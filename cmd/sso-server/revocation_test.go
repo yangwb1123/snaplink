@@ -10,6 +10,7 @@ import (
 )
 
 func TestBuildRevocationStore(t *testing.T) {
+	t.Parallel()
 	if s, err := serverbuildsign.BuildRevocationStore(config.SigningConfig{}); err != nil || s != nil {
 		t.Errorf("empty backend = (%v, %v), want (nil, nil)", s, err)
 	}
@@ -33,6 +34,7 @@ func TestBuildRevocationStore(t *testing.T) {
 // when a durable revocation backend is wired (the cmd plumbing for the durable
 // revocation feature), and the issuer exposes the SeedRevocations seam.
 func TestBuildSigningIssuer_WithRevocation(t *testing.T) {
+	t.Parallel()
 	for _, alg := range []string{"eddsa", "es256", "rs256", "ps256"} {
 		iss, _, _, err := serverbuildsign.BuildSigningIssuer(
 			config.SigningConfig{Alg: alg, RevocationBackend: "memory"},

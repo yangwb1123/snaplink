@@ -25,6 +25,7 @@ import (
 // every verify call against an empty pool, which is correct
 // fail-closed behavior).
 func TestLoadCertPool_EmptyPathsReturnsEmptyPool(t *testing.T) {
+	t.Parallel()
 	pool, err := serverbuildauthn.LoadCertPool(nil)
 	if err != nil {
 		t.Fatalf("err = %v", err)
@@ -39,6 +40,7 @@ func TestLoadCertPool_EmptyPathsReturnsEmptyPool(t *testing.T) {
 // with a partial trust store that admits some certs the operator
 // thought they had restricted.
 func TestLoadCertPool_MissingFileSurfaces(t *testing.T) {
+	t.Parallel()
 	if _, err := serverbuildauthn.LoadCertPool([]string{"/nonexistent/ca.pem"}); err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -50,6 +52,7 @@ func TestLoadCertPool_MissingFileSurfaces(t *testing.T) {
 // PEM stripped during config templating). Operators see the
 // mistake at boot rather than at first login attempt.
 func TestLoadCertPool_NoPEMBlocksSurfaces(t *testing.T) {
+	t.Parallel()
 	tmp := filepath.Join(t.TempDir(), "empty.pem")
 	if err := os.WriteFile(tmp, []byte("not a pem file\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -66,6 +69,7 @@ func TestLoadCertPool_NoPEMBlocksSurfaces(t *testing.T) {
 // here — Subjects() is deprecated for forward compatibility
 // with system roots.
 func TestLoadCertPool_GoodCertLoads(t *testing.T) {
+	t.Parallel()
 	pemBytes, ca := makeSelfSignedCAPEM(t, "test-ca")
 	path := filepath.Join(t.TempDir(), "ca.pem")
 	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
@@ -87,6 +91,7 @@ func TestLoadCertPool_GoodCertLoads(t *testing.T) {
 // rejected with no log signal — this asserts the values flow
 // through the loader into the registered authenticator.
 func TestBuildAuthenticators_CertificateWiresTrustedCAs(t *testing.T) {
+	t.Parallel()
 	pemBytes, _ := makeSelfSignedCAPEM(t, "wire-test-ca")
 	path := filepath.Join(t.TempDir(), "ca.pem")
 	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
@@ -116,6 +121,7 @@ func TestBuildAuthenticators_CertificateWiresTrustedCAs(t *testing.T) {
 // pool — would accept zero certs in production, which is the
 // silent-ship-broken trap serverbuildauthn.LoadCertPool exists to prevent.
 func TestBuildAuthenticators_CertificateBadCAGetsSkipped(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Authenticators.Certificate = &config.CertificateConfig{
 		Enabled:        true,

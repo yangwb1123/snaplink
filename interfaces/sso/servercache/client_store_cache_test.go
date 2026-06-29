@@ -118,6 +118,7 @@ var _ core.ClientStore = (*countingClientStore)(nil)
 // mutating the inner store's secret must be reflected by ValidateSecret on the
 // VERY NEXT call — a stale cached credential check is forbidden.
 func TestClientStoreCache_ValidateSecretBypassesCache(t *testing.T) {
+	t.Parallel()
 	inner := newCountingClientStore()
 	inner.seed(&core.Client{ID: "c1", Secret: "old", Active: true})
 	cache := NewClientStoreCache(inner, time.Minute, nil)
@@ -157,6 +158,7 @@ func TestClientStoreCache_ValidateSecretBypassesCache(t *testing.T) {
 // every time; once the client is created in the inner store, the next Get sees
 // it (NOT a cached negative entry).
 func TestClientStoreCache_MissNeverCached(t *testing.T) {
+	t.Parallel()
 	inner := newCountingClientStore()
 	cache := NewClientStoreCache(inner, time.Minute, nil)
 	ctx := context.Background()
@@ -186,6 +188,7 @@ func TestClientStoreCache_MissNeverCached(t *testing.T) {
 // A cache HIT is served WITHOUT touching the inner store within TTL, and the
 // entry expires after TTL (the next Get re-reads).
 func TestClientStoreCache_HitServedThenExpires(t *testing.T) {
+	t.Parallel()
 	inner := newCountingClientStore()
 	inner.seed(&core.Client{ID: "c1", Secret: "s", Active: true})
 	cache := NewClientStoreCache(inner, 40*time.Millisecond, nil)
@@ -218,6 +221,7 @@ func TestClientStoreCache_HitServedThenExpires(t *testing.T) {
 // evict() (the primitive InvalidateClientCache calls) drops the entry so the
 // next Get sees the inner store's new metadata immediately.
 func TestClientStoreCache_EvictReReads(t *testing.T) {
+	t.Parallel()
 	inner := newCountingClientStore()
 	inner.seed(&core.Client{ID: "c1", Secret: "s", Active: true, RedirectURIs: []string{"https://a"}})
 	cache := NewClientStoreCache(inner, time.Minute, nil)
@@ -249,6 +253,7 @@ func TestClientStoreCache_EvictReReads(t *testing.T) {
 // Update/Delete through the decorator evict the affected entry automatically
 // (belt-and-suspenders alongside the InvalidateClientCache bus).
 func TestClientStoreCache_MutationsEvict(t *testing.T) {
+	t.Parallel()
 	inner := newCountingClientStore()
 	inner.seed(&core.Client{ID: "c1", Secret: "s", Active: true, Name: "v1"})
 	cache := NewClientStoreCache(inner, time.Minute, nil)
@@ -282,6 +287,7 @@ func TestClientStoreCache_MutationsEvict(t *testing.T) {
 // corrupt the cached snapshot another caller observes, and must not corrupt the
 // inner store (whose MemoryClientStore analogue returns shared pointers).
 func TestClientStoreCache_CloneOnReadIsolation(t *testing.T) {
+	t.Parallel()
 	inner := newCountingClientStore()
 	inner.seed(&core.Client{
 		ID:            "c1",
@@ -343,6 +349,7 @@ func TestClientStoreCache_CloneOnReadIsolation(t *testing.T) {
 // cloneClient preserves nil-vs-empty so a clone compares equal to the original
 // across every reference field.
 func TestCloneClient_NilAndEmptyPreserved(t *testing.T) {
+	t.Parallel()
 	if got := cloneClient(nil); got != nil {
 		t.Fatalf("cloneClient(nil) = %v, want nil", got)
 	}
@@ -360,6 +367,7 @@ func TestCloneClient_NilAndEmptyPreserved(t *testing.T) {
 
 // The metric callback fires with bounded {hit,miss} outcomes only.
 func TestClientStoreCache_OutcomeCallback(t *testing.T) {
+	t.Parallel()
 	inner := newCountingClientStore()
 	inner.seed(&core.Client{ID: "c1", Secret: "s", Active: true})
 	var hits, misses atomic.Int64
@@ -384,6 +392,7 @@ func TestClientStoreCache_OutcomeCallback(t *testing.T) {
 
 // -count=10 -race: concurrent Get during evict must not race or tear.
 func TestClientStoreCache_ConcurrentGetDuringEvict(t *testing.T) {
+	t.Parallel()
 	inner := newCountingClientStore()
 	inner.seed(&core.Client{
 		ID:           "c1",

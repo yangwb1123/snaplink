@@ -12,6 +12,7 @@ import (
 )
 
 func TestMemoryCIBAStore_UpdateLastPoll(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryCIBAStore()
 	id, err := s.Issue(ctx, sampleCIBA())
@@ -39,6 +40,7 @@ func TestMemoryCIBAStore_UpdateLastPoll(t *testing.T) {
 // approved request is consumed, and consuming it is destructive + repeatable
 // once. Pending requests survive a failed consume (poll keeps working).
 func TestMemoryCIBAStore_ConsumeIfApproved(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryCIBAStore()
 
@@ -76,6 +78,7 @@ func TestMemoryCIBAStore_ConsumeIfApproved(t *testing.T) {
 // polls of one approved request yield exactly one winner — the invariant that
 // stops one out-of-band approval from minting N token sets.
 func TestMemoryCIBAStore_ConsumeIfApprovedAtomicRace(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryCIBAStore()
 	id, _ := s.Issue(ctx, sampleCIBA())
@@ -102,6 +105,7 @@ func TestMemoryCIBAStore_ConsumeIfApprovedAtomicRace(t *testing.T) {
 }
 
 func TestGenerateCIBAAuthReqID(t *testing.T) {
+	t.Parallel()
 	a, err := defaultimpl.GenerateCIBAAuthReqID()
 	if err != nil {
 		t.Fatalf("GenerateCIBAAuthReqID: %v", err)

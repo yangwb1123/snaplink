@@ -10,6 +10,7 @@ import (
 )
 
 func TestAuthCodeIssueConsume(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewAuthCodeStore(rdb)
 	ctx := context.Background()
@@ -42,6 +43,7 @@ func TestAuthCodeIssueConsume(t *testing.T) {
 // oracle-leak hardening requires to be INDISTINGUISHABLE — every one must
 // return exactly ErrAuthCodeNotFound.
 func TestAuthCodeOracleLeak(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	s := NewAuthCodeStore(rdb)
 	ctx := context.Background()
@@ -71,6 +73,7 @@ func TestAuthCodeOracleLeak(t *testing.T) {
 // TestAuthCodeSingleUseRace fires N concurrent Consume calls at one code;
 // exactly one must win. (Run under -race -count.)
 func TestAuthCodeSingleUseRace(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewAuthCodeStore(rdb)
 	ctx := context.Background()

@@ -22,6 +22,7 @@ func newDeviceSecretStore(t *testing.T) *sqlitestores.DeviceSecretStore {
 }
 
 func TestSQLiteDeviceSecretStore_IssueConsume(t *testing.T) {
+	t.Parallel()
 	s := newDeviceSecretStore(t)
 	ctx := context.Background()
 	ds := &core.DeviceSecret{Secret: "x1", Subject: "u1", SID: "s1", ClientID: "a", ExpiresAt: time.Now().Add(time.Minute)}
@@ -42,6 +43,7 @@ func TestSQLiteDeviceSecretStore_IssueConsume(t *testing.T) {
 }
 
 func TestSQLiteDeviceSecretStore_Missing(t *testing.T) {
+	t.Parallel()
 	s := newDeviceSecretStore(t)
 	if _, err := s.Consume(context.Background(), "nope"); !errors.Is(err, core.ErrDeviceSecretNotFound) {
 		t.Errorf("err=%v want ErrDeviceSecretNotFound", err)
@@ -49,6 +51,7 @@ func TestSQLiteDeviceSecretStore_Missing(t *testing.T) {
 }
 
 func TestSQLiteDeviceSecretStore_Expired(t *testing.T) {
+	t.Parallel()
 	s := newDeviceSecretStore(t)
 	ctx := context.Background()
 	_ = s.Issue(ctx, &core.DeviceSecret{Secret: "old", Subject: "u", ClientID: "c", ExpiresAt: time.Now().Add(-time.Second)})

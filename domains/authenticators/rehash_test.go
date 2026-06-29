@@ -27,6 +27,7 @@ func fixedVerifier(subjectID string) PasswordVerifier {
 // TestLazyRehashVerifier_RehashesOnFirstLogin checks that when NeedsRehash
 // returns true, Updater is eventually called with a valid bcrypt hash.
 func TestLazyRehashVerifier_RehashesOnFirstLogin(t *testing.T) {
+	t.Parallel()
 	var (
 		mu          sync.Mutex
 		updatedUser string
@@ -76,6 +77,7 @@ func TestLazyRehashVerifier_RehashesOnFirstLogin(t *testing.T) {
 // returns false (e.g. for a user whose hash is already bcrypt), Updater is
 // never called.
 func TestLazyRehashVerifier_NoRehashForBcrypt(t *testing.T) {
+	t.Parallel()
 	updaterCalled := false
 
 	v := &LazyRehashVerifier{
@@ -104,6 +106,7 @@ func TestLazyRehashVerifier_NoRehashForBcrypt(t *testing.T) {
 // TestLazyRehashVerifier_FailOpenOnRehashError verifies that when Updater
 // returns an error, authentication still succeeds (fail-open contract).
 func TestLazyRehashVerifier_FailOpenOnRehashError(t *testing.T) {
+	t.Parallel()
 	// logErrCh receives exactly one value: the logged message on Updater
 	// error. Using a channel rather than a shared variable avoids a data
 	// race between the goroutine write and the test-goroutine read.
@@ -155,6 +158,7 @@ func TestLazyRehashVerifier_FailOpenOnRehashError(t *testing.T) {
 // ---- TestLazyRehashVerifier_NilUpdaterIsNoop ----
 
 func TestLazyRehashVerifier_NilUpdaterIsNoop(t *testing.T) {
+	t.Parallel()
 	// When Updater is nil, verification should still work without panicking.
 	v := &LazyRehashVerifier{
 		Underlying:  fixedVerifier("user-4"),
@@ -173,6 +177,7 @@ func TestLazyRehashVerifier_NilUpdaterIsNoop(t *testing.T) {
 // ---- TestLazyRehashVerifier_NeedsRehashErrorIsFailOpen ----
 
 func TestLazyRehashVerifier_NeedsRehashErrorIsFailOpen(t *testing.T) {
+	t.Parallel()
 	updaterCalled := false
 	v := &LazyRehashVerifier{
 		Underlying: fixedVerifier("user-5"),

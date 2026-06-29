@@ -172,6 +172,7 @@ func mustSigner(t *testing.T, f *fakeSession, pub crypto.PublicKey) *Signer {
 // hash than the published ES* alg (mirrors the awskms/gcpkms peers, which both
 // enforce the curve->hash pairing).
 func TestSignECDSAHashCurveMismatchRejected(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	s := mustSigner(t, f, nil)
 
@@ -192,6 +193,7 @@ func TestSignECDSAHashCurveMismatchRejected(t *testing.T) {
 // TestPublicKeyParsesAndCaches verifies Public() parses the SPKI DER into the
 // right key type and reads the token public key only once (the cache).
 func TestPublicKeyParsesAndCaches(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	s := mustSigner(t, f, nil)
 
@@ -211,6 +213,7 @@ func TestPublicKeyParsesAndCaches(t *testing.T) {
 // TestSuppliedPublicKeySkipsTokenRead verifies that a supplied public key is
 // served without any token read.
 func TestSuppliedPublicKeySkipsTokenRead(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	s := mustSigner(t, f, &f.ecKey.PublicKey)
 	if _, ok := s.Public().(*ecdsa.PublicKey); !ok {
@@ -226,6 +229,7 @@ func TestSuppliedPublicKeySkipsTokenRead(t *testing.T) {
 // SAME r,s and (b) verifies via ecdsa.VerifyASN1 (the stdlib contract the
 // cryptosigner bridge relies on). Covers P-256 (ES256) and P-384 (ES384).
 func TestSignECDSARoundTrip(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		curve elliptic.Curve
@@ -287,6 +291,7 @@ func TestSignECDSARoundTrip(t *testing.T) {
 // TestRawToDERExactRoundTrip proves rawECDSAToDER is the exact inverse of the
 // raw R||S split: a known (r,s) -> R||S -> DER parses back to the SAME r,s.
 func TestRawToDERExactRoundTrip(t *testing.T) {
+	t.Parallel()
 	curve := elliptic.P256()
 	coordLen := (curve.Params().BitSize + 7) / 8
 	r := new(big.Int).SetBytes([]byte{0x01, 0x02, 0x03, 0xab, 0xcd})
@@ -311,6 +316,7 @@ func TestRawToDERExactRoundTrip(t *testing.T) {
 // TestRawToDERRejectsBadLength confirms a raw signature whose length doesn't
 // match the curve is rejected rather than mis-split.
 func TestRawToDERRejectsBadLength(t *testing.T) {
+	t.Parallel()
 	if _, err := rawECDSAToDER([]byte{0x01, 0x02, 0x03}, elliptic.P256()); err == nil {
 		t.Fatal("rawECDSAToDER accepted a wrong-length raw signature")
 	}
@@ -319,6 +325,7 @@ func TestRawToDERRejectsBadLength(t *testing.T) {
 // TestSignRSARoundTrip verifies RS256 (DigestInfo path) + PS256 round-trip and
 // map to the right mechanism.
 func TestSignRSARoundTrip(t *testing.T) {
+	t.Parallel()
 	f := newFakeRSA(t)
 	s := mustSigner(t, f, nil)
 	pub := s.Public().(*rsa.PublicKey)
@@ -360,6 +367,7 @@ func TestSignRSARoundTrip(t *testing.T) {
 // TestSignEd25519RoundTrip verifies the EdDSA path: HashFunc()==0, the raw
 // message is signed via CKM_EDDSA, and the 64-byte signature verifies.
 func TestSignEd25519RoundTrip(t *testing.T) {
+	t.Parallel()
 	f := newFakeEd25519(t)
 	s := mustSigner(t, f, nil)
 	pub := s.Public().(ed25519.PublicKey)
@@ -380,6 +388,7 @@ func TestSignEd25519RoundTrip(t *testing.T) {
 // TestECDSARejectsZeroHash confirms an ECDSA key with HashFunc()==0 (EdDSA-
 // style call) is rejected — EC keys need a pre-hash.
 func TestECDSARejectsZeroHash(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	s := mustSigner(t, f, nil)
 	if _, err := s.Sign(rand.Reader, []byte("x"), crypto.Hash(0)); !errors.Is(err, ErrUnsupportedKey) {
@@ -390,6 +399,7 @@ func TestECDSARejectsZeroHash(t *testing.T) {
 // TestEd25519RejectsPreHash confirms an Ed25519 key with a non-zero hash is
 // rejected — the JWS EdDSA issuer signs the raw message.
 func TestEd25519RejectsPreHash(t *testing.T) {
+	t.Parallel()
 	f := newFakeEd25519(t)
 	s := mustSigner(t, f, nil)
 	if _, err := s.Sign(rand.Reader, []byte("x"), crypto.SHA256); !errors.Is(err, ErrUnsupportedKey) {
@@ -400,6 +410,7 @@ func TestEd25519RejectsPreHash(t *testing.T) {
 // TestRSARejectsNonSHA256 confirms an RSA key with a non-SHA-256 hash is
 // rejected (the JWS RSA issuers are SHA-256 only).
 func TestRSARejectsNonSHA256(t *testing.T) {
+	t.Parallel()
 	f := newFakeRSA(t)
 	s := mustSigner(t, f, nil)
 	digest := make([]byte, 48)
@@ -411,6 +422,7 @@ func TestRSARejectsNonSHA256(t *testing.T) {
 // TestSignFailsClosed confirms a token Sign error propagates (no unsigned
 // token ever leaves the signer).
 func TestSignFailsClosed(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	f.signErr = errors.New("token: CKR_DEVICE_ERROR")
 	s := mustSigner(t, f, nil)
@@ -424,6 +436,7 @@ func TestSignFailsClosed(t *testing.T) {
 // contract; this signer needs the hash it carries, so a nil must yield a clear
 // error, never a nil-interface panic on opts.HashFunc().
 func TestSignNilOptsRejected(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	s := mustSigner(t, f, nil)
 	digest := sha256.Sum256([]byte("x"))
@@ -444,6 +457,7 @@ func TestSignNilOptsRejected(t *testing.T) {
 // TestPublicKeyFailsClosed confirms a token public-key read error surfaces
 // from PublicKey() (and Public() returns nil).
 func TestPublicKeyFailsClosed(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	f.pubErr = errors.New("token: CKR_TOKEN_NOT_PRESENT")
 	s := mustSigner(t, f, nil)
@@ -457,6 +471,7 @@ func TestPublicKeyFailsClosed(t *testing.T) {
 
 // TestNewSignerRejectsNilSession covers the construction guard.
 func TestNewSignerRejectsNilSession(t *testing.T) {
+	t.Parallel()
 	if _, err := NewSigner(nil, 1, nil); err == nil {
 		t.Fatal("NewSigner(nil session) should error")
 	}
@@ -465,6 +480,7 @@ func TestNewSignerRejectsNilSession(t *testing.T) {
 // TestCloseOnFakeIsNoop confirms Close() is a safe no-op for a non-token
 // (fake) session — Close only acts on the real miekg-backed session.
 func TestCloseOnFakeIsNoop(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	s := mustSigner(t, f, nil)
 	if err := s.Close(); err != nil {
@@ -479,6 +495,7 @@ func TestCloseOnFakeIsNoop(t *testing.T) {
 // under -race; post-fix the mutex serializes reads, the error is retried (not
 // poisoned), and once it clears every call caches the same key and signs.
 func TestConcurrentLoadPublicRetriesTransientError(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	f.failPubN.Store(5) // first 5 reads fail, then succeed
 
@@ -524,6 +541,7 @@ func TestConcurrentLoadPublicRetriesTransientError(t *testing.T) {
 // the full chain — token RAW R||S -> Signer DER -> cryptosigner JWS R||S ->
 // JWS ES256 -> Validate.
 func TestEndToEndECDSAIssuer(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	signer := mustSigner(t, f, nil)
 
@@ -555,6 +573,7 @@ func TestEndToEndECDSAIssuer(t *testing.T) {
 // TestEndToEndRSAIssuer mirrors the ECDSA end-to-end test for RS256 + PS256
 // through the REAL RSAJWTIssuer + cryptosigner.RSA bridge over the fake token.
 func TestEndToEndRSAIssuer(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		alg  string
@@ -593,6 +612,7 @@ func TestEndToEndRSAIssuer(t *testing.T) {
 // Ed25519JWTIssuer + cryptosigner.Ed25519 bridge over the fake token (the
 // CKM_EDDSA path awskms cannot offer).
 func TestEndToEndEd25519Issuer(t *testing.T) {
+	t.Parallel()
 	f := newFakeEd25519(t)
 	signer := mustSigner(t, f, nil)
 

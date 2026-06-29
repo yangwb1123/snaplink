@@ -185,6 +185,7 @@ func hasAuditType(types []audit.EventType, want audit.EventType) bool {
 // --- The happy path: a valid SET revokes the mapped subject. ---
 
 func TestReceiver_ValidSET_RevokesSubject(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	if !f.subjectHasAccess(t) {
 		t.Fatal("precondition: subject should start with access")
@@ -218,6 +219,7 @@ func TestReceiver_ValidSET_RevokesSubject(t *testing.T) {
 // --- Forged / unsigned / wrong-key SET → rejected, NO revocation. ---
 
 func TestReceiver_ForgedSignature_Rejected(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	good := f.signSET(t, sessionRevokedSET(rcvLocalUser, "jti-forge"))
 	// Tamper the signature segment so the signature no longer verifies.
@@ -239,6 +241,7 @@ func TestReceiver_ForgedSignature_Rejected(t *testing.T) {
 }
 
 func TestReceiver_WrongKey_Rejected(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	// Sign with a DIFFERENT issuer (a different key) but stamp the trusted
 	// iss in the claims — the signature must fail against the trusted bundle.
@@ -260,6 +263,7 @@ func TestReceiver_WrongKey_Rejected(t *testing.T) {
 }
 
 func TestReceiver_MalformedBody_Rejected(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	res, err := f.receiver.Receive(context.Background(), "not-a-jws")
 	if err != nil {
@@ -279,6 +283,7 @@ func TestReceiver_MalformedBody_Rejected(t *testing.T) {
 // --- Untrusted iss → rejected. ---
 
 func TestReceiver_UntrustedIssuer_Rejected(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	// A SET signed by an issuer whose iss is NOT in the allowlist. Build it
 	// with its own issuer object (so the iss claim matches its signing key),
@@ -305,6 +310,7 @@ func TestReceiver_UntrustedIssuer_Rejected(t *testing.T) {
 // --- Wrong aud (addressed elsewhere) → rejected. ---
 
 func TestReceiver_WrongAudience_Rejected(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	claims := sessionRevokedSET(rcvLocalUser, "jti-aud")
 	claims["aud"] = []string{rcvOtherAud} // addressed to a DIFFERENT receiver
@@ -325,6 +331,7 @@ func TestReceiver_WrongAudience_Rejected(t *testing.T) {
 // --- Replayed SET (same jti twice) → second is a no-op. ---
 
 func TestReceiver_ReplayedSET_SecondRejected(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	set := f.signSET(t, sessionRevokedSET(rcvLocalUser, "jti-replay"))
 
@@ -360,6 +367,7 @@ func TestReceiver_ReplayedSET_SecondRejected(t *testing.T) {
 // --- Expired / stale SET → rejected. ---
 
 func TestReceiver_ExpiredSET_Rejected(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	claims := sessionRevokedSET(rcvLocalUser, "jti-expired")
 	// exp well in the past (beyond the default 60s skew).
@@ -382,6 +390,7 @@ func TestReceiver_ExpiredSET_Rejected(t *testing.T) {
 // --- Valid SET for an UNKNOWN/unmapped subject → ack, NO revocation. ---
 
 func TestReceiver_UnmappedSubject_AckedNoRevocation(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	// A subject that maps to no local user (opaque id with no matching user).
 	set := f.signSET(t, sessionRevokedSET("ghost-subject-does-not-exist", "jti-ghost"))
@@ -405,6 +414,7 @@ func TestReceiver_UnmappedSubject_AckedNoRevocation(t *testing.T) {
 // --- Unknown event URI → ack, no-op. ---
 
 func TestReceiver_UnknownEvent_AckedNoop(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	claims := sessionRevokedSET(rcvLocalUser, "jti-unknown-event")
 	claims["events"] = map[string]any{
@@ -432,6 +442,7 @@ func TestReceiver_UnknownEvent_AckedNoop(t *testing.T) {
 // replayed as a SET). ---
 
 func TestReceiver_WrongTyp_Rejected(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	// Sign the exact SET claims but with typ "at+jwt" (an access token typ).
 	tok, err := f.issuer.SignJWT(context.Background(), "at+jwt", sessionRevokedSET(rcvLocalUser, "jti-typ"))
@@ -453,6 +464,7 @@ func TestReceiver_WrongTyp_Rejected(t *testing.T) {
 // --- iss_sub subject mapping resolves the federation link precisely. ---
 
 func TestReceiver_IssSubMapping_ResolvesFederationLink(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	// Build a receiver in iss_sub mode: the SET's {iss,sub} resolves via
 	// GetByExternalID(provider=rcvIssuer, externalID=upstream-sub).
@@ -598,6 +610,7 @@ func (f *issSubRcvFixture) fedHasSession(t *testing.T) bool {
 // foreign sub_id.iss is a no-op: the SET is acked (it is otherwise valid) but
 // triggers NO revocation.
 func TestReceiver_IssSub_ForeignSubIDIss_NoRevocation(t *testing.T) {
+	t.Parallel()
 	f := newIssSubRcvFixture(t)
 	if !f.fedHasSession(t) {
 		t.Fatal("precondition: federated subject should start with a session")
@@ -623,6 +636,7 @@ func TestReceiver_IssSub_ForeignSubIDIss_NoRevocation(t *testing.T) {
 // The legit path still works: a SET whose sub_id.iss == the configured
 // provider, naming a real federated subject, revokes correctly.
 func TestReceiver_IssSub_MatchingSubIDIss_Revokes(t *testing.T) {
+	t.Parallel()
 	f := newIssSubRcvFixture(t)
 	set := f.signIssSub(t, rcvIssuer, "upstream-sub-9", "jti-match")
 
@@ -641,6 +655,7 @@ func TestReceiver_IssSub_MatchingSubIDIss_Revokes(t *testing.T) {
 // The legit path also works when sub_id.iss is OMITTED (the transmitter relies
 // on the operator-pinned provider): the subject still resolves + revokes.
 func TestReceiver_IssSub_OmittedSubIDIss_Revokes(t *testing.T) {
+	t.Parallel()
 	f := newIssSubRcvFixture(t)
 	set := f.signIssSub(t, "", "upstream-sub-9", "jti-omit")
 
@@ -660,6 +675,7 @@ func TestReceiver_IssSub_OmittedSubIDIss_Revokes(t *testing.T) {
 // empty-provider default is refused at the trust boundary), while a non-empty
 // Provider builds fine.
 func TestNewReceiver_IssSubRequiresProvider(t *testing.T) {
+	t.Parallel()
 	users := defaultimpl.NewMemoryUserProvider()
 	sessions := defaultimpl.NewMemorySessionManager(time.Hour)
 	revoker, _ := caep.NewStoreRevoker(sessions, nil, nil)
@@ -686,6 +702,7 @@ func TestNewReceiver_IssSubRequiresProvider(t *testing.T) {
 // replay indefinitely past the default jti window. ---
 
 func TestReceiver_NoFreshnessClaim_Rejected(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	claims := sessionRevokedSET(rcvLocalUser, "jti-nofresh")
 	delete(claims, "iat")
@@ -712,6 +729,7 @@ func TestReceiver_NoFreshnessClaim_Rejected(t *testing.T) {
 
 // A SET carrying ONLY a fresh iat (no exp) is still accepted + acts.
 func TestReceiver_OnlyIat_Fresh_Works(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	claims := sessionRevokedSET(rcvLocalUser, "jti-only-iat")
 	delete(claims, "exp")
@@ -733,6 +751,7 @@ func TestReceiver_OnlyIat_Fresh_Works(t *testing.T) {
 // A SET carrying ONLY a future-valid exp (no iat) is still accepted + acts;
 // an expired exp-only SET is still rejected.
 func TestReceiver_OnlyExp_FreshAndExpired(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 
 	fresh := sessionRevokedSET(rcvLocalUser, "jti-only-exp-fresh")
@@ -771,6 +790,7 @@ func TestReceiver_OnlyExp_FreshAndExpired(t *testing.T) {
 // --- Constructor guards: a misconfigured receiver must error, not build. ---
 
 func TestNewReceiver_RequiresAudienceAndTransmitters(t *testing.T) {
+	t.Parallel()
 	users := defaultimpl.NewMemoryUserProvider()
 	sessions := defaultimpl.NewMemorySessionManager(time.Hour)
 	revoker, _ := caep.NewStoreRevoker(sessions, nil, nil)
@@ -795,6 +815,7 @@ func TestNewReceiver_RequiresAudienceAndTransmitters(t *testing.T) {
 }
 
 func TestNewStoreRevoker_RequiresAtLeastOneLeg(t *testing.T) {
+	t.Parallel()
 	if _, err := caep.NewStoreRevoker(nil, nil, nil); err == nil {
 		t.Error("a revoker that can do nothing must error")
 	}
@@ -803,6 +824,7 @@ func TestNewStoreRevoker_RequiresAtLeastOneLeg(t *testing.T) {
 // jsonRT confirms a SET's events claim round-trips as the receiver expects
 // (defensive — the receiver reads events as json.RawMessage).
 func TestReceiver_EventsClaimShape(t *testing.T) {
+	t.Parallel()
 	raw, _ := json.Marshal(map[string]any{caep.EventURICAEPSessionRevoked: map[string]any{}})
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -834,6 +856,7 @@ func (r *failOnceRevoker) RevokeAllForSubject(ctx context.Context, localUserID s
 // so the resend is admitted rather than dropped as a replay. Without the rollback
 // the subject keeps all access forever despite a valid session-revoked SET.
 func TestReceiver_RetryAfterRevokeError_SecondDeliveryRevokes(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer(rcvIssuer))
 	sessions := defaultimpl.NewMemorySessionManager(time.Hour)
@@ -886,6 +909,7 @@ func TestReceiver_RetryAfterRevokeError_SecondDeliveryRevokes(t *testing.T) {
 // SET re-passes freshness and re-revokes the subject -- an indefinite,
 // repeatable forced-logout replay.
 func TestReceiver_ExpLessStaleSET_Rejected(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	claims := sessionRevokedSET(rcvLocalUser, "jti-expless-stale")
 	delete(claims, "exp")                                    // exp-less
@@ -908,6 +932,7 @@ func TestReceiver_ExpLessStaleSET_Rejected(t *testing.T) {
 // exp-less SET is legitimate and must still be accepted + acted -- the new
 // iat-age bound only rejects STALE exp-less SETs.
 func TestReceiver_ExpLessFreshSET_Accepted(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	claims := sessionRevokedSET(rcvLocalUser, "jti-expless-fresh")
 	delete(claims, "exp")

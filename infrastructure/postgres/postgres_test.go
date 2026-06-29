@@ -27,6 +27,7 @@ func testConfig(t *testing.T) Config {
 }
 
 func TestMigrate_RunIdempotentAndVersioned(t *testing.T) {
+	t.Parallel()
 	cfg := testConfig(t)
 	db, err := Open(cfg)
 	if err != nil {
@@ -75,6 +76,7 @@ func freshConsentStore(t *testing.T) *ConsentStore {
 }
 
 func TestConsent_RecordGetRevoke(t *testing.T) {
+	t.Parallel()
 	s := freshConsentStore(t)
 	ctx := context.Background()
 
@@ -121,6 +123,7 @@ func TestConsent_RecordGetRevoke(t *testing.T) {
 }
 
 func TestConsent_ListByUserDescending(t *testing.T) {
+	t.Parallel()
 	s := freshConsentStore(t)
 	ctx := context.Background()
 	base := time.Now().UTC()

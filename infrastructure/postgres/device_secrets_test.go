@@ -23,6 +23,7 @@ func freshDeviceSecretStore(t *testing.T) *DeviceSecretStore {
 }
 
 func TestDeviceSecret_IssueConsume(t *testing.T) {
+	t.Parallel()
 	s := freshDeviceSecretStore(t)
 	ctx := context.Background()
 
@@ -51,6 +52,7 @@ func TestDeviceSecret_IssueConsume(t *testing.T) {
 }
 
 func TestDeviceSecret_Missing(t *testing.T) {
+	t.Parallel()
 	s := freshDeviceSecretStore(t)
 	if _, err := s.Consume(context.Background(), "nope"); !errors.Is(err, core.ErrDeviceSecretNotFound) {
 		t.Errorf("err=%v want ErrDeviceSecretNotFound", err)
@@ -58,6 +60,7 @@ func TestDeviceSecret_Missing(t *testing.T) {
 }
 
 func TestDeviceSecret_Expired(t *testing.T) {
+	t.Parallel()
 	s := freshDeviceSecretStore(t)
 	ctx := context.Background()
 	if err := s.Issue(ctx, &core.DeviceSecret{Secret: "old", Subject: "u", ClientID: "c", ExpiresAt: time.Now().Add(-time.Second)}); err != nil {
@@ -74,6 +77,7 @@ func TestDeviceSecret_Expired(t *testing.T) {
 }
 
 func TestDeviceSecret_IssueReplacesInFull(t *testing.T) {
+	t.Parallel()
 	s := freshDeviceSecretStore(t)
 	ctx := context.Background()
 
@@ -102,6 +106,7 @@ func TestDeviceSecret_IssueReplacesInFull(t *testing.T) {
 }
 
 func TestDeviceSecret_RevokeBySubject(t *testing.T) {
+	t.Parallel()
 	s := freshDeviceSecretStore(t)
 	ctx := context.Background()
 

@@ -25,6 +25,7 @@ func newSessionStoreForTest(t *testing.T) *SessionStore {
 }
 
 func TestSessionStore_PutThenTake(t *testing.T) {
+	t.Parallel()
 	store := newSessionStoreForTest(t)
 	ctx := context.Background()
 	want := &gw.SessionData{Challenge: "abc", UserID: []byte("alice")}
@@ -45,6 +46,7 @@ func TestSessionStore_PutThenTake(t *testing.T) {
 }
 
 func TestSessionStore_TakeIsSingleUse(t *testing.T) {
+	t.Parallel()
 	store := newSessionStoreForTest(t)
 	ctx := context.Background()
 	if err := store.Put(ctx, "s1", &gw.SessionData{Challenge: "x"}, time.Minute); err != nil {
@@ -61,6 +63,7 @@ func TestSessionStore_TakeIsSingleUse(t *testing.T) {
 }
 
 func TestSessionStore_ExpiredSessionReturnsExpired(t *testing.T) {
+	t.Parallel()
 	store := newSessionStoreForTest(t)
 	ctx := context.Background()
 	if err := store.Put(ctx, "s1", &gw.SessionData{Challenge: "x"}, -1*time.Second); err != nil {
@@ -79,6 +82,7 @@ func TestSessionStore_ExpiredSessionReturnsExpired(t *testing.T) {
 }
 
 func TestSessionStore_TakeUnknownReturnsSentinel(t *testing.T) {
+	t.Parallel()
 	store := newSessionStoreForTest(t)
 	_, err := store.Take(context.Background(), "ghost")
 	if !errors.Is(err, webauthn.ErrSessionUnknown) {
@@ -87,6 +91,7 @@ func TestSessionStore_TakeUnknownReturnsSentinel(t *testing.T) {
 }
 
 func TestSessionStore_PutUpsertsOnSameID(t *testing.T) {
+	t.Parallel()
 	// Second Put with the same id overwrites — defense against a rare
 	// collision on the helper's 24-byte random session id.
 	store := newSessionStoreForTest(t)
@@ -107,6 +112,7 @@ func TestSessionStore_PutUpsertsOnSameID(t *testing.T) {
 }
 
 func TestSessionStore_CrossInstanceSharing(t *testing.T) {
+	t.Parallel()
 	// Ceremony Begin* on replica A, Finish* on replica B — both
 	// store handles point at the same DB file.
 	dir := t.TempDir()

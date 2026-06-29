@@ -22,6 +22,7 @@ func newClientStore(t *testing.T) *sqlite.ClientStore {
 }
 
 func TestSQLiteClients_AddGetRoundTrip(t *testing.T) {
+	t.Parallel()
 	st := newClientStore(t)
 	in := &sso.Client{
 		ID:                    "web",
@@ -68,6 +69,7 @@ func TestSQLiteClients_AddGetRoundTrip(t *testing.T) {
 // private_key_jwt/JAR verification, the RFC 7592 management credential, and
 // the RFC 8707/9101 SSRF allowlists.
 func TestSQLiteClients_SecurityFieldsSurviveRestart(t *testing.T) {
+	t.Parallel()
 	dsn := freshSharedDSN(t)
 	st, err := sqlite.NewClientStore(dsn)
 	if err != nil {
@@ -140,6 +142,7 @@ func TestSQLiteClients_SecurityFieldsSurviveRestart(t *testing.T) {
 // (not just Add) persists the v2 columns — Update has its own SET list that
 // must stay in lockstep with INSERT and scan.
 func TestSQLiteClients_SecurityFieldsUpdateRoundTrip(t *testing.T) {
+	t.Parallel()
 	st := newClientStore(t)
 	if err := st.Add(context.Background(), &sso.Client{ID: "u2", Secret: "s", Active: true}); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -178,6 +181,7 @@ func TestSQLiteClients_SecurityFieldsUpdateRoundTrip(t *testing.T) {
 // back with the same zero values (nil slices, empty strings, false), so the
 // new columns are byte-identical to the v1 schema for legacy/minimal clients.
 func TestSQLiteClients_EmptySecurityFieldsRoundTripCleanly(t *testing.T) {
+	t.Parallel()
 	st := newClientStore(t)
 	if err := st.Add(context.Background(), &sso.Client{ID: "min", Secret: "s", Active: true}); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -197,6 +201,7 @@ func TestSQLiteClients_EmptySecurityFieldsRoundTripCleanly(t *testing.T) {
 }
 
 func TestSQLiteClients_AddDuplicateReturnsExists(t *testing.T) {
+	t.Parallel()
 	st := newClientStore(t)
 	c := &sso.Client{ID: "dup", Secret: "s", Active: true}
 	if err := st.Add(context.Background(), c); err != nil {
@@ -209,6 +214,7 @@ func TestSQLiteClients_AddDuplicateReturnsExists(t *testing.T) {
 }
 
 func TestSQLiteClients_GetMissingReturnsNoSuchClient(t *testing.T) {
+	t.Parallel()
 	st := newClientStore(t)
 	_, err := st.Get(context.Background(), "ghost")
 	if !errors.Is(err, sso.ErrNoSuchClient) {
@@ -217,6 +223,7 @@ func TestSQLiteClients_GetMissingReturnsNoSuchClient(t *testing.T) {
 }
 
 func TestSQLiteClients_ValidateSecret(t *testing.T) {
+	t.Parallel()
 	st := newClientStore(t)
 	_ = st.Add(context.Background(), &sso.Client{ID: "x", Secret: "right", Active: true})
 	if err := st.ValidateSecret(context.Background(), "x", "right"); err != nil {
@@ -231,6 +238,7 @@ func TestSQLiteClients_ValidateSecret(t *testing.T) {
 }
 
 func TestSQLiteClients_UpdateChangesFields(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := newClientStore(t)
 	_ = st.Add(ctx, &sso.Client{ID: "u", Secret: "s1", Active: true})
@@ -270,6 +278,7 @@ func TestSQLiteClients_UpdateChangesFields(t *testing.T) {
 }
 
 func TestSQLiteClients_UpdateUnknownReturnsNoSuchClient(t *testing.T) {
+	t.Parallel()
 	st := newClientStore(t)
 	err := st.Update(context.Background(), &sso.Client{ID: "ghost"})
 	if !errors.Is(err, sso.ErrNoSuchClient) {
@@ -278,6 +287,7 @@ func TestSQLiteClients_UpdateUnknownReturnsNoSuchClient(t *testing.T) {
 }
 
 func TestSQLiteClients_DeleteIsIdempotent(t *testing.T) {
+	t.Parallel()
 	st := newClientStore(t)
 	_ = st.Add(context.Background(), &sso.Client{ID: "d", Secret: "s", Active: true})
 	if err := st.Delete(context.Background(), "d"); err != nil {
@@ -292,6 +302,7 @@ func TestSQLiteClients_DeleteIsIdempotent(t *testing.T) {
 }
 
 func TestSQLiteClients_RotateSecretReturnsNewSecret(t *testing.T) {
+	t.Parallel()
 	st := newClientStore(t)
 	_ = st.Add(context.Background(), &sso.Client{ID: "r", Secret: "old", Active: true})
 	newSecret, err := st.RotateSecret(context.Background(), "r")
@@ -307,6 +318,7 @@ func TestSQLiteClients_RotateSecretReturnsNewSecret(t *testing.T) {
 }
 
 func TestSQLiteClients_RotateSecretUnknownReturnsNoSuchClient(t *testing.T) {
+	t.Parallel()
 	st := newClientStore(t)
 	_, err := st.RotateSecret(context.Background(), "ghost")
 	if !errors.Is(err, sso.ErrNoSuchClient) {
@@ -315,6 +327,7 @@ func TestSQLiteClients_RotateSecretUnknownReturnsNoSuchClient(t *testing.T) {
 }
 
 func TestSQLiteClients_ListOrderedById(t *testing.T) {
+	t.Parallel()
 	st := newClientStore(t)
 	for _, id := range []string{"c-3", "c-1", "c-2"} {
 		_ = st.Add(context.Background(), &sso.Client{ID: id, Secret: "s", Active: true})
@@ -332,6 +345,7 @@ func TestSQLiteClients_ListOrderedById(t *testing.T) {
 }
 
 func TestSQLiteClients_ListByTenant(t *testing.T) {
+	t.Parallel()
 	st := newClientStore(t)
 	_ = st.Add(context.Background(), &sso.Client{ID: "a1", Secret: "s", TenantID: "acme", Active: true})
 	_ = st.Add(context.Background(), &sso.Client{ID: "a2", Secret: "s", TenantID: "acme", Active: true})
@@ -353,6 +367,7 @@ func TestSQLiteClients_ListByTenant(t *testing.T) {
 }
 
 func TestSQLiteStats_OrderIndependentHash(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	// Same logical set inserted in different orders across two fresh
 	// DBs must fingerprint identically — row order must not leak.
@@ -383,6 +398,7 @@ func TestSQLiteStats_OrderIndependentHash(t *testing.T) {
 }
 
 func TestSQLiteStats_ScopeChangeFlipsHash(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := newClientStore(t)
 	_ = st.Add(ctx, &sso.Client{ID: "c-1", Secret: "s", AllowedScopes: []string{"read"}, Active: true})
@@ -408,6 +424,7 @@ func TestSQLiteStats_ScopeChangeFlipsHash(t *testing.T) {
 }
 
 func TestSQLiteStats_AddDeleteRestoresHash(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := newClientStore(t)
 	_ = st.Add(ctx, &sso.Client{ID: "c-1", Secret: "s", AllowedScopes: []string{"read"}, Active: true})
@@ -432,6 +449,7 @@ func TestSQLiteStats_AddDeleteRestoresHash(t *testing.T) {
 // TestSQLiteClients_SecretHashAtRest proves that Add stores a bcrypt hash,
 // not the plaintext, and that ValidateSecret accepts the original plaintext.
 func TestSQLiteClients_SecretHashAtRest(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := newClientStore(t)
 	plaintext := "plaintext-secret"
@@ -463,6 +481,7 @@ func TestSQLiteClients_SecretHashAtRest(t *testing.T) {
 // path: a client whose Secret was inserted directly as plaintext (pre-migration)
 // is still accepted by ValidateSecret without rehashing.
 func TestSQLiteClients_SecretPlaintextFallback(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := newClientStore(t)
 	// Bypass the hashing by inserting the raw plaintext directly via SQL —
@@ -491,6 +510,7 @@ func TestSQLiteClients_SecretPlaintextFallback(t *testing.T) {
 // TestSQLiteClients_RotateSecretHashAtRest proves that RotateSecret stores a
 // bcrypt hash and returns the plaintext to the caller.
 func TestSQLiteClients_RotateSecretHashAtRest(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := newClientStore(t)
 	_ = st.Add(ctx, &sso.Client{ID: "rot", Secret: "initial", Active: true})
@@ -520,6 +540,7 @@ func TestSQLiteClients_RotateSecretHashAtRest(t *testing.T) {
 // grant path relies solely on this gate, so without it a deactivated
 // client kept exchanging client_credentials/refresh for fresh tokens.
 func TestSQLiteClients_ValidateSecretRejectsInactive(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := newClientStore(t)
 

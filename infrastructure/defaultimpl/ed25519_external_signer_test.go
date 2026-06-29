@@ -32,6 +32,7 @@ func (s *fakeExternalSigner) Sign(_ context.Context, msg []byte) ([]byte, error)
 // produces tokens that Validate accepts against the supplied public key
 // — i.e. the issuer never needs the private key in-process.
 func TestExternalSigner_IssuesVerifiableTokens(t *testing.T) {
+	t.Parallel()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("genkey: %v", err)
@@ -63,6 +64,7 @@ func TestExternalSigner_IssuesVerifiableTokens(t *testing.T) {
 // TestExternalSigner_FailurePropagates proves a signer error fails the
 // issuance closed (no unsigned token emitted) across every sign path.
 func TestExternalSigner_FailurePropagates(t *testing.T) {
+	t.Parallel()
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
 	boom := errors.New("kms unavailable")
 	signer := &fakeExternalSigner{priv: ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize)), failErr: boom}

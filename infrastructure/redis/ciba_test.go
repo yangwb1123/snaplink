@@ -40,6 +40,7 @@ func newCIBARequest(ttl time.Duration) *oauth.CIBARequest {
 // would NOT catch the bug (the old RMW's Get sees the approved status), so the
 // writers run concurrently.
 func TestCIBAStore_UpdateLastPollPreservesConcurrentApproval(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewCIBAStore(rdb)
@@ -84,6 +85,7 @@ func TestCIBAStore_UpdateLastPollPreservesConcurrentApproval(t *testing.T) {
 // encodes empty tables as [] (the OPPOSITE of real Redis), so a round-trip test
 // would false-green; the stored-shape assertion catches a normalization regress.
 func TestCIBAStore_IssueNormalizesEmptySlices(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewCIBAStore(rdb)
@@ -105,6 +107,7 @@ func TestCIBAStore_IssueNormalizesEmptySlices(t *testing.T) {
 }
 
 func TestCIBAStore_IssuePendingPoll(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewCIBAStore(rdb)
@@ -129,6 +132,7 @@ func TestCIBAStore_IssuePendingPoll(t *testing.T) {
 }
 
 func TestCIBAStore_IssueRejectsMissingIdentity(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewCIBAStore(rdb)
@@ -146,6 +150,7 @@ func TestCIBAStore_IssueRejectsMissingIdentity(t *testing.T) {
 }
 
 func TestCIBAStore_ApproveTransitionAndFidelity(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewCIBAStore(rdb)
@@ -190,6 +195,7 @@ func TestCIBAStore_ApproveTransitionAndFidelity(t *testing.T) {
 }
 
 func TestCIBAStore_DenyAndReResolutionGuard(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewCIBAStore(rdb)
@@ -212,6 +218,7 @@ func TestCIBAStore_DenyAndReResolutionGuard(t *testing.T) {
 }
 
 func TestCIBAStore_SingleUseGrant(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewCIBAStore(rdb)
@@ -240,6 +247,7 @@ func TestCIBAStore_SingleUseGrant(t *testing.T) {
 }
 
 func TestCIBAStore_OracleLeak(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewCIBAStore(rdb)
@@ -267,6 +275,7 @@ func TestCIBAStore_OracleLeak(t *testing.T) {
 }
 
 func TestCIBAStore_UpdateLastPollPreservesTTL(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewCIBAStore(rdb)
@@ -297,6 +306,7 @@ func TestCIBAStore_UpdateLastPollPreservesTTL(t *testing.T) {
 }
 
 func TestCIBAStore_Ping(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewCIBAStore(rdb)
 	if err := s.Ping(context.Background()); err != nil {
@@ -313,6 +323,7 @@ func TestCIBAStore_Ping(t *testing.T) {
 // is not-found. The returned blob is the original Go-marshaled bytes (not a
 // cjson re-encode), so RFC 8707 resources round-trip intact.
 func TestCIBAStore_ConsumeIfApproved(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewCIBAStore(rdb)
@@ -356,6 +367,7 @@ func TestCIBAStore_ConsumeIfApproved(t *testing.T) {
 // of one approved request exactly ONE wins the indivisible server-side claim —
 // the cross-replica invariant that stops one approval from minting N token sets.
 func TestCIBAStore_ConsumeIfApprovedAtomicRace(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewCIBAStore(rdb)

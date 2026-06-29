@@ -38,6 +38,7 @@ func doH(t *testing.T, h *Handler, method, path, body string, headers map[string
 // echoes it in the ETag header, and the header equals the body value
 // (RFC 7644 §3.14).
 func TestETag_RoundTrip(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"etag@example.com"}`)
 
@@ -61,6 +62,7 @@ func TestETag_RoundTrip(t *testing.T) {
 // hash to the same version (content-derived ETag), and the version changes
 // when content changes.
 func TestETag_DeterministicForSameContent(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"v1@example.com","displayName":"V"}`)
 
@@ -85,6 +87,7 @@ func TestETag_DeterministicForSameContent(t *testing.T) {
 // TestETag_IfMatchMismatch412: a write whose If-Match is stale is rejected
 // 412 and writes nothing; a write with the current version succeeds.
 func TestETag_IfMatchMismatch412(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"ifmatch@example.com"}`)
 	current := decodeResource(t, do(t, h, http.MethodGet, pathUsers+"/"+id, "")).Meta.Version
@@ -113,6 +116,7 @@ func TestETag_IfMatchMismatch412(t *testing.T) {
 
 // TestETag_IfMatchPatchAndDelete: If-Match guards PATCH and DELETE too.
 func TestETag_IfMatchPatchAndDelete(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"guard@example.com"}`)
 	cur := decodeResource(t, do(t, h, http.MethodGet, pathUsers+"/"+id, "")).Meta.Version
@@ -134,6 +138,7 @@ func TestETag_IfMatchPatchAndDelete(t *testing.T) {
 // TestETag_IfNoneMatch304: a GET whose If-None-Match equals the current
 // version returns 304 with no body and the ETag header (RFC 7644 §3.14).
 func TestETag_IfNoneMatch304(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"inm@example.com"}`)
 	cur := decodeResource(t, do(t, h, http.MethodGet, pathUsers+"/"+id, "")).Meta.Version
@@ -159,6 +164,7 @@ func TestETag_IfNoneMatch304(t *testing.T) {
 // TestETag_WildcardIfMatch: If-Match:* matches any existing resource
 // (RFC 7232 §3.1).
 func TestETag_WildcardIfMatch(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"wild@example.com"}`)
 	body := `{"userName":"wild@example.com","displayName":"D"}`
@@ -170,6 +176,7 @@ func TestETag_WildcardIfMatch(t *testing.T) {
 
 // TestETag_Group: groups also stamp meta.version and honor If-Match.
 func TestETag_Group(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G"}`)
 	g := decodeGroupResource(t, do(t, h, http.MethodGet, pathGroups+"/"+id, ""))
@@ -189,6 +196,7 @@ func TestETag_Group(t *testing.T) {
 // TestSort_UserName exercises ascending + descending sort by userName
 // (RFC 7644 §3.4.2.3): the page is a window into the FULLY sorted set.
 func TestSort_UserName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	// Seed out of order so a no-sort list would not be alphabetical.
 	for _, name := range []string{"charlie", "alice", "bob"} {
@@ -215,6 +223,7 @@ func TestSort_UserName(t *testing.T) {
 // TestSort_AppliesAcrossPages: sort runs before pagination, so a page is a
 // window into the globally sorted set, not a sort of one page.
 func TestSort_AppliesAcrossPages(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	for _, name := range []string{"d", "b", "a", "c"} {
 		seedUser(t, h, `{"userName":"`+name+`"}`)
@@ -228,6 +237,7 @@ func TestSort_AppliesAcrossPages(t *testing.T) {
 
 // TestSort_Group exercises group sort by displayName.
 func TestSort_Group(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	for _, name := range []string{"Zeta", "Alpha", "Mu"} {
 		seedGroup(t, h, `{"displayName":"`+name+`"}`)

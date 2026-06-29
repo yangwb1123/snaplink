@@ -24,6 +24,7 @@ func newAccountLockoutForTest(t *testing.T) *AccountLockout {
 }
 
 func TestAccountLockout_FirstFailureNoLock(t *testing.T) {
+	t.Parallel()
 	lockout := newAccountLockoutForTest(t)
 	locked, _, err := lockout.RegisterFailure(context.Background(), "alice")
 	if err != nil {
@@ -35,6 +36,7 @@ func TestAccountLockout_FirstFailureNoLock(t *testing.T) {
 }
 
 func TestAccountLockout_ThresholdLocks(t *testing.T) {
+	t.Parallel()
 	lockout := newAccountLockoutForTest(t)
 	ctx := context.Background()
 	for i := 0; i < lockout.MaxFailures-1; i++ {
@@ -59,6 +61,7 @@ func TestAccountLockout_ThresholdLocks(t *testing.T) {
 }
 
 func TestAccountLockout_IsLockedReportsState(t *testing.T) {
+	t.Parallel()
 	lockout := newAccountLockoutForTest(t)
 	ctx := context.Background()
 
@@ -85,6 +88,7 @@ func TestAccountLockout_IsLockedReportsState(t *testing.T) {
 }
 
 func TestAccountLockout_RegisterSuccessClears(t *testing.T) {
+	t.Parallel()
 	lockout := newAccountLockoutForTest(t)
 	ctx := context.Background()
 
@@ -102,6 +106,7 @@ func TestAccountLockout_RegisterSuccessClears(t *testing.T) {
 }
 
 func TestAccountLockout_AutoUnlockAfterDuration(t *testing.T) {
+	t.Parallel()
 	lockout := newAccountLockoutForTest(t)
 	ctx := context.Background()
 
@@ -120,6 +125,7 @@ func TestAccountLockout_AutoUnlockAfterDuration(t *testing.T) {
 }
 
 func TestAccountLockout_KeysIsolated(t *testing.T) {
+	t.Parallel()
 	lockout := newAccountLockoutForTest(t)
 	ctx := context.Background()
 
@@ -134,6 +140,7 @@ func TestAccountLockout_KeysIsolated(t *testing.T) {
 }
 
 func TestAccountLockout_EmptyKeyIsNoOp(t *testing.T) {
+	t.Parallel()
 	lockout := newAccountLockoutForTest(t)
 	ctx := context.Background()
 	for range 10 {
@@ -155,6 +162,7 @@ func TestAccountLockout_EmptyKeyIsNoOp(t *testing.T) {
 }
 
 func TestAccountLockout_AlreadyLockedDoesNotResetCounter(t *testing.T) {
+	t.Parallel()
 	lockout := newAccountLockoutForTest(t)
 	ctx := context.Background()
 	for range lockout.MaxFailures {
@@ -178,6 +186,7 @@ func TestAccountLockout_AlreadyLockedDoesNotResetCounter(t *testing.T) {
 }
 
 func TestAccountLockout_SlidingWindowResetsAfterExpiry(t *testing.T) {
+	t.Parallel()
 	lockout := newAccountLockoutForTest(t)
 	lockout.FailureWindow = 100 * time.Millisecond
 	ctx := context.Background()
@@ -198,6 +207,7 @@ func TestAccountLockout_SlidingWindowResetsAfterExpiry(t *testing.T) {
 }
 
 func TestAccountLockout_CrossInstanceSharing(t *testing.T) {
+	t.Parallel()
 	// The whole reason for the SQLite backend: an attacker rotating
 	// targets across replicas can't stay under each replica's local
 	// threshold because the counter is shared.

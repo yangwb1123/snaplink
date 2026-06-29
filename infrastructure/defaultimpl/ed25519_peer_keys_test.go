@@ -32,6 +32,7 @@ func issuePeerToken(t *testing.T) (token, peerKid string, peerPub ed25519.Public
 // TestEd25519PeerKey_AdoptAppearsInJWKS proves an adopted peer key surfaces
 // in JWKS as a verify-only (use:sig) entry under the peer's kid.
 func TestEd25519PeerKey_AdoptAppearsInJWKS(t *testing.T) {
+	t.Parallel()
 	local := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("local-iss"))
 	_, peerKid, peerPub := issuePeerToken(t)
 
@@ -65,6 +66,7 @@ func TestEd25519PeerKey_AdoptAppearsInJWKS(t *testing.T) {
 // SEPARATE issuer validates on the local issuer after adoption — the core
 // cross-replica verification property.
 func TestEd25519PeerKey_AdoptedTokenValidates(t *testing.T) {
+	t.Parallel()
 	local := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("local-iss"))
 	token, peerKid, peerPub := issuePeerToken(t)
 
@@ -90,6 +92,7 @@ func TestEd25519PeerKey_AdoptedTokenValidates(t *testing.T) {
 // lifecycle (RotateKey / RetireKey) never touches adopted peer keys — peer
 // lifecycle is owned by the registry side, not local rotation.
 func TestEd25519PeerKey_LocalRotationLeavesPeerKeys(t *testing.T) {
+	t.Parallel()
 	local := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("local-iss"))
 	token, peerKid, peerPub := issuePeerToken(t)
 	if err := local.AdoptVerifyKey(peerKid, peerPub); err != nil {
@@ -130,6 +133,7 @@ func TestEd25519PeerKey_LocalRotationLeavesPeerKeys(t *testing.T) {
 // rejected by an ECDSA issuer: the alg gate runs BEFORE key lookup, so an
 // adopted-or-not EdDSA key can never be reached on the ES256 verify path.
 func TestEd25519PeerKey_AlgConfusionRejected(t *testing.T) {
+	t.Parallel()
 	token, _, _ := issuePeerToken(t)
 
 	ecIss := defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSAIssuer("ec-iss"))
@@ -147,6 +151,7 @@ func TestEd25519PeerKey_AlgConfusionRejected(t *testing.T) {
 // collides with the local active signing key (defensive guard against two
 // distinct keys claiming one kid).
 func TestEd25519PeerKey_CollisionGuard(t *testing.T) {
+	t.Parallel()
 	local := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("local-iss"))
 
 	_, _, peerPub := issuePeerToken(t)

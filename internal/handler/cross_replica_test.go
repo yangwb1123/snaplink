@@ -33,6 +33,7 @@ func makeJWT(t *testing.T, exp int64) string {
 // its exp, and any malformed shape (wrong segment count, bad base64, non-JSON,
 // opaque token) yields 0 so the caller treats it as "no advisory exp".
 func TestJWTExpUnsafe(t *testing.T) {
+	t.Parallel()
 	good := makeJWT(t, 1893456000)
 	cases := []struct {
 		name  string
@@ -61,6 +62,7 @@ func TestJWTExpUnsafe(t *testing.T) {
 // whose Payload carries the FULL token under MetaRevokedToken and the advisory
 // exp under MetaRevokedExp, and the published metric must increment.
 func TestPublishTokenRevocation_WireFormat(t *testing.T) {
+	t.Parallel()
 	bus := clustermem.New()
 	defer func() { _ = bus.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -105,6 +107,7 @@ func TestPublishTokenRevocation_WireFormat(t *testing.T) {
 // TestPublishTokenRevocation_Disabled covers the guard: with cross-replica
 // revocation off, nothing is published.
 func TestPublishTokenRevocation_Disabled(t *testing.T) {
+	t.Parallel()
 	bus := clustermem.New()
 	defer func() { _ = bus.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -131,6 +134,7 @@ func TestPublishTokenRevocation_Disabled(t *testing.T) {
 // TestPublishTokenRevocation_NilBusAndEmptyToken covers the remaining guards:
 // a nil bus and an empty token are silent no-ops (no panic).
 func TestPublishTokenRevocation_NilBusAndEmptyToken(t *testing.T) {
+	t.Parallel()
 	d := &ServerDeps{
 		Logger:                 spi.NopLogger{},
 		Metrics:                metrics.New(),
@@ -150,6 +154,7 @@ func TestPublishTokenRevocation_NilBusAndEmptyToken(t *testing.T) {
 // a publish error against a closed bus is logged and swallowed (no panic), and
 // the published metric is NOT incremented.
 func TestPublishTokenRevocation_FailOpenOnBusError(t *testing.T) {
+	t.Parallel()
 	bus := clustermem.New()
 	_ = bus.Close() // Publish now returns ErrClosed
 	m := metrics.New()
@@ -169,6 +174,7 @@ func TestPublishTokenRevocation_FailOpenOnBusError(t *testing.T) {
 // KindTokenRevoked Event routes the carried token to the LOCAL revoke seam and,
 // on a non-empty revoked result, increments the adopted metric.
 func TestApplyTokenRevocation_AdoptsAndCounts(t *testing.T) {
+	t.Parallel()
 	m := metrics.New()
 	var gotToken string
 	d := &ServerDeps{
@@ -197,6 +203,7 @@ func TestApplyTokenRevocation_AdoptsAndCounts(t *testing.T) {
 // TestApplyTokenRevocation_NilMetricsNoPanic locks the nil-Metrics guard: a
 // successful adoption with Metrics unwired must NOT panic.
 func TestApplyTokenRevocation_NilMetricsNoPanic(t *testing.T) {
+	t.Parallel()
 	d := &ServerDeps{
 		Logger:                 spi.NopLogger{},
 		Metrics:                nil, // unwired
@@ -218,6 +225,7 @@ func TestApplyTokenRevocation_NilMetricsNoPanic(t *testing.T) {
 // empty -> no adopted count). None of these may route to revoke (except the
 // last, where revoke runs but the metric stays at 0).
 func TestApplyTokenRevocation_NoOpPaths(t *testing.T) {
+	t.Parallel()
 	t.Run("disabled is a no-op", func(t *testing.T) {
 		called := false
 		d := newApplyDeps(&called, []string{"x"})

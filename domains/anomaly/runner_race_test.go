@@ -23,6 +23,7 @@ func (raceDetector) Inspect(context.Context, *LoginEvent) ([]Signal, error) {
 // the closed-check and the send under one RWMutex that Close's writer-lock
 // excludes. Run with -race -count=10 to surface the window.
 func TestDispatchCloseRace(t *testing.T) {
+	t.Parallel()
 	r := NewRunner([]Detector{raceDetector{}}, nil)
 	r.Start()
 

@@ -12,6 +12,7 @@ import (
 // SQLite peer (see permissions/sqlite tests) is the whole point —
 // operators swapping backends should see no behavior differences.
 func TestMemoryProvider_Conformance(t *testing.T) {
+	t.Parallel()
 	permissionstest.ConformanceSuite{
 		Factory: func(_ *testing.T) permissions.Provider {
 			return permissions.NewMemoryProvider()

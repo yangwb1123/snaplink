@@ -11,6 +11,7 @@ import (
 )
 
 func TestClientTenantID_RoundTripThroughStore(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	ctx := context.Background()
 	in := &sso.Client{ID: "web-app", TenantID: "t-acme", Active: true}
@@ -27,6 +28,7 @@ func TestClientTenantID_RoundTripThroughStore(t *testing.T) {
 }
 
 func TestClientTenantID_EmptyByDefault(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	ctx := context.Background()
 	_ = store.Add(ctx, &sso.Client{ID: "platform-admin", Active: true}) // no TenantID
@@ -37,6 +39,7 @@ func TestClientTenantID_EmptyByDefault(t *testing.T) {
 }
 
 func TestListByTenant_FiltersCorrectly(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	ctx := context.Background()
 	_ = store.Add(ctx, &sso.Client{ID: "acme-portal", TenantID: "t-acme"})
@@ -59,6 +62,7 @@ func TestListByTenant_FiltersCorrectly(t *testing.T) {
 }
 
 func TestListByTenant_EmptyTenantIDReturnsNoTenantBucket(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	ctx := context.Background()
 	_ = store.Add(ctx, &sso.Client{ID: "acme-portal", TenantID: "t-acme"})
@@ -72,6 +76,7 @@ func TestListByTenant_EmptyTenantIDReturnsNoTenantBucket(t *testing.T) {
 }
 
 func TestListByTenant_UnknownTenantReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	out, err := store.ListByTenant(context.Background(), "ghost-tenant")
 	if err != nil {
@@ -83,6 +88,7 @@ func TestListByTenant_UnknownTenantReturnsEmpty(t *testing.T) {
 }
 
 func TestMemoryStats_OrderIndependentHash(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	// Two stores with the SAME logical client set added in DIFFERENT
 	// orders must produce the same fingerprint — map iteration order
@@ -115,6 +121,7 @@ func TestMemoryStats_OrderIndependentHash(t *testing.T) {
 }
 
 func TestMemoryStats_ScopeChangeFlipsHash(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := defaultimpl.NewMemoryClientStore()
 	_ = store.Add(ctx, &sso.Client{ID: "c-1", AllowedScopes: []string{"read"}})
@@ -140,6 +147,7 @@ func TestMemoryStats_ScopeChangeFlipsHash(t *testing.T) {
 }
 
 func TestMemoryStats_NewClientFlipsHash(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := defaultimpl.NewMemoryClientStore()
 	_ = store.Add(ctx, &sso.Client{ID: "c-1", AllowedScopes: []string{"read"}})
@@ -165,6 +173,7 @@ func TestMemoryStats_NewClientFlipsHash(t *testing.T) {
 }
 
 func TestMemoryStats_EmptyStoreStable(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	a := defaultimpl.NewMemoryClientStore()
 	b := defaultimpl.NewMemoryClientStore()
@@ -184,6 +193,7 @@ func TestMemoryStats_EmptyStoreStable(t *testing.T) {
 // TestMemoryClients_SecretHashAtRest proves that Add/AddSeed store a bcrypt
 // hash and that ValidateSecret accepts the original plaintext.
 func TestMemoryClients_SecretHashAtRest(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("via Add", func(t *testing.T) {
@@ -236,6 +246,7 @@ func TestMemoryClients_SecretHashAtRest(t *testing.T) {
 // client with a plaintext secret (from a legacy path) validates via the
 // constant-time fallback.
 func TestMemoryClients_SecretPlaintextFallback(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := defaultimpl.NewMemoryClientStore()
 
@@ -263,6 +274,7 @@ func TestMemoryClients_SecretPlaintextFallback(t *testing.T) {
 // TestMemoryClients_RotateSecretHashAtRest proves that RotateSecret stores a
 // bcrypt hash and returns the plaintext to the caller.
 func TestMemoryClients_RotateSecretHashAtRest(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := defaultimpl.NewMemoryClientStore()
 	_ = store.Add(ctx, &sso.Client{ID: "rot", Secret: "initial", Active: true})
@@ -288,6 +300,7 @@ func TestMemoryClients_RotateSecretHashAtRest(t *testing.T) {
 
 // TestMemoryClients_ValidateSecretUnknownClient locks the error sentinel.
 func TestMemoryClients_ValidateSecretUnknownClient(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	err := store.ValidateSecret(context.Background(), "ghost", "anything")
 	if !errors.Is(err, sso.ErrNoSuchClient) {

@@ -11,6 +11,7 @@ import (
 )
 
 func TestBuildApp_BackchannelLogoutFlipsDiscovery(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.BackchannelLogout.Enabled = true
 
@@ -34,6 +35,7 @@ func TestBuildApp_BackchannelLogoutFlipsDiscovery(t *testing.T) {
 }
 
 func TestBuildSubjectClientIndex_MemoryDefault(t *testing.T) {
+	t.Parallel()
 	idx, mode, err := serverbuildauthn.BuildSubjectClientIndex(config.BCLIndexConfig{}, nil)
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
@@ -47,6 +49,7 @@ func TestBuildSubjectClientIndex_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildSubjectClientIndex_SQLiteNeedsDSN(t *testing.T) {
+	t.Parallel()
 	_, _, err := serverbuildauthn.BuildSubjectClientIndex(config.BCLIndexConfig{Backend: "sqlite"}, nil)
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
@@ -54,6 +57,7 @@ func TestBuildSubjectClientIndex_SQLiteNeedsDSN(t *testing.T) {
 }
 
 func TestBuildSubjectClientIndex_SQLiteOpensFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "sci.db") + "?_journal=WAL"
 	idx, mode, err := serverbuildauthn.BuildSubjectClientIndex(config.BCLIndexConfig{
@@ -72,6 +76,7 @@ func TestBuildSubjectClientIndex_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildSubjectClientIndex_UnknownBackendErrors(t *testing.T) {
+	t.Parallel()
 	_, _, err := serverbuildauthn.BuildSubjectClientIndex(config.BCLIndexConfig{Backend: "etcd"}, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
@@ -79,6 +84,7 @@ func TestBuildSubjectClientIndex_UnknownBackendErrors(t *testing.T) {
 }
 
 func TestBuildApp_BCL_SQLiteIndexWires(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "bcl.db") + "?_journal=WAL"
 	cfg := &config.Config{}
@@ -101,6 +107,7 @@ func TestBuildApp_BCL_SQLiteIndexWires(t *testing.T) {
 }
 
 func TestBuildApp_BackchannelLogoutDisabledOmitsDiscoveryFlag(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 
 	a, err := buildApp(cfg, quietLogger())

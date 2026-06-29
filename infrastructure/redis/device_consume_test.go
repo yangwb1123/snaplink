@@ -10,6 +10,7 @@ import (
 )
 
 func TestDeviceConsumeIfApproved(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewDeviceCodeStore(rdb)
 	ctx := context.Background()
@@ -47,6 +48,7 @@ func TestDeviceConsumeIfApproved(t *testing.T) {
 }
 
 func TestDeviceConsumeIfApprovedAtomicRace(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewDeviceCodeStore(rdb)
 	ctx := context.Background()
@@ -76,6 +78,7 @@ func TestDeviceConsumeIfApprovedAtomicRace(t *testing.T) {
 }
 
 func TestDeviceConsumeIfApprovedPreservesResources(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewDeviceCodeStore(rdb)
 	ctx := context.Background()

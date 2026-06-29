@@ -55,6 +55,7 @@ func newUserStoreForTest(t *testing.T) *UserStore {
 }
 
 func TestUserStore_CreateGetByNameAndHandle(t *testing.T) {
+	t.Parallel()
 	store := newUserStoreForTest(t)
 	ctx := context.Background()
 
@@ -84,6 +85,7 @@ func TestUserStore_CreateGetByNameAndHandle(t *testing.T) {
 }
 
 func TestUserStore_DuplicateCreateRejected(t *testing.T) {
+	t.Parallel()
 	store := newUserStoreForTest(t)
 	ctx := context.Background()
 
@@ -96,6 +98,7 @@ func TestUserStore_DuplicateCreateRejected(t *testing.T) {
 }
 
 func TestUserStore_GetByNameUnknownReturnsSentinel(t *testing.T) {
+	t.Parallel()
 	store := newUserStoreForTest(t)
 	_, err := store.GetByName(context.Background(), "ghost")
 	if !errors.Is(err, webauthn.ErrUserUnknown) {
@@ -104,6 +107,7 @@ func TestUserStore_GetByNameUnknownReturnsSentinel(t *testing.T) {
 }
 
 func TestUserStore_GetByHandleUnknownReturnsSentinel(t *testing.T) {
+	t.Parallel()
 	store := newUserStoreForTest(t)
 	_, err := store.GetByHandle(context.Background(), []byte("ghost-handle"))
 	if !errors.Is(err, webauthn.ErrUserUnknown) {
@@ -112,6 +116,7 @@ func TestUserStore_GetByHandleUnknownReturnsSentinel(t *testing.T) {
 }
 
 func TestUserStore_AddAndUpdateCredential(t *testing.T) {
+	t.Parallel()
 	store := newUserStoreForTest(t)
 	ctx := context.Background()
 	if _, err := store.CreateUser(ctx, "alice", "Alice"); err != nil {
@@ -145,6 +150,7 @@ func TestUserStore_AddAndUpdateCredential(t *testing.T) {
 }
 
 func TestUserStore_AddCredentialUnknownUserErrors(t *testing.T) {
+	t.Parallel()
 	store := newUserStoreForTest(t)
 	err := store.AddCredential(context.Background(), "ghost", &gw.Credential{ID: []byte("x")})
 	if !errors.Is(err, webauthn.ErrUserUnknown) {
@@ -153,6 +159,7 @@ func TestUserStore_AddCredentialUnknownUserErrors(t *testing.T) {
 }
 
 func TestUserStore_UpdateUnknownCredentialErrors(t *testing.T) {
+	t.Parallel()
 	store := newUserStoreForTest(t)
 	ctx := context.Background()
 	if _, err := store.CreateUser(ctx, "alice", "Alice"); err != nil {
@@ -165,6 +172,7 @@ func TestUserStore_UpdateUnknownCredentialErrors(t *testing.T) {
 }
 
 func TestUserStore_AddCredentialAppendsNotReplaces(t *testing.T) {
+	t.Parallel()
 	store := newUserStoreForTest(t)
 	ctx := context.Background()
 	if _, err := store.CreateUser(ctx, "alice", "Alice"); err != nil {
@@ -183,6 +191,7 @@ func TestUserStore_AddCredentialAppendsNotReplaces(t *testing.T) {
 }
 
 func TestUserStore_RemoveCredential(t *testing.T) {
+	t.Parallel()
 	store := newUserStoreForTest(t)
 	ctx := context.Background()
 	if _, err := store.CreateUser(ctx, "alice", "Alice"); err != nil {
@@ -214,6 +223,7 @@ func TestUserStore_RemoveCredential(t *testing.T) {
 }
 
 func TestUserStore_CredentialArrayRoundTrip(t *testing.T) {
+	t.Parallel()
 	store := newUserStoreForTest(t)
 	ctx := context.Background()
 	if _, err := store.CreateUser(ctx, "alice", "Alice"); err != nil {
@@ -246,6 +256,7 @@ func TestUserStore_CredentialArrayRoundTrip(t *testing.T) {
 // the SQLite peer's cross-instance test, with two pools standing in for two
 // replicas).
 func TestUserStore_CrossInstanceSharing(t *testing.T) {
+	t.Parallel()
 	dbA, dialect := openTestDB(t)
 	storeA, err := NewUserStore(dbA, dialect)
 	if err != nil {

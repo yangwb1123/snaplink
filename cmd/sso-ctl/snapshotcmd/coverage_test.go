@@ -13,12 +13,14 @@ import (
 // ---- runList edge cases ----
 
 func TestRunList_MissingDir(t *testing.T) {
+	t.Parallel()
 	if err := runList(nil); err == nil {
 		t.Fatal("expected error when --dir is missing")
 	}
 }
 
 func TestRunList_BadFlag(t *testing.T) {
+	t.Parallel()
 	if err := runList([]string{"--bogus"}); err == nil {
 		t.Fatal("expected parse error for unknown flag")
 	}
@@ -29,6 +31,7 @@ func TestRunList_BadFlag(t *testing.T) {
 // must print a "(peek error)" row and continue rather than aborting the
 // whole listing.
 func TestRunList_PeekErrorRow(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// The file-storage backend lists files ending in ".snap". A junk
 	// ".snap" file is listed but fails PeekEnvelope.
@@ -49,12 +52,14 @@ func TestRunList_PeekErrorRow(t *testing.T) {
 // ---- runInspect edge cases ----
 
 func TestRunInspect_MissingFlags(t *testing.T) {
+	t.Parallel()
 	if err := runInspect([]string{"--dir", t.TempDir()}); err == nil {
 		t.Fatal("expected error when --id is missing")
 	}
 }
 
 func TestRunInspect_BadFlag(t *testing.T) {
+	t.Parallel()
 	if err := runInspect([]string{"--nope"}); err == nil {
 		t.Fatal("expected parse error for unknown flag")
 	}
@@ -63,6 +68,7 @@ func TestRunInspect_BadFlag(t *testing.T) {
 // TestRunInspect_GetMissing — a non-existent id surfaces the storage
 // Get error.
 func TestRunInspect_GetMissing(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := runInspect([]string{"--dir", dir, "--id", "does-not-exist"}); err == nil {
 		t.Fatal("expected error inspecting a missing snapshot id")
@@ -72,18 +78,21 @@ func TestRunInspect_GetMissing(t *testing.T) {
 // ---- runVerify edge cases ----
 
 func TestRunVerify_MissingFlags(t *testing.T) {
+	t.Parallel()
 	if err := runVerify([]string{"--dir", t.TempDir()}); err == nil {
 		t.Fatal("expected error when --id is missing")
 	}
 }
 
 func TestRunVerify_BadFlag(t *testing.T) {
+	t.Parallel()
 	if err := runVerify([]string{"--nope"}); err == nil {
 		t.Fatal("expected parse error for unknown flag")
 	}
 }
 
 func TestRunVerify_GetMissing(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := runVerify([]string{"--dir", dir, "--id", "missing"}); err == nil {
 		t.Fatal("expected error verifying a missing snapshot id")
@@ -94,6 +103,7 @@ func TestRunVerify_GetMissing(t *testing.T) {
 // file (not inline) round-trips an encrypted snapshot, covering the
 // passphrase-file read branch.
 func TestRunVerify_PassphraseFileSucceeds(t *testing.T) {
+	t.Parallel()
 	dir, id := writeSampleSnapshot(t, "s3cret")
 	pf := filepath.Join(t.TempDir(), "pass.txt")
 	if err := os.WriteFile(pf, []byte("s3cret\n"), 0o600); err != nil {
@@ -113,6 +123,7 @@ func TestRunVerify_PassphraseFileSucceeds(t *testing.T) {
 // for an unencrypted snapshot still succeeds, and the tool notes the
 // passphrase was ignored (stderr) while verifying cleanly (stdout).
 func TestRunVerify_PassphraseIgnoredOnUnencrypted(t *testing.T) {
+	t.Parallel()
 	dir, id := writeSampleSnapshot(t, "")
 	out := captureStdout(t, func() {
 		if err := runVerify([]string{"--dir", dir, "--id", id, "--passphrase", "unused"}); err != nil {
@@ -127,6 +138,7 @@ func TestRunVerify_PassphraseIgnoredOnUnencrypted(t *testing.T) {
 // TestRunVerify_WrongPassphraseFails — a passphrase that doesn't match
 // the sealing passphrase fails the AEAD open during Pipeline.Load.
 func TestRunVerify_WrongPassphraseFails(t *testing.T) {
+	t.Parallel()
 	dir, id := writeSampleSnapshot(t, "correct")
 	if err := runVerify([]string{"--dir", dir, "--id", id, "--passphrase", "wrong"}); err == nil {
 		t.Fatal("expected load failure with the wrong passphrase")
@@ -138,6 +150,7 @@ func TestRunVerify_WrongPassphraseFails(t *testing.T) {
 // TestStorageRoundTrip confirms the file storage backend the CLI uses
 // lists a written snapshot id — guards the assumption runList relies on.
 func TestStorageRoundTrip(t *testing.T) {
+	t.Parallel()
 	dir, id := writeSampleSnapshot(t, "")
 	store, err := storagefile.New(dir)
 	if err != nil {
@@ -163,6 +176,7 @@ func TestStorageRoundTrip(t *testing.T) {
 // TestUsage_PrintsBanner — banner names the program + all three
 // subcommands.
 func TestUsage_PrintsBanner(t *testing.T) {
+	t.Parallel()
 	out := captureStderr(t, usage)
 	for _, want := range []string{progName, "list", "inspect", "verify"} {
 		if !strings.Contains(out, want) {
@@ -174,6 +188,7 @@ func TestUsage_PrintsBanner(t *testing.T) {
 // TestRun_HelpReturns drives the help branch of Run, which returns exit
 // code 0 — covering the dispatch switch + usage call.
 func TestRun_HelpReturns(t *testing.T) {
+	t.Parallel()
 	var code int
 	_ = captureStderr(t, func() { code = Run([]string{"help"}) })
 	if code != 0 {
@@ -184,6 +199,7 @@ func TestRun_HelpReturns(t *testing.T) {
 // TestRun_ListSuccess drives the list-success path through Run so the
 // dispatch case + zero exit code are covered without a subprocess.
 func TestRun_ListSuccess(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	var code int
 	_ = captureStdout(t, func() { code = Run([]string{"list", "--dir", dir}) })

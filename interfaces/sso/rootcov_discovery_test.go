@@ -37,6 +37,7 @@ func rcovGetJSON(t *testing.T, url string, v any) *http.Response {
 // TestRcovDisc_DiscoveryDoc fetches the OIDC discovery document twice so the
 // snapshot + body cache + ETag (304) machinery is covered.
 func TestRcovDisc_DiscoveryDoc(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithDiscoveryCacheTTL(5*time.Second), sso.WithDiscoveryDocCacheTTL(5*time.Second))
 
 	var doc map[string]any
@@ -72,6 +73,7 @@ func TestRcovDisc_DiscoveryDoc(t *testing.T) {
 
 // TestRcovDisc_JWKS fetches the JWKS twice to cover the single-flight body cache.
 func TestRcovDisc_JWKS(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	for i := 0; i < 2; i++ {
 		var body map[string]any
@@ -87,6 +89,7 @@ func TestRcovDisc_JWKS(t *testing.T) {
 
 // TestRcovDisc_Probes hits the operational probes registered outside middleware.
 func TestRcovDisc_Probes(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	for _, path := range []string{"/livez", "/readyz", "/health"} {
 		resp := rcovGetJSON(t, s.http.URL+path, nil)
@@ -99,6 +102,7 @@ func TestRcovDisc_Probes(t *testing.T) {
 // TestRcovDisc_DeviceCode covers the device-authorization endpoint when a
 // device-code store is wired.
 func TestRcovDisc_DeviceCode(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithDeviceCodeStore(
 		defaultimpl.NewMemoryDeviceCodeStore(), 5*time.Minute, 5*time.Second, "https://opt.example.com/device"))
 
@@ -116,6 +120,7 @@ func TestRcovDisc_DeviceCode(t *testing.T) {
 
 // TestRcovDisc_PAR covers the pushed-authorization-request endpoint.
 func TestRcovDisc_PAR(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithPARStore(defaultimpl.NewMemoryPARStore(), time.Minute))
 
 	status, out := rcovPostJSON(t, s.http.URL+"/par", "", map[string]any{
@@ -135,6 +140,7 @@ func TestRcovDisc_PAR(t *testing.T) {
 
 // TestRcovDisc_DCR covers dynamic client registration (open registration).
 func TestRcovDisc_DCR(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithDynamicClientRegistration(oauth.DCRPolicy{
 		AllowOpenRegistration: true,
 		DefaultActive:         true,
@@ -171,6 +177,7 @@ func (r *rcovResetSender) SendResetToken(_ context.Context, _, token string) err
 // TestRcovDisc_PasswordReset covers POST /auth/forgot-password (anti-enumeration
 // 200) and POST /auth/reset-password (oracle-safe consume).
 func TestRcovDisc_PasswordReset(t *testing.T) {
+	t.Parallel()
 	sender := &rcovResetSender{}
 	s := rcovNewServer(t,
 		sso.WithPasswordResetStore(defaultimpl.NewMemoryPasswordResetStore(), time.Hour),

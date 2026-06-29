@@ -14,6 +14,7 @@ import (
 )
 
 func TestMemoryRefreshTokenStore_RoundTrip(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	now := time.Now()
 	in := &oauth.RefreshToken{
@@ -44,6 +45,7 @@ func TestMemoryRefreshTokenStore_RoundTrip(t *testing.T) {
 }
 
 func TestMemoryRefreshTokenStore_SingleUseRotation(t *testing.T) {
+	t.Parallel()
 	// Consumption deletes — replay is the canonical rotation-reuse
 	// detection signal even before family-revocation is implemented.
 	s := defaultimpl.NewMemoryRefreshTokenStore()
@@ -57,6 +59,7 @@ func TestMemoryRefreshTokenStore_SingleUseRotation(t *testing.T) {
 }
 
 func TestMemoryRefreshTokenStore_RejectsEmptyArgs(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	if err := s.Issue(context.Background(), "", &oauth.RefreshToken{}); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
 		t.Errorf("empty token Issue err = %v", err)
@@ -67,6 +70,7 @@ func TestMemoryRefreshTokenStore_RejectsEmptyArgs(t *testing.T) {
 }
 
 func TestMemoryRefreshTokenStore_UnknownTokenReturnsSentinel(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	if _, err := s.Consume(context.Background(), "ghost"); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
 		t.Errorf("err = %v, want oauth.ErrRefreshTokenNotFound", err)
@@ -74,6 +78,7 @@ func TestMemoryRefreshTokenStore_UnknownTokenReturnsSentinel(t *testing.T) {
 }
 
 func TestMemoryRefreshTokenStore_ExpiredTokenIndistinguishableFromMissing(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	_ = s.Issue(context.Background(), "stale", &oauth.RefreshToken{
 		ExpiresAt: time.Now().Add(-time.Minute),
@@ -84,6 +89,7 @@ func TestMemoryRefreshTokenStore_ExpiredTokenIndistinguishableFromMissing(t *tes
 }
 
 func TestMemoryRefreshTokenStore_DoesNotAliasCallerSlices(t *testing.T) {
+	t.Parallel()
 	// Caller-supplied Scopes / Attributes must be copied at Issue time so
 	// later mutation of the caller's structures isn't visible at Consume.
 	s := defaultimpl.NewMemoryRefreshTokenStore()
@@ -107,6 +113,7 @@ func TestMemoryRefreshTokenStore_DoesNotAliasCallerSlices(t *testing.T) {
 }
 
 func TestMemoryRefreshTokenStore_Concurrent(t *testing.T) {
+	t.Parallel()
 	// Many goroutines issuing + consuming distinct tokens must not race.
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	var wg sync.WaitGroup
@@ -129,6 +136,7 @@ func TestMemoryRefreshTokenStore_Concurrent(t *testing.T) {
 }
 
 func TestGenerateRefreshToken_LengthAndAlphabet(t *testing.T) {
+	t.Parallel()
 	tok, err := defaultimpl.GenerateRefreshToken()
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken: %v", err)
@@ -143,6 +151,7 @@ func TestGenerateRefreshToken_LengthAndAlphabet(t *testing.T) {
 }
 
 func TestRefreshToken_IsExpired(t *testing.T) {
+	t.Parallel()
 	past := &oauth.RefreshToken{ExpiresAt: time.Now().Add(-time.Hour)}
 	future := &oauth.RefreshToken{ExpiresAt: time.Now().Add(time.Hour)}
 	if !past.IsExpired() {

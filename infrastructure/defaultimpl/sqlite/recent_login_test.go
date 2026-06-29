@@ -23,6 +23,7 @@ func newRecentLoginStoreForTest(t *testing.T) *RecentLoginStore {
 }
 
 func TestSQLiteRecentLoginStore_AppendAndRecent(t *testing.T) {
+	t.Parallel()
 	s := newRecentLoginStoreForTest(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -50,6 +51,7 @@ func TestSQLiteRecentLoginStore_AppendAndRecent(t *testing.T) {
 }
 
 func TestSQLiteRecentLoginStore_AppendEmptySubjectErrors(t *testing.T) {
+	t.Parallel()
 	s := newRecentLoginStoreForTest(t)
 	err := s.Append(context.Background(), &anomaly.LoginEntry{Outcome: "failure"})
 	if !errors.Is(err, anomaly.ErrInvalidLoginEntry) {
@@ -58,6 +60,7 @@ func TestSQLiteRecentLoginStore_AppendEmptySubjectErrors(t *testing.T) {
 }
 
 func TestSQLiteRecentLoginStore_AppendNilErrors(t *testing.T) {
+	t.Parallel()
 	s := newRecentLoginStoreForTest(t)
 	if err := s.Append(context.Background(), nil); !errors.Is(err, anomaly.ErrInvalidLoginEntry) {
 		t.Fatalf("got %v, want ErrInvalidLoginEntry", err)
@@ -65,6 +68,7 @@ func TestSQLiteRecentLoginStore_AppendNilErrors(t *testing.T) {
 }
 
 func TestSQLiteRecentLoginStore_RecentRespectsSince(t *testing.T) {
+	t.Parallel()
 	s := newRecentLoginStoreForTest(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -78,6 +82,7 @@ func TestSQLiteRecentLoginStore_RecentRespectsSince(t *testing.T) {
 }
 
 func TestSQLiteRecentLoginStore_RecentRespectsLimit(t *testing.T) {
+	t.Parallel()
 	s := newRecentLoginStoreForTest(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -94,6 +99,7 @@ func TestSQLiteRecentLoginStore_RecentRespectsLimit(t *testing.T) {
 }
 
 func TestSQLiteRecentLoginStore_RecentDefaultsTo100(t *testing.T) {
+	t.Parallel()
 	// limit <= 0 → backend cap = 100 (matches SPI contract).
 	s := newRecentLoginStoreForTest(t)
 	ctx := context.Background()
@@ -111,6 +117,7 @@ func TestSQLiteRecentLoginStore_RecentDefaultsTo100(t *testing.T) {
 }
 
 func TestSQLiteRecentLoginStore_RecentEmptySubjectReturnsNil(t *testing.T) {
+	t.Parallel()
 	s := newRecentLoginStoreForTest(t)
 	got, err := s.Recent(context.Background(), "", time.Time{}, 0)
 	if err != nil {
@@ -122,6 +129,7 @@ func TestSQLiteRecentLoginStore_RecentEmptySubjectReturnsNil(t *testing.T) {
 }
 
 func TestSQLiteRecentLoginStore_PruneOlderRemovesPastCutoff(t *testing.T) {
+	t.Parallel()
 	s := newRecentLoginStoreForTest(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -138,6 +146,7 @@ func TestSQLiteRecentLoginStore_PruneOlderRemovesPastCutoff(t *testing.T) {
 }
 
 func TestSQLiteRecentLoginStore_PruneOlderZeroIsNoop(t *testing.T) {
+	t.Parallel()
 	s := newRecentLoginStoreForTest(t)
 	deleted, _ := s.PruneOlder(context.Background(), time.Time{})
 	if deleted != 0 {
@@ -146,6 +155,7 @@ func TestSQLiteRecentLoginStore_PruneOlderZeroIsNoop(t *testing.T) {
 }
 
 func TestSQLiteRecentLoginStore_GeoFieldsRoundtrip(t *testing.T) {
+	t.Parallel()
 	// Latitude/longitude/country preserved across Append→Recent —
 	// impossible-travel detector reads them directly.
 	s := newRecentLoginStoreForTest(t)
@@ -164,6 +174,7 @@ func TestSQLiteRecentLoginStore_GeoFieldsRoundtrip(t *testing.T) {
 }
 
 func TestSQLiteRecentLoginStore_TimestampRoundtripPreservesUTC(t *testing.T) {
+	t.Parallel()
 	s := newRecentLoginStoreForTest(t)
 	ctx := context.Background()
 	ts := time.Date(2026, 5, 22, 12, 34, 56, 0, time.UTC)
@@ -178,6 +189,7 @@ func TestSQLiteRecentLoginStore_TimestampRoundtripPreservesUTC(t *testing.T) {
 }
 
 func TestSQLiteRecentLoginStore_ClusterSharedSameDSN(t *testing.T) {
+	t.Parallel()
 	// Two stores on the same DSN — entries written by store A
 	// visible to store B (cluster-shared semantic). This is the
 	// difference from the memory peer.
@@ -208,6 +220,7 @@ func TestSQLiteRecentLoginStore_ClusterSharedSameDSN(t *testing.T) {
 }
 
 func TestSQLiteRecentLoginStore_PingFailsAfterClose(t *testing.T) {
+	t.Parallel()
 	s := newRecentLoginStoreForTest(t)
 	if err := s.Ping(context.Background()); err != nil {
 		t.Fatalf("Ping pre-close: %v", err)
@@ -219,6 +232,7 @@ func TestSQLiteRecentLoginStore_PingFailsAfterClose(t *testing.T) {
 }
 
 func TestSQLiteRecentLoginStore_DoubleCloseIsNoop(t *testing.T) {
+	t.Parallel()
 	s := newRecentLoginStoreForTest(t)
 	if err := s.Close(); err != nil {
 		t.Fatalf("first Close: %v", err)

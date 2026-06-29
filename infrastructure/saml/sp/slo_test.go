@@ -168,6 +168,7 @@ func processRedirectLogout(a *SPAuthenticator, rawQuery string) (*LogoutSubject,
 // LogoutRequest carrying a DETACHED §3.4.4.1 signature under the PINNED IdP cert
 // validates and yields the subject.
 func TestSP_ProcessLogoutRequest_Signed_ReturnsSubject(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -193,6 +194,7 @@ func TestSP_ProcessLogoutRequest_Signed_ReturnsSubject(t *testing.T) {
 // (ErrLogoutInvalid) — the SP must not log out on an unauthenticated request.
 // This is the fail-closed property preserved through the detached path.
 func TestSP_ProcessLogoutRequest_Unsigned_Rejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -207,6 +209,7 @@ func TestSP_ProcessLogoutRequest_Unsigned_Rejected(t *testing.T) {
 // TestSP_ProcessLogoutRequest_AttackerCert_Rejected: a LogoutRequest detached-
 // signed by a DIFFERENT (attacker) key — not the pinned IdP cert — is rejected.
 func TestSP_ProcessLogoutRequest_AttackerCert_Rejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -224,6 +227,7 @@ func TestSP_ProcessLogoutRequest_AttackerCert_Rejected(t *testing.T) {
 // signing — the reconstructed octet string no longer matches, so verification
 // fails (signature-over-different-bytes detection).
 func TestSP_ProcessLogoutRequest_TamperedRequest_Rejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -246,6 +250,7 @@ func TestSP_ProcessLogoutRequest_TamperedRequest_Rejected(t *testing.T) {
 // TestSP_ProcessLogoutRequest_WrongIssuer_Rejected: a request detached-signed by
 // the pinned key but claiming a DIFFERENT Issuer is rejected (issuer-binding).
 func TestSP_ProcessLogoutRequest_WrongIssuer_Rejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -260,6 +265,7 @@ func TestSP_ProcessLogoutRequest_WrongIssuer_Rejected(t *testing.T) {
 // TestSP_ProcessLogoutRequest_Malformed_Rejected: garbage base64 collapses to
 // the one code.
 func TestSP_ProcessLogoutRequest_Malformed_Rejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -273,6 +279,7 @@ func TestSP_ProcessLogoutRequest_Malformed_Rejected(t *testing.T) {
 // replayed is rejected (its ID is deduped within the freshness window), while a
 // fresh distinct request still succeeds.
 func TestSP_ProcessLogoutRequest_Replay_Rejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -296,6 +303,7 @@ func TestSP_ProcessLogoutRequest_Replay_Rejected(t *testing.T) {
 // LogoutRequest whose IssueInstant is older than the freshness window is
 // rejected (a captured-then-stale logout can't terminate a session).
 func TestSP_ProcessLogoutRequest_StaleIssueInstant_Rejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -311,6 +319,7 @@ func TestSP_ProcessLogoutRequest_StaleIssueInstant_Rejected(t *testing.T) {
 // LogoutRequest whose IssueInstant is far in the FUTURE (beyond skew) is
 // rejected (a clock-forward forgery minted to outlive the window).
 func TestSP_ProcessLogoutRequest_FutureIssueInstant_Rejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -327,6 +336,7 @@ func TestSP_ProcessLogoutRequest_FutureIssueInstant_Rejected(t *testing.T) {
 // (SigAlg+Signature query params over the octet string), NOT an enveloped body
 // signature — the form a real IdP validates. The XML body is UNSIGNED.
 func TestSP_LogoutURL_BuildsDetachedSignedRedirect(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -374,6 +384,7 @@ func TestSP_LogoutURL_BuildsDetachedSignedRedirect(t *testing.T) {
 // acknowledgement to an IdP-initiated logout is a DETACHED-signed LogoutResponse
 // redirect to the IdP SLO.
 func TestSP_BuildLogoutResponseURL_BuildsDetachedSignedRedirect(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -439,6 +450,7 @@ func newFrontChannelSLOSP(t *testing.T, idpSigner *idpKeypair, now time.Time) *S
 // (not the request endpoint), carrying a detached signature + the ECHOED
 // RelayState (the chain-state id the IdP resumes on) + the InResponseTo binding.
 func TestSP_FrontChannel_ProcessRequest_RedirectsResponseToContinue(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newFrontChannelSLOSP(t, idp, now)
@@ -489,6 +501,7 @@ func TestSP_FrontChannel_ProcessRequest_RedirectsResponseToContinue(t *testing.T
 // configured, the SP's LogoutResponse still targets the IdP's request-side SLO
 // endpoint (the pre-front-channel behavior).
 func TestSP_BackChannel_ResponseTargetsRequestEndpoint_Unchanged(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now) // no IDPSLOResponseURL
@@ -511,6 +524,7 @@ func TestSP_BackChannel_ResponseTargetsRequestEndpoint_Unchanged(t *testing.T) {
 // the SP cert (sign/verify symmetry within this module — the basis for SP↔IdP
 // interop since both sides share these helpers).
 func TestSP_RoundTrip_OwnDetachedSigVerifies(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -533,6 +547,7 @@ func TestSP_RoundTrip_OwnDetachedSigVerifies(t *testing.T) {
 // TestSP_LogoutURL_NoKey_ReturnsEmpty: without an SP signing key the SLO helpers
 // are inert (no unsigned logout is ever emitted).
 func TestSP_LogoutURL_NoKey_ReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	// No SP key, but an IdP SLO URL set.
@@ -561,6 +576,7 @@ func TestSP_LogoutURL_NoKey_ReturnsEmpty(t *testing.T) {
 // verifying the signature — the lookup key the SP-side multi-IdP SLO dispatcher
 // uses. It reads the Issuer off an UNSIGNED request (peeking is signature-free).
 func TestSP_PeekLogoutRequestIssuer_ReadsIssuer(t *testing.T) {
+	t.Parallel()
 	q := buildIDPLogoutRedirectQuery(t, logoutReq{issuer: tIDPEntity, nameID: "alice@example.com", dest: tSPSLOURL}, "rs", nil)
 	vals, _ := url.ParseQuery(q)
 	got, err := PeekLogoutRequestIssuer(vals.Get("SAMLRequest"), true)
@@ -576,6 +592,7 @@ func TestSP_PeekLogoutRequestIssuer_ReadsIssuer(t *testing.T) {
 // cases — all collapse to ErrLogoutInvalid (oracle-safe), the same code the
 // dispatcher maps to a 400.
 func TestSP_PeekLogoutRequestIssuer_Rejects(t *testing.T) {
+	t.Parallel()
 	// Garbage base64.
 	if _, err := PeekLogoutRequestIssuer("not-base64-$$$", true); !errors.Is(err, ErrLogoutInvalid) {
 		t.Fatalf("malformed peek err = %v, want ErrLogoutInvalid", err)
@@ -592,6 +609,7 @@ func TestSP_PeekLogoutRequestIssuer_Rejects(t *testing.T) {
 // upstream-IdP entity id (the value the dispatcher matches the inbound Issuer
 // against, and the same one ProcessLogoutRequest checks the Issuer against).
 func TestSP_IDPEntityID_ReturnsPinnedEntity(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)

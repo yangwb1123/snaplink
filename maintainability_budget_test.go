@@ -49,6 +49,7 @@ var skipDirs = map[string]bool{
 }
 
 func TestMaintainability_FileSizeBudget(t *testing.T) {
+	t.Parallel()
 	var overBudget, staleExemptions []string
 	seenExempt := map[string]bool{}
 
@@ -130,6 +131,7 @@ func countFileLines(path string) (int, error) {
 const maxFileSizeExemptions = 0
 
 func TestMaintainability_FileSizeExemptionsDoNotGrow(t *testing.T) {
+	t.Parallel()
 	if n := len(fileSizeExemptions); n > maxFileSizeExemptions {
 		t.Errorf("fileSizeExemptions grew to %d (cap %d) — no file may exceed 500 lines; split it instead of adding an exemption.", n, maxFileSizeExemptions)
 	}

@@ -66,6 +66,7 @@ func fixture(t *testing.T) *permissions.MemoryProvider {
 }
 
 func TestRoles_ReturnsAssignedRoles(t *testing.T) {
+	t.Parallel()
 	p := fixture(t)
 	roles, err := p.Roles(context.Background(), "user-alice", "web-app")
 	if err != nil {
@@ -77,6 +78,7 @@ func TestRoles_ReturnsAssignedRoles(t *testing.T) {
 }
 
 func TestRoles_UnknownUserReturnsErrUserNotFound(t *testing.T) {
+	t.Parallel()
 	p := fixture(t)
 	_, err := p.Roles(context.Background(), "ghost", "web-app")
 	if !errors.Is(err, permissions.ErrUserNotFound) {
@@ -85,6 +87,7 @@ func TestRoles_UnknownUserReturnsErrUserNotFound(t *testing.T) {
 }
 
 func TestRoles_PerClientIsolation(t *testing.T) {
+	t.Parallel()
 	p := fixture(t)
 	web, err := p.Roles(context.Background(), "user-alice", "web-app")
 	if err != nil {
@@ -100,6 +103,7 @@ func TestRoles_PerClientIsolation(t *testing.T) {
 }
 
 func TestRoles_UnknownRoleCodeSkipped(t *testing.T) {
+	t.Parallel()
 	// Assigning a role code that isn't defined on the client should not panic;
 	// it just silently drops out of the result.
 	p := permissions.NewMemoryProvider()
@@ -116,6 +120,7 @@ func TestRoles_UnknownRoleCodeSkipped(t *testing.T) {
 }
 
 func TestPermissions_UnionsAndDeduplicates(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	_ = p.AddRole(context.Background(), "c", permissions.Role{Code: "r1", Permissions: []string{"a", "b"}})
 	_ = p.AddRole(context.Background(), "c", permissions.Role{Code: "r2", Permissions: []string{"b", "c"}})
@@ -134,6 +139,7 @@ func TestPermissions_UnionsAndDeduplicates(t *testing.T) {
 }
 
 func TestPermissions_UnknownUser(t *testing.T) {
+	t.Parallel()
 	p := fixture(t)
 	_, err := p.Permissions(context.Background(), "ghost", "web-app")
 	if !errors.Is(err, permissions.ErrUserNotFound) {
@@ -142,6 +148,7 @@ func TestPermissions_UnknownUser(t *testing.T) {
 }
 
 func TestMenus_AdminSeesEverything(t *testing.T) {
+	t.Parallel()
 	p := fixture(t)
 	tree, err := p.Menus(context.Background(), "user-alice", "web-app")
 	if err != nil {
@@ -174,6 +181,7 @@ func TestMenus_AdminSeesEverything(t *testing.T) {
 }
 
 func TestMenus_ViewerLosesGatedNodesButKeepsPublic(t *testing.T) {
+	t.Parallel()
 	p := fixture(t)
 	tree, err := p.Menus(context.Background(), "user-bob", "web-app")
 	if err != nil {
@@ -215,6 +223,7 @@ func TestMenus_ViewerLosesGatedNodesButKeepsPublic(t *testing.T) {
 }
 
 func TestMenus_ParentKeptWhenChildrenSurvive(t *testing.T) {
+	t.Parallel()
 	// Parent has a permission the user doesn't hold, but a child the user CAN
 	// see. The current implementation keeps the parent so the surviving child
 	// remains reachable.
@@ -243,6 +252,7 @@ func TestMenus_ParentKeptWhenChildrenSurvive(t *testing.T) {
 }
 
 func TestMenus_ParentPrunedWhenAllChildrenFiltered(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	_ = p.AddRole(context.Background(), "c", permissions.Role{Code: "r", Permissions: []string{"unrelated:perm"}})
 	_ = p.AssignRoles(context.Background(), "u", "c", []string{"r"})
@@ -265,6 +275,7 @@ func TestMenus_ParentPrunedWhenAllChildrenFiltered(t *testing.T) {
 }
 
 func TestMenus_UnknownUserReturnsEmptyNotError(t *testing.T) {
+	t.Parallel()
 	// A user with no role assignments shouldn't error out the UI — the menu
 	// just becomes empty (after public/no-gate items are filtered through).
 	p := fixture(t)
@@ -280,6 +291,7 @@ func TestMenus_UnknownUserReturnsEmptyNotError(t *testing.T) {
 }
 
 func TestMenus_NoMenusConfiguredReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	_ = p.AddRole(context.Background(), "c", permissions.Role{Code: "r", Permissions: []string{"x"}})
 	_ = p.AssignRoles(context.Background(), "u", "c", []string{"r"})
@@ -294,6 +306,7 @@ func TestMenus_NoMenusConfiguredReturnsEmpty(t *testing.T) {
 }
 
 func TestMenus_WildcardPermissionGrantsEverything(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	_ = p.AddRole(context.Background(), "c", permissions.Role{Code: "god", Permissions: []string{"*"}})
 	_ = p.AssignRoles(context.Background(), "u", "c", []string{"god"})
@@ -313,6 +326,7 @@ func TestMenus_WildcardPermissionGrantsEverything(t *testing.T) {
 }
 
 func TestPermissionsAndRoles_AssignmentIsCopied(t *testing.T) {
+	t.Parallel()
 	// AssignRoles should defensively copy the slice — mutating the caller's
 	// slice afterward must not leak into the provider's state.
 	p := permissions.NewMemoryProvider()

@@ -11,6 +11,7 @@ import (
 )
 
 func TestStore_ApplyGetList(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	defer func() { _ = s.Close() }()
 
@@ -41,6 +42,7 @@ func TestStore_ApplyGetList(t *testing.T) {
 }
 
 func TestStore_ApplyTwiceIncrementsVersion(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	defer func() { _ = s.Close() }()
 	p := &netpolicy.Policy{Name: "x"}
@@ -52,6 +54,7 @@ func TestStore_ApplyTwiceIncrementsVersion(t *testing.T) {
 }
 
 func TestStore_ApplyMissingNameErrors(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	defer func() { _ = s.Close() }()
 	if _, err := s.Apply(context.Background(), &netpolicy.Policy{}); err == nil {
@@ -60,6 +63,7 @@ func TestStore_ApplyMissingNameErrors(t *testing.T) {
 }
 
 func TestStore_GetUnknownReturnsErrNotFound(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	defer func() { _ = s.Close() }()
 	if _, err := s.Get(context.Background(), "nope"); !errors.Is(err, netpolicy.ErrNotFound) {
@@ -68,6 +72,7 @@ func TestStore_GetUnknownReturnsErrNotFound(t *testing.T) {
 }
 
 func TestStore_DeleteIdempotent(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	defer func() { _ = s.Close() }()
 	if err := s.Delete(context.Background(), "ghost"); err != nil {
@@ -83,6 +88,7 @@ func TestStore_DeleteIdempotent(t *testing.T) {
 }
 
 func TestStore_WatchDeliversAddUpdateRemove(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	defer func() { _ = s.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -114,6 +120,7 @@ func TestStore_WatchDeliversAddUpdateRemove(t *testing.T) {
 }
 
 func TestStore_WatchClosesOnContextCancel(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	defer func() { _ = s.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -130,6 +137,7 @@ func TestStore_WatchClosesOnContextCancel(t *testing.T) {
 }
 
 func TestStore_CloseClosesWatchers(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ch, _ := s.Watch(context.Background())
 	_ = s.Close()
@@ -144,6 +152,7 @@ func TestStore_CloseClosesWatchers(t *testing.T) {
 }
 
 func TestStore_ApplyAfterCloseFails(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	_ = s.Close()
 	if _, err := s.Apply(context.Background(), &netpolicy.Policy{Name: "x"}); !errors.Is(err, memory.ErrClosed) {

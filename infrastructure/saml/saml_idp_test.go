@@ -49,6 +49,7 @@ const (
 // TestBuild_IdPEnabled_MountsThreeHandlers proves cfg.IdP.Enabled appends the
 // three IdP routes (metadata + sso GET/POST + sso/finish) on top of the SP ACS.
 func TestBuild_IdPEnabled_MountsThreeHandlers(t *testing.T) {
+	t.Parallel()
 	issuer, _ := newRSAIssuer(t)
 	clients := defaultimpl.NewMemoryClientStore()
 
@@ -84,6 +85,7 @@ func TestBuild_IdPEnabled_MountsThreeHandlers(t *testing.T) {
 // TestBuild_NothingRequested_Errors proves Build refuses a config with neither
 // SPs nor the IdP enabled.
 func TestBuild_NothingRequested_Errors(t *testing.T) {
+	t.Parallel()
 	_, err := samlmod.Build(samlmod.Deps{
 		SessionManager: defaultimpl.NewMemorySessionManager(),
 		UserProvider:   defaultimpl.NewMemoryUserProvider(),
@@ -100,6 +102,7 @@ func TestBuild_NothingRequested_Errors(t *testing.T) {
 // metadata cert matches the signing key; the assertion signature verifies
 // through crewjam's XSW-resistant ParseXMLResponse).
 func TestIdPToSP_RoundTrip(t *testing.T) {
+	t.Parallel()
 	issuer, _ := newRSAIssuer(t)
 
 	clients := defaultimpl.NewMemoryClientStore()

@@ -50,6 +50,7 @@ func (rcovMFAProvider) Verify(context.Context, string, string, map[string]string
 // TestRcovOptions_KitchenSink applies the broadest practical option set and
 // asserts the server constructs + the cheaply-observable options stuck.
 func TestRcovOptions_KitchenSink(t *testing.T) {
+	t.Parallel()
 	scorer, err := defaultimpl.NewRuleBasedRiskScorer(defaultimpl.RuleBasedRiskScorerConfig{})
 	if err != nil {
 		t.Fatalf("risk scorer: %v", err)

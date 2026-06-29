@@ -76,6 +76,7 @@ type fetchHTTPError struct {
 func (e *fetchHTTPError) Error() string { return "fetch failed: " + e.body }
 
 func TestFederationFetch_OPAsIntermediate_RoundTrip(t *testing.T) {
+	t.Parallel()
 	clock := time.Unix(1_900_000_000, 0).UTC()
 
 	// Three entities, each its own keypair.
@@ -156,6 +157,7 @@ func TestFederationFetch_OPAsIntermediate_RoundTrip(t *testing.T) {
 // consuming-side enforcement compose. Here the policy PINS client_name; the
 // resolved metadata must reflect it.
 func TestFederationFetch_OPAsIntermediate_PolicyEnforced(t *testing.T) {
+	t.Parallel()
 	clock := time.Unix(1_900_000_000, 0).UTC()
 
 	anchor := newFedEntity(t, rtAnchorID)

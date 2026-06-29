@@ -54,6 +54,7 @@ func (e *erroringPermissionProvider) GetMenus(context.Context, string) (permissi
 // ---------- nil provider → FailedPrecondition ----------
 
 func TestPermissionAdmin_NilProvider_FailedPrecondition(t *testing.T) {
+	t.Parallel()
 	conn := startAdminGRPC(t, nil, nil, nil, nil, nil, nil)
 	c := adminv1.NewPermissionAdminServiceClient(conn)
 	ctx := context.Background()
@@ -99,6 +100,7 @@ func TestPermissionAdmin_NilProvider_FailedPrecondition(t *testing.T) {
 // ---------- bad args → InvalidArgument ----------
 
 func TestPermissionAdmin_BadArgs_InvalidArgument(t *testing.T) {
+	t.Parallel()
 	prov := &erroringPermissionProvider{} // non-nil so we get past the FailedPrecondition gate
 	conn := startAdminGRPC(t, nil, nil, nil, prov, nil, nil)
 	c := adminv1.NewPermissionAdminServiceClient(conn)
@@ -147,6 +149,7 @@ func TestPermissionAdmin_BadArgs_InvalidArgument(t *testing.T) {
 // ---------- provider error → Internal ----------
 
 func TestPermissionAdmin_ProviderError_Internal(t *testing.T) {
+	t.Parallel()
 	prov := &erroringPermissionProvider{err: errors.New("db unavailable")}
 	conn := startAdminGRPC(t, nil, nil, nil, prov, nil, nil)
 	c := adminv1.NewPermissionAdminServiceClient(conn)
@@ -185,6 +188,7 @@ func TestPermissionAdmin_ProviderError_Internal(t *testing.T) {
 // ---------- sentinel mappings ----------
 
 func TestPermissionAdmin_AddRole_AlreadyExists(t *testing.T) {
+	t.Parallel()
 	prov := &erroringPermissionProvider{err: permissions.ErrRoleExists}
 	conn := startAdminGRPC(t, nil, nil, nil, prov, nil, nil)
 	c := adminv1.NewPermissionAdminServiceClient(conn)
@@ -198,6 +202,7 @@ func TestPermissionAdmin_AddRole_AlreadyExists(t *testing.T) {
 }
 
 func TestPermissionAdmin_UpdateRole_NotFound(t *testing.T) {
+	t.Parallel()
 	prov := &erroringPermissionProvider{err: permissions.ErrRoleNotFound}
 	conn := startAdminGRPC(t, nil, nil, nil, prov, nil, nil)
 	c := adminv1.NewPermissionAdminServiceClient(conn)
@@ -211,6 +216,7 @@ func TestPermissionAdmin_UpdateRole_NotFound(t *testing.T) {
 }
 
 func TestPermissionAdmin_RemoveRole_NotFound(t *testing.T) {
+	t.Parallel()
 	prov := &erroringPermissionProvider{err: permissions.ErrRoleNotFound}
 	conn := startAdminGRPC(t, nil, nil, nil, prov, nil, nil)
 	c := adminv1.NewPermissionAdminServiceClient(conn)
@@ -224,6 +230,7 @@ func TestPermissionAdmin_RemoveRole_NotFound(t *testing.T) {
 // ---------- protoToMenuItem nested-tree coverage ----------
 
 func TestPermissionAdmin_SetMenus_NestedTree(t *testing.T) {
+	t.Parallel()
 	// Exercise protoToMenuItem's Buttons + Children branches by sending
 	// a multi-level menu tree through SetMenus and reading it back via
 	// the storage layer.

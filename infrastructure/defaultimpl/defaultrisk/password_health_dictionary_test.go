@@ -8,6 +8,7 @@ import (
 )
 
 func TestDictionaryPasswordHealthChecker_WeakBuiltin(t *testing.T) {
+	t.Parallel()
 	c, err := NewDictionaryPasswordHealthChecker(DictionaryPasswordHealthConfig{})
 	if err != nil {
 		t.Fatalf("constructor: %v", err)
@@ -28,6 +29,7 @@ func TestDictionaryPasswordHealthChecker_WeakBuiltin(t *testing.T) {
 }
 
 func TestDictionaryPasswordHealthChecker_StrongReturnsNil(t *testing.T) {
+	t.Parallel()
 	c, err := NewDictionaryPasswordHealthChecker(DictionaryPasswordHealthConfig{})
 	if err != nil {
 		t.Fatalf("constructor: %v", err)
@@ -43,6 +45,7 @@ func TestDictionaryPasswordHealthChecker_StrongReturnsNil(t *testing.T) {
 }
 
 func TestDictionaryPasswordHealthChecker_OperatorFileExtends(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "weak.txt")
 	// Mix in a comment + blank line to prove they are skipped, plus a
@@ -73,6 +76,7 @@ func TestDictionaryPasswordHealthChecker_OperatorFileExtends(t *testing.T) {
 }
 
 func TestDictionaryPasswordHealthChecker_MissingFileIsLoud(t *testing.T) {
+	t.Parallel()
 	_, err := NewDictionaryPasswordHealthChecker(DictionaryPasswordHealthConfig{
 		WeakPasswordFile: filepath.Join(t.TempDir(), "does-not-exist.txt"),
 	})

@@ -11,6 +11,7 @@ import (
 )
 
 func TestLookupString_HappyPath(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	_ = p.Add("10.0.0.0/8", geo.GeoInfo{CountryCode: "US", RecommendedLanguage: "en-US"})
 	got, err := geo.LookupString(context.Background(), p, "10.1.2.3")
@@ -23,6 +24,7 @@ func TestLookupString_HappyPath(t *testing.T) {
 }
 
 func TestLookupString_RejectsBadIP(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	_, err := geo.LookupString(context.Background(), p, "not-an-ip")
 	if !errors.Is(err, geo.ErrInvalidIP) {
@@ -31,12 +33,14 @@ func TestLookupString_RejectsBadIP(t *testing.T) {
 }
 
 func TestLookupString_NilProviderIsError(t *testing.T) {
+	t.Parallel()
 	if _, err := geo.LookupString(context.Background(), nil, "10.0.0.1"); err == nil {
 		t.Fatal("expected error for nil provider")
 	}
 }
 
 func TestLookupString_PropagatesNotFound(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	_, err := geo.LookupString(context.Background(), p, "10.0.0.1")
 	if !errors.Is(err, geo.ErrNotFound) {
@@ -48,6 +52,7 @@ func TestLookupString_PropagatesNotFound(t *testing.T) {
 // (the compile-time check lives next to the type; this exercises the path
 // via the SPI).
 func TestStaticImplementsProvider(t *testing.T) {
+	t.Parallel()
 	var p geo.Provider = static.New()
 	_, _ = p.Lookup(context.Background(), net.ParseIP("127.0.0.1"))
 }

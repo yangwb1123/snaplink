@@ -30,6 +30,7 @@ func newBlank() *fixtureBlank {
 // the per-category Inserted counts that the existing merge test (which only
 // asserted clients/users/netpolicy) leaves uncovered.
 func TestRestore_Merge_AllPermissionCategories(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t)
 	snap, err := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
@@ -75,6 +76,7 @@ func TestRestore_Merge_AllPermissionCategories(t *testing.T) {
 // the same roles/menus/assignments/netpolicy so the merge SKIP branches in
 // restoreRoles/restoreMenus/restoreAssignments/restoreNetPolicy all fire.
 func TestRestore_Merge_SkipsExistingPermissions(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
@@ -127,6 +129,7 @@ func TestRestore_Merge_SkipsExistingPermissions(t *testing.T) {
 // snapshot, and the snapshot adds a new one. The merge must union them and
 // report Updated (not Skipped, not Inserted).
 func TestRestore_Merge_AssignmentsUnionExisting(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
@@ -168,6 +171,7 @@ func TestRestore_Merge_AssignmentsUnionExisting(t *testing.T) {
 // for roles, menus, and assignments — present-then-replace bookkeeping that
 // the clients-only overwrite test does not reach.
 func TestRestore_Overwrite_UpdatesPermissions(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
@@ -231,6 +235,7 @@ func TestRestore_Overwrite_UpdatesPermissions(t *testing.T) {
 // the destructive paths only partially covered by the clients/users
 // orphan test.
 func TestRestore_Replace_DeletesOrphanPermissions(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
@@ -288,6 +293,7 @@ func TestRestore_Replace_DeletesOrphanPermissions(t *testing.T) {
 // destructive + insert work but mutates nothing — the dry-run guards inside
 // every replace branch (the riskiest mode to leave untested).
 func TestRestore_Replace_DryRun_NoMutation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
@@ -322,6 +328,7 @@ func TestRestore_Replace_DryRun_NoMutation(t *testing.T) {
 // TestRestore_Overwrite_DryRun proves overwrite dry-run reports Inserted /
 // Updated counts (the dry-run pre-Get probe branches) without mutating.
 func TestRestore_Overwrite_DryRun(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
@@ -348,6 +355,7 @@ func TestRestore_Overwrite_DryRun(t *testing.T) {
 // TestRestore_Exclude_SkipsCategory proves RestoreOptions.Exclude omits a
 // whole category from the apply plan.
 func TestRestore_Exclude_SkipsCategory(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
@@ -384,6 +392,7 @@ func TestRestore_Exclude_SkipsCategory(t *testing.T) {
 
 // TestRestore_NilSnapshotRejected pins the nil-snapshot guard.
 func TestRestore_NilSnapshotRejected(t *testing.T) {
+	t.Parallel()
 	dst := newBlank()
 	if _, err := dst.restorer().Restore(context.Background(), nil, snapshot.RestoreOptions{}); err == nil {
 		t.Fatal("want error for nil snapshot")
@@ -393,6 +402,7 @@ func TestRestore_NilSnapshotRejected(t *testing.T) {
 // TestRestore_InvalidSnapshotRejected pins that Restore validates the
 // snapshot envelope before applying anything.
 func TestRestore_InvalidSnapshotRejected(t *testing.T) {
+	t.Parallel()
 	dst := newBlank()
 	bad := &snapshot.Snapshot{SchemaVersion: "999", SourceNamespace: "ns", SnapshotID: "x"}
 	if _, err := dst.restorer().Restore(context.Background(), bad, snapshot.RestoreOptions{}); err == nil {
@@ -403,6 +413,7 @@ func TestRestore_InvalidSnapshotRejected(t *testing.T) {
 // TestRestore_DefaultMode_IsMerge proves an empty Mode defaults to merge
 // (the safest mode) rather than failing or wiping.
 func TestRestore_DefaultMode_IsMerge(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(ctx, snapshot.ExportOptions{})

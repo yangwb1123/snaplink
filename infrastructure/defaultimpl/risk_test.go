@@ -10,6 +10,7 @@ import (
 )
 
 func TestNoopRiskScorer_AlwaysAllows(t *testing.T) {
+	t.Parallel()
 	got, err := defaultimpl.NoopRiskScorer{}.Score(context.Background(), &spi.RiskRequest{
 		SubjectID: "alice",
 		ClientID:  "web-app",
@@ -27,6 +28,7 @@ func TestNoopRiskScorer_AlwaysAllows(t *testing.T) {
 }
 
 func TestNoopRiskScorer_NilRequest_StillAllows(t *testing.T) {
+	t.Parallel()
 	// Defensive: the noop should not panic on a nil request even though
 	// the server wouldn't normally call it that way.
 	got, err := defaultimpl.NoopRiskScorer{}.Score(context.Background(), nil)

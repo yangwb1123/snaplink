@@ -50,6 +50,7 @@ func decodeJWTSegments(t *testing.T, jwt string) (header, payload map[string]any
 }
 
 func TestRFC9068_HeaderTypIsAtJwt(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	tok, err := iss.Issue(context.Background(),
 		&sso.Subject{ID: "u-1", ClientID: "web"}, []string{"read"})
@@ -66,6 +67,7 @@ func TestRFC9068_HeaderTypIsAtJwt(t *testing.T) {
 }
 
 func TestRFC9068_PayloadCarriesRequiredClaims(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("https://sso.test"))
 	authTime := time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC)
 	tok, err := iss.Issue(context.Background(), &sso.Subject{
@@ -114,6 +116,7 @@ func TestRFC9068_PayloadCarriesRequiredClaims(t *testing.T) {
 }
 
 func TestRFC9068_JTIIsUniquePerCall(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	subj := &sso.Subject{ID: "u-1", ClientID: "web"}
 
@@ -137,6 +140,7 @@ func TestRFC9068_JTIIsUniquePerCall(t *testing.T) {
 }
 
 func TestRFC9068_ClientCredentialsOmitsAuthTime(t *testing.T) {
+	t.Parallel()
 	// Machine-to-machine tokens (subject = client) have no end-user
 	// auth event — auth_time / amr MUST stay omitted to avoid
 	// fabricating a non-event.
@@ -161,6 +165,7 @@ func TestRFC9068_ClientCredentialsOmitsAuthTime(t *testing.T) {
 }
 
 func TestRFC9068_ValidateRejectsAlgNone(t *testing.T) {
+	t.Parallel()
 	// alg=none is the canonical alg-confusion attack. Validate
 	// MUST reject before signature verification even runs.
 	iss := defaultimpl.NewEd25519JWTIssuer()
@@ -177,6 +182,7 @@ func TestRFC9068_ValidateRejectsAlgNone(t *testing.T) {
 }
 
 func TestRFC9068_ValidateRejectsUnknownTyp(t *testing.T) {
+	t.Parallel()
 	// A token shaped as e.g. typ=JWE or typ=foo+jwt MUST be
 	// rejected — defends against passing an ID Token or
 	// other-shape JWT off as an access token.
@@ -198,6 +204,7 @@ func TestRFC9068_ValidateRejectsUnknownTyp(t *testing.T) {
 }
 
 func TestRFC9068_ValidateAcceptsLegacyJWTTyp(t *testing.T) {
+	t.Parallel()
 	// Tokens minted before the at+jwt switch (typ=JWT) MUST still
 	// verify until their natural expiry — operators rolling forward
 	// can't tolerate every in-flight token suddenly going invalid.
@@ -221,6 +228,7 @@ func TestRFC9068_ValidateAcceptsLegacyJWTTyp(t *testing.T) {
 }
 
 func TestRFC9068_ValidatePopulatesAccessTokenClaims(t *testing.T) {
+	t.Parallel()
 	// Round-trip: Issue → Validate yields the RFC 9068 claims on
 	// the typed TokenClaims surface (so /introspect + permission
 	// resolution can rely on them).

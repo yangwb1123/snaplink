@@ -34,6 +34,7 @@ func resolverWithDefaultFetcher(t *testing.T, anchorID string) *federation.Trust
 // TestFetcher_RejectsHTTPLeaf: an http:// leaf entity id is rejected by the
 // scheme gate (no outbound request).
 func TestFetcher_RejectsHTTPLeaf(t *testing.T) {
+	t.Parallel()
 	r := resolverWithDefaultFetcher(t, "https://anchor.test")
 	_, err := r.ResolveTrustChain(context.Background(), "http://rp.internal.test")
 	if !errors.Is(err, federation.ErrTrustChainInvalid) {
@@ -43,6 +44,7 @@ func TestFetcher_RejectsHTTPLeaf(t *testing.T) {
 
 // TestFetcher_RejectsFileScheme: a file:// leaf is rejected.
 func TestFetcher_RejectsFileScheme(t *testing.T) {
+	t.Parallel()
 	r := resolverWithDefaultFetcher(t, "https://anchor.test")
 	_, err := r.ResolveTrustChain(context.Background(), "file:///etc/passwd")
 	if !errors.Is(err, federation.ErrTrustChainInvalid) {
@@ -53,6 +55,7 @@ func TestFetcher_RejectsFileScheme(t *testing.T) {
 // TestFetcher_RejectsInternalIPLeaf: an https leaf whose host is a literal
 // internal IP is rejected by the best-effort internal-host block.
 func TestFetcher_RejectsInternalIPLeaf(t *testing.T) {
+	t.Parallel()
 	r := resolverWithDefaultFetcher(t, "https://anchor.test")
 	for _, host := range []string{
 		"https://127.0.0.1/rp",
@@ -72,6 +75,7 @@ func TestFetcher_RejectsInternalIPLeaf(t *testing.T) {
 // followed (a redirect to an internal IP would defeat the scheme/host gate).
 // We point the leaf at a TLS test server that redirects; the fetch must fail.
 func TestFetcher_NoRedirectFollowed(t *testing.T) {
+	t.Parallel()
 	// A server that always redirects (to an internal-looking target).
 	redirector := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://127.0.0.1/secret", http.StatusFound)
@@ -147,6 +151,7 @@ func noRedirectClient(base *http.Client) *http.Client {
 // are the literal-IP paths that bypass DNS but should still be caught at dial time
 // (defense-in-depth over the validateFederationURL literal-IP check).
 func TestDialWithSSRFCheck_BlocksInternalIPs(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		addr string
@@ -181,6 +186,7 @@ func TestDialWithSSRFCheck_BlocksInternalIPs(t *testing.T) {
 // SSRF-guard marker, NOT a downstream connect error, proving the resolved IP
 // was inspected and rejected before any connection was attempted.
 func TestDialWithSSRFCheck_BlocksRebinding(t *testing.T) {
+	t.Parallel()
 	// A real listener on loopback so that, absent the guard, the dial WOULD
 	// succeed — the test would be vacuous if nothing were listening.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -214,6 +220,7 @@ func TestDialWithSSRFCheck_BlocksRebinding(t *testing.T) {
 // gate. A guard-marker error here would mean a legitimate public host was being
 // wrongly blocked.
 func TestDialWithSSRFCheck_AllowsPublicAddress(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 

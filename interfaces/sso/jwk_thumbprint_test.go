@@ -19,6 +19,7 @@ import (
 // would produce a different hash and fail here. For DPoP a wrong RSA
 // thumbprint is a binding bypass, so this is a security regression guard.
 func TestJWKThumbprintRFC7638_RSAKnownAnswer(t *testing.T) {
+	t.Parallel()
 	const (
 		n = "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx" +
 			"4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMs" +
@@ -45,6 +46,7 @@ func TestJWKThumbprintRFC7638_RSAKnownAnswer(t *testing.T) {
 // also documents the canonical string so a future edit that reorders members
 // is caught.
 func TestJWKThumbprintRFC7638_ECCanonicalForm(t *testing.T) {
+	t.Parallel()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +68,7 @@ func TestJWKThumbprintRFC7638_ECCanonicalForm(t *testing.T) {
 }
 
 func TestJWKThumbprintRFC7638_OKPCanonicalForm(t *testing.T) {
+	t.Parallel()
 	x := base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
 	got, err := jwkThumbprintRFC7638(JWK{Kty: "OKP", Crv: "Ed25519", X: x})
 	if err != nil {
@@ -83,6 +86,7 @@ func TestJWKThumbprintRFC7638_OKPCanonicalForm(t *testing.T) {
 // correct thumbprints (not the same value, not an error). Before the fix the
 // only thumbprint path was OKP-only.
 func TestJWKThumbprintRFC7638_PerKtyDistinct(t *testing.T) {
+	t.Parallel()
 	ecPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("EC keygen: %v", err)
@@ -132,6 +136,7 @@ func ecCoordsP256(t *testing.T, priv *ecdsa.PrivateKey) (x, y string) {
 // malformed shapes, so a proof cannot smuggle a private component or an
 // incomplete key past the verifier.
 func TestParseDPoPHeaderJWK(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		raw     string

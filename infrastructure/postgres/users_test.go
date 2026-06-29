@@ -26,6 +26,7 @@ func freshUserProvider(t *testing.T) *UserProvider {
 }
 
 func TestUser_CreateThenGetByID(t *testing.T) {
+	t.Parallel()
 	p := freshUserProvider(t)
 	ctx := context.Background()
 
@@ -57,6 +58,7 @@ func TestUser_CreateThenGetByID(t *testing.T) {
 }
 
 func TestUser_GetByID_MissingReturnsErrNoSuchUser(t *testing.T) {
+	t.Parallel()
 	p := freshUserProvider(t)
 	if _, err := p.GetByID(context.Background(), "ghost"); !errors.Is(err, core.ErrNoSuchUser) {
 		t.Errorf("missing GetByID err = %v, want ErrNoSuchUser", err)
@@ -64,6 +66,7 @@ func TestUser_GetByID_MissingReturnsErrNoSuchUser(t *testing.T) {
 }
 
 func TestUser_GetByExternalID(t *testing.T) {
+	t.Parallel()
 	p := freshUserProvider(t)
 	ctx := context.Background()
 
@@ -88,6 +91,7 @@ func TestUser_GetByExternalID(t *testing.T) {
 }
 
 func TestUser_CreateOrUpdate_PreservesCreatedAtAndReplacesInFull(t *testing.T) {
+	t.Parallel()
 	p := freshUserProvider(t)
 	ctx := context.Background()
 
@@ -125,6 +129,7 @@ func TestUser_CreateOrUpdate_PreservesCreatedAtAndReplacesInFull(t *testing.T) {
 }
 
 func TestUser_CreateOrUpdate_RejectsEmptyID(t *testing.T) {
+	t.Parallel()
 	p := freshUserProvider(t)
 	if err := p.CreateOrUpdate(context.Background(), &core.User{}); err == nil {
 		t.Error("expected error for empty ID")
@@ -132,6 +137,7 @@ func TestUser_CreateOrUpdate_RejectsEmptyID(t *testing.T) {
 }
 
 func TestUser_List_OrderById(t *testing.T) {
+	t.Parallel()
 	p := freshUserProvider(t)
 	ctx := context.Background()
 
@@ -157,6 +163,7 @@ func TestUser_List_OrderById(t *testing.T) {
 }
 
 func TestUser_Delete_RemovesAndIsIdempotent(t *testing.T) {
+	t.Parallel()
 	p := freshUserProvider(t)
 	ctx := context.Background()
 
@@ -176,6 +183,7 @@ func TestUser_Delete_RemovesAndIsIdempotent(t *testing.T) {
 }
 
 func TestUser_NilAttributes_RoundtripsAsEmpty(t *testing.T) {
+	t.Parallel()
 	p := freshUserProvider(t)
 	ctx := context.Background()
 	if err := p.CreateOrUpdate(ctx, &core.User{ID: "u"}); err != nil {
@@ -191,6 +199,7 @@ func TestUser_NilAttributes_RoundtripsAsEmpty(t *testing.T) {
 }
 
 func TestUser_NanosecondRoundTrip(t *testing.T) {
+	t.Parallel()
 	p := freshUserProvider(t)
 	ctx := context.Background()
 

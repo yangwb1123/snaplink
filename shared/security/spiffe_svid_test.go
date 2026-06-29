@@ -22,6 +22,7 @@ import (
 // --- SPIFFE-ID parsing ---
 
 func TestParseSPIFFEURI_Valid(t *testing.T) {
+	t.Parallel()
 	id, err := security.ParseSPIFFEURI("spiffe://example.org/ns/prod/sa/payments")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -41,6 +42,7 @@ func TestParseSPIFFEURI_Valid(t *testing.T) {
 }
 
 func TestParseSPIFFEURI_NonK8sPath(t *testing.T) {
+	t.Parallel()
 	id, err := security.ParseSPIFFEURI("spiffe://example.org/workload/frontend")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -56,6 +58,7 @@ func TestParseSPIFFEURI_NonK8sPath(t *testing.T) {
 }
 
 func TestParseSPIFFEURI_Rejects(t *testing.T) {
+	t.Parallel()
 	cases := []string{
 		"",
 		"https://example.org/x",            // wrong scheme
@@ -211,6 +214,7 @@ func baseClaims(sub, aud string) map[string]any {
 // --- VerifyCompactJWS primitive ---
 
 func TestVerifyCompactJWS_RejectsSymmetricAllowlist(t *testing.T) {
+	t.Parallel()
 	k := newES256Key(t, "k1")
 	svid := mintSVID(t, k, "", baseClaims("spiffe://example.org/x", "aud"))
 	// An HS256 in the allowlist must be refused outright.
@@ -221,6 +225,7 @@ func TestVerifyCompactJWS_RejectsSymmetricAllowlist(t *testing.T) {
 }
 
 func TestVerifyCompactJWS_RejectsAlgNone(t *testing.T) {
+	t.Parallel()
 	k := newES256Key(t, "k1")
 	svid := mintSVID(t, k, "none", baseClaims("spiffe://example.org/x", "aud"))
 	_, err := security.VerifyCompactJWS(svid, []core.JWK{k.jwk}, map[string]struct{}{"ES256": {}})
@@ -248,6 +253,7 @@ func newValidator(t *testing.T, keys ...core.JWK) *security.SPIFFEValidator {
 }
 
 func TestSPIFFEValidator_HappyPath_ES256(t *testing.T) {
+	t.Parallel()
 	k := newES256Key(t, "spire-1")
 	v := newValidator(t, k.jwk)
 	svid := mintSVID(t, k, "", baseClaims(testSub, testAudience))
@@ -265,6 +271,7 @@ func TestSPIFFEValidator_HappyPath_ES256(t *testing.T) {
 }
 
 func TestSPIFFEValidator_HappyPath_EdDSA(t *testing.T) {
+	t.Parallel()
 	k := newEdDSAKey(t, "spire-ed")
 	v := newValidator(t, k.jwk)
 	svid := mintSVID(t, k, "", baseClaims(testSub, testAudience))
@@ -279,6 +286,7 @@ func TestSPIFFEValidator_HappyPath_EdDSA(t *testing.T) {
 // signature was rejected with crypto/rsa: verification error →
 // ErrSPIFFESVIDInvalid, silently breaking the allowlisted PS256 branch.
 func TestSPIFFEValidator_HappyPath_PS256(t *testing.T) {
+	t.Parallel()
 	k := newPS256Key(t, "spire-ps", 2048)
 	v := newValidator(t, k.jwk)
 	svid := mintSVID(t, k, "", baseClaims(testSub, testAudience))
@@ -291,6 +299,7 @@ func TestSPIFFEValidator_HappyPath_PS256(t *testing.T) {
 // 2048-bit floor (RFC 7518 §3.3) is rejected. The external trust boundary
 // must meet the same modulus floor as keys the SSO itself issues.
 func TestSPIFFEValidator_WeakRSAKeyRejected(t *testing.T) {
+	t.Parallel()
 	k := newPS256Key(t, "weak-rsa", 1024) // below the 2048-bit minimum
 	v := newValidator(t, k.jwk)
 	svid := mintSVID(t, k, "", baseClaims(testSub, testAudience))
@@ -304,6 +313,7 @@ func TestSPIFFEValidator_WeakRSAKeyRejected(t *testing.T) {
 }
 
 func TestSPIFFEValidator_AudInArrayAccepted(t *testing.T) {
+	t.Parallel()
 	k := newES256Key(t, "spire-1")
 	v := newValidator(t, k.jwk)
 	claims := baseClaims(testSub, "")
@@ -317,6 +327,7 @@ func TestSPIFFEValidator_AudInArrayAccepted(t *testing.T) {
 // SECURITY cases — each MUST fail with the SINGLE opaque error.
 
 func TestSPIFFEValidator_SecurityRejections(t *testing.T) {
+	t.Parallel()
 	good := newES256Key(t, "spire-1")
 	other := newES256Key(t, "attacker") // NOT in the bundle
 
@@ -409,6 +420,7 @@ func TestSPIFFEValidator_SecurityRejections(t *testing.T) {
 }
 
 func TestSPIFFEValidator_RSConfusionRejected(t *testing.T) {
+	t.Parallel()
 	// An attacker who knows the EC public key cannot get it treated as an
 	// HMAC secret: the validator's allowlist is asymmetric-only, and an
 	// HS256-header token never reaches signature verification.
@@ -429,6 +441,7 @@ func TestSPIFFEValidator_RSConfusionRejected(t *testing.T) {
 }
 
 func TestNewSPIFFEValidator_RequiresArgs(t *testing.T) {
+	t.Parallel()
 	src := security.NewStaticJWKS(nil)
 	if _, err := security.NewSPIFFEValidator("", src); err == nil {
 		t.Error("empty trust domain accepted")
@@ -439,6 +452,7 @@ func TestNewSPIFFEValidator_RequiresArgs(t *testing.T) {
 }
 
 func TestParseStaticJWKS_RejectsEmpty(t *testing.T) {
+	t.Parallel()
 	if _, err := security.ParseStaticJWKS([]byte(`{"keys":[]}`)); err == nil {
 		t.Error("empty keys accepted")
 	}
@@ -460,6 +474,7 @@ func TestParseStaticJWKS_RejectsEmpty(t *testing.T) {
 // guard: P-521 coord width sanity (the digestOf/coordBytes wiring) via a
 // happy ES256 path already exercised; this confirms multi-key kid select.
 func TestSPIFFEValidator_MultiKeyBundleSelectsByKid(t *testing.T) {
+	t.Parallel()
 	k1 := newES256Key(t, "k1")
 	k2 := newEdDSAKey(t, "k2")
 	v := newValidator(t, k1.jwk, k2.jwk)

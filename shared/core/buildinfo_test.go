@@ -6,6 +6,7 @@ import (
 )
 
 func TestReadBuildInfo(t *testing.T) {
+	t.Parallel()
 	// Not parallel: ReadBuildInfo memoizes via sync.Once, and we assert the
 	// same cached value is returned across calls.
 	first := ReadBuildInfo()

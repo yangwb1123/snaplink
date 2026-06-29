@@ -47,6 +47,7 @@ func (l *ctxCapturingLogger) DebugCtx(ctx context.Context, msg string, kv ...any
 }
 
 func TestPlainLoggerIsNotContextLogger(t *testing.T) {
+	t.Parallel()
 	var l spi.Logger = &capturingLogger{}
 	if _, ok := l.(spi.ContextLogger); ok {
 		t.Fatal("plain capturingLogger must NOT satisfy spi.ContextLogger")
@@ -59,6 +60,7 @@ func TestPlainLoggerIsNotContextLogger(t *testing.T) {
 }
 
 func TestContextLoggerReadsTraceID(t *testing.T) {
+	t.Parallel()
 	var l spi.Logger = &ctxCapturingLogger{}
 	cl, ok := l.(spi.ContextLogger)
 	if !ok {
@@ -74,6 +76,7 @@ func TestContextLoggerReadsTraceID(t *testing.T) {
 }
 
 func TestContextWithTraceIDEmptyIsNoOp(t *testing.T) {
+	t.Parallel()
 	base := context.Background()
 	// Empty tid must return the SAME context (no value stashed) so the
 	// logger omits the field.

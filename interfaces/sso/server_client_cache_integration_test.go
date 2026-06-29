@@ -13,6 +13,7 @@ import (
 )
 
 func TestClientStoreCache_ServerWiring(t *testing.T) {
+	t.Parallel()
 	inner := newCountingClientStore()
 
 	// Unwired: the server's clientStore is the RAW store, no wrapper.
@@ -45,6 +46,7 @@ func TestClientStoreCache_ServerWiring(t *testing.T) {
 // InvalidateClientCache on a wired server evicts the local cache so the next
 // Get re-reads (the end-to-end path admin/DCR mutations use).
 func TestServer_InvalidateClientCacheEvicts(t *testing.T) {
+	t.Parallel()
 	inner := newCountingClientStore()
 	inner.seed(&core.Client{ID: "c1", Secret: "s", Active: true, Name: "v1"})
 	srv := NewServer(WithClientStore(inner), WithClientStoreCache(time.Minute))

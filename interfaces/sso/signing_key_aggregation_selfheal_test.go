@@ -174,6 +174,7 @@ var _ signingkeys.Registry = (*flakyRegistry)(nil)
 // degraded — readiness ok, up back to 1 — and (c) emits exactly ONE degraded
 // audit event per transition (and one recovered).
 func TestSigningKeyAggregation_SelfHealsOnChannelClose(t *testing.T) {
+	t.Parallel()
 	reg := newFlakyRegistry()
 	defer func() { _ = reg.Close() }()
 
@@ -285,6 +286,7 @@ func TestSigningKeyAggregation_SelfHealsOnChannelClose(t *testing.T) {
 // but the loop must exit WITHOUT going degraded — a drain must never trip
 // /readyz or emit a degraded audit event.
 func TestSigningKeyAggregation_CleanCancelNotDegraded(t *testing.T) {
+	t.Parallel()
 	reg := signingkeysmemory.New()
 	defer func() { _ = reg.Close() }()
 
@@ -345,6 +347,7 @@ func adoptionErrorTotal(t *testing.T, m *metrics.Metrics, reason string) float64
 // rejects AdoptVerifyKey) bumps {reason=adopt}. Both stay fail-open (the key is
 // skipped, nothing else changes).
 func TestSigningKeyAggregation_AdoptionErrorMetrics(t *testing.T) {
+	t.Parallel()
 	m := metrics.New()
 	localIss := defaultimpl.NewEd25519JWTIssuer(
 		defaultimpl.WithEd25519Issuer("https://sso.example"),

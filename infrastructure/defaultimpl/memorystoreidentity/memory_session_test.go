@@ -11,6 +11,7 @@ import (
 )
 
 func TestMemorySessionManager_CreateGet(t *testing.T) {
+	t.Parallel()
 	m := NewMemorySessionManager(time.Hour)
 	s, err := m.Create(context.Background(), "u-alice")
 	if err != nil {
@@ -33,6 +34,7 @@ func TestMemorySessionManager_CreateGet(t *testing.T) {
 }
 
 func TestMemorySessionManager_DefaultTTL(t *testing.T) {
+	t.Parallel()
 	m := NewMemorySessionManager()
 	if m.ttl != core.DefaultSessionDuration {
 		t.Errorf("ttl = %v, want default %v", m.ttl, core.DefaultSessionDuration)
@@ -40,6 +42,7 @@ func TestMemorySessionManager_DefaultTTL(t *testing.T) {
 }
 
 func TestMemorySessionManager_OverrideTTL(t *testing.T) {
+	t.Parallel()
 	m := NewMemorySessionManager(7 * time.Minute)
 	if m.ttl != 7*time.Minute {
 		t.Errorf("ttl = %v, want override", m.ttl)
@@ -47,6 +50,7 @@ func TestMemorySessionManager_OverrideTTL(t *testing.T) {
 }
 
 func TestMemorySessionManager_GetMissingReturnsSentinel(t *testing.T) {
+	t.Parallel()
 	m := NewMemorySessionManager(time.Hour)
 	if _, err := m.Get(context.Background(), "missing"); !errors.Is(err, core.ErrSessionNotFound) {
 		t.Errorf("err = %v, want ErrSessionNotFound", err)
@@ -54,6 +58,7 @@ func TestMemorySessionManager_GetMissingReturnsSentinel(t *testing.T) {
 }
 
 func TestMemorySessionManager_Destroy(t *testing.T) {
+	t.Parallel()
 	m := NewMemorySessionManager(time.Hour)
 	s, _ := m.Create(context.Background(), "u")
 	if err := m.Destroy(context.Background(), s.ID); err != nil {
@@ -69,6 +74,7 @@ func TestMemorySessionManager_Destroy(t *testing.T) {
 }
 
 func TestMemorySessionManager_RefreshBumpsExpiry(t *testing.T) {
+	t.Parallel()
 	m := NewMemorySessionManager(time.Second)
 	s, _ := m.Create(context.Background(), "u")
 	old := s.ExpiresAt
@@ -83,6 +89,7 @@ func TestMemorySessionManager_RefreshBumpsExpiry(t *testing.T) {
 }
 
 func TestMemorySessionManager_RefreshMissing(t *testing.T) {
+	t.Parallel()
 	m := NewMemorySessionManager(time.Hour)
 	if _, err := m.Refresh(context.Background(), "missing"); !errors.Is(err, core.ErrSessionNotFound) {
 		t.Errorf("err = %v, want ErrSessionNotFound", err)
@@ -94,6 +101,7 @@ func TestMemorySessionManager_RefreshMissing(t *testing.T) {
 // resurrectable by calling Refresh. Pre-fix this test failed: the
 // old Refresh just bumped ExpiresAt without checking IsExpired.
 func TestMemorySessionManager_RefreshRefusesExpired(t *testing.T) {
+	t.Parallel()
 	m := NewMemorySessionManager(10 * time.Millisecond)
 	s, _ := m.Create(context.Background(), "alice")
 	time.Sleep(20 * time.Millisecond) // session past ExpiresAt
@@ -106,6 +114,7 @@ func TestMemorySessionManager_RefreshRefusesExpired(t *testing.T) {
 // admin-revocation case — operator revokes a session, attacker
 // captures the id, tries to extend. MUST fail.
 func TestMemorySessionManager_RefreshRefusesRevoked(t *testing.T) {
+	t.Parallel()
 	m := NewMemorySessionManager(time.Hour)
 	s, _ := m.Create(context.Background(), "alice")
 	// Mark revoked directly via the underlying map (admin
@@ -120,6 +129,7 @@ func TestMemorySessionManager_RefreshRefusesRevoked(t *testing.T) {
 }
 
 func TestMemorySessionManager_ListByUser(t *testing.T) {
+	t.Parallel()
 	m := NewMemorySessionManager(time.Hour)
 	_, _ = m.Create(context.Background(), "alice")
 	_, _ = m.Create(context.Background(), "alice")
@@ -140,6 +150,7 @@ func TestMemorySessionManager_ListByUser(t *testing.T) {
 }
 
 func TestMemorySessionManager_ListAll(t *testing.T) {
+	t.Parallel()
 	m := NewMemorySessionManager(time.Hour)
 	_, _ = m.Create(context.Background(), "alice")
 	_, _ = m.Create(context.Background(), "bob")
@@ -150,6 +161,7 @@ func TestMemorySessionManager_ListAll(t *testing.T) {
 }
 
 func TestMemorySessionManager_ConcurrentCreates(t *testing.T) {
+	t.Parallel()
 	m := NewMemorySessionManager(time.Hour)
 	const n = 50
 	var wg sync.WaitGroup
@@ -168,6 +180,7 @@ func TestMemorySessionManager_ConcurrentCreates(t *testing.T) {
 }
 
 func TestMemorySessionManager_CreateWithMeta(t *testing.T) {
+	t.Parallel()
 	mgr := NewMemorySessionManager(time.Hour)
 	ctx := context.Background()
 	s, err := mgr.CreateWithMeta(ctx, "alice", core.SessionMeta{IP: "10.0.0.1", UserAgent: "UA/1"})
@@ -191,6 +204,7 @@ func TestMemorySessionManager_CreateWithMeta(t *testing.T) {
 // tenant suspension: only the target tenant's sessions are removed, sessions of
 // other tenants (and untagged sessions) survive.
 func TestMemorySessionManager_DeleteByTenant(t *testing.T) {
+	t.Parallel()
 	m := NewMemorySessionManager(time.Hour)
 	ctx := context.Background()
 	// Two sessions for tenant acme, one for globex, one untagged.

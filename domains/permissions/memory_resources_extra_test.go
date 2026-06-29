@@ -11,6 +11,7 @@ import (
 // resolves with the HTTP type at the same (tenant,client) — the r.Type !=
 // lookup.Type continue branch fires and nothing matches.
 func TestResolveResource_TypeMismatchSkips(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	r := newRes("r-1", "t-acme", "web", permissions.ResourceTypeGRPCAPI, map[string]string{
@@ -31,6 +32,7 @@ func TestResolveResource_TypeMismatchSkips(t *testing.T) {
 }
 
 func TestResolveResource_ClientMismatchSkips(t *testing.T) {
+	t.Parallel()
 	// A resource exists under (tenant, clientA) but the lookup names
 	// clientB → the scope-filter continue branch skips it.
 	p := permissions.NewMemoryProvider()
@@ -50,6 +52,7 @@ func TestResolveResource_ClientMismatchSkips(t *testing.T) {
 }
 
 func TestResolveResource_GRPCMethodMismatch(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	r := newRes("r-1", "t-acme", "svc", permissions.ResourceTypeGRPCAPI, map[string]string{
@@ -67,6 +70,7 @@ func TestResolveResource_GRPCMethodMismatch(t *testing.T) {
 }
 
 func TestResolveResource_GraphQL(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	r := newRes("r-1", "t-acme", "web", permissions.ResourceTypeGraphQLAPI, map[string]string{
@@ -93,6 +97,7 @@ func TestResolveResource_GraphQL(t *testing.T) {
 }
 
 func TestResolveResource_JSFn(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	r := newRes("r-1", "t-acme", "web", permissions.ResourceTypeJSFn, map[string]string{
@@ -118,6 +123,7 @@ func TestResolveResource_JSFn(t *testing.T) {
 }
 
 func TestResolveResource_UIElementSelectorMismatch(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	r := newRes("r-1", "t-acme", "web", permissions.ResourceTypeUIElement, map[string]string{
@@ -135,6 +141,7 @@ func TestResolveResource_UIElementSelectorMismatch(t *testing.T) {
 }
 
 func TestResolveResource_UIElementPageIDMismatch(t *testing.T) {
+	t.Parallel()
 	// Same selector, both sides set page_id but they differ → the
 	// page_id disambiguation branch rejects the match.
 	p := permissions.NewMemoryProvider()
@@ -154,6 +161,7 @@ func TestResolveResource_UIElementPageIDMismatch(t *testing.T) {
 }
 
 func TestResolveResource_UIElementPageIDOmittedMatchesSelectorOnly(t *testing.T) {
+	t.Parallel()
 	// page_id only disambiguates when BOTH sides set it. If the lookup
 	// omits page_id, a selector match alone is enough.
 	p := permissions.NewMemoryProvider()
@@ -173,6 +181,7 @@ func TestResolveResource_UIElementPageIDOmittedMatchesSelectorOnly(t *testing.T)
 }
 
 func TestResolveResource_CustomTypeKeyMismatch(t *testing.T) {
+	t.Parallel()
 	// Custom (unknown) type falls into the default best-effort exact-match
 	// over every registered key; a differing value rejects.
 	p := permissions.NewMemoryProvider()
@@ -192,6 +201,7 @@ func TestResolveResource_CustomTypeKeyMismatch(t *testing.T) {
 }
 
 func TestResolveResource_HTTPPathSegmentMismatch(t *testing.T) {
+	t.Parallel()
 	// Equal segment count, but a concrete (non-:param) segment differs →
 	// matchPath's per-segment inequality branch rejects.
 	p := permissions.NewMemoryProvider()
@@ -208,6 +218,7 @@ func TestResolveResource_HTTPPathSegmentMismatch(t *testing.T) {
 }
 
 func TestRegisterResource_NoAttributesCloneRoundTrips(t *testing.T) {
+	t.Parallel()
 	// A page resource with a non-nil Attributes but nil RequiredPermissions
 	// plus a custom-type resource with nil Attributes exercise cloneResource's
 	// nil-field branches without aliasing.

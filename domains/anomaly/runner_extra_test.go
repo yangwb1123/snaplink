@@ -45,6 +45,7 @@ func (l *countingLogger) errorCount() int {
 }
 
 func TestWithWorkers_OverridesDefault(t *testing.T) {
+	t.Parallel()
 	// Default is 4; WithWorkers raises/lowers it. A non-positive value
 	// is rejected (guard), leaving whatever stood before.
 	r := NewRunner([]Detector{&recordingDetector{name: "d"}}, nil)
@@ -67,6 +68,7 @@ func TestWithWorkers_OverridesDefault(t *testing.T) {
 }
 
 func TestWithWorkers_LaunchesConfiguredGoroutineCount(t *testing.T) {
+	t.Parallel()
 	// Prove the worker count is actually honored by Start: with 3 workers
 	// and a detector that blocks until released, all 3 events can be
 	// in-flight simultaneously. A single worker would serialize them.
@@ -113,6 +115,7 @@ func (g *gateDetector) Inspect(_ context.Context, _ *LoginEvent) ([]Signal, erro
 }
 
 func TestWithLogger_NilIgnored_CustomApplied(t *testing.T) {
+	t.Parallel()
 	// WithLogger(nil) is a guarded no-op; a real logger replaces the
 	// NopLogger default.
 	r := NewRunner([]Detector{&recordingDetector{name: "d"}}, nil,
@@ -131,6 +134,7 @@ func TestWithLogger_NilIgnored_CustomApplied(t *testing.T) {
 }
 
 func TestRecordDrop_LogsAndMetricsThroughCustomLogger(t *testing.T) {
+	t.Parallel()
 	// A full queue under drop_newest must: (a) log the drop via the
 	// wired logger, and (b) fire the dropped metric callback with the
 	// "queue_full" reason. Workers are never started so the queue stays
@@ -172,6 +176,7 @@ func TestRecordDrop_LogsAndMetricsThroughCustomLogger(t *testing.T) {
 }
 
 func TestRecordDrop_BlockPolicyCtxCanceledReason(t *testing.T) {
+	t.Parallel()
 	// Under block policy with a full queue, a canceled ctx must drop
 	// with the "ctx_canceled" reason (not "queue_full").
 	var reasons []string
@@ -198,6 +203,7 @@ func TestRecordDrop_BlockPolicyCtxCanceledReason(t *testing.T) {
 }
 
 func TestMetricsCallbacks_DetectedAndInspectErrorFire(t *testing.T) {
+	t.Parallel()
 	// Exercise recordDetected + recordInspectError end-to-end through a
 	// running worker: one detector errors (inspectError), another
 	// surfaces an anomaly (detected). Both callbacks must fire with the
@@ -246,6 +252,7 @@ func TestMetricsCallbacks_DetectedAndInspectErrorFire(t *testing.T) {
 }
 
 func TestSinkFunc_RecordAdapter(t *testing.T) {
+	t.Parallel()
 	// SinkFunc is a func→Sink adapter; calling Record must invoke the
 	// wrapped func with the same args and propagate its error.
 	var gotEvent *LoginEvent
@@ -267,6 +274,7 @@ func TestSinkFunc_RecordAdapter(t *testing.T) {
 }
 
 func TestNewRecorderSink_WritesAnomalyAuditEvent(t *testing.T) {
+	t.Parallel()
 	// The standard recorder sink translates a Signal into an
 	// audit.EventAnomalyDetected event carrying severity + score +
 	// every Evidence key as metadata. Use the real in-memory audit
@@ -330,6 +338,7 @@ func TestNewRecorderSink_WritesAnomalyAuditEvent(t *testing.T) {
 }
 
 func TestNewRecorderSink_ActorFallsBackToEventSubject(t *testing.T) {
+	t.Parallel()
 	// When the Signal carries no SubjectID, the audit ActorID falls
 	// back to the event's SubjectID.
 	sink := audit.NewMemorySink(8)
@@ -347,6 +356,7 @@ func TestNewRecorderSink_ActorFallsBackToEventSubject(t *testing.T) {
 }
 
 func TestNewRecorderSink_SignalSubjectWins(t *testing.T) {
+	t.Parallel()
 	// When the Signal resolves its own SubjectID (e.g. brute-force
 	// shadow), it takes precedence over the event's subject.
 	sink := audit.NewMemorySink(8)
@@ -364,6 +374,7 @@ func TestNewRecorderSink_SignalSubjectWins(t *testing.T) {
 }
 
 func TestNewRecorderSink_ZeroScoreOmitted(t *testing.T) {
+	t.Parallel()
 	// Binary detectors leave Score 0 → no anomaly.score metadata key.
 	sink := audit.NewMemorySink(8)
 	rs := NewRecorderSink(audit.New(sink))
@@ -385,6 +396,7 @@ func TestNewRecorderSink_ZeroScoreOmitted(t *testing.T) {
 }
 
 func TestInspect_NeverInfluencesDispatchCaller(t *testing.T) {
+	t.Parallel()
 	// Hard invariant: anomaly detection MUST NOT feed back into the auth
 	// decision. Dispatch is fire-and-forget — it returns no result and
 	// must not block on inspect even when a detector flags critical. A
@@ -410,6 +422,7 @@ func TestInspect_NeverInfluencesDispatchCaller(t *testing.T) {
 }
 
 func TestDispatch_DropNewestUnderLoad_ProcessesSomeDropsRest(t *testing.T) {
+	t.Parallel()
 	// Under sustained load with a small queue + a slow detector, the
 	// runner processes a bounded subset and sheds the rest via
 	// drop-newest — never blocking the dispatcher. Assert: every offer
@@ -449,6 +462,7 @@ func TestDispatch_DropNewestUnderLoad_ProcessesSomeDropsRest(t *testing.T) {
 }
 
 func TestDispatch_PreservesEventFields(t *testing.T) {
+	t.Parallel()
 	// The exact *LoginEvent pointer (with geo + all fields) reaches the
 	// detector unmodified — the runner is a pure conduit.
 	var seen *LoginEvent

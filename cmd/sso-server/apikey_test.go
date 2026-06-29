@@ -17,6 +17,7 @@ import (
 // newline that operators would be surprised to find baked into the
 // stored secret.
 func TestLoadSecretFile_TrimsTrailingNewline(t *testing.T) {
+	t.Parallel()
 	tmp := filepath.Join(t.TempDir(), "k.secret")
 	if err := os.WriteFile(tmp, []byte("topsecret\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -34,6 +35,7 @@ func TestLoadSecretFile_TrimsTrailingNewline(t *testing.T) {
 // silently admit the empty string as a credential. Fail loud at
 // boot instead.
 func TestLoadSecretFile_RejectsEmpty(t *testing.T) {
+	t.Parallel()
 	tmp := filepath.Join(t.TempDir(), "empty.secret")
 	if err := os.WriteFile(tmp, []byte(""), 0o600); err != nil {
 		t.Fatal(err)
@@ -47,6 +49,7 @@ func TestLoadSecretFile_RejectsEmpty(t *testing.T) {
 // TestLoadSecretFile_MissingFileSurfaces — typo'd path → boot
 // error, not silent zero-credential.
 func TestLoadSecretFile_MissingFileSurfaces(t *testing.T) {
+	t.Parallel()
 	if _, err := serverbuildauthn.LoadSecretFile("/no/such/secret"); err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -58,6 +61,7 @@ func TestLoadSecretFile_MissingFileSurfaces(t *testing.T) {
 // previous wiring registered a hardcoded "ak_demo" demo key that
 // no real caller could ever use against production credentials.
 func TestBuildAuthenticators_APIKeySeedAuthenticates(t *testing.T) {
+	t.Parallel()
 	tmp := filepath.Join(t.TempDir(), "k.secret")
 	const secret = "rotateme"
 	if err := os.WriteFile(tmp, []byte(secret+"\n"), 0o600); err != nil {
@@ -97,6 +101,7 @@ func TestBuildAuthenticators_APIKeySeedAuthenticates(t *testing.T) {
 // fail-soft behavior — bad entries log + skip, valid ones still
 // register, the authenticator stays available.
 func TestBuildAuthenticators_APIKeySkipsBadEntries(t *testing.T) {
+	t.Parallel()
 	tmp := filepath.Join(t.TempDir(), "k.secret")
 	if err := os.WriteFile(tmp, []byte("good\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -127,6 +132,7 @@ func TestBuildAuthenticators_APIKeySkipsBadEntries(t *testing.T) {
 // later). Authenticator still registers; it simply rejects every
 // authentication attempt with unknown-key until seeded.
 func TestBuildAuthenticators_APIKeyEmptyKeysList(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Authenticators.APIKey = &config.APIKeyConfig{Enabled: true}
 	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil, nil)

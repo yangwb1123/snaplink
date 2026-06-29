@@ -6,6 +6,7 @@ import (
 )
 
 func TestConsentChallengeStore_IssueConsumeSingleUse(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewConsentChallengeStore(rdb)
 	scopes := []string{"openid", "profile", "email"}
@@ -26,6 +27,7 @@ func TestConsentChallengeStore_IssueConsumeSingleUse(t *testing.T) {
 }
 
 func TestConsentChallengeStore_RejectsMismatch(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewConsentChallengeStore(rdb)
 	scopes := []string{"openid", "profile"}
@@ -51,6 +53,7 @@ func TestConsentChallengeStore_RejectsMismatch(t *testing.T) {
 }
 
 func TestConsentChallengeStore_UnknownAndExpired(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	s := NewConsentChallengeStore(rdb)
 

@@ -60,6 +60,7 @@ func standardUser(dir *fakeDirectory) string {
 // --- Happy path -----------------------------------------------------------
 
 func TestAuthenticate_HappyPath(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	standardUser(dir)
 	a, _ := newTestAuth(t, dir, Config{
@@ -102,6 +103,7 @@ func TestAuthenticate_HappyPath(t *testing.T) {
 // --- Wrong password vs unknown user: SAME error (anti-enumeration) --------
 
 func TestAuthenticate_WrongPassword(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	standardUser(dir)
 	a, _ := newTestAuth(t, dir, Config{UserFilter: "(uid=%s)", IDAttribute: "uid"})
@@ -113,6 +115,7 @@ func TestAuthenticate_WrongPassword(t *testing.T) {
 }
 
 func TestAuthenticate_UnknownUser_SameErrorAsWrongPassword(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	standardUser(dir)
 	a, _ := newTestAuth(t, dir, Config{UserFilter: "(uid=%s)", IDAttribute: "uid"})
@@ -138,6 +141,7 @@ func TestAuthenticate_UnknownUser_SameErrorAsWrongPassword(t *testing.T) {
 // bind round-trip a wrong-password attempt does — closing the timing
 // side-channel. We assert by inspecting the binds the directory received.
 func TestAuthenticate_UnknownUser_DummyBindForTimingParity(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	standardUser(dir)
 	a, _ := newTestAuth(t, dir, Config{UserFilter: "(uid=%s)", IDAttribute: "uid"})
@@ -169,6 +173,7 @@ func TestAuthenticate_UnknownUser_DummyBindForTimingParity(t *testing.T) {
 // Symmetry check: a wrong-password attempt for a KNOWN user also ends in a user
 // bind, so the bind-count shape matches the unknown-user case.
 func TestAuthenticate_WrongPassword_PerformsUserBind(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	standardUser(dir)
 	a, _ := newTestAuth(t, dir, Config{UserFilter: "(uid=%s)", IDAttribute: "uid"})
@@ -185,6 +190,7 @@ func TestAuthenticate_WrongPassword_PerformsUserBind(t *testing.T) {
 }
 
 func TestAuthenticate_EmptyPassword_RejectedNoBind(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	standardUser(dir)
 	a, _ := newTestAuth(t, dir, Config{UserFilter: "(uid=%s)", IDAttribute: "uid"})
@@ -209,6 +215,7 @@ func TestAuthenticate_EmptyPassword_RejectedNoBind(t *testing.T) {
 // widen the query (no entry matches), and the result is the generic
 // ErrAuthFailed (indistinguishable from any other miss).
 func TestAuthenticate_LDAPInjection_UsernameEscaped(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	// A decoy "admin" entry the injection would try to reach if unescaped.
 	dir.addUser("uid=admin,dc=example,dc=com", "admin-pw", map[string][]string{"uid": {"admin"}})
@@ -254,6 +261,7 @@ func TestAuthenticate_LDAPInjection_UsernameEscaped(t *testing.T) {
 
 // A grab-bag of metacharacters (backslash, parens, NUL) are all escaped.
 func TestAuthenticate_LDAPInjection_AllMetacharsEscaped(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	standardUser(dir)
 	a, _ := newTestAuth(t, dir, Config{UserFilter: "(uid=%s)", IDAttribute: "uid"})
@@ -290,6 +298,7 @@ func TestAuthenticate_LDAPInjection_AllMetacharsEscaped(t *testing.T) {
 // --- Ambiguous (>1) match rejected ----------------------------------------
 
 func TestAuthenticate_AmbiguousMatch_Rejected(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	// Force the search to return TWO entries for any filter.
 	dir.searchEntriesFor = func(_ string) []*ldap.Entry {
@@ -319,6 +328,7 @@ func TestAuthenticate_AmbiguousMatch_Rejected(t *testing.T) {
 // --- Group second-search path (reverse membership) ------------------------
 
 func TestAuthenticate_GroupSearch_ReverseMembership(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	dir.addUser("uid=bob,dc=example,dc=com", "pw", map[string][]string{"uid": {"bob"}})
 	// Group entries returned by the GroupFilter search.
@@ -369,6 +379,7 @@ func TestAuthenticate_GroupSearch_ReverseMembership(t *testing.T) {
 // Group filter injection: a user DN containing metacharacters is escaped in the
 // group second-search too.
 func TestAuthenticate_GroupSearch_DNEscaped(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	// User DN deliberately carries a paren (legal-ish in a CN value) to prove
 	// escaping in the group filter.
@@ -417,6 +428,7 @@ func TestAuthenticate_GroupSearch_DNEscaped(t *testing.T) {
 // the escaped form, the raw payload is absent, and it was the USERNAME (not the
 // DN) that was substituted.
 func TestAuthenticate_GroupSearch_MemberUid_UsernameEscaped(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 
 	// The user lives at a DN that is intentionally UNRELATED to the username, so
@@ -510,6 +522,7 @@ func TestAuthenticate_GroupSearch_MemberUid_UsernameEscaped(t *testing.T) {
 // DN into the placeholder, while a "memberUid"-style filter routes the username.
 // This locks the routing rule the escaping tests each assert on one side.
 func TestResolveGroups_BranchSelection_DNvsUsername(t *testing.T) {
+	t.Parallel()
 	const userDN = "uid=zoe,dc=example,dc=com"
 	const username = "zoe"
 
@@ -571,6 +584,7 @@ func TestResolveGroups_BranchSelection_DNvsUsername(t *testing.T) {
 // --- Operational failures (distinct from a credential verdict) ------------
 
 func TestAuthenticate_ServiceBindRejected_DirectoryUnavailable(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	standardUser(dir)
 	a, _ := newTestAuth(t, dir, Config{
@@ -592,6 +606,7 @@ func TestAuthenticate_ServiceBindRejected_DirectoryUnavailable(t *testing.T) {
 }
 
 func TestAuthenticate_DialFailure_Failover(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	standardUser(dir)
 	d := &fakeDialer{
@@ -630,6 +645,7 @@ func TestAuthenticate_DialFailure_Failover(t *testing.T) {
 }
 
 func TestAuthenticate_AllDialsFail_Unavailable(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	d := &fakeDialer{
 		dir:        dir,
@@ -651,6 +667,7 @@ func TestAuthenticate_AllDialsFail_Unavailable(t *testing.T) {
 // --- Timeout: a hung search returns a bounded error, not a hang -----------
 
 func TestAuthenticate_SearchTimeout_Bounded(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	standardUser(dir)
 	dir.searchHang = time.Hour // the search would hang forever
@@ -685,6 +702,7 @@ func TestAuthenticate_SearchTimeout_Bounded(t *testing.T) {
 }
 
 func TestAuthenticate_ContextCancelled_BetweenFailover(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	d := &fakeDialer{
 		dir:        dir,
@@ -709,6 +727,7 @@ func TestAuthenticate_ContextCancelled_BetweenFailover(t *testing.T) {
 // --- Interface contract: LoginURL "" + Callback not applicable ------------
 
 func TestLoginURL_Empty(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	a, _ := newTestAuth(t, dir, Config{UserFilter: "(uid=%s)"})
 	if got := a.LoginURL("some-state"); got != "" {
@@ -717,6 +736,7 @@ func TestLoginURL_Empty(t *testing.T) {
 }
 
 func TestCallback_NotApplicable(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	a, _ := newTestAuth(t, dir, Config{UserFilter: "(uid=%s)"})
 	if _, err := a.Callback(context.Background(), &sso.CallbackState{}); !errors.Is(err, ErrCallbackNotApplicable) {
@@ -725,6 +745,7 @@ func TestCallback_NotApplicable(t *testing.T) {
 }
 
 func TestName(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	a, _ := newTestAuth(t, dir, Config{Name: "corp-ad", UserFilter: "(uid=%s)"})
 	if a.Name() != "corp-ad" {
@@ -735,6 +756,7 @@ func TestName(t *testing.T) {
 // --- ID-attribute fallback to DN ------------------------------------------
 
 func TestAuthenticate_IDAttributeAbsent_FallsBackToDN(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	// User has no "objectGUID" attribute, so ExternalID must fall back to the DN.
 	dir.addUser("uid=carol,dc=example,dc=com", "pw", map[string][]string{"uid": {"carol"}})
@@ -752,6 +774,7 @@ func TestAuthenticate_IDAttributeAbsent_FallsBackToDN(t *testing.T) {
 // --- Anonymous search bind (no service account) ---------------------------
 
 func TestAuthenticate_AnonymousSearchBind(t *testing.T) {
+	t.Parallel()
 	dir := newFakeDirectory()
 	dir.serviceDN = "" // directory permits anonymous search
 	dir.addUser("uid=dave,dc=example,dc=com", "pw", map[string][]string{"uid": {"dave"}})

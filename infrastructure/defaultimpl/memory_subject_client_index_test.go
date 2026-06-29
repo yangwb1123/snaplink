@@ -9,6 +9,7 @@ import (
 )
 
 func TestMemorySubjectClientIndex_RecordListForget(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	idx := defaultimpl.NewMemorySubjectClientIndex()
 
@@ -55,6 +56,7 @@ func TestMemorySubjectClientIndex_RecordListForget(t *testing.T) {
 }
 
 func TestMemorySubjectClientIndex_EmptyArgsAreNoOps(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	idx := defaultimpl.NewMemorySubjectClientIndex()
 

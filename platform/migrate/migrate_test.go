@@ -51,6 +51,7 @@ var base = []migrate.Migration{
 }
 
 func TestRun_FreshApply(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	ctx := context.Background()
 	if err := migrate.Run(ctx, db, "demo", base); err != nil {
@@ -66,6 +67,7 @@ func TestRun_FreshApply(t *testing.T) {
 }
 
 func TestRun_Idempotent(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	ctx := context.Background()
 	for i := range 3 {
@@ -82,6 +84,7 @@ func TestRun_Idempotent(t *testing.T) {
 }
 
 func TestRun_Incremental(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	ctx := context.Background()
 	if err := migrate.Run(ctx, db, "demo", base); err != nil {
@@ -105,6 +108,7 @@ func TestRun_Incremental(t *testing.T) {
 // accept the idempotent baseline without error and be stamped v1 — no
 // data loss, no "table already exists" failure.
 func TestRun_AdoptsExistingSchema(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	ctx := context.Background()
 	// Simulate a pre-migration DB: create the table directly + seed data.
@@ -129,6 +133,7 @@ func TestRun_AdoptsExistingSchema(t *testing.T) {
 // TestRun_FailureRollsBack proves a failing migration leaves no partial
 // version record (atomic application).
 func TestRun_FailureRollsBack(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	ctx := context.Background()
 	bad := []migrate.Migration{
@@ -145,6 +150,7 @@ func TestRun_FailureRollsBack(t *testing.T) {
 }
 
 func TestRun_Validation(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	ctx := context.Background()
 	cases := map[string][]migrate.Migration{
@@ -163,6 +169,7 @@ func TestRun_Validation(t *testing.T) {
 }
 
 func TestCurrentVersion_MissingTableIsZero(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	if v := current(t, db, "never_run"); v != 0 {
 		t.Errorf("version = %d, want 0 for unmigrated namespace", v)
@@ -170,6 +177,7 @@ func TestCurrentVersion_MissingTableIsZero(t *testing.T) {
 }
 
 func TestRun_FuncMigration(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	ctx := context.Background()
 	ran := false
@@ -200,6 +208,7 @@ func TestRun_FuncMigration(t *testing.T) {
 }
 
 func TestRun_FuncErrorRollsBack(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	ms := []migrate.Migration{
 		{Version: 1, Name: "boom", Func: func(_ context.Context, _ migrate.Execer) error {
@@ -215,6 +224,7 @@ func TestRun_FuncErrorRollsBack(t *testing.T) {
 }
 
 func TestRun_RejectsBothOrNeitherSQLAndFunc(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	ctx := context.Background()
 	both := []migrate.Migration{{Version: 1, Name: "both", SQL: "SELECT 1", Func: func(context.Context, migrate.Execer) error { return nil }}}
@@ -234,6 +244,7 @@ type errTest string
 func (e errTest) Error() string { return string(e) }
 
 func TestStatus_ReportsPerNamespace(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	ctx := context.Background()
 	// Two namespaces at different versions.
@@ -267,6 +278,7 @@ func TestStatus_ReportsPerNamespace(t *testing.T) {
 }
 
 func TestStatus_EmptyDBNoNamespaces(t *testing.T) {
+	t.Parallel()
 	st, err := migrate.Status(context.Background(), openDB(t))
 	if err != nil {
 		t.Fatalf("Status: %v", err)
@@ -280,6 +292,7 @@ func TestStatus_EmptyDBNoNamespaces(t *testing.T) {
 // against one database: every Run must succeed and the version must be
 // recorded exactly once (BEGIN IMMEDIATE serialization, no double-apply).
 func TestRun_ConcurrentRunnersSerialize(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	ctx := context.Background()
 	const replicas = 8
@@ -306,6 +319,7 @@ func TestRun_ConcurrentRunnersSerialize(t *testing.T) {
 }
 
 func TestMaxVersion_Empty(t *testing.T) {
+	t.Parallel()
 	if got := migrate.MaxVersion(nil); got != -1 {
 		t.Errorf("MaxVersion(nil) = %d, want -1", got)
 	}
@@ -315,6 +329,7 @@ func TestMaxVersion_Empty(t *testing.T) {
 }
 
 func TestMaxVersion_Single(t *testing.T) {
+	t.Parallel()
 	ms := []migrate.Migration{{Version: 5, Name: "only", SQL: "SELECT 1"}}
 	if got := migrate.MaxVersion(ms); got != 5 {
 		t.Errorf("MaxVersion = %d, want 5", got)
@@ -322,6 +337,7 @@ func TestMaxVersion_Single(t *testing.T) {
 }
 
 func TestMaxVersion_Multi(t *testing.T) {
+	t.Parallel()
 	ms := []migrate.Migration{
 		{Version: 1, Name: "a", SQL: "SELECT 1"},
 		{Version: 3, Name: "b", SQL: "SELECT 1"},
@@ -336,6 +352,7 @@ func TestMaxVersion_Multi(t *testing.T) {
 // is at or below the binary's declared max, or when the DB has no migrations
 // yet (fresh install).
 func TestCheckSchema_SafeCases(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	t.Run("fresh DB (version 0) is safe", func(t *testing.T) {
@@ -370,6 +387,7 @@ func TestCheckSchema_SafeCases(t *testing.T) {
 // live DB version exceeds the binary's declared max — the canary-rollback
 // foot-gun this guard was designed to catch.
 func TestCheckSchema_SchemaTooNew(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	db := openDB(t)
 	v2 := append(append([]migrate.Migration{}, base...),

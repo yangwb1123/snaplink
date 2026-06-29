@@ -14,6 +14,7 @@ import (
 )
 
 func TestBuildPasswordCredentialStore_DisabledByDefault(t *testing.T) {
+	t.Parallel()
 	s, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{}, nil, "")
 	if err != nil {
 		t.Fatalf("disabled build: %v", err)
@@ -24,12 +25,14 @@ func TestBuildPasswordCredentialStore_DisabledByDefault(t *testing.T) {
 }
 
 func TestBuildPasswordCredentialStore_SQLiteNeedsDSN(t *testing.T) {
+	t.Parallel()
 	if _, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "sqlite"}, nil, ""); err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
 }
 
 func TestBuildPasswordCredentialStore_UnknownBackend(t *testing.T) {
+	t.Parallel()
 	if _, err := serverbuildstore.BuildPasswordCredentialStore(config.SelfServiceStoreConfig{Backend: "bogus"}, nil, ""); err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
@@ -54,6 +57,7 @@ func writeHashFile(t *testing.T, pw string) string {
 // authenticates against the store, an unknown user fails, and a password
 // changed in the store (as /me/password would) takes effect on next login.
 func TestBuildStoredPasswordVerifier_SeedsAndAuthenticates(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryPasswordCredentialStore()
 	users := []config.PasswordUserConfig{
 		{Username: "alice", SubjectID: "u-alice", BcryptHashFile: writeHashFile(t, "alice-pw")},

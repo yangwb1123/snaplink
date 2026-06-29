@@ -12,6 +12,7 @@ import (
 )
 
 func TestNew_ConstructsAllVectors(t *testing.T) {
+	t.Parallel()
 	m := metrics.New()
 	if m.Registry == nil {
 		t.Fatal("Registry must not be nil")
@@ -36,6 +37,7 @@ func TestNew_ConstructsAllVectors(t *testing.T) {
 // TestSigningKeyRotationsTotal_ScrapeReportsCounter proves the rotation
 // counter increments and surfaces on /metrics under its canonical name.
 func TestSigningKeyRotationsTotal_ScrapeReportsCounter(t *testing.T) {
+	t.Parallel()
 	m := metrics.New()
 	m.SigningKeyRotationsTotal.Inc()
 	m.SigningKeyRotationsTotal.Inc()
@@ -54,6 +56,7 @@ func TestSigningKeyRotationsTotal_ScrapeReportsCounter(t *testing.T) {
 }
 
 func TestMiddleware_NilMetricsIsIdentity(t *testing.T) {
+	t.Parallel()
 	// Wrapping with nil Metrics MUST NOT alter behavior — operators
 	// who don't wire WithMetrics get the unmodified router.
 	mw := metrics.Middleware(nil)
@@ -73,6 +76,7 @@ func TestMiddleware_NilMetricsIsIdentity(t *testing.T) {
 }
 
 func TestMiddleware_CountsRequestsByMethodAndStatusClass(t *testing.T) {
+	t.Parallel()
 	m := metrics.New()
 	mw := metrics.Middleware(m)
 	wrapped := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -98,6 +102,7 @@ func TestMiddleware_CountsRequestsByMethodAndStatusClass(t *testing.T) {
 }
 
 func TestMiddleware_ImplicitOKCountsAs2xx(t *testing.T) {
+	t.Parallel()
 	// Handlers that never call WriteHeader implicitly return 200.
 	// Without the statusRecorder.Write hook this would mis-classify
 	// as the zero-value status_class.
@@ -114,6 +119,7 @@ func TestMiddleware_ImplicitOKCountsAs2xx(t *testing.T) {
 }
 
 func TestMiddleware_RecordsLatencyHistogram(t *testing.T) {
+	t.Parallel()
 	m := metrics.New()
 	mw := metrics.Middleware(m)
 	wrapped := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -127,6 +133,7 @@ func TestMiddleware_RecordsLatencyHistogram(t *testing.T) {
 }
 
 func TestMetrics_DirectCountersAreScrapable(t *testing.T) {
+	t.Parallel()
 	// The non-HTTP counters (login attempts, tokens, risk, mfa) are
 	// incremented manually from handler.go / audit_handler.go /
 	// handle_mfa.go. Just prove they roundtrip through the registry.

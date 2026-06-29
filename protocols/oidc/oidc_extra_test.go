@@ -27,6 +27,7 @@ func (failingSigner) SignUserInfo(context.Context, string, map[string]any) (stri
 }
 
 func TestMaybeSignUserInfo_SignFailureSignOnlyFallsThrough(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	_ = store.Add(context.Background(), &core.Client{ID: "rp", UserinfoSignedResponseAlg: oidc.UserinfoSignedAlgEdDSA})
 	d := &userinfoDeps{issuer: failingSigner{}, clients: store, algs: []string{"EdDSA"}, selectorOK: true}
@@ -38,6 +39,7 @@ func TestMaybeSignUserInfo_SignFailureSignOnlyFallsThrough(t *testing.T) {
 }
 
 func TestMaybeSignUserInfo_SignFailureWithEncryptServerError(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	_ = store.Add(context.Background(), &core.Client{
 		ID:                           "rp",
@@ -64,6 +66,7 @@ func TestMaybeSignUserInfo_SignFailureWithEncryptServerError(t *testing.T) {
 }
 
 func TestRenderJARMResponse_EmptyExistingQuery(t *testing.T) {
+	t.Parallel()
 	ctx, rec := newCtx(http.MethodGet, "/auth/login")
 	// redirect_uri with NO existing query → RawQuery starts empty.
 	oidc.RenderJARMResponse(ctx, &fakeSigner{}, oidc.ResponseModeQueryJWT, "https://rp.example/cb", "iss", "c", "code", "st")
@@ -80,6 +83,7 @@ func TestRenderJARMResponse_EmptyExistingQuery(t *testing.T) {
 }
 
 func TestRenderJARMResponse_UnparseableRedirectURI(t *testing.T) {
+	t.Parallel()
 	ctx, rec := newCtx(http.MethodGet, "/auth/login")
 	// A control character makes url.Parse fail → 400 with a plain body
 	// (no broken Location header leaked).
@@ -96,6 +100,7 @@ func TestRenderJARMResponse_UnparseableRedirectURI(t *testing.T) {
 }
 
 func TestHandleSilentRenewal_MaxAgeZeroAuthTimeLoginRequired(t *testing.T) {
+	t.Parallel()
 	d := newSilentDeps(t)
 	// Mint a hint with a zero auth_time (no RFC 9068 population) — freshness
 	// is unverifiable, so any max_age constraint forces login_required.
@@ -110,6 +115,7 @@ func TestHandleSilentRenewal_MaxAgeZeroAuthTimeLoginRequired(t *testing.T) {
 }
 
 func TestHandleSilentRenewal_RevokedSessionLoginRequired(t *testing.T) {
+	t.Parallel()
 	d := newSilentDeps(t)
 	sess, err := d.sessions.Create(context.Background(), "user-1")
 	if err != nil {
@@ -127,6 +133,7 @@ func TestHandleSilentRenewal_RevokedSessionLoginRequired(t *testing.T) {
 }
 
 func TestHandleSilentRenewal_ScopeFallbackToHintScopes(t *testing.T) {
+	t.Parallel()
 	d := newSilentDeps(t)
 	_, _ = d.sessions.Create(context.Background(), "user-1")
 	// Hint carries openid; the request omits Scope, so the handler must
@@ -142,6 +149,7 @@ func TestHandleSilentRenewal_ScopeFallbackToHintScopes(t *testing.T) {
 }
 
 func TestHandleEndSession_StateAppendedToExistingQuery(t *testing.T) {
+	t.Parallel()
 	d := newEndSessionDeps(t)
 	_ = d.clients.Add(context.Background(), &core.Client{
 		ID:                     "rp-1",

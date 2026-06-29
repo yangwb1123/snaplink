@@ -325,6 +325,7 @@ func fullFeatureConfig(t *testing.T) *config.Config {
 // The goal is branch coverage of the cmd assembly layer, not behavior — the
 // behavior is pinned by the dedicated per-feature tests.
 func TestBuildApp_FullFeatureSet(t *testing.T) {
+	t.Parallel()
 	cfg := fullFeatureConfig(t)
 	a, err := buildApp(cfg, quietLogger())
 	if err != nil {
@@ -378,6 +379,7 @@ func TestBuildApp_FullFeatureSet(t *testing.T) {
 // TestBuildApp_SignupRequiresPasswordStore — self-service signup without a
 // password store is a misconfiguration that must fail at boot.
 func TestBuildApp_SignupRequiresPasswordStore(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.SelfService.Signup = true
 	// No SelfService.Password backend.
@@ -393,6 +395,7 @@ func TestBuildApp_SignupRequiresPasswordStore(t *testing.T) {
 // TestNewGRPCServer_MinimalRegistersCoreServices — even a bare app registers
 // the always-on Phase A services without panicking.
 func TestNewGRPCServer_MinimalRegistersCoreServices(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Audit.Enabled = true
 	cfg.Audit.MemoryCapacity = 8
@@ -413,6 +416,7 @@ func TestNewGRPCServer_MinimalRegistersCoreServices(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestNewSlogLogger_LevelsAndMethods(t *testing.T) {
+	t.Parallel()
 	for _, lvl := range []string{"debug", "info", "error", "unknown-falls-back-to-info"} {
 		l := newSlogLogger(lvl)
 		if l == nil {
@@ -434,6 +438,7 @@ func TestNewSlogLogger_LevelsAndMethods(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestWriteAdminPasswordFile_WritesMode0600(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "admin-password")
 	if err := writeAdminPasswordFile(path, "s3cr3t"); err != nil {
 		t.Fatalf("writeAdminPasswordFile: %v", err)
@@ -455,6 +460,7 @@ func TestWriteAdminPasswordFile_WritesMode0600(t *testing.T) {
 }
 
 func TestWriteAdminPasswordFile_MissingDirErrors(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "no-such-dir", "admin-password")
 	if err := writeAdminPasswordFile(path, "x"); err == nil {
 		t.Fatal("expected error writing into a non-existent parent dir")
@@ -466,6 +472,7 @@ func TestWriteAdminPasswordFile_MissingDirErrors(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestAssetSubFS_RootIndexResolvable(t *testing.T) {
+	t.Parallel()
 	cases := map[string]fs.FS{
 		"admin":  serverassets.AdminSubFS(),
 		"login":  serverassets.LoginSubFS(),
@@ -493,6 +500,7 @@ func TestAssetSubFS_RootIndexResolvable(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestCallbackClientIP_XFFFirstHopWins(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest(http.MethodPost, "/push/approval/x/approve", nil)
 	r.RemoteAddr = "10.9.9.9:1234"
 	r.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.1")
@@ -503,6 +511,7 @@ func TestCallbackClientIP_XFFFirstHopWins(t *testing.T) {
 }
 
 func TestCallbackClientIP_FallsBackToRemoteAddr(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
 	r.RemoteAddr = "198.51.100.4:5555"
 	ip := callbackClientIP(r)
@@ -512,6 +521,7 @@ func TestCallbackClientIP_FallsBackToRemoteAddr(t *testing.T) {
 }
 
 func TestCallbackClientIP_RemoteAddrWithoutPort(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
 	r.RemoteAddr = "192.0.2.9" // no port → SplitHostPort errs, host = whole string
 	ip := callbackClientIP(r)
@@ -521,6 +531,7 @@ func TestCallbackClientIP_RemoteAddrWithoutPort(t *testing.T) {
 }
 
 func TestCallbackClientIP_UnparseableReturnsNil(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
 	r.RemoteAddr = "not-an-ip"
 	if ip := callbackClientIP(r); ip != nil {
@@ -529,12 +540,14 @@ func TestCallbackClientIP_UnparseableReturnsNil(t *testing.T) {
 }
 
 func TestRecordCompliance_NilRecorderNoPanic(t *testing.T) {
+	t.Parallel()
 	// nil recorder is the disabled-audit path; must be a silent no-op.
 	recordCompliance(nil, audit.EventAdminSubjectExported, "u1",
 		httptest.NewRequest(http.MethodGet, "/", nil), nil)
 }
 
 func TestRecordCompliance_FailureOutcomeStampsReason(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(8)
 	rec := audit.New(sink)
 	opErr := context.DeadlineExceeded

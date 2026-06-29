@@ -40,6 +40,7 @@ func seedDeviceHistory(t *testing.T, store anomaly.RecentLoginStore, subject, ua
 }
 
 func TestNewDevice_FirstLoginNoSignal(t *testing.T) {
+	t.Parallel()
 	d, _ := newDeviceDetector(t)
 	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
@@ -52,6 +53,7 @@ func TestNewDevice_FirstLoginNoSignal(t *testing.T) {
 }
 
 func TestNewDevice_KnownUANoSignal(t *testing.T) {
+	t.Parallel()
 	d, store := newDeviceDetector(t, detectors.WithNewDeviceBootstrapGracePeriod(0))
 	now := time.Now()
 	// Seed alice with Browser/1 ten days ago (past grace).
@@ -67,6 +69,7 @@ func TestNewDevice_KnownUANoSignal(t *testing.T) {
 }
 
 func TestNewDevice_NewUAFlags(t *testing.T) {
+	t.Parallel()
 	d, store := newDeviceDetector(t, detectors.WithNewDeviceBootstrapGracePeriod(0))
 	now := time.Now()
 	seedDeviceHistory(t, store, "alice", "Browser/1", []byte("salt"), now.Add(-10*24*time.Hour))
@@ -90,6 +93,7 @@ func TestNewDevice_NewUAFlags(t *testing.T) {
 }
 
 func TestNewDevice_EmptyUASkips(t *testing.T) {
+	t.Parallel()
 	d, store := newDeviceDetector(t, detectors.WithNewDeviceBootstrapGracePeriod(0))
 	now := time.Now()
 	seedDeviceHistory(t, store, "alice", "Browser/1", []byte("salt"), now.Add(-10*24*time.Hour))
@@ -104,6 +108,7 @@ func TestNewDevice_EmptyUASkips(t *testing.T) {
 }
 
 func TestNewDevice_BootstrapGraceSuppressesFlag(t *testing.T) {
+	t.Parallel()
 	d, store := newDeviceDetector(t,
 		detectors.WithNewDeviceBootstrapGracePeriod(7*24*time.Hour),
 	)
@@ -121,6 +126,7 @@ func TestNewDevice_BootstrapGraceSuppressesFlag(t *testing.T) {
 }
 
 func TestNewDevice_OutsideGraceFlagsNewUA(t *testing.T) {
+	t.Parallel()
 	d, store := newDeviceDetector(t,
 		detectors.WithNewDeviceBootstrapGracePeriod(7*24*time.Hour),
 	)
@@ -137,6 +143,7 @@ func TestNewDevice_OutsideGraceFlagsNewUA(t *testing.T) {
 }
 
 func TestNewDevice_OutOfBaselineWindowSkips(t *testing.T) {
+	t.Parallel()
 	// Seeded entry is 60 days ago — outside the 30-day default window.
 	d, store := newDeviceDetector(t, detectors.WithNewDeviceBootstrapGracePeriod(0))
 	now := time.Now()
@@ -152,6 +159,7 @@ func TestNewDevice_OutOfBaselineWindowSkips(t *testing.T) {
 }
 
 func TestNewDevice_NilStoreErrors(t *testing.T) {
+	t.Parallel()
 	_, err := detectors.NewNewDeviceDetector(nil, []byte("salt"))
 	if err == nil {
 		t.Error("nil store should error")
@@ -159,6 +167,7 @@ func TestNewDevice_NilStoreErrors(t *testing.T) {
 }
 
 func TestNewDevice_NameStableWireString(t *testing.T) {
+	t.Parallel()
 	d, _ := newDeviceDetector(t)
 	if got := d.Name(); got != "new_device" {
 		t.Errorf("Name = %q, want new_device", got)
@@ -189,6 +198,7 @@ func seedCountryHistory(t *testing.T, store anomaly.RecentLoginStore, subject, c
 }
 
 func TestNewCountry_KnownCountryNoSignal(t *testing.T) {
+	t.Parallel()
 	d, store := newCountryDetector(t, detectors.WithNewCountryBootstrapGracePeriod(0))
 	now := time.Now()
 	seedCountryHistory(t, store, "alice", "US", now.Add(-30*24*time.Hour))
@@ -203,6 +213,7 @@ func TestNewCountry_KnownCountryNoSignal(t *testing.T) {
 }
 
 func TestNewCountry_NewCountryFlags(t *testing.T) {
+	t.Parallel()
 	d, store := newCountryDetector(t, detectors.WithNewCountryBootstrapGracePeriod(0))
 	now := time.Now()
 	seedCountryHistory(t, store, "alice", "US", now.Add(-30*24*time.Hour))
@@ -229,6 +240,7 @@ func TestNewCountry_NewCountryFlags(t *testing.T) {
 }
 
 func TestNewCountry_BootstrapGraceSuppresses(t *testing.T) {
+	t.Parallel()
 	d, store := newCountryDetector(t,
 		detectors.WithNewCountryBootstrapGracePeriod(7*24*time.Hour),
 	)
@@ -245,6 +257,7 @@ func TestNewCountry_BootstrapGraceSuppresses(t *testing.T) {
 }
 
 func TestNewCountry_NoGeoSkips(t *testing.T) {
+	t.Parallel()
 	d, _ := newCountryDetector(t)
 	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
@@ -257,6 +270,7 @@ func TestNewCountry_NoGeoSkips(t *testing.T) {
 }
 
 func TestNewCountry_EmptyCountrySkips(t *testing.T) {
+	t.Parallel()
 	d, _ := newCountryDetector(t)
 	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
@@ -269,6 +283,7 @@ func TestNewCountry_EmptyCountrySkips(t *testing.T) {
 }
 
 func TestNewCountry_NilStoreErrors(t *testing.T) {
+	t.Parallel()
 	_, err := detectors.NewNewCountryDetector(nil)
 	if err == nil {
 		t.Error("nil store should error")
@@ -276,6 +291,7 @@ func TestNewCountry_NilStoreErrors(t *testing.T) {
 }
 
 func TestNewCountry_NameStableWireString(t *testing.T) {
+	t.Parallel()
 	d, _ := newCountryDetector(t)
 	if got := d.Name(); got != "new_country" {
 		t.Errorf("Name = %q, want new_country", got)
@@ -283,6 +299,7 @@ func TestNewCountry_NameStableWireString(t *testing.T) {
 }
 
 func TestNewCountry_OutOfBaselineWindowNoBaseline(t *testing.T) {
+	t.Parallel()
 	// 180 days ago > 90-day default window → no baseline → first
 	// login behavior (no signal).
 	d, store := newCountryDetector(t, detectors.WithNewCountryBootstrapGracePeriod(0))

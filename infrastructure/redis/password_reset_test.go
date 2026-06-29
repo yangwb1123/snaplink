@@ -10,6 +10,7 @@ import (
 )
 
 func TestPasswordResetIssueConsume(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewPasswordResetStore(rdb)
 	ctx := context.Background()
@@ -34,6 +35,7 @@ func TestPasswordResetIssueConsume(t *testing.T) {
 // TestPasswordResetOracleLeak enumerates the indistinguishable failures — each
 // must return exactly core.ErrResetTokenNotFound (single oracle-safe response).
 func TestPasswordResetOracleLeak(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	s := NewPasswordResetStore(rdb)
 	ctx := context.Background()
@@ -67,6 +69,7 @@ func TestPasswordResetOracleLeak(t *testing.T) {
 // TestPasswordResetIssueAlreadyExpired confirms an already-expired token is a
 // no-op at Issue (non-positive TTL) and unconsumable afterward.
 func TestPasswordResetIssueAlreadyExpired(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewPasswordResetStore(rdb)
 	ctx := context.Background()
@@ -82,6 +85,7 @@ func TestPasswordResetIssueAlreadyExpired(t *testing.T) {
 // TestPasswordResetSingleUseRace proves GETDEL gives exactly one winner under
 // concurrent consumption of the same token.
 func TestPasswordResetSingleUseRace(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewPasswordResetStore(rdb)
 	ctx := context.Background()
@@ -111,6 +115,7 @@ func TestPasswordResetSingleUseRace(t *testing.T) {
 }
 
 func TestPasswordResetRevokeAndListByUser(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewPasswordResetStore(rdb)
 	ctx := context.Background()

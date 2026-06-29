@@ -39,6 +39,7 @@ func realKeytabConfig(t *testing.T) Config {
 // loads a real keytab at construction (no KDC, no network) — the operator's
 // boot path.
 func TestGokrb5Validator_ConstructsFromKeytab(t *testing.T) {
+	t.Parallel()
 	v, err := NewGokrb5Validator(realKeytabConfig(t))
 	if err != nil {
 		t.Fatalf("NewGokrb5Validator with a real keytab: %v", err)
@@ -53,6 +54,7 @@ func TestGokrb5Validator_ConstructsFromKeytab(t *testing.T) {
 // (non-nil error, no principal). A forged SPNEGO token can NEVER authenticate
 // against the keytab. Time-independent (none of these are valid tickets).
 func TestGokrb5Validator_FailsClosed(t *testing.T) {
+	t.Parallel()
 	v, err := NewGokrb5Validator(realKeytabConfig(t))
 	if err != nil {
 		t.Fatalf("NewGokrb5Validator: %v", err)
@@ -99,6 +101,7 @@ func TestGokrb5Validator_FailsClosed(t *testing.T) {
 // CLOSED (the operator's boot fails loud) and that the error carries NO keytab
 // bytes.
 func TestNewGokrb5Validator_BadKeytab(t *testing.T) {
+	t.Parallel()
 	cfg := realKeytabConfig(t)
 	cfg.KeytabBytes = []byte("not-a-keytab")
 	_, err := NewGokrb5Validator(cfg)
@@ -117,6 +120,7 @@ func TestNewGokrb5Validator_BadKeytab(t *testing.T) {
 // validation (a missing keytab / realm / client_id fails here, before any
 // keytab load).
 func TestNewGokrb5Validator_RejectsBadConfig(t *testing.T) {
+	t.Parallel()
 	if _, err := NewGokrb5Validator(Config{Name: "k"}); err == nil {
 		t.Error("NewGokrb5Validator with an empty config should error")
 	}
@@ -137,6 +141,7 @@ func settingsSkew(cfg Config) time.Duration {
 // plumbs through to service.MaxClockSkew so the validator enforces the
 // operator's window.
 func TestMaxClockSkew_Plumbing(t *testing.T) {
+	t.Parallel()
 	const gokrb5Default = 5 * time.Minute
 
 	cfg := realKeytabConfig(t)
@@ -176,6 +181,7 @@ func TestMaxClockSkew_Plumbing(t *testing.T) {
 // (The real-keytab FailsClosed test already proves the production decode path;
 // this pins the helper's contract directly without a KDC.)
 func TestExtractGroups_HappyPath(t *testing.T) {
+	t.Parallel()
 	// No PAC / no AD creds ⇒ nil (enrichment, not a gate). credentials.New
 	// initializes the internal attribute maps (new(Credentials) would not).
 	empty := credentials.New("svc", "TEST.GOKRB5")

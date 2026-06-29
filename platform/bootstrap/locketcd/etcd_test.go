@@ -13,6 +13,7 @@ import (
 )
 
 func TestNew_RequiresEndpoints(t *testing.T) {
+	t.Parallel()
 	if _, err := New(Config{}); err == nil {
 		t.Error("expected error when endpoints is empty")
 	}

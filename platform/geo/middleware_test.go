@@ -60,6 +60,7 @@ func requestWithRemoteAddr(remoteAddr string) *http.Request {
 }
 
 func TestMiddleware_EnrichSuccess(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	if err := p.Add("203.0.113.0/24", geo.GeoInfo{
 		CountryCode:         "US",
@@ -82,6 +83,7 @@ func TestMiddleware_EnrichSuccess(t *testing.T) {
 }
 
 func TestMiddleware_NilProviderIsNoOp(t *testing.T) {
+	t.Parallel()
 	mw := geo.Middleware(nil, geo.MiddlewareOptions{})
 	hctx := newHCtx(requestWithRemoteAddr("203.0.113.5:1234"))
 	mw(hctx) // must not panic and must not stash anything
@@ -92,6 +94,7 @@ func TestMiddleware_NilProviderIsNoOp(t *testing.T) {
 }
 
 func TestMiddleware_MissingIPSkipsLookup(t *testing.T) {
+	t.Parallel()
 	// Extractor returns nil → middleware short-circuits before Lookup. Use a
 	// provider that would error if reached, to prove it is not reached.
 	called := false
@@ -112,6 +115,7 @@ func TestMiddleware_MissingIPSkipsLookup(t *testing.T) {
 }
 
 func TestMiddleware_LookupErrorFailsOpenAndReportsViaOnError(t *testing.T) {
+	t.Parallel()
 	wantErr := errors.New("backend down")
 	var gotErr error
 	mw := geo.Middleware(errProvider{err: wantErr}, geo.MiddlewareOptions{
@@ -129,6 +133,7 @@ func TestMiddleware_LookupErrorFailsOpenAndReportsViaOnError(t *testing.T) {
 }
 
 func TestMiddleware_NotFoundIsSilent(t *testing.T) {
+	t.Parallel()
 	// ErrNotFound is the normal "unknown IP" outcome and MUST NOT trip OnError.
 	reported := false
 	mw := geo.Middleware(notFoundProvider{}, geo.MiddlewareOptions{
@@ -146,6 +151,7 @@ func TestMiddleware_NotFoundIsSilent(t *testing.T) {
 }
 
 func TestMiddleware_LookupErrorWithoutOnErrorDoesNotPanic(t *testing.T) {
+	t.Parallel()
 	// OnError unset: the error path must still fail-open cleanly.
 	mw := geo.Middleware(errProvider{err: errors.New("boom")}, geo.MiddlewareOptions{})
 	hctx := newHCtx(requestWithRemoteAddr("203.0.113.5:1234"))
@@ -157,6 +163,7 @@ func TestMiddleware_LookupErrorWithoutOnErrorDoesNotPanic(t *testing.T) {
 }
 
 func TestMiddleware_NilInfoNotStashed(t *testing.T) {
+	t.Parallel()
 	mw := geo.Middleware(nilInfoProvider{}, geo.MiddlewareOptions{})
 	hctx := newHCtx(requestWithRemoteAddr("203.0.113.5:1234"))
 	mw(hctx)
@@ -167,6 +174,7 @@ func TestMiddleware_NilInfoNotStashed(t *testing.T) {
 }
 
 func TestMiddleware_TimeoutFailsOpen(t *testing.T) {
+	t.Parallel()
 	// A blocking provider plus a tiny timeout exercises the
 	// context.WithTimeout branch: the lookup returns ctx.Err() and the
 	// middleware fails open. OnError SHOULD fire (ctx err is not ErrNotFound).
@@ -191,6 +199,7 @@ func TestMiddleware_TimeoutFailsOpen(t *testing.T) {
 }
 
 func TestMiddleware_CustomExtractorIsUsed(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	_ = p.Add("198.51.100.0/24", geo.GeoInfo{CountryCode: "CA"})
 
@@ -211,6 +220,7 @@ func TestMiddleware_CustomExtractorIsUsed(t *testing.T) {
 }
 
 func TestMiddleware_ZeroValueOptionsUseDefaults(t *testing.T) {
+	t.Parallel()
 	// Zero MiddlewareOptions → DefaultIPExtractor + DefaultLookupTimeout.
 	// Drive it through a forwarded header to confirm the default extractor ran.
 	p := static.New()
@@ -232,12 +242,14 @@ func TestMiddleware_ZeroValueOptionsUseDefaults(t *testing.T) {
 }
 
 func TestFromHandlerContext_NilContext(t *testing.T) {
+	t.Parallel()
 	if info, ok := geo.FromHandlerContext(nil); ok || info != nil {
 		t.Errorf("FromHandlerContext(nil) = (%v, %v), want (nil, false)", info, ok)
 	}
 }
 
 func TestFromHandlerContext_MissingKey(t *testing.T) {
+	t.Parallel()
 	hctx := newHCtx(requestWithRemoteAddr("203.0.113.5:1234"))
 	if info, ok := geo.FromHandlerContext(hctx); ok || info != nil {
 		t.Errorf("FromHandlerContext with no value = (%v, %v), want (nil, false)", info, ok)
@@ -245,6 +257,7 @@ func TestFromHandlerContext_MissingKey(t *testing.T) {
 }
 
 func TestFromHandlerContext_WrongType(t *testing.T) {
+	t.Parallel()
 	// A non-*GeoInfo stashed under the key must yield (nil, false), not panic.
 	hctx := newHCtx(requestWithRemoteAddr("203.0.113.5:1234"))
 	hctx.Set(geo.HandlerContextKey, "not a geoinfo")
@@ -254,6 +267,7 @@ func TestFromHandlerContext_WrongType(t *testing.T) {
 }
 
 func TestDefaultIPExtractor_ForwardedForFirstHop(t *testing.T) {
+	t.Parallel()
 	r := requestWithRemoteAddr("10.0.0.1:9999")
 	r.Header.Set("X-Forwarded-For", "203.0.113.7, 70.41.3.18, 150.172.238.178")
 	got := geo.DefaultIPExtractor(r)
@@ -263,6 +277,7 @@ func TestDefaultIPExtractor_ForwardedForFirstHop(t *testing.T) {
 }
 
 func TestDefaultIPExtractor_ForwardedForSingleValueTrimmed(t *testing.T) {
+	t.Parallel()
 	r := requestWithRemoteAddr("10.0.0.1:9999")
 	r.Header.Set("X-Forwarded-For", "  203.0.113.9  ")
 	got := geo.DefaultIPExtractor(r)
@@ -272,6 +287,7 @@ func TestDefaultIPExtractor_ForwardedForSingleValueTrimmed(t *testing.T) {
 }
 
 func TestDefaultIPExtractor_InvalidForwardedForFallsToRealIP(t *testing.T) {
+	t.Parallel()
 	r := requestWithRemoteAddr("10.0.0.1:9999")
 	r.Header.Set("X-Forwarded-For", "garbage")
 	r.Header.Set("X-Real-IP", "198.51.100.22")
@@ -282,6 +298,7 @@ func TestDefaultIPExtractor_InvalidForwardedForFallsToRealIP(t *testing.T) {
 }
 
 func TestDefaultIPExtractor_RealIP(t *testing.T) {
+	t.Parallel()
 	r := requestWithRemoteAddr("10.0.0.1:9999")
 	r.Header.Set("X-Real-IP", "  198.51.100.5 ")
 	got := geo.DefaultIPExtractor(r)
@@ -291,6 +308,7 @@ func TestDefaultIPExtractor_RealIP(t *testing.T) {
 }
 
 func TestDefaultIPExtractor_InvalidRealIPFallsToRemoteAddr(t *testing.T) {
+	t.Parallel()
 	r := requestWithRemoteAddr("192.0.2.44:5555")
 	r.Header.Set("X-Real-IP", "not-an-ip")
 	got := geo.DefaultIPExtractor(r)
@@ -300,6 +318,7 @@ func TestDefaultIPExtractor_InvalidRealIPFallsToRemoteAddr(t *testing.T) {
 }
 
 func TestDefaultIPExtractor_RemoteAddrWithPort(t *testing.T) {
+	t.Parallel()
 	r := requestWithRemoteAddr("192.0.2.55:443")
 	got := geo.DefaultIPExtractor(r)
 	if got == nil || got.String() != "192.0.2.55" {
@@ -308,6 +327,7 @@ func TestDefaultIPExtractor_RemoteAddrWithPort(t *testing.T) {
 }
 
 func TestDefaultIPExtractor_RemoteAddrWithoutPort(t *testing.T) {
+	t.Parallel()
 	// Rare: some test harnesses set a bare IP with no port.
 	r := requestWithRemoteAddr("192.0.2.66")
 	got := geo.DefaultIPExtractor(r)
@@ -317,6 +337,7 @@ func TestDefaultIPExtractor_RemoteAddrWithoutPort(t *testing.T) {
 }
 
 func TestDefaultIPExtractor_IPv6RemoteAddr(t *testing.T) {
+	t.Parallel()
 	r := requestWithRemoteAddr("[2001:db8::1]:8443")
 	got := geo.DefaultIPExtractor(r)
 	if got == nil || got.String() != "2001:db8::1" {
@@ -325,6 +346,7 @@ func TestDefaultIPExtractor_IPv6RemoteAddr(t *testing.T) {
 }
 
 func TestDefaultIPExtractor_NoUsableSourceReturnsNil(t *testing.T) {
+	t.Parallel()
 	r := requestWithRemoteAddr("")
 	if got := geo.DefaultIPExtractor(r); got != nil {
 		t.Errorf("got %v, want nil when no IP source present", got)
@@ -332,6 +354,7 @@ func TestDefaultIPExtractor_NoUsableSourceReturnsNil(t *testing.T) {
 }
 
 func TestDefaultIPExtractor_GarbageRemoteAddrReturnsNil(t *testing.T) {
+	t.Parallel()
 	r := requestWithRemoteAddr("totally:not:valid:addr")
 	if got := geo.DefaultIPExtractor(r); got != nil {
 		t.Errorf("got %v, want nil for unparseable RemoteAddr", got)

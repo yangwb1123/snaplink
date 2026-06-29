@@ -43,6 +43,7 @@ func mkDomain(host, tenantID string) *tenant.Domain {
 }
 
 func TestStore_TenantRoundtrip(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	want := mkTenant("t1", "acme")
@@ -69,6 +70,7 @@ func TestStore_TenantRoundtrip(t *testing.T) {
 }
 
 func TestStore_TenantRegionFieldsRoundtrip(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	want := &tenant.Tenant{
@@ -105,6 +107,7 @@ func TestStore_TenantRegionFieldsRoundtrip(t *testing.T) {
 }
 
 func TestStore_TenantEnforceWritesRoundtrip(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	if err := s.PutTenant(ctx, &tenant.Tenant{
@@ -140,6 +143,7 @@ func TestStore_TenantEnforceWritesRoundtrip(t *testing.T) {
 }
 
 func TestStore_TenantRegionFieldsZeroIsUnconstrained(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	// A tenant persisted without region fields must round-trip to the zero
@@ -158,6 +162,7 @@ func TestStore_TenantRegionFieldsZeroIsUnconstrained(t *testing.T) {
 }
 
 func TestStore_GetTenantMissingReturnsErr(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_, err := s.GetTenant(context.Background(), "ghost")
 	if !errors.Is(err, tenant.ErrTenantNotFound) {
@@ -166,6 +171,7 @@ func TestStore_GetTenantMissingReturnsErr(t *testing.T) {
 }
 
 func TestStore_PutTenantValidates(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	if err := s.PutTenant(context.Background(), &tenant.Tenant{Slug: "no-id"}); !errors.Is(err, tenant.ErrInvalidTenant) {
 		t.Fatalf("got %v, want ErrInvalidTenant", err)
@@ -173,6 +179,7 @@ func TestStore_PutTenantValidates(t *testing.T) {
 }
 
 func TestStore_PutTenantDefaultsStatus(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	t1 := &tenant.Tenant{ID: "t1", Slug: "acme"} // Status unset
@@ -186,6 +193,7 @@ func TestStore_PutTenantDefaultsStatus(t *testing.T) {
 }
 
 func TestStore_PutTenantPreservesCreatedAt(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	if err := s.PutTenant(ctx, mkTenant("t1", "acme")); err != nil {
@@ -212,6 +220,7 @@ func TestStore_PutTenantPreservesCreatedAt(t *testing.T) {
 }
 
 func TestStore_PutTenantSlugConflictRejected(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	if err := s.PutTenant(ctx, mkTenant("t1", "acme")); err != nil {
@@ -226,6 +235,7 @@ func TestStore_PutTenantSlugConflictRejected(t *testing.T) {
 }
 
 func TestStore_ListTenantsSorted(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	// Insert in reverse order; List should sort by id ascending.
@@ -247,6 +257,7 @@ func TestStore_ListTenantsSorted(t *testing.T) {
 }
 
 func TestStore_DeleteTenantCascadesDomains(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
@@ -272,6 +283,7 @@ func TestStore_DeleteTenantCascadesDomains(t *testing.T) {
 // --- Domains ---
 
 func TestStore_DomainRoundtripWithCaseInsensitiveLookup(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
@@ -291,6 +303,7 @@ func TestStore_DomainRoundtripWithCaseInsensitiveLookup(t *testing.T) {
 }
 
 func TestStore_GetDomainTrailingDotNormalised(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
@@ -301,6 +314,7 @@ func TestStore_GetDomainTrailingDotNormalised(t *testing.T) {
 }
 
 func TestStore_PutDomainRejectsUnknownTenant(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	err := s.PutDomain(context.Background(), mkDomain("acme.com", "ghost-tenant"))
 	if !errors.Is(err, tenant.ErrTenantNotFound) {
@@ -309,6 +323,7 @@ func TestStore_PutDomainRejectsUnknownTenant(t *testing.T) {
 }
 
 func TestStore_PutDomainHostnameConflictRejected(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
@@ -322,6 +337,7 @@ func TestStore_PutDomainHostnameConflictRejected(t *testing.T) {
 }
 
 func TestStore_PutDomainSameTenantUpdateAllowed(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
@@ -341,6 +357,7 @@ func TestStore_PutDomainSameTenantUpdateAllowed(t *testing.T) {
 }
 
 func TestStore_ListDomainsByTenant(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
@@ -364,6 +381,7 @@ func TestStore_ListDomainsByTenant(t *testing.T) {
 }
 
 func TestStore_DeleteDomainIdempotent(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	if err := s.DeleteDomain(context.Background(), "ghost.example.com"); err != nil {
 		t.Fatalf("Delete on missing: %v", err)
@@ -371,6 +389,7 @@ func TestStore_DeleteDomainIdempotent(t *testing.T) {
 }
 
 func TestStore_PingAfterCloseErrors(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	_ = s.Close()
 	if err := s.Ping(context.Background()); err == nil {

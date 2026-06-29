@@ -14,6 +14,7 @@ import (
 // suite against the sqlite IdP LogoutReplayStore — the SAME suite the in-memory
 // store runs (saml/idp.TestLogoutReplayConformance_Memory), so memory==sqlite.
 func TestLogoutReplayConformance_SQLite(t *testing.T) {
+	t.Parallel()
 	samltest.ReplayConformance{
 		Factory: func(t *testing.T) samltest.ReplayChecker {
 			s, err := NewLogoutReplayStore(uniqDSN("idp_logout_conf"))
@@ -30,6 +31,7 @@ func TestLogoutReplayConformance_SQLite(t *testing.T) {
 // store FAILS CLOSED (rejects) — a captured LogoutRequest can't slip through on
 // a store outage.
 func TestLogoutReplay_FailsClosedAfterClose(t *testing.T) {
+	t.Parallel()
 	s, err := NewLogoutReplayStore(uniqDSN("idp_failclosed"))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -44,6 +46,7 @@ func TestLogoutReplay_FailsClosedAfterClose(t *testing.T) {
 // goroutine sees it fresh — the ON CONFLICT atomic admits one winner. Run with
 // -race -count=10.
 func TestLogoutReplay_ConcurrentDedup(t *testing.T) {
+	t.Parallel()
 	s, err := NewLogoutReplayStore(uniqDSN("idp_conc_one"))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -75,6 +78,7 @@ func TestLogoutReplay_ConcurrentDedup(t *testing.T) {
 
 // TestLogoutReplay_PruneExpired proves the prune hook drops only lapsed rows.
 func TestLogoutReplay_PruneExpired(t *testing.T) {
+	t.Parallel()
 	s, err := NewLogoutReplayStore(uniqDSN("idp_prune"))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -95,6 +99,7 @@ func TestLogoutReplay_PruneExpired(t *testing.T) {
 // TestIdPSqlite_LogoutReplayMigration proves the baseline migration applies on a
 // fresh DB (v1) and no-ops on re-open.
 func TestIdPSqlite_LogoutReplayMigration(t *testing.T) {
+	t.Parallel()
 	db := openSharedDB(t, "idp_logout_migrate")
 	if _, err := NewLogoutReplayStoreWithDB(db); err != nil {
 		t.Fatalf("fresh: %v", err)
@@ -112,6 +117,7 @@ func TestIdPSqlite_LogoutReplayMigration(t *testing.T) {
 
 // Defensive: distinct ids never falsely collide under concurrency.
 func TestLogoutReplay_ConcurrentDistinct(t *testing.T) {
+	t.Parallel()
 	s, err := NewLogoutReplayStore(uniqDSN("idp_conc_many"))
 	if err != nil {
 		t.Fatalf("new: %v", err)

@@ -18,6 +18,7 @@ import (
 // rotation TTLs), so the consume event -- not the token's lifetime -- is the
 // reuse signal. The famof marker is written at Consume, so it survives expiry.
 func TestRefreshConsumedReplayAfterExpiryIsReuse(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	s := NewRefreshTokenStore(rdb)
 	ctx := context.Background()
@@ -56,6 +57,7 @@ func newRTInfo(user, client, family string) *oauth.RefreshToken {
 }
 
 func TestRefreshIssueConsume(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewRefreshTokenStore(rdb)
 	ctx := context.Background()
@@ -76,6 +78,7 @@ func TestRefreshIssueConsume(t *testing.T) {
 // (Already-consumed WITH a family is reuse — tested separately; an opt-out
 // token with no family that's re-consumed is plain not-found, covered here.)
 func TestRefreshOracleLeak(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	s := NewRefreshTokenStore(rdb)
 	ctx := context.Background()
@@ -106,6 +109,7 @@ func TestRefreshOracleLeak(t *testing.T) {
 
 // TestRefreshSingleUseRace: one winner among N concurrent Consume.
 func TestRefreshSingleUseRace(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewRefreshTokenStore(rdb)
 	ctx := context.Background()
@@ -140,6 +144,7 @@ func TestRefreshSingleUseRace(t *testing.T) {
 // (rotated-away) token is detected as reuse, returning ErrRefreshTokenReused
 // with the FamilyID so the handler can DeleteFamily.
 func TestRefreshFamilyRotationAndReuse(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewRefreshTokenStore(rdb)
 	ctx := context.Background()
@@ -194,6 +199,7 @@ func TestRefreshFamilyRotationAndReuse(t *testing.T) {
 // Issue's Expire landing last would clamp the index, dropping ids and
 // returning < N from DeleteAllForSubject.
 func TestRefreshConcurrentIssueBulkRevoke(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	// Small familyTTL so the index TTL is governed by the token TTLs, not a
 	// large floor — that's what makes a shortened-TTL race observable.
@@ -259,6 +265,7 @@ func TestRefreshConcurrentIssueBulkRevoke(t *testing.T) {
 // The active key vanishing without a Consume is simulated by DELeting just
 // rtKey(token) (a silent TTL eviction analogue).
 func TestRefreshFamilyReuse_MarkerAtConsume(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewRefreshTokenStore(rdb)
 	ctx := context.Background()
@@ -301,6 +308,7 @@ func TestRefreshFamilyReuse_MarkerAtConsume(t *testing.T) {
 }
 
 func TestRefreshInspectAndDelete(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewRefreshTokenStore(rdb)
 	ctx := context.Background()
@@ -328,6 +336,7 @@ func TestRefreshInspectAndDelete(t *testing.T) {
 }
 
 func TestRefreshSubjectIndexAndCount(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewRefreshTokenStore(rdb)
 	ctx := context.Background()
@@ -370,6 +379,7 @@ func TestRefreshSubjectIndexAndCount(t *testing.T) {
 }
 
 func TestRefreshClientPurger(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewRefreshTokenStore(rdb)
 	ctx := context.Background()

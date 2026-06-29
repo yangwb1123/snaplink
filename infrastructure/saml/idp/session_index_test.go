@@ -20,6 +20,7 @@ func mkRow(spEntityID, sloURL, nameID string) SAMLSPSession {
 // TestSessionIndex_RecordListRemove covers the core CRUD: record two SPs for a
 // subject, list them back, remove one, remove all.
 func TestSessionIndex_RecordListRemove(t *testing.T) {
+	t.Parallel()
 	idx := NewMemorySessionIndex(0, 0)
 	ctx := context.Background()
 	const sub = "alice@example.com"
@@ -72,6 +73,7 @@ func TestSessionIndex_RecordListRemove(t *testing.T) {
 // (subject, SPEntityID) again UPDATES the row (refreshed SLO URL) rather than
 // duplicating it — so the fan-out never double-sends to one SP.
 func TestSessionIndex_ReRecordUpdatesInPlace(t *testing.T) {
+	t.Parallel()
 	idx := NewMemorySessionIndex(0, 0)
 	ctx := context.Background()
 	const sub = "bob@example.com"
@@ -91,6 +93,7 @@ func TestSessionIndex_ReRecordUpdatesInPlace(t *testing.T) {
 // TestSessionIndex_RemoveLastSPDropsSubject proves removing a subject's last SP
 // row drops the (empty) subject entry from the LRU.
 func TestSessionIndex_RemoveLastSPDropsSubject(t *testing.T) {
+	t.Parallel()
 	idx := NewMemorySessionIndex(0, 0)
 	ctx := context.Background()
 	const sub = "carol@example.com"
@@ -104,6 +107,7 @@ func TestSessionIndex_RemoveLastSPDropsSubject(t *testing.T) {
 
 // TestSessionIndex_UnknownSubject covers list/remove on an unknown subject.
 func TestSessionIndex_UnknownSubject(t *testing.T) {
+	t.Parallel()
 	idx := NewMemorySessionIndex(0, 0)
 	ctx := context.Background()
 	rows, err := idx.ListBySubject(ctx, "nobody")
@@ -121,6 +125,7 @@ func TestSessionIndex_UnknownSubject(t *testing.T) {
 // TestSessionIndex_BlankIgnored proves a blank subject or blank SP entity id is
 // ignored (no row, no error) — a degenerate assertion can't pollute the index.
 func TestSessionIndex_BlankIgnored(t *testing.T) {
+	t.Parallel()
 	idx := NewMemorySessionIndex(0, 0)
 	ctx := context.Background()
 	_ = idx.Record(ctx, "", mkRow("sp-a", "https://a/slo", ""))
@@ -133,6 +138,7 @@ func TestSessionIndex_BlankIgnored(t *testing.T) {
 // TestSessionIndex_SubjectCapEvictsOldest proves the subject LRU is bounded: past
 // the subject cap the least-recently-recorded subject is evicted whole.
 func TestSessionIndex_SubjectCapEvictsOldest(t *testing.T) {
+	t.Parallel()
 	idx := NewMemorySessionIndex(3, 0) // cap 3 subjects
 	ctx := context.Background()
 
@@ -161,6 +167,7 @@ func TestSessionIndex_SubjectCapEvictsOldest(t *testing.T) {
 // TestSessionIndex_RecordTouchesRecency proves recording a subject again moves it
 // to the most-recently-used end (so it survives eviction over a stale subject).
 func TestSessionIndex_RecordTouchesRecency(t *testing.T) {
+	t.Parallel()
 	idx := NewMemorySessionIndex(2, 0) // cap 2 subjects
 	ctx := context.Background()
 
@@ -184,6 +191,7 @@ func TestSessionIndex_RecordTouchesRecency(t *testing.T) {
 
 // TestSessionIndex_SPCapEvictsOldest proves the per-subject SP list is bounded.
 func TestSessionIndex_SPCapEvictsOldest(t *testing.T) {
+	t.Parallel()
 	idx := NewMemorySessionIndex(0, 3) // cap 3 SPs per subject
 	ctx := context.Background()
 	const sub = "dave@example.com"
@@ -211,6 +219,7 @@ func TestSessionIndex_SPCapEvictsOldest(t *testing.T) {
 // TestSessionIndex_ListReturnsCopy proves the returned slice is a copy — mutating
 // it does not corrupt the index.
 func TestSessionIndex_ListReturnsCopy(t *testing.T) {
+	t.Parallel()
 	idx := NewMemorySessionIndex(0, 0)
 	ctx := context.Background()
 	const sub = "erin@example.com"
@@ -228,6 +237,7 @@ func TestSessionIndex_ListReturnsCopy(t *testing.T) {
 // TestSessionIndex_Concurrent hammers the index from many goroutines (run with
 // -race) to prove the locking is sound under concurrent Record/List/Remove.
 func TestSessionIndex_Concurrent(t *testing.T) {
+	t.Parallel()
 	idx := NewMemorySessionIndex(0, 0)
 	ctx := context.Background()
 

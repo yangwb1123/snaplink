@@ -15,6 +15,7 @@ import (
 // not-found (not a reuse event), leaves other clients untouched, and treats
 // an empty clientID as a no-op rather than a wildcard.
 func TestMemoryRefreshTokenStore_DeleteAllForClient(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	ctx := context.Background()
 	mk := func(tok, user, client string) {

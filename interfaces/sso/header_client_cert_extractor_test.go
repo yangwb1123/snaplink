@@ -44,6 +44,7 @@ func newTestClientCert(t *testing.T) (*x509.Certificate, []byte) {
 }
 
 func TestHeaderClientCertExtractor_URLPEMNginx(t *testing.T) {
+	t.Parallel()
 	cert, der := newTestClientCert(t)
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 
@@ -64,6 +65,7 @@ func TestHeaderClientCertExtractor_URLPEMNginx(t *testing.T) {
 }
 
 func TestHeaderClientCertExtractor_PEMApache(t *testing.T) {
+	t.Parallel()
 	cert, der := newTestClientCert(t)
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 
@@ -81,6 +83,7 @@ func TestHeaderClientCertExtractor_PEMApache(t *testing.T) {
 }
 
 func TestHeaderClientCertExtractor_Base64DER(t *testing.T) {
+	t.Parallel()
 	cert, der := newTestClientCert(t)
 
 	ex := &security.HeaderClientCertExtractor{HeaderName: "X-Client-Cert-DER", Encoding: security.HeaderCertEncodingBase64DER}
@@ -97,6 +100,7 @@ func TestHeaderClientCertExtractor_Base64DER(t *testing.T) {
 }
 
 func TestHeaderClientCertExtractor_MissingHeaderFallsOpen(t *testing.T) {
+	t.Parallel()
 	ex := security.NewHeaderClientCertExtractor("X-Client-Cert")
 	r := httptest.NewRequest(http.MethodPost, "/token", nil)
 	cert, ok := ex.ExtractClientCert(r)
@@ -106,6 +110,7 @@ func TestHeaderClientCertExtractor_MissingHeaderFallsOpen(t *testing.T) {
 }
 
 func TestHeaderClientCertExtractor_MalformedPEM(t *testing.T) {
+	t.Parallel()
 	ex := &security.HeaderClientCertExtractor{HeaderName: "X-Client-Cert", Encoding: security.HeaderCertEncodingPEM}
 	r := httptest.NewRequest(http.MethodPost, "/token", nil)
 	r.Header.Set("X-Client-Cert", "not a pem block")
@@ -116,6 +121,7 @@ func TestHeaderClientCertExtractor_MalformedPEM(t *testing.T) {
 }
 
 func TestHeaderClientCertExtractor_BadBase64(t *testing.T) {
+	t.Parallel()
 	ex := &security.HeaderClientCertExtractor{HeaderName: "X-Client-Cert", Encoding: security.HeaderCertEncodingBase64DER}
 	r := httptest.NewRequest(http.MethodPost, "/token", nil)
 	r.Header.Set("X-Client-Cert", "!!! invalid base64 !!!")
@@ -126,6 +132,7 @@ func TestHeaderClientCertExtractor_BadBase64(t *testing.T) {
 }
 
 func TestHeaderClientCertExtractor_BadURLEscape(t *testing.T) {
+	t.Parallel()
 	ex := security.NewHeaderClientCertExtractor("X-Client-Cert")
 	r := httptest.NewRequest(http.MethodPost, "/token", nil)
 	r.Header.Set("X-Client-Cert", "%ZZ-not-url-escaped")
@@ -136,6 +143,7 @@ func TestHeaderClientCertExtractor_BadURLEscape(t *testing.T) {
 }
 
 func TestHeaderClientCertExtractor_NilSafe(t *testing.T) {
+	t.Parallel()
 	var ex *security.HeaderClientCertExtractor
 	cert, ok := ex.ExtractClientCert(httptest.NewRequest(http.MethodPost, "/token", nil))
 	if ok || cert != nil {
@@ -144,6 +152,7 @@ func TestHeaderClientCertExtractor_NilSafe(t *testing.T) {
 }
 
 func TestHeaderClientCertExtractor_EmptyHeaderName(t *testing.T) {
+	t.Parallel()
 	ex := &security.HeaderClientCertExtractor{}
 	r := httptest.NewRequest(http.MethodPost, "/token", nil)
 	r.Header.Set("X-Client-Cert", "any value")
@@ -154,6 +163,7 @@ func TestHeaderClientCertExtractor_EmptyHeaderName(t *testing.T) {
 }
 
 func TestHeaderClientCertExtractor_NotACertificatePEM(t *testing.T) {
+	t.Parallel()
 	wrong := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("not a cert")})
 	ex := &security.HeaderClientCertExtractor{HeaderName: "X-Client-Cert", Encoding: security.HeaderCertEncodingPEM}
 	r := httptest.NewRequest(http.MethodPost, "/token", nil)

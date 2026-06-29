@@ -52,6 +52,7 @@ func clientByID(clients []*sso.Client, id string) *sso.Client {
 // the credential fields on the exported snapshot while leaving the
 // non-secret material (id, name, redirect URIs, scopes) intact.
 func TestExportWithRedactionZerosSecrets(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	sn := &snapshot.Snapshotter{Clients: redactSourceStore(t)}
 
@@ -85,6 +86,7 @@ func TestExportWithRedactionZerosSecrets(t *testing.T) {
 // snapshot whose clients still carry their secrets.  Secrets are stored as
 // bcrypt hashes, so the snapshot carries the hash (not the plaintext).
 func TestExportWithoutRedactionKeepsSecrets(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	sn := &snapshot.Snapshotter{Clients: redactSourceStore(t)}
 
@@ -117,6 +119,7 @@ func TestExportWithoutRedactionKeepsSecrets(t *testing.T) {
 // still hold their secrets. MemoryClientStore.List hands out live
 // pointers, so without the export-local deep copy this would fail.
 func TestRedactedExportDoesNotMutateLiveStore(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cs := redactSourceStore(t)
 	sn := &snapshot.Snapshotter{Clients: cs}
@@ -151,6 +154,7 @@ func TestRedactedExportDoesNotMutateLiveStore(t *testing.T) {
 // (the cmd wiring path for snapshot.redact_secrets) fires when no
 // per-call redactor is supplied.
 func TestDefaultExportRedactorApplies(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	sn := &snapshot.Snapshotter{
 		Clients:               redactSourceStore(t),
@@ -179,6 +183,7 @@ func TestDefaultExportRedactorApplies(t *testing.T) {
 // second redactor asserts the first already zeroed the secret, so a
 // broken ordering would surface the secret.
 func TestComposeChainsRedactors(t *testing.T) {
+	t.Parallel()
 	var sawZeroed bool
 	probe := snapshot.RedactorFunc(func(s *snapshot.Snapshot) {
 		if c := clientByID(s.Resources.Clients, "alpha"); c != nil {
@@ -218,6 +223,7 @@ func TestComposeChainsRedactors(t *testing.T) {
 // serializes, seals, and loads through the pipeline — it just comes back
 // with empty secrets (it is an inspection artifact, not a restore one).
 func TestRedactedSnapshotRoundTrips(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	sn := &snapshot.Snapshotter{Clients: redactSourceStore(t)}
 	snap, err := sn.Export(ctx, snapshot.ExportOptions{Redactor: snapshot.SnapshotRedactSecrets()})
@@ -251,6 +257,7 @@ func TestRedactedSnapshotRoundTrips(t *testing.T) {
 // TestSnapshotRedactSecretsNilSafe documents that the redactor tolerates
 // nil snapshots / nil client entries without panicking.
 func TestSnapshotRedactSecretsNilSafe(t *testing.T) {
+	t.Parallel()
 	r := snapshot.SnapshotRedactSecrets()
 	r.Redact(nil)
 	snap := &snapshot.Snapshot{Resources: snapshot.Resources{Clients: []*sso.Client{nil, {ID: "x", Secret: "s"}}}}
@@ -267,6 +274,7 @@ func TestSnapshotRedactSecretsNilSafe(t *testing.T) {
 // password_hash and break login). MemoryUserProvider.List hands out live
 // pointers, so the export-local copy is load-bearing.
 func TestRedactedExportScrubsUserCredentials(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := defaultimpl.NewMemoryUserProvider()
 	if err := users.CreateOrUpdate(ctx, &sso.User{

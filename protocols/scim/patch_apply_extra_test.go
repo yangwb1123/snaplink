@@ -14,6 +14,7 @@ import (
 // TestPatchUser_ReplaceWholeName replaces the entire "name" complex attribute
 // with an object (applyUserName whole-name branch).
 func TestPatchUser_ReplaceWholeName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"wn@example.com","name":{"givenName":"Old"}}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -31,6 +32,7 @@ func TestPatchUser_ReplaceWholeName(t *testing.T) {
 
 // TestPatchUser_RemoveWholeName removes the entire "name" attribute.
 func TestPatchUser_RemoveWholeName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"rn@example.com","name":{"givenName":"X","familyName":"Y"}}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -48,6 +50,7 @@ func TestPatchUser_RemoveWholeName(t *testing.T) {
 // TestPatchUser_ReplaceWholeNameWithEmptyDropsIt: replacing name with an
 // all-empty object drops the attribute (applyUserName's n.empty() branch).
 func TestPatchUser_ReplaceWholeNameWithEmptyDropsIt(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"en@example.com","name":{"givenName":"X"}}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -65,6 +68,7 @@ func TestPatchUser_ReplaceWholeNameWithEmptyDropsIt(t *testing.T) {
 // TestPatchUser_RemoveNameSubLeavesOtherSubs: removing one name.<sub> clears
 // just that sub-attribute (applyUserName sub-remove branch), keeping the rest.
 func TestPatchUser_RemoveNameSub(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"ns@example.com","name":{"givenName":"Keep","familyName":"Drop"}}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -86,6 +90,7 @@ func TestPatchUser_RemoveNameSub(t *testing.T) {
 // TestPatchUser_RemoveLastNameSubDropsName: removing the only set sub-attribute
 // drops the whole name (applyUserName's post-set empty() check).
 func TestPatchUser_RemoveLastNameSubDropsName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"ls@example.com","name":{"givenName":"Only"}}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -103,6 +108,7 @@ func TestPatchUser_RemoveLastNameSubDropsName(t *testing.T) {
 // TestPatchUser_AddNameSubAllocatesName: a name.<sub> add against a user with
 // NO name allocates the Name struct (applyUserName nil-name branch).
 func TestPatchUser_AddNameSubAllocatesName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"al@example.com"}`) // no name
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -121,6 +127,7 @@ func TestPatchUser_AddNameSubAllocatesName(t *testing.T) {
 // TestPatchUser_NameSubNonString: a name.<sub> value that isn't a string is an
 // invalidValue error (applyUserName decode-error branch).
 func TestPatchUser_NameSubNonString(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"nx@example.com"}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -138,6 +145,7 @@ func TestPatchUser_NameSubNonString(t *testing.T) {
 // TestPatchUser_WholeNameNonObject: replacing "name" with a non-object value is
 // an invalidValue error.
 func TestPatchUser_WholeNameNonObject(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"no@example.com"}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -155,6 +163,7 @@ func TestPatchUser_WholeNameNonObject(t *testing.T) {
 // TestPatchUser_RootMergeName: a path-less merge whose value object names
 // "name" applies through applyUserPathOp (root-merge -> name complex attr).
 func TestPatchUser_RootMergeName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"rm@example.com"}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -176,6 +185,7 @@ func TestPatchUser_RootMergeName(t *testing.T) {
 // TestPatchUser_RootMergeUnknownKey: a path-less merge naming an unsupported
 // attribute is invalidPath (applyUserRootMerge unknown-key branch).
 func TestPatchUser_RootMergeUnknownKey(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"uk@example.com"}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -193,6 +203,7 @@ func TestPatchUser_RootMergeUnknownKey(t *testing.T) {
 // TestPatchUser_RootMergeMissingValue: a path-less op with no value is
 // invalidValue (applyUserRootMerge empty-raw branch).
 func TestPatchUser_RootMergeMissingValue(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"mv@example.com"}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -210,6 +221,7 @@ func TestPatchUser_RootMergeMissingValue(t *testing.T) {
 // TestPatchUser_RootMergeNonObject: a path-less value that isn't a JSON object
 // is invalidSyntax (applyUserRootMerge unmarshal-error branch).
 func TestPatchUser_RootMergeNonObject(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"po@example.com"}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -227,6 +239,7 @@ func TestPatchUser_RootMergeNonObject(t *testing.T) {
 // TestPatchUser_ValuePathSetType: a value-path op over emails[..].type sets the
 // type sub-attribute on the matching element (setEmailStringSub).
 func TestPatchUser_ValuePathSetType(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedTwoEmailUser(t, h)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -254,6 +267,7 @@ func TestPatchUser_ValuePathSetType(t *testing.T) {
 // TestPatchUser_ValuePathSetPrimary: a value-path op over emails[..].primary
 // flips the primary flag (applyEmailElementOp primary branch).
 func TestPatchUser_ValuePathSetPrimary(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedTwoEmailUser(t, h)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -286,6 +300,7 @@ func TestPatchUser_ValuePathSetPrimary(t *testing.T) {
 // clears that sub on the matching element (setEmailStringSub remove branch),
 // leaving the element in place.
 func TestPatchUser_ValuePathRemoveSub(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedTwoEmailUser(t, h)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -314,6 +329,7 @@ func TestPatchUser_ValuePathRemoveSub(t *testing.T) {
 // TestPatchUser_ValuePathRemovePrimary: a value-path remove over .primary
 // resets primary to false (applyEmailElementOp primary-remove branch).
 func TestPatchUser_ValuePathRemovePrimary(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedTwoEmailUser(t, h)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -328,6 +344,7 @@ func TestPatchUser_ValuePathRemovePrimary(t *testing.T) {
 // TestPatchUser_ValuePathBadSub: a value-path naming a sub-attribute the email
 // element doesn't model is invalidPath (applyEmailElementOp default branch).
 func TestPatchUser_ValuePathBadSub(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedTwoEmailUser(t, h)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -345,6 +362,7 @@ func TestPatchUser_ValuePathBadSub(t *testing.T) {
 // TestPatchUser_ValuePathSubBadType: a value-path .primary with a non-boolean
 // value is invalidValue (applyEmailElementOp primary decode-error branch).
 func TestPatchUser_ValuePathPrimaryBadType(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedTwoEmailUser(t, h)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -363,6 +381,7 @@ func TestPatchUser_ValuePathPrimaryBadType(t *testing.T) {
 // with a non-object value is invalidValue (applyEmailElementOp no-sub decode
 // error).
 func TestPatchUser_ValuePathReplaceElementBadObject(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedTwoEmailUser(t, h)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -380,6 +399,7 @@ func TestPatchUser_ValuePathReplaceElementBadObject(t *testing.T) {
 // TestPatchUser_EmailsAddNonArray: an add over the unfiltered emails attribute
 // whose value isn't an array is invalidValue (applyUserEmails decode error).
 func TestPatchUser_EmailsAddNonArray(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"ea@example.com"}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -396,6 +416,7 @@ func TestPatchUser_EmailsAddNonArray(t *testing.T) {
 
 // TestPatchUser_ActiveBadType: replace active with a non-boolean is invalidValue.
 func TestPatchUser_ActiveBadType(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"ab@example.com"}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -413,6 +434,7 @@ func TestPatchUser_ActiveBadType(t *testing.T) {
 // TestPatchUser_RemoveActiveRestoresDefault: removing active restores the
 // active=true default (applyUserPathOp active-remove branch).
 func TestPatchUser_RemoveActiveRestoresDefault(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"ra@example.com","active":false}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -430,6 +452,7 @@ func TestPatchUser_RemoveActiveRestoresDefault(t *testing.T) {
 // TestPatchUser_RemoveDisplayNameAndExternalID covers the displayName/externalId
 // remove branches in applyUserPathOp.
 func TestPatchUser_RemoveDisplayNameAndExternalID(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"rd@example.com","displayName":"D","externalId":"E"}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -449,6 +472,7 @@ func TestPatchUser_RemoveDisplayNameAndExternalID(t *testing.T) {
 // TestPatchUser_DisplayNameBadType / externalId bad type cover the decode-error
 // branches for those single string attributes.
 func TestPatchUser_StringAttrBadType(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"sb@example.com"}`)
 	for _, attr := range []string{"displayName", "externalId", "userName"} {

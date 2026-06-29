@@ -9,6 +9,7 @@ import (
 )
 
 func TestReplayStore_FirstSeenThenReplay(t *testing.T) {
+	t.Parallel()
 	s := newReplayStore(100)
 	now := time.Now()
 	exp := now.Add(time.Hour)
@@ -26,6 +27,7 @@ func TestReplayStore_FirstSeenThenReplay(t *testing.T) {
 }
 
 func TestReplayStore_ExpiredEntryPrunedThenFreshAgain(t *testing.T) {
+	t.Parallel()
 	s := newReplayStore(100)
 	t0 := time.Now()
 
@@ -50,6 +52,7 @@ func TestReplayStore_ExpiredEntryPrunedThenFreshAgain(t *testing.T) {
 }
 
 func TestReplayStore_CapacityEviction(t *testing.T) {
+	t.Parallel()
 	const cap = 8
 	s := newReplayStore(cap)
 	now := time.Now()
@@ -74,6 +77,7 @@ func TestReplayStore_CapacityEviction(t *testing.T) {
 }
 
 func TestReplayStore_DefaultCapacity(t *testing.T) {
+	t.Parallel()
 	s := newReplayStore(0) // non-positive => default
 	if s.capacity != DefaultReplayStoreSize {
 		t.Errorf("capacity = %d, want default %d", s.capacity, DefaultReplayStoreSize)
@@ -84,6 +88,7 @@ func TestReplayStore_DefaultCapacity(t *testing.T) {
 // with -race -count=10 (the suite's standard) to catch data races + ordering
 // bugs in the mutex-guarded list/map.
 func TestReplayStore_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
 	s := newReplayStore(1024)
 	now := time.Now()
 	exp := now.Add(time.Hour)
@@ -124,6 +129,7 @@ func TestReplayStore_ConcurrentAccess(t *testing.T) {
 // check that two presentations of the SAME assertion (same ID) are deduped, and
 // two DISTINCT assertions both succeed.
 func TestReplayStore_DistinctAssertionsBothSucceed(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newTestSP(t, idp, tIDPEntity, tSPEntity, tACSURL, now)

@@ -10,6 +10,7 @@ import (
 )
 
 func TestRedisPasswordCredentialStore_SetVerifyRoundTrip(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewPasswordCredentialStore(rdb)
 	ctx := context.Background()
@@ -23,6 +24,7 @@ func TestRedisPasswordCredentialStore_SetVerifyRoundTrip(t *testing.T) {
 }
 
 func TestRedisPasswordCredentialStore_WrongPassword(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewPasswordCredentialStore(rdb)
 	ctx := context.Background()
@@ -37,6 +39,7 @@ func TestRedisPasswordCredentialStore_WrongPassword(t *testing.T) {
 // collapse: an unknown user maps to the SAME ErrPasswordMismatch as a wrong
 // password, indistinguishable from the caller's side.
 func TestRedisPasswordCredentialStore_UnknownUser(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewPasswordCredentialStore(rdb)
 	if err := s.VerifyPassword(context.Background(), "ghost", "anything"); !errors.Is(err, sso.ErrPasswordMismatch) {
@@ -45,6 +48,7 @@ func TestRedisPasswordCredentialStore_UnknownUser(t *testing.T) {
 }
 
 func TestRedisPasswordCredentialStore_SetPasswordHash(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewPasswordCredentialStore(rdb)
 	ctx := context.Background()
@@ -73,6 +77,7 @@ func TestRedisPasswordCredentialStore_SetPasswordHash(t *testing.T) {
 // TestRedisPasswordCredentialStore_SetReplaces verifies a second SetPassword
 // overwrites the prior hash (parity with the memory peer's map-write).
 func TestRedisPasswordCredentialStore_SetReplaces(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewPasswordCredentialStore(rdb)
 	ctx := context.Background()
@@ -92,6 +97,7 @@ func TestRedisPasswordCredentialStore_SetReplaces(t *testing.T) {
 // TestRedisPasswordCredentialStore_EmptyUserID confirms an empty userID is
 // rejected on the write side (parity with memory + sqlite peers).
 func TestRedisPasswordCredentialStore_EmptyUserID(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewPasswordCredentialStore(rdb)
 	ctx := context.Background()

@@ -18,6 +18,7 @@ import (
 // default: only guards a FULL channel, never a CLOSED one). Run with -race
 // -count=10 to surface the window.
 func TestBroadcastCloseRace(t *testing.T) {
+	t.Parallel()
 	const serviceName = "svc"
 	r := memory.New()
 
@@ -61,6 +62,7 @@ func TestBroadcastCloseRace(t *testing.T) {
 // ctx-cancel path (removeWatcher closes the channel). This is the second
 // goroutine that closes a subscriber channel without Close being involved.
 func TestWatchCancelBroadcastRace(t *testing.T) {
+	t.Parallel()
 	const serviceName = "svc"
 	r := memory.New()
 	defer func() { _ = r.Close() }()

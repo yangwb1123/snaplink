@@ -25,6 +25,7 @@ func seedPasskeys(t *testing.T, userID string, credIDs ...string) *webauthn.Memo
 }
 
 func TestMFAEnrollmentAdapter_ListAndRemove(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	a := webauthn.NewMFAEnrollmentAdapter(seedPasskeys(t, "u-alice", "credA", "credB"))
 

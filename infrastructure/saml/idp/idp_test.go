@@ -24,6 +24,7 @@ import (
 // validates against the issuer's published cert, with the right audience,
 // recipient, and InResponseTo.
 func TestFinish_IssuesSignedAssertion_RSA(t *testing.T) {
+	t.Parallel()
 	testFinishIssuesSignedAssertion(t, issuerRSA)
 }
 
@@ -31,6 +32,7 @@ func TestFinish_IssuesSignedAssertion_RSA(t *testing.T) {
 // crucially that the ASN.1-DER signature goxmldsig emits validates (the
 // DER-vs-R‖S finding: no conversion, goxmldsig validates DER).
 func TestFinish_IssuesSignedAssertion_ECDSA(t *testing.T) {
+	t.Parallel()
 	testFinishIssuesSignedAssertion(t, issuerECDSA)
 }
 
@@ -111,6 +113,7 @@ func testFinishIssuesSignedAssertion(t *testing.T, kind testIssuerKind) {
 // NOT in the SP's registered saml_sp_acs_urls is rejected at /saml/sso BEFORE
 // any pending request is stored (so no assertion can ever be issued to it).
 func TestSSO_ACSNotInAllowlist_Rejected(t *testing.T) {
+	t.Parallel()
 	hh := newHarness(t, issuerRSA)
 
 	evilACS := "https://attacker.example.com/steal"
@@ -131,6 +134,7 @@ func TestSSO_ACSNotInAllowlist_Rejected(t *testing.T) {
 // registered ACS yields a stored pending request + a 302 to /auth/login with
 // client_id + state.
 func TestSSO_ACSInAllowlist_RedirectsToLogin(t *testing.T) {
+	t.Parallel()
 	hh := newHarness(t, issuerRSA)
 
 	authnReq := makeAuthnRequest(t, spEntityID, spACSURL, "id-req-ok")
@@ -158,6 +162,7 @@ func TestSSO_ACSInAllowlist_RedirectsToLogin(t *testing.T) {
 // TestSSO_UnknownSP_Rejected proves an AuthnRequest from an Issuer not
 // registered as any client's saml_sp_entity_id is rejected (oracle-safe).
 func TestSSO_UnknownSP_Rejected(t *testing.T) {
+	t.Parallel()
 	hh := newHarness(t, issuerRSA)
 	authnReq := makeAuthnRequest(t, "https://unknown.example.com/saml", spACSURL, "id-req-x")
 	rec := hh.getSSO(authnReq)
@@ -174,6 +179,7 @@ func TestSSO_UnknownSP_Rejected(t *testing.T) {
 // session) and asserts each yields the IDENTICAL 400 saml_request_invalid with
 // no distinguishing detail.
 func TestFinish_OracleSafe_AllCollapseToOneCode(t *testing.T) {
+	t.Parallel()
 	t.Run("unknown_request_id", func(t *testing.T) {
 		hh := newHarness(t, issuerRSA)
 		sessionID := hh.seedUserSession(t, "bob@example.com")
@@ -237,6 +243,7 @@ func TestFinish_OracleSafe_AllCollapseToOneCode(t *testing.T) {
 // tenant-B's / a shared key. Two tenants get distinct issuer keys; the
 // IssuerForClient closure routes by client's TenantID.
 func TestPerTenantKeyIsolation_TenantASignedByTenantAKey(t *testing.T) {
+	t.Parallel()
 	issuerA, pubA := newIssuer(t, issuerRSA)
 	issuerB, pubB := newIssuer(t, issuerRSA)
 	if pubA == nil || pubB == nil {
@@ -315,6 +322,7 @@ func TestPerTenantKeyIsolation_TenantASignedByTenantAKey(t *testing.T) {
 // XML-DSig method) fails CLOSED with saml_assertion_failed (500), never an
 // unsigned assertion or a cross-key fallback.
 func TestFinish_Ed25519Issuer_FailsClosed(t *testing.T) {
+	t.Parallel()
 	hh := newHarness(t, issuerEd25519)
 	sessionID := hh.seedUserSession(t, "dave@example.com")
 	pendingID := hh.insertPending(t, "id-req-ed")
@@ -336,6 +344,7 @@ func TestFinish_Ed25519Issuer_FailsClosed(t *testing.T) {
 // publishes a signing cert that wraps the same key assertions are signed with:
 // the cert validates an assertion the IdP issues.
 func TestMetadata_ContainsSigningCertMatchingAssertionKey(t *testing.T) {
+	t.Parallel()
 	hh := newHarness(t, issuerRSA)
 
 	req := httptest.NewRequest(http.MethodGet, "/saml/metadata", nil)
@@ -373,6 +382,7 @@ func TestMetadata_ContainsSigningCertMatchingAssertionKey(t *testing.T) {
 
 // TestMetadata_ConditionalRequest_304 proves the ETag/If-None-Match path.
 func TestMetadata_ConditionalRequest_304(t *testing.T) {
+	t.Parallel()
 	hh := newHarness(t, issuerRSA)
 
 	rec1 := httptest.NewRecorder()

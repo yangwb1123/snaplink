@@ -62,6 +62,7 @@ func newCIBADeps(cs core.ClientStore, store CIBAStore) *cibaDeps {
 }
 
 func TestHandleBackchannelAuth(t *testing.T) {
+	t.Parallel()
 	t.Run("no store 501", func(t *testing.T) {
 		d := &cibaDeps{clients: newMemClientStore()}
 		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, `{}`)

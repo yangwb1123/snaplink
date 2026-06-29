@@ -29,6 +29,7 @@ func issueWithTinyTTL(t *testing.T, skew time.Duration) (*defaultimpl.Ed25519JWT
 }
 
 func TestEd25519_ZeroSkewRejectsExpiredToken(t *testing.T) {
+	t.Parallel()
 	j, raw := issueWithTinyTTL(t, 0)
 	_, err := j.Validate(context.Background(), raw)
 	if err == nil {
@@ -37,6 +38,7 @@ func TestEd25519_ZeroSkewRejectsExpiredToken(t *testing.T) {
 }
 
 func TestEd25519_PositiveSkewAcceptsRecentlyExpired(t *testing.T) {
+	t.Parallel()
 	// 2s skew covers the ~20ms expiry overrun trivially.
 	j, raw := issueWithTinyTTL(t, 2*time.Second)
 	if _, err := j.Validate(context.Background(), raw); err != nil {
@@ -45,6 +47,7 @@ func TestEd25519_PositiveSkewAcceptsRecentlyExpired(t *testing.T) {
 }
 
 func TestEd25519_SkewDoesNotAcceptStaleToken(t *testing.T) {
+	t.Parallel()
 	// 100ms skew is too small for a token expired ~1.1s ago.
 	j := defaultimpl.NewEd25519JWTIssuer(
 		defaultimpl.WithEd25519Issuer("test"),

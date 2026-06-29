@@ -22,6 +22,7 @@ type rotatingIssuer interface {
 // retire the demoted key from JWKS after the grace period, then stop on
 // ctx cancel. RSA uses longer intervals (key generation is slower).
 func TestStartRotation_MultiAlg_RotatesAndRetires(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name            string
 		issuer          rotatingIssuer
@@ -87,6 +88,7 @@ func TestStartRotation_MultiAlg_RotatesAndRetires(t *testing.T) {
 // TestStartRotation_MultiAlg_DisabledWhenIntervalZero proves a zero
 // interval is a no-op returning an already-closed channel for both.
 func TestStartRotation_MultiAlg_DisabledWhenIntervalZero(t *testing.T) {
+	t.Parallel()
 	for name, iss := range map[string]rotatingIssuer{
 		"ES256": defaultimpl.NewECDSAJWTIssuer(),
 		"RS256": defaultimpl.NewRSAJWTIssuer(),

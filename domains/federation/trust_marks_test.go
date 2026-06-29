@@ -129,6 +129,7 @@ func authorizedIssuerFor(t *testing.T, issuer *fedEntity, allowedTypes ...string
 // ---------------------------------------------------------------------------
 
 func TestTrustMark_ValidRequiredMark_Admitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmIssuerID)
 
@@ -150,6 +151,7 @@ func TestTrustMark_ValidRequiredMark_Admitted(t *testing.T) {
 // A required mark whose issuer is configured with AllowedTypes that PERMIT the
 // type (an explicit type authorization, not the empty "any") is admitted.
 func TestTrustMark_AllowedTypesPermitsType_Admitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmIssuerID)
 
@@ -167,6 +169,7 @@ func TestTrustMark_AllowedTypesPermitsType_Admitted(t *testing.T) {
 
 // Multiple required types, each satisfied by its own valid mark -> admitted.
 func TestTrustMark_MultipleRequiredTypes_AllPresent_Admitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmIssuerID)
 
@@ -190,6 +193,7 @@ func TestTrustMark_MultipleRequiredTypes_AllPresent_Admitted(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTrustMark_MissingRequiredMark_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmIssuerID)
 
@@ -206,6 +210,7 @@ func TestTrustMark_MissingRequiredMark_NotAdmitted(t *testing.T) {
 // One of two required types present, the other missing -> NOT admitted (EVERY
 // required type must be satisfied).
 func TestTrustMark_OneOfTwoRequiredMissing_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmIssuerID)
 
@@ -226,6 +231,7 @@ func TestTrustMark_OneOfTwoRequiredMissing_NotAdmitted(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTrustMark_UnauthorizedIssuer_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	authorized := newFedEntity(t, tmIssuerID)
 	rogue := newFedEntity(t, tmIssuerOther) // a real, well-formed issuer, just NOT configured
@@ -251,6 +257,7 @@ func TestTrustMark_UnauthorizedIssuer_NotAdmitted(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTrustMark_IssuerNotAuthorizedForType_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmIssuerID)
 
@@ -272,6 +279,7 @@ func TestTrustMark_IssuerNotAuthorizedForType_NotAdmitted(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTrustMark_ForgedSignature_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	// The authorized issuer's IDENTITY is tmIssuerID, but the mark is signed by a
 	// DIFFERENT keypair (an impostor sharing the id) — iss matches the configured
@@ -294,6 +302,7 @@ func TestTrustMark_ForgedSignature_NotAdmitted(t *testing.T) {
 
 // A structurally-tampered mark (a flipped signature byte) is also rejected.
 func TestTrustMark_TamperedSignature_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmIssuerID)
 
@@ -314,6 +323,7 @@ func TestTrustMark_TamperedSignature_NotAdmitted(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTrustMark_WrongSubject_ConfusedDeputy_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmIssuerID)
 	otherEntity := "https://some-other-rp.federation.test"
@@ -337,6 +347,7 @@ func TestTrustMark_WrongSubject_ConfusedDeputy_NotAdmitted(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTrustMark_Expired_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmIssuerID)
 
@@ -354,6 +365,7 @@ func TestTrustMark_Expired_NotAdmitted(t *testing.T) {
 }
 
 func TestTrustMark_FutureIat_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmIssuerID)
 
@@ -371,6 +383,7 @@ func TestTrustMark_FutureIat_NotAdmitted(t *testing.T) {
 
 // A mark with NO iat claim at all -> NOT admitted (iat is REQUIRED).
 func TestTrustMark_NoIat_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmIssuerID)
 
@@ -402,6 +415,7 @@ func TestTrustMark_NoIat_NotAdmitted(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTrustMark_SignedTypeAuthoritative_WrapperLies_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmIssuerID)
 
@@ -426,6 +440,7 @@ func TestTrustMark_SignedTypeAuthoritative_WrapperLies_NotAdmitted(t *testing.T)
 // MISLABELED (wrapper says tmTypeOther, signed says tmType) STILL satisfies the
 // tmType requirement — the wrapper type is advisory, the signed type wins.
 func TestTrustMark_SignedTypeAuthoritative_WrapperMislabeled_StillAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmIssuerID)
 
@@ -446,6 +461,7 @@ func TestTrustMark_SignedTypeAuthoritative_WrapperMislabeled_StillAdmitted(t *te
 // ---------------------------------------------------------------------------
 
 func TestTrustMark_WrongTyp_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmIssuerID)
 
@@ -477,6 +493,7 @@ func TestTrustMark_WrongTyp_NotAdmitted(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTrustMark_DefaultOff_NoRequiredTypes_AdmitsWithoutMarks(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	// No trust marks on the leaf, AND no required types configured.
 	f, anchor := fedWithLeafMarks(t, leaf, rpWithKeys(t, leaf, "https://rp.federation.test/cb"), nil)
@@ -496,6 +513,7 @@ func TestTrustMark_DefaultOff_NoRequiredTypes_AdmitsWithoutMarks(t *testing.T) {
 // Even with a nil Config passed to WithRegistrationTrustMarks, the gate is inert
 // (default-off) — an RP with no marks is admitted.
 func TestTrustMark_NilConfig_Inert_AdmitsWithoutMarks(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	f, anchor := fedWithLeafMarks(t, leaf, rpWithKeys(t, leaf, "https://rp.federation.test/cb"), nil)
 
@@ -514,6 +532,7 @@ func TestTrustMark_NilConfig_Inert_AdmitsWithoutMarks(t *testing.T) {
 // A store with NO trust-mark option wired at all behaves identically (the
 // zero-value gate is nil/inert) — proves the slice-3 store is unaffected.
 func TestTrustMark_OptionAbsent_SliceThreeUnaffected(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	f, anchor := fedWithLeafMarks(t, leaf, rpWithKeys(t, leaf, "https://rp.federation.test/cb"), nil)
 
@@ -536,6 +555,7 @@ func TestTrustMark_OptionAbsent_SliceThreeUnaffected(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTrustMark_ValidMarkDoesNotBypassInvalidChain(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	anchor := newFedEntity(t, tcAnchorID)
 	rogue := newFedEntity(t, "https://rogue.federation.test")
@@ -568,6 +588,7 @@ func TestTrustMark_ValidMarkDoesNotBypassInvalidChain(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTrustMark_ValidAmongJunkEntries_Admitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmIssuerID)
 

@@ -10,12 +10,14 @@ import (
 )
 
 func TestNew_RejectsReservedNamespace(t *testing.T) {
+	t.Parallel()
 	if _, err := ssobootstrap.New("sso-server", filepath.Join(t.TempDir(), "s.json")); err == nil {
 		t.Fatal("expected error for reserved namespace")
 	}
 }
 
 func TestNew_RequiresArgs(t *testing.T) {
+	t.Parallel()
 	if _, err := ssobootstrap.New("", "x"); err == nil {
 		t.Fatal("expected error for empty namespace")
 	}
@@ -25,6 +27,7 @@ func TestNew_RequiresArgs(t *testing.T) {
 }
 
 func TestRun_AppliesStepsAndSkipsRepeats(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "state.json")
 	bs, err := ssobootstrap.New("billing", path)
 	if err != nil {

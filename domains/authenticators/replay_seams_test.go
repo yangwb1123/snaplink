@@ -51,6 +51,7 @@ var _ security.JTIReplayStore = erroringReplayStore{}
 // ---------- KeyPair nonce replay ----------
 
 func TestKeyPairNonceReplay_RejectedWithStore(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	resolver := authenticators.NewMemoryPublicKeyStore()
@@ -71,6 +72,7 @@ func TestKeyPairNonceReplay_RejectedWithStore(t *testing.T) {
 }
 
 func TestKeyPairNonceReplay_AllowedWithoutStore(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	resolver := authenticators.NewMemoryPublicKeyStore()
@@ -89,6 +91,7 @@ func TestKeyPairNonceReplay_AllowedWithoutStore(t *testing.T) {
 }
 
 func TestKeyPairNonceReplay_FreshNonceStillAuthenticates(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	resolver := authenticators.NewMemoryPublicKeyStore()
@@ -109,6 +112,7 @@ func TestKeyPairNonceReplay_FreshNonceStillAuthenticates(t *testing.T) {
 }
 
 func TestKeyPairNonceReplay_FailOpenOnStoreError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	resolver := authenticators.NewMemoryPublicKeyStore()
@@ -126,6 +130,7 @@ func TestKeyPairNonceReplay_FailOpenOnStoreError(t *testing.T) {
 // ---------- TOTP code reuse ----------
 
 func TestTOTPCodeReuse_RejectedWithStore(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := authenticators.NewMemoryTOTPStore()
 	secret, _ := authenticators.GenerateTOTPSecret()
@@ -146,6 +151,7 @@ func TestTOTPCodeReuse_RejectedWithStore(t *testing.T) {
 }
 
 func TestTOTPCodeReuse_AllowedWithoutStore(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := authenticators.NewMemoryTOTPStore()
 	secret, _ := authenticators.GenerateTOTPSecret()
@@ -165,6 +171,7 @@ func TestTOTPCodeReuse_AllowedWithoutStore(t *testing.T) {
 }
 
 func TestTOTPCodeReuse_FailOpenOnStoreError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := authenticators.NewMemoryTOTPStore()
 	secret, _ := authenticators.GenerateTOTPSecret()

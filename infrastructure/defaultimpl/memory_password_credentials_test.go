@@ -11,6 +11,7 @@ import (
 )
 
 func TestMemoryPasswordCredentialStore_SetAndVerify(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryPasswordCredentialStore()
 
@@ -26,6 +27,7 @@ func TestMemoryPasswordCredentialStore_SetAndVerify(t *testing.T) {
 }
 
 func TestMemoryPasswordCredentialStore_UnknownUserMismatch(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryPasswordCredentialStore()
 	// Anti-enumeration: unknown user collapses to the same mismatch error.
@@ -35,6 +37,7 @@ func TestMemoryPasswordCredentialStore_UnknownUserMismatch(t *testing.T) {
 }
 
 func TestMemoryPasswordCredentialStore_EmptyUserRejected(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryPasswordCredentialStore()
 	if err := s.SetPassword(ctx, "", "x"); !errors.Is(err, core.ErrPasswordMismatch) {
@@ -46,6 +49,7 @@ func TestMemoryPasswordCredentialStore_EmptyUserRejected(t *testing.T) {
 }
 
 func TestMemoryPasswordCredentialStore_SetPasswordHash(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryPasswordCredentialStore()
 

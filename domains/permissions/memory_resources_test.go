@@ -29,6 +29,7 @@ func httpRes(id, tenantID, clientID, method, path string) *permissions.Resource 
 // --- Catalog CRUD ---
 
 func TestRegisterResource_RoundTrip(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	if err := p.RegisterResource(ctx, httpRes("r-1", "t-acme", "web-app", "GET", "/users")); err != nil {
@@ -47,6 +48,7 @@ func TestRegisterResource_RoundTrip(t *testing.T) {
 }
 
 func TestRegisterResource_RejectsInvalid(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	r := &permissions.Resource{ID: "r-1", Type: permissions.ResourceTypeHTTPAPI, Name: "x"} // missing attrs
 	if err := p.RegisterResource(context.Background(), r); !errors.Is(err, permissions.ErrInvalidResource) {
@@ -55,6 +57,7 @@ func TestRegisterResource_RejectsInvalid(t *testing.T) {
 }
 
 func TestRegisterResource_TupleConflictRejected(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	_ = p.RegisterResource(ctx, httpRes("r-1", "t-acme", "web-app", "GET", "/users"))
@@ -66,6 +69,7 @@ func TestRegisterResource_TupleConflictRejected(t *testing.T) {
 }
 
 func TestRegisterResource_SameIDIdempotent(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	_ = p.RegisterResource(ctx, httpRes("r-1", "t-acme", "web-app", "GET", "/users"))
@@ -81,6 +85,7 @@ func TestRegisterResource_SameIDIdempotent(t *testing.T) {
 }
 
 func TestRegisterResource_RetupleClearsStaleIndex(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	r := httpRes("r-1", "t-acme", "web-app", "GET", "/users")
@@ -102,6 +107,7 @@ func TestRegisterResource_RetupleClearsStaleIndex(t *testing.T) {
 }
 
 func TestGetResource_MissingIsErrResourceNotFound(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	if _, err := p.GetResource(context.Background(), "ghost"); !errors.Is(err, permissions.ErrResourceNotFound) {
 		t.Errorf("err=%v", err)
@@ -109,6 +115,7 @@ func TestGetResource_MissingIsErrResourceNotFound(t *testing.T) {
 }
 
 func TestListResources_FiltersByScope(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	_ = p.RegisterResource(ctx, httpRes("r-acme-a", "t-acme", "web", "GET", "/a"))
@@ -127,6 +134,7 @@ func TestListResources_FiltersByScope(t *testing.T) {
 }
 
 func TestDeleteResource_ClearsIndex(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	r := httpRes("r-1", "t-acme", "web-app", "GET", "/users")
@@ -142,6 +150,7 @@ func TestDeleteResource_ClearsIndex(t *testing.T) {
 }
 
 func TestDeleteResource_MissingIsIdempotent(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	if err := p.DeleteResource(context.Background(), "ghost"); err != nil {
 		t.Errorf("delete missing: %v", err)
@@ -151,6 +160,7 @@ func TestDeleteResource_MissingIsIdempotent(t *testing.T) {
 // --- ResolveResource matching ---
 
 func TestResolveResource_HTTPExactMatch(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	_ = p.RegisterResource(ctx, httpRes("r-1", "t-acme", "web", "GET", "/api/v1/users"))
@@ -173,6 +183,7 @@ func TestResolveResource_HTTPExactMatch(t *testing.T) {
 }
 
 func TestResolveResource_HTTPMethodMismatch(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	_ = p.RegisterResource(ctx, httpRes("r-1", "t-acme", "web", "GET", "/api/v1/users"))
@@ -186,6 +197,7 @@ func TestResolveResource_HTTPMethodMismatch(t *testing.T) {
 }
 
 func TestResolveResource_HTTPMethodCaseInsensitive(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	_ = p.RegisterResource(ctx, httpRes("r-1", "t-acme", "web", "GET", "/api/v1/users"))
@@ -199,6 +211,7 @@ func TestResolveResource_HTTPMethodCaseInsensitive(t *testing.T) {
 }
 
 func TestResolveResource_HTTPPathParam(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	_ = p.RegisterResource(ctx, httpRes("r-1", "t-acme", "web", "DELETE", "/api/v1/users/:id"))
@@ -212,6 +225,7 @@ func TestResolveResource_HTTPPathParam(t *testing.T) {
 }
 
 func TestResolveResource_HTTPPathLengthMismatch(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	_ = p.RegisterResource(ctx, httpRes("r-1", "t-acme", "web", "GET", "/api/v1/users"))
@@ -225,6 +239,7 @@ func TestResolveResource_HTTPPathLengthMismatch(t *testing.T) {
 }
 
 func TestResolveResource_TenantIsolation(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	_ = p.RegisterResource(ctx, httpRes("r-acme", "t-acme", "web", "GET", "/api/v1/users"))
@@ -240,6 +255,7 @@ func TestResolveResource_TenantIsolation(t *testing.T) {
 }
 
 func TestResolveResource_GRPC(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	r := newRes("r-1", "t-acme", "user-svc", permissions.ResourceTypeGRPCAPI, map[string]string{
@@ -262,6 +278,7 @@ func TestResolveResource_GRPC(t *testing.T) {
 }
 
 func TestResolveResource_Page(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	r := newRes("r-1", "t-acme", "web", permissions.ResourceTypePage, map[string]string{"route": "/admin/users"})
@@ -278,6 +295,7 @@ func TestResolveResource_Page(t *testing.T) {
 }
 
 func TestResolveResource_NoMatchReturnsFoundFalse(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	d, err := p.ResolveResource(context.Background(), permissions.ResourceLookup{
 		TenantID: "t-acme", ClientID: "web", Type: permissions.ResourceTypeHTTPAPI,
@@ -292,6 +310,7 @@ func TestResolveResource_NoMatchReturnsFoundFalse(t *testing.T) {
 }
 
 func TestResolveResource_PublicResourceCarriesRequiresAuthFalse(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	r := httpRes("r-1", "t-acme", "web", "GET", "/healthz")
@@ -312,6 +331,7 @@ func TestResolveResource_PublicResourceCarriesRequiresAuthFalse(t *testing.T) {
 }
 
 func TestResolveResource_UIElement(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	r := newRes("r-1", "t-acme", "web", permissions.ResourceTypeUIElement, map[string]string{
@@ -332,6 +352,7 @@ func TestResolveResource_UIElement(t *testing.T) {
 }
 
 func TestResolveResource_CustomTypeExactMatch(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	r := newRes("r-1", "t-acme", "web", "ws_event", map[string]string{

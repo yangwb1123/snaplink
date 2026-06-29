@@ -23,6 +23,7 @@ func freshInvitationStore(t *testing.T) *InvitationStore {
 }
 
 func TestInvitation_IssueConsumeSingleUse(t *testing.T) {
+	t.Parallel()
 	s := freshInvitationStore(t)
 	ctx := context.Background()
 
@@ -41,6 +42,7 @@ func TestInvitation_IssueConsumeSingleUse(t *testing.T) {
 }
 
 func TestInvitation_MissingAndExpired(t *testing.T) {
+	t.Parallel()
 	s := freshInvitationStore(t)
 	ctx := context.Background()
 
@@ -68,6 +70,7 @@ func TestInvitation_MissingAndExpired(t *testing.T) {
 }
 
 func TestInvitation_NanosecondRoundTrip(t *testing.T) {
+	t.Parallel()
 	s := freshInvitationStore(t)
 	ctx := context.Background()
 
@@ -87,6 +90,7 @@ func TestInvitation_NanosecondRoundTrip(t *testing.T) {
 }
 
 func TestInvitation_IssueUpsertReplacesInFull(t *testing.T) {
+	t.Parallel()
 	s := freshInvitationStore(t)
 	ctx := context.Background()
 
@@ -117,6 +121,7 @@ func TestInvitation_IssueUpsertReplacesInFull(t *testing.T) {
 }
 
 func TestInvitation_ListByTenantAndIsolation(t *testing.T) {
+	t.Parallel()
 	s := freshInvitationStore(t)
 	ctx := context.Background()
 	exp := time.Now().Add(time.Minute)

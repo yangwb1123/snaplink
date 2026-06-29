@@ -29,18 +29,21 @@ func seedDB(t *testing.T) string {
 }
 
 func TestRunStatus_RequiresDSN(t *testing.T) {
+	t.Parallel()
 	if err := runStatus(nil); err == nil {
 		t.Fatal("expected error when --dsn is missing")
 	}
 }
 
 func TestRunStatus_HappyPath(t *testing.T) {
+	t.Parallel()
 	if err := runStatus([]string{"--dsn", seedDB(t)}); err != nil {
 		t.Fatalf("runStatus: %v", err)
 	}
 }
 
 func TestRunStatus_BadDSN(t *testing.T) {
+	t.Parallel()
 	// A path under a nonexistent directory can't be opened/pinged.
 	if err := runStatus([]string{"--dsn", "file:/nonexistent-dir-xyz/none.db?mode=ro"}); err == nil {
 		t.Fatal("expected error opening a non-existent read-only DB")
@@ -48,6 +51,7 @@ func TestRunStatus_BadDSN(t *testing.T) {
 }
 
 func TestRenderStatus_Table(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	st := []migrate.NamespaceStatus{{Namespace: "audit", Version: 3, Name: "add_index"}}
 	if err := renderStatus(&buf, st, false); err != nil {
@@ -62,6 +66,7 @@ func TestRenderStatus_Table(t *testing.T) {
 }
 
 func TestRenderStatus_JSON(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	st := []migrate.NamespaceStatus{{Namespace: "tenant", Version: 1, Name: "baseline"}}
 	if err := renderStatus(&buf, st, true); err != nil {
@@ -73,6 +78,7 @@ func TestRenderStatus_JSON(t *testing.T) {
 }
 
 func TestRenderStatus_Empty(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	if err := renderStatus(&buf, nil, false); err != nil {
 		t.Fatalf("render empty: %v", err)

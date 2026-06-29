@@ -21,6 +21,7 @@ func newTOTPEnrollStore(t *testing.T) *sqlitestores.TOTPEnrollmentStore {
 }
 
 func TestSQLiteTOTPEnrollmentStore_Lifecycle(t *testing.T) {
+	t.Parallel()
 	s := newTOTPEnrollStore(t)
 	ctx := context.Background()
 	secret := []byte("seedbytes12345678901")

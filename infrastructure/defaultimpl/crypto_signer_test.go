@@ -17,6 +17,7 @@ import (
 // accepts. Ed25519 signs the message directly, so there is no pre-hash to
 // double; this case locks the "raw message in" half of the seam.
 func TestCryptoSigner_Ed25519(t *testing.T) {
+	t.Parallel()
 	iss := NewEd25519JWTIssuer(WithEd25519Issuer("https://sso.test"))
 
 	signer, pub, kid := iss.CryptoSigner()
@@ -63,6 +64,7 @@ func TestCryptoSigner_Ed25519(t *testing.T) {
 // seam re-hashed internally (like the JWS ECDSASigner does), VerifyASN1 over
 // the single digest would FAIL.
 func TestCryptoSigner_ECDSA_NoDoubleHash(t *testing.T) {
+	t.Parallel()
 	iss := NewECDSAJWTIssuer(WithECDSAIssuer("https://sso.test"))
 
 	signer, pub, kid := iss.CryptoSigner()
@@ -111,6 +113,7 @@ func TestCryptoSigner_ECDSA_NoDoubleHash(t *testing.T) {
 // with rsa.VerifyPKCS1v15 over that SAME digest — the no-double-hash proof
 // for the RSA family.
 func TestCryptoSigner_RSA_NoDoubleHash(t *testing.T) {
+	t.Parallel()
 	iss := NewRSAJWTIssuer(WithRSAIssuer("https://sso.test"))
 
 	signer, pub, kid := iss.CryptoSigner()
@@ -155,6 +158,7 @@ func TestCryptoSigner_RSA_NoDoubleHash(t *testing.T) {
 // a crypto.Signer means no SAML signing" contract. A zero-value issuer has a
 // nil signer field, exercising the first guard in the accessor.
 func TestCryptoSigner_NilSigner(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		signer func() (crypto.Signer, crypto.PublicKey, string)
@@ -186,6 +190,7 @@ func TestCryptoSigner_NilSigner(t *testing.T) {
 // The bridge's own CryptoSigner() is covered in the cryptosigner package
 // test.
 func TestCryptoSigner_ExternalKeyMatchesJWKS(t *testing.T) {
+	t.Parallel()
 	_, edPriv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		// GenerateKey(nil) uses crypto/rand by default; nil reader is valid.

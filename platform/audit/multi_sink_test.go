@@ -10,6 +10,7 @@ import (
 )
 
 func TestMultiSink_FansOutToAllSinks(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	mem := audit.NewMemorySink(10)
 	wr := audit.NewWriterSink(&buf)
@@ -28,6 +29,7 @@ func TestMultiSink_FansOutToAllSinks(t *testing.T) {
 }
 
 func TestMultiSink_GetSkipsWriteOnlySinks(t *testing.T) {
+	t.Parallel()
 	wr := audit.NewWriterSink(&bytes.Buffer{})
 	mem := audit.NewMemorySink(10)
 	// Writer-only first; readback sink second. MultiSink must skip the first.
@@ -46,6 +48,7 @@ func TestMultiSink_GetSkipsWriteOnlySinks(t *testing.T) {
 }
 
 func TestMultiSink_QueryDelegatesToFirstReadableSink(t *testing.T) {
+	t.Parallel()
 	wr := audit.NewWriterSink(&bytes.Buffer{})
 	mem := audit.NewMemorySink(10)
 	multi := audit.NewMultiSink(wr, mem)
@@ -72,6 +75,7 @@ func (errorSink) Get(_ context.Context, _ string) (*audit.Event, error) {
 func (errorSink) Query(_ context.Context, _ audit.Query) ([]*audit.Event, error) { return nil, nil }
 
 func TestMultiSink_JoinsRecordErrors(t *testing.T) {
+	t.Parallel()
 	a := errors.New("a failed")
 	b := errors.New("b failed")
 	multi := audit.NewMultiSink(errorSink{err: a}, errorSink{err: b})
@@ -86,6 +90,7 @@ func TestMultiSink_JoinsRecordErrors(t *testing.T) {
 }
 
 func TestMultiSink_AllWriteOnlyQueryStillSurfacesWriteOnlyErr(t *testing.T) {
+	t.Parallel()
 	multi := audit.NewMultiSink(audit.NewWriterSink(&bytes.Buffer{}))
 	if _, err := multi.Query(context.Background(), audit.Query{}); !errors.Is(err, audit.ErrSinkWriteOnly) {
 		t.Fatalf("expected ErrSinkWriteOnly, got %v", err)
@@ -93,6 +98,7 @@ func TestMultiSink_AllWriteOnlyQueryStillSurfacesWriteOnlyErr(t *testing.T) {
 }
 
 func TestMultiSink_AllWriteOnlyGetReturnsEventNotFound(t *testing.T) {
+	t.Parallel()
 	// When every sink is write-only, the loop falls through and we should
 	// see ErrEventNotFound — not the write-only sentinel.
 	multi := audit.NewMultiSink(audit.NewWriterSink(&bytes.Buffer{}))

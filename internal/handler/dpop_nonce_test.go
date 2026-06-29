@@ -13,6 +13,7 @@ import (
 // TestHMACNonceProvider_IssueVerifyRoundTrip locks the happy path: a freshly
 // issued nonce verifies cleanly under the same provider.
 func TestHMACNonceProvider_IssueVerifyRoundTrip(t *testing.T) {
+	t.Parallel()
 	p, err := NewHMACNonceProvider(time.Minute)
 	if err != nil {
 		t.Fatalf("NewHMACNonceProvider: %v", err)
@@ -31,6 +32,7 @@ func TestHMACNonceProvider_IssueVerifyRoundTrip(t *testing.T) {
 
 // TestHMACNonceProvider_TTLFallback locks the ttl<=0 fallback to the default.
 func TestHMACNonceProvider_TTLFallback(t *testing.T) {
+	t.Parallel()
 	p, err := NewHMACNonceProvider(0)
 	if err != nil {
 		t.Fatalf("NewHMACNonceProvider: %v", err)
@@ -51,6 +53,7 @@ func TestHMACNonceProvider_TTLFallback(t *testing.T) {
 // are rejected, the key is defensively copied so a later caller mutation can't
 // silently rotate the signing secret, and ttl<=0 still falls back to default.
 func TestNewHMACNonceProviderWithKey(t *testing.T) {
+	t.Parallel()
 	if _, err := NewHMACNonceProviderWithKey(make([]byte, 15), time.Minute); err == nil {
 		t.Fatal("expected error for key < 16 bytes")
 	}
@@ -83,6 +86,7 @@ func TestNewHMACNonceProviderWithKey(t *testing.T) {
 // nonce issued by one replica verifies on a peer sharing the same key, and a
 // peer with a DIFFERENT key rejects it (tag mismatch).
 func TestHMACNonceProvider_MultiKeyVerify(t *testing.T) {
+	t.Parallel()
 	key := make([]byte, 32)
 	for i := range key {
 		key[i] = byte(i)
@@ -120,6 +124,7 @@ func TestHMACNonceProvider_MultiKeyVerify(t *testing.T) {
 // before the MAC check: bad base64, wrong length, and the strict-decoding guard
 // against flipping the unused trailing bits of the final base64 char.
 func TestHMACNonceProvider_VerifyRejectsMalformed(t *testing.T) {
+	t.Parallel()
 	p, err := NewHMACNonceProvider(time.Minute)
 	if err != nil {
 		t.Fatalf("NewHMACNonceProvider: %v", err)
@@ -151,6 +156,7 @@ func TestHMACNonceProvider_VerifyRejectsMalformed(t *testing.T) {
 // TestHMACNonceProvider_VerifyRejectsTampered locks the MAC check: flipping a
 // payload byte invalidates the tag.
 func TestHMACNonceProvider_VerifyRejectsTampered(t *testing.T) {
+	t.Parallel()
 	p, err := NewHMACNonceProvider(time.Minute)
 	if err != nil {
 		t.Fatalf("NewHMACNonceProvider: %v", err)
@@ -173,6 +179,7 @@ func TestHMACNonceProvider_VerifyRejectsTampered(t *testing.T) {
 // TestHMACNonceProvider_VerifyExpired locks the TTL lower bound: a nonce older
 // than ttl is rejected as expired. A sub-second TTL keeps the test fast.
 func TestHMACNonceProvider_VerifyExpired(t *testing.T) {
+	t.Parallel()
 	p, err := NewHMACNonceProvider(20 * time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewHMACNonceProvider: %v", err)
@@ -195,6 +202,7 @@ func TestHMACNonceProvider_VerifyExpired(t *testing.T) {
 // We forge a nonce far in the future by re-MACing a future timestamp under a
 // known key (so it passes the tag check and reaches the skew gate).
 func TestHMACNonceProvider_VerifyFutureSkew(t *testing.T) {
+	t.Parallel()
 	key := make([]byte, 32)
 	for i := range key {
 		key[i] = byte(i + 7)

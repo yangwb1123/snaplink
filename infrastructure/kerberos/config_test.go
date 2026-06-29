@@ -22,6 +22,7 @@ func validConfig() kerberosauth.Config {
 // field fails CLOSED (a credential-validation gate misconfiguration is a
 // security regression, not a runtime warning).
 func TestConfigValidate(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		mutate  func(*kerberosauth.Config)

@@ -13,6 +13,7 @@ import (
 // dispatch happens but the index is reclaimed (RemoveAll), exercising Fanout's
 // len(front) > 0 skip-log branch.
 func TestFanout_IdPInitiated_SkipsFrontChannelSPs(t *testing.T) {
+	t.Parallel()
 	const nameID = "fc-skip@example.com"
 	hh, _, _, idx, _ := newFanoutHarness(t, nameID)
 	ctx := context.Background()
@@ -40,6 +41,7 @@ func TestFanout_IdPInitiated_SkipsFrontChannelSPs(t *testing.T) {
 // TestFanout_BlankSubject_NoOp proves Fanout is a no-op for a blank subject
 // (nothing to log out) — the early guard, never touching the index.
 func TestFanout_BlankSubject_NoOp(t *testing.T) {
+	t.Parallel()
 	hh, _, _, idx, _ := newFanoutHarness(t, "someone@example.com")
 	ctx := context.Background()
 	// Record a row under a real subject; a blank-subject Fanout must NOT clean it.

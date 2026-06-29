@@ -87,6 +87,7 @@ func buildTestServer(t *testing.T) (http.HandlerFunc, sso.SessionManager, sso.Us
 }
 
 func TestACS_ValidAssertion_CreatesSession(t *testing.T) {
+	t.Parallel()
 	handler, sessions, users, idp := buildTestServer(t)
 
 	resp := mintSignedResponse(t, idp, "alice@example.com", map[string]string{"email": "alice@example.com"})
@@ -122,6 +123,7 @@ func TestACS_ValidAssertion_CreatesSession(t *testing.T) {
 }
 
 func TestACS_InvalidAssertion_400AndNoStore(t *testing.T) {
+	t.Parallel()
 	handler, sessions, _, _ := buildTestServer(t)
 
 	// A structurally-valid base64 that is not a valid signed assertion.
@@ -151,6 +153,7 @@ func TestACS_InvalidAssertion_400AndNoStore(t *testing.T) {
 }
 
 func TestACS_MissingSAMLResponse_400(t *testing.T) {
+	t.Parallel()
 	handler, _, _, _ := buildTestServer(t)
 	rec := postACS(handler, "", "") // empty SAMLResponse
 	if rec.Code != http.StatusBadRequest {
@@ -160,6 +163,7 @@ func TestACS_MissingSAMLResponse_400(t *testing.T) {
 }
 
 func TestACS_GET_405(t *testing.T) {
+	t.Parallel()
 	handler, _, _, _ := buildTestServer(t)
 	req := httptest.NewRequest(http.MethodGet, acsURL, nil)
 	rec := httptest.NewRecorder()
@@ -171,6 +175,7 @@ func TestACS_GET_405(t *testing.T) {
 }
 
 func TestACS_ReplayedAssertion_Rejected(t *testing.T) {
+	t.Parallel()
 	handler, _, _, idp := buildTestServer(t)
 	resp := mintSignedResponse(t, idp, "carol@example.com", nil)
 
@@ -185,6 +190,7 @@ func TestACS_ReplayedAssertion_Rejected(t *testing.T) {
 }
 
 func TestBuild_RejectsMissingDeps(t *testing.T) {
+	t.Parallel()
 	_, err := samlmod.Build(samlmod.Deps{
 		UserProvider: defaultimpl.NewMemoryUserProvider(),
 	}, samlmod.Config{SPs: []sp.SPConfig{{Name: "x"}}})
@@ -202,6 +208,7 @@ func TestBuild_RejectsMissingDeps(t *testing.T) {
 }
 
 func TestBuild_RejectsDuplicateSPNames(t *testing.T) {
+	t.Parallel()
 	idp := newIDPKey(t)
 	spc := sp.SPConfig{
 		Name: "dup", EntityID: spEntity, ACSURL: acsURL,

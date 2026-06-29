@@ -23,6 +23,7 @@ func newTestProvider(t *testing.T) *permsqlite.Provider {
 }
 
 func TestProvider_RoleRoundtrip(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	ctx := context.Background()
 	role := permissions.Role{
@@ -47,6 +48,7 @@ func TestProvider_RoleRoundtrip(t *testing.T) {
 }
 
 func TestProvider_AddRoleDuplicateRejected(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	ctx := context.Background()
 	role := permissions.Role{Code: "viewer", Permissions: []string{"x:read"}}
@@ -60,6 +62,7 @@ func TestProvider_AddRoleDuplicateRejected(t *testing.T) {
 }
 
 func TestProvider_UpdateRoleRequiresExistence(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	err := p.UpdateRole(context.Background(), "web", permissions.Role{Code: "ghost"})
 	if !errors.Is(err, permissions.ErrRoleNotFound) {
@@ -68,6 +71,7 @@ func TestProvider_UpdateRoleRequiresExistence(t *testing.T) {
 }
 
 func TestProvider_UpdateRoleReplacesFields(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	ctx := context.Background()
 	_ = p.AddRole(ctx, "web", permissions.Role{Code: "r1", Name: "Original", Permissions: []string{"a"}})
@@ -86,6 +90,7 @@ func TestProvider_UpdateRoleReplacesFields(t *testing.T) {
 }
 
 func TestProvider_RemoveRoleStripsAssignments(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	ctx := context.Background()
 	_ = p.AddRole(ctx, "web", permissions.Role{Code: "admin", Permissions: []string{"all"}})
@@ -115,6 +120,7 @@ func TestProvider_RemoveRoleStripsAssignments(t *testing.T) {
 }
 
 func TestProvider_RemoveRoleMissingErrors(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	err := p.RemoveRole(context.Background(), "web", "ghost")
 	if !errors.Is(err, permissions.ErrRoleNotFound) {
@@ -123,6 +129,7 @@ func TestProvider_RemoveRoleMissingErrors(t *testing.T) {
 }
 
 func TestProvider_AssignRolesIsSet(t *testing.T) {
+	t.Parallel()
 	// The Provider.AssignRoles contract is SET (not merge) per
 	// memory peer. Verify the sqlite peer holds the same shape.
 	p := newTestProvider(t)
@@ -139,6 +146,7 @@ func TestProvider_AssignRolesIsSet(t *testing.T) {
 }
 
 func TestProvider_UnassignRolesIgnoresMissing(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	ctx := context.Background()
 	_ = p.AddRole(ctx, "web", permissions.Role{Code: "r1"})
@@ -155,6 +163,7 @@ func TestProvider_UnassignRolesIgnoresMissing(t *testing.T) {
 }
 
 func TestProvider_UnassignRolesNoAssignmentNoOp(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	// No assignment row at all → silent no-op.
 	if err := p.UnassignRoles(context.Background(), "alice", "web", []string{"r1"}); err != nil {
@@ -163,6 +172,7 @@ func TestProvider_UnassignRolesNoAssignmentNoOp(t *testing.T) {
 }
 
 func TestProvider_ListAssignmentsFiltersEmptyRoles(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	ctx := context.Background()
 	_ = p.AddRole(ctx, "web", permissions.Role{Code: "r1"})
@@ -176,6 +186,7 @@ func TestProvider_ListAssignmentsFiltersEmptyRoles(t *testing.T) {
 }
 
 func TestProvider_PermissionsDeduplicates(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	ctx := context.Background()
 	_ = p.AddRole(ctx, "web", permissions.Role{Code: "r1", Permissions: []string{"user:read", "user:write"}})
@@ -202,6 +213,7 @@ func TestProvider_PermissionsDeduplicates(t *testing.T) {
 }
 
 func TestProvider_RolesUnknownUserSentinel(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	_, err := p.Roles(context.Background(), "ghost", "web")
 	if !errors.Is(err, permissions.ErrUserNotFound) {
@@ -210,6 +222,7 @@ func TestProvider_RolesUnknownUserSentinel(t *testing.T) {
 }
 
 func TestProvider_MenusSetGetRoundtrip(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	ctx := context.Background()
 	want := permissions.MenuTree{
@@ -233,6 +246,7 @@ func TestProvider_MenusSetGetRoundtrip(t *testing.T) {
 }
 
 func TestProvider_MenusGetMissingReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	got, err := p.GetMenus(context.Background(), "web")
 	if err != nil {
@@ -244,6 +258,7 @@ func TestProvider_MenusGetMissingReturnsEmpty(t *testing.T) {
 }
 
 func TestProvider_MenusFiltersByUserPermissions(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	ctx := context.Background()
 	tree := permissions.MenuTree{
@@ -278,6 +293,7 @@ func TestProvider_MenusFiltersByUserPermissions(t *testing.T) {
 }
 
 func TestProvider_PingAfterCloseErrors(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	_ = p.Close()
 	if err := p.Ping(context.Background()); err == nil {

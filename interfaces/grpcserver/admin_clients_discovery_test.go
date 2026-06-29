@@ -17,6 +17,7 @@ import (
 // union and MUST fire the callback; List/Get/RotateSecret do not affect
 // discovery and MUST NOT.
 func TestClientAdmin_DiscoveryChangeTrigger(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	store.AddSeed(&sso.Client{ID: "c1", Secret: "s", Active: true, AllowedScopes: []string{"read"}})
 
@@ -67,6 +68,7 @@ func TestClientAdmin_DiscoveryChangeTrigger(t *testing.T) {
 // TestClientAdmin_NilDiscoveryCallbackSafe confirms a nil callback is a
 // no-op (single-node / no-bus deployments pass nil).
 func TestClientAdmin_NilDiscoveryCallbackSafe(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	svc := grpcserver.NewClientAdminService(store, nil, nil, nil)
 	if _, err := svc.Create(context.Background(), &adminv1.CreateClientRequest{
@@ -81,6 +83,7 @@ func TestClientAdmin_NilDiscoveryCallbackSafe(t *testing.T) {
 // RotateSecret all change a cached field (metadata or the Secret), so every
 // one MUST evict; reads (List/Get) MUST NOT.
 func TestClientAdmin_ClientChangeTrigger(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	store.AddSeed(&sso.Client{ID: "c1", Secret: "s", Active: true})
 

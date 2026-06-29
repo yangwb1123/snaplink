@@ -23,6 +23,7 @@ func freshTOTPEnrollmentStore(t *testing.T) *TOTPEnrollmentStore {
 }
 
 func TestTOTPEnrollment_Lifecycle(t *testing.T) {
+	t.Parallel()
 	s := freshTOTPEnrollmentStore(t)
 	ctx := context.Background()
 	secret := []byte("seedbytes12345678901")
@@ -55,6 +56,7 @@ func TestTOTPEnrollment_Lifecycle(t *testing.T) {
 }
 
 func TestTOTPEnrollment_ReEnrollReplacesInFull(t *testing.T) {
+	t.Parallel()
 	s := freshTOTPEnrollmentStore(t)
 	ctx := context.Background()
 	secret := []byte("seedbytes12345678901")
@@ -81,6 +83,7 @@ func TestTOTPEnrollment_ReEnrollReplacesInFull(t *testing.T) {
 }
 
 func TestTOTPEnrollment_RemoveIsIdempotentAndScoped(t *testing.T) {
+	t.Parallel()
 	s := freshTOTPEnrollmentStore(t)
 	ctx := context.Background()
 	secret := []byte("seedbytes12345678901")
@@ -115,6 +118,7 @@ func TestTOTPEnrollment_RemoveIsIdempotentAndScoped(t *testing.T) {
 }
 
 func TestTOTPEnrollment_PerUserIsolation(t *testing.T) {
+	t.Parallel()
 	s := freshTOTPEnrollmentStore(t)
 	ctx := context.Background()
 	aliceSecret := []byte("aliceseed12345678901")
@@ -140,6 +144,7 @@ func TestTOTPEnrollment_PerUserIsolation(t *testing.T) {
 }
 
 func TestTOTPEnrollment_AddedAtNanosecondRoundTrip(t *testing.T) {
+	t.Parallel()
 	s := freshTOTPEnrollmentStore(t)
 	ctx := context.Background()
 

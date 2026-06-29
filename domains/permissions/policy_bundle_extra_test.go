@@ -21,6 +21,7 @@ func (l listFailProvider) ListAllRoles(context.Context, string) ([]permissions.R
 }
 
 func TestBuildPolicyBundle_PropagatesListError(t *testing.T) {
+	t.Parallel()
 	want := errors.New("store unavailable")
 	prov := listFailProvider{MemoryProvider: permissions.NewMemoryProvider(), err: want}
 	b, err := permissions.BuildPolicyBundle(context.Background(), prov, "web-app")
@@ -37,6 +38,7 @@ func TestBuildPolicyBundle_PropagatesListError(t *testing.T) {
 // (it frames version + client + semantics + a "0" role count), and two
 // empty bundles for the same client hash identically.
 func TestCanonicalBytes_EmptyBundleStable(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	b1, err := permissions.BuildPolicyBundle(context.Background(), p, "nobody")
 	if err != nil {
@@ -60,6 +62,7 @@ func TestCanonicalBytes_EmptyBundleStable(t *testing.T) {
 // that grants no permissions (len(r.Permissions)==0 → writeField(itoa(0))),
 // and confirms it stays distinct from a role that grants one.
 func TestCanonicalBytes_RoleWithZeroPermissions(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	pEmpty := permissions.NewMemoryProvider()
 	_ = pEmpty.AddRole(ctx, "c", permissions.Role{Code: "r"}) // no permissions

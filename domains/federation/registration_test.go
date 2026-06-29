@@ -88,6 +88,7 @@ func regStore(t *testing.T, inner core.ClientStore, fetcher federation.EntitySta
 // ---------------------------------------------------------------------------
 
 func TestRegistration_ValidChain_DerivesUsableClient(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	f, anchor, _, _ := buildLinearFederationWithLeaf(t, leaf,
 		rpWithKeys(t, leaf, "https://rp.federation.test/cb"), nil, nil)
@@ -127,6 +128,7 @@ func TestRegistration_ValidChain_DerivesUsableClient(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegistration_PreRegisteredClientWins(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	anchor := newFedEntity(t, tcAnchorID)
 
@@ -168,6 +170,7 @@ func TestRegistration_PreRegisteredClientWins(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegistration_InvalidChain_StaysUnknown(t *testing.T) {
+	t.Parallel()
 	// A leaf whose chain NEVER reaches the configured anchor (no authority_hints
 	// path to it) — slice-2 ResolveTrustChain fails closed.
 	leaf := newFedEntity(t, tcLeafID)
@@ -197,6 +200,7 @@ func TestRegistration_InvalidChain_StaysUnknown(t *testing.T) {
 }
 
 func TestRegistration_ForgedLeafKey_StaysUnknown(t *testing.T) {
+	t.Parallel()
 	// The intermediate vouches for the leaf with DIFFERENT keys than the leaf
 	// actually signed its config with → slice-2 leaf-signature check fails.
 	anchor := newFedEntity(t, tcAnchorID)
@@ -227,6 +231,7 @@ func TestRegistration_ForgedLeafKey_StaysUnknown(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegistration_PolicyConstrainsRedirectURIs(t *testing.T) {
+	t.Parallel()
 	// The anchor's policy PINS redirect_uris to a single permitted value via
 	// `value`. The leaf ASKS for two (one permitted, one rogue); the policy
 	// pins the metadata to exactly the permitted one — the rogue is never on
@@ -262,6 +267,7 @@ func TestRegistration_PolicyConstrainsRedirectURIs(t *testing.T) {
 }
 
 func TestRegistration_PolicyConstrainsScope(t *testing.T) {
+	t.Parallel()
 	// The anchor's policy caps scope to subset_of {openid}. The leaf asks for
 	// "openid profile email"; the merged policy rejects the leaf metadata
 	// (profile/email are not in the subset) → resolution fails → unknown.
@@ -289,6 +295,7 @@ func TestRegistration_PolicyConstrainsScope(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegistration_NonEntityIDUnknown_NoResolutionAttempt(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	f := newFakeFetcher()
 	f.configs[anchor.id] = anchor.entityConfig(t, nil, tcFetchURL, nil)
@@ -320,6 +327,7 @@ func TestRegistration_NonEntityIDUnknown_NoResolutionAttempt(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegistration_NilResolver_TransparentPassthrough(t *testing.T) {
+	t.Parallel()
 	inner := newCountingClientStore()
 	inner.AddSeed(&core.Client{ID: "c1", Active: true, Secret: "s"})
 
@@ -339,6 +347,7 @@ func TestRegistration_NilResolver_TransparentPassthrough(t *testing.T) {
 }
 
 func TestRegistration_DisabledResolver_NoAnchors_Passthrough(t *testing.T) {
+	t.Parallel()
 	inner := newCountingClientStore()
 	// A resolver built from a config with NO trust anchors is inert (Enabled()
 	// == false) — the decorator must not attempt resolution.
@@ -358,6 +367,7 @@ func TestRegistration_DisabledResolver_NoAnchors_Passthrough(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegistration_CachesWithinChainExp(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	f, anchor, _, leaf2 := buildLinearFederationWithLeaf(t, leaf,
 		rpWithKeys(t, leaf, "https://rp.federation.test/cb"), nil, nil)
@@ -382,6 +392,7 @@ func TestRegistration_CachesWithinChainExp(t *testing.T) {
 }
 
 func TestRegistration_ReResolvesAfterChainExp(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	f, anchor, _, leaf2 := buildLinearFederationWithLeaf(t, leaf,
 		rpWithKeys(t, leaf, "https://rp.federation.test/cb"), nil, nil)
@@ -419,6 +430,7 @@ func TestRegistration_ReResolvesAfterChainExp(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegistration_ConcurrentGets_RaceFree(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	f, anchor, _, leaf2 := buildLinearFederationWithLeaf(t, leaf,
 		rpWithKeys(t, leaf, "https://rp.federation.test/cb"), nil, nil)
@@ -445,6 +457,7 @@ func TestRegistration_ConcurrentGets_RaceFree(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMetadataToClient_RequiresRedirectURI(t *testing.T) {
+	t.Parallel()
 	_, err := federation.MetadataToClient("https://rp.test", map[string]any{
 		"client_name": "No Redirect",
 	}, nil, "")
@@ -454,6 +467,7 @@ func TestMetadataToClient_RequiresRedirectURI(t *testing.T) {
 }
 
 func TestMetadataToClient_PublicClientGetsPKCE(t *testing.T) {
+	t.Parallel()
 	c, err := federation.MetadataToClient("https://rp.test", map[string]any{
 		"redirect_uris":              []any{"https://rp.test/cb"},
 		"token_endpoint_auth_method": "none",
@@ -488,6 +502,7 @@ func TestMetadataToClient_PublicClientGetsPKCE(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegistration_NegativeCache_RepeatFakeIDDoesNotRefetch(t *testing.T) {
+	t.Parallel()
 	// A leaf whose chain NEVER reaches the configured anchor → resolution fails.
 	leaf := newFedEntity(t, tcLeafID)
 	anchor := newFedEntity(t, tcAnchorID)
@@ -525,6 +540,7 @@ func TestRegistration_NegativeCache_RepeatFakeIDDoesNotRefetch(t *testing.T) {
 }
 
 func TestRegistration_NegativeCache_LegitRPNotPinnedOut_ReResolvesAfterTTL(t *testing.T) {
+	t.Parallel()
 	// A legit RP whose superior is TRANSIENTLY down: the first resolution fails
 	// (negative-cached), but the SHORT TTL must let it re-resolve + succeed once
 	// the outage clears — the negative cache only DELAYS, never permanently pins.
@@ -579,6 +595,7 @@ func TestRegistration_NegativeCache_LegitRPNotPinnedOut_ReResolvesAfterTTL(t *te
 // ---------------------------------------------------------------------------
 
 func TestRegistration_NegativeCache_SizeCapEvicts(t *testing.T) {
+	t.Parallel()
 	// A resolver with a configured anchor but a fetcher that fails EVERY config
 	// fetch → every distinct id's resolution fails (each would be negative-cached).
 	anchor := newFedEntity(t, tcAnchorID)
@@ -614,6 +631,7 @@ func TestRegistration_NegativeCache_SizeCapEvicts(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegistration_ConcurrencySemaphore_SaturatedShedsFailClosed(t *testing.T) {
+	t.Parallel()
 	// Two distinct valid leaves under the SAME anchor/intermediate, so EITHER
 	// could resolve — the only thing stopping the second is the saturated
 	// semaphore (cap 1), not an invalid chain.

@@ -41,6 +41,7 @@ func markSessionRevoked(t *testing.T, mgr *SessionManager, sessionID string) err
 }
 
 func TestSessionManager_CreateAndGet(t *testing.T) {
+	t.Parallel()
 	mgr := newSessionManagerForTest(t)
 	ctx := context.Background()
 
@@ -77,6 +78,7 @@ func TestSessionManager_CreateAndGet(t *testing.T) {
 }
 
 func TestSessionManager_GetUnknownReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	mgr := newSessionManagerForTest(t)
 	_, err := mgr.Get(context.Background(), "nonexistent-id")
 	if !errors.Is(err, sso.ErrSessionNotFound) {
@@ -85,6 +87,7 @@ func TestSessionManager_GetUnknownReturnsNotFound(t *testing.T) {
 }
 
 func TestSessionManager_DestroyRemoves(t *testing.T) {
+	t.Parallel()
 	mgr := newSessionManagerForTest(t)
 	ctx := context.Background()
 
@@ -103,6 +106,7 @@ func TestSessionManager_DestroyRemoves(t *testing.T) {
 }
 
 func TestSessionManager_RefreshExtendsExpiresAt(t *testing.T) {
+	t.Parallel()
 	mgr := newSessionManagerForTest(t)
 	ctx := context.Background()
 
@@ -124,6 +128,7 @@ func TestSessionManager_RefreshExtendsExpiresAt(t *testing.T) {
 }
 
 func TestSessionManager_RefreshUnknownReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	mgr := newSessionManagerForTest(t)
 	_, err := mgr.Refresh(context.Background(), "nonexistent")
 	if !errors.Is(err, sso.ErrSessionNotFound) {
@@ -139,6 +144,7 @@ func TestSessionManager_RefreshUnknownReturnsNotFound(t *testing.T) {
 // captured an old session id and could trigger Refresh (via admin
 // RPC, internal handler, etc) could extend it forever.
 func TestSessionManager_RefreshRefusesExpired(t *testing.T) {
+	t.Parallel()
 	mgr := newSessionManagerForTestWithTTL(t, 10*time.Millisecond)
 	s, _ := mgr.Create(context.Background(), "alice")
 	time.Sleep(20 * time.Millisecond)
@@ -152,6 +158,7 @@ func TestSessionManager_RefreshRefusesExpired(t *testing.T) {
 // captures the id, calls Refresh. MUST fail (the same WHERE
 // filter also checks revoked = 0).
 func TestSessionManager_RefreshRefusesRevoked(t *testing.T) {
+	t.Parallel()
 	mgr := newSessionManagerForTest(t)
 	s, _ := mgr.Create(context.Background(), "alice")
 	// Mark revoked directly via DB so we exercise the Refresh
@@ -165,6 +172,7 @@ func TestSessionManager_RefreshRefusesRevoked(t *testing.T) {
 }
 
 func TestSessionManager_ListByUserFiltersByOwner(t *testing.T) {
+	t.Parallel()
 	mgr := newSessionManagerForTest(t)
 	ctx := context.Background()
 
@@ -209,6 +217,7 @@ func TestSessionManager_ListByUserFiltersByOwner(t *testing.T) {
 }
 
 func TestSessionManager_ListAllReturnsEverything(t *testing.T) {
+	t.Parallel()
 	mgr := newSessionManagerForTest(t)
 	ctx := context.Background()
 
@@ -226,6 +235,7 @@ func TestSessionManager_ListAllReturnsEverything(t *testing.T) {
 }
 
 func TestSessionManager_DefaultsToConfiguredTTL(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "default-ttl.db")
 	mgr, err := NewSessionManager(dsn, 0) // zero = use sso.DefaultSessionDuration
@@ -247,6 +257,7 @@ func TestSessionManager_DefaultsToConfiguredTTL(t *testing.T) {
 }
 
 func TestSessionManager_CrossInstanceSharing(t *testing.T) {
+	t.Parallel()
 	// The whole point of SQLite-backed sessions is that a session
 	// minted on one process is visible to another against the same
 	// DB file — the multi-replica use case.
@@ -278,6 +289,7 @@ func TestSessionManager_CrossInstanceSharing(t *testing.T) {
 }
 
 func TestSessionManager_CreateWithMeta_RoundTrips(t *testing.T) {
+	t.Parallel()
 	mgr := newSessionManagerForTest(t)
 	ctx := context.Background()
 
@@ -315,6 +327,7 @@ func TestSessionManager_CreateWithMeta_RoundTrips(t *testing.T) {
 // TestSessionManager_MigrationFromV1 verifies the v2 ALTER applies cleanly to a
 // DB created at v1 (sessions without the device-context columns).
 func TestSessionManager_MigrationFromV1(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "v1.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
@@ -347,6 +360,7 @@ func TestSessionManager_MigrationFromV1(t *testing.T) {
 // tenant suspension: DeleteByTenant removes only the target tenant's sessions
 // and leaves other tenants' (and untagged) sessions intact.
 func TestSessionManager_DeleteByTenant(t *testing.T) {
+	t.Parallel()
 	mgr := newSessionManagerForTest(t)
 	ctx := context.Background()
 	if _, err := mgr.CreateWithMeta(ctx, "alice", sso.SessionMeta{TenantID: "acme"}); err != nil {
@@ -402,6 +416,7 @@ func TestSessionManager_DeleteByTenant(t *testing.T) {
 // cleanly to a DB created at v2 (sessions without the tenant binding) and that
 // the new column round-trips.
 func TestSessionManager_MigrationFromV2(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "v2.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"

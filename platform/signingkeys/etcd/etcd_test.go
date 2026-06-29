@@ -36,12 +36,14 @@ func sampleKeys() []core.JWK {
 }
 
 func TestNew_RequiresEndpoints(t *testing.T) {
+	t.Parallel()
 	if _, err := New(Config{}); err == nil {
 		t.Fatal("expected error for empty endpoints")
 	}
 }
 
 func TestNewWithClient_AppliesDefaults(t *testing.T) {
+	t.Parallel()
 	r := NewWithClient(nil, Config{})
 	if r.prefix != DefaultPrefix {
 		t.Errorf("prefix = %q, want default", r.prefix)
@@ -52,6 +54,7 @@ func TestNewWithClient_AppliesDefaults(t *testing.T) {
 }
 
 func TestNewWithClient_KeepsExplicitConfig(t *testing.T) {
+	t.Parallel()
 	r := NewWithClient(nil, Config{Prefix: "/x", LeaseTTL: time.Minute})
 	if r.prefix != "/x" || r.defaultTTL != time.Minute {
 		t.Errorf("config not preserved: %q %v", r.prefix, r.defaultTTL)
@@ -59,6 +62,7 @@ func TestNewWithClient_KeepsExplicitConfig(t *testing.T) {
 }
 
 func TestLeaseSeconds_RequestWinsThenDefaultThenFloor(t *testing.T) {
+	t.Parallel()
 	r := NewWithClient(nil, Config{LeaseTTL: 90 * time.Second})
 	if got := r.leaseSeconds(300); got != 300 {
 		t.Errorf("explicit request: got %d, want 300", got)
@@ -75,6 +79,7 @@ func TestLeaseSeconds_RequestWinsThenDefaultThenFloor(t *testing.T) {
 }
 
 func TestAnnouncementJSONRoundtrip(t *testing.T) {
+	t.Parallel()
 	in := signingkeys.Announcement{
 		ReplicaID:    "replica-7",
 		Keys:         sampleKeys(),
@@ -103,12 +108,14 @@ func TestAnnouncementJSONRoundtrip(t *testing.T) {
 }
 
 func TestDecodeAnnouncement_SkipsGarbage(t *testing.T) {
+	t.Parallel()
 	if _, ok := decodeAnnouncement([]byte("not json")); ok {
 		t.Fatal("undecodable value should be skipped")
 	}
 }
 
 func TestReplicaIDFromKey(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		prefix, key, want string
 	}{
@@ -127,6 +134,7 @@ func TestReplicaIDFromKey(t *testing.T) {
 // TestReplicaKey covers the per-replica key derivation — the inverse of
 // replicaIDFromKey, joining prefix and replica id with the path separator.
 func TestReplicaKey(t *testing.T) {
+	t.Parallel()
 	r := &Registry{prefix: "/snaplink/signingkeys"}
 	if got := r.replicaKey("replica-7"); got != "/snaplink/signingkeys/replica-7" {
 		t.Errorf("replicaKey = %q", got)
@@ -137,6 +145,7 @@ func TestReplicaKey(t *testing.T) {
 // namespace: the trailing slash is what keeps prefix "/snaplink/signingkeys"
 // from also matching "/snaplink/signingkeysX/...".
 func TestNamespace_TrailingSlashPreventsPrefixCollision(t *testing.T) {
+	t.Parallel()
 	r := &Registry{prefix: "/snaplink/signingkeys"}
 	if got := r.namespace(); got != "/snaplink/signingkeys/" {
 		t.Errorf("namespace = %q, want trailing slash", got)
@@ -147,6 +156,7 @@ func TestNamespace_TrailingSlashPreventsPrefixCollision(t *testing.T) {
 // an event type that is neither PUT nor DELETE is reported not-ok so the
 // Subscribe loop drops it.
 func TestDecodeWatchEvent_SkipsUnknownType(t *testing.T) {
+	t.Parallel()
 	ev := &clientv3.Event{
 		Type: mvccpb.Event_EventType(99),
 		Kv:   &mvccpb.KeyValue{Key: []byte("/snaplink/signingkeys/replica-7")},
@@ -157,6 +167,7 @@ func TestDecodeWatchEvent_SkipsUnknownType(t *testing.T) {
 }
 
 func TestDecodeWatchEvent_PutBecomesUpsert(t *testing.T) {
+	t.Parallel()
 	in := signingkeys.Announcement{ReplicaID: "replica-7", Keys: sampleKeys(), LeaseSeconds: 300}
 	body, _ := encodeAnnouncement(in)
 	ev := &clientv3.Event{
@@ -176,6 +187,7 @@ func TestDecodeWatchEvent_PutBecomesUpsert(t *testing.T) {
 }
 
 func TestDecodeWatchEvent_DeleteBecomesRemovedWithReplicaID(t *testing.T) {
+	t.Parallel()
 	// A DELETE (lease expiry or explicit remove) carries no value; the
 	// ReplicaID must come from the key path so dropAllAdopted can act.
 	ev := &clientv3.Event{
@@ -198,6 +210,7 @@ func TestDecodeWatchEvent_DeleteBecomesRemovedWithReplicaID(t *testing.T) {
 }
 
 func TestDecodeWatchEvent_SkipsGarbagePut(t *testing.T) {
+	t.Parallel()
 	ev := &clientv3.Event{
 		Type: mvccpb.PUT,
 		Kv:   &mvccpb.KeyValue{Key: []byte("/snaplink/signingkeys/replica-7"), Value: []byte("not json")},
@@ -208,6 +221,7 @@ func TestDecodeWatchEvent_SkipsGarbagePut(t *testing.T) {
 }
 
 func TestDecodeWatchEvent_SkipsNilKv(t *testing.T) {
+	t.Parallel()
 	if _, ok := decodeWatchEvent(DefaultPrefix, &clientv3.Event{Type: mvccpb.PUT}); ok {
 		t.Fatal("nil Kv should be skipped")
 	}
@@ -217,6 +231,7 @@ func TestDecodeWatchEvent_SkipsNilKv(t *testing.T) {
 }
 
 func TestDecodeWatchEvent_SkipsDeleteWithBareKey(t *testing.T) {
+	t.Parallel()
 	// A DELETE whose key has no replica segment yields no actionable id.
 	ev := &clientv3.Event{Type: mvccpb.DELETE, Kv: &mvccpb.KeyValue{Key: []byte("/snaplink/signingkeys/")}}
 	if _, ok := decodeWatchEvent(DefaultPrefix, ev); ok {

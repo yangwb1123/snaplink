@@ -40,6 +40,7 @@ func issuerSigners(t *testing.T) map[string]jwtSigner {
 func threeSegments(s string) bool { return strings.Count(s, ".") == 2 }
 
 func TestIssuers_SignMetadata(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for name, iss := range issuerSigners(t) {
 		t.Run(name, func(t *testing.T) {
@@ -63,6 +64,7 @@ func TestIssuers_SignMetadata(t *testing.T) {
 }
 
 func TestIssuers_SignUserInfo(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for name, iss := range issuerSigners(t) {
 		t.Run(name, func(t *testing.T) {
@@ -109,6 +111,7 @@ func TestIssuers_SignUserInfo(t *testing.T) {
 }
 
 func TestIssuers_IssueLogoutToken(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for name, iss := range issuerSigners(t) {
 		t.Run(name, func(t *testing.T) {
@@ -152,6 +155,7 @@ func TestIssuers_IssueLogoutToken(t *testing.T) {
 }
 
 func TestIssuers_SignJWT(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for name, iss := range issuerSigners(t) {
 		t.Run(name, func(t *testing.T) {
@@ -177,6 +181,7 @@ func TestIssuers_SignJWT(t *testing.T) {
 }
 
 func TestIssuers_AcceptsTokenFormat(t *testing.T) {
+	t.Parallel()
 	for name, iss := range issuerSigners(t) {
 		t.Run(name, func(t *testing.T) {
 			if !iss.AcceptsTokenFormat("a.b.c") {
@@ -198,6 +203,7 @@ func TestIssuers_AcceptsTokenFormat(t *testing.T) {
 // TestECDSAIssuer_Options exercises WithECDSAKey / WithECDSAKeyID /
 // WithECDSAVerifyKey, none of which were covered.
 func TestECDSAIssuer_Options(t *testing.T) {
+	t.Parallel()
 	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	other, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	iss := defaultimpl.NewECDSAJWTIssuer(
@@ -220,6 +226,7 @@ func TestECDSAIssuer_Options(t *testing.T) {
 
 // TestRSAIssuer_Options exercises WithRSAKeyID / WithRSAVerifyKey.
 func TestRSAIssuer_Options(t *testing.T) {
+	t.Parallel()
 	priv, _ := rsa.GenerateKey(rand.Reader, 2048)
 	other, _ := rsa.GenerateKey(rand.Reader, 2048)
 	iss := defaultimpl.NewRSAJWTIssuer(
@@ -246,6 +253,7 @@ func (s softwareRSAExtSigner) Sign(_ context.Context, message []byte) ([]byte, e
 }
 
 func TestRSAIssuer_ExternalSigner(t *testing.T) {
+	t.Parallel()
 	priv, _ := rsa.GenerateKey(rand.Reader, 2048)
 	iss := defaultimpl.NewRSAJWTIssuer(
 		defaultimpl.WithRSAExternalSigner(softwareRSAExtSigner{priv}, &priv.PublicKey, "ext-rsa"),
@@ -265,6 +273,7 @@ func TestRSAIssuer_ExternalSigner(t *testing.T) {
 // TestECDSAIssuer_RevocationSurvivesRestart mirrors the Ed25519 restart-survival
 // contract for the ECDSA issuer (exercises SeedRevocations + WithECDSARevocationStore).
 func TestECDSAIssuer_RevocationSurvivesRestart(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	store := defaultimpl.NewMemoryRevocationStore()
@@ -300,6 +309,7 @@ func TestECDSAIssuer_RevocationSurvivesRestart(t *testing.T) {
 }
 
 func TestRSAIssuer_RevocationSurvivesRestart(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	priv, _ := rsa.GenerateKey(rand.Reader, 2048)
 	store := defaultimpl.NewMemoryRevocationStore()
@@ -336,6 +346,7 @@ func TestRSAIssuer_RevocationSurvivesRestart(t *testing.T) {
 // TestEd25519Issuer_VerifyKeyOption covers WithEd25519VerifyKey (a token from a
 // rotated-out key still verifies when its public half is registered).
 func TestEd25519Issuer_VerifyKeyOption(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	oldPub, oldPriv, _ := ed25519.GenerateKey(rand.Reader)
 	oldIss := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("iss"), defaultimpl.WithEd25519Key(oldPriv))

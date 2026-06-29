@@ -41,6 +41,7 @@ func freshPermissionProvider(t *testing.T) *PermissionProvider {
 // per Factory call, so the integration test needs only a single live DB
 // connection.
 func TestPermissionProvider_Conformance(t *testing.T) {
+	t.Parallel()
 	cfg := testConfig(t)
 	db, err := Open(cfg)
 	if err != nil {
@@ -69,6 +70,7 @@ func TestPermissionProvider_Conformance(t *testing.T) {
 // multi-user fan-out must not miss anyone, and a user left with no roles drops
 // out of ListAssignments / Roles.
 func TestPermissionProvider_RemoveRoleStripsAllUsers(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	p := freshPermissionProvider(t)
 

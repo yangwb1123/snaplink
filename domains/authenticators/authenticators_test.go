@@ -29,6 +29,7 @@ func req(creds map[string]string) *sso.AuthRequest {
 // ---------- PasswordAuthenticator ----------
 
 func TestPasswordAuthenticator_Success(t *testing.T) {
+	t.Parallel()
 	v := PasswordVerifierFunc(func(_ context.Context, u, p string) (*sso.AuthResult, error) {
 		if u == "alice" && p == "s3cret" {
 			return &sso.AuthResult{UserID: "u-alice"}, nil
@@ -58,6 +59,7 @@ func TestPasswordAuthenticator_Success(t *testing.T) {
 }
 
 func TestPasswordAuthenticator_PreservesVerifierProvider(t *testing.T) {
+	t.Parallel()
 	// Verifier-set Provider / AuthMethods must NOT be overwritten.
 	v := PasswordVerifierFunc(func(_ context.Context, _, _ string) (*sso.AuthResult, error) {
 		return &sso.AuthResult{UserID: "u", Provider: "custom", AuthMethods: []string{"mfa", "pwd"}}, nil
@@ -73,6 +75,7 @@ func TestPasswordAuthenticator_PreservesVerifierProvider(t *testing.T) {
 }
 
 func TestPasswordAuthenticator_MissingCredentials(t *testing.T) {
+	t.Parallel()
 	a := NewPasswordAuthenticator(PasswordVerifierFunc(func(_ context.Context, _, _ string) (*sso.AuthResult, error) {
 		t.Fatal("verifier should not be called on empty creds")
 		return nil, nil
@@ -90,6 +93,7 @@ func TestPasswordAuthenticator_MissingCredentials(t *testing.T) {
 }
 
 func TestPasswordAuthenticator_VerifierError(t *testing.T) {
+	t.Parallel()
 	a := NewPasswordAuthenticator(PasswordVerifierFunc(func(_ context.Context, _, _ string) (*sso.AuthResult, error) {
 		return nil, errors.New("bad creds")
 	}))
@@ -102,6 +106,7 @@ func TestPasswordAuthenticator_VerifierError(t *testing.T) {
 }
 
 func TestPasswordAuthenticator_CallbackAndLoginURL(t *testing.T) {
+	t.Parallel()
 	a := NewPasswordAuthenticator(nil)
 	if _, err := a.Callback(context.Background(), nil); err == nil {
 		t.Error("Callback should not be supported")
@@ -124,6 +129,7 @@ func (c *captureSMS) Send(_ context.Context, phone, code string) error {
 }
 
 func TestPhoneAuthenticator_RoundTrip(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryCodeStore()
 	sms := &captureSMS{}
 	a := NewPhoneAuthenticator(store, sms, WithPhoneCodeLength(8), WithPhoneCodeTTL(time.Minute))
@@ -161,6 +167,7 @@ func TestPhoneAuthenticator_RoundTrip(t *testing.T) {
 }
 
 func TestPhoneAuthenticator_SendCodeRejectsEmpty(t *testing.T) {
+	t.Parallel()
 	a := NewPhoneAuthenticator(NewMemoryCodeStore(), &captureSMS{})
 	if err := a.SendCode(context.Background(), ""); err == nil {
 		t.Error("expected error on empty phone")
@@ -168,6 +175,7 @@ func TestPhoneAuthenticator_SendCodeRejectsEmpty(t *testing.T) {
 }
 
 func TestPhoneAuthenticator_MissingCreds(t *testing.T) {
+	t.Parallel()
 	a := NewPhoneAuthenticator(NewMemoryCodeStore(), &captureSMS{})
 	if _, err := a.Authenticate(context.Background(), req(map[string]string{"phone": "+1", "code": ""})); err == nil {
 		t.Error("expected error on missing code")
@@ -175,6 +183,7 @@ func TestPhoneAuthenticator_MissingCreds(t *testing.T) {
 }
 
 func TestPhoneAuthenticator_WrongCode(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryCodeStore()
 	a := NewPhoneAuthenticator(store, &captureSMS{})
 	_ = a.SendCode(context.Background(), "+1")
@@ -186,6 +195,7 @@ func TestPhoneAuthenticator_WrongCode(t *testing.T) {
 }
 
 func TestPhoneAuthenticator_SMSErrorPropagates(t *testing.T) {
+	t.Parallel()
 	a := NewPhoneAuthenticator(NewMemoryCodeStore(), &captureSMS{err: errors.New("sms down")})
 	if err := a.SendCode(context.Background(), "+1"); err == nil || !strings.Contains(err.Error(), "sms down") {
 		t.Errorf("err = %v, want wrapped sms down", err)
@@ -193,6 +203,7 @@ func TestPhoneAuthenticator_SMSErrorPropagates(t *testing.T) {
 }
 
 func TestPhoneAuthenticator_DefaultsApplied(t *testing.T) {
+	t.Parallel()
 	a := NewPhoneAuthenticator(NewMemoryCodeStore(), &captureSMS{})
 	if a.codeLength != DefaultCodeLength {
 		t.Errorf("codeLength = %d, want default %d", a.codeLength, DefaultCodeLength)
@@ -203,6 +214,7 @@ func TestPhoneAuthenticator_DefaultsApplied(t *testing.T) {
 }
 
 func TestPhoneAuthenticator_CallbackUnsupported(t *testing.T) {
+	t.Parallel()
 	a := NewPhoneAuthenticator(NewMemoryCodeStore(), &captureSMS{})
 	if _, err := a.Callback(context.Background(), nil); err == nil {
 		t.Error("Callback should not be supported")
@@ -224,6 +236,7 @@ func (c *captureEmail) Send(_ context.Context, to, code string) error {
 }
 
 func TestEmailAuthenticator_RoundTrip(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryCodeStore()
 	em := &captureEmail{}
 	a := NewEmailAuthenticator(store, em, WithEmailCodeLength(4), WithEmailCodeTTL(2*time.Minute))
@@ -252,6 +265,7 @@ func TestEmailAuthenticator_RoundTrip(t *testing.T) {
 }
 
 func TestEmailAuthenticator_InvalidEmail(t *testing.T) {
+	t.Parallel()
 	a := NewEmailAuthenticator(NewMemoryCodeStore(), &captureEmail{})
 	for _, bad := range []string{"", "no-at-sign", "   "} {
 		if err := a.SendCode(context.Background(), bad); err == nil {
@@ -261,6 +275,7 @@ func TestEmailAuthenticator_InvalidEmail(t *testing.T) {
 }
 
 func TestEmailAuthenticator_AuthenticateMissingCreds(t *testing.T) {
+	t.Parallel()
 	a := NewEmailAuthenticator(NewMemoryCodeStore(), &captureEmail{})
 	if _, err := a.Authenticate(context.Background(), req(map[string]string{"email": "a@b.co"})); err == nil {
 		t.Error("expected error on missing code")
@@ -268,6 +283,7 @@ func TestEmailAuthenticator_AuthenticateMissingCreds(t *testing.T) {
 }
 
 func TestEmailAuthenticator_CallbackUnsupported(t *testing.T) {
+	t.Parallel()
 	a := NewEmailAuthenticator(NewMemoryCodeStore(), &captureEmail{})
 	if _, err := a.Callback(context.Background(), nil); err == nil {
 		t.Error("Callback should not be supported")
@@ -280,6 +296,7 @@ func TestEmailAuthenticator_CallbackUnsupported(t *testing.T) {
 // ---------- TempTokenAuthenticator ----------
 
 func TestTempTokenAuthenticator_RoundTrip(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryTempTokenStore()
 	a := NewTempTokenAuthenticator(store, time.Minute)
 
@@ -313,6 +330,7 @@ func TestTempTokenAuthenticator_RoundTrip(t *testing.T) {
 }
 
 func TestTempTokenAuthenticator_DefaultTTL(t *testing.T) {
+	t.Parallel()
 	a := NewTempTokenAuthenticator(NewMemoryTempTokenStore(), 0)
 	if a.ttl != DefaultTempTokenTTL {
 		t.Errorf("ttl = %v, want default %v", a.ttl, DefaultTempTokenTTL)
@@ -320,6 +338,7 @@ func TestTempTokenAuthenticator_DefaultTTL(t *testing.T) {
 }
 
 func TestTempTokenAuthenticator_IssueRequiresSubject(t *testing.T) {
+	t.Parallel()
 	a := NewTempTokenAuthenticator(NewMemoryTempTokenStore(), time.Minute)
 	if _, err := a.Issue(context.Background(), nil); err == nil {
 		t.Error("expected error on nil subject")
@@ -330,6 +349,7 @@ func TestTempTokenAuthenticator_IssueRequiresSubject(t *testing.T) {
 }
 
 func TestTempTokenAuthenticator_AuthenticateMissingToken(t *testing.T) {
+	t.Parallel()
 	a := NewTempTokenAuthenticator(NewMemoryTempTokenStore(), time.Minute)
 	if _, err := a.Authenticate(context.Background(), req(map[string]string{})); err == nil {
 		t.Error("expected error on missing token")
@@ -337,6 +357,7 @@ func TestTempTokenAuthenticator_AuthenticateMissingToken(t *testing.T) {
 }
 
 func TestTempTokenAuthenticator_UnknownToken(t *testing.T) {
+	t.Parallel()
 	a := NewTempTokenAuthenticator(NewMemoryTempTokenStore(), time.Minute)
 	if _, err := a.Authenticate(context.Background(), req(map[string]string{"token": "made-up"})); err == nil {
 		t.Error("expected error on unknown token")
@@ -344,6 +365,7 @@ func TestTempTokenAuthenticator_UnknownToken(t *testing.T) {
 }
 
 func TestTempTokenAuthenticator_CallbackUnsupported(t *testing.T) {
+	t.Parallel()
 	a := NewTempTokenAuthenticator(NewMemoryTempTokenStore(), time.Minute)
 	if _, err := a.Callback(context.Background(), nil); err == nil {
 		t.Error("Callback should not be supported")
@@ -356,6 +378,7 @@ func TestTempTokenAuthenticator_CallbackUnsupported(t *testing.T) {
 // ---------- APIKeyAuthenticator ----------
 
 func TestAPIKeyAuthenticator_RoundTrip(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryAPIKeyStore()
 	store.Register("k1", "secret-v1", &sso.Subject{ID: "svc-a", Claims: map[string]string{"team": "platform"}})
 	a := NewAPIKeyAuthenticator(store)
@@ -382,6 +405,7 @@ func TestAPIKeyAuthenticator_RoundTrip(t *testing.T) {
 }
 
 func TestAPIKeyAuthenticator_DefaultSubject(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryAPIKeyStore()
 	store.Register("k2", "s2", nil) // no subject provided
 	a := NewAPIKeyAuthenticator(store)
@@ -396,6 +420,7 @@ func TestAPIKeyAuthenticator_DefaultSubject(t *testing.T) {
 }
 
 func TestAPIKeyAuthenticator_BadSecret(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryAPIKeyStore()
 	store.Register("k", "right", &sso.Subject{ID: "s"})
 	a := NewAPIKeyAuthenticator(store)
@@ -405,6 +430,7 @@ func TestAPIKeyAuthenticator_BadSecret(t *testing.T) {
 }
 
 func TestAPIKeyAuthenticator_UnknownKey(t *testing.T) {
+	t.Parallel()
 	a := NewAPIKeyAuthenticator(NewMemoryAPIKeyStore())
 	if _, err := a.Authenticate(context.Background(), req(map[string]string{"key_id": "?", "secret": "?"})); err == nil {
 		t.Error("expected error on unknown key")
@@ -412,6 +438,7 @@ func TestAPIKeyAuthenticator_UnknownKey(t *testing.T) {
 }
 
 func TestAPIKeyAuthenticator_MissingCreds(t *testing.T) {
+	t.Parallel()
 	a := NewAPIKeyAuthenticator(NewMemoryAPIKeyStore())
 	if _, err := a.Authenticate(context.Background(), req(map[string]string{"key_id": "k"})); err == nil {
 		t.Error("expected error on missing secret")
@@ -419,6 +446,7 @@ func TestAPIKeyAuthenticator_MissingCreds(t *testing.T) {
 }
 
 func TestAPIKeyAuthenticator_CallbackUnsupported(t *testing.T) {
+	t.Parallel()
 	a := NewAPIKeyAuthenticator(NewMemoryAPIKeyStore())
 	if _, err := a.Callback(context.Background(), nil); err == nil {
 		t.Error("Callback should not be supported")
@@ -438,6 +466,7 @@ func signKeyPair(t *testing.T, priv ed25519.PrivateKey, keyID, nonce string, ts 
 }
 
 func TestKeyPairAuthenticator_RoundTrip(t *testing.T) {
+	t.Parallel()
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	store := NewMemoryPublicKeyStore()
 	store.Register("svc-key-1", pub, &sso.Subject{ID: "svc-a", Claims: map[string]string{"team": "infra"}})
@@ -469,6 +498,7 @@ func TestKeyPairAuthenticator_RoundTrip(t *testing.T) {
 }
 
 func TestKeyPairAuthenticator_DefaultSubject(t *testing.T) {
+	t.Parallel()
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	store := NewMemoryPublicKeyStore()
 	store.Register("k", pub, nil)
@@ -487,6 +517,7 @@ func TestKeyPairAuthenticator_DefaultSubject(t *testing.T) {
 }
 
 func TestKeyPairAuthenticator_DefaultClockSkew(t *testing.T) {
+	t.Parallel()
 	a := NewKeyPairAuthenticator(NewMemoryPublicKeyStore(), 0)
 	if a.maxClockSkew != DefaultKeyPairClockSkew {
 		t.Errorf("maxClockSkew = %v, want default %v", a.maxClockSkew, DefaultKeyPairClockSkew)
@@ -494,6 +525,7 @@ func TestKeyPairAuthenticator_DefaultClockSkew(t *testing.T) {
 }
 
 func TestKeyPairAuthenticator_StaleTimestamp(t *testing.T) {
+	t.Parallel()
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	store := NewMemoryPublicKeyStore()
 	store.Register("k", pub, &sso.Subject{ID: "s"})
@@ -507,6 +539,7 @@ func TestKeyPairAuthenticator_StaleTimestamp(t *testing.T) {
 }
 
 func TestKeyPairAuthenticator_BadSignature(t *testing.T) {
+	t.Parallel()
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
 	store := NewMemoryPublicKeyStore()
 	store.Register("k", pub, &sso.Subject{ID: "s"})
@@ -522,6 +555,7 @@ func TestKeyPairAuthenticator_BadSignature(t *testing.T) {
 }
 
 func TestKeyPairAuthenticator_BadTimestampFormat(t *testing.T) {
+	t.Parallel()
 	a := NewKeyPairAuthenticator(NewMemoryPublicKeyStore(), time.Minute)
 	if _, err := a.Authenticate(context.Background(), req(map[string]string{
 		"key_id": "k", "nonce": "n", "timestamp": "not-a-number", "signature": "aaa",
@@ -531,6 +565,7 @@ func TestKeyPairAuthenticator_BadTimestampFormat(t *testing.T) {
 }
 
 func TestKeyPairAuthenticator_MissingFields(t *testing.T) {
+	t.Parallel()
 	a := NewKeyPairAuthenticator(NewMemoryPublicKeyStore(), time.Minute)
 	if _, err := a.Authenticate(context.Background(), req(map[string]string{
 		"key_id": "k", "nonce": "n",
@@ -540,6 +575,7 @@ func TestKeyPairAuthenticator_MissingFields(t *testing.T) {
 }
 
 func TestKeyPairAuthenticator_UnknownKeyID(t *testing.T) {
+	t.Parallel()
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	a := NewKeyPairAuthenticator(NewMemoryPublicKeyStore(), time.Minute)
 	sig, ts := signKeyPair(t, priv, "k", "n", time.Now())
@@ -551,6 +587,7 @@ func TestKeyPairAuthenticator_UnknownKeyID(t *testing.T) {
 }
 
 func TestKeyPairAuthenticator_StdBase64SignatureAccepted(t *testing.T) {
+	t.Parallel()
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	store := NewMemoryPublicKeyStore()
 	store.Register("k", pub, &sso.Subject{ID: "s"})
@@ -569,6 +606,7 @@ func TestKeyPairAuthenticator_StdBase64SignatureAccepted(t *testing.T) {
 }
 
 func TestKeyPairAuthenticator_BadBase64(t *testing.T) {
+	t.Parallel()
 	a := NewKeyPairAuthenticator(NewMemoryPublicKeyStore(), time.Minute)
 	if _, err := a.Authenticate(context.Background(), req(map[string]string{
 		"key_id": "k", "nonce": "n", "timestamp": strconv.FormatInt(time.Now().Unix(), 10),
@@ -579,6 +617,7 @@ func TestKeyPairAuthenticator_BadBase64(t *testing.T) {
 }
 
 func TestKeyPairAuthenticator_CallbackUnsupported(t *testing.T) {
+	t.Parallel()
 	a := NewKeyPairAuthenticator(NewMemoryPublicKeyStore(), time.Minute)
 	if _, err := a.Callback(context.Background(), nil); err == nil {
 		t.Error("Callback should not be supported")
@@ -589,6 +628,7 @@ func TestKeyPairAuthenticator_CallbackUnsupported(t *testing.T) {
 }
 
 func TestCanonicalKeyPairMessage_Stable(t *testing.T) {
+	t.Parallel()
 	msg := CanonicalKeyPairMessage("k", "n", "1700000000")
 	want := "k" + keyPairMessageSeparator + "n" + keyPairMessageSeparator + "1700000000"
 	if string(msg) != want {
@@ -597,6 +637,7 @@ func TestCanonicalKeyPairMessage_Stable(t *testing.T) {
 }
 
 func TestParseEd25519PublicKeyPEM(t *testing.T) {
+	t.Parallel()
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
 	der, _ := x509.MarshalPKIXPublicKey(pub)
 	pemBlock := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
@@ -674,6 +715,7 @@ func issueCertChain(t *testing.T, cn string) (leafPEM []byte, roots *x509.CertPo
 }
 
 func TestCertificateAuthenticator_Success(t *testing.T) {
+	t.Parallel()
 	leafPEM, roots := issueCertChain(t, "client-1")
 	a := NewCertificateAuthenticator(roots)
 
@@ -702,6 +744,7 @@ func TestCertificateAuthenticator_Success(t *testing.T) {
 }
 
 func TestCertificateAuthenticator_CustomIdentity(t *testing.T) {
+	t.Parallel()
 	leafPEM, roots := issueCertChain(t, "client-2")
 	a := NewCertificateAuthenticator(roots, WithCertIdentity(func(c *x509.Certificate) *sso.Subject {
 		return &sso.Subject{ID: "override:" + c.Subject.CommonName, Claims: map[string]string{"k": "v"}}
@@ -718,6 +761,7 @@ func TestCertificateAuthenticator_CustomIdentity(t *testing.T) {
 }
 
 func TestCertificateAuthenticator_MissingPEM(t *testing.T) {
+	t.Parallel()
 	a := NewCertificateAuthenticator(x509.NewCertPool())
 	if _, err := a.Authenticate(context.Background(), req(map[string]string{"certificate": ""})); err == nil {
 		t.Error("expected error on empty certificate")
@@ -725,6 +769,7 @@ func TestCertificateAuthenticator_MissingPEM(t *testing.T) {
 }
 
 func TestCertificateAuthenticator_BadPEM(t *testing.T) {
+	t.Parallel()
 	a := NewCertificateAuthenticator(x509.NewCertPool())
 	if _, err := a.Authenticate(context.Background(), req(map[string]string{"certificate": "not pem"})); err == nil {
 		t.Error("expected error on non-PEM input")
@@ -732,6 +777,7 @@ func TestCertificateAuthenticator_BadPEM(t *testing.T) {
 }
 
 func TestCertificateAuthenticator_BadDER(t *testing.T) {
+	t.Parallel()
 	// Valid PEM envelope but garbage inside.
 	bad := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte{0xFF, 0xFE, 0xFD}})
 	a := NewCertificateAuthenticator(x509.NewCertPool())
@@ -741,6 +787,7 @@ func TestCertificateAuthenticator_BadDER(t *testing.T) {
 }
 
 func TestCertificateAuthenticator_UntrustedRoot(t *testing.T) {
+	t.Parallel()
 	leafPEM, _ := issueCertChain(t, "client-x")
 	// Use an empty pool — the leaf's CA isn't trusted.
 	a := NewCertificateAuthenticator(x509.NewCertPool())
@@ -752,6 +799,7 @@ func TestCertificateAuthenticator_UntrustedRoot(t *testing.T) {
 }
 
 func TestCertificateAuthenticator_DefaultIdentity_FallsBackToEmail(t *testing.T) {
+	t.Parallel()
 	// Hand-craft a cert with no CN, only an email SAN, so defaultIdentityFromCert
 	// must pick the email.
 	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -795,6 +843,7 @@ func TestCertificateAuthenticator_DefaultIdentity_FallsBackToEmail(t *testing.T)
 }
 
 func TestCertificateAuthenticator_CallbackUnsupported(t *testing.T) {
+	t.Parallel()
 	a := NewCertificateAuthenticator(x509.NewCertPool())
 	if _, err := a.Callback(context.Background(), nil); err == nil {
 		t.Error("Callback should not be supported")
@@ -807,6 +856,7 @@ func TestCertificateAuthenticator_CallbackUnsupported(t *testing.T) {
 // ---------- MemoryCodeStore ----------
 
 func TestMemoryCodeStore_ConsumesOnSuccess(t *testing.T) {
+	t.Parallel()
 	s := NewMemoryCodeStore()
 	_ = s.Save(context.Background(), "k", "1234", time.Minute)
 	if err := s.Verify(context.Background(), "k", "1234"); err != nil {
@@ -818,6 +868,7 @@ func TestMemoryCodeStore_ConsumesOnSuccess(t *testing.T) {
 }
 
 func TestMemoryCodeStore_WrongCodeDoesNotConsume(t *testing.T) {
+	t.Parallel()
 	s := NewMemoryCodeStore()
 	_ = s.Save(context.Background(), "k", "1234", time.Minute)
 	if err := s.Verify(context.Background(), "k", "9999"); !errors.Is(err, ErrCodeInvalid) {
@@ -830,6 +881,7 @@ func TestMemoryCodeStore_WrongCodeDoesNotConsume(t *testing.T) {
 }
 
 func TestMemoryCodeStore_TTLExpiry(t *testing.T) {
+	t.Parallel()
 	s := NewMemoryCodeStore()
 	_ = s.Save(context.Background(), "k", "1234", time.Nanosecond)
 	time.Sleep(2 * time.Millisecond)
@@ -839,6 +891,7 @@ func TestMemoryCodeStore_TTLExpiry(t *testing.T) {
 }
 
 func TestMemoryCodeStore_UnknownKey(t *testing.T) {
+	t.Parallel()
 	s := NewMemoryCodeStore()
 	if err := s.Verify(context.Background(), "missing", "x"); !errors.Is(err, ErrCodeInvalid) {
 		t.Errorf("err = %v", err)
@@ -848,6 +901,7 @@ func TestMemoryCodeStore_UnknownKey(t *testing.T) {
 // ---------- GenerateNumericCode ----------
 
 func TestGenerateNumericCode_LengthAndAlphabet(t *testing.T) {
+	t.Parallel()
 	for _, n := range []int{1, 4, 6, 8, 32} {
 		c, err := GenerateNumericCode(n)
 		if err != nil {
@@ -865,6 +919,7 @@ func TestGenerateNumericCode_LengthAndAlphabet(t *testing.T) {
 }
 
 func TestGenerateNumericCode_RejectsNonPositive(t *testing.T) {
+	t.Parallel()
 	for _, n := range []int{0, -1, -100} {
 		if _, err := GenerateNumericCode(n); err == nil {
 			t.Errorf("n=%d: expected error", n)

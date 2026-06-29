@@ -8,6 +8,7 @@ import (
 )
 
 func TestMemoryTOTPEnrollmentStore_Lifecycle(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := NewMemoryTOTPEnrollmentStore()
 	secret := []byte("seedbytes12345678901")

@@ -9,6 +9,7 @@ import (
 )
 
 func TestSealOpenRoundtrip(t *testing.T) {
+	t.Parallel()
 	s := passphrase.NewFromString("hunter2")
 	plain := []byte("the quick brown fox")
 	cipher, params, err := s.Seal(plain)
@@ -31,6 +32,7 @@ func TestSealOpenRoundtrip(t *testing.T) {
 }
 
 func TestSealNotDeterministic(t *testing.T) {
+	t.Parallel()
 	s := passphrase.NewFromString("k")
 	c1, _, _ := s.Seal([]byte("data"))
 	c2, _, _ := s.Seal([]byte("data"))
@@ -40,6 +42,7 @@ func TestSealNotDeterministic(t *testing.T) {
 }
 
 func TestOpen_WrongPassphrase(t *testing.T) {
+	t.Parallel()
 	s1 := passphrase.NewFromString("right")
 	cipher, params, _ := s1.Seal([]byte("data"))
 
@@ -51,6 +54,7 @@ func TestOpen_WrongPassphrase(t *testing.T) {
 }
 
 func TestOpen_TamperedCipher(t *testing.T) {
+	t.Parallel()
 	s := passphrase.NewFromString("k")
 	cipher, params, _ := s.Seal([]byte("data"))
 	cipher[0] ^= 0xFF
@@ -61,6 +65,7 @@ func TestOpen_TamperedCipher(t *testing.T) {
 }
 
 func TestSeal_RejectsEmptyPassphrase(t *testing.T) {
+	t.Parallel()
 	s := &passphrase.Sealer{}
 	_, _, err := s.Seal([]byte("data"))
 	if err == nil || !strings.Contains(err.Error(), "passphrase required") {
@@ -69,6 +74,7 @@ func TestSeal_RejectsEmptyPassphrase(t *testing.T) {
 }
 
 func TestOpen_RejectsEmptyParams(t *testing.T) {
+	t.Parallel()
 	s := passphrase.NewFromString("k")
 	_, err := s.Open([]byte("x"), nil)
 	if err == nil || !strings.Contains(err.Error(), "missing encryption params") {

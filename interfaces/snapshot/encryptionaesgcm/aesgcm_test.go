@@ -20,6 +20,7 @@ func mkKey(t *testing.T) []byte {
 }
 
 func TestNew_RejectsWrongKeyLength(t *testing.T) {
+	t.Parallel()
 	for _, n := range []int{0, 1, 16, 24, 31, 33, 64} {
 		_, err := aesgcm.New(make([]byte, n))
 		if err == nil {
@@ -29,6 +30,7 @@ func TestNew_RejectsWrongKeyLength(t *testing.T) {
 }
 
 func TestSealer_AlgorithmString(t *testing.T) {
+	t.Parallel()
 	s, err := aesgcm.New(mkKey(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -39,6 +41,7 @@ func TestSealer_AlgorithmString(t *testing.T) {
 }
 
 func TestSealer_SealOpenRoundtrip(t *testing.T) {
+	t.Parallel()
 	s, _ := aesgcm.New(mkKey(t))
 	plain := []byte("hello cluster")
 
@@ -59,6 +62,7 @@ func TestSealer_SealOpenRoundtrip(t *testing.T) {
 }
 
 func TestSealer_SealsProducesFreshNonce(t *testing.T) {
+	t.Parallel()
 	// AES-GCM nonce reuse with the same key is catastrophic. Verify
 	// two successive Seal calls produce different (ciphertext, nonce).
 	s, _ := aesgcm.New(mkKey(t))
@@ -80,6 +84,7 @@ func TestSealer_SealsProducesFreshNonce(t *testing.T) {
 }
 
 func TestSealer_OpenWrongKeyFails(t *testing.T) {
+	t.Parallel()
 	s1, _ := aesgcm.New(mkKey(t))
 	s2, _ := aesgcm.New(mkKey(t)) // different key
 
@@ -91,6 +96,7 @@ func TestSealer_OpenWrongKeyFails(t *testing.T) {
 }
 
 func TestSealer_OpenTamperedCipherFails(t *testing.T) {
+	t.Parallel()
 	s, _ := aesgcm.New(mkKey(t))
 	cipher, params, _ := s.Seal([]byte("trust me"))
 	cipher[0] ^= 0xFF // flip a bit
@@ -101,6 +107,7 @@ func TestSealer_OpenTamperedCipherFails(t *testing.T) {
 }
 
 func TestSealer_OpenEmptyParamsFails(t *testing.T) {
+	t.Parallel()
 	s, _ := aesgcm.New(mkKey(t))
 	_, err := s.Open([]byte("any"), nil)
 	if err == nil {
@@ -109,6 +116,7 @@ func TestSealer_OpenEmptyParamsFails(t *testing.T) {
 }
 
 func TestSealer_OpenMalformedParamsFails(t *testing.T) {
+	t.Parallel()
 	s, _ := aesgcm.New(mkKey(t))
 	_, err := s.Open([]byte("any"), []byte("not json"))
 	if err == nil {
@@ -117,6 +125,7 @@ func TestSealer_OpenMalformedParamsFails(t *testing.T) {
 }
 
 func TestSealer_KeyCopiedAtConstruction(t *testing.T) {
+	t.Parallel()
 	// Caller wipes their source slice; Sealer must still work.
 	k := mkKey(t)
 	s, err := aesgcm.New(k)
@@ -140,6 +149,7 @@ func TestSealer_KeyCopiedAtConstruction(t *testing.T) {
 }
 
 func TestSealer_PluggableInPipeline(t *testing.T) {
+	t.Parallel()
 	// AES-GCM Sealer satisfies snapshot.Sealer — implicit via the
 	// compile-time assertion in aesgcm.go, but a concrete check
 	// here helps refactors notice if the interface drifts.

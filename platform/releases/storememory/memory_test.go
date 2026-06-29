@@ -18,6 +18,7 @@ func validRelease(id string) *releases.Release {
 }
 
 func TestRegister_GetRoundTrip(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	if err := s.Register(ctx, validRelease("rel-1")); err != nil {
@@ -33,6 +34,7 @@ func TestRegister_GetRoundTrip(t *testing.T) {
 }
 
 func TestRegister_RejectsDuplicate(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	_ = s.Register(ctx, validRelease("rel-1"))
@@ -42,6 +44,7 @@ func TestRegister_RejectsDuplicate(t *testing.T) {
 }
 
 func TestRegister_RejectsInvalid(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	r := &releases.Release{ID: "rel-1"} // no artifacts
 	if err := s.Register(context.Background(), r); !errors.Is(err, releases.ErrInvalidPair) {
@@ -50,6 +53,7 @@ func TestRegister_RejectsInvalid(t *testing.T) {
 }
 
 func TestGet_MissingReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	if _, err := s.Get(context.Background(), "ghost"); !errors.Is(err, releases.ErrReleaseNotFound) {
 		t.Fatalf("err = %v", err)
@@ -57,6 +61,7 @@ func TestGet_MissingReturnsNotFound(t *testing.T) {
 }
 
 func TestList_SortedByID(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	for _, id := range []string{"rel-c", "rel-a", "rel-b"} {
@@ -72,6 +77,7 @@ func TestList_SortedByID(t *testing.T) {
 }
 
 func TestSetCurrent_AndCurrent(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	if _, err := s.Current(ctx); !errors.Is(err, releases.ErrNoCurrent) {
@@ -91,6 +97,7 @@ func TestSetCurrent_AndCurrent(t *testing.T) {
 }
 
 func TestSetCurrent_UnknownReleaseIsNotFound(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	if err := s.SetCurrent(context.Background(), "ghost"); !errors.Is(err, releases.ErrReleaseNotFound) {
 		t.Fatalf("err = %v", err)
@@ -98,6 +105,7 @@ func TestSetCurrent_UnknownReleaseIsNotFound(t *testing.T) {
 }
 
 func TestDelete_ClearsCurrentWhenSame(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	_ = s.Register(ctx, validRelease("rel-1"))
@@ -111,6 +119,7 @@ func TestDelete_ClearsCurrentWhenSame(t *testing.T) {
 }
 
 func TestDelete_MissingIsIdempotent(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	if err := s.Delete(context.Background(), "ghost"); err != nil {
 		t.Errorf("Delete missing: %v", err)
@@ -118,6 +127,7 @@ func TestDelete_MissingIsIdempotent(t *testing.T) {
 }
 
 func TestClearCurrent_KeepsReleases(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	_ = s.Register(ctx, validRelease("rel-1"))

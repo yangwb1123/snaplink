@@ -19,6 +19,7 @@ import (
 // 32 bytes — equivalence to a known reference is the cheapest
 // way to lock the round-trip.
 func TestLoadEd25519PublicKeyPEM_GoodFile(t *testing.T) {
+	t.Parallel()
 	pub, path := writeEd25519PubKey(t)
 	got, err := serverbuildauthn.LoadEd25519PublicKeyPEM(path)
 	if err != nil {
@@ -35,6 +36,7 @@ func TestLoadEd25519PublicKeyPEM_GoodFile(t *testing.T) {
 // the test pins the surface so a future refactor can't relax it
 // without flagging.
 func TestLoadEd25519PublicKeyPEM_RejectsWrongPEMType(t *testing.T) {
+	t.Parallel()
 	tmp := filepath.Join(t.TempDir(), "wrong.pem")
 	bogus := pem.EncodeToMemory(&pem.Block{Type: "RSA PUBLIC KEY", Bytes: []byte("notreallyakey")})
 	if err := os.WriteFile(tmp, bogus, 0o600); err != nil {
@@ -50,6 +52,7 @@ func TestLoadEd25519PublicKeyPEM_RejectsWrongPEMType(t *testing.T) {
 // typo a path see the error at boot rather than at first /auth/login
 // against an empty store.
 func TestLoadEd25519PublicKeyPEM_MissingFileSurfaces(t *testing.T) {
+	t.Parallel()
 	if _, err := serverbuildauthn.LoadEd25519PublicKeyPEM("/no/such/key.pem"); err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -63,6 +66,7 @@ func TestLoadEd25519PublicKeyPEM_MissingFileSurfaces(t *testing.T) {
 // explicit seed entry produces an authenticator that resolves the
 // configured key_id back to the configured subject.
 func TestBuildAuthenticators_KeyPairSeedsRegistered(t *testing.T) {
+	t.Parallel()
 	_, path := writeEd25519PubKey(t)
 	cfg := &config.Config{}
 	cfg.Authenticators.KeyPair = &config.KeyPairConfig{
@@ -91,6 +95,7 @@ func TestBuildAuthenticators_KeyPairSeedsRegistered(t *testing.T) {
 // stays in the registry. Verifies the cmd-side fail-soft behavior
 // (logger.Error + continue) on a per-entry basis.
 func TestBuildAuthenticators_KeyPairSkipsBadEntries(t *testing.T) {
+	t.Parallel()
 	_, goodPath := writeEd25519PubKey(t)
 	cfg := &config.Config{}
 	cfg.Authenticators.KeyPair = &config.KeyPairConfig{

@@ -21,6 +21,7 @@ func newDeviceCode(deviceCode, userCode string, ttl time.Duration) *oauth.Device
 }
 
 func TestDeviceCodeStore_IssueAndLookup(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewDeviceCodeStore(rdb)
@@ -47,6 +48,7 @@ func TestDeviceCodeStore_IssueAndLookup(t *testing.T) {
 }
 
 func TestDeviceCodeStore_OracleLeak(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewDeviceCodeStore(rdb)
@@ -74,6 +76,7 @@ func TestDeviceCodeStore_OracleLeak(t *testing.T) {
 }
 
 func TestDeviceCodeStore_ApproveDeny(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewDeviceCodeStore(rdb)
@@ -121,6 +124,7 @@ func TestDeviceCodeStore_ApproveDeny(t *testing.T) {
 }
 
 func TestDeviceCodeStore_UpdateLastPollPreservesTTL(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewDeviceCodeStore(rdb)
@@ -153,6 +157,7 @@ func TestDeviceCodeStore_UpdateLastPollPreservesTTL(t *testing.T) {
 }
 
 func TestDeviceCodeStore_DeleteReapsBothKeys(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewDeviceCodeStore(rdb)
@@ -177,6 +182,7 @@ func TestDeviceCodeStore_DeleteReapsBothKeys(t *testing.T) {
 }
 
 func TestDeviceCodeStore_Ping(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewDeviceCodeStore(rdb)
 	if err := s.Ping(context.Background()); err != nil {

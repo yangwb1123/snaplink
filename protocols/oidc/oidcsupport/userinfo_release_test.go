@@ -14,6 +14,7 @@ import (
 // keys are NOT released by name (custom release would need explicit operator
 // config, never a default-allow that could leak a misnamed secret).
 func TestProjectRequestedClaims_DefaultDeny(t *testing.T) {
+	t.Parallel()
 	u := &core.User{
 		ID: "alice",
 		Attributes: map[string]string{
@@ -48,6 +49,7 @@ func TestProjectRequestedClaims_DefaultDeny(t *testing.T) {
 // backend secrets like keytab) never leak, while standard claims survive. The
 // source user is never mutated.
 func TestSanitizeUserForUserInfo(t *testing.T) {
+	t.Parallel()
 	u := &core.User{
 		ID:   "bob",
 		Name: "Bob",

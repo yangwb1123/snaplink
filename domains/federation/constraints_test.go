@@ -61,6 +61,7 @@ func subStmtC(t *testing.T, e *fedEntity, subject *fedEntity, c *federation.Enti
 // ANY intermediate between the anchor and the leaf. The linear chain anchor ->
 // intermediate -> leaf has one intermediate below the anchor → REJECTED.
 func TestConstraints_MaxPathLengthZeroRejectsIntermediate(t *testing.T) {
+	t.Parallel()
 	// anchorPolicy is carried via the constraints on the anchor->inter SS. Build
 	// the linear federation but override that SS to carry max_path_length=0.
 	f, anchor, inter, leaf := buildLinearFederation(t, map[string]any{"client_name": "X"}, nil, nil)
@@ -81,6 +82,7 @@ func TestConstraints_MaxPathLengthZeroRejectsIntermediate(t *testing.T) {
 // anchor's statement ABOUT the leaf (a direct anchor child, no intermediate) is
 // SATISFIED (0 intermediates below the anchor) → accepted.
 func TestConstraints_MaxPathLengthZeroAllowsDirectLeaf(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	leaf := newFedEntity(t, tcLeafID)
 	f := newFakeFetcher()
@@ -101,6 +103,7 @@ func TestConstraints_MaxPathLengthZeroAllowsDirectLeaf(t *testing.T) {
 //   - =2 → accepted (2 intermediates below the anchor: i1, i2);
 //   - =1 → rejected (2 > 1).
 func TestConstraints_MaxPathLengthOne(t *testing.T) {
+	t.Parallel()
 	build := func(anchorLimit int) (*fakeFetcher, *fedEntity, *fedEntity) {
 		anchor := newFedEntity(t, tcAnchorID)
 		i2 := newFedEntity(t, "https://i2.test")
@@ -139,6 +142,7 @@ func TestConstraints_MaxPathLengthOne(t *testing.T) {
 // (i2 sits 1 intermediate i1 above the leaf) forbids any intermediate below i2,
 // but i1 IS below i2 → rejected, regardless of the anchor's looser bound.
 func TestConstraints_DeeperStatementTighterWins(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	i2 := newFedEntity(t, "https://i2.test")
 	i1 := newFedEntity(t, "https://i1.test")
@@ -171,6 +175,7 @@ func TestConstraints_DeeperStatementTighterWins(t *testing.T) {
 // max_path_length=5. The chain must STILL be rejected — independent application
 // means the anchor's tight bound is enforced no matter what i2 says.
 func TestConstraints_DeeperStatementCannotRelax(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	i2 := newFedEntity(t, "https://i2.test")
 	i1 := newFedEntity(t, "https://i1.test")
@@ -199,6 +204,7 @@ func TestConstraints_DeeperStatementCannotRelax(t *testing.T) {
 // max_path_length (§6.2.1 requires >= 0) is fail-closed rejected, NOT silently
 // treated as unlimited.
 func TestConstraints_NegativeMaxPathLengthRejected(t *testing.T) {
+	t.Parallel()
 	f, anchor, inter, leaf := buildLinearFederation(t, map[string]any{"client_name": "X"}, nil, nil)
 	f.subs[subKey(tcFetchURL, anchor.id, inter.id)] = subStmtC(t, anchor, inter,
 		&federation.EntityConstraints{MaxPathLength: intPtr(-1)})
@@ -217,6 +223,7 @@ func TestConstraints_NegativeMaxPathLengthRejected(t *testing.T) {
 // ".federation.test" admits the leaf host rp.federation.test (and the
 // intermediate intermediate.federation.test) → accepted.
 func TestConstraints_NamingPermittedSubtreeAccepted(t *testing.T) {
+	t.Parallel()
 	f, anchor, inter, leaf := buildLinearFederation(t, map[string]any{"client_name": "X"}, nil, nil)
 	// Anchor's statement about the intermediate constrains the whole subtree to
 	// ".federation.test". Both inter (intermediate.federation.test) and the leaf
@@ -236,6 +243,7 @@ func TestConstraints_NamingPermittedSubtreeAccepted(t *testing.T) {
 // does NOT cover the leaf host rejects the chain. ".example.com" does not admit
 // rp.federation.test → rejected.
 func TestConstraints_NamingPermittedExcludesForeignHost(t *testing.T) {
+	t.Parallel()
 	f, anchor, inter, leaf := buildLinearFederation(t, map[string]any{"client_name": "X"}, nil, nil)
 	f.subs[subKey(tcFetchURL, anchor.id, inter.id)] = subStmtC(t, anchor, inter,
 		&federation.EntityConstraints{NamingConstraints: &federation.NamingConstraints{
@@ -253,6 +261,7 @@ func TestConstraints_NamingPermittedExcludesForeignHost(t *testing.T) {
 // (excluded beats permitted, §6.2.2). Permitted ".federation.test" admits the
 // leaf, but excluded "rp.federation.test" (the exact leaf host) forbids it.
 func TestConstraints_NamingExcludedBeatsPermitted(t *testing.T) {
+	t.Parallel()
 	f, anchor, inter, leaf := buildLinearFederation(t, map[string]any{"client_name": "X"}, nil, nil)
 	f.subs[subKey(tcFetchURL, anchor.id, inter.id)] = subStmtC(t, anchor, inter,
 		&federation.EntityConstraints{NamingConstraints: &federation.NamingConstraints{
@@ -271,6 +280,7 @@ func TestConstraints_NamingExcludedBeatsPermitted(t *testing.T) {
 // exactly. The intermediate host (intermediate.federation.test) must ALSO be
 // permitted, so we list both — proving the exact-host rule + multi-entry OR.
 func TestConstraints_NamingSingleHostExactMatch(t *testing.T) {
+	t.Parallel()
 	f, anchor, inter, leaf := buildLinearFederation(t, map[string]any{"client_name": "X"}, nil, nil)
 	f.subs[subKey(tcFetchURL, anchor.id, inter.id)] = subStmtC(t, anchor, inter,
 		&federation.EntityConstraints{NamingConstraints: &federation.NamingConstraints{
@@ -289,6 +299,7 @@ func TestConstraints_NamingSingleHostExactMatch(t *testing.T) {
 // ".federation.test", is REJECTED (the dotted subtree requires at least one
 // extra label in front).
 func TestConstraints_NamingBareDomainNotMatchedByDottedSubtree(t *testing.T) {
+	t.Parallel()
 	// A leaf whose host is the BARE domain federation.test.
 	anchor := newFedEntity(t, tcAnchorID)
 	inter := newFedEntity(t, tcInterID)
@@ -316,6 +327,7 @@ func TestConstraints_NamingBareDomainNotMatchedByDottedSubtree(t *testing.T) {
 // admit "evil-example.com" (a different domain that merely ends in the same
 // characters). A permitted ".rp.test" must NOT admit "evilrp.test".
 func TestConstraints_NamingSuffixIsNotSubstring(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	inter := newFedEntity(t, tcInterID)
 	leaf := newFedEntity(t, "https://evilrp.test") // ends with "rp.test" but a different label
@@ -341,6 +353,7 @@ func TestConstraints_NamingSuffixIsNotSubstring(t *testing.T) {
 // only the leaf's host (excluding the intermediate hosts) is violated because
 // the intermediate i1 below it is outside the permitted subtree → rejected.
 func TestConstraints_NamingAppliesToIntermediateNotJustLeaf(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	i2 := newFedEntity(t, "https://i2.elsewhere.test")
 	i1 := newFedEntity(t, "https://i1.elsewhere.test")
@@ -374,6 +387,7 @@ func TestConstraints_NamingAppliesToIntermediateNotJustLeaf(t *testing.T) {
 // leaf in evil.test, the anchor's narrower permit still rejects (independent
 // application = intersection-equivalent).
 func TestConstraints_NamingDeeperCannotWidenHigher(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	inter := newFedEntity(t, "https://intermediate.federation.test")
 	leaf := newFedEntity(t, "https://rp.evil.test") // in evil.test, NOT federation.test
@@ -407,6 +421,7 @@ func TestConstraints_NamingDeeperCannotWidenHigher(t *testing.T) {
 // TestConstraints_AllowedEntityTypesAdmitsRP: an allowed_entity_types listing
 // openid_relying_party admits a leaf RP → accepted.
 func TestConstraints_AllowedEntityTypesAdmitsRP(t *testing.T) {
+	t.Parallel()
 	f, anchor, inter, leaf := buildLinearFederation(t, map[string]any{"client_name": "X"}, nil, nil)
 	f.subs[subKey(tcFetchURL, anchor.id, inter.id)] = subStmtC(t, anchor, inter,
 		&federation.EntityConstraints{AllowedEntityTypes: strsPtr("openid_relying_party")})
@@ -420,6 +435,7 @@ func TestConstraints_AllowedEntityTypesAdmitsRP(t *testing.T) {
 // TestConstraints_AllowedEntityTypesRejectsRP: an allowed_entity_types of only
 // openid_provider (NOT openid_relying_party) rejects a leaf RP → rejected.
 func TestConstraints_AllowedEntityTypesRejectsRP(t *testing.T) {
+	t.Parallel()
 	f, anchor, inter, leaf := buildLinearFederation(t, map[string]any{"client_name": "X"}, nil, nil)
 	f.subs[subKey(tcFetchURL, anchor.id, inter.id)] = subStmtC(t, anchor, inter,
 		&federation.EntityConstraints{AllowedEntityTypes: strsPtr("openid_provider")})
@@ -434,6 +450,7 @@ func TestConstraints_AllowedEntityTypesRejectsRP(t *testing.T) {
 // array means ONLY federation_entity is allowed (§6.2.3), so a leaf RP is
 // rejected. This is the pointer-distinguishes-[]-from-absent proof.
 func TestConstraints_AllowedEntityTypesEmptyRejectsRP(t *testing.T) {
+	t.Parallel()
 	f, anchor, inter, leaf := buildLinearFederation(t, map[string]any{"client_name": "X"}, nil, nil)
 	f.subs[subKey(tcFetchURL, anchor.id, inter.id)] = subStmtC(t, anchor, inter,
 		&federation.EntityConstraints{AllowedEntityTypes: strsPtr()}) // present, empty
@@ -450,6 +467,7 @@ func TestConstraints_AllowedEntityTypesEmptyRejectsRP(t *testing.T) {
 // intermediate's narrower set is independently enforced and openid_relying_party
 // is not in it.
 func TestConstraints_AllowedEntityTypesIntersection(t *testing.T) {
+	t.Parallel()
 	f, anchor, inter, leaf := buildLinearFederation(t, map[string]any{"client_name": "X"}, nil, nil)
 	f.subs[subKey(tcFetchURL, anchor.id, inter.id)] = subStmtC(t, anchor, inter,
 		&federation.EntityConstraints{AllowedEntityTypes: strsPtr("openid_relying_party", "openid_provider")})
@@ -471,6 +489,7 @@ func TestConstraints_AllowedEntityTypesIntersection(t *testing.T) {
 // constraints, all satisfied, validates AND still applies the metadata policy
 // (proves the constraint step runs alongside, not instead of, the §10 policy).
 func TestConstraints_AllSatisfiedAccepted(t *testing.T) {
+	t.Parallel()
 	f, anchor, inter, leaf := buildLinearFederation(t, map[string]any{
 		"client_name":   "Good RP",
 		"redirect_uris": []any{"https://rp.federation.test/cb"},
@@ -500,6 +519,7 @@ func TestConstraints_AllSatisfiedAccepted(t *testing.T) {
 // validates EXACTLY as slice 2 — the constraint step is a no-op. This is the
 // byte-identical proof (it mirrors the slice-2 happy path with no constraints).
 func TestConstraints_NoConstraintsNoOp(t *testing.T) {
+	t.Parallel()
 	f, anchor, _, leaf := buildLinearFederation(t, map[string]any{
 		"client_name":   "Test RP",
 		"redirect_uris": []any{"https://rp.federation.test/cb"},

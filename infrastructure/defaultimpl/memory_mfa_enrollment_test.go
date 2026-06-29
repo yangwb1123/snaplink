@@ -10,6 +10,7 @@ import (
 )
 
 func TestMemoryMFAEnrollmentStore_AddListRemove(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryMFAEnrollmentStore()
 
@@ -63,6 +64,7 @@ func TestMemoryMFAEnrollmentStore_AddListRemove(t *testing.T) {
 }
 
 func TestMemoryMFAEnrollmentStore_ListUnknownUser(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryMFAEnrollmentStore()
 	got, err := s.ListFactors(ctx, "nobody")

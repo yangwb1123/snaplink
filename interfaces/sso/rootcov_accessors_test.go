@@ -97,6 +97,7 @@ func rcovWiredServer(t *testing.T) *sso.Server {
 // TestRcovAccessors_Getters calls every pure getter once. The assertions are
 // light (these are config readbacks); the point is to execute the statements.
 func TestRcovAccessors_Getters(t *testing.T) {
+	t.Parallel()
 	s := rcovWiredServer(t)
 
 	if s.AuthCodeStore() == nil {
@@ -233,6 +234,7 @@ func TestRcovAccessors_Getters(t *testing.T) {
 // TestRcovAccessors_CtxHelpers drives the accessors that take a HandlerContext
 // or perform a side effect.
 func TestRcovAccessors_CtxHelpers(t *testing.T) {
+	t.Parallel()
 	s := rcovWiredServer(t)
 	ctx := rcovNewCtx(http.MethodGet, "https://accessor.example.com/x")
 
@@ -287,6 +289,7 @@ func TestRcovAccessors_CtxHelpers(t *testing.T) {
 
 // TestRcovAccessors_TokenAndClientHelpers covers the validate / client helpers.
 func TestRcovAccessors_TokenAndClientHelpers(t *testing.T) {
+	t.Parallel()
 	s := rcovWiredServer(t)
 	ctx := rcovNewCtx(http.MethodPost, "https://accessor.example.com/token")
 

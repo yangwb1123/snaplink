@@ -6,18 +6,21 @@ import (
 )
 
 func TestResolve_NeverEmpty(t *testing.T) {
+	t.Parallel()
 	if ver, _, _ := Resolve(""); ver == "" {
 		t.Error("Resolve must never return an empty version string")
 	}
 }
 
 func TestResolve_OverrideWins(t *testing.T) {
+	t.Parallel()
 	if ver, _, _ := Resolve("v9.9.9-test"); ver != "v9.9.9-test" {
 		t.Errorf("override = %q, want v9.9.9-test", ver)
 	}
 }
 
 func TestWrite_FormatsProgNameAndGoVersion(t *testing.T) {
+	t.Parallel()
 	var sb strings.Builder
 	Write(&sb, "demo", "v1.2.3")
 	out := sb.String()

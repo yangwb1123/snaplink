@@ -19,6 +19,7 @@ import (
 )
 
 func TestBuildWebAuthnHelper_Disabled(t *testing.T) {
+	t.Parallel()
 	h, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{}, quietLogger())
 	if err != nil {
 		t.Fatalf("BuildWebAuthnHelper disabled: %v", err)
@@ -29,6 +30,7 @@ func TestBuildWebAuthnHelper_Disabled(t *testing.T) {
 }
 
 func TestBuildWebAuthnHelper_RequiresRPID(t *testing.T) {
+	t.Parallel()
 	_, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:   true,
 		RPOrigins: []string{"https://sso.example.com"},
@@ -39,6 +41,7 @@ func TestBuildWebAuthnHelper_RequiresRPID(t *testing.T) {
 }
 
 func TestBuildWebAuthnHelper_RequiresAtLeastOneOrigin(t *testing.T) {
+	t.Parallel()
 	_, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled: true,
 		RPID:    "example.com",
@@ -49,6 +52,7 @@ func TestBuildWebAuthnHelper_RequiresAtLeastOneOrigin(t *testing.T) {
 }
 
 func TestBuildWebAuthnHelper_DefaultsMemoryBackends(t *testing.T) {
+	t.Parallel()
 	h, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:   true,
 		RPID:      "example.com",
@@ -63,6 +67,7 @@ func TestBuildWebAuthnHelper_DefaultsMemoryBackends(t *testing.T) {
 }
 
 func TestBuildWebAuthnUserStore_SQLiteRequiresDSN(t *testing.T) {
+	t.Parallel()
 	_, _, err := buildWebAuthnUserStore(config.WebAuthnBackendConfig{Backend: "sqlite"}, nil, "")
 	if err == nil {
 		t.Fatal("sqlite backend without dsn must error")
@@ -70,6 +75,7 @@ func TestBuildWebAuthnUserStore_SQLiteRequiresDSN(t *testing.T) {
 }
 
 func TestBuildWebAuthnSessionStore_SQLiteRequiresDSN(t *testing.T) {
+	t.Parallel()
 	_, _, err := buildWebAuthnSessionStore(config.WebAuthnBackendConfig{Backend: "sqlite"}, nil)
 	if err == nil {
 		t.Fatal("sqlite backend without dsn must error")
@@ -77,6 +83,7 @@ func TestBuildWebAuthnSessionStore_SQLiteRequiresDSN(t *testing.T) {
 }
 
 func TestBuildWebAuthnUserStore_UnknownBackend(t *testing.T) {
+	t.Parallel()
 	// redis is valid for the session store but NOT the user store (durable);
 	// mongodb is unknown to both.
 	_, _, err := buildWebAuthnUserStore(config.WebAuthnBackendConfig{Backend: "mongodb"}, nil, "")
@@ -86,6 +93,7 @@ func TestBuildWebAuthnUserStore_UnknownBackend(t *testing.T) {
 }
 
 func TestBuildWebAuthnHelper_SQLiteBackends(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	h, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:   true,
@@ -132,6 +140,7 @@ func newWebAuthnTestServer(t *testing.T) (*httptest.Server, *webauthn.Helper) {
 }
 
 func TestWebAuthnHTTP_BeginRegistrationReturnsOptionsAndSession(t *testing.T) {
+	t.Parallel()
 	ts, _ := newWebAuthnTestServer(t)
 	body, _ := json.Marshal(webauthnBeginRequest{Username: "alice@example.com", DisplayName: "Alice"})
 	resp, err := http.Post(ts.URL+PathWebAuthnRegistrationBegin, "application/json", bytes.NewReader(body))
@@ -158,6 +167,7 @@ func TestWebAuthnHTTP_BeginRegistrationReturnsOptionsAndSession(t *testing.T) {
 }
 
 func TestWebAuthnHTTP_BeginRequiresUsername(t *testing.T) {
+	t.Parallel()
 	ts, _ := newWebAuthnTestServer(t)
 	body, _ := json.Marshal(webauthnBeginRequest{Username: ""})
 	resp, err := http.Post(ts.URL+PathWebAuthnRegistrationBegin, "application/json", bytes.NewReader(body))
@@ -171,6 +181,7 @@ func TestWebAuthnHTTP_BeginRequiresUsername(t *testing.T) {
 }
 
 func TestWebAuthnHTTP_BeginRejectsEmptyBody(t *testing.T) {
+	t.Parallel()
 	ts, _ := newWebAuthnTestServer(t)
 	resp, err := http.Post(ts.URL+PathWebAuthnRegistrationBegin, "application/json", strings.NewReader(""))
 	if err != nil {
@@ -183,6 +194,7 @@ func TestWebAuthnHTTP_BeginRejectsEmptyBody(t *testing.T) {
 }
 
 func TestWebAuthnHTTP_FinishRequiresSessionID(t *testing.T) {
+	t.Parallel()
 	ts, _ := newWebAuthnTestServer(t)
 	resp, err := http.Post(ts.URL+PathWebAuthnRegistrationFinish, "application/json", strings.NewReader("{}"))
 	if err != nil {
@@ -195,6 +207,7 @@ func TestWebAuthnHTTP_FinishRequiresSessionID(t *testing.T) {
 }
 
 func TestWebAuthnHTTP_FinishUnknownSessionReturns404(t *testing.T) {
+	t.Parallel()
 	ts, _ := newWebAuthnTestServer(t)
 	resp, err := http.Post(ts.URL+PathWebAuthnRegistrationFinish+"?session_id=ghost", "application/json", strings.NewReader("{}"))
 	if err != nil {
@@ -212,6 +225,7 @@ func TestWebAuthnHTTP_FinishUnknownSessionReturns404(t *testing.T) {
 }
 
 func TestWebAuthnHTTP_BeginLoginUnknownUserReturns404(t *testing.T) {
+	t.Parallel()
 	// Unknown username folds into the same 404 session_invalid envelope
 	// as bad session_id so a probe can't enumerate registered users.
 	ts, _ := newWebAuthnTestServer(t)
@@ -232,6 +246,7 @@ func TestWebAuthnHTTP_BeginLoginUnknownUserReturns404(t *testing.T) {
 }
 
 func TestWebAuthnHTTP_AllRoutesCacheControlNoStore(t *testing.T) {
+	t.Parallel()
 	ts, _ := newWebAuthnTestServer(t)
 	body, _ := json.Marshal(webauthnBeginRequest{Username: "alice"})
 	resp, err := http.Post(ts.URL+PathWebAuthnRegistrationBegin, "application/json", bytes.NewReader(body))
@@ -285,6 +300,7 @@ func newWebAuthnIssuingTestServer(t *testing.T, client *sso.Client) (*httptest.S
 }
 
 func TestIssueWebAuthnToken_UnknownClientReturnsInvalidClient(t *testing.T) {
+	t.Parallel()
 	deps := &WebAuthnDeps{
 		ClientStore:  defaultimpl.NewMemoryClientStore(),
 		TokenIssuers: map[string]sso.TokenIssuer{"jwt": defaultimpl.NewEd25519JWTIssuer()},
@@ -302,6 +318,7 @@ func TestIssueWebAuthnToken_UnknownClientReturnsInvalidClient(t *testing.T) {
 }
 
 func TestIssueWebAuthnToken_InactiveClientReturnsInvalidClient(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	_ = store.Add(context.Background(), &sso.Client{
 		ID:            "wa-app",
@@ -322,6 +339,7 @@ func TestIssueWebAuthnToken_InactiveClientReturnsInvalidClient(t *testing.T) {
 }
 
 func TestIssueWebAuthnToken_MissingIssuerReturnsServerError(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	_ = store.Add(context.Background(), &sso.Client{
 		ID:            "wa-app",
@@ -346,6 +364,7 @@ func TestIssueWebAuthnToken_MissingIssuerReturnsServerError(t *testing.T) {
 }
 
 func TestIssueWebAuthnToken_HappyPath(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	_ = store.Add(context.Background(), &sso.Client{
 		ID:            "wa-app",
@@ -375,6 +394,7 @@ func TestIssueWebAuthnToken_HappyPath(t *testing.T) {
 }
 
 func TestIssueWebAuthnToken_ScopeGate(t *testing.T) {
+	t.Parallel()
 	// WebAuthn requests the client's full AllowedScopes through oauth.GrantedScopes
 	// (the shared scope-authorization gate). openid is preserved so an OIDC client
 	// still gets an id_token; a non-openid client gets only its allowed scopes and
@@ -421,6 +441,7 @@ func TestIssueWebAuthnToken_ScopeGate(t *testing.T) {
 }
 
 func TestIssueWebAuthnToken_DefaultStrategyFallback(t *testing.T) {
+	t.Parallel()
 	// Client.TokenStrategy empty → fall back to deps.DefaultStrat.
 	store := defaultimpl.NewMemoryClientStore()
 	_ = store.Add(context.Background(), &sso.Client{
@@ -441,6 +462,7 @@ func TestIssueWebAuthnToken_DefaultStrategyFallback(t *testing.T) {
 }
 
 func TestWebAuthnHTTP_FinishLoginIssuesTokenWhenClientIDProvided(t *testing.T) {
+	t.Parallel()
 	// End-to-end: register a credential via the helper, then drive
 	// Begin/Finish login through the HTTP layer with client_id set.
 	// The Finish response should carry an access_token.
@@ -474,6 +496,7 @@ func TestWebAuthnHTTP_FinishLoginIssuesTokenWhenClientIDProvided(t *testing.T) {
 }
 
 func TestWebAuthnHTTP_FinishLoginWithoutClientIDStaysCredentialOnly(t *testing.T) {
+	t.Parallel()
 	// Without client_id, even if ClientStore + TokenIssuers are
 	// wired, the v1 response stays credential-only. Test ensures
 	// the gating logic doesn't accidentally issue a token from a
@@ -498,6 +521,7 @@ func TestWebAuthnHTTP_FinishLoginWithoutClientIDStaysCredentialOnly(t *testing.T
 }
 
 func TestIssueWebAuthnToken_IssuesIDTokenWhenOpenIDScopeAndIssuerWired(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	_ = store.Add(context.Background(), &sso.Client{
 		ID:            "wa-app",
@@ -526,6 +550,7 @@ func TestIssueWebAuthnToken_IssuesIDTokenWhenOpenIDScopeAndIssuerWired(t *testin
 }
 
 func TestIssueWebAuthnToken_NoIDTokenWithoutOpenIDScope(t *testing.T) {
+	t.Parallel()
 	// Client scopes don't include openid — id_token must NOT be emitted
 	// even when oidc.IDTokenIssuer is wired. Matches /auth/login's contract.
 	store := defaultimpl.NewMemoryClientStore()
@@ -553,6 +578,7 @@ func TestIssueWebAuthnToken_NoIDTokenWithoutOpenIDScope(t *testing.T) {
 }
 
 func TestIssueWebAuthnToken_NoIDTokenWithoutIssuer(t *testing.T) {
+	t.Parallel()
 	// openid in scope but no oidc.IDTokenIssuer wired — id_token field
 	// stays empty rather than 500. Mirrors how /auth/login silently
 	// omits id_token when WithIDTokenIssuer wasn't supplied.
@@ -579,6 +605,7 @@ func TestIssueWebAuthnToken_NoIDTokenWithoutIssuer(t *testing.T) {
 }
 
 func TestIssueWebAuthnToken_IssuesRefreshTokenWhenStoreWired(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	_ = store.Add(context.Background(), &sso.Client{
 		ID:            "wa-app",
@@ -620,6 +647,7 @@ func TestIssueWebAuthnToken_IssuesRefreshTokenWhenStoreWired(t *testing.T) {
 }
 
 func TestIssueWebAuthnToken_NoRefreshTokenWithoutStore(t *testing.T) {
+	t.Parallel()
 	// Without oauth.RefreshTokenStore the field stays empty regardless of
 	// scope — matches /auth/login's "wired → emit" contract.
 	store := defaultimpl.NewMemoryClientStore()
@@ -645,6 +673,7 @@ func TestIssueWebAuthnToken_NoRefreshTokenWithoutStore(t *testing.T) {
 }
 
 func TestIssueWebAuthnToken_ClientRefreshTTLOverride(t *testing.T) {
+	t.Parallel()
 	// Per-client RefreshTokenTTL beats deps.RefreshTokenTTL when set.
 	store := defaultimpl.NewMemoryClientStore()
 	_ = store.Add(context.Background(), &sso.Client{
@@ -680,6 +709,7 @@ func TestIssueWebAuthnToken_ClientRefreshTTLOverride(t *testing.T) {
 
 // Sanity: confirm the error mapping respects the sentinel set.
 func TestWebAuthnErrorStatus_Mapping(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in           error
 		wantStatus   int

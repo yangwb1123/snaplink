@@ -14,6 +14,7 @@ import (
 // Pinning to the year 2000 makes a wall-clock regression obvious (it would
 // return ~now, not 2000).
 func TestReplayExpiry_NoDeadlineUsesClockSeam(t *testing.T) {
+	t.Parallel()
 	pinned := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 	// An assertion with neither Conditions.NotOnOrAfter nor a
 	// SubjectConfirmationData.NotOnOrAfter exercises the fallback branch.

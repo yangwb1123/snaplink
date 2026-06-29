@@ -18,6 +18,7 @@ func internalDSN(t *testing.T) string {
 }
 
 func TestPasswordCredentialStore_DummyRaisesToImportedCost(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s, err := NewPasswordCredentialStore(internalDSN(t))
 	if err != nil {

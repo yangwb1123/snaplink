@@ -28,6 +28,7 @@ func newHelperForTest(t *testing.T) *Helper {
 }
 
 func TestNewHelper_RequiresRPID(t *testing.T) {
+	t.Parallel()
 	_, err := NewHelper(Config{RPOrigins: []string{"https://example.com"}}, NewMemoryUserStore(), NewMemorySessionStore())
 	if err == nil {
 		t.Fatal("expected error when RPID missing")
@@ -35,6 +36,7 @@ func TestNewHelper_RequiresRPID(t *testing.T) {
 }
 
 func TestNewHelper_RequiresAtLeastOneOrigin(t *testing.T) {
+	t.Parallel()
 	_, err := NewHelper(Config{RPID: "example.com"}, NewMemoryUserStore(), NewMemorySessionStore())
 	if err == nil {
 		t.Fatal("expected error when RPOrigins empty")
@@ -42,6 +44,7 @@ func TestNewHelper_RequiresAtLeastOneOrigin(t *testing.T) {
 }
 
 func TestNewHelper_RequiresStores(t *testing.T) {
+	t.Parallel()
 	cfg := Config{RPID: "example.com", RPOrigins: []string{"https://sso.example.com"}}
 	if _, err := NewHelper(cfg, nil, NewMemorySessionStore()); err == nil {
 		t.Fatal("expected error when UserStore nil")
@@ -52,6 +55,7 @@ func TestNewHelper_RequiresStores(t *testing.T) {
 }
 
 func TestNewHelper_DefaultSessionTTL(t *testing.T) {
+	t.Parallel()
 	h, err := NewHelper(Config{
 		RPID:      "example.com",
 		RPOrigins: []string{"https://sso.example.com"},
@@ -65,6 +69,7 @@ func TestNewHelper_DefaultSessionTTL(t *testing.T) {
 }
 
 func TestBeginRegistration_CreatesUserAndReturnsOptions(t *testing.T) {
+	t.Parallel()
 	h := newHelperForTest(t)
 	ctx := context.Background()
 
@@ -96,6 +101,7 @@ func TestBeginRegistration_CreatesUserAndReturnsOptions(t *testing.T) {
 }
 
 func TestBeginRegistration_ReusesExistingUser(t *testing.T) {
+	t.Parallel()
 	h := newHelperForTest(t)
 	ctx := context.Background()
 
@@ -117,6 +123,7 @@ func TestBeginRegistration_ReusesExistingUser(t *testing.T) {
 }
 
 func TestFinishRegistration_UnknownSessionReturnsError(t *testing.T) {
+	t.Parallel()
 	h := newHelperForTest(t)
 	req := httptest.NewRequest("POST", "/webauthn/registration/finish", strings.NewReader("{}"))
 	_, err := h.FinishRegistration(context.Background(), "ghost-session", req)
@@ -126,6 +133,7 @@ func TestFinishRegistration_UnknownSessionReturnsError(t *testing.T) {
 }
 
 func TestBeginLogin_UnknownUserReturnsError(t *testing.T) {
+	t.Parallel()
 	h := newHelperForTest(t)
 	_, _, err := h.BeginLogin(context.Background(), "ghost@example.com")
 	if !errors.Is(err, ErrUserUnknown) {
@@ -134,6 +142,7 @@ func TestBeginLogin_UnknownUserReturnsError(t *testing.T) {
 }
 
 func TestFinishLogin_UnknownSessionReturnsError(t *testing.T) {
+	t.Parallel()
 	h := newHelperForTest(t)
 	req := httptest.NewRequest("POST", "/webauthn/login/finish", strings.NewReader("{}"))
 	_, _, err := h.FinishLogin(context.Background(), "ghost-session", req)
@@ -145,6 +154,7 @@ func TestFinishLogin_UnknownSessionReturnsError(t *testing.T) {
 // ----- MemoryUserStore -----
 
 func TestMemoryUserStore_CreateGetByNameAndHandle(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryUserStore()
 	ctx := context.Background()
 
@@ -171,6 +181,7 @@ func TestMemoryUserStore_CreateGetByNameAndHandle(t *testing.T) {
 }
 
 func TestMemoryUserStore_DuplicateCreateRejected(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryUserStore()
 	ctx := context.Background()
 
@@ -183,6 +194,7 @@ func TestMemoryUserStore_DuplicateCreateRejected(t *testing.T) {
 }
 
 func TestMemoryUserStore_GetByNameUnknownReturnsSentinel(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryUserStore()
 	_, err := store.GetByName(context.Background(), "ghost")
 	if !errors.Is(err, ErrUserUnknown) {
@@ -191,6 +203,7 @@ func TestMemoryUserStore_GetByNameUnknownReturnsSentinel(t *testing.T) {
 }
 
 func TestMemoryUserStore_AddAndUpdateCredential(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryUserStore()
 	ctx := context.Background()
 	_, _ = store.CreateUser(ctx, "alice", "Alice")
@@ -217,6 +230,7 @@ func TestMemoryUserStore_AddAndUpdateCredential(t *testing.T) {
 }
 
 func TestMemoryUserStore_AddCredentialUnknownUserErrors(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryUserStore()
 	err := store.AddCredential(context.Background(), "ghost", &gw.Credential{ID: []byte("x")})
 	if !errors.Is(err, ErrUserUnknown) {
@@ -225,6 +239,7 @@ func TestMemoryUserStore_AddCredentialUnknownUserErrors(t *testing.T) {
 }
 
 func TestMemoryUserStore_RemoveCredential(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryUserStore()
 	ctx := context.Background()
 	_, _ = store.CreateUser(ctx, "alice", "Alice")
@@ -256,6 +271,7 @@ func TestMemoryUserStore_RemoveCredential(t *testing.T) {
 // ----- MemorySessionStore -----
 
 func TestMemorySessionStore_PutThenTake(t *testing.T) {
+	t.Parallel()
 	store := NewMemorySessionStore()
 	ctx := context.Background()
 	want := &gw.SessionData{Challenge: "abc", UserID: []byte("alice")}
@@ -273,6 +289,7 @@ func TestMemorySessionStore_PutThenTake(t *testing.T) {
 }
 
 func TestMemorySessionStore_TakeIsSingleUse(t *testing.T) {
+	t.Parallel()
 	store := NewMemorySessionStore()
 	ctx := context.Background()
 	_ = store.Put(ctx, "s1", &gw.SessionData{Challenge: "x"}, time.Minute)
@@ -287,6 +304,7 @@ func TestMemorySessionStore_TakeIsSingleUse(t *testing.T) {
 }
 
 func TestMemorySessionStore_ExpiredSessionReturnsExpired(t *testing.T) {
+	t.Parallel()
 	store := NewMemorySessionStore()
 	ctx := context.Background()
 	_ = store.Put(ctx, "s1", &gw.SessionData{Challenge: "x"}, -1*time.Second)
@@ -303,6 +321,7 @@ func TestMemorySessionStore_ExpiredSessionReturnsExpired(t *testing.T) {
 }
 
 func TestMemorySessionStore_TakeUnknownReturnsSentinel(t *testing.T) {
+	t.Parallel()
 	store := NewMemorySessionStore()
 	_, err := store.Take(context.Background(), "ghost")
 	if !errors.Is(err, ErrSessionUnknown) {
@@ -313,6 +332,7 @@ func TestMemorySessionStore_TakeUnknownReturnsSentinel(t *testing.T) {
 // ----- BeginLoginConditional / FinishLoginConditional -----
 
 func TestBeginLoginConditional_ReturnsOptionsWithMediation(t *testing.T) {
+	t.Parallel()
 	h := newHelperForTest(t)
 	ctx := context.Background()
 
@@ -343,6 +363,7 @@ func TestBeginLoginConditional_ReturnsOptionsWithMediation(t *testing.T) {
 }
 
 func TestFinishLoginConditional_UnknownSessionReturnsError(t *testing.T) {
+	t.Parallel()
 	h := newHelperForTest(t)
 	req := httptest.NewRequest("POST", "/webauthn/login/conditional/finish", strings.NewReader("{}"))
 	_, _, err := h.FinishLoginConditional(context.Background(), "ghost-session", req)
@@ -364,6 +385,7 @@ func (s *nonHandleResolverStore) UpdateCredential(ctx context.Context, name stri
 func (s *nonHandleResolverStore) RemoveCredential(ctx context.Context, name string, credentialID []byte) error { return s.inner.RemoveCredential(ctx, name, credentialID) }
 
 func TestFinishLoginConditional_RequiresHandleResolver(t *testing.T) {
+	t.Parallel()
 	h, err := NewHelper(Config{
 		RPID:      "example.com",
 		RPOrigins: []string{"https://sso.example.com"},
@@ -394,6 +416,7 @@ func TestFinishLoginConditional_RequiresHandleResolver(t *testing.T) {
 // round trip: begin (discoverable, no username), sign the challenge with a
 // software authenticator including the user's handle, and finish successfully.
 func TestFinishLoginConditional_HappyPath(t *testing.T) {
+	t.Parallel()
 	h := newHelperForTest(t)
 	ctx := context.Background()
 	auth := newSoftwareAuthenticator(t)

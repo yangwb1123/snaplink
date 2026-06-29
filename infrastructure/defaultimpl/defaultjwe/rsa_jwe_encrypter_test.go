@@ -35,6 +35,7 @@ func pubJWK(priv *rsa.PrivateKey, use, kid string) core.JWK {
 // with the matching private key via the existing RSAJWEDecrypter to
 // prove the JWE is well-formed and recoverable.
 func TestEncrypt_RoundTrip(t *testing.T) {
+	t.Parallel()
 	priv := testRSAKey(t)
 	enc := NewRSAJWEResponseEncrypter()
 
@@ -70,6 +71,7 @@ func TestEncrypt_RoundTrip(t *testing.T) {
 }
 
 func TestEncrypt_DualUseKeyFallback(t *testing.T) {
+	t.Parallel()
 	priv := testRSAKey(t)
 	enc := NewRSAJWEResponseEncrypter()
 	// No use field -> dual-use, accepted as fallback.
@@ -80,6 +82,7 @@ func TestEncrypt_DualUseKeyFallback(t *testing.T) {
 }
 
 func TestEncrypt_SkipsSigningKey(t *testing.T) {
+	t.Parallel()
 	priv := testRSAKey(t)
 	enc := NewRSAJWEResponseEncrypter()
 	jwks := []core.JWK{pubJWK(priv, "sig", "sig-1")}
@@ -89,6 +92,7 @@ func TestEncrypt_SkipsSigningKey(t *testing.T) {
 }
 
 func TestEncrypt_NoKey(t *testing.T) {
+	t.Parallel()
 	enc := NewRSAJWEResponseEncrypter()
 	if _, err := enc.Encrypt(context.Background(), []byte("x"), nil, "RSA-OAEP-256", "A256GCM"); err == nil {
 		t.Fatal("expected error with empty JWKS")
@@ -96,6 +100,7 @@ func TestEncrypt_NoKey(t *testing.T) {
 }
 
 func TestEncrypt_UnsupportedAlgEnc(t *testing.T) {
+	t.Parallel()
 	priv := testRSAKey(t)
 	enc := NewRSAJWEResponseEncrypter()
 	jwks := []core.JWK{pubJWK(priv, "enc", "k")}
@@ -110,6 +115,7 @@ func TestEncrypt_UnsupportedAlgEnc(t *testing.T) {
 // TestEncrypt_PrefersEncOverDualUse ensures a use:"enc" key wins when
 // both an enc key and a dual-use key are present.
 func TestEncrypt_PrefersEncOverDualUse(t *testing.T) {
+	t.Parallel()
 	dual := testRSAKey(t)
 	encKey := testRSAKey(t)
 	enc := NewRSAJWEResponseEncrypter()

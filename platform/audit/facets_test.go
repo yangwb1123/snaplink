@@ -11,6 +11,7 @@ import (
 // backend directly (the cross-backend equivalence lives in
 // audit/sqlite/facets_conformance_test.go).
 func TestMemorySink_Facets(t *testing.T) {
+	t.Parallel()
 	m := NewMemorySink(100)
 	base := time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC)
 	seed := []*Event{
@@ -52,6 +53,7 @@ func TestMemorySink_Facets(t *testing.T) {
 // TestMemorySink_FacetsWindowed proves Since/Until narrows the corpus
 // before grouping (the facet window == the filter window).
 func TestMemorySink_FacetsWindowed(t *testing.T) {
+	t.Parallel()
 	m := NewMemorySink(100)
 	base := time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC)
 	for i := 0; i < 3; i++ {
@@ -76,6 +78,7 @@ func TestMemorySink_FacetsWindowed(t *testing.T) {
 // TestMemorySink_FacetsEmpty proves a zero-match query returns empty
 // (non-nil) maps so the JSON serializes objects, not null.
 func TestMemorySink_FacetsEmpty(t *testing.T) {
+	t.Parallel()
 	m := NewMemorySink(100)
 	f, err := m.Facets(context.Background(), Query{})
 	if err != nil {
@@ -101,6 +104,7 @@ func (writeOnlyStub) Get(context.Context, string) (*Event, error)    { return ni
 // TestAsyncSink_FacetsDelegatesAndFallsBack proves AsyncSink forwards to
 // a FacetQuerier inner sink and reports ErrFacetsUnsupported otherwise.
 func TestAsyncSink_FacetsDelegatesAndFallsBack(t *testing.T) {
+	t.Parallel()
 	// Delegates to a facet-capable inner sink.
 	mem := NewMemorySink(10)
 	_ = mem.Record(context.Background(), &Event{Type: EventLogin, Outcome: OutcomeSuccess, ClientID: "web"})
@@ -123,6 +127,7 @@ func TestAsyncSink_FacetsDelegatesAndFallsBack(t *testing.T) {
 // TestMultiSink_FacetsPicksFacetCapableSink proves MultiSink delegates to
 // the first FacetQuerier and reports unsupported when none qualifies.
 func TestMultiSink_FacetsPicksFacetCapableSink(t *testing.T) {
+	t.Parallel()
 	mem := NewMemorySink(10)
 	_ = mem.Record(context.Background(), &Event{Type: EventLogin, Outcome: OutcomeSuccess, ClientID: "web"})
 	// write-only first, facet-capable second — MultiSink must skip past

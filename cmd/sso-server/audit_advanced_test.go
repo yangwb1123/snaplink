@@ -12,6 +12,7 @@ import (
 )
 
 func TestBuildApp_AuditHashChainStampsRecordedEvents(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Audit.Enabled = true
 	cfg.Audit.MemoryCapacity = 16
@@ -31,6 +32,7 @@ func TestBuildApp_AuditHashChainStampsRecordedEvents(t *testing.T) {
 }
 
 func TestBuildApp_AuditPIIRedactionRequiresSalt(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Audit.Enabled = true
 	cfg.Audit.MemoryCapacity = 16
@@ -44,6 +46,7 @@ func TestBuildApp_AuditPIIRedactionRequiresSalt(t *testing.T) {
 }
 
 func TestBuildApp_AuditPIIRedactionAcceptsInlineSalt(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Audit.Enabled = true
 	cfg.Audit.MemoryCapacity = 16
@@ -61,6 +64,7 @@ func TestBuildApp_AuditPIIRedactionAcceptsInlineSalt(t *testing.T) {
 }
 
 func TestBuildApp_AuditPIIRedactionAcceptsSaltFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	saltPath := filepath.Join(dir, "audit.salt")
 	if err := os.WriteFile(saltPath, []byte("salt-from-file\n"), 0o600); err != nil {
@@ -84,6 +88,7 @@ func TestBuildApp_AuditPIIRedactionAcceptsSaltFile(t *testing.T) {
 }
 
 func TestResolvePIISalt_EmptyFileIsError(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	saltPath := filepath.Join(dir, "empty.salt")
 	if err := os.WriteFile(saltPath, []byte(""), 0o600); err != nil {

@@ -30,6 +30,7 @@ func fetchDiscovery(t *testing.T, url string) map[string]any {
 }
 
 func TestBuildApp_SupportedACRValuesAppearsInDiscovery(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Server.SupportedACRValues = []string{"urn:mace:incommon:iap:silver", "phr"}
 
@@ -52,6 +53,7 @@ func TestBuildApp_SupportedACRValuesAppearsInDiscovery(t *testing.T) {
 }
 
 func TestBuildApp_OperatorMetadataAppearsInDiscovery(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Server.OperatorMetadata = config.OperatorMetadataConfig{
 		PolicyURI:            "https://example.com/policy",
@@ -80,6 +82,7 @@ func TestBuildApp_OperatorMetadataAppearsInDiscovery(t *testing.T) {
 }
 
 func TestBuildApp_IDTokenIssuerWiredByDefault(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	a, err := buildApp(cfg, quietLogger())
 	if err != nil {
@@ -100,6 +103,7 @@ func TestBuildApp_IDTokenIssuerWiredByDefault(t *testing.T) {
 }
 
 func TestBuildApp_OperatorMetadataOmittedWhenAllEmpty(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	// Leave OperatorMetadata zero-valued.
 

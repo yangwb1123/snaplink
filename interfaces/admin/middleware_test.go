@@ -10,6 +10,7 @@ import (
 // that do not hold admin tokens. The existing admin/audit/netpolicy prefix
 // gates must not regress.
 func TestIsGatedGRPCMethod_DiscoveryMutations(t *testing.T) {
+	t.Parallel()
 	gated := []string{
 		// Discovery write mutations — the security fix.
 		"/snaplink.discovery.v1.Discovery/Register",

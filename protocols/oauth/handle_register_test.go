@@ -79,6 +79,7 @@ func mgmtHandler(d RegisterDeps, fn func(RegisterDeps, core.HandlerContext)) cor
 }
 
 func TestHandleRegister(t *testing.T) {
+	t.Parallel()
 	t.Run("nil policy 501", func(t *testing.T) {
 		d := &registerDeps{clients: newMemClientStore()}
 		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, `{}`)
@@ -207,6 +208,7 @@ func TestHandleRegister(t *testing.T) {
 }
 
 func TestHandleRegistrationGet(t *testing.T) {
+	t.Parallel()
 	t.Run("nil policy 501", func(t *testing.T) {
 		d := &registerDeps{clients: newMemClientStore()}
 		rec := serveMgmt(d, mgmtHandler(d, HandleRegistrationGet), http.MethodGet, "", "c1", "tok")
@@ -296,6 +298,7 @@ func TestHandleRegistrationGet(t *testing.T) {
 }
 
 func TestHandleRegistrationPut(t *testing.T) {
+	t.Parallel()
 	t.Run("valid bearer updates metadata", func(t *testing.T) {
 		d, cs := newRegisterDeps(&DCRPolicy{AllowOpenRegistration: true})
 		cs.put(&core.Client{ID: "c1", Name: "old", RegistrationAccessToken: "rat", Active: true}, "")
@@ -353,6 +356,7 @@ func TestHandleRegistrationPut(t *testing.T) {
 }
 
 func TestHandleRegistrationDelete(t *testing.T) {
+	t.Parallel()
 	t.Run("valid bearer deletes 204", func(t *testing.T) {
 		d, cs := newRegisterDeps(&DCRPolicy{AllowOpenRegistration: true})
 		cs.put(&core.Client{ID: "c1", RegistrationAccessToken: "rat"}, "")

@@ -311,6 +311,7 @@ func newSigner(t *testing.T, fv *fakeVault, mutate func(*vaulttransit.Config)) *
 // the Ed25519-message vs digest distinction being wrong).
 
 func TestEndToEnd_ECDSA_P256(t *testing.T) {
+	t.Parallel()
 	fv := newFakeVault(t, "ecdsa-p256")
 	sgn := newSigner(t, fv, nil)
 
@@ -340,6 +341,7 @@ func TestEndToEnd_ECDSA_P256(t *testing.T) {
 }
 
 func TestEndToEnd_RSA(t *testing.T) {
+	t.Parallel()
 	for _, alg := range []string{cryptosigner.AlgRS256, cryptosigner.AlgPS256} {
 		t.Run(alg, func(t *testing.T) {
 			fv := newFakeVault(t, "rsa-2048")
@@ -383,6 +385,7 @@ func TestEndToEnd_RSA(t *testing.T) {
 }
 
 func TestEndToEnd_Ed25519(t *testing.T) {
+	t.Parallel()
 	fv := newFakeVault(t, "ed25519")
 	sgn := newSigner(t, fv, nil)
 
@@ -421,6 +424,7 @@ func TestEndToEnd_Ed25519(t *testing.T) {
 // bridge's ECDSA path is P-256 only, so the issuer round-trip covers P-256;
 // these prove the signer's curve<->hash pairing + DER round-trip for P-384/521).
 func TestEndToEnd_ECDSA_HigherCurves(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		transitType string
 		hash        crypto.Hash
@@ -451,6 +455,7 @@ func TestEndToEnd_ECDSA_HigherCurves(t *testing.T) {
 // --- hash<->curve mismatch must fail closed with NO HTTP call.
 
 func TestHashCurveMismatch_FailsClosed_NoHTTPCall(t *testing.T) {
+	t.Parallel()
 	fv := newFakeVault(t, "ecdsa-p256")
 	var tokenCalls int32
 	sgn := newSigner(t, fv, func(c *vaulttransit.Config) {
@@ -492,6 +497,7 @@ func TestHashCurveMismatch_FailsClosed_NoHTTPCall(t *testing.T) {
 // --- Vault failure modes fail closed, and the token never leaks.
 
 func TestVaultErrorFailsClosed(t *testing.T) {
+	t.Parallel()
 	t.Run("read-key 5xx", func(t *testing.T) {
 		fv := newFakeVault(t, "ecdsa-p256")
 		fv.mu.Lock()
@@ -525,6 +531,7 @@ func TestVaultErrorFailsClosed(t *testing.T) {
 }
 
 func TestMalformedSignature_FailsClosed(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"no-prefix", "empty", "bad-b64", "bad-version"} {
 		t.Run(kind, func(t *testing.T) {
 			fv := newFakeVault(t, "ecdsa-p256")
@@ -555,6 +562,7 @@ func assertNoToken(t *testing.T, err error) {
 // --- TokenSource is called PER request; the namespace header is set.
 
 func TestTokenSourceCalledPerRequest(t *testing.T) {
+	t.Parallel()
 	fv := newFakeVault(t, "ecdsa-p256")
 	var calls int32
 	sgn := newSigner(t, fv, func(c *vaulttransit.Config) {
@@ -591,6 +599,7 @@ func TestTokenSourceCalledPerRequest(t *testing.T) {
 // 403s, then the source rotates to the accepted token and the sign succeeds.
 // Proves the operator owns token lifecycle (re-auth happens outside the signer).
 func TestTokenSource_Renewal(t *testing.T) {
+	t.Parallel()
 	fv := newFakeVault(t, "ed25519")
 	fv.mu.Lock()
 	fv.wantToken = "s.good"
@@ -626,6 +635,7 @@ func TestTokenSource_Renewal(t *testing.T) {
 // --- Public-key cache: one read-key GET for N signs; a fetch error is retried.
 
 func TestPublicKeyCached_OneReadForManySigns(t *testing.T) {
+	t.Parallel()
 	fv := newFakeVault(t, "rsa-2048")
 	sgn := newSigner(t, fv, nil)
 	dgst := sha256.Sum256([]byte("m"))
@@ -640,6 +650,7 @@ func TestPublicKeyCached_OneReadForManySigns(t *testing.T) {
 }
 
 func TestPublicKeyFetchError_NotCached_Retried(t *testing.T) {
+	t.Parallel()
 	fv := newFakeVault(t, "ecdsa-p256")
 	fv.mu.Lock()
 	fv.forceStatus = http.StatusServiceUnavailable
@@ -667,6 +678,7 @@ func TestPublicKeyFetchError_NotCached_Retried(t *testing.T) {
 // Concurrent signs while the public key is fetched: race-detector coverage for
 // the cache mutex (run under -race -count=10).
 func TestConcurrentSigns(t *testing.T) {
+	t.Parallel()
 	fv := newFakeVault(t, "ed25519")
 	sgn := newSigner(t, fv, nil)
 	var wg sync.WaitGroup
@@ -699,6 +711,7 @@ func TestConcurrentSigns(t *testing.T) {
 // --- Config validation.
 
 func TestConfigValidation(t *testing.T) {
+	t.Parallel()
 	good := func() vaulttransit.Config {
 		return vaulttransit.Config{
 			VaultAddr:   "https://vault.example:8200",
@@ -737,6 +750,7 @@ func TestConfigValidation(t *testing.T) {
 // The DEFAULT client (no HTTPClient supplied) must VERIFY TLS — it must REFUSE
 // the fake's self-signed cert. This proves the default is not InsecureSkipVerify.
 func TestDefaultClientVerifiesTLS(t *testing.T) {
+	t.Parallel()
 	fv := newFakeVault(t, "ecdsa-p256")
 	cfg := vaulttransit.Config{
 		VaultAddr:   fv.addr(), // httptest self-signed cert
@@ -761,6 +775,7 @@ func TestDefaultClientVerifiesTLS(t *testing.T) {
 // Unsupported transit key type is rejected at read-key (defense against a
 // transit key whose type this signer cannot bridge).
 func TestUnsupportedKeyType(t *testing.T) {
+	t.Parallel()
 	fv := newFakeVault(t, "ecdsa-p256")
 	// Lie about the type so the parsed EC key disagrees with a claimed aes type.
 	fv.transitType = "aes256-gcm96"

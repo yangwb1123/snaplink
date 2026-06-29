@@ -44,6 +44,7 @@ func newPARDeps(cs core.ClientStore, ps PARStore) *parDeps {
 }
 
 func TestHandlePAR(t *testing.T) {
+	t.Parallel()
 	t.Run("no PAR store 501", func(t *testing.T) {
 		d := &parDeps{clients: newMemClientStore()}
 		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, `{}`)

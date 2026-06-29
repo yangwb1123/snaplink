@@ -62,6 +62,7 @@ func startSnapshotAdmin(t *testing.T, p *snapshot.Pipeline, st snapshot.Storage,
 }
 
 func TestSnapshotAdmin_NotReadyFailsPrecondition(t *testing.T) {
+	t.Parallel()
 	// Nil pipeline/storage -> ready() gate fires on every RPC.
 	c := startSnapshotAdmin(t, nil, nil, nil, nil)
 	ctx := context.Background()
@@ -80,6 +81,7 @@ func TestSnapshotAdmin_NotReadyFailsPrecondition(t *testing.T) {
 }
 
 func TestSnapshotAdmin_ExportWithoutSnapshotterFailsPrecondition(t *testing.T) {
+	t.Parallel()
 	// Pipeline + storage present but no Snapshotter -> Export-specific gate.
 	c := startSnapshotAdmin(t, &snapshot.Pipeline{}, &erroringStorage{}, nil, nil)
 	if _, err := c.Export(context.Background(), &adminv1.ExportSnapshotRequest{}); status.Code(err) != codes.FailedPrecondition {
@@ -88,6 +90,7 @@ func TestSnapshotAdmin_ExportWithoutSnapshotterFailsPrecondition(t *testing.T) {
 }
 
 func TestSnapshotAdmin_RestoreWithoutRestorerFailsPrecondition(t *testing.T) {
+	t.Parallel()
 	c := startSnapshotAdmin(t, &snapshot.Pipeline{}, &erroringStorage{}, nil, nil)
 	if _, err := c.Restore(context.Background(), &adminv1.RestoreSnapshotRequest{Id: "s"}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("expected FailedPrecondition, got %v", err)
@@ -95,6 +98,7 @@ func TestSnapshotAdmin_RestoreWithoutRestorerFailsPrecondition(t *testing.T) {
 }
 
 func TestSnapshotAdmin_EmptyIDIsInvalidArgument(t *testing.T) {
+	t.Parallel()
 	c := startSnapshotAdmin(t, &snapshot.Pipeline{}, &erroringStorage{}, nil, &snapshot.Restorer{})
 	ctx := context.Background()
 	cases := map[string]func() error{
@@ -110,6 +114,7 @@ func TestSnapshotAdmin_EmptyIDIsInvalidArgument(t *testing.T) {
 }
 
 func TestSnapshotAdmin_MapperCodes(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	// NotFound: storage returns ErrSnapshotNotFound.
 	cNF := startSnapshotAdmin(t, &snapshot.Pipeline{}, &erroringStorage{err: snapshot.ErrSnapshotNotFound}, nil, nil)
@@ -137,6 +142,7 @@ func TestSnapshotAdmin_MapperCodes(t *testing.T) {
 }
 
 func TestSnapshotAdmin_ListGetErrorIsMapped(t *testing.T) {
+	t.Parallel()
 	// List calls storage.List successfully but the per-item Get fails: drive
 	// the mapSnapshotError branch inside the List loop. erroringStorage.List
 	// returns its err, so use a storage that lists one name then fails Get.
@@ -182,6 +188,7 @@ func startReleaseAdminClient(t *testing.T, reg *releases.Registry, store release
 }
 
 func TestReleaseAdmin_GetCurrentNilStoreFailsPrecondition(t *testing.T) {
+	t.Parallel()
 	c := startReleaseAdminClient(t, nil, nil)
 	if _, err := c.GetCurrent(context.Background(), &adminv1.GetCurrentReleaseRequest{}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("expected FailedPrecondition, got %v", err)
@@ -189,6 +196,7 @@ func TestReleaseAdmin_GetCurrentNilStoreFailsPrecondition(t *testing.T) {
 }
 
 func TestReleaseAdmin_GetCurrentInternalError(t *testing.T) {
+	t.Parallel()
 	// A non-ErrNoCurrent error from Current() maps to Internal via
 	// mapReleaseError (the GetCurrent default branch).
 	store := &erroringReleaseStore{err: errors.New("db down")}
@@ -202,6 +210,7 @@ func TestReleaseAdmin_GetCurrentInternalError(t *testing.T) {
 // --- nil proto converters via nil-returning stores ---
 
 func TestTenantAdmin_GetTenantNilProto(t *testing.T) {
+	t.Parallel()
 	// A store that returns (nil, nil) drives the nil branch of tenantToProto.
 	store := &nilTenantStore{}
 	conn := startTenantAdminGRPC(t, store, nil, nil)
@@ -216,6 +225,7 @@ func TestTenantAdmin_GetTenantNilProto(t *testing.T) {
 }
 
 func TestTenantAdmin_GetDomainNilProto(t *testing.T) {
+	t.Parallel()
 	store := &nilTenantStore{}
 	conn := startTenantAdminGRPC(t, store, nil, nil)
 	c := adminv1.NewTenantAdminServiceClient(conn)

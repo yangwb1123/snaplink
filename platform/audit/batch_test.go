@@ -6,6 +6,7 @@ import (
 )
 
 func TestBatchAsyncSink_RecordBatch(t *testing.T) {
+	t.Parallel()
 	inner := NewMemorySink(0)
 	a := NewBatchAsyncSink(inner, 4, 64)
 	a.Start()
@@ -27,6 +28,7 @@ func TestBatchAsyncSink_RecordBatch(t *testing.T) {
 }
 
 func TestBatchAsyncSink_FallsBackToSingle(t *testing.T) {
+	t.Parallel()
 	// When the inner sink does NOT implement BatchSink, deliverBatch should
 	// fall back to per-event deliver calls. Use a sinkFunc wrapper that
 	// implements Sink but not BatchSink.
@@ -63,6 +65,7 @@ func (f sinkFunc) Query(_ context.Context, _ Query) ([]*Event, error) {
 }
 
 func TestDefaultBatchSize(t *testing.T) {
+	t.Parallel()
 	if DefaultBatchSize <= 0 {
 		t.Errorf("DefaultBatchSize = %d, want > 0", DefaultBatchSize)
 	}

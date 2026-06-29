@@ -13,6 +13,7 @@ import (
 // memory backend returns the in-process Registry with kind=memory
 // so cmd's wrapper preserves the long-standing default behavior.
 func TestBuildRegistry_MemoryDefault(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"", "memory"} {
 		t.Run("backend="+name, func(t *testing.T) {
 			reg, kind, err := serverbuildplatform.BuildRegistry(&config.RegistryConfig{Backend: name}, quietLogger())
@@ -31,6 +32,7 @@ func TestBuildRegistry_MemoryDefault(t *testing.T) {
 // surfaces a clear operator-facing error instead of dialing with
 // no endpoints — same contract serverbuildstore.BuildNetworkStore enforces.
 func TestBuildRegistry_EtcdRequiresEndpoints(t *testing.T) {
+	t.Parallel()
 	cfg := &config.RegistryConfig{Backend: "etcd"}
 	_, _, err := serverbuildplatform.BuildRegistry(cfg, quietLogger())
 	if err == nil {
@@ -44,6 +46,7 @@ func TestBuildRegistry_EtcdRequiresEndpoints(t *testing.T) {
 // TestBuildRegistry_UnknownBackendErrors guards the validation
 // boundary — typos in YAML must fail fast.
 func TestBuildRegistry_UnknownBackendErrors(t *testing.T) {
+	t.Parallel()
 	cfg := &config.RegistryConfig{Backend: "mythical"}
 	if _, _, err := serverbuildplatform.BuildRegistry(cfg, quietLogger()); err == nil {
 		t.Fatal("expected error for unknown backend")
@@ -54,6 +57,7 @@ func TestBuildRegistry_UnknownBackendErrors(t *testing.T) {
 // short-circuits hostname lookup — operators with strict naming
 // schemes (e.g. k8s pod name templating) need that override path.
 func TestResolveServiceID_ExplicitWins(t *testing.T) {
+	t.Parallel()
 	if got := serverbuildplatform.ResolveServiceID("pod-7", "sso"); got != "pod-7" {
 		t.Errorf("serverbuildplatform.ResolveServiceID(explicit) = %q; want pod-7", got)
 	}
@@ -70,6 +74,7 @@ func TestResolveServiceID_ExplicitWins(t *testing.T) {
 // don't collide on the etcd key — the bug a hardcoded "sso-1" had
 // before this wiring.
 func TestResolveServiceID_DerivesFromHostname(t *testing.T) {
+	t.Parallel()
 	host, err := os.Hostname()
 	if err != nil || host == "" {
 		t.Skip("hostname lookup failed; skipping derivation test")

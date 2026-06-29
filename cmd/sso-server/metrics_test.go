@@ -12,6 +12,7 @@ import (
 )
 
 func TestBuildApp_MetricsEndpointServedWhenEnabled(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Metrics.Enabled = true
 
@@ -41,6 +42,7 @@ func TestBuildApp_MetricsEndpointServedWhenEnabled(t *testing.T) {
 }
 
 func TestBuildApp_MetricsEndpointAbsentWhenDisabled(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	// Metrics.Enabled defaults to false.
 
@@ -66,6 +68,7 @@ func TestBuildApp_MetricsEndpointAbsentWhenDisabled(t *testing.T) {
 }
 
 func TestBuildApp_MetricsRegistersAsyncSinkCollectorWhenAuditAsyncOn(t *testing.T) {
+	t.Parallel()
 	// Async audit + metrics together — verify that the AsyncSinkCollector
 	// hooks into the registry so its series surface on /metrics.
 	cfg := &config.Config{}

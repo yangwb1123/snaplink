@@ -34,6 +34,7 @@ func stampSchemaVersion(t *testing.T, store interface{ DB() *sql.DB }, table str
 // table to an impossibly-high version, then assert serverbuildsign.CheckSQLiteSchema returns
 // ErrSchemaTooNew so startup aborts before any traffic is served.
 func TestCheckSQLiteSchema_RefusesAheadDB(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "clients.db") + "?_journal=WAL"
 	store, err := sqlitestores.NewClientStore(dsn)
@@ -59,6 +60,7 @@ func TestCheckSQLiteSchema_RefusesAheadDB(t *testing.T) {
 // knows newer migrations than the DB carries (behind). Neither is a rollback,
 // so the forward-migration path must remain unblocked.
 func TestCheckSQLiteSchema_AllowsEqualAndBehind(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "clients.db") + "?_journal=WAL"
 	store, err := sqlitestores.NewClientStore(dsn)
@@ -84,6 +86,7 @@ func TestCheckSQLiteSchema_AllowsEqualAndBehind(t *testing.T) {
 // backends without a DB() handle (memory stores), mirroring serverbuildsign.AppendReadyCheck's
 // additive gating — no false rollback alarm for a process-local store.
 func TestCheckSQLiteSchema_MemoryBackendNoOps(t *testing.T) {
+	t.Parallel()
 	// A value with no DB() *sql.DB method must not trip the guard.
 	if err := serverbuildsign.CheckSQLiteSchema(context.Background(), struct{}{}, "clients", 0); err != nil {
 		t.Errorf("memory backend: unexpected error: %v", err)

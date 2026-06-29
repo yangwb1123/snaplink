@@ -60,6 +60,7 @@ func rcov2ClientCert(t *testing.T) tls.Certificate {
 // the sender constraint: the bound token is rejected when re-presented from a
 // connection lacking the client cert.
 func TestRcov2M_MTLSBoundToken(t *testing.T) {
+	t.Parallel()
 	clientCert := rcov2ClientCert(t)
 
 	srv := sso.NewServer(
@@ -154,6 +155,7 @@ func rcov2MTLSUserinfo(t *testing.T, c *http.Client, base, token string) int {
 // malformed SET body returns the oracle-safe SSF error (handleSSFReceive +
 // writeSSFError).
 func TestRcov2M_SSFReceiver(t *testing.T) {
+	t.Parallel()
 	rcv, err := caep.NewReceiver(
 		"https://rp.example.com",              // audience
 		defaultimpl.NewMemoryJTIReplayStore(), // jti replay
@@ -204,6 +206,7 @@ func (rcov2NopRevoker) RevokeAllForSubject(context.Context, string) (caep.Revoca
 // the cert against the client, so accepting its mere presence as proof of
 // identity let any public client mint a client_credentials token.
 func TestRcov2M_MTLSCertIsNotClientAuth(t *testing.T) {
+	t.Parallel()
 	clientCert := rcov2ClientCert(t)
 
 	clients := defaultimpl.NewMemoryClientStore()

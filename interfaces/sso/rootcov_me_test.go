@@ -22,6 +22,7 @@ func rcovTenantUserStore() *defaultimpl.MemoryTenantUserStore {
 
 // TestRcovMe_Overview covers GET /me (profile + counts) and its 401 gate.
 func TestRcovMe_Overview(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	access, _ := rcovDirectLogin(t, s)
 
@@ -46,6 +47,7 @@ func TestRcovMe_Overview(t *testing.T) {
 // TestRcovMe_PatchProfile covers PATCH /me including the self-editable-attr
 // allowlist (nickname allowed, role dropped).
 func TestRcovMe_PatchProfile(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	access, _ := rcovDirectLogin(t, s)
 
@@ -82,6 +84,7 @@ func TestRcovMe_PatchProfile(t *testing.T) {
 
 // TestRcovMe_ChangePassword covers POST /me/password success + wrong-current.
 func TestRcovMe_ChangePassword(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	access, _ := rcovDirectLogin(t, s)
 
@@ -118,6 +121,7 @@ func TestRcovMe_ChangePassword(t *testing.T) {
 // TestRcovMe_Sessions covers GET /sessions/me, DELETE /sessions/me/:id, and
 // DELETE /sessions/me (sign out everywhere).
 func TestRcovMe_Sessions(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	access, _ := rcovDirectLogin(t, s)
 
@@ -145,6 +149,7 @@ func TestRcovMe_Sessions(t *testing.T) {
 
 // TestRcovMe_DeleteOwnSession revokes a concrete session the user owns.
 func TestRcovMe_DeleteOwnSession(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	access, _ := rcovDirectLogin(t, s)
 
@@ -161,6 +166,7 @@ func TestRcovMe_DeleteOwnSession(t *testing.T) {
 
 // TestRcovMe_Consents covers GET /consents/me + DELETE /consents/me/:client_id.
 func TestRcovMe_Consents(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	access, _ := rcovDirectLogin(t, s)
 
@@ -195,6 +201,7 @@ func TestRcovMe_Consents(t *testing.T) {
 
 // TestRcovMe_MFAFactors covers GET /me/mfa + DELETE /me/mfa/:id.
 func TestRcovMe_MFAFactors(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	access, _ := rcovDirectLogin(t, s)
 
@@ -216,6 +223,7 @@ func TestRcovMe_MFAFactors(t *testing.T) {
 // TestRcovMe_Permissions covers the permission/menu/role self endpoints, which
 // degrade gracefully when no permission provider is wired.
 func TestRcovMe_Permissions(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	access, _ := rcovDirectLogin(t, s)
 
@@ -232,6 +240,7 @@ func TestRcovMe_Permissions(t *testing.T) {
 // TestRcovMe_Organizations covers GET /me/organizations when a tenant-user store
 // is wired (and DELETE leave).
 func TestRcovMe_Organizations(t *testing.T) {
+	t.Parallel()
 	tu := rcovTenantUserStore()
 	s := rcovNewServer(t, sso.WithTenantUserStore(tu))
 	access, _ := rcovDirectLogin(t, s)

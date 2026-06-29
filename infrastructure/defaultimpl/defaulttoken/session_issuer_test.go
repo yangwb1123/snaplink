@@ -10,6 +10,7 @@ import (
 )
 
 func TestSessionTokenIssuer_RoundTrip(t *testing.T) {
+	t.Parallel()
 	s := NewSessionTokenIssuer(WithSessionTokenTTL(time.Hour))
 	tok, err := s.Issue(context.Background(),
 		&core.Subject{ID: "u-alice", Claims: map[string]string{"role": "admin"}},
@@ -47,6 +48,7 @@ func TestSessionTokenIssuer_RoundTrip(t *testing.T) {
 }
 
 func TestSessionTokenIssuer_DefaultTTL(t *testing.T) {
+	t.Parallel()
 	s := NewSessionTokenIssuer()
 	if s.ttl != defaultSessionTokenTTL {
 		t.Errorf("ttl = %v, want default %v", s.ttl, defaultSessionTokenTTL)
@@ -54,6 +56,7 @@ func TestSessionTokenIssuer_DefaultTTL(t *testing.T) {
 }
 
 func TestSessionTokenIssuer_TokensAreUnique(t *testing.T) {
+	t.Parallel()
 	s := NewSessionTokenIssuer()
 	seen := make(map[string]bool)
 	for range 50 {
@@ -69,6 +72,7 @@ func TestSessionTokenIssuer_TokensAreUnique(t *testing.T) {
 }
 
 func TestSessionTokenIssuer_IssueRequiresSubject(t *testing.T) {
+	t.Parallel()
 	s := NewSessionTokenIssuer()
 	if _, err := s.Issue(context.Background(), nil, nil); err == nil {
 		t.Error("expected error on nil subject")
@@ -79,6 +83,7 @@ func TestSessionTokenIssuer_IssueRequiresSubject(t *testing.T) {
 }
 
 func TestSessionTokenIssuer_ValidateUnknown(t *testing.T) {
+	t.Parallel()
 	s := NewSessionTokenIssuer()
 	if _, err := s.Validate(context.Background(), "not-a-real-token"); err == nil {
 		t.Error("expected error on unknown token")
@@ -86,6 +91,7 @@ func TestSessionTokenIssuer_ValidateUnknown(t *testing.T) {
 }
 
 func TestSessionTokenIssuer_ExpiredTokenDeleted(t *testing.T) {
+	t.Parallel()
 	// TTL = 1ns guarantees the token is expired by the time Validate runs.
 	s := NewSessionTokenIssuer(WithSessionTokenTTL(time.Nanosecond))
 	tok, _ := s.Issue(context.Background(), &core.Subject{ID: "u"}, nil)
@@ -100,6 +106,7 @@ func TestSessionTokenIssuer_ExpiredTokenDeleted(t *testing.T) {
 }
 
 func TestSessionTokenIssuer_Revoke(t *testing.T) {
+	t.Parallel()
 	s := NewSessionTokenIssuer()
 	tok, _ := s.Issue(context.Background(), &core.Subject{ID: "u"}, nil)
 	if err := s.Revoke(context.Background(), tok.AccessToken); err != nil {

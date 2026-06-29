@@ -16,6 +16,7 @@ import (
 // dummy is minted above bcrypt's cost-10 default so the miss path is not
 // trivially faster than a modern imported hash.
 func TestStoredHashVerifier_DummyDefaultsAboveDefaultCost(t *testing.T) {
+	t.Parallel()
 	v := NewStoredHashVerifier(nil)
 	cost, err := bcrypt.Cost([]byte(v.dummyHash.Hash))
 	if err != nil {
@@ -33,6 +34,7 @@ func TestStoredHashVerifier_DummyDefaultsAboveDefaultCost(t *testing.T) {
 // pins the dummy to the imported corpus's cost so the miss path matches the hit
 // path.
 func TestStoredHashVerifier_DummyMatchesPinnedCost(t *testing.T) {
+	t.Parallel()
 	const want = 13
 	v := NewStoredHashVerifier(nil, WithStoredHashDummyCost(want))
 	cost, err := bcrypt.Cost([]byte(v.dummyHash.Hash))
@@ -48,6 +50,7 @@ func TestStoredHashVerifier_DummyMatchesPinnedCost(t *testing.T) {
 // pinned cost falls back to the safe default rather than panicking or producing
 // an empty hash.
 func TestStoredHashVerifier_DummyRejectsOutOfRangeCost(t *testing.T) {
+	t.Parallel()
 	for _, bad := range []int{0, -1, bcrypt.MaxCost + 1} {
 		v := NewStoredHashVerifier(nil, WithStoredHashDummyCost(bad))
 		cost, err := bcrypt.Cost([]byte(v.dummyHash.Hash))
@@ -63,6 +66,7 @@ func TestStoredHashVerifier_DummyRejectsOutOfRangeCost(t *testing.T) {
 // TestStoredHashVerifier_HasherCostWinsOverDefault proves WithHasher sets the
 // dummy cost to the hasher's cost when no explicit dummy cost is pinned.
 func TestStoredHashVerifier_HasherCostWinsOverDefault(t *testing.T) {
+	t.Parallel()
 	const want = 14
 	v := NewStoredHashVerifier(nil, WithHasher(NewBcryptHasher(want)))
 	cost, err := bcrypt.Cost([]byte(v.dummyHash.Hash))
@@ -77,6 +81,7 @@ func TestStoredHashVerifier_HasherCostWinsOverDefault(t *testing.T) {
 // TestStoredHashVerifier_ExplicitPinWinsOverHasher proves WithStoredHashDummyCost
 // takes precedence over WithHasher (explicit pinning wins).
 func TestStoredHashVerifier_ExplicitPinWinsOverHasher(t *testing.T) {
+	t.Parallel()
 	const pinned = 8 // intentionally below default
 	v := NewStoredHashVerifier(nil,
 		WithStoredHashDummyCost(pinned),
@@ -94,6 +99,7 @@ func TestStoredHashVerifier_ExplicitPinWinsOverHasher(t *testing.T) {
 // TestStoredHashVerifier_HasherInvalidCostFallsBack proves WithHasher with an
 // out-of-range cost falls back to DefaultStoredHashDummyCost.
 func TestStoredHashVerifier_HasherInvalidCostFallsBack(t *testing.T) {
+	t.Parallel()
 	for _, bad := range []int{0, bcrypt.MaxCost + 1} {
 		v := NewStoredHashVerifier(nil, WithHasher(NewBcryptHasher(bad)))
 		cost, err := bcrypt.Cost([]byte(v.dummyHash.Hash))

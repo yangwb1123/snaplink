@@ -12,6 +12,7 @@ import (
 // crewjam — if a future crewjam default loosened, these would still reject.
 
 func TestAudienceContains(t *testing.T) {
+	t.Parallel()
 	mk := func(auds ...string) *saml.Assertion {
 		a := &saml.Assertion{Conditions: &saml.Conditions{}}
 		for _, v := range auds {
@@ -41,6 +42,7 @@ func TestAudienceContains(t *testing.T) {
 }
 
 func TestRecipientMatches(t *testing.T) {
+	t.Parallel()
 	mk := func(recips ...string) *saml.Assertion {
 		s := &saml.Subject{}
 		for _, r := range recips {
@@ -72,6 +74,7 @@ func TestRecipientMatches(t *testing.T) {
 }
 
 func TestExpired(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
 	mk := func(condNB, condNOA, scNOA time.Time) *saml.Assertion {
 		a := &saml.Assertion{
@@ -106,6 +109,7 @@ func TestExpired(t *testing.T) {
 }
 
 func TestCountAssertions(t *testing.T) {
+	t.Parallel()
 	const ns = `xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"`
 	cases := []struct {
 		name string
@@ -134,6 +138,7 @@ func TestCountAssertions(t *testing.T) {
 }
 
 func TestMapAttr(t *testing.T) {
+	t.Parallel()
 	a := &SPAuthenticator{attrMap: map[string]string{
 		"urn:oid:email": "email",
 		"DisplayName":   "name", // matched via FriendlyName

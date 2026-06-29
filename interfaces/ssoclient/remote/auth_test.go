@@ -79,6 +79,7 @@ func b64url(b []byte) string {
 }
 
 func TestRemoteAuth_ValidateRoundtrip(t *testing.T) {
+	t.Parallel()
 	iss, client, stop := signerAndCache(t)
 	defer stop()
 
@@ -106,6 +107,7 @@ func TestRemoteAuth_ValidateRoundtrip(t *testing.T) {
 }
 
 func TestRemoteAuth_RejectsTamperedSignature(t *testing.T) {
+	t.Parallel()
 	iss, client, stop := signerAndCache(t)
 	defer stop()
 	tok, _ := iss.Issue(context.Background(), &sso.Subject{ID: "u"}, nil)
@@ -122,6 +124,7 @@ func TestRemoteAuth_RejectsTamperedSignature(t *testing.T) {
 }
 
 func TestRemoteAuth_RejectsMalformedToken(t *testing.T) {
+	t.Parallel()
 	_, client, stop := signerAndCache(t)
 	defer stop()
 	for _, s := range []string{"", "abc", "a.b", "a.b.c.d"} {
@@ -132,6 +135,7 @@ func TestRemoteAuth_RejectsMalformedToken(t *testing.T) {
 }
 
 func TestRemoteAuth_RejectsUnknownKid(t *testing.T) {
+	t.Parallel()
 	// Issue a token from a DIFFERENT issuer whose kid the JWKS doesn't know.
 	_, client, stop := signerAndCache(t)
 	defer stop()
@@ -144,6 +148,7 @@ func TestRemoteAuth_RejectsUnknownKid(t *testing.T) {
 }
 
 func TestRemoteAuth_RejectsExpired(t *testing.T) {
+	t.Parallel()
 	// Issuer with 1ns TTL → instantly expired.
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	iss := defaultimpl.NewEd25519JWTIssuer(
@@ -164,6 +169,7 @@ func TestRemoteAuth_RejectsExpired(t *testing.T) {
 }
 
 func TestRemoteAuth_LogoutWithoutURLIsNoop(t *testing.T) {
+	t.Parallel()
 	_, client, stop := signerAndCache(t)
 	defer stop()
 	// No WithLogoutURL configured → Logout is silent no-op.
@@ -173,6 +179,7 @@ func TestRemoteAuth_LogoutWithoutURLIsNoop(t *testing.T) {
 }
 
 func TestRemoteAuth_LogoutCallsConfiguredURL(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	var sawAuth, sawSession string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -49,6 +49,7 @@ func jwksServerForIssuer(t *testing.T, iss jwtIssuer) (string, func()) {
 // minted by EACH default issuer alg, not just EdDSA — ES256 (the FAPI choice)
 // and RS256 must validate, since AWS/Azure-KMS keys cannot be Ed25519 at all.
 func TestRemoteAuth_RoundtripPerAlg(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		iss  jwtIssuer
@@ -95,6 +96,7 @@ func TestRemoteAuth_RoundtripPerAlg(t *testing.T) {
 // rejected — the alg allowlist in security.VerifyCompactJWS never contains
 // "none", so it fails before any signature work.
 func TestRemoteAuth_RejectsAlgNone(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSATokenTTL(5 * time.Minute))
 	url, stop := jwksServerForIssuer(t, iss)
 	defer stop()
@@ -120,6 +122,7 @@ func TestRemoteAuth_RejectsAlgNone(t *testing.T) {
 // the public-key-as-HMAC-secret confusion attack. The allowlist is
 // asymmetric-only, so HS256 never reaches signature verification.
 func TestRemoteAuth_RejectsHS256(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewRSAJWTIssuer(defaultimpl.WithRSATokenTTL(5 * time.Minute))
 	url, stop := jwksServerForIssuer(t, iss)
 	defer stop()
@@ -145,6 +148,7 @@ func TestRemoteAuth_RejectsHS256(t *testing.T) {
 // validate against a DIFFERENT issuer's published key of the SAME alg (kid
 // matches but the key bytes differ) — the signature check fails.
 func TestRemoteAuth_RejectsWrongKey(t *testing.T) {
+	t.Parallel()
 	// Both issuers are ES256; pin them to the SAME kid so the cache resolves a
 	// key for the token, but it is the WRONG (signer-A vs published-B) key.
 	signer := defaultimpl.NewECDSAJWTIssuer(

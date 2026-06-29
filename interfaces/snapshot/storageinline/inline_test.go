@@ -10,6 +10,7 @@ import (
 )
 
 func TestRoundtrip(t *testing.T) {
+	t.Parallel()
 	st := inline.New()
 	if err := st.Put(context.Background(), "k", []byte("v")); err != nil {
 		t.Fatalf("put: %v", err)
@@ -27,6 +28,7 @@ func TestRoundtrip(t *testing.T) {
 }
 
 func TestGet_Missing(t *testing.T) {
+	t.Parallel()
 	st := inline.New()
 	_, err := st.Get(context.Background(), "absent")
 	if !errors.Is(err, snapshot.ErrSnapshotNotFound) {
@@ -35,6 +37,7 @@ func TestGet_Missing(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
+	t.Parallel()
 	st := inline.New()
 	_ = st.Put(context.Background(), "k", []byte("v"))
 	if err := st.Delete(context.Background(), "k"); err != nil {
@@ -50,6 +53,7 @@ func TestDelete(t *testing.T) {
 }
 
 func TestBytesIsCopy(t *testing.T) {
+	t.Parallel()
 	st := inline.New()
 	_ = st.Put(context.Background(), "k", []byte("hello"))
 	b, ok := st.Bytes("k")

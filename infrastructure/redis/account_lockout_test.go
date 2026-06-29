@@ -23,6 +23,7 @@ func newTestLockout(t *testing.T) (*goredis.Client, *AccountLockout) {
 }
 
 func TestAccountLockoutDefaults(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	l := NewAccountLockout(rdb)
 	if l.MaxFailures != 5 || l.LockoutDuration != 15*time.Minute || l.FailureWindow != time.Hour {
@@ -31,6 +32,7 @@ func TestAccountLockoutDefaults(t *testing.T) {
 }
 
 func TestAccountLockoutEngageAndAutoUnlock(t *testing.T) {
+	t.Parallel()
 	_, l := newTestLockout(t)
 	ctx := context.Background()
 	const key = "app:alice"
@@ -64,6 +66,7 @@ func TestAccountLockoutEngageAndAutoUnlock(t *testing.T) {
 // TestAccountLockoutAutoUnlock proves the lock marker's PX expiry auto-unlocks
 // after LockoutDuration without any background sweep.
 func TestAccountLockoutAutoUnlock(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	l := NewAccountLockout(rdb)
 	l.MaxFailures, l.LockoutDuration, l.FailureWindow = 1, time.Minute, time.Hour
@@ -82,6 +85,7 @@ func TestAccountLockoutAutoUnlock(t *testing.T) {
 // TestAccountLockoutAlreadyLocked: once locked, further failures return the
 // SAME deadline and never advance the counter (matches the memory peer).
 func TestAccountLockoutAlreadyLocked(t *testing.T) {
+	t.Parallel()
 	rdb, l := newTestLockout(t)
 	ctx := context.Background()
 	const key = "app:carol"
@@ -108,6 +112,7 @@ func TestAccountLockoutAlreadyLocked(t *testing.T) {
 }
 
 func TestAccountLockoutRegisterSuccessClears(t *testing.T) {
+	t.Parallel()
 	rdb, l := newTestLockout(t)
 	ctx := context.Background()
 	const key = "app:dave"
@@ -130,6 +135,7 @@ func TestAccountLockoutRegisterSuccessClears(t *testing.T) {
 // TestAccountLockoutSlidingWindow: when FailureWindow elapses, the counter key
 // expires so the next failure starts a fresh window at 1.
 func TestAccountLockoutSlidingWindow(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	l := NewAccountLockout(rdb)
 	l.MaxFailures, l.LockoutDuration, l.FailureWindow = 3, time.Minute, time.Hour
@@ -149,6 +155,7 @@ func TestAccountLockoutSlidingWindow(t *testing.T) {
 }
 
 func TestAccountLockoutEmptyKey(t *testing.T) {
+	t.Parallel()
 	_, l := newTestLockout(t)
 	ctx := context.Background()
 	if locked, _, err := l.IsLocked(ctx, ""); locked || err != nil {
@@ -167,6 +174,7 @@ func TestAccountLockoutEmptyKey(t *testing.T) {
 // (a non-atomic read-modify-write — the per-pod bug — would engage twice or
 // never with exactly N callers).
 func TestAccountLockoutAtomicThreshold(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	l := NewAccountLockout(rdb)
 	const n = 16
@@ -202,6 +210,7 @@ func TestAccountLockoutAtomicThreshold(t *testing.T) {
 // keys (counter + lock marker) MUST share a Redis Cluster slot via the {key}
 // hash tag, else the EVAL is a CROSSSLOT error on a real cluster.
 func TestAccountLockoutKeysShareSlot(t *testing.T) {
+	t.Parallel()
 	for _, k := range []string{"app:alice", "tenant:abc/web:user@x", "weird}id", "k"} {
 		assertSameSlot(t, "lockout key="+k, lockoutFailKey(k), lockoutUntilKey(k))
 	}

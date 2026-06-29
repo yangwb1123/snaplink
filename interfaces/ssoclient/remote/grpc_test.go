@@ -69,6 +69,7 @@ func authzProvider(t *testing.T) permissions.Provider {
 }
 
 func TestRemoteAuthz_CheckAllowed(t *testing.T) {
+	t.Parallel()
 	conn := startGRPCBackend(t, authzProvider(t), nil)
 	c := remote.NewAuthzClient(conn)
 
@@ -81,6 +82,7 @@ func TestRemoteAuthz_CheckAllowed(t *testing.T) {
 }
 
 func TestRemoteAuthz_CheckDenied(t *testing.T) {
+	t.Parallel()
 	conn := startGRPCBackend(t, authzProvider(t), nil)
 	c := remote.NewAuthzClient(conn)
 
@@ -96,6 +98,7 @@ func TestRemoteAuthz_CheckDenied(t *testing.T) {
 }
 
 func TestRemoteAuthz_CheckNilRequestErrors(t *testing.T) {
+	t.Parallel()
 	conn := startGRPCBackend(t, authzProvider(t), nil)
 	c := remote.NewAuthzClient(conn)
 	if _, err := c.Check(context.Background(), nil); err == nil {
@@ -104,6 +107,7 @@ func TestRemoteAuthz_CheckNilRequestErrors(t *testing.T) {
 }
 
 func TestRemoteAuthz_GetMenusFiltered(t *testing.T) {
+	t.Parallel()
 	conn := startGRPCBackend(t, authzProvider(t), nil)
 	c := remote.NewAuthzClient(conn)
 	tree, err := c.GetMenus(context.Background(), "user-alice", "web-app")
@@ -116,6 +120,7 @@ func TestRemoteAuthz_GetMenusFiltered(t *testing.T) {
 }
 
 func TestRemoteAuthz_ListPermissions(t *testing.T) {
+	t.Parallel()
 	conn := startGRPCBackend(t, authzProvider(t), nil)
 	c := remote.NewAuthzClient(conn)
 	perms, err := c.ListPermissions(context.Background(), "user-alice", "web-app")
@@ -128,6 +133,7 @@ func TestRemoteAuthz_ListPermissions(t *testing.T) {
 }
 
 func TestRemoteAuthz_ListRoles(t *testing.T) {
+	t.Parallel()
 	conn := startGRPCBackend(t, authzProvider(t), nil)
 	c := remote.NewAuthzClient(conn)
 	roles, err := c.ListRoles(context.Background(), "user-alice", "web-app")
@@ -142,6 +148,7 @@ func TestRemoteAuthz_ListRoles(t *testing.T) {
 // --- AuditClient ---
 
 func TestRemoteAudit_Record(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(10)
 	recorder := audit.New(sink)
 	conn := startGRPCBackend(t, nil, recorder)
@@ -158,6 +165,7 @@ func TestRemoteAudit_Record(t *testing.T) {
 }
 
 func TestRemoteAudit_RecordNilErrors(t *testing.T) {
+	t.Parallel()
 	conn := startGRPCBackend(t, nil, audit.New(audit.NewMemorySink(1)))
 	c := remote.NewAuditClient(conn)
 	if err := c.Record(context.Background(), nil); err == nil {
@@ -166,6 +174,7 @@ func TestRemoteAudit_RecordNilErrors(t *testing.T) {
 }
 
 func TestRemoteAudit_CloseIsNoop(t *testing.T) {
+	t.Parallel()
 	conn := startGRPCBackend(t, nil, audit.New(audit.NewMemorySink(1)))
 	c := remote.NewAuditClient(conn)
 	if err := c.Close(); err != nil {

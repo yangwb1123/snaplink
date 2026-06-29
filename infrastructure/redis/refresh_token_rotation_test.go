@@ -7,6 +7,7 @@ import (
 )
 
 func TestRecordRotationEmptyFamilyIsNoOp(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewRefreshTokenStore(rdb)
 	count, exceeded, err := s.RecordRotation(context.Background(), "")
@@ -16,6 +17,7 @@ func TestRecordRotationEmptyFamilyIsNoOp(t *testing.T) {
 }
 
 func TestRecordRotationCountsAndCaps(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	// Cap: at most 3 rotations of a family per (long) window.
 	s := NewRefreshTokenStore(rdb, WithRotationCap(3, time.Hour))
@@ -50,6 +52,7 @@ func TestRecordRotationCountsAndCaps(t *testing.T) {
 }
 
 func TestRecordRotationNoCapNeverExceeds(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewRefreshTokenStore(rdb) // no WithRotationCap -> cap disabled
 	ctx := context.Background()
@@ -68,6 +71,7 @@ func TestRecordRotationNoCapNeverExceeds(t *testing.T) {
 }
 
 func TestRecordRotationWindowRollsOver(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	// Tiny window so a short real sleep guarantees rollover.
 	s := NewRefreshTokenStore(rdb, WithRotationCap(2, 10*time.Millisecond))

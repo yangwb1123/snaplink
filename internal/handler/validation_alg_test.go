@@ -6,6 +6,7 @@ import "testing"
 // the alg gate: only an exact match against the configured allowlist passes;
 // an empty allowlist or empty alg never matches.
 func TestAlgAllowed(t *testing.T) {
+	t.Parallel()
 	allow := []string{"EdDSA", "ES256", "RS256"}
 	cases := []struct {
 		name  string

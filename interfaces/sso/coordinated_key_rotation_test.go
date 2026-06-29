@@ -57,6 +57,7 @@ func validates(iss *defaultimpl.Ed25519JWTIssuer, token string) bool {
 // (c) retires it AT/AFTER the deadline. B can verify an old-kid token before the
 // deadline and the kid is gone after.
 func TestCoordinatedRotation_CutoverAcrossReplicas(t *testing.T) {
+	t.Parallel()
 	bus := clustermemory.New()
 	defer func() { _ = bus.Close() }()
 
@@ -143,6 +144,7 @@ func TestCoordinatedRotation_CutoverAcrossReplicas(t *testing.T) {
 // old kid before the clamp floor — the deferral is clamped UP to the floor, so
 // the kid stays verifiable. A dropped/garbage event only ever DELAYS the retire.
 func TestCoordinatedRotation_FailSafe_GarbageDeadlineDoesNotRetireEarly(t *testing.T) {
+	t.Parallel()
 	srvB, issB := newCoordServer(t, clustermemory.New(), true)
 	// A generous floor so we can observe "still verifiable" for a real interval
 	// before the clamped retire eventually fires.
@@ -188,6 +190,7 @@ func TestCoordinatedRotation_FailSafe_GarbageDeadlineDoesNotRetireEarly(t *testi
 // retires a key off a received rotation Event (byte-identical to a build without
 // the feature on the receive side).
 func TestCoordinatedRotation_FailSafe_NotArmedIgnoresEvent(t *testing.T) {
+	t.Parallel()
 	srvB, issB := newCoordServer(t, clustermemory.New(), false) // NOT armed
 	srvB.SetCoordinatedRetireBoundsForTest(20*time.Millisecond, time.Second)
 
@@ -219,6 +222,7 @@ func TestCoordinatedRotation_FailSafe_NotArmedIgnoresEvent(t *testing.T) {
 // any effect, and no timer is armed. (Receive-side nil-default-off is covered by
 // TestCoordinatedRotation_FailSafe_NotArmedIgnoresEvent.)
 func TestCoordinatedRotation_NilBusByteIdentical(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("https://sso.example"))
 	// Armed but NO bus — publish must be inert.
 	srv := sso.NewServer(
@@ -242,6 +246,7 @@ func TestCoordinatedRotation_NilBusByteIdentical(t *testing.T) {
 // side emits a well-formed Event: old/new kids, a now+grace deadline (unix-ns),
 // and the new key's JWK material — exactly what the receive side consumes.
 func TestCoordinatedRotation_PublishCarriesDeadlineAndNewKey(t *testing.T) {
+	t.Parallel()
 	bus := clustermemory.New()
 	defer func() { _ = bus.Close() }()
 
@@ -299,6 +304,7 @@ func TestCoordinatedRotation_PublishCarriesDeadlineAndNewKey(t *testing.T) {
 // shutdown must never be the trigger that drops a key (fail-safe), and no timer
 // leaks.
 func TestCoordinatedRotation_ShutdownCancelsPendingRetire(t *testing.T) {
+	t.Parallel()
 	srvB, issB := newCoordServer(t, clustermemory.New(), true)
 	srvB.SetCoordinatedRetireBoundsForTest(500*time.Millisecond, time.Second)
 

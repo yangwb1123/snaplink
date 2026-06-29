@@ -108,6 +108,7 @@ var layerExemptions = map[string]bool{
 }
 
 func TestArchitecture_LayerBoundaries(t *testing.T) {
+	t.Parallel()
 	fset := token.NewFileSet()
 	violations := map[string]bool{}
 	unclassified := map[string]bool{}

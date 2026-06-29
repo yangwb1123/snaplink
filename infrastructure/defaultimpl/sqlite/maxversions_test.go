@@ -13,6 +13,7 @@ import (
 // baseline version. The multi-migration stores (sessions/clients/refresh)
 // MUST report > 1 because they have appended migrations.
 func TestMaxVersions_AllReturnPositive(t *testing.T) {
+	t.Parallel()
 	type vfn struct {
 		name string
 		fn   func() int

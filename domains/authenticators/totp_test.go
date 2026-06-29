@@ -9,6 +9,7 @@ import (
 )
 
 func TestTOTP_RFC6238Vectors(t *testing.T) {
+	t.Parallel()
 	// RFC 6238 Appendix B test vectors. We re-derive the HMAC-SHA1
 	// 6-digit truncations from the spec's sample key ("12345678901234567890")
 	// at known times.
@@ -40,6 +41,7 @@ func TestTOTP_RFC6238Vectors(t *testing.T) {
 }
 
 func TestTOTPAuthenticator_HappyPath(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryTOTPStore()
 	secret, err := GenerateTOTPSecret()
 	if err != nil {
@@ -68,6 +70,7 @@ func TestTOTPAuthenticator_HappyPath(t *testing.T) {
 }
 
 func TestTOTPAuthenticator_RejectsBadCode(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryTOTPStore()
 	store.Set("alice", []byte("seedbytes12345678901"))
 	auth := NewTOTPAuthenticator(store)
@@ -81,6 +84,7 @@ func TestTOTPAuthenticator_RejectsBadCode(t *testing.T) {
 }
 
 func TestTOTPAuthenticator_RejectsUnenrolledUser(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryTOTPStore()
 	auth := NewTOTPAuthenticator(store)
 
@@ -93,6 +97,7 @@ func TestTOTPAuthenticator_RejectsUnenrolledUser(t *testing.T) {
 }
 
 func TestTOTPAuthenticator_AcceptsCodeWithinSkewWindow(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryTOTPStore()
 	secret, _ := GenerateTOTPSecret()
 	store.Set("alice", secret)
@@ -111,6 +116,7 @@ func TestTOTPAuthenticator_AcceptsCodeWithinSkewWindow(t *testing.T) {
 }
 
 func TestTOTPAuthenticator_StrictSkewRejectsDrift(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryTOTPStore()
 	secret, _ := GenerateTOTPSecret()
 	store.Set("alice", secret)
@@ -128,6 +134,7 @@ func TestTOTPAuthenticator_StrictSkewRejectsDrift(t *testing.T) {
 }
 
 func TestTOTPAuthenticator_VerifyCode(t *testing.T) {
+	t.Parallel()
 	// VerifyCode is the enrollment-confirm path: it checks a code against a
 	// caller-supplied secret WITHOUT consulting the store.
 	secret, _ := GenerateTOTPSecret()
@@ -147,6 +154,7 @@ func TestTOTPAuthenticator_VerifyCode(t *testing.T) {
 }
 
 func TestOTPAuthURL_RenderableShape(t *testing.T) {
+	t.Parallel()
 	secret := []byte("12345678901234567890")
 	url := OTPAuthURL("Acme Corp", "alice@example.com", secret)
 	want := "otpauth://totp/"

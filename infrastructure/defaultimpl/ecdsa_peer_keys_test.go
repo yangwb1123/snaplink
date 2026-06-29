@@ -31,6 +31,7 @@ func issueECPeerToken(t *testing.T) (token, peerKid string, peerPub *ecdsa.Publi
 // TestECDSAPeerKey_AdoptAppearsInJWKS proves an adopted EC peer key surfaces in
 // JWKS as a verify-only (use:sig) EC entry under the peer's kid.
 func TestECDSAPeerKey_AdoptAppearsInJWKS(t *testing.T) {
+	t.Parallel()
 	local := defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSAIssuer("local-iss"))
 	_, peerKid, peerPub := issueECPeerToken(t)
 
@@ -67,6 +68,7 @@ func TestECDSAPeerKey_AdoptAppearsInJWKS(t *testing.T) {
 // ES256 issuer validates on the local issuer after adoption — the core
 // cross-replica verification property.
 func TestECDSAPeerKey_AdoptedTokenValidates(t *testing.T) {
+	t.Parallel()
 	local := defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSAIssuer("local-iss"))
 	token, peerKid, peerPub := issueECPeerToken(t)
 
@@ -92,6 +94,7 @@ func TestECDSAPeerKey_AdoptedTokenValidates(t *testing.T) {
 // (RotateKey / RetireKey) never touches adopted peer keys — peer lifecycle is
 // owned by the registry side, not local rotation.
 func TestECDSAPeerKey_LocalRotationLeavesPeerKeys(t *testing.T) {
+	t.Parallel()
 	local := defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSAIssuer("local-iss"))
 	token, peerKid, peerPub := issueECPeerToken(t)
 	if err := local.AdoptVerifyKey(peerKid, peerPub); err != nil {
@@ -130,6 +133,7 @@ func TestECDSAPeerKey_LocalRotationLeavesPeerKeys(t *testing.T) {
 // lookup, so an adopted-or-not ES256 key can never be reached on a non-ES256
 // verify path.
 func TestECDSAPeerKey_AlgConfusionRejected(t *testing.T) {
+	t.Parallel()
 	token, _, _ := issueECPeerToken(t)
 
 	edIss := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("ed-iss"))
@@ -147,6 +151,7 @@ func TestECDSAPeerKey_AlgConfusionRejected(t *testing.T) {
 // with the local active signing key, an empty kid, a nil key, and a key on the
 // wrong curve (ES256 accepts only P-256).
 func TestECDSAPeerKey_CollisionGuard(t *testing.T) {
+	t.Parallel()
 	local := defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSAIssuer("local-iss"))
 
 	_, _, peerPub := issueECPeerToken(t)

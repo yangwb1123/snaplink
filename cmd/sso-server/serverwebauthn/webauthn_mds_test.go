@@ -31,6 +31,7 @@ func writeCustomRootFile(t *testing.T) string {
 // TestBuildWebAuthnMDSProvider_OffByDefault: no source ⇒ nil provider, nil
 // error (byte-identical default-off — gw.Config.MDS stays nil).
 func TestBuildWebAuthnMDSProvider_OffByDefault(t *testing.T) {
+	t.Parallel()
 	p, err := buildWebAuthnMDSProvider(config.WebAuthnMDSConfig{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -43,6 +44,7 @@ func TestBuildWebAuthnMDSProvider_OffByDefault(t *testing.T) {
 // TestBuildWebAuthnMDSProvider_FromFileWithCustomRoot exercises the full cmd
 // path: read the custom root file + load+decode the blob into a provider.
 func TestBuildWebAuthnMDSProvider_FromFileWithCustomRoot(t *testing.T) {
+	t.Parallel()
 	rootPath := writeCustomRootFile(t)
 	p, err := buildWebAuthnMDSProvider(config.WebAuthnMDSConfig{
 		File:           exampleBlobPath,
@@ -63,6 +65,7 @@ func TestBuildWebAuthnMDSProvider_FromFileWithCustomRoot(t *testing.T) {
 // the WRONG root (default FIDO production root vs the test-root-signed blob)
 // fails loud — we never silently downgrade to no-MDS.
 func TestBuildWebAuthnMDSProvider_WrongRootFailsLoud(t *testing.T) {
+	t.Parallel()
 	_, err := buildWebAuthnMDSProvider(config.WebAuthnMDSConfig{File: exampleBlobPath})
 	if err == nil {
 		t.Fatal("expected wrong-root blob to fail loud")
@@ -72,6 +75,7 @@ func TestBuildWebAuthnMDSProvider_WrongRootFailsLoud(t *testing.T) {
 // TestBuildWebAuthnMDSProvider_StrayCustomRootFailsLoud: a custom_root_file
 // with no blob source is a misconfiguration and must fail loud, not no-op.
 func TestBuildWebAuthnMDSProvider_StrayCustomRootFailsLoud(t *testing.T) {
+	t.Parallel()
 	rootPath := writeCustomRootFile(t)
 	_, err := buildWebAuthnMDSProvider(config.WebAuthnMDSConfig{CustomRootFile: rootPath})
 	if err == nil || !strings.Contains(err.Error(), "custom_root_file is set but neither") {
@@ -82,6 +86,7 @@ func TestBuildWebAuthnMDSProvider_StrayCustomRootFailsLoud(t *testing.T) {
 // TestBuildWebAuthnMDSProvider_MissingCustomRootFailsLoud: a configured blob
 // source pointing at a missing custom root file fails loud.
 func TestBuildWebAuthnMDSProvider_MissingCustomRootFailsLoud(t *testing.T) {
+	t.Parallel()
 	_, err := buildWebAuthnMDSProvider(config.WebAuthnMDSConfig{
 		File:           exampleBlobPath,
 		CustomRootFile: "/nonexistent/root.b64",
@@ -94,6 +99,7 @@ func TestBuildWebAuthnMDSProvider_MissingCustomRootFailsLoud(t *testing.T) {
 // TestBuildWebAuthnMDSProvider_EmptyCustomRootFailsLoud: an empty custom root
 // file fails loud.
 func TestBuildWebAuthnMDSProvider_EmptyCustomRootFailsLoud(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	rootPath := filepath.Join(dir, "empty.b64")
 	if err := os.WriteFile(rootPath, nil, 0o600); err != nil {
@@ -112,6 +118,7 @@ func TestBuildWebAuthnMDSProvider_EmptyCustomRootFailsLoud(t *testing.T) {
 // reaches gw.Config.MDS when an MDS source is configured, and leaves it nil
 // when not (the default-off byte-identical proof at the cmd layer).
 func TestBuildWebAuthnHelper_MDSWiresThrough(t *testing.T) {
+	t.Parallel()
 	rootPath := writeCustomRootFile(t)
 
 	// Without MDS → gw.Config.MDS nil.

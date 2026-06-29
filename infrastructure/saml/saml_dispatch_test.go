@@ -153,6 +153,7 @@ const (
 // SPAuthenticator named by the RelayState when several SPs are wired: an assertion
 // minted for SP "b" is dispatched to b's authenticator only when RelayState=="b".
 func TestACS_MultiSP_DispatchByRelayName(t *testing.T) {
+	t.Parallel()
 	handler, idp := buildMultiSPACS(t,
 		spParams{name: "a", entityID: spEntity, acsURL: acsURL},
 		spParams{name: "b", entityID: spBEntity, acsURL: spBACS})
@@ -168,6 +169,7 @@ func TestACS_MultiSP_DispatchByRelayName(t *testing.T) {
 // relay convention: RelayState "b:some-opaque-login-state" still dispatches to
 // SP "b" (first colon segment is the provider hint).
 func TestACS_MultiSP_DispatchByColonPrefix(t *testing.T) {
+	t.Parallel()
 	handler, idp := buildMultiSPACS(t,
 		spParams{name: "a", entityID: spEntity, acsURL: acsURL},
 		spParams{name: "b", entityID: spBEntity, acsURL: spBACS})
@@ -184,6 +186,7 @@ func TestACS_MultiSP_DispatchByColonPrefix(t *testing.T) {
 // the ACS collapses to the oracle-safe assertion-invalid code — no
 // provider-enumeration leak, and the wrong SP is never picked.
 func TestACS_MultiSP_NoHint_Rejected(t *testing.T) {
+	t.Parallel()
 	handler, idp := buildMultiSPACS(t,
 		spParams{name: "a", entityID: spEntity, acsURL: acsURL},
 		spParams{name: "b", entityID: spBEntity, acsURL: spBACS})
@@ -206,6 +209,7 @@ func TestACS_MultiSP_NoHint_Rejected(t *testing.T) {
 // that session; the subject's other session survives. (The handler compares
 // SessionIndex to the local session id.)
 func TestSPSLO_SessionIndexNarrowsTermination(t *testing.T) {
+	t.Parallel()
 	handler, sessions, idp := buildSLOServer(t)
 	const nameID = "multi@example.com"
 

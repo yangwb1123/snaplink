@@ -36,6 +36,7 @@ func authReq(username, password string) *sso.AuthRequest {
 // --- Happy path: Access-Accept => a Subject is minted ----------------------
 
 func TestAuthenticate_AccessAccept_MintsSubject(t *testing.T) {
+	t.Parallel()
 	fake := &fakeExchanger{accept: true}
 	a := newTestAuth(t, fake, Config{})
 
@@ -66,6 +67,7 @@ func TestAuthenticate_AccessAccept_MintsSubject(t *testing.T) {
 // --- Reply-attribute mapping (Filter-Id / Class -> Subject attrs) ----------
 
 func TestAuthenticate_AccessAccept_MapsReplyAttributes(t *testing.T) {
+	t.Parallel()
 	fake := &fakeExchanger{
 		accept: true,
 		// The exchanger has already projected the configured RADIUS reply
@@ -93,6 +95,7 @@ func TestAuthenticate_AccessAccept_MapsReplyAttributes(t *testing.T) {
 // --- Access-Reject: unknown-user and wrong-password are the SAME error ------
 
 func TestAuthenticate_AccessReject_WrongPassword_ErrAuthFailed(t *testing.T) {
+	t.Parallel()
 	fake := &fakeExchanger{accept: false} // clean Reject, err == nil
 	a := newTestAuth(t, fake, Config{})
 
@@ -106,6 +109,7 @@ func TestAuthenticate_AccessReject_WrongPassword_ErrAuthFailed(t *testing.T) {
 // unknown user AND a wrong password. Both MUST surface as the IDENTICAL wire
 // error — no probe can tell "no such user" from "wrong password".
 func TestAuthenticate_AccessReject_UnknownUser_SameErrorAsWrongPassword(t *testing.T) {
+	t.Parallel()
 	// Same fake (clean Reject) models both: the server gives Reject regardless of
 	// whether the account exists.
 	fakeWrong := &fakeExchanger{accept: false}
@@ -130,6 +134,7 @@ func TestAuthenticate_AccessReject_UnknownUser_SameErrorAsWrongPassword(t *testi
 // --- Transport / server-down: a DISTINCT error, no existence leak ----------
 
 func TestAuthenticate_TransportError_ErrServerUnavailable(t *testing.T) {
+	t.Parallel()
 	fake := &fakeExchanger{err: errors.New("dial udp radius.example.com:1812: i/o timeout")}
 	a := newTestAuth(t, fake, Config{})
 
@@ -151,6 +156,7 @@ func TestAuthenticate_TransportError_ErrServerUnavailable(t *testing.T) {
 // A non-authentic (forged) response also arrives as an exchange error and must
 // map to ErrServerUnavailable, NEVER to a false-positive accept.
 func TestAuthenticate_NonAuthenticResponse_ErrServerUnavailable(t *testing.T) {
+	t.Parallel()
 	fake := &fakeExchanger{err: errors.New("radius: non-authentic response")}
 	a := newTestAuth(t, fake, Config{})
 
@@ -163,6 +169,7 @@ func TestAuthenticate_NonAuthenticResponse_ErrServerUnavailable(t *testing.T) {
 // --- Empty password: rejected BEFORE any exchange (no anonymous bypass) -----
 
 func TestAuthenticate_EmptyPassword_RejectedPreExchange(t *testing.T) {
+	t.Parallel()
 	fake := &fakeExchanger{accept: true} // would ACCEPT if ever called
 	a := newTestAuth(t, fake, Config{})
 
@@ -178,6 +185,7 @@ func TestAuthenticate_EmptyPassword_RejectedPreExchange(t *testing.T) {
 }
 
 func TestAuthenticate_EmptyUsername_RejectedPreExchange(t *testing.T) {
+	t.Parallel()
 	fake := &fakeExchanger{accept: true}
 	a := newTestAuth(t, fake, Config{})
 
@@ -193,6 +201,7 @@ func TestAuthenticate_EmptyUsername_RejectedPreExchange(t *testing.T) {
 // --- Interface conformance + the non-credential surface --------------------
 
 func TestAuthenticator_LoginURL_Empty(t *testing.T) {
+	t.Parallel()
 	a := newTestAuth(t, &fakeExchanger{}, Config{})
 	if got := a.LoginURL("state"); got != "" {
 		t.Errorf("LoginURL = %q, want empty (direct credential auth)", got)
@@ -200,6 +209,7 @@ func TestAuthenticator_LoginURL_Empty(t *testing.T) {
 }
 
 func TestAuthenticator_Callback_NotApplicable(t *testing.T) {
+	t.Parallel()
 	a := newTestAuth(t, &fakeExchanger{}, Config{})
 	_, err := a.Callback(context.Background(), &sso.CallbackState{})
 	if !errors.Is(err, ErrCallbackNotApplicable) {
@@ -208,6 +218,7 @@ func TestAuthenticator_Callback_NotApplicable(t *testing.T) {
 }
 
 func TestAuthenticator_Name(t *testing.T) {
+	t.Parallel()
 	a := newTestAuth(t, &fakeExchanger{}, Config{Name: "corp-nps"})
 	if a.Name() != "corp-nps" {
 		t.Errorf("Name = %q, want corp-nps", a.Name())
@@ -217,6 +228,7 @@ func TestAuthenticator_Name(t *testing.T) {
 // New surfaces a Validate error (boot fails closed) when the shared secret is
 // missing — the security anchor must be present.
 func TestNew_MissingSharedSecret_FailsClosed(t *testing.T) {
+	t.Parallel()
 	_, err := New(Config{Name: "x", Servers: []string{"h:1812"}})
 	if err == nil {
 		t.Fatal("New accepted a config with no shared secret — must fail closed")
@@ -246,6 +258,7 @@ var _ Exchanger = (*stubExchanger)(nil)
 // reachability config.go's CHAP rejection promises: a custom Exchanger wired via
 // the exported New(cfg, WithExchanger(...)) API is genuinely used.
 func TestNew_WithExchanger_Public_IsUsedByAuthenticate(t *testing.T) {
+	t.Parallel()
 	stub := &stubExchanger{}
 	a, err := New(Config{
 		Name:         "corp-nps",
@@ -271,6 +284,7 @@ func TestNew_WithExchanger_Public_IsUsedByAuthenticate(t *testing.T) {
 // A nil Exchanger must be ignored (the stock one kept), so passing it cannot
 // accidentally disarm the authenticator.
 func TestNew_WithExchanger_Nil_KeepsStockExchanger(t *testing.T) {
+	t.Parallel()
 	a, err := New(Config{
 		Name:         "corp-nps",
 		Servers:      []string{"radius.example.com:1812"},

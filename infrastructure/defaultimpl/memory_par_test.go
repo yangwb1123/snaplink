@@ -12,6 +12,7 @@ import (
 )
 
 func TestMemoryPARStore_IssueConsume(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryPARStore()
 
@@ -49,6 +50,7 @@ func TestMemoryPARStore_IssueConsume(t *testing.T) {
 }
 
 func TestMemoryPARStore_SingleUse(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryPARStore()
 	uri, _ := s.Issue(ctx, &oauth.PARRequest{ClientID: "c", ExpiresAt: time.Now().Add(time.Minute)})
@@ -61,6 +63,7 @@ func TestMemoryPARStore_SingleUse(t *testing.T) {
 }
 
 func TestMemoryPARStore_NilRequestRejected(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryPARStore()
 	if _, err := s.Issue(ctx, nil); !errors.Is(err, oauth.ErrPARNotFound) {
@@ -69,6 +72,7 @@ func TestMemoryPARStore_NilRequestRejected(t *testing.T) {
 }
 
 func TestMemoryPARStore_UnknownAndExpired(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryPARStore()
 	if _, err := s.Consume(ctx, "urn:ietf:params:oauth:request_uri:nope"); !errors.Is(err, oauth.ErrPARNotFound) {
@@ -81,6 +85,7 @@ func TestMemoryPARStore_UnknownAndExpired(t *testing.T) {
 }
 
 func TestGeneratePARToken(t *testing.T) {
+	t.Parallel()
 	a, err := defaultimpl.GeneratePARToken()
 	if err != nil {
 		t.Fatalf("GeneratePARToken: %v", err)

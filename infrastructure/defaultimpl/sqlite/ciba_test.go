@@ -40,6 +40,7 @@ func sampleCIBAReq() *oauth.CIBARequest {
 }
 
 func TestCIBAStore_IssueGetRoundTrip(t *testing.T) {
+	t.Parallel()
 	s := newCIBAStoreForTest(t)
 	ctx := context.Background()
 	id, err := s.Issue(ctx, sampleCIBAReq())
@@ -59,6 +60,7 @@ func TestCIBAStore_IssueGetRoundTrip(t *testing.T) {
 }
 
 func TestCIBAStore_IssueRejectsInvalid(t *testing.T) {
+	t.Parallel()
 	s := newCIBAStoreForTest(t)
 	ctx := context.Background()
 	for _, r := range []*oauth.CIBARequest{nil, {ClientID: "c"}, {SubjectID: "u"}} {
@@ -69,6 +71,7 @@ func TestCIBAStore_IssueRejectsInvalid(t *testing.T) {
 }
 
 func TestCIBAStore_MissingAndExpiredCollapse(t *testing.T) {
+	t.Parallel()
 	s := newCIBAStoreForTest(t)
 	ctx := context.Background()
 	if _, err := s.Get(ctx, "nope"); !errors.Is(err, oauth.ErrCIBARequestNotFound) {
@@ -83,6 +86,7 @@ func TestCIBAStore_MissingAndExpiredCollapse(t *testing.T) {
 }
 
 func TestCIBAStore_SetStatusLifecycle(t *testing.T) {
+	t.Parallel()
 	s := newCIBAStoreForTest(t)
 	ctx := context.Background()
 	id, _ := s.Issue(ctx, sampleCIBAReq())
@@ -98,6 +102,7 @@ func TestCIBAStore_SetStatusLifecycle(t *testing.T) {
 }
 
 func TestCIBAStore_UpdateLastPollAndPrune(t *testing.T) {
+	t.Parallel()
 	s := newCIBAStoreForTest(t)
 	ctx := context.Background()
 	id, _ := s.Issue(ctx, sampleCIBAReq())
@@ -127,6 +132,7 @@ func TestCIBAStore_UpdateLastPollAndPrune(t *testing.T) {
 // not-found. The DELETE ... WHERE status='approved' RETURNING is what makes one
 // out-of-band approval mint exactly one token set.
 func TestCIBAStore_ConsumeIfApproved(t *testing.T) {
+	t.Parallel()
 	s := newCIBAStoreForTest(t)
 	ctx := context.Background()
 
@@ -163,6 +169,7 @@ func TestCIBAStore_ConsumeIfApproved(t *testing.T) {
 // of one approved request exactly one wins — one approval can never mint N token
 // sets even under concurrent token-endpoint polls.
 func TestCIBAStore_ConsumeIfApprovedSingleWinner(t *testing.T) {
+	t.Parallel()
 	s := newCIBAStoreForTest(t)
 	ctx := context.Background()
 	id, _ := s.Issue(ctx, sampleCIBAReq())

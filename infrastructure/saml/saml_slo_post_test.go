@@ -76,6 +76,7 @@ func postSPSLOForm(handler http.HandlerFunc, samlRequest, relayState string) *ht
 // POST-binding analogue of the redirect-binding end-to-end test (exercises the
 // handler's POST branch end to end).
 func TestSPSLO_POSTBinding_SignedRequest_TerminatesSession(t *testing.T) {
+	t.Parallel()
 	handler, sessions, idp := buildSLOServer(t)
 
 	const nameID = "post-slo@example.com"
@@ -101,6 +102,7 @@ func TestSPSLO_POSTBinding_SignedRequest_TerminatesSession(t *testing.T) {
 // fail-closed too: an UNSIGNED enveloped LogoutRequest is rejected and the
 // session survives.
 func TestSPSLO_POSTBinding_Unsigned_NoTermination(t *testing.T) {
+	t.Parallel()
 	handler, sessions, _ := buildSLOServer(t)
 
 	const nameID = "post-unsigned@example.com"
@@ -127,6 +129,7 @@ func TestSPSLO_POSTBinding_Unsigned_NoTermination(t *testing.T) {
 // TestSPSLO_POSTBinding_MissingSAMLRequest_400 covers the POST branch's empty
 // SAMLRequest guard.
 func TestSPSLO_POSTBinding_MissingSAMLRequest_400(t *testing.T) {
+	t.Parallel()
 	handler, _, _ := buildSLOServer(t)
 	rec := postSPSLOForm(handler, "", "")
 	if rec.Code != http.StatusBadRequest {
@@ -140,6 +143,7 @@ func TestSPSLO_POSTBinding_MissingSAMLRequest_400(t *testing.T) {
 // TestSPSLO_MethodNotAllowed_405 covers the SP SLO handler's default (non
 // GET/POST) branch.
 func TestSPSLO_MethodNotAllowed_405(t *testing.T) {
+	t.Parallel()
 	handler, _, _ := buildSLOServer(t)
 	req := httptest.NewRequest(http.MethodPut, spSLOURL, nil)
 	rec := httptest.NewRecorder()

@@ -25,6 +25,7 @@ func newRevocationStore(t *testing.T) *sqlite.RevocationStore {
 // Load (the boot re-seed path) and that re-revoking the same token is an
 // idempotent upsert that updates the expiry rather than erroring.
 func TestRevocationStore_RevokeLoadRoundTrip(t *testing.T) {
+	t.Parallel()
 	s := newRevocationStore(t)
 	ctx := context.Background()
 	exp := time.Now().Add(time.Hour).Unix()
@@ -54,6 +55,7 @@ func TestRevocationStore_RevokeLoadRoundTrip(t *testing.T) {
 // passed (lazy GC) so the boot-time deny-set never re-seeds a token that is
 // already rejected on expiry anyway.
 func TestRevocationStore_LoadPrunesExpired(t *testing.T) {
+	t.Parallel()
 	s := newRevocationStore(t)
 	ctx := context.Background()
 	_ = s.Revoke(ctx, "live", time.Now().Add(time.Hour).Unix())
@@ -74,6 +76,7 @@ func TestRevocationStore_LoadPrunesExpired(t *testing.T) {
 // TestRevocationStore_Prune isolates Prune from Load's own now()-based prune
 // so the strictly-before-cutoff semantics are observable on the raw table.
 func TestRevocationStore_Prune(t *testing.T) {
+	t.Parallel()
 	s := newRevocationStore(t)
 	ctx := context.Background()
 	_ = s.Revoke(ctx, "keep", 1000)
@@ -100,6 +103,7 @@ func TestRevocationStore_Prune(t *testing.T) {
 // TestRevocationStore_WithDBSharesPool proves the shared-pool constructor
 // migrates the namespace and stays usable on the caller-owned handle.
 func TestRevocationStore_WithDBSharesPool(t *testing.T) {
+	t.Parallel()
 	db := newSharedDB(t)
 	s := sqlite.NewRevocationStoreWithDB(db)
 	ctx := context.Background()

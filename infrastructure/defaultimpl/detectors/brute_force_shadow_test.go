@@ -21,6 +21,7 @@ func newBruteForce(t *testing.T, opts ...detectors.BruteForceShadowOption) (*det
 }
 
 func TestBruteForceShadow_FirstFailureNoSignal(t *testing.T) {
+	t.Parallel()
 	d, _ := newBruteForce(t)
 	got, err := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
@@ -37,6 +38,7 @@ func TestBruteForceShadow_FirstFailureNoSignal(t *testing.T) {
 }
 
 func TestBruteForceShadow_FailureLimitWarn(t *testing.T) {
+	t.Parallel()
 	d, _ := newBruteForce(t,
 		detectors.WithBruteForceShadowFailureLimit(5),
 		detectors.WithBruteForceShadowDistinctSubjectLimit(0), // disable distinct
@@ -67,6 +69,7 @@ func TestBruteForceShadow_FailureLimitWarn(t *testing.T) {
 }
 
 func TestBruteForceShadow_DistinctSubjectsCritical(t *testing.T) {
+	t.Parallel()
 	d, _ := newBruteForce(t,
 		detectors.WithBruteForceShadowFailureLimit(0), // disable total
 		detectors.WithBruteForceShadowDistinctSubjectLimit(3),
@@ -98,6 +101,7 @@ func TestBruteForceShadow_DistinctSubjectsCritical(t *testing.T) {
 }
 
 func TestBruteForceShadow_SuccessFromSuspiciousIPFlags(t *testing.T) {
+	t.Parallel()
 	// Attacker found valid creds after spraying: success from an
 	// IP that's been hammering should ALSO surface (the counter
 	// keeps the failure history; success just doesn't add to it).
@@ -127,6 +131,7 @@ func TestBruteForceShadow_SuccessFromSuspiciousIPFlags(t *testing.T) {
 }
 
 func TestBruteForceShadow_SuccessDoesntIncrement(t *testing.T) {
+	t.Parallel()
 	// Successes don't add to the counter — only the existing
 	// failure count matters when a success crosses the threshold.
 	d, _ := newBruteForce(t,
@@ -156,6 +161,7 @@ func TestBruteForceShadow_SuccessDoesntIncrement(t *testing.T) {
 }
 
 func TestBruteForceShadow_OutOfWindowExcluded(t *testing.T) {
+	t.Parallel()
 	d, _ := newBruteForce(t,
 		detectors.WithBruteForceShadowWindow(10*time.Minute),
 		detectors.WithBruteForceShadowFailureLimit(5),
@@ -183,6 +189,7 @@ func TestBruteForceShadow_OutOfWindowExcluded(t *testing.T) {
 }
 
 func TestBruteForceShadow_EmptyIPSkips(t *testing.T) {
+	t.Parallel()
 	d, _ := newBruteForce(t)
 	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
@@ -196,6 +203,7 @@ func TestBruteForceShadow_EmptyIPSkips(t *testing.T) {
 }
 
 func TestBruteForceShadow_NilCounterErrors(t *testing.T) {
+	t.Parallel()
 	_, err := detectors.NewBruteForceShadowDetector(nil, []byte("salt"))
 	if err == nil {
 		t.Error("nil counter should error")
@@ -203,6 +211,7 @@ func TestBruteForceShadow_NilCounterErrors(t *testing.T) {
 }
 
 func TestBruteForceShadow_NameStableWireString(t *testing.T) {
+	t.Parallel()
 	d, _ := newBruteForce(t)
 	if got := d.Name(); got != "brute_force_shadow" {
 		t.Errorf("Name = %q, want brute_force_shadow", got)
@@ -210,6 +219,7 @@ func TestBruteForceShadow_NameStableWireString(t *testing.T) {
 }
 
 func TestBruteForceShadow_BothThresholdsFireTwoAnomalies(t *testing.T) {
+	t.Parallel()
 	d, _ := newBruteForce(t,
 		detectors.WithBruteForceShadowFailureLimit(5),
 		detectors.WithBruteForceShadowDistinctSubjectLimit(3),

@@ -47,6 +47,7 @@ func scimReq(t *testing.T, h http.Handler, method, path, body string) *httptest.
 // TestSCIMRoutesMounted drives create -> get -> delete through the real
 // router so the :id param route and the discovery routes are proven wired.
 func TestSCIMRoutesMounted(t *testing.T) {
+	t.Parallel()
 	h, users, _ := scimTestServer(t)
 
 	// Create via POST /Users.
@@ -82,6 +83,7 @@ func TestSCIMRoutesMounted(t *testing.T) {
 // TestSCIMBulkRouteMounted proves POST /Bulk reaches the handler through the
 // real cmd router (a 200 bulk envelope, not a 404-at-router).
 func TestSCIMBulkRouteMounted(t *testing.T) {
+	t.Parallel()
 	h, users, _ := scimTestServer(t)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:BulkRequest"],
 	  "Operations":[{"method":"POST","bulkId":"a","path":"/Users","data":{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"bulkuser@example.com"}}]}`
@@ -99,6 +101,7 @@ func TestSCIMBulkRouteMounted(t *testing.T) {
 // server has no admin middleware, so the meResolver finds no actor and returns
 // 401 — which (not 404) confirms the route is registered and dispatches to /Me.
 func TestSCIMMeRouteMounted(t *testing.T) {
+	t.Parallel()
 	h, _, _ := scimTestServer(t)
 	rec := scimReq(t, h, http.MethodGet, "/Me", "")
 	if rec.Code == http.StatusNotFound {
@@ -110,6 +113,7 @@ func TestSCIMMeRouteMounted(t *testing.T) {
 }
 
 func TestSCIMDiscoveryRoutesMounted(t *testing.T) {
+	t.Parallel()
 	h, _, _ := scimTestServer(t)
 	for _, p := range []string{"/ServiceProviderConfig", "/Schemas"} {
 		rec := scimReq(t, h, http.MethodGet, p, "")
@@ -122,6 +126,7 @@ func TestSCIMDiscoveryRoutesMounted(t *testing.T) {
 // TestSCIMRoutesNoUserProvider confirms the mount is a no-op (no error)
 // when there is no user provider to provision against.
 func TestSCIMRoutesNoUserProvider(t *testing.T) {
+	t.Parallel()
 	srv := sso.NewServer()
 	_ = srv.Handler()
 	if err := mountSCIMRoutes(srv, nil, nil, nil); err != nil {
@@ -133,6 +138,7 @@ func TestSCIMRoutesNoUserProvider(t *testing.T) {
 // through the real router so the :id param route is proven wired and the
 // SCIM group -> permissions role mapping runs end-to-end.
 func TestSCIMGroupRoutesMounted(t *testing.T) {
+	t.Parallel()
 	users := defaultimpl.NewMemoryUserProvider()
 	perms := permissions.NewMemoryProvider()
 	srv := sso.NewServer()
@@ -172,6 +178,7 @@ func TestSCIMGroupRoutesMounted(t *testing.T) {
 // TestSCIMGroupsNotMountedWithoutDeps confirms /Groups 404s when groups
 // aren't wired (the User surface stays independent of permissions).
 func TestSCIMGroupsNotMountedWithoutDeps(t *testing.T) {
+	t.Parallel()
 	h, _, _ := scimTestServer(t) // mounted with nil group deps
 	rec := scimReq(t, h, http.MethodGet, "/Groups", "")
 	if rec.Code != http.StatusNotFound {

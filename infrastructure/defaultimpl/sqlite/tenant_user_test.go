@@ -22,6 +22,7 @@ func newTenantUserStore(t *testing.T) *sqlitestores.TenantUserStore {
 }
 
 func TestSQLiteTenantUserStore_AddGetRemove(t *testing.T) {
+	t.Parallel()
 	s := newTenantUserStore(t)
 	ctx := context.Background()
 
@@ -46,6 +47,7 @@ func TestSQLiteTenantUserStore_AddGetRemove(t *testing.T) {
 }
 
 func TestSQLiteTenantUserStore_GetMiss(t *testing.T) {
+	t.Parallel()
 	s := newTenantUserStore(t)
 	if _, err := s.Get(context.Background(), "nope", "nobody"); !errors.Is(err, core.ErrNoMembership) {
 		t.Errorf("get miss err = %v, want ErrNoMembership", err)
@@ -53,6 +55,7 @@ func TestSQLiteTenantUserStore_GetMiss(t *testing.T) {
 }
 
 func TestSQLiteTenantUserStore_AddUpsertsRole(t *testing.T) {
+	t.Parallel()
 	s := newTenantUserStore(t)
 	ctx := context.Background()
 
@@ -75,6 +78,7 @@ func TestSQLiteTenantUserStore_AddUpsertsRole(t *testing.T) {
 }
 
 func TestSQLiteTenantUserStore_ListByTenant(t *testing.T) {
+	t.Parallel()
 	s := newTenantUserStore(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -98,6 +102,7 @@ func TestSQLiteTenantUserStore_ListByTenant(t *testing.T) {
 }
 
 func TestSQLiteTenantUserStore_ListByUser(t *testing.T) {
+	t.Parallel()
 	s := newTenantUserStore(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -121,6 +126,7 @@ func TestSQLiteTenantUserStore_ListByUser(t *testing.T) {
 }
 
 func TestSQLiteTenantUserStore_CrossTenantIsolation(t *testing.T) {
+	t.Parallel()
 	s := newTenantUserStore(t)
 	ctx := context.Background()
 	now := time.Now()

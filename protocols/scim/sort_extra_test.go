@@ -15,6 +15,7 @@ import (
 // numerically so "2" precedes "10" (not lexical). We sort by externalId set to
 // numeric strings.
 func TestSortNumericKeyLess(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	// externalId carries the numeric sort key; seed out of numeric order.
 	for _, ext := range []string{"10", "2", "1", "20"} {
@@ -39,6 +40,7 @@ func TestSortNumericKeyLess(t *testing.T) {
 // resolve to "" and collate before populated ones in ascending order
 // (sortKey's absent branch).
 func TestSortAbsentAttributeCollatesFirst(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	seedUser(t, h, `{"userName":"has@example.com","displayName":"Zed"}`)
 	seedUser(t, h, `{"userName":"none@example.com"}`) // no displayName
@@ -59,6 +61,7 @@ func TestSortAbsentAttributeCollatesFirst(t *testing.T) {
 // input order. Exercised directly on a fixed slice because the store's List
 // order is unspecified (a handler round-trip can't pin the input order).
 func TestSortUnknownAttributeIsNoOp(t *testing.T) {
+	t.Parallel()
 	in := []Resource{
 		{Schemas: []string{SchemaUser}, ID: "1", UserName: "c"},
 		{Schemas: []string{SchemaUser}, ID: "2", UserName: "a"},
@@ -77,6 +80,7 @@ func TestSortUnknownAttributeIsNoOp(t *testing.T) {
 
 // TestSortDescendingNumeric: descending order flips numeric keyLess.
 func TestSortDescendingNumeric(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	for _, ext := range []string{"3", "1", "2"} {
 		seedUser(t, h, `{"userName":"d`+ext+`@example.com","externalId":"`+ext+`"}`)
@@ -97,6 +101,7 @@ func TestSortDescendingNumeric(t *testing.T) {
 // caller skips sorting). Exercised directly so the by=="" early return is hit
 // without relying on a handler round-trip.
 func TestParseSortSpec_NoSortBy(t *testing.T) {
+	t.Parallel()
 	r := httptest_NewRequest(t, http.MethodGet, "/Users")
 	if spec := parseSortSpec(r); spec.by != "" {
 		t.Errorf("parseSortSpec with no sortBy = %+v, want empty", spec)

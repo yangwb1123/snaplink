@@ -47,6 +47,7 @@ func stageSnapshot(t *testing.T, srcClients sso.ClientStore, srcUsers sso.UserPr
 }
 
 func TestApplyRestore_NilPlanIsNoop(t *testing.T) {
+	t.Parallel()
 	rep, err := builtin.ApplyRestore(context.Background(), nil)
 	if err != nil || rep != nil {
 		t.Fatalf("nil plan: got rep=%v err=%v", rep, err)
@@ -54,6 +55,7 @@ func TestApplyRestore_NilPlanIsNoop(t *testing.T) {
 }
 
 func TestApplyRestore_EmptyURIIsNoop(t *testing.T) {
+	t.Parallel()
 	rep, err := builtin.ApplyRestore(context.Background(), &builtin.RestorePlan{})
 	if err != nil || rep != nil {
 		t.Fatalf("empty URI: got rep=%v err=%v", rep, err)
@@ -61,6 +63,7 @@ func TestApplyRestore_EmptyURIIsNoop(t *testing.T) {
 }
 
 func TestApplyRestore_RoundTripAdvancesBootstrap(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	const ns = "sso-server"
 
@@ -144,6 +147,7 @@ func TestApplyRestore_RoundTripAdvancesBootstrap(t *testing.T) {
 }
 
 func TestApplyRestore_MissingPipelineIsError(t *testing.T) {
+	t.Parallel()
 	_, err := builtin.ApplyRestore(context.Background(), &builtin.RestorePlan{URI: "file:///nope.snap"})
 	if err == nil {
 		t.Fatal("expected error for missing Pipeline/Restorer")
@@ -151,6 +155,7 @@ func TestApplyRestore_MissingPipelineIsError(t *testing.T) {
 }
 
 func TestApplyRestore_BadURISurfacesError(t *testing.T) {
+	t.Parallel()
 	_, err := builtin.ApplyRestore(context.Background(), &builtin.RestorePlan{
 		URI:      "s3://nope",
 		Pipeline: &snapshot.Pipeline{},

@@ -34,6 +34,7 @@ func samplePushApproval() *defaultimpl.PushApproval {
 }
 
 func TestPushApprovalStore_PutAndGetRoundTrip(t *testing.T) {
+	t.Parallel()
 	s := newPushApprovalStoreForTest(t)
 	ctx := context.Background()
 	want := samplePushApproval()
@@ -50,6 +51,7 @@ func TestPushApprovalStore_PutAndGetRoundTrip(t *testing.T) {
 }
 
 func TestPushApprovalStore_PutRejectsInvalid(t *testing.T) {
+	t.Parallel()
 	s := newPushApprovalStoreForTest(t)
 	for _, tc := range []struct {
 		name string
@@ -69,6 +71,7 @@ func TestPushApprovalStore_PutRejectsInvalid(t *testing.T) {
 }
 
 func TestPushApprovalStore_PutDuplicateRejected(t *testing.T) {
+	t.Parallel()
 	s := newPushApprovalStoreForTest(t)
 	ctx := context.Background()
 	a := samplePushApproval()
@@ -83,6 +86,7 @@ func TestPushApprovalStore_PutDuplicateRejected(t *testing.T) {
 }
 
 func TestPushApprovalStore_GetExpiredReturnsNotFoundAndDeletes(t *testing.T) {
+	t.Parallel()
 	s := newPushApprovalStoreForTest(t)
 	ctx := context.Background()
 	a := samplePushApproval()
@@ -104,6 +108,7 @@ func TestPushApprovalStore_GetExpiredReturnsNotFoundAndDeletes(t *testing.T) {
 }
 
 func TestPushApprovalStore_SetStatusPendingToApproved(t *testing.T) {
+	t.Parallel()
 	s := newPushApprovalStoreForTest(t)
 	ctx := context.Background()
 	a := samplePushApproval()
@@ -118,6 +123,7 @@ func TestPushApprovalStore_SetStatusPendingToApproved(t *testing.T) {
 }
 
 func TestPushApprovalStore_SetStatusRejectsReResolution(t *testing.T) {
+	t.Parallel()
 	s := newPushApprovalStoreForTest(t)
 	ctx := context.Background()
 	a := samplePushApproval()
@@ -130,6 +136,7 @@ func TestPushApprovalStore_SetStatusRejectsReResolution(t *testing.T) {
 }
 
 func TestPushApprovalStore_SetStatusIdempotentForSameStatus(t *testing.T) {
+	t.Parallel()
 	s := newPushApprovalStoreForTest(t)
 	ctx := context.Background()
 	a := samplePushApproval()
@@ -140,6 +147,7 @@ func TestPushApprovalStore_SetStatusIdempotentForSameStatus(t *testing.T) {
 }
 
 func TestPushApprovalStore_SetStatusMissingReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newPushApprovalStoreForTest(t)
 	err := s.SetStatus(context.Background(), "ghost", defaultimpl.PushApprovalApproved)
 	if !errors.Is(err, defaultimpl.ErrPushApprovalNotFound) {
@@ -148,6 +156,7 @@ func TestPushApprovalStore_SetStatusMissingReturnsNotFound(t *testing.T) {
 }
 
 func TestPushApprovalStore_DeleteIdempotent(t *testing.T) {
+	t.Parallel()
 	s := newPushApprovalStoreForTest(t)
 	if err := s.Delete(context.Background(), "nonexistent"); err != nil {
 		t.Fatalf("Delete on missing id: %v", err)
@@ -155,6 +164,7 @@ func TestPushApprovalStore_DeleteIdempotent(t *testing.T) {
 }
 
 func TestPushApprovalStore_PruneExpiredRemovesOldEntries(t *testing.T) {
+	t.Parallel()
 	s := newPushApprovalStoreForTest(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -180,6 +190,7 @@ func TestPushApprovalStore_PruneExpiredRemovesOldEntries(t *testing.T) {
 }
 
 func TestPushApprovalStore_PingAfterCloseErrors(t *testing.T) {
+	t.Parallel()
 	s := newPushApprovalStoreForTest(t)
 	_ = s.Close()
 	if err := s.Ping(context.Background()); err == nil {
@@ -188,6 +199,7 @@ func TestPushApprovalStore_PingAfterCloseErrors(t *testing.T) {
 }
 
 func TestPushApprovalStore_SubjectBindingSurvivesRoundTrip(t *testing.T) {
+	t.Parallel()
 	// Subject binding is the defense-in-depth check the
 	// PushMFAProvider runs at Verify time. The store doesn't enforce
 	// it, but must round-trip SubjectID intact so the provider has

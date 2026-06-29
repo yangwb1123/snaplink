@@ -12,6 +12,7 @@ import (
 // nil — operators who don't opt in get no /auth/login?provider=totp
 // surface.
 func TestBuildAuthenticators_TOTPDisabledByDefault(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true}
 	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil, nil)
@@ -26,6 +27,7 @@ func TestBuildAuthenticators_TOTPDisabledByDefault(t *testing.T) {
 // the authenticator under its canonical "totp" name when the YAML
 // block opts in. /auth/login?provider=totp then routes here.
 func TestBuildAuthenticators_TOTPEnabled(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Authenticators.TOTP = &config.TOTPConfig{Enabled: true}
 	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil, nil)
@@ -46,6 +48,7 @@ func TestBuildAuthenticators_TOTPEnabled(t *testing.T) {
 // wire self-service /me/mfa + TOTP enrollment over the same secret store the
 // authenticator reads. Disabled TOTP surfaces nil (byte-identical off).
 func TestBuildAuthenticators_TOTPSurfacesEnrollmentStore(t *testing.T) {
+	t.Parallel()
 	enabled := &config.Config{}
 	enabled.Authenticators.TOTP = &config.TOTPConfig{Enabled: true}
 	if _, _, _, store, _ := serverbuildauthn.BuildAuthenticators(enabled, quietLogger(), nil, nil, nil); store == nil {
@@ -62,6 +65,7 @@ func TestBuildAuthenticators_TOTPSurfacesEnrollmentStore(t *testing.T) {
 // TestBuildAuthenticators_TOTPSQLiteStore proves the sqlite_dsn branch builds a
 // durable TOTP store and surfaces it for self-service enrollment wiring.
 func TestBuildAuthenticators_TOTPSQLiteStore(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Authenticators.TOTP = &config.TOTPConfig{
 		Enabled:   true,
@@ -82,6 +86,7 @@ func TestBuildAuthenticators_TOTPSQLiteStore(t *testing.T) {
 // constructor doesn't error and the resulting Authenticator
 // reports the canonical name.
 func TestBuildAuthenticators_TOTPSkewStepsApplied(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Authenticators.TOTP = &config.TOTPConfig{Enabled: true, SkewSteps: 2}
 	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil, nil)

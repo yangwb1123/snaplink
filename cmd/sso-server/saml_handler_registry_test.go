@@ -41,6 +41,7 @@ func (a fakeSAMLAuthenticator) Callback(context.Context, *sso.CallbackState) (*s
 func (a fakeSAMLAuthenticator) LoginURL(string) string { return "" }
 
 func TestRegisterSAMLHandlers_RegisterLookupList(t *testing.T) {
+	t.Parallel()
 	factory := func(context.Context, SAMLServerDeps) (*SAMLHandlerSet, error) {
 		return &SAMLHandlerSet{}, nil
 	}
@@ -62,6 +63,7 @@ func TestRegisterSAMLHandlers_RegisterLookupList(t *testing.T) {
 }
 
 func TestRegisterSAMLHandlers_RejectsBadInput(t *testing.T) {
+	t.Parallel()
 	good := func(context.Context, SAMLServerDeps) (*SAMLHandlerSet, error) { return &SAMLHandlerSet{}, nil }
 	// assertPanic is defined in external_signer_test.go (same package).
 	assertPanic(t, "empty name", func() { RegisterSAMLHandlers("", good) })
@@ -76,6 +78,7 @@ func TestRegisterSAMLHandlers_RejectsBadInput(t *testing.T) {
 // SAML route — /saml/metadata 404s exactly as on a build without the feature.
 // No factory is registered, so the lookup block never runs.
 func TestSAMLUnconfigured_NoRoutesMounted(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{} // SAML.Handler == "" (disabled)
 	a, err := buildApp(cfg, quietLogger())
 	if err != nil {
@@ -107,6 +110,7 @@ func TestSAMLUnconfigured_NoRoutesMounted(t *testing.T) {
 // IssuerForClient + stores). Asserting the route serves and the auth is in
 // the map is the positive counterpart to the byte-identical test.
 func TestSAMLConfigured_MountsRoutesAndAuthenticator(t *testing.T) {
+	t.Parallel()
 	var gotDeps SAMLServerDeps
 	factory := func(_ context.Context, deps SAMLServerDeps) (*SAMLHandlerSet, error) {
 		gotDeps = deps
@@ -170,6 +174,7 @@ func TestSAMLConfigured_MountsRoutesAndAuthenticator(t *testing.T) {
 // names no registered factory fails boot (rather than silently skipping SAML)
 // — a misconfiguration, surfaced loudly with the list of registered names.
 func TestSAMLConfigured_UnregisteredHandlerFailsBoot(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.SAML.Handler = "does-not-exist"
 

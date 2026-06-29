@@ -13,6 +13,7 @@ import (
 )
 
 func TestAcquireRelease_RoundTrip(t *testing.T) {
+	t.Parallel()
 	l := file.New(t.TempDir())
 	h, err := l.TryAcquire(context.Background(), "boot", time.Second)
 	if err != nil {
@@ -30,6 +31,7 @@ func TestAcquireRelease_RoundTrip(t *testing.T) {
 }
 
 func TestSecondAcquire_GetsErrLocked(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	l := file.New(dir)
 	h, err := l.TryAcquire(context.Background(), "boot", time.Second)
@@ -47,6 +49,7 @@ func TestSecondAcquire_GetsErrLocked(t *testing.T) {
 }
 
 func TestReleaseThenReacquire(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	l := file.New(dir)
 	h, err := l.TryAcquire(context.Background(), "boot", time.Second)
@@ -65,6 +68,7 @@ func TestReleaseThenReacquire(t *testing.T) {
 }
 
 func TestRelease_Idempotent(t *testing.T) {
+	t.Parallel()
 	l := file.New(t.TempDir())
 	h, err := l.TryAcquire(context.Background(), "k", time.Second)
 	if err != nil {
@@ -79,6 +83,7 @@ func TestRelease_Idempotent(t *testing.T) {
 }
 
 func TestEmptyKeyRejected(t *testing.T) {
+	t.Parallel()
 	l := file.New(t.TempDir())
 	if _, err := l.TryAcquire(context.Background(), "", time.Second); err == nil {
 		t.Fatal("expected error for empty key")

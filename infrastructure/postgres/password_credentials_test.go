@@ -22,6 +22,7 @@ func freshPasswordCredentialStore(t *testing.T) *PasswordCredentialStore {
 }
 
 func TestPasswordCredentials_SetVerify(t *testing.T) {
+	t.Parallel()
 	s := freshPasswordCredentialStore(t)
 	ctx := context.Background()
 
@@ -49,6 +50,7 @@ func TestPasswordCredentials_SetVerify(t *testing.T) {
 }
 
 func TestPasswordCredentials_UpsertReplacesInFull(t *testing.T) {
+	t.Parallel()
 	s := freshPasswordCredentialStore(t)
 	ctx := context.Background()
 
@@ -80,6 +82,7 @@ func TestPasswordCredentials_UpsertReplacesInFull(t *testing.T) {
 }
 
 func TestPasswordCredentials_SetPasswordHashImporter(t *testing.T) {
+	t.Parallel()
 	s := freshPasswordCredentialStore(t)
 	ctx := context.Background()
 
@@ -115,6 +118,7 @@ func TestPasswordCredentials_SetPasswordHashImporter(t *testing.T) {
 }
 
 func TestPasswordCredentials_UpdatedAtNanoRoundTrip(t *testing.T) {
+	t.Parallel()
 	s := freshPasswordCredentialStore(t)
 	ctx := context.Background()
 
@@ -140,6 +144,7 @@ func TestPasswordCredentials_UpdatedAtNanoRoundTrip(t *testing.T) {
 }
 
 func TestPasswordCredentials_PingAndDB(t *testing.T) {
+	t.Parallel()
 	s := freshPasswordCredentialStore(t)
 	ctx := context.Background()
 

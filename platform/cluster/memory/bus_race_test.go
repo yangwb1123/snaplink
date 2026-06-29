@@ -16,6 +16,7 @@ import (
 // A drained subscriber maximises the chance the send is actually attempted at
 // the instant Close runs. Run with -race -count=10 to surface the window.
 func TestPublishCloseRace(t *testing.T) {
+	t.Parallel()
 	b := memory.New()
 
 	ch, err := b.Subscribe(context.Background())

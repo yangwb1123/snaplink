@@ -16,6 +16,7 @@ import (
 // than now-maxAge. Uses a fast 50ms interval + 100ms maxAge so the
 // test finishes in well under a second.
 func TestRunAuditRetention_PrunesOldEventsAtInterval(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "audit.db") + "?_journal=WAL"
 	sink, err := auditsqlite.New(dsn)
@@ -74,6 +75,7 @@ func TestRunAuditRetention_PrunesOldEventsAtInterval(t *testing.T) {
 // scheduler honors immediate ctx cancellation — no spurious Prune
 // against an empty schedule.
 func TestRunAuditRetention_ExitsOnCtxCancelBeforeFirstTick(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "audit.db") + "?_journal=WAL"
 	sink, _ := auditsqlite.New(dsn)
@@ -97,6 +99,7 @@ func TestRunAuditRetention_ExitsOnCtxCancelBeforeFirstTick(t *testing.T) {
 // (which makes Prune return "closed" errors) — the loop should
 // still respect ctx cancel without hanging.
 func TestRunAuditRetention_PruneErrorDoesNotStopLoop(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "audit.db") + "?_journal=WAL"
 	sink, _ := auditsqlite.New(dsn)

@@ -61,12 +61,14 @@ func runAllSteps(t *testing.T, seed *builtin.AdminSeed) {
 }
 
 func TestSteps_NilSeedReturnsNil(t *testing.T) {
+	t.Parallel()
 	if got := builtin.Steps(nil); got != nil {
 		t.Errorf("Steps(nil) = %v, want nil", got)
 	}
 }
 
 func TestSteps_AppliesDefaults(t *testing.T) {
+	t.Parallel()
 	seed := &builtin.AdminSeed{
 		Permissions: permissions.NewMemoryProvider(),
 		Users:       defaultimpl.NewMemoryUserProvider(),
@@ -87,6 +89,7 @@ func TestSteps_AppliesDefaults(t *testing.T) {
 }
 
 func TestSteps_SeedsRolePermissions(t *testing.T) {
+	t.Parallel()
 	seed, _ := fullSeed(t)
 	runAllSteps(t, seed)
 
@@ -110,6 +113,7 @@ func TestSteps_SeedsRolePermissions(t *testing.T) {
 }
 
 func TestSteps_SeedsAdminUser(t *testing.T) {
+	t.Parallel()
 	seed, printer := fullSeed(t)
 	runAllSteps(t, seed)
 
@@ -139,6 +143,7 @@ func TestSteps_SeedsAdminUser(t *testing.T) {
 }
 
 func TestSteps_SeedsDefaultNetpolicy(t *testing.T) {
+	t.Parallel()
 	seed, _ := fullSeed(t)
 	runAllSteps(t, seed)
 
@@ -153,6 +158,7 @@ func TestSteps_SeedsDefaultNetpolicy(t *testing.T) {
 }
 
 func TestSteps_NetpolicySkippedWhenAlreadyPopulated(t *testing.T) {
+	t.Parallel()
 	// Pre-populate the netpolicy store; the seeding step must respect existing
 	// operator-defined entries instead of injecting a duplicate.
 	seed, _ := fullSeed(t)
@@ -170,12 +176,14 @@ func TestSteps_NetpolicySkippedWhenAlreadyPopulated(t *testing.T) {
 }
 
 func TestSteps_NetpolicyNilDependencyNoop(t *testing.T) {
+	t.Parallel()
 	seed, _ := fullSeed(t)
 	seed.Netpolicy = nil // disable optional dependency
 	runAllSteps(t, seed) // must not error despite Step 3 having no backend
 }
 
 func TestSteps_SeedsAdminClient(t *testing.T) {
+	t.Parallel()
 	seed, _ := fullSeed(t)
 	runAllSteps(t, seed)
 
@@ -199,6 +207,7 @@ func TestSteps_SeedsAdminClient(t *testing.T) {
 }
 
 func TestSteps_AdminClientSkippedWhenOperatorPredeclared(t *testing.T) {
+	t.Parallel()
 	// Operator already wired a sso-admin client via YAML — Step 4 must
 	// no-op rather than overwrite the operator secret.
 	seed, _ := fullSeed(t)
@@ -223,6 +232,7 @@ func TestSteps_AdminClientSkippedWhenOperatorPredeclared(t *testing.T) {
 }
 
 func TestSteps_RoleSeedTolerantOfPreExistingRole(t *testing.T) {
+	t.Parallel()
 	// Permissions.AddRole returns ErrRoleExists if a previous boot
 	// already wrote it. The step must treat that as success.
 	seed, _ := fullSeed(t)
@@ -244,6 +254,7 @@ func TestSteps_RoleSeedTolerantOfPreExistingRole(t *testing.T) {
 }
 
 func TestSteps_MissingProviderFailsRoleStep(t *testing.T) {
+	t.Parallel()
 	// Permissions nil → seed_admin_role must fail explicitly.
 	seed := &builtin.AdminSeed{Users: defaultimpl.NewMemoryUserProvider()}
 	steps := builtin.Steps(seed)
@@ -260,6 +271,7 @@ func TestSteps_MissingProviderFailsRoleStep(t *testing.T) {
 }
 
 func TestSteps_ApplyRestoreErrors(t *testing.T) {
+	t.Parallel()
 	// Cover the validation branches of ApplyRestore that are not exercised
 	// by the existing builtin_test.go (Pipeline/Restorer nil).
 	_, err := builtin.ApplyRestore(context.Background(), &builtin.RestorePlan{
@@ -279,6 +291,7 @@ func TestSteps_ApplyRestoreErrors(t *testing.T) {
 }
 
 func TestGeneratePassword_LengthAndAlphabet(t *testing.T) {
+	t.Parallel()
 	// generatePassword is unexported but exercised through seed_admin_user.
 	// The password is emitted via PasswordPrinter; decode it from there to
 	// confirm it's well-formed base64url of the right length.
@@ -298,6 +311,7 @@ func TestGeneratePassword_LengthAndAlphabet(t *testing.T) {
 }
 
 func TestSteps_ClearSeededPassword_RemovesLegacyAttr(t *testing.T) {
+	t.Parallel()
 	// Simulate an existing deployment that wrote seeded_password under a prior
 	// server version. On the next boot the clear_seeded_password step (version 6)
 	// must remove the attribute and persist the updated record.
@@ -327,6 +341,7 @@ func TestSteps_ClearSeededPassword_RemovesLegacyAttr(t *testing.T) {
 }
 
 func TestSteps_SeedsAdminConsoleClient(t *testing.T) {
+	t.Parallel()
 	seed, _ := fullSeed(t)
 	runAllSteps(t, seed)
 
@@ -356,6 +371,7 @@ func TestSteps_SeedsAdminConsoleClient(t *testing.T) {
 }
 
 func TestSteps_AdminConsoleClientSkippedWhenOperatorPredeclared(t *testing.T) {
+	t.Parallel()
 	// Operator already wired an sso-admin-console client — Step 5 must not overwrite.
 	seed, _ := fullSeed(t)
 	original := &sso.Client{ID: "sso-admin-console", Name: "Operator Console"}

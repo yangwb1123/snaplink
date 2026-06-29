@@ -260,6 +260,7 @@ func newSLOHarness(t *testing.T, nameID string) (*harness, *spKeypair, string) {
 // the IdP returns a 302 DETACHED-signed LogoutResponse redirect to the SP's
 // REGISTERED SLO URL.
 func TestSLO_SignedRequest_TerminatesSessionAndReturnsResponse(t *testing.T) {
+	t.Parallel()
 	const nameID = "alice@example.com"
 	hh, spKey, sid := newSLOHarness(t, nameID)
 
@@ -314,6 +315,7 @@ func TestSLO_SignedRequest_TerminatesSessionAndReturnsResponse(t *testing.T) {
 // termination without a verified signature — the fail-closed property preserved
 // through the detached path.
 func TestSLO_UnsignedRequest_Rejected_NoTermination(t *testing.T) {
+	t.Parallel()
 	const nameID = "bob@example.com"
 	hh, _, sid := newSLOHarness(t, nameID)
 
@@ -332,6 +334,7 @@ func TestSLO_UnsignedRequest_Rejected_NoTermination(t *testing.T) {
 // signed by a DIFFERENT key (not the SP's registered cert) is rejected and the
 // session is NOT terminated.
 func TestSLO_AttackerSignedRequest_Rejected_NoTermination(t *testing.T) {
+	t.Parallel()
 	const nameID = "carol@example.com"
 	hh, _, sid := newSLOHarness(t, nameID)
 
@@ -349,6 +352,7 @@ func TestSLO_AttackerSignedRequest_Rejected_NoTermination(t *testing.T) {
 // the SAMLRequest bytes are swapped after signing — the reconstructed octet
 // string no longer matches, so verification fails and nothing is terminated.
 func TestSLO_TamperedRequest_Rejected_NoTermination(t *testing.T) {
+	t.Parallel()
 	const nameID = "trent@example.com"
 	hh, spKey, sid := newSLOHarness(t, nameID)
 
@@ -370,6 +374,7 @@ func TestSLO_TamperedRequest_Rejected_NoTermination(t *testing.T) {
 // TestSLO_UnregisteredSP_Rejected: a (well-formed, signed) LogoutRequest whose
 // Issuer is not a registered SP is rejected.
 func TestSLO_UnregisteredSP_Rejected(t *testing.T) {
+	t.Parallel()
 	const nameID = "dave@example.com"
 	hh, spKey, sid := newSLOHarness(t, nameID)
 
@@ -386,6 +391,7 @@ func TestSLO_UnregisteredSP_Rejected(t *testing.T) {
 // rejected (its ID is deduped within the freshness window). The session
 // re-established after the first logout is NOT re-terminated by the replay.
 func TestSLO_Replay_Rejected(t *testing.T) {
+	t.Parallel()
 	const nameID = "rachel@example.com"
 	hh, spKey, sid := newSLOHarness(t, nameID)
 
@@ -410,6 +416,7 @@ func TestSLO_Replay_Rejected(t *testing.T) {
 // TestSLO_StaleIssueInstant_Rejected: a validly-signed LogoutRequest whose
 // IssueInstant predates the freshness window is rejected, nothing terminated.
 func TestSLO_StaleIssueInstant_Rejected(t *testing.T) {
+	t.Parallel()
 	const nameID = "sam@example.com"
 	hh, spKey, sid := newSLOHarness(t, nameID)
 
@@ -426,6 +433,7 @@ func TestSLO_StaleIssueInstant_Rejected(t *testing.T) {
 // TestSLO_FutureIssueInstant_Rejected: a validly-signed LogoutRequest whose
 // IssueInstant is far in the FUTURE (beyond skew) is rejected.
 func TestSLO_FutureIssueInstant_Rejected(t *testing.T) {
+	t.Parallel()
 	const nameID = "fiona@example.com"
 	hh, spKey, sid := newSLOHarness(t, nameID)
 
@@ -445,6 +453,7 @@ func TestSLO_FutureIssueInstant_Rejected(t *testing.T) {
 // LogoutRequest terminates the session and the IdP returns the enveloped
 // auto-POST LogoutResponse form to the registered SLO URL.
 func TestSLO_PostBinding_Enveloped_TerminatesAndAutoPosts(t *testing.T) {
+	t.Parallel()
 	const nameID = "post@example.com"
 	hh, spKey, sid := newSLOHarness(t, nameID)
 
@@ -471,6 +480,7 @@ func TestSLO_PostBinding_Enveloped_TerminatesAndAutoPosts(t *testing.T) {
 // rejected (no enveloped Signature) — the fail-closed property holds on the POST
 // binding too.
 func TestSLO_PostBinding_Unsigned_Rejected(t *testing.T) {
+	t.Parallel()
 	const nameID = "postbob@example.com"
 	hh, _, sid := newSLOHarness(t, nameID)
 
@@ -500,6 +510,7 @@ func TestSLO_PostBinding_Unsigned_Rejected(t *testing.T) {
 // send it) — proving the response goes ONLY to a registered URL, never a
 // request-supplied one.
 func TestSLO_SLOURLNotRegistered_TerminatesButNoResponse(t *testing.T) {
+	t.Parallel()
 	const nameID = "erin@example.com"
 	issuer, pub := newIssuer(t, issuerRSA)
 	clients := defaultimpl.NewMemoryClientStore()
@@ -559,6 +570,7 @@ func TestSLO_SLOURLNotRegistered_TerminatesButNoResponse(t *testing.T) {
 // terminate another subject's session — the termination is scoped to the
 // request's NameID, never a global wipe.
 func TestSLO_OnlyMatchingSubjectTerminated(t *testing.T) {
+	t.Parallel()
 	const target = "frank@example.com"
 	hh, spKey, targetSID := newSLOHarness(t, target)
 
@@ -584,6 +596,7 @@ func TestSLO_OnlyMatchingSubjectTerminated(t *testing.T) {
 // live session still returns a Success LogoutResponse (not a distinguishable
 // error), so SLO cannot enumerate live sessions.
 func TestSLO_NonexistentSession_StillSuccess_NoOracle(t *testing.T) {
+	t.Parallel()
 	const nameID = "ghost@example.com"
 	hh, spKey, sid := newSLOHarness(t, nameID)
 
@@ -611,6 +624,7 @@ func TestSLO_NonexistentSession_StillSuccess_NoOracle(t *testing.T) {
 // TestSLO_Malformed_Rejected: a structurally-broken SAMLRequest collapses to the
 // one oracle-safe code.
 func TestSLO_Malformed_Rejected(t *testing.T) {
+	t.Parallel()
 	hh, _, _ := newSLOHarness(t, "h@example.com")
 	rec := hh.getSLO("SAMLRequest=" + url.QueryEscape("not-valid-base64-$$$"))
 	assertRequestInvalidOnly(t, rec)
@@ -626,6 +640,7 @@ func TestSLO_Malformed_Rejected(t *testing.T) {
 // crewjam cross-validation, which uses the one message crewjam DOES detached-
 // sign: the AuthnRequest redirect.)
 func TestSLO_LogoutResponse_DetachedSigValidates(t *testing.T) {
+	t.Parallel()
 	const nameID = "interop@example.com"
 	hh, spKey, _ := newSLOHarness(t, nameID)
 
@@ -659,6 +674,7 @@ func TestSLO_LogoutResponse_DetachedSigValidates(t *testing.T) {
 // module's verifyRedirectSignature accepts the resulting SigAlg+Signature over
 // the octet string — confirming our reconstruction byte-matches crewjam's.
 func TestSLO_AcceptsCrewjamDetachedRedirectSig(t *testing.T) {
+	t.Parallel()
 	spKey := newSPKeypair(t)
 
 	// A crewjam ServiceProvider that signs its AuthnRequest redirect (detached)

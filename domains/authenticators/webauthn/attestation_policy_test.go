@@ -24,6 +24,7 @@ const (
 var zeroAAGUID16 = make([]byte, 16)
 
 func TestCanonicalAAGUID_FormsMatch(t *testing.T) {
+	t.Parallel()
 	// Canonical, uppercase, and bare-hex all canonicalize to the same
 	// value — and that value matches the raw 16-byte rendering. A
 	// canonicalization mismatch here would silently allow/deny the wrong
@@ -50,6 +51,7 @@ func TestCanonicalAAGUID_FormsMatch(t *testing.T) {
 }
 
 func TestCanonicalAAGUID_RejectsMalformed(t *testing.T) {
+	t.Parallel()
 	bad := []string{
 		"",                                     // empty
 		"not-a-uuid",                           // junk
@@ -68,6 +70,7 @@ func TestCanonicalAAGUID_RejectsMalformed(t *testing.T) {
 }
 
 func TestNewAttestationPolicy_Validation(t *testing.T) {
+	t.Parallel()
 	// off mode ignores the list and is a no-op.
 	p, err := NewAttestationPolicy(AttestationPolicyOff, nil)
 	if err != nil {
@@ -97,6 +100,7 @@ func TestNewAttestationPolicy_Validation(t *testing.T) {
 }
 
 func TestAttestationPolicy_NilAndOffPermitAll(t *testing.T) {
+	t.Parallel()
 	var nilPolicy *AttestationPolicy
 	if err := nilPolicy.Check(rawAAGUID16); err != nil {
 		t.Fatalf("nil policy must permit, got %v", err)
@@ -111,6 +115,7 @@ func TestAttestationPolicy_NilAndOffPermitAll(t *testing.T) {
 }
 
 func TestAttestationPolicy_Allowlist(t *testing.T) {
+	t.Parallel()
 	// Config supplies the UPPERCASE form; the raw 16-byte AAGUID must
 	// still match through canonicalization.
 	p, err := NewAttestationPolicy(AttestationPolicyAllowlist, []string{aaguidUpper})
@@ -133,6 +138,7 @@ func TestAttestationPolicy_Allowlist(t *testing.T) {
 }
 
 func TestAttestationPolicy_AllowlistZeroExplicit(t *testing.T) {
+	t.Parallel()
 	// When the operator explicitly allowlists the zero AAGUID, it passes.
 	p, err := NewAttestationPolicy(AttestationPolicyAllowlist, []string{ZeroAAGUID, aaguidCanonical})
 	if err != nil {
@@ -147,6 +153,7 @@ func TestAttestationPolicy_AllowlistZeroExplicit(t *testing.T) {
 }
 
 func TestAttestationPolicy_Denylist(t *testing.T) {
+	t.Parallel()
 	p, err := NewAttestationPolicy(AttestationPolicyDenylist, []string{aaguidCanonical})
 	if err != nil {
 		t.Fatalf("NewAttestationPolicy: %v", err)
@@ -167,6 +174,7 @@ func TestAttestationPolicy_Denylist(t *testing.T) {
 }
 
 func TestAttestationPolicy_UnparseableAAGUID(t *testing.T) {
+	t.Parallel()
 	// A non-16-byte AAGUID can't match the canonical set. Under allowlist
 	// it must be denied (fail closed); under denylist it can't match a
 	// denied entry, so it passes.
@@ -182,6 +190,7 @@ func TestAttestationPolicy_UnparseableAAGUID(t *testing.T) {
 }
 
 func TestCredentialAAGUID(t *testing.T) {
+	t.Parallel()
 	if got := CredentialAAGUID(rawAAGUID16); got != aaguidCanonical {
 		t.Fatalf("CredentialAAGUID = %q, want %q", got, aaguidCanonical)
 	}
@@ -194,6 +203,7 @@ func TestCredentialAAGUID(t *testing.T) {
 }
 
 func TestMapConveyance(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"":           "",
 		"none":       "",
@@ -217,6 +227,7 @@ func TestMapConveyance(t *testing.T) {
 }
 
 func TestNewHelper_InvalidConveyanceRejected(t *testing.T) {
+	t.Parallel()
 	_, err := NewHelper(Config{
 		RPID:                  "example.com",
 		RPOrigins:             []string{"https://sso.example.com"},
@@ -234,6 +245,7 @@ func TestNewHelper_InvalidConveyanceRejected(t *testing.T) {
 // (real crypto) is intentionally avoided; the gate logic is the part this
 // feature owns.
 func TestFinishRegistrationGate(t *testing.T) {
+	t.Parallel()
 	credWith := func(aaguid []byte) *gw.Credential {
 		c := &gw.Credential{ID: []byte("cred-1")}
 		c.Authenticator.AAGUID = aaguid
@@ -312,6 +324,7 @@ func TestFinishRegistrationGate(t *testing.T) {
 // verification, so the AAGUID is untrustworthy; an active policy MUST demand a
 // verified attestation statement. Default-off performs no format check.
 func TestFinishRegistrationGate_NoneAttestationRejected(t *testing.T) {
+	t.Parallel()
 	credNone := func(aaguid []byte) *gw.Credential {
 		c := &gw.Credential{ID: []byte("cred-none"), AttestationFormat: "none"}
 		c.Authenticator.AAGUID = aaguid
@@ -389,6 +402,7 @@ func TestFinishRegistrationGate_NoneAttestationRejected(t *testing.T) {
 // an active policy demands conveyance direct|enterprise; ""/none/indirect
 // fail loud; mode-off with any conveyance is fine (no guard).
 func TestNewHelper_ActivePolicyRequiresDirectConveyance(t *testing.T) {
+	t.Parallel()
 	mk := func(conv string, policy *AttestationPolicy) error {
 		_, err := NewHelper(Config{
 			RPID:                  "example.com",

@@ -34,6 +34,7 @@ func (e *erroringClientStore) RotateSecret(context.Context, string) (string, err
 // ---------- nil-store → FailedPrecondition ----------
 
 func TestClientAdmin_NilStore_FailedPrecondition(t *testing.T) {
+	t.Parallel()
 	conn := startAdminGRPC(t, nil, nil, nil, nil, nil, nil)
 	c := adminv1.NewClientAdminServiceClient(conn)
 	ctx := context.Background()
@@ -74,6 +75,7 @@ func TestClientAdmin_NilStore_FailedPrecondition(t *testing.T) {
 // ---------- empty Id → InvalidArgument ----------
 
 func TestClientAdmin_EmptyID_InvalidArgument(t *testing.T) {
+	t.Parallel()
 	store := &erroringClientStore{} // any non-nil store passes the FailedPrecondition gate
 	conn := startAdminGRPC(t, store, nil, nil, nil, nil, nil)
 	c := adminv1.NewClientAdminServiceClient(conn)
@@ -116,6 +118,7 @@ func TestClientAdmin_EmptyID_InvalidArgument(t *testing.T) {
 // ---------- store error → Internal ----------
 
 func TestClientAdmin_StoreError_Internal(t *testing.T) {
+	t.Parallel()
 	store := &erroringClientStore{err: errors.New("db unavailable")}
 	conn := startAdminGRPC(t, store, nil, nil, nil, nil, nil)
 	c := adminv1.NewClientAdminServiceClient(conn)
@@ -155,6 +158,7 @@ func TestClientAdmin_StoreError_Internal(t *testing.T) {
 // post-delete Get; pinning it explicitly so a refactor to that path
 // doesn't accidentally drop the mapping.
 func TestClientAdmin_Get_NotFound(t *testing.T) {
+	t.Parallel()
 	store := &erroringClientStore{err: sso.ErrNoSuchClient}
 	conn := startAdminGRPC(t, store, nil, nil, nil, nil, nil)
 	c := adminv1.NewClientAdminServiceClient(conn)
@@ -166,6 +170,7 @@ func TestClientAdmin_Get_NotFound(t *testing.T) {
 }
 
 func TestClientAdmin_RotateSecret_NotFound(t *testing.T) {
+	t.Parallel()
 	store := &erroringClientStore{err: sso.ErrNoSuchClient}
 	conn := startAdminGRPC(t, store, nil, nil, nil, nil, nil)
 	c := adminv1.NewClientAdminServiceClient(conn)
@@ -179,6 +184,7 @@ func TestClientAdmin_RotateSecret_NotFound(t *testing.T) {
 // ---------- helper-coverage smoke checks ----------
 
 func TestClientToProto_Nil(t *testing.T) {
+	t.Parallel()
 	// Round-trips the nil branch of the unexported clientToProto helper
 	// via the public API: when ClientStore.Get returns (nil, nil), Get
 	// must not panic and the returned proto's Client field is nil too.

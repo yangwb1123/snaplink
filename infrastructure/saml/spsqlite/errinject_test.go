@@ -12,6 +12,7 @@ import (
 // store MUST return false (reject) and surface the error on its logger — never
 // admit a possibly-replayed assertion when freshness can't be confirmed.
 func TestSPSqlite_CheckAndRememberFailsClosedOnDBError(t *testing.T) {
+	t.Parallel()
 	db := openSharedDB(t, "sp_errinject")
 	log := &capturingLogger{}
 	s, err := NewAssertionReplayStoreWithDB(db, WithLogger(log))
@@ -40,6 +41,7 @@ func TestSPSqlite_CheckAndRememberFailsClosedOnDBError(t *testing.T) {
 // through the default nopLogger (the db!=nil error path, not just the closed
 // guard), so the no-op sink is actually invoked.
 func TestSPSqlite_NopLoggerSilent(t *testing.T) {
+	t.Parallel()
 	db := openSharedDB(t, "sp_nop")
 	s, err := NewAssertionReplayStoreWithDB(db) // no WithLogger ⇒ nopLogger
 	if err != nil {
@@ -70,6 +72,7 @@ func TestSPSqlite_NopLoggerSilent(t *testing.T) {
 // non-nil handle still passes the db==nil guard) can't open a connection, so
 // CheckAndRemember rejects rather than admitting a possibly-replayed assertion.
 func TestSPSqlite_CheckAndRememberFailsClosedOnConnError(t *testing.T) {
+	t.Parallel()
 	db := openSharedDB(t, "sp_connerr")
 	log := &capturingLogger{}
 	s, err := NewAssertionReplayStoreWithDB(db, WithLogger(log))
@@ -91,6 +94,7 @@ func TestSPSqlite_CheckAndRememberFailsClosedOnConnError(t *testing.T) {
 // TestSPSqlite_PruneExpiredDBError covers PruneExpired's exec-error branch by
 // dropping the table before the prune runs.
 func TestSPSqlite_PruneExpiredDBError(t *testing.T) {
+	t.Parallel()
 	db := openSharedDB(t, "sp_prune_err")
 	s, err := NewAssertionReplayStoreWithDB(db)
 	if err != nil {

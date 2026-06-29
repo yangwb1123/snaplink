@@ -119,6 +119,7 @@ func newHarnessWithClients(t *testing.T, clients *defaultimpl.MemoryClientStore)
 // the SP's PINNED cert passes verifyAuthnRequestSignature and yields the 302 to
 // login.
 func TestSSO_SignedRequest_Valid_RedirectsToLogin(t *testing.T) {
+	t.Parallel()
 	clients := newClientStore(t)
 	spKey := newSPKeypair(t)
 	registerSPRequireSigned(t, clients, spKey)
@@ -138,6 +139,7 @@ func TestSSO_SignedRequest_Valid_RedirectsToLogin(t *testing.T) {
 // enveloped signature is rejected (verifyAuthnRequestSignature finds nothing to
 // validate) → oracle-safe saml_request_invalid, no pending stored.
 func TestSSO_SignedRequest_Unsigned_Rejected(t *testing.T) {
+	t.Parallel()
 	clients := newClientStore(t)
 	spKey := newSPKeypair(t)
 	registerSPRequireSigned(t, clients, spKey)
@@ -159,6 +161,7 @@ func TestSSO_SignedRequest_Unsigned_Rejected(t *testing.T) {
 // trust anchor → rejected. This is the alg/key-confusion defense — the verifier
 // uses the PINNED cert, never one embedded in the request's KeyInfo.
 func TestSSO_SignedRequest_AttackerKey_Rejected(t *testing.T) {
+	t.Parallel()
 	clients := newClientStore(t)
 	spKey := newSPKeypair(t)
 	registerSPRequireSigned(t, clients, spKey)
@@ -178,6 +181,7 @@ func TestSSO_SignedRequest_AttackerKey_Rejected(t *testing.T) {
 // (Also note: even if the signature somehow passed, the mutated ACS would have to
 // survive the ACS allowlist — this asserts the signature gate catches it first.)
 func TestSSO_SignedRequest_Tampered_Rejected(t *testing.T) {
+	t.Parallel()
 	clients := newClientStore(t)
 	spKey := newSPKeypair(t)
 	registerSPRequireSigned(t, clients, spKey)
@@ -205,6 +209,7 @@ func TestSSO_SignedRequest_Tampered_Rejected(t *testing.T) {
 // pinned cert can never validate a signature → every signed request is rejected
 // (covers verifyAuthnRequestSignature's empty-cert guard).
 func TestSSO_SignedRequest_NoPinnedCert_Rejected(t *testing.T) {
+	t.Parallel()
 	clients := newClientStore(t)
 	if err := clients.Add(context.Background(), &sso.Client{
 		ID:     spClientID,
@@ -232,6 +237,7 @@ func TestSSO_SignedRequest_NoPinnedCert_Rejected(t *testing.T) {
 // TestVerifyAuthnRequestSignature_BadCertPEM directly exercises the cert-parse
 // guards: a non-PEM and a PEM whose bytes aren't a cert both return an error.
 func TestVerifyAuthnRequestSignature_BadCertPEM(t *testing.T) {
+	t.Parallel()
 	if err := verifyAuthnRequestSignature([]byte("<x/>"), ""); err == nil {
 		t.Fatal("empty cert PEM accepted")
 	}

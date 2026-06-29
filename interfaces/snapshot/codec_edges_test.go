@@ -8,12 +8,14 @@ import (
 )
 
 func TestJSONCodec_Marshal_NilSnapshot(t *testing.T) {
+	t.Parallel()
 	if _, err := snapshot.NewJSONCodec().Marshal(nil); err == nil {
 		t.Error("expected error on nil snapshot")
 	}
 }
 
 func TestJSONCodec_Marshal_CompactForm(t *testing.T) {
+	t.Parallel()
 	// Indent=false emits the compact form (no leading two-space lines).
 	c := &snapshot.JSONCodec{Indent: false}
 	snap := &snapshot.Snapshot{
@@ -29,6 +31,7 @@ func TestJSONCodec_Marshal_CompactForm(t *testing.T) {
 }
 
 func TestJSONCodec_Marshal_IndentedDefault(t *testing.T) {
+	t.Parallel()
 	c := snapshot.NewJSONCodec()
 	snap := &snapshot.Snapshot{
 		SnapshotID: "indented", SchemaVersion: snapshot.SchemaVersion, SourceNamespace: "ns",
@@ -46,6 +49,7 @@ func TestJSONCodec_Marshal_IndentedDefault(t *testing.T) {
 }
 
 func TestJSONCodec_Marshal_NilReceiverDefaultsToIndented(t *testing.T) {
+	t.Parallel()
 	// A nil *JSONCodec receiver should still produce indented output —
 	// the contract is "passing nil works like the default".
 	var c *snapshot.JSONCodec
@@ -62,6 +66,7 @@ func TestJSONCodec_Marshal_NilReceiverDefaultsToIndented(t *testing.T) {
 }
 
 func TestJSONCodec_Unmarshal_EmptyInput(t *testing.T) {
+	t.Parallel()
 	if _, err := snapshot.NewJSONCodec().Unmarshal(nil); err == nil {
 		t.Error("expected error on nil input")
 	}
@@ -71,6 +76,7 @@ func TestJSONCodec_Unmarshal_EmptyInput(t *testing.T) {
 }
 
 func TestJSONCodec_Unmarshal_RejectsUnknownFields(t *testing.T) {
+	t.Parallel()
 	// DisallowUnknownFields is on — bogus top-level keys must fail
 	// the decode, not be silently dropped.
 	bad := []byte(`{"schema_version":"1","snapshot_id":"x","source_namespace":"y","bogus_field":42}`)
@@ -80,6 +86,7 @@ func TestJSONCodec_Unmarshal_RejectsUnknownFields(t *testing.T) {
 }
 
 func TestJSONCodec_ContentType(t *testing.T) {
+	t.Parallel()
 	got := snapshot.NewJSONCodec().ContentType()
 	if got != string(snapshot.CodecJSON) {
 		t.Errorf("ContentType = %q, want %q", got, snapshot.CodecJSON)

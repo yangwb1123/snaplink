@@ -71,6 +71,7 @@ func drainSink(t *testing.T, sink *audit.MemorySink) []*audit.Event {
 // on metadata via SetMeta) AND a subject->SP row in the SLO session index (with
 // the SP's registered https SLO URL as the fan-out target).
 func TestFinish_RecordsAuditAndSessionIndex(t *testing.T) {
+	t.Parallel()
 	const sloURL = "https://sp.example.com/saml/slo"
 	hh, sink, idx := newRecordingHarness(t, sloURL)
 
@@ -127,6 +128,7 @@ func TestFinish_RecordsAuditAndSessionIndex(t *testing.T) {
 // SPSLOUrl (so it never becomes a fan-out destination), while the row itself is
 // still kept (so RemoveAll stays a faithful subject->SP picture).
 func TestFinish_NonHTTPSSLOUrl_DroppedFromIndex(t *testing.T) {
+	t.Parallel()
 	const badSLO = "http://sp.example.com/saml/slo" // plain http — not allowed
 	hh, _, idx := newRecordingHarness(t, badSLO)
 
@@ -155,6 +157,7 @@ func TestFinish_NonHTTPSSLOUrl_DroppedFromIndex(t *testing.T) {
 // returns 200 even with a nil AuditRecorder + nil SessionIndex (the default
 // harness path), so recording can never fail the issue path.
 func TestFinish_NoRecorderNoIndex_StillSucceeds(t *testing.T) {
+	t.Parallel()
 	hh := newHarness(t, issuerRSA) // no AuditRecorder, no SessionIndex
 	sessionID := hh.seedUserSession(t, "carol@example.com")
 	pendingID := hh.insertPending(t, "id-req-norec")

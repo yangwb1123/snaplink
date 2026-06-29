@@ -10,6 +10,7 @@ import (
 )
 
 func TestHashLoginEntry_PopulatesAllFields(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	event := &anomaly.LoginEvent{
 		SubjectID: "alice",
@@ -46,12 +47,14 @@ func TestHashLoginEntry_PopulatesAllFields(t *testing.T) {
 }
 
 func TestHashLoginEntry_NilEventReturnsNil(t *testing.T) {
+	t.Parallel()
 	if got := defaultimpl.HashLoginEntry(nil, []byte("salt")); got != nil {
 		t.Errorf("nil event: got %v, want nil", got)
 	}
 }
 
 func TestHashLoginEntry_EmptySubjectReturnsNil(t *testing.T) {
+	t.Parallel()
 	event := &anomaly.LoginEvent{Outcome: "failure"}
 	if got := defaultimpl.HashLoginEntry(event, []byte("salt")); got != nil {
 		t.Errorf("empty subject: got %v, want nil", got)
@@ -59,6 +62,7 @@ func TestHashLoginEntry_EmptySubjectReturnsNil(t *testing.T) {
 }
 
 func TestHashLoginEntry_EmptyUASkipsUAHash(t *testing.T) {
+	t.Parallel()
 	event := &anomaly.LoginEvent{SubjectID: "alice", RemoteIP: "10.0.0.1"}
 	entry := defaultimpl.HashLoginEntry(event, []byte("salt"))
 	if entry.UAFingerprintHash != "" {
@@ -67,6 +71,7 @@ func TestHashLoginEntry_EmptyUASkipsUAHash(t *testing.T) {
 }
 
 func TestHashLoginEntry_NilGeoSkipsGeoFields(t *testing.T) {
+	t.Parallel()
 	event := &anomaly.LoginEvent{SubjectID: "alice", RemoteIP: "10.0.0.1"}
 	entry := defaultimpl.HashLoginEntry(event, []byte("salt"))
 	if entry.CountryCode != "" || entry.Latitude != 0 || entry.Longitude != 0 {
@@ -75,6 +80,7 @@ func TestHashLoginEntry_NilGeoSkipsGeoFields(t *testing.T) {
 }
 
 func TestHashLoginEntry_SaltAffectsIPHash(t *testing.T) {
+	t.Parallel()
 	event := &anomaly.LoginEvent{SubjectID: "alice", RemoteIP: "10.0.0.1"}
 	a := defaultimpl.HashLoginEntry(event, []byte("salt-a"))
 	b := defaultimpl.HashLoginEntry(event, []byte("salt-b"))
@@ -84,6 +90,7 @@ func TestHashLoginEntry_SaltAffectsIPHash(t *testing.T) {
 }
 
 func TestHashLoginEntry_SameSubjectSameUAStableHash(t *testing.T) {
+	t.Parallel()
 	// Replay invariant: two events with same subject + UA + salt
 	// produce same fingerprint, so the new-device detector can
 	// compare across login events.
@@ -98,6 +105,7 @@ func TestHashLoginEntry_SameSubjectSameUAStableHash(t *testing.T) {
 }
 
 func TestHashLoginEntry_DifferentSubjectsDifferentUAHash(t *testing.T) {
+	t.Parallel()
 	// Privacy invariant: same UA across two users produces
 	// different hashes (per-subject salt).
 	event1 := &anomaly.LoginEvent{SubjectID: "alice", UserAgent: "Browser/1"}

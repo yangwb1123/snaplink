@@ -84,6 +84,7 @@ func newStoreForTest(t *testing.T) (*SessionStore, *fakeRedis) {
 }
 
 func TestSessionStore_PutThenTake_RoundTrip(t *testing.T) {
+	t.Parallel()
 	store, _ := newStoreForTest(t)
 	ctx := context.Background()
 	want := &gw.SessionData{
@@ -120,6 +121,7 @@ func TestSessionStore_PutThenTake_RoundTrip(t *testing.T) {
 }
 
 func TestSessionStore_TakeIsSingleUse(t *testing.T) {
+	t.Parallel()
 	store, _ := newStoreForTest(t)
 	ctx := context.Background()
 
@@ -136,6 +138,7 @@ func TestSessionStore_TakeIsSingleUse(t *testing.T) {
 }
 
 func TestSessionStore_TakeUnknown(t *testing.T) {
+	t.Parallel()
 	store, _ := newStoreForTest(t)
 	if _, err := store.Take(context.Background(), "never-stored"); !errors.Is(err, webauthn.ErrSessionUnknown) {
 		t.Fatalf("Take unknown: got %v want ErrSessionUnknown", err)
@@ -143,6 +146,7 @@ func TestSessionStore_TakeUnknown(t *testing.T) {
 }
 
 func TestSessionStore_TTLExpiry(t *testing.T) {
+	t.Parallel()
 	store, f := newStoreForTest(t)
 	ctx := context.Background()
 
@@ -158,6 +162,7 @@ func TestSessionStore_TTLExpiry(t *testing.T) {
 }
 
 func TestSessionStore_PutNonPositiveTTLSkips(t *testing.T) {
+	t.Parallel()
 	store, f := newStoreForTest(t)
 	ctx := context.Background()
 
@@ -173,6 +178,7 @@ func TestSessionStore_PutNonPositiveTTLSkips(t *testing.T) {
 }
 
 func TestSessionStore_Ping(t *testing.T) {
+	t.Parallel()
 	store, _ := newStoreForTest(t)
 	if err := store.Ping(context.Background()); err != nil {
 		t.Fatalf("Ping: %v", err)

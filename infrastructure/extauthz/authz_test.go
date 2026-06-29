@@ -112,6 +112,7 @@ func contains(ss []string, want string) bool {
 // stripped (edge-strip). The inbound CheckRequest deliberately smuggles a
 // spoofed X-Auth-Subject; it must NOT appear as the injected value.
 func TestCheck_Allow_InjectsDerivedIdentityAndStripsInbound(t *testing.T) {
+	t.Parallel()
 	exp := time.Now().Add(time.Hour).Unix()
 	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{
 		Allowed:   true,
@@ -172,6 +173,7 @@ func TestCheck_Allow_InjectsDerivedIdentityAndStripsInbound(t *testing.T) {
 // which omits empty X-Auth-Client-Id/Scopes/Expires/Roles). Subject is
 // always injected on ALLOW.
 func TestCheck_Allow_OmitsEmptyOptionalHeaders(t *testing.T) {
+	t.Parallel()
 	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{
 		Allowed: true,
 		Subject: "only-subject",
@@ -206,6 +208,7 @@ func TestCheck_Allow_OmitsEmptyOptionalHeaders(t *testing.T) {
 // the WWW-Authenticate invalid_token challenge, NO body, and NO X-Auth-*
 // leaked. The Go error is nil (so the verdict can't fail-open at Envoy).
 func TestCheck_Deny_PermissionDenied401NoBody(t *testing.T) {
+	t.Parallel()
 	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{
 		Allowed:  false,
 		DenyCode: sso.ErrInvalidToken,
@@ -252,6 +255,7 @@ func TestCheck_Deny_PermissionDenied401NoBody(t *testing.T) {
 // (RFC 6750 §3.1), matching the seam's missing-vs-invalid distinction and
 // the HTTP handler.
 func TestCheck_Deny_MissingCredentials_BareChallenge(t *testing.T) {
+	t.Parallel()
 	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{
 		Allowed:  false,
 		DenyCode: "", // bare-challenge case
@@ -292,6 +296,7 @@ func TestCheck_Deny_MissingCredentials_BareChallenge(t *testing.T) {
 // NOT an oracle leak: the nonce + use_dpop_nonce is the protocol-required
 // handshake, exactly what HTTP mode emits.
 func TestCheck_Deny_DPoPNonceHandshake_SurfacesNonceAndUseDPoPNonce(t *testing.T) {
+	t.Parallel()
 	const freshNonce = "fresh-server-nonce-abc123"
 	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{
 		Allowed: false,
@@ -345,6 +350,7 @@ func TestCheck_Deny_DPoPNonceHandshake_SurfacesNonceAndUseDPoPNonce(t *testing.T
 // This locks the oracle-safety boundary: only the genuine nonce handshake
 // gets the nonce signal; binding/validity/residency stay non-probeable.
 func TestCheck_Deny_InvalidToken_NoDPoPNonceHeader(t *testing.T) {
+	t.Parallel()
 	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{
 		Allowed:  false,
 		DenyCode: sso.ErrInvalidToken,
@@ -379,6 +385,7 @@ func TestCheck_Deny_InvalidToken_NoDPoPNonceHeader(t *testing.T) {
 // input — this is the load-bearing mapping (the seam can only enforce the
 // DPoP htm/htu + bearer if it receives them faithfully).
 func TestCheck_RequestMapping_MethodURLHeadersReachSeam(t *testing.T) {
+	t.Parallel()
 	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{Allowed: true, Subject: "s"}}
 	srv := NewAuthorizationServer(fake)
 
@@ -425,6 +432,7 @@ func TestCheck_RequestMapping_MethodURLHeadersReachSeam(t *testing.T) {
 // We assert via url.Parse that Path and RawQuery come back distinct, and that
 // the seam's htu normalization would still see the bare path.
 func TestCheck_RequestMapping_URLWithQueryInPath(t *testing.T) {
+	t.Parallel()
 	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{Allowed: true, Subject: "s"}}
 	srv := NewAuthorizationServer(fake)
 
@@ -462,6 +470,7 @@ func TestCheck_RequestMapping_URLWithQueryInPath(t *testing.T) {
 // The fallback still carries the query (we never silently drop it), and the
 // scheme defaults to https when omitted.
 func TestCheck_RequestMapping_QueryFallbackFromGetQuery(t *testing.T) {
+	t.Parallel()
 	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{Allowed: true, Subject: "s"}}
 	srv := NewAuthorizationServer(fake)
 
@@ -482,6 +491,7 @@ func TestCheck_RequestMapping_QueryFallbackFromGetQuery(t *testing.T) {
 // the seam can enforce an mTLS sender-constraint. Verified via the fake
 // recording the cert.
 func TestCheck_ClientCertParsedAndPassed(t *testing.T) {
+	t.Parallel()
 	leaf, pemBytes := makeTestCert(t)
 
 	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{Allowed: true, Subject: "s"}}
@@ -512,6 +522,7 @@ func TestCheck_ClientCertParsedAndPassed(t *testing.T) {
 // Envoy builds may forward un-escaped PEM. The parser must still decode it
 // (QueryUnescape is a no-op on text without '%').
 func TestCheck_ClientCert_RawPEM_NotURLEncoded(t *testing.T) {
+	t.Parallel()
 	leaf, pemBytes := makeTestCert(t)
 	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{Allowed: true, Subject: "s"}}
 	srv := NewAuthorizationServer(fake)
@@ -530,6 +541,7 @@ func TestCheck_ClientCert_RawPEM_NotURLEncoded(t *testing.T) {
 // TestCheck_NoClientCert_NilOnSeam: no Source.Certificate -> ClientCert is
 // nil on the seam request (the seam treats it as "no mTLS material").
 func TestCheck_NoClientCert_NilOnSeam(t *testing.T) {
+	t.Parallel()
 	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{Allowed: true, Subject: "s"}}
 	srv := NewAuthorizationServer(fake)
 	if _, err := srv.Check(context.Background(), checkRequest("GET", "https", "sso.test", "/x", nil)); err != nil {
@@ -545,6 +557,7 @@ func TestCheck_NoClientCert_NilOnSeam(t *testing.T) {
 // cert can only fail an mTLS sender-constraint, never satisfy one). The
 // request still flows to the seam, which decides.
 func TestCheck_MalformedClientCert_NilNotError(t *testing.T) {
+	t.Parallel()
 	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{Allowed: false, DenyCode: sso.ErrInvalidToken}}
 	srv := NewAuthorizationServer(fake)
 
@@ -572,6 +585,7 @@ func TestCheck_MalformedClientCert_NilNotError(t *testing.T) {
 // sender-constrained token therefore cannot replay as a plain bearer over
 // gRPC.
 func TestCheck_SenderConstraint_DPoPBoundAsPlainBearer_Denies(t *testing.T) {
+	t.Parallel()
 	fake := &fakeAuthorizer{decide: func(req sso.MeshAuthorizeRequest) sso.MeshAuthorizeResult {
 		// Model the seam: a DPoP-bound token WITHOUT a proof is denied.
 		hasBearer := req.Header.Get("Authorization") == "Bearer dpop-bound-token"

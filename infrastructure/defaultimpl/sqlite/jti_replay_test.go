@@ -20,6 +20,7 @@ func newJTIReplayStoreForTest(t *testing.T) *JTIReplayStore {
 }
 
 func TestJTIReplayStore_FirstSightingThenReplay(t *testing.T) {
+	t.Parallel()
 	store := newJTIReplayStoreForTest(t)
 	ctx := context.Background()
 
@@ -41,6 +42,7 @@ func TestJTIReplayStore_FirstSightingThenReplay(t *testing.T) {
 }
 
 func TestJTIReplayStore_EmptyJTIAlwaysAccepts(t *testing.T) {
+	t.Parallel()
 	store := newJTIReplayStoreForTest(t)
 	for range 3 {
 		ok, err := store.MarkSeen(context.Background(), "", time.Now().Add(time.Minute))
@@ -54,6 +56,7 @@ func TestJTIReplayStore_EmptyJTIAlwaysAccepts(t *testing.T) {
 }
 
 func TestJTIReplayStore_DifferentJTIsCoexist(t *testing.T) {
+	t.Parallel()
 	store := newJTIReplayStoreForTest(t)
 	ctx := context.Background()
 
@@ -79,6 +82,7 @@ func TestJTIReplayStore_DifferentJTIsCoexist(t *testing.T) {
 }
 
 func TestJTIReplayStore_ExpiredEntryGCdAndResubmissionAllowed(t *testing.T) {
+	t.Parallel()
 	store := newJTIReplayStoreForTest(t)
 	ctx := context.Background()
 
@@ -108,6 +112,7 @@ func TestJTIReplayStore_ExpiredEntryGCdAndResubmissionAllowed(t *testing.T) {
 }
 
 func TestJTIReplayStore_PastExpiryGetsBumpedSoImmediateReplayCaught(t *testing.T) {
+	t.Parallel()
 	store := newJTIReplayStoreForTest(t)
 	ctx := context.Background()
 
@@ -132,6 +137,7 @@ func TestJTIReplayStore_PastExpiryGetsBumpedSoImmediateReplayCaught(t *testing.T
 }
 
 func TestJTIReplayStore_CrossInstanceSharing(t *testing.T) {
+	t.Parallel()
 	// Multi-replica defense: a jti seen on one process must be
 	// rejected when re-submitted to a second process pointed at the
 	// same DB file.

@@ -67,6 +67,7 @@ func hasRole(t *testing.T, perms *permissions.MemoryProvider, userID, roleCode s
 // TestGroupRoundTrip exercises create -> get -> list -> replace -> delete,
 // asserting the SCIM group view AND the underlying role/assignment state.
 func TestGroupRoundTrip(t *testing.T) {
+	t.Parallel()
 	h, perms, sink := newGroupHandler(t)
 
 	// --- create with two members ---
@@ -177,6 +178,7 @@ func TestGroupRoundTrip(t *testing.T) {
 // TestPatchGroup_AddRemoveMember covers the IdP group-membership delta:
 // add one member, then remove one, via PATCH on the members attribute.
 func TestPatchGroup_AddRemoveMember(t *testing.T) {
+	t.Parallel()
 	h, perms, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"Team","members":[{"value":"u1"}]}`)
 
@@ -216,6 +218,7 @@ func TestPatchGroup_AddRemoveMember(t *testing.T) {
 // TestPatchGroup_ReplaceMembers sets membership to exactly a new set (the
 // connector path for removing a single member: re-send the full list).
 func TestPatchGroup_ReplaceMembers(t *testing.T) {
+	t.Parallel()
 	h, perms, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"T","members":[{"value":"a"},{"value":"b"},{"value":"c"}]}`)
 
@@ -233,6 +236,7 @@ func TestPatchGroup_ReplaceMembers(t *testing.T) {
 
 // TestPatchGroup_ReplaceDisplayName covers a displayName rename via PATCH.
 func TestPatchGroup_ReplaceDisplayName(t *testing.T) {
+	t.Parallel()
 	h, perms, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"Before"}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -253,6 +257,7 @@ func TestPatchGroup_ReplaceDisplayName(t *testing.T) {
 
 // TestCreateGroup_MissingDisplayName: displayName is required.
 func TestCreateGroup_MissingDisplayName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	rec := do(t, h, http.MethodPost, pathGroups, `{"members":[{"value":"x"}]}`)
 	if rec.Code != http.StatusBadRequest {
@@ -265,6 +270,7 @@ func TestCreateGroup_MissingDisplayName(t *testing.T) {
 
 // TestGroup_NotFound: get/replace/patch/delete on an unknown group are 404.
 func TestGroup_NotFound(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	patchBody := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"displayName","value":"x"}]}`
 	cases := []struct {
@@ -287,6 +293,7 @@ func TestGroup_NotFound(t *testing.T) {
 // TestReplaceGroup_ImmutableID: a PUT body with a different id is a
 // mutability violation.
 func TestReplaceGroup_ImmutableID(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G"}`)
 	rec := do(t, h, http.MethodPut, pathGroups+"/"+id, `{"id":"other","displayName":"G"}`)
@@ -302,6 +309,7 @@ func TestReplaceGroup_ImmutableID(t *testing.T) {
 // (RFC 7644 §3.5.2 — the per-member delta Azure AD / Okta send) drops ONLY
 // the targeted member, leaving the rest of the membership intact.
 func TestGroupPatch_MemberValuePathRemove(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G","members":[{"value":"a"},{"value":"b"}]}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -322,6 +330,7 @@ func TestGroupPatch_MemberValuePathRemove(t *testing.T) {
 // schema-URN-qualified path) is 400 invalidPath, not half-applied. Value-path
 // filters themselves are supported (see TestGroupPatch_MemberValuePathRemove).
 func TestGroupPatch_UnsupportedPath(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G","members":[{"value":"a"}]}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -339,6 +348,7 @@ func TestGroupPatch_UnsupportedPath(t *testing.T) {
 // TestGroupsDisabled_404: with no WithGroups, /Groups routes 404 so the
 // User surface isn't accidentally coupled to a permissions provider.
 func TestGroupsDisabled_404(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t) // no WithGroups
 	for _, m := range []string{http.MethodGet, http.MethodPost} {
 		rec := do(t, h, m, pathGroups, `{"displayName":"x"}`)
@@ -351,6 +361,7 @@ func TestGroupsDisabled_404(t *testing.T) {
 // TestSchemas_IncludesGroupWhenEnabled: GET /Schemas advertises Group only
 // when WithGroups is wired.
 func TestSchemas_IncludesGroupWhenEnabled(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	rec := do(t, h, http.MethodGet, pathSchemas, "")
 	if rec.Code != http.StatusOK {
@@ -422,6 +433,7 @@ var _ permissions.Provider = baseOnlyProvider{}
 // works against a Provider that does NOT implement GroupMembershipWriter,
 // via the Roles + AssignRoles / UnassignRoles fallback.
 func TestGroup_FallbackWithoutMembershipWriter(t *testing.T) {
+	t.Parallel()
 	if _, ok := interface{}(baseOnlyProvider{}).(permissions.GroupMembershipWriter); ok {
 		t.Fatal("baseOnlyProvider must NOT implement GroupMembershipWriter (test would not exercise the fallback)")
 	}
@@ -471,6 +483,7 @@ func TestGroup_FallbackWithoutMembershipWriter(t *testing.T) {
 // de-provisioned role's permissions from a stale bundle cache. Mirrors the gRPC
 // PermissionAdmin path.
 func TestGroup_RoleMutationsInvalidateAuthzBundle(t *testing.T) {
+	t.Parallel()
 	users := defaultimpl.NewMemoryUserProvider()
 	perms := permissions.NewMemoryProvider()
 	var invalidated []string

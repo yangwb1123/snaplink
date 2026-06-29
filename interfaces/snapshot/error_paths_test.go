@@ -45,6 +45,7 @@ func (e *errStorage) Delete(context.Context, string) error {
 
 // TestPipeline_Save_PutError surfaces a storage write fault.
 func TestPipeline_Save_PutError(t *testing.T) {
+	t.Parallel()
 	snap := &snapshot.Snapshot{SnapshotID: "x", SchemaVersion: snapshot.SchemaVersion, SourceNamespace: "ns"}
 	st := &errStorage{putErr: errBoom}
 	if err := (&snapshot.Pipeline{}).Save(context.Background(), snap, st, "x"); err == nil {
@@ -54,6 +55,7 @@ func TestPipeline_Save_PutError(t *testing.T) {
 
 // TestPipeline_Load_GetError surfaces a storage read fault (non-sentinel).
 func TestPipeline_Load_GetError(t *testing.T) {
+	t.Parallel()
 	st := &errStorage{getErr: errBoom}
 	if _, err := (&snapshot.Pipeline{}).Load(context.Background(), st, "x"); err == nil {
 		t.Error("Load must propagate Get error")
@@ -62,6 +64,7 @@ func TestPipeline_Load_GetError(t *testing.T) {
 
 // TestPruneOldest_ListError surfaces a storage enumeration fault.
 func TestPruneOldest_ListError(t *testing.T) {
+	t.Parallel()
 	st := &errStorage{listErr: errBoom}
 	if _, err := snapshot.PruneOldest(context.Background(), st, 1); err == nil {
 		t.Error("PruneOldest must propagate List error")
@@ -71,6 +74,7 @@ func TestPruneOldest_ListError(t *testing.T) {
 // TestPruneOldest_DeleteErrorContinues proves a Delete fault doesn't stop the
 // loop: the helper reports the partial-success list AND the first error.
 func TestPruneOldest_DeleteErrorContinues(t *testing.T) {
+	t.Parallel()
 	st := &countingDeleteStorage{
 		names:     []string{"snap_2026-01-01T00-00-00Z_a", "snap_2026-01-02T00-00-00Z_b", "snap_2026-01-03T00-00-00Z_c"},
 		failOnIdx: 0, // first delete fails, the rest succeed
@@ -135,6 +139,7 @@ func (t *errTracker) Close() error                                           { r
 
 // TestAdvanceBootstrap_ReadError surfaces an AppliedVersion fault.
 func TestAdvanceBootstrap_ReadError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	snap := &snapshot.Snapshot{
 		SchemaVersion:   snapshot.SchemaVersion,
@@ -155,6 +160,7 @@ func TestAdvanceBootstrap_ReadError(t *testing.T) {
 // TestAdvanceBootstrap_MarkError surfaces a MarkApplied fault (snapshot is
 // newer so the mark is actually attempted).
 func TestAdvanceBootstrap_MarkError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	snap := &snapshot.Snapshot{
 		SchemaVersion:   snapshot.SchemaVersion,

@@ -63,6 +63,7 @@ func startAdminGRPC(
 // --- ClientAdmin ---
 
 func TestClientAdmin_CRUD(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	sink := audit.NewMemorySink(20)
 	rec := audit.New(sink)
@@ -138,6 +139,7 @@ func TestClientAdmin_CRUD(t *testing.T) {
 }
 
 func TestClientAdmin_UpdateUnknownIs404(t *testing.T) {
+	t.Parallel()
 	conn := startAdminGRPC(t, defaultimpl.NewMemoryClientStore(), nil, nil, nil, nil, nil)
 	c := adminv1.NewClientAdminServiceClient(conn)
 	_, err := c.Update(context.Background(), &adminv1.UpdateClientRequest{Client: &adminv1.Client{Id: "ghost"}})
@@ -149,6 +151,7 @@ func TestClientAdmin_UpdateUnknownIs404(t *testing.T) {
 // --- UserAdmin ---
 
 func TestUserAdmin_CRUDAndSessions(t *testing.T) {
+	t.Parallel()
 	users := defaultimpl.NewMemoryUserProvider()
 	sessions := defaultimpl.NewMemorySessionManager()
 	sink := audit.NewMemorySink(10)
@@ -191,6 +194,7 @@ func TestUserAdmin_CRUDAndSessions(t *testing.T) {
 }
 
 func TestUserAdmin_CredentialAttrsRedacted(t *testing.T) {
+	t.Parallel()
 	users := defaultimpl.NewMemoryUserProvider()
 	conn := startAdminGRPC(t, nil, users, nil, nil, nil, nil)
 	c := adminv1.NewUserAdminServiceClient(conn)
@@ -244,6 +248,7 @@ func TestUserAdmin_CredentialAttrsRedacted(t *testing.T) {
 // --- TokenAdmin ---
 
 func TestTokenAdmin_ListAndIssueTemp(t *testing.T) {
+	t.Parallel()
 	sessions := defaultimpl.NewMemorySessionManager()
 	tempStore := authenticators.NewMemoryTempTokenStore()
 	sink := audit.NewMemorySink(10)
@@ -297,6 +302,7 @@ func TestTokenAdmin_ListAndIssueTemp(t *testing.T) {
 }
 
 func TestTokenAdmin_RevokeRequiresIdentifier(t *testing.T) {
+	t.Parallel()
 	conn := startAdminGRPC(t, nil, nil, defaultimpl.NewMemorySessionManager(), nil, nil, nil)
 	c := adminv1.NewTokenAdminServiceClient(conn)
 	if _, err := c.Revoke(context.Background(), &adminv1.RevokeRequest{}); status.Code(err) != codes.InvalidArgument {
@@ -305,6 +311,7 @@ func TestTokenAdmin_RevokeRequiresIdentifier(t *testing.T) {
 }
 
 func TestTokenAdmin_NoSessionsWhenManagerNil(t *testing.T) {
+	t.Parallel()
 	conn := startAdminGRPC(t, nil, nil, nil, nil, nil, nil)
 	c := adminv1.NewTokenAdminServiceClient(conn)
 	if _, err := c.ListSessions(context.Background(), &adminv1.ListSessionsRequest{}); status.Code(err) != codes.Unimplemented {
@@ -315,6 +322,7 @@ func TestTokenAdmin_NoSessionsWhenManagerNil(t *testing.T) {
 // --- PermissionAdmin ---
 
 func TestPermissionAdmin_FullLifecycle(t *testing.T) {
+	t.Parallel()
 	prov := permissions.NewMemoryProvider()
 	sink := audit.NewMemorySink(20)
 	rec := audit.New(sink)

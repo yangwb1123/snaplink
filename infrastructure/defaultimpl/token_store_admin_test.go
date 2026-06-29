@@ -10,6 +10,7 @@ import (
 )
 
 func TestMemoryEmailChangeStore_RevokeAndList(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryEmailChangeStore()
 	_ = s.Issue(ctx, &core.EmailChangeToken{Token: "t1", UserID: "alice", NewEmail: "a1@e.com", ExpiresAt: time.Now().Add(time.Minute)})
@@ -41,6 +42,7 @@ func TestMemoryEmailChangeStore_RevokeAndList(t *testing.T) {
 }
 
 func TestMemoryPasswordResetStore_RevokeAndList(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryPasswordResetStore()
 	_ = s.Issue(ctx, &core.PasswordResetToken{Token: "t1", UserID: "alice", ExpiresAt: time.Now().Add(time.Minute)})
@@ -71,6 +73,7 @@ func TestMemoryPasswordResetStore_RevokeAndList(t *testing.T) {
 }
 
 func TestMemoryDeviceSecretStore_RevokeBySubject(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryDeviceSecretStore()
 	_ = s.Issue(ctx, &core.DeviceSecret{Secret: "s1", Subject: "alice", ClientID: "c", ExpiresAt: time.Now().Add(time.Minute)})

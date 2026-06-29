@@ -18,6 +18,7 @@ import (
 // already held by ANOTHER user is a 409 uniqueness conflict (replaceUser's
 // userNameExists branch).
 func TestReplaceUser_DuplicateUserName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	seedUser(t, h, `{"userName":"taken@example.com"}`)
 	id := seedUser(t, h, `{"userName":"other@example.com"}`)
@@ -32,6 +33,7 @@ func TestReplaceUser_DuplicateUserName(t *testing.T) {
 
 // TestReplaceUser_BlankUserName: a PUT body with a blank userName is invalidValue.
 func TestReplaceUser_BlankUserName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"u@example.com"}`)
 	rec := do(t, h, http.MethodPut, pathUsers+"/"+id, `{"userName":"   "}`)
@@ -45,6 +47,7 @@ func TestReplaceUser_BlankUserName(t *testing.T) {
 
 // TestReplaceUser_BadJSON: a malformed PUT body is invalidSyntax.
 func TestReplaceUser_BadJSON(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"u@example.com"}`)
 	rec := do(t, h, http.MethodPut, pathUsers+"/"+id, `{bad`)
@@ -59,6 +62,7 @@ func TestReplaceUser_BadJSON(t *testing.T) {
 // TestPatchUser_DuplicateUserName: a PATCH that renames userName onto another
 // user's is a 409 (patchUser's userNameExists branch).
 func TestPatchUser_DuplicateUserName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	seedUser(t, h, `{"userName":"a@example.com"}`)
 	id := seedUser(t, h, `{"userName":"b@example.com"}`)
@@ -77,6 +81,7 @@ func TestPatchUser_DuplicateUserName(t *testing.T) {
 // TestPatchUser_BlankUserNameRejected: a PATCH that blanks userName is
 // invalidValue (patchUser post-apply required check).
 func TestPatchUser_BlankUserNameRejected(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"keep@example.com"}`)
 	// Replace userName with whitespace -> blank after trim.
@@ -94,6 +99,7 @@ func TestPatchUser_BlankUserNameRejected(t *testing.T) {
 
 // TestPatchUser_BadJSON: a malformed PATCH body is invalidSyntax (decodePatch).
 func TestPatchUser_BadJSON(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	id := seedUser(t, h, `{"userName":"u@example.com"}`)
 	rec := do(t, h, http.MethodPatch, pathUsers+"/"+id, `{not json`)
@@ -107,6 +113,7 @@ func TestPatchUser_BadJSON(t *testing.T) {
 
 // TestPagination_BadStartIndex: a non-integer startIndex is a 400 invalidValue.
 func TestPagination_BadStartIndex(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	rec := do(t, h, http.MethodGet, pathUsers+"?startIndex=abc", "")
 	if rec.Code != http.StatusBadRequest {
@@ -119,6 +126,7 @@ func TestPagination_BadStartIndex(t *testing.T) {
 
 // TestPagination_NegativeCount: a negative count is a 400 invalidValue.
 func TestPagination_NegativeCount(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	rec := do(t, h, http.MethodGet, pathUsers+"?count=-3", "")
 	if rec.Code != http.StatusBadRequest {
@@ -129,6 +137,7 @@ func TestPagination_NegativeCount(t *testing.T) {
 // TestPagination_StartIndexBelowOneClamps: startIndex<1 is clamped to 1
 // (paginationParams clamp branch), returning the first page.
 func TestPagination_StartIndexBelowOneClamps(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	for i := 0; i < 3; i++ {
 		seedUser(t, h, `{"userName":"c`+string(rune('a'+i))+`@example.com"}`)
@@ -147,6 +156,7 @@ func TestPagination_StartIndexBelowOneClamps(t *testing.T) {
 // TestPagination_CountClampedToMax: a count above maxPageSize is clamped down,
 // so itemsPerPage never exceeds the cap (paginationParams max clamp).
 func TestPagination_CountClampedToMax(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	for i := 0; i < 3; i++ {
 		seedUser(t, h, `{"userName":"m`+string(rune('a'+i))+`@example.com"}`)
@@ -168,6 +178,7 @@ func TestPagination_CountClampedToMax(t *testing.T) {
 // path dispatches on the bare SCIM-relative URL (relPath pass-through branch)
 // and omits meta.location (locationFor empty-base branch).
 func TestRelPathPassThroughAndNoLocation(t *testing.T) {
+	t.Parallel()
 	h := NewHandler(defaultimpl.NewMemoryUserProvider(), "",
 		WithIDGenerator(func() string { return "nb-1" }))
 	r := httptest.NewRequest(http.MethodPost, "/Users", strings.NewReader(`{"userName":"nb@example.com"}`))
@@ -186,6 +197,7 @@ func TestRelPathPassThroughAndNoLocation(t *testing.T) {
 // TestCreate_CaseInsensitiveDuplicateUserName: posting "Alice@example.com" when
 // "alice@example.com" already exists is a 409 (RFC 7643 §8.7.1: caseExact=false).
 func TestCreate_CaseInsensitiveDuplicateUserName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	if rec := do(t, h, http.MethodPost, pathUsers, `{"userName":"alice@example.com"}`); rec.Code != http.StatusCreated {
 		t.Fatalf("seed status = %d", rec.Code)
@@ -203,6 +215,7 @@ func TestCreate_CaseInsensitiveDuplicateUserName(t *testing.T) {
 // returned with the original casing intact. RFC 7643 §7.6 defines caseExact=false
 // as a comparison rule, not a normalization directive — round-trip fidelity is preserved.
 func TestCreate_UserNameCasingPreserved(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	rec := do(t, h, http.MethodPost, pathUsers, `{"userName":"Alice@Example.COM"}`)
 	if rec.Code != http.StatusCreated {
@@ -217,6 +230,7 @@ func TestCreate_UserNameCasingPreserved(t *testing.T) {
 // TestReplaceUser_CaseInsensitiveDuplicateUserName: a PUT that renames a user to a
 // userName held by another user with different case is a 409 (RFC 7643 §8.7.1).
 func TestReplaceUser_CaseInsensitiveDuplicateUserName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	seedUser(t, h, `{"userName":"taken@example.com"}`)
 	id := seedUser(t, h, `{"userName":"other@example.com"}`)
@@ -232,6 +246,7 @@ func TestReplaceUser_CaseInsensitiveDuplicateUserName(t *testing.T) {
 // TestPatchUser_CaseInsensitiveDuplicateUserName: a PATCH that sets userName to a
 // value differing only in case from another user's is a 409 (RFC 7643 §8.7.1).
 func TestPatchUser_CaseInsensitiveDuplicateUserName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	seedUser(t, h, `{"userName":"a@example.com"}`)
 	id := seedUser(t, h, `{"userName":"b@example.com"}`)

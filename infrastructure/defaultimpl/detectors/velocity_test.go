@@ -37,6 +37,7 @@ func seedRecent(t *testing.T, store anomaly.RecentLoginStore, subject string, co
 }
 
 func TestVelocity_NoHistoryNoSignal(t *testing.T) {
+	t.Parallel()
 	d, _ := newVelocity(t)
 	got, err := d.Inspect(context.Background(), &anomaly.LoginEvent{
 		SubjectID: "alice",
@@ -51,6 +52,7 @@ func TestVelocity_NoHistoryNoSignal(t *testing.T) {
 }
 
 func TestVelocity_BelowHourlyThresholdNoSignal(t *testing.T) {
+	t.Parallel()
 	d, store := newVelocity(t, detectors.WithVelocityHourlyLimit(10))
 	now := time.Now()
 	// 5 attempts in past hour — under threshold.
@@ -65,6 +67,7 @@ func TestVelocity_BelowHourlyThresholdNoSignal(t *testing.T) {
 }
 
 func TestVelocity_HourlyThresholdWarn(t *testing.T) {
+	t.Parallel()
 	d, store := newVelocity(t, detectors.WithVelocityHourlyLimit(10))
 	now := time.Now()
 	seedRecent(t, store, "alice", 15, 30*time.Minute, now.Add(-5*time.Second))
@@ -84,6 +87,7 @@ func TestVelocity_HourlyThresholdWarn(t *testing.T) {
 }
 
 func TestVelocity_DailyThresholdCritical(t *testing.T) {
+	t.Parallel()
 	d, store := newVelocity(t,
 		detectors.WithVelocityHourlyLimit(0), // disable hourly to isolate daily
 		detectors.WithVelocityDailyLimit(50),
@@ -104,6 +108,7 @@ func TestVelocity_DailyThresholdCritical(t *testing.T) {
 }
 
 func TestVelocity_BothThresholdsFireTwoAnomalies(t *testing.T) {
+	t.Parallel()
 	d, store := newVelocity(t,
 		detectors.WithVelocityHourlyLimit(10),
 		detectors.WithVelocityDailyLimit(50),
@@ -127,6 +132,7 @@ func TestVelocity_BothThresholdsFireTwoAnomalies(t *testing.T) {
 }
 
 func TestVelocity_ZeroLimitDisablesCheck(t *testing.T) {
+	t.Parallel()
 	d, store := newVelocity(t,
 		detectors.WithVelocityHourlyLimit(0),
 		detectors.WithVelocityDailyLimit(0),
@@ -142,6 +148,7 @@ func TestVelocity_ZeroLimitDisablesCheck(t *testing.T) {
 }
 
 func TestVelocity_OutOfWindowAttemptsExcluded(t *testing.T) {
+	t.Parallel()
 	// Seed many entries 25+ hours old — outside daily window.
 	d, store := newVelocity(t, detectors.WithVelocityHourlyLimit(5))
 	now := time.Now()
@@ -160,6 +167,7 @@ func TestVelocity_OutOfWindowAttemptsExcluded(t *testing.T) {
 }
 
 func TestVelocity_EmptySubjectNoSignal(t *testing.T) {
+	t.Parallel()
 	d, _ := newVelocity(t)
 	got, _ := d.Inspect(context.Background(), &anomaly.LoginEvent{Outcome: "failure"})
 	if got != nil {
@@ -168,6 +176,7 @@ func TestVelocity_EmptySubjectNoSignal(t *testing.T) {
 }
 
 func TestVelocity_NilEventNoSignal(t *testing.T) {
+	t.Parallel()
 	d, _ := newVelocity(t)
 	got, _ := d.Inspect(context.Background(), nil)
 	if got != nil {
@@ -176,6 +185,7 @@ func TestVelocity_NilEventNoSignal(t *testing.T) {
 }
 
 func TestVelocity_NilStoreErrors(t *testing.T) {
+	t.Parallel()
 	_, err := detectors.NewVelocityDetector(nil)
 	if err == nil {
 		t.Error("nil store should error")
@@ -183,6 +193,7 @@ func TestVelocity_NilStoreErrors(t *testing.T) {
 }
 
 func TestVelocity_NameIsStableWireString(t *testing.T) {
+	t.Parallel()
 	d, _ := newVelocity(t)
 	if got := d.Name(); got != detectors.DetectorTypeVelocity {
 		t.Errorf("Name = %q, want %q", got, detectors.DetectorTypeVelocity)
@@ -193,6 +204,7 @@ func TestVelocity_NameIsStableWireString(t *testing.T) {
 }
 
 func TestVelocity_DoesNotWriteToStore(t *testing.T) {
+	t.Parallel()
 	// Velocity is read-only — impossible-travel owns the writes.
 	d, store := newVelocity(t)
 	now := time.Now()
@@ -206,6 +218,7 @@ func TestVelocity_DoesNotWriteToStore(t *testing.T) {
 }
 
 func TestVelocity_ScoreCappedAt100(t *testing.T) {
+	t.Parallel()
 	// Score is in the anomaly Score field 0..100.
 	d, store := newVelocity(t, detectors.WithVelocityHourlyLimit(2))
 	now := time.Now()

@@ -24,6 +24,7 @@ func sampleUserWithMeta() Resource {
 
 // TestFilterUserMetaFields exercises metaField via filters over meta.*.
 func TestFilterUserMetaFields(t *testing.T) {
+	t.Parallel()
 	u := sampleUserWithMeta()
 	cases := []struct {
 		filter string
@@ -46,6 +47,7 @@ func TestFilterUserMetaFields(t *testing.T) {
 // TestFilterUserMetaAbsent: a user with no meta resolves every meta.* path as
 // absent (metaField's nil-meta branch), so pr is false and eq never matches.
 func TestFilterUserMetaAbsent(t *testing.T) {
+	t.Parallel()
 	u := sampleUser() // no Meta set
 	if matchesUser(u, mustParse(t, `meta.resourceType pr`)) {
 		t.Error("meta.resourceType pr matched a user with no meta")
@@ -58,6 +60,7 @@ func TestFilterUserMetaAbsent(t *testing.T) {
 // TestFilterEmailSubAttributes exercises emails.type (emailTypes) and
 // emails.primary (emailPrimaries) — the multi-valued sub-attribute projectors.
 func TestFilterEmailSubAttributes(t *testing.T) {
+	t.Parallel()
 	u := sampleUser() // work(primary) + home
 	cases := []struct {
 		filter string
@@ -83,6 +86,7 @@ func TestFilterEmailSubAttributes(t *testing.T) {
 // TestFilterEmailSubAttributesNoEmails: a user with no emails resolves every
 // emails.* path as absent, so pr is false.
 func TestFilterEmailSubAttributesNoEmails(t *testing.T) {
+	t.Parallel()
 	u := sampleUser()
 	u.Emails = nil
 	for _, f := range []string{`emails.type pr`, `emails.primary pr`, `emails.value pr`} {
@@ -95,6 +99,7 @@ func TestFilterEmailSubAttributesNoEmails(t *testing.T) {
 // TestFilterGroupMemberSubAttributes exercises members.display
 // (memberDisplaySet) and members.type (memberTypeSet) projectors via filters.
 func TestFilterGroupMemberSubAttributes(t *testing.T) {
+	t.Parallel()
 	g := GroupResource{
 		Schemas:     []string{SchemaGroup},
 		ID:          "grp-1",
@@ -128,6 +133,7 @@ func TestFilterGroupMemberSubAttributes(t *testing.T) {
 // TestFilterGroupMemberSubAttributesEmpty: an empty-member group resolves the
 // member.* sub-attribute paths as absent.
 func TestFilterGroupMemberSubAttributesEmpty(t *testing.T) {
+	t.Parallel()
 	g := GroupResource{Schemas: []string{SchemaGroup}, ID: "g", DisplayName: "Empty"}
 	for _, f := range []string{`members.display pr`, `members.type pr`, `members.value pr`} {
 		if matchesGroup(g, mustParse(t, f)) {
@@ -140,6 +146,7 @@ func TestFilterGroupMemberSubAttributesEmpty(t *testing.T) {
 // "name nil" branches: a name with only GivenName set leaves familyName etc.
 // resolving as absent.
 func TestFilterNameSubAbsent(t *testing.T) {
+	t.Parallel()
 	u := sampleUser()
 	u.Name = &Name{GivenName: "Alice"} // familyName/formatted unset
 	if matchesUser(u, mustParse(t, `name.familyName pr`)) {
@@ -165,6 +172,7 @@ func TestFilterNameSubAbsent(t *testing.T) {
 
 // TestFilterIDAttribute exercises the id projector path on both resources.
 func TestFilterIDAttribute(t *testing.T) {
+	t.Parallel()
 	if !matchesUser(sampleUser(), mustParse(t, `id eq "id-1"`)) {
 		t.Error("user id eq did not match")
 	}

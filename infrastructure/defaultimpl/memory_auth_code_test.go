@@ -14,6 +14,7 @@ import (
 )
 
 func TestMemoryAuthCodeStore_RoundTrip(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryAuthCodeStore()
 	in := &oauth.AuthCode{
 		UserID:      "u-1",
@@ -44,6 +45,7 @@ func TestMemoryAuthCodeStore_RoundTrip(t *testing.T) {
 }
 
 func TestMemoryAuthCodeStore_SingleUse(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryAuthCodeStore()
 	_ = s.Issue(context.Background(), "c", &oauth.AuthCode{ExpiresAt: time.Now().Add(time.Minute)})
 	if _, err := s.Consume(context.Background(), "c"); err != nil {
@@ -55,6 +57,7 @@ func TestMemoryAuthCodeStore_SingleUse(t *testing.T) {
 }
 
 func TestMemoryAuthCodeStore_RejectsEmptyArgs(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryAuthCodeStore()
 	if err := s.Issue(context.Background(), "", &oauth.AuthCode{}); !errors.Is(err, oauth.ErrAuthCodeNotFound) {
 		t.Errorf("empty code Issue err = %v", err)
@@ -65,6 +68,7 @@ func TestMemoryAuthCodeStore_RejectsEmptyArgs(t *testing.T) {
 }
 
 func TestMemoryAuthCodeStore_UnknownCodeReturnsSentinel(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryAuthCodeStore()
 	if _, err := s.Consume(context.Background(), "ghost"); !errors.Is(err, oauth.ErrAuthCodeNotFound) {
 		t.Errorf("err = %v, want oauth.ErrAuthCodeNotFound", err)
@@ -72,6 +76,7 @@ func TestMemoryAuthCodeStore_UnknownCodeReturnsSentinel(t *testing.T) {
 }
 
 func TestMemoryAuthCodeStore_ExpiredCodeIndistinguishableFromMissing(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryAuthCodeStore()
 	_ = s.Issue(context.Background(), "stale", &oauth.AuthCode{
 		ExpiresAt: time.Now().Add(-time.Minute),
@@ -82,6 +87,7 @@ func TestMemoryAuthCodeStore_ExpiredCodeIndistinguishableFromMissing(t *testing.
 }
 
 func TestMemoryAuthCodeStore_DoesNotAliasCallerSlices(t *testing.T) {
+	t.Parallel()
 	// Caller-supplied Scopes / Attributes must be copied at Issue time so
 	// later mutation of the caller's structures isn't visible at Consume.
 	s := defaultimpl.NewMemoryAuthCodeStore()
@@ -105,6 +111,7 @@ func TestMemoryAuthCodeStore_DoesNotAliasCallerSlices(t *testing.T) {
 }
 
 func TestMemoryAuthCodeStore_Concurrent(t *testing.T) {
+	t.Parallel()
 	// Many goroutines issuing + consuming distinct codes must not race.
 	s := defaultimpl.NewMemoryAuthCodeStore()
 	var wg sync.WaitGroup
@@ -127,6 +134,7 @@ func TestMemoryAuthCodeStore_Concurrent(t *testing.T) {
 }
 
 func TestGenerateAuthCode_LengthAndAlphabet(t *testing.T) {
+	t.Parallel()
 	c, err := defaultimpl.GenerateAuthCode()
 	if err != nil {
 		t.Fatalf("GenerateAuthCode: %v", err)
@@ -141,6 +149,7 @@ func TestGenerateAuthCode_LengthAndAlphabet(t *testing.T) {
 }
 
 func TestAuthCode_IsExpired(t *testing.T) {
+	t.Parallel()
 	past := &oauth.AuthCode{ExpiresAt: time.Now().Add(-time.Hour)}
 	future := &oauth.AuthCode{ExpiresAt: time.Now().Add(time.Hour)}
 	if !past.IsExpired() {

@@ -10,6 +10,7 @@ import (
 )
 
 func TestMemoryRegistry_PublishListSubscribe(t *testing.T) {
+	t.Parallel()
 	reg := memory.New()
 	defer func() { _ = reg.Close() }()
 	ctx := context.Background()
@@ -53,6 +54,7 @@ func TestMemoryRegistry_PublishListSubscribe(t *testing.T) {
 }
 
 func TestMemoryRegistry_PublishUpsertsPerReplica(t *testing.T) {
+	t.Parallel()
 	reg := memory.New()
 	defer func() { _ = reg.Close() }()
 	ctx := context.Background()
@@ -73,6 +75,7 @@ func TestMemoryRegistry_PublishUpsertsPerReplica(t *testing.T) {
 }
 
 func TestMemoryRegistry_EmptyReplicaIDRejected(t *testing.T) {
+	t.Parallel()
 	reg := memory.New()
 	defer func() { _ = reg.Close() }()
 	if err := reg.Publish(context.Background(), signingkeys.Announcement{}); err == nil {
@@ -81,6 +84,7 @@ func TestMemoryRegistry_EmptyReplicaIDRejected(t *testing.T) {
 }
 
 func TestMemoryRegistry_CloseClosesSubscribers(t *testing.T) {
+	t.Parallel()
 	reg := memory.New()
 	sub, err := reg.Subscribe(context.Background())
 	if err != nil {
@@ -101,6 +105,7 @@ func TestMemoryRegistry_CloseClosesSubscribers(t *testing.T) {
 }
 
 func TestMemoryRegistry_SubscribeCtxCancelCleansUp(t *testing.T) {
+	t.Parallel()
 	reg := memory.New()
 	defer func() { _ = reg.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())

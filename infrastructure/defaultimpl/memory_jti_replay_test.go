@@ -9,6 +9,7 @@ import (
 )
 
 func TestMemoryJTIReplayStore_FirstSeenThenReplay(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryJTIReplayStore()
 	exp := time.Now().Add(time.Minute)
@@ -31,6 +32,7 @@ func TestMemoryJTIReplayStore_FirstSeenThenReplay(t *testing.T) {
 }
 
 func TestMemoryJTIReplayStore_EmptyJTIAlwaysFresh(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryJTIReplayStore()
 	ok, err := s.MarkSeen(ctx, "", time.Now().Add(time.Minute))
@@ -40,6 +42,7 @@ func TestMemoryJTIReplayStore_EmptyJTIAlwaysFresh(t *testing.T) {
 }
 
 func TestMemoryJTIReplayStore_DistinctJTIsCoexist(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryJTIReplayStore()
 	exp := time.Now().Add(time.Minute)
@@ -55,6 +58,7 @@ func TestMemoryJTIReplayStore_DistinctJTIsCoexist(t *testing.T) {
 // sweep: once an entry's recorded expiry has passed, the next MarkSeen of
 // the same jti sees it as fresh again (the entry was GC'd, not a replay).
 func TestMemoryJTIReplayStore_LazyGCAllowsReuseAfterExpiry(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryJTIReplayStore()
 	// Already-elapsed exp: the store clamps it to now+1s so an immediate

@@ -21,6 +21,7 @@ import (
 // implement Ping(ctx) — the helper must skip them silently rather
 // than register a check that would always fail.
 func TestAppendReadyCheck_MemoryNoOps(t *testing.T) {
+	t.Parallel()
 	memStore := struct{}{}
 	opts := serverbuildsign.AppendReadyCheck(nil, "noop", memStore)
 	if len(opts) != 0 {
@@ -31,6 +32,7 @@ func TestAppendReadyCheck_MemoryNoOps(t *testing.T) {
 // TestAppendReadyCheck_SQLitePings proves a Pinger-implementing
 // candidate produces exactly one [sso.WithReadyCheck] option.
 func TestAppendReadyCheck_SQLitePings(t *testing.T) {
+	t.Parallel()
 	called := false
 	candidate := pingerStub{fn: func(context.Context) error {
 		called = true
@@ -61,6 +63,7 @@ func TestAppendReadyCheck_SQLitePings(t *testing.T) {
 // This is the operational contract /readyz exists to satisfy — a
 // pod with broken SQLite must be pulled from the LB.
 func TestBuildApp_ReadyCheck_SQLiteFlipsTo503(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "identity.db") + "?_journal=WAL"
 	cfg := &config.Config{}
@@ -151,6 +154,7 @@ func (p pingerLimiter) Allow(_ string) (bool, time.Duration) { return true, 0 }
 // names surface in the /readyz payload so they need to stay
 // readable, stable, and collision-resistant across rule sets.
 func TestSanitizeReadyCheckSuffix_Paths(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ in, want string }{
 		{"/token", "token"},
 		{"/token/revoke", "token-revoke"},
@@ -173,6 +177,7 @@ func TestSanitizeReadyCheckSuffix_Paths(t *testing.T) {
 // resulting /readyz body MUST surface the SQLite limiters by their
 // sanitized prefix name and MUST NOT surface the memory ones.
 func TestAppendRateLimitReadyChecks_MixedBackends(t *testing.T) {
+	t.Parallel()
 	okPing := func(context.Context) error { return nil }
 	policy := ratelimit.Policy{
 		Default: pingerLimiter{pingerStub: pingerStub{fn: okPing}}, // pretend-SQLite default
@@ -218,6 +223,7 @@ func TestAppendRateLimitReadyChecks_MixedBackends(t *testing.T) {
 // guards against a startup regression that would register a stray
 // failing check for an unwired rate limiter.
 func TestAppendRateLimitReadyChecks_EmptyPolicy(t *testing.T) {
+	t.Parallel()
 	opts := serverbuildsign.AppendRateLimitReadyChecks(nil, ratelimit.Policy{})
 	if len(opts) != 0 {
 		t.Fatalf("empty policy produced %d opts; want 0", len(opts))

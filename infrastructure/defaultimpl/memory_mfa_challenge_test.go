@@ -11,6 +11,7 @@ import (
 )
 
 func TestMemoryMFAChallengeStore_PutConsume(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryMFAChallengeStore()
 	ch := &spi.MFAChallenge{
@@ -38,6 +39,7 @@ func TestMemoryMFAChallengeStore_PutConsume(t *testing.T) {
 }
 
 func TestMemoryMFAChallengeStore_SingleUse(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryMFAChallengeStore()
 	_ = s.Put(ctx, &spi.MFAChallenge{ID: "ch", ExpiresAt: time.Now().Add(time.Minute)})
@@ -50,6 +52,7 @@ func TestMemoryMFAChallengeStore_SingleUse(t *testing.T) {
 }
 
 func TestMemoryMFAChallengeStore_NotFoundShapes(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryMFAChallengeStore()
 
@@ -68,6 +71,7 @@ func TestMemoryMFAChallengeStore_NotFoundShapes(t *testing.T) {
 }
 
 func TestMemoryMFAChallengeStore_ExpiredCollapses(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryMFAChallengeStore()
 	_ = s.Put(ctx, &spi.MFAChallenge{ID: "ch", ExpiresAt: time.Now().Add(-time.Second)})

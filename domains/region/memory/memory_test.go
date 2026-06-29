@@ -10,6 +10,7 @@ import (
 )
 
 func TestSetGetPolicy_Roundtrip(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	want := region.ResidencyPolicy{
@@ -32,6 +33,7 @@ func TestSetGetPolicy_Roundtrip(t *testing.T) {
 }
 
 func TestGetPolicy_AbsentIsZeroUnconstrained(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	got, err := s.GetPolicy(context.Background(), "ghost")
 	if err != nil {
@@ -43,6 +45,7 @@ func TestGetPolicy_AbsentIsZeroUnconstrained(t *testing.T) {
 }
 
 func TestDelete_RevertsToUnconstrained(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	s.Set("t1", region.ResidencyPolicy{HomeRegion: "us-east-1", EnforceWrites: true})
@@ -54,12 +57,14 @@ func TestDelete_RevertsToUnconstrained(t *testing.T) {
 }
 
 func TestDelete_Idempotent(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	// Delete of an absent tenant must not panic.
 	s.Delete("ghost")
 }
 
 func TestSet_IsolatesAllowedRegionsSlice(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	regions := []region.ID{"eu-west-1", "eu-central-1"}
@@ -81,6 +86,7 @@ func TestSet_IsolatesAllowedRegionsSlice(t *testing.T) {
 }
 
 func TestConcurrentAccess_NoRace(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	s.Set("t1", region.ResidencyPolicy{HomeRegion: "eu-west-1"})

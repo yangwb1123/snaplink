@@ -25,6 +25,7 @@ func recv(t *testing.T, ch <-chan cluster.Event) cluster.Event {
 }
 
 func TestPublish_DeliversToSubscriber(t *testing.T) {
+	t.Parallel()
 	b := memory.New()
 	defer func() { _ = b.Close() }()
 	ch, err := b.Subscribe(context.Background())
@@ -41,6 +42,7 @@ func TestPublish_DeliversToSubscriber(t *testing.T) {
 }
 
 func TestPublish_FansOutToAllSubscribers(t *testing.T) {
+	t.Parallel()
 	b := memory.New()
 	defer func() { _ = b.Close() }()
 	ch1, _ := b.Subscribe(context.Background())
@@ -58,6 +60,7 @@ func TestPublish_FansOutToAllSubscribers(t *testing.T) {
 }
 
 func TestSubscribe_ClosedOnContextCancel(t *testing.T) {
+	t.Parallel()
 	b := memory.New()
 	defer func() { _ = b.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -74,6 +77,7 @@ func TestSubscribe_ClosedOnContextCancel(t *testing.T) {
 }
 
 func TestClose_ClosesSubscribersAndRejects(t *testing.T) {
+	t.Parallel()
 	b := memory.New()
 	ch, _ := b.Subscribe(context.Background())
 	if err := b.Close(); err != nil {
@@ -96,6 +100,7 @@ func TestClose_ClosesSubscribersAndRejects(t *testing.T) {
 }
 
 func TestClose_Idempotent(t *testing.T) {
+	t.Parallel()
 	b := memory.New()
 	if err := b.Close(); err != nil {
 		t.Fatalf("first close: %v", err)
@@ -108,6 +113,7 @@ func TestClose_Idempotent(t *testing.T) {
 // A full subscriber buffer must not block the publisher; the event is
 // dropped (best-effort contract) and Publish still returns promptly.
 func TestPublish_SlowConsumerDoesNotBlock(t *testing.T) {
+	t.Parallel()
 	b := memory.New()
 	defer func() { _ = b.Close() }()
 	if _, err := b.Subscribe(context.Background()); err != nil {

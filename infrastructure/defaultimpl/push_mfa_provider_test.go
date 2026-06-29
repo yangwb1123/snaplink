@@ -55,18 +55,21 @@ func newPushProviderForTest(t *testing.T, opts ...defaultimpl.PushMFAOption) (*d
 }
 
 func TestPushMFAProvider_RejectsNilStore(t *testing.T) {
+	t.Parallel()
 	if _, err := defaultimpl.NewPushMFAProvider(nil, &captureTransport{}); err == nil {
 		t.Fatal("want error for nil store")
 	}
 }
 
 func TestPushMFAProvider_RejectsNilTransport(t *testing.T) {
+	t.Parallel()
 	if _, err := defaultimpl.NewPushMFAProvider(defaultimpl.NewMemoryPushApprovalStore(), nil); err == nil {
 		t.Fatal("want error for nil transport")
 	}
 }
 
 func TestPushMFAProvider_SupportedMethods(t *testing.T) {
+	t.Parallel()
 	p, _, _ := newPushProviderForTest(t)
 	methods := p.SupportedMethods()
 	if len(methods) != 1 || methods[0] != defaultimpl.MethodPush {
@@ -75,6 +78,7 @@ func TestPushMFAProvider_SupportedMethods(t *testing.T) {
 }
 
 func TestPushMFAProvider_BeginIssuesPendingApprovalAndSendsTransport(t *testing.T) {
+	t.Parallel()
 	p, store, transport := newPushProviderForTest(t)
 	ctx := context.Background()
 
@@ -103,6 +107,7 @@ func TestPushMFAProvider_BeginIssuesPendingApprovalAndSendsTransport(t *testing.
 }
 
 func TestPushMFAProvider_BeginRejectsUnsupportedMethod(t *testing.T) {
+	t.Parallel()
 	p, _, _ := newPushProviderForTest(t)
 	_, err := p.Begin(context.Background(), "alice", "totp")
 	if !errors.Is(err, defaultimpl.ErrPushUnsupportedMethod) {
@@ -111,6 +116,7 @@ func TestPushMFAProvider_BeginRejectsUnsupportedMethod(t *testing.T) {
 }
 
 func TestPushMFAProvider_BeginRejectsEmptySubject(t *testing.T) {
+	t.Parallel()
 	p, _, _ := newPushProviderForTest(t)
 	_, err := p.Begin(context.Background(), "", defaultimpl.MethodPush)
 	if !errors.Is(err, defaultimpl.ErrPushMissingSubject) {
@@ -119,6 +125,7 @@ func TestPushMFAProvider_BeginRejectsEmptySubject(t *testing.T) {
 }
 
 func TestPushMFAProvider_BeginCleansUpOnTransportFailure(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryPushApprovalStore()
 	transport := &captureTransport{sendErr: errors.New("transport down")}
 	p, err := defaultimpl.NewPushMFAProvider(store, transport,
@@ -140,6 +147,7 @@ func TestPushMFAProvider_BeginCleansUpOnTransportFailure(t *testing.T) {
 }
 
 func TestPushMFAProvider_VerifyApprovedSucceeds(t *testing.T) {
+	t.Parallel()
 	p, store, _ := newPushProviderForTest(t)
 	ctx := context.Background()
 
@@ -166,6 +174,7 @@ func TestPushMFAProvider_VerifyApprovedSucceeds(t *testing.T) {
 }
 
 func TestPushMFAProvider_VerifyDeniedReturnsDenied(t *testing.T) {
+	t.Parallel()
 	p, store, _ := newPushProviderForTest(t)
 	ctx := context.Background()
 
@@ -184,6 +193,7 @@ func TestPushMFAProvider_VerifyDeniedReturnsDenied(t *testing.T) {
 }
 
 func TestPushMFAProvider_VerifyTimesOutWhenNoApproval(t *testing.T) {
+	t.Parallel()
 	// 100ms maxWait — finishes within test budget.
 	p, store, _ := newPushProviderForTest(t,
 		defaultimpl.WithPushPollInterval(20*time.Millisecond),
@@ -205,6 +215,7 @@ func TestPushMFAProvider_VerifyTimesOutWhenNoApproval(t *testing.T) {
 }
 
 func TestPushMFAProvider_VerifyRespectsContextCancel(t *testing.T) {
+	t.Parallel()
 	p, _, _ := newPushProviderForTest(t,
 		defaultimpl.WithPushMaxWait(10*time.Second), // long timeout — would block test
 	)
@@ -233,6 +244,7 @@ func TestPushMFAProvider_VerifyRespectsContextCancel(t *testing.T) {
 }
 
 func TestPushMFAProvider_VerifyRejectsSubjectMismatch(t *testing.T) {
+	t.Parallel()
 	p, store, _ := newPushProviderForTest(t)
 	ctx := context.Background()
 
@@ -249,6 +261,7 @@ func TestPushMFAProvider_VerifyRejectsSubjectMismatch(t *testing.T) {
 }
 
 func TestPushMFAProvider_VerifyRejectsMissingApprovalID(t *testing.T) {
+	t.Parallel()
 	p, _, _ := newPushProviderForTest(t)
 	err := p.Verify(context.Background(), "alice", defaultimpl.MethodPush, nil)
 	if !errors.Is(err, defaultimpl.ErrPushMissingApprovalID) {
@@ -257,6 +270,7 @@ func TestPushMFAProvider_VerifyRejectsMissingApprovalID(t *testing.T) {
 }
 
 func TestPushMFAProvider_VerifyRejectsUnsupportedMethod(t *testing.T) {
+	t.Parallel()
 	p, _, _ := newPushProviderForTest(t)
 	err := p.Verify(context.Background(), "alice", "totp", map[string]string{"approval_id": "x"})
 	if !errors.Is(err, defaultimpl.ErrPushUnsupportedMethod) {
@@ -267,6 +281,7 @@ func TestPushMFAProvider_VerifyRejectsUnsupportedMethod(t *testing.T) {
 // ---- MemoryPushApprovalStore ----
 
 func TestMemoryPushApprovalStore_PutRejectsEmptyID(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryPushApprovalStore()
 	err := s.Put(context.Background(), &defaultimpl.PushApproval{SubjectID: "alice", ExpiresAt: time.Now().Add(time.Minute)})
 	if !errors.Is(err, defaultimpl.ErrPushApprovalInvalid) {
@@ -275,6 +290,7 @@ func TestMemoryPushApprovalStore_PutRejectsEmptyID(t *testing.T) {
 }
 
 func TestMemoryPushApprovalStore_PutRejectsEmptySubject(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryPushApprovalStore()
 	err := s.Put(context.Background(), &defaultimpl.PushApproval{ID: "id", ExpiresAt: time.Now().Add(time.Minute)})
 	if !errors.Is(err, defaultimpl.ErrPushApprovalInvalid) {
@@ -283,6 +299,7 @@ func TestMemoryPushApprovalStore_PutRejectsEmptySubject(t *testing.T) {
 }
 
 func TestMemoryPushApprovalStore_GetExpiredReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryPushApprovalStore()
 	_ = s.Put(context.Background(), &defaultimpl.PushApproval{
 		ID:        "id",
@@ -297,6 +314,7 @@ func TestMemoryPushApprovalStore_GetExpiredReturnsNotFound(t *testing.T) {
 }
 
 func TestMemoryPushApprovalStore_SetStatusRejectsReResolution(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryPushApprovalStore()
 	_ = s.Put(context.Background(), &defaultimpl.PushApproval{
 		ID:        "id",
@@ -316,6 +334,7 @@ func TestMemoryPushApprovalStore_SetStatusRejectsReResolution(t *testing.T) {
 }
 
 func TestMemoryPushApprovalStore_SetStatusIdempotentForSameStatus(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryPushApprovalStore()
 	_ = s.Put(context.Background(), &defaultimpl.PushApproval{
 		ID:        "id",
@@ -331,6 +350,7 @@ func TestMemoryPushApprovalStore_SetStatusIdempotentForSameStatus(t *testing.T) 
 }
 
 func TestMemoryPushApprovalStore_DeleteIsIdempotent(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryPushApprovalStore()
 	if err := s.Delete(context.Background(), "nonexistent"); err != nil {
 		t.Fatalf("Delete on missing id: %v", err)
@@ -343,6 +363,7 @@ func TestMemoryPushApprovalStore_DeleteIsIdempotent(t *testing.T) {
 // in well under one poll interval: a 5s poll would otherwise dominate,
 // so a sub-second return can only come from the channel signal.
 func TestPushMFAProvider_ChannelNotifyWakesFast(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryPushApprovalStore()
 	transport := &captureTransport{}
 	p, err := defaultimpl.NewPushMFAProvider(store, transport,
@@ -386,6 +407,7 @@ func TestPushMFAProvider_ChannelNotifyWakesFast(t *testing.T) {
 // callback). Verify must still resolve via the poll fallback — proving
 // correctness never depends on the wakeup arriving.
 func TestPushMFAProvider_ChannelNotifyCorrectWhenSignalDropped(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryPushApprovalStore()
 	transport := &captureTransport{}
 	p, err := defaultimpl.NewPushMFAProvider(store, transport,
@@ -418,6 +440,7 @@ func TestPushMFAProvider_ChannelNotifyCorrectWhenSignalDropped(t *testing.T) {
 // budget. Run under -race -count to surface ordering bugs + the
 // registry's concurrent access.
 func TestPushMFAProvider_ChannelNotifyLostWakeupRace(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryPushApprovalStore()
 	transport := &captureTransport{}
 	p, err := defaultimpl.NewPushMFAProvider(store, transport,
@@ -461,6 +484,7 @@ func TestPushMFAProvider_ChannelNotifyLostWakeupRace(t *testing.T) {
 // no-op when WithPushChannelNotify wasn't set: calling it must neither
 // panic nor break the pure-poll resolution path (full backward compat).
 func TestPushMFAProvider_NotifyNoopWithoutOptIn(t *testing.T) {
+	t.Parallel()
 	p, store, _ := newPushProviderForTest(t) // no WithPushChannelNotify
 	ctx := context.Background()
 	data, _ := p.Begin(ctx, "alice", defaultimpl.MethodPush)
@@ -486,6 +510,7 @@ func TestPushMFAProvider_NotifyNoopWithoutOptIn(t *testing.T) {
 // Notify. Asserts each gets the right answer (approve vs deny) — the
 // registry must isolate waiters per id under -race.
 func TestPushMFAProvider_ChannelNotifyConcurrentDistinctIDs(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryPushApprovalStore()
 	transport := &captureTransport{}
 	p, err := defaultimpl.NewPushMFAProvider(store, transport,

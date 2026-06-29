@@ -38,6 +38,7 @@ func resolveWithMergedPolicy(t *testing.T, leafRP map[string]any, anchorPolicy, 
 // --- value ---
 
 func TestPolicy_Value_Pins(t *testing.T) {
+	t.Parallel()
 	chain, err := resolveWithPolicy(t,
 		map[string]any{"token_endpoint_auth_method": "client_secret_basic"},
 		policy(map[string]map[string]any{
@@ -56,6 +57,7 @@ func TestPolicy_Value_Pins(t *testing.T) {
 // --- default ---
 
 func TestPolicy_Default_FillsWhenAbsent(t *testing.T) {
+	t.Parallel()
 	chain, err := resolveWithPolicy(t,
 		map[string]any{"client_name": "RP"}, // no token_endpoint_auth_method
 		policy(map[string]map[string]any{
@@ -71,6 +73,7 @@ func TestPolicy_Default_FillsWhenAbsent(t *testing.T) {
 }
 
 func TestPolicy_Default_DoesNotOverridePresent(t *testing.T) {
+	t.Parallel()
 	chain, err := resolveWithPolicy(t,
 		map[string]any{"token_endpoint_auth_method": "private_key_jwt"},
 		policy(map[string]map[string]any{
@@ -88,6 +91,7 @@ func TestPolicy_Default_DoesNotOverridePresent(t *testing.T) {
 // --- add ---
 
 func TestPolicy_Add_Appends(t *testing.T) {
+	t.Parallel()
 	chain, err := resolveWithPolicy(t,
 		map[string]any{"grant_types": []any{"authorization_code"}},
 		policy(map[string]map[string]any{
@@ -106,6 +110,7 @@ func TestPolicy_Add_Appends(t *testing.T) {
 // --- one_of ---
 
 func TestPolicy_OneOf_AllowsMember(t *testing.T) {
+	t.Parallel()
 	_, err := resolveWithPolicy(t,
 		map[string]any{"subject_type": "pairwise"},
 		policy(map[string]map[string]any{
@@ -118,6 +123,7 @@ func TestPolicy_OneOf_AllowsMember(t *testing.T) {
 }
 
 func TestPolicy_OneOf_RejectsNonMember(t *testing.T) {
+	t.Parallel()
 	_, err := resolveWithPolicy(t,
 		map[string]any{"subject_type": "global"},
 		policy(map[string]map[string]any{
@@ -132,6 +138,7 @@ func TestPolicy_OneOf_RejectsNonMember(t *testing.T) {
 // --- subset_of ---
 
 func TestPolicy_SubsetOf_RejectsOutOfSet(t *testing.T) {
+	t.Parallel()
 	_, err := resolveWithPolicy(t,
 		map[string]any{"grant_types": []any{"authorization_code", "implicit"}},
 		policy(map[string]map[string]any{
@@ -144,6 +151,7 @@ func TestPolicy_SubsetOf_RejectsOutOfSet(t *testing.T) {
 }
 
 func TestPolicy_SubsetOf_AllowsSubset(t *testing.T) {
+	t.Parallel()
 	_, err := resolveWithPolicy(t,
 		map[string]any{"grant_types": []any{"authorization_code"}},
 		policy(map[string]map[string]any{
@@ -158,6 +166,7 @@ func TestPolicy_SubsetOf_AllowsSubset(t *testing.T) {
 // --- superset_of ---
 
 func TestPolicy_SupersetOf_RejectsMissingRequired(t *testing.T) {
+	t.Parallel()
 	_, err := resolveWithPolicy(t,
 		map[string]any{"grant_types": []any{"authorization_code"}},
 		policy(map[string]map[string]any{
@@ -172,6 +181,7 @@ func TestPolicy_SupersetOf_RejectsMissingRequired(t *testing.T) {
 // --- essential ---
 
 func TestPolicy_Essential_RejectsMissing(t *testing.T) {
+	t.Parallel()
 	_, err := resolveWithPolicy(t,
 		map[string]any{"client_name": "RP"}, // no contacts
 		policy(map[string]map[string]any{
@@ -184,6 +194,7 @@ func TestPolicy_Essential_RejectsMissing(t *testing.T) {
 }
 
 func TestPolicy_Essential_PassesWhenPresent(t *testing.T) {
+	t.Parallel()
 	_, err := resolveWithPolicy(t,
 		map[string]any{"contacts": []any{"mailto:admin@rp.test"}},
 		policy(map[string]map[string]any{
@@ -198,6 +209,7 @@ func TestPolicy_Essential_PassesWhenPresent(t *testing.T) {
 // essential satisfied via a default fill (default runs before the essential
 // check, §10.3 ordering).
 func TestPolicy_Essential_SatisfiedByDefault(t *testing.T) {
+	t.Parallel()
 	chain, err := resolveWithPolicy(t,
 		map[string]any{"client_name": "RP"},
 		policy(map[string]map[string]any{
@@ -222,6 +234,7 @@ func TestPolicy_Essential_SatisfiedByDefault(t *testing.T) {
 // A higher authority (anchor) and a lower one (intermediate) both pin `value`
 // to DIFFERENT values → merge conflict → rejected (§10.2).
 func TestPolicy_MergeConflict_ValueDisagrees(t *testing.T) {
+	t.Parallel()
 	_, err := resolveWithMergedPolicy(t,
 		map[string]any{"token_endpoint_auth_method": "private_key_jwt"},
 		policy(map[string]map[string]any{ // anchor about inter
@@ -241,6 +254,7 @@ func TestPolicy_MergeConflict_ValueDisagrees(t *testing.T) {
 // compromised intermediate tries to append an attacker callback. The merge must
 // fail the chain closed (ErrTrustChainInvalid), not silently union the two.
 func TestPolicy_MergeConflict_ValuePlusAddRejected(t *testing.T) {
+	t.Parallel()
 	_, err := resolveWithMergedPolicy(t,
 		map[string]any{"redirect_uris": []any{"https://rp.example/cb"}},
 		policy(map[string]map[string]any{ // anchor about inter: pin
@@ -257,6 +271,7 @@ func TestPolicy_MergeConflict_ValuePlusAddRejected(t *testing.T) {
 
 // one_of merges by intersection; disjoint sets → empty intersection → conflict.
 func TestPolicy_MergeConflict_OneOfDisjoint(t *testing.T) {
+	t.Parallel()
 	_, err := resolveWithMergedPolicy(t,
 		map[string]any{"subject_type": "public"},
 		policy(map[string]map[string]any{
@@ -274,6 +289,7 @@ func TestPolicy_MergeConflict_OneOfDisjoint(t *testing.T) {
 // one_of merges by intersection; overlapping sets narrow to the intersection,
 // and a leaf value in the intersection passes.
 func TestPolicy_Merge_OneOfIntersectionNarrows(t *testing.T) {
+	t.Parallel()
 	// anchor allows {public, pairwise}; inter allows {pairwise, global};
 	// intersection = {pairwise}. Leaf=pairwise passes.
 	_, err := resolveWithMergedPolicy(t,
@@ -307,6 +323,7 @@ func TestPolicy_Merge_OneOfIntersectionNarrows(t *testing.T) {
 // essential merges by OR: a superior requiring essential cannot be relaxed by a
 // subordinate setting essential:false.
 func TestPolicy_Merge_EssentialCannotBeRelaxed(t *testing.T) {
+	t.Parallel()
 	_, err := resolveWithMergedPolicy(t,
 		map[string]any{"client_name": "RP"}, // contacts missing
 		policy(map[string]map[string]any{ // anchor: contacts essential
@@ -324,6 +341,7 @@ func TestPolicy_Merge_EssentialCannotBeRelaxed(t *testing.T) {
 // A pinned `value` inconsistent with a merged `one_of` (value not in one_of) is
 // a consistency error at merge.
 func TestPolicy_MergeConflict_ValueNotInOneOf(t *testing.T) {
+	t.Parallel()
 	_, err := resolveWithMergedPolicy(t,
 		map[string]any{"subject_type": "public"},
 		policy(map[string]map[string]any{
@@ -340,6 +358,7 @@ func TestPolicy_MergeConflict_ValueNotInOneOf(t *testing.T) {
 
 // An unknown operator is rejected (fail-closed).
 func TestPolicy_UnknownOperatorRejected(t *testing.T) {
+	t.Parallel()
 	_, err := resolveWithPolicy(t,
 		map[string]any{"client_name": "RP"},
 		policy(map[string]map[string]any{
@@ -353,6 +372,7 @@ func TestPolicy_UnknownOperatorRejected(t *testing.T) {
 
 // No policy anywhere → the leaf RP metadata passes through unchanged.
 func TestPolicy_NoPolicy_PassThrough(t *testing.T) {
+	t.Parallel()
 	chain, err := resolveWithPolicy(t,
 		map[string]any{"client_name": "RP", "subject_type": "public"},
 		nil,

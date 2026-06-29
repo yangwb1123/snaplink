@@ -15,6 +15,7 @@ func newSvc(id, name string) *registry.Service {
 }
 
 func TestRegister_RequiresIDAndName(t *testing.T) {
+	t.Parallel()
 	r := memory.New()
 	defer func() { _ = r.Close() }()
 	if err := r.Register(context.Background(), &registry.Service{Name: "x"}); err == nil {
@@ -29,6 +30,7 @@ func TestRegister_RequiresIDAndName(t *testing.T) {
 }
 
 func TestRegisterAndDiscover(t *testing.T) {
+	t.Parallel()
 	r := memory.New()
 	defer func() { _ = r.Close() }()
 	ctx := context.Background()
@@ -45,6 +47,7 @@ func TestRegisterAndDiscover(t *testing.T) {
 }
 
 func TestDiscover_UnknownReturnsErrNotFound(t *testing.T) {
+	t.Parallel()
 	r := memory.New()
 	defer func() { _ = r.Close() }()
 	_, err := r.Discover(context.Background(), "nope")
@@ -54,6 +57,7 @@ func TestDiscover_UnknownReturnsErrNotFound(t *testing.T) {
 }
 
 func TestDiscover_MultipleInstances(t *testing.T) {
+	t.Parallel()
 	r := memory.New()
 	defer func() { _ = r.Close() }()
 	ctx := context.Background()
@@ -67,6 +71,7 @@ func TestDiscover_MultipleInstances(t *testing.T) {
 }
 
 func TestDeregister(t *testing.T) {
+	t.Parallel()
 	r := memory.New()
 	defer func() { _ = r.Close() }()
 	ctx := context.Background()
@@ -80,6 +85,7 @@ func TestDeregister(t *testing.T) {
 }
 
 func TestDeregister_UnknownIsNoop(t *testing.T) {
+	t.Parallel()
 	r := memory.New()
 	defer func() { _ = r.Close() }()
 	if err := r.Deregister(context.Background(), "ghost"); err != nil {
@@ -88,6 +94,7 @@ func TestDeregister_UnknownIsNoop(t *testing.T) {
 }
 
 func TestRegister_UpdatesEmitUpdatedEvent(t *testing.T) {
+	t.Parallel()
 	r := memory.New()
 	defer func() { _ = r.Close() }()
 	ctx := context.Background()
@@ -108,6 +115,7 @@ func TestRegister_UpdatesEmitUpdatedEvent(t *testing.T) {
 }
 
 func TestWatch_DeliversAddedAndRemoved(t *testing.T) {
+	t.Parallel()
 	r := memory.New()
 	defer func() { _ = r.Close() }()
 	ctx := context.Background()
@@ -130,6 +138,7 @@ func TestWatch_DeliversAddedAndRemoved(t *testing.T) {
 }
 
 func TestWatch_ClosedOnContextCancel(t *testing.T) {
+	t.Parallel()
 	r := memory.New()
 	defer func() { _ = r.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -149,6 +158,7 @@ func TestWatch_ClosedOnContextCancel(t *testing.T) {
 }
 
 func TestClose_ClosesAllWatchers(t *testing.T) {
+	t.Parallel()
 	r := memory.New()
 	ch, _ := r.Watch(context.Background(), "sso")
 	_ = r.Close()
@@ -164,6 +174,7 @@ func TestClose_ClosesAllWatchers(t *testing.T) {
 }
 
 func TestOperationsAfterClose(t *testing.T) {
+	t.Parallel()
 	r := memory.New()
 	_ = r.Close()
 
@@ -182,6 +193,7 @@ func TestOperationsAfterClose(t *testing.T) {
 }
 
 func TestTTLExpiry(t *testing.T) {
+	t.Parallel()
 	r := memory.New()
 	defer func() { _ = r.Close() }()
 	ctx := context.Background()
@@ -208,6 +220,7 @@ func TestTTLExpiry(t *testing.T) {
 }
 
 func TestRegisterDeepCopiesInputs(t *testing.T) {
+	t.Parallel()
 	// Mutating the supplied Service's Tags / Metadata after Register must
 	// not bleed into the registry's snapshot.
 	r := memory.New()
@@ -233,6 +246,7 @@ func TestRegisterDeepCopiesInputs(t *testing.T) {
 }
 
 func TestServiceEndpoint(t *testing.T) {
+	t.Parallel()
 	if (&registry.Service{Address: "1.2.3.4", Port: 80}).Endpoint() != "1.2.3.4:80" {
 		t.Fail()
 	}

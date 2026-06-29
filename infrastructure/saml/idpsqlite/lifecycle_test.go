@@ -33,6 +33,7 @@ func (l *capturingLogger) count() int {
 // non-existent directory fails at PingContext, exercising the open-path error
 // branch + the db.Close() cleanup.
 func TestIdPSqlite_OpenBadDSN(t *testing.T) {
+	t.Parallel()
 	badDSN := "file:" + filepath.Join(t.TempDir(), "no_such_subdir", "saml.db")
 	if _, err := NewLogoutReplayStore(badDSN); err == nil {
 		t.Fatal("NewLogoutReplayStore accepted a bad DSN")
@@ -45,6 +46,7 @@ func TestIdPSqlite_OpenBadDSN(t *testing.T) {
 // TestIdPSqlite_LogoutDBAndPing covers DB()/Ping() across the open → closed
 // lifecycle for the logout replay store.
 func TestIdPSqlite_LogoutDBAndPing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s, err := NewLogoutReplayStore(uniqDSN("idp_db_logout"))
 	if err != nil {
@@ -75,6 +77,7 @@ func TestIdPSqlite_LogoutDBAndPing(t *testing.T) {
 // closed lifecycle for the session index, plus that the index's mutators report
 // "closed" errors (fail-loud) once the handle is gone.
 func TestIdPSqlite_SessionIndexDBAndPing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	idx, err := NewSessionIndex(uniqDSN("idp_db_idx"))
 	if err != nil {
@@ -118,6 +121,7 @@ func TestIdPSqlite_SessionIndexDBAndPing(t *testing.T) {
 // guards are nil-safe no-ops on EVERY index method (memory parity) and never
 // touch the DB — a degenerate assertion can't fail the issue path.
 func TestIdPSqlite_SessionIndexBlankIgnored(t *testing.T) {
+	t.Parallel()
 	idx, err := NewSessionIndex(uniqDSN("idp_idx_blank"))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -157,6 +161,7 @@ func TestIdPSqlite_SessionIndexBlankIgnored(t *testing.T) {
 // before the cutoff are dropped, newer rows survive. This is the shared-store
 // replacement for the memory subject-LRU (see DefaultSPsPerSubject's doc).
 func TestIdPSqlite_PruneOlderThan(t *testing.T) {
+	t.Parallel()
 	idx, err := NewSessionIndex(uniqDSN("idp_idx_prune"))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -190,6 +195,7 @@ func TestIdPSqlite_PruneOlderThan(t *testing.T) {
 // whole-subject RemoveAll over real rows (the closed-store error paths are
 // covered above; this covers the happy DELETE).
 func TestIdPSqlite_RemoveAndRemoveAll(t *testing.T) {
+	t.Parallel()
 	idx, err := NewSessionIndex(uniqDSN("idp_idx_remove"))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -230,6 +236,7 @@ func TestIdPSqlite_RemoveAndRemoveAll(t *testing.T) {
 // the package default (newIndexConfig's floor), so a misconfiguration can't
 // disable the per-subject growth bound.
 func TestIdPSqlite_WithMaxSPsPerSubjectFloor(t *testing.T) {
+	t.Parallel()
 	idx, err := NewSessionIndex(uniqDSN("idp_idx_floor"), WithMaxSPsPerSubject(0))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -254,6 +261,7 @@ func TestIdPSqlite_WithMaxSPsPerSubjectFloor(t *testing.T) {
 // confirmed (here: closed DB), and that WithLogger(nil) doesn't clobber a real
 // logger.
 func TestIdPSqlite_WithLoggerSurfacesFailClosed(t *testing.T) {
+	t.Parallel()
 	log := &capturingLogger{}
 	s, err := NewLogoutReplayStore(uniqDSN("idp_log"), WithLogger(log), WithLogger(nil))
 	if err != nil {
@@ -271,6 +279,7 @@ func TestIdPSqlite_WithLoggerSurfacesFailClosed(t *testing.T) {
 // TestIdPSqlite_IsConstraintErr covers the defensive UNIQUE-constraint classifier
 // used on the degraded-build INSERT path.
 func TestIdPSqlite_IsConstraintErr(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		err  error
 		want bool
@@ -290,6 +299,7 @@ func TestIdPSqlite_IsConstraintErr(t *testing.T) {
 // TestIdPSqlite_PruneAfterCloseErrors confirms the session index's PruneExpired
 // and PruneOlderThan report an error (not a silent 0) once the handle is gone.
 func TestIdPSqlite_PruneAfterCloseErrors(t *testing.T) {
+	t.Parallel()
 	s, _ := NewLogoutReplayStore(uniqDSN("idp_prune_closed"))
 	_ = s.Close()
 	if _, err := s.PruneExpired(context.Background(), time.Now()); err == nil {
@@ -305,6 +315,7 @@ func TestIdPSqlite_PruneAfterCloseErrors(t *testing.T) {
 // TestIdPSqlite_PruneExpired proves the TTL-based expiry: rows whose expires_at
 // is before the cutoff are deleted, rows with a future expires_at survive.
 func TestIdPSqlite_PruneExpired(t *testing.T) {
+	t.Parallel()
 	idx, err := NewSessionIndex(uniqDSN("idp_idx_expiry"))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -345,6 +356,7 @@ func TestIdPSqlite_PruneExpired(t *testing.T) {
 // removes expired rows. It uses a short interval and a short TTL so the test
 // completes quickly.
 func TestIdPSqlite_StartCleanup(t *testing.T) {
+	t.Parallel()
 	idx, err := NewSessionIndex(uniqDSN("idp_idx_cleanup"))
 	if err != nil {
 		t.Fatalf("new: %v", err)

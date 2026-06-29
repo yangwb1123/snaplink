@@ -15,6 +15,7 @@ import (
 // future-Event additions that would silently drop fields if the
 // scan vector falls out of sync.
 func TestSink_RecordThenGet(t *testing.T) {
+	t.Parallel()
 	s := newTestSink(t)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	want := &audit.Event{
@@ -78,6 +79,7 @@ func TestSink_RecordThenGet(t *testing.T) {
 // audit_handler.go GET branch tests `errors.Is(err,
 // audit.ErrEventNotFound)` to render 404 vs 500.
 func TestSink_GetUnknownReturnsErrEventNotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestSink(t)
 	_, err := s.Get(context.Background(), "no-such-id")
 	if !errors.Is(err, audit.ErrEventNotFound) {
@@ -89,6 +91,7 @@ func TestSink_GetUnknownReturnsErrEventNotFound(t *testing.T) {
 // to fill ID + Timestamp when they're zero (matches the
 // MemorySink contract).
 func TestSink_RecordFillsMissingFields(t *testing.T) {
+	t.Parallel()
 	s := newTestSink(t)
 	e := &audit.Event{Type: audit.EventLogin, Outcome: audit.OutcomeSuccess}
 	if err := s.Record(context.Background(), e); err != nil {
@@ -105,6 +108,7 @@ func TestSink_RecordFillsMissingFields(t *testing.T) {
 // TestSink_QueryFilters covers each WHERE clause individually so a
 // regression in clause assembly fails at the specific filter.
 func TestSink_QueryFilters(t *testing.T) {
+	t.Parallel()
 	s := newTestSink(t)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	mustRecord(t, s, &audit.Event{
@@ -161,6 +165,7 @@ func TestSink_QueryFilters(t *testing.T) {
 // applies NormalizedLimit (defaults 100, caps at 1000), an
 // explicit Limit ≤ the bounds flows through.
 func TestSink_QueryLimitOffset(t *testing.T) {
+	t.Parallel()
 	s := newTestSink(t)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i := range 5 {
@@ -185,6 +190,7 @@ func TestSink_QueryLimitOffset(t *testing.T) {
 // TestSink_PingHealthy / TestSink_PingClosed cover the
 // ReadyCheck integration cmd uses.
 func TestSink_Ping(t *testing.T) {
+	t.Parallel()
 	s := newTestSink(t)
 	if err := s.Ping(context.Background()); err != nil {
 		t.Fatalf("healthy ping = %v", err)
@@ -198,6 +204,7 @@ func TestSink_Ping(t *testing.T) {
 // TestSink_CloseIdempotent — defensive against double-close on
 // shutdown paths where multiple subsystems share the sink lifetime.
 func TestSink_CloseIdempotent(t *testing.T) {
+	t.Parallel()
 	s := newTestSink(t)
 	if err := s.Close(); err != nil {
 		t.Fatalf("first close: %v", err)
@@ -230,6 +237,7 @@ func mustRecord(t *testing.T, s *Sink, e *audit.Event) {
 // delete the table (the contract operators rely on for "do nothing
 // when retention is disabled" semantics).
 func TestSink_PruneZeroTimeIsNoop(t *testing.T) {
+	t.Parallel()
 	s := newTestSink(t)
 	now := time.Now().UTC()
 	mustRecord(t, s, &audit.Event{ID: "evt-1", Type: audit.EventLogin, Outcome: audit.OutcomeSuccess, Timestamp: now})
@@ -253,6 +261,7 @@ func TestSink_PruneZeroTimeIsNoop(t *testing.T) {
 // "retain last 30 days" — events from exactly 30 days ago are
 // retained, events older are not.
 func TestSink_PruneRespectsBoundary(t *testing.T) {
+	t.Parallel()
 	s := newTestSink(t)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	mustRecord(t, s, &audit.Event{ID: "old", Type: audit.EventLogin, Outcome: audit.OutcomeSuccess, Timestamp: base.Add(-1 * time.Second)})
@@ -282,6 +291,7 @@ func TestSink_PruneRespectsBoundary(t *testing.T) {
 // for a re-seed pass this value (instead of issuing a DROP TABLE +
 // migration round-trip).
 func TestSink_PruneWipesEverythingWhenFutureThreshold(t *testing.T) {
+	t.Parallel()
 	s := newTestSink(t)
 	now := time.Now().UTC()
 	for i := range 5 {
@@ -313,6 +323,7 @@ func TestSink_PruneWipesEverythingWhenFutureThreshold(t *testing.T) {
 // of operator scare from cron Prune runs on freshly-bootstrapped
 // servers.
 func TestSink_PruneOnEmptyTableSucceeds(t *testing.T) {
+	t.Parallel()
 	s := newTestSink(t)
 	deleted, err := s.Prune(context.Background(), time.Now())
 	if err != nil {
@@ -328,6 +339,7 @@ func TestSink_PruneOnEmptyTableSucceeds(t *testing.T) {
 // wrap audit sink in goroutine + cancellation pattern can rely on
 // the error to drive their shutdown ordering.
 func TestSink_PruneAfterCloseErrors(t *testing.T) {
+	t.Parallel()
 	s := newTestSink(t)
 	_ = s.Close()
 	_, err := s.Prune(context.Background(), time.Now())
@@ -356,6 +368,7 @@ func allEventsOldestFirst(t *testing.T, s *Sink) []*audit.Event {
 // ("") on a fresh table, so a first-boot Recorder seeds genesis exactly
 // as a non-resuming chainer would.
 func TestSink_LastHashEmptyStore(t *testing.T) {
+	t.Parallel()
 	s := newTestSink(t)
 	got, err := s.LastHash(context.Background())
 	if err != nil {
@@ -370,6 +383,7 @@ func TestSink_LastHashEmptyStore(t *testing.T) {
 // a tip read on a closed sink reports an error rather than nil-derefing,
 // so the Recorder's best-effort resume falls back to genesis cleanly.
 func TestSink_LastHashAfterCloseErrors(t *testing.T) {
+	t.Parallel()
 	s := newTestSink(t)
 	_ = s.Close()
 	if _, err := s.LastHash(context.Background()); err == nil {
@@ -385,6 +399,7 @@ func TestSink_LastHashAfterCloseErrors(t *testing.T) {
 // pre-restart Hash, so audit.VerifyChain accepts the combined sequence
 // as ONE unbroken chain — no spurious genesis at the seam.
 func TestSink_HashChainResumesAcrossRestart(t *testing.T) {
+	t.Parallel()
 	// File DB (not :memory:) so the second sink observes the rows the
 	// first wrote — a :memory: DSN is per-connection and would not
 	// share state across the simulated restart.

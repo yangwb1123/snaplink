@@ -57,6 +57,7 @@ func callCallback(t *testing.T, deps *pushCallbackDeps, urlPath, bearer string) 
 }
 
 func TestPushCallback_ApproveHappy(t *testing.T) {
+	t.Parallel()
 	store, _ := newCallbackTestStore(t)
 	seedApproval(t, store, "ch-1")
 	deps := &pushCallbackDeps{Store: store, Logger: quietLogger()}
@@ -72,6 +73,7 @@ func TestPushCallback_ApproveHappy(t *testing.T) {
 }
 
 func TestPushCallback_DenyHappy(t *testing.T) {
+	t.Parallel()
 	store, _ := newCallbackTestStore(t)
 	seedApproval(t, store, "ch-2")
 	deps := &pushCallbackDeps{Store: store, Logger: quietLogger()}
@@ -87,6 +89,7 @@ func TestPushCallback_DenyHappy(t *testing.T) {
 }
 
 func TestPushCallback_InvalidDecisionRejected(t *testing.T) {
+	t.Parallel()
 	store, _ := newCallbackTestStore(t)
 	seedApproval(t, store, "ch-3")
 	deps := &pushCallbackDeps{Store: store, Logger: quietLogger()}
@@ -102,6 +105,7 @@ func TestPushCallback_InvalidDecisionRejected(t *testing.T) {
 }
 
 func TestPushCallback_UnknownApprovalReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	store, _ := newCallbackTestStore(t)
 	deps := &pushCallbackDeps{Store: store, Logger: quietLogger()}
 
@@ -112,6 +116,7 @@ func TestPushCallback_UnknownApprovalReturnsNotFound(t *testing.T) {
 }
 
 func TestPushCallback_DoubleResolutionReturnsConflict(t *testing.T) {
+	t.Parallel()
 	store, _ := newCallbackTestStore(t)
 	seedApproval(t, store, "ch-4")
 	deps := &pushCallbackDeps{Store: store, Logger: quietLogger()}
@@ -127,6 +132,7 @@ func TestPushCallback_DoubleResolutionReturnsConflict(t *testing.T) {
 }
 
 func TestPushCallback_MissingBearerRejected(t *testing.T) {
+	t.Parallel()
 	store, _ := newCallbackTestStore(t)
 	seedApproval(t, store, "ch-5")
 	deps := &pushCallbackDeps{Store: store, BearerToken: "expected-token", Logger: quietLogger()}
@@ -145,6 +151,7 @@ func TestPushCallback_MissingBearerRejected(t *testing.T) {
 }
 
 func TestPushCallback_WrongBearerRejected(t *testing.T) {
+	t.Parallel()
 	store, _ := newCallbackTestStore(t)
 	seedApproval(t, store, "ch-6")
 	deps := &pushCallbackDeps{Store: store, BearerToken: "expected-token", Logger: quietLogger()}
@@ -160,6 +167,7 @@ func TestPushCallback_WrongBearerRejected(t *testing.T) {
 }
 
 func TestPushCallback_CorrectBearerAccepted(t *testing.T) {
+	t.Parallel()
 	store, _ := newCallbackTestStore(t)
 	seedApproval(t, store, "ch-7")
 	deps := &pushCallbackDeps{Store: store, BearerToken: "expected-token", Logger: quietLogger()}
@@ -171,6 +179,7 @@ func TestPushCallback_CorrectBearerAccepted(t *testing.T) {
 }
 
 func TestPushCallback_IPAllowlistBlocks(t *testing.T) {
+	t.Parallel()
 	store, _ := newCallbackTestStore(t)
 	seedApproval(t, store, "ch-8")
 	_, cidr, _ := net.ParseCIDR("10.0.0.0/8")
@@ -190,6 +199,7 @@ func TestPushCallback_IPAllowlistBlocks(t *testing.T) {
 }
 
 func TestPushCallback_IPAllowlistAccepts(t *testing.T) {
+	t.Parallel()
 	store, _ := newCallbackTestStore(t)
 	seedApproval(t, store, "ch-9")
 	_, cidr, _ := net.ParseCIDR("10.0.0.0/8")
@@ -208,6 +218,7 @@ func TestPushCallback_IPAllowlistAccepts(t *testing.T) {
 }
 
 func TestPushCallback_IPAllowlistAcceptsV4MappedV6(t *testing.T) {
+	t.Parallel()
 	store, _ := newCallbackTestStore(t)
 	seedApproval(t, store, "ch-10")
 	_, cidr, _ := net.ParseCIDR("10.0.0.0/8")
@@ -227,6 +238,7 @@ func TestPushCallback_IPAllowlistAcceptsV4MappedV6(t *testing.T) {
 }
 
 func TestParsePushCallbackPath_HappyAndFailure(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		path    string
 		wantID  string
@@ -248,6 +260,7 @@ func TestParsePushCallbackPath_HappyAndFailure(t *testing.T) {
 }
 
 func TestBuildPushCallbackDeps_RejectsBadCIDR(t *testing.T) {
+	t.Parallel()
 	store, _ := newCallbackTestStore(t)
 	_, err := buildPushCallbackDeps(config.MFAPushCallbackConfig{
 		AllowedCIDRs: []string{"not-a-cidr"},
@@ -265,6 +278,7 @@ func TestBuildPushCallbackDeps_RejectsBadCIDR(t *testing.T) {
 // successful SetStatus — and never on a not-found error (no spurious
 // wakeup for an id no Verify is parked on).
 func TestPushCallback_NotifyFiresOnSuccess(t *testing.T) {
+	t.Parallel()
 	store, _ := newCallbackTestStore(t)
 	seedApproval(t, store, "ch-notify")
 
@@ -302,6 +316,7 @@ func TestPushCallback_NotifyFiresOnSuccess(t *testing.T) {
 // toggle controls whether serverbuildstore.BuildMFA returns a live wakeup func: present
 // when true, nil when false (so the callback wiring degrades to poll).
 func TestBuildMFA_PushChannelNotifySurfacesNotifier(t *testing.T) {
+	t.Parallel()
 	mk := func(channelNotify bool) func(string) {
 		t.Helper()
 		_, _, _, _, _, notify, err := serverbuildstore.BuildMFA(config.MFAConfig{

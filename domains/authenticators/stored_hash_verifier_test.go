@@ -44,6 +44,7 @@ func importUser(t *testing.T, p *defaultimpl.MemoryUserProvider, id, plaintext, 
 }
 
 func TestStoredHashVerifier_MultiFormat(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	p := defaultimpl.NewMemoryUserProvider()
 	importUser(t, p, "alice", "alice-pw", authenticators.HashFormatArgon2id)
@@ -75,6 +76,7 @@ func TestStoredHashVerifier_MultiFormat(t *testing.T) {
 }
 
 func TestStoredHashRehashHooks_NonBcryptNeedsUpgrade(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	p := defaultimpl.NewMemoryUserProvider()
 	importUser(t, p, "alice", "pw", authenticators.HashFormatArgon2id)
@@ -104,6 +106,7 @@ func TestStoredHashRehashHooks_NonBcryptNeedsUpgrade(t *testing.T) {
 }
 
 func TestChainPasswordVerifier_FirstSuccessWins(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	p := defaultimpl.NewMemoryUserProvider()
 	importUser(t, p, "alice", "alice-pw", authenticators.HashFormatArgon2id)
@@ -133,6 +136,7 @@ func TestChainPasswordVerifier_FirstSuccessWins(t *testing.T) {
 // tool documents: an argon2id user logs in and the stored hash is transparently
 // migrated to bcrypt (async).
 func TestLazyRehash_UpgradesImportedHashOnLogin(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	p := defaultimpl.NewMemoryUserProvider()
 	importUser(t, p, "alice", "alice-pw", authenticators.HashFormatArgon2id)

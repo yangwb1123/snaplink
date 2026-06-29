@@ -32,6 +32,7 @@ func busyTimeoutOf(t *testing.T, dsn string) int {
 // fixes (such a connection previously ran with busy_timeout=0 and returned
 // SQLITE_BUSY immediately under writer contention).
 func TestBusyTimeout_DefaultApplied(t *testing.T) {
+	t.Parallel()
 	got := busyTimeoutOf(t, "file::memory:")
 	if got != defaultBusyTimeoutMS {
 		t.Errorf("busy_timeout = %d, want %d (hook must inject the default on a fresh conn)", got, defaultBusyTimeoutMS)
@@ -41,6 +42,7 @@ func TestBusyTimeout_DefaultApplied(t *testing.T) {
 // TestBusyTimeout_OperatorOverrideWins verifies an explicit DSN busy_timeout
 // is respected — the hook must not clobber operator-supplied config.
 func TestBusyTimeout_OperatorOverrideWins(t *testing.T) {
+	t.Parallel()
 	const want = 1234
 	got := busyTimeoutOf(t, "file::memory:?_pragma=busy_timeout(1234)")
 	if got != want {

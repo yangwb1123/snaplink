@@ -22,6 +22,7 @@ func newMFAChallenge(id string, ttl time.Duration) *spi.MFAChallenge {
 }
 
 func TestMFAChallengeStore_PutConsumeRoundTrip(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewMFAChallengeStore(rdb)
@@ -43,6 +44,7 @@ func TestMFAChallengeStore_PutConsumeRoundTrip(t *testing.T) {
 }
 
 func TestMFAChallengeStore_SingleUse(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewMFAChallengeStore(rdb)
@@ -61,6 +63,7 @@ func TestMFAChallengeStore_SingleUse(t *testing.T) {
 }
 
 func TestMFAChallengeStore_OracleLeak(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	ctx := context.Background()
 	s := NewMFAChallengeStore(rdb)
@@ -84,6 +87,7 @@ func TestMFAChallengeStore_OracleLeak(t *testing.T) {
 }
 
 func TestMFAChallengeStore_PutRejectsEmptyID(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewMFAChallengeStore(rdb)
 	c := newMFAChallenge("", spi.DefaultMFAChallengeTTL)
@@ -93,6 +97,7 @@ func TestMFAChallengeStore_PutRejectsEmptyID(t *testing.T) {
 }
 
 func TestMFAChallengeStore_Ping(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewMFAChallengeStore(rdb)
 	if err := s.Ping(context.Background()); err != nil {

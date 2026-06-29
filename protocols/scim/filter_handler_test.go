@@ -39,6 +39,7 @@ func listUsersFiltered(t *testing.T, h *Handler, raw string) (*httptest.Response
 // TestListUsersFilterRoundTrip is the headline acceptance test: the
 // userName eq round-trip a connector uses to reconcile a single user.
 func TestListUsersFilterRoundTrip(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	aliceID := createUserNamed(t, h, "alice@example.com", true)
 	createUserNamed(t, h, "bob@example.com", true)
@@ -59,6 +60,7 @@ func TestListUsersFilterRoundTrip(t *testing.T) {
 // TestListUsersFilterCaseInsensitive confirms the eq operator folds case
 // for the userName string both in the literal and the keyword.
 func TestListUsersFilterCaseInsensitive(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	createUserNamed(t, h, "Alice@Example.com", true)
 
@@ -71,6 +73,7 @@ func TestListUsersFilterCaseInsensitive(t *testing.T) {
 // TestListUsersFilterActive covers the deprovision-reconcile filter Azure
 // AD / Okta use: list only disabled accounts.
 func TestListUsersFilterActive(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	createUserNamed(t, h, "enabled@example.com", true)
 	disabledID := createUserNamed(t, h, "disabled@example.com", false)
@@ -88,6 +91,7 @@ func TestListUsersFilterActive(t *testing.T) {
 // handler so the parser + evaluator + integration path are covered
 // end-to-end.
 func TestListUsersFilterLogical(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	createUserNamed(t, h, "alice@corp.example", true)
 	createUserNamed(t, h, "bob@corp.example", false)
@@ -109,6 +113,7 @@ func TestListUsersFilterLogical(t *testing.T) {
 // TestListUsersFilterNoMatch confirms a filter matching nothing returns an
 // empty page with totalResults 0 (not an error).
 func TestListUsersFilterNoMatch(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	createUserNamed(t, h, "alice@example.com", true)
 
@@ -121,6 +126,7 @@ func TestListUsersFilterNoMatch(t *testing.T) {
 // TestListUsersFilterInvalid confirms a malformed filter yields HTTP 400
 // with the SCIM invalidFilter error shape (RFC 7644 §3.4.2.2 / §3.12).
 func TestListUsersFilterInvalid(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	createUserNamed(t, h, "alice@example.com", true)
 
@@ -144,6 +150,7 @@ func TestListUsersFilterInvalid(t *testing.T) {
 // unsupported "attr[...]" form) is rejected as invalidFilter rather than
 // silently returning the unfiltered set.
 func TestListUsersFilterValuePathRejected(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	createUserNamed(t, h, "alice@example.com", true)
 
@@ -160,6 +167,7 @@ func TestListUsersFilterValuePathRejected(t *testing.T) {
 // the FILTERED set: totalResults is the filtered count, and startIndex/
 // count page within it (RFC 7644 §3.4.2.2 + §3.4.2.4).
 func TestListUsersFilterPaginationAfterFilter(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	// 3 active + 1 disabled; filter to the 3 active, page size 2.
 	createUserNamed(t, h, "a@example.com", true)
@@ -187,6 +195,7 @@ func TestListUsersFilterPaginationAfterFilter(t *testing.T) {
 // TestListUsersNoFilterUnchanged confirms an absent ?filter= returns every
 // user (the filter is purely opt-in).
 func TestListUsersNoFilterUnchanged(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	createUserNamed(t, h, "alice@example.com", true)
 	createUserNamed(t, h, "bob@example.com", true)
@@ -217,6 +226,7 @@ func createGroupNamed(t *testing.T, h *Handler, displayName string) string {
 // TestListGroupsFilterRoundTrip confirms displayName eq filtering through
 // the Groups handler.
 func TestListGroupsFilterRoundTrip(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	engID := createGroupNamed(t, h, "Engineering")
 	createGroupNamed(t, h, "Sales")
@@ -241,6 +251,7 @@ func TestListGroupsFilterRoundTrip(t *testing.T) {
 // TestListGroupsFilterByMember confirms a members eq filter selects groups
 // containing a given user id (the membership reconcile a connector runs).
 func TestListGroupsFilterByMember(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	engID := createGroupNamed(t, h, "Engineering")
 	createGroupNamed(t, h, "Sales")
@@ -264,6 +275,7 @@ func TestListGroupsFilterByMember(t *testing.T) {
 // TestListGroupsFilterInvalid confirms a malformed group filter is
 // invalidFilter / 400.
 func TestListGroupsFilterInvalid(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	createGroupNamed(t, h, "Engineering")
 

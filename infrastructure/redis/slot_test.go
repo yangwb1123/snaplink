@@ -75,6 +75,7 @@ func assertSameSlot(t *testing.T, op string, keys ...string) {
 // checked, including one containing a '}' to prove the extraction stays
 // deterministic (so co-location holds regardless of the id's bytes).
 func TestPermissionsKeysShareSlot(t *testing.T) {
+	t.Parallel()
 	clients := []string{"client-123", "acme", "tenant:abc/web", "weird}id", "a-very-long-client-identifier-0001"}
 	users := []string{"alice", "bob-9", "user{0}"}
 	for _, c := range clients {
@@ -92,6 +93,7 @@ func TestPermissionsKeysShareSlot(t *testing.T) {
 // canonical examples from the Redis Cluster spec so a refactor of the
 // extraction can't silently diverge from what a real cluster computes.
 func TestSlotExtractionMatchesRedisExamples(t *testing.T) {
+	t.Parallel()
 	// Per the spec: {user1000} in both keys -> identical slot; no/empty tag
 	// hashes the whole key.
 	if slotOf("{user1000}.following") != slotOf("{user1000}.followers") {

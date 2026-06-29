@@ -7,6 +7,7 @@ import (
 )
 
 func TestSubjectClientIndex_RecordListForget(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	idx := NewSubjectClientIndex(rdb)
 	ctx := context.Background()
@@ -54,6 +55,7 @@ func TestSubjectClientIndex_RecordListForget(t *testing.T) {
 }
 
 func TestSubjectClientIndex_EmptyArgsAreNoOps(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	idx := NewSubjectClientIndex(rdb)
 	ctx := context.Background()
@@ -79,6 +81,7 @@ func TestSubjectClientIndex_EmptyArgsAreNoOps(t *testing.T) {
 }
 
 func TestSubjectClientIndex_Ping(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	idx := NewSubjectClientIndex(rdb)
 	if err := idx.Ping(context.Background()); err != nil {

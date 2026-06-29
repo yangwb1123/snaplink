@@ -18,6 +18,7 @@ import (
 // A fresh miniredis fake is spun up per Factory call so subtests never share
 // state (state leakage would mask backend bugs, which the suite warns about).
 func TestPermissionProvider_Conformance(t *testing.T) {
+	t.Parallel()
 	permissionstest.ConformanceSuite{
 		Factory: func(t *testing.T) permissions.Provider {
 			t.Helper()
@@ -34,6 +35,7 @@ func TestPermissionProvider_Conformance(t *testing.T) {
 // unknown-user sentinel — the assignment row + the users index entry are both
 // cleared.
 func TestPermissionProvider_EmptyAssignClearsRow(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, rdb := newTestClient(t)
 	p := NewPermissionProvider(rdb)
@@ -63,6 +65,7 @@ func TestPermissionProvider_EmptyAssignClearsRow(t *testing.T) {
 // role leaves the user out of ListAssignments — the emptied assignment SET is
 // deleted and the users index pruned, matching the memory + SQLite peers.
 func TestPermissionProvider_UnassignEmptiesIndex(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, rdb := newTestClient(t)
 	p := NewPermissionProvider(rdb)
@@ -90,6 +93,7 @@ func TestPermissionProvider_UnassignEmptiesIndex(t *testing.T) {
 // the per-user index drives the strip, so a multi-user fan-out must not miss
 // anyone.
 func TestPermissionProvider_RemoveRoleStripsAllUsers(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, rdb := newTestClient(t)
 	p := NewPermissionProvider(rdb)

@@ -33,6 +33,7 @@ func issueRSAPeerToken(t *testing.T, alg string) (token, peerKid string, peerPub
 // bypass the registry decode gate). e=1 makes verification the identity
 // (universal forgery); even e is non-invertible modulo the totient.
 func TestRSAPeerKey_DegenerateExponentRejected(t *testing.T) {
+	t.Parallel()
 	local := defaultimpl.NewRSAJWTIssuer(
 		defaultimpl.WithRSAIssuer("local-iss"),
 		defaultimpl.WithRSAAlg("RS256"),
@@ -57,6 +58,7 @@ func TestRSAPeerKey_DegenerateExponentRejected(t *testing.T) {
 // TestRSAPeerKey_AdoptAppearsInJWKS proves an adopted RSA peer key surfaces in
 // JWKS as a verify-only (use:sig) RSA entry stamped with the LOCAL issuer's alg.
 func TestRSAPeerKey_AdoptAppearsInJWKS(t *testing.T) {
+	t.Parallel()
 	local := defaultimpl.NewRSAJWTIssuer(
 		defaultimpl.WithRSAIssuer("local-iss"),
 		defaultimpl.WithRSAAlg("RS256"),
@@ -95,6 +97,7 @@ func TestRSAPeerKey_AdoptAppearsInJWKS(t *testing.T) {
 // TestRSAPeerKey_AdoptedTokenValidates proves a token signed by a SEPARATE
 // RS256 issuer validates on the local RS256 issuer after adoption.
 func TestRSAPeerKey_AdoptedTokenValidates(t *testing.T) {
+	t.Parallel()
 	local := defaultimpl.NewRSAJWTIssuer(
 		defaultimpl.WithRSAIssuer("local-iss"),
 		defaultimpl.WithRSAAlg("RS256"),
@@ -121,6 +124,7 @@ func TestRSAPeerKey_AdoptedTokenValidates(t *testing.T) {
 // PSS padding: a PS256 peer token validates on a PS256 local issuer after
 // adoption (RS256 and PS256 each carry their own routed verify path).
 func TestRSAPeerKey_PS256AdoptedTokenValidates(t *testing.T) {
+	t.Parallel()
 	local := defaultimpl.NewRSAJWTIssuer(
 		defaultimpl.WithRSAIssuer("local-iss"),
 		defaultimpl.WithRSAAlg("PS256"),
@@ -138,6 +142,7 @@ func TestRSAPeerKey_PS256AdoptedTokenValidates(t *testing.T) {
 // TestRSAPeerKey_LocalRotationLeavesPeerKeys proves the local key lifecycle
 // never touches adopted peer keys.
 func TestRSAPeerKey_LocalRotationLeavesPeerKeys(t *testing.T) {
+	t.Parallel()
 	local := defaultimpl.NewRSAJWTIssuer(
 		defaultimpl.WithRSAIssuer("local-iss"),
 		defaultimpl.WithRSAAlg("RS256"),
@@ -176,6 +181,7 @@ func TestRSAPeerKey_LocalRotationLeavesPeerKeys(t *testing.T) {
 // TestRSAPeerKey_AlgConfusionRejected proves an RS256 peer token is rejected by
 // an ES256 issuer (the alg gate runs before key lookup).
 func TestRSAPeerKey_AlgConfusionRejected(t *testing.T) {
+	t.Parallel()
 	token, _, _ := issueRSAPeerToken(t, "RS256")
 
 	ecIss := defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSAIssuer("ec-iss"))
@@ -190,6 +196,7 @@ func TestRSAPeerKey_AlgConfusionRejected(t *testing.T) {
 // identical across paddings; only the alg gate distinguishes them, so a PS256
 // token must never verify on an RS256 issuer.
 func TestRSAPeerKey_RS256VsPS256Strict(t *testing.T) {
+	t.Parallel()
 	// RS256 issuer, PS256 peer token + key.
 	rsLocal := defaultimpl.NewRSAJWTIssuer(
 		defaultimpl.WithRSAIssuer("rs-local"),
@@ -224,6 +231,7 @@ func TestRSAPeerKey_RS256VsPS256Strict(t *testing.T) {
 // with the local active signing key, an empty kid, a nil key, and an
 // undersized (< 2048-bit) modulus.
 func TestRSAPeerKey_CollisionGuard(t *testing.T) {
+	t.Parallel()
 	local := defaultimpl.NewRSAJWTIssuer(
 		defaultimpl.WithRSAIssuer("local-iss"),
 		defaultimpl.WithRSAAlg("RS256"),

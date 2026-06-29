@@ -17,6 +17,7 @@ import (
 // TestReadFromFile_PlainArray — the simplest input shape:
 // raw [event, event, ...] in chain order.
 func TestReadFromFile_PlainArray(t *testing.T) {
+	t.Parallel()
 	events := chainedEvents(t, 3)
 	raw, _ := json.Marshal(events)
 	path := filepath.Join(t.TempDir(), "events.json")
@@ -40,6 +41,7 @@ func TestReadFromFile_PlainArray(t *testing.T) {
 // response shape ({events: [...], count: N}) and feeding it back
 // should "just work" without unwrapping.
 func TestReadFromFile_EventsEnvelope(t *testing.T) {
+	t.Parallel()
 	events := chainedEvents(t, 2)
 	envelope := map[string]any{"events": events, "count": len(events)}
 	raw, _ := json.Marshal(envelope)
@@ -63,6 +65,7 @@ func TestReadFromFile_EventsEnvelope(t *testing.T) {
 // newest-first (API order) but written to a file, the tool should
 // auto-reverse so audit.VerifyChain accepts it.
 func TestReadFromFile_NewestFirstAutoReversed(t *testing.T) {
+	t.Parallel()
 	events := chainedEvents(t, 3)
 	// Flip to API order (newest first).
 	reversed := make([]*audit.Event, len(events))
@@ -89,6 +92,7 @@ func TestReadFromFile_NewestFirstAutoReversed(t *testing.T) {
 // then confirms the CLI reassembles the chain in oldest-first
 // order.
 func TestReadFromURL_PagesAndReverses(t *testing.T) {
+	t.Parallel()
 	events := chainedEvents(t, 7) // 7 events, 3 pages of 3 + partial of 1
 	// API returns newest-first by offset+limit. Build reversed
 	// view once.
@@ -127,6 +131,7 @@ func TestReadFromURL_PagesAndReverses(t *testing.T) {
 // TestReadFromURL_LimitStopsPagination — the CLI's --limit flag
 // caps how many events get pulled, even when the API has more.
 func TestReadFromURL_LimitStopsPagination(t *testing.T) {
+	t.Parallel()
 	events := chainedEvents(t, 10)
 	newestFirst := make([]*audit.Event, len(events))
 	for i, e := range events {
@@ -152,6 +157,7 @@ func TestReadFromURL_LimitStopsPagination(t *testing.T) {
 // fails the chain check exactly the way audit.VerifyChain
 // documents.
 func TestVerifyDetectsTamper(t *testing.T) {
+	t.Parallel()
 	events := chainedEvents(t, 3)
 	// Corrupt the middle event's reason string.
 	events[1].Reason = "tampered"

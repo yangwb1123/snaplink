@@ -11,6 +11,7 @@ import (
 )
 
 func TestMemoryInvitationStore_IssueConsumeSingleUse(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryInvitationStore()
 	ctx := context.Background()
 	if err := s.Issue(ctx, &core.Invitation{Token: "t1", TenantID: "acme", Email: "a@e.com", Role: core.TenantRoleMember, ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
@@ -27,6 +28,7 @@ func TestMemoryInvitationStore_IssueConsumeSingleUse(t *testing.T) {
 }
 
 func TestMemoryInvitationStore_MissingAndExpired(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryInvitationStore()
 	ctx := context.Background()
 	if _, err := s.Consume(ctx, "nope"); !errors.Is(err, core.ErrInvitationNotFound) {
@@ -39,6 +41,7 @@ func TestMemoryInvitationStore_MissingAndExpired(t *testing.T) {
 }
 
 func TestMemoryInvitationStore_ListByTenantPending(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryInvitationStore()
 	ctx := context.Background()
 	exp := time.Now().Add(time.Minute)
@@ -59,6 +62,7 @@ func TestMemoryInvitationStore_ListByTenantPending(t *testing.T) {
 }
 
 func TestMemoryInvitationStore_CrossTenantIsolation(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryInvitationStore()
 	ctx := context.Background()
 	exp := time.Now().Add(time.Minute)

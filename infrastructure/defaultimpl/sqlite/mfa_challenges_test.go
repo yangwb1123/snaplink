@@ -35,6 +35,7 @@ func sampleMFAChallenge() *spi.MFAChallenge {
 }
 
 func TestMFAChallengeStore_PutAndConsumeRoundTrip(t *testing.T) {
+	t.Parallel()
 	store := newMFAChallengeStoreForTest(t)
 	ctx := context.Background()
 
@@ -62,6 +63,7 @@ func TestMFAChallengeStore_PutAndConsumeRoundTrip(t *testing.T) {
 }
 
 func TestMFAChallengeStore_ConsumeIsSingleUse(t *testing.T) {
+	t.Parallel()
 	store := newMFAChallengeStoreForTest(t)
 	ctx := context.Background()
 
@@ -79,6 +81,7 @@ func TestMFAChallengeStore_ConsumeIsSingleUse(t *testing.T) {
 }
 
 func TestMFAChallengeStore_ConsumeUnknownReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	store := newMFAChallengeStoreForTest(t)
 	_, err := store.Consume(context.Background(), "ch-nonexistent")
 	if !errors.Is(err, spi.ErrMFAChallengeNotFound) {
@@ -87,6 +90,7 @@ func TestMFAChallengeStore_ConsumeUnknownReturnsNotFound(t *testing.T) {
 }
 
 func TestMFAChallengeStore_ExpiredEntryReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	store := newMFAChallengeStoreForTest(t)
 	ctx := context.Background()
 
@@ -110,6 +114,7 @@ func TestMFAChallengeStore_ExpiredEntryReturnsNotFound(t *testing.T) {
 }
 
 func TestMFAChallengeStore_PutEmptyIDRejected(t *testing.T) {
+	t.Parallel()
 	store := newMFAChallengeStoreForTest(t)
 	c := sampleMFAChallenge()
 	c.ID = ""
@@ -120,6 +125,7 @@ func TestMFAChallengeStore_PutEmptyIDRejected(t *testing.T) {
 }
 
 func TestMFAChallengeStore_PutNilRejected(t *testing.T) {
+	t.Parallel()
 	store := newMFAChallengeStoreForTest(t)
 	err := store.Put(context.Background(), nil)
 	if !errors.Is(err, spi.ErrMFAChallengeNotFound) {
@@ -128,6 +134,7 @@ func TestMFAChallengeStore_PutNilRejected(t *testing.T) {
 }
 
 func TestMFAChallengeStore_ConsumeEmptyIDReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	store := newMFAChallengeStoreForTest(t)
 	_, err := store.Consume(context.Background(), "")
 	if !errors.Is(err, spi.ErrMFAChallengeNotFound) {
@@ -136,6 +143,7 @@ func TestMFAChallengeStore_ConsumeEmptyIDReturnsNotFound(t *testing.T) {
 }
 
 func TestMFAChallengeStore_PingAfterClose(t *testing.T) {
+	t.Parallel()
 	store := newMFAChallengeStoreForTest(t)
 	if err := store.Ping(context.Background()); err != nil {
 		t.Fatalf("Ping open store: %v", err)
@@ -149,6 +157,7 @@ func TestMFAChallengeStore_PingAfterClose(t *testing.T) {
 }
 
 func TestMFAChallengeStore_DuplicateIDRejected(t *testing.T) {
+	t.Parallel()
 	// Same anti-replay guarantee Put gives at the wire — if a caller
 	// tries to overwrite an in-flight challenge, the second Put fails
 	// rather than silently displacing the first (which would let an

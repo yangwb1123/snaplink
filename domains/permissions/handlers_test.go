@@ -88,6 +88,7 @@ func queryEvents(t *testing.T, rec *audit.Recorder) []*audit.Event {
 }
 
 func TestHandleMyPermissions_Success(t *testing.T) {
+	t.Parallel()
 	p := fixture(t)
 	rec := audit.New(audit.NewMemorySink(16))
 	d := handlerDeps{prov: p, rec: rec, userID: "user-alice", clientD: "web-app", authOK: true}
@@ -112,6 +113,7 @@ func TestHandleMyPermissions_Success(t *testing.T) {
 }
 
 func TestHandleMyPermissions_UnauthenticatedNoOp(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{prov: permissions.NewMemoryProvider(), rec: audit.New(audit.NewMemorySink(4)), authOK: false}
 	ctx, rr := newHandlerCtx(t)
 	permissions.HandleMyPermissions(d, ctx)
@@ -122,6 +124,7 @@ func TestHandleMyPermissions_UnauthenticatedNoOp(t *testing.T) {
 }
 
 func TestHandleMyPermissions_NilProvider501(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{prov: nil, rec: nil, userID: "u", clientD: "c", authOK: true}
 	ctx, rr := newHandlerCtx(t)
 	permissions.HandleMyPermissions(d, ctx)
@@ -134,6 +137,7 @@ func TestHandleMyPermissions_NilProvider501(t *testing.T) {
 }
 
 func TestHandleMyPermissions_LookupError500(t *testing.T) {
+	t.Parallel()
 	rec := audit.New(audit.NewMemorySink(4))
 	d := handlerDeps{
 		prov:    failingProvider{Provider: permissions.NewMemoryProvider(), err: errors.New("boom")},
@@ -156,6 +160,7 @@ func TestHandleMyPermissions_LookupError500(t *testing.T) {
 }
 
 func TestHandleMyPermissions_UnknownUserStillOK(t *testing.T) {
+	t.Parallel()
 	// ErrUserNotFound is swallowed: the handler returns an empty list + 200,
 	// not a 500 (anti-enumeration / UX).
 	p := permissions.NewMemoryProvider()
@@ -172,6 +177,7 @@ func TestHandleMyPermissions_UnknownUserStillOK(t *testing.T) {
 }
 
 func TestHandleMyRoles_Success(t *testing.T) {
+	t.Parallel()
 	p := fixture(t)
 	rec := audit.New(audit.NewMemorySink(8))
 	d := handlerDeps{prov: p, rec: rec, userID: "user-alice", clientD: "web-app", authOK: true}
@@ -187,6 +193,7 @@ func TestHandleMyRoles_Success(t *testing.T) {
 }
 
 func TestHandleMyRoles_NilProvider501(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{prov: nil, userID: "u", clientD: "c", authOK: true}
 	ctx, rr := newHandlerCtx(t)
 	permissions.HandleMyRoles(d, ctx)
@@ -196,6 +203,7 @@ func TestHandleMyRoles_NilProvider501(t *testing.T) {
 }
 
 func TestHandleMyRoles_Unauthenticated(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{prov: permissions.NewMemoryProvider(), authOK: false}
 	ctx, rr := newHandlerCtx(t)
 	permissions.HandleMyRoles(d, ctx)
@@ -205,6 +213,7 @@ func TestHandleMyRoles_Unauthenticated(t *testing.T) {
 }
 
 func TestHandleMyRoles_LookupError500(t *testing.T) {
+	t.Parallel()
 	rec := audit.New(audit.NewMemorySink(4))
 	d := handlerDeps{
 		prov:    failingProvider{Provider: permissions.NewMemoryProvider(), err: errors.New("boom")},
@@ -224,6 +233,7 @@ func TestHandleMyRoles_LookupError500(t *testing.T) {
 }
 
 func TestHandleMyRoles_UnknownUserEmptyOK(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{prov: permissions.NewMemoryProvider(), rec: audit.New(audit.NewMemorySink(4)), userID: "ghost", clientD: "c", authOK: true}
 	ctx, rr := newHandlerCtx(t)
 	permissions.HandleMyRoles(d, ctx)
@@ -236,6 +246,7 @@ func TestHandleMyRoles_UnknownUserEmptyOK(t *testing.T) {
 }
 
 func TestHandleMyMenus_Success(t *testing.T) {
+	t.Parallel()
 	p := fixture(t)
 	rec := audit.New(audit.NewMemorySink(8))
 	d := handlerDeps{prov: p, rec: rec, userID: "user-alice", clientD: "web-app", authOK: true}
@@ -250,6 +261,7 @@ func TestHandleMyMenus_Success(t *testing.T) {
 }
 
 func TestHandleMyMenus_NilProvider501(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{prov: nil, userID: "u", clientD: "c", authOK: true}
 	ctx, rr := newHandlerCtx(t)
 	permissions.HandleMyMenus(d, ctx)
@@ -259,6 +271,7 @@ func TestHandleMyMenus_NilProvider501(t *testing.T) {
 }
 
 func TestHandleMyMenus_Unauthenticated(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{prov: permissions.NewMemoryProvider(), authOK: false}
 	ctx, rr := newHandlerCtx(t)
 	permissions.HandleMyMenus(d, ctx)
@@ -268,6 +281,7 @@ func TestHandleMyMenus_Unauthenticated(t *testing.T) {
 }
 
 func TestHandleMyMenus_LookupError500(t *testing.T) {
+	t.Parallel()
 	// Menus has no ErrUserNotFound short-circuit — ANY error is a 500.
 	rec := audit.New(audit.NewMemorySink(4))
 	d := handlerDeps{
@@ -288,6 +302,7 @@ func TestHandleMyMenus_LookupError500(t *testing.T) {
 }
 
 func TestHandleMyMenus_EmptyMenusOK(t *testing.T) {
+	t.Parallel()
 	// Unknown user → Provider.Menus returns an empty tree (not error) → 200.
 	d := handlerDeps{prov: permissions.NewMemoryProvider(), rec: audit.New(audit.NewMemorySink(4)), userID: "ghost", clientD: "c", authOK: true}
 	ctx, rr := newHandlerCtx(t)
@@ -298,6 +313,7 @@ func TestHandleMyMenus_EmptyMenusOK(t *testing.T) {
 }
 
 func TestHandleMyMenus_NilTreeNormalizedToEmpty(t *testing.T) {
+	t.Parallel()
 	// Provider returns (nil, nil): the handler must normalize the nil tree
 	// to an empty MenuTree{} and still return 200 with a menus key.
 	d := handlerDeps{
@@ -322,6 +338,7 @@ func TestHandleMyMenus_NilTreeNormalizedToEmpty(t *testing.T) {
 }
 
 func TestResolveForLogin_NilProviderReturnsNils(t *testing.T) {
+	t.Parallel()
 	roles, perms, menus := permissions.ResolveForLogin(nil, spi.NopLogger{}, context.Background(), "u", "c")
 	if roles != nil || perms != nil || menus != nil {
 		t.Fatalf("nil provider should yield nils, got %v / %v / %v", roles, perms, menus)
@@ -329,6 +346,7 @@ func TestResolveForLogin_NilProviderReturnsNils(t *testing.T) {
 }
 
 func TestResolveForLogin_PopulatesBundle(t *testing.T) {
+	t.Parallel()
 	p := fixture(t)
 	roles, perms, menus := permissions.ResolveForLogin(p, spi.NopLogger{}, context.Background(), "user-alice", "web-app")
 	if len(roles) != 1 {
@@ -343,6 +361,7 @@ func TestResolveForLogin_PopulatesBundle(t *testing.T) {
 }
 
 func TestResolveForLogin_UnknownUserSwallowsErr(t *testing.T) {
+	t.Parallel()
 	// ErrUserNotFound is swallowed for roles+perms; Menus returns empty.
 	// The function never errors out a login.
 	p := fixture(t)
@@ -353,6 +372,7 @@ func TestResolveForLogin_UnknownUserSwallowsErr(t *testing.T) {
 }
 
 func TestResolveForLogin_HardErrorsLoggedNotFatal(t *testing.T) {
+	t.Parallel()
 	// A non-ErrUserNotFound error from every read is logged and the
 	// function still returns (empty bundle) so login proceeds.
 	fp := failingProvider{Provider: permissions.NewMemoryProvider(), err: errors.New("backend down")}
@@ -363,12 +383,14 @@ func TestResolveForLogin_HardErrorsLoggedNotFatal(t *testing.T) {
 }
 
 func TestRecordQuery_NilRecorderNoPanic(t *testing.T) {
+	t.Parallel()
 	// Audit is opt-in: a nil recorder must be a safe no-op.
 	ctx, _ := newHandlerCtx(t)
 	permissions.RecordQuery(nil, ctx, "u", "c", core.KeyPermissions, true)
 }
 
 func TestRecordQuery_StampsFields(t *testing.T) {
+	t.Parallel()
 	rec := audit.New(audit.NewMemorySink(4))
 	ctx, _ := newHandlerCtx(t)
 	permissions.RecordQuery(rec, ctx, "user-x", "client-y", core.KeyMenus, false)

@@ -31,6 +31,7 @@ func bindForm(t *testing.T, body string, v any) error {
 }
 
 func TestFormIntoStruct(t *testing.T) {
+	t.Parallel()
 	t.Run("string and bool", func(t *testing.T) {
 		var got bindTarget
 		if err := bindForm(t, "grant_type=authorization_code&flag=true", &got); err != nil {
@@ -126,6 +127,7 @@ func TestFormIntoStruct(t *testing.T) {
 }
 
 func TestBindParamsJSONDefault(t *testing.T) {
+	t.Parallel()
 	// Missing Content-Type defaults to JSON (the original SDK contract).
 	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"grant_type":"x"}`))
 	rec := httptest.NewRecorder()
@@ -139,6 +141,7 @@ func TestBindParamsJSONDefault(t *testing.T) {
 }
 
 func TestBindParamsContentTypeWithCharset(t *testing.T) {
+	t.Parallel()
 	// The charset parameter must be stripped before dispatch.
 	req := httptest.NewRequest("POST", "/", strings.NewReader("grant_type=z"))
 	req.Header.Set(core.HeaderContentType, "application/x-www-form-urlencoded; charset=utf-8")
@@ -155,6 +158,7 @@ func TestBindParamsContentTypeWithCharset(t *testing.T) {
 // TestAuthenticateIntrospectionClientMissingCreds covers the early-return
 // branch when id or secret is empty (no store round trip).
 func TestAuthenticateIntrospectionClientMissingCreds(t *testing.T) {
+	t.Parallel()
 	cs := newMemClientStore()
 	ctx, _ := newCtx("POST", core.ContentTypeJSON, `{}`)
 	if err := authenticateIntrospectionClient(cs, ctx, "", "secret"); err == nil {

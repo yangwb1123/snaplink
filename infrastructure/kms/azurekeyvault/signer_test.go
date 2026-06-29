@@ -219,6 +219,7 @@ const (
 // TestPublicKeyParsesAndCaches verifies Public() builds the right key type
 // from the JWK and that GetKey is hit only once (the cache).
 func TestPublicKeyParsesAndCaches(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	s, err := NewSigner(f, testKeyName, testKeyVersion)
 	if err != nil {
@@ -248,6 +249,7 @@ func TestPublicKeyParsesAndCaches(t *testing.T) {
 
 // TestPublicKeyRSA verifies the RSA JWK (n/e) reconstructs the right key.
 func TestPublicKeyRSA(t *testing.T) {
+	t.Parallel()
 	f := newFakeRSA(t)
 	s, err := NewSigner(f, testKeyName, testKeyVersion)
 	if err != nil {
@@ -269,6 +271,7 @@ func TestPublicKeyRSA(t *testing.T) {
 // raw-R||S -> ASN.1 DER conversion is byte-exact across all three curves (a
 // wrong split would fail ecdsa.VerifyASN1).
 func TestSignVerifyTable(t *testing.T) {
+	t.Parallel()
 	msg := []byte("header.payload")
 	sum256 := sha256.Sum256(msg)
 	sum384 := sha512.Sum384(msg)
@@ -354,6 +357,7 @@ func TestSignVerifyTable(t *testing.T) {
 // convert + verify every time. Catches an off-by-one in the width handling
 // that a single-shot test could miss.
 func TestSignRepeatedVerifies(t *testing.T) {
+	t.Parallel()
 	for _, curve := range []elliptic.Curve{elliptic.P256(), elliptic.P384(), elliptic.P521()} {
 		f := newFakeEC(t, curve)
 		s, _ := NewSigner(f, testKeyName, testKeyVersion)
@@ -381,6 +385,7 @@ func TestSignRepeatedVerifies(t *testing.T) {
 // clearly — Azure Key Vault has no Ed25519/EdDSA key type. Driven against an
 // EC key (the realistic case: a caller mistakenly passes HashFunc()==0).
 func TestEdDSARejected(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	s, _ := NewSigner(f, testKeyName, testKeyVersion)
 	if _, err := s.Sign(rand.Reader, []byte("msg"), crypto.Hash(0)); !errors.Is(err, ErrUnsupportedKey) {
@@ -392,6 +397,7 @@ func TestEdDSARejected(t *testing.T) {
 // OKP/Ed25519 JWK, jwkToPublic rejects it (Azure has no such key, but the
 // public-key parse must fail loud rather than build a bogus key).
 func TestEd25519JWKRejected(t *testing.T) {
+	t.Parallel()
 	f := newFakeEd25519(t)
 	s, _ := NewSigner(f, testKeyName, testKeyVersion)
 	if _, err := s.PublicKey(context.Background()); !errors.Is(err, ErrUnsupportedKey) {
@@ -404,6 +410,7 @@ func TestEd25519JWKRejected(t *testing.T) {
 // rejected BEFORE any vault call, so a direct crypto.Signer caller cannot mint
 // a signature that disagrees with the JWKS-published ES* alg.
 func TestSignHashCurveMismatchRejected(t *testing.T) {
+	t.Parallel()
 	t.Run("P-256 with SHA-384", func(t *testing.T) {
 		f := newFakeEC(t, elliptic.P256())
 		s, _ := NewSigner(f, testKeyName, testKeyVersion)
@@ -446,6 +453,7 @@ func TestSignHashCurveMismatchRejected(t *testing.T) {
 // TestSignFailsClosed confirms a vault Sign error propagates (no unsigned
 // token ever leaves the signer).
 func TestSignFailsClosed(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	f.signErr = errors.New("vault forbidden")
 	s, _ := NewSigner(f, testKeyName, testKeyVersion)
@@ -459,6 +467,7 @@ func TestSignFailsClosed(t *testing.T) {
 // contract; this signer needs the hash it carries, so a nil must yield a clear
 // error, never a nil-interface panic on opts.HashFunc().
 func TestSignNilOptsRejected(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	s, _ := NewSigner(f, testKeyName, testKeyVersion)
 	digest := sha256.Sum256([]byte("x"))
@@ -482,6 +491,7 @@ func TestSignNilOptsRejected(t *testing.T) {
 // the full chain — Azure raw R||S -> azurekeyvault DER -> cryptosigner R||S ->
 // JWS ES256 -> Validate.
 func TestEndToEndECDSAIssuer(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	signer, err := NewSigner(f, testKeyName, testKeyVersion)
 	if err != nil {
@@ -517,6 +527,7 @@ func TestEndToEndECDSAIssuer(t *testing.T) {
 // TestEndToEndRSAIssuer mirrors the ECDSA end-to-end test for RS256 + PS256
 // through the REAL RSAJWTIssuer + cryptosigner.RSA bridge over the fake vault.
 func TestEndToEndRSAIssuer(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		alg  string
@@ -556,6 +567,7 @@ func TestEndToEndRSAIssuer(t *testing.T) {
 
 // TestNewRejectsBadArgs covers the cheap construction guards.
 func TestNewRejectsBadArgs(t *testing.T) {
+	t.Parallel()
 	if _, err := NewSigner(nil, testKeyName, testKeyVersion); err == nil {
 		t.Fatal("NewSigner(nil client) should error")
 	}
@@ -574,6 +586,7 @@ func TestNewRejectsBadArgs(t *testing.T) {
 // TokenCredential so the real azkeys.NewClient + azcore.TokenCredential seam
 // is exercised on the happy-credential path.
 func TestNewSignerFromVaultURLGuards(t *testing.T) {
+	t.Parallel()
 	if _, err := NewSignerFromVaultURL("", testKeyName, testKeyVersion, &fake.TokenCredential{}, nil); err == nil {
 		t.Fatal("empty vault URL should error")
 	}
@@ -602,6 +615,7 @@ func TestNewSignerFromVaultURLGuards(t *testing.T) {
 // poisoned), and once it clears every signer caches the same immutable key and
 // signs successfully.
 func TestConcurrentLoadPublicRetriesTransientError(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	f.failGetN.Store(5)
 
@@ -663,6 +677,7 @@ func rsaJWK(n, e []byte) *azkeys.JSONWebKey {
 // small odd exponents (e=3, e=65537) are accepted. A valid >=2048-bit modulus
 // is reused throughout so the EXPONENT is the only variable under test.
 func TestRSAExponentValidation(t *testing.T) {
+	t.Parallel()
 	good := newFakeRSA(t) // a real 2048-bit key supplies a valid modulus
 	nBytes := good.rsaKey.N.Bytes()
 
@@ -703,6 +718,7 @@ func TestRSAExponentValidation(t *testing.T) {
 // vault returning E=1 yields a nil Public()/erroring PublicKey, never an
 // rsa.PublicKey{E:1}.
 func TestRSAExponentValidationThroughPublic(t *testing.T) {
+	t.Parallel()
 	good := newFakeRSA(t)
 	f := &fakeVaultJWK{jwk: rsaJWK(good.rsaKey.N.Bytes(), []byte{0x01})}
 	s, err := NewSigner(f, testKeyName, testKeyVersion)
@@ -723,6 +739,7 @@ func TestRSAExponentValidationThroughPublic(t *testing.T) {
 // is accepted (and the existing happy-path RSA tests, which use 2048-bit keys,
 // stay green).
 func TestRSAModulusFloor(t *testing.T) {
+	t.Parallel()
 	e := []byte{0x01, 0x00, 0x01} // 65537, a valid exponent
 
 	weak, err := rsa.GenerateKey(rand.Reader, 1024)
@@ -755,6 +772,7 @@ func TestRSAModulusFloor(t *testing.T) {
 // would sign garbage. All three are fed through jwkToPublic against a real
 // curve's coordinate encoding.
 func TestECPointValidation(t *testing.T) {
+	t.Parallel()
 	curve := elliptic.P256()
 	curveName, coordLen := ecParams(curve)
 	p := curve.Params().P
@@ -829,6 +847,7 @@ func TestECPointValidation(t *testing.T) {
 // WithCallTimeout must return a context-deadline error promptly rather than
 // hanging the signing goroutine past any handler deadline.
 func TestSignCallTimeout(t *testing.T) {
+	t.Parallel()
 	f := newFakeEC(t, elliptic.P256())
 	never := make(chan struct{})
 	f.signBlock = never // Sign blocks forever (until ctx deadline)

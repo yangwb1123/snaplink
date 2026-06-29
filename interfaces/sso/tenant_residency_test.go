@@ -57,6 +57,7 @@ func constrainedTenant() *tenant.Tenant {
 // even for a fully-constrained tenant served from a disallowed region. This
 // is the nil-default byte-identical guarantee.
 func TestResidency_NotEnabledIsByteIdentical(t *testing.T) {
+	t.Parallel()
 	srv := newResidencyServer(t, false, constrainedTenant())
 	if srv.tenantResidencyCache != nil {
 		t.Fatal("residency cache allocated without WithTenantResidencyCheck")
@@ -71,6 +72,7 @@ func TestResidency_NotEnabledIsByteIdentical(t *testing.T) {
 // TestResidency_EmptyServingRegionUnconstrained: no resolved serving region
 // means unconstrained (region is a routing signal; absence = anywhere).
 func TestResidency_EmptyServingRegionUnconstrained(t *testing.T) {
+	t.Parallel()
 	srv := newResidencyServer(t, true, constrainedTenant())
 	if err := srv.checkTenantResidency(context.Background(), trTenantID, "", false); err != nil {
 		t.Fatalf("empty serving region = %v want nil", err)
@@ -79,6 +81,7 @@ func TestResidency_EmptyServingRegionUnconstrained(t *testing.T) {
 
 // TestResidency_EmptyTenantUnconstrained: no tenant binding → nothing to gate.
 func TestResidency_EmptyTenantUnconstrained(t *testing.T) {
+	t.Parallel()
 	srv := newResidencyServer(t, true, constrainedTenant())
 	if err := srv.checkTenantResidency(context.Background(), "", "us-east-1", false); err != nil {
 		t.Fatalf("empty tenant = %v want nil", err)
@@ -88,6 +91,7 @@ func TestResidency_EmptyTenantUnconstrained(t *testing.T) {
 // TestResidency_UnconstrainedTenant: a tenant with no HomeRegion accepts any
 // serving region for reads and writes.
 func TestResidency_UnconstrainedTenant(t *testing.T) {
+	t.Parallel()
 	srv := newResidencyServer(t, true, &tenant.Tenant{
 		ID: trTenantID, Slug: "tr", Status: tenant.StatusActive,
 		// HomeRegion empty, AllowedRegions nil, EnforceWrites false.
@@ -102,6 +106,7 @@ func TestResidency_UnconstrainedTenant(t *testing.T) {
 // TestResidency_HomeRegionAlwaysAllowed: serving from the home region is
 // allowed for both reads and writes regardless of EnforceWrites.
 func TestResidency_HomeRegionAlwaysAllowed(t *testing.T) {
+	t.Parallel()
 	seed := constrainedTenant()
 	seed.EnforceWrites = true
 	srv := newResidencyServer(t, true, seed)
@@ -115,6 +120,7 @@ func TestResidency_HomeRegionAlwaysAllowed(t *testing.T) {
 // TestResidency_RegionNotAllowed: a serving region outside AllowedRegions is
 // rejected with ErrRegionNotAllowed for both reads and writes.
 func TestResidency_RegionNotAllowed(t *testing.T) {
+	t.Parallel()
 	srv := newResidencyServer(t, true, constrainedTenant())
 	for _, isWrite := range []bool{false, true} {
 		err := srv.checkTenantResidency(context.Background(), trTenantID, "us-east-1", isWrite)
@@ -131,6 +137,7 @@ func TestResidency_RegionNotAllowed(t *testing.T) {
 //   - write + EnforceWrites=false         → nil (advisory, fail-open default)
 //   - write + EnforceWrites=true          → ErrResidencyViolation
 func TestResidency_AllowedNonHomeWriteMatrix(t *testing.T) {
+	t.Parallel()
 	const serving region.ID = "eu-central-1" // in AllowedRegions, != HomeRegion
 
 	t.Run("read does not enforce", func(t *testing.T) {
@@ -166,6 +173,7 @@ func TestResidency_AllowedNonHomeWriteMatrix(t *testing.T) {
 // region is unconstrained for reads, but a write under EnforceWrites still
 // can't leave HomeRegion. (HomeRegion set, AllowedRegions empty.)
 func TestResidency_EnforceWritesNoAllowedList(t *testing.T) {
+	t.Parallel()
 	srv := newResidencyServer(t, true, &tenant.Tenant{
 		ID: trTenantID, Slug: "tr", Status: tenant.StatusActive,
 		HomeRegion:    "eu-west-1",
@@ -216,6 +224,7 @@ func (*erroringTenantStore) Close() error                                    { r
 // request (residency is an AP/governance control, not a security CP
 // invariant) AND logs the failure.
 func TestResidency_StoreOutageFailsOpen(t *testing.T) {
+	t.Parallel()
 	logger := &capturingLogger{}
 	srv := NewServer(
 		WithLogger(logger),
@@ -285,6 +294,7 @@ func newCountingResidencyServer(t *testing.T, seed *tenant.Tenant) (*Server, *co
 // TestResidency_CacheAmortizesLookups: after the first resolution every
 // subsequent check hits the cache, so the tenant store is read exactly once.
 func TestResidency_CacheAmortizesLookups(t *testing.T) {
+	t.Parallel()
 	srv, counter := newCountingResidencyServer(t, constrainedTenant())
 	for i := 0; i < 20; i++ {
 		if err := srv.checkTenantResidency(context.Background(), trTenantID, "eu-west-1", false); err != nil {
@@ -299,6 +309,7 @@ func TestResidency_CacheAmortizesLookups(t *testing.T) {
 // TestResidency_InvalidateForcesRefetch: InvalidateTenantResidencyCache drops
 // the cached policy so the next check re-reads the store.
 func TestResidency_InvalidateForcesRefetch(t *testing.T) {
+	t.Parallel()
 	srv, counter := newCountingResidencyServer(t, constrainedTenant())
 
 	if err := srv.checkTenantResidency(context.Background(), trTenantID, "eu-west-1", false); err != nil {
@@ -319,6 +330,7 @@ func TestResidency_InvalidateForcesRefetch(t *testing.T) {
 // TestResidency_InvalidateNilSafe: calling Invalidate on a server with no
 // residency cache (and no bus) is a no-op, not a panic.
 func TestResidency_InvalidateNilSafe(t *testing.T) {
+	t.Parallel()
 	srv := NewServer()
 	srv.InvalidateTenantResidencyCache(trTenantID) // must not panic
 }
@@ -328,6 +340,7 @@ func TestResidency_InvalidateNilSafe(t *testing.T) {
 // cross-replica convergence path). It drives applyInvalidation directly,
 // the same way StartInvalidationBus would on a real Subscribe.
 func TestResidency_ApplyInvalidationDropsCache(t *testing.T) {
+	t.Parallel()
 	srv, counter := newCountingResidencyServer(t, constrainedTenant())
 
 	if err := srv.checkTenantResidency(context.Background(), trTenantID, "eu-west-1", false); err != nil {
@@ -358,6 +371,7 @@ func TestResidency_ApplyInvalidationDropsCache(t *testing.T) {
 // fans the change out to peers over the wired bus as a KindTenantResidency
 // Event (the cross-replica side of invalidation).
 func TestResidency_InvalidatePublishesToBus(t *testing.T) {
+	t.Parallel()
 	bus := clustermemory.New()
 	sub, err := bus.Subscribe(context.Background())
 	if err != nil {
@@ -388,6 +402,7 @@ func TestResidency_InvalidatePublishesToBus(t *testing.T) {
 // served fine from eu-central-1 is later restricted to eu-west-1 only, and the
 // next check after invalidation rejects.
 func TestResidency_PolicyEditPropagatesAfterInvalidate(t *testing.T) {
+	t.Parallel()
 	inner := tenantmemory.New()
 	_ = inner.PutTenant(context.Background(), constrainedTenant()) // allows eu-central-1
 	srv := NewServer(

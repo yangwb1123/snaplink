@@ -64,6 +64,7 @@ func newAggServer(t *testing.T, replicaID string, reg *signingkeysmemory.Registr
 // registry. After aggregation settles, a token minted by A validates on B
 // and A's kid appears in B's JWKS union (and vice versa).
 func TestSigningKeyAggregation_CrossReplicaVerify(t *testing.T) {
+	t.Parallel()
 	reg := signingkeysmemory.New()
 	defer func() { _ = reg.Close() }()
 
@@ -134,6 +135,7 @@ func TestSigningKeyAggregation_CrossReplicaVerify(t *testing.T) {
 // regression). StartSigningKeyAggregation is a no-op (already-closed chan,
 // nil error).
 func TestSigningKeyAggregation_OptInByteIdentity(t *testing.T) {
+	t.Parallel()
 	// Same key on both so JWKS is comparable: byte-identity is about the
 	// option not perturbing output, not about key material.
 	iss := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("https://sso.example"))
@@ -182,6 +184,7 @@ func TestSigningKeyAggregation_OptInByteIdentity(t *testing.T) {
 // peers but its own announcement — rejected by the registry for an empty
 // ReplicaID — would never land, so peers could not verify its tokens).
 func TestSigningKeyAggregation_RequiresReplicaID(t *testing.T) {
+	t.Parallel()
 	reg := signingkeysmemory.New()
 	defer func() { _ = reg.Close() }()
 
@@ -252,6 +255,7 @@ func issuerHasKid(t *testing.T, iss *defaultimpl.Ed25519JWTIssuer, kid string) b
 // the adopted kid from the issuer's JWKS AND make a token signed by that
 // peer's key fail Validate (unknown kid).
 func TestSigningKeyAggregation_DropPath(t *testing.T) {
+	t.Parallel()
 	srv, localIss := newEventServer(t, "replica-local")
 	_, peerIss := newEventServer(t, "replica-peer")
 	peerKid := peerIss.KeyID()
@@ -297,6 +301,7 @@ func TestSigningKeyAggregation_DropPath(t *testing.T) {
 // validate. Only when BOTH are gone does the refcount reach 0 and the kid
 // drop.
 func TestSigningKeyAggregation_SharedKidRefcount(t *testing.T) {
+	t.Parallel()
 	srv, localIss := newEventServer(t, "replica-local")
 
 	// One peer issuer; both announcements carry ITS key, simulating two
@@ -353,6 +358,7 @@ func TestSigningKeyAggregation_SharedKidRefcount(t *testing.T) {
 // and must not change Validate behavior. This proves the alg-match routing
 // gate at adoption time.
 func TestSigningKeyAggregation_CrossAlgRoutingGate(t *testing.T) {
+	t.Parallel()
 	srv, localIss := newEventServer(t, "replica-local")
 
 	before, err := localIss.JWKS(context.Background())
@@ -474,6 +480,7 @@ func issuerHasKidRSA(t *testing.T, iss *defaultimpl.RSAJWTIssuer, kid string) bo
 // CORRECT-alg issuer — appears in that issuer's JWKS, validates a token signed
 // by the matching peer, and does NOT appear in any other-alg issuer.
 func TestSigningKeyAggregation_MultiAlgRouting(t *testing.T) {
+	t.Parallel()
 	srv, edLocal, ecLocal, rsLocal := newMultiAlgEventServer(t, "replica-local")
 
 	// Three peers, one per alg, each minting a token + announcing its key.
@@ -550,6 +557,7 @@ func TestSigningKeyAggregation_MultiAlgRouting(t *testing.T) {
 // adopt a PS256-announced key (and a PS256-only Server must NOT adopt an
 // RS256-announced key). Alg-match is by the exact alg string, so RS256 != PS256.
 func TestSigningKeyAggregation_RS256VsPS256Routing(t *testing.T) {
+	t.Parallel()
 	// RS256-only Server; announce a PS256 key.
 	rsIss := defaultimpl.NewRSAJWTIssuer(
 		defaultimpl.WithRSAIssuer("https://sso.example"),
@@ -596,6 +604,7 @@ func TestSigningKeyAggregation_RS256VsPS256Routing(t *testing.T) {
 // subscriber path keeps going. An EC JWK whose x/y do not lie on P-256 must not
 // land in the ES256 issuer.
 func TestSigningKeyAggregation_MalformedECKeySkipped(t *testing.T) {
+	t.Parallel()
 	ecIss := defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSAIssuer("https://sso.example"))
 	srv := sso.NewServer(sso.WithTokenIssuer("jwt-es256", ecIss))
 	srv.SetReplicaIDForTest("local")
@@ -622,6 +631,7 @@ func TestSigningKeyAggregation_MalformedECKeySkipped(t *testing.T) {
 // the (odd) totient. Go's rsa.Verify* reject neither, so decodeRSAJWK must —
 // the key must never enter the RS256 issuer's verify-set.
 func TestSigningKeyAggregation_DegenerateRSAExponentSkipped(t *testing.T) {
+	t.Parallel()
 	rsIss := defaultimpl.NewRSAJWTIssuer(
 		defaultimpl.WithRSAIssuer("https://sso.example"),
 		defaultimpl.WithRSAAlg("RS256"),
@@ -653,6 +663,7 @@ func TestSigningKeyAggregation_DegenerateRSAExponentSkipped(t *testing.T) {
 // peer key is rejected at the aggregation decode path, symmetric with the
 // malformed-EC skip test (decodeRSAJWK modulus floor).
 func TestSigningKeyAggregation_WeakRSAModulusSkipped(t *testing.T) {
+	t.Parallel()
 	rsIss := defaultimpl.NewRSAJWTIssuer(
 		defaultimpl.WithRSAIssuer("https://sso.example"),
 		defaultimpl.WithRSAAlg("RS256"),

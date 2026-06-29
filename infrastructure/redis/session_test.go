@@ -11,6 +11,7 @@ import (
 )
 
 func TestSessionCreateGetDestroy(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	sm := NewSessionManager(rdb, WithSessionTTL(time.Hour))
 	ctx := context.Background()
@@ -40,6 +41,7 @@ func TestSessionCreateGetDestroy(t *testing.T) {
 }
 
 func TestSessionGetUnknown(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	sm := NewSessionManager(rdb)
 	if _, err := sm.Get(context.Background(), "nope"); !errors.Is(err, sso.ErrSessionNotFound) {
@@ -49,6 +51,7 @@ func TestSessionGetUnknown(t *testing.T) {
 
 // TestSessionRefreshExtends locks the happy path: a live session extends.
 func TestSessionRefreshExtends(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	sm := NewSessionManager(rdb, WithSessionTTL(time.Hour))
 	ctx := context.Background()
@@ -73,6 +76,7 @@ func TestSessionRefreshExtends(t *testing.T) {
 // extended by Refresh — it must read as ErrSessionNotFound, never silently
 // come back to life.
 func TestSessionRefreshRefusesExpired(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	// 1s TTL so we can drive expiry deterministically via miniredis' clock.
 	sm := NewSessionManager(rdb, WithSessionTTL(time.Second))
@@ -97,6 +101,7 @@ func TestSessionRefreshRefusesExpired(t *testing.T) {
 // TestSessionRefreshRefusesRevoked is the revoked half of the same
 // invariant: a revoked session can't be resurrected by Refresh.
 func TestSessionRefreshRefusesRevoked(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	sm := NewSessionManager(rdb, WithSessionTTL(time.Hour))
 	ctx := context.Background()
@@ -133,6 +138,7 @@ func TestSessionRefreshRefusesRevoked(t *testing.T) {
 // wall-clock time.Now() internally, so direct invocation is the only way to
 // pin `now` to the boundary deterministically).
 func TestSessionRefreshMillisBoundary(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 
@@ -195,6 +201,7 @@ func TestSessionRefreshMillisBoundary(t *testing.T) {
 // wall-clock read inside Refresh can't straddle the boundary and flake,
 // while still proving millis round-trips correctly end to end.
 func TestSessionRefreshNearExpiryPublicAPI(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	sm := NewSessionManager(rdb, WithSessionTTL(time.Hour))
 	ctx := context.Background()
@@ -226,6 +233,7 @@ func TestSessionRefreshNearExpiryPublicAPI(t *testing.T) {
 }
 
 func TestSessionRefreshUnknown(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	sm := NewSessionManager(rdb)
 	if _, err := sm.Refresh(context.Background(), "ghost"); !errors.Is(err, sso.ErrSessionNotFound) {
@@ -234,6 +242,7 @@ func TestSessionRefreshUnknown(t *testing.T) {
 }
 
 func TestSessionListByUserAndAll(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	sm := NewSessionManager(rdb, WithSessionTTL(time.Hour))
 	ctx := context.Background()

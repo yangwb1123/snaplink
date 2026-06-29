@@ -19,6 +19,7 @@ func mkDomain(host, tenantID string) *tenant.Domain {
 }
 
 func TestPutGetTenant_Roundtrip(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	if err := s.PutTenant(ctx, mkTenant("t1", "acme")); err != nil {
@@ -43,6 +44,7 @@ func TestPutGetTenant_Roundtrip(t *testing.T) {
 }
 
 func TestPutGetTenant_RegionFieldsRoundtrip(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	want := &tenant.Tenant{
@@ -74,6 +76,7 @@ func TestPutGetTenant_RegionFieldsRoundtrip(t *testing.T) {
 }
 
 func TestPutGetTenant_EnforceWritesRoundtrip(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	if err := s.PutTenant(ctx, &tenant.Tenant{
@@ -99,6 +102,7 @@ func TestPutGetTenant_EnforceWritesRoundtrip(t *testing.T) {
 }
 
 func TestPutGetTenant_RegionFieldsZeroIsUnconstrained(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	if err := s.PutTenant(ctx, mkTenant("t1", "acme")); err != nil {
@@ -111,6 +115,7 @@ func TestPutGetTenant_RegionFieldsZeroIsUnconstrained(t *testing.T) {
 }
 
 func TestGetTenant_MissingIsErrTenantNotFound(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	if _, err := s.GetTenant(context.Background(), "ghost"); !errors.Is(err, tenant.ErrTenantNotFound) {
 		t.Errorf("err=%v", err)
@@ -118,6 +123,7 @@ func TestGetTenant_MissingIsErrTenantNotFound(t *testing.T) {
 }
 
 func TestPutTenant_RejectsInvalid(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	if err := s.PutTenant(context.Background(), &tenant.Tenant{Slug: "x"}); !errors.Is(err, tenant.ErrInvalidTenant) {
 		t.Errorf("err=%v", err)
@@ -125,6 +131,7 @@ func TestPutTenant_RejectsInvalid(t *testing.T) {
 }
 
 func TestPutTenant_PreservesCreatedAt(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
@@ -140,6 +147,7 @@ func TestPutTenant_PreservesCreatedAt(t *testing.T) {
 }
 
 func TestListTenants_SortedByID(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	for _, id := range []string{"t-c", "t-a", "t-b"} {
@@ -152,6 +160,7 @@ func TestListTenants_SortedByID(t *testing.T) {
 }
 
 func TestDeleteTenant_CascadesDomains(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
@@ -163,6 +172,7 @@ func TestDeleteTenant_CascadesDomains(t *testing.T) {
 }
 
 func TestPutDomain_RoundtripWithCaseInsensitiveLookup(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
@@ -177,6 +187,7 @@ func TestPutDomain_RoundtripWithCaseInsensitiveLookup(t *testing.T) {
 }
 
 func TestGetDomain_TrailingDotNormalised(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
@@ -187,6 +198,7 @@ func TestGetDomain_TrailingDotNormalised(t *testing.T) {
 }
 
 func TestPutDomain_RejectsUnknownTenant(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	if err := s.PutDomain(context.Background(), mkDomain("acme.com", "ghost")); !errors.Is(err, tenant.ErrTenantNotFound) {
 		t.Errorf("err=%v", err)
@@ -194,6 +206,7 @@ func TestPutDomain_RejectsUnknownTenant(t *testing.T) {
 }
 
 func TestPutDomain_HostnameConflictRejected(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
@@ -205,6 +218,7 @@ func TestPutDomain_HostnameConflictRejected(t *testing.T) {
 }
 
 func TestPutDomain_SameTenantUpdateAllowed(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
@@ -221,6 +235,7 @@ func TestPutDomain_SameTenantUpdateAllowed(t *testing.T) {
 }
 
 func TestListDomainsByTenant(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	ctx := context.Background()
 	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
@@ -236,6 +251,7 @@ func TestListDomainsByTenant(t *testing.T) {
 }
 
 func TestDeleteDomain_Idempotent(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	if err := s.DeleteDomain(context.Background(), "ghost.com"); err != nil {
 		t.Errorf("delete on empty: %v", err)
@@ -243,6 +259,7 @@ func TestDeleteDomain_Idempotent(t *testing.T) {
 }
 
 func TestConcurrentAccess_NoRace(t *testing.T) {
+	t.Parallel()
 	// Race detector catches mutation-during-read; this just exercises
 	// the path concurrently.
 	s := memory.New()

@@ -15,6 +15,7 @@ import (
 // TestRcov2XM_ExchangeUnsupportedRequestedType covers the rejection branch for
 // an unsupported requested_token_type (invalid_request, oracle-safe).
 func TestRcov2XM_ExchangeUnsupportedRequestedType(t *testing.T) {
+	t.Parallel()
 	s := rcov2ExchangeServer(t, "")
 	subject := rcov2LoginToken(t, s)
 
@@ -34,6 +35,7 @@ func TestRcov2XM_ExchangeUnsupportedRequestedType(t *testing.T) {
 // TestRcov2XM_RefreshDownscope covers the refresh_token grant downscope path:
 // a refresh requesting a narrower scope than the original grant is honored.
 func TestRcov2XM_RefreshDownscope(t *testing.T) {
+	t.Parallel()
 	s := rcov2ExchangeServer(t, "")
 
 	// Login mints an access + refresh token (the exchange server wires a

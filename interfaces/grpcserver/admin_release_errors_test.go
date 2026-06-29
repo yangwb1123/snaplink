@@ -63,6 +63,7 @@ func startReleaseAdmin(t *testing.T, store releases.ReleaseStore, registry *rele
 // ---------- nil store → FailedPrecondition on every RPC ----------
 
 func TestReleaseAdmin_NilStore_FailedPrecondition(t *testing.T) {
+	t.Parallel()
 	c := startReleaseAdmin(t, nil, nil)
 	ctx := context.Background()
 
@@ -105,6 +106,7 @@ func TestReleaseAdmin_NilStore_FailedPrecondition(t *testing.T) {
 // ---------- Pin/Rollback without registry → FailedPrecondition ----------
 
 func TestReleaseAdmin_PinRollback_NilRegistry_FailedPrecondition(t *testing.T) {
+	t.Parallel()
 	store := &erroringReleaseStore{}
 	c := startReleaseAdmin(t, store, nil) // store present but no Registry
 	ctx := context.Background()
@@ -120,6 +122,7 @@ func TestReleaseAdmin_PinRollback_NilRegistry_FailedPrecondition(t *testing.T) {
 // ---------- bad args → InvalidArgument ----------
 
 func TestReleaseAdmin_BadArgs_InvalidArgument(t *testing.T) {
+	t.Parallel()
 	store := &erroringReleaseStore{}
 	registry := &releases.Registry{Store: store, Pinner: noop.Pinner{}}
 	c := startReleaseAdmin(t, store, registry)
@@ -158,6 +161,7 @@ func TestReleaseAdmin_BadArgs_InvalidArgument(t *testing.T) {
 // ---------- store error → Internal ----------
 
 func TestReleaseAdmin_StoreError_Internal(t *testing.T) {
+	t.Parallel()
 	store := &erroringReleaseStore{err: errors.New("disk full")}
 	registry := &releases.Registry{Store: store, Pinner: noop.Pinner{}}
 	c := startReleaseAdmin(t, store, registry)
@@ -182,6 +186,7 @@ func TestReleaseAdmin_StoreError_Internal(t *testing.T) {
 // ---------- sentinel mappings via mapReleaseError ----------
 
 func TestReleaseAdmin_Get_NotFound(t *testing.T) {
+	t.Parallel()
 	store := &erroringReleaseStore{err: releases.ErrReleaseNotFound}
 	c := startReleaseAdmin(t, store, nil)
 	if _, err := c.Get(context.Background(), &adminv1.GetReleaseRequest{Id: "ghost"}); status.Code(err) != codes.NotFound {
@@ -190,6 +195,7 @@ func TestReleaseAdmin_Get_NotFound(t *testing.T) {
 }
 
 func TestReleaseAdmin_Register_AlreadyExists(t *testing.T) {
+	t.Parallel()
 	store := &erroringReleaseStore{err: releases.ErrReleaseExists}
 	registry := &releases.Registry{Store: store, Pinner: noop.Pinner{}}
 	c := startReleaseAdmin(t, store, registry)
@@ -202,6 +208,7 @@ func TestReleaseAdmin_Register_AlreadyExists(t *testing.T) {
 }
 
 func TestReleaseAdmin_Register_InvalidPair(t *testing.T) {
+	t.Parallel()
 	store := &erroringReleaseStore{err: releases.ErrInvalidPair}
 	registry := &releases.Registry{Store: store, Pinner: noop.Pinner{}}
 	c := startReleaseAdmin(t, store, registry)
@@ -217,6 +224,7 @@ func TestReleaseAdmin_Register_InvalidPair(t *testing.T) {
 // error" — the response is OK with no Release field set. Fresh
 // deployments rely on this so polling code never branches on an error.
 func TestReleaseAdmin_GetCurrent_NoCurrentIsOK(t *testing.T) {
+	t.Parallel()
 	store := &erroringReleaseStore{err: releases.ErrNoCurrent}
 	c := startReleaseAdmin(t, store, nil)
 	resp, err := c.GetCurrent(context.Background(), &adminv1.GetCurrentReleaseRequest{})
@@ -231,6 +239,7 @@ func TestReleaseAdmin_GetCurrent_NoCurrentIsOK(t *testing.T) {
 // ---------- helper nil-input branches ----------
 
 func TestReleaseAdmin_ProtoMappers_NilTolerant(t *testing.T) {
+	t.Parallel()
 	// releaseToProto(nil) and pinReportToProto(nil) both return nil —
 	// exercised via the public RPCs that internally call them on
 	// nil inputs.

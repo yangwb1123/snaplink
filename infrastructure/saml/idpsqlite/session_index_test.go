@@ -21,6 +21,7 @@ const testSPCap = 8
 // list-copy, per-subject SP cap). The subject-LRU bound is memory-only by design
 // (see SessionIndexConformance's doc) and not asserted here.
 func TestSessionIndexConformance_SQLite(t *testing.T) {
+	t.Parallel()
 	sessionindextest.SessionIndexConformance{
 		Factory: func(t *testing.T) samlidp.SAMLSessionIndex {
 			idx, err := NewSessionIndex(uniqDSN("idp_sessidx_conf"), WithMaxSPsPerSubject(testSPCap))
@@ -38,6 +39,7 @@ func TestSessionIndexConformance_SQLite(t *testing.T) {
 // newest position (recorded_at bumped), matching the memory store's MoveToBack —
 // so the per-subject cap evicts by genuine recency, not original insert order.
 func TestSessionIndex_ReRecordBumpsOrder(t *testing.T) {
+	t.Parallel()
 	idx, err := NewSessionIndex(uniqDSN("idp_sessidx_order"))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -62,6 +64,7 @@ func TestSessionIndex_ReRecordBumpsOrder(t *testing.T) {
 // TestSessionIndex_Migration proves the schema migration applies on a fresh DB
 // (records v2, the latest) and no-ops on re-open.
 func TestSessionIndex_Migration(t *testing.T) {
+	t.Parallel()
 	db := openSharedDB(t, "idp_sessidx_migrate")
 	ctx := context.Background()
 	if _, err := NewSessionIndexWithDB(db); err != nil {
@@ -83,6 +86,7 @@ func TestSessionIndex_Migration(t *testing.T) {
 // clobbering each other. The session index is at v2 (with expires_at), the
 // logout replay remains at v1.
 func TestSessionIndex_SharedDBNamespaceIsolation(t *testing.T) {
+	t.Parallel()
 	db := openSharedDB(t, "idp_shared")
 	ctx := context.Background()
 	if _, err := NewSessionIndexWithDB(db); err != nil {
@@ -104,6 +108,7 @@ func TestSessionIndex_SharedDBNamespaceIsolation(t *testing.T) {
 // row (the composite PK + ON CONFLICT collapses concurrent inserts). Run with
 // -race -count=10.
 func TestSessionIndex_ConcurrentRecordSameSP(t *testing.T) {
+	t.Parallel()
 	idx, err := NewSessionIndex(uniqDSN("idp_sessidx_conc"))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -131,6 +136,7 @@ func TestSessionIndex_ConcurrentRecordSameSP(t *testing.T) {
 // TestSessionIndex_ConcurrentMixed hammers Record/List/Remove/RemoveAll across
 // many subjects (race-detector + bound check). Run with -race -count=10.
 func TestSessionIndex_ConcurrentMixed(t *testing.T) {
+	t.Parallel()
 	idx, err := NewSessionIndex(uniqDSN("idp_sessidx_mixed"))
 	if err != nil {
 		t.Fatalf("new: %v", err)

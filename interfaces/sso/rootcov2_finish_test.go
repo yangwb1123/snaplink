@@ -24,6 +24,7 @@ import (
 // TestRcov2F_GeoAndPermissionsLogin covers the geo-enrichment + embedded-
 // permissions branches of finishLogin and the full OIDC userinfo projection.
 func TestRcov2F_GeoAndPermissionsLogin(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(ctx, &sso.User{ID: rcovUser})

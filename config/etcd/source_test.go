@@ -22,6 +22,7 @@ import (
 // value) and a nil *Source both surface a typed closed-error rather
 // than panic.
 func TestPing_NilReceiverAndClient(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	if err := (*Source)(nil).Ping(ctx); err == nil {
@@ -33,6 +34,7 @@ func TestPing_NilReceiverAndClient(t *testing.T) {
 }
 
 func TestParseKey_BasicNested(t *testing.T) {
+	t.Parallel()
 	got := parseKey("/snaplink/config", "/snaplink/config/server/listen")
 	want := []string{"server", "listen"}
 	if !reflect.DeepEqual(got, want) {
@@ -41,6 +43,7 @@ func TestParseKey_BasicNested(t *testing.T) {
 }
 
 func TestParseKey_PrefixWithTrailingSlash(t *testing.T) {
+	t.Parallel()
 	got := parseKey("/snaplink/config/", "/snaplink/config/server/listen")
 	want := []string{"server", "listen"}
 	if !reflect.DeepEqual(got, want) {
@@ -49,6 +52,7 @@ func TestParseKey_PrefixWithTrailingSlash(t *testing.T) {
 }
 
 func TestParseKey_LowercasesSegments(t *testing.T) {
+	t.Parallel()
 	got := parseKey("/snaplink/config", "/snaplink/config/Server/Listen")
 	want := []string{"server", "listen"}
 	if !reflect.DeepEqual(got, want) {
@@ -57,12 +61,14 @@ func TestParseKey_LowercasesSegments(t *testing.T) {
 }
 
 func TestParseKey_NotUnderPrefix(t *testing.T) {
+	t.Parallel()
 	if got := parseKey("/snaplink/config", "/other/key"); got != nil {
 		t.Errorf("expected nil for off-prefix key, got %v", got)
 	}
 }
 
 func TestParseKey_PrefixCollisionBoundary(t *testing.T) {
+	t.Parallel()
 	// "/snaplink/configX/foo" should NOT match prefix "/snaplink/config"
 	// — the trailing-slash boundary is what etcd's own WithPrefix gets
 	// wrong if you don't enforce it.
@@ -72,6 +78,7 @@ func TestParseKey_PrefixCollisionBoundary(t *testing.T) {
 }
 
 func TestParseKey_BarePrefixHasNoLeaf(t *testing.T) {
+	t.Parallel()
 	if got := parseKey("/snaplink/config", "/snaplink/config"); got != nil {
 		t.Errorf("expected nil for bare-prefix key, got %v", got)
 	}
@@ -81,6 +88,7 @@ func TestParseKey_BarePrefixHasNoLeaf(t *testing.T) {
 }
 
 func TestParseKey_DropsEmptySegments(t *testing.T) {
+	t.Parallel()
 	got := parseKey("/snaplink/config", "/snaplink/config//server//listen/")
 	want := []string{"server", "listen"}
 	if !reflect.DeepEqual(got, want) {
@@ -89,6 +97,7 @@ func TestParseKey_DropsEmptySegments(t *testing.T) {
 }
 
 func TestBuildConfigMap_NestedKeys(t *testing.T) {
+	t.Parallel()
 	got := buildConfigMap("/snaplink/config", []kv{
 		{Key: "/snaplink/config/server/listen", Value: ":9090"},
 		{Key: "/snaplink/config/logging/level", Value: "debug"},
@@ -104,6 +113,7 @@ func TestBuildConfigMap_NestedKeys(t *testing.T) {
 }
 
 func TestBuildConfigMap_TypeCoercion(t *testing.T) {
+	t.Parallel()
 	got := buildConfigMap("/snaplink/config", []kv{
 		{Key: "/snaplink/config/bootstrap/disabled", Value: "true"},
 		{Key: "/snaplink/config/audit/memory_capacity", Value: "512"},
@@ -122,6 +132,7 @@ func TestBuildConfigMap_TypeCoercion(t *testing.T) {
 }
 
 func TestBuildConfigMap_YAMLValueParsedAsSubtree(t *testing.T) {
+	t.Parallel()
 	// An operator who wants to drop a chunk of YAML at one etcd key
 	// — common when seeding the whole config from a single put — gets
 	// it parsed as a subtree, matching the env source semantics.
@@ -138,6 +149,7 @@ func TestBuildConfigMap_YAMLValueParsedAsSubtree(t *testing.T) {
 }
 
 func TestBuildConfigMap_OffPrefixSkipped(t *testing.T) {
+	t.Parallel()
 	got := buildConfigMap("/snaplink/config", []kv{
 		{Key: "/other/garbage", Value: "ignored"},
 		{Key: "/snaplink/config/server/listen", Value: ":9090"},
@@ -152,6 +164,7 @@ func TestBuildConfigMap_OffPrefixSkipped(t *testing.T) {
 }
 
 func TestBuildConfigMap_EmptyReturnsNil(t *testing.T) {
+	t.Parallel()
 	if got := buildConfigMap("/snaplink/config", nil); got != nil {
 		t.Errorf("empty kvs should yield nil, got %v", got)
 	}
@@ -163,6 +176,7 @@ func TestBuildConfigMap_EmptyReturnsNil(t *testing.T) {
 }
 
 func TestSource_Name(t *testing.T) {
+	t.Parallel()
 	s := &Source{prefix: "/snaplink/config"}
 	if got := s.Name(); got != "etcd:/snaplink/config" {
 		t.Errorf("Name = %q", got)
@@ -170,12 +184,14 @@ func TestSource_Name(t *testing.T) {
 }
 
 func TestNew_RequiresEndpoints(t *testing.T) {
+	t.Parallel()
 	if _, err := New(Config{}); err == nil {
 		t.Error("expected error when endpoints is empty")
 	}
 }
 
 func TestNewWithClient_EmptyPrefixGetsDefault(t *testing.T) {
+	t.Parallel()
 	// Passing a nil client is fine here — we only inspect the prefix
 	// field that NewWithClient sets up. Dialing happens on Load, which
 	// this test does not call.
@@ -186,6 +202,7 @@ func TestNewWithClient_EmptyPrefixGetsDefault(t *testing.T) {
 }
 
 func TestNewWithClient_KeepsExplicitPrefix(t *testing.T) {
+	t.Parallel()
 	s := NewWithClient(nil, "/custom")
 	if s.prefix != "/custom" {
 		t.Errorf("prefix = %q, want /custom", s.prefix)

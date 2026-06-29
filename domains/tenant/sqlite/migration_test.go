@@ -15,6 +15,7 @@ import (
 // key survives running through the migration runner (deleting a tenant
 // removes its domains).
 func TestMigration_StampsHeadAndKeepsCascade(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s, err := New("file:" + filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -51,6 +52,7 @@ func TestMigration_StampsHeadAndKeepsCascade(t *testing.T) {
 // columns, existing tenants stay byte-compatible (empty HomeRegion / nil
 // AllowedRegions), and the version stamps to 2.
 func TestMigration_V2NoOpsOnV1PopulatedDB(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dsn := "file:" + filepath.Join(t.TempDir(), "v1.db")
 
@@ -125,6 +127,7 @@ func TestMigration_V2NoOpsOnV1PopulatedDB(t *testing.T) {
 // deployment upgrading to a v3 binary gains the column, existing tenants stay
 // byte-compatible (EnforceWrites false), and the version stamps to 3.
 func TestMigration_V3NoOpsOnV2PopulatedDB(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dsn := "file:" + filepath.Join(t.TempDir(), "v2.db")
 
@@ -195,6 +198,7 @@ func TestMigration_V3NoOpsOnV2PopulatedDB(t *testing.T) {
 // TestMigration_RerunIsIdempotent proves running the full set twice (a
 // replica reboot) is a no-op — the version stays at head and no error.
 func TestMigration_RerunIsIdempotent(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dsn := "file:" + filepath.Join(t.TempDir(), "rerun.db")
 	s1, err := New(dsn)

@@ -30,6 +30,7 @@ func ecJWK(t *testing.T, pub *ecdsa.PublicKey, crv string) core.JWK {
 }
 
 func TestECDHJWEResponseEncrypter_RoundTrip(t *testing.T) {
+	t.Parallel()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("genkey: %v", err)
@@ -62,6 +63,7 @@ func TestECDHJWEResponseEncrypter_RoundTrip(t *testing.T) {
 }
 
 func TestECDHJWEResponseEncrypter_Rejects(t *testing.T) {
+	t.Parallel()
 	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	jwks := []core.JWK{ecJWK(t, &priv.PublicKey, "P-256")}
 	enc := defaultimpl.NewECDHJWEResponseEncrypter()
@@ -81,6 +83,7 @@ func TestECDHJWEResponseEncrypter_Rejects(t *testing.T) {
 }
 
 func TestMultiJWEResponseEncrypter_Routing(t *testing.T) {
+	t.Parallel()
 	multi := defaultimpl.NewMultiJWEResponseEncrypter(
 		defaultimpl.NewRSAJWEResponseEncrypter(),
 		defaultimpl.NewECDHJWEResponseEncrypter(),
@@ -108,6 +111,7 @@ func TestMultiJWEResponseEncrypter_Routing(t *testing.T) {
 }
 
 func TestMultiJWEResponseEncrypter_DuplicateAlgPanics(t *testing.T) {
+	t.Parallel()
 	defer func() {
 		if recover() == nil {
 			t.Error("expected panic on duplicate alg across encrypters")

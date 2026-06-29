@@ -12,6 +12,7 @@ import (
 // the single-element fallback only when nothing was recorded so amr is never
 // absent.
 func TestAmrForResult(t *testing.T) {
+	t.Parallel()
 	t.Run("recorded methods win and are copied", func(t *testing.T) {
 		methods := []string{"pwd", "otp"}
 		res := &core.AuthResult{AuthMethods: methods, Provider: "password"}
@@ -39,6 +40,7 @@ func TestAmrForResult(t *testing.T) {
 // TestAmrOrProvider exercises the shared helper directly, including the
 // empty-methods fallback used by the authorization_code replay path.
 func TestAmrOrProvider(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		methods  []string
@@ -63,6 +65,7 @@ func TestAmrOrProvider(t *testing.T) {
 // factor's amr value plus the "mfa" marker, deduped and order-preserving, with
 // the totp->otp mapping applied and unknown factors passing through.
 func TestWithMFAMethod(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		existing []string
@@ -88,6 +91,7 @@ func TestWithMFAMethod(t *testing.T) {
 // TestWithMFAMethod_DoesNotMutateInput guards that the fold never writes back
 // into the caller's slice (it builds a fresh copy first).
 func TestWithMFAMethod_DoesNotMutateInput(t *testing.T) {
+	t.Parallel()
 	existing := []string{"pwd"}
 	_ = WithMFAMethod(existing, "totp")
 	if !slices.Equal(existing, []string{"pwd"}) {

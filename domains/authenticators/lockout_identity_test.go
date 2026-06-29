@@ -13,6 +13,7 @@ import (
 // could inject a varying username (ignored by the authenticator) to defeat
 // lockout. LockoutKeyer returns ONLY the real, normalized identity.
 func TestLockoutIdentity_ClosesFieldInjectionBypass(t *testing.T) {
+	t.Parallel()
 	var _ core.LockoutKeyer = (*PhoneAuthenticator)(nil)
 	var _ core.LockoutKeyer = (*EmailAuthenticator)(nil)
 

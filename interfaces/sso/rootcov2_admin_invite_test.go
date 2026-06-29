@@ -33,6 +33,7 @@ func (s *rcov2AdminInviteSender) SendInvitation(_ context.Context, email, tenant
 
 // TestRcov2AI_SendInvitation drives the admin send + list invitation handlers.
 func TestRcov2AI_SendInvitation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(ctx, &sso.User{ID: rcovUser})

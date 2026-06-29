@@ -82,6 +82,7 @@ func newRevokeDeps(cs core.ClientStore, rs RefreshTokenStore) *revokeDeps {
 }
 
 func TestHandleRevoke(t *testing.T) {
+	t.Parallel()
 	t.Run("misconfigured nil client store", func(t *testing.T) {
 		d := &revokeDeps{}
 		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, `{}`)
@@ -238,6 +239,7 @@ func TestHandleRevoke(t *testing.T) {
 }
 
 func TestHandleRevokeAll(t *testing.T) {
+	t.Parallel()
 	t.Run("no issuers misconfigured", func(t *testing.T) {
 		d := &revokeDeps{issuers: map[string]core.TokenIssuer{}}
 		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, `{}`)

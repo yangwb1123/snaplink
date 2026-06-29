@@ -3,6 +3,7 @@ package registry
 import "testing"
 
 func TestService_Endpoint(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		s    Service
@@ -23,6 +24,7 @@ func TestService_Endpoint(t *testing.T) {
 }
 
 func TestItoa(t *testing.T) {
+	t.Parallel()
 	cases := map[int]string{
 		0:       "0",
 		1:       "1",
@@ -39,6 +41,7 @@ func TestItoa(t *testing.T) {
 }
 
 func TestErrNotFound_StableMessage(t *testing.T) {
+	t.Parallel()
 	// Wire-level contract: clients branch on this sentinel via errors.Is;
 	// the message is also surfaced in some logs. Don't change it lightly.
 	if ErrNotFound.Error() != "registry: service not found" {
@@ -47,6 +50,7 @@ func TestErrNotFound_StableMessage(t *testing.T) {
 }
 
 func TestEventType_Constants(t *testing.T) {
+	t.Parallel()
 	// Wire-level enums consumed by Watch subscribers — keep stable.
 	cases := map[EventType]string{
 		EventAdded:   "added",

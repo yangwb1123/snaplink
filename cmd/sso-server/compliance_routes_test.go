@@ -37,6 +37,7 @@ func complianceTestDeps(t *testing.T) (*complianceDeps, *audit.MemorySink) {
 }
 
 func TestComplianceExportHandler(t *testing.T) {
+	t.Parallel()
 	deps, sink := complianceTestDeps(t)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/compliance/users/u1/export", nil)
@@ -62,6 +63,7 @@ func TestComplianceExportHandler(t *testing.T) {
 }
 
 func TestComplianceEraseHandler(t *testing.T) {
+	t.Parallel()
 	deps, sink := complianceTestDeps(t)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/compliance/users/u1/erase", nil)
@@ -84,6 +86,7 @@ func TestComplianceEraseHandler(t *testing.T) {
 }
 
 func TestComplianceEraseHandler_DryRun(t *testing.T) {
+	t.Parallel()
 	deps, _ := complianceTestDeps(t)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/compliance/users/u1/erase",
@@ -99,6 +102,7 @@ func TestComplianceEraseHandler_DryRun(t *testing.T) {
 }
 
 func TestComplianceHandler_InvalidPath(t *testing.T) {
+	t.Parallel()
 	deps, _ := complianceTestDeps(t)
 	rec := httptest.NewRecorder()
 	// Nested path (extra segment) must not match a single id.

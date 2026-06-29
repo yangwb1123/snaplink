@@ -16,6 +16,7 @@ import (
 )
 
 func TestBuildApp_AuditWebhookRequiresURL(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Audit.Enabled = true
 	cfg.Audit.MemoryCapacity = 16
@@ -29,6 +30,7 @@ func TestBuildApp_AuditWebhookRequiresURL(t *testing.T) {
 }
 
 func TestBuildApp_AuditWebhookFansOutAlongsideMemory(t *testing.T) {
+	t.Parallel()
 	// Spin a collector that captures every POST; cfg points the
 	// webhook sink at it. Record one event via the recorder; both
 	// the memory query layer AND the webhook should see it.
@@ -75,6 +77,7 @@ func TestBuildApp_AuditWebhookFansOutAlongsideMemory(t *testing.T) {
 }
 
 func TestBuildApp_AuditWebhookRetriesTransientFailures(t *testing.T) {
+	t.Parallel()
 	// First request fails (500), second succeeds. Webhook sink should
 	// retry without dropping the event.
 	var attempts atomic.Int32
@@ -119,6 +122,7 @@ func TestBuildApp_AuditWebhookRetriesTransientFailures(t *testing.T) {
 }
 
 func TestBuildApp_AuditWebhookComposesWithAsync(t *testing.T) {
+	t.Parallel()
 	// Verify async wrap fires when both async.enabled and
 	// webhook.enabled — the worker drains via MultiSink to both
 	// memory and webhook.
@@ -158,6 +162,7 @@ func TestBuildApp_AuditWebhookComposesWithAsync(t *testing.T) {
 }
 
 func TestBuildApp_AuditWebhookHeaderPropagation(t *testing.T) {
+	t.Parallel()
 	got := make(chan http.Header, 1)
 	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {

@@ -11,6 +11,7 @@ import (
 )
 
 func TestMemoryRecentLoginStore_AppendAndRecentRoundtrip(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRecentLoginStore()
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -39,6 +40,7 @@ func TestMemoryRecentLoginStore_AppendAndRecentRoundtrip(t *testing.T) {
 }
 
 func TestMemoryRecentLoginStore_AppendEmptySubjectErrors(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRecentLoginStore()
 	err := s.Append(context.Background(), &anomaly.LoginEntry{Outcome: "failure"})
 	if !errors.Is(err, anomaly.ErrInvalidLoginEntry) {
@@ -47,6 +49,7 @@ func TestMemoryRecentLoginStore_AppendEmptySubjectErrors(t *testing.T) {
 }
 
 func TestMemoryRecentLoginStore_AppendNilErrors(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRecentLoginStore()
 	if err := s.Append(context.Background(), nil); !errors.Is(err, anomaly.ErrInvalidLoginEntry) {
 		t.Fatalf("got %v, want ErrInvalidLoginEntry", err)
@@ -54,6 +57,7 @@ func TestMemoryRecentLoginStore_AppendNilErrors(t *testing.T) {
 }
 
 func TestMemoryRecentLoginStore_RecentRespectsSince(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRecentLoginStore()
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -68,6 +72,7 @@ func TestMemoryRecentLoginStore_RecentRespectsSince(t *testing.T) {
 }
 
 func TestMemoryRecentLoginStore_RecentRespectsLimit(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRecentLoginStore()
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -84,6 +89,7 @@ func TestMemoryRecentLoginStore_RecentRespectsLimit(t *testing.T) {
 }
 
 func TestMemoryRecentLoginStore_RecentEmptySubjectReturnsNil(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRecentLoginStore()
 	got, err := s.Recent(context.Background(), "", time.Time{}, 0)
 	if err != nil {
@@ -95,6 +101,7 @@ func TestMemoryRecentLoginStore_RecentEmptySubjectReturnsNil(t *testing.T) {
 }
 
 func TestMemoryRecentLoginStore_PerSubjectCapEnforced(t *testing.T) {
+	t.Parallel()
 	// Cap at 3; insert 5 → newest 3 survive.
 	s := defaultimpl.NewMemoryRecentLoginStore(defaultimpl.WithRecentLoginPerSubjectCap(3))
 	ctx := context.Background()
@@ -117,6 +124,7 @@ func TestMemoryRecentLoginStore_PerSubjectCapEnforced(t *testing.T) {
 }
 
 func TestMemoryRecentLoginStore_PruneOlderRemovesPastCutoff(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRecentLoginStore()
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -144,6 +152,7 @@ func TestMemoryRecentLoginStore_PruneOlderRemovesPastCutoff(t *testing.T) {
 }
 
 func TestMemoryRecentLoginStore_PruneOlderZeroIsNoop(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRecentLoginStore()
 	ctx := context.Background()
 	_ = s.Append(ctx, &anomaly.LoginEntry{SubjectID: "alice", Timestamp: time.Now()})
@@ -154,6 +163,7 @@ func TestMemoryRecentLoginStore_PruneOlderZeroIsNoop(t *testing.T) {
 }
 
 func TestMemoryRecentLoginStore_CallerMutationDoesNotLeak(t *testing.T) {
+	t.Parallel()
 	// Append's defensive copy prevents the caller from mutating
 	// the stored row by holding onto the input pointer.
 	s := defaultimpl.NewMemoryRecentLoginStore()

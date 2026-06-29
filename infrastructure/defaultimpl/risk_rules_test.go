@@ -11,6 +11,7 @@ import (
 )
 
 func TestRuleBasedRiskScorer_AllowsByDefault(t *testing.T) {
+	t.Parallel()
 	s, err := defaultimpl.NewRuleBasedRiskScorer(defaultimpl.RuleBasedRiskScorerConfig{})
 	if err != nil {
 		t.Fatalf("construct: %v", err)
@@ -22,6 +23,7 @@ func TestRuleBasedRiskScorer_AllowsByDefault(t *testing.T) {
 }
 
 func TestRuleBasedRiskScorer_DeniesIPInExactList(t *testing.T) {
+	t.Parallel()
 	s, _ := defaultimpl.NewRuleBasedRiskScorer(defaultimpl.RuleBasedRiskScorerConfig{
 		IPDenyList: []string{"203.0.113.5"},
 	})
@@ -35,6 +37,7 @@ func TestRuleBasedRiskScorer_DeniesIPInExactList(t *testing.T) {
 }
 
 func TestRuleBasedRiskScorer_DeniesIPInCIDR(t *testing.T) {
+	t.Parallel()
 	s, _ := defaultimpl.NewRuleBasedRiskScorer(defaultimpl.RuleBasedRiskScorerConfig{
 		IPDenyList: []string{"203.0.113.0/24"},
 	})
@@ -45,6 +48,7 @@ func TestRuleBasedRiskScorer_DeniesIPInCIDR(t *testing.T) {
 }
 
 func TestRuleBasedRiskScorer_IPAllowListDefaultDeny(t *testing.T) {
+	t.Parallel()
 	s, _ := defaultimpl.NewRuleBasedRiskScorer(defaultimpl.RuleBasedRiskScorerConfig{
 		IPAllowList: []string{"10.0.0.0/8", "192.0.2.1"},
 	})
@@ -63,6 +67,7 @@ func TestRuleBasedRiskScorer_IPAllowListDefaultDeny(t *testing.T) {
 }
 
 func TestRuleBasedRiskScorer_DenyListBeatsAllowList(t *testing.T) {
+	t.Parallel()
 	s, _ := defaultimpl.NewRuleBasedRiskScorer(defaultimpl.RuleBasedRiskScorerConfig{
 		IPDenyList:  []string{"10.0.0.0/8"},
 		IPAllowList: []string{"10.0.0.0/8"},
@@ -74,6 +79,7 @@ func TestRuleBasedRiskScorer_DenyListBeatsAllowList(t *testing.T) {
 }
 
 func TestRuleBasedRiskScorer_DeniesCountryInDenyList(t *testing.T) {
+	t.Parallel()
 	s, _ := defaultimpl.NewRuleBasedRiskScorer(defaultimpl.RuleBasedRiskScorerConfig{
 		CountryDenyList: []string{"RU"},
 	})
@@ -87,6 +93,7 @@ func TestRuleBasedRiskScorer_DeniesCountryInDenyList(t *testing.T) {
 }
 
 func TestRuleBasedRiskScorer_CountryAllowListGeoMissing(t *testing.T) {
+	t.Parallel()
 	// Default DenyOnGeoMissing=false: missing geo skips the allow
 	// list (operators don't want to lock out every login when the
 	// geo provider has a hiccup).
@@ -111,6 +118,7 @@ func TestRuleBasedRiskScorer_CountryAllowListGeoMissing(t *testing.T) {
 }
 
 func TestRuleBasedRiskScorer_CountryAllowListPasses(t *testing.T) {
+	t.Parallel()
 	s, _ := defaultimpl.NewRuleBasedRiskScorer(defaultimpl.RuleBasedRiskScorerConfig{
 		CountryAllowList: []string{"US", "DE"},
 	})
@@ -124,6 +132,7 @@ func TestRuleBasedRiskScorer_CountryAllowListPasses(t *testing.T) {
 }
 
 func TestRuleBasedRiskScorer_MalformedIPEntriesError(t *testing.T) {
+	t.Parallel()
 	if _, err := defaultimpl.NewRuleBasedRiskScorer(defaultimpl.RuleBasedRiskScorerConfig{
 		IPDenyList: []string{"not-an-ip"},
 	}); err == nil {
@@ -132,6 +141,7 @@ func TestRuleBasedRiskScorer_MalformedIPEntriesError(t *testing.T) {
 }
 
 func TestRuleBasedRiskScorer_RemoteIPWithPort(t *testing.T) {
+	t.Parallel()
 	// RemoteIP sometimes arrives with a :port suffix (raw RemoteAddr
 	// from net/http). The scorer must normalize before matching.
 	s, _ := defaultimpl.NewRuleBasedRiskScorer(defaultimpl.RuleBasedRiskScorerConfig{
@@ -144,6 +154,7 @@ func TestRuleBasedRiskScorer_RemoteIPWithPort(t *testing.T) {
 }
 
 func TestRuleBasedRiskScorer_NilRequestAllows(t *testing.T) {
+	t.Parallel()
 	// Defensive — the wire path never passes nil, but the contract
 	// shouldn't panic on a degenerate caller.
 	s, _ := defaultimpl.NewRuleBasedRiskScorer(defaultimpl.RuleBasedRiskScorerConfig{

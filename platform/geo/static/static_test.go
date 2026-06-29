@@ -12,6 +12,7 @@ import (
 )
 
 func TestAdd_LookupRoundtrip(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	if err := p.Add("10.0.0.0/8", geo.GeoInfo{CountryCode: "US", RecommendedLanguage: "en-US"}); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -26,6 +27,7 @@ func TestAdd_LookupRoundtrip(t *testing.T) {
 }
 
 func TestLookup_LongestPrefixWins(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	_ = p.Add("10.0.0.0/8", geo.GeoInfo{CountryCode: "US", City: "broad"})
 	_ = p.Add("10.1.0.0/16", geo.GeoInfo{CountryCode: "US", City: "narrow"})
@@ -41,6 +43,7 @@ func TestLookup_LongestPrefixWins(t *testing.T) {
 }
 
 func TestLookup_FallsThroughToBroaderEntry(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	_ = p.Add("10.0.0.0/8", geo.GeoInfo{CountryCode: "US", City: "broad"})
 	_ = p.Add("10.1.0.0/16", geo.GeoInfo{CountryCode: "US", City: "narrow"})
@@ -56,6 +59,7 @@ func TestLookup_FallsThroughToBroaderEntry(t *testing.T) {
 }
 
 func TestLookup_EmptyProviderReturnsErrNotFound(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	_, err := p.Lookup(context.Background(), net.ParseIP("10.0.0.1"))
 	if !errors.Is(err, geo.ErrNotFound) {
@@ -64,6 +68,7 @@ func TestLookup_EmptyProviderReturnsErrNotFound(t *testing.T) {
 }
 
 func TestLookup_NoMatchReturnsErrNotFound(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	_ = p.Add("10.0.0.0/8", geo.GeoInfo{CountryCode: "US"})
 	_, err := p.Lookup(context.Background(), net.ParseIP("192.168.1.1"))
@@ -73,6 +78,7 @@ func TestLookup_NoMatchReturnsErrNotFound(t *testing.T) {
 }
 
 func TestLookup_NilIPIsErrInvalidIP(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	_, err := p.Lookup(context.Background(), nil)
 	if !errors.Is(err, geo.ErrInvalidIP) {
@@ -81,6 +87,7 @@ func TestLookup_NilIPIsErrInvalidIP(t *testing.T) {
 }
 
 func TestAdd_RejectsBadCIDR(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	if err := p.Add("not-a-cidr", geo.GeoInfo{}); err == nil {
 		t.Fatal("expected error")
@@ -91,6 +98,7 @@ func TestAdd_RejectsBadCIDR(t *testing.T) {
 }
 
 func TestAdd_OverwritesSameCIDR(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	_ = p.Add("10.0.0.0/8", geo.GeoInfo{CountryCode: "US", City: "v1"})
 	_ = p.Add("10.0.0.0/8", geo.GeoInfo{CountryCode: "US", City: "v2"})
@@ -104,6 +112,7 @@ func TestAdd_OverwritesSameCIDR(t *testing.T) {
 }
 
 func TestRemove_DropsEntry(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	_ = p.Add("10.0.0.0/8", geo.GeoInfo{CountryCode: "US"})
 	if err := p.Remove("10.0.0.0/8"); err != nil {
@@ -118,6 +127,7 @@ func TestRemove_DropsEntry(t *testing.T) {
 }
 
 func TestRemove_MissingIsIdempotent(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	if err := p.Remove("10.0.0.0/8"); err != nil {
 		t.Errorf("Remove on empty: %v", err)
@@ -125,6 +135,7 @@ func TestRemove_MissingIsIdempotent(t *testing.T) {
 }
 
 func TestRemove_RejectsBadCIDR(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	if err := p.Remove("not-a-cidr"); err == nil {
 		t.Fatal("expected error for malformed CIDR")
@@ -132,6 +143,7 @@ func TestRemove_RejectsBadCIDR(t *testing.T) {
 }
 
 func TestRemove_LeavesOtherEntries(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	_ = p.Add("10.0.0.0/8", geo.GeoInfo{CountryCode: "US"})
 	_ = p.Add("192.168.0.0/16", geo.GeoInfo{CountryCode: "US"})
@@ -147,6 +159,7 @@ func TestRemove_LeavesOtherEntries(t *testing.T) {
 }
 
 func TestLookup_IPv6(t *testing.T) {
+	t.Parallel()
 	p := static.New()
 	_ = p.Add("2001:db8::/32", geo.GeoInfo{CountryCode: "DE", RecommendedLanguage: "de-DE"})
 	got, err := p.Lookup(context.Background(), net.ParseIP("2001:db8::1"))
@@ -159,6 +172,7 @@ func TestLookup_IPv6(t *testing.T) {
 }
 
 func TestConcurrentLookupAndAdd_NoRace(t *testing.T) {
+	t.Parallel()
 	// Race detector catches mutation-during-read; this just exercises
 	// the path.
 	p := static.New()

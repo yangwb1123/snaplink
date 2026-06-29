@@ -30,6 +30,7 @@ func ruleIDs(vs []fapi.Violation) []string {
 }
 
 func TestCheckAuthorization_CompliantHasNoViolations(t *testing.T) {
+	t.Parallel()
 	for _, m := range []fapi.Mode{fapi.ModeInspection, fapi.ModeEnforce} {
 		v := fapi.New(m)
 		if got := v.CheckAuthorization(compliantAuth()); len(got) != 0 {
@@ -39,6 +40,7 @@ func TestCheckAuthorization_CompliantHasNoViolations(t *testing.T) {
 }
 
 func TestCheckAuthorization_EachRuleFires(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		mutate func(*fapi.AuthorizationContext)
@@ -79,6 +81,7 @@ func TestCheckAuthorization_EachRuleFires(t *testing.T) {
 // sending "s256" — the method comparison must be case-insensitive so a
 // compliant-but-lowercased request isn't flagged.
 func TestCheckAuthorization_S256CaseInsensitive(t *testing.T) {
+	t.Parallel()
 	ac := compliantAuth()
 	ac.CodeChallengeMethod = "s256"
 	if got := fapi.New(fapi.ModeEnforce).CheckAuthorization(ac); len(got) != 0 {
@@ -87,6 +90,7 @@ func TestCheckAuthorization_S256CaseInsensitive(t *testing.T) {
 }
 
 func TestCheckToken_SenderConstraint(t *testing.T) {
+	t.Parallel()
 	v := fapi.New(fapi.ModeEnforce)
 	if got := v.CheckToken(fapi.TokenContext{ClientID: "c1", SenderConstrained: true}); len(got) != 0 {
 		t.Errorf("sender-constrained token should be compliant, got %v", got)
@@ -98,6 +102,7 @@ func TestCheckToken_SenderConstraint(t *testing.T) {
 }
 
 func TestCheckToken_ClientAuth(t *testing.T) {
+	t.Parallel()
 	v := fapi.New(fapi.ModeEnforce)
 	cases := []struct {
 		method   string
@@ -135,6 +140,7 @@ func TestCheckToken_ClientAuth(t *testing.T) {
 }
 
 func TestCheckClientAuth_Standalone(t *testing.T) {
+	t.Parallel()
 	v := fapi.New(fapi.ModeEnforce)
 	if got := v.CheckClientAuth("c1", fapi.ClientAuthPrivateKeyJWT); len(got) != 0 {
 		t.Errorf("private_key_jwt compliant, got %v", ruleIDs(got))
@@ -152,6 +158,7 @@ func TestCheckClientAuth_Standalone(t *testing.T) {
 // TestNilAndOff_NoChecks proves the nil-safe / ModeOff contract the
 // integration points rely on to call unconditionally.
 func TestNilAndOff_NoChecks(t *testing.T) {
+	t.Parallel()
 	var nilV *fapi.Validator
 	off := fapi.New(fapi.ModeOff)
 	for _, v := range []*fapi.Validator{nilV, off} {
@@ -175,6 +182,7 @@ func TestNilAndOff_NoChecks(t *testing.T) {
 }
 
 func TestEnforcing(t *testing.T) {
+	t.Parallel()
 	if !fapi.New(fapi.ModeEnforce).Enforcing() {
 		t.Error("ModeEnforce must report Enforcing()=true")
 	}
@@ -187,6 +195,7 @@ func TestEnforcing(t *testing.T) {
 }
 
 func TestModeString(t *testing.T) {
+	t.Parallel()
 	for m, want := range map[fapi.Mode]string{
 		fapi.ModeOff:        "off",
 		fapi.ModeInspection: "inspection",

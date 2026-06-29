@@ -9,6 +9,7 @@ import (
 )
 
 func TestRedactor_ActorIDHashWithSalt(t *testing.T) {
+	t.Parallel()
 	r := audit.RedactActorIDHash("secret-salt")
 	e := &audit.Event{ActorID: "alice@example.com"}
 	r.Redact(e)
@@ -28,6 +29,7 @@ func TestRedactor_ActorIDHashWithSalt(t *testing.T) {
 }
 
 func TestRedactor_ActorIDHashDifferentSalts(t *testing.T) {
+	t.Parallel()
 	a := audit.RedactActorIDHash("salt-a")
 	b := audit.RedactActorIDHash("salt-b")
 	e1 := &audit.Event{ActorID: "alice"}
@@ -40,6 +42,7 @@ func TestRedactor_ActorIDHashDifferentSalts(t *testing.T) {
 }
 
 func TestRedactor_ActorIDHashEmptyActorIDPassthrough(t *testing.T) {
+	t.Parallel()
 	r := audit.RedactActorIDHash("salt")
 	e := &audit.Event{} // empty ActorID
 	r.Redact(e)
@@ -49,6 +52,7 @@ func TestRedactor_ActorIDHashEmptyActorIDPassthrough(t *testing.T) {
 }
 
 func TestRedactor_IPTruncateIPv4(t *testing.T) {
+	t.Parallel()
 	r := audit.RedactIPTruncate()
 	cases := []struct {
 		in, want string
@@ -67,6 +71,7 @@ func TestRedactor_IPTruncateIPv4(t *testing.T) {
 }
 
 func TestRedactor_IPTruncateIPv6(t *testing.T) {
+	t.Parallel()
 	r := audit.RedactIPTruncate()
 	e := &audit.Event{ActorIP: "2001:db8:abcd:1234::1"}
 	r.Redact(e)
@@ -80,6 +85,7 @@ func TestRedactor_IPTruncateIPv6(t *testing.T) {
 }
 
 func TestRedactor_IPTruncatePassesThroughInvalid(t *testing.T) {
+	t.Parallel()
 	r := audit.RedactIPTruncate()
 	e := &audit.Event{ActorIP: "not-an-ip"}
 	r.Redact(e)
@@ -89,6 +95,7 @@ func TestRedactor_IPTruncatePassesThroughInvalid(t *testing.T) {
 }
 
 func TestRedactor_UserAgentCleared(t *testing.T) {
+	t.Parallel()
 	r := audit.RedactUserAgent()
 	e := &audit.Event{UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ..."}
 	r.Redact(e)
@@ -98,6 +105,7 @@ func TestRedactor_UserAgentCleared(t *testing.T) {
 }
 
 func TestRedactor_MetadataKeysDeleted(t *testing.T) {
+	t.Parallel()
 	r := audit.RedactMetadataKeys("email", "phone")
 	e := &audit.Event{
 		Metadata: map[string]string{
@@ -123,6 +131,7 @@ func TestRedactor_MetadataKeysDeleted(t *testing.T) {
 }
 
 func TestRedactor_MetadataKeyPrefixesDeleted(t *testing.T) {
+	t.Parallel()
 	r := audit.RedactMetadataKeyPrefixes("pii.", "internal.")
 	e := &audit.Event{
 		Metadata: map[string]string{
@@ -144,6 +153,7 @@ func TestRedactor_MetadataKeyPrefixesDeleted(t *testing.T) {
 }
 
 func TestRedactor_ComposeRunsAllInOrder(t *testing.T) {
+	t.Parallel()
 	a := audit.RedactorFunc(func(e *audit.Event) { e.ActorID = "a" })
 	b := audit.RedactorFunc(func(e *audit.Event) { e.ActorID += "b" })
 	c := audit.RedactorFunc(func(e *audit.Event) { e.ActorID += "c" })
@@ -156,6 +166,7 @@ func TestRedactor_ComposeRunsAllInOrder(t *testing.T) {
 }
 
 func TestRedactor_ComposeEmptyIsNoop(t *testing.T) {
+	t.Parallel()
 	r := audit.Compose()
 	e := &audit.Event{ActorID: "alice"}
 	r.Redact(e)
@@ -165,6 +176,7 @@ func TestRedactor_ComposeEmptyIsNoop(t *testing.T) {
 }
 
 func TestRedactor_DefaultPIIRedactor(t *testing.T) {
+	t.Parallel()
 	r := audit.DefaultPIIRedactor("salt")
 	e := &audit.Event{
 		ActorID:   "alice@example.com",
@@ -188,6 +200,7 @@ func TestRedactor_DefaultPIIRedactor(t *testing.T) {
 // the redacted form.
 
 func TestRecorder_WithRedactor_AppliesBeforeSink(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(10)
 	rec := audit.New(sink, audit.WithRedactor(audit.RedactActorIDHash("salt")))
 
@@ -208,6 +221,7 @@ func TestRecorder_WithRedactor_AppliesBeforeSink(t *testing.T) {
 }
 
 func TestRecorder_RedactorRunsBeforeHashChain(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(10)
 	rec := audit.New(
 		sink,

@@ -218,6 +218,7 @@ func (hh *harness) crossValidateLogoutRequest(t *testing.T, spEntity, rawQuery s
 // 302s to the INITIATOR's return URL with the IdP's final LogoutResponse. Every
 // chained LogoutRequest is cross-validated through the module's own sp validator.
 func TestFrontChannel_FullChain(t *testing.T) {
+	t.Parallel()
 	const nameID = "alice@example.com"
 	const initiatorSLO = "https://sp-a.example.com/saml/slo"
 	hh, spA, sid, idx := newFrontChannelHarness(t, nameID, initiatorSLO)
@@ -304,6 +305,7 @@ func TestFrontChannel_FullChain(t *testing.T) {
 // TestFrontChannel_UnknownState_Rejected: a /continue hop with an UNKNOWN chain
 // state id is rejected (saml_request_invalid), the chain not advanced.
 func TestFrontChannel_UnknownState_Rejected(t *testing.T) {
+	t.Parallel()
 	const nameID = "bob@example.com"
 	hh, spA, _, idx := newFrontChannelHarness(t, nameID, "https://sp-a.example.com/saml/slo")
 	spB := fcSP{entityID: "https://sp-b.example.com/saml", clientID: "sp-b", sloURL: "https://sp-b.example.com/saml/slo", key: newSPKeypair(t)}
@@ -321,6 +323,7 @@ func TestFrontChannel_UnknownState_Rejected(t *testing.T) {
 // re-presenting a consumed one (after a valid advance) fails. The first hop
 // advances; replaying the SAME state id at /continue is rejected.
 func TestFrontChannel_ReplayedState_Rejected(t *testing.T) {
+	t.Parallel()
 	const nameID = "rachel@example.com"
 	hh, spA, _, idx := newFrontChannelHarness(t, nameID, "https://sp-a.example.com/saml/slo")
 	spB := fcSP{entityID: "https://sp-b.example.com/saml", clientID: "sp-b", sloURL: "https://sp-b.example.com/saml/slo", key: newSPKeypair(t)}
@@ -350,6 +353,7 @@ func TestFrontChannel_ReplayedState_Rejected(t *testing.T) {
 // TestFrontChannel_ExpiredState_Rejected: a /continue hop whose chain state has
 // expired (TTL elapsed) is rejected, oracle-safe.
 func TestFrontChannel_ExpiredState_Rejected(t *testing.T) {
+	t.Parallel()
 	const nameID = "sam@example.com"
 	hh, spA, _, idx := newFrontChannelHarness(t, nameID, "https://sp-a.example.com/saml/slo")
 	spB := fcSP{entityID: "https://sp-b.example.com/saml", clientID: "sp-b", sloURL: "https://sp-b.example.com/saml/slo", key: newSPKeypair(t)}
@@ -385,6 +389,7 @@ func TestFrontChannel_ExpiredState_Rejected(t *testing.T) {
 // SP's registered cert) is rejected and the chain is NOT advanced (no redirect to
 // the next SP).
 func TestFrontChannel_ForgedLogoutResponse_Rejected(t *testing.T) {
+	t.Parallel()
 	const nameID = "carol@example.com"
 	hh, spA, _, idx := newFrontChannelHarness(t, nameID, "https://sp-a.example.com/saml/slo")
 	spB := fcSP{entityID: "https://sp-b.example.com/saml", clientID: "sp-b", sloURL: "https://sp-b.example.com/saml/slo", key: newSPKeypair(t)}
@@ -413,6 +418,7 @@ func TestFrontChannel_ForgedLogoutResponse_Rejected(t *testing.T) {
 // the SAME chain id still advances the chain. (A forged response can neither
 // advance nor DoS a legit chain.)
 func TestFrontChannel_ForgedResponse_DoesNotBurnChain(t *testing.T) {
+	t.Parallel()
 	const nameID = "nora@example.com"
 	hh, spA, _, idx := newFrontChannelHarness(t, nameID, "https://sp-a.example.com/saml/slo")
 	spB := fcSP{entityID: "https://sp-b.example.com/saml", clientID: "sp-b", sloURL: "https://sp-b.example.com/saml/slo", key: newSPKeypair(t)}
@@ -448,6 +454,7 @@ func TestFrontChannel_ForgedResponse_DoesNotBurnChain(t *testing.T) {
 // TestFrontChannel_UnsignedLogoutResponse_Rejected: a /continue LogoutResponse
 // with NO detached signature (no SigAlg/Signature) is rejected — fail-closed.
 func TestFrontChannel_UnsignedLogoutResponse_Rejected(t *testing.T) {
+	t.Parallel()
 	const nameID = "trent@example.com"
 	hh, spA, _, idx := newFrontChannelHarness(t, nameID, "https://sp-a.example.com/saml/slo")
 	spB := fcSP{entityID: "https://sp-b.example.com/saml", clientID: "sp-b", sloURL: "https://sp-b.example.com/saml/slo", key: newSPKeypair(t)}
@@ -469,6 +476,7 @@ func TestFrontChannel_UnsignedLogoutResponse_Rejected(t *testing.T) {
 // validly-signed by SP-B's key but whose Issuer names a DIFFERENT entity is
 // rejected (the Issuer-must-match-the-acknowledging-SP defense-in-depth check).
 func TestFrontChannel_WrongIssuerLogoutResponse_Rejected(t *testing.T) {
+	t.Parallel()
 	const nameID = "ivan@example.com"
 	hh, spA, _, idx := newFrontChannelHarness(t, nameID, "https://sp-a.example.com/saml/slo")
 	spB := fcSP{entityID: "https://sp-b.example.com/saml", clientID: "sp-b", sloURL: "https://sp-b.example.com/saml/slo", key: newSPKeypair(t)}
@@ -492,6 +500,7 @@ func TestFrontChannel_WrongIssuerLogoutResponse_Rejected(t *testing.T) {
 // https is SKIPPED (the SSRF gate) — the chain advances past it to the next https
 // SP without ever redirecting the browser to the http URL.
 func TestFrontChannel_NonHTTPSSPSkipped(t *testing.T) {
+	t.Parallel()
 	const nameID = "dave@example.com"
 	hh, spA, _, idx := newFrontChannelHarness(t, nameID, "https://sp-a.example.com/saml/slo")
 
@@ -525,6 +534,7 @@ func TestFrontChannel_NonHTTPSSPSkipped(t *testing.T) {
 // back-channel-only build does (a 302 to the initiator's SLO URL, no /continue
 // hop).
 func TestFrontChannel_NoFrontChannelSPs_ByteIdentical(t *testing.T) {
+	t.Parallel()
 	const nameID = "noop@example.com"
 	// SP-A here is BACK-channel (the default): no chain should start.
 	issuer, pub := newIssuer(t, issuerRSA)
@@ -580,6 +590,7 @@ func TestFrontChannel_NoFrontChannelSPs_ByteIdentical(t *testing.T) {
 // front-channel SP AND delivers the back-channel LogoutRequest to the back-channel
 // SP's SLO endpoint.
 func TestFrontChannel_Coexist_BackAndFront(t *testing.T) {
+	t.Parallel()
 	const nameID = "mix@example.com"
 	hh, spA, _, idx := newFrontChannelHarness(t, nameID, "https://sp-a.example.com/saml/slo")
 
@@ -619,6 +630,7 @@ func TestFrontChannel_Coexist_BackAndFront(t *testing.T) {
 // Each goroutine logs out a DISTINCT subject through the SAME two front-channel
 // SPs; the chains must not interfere (each carries its own single-use state).
 func TestFrontChannel_ConcurrentChains(t *testing.T) {
+	t.Parallel()
 	// One shared harness; SP-B + SP-C registered once. Each chain uses a DISTINCT
 	// subject but the SAME initiator SP-A (harness-registered, key in spA) — SP-A
 	// is excluded from each chain, so every chain visits SP-B then SP-C.
@@ -737,6 +749,7 @@ func redirectOK(rec *httptest.ResponseRecorder) (*url.URL, bool) {
 // TestLogoutChainStore_SingleUse: consume removes the entry (a second consume of
 // the same id fails); unknown ids fail.
 func TestLogoutChainStore_SingleUse(t *testing.T) {
+	t.Parallel()
 	s := newLogoutChainStore(time.Minute, 100)
 	now := time.Now()
 	id, err := s.insert(logoutChainState{Subject: "u1"}, now)
@@ -757,6 +770,7 @@ func TestLogoutChainStore_SingleUse(t *testing.T) {
 
 // TestLogoutChainStore_Expiry: a chain past its TTL is not consumable.
 func TestLogoutChainStore_Expiry(t *testing.T) {
+	t.Parallel()
 	s := newLogoutChainStore(time.Minute, 100)
 	now := time.Now()
 	id, _ := s.insert(logoutChainState{Subject: "u1"}, now)
@@ -767,6 +781,7 @@ func TestLogoutChainStore_Expiry(t *testing.T) {
 
 // TestLogoutChainStore_Bounded: the hard capacity cap evicts the oldest insert.
 func TestLogoutChainStore_Bounded(t *testing.T) {
+	t.Parallel()
 	s := newLogoutChainStore(time.Hour, 4)
 	now := time.Now()
 	var ids []string
@@ -790,6 +805,7 @@ func TestLogoutChainStore_Bounded(t *testing.T) {
 // insert/consume to surface races (-race -count). Each id is consumed exactly
 // once across goroutines.
 func TestLogoutChainStore_Concurrent(t *testing.T) {
+	t.Parallel()
 	s := newLogoutChainStore(time.Hour, 100000)
 	now := time.Now()
 	const workers = 16

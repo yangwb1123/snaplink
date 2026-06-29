@@ -15,6 +15,7 @@ import (
 // ACS (firstACS) rather than rejecting — the SP delegated the choice to its
 // registration. The fallback must still be a registered (allowlisted) URL.
 func TestSSO_NoACSInRequest_FallsBackToFirstRegistered(t *testing.T) {
+	t.Parallel()
 	hh := newHarness(t, issuerRSA)
 
 	// Build an AuthnRequest with an EMPTY ACS URL; the IdP should use spACSURL
@@ -38,6 +39,7 @@ func TestSSO_NoACSInRequest_FallsBackToFirstRegistered(t *testing.T) {
 // a NON-allowlisted (here SHA-1) URI is rejected by x509SigAlgForSigAlgURI BEFORE
 // any key/signature math runs — a downgrade attempt can't reach CheckSignature.
 func TestVerifyRedirectSignature_UnsupportedSigAlg_Rejected(t *testing.T) {
+	t.Parallel()
 	spKey := newSPKeypair(t)
 
 	// A well-formed redirect query but carrying a SHA-1 SigAlg (not allowlisted).
@@ -58,6 +60,7 @@ func TestVerifyRedirectSignature_UnsupportedSigAlg_Rejected(t *testing.T) {
 // TestVerifyRedirectSignature_NilCert_And_MissingSig covers the two fail-closed
 // guards: no trust-anchor cert, and a query with no SigAlg/Signature pair.
 func TestVerifyRedirectSignature_NilCert_And_MissingSig(t *testing.T) {
+	t.Parallel()
 	if err := verifyRedirectSignature(nil, "SAMLRequest=x", "SAMLRequest"); err == nil {
 		t.Fatal("nil cert accepted")
 	}
@@ -76,6 +79,7 @@ func TestVerifyRedirectSignature_NilCert_And_MissingSig(t *testing.T) {
 // two asymmetric SHA-256 methods map; everything else (SHA-1, empty, garbage) is
 // rejected so it can never reach CheckSignature.
 func TestX509SigAlgForSigAlgURI_Mapping(t *testing.T) {
+	t.Parallel()
 	if a, ok := x509SigAlgForSigAlgURI(dsig.RSASHA256SignatureMethod); !ok || a != x509.SHA256WithRSA {
 		t.Fatalf("RSA-SHA256 mapped to %v ok=%v, want SHA256WithRSA", a, ok)
 	}

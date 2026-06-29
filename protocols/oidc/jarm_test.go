@@ -47,6 +47,7 @@ func decodeJARMClaims(t *testing.T, jwt string) map[string]any {
 }
 
 func TestSignJARMResponse_Claims(t *testing.T) {
+	t.Parallel()
 	jwt, err := oidc.SignJARMResponse(context.Background(), &fakeSigner{}, "https://as.example", "client-1", "the-code", "the-state")
 	if err != nil {
 		t.Fatalf("SignJARMResponse: %v", err)
@@ -70,6 +71,7 @@ func TestSignJARMResponse_Claims(t *testing.T) {
 }
 
 func TestSignJARMResponse_OmitsEmptyState(t *testing.T) {
+	t.Parallel()
 	jwt, _ := oidc.SignJARMResponse(context.Background(), &fakeSigner{}, "iss", "c", "code", "")
 	if _, ok := decodeJARMClaims(t, jwt)["state"]; ok {
 		t.Error("empty state must be omitted")
@@ -83,6 +85,7 @@ func newCtx(method, target string) (*core.Context, *httptest.ResponseRecorder) {
 }
 
 func TestRenderJARMResponse_QueryDelivery(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{oidc.ResponseModeJWT, oidc.ResponseModeQueryJWT} {
 		ctx, rec := newCtx(http.MethodGet, "/auth/login")
 		ok := oidc.RenderJARMResponse(ctx, &fakeSigner{}, mode, "https://rp.example/cb?x=1", "iss", "c", "code", "st")
@@ -106,6 +109,7 @@ func TestRenderJARMResponse_QueryDelivery(t *testing.T) {
 }
 
 func TestRenderJARMResponse_FragmentDelivery(t *testing.T) {
+	t.Parallel()
 	ctx, rec := newCtx(http.MethodGet, "/auth/login")
 	oidc.RenderJARMResponse(ctx, &fakeSigner{}, oidc.ResponseModeFragmentJWT, "https://rp.example/cb", "iss", "c", "code", "")
 	loc := rec.Header().Get("Location")
@@ -115,6 +119,7 @@ func TestRenderJARMResponse_FragmentDelivery(t *testing.T) {
 }
 
 func TestRenderJARMResponse_FormPostDelivery(t *testing.T) {
+	t.Parallel()
 	ctx, rec := newCtx(http.MethodGet, "/auth/login")
 	oidc.RenderJARMResponse(ctx, &fakeSigner{}, oidc.ResponseModeFormPostJWT, "https://rp.example/cb", "iss", "c", "code", "")
 	if rec.Code != http.StatusOK {
@@ -130,6 +135,7 @@ func TestRenderJARMResponse_FormPostDelivery(t *testing.T) {
 }
 
 func TestRenderJARMResponse_SignFailureReturnsFalse(t *testing.T) {
+	t.Parallel()
 	ctx, rec := newCtx(http.MethodGet, "/auth/login")
 	if oidc.RenderJARMResponse(ctx, &fakeSigner{errOnSign: true}, oidc.ResponseModeJWT, "https://rp.example/cb", "iss", "c", "code", "") {
 		t.Error("RenderJARMResponse must return false on sign failure")
@@ -140,6 +146,7 @@ func TestRenderJARMResponse_SignFailureReturnsFalse(t *testing.T) {
 }
 
 func TestIsJARMResponseMode(t *testing.T) {
+	t.Parallel()
 	for _, m := range []string{"jwt", "query.jwt", "fragment.jwt", "form_post.jwt"} {
 		if !oidc.IsJARMResponseMode(m) {
 			t.Errorf("%q should be a JARM mode", m)

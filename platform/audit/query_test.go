@@ -8,6 +8,7 @@ import (
 )
 
 func TestQuery_Match_EmptyQueryMatchesEverything(t *testing.T) {
+	t.Parallel()
 	q := audit.Query{}
 	e := &audit.Event{
 		Type:     audit.EventLogin,
@@ -21,6 +22,7 @@ func TestQuery_Match_EmptyQueryMatchesEverything(t *testing.T) {
 }
 
 func TestQuery_Match_FieldFilters(t *testing.T) {
+	t.Parallel()
 	base := &audit.Event{
 		Type:      audit.EventLogin,
 		ActorID:   "alice",
@@ -72,6 +74,7 @@ func TestQuery_Match_FieldFilters(t *testing.T) {
 }
 
 func TestQuery_Match_SinceInclusive(t *testing.T) {
+	t.Parallel()
 	cutoff := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	q := audit.Query{Since: cutoff}
 
@@ -87,6 +90,7 @@ func TestQuery_Match_SinceInclusive(t *testing.T) {
 }
 
 func TestQuery_Match_UntilExclusive(t *testing.T) {
+	t.Parallel()
 	cutoff := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	q := audit.Query{Until: cutoff}
 
@@ -102,6 +106,7 @@ func TestQuery_Match_UntilExclusive(t *testing.T) {
 }
 
 func TestQuery_Match_ZeroTimeMeansNoBound(t *testing.T) {
+	t.Parallel()
 	q := audit.Query{} // both Since and Until zero
 	if !q.Match(&audit.Event{Timestamp: time.Unix(0, 0)}) {
 		t.Error("epoch event should match when no bounds set")
@@ -112,6 +117,7 @@ func TestQuery_Match_ZeroTimeMeansNoBound(t *testing.T) {
 }
 
 func TestQuery_NormalizedLimit(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in   int
 		want int

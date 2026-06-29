@@ -24,6 +24,7 @@ func (l *captureLogger) Error(string, ...any) {
 }
 
 func TestHIBP_WithUserAgent(t *testing.T) {
+	t.Parallel()
 	const pw = "ua-test-password"
 	_, _, suffix := hibpHashParts(pw)
 	fake := &fakeHIBP{body: suffix + ":3\r\n"}
@@ -47,6 +48,7 @@ func TestHIBP_WithUserAgent(t *testing.T) {
 }
 
 func TestHIBP_WithLoggerOnFailOpen(t *testing.T) {
+	t.Parallel()
 	fake := &fakeHIBP{status: http.StatusInternalServerError}
 	srv := httptest.NewServer(fake)
 	defer srv.Close()
@@ -67,6 +69,7 @@ func TestHIBP_WithLoggerOnFailOpen(t *testing.T) {
 }
 
 func TestHIBP_WithHTTPClient(t *testing.T) {
+	t.Parallel()
 	const pw = "client-opt-test"
 	_, _, suffix := hibpHashParts(pw)
 	fake := &fakeHIBP{body: suffix + ":7\r\n"}

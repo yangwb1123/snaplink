@@ -29,6 +29,7 @@ func (f *fakeTipSink) LastHash(context.Context) (string, error) {
 // MemorySink does NOT implement ChainTip, so WithHashChain over it seeds
 // genesis — the first event carries PrevHash == "".
 func TestWithHashChain_MemorySinkSeedsGenesis(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(4)
 	rec := audit.New(sink, audit.WithHashChain())
 	rec.Record(context.Background(), &audit.Event{Type: audit.EventLogin})
@@ -41,6 +42,7 @@ func TestWithHashChain_MemorySinkSeedsGenesis(t *testing.T) {
 // When the sink implements ChainTip with a non-empty head, the chain
 // RESUMES: the first event's PrevHash equals the persisted tip.
 func TestWithHashChain_ResumesFromTip(t *testing.T) {
+	t.Parallel()
 	const persistedHead = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 	sink := newFakeTipSink(persistedHead)
 	rec := audit.New(sink, audit.WithHashChain())
@@ -55,6 +57,7 @@ func TestWithHashChain_ResumesFromTip(t *testing.T) {
 // A tip-read error is best-effort: seed genesis and continue so a degraded
 // durable sink never blocks recording.
 func TestWithHashChain_TipErrorSeedsGenesis(t *testing.T) {
+	t.Parallel()
 	sink := newFakeTipSink("ignored-because-error")
 	sink.tipErr = context.DeadlineExceeded
 	rec := audit.New(sink, audit.WithHashChain())
@@ -69,6 +72,7 @@ func TestWithHashChain_TipErrorSeedsGenesis(t *testing.T) {
 // MultiSink.LastHash delegates to the first wrapped sink implementing
 // ChainTip; a fan-out with no durable leaf returns genesis ("").
 func TestMultiSink_LastHashDelegatesToChainTipLeaf(t *testing.T) {
+	t.Parallel()
 	tip := newFakeTipSink("abc123")
 	multi := audit.NewMultiSink(audit.NewMemorySink(4), tip)
 	got, err := multi.LastHash(context.Background())
@@ -81,6 +85,7 @@ func TestMultiSink_LastHashDelegatesToChainTipLeaf(t *testing.T) {
 }
 
 func TestMultiSink_LastHashNoDurableLeafIsGenesis(t *testing.T) {
+	t.Parallel()
 	multi := audit.NewMultiSink(audit.NewMemorySink(4), audit.NewMemorySink(4))
 	got, err := multi.LastHash(context.Background())
 	if err != nil || got != "" {
@@ -91,6 +96,7 @@ func TestMultiSink_LastHashNoDurableLeafIsGenesis(t *testing.T) {
 // AsyncSink.LastHash delegates synchronously to the inner ChainTip,
 // bypassing the write queue.
 func TestAsyncSink_LastHashDelegatesToInner(t *testing.T) {
+	t.Parallel()
 	tip := newFakeTipSink("xyz789")
 	async := audit.NewAsyncSink(tip)
 	got, err := async.LastHash(context.Background())
@@ -103,6 +109,7 @@ func TestAsyncSink_LastHashDelegatesToInner(t *testing.T) {
 }
 
 func TestAsyncSink_LastHashInnerWithoutChainTipIsGenesis(t *testing.T) {
+	t.Parallel()
 	async := audit.NewAsyncSink(audit.NewMemorySink(4))
 	got, err := async.LastHash(context.Background())
 	if err != nil || got != "" {
@@ -113,6 +120,7 @@ func TestAsyncSink_LastHashInnerWithoutChainTipIsGenesis(t *testing.T) {
 // End-to-end: the resume seam works through the standard
 // Async -> Multi -> ChainTip-leaf pipeline that WithHashChain reads.
 func TestWithHashChain_ResumesThroughAsyncMultiPipeline(t *testing.T) {
+	t.Parallel()
 	const head = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
 	leaf := newFakeTipSink(head)
 	pipeline := audit.NewAsyncSink(audit.NewMultiSink(leaf))
@@ -143,6 +151,7 @@ func TestWithHashChain_ResumesThroughAsyncMultiPipeline(t *testing.T) {
 // AddSink fans every event to the extra tap IN ADDITION to the primary,
 // with redaction + chaining applied once before either sink sees it.
 func TestRecorder_AddSinkTapsEveryEvent(t *testing.T) {
+	t.Parallel()
 	primary := audit.NewMemorySink(8)
 	tap := audit.NewMemorySink(8)
 	rec := audit.New(primary, audit.WithHashChain())
@@ -162,6 +171,7 @@ func TestRecorder_AddSinkTapsEveryEvent(t *testing.T) {
 }
 
 func TestRecorder_AddSinkNilSafe(t *testing.T) {
+	t.Parallel()
 	// nil recorder + nil extra are both no-ops.
 	var nilRec *audit.Recorder
 	nilRec.AddSink(audit.NewMemorySink(1)) // must not panic
@@ -177,6 +187,7 @@ func TestRecorder_AddSinkNilSafe(t *testing.T) {
 // AsyncSink and RetryingSink serve Get synchronously from the inner sink
 // (only the write path is wrapped).
 func TestComposingSinks_GetDelegatesToInner(t *testing.T) {
+	t.Parallel()
 	inner := audit.NewMemorySink(4)
 	_ = inner.Record(context.Background(), &audit.Event{ID: "find-me", Type: audit.EventLogin})
 
@@ -194,6 +205,7 @@ func TestComposingSinks_GetDelegatesToInner(t *testing.T) {
 // WithAsyncRecordTimeout caps the inner Record; an event still delivers
 // when the inner sink is fast.
 func TestAsyncSink_WithRecordTimeoutDelivers(t *testing.T) {
+	t.Parallel()
 	inner := audit.NewMemorySink(4)
 	async := audit.NewAsyncSink(inner, audit.WithAsyncRecordTimeout(time.Second))
 	async.Start()

@@ -22,6 +22,7 @@ const spsPerSubjectCapForTest = 8
 // the package it tests. MemorySessionIndex's constructor is exported, so no
 // internal access is needed.
 func TestSessionIndexConformance_Memory(t *testing.T) {
+	t.Parallel()
 	sessionindextest.SessionIndexConformance{
 		Factory: func(t *testing.T) samlidp.SAMLSessionIndex {
 			return samlidp.NewMemorySessionIndex(0, spsPerSubjectCapForTest)

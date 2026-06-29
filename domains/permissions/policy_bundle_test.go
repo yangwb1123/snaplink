@@ -36,6 +36,7 @@ func bundleProvider(t *testing.T) *permissions.MemoryProvider {
 }
 
 func TestBuildPolicyBundle_SerializesRolesAndSemantics(t *testing.T) {
+	t.Parallel()
 	p := bundleProvider(t)
 	b, err := permissions.BuildPolicyBundle(context.Background(), p, "web-app")
 	if err != nil {
@@ -102,6 +103,7 @@ func TestBuildPolicyBundle_SerializesRolesAndSemantics(t *testing.T) {
 // must yield byte-identical CanonicalBytes, since the ETag is hashed over
 // those bytes and a sidecar's If-None-Match relies on it.
 func TestBuildPolicyBundle_CanonicalBytesStableAcrossRebuilds(t *testing.T) {
+	t.Parallel()
 	p := bundleProvider(t)
 	b1, err := permissions.BuildPolicyBundle(context.Background(), p, "web-app")
 	if err != nil {
@@ -127,6 +129,7 @@ func TestBuildPolicyBundle_CanonicalBytesStableAcrossRebuilds(t *testing.T) {
 // actually tracks content: editing a role's permissions changes the
 // canonical bytes (and thus the ETag), so a sidecar re-fetches.
 func TestBuildPolicyBundle_CanonicalBytesChangeOnRoleEdit(t *testing.T) {
+	t.Parallel()
 	p := bundleProvider(t)
 	before, _ := permissions.BuildPolicyBundle(context.Background(), p, "web-app")
 	if err := p.UpdateRole(context.Background(), "web-app", permissions.Role{
@@ -146,6 +149,7 @@ func TestBuildPolicyBundle_CanonicalBytesChangeOnRoleEdit(t *testing.T) {
 // TestBuildPolicyBundle_UnknownClientEmpty: an unknown client yields an
 // empty role set, not an error (the bundle is still well-formed).
 func TestBuildPolicyBundle_UnknownClientEmpty(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	b, err := permissions.BuildPolicyBundle(context.Background(), p, "nope")
 	if err != nil {

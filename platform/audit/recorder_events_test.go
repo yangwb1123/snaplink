@@ -48,6 +48,7 @@ func only(t *testing.T, sink *audit.MemorySink) *audit.Event {
 }
 
 func TestRecordTokenIssued(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordTokenIssued(rec, ctx, "client-a", "jwt", "user-1")
 	e := only(t, sink)
@@ -64,6 +65,7 @@ func TestRecordTokenIssued(t *testing.T) {
 }
 
 func TestRecordRefreshTokenIssued_RotationFlag(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordRefreshTokenIssued(rec, ctx, "c", "u", true)
 	e := only(t, sink)
@@ -76,6 +78,7 @@ func TestRecordRefreshTokenIssued_RotationFlag(t *testing.T) {
 }
 
 func TestRecordRefreshTokenIssued_FirstIssueNoRotationMeta(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordRefreshTokenIssued(rec, ctx, "c", "u", false)
 	e := only(t, sink)
@@ -85,6 +88,7 @@ func TestRecordRefreshTokenIssued_FirstIssueNoRotationMeta(t *testing.T) {
 }
 
 func TestRecordIDTokenIssued(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordIDTokenIssued(rec, ctx, "c", "u")
 	e := only(t, sink)
@@ -94,6 +98,7 @@ func TestRecordIDTokenIssued(t *testing.T) {
 }
 
 func TestRecordDeviceCodeIssued(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordDeviceCodeIssued(rec, ctx, "device-client")
 	e := only(t, sink)
@@ -103,6 +108,7 @@ func TestRecordDeviceCodeIssued(t *testing.T) {
 }
 
 func TestRecordDeviceCodeDecision_ApprovedAndDenied(t *testing.T) {
+	t.Parallel()
 	rec1, ctx1, sink1 := recCtx(t)
 	audit.RecordDeviceCodeDecision(rec1, ctx1, "user", "dc", true)
 	e := only(t, sink1)
@@ -122,6 +128,7 @@ func TestRecordDeviceCodeDecision_ApprovedAndDenied(t *testing.T) {
 }
 
 func TestRecordCIBAAuthRequest(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordCIBAAuthRequest(rec, ctx, "c", "u", "areq-99")
 	e := only(t, sink)
@@ -131,6 +138,7 @@ func TestRecordCIBAAuthRequest(t *testing.T) {
 }
 
 func TestRecordCIBADecision_Branches(t *testing.T) {
+	t.Parallel()
 	rec1, ctx1, s1 := recCtx(t)
 	audit.RecordCIBADecision(rec1, ctx1, "c", "u", true)
 	if e := only(t, s1); e.Type != audit.EventCIBAApproved || e.Outcome != audit.OutcomeSuccess {
@@ -144,6 +152,7 @@ func TestRecordCIBADecision_Branches(t *testing.T) {
 }
 
 func TestRecordCIBAPingFailed_BackgroundContext(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(4)
 	rec := audit.New(sink)
 	audit.RecordCIBAPingFailed(rec, context.Background(), "c", "areq-1", "connection refused")
@@ -157,6 +166,7 @@ func TestRecordCIBAPingFailed_BackgroundContext(t *testing.T) {
 }
 
 func TestRecordCIBAPingFailed_EmptyAuthReqOmitsMeta(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(4)
 	rec := audit.New(sink)
 	audit.RecordCIBAPingFailed(rec, context.Background(), "c", "", "boom")
@@ -167,6 +177,7 @@ func TestRecordCIBAPingFailed_EmptyAuthReqOmitsMeta(t *testing.T) {
 }
 
 func TestRecordRefreshTokenReuse(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordRefreshTokenReuse(rec, ctx, "c", "fam-1", 3)
 	e := only(t, sink)
@@ -179,6 +190,7 @@ func TestRecordRefreshTokenReuse(t *testing.T) {
 }
 
 func TestRecordRefreshTokenReuse_ZeroKilledOmitsMeta(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordRefreshTokenReuse(rec, ctx, "c", "fam-1", 0)
 	e := only(t, sink)
@@ -188,6 +200,7 @@ func TestRecordRefreshTokenReuse_ZeroKilledOmitsMeta(t *testing.T) {
 }
 
 func TestRecordRefreshRotationVelocityExceeded(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordRefreshRotationVelocityExceeded(rec, ctx, "c", "fam-x", 12, 4)
 	e := only(t, sink)
@@ -200,6 +213,7 @@ func TestRecordRefreshRotationVelocityExceeded(t *testing.T) {
 }
 
 func TestRecordCredentialHealth_WeakAndCompromised(t *testing.T) {
+	t.Parallel()
 	rec1, ctx1, s1 := recCtx(t)
 	audit.RecordCredentialHealth(rec1, ctx1, "c", "u", &core.CredentialHealth{Weak: true, Reason: "short"})
 	e := only(t, s1)
@@ -219,6 +233,7 @@ func TestRecordCredentialHealth_WeakAndCompromised(t *testing.T) {
 }
 
 func TestRecordCredentialHealth_NilHealthNoEvent(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(4)
 	rec := audit.New(sink)
 	audit.RecordCredentialHealth(rec, newHandlerCtx(t), "c", "u", nil)
@@ -229,6 +244,7 @@ func TestRecordCredentialHealth_NilHealthNoEvent(t *testing.T) {
 }
 
 func TestRecordLogout(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordLogout(rec, ctx, "sess-1", []string{"a", "b"})
 	e := only(t, sink)
@@ -241,6 +257,7 @@ func TestRecordLogout(t *testing.T) {
 }
 
 func TestRecordLogout_EmptyRevokedOmitsMeta(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordLogout(rec, ctx, "sess-1", nil)
 	e := only(t, sink)
@@ -250,6 +267,7 @@ func TestRecordLogout_EmptyRevokedOmitsMeta(t *testing.T) {
 }
 
 func TestRecordLogoutNotify_SuccessAndFailure(t *testing.T) {
+	t.Parallel()
 	rec1, ctx1, s1 := recCtx(t)
 	audit.RecordLogoutNotifySuccess(rec1, ctx1, "c", "sub", "https://rp/bcl")
 	e := only(t, s1)
@@ -269,6 +287,7 @@ func TestRecordLogoutNotify_SuccessAndFailure(t *testing.T) {
 }
 
 func TestRecordAccountLocked(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	until := time.Date(2026, 6, 16, 10, 0, 0, 0, time.UTC)
 	audit.RecordAccountLocked(rec, ctx, "c", "password", "lockkey", until)
@@ -285,6 +304,7 @@ func TestRecordAccountLocked(t *testing.T) {
 }
 
 func TestRecordAccountLocked_ZeroUntilOmitsMeta(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordAccountLocked(rec, ctx, "c", "password", "lockkey", time.Time{})
 	e := only(t, sink)
@@ -294,6 +314,7 @@ func TestRecordAccountLocked_ZeroUntilOmitsMeta(t *testing.T) {
 }
 
 func TestRecordLoginSuccessAndFailure(t *testing.T) {
+	t.Parallel()
 	rec1, ctx1, s1 := recCtx(t)
 	audit.RecordLoginSuccess(rec1, ctx1, "c", "password", "jwt", "u", "sess")
 	e := only(t, s1)
@@ -316,6 +337,7 @@ func TestRecordLoginSuccessAndFailure(t *testing.T) {
 }
 
 func TestRecordCodeSent_MasksTarget(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name, target, wantMeta string
 		ok                     bool
@@ -349,6 +371,7 @@ func TestRecordCodeSent_MasksTarget(t *testing.T) {
 }
 
 func TestRecordCodeSent_EmptyTargetOmitsMeta(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordCodeSent(rec, ctx, "email", "", true)
 	e := only(t, sink)
@@ -358,6 +381,7 @@ func TestRecordCodeSent_EmptyTargetOmitsMeta(t *testing.T) {
 }
 
 func TestRecordCallbackFailure(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordCallbackFailure(rec, ctx, "oidc_federation", "state mismatch")
 	e := only(t, sink)
@@ -367,6 +391,7 @@ func TestRecordCallbackFailure(t *testing.T) {
 }
 
 func TestRecordMFAFailure(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordMFAFailure(rec, ctx, "u", "chal-1", "totp", "wrong code")
 	e := only(t, sink)
@@ -386,6 +411,7 @@ func TestRecordMFAFailure(t *testing.T) {
 }
 
 func TestRecordMFAFailure_EmptyFactorOmitsMeta(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordMFAFailure(rec, ctx, "u", "", "", "reason")
 	e := only(t, sink)
@@ -395,6 +421,7 @@ func TestRecordMFAFailure_EmptyFactorOmitsMeta(t *testing.T) {
 }
 
 func TestRecordFAPIViolation(t *testing.T) {
+	t.Parallel()
 	rec, ctx, sink := recCtx(t)
 	audit.RecordFAPIViolation(rec, ctx, "c", "rule-1", "detail text", "enforce")
 	e := only(t, sink)
@@ -410,6 +437,7 @@ func TestRecordFAPIViolation(t *testing.T) {
 }
 
 func TestRecordSigningKeyAggregation_DegradedAndRecovered(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(8)
 	rec := audit.New(sink)
 	audit.RecordSigningKeyAggregationDegraded(rec, context.Background(), "subscribe closed")
@@ -432,6 +460,7 @@ func TestRecordSigningKeyAggregation_DegradedAndRecovered(t *testing.T) {
 }
 
 func TestRecordSigningKeyRotationCoordinated(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(4)
 	rec := audit.New(sink)
 	audit.RecordSigningKeyRotationCoordinated(rec, context.Background(), "deferred")
@@ -447,6 +476,7 @@ func TestRecordSigningKeyRotationCoordinated(t *testing.T) {
 // Every helper short-circuits on a nil recorder — the contract that lets
 // handlers in any subpackage call them without a wiring guard.
 func TestRecordHelpers_NilRecorderNoPanic(t *testing.T) {
+	t.Parallel()
 	ctx := newHandlerCtx(t)
 	bg := context.Background()
 	audit.RecordTokenIssued(nil, ctx, "", "", "")

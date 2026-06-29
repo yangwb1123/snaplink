@@ -9,6 +9,7 @@ import (
 )
 
 func TestRedisUserProvider_CreateGetRoundTrip(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	up := NewUserProvider(rdb)
 	ctx := context.Background()
@@ -27,6 +28,7 @@ func TestRedisUserProvider_CreateGetRoundTrip(t *testing.T) {
 }
 
 func TestRedisUserProvider_GetByIDUnknown(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	up := NewUserProvider(rdb)
 	if _, err := up.GetByID(context.Background(), "nope"); !errors.Is(err, sso.ErrNoSuchUser) {
@@ -35,6 +37,7 @@ func TestRedisUserProvider_GetByIDUnknown(t *testing.T) {
 }
 
 func TestRedisUserProvider_GetByExternalID(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	up := NewUserProvider(rdb)
 	ctx := context.Background()
@@ -59,6 +62,7 @@ func TestRedisUserProvider_GetByExternalID(t *testing.T) {
 // TestRedisUserProvider_ExternalIDReindexedOnChange verifies the stale pointer
 // key is dropped when a user's external identity changes.
 func TestRedisUserProvider_ExternalIDReindexedOnChange(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	up := NewUserProvider(rdb)
 	ctx := context.Background()
@@ -76,6 +80,7 @@ func TestRedisUserProvider_ExternalIDReindexedOnChange(t *testing.T) {
 }
 
 func TestRedisUserProvider_ListAndDelete(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	up := NewUserProvider(rdb)
 	ctx := context.Background()

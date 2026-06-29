@@ -12,6 +12,7 @@ import (
 // captured LogoutRequest can't slip through on a store error) and surface it via
 // logErr.
 func TestIdPSqlite_CheckAndRememberFailsClosedOnDBError(t *testing.T) {
+	t.Parallel()
 	db := openSharedDB(t, "idp_errinject")
 	log := &capturingLogger{}
 	s, err := NewLogoutReplayStoreWithDB(db, WithLogger(log))
@@ -36,6 +37,7 @@ func TestIdPSqlite_CheckAndRememberFailsClosedOnDBError(t *testing.T) {
 // silent (no WithLogger) store still fails closed without panicking on the
 // closed-DB path.
 func TestIdPSqlite_LogErrNilSafe(t *testing.T) {
+	t.Parallel()
 	s, err := NewLogoutReplayStore(uniqDSN("idp_nop"))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -50,6 +52,7 @@ func TestIdPSqlite_LogErrNilSafe(t *testing.T) {
 // store's conn-acquisition fail-closed branch: a closed pool (non-nil handle)
 // can't open a connection, so a captured LogoutRequest is rejected.
 func TestIdPSqlite_CheckAndRememberFailsClosedOnConnError(t *testing.T) {
+	t.Parallel()
 	db := openSharedDB(t, "idp_connerr")
 	log := &capturingLogger{}
 	s, err := NewLogoutReplayStoreWithDB(db, WithLogger(log))
@@ -70,6 +73,7 @@ func TestIdPSqlite_CheckAndRememberFailsClosedOnConnError(t *testing.T) {
 // TestIdPSqlite_RecordConnError covers Record's conn-acquisition error branch
 // over a closed pool.
 func TestIdPSqlite_RecordConnError(t *testing.T) {
+	t.Parallel()
 	db := openSharedDB(t, "idp_record_connerr")
 	idx, err := NewSessionIndexWithDB(db)
 	if err != nil {
@@ -86,6 +90,7 @@ func TestIdPSqlite_RecordConnError(t *testing.T) {
 // TestIdPSqlite_PruneExpiredDBError covers the logout PruneExpired exec-error
 // branch.
 func TestIdPSqlite_PruneExpiredDBError(t *testing.T) {
+	t.Parallel()
 	db := openSharedDB(t, "idp_prune_err")
 	s, err := NewLogoutReplayStoreWithDB(db)
 	if err != nil {
@@ -102,6 +107,7 @@ func TestIdPSqlite_PruneExpiredDBError(t *testing.T) {
 // TestIdPSqlite_RecordDBError covers Record's upsert exec-error branch (and its
 // ROLLBACK defer) by dropping the index table mid-flight.
 func TestIdPSqlite_RecordDBError(t *testing.T) {
+	t.Parallel()
 	db := openSharedDB(t, "idp_record_err")
 	idx, err := NewSessionIndexWithDB(db)
 	if err != nil {
@@ -117,6 +123,7 @@ func TestIdPSqlite_RecordDBError(t *testing.T) {
 
 // TestIdPSqlite_ListBySubjectDBError covers ListBySubject's query-error branch.
 func TestIdPSqlite_ListBySubjectDBError(t *testing.T) {
+	t.Parallel()
 	db := openSharedDB(t, "idp_list_err")
 	idx, err := NewSessionIndexWithDB(db)
 	if err != nil {
@@ -133,6 +140,7 @@ func TestIdPSqlite_ListBySubjectDBError(t *testing.T) {
 // TestIdPSqlite_RemoveDBError covers the exec-error branches of Remove / RemoveAll
 // / PruneOlderThan over a real-but-broken DB.
 func TestIdPSqlite_RemoveDBError(t *testing.T) {
+	t.Parallel()
 	db := openSharedDB(t, "idp_remove_err")
 	idx, err := NewSessionIndexWithDB(db)
 	if err != nil {

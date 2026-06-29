@@ -22,6 +22,7 @@ func freshPairwiseStore(t *testing.T) *PairwiseSubjectStore {
 }
 
 func TestPairwise_MapAndResolve(t *testing.T) {
+	t.Parallel()
 	s := freshPairwiseStore(t)
 	ctx := context.Background()
 
@@ -43,6 +44,7 @@ func TestPairwise_MapAndResolve(t *testing.T) {
 }
 
 func TestPairwise_IdempotentUpsertReplacesInFull(t *testing.T) {
+	t.Parallel()
 	s := freshPairwiseStore(t)
 	ctx := context.Background()
 
@@ -70,6 +72,7 @@ func TestPairwise_IdempotentUpsertReplacesInFull(t *testing.T) {
 }
 
 func TestPairwise_DistinctSubjectsCoexist(t *testing.T) {
+	t.Parallel()
 	s := freshPairwiseStore(t)
 	ctx := context.Background()
 
@@ -101,6 +104,7 @@ func TestPairwise_DistinctSubjectsCoexist(t *testing.T) {
 }
 
 func TestPairwise_RejectsEmpty(t *testing.T) {
+	t.Parallel()
 	s := freshPairwiseStore(t)
 	ctx := context.Background()
 

@@ -22,6 +22,7 @@ func newPasswordResetStore(t *testing.T) *sqlitestores.PasswordResetStore {
 }
 
 func TestSQLitePasswordResetStore_IssueConsumeSingleUse(t *testing.T) {
+	t.Parallel()
 	s := newPasswordResetStore(t)
 	ctx := context.Background()
 	if err := s.Issue(ctx, &core.PasswordResetToken{Token: "t1", UserID: "u1", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
@@ -38,6 +39,7 @@ func TestSQLitePasswordResetStore_IssueConsumeSingleUse(t *testing.T) {
 }
 
 func TestSQLitePasswordResetStore_MissingAndExpired(t *testing.T) {
+	t.Parallel()
 	s := newPasswordResetStore(t)
 	ctx := context.Background()
 	if _, err := s.Consume(ctx, "nope"); !errors.Is(err, core.ErrResetTokenNotFound) {
@@ -50,6 +52,7 @@ func TestSQLitePasswordResetStore_MissingAndExpired(t *testing.T) {
 }
 
 func TestSQLitePasswordResetStore_RevokeByUser(t *testing.T) {
+	t.Parallel()
 	s := newPasswordResetStore(t)
 	ctx := context.Background()
 	exp := time.Now().Add(time.Minute)
@@ -74,6 +77,7 @@ func TestSQLitePasswordResetStore_RevokeByUser(t *testing.T) {
 }
 
 func TestSQLitePasswordResetStore_ListByUser(t *testing.T) {
+	t.Parallel()
 	s := newPasswordResetStore(t)
 	ctx := context.Background()
 	exp := time.Now().Add(time.Minute)

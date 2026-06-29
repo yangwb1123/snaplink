@@ -19,6 +19,7 @@ func (s *stubSource) Name() string                                   { return s.
 func (s *stubSource) Load(_ context.Context) (map[string]any, error) { return s.data, s.err }
 
 func TestDeepMerge_ScalarOverride(t *testing.T) {
+	t.Parallel()
 	dst := map[string]any{"a": 1, "b": "old"}
 	deepMerge(dst, map[string]any{"b": "new", "c": true})
 	if dst["a"] != 1 {
@@ -33,6 +34,7 @@ func TestDeepMerge_ScalarOverride(t *testing.T) {
 }
 
 func TestDeepMerge_NestedMaps(t *testing.T) {
+	t.Parallel()
 	dst := map[string]any{
 		"server": map[string]any{"listen": ":8080", "issuer": "old"},
 	}
@@ -50,6 +52,7 @@ func TestDeepMerge_NestedMaps(t *testing.T) {
 }
 
 func TestDeepMerge_SliceReplaces(t *testing.T) {
+	t.Parallel()
 	dst := map[string]any{"xs": []any{1, 2, 3}}
 	deepMerge(dst, map[string]any{"xs": []any{9}})
 	got := dst["xs"].([]any)
@@ -59,6 +62,7 @@ func TestDeepMerge_SliceReplaces(t *testing.T) {
 }
 
 func TestDeepMerge_TypeMismatchOverwrites(t *testing.T) {
+	t.Parallel()
 	dst := map[string]any{"x": map[string]any{"y": 1}}
 	deepMerge(dst, map[string]any{"x": "now scalar"})
 	if dst["x"] != "now scalar" {
@@ -67,6 +71,7 @@ func TestDeepMerge_TypeMismatchOverwrites(t *testing.T) {
 }
 
 func TestLoader_Precedence_LaterWins(t *testing.T) {
+	t.Parallel()
 	lo := &stubSource{name: "low", data: map[string]any{
 		"logging": map[string]any{"level": "info"},
 		"server":  map[string]any{"listen": ":8080"},
@@ -87,6 +92,7 @@ func TestLoader_Precedence_LaterWins(t *testing.T) {
 }
 
 func TestLoader_NilSourceData_IsSkipped(t *testing.T) {
+	t.Parallel()
 	empty := &stubSource{name: "empty", data: nil}
 	real := &stubSource{name: "real", data: map[string]any{
 		"server": map[string]any{"listen": ":7000"},
@@ -101,6 +107,7 @@ func TestLoader_NilSourceData_IsSkipped(t *testing.T) {
 }
 
 func TestLoader_SourceError_ShortCircuits(t *testing.T) {
+	t.Parallel()
 	boom := errors.New("boom")
 	_, err := NewLoader(&stubSource{name: "bad", err: boom}).Load(context.Background())
 	if err == nil || !errors.Is(err, boom) {
@@ -109,6 +116,7 @@ func TestLoader_SourceError_ShortCircuits(t *testing.T) {
 }
 
 func TestLoader_ValidationStillRuns(t *testing.T) {
+	t.Parallel()
 	// Invalid logging.level should still fail through the Loader path
 	// (regression guard — applyDefaults + validate must run on the merged result).
 	bad := &stubSource{name: "x", data: map[string]any{
@@ -121,6 +129,7 @@ func TestLoader_ValidationStillRuns(t *testing.T) {
 }
 
 func TestLoader_DefaultsApplied(t *testing.T) {
+	t.Parallel()
 	// Empty merge → applyDefaults should populate the documented defaults.
 	cfg, err := NewLoader(&stubSource{name: "empty"}).Load(context.Background())
 	if err != nil {
@@ -138,6 +147,7 @@ func TestLoader_DefaultsApplied(t *testing.T) {
 // warning log instead of silently defaulting. The config itself still
 // loads successfully — this is the graceful-fallback contract.
 func TestLoader_UnknownKey_Warns(t *testing.T) {
+	t.Parallel()
 	// Capture slog output.
 	var buf bytes.Buffer
 	h := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})

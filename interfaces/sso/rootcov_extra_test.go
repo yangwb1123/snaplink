@@ -20,6 +20,7 @@ import (
 // TestRcovExtra_ClientStoreCache logs in twice with the per-login client cache
 // enabled so both the miss (first) and hit (second) cache paths run.
 func TestRcovExtra_ClientStoreCache(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithClientStoreCache(30*time.Second))
 	access1, _ := rcovDirectLogin(t, s)
 	access2, _ := rcovDirectLogin(t, s)
@@ -31,6 +32,7 @@ func TestRcovExtra_ClientStoreCache(t *testing.T) {
 // TestRcovExtra_GetClient covers the public GET /api/v1/clients/:id endpoint
 // (200 for a known client, 404 for an unknown one).
 func TestRcovExtra_GetClient(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 
 	status, out := rcovDo(t, http.MethodGet, s.http.URL+"/api/v1/clients/"+rcovClient, "", nil)
@@ -50,6 +52,7 @@ func TestRcovExtra_GetClient(t *testing.T) {
 // TestRcovExtra_CIBA covers the CIBA backchannel-authentication endpoint in poll
 // mode: a request with a resolvable login_hint returns an auth_req_id.
 func TestRcovExtra_CIBA(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithCIBA(
 		defaultimpl.NewMemoryCIBAStore(),
 		oauth.CIBATransportFunc(func(context.Context, string, string, map[string]string) error { return nil }),
@@ -84,6 +87,7 @@ func (r *rcovLogoutNotifierCapture) Notify(context.Context, string, string) erro
 // wired so the fan-out path (fanOutBackchannelLogout) runs. The seeded client
 // declares a backchannel_logout_uri so a notification is attempted.
 func TestRcovExtra_BackchannelLogout(t *testing.T) {
+	t.Parallel()
 	notifier := &rcovLogoutNotifierCapture{}
 	s := rcovNewServer(t, sso.WithBackchannelLogout(rcovLogoutTokenIssuer{}, notifier))
 

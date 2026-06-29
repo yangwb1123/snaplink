@@ -13,6 +13,7 @@ import (
 // rotation grace window is accepted by buildApp (the option only applies when
 // the refresh store is enabled and the window > 0).
 func TestBuildApp_RefreshRotationGrace_BuildsCleanly(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.OAuth.RefreshToken = config.OAuthRefreshTokenConfig{
 		OAuthStoreConfig: config.OAuthStoreConfig{
@@ -29,6 +30,7 @@ func TestBuildApp_RefreshRotationGrace_BuildsCleanly(t *testing.T) {
 }
 
 func TestBuildTenantUsageAggregator_DisabledByDefault(t *testing.T) {
+	t.Parallel()
 	a, err := serverbuildstore.BuildTenantUsageAggregator(config.TenantUsageMeteringConfig{})
 	if err != nil {
 		t.Fatalf("disabled build: %v", err)
@@ -39,6 +41,7 @@ func TestBuildTenantUsageAggregator_DisabledByDefault(t *testing.T) {
 }
 
 func TestBuildTenantUsageAggregator_Memory(t *testing.T) {
+	t.Parallel()
 	a, err := serverbuildstore.BuildTenantUsageAggregator(config.TenantUsageMeteringConfig{Backend: "memory"})
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
@@ -49,12 +52,14 @@ func TestBuildTenantUsageAggregator_Memory(t *testing.T) {
 }
 
 func TestBuildTenantUsageAggregator_SQLiteNeedsDSN(t *testing.T) {
+	t.Parallel()
 	if _, err := serverbuildstore.BuildTenantUsageAggregator(config.TenantUsageMeteringConfig{Backend: "sqlite"}); err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
 }
 
 func TestBuildTenantUsageAggregator_SQLiteOpensFile(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "audit.db") + "?_journal=WAL"
 	a, err := serverbuildstore.BuildTenantUsageAggregator(config.TenantUsageMeteringConfig{Backend: "sqlite", DSN: dsn})
 	if err != nil {
@@ -66,6 +71,7 @@ func TestBuildTenantUsageAggregator_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildTenantUsageAggregator_UnknownBackend(t *testing.T) {
+	t.Parallel()
 	if _, err := serverbuildstore.BuildTenantUsageAggregator(config.TenantUsageMeteringConfig{Backend: "bogus"}); err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
@@ -74,6 +80,7 @@ func TestBuildTenantUsageAggregator_UnknownBackend(t *testing.T) {
 // TestBuildApp_TenantTokenStrategy_RejectsUnregistered verifies an unregistered
 // per-tenant token_strategy fails loud at boot (it would break login at runtime).
 func TestBuildApp_TenantTokenStrategy_RejectsUnregistered(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Tenant.Enabled = true
 	cfg.Tenant.Backend = "memory"
@@ -88,6 +95,7 @@ func TestBuildApp_TenantTokenStrategy_RejectsUnregistered(t *testing.T) {
 // TestBuildApp_TenantTokenStrategy_AcceptsRegistered verifies a valid per-tenant
 // strategy (session) is accepted and the app builds.
 func TestBuildApp_TenantTokenStrategy_AcceptsRegistered(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Tenant.Enabled = true
 	cfg.Tenant.Backend = "memory"

@@ -150,6 +150,7 @@ const testKeyID = "arn:aws:kms:us-east-1:000000000000:key/test"
 // TestPublicKeyParsesAndCaches verifies Public() parses the DER SPKI into
 // the right key type and that GetPublicKey is hit only once (the cache).
 func TestPublicKeyParsesAndCaches(t *testing.T) {
+	t.Parallel()
 	f := newFakeECKMS(t)
 	s, err := New(f, testKeyID)
 	if err != nil {
@@ -174,6 +175,7 @@ func TestPublicKeyParsesAndCaches(t *testing.T) {
 // Sign returns ASN.1 DER that verifies against the public key via
 // ecdsa.VerifyASN1 (the stdlib contract the cryptosigner bridge relies on).
 func TestSignECDSARoundTrip(t *testing.T) {
+	t.Parallel()
 	f := newFakeECKMS(t)
 	s, err := New(f, testKeyID)
 	if err != nil {
@@ -193,6 +195,7 @@ func TestSignECDSARoundTrip(t *testing.T) {
 
 // TestSignRSARoundTrip verifies RS256 + PS256 raw signatures round-trip.
 func TestSignRSARoundTrip(t *testing.T) {
+	t.Parallel()
 	f := newFakeRSAKMS(t)
 	s, err := New(f, testKeyID)
 	if err != nil {
@@ -231,6 +234,7 @@ func TestSignRSARoundTrip(t *testing.T) {
 // TestEdDSARejected confirms an EdDSA request (HashFunc()==0) is rejected
 // clearly — AWS KMS has no Ed25519 signing key spec.
 func TestEdDSARejected(t *testing.T) {
+	t.Parallel()
 	f := newFakeECKMS(t)
 	s, err := New(f, testKeyID)
 	if err != nil {
@@ -244,6 +248,7 @@ func TestEdDSARejected(t *testing.T) {
 // TestSignFailsClosed confirms a KMS Sign error propagates (no unsigned
 // token ever leaves the signer).
 func TestSignFailsClosed(t *testing.T) {
+	t.Parallel()
 	f := newFakeECKMS(t)
 	f.signErr = errors.New("kms throttled")
 	s, err := New(f, testKeyID)
@@ -261,6 +266,7 @@ func TestSignFailsClosed(t *testing.T) {
 // cryptosigner bridge over the fake KMS signer must Validate. This proves
 // the full chain — KMS DER -> cryptosigner R||S -> JWS ES256 -> Validate.
 func TestEndToEndECDSAIssuer(t *testing.T) {
+	t.Parallel()
 	f := newFakeECKMS(t)
 	signer, err := New(f, testKeyID)
 	if err != nil {
@@ -296,6 +302,7 @@ func TestEndToEndECDSAIssuer(t *testing.T) {
 // TestEndToEndRSAIssuer mirrors the ECDSA end-to-end test for RS256 + PS256
 // through the REAL RSAJWTIssuer + cryptosigner.RSA bridge over fake KMS.
 func TestEndToEndRSAIssuer(t *testing.T) {
+	t.Parallel()
 	// cryptosigner.AlgRS256/AlgPS256 ("RS256"/"PS256") are string-equal to
 	// what defaultimpl.WithRSAAlg expects, so they double as the issuer alg.
 	for _, tc := range []struct {
@@ -337,6 +344,7 @@ func TestEndToEndRSAIssuer(t *testing.T) {
 
 // TestNewRejectsBadArgs covers the cheap construction guards.
 func TestNewRejectsBadArgs(t *testing.T) {
+	t.Parallel()
 	if _, err := New(nil, testKeyID); err == nil {
 		t.Fatal("New(nil client) should error")
 	}
@@ -357,6 +365,7 @@ func TestNewRejectsBadArgs(t *testing.T) {
 // transient error is retried (not poisoned), and once it clears every
 // signer caches the same immutable key and signs successfully.
 func TestConcurrentLoadPublicRetriesTransientError(t *testing.T) {
+	t.Parallel()
 	f := newFakeECKMS(t)
 	// First 5 GetPublicKey attempts fail; the rest succeed. With the cache
 	// only populated on success, concurrent callers retry past the outage.
@@ -411,6 +420,7 @@ func TestConcurrentLoadPublicRetriesTransientError(t *testing.T) {
 // the stdlib contract; this signer needs the hash it carries, so a nil must
 // yield a clear error, never a nil-interface panic on opts.HashFunc().
 func TestSignNilOptsRejected(t *testing.T) {
+	t.Parallel()
 	f := newFakeECKMS(t)
 	s, err := New(f, testKeyID)
 	if err != nil {
@@ -435,6 +445,7 @@ func TestSignNilOptsRejected(t *testing.T) {
 // than WithCallTimeout must return a context-deadline error promptly rather
 // than hanging the signing goroutine past any handler deadline.
 func TestSignCallTimeout(t *testing.T) {
+	t.Parallel()
 	f := newFakeECKMS(t)
 	// Pre-load the public key (no block) so the timeout we measure is the
 	// Sign round-trip itself, isolating the FIX-2 behavior.

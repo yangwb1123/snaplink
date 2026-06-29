@@ -77,6 +77,7 @@ func issueIDTokenFor(t *testing.T, srv *sso.Server, client *sso.Client) string {
 }
 
 func TestServer_PerTenantIDTokenIsolation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// Three independent Ed25519 issuers => three distinct signing keys.
@@ -173,6 +174,7 @@ func TestServer_PerTenantIDTokenIsolation(t *testing.T) {
 // id_token: returning an error rather than silently falling back to the
 // shared idTokenIssuer (which would leak the tenant onto a shared key).
 func TestServer_TenantIDTokenUnregisteredFailsClosed(t *testing.T) {
+	t.Parallel()
 	def := defaultimpl.NewEd25519JWTIssuer()
 	srv := sso.NewServer(
 		sso.WithTokenIssuer("default", def),
@@ -200,6 +202,7 @@ func TestServer_TenantIDTokenUnregisteredFailsClosed(t *testing.T) {
 // (emit=false, no error) rather than sign it with the shared key —
 // fail-closed by omission. The access-token path is unaffected.
 func TestServer_TenantIDTokenNonOIDCIssuerOmits(t *testing.T) {
+	t.Parallel()
 	def := defaultimpl.NewEd25519JWTIssuer()
 	session := defaultimpl.NewSessionTokenIssuer() // TokenIssuer, not IDTokenIssuer
 
@@ -242,6 +245,7 @@ func TestServer_TenantIDTokenNonOIDCIssuerOmits(t *testing.T) {
 // signer; an opaque/unregistered tenant issuer fails closed (ok=false →
 // caller omits + invalid_request, never a bare code under the shared key).
 func TestServer_PerTenantJARMIsolation(t *testing.T) {
+	t.Parallel()
 	def := defaultimpl.NewEd25519JWTIssuer()
 	tenantA := defaultimpl.NewEd25519JWTIssuer()
 	session := defaultimpl.NewSessionTokenIssuer()

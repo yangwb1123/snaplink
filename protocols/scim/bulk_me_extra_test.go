@@ -19,6 +19,7 @@ import (
 // TestMe_PutReplacesSubject: PUT /Me replaces the resolved subject's own
 // resource (me's MethodPut -> replaceUser branch).
 func TestMe_PutReplacesSubject(t *testing.T) {
+	t.Parallel()
 	h, _ := meHandler(t, "id-1")
 	if rec := do(t, h, http.MethodPost, "/Users", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"self@example.com"}`); rec.Code != http.StatusCreated {
 		t.Fatalf("seed create: %d %s", rec.Code, rec.Body.String())
@@ -35,6 +36,7 @@ func TestMe_PutReplacesSubject(t *testing.T) {
 
 // TestMe_PatchSubject: PATCH /Me applies a PATCH to the subject's resource.
 func TestMe_PatchSubject(t *testing.T) {
+	t.Parallel()
 	h, _ := meHandler(t, "id-1")
 	if rec := do(t, h, http.MethodPost, "/Users", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"me@example.com"}`); rec.Code != http.StatusCreated {
 		t.Fatalf("seed: %d", rec.Code)
@@ -52,6 +54,7 @@ func TestMe_PatchSubject(t *testing.T) {
 // TestMe_MethodNotAllowed: an undefined method on /Me is 405 (me's default
 // branch).
 func TestMe_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
 	h, _ := meHandler(t, "id-1")
 	rec := do(t, h, http.MethodPost, "/Me", `{}`)
 	if rec.Code != http.StatusMethodNotAllowed {
@@ -63,6 +66,7 @@ func TestMe_MethodNotAllowed(t *testing.T) {
 // uses crypto/rand randomID, producing a 32-hex-char opaque id (helpers.go
 // randomID, otherwise only the deterministic test generator runs).
 func TestRandomIDDefaultGenerator(t *testing.T) {
+	t.Parallel()
 	users := defaultimpl.NewMemoryUserProvider()
 	h := NewHandler(users, testBase) // no WithIDGenerator
 	rec := do(t, h, http.MethodPost, pathUsers, `{"userName":"rng@example.com"}`)
@@ -91,6 +95,7 @@ func TestRandomIDDefaultGenerator(t *testing.T) {
 // (bulk's error branch + marshalErr path is covered by the failOnErrors test;
 // here we assert the inline error response body on a per-op failure).
 func TestBulk_OperationErrorEnvelope(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	// Seed a user so the second create collides on userName.
 	if rec := do(t, h, http.MethodPost, pathUsers, `{"userName":"dup@example.com"}`); rec.Code != http.StatusCreated {
@@ -114,6 +119,7 @@ func TestBulk_OperationErrorEnvelope(t *testing.T) {
 
 // TestBulk_PayloadTooLarge: a bulk body over maxPayloadSize is 413.
 func TestBulk_PayloadTooLarge(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	// Build a body larger than bulkMaxPayloadSize via a giant userName.
 	huge := strings.Repeat("a", bulkMaxPayloadSize+10)
@@ -128,6 +134,7 @@ func TestBulk_PayloadTooLarge(t *testing.T) {
 
 // TestBulk_MalformedRequest: an unparseable BulkRequest body is 400.
 func TestBulk_MalformedRequest(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	rec := do(t, h, http.MethodPost, "/Bulk", `{not json`)
 	if rec.Code != http.StatusBadRequest {
@@ -142,6 +149,7 @@ func TestBulk_MalformedRequest(t *testing.T) {
 // later PATCH references the new id inside its data (resolveBulkRefs over data,
 // not just path).
 func TestBulk_CreateThenReferenceInData(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	// Create a group, then in the same bulk add a member that references the
 	// created group's bulkId in the PATCH path.
@@ -167,6 +175,7 @@ func TestBulk_CreateThenReferenceInData(t *testing.T) {
 // store (the baseOnlyProvider pattern — every other call delegates to the real
 // store) and only forces List to error, so this is not a mock.
 func TestStorageErrorMapping(t *testing.T) {
+	t.Parallel()
 	real := defaultimpl.NewMemoryUserProvider()
 	h := NewHandler(failingListProvider{inner: real}, testBase,
 		WithIDGenerator(func() string { return "x" }))
@@ -185,6 +194,7 @@ func TestStorageErrorMapping(t *testing.T) {
 // TestStorageErrorMapping_ListUsers: a List error on the list endpoint also
 // surfaces as a 500 (storageError via listUsers).
 func TestStorageErrorMapping_ListUsers(t *testing.T) {
+	t.Parallel()
 	h := NewHandler(failingListProvider{inner: defaultimpl.NewMemoryUserProvider()}, testBase)
 	rec := do(t, h, http.MethodGet, pathUsers, "")
 	if rec.Code != http.StatusInternalServerError {

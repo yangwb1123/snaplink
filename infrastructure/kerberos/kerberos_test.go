@@ -201,6 +201,7 @@ func assertNegotiateChallenge(t *testing.T, rr *httptest.ResponseRecorder) {
 // (the browser-trigger), no-store, and NO error body (this is the handshake,
 // not a credential failure).
 func TestNoNegotiateHeader_Challenges(t *testing.T) {
+	t.Parallel()
 	v := &fakeValidator{principal: "alice", realm: testRealm}
 	h := newHarness(t, v, nil)
 
@@ -222,6 +223,7 @@ func TestNoNegotiateHeader_Challenges(t *testing.T) {
 // TestNonNegotiateScheme_Challenges proves a non-Negotiate Authorization scheme
 // (e.g. a Bearer header) is treated as the handshake leg, not a parse error.
 func TestNonNegotiateScheme_Challenges(t *testing.T) {
+	t.Parallel()
 	v := &fakeValidator{principal: "alice", realm: testRealm}
 	h := newHarness(t, v, nil)
 
@@ -239,6 +241,7 @@ func TestNonNegotiateScheme_Challenges(t *testing.T) {
 // upserted user carrying the mapped realm/groups attributes, AMR krb5 on the
 // minted access token, and no-store throughout.
 func TestValidToken_MintsTokens(t *testing.T) {
+	t.Parallel()
 	v := &fakeValidator{
 		principal: "alice",
 		realm:     testRealm,
@@ -333,6 +336,7 @@ func TestValidToken_MintsTokens(t *testing.T) {
 // NOTHING, and is byte-identical regardless of WHICH validation failed
 // (oracle-safe).
 func TestForgedToken_Rejected(t *testing.T) {
+	t.Parallel()
 	// Two DISTINCT internal failure causes must produce the SAME wire response.
 	causes := []error{
 		errors.New("bad signature against keytab"),
@@ -367,6 +371,7 @@ func TestForgedToken_Rejected(t *testing.T) {
 // valid base64 collapses to the SAME generic 401 invalid_token as a bad ticket
 // (no decode-vs-validate oracle), and never reaches the validator with junk.
 func TestMalformedBase64_Rejected(t *testing.T) {
+	t.Parallel()
 	v := &fakeValidator{principal: "alice", realm: testRealm}
 	h := newHarness(t, v, nil)
 
@@ -391,6 +396,7 @@ func TestMalformedBase64_Rejected(t *testing.T) {
 // realm other than the configured one is rejected with the SAME generic 401 and
 // mints nothing.
 func TestWrongRealm_Rejected(t *testing.T) {
+	t.Parallel()
 	v := &fakeValidator{principal: "mallory", realm: "EVIL.CORP"} // != EXAMPLE.COM
 	h := newHarness(t, v, nil)
 
@@ -413,6 +419,7 @@ func TestWrongRealm_Rejected(t *testing.T) {
 // wire response stays the byte-identical generic 401 (oracle-safe). No principal
 // is attached: validation failed, so there is no proven identity.
 func TestForgedToken_EmitsFailureAudit(t *testing.T) {
+	t.Parallel()
 	const secretCause = "bad signature against keytab S-1-5-21-secret"
 	v := &fakeValidator{err: errors.New(secretCause)}
 	h := newHarness(t, v, nil)
@@ -448,6 +455,7 @@ func TestForgedToken_EmitsFailureAudit(t *testing.T) {
 // attached for the operator's triage — but still no secret (ticket/keytab). The
 // wire stays the byte-identical generic 401.
 func TestWrongRealm_EmitsFailureAudit(t *testing.T) {
+	t.Parallel()
 	v := &fakeValidator{principal: "mallory", realm: "EVIL.CORP"} // != EXAMPLE.COM
 	h := newHarness(t, v, nil)
 
@@ -473,6 +481,7 @@ func TestWrongRealm_EmitsFailureAudit(t *testing.T) {
 // audit, with no identity — consistent with its oracle-safe collapse to the
 // same 401 as a bad ticket.
 func TestMalformedBase64_EmitsFailureAudit(t *testing.T) {
+	t.Parallel()
 	v := &fakeValidator{principal: "alice", realm: testRealm}
 	h := newHarness(t, v, nil)
 
@@ -491,6 +500,7 @@ func TestMalformedBase64_EmitsFailureAudit(t *testing.T) {
 // SPNEGO challenge, not a credential failure, so it must not pollute the audit
 // pipeline / trip brute-force detectors.
 func TestNoCredentialChallenge_NoFailureAudit(t *testing.T) {
+	t.Parallel()
 	v := &fakeValidator{principal: "alice", realm: testRealm}
 	h := newHarness(t, v, nil)
 
@@ -505,6 +515,7 @@ func TestNoCredentialChallenge_NoFailureAudit(t *testing.T) {
 // TestValidToken_EmitsLoginSuccessAudit (FIX #6 parity) proves the SUCCESS path
 // still records a login_success (unchanged) and NO login_failure.
 func TestValidToken_EmitsLoginSuccessAudit(t *testing.T) {
+	t.Parallel()
 	v := &fakeValidator{principal: "alice", realm: testRealm}
 	h := newHarness(t, v, nil)
 
@@ -531,6 +542,7 @@ func TestValidToken_EmitsLoginSuccessAudit(t *testing.T) {
 // TestGroupRealmMapping_CustomKeys proves AttributeMapping renames the derived
 // realm + groups attributes onto the AuthResult/user under the operator's keys.
 func TestGroupRealmMapping_CustomKeys(t *testing.T) {
+	t.Parallel()
 	v := &fakeValidator{
 		principal: "bob",
 		realm:     testRealm,
@@ -567,6 +579,7 @@ func TestGroupRealmMapping_CustomKeys(t *testing.T) {
 // TestNoPACGroups_OmitsAttr proves a principal with no PAC groups simply omits
 // the groups attribute (the access token + realm still mint).
 func TestNoPACGroups_OmitsAttr(t *testing.T) {
+	t.Parallel()
 	v := &fakeValidator{principal: "svc", realm: testRealm, groups: nil}
 	h := newHarness(t, v, nil)
 
@@ -590,6 +603,7 @@ func TestNoPACGroups_OmitsAttr(t *testing.T) {
 // (same disposition as /auth/login) — a 403, no tokens, even on a validated
 // ticket.
 func TestInactiveClient_NoMint(t *testing.T) {
+	t.Parallel()
 	v := &fakeValidator{principal: "alice", realm: testRealm}
 	h := newHarness(t, v, nil)
 	// Flip the client inactive.
@@ -614,6 +628,7 @@ func TestInactiveClient_NoMint(t *testing.T) {
 
 // TestBuild_Validation covers Build's required-dep + nil-validator guards.
 func TestBuild_Validation(t *testing.T) {
+	t.Parallel()
 	goodCfg := kerberosauth.Config{
 		Name: "kerberos", KeytabBytes: []byte("kt"), ServicePrincipal: testSPN,
 		Realm: testRealm, ClientID: testClientID,

@@ -39,6 +39,7 @@ func readExampleBlob(t *testing.T) []byte {
 }
 
 func TestMDSSource_Configured(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  MDSSource
@@ -60,6 +61,7 @@ func TestMDSSource_Configured(t *testing.T) {
 }
 
 func TestMDSSource_Validate(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		src     MDSSource
@@ -93,6 +95,7 @@ func TestMDSSource_Validate(t *testing.T) {
 // OFF) — the settings under which go-webauthn rejects an unknown AAGUID or an
 // unrooted attestation chain.
 func TestBuildMDSProvider_FromFile(t *testing.T) {
+	t.Parallel()
 	provider, err := BuildMDSProvider(MDSSource{
 		FilePath:      exampleBlobPath,
 		CustomRootPEM: metadata.ExampleMDSRoot,
@@ -121,6 +124,7 @@ func TestBuildMDSProvider_FromFile(t *testing.T) {
 // build time. This is the security-critical property — we must never silently
 // run without MDS when the operator asked for it.
 func TestBuildMDSProvider_WrongRootFailsLoud(t *testing.T) {
+	t.Parallel()
 	// No CustomRootPEM ⇒ defaults to the built-in FIDO production root, which
 	// is the WRONG root for the example (test-root-signed) blob.
 	_, err := BuildMDSProvider(MDSSource{FilePath: exampleBlobPath})
@@ -135,6 +139,7 @@ func TestBuildMDSProvider_WrongRootFailsLoud(t *testing.T) {
 // TestBuildMDSProvider_TamperedBlobFailsLoud flips a byte in the blob; the JWS
 // signature check must reject it (even with the correct root).
 func TestBuildMDSProvider_TamperedBlobFailsLoud(t *testing.T) {
+	t.Parallel()
 	raw := readExampleBlob(t)
 	tampered := make([]byte, len(raw))
 	copy(tampered, raw)
@@ -160,6 +165,7 @@ func TestBuildMDSProvider_TamperedBlobFailsLoud(t *testing.T) {
 }
 
 func TestBuildMDSProvider_MissingFileFailsLoud(t *testing.T) {
+	t.Parallel()
 	_, err := BuildMDSProvider(MDSSource{FilePath: "testdata/does_not_exist.jws"})
 	if err == nil {
 		t.Fatal("expected missing-file error")
@@ -170,6 +176,7 @@ func TestBuildMDSProvider_MissingFileFailsLoud(t *testing.T) {
 }
 
 func TestBuildMDSProvider_EmptyFileFailsLoud(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "empty.jws")
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
@@ -182,6 +189,7 @@ func TestBuildMDSProvider_EmptyFileFailsLoud(t *testing.T) {
 }
 
 func TestBuildMDSProvider_BothSourcesFailLoud(t *testing.T) {
+	t.Parallel()
 	_, err := BuildMDSProvider(MDSSource{FilePath: "a", FetchURL: "https://b"})
 	if err == nil || !strings.Contains(err.Error(), "exactly one") {
 		t.Fatalf("expected both-sources error, got: %v", err)
@@ -189,6 +197,7 @@ func TestBuildMDSProvider_BothSourcesFailLoud(t *testing.T) {
 }
 
 func TestBuildMDSProvider_NeitherSourceFailsLoud(t *testing.T) {
+	t.Parallel()
 	_, err := BuildMDSProvider(MDSSource{})
 	if err == nil || !strings.Contains(err.Error(), "neither file_path nor fetch_url") {
 		t.Fatalf("expected unconfigured-source error, got: %v", err)
@@ -201,6 +210,7 @@ func TestBuildMDSProvider_NeitherSourceFailsLoud(t *testing.T) {
 // successful-decode logic is identical to the file path (same DecodeBytes),
 // which the file tests cover; here we prove the fetch wiring + fail-loud.
 func TestBuildMDSProvider_FetchReachesTransport(t *testing.T) {
+	t.Parallel()
 	raw := readExampleBlob(t)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(raw)
@@ -221,6 +231,7 @@ func TestBuildMDSProvider_FetchReachesTransport(t *testing.T) {
 
 // TestBuildMDSProvider_FetchRejectsPlaintext confirms the https guard.
 func TestBuildMDSProvider_FetchRejectsPlaintext(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer srv.Close()
 	_, err := BuildMDSProvider(MDSSource{FetchURL: srv.URL}) // http://...
@@ -234,6 +245,7 @@ func TestBuildMDSProvider_FetchRejectsPlaintext(t *testing.T) {
 // VerifyAttestation performs no metadata validation (its mds==nil early
 // return) — identical to the pre-MDS ceremony.
 func TestNewHelper_MDSNilByDefault(t *testing.T) {
+	t.Parallel()
 	h, err := NewHelper(Config{
 		RPID:      "example.com",
 		RPOrigins: []string{"https://sso.example.com"},
@@ -249,6 +261,7 @@ func TestNewHelper_MDSNilByDefault(t *testing.T) {
 // TestNewHelper_MDSWired proves a provided MDS provider reaches gw.Config.MDS,
 // so go-webauthn's VerifyAttestation will run metadata validation against it.
 func TestNewHelper_MDSWired(t *testing.T) {
+	t.Parallel()
 	provider, err := BuildMDSProvider(MDSSource{
 		FilePath:      exampleBlobPath,
 		CustomRootPEM: metadata.ExampleMDSRoot,

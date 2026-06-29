@@ -17,6 +17,7 @@ import (
 // (Functional correctness of the 3 tables is locked by the shared
 // permissionstest.ConformanceSuite in the package's other tests.)
 func TestMigration_StampsBaseline(t *testing.T) {
+	t.Parallel()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "p.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)

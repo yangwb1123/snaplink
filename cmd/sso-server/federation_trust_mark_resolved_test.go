@@ -44,6 +44,7 @@ func writeAnchorJWKSFile(t *testing.T) string {
 // Flag ON with NO trust anchors -> boot error (the anchor is the root of trust
 // that authorizes a resolved issuer; without one the path is inert).
 func TestBuildFederationConfig_ResolvedFlagWithoutAnchors_BootError(t *testing.T) {
+	t.Parallel()
 	cfg := config.FederationConfig{
 		RequiredTrustMarkTypes:                  []string{"https://fed.test/tm/certified"},
 		AllowFederationResolvedTrustMarkIssuers: true,
@@ -61,6 +62,7 @@ func TestBuildFederationConfig_ResolvedFlagWithoutAnchors_BootError(t *testing.T
 // A required type with NO configured issuers AND the resolved flag OFF -> boot
 // error (no authorized-issuer source at all would admit no RP).
 func TestBuildFederationConfig_RequiredTypeNoIssuerSource_BootError(t *testing.T) {
+	t.Parallel()
 	cfg := config.FederationConfig{
 		RequiredTrustMarkTypes:                  []string{"https://fed.test/tm/certified"},
 		AllowFederationResolvedTrustMarkIssuers: false,
@@ -79,6 +81,7 @@ func TestBuildFederationConfig_RequiredTypeNoIssuerSource_BootError(t *testing.T
 // configured anchor -> NO boot error (the federation-resolved path IS the
 // authorized-issuer source; the anchor provides the root of trust).
 func TestBuildFederationConfig_ResolvedFlagSatisfiesIssuerSource_OK(t *testing.T) {
+	t.Parallel()
 	jwksPath := writeAnchorJWKSFile(t)
 	cfg := config.FederationConfig{
 		TrustAnchors: []config.TrustAnchorConfig{

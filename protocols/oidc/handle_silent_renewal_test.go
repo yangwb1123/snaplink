@@ -103,6 +103,7 @@ func decodeBody(t *testing.T, b []byte) map[string]any {
 }
 
 func TestHandleSilentRenewal_NotPromptNonePassThrough(t *testing.T) {
+	t.Parallel()
 	d := newSilentDeps(t)
 	ctx, _ := newCtx(http.MethodGet, "/auth/login")
 	if oidc.HandleSilentRenewal(d, ctx, []string{"login"}, oidc.SilentRenewalRequest{}, &core.Client{ID: "c"}) {
@@ -111,6 +112,7 @@ func TestHandleSilentRenewal_NotPromptNonePassThrough(t *testing.T) {
 }
 
 func TestHandleSilentRenewal_PromptNoneCombinedInvalidRequest(t *testing.T) {
+	t.Parallel()
 	d := newSilentDeps(t)
 	ctx, rec := newCtx(http.MethodGet, "/auth/login")
 	handled := oidc.HandleSilentRenewal(d, ctx, []string{"none", "consent"}, oidc.SilentRenewalRequest{}, &core.Client{ID: "c"})
@@ -123,6 +125,7 @@ func TestHandleSilentRenewal_PromptNoneCombinedInvalidRequest(t *testing.T) {
 }
 
 func TestHandleSilentRenewal_NoHintLoginRequired(t *testing.T) {
+	t.Parallel()
 	d := newSilentDeps(t)
 	ctx, rec := newCtx(http.MethodGet, "/auth/login")
 	oidc.HandleSilentRenewal(d, ctx, []string{"none"}, oidc.SilentRenewalRequest{}, &core.Client{ID: "c"})
@@ -132,6 +135,7 @@ func TestHandleSilentRenewal_NoHintLoginRequired(t *testing.T) {
 }
 
 func TestHandleSilentRenewal_BadHintLoginRequired(t *testing.T) {
+	t.Parallel()
 	d := newSilentDeps(t)
 	ctx, rec := newCtx(http.MethodGet, "/auth/login")
 	oidc.HandleSilentRenewal(d, ctx, []string{"none"}, oidc.SilentRenewalRequest{IDTokenHint: "garbage"}, &core.Client{ID: "c"})
@@ -141,6 +145,7 @@ func TestHandleSilentRenewal_BadHintLoginRequired(t *testing.T) {
 }
 
 func TestHandleSilentRenewal_ClientMismatchLoginRequired(t *testing.T) {
+	t.Parallel()
 	d := newSilentDeps(t)
 	hint := mintHint(t, d, "user-1", "client-A")
 	ctx, rec := newCtx(http.MethodGet, "/auth/login")
@@ -152,6 +157,7 @@ func TestHandleSilentRenewal_ClientMismatchLoginRequired(t *testing.T) {
 }
 
 func TestHandleSilentRenewal_MaxAgeExceededLoginRequired(t *testing.T) {
+	t.Parallel()
 	d := newSilentDeps(t)
 	// Mint a hint whose auth_time is in the past.
 	tok, _ := d.issuer.Issue(context.Background(), &core.Subject{
@@ -167,6 +173,7 @@ func TestHandleSilentRenewal_MaxAgeExceededLoginRequired(t *testing.T) {
 }
 
 func TestHandleSilentRenewal_NoSessionManagerLoginRequired(t *testing.T) {
+	t.Parallel()
 	d := newSilentDeps(t)
 	d.sessions = nil
 	hint := mintHint(t, d, "user-1", "c")
@@ -178,6 +185,7 @@ func TestHandleSilentRenewal_NoSessionManagerLoginRequired(t *testing.T) {
 }
 
 func TestHandleSilentRenewal_NoLiveSessionLoginRequired(t *testing.T) {
+	t.Parallel()
 	d := newSilentDeps(t)
 	// No session created for user-1 → ListByUser empty → login_required.
 	hint := mintHint(t, d, "user-1", "c")
@@ -189,6 +197,7 @@ func TestHandleSilentRenewal_NoLiveSessionLoginRequired(t *testing.T) {
 }
 
 func TestHandleSilentRenewal_SuccessWithIDToken(t *testing.T) {
+	t.Parallel()
 	d := newSilentDeps(t)
 	if _, err := d.sessions.Create(context.Background(), "user-1"); err != nil {
 		t.Fatalf("create session: %v", err)
@@ -227,6 +236,7 @@ func TestHandleSilentRenewal_SuccessWithIDToken(t *testing.T) {
 // ListByUser(pseudonym) returns empty and the renewal is wrongly rejected with
 // login_required, forcing a full interactive re-login on every renewal.
 func TestHandleSilentRenewal_PairwiseResolvesLocalForSessionLookup(t *testing.T) {
+	t.Parallel()
 	d := newSilentDeps(t)
 	d.localFor = map[string]string{"pairwise-P": "user-1"}
 	if _, err := d.sessions.Create(context.Background(), "user-1"); err != nil {
@@ -248,6 +258,7 @@ func TestHandleSilentRenewal_PairwiseResolvesLocalForSessionLookup(t *testing.T)
 }
 
 func TestHandleSilentRenewal_SuccessNoOpenIDOmitsIDToken(t *testing.T) {
+	t.Parallel()
 	d := newSilentDeps(t)
 	_, _ = d.sessions.Create(context.Background(), "user-1")
 	// Hint carries only a non-openid scope; the renewed token preserves it,
@@ -265,6 +276,7 @@ func TestHandleSilentRenewal_SuccessNoOpenIDOmitsIDToken(t *testing.T) {
 }
 
 func TestHandleSilentRenewal_StrategyErrorServerError(t *testing.T) {
+	t.Parallel()
 	d := newSilentDeps(t)
 	_, _ = d.sessions.Create(context.Background(), "user-1")
 	hint := mintHint(t, d, "user-1", "c")
@@ -281,6 +293,7 @@ func TestHandleSilentRenewal_StrategyErrorServerError(t *testing.T) {
 }
 
 func TestHandleSilentRenewal_IDTokenResolutionErrorOmitsIDToken(t *testing.T) {
+	t.Parallel()
 	d := newSilentDeps(t)
 	_, _ = d.sessions.Create(context.Background(), "user-1")
 	hint := mintHint(t, d, "user-1", "c")

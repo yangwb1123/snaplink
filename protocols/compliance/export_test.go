@@ -22,6 +22,7 @@ func (s staticExporter) ExportSubject(context.Context, string) (any, error) { re
 func (s staticExporter) ExportKey() string                                  { return s.key }
 
 func TestExportSubject_BundlesUserSessionsAndExtras(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := defaultimpl.NewMemoryUserProvider()
 	sessions := defaultimpl.NewMemorySessionManager()
@@ -58,6 +59,7 @@ func TestExportSubject_BundlesUserSessionsAndExtras(t *testing.T) {
 }
 
 func TestExportSubject_ExtraErrorIsBestEffort(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := defaultimpl.NewMemoryUserProvider()
 	if err := users.CreateOrUpdate(ctx, &core.User{ID: "u1"}); err != nil {
@@ -80,6 +82,7 @@ func TestExportSubject_ExtraErrorIsBestEffort(t *testing.T) {
 }
 
 func TestExportSubject_EmptyUserID(t *testing.T) {
+	t.Parallel()
 	exp := &compliance.Exporter{Users: defaultimpl.NewMemoryUserProvider()}
 	if _, err := exp.ExportSubject(context.Background(), ""); err == nil {
 		t.Fatal("expected error for empty user id")

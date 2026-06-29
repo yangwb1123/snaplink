@@ -25,6 +25,7 @@ var (
 // --- AuthClient ---
 
 func TestLocalAuth_ValidateRoundtrip(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(5 * time.Minute))
 	tok, err := iss.Issue(context.Background(), &sso.Subject{ID: "user-1", Claims: map[string]string{"email": "u@example.com"}}, []string{"read"})
 	if err != nil {
@@ -47,6 +48,7 @@ func TestLocalAuth_ValidateRoundtrip(t *testing.T) {
 }
 
 func TestLocalAuth_ValidateEmptyTokenErrors(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	client := local.NewAuthClient(iss)
 	if _, err := client.ValidateToken(context.Background(), ""); err == nil {
@@ -55,6 +57,7 @@ func TestLocalAuth_ValidateEmptyTokenErrors(t *testing.T) {
 }
 
 func TestLocalAuth_LogoutRevokesToken(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	tok, _ := iss.Issue(context.Background(), &sso.Subject{ID: "u"}, nil)
 	client := local.NewAuthClient(iss)
@@ -68,6 +71,7 @@ func TestLocalAuth_LogoutRevokesToken(t *testing.T) {
 }
 
 func TestLocalAuth_LogoutRequiresAtLeastOne(t *testing.T) {
+	t.Parallel()
 	client := local.NewAuthClient(defaultimpl.NewEd25519JWTIssuer())
 	if err := client.Logout(context.Background(), &ssoclient.LogoutRequest{}); err == nil {
 		t.Fatal("empty Logout should error")
@@ -95,6 +99,7 @@ func authzFixture(t *testing.T) *permissions.MemoryProvider {
 }
 
 func TestLocalAuthz_Check_WildcardAllowed(t *testing.T) {
+	t.Parallel()
 	c := local.NewAuthzClient(authzFixture(t))
 	ok, err := c.Check(context.Background(), &ssoclient.CheckRequest{
 		SubjectID: "user-alice", ClientID: "web-app", Permission: "user:read",
@@ -105,6 +110,7 @@ func TestLocalAuthz_Check_WildcardAllowed(t *testing.T) {
 }
 
 func TestLocalAuthz_Check_Denied(t *testing.T) {
+	t.Parallel()
 	c := local.NewAuthzClient(authzFixture(t))
 	ok, err := c.Check(context.Background(), &ssoclient.CheckRequest{
 		SubjectID: "user-alice", ClientID: "web-app", Permission: "audit:read",
@@ -115,6 +121,7 @@ func TestLocalAuthz_Check_Denied(t *testing.T) {
 }
 
 func TestLocalAuthz_Check_RequiresFields(t *testing.T) {
+	t.Parallel()
 	c := local.NewAuthzClient(authzFixture(t))
 	if _, err := c.Check(context.Background(), &ssoclient.CheckRequest{Permission: "x"}); err == nil {
 		t.Error("missing SubjectID should error")
@@ -122,6 +129,7 @@ func TestLocalAuthz_Check_RequiresFields(t *testing.T) {
 }
 
 func TestLocalAuthz_Check_UnknownUserDeniedNotErrored(t *testing.T) {
+	t.Parallel()
 	c := local.NewAuthzClient(authzFixture(t))
 	ok, err := c.Check(context.Background(), &ssoclient.CheckRequest{
 		SubjectID: "ghost", ClientID: "web-app", Permission: "user:read",
@@ -135,6 +143,7 @@ func TestLocalAuthz_Check_UnknownUserDeniedNotErrored(t *testing.T) {
 }
 
 func TestLocalAuthz_GetMenus_Filtered(t *testing.T) {
+	t.Parallel()
 	c := local.NewAuthzClient(authzFixture(t))
 	tree, err := c.GetMenus(context.Background(), "user-alice", "web-app")
 	if err != nil {
@@ -146,6 +155,7 @@ func TestLocalAuthz_GetMenus_Filtered(t *testing.T) {
 }
 
 func TestLocalAuthz_GetMenus_UnknownUserReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	c := local.NewAuthzClient(authzFixture(t))
 	tree, err := c.GetMenus(context.Background(), "ghost", "web-app")
 	if err != nil {
@@ -157,6 +167,7 @@ func TestLocalAuthz_GetMenus_UnknownUserReturnsEmpty(t *testing.T) {
 }
 
 func TestLocalAuthz_ListRoles_UnknownUserReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	c := local.NewAuthzClient(authzFixture(t))
 	got, err := c.ListRoles(context.Background(), "ghost", "web-app")
 	if err != nil {
@@ -170,6 +181,7 @@ func TestLocalAuthz_ListRoles_UnknownUserReturnsEmpty(t *testing.T) {
 // --- AuditClient ---
 
 func TestLocalAudit_RecordPassthrough(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(10)
 	rec := audit.New(sink)
 	c := local.NewAuditClient(rec)
@@ -183,6 +195,7 @@ func TestLocalAudit_RecordPassthrough(t *testing.T) {
 }
 
 func TestLocalAudit_RecordRequiresEvent(t *testing.T) {
+	t.Parallel()
 	c := local.NewAuditClient(audit.New(audit.NewMemorySink(1)))
 	if err := c.Record(context.Background(), nil); err == nil {
 		t.Fatal("nil event should error")
@@ -190,6 +203,7 @@ func TestLocalAudit_RecordRequiresEvent(t *testing.T) {
 }
 
 func TestLocalAudit_NilRecorderSafe(t *testing.T) {
+	t.Parallel()
 	// Recorder is nil-safe at the SDK level — confirm the wrapper preserves that.
 	c := local.NewAuditClient(nil)
 	if err := c.Record(context.Background(), &ssoclient.Event{Type: audit.EventLogin}); err != nil {

@@ -9,6 +9,7 @@ import (
 )
 
 func TestMemoryUserProvider_CreateThenGet(t *testing.T) {
+	t.Parallel()
 	p := NewMemoryUserProvider()
 	u := &core.User{ID: "u-alice", Email: "alice@example.com", Provider: "password", ExternalID: "alice"}
 	if err := p.CreateOrUpdate(context.Background(), u); err != nil {
@@ -24,6 +25,7 @@ func TestMemoryUserProvider_CreateThenGet(t *testing.T) {
 }
 
 func TestMemoryUserProvider_GetByIDMissing(t *testing.T) {
+	t.Parallel()
 	p := NewMemoryUserProvider()
 	if _, err := p.GetByID(context.Background(), "?"); !errors.Is(err, core.ErrNoSuchUser) {
 		t.Errorf("err = %v, want ErrNoSuchUser", err)
@@ -31,6 +33,7 @@ func TestMemoryUserProvider_GetByIDMissing(t *testing.T) {
 }
 
 func TestMemoryUserProvider_GetByExternalID(t *testing.T) {
+	t.Parallel()
 	p := NewMemoryUserProvider()
 	u := &core.User{ID: "u1", Provider: "ldap", ExternalID: "cn=alice"}
 	_ = p.CreateOrUpdate(context.Background(), u)
@@ -54,6 +57,7 @@ func TestMemoryUserProvider_GetByExternalID(t *testing.T) {
 }
 
 func TestMemoryUserProvider_RejectsNilOrEmptyID(t *testing.T) {
+	t.Parallel()
 	p := NewMemoryUserProvider()
 	if err := p.CreateOrUpdate(context.Background(), nil); err == nil {
 		t.Error("expected error on nil user")
@@ -64,6 +68,7 @@ func TestMemoryUserProvider_RejectsNilOrEmptyID(t *testing.T) {
 }
 
 func TestMemoryUserProvider_UpdateReplaces(t *testing.T) {
+	t.Parallel()
 	p := NewMemoryUserProvider()
 	_ = p.CreateOrUpdate(context.Background(), &core.User{ID: "u", Email: "old@x.com"})
 	_ = p.CreateOrUpdate(context.Background(), &core.User{ID: "u", Email: "new@x.com"})
@@ -74,6 +79,7 @@ func TestMemoryUserProvider_UpdateReplaces(t *testing.T) {
 }
 
 func TestMemoryUserProvider_List(t *testing.T) {
+	t.Parallel()
 	p := NewMemoryUserProvider()
 	_ = p.CreateOrUpdate(context.Background(), &core.User{ID: "a"})
 	_ = p.CreateOrUpdate(context.Background(), &core.User{ID: "b"})
@@ -84,6 +90,7 @@ func TestMemoryUserProvider_List(t *testing.T) {
 }
 
 func TestMemoryUserProvider_Delete(t *testing.T) {
+	t.Parallel()
 	p := NewMemoryUserProvider()
 	_ = p.CreateOrUpdate(context.Background(), &core.User{ID: "u"})
 	_ = p.Delete(context.Background(), "u")

@@ -10,6 +10,7 @@ import (
 // produces an assertion the real validator accepts — the foundation every
 // adversarial test builds on. (Kept separate so a minter regression is obvious.)
 func TestSmoke_HappyPath(t *testing.T) {
+	t.Parallel()
 	const (
 		idpEntity = "https://idp.example.com"
 		spEntity  = "https://sp.example.com/saml/metadata"

@@ -12,6 +12,7 @@ import (
 )
 
 func TestStore_ListDomains(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	_ = s.PutTenant(ctx, mkTenant("t1", "acme"))
@@ -37,6 +38,7 @@ func TestStore_ListDomains(t *testing.T) {
 }
 
 func TestStore_ListDomainsEmpty(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	all, err := s.ListDomains(context.Background())
 	if err != nil {
@@ -48,6 +50,7 @@ func TestStore_ListDomainsEmpty(t *testing.T) {
 }
 
 func TestNewWithDB_RoundtripAndCallerOwnsConn(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "withdb.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	db, err := sql.Open("sqlite", dsn)
@@ -83,6 +86,7 @@ func TestNewWithDB_RoundtripAndCallerOwnsConn(t *testing.T) {
 }
 
 func TestStore_DBNilAfterClose(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	if s.DB() == nil {
 		t.Fatal("DB() nil before close")
@@ -98,6 +102,7 @@ func TestStore_DBNilAfterClose(t *testing.T) {
 }
 
 func TestStore_CloseNilReceiverSafe(t *testing.T) {
+	t.Parallel()
 	var s *Store
 	if err := s.Close(); err != nil {
 		t.Errorf("Close on nil store: %v", err)
@@ -105,6 +110,7 @@ func TestStore_CloseNilReceiverSafe(t *testing.T) {
 }
 
 func TestStore_PingNilStoreErrors(t *testing.T) {
+	t.Parallel()
 	var s *Store
 	if err := s.Ping(context.Background()); err == nil {
 		t.Error("Ping on nil store: want error")

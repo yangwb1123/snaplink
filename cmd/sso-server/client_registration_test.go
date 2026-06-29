@@ -8,6 +8,7 @@ import (
 )
 
 func TestBuildApp_DCREnabledAdvertisesRegistrationEndpoint(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.ClientRegistration.Enabled = true
 	cfg.ClientRegistration.InitialAccessToken = "operator-distributed-token"
@@ -28,6 +29,7 @@ func TestBuildApp_DCREnabledAdvertisesRegistrationEndpoint(t *testing.T) {
 }
 
 func TestBuildApp_DCRDisabledOmitsRegistrationEndpoint(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 
 	a, err := buildApp(cfg, quietLogger())

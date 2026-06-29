@@ -8,6 +8,7 @@ import (
 )
 
 func TestBuildStepUpChallenge_AllFields(t *testing.T) {
+	t.Parallel()
 	got, err := security.BuildStepUpChallenge(security.StepUpChallenge{
 		ACRValues:   []string{"urn:mace:incommon:iap:silver", "urn:mace:incommon:iap:bronze"},
 		MaxAge:      60,
@@ -32,6 +33,7 @@ func TestBuildStepUpChallenge_AllFields(t *testing.T) {
 }
 
 func TestBuildStepUpChallenge_ACRValuesOnly(t *testing.T) {
+	t.Parallel()
 	got, err := security.BuildStepUpChallenge(security.StepUpChallenge{
 		ACRValues: []string{"urn:level:high"},
 	})
@@ -51,6 +53,7 @@ func TestBuildStepUpChallenge_ACRValuesOnly(t *testing.T) {
 }
 
 func TestBuildStepUpChallenge_MaxAgeOnly(t *testing.T) {
+	t.Parallel()
 	got, err := security.BuildStepUpChallenge(security.StepUpChallenge{MaxAge: 120})
 	if err != nil {
 		t.Fatalf("build: %v", err)
@@ -61,6 +64,7 @@ func TestBuildStepUpChallenge_MaxAgeOnly(t *testing.T) {
 }
 
 func TestBuildStepUpChallenge_RejectsEmptyDemand(t *testing.T) {
+	t.Parallel()
 	// No ACR + no max_age → RFC 9470 has no semantics; refuse.
 	_, err := security.BuildStepUpChallenge(security.StepUpChallenge{Realm: "x"})
 	if err == nil {
@@ -69,6 +73,7 @@ func TestBuildStepUpChallenge_RejectsEmptyDemand(t *testing.T) {
 }
 
 func TestBuildStepUpChallenge_EscapesUntrustedDescription(t *testing.T) {
+	t.Parallel()
 	// Description with embedded quote + backslash MUST be
 	// escaped per RFC 7235 quoted-string rules — otherwise an
 	// attacker who controls part of the description could
@@ -94,6 +99,7 @@ func TestBuildStepUpChallenge_EscapesUntrustedDescription(t *testing.T) {
 }
 
 func TestMustBuildStepUpChallenge_PanicsOnEmpty(t *testing.T) {
+	t.Parallel()
 	defer func() {
 		if r := recover(); r == nil {
 			t.Errorf("expected panic")

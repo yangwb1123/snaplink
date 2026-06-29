@@ -37,6 +37,7 @@ func (e *erroringNetStore) Close() error { return nil }
 var _ netpolicy.Store = (*erroringNetStore)(nil)
 
 func TestNetPolicy_NilStoreFailsPrecondition(t *testing.T) {
+	t.Parallel()
 	conn := startNetPolicyGRPC(t, nil, nil, nil)
 	c := netpolicyv1.NewPolicyServiceClient(conn)
 	ctx := context.Background()
@@ -65,6 +66,7 @@ func TestNetPolicy_NilStoreFailsPrecondition(t *testing.T) {
 }
 
 func TestNetPolicy_List(t *testing.T) {
+	t.Parallel()
 	store := memory.New()
 	defer func() { _ = store.Close() }()
 	ctx := context.Background()
@@ -90,6 +92,7 @@ func TestNetPolicy_List(t *testing.T) {
 }
 
 func TestNetPolicy_ValidationRejections(t *testing.T) {
+	t.Parallel()
 	store := &erroringNetStore{} // passes nil-store gate
 	conn := startNetPolicyGRPC(t, store, nil, nil)
 	c := netpolicyv1.NewPolicyServiceClient(conn)
@@ -111,6 +114,7 @@ func TestNetPolicy_ValidationRejections(t *testing.T) {
 }
 
 func TestNetPolicy_StoreErrorsAreInternal(t *testing.T) {
+	t.Parallel()
 	store := &erroringNetStore{err: errors.New("etcd unavailable")}
 	conn := startNetPolicyGRPC(t, store, nil, nil)
 	c := netpolicyv1.NewPolicyServiceClient(conn)
@@ -140,6 +144,7 @@ func TestNetPolicy_StoreErrorsAreInternal(t *testing.T) {
 }
 
 func TestNetPolicy_ApplyRoundTripsAllFields(t *testing.T) {
+	t.Parallel()
 	// Drives the full protoToPolicy/policyToProto roundtrip including the
 	// advertised URLs + metadata fields the basic Apply test omits.
 	store := memory.New()
@@ -175,6 +180,7 @@ func TestNetPolicy_ApplyRoundTripsAllFields(t *testing.T) {
 }
 
 func TestNetPolicy_ClassifyNilRequestIsInvalidArgument(t *testing.T) {
+	t.Parallel()
 	// classifier present but a nil request body -> InvalidArgument (not the
 	// Unimplemented path the no-classifier test covers).
 	store := memory.New()

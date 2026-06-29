@@ -51,6 +51,7 @@ func startTenantAdminGRPCFull(t *testing.T, store tenant.Store, recorder *audit.
 }
 
 func TestTenantAdmin_CRUD(t *testing.T) {
+	t.Parallel()
 	store := tenantmemory.New()
 	sink := audit.NewMemorySink(50)
 	rec := audit.New(sink)
@@ -119,6 +120,7 @@ func TestTenantAdmin_CRUD(t *testing.T) {
 }
 
 func TestTenantAdmin_UpdatePreservesStatus(t *testing.T) {
+	t.Parallel()
 	// Update is for non-status fields; the SetStatus RPC is the only
 	// path that flips active/suspended. Verify Update on a suspended
 	// tenant leaves it suspended.
@@ -141,6 +143,7 @@ func TestTenantAdmin_UpdatePreservesStatus(t *testing.T) {
 }
 
 func TestTenantAdmin_ResidencyRoundTrip(t *testing.T) {
+	t.Parallel()
 	// Create + Update carry home_region/allowed_regions/enforce_writes;
 	// Get + List read them back over the gRPC wire.
 	store := tenantmemory.New()
@@ -212,6 +215,7 @@ func TestTenantAdmin_ResidencyRoundTrip(t *testing.T) {
 }
 
 func TestTenantAdmin_UpdateFiresResidencyInvalidation(t *testing.T) {
+	t.Parallel()
 	// Mirror of TestTenantAdmin_SetStatusFiresCacheInvalidation: a successful
 	// UpdateTenant MUST fire the residency-cache callback so the new policy
 	// applies on the next request instead of waiting out the residency TTL.
@@ -252,6 +256,7 @@ func TestTenantAdmin_UpdateFiresResidencyInvalidation(t *testing.T) {
 }
 
 func TestTenantAdmin_CreateWithResidencyFiresInvalidation(t *testing.T) {
+	t.Parallel()
 	// A create that actually sets a residency policy evicts any stale cached
 	// entry (delete-then-recreate guard); the common no-residency create stays
 	// a strict no-op (covered above).
@@ -275,6 +280,7 @@ func TestTenantAdmin_CreateWithResidencyFiresInvalidation(t *testing.T) {
 }
 
 func TestTenantAdmin_SetStatusFiresCacheInvalidation(t *testing.T) {
+	t.Parallel()
 	// AGENTS.md invariant: admin SetStatus handlers MUST call
 	// (*Server).InvalidateTenantSuspensionCache(id) so the flip
 	// takes effect on the next validate. Verify the callback fires.
@@ -305,6 +311,7 @@ func TestTenantAdmin_SetStatusFiresCacheInvalidation(t *testing.T) {
 }
 
 func TestTenantAdmin_SetStatusNoOpStillInvalidates(t *testing.T) {
+	t.Parallel()
 	// Even when the flip is a no-op (active → active), invalidate the
 	// cache cheaply — a drifted cache shouldn't outlive an explicit
 	// admin call.
@@ -330,6 +337,7 @@ func TestTenantAdmin_SetStatusNoOpStillInvalidates(t *testing.T) {
 }
 
 func TestTenantAdmin_SuspendFiresTokenRevocation(t *testing.T) {
+	t.Parallel()
 	// A real flip to Suspended must fire active refresh-token revocation;
 	// a subsequent flip back to Active must NOT (only suspension purges).
 	store := tenantmemory.New()
@@ -372,6 +380,7 @@ func TestTenantAdmin_SuspendFiresTokenRevocation(t *testing.T) {
 }
 
 func TestTenantAdmin_DeleteFiresTokenRevocation(t *testing.T) {
+	t.Parallel()
 	// Deleting a tenant must also purge its (now-orphaned) refresh tokens,
 	// symmetric with the suspend path.
 	store := tenantmemory.New()
@@ -402,6 +411,7 @@ func TestTenantAdmin_DeleteFiresTokenRevocation(t *testing.T) {
 }
 
 func TestTenantAdmin_SetStatusValidates(t *testing.T) {
+	t.Parallel()
 	store := tenantmemory.New()
 	conn := startTenantAdminGRPC(t, store, audit.New(audit.NewMemorySink(10)), nil)
 	c := adminv1.NewTenantAdminServiceClient(conn)
@@ -418,6 +428,7 @@ func TestTenantAdmin_SetStatusValidates(t *testing.T) {
 }
 
 func TestTenantAdmin_DeleteInvalidatesCache(t *testing.T) {
+	t.Parallel()
 	store := tenantmemory.New()
 	var invalidated atomic.Int32
 	conn := startTenantAdminGRPC(t, store, audit.New(audit.NewMemorySink(10)), func(string) {
@@ -438,6 +449,7 @@ func TestTenantAdmin_DeleteInvalidatesCache(t *testing.T) {
 }
 
 func TestTenantAdmin_DeleteInvalidatesResidencyCache(t *testing.T) {
+	t.Parallel()
 	// A deleted tenant's cached residency policy must be evicted on delete —
 	// symmetric with UpdateTenant. Without this, a still-valid token keeps being
 	// residency-gated against a policy that no longer exists until the cache TTL
@@ -473,6 +485,7 @@ func TestTenantAdmin_DeleteInvalidatesResidencyCache(t *testing.T) {
 }
 
 func TestTenantAdmin_DomainCRUD(t *testing.T) {
+	t.Parallel()
 	store := tenantmemory.New()
 	conn := startTenantAdminGRPC(t, store, audit.New(audit.NewMemorySink(20)), nil)
 	c := adminv1.NewTenantAdminServiceClient(conn)
@@ -541,6 +554,7 @@ func TestTenantAdmin_DomainCRUD(t *testing.T) {
 }
 
 func TestTenantAdmin_AuditFires(t *testing.T) {
+	t.Parallel()
 	store := tenantmemory.New()
 	sink := audit.NewMemorySink(50)
 	rec := audit.New(sink)
@@ -574,6 +588,7 @@ func TestTenantAdmin_AuditFires(t *testing.T) {
 }
 
 func TestTenantAdmin_GetNotFound(t *testing.T) {
+	t.Parallel()
 	store := tenantmemory.New()
 	conn := startTenantAdminGRPC(t, store, audit.New(audit.NewMemorySink(10)), nil)
 	c := adminv1.NewTenantAdminServiceClient(conn)

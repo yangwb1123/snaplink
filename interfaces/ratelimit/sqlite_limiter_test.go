@@ -19,6 +19,7 @@ func newSQLiteLimiterForTest(t *testing.T, perSec float64, burst int) *SQLiteLim
 }
 
 func TestSQLiteLimiter_BurstAllowedThenDenied(t *testing.T) {
+	t.Parallel()
 	// Burst=3, rate=0/sec — exactly 3 requests succeed then deny.
 	lim := newSQLiteLimiterForTest(t, 0, 3)
 	for i := range 3 {
@@ -34,6 +35,7 @@ func TestSQLiteLimiter_BurstAllowedThenDenied(t *testing.T) {
 }
 
 func TestSQLiteLimiter_RefillAfterIdle(t *testing.T) {
+	t.Parallel()
 	// Burst=1, 10/sec — after draining, wait 110ms → bucket refills 1.1 tokens
 	// → next request succeeds.
 	lim := newSQLiteLimiterForTest(t, 10, 1)
@@ -55,6 +57,7 @@ func TestSQLiteLimiter_RefillAfterIdle(t *testing.T) {
 }
 
 func TestSQLiteLimiter_RetryAfterIsPositiveOnDenial(t *testing.T) {
+	t.Parallel()
 	lim := newSQLiteLimiterForTest(t, 1, 1) // 1 token, refilling at 1/sec
 	_, _ = lim.Allow("alice")
 	_, retry := lim.Allow("alice")
@@ -68,6 +71,7 @@ func TestSQLiteLimiter_RetryAfterIsPositiveOnDenial(t *testing.T) {
 }
 
 func TestSQLiteLimiter_KeysIsolated(t *testing.T) {
+	t.Parallel()
 	lim := newSQLiteLimiterForTest(t, 0, 1)
 	if ok, _ := lim.Allow("alice"); !ok {
 		t.Fatal("alice first request denied")
@@ -83,6 +87,7 @@ func TestSQLiteLimiter_KeysIsolated(t *testing.T) {
 }
 
 func TestSQLiteLimiter_BucketNamesIsolated(t *testing.T) {
+	t.Parallel()
 	// Two limiters sharing one DB but with distinct bucket_names
 	// must not pollute each other's keys.
 	dir := t.TempDir()
@@ -112,6 +117,7 @@ func TestSQLiteLimiter_BucketNamesIsolated(t *testing.T) {
 }
 
 func TestSQLiteLimiter_CrossInstanceSharing(t *testing.T) {
+	t.Parallel()
 	// The whole point: a request that drained the bucket on
 	// "replica A" must be visible to "replica B" before B grants
 	// the next request.
@@ -139,6 +145,7 @@ func TestSQLiteLimiter_CrossInstanceSharing(t *testing.T) {
 }
 
 func TestSQLiteLimiter_BurstClampToOneWhenZero(t *testing.T) {
+	t.Parallel()
 	// Burst=0 must clamp to 1 — matches NewMemoryLimiter contract,
 	// rate.NewLimiter would otherwise refuse every request.
 	lim := newSQLiteLimiterForTest(t, 0, 0)
@@ -148,6 +155,7 @@ func TestSQLiteLimiter_BurstClampToOneWhenZero(t *testing.T) {
 }
 
 func TestSQLiteLimiter_DenyWhenRateAndBurstExhausted(t *testing.T) {
+	t.Parallel()
 	// perSecond=0 + burst exhausted → permanent deny, no useful
 	// retry-after (would be infinity).
 	lim := newSQLiteLimiterForTest(t, 0, 1)

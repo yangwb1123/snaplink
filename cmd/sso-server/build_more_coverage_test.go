@@ -23,6 +23,7 @@ import (
 // these (no DB() method), so this is the only place the sqlite assembly path
 // is walked end to end from cmd.
 func TestBuildApp_AllSQLiteBackends(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	idDSN := "file:" + filepath.Join(dir, "identity.db") + "?_journal=WAL"
 	oauthDSN := "file:" + filepath.Join(dir, "oauth.db") + "?_journal=WAL"
@@ -102,6 +103,7 @@ func TestBuildApp_AllSQLiteBackends(t *testing.T) {
 // TestBuildApp_AuditRetentionRequiresMaxAge — retention.enabled on a sqlite
 // audit backend without a max_age is a misconfiguration that must fail loud.
 func TestBuildApp_AuditRetentionRequiresMaxAge(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := &config.Config{}
 	cfg.Audit.Enabled = true
@@ -122,6 +124,7 @@ func TestBuildApp_AuditRetentionRequiresMaxAge(t *testing.T) {
 // issuer + subordinate JWKS-load loops together, which the existing
 // boot-guard tests (federation_trust_mark_resolved_test.go) don't reach.
 func TestBuildFederationConfig_FullSuccess(t *testing.T) {
+	t.Parallel()
 	anchorJWKS := writeJWKSFile(t, "https://anchor.fed.test")
 	issuerJWKS := writeJWKSFile(t, "https://tm-issuer.fed.test")
 	subJWKS := writeJWKSFile(t, "https://sub.fed.test")
@@ -169,6 +172,7 @@ func TestBuildFederationConfig_FullSuccess(t *testing.T) {
 // with no jwks_file is a boot error (the anchor's root-of-trust keys are
 // mandatory).
 func TestBuildFederationConfig_AnchorMissingJWKSFileErrors(t *testing.T) {
+	t.Parallel()
 	cfg := config.FederationConfig{
 		TrustAnchors: []config.TrustAnchorConfig{{EntityID: "https://anchor.fed.test"}},
 	}
@@ -180,6 +184,7 @@ func TestBuildFederationConfig_AnchorMissingJWKSFileErrors(t *testing.T) {
 // TestBuildFederationConfig_SubordinateBadJWKSFileErrors — a configured
 // subordinate whose jwks_file can't be read is a boot error.
 func TestBuildFederationConfig_SubordinateBadJWKSFileErrors(t *testing.T) {
+	t.Parallel()
 	cfg := config.FederationConfig{
 		Subordinates: []config.SubordinateConfig{{
 			EntityID: "https://sub.fed.test",
@@ -196,6 +201,7 @@ func TestBuildFederationConfig_SubordinateBadJWKSFileErrors(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestBuildReleaseSubsystem_FileStoreStaticPinner(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Releases.Enabled = true
 	cfg.Releases.Store.Backend = "file"
@@ -214,6 +220,7 @@ func TestBuildReleaseSubsystem_FileStoreStaticPinner(t *testing.T) {
 // TestBuildReleaseSubsystem_HTTPProbeRequiresURL — opting into the http probe
 // without a URL is a misconfiguration.
 func TestBuildReleaseSubsystem_HTTPProbeRequiresURL(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Releases.Enabled = true
 	cfg.Releases.Store.Backend = "memory"
@@ -229,6 +236,7 @@ func TestBuildReleaseSubsystem_HTTPProbeRequiresURL(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestBuildBootstrapLock_NoopReturnsNil(t *testing.T) {
+	t.Parallel()
 	l, cleanup, err := buildBootstrapLock(&config.Config{}, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
@@ -239,6 +247,7 @@ func TestBuildBootstrapLock_NoopReturnsNil(t *testing.T) {
 }
 
 func TestBuildBootstrapLock_FileBackend(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Bootstrap.Lock.Backend = "file"
 	cfg.Bootstrap.Lock.File.Dir = t.TempDir()
@@ -252,6 +261,7 @@ func TestBuildBootstrapLock_FileBackend(t *testing.T) {
 }
 
 func TestBuildBootstrapLock_EtcdRequiresEndpoints(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Bootstrap.Lock.Backend = "etcd"
 	if _, _, err := buildBootstrapLock(cfg, quietLogger()); err == nil {
@@ -260,6 +270,7 @@ func TestBuildBootstrapLock_EtcdRequiresEndpoints(t *testing.T) {
 }
 
 func TestBuildBootstrapLock_UnknownBackendErrors(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Bootstrap.Lock.Backend = "zookeeper"
 	if _, _, err := buildBootstrapLock(cfg, quietLogger()); err == nil {
@@ -275,6 +286,7 @@ func TestBuildBootstrapLock_UnknownBackendErrors(t *testing.T) {
 // conditional admin/metrics/audit/network blocks without panicking. The
 // output is operator diagnostics only — coverage is the point.
 func TestLogEndpoints_MinimalAndFull(t *testing.T) {
+	t.Parallel()
 	logEndpoints(&config.Config{}, "")
 
 	cfg := &config.Config{}
@@ -296,6 +308,7 @@ func TestLogEndpoints_MinimalAndFull(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestBuildSnapshotSubsystem_AESGCMInlineKey(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Snapshot.Enabled = true
 	cfg.Snapshot.Storage.Backend = "inline"
@@ -312,6 +325,7 @@ func TestBuildSnapshotSubsystem_AESGCMInlineKey(t *testing.T) {
 }
 
 func TestBuildSnapshotSubsystem_AESGCMRequiresKey(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Snapshot.Enabled = true
 	cfg.Snapshot.Storage.Backend = "inline"
@@ -327,6 +341,7 @@ func TestBuildSnapshotSubsystem_AESGCMRequiresKey(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestStoreBuilders_SQLiteDSNRequired(t *testing.T) {
+	t.Parallel()
 	if _, err := serverbuildstore.BuildUserProvider(config.IdentityConfig{Backend: "sqlite"}, nil, ""); err == nil {
 		t.Error("serverbuildstore.BuildUserProvider: expected dsn-required error")
 	}
@@ -348,6 +363,7 @@ func TestStoreBuilders_SQLiteDSNRequired(t *testing.T) {
 }
 
 func TestStoreBuilders_UnknownBackend(t *testing.T) {
+	t.Parallel()
 	if _, err := serverbuildstore.BuildUserProvider(config.IdentityConfig{Backend: "redis"}, nil, ""); err == nil {
 		t.Error("serverbuildstore.BuildUserProvider: expected unknown-backend error")
 	}
@@ -371,6 +387,7 @@ func TestStoreBuilders_UnknownBackend(t *testing.T) {
 // Self-service store backends: memory happy path + sqlite-DSN-required +
 // unknown-backend, for the consent + password-credential selectors.
 func TestSelfServiceStoreBuilders(t *testing.T) {
+	t.Parallel()
 	// Consent store.
 	if s, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "memory"}, nil, ""); err != nil || s == nil {
 		t.Errorf("serverbuildstore.BuildConsentStore memory: store=%v err=%v", s, err)
@@ -398,6 +415,7 @@ func TestSelfServiceStoreBuilders(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestBootstrapLogger_DelegatesToInner(t *testing.T) {
+	t.Parallel()
 	bl := serverbuildstore.BootstrapLogger{Inner: quietLogger()}
 	// NopLogger swallows output; the assertion is no-panic + the adapter
 	// satisfies the bootstrap.Logger Info/Error pair.
@@ -406,6 +424,7 @@ func TestBootstrapLogger_DelegatesToInner(t *testing.T) {
 }
 
 func TestSnapshotRestorerAdapter_UnconfiguredErrors(t *testing.T) {
+	t.Parallel()
 	a := &serverbuildstore.SnapshotRestorerAdapter{} // all nil
 	if err := a.RestoreByID(context.Background(), "snap-1"); err == nil {
 		t.Fatal("expected error when snapshot subsystem not configured")
@@ -419,6 +438,7 @@ func TestSnapshotRestorerAdapter_UnconfiguredErrors(t *testing.T) {
 // TestMountComplianceRoutes_NilDepsNoOp covers the early-return guard: a nil
 // deps (or nil Users) mounts nothing and returns no error — nothing to act on.
 func TestMountComplianceRoutes_NilDepsNoOp(t *testing.T) {
+	t.Parallel()
 	srv := sso.NewServer()
 	if err := mountComplianceRoutes(srv, nil); err != nil {
 		t.Fatalf("nil deps: %v", err)

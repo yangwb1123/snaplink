@@ -82,6 +82,7 @@ func seededRecorder(t *testing.T) *audit.Recorder {
 }
 
 func TestHandleEvents_ReturnsEventsAndCount(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{rec: seededRecorder(t)}
 	ctx, w := httpCtx(t, "", "")
 	audit.HandleEvents(d, ctx)
@@ -95,6 +96,7 @@ func TestHandleEvents_ReturnsEventsAndCount(t *testing.T) {
 }
 
 func TestHandleEvents_FilterByClientID(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{rec: seededRecorder(t)}
 	ctx, w := httpCtx(t, "client_id=c1", "")
 	audit.HandleEvents(d, ctx)
@@ -105,6 +107,7 @@ func TestHandleEvents_FilterByClientID(t *testing.T) {
 }
 
 func TestHandleEvents_NilRecorder500(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{rec: nil}
 	ctx, w := httpCtx(t, "", "")
 	audit.HandleEvents(d, ctx)
@@ -117,6 +120,7 @@ func TestHandleEvents_NilRecorder500(t *testing.T) {
 }
 
 func TestHandleEvents_BadQueryParam400(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{rec: seededRecorder(t)}
 	ctx, w := httpCtx(t, "limit=notanumber", "")
 	audit.HandleEvents(d, ctx)
@@ -126,6 +130,7 @@ func TestHandleEvents_BadQueryParam400(t *testing.T) {
 }
 
 func TestHandleEvents_BadSinceTimestamp400(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{rec: seededRecorder(t)}
 	ctx, w := httpCtx(t, "since=garbage", "")
 	audit.HandleEvents(d, ctx)
@@ -135,6 +140,7 @@ func TestHandleEvents_BadSinceTimestamp400(t *testing.T) {
 }
 
 func TestHandleEvents_QueryStoreError500(t *testing.T) {
+	t.Parallel()
 	rec := audit.New(writeOnlySink{}) // Query returns ErrSinkWriteOnly (non-nil)
 	d := handlerDeps{rec: rec}
 	ctx, w := httpCtx(t, "", "")
@@ -145,6 +151,7 @@ func TestHandleEvents_QueryStoreError500(t *testing.T) {
 }
 
 func TestHandleEvents_AcceptsRFC3339AndUnixTimestamps(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{rec: seededRecorder(t)}
 	for _, q := range []string{"since=2020-01-01T00:00:00Z", "since=1577836800", "until=2099-01-01T00:00:00Z", "offset=0&limit=5"} {
 		ctx, w := httpCtx(t, q, "")
@@ -156,6 +163,7 @@ func TestHandleEvents_AcceptsRFC3339AndUnixTimestamps(t *testing.T) {
 }
 
 func TestHandleEventByID_Found(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(4)
 	rec := audit.New(sink)
 	rec.Record(context.Background(), &audit.Event{ID: "evt-42", Type: audit.EventLogin})
@@ -171,6 +179,7 @@ func TestHandleEventByID_Found(t *testing.T) {
 }
 
 func TestHandleEventByID_MissingIDParam400(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{rec: seededRecorder(t)}
 	ctx, w := httpCtx(t, "", "")
 	audit.HandleEventByID(d, ctx)
@@ -180,6 +189,7 @@ func TestHandleEventByID_MissingIDParam400(t *testing.T) {
 }
 
 func TestHandleEventByID_NotFound404(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{rec: seededRecorder(t)}
 	ctx, w := httpCtx(t, "", "does-not-exist")
 	audit.HandleEventByID(d, ctx)
@@ -192,6 +202,7 @@ func TestHandleEventByID_NotFound404(t *testing.T) {
 }
 
 func TestHandleEventByID_NilRecorder500(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{rec: nil}
 	ctx, w := httpCtx(t, "", "x")
 	audit.HandleEventByID(d, ctx)
@@ -201,6 +212,7 @@ func TestHandleEventByID_NilRecorder500(t *testing.T) {
 }
 
 func TestHandleEventByID_StoreError500(t *testing.T) {
+	t.Parallel()
 	rec := audit.New(writeOnlySink{}) // Get returns ErrSinkWriteOnly (not ErrEventNotFound)
 	d := handlerDeps{rec: rec}
 	ctx, w := httpCtx(t, "", "any")
@@ -211,6 +223,7 @@ func TestHandleEventByID_StoreError500(t *testing.T) {
 }
 
 func TestHandleFacets_MemorySinkAggregates(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{rec: seededRecorder(t)}
 	ctx, w := httpCtx(t, "", "")
 	audit.HandleFacets(d, ctx)
@@ -223,6 +236,7 @@ func TestHandleFacets_MemorySinkAggregates(t *testing.T) {
 }
 
 func TestHandleFacets_NilRecorder500(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{rec: nil}
 	ctx, w := httpCtx(t, "", "")
 	audit.HandleFacets(d, ctx)
@@ -232,6 +246,7 @@ func TestHandleFacets_NilRecorder500(t *testing.T) {
 }
 
 func TestHandleFacets_WriteOnlySink501(t *testing.T) {
+	t.Parallel()
 	// writeOnlySink does not implement FacetQuerier -> 501.
 	rec := audit.New(writeOnlySink{})
 	d := handlerDeps{rec: rec}
@@ -246,6 +261,7 @@ func TestHandleFacets_WriteOnlySink501(t *testing.T) {
 }
 
 func TestHandleFacets_BadQueryParam400(t *testing.T) {
+	t.Parallel()
 	d := handlerDeps{rec: seededRecorder(t)}
 	ctx, w := httpCtx(t, "limit=NaN", "")
 	audit.HandleFacets(d, ctx)
@@ -264,6 +280,7 @@ func (facetUnsupportedSink) Facets(context.Context, audit.Query) (*audit.Facets,
 }
 
 func TestHandleFacets_CallTimeUnsupported501(t *testing.T) {
+	t.Parallel()
 	rec := audit.New(facetUnsupportedSink{})
 	d := handlerDeps{rec: rec}
 	ctx, w := httpCtx(t, "", "")
@@ -281,6 +298,7 @@ func (facetErrorSink) Facets(context.Context, audit.Query) (*audit.Facets, error
 }
 
 func TestHandleFacets_GenericError500(t *testing.T) {
+	t.Parallel()
 	rec := audit.New(facetErrorSink{})
 	d := handlerDeps{rec: rec}
 	ctx, w := httpCtx(t, "", "")

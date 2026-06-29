@@ -9,6 +9,7 @@ import (
 )
 
 func TestDomainFromIdentifier(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"alice@acme.com":   "acme.com",
 		"Alice@ACME.com":   "acme.com",
@@ -55,6 +56,7 @@ func seedStore(t *testing.T) *connections.MemoryStore {
 }
 
 func TestMemoryStore_ByDomainAndResolve(t *testing.T) {
+	t.Parallel()
 	s := seedStore(t)
 	ctx := context.Background()
 
@@ -89,6 +91,7 @@ func TestMemoryStore_ByDomainAndResolve(t *testing.T) {
 }
 
 func TestMemoryStore_GetByTenantUpsertDelete(t *testing.T) {
+	t.Parallel()
 	s := seedStore(t)
 	ctx := context.Background()
 
@@ -134,6 +137,7 @@ func TestMemoryStore_GetByTenantUpsertDelete(t *testing.T) {
 }
 
 func TestMemoryStore_DomainLastWriteWins(t *testing.T) {
+	t.Parallel()
 	s := connections.NewMemoryStore()
 	ctx := context.Background()
 	_ = s.Upsert(ctx, &connections.Connection{ID: "a", Domains: []string{"shared.com"}, Enabled: true})

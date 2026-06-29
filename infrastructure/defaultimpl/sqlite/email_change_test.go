@@ -22,6 +22,7 @@ func newEmailChangeStore(t *testing.T) *sqlitestores.EmailChangeStore {
 }
 
 func TestSQLiteEmailChangeStore_IssueConsumeSingleUse(t *testing.T) {
+	t.Parallel()
 	s := newEmailChangeStore(t)
 	ctx := context.Background()
 	if err := s.Issue(ctx, &core.EmailChangeToken{Token: "t1", UserID: "u1", NewEmail: "n@e.com", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
@@ -37,6 +38,7 @@ func TestSQLiteEmailChangeStore_IssueConsumeSingleUse(t *testing.T) {
 }
 
 func TestSQLiteEmailChangeStore_MissingAndExpired(t *testing.T) {
+	t.Parallel()
 	s := newEmailChangeStore(t)
 	ctx := context.Background()
 	if _, err := s.Consume(ctx, "nope"); !errors.Is(err, core.ErrEmailChangeTokenNotFound) {
@@ -49,6 +51,7 @@ func TestSQLiteEmailChangeStore_MissingAndExpired(t *testing.T) {
 }
 
 func TestSQLiteEmailChangeStore_RevokeByUser(t *testing.T) {
+	t.Parallel()
 	s := newEmailChangeStore(t)
 	ctx := context.Background()
 	exp := time.Now().Add(time.Minute)
@@ -68,6 +71,7 @@ func TestSQLiteEmailChangeStore_RevokeByUser(t *testing.T) {
 }
 
 func TestSQLiteEmailChangeStore_ListByUser(t *testing.T) {
+	t.Parallel()
 	s := newEmailChangeStore(t)
 	ctx := context.Background()
 	exp := time.Now().Add(time.Minute)

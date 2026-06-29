@@ -18,6 +18,7 @@ import (
 // deletes every row for the client across subjects, wipes the families
 // ledger, leaves other clients intact, and no-ops on an empty clientID.
 func TestRefreshTokenStore_DeleteAllForClient(t *testing.T) {
+	t.Parallel()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "rt.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)

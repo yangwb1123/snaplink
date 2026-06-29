@@ -8,6 +8,7 @@ import (
 )
 
 func TestWriteAdminPasswordFile_AtomicAnd0600(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "admin-pw")
 
@@ -41,6 +42,7 @@ func TestWriteAdminPasswordFile_AtomicAnd0600(t *testing.T) {
 }
 
 func TestWriteAdminPasswordFile_OverwriteAtomically(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "admin-pw")
 
@@ -58,6 +60,7 @@ func TestWriteAdminPasswordFile_OverwriteAtomically(t *testing.T) {
 }
 
 func TestWriteAdminPasswordFile_FailsOnMissingDir(t *testing.T) {
+	t.Parallel()
 	if err := writeAdminPasswordFile("/nonexistent-dir-12345/admin-pw", "x"); err == nil {
 		t.Fatal("expected error writing to nonexistent dir; got nil — operator would never see the failure")
 	}

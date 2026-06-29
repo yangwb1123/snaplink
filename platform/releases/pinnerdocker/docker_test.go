@@ -43,18 +43,21 @@ func validRelease(id string) *releases.Release {
 }
 
 func TestNew_RejectsEmptyDir(t *testing.T) {
+	t.Parallel()
 	if _, err := docker.New(""); err == nil {
 		t.Fatal("expected error for empty dir")
 	}
 }
 
 func TestNew_RejectsMissingDir(t *testing.T) {
+	t.Parallel()
 	if _, err := docker.New(filepath.Join(t.TempDir(), "does-not-exist")); err == nil {
 		t.Fatal("expected error for missing dir")
 	}
 }
 
 func TestNew_RejectsFile(t *testing.T) {
+	t.Parallel()
 	f, _ := os.CreateTemp(t.TempDir(), "*")
 	_ = f.Close()
 	if _, err := docker.New(f.Name()); err == nil {
@@ -63,6 +66,7 @@ func TestNew_RejectsFile(t *testing.T) {
 }
 
 func TestPinForward_WritesEnvAndCallsCompose(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p, err := docker.New(dir)
 	if err != nil {
@@ -104,6 +108,7 @@ func TestPinForward_WritesEnvAndCallsCompose(t *testing.T) {
 }
 
 func TestPinForward_FrontendOmittedWhenURIEmpty(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p, _ := docker.New(dir)
 	rec := &recorder{}
@@ -121,6 +126,7 @@ func TestPinForward_FrontendOmittedWhenURIEmpty(t *testing.T) {
 }
 
 func TestPinForward_BackendURIRequired(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p, _ := docker.New(dir)
 	r := validRelease("rel-1")
@@ -131,6 +137,7 @@ func TestPinForward_BackendURIRequired(t *testing.T) {
 }
 
 func TestPinForward_PullErrorAborts(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p, _ := docker.New(dir)
 	rec := &recorder{
@@ -149,6 +156,7 @@ func TestPinForward_PullErrorAborts(t *testing.T) {
 }
 
 func TestPinForward_UpErrorReturned(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p, _ := docker.New(dir)
 	rec := &recorder{
@@ -161,6 +169,7 @@ func TestPinForward_UpErrorReturned(t *testing.T) {
 }
 
 func TestPinRollback_SameAsForward(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p, _ := docker.New(dir)
 	rec := &recorder{}
@@ -178,6 +187,7 @@ func TestPinRollback_SameAsForward(t *testing.T) {
 }
 
 func TestPinForward_CustomCmdHonored(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p, _ := docker.New(dir)
 	p.Cmd = "podman"

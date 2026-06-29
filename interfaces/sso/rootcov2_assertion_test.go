@@ -84,6 +84,7 @@ func rcov2AssertionServer(t *testing.T, key rcov2DPoPKey, kid string) *rcovServe
 // TestRcov2A_PrivateKeyJWT authenticates a client_credentials grant via a valid
 // private_key_jwt client assertion, then proves the oracle-safe rejections.
 func TestRcov2A_PrivateKeyJWT(t *testing.T) {
+	t.Parallel()
 	key := rcov2NewDPoPKey(t)
 	const kid = "assert-key-1"
 	s := rcov2AssertionServer(t, key, kid)

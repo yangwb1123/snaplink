@@ -14,6 +14,7 @@ import (
 // pointed at the SAME database (the cluster-shared single-DSN case):
 // each gets its own schema_migrations_<ns> table, both stamped v1.
 func TestMigration_IndependentNamespacesOnSharedDB(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "wa.db"))
 	if err != nil {

@@ -118,6 +118,7 @@ func buildResolvedIssuerFederation(t *testing.T, leaf, issuer *fedEntity, markTy
 // ---------------------------------------------------------------------------
 
 func TestTrustMarkResolved_AnchorAuthorizedIssuer_Admitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmrIssuerID)
 
@@ -142,6 +143,7 @@ func TestTrustMarkResolved_AnchorAuthorizedIssuer_Admitted(t *testing.T) {
 // The anchor's trust_mark_issuers array for the type is EMPTY -> per spec §3.1.2
 // "anyone MAY issue" -> a chaining issuer is ADMITTED.
 func TestTrustMarkResolved_AnchorEmptyArrayAuthorizesAnyone_Admitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmrIssuerID)
 
@@ -164,6 +166,7 @@ func TestTrustMarkResolved_AnchorEmptyArrayAuthorizesAnyone_Admitted(t *testing.
 // ---------------------------------------------------------------------------
 
 func TestTrustMarkResolved_ChainsButNotAnchorAuthorized_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmrIssuerID)
 
@@ -183,6 +186,7 @@ func TestTrustMarkResolved_ChainsButNotAnchorAuthorized_NotAdmitted(t *testing.T
 // type authorizes NO one (fail-closed reading of the spec's unspecified case)
 // -> REJECTED even though the issuer chains.
 func TestTrustMarkResolved_AnchorHasNoTrustMarkIssuers_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmrIssuerID)
 
@@ -203,6 +207,7 @@ func TestTrustMarkResolved_AnchorHasNoTrustMarkIssuers_NotAdmitted(t *testing.T)
 // ---------------------------------------------------------------------------
 
 func TestTrustMarkResolved_IssuerNotChainingToAnchor_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmrIssuerID)
 
@@ -239,6 +244,7 @@ func TestTrustMarkResolved_IssuerNotChainingToAnchor_NotAdmitted(t *testing.T) {
 // A forged issuer chain: the issuer's config is signed by an impostor key the
 // anchor never vouched -> the chain validation fails -> REJECTED.
 func TestTrustMarkResolved_ForgedIssuerChain_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmrIssuerID)
 	impostor := newFedEntity(t, tmrIssuerID) // same id, DIFFERENT key
@@ -275,6 +281,7 @@ func TestTrustMarkResolved_ForgedIssuerChain_NotAdmitted(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTrustMarkResolved_AuthorizedForOtherType_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmrIssuerID)
 
@@ -297,6 +304,7 @@ func TestTrustMarkResolved_AuthorizedForOtherType_NotAdmitted(t *testing.T) {
 
 // Wrong subject (confused-deputy) on a resolved-issuer mark -> REJECTED.
 func TestTrustMarkResolved_WrongSubject_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmrIssuerID)
 
@@ -315,6 +323,7 @@ func TestTrustMarkResolved_WrongSubject_NotAdmitted(t *testing.T) {
 
 // Expired resolved-issuer mark -> REJECTED (freshness still applies).
 func TestTrustMarkResolved_ExpiredMark_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmrIssuerID)
 
@@ -335,6 +344,7 @@ func TestTrustMarkResolved_ExpiredMark_NotAdmitted(t *testing.T) {
 // anchor authorizes the issuer broadly (for BOTH types) so the ONLY defect is
 // the signed-type mismatch, not the authorization.
 func TestTrustMarkResolved_WrongSignedType_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmrIssuerID)
 
@@ -369,6 +379,7 @@ func TestTrustMarkResolved_WrongSignedType_NotAdmitted(t *testing.T) {
 // validated key) -> REJECTED. The issuer chains + is anchor-authorized, but the
 // mark's signature doesn't verify against the issuer's chain-vouched keys.
 func TestTrustMarkResolved_ForgedMarkSignature_NotAdmitted(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmrIssuerID)
 	impostor := newFedEntity(t, tmrIssuerID) // same id, DIFFERENT key
@@ -406,6 +417,7 @@ func TestTrustMarkResolved_ForgedMarkSignature_NotAdmitted(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTrustMarkResolved_FlagOff_ResolvableIssuerStillRejected(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmrIssuerID)
 
@@ -430,6 +442,7 @@ func TestTrustMarkResolved_FlagOff_ResolvableIssuerStillRejected(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTrustMarkResolved_ConfiguredIssuerStillWorks_WithFlagOn(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	configured := newFedEntity(t, tmIssuerID) // the slice-4b operator-configured issuer
 
@@ -452,6 +465,7 @@ func TestTrustMarkResolved_ConfiguredIssuerStillWorks_WithFlagOn(t *testing.T) {
 // SAME store also has a configured issuer for a DIFFERENT id — proves the
 // fallback only fires for the un-configured iss and the two coexist.
 func TestTrustMarkResolved_FallbackOnlyForUnconfiguredIss(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	resolved := newFedEntity(t, tmrIssuerID)       // satisfied via the federation path
 	configuredOther := newFedEntity(t, tmIssuerID) // configured, but NOT the mark's issuer
@@ -477,6 +491,7 @@ func TestTrustMarkResolved_FallbackOnlyForUnconfiguredIss(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTrustMarkResolved_FlagOnButResolverDisabled_Inert(t *testing.T) {
+	t.Parallel()
 	leaf := newFedEntity(t, tcLeafID)
 	issuer := newFedEntity(t, tmrIssuerID)
 

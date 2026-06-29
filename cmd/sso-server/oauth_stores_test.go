@@ -12,6 +12,7 @@ import (
 )
 
 func TestBuildApp_AllOAuthStoresEnabled_BuildsCleanly(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.OAuth.AuthCode = config.OAuthStoreConfig{Enabled: true, TTL: 10 * time.Minute}
 	cfg.OAuth.RefreshToken = config.OAuthRefreshTokenConfig{OAuthStoreConfig: config.OAuthStoreConfig{Enabled: true, TTL: 30 * 24 * time.Hour}}
@@ -34,6 +35,7 @@ func TestBuildApp_AllOAuthStoresEnabled_BuildsCleanly(t *testing.T) {
 }
 
 func TestBuildApp_PARStoreEnabledAdvertisesEndpoint(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.OAuth.PAR = config.OAuthStoreConfig{Enabled: true}
 
@@ -53,6 +55,7 @@ func TestBuildApp_PARStoreEnabledAdvertisesEndpoint(t *testing.T) {
 }
 
 func TestBuildApp_PairwiseSubjectsFlipsDiscovery(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Server.PairwiseSubjects.Enabled = true
 	cfg.Server.PairwiseSubjects.Salt = "test-salt"
@@ -77,6 +80,7 @@ func TestBuildApp_PairwiseSubjectsFlipsDiscovery(t *testing.T) {
 }
 
 func TestBuildPairwiseSubjectStore_MemoryDefault(t *testing.T) {
+	t.Parallel()
 	s, mode, err := serverbuildauthn.BuildPairwiseSubjectStore(config.PairwiseSubjectsConfig{}, nil, "")
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
@@ -90,6 +94,7 @@ func TestBuildPairwiseSubjectStore_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildPairwiseSubjectStore_SQLiteNeedsDSN(t *testing.T) {
+	t.Parallel()
 	_, _, err := serverbuildauthn.BuildPairwiseSubjectStore(config.PairwiseSubjectsConfig{Backend: "sqlite"}, nil, "")
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
@@ -97,6 +102,7 @@ func TestBuildPairwiseSubjectStore_SQLiteNeedsDSN(t *testing.T) {
 }
 
 func TestBuildPairwiseSubjectStore_SQLiteOpensFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "pairwise.db") + "?_journal=WAL"
 	s, mode, err := serverbuildauthn.BuildPairwiseSubjectStore(config.PairwiseSubjectsConfig{
@@ -115,6 +121,7 @@ func TestBuildPairwiseSubjectStore_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildPairwiseSubjectStore_UnknownBackendErrors(t *testing.T) {
+	t.Parallel()
 	_, _, err := serverbuildauthn.BuildPairwiseSubjectStore(config.PairwiseSubjectsConfig{Backend: "etcd"}, nil, "")
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
@@ -122,6 +129,7 @@ func TestBuildPairwiseSubjectStore_UnknownBackendErrors(t *testing.T) {
 }
 
 func TestBuildApp_PairwiseSubjectsSQLiteEndToEnd(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "pairwise.db") + "?_journal=WAL"
 	cfg := &config.Config{}
@@ -150,6 +158,7 @@ func TestBuildApp_PairwiseSubjectsSQLiteEndToEnd(t *testing.T) {
 }
 
 func TestBuildApp_OAuth21StrictModeFlipsDiscovery(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Server.OAuth21StrictMode = true
 
@@ -169,6 +178,7 @@ func TestBuildApp_OAuth21StrictModeFlipsDiscovery(t *testing.T) {
 }
 
 func TestBuildApp_JARFetcherFlipsRequestURIParameterSupported(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.OAuth.JAR = config.OAuthJARConfig{Enabled: true}
 
@@ -187,6 +197,7 @@ func TestBuildApp_JARFetcherFlipsRequestURIParameterSupported(t *testing.T) {
 }
 
 func TestBuildApp_PARStoreDisabledOmitsEndpoint(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 
 	a, err := buildApp(cfg, quietLogger())

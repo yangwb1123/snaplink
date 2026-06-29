@@ -12,6 +12,7 @@ import (
 // contract — when network.enabled=false, cmd's wrapper must return
 // (nil, "", nil) so the caller skips classifier wiring.
 func TestBuildNetworkStore_DisabledReturnsNil(t *testing.T) {
+	t.Parallel()
 	store, kind, err := serverbuildstore.BuildNetworkStore(&config.NetworkConfig{Enabled: false}, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
@@ -26,6 +27,7 @@ func TestBuildNetworkStore_DisabledReturnsNil(t *testing.T) {
 // via the shared helper. Operators expect the YAML policies block
 // to be live after startup without an admin RPC.
 func TestBuildNetworkStore_MemoryAppliesSeeds(t *testing.T) {
+	t.Parallel()
 	cfg := &config.NetworkConfig{
 		Enabled: true,
 		Store:   "memory",
@@ -55,6 +57,7 @@ func TestBuildNetworkStore_MemoryAppliesSeeds(t *testing.T) {
 // no endpoints (which would silently hang on the etcd client's
 // default behavior).
 func TestBuildNetworkStore_EtcdRequiresEndpoints(t *testing.T) {
+	t.Parallel()
 	cfg := &config.NetworkConfig{Enabled: true, Store: "etcd"}
 	_, _, err := serverbuildstore.BuildNetworkStore(cfg, quietLogger())
 	if err == nil {
@@ -69,6 +72,7 @@ func TestBuildNetworkStore_EtcdRequiresEndpoints(t *testing.T) {
 // boundary — typos in YAML must fail fast rather than silently
 // fall through to a default.
 func TestBuildNetworkStore_UnknownBackendErrors(t *testing.T) {
+	t.Parallel()
 	cfg := &config.NetworkConfig{Enabled: true, Store: "mythical"}
 	if _, _, err := serverbuildstore.BuildNetworkStore(cfg, quietLogger()); err == nil {
 		t.Fatal("expected error for unknown backend")

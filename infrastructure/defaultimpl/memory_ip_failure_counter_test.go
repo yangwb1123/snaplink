@@ -9,6 +9,7 @@ import (
 )
 
 func TestMemoryIPFailureCounter_RecordCountRoundtrip(t *testing.T) {
+	t.Parallel()
 	c := defaultimpl.NewMemoryIPFailureCounter()
 	ctx := context.Background()
 	now := time.Now()
@@ -26,6 +27,7 @@ func TestMemoryIPFailureCounter_RecordCountRoundtrip(t *testing.T) {
 }
 
 func TestMemoryIPFailureCounter_RecordEmptyIPNoop(t *testing.T) {
+	t.Parallel()
 	c := defaultimpl.NewMemoryIPFailureCounter()
 	if err := c.Record(context.Background(), "", "alice", time.Now()); err != nil {
 		t.Fatalf("Record: %v", err)
@@ -37,6 +39,7 @@ func TestMemoryIPFailureCounter_RecordEmptyIPNoop(t *testing.T) {
 }
 
 func TestMemoryIPFailureCounter_CountRespectsSince(t *testing.T) {
+	t.Parallel()
 	c := defaultimpl.NewMemoryIPFailureCounter()
 	now := time.Now()
 	_ = c.Record(context.Background(), "ip1", "alice", now.Add(-1*time.Hour))
@@ -49,6 +52,7 @@ func TestMemoryIPFailureCounter_CountRespectsSince(t *testing.T) {
 }
 
 func TestMemoryIPFailureCounter_EmptySubjectNotInDistinct(t *testing.T) {
+	t.Parallel()
 	c := defaultimpl.NewMemoryIPFailureCounter()
 	now := time.Now()
 	_ = c.Record(context.Background(), "ip1", "", now.Add(-1*time.Minute))
@@ -63,6 +67,7 @@ func TestMemoryIPFailureCounter_EmptySubjectNotInDistinct(t *testing.T) {
 }
 
 func TestMemoryIPFailureCounter_PruneOlder(t *testing.T) {
+	t.Parallel()
 	c := defaultimpl.NewMemoryIPFailureCounter()
 	now := time.Now()
 	_ = c.Record(context.Background(), "ip1", "alice", now.Add(-2*time.Hour))
@@ -87,6 +92,7 @@ func TestMemoryIPFailureCounter_PruneOlder(t *testing.T) {
 }
 
 func TestMemoryIPFailureCounter_PruneZeroNoop(t *testing.T) {
+	t.Parallel()
 	c := defaultimpl.NewMemoryIPFailureCounter()
 	_ = c.Record(context.Background(), "ip1", "alice", time.Now())
 	deleted, _ := c.PruneOlder(context.Background(), time.Time{})

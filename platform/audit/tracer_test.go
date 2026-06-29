@@ -9,6 +9,7 @@ import (
 )
 
 func TestNewTraceID_LengthAndHex(t *testing.T) {
+	t.Parallel()
 	tr := audit.NewTracer()
 	for range 50 {
 		id := tr.NewTraceID()
@@ -25,6 +26,7 @@ func TestNewTraceID_LengthAndHex(t *testing.T) {
 }
 
 func TestNewSpanID_LengthAndHex(t *testing.T) {
+	t.Parallel()
 	tr := audit.NewTracer()
 	for range 50 {
 		id := tr.NewSpanID()
@@ -38,6 +40,7 @@ func TestNewSpanID_LengthAndHex(t *testing.T) {
 }
 
 func TestNewTraceID_Uniqueness(t *testing.T) {
+	t.Parallel()
 	tr := audit.NewTracer()
 	seen := make(map[string]struct{})
 	for range 1000 {
@@ -50,6 +53,7 @@ func TestNewTraceID_Uniqueness(t *testing.T) {
 }
 
 func TestFormatTraceparent(t *testing.T) {
+	t.Parallel()
 	tr := audit.NewTracer()
 	tc := audit.TraceContext{
 		TraceID: "4bf92f3577b34da6a3ce929d0e0e4736",
@@ -64,6 +68,7 @@ func TestFormatTraceparent(t *testing.T) {
 }
 
 func TestFormatTraceparent_ZeroFlagsPadded(t *testing.T) {
+	t.Parallel()
 	tr := audit.NewTracer()
 	tc := audit.TraceContext{
 		TraceID: "11111111111111111111111111111111",
@@ -77,6 +82,7 @@ func TestFormatTraceparent_ZeroFlagsPadded(t *testing.T) {
 }
 
 func TestParseTraceparent_Valid(t *testing.T) {
+	t.Parallel()
 	tr := audit.NewTracer()
 	tc, err := tr.ParseTraceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
 	if err != nil {
@@ -97,6 +103,7 @@ func TestParseTraceparent_Valid(t *testing.T) {
 }
 
 func TestParseTraceparent_Malformed(t *testing.T) {
+	t.Parallel()
 	tr := audit.NewTracer()
 	cases := []string{
 		"",
@@ -119,6 +126,7 @@ func TestParseTraceparent_Malformed(t *testing.T) {
 }
 
 func TestParseFormat_Roundtrip(t *testing.T) {
+	t.Parallel()
 	tr := audit.NewTracer()
 	tc := audit.TraceContext{
 		TraceID: tr.NewTraceID(),
@@ -135,6 +143,7 @@ func TestParseFormat_Roundtrip(t *testing.T) {
 }
 
 func TestStartChild_NoParentStartsNewTrace(t *testing.T) {
+	t.Parallel()
 	tr := audit.NewTracer()
 	child := tr.StartChild(audit.TraceContext{})
 
@@ -150,6 +159,7 @@ func TestStartChild_NoParentStartsNewTrace(t *testing.T) {
 }
 
 func TestStartChild_PreservesTraceAndChainsSpan(t *testing.T) {
+	t.Parallel()
 	tr := audit.NewTracer()
 	parent := audit.TraceContext{
 		TraceID: tr.NewTraceID(),
@@ -173,6 +183,7 @@ func TestStartChild_PreservesTraceAndChainsSpan(t *testing.T) {
 }
 
 func TestStartChild_InvalidParentIsTreatedAsRoot(t *testing.T) {
+	t.Parallel()
 	tr := audit.NewTracer()
 	// Half-built parent (TraceID set, SpanID empty) is invalid.
 	bad := audit.TraceContext{TraceID: tr.NewTraceID()}
@@ -187,6 +198,7 @@ func TestStartChild_InvalidParentIsTreatedAsRoot(t *testing.T) {
 }
 
 func TestTraceContext_IsValid(t *testing.T) {
+	t.Parallel()
 	if (audit.TraceContext{}).IsValid() {
 		t.Error("zero context should not be Valid()")
 	}

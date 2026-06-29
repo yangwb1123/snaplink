@@ -6,6 +6,7 @@ import (
 )
 
 func TestWriteVersion_IncludesProgNameAndGoVersion(t *testing.T) {
+	t.Parallel()
 	var sb strings.Builder
 	writeVersion(&sb)
 	out := sb.String()

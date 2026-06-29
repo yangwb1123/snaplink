@@ -20,6 +20,7 @@ import (
 // field and access tokens' `iss` claim would then disagree, breaking
 // every spec-compliant RFC 9068 validator.
 func TestConfigDefaultIssuerIsNonSentinel(t *testing.T) {
+	t.Parallel()
 	cfg := loadIssuerOnlyConfig(t, "")
 	if cfg.Server.Issuer == sso.DefaultIssuer {
 		t.Errorf("default Server.Issuer = %q (SDK sentinel) — must be a non-sentinel value",
@@ -35,6 +36,7 @@ func TestConfigDefaultIssuerIsNonSentinel(t *testing.T) {
 // reference YAML files get a loud boot error, not a silent
 // production-time divergence between JWT iss + discovery issuer.
 func TestConfigRejectsSDKSentinel(t *testing.T) {
+	t.Parallel()
 	path := writeIssuerYAML(t, sso.DefaultIssuer)
 	_, err := config.Load(path)
 	if err == nil {
@@ -49,6 +51,7 @@ func TestConfigRejectsSDKSentinel(t *testing.T) {
 // only on the sentinel — a real URL or any other non-sentinel
 // string passes.
 func TestConfigAcceptsRealURLIssuer(t *testing.T) {
+	t.Parallel()
 	for _, issuer := range []string{
 		"https://sso.example.com",
 		"sso-server",
@@ -67,6 +70,7 @@ func TestConfigAcceptsRealURLIssuer(t *testing.T) {
 // config MUST not use the SDK sentinel. Pins against a future
 // rebase that accidentally restores the old value.
 func TestReferenceConfigIssuerIsNotSentinel(t *testing.T) {
+	t.Parallel()
 	cfg, err := config.Load("config.yaml")
 	if err != nil {
 		t.Fatalf("load reference config: %v", err)

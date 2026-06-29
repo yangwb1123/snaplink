@@ -22,6 +22,7 @@ import (
 // TestSigningKeyLeaseBackoff verifies the growth + jitter + cap properties
 // without any etcd I/O.
 func TestSigningKeyLeaseBackoff(t *testing.T) {
+	t.Parallel()
 	// Attempt 1 must be at least the initial constant.
 	d1 := signingKeyLeaseBackoff(1)
 	if d1 < signingKeyLeaseBackoffInitial {
@@ -64,6 +65,7 @@ func TestSigningKeyLeaseBackoff(t *testing.T) {
 // TestBackoffDeterminism checks that the same attempt always returns the same
 // duration — no hidden randomness.
 func TestBackoffDeterminism(t *testing.T) {
+	t.Parallel()
 	for _, attempt := range []int{1, 3, 5, 7, 10} {
 		a := signingKeyLeaseBackoff(attempt)
 		b := signingKeyLeaseBackoff(attempt)
@@ -76,6 +78,7 @@ func TestBackoffDeterminism(t *testing.T) {
 // TestReadyzCheck_DegradedAndRecovered exercises the degrade/clear state
 // machine in isolation, without any etcd I/O.
 func TestReadyzCheck_DegradedAndRecovered(t *testing.T) {
+	t.Parallel()
 	r := NewWithClient(nil, Config{})
 
 	// Healthy by default.
@@ -107,6 +110,7 @@ func TestReadyzCheck_DegradedAndRecovered(t *testing.T) {
 // background context (as Close and re-Publish do) causes supervisedKeepAlive
 // to exit without marking the registry degraded.
 func TestSupervisedKeepAlive_CleanExitOnCtxCancel(t *testing.T) {
+	t.Parallel()
 	r := NewWithClient(nil, Config{})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -143,6 +147,7 @@ func TestSupervisedKeepAlive_CleanExitOnCtxCancel(t *testing.T) {
 // partition) marks the registry degraded. We use a cancelled context as the
 // escape hatch so the re-grant loop does not need a real etcd client.
 func TestSupervisedKeepAlive_MarksDegradedOnUnexpectedClose(t *testing.T) {
+	t.Parallel()
 	r := NewWithClient(nil, Config{})
 
 	// A context we cancel only AFTER the channel closes — so the goroutine

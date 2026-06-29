@@ -88,6 +88,7 @@ func buildSLOServer(t *testing.T) (http.HandlerFunc, sso.SessionManager, *idpKey
 // subject (asserted gone via the real Memory SessionManager) and returns a 302
 // signed LogoutResponse redirect to the IdP.
 func TestSPSLO_EndToEnd_SignedRequest_TerminatesLocalSession(t *testing.T) {
+	t.Parallel()
 	handler, sessions, idp := buildSLOServer(t)
 
 	const nameID = "alice@example.com"
@@ -129,6 +130,7 @@ func TestSPSLO_EndToEnd_SignedRequest_TerminatesLocalSession(t *testing.T) {
 // TestSPSLO_EndToEnd_UnsignedRequest_NoTermination is the wired-path crux: an
 // UNSIGNED IdP LogoutRequest is rejected and the local session SURVIVES.
 func TestSPSLO_EndToEnd_UnsignedRequest_NoTermination(t *testing.T) {
+	t.Parallel()
 	handler, sessions, _ := buildSLOServer(t)
 
 	const nameID = "bob@example.com"
@@ -158,6 +160,7 @@ func TestSPSLO_EndToEnd_UnsignedRequest_NoTermination(t *testing.T) {
 // termination to the request's subject — a second subject's session is
 // untouched.
 func TestSPSLO_EndToEnd_OnlySubjectTerminated(t *testing.T) {
+	t.Parallel()
 	handler, sessions, idp := buildSLOServer(t)
 
 	target, err := sessions.Create(context.Background(), "carol@example.com")
@@ -186,6 +189,7 @@ func TestSPSLO_EndToEnd_OnlySubjectTerminated(t *testing.T) {
 // front-channel chain RESUME endpoint (GET /saml/slo/continue) when the IdP is
 // enabled — the route the browser-redirect chain resumes on.
 func TestBuild_MountsFrontChannelContinueRoute(t *testing.T) {
+	t.Parallel()
 	res, err := samlmod.Build(samlmod.Deps{
 		SessionManager:  defaultimpl.NewMemorySessionManager(),
 		UserProvider:    defaultimpl.NewMemoryUserProvider(),
@@ -220,6 +224,7 @@ func TestBuild_MountsFrontChannelContinueRoute(t *testing.T) {
 // to the CONTINUE endpoint (not the request endpoint), echoing the chain-state
 // RelayState so the IdP can resume.
 func TestSPSLO_FrontChannel_RedirectsResponseToContinue(t *testing.T) {
+	t.Parallel()
 	idpKp := newIDPKey(t)
 	spKeyPEM, spCertPEM := newSPSLOKey(t)
 	sessions := defaultimpl.NewMemorySessionManager()
@@ -360,6 +365,7 @@ func buildMultiSPSLOServer(t *testing.T) (http.HandlerFunc, sso.SessionManager, 
 // resumes). Under the old RelayState-name dispatch this would 400 and silently
 // leave the session alive.
 func TestSPSLO_MultiSP_FrontChannel_DispatchesByIssuer(t *testing.T) {
+	t.Parallel()
 	handler, sessions, idpA, _ := buildMultiSPSLOServer(t)
 
 	const nameID = "multi-a@example.com"
@@ -401,6 +407,7 @@ func TestSPSLO_MultiSP_FrontChannel_DispatchesByIssuer(t *testing.T) {
 // REJECTED — idp-B's pinned cert can't validate idp-A's signature. The session
 // SURVIVES. This is the security crux of dispatching by an unverified Issuer.
 func TestSPSLO_MultiSP_IssuerSaysBSignedByA_Rejected(t *testing.T) {
+	t.Parallel()
 	handler, sessions, idpA, _ := buildMultiSPSLOServer(t)
 
 	const nameID = "multi-mismatch@example.com"
@@ -432,6 +439,7 @@ func TestSPSLO_MultiSP_IssuerSaysBSignedByA_Rejected(t *testing.T) {
 // NO configured upstream IdP yields 400 saml_request_invalid (oracle-safe, same
 // as a single-SP unknown request).
 func TestSPSLO_MultiSP_UnknownIssuer_Rejected(t *testing.T) {
+	t.Parallel()
 	handler, sessions, idpA, _ := buildMultiSPSLOServer(t)
 
 	const nameID = "multi-unknown@example.com"
@@ -463,6 +471,7 @@ func TestSPSLO_MultiSP_UnknownIssuer_Rejected(t *testing.T) {
 // directly (no Issuer lookup needed), terminating the session — byte-identical to
 // the prior behavior. (buildSLOServer wires exactly one SP.)
 func TestSPSLO_SingleSP_DispatchUnchanged(t *testing.T) {
+	t.Parallel()
 	handler, sessions, idp := buildSLOServer(t)
 
 	const nameID = "single-sp@example.com"
@@ -490,6 +499,7 @@ func TestSPSLO_SingleSP_DispatchUnchanged(t *testing.T) {
 // returns a detached-signed LogoutResponse redirect whose signature verifies
 // against the IdP's signing cert the SP pinned. Both halves speak §3.4.4.1.
 func TestSLO_SPtoIdPtoSP_RoundTrip(t *testing.T) {
+	t.Parallel()
 	const nameID = "roundtrip@example.com"
 	idpEntityID := asIssuer + "/saml"
 	idpSLOURL := asIssuer + sso.PathSAMLSLO

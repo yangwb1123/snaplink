@@ -20,6 +20,7 @@ func gateConfig() *Config {
 }
 
 func TestRSGate_AllowsValidToken(t *testing.T) {
+	t.Parallel()
 	iss := edIssuer()
 	gate := newRSGate(jwksAuthClient(t, iss), gateConfig(), okNext())
 	tok, _ := iss.Issue(context.Background(), &sso.Subject{ID: "agent-1", Resources: []string{"https://mcp/"}}, []string{"mcp:read"})
@@ -34,6 +35,7 @@ func TestRSGate_AllowsValidToken(t *testing.T) {
 }
 
 func TestRSGate_RejectsMissingWrongAudWrongScope(t *testing.T) {
+	t.Parallel()
 	iss := edIssuer()
 	cfg := gateConfig()
 	gate := newRSGate(jwksAuthClient(t, iss), cfg, okNext())
@@ -67,6 +69,7 @@ func TestRSGate_RejectsMissingWrongAudWrongScope(t *testing.T) {
 }
 
 func TestPRMHandler(t *testing.T) {
+	t.Parallel()
 	w := httptest.NewRecorder()
 	prmHandler(gateConfig())(w, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-protected-resource", nil))
 	body := w.Body.String()
@@ -76,6 +79,7 @@ func TestPRMHandler(t *testing.T) {
 }
 
 func TestLivez(t *testing.T) {
+	t.Parallel()
 	w := httptest.NewRecorder()
 	livezHandler()(w, httptest.NewRequest(http.MethodGet, "/livez", nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "alive") {
@@ -87,6 +91,7 @@ func TestLivez(t *testing.T) {
 // /livez and a GATED /mcp (401 without a token). conn is nil here because
 // /readyz is not exercised.
 func TestBuildHTTPHandler_Wiring(t *testing.T) {
+	t.Parallel()
 	cfg := gateConfig()
 	cfg.JWKSURL = "https://sso/jwks"
 	sc := &snaplinkClient{auth: jwksAuthClient(t, edIssuer()), authz: bufconnAuthz(t)}
@@ -110,6 +115,7 @@ func TestBuildHTTPHandler_Wiring(t *testing.T) {
 // Task 4, so this mounts the raw streamable handler (no gate) to keep the
 // transport smoke independent of client-side header injection.
 func TestEndToEnd_MCPTransport(t *testing.T) {
+	t.Parallel()
 	srv := newMCPServer(&toolDeps{authz: bufconnAuthz(t)}) // intro unused by check_permission
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
 	ts := httptest.NewServer(handler)

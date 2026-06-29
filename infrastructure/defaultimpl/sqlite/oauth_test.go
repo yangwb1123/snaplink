@@ -23,6 +23,7 @@ func freshSharedDSN(t *testing.T) string {
 // ---------- oauth.AuthCodeStore ----------
 
 func TestSQLiteAuthCode_RoundTrip(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewAuthCodeStore(freshSharedDSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -60,6 +61,7 @@ func TestSQLiteAuthCode_RoundTrip(t *testing.T) {
 }
 
 func TestSQLiteAuthCode_SingleUse(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewAuthCodeStore(freshSharedDSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -78,6 +80,7 @@ func TestSQLiteAuthCode_SingleUse(t *testing.T) {
 }
 
 func TestSQLiteAuthCode_ExpiredIndistinguishable(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewAuthCodeStore(freshSharedDSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -93,6 +96,7 @@ func TestSQLiteAuthCode_ExpiredIndistinguishable(t *testing.T) {
 }
 
 func TestSQLiteAuthCode_UnknownReturnsSentinel(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewAuthCodeStore(freshSharedDSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -107,6 +111,7 @@ func TestSQLiteAuthCode_UnknownReturnsSentinel(t *testing.T) {
 // ---------- oauth.RefreshTokenStore ----------
 
 func TestSQLiteRefresh_RoundTripAndRotation(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -137,6 +142,7 @@ func TestSQLiteRefresh_RoundTripAndRotation(t *testing.T) {
 }
 
 func TestSQLiteRefresh_CountForSubject(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -163,6 +169,7 @@ func TestSQLiteRefresh_CountForSubject(t *testing.T) {
 }
 
 func TestSQLiteRefresh_InspectAndDelete(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -192,6 +199,7 @@ func TestSQLiteRefresh_InspectAndDelete(t *testing.T) {
 }
 
 func TestSQLiteRefresh_ExpiredIndistinguishable(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -213,6 +221,7 @@ func TestSQLiteRefresh_ExpiredIndistinguishable(t *testing.T) {
 // ---------- oauth.RefreshTokenSubjectIndex ----------
 
 func TestSQLiteRefresh_DeleteAllForSubject(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -248,6 +257,7 @@ func TestSQLiteRefresh_DeleteAllForSubject(t *testing.T) {
 }
 
 func TestSQLiteRefresh_DeleteAllForSubject_EmptyClient(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -265,6 +275,7 @@ func TestSQLiteRefresh_DeleteAllForSubject_EmptyClient(t *testing.T) {
 // ---------- oauth.RefreshTokenFamilyTracker ----------
 
 func TestSQLiteRefresh_FamilyTracker_ReuseDetection(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -290,6 +301,7 @@ func TestSQLiteRefresh_FamilyTracker_ReuseDetection(t *testing.T) {
 }
 
 func TestSQLiteRefresh_DeleteFamilyKillsAllAndForgetsLedger(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewRefreshTokenStore(freshSharedDSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -328,6 +340,7 @@ func TestSQLiteRefresh_DeleteFamilyKillsAllAndForgetsLedger(t *testing.T) {
 // ---------- oauth.DeviceCodeStore ----------
 
 func TestSQLiteDevice_FullStateMachine(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewDeviceCodeStore(freshSharedDSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -383,6 +396,7 @@ func TestSQLiteDevice_FullStateMachine(t *testing.T) {
 }
 
 func TestSQLiteDevice_Deny(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewDeviceCodeStore(freshSharedDSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -403,6 +417,7 @@ func TestSQLiteDevice_Deny(t *testing.T) {
 }
 
 func TestSQLiteDevice_ApproveDenyOnUnknownReturnsSentinel(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewDeviceCodeStore(freshSharedDSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -418,6 +433,7 @@ func TestSQLiteDevice_ApproveDenyOnUnknownReturnsSentinel(t *testing.T) {
 }
 
 func TestSQLiteDevice_UniqueUserCodeRejectsCollision(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewDeviceCodeStore(freshSharedDSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)

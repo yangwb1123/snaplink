@@ -45,6 +45,7 @@ func samplePARRequest() *oauth.PARRequest {
 }
 
 func TestPARStore_IssueAndConsumeRoundTrip(t *testing.T) {
+	t.Parallel()
 	store := newPARStoreForTest(t)
 	ctx := context.Background()
 
@@ -102,6 +103,7 @@ func TestPARStore_IssueAndConsumeRoundTrip(t *testing.T) {
 }
 
 func TestPARStore_ConsumeIsSingleUse(t *testing.T) {
+	t.Parallel()
 	store := newPARStoreForTest(t)
 	ctx := context.Background()
 
@@ -119,6 +121,7 @@ func TestPARStore_ConsumeIsSingleUse(t *testing.T) {
 }
 
 func TestPARStore_ConsumeUnknownReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	store := newPARStoreForTest(t)
 	_, err := store.Consume(context.Background(), oauth.PARURIPrefix+"nonexistent")
 	if !errors.Is(err, oauth.ErrPARNotFound) {
@@ -127,6 +130,7 @@ func TestPARStore_ConsumeUnknownReturnsNotFound(t *testing.T) {
 }
 
 func TestPARStore_ExpiredEntryReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	store := newPARStoreForTest(t)
 	ctx := context.Background()
 
@@ -143,6 +147,7 @@ func TestPARStore_ExpiredEntryReturnsNotFound(t *testing.T) {
 }
 
 func TestPARStore_IssueNilRejected(t *testing.T) {
+	t.Parallel()
 	store := newPARStoreForTest(t)
 	_, err := store.Issue(context.Background(), nil)
 	if !errors.Is(err, oauth.ErrPARNotFound) {
@@ -151,6 +156,7 @@ func TestPARStore_IssueNilRejected(t *testing.T) {
 }
 
 func TestPARStore_OptionalFieldsNilSurviveRoundTrip(t *testing.T) {
+	t.Parallel()
 	store := newPARStoreForTest(t)
 	ctx := context.Background()
 
@@ -179,6 +185,7 @@ func TestPARStore_OptionalFieldsNilSurviveRoundTrip(t *testing.T) {
 }
 
 func TestPARStore_CallerMutationDoesNotLeak(t *testing.T) {
+	t.Parallel()
 	// Issue marshals slices into JSON columns, so post-Issue mutation
 	// can't reach stored state. Verify by mutating then Consuming.
 	store := newPARStoreForTest(t)

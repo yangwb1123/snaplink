@@ -39,6 +39,7 @@ func (f *flakySink) Query(_ context.Context, _ audit.Query) ([]*audit.Event, err
 }
 
 func TestRetryingSink_RetriesUntilSuccess(t *testing.T) {
+	t.Parallel()
 	inner := newFlakySink(2, errors.New("transient"))
 	r := audit.NewRetryingSink(inner,
 		audit.WithRetryMaxAttempts(5),
@@ -54,6 +55,7 @@ func TestRetryingSink_RetriesUntilSuccess(t *testing.T) {
 }
 
 func TestRetryingSink_GivesUpAfterMaxAttempts(t *testing.T) {
+	t.Parallel()
 	inner := newFlakySink(99, errors.New("never recovers"))
 	r := audit.NewRetryingSink(inner,
 		audit.WithRetryMaxAttempts(4),
@@ -70,6 +72,7 @@ func TestRetryingSink_GivesUpAfterMaxAttempts(t *testing.T) {
 }
 
 func TestRetryingSink_NonTransientShortCircuits(t *testing.T) {
+	t.Parallel()
 	inner := newFlakySink(99, errors.New("permanent"))
 	r := audit.NewRetryingSink(inner,
 		audit.WithRetryMaxAttempts(5),
@@ -88,6 +91,7 @@ func TestRetryingSink_NonTransientShortCircuits(t *testing.T) {
 }
 
 func TestRetryingSink_HappyPathSingleCall(t *testing.T) {
+	t.Parallel()
 	inner := newFlakySink(0, errors.New("would fail if hit"))
 	r := audit.NewRetryingSink(inner, audit.WithRetryMaxAttempts(5))
 	if err := r.Record(context.Background(), &audit.Event{Type: audit.EventLogin}); err != nil {
@@ -99,6 +103,7 @@ func TestRetryingSink_HappyPathSingleCall(t *testing.T) {
 }
 
 func TestRetryingSink_ContextCancellationShortCircuits(t *testing.T) {
+	t.Parallel()
 	inner := newFlakySink(99, errors.New("transient"))
 	r := audit.NewRetryingSink(inner,
 		audit.WithRetryMaxAttempts(20),
@@ -117,6 +122,7 @@ func TestRetryingSink_ContextCancellationShortCircuits(t *testing.T) {
 }
 
 func TestRetryingSink_ComposesWithAsyncSink(t *testing.T) {
+	t.Parallel()
 	// Realistic stack: AsyncSink -> RetryingSink -> flaky inner.
 	// The retry wrapper should mask transient inner failures from
 	// the AsyncSink drop accounting.
@@ -141,6 +147,7 @@ func TestRetryingSink_ComposesWithAsyncSink(t *testing.T) {
 }
 
 func TestRetryingSink_ReadPathDelegates(t *testing.T) {
+	t.Parallel()
 	mem := audit.NewMemorySink(8)
 	r := audit.NewRetryingSink(mem)
 	_ = r.Record(context.Background(), &audit.Event{Type: audit.EventLogin})

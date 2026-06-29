@@ -79,6 +79,7 @@ func startSnapshotGRPC(t *testing.T) *snapshotFixture {
 }
 
 func TestSnapshotAdmin_FullCycle(t *testing.T) {
+	t.Parallel()
 	fx := startSnapshotGRPC(t)
 	c := adminv1.NewSnapshotAdminServiceClient(fx.conn)
 	ctx := context.Background()
@@ -184,6 +185,7 @@ func TestSnapshotAdmin_FullCycle(t *testing.T) {
 }
 
 func TestSnapshotAdmin_GetUnknownIs404(t *testing.T) {
+	t.Parallel()
 	fx := startSnapshotGRPC(t)
 	c := adminv1.NewSnapshotAdminServiceClient(fx.conn)
 	if _, err := c.Get(context.Background(), &adminv1.GetSnapshotRequest{Id: "ghost"}); status.Code(err) != codes.NotFound {
@@ -192,6 +194,7 @@ func TestSnapshotAdmin_GetUnknownIs404(t *testing.T) {
 }
 
 func TestSnapshotAdmin_RestoreReplaceWithoutConfirmFailsPrecondition(t *testing.T) {
+	t.Parallel()
 	fx := startSnapshotGRPC(t)
 	c := adminv1.NewSnapshotAdminServiceClient(fx.conn)
 	ctx := context.Background()
@@ -206,6 +209,7 @@ func TestSnapshotAdmin_RestoreReplaceWithoutConfirmFailsPrecondition(t *testing.
 }
 
 func TestSnapshotAdmin_RestoreUnknownModeIsInvalidArgument(t *testing.T) {
+	t.Parallel()
 	fx := startSnapshotGRPC(t)
 	c := adminv1.NewSnapshotAdminServiceClient(fx.conn)
 	ctx := context.Background()

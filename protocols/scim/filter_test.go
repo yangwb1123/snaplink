@@ -45,6 +45,7 @@ func sampleUser() Resource {
 // the sample user, covering both the matching and non-matching case so a
 // regression in either direction is caught.
 func TestFilterComparisonOperators(t *testing.T) {
+	t.Parallel()
 	u := sampleUser()
 	cases := []struct {
 		name   string
@@ -96,6 +97,7 @@ func TestFilterComparisonOperators(t *testing.T) {
 // TestFilterOrderingOperators covers gt/ge/lt/le over both numeric and
 // lexical comparisons.
 func TestFilterOrderingOperators(t *testing.T) {
+	t.Parallel()
 	// A user whose externalId sorts lexically and whose displayName gives
 	// a stable ordering anchor.
 	u := Resource{UserName: "u", ExternalID: "m", Active: true}
@@ -124,6 +126,7 @@ func TestFilterOrderingOperators(t *testing.T) {
 // path via an attribute that holds a numeric string). externalId holds the
 // numeric text to drive the numeric branch of orderCompare/literalEquals.
 func TestFilterNumericComparison(t *testing.T) {
+	t.Parallel()
 	u := Resource{UserName: "u", ExternalID: "10", Active: true}
 	if !matchesUser(u, mustParse(t, `externalId gt 9`)) {
 		t.Error("10 gt 9 should match numerically")
@@ -140,6 +143,7 @@ func TestFilterNumericComparison(t *testing.T) {
 // TestFilterLogicalPrecedence locks the and-binds-tighter-than-or
 // precedence (RFC 7644 §3.4.2.2 ABNF) and the effect of explicit grouping.
 func TestFilterLogicalPrecedence(t *testing.T) {
+	t.Parallel()
 	u := sampleUser() // userName Alice, displayName "Alice Smith", active true
 
 	// `userName eq "bob" or displayName co "Alice" and active eq false`
@@ -168,6 +172,7 @@ func TestFilterLogicalPrecedence(t *testing.T) {
 // TestFilterNot covers the negation operator, which must wrap a
 // parenthesized sub-filter.
 func TestFilterNot(t *testing.T) {
+	t.Parallel()
 	u := sampleUser()
 	if !matchesUser(u, mustParse(t, `not (userName eq "bob")`)) {
 		t.Error("not (false) should be true")
@@ -183,6 +188,7 @@ func TestFilterNot(t *testing.T) {
 
 // TestFilterGrouping covers nested parentheses.
 func TestFilterGrouping(t *testing.T) {
+	t.Parallel()
 	u := sampleUser()
 	f := `((userName sw "Alice") and (active eq true)) or (externalId eq "nope")`
 	if !matchesUser(u, mustParse(t, f)) {
@@ -194,6 +200,7 @@ func TestFilterGrouping(t *testing.T) {
 // a comparison and is not present, but does NOT error (so a connector
 // probing an optional attribute gets an empty result, not a 400).
 func TestFilterUnknownAttribute(t *testing.T) {
+	t.Parallel()
 	u := sampleUser()
 	if matchesUser(u, mustParse(t, `costCenter eq "x"`)) {
 		t.Error("unknown attribute eq should not match")
@@ -210,6 +217,7 @@ func TestFilterUnknownAttribute(t *testing.T) {
 // TestFilterPresentEmptyValue confirms a modeled-but-empty attribute fails
 // "pr" (RFC 7644 §3.4.2.2: pr requires a non-empty value).
 func TestFilterPresentEmptyValue(t *testing.T) {
+	t.Parallel()
 	u := Resource{UserName: "u", DisplayName: "", Active: true}
 	if matchesUser(u, mustParse(t, `displayName pr`)) {
 		t.Error("empty displayName must not satisfy pr")
@@ -223,6 +231,7 @@ func TestFilterPresentEmptyValue(t *testing.T) {
 // and operator/logical keywords fold case (RFC 7643 §2.1 / RFC 7644
 // §3.4.2.2).
 func TestFilterCaseInsensitiveAttrAndKeyword(t *testing.T) {
+	t.Parallel()
 	u := sampleUser()
 	// Upper-cased attribute name + upper-cased operator + upper-cased
 	// logical keyword all resolve.
@@ -237,6 +246,7 @@ func TestFilterCaseInsensitiveAttrAndKeyword(t *testing.T) {
 // TestFilterStringEscapes confirms the tokenizer honors JSON string
 // escapes in a quoted literal.
 func TestFilterStringEscapes(t *testing.T) {
+	t.Parallel()
 	u := Resource{UserName: `quote"inside`, Active: true}
 	if !matchesUser(u, mustParse(t, `userName eq "quote\"inside"`)) {
 		t.Error("escaped quote literal should match")
@@ -251,6 +261,7 @@ func TestFilterStringEscapes(t *testing.T) {
 // errInvalidFilter sentinel (the handler maps this to scimType
 // invalidFilter / HTTP 400).
 func TestFilterInvalid(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		filter string
@@ -291,6 +302,7 @@ func TestFilterInvalid(t *testing.T) {
 // TestFilterGroupAttrs covers the Group resolver: displayName + the
 // multi-valued members attribute.
 func TestFilterGroupAttrs(t *testing.T) {
+	t.Parallel()
 	g := GroupResource{
 		Schemas:     []string{SchemaGroup},
 		ID:          "grp-1",
@@ -326,6 +338,7 @@ func TestFilterGroupAttrs(t *testing.T) {
 // Neither test sends input that would actually overflow the stack — the guards
 // must fire well before that point.
 func TestFilterDepthAndLengthLimits(t *testing.T) {
+	t.Parallel()
 	// Length guard: build a string just over maxFilterLen. Content does not
 	// need to be a valid filter — the length check fires first.
 	overLen := strings.Repeat("x", maxFilterLen+1)
@@ -363,6 +376,7 @@ func TestFilterDepthAndLengthLimits(t *testing.T) {
 
 // TestFilterEmptyMembersPresence confirms an empty members set fails pr.
 func TestFilterEmptyMembersPresence(t *testing.T) {
+	t.Parallel()
 	g := GroupResource{DisplayName: "Empty"}
 	if matchesGroup(g, mustParse(t, `members pr`)) {
 		t.Error("group with no members must not satisfy members pr")

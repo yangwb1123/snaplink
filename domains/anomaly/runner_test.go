@@ -79,6 +79,7 @@ func waitFor(t *testing.T, budget time.Duration, fn func() bool) {
 }
 
 func TestNewAsyncAnomalyRunner_NoDetectorsReturnsNil(t *testing.T) {
+	t.Parallel()
 	// Empty detector list → nil runner. Server falls back to
 	// no-op dispatch path; zero overhead invariant.
 	r := NewRunner(nil, nil)
@@ -88,6 +89,7 @@ func TestNewAsyncAnomalyRunner_NoDetectorsReturnsNil(t *testing.T) {
 }
 
 func TestAsyncAnomalyRunner_DispatchesToEveryDetector(t *testing.T) {
+	t.Parallel()
 	d1 := &recordingDetector{name: "d1"}
 	d2 := &recordingDetector{name: "d2"}
 	sink := &captureSink{}
@@ -107,6 +109,7 @@ func TestAsyncAnomalyRunner_DispatchesToEveryDetector(t *testing.T) {
 }
 
 func TestAsyncAnomalyRunner_DetectorErrorsDontStopSiblings(t *testing.T) {
+	t.Parallel()
 	// One broken detector shouldn't blind the others. The error
 	// path is logged + metric'd but never propagates.
 	d1 := &recordingDetector{name: "d1", cannedErr: errors.New("backend offline")}
@@ -131,6 +134,7 @@ func TestAsyncAnomalyRunner_DetectorErrorsDontStopSiblings(t *testing.T) {
 }
 
 func TestAsyncAnomalyRunner_SinkErrorIsLoggedNotRequeued(t *testing.T) {
+	t.Parallel()
 	// Sink failures shouldn't backpressure or re-queue — the
 	// anomaly is already detected, we just couldn't notify. Log
 	// + move on.
@@ -151,6 +155,7 @@ func TestAsyncAnomalyRunner_SinkErrorIsLoggedNotRequeued(t *testing.T) {
 }
 
 func TestAsyncAnomalyRunner_DropsNewestWhenQueueFull(t *testing.T) {
+	t.Parallel()
 	// Queue size 1, no started workers — second Dispatch hits a
 	// full queue, drops newest, returns immediately.
 	d := &recordingDetector{name: "d"}
@@ -170,6 +175,7 @@ func TestAsyncAnomalyRunner_DropsNewestWhenQueueFull(t *testing.T) {
 }
 
 func TestAsyncAnomalyRunner_BlockPolicyHonorsCtx(t *testing.T) {
+	t.Parallel()
 	// Queue size 1, no workers, block policy — Dispatch waits for
 	// space OR ctx cancellation, whichever comes first.
 	d := &recordingDetector{name: "d"}
@@ -191,6 +197,7 @@ func TestAsyncAnomalyRunner_BlockPolicyHonorsCtx(t *testing.T) {
 }
 
 func TestAsyncAnomalyRunner_NilRunnerDispatchSafe(t *testing.T) {
+	t.Parallel()
 	// SDK contract: nil runner = no-op. The server's
 	// dispatchLoginAnomaly path uses a nil-runner guard, but tests
 	// here exercise the direct API too.
@@ -202,6 +209,7 @@ func TestAsyncAnomalyRunner_NilRunnerDispatchSafe(t *testing.T) {
 }
 
 func TestAsyncAnomalyRunner_CloseAfterCloseIsNoop(t *testing.T) {
+	t.Parallel()
 	d := &recordingDetector{name: "d"}
 	r := NewRunner([]Detector{d}, nil)
 	r.Start()
@@ -214,6 +222,7 @@ func TestAsyncAnomalyRunner_CloseAfterCloseIsNoop(t *testing.T) {
 }
 
 func TestAsyncAnomalyRunner_DispatchAfterCloseDropsSilently(t *testing.T) {
+	t.Parallel()
 	d := &recordingDetector{name: "d"}
 	r := NewRunner([]Detector{d}, nil)
 	r.Start()
@@ -227,6 +236,7 @@ func TestAsyncAnomalyRunner_DispatchAfterCloseDropsSilently(t *testing.T) {
 }
 
 func TestAsyncAnomalyRunner_MultipleAnomaliesPerEvent(t *testing.T) {
+	t.Parallel()
 	// One detector can return multiple Anomalies per event (a single
 	// login can trip impossible-travel + new-country at the same
 	// time). Sink should receive both, attributed to the same event.
@@ -265,6 +275,7 @@ func (b *blockingDetector) Inspect(ctx context.Context, _ *LoginEvent) ([]Signal
 }
 
 func TestWithInspectTimeout_CutsOffSlowDetector(t *testing.T) {
+	t.Parallel()
 	// A detector that would block indefinitely must be cut off by the
 	// configured per-detector inspect deadline — not hang the worker.
 	d := &blockingDetector{name: "slow", release: make(chan struct{})}
@@ -287,6 +298,7 @@ func TestWithInspectTimeout_CutsOffSlowDetector(t *testing.T) {
 }
 
 func TestWithInspectTimeout_DefaultsToFiveSeconds(t *testing.T) {
+	t.Parallel()
 	// Unset → SDK default 5s (honor the 0→default convention).
 	r := NewRunner([]Detector{&recordingDetector{name: "d"}}, nil)
 	if r.inspectTimeout != 5*time.Second {
@@ -303,6 +315,7 @@ func TestWithInspectTimeout_DefaultsToFiveSeconds(t *testing.T) {
 }
 
 func TestWithMetricsCallbacks_DispatchedFiresPerOfferedEvent(t *testing.T) {
+	t.Parallel()
 	// The dispatched (received) counter is the offered-load denominator:
 	// one Inc per event actually offered to the queue — including events
 	// that then get dropped — but NOT for nil events or a closed runner.
@@ -337,6 +350,7 @@ func TestWithMetricsCallbacks_DispatchedFiresPerOfferedEvent(t *testing.T) {
 }
 
 func TestRecorderAnomalySink_NilRecorderReturnsNil(t *testing.T) {
+	t.Parallel()
 	// Defensive: NewRecorderSink with nil recorder returns
 	// nil so embedders can wire `NewRecorderSink(maybeNil)`
 	// directly into NewRunner.

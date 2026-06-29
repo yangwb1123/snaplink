@@ -66,6 +66,7 @@ func newFixture(t *testing.T) *fixture {
 }
 
 func TestEraseSubject_FullErasure(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
 
@@ -107,6 +108,7 @@ func TestEraseSubject_FullErasure(t *testing.T) {
 }
 
 func TestEraseSubject_Idempotent(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
 
@@ -123,6 +125,7 @@ func TestEraseSubject_Idempotent(t *testing.T) {
 }
 
 func TestEraseSubject_DryRunMutatesNothing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
 
@@ -146,6 +149,7 @@ func TestEraseSubject_DryRunMutatesNothing(t *testing.T) {
 }
 
 func TestEraseSubject_DryRunPreviewsRefreshCount(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
 	// MemoryRefreshTokenStore implements RefreshTokenSubjectCounter, so a
@@ -164,6 +168,7 @@ func TestEraseSubject_DryRunPreviewsRefreshCount(t *testing.T) {
 }
 
 func TestEraseSubject_SkipsUnwiredStores(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	// Only a user provider wired; refresh + sessions absent.
 	users := defaultimpl.NewMemoryUserProvider()
@@ -185,6 +190,7 @@ func TestEraseSubject_SkipsUnwiredStores(t *testing.T) {
 }
 
 func TestEraseSubject_EmptyUserID(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	if _, err := f.eraser.EraseSubject(context.Background(), "", compliance.EraseOptions{}); err == nil {
 		t.Fatal("expected error for empty user id")
@@ -237,6 +243,7 @@ func (f *fakeMFAEnroll) RemoveFactor(_ context.Context, userID, factorID string)
 // otherwise pick up: recorded consent grants (which would bypass the consent
 // gate) and registered second factors. Another subject's data is untouched.
 func TestEraseSubject_ClearsConsentAndMFAEnrollments(t *testing.T) {
+	t.Parallel()
 	consent := &fakeConsentStore{grants: map[string][]core.ConsentGrant{
 		"alice": {{UserID: "alice", ClientID: "app1"}, {UserID: "alice", ClientID: "app2"}},
 		"bob":   {{UserID: "bob", ClientID: "app1"}},

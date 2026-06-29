@@ -22,6 +22,7 @@ func mkAESGCMKey(t *testing.T) []byte {
 }
 
 func TestLoadAESGCMKey_RawBytes(t *testing.T) {
+	t.Parallel()
 	key := mkAESGCMKey(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "key.bin")
@@ -38,6 +39,7 @@ func TestLoadAESGCMKey_RawBytes(t *testing.T) {
 }
 
 func TestLoadAESGCMKey_HexEncoded(t *testing.T) {
+	t.Parallel()
 	key := mkAESGCMKey(t)
 	encoded := hex.EncodeToString(key)
 	dir := t.TempDir()
@@ -55,6 +57,7 @@ func TestLoadAESGCMKey_HexEncoded(t *testing.T) {
 }
 
 func TestLoadAESGCMKey_Base64Encoded(t *testing.T) {
+	t.Parallel()
 	key := mkAESGCMKey(t)
 	encoded := base64.StdEncoding.EncodeToString(key)
 	dir := t.TempDir()
@@ -72,6 +75,7 @@ func TestLoadAESGCMKey_Base64Encoded(t *testing.T) {
 }
 
 func TestLoadAESGCMKey_InlineKeyHex(t *testing.T) {
+	t.Parallel()
 	key := mkAESGCMKey(t)
 	got, err := serverbuildstore.LoadAESGCMKey(config.SnapshotEncryptionConfig{Key: hex.EncodeToString(key)})
 	if err != nil {
@@ -86,6 +90,7 @@ func TestLoadAESGCMKey_InlineKeyHex(t *testing.T) {
 // regression for the flake: a raw 32-byte key whose final byte is 0x0A
 // (or 0x0D) must load verbatim, not be truncated by newline trimming.
 func TestLoadAESGCMKey_RawKeyEndingInNewlineByte(t *testing.T) {
+	t.Parallel()
 	for _, last := range []byte{'\n', '\r'} {
 		key := make([]byte, 32)
 		for i := range key {
@@ -108,6 +113,7 @@ func TestLoadAESGCMKey_RawKeyEndingInNewlineByte(t *testing.T) {
 }
 
 func TestLoadAESGCMKey_RejectsMissing(t *testing.T) {
+	t.Parallel()
 	_, err := serverbuildstore.LoadAESGCMKey(config.SnapshotEncryptionConfig{})
 	if err == nil {
 		t.Fatal("want error when neither key nor key_file set")
@@ -115,6 +121,7 @@ func TestLoadAESGCMKey_RejectsMissing(t *testing.T) {
 }
 
 func TestLoadAESGCMKey_RejectsWrongLength(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "short.bin")
 	if err := os.WriteFile(path, []byte("only-16-bytes-yo"), 0o600); err != nil {
@@ -127,6 +134,7 @@ func TestLoadAESGCMKey_RejectsWrongLength(t *testing.T) {
 }
 
 func TestLoadAESGCMKey_RejectsMissingFile(t *testing.T) {
+	t.Parallel()
 	_, err := serverbuildstore.LoadAESGCMKey(config.SnapshotEncryptionConfig{KeyFile: "/nonexistent/path"})
 	if err == nil {
 		t.Fatal("want error when key_file missing")

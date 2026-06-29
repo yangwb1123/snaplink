@@ -21,6 +21,7 @@ func newSubjectClientIndexForTest(t *testing.T) *SubjectClientIndex {
 }
 
 func TestSubjectClientIndex_RecordAndList(t *testing.T) {
+	t.Parallel()
 	idx := newSubjectClientIndexForTest(t)
 	ctx := context.Background()
 
@@ -47,6 +48,7 @@ func TestSubjectClientIndex_RecordAndList(t *testing.T) {
 }
 
 func TestSubjectClientIndex_ListUnknownReturnsNilNoError(t *testing.T) {
+	t.Parallel()
 	idx := newSubjectClientIndexForTest(t)
 	got, err := idx.ListClients(context.Background(), "ghost")
 	if err != nil {
@@ -58,6 +60,7 @@ func TestSubjectClientIndex_ListUnknownReturnsNilNoError(t *testing.T) {
 }
 
 func TestSubjectClientIndex_RecordIsIdempotent(t *testing.T) {
+	t.Parallel()
 	idx := newSubjectClientIndexForTest(t)
 	ctx := context.Background()
 
@@ -76,6 +79,7 @@ func TestSubjectClientIndex_RecordIsIdempotent(t *testing.T) {
 }
 
 func TestSubjectClientIndex_EmptySubjectOrClientIDNoOp(t *testing.T) {
+	t.Parallel()
 	idx := newSubjectClientIndexForTest(t)
 	ctx := context.Background()
 
@@ -97,6 +101,7 @@ func TestSubjectClientIndex_EmptySubjectOrClientIDNoOp(t *testing.T) {
 }
 
 func TestSubjectClientIndex_Forget(t *testing.T) {
+	t.Parallel()
 	idx := newSubjectClientIndexForTest(t)
 	ctx := context.Background()
 
@@ -121,6 +126,7 @@ func TestSubjectClientIndex_Forget(t *testing.T) {
 }
 
 func TestSubjectClientIndex_ForgetUnknownIsNoOp(t *testing.T) {
+	t.Parallel()
 	idx := newSubjectClientIndexForTest(t)
 	ctx := context.Background()
 	if err := idx.Forget(ctx, "ghost", "web"); err != nil {
@@ -132,6 +138,7 @@ func TestSubjectClientIndex_ForgetUnknownIsNoOp(t *testing.T) {
 }
 
 func TestSubjectClientIndex_SubjectsIsolated(t *testing.T) {
+	t.Parallel()
 	idx := newSubjectClientIndexForTest(t)
 	ctx := context.Background()
 
@@ -149,6 +156,7 @@ func TestSubjectClientIndex_SubjectsIsolated(t *testing.T) {
 }
 
 func TestSubjectClientIndex_OrderedByLastSeenDesc(t *testing.T) {
+	t.Parallel()
 	idx := newSubjectClientIndexForTest(t)
 	ctx := context.Background()
 
@@ -169,6 +177,7 @@ func TestSubjectClientIndex_OrderedByLastSeenDesc(t *testing.T) {
 }
 
 func TestSubjectClientIndex_CrossInstanceSharing(t *testing.T) {
+	t.Parallel()
 	// Multi-replica BCL fan-out is the whole point: a token issued
 	// on replica A must show up in the ListClients result on replica B
 	// so its logout reaches every client.

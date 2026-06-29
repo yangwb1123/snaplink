@@ -41,6 +41,7 @@ func newSharedDB(t *testing.T) *sql.DB {
 // covers the NewXxxWithDB / DB() / Ping() boilerplate across the package in
 // one place.
 func TestWithDBConstructors_ShareOnePoolAndExposeHealth(t *testing.T) {
+	t.Parallel()
 	db := newSharedDB(t)
 	ctx := context.Background()
 
@@ -103,6 +104,7 @@ func TestWithDBConstructors_ShareOnePoolAndExposeHealth(t *testing.T) {
 // ping/migrate failure branch — which Closes the half-open handle and wraps
 // the error — is exercised for each. Without this only the happy path runs.
 func TestOpenDSNConstructors_BadPathReturnError(t *testing.T) {
+	t.Parallel()
 	const bad = "file:/no_such_dir_for_sqlite_tests/x/store.db"
 	type erring struct {
 		name string
@@ -147,6 +149,7 @@ func TestOpenDSNConstructors_BadPathReturnError(t *testing.T) {
 // migrate-failure branch — the one the shared-pool happy path never takes —
 // is exercised for each.
 func TestWithDBConstructors_ClosedDBMigrateError(t *testing.T) {
+	t.Parallel()
 	closed := func(t *testing.T) *sql.DB {
 		db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "closed.db"))
 		if err != nil {
@@ -191,6 +194,7 @@ func TestWithDBConstructors_ClosedDBMigrateError(t *testing.T) {
 // constructors plus the Close/Ping-after-close error path that the shared-DB
 // test cannot (closing a shared handle would break its siblings).
 func TestStandaloneStores_PingAndCloseLifecycle(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	type closer interface {

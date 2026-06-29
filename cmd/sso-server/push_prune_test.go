@@ -12,6 +12,7 @@ import (
 )
 
 func TestRunPushApprovalPrune_RemovesExpiredAtInterval(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "push.db") + "?_journal=WAL"
 	store, err := sqlitestores.NewPushApprovalStore(dsn)
@@ -63,6 +64,7 @@ func TestRunPushApprovalPrune_RemovesExpiredAtInterval(t *testing.T) {
 }
 
 func TestRunPushApprovalPrune_ExitsOnCtxCancelBeforeFirstTick(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "push.db") + "?_journal=WAL"
 	store, _ := sqlitestores.NewPushApprovalStore(dsn)
@@ -81,6 +83,7 @@ func TestRunPushApprovalPrune_ExitsOnCtxCancelBeforeFirstTick(t *testing.T) {
 }
 
 func TestRunPushApprovalPrune_PruneErrorDoesNotStopLoop(t *testing.T) {
+	t.Parallel()
 	// Close the store so Prune returns "closed" errors; the loop
 	// should still respect ctx cancel without hanging.
 	dir := t.TempDir()

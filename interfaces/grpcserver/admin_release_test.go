@@ -63,6 +63,7 @@ func validProto(id string, schema int32) *adminv1.Release {
 }
 
 func TestReleaseAdmin_FullCycle(t *testing.T) {
+	t.Parallel()
 	fx := startReleaseGRPC(t)
 	c := adminv1.NewReleaseAdminServiceClient(fx.conn)
 	ctx := context.Background()
@@ -169,6 +170,7 @@ func TestReleaseAdmin_FullCycle(t *testing.T) {
 }
 
 func TestReleaseAdmin_GetUnknownIs404(t *testing.T) {
+	t.Parallel()
 	fx := startReleaseGRPC(t)
 	c := adminv1.NewReleaseAdminServiceClient(fx.conn)
 	if _, err := c.Get(context.Background(), &adminv1.GetReleaseRequest{Id: "ghost"}); status.Code(err) != codes.NotFound {
@@ -177,6 +179,7 @@ func TestReleaseAdmin_GetUnknownIs404(t *testing.T) {
 }
 
 func TestReleaseAdmin_RegisterInvalidPairIsInvalidArgument(t *testing.T) {
+	t.Parallel()
 	fx := startReleaseGRPC(t)
 	c := adminv1.NewReleaseAdminServiceClient(fx.conn)
 	one := validProto("rel-1", 1)
@@ -187,6 +190,7 @@ func TestReleaseAdmin_RegisterInvalidPairIsInvalidArgument(t *testing.T) {
 }
 
 func TestReleaseAdmin_PinUnknownIs404(t *testing.T) {
+	t.Parallel()
 	fx := startReleaseGRPC(t)
 	c := adminv1.NewReleaseAdminServiceClient(fx.conn)
 	if _, err := c.Pin(context.Background(), &adminv1.PinReleaseRequest{Id: "ghost"}); status.Code(err) != codes.NotFound {

@@ -15,6 +15,7 @@ import (
 // MemorySink behavior. Pins the no-regression for existing
 // reference YAMLs that don't yet name a backend.
 func TestBuildPrimaryAuditSink_DefaultsToMemory(t *testing.T) {
+	t.Parallel()
 	sink, name, err := serverbuildauthn.BuildPrimaryAuditSink(config.AuditConfig{Enabled: true}, quietLogger(), nil, "")
 	if err != nil {
 		t.Fatalf("err = %v", err)
@@ -33,6 +34,7 @@ func TestBuildPrimaryAuditSink_DefaultsToMemory(t *testing.T) {
 // cmd-level wiring doesn't drop any of the event fields the
 // downstream API surfaces.
 func TestBuildPrimaryAuditSink_SqliteRoundTrip(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "audit.db") + "?_journal=WAL"
 	sink, name, err := serverbuildauthn.BuildPrimaryAuditSink(config.AuditConfig{
 		Enabled: true,
@@ -67,6 +69,7 @@ func TestBuildPrimaryAuditSink_SqliteRoundTrip(t *testing.T) {
 // without a DSN → loud boot error, not a silent crash at first
 // Record.
 func TestBuildPrimaryAuditSink_SqliteRequiresDSN(t *testing.T) {
+	t.Parallel()
 	_, _, err := serverbuildauthn.BuildPrimaryAuditSink(config.AuditConfig{
 		Enabled: true, Backend: "sqlite",
 	}, quietLogger(), nil, "")
@@ -79,6 +82,7 @@ func TestBuildPrimaryAuditSink_SqliteRequiresDSN(t *testing.T) {
 // surface at boot rather than silently falling back to memory and
 // losing every event the operator expected to persist.
 func TestBuildPrimaryAuditSink_RejectsUnknownBackend(t *testing.T) {
+	t.Parallel()
 	_, _, err := serverbuildauthn.BuildPrimaryAuditSink(config.AuditConfig{
 		Enabled: true, Backend: "postgres",
 	}, quietLogger(), nil, "")

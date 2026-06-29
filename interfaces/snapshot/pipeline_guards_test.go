@@ -12,6 +12,7 @@ import (
 
 // TestPipeline_Save_NilGuards pins the two argument guards on Save.
 func TestPipeline_Save_NilGuards(t *testing.T) {
+	t.Parallel()
 	p := &snapshot.Pipeline{}
 	if err := p.Save(context.Background(), nil, inline.New(), "n"); err == nil {
 		t.Error("Save(nil snapshot) must error")
@@ -24,6 +25,7 @@ func TestPipeline_Save_NilGuards(t *testing.T) {
 
 // TestPipeline_Load_NilStorage pins the nil-storage guard on Load.
 func TestPipeline_Load_NilStorage(t *testing.T) {
+	t.Parallel()
 	p := &snapshot.Pipeline{}
 	if _, err := p.Load(context.Background(), nil, "n"); err == nil {
 		t.Error("Load(nil storage) must error")
@@ -33,6 +35,7 @@ func TestPipeline_Load_NilStorage(t *testing.T) {
 // TestPipeline_Load_GarbageEnvelope proves Load rejects non-envelope bytes
 // (the json.Unmarshal failure branch).
 func TestPipeline_Load_GarbageEnvelope(t *testing.T) {
+	t.Parallel()
 	st := inline.New()
 	if err := st.Put(context.Background(), "g", []byte("{not an envelope")); err != nil {
 		t.Fatalf("put: %v", err)
@@ -44,6 +47,7 @@ func TestPipeline_Load_GarbageEnvelope(t *testing.T) {
 
 // TestPipeline_Load_UnknownEnvelopeVersion proves the envelope-version guard.
 func TestPipeline_Load_UnknownEnvelopeVersion(t *testing.T) {
+	t.Parallel()
 	st := inline.New()
 	// Minimal envelope JSON with a bogus version.
 	raw := []byte(`{"envelope_version":"99","snapshot_id":"x","codec":"json","encryption_algorithm":"none","plaintext_sha256_hex":"00","body":""}`)
@@ -58,6 +62,7 @@ func TestPipeline_Load_UnknownEnvelopeVersion(t *testing.T) {
 // TestAdvanceBootstrap_NoNamespace covers the branch where neither the
 // Restorer nor the snapshot carries a namespace: advance is a reasoned no-op.
 func TestAdvanceBootstrap_NoNamespace(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	// Snapshot with empty BootstrapState namespace.
 	snap := &snapshot.Snapshot{

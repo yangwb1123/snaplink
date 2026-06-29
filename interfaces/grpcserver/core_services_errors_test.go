@@ -102,6 +102,7 @@ func (r *recordingRegistry) Close() error { return nil }
 // --- AuditWriter ---
 
 func TestAudit_StreamEventsWithoutRecorderFailsPrecondition(t *testing.T) {
+	t.Parallel()
 	conn := startGRPC(t, nil, nil, nil)
 	c := auditv1.NewAuditWriterClient(conn)
 	stream, err := c.StreamEvents(context.Background())
@@ -117,6 +118,7 @@ func TestAudit_StreamEventsWithoutRecorderFailsPrecondition(t *testing.T) {
 }
 
 func TestAudit_RecordStampsTimestamp(t *testing.T) {
+	t.Parallel()
 	// Exercises the in.TimestampUnix != 0 branch of protoToEvent and proves
 	// the recorder preserves a caller-supplied wall-clock time.
 	sink := audit.NewMemorySink(4)
@@ -135,6 +137,7 @@ func TestAudit_RecordStampsTimestamp(t *testing.T) {
 // --- Authorizer ---
 
 func TestAuthz_NilProviderFailsPrecondition(t *testing.T) {
+	t.Parallel()
 	conn := startGRPC(t, nil, nil, nil) // no provider
 	c := authzv1.NewAuthorizerClient(conn)
 	ctx := context.Background()
@@ -164,6 +167,7 @@ func TestAuthz_NilProviderFailsPrecondition(t *testing.T) {
 }
 
 func TestAuthz_ListPermissions(t *testing.T) {
+	t.Parallel()
 	prov := permissions.NewMemoryProvider()
 	_ = prov.AddRole(context.Background(), "web", permissions.Role{
 		Code: "admin", Permissions: []string{"user:read", "order:write"},
@@ -184,6 +188,7 @@ func TestAuthz_ListPermissions(t *testing.T) {
 }
 
 func TestAuthz_ListPermissions_UnknownUserIsEmptyNotError(t *testing.T) {
+	t.Parallel()
 	// ErrUserNotFound is swallowed (treated as "no permissions"), not an error.
 	prov := permissions.NewMemoryProvider()
 	conn := startGRPC(t, nil, prov, nil)
@@ -198,6 +203,7 @@ func TestAuthz_ListPermissions_UnknownUserIsEmptyNotError(t *testing.T) {
 }
 
 func TestAuthz_ProviderErrorIsInternal(t *testing.T) {
+	t.Parallel()
 	prov := &erroringProvider{err: errors.New("db down")}
 	conn := startGRPC(t, nil, prov, nil)
 	c := authzv1.NewAuthorizerClient(conn)
@@ -228,6 +234,7 @@ func TestAuthz_ProviderErrorIsInternal(t *testing.T) {
 }
 
 func TestAuthz_GetMenusWithButtonsAndChildren(t *testing.T) {
+	t.Parallel()
 	// Exercises the Buttons and Children branches of convertMenuItem.
 	prov := permissions.NewMemoryProvider()
 	_ = prov.AddRole(context.Background(), "web", permissions.Role{
@@ -264,6 +271,7 @@ func TestAuthz_GetMenusWithButtonsAndChildren(t *testing.T) {
 // --- Discovery ---
 
 func TestDiscovery_NilRegistryFailsPrecondition(t *testing.T) {
+	t.Parallel()
 	conn := startGRPC(t, nil, nil, nil)
 	c := discoveryv1.NewDiscoveryClient(conn)
 	ctx := context.Background()
@@ -297,6 +305,7 @@ func TestDiscovery_NilRegistryFailsPrecondition(t *testing.T) {
 }
 
 func TestDiscovery_RegisterNilServiceIsInvalidArgument(t *testing.T) {
+	t.Parallel()
 	reg := newRecordingRegistry()
 	conn := startGRPC(t, nil, nil, reg)
 	c := discoveryv1.NewDiscoveryClient(conn)
@@ -306,6 +315,7 @@ func TestDiscovery_RegisterNilServiceIsInvalidArgument(t *testing.T) {
 }
 
 func TestDiscovery_StoreErrorsAreInternal(t *testing.T) {
+	t.Parallel()
 	reg := &erroringRegistry{err: errors.New("etcd down")}
 	conn := startGRPC(t, nil, nil, reg)
 	c := discoveryv1.NewDiscoveryClient(conn)
@@ -332,6 +342,7 @@ func TestDiscovery_StoreErrorsAreInternal(t *testing.T) {
 }
 
 func TestDiscovery_RegisterRoundTripsTTLAndTags(t *testing.T) {
+	t.Parallel()
 	// Exercises the full protoToService -> registry.Service -> serviceToProto
 	// roundtrip, including the TTL/Tags fields the happy-path test omits.
 	reg := newRecordingRegistry()

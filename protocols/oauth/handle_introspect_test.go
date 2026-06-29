@@ -81,6 +81,7 @@ func activeClient(id string) *core.Client {
 }
 
 func TestHandleIntrospect(t *testing.T) {
+	t.Parallel()
 	t.Run("misconfigured nil client store", func(t *testing.T) {
 		d := &introspectDeps{}
 		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, `{}`)
@@ -325,6 +326,7 @@ func TestHandleIntrospect(t *testing.T) {
 // MUST echo the sender-constraint confirmation so a resource server can enforce
 // RFC 8705 §3.3 (mTLS) / RFC 9449 §7 (DPoP) binding. Previously omitted entirely.
 func TestIntrospectionEmitsCnf(t *testing.T) {
+	t.Parallel()
 	// mTLS-bound token -> cnf.x5t#S256.
 	body := map[string]any{}
 	populateAccessIntrospectionBody(body, &core.TokenClaims{Subject: "u", ConfirmationX5TS256: "thumb-abc"})

@@ -64,6 +64,7 @@ func (hh *harness) getMetadata(t *testing.T) *httptest.ResponseRecorder {
 // KeyDescriptor. A consumer doing automated metadata refresh therefore validates
 // the metadata with NO trust anchor beyond the document itself.
 func TestMetadata_Signed_RSA_ValidatesAgainstOwnKeyDescriptor(t *testing.T) {
+	t.Parallel()
 	testMetadataSignedValidatesAgainstOwnKeyDescriptor(t, issuerRSA)
 }
 
@@ -71,6 +72,7 @@ func TestMetadata_Signed_RSA_ValidatesAgainstOwnKeyDescriptor(t *testing.T) {
 // (ES256) path: the ASN.1-DER XML-DSig signature goxmldsig emits validates (the
 // DER-vs-R‖S finding holds for metadata exactly as for assertions).
 func TestMetadata_Signed_ECDSA_ValidatesAgainstOwnKeyDescriptor(t *testing.T) {
+	t.Parallel()
 	testMetadataSignedValidatesAgainstOwnKeyDescriptor(t, issuerECDSA)
 }
 
@@ -137,6 +139,7 @@ func testMetadataSignedValidatesAgainstOwnKeyDescriptor(t *testing.T, kind testI
 // and is BYTE-IDENTICAL to GenerateMetadata's unsigned render (the historical
 // output). This is the regression gate for "default => byte-identical".
 func TestMetadata_Default_Unsigned_ByteIdentical(t *testing.T) {
+	t.Parallel()
 	// newHarness leaves SignMetadata at its zero value (false).
 	hh := newHarness(t, issuerRSA)
 
@@ -170,6 +173,7 @@ func TestMetadata_Default_Unsigned_ByteIdentical(t *testing.T) {
 // independent of the handler — a second guard that the sign=false path did not
 // drift.
 func TestGenerateMetadata_UnsignedMatchesHistoricalShape(t *testing.T) {
+	t.Parallel()
 	hh := newHarness(t, issuerRSA)
 	signer := hh.signerFor(t)
 
@@ -208,6 +212,7 @@ func TestGenerateMetadata_UnsignedMatchesHistoricalShape(t *testing.T) {
 // assertion path can't offer (it must fail closed), kept here so automated
 // metadata refresh against an Ed25519 IdP doesn't break the endpoint.
 func TestMetadata_Ed25519_SignRequested_FallsBackUnsigned(t *testing.T) {
+	t.Parallel()
 	hh := newSigningHarness(t, issuerEd25519)
 	logger := &capturingLogger{}
 	hh.h.deps.Logger = logger
@@ -242,6 +247,7 @@ func TestMetadata_Ed25519_SignRequested_FallsBackUnsigned(t *testing.T) {
 // the ETag input), so a cache keyed on it never serves an unsigned body as a
 // signed one (or vice versa).
 func TestMetadata_ETag_ChangesSignedVsUnsigned(t *testing.T) {
+	t.Parallel()
 	unsigned := newHarness(t, issuerRSA)
 	signed := newSigningHarness(t, issuerRSA)
 	// Force BOTH harnesses onto the SAME signing key so only the signed flag
@@ -266,6 +272,7 @@ func TestMetadata_ETag_ChangesSignedVsUnsigned(t *testing.T) {
 // signing material. Exercised on the signed path (the kid is folded into the
 // ETag input, and the new cert changes the body too).
 func TestMetadata_ETag_ChangesOnKeyRotation(t *testing.T) {
+	t.Parallel()
 	hh := newSigningHarness(t, issuerRSA)
 	etag1 := hh.getMetadata(t).Header().Get("ETag")
 	if etag1 == "" {
@@ -294,6 +301,7 @@ func TestMetadata_ETag_ChangesOnKeyRotation(t *testing.T) {
 // doc yields a STABLE ETag + body across repeated requests AND that
 // If-None-Match → 304 works for the signed ECDSA case.
 func TestMetadata_Signed_ECDSA_ETagStableAcrossRequests(t *testing.T) {
+	t.Parallel()
 	hh := newSigningHarness(t, issuerECDSA)
 
 	rec1 := hh.getMetadata(t)
@@ -326,6 +334,7 @@ func TestMetadata_Signed_ECDSA_ETagStableAcrossRequests(t *testing.T) {
 // signer cache are race-free (run under -race) AND that every concurrent
 // response is the SAME cached, valid document (one ETag, validating signature).
 func TestMetadata_Signed_ConcurrentRequests_RaceSafe(t *testing.T) {
+	t.Parallel()
 	hh := newSigningHarness(t, issuerECDSA)
 
 	const goroutines = 32

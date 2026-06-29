@@ -6,6 +6,7 @@ import (
 )
 
 func TestFlagSource_EmptyBindIgnored(t *testing.T) {
+	t.Parallel()
 	fs := newTestFlags([]string{"--listen=:9090"})
 	src := NewFlagSource(fs).
 		Bind("", "server.listen").

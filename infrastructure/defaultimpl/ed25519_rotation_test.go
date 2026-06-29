@@ -21,6 +21,7 @@ func generateKey(t *testing.T) (ed25519.PrivateKey, ed25519.PublicKey) {
 }
 
 func TestKeyRotation_LegacyKeyValidatesAfterSwap(t *testing.T) {
+	t.Parallel()
 	// Step 1: original issuer signs a token.
 	oldPriv, oldPub := generateKey(t)
 	old := defaultimpl.NewEd25519JWTIssuer(
@@ -48,6 +49,7 @@ func TestKeyRotation_LegacyKeyValidatesAfterSwap(t *testing.T) {
 }
 
 func TestKeyRotation_UnknownKidRejected(t *testing.T) {
+	t.Parallel()
 	// Issuer that has ONLY its own key.
 	priv, _ := generateKey(t)
 	iss := defaultimpl.NewEd25519JWTIssuer(
@@ -69,6 +71,7 @@ func TestKeyRotation_UnknownKidRejected(t *testing.T) {
 }
 
 func TestKeyRotation_NewTokensSignedByPrimary(t *testing.T) {
+	t.Parallel()
 	oldPriv, oldPub := generateKey(t)
 	newPriv, _ := generateKey(t)
 	iss := defaultimpl.NewEd25519JWTIssuer(
@@ -88,6 +91,7 @@ func TestKeyRotation_NewTokensSignedByPrimary(t *testing.T) {
 }
 
 func TestKeyRotation_JWKSEmitsBothKeys(t *testing.T) {
+	t.Parallel()
 	priv, _ := generateKey(t)
 	_, oldPub := generateKey(t)
 	iss := defaultimpl.NewEd25519JWTIssuer(
@@ -112,6 +116,7 @@ func TestKeyRotation_JWKSEmitsBothKeys(t *testing.T) {
 }
 
 func TestKeyRotation_VerifyKeyOverrideIdempotent(t *testing.T) {
+	t.Parallel()
 	priv, _ := generateKey(t)
 	_, pubA := generateKey(t)
 	_, pubB := generateKey(t)
@@ -129,6 +134,7 @@ func TestKeyRotation_VerifyKeyOverrideIdempotent(t *testing.T) {
 }
 
 func TestKeyRotation_JWKSStableOrderPreservesETag(t *testing.T) {
+	t.Parallel()
 	// Insertion order shouldn't change JWKS output — kids sort
 	// deterministically. Verify two builds with the same inputs in
 	// different order produce identical JWKS sequences.

@@ -192,6 +192,7 @@ func idpSignerCertPEM(t *testing.T, signer *AssertionSigner) []byte {
 // dispatched request's signature validates against the IdP key + carries the
 // right NameID — cross-validated through the module's OWN saml/sp validator.
 func TestFanout_SPInitiated_DispatchesToOtherSP(t *testing.T) {
+	t.Parallel()
 	const nameID = "alice@example.com"
 	hh, spKeyA, sid, idx, _ := newFanoutHarness(t, nameID)
 
@@ -285,6 +286,7 @@ func TestFanout_SPInitiated_DispatchesToOtherSP(t *testing.T) {
 // endpoint returns 500; the /saml/slo response to SP-A still returns 302 Success
 // (not blocked), and the failure is recorded as a logout_notified failure.
 func TestFanout_DeadSP_DoesNotBlock(t *testing.T) {
+	t.Parallel()
 	const nameID = "bob@example.com"
 	hh, spKeyA, _, idx, sink := newFanoutHarness(t, nameID)
 
@@ -326,6 +328,7 @@ func TestFanout_DeadSP_DoesNotBlock(t *testing.T) {
 // LogoutRequest (form POST), cross-validated by the module's SP-side POST
 // validator.
 func TestFanout_POSTBinding_DispatchesEnvelopedRequest(t *testing.T) {
+	t.Parallel()
 	const nameID = "carol@example.com"
 	hh, spKeyA, _, idx, _ := newFanoutHarness(t, nameID)
 
@@ -378,6 +381,7 @@ func TestFanout_POSTBinding_DispatchesEnvelopedRequest(t *testing.T) {
 // the single-SP path: it returns the same 302 LogoutResponse and there is no
 // fan-out audit event.)
 func TestFanout_NilIndex_NoDispatch_ByteIdentical(t *testing.T) {
+	t.Parallel()
 	const nameID = "dave@example.com"
 	// newSLOHarness wires NO index (nil) — the pre-fan-out construction.
 	hh, spKeyA, sid := newSLOHarness(t, nameID)
@@ -408,6 +412,7 @@ func TestFanout_NilIndex_NoDispatch_ByteIdentical(t *testing.T) {
 // calls for IdP-initiated global logout (e.g. from /end_session): calling
 // Fanout(subject, "") dispatches to ALL the subject's SPs and cleans the index.
 func TestFanout_IdPInitiated_Hook(t *testing.T) {
+	t.Parallel()
 	const nameID = "erin@example.com"
 	hh, _, _, idx, _ := newFanoutHarness(t, nameID)
 
@@ -432,6 +437,7 @@ func TestFanout_IdPInitiated_Hook(t *testing.T) {
 // TestFanout_SkipsSPWithNoSLOURL proves an SP recorded without a registered SLO
 // URL is skipped (nowhere to deliver) — no panic, no dispatch.
 func TestFanout_SkipsSPWithNoSLOURL(t *testing.T) {
+	t.Parallel()
 	const nameID = "frank@example.com"
 	hh, _, _, idx, _ := newFanoutHarness(t, nameID)
 
@@ -472,6 +478,7 @@ func newPlainHTTPCapturingSP(t *testing.T, cap *capturedSLO) *httptest.Server {
 // the FIXED non-https reason. This locks the gate that stops the IdP becoming an
 // SSRF vector (an http:// / internal / IMDS saml_sp_slo_url).
 func TestFanout_SSRF_RefusesNonHTTPSSLOURL(t *testing.T) {
+	t.Parallel()
 	const nameID = "ssrf@example.com"
 	hh, _, _, idx, sink := newFanoutHarness(t, nameID)
 
@@ -532,6 +539,7 @@ func TestFanout_SSRF_RefusesNonHTTPSSLOURL(t *testing.T) {
 // whose registered saml_sp_slo_url is non-https, so a non-https SP never enters
 // the fan-out target set. The row itself is still recorded (RemoveAll fidelity).
 func TestRecordSessionIndex_DropsNonHTTPSSLOURL(t *testing.T) {
+	t.Parallel()
 	const nameID = "issuance@example.com"
 	hh, _, _, idx, _ := newFanoutHarness(t, nameID)
 
@@ -563,6 +571,7 @@ func TestRecordSessionIndex_DropsNonHTTPSSLOURL(t *testing.T) {
 // TestRecordSessionIndex_KeepsHTTPSSLOURL is the positive control: an https SLO
 // URL is recorded intact (the gate only drops non-https).
 func TestRecordSessionIndex_KeepsHTTPSSLOURL(t *testing.T) {
+	t.Parallel()
 	const nameID = "issuance-ok@example.com"
 	hh, _, _, idx, _ := newFanoutHarness(t, nameID)
 
@@ -593,6 +602,7 @@ func TestRecordSessionIndex_KeepsHTTPSSLOURL(t *testing.T) {
 // NEVER embeds the destination URL (Fix 3 — the raw transport error would leak
 // it). Complements TestFanout_DeadSP_DoesNotBlock (which only checks the outcome).
 func TestFanout_DeliveryFailure_FixedReason(t *testing.T) {
+	t.Parallel()
 	const nameID = "leak@example.com"
 	hh, _, _, idx, sink := newFanoutHarness(t, nameID)
 
@@ -630,6 +640,7 @@ func TestFanout_DeliveryFailure_FixedReason(t *testing.T) {
 // still dispatches. (Saturation-drop is covered structurally by the non-blocking
 // acquire; this guards the common path.)
 func TestFanout_DispatchSemaphore_NormalOperationDispatches(t *testing.T) {
+	t.Parallel()
 	const nameID = "sem@example.com"
 	hh, _, _, idx, _ := newFanoutHarness(t, nameID)
 

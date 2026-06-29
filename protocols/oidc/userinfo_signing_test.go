@@ -65,6 +65,7 @@ func newSignDeps(t *testing.T) (*userinfoDeps, *core.Client) {
 }
 
 func TestMaybeSignUserInfo_SignedJWT(t *testing.T) {
+	t.Parallel()
 	d, _ := newSignDeps(t)
 	ctx, rec := newCtx(http.MethodGet, "/userinfo")
 	handled := oidc.MaybeSignUserInfo(d, ctx, "rp-1", map[string]any{"sub": "user-1", "email": "a@b.c"})
@@ -84,6 +85,7 @@ func TestMaybeSignUserInfo_SignedJWT(t *testing.T) {
 }
 
 func TestMaybeSignUserInfo_NoClientStore(t *testing.T) {
+	t.Parallel()
 	d := &userinfoDeps{issuer: defaultimpl.NewEd25519JWTIssuer(), clients: nil, selectorOK: true}
 	ctx, _ := newCtx(http.MethodGet, "/userinfo")
 	if oidc.MaybeSignUserInfo(d, ctx, "rp-1", map[string]any{"sub": "u"}) {
@@ -92,6 +94,7 @@ func TestMaybeSignUserInfo_NoClientStore(t *testing.T) {
 }
 
 func TestMaybeSignUserInfo_EmptyClientID(t *testing.T) {
+	t.Parallel()
 	d, _ := newSignDeps(t)
 	ctx, _ := newCtx(http.MethodGet, "/userinfo")
 	if oidc.MaybeSignUserInfo(d, ctx, "", map[string]any{"sub": "u"}) {
@@ -100,6 +103,7 @@ func TestMaybeSignUserInfo_EmptyClientID(t *testing.T) {
 }
 
 func TestMaybeSignUserInfo_UnknownClient(t *testing.T) {
+	t.Parallel()
 	d, _ := newSignDeps(t)
 	ctx, _ := newCtx(http.MethodGet, "/userinfo")
 	if oidc.MaybeSignUserInfo(d, ctx, "does-not-exist", map[string]any{"sub": "u"}) {
@@ -108,6 +112,7 @@ func TestMaybeSignUserInfo_UnknownClient(t *testing.T) {
 }
 
 func TestMaybeSignUserInfo_NoSignNoEncryptFallsThrough(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	mustSeedClient(t, store, &core.Client{ID: "plain"})
 	d := &userinfoDeps{issuer: defaultimpl.NewEd25519JWTIssuer(), clients: store, algs: []string{"EdDSA"}, selectorOK: true}
@@ -118,6 +123,7 @@ func TestMaybeSignUserInfo_NoSignNoEncryptFallsThrough(t *testing.T) {
 }
 
 func TestMaybeSignUserInfo_UnsupportedAlgFallsThrough(t *testing.T) {
+	t.Parallel()
 	d, _ := newSignDeps(t)
 	store := d.clients.(*defaultimpl.MemoryClientStore)
 	// The resolved signer is Ed25519 (Alg "EdDSA"). A client that registered a
@@ -147,6 +153,7 @@ func (s noAlgSigner) SignUserInfo(ctx context.Context, audience string, claims m
 }
 
 func TestMaybeSignUserInfo_NoAlgSignerFallsBackToServerSet(t *testing.T) {
+	t.Parallel()
 	d, _ := newSignDeps(t)
 	d.issuer = noAlgSigner{inner: defaultimpl.NewEd25519JWTIssuer()}
 
@@ -166,6 +173,7 @@ func TestMaybeSignUserInfo_NoAlgSignerFallsBackToServerSet(t *testing.T) {
 }
 
 func TestMaybeSignUserInfo_SelectorErrorFallsThrough(t *testing.T) {
+	t.Parallel()
 	d, _ := newSignDeps(t)
 	// A misconfigured tenant issuer (resolution error) is fail-closed by
 	// omission: no signer → fall through (sign-only, no encryption).
@@ -177,6 +185,7 @@ func TestMaybeSignUserInfo_SelectorErrorFallsThrough(t *testing.T) {
 }
 
 func TestMaybeSignUserInfo_EmitFalseFallsThrough(t *testing.T) {
+	t.Parallel()
 	d, _ := newSignDeps(t)
 	// emit=false means the tenant strategy can't sign here → omit (fall
 	// through), never reach for the shared key.
@@ -188,6 +197,7 @@ func TestMaybeSignUserInfo_EmitFalseFallsThrough(t *testing.T) {
 }
 
 func TestMaybeSignUserInfo_EncryptRequestedNoEncrypter(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	mustSeedClient(t, store, &core.Client{ID: "enc-rp", UserinfoEncryptedResponseAlg: "RSA-OAEP-256"})
 	d := &userinfoDeps{issuer: defaultimpl.NewEd25519JWTIssuer(), clients: store, algs: []string{"EdDSA"}, selectorOK: true, encrypter: nil}
@@ -207,6 +217,7 @@ func TestMaybeSignUserInfo_EncryptRequestedNoEncrypter(t *testing.T) {
 }
 
 func TestMaybeSignUserInfo_EncryptOnlyJSON(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	encJWK := rsaEncJWK(t)
 	mustSeedClient(t, store, &core.Client{
@@ -238,6 +249,7 @@ func TestMaybeSignUserInfo_EncryptOnlyJSON(t *testing.T) {
 }
 
 func TestMaybeSignUserInfo_SignThenEncrypt(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	encJWK := rsaEncJWK(t)
 	mustSeedClient(t, store, &core.Client{
@@ -267,6 +279,7 @@ func TestMaybeSignUserInfo_SignThenEncrypt(t *testing.T) {
 }
 
 func TestMaybeSignUserInfo_EncryptFailureServerError(t *testing.T) {
+	t.Parallel()
 	store := defaultimpl.NewMemoryClientStore()
 	// Encrypter is wired but the client JWKS has no usable enc key → the
 	// undifferentiated server_error path fires (never falls back to

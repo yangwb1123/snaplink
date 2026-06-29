@@ -41,6 +41,7 @@ func (s *stubBeginnerProvider) Begin(_ context.Context, _, _ string) (map[string
 }
 
 func TestMultiMFAProvider_RejectsEmptyProviders(t *testing.T) {
+	t.Parallel()
 	_, err := defaultimpl.NewMultiMFAProvider()
 	if !errors.Is(err, defaultimpl.ErrMFANoProviders) {
 		t.Fatalf("got %v, want ErrMFANoProviders", err)
@@ -48,6 +49,7 @@ func TestMultiMFAProvider_RejectsEmptyProviders(t *testing.T) {
 }
 
 func TestMultiMFAProvider_RejectsNilProvider(t *testing.T) {
+	t.Parallel()
 	good := &stubMFAProvider{methods: []string{"totp"}}
 	_, err := defaultimpl.NewMultiMFAProvider(good, nil)
 	if err == nil {
@@ -56,6 +58,7 @@ func TestMultiMFAProvider_RejectsNilProvider(t *testing.T) {
 }
 
 func TestMultiMFAProvider_RejectsProviderWithNoMethods(t *testing.T) {
+	t.Parallel()
 	bad := &stubMFAProvider{methods: nil}
 	_, err := defaultimpl.NewMultiMFAProvider(bad)
 	if err == nil {
@@ -64,6 +67,7 @@ func TestMultiMFAProvider_RejectsProviderWithNoMethods(t *testing.T) {
 }
 
 func TestMultiMFAProvider_RejectsEmptyMethodName(t *testing.T) {
+	t.Parallel()
 	bad := &stubMFAProvider{methods: []string{""}}
 	_, err := defaultimpl.NewMultiMFAProvider(bad)
 	if err == nil {
@@ -72,6 +76,7 @@ func TestMultiMFAProvider_RejectsEmptyMethodName(t *testing.T) {
 }
 
 func TestMultiMFAProvider_RejectsMethodConflict(t *testing.T) {
+	t.Parallel()
 	a := &stubMFAProvider{methods: []string{"totp"}}
 	b := &stubMFAProvider{methods: []string{"totp"}}
 	_, err := defaultimpl.NewMultiMFAProvider(a, b)
@@ -81,6 +86,7 @@ func TestMultiMFAProvider_RejectsMethodConflict(t *testing.T) {
 }
 
 func TestMultiMFAProvider_SupportedMethodsAggregatesInOrder(t *testing.T) {
+	t.Parallel()
 	a := &stubMFAProvider{methods: []string{"totp"}}
 	b := &stubMFAProvider{methods: []string{"webauthn", "push"}}
 	m, err := defaultimpl.NewMultiMFAProvider(a, b)
@@ -100,6 +106,7 @@ func TestMultiMFAProvider_SupportedMethodsAggregatesInOrder(t *testing.T) {
 }
 
 func TestMultiMFAProvider_SupportedMethodsReturnsCopy(t *testing.T) {
+	t.Parallel()
 	// Anti-aliasing: caller mutating the returned slice mustn't
 	// poison subsequent calls. SDK readers (the SSO server's
 	// /auth/login handler) marshal into a JSON response, but
@@ -115,6 +122,7 @@ func TestMultiMFAProvider_SupportedMethodsReturnsCopy(t *testing.T) {
 }
 
 func TestMultiMFAProvider_VerifyDispatchesByMethod(t *testing.T) {
+	t.Parallel()
 	a := &stubMFAProvider{methods: []string{"totp"}}
 	b := &stubMFAProvider{methods: []string{"webauthn"}}
 	m, _ := defaultimpl.NewMultiMFAProvider(a, b)
@@ -135,6 +143,7 @@ func TestMultiMFAProvider_VerifyDispatchesByMethod(t *testing.T) {
 }
 
 func TestMultiMFAProvider_VerifyUnknownMethod(t *testing.T) {
+	t.Parallel()
 	a := &stubMFAProvider{methods: []string{"totp"}}
 	m, _ := defaultimpl.NewMultiMFAProvider(a)
 	err := m.Verify(context.Background(), "alice", "fido2", nil)
@@ -144,6 +153,7 @@ func TestMultiMFAProvider_VerifyUnknownMethod(t *testing.T) {
 }
 
 func TestMultiMFAProvider_VerifyPropagatesInnerError(t *testing.T) {
+	t.Parallel()
 	innerErr := errors.New("totp: code mismatch")
 	a := &stubMFAProvider{methods: []string{"totp"}, verifyErr: innerErr}
 	m, _ := defaultimpl.NewMultiMFAProvider(a)
@@ -154,6 +164,7 @@ func TestMultiMFAProvider_VerifyPropagatesInnerError(t *testing.T) {
 }
 
 func TestMultiMFAProvider_BeginRoutesToBeginnerProvider(t *testing.T) {
+	t.Parallel()
 	totp := &stubMFAProvider{methods: []string{"totp"}}
 	webauthn := &stubBeginnerProvider{
 		stubMFAProvider: stubMFAProvider{methods: []string{"webauthn"}},
@@ -187,6 +198,7 @@ func TestMultiMFAProvider_BeginRoutesToBeginnerProvider(t *testing.T) {
 }
 
 func TestMultiMFAProvider_BeginUnknownMethod(t *testing.T) {
+	t.Parallel()
 	a := &stubMFAProvider{methods: []string{"totp"}}
 	m, _ := defaultimpl.NewMultiMFAProvider(a)
 	_, err := m.Begin(context.Background(), "alice", "ghost")
@@ -196,6 +208,7 @@ func TestMultiMFAProvider_BeginUnknownMethod(t *testing.T) {
 }
 
 func TestMultiMFAProvider_BeginPropagatesInnerError(t *testing.T) {
+	t.Parallel()
 	innerErr := errors.New("webauthn: helper down")
 	b := &stubBeginnerProvider{
 		stubMFAProvider: stubMFAProvider{methods: []string{"webauthn"}},
@@ -209,6 +222,7 @@ func TestMultiMFAProvider_BeginPropagatesInnerError(t *testing.T) {
 }
 
 func TestMultiMFAProvider_SatisfiesBothInterfaces(t *testing.T) {
+	t.Parallel()
 	a := &stubMFAProvider{methods: []string{"totp"}}
 	m, _ := defaultimpl.NewMultiMFAProvider(a)
 	// Type assertions are also enforced at package-level via interface
@@ -221,6 +235,7 @@ func TestMultiMFAProvider_SatisfiesBothInterfaces(t *testing.T) {
 }
 
 func TestMultiMFAProvider_MultiMethodProviderClaimSurvivesReuse(t *testing.T) {
+	t.Parallel()
 	// Defensive case: same provider declares two methods (push +
 	// push-fallback). The byMethod map should hold the same pointer
 	// for both keys, not duplicate the entries in SupportedMethods.

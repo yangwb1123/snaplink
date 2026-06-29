@@ -11,6 +11,7 @@ import (
 // public-key-as-HMAC confusion attack (VerifyCompactJWS refuses such a set,
 // but this guards the source).
 func TestAsymmetricJWSAlgs_ExactSet(t *testing.T) {
+	t.Parallel()
 	got := AsymmetricJWSAlgs()
 	want := map[string]struct{}{
 		"EdDSA": {},
@@ -38,6 +39,7 @@ func TestAsymmetricJWSAlgs_ExactSet(t *testing.T) {
 
 // A fresh map per call so one path cannot mutate another path's allowlist.
 func TestAsymmetricJWSAlgs_FreshCopy(t *testing.T) {
+	t.Parallel()
 	a := AsymmetricJWSAlgs()
 	a["INJECTED"] = struct{}{}
 	b := AsymmetricJWSAlgs()
@@ -47,6 +49,7 @@ func TestAsymmetricJWSAlgs_FreshCopy(t *testing.T) {
 }
 
 func TestAsymmetricJWSAlgValues_SortedAndComplete(t *testing.T) {
+	t.Parallel()
 	got := AsymmetricJWSAlgValues()
 	// sort.Strings is byte-ordered: 'S' (0x53) < 'd' (0x64), so "ES*"
 	// precedes "EdDSA".

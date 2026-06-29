@@ -35,6 +35,7 @@ import (
 // compliance.Exporter assembles the bundle from the same Memory* stores the
 // server already uses.
 func TestRcov2SS_DataExport(t *testing.T) {
+	t.Parallel()
 	users := defaultimpl.NewMemoryUserProvider()
 	sessions := defaultimpl.NewMemorySessionManager()
 	exporter := &compliance.Exporter{Users: users, Sessions: sessions}
@@ -69,6 +70,7 @@ func TestRcov2SS_DataExport(t *testing.T) {
 // self-service erasure: the dry-run preview path, the confirmation guard
 // (missing/wrong confirm => 400 on a real erase), and the irreversible commit.
 func TestRcov2SS_AccountErase(t *testing.T) {
+	t.Parallel()
 	users := defaultimpl.NewMemoryUserProvider()
 	sessions := defaultimpl.NewMemorySessionManager()
 	clients := defaultimpl.NewMemoryClientStore()
@@ -143,6 +145,7 @@ func rcov2CurrentTOTPCode(t *testing.T, base32Secret string) string {
 // /me/mfa/totp/confirm — a valid derived code persists the factor and fires
 // recordTOTPEnrollSuccess (the first pass only exercised the wrong-code path).
 func TestRcov2SS_TOTPEnrollSuccess(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	enroller := authenticators.NewTOTPEnroller(totpAuth)
 	s := rcovNewServer(t,
@@ -204,6 +207,7 @@ func (r *rcov2WebAuthnRegistrar) FinishRegistration(_ context.Context, sessionID
 // the begin success path, the finish success path, and the missing-session-id
 // 400 branch.
 func TestRcov2SS_WebAuthnRegister(t *testing.T) {
+	t.Parallel()
 	reg := &rcov2WebAuthnRegistrar{}
 	s := rcovNewServer(t, sso.WithWebAuthnRegistrar(reg))
 	access, _ := rcovDirectLogin(t, s)
@@ -239,6 +243,7 @@ func TestRcov2SS_WebAuthnRegister(t *testing.T) {
 // TestRcov2SS_WebAuthnRegisterFinishFailure covers the finish FAILURE branch
 // (attestation rejected => 400 webauthn_registration).
 func TestRcov2SS_WebAuthnRegisterFinishFailure(t *testing.T) {
+	t.Parallel()
 	reg := &rcov2WebAuthnRegistrar{fail: true}
 	s := rcovNewServer(t, sso.WithWebAuthnRegistrar(reg))
 	access, _ := rcovDirectLogin(t, s)

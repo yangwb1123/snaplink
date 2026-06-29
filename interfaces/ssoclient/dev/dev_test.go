@@ -11,6 +11,7 @@ import (
 )
 
 func TestAuthClient_DefaultSubject(t *testing.T) {
+	t.Parallel()
 	c := dev.NewAuthClient(dev.WithSilent())
 	s, err := c.ValidateToken(context.Background(), "anything-here")
 	if err != nil {
@@ -25,6 +26,7 @@ func TestAuthClient_DefaultSubject(t *testing.T) {
 }
 
 func TestAuthClient_WithUserID(t *testing.T) {
+	t.Parallel()
 	c := dev.NewAuthClient(dev.WithSilent(), dev.WithUserID("alice"))
 	s, _ := c.ValidateToken(context.Background(), "")
 	if s.ID != "alice" {
@@ -33,6 +35,7 @@ func TestAuthClient_WithUserID(t *testing.T) {
 }
 
 func TestAuthClient_WithSubject(t *testing.T) {
+	t.Parallel()
 	custom := &ssoclient.Subject{ID: "bob", Audience: []string{"app-x"}, Scopes: []string{"admin"}}
 	c := dev.NewAuthClient(dev.WithSilent(), dev.WithSubject(custom))
 	s, _ := c.ValidateToken(context.Background(), "")
@@ -42,6 +45,7 @@ func TestAuthClient_WithSubject(t *testing.T) {
 }
 
 func TestAuthClient_WithAttr(t *testing.T) {
+	t.Parallel()
 	c := dev.NewAuthClient(dev.WithSilent(), dev.WithAttr("tier", "gold"))
 	s, _ := c.ValidateToken(context.Background(), "")
 	if s.Attrs["tier"] != "gold" {
@@ -50,6 +54,7 @@ func TestAuthClient_WithAttr(t *testing.T) {
 }
 
 func TestAuthClient_Logout_Always_OK(t *testing.T) {
+	t.Parallel()
 	c := dev.NewAuthClient(dev.WithSilent())
 	if err := c.Logout(context.Background(), &ssoclient.LogoutRequest{}); err != nil {
 		t.Errorf("Logout: %v", err)
@@ -60,6 +65,7 @@ func TestAuthClient_Logout_Always_OK(t *testing.T) {
 }
 
 func TestAuthClient_AttrsAreDefensivelyCopied(t *testing.T) {
+	t.Parallel()
 	// Mutating the returned Subject's Attrs must not affect the
 	// next ValidateToken caller. Regression guard.
 	c := dev.NewAuthClient(dev.WithSilent())
@@ -72,6 +78,7 @@ func TestAuthClient_AttrsAreDefensivelyCopied(t *testing.T) {
 }
 
 func TestAuthzClient_AllowAllByDefault(t *testing.T) {
+	t.Parallel()
 	c := dev.NewAuthzClient(dev.WithSilentAuthz())
 	ok, err := c.Check(context.Background(), &ssoclient.CheckRequest{Permission: "anything"})
 	if err != nil {
@@ -83,6 +90,7 @@ func TestAuthzClient_AllowAllByDefault(t *testing.T) {
 }
 
 func TestAuthzClient_WithPermissions(t *testing.T) {
+	t.Parallel()
 	c := dev.NewAuthzClient(
 		dev.WithSilentAuthz(),
 		dev.WithPermissions("billing:read", "billing:write"),
@@ -98,6 +106,7 @@ func TestAuthzClient_WithPermissions(t *testing.T) {
 }
 
 func TestAuthzClient_WildcardPermission(t *testing.T) {
+	t.Parallel()
 	c := dev.NewAuthzClient(
 		dev.WithSilentAuthz(),
 		dev.WithPermissions("billing:*"),
@@ -111,6 +120,7 @@ func TestAuthzClient_WildcardPermission(t *testing.T) {
 }
 
 func TestAuthzClient_ListPermissions(t *testing.T) {
+	t.Parallel()
 	c := dev.NewAuthzClient(
 		dev.WithSilentAuthz(),
 		dev.WithPermissions("a:b", "c:d"),
@@ -122,6 +132,7 @@ func TestAuthzClient_ListPermissions(t *testing.T) {
 }
 
 func TestAuthzClient_ListRoles(t *testing.T) {
+	t.Parallel()
 	c := dev.NewAuthzClient(
 		dev.WithSilentAuthz(),
 		dev.WithRoles("admin", "viewer"),
@@ -133,6 +144,7 @@ func TestAuthzClient_ListRoles(t *testing.T) {
 }
 
 func TestAuthzClient_GetMenus(t *testing.T) {
+	t.Parallel()
 	tree := ssoclient.MenuTree{
 		{ID: "1", Name: "Home"},
 		{ID: "2", Name: "Settings"},
@@ -145,6 +157,7 @@ func TestAuthzClient_GetMenus(t *testing.T) {
 }
 
 func TestAuthzClient_CheckNilRequest_AllowAll(t *testing.T) {
+	t.Parallel()
 	c := dev.NewAuthzClient(dev.WithSilentAuthz())
 	if ok, _ := c.Check(context.Background(), nil); !ok {
 		t.Errorf("AllowAll should tolerate nil request")
@@ -152,6 +165,7 @@ func TestAuthzClient_CheckNilRequest_AllowAll(t *testing.T) {
 }
 
 func TestAuthzClient_CheckNilRequest_NoAllowAll(t *testing.T) {
+	t.Parallel()
 	c := dev.NewAuthzClient(dev.WithSilentAuthz(), dev.WithAllowAll(false))
 	if ok, _ := c.Check(context.Background(), nil); ok {
 		t.Errorf("non-allow-all + nil request should deny")
@@ -159,6 +173,7 @@ func TestAuthzClient_CheckNilRequest_NoAllowAll(t *testing.T) {
 }
 
 func TestAuditClient_RecordIsNoopByDefault(t *testing.T) {
+	t.Parallel()
 	c := dev.NewAuditClient(dev.WithSilentAudit())
 	if err := c.Record(context.Background(), &ssoclient.Event{}); err != nil {
 		t.Errorf("Record: %v", err)
@@ -166,6 +181,7 @@ func TestAuditClient_RecordIsNoopByDefault(t *testing.T) {
 }
 
 func TestAuditClient_WithSink(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	c := dev.NewAuditClient(dev.WithSilentAudit(), dev.WithSink(&buf))
 	_ = c.Record(context.Background(), &ssoclient.Event{ActorID: "alice"})
@@ -175,6 +191,7 @@ func TestAuditClient_WithSink(t *testing.T) {
 }
 
 func TestAuditClient_NilEvent_NoWrite(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	c := dev.NewAuditClient(dev.WithSilentAudit(), dev.WithSink(&buf))
 	_ = c.Record(context.Background(), nil)
@@ -184,6 +201,7 @@ func TestAuditClient_NilEvent_NoWrite(t *testing.T) {
 }
 
 func TestAuditClient_Close_Always_OK(t *testing.T) {
+	t.Parallel()
 	c := dev.NewAuditClient(dev.WithSilentAudit())
 	if err := c.Close(); err != nil {
 		t.Errorf("Close: %v", err)
@@ -194,6 +212,7 @@ func TestAuditClient_Close_Always_OK(t *testing.T) {
 // belt-and-suspenders smoke test that the constructors return concrete
 // values satisfying the public ssoclient interfaces.
 func TestClients_SatisfyInterfaces(t *testing.T) {
+	t.Parallel()
 	var (
 		_ ssoclient.AuthClient  = dev.NewAuthClient(dev.WithSilent())
 		_ ssoclient.AuthzClient = dev.NewAuthzClient(dev.WithSilentAuthz())
@@ -204,6 +223,7 @@ func TestClients_SatisfyInterfaces(t *testing.T) {
 // Sanity check that permissions.Matches works with the imported type
 // (catches a future refactor breaking the alias chain).
 func TestPermissionsMatchesAliased(t *testing.T) {
+	t.Parallel()
 	p := []ssoclient.Permission{{Code: "x:*"}}
 	if !permissions.Matches(p, "x:y") {
 		t.Errorf("Matches across alias broken")

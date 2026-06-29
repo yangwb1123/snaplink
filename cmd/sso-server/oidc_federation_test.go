@@ -9,6 +9,7 @@ import (
 )
 
 func TestBuildAuthenticators_OIDCFederationWiresProviderByName(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Authenticators.OIDCFederation = []*config.OIDCFederationAuthConfig{
 		{
@@ -47,6 +48,7 @@ func TestBuildAuthenticators_OIDCFederationWiresProviderByName(t *testing.T) {
 }
 
 func TestBuildAuthenticators_OIDCFederationSkipsInvalidEntries(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Authenticators.OIDCFederation = []*config.OIDCFederationAuthConfig{
 		{

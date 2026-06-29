@@ -16,6 +16,7 @@ import (
 // TestAssertionSigner_RSA_SignatureMethodAndCert proves the RSA adapter selects
 // RSA-SHA256 and wraps the RSA public key in a self-signed cert.
 func TestAssertionSigner_RSA(t *testing.T) {
+	t.Parallel()
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	s, err := NewAssertionSigner(key, &key.PublicKey, "kid-rsa", "issuer")
 	if err != nil {
@@ -36,6 +37,7 @@ func TestAssertionSigner_RSA(t *testing.T) {
 // TestAssertionSigner_ECDSA proves the ECDSA adapter selects ECDSA-SHA256 and
 // wraps the EC public key.
 func TestAssertionSigner_ECDSA(t *testing.T) {
+	t.Parallel()
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	s, err := NewAssertionSigner(key, &key.PublicKey, "kid-ec", "issuer")
 	if err != nil {
@@ -56,6 +58,7 @@ func TestAssertionSigner_ECDSA(t *testing.T) {
 // TestAssertionSigner_Ed25519_Rejected proves an Ed25519 key (no XML-DSig
 // method in goxmldsig) is rejected with ErrUnsupportedSigningKey.
 func TestAssertionSigner_Ed25519_Rejected(t *testing.T) {
+	t.Parallel()
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	if _, err := NewAssertionSigner(priv, pub, "kid-ed", "issuer"); err != ErrUnsupportedSigningKey {
 		t.Errorf("Ed25519 err = %v, want ErrUnsupportedSigningKey", err)
@@ -65,6 +68,7 @@ func TestAssertionSigner_Ed25519_Rejected(t *testing.T) {
 // TestAssertionSigner_NilSigner_Rejected proves a nil signer (issuer can't
 // expose a crypto.Signer) is rejected — the fail-closed precondition.
 func TestAssertionSigner_NilSigner_Rejected(t *testing.T) {
+	t.Parallel()
 	if _, err := NewAssertionSigner(nil, nil, "", "issuer"); err != ErrUnsupportedSigningKey {
 		t.Errorf("nil-signer err = %v, want ErrUnsupportedSigningKey", err)
 	}
@@ -73,6 +77,7 @@ func TestAssertionSigner_NilSigner_Rejected(t *testing.T) {
 // TestAssertionSigner_NonP256ECDSA_Rejected proves a non-P-256 EC key is
 // rejected (the ES256 issuer is P-256 only).
 func TestAssertionSigner_NonP256ECDSA_Rejected(t *testing.T) {
+	t.Parallel()
 	key, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	if _, err := NewAssertionSigner(key, &key.PublicKey, "kid", "issuer"); err != ErrUnsupportedSigningKey {
 		t.Errorf("P-384 err = %v, want ErrUnsupportedSigningKey", err)
@@ -83,6 +88,7 @@ func TestAssertionSigner_NonP256ECDSA_Rejected(t *testing.T) {
 // cert on repeated calls (generated once, cached) — so metadata and every
 // assertion embed an identical cert.
 func TestAssertionSigner_CertCachedStable(t *testing.T) {
+	t.Parallel()
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	s, _ := NewAssertionSigner(key, &key.PublicKey, "kid", "issuer")
 	c1, err := s.Certificate()
@@ -102,6 +108,7 @@ func TestAssertionSigner_CertCachedStable(t *testing.T) {
 // exactly what the validation engine (and crewjam, and the SP side) expects.
 // This is the test that would FAIL if we wrongly converted ECDSA DER->R‖S.
 func TestAssertionSigner_EnvelopedSignatureValidates(t *testing.T) {
+	t.Parallel()
 	t.Run("RSA", func(t *testing.T) {
 		key, _ := rsa.GenerateKey(rand.Reader, 2048)
 		s, _ := NewAssertionSigner(key, &key.PublicKey, "kid", "issuer")

@@ -12,6 +12,7 @@ import (
 // when no live bus is wired, rather than silently running INERT and leaking
 // revoked tokens across a multi-replica fleet.
 func TestWireInvalidationBusOpts_FailsClosedWhenArmedWithoutBus(t *testing.T) {
+	t.Parallel()
 	armed := func(mut func(*config.Config)) *appBuilder {
 		cfg := &config.Config{}
 		mut(cfg)

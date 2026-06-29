@@ -18,6 +18,7 @@ import (
 func rsaAlgs() []string { return []string{"RS256", "PS256"} }
 
 func TestRSAJWT_RoundTrip_BothAlgs(t *testing.T) {
+	t.Parallel()
 	for _, alg := range rsaAlgs() {
 		t.Run(alg, func(t *testing.T) {
 			iss := defaultimpl.NewRSAJWTIssuer(
@@ -64,6 +65,7 @@ func TestRSAJWT_RoundTrip_BothAlgs(t *testing.T) {
 }
 
 func TestRSAJWT_JWKS(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewRSAJWTIssuer(defaultimpl.WithRSAAlg("PS256"))
 	keys, err := iss.JWKS(context.Background())
 	if err != nil || len(keys) != 1 {
@@ -85,6 +87,7 @@ func TestRSAJWT_JWKS(t *testing.T) {
 // issuer rejects a PS256-signed token and vice versa, plus alg=none and a
 // tampered alg header — all before signature verification.
 func TestRSAJWT_AlgConfusion(t *testing.T) {
+	t.Parallel()
 	rs := defaultimpl.NewRSAJWTIssuer(defaultimpl.WithRSAAlg("RS256"))
 	ps := defaultimpl.NewRSAJWTIssuer(defaultimpl.WithRSAAlg("PS256"))
 
@@ -108,6 +111,7 @@ func TestRSAJWT_AlgConfusion(t *testing.T) {
 }
 
 func TestRSAJWT_RotationOverlap(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewRSAJWTIssuer(defaultimpl.WithRSAAlg("RS256"), defaultimpl.WithRSATokenTTL(time.Hour))
 	oldKID := iss.KeyID()
 	tok, _ := iss.Issue(context.Background(), &sso.Subject{ID: "u", ClientID: "c"}, nil)
@@ -141,6 +145,7 @@ func TestRSAJWT_RotationOverlap(t *testing.T) {
 }
 
 func TestRSAJWT_IDTokenAndMetadata(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewRSAJWTIssuer(defaultimpl.WithRSAIssuer("idp"), defaultimpl.WithRSAAlg("RS256"))
 	idt, err := iss.IssueIDToken(context.Background(), &oidc.IDTokenRequest{
 		Subject: "sub-1", Audience: "client-1", Nonce: "n", AMR: []string{"pwd"},
@@ -155,6 +160,7 @@ func TestRSAJWT_IDTokenAndMetadata(t *testing.T) {
 }
 
 func TestRSAJWT_RejectsSmallKey(t *testing.T) {
+	t.Parallel()
 	defer func() {
 		if recover() == nil {
 			t.Error("NewRSAJWTIssuer must panic on a sub-2048-bit key")
@@ -165,6 +171,7 @@ func TestRSAJWT_RejectsSmallKey(t *testing.T) {
 }
 
 func TestRSAJWT_RejectsUnsupportedAlg(t *testing.T) {
+	t.Parallel()
 	defer func() {
 		if recover() == nil {
 			t.Error("NewRSAJWTIssuer must panic on an unsupported alg")

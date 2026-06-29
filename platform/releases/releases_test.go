@@ -18,12 +18,14 @@ func validRelease(id string) *releases.Release {
 }
 
 func TestValidate_Happy(t *testing.T) {
+	t.Parallel()
 	if err := validRelease("rel-1").Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 }
 
 func TestValidate_RejectsMissingID(t *testing.T) {
+	t.Parallel()
 	r := validRelease("")
 	if err := r.Validate(); err == nil {
 		t.Fatal("expected error for missing id")
@@ -31,6 +33,7 @@ func TestValidate_RejectsMissingID(t *testing.T) {
 }
 
 func TestValidate_RejectsOneSidedFrontend(t *testing.T) {
+	t.Parallel()
 	r := validRelease("rel-1")
 	r.Frontend = releases.Artifact{}
 	if err := r.Validate(); !errors.Is(err, releases.ErrInvalidPair) {
@@ -39,6 +42,7 @@ func TestValidate_RejectsOneSidedFrontend(t *testing.T) {
 }
 
 func TestValidate_RejectsOneSidedBackend(t *testing.T) {
+	t.Parallel()
 	r := validRelease("rel-1")
 	r.Backend = releases.Artifact{}
 	if err := r.Validate(); !errors.Is(err, releases.ErrInvalidPair) {

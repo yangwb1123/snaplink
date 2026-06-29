@@ -207,6 +207,7 @@ func rcovDirectLogin(t *testing.T, s *rcovServer) (access, refresh string) {
 // TestRcov_DirectMintLogin covers the login orchestrator's direct-mint branch
 // plus the no-store header stamping and RFC 9207 iss echo.
 func TestRcov_DirectMintLogin(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	access, refresh := rcovDirectLogin(t, s)
 	if refresh == "" {
@@ -238,6 +239,7 @@ func TestRcov_DirectMintLogin(t *testing.T) {
 
 // TestRcov_LoginBadCredentials covers the authenticator-failure path.
 func TestRcov_LoginBadCredentials(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	status, out := rcovPostJSON(t, s.http.URL+"/auth/login", "", map[string]any{
 		"provider":   "password",
@@ -255,6 +257,7 @@ func TestRcov_LoginBadCredentials(t *testing.T) {
 // TestRcov_AuthCodeRoundTrip covers the code-issuance branch of the login
 // orchestrator plus the authorization_code grant in the token handler.
 func TestRcov_AuthCodeRoundTrip(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	status, out := rcovPostJSON(t, s.http.URL+"/auth/login", "", map[string]any{
 		"provider":      "password",
@@ -304,6 +307,7 @@ func TestRcov_AuthCodeRoundTrip(t *testing.T) {
 
 // TestRcov_RefreshGrant covers the refresh_token grant + rotation path.
 func TestRcov_RefreshGrant(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	_, refresh := rcovDirectLogin(t, s)
 	if refresh == "" {
@@ -325,6 +329,7 @@ func TestRcov_RefreshGrant(t *testing.T) {
 
 // TestRcov_Userinfo covers the userinfo handler success + the two 401 branches.
 func TestRcov_Userinfo(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	access, _ := rcovDirectLogin(t, s)
 
@@ -354,6 +359,7 @@ func TestRcov_Userinfo(t *testing.T) {
 
 // TestRcov_IntrospectAndRevoke covers the introspection + revocation handlers.
 func TestRcov_IntrospectAndRevoke(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	access, _ := rcovDirectLogin(t, s)
 
@@ -400,6 +406,7 @@ func TestRcov_IntrospectAndRevoke(t *testing.T) {
 
 // TestRcov_Logout covers the logout handler with a bearer token.
 func TestRcov_Logout(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	access, _ := rcovDirectLogin(t, s)
 
@@ -420,6 +427,7 @@ func TestRcov_Logout(t *testing.T) {
 
 // TestRcov_EndSession covers the RP-initiated logout GET endpoint.
 func TestRcov_EndSession(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	status, _ := rcovDo(t, http.MethodGet, s.http.URL+"/end_session", "", nil)
 	// No id_token_hint / post_logout_redirect_uri => a benign non-5xx response.
@@ -430,6 +438,7 @@ func TestRcov_EndSession(t *testing.T) {
 
 // TestRcov_ClientCredentialsGrant covers the always-on client_credentials grant.
 func TestRcov_ClientCredentialsGrant(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	status, tok := rcovPostJSON(t, s.http.URL+"/token", "", map[string]any{
 		"grant_type":    "client_credentials",
@@ -447,6 +456,7 @@ func TestRcov_ClientCredentialsGrant(t *testing.T) {
 
 // TestRcov_TokenUnknownGrant covers the unsupported_grant_type branch.
 func TestRcov_TokenUnknownGrant(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	status, out := rcovPostJSON(t, s.http.URL+"/token", "", map[string]any{
 		"grant_type":    "totally_made_up",
@@ -469,6 +479,7 @@ func rcovAuditCount(t *testing.T, s *rcovServer, et audit.EventType) int {
 // successful direct-mint login (which records EventLogin) and on the
 // authorization_code exchange (which records EventTokenIssued).
 func TestRcov_LoginEmitsAudit(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	rcovDirectLogin(t, s)
 	if n := rcovAuditCount(t, s, audit.EventLogin); n < 1 {

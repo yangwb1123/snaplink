@@ -23,6 +23,7 @@ func makeAESKey(b byte) []byte {
 // TestPipeline_AESGCM_Roundtrip proves the aes-256-gcm sealer round-trips a
 // snapshot through Save/Load with the matching key.
 func TestPipeline_AESGCM_Roundtrip(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
@@ -60,6 +61,7 @@ func TestPipeline_AESGCM_Roundtrip(t *testing.T) {
 // TestPipeline_AESGCM_WrongKeyFails proves opening with a different key fails
 // (AEAD authentication tag rejects it).
 func TestPipeline_AESGCM_WrongKeyFails(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
@@ -82,6 +84,7 @@ func TestPipeline_AESGCM_WrongKeyFails(t *testing.T) {
 // Load -> PruneOldest path against the on-disk file.Storage backend (the
 // production storage), proving the snapshot package composes with it.
 func TestPipeline_FileStorage_FullCycle(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t)
 
@@ -143,6 +146,7 @@ func TestPipeline_FileStorage_FullCycle(t *testing.T) {
 // TestPipeline_AESGCM_AlgorithmMismatchAgainstFile proves a noop loader
 // refuses an aes-gcm-sealed envelope (algorithm guard) even off disk.
 func TestPipeline_AESGCM_AlgorithmMismatchAgainstFile(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(ctx, snapshot.ExportOptions{})

@@ -22,6 +22,7 @@ func newPairwiseSubjectStoreForTest(t *testing.T) *PairwiseSubjectStore {
 }
 
 func TestPairwiseSubjectStore_MapAndLookup(t *testing.T) {
+	t.Parallel()
 	store := newPairwiseSubjectStoreForTest(t)
 	ctx := context.Background()
 
@@ -38,6 +39,7 @@ func TestPairwiseSubjectStore_MapAndLookup(t *testing.T) {
 }
 
 func TestPairwiseSubjectStore_UnknownReturnsSentinel(t *testing.T) {
+	t.Parallel()
 	store := newPairwiseSubjectStoreForTest(t)
 	_, err := store.LocalSubject(context.Background(), "never-mapped")
 	if !errors.Is(err, security.ErrPairwiseUnknown) {
@@ -46,6 +48,7 @@ func TestPairwiseSubjectStore_UnknownReturnsSentinel(t *testing.T) {
 }
 
 func TestPairwiseSubjectStore_MapIsIdempotent(t *testing.T) {
+	t.Parallel()
 	store := newPairwiseSubjectStoreForTest(t)
 	ctx := context.Background()
 
@@ -64,6 +67,7 @@ func TestPairwiseSubjectStore_MapIsIdempotent(t *testing.T) {
 }
 
 func TestPairwiseSubjectStore_RejectsEmptySub(t *testing.T) {
+	t.Parallel()
 	store := newPairwiseSubjectStoreForTest(t)
 	ctx := context.Background()
 
@@ -81,6 +85,7 @@ func TestPairwiseSubjectStore_RejectsEmptySub(t *testing.T) {
 }
 
 func TestPairwiseSubjectStore_DifferentPairwisesMapToDifferentLocals(t *testing.T) {
+	t.Parallel()
 	store := newPairwiseSubjectStoreForTest(t)
 	ctx := context.Background()
 
@@ -106,6 +111,7 @@ func TestPairwiseSubjectStore_DifferentPairwisesMapToDifferentLocals(t *testing.
 }
 
 func TestPairwiseSubjectStore_CrossInstanceSharing(t *testing.T) {
+	t.Parallel()
 	// The whole multi-replica defense: a pairwise sub minted on
 	// replica A is resolvable at /userinfo on replica B against the
 	// same DB file.

@@ -105,6 +105,7 @@ func superiorKeys(t *testing.T, d *fetchDeps) []core.JWK {
 // jwks=the configured subordinate keys, and the imposed metadata_policy/
 // constraints present; exp-iat == the configured TTL.
 func TestFederationFetch_ConfiguredSubordinate_ServesVerifiableStatement(t *testing.T) {
+	t.Parallel()
 	sub := subEntity(t)
 	subKS := subKeys(t, sub)
 
@@ -203,6 +204,7 @@ func TestFederationFetch_ConfiguredSubordinate_ServesVerifiableStatement(t *test
 // 404 not_found (the §8 federation error JSON) and NO statement is issued
 // (this server never vouches for an unconfigured entity).
 func TestFederationFetch_UnknownSub_404(t *testing.T) {
+	t.Parallel()
 	sub := subEntity(t)
 	d := newFetchDeps(t, &federation.Config{
 		Subordinates: []federation.SubordinateEntity{{EntityID: fedFetchSubID, Keys: subKeys(t, sub)}},
@@ -229,6 +231,7 @@ func TestFederationFetch_UnknownSub_404(t *testing.T) {
 // invalid_request (the required parameter is absent — fail-closed, no
 // statement).
 func TestFederationFetch_MissingSub_400(t *testing.T) {
+	t.Parallel()
 	sub := subEntity(t)
 	d := newFetchDeps(t, &federation.Config{
 		Subordinates: []federation.SubordinateEntity{{EntityID: fedFetchSubID, Keys: subKeys(t, sub)}},
@@ -251,6 +254,7 @@ func TestFederationFetch_MissingSub_400(t *testing.T) {
 // equal this server's entity id → 400 invalid_request (a superior issues only
 // its OWN statements). A MATCHING iss is accepted.
 func TestFederationFetch_IssMismatch_400(t *testing.T) {
+	t.Parallel()
 	sub := subEntity(t)
 	d := newFetchDeps(t, &federation.Config{
 		Subordinates: []federation.SubordinateEntity{{EntityID: fedFetchSubID, Keys: subKeys(t, sub)}},
@@ -278,6 +282,7 @@ func TestFederationFetch_IssMismatch_400(t *testing.T) {
 // matching If-None-Match as 304 (no body) — public metadata caching, mirroring
 // the entity-config path.
 func TestFederationFetch_ETagAnd304(t *testing.T) {
+	t.Parallel()
 	sub := subEntity(t)
 	d := newFetchDeps(t, &federation.Config{
 		Subordinates: []federation.SubordinateEntity{{EntityID: fedFetchSubID, Keys: subKeys(t, sub)}},

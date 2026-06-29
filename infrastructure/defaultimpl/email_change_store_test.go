@@ -57,6 +57,7 @@ func emailChangeStoreSuite(t *testing.T, mk func(t *testing.T) core.EmailChangeS
 }
 
 func TestMemoryEmailChangeStore(t *testing.T) {
+	t.Parallel()
 	emailChangeStoreSuite(t, func(t *testing.T) core.EmailChangeStore {
 		return defaultimpl.NewMemoryEmailChangeStore()
 	})

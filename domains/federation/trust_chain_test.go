@@ -184,6 +184,7 @@ func buildLinearFederation(t *testing.T, leafRP map[string]any, anchorPolicy, in
 // ===========================================================================
 
 func TestResolveTrustChain_HappyPath(t *testing.T) {
+	t.Parallel()
 	f, anchor, _, leaf := buildLinearFederation(t, map[string]any{
 		"client_name":   "Test RP",
 		"redirect_uris": []any{"https://rp.federation.test/cb"},
@@ -217,6 +218,7 @@ func TestResolveTrustChain_HappyPath(t *testing.T) {
 // legitimately-chained entity must be REJECTED — otherwise it could auto-register
 // an OAuth client under any client_id URL it controls.
 func TestResolveTrustChain_LeafNotSelfIssuedForRequestedID_Rejected(t *testing.T) {
+	t.Parallel()
 	f, anchor, inter, leaf := buildLinearFederation(t, map[string]any{
 		"client_name":   "Impostor RP",
 		"redirect_uris": []any{"https://rp.federation.test/cb"},
@@ -234,6 +236,7 @@ func TestResolveTrustChain_LeafNotSelfIssuedForRequestedID_Rejected(t *testing.T
 }
 
 func TestResolveTrustChain_DirectAnchorChild(t *testing.T) {
+	t.Parallel()
 	// A leaf whose immediate superior IS the configured anchor (2-hop chain).
 	anchor := newFedEntity(t, tcAnchorID)
 	leaf := newFedEntity(t, tcLeafID)
@@ -261,6 +264,7 @@ func TestResolveTrustChain_DirectAnchorChild(t *testing.T) {
 // by a DIFFERENT key than the one the immediate superior vouches for. The
 // signature against the superior-published keys must FAIL → rejected.
 func TestResolveTrustChain_LeafSignedByUntrustedKey(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	inter := newFedEntity(t, tcInterID)
 	leaf := newFedEntity(t, tcLeafID)
@@ -287,6 +291,7 @@ func TestResolveTrustChain_LeafSignedByUntrustedKey(t *testing.T) {
 // must be verified against the CONFIGURED keys → rejected. This is the
 // configured-root-of-trust proof: never trust the fetched anchor keys.
 func TestResolveTrustChain_AnchorConfigForged(t *testing.T) {
+	t.Parallel()
 	realAnchor := newFedEntity(t, tcAnchorID)
 	fakeAnchor := newFedEntity(t, tcAnchorID) // same id, different key
 	leaf := newFedEntity(t, tcLeafID)
@@ -316,6 +321,7 @@ func TestResolveTrustChain_AnchorConfigForged(t *testing.T) {
 // blessed → rejected. (This is the precise weakness of trusting an
 // intermediate's self-config jwks instead of the vouched keys.)
 func TestResolveTrustChain_IntermediateKeyNotVouchedByAnchor(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	interReal := newFedEntity(t, tcInterID)  // key A — what the anchor vouches
 	interRogue := newFedEntity(t, tcInterID) // key B — same id, signs SS_1
@@ -342,6 +348,7 @@ func TestResolveTrustChain_IntermediateKeyNotVouchedByAnchor(t *testing.T) {
 // TestResolveTrustChain_SelfSignedLeafClaimingOwnAnchor: a self-signed leaf with
 // NO authority_hints that is NOT a configured anchor → never anchors → rejected.
 func TestResolveTrustChain_SelfSignedLeafClaimingOwnAnchor(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID) // configured, but unrelated to the leaf
 	leaf := newFedEntity(t, tcLeafID)
 	f := newFakeFetcher()
@@ -359,6 +366,7 @@ func TestResolveTrustChain_SelfSignedLeafClaimingOwnAnchor(t *testing.T) {
 // TestResolveTrustChain_ChainNeverReachesConfiguredAnchor: a complete, validly-
 // signed chain to a DIFFERENT (non-configured) anchor → rejected.
 func TestResolveTrustChain_ChainNeverReachesConfiguredAnchor(t *testing.T) {
+	t.Parallel()
 	configuredAnchor := newFedEntity(t, "https://real-anchor.test")
 	rogueAnchor := newFedEntity(t, "https://rogue-anchor.test")
 	leaf := newFedEntity(t, tcLeafID)
@@ -379,6 +387,7 @@ func TestResolveTrustChain_ChainNeverReachesConfiguredAnchor(t *testing.T) {
 // TestResolveTrustChain_TamperedSubordinateSignature: flip a byte in the
 // intermediate's Subordinate Statement signature → rejected.
 func TestResolveTrustChain_TamperedSubordinateSignature(t *testing.T) {
+	t.Parallel()
 	f, anchor, _, leaf := buildLinearFederation(t, map[string]any{"client_name": "X"}, nil, nil)
 	// Tamper the inter->leaf subordinate statement (corrupt its last char).
 	k := subKey(tcInterFch, tcInterID, tcLeafID)
@@ -406,6 +415,7 @@ func flipChar(s string) string {
 // TestResolveTrustChain_ExpiredLeaf: leaf config expired well before the fixed
 // clock → rejected (the date-bomb / clock-injection proof).
 func TestResolveTrustChain_ExpiredLeaf(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	inter := newFedEntity(t, tcInterID)
 	leaf := newFedEntity(t, tcLeafID)
@@ -436,6 +446,7 @@ func TestResolveTrustChain_ExpiredLeaf(t *testing.T) {
 // TestResolveTrustChain_ExpiredSubordinate: the anchor->inter subordinate
 // statement is expired → rejected.
 func TestResolveTrustChain_ExpiredSubordinate(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	inter := newFedEntity(t, tcInterID)
 	leaf := newFedEntity(t, tcLeafID)
@@ -463,6 +474,7 @@ func TestResolveTrustChain_ExpiredSubordinate(t *testing.T) {
 // TestResolveTrustChain_NotYetValidLeaf: leaf iat far in the FUTURE (> skew) →
 // rejected.
 func TestResolveTrustChain_NotYetValidLeaf(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	inter := newFedEntity(t, tcInterID)
 	leaf := newFedEntity(t, tcLeafID)
@@ -492,6 +504,7 @@ func TestResolveTrustChain_NotYetValidLeaf(t *testing.T) {
 // TestResolveTrustChain_SubordinateIssMismatch: the anchor->inter subordinate
 // statement has the WRONG iss (not the anchor) → rejected.
 func TestResolveTrustChain_SubordinateIssMismatch(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	inter := newFedEntity(t, tcInterID)
 	leaf := newFedEntity(t, tcLeafID)
@@ -520,6 +533,7 @@ func TestResolveTrustChain_SubordinateIssMismatch(t *testing.T) {
 // TestResolveTrustChain_WrongTyp: a statement signed with the wrong JOSE typ
 // (an access-token-shaped typ) is rejected by the typ gate.
 func TestResolveTrustChain_WrongTyp(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	leaf := newFedEntity(t, tcLeafID)
 	f := newFakeFetcher()
@@ -553,6 +567,7 @@ func TestResolveTrustChain_WrongTyp(t *testing.T) {
 // TestResolveTrustChain_CyclicAuthorityHints: A hints B, B hints A (a cycle),
 // neither a configured anchor → rejected, NO hang/stack-overflow.
 func TestResolveTrustChain_CyclicAuthorityHints(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID) // configured but unreachable
 	a := newFedEntity(t, "https://a.cycle.test")
 	b := newFedEntity(t, "https://b.cycle.test")
@@ -587,6 +602,7 @@ func TestResolveTrustChain_CyclicAuthorityHints(t *testing.T) {
 // TestResolveTrustChain_PathTooLong: a chain deeper than the configured bound →
 // rejected.
 func TestResolveTrustChain_PathTooLong(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	// Build a deep linear chain: leaf -> i1 -> i2 -> i3 -> anchor (3 inter hops).
 	i1 := newFedEntity(t, "https://i1.test")
@@ -631,6 +647,7 @@ func TestResolveTrustChain_PathTooLong(t *testing.T) {
 // ===========================================================================
 
 func TestResolveTrustChain_FetchError(t *testing.T) {
+	t.Parallel()
 	f, anchor, _, leaf := buildLinearFederation(t, map[string]any{"client_name": "X"}, nil, nil)
 	f.fail[leaf.id] = errors.New("simulated transport failure")
 
@@ -652,6 +669,7 @@ func TestResolveTrustChain_FetchError(t *testing.T) {
 // leaves is the configured anchor. A naive resolver fetches O(2^fanDepth)
 // documents — the budget caps total fetches well below that.
 func TestResolveTrustChain_FanoutBudgetBounded(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID) // configured but never linked
 	leaf := newFedEntity(t, tcLeafID)
 
@@ -726,6 +744,7 @@ const maxFanoutBudgetCeiling = 98
 // ===========================================================================
 
 func TestResolveTrustChain_DisabledWhenNoAnchors(t *testing.T) {
+	t.Parallel()
 	r := federation.NewTrustChainResolver(&federation.Config{})
 	if r.Enabled() {
 		t.Fatal("resolver with no anchors must be disabled")

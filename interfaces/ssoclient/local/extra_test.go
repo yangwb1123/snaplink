@@ -16,6 +16,7 @@ import (
 // ---------- WithSessionManager + Logout coverage ----------
 
 func TestLocalAuth_WithSessionManager_OptionWired(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	sm := defaultimpl.NewMemorySessionManager(time.Hour)
 	sess, _ := sm.Create(context.Background(), "u-alice")
@@ -34,6 +35,7 @@ func TestLocalAuth_WithSessionManager_OptionWired(t *testing.T) {
 }
 
 func TestLocalAuth_Logout_SessionIDWithoutManagerIsNoop(t *testing.T) {
+	t.Parallel()
 	// Without WithSessionManager wired, a session-only Logout request
 	// should silently skip the session step (no error, no panic).
 	iss := defaultimpl.NewEd25519JWTIssuer()
@@ -46,6 +48,7 @@ func TestLocalAuth_Logout_SessionIDWithoutManagerIsNoop(t *testing.T) {
 }
 
 func TestLocalAuth_Logout_BothPathsAggregateErrors(t *testing.T) {
+	t.Parallel()
 	// Bearer token revoke succeeds, session destroy succeeds — combined
 	// errors.Join(nil, nil) returns nil per the documented Joined contract.
 	iss := defaultimpl.NewEd25519JWTIssuer()
@@ -63,6 +66,7 @@ func TestLocalAuth_Logout_BothPathsAggregateErrors(t *testing.T) {
 }
 
 func TestLocalAuth_Logout_TokenRevokeErrorSurfaces(t *testing.T) {
+	t.Parallel()
 	// A re-revoke of an already-revoked token surfaces an error from the
 	// issuer. Logout must propagate it.
 	iss := defaultimpl.NewEd25519JWTIssuer()
@@ -83,6 +87,7 @@ func TestLocalAuth_Logout_TokenRevokeErrorSurfaces(t *testing.T) {
 }
 
 func TestLocalAuth_Logout_NilRequestErrors(t *testing.T) {
+	t.Parallel()
 	client := local.NewAuthClient(defaultimpl.NewEd25519JWTIssuer())
 	if err := client.Logout(context.Background(), nil); err == nil {
 		t.Error("Logout(nil) should error")
@@ -92,6 +97,7 @@ func TestLocalAuth_Logout_NilRequestErrors(t *testing.T) {
 // ---------- ListPermissions coverage ----------
 
 func TestLocalAuthz_ListPermissions_HappyPath(t *testing.T) {
+	t.Parallel()
 	prov := authzFixture(t)
 	c := local.NewAuthzClient(prov)
 
@@ -105,6 +111,7 @@ func TestLocalAuthz_ListPermissions_HappyPath(t *testing.T) {
 }
 
 func TestLocalAuthz_ListPermissions_UnknownUserReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	// permissions.ErrUserNotFound is swallowed and the caller sees an
 	// empty, non-nil slice — same contract as ListRoles / GetMenus.
 	c := local.NewAuthzClient(authzFixture(t))
@@ -121,6 +128,7 @@ func TestLocalAuthz_ListPermissions_UnknownUserReturnsEmpty(t *testing.T) {
 }
 
 func TestLocalAuthz_ListPermissions_ProviderErrorSurfaces(t *testing.T) {
+	t.Parallel()
 	// A non-NotFound provider error must propagate. We can't easily
 	// trigger one from MemoryProvider, so use a stub.
 	c := local.NewAuthzClient(&erroringProvider{err: errors.New("db down")})
@@ -130,6 +138,7 @@ func TestLocalAuthz_ListPermissions_ProviderErrorSurfaces(t *testing.T) {
 }
 
 func TestLocalAuthz_ListRoles_ProviderErrorSurfaces(t *testing.T) {
+	t.Parallel()
 	c := local.NewAuthzClient(&erroringProvider{err: errors.New("db down")})
 	if _, err := c.ListRoles(context.Background(), "u", "c"); err == nil {
 		t.Error("expected provider error to surface")
@@ -137,6 +146,7 @@ func TestLocalAuthz_ListRoles_ProviderErrorSurfaces(t *testing.T) {
 }
 
 func TestLocalAuthz_GetMenus_ProviderErrorSurfaces(t *testing.T) {
+	t.Parallel()
 	c := local.NewAuthzClient(&erroringProvider{err: errors.New("db down")})
 	if _, err := c.GetMenus(context.Background(), "u", "c"); err == nil {
 		t.Error("expected provider error to surface")

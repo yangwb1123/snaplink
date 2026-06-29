@@ -71,6 +71,7 @@ func passwordResetStoreSuite(t *testing.T, mk func(t *testing.T) core.PasswordRe
 }
 
 func TestMemoryPasswordResetStore(t *testing.T) {
+	t.Parallel()
 	passwordResetStoreSuite(t, func(t *testing.T) core.PasswordResetStore {
 		return defaultimpl.NewMemoryPasswordResetStore()
 	})

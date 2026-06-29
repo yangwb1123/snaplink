@@ -6,6 +6,7 @@ import (
 )
 
 func TestParseRequestedClaimsEmpty(t *testing.T) {
+	t.Parallel()
 	id, ui, err := ParseRequestedClaims(nil)
 	if err != nil || id != nil || ui != nil {
 		t.Fatalf("empty raw: want nil,nil,nil got %v,%v,%v", id, ui, err)
@@ -13,6 +14,7 @@ func TestParseRequestedClaimsEmpty(t *testing.T) {
 }
 
 func TestParseRequestedClaimsNullEntry(t *testing.T) {
+	t.Parallel()
 	raw := json.RawMessage(`{"id_token":{"sub":null},"userinfo":{"email":null}}`)
 	id, ui, err := ParseRequestedClaims(raw)
 	if err != nil {
@@ -27,6 +29,7 @@ func TestParseRequestedClaimsNullEntry(t *testing.T) {
 }
 
 func TestParseRequestedClaimsEssential(t *testing.T) {
+	t.Parallel()
 	raw := json.RawMessage(`{"id_token":{"acr":{"essential":true,"values":["urn:level:2"]}}}`)
 	id, _, err := ParseRequestedClaims(raw)
 	if err != nil {
@@ -52,6 +55,7 @@ func TestParseRequestedClaimsEssential(t *testing.T) {
 }
 
 func TestParseRequestedClaimsSingleValue(t *testing.T) {
+	t.Parallel()
 	raw := json.RawMessage(`{"userinfo":{"given_name":{"essential":true,"value":"Alice"}}}`)
 	_, ui, err := ParseRequestedClaims(raw)
 	if err != nil {
@@ -74,6 +78,7 @@ func TestParseRequestedClaimsSingleValue(t *testing.T) {
 }
 
 func TestParseRequestedClaimsMissingSection(t *testing.T) {
+	t.Parallel()
 	raw := json.RawMessage(`{"userinfo":{"email":null}}`)
 	id, ui, err := ParseRequestedClaims(raw)
 	if err != nil {

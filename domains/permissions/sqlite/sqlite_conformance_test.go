@@ -15,6 +15,7 @@ import (
 // permissions/memory_conformance_test.go) is the whole point —
 // operators swapping backends should see no behavior differences.
 func TestSQLiteProvider_Conformance(t *testing.T) {
+	t.Parallel()
 	permissionstest.ConformanceSuite{
 		Factory: func(t *testing.T) permissions.Provider {
 			t.Helper()

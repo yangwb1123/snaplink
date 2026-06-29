@@ -12,6 +12,7 @@ import (
 // ONLY that session; the subject's other session survives. This locks the
 // per-session scoping branch in terminateSubjectSessions (s.ID != sessionIndex).
 func TestSLO_SessionIndexNarrowsTermination(t *testing.T) {
+	t.Parallel()
 	const nameID = "multi-idp@example.com"
 	hh, spKey, sid1 := newSLOHarness(t, nameID)
 
@@ -43,6 +44,7 @@ func TestSLO_SessionIndexNarrowsTermination(t *testing.T) {
 // Success LogoutResponse (302) — terminateSubjectSessions destroys zero sessions
 // but never errors or leaks that nothing matched.
 func TestSLO_UnknownSubject_StillSuccess(t *testing.T) {
+	t.Parallel()
 	// Harness seeds a session for "present@example.com" but we log out a DIFFERENT
 	// subject that has none.
 	hh, spKey, _ := newSLOHarness(t, "present@example.com")

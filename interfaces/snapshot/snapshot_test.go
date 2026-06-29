@@ -82,6 +82,7 @@ func (f *fixture) snapshotter() *snapshot.Snapshotter {
 }
 
 func TestExport_Full(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	snap, err := f.snapshotter().Export(context.Background(), snapshot.ExportOptions{SourceNodeID: "node-A"})
 	if err != nil {
@@ -121,6 +122,7 @@ func TestExport_Full(t *testing.T) {
 }
 
 func TestExport_Exclude(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	snap, err := f.snapshotter().Export(context.Background(), snapshot.ExportOptions{
 		Exclude: []snapshot.ResourceCategory{snapshot.CategoryNetPolicy, snapshot.CategoryUsers},
@@ -140,6 +142,7 @@ func TestExport_Exclude(t *testing.T) {
 }
 
 func TestExport_NoBackends(t *testing.T) {
+	t.Parallel()
 	s := &snapshot.Snapshotter{Namespace: "sso-server"}
 	snap, err := s.Export(context.Background(), snapshot.ExportOptions{})
 	if err != nil {
@@ -151,6 +154,7 @@ func TestExport_NoBackends(t *testing.T) {
 }
 
 func TestRestore_Merge_FreshDestination(t *testing.T) {
+	t.Parallel()
 	src := newFixture(t)
 	snap, err := src.snapshotter().Export(context.Background(), snapshot.ExportOptions{})
 	if err != nil {
@@ -188,6 +192,7 @@ func TestRestore_Merge_FreshDestination(t *testing.T) {
 }
 
 func TestRestore_Merge_SkipsExisting(t *testing.T) {
+	t.Parallel()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(context.Background(), snapshot.ExportOptions{})
 
@@ -218,6 +223,7 @@ func TestRestore_Merge_SkipsExisting(t *testing.T) {
 }
 
 func TestRestore_Overwrite_Updates(t *testing.T) {
+	t.Parallel()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(context.Background(), snapshot.ExportOptions{})
 
@@ -244,6 +250,7 @@ func TestRestore_Overwrite_Updates(t *testing.T) {
 }
 
 func TestRestore_Replace_RequiresConfirm(t *testing.T) {
+	t.Parallel()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(context.Background(), snapshot.ExportOptions{})
 
@@ -266,6 +273,7 @@ func TestRestore_Replace_RequiresConfirm(t *testing.T) {
 }
 
 func TestRestore_Replace_DeletesOrphans(t *testing.T) {
+	t.Parallel()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(context.Background(), snapshot.ExportOptions{})
 
@@ -297,6 +305,7 @@ func TestRestore_Replace_DeletesOrphans(t *testing.T) {
 }
 
 func TestRestore_DryRun_NoMutation(t *testing.T) {
+	t.Parallel()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(context.Background(), snapshot.ExportOptions{})
 

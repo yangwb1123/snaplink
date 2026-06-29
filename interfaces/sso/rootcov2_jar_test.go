@@ -58,6 +58,7 @@ func rcov2SignJAR(t *testing.T, key rcov2DPoPKey, kid, clientID, audience, redir
 // /auth/login: a signed request object is verified against the client JWKS and
 // its parameters drive the authorization (verifyJAR).
 func TestRcov2J_SignedRequestObject(t *testing.T) {
+	t.Parallel()
 	key := rcov2NewDPoPKey(t)
 	const kid = "jar-key-1"
 	ctx := context.Background()
@@ -140,6 +141,7 @@ func TestRcov2J_SignedRequestObject(t *testing.T) {
 // a suspended tenant is rejected at /userinfo; reactivating + invalidating the
 // cache restores access (checkTenantNotSuspended + InvalidateTenantSuspensionCache).
 func TestRcov2J_TenantSuspension(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	tstore := tenantmem.New()
 	// Start ACTIVE so the token mints; suspension is applied AFTER issuance.

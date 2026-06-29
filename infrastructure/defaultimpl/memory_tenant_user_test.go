@@ -11,6 +11,7 @@ import (
 )
 
 func TestMemoryTenantUserStore_AddGetRemove(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryTenantUserStore()
 	ctx := context.Background()
 
@@ -35,6 +36,7 @@ func TestMemoryTenantUserStore_AddGetRemove(t *testing.T) {
 }
 
 func TestMemoryTenantUserStore_GetMiss(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryTenantUserStore()
 	if _, err := s.Get(context.Background(), "nope", "nobody"); !errors.Is(err, core.ErrNoMembership) {
 		t.Errorf("get miss err = %v, want ErrNoMembership", err)
@@ -42,6 +44,7 @@ func TestMemoryTenantUserStore_GetMiss(t *testing.T) {
 }
 
 func TestMemoryTenantUserStore_AddUpsertsRole(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryTenantUserStore()
 	ctx := context.Background()
 
@@ -60,6 +63,7 @@ func TestMemoryTenantUserStore_AddUpsertsRole(t *testing.T) {
 }
 
 func TestMemoryTenantUserStore_ListByTenant(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryTenantUserStore()
 	ctx := context.Background()
 	now := time.Now()
@@ -83,6 +87,7 @@ func TestMemoryTenantUserStore_ListByTenant(t *testing.T) {
 }
 
 func TestMemoryTenantUserStore_ListByUser(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryTenantUserStore()
 	ctx := context.Background()
 	now := time.Now()
@@ -106,6 +111,7 @@ func TestMemoryTenantUserStore_ListByUser(t *testing.T) {
 }
 
 func TestMemoryTenantUserStore_CrossTenantIsolation(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryTenantUserStore()
 	ctx := context.Background()
 	now := time.Now()

@@ -21,6 +21,7 @@ import (
 )
 
 func TestServiceKey(t *testing.T) {
+	t.Parallel()
 	r := &Registry{prefix: "/snaplink/registry"}
 	if got := r.serviceKey("sso", "sso-1"); got != "/snaplink/registry/sso/sso-1" {
 		t.Fatalf("serviceKey = %q", got)
@@ -28,6 +29,7 @@ func TestServiceKey(t *testing.T) {
 }
 
 func TestServiceNamespace_TrailingSlashPreventsPrefixCollision(t *testing.T) {
+	t.Parallel()
 	// Without the trailing slash, asking for "sso" would also match
 	// "/snaplink/registry/sso-prime/...". The slash boundary prevents that.
 	r := &Registry{prefix: "/snaplink/registry"}
@@ -38,12 +40,14 @@ func TestServiceNamespace_TrailingSlashPreventsPrefixCollision(t *testing.T) {
 }
 
 func TestNew_RequiresEndpoints(t *testing.T) {
+	t.Parallel()
 	if _, err := New(Config{}); err == nil {
 		t.Error("expected error when endpoints is empty")
 	}
 }
 
 func TestServiceJSONRoundtrip(t *testing.T) {
+	t.Parallel()
 	in := registry.Service{
 		ID: "id", Name: "name", Address: "1.2.3.4", Port: 8080,
 		Tags:     []string{"a", "b"},
@@ -66,6 +70,7 @@ func TestServiceJSONRoundtrip(t *testing.T) {
 }
 
 func TestTranslateEvent_Put_Added(t *testing.T) {
+	t.Parallel()
 	svc := registry.Service{ID: "x", Name: "n"}
 	body, _ := json.Marshal(svc)
 	ev := &clientv3.Event{
@@ -83,6 +88,7 @@ func TestTranslateEvent_Put_Added(t *testing.T) {
 }
 
 func TestTranslateEvent_Put_Updated(t *testing.T) {
+	t.Parallel()
 	svc := registry.Service{ID: "x", Name: "n"}
 	body, _ := json.Marshal(svc)
 	// IsModify() is true when CreateRevision != ModRevision.
@@ -97,6 +103,7 @@ func TestTranslateEvent_Put_Updated(t *testing.T) {
 }
 
 func TestTranslateEvent_Delete_WithPrevKV(t *testing.T) {
+	t.Parallel()
 	svc := registry.Service{ID: "x", Name: "n", Address: "host"}
 	body, _ := json.Marshal(svc)
 	ev := &clientv3.Event{
@@ -118,6 +125,7 @@ func TestTranslateEvent_Delete_WithPrevKV(t *testing.T) {
 // value) and a nil *Registry both surface a typed closed-error
 // rather than panic.
 func TestPing_NilReceiverAndClient(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	if err := (*Registry)(nil).Ping(ctx); err == nil {
@@ -129,6 +137,7 @@ func TestPing_NilReceiverAndClient(t *testing.T) {
 }
 
 func TestTranslateEvent_Delete_NoPrevKV_StillSurfacesIDName(t *testing.T) {
+	t.Parallel()
 	// When the watcher wasn't configured WithPrevKV, we should still emit
 	// a Removed event with the ID and Name parsed out of the key path.
 	ev := &clientv3.Event{
@@ -150,6 +159,7 @@ func TestTranslateEvent_Delete_NoPrevKV_StillSurfacesIDName(t *testing.T) {
 // initializes the lease/cancel bookkeeping maps so Register/Deregister never
 // nil-panic. A nil client is fine because the constructor never touches it.
 func TestNewWithClient_PrefixHandling(t *testing.T) {
+	t.Parallel()
 	r := NewWithClient(nil, "")
 	if r.prefix != DefaultPrefix {
 		t.Errorf("empty prefix = %q, want default %q", r.prefix, DefaultPrefix)
@@ -166,6 +176,7 @@ func TestNewWithClient_PrefixHandling(t *testing.T) {
 // stored value won't decode: translateEvent returns a zero Event (nil Service)
 // so the Watch loop skips it.
 func TestTranslateEvent_Put_GarbageYieldsEmpty(t *testing.T) {
+	t.Parallel()
 	ev := &clientv3.Event{
 		Type: mvccpb.PUT,
 		Kv:   &mvccpb.KeyValue{Key: []byte("/p/n/x"), Value: []byte("not json"), ModRevision: 1},
@@ -179,6 +190,7 @@ func TestTranslateEvent_Put_GarbageYieldsEmpty(t *testing.T) {
 // where PrevKv is present but its value is corrupt: rather than emit a
 // half-formed Removed event, translateEvent drops it (nil Service).
 func TestTranslateEvent_Delete_GarbagePrevKVYieldsEmpty(t *testing.T) {
+	t.Parallel()
 	ev := &clientv3.Event{
 		Type:   mvccpb.DELETE,
 		Kv:     &mvccpb.KeyValue{Key: []byte("/p/n/x")},
@@ -192,6 +204,7 @@ func TestTranslateEvent_Delete_GarbagePrevKVYieldsEmpty(t *testing.T) {
 // TestTranslateEvent_UnknownTypeYieldsEmpty covers translateEvent's default
 // arm — an event type that is neither PUT nor DELETE is dropped.
 func TestTranslateEvent_UnknownTypeYieldsEmpty(t *testing.T) {
+	t.Parallel()
 	ev := &clientv3.Event{
 		Type: mvccpb.Event_EventType(99),
 		Kv:   &mvccpb.KeyValue{Key: []byte("/p/n/x")},
@@ -206,6 +219,7 @@ func TestTranslateEvent_UnknownTypeYieldsEmpty(t *testing.T) {
 // a lease's KeepAlive without leaking the drain goroutine. No etcd server is
 // needed: we drive the channel directly.
 func TestDrainKeepAlive_ExitsOnClosedChannel(t *testing.T) {
+	t.Parallel()
 	ch := make(chan *clientv3.LeaseKeepAliveResponse, 2)
 	ch <- &clientv3.LeaseKeepAliveResponse{ID: 1}
 	ch <- nil

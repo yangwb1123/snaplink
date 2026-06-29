@@ -14,6 +14,7 @@ import (
 )
 
 func TestHTTPCIBAPingNotifier_PostsToEndpoint(t *testing.T) {
+	t.Parallel()
 	var gotAuth, gotBody atomic.Value
 	gotAuth.Store("")
 	gotBody.Store("")
@@ -43,6 +44,7 @@ func TestHTTPCIBAPingNotifier_PostsToEndpoint(t *testing.T) {
 }
 
 func TestHTTPCIBAPingNotifier_UnknownClientDegradesToPoll(t *testing.T) {
+	t.Parallel()
 	n := newHTTPCIBAPingNotifier(config.CIBAPingConfig{
 		Endpoints: map[string]string{"client-a": "http://unused"},
 	}, spi.NopLogger{})
@@ -53,6 +55,7 @@ func TestHTTPCIBAPingNotifier_UnknownClientDegradesToPoll(t *testing.T) {
 }
 
 func TestHTTPCIBAPingNotifier_Non2xxIsError(t *testing.T) {
+	t.Parallel()
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))

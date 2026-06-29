@@ -30,6 +30,7 @@ func facetSeed() (time.Time, []*audit.Event) {
 // real backends to one facet contract — the same posture the permissions
 // ConformanceSuite enforces for memory/sqlite.
 func TestFacets_MemoryEqualsSQLite(t *testing.T) {
+	t.Parallel()
 	base, seed := facetSeed()
 
 	mem := audit.NewMemorySink(100)
@@ -85,6 +86,7 @@ func TestFacets_MemoryEqualsSQLite(t *testing.T) {
 // a bug that keeps memory==sqlite but breaks BOTH (e.g. a fixture or
 // grouping mistake) is still caught.
 func TestFacets_Counts(t *testing.T) {
+	t.Parallel()
 	_, seed := facetSeed()
 	sq := newTestSink(t)
 	for _, e := range seed {

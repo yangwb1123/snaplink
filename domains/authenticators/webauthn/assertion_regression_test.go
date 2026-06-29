@@ -194,6 +194,7 @@ func newUVHelper(t *testing.T, requireUV bool) *Helper {
 // Guards the test harness itself — if this fails the regression assertions
 // below would pass for the wrong reason.
 func TestFinishLogin_ValidAssertionSucceeds(t *testing.T) {
+	t.Parallel()
 	h := newUVHelper(t, true)
 	auth := newSoftwareAuthenticator(t)
 	enrollAuthenticator(t, h, testUserUV, auth, 5)
@@ -228,6 +229,7 @@ func TestFinishLogin_ValidAssertionSucceeds(t *testing.T) {
 // ErrClonedAuthenticator — go-webauthn only sets CloneWarning and returns no
 // error, so without the wrapper gate this logs in undetected.
 func TestFinishLogin_CounterRegressionRejected(t *testing.T) {
+	t.Parallel()
 	h := newUVHelper(t, true)
 	auth := newSoftwareAuthenticator(t)
 	enrollAuthenticator(t, h, testUserUV, auth, 10)
@@ -262,6 +264,7 @@ func TestFinishLogin_CounterRegressionRejected(t *testing.T) {
 // common platform-passkey posture; go-webauthn exempts it from CloneWarning,
 // so the wrapper MUST accept it. Confirms the gate does not over-reject.
 func TestFinishLogin_ZeroCounterPasskeyAccepted(t *testing.T) {
+	t.Parallel()
 	h := newUVHelper(t, true)
 	auth := newSoftwareAuthenticator(t)
 	enrollAuthenticator(t, h, testUserUV, auth, 0)
@@ -285,6 +288,7 @@ func TestFinishLogin_ZeroCounterPasskeyAccepted(t *testing.T) {
 // REJECTED. Before the fix shouldVerifyUser was always false and the UV bit
 // went unchecked.
 func TestFinishLogin_UserVerificationRequiredRejectsUVMissing(t *testing.T) {
+	t.Parallel()
 	h := newUVHelper(t, true)
 	auth := newSoftwareAuthenticator(t)
 	enrollAuthenticator(t, h, testUserUV, auth, 1)
@@ -317,6 +321,7 @@ func TestFinishLogin_UserVerificationRequiredRejectsUVMissing(t *testing.T) {
 // Bug 2 control: with RequireUserVerification, a UV-performed assertion is
 // accepted — proving the gate rejects only the UV-missing case.
 func TestFinishLogin_UserVerificationRequiredAcceptsUVPresent(t *testing.T) {
+	t.Parallel()
 	h := newUVHelper(t, true)
 	auth := newSoftwareAuthenticator(t)
 	enrollAuthenticator(t, h, testUserUV, auth, 1)
@@ -340,6 +345,7 @@ func TestFinishLogin_UserVerificationRequiredAcceptsUVPresent(t *testing.T) {
 // RequireUserVerification, drive the step-up via the MFA provider, and a
 // UV-missing assertion must still be rejected.
 func TestMFAProvider_AlwaysRequiresUserVerification(t *testing.T) {
+	t.Parallel()
 	h := newUVHelper(t, false) // primary login does NOT require UV
 	p, err := NewWebAuthnMFAProvider(h)
 	if err != nil {
@@ -373,6 +379,7 @@ func TestMFAProvider_AlwaysRequiresUserVerification(t *testing.T) {
 
 // MFA control: a UV-performed assertion satisfies the MFA factor.
 func TestMFAProvider_AcceptsUserVerifiedAssertion(t *testing.T) {
+	t.Parallel()
 	h := newUVHelper(t, false)
 	p, err := NewWebAuthnMFAProvider(h)
 	if err != nil {

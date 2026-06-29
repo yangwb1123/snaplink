@@ -19,6 +19,7 @@ func echo200() http.Handler {
 }
 
 func TestEmptyPolicy_IsIdentity(t *testing.T) {
+	t.Parallel()
 	mw := cors.Middleware(cors.Policy{})
 	wrapped := mw(echo200())
 
@@ -36,6 +37,7 @@ func TestEmptyPolicy_IsIdentity(t *testing.T) {
 }
 
 func TestNoOrigin_IsPassthrough(t *testing.T) {
+	t.Parallel()
 	mw := cors.Middleware(cors.Policy{AllowedOrigins: []string{"https://app.example.com"}})
 	wrapped := mw(echo200())
 
@@ -51,6 +53,7 @@ func TestNoOrigin_IsPassthrough(t *testing.T) {
 }
 
 func TestExactOrigin_Allowed(t *testing.T) {
+	t.Parallel()
 	mw := cors.Middleware(cors.Policy{
 		AllowedOrigins: []string{"https://app.example.com"},
 	})
@@ -70,6 +73,7 @@ func TestExactOrigin_Allowed(t *testing.T) {
 }
 
 func TestExactOrigin_Disallowed(t *testing.T) {
+	t.Parallel()
 	mw := cors.Middleware(cors.Policy{
 		AllowedOrigins: []string{"https://app.example.com"},
 	})
@@ -91,6 +95,7 @@ func TestExactOrigin_Disallowed(t *testing.T) {
 }
 
 func TestWildcard_EmitsStar(t *testing.T) {
+	t.Parallel()
 	mw := cors.Middleware(cors.Policy{AllowedOrigins: []string{"*"}})
 	wrapped := mw(echo200())
 
@@ -105,6 +110,7 @@ func TestWildcard_EmitsStar(t *testing.T) {
 }
 
 func TestWildcardWithCredentials_EchoesOrigin(t *testing.T) {
+	t.Parallel()
 	// CORS spec forbids "*" + credentials. Middleware degrades
 	// gracefully by echoing the request Origin instead.
 	mw := cors.Middleware(cors.Policy{
@@ -127,6 +133,7 @@ func TestWildcardWithCredentials_EchoesOrigin(t *testing.T) {
 }
 
 func TestPreflight_EmitsAllowMethodsAndHeaders(t *testing.T) {
+	t.Parallel()
 	mw := cors.Middleware(cors.Policy{
 		AllowedOrigins: []string{"https://app.example.com"},
 		AllowedMethods: []string{"GET", "POST", "PATCH"},
@@ -156,6 +163,7 @@ func TestPreflight_EmitsAllowMethodsAndHeaders(t *testing.T) {
 }
 
 func TestPreflight_WithoutRequestMethod_NotShortCircuited(t *testing.T) {
+	t.Parallel()
 	// An OPTIONS request without Access-Control-Request-Method is
 	// NOT a CORS preflight — let it through to the underlying handler.
 	mw := cors.Middleware(cors.Policy{AllowedOrigins: []string{"*"}})
@@ -179,6 +187,7 @@ func TestPreflight_WithoutRequestMethod_NotShortCircuited(t *testing.T) {
 }
 
 func TestExposedHeaders(t *testing.T) {
+	t.Parallel()
 	mw := cors.Middleware(cors.Policy{
 		AllowedOrigins: []string{"*"},
 		ExposedHeaders: []string{"X-Request-ID", "X-RateLimit-Remaining"},

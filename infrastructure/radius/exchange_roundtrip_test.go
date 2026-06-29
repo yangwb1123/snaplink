@@ -116,6 +116,7 @@ func startUDPServer(t *testing.T, secret string, handler radius.HandlerFunc) str
 // --- 1. Correct-secret Access-Accept => accepted, attributes round-trip ------
 
 func TestRoundTrip_UDP_CorrectSecret_Accept(t *testing.T) {
+	t.Parallel()
 	addr := startUDPServer(t, testSecret, func(w radius.ResponseWriter, r *radius.Request) {
 		resp := r.Response(radius.CodeAccessAccept)
 		// A reply attribute the client is configured to map back, proving the
@@ -207,6 +208,7 @@ func forgedAcceptResponder(t *testing.T, forgeWith string) string {
 }
 
 func TestRoundTrip_UDP_ForgedAccept_Rejected_TheAnchor(t *testing.T) {
+	t.Parallel()
 	// The forger signs an Access-Accept with a secret the client does NOT have.
 	addr := forgedAcceptResponder(t, testWrongSecret)
 
@@ -259,6 +261,7 @@ func TestRoundTrip_UDP_ForgedAccept_Rejected_TheAnchor(t *testing.T) {
 // --- 3. Access-Reject => clean verdict (accepted=false, err=nil) -> ErrAuthFailed
 
 func TestRoundTrip_UDP_Reject_MapsToAuthFailed(t *testing.T) {
+	t.Parallel()
 	addr := startUDPServer(t, testSecret, func(w radius.ResponseWriter, r *radius.Request) {
 		_ = w.Write(r.Response(radius.CodeAccessReject))
 	})
@@ -283,6 +286,7 @@ func TestRoundTrip_UDP_Reject_MapsToAuthFailed(t *testing.T) {
 // --- 4. Timeout (server never replies) => bounded err -> ErrServerUnavailable -
 
 func TestRoundTrip_UDP_Timeout_MapsToServerUnavailable(t *testing.T) {
+	t.Parallel()
 	// A handler that NEVER writes a reply: the client retransmits, then the
 	// bounded per-request deadline fires. This must return promptly (well under
 	// the test's own guard), proving a black-holed server cannot hang a login.
@@ -478,6 +482,7 @@ func radSecCfg(addr string, caPEM []byte, secret string) Config {
 // --- 5. RadSec correct-secret Accept => accepted -----------------------------
 
 func TestRoundTrip_RadSec_CorrectSecret_Accept(t *testing.T) {
+	t.Parallel()
 	cert, caPEM := selfSignedTLS(t)
 	addr := startRadSecServer(t, cert, testSecret, radius.CodeAccessAccept, nil)
 
@@ -505,6 +510,7 @@ func TestRoundTrip_RadSec_CorrectSecret_Accept(t *testing.T) {
 // --- 6. RadSec forged / wrong-secret Accept => REJECTED (the RadSec anchor) ---
 
 func TestRoundTrip_RadSec_ForgedAccept_Rejected_TheAnchor(t *testing.T) {
+	t.Parallel()
 	cert, caPEM := selfSignedTLS(t)
 	// TLS is honest (the cert verifies), but the RADIUS reply is signed with a
 	// secret the client does NOT have — exactly a compromised-TLS-peer or
@@ -544,6 +550,7 @@ func TestRoundTrip_RadSec_ForgedAccept_Rejected_TheAnchor(t *testing.T) {
 // make the client allocate/read an oversized record. We hand-craft a 20-byte
 // header claiming length 5000.
 func TestRoundTrip_RadSec_OverlongLength_Rejected(t *testing.T) {
+	t.Parallel()
 	cert, caPEM := selfSignedTLS(t)
 	raw := make([]byte, 20)
 	raw[0] = byte(radius.CodeAccessAccept)
@@ -565,6 +572,7 @@ func TestRoundTrip_RadSec_OverlongLength_Rejected(t *testing.T) {
 // A response whose declared Length is < 20 (a truncated header) must be rejected
 // by the same bound (total < 20). We claim length 8.
 func TestRoundTrip_RadSec_UndersizeLength_Rejected(t *testing.T) {
+	t.Parallel()
 	cert, caPEM := selfSignedTLS(t)
 	raw := make([]byte, 20)
 	raw[0] = byte(radius.CodeAccessAccept)
@@ -582,6 +590,7 @@ func TestRoundTrip_RadSec_UndersizeLength_Rejected(t *testing.T) {
 // --- RadSec Reject over TLS => clean verdict -> ErrAuthFailed -----------------
 
 func TestRoundTrip_RadSec_Reject_MapsToAuthFailed(t *testing.T) {
+	t.Parallel()
 	cert, caPEM := selfSignedTLS(t)
 	addr := startRadSecServer(t, cert, testSecret, radius.CodeAccessReject, nil)
 

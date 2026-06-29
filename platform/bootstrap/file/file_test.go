@@ -19,12 +19,14 @@ func tempState(t *testing.T) string {
 }
 
 func TestTracker_RejectsEmptyPath(t *testing.T) {
+	t.Parallel()
 	if _, err := New(""); err == nil {
 		t.Error("expected error on empty path")
 	}
 }
 
 func TestTracker_MissingFileStartsEmpty(t *testing.T) {
+	t.Parallel()
 	tr, err := New(tempState(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -37,6 +39,7 @@ func TestTracker_MissingFileStartsEmpty(t *testing.T) {
 }
 
 func TestTracker_PersistsAcrossInstances(t *testing.T) {
+	t.Parallel()
 	path := tempState(t)
 	ctx := context.Background()
 
@@ -64,6 +67,7 @@ func TestTracker_PersistsAcrossInstances(t *testing.T) {
 }
 
 func TestTracker_StateFileShape(t *testing.T) {
+	t.Parallel()
 	path := tempState(t)
 	tr, _ := New(path)
 	_ = tr.MarkApplied(context.Background(), "billing-app", 2, "seed_admin")
@@ -101,6 +105,7 @@ func TestTracker_StateFileShape(t *testing.T) {
 }
 
 func TestTracker_MonotonicVersion(t *testing.T) {
+	t.Parallel()
 	tr, _ := New(tempState(t))
 	defer func() { _ = tr.Close() }()
 	ctx := context.Background()
@@ -115,6 +120,7 @@ func TestTracker_MonotonicVersion(t *testing.T) {
 }
 
 func TestTracker_NamespacesIsolated(t *testing.T) {
+	t.Parallel()
 	tr, _ := New(tempState(t))
 	defer func() { _ = tr.Close() }()
 	ctx := context.Background()
@@ -134,6 +140,7 @@ func TestTracker_NamespacesIsolated(t *testing.T) {
 }
 
 func TestTracker_AtomicWrite_NoTempLeftBehind(t *testing.T) {
+	t.Parallel()
 	path := tempState(t)
 	tr, _ := New(path)
 	for i := 1; i <= 5; i++ {
@@ -155,6 +162,7 @@ func TestTracker_AtomicWrite_NoTempLeftBehind(t *testing.T) {
 }
 
 func TestTracker_CorruptFile_FailsFast(t *testing.T) {
+	t.Parallel()
 	path := tempState(t)
 	if err := os.WriteFile(path, []byte("not json at all"), 0o600); err != nil {
 		t.Fatalf("write corrupt: %v", err)
@@ -165,6 +173,7 @@ func TestTracker_CorruptFile_FailsFast(t *testing.T) {
 }
 
 func TestTracker_EmptyFileLoadsAsEmpty(t *testing.T) {
+	t.Parallel()
 	path := tempState(t)
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatalf("write empty: %v", err)
@@ -180,6 +189,7 @@ func TestTracker_EmptyFileLoadsAsEmpty(t *testing.T) {
 }
 
 func TestTracker_CreatesMissingDir(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	path := filepath.Join(root, "nested", "deep", "bootstrap.json")
 	tr, err := New(path)
@@ -196,6 +206,7 @@ func TestTracker_CreatesMissingDir(t *testing.T) {
 }
 
 func TestTracker_ConcurrentMarksSerialized(t *testing.T) {
+	t.Parallel()
 	tr, _ := New(tempState(t))
 	defer func() { _ = tr.Close() }()
 	ctx := context.Background()
@@ -215,6 +226,7 @@ func TestTracker_ConcurrentMarksSerialized(t *testing.T) {
 }
 
 func TestTracker_SatisfiesInterface(t *testing.T) {
+	t.Parallel()
 	tr, _ := New(tempState(t))
 	defer func() { _ = tr.Close() }()
 	var _ bootstrap.Tracker = tr

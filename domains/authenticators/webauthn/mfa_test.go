@@ -42,12 +42,14 @@ func enrollUser(t *testing.T, h *Helper, name string) {
 }
 
 func TestNewWebAuthnMFAProvider_RejectsNilHelper(t *testing.T) {
+	t.Parallel()
 	if _, err := NewWebAuthnMFAProvider(nil); err == nil {
 		t.Fatal("want error on nil helper")
 	}
 }
 
 func TestWebAuthnMFAProvider_SupportedMethods(t *testing.T) {
+	t.Parallel()
 	p, _ := newMFAProviderForTest(t)
 	methods := p.SupportedMethods()
 	if len(methods) != 1 || methods[0] != MethodWebAuthn {
@@ -56,6 +58,7 @@ func TestWebAuthnMFAProvider_SupportedMethods(t *testing.T) {
 }
 
 func TestWebAuthnMFAProvider_BeginRejectsUnsupportedMethod(t *testing.T) {
+	t.Parallel()
 	p, _ := newMFAProviderForTest(t)
 	_, err := p.Begin(context.Background(), "alice", "totp")
 	if !errors.Is(err, ErrWebAuthnMFAUnsupportedMethod) {
@@ -64,6 +67,7 @@ func TestWebAuthnMFAProvider_BeginRejectsUnsupportedMethod(t *testing.T) {
 }
 
 func TestWebAuthnMFAProvider_BeginRejectsEmptySubject(t *testing.T) {
+	t.Parallel()
 	p, _ := newMFAProviderForTest(t)
 	_, err := p.Begin(context.Background(), "", MethodWebAuthn)
 	if !errors.Is(err, ErrWebAuthnMFAMissingSubject) {
@@ -72,6 +76,7 @@ func TestWebAuthnMFAProvider_BeginRejectsEmptySubject(t *testing.T) {
 }
 
 func TestWebAuthnMFAProvider_BeginUnknownUserSurfacesHelperError(t *testing.T) {
+	t.Parallel()
 	p, _ := newMFAProviderForTest(t)
 	_, err := p.Begin(context.Background(), "ghost@example.com", MethodWebAuthn)
 	if err == nil {
@@ -83,6 +88,7 @@ func TestWebAuthnMFAProvider_BeginUnknownUserSurfacesHelperError(t *testing.T) {
 }
 
 func TestWebAuthnMFAProvider_BeginEnrolledUserReturnsOptionsAndSession(t *testing.T) {
+	t.Parallel()
 	p, h := newMFAProviderForTest(t)
 	enrollUser(t, h, "alice@example.com")
 
@@ -111,6 +117,7 @@ func TestWebAuthnMFAProvider_BeginEnrolledUserReturnsOptionsAndSession(t *testin
 }
 
 func TestWebAuthnMFAProvider_VerifyRejectsUnsupportedMethod(t *testing.T) {
+	t.Parallel()
 	p, _ := newMFAProviderForTest(t)
 	err := p.Verify(context.Background(), "alice", "totp", map[string]string{
 		"session":   "sess",
@@ -122,6 +129,7 @@ func TestWebAuthnMFAProvider_VerifyRejectsUnsupportedMethod(t *testing.T) {
 }
 
 func TestWebAuthnMFAProvider_VerifyRejectsEmptySubject(t *testing.T) {
+	t.Parallel()
 	p, _ := newMFAProviderForTest(t)
 	err := p.Verify(context.Background(), "", MethodWebAuthn, map[string]string{
 		"session":   "sess",
@@ -133,6 +141,7 @@ func TestWebAuthnMFAProvider_VerifyRejectsEmptySubject(t *testing.T) {
 }
 
 func TestWebAuthnMFAProvider_VerifyRejectsMissingSession(t *testing.T) {
+	t.Parallel()
 	p, _ := newMFAProviderForTest(t)
 	err := p.Verify(context.Background(), "alice", MethodWebAuthn, map[string]string{
 		"assertion": "{}",
@@ -143,6 +152,7 @@ func TestWebAuthnMFAProvider_VerifyRejectsMissingSession(t *testing.T) {
 }
 
 func TestWebAuthnMFAProvider_VerifyRejectsMissingAssertion(t *testing.T) {
+	t.Parallel()
 	p, _ := newMFAProviderForTest(t)
 	err := p.Verify(context.Background(), "alice", MethodWebAuthn, map[string]string{
 		"session": "sess",
@@ -153,6 +163,7 @@ func TestWebAuthnMFAProvider_VerifyRejectsMissingAssertion(t *testing.T) {
 }
 
 func TestWebAuthnMFAProvider_VerifyUnknownSessionSurfacesHelperError(t *testing.T) {
+	t.Parallel()
 	p, _ := newMFAProviderForTest(t)
 	err := p.Verify(context.Background(), "alice", MethodWebAuthn, map[string]string{
 		"session":   "ghost-session",
@@ -167,6 +178,7 @@ func TestWebAuthnMFAProvider_VerifyUnknownSessionSurfacesHelperError(t *testing.
 }
 
 func TestWebAuthnMFAProvider_VerifyExpiredSessionSurfacesHelperError(t *testing.T) {
+	t.Parallel()
 	p, h := newMFAProviderForTest(t)
 	enrollUser(t, h, "alice@example.com")
 

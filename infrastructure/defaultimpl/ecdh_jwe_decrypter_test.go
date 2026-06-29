@@ -11,6 +11,7 @@ import (
 )
 
 func TestECDHJWEDecrypter_RoundTrip(t *testing.T) {
+	t.Parallel()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("genkey: %v", err)
@@ -48,6 +49,7 @@ func TestECDHJWEDecrypter_RoundTrip(t *testing.T) {
 }
 
 func TestECDHJWEDecrypter_WrongRecipientFails(t *testing.T) {
+	t.Parallel()
 	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	other, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	dec, err := defaultimpl.NewECDHJWEDecrypter(priv, "enc-1")
@@ -69,6 +71,7 @@ func TestECDHJWEDecrypter_WrongRecipientFails(t *testing.T) {
 }
 
 func TestNewECDHJWEDecrypter_Rejects(t *testing.T) {
+	t.Parallel()
 	if _, err := defaultimpl.NewECDHJWEDecrypter(nil, "k"); err == nil {
 		t.Error("accepted nil private key")
 	}

@@ -14,6 +14,7 @@ import (
 )
 
 func TestEd25519JWT_RoundTrip(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer(
 		defaultimpl.WithEd25519Issuer("test-iss"),
 		defaultimpl.WithEd25519TokenTTL(5*time.Minute),
@@ -50,6 +51,7 @@ func TestEd25519JWT_RoundTrip(t *testing.T) {
 }
 
 func TestEd25519JWT_TamperedSignatureRejected(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	tok, _ := iss.Issue(context.Background(), &sso.Subject{ID: "u"}, nil)
 
@@ -65,6 +67,7 @@ func TestEd25519JWT_TamperedSignatureRejected(t *testing.T) {
 }
 
 func TestEd25519JWT_TamperedPayloadRejected(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	tok, _ := iss.Issue(context.Background(), &sso.Subject{ID: "u"}, nil)
 
@@ -77,6 +80,7 @@ func TestEd25519JWT_TamperedPayloadRejected(t *testing.T) {
 }
 
 func TestEd25519JWT_MalformedTokenRejected(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	cases := []string{"", "abc", "a.b", "a.b.c.d"}
 	for _, s := range cases {
@@ -87,6 +91,7 @@ func TestEd25519JWT_MalformedTokenRejected(t *testing.T) {
 }
 
 func TestEd25519JWT_ExpiredTokenRejected(t *testing.T) {
+	t.Parallel()
 	// 1ns TTL guarantees expiry by the time Validate runs.
 	iss := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Nanosecond))
 	tok, _ := iss.Issue(context.Background(), &sso.Subject{ID: "u"}, nil)
@@ -97,6 +102,7 @@ func TestEd25519JWT_ExpiredTokenRejected(t *testing.T) {
 }
 
 func TestEd25519JWT_RevokeBlocksValidate(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	tok, _ := iss.Issue(context.Background(), &sso.Subject{ID: "u"}, nil)
 
@@ -109,6 +115,7 @@ func TestEd25519JWT_RevokeBlocksValidate(t *testing.T) {
 }
 
 func TestEd25519JWT_RevokeUnknownReturnsError(t *testing.T) {
+	t.Parallel()
 	// Tokens not signed by this issuer cannot be revoked — keeps
 	// revokeAcrossIssuers attribution correct.
 	iss := defaultimpl.NewEd25519JWTIssuer()
@@ -121,6 +128,7 @@ func TestEd25519JWT_RevokeUnknownReturnsError(t *testing.T) {
 }
 
 func TestEd25519JWT_JWKSExposesPublicKey(t *testing.T) {
+	t.Parallel()
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	iss := defaultimpl.NewEd25519JWTIssuer(
 		defaultimpl.WithEd25519Key(priv),
@@ -151,6 +159,7 @@ func TestEd25519JWT_JWKSExposesPublicKey(t *testing.T) {
 }
 
 func TestEd25519JWT_KidIsDeterministic(t *testing.T) {
+	t.Parallel()
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	a := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Key(priv))
 	b := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Key(priv))

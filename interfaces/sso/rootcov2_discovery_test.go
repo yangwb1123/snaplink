@@ -38,6 +38,7 @@ import (
 // the discovery doc, exercising the buildOIDCConfiguration branches +
 // signDiscoveryMetadata that only fire when those collaborators are present.
 func TestRcov2D_DiscoveryRichBranches(t *testing.T) {
+	t.Parallel()
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("rsa key: %v", err)
@@ -106,6 +107,7 @@ func (rcov2CertExtractor) ExtractClientCert(*http.Request) (*x509.Certificate, b
 // push yields a request_uri that /auth/login consumes to recover the pushed
 // parameters and mint a code.
 func TestRcov2D_PARThenLogin(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithPARStore(defaultimpl.NewMemoryPARStore(), 5*time.Minute))
 
 	// Push the authorization request.
@@ -160,6 +162,7 @@ func TestRcov2D_PARThenLogin(t *testing.T) {
 // with subject_type=pairwise gets an opaque sub in its token, and /userinfo
 // reverses it via resolveLocalSubject.
 func TestRcov2D_PairwiseSubject(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(ctx, &sso.User{ID: rcovUser, Email: "alice@example.com"})
@@ -218,6 +221,7 @@ func TestRcov2D_PairwiseSubject(t *testing.T) {
 // option bodies run during NewServer; building the handler exercises any
 // route-mount branches they gate.
 func TestRcov2D_CheapOptionSetters(t *testing.T) {
+	t.Parallel()
 	detectors := []anomaly.Detector{}
 	runner := anomaly.NewRunner(detectors, anomaly.SinkFunc(
 		func(context.Context, *anomaly.LoginEvent, anomaly.Signal) error { return nil }))

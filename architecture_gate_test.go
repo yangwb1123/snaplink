@@ -47,6 +47,7 @@ var importRules = []importRule{
 }
 
 func TestArchitecture_ImportBoundaries(t *testing.T) {
+	t.Parallel()
 	fset := token.NewFileSet()
 	var violations, staleExempt []string
 	hitExempt := map[string]bool{}

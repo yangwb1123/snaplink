@@ -45,6 +45,7 @@ func decodeStorageHealth(t *testing.T, d *ServerDeps) storageHealthResponse {
 // unreachable with the error, and a schema-version error is surfaced while the
 // store still counts as reachable. Output is sorted by name.
 func TestHandleStorageHealth_Aggregation(t *testing.T) {
+	t.Parallel()
 	d := &ServerDeps{
 		StorageHealthSources: func() []StorageHealthSource {
 			return []StorageHealthSource{
@@ -140,6 +141,7 @@ func TestHandleStorageHealth_Aggregation(t *testing.T) {
 // TestHandleStorageHealth_Empty covers the no-sources case: an empty store list
 // still yields a well-formed 200 response.
 func TestHandleStorageHealth_Empty(t *testing.T) {
+	t.Parallel()
 	d := &ServerDeps{
 		StorageHealthSources: func() []StorageHealthSource { return nil },
 	}

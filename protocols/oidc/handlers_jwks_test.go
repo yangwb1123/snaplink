@@ -55,6 +55,7 @@ func decodeJWKS(t *testing.T, body []byte) []map[string]any {
 }
 
 func TestHandleJWKS_AggregatesIssuerKeys(t *testing.T) {
+	t.Parallel()
 	ed := defaultimpl.NewEd25519JWTIssuer()
 	ec := defaultimpl.NewECDSAJWTIssuer()
 	d := &jwksDeps{issuers: map[string]core.TokenIssuer{"jwt": ed, "es256": ec}}
@@ -81,6 +82,7 @@ func TestHandleJWKS_AggregatesIssuerKeys(t *testing.T) {
 }
 
 func TestHandleJWKS_SkipsNonJWKSProvider(t *testing.T) {
+	t.Parallel()
 	// A TokenIssuer that does NOT implement JWKSProvider must be silently
 	// skipped, not crash the walk.
 	d := &jwksDeps{issuers: map[string]core.TokenIssuer{
@@ -99,6 +101,7 @@ func TestHandleJWKS_SkipsNonJWKSProvider(t *testing.T) {
 }
 
 func TestHandleJWKS_ProviderErrorIsSkipped(t *testing.T) {
+	t.Parallel()
 	d := &jwksDeps{issuers: map[string]core.TokenIssuer{
 		"bad":  errorIssuer{},
 		"good": defaultimpl.NewEd25519JWTIssuer(),
@@ -115,6 +118,7 @@ func TestHandleJWKS_ProviderErrorIsSkipped(t *testing.T) {
 }
 
 func TestHandleJWKS_DecrypterEncKeyPublished(t *testing.T) {
+	t.Parallel()
 	ed := defaultimpl.NewEd25519JWTIssuer()
 	// The JAR decrypter that also implements JWKSProvider must contribute
 	// its enc key alongside the issuer sig keys.
@@ -140,6 +144,7 @@ func TestHandleJWKS_DecrypterEncKeyPublished(t *testing.T) {
 }
 
 func TestHandleJWKS_DecrypterWithoutJWKSProviderIgnored(t *testing.T) {
+	t.Parallel()
 	ed := defaultimpl.NewEd25519JWTIssuer()
 	// A decrypter that does NOT implement JWKSProvider contributes nothing
 	// and must not error.
@@ -153,6 +158,7 @@ func TestHandleJWKS_DecrypterWithoutJWKSProviderIgnored(t *testing.T) {
 }
 
 func TestHandleJWKS_IfNoneMatch304(t *testing.T) {
+	t.Parallel()
 	ed := defaultimpl.NewEd25519JWTIssuer()
 	d := &jwksDeps{issuers: map[string]core.TokenIssuer{"jwt": ed}}
 
@@ -179,6 +185,7 @@ func TestHandleJWKS_IfNoneMatch304(t *testing.T) {
 }
 
 func TestHandleJWKS_StaleETagServesBody(t *testing.T) {
+	t.Parallel()
 	ed := defaultimpl.NewEd25519JWTIssuer()
 	d := &jwksDeps{issuers: map[string]core.TokenIssuer{"jwt": ed}}
 	rec := httptest.NewRecorder()
@@ -195,6 +202,7 @@ func TestHandleJWKS_StaleETagServesBody(t *testing.T) {
 }
 
 func TestHandleJWKS_DefaultMaxAgeWhenUnset(t *testing.T) {
+	t.Parallel()
 	ed := defaultimpl.NewEd25519JWTIssuer()
 	d := &jwksDeps{issuers: map[string]core.TokenIssuer{"jwt": ed}, maxAge: 0}
 	ctx, rec := newCtx(http.MethodGet, "/.well-known/jwks.json")
@@ -205,6 +213,7 @@ func TestHandleJWKS_DefaultMaxAgeWhenUnset(t *testing.T) {
 }
 
 func TestHandleJWKS_ComputeErrorReturns500(t *testing.T) {
+	t.Parallel()
 	d := &computeErrDeps{}
 	ctx, rec := newCtx(http.MethodGet, "/.well-known/jwks.json")
 	oidc.HandleJWKS(d, ctx)

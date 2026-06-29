@@ -22,6 +22,7 @@ func seedInlineStorage(t *testing.T, names ...string) snapshot.Storage {
 }
 
 func TestPruneOldest_NoOpWhenUnderKeepThreshold(t *testing.T) {
+	t.Parallel()
 	s := seedInlineStorage(t,
 		"snap_2026-01-01T00-00-00Z_aaa",
 		"snap_2026-01-02T00-00-00Z_bbb",
@@ -36,6 +37,7 @@ func TestPruneOldest_NoOpWhenUnderKeepThreshold(t *testing.T) {
 }
 
 func TestPruneOldest_KeepsLastN(t *testing.T) {
+	t.Parallel()
 	// Five snapshots, keep 2 — oldest 3 get deleted.
 	s := seedInlineStorage(t,
 		"snap_2026-01-01T00-00-00Z_aaa",
@@ -64,6 +66,7 @@ func TestPruneOldest_KeepsLastN(t *testing.T) {
 }
 
 func TestPruneOldest_KeepZeroDeletesEverything(t *testing.T) {
+	t.Parallel()
 	s := seedInlineStorage(t,
 		"snap_2026-01-01T00-00-00Z_aaa",
 		"snap_2026-01-02T00-00-00Z_bbb",
@@ -82,6 +85,7 @@ func TestPruneOldest_KeepZeroDeletesEverything(t *testing.T) {
 }
 
 func TestPruneOldest_IgnoresNonSnapshotFiles(t *testing.T) {
+	t.Parallel()
 	// Operator notes / README in the snapshot dir mustn't get
 	// deleted — the prefix filter is the safety net.
 	s := seedInlineStorage(t,
@@ -119,6 +123,7 @@ func TestPruneOldest_IgnoresNonSnapshotFiles(t *testing.T) {
 }
 
 func TestPruneOldest_NilStorageRejected(t *testing.T) {
+	t.Parallel()
 	_, err := snapshot.PruneOldest(context.Background(), nil, 5)
 	if err == nil {
 		t.Fatal("want error for nil storage")
@@ -126,6 +131,7 @@ func TestPruneOldest_NilStorageRejected(t *testing.T) {
 }
 
 func TestPruneOldest_RespectsContextCancel(t *testing.T) {
+	t.Parallel()
 	s := seedInlineStorage(t,
 		"snap_2026-01-01T00-00-00Z_aaa",
 		"snap_2026-01-02T00-00-00Z_bbb",
@@ -140,6 +146,7 @@ func TestPruneOldest_RespectsContextCancel(t *testing.T) {
 }
 
 func TestPruneOldest_LexicalOrderingPreservesChronology(t *testing.T) {
+	t.Parallel()
 	// SnapshotID format snap_<RFC3339-with-dashes>_<rand> is
 	// designed so lexical sort matches chronological order. This
 	// test pins that invariant against future name-generator

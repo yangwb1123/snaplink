@@ -79,6 +79,7 @@ func newHIBPTestChecker(t *testing.T, srv *httptest.Server, opts ...HIBPOption) 
 }
 
 func TestHIBP_CompromisedAndKAnonymity(t *testing.T) {
+	t.Parallel()
 	const pw = "P@ssw0rd-compromised-test"
 	full, prefix, suffix := hibpHashParts(pw)
 
@@ -138,6 +139,7 @@ func TestHIBP_CompromisedAndKAnonymity(t *testing.T) {
 }
 
 func TestHIBP_CleanPasswordNotCompromised(t *testing.T) {
+	t.Parallel()
 	const pw = "correct-horse-battery-staple-9x!Q-clean"
 	_, _, suffix := hibpHashParts(pw)
 
@@ -162,6 +164,7 @@ func TestHIBP_CleanPasswordNotCompromised(t *testing.T) {
 }
 
 func TestHIBP_MinCountBelowThresholdNotFlagged(t *testing.T) {
+	t.Parallel()
 	const pw = "rare-breach-low-count-pw"
 	_, _, suffix := hibpHashParts(pw)
 
@@ -191,6 +194,7 @@ func TestHIBP_MinCountBelowThresholdNotFlagged(t *testing.T) {
 }
 
 func TestHIBP_PaddingCountZeroIgnored(t *testing.T) {
+	t.Parallel()
 	const pw = "P@ssw0rd-compromised-test"
 	_, _, suffix := hibpHashParts(pw)
 
@@ -213,6 +217,7 @@ func TestHIBP_PaddingCountZeroIgnored(t *testing.T) {
 }
 
 func TestHIBP_CRLFAndCaseInsensitiveSuffix(t *testing.T) {
+	t.Parallel()
 	const pw = "P@ssw0rd-compromised-test"
 	_, _, suffix := hibpHashParts(pw)
 
@@ -236,6 +241,7 @@ func TestHIBP_CRLFAndCaseInsensitiveSuffix(t *testing.T) {
 }
 
 func TestHIBP_FailOpenOnServerError(t *testing.T) {
+	t.Parallel()
 	const pw = "P@ssw0rd-compromised-test"
 	fake := &fakeHIBP{status: http.StatusInternalServerError, body: "boom"}
 	srv := httptest.NewServer(fake)
@@ -253,6 +259,7 @@ func TestHIBP_FailOpenOnServerError(t *testing.T) {
 }
 
 func TestHIBP_FailOpenOnConnectionRefused(t *testing.T) {
+	t.Parallel()
 	const pw = "P@ssw0rd-compromised-test"
 	// Stand up then immediately close a server to get a refused/unreachable
 	// address without sleeping.
@@ -277,6 +284,7 @@ func TestHIBP_FailOpenOnConnectionRefused(t *testing.T) {
 }
 
 func TestHIBP_FailOpenOnTimeout(t *testing.T) {
+	t.Parallel()
 	const pw = "P@ssw0rd-compromised-test"
 	_, _, suffix := hibpHashParts(pw)
 	// Server delays well past the client timeout; the request must abort
@@ -300,6 +308,7 @@ func TestHIBP_FailOpenOnTimeout(t *testing.T) {
 }
 
 func TestHIBP_ContextCancellationFailsOpen(t *testing.T) {
+	t.Parallel()
 	const pw = "P@ssw0rd-compromised-test"
 	fake := &fakeHIBP{body: "X:1\r\n", delay: 2 * time.Second}
 	srv := httptest.NewServer(fake)
@@ -322,6 +331,7 @@ func TestHIBP_ContextCancellationFailsOpen(t *testing.T) {
 // Compromised signal with a non-empty operator-facing Reason and no Weak
 // flag, mirroring how DictionaryPasswordHealthChecker returns a Weak hit.
 func TestHIBP_SignalShapeMatchesDictionary(t *testing.T) {
+	t.Parallel()
 	const pw = "P@ssw0rd-compromised-test"
 	_, _, suffix := hibpHashParts(pw)
 	fake := &fakeHIBP{body: suffix + ":3\r\n"}
@@ -348,6 +358,7 @@ func TestHIBP_SignalShapeMatchesDictionary(t *testing.T) {
 // goroutines hitting the same checker/server with distinct passwords. The
 // checker holds no mutable per-call state, so this must be race-free.
 func TestHIBP_ConcurrentChecks(t *testing.T) {
+	t.Parallel()
 	// A server that, for any prefix, returns a body containing the suffix
 	// of THAT request's password with a count, so every goroutine that
 	// queried a "breached" password gets flagged. We derive the suffix the

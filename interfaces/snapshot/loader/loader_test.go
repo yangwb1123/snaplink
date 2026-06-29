@@ -25,6 +25,7 @@ func minimalSnapshot() *snapshot.Snapshot {
 }
 
 func TestFromURI_FileRoundtrip(t *testing.T) {
+	t.Parallel()
 	snap := minimalSnapshot()
 	holder := inline.New()
 	p := &snapshot.Pipeline{}
@@ -56,6 +57,7 @@ func TestFromURI_FileRoundtrip(t *testing.T) {
 }
 
 func TestFromURI_FileWithExplicitName(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "alt.snap"), []byte("payload"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
@@ -74,6 +76,7 @@ func TestFromURI_FileWithExplicitName(t *testing.T) {
 }
 
 func TestFromURI_InlineRoundtrip(t *testing.T) {
+	t.Parallel()
 	snap := minimalSnapshot()
 	holder := inline.New()
 	p := &snapshot.Pipeline{}
@@ -97,6 +100,7 @@ func TestFromURI_InlineRoundtrip(t *testing.T) {
 }
 
 func TestFromURI_Rejects(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		uri  string

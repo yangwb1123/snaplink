@@ -33,6 +33,7 @@ func jwksCompute(s *sso.Server) func() ([]byte, error) {
 }
 
 func TestJWKSBodyCache_Disabled(t *testing.T) {
+	t.Parallel()
 	s := sso.NewServer(
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
 		sso.WithDefaultTokenStrategy("jwt"),
@@ -53,6 +54,7 @@ func TestJWKSBodyCache_Disabled(t *testing.T) {
 }
 
 func TestJWKSBodyCache_Enabled(t *testing.T) {
+	t.Parallel()
 	s := sso.NewServer(
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
 		sso.WithDefaultTokenStrategy("jwt"),
@@ -76,6 +78,7 @@ func TestJWKSBodyCache_Enabled(t *testing.T) {
 }
 
 func TestJWKSBodyCache_Invalidate(t *testing.T) {
+	t.Parallel()
 	s := sso.NewServer(
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
 		sso.WithDefaultTokenStrategy("jwt"),

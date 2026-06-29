@@ -13,6 +13,7 @@ import (
 // path used by snapshots) — it must hand back an empty, non-nil tree
 // rather than nil so the snapshot encoder doesn't trip on a null.
 func TestGetMenus_NilForUnknownClientReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	tree, err := p.GetMenus(context.Background(), "no-such-client")
 	if err != nil {
@@ -27,6 +28,7 @@ func TestGetMenus_NilForUnknownClientReturnsEmpty(t *testing.T) {
 }
 
 func TestGetMenus_ReturnsCopy(t *testing.T) {
+	t.Parallel()
 	// GetMenus must defensively copy so a caller mutating the returned
 	// slice can't corrupt the provider's stored tree.
 	p := permissions.NewMemoryProvider()
@@ -46,6 +48,7 @@ func TestGetMenus_ReturnsCopy(t *testing.T) {
 }
 
 func TestUnassignRoles_NoAssignmentsIsNoOp(t *testing.T) {
+	t.Parallel()
 	// User has never been assigned anything → byClient nil branch.
 	p := permissions.NewMemoryProvider()
 	if err := p.UnassignRoles(context.Background(), "ghost", "c", []string{"r"}); err != nil {
@@ -54,6 +57,7 @@ func TestUnassignRoles_NoAssignmentsIsNoOp(t *testing.T) {
 }
 
 func TestUnassignRoles_EmptyClientListIsNoOp(t *testing.T) {
+	t.Parallel()
 	// User has assignments under a DIFFERENT client, so byClient is
 	// non-nil but the requested client's list is empty → len(cur)==0 branch.
 	p := permissions.NewMemoryProvider()
@@ -74,6 +78,7 @@ func TestUnassignRoles_EmptyClientListIsNoOp(t *testing.T) {
 }
 
 func TestUnassignRoles_RemovesRequestedCodes(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	_ = p.AddRole(context.Background(), "c", permissions.Role{Code: "a", Permissions: []string{"x"}})
 	_ = p.AddRole(context.Background(), "c", permissions.Role{Code: "b", Permissions: []string{"y"}})
@@ -89,6 +94,7 @@ func TestUnassignRoles_RemovesRequestedCodes(t *testing.T) {
 }
 
 func TestAddRoleToUser_FirstAssignmentCreatesMap(t *testing.T) {
+	t.Parallel()
 	// User has no prior assignment map → the assignmentsByUser[userID]==nil
 	// initialization branch runs.
 	p := permissions.NewMemoryProvider()
@@ -107,6 +113,7 @@ func TestAddRoleToUser_FirstAssignmentCreatesMap(t *testing.T) {
 }
 
 func TestAddRoleToUser_IdempotentWhenAlreadyHeld(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	_ = p.AddRole(context.Background(), "c", permissions.Role{Code: "r", Permissions: []string{"x"}})
 	_ = p.AssignRoles(context.Background(), "u", "c", []string{"r"})
@@ -121,6 +128,7 @@ func TestAddRoleToUser_IdempotentWhenAlreadyHeld(t *testing.T) {
 }
 
 func TestAddRoleToUser_PreservesExistingRoles(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	_ = p.AddRole(context.Background(), "c", permissions.Role{Code: "a", Permissions: []string{"x"}})
 	_ = p.AddRole(context.Background(), "c", permissions.Role{Code: "b", Permissions: []string{"y"}})
@@ -141,6 +149,7 @@ func TestAddRoleToUser_PreservesExistingRoles(t *testing.T) {
 }
 
 func TestRemoveRoleFromUser_NoAssignmentsIsNoOp(t *testing.T) {
+	t.Parallel()
 	// byClient nil branch.
 	p := permissions.NewMemoryProvider()
 	if err := p.RemoveRoleFromUser(context.Background(), "ghost", "c", "r"); err != nil {
@@ -149,6 +158,7 @@ func TestRemoveRoleFromUser_NoAssignmentsIsNoOp(t *testing.T) {
 }
 
 func TestRemoveRoleFromUser_EmptyClientListIsNoOp(t *testing.T) {
+	t.Parallel()
 	// byClient non-nil (assignment under another client), requested
 	// client's list empty → len(cur)==0 branch.
 	p := permissions.NewMemoryProvider()
@@ -165,6 +175,7 @@ func TestRemoveRoleFromUser_EmptyClientListIsNoOp(t *testing.T) {
 }
 
 func TestRemoveRoleFromUser_RevokesAndLeavesOthers(t *testing.T) {
+	t.Parallel()
 	p := permissions.NewMemoryProvider()
 	_ = p.AddRole(context.Background(), "c", permissions.Role{Code: "a", Permissions: []string{"x"}})
 	_ = p.AddRole(context.Background(), "c", permissions.Role{Code: "b", Permissions: []string{"y"}})
@@ -180,6 +191,7 @@ func TestRemoveRoleFromUser_RevokesAndLeavesOthers(t *testing.T) {
 }
 
 func TestRemoveRole_StripsCodeFromEveryAssignment(t *testing.T) {
+	t.Parallel()
 	// RemoveRole must rip the role out of EVERY user's assignment list
 	// under that client (the §4 "detach from assignments" invariant), not
 	// just delete the definition.

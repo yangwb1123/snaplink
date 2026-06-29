@@ -185,6 +185,7 @@ func dosConfig(requiredTypes []string, budget, concurrency int, negTTL time.Dura
 // -> the RP is rejected (fail-closed). Proven via the per-issuer config-fetch
 // count (== budget).
 func TestTrustMarkResolvedDoS_DistinctIssuerBudget_Capped(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	inter := newFedEntity(t, tcInterID)
 	leaf := newFedEntity(t, tcLeafID)
@@ -237,6 +238,7 @@ func TestTrustMarkResolvedDoS_DistinctIssuerBudget_Capped(t *testing.T) {
 // DISTINCT issuers, not marks). All marks wrong-subject (so the scan visits each)
 // from a single issuer -> the issuer is resolved exactly once.
 func TestTrustMarkResolvedDoS_SameIssuerDedup_OneResolution(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	inter := newFedEntity(t, tcInterID)
 	leaf := newFedEntity(t, tcLeafID)
@@ -279,6 +281,7 @@ func TestTrustMarkResolvedDoS_SameIssuerDedup_OneResolution(t *testing.T) {
 // (start the cap first, wait until they hold the semaphore, THEN start the
 // excess) removes flakiness; the high-water concurrency is asserted == cap.
 func TestTrustMarkResolvedDoS_ConcurrencySemaphore_ExcessShed(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	inter := newFedEntity(t, tcInterID)
 
@@ -386,6 +389,7 @@ func TestTrustMarkResolvedDoS_ConcurrencySemaphore_ExcessShed(t *testing.T) {
 // re-resolves (count 2). Drives a MUTABLE registration clock past the 30s TTL
 // while the resolver clock stays fixed (the 24h statements stay valid).
 func TestTrustMarkResolvedDoS_NegativeCache_NoRefetchWithinTTL(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	inter := newFedEntity(t, tcInterID)
 	leaf := newFedEntity(t, tcLeafID)
@@ -443,6 +447,7 @@ func TestTrustMarkResolvedDoS_NegativeCache_NoRefetchWithinTTL(t *testing.T) {
 // the POSITIVE cache (still admitted). Proves the negative cache never shadows a
 // good issuer.
 func TestTrustMarkResolvedDoS_NegativeCache_LegitIssuerNotPinned(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	inter := newFedEntity(t, tcInterID)
 	leaf := newFedEntity(t, tcLeafID)
@@ -479,6 +484,7 @@ func TestTrustMarkResolvedDoS_NegativeCache_LegitIssuerNotPinned(t *testing.T) {
 // any per-type scan / nested resolution — defense-in-depth against an absurd-
 // cardinality leaf. NO issuer is resolved (the scan is bounded out).
 func TestTrustMarkResolvedDoS_LeafTrustMarkCountCap_Rejected(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	inter := newFedEntity(t, tcInterID)
 	leaf := newFedEntity(t, tcLeafID)
@@ -513,6 +519,7 @@ func TestTrustMarkResolvedDoS_LeafTrustMarkCountCap_Rejected(t *testing.T) {
 // Under the cap, the gate behaves normally (a leaf with a few valid marks is
 // admitted) — the count cap does not over-reject legitimate leaves.
 func TestTrustMarkResolvedDoS_LeafTrustMarkCountUnderCap_Admitted(t *testing.T) {
+	t.Parallel()
 	anchor := newFedEntity(t, tcAnchorID)
 	inter := newFedEntity(t, tcInterID)
 	leaf := newFedEntity(t, tcLeafID)

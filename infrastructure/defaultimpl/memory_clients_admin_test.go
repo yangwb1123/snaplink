@@ -10,6 +10,7 @@ import (
 )
 
 func TestMemoryClientStore_AddGetListUpdate(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryClientStore()
 
@@ -64,6 +65,7 @@ func TestMemoryClientStore_AddGetListUpdate(t *testing.T) {
 }
 
 func TestMemoryClientStore_AddHashesSecret(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryClientStore()
 	if err := s.Add(ctx, &sso.Client{ID: "c1", Secret: "plaintext", Active: true, RegistrationAccessToken: "rat-plain"}); err != nil {
@@ -83,6 +85,7 @@ func TestMemoryClientStore_AddHashesSecret(t *testing.T) {
 }
 
 func TestMemoryClientStore_RotateSecret(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryClientStore()
 	_ = s.Add(ctx, &sso.Client{ID: "c1", Secret: "old", Active: true})
@@ -109,6 +112,7 @@ func TestMemoryClientStore_RotateSecret(t *testing.T) {
 }
 
 func TestMemoryClientStore_ValidateInactiveClient(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryClientStore()
 	_ = s.Add(ctx, &sso.Client{ID: "c1", Secret: "sec", Active: false})
@@ -119,6 +123,7 @@ func TestMemoryClientStore_ValidateInactiveClient(t *testing.T) {
 }
 
 func TestMemoryClientStore_Delete(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryClientStore()
 	_ = s.Add(ctx, &sso.Client{ID: "c1", Active: true})

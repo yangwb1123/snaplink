@@ -12,6 +12,7 @@ import (
 // sender-constrained token-exchange yields a cnf-bound token (previously the
 // token-exchange grant alone dropped the binding, issuing an unbound token).
 func TestTokExSubject_SenderConstraint(t *testing.T) {
+	t.Parallel()
 	client := &core.Client{ID: "rp"}
 
 	bound := tokExSubject(client, &tokExState{
@@ -41,6 +42,7 @@ func TestTokExSubject_SenderConstraint(t *testing.T) {
 // copy is independent of both the stored input and prior reads, and unknown
 // tokens miss.
 func TestRefreshGraceCache_RememberLookup(t *testing.T) {
+	t.Parallel()
 	c := NewRefreshGraceCache(time.Minute)
 	now := time.Now()
 	resp := map[string]any{"access_token": "AT1", "refresh_token": "RT2"}
@@ -73,6 +75,7 @@ func TestRefreshGraceCache_RememberLookup(t *testing.T) {
 // now is treated as expired (the grace must not return after the window), and a
 // lookup before the boundary still hits.
 func TestRefreshGraceCache_TTLExpiry(t *testing.T) {
+	t.Parallel()
 	window := 100 * time.Millisecond
 	c := NewRefreshGraceCache(window)
 	now := time.Now()
@@ -95,6 +98,7 @@ func TestRefreshGraceCache_TTLExpiry(t *testing.T) {
 // TestRefreshGraceCache_Prune verifies that Remember lazily drops expired
 // entries so the map stays bounded by rotation-rate x window.
 func TestRefreshGraceCache_Prune(t *testing.T) {
+	t.Parallel()
 	window := 50 * time.Millisecond
 	c := NewRefreshGraceCache(window)
 	t0 := time.Now()
@@ -118,6 +122,7 @@ func TestRefreshGraceCache_Prune(t *testing.T) {
 // TestRefreshGraceCache_NilAndEmptyGuards locks the no-op guards: a nil cache
 // and an empty token are silent no-ops on both Remember and Lookup.
 func TestRefreshGraceCache_NilAndEmptyGuards(t *testing.T) {
+	t.Parallel()
 	var nilCache *RefreshGraceCache
 	now := time.Now()
 	// Must not panic.

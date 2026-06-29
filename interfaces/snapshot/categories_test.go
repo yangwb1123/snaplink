@@ -8,6 +8,7 @@ import (
 )
 
 func TestAllCategories_StableContents(t *testing.T) {
+	t.Parallel()
 	got := snapshot.AllCategories()
 	want := []snapshot.ResourceCategory{
 		snapshot.CategoryClients,
@@ -28,6 +29,7 @@ func TestAllCategories_StableContents(t *testing.T) {
 }
 
 func TestAllCategories_NotShared(t *testing.T) {
+	t.Parallel()
 	// Each call must return an independent slice so callers can mutate
 	// it (filter, append) without affecting subsequent callers.
 	a := snapshot.AllCategories()
@@ -42,6 +44,7 @@ func TestAllCategories_NotShared(t *testing.T) {
 }
 
 func TestSnapshot_Validate_AcceptsCurrentSchema(t *testing.T) {
+	t.Parallel()
 	s := &snapshot.Snapshot{
 		SchemaVersion:   snapshot.SchemaVersion,
 		SourceNamespace: "test",
@@ -52,6 +55,7 @@ func TestSnapshot_Validate_AcceptsCurrentSchema(t *testing.T) {
 }
 
 func TestSnapshot_Validate_RejectsUnknownSchema(t *testing.T) {
+	t.Parallel()
 	s := &snapshot.Snapshot{
 		SchemaVersion:   "999",
 		SourceNamespace: "test",
@@ -66,6 +70,7 @@ func TestSnapshot_Validate_RejectsUnknownSchema(t *testing.T) {
 }
 
 func TestSnapshot_Validate_RequiresSourceNamespace(t *testing.T) {
+	t.Parallel()
 	s := &snapshot.Snapshot{
 		SchemaVersion: snapshot.SchemaVersion,
 		// no SourceNamespace
@@ -76,6 +81,7 @@ func TestSnapshot_Validate_RequiresSourceNamespace(t *testing.T) {
 }
 
 func TestIsValidSchemaVersion(t *testing.T) {
+	t.Parallel()
 	if !snapshot.IsValidSchemaVersion(snapshot.SchemaVersion) {
 		t.Errorf("current SchemaVersion %q rejected by IsValidSchemaVersion", snapshot.SchemaVersion)
 	}

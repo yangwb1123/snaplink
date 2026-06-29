@@ -19,6 +19,7 @@ import (
 )
 
 func TestECDSAJWT_RoundTrip(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewECDSAJWTIssuer(
 		defaultimpl.WithECDSAIssuer("test-iss"),
 		defaultimpl.WithECDSATokenTTL(5*time.Minute),
@@ -57,6 +58,7 @@ func TestECDSAJWT_RoundTrip(t *testing.T) {
 // requirements: client_id REQUIRED, jti auto-generated, auth_time + amr
 // projected from the live event, at+jwt typ header.
 func TestECDSAJWT_RFC9068Claims(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSAIssuer("rfc9068"))
 	authTime := time.Now().Add(-2 * time.Minute).Truncate(time.Second)
 	tok, err := iss.Issue(context.Background(), &sso.Subject{
@@ -112,6 +114,7 @@ func TestECDSAJWT_RFC9068Claims(t *testing.T) {
 }
 
 func TestECDSAJWT_JWKS(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewECDSAJWTIssuer()
 	jwks, err := iss.JWKS(context.Background())
 	if err != nil {
@@ -153,6 +156,7 @@ func TestECDSAJWT_JWKS(t *testing.T) {
 }
 
 func TestECDSAJWT_TamperedSignatureRejected(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewECDSAJWTIssuer()
 	tok, _ := iss.Issue(context.Background(), &sso.Subject{ID: "u", ClientID: "c"}, nil)
 	parts := strings.Split(tok.AccessToken, ".")
@@ -167,6 +171,7 @@ func TestECDSAJWT_TamperedSignatureRejected(t *testing.T) {
 // TestECDSAJWT_AlgConfusion enumerates the alg-confusion negatives that
 // MUST be rejected at the alg/typ allowlist BEFORE signature verify.
 func TestECDSAJWT_AlgConfusion(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSAIssuer("ec"))
 	good, _ := iss.Issue(context.Background(), &sso.Subject{ID: "u", ClientID: "c"}, nil)
 	parts := strings.Split(good.AccessToken, ".")
@@ -206,6 +211,7 @@ func TestECDSAJWT_AlgConfusion(t *testing.T) {
 }
 
 func TestECDSAJWT_ExpiredRejected(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSATokenTTL(time.Millisecond))
 	tok, _ := iss.Issue(context.Background(), &sso.Subject{ID: "u", ClientID: "c"}, nil)
 	time.Sleep(5 * time.Millisecond)
@@ -215,6 +221,7 @@ func TestECDSAJWT_ExpiredRejected(t *testing.T) {
 }
 
 func TestECDSAJWT_IDTokenAndUserinfo(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSAIssuer("op"))
 	idt, err := iss.IssueIDToken(context.Background(), &oidc.IDTokenRequest{
 		Subject:  "sub",
@@ -247,6 +254,7 @@ func TestECDSAJWT_IDTokenAndUserinfo(t *testing.T) {
 // TestECDSAJWT_Rotation: a token minted by the old key still verifies
 // after RotateKey demotes it to verify-only, and JWKS publishes both.
 func TestECDSAJWT_Rotation(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewECDSAJWTIssuer()
 	oldTok, _ := iss.Issue(context.Background(), &sso.Subject{ID: "u", ClientID: "c"}, nil)
 	oldKID := iss.KeyID()
@@ -274,6 +282,7 @@ func TestECDSAJWT_Rotation(t *testing.T) {
 // TestECDSAJWT_ExternalSigner verifies the KMS/HSM seam: a signer holding
 // the key out of band, with the public half supplied via the option.
 func TestECDSAJWT_ExternalSigner(t *testing.T) {
+	t.Parallel()
 	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	iss := defaultimpl.NewECDSAJWTIssuer(
 		defaultimpl.WithECDSAExternalSigner(extECSigner{priv}, &priv.PublicKey, "ext-kid"),

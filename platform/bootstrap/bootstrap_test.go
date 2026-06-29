@@ -24,6 +24,7 @@ func step(name string, version int, fn func(context.Context) error) bootstrap.St
 }
 
 func TestRunner_AppliesPendingInOrder(t *testing.T) {
+	t.Parallel()
 	tr := memory.New()
 	r := bootstrap.NewRunner("ns", tr)
 	r1, r2, r3 := &recorder{}, &recorder{}, &recorder{}
@@ -42,6 +43,7 @@ func TestRunner_AppliesPendingInOrder(t *testing.T) {
 }
 
 func TestRunner_AlreadyAppliedIsSkipped(t *testing.T) {
+	t.Parallel()
 	tr := memory.New()
 	r := bootstrap.NewRunner("ns", tr)
 	r1 := &recorder{}
@@ -59,6 +61,7 @@ func TestRunner_AlreadyAppliedIsSkipped(t *testing.T) {
 }
 
 func TestRunner_NewStepRunsOnLaterCall(t *testing.T) {
+	t.Parallel()
 	tr := memory.New()
 	r := bootstrap.NewRunner("ns", tr)
 	r1, r2 := &recorder{}, &recorder{}
@@ -79,6 +82,7 @@ func TestRunner_NewStepRunsOnLaterCall(t *testing.T) {
 }
 
 func TestRunner_FailureStopsAndDoesNotMarkApplied(t *testing.T) {
+	t.Parallel()
 	tr := memory.New()
 	r := bootstrap.NewRunner("ns", tr)
 	good, bad, after := &recorder{}, &recorder{}, &recorder{}
@@ -108,6 +112,7 @@ func TestRunner_FailureStopsAndDoesNotMarkApplied(t *testing.T) {
 }
 
 func TestRunner_DuplicateVersionIsRejected(t *testing.T) {
+	t.Parallel()
 	tr := memory.New()
 	r := bootstrap.NewRunner("ns", tr)
 	r.Register(
@@ -120,6 +125,7 @@ func TestRunner_DuplicateVersionIsRejected(t *testing.T) {
 }
 
 func TestRunner_NamespaceIsolation(t *testing.T) {
+	t.Parallel()
 	tr := memory.New()
 	r1 := bootstrap.NewRunner("alpha", tr)
 	r2 := bootstrap.NewRunner("beta", tr)
@@ -139,6 +145,7 @@ func TestRunner_NamespaceIsolation(t *testing.T) {
 }
 
 func TestRunner_AuditRecorded(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(10)
 	rec := audit.New(sink)
 	tr := memory.New()
@@ -162,6 +169,7 @@ func TestRunner_AuditRecorded(t *testing.T) {
 // --- file tracker ---
 
 func TestFileTracker_PersistsAcrossInstances(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.json")
 
@@ -200,6 +208,7 @@ func TestFileTracker_PersistsAcrossInstances(t *testing.T) {
 }
 
 func TestFileTracker_MissingFileIsEmpty(t *testing.T) {
+	t.Parallel()
 	tr, err := file.New(filepath.Join(t.TempDir(), "does-not-exist.json"))
 	if err != nil {
 		t.Fatalf("file.New: %v", err)
@@ -211,6 +220,7 @@ func TestFileTracker_MissingFileIsEmpty(t *testing.T) {
 }
 
 func TestFileTracker_RequiresPath(t *testing.T) {
+	t.Parallel()
 	if _, err := file.New(""); err == nil {
 		t.Fatal("expected error for empty path")
 	}

@@ -55,6 +55,7 @@ var _ oauth.RefreshTokenSubjectIndex = indexOnlyRefresh{}
 // the wired index can't preview a count: the step is recorded in Skipped and
 // nothing is deleted.
 func TestEraseSubject_DryRunNoCounterIsSkipped(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	mem := defaultimpl.NewMemoryRefreshTokenStore()
 	clients := defaultimpl.NewMemoryClientStore()
@@ -88,6 +89,7 @@ func TestEraseSubject_DryRunNoCounterIsSkipped(t *testing.T) {
 // where enumerating clients for refresh revocation fails: the failure lands
 // in Errors and the run continues to sessions + user.
 func TestEraseSubject_ClientListErrorLive(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	refresh := sqlite.NewRefreshTokenStoreWithDB(openTempDB(t)) // wired, never reached past List
 	clientsDB := openTempDB(t)
@@ -116,6 +118,7 @@ func TestEraseSubject_ClientListErrorLive(t *testing.T) {
 // DryRun, where the counter type-assertion succeeds (sqlite implements it)
 // but the subsequent List errors.
 func TestEraseSubject_ClientListErrorDryRun(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	refresh := sqlite.NewRefreshTokenStoreWithDB(openTempDB(t)) // implements RefreshTokenSubjectCounter
 	clientsDB := openTempDB(t)
@@ -136,6 +139,7 @@ func TestEraseSubject_ClientListErrorDryRun(t *testing.T) {
 // failure path: clients enumerate fine (memory) but the refresh store is a
 // closed sqlite handle, so DeleteAllForSubject errors for each client.
 func TestEraseSubject_RefreshDeleteErrorLive(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clients := defaultimpl.NewMemoryClientStore()
 	for _, id := range []string{"c1", "c2"} {
@@ -167,6 +171,7 @@ func TestEraseSubject_RefreshDeleteErrorLive(t *testing.T) {
 // TestEraseSubject_RefreshCountErrorDryRun covers the dry-run per-client
 // count failure path.
 func TestEraseSubject_RefreshCountErrorDryRun(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clients := defaultimpl.NewMemoryClientStore()
 	if err := clients.Add(ctx, &core.Client{ID: "c1"}); err != nil {
@@ -189,6 +194,7 @@ func TestEraseSubject_RefreshCountErrorDryRun(t *testing.T) {
 // TestEraseSubject_SessionListError covers the sessions-step failure where
 // listing the subject's sessions errors.
 func TestEraseSubject_SessionListError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	sessDB := openTempDB(t)
 	sessions, err := sqlite.NewSessionManagerWithDB(sessDB, time.Hour)
@@ -216,6 +222,7 @@ func TestEraseSubject_SessionListError(t *testing.T) {
 // manager. destroyFailingSessions delegates both methods to real stores —
 // it fabricates no behaviour of its own.
 func TestEraseSubject_SessionDestroyError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	live := defaultimpl.NewMemorySessionManager()
 	if _, err := live.Create(ctx, "u1"); err != nil {
@@ -243,6 +250,7 @@ func TestEraseSubject_SessionDestroyError(t *testing.T) {
 
 // TestEraseSubject_UserDeleteError covers the user-delete failure path.
 func TestEraseSubject_UserDeleteError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	usersDB := openTempDB(t)
 	users := sqlite.NewUserProviderWithDB(usersDB)
@@ -265,6 +273,7 @@ func TestEraseSubject_UserDeleteError(t *testing.T) {
 // failure branches: both built-in reads error, the errors aggregate, and a
 // non-nil (empty) bundle is still returned.
 func TestExportSubject_UserAndSessionReadErrors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	usersDB := openTempDB(t)
 	users := sqlite.NewUserProviderWithDB(usersDB)

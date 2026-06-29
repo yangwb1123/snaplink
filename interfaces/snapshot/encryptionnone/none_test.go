@@ -9,16 +9,19 @@ import (
 )
 
 func TestNew_SatisfiesSealerInterface(t *testing.T) {
+	t.Parallel()
 	var _ snapshot.Sealer = none.New()
 }
 
 func TestAlgorithm(t *testing.T) {
+	t.Parallel()
 	if got := none.New().Algorithm(); got != snapshot.EncryptionNone {
 		t.Errorf("Algorithm = %q, want %q", got, snapshot.EncryptionNone)
 	}
 }
 
 func TestSeal_PassesThrough(t *testing.T) {
+	t.Parallel()
 	plain := []byte("hello world")
 	out, params, err := none.New().Seal(plain)
 	if err != nil {
@@ -38,6 +41,7 @@ func TestSeal_PassesThrough(t *testing.T) {
 }
 
 func TestOpen_PassesThrough(t *testing.T) {
+	t.Parallel()
 	cipher := []byte("hello world")
 	out, err := none.New().Open(cipher, nil)
 	if err != nil {
@@ -54,6 +58,7 @@ func TestOpen_PassesThrough(t *testing.T) {
 }
 
 func TestSealOpenRoundTrip(t *testing.T) {
+	t.Parallel()
 	original := []byte("round-trip-bytes")
 	s := none.New()
 	sealed, params, _ := s.Seal(original)
@@ -67,6 +72,7 @@ func TestSealOpenRoundTrip(t *testing.T) {
 }
 
 func TestSeal_EmptyInput(t *testing.T) {
+	t.Parallel()
 	out, _, err := none.New().Seal(nil)
 	if err != nil {
 		t.Fatalf("Seal(nil): %v", err)

@@ -17,6 +17,7 @@ import (
 // outside any shared lock — a send on a CLOSED channel panics regardless of
 // the non-blocking select. Run with -race -count=10 to surface the window.
 func TestBroadcastWatchCancelRace(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 	defer func() { _ = s.Close() }()
 
@@ -53,6 +54,7 @@ func TestBroadcastWatchCancelRace(t *testing.T) {
 // TestBroadcastCloseRace exercises broadcast racing Store.Close, which signals
 // every watcher goroutine to close its channel.
 func TestBroadcastCloseRace(t *testing.T) {
+	t.Parallel()
 	s := memory.New()
 
 	const watchers = 8

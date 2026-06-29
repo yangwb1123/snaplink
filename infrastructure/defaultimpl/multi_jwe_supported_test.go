@@ -20,6 +20,7 @@ func contains(s []string, want string) bool {
 }
 
 func TestMultiJWEDecrypter_SupportedAlgsAndEncs(t *testing.T) {
+	t.Parallel()
 	rsaPriv, _ := rsa.GenerateKey(rand.Reader, 2048)
 	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	rsaDec, _ := defaultimpl.NewRSAJWEDecrypter(rsaPriv, "rsa-1")
@@ -37,6 +38,7 @@ func TestMultiJWEDecrypter_SupportedAlgsAndEncs(t *testing.T) {
 }
 
 func TestMultiJWEResponseEncrypter_SupportedAlgsAndEncs(t *testing.T) {
+	t.Parallel()
 	multi := defaultimpl.NewMultiJWEResponseEncrypter(
 		defaultimpl.NewRSAJWEResponseEncrypter(),
 		defaultimpl.NewECDHJWEResponseEncrypter(),

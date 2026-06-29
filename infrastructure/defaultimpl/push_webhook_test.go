@@ -15,6 +15,7 @@ import (
 )
 
 func TestHTTPWebhookPushTransport_RejectsEmptyURL(t *testing.T) {
+	t.Parallel()
 	_, err := defaultimpl.NewHTTPWebhookPushTransport("")
 	if err == nil {
 		t.Fatal("want error for empty URL")
@@ -22,6 +23,7 @@ func TestHTTPWebhookPushTransport_RejectsEmptyURL(t *testing.T) {
 }
 
 func TestHTTPWebhookPushTransport_SendsJSONPayload(t *testing.T) {
+	t.Parallel()
 	var received pushWebhookReceived
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -66,6 +68,7 @@ func TestHTTPWebhookPushTransport_SendsJSONPayload(t *testing.T) {
 }
 
 func TestHTTPWebhookPushTransport_RetriesOn5xx(t *testing.T) {
+	t.Parallel()
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		n := calls.Add(1)
@@ -89,6 +92,7 @@ func TestHTTPWebhookPushTransport_RetriesOn5xx(t *testing.T) {
 }
 
 func TestHTTPWebhookPushTransport_GivesUpAfterMaxAttempts(t *testing.T) {
+	t.Parallel()
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
@@ -112,6 +116,7 @@ func TestHTTPWebhookPushTransport_GivesUpAfterMaxAttempts(t *testing.T) {
 }
 
 func TestHTTPWebhookPushTransport_RespectsContextCancelBetweenRetries(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "down", http.StatusInternalServerError)
 	}))
@@ -134,6 +139,7 @@ func TestHTTPWebhookPushTransport_RespectsContextCancelBetweenRetries(t *testing
 }
 
 func TestHTTPWebhookPushTransport_AcceptsAllStatusesIn2xx(t *testing.T) {
+	t.Parallel()
 	for _, code := range []int{200, 201, 202, 204} {
 		t.Run(http.StatusText(code), func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -149,6 +155,7 @@ func TestHTTPWebhookPushTransport_AcceptsAllStatusesIn2xx(t *testing.T) {
 }
 
 func TestHTTPWebhookPushTransport_OmitsAuthorizationWhenNoToken(t *testing.T) {
+	t.Parallel()
 	var seenAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seenAuth = r.Header.Get("Authorization")
@@ -163,6 +170,7 @@ func TestHTTPWebhookPushTransport_OmitsAuthorizationWhenNoToken(t *testing.T) {
 }
 
 func TestHTTPWebhookPushTransport_MultipleHeadersAccumulate(t *testing.T) {
+	t.Parallel()
 	var seen http.Header
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = r.Header

@@ -14,6 +14,7 @@ import (
 // refresh token bound to them, leaving other tenants untouched. It is the
 // active-revocation companion to the lazy suspension check.
 func TestServer_RevokeTenantRefreshTokens(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	clients := defaultimpl.NewMemoryClientStore()
@@ -66,6 +67,7 @@ func TestServer_RevokeTenantRefreshTokens(t *testing.T) {
 // direct SessionTenantIndex path (sessions stamped with the tenant at login),
 // leaving other tenants' and untagged sessions alive.
 func TestServer_RevokeTenant_DestroysSessionsByIndex(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	sm := defaultimpl.NewMemorySessionManager(time.Hour)
 	keepGlobex, _ := sm.CreateWithMeta(ctx, "carol", sso.SessionMeta{TenantID: "t2"})
@@ -99,6 +101,7 @@ func TestServer_RevokeTenant_DestroysSessionsByIndex(t *testing.T) {
 // still works through the membership-roster fallback: the tenant's members are
 // enumerated and each member's sessions destroyed.
 func TestServer_RevokeTenant_DestroysSessionsByRoster(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	sm := defaultimpl.NewMemorySessionManager(time.Hour)
 	// Sessions created WITHOUT a tenant stamp (so the index path finds nothing).

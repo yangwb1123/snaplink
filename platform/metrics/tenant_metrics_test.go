@@ -38,6 +38,7 @@ func gatherSeries(t *testing.T, m *metrics.Metrics, name string) map[string]floa
 // registered by a plain metrics.New() — the per-tenant series are absent
 // until EnableTenantMetrics is called (byte-identical off, §5).
 func TestTenantMetrics_DefaultOff(t *testing.T) {
+	t.Parallel()
 	m := metrics.New()
 	if m.LoginAttemptsByTenantTotal != nil {
 		t.Fatal("LoginAttemptsByTenantTotal must be nil before EnableTenantMetrics")
@@ -57,6 +58,7 @@ func TestTenantMetrics_DefaultOff(t *testing.T) {
 // + registers both vectors, is idempotent, and that the "other" bucket
 // caps cardinality alongside an allowlisted tenant.
 func TestTenantMetrics_EnableRegistersVectors(t *testing.T) {
+	t.Parallel()
 	m := metrics.New()
 	m.EnableTenantMetrics()
 	if m.LoginAttemptsByTenantTotal == nil || m.TokensIssuedByTenantTotal == nil {

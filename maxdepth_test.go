@@ -24,6 +24,7 @@ import (
 const maxDirDepth = 3
 
 func TestArchitecture_DirectoryDepth(t *testing.T) {
+	t.Parallel()
 	var violations []string
 	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {

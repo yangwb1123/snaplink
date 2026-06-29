@@ -51,6 +51,7 @@ func waitPastSecond(t *testing.T, ref time.Time) {
 // NEVER dropped (dropping it would let a still-valid revoked token validate
 // again). Only strictly-past entries go.
 func TestPruneRevoked_NeverDropsLiveEntry(t *testing.T) {
+	t.Parallel()
 	now := int64(1_000_000)
 	m := map[string]int64{
 		"past":   now - 1, // strictly before now -> droppable
@@ -79,6 +80,7 @@ func TestPruneRevoked_NeverDropsLiveEntry(t *testing.T) {
 // pruned out of the deny-set (memory bounded) on a subsequent Revoke while a
 // not-yet-expired one is NOT.
 func TestEd25519Revoke_HonoredUpToExp(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	// Generous skew so the not-yet-expired revoked token still validates as
 	// "not expired" while we assert the deny-set rejects it FIRST.
@@ -132,6 +134,7 @@ func TestEd25519Revoke_HonoredUpToExp(t *testing.T) {
 }
 
 func TestECDSARevoke_HonoredUpToExp(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	iss := NewECDSAJWTIssuer(WithECDSAMaxClockSkew(time.Hour))
 
@@ -167,6 +170,7 @@ func TestECDSARevoke_HonoredUpToExp(t *testing.T) {
 }
 
 func TestRSARevoke_HonoredUpToExp(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	iss := NewRSAJWTIssuer(WithRSAMaxClockSkew(time.Hour))
 

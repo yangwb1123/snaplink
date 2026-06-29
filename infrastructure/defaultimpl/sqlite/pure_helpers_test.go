@@ -11,6 +11,7 @@ import (
 // only graze are fully covered.
 
 func TestIsConstraintErr(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		err  error
@@ -29,6 +30,7 @@ func TestIsConstraintErr(t *testing.T) {
 }
 
 func TestIsUniqueViolation(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		err  error
 		want bool
@@ -47,6 +49,7 @@ func TestIsUniqueViolation(t *testing.T) {
 }
 
 func TestIsBcryptHash(t *testing.T) {
+	t.Parallel()
 	if !isBcryptHash("$2a$10$abcdefghijklmnopqrstuv") {
 		t.Error("bcrypt hash not recognised")
 	}
@@ -59,6 +62,7 @@ func TestIsBcryptHash(t *testing.T) {
 }
 
 func TestLockedUntilUnix(t *testing.T) {
+	t.Parallel()
 	if got := lockedUntilUnix(time.Time{}); got != 0 {
 		t.Errorf("lockedUntilUnix(zero) = %d, want 0", got)
 	}
@@ -69,6 +73,7 @@ func TestLockedUntilUnix(t *testing.T) {
 }
 
 func TestSplitNonEmpty(t *testing.T) {
+	t.Parallel()
 	if got := splitNonEmpty(""); got != nil {
 		t.Errorf("splitNonEmpty(\"\") = %v, want nil", got)
 	}
@@ -79,6 +84,7 @@ func TestSplitNonEmpty(t *testing.T) {
 }
 
 func TestNullable(t *testing.T) {
+	t.Parallel()
 	if n := nullable(""); n.Valid {
 		t.Errorf("nullable(\"\") should be NULL, got %+v", n)
 	}
@@ -89,6 +95,7 @@ func TestNullable(t *testing.T) {
 }
 
 func TestGenerateClientSecret(t *testing.T) {
+	t.Parallel()
 	a, err := generateClientSecret()
 	if err != nil {
 		t.Fatalf("generateClientSecret: %v", err)
@@ -100,6 +107,7 @@ func TestGenerateClientSecret(t *testing.T) {
 }
 
 func TestHashClientSecret_NonEmptyAndComparable(t *testing.T) {
+	t.Parallel()
 	h, err := hashClientSecret("topsecret")
 	if err != nil {
 		t.Fatalf("hashClientSecret: %v", err)

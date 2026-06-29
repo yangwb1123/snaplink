@@ -68,6 +68,7 @@ func (c *countingSink) len() int {
 }
 
 func TestAsyncSink_DeliversEventsAsync(t *testing.T) {
+	t.Parallel()
 	inner := &countingSink{}
 	a := audit.NewAsyncSink(inner, audit.WithAsyncBuffer(16))
 	a.Start()
@@ -89,6 +90,7 @@ func TestAsyncSink_DeliversEventsAsync(t *testing.T) {
 }
 
 func TestAsyncSink_NeverBlocksHotPath(t *testing.T) {
+	t.Parallel()
 	// 4-slot queue + a sink that hangs forever. After 4 Record calls
 	// the queue is full; the next 6 must drop, not block.
 	inner := newBlockingSink()
@@ -132,6 +134,7 @@ func TestAsyncSink_NeverBlocksHotPath(t *testing.T) {
 }
 
 func TestAsyncSink_DropHandlerSurfacesInnerError(t *testing.T) {
+	t.Parallel()
 	want := errors.New("sink boom")
 	inner := &countingSink{recErr: want}
 	var seen error
@@ -158,6 +161,7 @@ func TestAsyncSink_DropHandlerSurfacesInnerError(t *testing.T) {
 }
 
 func TestAsyncSink_RecordAfterCloseIsDropped(t *testing.T) {
+	t.Parallel()
 	inner := &countingSink{}
 	var dropReason error
 	a := audit.NewAsyncSink(inner,
@@ -180,6 +184,7 @@ func TestAsyncSink_RecordAfterCloseIsDropped(t *testing.T) {
 }
 
 func TestAsyncSink_CloseDeadlineEnforced(t *testing.T) {
+	t.Parallel()
 	// A sink that never releases pins the worker — Close must respect
 	// the supplied context.
 	inner := newBlockingSink()
@@ -198,6 +203,7 @@ func TestAsyncSink_CloseDeadlineEnforced(t *testing.T) {
 }
 
 func TestAsyncSink_RecordContextCancellationIgnored(t *testing.T) {
+	t.Parallel()
 	// Hot-path ctx cancellation MUST NOT abort delivery — the request
 	// goroutine often returns before the worker drains the queue.
 	inner := &countingSink{}
@@ -220,6 +226,7 @@ func TestAsyncSink_RecordContextCancellationIgnored(t *testing.T) {
 }
 
 func TestAsyncSink_ConcurrentWorkers(t *testing.T) {
+	t.Parallel()
 	// 4 workers + 4-slot queue + slow sink → drain rate roughly 4x.
 	inner := &slowSink{delay: 30 * time.Millisecond}
 	a := audit.NewAsyncSink(inner,
@@ -271,6 +278,7 @@ func (s *slowSink) Query(_ context.Context, _ audit.Query) ([]*audit.Event, erro
 }
 
 func TestAsyncSink_ReadPathDelegated(t *testing.T) {
+	t.Parallel()
 	inner := audit.NewMemorySink(8)
 	a := audit.NewAsyncSink(inner)
 	a.Start()
@@ -292,6 +300,7 @@ func TestAsyncSink_ReadPathDelegated(t *testing.T) {
 }
 
 func TestAsyncSink_StartIsIdempotent(t *testing.T) {
+	t.Parallel()
 	inner := &countingSink{}
 	a := audit.NewAsyncSink(inner, audit.WithAsyncWorkers(2))
 	a.Start()
@@ -307,6 +316,7 @@ func TestAsyncSink_StartIsIdempotent(t *testing.T) {
 }
 
 func TestAsyncSink_DropCountersTrackEachReason(t *testing.T) {
+	t.Parallel()
 	// queue full → DropsQueueFull
 	full := newBlockingSink()
 	a := audit.NewAsyncSink(full, audit.WithAsyncBuffer(2))
@@ -342,6 +352,7 @@ func TestAsyncSink_DropCountersTrackEachReason(t *testing.T) {
 }
 
 func TestAsyncSink_PendingAndCapacityGauges(t *testing.T) {
+	t.Parallel()
 	inner := newBlockingSink()
 	a := audit.NewAsyncSink(inner, audit.WithAsyncBuffer(8))
 	a.Start()

@@ -14,6 +14,7 @@ import (
 // TestReadFromFile_MissingFile — a path that doesn't exist surfaces the
 // os.ReadFile error rather than a panic or empty result.
 func TestReadFromFile_MissingFile(t *testing.T) {
+	t.Parallel()
 	if _, err := readFromFile(filepath.Join(t.TempDir(), "nope.json"), 0); err == nil {
 		t.Fatal("expected error reading a missing file")
 	}
@@ -22,6 +23,7 @@ func TestReadFromFile_MissingFile(t *testing.T) {
 // TestReadFromFile_BadJSON — neither a JSON array nor an {events:[...]}
 // object → parseEventList's terminal error.
 func TestReadFromFile_BadJSON(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "bad.json")
 	if err := os.WriteFile(path, []byte(`{"not_events": 1}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -34,6 +36,7 @@ func TestReadFromFile_BadJSON(t *testing.T) {
 // TestReadFromFile_LimitTruncates — the --limit cap is honored on file
 // input, slicing the chain down to the first N events.
 func TestReadFromFile_LimitTruncates(t *testing.T) {
+	t.Parallel()
 	events := chainedEvents(t, 5)
 	raw, _ := json.Marshal(events)
 	path := filepath.Join(t.TempDir(), "events.json")
@@ -52,6 +55,7 @@ func TestReadFromFile_LimitTruncates(t *testing.T) {
 // TestReadFromURL_BadBaseURL — an unparseable base URL is rejected up
 // front.
 func TestReadFromURL_BadBaseURL(t *testing.T) {
+	t.Parallel()
 	if _, err := readFromURL("://not a url", "t", 0, 10, time.Second); err == nil {
 		t.Fatal("expected parse error for malformed base URL")
 	}
@@ -60,6 +64,7 @@ func TestReadFromURL_BadBaseURL(t *testing.T) {
 // TestReadFromURL_HTTPError — a non-2xx page response is surfaced with
 // the status code + body, not silently swallowed.
 func TestReadFromURL_HTTPError(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
@@ -72,6 +77,7 @@ func TestReadFromURL_HTTPError(t *testing.T) {
 // TestReadFromURL_BadPageBody — a 200 with a body that isn't a valid
 // event list fails at parseEventList.
 func TestReadFromURL_BadPageBody(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"garbage": true}`))
 	}))
@@ -84,6 +90,7 @@ func TestReadFromURL_BadPageBody(t *testing.T) {
 // TestReadFromURL_RequestError — a connection-refused base URL surfaces
 // the transport error from client.Do.
 func TestReadFromURL_RequestError(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	url := srv.URL
 	srv.Close() // close immediately so the next request fails to connect
@@ -95,6 +102,7 @@ func TestReadFromURL_RequestError(t *testing.T) {
 // TestReadFromURL_PageSizeClampedToMax — a page size above
 // audit.MaxQueryLimit is clamped; the server sees at most the cap.
 func TestReadFromURL_PageSizeClamped(t *testing.T) {
+	t.Parallel()
 	events := chainedEvents(t, 1)
 	var seenLimit string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -114,6 +122,7 @@ func TestReadFromURL_PageSizeClamped(t *testing.T) {
 // TestReadFromURL_NonPositivePageSizeDefaults — page size <= 0 falls
 // back to the 500 default.
 func TestReadFromURL_NonPositivePageSizeDefaults(t *testing.T) {
+	t.Parallel()
 	var seenLimit string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seenLimit = r.URL.Query().Get("limit")
@@ -133,6 +142,7 @@ func TestReadFromURL_NonPositivePageSizeDefaults(t *testing.T) {
 // returns exit code 0. Run uses a local FlagSet, so no global flag/os.Args
 // juggling is needed and the call is reentrant across sibling tests.
 func TestRun_VerifyHappyPath(t *testing.T) {
+	t.Parallel()
 	events := chainedEvents(t, 3)
 	raw, _ := json.Marshal(events)
 	path := filepath.Join(t.TempDir(), "events.json")
@@ -184,6 +194,7 @@ func captureStdout(t *testing.T, fn func()) string {
 // TestUsage_PrintsBanner — the usage banner names the program and both
 // input modes so -h / parse errors are actionable.
 func TestUsage_PrintsBanner(t *testing.T) {
+	t.Parallel()
 	out := captureStderr(t, usage)
 	for _, want := range []string{progName, "--from-file", "--from-url"} {
 		if !strings.Contains(out, want) {

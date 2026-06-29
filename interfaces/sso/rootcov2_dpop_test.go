@@ -96,6 +96,7 @@ func (k rcov2DPoPKey) proof(t *testing.T, htm, htu, nonce string) string {
 
 // TestRcov2P_DPoPBoundFlow mints a DPoP-bound token and uses it at /userinfo.
 func TestRcov2P_DPoPBoundFlow(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithJTIReplayStore(defaultimpl.NewMemoryJTIReplayStore()))
 	key := rcov2NewDPoPKey(t)
 
@@ -160,6 +161,7 @@ func TestRcov2P_DPoPBoundFlow(t *testing.T) {
 // header, then the echoed nonce is accepted (stampDPoPNonce + verifyDPoPProof
 // nonce branch).
 func TestRcov2P_DPoPNonceHandshake(t *testing.T) {
+	t.Parallel()
 	nonce, err := sso.NewHMACNonceProvider(time.Minute)
 	if err != nil {
 		t.Fatalf("nonce provider: %v", err)
@@ -209,6 +211,7 @@ func TestRcov2P_DPoPNonceHandshake(t *testing.T) {
 // and asserts the public JWK x member round-trips (a sanity check on the proof
 // construction the verifier depends on).
 func TestRcov2P_DPoPThumbprintConsts(t *testing.T) {
+	t.Parallel()
 	key := rcov2NewDPoPKey(t)
 	xb, err := base64.RawURLEncoding.DecodeString(key.publicJWK()["x"])
 	if err != nil {

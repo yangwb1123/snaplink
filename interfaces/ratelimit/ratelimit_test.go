@@ -13,6 +13,7 @@ import (
 )
 
 func TestMemoryLimiter_AllowsBurstThenRejects(t *testing.T) {
+	t.Parallel()
 	// 1 token/sec, burst 3 — first three calls succeed, fourth rejected.
 	lim := ratelimit.NewMemoryLimiter(1, 3)
 	for i := range 3 {
@@ -31,6 +32,7 @@ func TestMemoryLimiter_AllowsBurstThenRejects(t *testing.T) {
 }
 
 func TestMemoryLimiter_BucketsAreIndependent(t *testing.T) {
+	t.Parallel()
 	lim := ratelimit.NewMemoryLimiter(1, 2)
 	// Exhaust k1.
 	_, _ = lim.Allow("k1")
@@ -45,6 +47,7 @@ func TestMemoryLimiter_BucketsAreIndependent(t *testing.T) {
 }
 
 func TestMemoryLimiter_RetryAfterIsBounded(t *testing.T) {
+	t.Parallel()
 	// rate 10/sec, burst 1 — second call rejected, retry ~100ms.
 	lim := ratelimit.NewMemoryLimiter(10, 1)
 	_, _ = lim.Allow("k")
@@ -58,6 +61,7 @@ func TestMemoryLimiter_RetryAfterIsBounded(t *testing.T) {
 }
 
 func TestMiddleware_NilPolicyIsIdentity(t *testing.T) {
+	t.Parallel()
 	// Empty Policy (no Default, no Prefixes) lets everything through.
 	mw := ratelimit.Middleware(ratelimit.Policy{})
 	called := 0
@@ -78,6 +82,7 @@ func TestMiddleware_NilPolicyIsIdentity(t *testing.T) {
 }
 
 func TestMiddleware_DefaultLimiterApplied(t *testing.T) {
+	t.Parallel()
 	lim := ratelimit.NewMemoryLimiter(1, 2)
 	mw := ratelimit.Middleware(ratelimit.Policy{
 		Default: lim,
@@ -103,6 +108,7 @@ func TestMiddleware_DefaultLimiterApplied(t *testing.T) {
 }
 
 func TestMiddleware_PrefixRuleOverridesDefault(t *testing.T) {
+	t.Parallel()
 	tight := ratelimit.NewMemoryLimiter(1, 1) // 1 then denied
 	loose := ratelimit.NewMemoryLimiter(100, 100)
 
@@ -137,6 +143,7 @@ func TestMiddleware_PrefixRuleOverridesDefault(t *testing.T) {
 }
 
 func TestMiddleware_Returns429WithRetryAfter(t *testing.T) {
+	t.Parallel()
 	mw := ratelimit.Middleware(ratelimit.Policy{
 		Default: ratelimit.NewMemoryLimiter(1, 1),
 		Key:     func(_ *http.Request) string { return "k" },
@@ -164,6 +171,7 @@ func TestMiddleware_Returns429WithRetryAfter(t *testing.T) {
 }
 
 func TestKeyByClientIP_IgnoresXFFWithoutTrustedProxies(t *testing.T) {
+	t.Parallel()
 	// Without TrustedProxies middleware, XFF must NOT be trusted — a client
 	// can set any XFF value to forge their bucket key and bypass rate limiting.
 	// KeyByClientIP must key on RemoteAddr (the TCP peer) in this case.
@@ -176,6 +184,7 @@ func TestKeyByClientIP_IgnoresXFFWithoutTrustedProxies(t *testing.T) {
 }
 
 func TestKeyByClientIP_FallsBackToRemoteAddr(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "192.0.2.1:9999"
 	if got := ratelimit.KeyByClientIP(r); got != "192.0.2.1" {
@@ -184,6 +193,7 @@ func TestKeyByClientIP_FallsBackToRemoteAddr(t *testing.T) {
 }
 
 func TestKeyByClientIDOrIP_HonorsBasicAuthClientID(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest(http.MethodPost, "/token", nil)
 	r.RemoteAddr = "10.0.0.1:5555"
 	r.SetBasicAuth("acme-app", "secret")
@@ -193,6 +203,7 @@ func TestKeyByClientIDOrIP_HonorsBasicAuthClientID(t *testing.T) {
 }
 
 func TestKeyByClientIDOrIP_FallsBackToIPWithoutBasicAuth(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest(http.MethodPost, "/token", nil)
 	r.RemoteAddr = "192.0.2.5:5555"
 	if got := ratelimit.KeyByClientIDOrIP(r); got != "192.0.2.5" {
@@ -201,6 +212,7 @@ func TestKeyByClientIDOrIP_FallsBackToIPWithoutBasicAuth(t *testing.T) {
 }
 
 func TestKeyByClientIDOrIP_DoesNotConsumeBody(t *testing.T) {
+	t.Parallel()
 	// Per-client keying MUST NOT read r.Body, or downstream handlers
 	// can't parse it. Verify by setting a body and confirming it's
 	// still readable end-to-end.
@@ -218,6 +230,7 @@ func TestKeyByClientIDOrIP_DoesNotConsumeBody(t *testing.T) {
 }
 
 func TestMemoryLimiter_PrunesSampled(t *testing.T) {
+	t.Parallel()
 	// Verify that pruning is NOT called on every Allow — only once per
 	// 64 calls. Strategy: seed a bucket with an already-expired lastSeen,
 	// then confirm the expired entry is cleaned up once the prune fires
@@ -260,6 +273,7 @@ func TestMemoryLimiter_PrunesSampled(t *testing.T) {
 }
 
 func TestKeyBySubject_UsesAuthenticatedSubject(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest(http.MethodGet, "/userinfo", nil)
 	r.RemoteAddr = "10.0.0.1:5555"
 	r = r.WithContext(middleware.WithSubject(r.Context(), "alice"))
@@ -269,6 +283,7 @@ func TestKeyBySubject_UsesAuthenticatedSubject(t *testing.T) {
 }
 
 func TestKeyBySubject_FallsBackToIPWhenNoSubject(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest(http.MethodGet, "/userinfo", nil)
 	r.RemoteAddr = "192.0.2.7:8888"
 	if got := ratelimit.KeyBySubject(r); got != "192.0.2.7" {

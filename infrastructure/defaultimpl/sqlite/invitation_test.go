@@ -22,6 +22,7 @@ func newInvitationStore(t *testing.T) *sqlitestores.InvitationStore {
 }
 
 func TestSQLiteInvitationStore_IssueConsumeSingleUse(t *testing.T) {
+	t.Parallel()
 	s := newInvitationStore(t)
 	ctx := context.Background()
 	if err := s.Issue(ctx, &core.Invitation{Token: "t1", TenantID: "acme", Email: "a@e.com", Role: core.TenantRoleAdmin, ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
@@ -38,6 +39,7 @@ func TestSQLiteInvitationStore_IssueConsumeSingleUse(t *testing.T) {
 }
 
 func TestSQLiteInvitationStore_MissingAndExpired(t *testing.T) {
+	t.Parallel()
 	s := newInvitationStore(t)
 	ctx := context.Background()
 	if _, err := s.Consume(ctx, "nope"); !errors.Is(err, core.ErrInvitationNotFound) {
@@ -50,6 +52,7 @@ func TestSQLiteInvitationStore_MissingAndExpired(t *testing.T) {
 }
 
 func TestSQLiteInvitationStore_ListByTenant(t *testing.T) {
+	t.Parallel()
 	s := newInvitationStore(t)
 	ctx := context.Background()
 	exp := time.Now().Add(time.Minute)
@@ -72,6 +75,7 @@ func TestSQLiteInvitationStore_ListByTenant(t *testing.T) {
 }
 
 func TestSQLiteInvitationStore_CrossTenantIsolation(t *testing.T) {
+	t.Parallel()
 	s := newInvitationStore(t)
 	ctx := context.Background()
 	exp := time.Now().Add(time.Minute)

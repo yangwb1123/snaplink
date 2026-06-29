@@ -20,6 +20,7 @@ import (
 // region resolver whose pinned region IS in the AllowedRegions set — so
 // meshRegionAllowed returns true and the serving region is stashed.
 func TestRcov2Mesh_RegionAllowed(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t,
 		sso.WithMeshExtAuthz("/mesh/ext-authz"),
 		sso.WithRegionMiddleware(
@@ -47,6 +48,7 @@ func TestRcov2Mesh_RegionAllowed(t *testing.T) {
 // tenant residency policy wired the request still ALLOWs — the goal here is to
 // drive the not-allowed branch, not to assert a deny.
 func TestRcov2Mesh_RegionNotAllowed(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t,
 		sso.WithMeshExtAuthz("/mesh/ext-authz"),
 		sso.WithRegionMiddleware(

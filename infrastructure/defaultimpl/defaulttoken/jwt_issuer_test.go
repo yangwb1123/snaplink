@@ -10,6 +10,7 @@ import (
 )
 
 func TestJWTIssuer_RoundTrip(t *testing.T) {
+	t.Parallel()
 	j := NewJWTIssuer(
 		WithJWTSecret([]byte("test-secret-bytes-for-jwt-issuer")),
 		WithJWTIssuer("test-issuer"),
@@ -45,6 +46,7 @@ func TestJWTIssuer_RoundTrip(t *testing.T) {
 }
 
 func TestJWTIssuer_DefaultsApplied(t *testing.T) {
+	t.Parallel()
 	j := NewJWTIssuer()
 	if j.issuer != core.DefaultIssuer {
 		t.Errorf("issuer = %q, want %q", j.issuer, core.DefaultIssuer)
@@ -58,6 +60,7 @@ func TestJWTIssuer_DefaultsApplied(t *testing.T) {
 }
 
 func TestJWTIssuer_GeneratesUniqueTokens(t *testing.T) {
+	t.Parallel()
 	j := NewJWTIssuer()
 	seen := map[string]bool{}
 	for i := range 20 {
@@ -78,6 +81,7 @@ func subjectN(i int) string {
 }
 
 func TestJWTIssuer_ValidateUnknown(t *testing.T) {
+	t.Parallel()
 	j := NewJWTIssuer()
 	if _, err := j.Validate(context.Background(), "no-such-token"); err == nil {
 		t.Error("expected error on unknown token")
@@ -85,6 +89,7 @@ func TestJWTIssuer_ValidateUnknown(t *testing.T) {
 }
 
 func TestJWTIssuer_ValidateExpired(t *testing.T) {
+	t.Parallel()
 	j := NewJWTIssuer(WithJWTTokenTTL(time.Nanosecond))
 	tok, _ := j.Issue(context.Background(), &core.Subject{ID: "u"}, nil)
 	time.Sleep(2 * time.Millisecond)
@@ -94,6 +99,7 @@ func TestJWTIssuer_ValidateExpired(t *testing.T) {
 }
 
 func TestJWTIssuer_Revoke(t *testing.T) {
+	t.Parallel()
 	j := NewJWTIssuer()
 	tok, _ := j.Issue(context.Background(), &core.Subject{ID: "u"}, nil)
 	if err := j.Revoke(context.Background(), tok.AccessToken); err != nil {
@@ -108,6 +114,7 @@ func TestJWTIssuer_Revoke(t *testing.T) {
 }
 
 func TestJWTIssuer_TokenContainsDot(t *testing.T) {
+	t.Parallel()
 	// Loose contract check: buildToken emits "<payload-b64>.<sig-b64>" so
 	// downstream tooling that parses by "." can rely on the structure.
 	j := NewJWTIssuer()

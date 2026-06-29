@@ -53,6 +53,7 @@ func dpopKeyForTest(t *testing.T) (ed25519.PrivateKey, string) {
 // future-iat window wider than the 60s default, while the default still
 // rejects beyond 60s. A proof's iat in the FUTURE is gated by clock-skew.
 func TestDPoPProofClockSkewConfigurable(t *testing.T) {
+	t.Parallel()
 	const method = "POST"
 	const url = "https://sso.test/token"
 	priv, pubX := dpopKeyForTest(t)
@@ -99,6 +100,7 @@ func TestDPoPProofClockSkewConfigurable(t *testing.T) {
 // staleness window wider than the 60s default, while the default still
 // rejects beyond 60s. A proof's iat in the PAST is gated by max-age.
 func TestDPoPProofMaxAgeConfigurable(t *testing.T) {
+	t.Parallel()
 	const method = "POST"
 	const url = "https://sso.test/token"
 	priv, pubX := dpopKeyForTest(t)
@@ -144,6 +146,7 @@ func TestDPoPProofMaxAgeConfigurable(t *testing.T) {
 // is ignored (clamps to the 60s default), so the resolver helpers never
 // return 0 and an explicit zero/negative is a no-op (byte-identical).
 func TestDPoPProofClockSkewClampToDefault(t *testing.T) {
+	t.Parallel()
 	s := NewServer(WithDPoPMaxClockSkew(0), WithDPoPProofMaxAge(-time.Second))
 	if got := s.resolvedDPoPProofClockSkew(); got != dpopProofClockSkewDefault {
 		t.Fatalf("clock skew clamp: got %v want %v", got, dpopProofClockSkewDefault)

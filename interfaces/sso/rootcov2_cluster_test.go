@@ -52,6 +52,7 @@ func rcov2PasswordAuth() sso.Authenticator {
 // in-process bus, starts the consumer loop, publishes a KindTokenRevoked event,
 // and confirms the adopt path (applyTokenRevocation) runs without panicking.
 func TestRcov2Cl_CrossReplicaRevocation(t *testing.T) {
+	t.Parallel()
 	bus := clustermem.New()
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	srv := sso.NewServer(
@@ -112,6 +113,7 @@ func (n *rcov2PingNotifier) Notify(_ context.Context, _, _, _ string) error {
 // operator resolves (approve, ping fires) -> /token poll mints. Covers
 // handleCIBATokenGrant + ResolveBackchannelAuthRequest + deliverCIBAPing.
 func TestRcov2Cl_CIBAPollPing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(ctx, &sso.User{ID: rcovUser})
@@ -199,6 +201,7 @@ func TestRcov2Cl_CIBAPollPing(t *testing.T) {
 // TestRcov2Cl_CIBADeny covers the CIBA denial branch (recordCIBADecision +
 // access_denied poll).
 func TestRcov2Cl_CIBADeny(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(ctx, &sso.User{ID: rcovUser})
@@ -244,6 +247,7 @@ func TestRcov2Cl_CIBADeny(t *testing.T) {
 // TestRcov2Cl_BackchannelLogout covers OIDC BCL/FCL fan-out on /end_session:
 // a logout_token is POSTed to the client's backchannel_logout_uri receiver.
 func TestRcov2Cl_BackchannelLogout(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// A receiver that records the logout_token it was POSTed.
@@ -324,6 +328,7 @@ func TestRcov2Cl_BackchannelLogout(t *testing.T) {
 // pinned to "us" denies a write served from "ap" (ResidencyDecision +
 // mapResidencyError), while a home-region request is allowed.
 func TestRcov2Cl_ResidencyDecision(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	tstore := tenantmem.New()
 	if perr := tstore.PutTenant(ctx, &tenantpkg.Tenant{

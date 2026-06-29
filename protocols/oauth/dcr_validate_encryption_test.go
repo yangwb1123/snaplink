@@ -15,6 +15,7 @@ func validateEnc(t *testing.T, m *DCRMetadata) error {
 }
 
 func TestDCREncryption_EncDefaultsWhenAlgSet(t *testing.T) {
+	t.Parallel()
 	m := &DCRMetadata{IDTokenEncryptedResponseAlg: "RSA-OAEP-256"}
 	if err := validateEnc(t, m); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -25,6 +26,7 @@ func TestDCREncryption_EncDefaultsWhenAlgSet(t *testing.T) {
 }
 
 func TestDCREncryption_UserinfoEncDefaults(t *testing.T) {
+	t.Parallel()
 	m := &DCRMetadata{UserinfoEncryptedResponseAlg: "RSA-OAEP-256"}
 	if err := validateEnc(t, m); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -35,6 +37,7 @@ func TestDCREncryption_UserinfoEncDefaults(t *testing.T) {
 }
 
 func TestDCREncryption_RejectsUnknownAlg(t *testing.T) {
+	t.Parallel()
 	m := &DCRMetadata{IDTokenEncryptedResponseAlg: "RSA1_5"}
 	if err := validateEnc(t, m); err == nil {
 		t.Fatal("expected rejection of unknown alg")
@@ -42,6 +45,7 @@ func TestDCREncryption_RejectsUnknownAlg(t *testing.T) {
 }
 
 func TestDCREncryption_RejectsUnknownEnc(t *testing.T) {
+	t.Parallel()
 	m := &DCRMetadata{
 		UserinfoEncryptedResponseAlg: "RSA-OAEP-256",
 		UserinfoEncryptedResponseEnc: "A128CBC-HS256",
@@ -52,6 +56,7 @@ func TestDCREncryption_RejectsUnknownEnc(t *testing.T) {
 }
 
 func TestDCREncryption_RejectsEncWithoutAlg(t *testing.T) {
+	t.Parallel()
 	m := &DCRMetadata{IDTokenEncryptedResponseEnc: "A256GCM"}
 	if err := validateEnc(t, m); err == nil {
 		t.Fatal("expected rejection of enc without alg")
@@ -59,6 +64,7 @@ func TestDCREncryption_RejectsEncWithoutAlg(t *testing.T) {
 }
 
 func TestDCREncryption_EmptyIsValid(t *testing.T) {
+	t.Parallel()
 	m := &DCRMetadata{}
 	if err := validateEnc(t, m); err != nil {
 		t.Fatalf("empty encryption metadata should be valid: %v", err)

@@ -11,6 +11,7 @@ import (
 )
 
 func TestProbe_2xxIsHealthy(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -22,6 +23,7 @@ func TestProbe_2xxIsHealthy(t *testing.T) {
 }
 
 func TestProbe_5xxIsUnhealthy(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -33,6 +35,7 @@ func TestProbe_5xxIsUnhealthy(t *testing.T) {
 }
 
 func TestProbe_404IsUnhealthy(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()
 	p := probehttp.New(srv.URL)
@@ -42,6 +45,7 @@ func TestProbe_404IsUnhealthy(t *testing.T) {
 }
 
 func TestProbe_EmptyURLIsError(t *testing.T) {
+	t.Parallel()
 	p := probehttp.New("")
 	if err := p.Probe(context.Background(), &releases.Release{ID: "rel-1"}); err == nil {
 		t.Error("expected error for empty URL")
@@ -49,6 +53,7 @@ func TestProbe_EmptyURLIsError(t *testing.T) {
 }
 
 func TestProbe_UnreachableHostIsError(t *testing.T) {
+	t.Parallel()
 	p := probehttp.New("http://127.0.0.1:1/should-not-bind")
 	if err := p.Probe(context.Background(), &releases.Release{ID: "rel-1"}); err == nil {
 		t.Error("expected error for unreachable host")

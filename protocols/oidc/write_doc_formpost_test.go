@@ -12,6 +12,7 @@ import (
 )
 
 func TestWriteDoc_ServesBodyWithHeaders(t *testing.T) {
+	t.Parallel()
 	body := []byte(`{"issuer":"https://as.example"}`)
 	entry := oidc.BuildDocEntry(body, time.Hour)
 
@@ -36,6 +37,7 @@ func TestWriteDoc_ServesBodyWithHeaders(t *testing.T) {
 }
 
 func TestWriteDoc_IfNoneMatch304(t *testing.T) {
+	t.Parallel()
 	entry := oidc.BuildDocEntry([]byte(`{"a":1}`), time.Hour)
 
 	rec := httptest.NewRecorder()
@@ -56,6 +58,7 @@ func TestWriteDoc_IfNoneMatch304(t *testing.T) {
 }
 
 func TestWriteDoc_NonMatchingETagServesBody(t *testing.T) {
+	t.Parallel()
 	entry := oidc.BuildDocEntry([]byte(`{"a":1}`), time.Hour)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
@@ -71,6 +74,7 @@ func TestWriteDoc_NonMatchingETagServesBody(t *testing.T) {
 }
 
 func TestWriteDoc_ClampsSubSecondTTL(t *testing.T) {
+	t.Parallel()
 	entry := oidc.BuildDocEntry([]byte(`{}`), time.Hour)
 	ctx, rec := newCtx(http.MethodGet, "/.well-known/openid-configuration")
 	// A sub-second cacheTTL must be clamped so Cache-Control never carries
@@ -82,6 +86,7 @@ func TestWriteDoc_ClampsSubSecondTTL(t *testing.T) {
 }
 
 func TestRenderFormPostResponse_AutoSubmitForm(t *testing.T) {
+	t.Parallel()
 	ctx, rec := newCtx(http.MethodGet, "/auth/login")
 	oidc.RenderFormPostResponse(ctx, "https://rp.example/cb", "the-code", "the-state", "https://as.example")
 
@@ -103,6 +108,7 @@ func TestRenderFormPostResponse_AutoSubmitForm(t *testing.T) {
 }
 
 func TestRenderFormPostResponse_SecurityHeaders(t *testing.T) {
+	t.Parallel()
 	ctx, rec := newCtx(http.MethodGet, "/auth/login")
 	oidc.RenderFormPostResponse(ctx, "https://rp.example/cb", "c", "", "iss")
 
@@ -121,6 +127,7 @@ func TestRenderFormPostResponse_SecurityHeaders(t *testing.T) {
 }
 
 func TestRenderFormPostResponse_OmitsEmptyState(t *testing.T) {
+	t.Parallel()
 	ctx, rec := newCtx(http.MethodGet, "/auth/login")
 	oidc.RenderFormPostResponse(ctx, "https://rp.example/cb", "c", "", "iss")
 	if strings.Contains(rec.Body.String(), `name="state"`) {
@@ -129,6 +136,7 @@ func TestRenderFormPostResponse_OmitsEmptyState(t *testing.T) {
 }
 
 func TestRenderFormPostResponse_EscapesUntrustedValues(t *testing.T) {
+	t.Parallel()
 	ctx, rec := newCtx(http.MethodGet, "/auth/login")
 	// A code that tries to break out of the value attribute must be
 	// contextually escaped by html/template, not rendered verbatim.

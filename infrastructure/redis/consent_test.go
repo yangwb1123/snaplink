@@ -11,6 +11,7 @@ import (
 )
 
 func TestRedisConsentStore_RecordGetRoundTrip(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	cs := NewConsentStore(rdb)
 	ctx := context.Background()
@@ -44,6 +45,7 @@ func TestRedisConsentStore_RecordGetRoundTrip(t *testing.T) {
 }
 
 func TestRedisConsentStore_GetAbsent(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	cs := NewConsentStore(rdb)
 	if _, err := cs.GetConsent(context.Background(), "nope", "nope"); !errors.Is(err, sso.ErrNoConsentGrant) {
@@ -52,6 +54,7 @@ func TestRedisConsentStore_GetAbsent(t *testing.T) {
 }
 
 func TestRedisConsentStore_RevokeIdempotent(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	cs := NewConsentStore(rdb)
 	ctx := context.Background()
@@ -74,6 +77,7 @@ func TestRedisConsentStore_RevokeIdempotent(t *testing.T) {
 }
 
 func TestRedisConsentStore_RevokeDropsFromListByUser(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	cs := NewConsentStore(rdb)
 	ctx := context.Background()
@@ -96,6 +100,7 @@ func TestRedisConsentStore_RevokeDropsFromListByUser(t *testing.T) {
 }
 
 func TestRedisConsentStore_ListByUserOrdering(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	cs := NewConsentStore(rdb)
 	ctx := context.Background()
@@ -125,6 +130,7 @@ func TestRedisConsentStore_ListByUserOrdering(t *testing.T) {
 }
 
 func TestRedisConsentStore_ListByUserEmpty(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	cs := NewConsentStore(rdb)
 
@@ -142,6 +148,7 @@ func TestRedisConsentStore_ListByUserEmpty(t *testing.T) {
 }
 
 func TestRedisConsentStore_OverwriteReplaces(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	cs := NewConsentStore(rdb)
 	ctx := context.Background()

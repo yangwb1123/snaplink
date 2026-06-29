@@ -65,6 +65,7 @@ func rcov2ExchangeServer(t *testing.T, acr string) *rcovServer {
 // TestRcov2X_ExchangeWithActorAndResource covers the delegation path (actor
 // token), resource binding, scope downscoping, and requested_token_type variants.
 func TestRcov2X_ExchangeWithActorAndResource(t *testing.T) {
+	t.Parallel()
 	s := rcov2ExchangeServer(t, "")
 
 	// Two tokens: a subject token and an actor token (both real access tokens).
@@ -110,6 +111,7 @@ func TestRcov2X_ExchangeWithActorAndResource(t *testing.T) {
 // TestRcov2X_ExchangeRejections covers the rejection branches: an unknown actor
 // token type, a disallowed resource, and scope expansion.
 func TestRcov2X_ExchangeRejections(t *testing.T) {
+	t.Parallel()
 	s := rcov2ExchangeServer(t, "")
 	subject := rcov2LoginToken(t, s)
 
@@ -144,6 +146,7 @@ func TestRcov2X_ExchangeRejections(t *testing.T) {
 // TestRcov2X_ExchangeACRDemand covers acrMatchesAny: an exchange demanding an
 // acr_values the subject token satisfies succeeds; one it doesn't fails.
 func TestRcov2X_ExchangeACRDemand(t *testing.T) {
+	t.Parallel()
 	s := rcov2ExchangeServer(t, "urn:acr:strong")
 	subject := rcov2LoginToken(t, s)
 
@@ -196,6 +199,7 @@ func rcov2LoginToken(t *testing.T, s *rcovServer) string {
 // TestRcov2X_AcceptInvitation covers the B2B accept-invitation flow: an
 // invitation issued into the store is redeemed by the authenticated subject.
 func TestRcov2X_AcceptInvitation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	invStore := defaultimpl.NewMemoryInvitationStore()
 	tenantUsers := defaultimpl.NewMemoryTenantUserStore()
@@ -246,6 +250,7 @@ func TestRcov2X_AcceptInvitation(t *testing.T) {
 // enroll a TOTP factor, list it (handleMyMFAFactors), then delete it
 // (handleDeleteMyMFAFactor).
 func TestRcov2X_MFAFactorDelete(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	enroller := authenticators.NewTOTPEnroller(totpAuth)
 	s := rcovNewServer(t,

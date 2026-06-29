@@ -21,6 +21,7 @@ func decodeBulk(t *testing.T, body []byte) BulkResponse {
 // TestBulk_MultipleCreates: a single POST /Bulk creates several users, each
 // op reporting 201 + a location, and the users are actually persisted.
 func TestBulk_MultipleCreates(t *testing.T) {
+	t.Parallel()
 	h, users, _ := newTestHandler(t)
 	body := `{
 	  "schemas": ["urn:ietf:params:scim:api:messages:2.0:BulkRequest"],
@@ -53,6 +54,7 @@ func TestBulk_MultipleCreates(t *testing.T) {
 
 // TestBulk_PostRequiresBulkId: a POST op without a bulkId is a 400 per §3.7.2.
 func TestBulk_PostRequiresBulkId(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:BulkRequest"],
 	  "Operations":[{"method":"POST","path":"/Users","data":{"userName":"x"}}]}`
@@ -65,6 +67,7 @@ func TestBulk_PostRequiresBulkId(t *testing.T) {
 
 // TestBulk_FailOnErrors: processing stops after the configured error count.
 func TestBulk_FailOnErrors(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	// Two bad ops (missing userName -> 400) then a good one; failOnErrors=1
 	// must stop after the first error, so the third op never runs.
@@ -87,6 +90,7 @@ func TestBulk_FailOnErrors(t *testing.T) {
 // TestBulk_CreateThenPatchByBulkId: a PATCH op references the just-created
 // user via "bulkId:<id>" in its path; the reference resolves to the new id.
 func TestBulk_CreateThenPatchByBulkId(t *testing.T) {
+	t.Parallel()
 	h, users, _ := newTestHandler(t)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:BulkRequest"],
 	  "Operations":[
@@ -121,6 +125,7 @@ func TestBulk_CreateThenPatchByBulkId(t *testing.T) {
 
 // TestBulk_DeleteOperation: a DELETE op in a bulk removes the user.
 func TestBulk_DeleteOperation(t *testing.T) {
+	t.Parallel()
 	h, users, _ := newTestHandler(t)
 	// Seed via a create op, then delete it by bulkId in a second bulk call.
 	_ = do(t, h, http.MethodPost, "/Bulk", `{"schemas":["urn:ietf:params:scim:api:messages:2.0:BulkRequest"],"Operations":[{"method":"POST","bulkId":"d","path":"/Users","data":{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"dave"}}]}`)
@@ -139,6 +144,7 @@ func TestBulk_DeleteOperation(t *testing.T) {
 
 // TestBulk_EmptyOperationsRejected: an empty Operations array is a 400.
 func TestBulk_EmptyOperationsRejected(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	rec := do(t, h, http.MethodPost, "/Bulk", `{"schemas":["urn:ietf:params:scim:api:messages:2.0:BulkRequest"],"Operations":[]}`)
 	if rec.Code != http.StatusBadRequest {
@@ -158,6 +164,7 @@ func meHandler(t *testing.T, id string) (*Handler, *defaultimpl.MemoryUserProvid
 // TestMe_ResolvesToSubject: GET/PATCH/DELETE /Me operate on the resolved
 // subject's own resource.
 func TestMe_ResolvesToSubject(t *testing.T) {
+	t.Parallel()
 	h, _ := meHandler(t, "id-1")
 	// Create the user the resolver points at.
 	if rec := do(t, h, http.MethodPost, "/Users", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"self@example.com"}`); rec.Code != http.StatusCreated {
@@ -179,6 +186,7 @@ func TestMe_ResolvesToSubject(t *testing.T) {
 
 // TestMe_NotEnabledWithoutResolver: /Me is 501 when no resolver is wired.
 func TestMe_NotEnabledWithoutResolver(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t) // no WithMeResolver
 	rec := do(t, h, http.MethodGet, "/Me", "")
 	if rec.Code != http.StatusNotImplemented {
@@ -188,6 +196,7 @@ func TestMe_NotEnabledWithoutResolver(t *testing.T) {
 
 // TestMe_NoSubject: /Me is 401 when the resolver yields no subject.
 func TestMe_NoSubject(t *testing.T) {
+	t.Parallel()
 	h, _ := meHandler(t, "") // resolver returns ok=false
 	rec := do(t, h, http.MethodGet, "/Me", "")
 	if rec.Code != http.StatusUnauthorized {
@@ -197,6 +206,7 @@ func TestMe_NoSubject(t *testing.T) {
 
 // TestBulk_Advertised: ServiceProviderConfig now advertises bulk supported.
 func TestBulk_Advertised(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	rec := do(t, h, http.MethodGet, "/ServiceProviderConfig", "")
 	var cfg map[string]any

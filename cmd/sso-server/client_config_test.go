@@ -17,6 +17,7 @@ import (
 // require_par / require_signed_request_object, OIDC FCL, per-client
 // TTLs) when operators configured them via YAML.
 func TestBuildApp_ClientYAMLPropagatesAllFields(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Clients = []config.ClientConfig{
 		{
@@ -100,6 +101,7 @@ func TestBuildApp_ClientYAMLPropagatesAllFields(t *testing.T) {
 }
 
 func TestConvertClientJWKs_PreservesEveryField(t *testing.T) {
+	t.Parallel()
 	in := []config.ClientJWK{
 		{Kty: "RSA", Kid: "rsa-1", Use: "sig", Alg: "RS256", N: "MOD", E: "EXP"},
 		{Kty: "OKP", Kid: "ed-1", Use: "sig", Alg: "EdDSA", Crv: "Ed25519", X: "PUB"},
@@ -120,6 +122,7 @@ func TestConvertClientJWKs_PreservesEveryField(t *testing.T) {
 }
 
 func TestConvertClientJWKs_EmptyReturnsNil(t *testing.T) {
+	t.Parallel()
 	if got := serverbuildstore.ConvertClientJWKs(nil); got != nil {
 		t.Fatalf("nil input: got %v want nil", got)
 	}

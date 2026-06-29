@@ -19,6 +19,7 @@ func newClient(id string) *sso.Client {
 }
 
 func TestRedisClientStore_AddGetRoundTrip(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	cs := NewClientStore(rdb)
 	ctx := context.Background()
@@ -50,6 +51,7 @@ func TestRedisClientStore_AddGetRoundTrip(t *testing.T) {
 }
 
 func TestRedisClientStore_GetUnknown(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	cs := NewClientStore(rdb)
 	if _, err := cs.Get(context.Background(), "nope"); !errors.Is(err, sso.ErrNoSuchClient) {
@@ -58,6 +60,7 @@ func TestRedisClientStore_GetUnknown(t *testing.T) {
 }
 
 func TestRedisClientStore_AddDuplicate(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	cs := NewClientStore(rdb)
 	ctx := context.Background()
@@ -70,6 +73,7 @@ func TestRedisClientStore_AddDuplicate(t *testing.T) {
 }
 
 func TestRedisClientStore_UpdateMissingAndPresent(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	cs := NewClientStore(rdb)
 	ctx := context.Background()
@@ -95,6 +99,7 @@ func TestRedisClientStore_UpdateMissingAndPresent(t *testing.T) {
 }
 
 func TestRedisClientStore_DeleteIdempotent(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	cs := NewClientStore(rdb)
 	ctx := context.Background()
@@ -112,6 +117,7 @@ func TestRedisClientStore_DeleteIdempotent(t *testing.T) {
 }
 
 func TestRedisClientStore_List(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	cs := NewClientStore(rdb)
 	ctx := context.Background()
@@ -134,6 +140,7 @@ func TestRedisClientStore_List(t *testing.T) {
 }
 
 func TestRedisClientStore_RotateSecret(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	cs := NewClientStore(rdb)
 	ctx := context.Background()

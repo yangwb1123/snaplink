@@ -24,6 +24,7 @@ const (
 // vectors so a wrong hash, a wrong half, or std-vs-url base64 regresses
 // visibly. ES256/RS256/PS256 all hash with SHA-256; EdDSA with SHA-512.
 func TestAccessTokenHash_KnownAnswers(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		alg  string
 		want string
@@ -43,6 +44,7 @@ func TestAccessTokenHash_KnownAnswers(t *testing.T) {
 // SHA-256 digest halves to 16 bytes (22 base64url chars), SHA-512 to 32
 // bytes (43 chars). A confusion between the two would change the length.
 func TestAccessTokenHash_HalfLengths(t *testing.T) {
+	t.Parallel()
 	if l := len(accessTokenHash(jwtAlgES256, specAccessToken)); l != 22 {
 		t.Errorf("SHA-256 at_hash length = %d, want 22 (16-byte half)", l)
 	}
@@ -55,6 +57,7 @@ func TestAccessTokenHash_HalfLengths(t *testing.T) {
 // caller's omitempty drops the claim (at_hash is only REQUIRED alongside
 // an access_token).
 func TestAccessTokenHash_EmptyOmits(t *testing.T) {
+	t.Parallel()
 	if got := accessTokenHash(jwtAlgEdDSA, ""); got != "" {
 		t.Errorf("empty access_token = %q, want \"\"", got)
 	}
@@ -65,6 +68,7 @@ func TestAccessTokenHash_EmptyOmits(t *testing.T) {
 // omits the claim entirely when it is not — across Ed25519/ECDSA/RSA,
 // which share one id_token payload type.
 func TestIssueIDToken_AtHash(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		iss  oidc.IDTokenIssuer

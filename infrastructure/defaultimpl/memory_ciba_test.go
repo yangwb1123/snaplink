@@ -28,6 +28,7 @@ func sampleCIBA() *oauth.CIBARequest {
 }
 
 func TestMemoryCIBAStore_IssueGetRoundTrip(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryCIBAStore()
 	ctx := context.Background()
 	id, err := s.Issue(ctx, sampleCIBA())
@@ -47,6 +48,7 @@ func TestMemoryCIBAStore_IssueGetRoundTrip(t *testing.T) {
 }
 
 func TestMemoryCIBAStore_IssueRejectsInvalid(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryCIBAStore()
 	ctx := context.Background()
 	for _, r := range []*oauth.CIBARequest{nil, {ClientID: "c"}, {SubjectID: "u"}} {
@@ -57,6 +59,7 @@ func TestMemoryCIBAStore_IssueRejectsInvalid(t *testing.T) {
 }
 
 func TestMemoryCIBAStore_MissingAndExpiredCollapse(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryCIBAStore()
 	ctx := context.Background()
 	if _, err := s.Get(ctx, "nope"); !errors.Is(err, oauth.ErrCIBARequestNotFound) {
@@ -71,6 +74,7 @@ func TestMemoryCIBAStore_MissingAndExpiredCollapse(t *testing.T) {
 }
 
 func TestMemoryCIBAStore_SetStatusLifecycle(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryCIBAStore()
 	ctx := context.Background()
 	id, _ := s.Issue(ctx, sampleCIBA())
@@ -92,6 +96,7 @@ func TestMemoryCIBAStore_SetStatusLifecycle(t *testing.T) {
 }
 
 func TestMemoryCIBAStore_DeleteIdempotent(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryCIBAStore()
 	ctx := context.Background()
 	id, _ := s.Issue(ctx, sampleCIBA())

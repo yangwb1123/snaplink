@@ -12,6 +12,7 @@ import (
 // TestNew_StampsCurrentVersion proves a fresh sink runs all migrations
 // and stamps the current (highest) schema version.
 func TestNew_StampsCurrentVersion(t *testing.T) {
+	t.Parallel()
 	s, err := New("file:" + filepath.Join(t.TempDir(), "a.db"))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -32,6 +33,7 @@ func TestNew_StampsCurrentVersion(t *testing.T) {
 // adopted cleanly: NewWithDB succeeds, stamps the latest schema version,
 // and preserves pre-existing rows.
 func TestNewWithDB_AdoptsPreMigrationSchema(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "legacy.db")
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {

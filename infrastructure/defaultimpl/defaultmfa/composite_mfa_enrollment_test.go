@@ -36,6 +36,7 @@ func (f *fakeMFAStore) RemoveFactor(_ context.Context, userID, factorID string) 
 }
 
 func TestCompositeMFA_FanOutAndRouting(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	totp := NewMemoryTOTPEnrollmentStore()
 	_ = totp.AddTOTPFactor(ctx, "u-alice", "totp-1", "Phone", []byte("secret-bytes-1234567"))
@@ -71,6 +72,7 @@ func TestCompositeMFA_FanOutAndRouting(t *testing.T) {
 }
 
 func TestCompositeMFA_ForwardsTOTPEnrollmentWriter(t *testing.T) {
+	t.Parallel()
 	totp := NewMemoryTOTPEnrollmentStore()
 	other := newFakeMFAStore()
 

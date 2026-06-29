@@ -12,6 +12,7 @@ import (
 // yields a nil bus — single-node deployments invalidate locally and
 // must not be forced to stand up a bus.
 func TestBuildInvalidationBus_UnsetIsNil(t *testing.T) {
+	t.Parallel()
 	bus, kind, err := serverbuildplatform.BuildInvalidationBus(&config.ClusterBusConfig{}, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
@@ -26,6 +27,7 @@ func TestBuildInvalidationBus_UnsetIsNil(t *testing.T) {
 
 // TestBuildInvalidationBus_Memory proves the in-process backend wires up.
 func TestBuildInvalidationBus_Memory(t *testing.T) {
+	t.Parallel()
 	bus, kind, err := serverbuildplatform.BuildInvalidationBus(&config.ClusterBusConfig{Backend: "memory"}, quietLogger())
 	if err != nil {
 		t.Fatalf("err = %v", err)
@@ -40,6 +42,7 @@ func TestBuildInvalidationBus_Memory(t *testing.T) {
 // contract: the etcd path must fail fast with an operator-facing error
 // rather than dialing nothing.
 func TestBuildInvalidationBus_EtcdRequiresEndpoints(t *testing.T) {
+	t.Parallel()
 	_, _, err := serverbuildplatform.BuildInvalidationBus(&config.ClusterBusConfig{Backend: "etcd"}, quietLogger())
 	if err == nil {
 		t.Fatal("expected error when etcd_endpoints is empty")
@@ -51,6 +54,7 @@ func TestBuildInvalidationBus_EtcdRequiresEndpoints(t *testing.T) {
 
 // TestBuildInvalidationBus_UnknownBackendErrors guards YAML typos.
 func TestBuildInvalidationBus_UnknownBackendErrors(t *testing.T) {
+	t.Parallel()
 	_, _, err := serverbuildplatform.BuildInvalidationBus(&config.ClusterBusConfig{Backend: "mythical"}, quietLogger())
 	if err == nil {
 		t.Fatal("expected error for unknown backend")

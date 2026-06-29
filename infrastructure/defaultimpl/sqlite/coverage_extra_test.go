@@ -23,6 +23,7 @@ import (
 // branches that the happy-path tests never reach, and pins the contract that
 // a corrupt/migrating schema degrades to an error the caller can log.
 func TestDBErrorsAreWrappedNotPanicked(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// Open-DSN constructors migrate the schema, so the table exists to drop.
@@ -106,6 +107,7 @@ func TestDBErrorsAreWrappedNotPanicked(t *testing.T) {
 // happy-path tests skip: empty primary keys / nil payloads collapse to the
 // store's typed sentinel or a no-op, never an INSERT.
 func TestInputGuards_RejectEmptyArgs(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// AuthCode.Issue: empty code OR nil info → ErrAuthCodeNotFound.
@@ -159,6 +161,7 @@ func TestInputGuards_RejectEmptyArgs(t *testing.T) {
 // path opportunistically deletes an entry it finds expired, so a later
 // presentation looks like a vanilla unknown token rather than a stale row.
 func TestRefreshTokenStore_InspectGCsExpired(t *testing.T) {
+	t.Parallel()
 	rt := sqlite.NewRefreshTokenStoreWithDB(newSharedDB(t))
 	ctx := context.Background()
 	if err := rt.Issue(ctx, "exptok", &oauth.RefreshToken{
@@ -183,6 +186,7 @@ func TestRefreshTokenStore_InspectGCsExpired(t *testing.T) {
 // TestDeviceCodeStore_UpdateLastPollAndDeleteEdges covers the not-found and
 // idempotent-delete branches the happy-path state-machine test does not.
 func TestDeviceCodeStore_UpdateLastPollAndDeleteEdges(t *testing.T) {
+	t.Parallel()
 	st, err := sqlite.NewDeviceCodeStore("file:" + filepath.Join(t.TempDir(), "dc.db"))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -215,6 +219,7 @@ func TestDeviceCodeStore_UpdateLastPollAndDeleteEdges(t *testing.T) {
 // re-Put with an already-bcrypt secret is stored verbatim (no double-hash),
 // and an empty ID is rejected.
 func TestClientStore_Put_UpsertAndRehash(t *testing.T) {
+	t.Parallel()
 	st := newClientStore(t)
 	ctx := context.Background()
 
@@ -262,6 +267,7 @@ func TestClientStore_Put_UpsertAndRehash(t *testing.T) {
 // TestCIBAStore_Delete proves Delete removes the request (Get then collapses
 // to the not-found sentinel) and is idempotent on a missing/empty id.
 func TestCIBAStore_Delete(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "ciba.db") + "?_pragma=busy_timeout(5000)"
 	s, err := sqlite.NewCIBAStore(dsn)
 	if err != nil {
@@ -298,6 +304,7 @@ func TestCIBAStore_Delete(t *testing.T) {
 // original plaintext), a non-bcrypt value is rejected (never stored as a
 // fake hash), and an empty userID collapses to the mismatch sentinel.
 func TestPasswordStore_SetPasswordHash(t *testing.T) {
+	t.Parallel()
 	ps := newTestPasswordStore(t)
 	ctx := context.Background()
 
@@ -324,6 +331,7 @@ func TestPasswordStore_SetPasswordHash(t *testing.T) {
 // to end: record two failures, count them, then PruneOlder past their
 // timestamp removes them. Empty-ip and zero-cutoff guards are also covered.
 func TestIPFailureCounter_RecordCountPruneOlder(t *testing.T) {
+	t.Parallel()
 	c, err := sqlite.NewIPFailureCounter("file:" + filepath.Join(t.TempDir(), "ipf.db"))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -367,6 +375,7 @@ func TestIPFailureCounter_RecordCountPruneOlder(t *testing.T) {
 // per-family rotation limiter and proves: empty family is a no-op, the count
 // climbs per call, and crossing MaxRotationsPerWindow flips exceeded.
 func TestRefreshTokenStore_RecordRotation_VelocityCap(t *testing.T) {
+	t.Parallel()
 	s := sqlite.NewRefreshTokenStoreWithDB(newSharedDB(t))
 	s.MaxRotationsPerWindow = 2
 	s.RotationWindow = time.Hour
@@ -400,6 +409,7 @@ func TestRefreshTokenStore_RecordRotation_VelocityCap(t *testing.T) {
 // means the second rotation starts a fresh window at count 1 rather than
 // accumulating.
 func TestRefreshTokenStore_RecordRotation_WindowRollover(t *testing.T) {
+	t.Parallel()
 	s := sqlite.NewRefreshTokenStoreWithDB(newSharedDB(t))
 	s.MaxRotationsPerWindow = 5
 	s.RotationWindow = time.Millisecond
@@ -422,6 +432,7 @@ func TestRefreshTokenStore_RecordRotation_WindowRollover(t *testing.T) {
 // management credential is bcrypt-hashed at rest by Put (same as the secret),
 // covering the RAT re-hash branch.
 func TestClientStore_Put_HashesRegistrationAccessToken(t *testing.T) {
+	t.Parallel()
 	st := newClientStore(t)
 	ctx := context.Background()
 	if err := st.Put(ctx, &sso.Client{
@@ -442,6 +453,7 @@ func TestClientStore_Put_HashesRegistrationAccessToken(t *testing.T) {
 // every binding for the subject (and only that subject) and returns the
 // count.
 func TestDeviceSecretStore_RevokeBySubject(t *testing.T) {
+	t.Parallel()
 	s, err := sqlite.NewDeviceSecretStore("file:" + filepath.Join(t.TempDir(), "ds.db"))
 	if err != nil {
 		t.Fatalf("New: %v", err)

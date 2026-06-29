@@ -14,6 +14,7 @@ import (
 )
 
 func TestPutGet(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	st, err := file.New(dir)
 	if err != nil {
@@ -32,6 +33,7 @@ func TestPutGet(t *testing.T) {
 }
 
 func TestList(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	st, _ := file.New(dir)
 	for _, n := range []string{"a", "b", "c"} {
@@ -48,6 +50,7 @@ func TestList(t *testing.T) {
 }
 
 func TestDeleteIdempotent(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	st, _ := file.New(dir)
 	if err := st.Delete(context.Background(), "missing"); err != nil {
@@ -63,6 +66,7 @@ func TestDeleteIdempotent(t *testing.T) {
 }
 
 func TestSanitisesNames(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	st, _ := file.New(dir)
 	if err := st.Put(context.Background(), "ok/with..bad chars*", []byte("z")); err != nil {
@@ -84,6 +88,7 @@ func TestSanitisesNames(t *testing.T) {
 }
 
 func TestPutAtomic(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	st, _ := file.New(dir)
 	_ = st.Put(context.Background(), "x", []byte("v1"))
@@ -102,12 +107,14 @@ func TestPutAtomic(t *testing.T) {
 }
 
 func TestNew_RequiresBaseDir(t *testing.T) {
+	t.Parallel()
 	if _, err := file.New(""); err == nil {
 		t.Errorf("want error for empty baseDir")
 	}
 }
 
 func TestBaseDirReturnsAbs(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	st, _ := file.New(dir)
 	if !filepath.IsAbs(st.BaseDir()) {

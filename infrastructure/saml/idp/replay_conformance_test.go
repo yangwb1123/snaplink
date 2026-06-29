@@ -12,6 +12,7 @@ import (
 // identical dedup behavior. (samltest imports neither idp nor sp, so this
 // INTERNAL `package idp` test introduces no import cycle.)
 func TestLogoutReplayConformance_Memory(t *testing.T) {
+	t.Parallel()
 	samltest.ReplayConformance{
 		Factory: func(t *testing.T) samltest.ReplayChecker {
 			return newLogoutReplayStore(0)

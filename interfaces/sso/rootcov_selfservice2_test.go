@@ -23,6 +23,7 @@ import (
 // TestRcovSS2_TOTPEnroll covers POST /me/mfa/totp/begin (mint secret) and the
 // confirm error path (wrong code => totp_invalid_code).
 func TestRcovSS2_TOTPEnroll(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	enroller := authenticators.NewTOTPEnroller(totpAuth)
 	// The TOTP enrollment routes mount only when the MFA enrollment store also
@@ -70,6 +71,7 @@ func (r *rcovEmailSender) SendEmailChangeToken(_ context.Context, _, token strin
 // TestRcovSS2_EmailChange covers POST /me/email/change (request) and the verify
 // leg with the delivered token.
 func TestRcovSS2_EmailChange(t *testing.T) {
+	t.Parallel()
 	sender := &rcovEmailSender{}
 	s := rcovNewServer(t,
 		sso.WithEmailChangeStore(defaultimpl.NewMemoryEmailChangeStore(), 0),
@@ -107,6 +109,7 @@ func TestRcovSS2_EmailChange(t *testing.T) {
 
 // TestRcovSS2_Signup covers POST /auth/register self-service signup.
 func TestRcovSS2_Signup(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithSelfServiceSignup())
 
 	status, out := rcovPostJSON(t, s.http.URL+"/auth/register", "", map[string]any{
@@ -123,6 +126,7 @@ func TestRcovSS2_Signup(t *testing.T) {
 // TestRcovSS2_Branding covers GET /branding, which is mounted with a tenant store
 // and always returns 200 (non-enumerable).
 func TestRcovSS2_Branding(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithTenantStore(tenantmemory.New()))
 
 	resp := rcovGetJSON(t, s.http.URL+"/branding", nil)
@@ -134,6 +138,7 @@ func TestRcovSS2_Branding(t *testing.T) {
 // TestRcovSS2_PermissionsWithProvider covers the permission/menu/role self
 // endpoints when a provider is wired and the bearer subject has a role.
 func TestRcovSS2_PermissionsWithProvider(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(ctx, &sso.User{ID: rcovUser})

@@ -19,6 +19,7 @@ import (
 // entirely when mfa.enabled=false. Risk scorers returning
 // DecisionRequireMFA then decay to Allow (back-compat preserved).
 func TestBuildMFA_DisabledReturnsZeroes(t *testing.T) {
+	t.Parallel()
 	provider, store, ttl, mode, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{Enabled: false}, nil, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -35,6 +36,7 @@ func TestBuildMFA_DisabledReturnsZeroes(t *testing.T) {
 // the in-process MemoryMFAChallengeStore. Verifies the wired provider
 // reports the canonical "totp" method on the wire.
 func TestBuildMFA_TOTPWithMemoryStore(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	provider, store, ttl, mode, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled:  true,
@@ -70,6 +72,7 @@ func TestBuildMFA_TOTPWithMemoryStore(t *testing.T) {
 // store is exercised through one Put → Consume cycle to prove the
 // schema migrated at construction.
 func TestBuildMFA_TOTPWithSQLiteStore(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "mfa.db") + "?_journal=WAL"
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
@@ -117,6 +120,7 @@ func TestBuildMFA_TOTPWithSQLiteStore(t *testing.T) {
 // through to "totp" rather than erroring — saves config noise when the
 // only wired factor is TOTP anyway.
 func TestBuildMFA_KindDefaultsToTOTP(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	provider, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled:   true,
@@ -136,6 +140,7 @@ func TestBuildMFA_KindDefaultsToTOTP(t *testing.T) {
 // shared-secret-store contract requires the underlying authenticator
 // — without it the provider would silently have no users enrolled.
 func TestBuildMFA_TOTPRequiresTOTPAuth(t *testing.T) {
+	t.Parallel()
 	_, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "totp"},
@@ -150,6 +155,7 @@ func TestBuildMFA_TOTPRequiresTOTPAuth(t *testing.T) {
 // where an operator writes mfa.provider.kind=fido2 expecting it to
 // "just work". Fail loud — silent fallback to TOTP would surprise.
 func TestBuildMFA_UnknownKindRejected(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	_, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled:   true,
@@ -165,6 +171,7 @@ func TestBuildMFA_UnknownKindRejected(t *testing.T) {
 // fails loud when DSN is missing — silently falling back to memory
 // would defeat the cluster-shared invariant.
 func TestBuildMFA_SQLiteRequiresDSN(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	_, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled:   true,
@@ -179,6 +186,7 @@ func TestBuildMFA_SQLiteRequiresDSN(t *testing.T) {
 // TestBuildMFA_UnknownBackendRejected guards against config typos in
 // mfa.challenge.backend (e.g. "redis" before that lands).
 func TestBuildMFA_UnknownBackendRejected(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	_, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled:   true,
@@ -194,6 +202,7 @@ func TestBuildMFA_UnknownBackendRejected(t *testing.T) {
 // falls through to memory (matches the rest of cmd's backend
 // selectors).
 func TestBuildMFA_DefaultBackendIsMemory(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	_, store, _, mode, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled:   true,
@@ -217,6 +226,7 @@ func TestBuildMFA_DefaultBackendIsMemory(t *testing.T) {
 // default-policy decision single-source in the SDK rather than
 // scattered across config wrappers.
 func TestBuildMFA_ZeroTTLPassesThrough(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	_, _, ttl, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled:   true,
@@ -235,6 +245,7 @@ func TestBuildMFA_ZeroTTLPassesThrough(t *testing.T) {
 // wired store returns the spi.ErrMFAChallengeNotFound sentinel on
 // missing IDs — anti-enumeration depends on this.
 func TestBuildMFA_StoreSurfacesNotFoundSentinel(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	_, store, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled:   true,
@@ -255,6 +266,7 @@ func TestBuildMFA_StoreSurfacesNotFoundSentinel(t *testing.T) {
 // step-up adapter sharing the same Helper instance the primary
 // /webauthn/login/{begin,finish} routes use.
 func TestBuildMFA_WebAuthnWithMemoryStore(t *testing.T) {
+	t.Parallel()
 	helper, err := webauthn.NewHelper(webauthn.Config{
 		RPID:      "example.com",
 		RPOrigins: []string{"https://sso.example.com"},
@@ -289,6 +301,7 @@ func TestBuildMFA_WebAuthnWithMemoryStore(t *testing.T) {
 // kind=webauthn without a webauthn.enabled wiring. Silent fallthrough
 // (e.g. degrading to TOTP) would surprise operators.
 func TestBuildMFA_WebAuthnRequiresHelper(t *testing.T) {
+	t.Parallel()
 	_, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled:   true,
 		Provider:  config.MFAProviderConfig{Kind: "webauthn"},
@@ -317,6 +330,7 @@ func newTestWebAuthnHelper(t *testing.T) *webauthn.Helper {
 // dispatch path for WebAuthn still works alongside the single-call
 // TOTP factor.
 func TestBuildMFA_MultiKindComposesBothFactors(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	helper := newTestWebAuthnHelper(t)
 	provider, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
@@ -351,6 +365,7 @@ func TestBuildMFA_MultiKindComposesBothFactors(t *testing.T) {
 // Kinds list when kind=multi errors loudly — a one-element multi is
 // a misconfiguration (use the leaf kind directly).
 func TestBuildMFA_MultiRequiresTwoKinds(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	for _, tc := range []struct {
 		name  string
@@ -380,6 +395,7 @@ func TestBuildMFA_MultiRequiresTwoKinds(t *testing.T) {
 // flat (one level of composition; richer trees implement
 // MFAProvider directly in the SDK).
 func TestBuildMFA_MultiRejectsNestedMulti(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	_, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled: true,
@@ -399,6 +415,7 @@ func TestBuildMFA_MultiRejectsNestedMulti(t *testing.T) {
 // would also reject via method-conflict, but failing earlier (at
 // the YAML layer) gives operators a clearer error.
 func TestBuildMFA_MultiRejectsDuplicateKinds(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	_, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled: true,
@@ -418,6 +435,7 @@ func TestBuildMFA_MultiRejectsDuplicateKinds(t *testing.T) {
 // wrapped error naming which inner kind failed — operators see
 // the leaf kind in the error string for fast diagnosis.
 func TestBuildMFA_MultiPropagatesInnerKindError(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	_, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled: true,
@@ -436,6 +454,7 @@ func TestBuildMFA_MultiPropagatesInnerKindError(t *testing.T) {
 // reference PushMFAProvider with the default log transport + in-
 // process MemoryPushApprovalStore. Backend="" → memory fallthrough.
 func TestBuildMFA_PushKindWithMemoryStore(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled: true,
 		Provider: config.MFAProviderConfig{
@@ -465,6 +484,7 @@ func TestBuildMFA_PushKindWithMemoryStore(t *testing.T) {
 // path: PushApprovalStore backed by SQLite so Begin on one replica
 // is resolvable by the callback on another.
 func TestBuildMFA_PushKindWithSQLiteStore(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "push.db") + "?_journal=WAL"
 	provider, _, _, _, sqliteStore, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
@@ -496,6 +516,7 @@ func TestBuildMFA_PushKindWithSQLiteStore(t *testing.T) {
 // backend does NOT surface a SQLite handle (there is none). cmd
 // uses the nil signal to skip /readyz wiring for memory deployments.
 func TestBuildMFA_PushKindMemoryReturnsNilStore(t *testing.T) {
+	t.Parallel()
 	_, _, _, _, sqliteStore, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled: true,
 		Provider: config.MFAProviderConfig{
@@ -517,6 +538,7 @@ func TestBuildMFA_PushKindMemoryReturnsNilStore(t *testing.T) {
 // kind=multi + kinds=[totp, push] with push.backend=sqlite still
 // get the readyz handle.
 func TestBuildMFA_MultiWithPushSQLiteCapture(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "push.db") + "?_journal=WAL"
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
@@ -544,6 +566,7 @@ func TestBuildMFA_MultiWithPushSQLiteCapture(t *testing.T) {
 // kind=push backend=sqlite without a DSN (same fail-loud pattern
 // as every other sqlite backend slot).
 func TestBuildMFA_PushKindRequiresSQLiteDSN(t *testing.T) {
+	t.Parallel()
 	_, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled: true,
 		Provider: config.MFAProviderConfig{
@@ -559,6 +582,7 @@ func TestBuildMFA_PushKindRequiresSQLiteDSN(t *testing.T) {
 
 // TestBuildMFA_PushKindRejectsUnknownBackend covers the typo case.
 func TestBuildMFA_PushKindRejectsUnknownBackend(t *testing.T) {
+	t.Parallel()
 	_, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled: true,
 		Provider: config.MFAProviderConfig{
@@ -576,6 +600,7 @@ func TestBuildMFA_PushKindRejectsUnknownBackend(t *testing.T) {
 // for the transport selector (log + webhook ship today; others
 // would surprise an operator into silent push-delivery failures).
 func TestBuildMFA_PushKindRejectsUnknownTransport(t *testing.T) {
+	t.Parallel()
 	_, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled: true,
 		Provider: config.MFAProviderConfig{
@@ -593,6 +618,7 @@ func TestBuildMFA_PushKindRejectsUnknownTransport(t *testing.T) {
 // a URL builds successfully. The transport itself is exercised in
 // defaultimpl/push_webhook_test.go.
 func TestBuildMFA_PushWebhookHappyPath(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled: true,
 		Provider: config.MFAProviderConfig{
@@ -618,6 +644,7 @@ func TestBuildMFA_PushWebhookHappyPath(t *testing.T) {
 // flip transport=webhook without setting URL would otherwise get
 // silent push-delivery failures.
 func TestBuildMFA_PushWebhookRequiresURL(t *testing.T) {
+	t.Parallel()
 	_, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled: true,
 		Provider: config.MFAProviderConfig{
@@ -638,6 +665,7 @@ func TestBuildMFA_PushWebhookRequiresURL(t *testing.T) {
 // signal) — so this is a smoke test that serverbuildstore.BuildMFA at least accepts
 // the YAML knobs without erroring.
 func TestBuildMFA_PushKindAppliesPollAndMaxWait(t *testing.T) {
+	t.Parallel()
 	provider, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled: true,
 		Provider: config.MFAProviderConfig{
@@ -660,6 +688,7 @@ func TestBuildMFA_PushKindAppliesPollAndMaxWait(t *testing.T) {
 // TestBuildMFA_MultiWithPushInner proves push works alongside
 // totp + webauthn in a kind=multi composition.
 func TestBuildMFA_MultiWithPushInner(t *testing.T) {
+	t.Parallel()
 	totpAuth := authenticators.NewTOTPAuthenticator(authenticators.NewMemoryTOTPStore())
 	provider, _, _, _, _, _, err := serverbuildstore.BuildMFA(config.MFAConfig{
 		Enabled: true,

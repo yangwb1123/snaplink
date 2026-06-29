@@ -12,6 +12,7 @@ import (
 // fired). This locks the contract: only the conventional not-found shapes are
 // benign; every other error is a genuine failure the caller MUST surface.
 func TestIsUnknownTokenErr(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		err  error
@@ -41,6 +42,7 @@ func TestIsUnknownTokenErr(t *testing.T) {
 // or malformed input reports "no JWS alg" so it passes through to the
 // session/opaque issuers untouched.
 func TestJWSHeaderAlg(t *testing.T) {
+	t.Parallel()
 	jws := func(headerJSON string) string {
 		h := base64.RawURLEncoding.EncodeToString([]byte(headerJSON))
 		return h + ".eyJzdWIiOiJ4In0.sig"

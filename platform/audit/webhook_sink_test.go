@@ -16,6 +16,7 @@ import (
 )
 
 func TestWebhookSink_PostsJSON(t *testing.T) {
+	t.Parallel()
 	var (
 		mu       sync.Mutex
 		received []audit.Event
@@ -64,6 +65,7 @@ func TestWebhookSink_PostsJSON(t *testing.T) {
 }
 
 func TestWebhookSink_4xxReturnsError(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 	}))
@@ -77,6 +79,7 @@ func TestWebhookSink_4xxReturnsError(t *testing.T) {
 }
 
 func TestWebhookSink_GetAndQueryWriteOnly(t *testing.T) {
+	t.Parallel()
 	s := audit.NewWebhookSink("http://nope.invalid")
 	if _, err := s.Get(context.Background(), "x"); !errors.Is(err, audit.ErrSinkWriteOnly) {
 		t.Errorf("Get: expected ErrSinkWriteOnly, got %v", err)
@@ -87,6 +90,7 @@ func TestWebhookSink_GetAndQueryWriteOnly(t *testing.T) {
 }
 
 func TestWebhookSink_OptionsApplyCleanly(t *testing.T) {
+	t.Parallel()
 	// Smoke: every Option must construct without panic. Behavior of the
 	// final wired client is exercised below in NetworkErrorPropagates.
 	custom := &http.Client{Timeout: 250 * time.Millisecond}
@@ -98,6 +102,7 @@ func TestWebhookSink_OptionsApplyCleanly(t *testing.T) {
 }
 
 func TestWebhookSink_NetworkErrorPropagates(t *testing.T) {
+	t.Parallel()
 	// Bind a port then immediately close it. Subsequent POSTs to that address
 	// fail at the transport layer — covers WebhookSink.Record's error branch
 	// without depending on httptest connection lifecycle.

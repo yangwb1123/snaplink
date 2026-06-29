@@ -102,6 +102,7 @@ func TestReceiverOptions_AllApplied(t *testing.T) {
 // metric leg + WithReceiverMetric). ---
 
 func TestReceiver_RejectedMetric(t *testing.T) {
+	t.Parallel()
 	metric := &capturingMetric{}
 	f := newRcvFixture(t, caep.WithReceiverMetric(metric.record))
 	if _, err := f.receiver.Receive(context.Background(), "not-a-jws"); err != nil {
@@ -116,6 +117,7 @@ func TestReceiver_RejectedMetric(t *testing.T) {
 // happy + valid-but-noop paths). ---
 
 func TestReceiver_RevokedAndNoopMetrics(t *testing.T) {
+	t.Parallel()
 	metric := &capturingMetric{}
 	f := newRcvFixture(t, caep.WithReceiverMetric(metric.record))
 
@@ -142,6 +144,7 @@ func TestReceiver_RevokedAndNoopMetrics(t *testing.T) {
 // trust bundle). The pre-parse iss-read failure path. ---
 
 func TestReceiver_NoIssuer_Rejected(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	claims := sessionRevokedSET(rcvLocalUser, "jti-noiss")
 	delete(claims, "iss")
@@ -166,6 +169,7 @@ func TestReceiver_NoIssuer_Rejected(t *testing.T) {
 // replay guard). ---
 
 func TestReceiver_NoJTI_Rejected(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	claims := sessionRevokedSET(rcvLocalUser, "ignored")
 	delete(claims, "jti")
@@ -187,6 +191,7 @@ func TestReceiver_NoJTI_Rejected(t *testing.T) {
 // fallback (covers inboundSETClaims.subjectID()'s sub-fallback branch). ---
 
 func TestReceiver_TopLevelSubFallback_Revokes(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	now := time.Now()
 	claims := map[string]any{
@@ -213,6 +218,7 @@ func TestReceiver_TopLevelSubFallback_Revokes(t *testing.T) {
 // acked + no-op. ---
 
 func TestReceiver_NoSubject_AckedNoop(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	now := time.Now()
 	claims := map[string]any{
@@ -241,6 +247,7 @@ func TestReceiver_NoSubject_AckedNoop(t *testing.T) {
 // single-string UnmarshalJSON path through the full pipeline). ---
 
 func TestReceiver_SingleStringAud_Binds(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	claims := sessionRevokedSET(rcvLocalUser, "jti-strAud")
 	claims["aud"] = rcvAudience // a bare string, not []string
@@ -600,6 +607,7 @@ func TestStoreRevoker_RefreshListError_Collected(t *testing.T) {
 // transmitter's configured subject mode maps to NOTHING. ---
 
 func TestReceiver_OpaqueMode_IssSubFormatSubject_NoMap(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t) // opaque-mode transmitter
 	now := time.Now()
 	claims := map[string]any{
@@ -626,6 +634,7 @@ func TestReceiver_OpaqueMode_IssSubFormatSubject_NoMap(t *testing.T) {
 }
 
 func TestReceiver_OpaqueMode_EmptyID_NoMap(t *testing.T) {
+	t.Parallel()
 	f := newRcvFixture(t)
 	now := time.Now()
 	claims := map[string]any{
@@ -651,6 +660,7 @@ func TestReceiver_OpaqueMode_EmptyID_NoMap(t *testing.T) {
 // format-mismatch). Also covers the iss_sub empty-sub branch. ---
 
 func TestReceiver_IssSubMode_OpaqueFormatSubject_NoMap(t *testing.T) {
+	t.Parallel()
 	f := newIssSubRcvFixture(t)
 	now := time.Now()
 	claims := map[string]any{

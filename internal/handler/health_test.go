@@ -13,6 +13,7 @@ import (
 // TestHandleLivez locks the liveness probe: always 200 with the alive body and
 // JSON content type.
 func TestHandleLivez(t *testing.T) {
+	t.Parallel()
 	rec := httptest.NewRecorder()
 	HandleLivez(rec, httptest.NewRequest(http.MethodGet, "/livez", nil))
 	if rec.Code != http.StatusOK {
@@ -46,6 +47,7 @@ func newEchoHandler(reached *bool) http.Handler {
 // over-sized declared body is rejected with 413 BEFORE the downstream handler
 // runs, and the body carries the payload_too_large error code.
 func TestBodyLimitMiddleware_PreCheck413(t *testing.T) {
+	t.Parallel()
 	var reached bool
 	mw := BodyLimitMiddleware(10, nil)
 	h := mw(newEchoHandler(&reached))
@@ -72,6 +74,7 @@ func TestBodyLimitMiddleware_PreCheck413(t *testing.T) {
 // TestBodyLimitMiddleware_UnderLimitPasses covers the happy path: a body within
 // the cap reaches the downstream handler and returns 200.
 func TestBodyLimitMiddleware_UnderLimitPasses(t *testing.T) {
+	t.Parallel()
 	var reached bool
 	mw := BodyLimitMiddleware(100, nil)
 	h := mw(newEchoHandler(&reached))
@@ -91,6 +94,7 @@ func TestBodyLimitMiddleware_UnderLimitPasses(t *testing.T) {
 // TestBodyLimitMiddleware_Unlimited covers the 0=unlimited default: no cap, no
 // pre-check, no MaxBytesReader wrap — even a large declared body passes through.
 func TestBodyLimitMiddleware_Unlimited(t *testing.T) {
+	t.Parallel()
 	var reached bool
 	mw := BodyLimitMiddleware(0, nil)
 	h := mw(newEchoHandler(&reached))
@@ -113,6 +117,7 @@ func TestBodyLimitMiddleware_Unlimited(t *testing.T) {
 // unlimited for that path even while a global cap is in effect, and unmatched
 // paths fall back to the global default.
 func TestBodyLimitMiddleware_LongestPrefixOverride(t *testing.T) {
+	t.Parallel()
 	byPath := map[string]int64{
 		"/api":            5,    // short prefix, tight cap
 		"/api/v1/scim":    1000, // longer prefix, generous cap
@@ -160,6 +165,7 @@ func TestBodyLimitMiddleware_LongestPrefixOverride(t *testing.T) {
 // path: the pre-check can't fire, so the MaxBytesReader streaming guard must
 // reject an over-sized body when the downstream handler reads it.
 func TestBodyLimitMiddleware_StreamingGuard(t *testing.T) {
+	t.Parallel()
 	var reached bool
 	mw := BodyLimitMiddleware(8, nil)
 	h := mw(newEchoHandler(&reached))

@@ -20,6 +20,7 @@ func newStore(t *testing.T) *csqlite.Store {
 }
 
 func TestSQLite_HomeRealmDiscoveryAndCRUD(t *testing.T) {
+	t.Parallel()
 	s := newStore(t)
 	ctx := context.Background()
 	if err := s.Upsert(ctx, &connections.Connection{

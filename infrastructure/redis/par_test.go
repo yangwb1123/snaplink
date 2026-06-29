@@ -11,6 +11,7 @@ import (
 )
 
 func TestPARIssueConsume(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewPARStore(rdb)
 	ctx := context.Background()
@@ -41,6 +42,7 @@ func TestPARIssueConsume(t *testing.T) {
 // TestPAROracleLeak enumerates the §2 indistinguishable failures — each
 // must return exactly ErrPARNotFound.
 func TestPAROracleLeak(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	s := NewPARStore(rdb)
 	ctx := context.Background()
@@ -68,6 +70,7 @@ func TestPAROracleLeak(t *testing.T) {
 }
 
 func TestPARSingleUseRace(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewPARStore(rdb)
 	ctx := context.Background()

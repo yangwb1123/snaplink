@@ -10,10 +10,12 @@ import (
 )
 
 func TestNew_SatisfiesInterface(t *testing.T) {
+	t.Parallel()
 	var _ lock.Lock = noop.New()
 }
 
 func TestTryAcquire_AlwaysSucceeds(t *testing.T) {
+	t.Parallel()
 	l := noop.New()
 	h, err := l.TryAcquire(context.Background(), "any-key", time.Second)
 	if err != nil {
@@ -25,6 +27,7 @@ func TestTryAcquire_AlwaysSucceeds(t *testing.T) {
 }
 
 func TestHandle_RenewReleaseAreIdempotent(t *testing.T) {
+	t.Parallel()
 	l := noop.New()
 	h, _ := l.TryAcquire(context.Background(), "k", time.Second)
 
@@ -41,6 +44,7 @@ func TestHandle_RenewReleaseAreIdempotent(t *testing.T) {
 }
 
 func TestHandle_FencingTokenIsZero(t *testing.T) {
+	t.Parallel()
 	// Contract: noop has no monotonic token because nothing's actually
 	// fenced. Document it via test so the operator's mental model of
 	// "noop returns 0" stays sticky.
@@ -52,6 +56,7 @@ func TestHandle_FencingTokenIsZero(t *testing.T) {
 }
 
 func TestConcurrentAcquireOK(t *testing.T) {
+	t.Parallel()
 	// Even though noop doesn't actually serialize, simultaneous calls
 	// must not panic or race.
 	l := noop.New()

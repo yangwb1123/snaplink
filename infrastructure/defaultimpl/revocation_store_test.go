@@ -13,6 +13,7 @@ import (
 )
 
 func TestMemoryRevocationStore_RoundTripAndPrune(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryRevocationStore()
 	future := time.Now().Add(time.Hour).Unix()
@@ -87,10 +88,12 @@ func runRevocationRestart(t *testing.T, store defaultimpl.RevocationStore) {
 }
 
 func TestEd25519Issuer_RevocationSurvivesRestart_Memory(t *testing.T) {
+	t.Parallel()
 	runRevocationRestart(t, defaultimpl.NewMemoryRevocationStore())
 }
 
 func TestEd25519Issuer_RevocationSurvivesRestart_SQLite(t *testing.T) {
+	t.Parallel()
 	store, err := sqlite.NewRevocationStore("file:" + t.TempDir() + "/rev.db")
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +103,7 @@ func TestEd25519Issuer_RevocationSurvivesRestart_SQLite(t *testing.T) {
 }
 
 func TestEd25519Issuer_NilStore_SeedNoOp(t *testing.T) {
+	t.Parallel()
 	// nil store: SeedRevocations is a byte-identical no-op (no regression for
 	// the in-process-only default).
 	iss := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("iss"))

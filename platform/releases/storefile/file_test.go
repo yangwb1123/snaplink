@@ -30,6 +30,7 @@ func newStore(t *testing.T) *file.Store {
 }
 
 func TestRegister_GetRoundTripPersistsToDisk(t *testing.T) {
+	t.Parallel()
 	s := newStore(t)
 	ctx := context.Background()
 	if err := s.Register(ctx, validRelease("rel-1")); err != nil {
@@ -49,6 +50,7 @@ func TestRegister_GetRoundTripPersistsToDisk(t *testing.T) {
 }
 
 func TestRegister_RejectsDuplicate(t *testing.T) {
+	t.Parallel()
 	s := newStore(t)
 	ctx := context.Background()
 	_ = s.Register(ctx, validRelease("rel-1"))
@@ -58,6 +60,7 @@ func TestRegister_RejectsDuplicate(t *testing.T) {
 }
 
 func TestList_SortedByID(t *testing.T) {
+	t.Parallel()
 	s := newStore(t)
 	ctx := context.Background()
 	for _, id := range []string{"rel-c", "rel-a", "rel-b"} {
@@ -73,6 +76,7 @@ func TestList_SortedByID(t *testing.T) {
 }
 
 func TestSetCurrent_AndCurrent_PersistViaCURRENTFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ctx := context.Background()
 
@@ -94,6 +98,7 @@ func TestSetCurrent_AndCurrent_PersistViaCURRENTFile(t *testing.T) {
 }
 
 func TestDelete_RemovesFileAndClearsCurrent(t *testing.T) {
+	t.Parallel()
 	s := newStore(t)
 	ctx := context.Background()
 	_ = s.Register(ctx, validRelease("rel-1"))
@@ -110,6 +115,7 @@ func TestDelete_RemovesFileAndClearsCurrent(t *testing.T) {
 }
 
 func TestSetCurrent_UnknownReleaseIsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newStore(t)
 	if err := s.SetCurrent(context.Background(), "ghost"); !errors.Is(err, releases.ErrReleaseNotFound) {
 		t.Fatalf("err = %v", err)
@@ -117,6 +123,7 @@ func TestSetCurrent_UnknownReleaseIsNotFound(t *testing.T) {
 }
 
 func TestGet_MissingIsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newStore(t)
 	if _, err := s.Get(context.Background(), "ghost"); !errors.Is(err, releases.ErrReleaseNotFound) {
 		t.Fatalf("err = %v", err)
@@ -124,6 +131,7 @@ func TestGet_MissingIsNotFound(t *testing.T) {
 }
 
 func TestSanitizedID_StoredUnderSafeName(t *testing.T) {
+	t.Parallel()
 	s := newStore(t)
 	ctx := context.Background()
 	r := validRelease("rel/with:slashes")

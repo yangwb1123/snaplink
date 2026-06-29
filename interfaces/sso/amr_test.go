@@ -7,6 +7,7 @@ import (
 )
 
 func TestAMRForResult(t *testing.T) {
+	t.Parallel()
 	// Authenticator-recorded methods win over the OAuth provider id.
 	if got := handler.AmrForResult(&AuthResult{Provider: "password", AuthMethods: []string{"pwd"}}); !reflect.DeepEqual(got, []string{"pwd"}) {
 		t.Errorf("handler.AmrForResult with AuthMethods = %v, want [pwd]", got)
@@ -30,6 +31,7 @@ func TestAMRForResult(t *testing.T) {
 }
 
 func TestWithMFAMethod(t *testing.T) {
+	t.Parallel()
 	// totp maps to the RFC 8176 "otp" value, plus the "mfa" marker.
 	if got := handler.WithMFAMethod([]string{"pwd"}, "totp"); !reflect.DeepEqual(got, []string{"pwd", "otp", "mfa"}) {
 		t.Errorf("handler.WithMFAMethod totp = %v, want [pwd otp mfa]", got)

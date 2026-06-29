@@ -12,6 +12,7 @@ import (
 )
 
 func TestWriterSink_RecordWritesJSONL(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	s := audit.NewWriterSink(&buf)
 
@@ -48,6 +49,7 @@ func TestWriterSink_RecordWritesJSONL(t *testing.T) {
 }
 
 func TestWriterSink_GetAndQueryReturnErrSinkWriteOnly(t *testing.T) {
+	t.Parallel()
 	s := audit.NewWriterSink(&bytes.Buffer{})
 
 	if _, err := s.Get(context.Background(), "x"); !errors.Is(err, audit.ErrSinkWriteOnly) {
@@ -65,6 +67,7 @@ type failingWriter struct{ err error }
 func (f failingWriter) Write(_ []byte) (int, error) { return 0, f.err }
 
 func TestWriterSink_PropagatesWriteError(t *testing.T) {
+	t.Parallel()
 	target := errors.New("disk full")
 	s := audit.NewWriterSink(failingWriter{err: target})
 	err := s.Record(context.Background(), &audit.Event{Type: audit.EventLogin})

@@ -18,6 +18,7 @@ import (
 // objects with bcrypt password_hash. Empty rows (no email/user_id) are
 // skipped; the hash format is auto-detected.
 func TestParseAuth0(t *testing.T) {
+	t.Parallel()
 	in := `[
 		{"user_id":"auth0|abc","email":"a@example.com","name":"Alice","password_hash":"$2b$10$abcdefghijklmnopqrstuv"},
 		{"user_id":"","email":"","name":"empty"},
@@ -43,6 +44,7 @@ func TestParseAuth0(t *testing.T) {
 }
 
 func TestParseAuth0_BadJSON(t *testing.T) {
+	t.Parallel()
 	if _, err := parseInput("auth0", strings.NewReader("not json")); err == nil {
 		t.Fatal("expected decode error for malformed auth0 json")
 	}
@@ -52,6 +54,7 @@ func TestParseAuth0_BadJSON(t *testing.T) {
 // ({"users":[...]}) including pbkdf2-sha256 hash reconstruction and the
 // firstName+lastName name join.
 func TestParseKeycloak_RealmObject(t *testing.T) {
+	t.Parallel()
 	in := `{
 		"realm":"demo",
 		"users":[
@@ -87,6 +90,7 @@ func TestParseKeycloak_RealmObject(t *testing.T) {
 // so a bare array imports correctly (it previously failed with a decode
 // error because Decode was called expecting another '[').
 func TestParseKeycloak_BareArrayBranch(t *testing.T) {
+	t.Parallel()
 	in := `[
 		{"id":"kc-2","username":"bob","email":"b@kc.example"},
 		{"id":"kc-3","username":"carol","email":"c@kc.example"}
@@ -107,6 +111,7 @@ func TestParseKeycloak_BareArrayBranch(t *testing.T) {
 // and bcrypt branches of extractKeycloakHash, plus the unknown-algorithm
 // fallback (no hash).
 func TestParseKeycloak_HashVariants(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name       string
 		alg        string
@@ -144,6 +149,7 @@ func TestParseKeycloak_HashVariants(t *testing.T) {
 // TestParseKeycloak_NonPasswordCredentialSkipped — a credential whose
 // type isn't "password" (e.g. otp) must be ignored, leaving no hash.
 func TestParseKeycloak_NonPasswordCredentialSkipped(t *testing.T) {
+	t.Parallel()
 	in := `{"users":[{"id":"u","username":"u","credentials":[{"type":"otp","secretData":"{}","credentialData":"{}"}]}]}`
 	users, err := parseInput("keycloak", strings.NewReader(in))
 	if err != nil {
@@ -160,6 +166,7 @@ func TestParseKeycloak_NonPasswordCredentialSkipped(t *testing.T) {
 // extractKeycloakHash (invalid JSON in secretData → credential
 // ignored, leaving no hash).
 func TestParseKeycloak_SkipsUnknownFieldsAndBadSecretData(t *testing.T) {
+	t.Parallel()
 	in := `{
 		"id":"realm-uuid",
 		"realm":"demo",
@@ -184,6 +191,7 @@ func TestParseKeycloak_SkipsUnknownFieldsAndBadSecretData(t *testing.T) {
 // TestParseKeycloak_BadCredentialData covers the CredentialData
 // unmarshal-failure skip in extractKeycloakHash.
 func TestParseKeycloak_BadCredentialData(t *testing.T) {
+	t.Parallel()
 	in := `{"users":[{"id":"u","username":"u","credentials":[{"type":"password",` +
 		`"secretData":"{\"value\":\"v\",\"salt\":\"s\"}","credentialData":"not-json"}]}]}`
 	users, err := parseInput("keycloak", strings.NewReader(in))
@@ -196,6 +204,7 @@ func TestParseKeycloak_BadCredentialData(t *testing.T) {
 }
 
 func TestParseKeycloak_BadJSON(t *testing.T) {
+	t.Parallel()
 	if _, err := parseInput("keycloak", strings.NewReader("garbage")); err == nil {
 		t.Fatal("expected error for malformed keycloak json")
 	}
@@ -204,6 +213,7 @@ func TestParseKeycloak_BadJSON(t *testing.T) {
 // TestParseKeycloak_UnexpectedToken — a top-level scalar (not [ or {)
 // is rejected.
 func TestParseKeycloak_UnexpectedToken(t *testing.T) {
+	t.Parallel()
 	if _, err := parseInput("keycloak", strings.NewReader(`"a string"`)); err == nil {
 		t.Fatal("expected error for non-array/object top-level token")
 	}
@@ -213,6 +223,7 @@ func TestParseKeycloak_UnexpectedToken(t *testing.T) {
 // auto-detected hash formats, the username-only row, and skipping of
 // rows with neither username nor email.
 func TestParseCSV(t *testing.T) {
+	t.Parallel()
 	in := "Username,Email,Name,Password_Hash,Hash_Format\n" +
 		"alice,a@example.com,Alice,$2a$10$xxxxxxxxxxxxxxxxxxxxxx,\n" + // auto-detect bcrypt
 		"bob,b@example.com,Bob,deadbeef,pbkdf2-sha256\n" + // explicit format
@@ -237,6 +248,7 @@ func TestParseCSV(t *testing.T) {
 }
 
 func TestParseCSV_BadHeader(t *testing.T) {
+	t.Parallel()
 	// An unterminated quote in the header makes the first Read fail.
 	if _, err := parseInput("csv", strings.NewReader("\"unterminated")); err == nil {
 		t.Fatal("expected error reading malformed csv header")
@@ -244,6 +256,7 @@ func TestParseCSV_BadHeader(t *testing.T) {
 }
 
 func TestParseCSV_BadRow(t *testing.T) {
+	t.Parallel()
 	// Wrong field count on a data row surfaces as a per-line error.
 	in := "email,name\na@example.com,Alice,extra\n"
 	if _, err := parseInput("csv", strings.NewReader(in)); err == nil {
@@ -252,6 +265,7 @@ func TestParseCSV_BadRow(t *testing.T) {
 }
 
 func TestParseInput_UnknownFormat(t *testing.T) {
+	t.Parallel()
 	if _, err := parseInput("ldif", strings.NewReader("")); err == nil {
 		t.Fatal("expected error for unknown format")
 	}
@@ -260,6 +274,7 @@ func TestParseInput_UnknownFormat(t *testing.T) {
 // ---- hash detection ----
 
 func TestDetectHashFormat(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"$2a$10$abc":          "bcrypt",
 		"$2b$10$abc":          "bcrypt",
@@ -280,6 +295,7 @@ func TestDetectHashFormat(t *testing.T) {
 // ---- ID derivation ----
 
 func TestDeriveID(t *testing.T) {
+	t.Parallel()
 	if got := deriveID("auth0|abc", "x@y.z", "auth0"); got != "auth0:auth0_abc" {
 		t.Errorf("source-id derive = %q; want sanitized provider:source", got)
 	}
@@ -294,6 +310,7 @@ func TestDeriveID(t *testing.T) {
 }
 
 func TestSanitizeID(t *testing.T) {
+	t.Parallel()
 	got := sanitizeID("auth0|a\x00b\nc\rd")
 	if strings.ContainsAny(got, "|\x00\n\r") {
 		t.Errorf("sanitizeID left problematic chars: %q", got)
@@ -306,6 +323,7 @@ func TestSanitizeID(t *testing.T) {
 // ---- openInput ----
 
 func TestOpenInput_File(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "in.json")
 	if err := os.WriteFile(path, []byte("[]"), 0o600); err != nil {
 		t.Fatal(err)
@@ -322,6 +340,7 @@ func TestOpenInput_File(t *testing.T) {
 }
 
 func TestOpenInput_Stdin(t *testing.T) {
+	t.Parallel()
 	rc, err := openInput("-")
 	if err != nil {
 		t.Fatalf("openInput(-): %v", err)
@@ -333,6 +352,7 @@ func TestOpenInput_Stdin(t *testing.T) {
 }
 
 func TestOpenInput_Missing(t *testing.T) {
+	t.Parallel()
 	if _, err := openInput(filepath.Join(t.TempDir(), "nope.json")); err == nil {
 		t.Fatal("expected error opening a missing file")
 	}
@@ -352,6 +372,7 @@ func newTestProvider(t *testing.T) *sqlite.UserProvider {
 }
 
 func TestOpenDB_BadDSN(t *testing.T) {
+	t.Parallel()
 	if _, err := openDB("file:/nonexistent-dir-zzz/users.db?mode=ro"); err == nil {
 		t.Fatal("expected error opening DB in a missing directory")
 	}
@@ -360,6 +381,7 @@ func TestOpenDB_BadDSN(t *testing.T) {
 // TestToSSOUser confirms hash + format land in Attributes and that a
 // user with no hash gets an empty attribute map (no stray keys).
 func TestToSSOUser(t *testing.T) {
+	t.Parallel()
 	withHash := toSSOUser(importedUser{
 		ID: "id-1", ExternalID: "ext", Provider: "auth0",
 		Email: "a@b.c", Name: "A", Hash: "$2b$h", HashFormat: "bcrypt",
@@ -378,6 +400,7 @@ func TestToSSOUser(t *testing.T) {
 // real SQLite DB, then re-reads to confirm the rows + hash attributes
 // persisted, and that a second import upserts rather than erroring.
 func TestRunImport_PersistsAndUpserts(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	users := []importedUser{
 		{ID: "auth0:1", ExternalID: "1", Provider: "auth0", Email: "a@x.z", Name: "A", Hash: "$2b$h", HashFormat: "bcrypt"},
@@ -418,6 +441,7 @@ func TestRunImport_PersistsAndUpserts(t *testing.T) {
 // TestRunImport_SkipsBadRows — a user with an empty ID fails the write
 // and is reported as skipped without aborting the whole run.
 func TestRunImport_SkipsBadRows(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	users := []importedUser{
 		{ID: "", Email: "bad@x.z"},    // empty ID → CreateOrUpdate errors
@@ -436,6 +460,7 @@ func TestRunImport_SkipsBadRows(t *testing.T) {
 // TestRunImport_DefaultBatchSize — a non-positive batch size falls back
 // to the default rather than dividing by zero / looping forever.
 func TestRunImport_DefaultBatchSize(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	users := []importedUser{{ID: "x:1", Email: "x@x.z"}}
 	if err := runImport(context.Background(), p, users, 0); err != nil {
@@ -451,6 +476,7 @@ func TestRunImport_DefaultBatchSize(t *testing.T) {
 // TestRunDryRun_TruncatesPreview — with more than the preview cap, the
 // summary prints the count, the first N, and an "and M more" line.
 func TestRunDryRun_TruncatesPreview(t *testing.T) {
+	t.Parallel()
 	var users []importedUser
 	for i := 0; i < 8; i++ {
 		users = append(users, importedUser{
@@ -472,6 +498,7 @@ func TestRunDryRun_TruncatesPreview(t *testing.T) {
 // TestRunDryRun_NoHash — a user with no hash shows the "(no hash)"
 // marker and no truncation line when under the preview cap.
 func TestRunDryRun_NoHash(t *testing.T) {
+	t.Parallel()
 	out := captureStdout(t, func() {
 		runDryRun([]importedUser{{ID: "id-1", Email: "a@x.z"}})
 	})
@@ -489,6 +516,7 @@ func TestRunDryRun_NoHash(t *testing.T) {
 // repeated calls are safe. args carry NO leading program name — the
 // dispatcher strips it before calling Run.
 func TestRun_DryRun(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "users.csv")
 	if err := os.WriteFile(path, []byte("email,name\na@x.z,Alice\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -509,6 +537,7 @@ func TestRun_DryRun(t *testing.T) {
 // → parseInput → openDB → runImport → return 0) against a real SQLite DB,
 // then confirms the row landed.
 func TestRun_FullImport(t *testing.T) {
+	t.Parallel()
 	csvPath := filepath.Join(t.TempDir(), "users.csv")
 	if err := os.WriteFile(csvPath, []byte("email,name,password_hash\nm@x.z,Mallory,$2b$10$abc\n"), 0o600); err != nil {
 		t.Fatal(err)

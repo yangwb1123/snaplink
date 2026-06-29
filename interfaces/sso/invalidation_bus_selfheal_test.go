@@ -234,6 +234,7 @@ func primeAndExpectInvalidated(t *testing.T, srv *Server, bus cluster.Bus, tenan
 // readiness ok, up back to 1, an Event flows again — and (c) emits exactly ONE
 // degraded audit event + reconnect tick per transition (and one recovered).
 func TestInvalidationBus_SelfHealsOnChannelClose(t *testing.T) {
+	t.Parallel()
 	bus := newFlakyBus()
 	defer func() { _ = bus.Close() }()
 
@@ -328,6 +329,7 @@ func TestInvalidationBus_SelfHealsOnChannelClose(t *testing.T) {
 // /readyz or emit a degraded audit event. Mirrors
 // TestSigningKeyAggregation_CleanCancelNotDegraded.
 func TestInvalidationBus_CleanCancelNotDegraded(t *testing.T) {
+	t.Parallel()
 	bus := clustermemory.New()
 	defer func() { _ = bus.Close() }()
 
@@ -358,6 +360,7 @@ func TestInvalidationBus_CleanCancelNotDegraded(t *testing.T) {
 // with no bus wired StartInvalidationBus returns an already-closed channel + nil
 // error, and readiness is never degraded (the loop never ran).
 func TestInvalidationBus_NilBusNoGoroutine(t *testing.T) {
+	t.Parallel()
 	srv := NewServer()
 	done, err := srv.StartInvalidationBus(context.Background())
 	if err != nil {

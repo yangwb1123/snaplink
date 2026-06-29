@@ -10,6 +10,7 @@ import (
 // TestLogoutReplayStore_FirstSeenThenReplay: a fresh LogoutRequest ID is
 // accepted once and rejected on the second (within-window) sighting.
 func TestLogoutReplayStore_FirstSeenThenReplay(t *testing.T) {
+	t.Parallel()
 	s := newLogoutReplayStore(100)
 	now := time.Now()
 	exp := now.Add(time.Hour)
@@ -29,6 +30,7 @@ func TestLogoutReplayStore_FirstSeenThenReplay(t *testing.T) {
 // lapsed it is pruned (a later same-ID sighting reads fresh — by then the
 // freshness check rejects it anyway).
 func TestLogoutReplayStore_ExpiredPrunedThenFreshAgain(t *testing.T) {
+	t.Parallel()
 	s := newLogoutReplayStore(100)
 	t0 := time.Now()
 
@@ -49,6 +51,7 @@ func TestLogoutReplayStore_ExpiredPrunedThenFreshAgain(t *testing.T) {
 // TestLogoutReplayStore_CapacityEviction: the hard cap evicts oldest inserts so
 // the store never grows past capacity under a flood of distinct IDs.
 func TestLogoutReplayStore_CapacityEviction(t *testing.T) {
+	t.Parallel()
 	const capacity = 8
 	s := newLogoutReplayStore(capacity)
 	now := time.Now()
@@ -72,6 +75,7 @@ func TestLogoutReplayStore_CapacityEviction(t *testing.T) {
 // TestLogoutReplayStore_DefaultCapacity: a non-positive capacity falls back to
 // the default.
 func TestLogoutReplayStore_DefaultCapacity(t *testing.T) {
+	t.Parallel()
 	s := newLogoutReplayStore(0)
 	if s.capacity != DefaultLogoutReplayStoreSize {
 		t.Errorf("capacity = %d, want default %d", s.capacity, DefaultLogoutReplayStoreSize)
@@ -82,6 +86,7 @@ func TestLogoutReplayStore_DefaultCapacity(t *testing.T) {
 // Run with -race -count=10 (the suite standard) to catch data races + ordering
 // bugs in the mutex-guarded list/map.
 func TestLogoutReplayStore_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
 	s := newLogoutReplayStore(1024)
 	now := time.Now()
 	exp := now.Add(time.Hour)

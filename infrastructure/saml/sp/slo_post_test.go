@@ -75,6 +75,7 @@ func processPOSTLogout(a *SPAuthenticator, samlRequestB64 string) (*LogoutSubjec
 // a LogoutRequest with an ENVELOPED XML-DSig under the PINNED IdP cert validates
 // and yields the subject. Covers verifyLogoutRequestSignature's success path.
 func TestSP_ProcessLogoutPOST_Signed_ReturnsSubject(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -96,6 +97,7 @@ func TestSP_ProcessLogoutPOST_Signed_ReturnsSubject(t *testing.T) {
 // enveloped Signature element is rejected — verifyLogoutRequestSignature fails
 // closed (goxmldsig finds no Signature to validate).
 func TestSP_ProcessLogoutPOST_Unsigned_Rejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -110,6 +112,7 @@ func TestSP_ProcessLogoutPOST_Unsigned_Rejected(t *testing.T) {
 // DIFFERENT key (not the pinned IdP cert) does not verify against the trust
 // anchor → rejected.
 func TestSP_ProcessLogoutPOST_AttackerKey_Rejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -126,6 +129,7 @@ func TestSP_ProcessLogoutPOST_AttackerKey_Rejected(t *testing.T) {
 // rejects (XML-DSig integrity). This is the enveloped-binding analogue of the
 // detached tamper test.
 func TestSP_ProcessLogoutPOST_TamperedAfterSign_Rejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -159,6 +163,7 @@ func TestSP_ProcessLogoutPOST_TamperedAfterSign_Rejected(t *testing.T) {
 // IdAttribute pinned, and the subsequent strict unmarshal reads the canonical
 // NameID — the wrapper must not flip the outcome to the attacker's identity.
 func TestSP_ProcessLogoutPOST_XSW_Rejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -193,6 +198,7 @@ func TestSP_ProcessLogoutPOST_XSW_Rejected(t *testing.T) {
 // TestSP_ProcessLogoutPOST_Replay_Rejected: the SAME enveloped-signed POST
 // request replayed is deduped within the freshness window.
 func TestSP_ProcessLogoutPOST_Replay_Rejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)
@@ -210,6 +216,7 @@ func TestSP_ProcessLogoutPOST_Replay_Rejected(t *testing.T) {
 // key but claiming a DIFFERENT Issuer is rejected (issuer-binding, defense in
 // depth atop the signature).
 func TestSP_ProcessLogoutPOST_WrongIssuer_Rejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newSLOSP(t, idp, now)

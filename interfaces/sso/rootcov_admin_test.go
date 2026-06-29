@@ -118,6 +118,7 @@ func rcovPasswordAuthAccepting() sso.Authenticator {
 
 // TestRcovAdmin_Gate confirms the middleware rejects unauthenticated + non-admin.
 func TestRcovAdmin_Gate(t *testing.T) {
+	t.Parallel()
 	env := rcovNewAdminServer(t)
 
 	// No bearer => 401.
@@ -134,6 +135,7 @@ func TestRcovAdmin_Gate(t *testing.T) {
 
 // TestRcovAdmin_Connections covers the enterprise-connection CRUD handlers.
 func TestRcovAdmin_Connections(t *testing.T) {
+	t.Parallel()
 	env := rcovNewAdminServer(t)
 
 	// Upsert a connection.
@@ -184,6 +186,7 @@ func TestRcovAdmin_Connections(t *testing.T) {
 
 // TestRcovAdmin_TenantMembers covers the org-roster admin handlers.
 func TestRcovAdmin_TenantMembers(t *testing.T) {
+	t.Parallel()
 	env := rcovNewAdminServer(t)
 
 	// Add a member.
@@ -222,6 +225,7 @@ func TestRcovAdmin_TenantMembers(t *testing.T) {
 // TestRcovAdmin_Invitations covers the invitation send/list handlers. Without an
 // InvitationSender wired, send returns 501 (the token must never be returned).
 func TestRcovAdmin_Invitations(t *testing.T) {
+	t.Parallel()
 	env := rcovNewAdminServer(t)
 
 	// Send without a sender => 501.
@@ -243,6 +247,7 @@ func TestRcovAdmin_Invitations(t *testing.T) {
 // MFA factors, password reset, email set, account-lockout clear, and the
 // recovery-token list/revoke surfaces.
 func TestRcovAdmin_UserManagement(t *testing.T) {
+	t.Parallel()
 	env := rcovNewAdminServer(t)
 	base := env.url + "/api/v1/admin/users/" + rcovUser
 

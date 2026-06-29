@@ -12,6 +12,7 @@ import (
 )
 
 func TestBuildPermissionsProvider_DisabledReturnsNil(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	p, err := serverbuildplatform.BuildPermissionsProvider(cfg, quietLogger(), nil, "")
 	if err != nil {
@@ -23,6 +24,7 @@ func TestBuildPermissionsProvider_DisabledReturnsNil(t *testing.T) {
 }
 
 func TestBuildPermissionsProvider_MemoryDefault(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Permissions = config.PermissionsConfig{Enabled: true}
 	p, err := serverbuildplatform.BuildPermissionsProvider(cfg, quietLogger(), nil, "")
@@ -39,6 +41,7 @@ func TestBuildPermissionsProvider_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildPermissionsProvider_SQLiteRequiresDSN(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Permissions = config.PermissionsConfig{
 		Enabled: true,
@@ -51,6 +54,7 @@ func TestBuildPermissionsProvider_SQLiteRequiresDSN(t *testing.T) {
 }
 
 func TestBuildPermissionsProvider_SQLiteSeedsAppsAndAssignments(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "permissions.db") + "?_journal=WAL"
 	cfg := &config.Config{}
@@ -97,6 +101,7 @@ func TestBuildPermissionsProvider_SQLiteSeedsAppsAndAssignments(t *testing.T) {
 }
 
 func TestBuildPermissionsProvider_SQLiteSeedIsIdempotent(t *testing.T) {
+	t.Parallel()
 	// Operators re-running cmd against an already-seeded DSN should
 	// see no errors + the YAML state re-applied (idempotent reseed).
 	dir := t.TempDir()
@@ -142,6 +147,7 @@ func TestBuildPermissionsProvider_SQLiteSeedIsIdempotent(t *testing.T) {
 }
 
 func TestBuildPermissionsProvider_UnknownBackendRejected(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Permissions = config.PermissionsConfig{
 		Enabled: true,
@@ -157,6 +163,7 @@ func TestBuildPermissionsProvider_UnknownBackendRejected(t *testing.T) {
 // sentinel the memory peer does — operator audit paths branching on
 // this don't have to special-case backends.
 func TestBuildPermissionsProvider_SQLiteRolesUnknownUser(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "permissions.db") + "?_journal=WAL"
 	cfg := &config.Config{}

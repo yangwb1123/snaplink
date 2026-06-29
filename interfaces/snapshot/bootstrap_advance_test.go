@@ -14,6 +14,7 @@ import (
 // TestAdvanceBootstrap_NoTracker proves AdvanceBootstrap is a graceful no-op
 // (Attempted=true, NoOp=true, reason explains why) when no Tracker is wired.
 func TestAdvanceBootstrap_NoTracker(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
@@ -45,6 +46,7 @@ func TestAdvanceBootstrap_NoTracker(t *testing.T) {
 // TestAdvanceBootstrap_NotNewer proves advance is a no-op when the
 // destination tracker is already at or beyond the snapshot's version.
 func TestAdvanceBootstrap_NotNewer(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t) // snapshot version = 2
 	snap, _ := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
@@ -75,6 +77,7 @@ func TestAdvanceBootstrap_NotNewer(t *testing.T) {
 // TestAdvanceBootstrap_Advances proves the happy path bumps the destination
 // tracker to the snapshot version when the snapshot is newer.
 func TestAdvanceBootstrap_Advances(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t) // snapshot version = 2
 	snap, _ := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
@@ -103,6 +106,7 @@ func TestAdvanceBootstrap_Advances(t *testing.T) {
 // TestAdvanceBootstrap_FallsBackToSnapshotNamespace proves that when the
 // Restorer has no explicit Namespace it uses the snapshot's recorded one.
 func TestAdvanceBootstrap_FallsBackToSnapshotNamespace(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t) // namespace "sso-server", version 2
 	snap, _ := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
@@ -129,6 +133,7 @@ func TestAdvanceBootstrap_FallsBackToSnapshotNamespace(t *testing.T) {
 // TestAdvanceBootstrap_DryRun proves dry-run computes From/To but does not
 // move the tracker.
 func TestAdvanceBootstrap_DryRun(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(ctx, snapshot.ExportOptions{})

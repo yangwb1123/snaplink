@@ -11,6 +11,7 @@ import (
 )
 
 func TestMemorySink_AssignsIDWhenEmpty(t *testing.T) {
+	t.Parallel()
 	s := audit.NewMemorySink(10)
 	e := &audit.Event{Type: audit.EventLogin}
 	if err := s.Record(context.Background(), e); err != nil {
@@ -22,6 +23,7 @@ func TestMemorySink_AssignsIDWhenEmpty(t *testing.T) {
 }
 
 func TestMemorySink_PreservesGivenID(t *testing.T) {
+	t.Parallel()
 	s := audit.NewMemorySink(10)
 	e := &audit.Event{ID: "preset-id", Type: audit.EventLogin}
 	_ = s.Record(context.Background(), e)
@@ -31,6 +33,7 @@ func TestMemorySink_PreservesGivenID(t *testing.T) {
 }
 
 func TestMemorySink_GetReturnsRecordedEvent(t *testing.T) {
+	t.Parallel()
 	s := audit.NewMemorySink(10)
 	e := &audit.Event{Type: audit.EventLogin}
 	_ = s.Record(context.Background(), e)
@@ -45,6 +48,7 @@ func TestMemorySink_GetReturnsRecordedEvent(t *testing.T) {
 }
 
 func TestMemorySink_GetUnknownReturnsErrEventNotFound(t *testing.T) {
+	t.Parallel()
 	s := audit.NewMemorySink(10)
 	_, err := s.Get(context.Background(), "no-such-id")
 	if !errors.Is(err, audit.ErrEventNotFound) {
@@ -53,6 +57,7 @@ func TestMemorySink_GetUnknownReturnsErrEventNotFound(t *testing.T) {
 }
 
 func TestMemorySink_LenTracksRecords(t *testing.T) {
+	t.Parallel()
 	s := audit.NewMemorySink(3)
 	if got := s.Len(); got != 0 {
 		t.Fatalf("Len at start = %d, want 0", got)
@@ -66,6 +71,7 @@ func TestMemorySink_LenTracksRecords(t *testing.T) {
 }
 
 func TestMemorySink_RingBufferEvictsOldest(t *testing.T) {
+	t.Parallel()
 	s := audit.NewMemorySink(3)
 
 	events := make([]*audit.Event, 5)
@@ -94,6 +100,7 @@ func TestMemorySink_RingBufferEvictsOldest(t *testing.T) {
 }
 
 func TestMemorySink_QueryReturnsNewestFirst(t *testing.T) {
+	t.Parallel()
 	s := audit.NewMemorySink(10)
 	t0 := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	for i := range 5 {
@@ -120,6 +127,7 @@ func TestMemorySink_QueryReturnsNewestFirst(t *testing.T) {
 }
 
 func TestMemorySink_QueryAppliesFilter(t *testing.T) {
+	t.Parallel()
 	s := audit.NewMemorySink(10)
 	_ = s.Record(context.Background(), &audit.Event{Type: audit.EventLogin, ActorID: "alice"})
 	_ = s.Record(context.Background(), &audit.Event{Type: audit.EventLogin, ActorID: "bob"})
@@ -138,6 +146,7 @@ func TestMemorySink_QueryAppliesFilter(t *testing.T) {
 }
 
 func TestMemorySink_QueryAppliesLimitAndOffset(t *testing.T) {
+	t.Parallel()
 	s := audit.NewMemorySink(20)
 	t0 := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	for i := range 10 {
@@ -165,6 +174,7 @@ func TestMemorySink_QueryAppliesLimitAndOffset(t *testing.T) {
 }
 
 func TestMemorySink_QueryOffsetBeyondLengthReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	s := audit.NewMemorySink(10)
 	for range 3 {
 		_ = s.Record(context.Background(), &audit.Event{Type: audit.EventLogin})
@@ -179,6 +189,7 @@ func TestMemorySink_QueryOffsetBeyondLengthReturnsEmpty(t *testing.T) {
 }
 
 func TestMemorySink_QueryEmptySinkReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	s := audit.NewMemorySink(10)
 	got, err := s.Query(context.Background(), audit.Query{})
 	if err != nil {
@@ -190,6 +201,7 @@ func TestMemorySink_QueryEmptySinkReturnsEmpty(t *testing.T) {
 }
 
 func TestNewMemorySink_NonPositiveUsesDefault(t *testing.T) {
+	t.Parallel()
 	// Sentinel: NewMemorySink(0) and (-1) should not panic, should accept records.
 	for _, capacity := range []int{0, -1} {
 		s := audit.NewMemorySink(capacity)
@@ -203,6 +215,7 @@ func TestNewMemorySink_NonPositiveUsesDefault(t *testing.T) {
 }
 
 func TestMemorySink_ConcurrentRecord(t *testing.T) {
+	t.Parallel()
 	// Race detector verifies thread safety. With `-race` enabled this catches
 	// concurrent map writes or buffer corruption.
 	const goroutines = 20
@@ -229,6 +242,7 @@ func TestMemorySink_ConcurrentRecord(t *testing.T) {
 }
 
 func TestMemorySink_RingBufferWrapDoesNotDoubleCount(t *testing.T) {
+	t.Parallel()
 	// Specifically exercise the boundary where (head+1)%capacity == 0
 	// for the first time (transition full=false → true).
 	s := audit.NewMemorySink(3)

@@ -26,6 +26,7 @@ var (
 // ---------- memory ----------
 
 func TestMemoryRotationLimiter_UnderCap_NeverExceeds(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	s.MaxRotationsPerWindow = 5
 	s.RotationWindow = time.Hour
@@ -45,6 +46,7 @@ func TestMemoryRotationLimiter_UnderCap_NeverExceeds(t *testing.T) {
 }
 
 func TestMemoryRotationLimiter_OverCap_Exceeds(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	s.MaxRotationsPerWindow = 3
 	s.RotationWindow = time.Hour
@@ -66,6 +68,7 @@ func TestMemoryRotationLimiter_OverCap_Exceeds(t *testing.T) {
 }
 
 func TestMemoryRotationLimiter_Unconfigured_NeverExceeds(t *testing.T) {
+	t.Parallel()
 	// No cap/window set = limiter inert (byte-identical off). Count still
 	// advances, but windowExceeded is always false.
 	s := defaultimpl.NewMemoryRefreshTokenStore()
@@ -82,6 +85,7 @@ func TestMemoryRotationLimiter_Unconfigured_NeverExceeds(t *testing.T) {
 }
 
 func TestMemoryRotationLimiter_WindowRollover(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	s.MaxRotationsPerWindow = 2
 	s.RotationWindow = 30 * time.Millisecond
@@ -107,6 +111,7 @@ func TestMemoryRotationLimiter_WindowRollover(t *testing.T) {
 }
 
 func TestMemoryRotationLimiter_EmptyFamilyIDNoOp(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	s.MaxRotationsPerWindow = 1
 	s.RotationWindow = time.Hour
@@ -117,6 +122,7 @@ func TestMemoryRotationLimiter_EmptyFamilyIDNoOp(t *testing.T) {
 }
 
 func TestMemoryRotationLimiter_PerFamilyIndependent(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	s.MaxRotationsPerWindow = 2
 	s.RotationWindow = time.Hour
@@ -136,6 +142,7 @@ func TestMemoryRotationLimiter_PerFamilyIndependent(t *testing.T) {
 }
 
 func TestMemoryRotationLimiter_DeleteFamilyResetsWindow(t *testing.T) {
+	t.Parallel()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	s.MaxRotationsPerWindow = 2
 	s.RotationWindow = time.Hour
@@ -166,6 +173,7 @@ func newSQLiteRotationStore(t *testing.T) *sqlite.RefreshTokenStore {
 }
 
 func TestSQLiteRotationLimiter_UnderCap_NeverExceeds(t *testing.T) {
+	t.Parallel()
 	s := newSQLiteRotationStore(t)
 	s.MaxRotationsPerWindow = 5
 	s.RotationWindow = time.Hour
@@ -185,6 +193,7 @@ func TestSQLiteRotationLimiter_UnderCap_NeverExceeds(t *testing.T) {
 }
 
 func TestSQLiteRotationLimiter_OverCap_Exceeds(t *testing.T) {
+	t.Parallel()
 	s := newSQLiteRotationStore(t)
 	s.MaxRotationsPerWindow = 3
 	s.RotationWindow = time.Hour
@@ -206,6 +215,7 @@ func TestSQLiteRotationLimiter_OverCap_Exceeds(t *testing.T) {
 }
 
 func TestSQLiteRotationLimiter_Unconfigured_NeverExceeds(t *testing.T) {
+	t.Parallel()
 	s := newSQLiteRotationStore(t)
 	ctx := context.Background()
 	for i := 1; i <= 50; i++ {
@@ -220,6 +230,7 @@ func TestSQLiteRotationLimiter_Unconfigured_NeverExceeds(t *testing.T) {
 }
 
 func TestSQLiteRotationLimiter_WindowRollover(t *testing.T) {
+	t.Parallel()
 	s := newSQLiteRotationStore(t)
 	s.MaxRotationsPerWindow = 2
 	s.RotationWindow = 30 * time.Millisecond
@@ -243,6 +254,7 @@ func TestSQLiteRotationLimiter_WindowRollover(t *testing.T) {
 }
 
 func TestSQLiteRotationLimiter_EmptyFamilyIDNoOp(t *testing.T) {
+	t.Parallel()
 	s := newSQLiteRotationStore(t)
 	s.MaxRotationsPerWindow = 1
 	s.RotationWindow = time.Hour
@@ -253,6 +265,7 @@ func TestSQLiteRotationLimiter_EmptyFamilyIDNoOp(t *testing.T) {
 }
 
 func TestSQLiteRotationLimiter_DeleteFamilyResetsWindow(t *testing.T) {
+	t.Parallel()
 	s := newSQLiteRotationStore(t)
 	s.MaxRotationsPerWindow = 2
 	s.RotationWindow = time.Hour
@@ -275,6 +288,7 @@ func TestSQLiteRotationLimiter_DeleteFamilyResetsWindow(t *testing.T) {
 // outputs match step-for-step — the semantics must be indistinguishable so
 // an operator swapping memory→sqlite gets the same velocity behavior.
 func TestRotationLimiter_MemorySQLiteConformance(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	const cap = 3
 

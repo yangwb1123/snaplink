@@ -32,6 +32,7 @@ func (l *capturingLogger) count() int {
 // under a non-existent directory fails at PingContext ("unable to open database
 // file"), exercising the open-path error branch + the db.Close() cleanup.
 func TestSPSqlite_OpenBadDSN(t *testing.T) {
+	t.Parallel()
 	badDSN := "file:" + filepath.Join(t.TempDir(), "no_such_subdir", "saml.db")
 	if _, err := NewAssertionReplayStore(badDSN); err == nil {
 		t.Fatal("NewAssertionReplayStore accepted a bad DSN")
@@ -44,6 +45,7 @@ func TestSPSqlite_OpenBadDSN(t *testing.T) {
 // TestSPSqlite_DBAndPing covers the DB()/Ping() readycheck accessors across the
 // open → closed lifecycle for both SP stores.
 func TestSPSqlite_DBAndPing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	assertS, err := NewAssertionReplayStore(uniqDSN("sp_db_assert"))
@@ -92,6 +94,7 @@ func TestSPSqlite_DBAndPing(t *testing.T) {
 // TestSPSqlite_LogoutPruneExpired proves the SP-side logout store's prune hook
 // drops only lapsed rows (the assertion store's PruneExpired is already covered).
 func TestSPSqlite_LogoutPruneExpired(t *testing.T) {
+	t.Parallel()
 	s, err := NewLogoutReplayStore(uniqDSN("sp_logout_prune"))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -121,6 +124,7 @@ func TestSPSqlite_LogoutPruneExpired(t *testing.T) {
 // TestSPSqlite_PruneAfterCloseErrors proves both stores' PruneExpired reports an
 // error (not a silent 0) once the DB handle is gone.
 func TestSPSqlite_PruneAfterCloseErrors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	assertS, _ := NewAssertionReplayStore(uniqDSN("sp_prune_closed_a"))
@@ -141,6 +145,7 @@ func TestSPSqlite_PruneAfterCloseErrors(t *testing.T) {
 // closed under it). It also proves WithLogger(nil) is a no-op that does NOT
 // clobber a previously-set real logger.
 func TestSPSqlite_WithLoggerSurfacesFailClosed(t *testing.T) {
+	t.Parallel()
 	log := &capturingLogger{}
 	s, err := NewAssertionReplayStore(uniqDSN("sp_log"), WithLogger(log), WithLogger(nil))
 	if err != nil {
@@ -158,6 +163,7 @@ func TestSPSqlite_WithLoggerSurfacesFailClosed(t *testing.T) {
 // TestSPSqlite_IsConstraintErr covers the defensive UNIQUE-constraint classifier
 // used on the degraded-build INSERT path.
 func TestSPSqlite_IsConstraintErr(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		err  error
 		want bool

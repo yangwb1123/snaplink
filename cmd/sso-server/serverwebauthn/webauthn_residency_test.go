@@ -94,6 +94,7 @@ func constrainedResidencyClient() *sso.Client {
 // tenant served from a region outside AllowedRegions is denied a WebAuthn mint
 // with 403 region_not_allowed.
 func TestWebAuthnResidency_DisallowedRegionDeniedRegionNotAllowed(t *testing.T) {
+	t.Parallel()
 	deps := newWebAuthnResidencyDeps(t,
 		constrainedResidencyTenant(),
 		constrainedResidencyClient(),
@@ -113,6 +114,7 @@ func TestWebAuthnResidency_DisallowedRegionDeniedRegionNotAllowed(t *testing.T) 
 // TestWebAuthnResidency_HomeRegionMints: the same constrained tenant served
 // from its home region mints normally (no denial).
 func TestWebAuthnResidency_HomeRegionMints(t *testing.T) {
+	t.Parallel()
 	deps := newWebAuthnResidencyDeps(t,
 		constrainedResidencyTenant(),
 		constrainedResidencyClient(),
@@ -133,6 +135,7 @@ func TestWebAuthnResidency_HomeRegionMints(t *testing.T) {
 // ResidencyDecision wired (the non-residency deployment) mints normally — the
 // residency check is simply not enforced for WebAuthn.
 func TestWebAuthnResidency_UnwiredIsByteIdentical(t *testing.T) {
+	t.Parallel()
 	deps := newWebAuthnResidencyDeps(t,
 		constrainedResidencyTenant(),
 		constrainedResidencyClient(),
@@ -157,6 +160,7 @@ func TestWebAuthnResidency_UnwiredIsByteIdentical(t *testing.T) {
 // mint is a WRITE (isWrite=true), it must trip the EnforceWrites guard with
 // 403 residency_violation (distinct from region_not_allowed).
 func TestWebAuthnResidency_EnforceWritesViolation(t *testing.T) {
+	t.Parallel()
 	seed := &tenant.Tenant{
 		ID:             "tenant-wa",
 		Slug:           "wa",
@@ -187,6 +191,7 @@ func TestWebAuthnResidency_EnforceWritesViolation(t *testing.T) {
 // as unconstrained — so the constrained tenant still mints (the region
 // middleware's nonfatal contract, mirrored here).
 func TestWebAuthnResidency_ResolverErrorFailsOpen(t *testing.T) {
+	t.Parallel()
 	deps := newWebAuthnResidencyDeps(t,
 		constrainedResidencyTenant(),
 		constrainedResidencyClient(),

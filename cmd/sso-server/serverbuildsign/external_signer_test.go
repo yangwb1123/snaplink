@@ -55,6 +55,7 @@ func registerExternalSignerForTest(t *testing.T, name string, f ExternalSignerFa
 }
 
 func TestBuildSigningIssuer_ExternalSigner(t *testing.T) {
+	t.Parallel()
 	_, edPriv, _ := ed25519.GenerateKey(rand.Reader)
 	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	rsaPriv, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -90,6 +91,7 @@ func TestBuildSigningIssuer_ExternalSigner(t *testing.T) {
 }
 
 func TestBuildSigningIssuer_UnregisteredExternal(t *testing.T) {
+	t.Parallel()
 	_, _, _, err := BuildSigningIssuer(
 		config.SigningConfig{Alg: "eddsa", External: "does-not-exist"},
 		config.ServerConfig{Issuer: "https://sso.test"},
@@ -102,6 +104,7 @@ func TestBuildSigningIssuer_UnregisteredExternal(t *testing.T) {
 }
 
 func TestBuildSigningIssuer_AlgKeyMismatchFailsClosed(t *testing.T) {
+	t.Parallel()
 	// es256 alg but an Ed25519 signer — the bridge must reject it at
 	// startup rather than minting tokens no verifier accepts.
 	_, edPriv, _ := ed25519.GenerateKey(rand.Reader)
@@ -118,6 +121,7 @@ func TestBuildSigningIssuer_AlgKeyMismatchFailsClosed(t *testing.T) {
 }
 
 func TestBuildSigningIssuer_NoExternalIsInProcess(t *testing.T) {
+	t.Parallel()
 	// Empty External keeps the historical in-process key path.
 	iss, alg, probe, err := BuildSigningIssuer(
 		config.SigningConfig{Alg: "eddsa"},
@@ -143,6 +147,7 @@ func TestBuildSigningIssuer_NoExternalIsInProcess(t *testing.T) {
 // counted: issuing a token through an externally-signed issuer increments
 // sso_signing_operations_total{alg,outcome="success"}.
 func TestExternalSignerMetrics(t *testing.T) {
+	t.Parallel()
 	m := metrics.New()
 	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	registerExternalSignerForTest(t, "ext-metrics", staticSigner(ecPriv))
@@ -169,6 +174,7 @@ func TestExternalSignerMetrics(t *testing.T) {
 // TestSigningBackendUpGauge proves the health gauge tracks the last
 // signing outcome: 1 after success, 0 after a failure.
 func TestSigningBackendUpGauge(t *testing.T) {
+	t.Parallel()
 	m := metrics.New()
 	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	flaky := &flakySigner{inner: ecPriv}
@@ -207,6 +213,7 @@ func scrapeMetrics(t *testing.T, m *metrics.Metrics) string {
 }
 
 func TestRegisterExternalSigner_RejectsBadInput(t *testing.T) {
+	t.Parallel()
 	assertPanic(t, "empty name", func() { RegisterExternalSigner("", staticSigner(nil)) })
 	assertPanic(t, "nil factory", func() { RegisterExternalSigner("ext-nilfac", nil) })
 
@@ -241,6 +248,7 @@ func (f *flakySigner) setErr(er error) {
 }
 
 func TestInstrumentSigner_ReadinessProbe(t *testing.T) {
+	t.Parallel()
 	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	flaky := &flakySigner{inner: ecPriv}
 
@@ -307,6 +315,7 @@ func (l *captureLogger) Debug(msg string, _ ...any) {}
 // TestInstrumentSigner_LogsOnlyTransitions proves the down/up edges are
 // logged once each — not every steady-state call.
 func TestInstrumentSigner_LogsOnlyTransitions(t *testing.T) {
+	t.Parallel()
 	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	flaky := &flakySigner{inner: ecPriv}
 	lg := &captureLogger{}
@@ -334,6 +343,7 @@ func TestInstrumentSigner_LogsOnlyTransitions(t *testing.T) {
 }
 
 func TestSignerHealth_StaleFailureRecovers(t *testing.T) {
+	t.Parallel()
 	var h SignerHealth
 	h.record(errKMSDown)
 	if h.check() == nil {

@@ -35,6 +35,7 @@ import (
 // start -> approve via /device/verify (bearer-authenticated) -> poll /token with
 // the device_code grant. This covers handleDeviceVerify + handleDeviceTokenGrant.
 func TestRcov2Ext_DeviceFlowApproveAndPoll(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithDeviceCodeStore(
 		defaultimpl.NewMemoryDeviceCodeStore(), 5*time.Minute, time.Nanosecond, rcov2DeviceVerifyURI))
 	access, _ := rcovDirectLogin(t, s)
@@ -94,6 +95,7 @@ const rcov2DeviceVerifyURI = "https://opt.example.com/device"
 // TestRcov2Ext_DeviceVerifyDeny covers the denial branch of handleDeviceVerify
 // (approve=false) plus the access_denied poll result.
 func TestRcov2Ext_DeviceVerifyDeny(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithDeviceCodeStore(
 		defaultimpl.NewMemoryDeviceCodeStore(), 5*time.Minute, time.Nanosecond, rcov2DeviceVerifyURI))
 	access, _ := rcovDirectLogin(t, s)
@@ -147,6 +149,7 @@ func TestRcov2Ext_DeviceVerifyDeny(t *testing.T) {
 // TestRcov2Ext_HomeRealm covers B2B home-realm discovery: a known email domain
 // resolves to its connection; an unknown one returns {"found": false}.
 func TestRcov2Ext_HomeRealm(t *testing.T) {
+	t.Parallel()
 	store := connections.NewMemoryStore()
 	_ = store.Upsert(context.Background(), &connections.Connection{
 		ID:          "acme-oidc",
@@ -184,6 +187,7 @@ func TestRcov2Ext_HomeRealm(t *testing.T) {
 // configuration endpoint (handleFederationEntityConfig + BuildOPMetadata): the
 // route is mounted by WithFederationEntity and serves a signed entity statement.
 func TestRcov2Ext_FederationEntityConfig(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("https://fed.example.com"))
 	s := rcovNewServer(t,
 		sso.WithIssuer("https://fed.example.com"),
@@ -212,6 +216,7 @@ func TestRcov2Ext_FederationEntityConfig(t *testing.T) {
 // TestRcov2Ext_ProtectedResourceMetadata covers the RFC 9728 endpoint
 // (handleProtectedResourceMetadata + WithProtectedResourceMetadata).
 func TestRcov2Ext_ProtectedResourceMetadata(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithProtectedResourceMetadata(sso.ProtectedResourceMetadata{
 		ResourceName:          "Coverage Resource",
 		ResourceDocumentation: "https://docs.example.com",
@@ -238,6 +243,7 @@ func TestRcov2Ext_ProtectedResourceMetadata(t *testing.T) {
 // echoed back to complete the login (issueConsentChallenge / consumeConsentChallenge
 // / describeScopes / scopesSubsumed).
 func TestRcov2Ext_ConsentChallenge(t *testing.T) {
+	t.Parallel()
 	s := rcov2ConsentServer(t)
 
 	// First login: no prior grant => consent_required + a challenge.
@@ -315,6 +321,7 @@ func rcov2ConsentServer(t *testing.T) *rcovServer {
 // missing fields, an unsupported provider, and a provider that cannot send
 // codes. The success path needs a CodeSender authenticator wired.
 func TestRcov2Ext_SendCode(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 
 	// Missing provider/target => 400.
@@ -346,6 +353,7 @@ func TestRcov2Ext_SendCode(t *testing.T) {
 // real CodeSender authenticator wired (recordCodeSent success leg). The
 // PhoneAuthenticator implements spi.CodeSender via SendCode.
 func TestRcov2Ext_SendCodeSuccess(t *testing.T) {
+	t.Parallel()
 	var delivered bool
 	sender := authenticators.SMSSenderFunc(func(_ context.Context, _, _ string) error {
 		delivered = true
@@ -372,6 +380,7 @@ func TestRcov2Ext_SendCodeSuccess(t *testing.T) {
 // its own tokens. Drives issueDeviceSecret + handleDeviceSecretExchange + the
 // ds_hash helpers (dsHash / idTokenAlg / idTokenDsHash / jwsSegment).
 func TestRcov2Ext_NativeSSO(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute))
 	s := rcovNewServer(t,
 		sso.WithTokenIssuer("jwt", iss),

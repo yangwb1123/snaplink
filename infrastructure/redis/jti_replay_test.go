@@ -10,6 +10,7 @@ import (
 // TestJTIFirstVsRepeat: first MarkSeen is the first-sighting (true), a
 // repeat within the window is a replay (false).
 func TestJTIFirstVsRepeat(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewJTIReplayStore(rdb)
 	ctx := context.Background()
@@ -33,6 +34,7 @@ func TestJTIFirstVsRepeat(t *testing.T) {
 
 // TestJTIDistinctIndependent: distinct jtis are independent first-sightings.
 func TestJTIDistinctIndependent(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewJTIReplayStore(rdb)
 	ctx := context.Background()
@@ -50,6 +52,7 @@ func TestJTIDistinctIndependent(t *testing.T) {
 // says the call site should short-circuit, but the store must not treat ""
 // as a replay sentinel).
 func TestJTIEmptyShortCircuits(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewJTIReplayStore(rdb)
 	ctx := context.Background()
@@ -64,6 +67,7 @@ func TestJTIEmptyShortCircuits(t *testing.T) {
 // TestJTIExpiryWindow: after the key's TTL elapses, the same jti is a
 // fresh first-sighting again (the window closed).
 func TestJTIExpiryWindow(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	s := NewJTIReplayStore(rdb)
 	ctx := context.Background()
@@ -80,6 +84,7 @@ func TestJTIExpiryWindow(t *testing.T) {
 // TestJTIConcurrentSingleWinner: under concurrency exactly one MarkSeen of
 // the same jti reports first-sighting (atomic SET NX). Run with -race.
 func TestJTIConcurrentSingleWinner(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewJTIReplayStore(rdb)
 	ctx := context.Background()

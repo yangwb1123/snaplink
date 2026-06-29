@@ -6,6 +6,7 @@ import (
 )
 
 func TestSPConfig_Validate(t *testing.T) {
+	t.Parallel()
 	base := func() SPConfig {
 		return SPConfig{
 			Name:        "idp",

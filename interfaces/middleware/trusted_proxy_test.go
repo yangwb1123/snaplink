@@ -18,6 +18,7 @@ func makeTrustedProxies(t *testing.T, cidrs []string, hops int) *TrustedProxies 
 }
 
 func TestNewTrustedProxies_InvalidCIDR(t *testing.T) {
+	t.Parallel()
 	_, err := NewTrustedProxies([]string{"not-a-cidr"}, 0)
 	if err == nil {
 		t.Fatal("expected parse error for invalid CIDR, got nil")
@@ -36,6 +37,7 @@ func (c *captureIP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func TestTrustedProxies_SingleTier(t *testing.T) {
+	t.Parallel()
 	// One trusted proxy tier (10.0.0.1/32). The XFF contains two entries:
 	// the real client (1.2.3.4) and the trusted proxy (10.0.0.1). The
 	// middleware should peel the trusted proxy and return the client IP.
@@ -55,6 +57,7 @@ func TestTrustedProxies_SingleTier(t *testing.T) {
 }
 
 func TestTrustedProxies_TwoTiers(t *testing.T) {
+	t.Parallel()
 	// Two trusted proxy tiers. XFF = "client, proxy1, proxy2".
 	// Both proxies are in the 10.0.0.0/8 range; client is untrusted.
 	tp := makeTrustedProxies(t, []string{"10.0.0.0/8"}, 2)
@@ -73,6 +76,7 @@ func TestTrustedProxies_TwoTiers(t *testing.T) {
 }
 
 func TestTrustedProxies_ForgedHeader(t *testing.T) {
+	t.Parallel()
 	// Attacker prepends a spoofed IP to the XFF chain:
 	// XFF = "forge, real-client, trusted-proxy".
 	// The trusted proxy set the real client IP; the attacker's entry is
@@ -96,6 +100,7 @@ func TestTrustedProxies_ForgedHeader(t *testing.T) {
 }
 
 func TestTrustedProxies_NoXFF_FallsBackToRemoteAddr(t *testing.T) {
+	t.Parallel()
 	// No X-Forwarded-For header at all — return RemoteAddr with port stripped.
 	tp := makeTrustedProxies(t, []string{"10.0.0.0/8"}, 0)
 	cap := &captureIP{}
@@ -112,6 +117,7 @@ func TestTrustedProxies_NoXFF_FallsBackToRemoteAddr(t *testing.T) {
 }
 
 func TestTrustedProxies_AllTrusted_ReturnsLeftmost(t *testing.T) {
+	t.Parallel()
 	// Every hop in XFF is trusted. The leftmost entry is the best
 	// approximation of the original client (all hops were our own
 	// infrastructure).
@@ -131,6 +137,7 @@ func TestTrustedProxies_AllTrusted_ReturnsLeftmost(t *testing.T) {
 }
 
 func TestRealClientIP_NoMiddleware_FallsBackToRemoteAddr(t *testing.T) {
+	t.Parallel()
 	// RealClientIP with no TrustedProxies middleware in the chain must
 	// return r.RemoteAddr (port stripped) — byte-identical to today's
 	// unconditional XFF read, but without a nil-panic.
@@ -145,6 +152,7 @@ func TestRealClientIP_NoMiddleware_FallsBackToRemoteAddr(t *testing.T) {
 }
 
 func TestTrustedProxies_NilMiddleware_Passthrough(t *testing.T) {
+	t.Parallel()
 	// A nil *TrustedProxies wrapping a handler must not panic — it passes
 	// through unchanged (no-op deployment guard).
 	var tp *TrustedProxies
@@ -159,6 +167,7 @@ func TestTrustedProxies_NilMiddleware_Passthrough(t *testing.T) {
 }
 
 func TestTrustedProxies_HopsBudget_LimitsStripping(t *testing.T) {
+	t.Parallel()
 	// The CIDR covers all 10/8 addresses, but hops=1 limits stripping to
 	// one trusted proxy tier. XFF = "9.9.9.9, 10.0.0.10, 10.0.0.20".
 	//
@@ -185,6 +194,7 @@ func TestTrustedProxies_HopsBudget_LimitsStripping(t *testing.T) {
 }
 
 func TestRealClientIP_IPv6RemoteAddr(t *testing.T) {
+	t.Parallel()
 	// IPv6 RemoteAddr with bracket notation must strip the port correctly.
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "[::1]:8080"

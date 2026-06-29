@@ -9,6 +9,7 @@ import (
 )
 
 func TestSigningKeyRotationConfig(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		in      config.KeyRotationConfig

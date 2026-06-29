@@ -15,6 +15,7 @@ import (
 // We model a synthetic numeric attribute through a user whose externalId holds
 // a number so orderCompare takes the numeric branch.
 func TestNumOrderAllOperators(t *testing.T) {
+	t.Parallel()
 	u := sampleUser()
 	u.ExternalID = "42"
 	cases := []struct {
@@ -41,6 +42,7 @@ func TestNumOrderAllOperators(t *testing.T) {
 // literal ordering comparison falls through to a lexical compare (orderCompare
 // strOrder branch).
 func TestNumOrderLexicalFallback(t *testing.T) {
+	t.Parallel()
 	u := sampleUser()
 	u.ExternalID = "abc" // not a number
 	// "abc" vs literal number 5: numeric parse of value fails -> lexical
@@ -56,6 +58,7 @@ func TestNumOrderLexicalFallback(t *testing.T) {
 // TestLiteralEqualsNull exercises the litNull eq branch: `attr eq null`
 // matches an attribute with an empty value and not a populated one.
 func TestLiteralEqualsNull(t *testing.T) {
+	t.Parallel()
 	u := sampleUser()
 	// displayName is set, so eq null is false.
 	if matchesUser(u, mustParse(t, `displayName eq null`)) {
@@ -71,6 +74,7 @@ func TestLiteralEqualsNull(t *testing.T) {
 // TestLiteralEqualsBoolMismatch: active is bool; eq against the wrong literal
 // is false, covering the litBool eq branch's negative.
 func TestLiteralEqualsBoolMismatch(t *testing.T) {
+	t.Parallel()
 	u := sampleUser() // active true
 	if matchesUser(u, mustParse(t, `active eq false`)) {
 		t.Error("active eq false matched an active user")
@@ -83,6 +87,7 @@ func TestLiteralEqualsBoolMismatch(t *testing.T) {
 // TestLiteralEqualsNumberTextualFallback: a numeric literal compared against a
 // non-numeric value falls back to a textual equality (litNumber default path).
 func TestLiteralEqualsNumberTextualFallback(t *testing.T) {
+	t.Parallel()
 	u := sampleUser()
 	u.ExternalID = "007" // parses as 7
 	// eq 7 -> numeric 7==7 true.
@@ -94,6 +99,7 @@ func TestLiteralEqualsNumberTextualFallback(t *testing.T) {
 // TestReadStringEscapes exercises readString's escape handling, including the
 // \uXXXX form, through filters that compare against an escaped literal.
 func TestReadStringEscapes(t *testing.T) {
+	t.Parallel()
 	u := sampleUser()
 	u.DisplayName = "tab\there" // a real tab
 	if !matchesUser(u, mustParse(t, `displayName eq "tab\there"`)) {
@@ -130,6 +136,7 @@ func TestReadStringEscapes(t *testing.T) {
 
 // TestReadStringErrors: unterminated strings and bad escapes are invalidFilter.
 func TestReadStringErrors(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{
 		`userName eq "unterminated`,
 		`userName eq "bad\xescape"`,
@@ -146,6 +153,7 @@ func TestReadStringErrors(t *testing.T) {
 // TestReadNumberForms: a variety of valid numbers tokenize, and malformed ones
 // are invalidFilter (readNumber's strconv validation).
 func TestReadNumberForms(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{
 		`externalId eq 0`,
 		`externalId eq -5`,
@@ -172,6 +180,7 @@ func TestReadNumberForms(t *testing.T) {
 // TestTokenizeUnexpectedChar: a stray character not starting any token is a
 // lexical error.
 func TestTokenizeUnexpectedChar(t *testing.T) {
+	t.Parallel()
 	if _, err := parseFilter(`userName eq @`); !errors.Is(err, errInvalidFilter) {
 		t.Errorf("stray '@' err = %v, want errInvalidFilter", err)
 	}

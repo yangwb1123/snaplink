@@ -13,6 +13,7 @@ import (
 )
 
 func TestMemoryDeviceCodeStore_IssueGetApprove(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryDeviceCodeStore()
 
@@ -57,6 +58,7 @@ func TestMemoryDeviceCodeStore_IssueGetApprove(t *testing.T) {
 }
 
 func TestMemoryDeviceCodeStore_Deny(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryDeviceCodeStore()
 	_ = s.Issue(ctx, &oauth.DeviceCode{DeviceCode: "dc", UserCode: "uc", ClientID: "c", ExpiresAt: time.Now().Add(time.Minute)})
@@ -70,6 +72,7 @@ func TestMemoryDeviceCodeStore_Deny(t *testing.T) {
 }
 
 func TestMemoryDeviceCodeStore_NotFoundShapes(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryDeviceCodeStore()
 
@@ -99,6 +102,7 @@ func TestMemoryDeviceCodeStore_NotFoundShapes(t *testing.T) {
 }
 
 func TestMemoryDeviceCodeStore_UpdateLastPollAndDelete(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryDeviceCodeStore()
 	_ = s.Issue(ctx, &oauth.DeviceCode{DeviceCode: "dc", UserCode: "uc", ClientID: "c", ExpiresAt: time.Now().Add(time.Minute)})
@@ -128,6 +132,7 @@ func TestMemoryDeviceCodeStore_UpdateLastPollAndDelete(t *testing.T) {
 }
 
 func TestMemoryDeviceCodeStore_ExpiredCollapsesToNotFound(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryDeviceCodeStore()
 	_ = s.Issue(ctx, &oauth.DeviceCode{DeviceCode: "dc", UserCode: "uc", ClientID: "c", ExpiresAt: time.Now().Add(-time.Second)})
@@ -146,6 +151,7 @@ func TestMemoryDeviceCodeStore_ExpiredCollapsesToNotFound(t *testing.T) {
 }
 
 func TestGenerateDeviceAndUserCode(t *testing.T) {
+	t.Parallel()
 	dc, err := defaultimpl.GenerateDeviceCode()
 	if err != nil {
 		t.Fatalf("GenerateDeviceCode: %v", err)
@@ -179,6 +185,7 @@ func TestGenerateDeviceAndUserCode(t *testing.T) {
 // -race; the concurrent reader must never observe Approve's writes through
 // its own (independent) copy, and its Attributes map must not be aliased.
 func TestMemoryDeviceCodeStore_GetReturnsIndependentCopy(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryDeviceCodeStore()
 

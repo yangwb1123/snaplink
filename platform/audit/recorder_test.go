@@ -45,6 +45,7 @@ func (s *stubSink) snapshot() []*audit.Event {
 }
 
 func TestRecorder_RecordPersistsEvent(t *testing.T) {
+	t.Parallel()
 	s := &stubSink{}
 	r := audit.New(s)
 	r.Record(context.Background(), &audit.Event{Type: audit.EventLogin})
@@ -59,6 +60,7 @@ func TestRecorder_RecordPersistsEvent(t *testing.T) {
 }
 
 func TestRecorder_FillsZeroTimestampFromClock(t *testing.T) {
+	t.Parallel()
 	frozen := time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC)
 	s := &stubSink{}
 	r := audit.New(s, audit.WithClock(func() time.Time { return frozen }))
@@ -72,6 +74,7 @@ func TestRecorder_FillsZeroTimestampFromClock(t *testing.T) {
 }
 
 func TestRecorder_PreservesNonZeroTimestamp(t *testing.T) {
+	t.Parallel()
 	preset := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	frozen := time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC)
 	s := &stubSink{}
@@ -86,6 +89,7 @@ func TestRecorder_PreservesNonZeroTimestamp(t *testing.T) {
 }
 
 func TestRecorder_RoutesSinkErrorToHandler(t *testing.T) {
+	t.Parallel()
 	sinkErr := errors.New("boom")
 	s := &stubSink{recordErr: sinkErr}
 
@@ -99,6 +103,7 @@ func TestRecorder_RoutesSinkErrorToHandler(t *testing.T) {
 }
 
 func TestRecorder_SwallowsSinkErrorWhenNoHandler(t *testing.T) {
+	t.Parallel()
 	s := &stubSink{recordErr: errors.New("boom")}
 	r := audit.New(s)
 	// Must not panic and must not propagate the error.
@@ -106,6 +111,7 @@ func TestRecorder_SwallowsSinkErrorWhenNoHandler(t *testing.T) {
 }
 
 func TestRecorder_NilSafety(t *testing.T) {
+	t.Parallel()
 	// nil recorder
 	var r *audit.Recorder
 	r.Record(context.Background(), &audit.Event{Type: audit.EventLogin}) // must not panic
@@ -124,6 +130,7 @@ func TestRecorder_NilSafety(t *testing.T) {
 }
 
 func TestRecorder_SinkAccessor(t *testing.T) {
+	t.Parallel()
 	s := &stubSink{}
 	r := audit.New(s)
 	if r.Sink() != s {
@@ -132,6 +139,7 @@ func TestRecorder_SinkAccessor(t *testing.T) {
 }
 
 func TestRecorder_DefaultClockIsRealTime(t *testing.T) {
+	t.Parallel()
 	// Smoke test: without WithClock, the timestamp should be close to time.Now.
 	s := &stubSink{}
 	r := audit.New(s)

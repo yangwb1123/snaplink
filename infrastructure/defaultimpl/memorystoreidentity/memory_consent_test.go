@@ -10,6 +10,7 @@ import (
 )
 
 func TestMemoryConsentStore_RecordAndGet(t *testing.T) {
+	t.Parallel()
 	cs := NewMemoryConsentStore()
 	ctx := context.Background()
 	now := time.Now().Truncate(time.Millisecond)
@@ -37,6 +38,7 @@ func TestMemoryConsentStore_RecordAndGet(t *testing.T) {
 }
 
 func TestMemoryConsentStore_GetMissingReturnsErrNoConsentGrant(t *testing.T) {
+	t.Parallel()
 	cs := NewMemoryConsentStore()
 	_, err := cs.GetConsent(context.Background(), "alice", "app1")
 	if !errors.Is(err, core.ErrNoConsentGrant) {
@@ -45,6 +47,7 @@ func TestMemoryConsentStore_GetMissingReturnsErrNoConsentGrant(t *testing.T) {
 }
 
 func TestMemoryConsentStore_RecordOverwritesPriorGrant(t *testing.T) {
+	t.Parallel()
 	cs := NewMemoryConsentStore()
 	ctx := context.Background()
 
@@ -71,6 +74,7 @@ func TestMemoryConsentStore_RecordOverwritesPriorGrant(t *testing.T) {
 }
 
 func TestMemoryConsentStore_RevokeRemovesGrant(t *testing.T) {
+	t.Parallel()
 	cs := NewMemoryConsentStore()
 	ctx := context.Background()
 
@@ -90,6 +94,7 @@ func TestMemoryConsentStore_RevokeRemovesGrant(t *testing.T) {
 }
 
 func TestMemoryConsentStore_RevokeIsIdempotent(t *testing.T) {
+	t.Parallel()
 	cs := NewMemoryConsentStore()
 	ctx := context.Background()
 	// Revoking a non-existent grant MUST NOT error.
@@ -99,6 +104,7 @@ func TestMemoryConsentStore_RevokeIsIdempotent(t *testing.T) {
 }
 
 func TestMemoryConsentStore_ListByUser(t *testing.T) {
+	t.Parallel()
 	cs := NewMemoryConsentStore()
 	ctx := context.Background()
 
@@ -122,6 +128,7 @@ func TestMemoryConsentStore_ListByUser(t *testing.T) {
 }
 
 func TestMemoryConsentStore_ListByUserEmptySliceNotNil(t *testing.T) {
+	t.Parallel()
 	cs := NewMemoryConsentStore()
 	list, err := cs.ListByUser(context.Background(), "ghost")
 	if err != nil {
@@ -133,6 +140,7 @@ func TestMemoryConsentStore_ListByUserEmptySliceNotNil(t *testing.T) {
 }
 
 func TestMemoryConsentStore_NormalizesScopes(t *testing.T) {
+	t.Parallel()
 	cs := NewMemoryConsentStore()
 	ctx := context.Background()
 
@@ -157,6 +165,7 @@ func TestMemoryConsentStore_NormalizesScopes(t *testing.T) {
 }
 
 func TestMemoryConsentStore_SeparatesUserClientPairs(t *testing.T) {
+	t.Parallel()
 	cs := NewMemoryConsentStore()
 	ctx := context.Background()
 

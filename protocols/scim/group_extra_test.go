@@ -20,6 +20,7 @@ import (
 // TestGetGroup_IfNoneMatch304: a group GET whose If-None-Match equals the
 // current version returns 304 + the ETag (getGroup's 304 branch).
 func TestGetGroup_IfNoneMatch304(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"NM"}`)
 	cur := decodeGroupResource(t, do(t, h, http.MethodGet, pathGroups+"/"+id, "")).Meta.Version
@@ -39,6 +40,7 @@ func TestGetGroup_IfNoneMatch304(t *testing.T) {
 // TestDeleteGroup_IfMatchStale412: a DELETE with a stale If-Match is 412 and
 // the group survives (deleteGroup's If-Match precondition branch).
 func TestDeleteGroup_IfMatchStale(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"DG"}`)
 	rec := doH(t, h, http.MethodDelete, pathGroups+"/"+id, "", map[string]string{"If-Match": `W/"stale"`})
@@ -53,6 +55,7 @@ func TestDeleteGroup_IfMatchStale(t *testing.T) {
 
 // TestDeleteGroup_IfMatchCurrentProceeds: a matching If-Match lets DELETE through.
 func TestDeleteGroup_IfMatchCurrent(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"DG2"}`)
 	cur := decodeGroupResource(t, do(t, h, http.MethodGet, pathGroups+"/"+id, "")).Meta.Version
@@ -65,6 +68,7 @@ func TestDeleteGroup_IfMatchCurrent(t *testing.T) {
 // TestDeleteGroup_IfMatchUnknownGroup: an If-Match DELETE on an unknown group
 // is 404 (deleteGroup loads first when If-Match is present).
 func TestDeleteGroup_IfMatchUnknownGroup(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	rec := doH(t, h, http.MethodDelete, pathGroups+"/ghost", "", map[string]string{"If-Match": `W/"x"`})
 	if rec.Code != http.StatusNotFound {
@@ -74,6 +78,7 @@ func TestDeleteGroup_IfMatchUnknownGroup(t *testing.T) {
 
 // TestCreateGroup_BadJSON: a malformed body is invalidSyntax (decodeGroup).
 func TestCreateGroup_BadJSON(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	rec := do(t, h, http.MethodPost, pathGroups, `{not json`)
 	if rec.Code != http.StatusBadRequest {
@@ -88,6 +93,7 @@ func TestCreateGroup_BadJSON(t *testing.T) {
 // same id makes the second create collide with the first (createGroup's
 // ErrRoleExists -> 409 uniqueness branch).
 func TestCreateGroup_IDConflict(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	// First create mints grp-1; force the next id to also be grp-1.
 	if rec := do(t, h, http.MethodPost, pathGroups, `{"displayName":"First"}`); rec.Code != http.StatusCreated {
@@ -107,6 +113,7 @@ func TestCreateGroup_IDConflict(t *testing.T) {
 // TestPatchGroup_PathlessMerge: a path-less PATCH whose value object carries
 // displayName + members applies both (planGroupOp path-less branch).
 func TestPatchGroup_PathlessMerge(t *testing.T) {
+	t.Parallel()
 	h, perms, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"Old","members":[{"value":"x"}]}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -128,6 +135,7 @@ func TestPatchGroup_PathlessMerge(t *testing.T) {
 // TestPatchGroup_RemoveDisplayName: a "remove displayName" PATCH clears the
 // role name (planGroupOp displayName-remove branch).
 func TestPatchGroup_RemoveDisplayName(t *testing.T) {
+	t.Parallel()
 	h, perms, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"Named"}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -146,6 +154,7 @@ func TestPatchGroup_RemoveDisplayName(t *testing.T) {
 // TestPatchGroup_DisplayNamePathReplace: replace displayName via an explicit
 // path (planGroupOp displayName replace branch with a path).
 func TestPatchGroup_DisplayNameViaPathlessIsRejectedOnUnknown(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G"}`)
 	// A path-less merge naming an unsupported attribute is invalidPath.
@@ -164,6 +173,7 @@ func TestPatchGroup_DisplayNameViaPathlessIsRejectedOnUnknown(t *testing.T) {
 // TestPatchGroup_UnsupportedOp: an op verb outside add/replace/remove is
 // invalidValue (planGroupOp default verb branch).
 func TestPatchGroup_UnsupportedOp(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G"}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -180,6 +190,7 @@ func TestPatchGroup_UnsupportedOp(t *testing.T) {
 
 // TestPatchGroup_RemoveWithoutPath: remove with no path is noTarget.
 func TestPatchGroup_RemoveWithoutPath(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G"}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"remove"}]}`
@@ -195,6 +206,7 @@ func TestPatchGroup_RemoveWithoutPath(t *testing.T) {
 // TestPatchGroup_DisplayNameNonString: a non-string displayName value is
 // invalidValue (both the path-less and pathed branches).
 func TestPatchGroup_DisplayNameNonString(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G"}`)
 	// pathed
@@ -221,6 +233,7 @@ func TestPatchGroup_DisplayNameNonString(t *testing.T) {
 // TestPatchGroup_MembersNonArray: a members value that isn't an array is
 // invalidValue (memberValuesFromRaw error).
 func TestPatchGroup_MembersNonArray(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G"}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -238,6 +251,7 @@ func TestPatchGroup_MembersNonArray(t *testing.T) {
 // TestPatchGroup_PathlessMembersNonArray covers the path-less members decode
 // error branch.
 func TestPatchGroup_PathlessMembersNonArray(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G"}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -252,6 +266,7 @@ func TestPatchGroup_PathlessMembersNonArray(t *testing.T) {
 // TestPatchGroup_PathlessMissingValue / non-object cover those planGroupOp
 // branches.
 func TestPatchGroup_PathlessMissingAndNonObject(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G"}`)
 	// missing value
@@ -275,6 +290,7 @@ func TestPatchGroup_PathlessMissingAndNonObject(t *testing.T) {
 // selector is rejected — only remove is meaningful (planGroupOp value-path
 // non-remove branch).
 func TestPatchGroup_FilteredMemberAddRejected(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G","members":[{"value":"a"}]}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -294,6 +310,7 @@ func TestPatchGroup_FilteredMemberAddRejected(t *testing.T) {
 // memberElementAttrs type branch). All members carry type "User", so a
 // type-eq-User filter clears them all.
 func TestPatchGroup_FilteredMemberRemoveByType(t *testing.T) {
+	t.Parallel()
 	h, perms, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G","members":[{"value":"a"},{"value":"b"}]}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -311,6 +328,7 @@ func TestPatchGroup_FilteredMemberRemoveByType(t *testing.T) {
 // TestPatchGroup_FilteredMemberRemoveNoMatchIsNoOp: a value-path remove that
 // matches no current member is an idempotent no-op success (removeMembersMatching).
 func TestPatchGroup_FilteredMemberRemoveNoMatch(t *testing.T) {
+	t.Parallel()
 	h, perms, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G","members":[{"value":"keep"}]}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -329,6 +347,7 @@ func TestPatchGroup_FilteredMemberRemoveNoMatch(t *testing.T) {
 // a one-element array appends that member individually (planGroupOp members add
 // per-member branch).
 func TestPatchGroup_AddSingleMemberViaPath(t *testing.T) {
+	t.Parallel()
 	h, perms, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G","members":[{"value":"a"}]}`)
 	// add already-present 'a' (idempotent) plus a new 'c' -> exercises addMember
@@ -348,6 +367,7 @@ func TestPatchGroup_AddSingleMemberViaPath(t *testing.T) {
 // TestPatchGroup_UnfilteredMembersRemoveClearsAll covers the planGroupOp
 // unfiltered members remove branch directly (drops the whole set).
 func TestPatchGroup_UnfilteredMembersRemove(t *testing.T) {
+	t.Parallel()
 	h, perms, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G","members":[{"value":"a"},{"value":"b"}]}`)
 	body := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
@@ -365,6 +385,7 @@ func TestPatchGroup_UnfilteredMembersRemove(t *testing.T) {
 // TestReplaceGroup_MissingDisplayName: PUT with a blank displayName is
 // invalidValue (replaceGroup validation branch).
 func TestReplaceGroup_MissingDisplayName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G"}`)
 	rec := do(t, h, http.MethodPut, pathGroups+"/"+id, `{"members":[{"value":"x"}]}`)
@@ -378,6 +399,7 @@ func TestReplaceGroup_MissingDisplayName(t *testing.T) {
 
 // TestReplaceGroup_BadJSON: a malformed PUT body is invalidSyntax.
 func TestReplaceGroup_BadJSON(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G"}`)
 	rec := do(t, h, http.MethodPut, pathGroups+"/"+id, `{bad`)
@@ -392,6 +414,7 @@ func TestReplaceGroup_BadJSON(t *testing.T) {
 // TestGroupMethodNotAllowed: an undefined method on the /Groups collection and
 // on a /Groups/{id} resource returns 405.
 func TestGroupMethodNotAllowed(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	id := seedGroup(t, h, `{"displayName":"G"}`)
 	if rec := do(t, h, http.MethodDelete, pathGroups, ""); rec.Code != http.StatusMethodNotAllowed {
@@ -404,6 +427,7 @@ func TestGroupMethodNotAllowed(t *testing.T) {
 
 // TestGroupNestedPath: a nested /Groups/a/b path is not-found.
 func TestGroupNestedPath(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newGroupHandler(t)
 	if rec := do(t, h, http.MethodGet, pathGroups+"/a/b", ""); rec.Code != http.StatusNotFound {
 		t.Errorf("nested group path = %d, want 404", rec.Code)
@@ -414,6 +438,7 @@ func TestGroupNestedPath(t *testing.T) {
 // together (the populated branches of listGroups) and asserts the audit on
 // create lands as the reused role event.
 func TestGroupListFilteredAudit(t *testing.T) {
+	t.Parallel()
 	h, _, sink := newGroupHandler(t)
 	seedGroup(t, h, `{"displayName":"Alpha"}`)
 	seedGroup(t, h, `{"displayName":"Beta"}`)
@@ -438,6 +463,7 @@ func TestGroupListFilteredAudit(t *testing.T) {
 // "already a member" short-circuit through the baseOnlyProvider (no
 // GroupMembershipWriter), re-adding an existing member.
 func TestGroupAddMember_AlreadyMemberFallback(t *testing.T) {
+	t.Parallel()
 	inner := permissions.NewMemoryProvider()
 	ctx := context.Background()
 	// The role must be defined for userRoleCodes (which reads via Roles) to see

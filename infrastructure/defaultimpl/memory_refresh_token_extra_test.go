@@ -22,6 +22,7 @@ func mkRefresh(uid, cid, fam string) *oauth.RefreshToken {
 }
 
 func TestMemoryRefreshTokenStore_Inspect(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	_ = s.Issue(ctx, "rt", mkRefresh("u", "c", ""))
@@ -40,6 +41,7 @@ func TestMemoryRefreshTokenStore_Inspect(t *testing.T) {
 }
 
 func TestMemoryRefreshTokenStore_InspectUnknownAndExpired(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	if _, err := s.Inspect(ctx, "nope"); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
@@ -59,6 +61,7 @@ func TestMemoryRefreshTokenStore_InspectUnknownAndExpired(t *testing.T) {
 }
 
 func TestMemoryRefreshTokenStore_Delete(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	_ = s.Issue(ctx, "rt", mkRefresh("u", "c", "fam-1"))
@@ -81,6 +84,7 @@ func TestMemoryRefreshTokenStore_Delete(t *testing.T) {
 }
 
 func TestMemoryRefreshTokenStore_DeleteAllForSubject(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	_ = s.Issue(ctx, "a1", mkRefresh("alice", "app-x", ""))
@@ -116,6 +120,7 @@ func TestMemoryRefreshTokenStore_DeleteAllForSubject(t *testing.T) {
 }
 
 func TestMemoryRefreshTokenStore_CountForSubject(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	_ = s.Issue(ctx, "a1", mkRefresh("alice", "app-x", ""))
@@ -138,6 +143,7 @@ func TestMemoryRefreshTokenStore_CountForSubject(t *testing.T) {
 }
 
 func TestMemoryRefreshTokenStore_DeleteFamilyClearsReuseMarker(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	_ = s.Issue(ctx, "leaf1", mkRefresh("u", "c", "fam"))
@@ -167,6 +173,7 @@ func TestMemoryRefreshTokenStore_DeleteFamilyClearsReuseMarker(t *testing.T) {
 }
 
 func TestMemoryRefreshTokenStore_ReuseDetectionThenFamilyKill(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := defaultimpl.NewMemoryRefreshTokenStore()
 	_ = s.Issue(ctx, "leaf", mkRefresh("u", "c", "fam"))

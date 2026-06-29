@@ -48,6 +48,7 @@ func findAuth(t *testing.T, auths []sso.Authenticator, name string) sso.Authenti
 // timestamp) tuple even though the config opts into NOTHING extra — the
 // nonce store is wired by default.
 func TestBuildAuthenticators_KeyPairNonceReplayWiredByDefault(t *testing.T) {
+	t.Parallel()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("genkey: %v", err)
@@ -98,6 +99,7 @@ func TestBuildAuthenticators_KeyPairNonceReplayWiredByDefault(t *testing.T) {
 // authenticator rejects reuse of the same code within its step window with no
 // extra config — the consumed-code store is wired by default.
 func TestBuildAuthenticators_TOTPConsumedWiredByDefault(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Authenticators.TOTP = &config.TOTPConfig{Enabled: true}
 	// The cmd path builds its OWN secret store internally and surfaces it as the

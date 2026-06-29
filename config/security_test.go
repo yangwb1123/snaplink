@@ -35,6 +35,7 @@ security:
 `
 
 func TestSecurityConfig_Parses(t *testing.T) {
+	t.Parallel()
 	p := writeTemp(t, "sec.yaml", securityYAML)
 	cfg, err := LoadFromSources(context.Background(), NewFileSource(p))
 	if err != nil {
@@ -69,6 +70,7 @@ func TestSecurityConfig_Parses(t *testing.T) {
 }
 
 func TestSecurityConfig_ServerOptionsWiresThree(t *testing.T) {
+	t.Parallel()
 	// Verify that a populated Security block contributes three
 	// sso.Option entries (body limit + rate limit + CORS) to
 	// ServerOptions's output.
@@ -88,6 +90,7 @@ func TestSecurityConfig_ServerOptionsWiresThree(t *testing.T) {
 }
 
 func TestSecurityConfig_EmptyBlockAppliesBodyLimitDefault(t *testing.T) {
+	t.Parallel()
 	// Absent security: block → rate-limit + CORS stay skipped, but the
 	// conservative body-limit DEFAULT is now applied by applyDefaults
 	// (secure-by-default: an omitted body_limit is bounded, not unbounded).
@@ -105,6 +108,7 @@ func TestSecurityConfig_EmptyBlockAppliesBodyLimitDefault(t *testing.T) {
 }
 
 func TestSecurityConfig_NegativeBodyLimitIsUnlimited(t *testing.T) {
+	t.Parallel()
 	// max_bytes: -1 is the explicit unlimited escape hatch — normalized to
 	// 0 so no WithBodyLimit is wired (just WithIssuer survives).
 	p := writeTemp(t, "unlimited.yaml", "server: {issuer: t, listen: :8080}\nsecurity: {body_limit: {max_bytes: -1}}\n")

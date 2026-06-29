@@ -12,6 +12,7 @@ import (
 )
 
 func TestSetMeta_LazyAllocAndSkipEmpty(t *testing.T) {
+	t.Parallel()
 	e := &audit.Event{}
 	audit.SetMeta(e, "k0", "") // empty value: skipped, no alloc
 	if e.Metadata != nil {
@@ -26,6 +27,7 @@ func TestSetMeta_LazyAllocAndSkipEmpty(t *testing.T) {
 // SetMeta must never clobber prior enrichment — the central invariant the
 // whole audit metadata contract rests on (AGENTS.md §4).
 func TestSetMeta_NeverClobbersExistingKeys(t *testing.T) {
+	t.Parallel()
 	e := &audit.Event{}
 	audit.SetMeta(e, "geo.country_code", "US")
 	audit.SetMeta(e, "tenant.id", "t-1")
@@ -43,6 +45,7 @@ func TestSetMeta_NeverClobbersExistingKeys(t *testing.T) {
 }
 
 func TestClientIP_Precedence(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		xff, xrip string
@@ -74,6 +77,7 @@ func TestClientIP_Precedence(t *testing.T) {
 }
 
 func TestEventFromRequest_TracingHeaders(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest("POST", "/token", nil)
 	r.Header.Set(core.HeaderRequestID, "req-123")
 	r.Header.Set(core.HeaderParentSpanID, "parent-span")
@@ -97,6 +101,7 @@ func TestEventFromRequest_TracingHeaders(t *testing.T) {
 }
 
 func TestEventFromRequest_MalformedTraceparentIgnored(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest("POST", "/token", nil)
 	r.Header.Set(core.HeaderTraceparent, "not-a-valid-traceparent")
 	ctx := core.NewContext(httptest.NewRecorder(), r)
@@ -107,6 +112,7 @@ func TestEventFromRequest_MalformedTraceparentIgnored(t *testing.T) {
 }
 
 func TestEventFromRequest_NoMiddlewareLeavesFieldsEmpty(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest("POST", "/token", nil)
 	ctx := core.NewContext(httptest.NewRecorder(), r)
 	e := audit.EventFromRequest(ctx)
@@ -116,6 +122,7 @@ func TestEventFromRequest_NoMiddlewareLeavesFieldsEmpty(t *testing.T) {
 }
 
 func TestEnrichTenant_LiftsResolvedTenant(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest("POST", "/token", nil)
 	ctx := core.NewContext(httptest.NewRecorder(), r)
 	ctx.Set(tenant.HandlerContextKey, &tenant.Resolved{
@@ -136,6 +143,7 @@ func TestEnrichTenant_LiftsResolvedTenant(t *testing.T) {
 }
 
 func TestEnrichTenant_NilResolvedNoOp(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest("POST", "/token", nil)
 	ctx := core.NewContext(httptest.NewRecorder(), r)
 	// Resolved present but Tenant nil — the no-op branch.
@@ -147,6 +155,7 @@ func TestEnrichTenant_NilResolvedNoOp(t *testing.T) {
 }
 
 func TestEnrichGeo_LiftsGeoInfo(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest("POST", "/token", nil)
 	ctx := core.NewContext(httptest.NewRecorder(), r)
 	ctx.Set(geo.HandlerContextKey, &geo.GeoInfo{
@@ -166,6 +175,7 @@ func TestEnrichGeo_LiftsGeoInfo(t *testing.T) {
 }
 
 func TestEnrichRegion_LiftsServingRegion(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest("POST", "/token", nil)
 	ctx := core.NewContext(httptest.NewRecorder(), r)
 	ctx.Set(region.HandlerContextKey, region.ID("eu-west"))
@@ -177,6 +187,7 @@ func TestEnrichRegion_LiftsServingRegion(t *testing.T) {
 }
 
 func TestEnrichRegion_EmptyIDAddsNoKey(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest("POST", "/token", nil)
 	ctx := core.NewContext(httptest.NewRecorder(), r)
 	// Middleware ran but resolved no region (unconstrained request).
@@ -190,6 +201,7 @@ func TestEnrichRegion_EmptyIDAddsNoKey(t *testing.T) {
 // All three enrichers stacking onto one event must coexist — SetMeta's
 // no-clobber guarantee proven end-to-end through EventFromRequest.
 func TestEventFromRequest_AllEnrichersCoexist(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest("POST", "/token", nil)
 	ctx := core.NewContext(httptest.NewRecorder(), r)
 	ctx.Set(tenant.HandlerContextKey, &tenant.Resolved{Tenant: &tenant.Tenant{ID: "t", Slug: "s"}})

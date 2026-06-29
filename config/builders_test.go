@@ -11,6 +11,7 @@ import (
 // ---------- BuildPermissionProvider ----------
 
 func TestBuildPermissionProvider_DisabledReturnsNil(t *testing.T) {
+	t.Parallel()
 	c := &Config{}
 	c.Permissions.Enabled = false
 	if got := c.BuildPermissionProvider(); got != nil {
@@ -19,6 +20,7 @@ func TestBuildPermissionProvider_DisabledReturnsNil(t *testing.T) {
 }
 
 func TestBuildPermissionProvider_AppsRolesMenusUserRoles(t *testing.T) {
+	t.Parallel()
 	c := &Config{}
 	c.Permissions.Enabled = true
 	c.Permissions.Apps = []AppPermissionsConfig{
@@ -67,6 +69,7 @@ func TestBuildPermissionProvider_AppsRolesMenusUserRoles(t *testing.T) {
 }
 
 func TestBuildPermissionProvider_EmptyAppsStillReturnsProvider(t *testing.T) {
+	t.Parallel()
 	// Enabled=true with no apps must still return a usable empty Provider.
 	c := &Config{}
 	c.Permissions.Enabled = true
@@ -87,6 +90,7 @@ func TestBuildPermissionProvider_EmptyAppsStillReturnsProvider(t *testing.T) {
 // ---------- BuildNetworkStore ----------
 
 func TestBuildNetworkStore_DisabledReturnsNil(t *testing.T) {
+	t.Parallel()
 	c := &Config{}
 	c.Network.Enabled = false
 	store, err := c.BuildNetworkStore()
@@ -99,6 +103,7 @@ func TestBuildNetworkStore_DisabledReturnsNil(t *testing.T) {
 }
 
 func TestBuildNetworkStore_MemoryBackend(t *testing.T) {
+	t.Parallel()
 	c := &Config{}
 	c.Network.Enabled = true
 	c.Network.Store = "memory"
@@ -128,6 +133,7 @@ func TestBuildNetworkStore_MemoryBackend(t *testing.T) {
 }
 
 func TestBuildNetworkStore_DefaultBackendIsMemory(t *testing.T) {
+	t.Parallel()
 	c := &Config{}
 	c.Network.Enabled = true
 	// Store="" should default to memory, not error.
@@ -142,6 +148,7 @@ func TestBuildNetworkStore_DefaultBackendIsMemory(t *testing.T) {
 }
 
 func TestBuildNetworkStore_UnknownBackend(t *testing.T) {
+	t.Parallel()
 	c := &Config{}
 	c.Network.Enabled = true
 	c.Network.Store = "mythical"
@@ -151,6 +158,7 @@ func TestBuildNetworkStore_UnknownBackend(t *testing.T) {
 }
 
 func TestBuildNetworkStore_EtcdNeedsCmdConstruction(t *testing.T) {
+	t.Parallel()
 	// The lazy-import path returns a documented error directing
 	// operators to cmd/sso-server for etcd construction.
 	c := &Config{}
@@ -163,6 +171,7 @@ func TestBuildNetworkStore_EtcdNeedsCmdConstruction(t *testing.T) {
 }
 
 func TestBuildNetworkStore_SeedFailureClosesStore(t *testing.T) {
+	t.Parallel()
 	// A seed with an empty Name causes Apply to fail (the only
 	// validation the memory backend performs). The builder must
 	// Close the partially-populated store and surface the error.
@@ -180,6 +189,7 @@ func TestBuildNetworkStore_SeedFailureClosesStore(t *testing.T) {
 // ---------- applyCodeDefaults ----------
 
 func TestApplyCodeDefaults_ZeroValuesGetDefaults(t *testing.T) {
+	t.Parallel()
 	c := &CodeAuthConfig{}
 	applyCodeDefaults(c, 7*authenticators.DefaultPhoneCodeTTL)
 	if c.CodeLength != authenticators.DefaultCodeLength {
@@ -191,6 +201,7 @@ func TestApplyCodeDefaults_ZeroValuesGetDefaults(t *testing.T) {
 }
 
 func TestApplyCodeDefaults_NonZeroValuesPreserved(t *testing.T) {
+	t.Parallel()
 	c := &CodeAuthConfig{CodeLength: 12, CodeTTL: authenticators.DefaultPhoneCodeTTL * 3}
 	applyCodeDefaults(c, authenticators.DefaultPhoneCodeTTL)
 	if c.CodeLength != 12 {
@@ -204,6 +215,7 @@ func TestApplyCodeDefaults_NonZeroValuesPreserved(t *testing.T) {
 // ---------- Loader Sources accessor ----------
 
 func TestLoader_SourcesReturnsConfiguredChain(t *testing.T) {
+	t.Parallel()
 	a := NewFileSource("/nonexistent-a")
 	b := NewFileSource("/nonexistent-b")
 	l := NewLoader(a, b)

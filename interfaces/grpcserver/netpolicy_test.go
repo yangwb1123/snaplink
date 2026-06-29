@@ -43,6 +43,7 @@ func startNetPolicyGRPC(t *testing.T, store netpolicy.Store, c *netpolicy.Classi
 }
 
 func TestNetPolicy_ApplyGet(t *testing.T) {
+	t.Parallel()
 	store := memory.New()
 	defer func() { _ = store.Close() }()
 	conn := startNetPolicyGRPC(t, store, nil, nil)
@@ -67,6 +68,7 @@ func TestNetPolicy_ApplyGet(t *testing.T) {
 }
 
 func TestNetPolicy_GetUnknownIsNotFound(t *testing.T) {
+	t.Parallel()
 	store := memory.New()
 	defer func() { _ = store.Close() }()
 	conn := startNetPolicyGRPC(t, store, nil, nil)
@@ -78,6 +80,7 @@ func TestNetPolicy_GetUnknownIsNotFound(t *testing.T) {
 }
 
 func TestNetPolicy_ApplyMissingNameIsInvalidArgument(t *testing.T) {
+	t.Parallel()
 	store := memory.New()
 	defer func() { _ = store.Close() }()
 	conn := startNetPolicyGRPC(t, store, nil, nil)
@@ -89,6 +92,7 @@ func TestNetPolicy_ApplyMissingNameIsInvalidArgument(t *testing.T) {
 }
 
 func TestNetPolicy_ApplyWritesAuditEvent(t *testing.T) {
+	t.Parallel()
 	store := memory.New()
 	defer func() { _ = store.Close() }()
 	sink := audit.NewMemorySink(10)
@@ -121,6 +125,7 @@ func TestNetPolicy_ApplyWritesAuditEvent(t *testing.T) {
 }
 
 func TestNetPolicy_DeleteIsIdempotent(t *testing.T) {
+	t.Parallel()
 	store := memory.New()
 	defer func() { _ = store.Close() }()
 	conn := startNetPolicyGRPC(t, store, nil, nil)
@@ -131,6 +136,7 @@ func TestNetPolicy_DeleteIsIdempotent(t *testing.T) {
 }
 
 func TestNetPolicy_WatchStreamsAfterHeader(t *testing.T) {
+	t.Parallel()
 	store := memory.New()
 	defer func() { _ = store.Close() }()
 	conn := startNetPolicyGRPC(t, store, nil, nil)
@@ -183,6 +189,7 @@ func TestNetPolicy_WatchStreamsAfterHeader(t *testing.T) {
 }
 
 func TestNetPolicy_Classify(t *testing.T) {
+	t.Parallel()
 	store := memory.New()
 	defer func() { _ = store.Close() }()
 	_, _ = store.Apply(context.Background(), &netpolicy.Policy{
@@ -204,6 +211,7 @@ func TestNetPolicy_Classify(t *testing.T) {
 }
 
 func TestNetPolicy_ClassifyWithoutClassifierIsUnimplemented(t *testing.T) {
+	t.Parallel()
 	store := memory.New()
 	defer func() { _ = store.Close() }()
 	conn := startNetPolicyGRPC(t, store, nil, nil)

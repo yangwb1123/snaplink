@@ -20,12 +20,14 @@ func httpResource(id string) *permissions.Resource {
 }
 
 func TestValidate_HTTPAPIHappy(t *testing.T) {
+	t.Parallel()
 	if err := httpResource("r-1").Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 }
 
 func TestValidate_RejectsMissingID(t *testing.T) {
+	t.Parallel()
 	r := httpResource("")
 	if err := r.Validate(); !errors.Is(err, permissions.ErrInvalidResource) {
 		t.Errorf("err=%v", err)
@@ -33,6 +35,7 @@ func TestValidate_RejectsMissingID(t *testing.T) {
 }
 
 func TestValidate_RejectsMissingType(t *testing.T) {
+	t.Parallel()
 	r := httpResource("r-1")
 	r.Type = ""
 	if err := r.Validate(); !errors.Is(err, permissions.ErrInvalidResource) {
@@ -41,6 +44,7 @@ func TestValidate_RejectsMissingType(t *testing.T) {
 }
 
 func TestValidate_RejectsMissingName(t *testing.T) {
+	t.Parallel()
 	r := httpResource("r-1")
 	r.Name = ""
 	if err := r.Validate(); !errors.Is(err, permissions.ErrInvalidResource) {
@@ -49,6 +53,7 @@ func TestValidate_RejectsMissingName(t *testing.T) {
 }
 
 func TestValidate_RejectsBadRequireMode(t *testing.T) {
+	t.Parallel()
 	r := httpResource("r-1")
 	r.RequireMode = "maybe"
 	if err := r.Validate(); !errors.Is(err, permissions.ErrInvalidResource) {
@@ -57,6 +62,7 @@ func TestValidate_RejectsBadRequireMode(t *testing.T) {
 }
 
 func TestValidate_HTTPAPIRequiresMethodAndPath(t *testing.T) {
+	t.Parallel()
 	cases := map[string]map[string]string{
 		"missing method": {"path": "/x"},
 		"missing path":   {"method": "GET"},
@@ -73,6 +79,7 @@ func TestValidate_HTTPAPIRequiresMethodAndPath(t *testing.T) {
 }
 
 func TestValidate_GRPCAPIRequiresServiceAndMethod(t *testing.T) {
+	t.Parallel()
 	r := &permissions.Resource{
 		ID: "r-1", Type: permissions.ResourceTypeGRPCAPI, Name: "x",
 		Attributes: map[string]string{"service": "snaplink.user.v1.UserService"},
@@ -83,6 +90,7 @@ func TestValidate_GRPCAPIRequiresServiceAndMethod(t *testing.T) {
 }
 
 func TestValidate_GraphQLAPIRequiresOpAndField(t *testing.T) {
+	t.Parallel()
 	r := &permissions.Resource{
 		ID: "r-1", Type: permissions.ResourceTypeGraphQLAPI, Name: "x",
 		Attributes: map[string]string{"op": "mutation"},
@@ -93,6 +101,7 @@ func TestValidate_GraphQLAPIRequiresOpAndField(t *testing.T) {
 }
 
 func TestValidate_PageRequiresRoute(t *testing.T) {
+	t.Parallel()
 	r := &permissions.Resource{ID: "r-1", Type: permissions.ResourceTypePage, Name: "x"}
 	if err := r.Validate(); !errors.Is(err, permissions.ErrInvalidResource) {
 		t.Errorf("err=%v", err)
@@ -100,6 +109,7 @@ func TestValidate_PageRequiresRoute(t *testing.T) {
 }
 
 func TestValidate_JSFnRequiresRouteAndSymbol(t *testing.T) {
+	t.Parallel()
 	r := &permissions.Resource{
 		ID: "r-1", Type: permissions.ResourceTypeJSFn, Name: "x",
 		Attributes: map[string]string{"route": "/admin"},
@@ -110,6 +120,7 @@ func TestValidate_JSFnRequiresRouteAndSymbol(t *testing.T) {
 }
 
 func TestValidate_UIElementRequiresSelector(t *testing.T) {
+	t.Parallel()
 	r := &permissions.Resource{ID: "r-1", Type: permissions.ResourceTypeUIElement, Name: "x"}
 	if err := r.Validate(); !errors.Is(err, permissions.ErrInvalidResource) {
 		t.Errorf("err=%v", err)
@@ -117,6 +128,7 @@ func TestValidate_UIElementRequiresSelector(t *testing.T) {
 }
 
 func TestValidate_UnknownTypeAccepted(t *testing.T) {
+	t.Parallel()
 	// Custom types are allowed — backends define their own attribute
 	// contract. Validate only enforces the documented first-party set.
 	r := &permissions.Resource{ID: "r-1", Type: "custom_type", Name: "x"}
@@ -126,6 +138,7 @@ func TestValidate_UnknownTypeAccepted(t *testing.T) {
 }
 
 func TestEffectiveRequireMode_DefaultsToAny(t *testing.T) {
+	t.Parallel()
 	r := &permissions.Resource{}
 	if r.EffectiveRequireMode() != permissions.RequireAny {
 		t.Errorf("default = %q", r.EffectiveRequireMode())
@@ -133,6 +146,7 @@ func TestEffectiveRequireMode_DefaultsToAny(t *testing.T) {
 }
 
 func TestEffectiveRequireMode_PreservesExplicit(t *testing.T) {
+	t.Parallel()
 	r := &permissions.Resource{RequireMode: permissions.RequireAll}
 	if r.EffectiveRequireMode() != permissions.RequireAll {
 		t.Errorf("explicit ignored")

@@ -44,6 +44,7 @@ func mkRel(id string, schema int) *releases.Release {
 }
 
 func TestPin_ForwardSuccessAdvancesCurrent(t *testing.T) {
+	t.Parallel()
 	p := &captureP{}
 	r, st := newRegistry(t, p)
 	ctx := context.Background()
@@ -69,6 +70,7 @@ func TestPin_ForwardSuccessAdvancesCurrent(t *testing.T) {
 }
 
 func TestPin_PreviousIDReportedOnSecondPin(t *testing.T) {
+	t.Parallel()
 	p := &captureP{}
 	r, st := newRegistry(t, p)
 	ctx := context.Background()
@@ -85,6 +87,7 @@ func TestPin_PreviousIDReportedOnSecondPin(t *testing.T) {
 }
 
 func TestPin_PinnerErrorAbortsAndKeepsCurrent(t *testing.T) {
+	t.Parallel()
 	wantErr := errors.New("deploy fails")
 	p := &captureP{err: wantErr}
 	r, st := newRegistry(t, p)
@@ -100,6 +103,7 @@ func TestPin_PinnerErrorAbortsAndKeepsCurrent(t *testing.T) {
 }
 
 func TestPin_NilPinnerAdvancesCurrent(t *testing.T) {
+	t.Parallel()
 	r, st := newRegistry(t, nil)
 	ctx := context.Background()
 	_ = st.Register(ctx, mkRel("rel-1", 1))
@@ -113,6 +117,7 @@ func TestPin_NilPinnerAdvancesCurrent(t *testing.T) {
 }
 
 func TestPin_SchemaRegressionRejected(t *testing.T) {
+	t.Parallel()
 	p := &captureP{}
 	r, st := newRegistry(t, p)
 	ctx := context.Background()
@@ -132,6 +137,7 @@ func TestPin_SchemaRegressionRejected(t *testing.T) {
 }
 
 func TestRollback_SchemaRegressionAllowed(t *testing.T) {
+	t.Parallel()
 	p := &captureP{}
 	r, st := newRegistry(t, p)
 	ctx := context.Background()
@@ -156,6 +162,7 @@ func TestRollback_SchemaRegressionAllowed(t *testing.T) {
 }
 
 func TestPin_UnknownReleaseIsNotFound(t *testing.T) {
+	t.Parallel()
 	r, _ := newRegistry(t, nil)
 	if _, err := r.Pin(context.Background(), "ghost"); !errors.Is(err, releases.ErrReleaseNotFound) {
 		t.Fatalf("err = %v", err)
@@ -163,6 +170,7 @@ func TestPin_UnknownReleaseIsNotFound(t *testing.T) {
 }
 
 func TestCurrent_FreshStoreReturnsErrNoCurrent(t *testing.T) {
+	t.Parallel()
 	r, _ := newRegistry(t, nil)
 	if _, err := r.Current(context.Background()); !errors.Is(err, releases.ErrNoCurrent) {
 		t.Fatalf("err = %v", err)
@@ -186,6 +194,7 @@ func (p *scriptedProbe) Probe(_ context.Context, _ *releases.Release) error {
 }
 
 func TestPin_ProbeSuccessKeepsRelease(t *testing.T) {
+	t.Parallel()
 	p := &captureP{}
 	probe := &scriptedProbe{} // empty results → all calls succeed
 	st := memory.New()
@@ -204,6 +213,7 @@ func TestPin_ProbeSuccessKeepsRelease(t *testing.T) {
 }
 
 func TestPin_ProbeFailureRollsBackToPrevious(t *testing.T) {
+	t.Parallel()
 	p := &captureP{}
 	wantErr := errors.New("503")
 	probe := &scriptedProbe{results: []error{wantErr, wantErr}} // both attempts fail
@@ -233,6 +243,7 @@ func TestPin_ProbeFailureRollsBackToPrevious(t *testing.T) {
 }
 
 func TestPin_ProbeFailureNoPreviousLeavesAsIs(t *testing.T) {
+	t.Parallel()
 	p := &captureP{}
 	probe := &scriptedProbe{results: []error{errors.New("nope")}}
 	st := memory.New()
@@ -254,6 +265,7 @@ func TestPin_ProbeFailureNoPreviousLeavesAsIs(t *testing.T) {
 }
 
 func TestPin_ProbeRetriesUntilSuccess(t *testing.T) {
+	t.Parallel()
 	p := &captureP{}
 	probe := &scriptedProbe{results: []error{errors.New("warming up"), errors.New("warming up")}}
 	st := memory.New()
@@ -288,6 +300,7 @@ func (s *scriptedRestorer) RestoreByID(_ context.Context, id string) error {
 }
 
 func TestRollback_RestoresConfigSnapshotBeforePinner(t *testing.T) {
+	t.Parallel()
 	p := &captureP{}
 	rest := &scriptedRestorer{}
 	st := memory.New()
@@ -314,6 +327,7 @@ func TestRollback_RestoresConfigSnapshotBeforePinner(t *testing.T) {
 }
 
 func TestRollback_NoConfigSnapshotSkipsRestorer(t *testing.T) {
+	t.Parallel()
 	p := &captureP{}
 	rest := &scriptedRestorer{}
 	st := memory.New()
@@ -332,6 +346,7 @@ func TestRollback_NoConfigSnapshotSkipsRestorer(t *testing.T) {
 }
 
 func TestRollback_RestorerErrorAbortsBeforePinner(t *testing.T) {
+	t.Parallel()
 	p := &captureP{}
 	wantErr := errors.New("snapshot missing")
 	rest := &scriptedRestorer{err: wantErr}
@@ -358,6 +373,7 @@ func TestRollback_RestorerErrorAbortsBeforePinner(t *testing.T) {
 }
 
 func TestPin_ForwardSkipsRestorerEvenWithConfigSnapshot(t *testing.T) {
+	t.Parallel()
 	p := &captureP{}
 	rest := &scriptedRestorer{}
 	st := memory.New()
@@ -376,6 +392,7 @@ func TestPin_ForwardSkipsRestorerEvenWithConfigSnapshot(t *testing.T) {
 }
 
 func TestRollback_DoesNotProbe(t *testing.T) {
+	t.Parallel()
 	p := &captureP{}
 	probe := &scriptedProbe{results: []error{errors.New("would fail")}}
 	st := memory.New()

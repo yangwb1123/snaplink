@@ -117,6 +117,7 @@ func newOIDCFedForTest(t *testing.T, idp *fakeIdP) *OIDCFederationAuthenticator 
 }
 
 func TestOIDCFederation_LoginURLBuildsAuthorizeURL(t *testing.T) {
+	t.Parallel()
 	idp := newFakeIdP(t)
 	auth := newOIDCFedForTest(t, idp)
 
@@ -147,6 +148,7 @@ func TestOIDCFederation_LoginURLBuildsAuthorizeURL(t *testing.T) {
 }
 
 func TestOIDCFederation_LoginURLPreservesPreExistingQuery(t *testing.T) {
+	t.Parallel()
 	// Some IdPs (Microsoft Azure AD) embed a tenant id in the
 	// authorization endpoint path with a trailing ? for global params.
 	auth, _ := NewOIDCFederationAuthenticator(OIDCFederationConfig{
@@ -167,6 +169,7 @@ func TestOIDCFederation_LoginURLPreservesPreExistingQuery(t *testing.T) {
 }
 
 func TestOIDCFederation_AuthenticateRejectsDirect(t *testing.T) {
+	t.Parallel()
 	idp := newFakeIdP(t)
 	auth := newOIDCFedForTest(t, idp)
 
@@ -179,6 +182,7 @@ func TestOIDCFederation_AuthenticateRejectsDirect(t *testing.T) {
 }
 
 func TestOIDCFederation_CallbackHappyPath(t *testing.T) {
+	t.Parallel()
 	idp := newFakeIdP(t)
 	auth := newOIDCFedForTest(t, idp)
 
@@ -222,6 +226,7 @@ func TestOIDCFederation_CallbackHappyPath(t *testing.T) {
 }
 
 func TestOIDCFederation_CallbackEmptyCodeRejected(t *testing.T) {
+	t.Parallel()
 	idp := newFakeIdP(t)
 	auth := newOIDCFedForTest(t, idp)
 
@@ -232,6 +237,7 @@ func TestOIDCFederation_CallbackEmptyCodeRejected(t *testing.T) {
 }
 
 func TestOIDCFederation_CallbackPropagatesTokenEndpoint5xx(t *testing.T) {
+	t.Parallel()
 	idp := newFakeIdP(t)
 	idp.tokenStatus = http.StatusInternalServerError
 	auth := newOIDCFedForTest(t, idp)
@@ -246,6 +252,7 @@ func TestOIDCFederation_CallbackPropagatesTokenEndpoint5xx(t *testing.T) {
 }
 
 func TestOIDCFederation_CallbackPropagatesUserinfo5xx(t *testing.T) {
+	t.Parallel()
 	idp := newFakeIdP(t)
 	idp.userinfoStatus = http.StatusInternalServerError
 	auth := newOIDCFedForTest(t, idp)
@@ -260,6 +267,7 @@ func TestOIDCFederation_CallbackPropagatesUserinfo5xx(t *testing.T) {
 }
 
 func TestOIDCFederation_NoUserinfoEndpointSkipsLookup(t *testing.T) {
+	t.Parallel()
 	// Some non-OIDC OAuth providers (GitHub) only return tokens —
 	// configuring without UserinfoEndpoint should still fail
 	// because the token response carries no `sub`; the error is
@@ -287,6 +295,7 @@ func TestOIDCFederation_NoUserinfoEndpointSkipsLookup(t *testing.T) {
 }
 
 func TestOIDCFederation_SubjectFieldOverride(t *testing.T) {
+	t.Parallel()
 	idp := newFakeIdP(t)
 	idp.userinfoResponse = map[string]any{
 		"email":          "bob@example.com",
@@ -317,6 +326,7 @@ func TestOIDCFederation_SubjectFieldOverride(t *testing.T) {
 }
 
 func TestOIDCFederation_ConstructorRejectsMissingFields(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		cfg  OIDCFederationConfig

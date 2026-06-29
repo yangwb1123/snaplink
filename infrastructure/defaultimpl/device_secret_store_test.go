@@ -58,6 +58,7 @@ func deviceSecretStoreSuite(t *testing.T, mk func(t *testing.T) core.DeviceSecre
 }
 
 func TestMemoryDeviceSecretStore(t *testing.T) {
+	t.Parallel()
 	deviceSecretStoreSuite(t, func(t *testing.T) core.DeviceSecretStore {
 		return defaultimpl.NewMemoryDeviceSecretStore()
 	})

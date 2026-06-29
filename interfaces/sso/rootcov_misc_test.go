@@ -24,6 +24,7 @@ import (
 // TestRcovMisc_MeshExtAuthz covers the mesh ext_authz endpoint: a valid bearer
 // ALLOWs (200 + X-Auth-* headers), a missing/garbage bearer DENIES.
 func TestRcovMisc_MeshExtAuthz(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithMeshExtAuthz("/mesh/ext-authz"))
 	access, _ := rcovDirectLogin(t, s)
 
@@ -57,6 +58,7 @@ func TestRcovMisc_MeshExtAuthz(t *testing.T) {
 // TestRcovMisc_TokenExchange covers RFC 8693: a valid subject_token is exchanged
 // for a new access token; missing subject_token => invalid_request.
 func TestRcovMisc_TokenExchange(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	access, _ := rcovDirectLogin(t, s)
 
@@ -106,6 +108,7 @@ func (rcovTOTPProvider) Verify(_ context.Context, _, method string, params map[s
 // TestRcovMisc_MFAStepUp covers the Risk->RequireMFA two-leg flow: /auth/login
 // returns mfa_required, then POST /auth/mfa with the right factor mints tokens.
 func TestRcovMisc_MFAStepUp(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t,
 		sso.WithRiskScorer(rcovRequireMFAScorer{}),
 		sso.WithMFAProvider(rcovTOTPProvider{}),
@@ -164,6 +167,7 @@ func TestRcovMisc_MFAStepUp(t *testing.T) {
 
 // TestRcovMisc_AuditAPI covers the admin-gated audit query endpoints.
 func TestRcovMisc_AuditAPI(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(ctx, &sso.User{ID: rcovUser})

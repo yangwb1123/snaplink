@@ -18,6 +18,7 @@ import (
 // TestRcov2SU_SignupBranches covers the success, duplicate-username (409), and
 // missing-field (400) branches of POST /auth/register.
 func TestRcov2SU_SignupBranches(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithSelfServiceSignup())
 
 	// Success.
@@ -61,6 +62,7 @@ func TestRcov2SU_SignupBranches(t *testing.T) {
 // path: request a change, then verify with the delivered token, which commits
 // the new email on the UserProvider.
 func TestRcov2SU_EmailChangeVerifyCommit(t *testing.T) {
+	t.Parallel()
 	sender := &rcovEmailSender{}
 	s := rcovNewServer(t,
 		sso.WithEmailChangeStore(defaultimpl.NewMemoryEmailChangeStore(), 0),

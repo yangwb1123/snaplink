@@ -12,6 +12,7 @@ import (
 )
 
 func TestMultiJWEDecrypter_RoutesByAlg(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	rsaPriv, _ := rsa.GenerateKey(rand.Reader, 2048)
 	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -58,6 +59,7 @@ func TestMultiJWEDecrypter_RoutesByAlg(t *testing.T) {
 }
 
 func TestMultiJWEDecrypter_DuplicateAlgPanics(t *testing.T) {
+	t.Parallel()
 	defer func() {
 		if recover() == nil {
 			t.Error("expected panic on duplicate alg across decrypters")
@@ -71,6 +73,7 @@ func TestMultiJWEDecrypter_DuplicateAlgPanics(t *testing.T) {
 }
 
 func TestMultiJWEDecrypter_UnknownAlg(t *testing.T) {
+	t.Parallel()
 	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	ecDec, _ := defaultimpl.NewECDHJWEDecrypter(ecPriv, "ec-1")
 	multi := defaultimpl.NewMultiJWEDecrypter(ecDec)

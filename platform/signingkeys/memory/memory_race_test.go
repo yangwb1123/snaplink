@@ -15,6 +15,7 @@ import (
 // (the default: only guards a FULL channel, never a CLOSED one). Run with
 // -race -count=10 to surface the window.
 func TestPublishCloseRace(t *testing.T) {
+	t.Parallel()
 	r := memory.New()
 
 	ch, err := r.Subscribe(context.Background())

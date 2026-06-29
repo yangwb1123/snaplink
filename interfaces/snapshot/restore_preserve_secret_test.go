@@ -17,6 +17,7 @@ import (
 // wholesale-replaced and wiped the live hashed secret (the client could
 // no longer authenticate client_credentials/refresh on /token).
 func TestRestore_Overwrite_PreservesLiveClientSecret(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// Live destination: a confidential client with a real secret + RAT.

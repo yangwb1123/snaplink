@@ -24,6 +24,7 @@ import (
 // conversion being wrong).
 
 func TestEd25519_EndToEnd(t *testing.T) {
+	t.Parallel()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("genkey: %v", err)
@@ -42,6 +43,7 @@ func TestEd25519_EndToEnd(t *testing.T) {
 }
 
 func TestECDSA_EndToEnd(t *testing.T) {
+	t.Parallel()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("genkey: %v", err)
@@ -61,6 +63,7 @@ func TestECDSA_EndToEnd(t *testing.T) {
 }
 
 func TestRSA_EndToEnd(t *testing.T) {
+	t.Parallel()
 	for _, alg := range []string{cryptosigner.AlgRS256, cryptosigner.AlgPS256} {
 		t.Run(alg, func(t *testing.T) {
 			priv, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -122,6 +125,7 @@ type cryptoSignerAccessor interface {
 // The check is Public()-equality with the key the bridge wraps: SAML/XML-DSig
 // thus signs with the exact key published in JWKS, even for an external key.
 func TestCryptoSigner_BridgeUnwrapsUnderlyingKey(t *testing.T) {
+	t.Parallel()
 	edPub, edPriv, _ := ed25519.GenerateKey(rand.Reader)
 	ecPriv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	rsaPriv, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -187,6 +191,7 @@ func TestCryptoSigner_BridgeUnwrapsUnderlyingKey(t *testing.T) {
 }
 
 func TestWrongKeyType(t *testing.T) {
+	t.Parallel()
 	rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	ecKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	edPub, edPriv, _ := ed25519.GenerateKey(rand.Reader)
@@ -204,6 +209,7 @@ func TestWrongKeyType(t *testing.T) {
 }
 
 func TestECDSA_RejectsNonP256(t *testing.T) {
+	t.Parallel()
 	p384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	if err != nil {
 		t.Fatalf("genkey: %v", err)
@@ -214,6 +220,7 @@ func TestECDSA_RejectsNonP256(t *testing.T) {
 }
 
 func TestRSA_RejectsSmallKeyAndBadAlg(t *testing.T) {
+	t.Parallel()
 	small, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
 		t.Fatalf("genkey: %v", err)
@@ -231,6 +238,7 @@ func TestRSA_RejectsSmallKeyAndBadAlg(t *testing.T) {
 }
 
 func TestNilSigner(t *testing.T) {
+	t.Parallel()
 	if _, _, err := cryptosigner.Ed25519(nil); err == nil {
 		t.Error("Ed25519(nil) did not error")
 	}
@@ -243,6 +251,7 @@ func TestNilSigner(t *testing.T) {
 }
 
 func TestContextCancellationFailsClosed(t *testing.T) {
+	t.Parallel()
 	_, edPriv, _ := ed25519.GenerateKey(rand.Reader)
 	sgn, _, err := cryptosigner.Ed25519(edPriv)
 	if err != nil {

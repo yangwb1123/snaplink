@@ -11,6 +11,7 @@ import (
 )
 
 func TestPeekEnvelope_RoundTrip(t *testing.T) {
+	t.Parallel()
 	pipe := &snapshot.Pipeline{}
 	st := inline.New()
 	snap := &snapshot.Snapshot{SnapshotID: "snap-peek-1", SchemaVersion: snapshot.SchemaVersion}
@@ -45,6 +46,7 @@ func TestPeekEnvelope_RoundTrip(t *testing.T) {
 }
 
 func TestPeekEnvelope_RejectsGarbage(t *testing.T) {
+	t.Parallel()
 	if _, err := snapshot.PeekEnvelope([]byte("not even json")); err == nil {
 		t.Error("expected error on non-JSON input")
 	}
@@ -54,6 +56,7 @@ func TestPeekEnvelope_RejectsGarbage(t *testing.T) {
 }
 
 func TestPeekEnvelope_TolerantOfMissingBody(t *testing.T) {
+	t.Parallel()
 	// An envelope with no body field should still decode — PeekEnvelope's
 	// whole job is to surface header metadata without decryption. Other
 	// fields must round-trip even when Body is absent.

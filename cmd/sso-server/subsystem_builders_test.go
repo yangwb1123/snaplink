@@ -22,6 +22,7 @@ import (
 // (admin registration, restore step) — a non-nil return would wire
 // the snapshot RPCs without any backend behind them.
 func TestBuildSnapshotSubsystem_DisabledReturnsNils(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Snapshot.Enabled = false
 	pipe, store, err := serverbuildstore.BuildSnapshotSubsystem(cfg, quietLogger())
@@ -37,6 +38,7 @@ func TestBuildSnapshotSubsystem_DisabledReturnsNils(t *testing.T) {
 // in-memory backend. Asserts the Pipeline + Storage round-trip a
 // trivial snapshot through the Save/Load API.
 func TestBuildSnapshotSubsystem_InlineStorage(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Snapshot.Enabled = true
 	cfg.Snapshot.Storage.Backend = "inline"
@@ -53,6 +55,7 @@ func TestBuildSnapshotSubsystem_InlineStorage(t *testing.T) {
 // happy path. Uses a tempdir so subsequent test runs don't see
 // stale files.
 func TestBuildSnapshotSubsystem_FileStorageWithDir(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Snapshot.Enabled = true
 	cfg.Snapshot.Storage.Backend = "file"
@@ -69,6 +72,7 @@ func TestBuildSnapshotSubsystem_FileStorageWithDir(t *testing.T) {
 // TestBuildSnapshotSubsystem_UnknownBackendErrors — operator typos
 // surface at boot rather than silently falling back to file.
 func TestBuildSnapshotSubsystem_UnknownBackendErrors(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Snapshot.Enabled = true
 	cfg.Snapshot.Storage.Backend = "s3"
@@ -81,6 +85,7 @@ func TestBuildSnapshotSubsystem_UnknownBackendErrors(t *testing.T) {
 // passphrase encryption without supplying one is a misconfiguration
 // the operator needs to know about at boot time.
 func TestBuildSnapshotSubsystem_PassphraseRequiresValue(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Snapshot.Enabled = true
 	cfg.Snapshot.Storage.Backend = "inline"
@@ -94,6 +99,7 @@ func TestBuildSnapshotSubsystem_PassphraseRequiresValue(t *testing.T) {
 // passphrase happy path. The argon2id+chacha20poly1305 sealer is
 // the production-recommended encryption shape per AGENTS.md.
 func TestBuildSnapshotSubsystem_PassphraseFromInline(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Snapshot.Enabled = true
 	cfg.Snapshot.Storage.Backend = "inline"
@@ -116,6 +122,7 @@ func TestBuildSnapshotSubsystem_PassphraseFromInline(t *testing.T) {
 // the snapshot disabled guard. Admin Release RPC + Pinner stay
 // unwired.
 func TestBuildReleaseSubsystem_DisabledReturnsNils(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Releases.Enabled = false
 	reg, store, err := serverbuildplatform.BuildReleaseSubsystem(cfg, quietLogger())
@@ -132,6 +139,7 @@ func TestBuildReleaseSubsystem_DisabledReturnsNils(t *testing.T) {
 // admin RPC mounted without persisting or actually flipping
 // artifacts.
 func TestBuildReleaseSubsystem_MemoryStoreNoopPinner(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Releases.Enabled = true
 	cfg.Releases.Store.Backend = "memory"
@@ -152,6 +160,7 @@ func TestBuildReleaseSubsystem_MemoryStoreNoopPinner(t *testing.T) {
 // configuration error that would otherwise silently produce a
 // pinner that always errored at flip time.
 func TestBuildReleaseSubsystem_StaticPinnerRequiresBundleDir(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Releases.Enabled = true
 	cfg.Releases.Store.Backend = "memory"
@@ -164,6 +173,7 @@ func TestBuildReleaseSubsystem_StaticPinnerRequiresBundleDir(t *testing.T) {
 // TestBuildReleaseSubsystem_UnknownStoreBackendErrors guards
 // against silent fallback when operators typo the backend name.
 func TestBuildReleaseSubsystem_UnknownStoreBackendErrors(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Releases.Enabled = true
 	cfg.Releases.Store.Backend = "redis"
@@ -180,6 +190,7 @@ func TestBuildReleaseSubsystem_UnknownStoreBackendErrors(t *testing.T) {
 // only; single-tenant cmd gets nil so sso.WithTenantStore is a
 // no-op.
 func TestBuildTenantStore_DisabledReturnsNil(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Tenant.Enabled = false
 	store, err := serverbuildstore.BuildTenantStore(cfg, quietLogger(), nil, "")
@@ -196,6 +207,7 @@ func TestBuildTenantStore_DisabledReturnsNil(t *testing.T) {
 // here would leave declared tenants unfindable at runtime even
 // though config validation passes.
 func TestBuildTenantStore_SeedsTenantsAndDomains(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Tenant.Enabled = true
 	cfg.Tenant.Tenants = []config.TenantSeedConfig{
@@ -240,6 +252,7 @@ func TestBuildTenantStore_SeedsTenantsAndDomains(t *testing.T) {
 // silent-fallback trap if a future backend is added without
 // updating the switch.
 func TestBuildTenantStore_UnknownBackendErrors(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Tenant.Enabled = true
 	cfg.Tenant.Backend = "postgres"
@@ -256,6 +269,7 @@ func TestBuildTenantStore_UnknownBackendErrors(t *testing.T) {
 // operators who don't wire it get nil so sso.WithGeoProvider
 // no-ops.
 func TestBuildGeoProvider_DisabledReturnsNil(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Geo.Enabled = false
 	p, err := serverbuildstore.BuildGeoProvider(cfg, quietLogger())
@@ -272,6 +286,7 @@ func TestBuildGeoProvider_DisabledReturnsNil(t *testing.T) {
 // here would silently make login responses omit country_code /
 // recommended_language enrichment.
 func TestBuildGeoProvider_StaticSeedsCIDREntries(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Geo.Enabled = true
 	cfg.Geo.Static.Entries = []config.GeoStaticEntry{
@@ -297,6 +312,7 @@ func TestBuildGeoProvider_StaticSeedsCIDREntries(t *testing.T) {
 // TestBuildGeoProvider_BadCIDRSurfaces — malformed CIDR fails at
 // boot, not at first request.
 func TestBuildGeoProvider_BadCIDRSurfaces(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Geo.Enabled = true
 	cfg.Geo.Static.Entries = []config.GeoStaticEntry{
@@ -311,6 +327,7 @@ func TestBuildGeoProvider_BadCIDRSurfaces(t *testing.T) {
 // silent-fallback if a future backend is added without updating
 // the switch.
 func TestBuildGeoProvider_UnknownBackendErrors(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Geo.Enabled = true
 	cfg.Geo.Backend = "maxmind"

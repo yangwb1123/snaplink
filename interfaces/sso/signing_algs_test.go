@@ -31,6 +31,7 @@ func mkJWS(t *testing.T, alg string) string {
 }
 
 func TestJWSHeaderAlg(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		token   string
 		wantAlg string
@@ -53,6 +54,7 @@ func TestJWSHeaderAlg(t *testing.T) {
 }
 
 func TestSupportedSigningAlgsGate(t *testing.T) {
+	t.Parallel()
 	// ES256 allowed, EdDSA not.
 	fake := &fakeJWTIssuer{}
 	s := NewServer(
@@ -90,6 +92,7 @@ func TestSupportedSigningAlgsGate(t *testing.T) {
 // TestSupportedSigningAlgsGate_RSA proves the gate admits the RSA algs
 // when allowlisted (RS256/PS256) and pre-filters them when not.
 func TestSupportedSigningAlgsGate_RSA(t *testing.T) {
+	t.Parallel()
 	fake := &fakeJWTIssuer{}
 	s := NewServer(
 		WithTokenIssuer("jwt", fake),

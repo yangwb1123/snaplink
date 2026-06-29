@@ -10,6 +10,7 @@ import (
 )
 
 func TestCodeStore_SaveVerifySingleUse(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewCodeStore(rdb)
 	ctx := context.Background()
@@ -27,6 +28,7 @@ func TestCodeStore_SaveVerifySingleUse(t *testing.T) {
 }
 
 func TestCodeStore_WrongCodeIsRetryable(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewCodeStore(rdb)
 	ctx := context.Background()
@@ -44,6 +46,7 @@ func TestCodeStore_WrongCodeIsRetryable(t *testing.T) {
 }
 
 func TestCodeStore_UnknownAndExpired(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	s := NewCodeStore(rdb)
 	ctx := context.Background()

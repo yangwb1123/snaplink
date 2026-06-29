@@ -3,6 +3,7 @@ package main
 import "testing"
 
 func TestLoadConfig_HTTPDefaultsAndEnvFallback(t *testing.T) {
+	t.Parallel()
 	env := map[string]string{
 		"SSO_MCP_JWKS_URL": "https://sso/.well-known/jwks.json",
 		"SSO_MCP_RESOURCE": "https://mcp/",
@@ -27,6 +28,7 @@ func TestLoadConfig_HTTPDefaultsAndEnvFallback(t *testing.T) {
 }
 
 func TestLoadConfig_FlagBeatsEnv(t *testing.T) {
+	t.Parallel()
 	env := map[string]string{"SSO_MCP_LISTEN": ":1111", "SSO_MCP_JWKS_URL": "https://sso/jwks", "SSO_MCP_RESOURCE": "https://mcp/"}
 	c, err := loadConfig([]string{"-listen", ":2222"}, func(k string) string { return env[k] })
 	if err != nil {
@@ -38,12 +40,14 @@ func TestLoadConfig_FlagBeatsEnv(t *testing.T) {
 }
 
 func TestLoadConfig_HTTPRequiresResourceAndJWKS(t *testing.T) {
+	t.Parallel()
 	if _, err := loadConfig(nil, func(string) string { return "" }); err == nil {
 		t.Fatal("http transport without jwks-url/resource must error")
 	}
 }
 
 func TestLoadConfig_StdioRequiresJWKSOnly(t *testing.T) {
+	t.Parallel()
 	env := map[string]string{"SSO_MCP_TRANSPORT": "stdio", "SSO_MCP_JWKS_URL": "https://sso/jwks"}
 	if _, err := loadConfig(nil, func(k string) string { return env[k] }); err != nil {
 		t.Fatalf("stdio with jwks-url should be valid: %v", err)
@@ -51,6 +55,7 @@ func TestLoadConfig_StdioRequiresJWKSOnly(t *testing.T) {
 }
 
 func TestLoadConfig_RejectsUnknownTransport(t *testing.T) {
+	t.Parallel()
 	env := map[string]string{"SSO_MCP_TRANSPORT": "carrier-pigeon", "SSO_MCP_JWKS_URL": "x"}
 	if _, err := loadConfig(nil, func(k string) string { return env[k] }); err == nil {
 		t.Fatal("unknown transport must error")
@@ -58,6 +63,7 @@ func TestLoadConfig_RejectsUnknownTransport(t *testing.T) {
 }
 
 func TestNewSnaplinkClient_ConstructsAndCloses(t *testing.T) {
+	t.Parallel()
 	c, err := newSnaplinkClient(&Config{
 		JWKSURL:      "https://sso/.well-known/jwks.json",
 		SnaplinkGRPC: "localhost:8081",

@@ -12,6 +12,7 @@ import (
 // suite in saml/sp/sqlite, so the two backends are locked to identical dedup
 // behavior.
 func TestReplayConformance_Memory(t *testing.T) {
+	t.Parallel()
 	samltest.ReplayConformance{
 		Factory: func(t *testing.T) samltest.ReplayChecker {
 			return newReplayStore(0)

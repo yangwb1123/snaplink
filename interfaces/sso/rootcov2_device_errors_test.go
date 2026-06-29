@@ -23,6 +23,7 @@ import (
 
 // TestRcov2DE_DeviceStartErrors covers handleDeviceCode rejection branches.
 func TestRcov2DE_DeviceStartErrors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
@@ -86,6 +87,7 @@ func TestRcov2DE_DeviceStartErrors(t *testing.T) {
 // TestRcov2DE_DeviceTokenGrantErrors covers handleDeviceTokenGrant rejection
 // branches: missing device_code, unknown device_code, wrong-client binding.
 func TestRcov2DE_DeviceTokenGrantErrors(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithDeviceCodeStore(
 		defaultimpl.NewMemoryDeviceCodeStore(), time.Minute, time.Second, ""))
 
@@ -114,6 +116,7 @@ func TestRcov2DE_DeviceTokenGrantErrors(t *testing.T) {
 // TestRcov2DE_CIBATokenGrantErrors covers handleCIBATokenGrant rejection
 // branches: missing auth_req_id, unknown auth_req_id, and slow_down throttling.
 func TestRcov2DE_CIBATokenGrantErrors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(ctx, &sso.User{ID: rcovUser})

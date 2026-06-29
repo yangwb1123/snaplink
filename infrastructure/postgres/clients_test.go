@@ -58,6 +58,7 @@ func richClient() *sso.Client {
 }
 
 func TestClient_AddGetRoundTripAllColumns(t *testing.T) {
+	t.Parallel()
 	s := freshClientStore(t)
 	ctx := context.Background()
 	in := richClient()
@@ -92,6 +93,7 @@ func TestClient_AddGetRoundTripAllColumns(t *testing.T) {
 }
 
 func TestClient_AddDuplicateAndMissing(t *testing.T) {
+	t.Parallel()
 	s := freshClientStore(t)
 	ctx := context.Background()
 	if err := s.Add(ctx, &sso.Client{ID: "c1", Secret: "x", Active: true}); err != nil {
@@ -109,6 +111,7 @@ func TestClient_AddDuplicateAndMissing(t *testing.T) {
 }
 
 func TestClient_PutUpsertAndUpdate(t *testing.T) {
+	t.Parallel()
 	s := freshClientStore(t)
 	ctx := context.Background()
 	// Put creates then overwrites in full.
@@ -134,6 +137,7 @@ func TestClient_PutUpsertAndUpdate(t *testing.T) {
 }
 
 func TestClient_ValidateSecretInactiveAndWrong(t *testing.T) {
+	t.Parallel()
 	s := freshClientStore(t)
 	ctx := context.Background()
 	if err := s.Add(ctx, &sso.Client{ID: "c1", Secret: "right", Active: true}); err != nil {
@@ -152,6 +156,7 @@ func TestClient_ValidateSecretInactiveAndWrong(t *testing.T) {
 }
 
 func TestClient_ListByTenantIsolationAndRotate(t *testing.T) {
+	t.Parallel()
 	s := freshClientStore(t)
 	ctx := context.Background()
 	for _, c := range []*sso.Client{

@@ -36,6 +36,7 @@ import (
 // challenge captured at /auth/login and verified at /token with the matching
 // code_verifier (verifyPKCE S256 path), plus the mismatch rejection.
 func TestRcov2H_PKCERoundTrip(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 
 	const verifier = "rcov2-pkce-verifier-abcdefghijklmnopqrstuvwxyz0123456789"
@@ -104,6 +105,7 @@ func TestRcov2H_PKCERoundTrip(t *testing.T) {
 // returns the per-client provider list (providersForClient + resolveHomeRealm
 // miss path).
 func TestRcov2H_ProviderDiscovery(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	status, out := rcovPostJSON(t, s.http.URL+"/auth/login", "", map[string]any{
 		"client_id": rcovClient,
@@ -120,6 +122,7 @@ func TestRcov2H_ProviderDiscovery(t *testing.T) {
 // TestRcov2H_HomeRealmRequiredOnLogin covers the no-provider login branch that
 // resolves a connection from the login_hint and returns connection_required.
 func TestRcov2H_HomeRealmRequiredOnLogin(t *testing.T) {
+	t.Parallel()
 	store := connections.NewMemoryStore()
 	_ = store.Upsert(context.Background(), &connections.Connection{
 		ID: "umbrella", TenantID: "umbrella", Type: connections.TypeSAML,
@@ -158,6 +161,7 @@ func (rcov2CallbackAuth) Callback(_ context.Context, st *sso.CallbackState) (*ss
 // TestRcov2H_Callback covers the legacy /auth/callback endpoint: a successful
 // callback creates a session; a missing code is a 400; a bad code is a 401.
 func TestRcov2H_Callback(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithAuthenticator(rcov2CallbackAuth{}))
 
 	// Success: provider names the authenticator, code resolves a user.
@@ -187,6 +191,7 @@ func TestRcov2H_Callback(t *testing.T) {
 // TestRcov2H_RevokeAll covers POST /token/revoke-all — the bearer-authenticated
 // "logout everywhere" path backed by the RefreshTokenSubjectIndex extension.
 func TestRcov2H_RevokeAll(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithSubjectClientIndex(defaultimpl.NewMemorySubjectClientIndex()))
 	access, _ := rcovDirectLogin(t, s)
 
@@ -206,6 +211,7 @@ func TestRcov2H_RevokeAll(t *testing.T) {
 // (POST), then update (PUT) + delete (DELETE) authenticated with the
 // registration_access_token (handleRegistrationPut/Delete).
 func TestRcov2H_DCRLifecycle(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithDynamicClientRegistration(oauth.DCRPolicy{
 		AllowOpenRegistration: true,
 		DefaultActive:         true,
@@ -260,6 +266,7 @@ func TestRcov2H_DCRLifecycle(t *testing.T) {
 // yields an id_token used as id_token_hint to mint fresh tokens without
 // re-authenticating (discovery_handler.go handleSilentRenewal).
 func TestRcov2H_SilentRenewal(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute))
 	s := rcovNewServer(t,
 		sso.WithTokenIssuer("jwt", iss),
@@ -298,6 +305,7 @@ func TestRcov2H_SilentRenewal(t *testing.T) {
 // TestRcov2H_AuditEventByID covers GET /api/v1/audit/events/:id — fetch a single
 // recorded event after a login generated one.
 func TestRcov2H_AuditEventByID(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithAuditAPI())
 	rcovDirectLogin(t, s)
 
@@ -335,6 +343,7 @@ func TestRcov2H_AuditEventByID(t *testing.T) {
 // Get/Delete/Classify/ResolveMe) + ClassifyRequest, exercised without the admin
 // middleware wrapper (the gate is external; the handler bodies are the target).
 func TestRcov2H_NetPolicyAPI(t *testing.T) {
+	t.Parallel()
 	netStore := netmem.New()
 	classifier := netpolicy.NewClassifier()
 	s := rcovNewServer(t,
@@ -389,6 +398,7 @@ func TestRcov2H_NetPolicyAPI(t *testing.T) {
 // seam directly: a request whose RemoteAddr falls inside a seeded CIDR resolves
 // to that policy; a nil request / no classifier resolves to nil.
 func TestRcov2H_ClassifyRequest(t *testing.T) {
+	t.Parallel()
 	netStore := netmem.New()
 	classifier := netpolicy.NewClassifier()
 	_, _ = netStore.Apply(context.Background(), &netpolicy.Policy{

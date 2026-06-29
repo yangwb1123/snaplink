@@ -7,6 +7,7 @@ import (
 )
 
 func TestRedisRefreshGraceStore_RememberThenLookupReplays(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	s := NewRefreshGraceStore(rdb, time.Minute)
 	now := time.Now()
@@ -35,6 +36,7 @@ func TestRedisRefreshGraceStore_RememberThenLookupReplays(t *testing.T) {
 }
 
 func TestRedisRefreshGraceStore_UnrememberedTokenMisses(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewRefreshGraceStore(rdb, time.Minute)
 	if _, ok := s.Lookup("never-rotated", time.Now()); ok {
@@ -43,6 +45,7 @@ func TestRedisRefreshGraceStore_UnrememberedTokenMisses(t *testing.T) {
 }
 
 func TestRedisRefreshGraceStore_WindowZeroIsNoop(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewRefreshGraceStore(rdb, 0)
 	s.Remember("tok", map[string]any{"a": "b"}, time.Now())
@@ -52,6 +55,7 @@ func TestRedisRefreshGraceStore_WindowZeroIsNoop(t *testing.T) {
 }
 
 func TestRedisRefreshGraceStore_Ping(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewRefreshGraceStore(rdb, time.Minute)
 	if err := s.Ping(context.Background()); err != nil {

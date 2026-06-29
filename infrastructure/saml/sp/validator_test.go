@@ -38,6 +38,7 @@ func assertInvalid(t *testing.T, label string, err error) {
 // oracle-safe error — no probe can tell a bad signature from a wrong audience
 // from a replay. This is the §2 oracle-leak-hardening contract for the SP gate.
 func TestOracleSafety_AllFailuresCollapseToOneCode(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 
 	t.Run("bad_signature_attacker_cert", func(t *testing.T) {
@@ -160,6 +161,7 @@ func TestOracleSafety_AllFailuresCollapseToOneCode(t *testing.T) {
 // TestXSW_AttackerCertRejected proves an assertion signed by a cert OTHER than
 // the pinned IdP cert is rejected (the signature gate's core property).
 func TestXSW_AttackerCertRejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	attacker := newIDPKeypair(t)
@@ -183,6 +185,7 @@ func TestXSW_AttackerCertRejected(t *testing.T) {
 // metadata and we never set IDPCertificateFingerprint, crewjam verifies against
 // the pinned cert, not the embedded one — so it must be rejected.
 func TestXSW_EmbeddedCertNotTrusted(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	attacker := newIDPKeypair(t)
@@ -213,6 +216,7 @@ func TestXSW_EmbeddedCertNotTrusted(t *testing.T) {
 // injection. crewjam alone would silently return the first; our count gate
 // rejects it.
 func TestXSW_MultiAssertionRejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	attacker := newIDPKeypair(t)
@@ -239,6 +243,7 @@ func TestXSW_MultiAssertionRejected(t *testing.T) {
 // TestXSW_ZeroAssertionsRejected proves a response with NO assertion is rejected
 // (the count gate requires exactly one).
 func TestXSW_ZeroAssertionsRejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newTestSP(t, idp, tIDPEntity, tSPEntity, tACSURL, now)
@@ -255,6 +260,7 @@ func TestXSW_ZeroAssertionsRejected(t *testing.T) {
 // AuthResult with the NameID as ExternalID, the mapped attributes, the provider
 // name, and the SAML AMR.
 func TestHappyPath_MapsNameIDAttributesAndAMR(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 
@@ -312,6 +318,7 @@ func TestHappyPath_MapsNameIDAttributesAndAMR(t *testing.T) {
 // posture rejects a response with an empty InResponseTo (unsolicited), while a
 // solicited one (non-empty InResponseTo) is accepted.
 func TestSPInitiated_RejectsUnsolicited(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newTestSP(t, idp, tIDPEntity, tSPEntity, tACSURL, now) // AllowIDPInitiated=false
@@ -337,6 +344,7 @@ func TestSPInitiated_RejectsUnsolicited(t *testing.T) {
 // TestIDPInitiated_AcceptsUnsolicited proves AllowIDPInitiated=true accepts a
 // response with an empty InResponseTo.
 func TestIDPInitiated_AcceptsUnsolicited(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a, err := NewSPAuthenticator(SPConfig{
@@ -364,6 +372,7 @@ func TestIDPInitiated_AcceptsUnsolicited(t *testing.T) {
 // AudienceRestriction is rejected (we require an explicit audience; an
 // unrestricted assertion must not authenticate at a specific SP).
 func TestProcessAssertion_NoAudienceRestrictionRejected(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	idp := newIDPKeypair(t)
 	a := newTestSP(t, idp, tIDPEntity, tSPEntity, tACSURL, now)

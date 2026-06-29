@@ -14,6 +14,7 @@ import (
 // (which runs the v2 migration and writes tenant_id), then verifies the
 // aggregator returns the expected counts.
 func TestAggregator_basic(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dsn := "file::memory:?cache=shared&mode=rwc"
 
@@ -68,6 +69,7 @@ func TestAggregator_basic(t *testing.T) {
 // TestAggregator_topTenants verifies TopTenants returns tenants sorted by
 // login count and respects the limit.
 func TestAggregator_topTenants(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dsn := "file::memory:?cache=shared&mode=rwc&_txlock=exclusive"
 

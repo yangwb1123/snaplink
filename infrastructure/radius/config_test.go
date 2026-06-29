@@ -20,6 +20,7 @@ func baseValidCfg() Config {
 }
 
 func TestValidate_OK(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	if err := c.Validate(); err != nil {
 		t.Fatalf("valid config rejected: %v", err)
@@ -27,12 +28,14 @@ func TestValidate_OK(t *testing.T) {
 }
 
 func TestValidate_RequiresName(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.Name = ""
 	mustValidateErr(t, c, "Name")
 }
 
 func TestValidate_RequiresServer(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.Servers = nil
 	mustValidateErr(t, c, "server")
@@ -42,24 +45,28 @@ func TestValidate_RequiresServer(t *testing.T) {
 // leave the PAP password effectively in the clear and the response
 // unauthenticated.
 func TestValidate_RequiresSharedSecret(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.SharedSecret = ""
 	mustValidateErr(t, c, "SharedSecret")
 }
 
 func TestValidate_ServerMustHavePort(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.Servers = []string{"radius.example.com"} // no :port
 	mustValidateErr(t, c, "host:port")
 }
 
 func TestValidate_EmptyServerEntry_Rejected(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.Servers = []string{"radius.example.com:1812", "  "}
 	mustValidateErr(t, c, "empty")
 }
 
 func TestValidate_PAPDefault_OK(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.AuthProtocol = "" // defaults to PAP
 	if err := c.Validate(); err != nil {
@@ -71,6 +78,7 @@ func TestValidate_PAPDefault_OK(t *testing.T) {
 }
 
 func TestValidate_PAPExplicit_OK(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.AuthProtocol = AuthPAP
 	if err := c.Validate(); err != nil {
@@ -79,6 +87,7 @@ func TestValidate_PAPExplicit_OK(t *testing.T) {
 }
 
 func TestValidate_PAPCaseInsensitive_OK(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.AuthProtocol = "PAP"
 	if err := c.Validate(); err != nil {
@@ -89,18 +98,21 @@ func TestValidate_PAPCaseInsensitive_OK(t *testing.T) {
 // CHAP is reserved but not implemented by the stock exchanger — Validate must
 // fail loud rather than silently send PAP.
 func TestValidate_CHAP_RejectedByStockExchanger(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.AuthProtocol = AuthCHAP
 	mustValidateErr(t, c, "chap")
 }
 
 func TestValidate_UnknownProtocol_Rejected(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.AuthProtocol = "mschapv2"
 	mustValidateErr(t, c, "unknown AuthProtocol")
 }
 
 func TestValidate_RetriesLowerBound(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.Retries = -2
 	mustValidateErr(t, c, "Retries")
@@ -108,6 +120,7 @@ func TestValidate_RetriesLowerBound(t *testing.T) {
 
 // RadSec InsecureSkipVerify must require the explicit AllowInsecure acknowledgement.
 func TestValidate_RadSecInsecureSkipVerify_NeedsAllowInsecure(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.UseRadSec = true
 	c.RadSecInsecureSkipVerify = true
@@ -115,6 +128,7 @@ func TestValidate_RadSecInsecureSkipVerify_NeedsAllowInsecure(t *testing.T) {
 }
 
 func TestValidate_RadSecInsecureSkipVerify_WithAllowInsecure_OK(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.UseRadSec = true
 	c.RadSecInsecureSkipVerify = true
@@ -126,6 +140,7 @@ func TestValidate_RadSecInsecureSkipVerify_WithAllowInsecure_OK(t *testing.T) {
 
 // A mutual-RadSec client cert needs BOTH cert and key.
 func TestValidate_RadSecClientCert_BothHalvesRequired(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.UseRadSec = true
 	c.RadSecClientCertPEM = []byte("cert-only")
@@ -133,6 +148,7 @@ func TestValidate_RadSecClientCert_BothHalvesRequired(t *testing.T) {
 }
 
 func TestValidate_RadSec_SuppliedTLSConfig_SkipsFieldGate(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.UseRadSec = true
 	c.RadSecTLSConfig = &tls.Config{ServerName: "radius.example.com"}
@@ -147,6 +163,7 @@ func TestValidate_RadSec_SuppliedTLSConfig_SkipsFieldGate(t *testing.T) {
 // --- Defaults + derived helpers -------------------------------------------
 
 func TestDefaults_Timeout_NASIdentifier(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	if c.requestTimeout() != DefaultTimeout {
 		t.Errorf("requestTimeout() = %v, want default %v", c.requestTimeout(), DefaultTimeout)
@@ -157,6 +174,7 @@ func TestDefaults_Timeout_NASIdentifier(t *testing.T) {
 }
 
 func TestOverrides_Timeout_NASIdentifier(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.Timeout = 2 * time.Second
 	c.NASIdentifier = "sso-1"
@@ -170,6 +188,7 @@ func TestOverrides_Timeout_NASIdentifier(t *testing.T) {
 
 // retryInterval must fit all retransmits inside the bounded Timeout.
 func TestRetryInterval_FitsWithinTimeout(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.Timeout = 6 * time.Second
 	c.Retries = 2 // 3 sends total => interval 2s
@@ -179,6 +198,7 @@ func TestRetryInterval_FitsWithinTimeout(t *testing.T) {
 }
 
 func TestRetryInterval_NoRetransmit_WhenRetriesNegative(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.Retries = -1
 	if got := c.retryInterval(); got != 0 {
@@ -187,6 +207,7 @@ func TestRetryInterval_NoRetransmit_WhenRetriesNegative(t *testing.T) {
 }
 
 func TestUseTCP_RadSecImpliesTCP(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.UseRadSec = true
 	if !c.useTCP() {
@@ -196,6 +217,7 @@ func TestUseTCP_RadSecImpliesTCP(t *testing.T) {
 
 // radSecTLSConfig builds a verifying config from the CA/ServerName fields.
 func TestRadSecTLSConfig_BuiltFromFields(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.UseRadSec = true
 	c.RadSecServerName = "radius.example.com"
@@ -215,6 +237,7 @@ func TestRadSecTLSConfig_BuiltFromFields(t *testing.T) {
 }
 
 func TestRadSecTLSConfig_BadCACert_Errors(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	c.RadSecCACertPEM = []byte("not a pem")
 	if _, err := c.radSecTLSConfig(); err == nil {
@@ -223,6 +246,7 @@ func TestRadSecTLSConfig_BadCACert_Errors(t *testing.T) {
 }
 
 func TestRadSecTLSConfig_SuppliedVerbatim(t *testing.T) {
+	t.Parallel()
 	c := baseValidCfg()
 	supplied := &tls.Config{ServerName: "mine"}
 	c.RadSecTLSConfig = supplied
@@ -241,6 +265,7 @@ func TestRadSecTLSConfig_SuppliedVerbatim(t *testing.T) {
 // keys, reading the real Filter-Id / Class values back off a packet via the
 // layeh rfc2865 helpers. Nothing unconfigured is copied.
 func TestMapReplyAttributes_FilterIDAndClass(t *testing.T) {
+	t.Parallel()
 	cfg := baseValidCfg()
 	cfg.ReplyAttributeMapping = map[radius.Type]string{
 		rfc2865.FilterID_Type: "filter_id",
@@ -273,6 +298,7 @@ func TestMapReplyAttributes_FilterIDAndClass(t *testing.T) {
 // An unconfigured attribute present on the reply is NOT copied — a server cannot
 // smuggle an attribute onto the Subject unless the operator mapped it.
 func TestMapReplyAttributes_OnlyConfiguredCopied(t *testing.T) {
+	t.Parallel()
 	cfg := baseValidCfg()
 	cfg.ReplyAttributeMapping = map[radius.Type]string{
 		rfc2865.FilterID_Type: "filter_id",
@@ -297,6 +323,7 @@ func TestMapReplyAttributes_OnlyConfiguredCopied(t *testing.T) {
 
 // No mapping configured => nil attrs (only ExternalID is populated downstream).
 func TestMapReplyAttributes_NoMapping_Nil(t *testing.T) {
+	t.Parallel()
 	cfg := baseValidCfg()
 	ex, _ := newRadiusExchanger(cfg)
 	resp := radius.New(radius.CodeAccessAccept, []byte(cfg.SharedSecret))
@@ -309,6 +336,7 @@ func TestMapReplyAttributes_NoMapping_Nil(t *testing.T) {
 // --- buildAccessRequest sets the expected attributes -----------------------
 
 func TestBuildAccessRequest_SetsUserNameAndNAS(t *testing.T) {
+	t.Parallel()
 	cfg := baseValidCfg()
 	cfg.NASIdentifier = "sso.example.com"
 	ex, _ := newRadiusExchanger(cfg)

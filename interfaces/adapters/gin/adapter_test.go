@@ -32,6 +32,7 @@ func do(t *testing.T, r *GinRouter, method, path, body string) *httptest.Respons
 }
 
 func TestGinRouter_GET(t *testing.T) {
+	t.Parallel()
 	r := NewGinRouter()
 	r.GET("/hello", func(c sso.HandlerContext) {
 		c.JSON(http.StatusOK, map[string]string{"msg": "hi"})
@@ -48,6 +49,7 @@ func TestGinRouter_GET(t *testing.T) {
 }
 
 func TestGinRouter_POSTAndBind(t *testing.T) {
+	t.Parallel()
 	r := NewGinRouter()
 	type in struct {
 		Name string `json:"name"`
@@ -70,6 +72,7 @@ func TestGinRouter_POSTAndBind(t *testing.T) {
 }
 
 func TestGinRouter_DELETE(t *testing.T) {
+	t.Parallel()
 	r := NewGinRouter()
 	r.DELETE("/things/:id", func(c sso.HandlerContext) {
 		c.JSON(http.StatusOK, map[string]string{"deleted": c.Param("id")})
@@ -84,6 +87,7 @@ func TestGinRouter_DELETE(t *testing.T) {
 }
 
 func TestGinRouter_PATCH(t *testing.T) {
+	t.Parallel()
 	r := NewGinRouter()
 	r.PATCH("/things/:id", func(c sso.HandlerContext) {
 		c.JSON(http.StatusOK, map[string]string{"patched": c.Param("id")})
@@ -98,6 +102,7 @@ func TestGinRouter_PATCH(t *testing.T) {
 }
 
 func TestGinRouter_Query(t *testing.T) {
+	t.Parallel()
 	r := NewGinRouter()
 	r.GET("/search", func(c sso.HandlerContext) {
 		c.JSON(http.StatusOK, map[string]string{"q": c.Query("q")})
@@ -109,6 +114,7 @@ func TestGinRouter_Query(t *testing.T) {
 }
 
 func TestGinRouter_Redirect(t *testing.T) {
+	t.Parallel()
 	r := NewGinRouter()
 	r.GET("/r", func(c sso.HandlerContext) {
 		c.Redirect(http.StatusFound, "/elsewhere")
@@ -123,6 +129,7 @@ func TestGinRouter_Redirect(t *testing.T) {
 }
 
 func TestGinRouter_SetGet(t *testing.T) {
+	t.Parallel()
 	r := NewGinRouter()
 	r.Use(func(c sso.HandlerContext) {
 		c.Set("user_id", "u-alice")
@@ -138,6 +145,7 @@ func TestGinRouter_SetGet(t *testing.T) {
 }
 
 func TestGinRouter_MiddlewareInvocationCount(t *testing.T) {
+	t.Parallel()
 	r := NewGinRouter()
 	var calls atomic.Int32
 	r.Use(func(c sso.HandlerContext) { calls.Add(1) })
@@ -151,6 +159,7 @@ func TestGinRouter_MiddlewareInvocationCount(t *testing.T) {
 }
 
 func TestGinRouter_Group(t *testing.T) {
+	t.Parallel()
 	r := NewGinRouter()
 	r.Use(func(c sso.HandlerContext) { c.Set("base", "yes") })
 
@@ -173,6 +182,7 @@ func TestGinRouter_Group(t *testing.T) {
 }
 
 func TestGinRouter_RequestAndResponseWriter(t *testing.T) {
+	t.Parallel()
 	r := NewGinRouter()
 	r.GET("/peek", func(c sso.HandlerContext) {
 		if c.Request() == nil {
@@ -187,6 +197,7 @@ func TestGinRouter_RequestAndResponseWriter(t *testing.T) {
 }
 
 func TestGinRouter_AcceptsExistingEngine(t *testing.T) {
+	t.Parallel()
 	e := gin.New()
 	r := NewGinRouter(e)
 	if r.engine != e {

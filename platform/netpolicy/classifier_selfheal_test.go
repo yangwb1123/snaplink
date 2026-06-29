@@ -217,6 +217,7 @@ func newClassifierTest(m *metrics.Metrics) *netpolicy.Classifier {
 // clears degraded — Ready ok, up back to 1, a new Event flows again — and (c)
 // the reconnect counter shows one degraded + one reconnected tick per transition.
 func TestClassifier_SelfHealsOnWatchClose(t *testing.T) {
+	t.Parallel()
 	store := newFlakyStore()
 	defer func() { _ = store.Close() }()
 
@@ -320,6 +321,7 @@ func TestClassifier_SelfHealsOnWatchClose(t *testing.T) {
 // exit WITHOUT going degraded — a drain must never trip /readyz. Uses the real
 // memory Store directly (no flaky wrapper) since we only cancel ctx.
 func TestClassifier_CleanCancelNotDegraded(t *testing.T) {
+	t.Parallel()
 	store := memory.New()
 	defer func() { _ = store.Close() }()
 
@@ -350,6 +352,7 @@ func TestClassifier_CleanCancelNotDegraded(t *testing.T) {
 // TestClassifier_ReadyBeforeStart proves Ready is safe (and non-degraded) before
 // Start ever runs — the readiness probe can be registered unconditionally.
 func TestClassifier_ReadyBeforeStart(t *testing.T) {
+	t.Parallel()
 	c := netpolicy.NewClassifier()
 	if err := c.Ready(); err != nil {
 		t.Fatalf("Ready before Start must be nil, got: %v", err)

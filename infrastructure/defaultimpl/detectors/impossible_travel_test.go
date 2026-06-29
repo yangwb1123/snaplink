@@ -31,6 +31,7 @@ func newDetector(t *testing.T, opts ...detectors.ImpossibleTravelOption) (*detec
 }
 
 func TestImpossibleTravel_NewSubjectNoAnomaly(t *testing.T) {
+	t.Parallel()
 	// First login for a subject → no prior history → no signal.
 	d, _ := newDetector(t)
 	event := &anomaly.LoginEvent{
@@ -49,6 +50,7 @@ func TestImpossibleTravel_NewSubjectNoAnomaly(t *testing.T) {
 }
 
 func TestImpossibleTravel_SameCityNoAnomaly(t *testing.T) {
+	t.Parallel()
 	// Same city, 5 minutes apart — well below the 10km floor.
 	d, _ := newDetector(t)
 	ctx := context.Background()
@@ -70,6 +72,7 @@ func TestImpossibleTravel_SameCityNoAnomaly(t *testing.T) {
 }
 
 func TestImpossibleTravel_SF_to_NY_24h_NoAnomaly(t *testing.T) {
+	t.Parallel()
 	// SF → NY in 24 hours: ~4100km / 24h ≈ 170 km/h. Below
 	// 800 ceiling — legitimate travel.
 	d, _ := newDetector(t)
@@ -91,6 +94,7 @@ func TestImpossibleTravel_SF_to_NY_24h_NoAnomaly(t *testing.T) {
 }
 
 func TestImpossibleTravel_SF_to_NY_5min_Critical(t *testing.T) {
+	t.Parallel()
 	// SF → NY in 5 minutes: ~4100km / 0.083h ≈ 49,400 km/h. Way
 	// past supersonic — critical severity.
 	d, _ := newDetector(t)
@@ -125,6 +129,7 @@ func TestImpossibleTravel_SF_to_NY_5min_Critical(t *testing.T) {
 }
 
 func TestImpossibleTravel_SF_to_London_30min_Warn(t *testing.T) {
+	t.Parallel()
 	// SF → London ~8600km in 30min = 17,200 km/h. Past 2000 threshold
 	// → critical (not warn — our threshold is 2000+ km/h for critical).
 	d, _ := newDetector(t)
@@ -146,6 +151,7 @@ func TestImpossibleTravel_SF_to_London_30min_Warn(t *testing.T) {
 }
 
 func TestImpossibleTravel_BorderlineSpeedIsWarn(t *testing.T) {
+	t.Parallel()
 	// Borderline speed: ~1200 km/h (between 800 ceiling + 2000
 	// critical) → warn severity.
 	d, _ := newDetector(t)
@@ -171,6 +177,7 @@ func TestImpossibleTravel_BorderlineSpeedIsWarn(t *testing.T) {
 }
 
 func TestImpossibleTravel_MissingGeoSkipsCheck(t *testing.T) {
+	t.Parallel()
 	// Detector should not flag when geo is unavailable — no false
 	// positives for ops without lat/lon-capable providers.
 	d, _ := newDetector(t)
@@ -192,6 +199,7 @@ func TestImpossibleTravel_MissingGeoSkipsCheck(t *testing.T) {
 }
 
 func TestImpossibleTravel_PriorMissingLatLonSkipsCheck(t *testing.T) {
+	t.Parallel()
 	// First login has no lat/lon (e.g. geo provider returned only
 	// country) → second login has full geo → can't compute distance
 	// → skip.
@@ -215,6 +223,7 @@ func TestImpossibleTravel_PriorMissingLatLonSkipsCheck(t *testing.T) {
 }
 
 func TestImpossibleTravel_OutOfWindowPriorIgnored(t *testing.T) {
+	t.Parallel()
 	// Prior login from 48h ago — outside default 24h window. Even
 	// if computed speed exceeded ceiling, we shouldn't flag.
 	d, _ := newDetector(t, detectors.WithImpossibleTravelWindow(24*time.Hour))
@@ -236,6 +245,7 @@ func TestImpossibleTravel_OutOfWindowPriorIgnored(t *testing.T) {
 }
 
 func TestImpossibleTravel_CustomMaxSpeedHonored(t *testing.T) {
+	t.Parallel()
 	// Tighten ceiling to 200 km/h — a 4100km SF→JFK in 24h
 	// (170 km/h normally fine) now flags.
 	d, _ := newDetector(t, detectors.WithImpossibleTravelMaxSpeed(100))
@@ -257,6 +267,7 @@ func TestImpossibleTravel_CustomMaxSpeedHonored(t *testing.T) {
 }
 
 func TestImpossibleTravel_NilEventReturnsNoAnomaly(t *testing.T) {
+	t.Parallel()
 	d, _ := newDetector(t)
 	got, err := d.Inspect(context.Background(), nil)
 	if err != nil {
@@ -268,6 +279,7 @@ func TestImpossibleTravel_NilEventReturnsNoAnomaly(t *testing.T) {
 }
 
 func TestImpossibleTravel_EmptySubjectReturnsNoAnomaly(t *testing.T) {
+	t.Parallel()
 	d, _ := newDetector(t)
 	got, err := d.Inspect(context.Background(), &anomaly.LoginEvent{Outcome: "failure"})
 	if err != nil {
@@ -279,6 +291,7 @@ func TestImpossibleTravel_EmptySubjectReturnsNoAnomaly(t *testing.T) {
 }
 
 func TestImpossibleTravel_AppendsEvenWhenNoAnomaly(t *testing.T) {
+	t.Parallel()
 	// The "writes uncondi tionally" invariant — subsequent calls see
 	// this event as "previous" even though it didn't itself flag.
 	d, store := newDetector(t)
@@ -296,6 +309,7 @@ func TestImpossibleTravel_AppendsEvenWhenNoAnomaly(t *testing.T) {
 }
 
 func TestImpossibleTravel_NilStoreErrors(t *testing.T) {
+	t.Parallel()
 	_, err := detectors.NewImpossibleTravelDetector(nil, []byte("salt"))
 	if err == nil {
 		t.Fatal("nil store should error")
@@ -303,6 +317,7 @@ func TestImpossibleTravel_NilStoreErrors(t *testing.T) {
 }
 
 func TestImpossibleTravel_NameIsStableWireString(t *testing.T) {
+	t.Parallel()
 	d, _ := newDetector(t)
 	if got := d.Name(); got != detectors.DetectorTypeImpossibleTravel {
 		t.Errorf("Name() = %q, want %q", got, detectors.DetectorTypeImpossibleTravel)

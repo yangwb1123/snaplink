@@ -20,6 +20,7 @@ var testRawAAGUID = []byte{
 }
 
 func TestBuildWebAuthnAttestationPolicy(t *testing.T) {
+	t.Parallel()
 	// off / empty → nil policy (no gating, byte-identical default).
 	for _, mode := range []string{"", "off", "OFF", "  "} {
 		p, err := buildWebAuthnAttestationPolicy(config.WebAuthnAttestationConfig{PolicyMode: mode})
@@ -101,6 +102,7 @@ func TestBuildWebAuthnAttestationPolicy(t *testing.T) {
 }
 
 func TestBuildWebAuthnHelper_AttestationConfigPlumbedThrough(t *testing.T) {
+	t.Parallel()
 	// A valid attestation block builds the helper.
 	h, _, _, err := BuildWebAuthnHelper(config.WebAuthnConfig{
 		Enabled:   true,
@@ -141,6 +143,7 @@ func TestBuildWebAuthnHelper_AttestationConfigPlumbedThrough(t *testing.T) {
 }
 
 func TestBuildWebAuthnHelper_DefaultAttestationOff(t *testing.T) {
+	t.Parallel()
 	// No attestation block ⇒ the helper builds exactly as before (the
 	// default-off byte-identical path). buildWebAuthnAttestationPolicy
 	// returns nil, so no policy is attached.
@@ -165,6 +168,7 @@ func TestBuildWebAuthnHelper_DefaultAttestationOff(t *testing.T) {
 }
 
 func TestHelperAttestationPolicyEnabled_GatesSuccessAudit(t *testing.T) {
+	t.Parallel()
 	// The finish handler emits the success audit ONLY when the policy is
 	// active. Prove the gate the handler keys off: a helper built with no
 	// attestation block reports disabled (→ byte-identical, no success
@@ -200,6 +204,7 @@ func TestHelperAttestationPolicyEnabled_GatesSuccessAudit(t *testing.T) {
 }
 
 func TestRecordWebAuthnRegistered_EmitsAAGUID(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(8)
 	deps := &WebAuthnDeps{AuditRecorder: audit.New(sink)}
 	cred := &gw.Credential{ID: []byte("c1")}
@@ -225,6 +230,7 @@ func TestRecordWebAuthnRegistered_EmitsAAGUID(t *testing.T) {
 }
 
 func TestRecordWebAuthnAttestationDenied_EmitsAAGUIDAndMode(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(8)
 	deps := &WebAuthnDeps{AuditRecorder: audit.New(sink)}
 	denied := &webauthn.AttestationDeniedError{
@@ -266,6 +272,7 @@ func TestRecordWebAuthnAttestationDenied_EmitsAAGUIDAndMode(t *testing.T) {
 // audit metadata, so an operator can see a downgrade attempt separately from
 // an AAGUID-list miss.
 func TestRecordWebAuthnAttestationDenied_NoneReason(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(8)
 	deps := &WebAuthnDeps{AuditRecorder: audit.New(sink)}
 	denied := &webauthn.AttestationDeniedError{
@@ -288,6 +295,7 @@ func TestRecordWebAuthnAttestationDenied_NoneReason(t *testing.T) {
 // when no recorder is wired (an embedder without an audit pipeline) — the
 // default-off byte-identical path.
 func TestRecordWebAuthn_NilRecorderSafe(t *testing.T) {
+	t.Parallel()
 	deps := &WebAuthnDeps{} // no AuditRecorder
 	r := httptest.NewRequest("POST", "/webauthn/registration/finish", nil)
 	cred := &gw.Credential{ID: []byte("c1")}

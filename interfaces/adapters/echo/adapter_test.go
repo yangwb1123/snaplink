@@ -31,6 +31,7 @@ func do(t *testing.T, r *EchoRouter, method, path, body string) *httptest.Respon
 }
 
 func TestEchoRouter_GET(t *testing.T) {
+	t.Parallel()
 	r := NewEchoRouter()
 	r.GET("/hello", func(c sso.HandlerContext) {
 		c.JSON(http.StatusOK, map[string]string{"msg": "hi"})
@@ -47,6 +48,7 @@ func TestEchoRouter_GET(t *testing.T) {
 }
 
 func TestEchoRouter_POSTAndBind(t *testing.T) {
+	t.Parallel()
 	r := NewEchoRouter()
 	type in struct {
 		Name string `json:"name"`
@@ -69,6 +71,7 @@ func TestEchoRouter_POSTAndBind(t *testing.T) {
 }
 
 func TestEchoRouter_DELETE(t *testing.T) {
+	t.Parallel()
 	r := NewEchoRouter()
 	r.DELETE("/things/:id", func(c sso.HandlerContext) {
 		c.JSON(http.StatusOK, map[string]string{"deleted": c.Param("id")})
@@ -83,6 +86,7 @@ func TestEchoRouter_DELETE(t *testing.T) {
 }
 
 func TestEchoRouter_PATCH(t *testing.T) {
+	t.Parallel()
 	r := NewEchoRouter()
 	r.PATCH("/things/:id", func(c sso.HandlerContext) {
 		c.JSON(http.StatusOK, map[string]string{"patched": c.Param("id")})
@@ -97,6 +101,7 @@ func TestEchoRouter_PATCH(t *testing.T) {
 }
 
 func TestEchoRouter_Query(t *testing.T) {
+	t.Parallel()
 	r := NewEchoRouter()
 	r.GET("/search", func(c sso.HandlerContext) {
 		c.JSON(http.StatusOK, map[string]string{"q": c.Query("q")})
@@ -108,6 +113,7 @@ func TestEchoRouter_Query(t *testing.T) {
 }
 
 func TestEchoRouter_Redirect(t *testing.T) {
+	t.Parallel()
 	r := NewEchoRouter()
 	r.GET("/r", func(c sso.HandlerContext) {
 		c.Redirect(http.StatusFound, "/elsewhere")
@@ -122,6 +128,7 @@ func TestEchoRouter_Redirect(t *testing.T) {
 }
 
 func TestEchoRouter_SetGet(t *testing.T) {
+	t.Parallel()
 	r := NewEchoRouter()
 	r.Use(func(c sso.HandlerContext) {
 		c.Set("user_id", "u-alice")
@@ -137,6 +144,7 @@ func TestEchoRouter_SetGet(t *testing.T) {
 }
 
 func TestEchoRouter_MiddlewareInvocationCount(t *testing.T) {
+	t.Parallel()
 	r := NewEchoRouter()
 	var calls atomic.Int32
 	r.Use(func(c sso.HandlerContext) { calls.Add(1) })
@@ -150,6 +158,7 @@ func TestEchoRouter_MiddlewareInvocationCount(t *testing.T) {
 }
 
 func TestEchoRouter_Group(t *testing.T) {
+	t.Parallel()
 	r := NewEchoRouter()
 	r.Use(func(c sso.HandlerContext) { c.Set("base", "yes") })
 
@@ -172,6 +181,7 @@ func TestEchoRouter_Group(t *testing.T) {
 }
 
 func TestEchoRouter_RequestAndResponseWriter(t *testing.T) {
+	t.Parallel()
 	r := NewEchoRouter()
 	r.GET("/peek", func(c sso.HandlerContext) {
 		if c.Request() == nil {
@@ -186,6 +196,7 @@ func TestEchoRouter_RequestAndResponseWriter(t *testing.T) {
 }
 
 func TestEchoRouter_AcceptsExistingEngine(t *testing.T) {
+	t.Parallel()
 	e := echo.New()
 	r := NewEchoRouter(e)
 	if r.engine != e {

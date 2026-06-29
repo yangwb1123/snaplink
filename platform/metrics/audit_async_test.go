@@ -27,6 +27,7 @@ func (errSink) Query(context.Context, audit.Query) ([]*audit.Event, error) {
 }
 
 func TestAsyncSinkCollector_ScrapeReportsCounters(t *testing.T) {
+	t.Parallel()
 	async := audit.NewAsyncSink(errSink{}, audit.WithAsyncBuffer(4))
 	async.Start()
 	t.Cleanup(func() { _ = async.Close(context.Background()) })
@@ -65,6 +66,7 @@ func TestAsyncSinkCollector_ScrapeReportsCounters(t *testing.T) {
 }
 
 func TestAsyncSinkCollector_NilSinkIsHarmless(t *testing.T) {
+	t.Parallel()
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(metrics.NewAsyncSinkCollector(nil))
 	// Scraping a nil-sink collector should not panic.

@@ -9,6 +9,7 @@ import (
 )
 
 func TestPinForwardAndRollbackReturnNil(t *testing.T) {
+	t.Parallel()
 	p := noop.Pinner{}
 	r := &releases.Release{ID: "rel-1"}
 	if err := p.PinForward(context.Background(), r); err != nil {
@@ -20,6 +21,7 @@ func TestPinForwardAndRollbackReturnNil(t *testing.T) {
 }
 
 func TestLoggerInvokedWithMode(t *testing.T) {
+	t.Parallel()
 	var got []string
 	p := noop.Pinner{Logger: func(msg string, kv ...any) {
 		// kv = ["mode", "forward", "release_id", "rel-1"]

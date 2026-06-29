@@ -11,6 +11,7 @@ import (
 // follower that arrives while it is in flight: all share the one result
 // and compute runs exactly once.
 func TestJWKSSingleFlight_CollapsesConcurrent(t *testing.T) {
+	t.Parallel()
 	var f JWKSSingleFlight
 	var computes int32
 	release := make(chan struct{})
@@ -76,6 +77,7 @@ func TestJWKSSingleFlight_CollapsesConcurrent(t *testing.T) {
 // A call that arrives after the in-flight one finishes must recompute —
 // no result caching, so a rotation shows up on the next poll.
 func TestJWKSSingleFlight_RecomputesSequential(t *testing.T) {
+	t.Parallel()
 	var f JWKSSingleFlight
 	var computes int32
 	for i := 0; i < 3; i++ {

@@ -100,6 +100,7 @@ func (h *fakeHandle) FencingToken() uint64 { return h.token }
 // --- tests ---
 
 func TestRunner_NoLock_BackwardCompatible(t *testing.T) {
+	t.Parallel()
 	// Existing single-replica path stays untouched when WithLock is omitted.
 	tr := memory.New()
 	r := bootstrap.NewRunner("ns", tr)
@@ -114,6 +115,7 @@ func TestRunner_NoLock_BackwardCompatible(t *testing.T) {
 }
 
 func TestRunner_NoopLock_RunsNormally(t *testing.T) {
+	t.Parallel()
 	// noop lock should behave exactly like no lock from the Runner's view.
 	tr := memory.New()
 	r := bootstrap.NewRunner("ns", tr,
@@ -130,6 +132,7 @@ func TestRunner_NoopLock_RunsNormally(t *testing.T) {
 }
 
 func TestRunner_Contended_NonBlocking_ReturnsErrLocked(t *testing.T) {
+	t.Parallel()
 	fl := newFakeLock()
 	// Pre-acquire so the Runner's TryAcquire fails.
 	pre, err := fl.TryAcquire(context.Background(), "/k", time.Second)
@@ -149,6 +152,7 @@ func TestRunner_Contended_NonBlocking_ReturnsErrLocked(t *testing.T) {
 }
 
 func TestRunner_Contended_Blocking_RetriesUntilFree(t *testing.T) {
+	t.Parallel()
 	fl := newFakeLock()
 	pre, err := fl.TryAcquire(context.Background(), "/k", time.Second)
 	if err != nil {
@@ -179,6 +183,7 @@ func TestRunner_Contended_Blocking_RetriesUntilFree(t *testing.T) {
 }
 
 func TestRunner_LockLost_DuringStep_AbortsAndSurfacesErrLockLost(t *testing.T) {
+	t.Parallel()
 	fl := newFakeLock()
 	tr := memory.New()
 	r := bootstrap.NewRunner("ns", tr,
@@ -218,6 +223,7 @@ func TestRunner_LockLost_DuringStep_AbortsAndSurfacesErrLockLost(t *testing.T) {
 }
 
 func TestRunner_LockReleased_OnSuccessAndOnError(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		step bootstrap.Step
@@ -243,6 +249,7 @@ func TestRunner_LockReleased_OnSuccessAndOnError(t *testing.T) {
 }
 
 func TestRunner_LockAuditEvents(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(10)
 	rec := audit.New(sink)
 	tr := memory.New()
@@ -277,6 +284,7 @@ func TestRunner_LockAuditEvents(t *testing.T) {
 // --- file lock end-to-end ---
 
 func TestRunner_FileLock_EndToEnd(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	fl := file.New(dir)
 	tr := memory.New()

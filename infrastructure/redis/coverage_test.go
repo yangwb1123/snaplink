@@ -56,6 +56,7 @@ func downClient(t *testing.T) *goredis.Client {
 // methods are wired into sso.WithReadyCheck, so a nil-safe error path is the
 // contract.
 func TestPing_NilAndLive(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 
@@ -135,6 +136,7 @@ func TestPing_NilAndLive(t *testing.T) {
 // (never a no-TTL key that would pin Redis forever), and the subsequent read
 // finds nothing.
 func TestExpiredIssueIsNoOp(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 	past := time.Now().Add(-time.Minute)
@@ -185,6 +187,7 @@ func TestExpiredIssueIsNoOp(t *testing.T) {
 // Redis (nil/empty arguments collapse to the store's not-found / invalid
 // sentinel).
 func TestNilArgGuards(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	ctx := context.Background()
 
@@ -225,6 +228,7 @@ func TestNilArgGuards(t *testing.T) {
 // stores' admit-on-outage contract. This is the single densest block of
 // otherwise-uncovered code: every store's `if err != nil { return ...%w... }`.
 func TestRedisErrorPaths(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	exp := time.Now().Add(time.Hour)
 
@@ -499,6 +503,7 @@ func TestRedisErrorPaths(t *testing.T) {
 // expired-but-not-yet-evicted token is opportunistically GCed and reported
 // not-found (the eviction-lag defense, mirroring the SQLite peer).
 func TestRefreshInspectExpiredGC(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewRefreshTokenStore(rdb)
 	ctx := context.Background()
@@ -523,6 +528,7 @@ func TestRefreshInspectExpiredGC(t *testing.T) {
 // successfully-fetched-but-logically-expired token (the eviction-lag window):
 // it must collapse to not-found, not return the stale token.
 func TestRefreshConsumeExpiredCollapses(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewRefreshTokenStore(rdb)
 	ctx := context.Background()
@@ -541,6 +547,7 @@ func TestRefreshConsumeExpiredCollapses(t *testing.T) {
 // family marker written at Issue, a replay after Consume degrades to vanilla
 // not-found (NOT a reuse event), matching the SQLite peer.
 func TestRefreshOptOutEmptyFamily(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewRefreshTokenStore(rdb)
 	ctx := context.Background()
@@ -561,6 +568,7 @@ func TestRefreshOptOutEmptyFamily(t *testing.T) {
 // TestRefreshBulkRevokeEmptyArgs covers the empty-arg short-circuits on the
 // bulk operations (userID/clientID empty => zero, no Redis touch).
 func TestRefreshBulkRevokeEmptyArgs(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewRefreshTokenStore(rdb)
 	ctx := context.Background()
@@ -582,6 +590,7 @@ func TestRefreshBulkRevokeEmptyArgs(t *testing.T) {
 // TestRefreshWithFamilyTTLOption covers the WithFamilyTTL option and its
 // non-positive default-floor branch in NewRefreshTokenStore.
 func TestRefreshWithFamilyTTLOption(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	if s := NewRefreshTokenStore(rdb, WithFamilyTTL(time.Hour)); s.familyTTL != time.Hour {
 		t.Errorf("WithFamilyTTL(1h): got %v", s.familyTTL)
@@ -595,6 +604,7 @@ func TestRefreshWithFamilyTTLOption(t *testing.T) {
 // TestSessionWithTTLOptionFloor covers the WithSessionTTL non-positive floor in
 // NewSessionManager.
 func TestSessionWithTTLOptionFloor(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	if s := NewSessionManager(rdb, WithSessionTTL(-1)); s.ttl != sso.DefaultSessionDuration {
 		t.Errorf("WithSessionTTL(neg) must floor to default, got %v", s.ttl)
@@ -604,6 +614,7 @@ func TestSessionWithTTLOptionFloor(t *testing.T) {
 // TestLimiterConstructorFloors covers the limit<1 and window<=0 flooring in
 // NewLimiter and the burst<1 / sub-second-window flooring in NewLimiterFromRate.
 func TestLimiterConstructorFloors(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 
 	// limit<1 -> 1, window<=0 -> 1s.
@@ -629,6 +640,7 @@ func TestLimiterConstructorFloors(t *testing.T) {
 // GetByUserCode pointer-deref path, plus a dangling pointer: a user_code whose
 // canonical record is gone resolves to not-found.
 func TestDeviceUserCodePointerRollback(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewDeviceCodeStore(rdb)
 	ctx := context.Background()
@@ -660,6 +672,7 @@ func TestDeviceUserCodePointerRollback(t *testing.T) {
 // TestDeviceDeleteMissingAndUnparseable covers Delete's redis.Nil (missing ->
 // idempotent no-op) branch and the unparseable-record fallback branch.
 func TestDeviceDeleteMissingAndUnparseable(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewDeviceCodeStore(rdb)
 	ctx := context.Background()
@@ -685,6 +698,7 @@ func TestDeviceDeleteMissingAndUnparseable(t *testing.T) {
 // branch: a logically-expired-but-not-yet-TTL-evicted record is GCed (both
 // keys) and reported not-found.
 func TestDeviceGetExpiredGC(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewDeviceCodeStore(rdb)
 	ctx := context.Background()
@@ -711,6 +725,7 @@ func TestDeviceGetExpiredGC(t *testing.T) {
 // TestCIBAGetExpiredGC covers Get's IsExpired() GC branch and SetStatus /
 // UpdateLastPoll / Delete behavior on missing entries.
 func TestCIBAGetExpiredGC(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewCIBAStore(rdb)
 	ctx := context.Background()
@@ -744,6 +759,7 @@ func TestCIBAGetExpiredGC(t *testing.T) {
 // branch (a past ExpiresAt does NOT no-op for CIBA — it falls back to the
 // default TTL, unlike the single-use code stores).
 func TestCIBAIssueDefaultTTL(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewCIBAStore(rdb)
 	ctx := context.Background()
@@ -760,6 +776,7 @@ func TestCIBAIssueDefaultTTL(t *testing.T) {
 
 // TestPARIssueDefaultTTL covers PAR Issue's `ttl <= 0 => DefaultPARTTL` branch.
 func TestPARIssueDefaultTTL(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewPARStore(rdb)
 	ctx := context.Background()
@@ -776,6 +793,7 @@ func TestPARIssueDefaultTTL(t *testing.T) {
 // TestJTIPastExpiryFloor covers MarkSeen's `ttl <= 0 => 1s floor` branch: a jti
 // whose expiry is already past still records (so an immediate replay is caught).
 func TestJTIPastExpiryFloor(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewJTIReplayStore(rdb)
 	ctx := context.Background()
@@ -794,6 +812,7 @@ func TestJTIPastExpiryFloor(t *testing.T) {
 // TestPermissionsMenusEdges covers SetMenus' nil-menus normalization, GetMenus'
 // redis.Nil empty-tree branch, and Menus' no-roles degrade-to-empty branch.
 func TestPermissionsMenusEdges(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	p := NewPermissionProvider(rdb)
 	ctx := context.Background()
@@ -823,6 +842,7 @@ func TestPermissionsMenusEdges(t *testing.T) {
 // TestPermissionsRolesUnknownUser covers Roles/Permissions returning
 // ErrUserNotFound when the user holds no assignments.
 func TestPermissionsRolesUnknownUser(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	p := NewPermissionProvider(rdb)
 	ctx := context.Background()
@@ -838,6 +858,7 @@ func TestPermissionsRolesUnknownUser(t *testing.T) {
 // TestClientValidateSecretInactive covers ValidateSecret's inactive-client
 // branch (correct secret but Active==false rejects) and the wrong-secret branch.
 func TestClientValidateSecretInactive(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewClientStore(rdb)
 	ctx := context.Background()
@@ -866,6 +887,7 @@ func TestClientValidateSecretInactive(t *testing.T) {
 // TestClientUnmarshalNilRecord covers unmarshalClient's nil-client guard via a
 // directly-seeded record whose embedded client is null.
 func TestClientUnmarshalNilRecord(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewClientStore(rdb)
 	ctx := context.Background()
@@ -881,6 +903,7 @@ func TestClientUnmarshalNilRecord(t *testing.T) {
 // TestPasswordSetHashRejectsPlaintext covers SetPasswordHash's non-bcrypt
 // rejection branch and the empty-userID guard on both setters.
 func TestPasswordSetHashRejectsPlaintext(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewPasswordCredentialStore(rdb)
 	ctx := context.Background()
@@ -900,6 +923,7 @@ func TestPasswordSetHashRejectsPlaintext(t *testing.T) {
 // guard: a pointer key that resolves to a user no longer carrying that external
 // identity returns not-found. Also covers the empty-arg short-circuit.
 func TestUserGetByExternalIDStalePointer(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	p := NewUserProvider(rdb)
 	ctx := context.Background()

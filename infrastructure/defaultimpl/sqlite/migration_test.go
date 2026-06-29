@@ -18,6 +18,7 @@ import (
 // later amr/acr/auth_time auth-context columns (v3) gets them all added,
 // preserving existing rows, and is stamped at the latest version.
 func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "rt.db"))
 	if err != nil {
@@ -65,6 +66,7 @@ func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
 // form left every store with no busy timeout configured, causing immediate
 // SQLITE_BUSY errors under write contention.
 func TestBusyTimeoutPragma(t *testing.T) {
+	t.Parallel()
 	db, err := sql.Open("sqlite", "file::memory:?cache=shared&_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatal(err)
@@ -84,6 +86,7 @@ func TestBusyTimeoutPragma(t *testing.T) {
 // each track their schema version under an independent namespace, so
 // one store's future migration never disturbs another's history.
 func TestMigration_PerStoreNamespacesShareOneDB(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "sso.db"))
 	if err != nil {

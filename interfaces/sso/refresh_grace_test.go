@@ -8,6 +8,7 @@ import (
 )
 
 func TestRefreshGraceCache(t *testing.T) {
+	t.Parallel()
 	c := tokengrant.NewRefreshGraceCache(time.Minute)
 	now := time.Now()
 	resp := map[string]any{"access_token": "a1", "refresh_token": "r2"}

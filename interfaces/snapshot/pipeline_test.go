@@ -13,6 +13,7 @@ import (
 )
 
 func TestJSONCodec_Roundtrip(t *testing.T) {
+	t.Parallel()
 	src := newFixture(t)
 	snap, err := src.snapshotter().Export(context.Background(), snapshot.ExportOptions{})
 	if err != nil {
@@ -41,6 +42,7 @@ func TestJSONCodec_Roundtrip(t *testing.T) {
 }
 
 func TestJSONCodec_RejectsUnknownSchemaVersion(t *testing.T) {
+	t.Parallel()
 	bad := []byte(`{"schema_version":"99","snapshot_id":"x","source_namespace":"y"}`)
 	_, err := snapshot.NewJSONCodec().Unmarshal(bad)
 	if !errors.Is(err, snapshot.ErrUnknownSchemaVersion) {
@@ -49,6 +51,7 @@ func TestJSONCodec_RejectsUnknownSchemaVersion(t *testing.T) {
 }
 
 func TestPipeline_NoEncryption_Roundtrip(t *testing.T) {
+	t.Parallel()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(context.Background(), snapshot.ExportOptions{})
 
@@ -67,6 +70,7 @@ func TestPipeline_NoEncryption_Roundtrip(t *testing.T) {
 }
 
 func TestPipeline_Passphrase_Roundtrip(t *testing.T) {
+	t.Parallel()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(context.Background(), snapshot.ExportOptions{})
 
@@ -87,6 +91,7 @@ func TestPipeline_Passphrase_Roundtrip(t *testing.T) {
 }
 
 func TestPipeline_Passphrase_WrongKeyFails(t *testing.T) {
+	t.Parallel()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(context.Background(), snapshot.ExportOptions{})
 
@@ -104,6 +109,7 @@ func TestPipeline_Passphrase_WrongKeyFails(t *testing.T) {
 }
 
 func TestPipeline_AlgorithmMismatch(t *testing.T) {
+	t.Parallel()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(context.Background(), snapshot.ExportOptions{})
 
@@ -122,6 +128,7 @@ func TestPipeline_AlgorithmMismatch(t *testing.T) {
 }
 
 func TestPipeline_ChecksumMismatchDetected(t *testing.T) {
+	t.Parallel()
 	src := newFixture(t)
 	snap, _ := src.snapshotter().Export(context.Background(), snapshot.ExportOptions{})
 
@@ -157,6 +164,7 @@ func TestPipeline_ChecksumMismatchDetected(t *testing.T) {
 }
 
 func TestPipeline_LoadMissingReturnsSentinel(t *testing.T) {
+	t.Parallel()
 	st := inline.New()
 	p := &snapshot.Pipeline{}
 	_, err := p.Load(context.Background(), st, "absent")

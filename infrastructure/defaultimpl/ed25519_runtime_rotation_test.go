@@ -30,6 +30,7 @@ func jwksKIDs(t *testing.T, iss *defaultimpl.Ed25519JWTIssuer) map[string]bool {
 // minted before rotation still validates after it (old key demoted to
 // verify-only), new tokens carry the new kid, and JWKS serves both.
 func TestRotateKey_OverlapWindow(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	oldKID := iss.KeyID()
 
@@ -72,6 +73,7 @@ func TestRotateKey_OverlapWindow(t *testing.T) {
 // TestRetireKey_DropsOldAndProtectsActive proves retirement removes a
 // demoted key from JWKS and refuses to retire the active signer.
 func TestRetireKey_DropsOldAndProtectsActive(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	oldKID := iss.KeyID()
 	newKID, _ := iss.RotateKey(nil)
@@ -90,6 +92,7 @@ func TestRetireKey_DropsOldAndProtectsActive(t *testing.T) {
 // TestRotateKey_ConcurrentWithIssue is a race-detector guard: rotation
 // must not data-race concurrent issuance/JWKS reads.
 func TestRotateKey_ConcurrentWithIssue(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	var wg sync.WaitGroup
 	stop := make(chan struct{})

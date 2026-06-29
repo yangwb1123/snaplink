@@ -8,6 +8,7 @@ import (
 )
 
 func TestSinkRecordBatch(t *testing.T) {
+	t.Parallel()
 	sink := newTestSink(t)
 
 	events := []*audit.Event{
@@ -29,6 +30,7 @@ func TestSinkRecordBatch(t *testing.T) {
 }
 
 func TestSinkRecordBatch_Empty(t *testing.T) {
+	t.Parallel()
 	sink := newTestSink(t)
 
 	if err := sink.RecordBatch(context.Background(), nil); err != nil {
@@ -37,5 +39,6 @@ func TestSinkRecordBatch_Empty(t *testing.T) {
 }
 
 func TestBatchSink_InterfaceGuard(t *testing.T) {
+	t.Parallel()
 	var _ audit.BatchSink = (*Sink)(nil)
 }

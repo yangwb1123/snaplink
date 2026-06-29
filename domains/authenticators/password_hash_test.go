@@ -11,6 +11,7 @@ import (
 // ---- VerifyHash: bcrypt ----
 
 func TestVerifyHash_Bcrypt(t *testing.T) {
+	t.Parallel()
 	hash, err := bcrypt.GenerateFromPassword([]byte("hunter2"), bcrypt.MinCost)
 	if err != nil {
 		t.Fatalf("generate bcrypt: %v", err)
@@ -26,6 +27,7 @@ func TestVerifyHash_Bcrypt(t *testing.T) {
 }
 
 func TestVerifyHash_Bcrypt_MalformedHash(t *testing.T) {
+	t.Parallel()
 	h := PasswordHash{Format: HashFormatBcrypt, Hash: "not-a-bcrypt-hash"}
 	if err := VerifyHash(context.Background(), h, "anything"); err == nil {
 		t.Error("malformed bcrypt hash should return error")
@@ -35,6 +37,7 @@ func TestVerifyHash_Bcrypt_MalformedHash(t *testing.T) {
 // ---- VerifyHash: argon2id ----
 
 func TestVerifyHash_Argon2id(t *testing.T) {
+	t.Parallel()
 	encoded, err := EncodeArgon2id("secr3t", 65536, 3, 4, 32)
 	if err != nil {
 		t.Fatalf("EncodeArgon2id: %v", err)
@@ -50,6 +53,7 @@ func TestVerifyHash_Argon2id(t *testing.T) {
 }
 
 func TestVerifyHash_Argon2id_MalformedHash(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		hash string
@@ -72,6 +76,7 @@ func TestVerifyHash_Argon2id_MalformedHash(t *testing.T) {
 // ---- VerifyHash: PBKDF2-SHA256 ----
 
 func TestVerifyHash_PBKDF2SHA256(t *testing.T) {
+	t.Parallel()
 	encoded, err := EncodePBKDF2SHA256("p@ssw0rd", 260000)
 	if err != nil {
 		t.Fatalf("EncodePBKDF2SHA256: %v", err)
@@ -90,6 +95,7 @@ func TestVerifyHash_PBKDF2SHA256(t *testing.T) {
 // produces a hash that VerifyHash can check, exercising the full encode/verify
 // path including the Django-style "pbkdf2_sha256$iter$salt$hash" encoding.
 func TestVerifyHash_PBKDF2SHA256_RoundTrip(t *testing.T) {
+	t.Parallel()
 	enc, err := EncodePBKDF2SHA256("testpassword", 10000)
 	if err != nil {
 		t.Fatalf("EncodePBKDF2SHA256: %v", err)
@@ -106,6 +112,7 @@ func TestVerifyHash_PBKDF2SHA256_RoundTrip(t *testing.T) {
 // ---- VerifyHash: unknown format ----
 
 func TestVerifyHash_UnknownFormat(t *testing.T) {
+	t.Parallel()
 	h := PasswordHash{Format: "md5", Hash: "5f4dcc3b5aa765d61d8327deb882cf99"}
 	err := VerifyHash(context.Background(), h, "password")
 	if err == nil {
@@ -117,6 +124,7 @@ func TestVerifyHash_UnknownFormat(t *testing.T) {
 }
 
 func TestVerifyHash_EmptyFormat(t *testing.T) {
+	t.Parallel()
 	h := PasswordHash{Format: "", Hash: ""}
 	if err := VerifyHash(context.Background(), h, "anything"); err == nil {
 		t.Error("empty format should return error")
@@ -126,6 +134,7 @@ func TestVerifyHash_EmptyFormat(t *testing.T) {
 // ---- IsBcrypt ----
 
 func TestPasswordHash_IsBcrypt(t *testing.T) {
+	t.Parallel()
 	if !(PasswordHash{Format: HashFormatBcrypt}).IsBcrypt() {
 		t.Error("bcrypt hash should report IsBcrypt=true")
 	}

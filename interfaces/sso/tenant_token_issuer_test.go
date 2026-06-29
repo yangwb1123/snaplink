@@ -65,6 +65,7 @@ func issueFor(t *testing.T, srv *sso.Server, client *sso.Client) string {
 }
 
 func TestServer_PerTenantSigningKeyIsolation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// Three independent Ed25519 issuers => three distinct signing keys
@@ -153,6 +154,7 @@ func TestServer_PerTenantSigningKeyIsolation(t *testing.T) {
 // A per-tenant mapping must win over a client's own TokenStrategy, so a
 // client cannot opt itself out of its tenant's signing key.
 func TestServer_TenantIssuerBeatsClientStrategy(t *testing.T) {
+	t.Parallel()
 	shared := defaultimpl.NewEd25519JWTIssuer()
 	isolated := defaultimpl.NewEd25519JWTIssuer()
 
@@ -185,6 +187,7 @@ func TestServer_TenantIssuerBeatsClientStrategy(t *testing.T) {
 // returning an error rather than silently falling back to the default key
 // (which would defeat isolation by leaking the tenant onto a shared key).
 func TestServer_TenantIssuerUnregisteredFailsClosed(t *testing.T) {
+	t.Parallel()
 	def := defaultimpl.NewEd25519JWTIssuer()
 	srv := sso.NewServer(
 		sso.WithTokenIssuer("default", def),

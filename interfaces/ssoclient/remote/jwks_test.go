@@ -33,6 +33,7 @@ func jwksServer(t *testing.T, pub ed25519.PublicKey) (string, *atomic.Int64, fun
 }
 
 func TestJWKSCache_GetFetchesOnFirstCallAndCachesAfter(t *testing.T) {
+	t.Parallel()
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
 	url, hits, stop := jwksServer(t, pub)
 	defer stop()
@@ -57,6 +58,7 @@ func TestJWKSCache_GetFetchesOnFirstCallAndCachesAfter(t *testing.T) {
 }
 
 func TestJWKSCache_GetUnknownKidTriggersRefetch(t *testing.T) {
+	t.Parallel()
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
 	url, hits, stop := jwksServer(t, pub)
 	defer stop()
@@ -84,6 +86,7 @@ func TestJWKSCache_GetUnknownKidTriggersRefetch(t *testing.T) {
 }
 
 func TestJWKSCache_DebounceBlocksImmediateRefetch(t *testing.T) {
+	t.Parallel()
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
 	url, hits, stop := jwksServer(t, pub)
 	defer stop()
@@ -109,6 +112,7 @@ func TestJWKSCache_DebounceBlocksImmediateRefetch(t *testing.T) {
 }
 
 func TestJWKSCache_BadStatusReturnsError(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -122,6 +126,7 @@ func TestJWKSCache_BadStatusReturnsError(t *testing.T) {
 }
 
 func TestJWKSCache_NoUsableKeysIsAnError(t *testing.T) {
+	t.Parallel()
 	// Returns a doc with only an unsupported key type — should fail rather
 	// than silently cache an empty key map.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -138,6 +143,7 @@ func TestJWKSCache_NoUsableKeysIsAnError(t *testing.T) {
 }
 
 func TestJWKSCache_ClosedoesNotPanic(t *testing.T) {
+	t.Parallel()
 	cache := remote.NewJWKSCache("http://does-not-matter",
 		remote.WithJWKSRefreshInterval(time.Hour),
 	)

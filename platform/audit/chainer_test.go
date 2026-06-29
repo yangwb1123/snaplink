@@ -38,6 +38,7 @@ func recordN(t *testing.T, n int) []*audit.Event {
 }
 
 func TestHashChain_GenesisAndContinuity(t *testing.T) {
+	t.Parallel()
 	events := recordN(t, 5)
 	if len(events) != 5 {
 		t.Fatalf("got %d events, want 5", len(events))
@@ -54,6 +55,7 @@ func TestHashChain_GenesisAndContinuity(t *testing.T) {
 }
 
 func TestHashChain_HashFieldNonEmpty(t *testing.T) {
+	t.Parallel()
 	events := recordN(t, 3)
 	for i, e := range events {
 		if len(e.Hash) != 64 {
@@ -63,6 +65,7 @@ func TestHashChain_HashFieldNonEmpty(t *testing.T) {
 }
 
 func TestVerifyChain_ValidChainNoError(t *testing.T) {
+	t.Parallel()
 	events := recordN(t, 5)
 	if err := audit.VerifyChain(events); err != nil {
 		t.Errorf("VerifyChain on valid chain: %v", err)
@@ -70,6 +73,7 @@ func TestVerifyChain_ValidChainNoError(t *testing.T) {
 }
 
 func TestVerifyChain_EmptyChainIsValid(t *testing.T) {
+	t.Parallel()
 	// Genesis-only state — no events recorded yet — verifies trivially.
 	if err := audit.VerifyChain(nil); err != nil {
 		t.Errorf("VerifyChain(nil): %v", err)
@@ -80,6 +84,7 @@ func TestVerifyChain_EmptyChainIsValid(t *testing.T) {
 }
 
 func TestVerifyChain_DetectsTamperedReason(t *testing.T) {
+	t.Parallel()
 	events := recordN(t, 5)
 	// Mutate the middle event's Reason — its Hash no longer matches.
 	events[2].Reason = "tampered"
@@ -94,6 +99,7 @@ func TestVerifyChain_DetectsTamperedReason(t *testing.T) {
 }
 
 func TestVerifyChain_DetectsRemovedEvent(t *testing.T) {
+	t.Parallel()
 	events := recordN(t, 5)
 	// Drop event[2] — events[3].PrevHash no longer matches events[2's
 	// successor]'s Hash.
@@ -110,6 +116,7 @@ func TestVerifyChain_DetectsRemovedEvent(t *testing.T) {
 }
 
 func TestVerifyChain_DetectsReorderedEvents(t *testing.T) {
+	t.Parallel()
 	events := recordN(t, 5)
 	events[1], events[2] = events[2], events[1]
 
@@ -120,6 +127,7 @@ func TestVerifyChain_DetectsReorderedEvents(t *testing.T) {
 }
 
 func TestVerifyChain_DetectsWrongOrderNewestFirst(t *testing.T) {
+	t.Parallel()
 	// Easy operator mistake — pass query results directly (newest first)
 	// to VerifyChain. The genesis check at index 0 catches it.
 	events := recordN(t, 3)
@@ -137,6 +145,7 @@ func TestVerifyChain_DetectsWrongOrderNewestFirst(t *testing.T) {
 }
 
 func TestHashChain_DisabledByDefault(t *testing.T) {
+	t.Parallel()
 	// Without WithHashChain, no fields are stamped — zero overhead, no
 	// behavior change for callers who don't opt in.
 	sink := audit.NewMemorySink(2)
@@ -157,6 +166,7 @@ func TestHashChain_DisabledByDefault(t *testing.T) {
 // after the durable round-trip reconstructs Timestamp as UTC. Without the
 // eventHash UTC normalization, VerifyChain reports every event as tampered.
 func TestHashChain_TimezoneStableAcrossDurableReadback(t *testing.T) {
+	t.Parallel()
 	loc, err := time.LoadLocation("America/New_York")
 	if err != nil {
 		t.Skipf("tz db unavailable: %v", err)
@@ -191,6 +201,7 @@ func TestHashChain_TimezoneStableAcrossDurableReadback(t *testing.T) {
 // (persisted) timestamps must be strictly increasing in chain order so the
 // durable ORDER BY ts_unix_ns reconstructs the true chain order (not a false break).
 func TestHashChain_StampedTimestampsAreMonotonic(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(8)
 	calls := 0
 	r := audit.New(sink, audit.WithHashChain(), audit.WithClock(func() time.Time {

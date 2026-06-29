@@ -19,6 +19,7 @@ import (
 // TestLoadBcryptHashFile_GoodHash proves the helper accepts a real
 // bcrypt hash and returns it byte-for-byte.
 func TestLoadBcryptHashFile_GoodHash(t *testing.T) {
+	t.Parallel()
 	hash, _ := bcrypt.GenerateFromPassword([]byte("pw"), bcrypt.MinCost)
 	path := filepath.Join(t.TempDir(), "a.bcrypt")
 	if err := os.WriteFile(path, hash, 0o600); err != nil {
@@ -38,6 +39,7 @@ func TestLoadBcryptHashFile_GoodHash(t *testing.T) {
 // silently end up with a hash that bcrypt.CompareHashAndPassword
 // rejects.
 func TestLoadBcryptHashFile_TolerateTrailingNewline(t *testing.T) {
+	t.Parallel()
 	hash, _ := bcrypt.GenerateFromPassword([]byte("pw"), bcrypt.MinCost)
 	path := filepath.Join(t.TempDir(), "a.bcrypt")
 	if err := os.WriteFile(path, append(hash, '\n'), 0o600); err != nil {
@@ -59,6 +61,7 @@ func TestLoadBcryptHashFile_TolerateTrailingNewline(t *testing.T) {
 // formatting overhead and always fail) without telling the
 // operator why.
 func TestLoadBcryptHashFile_RejectsPlaintext(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "wrong.bcrypt")
 	if err := os.WriteFile(path, []byte("mypassword\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -73,6 +76,7 @@ func TestLoadBcryptHashFile_RejectsPlaintext(t *testing.T) {
 // hashes (operator concatenated several together?) is ambiguous.
 // Reject explicitly.
 func TestLoadBcryptHashFile_RejectsMultiLine(t *testing.T) {
+	t.Parallel()
 	hash, _ := bcrypt.GenerateFromPassword([]byte("pw"), bcrypt.MinCost)
 	path := filepath.Join(t.TempDir(), "multi.bcrypt")
 	if err := os.WriteFile(path, append(hash, '\n', 'X', '\n'), 0o600); err != nil {
@@ -87,6 +91,7 @@ func TestLoadBcryptHashFile_RejectsMultiLine(t *testing.T) {
 // TestLoadBcryptHashFile_RejectsEmpty — empty file → boot error,
 // not silent zero-credential authenticator.
 func TestLoadBcryptHashFile_RejectsEmpty(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "empty.bcrypt")
 	if err := os.WriteFile(path, []byte(""), 0o600); err != nil {
 		t.Fatal(err)
@@ -100,6 +105,7 @@ func TestLoadBcryptHashFile_RejectsEmpty(t *testing.T) {
 // happy path: seed a (username, hash) entry, supply the matching
 // password, get back the configured subject_id.
 func TestBcryptVerifier_CorrectPasswordAuthenticates(t *testing.T) {
+	t.Parallel()
 	const username, password = "alice", "s3cret!"
 	hashPath := writeBcryptHashFile(t, password)
 	users := []config.PasswordUserConfig{{
@@ -121,6 +127,7 @@ func TestBcryptVerifier_CorrectPasswordAuthenticates(t *testing.T) {
 // TestBcryptVerifier_WrongPasswordRejected — correct username,
 // wrong password → generic error. Locks the no-info-leak surface.
 func TestBcryptVerifier_WrongPasswordRejected(t *testing.T) {
+	t.Parallel()
 	hashPath := writeBcryptHashFile(t, "right")
 	users := []config.PasswordUserConfig{{
 		Username: "u", BcryptHashFile: hashPath, SubjectID: "s",
@@ -137,6 +144,7 @@ func TestBcryptVerifier_WrongPasswordRejected(t *testing.T) {
 // distinguishable error here would let an attacker enumerate
 // registered usernames over the audit log.
 func TestBcryptVerifier_UnknownUserRejected(t *testing.T) {
+	t.Parallel()
 	hashPath := writeBcryptHashFile(t, "p")
 	users := []config.PasswordUserConfig{{
 		Username: "u", BcryptHashFile: hashPath, SubjectID: "s",
@@ -161,6 +169,7 @@ func TestBcryptVerifier_UnknownUserRejected(t *testing.T) {
 // of magnitude (within 3x at min cost). A bare lookup-miss would
 // be 100x+ faster.
 func TestBcryptVerifier_UnknownUserTimingMatchesKnown(t *testing.T) {
+	t.Parallel()
 	hashPath := writeBcryptHashFile(t, "p")
 	users := []config.PasswordUserConfig{{
 		Username: "u", BcryptHashFile: hashPath, SubjectID: "s",
@@ -192,6 +201,7 @@ func timeVerify(t *testing.T, v interface {
 // authenticate. Matches the per-entry fail-soft behavior
 // keypair + apikey use.
 func TestBcryptVerifier_BadSeedSkipped(t *testing.T) {
+	t.Parallel()
 	goodHashPath := writeBcryptHashFile(t, "rightpw")
 	users := []config.PasswordUserConfig{
 		{Username: "missing", BcryptHashFile: "/no/such/file", SubjectID: "x"},
@@ -216,6 +226,7 @@ func TestBcryptVerifier_BadSeedSkipped(t *testing.T) {
 // users later). Authenticator stays in the registry; every
 // credential is rejected until seeded.
 func TestBuildAuthenticators_PasswordEmptyUsersRegisters(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true}
 	auths, _, _, _, _ := serverbuildauthn.BuildAuthenticators(cfg, quietLogger(), nil, nil, nil)
@@ -232,6 +243,7 @@ func TestBuildAuthenticators_PasswordEmptyUsersRegisters(t *testing.T) {
 // User.Attributes) can authenticate through the built password authenticator —
 // the end-to-end path the import tool documents but that was previously inert.
 func TestBuildAuthenticators_ImportedHashLogin(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := defaultimpl.NewMemoryUserProvider()
 	hash, err := authenticators.EncodeArgon2id("legacy-pw", 8192, 1, 1, 32)
@@ -281,6 +293,7 @@ func TestBuildAuthenticators_ImportedHashLogin(t *testing.T) {
 // TestBuildAuthenticators_ImportedHashLoginOffByDefault proves the verifier is
 // NOT chained when the flag is unset — byte-identical to prior behavior.
 func TestBuildAuthenticators_ImportedHashLoginOffByDefault(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := defaultimpl.NewMemoryUserProvider()
 	hash, _ := authenticators.EncodeArgon2id("legacy-pw", 8192, 1, 1, 32)
@@ -306,6 +319,7 @@ func TestBuildAuthenticators_ImportedHashLoginOffByDefault(t *testing.T) {
 // credential-health checker wires without error when enabled with no
 // extension file (built-in dictionary only).
 func TestBuildAuthenticators_PasswordHealthEnabled(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{
 		Enabled: true,
@@ -321,6 +335,7 @@ func TestBuildAuthenticators_PasswordHealthEnabled(t *testing.T) {
 // missing weak-password extension file fails the boot rather than
 // silently degrading to the built-in set.
 func TestBuildAuthenticators_PasswordHealthMissingFileIsLoud(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{
 		Enabled: true,

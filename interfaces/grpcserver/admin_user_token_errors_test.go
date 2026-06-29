@@ -48,6 +48,7 @@ func (n *notFoundUserProvider) Delete(context.Context, string) error      { retu
 // ---------- UserAdmin nil provider → FailedPrecondition ----------
 
 func TestUserAdmin_NilUsers_FailedPrecondition(t *testing.T) {
+	t.Parallel()
 	conn := startAdminGRPC(t, nil, nil, nil, nil, nil, nil)
 	c := adminv1.NewUserAdminServiceClient(conn)
 	ctx := context.Background()
@@ -83,6 +84,7 @@ func TestUserAdmin_NilUsers_FailedPrecondition(t *testing.T) {
 
 // ListUserSessions has a separate gate: nil sessions → Unimplemented.
 func TestUserAdmin_ListUserSessions_NilSessions_Unimplemented(t *testing.T) {
+	t.Parallel()
 	users := defaultimpl.NewMemoryUserProvider()
 	conn := startAdminGRPC(t, nil, users, nil, nil, nil, nil)
 	c := adminv1.NewUserAdminServiceClient(conn)
@@ -96,6 +98,7 @@ func TestUserAdmin_ListUserSessions_NilSessions_Unimplemented(t *testing.T) {
 // ---------- UserAdmin bad args → InvalidArgument ----------
 
 func TestUserAdmin_BadArgs_InvalidArgument(t *testing.T) {
+	t.Parallel()
 	users := defaultimpl.NewMemoryUserProvider()
 	sessions := defaultimpl.NewMemorySessionManager()
 	conn := startAdminGRPC(t, nil, users, sessions, nil, nil, nil)
@@ -139,6 +142,7 @@ func TestUserAdmin_BadArgs_InvalidArgument(t *testing.T) {
 // ---------- UserAdmin provider error → Internal ----------
 
 func TestUserAdmin_ProviderError_Internal(t *testing.T) {
+	t.Parallel()
 	users := &erroringUserProvider{err: errors.New("db down")}
 	sessions := defaultimpl.NewMemorySessionManager()
 	conn := startAdminGRPC(t, nil, users, sessions, nil, nil, nil)
@@ -169,6 +173,7 @@ func TestUserAdmin_ProviderError_Internal(t *testing.T) {
 // ---------- UserAdmin sentinel mappings ----------
 
 func TestUserAdmin_Get_NotFound(t *testing.T) {
+	t.Parallel()
 	users := &erroringUserProvider{err: sso.ErrNoSuchUser}
 	conn := startAdminGRPC(t, nil, users, nil, nil, nil, nil)
 	c := adminv1.NewUserAdminServiceClient(conn)
@@ -179,6 +184,7 @@ func TestUserAdmin_Get_NotFound(t *testing.T) {
 }
 
 func TestUserAdmin_Update_NotFound(t *testing.T) {
+	t.Parallel()
 	users := &notFoundUserProvider{}
 	conn := startAdminGRPC(t, nil, users, nil, nil, nil, nil)
 	c := adminv1.NewUserAdminServiceClient(conn)
@@ -191,6 +197,7 @@ func TestUserAdmin_Update_NotFound(t *testing.T) {
 }
 
 func TestUserAdmin_Update_HappyPath(t *testing.T) {
+	t.Parallel()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: "alice", Provider: "password"})
 	conn := startAdminGRPC(t, nil, users, nil, nil, nil, nil)
@@ -210,6 +217,7 @@ func TestUserAdmin_Update_HappyPath(t *testing.T) {
 // ---------- TokenAdmin nil dependency → Unimplemented ----------
 
 func TestTokenAdmin_ListSessions_NilSessions_Unimplemented(t *testing.T) {
+	t.Parallel()
 	conn := startAdminGRPC(t, nil, nil, nil, nil, nil, nil)
 	c := adminv1.NewTokenAdminServiceClient(conn)
 	_, err := c.ListSessions(context.Background(), &adminv1.ListSessionsRequest{})
@@ -219,6 +227,7 @@ func TestTokenAdmin_ListSessions_NilSessions_Unimplemented(t *testing.T) {
 }
 
 func TestTokenAdmin_IssueTempToken_NilStore_Unimplemented(t *testing.T) {
+	t.Parallel()
 	conn := startAdminGRPC(t, nil, nil, nil, nil, nil, nil)
 	c := adminv1.NewTokenAdminServiceClient(conn)
 	_, err := c.IssueTempToken(context.Background(), &adminv1.IssueTempTokenRequest{UserId: "u"})
@@ -230,6 +239,7 @@ func TestTokenAdmin_IssueTempToken_NilStore_Unimplemented(t *testing.T) {
 // ---------- TokenAdmin Revoke branches ----------
 
 func TestTokenAdmin_Revoke_RequiresTokenOrSession(t *testing.T) {
+	t.Parallel()
 	sessions := defaultimpl.NewMemorySessionManager()
 	conn := startAdminGRPC(t, nil, nil, sessions, nil, nil, nil)
 	c := adminv1.NewTokenAdminServiceClient(conn)
@@ -241,6 +251,7 @@ func TestTokenAdmin_Revoke_RequiresTokenOrSession(t *testing.T) {
 }
 
 func TestTokenAdmin_Revoke_NoMatch_NotFound(t *testing.T) {
+	t.Parallel()
 	// Empty SessionManager — Destroy returns nil but the session wasn't
 	// found, so nothing actually got revoked. No issuers configured, so
 	// the token path is a no-op too.
@@ -257,6 +268,7 @@ func TestTokenAdmin_Revoke_NoMatch_NotFound(t *testing.T) {
 }
 
 func TestTokenAdmin_Revoke_SessionWithoutManager_FailedPrecondition(t *testing.T) {
+	t.Parallel()
 	// No SessionManager wired but caller sends session_id.
 	conn := startAdminGRPC(t, nil, nil, nil, nil, nil, nil)
 	c := adminv1.NewTokenAdminServiceClient(conn)
@@ -267,6 +279,7 @@ func TestTokenAdmin_Revoke_SessionWithoutManager_FailedPrecondition(t *testing.T
 }
 
 func TestTokenAdmin_Revoke_HappyPath(t *testing.T) {
+	t.Parallel()
 	sessions := defaultimpl.NewMemorySessionManager()
 	sess, _ := sessions.Create(context.Background(), "alice")
 	conn := startAdminGRPC(t, nil, nil, sessions, nil, nil, nil)
@@ -284,6 +297,7 @@ func TestTokenAdmin_Revoke_HappyPath(t *testing.T) {
 // ---------- TokenAdmin IssueTempToken happy path with full claims ----------
 
 func TestTokenAdmin_IssueTempToken_HappyPathWithClaims(t *testing.T) {
+	t.Parallel()
 	store := authenticators.NewMemoryTempTokenStore()
 	conn := startAdminGRPC(t, nil, nil, nil, nil, store, nil)
 	c := adminv1.NewTokenAdminServiceClient(conn)
@@ -322,6 +336,7 @@ func TestTokenAdmin_IssueTempToken_HappyPathWithClaims(t *testing.T) {
 // ---------- TokenAdmin custom TTL ----------
 
 func TestTokenAdmin_CustomTTL_AppliedToIssuedToken(t *testing.T) {
+	t.Parallel()
 	// Construct the service with a non-default TTL via the public
 	// TokenAdminConfig + wire it manually (the helper doesn't expose
 	// the field).

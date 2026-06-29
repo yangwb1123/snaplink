@@ -11,6 +11,7 @@ import (
 )
 
 func TestTempTokenStore_IssueConsumeSingleUse(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	s := NewTempTokenStore(rdb)
 	ctx := context.Background()
@@ -33,6 +34,7 @@ func TestTempTokenStore_IssueConsumeSingleUse(t *testing.T) {
 }
 
 func TestTempTokenStore_UnknownAndExpired(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	s := NewTempTokenStore(rdb)
 	ctx := context.Background()

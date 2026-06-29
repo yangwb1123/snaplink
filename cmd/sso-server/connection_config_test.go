@@ -29,6 +29,7 @@ func acmeConnectionsConfig() config.ConnectionsConfig {
 }
 
 func TestBuildConnectionStore_SeedsAndResolves(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{Connections: acmeConnectionsConfig()}
 	store, err := serverbuildstore.BuildConnectionStore(cfg, quietLogger())
 	if err != nil {
@@ -51,6 +52,7 @@ func TestBuildConnectionStore_SeedsAndResolves(t *testing.T) {
 }
 
 func TestBuildConnectionStore_DisabledIsNil(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	store, err := serverbuildstore.BuildConnectionStore(cfg, quietLogger())
 	if err != nil {
@@ -62,6 +64,7 @@ func TestBuildConnectionStore_DisabledIsNil(t *testing.T) {
 }
 
 func TestBuildConnectionStore_SQLiteRequiresDSN(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{Connections: config.ConnectionsConfig{Enabled: true, Backend: "sqlite"}}
 	if _, err := serverbuildstore.BuildConnectionStore(cfg, quietLogger()); err == nil {
 		t.Error("sqlite backend without dsn must error")
@@ -69,6 +72,7 @@ func TestBuildConnectionStore_SQLiteRequiresDSN(t *testing.T) {
 }
 
 func TestBuildConnectionStore_UnknownBackend(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{Connections: config.ConnectionsConfig{Enabled: true, Backend: "redis"}}
 	if _, err := serverbuildstore.BuildConnectionStore(cfg, quietLogger()); err == nil {
 		t.Error("unknown backend must error")
@@ -80,6 +84,7 @@ func TestBuildConnectionStore_UnknownBackend(t *testing.T) {
 // so the B2B home-realm feature is operable from the binary (previously the
 // store could only be populated by SDK embedders).
 func TestBuildApp_ConnectionsMountsHomeRealm(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Connections = acmeConnectionsConfig()
 

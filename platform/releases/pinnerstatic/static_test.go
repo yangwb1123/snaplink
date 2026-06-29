@@ -24,18 +24,21 @@ func stagedBundle(t *testing.T, dir, id string) {
 }
 
 func TestNew_RejectsMissingDir(t *testing.T) {
+	t.Parallel()
 	if _, err := static.New(filepath.Join(t.TempDir(), "does-not-exist")); err == nil {
 		t.Fatal("expected error for missing dir")
 	}
 }
 
 func TestNew_RejectsEmptyDir(t *testing.T) {
+	t.Parallel()
 	if _, err := static.New(""); err == nil {
 		t.Fatal("expected error for empty dir")
 	}
 }
 
 func TestPinForward_SwapsSymlink(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	stagedBundle(t, dir, "rel-1")
 	p, err := static.New(dir)
@@ -55,6 +58,7 @@ func TestPinForward_SwapsSymlink(t *testing.T) {
 }
 
 func TestPinForward_OverwritesPreviousSymlink(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	stagedBundle(t, dir, "rel-1")
 	stagedBundle(t, dir, "rel-2")
@@ -73,6 +77,7 @@ func TestPinForward_OverwritesPreviousSymlink(t *testing.T) {
 }
 
 func TestPinRollback_SwapsSymlink(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	stagedBundle(t, dir, "rel-1")
 	stagedBundle(t, dir, "rel-2")
@@ -89,6 +94,7 @@ func TestPinRollback_SwapsSymlink(t *testing.T) {
 }
 
 func TestPinForward_BundleMissingIsError(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p, _ := static.New(dir)
 	err := p.PinForward(context.Background(), &releases.Release{ID: "rel-missing"})

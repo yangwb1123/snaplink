@@ -14,6 +14,7 @@ import (
 // slowest seeded cost. We assert the structural fix (dummy cost), not timing.
 
 func TestMemoryPasswordCredentialStore_DummyStartsAtDefaultCost(t *testing.T) {
+	t.Parallel()
 	s := NewMemoryPasswordCredentialStore()
 	cost, err := bcrypt.Cost(s.dummy)
 	if err != nil {
@@ -25,6 +26,7 @@ func TestMemoryPasswordCredentialStore_DummyStartsAtDefaultCost(t *testing.T) {
 }
 
 func TestMemoryPasswordCredentialStore_DummyRaisesToImportedCost(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := NewMemoryPasswordCredentialStore()
 
@@ -47,6 +49,7 @@ func TestMemoryPasswordCredentialStore_DummyRaisesToImportedCost(t *testing.T) {
 
 // A lower-cost import must NOT drop the dummy below the default floor.
 func TestMemoryPasswordCredentialStore_DummyNeverDropsBelowFloor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := NewMemoryPasswordCredentialStore()
 

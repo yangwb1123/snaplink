@@ -64,11 +64,13 @@ var cycloExemptions = map[string]int{}
 var funcLenExemptions = map[string]int{}
 
 func TestMaintainability_CyclomaticComplexity(t *testing.T) {
+	t.Parallel()
 	checkFuncBudget(t, "cyclo", maxFuncComplexity,
 		func(m funcMetric) int { return m.cyclo }, cycloExemptions)
 }
 
 func TestMaintainability_FunctionLength(t *testing.T) {
+	t.Parallel()
 	checkFuncBudget(t, "lines", maxFuncLines,
 		func(m funcMetric) int { return m.lines }, funcLenExemptions)
 }
@@ -215,6 +217,7 @@ func recvTypeName(e ast.Expr) string {
 // SEED_MAINTAINABILITY=1 to print Go map literals for the current backlog. Not a
 // gate — it asserts nothing.
 func TestSeedMaintainabilityExemptions(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("SEED_MAINTAINABILITY") != "1" {
 		t.Skip("set SEED_MAINTAINABILITY=1 to regenerate exemption backlogs")
 	}
@@ -247,6 +250,7 @@ const (
 )
 
 func TestMaintainability_ExemptionsDoNotGrow(t *testing.T) {
+	t.Parallel()
 	if n := len(cycloExemptions); n > maxCycloExemptions {
 		t.Errorf("cycloExemptions grew to %d (cap %d) — do NOT add a new exemption to grandfather a new function; extract sub-functions instead. Lower the cap only when removing exemptions.", n, maxCycloExemptions)
 	}

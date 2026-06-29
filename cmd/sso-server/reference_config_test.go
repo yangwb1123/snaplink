@@ -13,6 +13,7 @@ import (
 // parsing), so a green result means every top-level + nested key
 // the reference advertises maps cleanly onto the Go struct tree.
 func TestReferenceConfigYAMLParses(t *testing.T) {
+	t.Parallel()
 	cfg, err := config.Load("config.yaml")
 	if err != nil {
 		t.Fatalf("reference YAML failed to load: %v", err)

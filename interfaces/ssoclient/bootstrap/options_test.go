@@ -36,6 +36,7 @@ func (l *captureLogger) count() int {
 }
 
 func TestNew_WithLogger_WiresIntoRunner(t *testing.T) {
+	t.Parallel()
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	log := &captureLogger{}
 	bs, err := ssobootstrap.New("test-app", statePath, ssobootstrap.WithLogger(log))
@@ -54,6 +55,7 @@ func TestNew_WithLogger_WiresIntoRunner(t *testing.T) {
 }
 
 func TestNew_WithRecorder_EmitsAuditEvents(t *testing.T) {
+	t.Parallel()
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	sink := audit.NewMemorySink(50)
 	rec := audit.New(sink)
@@ -77,6 +79,7 @@ func TestNew_WithRecorder_EmitsAuditEvents(t *testing.T) {
 }
 
 func TestNew_WithRecorder_AlsoEmitsFailureEvents(t *testing.T) {
+	t.Parallel()
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	sink := audit.NewMemorySink(50)
 	rec := audit.New(sink)
@@ -98,6 +101,7 @@ func TestNew_WithRecorder_AlsoEmitsFailureEvents(t *testing.T) {
 }
 
 func TestNew_BothOptions_Compose(t *testing.T) {
+	t.Parallel()
 	// Wire BOTH WithLogger and WithRecorder; both must take effect.
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	log := &captureLogger{}

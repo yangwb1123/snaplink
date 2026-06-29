@@ -9,6 +9,7 @@ import (
 // TestPendingStore_SingleUseConsume proves a pending id is usable EXACTLY once:
 // the first Consume returns it; a second returns !ok.
 func TestPendingStore_SingleUseConsume(t *testing.T) {
+	t.Parallel()
 	s := NewPendingStore(time.Minute, 100)
 	id, err := s.Insert(PendingRequest{SPClientID: "c", RequestID: "r"})
 	if err != nil {
@@ -27,6 +28,7 @@ func TestPendingStore_SingleUseConsume(t *testing.T) {
 
 // TestPendingStore_UnknownIsNotOk proves an unknown id collapses to !ok.
 func TestPendingStore_UnknownIsNotOk(t *testing.T) {
+	t.Parallel()
 	s := NewPendingStore(time.Minute, 100)
 	if _, ok := s.Consume("never-inserted"); ok {
 		t.Fatal("Consume of unknown id returned ok")
@@ -36,6 +38,7 @@ func TestPendingStore_UnknownIsNotOk(t *testing.T) {
 // TestPendingStore_ExpiryPrune proves an expired entry is pruned and Consume
 // treats it as unknown.
 func TestPendingStore_ExpiryPrune(t *testing.T) {
+	t.Parallel()
 	s := NewPendingStore(time.Minute, 100)
 	id, err := s.Insert(PendingRequest{
 		SPClientID: "c", RequestID: "r",
@@ -63,6 +66,7 @@ func TestPendingStore_ExpiryPrune(t *testing.T) {
 // TestPendingStore_CapacityEviction proves the hard cap evicts the oldest
 // insert so the store never grows past capacity.
 func TestPendingStore_CapacityEviction(t *testing.T) {
+	t.Parallel()
 	const cap = 5
 	s := NewPendingStore(time.Hour, cap)
 	ids := make([]string, 0, 10)
@@ -86,6 +90,7 @@ func TestPendingStore_CapacityEviction(t *testing.T) {
 
 // TestPendingStore_UniqueIDs proves Insert returns distinct ids.
 func TestPendingStore_UniqueIDs(t *testing.T) {
+	t.Parallel()
 	s := NewPendingStore(time.Hour, 1000)
 	seen := map[string]bool{}
 	for i := 0; i < 500; i++ {
@@ -104,6 +109,7 @@ func TestPendingStore_UniqueIDs(t *testing.T) {
 // goroutines to prove race-safety (run under -race -count). Each goroutine
 // inserts then consumes its own id exactly once.
 func TestPendingStore_ConcurrentInsertConsume(t *testing.T) {
+	t.Parallel()
 	s := NewPendingStore(time.Hour, 100000)
 	const workers = 50
 	const per = 100

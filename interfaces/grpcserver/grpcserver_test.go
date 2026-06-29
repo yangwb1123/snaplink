@@ -62,6 +62,7 @@ func startGRPC(t *testing.T, recorder *audit.Recorder, prov permissions.Provider
 // --- AuditWriter ---
 
 func TestAudit_Record(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(10)
 	recorder := audit.New(sink)
 	conn := startGRPC(t, recorder, nil, nil)
@@ -84,6 +85,7 @@ func TestAudit_Record(t *testing.T) {
 }
 
 func TestAudit_StreamEvents(t *testing.T) {
+	t.Parallel()
 	sink := audit.NewMemorySink(100)
 	recorder := audit.New(sink)
 	conn := startGRPC(t, recorder, nil, nil)
@@ -114,6 +116,7 @@ func TestAudit_StreamEvents(t *testing.T) {
 }
 
 func TestAudit_RecordWithoutRecorderFailsPrecondition(t *testing.T) {
+	t.Parallel()
 	conn := startGRPC(t, nil, nil, nil)
 	client := auditv1.NewAuditWriterClient(conn)
 	_, err := client.Record(context.Background(), &auditv1.Event{Type: "x"})
@@ -137,6 +140,7 @@ func newAuthzFixture(t *testing.T) (*memory.Registry, permissions.Provider) {
 }
 
 func TestAuthz_Check_Allowed(t *testing.T) {
+	t.Parallel()
 	reg, prov := newAuthzFixture(t)
 	defer func() { _ = reg.Close() }()
 	conn := startGRPC(t, nil, prov, reg)
@@ -154,6 +158,7 @@ func TestAuthz_Check_Allowed(t *testing.T) {
 }
 
 func TestAuthz_Check_Denied(t *testing.T) {
+	t.Parallel()
 	reg, prov := newAuthzFixture(t)
 	defer func() { _ = reg.Close() }()
 	conn := startGRPC(t, nil, prov, reg)
@@ -171,6 +176,7 @@ func TestAuthz_Check_Denied(t *testing.T) {
 }
 
 func TestAuthz_Check_RequiredFieldsValidated(t *testing.T) {
+	t.Parallel()
 	reg, prov := newAuthzFixture(t)
 	defer func() { _ = reg.Close() }()
 	conn := startGRPC(t, nil, prov, reg)
@@ -185,6 +191,7 @@ func TestAuthz_Check_RequiredFieldsValidated(t *testing.T) {
 }
 
 func TestAuthz_GetMenus_FilteredByPermissions(t *testing.T) {
+	t.Parallel()
 	reg, prov := newAuthzFixture(t)
 	defer func() { _ = reg.Close() }()
 	conn := startGRPC(t, nil, prov, reg)
@@ -206,6 +213,7 @@ func TestAuthz_GetMenus_FilteredByPermissions(t *testing.T) {
 }
 
 func TestAuthz_ListRoles(t *testing.T) {
+	t.Parallel()
 	reg, prov := newAuthzFixture(t)
 	defer func() { _ = reg.Close() }()
 	conn := startGRPC(t, nil, prov, reg)
@@ -225,6 +233,7 @@ func TestAuthz_ListRoles(t *testing.T) {
 // --- Discovery ---
 
 func TestDiscovery_RegisterDiscoverDeregister(t *testing.T) {
+	t.Parallel()
 	reg := memory.New()
 	defer func() { _ = reg.Close() }()
 	conn := startGRPC(t, nil, nil, reg)
@@ -258,6 +267,7 @@ func TestDiscovery_RegisterDiscoverDeregister(t *testing.T) {
 }
 
 func TestDiscovery_Watch_StreamsAddedAndRemoved(t *testing.T) {
+	t.Parallel()
 	reg := memory.New()
 	defer func() { _ = reg.Close() }()
 	conn := startGRPC(t, nil, nil, reg)

@@ -12,6 +12,7 @@ import (
 )
 
 func TestBuildAnomaly_DisabledReturnsNil(t *testing.T) {
+	t.Parallel()
 	rt, err := buildAnomaly(config.AnomalyConfig{Enabled: false}, nil, nil, quietLogger())
 	if err != nil {
 		t.Fatalf("buildAnomaly: %v", err)
@@ -22,6 +23,7 @@ func TestBuildAnomaly_DisabledReturnsNil(t *testing.T) {
 }
 
 func TestBuildAnomaly_NoDetectorsEnabledReturnsNil(t *testing.T) {
+	t.Parallel()
 	// Enabled=true but no detector toggled — runner would be inert,
 	// cmd warns + returns nil so callers don't accidentally wire a
 	// no-op runner.
@@ -40,6 +42,7 @@ func TestBuildAnomaly_NoDetectorsEnabledReturnsNil(t *testing.T) {
 }
 
 func TestBuildAnomaly_HappyPathMemory(t *testing.T) {
+	t.Parallel()
 	rt, err := buildAnomaly(config.AnomalyConfig{
 		Enabled:     true,
 		IPSalt:      hex.EncodeToString([]byte("0123456789abcdef")),
@@ -60,6 +63,7 @@ func TestBuildAnomaly_HappyPathMemory(t *testing.T) {
 }
 
 func TestBuildAnomaly_SQLiteBackendOpenedAndClosed(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "anom.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 
@@ -93,6 +97,7 @@ func TestBuildAnomaly_SQLiteBackendOpenedAndClosed(t *testing.T) {
 }
 
 func TestBuildAnomaly_SQLiteRequiresDSN(t *testing.T) {
+	t.Parallel()
 	_, err := buildAnomaly(config.AnomalyConfig{
 		Enabled:     true,
 		IPSalt:      hex.EncodeToString([]byte("0123456789abcdef")),
@@ -108,6 +113,7 @@ func TestBuildAnomaly_SQLiteRequiresDSN(t *testing.T) {
 }
 
 func TestBuildAnomaly_RejectsUnknownBackend(t *testing.T) {
+	t.Parallel()
 	_, err := buildAnomaly(config.AnomalyConfig{
 		Enabled:     true,
 		IPSalt:      hex.EncodeToString([]byte("0123456789abcdef")),
@@ -120,6 +126,7 @@ func TestBuildAnomaly_RejectsUnknownBackend(t *testing.T) {
 }
 
 func TestBuildAnomaly_AllDetectorsEnable(t *testing.T) {
+	t.Parallel()
 	rt, err := buildAnomaly(config.AnomalyConfig{
 		Enabled:     true,
 		IPSalt:      hex.EncodeToString([]byte("0123456789abcdef")),
@@ -143,6 +150,7 @@ func TestBuildAnomaly_AllDetectorsEnable(t *testing.T) {
 }
 
 func TestDecodeAnomalySalt_HexEncodedAccepted(t *testing.T) {
+	t.Parallel()
 	b, err := decodeAnomalySalt(hex.EncodeToString([]byte("hello")))
 	if err != nil {
 		t.Fatalf("decodeAnomalySalt: %v", err)
@@ -153,6 +161,7 @@ func TestDecodeAnomalySalt_HexEncodedAccepted(t *testing.T) {
 }
 
 func TestDecodeAnomalySalt_NonHexFallsBackToRaw(t *testing.T) {
+	t.Parallel()
 	b, _ := decodeAnomalySalt("not-hex-this-is-raw")
 	if string(b) != "not-hex-this-is-raw" {
 		t.Errorf("raw fallback: %q", b)
@@ -160,6 +169,7 @@ func TestDecodeAnomalySalt_NonHexFallsBackToRaw(t *testing.T) {
 }
 
 func TestDecodeAnomalySalt_EmptyReturnsNilNoError(t *testing.T) {
+	t.Parallel()
 	b, err := decodeAnomalySalt("")
 	if err != nil {
 		t.Fatalf("decodeAnomalySalt: %v", err)

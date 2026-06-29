@@ -8,6 +8,7 @@ import (
 )
 
 func TestLimiter_UnderAndOverLimit(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	_ = mr
 	lim := NewLimiter(rdb, 3, time.Minute, "login")
@@ -36,6 +37,7 @@ func TestLimiter_UnderAndOverLimit(t *testing.T) {
 }
 
 func TestLimiter_PerKeyIsolation(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	lim := NewLimiter(rdb, 1, time.Minute, "")
 
@@ -52,6 +54,7 @@ func TestLimiter_PerKeyIsolation(t *testing.T) {
 }
 
 func TestLimiter_WindowResetAfterTTL(t *testing.T) {
+	t.Parallel()
 	mr, rdb := newTestClient(t)
 	lim := NewLimiter(rdb, 2, 10*time.Second, "")
 
@@ -74,6 +77,7 @@ func TestLimiter_WindowResetAfterTTL(t *testing.T) {
 }
 
 func TestLimiter_ConcurrentIncrSingleCounter(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	const limit = 50
 	lim := NewLimiter(rdb, limit, time.Minute, "")
@@ -105,6 +109,7 @@ func TestLimiter_ConcurrentIncrSingleCounter(t *testing.T) {
 }
 
 func TestLimiter_DenyAllFromRate(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	// perSecond<=0 yields a deny-all limiter (mirrors the token-bucket
 	// peers configured to never refill).
@@ -118,6 +123,7 @@ func TestLimiter_DenyAllFromRate(t *testing.T) {
 }
 
 func TestLimiter_FromRateWindow(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	// 10 req/s, burst 10 => window 1s, limit 10.
 	lim := NewLimiterFromRate(rdb, 10, 10, "")
@@ -132,6 +138,7 @@ func TestLimiter_FromRateWindow(t *testing.T) {
 }
 
 func TestLimiter_Ping(t *testing.T) {
+	t.Parallel()
 	_, rdb := newTestClient(t)
 	lim := NewLimiter(rdb, 1, time.Second, "")
 	if err := lim.Ping(context.Background()); err != nil {

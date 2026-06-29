@@ -26,6 +26,7 @@ func fetchDoc(t *testing.T, url string) (map[string]any, http.Header) {
 }
 
 func TestBuildApp_DiscoveryDocCacheTTLDisabledOmitsCacheControl(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Server.DiscoveryDocCacheTTL = -1 // SDK treats <=0 as disabled
 
@@ -44,6 +45,7 @@ func TestBuildApp_DiscoveryDocCacheTTLDisabledOmitsCacheControl(t *testing.T) {
 }
 
 func TestBuildApp_JWKSCacheTTLAppliedToResponse(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Server.JWKSCacheTTL = 17 * time.Second
 
@@ -68,6 +70,7 @@ func TestBuildApp_JWKSCacheTTLAppliedToResponse(t *testing.T) {
 }
 
 func TestBuildApp_DiscoveryCacheTTLBuildsCleanly(t *testing.T) {
+	t.Parallel()
 	// The clientDiscoverySnapshot cache is in-process only; behavior
 	// is observable as fewer client-store iterations. Smoke test just
 	// confirms wiring doesn't panic and the discovery endpoint still

@@ -96,6 +96,7 @@ func sliceContains(ss []string, target string) bool {
 // --- tool tests ---
 
 func TestCheckPermission(t *testing.T) {
+	t.Parallel()
 	d := &toolDeps{authz: bufconnAuthz(t)}
 	_, out, err := d.checkPermission(context.Background(), nil, checkIn{
 		SubjectID: "user-alice", ClientID: "web-app", Permission: "user:read",
@@ -115,6 +116,7 @@ func TestCheckPermission(t *testing.T) {
 }
 
 func TestListPermissionsAndRoles(t *testing.T) {
+	t.Parallel()
 	d := &toolDeps{authz: bufconnAuthz(t)}
 	_, p, err := d.listPermissions(context.Background(), nil, subjectClientIn{"user-alice", "web-app"})
 	if err != nil || len(p.Permissions) != 1 || p.Permissions[0].Code != "user:*" {
@@ -127,6 +129,7 @@ func TestListPermissionsAndRoles(t *testing.T) {
 }
 
 func TestGetMenusFiltered(t *testing.T) {
+	t.Parallel()
 	d := &toolDeps{authz: bufconnAuthz(t)}
 	_, m, err := d.getMenus(context.Background(), nil, subjectClientIn{"user-alice", "web-app"})
 	if err != nil || len(m.Menus) != 1 || m.Menus[0].ID != "m-users" {
@@ -135,6 +138,7 @@ func TestGetMenusFiltered(t *testing.T) {
 }
 
 func TestIntrospectToken(t *testing.T) {
+	t.Parallel()
 	iss := edIssuer()
 	d := &toolDeps{intro: jwksAuthClient(t, iss)}
 	tok, err := iss.Issue(context.Background(), &sso.Subject{ID: "user-1", ClientID: "web-app"}, []string{"mcp:read"})
@@ -160,6 +164,7 @@ func TestIntrospectToken(t *testing.T) {
 }
 
 func TestToMenuDTOs_Nesting(t *testing.T) {
+	t.Parallel()
 	tree := ssoclient.MenuTree{
 		{ID: "root", Name: "Root", Children: []ssoclient.MenuItem{
 			{ID: "child", Name: "Child", Permission: "x:read"},

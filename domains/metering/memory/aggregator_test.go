@@ -15,6 +15,7 @@ func dayOf(year int, month time.Month, day int) time.Time {
 }
 
 func TestUsage_hit(t *testing.T) {
+	t.Parallel()
 	a := New()
 	start := dayOf(2026, time.January, 15)
 	a.Record(&metering.TenantUsage{
@@ -46,6 +47,7 @@ func TestUsage_hit(t *testing.T) {
 }
 
 func TestUsage_miss_returns_zeros(t *testing.T) {
+	t.Parallel()
 	a := New()
 	u, err := a.Usage(ctx, "unknown-tenant", metering.PeriodDay, dayOf(2026, time.January, 1))
 	if err != nil {
@@ -60,6 +62,7 @@ func TestUsage_miss_returns_zeros(t *testing.T) {
 }
 
 func TestUsage_midday_timestamp_truncated(t *testing.T) {
+	t.Parallel()
 	a := New()
 	// Record is stored with midnight; query uses a midday timestamp — should match.
 	start := dayOf(2026, time.March, 10)
@@ -81,6 +84,7 @@ func TestUsage_midday_timestamp_truncated(t *testing.T) {
 }
 
 func TestUsage_month_period(t *testing.T) {
+	t.Parallel()
 	a := New()
 	a.Record(&metering.TenantUsage{
 		TenantID:    "t3",
@@ -100,6 +104,7 @@ func TestUsage_month_period(t *testing.T) {
 }
 
 func TestTopTenants_ordering(t *testing.T) {
+	t.Parallel()
 	a := New()
 	start := dayOf(2026, time.April, 1)
 	a.Record(&metering.TenantUsage{TenantID: "low", Period: metering.PeriodDay, PeriodStart: start, Logins: 5})
@@ -119,6 +124,7 @@ func TestTopTenants_ordering(t *testing.T) {
 }
 
 func TestTopTenants_limit(t *testing.T) {
+	t.Parallel()
 	a := New()
 	start := dayOf(2026, time.May, 1)
 	for i := 0; i < 5; i++ {
@@ -140,6 +146,7 @@ func TestTopTenants_limit(t *testing.T) {
 }
 
 func TestTopTenants_different_period_excluded(t *testing.T) {
+	t.Parallel()
 	a := New()
 	jan := dayOf(2026, time.January, 1)
 	feb := dayOf(2026, time.February, 1)

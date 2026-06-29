@@ -17,6 +17,7 @@ import (
 )
 
 func TestBuildRateLimitPolicy_DefaultAndPrefixes(t *testing.T) {
+	t.Parallel()
 	p, err := serverbuildplatform.BuildRateLimitPolicy(config.RateLimitConfig{
 		Enabled:       true,
 		DefaultPerSec: 5,
@@ -46,6 +47,7 @@ func TestBuildRateLimitPolicy_DefaultAndPrefixes(t *testing.T) {
 }
 
 func TestBuildRateLimitPolicy_ZeroDefaultLeavesDefaultLimiterNil(t *testing.T) {
+	t.Parallel()
 	// A zero DefaultPerSec means "no limit on unmatched paths" — only
 	// the prefix rules apply.
 	p, err := serverbuildplatform.BuildRateLimitPolicy(config.RateLimitConfig{
@@ -67,6 +69,7 @@ func TestBuildRateLimitPolicy_ZeroDefaultLeavesDefaultLimiterNil(t *testing.T) {
 }
 
 func TestBuildApp_BodyLimitWired(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Security.BodyLimit.MaxBytes = 16
 
@@ -94,6 +97,7 @@ func TestBuildApp_BodyLimitWired(t *testing.T) {
 }
 
 func TestBuildApp_JTIReplayStoreWiredWhenEnabled(t *testing.T) {
+	t.Parallel()
 	// Smoke test: just confirm buildApp doesn't panic and the option
 	// chain is reachable when the flag is on. End-to-end JAR replay
 	// behavior is covered by SDK-level tests.
@@ -111,6 +115,7 @@ func TestBuildApp_JTIReplayStoreWiredWhenEnabled(t *testing.T) {
 }
 
 func TestBuildRateLimitPolicy_SQLiteRequiresDSN(t *testing.T) {
+	t.Parallel()
 	_, err := serverbuildplatform.BuildRateLimitPolicy(config.RateLimitConfig{
 		Enabled:       true,
 		Backend:       "sqlite",
@@ -123,6 +128,7 @@ func TestBuildRateLimitPolicy_SQLiteRequiresDSN(t *testing.T) {
 }
 
 func TestBuildRateLimitPolicy_SQLiteOpensFileForEachPrefix(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "ratelimit.db") + "?_journal=WAL"
 
@@ -157,6 +163,7 @@ func TestBuildRateLimitPolicy_SQLiteOpensFileForEachPrefix(t *testing.T) {
 }
 
 func TestBuildRateLimitPolicy_UnknownBackendErrors(t *testing.T) {
+	t.Parallel()
 	_, err := serverbuildplatform.BuildRateLimitPolicy(config.RateLimitConfig{
 		Enabled: true,
 		Backend: "redis",
@@ -167,6 +174,7 @@ func TestBuildRateLimitPolicy_UnknownBackendErrors(t *testing.T) {
 }
 
 func TestBuildJTIReplayStore_MemoryDefault(t *testing.T) {
+	t.Parallel()
 	s, mode, err := serverbuildauthn.BuildJTIReplayStore(config.JTIReplayConfig{}, nil)
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
@@ -180,6 +188,7 @@ func TestBuildJTIReplayStore_MemoryDefault(t *testing.T) {
 }
 
 func TestBuildJTIReplayStore_SQLiteNeedsDSN(t *testing.T) {
+	t.Parallel()
 	_, _, err := serverbuildauthn.BuildJTIReplayStore(config.JTIReplayConfig{Backend: "sqlite"}, nil)
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
@@ -187,6 +196,7 @@ func TestBuildJTIReplayStore_SQLiteNeedsDSN(t *testing.T) {
 }
 
 func TestBuildJTIReplayStore_SQLiteOpensFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "jti.db") + "?_journal=WAL"
 	s, mode, err := serverbuildauthn.BuildJTIReplayStore(config.JTIReplayConfig{
@@ -205,6 +215,7 @@ func TestBuildJTIReplayStore_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildJTIReplayStore_UnknownBackendErrors(t *testing.T) {
+	t.Parallel()
 	_, _, err := serverbuildauthn.BuildJTIReplayStore(config.JTIReplayConfig{Backend: "redis"}, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
@@ -212,6 +223,7 @@ func TestBuildJTIReplayStore_UnknownBackendErrors(t *testing.T) {
 }
 
 func TestBuildApp_AccountLockoutWiredWithOverrides(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Security.AccountLockout.Enabled = true
 	cfg.Security.AccountLockout.MaxFailures = 3
@@ -227,6 +239,7 @@ func TestBuildApp_AccountLockoutWiredWithOverrides(t *testing.T) {
 }
 
 func TestBuildApp_AccountLockoutDefaultsWhenZeroValues(t *testing.T) {
+	t.Parallel()
 	// Zero numeric values fall back to SDK defaults — confirms the
 	// wiring code doesn't accidentally pass 0 to the override
 	// branches (which would lock the account on the first failure).
@@ -244,6 +257,7 @@ func TestBuildApp_AccountLockoutDefaultsWhenZeroValues(t *testing.T) {
 }
 
 func TestBuildAccountLockout_MemoryDefaultWithOverrides(t *testing.T) {
+	t.Parallel()
 	l, mode, err := serverbuildauthn.BuildAccountLockout(config.AccountLockoutConfig{
 		MaxFailures:     7,
 		LockoutDuration: 30 * security.NewMemoryAccountLockout().LockoutDuration,
@@ -265,6 +279,7 @@ func TestBuildAccountLockout_MemoryDefaultWithOverrides(t *testing.T) {
 }
 
 func TestBuildAccountLockout_SQLiteNeedsDSN(t *testing.T) {
+	t.Parallel()
 	_, _, err := serverbuildauthn.BuildAccountLockout(config.AccountLockoutConfig{Backend: "sqlite"}, nil)
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
@@ -272,6 +287,7 @@ func TestBuildAccountLockout_SQLiteNeedsDSN(t *testing.T) {
 }
 
 func TestBuildAccountLockout_SQLiteOpensFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "lockout.db") + "?_journal=WAL"
 	l, mode, err := serverbuildauthn.BuildAccountLockout(config.AccountLockoutConfig{
@@ -291,6 +307,7 @@ func TestBuildAccountLockout_SQLiteOpensFile(t *testing.T) {
 }
 
 func TestBuildAccountLockout_UnknownBackendErrors(t *testing.T) {
+	t.Parallel()
 	_, _, err := serverbuildauthn.BuildAccountLockout(config.AccountLockoutConfig{Backend: "mongodb"}, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
@@ -298,6 +315,7 @@ func TestBuildAccountLockout_UnknownBackendErrors(t *testing.T) {
 }
 
 func TestBuildApp_MTLSEnabledFlipsDiscovery(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Security.MTLS.Enabled = true
 
@@ -322,6 +340,7 @@ func TestBuildApp_MTLSEnabledFlipsDiscovery(t *testing.T) {
 }
 
 func TestBuildClientCertExtractor_DefaultTLS(t *testing.T) {
+	t.Parallel()
 	ex, mode, err := serverbuildstore.BuildClientCertExtractor(config.MTLSConfig{Enabled: true})
 	if err != nil {
 		t.Fatalf("default backend: %v", err)
@@ -335,6 +354,7 @@ func TestBuildClientCertExtractor_DefaultTLS(t *testing.T) {
 }
 
 func TestBuildClientCertExtractor_HeaderRequiresName(t *testing.T) {
+	t.Parallel()
 	_, _, err := serverbuildstore.BuildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: "header"})
 	if err == nil {
 		t.Fatal("expected error when header backend has empty name")
@@ -342,6 +362,7 @@ func TestBuildClientCertExtractor_HeaderRequiresName(t *testing.T) {
 }
 
 func TestBuildClientCertExtractor_HeaderURLPEM(t *testing.T) {
+	t.Parallel()
 	ex, mode, err := serverbuildstore.BuildClientCertExtractor(config.MTLSConfig{
 		Enabled: true,
 		Backend: "header",
@@ -366,6 +387,7 @@ func TestBuildClientCertExtractor_HeaderURLPEM(t *testing.T) {
 }
 
 func TestBuildClientCertExtractor_HeaderEncodings(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in   string
 		want security.HeaderCertEncoding
@@ -389,6 +411,7 @@ func TestBuildClientCertExtractor_HeaderEncodings(t *testing.T) {
 }
 
 func TestBuildClientCertExtractor_UnknownBackend(t *testing.T) {
+	t.Parallel()
 	_, _, err := serverbuildstore.BuildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: "spiffe"})
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
@@ -396,6 +419,7 @@ func TestBuildClientCertExtractor_UnknownBackend(t *testing.T) {
 }
 
 func TestBuildClientCertExtractor_UnknownEncoding(t *testing.T) {
+	t.Parallel()
 	_, _, err := serverbuildstore.BuildClientCertExtractor(config.MTLSConfig{
 		Enabled: true,
 		Backend: "header",
@@ -407,6 +431,7 @@ func TestBuildClientCertExtractor_UnknownEncoding(t *testing.T) {
 }
 
 func TestBuildApp_MTLSHeaderBackendWires(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Security.MTLS.Enabled = true
 	cfg.Security.MTLS.Backend = "header"
@@ -434,6 +459,7 @@ func TestBuildApp_MTLSHeaderBackendWires(t *testing.T) {
 }
 
 func TestBuildApp_CORSWiredWhenOriginsSet(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Security.CORS.Enabled = true
 	cfg.Security.CORS.AllowedOrigins = []string{"https://example.com"}

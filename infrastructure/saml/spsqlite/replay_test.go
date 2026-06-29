@@ -23,6 +23,7 @@ func uniqDSN(name string) string {
 // suite against the sqlite AssertionReplayStore — the SAME suite the in-memory
 // store runs (saml/sp.TestReplayConformance_Memory), so memory==sqlite.
 func TestAssertionReplayConformance_SQLite(t *testing.T) {
+	t.Parallel()
 	samltest.ReplayConformance{
 		Factory: func(t *testing.T) samltest.ReplayChecker {
 			s, err := NewAssertionReplayStore(uniqDSN("sp_assert_conf"))
@@ -38,6 +39,7 @@ func TestAssertionReplayConformance_SQLite(t *testing.T) {
 // TestLogoutReplayConformance_SQLite runs the shared suite against the sqlite
 // SP-side LogoutReplayStore.
 func TestLogoutReplayConformance_SQLite(t *testing.T) {
+	t.Parallel()
 	samltest.ReplayConformance{
 		Factory: func(t *testing.T) samltest.ReplayChecker {
 			s, err := NewLogoutReplayStore(uniqDSN("sp_logout_conf"))
@@ -55,6 +57,7 @@ func TestLogoutReplayConformance_SQLite(t *testing.T) {
 // recorded in the assertion table is still FRESH in the logout table (distinct
 // tables/namespaces), so the two ID spaces never cross-trigger a false replay.
 func TestAssertionReplay_SeparateNamespaces(t *testing.T) {
+	t.Parallel()
 	db := openSharedDB(t, "sp_two_stores")
 	assertS, err := NewAssertionReplayStoreWithDB(db)
 	if err != nil {
@@ -86,6 +89,7 @@ func TestAssertionReplay_SeparateNamespaces(t *testing.T) {
 // store is Closed (its DB handle gone), CheckAndRemember FAILS CLOSED (returns
 // false = reject), never silently letting a possibly-replayed assertion through.
 func TestAssertionReplay_FailsClosedAfterClose(t *testing.T) {
+	t.Parallel()
 	s, err := NewAssertionReplayStore(uniqDSN("sp_failclosed"))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -101,6 +105,7 @@ func TestAssertionReplay_FailsClosedAfterClose(t *testing.T) {
 // too, and the table stays empty). The callers never pass blank — this is purely
 // defense-in-depth so a degenerate caller can't write a blank-keyed row.
 func TestAssertionReplay_BlankIDShortCircuits(t *testing.T) {
+	t.Parallel()
 	s, err := NewAssertionReplayStore(uniqDSN("sp_blank"))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -125,6 +130,7 @@ func TestAssertionReplay_BlankIDShortCircuits(t *testing.T) {
 // TestAssertionReplay_PruneExpired proves the opportunistic prune hook drops
 // only lapsed rows.
 func TestAssertionReplay_PruneExpired(t *testing.T) {
+	t.Parallel()
 	s, err := NewAssertionReplayStore(uniqDSN("sp_prune"))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -155,6 +161,7 @@ func TestAssertionReplay_PruneExpired(t *testing.T) {
 // and asserts EXACTLY ONE sees it fresh — the race-free ON CONFLICT atomic must
 // admit one winner, never zero or two. Run with -race -count=10.
 func TestAssertionReplay_ConcurrentDedup(t *testing.T) {
+	t.Parallel()
 	s, err := NewAssertionReplayStore(uniqDSN("sp_conc_one"))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -187,6 +194,7 @@ func TestAssertionReplay_ConcurrentDedup(t *testing.T) {
 // TestAssertionReplay_ConcurrentDistinct hammers DISTINCT ids concurrently (no
 // false replays under load). Run with -race -count=10.
 func TestAssertionReplay_ConcurrentDistinct(t *testing.T) {
+	t.Parallel()
 	s, err := NewAssertionReplayStore(uniqDSN("sp_conc_many"))
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -217,6 +225,7 @@ func TestAssertionReplay_ConcurrentDistinct(t *testing.T) {
 // on a fresh DB (records v1) and no-ops on a re-open (still v1) — mirrors the
 // SDK's migration test. Both SP namespaces are checked.
 func TestSPSqlite_MigrationFreshAndPopulated(t *testing.T) {
+	t.Parallel()
 	db := openSharedDB(t, "sp_migrate")
 	ctx := context.Background()
 

@@ -22,6 +22,7 @@ func freshAuditSink(t *testing.T) *AuditSink {
 }
 
 func TestAudit_RecordGetQuery(t *testing.T) {
+	t.Parallel()
 	s := freshAuditSink(t)
 	ctx := context.Background()
 	base := time.Now().UTC()
@@ -54,6 +55,7 @@ func TestAudit_RecordGetQuery(t *testing.T) {
 }
 
 func TestAudit_QueryFilterOrderAndFacets(t *testing.T) {
+	t.Parallel()
 	s := freshAuditSink(t)
 	ctx := context.Background()
 	base := time.Now().UTC()
@@ -90,6 +92,7 @@ func TestAudit_QueryFilterOrderAndFacets(t *testing.T) {
 }
 
 func TestAudit_PruneAndLastHash(t *testing.T) {
+	t.Parallel()
 	s := freshAuditSink(t)
 	ctx := context.Background()
 	base := time.Now().UTC()

@@ -25,6 +25,7 @@ import (
 // value) and a nil *Store both surface a typed closed-error rather
 // than panic.
 func TestPing_NilReceiverAndClient(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	if err := (*Store)(nil).Ping(ctx); err == nil {
@@ -36,6 +37,7 @@ func TestPing_NilReceiverAndClient(t *testing.T) {
 }
 
 func TestKey(t *testing.T) {
+	t.Parallel()
 	s := &Store{prefix: "/snaplink/netpolicy"}
 	if got := s.key("intranet"); got != "/snaplink/netpolicy/intranet" {
 		t.Fatalf("key = %q", got)
@@ -43,6 +45,7 @@ func TestKey(t *testing.T) {
 }
 
 func TestNamespace_TrailingSlashPreventsPrefixCollision(t *testing.T) {
+	t.Parallel()
 	s := &Store{prefix: "/snaplink/netpolicy"}
 	if got := s.namespace(); got != "/snaplink/netpolicy/" {
 		t.Fatalf("namespace = %q, want trailing slash", got)
@@ -50,12 +53,14 @@ func TestNamespace_TrailingSlashPreventsPrefixCollision(t *testing.T) {
 }
 
 func TestNew_RequiresEndpoints(t *testing.T) {
+	t.Parallel()
 	if _, err := New(Config{}); err == nil {
 		t.Error("expected error when endpoints is empty")
 	}
 }
 
 func TestPolicyJSONRoundtrip(t *testing.T) {
+	t.Parallel()
 	in := netpolicy.Policy{
 		Name:                "intranet",
 		CIDRs:               []string{"10.0.0.0/8"},
@@ -83,6 +88,7 @@ func TestPolicyJSONRoundtrip(t *testing.T) {
 }
 
 func TestUnmarshalPolicy_StampsVersionFromModRevision(t *testing.T) {
+	t.Parallel()
 	body, _ := json.Marshal(netpolicy.Policy{Name: "x", Version: 999})
 	p, err := unmarshalPolicy(body, 42)
 	if err != nil {
@@ -94,6 +100,7 @@ func TestUnmarshalPolicy_StampsVersionFromModRevision(t *testing.T) {
 }
 
 func TestTranslateEvent_Put_Added(t *testing.T) {
+	t.Parallel()
 	body, _ := json.Marshal(netpolicy.Policy{Name: "intranet"})
 	ev := &clientv3.Event{
 		Type: mvccpb.PUT,
@@ -109,6 +116,7 @@ func TestTranslateEvent_Put_Added(t *testing.T) {
 }
 
 func TestTranslateEvent_Put_Updated(t *testing.T) {
+	t.Parallel()
 	body, _ := json.Marshal(netpolicy.Policy{Name: "intranet"})
 	ev := &clientv3.Event{
 		Type: mvccpb.PUT,
@@ -121,6 +129,7 @@ func TestTranslateEvent_Put_Updated(t *testing.T) {
 }
 
 func TestTranslateEvent_Delete_WithPrevKV(t *testing.T) {
+	t.Parallel()
 	body, _ := json.Marshal(netpolicy.Policy{Name: "intranet", AdvertisedBaseURL: "http://x"})
 	ev := &clientv3.Event{
 		Type:   mvccpb.DELETE,
@@ -137,6 +146,7 @@ func TestTranslateEvent_Delete_WithPrevKV(t *testing.T) {
 }
 
 func TestTranslateEvent_Delete_NoPrevKV(t *testing.T) {
+	t.Parallel()
 	ev := &clientv3.Event{
 		Type:   mvccpb.DELETE,
 		Kv:     &mvccpb.KeyValue{Key: []byte("/snaplink/netpolicy/intranet")},
@@ -155,6 +165,7 @@ func TestTranslateEvent_Delete_NoPrevKV(t *testing.T) {
 // prefix defaulting without dialing etcd: empty → DefaultPrefix, explicit
 // → preserved. A nil client is fine because the constructor never touches it.
 func TestNewWithClient_PrefixHandling(t *testing.T) {
+	t.Parallel()
 	if s := NewWithClient(nil, ""); s.prefix != DefaultPrefix {
 		t.Errorf("empty prefix = %q, want default %q", s.prefix, DefaultPrefix)
 	}
@@ -167,6 +178,7 @@ func TestNewWithClient_PrefixHandling(t *testing.T) {
 // unmarshalPolicy — a corrupt value surfaces a wrapped error rather than a
 // silent zero-value policy.
 func TestUnmarshalPolicy_RejectsGarbage(t *testing.T) {
+	t.Parallel()
 	if _, err := unmarshalPolicy([]byte("not json"), 7); err == nil {
 		t.Fatal("expected error for undecodable policy value")
 	}
@@ -176,6 +188,7 @@ func TestUnmarshalPolicy_RejectsGarbage(t *testing.T) {
 // stored value won't decode: translateEvent returns a zero Event (nil Policy)
 // so the Watch loop skips it rather than emitting a half-formed event.
 func TestTranslateEvent_Put_GarbageYieldsEmpty(t *testing.T) {
+	t.Parallel()
 	ev := &clientv3.Event{
 		Type: mvccpb.PUT,
 		Kv:   &mvccpb.KeyValue{Key: []byte("/p/intranet"), Value: []byte("not json"), ModRevision: 3},
@@ -188,6 +201,7 @@ func TestTranslateEvent_Put_GarbageYieldsEmpty(t *testing.T) {
 // TestTranslateEvent_UnknownTypeYieldsEmpty covers translateEvent's default
 // arm — an event type that is neither PUT nor DELETE is dropped.
 func TestTranslateEvent_UnknownTypeYieldsEmpty(t *testing.T) {
+	t.Parallel()
 	ev := &clientv3.Event{
 		Type: mvccpb.Event_EventType(99),
 		Kv:   &mvccpb.KeyValue{Key: []byte("/p/intranet")},

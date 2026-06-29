@@ -73,6 +73,7 @@ func decodeError(t *testing.T, rec *httptest.ResponseRecorder) ErrorResponse {
 // TestUserRoundTrip exercises create -> get -> list -> replace -> delete,
 // verifying the SCIM representation survives the trip through core.User.
 func TestUserRoundTrip(t *testing.T) {
+	t.Parallel()
 	h, _, sink := newTestHandler(t)
 
 	// --- create ---
@@ -205,6 +206,7 @@ func TestUserRoundTrip(t *testing.T) {
 }
 
 func TestCreate_MissingUserName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	rec := do(t, h, http.MethodPost, pathUsers, `{"displayName":"No Name"}`)
 	if rec.Code != http.StatusBadRequest {
@@ -223,6 +225,7 @@ func TestCreate_MissingUserName(t *testing.T) {
 }
 
 func TestCreate_BadJSON(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	rec := do(t, h, http.MethodPost, pathUsers, `{not json`)
 	if rec.Code != http.StatusBadRequest {
@@ -235,6 +238,7 @@ func TestCreate_BadJSON(t *testing.T) {
 }
 
 func TestCreate_DuplicateUserName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	body := `{"userName":"dup@example.com"}`
 	if rec := do(t, h, http.MethodPost, pathUsers, body); rec.Code != http.StatusCreated {
@@ -254,6 +258,7 @@ func TestCreate_DuplicateUserName(t *testing.T) {
 }
 
 func TestGet_NotFound(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	rec := do(t, h, http.MethodGet, pathUsers+"/nope", "")
 	if rec.Code != http.StatusNotFound {
@@ -266,6 +271,7 @@ func TestGet_NotFound(t *testing.T) {
 }
 
 func TestReplace_NotFoundIsNotUpsert(t *testing.T) {
+	t.Parallel()
 	h, users, _ := newTestHandler(t)
 	rec := do(t, h, http.MethodPut, pathUsers+"/ghost", `{"userName":"ghost@example.com"}`)
 	if rec.Code != http.StatusNotFound {
@@ -278,6 +284,7 @@ func TestReplace_NotFoundIsNotUpsert(t *testing.T) {
 }
 
 func TestReplace_ImmutableID(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	if rec := do(t, h, http.MethodPost, pathUsers, `{"userName":"a@example.com"}`); rec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d", rec.Code)
@@ -295,6 +302,7 @@ func TestReplace_ImmutableID(t *testing.T) {
 }
 
 func TestDelete_NotFound(t *testing.T) {
+	t.Parallel()
 	h, _, sink := newTestHandler(t)
 	rec := do(t, h, http.MethodDelete, pathUsers+"/missing", "")
 	if rec.Code != http.StatusNotFound {
@@ -310,6 +318,7 @@ func TestDelete_NotFound(t *testing.T) {
 // TestListPagination verifies the 1-based startIndex/count slicing and the
 // ListResponse envelope counts.
 func TestListPagination(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	for i := 0; i < 5; i++ {
 		body := fmt.Sprintf(`{"userName":"u%d@example.com"}`, i)
@@ -357,6 +366,7 @@ func TestListPagination(t *testing.T) {
 }
 
 func TestListPagination_BadParam(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	rec := do(t, h, http.MethodGet, pathUsers+"?count=abc", "")
 	if rec.Code != http.StatusBadRequest {
@@ -368,6 +378,7 @@ func TestListPagination_BadParam(t *testing.T) {
 }
 
 func TestActiveDefaultsTrueOnCreate(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	// Body omits "active" -> provisioned account must be active.
 	rec := do(t, h, http.MethodPost, pathUsers, `{"userName":"a@example.com"}`)
@@ -380,6 +391,7 @@ func TestActiveDefaultsTrueOnCreate(t *testing.T) {
 }
 
 func TestServiceProviderConfig(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	rec := do(t, h, http.MethodGet, pathServiceProviderConfig, "")
 	if rec.Code != http.StatusOK {
@@ -423,6 +435,7 @@ func TestServiceProviderConfig(t *testing.T) {
 }
 
 func TestSchemas(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	rec := do(t, h, http.MethodGet, pathSchemas, "")
 	if rec.Code != http.StatusOK {
@@ -448,6 +461,7 @@ func TestSchemas(t *testing.T) {
 }
 
 func TestMethodNotAllowed(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	// DELETE on the collection is not defined.
 	rec := do(t, h, http.MethodDelete, pathUsers, "")
@@ -457,6 +471,7 @@ func TestMethodNotAllowed(t *testing.T) {
 }
 
 func TestUnknownEndpoint(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	rec := do(t, h, http.MethodGet, "/Groups", "")
 	if rec.Code != http.StatusNotFound {
@@ -467,6 +482,7 @@ func TestUnknownEndpoint(t *testing.T) {
 // TestNestedUserPath confirms ".../Users/a/b" is treated as not-found
 // rather than misrouted as a single id.
 func TestNestedUserPath(t *testing.T) {
+	t.Parallel()
 	h, _, _ := newTestHandler(t)
 	rec := do(t, h, http.MethodGet, pathUsers+"/a/b", "")
 	if rec.Code != http.StatusNotFound {
@@ -478,6 +494,7 @@ func TestNestedUserPath(t *testing.T) {
 // (no scim:active attribute) reads back as active=true, so the admin API
 // and SCIM agree on enabled accounts.
 func TestExistingNonSCIMUserReadsActive(t *testing.T) {
+	t.Parallel()
 	h, users, _ := newTestHandler(t)
 	if err := users.CreateOrUpdate(context.Background(), &core.User{
 		ID:    "admin-made",

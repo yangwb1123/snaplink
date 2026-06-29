@@ -33,6 +33,7 @@ import (
 // ui_locales — driving the finishLogin RAR-validation + claims-threading
 // branches.
 func TestRcov2L_RichLogin(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(ctx, &sso.User{ID: rcovUser})
@@ -109,6 +110,7 @@ func TestRcov2L_RichLogin(t *testing.T) {
 // response_mode=form_post: finishLogin renders an HTML auto-POST page
 // (renderFormPostResponse) instead of a JSON body.
 func TestRcov2L_FormPostResponseMode(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 
 	body := map[string]any{
@@ -166,6 +168,7 @@ func rcov2PostRaw(t *testing.T, url string, body map[string]any) *http.Response 
 // TestRcov2L_FAPIInspection wires the FAPI 2.0 profile in inspection mode and
 // drives a login through the FAPI validation path (handleLogin FAPI branch).
 func TestRcov2L_FAPIInspection(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t, sso.WithFAPIProfile(fapi.ModeInspection))
 
 	// Inspection mode never blocks — it records violations as metrics; the
@@ -185,6 +188,7 @@ func TestRcov2L_FAPIInspection(t *testing.T) {
 // TestRcov2L_MeSessionsAndConsents covers the self-service session + consent
 // management endpoints: list/revoke-all sessions, list/delete consents.
 func TestRcov2L_MeSessionsAndConsents(t *testing.T) {
+	t.Parallel()
 	s := rcovNewServer(t)
 	access, _ := rcovDirectLogin(t, s)
 
@@ -222,6 +226,7 @@ func TestRcov2L_MeSessionsAndConsents(t *testing.T) {
 // TestRcov2L_DiscoveryCacheInvalidate covers the public InvalidateDiscoveryCache
 // seam: fetch the doc (populates the cache), invalidate, fetch again.
 func TestRcov2L_DiscoveryCacheInvalidate(t *testing.T) {
+	t.Parallel()
 	srv := sso.NewServer(
 		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
 		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),

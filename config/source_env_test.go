@@ -10,6 +10,7 @@ func envFn(pairs ...string) func() []string {
 }
 
 func TestEnvSource_PrefixFilter(t *testing.T) {
+	t.Parallel()
 	src := &EnvSource{Prefix: "SSO_", Separator: "__", Environ: envFn(
 		"PATH=/usr/bin",
 		"SSO_LOGGING__LEVEL=debug",
@@ -32,6 +33,7 @@ func TestEnvSource_PrefixFilter(t *testing.T) {
 }
 
 func TestEnvSource_NestedPath(t *testing.T) {
+	t.Parallel()
 	src := &EnvSource{Prefix: "SSO_", Separator: "__", Environ: envFn(
 		"SSO_SNAPSHOT__STORAGE__BACKEND=file",
 	)}
@@ -44,6 +46,7 @@ func TestEnvSource_NestedPath(t *testing.T) {
 }
 
 func TestEnvSource_TypeCoercion(t *testing.T) {
+	t.Parallel()
 	src := &EnvSource{Prefix: "SSO_", Separator: "__", Environ: envFn(
 		"SSO_BOOTSTRAP__DISABLED=true",
 		"SSO_AUDIT__MEMORY_CAPACITY=512",
@@ -64,6 +67,7 @@ func TestEnvSource_TypeCoercion(t *testing.T) {
 }
 
 func TestEnvSource_EmptyValue(t *testing.T) {
+	t.Parallel()
 	src := &EnvSource{Prefix: "SSO_", Separator: "__", Environ: envFn(
 		"SSO_LOGGING__LEVEL=",
 	)}
@@ -75,6 +79,7 @@ func TestEnvSource_EmptyValue(t *testing.T) {
 }
 
 func TestEnvSource_NoMatchingVars_ReturnsNil(t *testing.T) {
+	t.Parallel()
 	src := &EnvSource{Prefix: "SSO_", Separator: "__", Environ: envFn(
 		"PATH=/usr/bin",
 	)}
@@ -85,6 +90,7 @@ func TestEnvSource_NoMatchingVars_ReturnsNil(t *testing.T) {
 }
 
 func TestEnvSource_DefaultsApplied(t *testing.T) {
+	t.Parallel()
 	src := NewEnvSource()
 	if src.Prefix != DefaultEnvPrefix || src.Separator != DefaultEnvSeparator {
 		t.Errorf("defaults missing: %+v", src)
@@ -92,6 +98,7 @@ func TestEnvSource_DefaultsApplied(t *testing.T) {
 }
 
 func TestEnvSource_OverridesFileSource(t *testing.T) {
+	t.Parallel()
 	// End-to-end: file says listen :8080, env overrides to :9999.
 	p := writeTemp(t, "base.yaml", "server:\n  listen: :8080\n")
 	envSrc := &EnvSource{Prefix: "SSO_", Separator: "__", Environ: envFn(
@@ -107,6 +114,7 @@ func TestEnvSource_OverridesFileSource(t *testing.T) {
 }
 
 func TestEnvSource_BadKVPair_Ignored(t *testing.T) {
+	t.Parallel()
 	// No '=' in the pair — strings.Cut returns ok=false; we skip.
 	src := &EnvSource{Prefix: "SSO_", Separator: "__", Environ: envFn(
 		"NOEQUALSIGN",

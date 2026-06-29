@@ -154,6 +154,7 @@ func splitDots(s string) []string {
 }
 
 func TestEntityConfiguration_ServesVerifiableStatement(t *testing.T) {
+	t.Parallel()
 	d := newFedDeps(t, &federation.Config{
 		AuthorityHints:     []string{"https://federation.test/anchor"},
 		OrganizationName:   "Test Org",
@@ -207,6 +208,7 @@ func TestEntityConfiguration_ServesVerifiableStatement(t *testing.T) {
 }
 
 func TestEntityConfiguration_ETagAnd304(t *testing.T) {
+	t.Parallel()
 	d := newFedDeps(t, &federation.Config{})
 
 	first := serveEntityConfig(d, "")
@@ -235,6 +237,7 @@ func TestEntityConfiguration_ETagAnd304(t *testing.T) {
 // TestEntityConfiguration_NoFederationEntityMeta proves the federation_entity
 // entry is OMITTED when the operator configures neither org nor contacts.
 func TestEntityConfiguration_NoFederationEntityMeta(t *testing.T) {
+	t.Parallel()
 	d := newFedDeps(t, &federation.Config{})
 	rec := serveEntityConfig(d, "")
 	dec := verifyEntityStatement(t, d, rec.Body.Bytes())

@@ -12,6 +12,7 @@ import (
 // intervals: it must rotate (new kid != old), invoke OnRotate, and
 // eventually retire the demoted key from JWKS after the grace period.
 func TestStartRotation_RotatesAndRetires(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	seedKID := iss.KeyID()
 
@@ -68,6 +69,7 @@ func TestStartRotation_RotatesAndRetires(t *testing.T) {
 // TestStartRotation_DisabledWhenIntervalZero proves a zero interval is a
 // no-op returning an already-closed channel.
 func TestStartRotation_DisabledWhenIntervalZero(t *testing.T) {
+	t.Parallel()
 	iss := defaultimpl.NewEd25519JWTIssuer()
 	done := iss.StartRotation(context.Background(), defaultimpl.RotationConfig{})
 	select {

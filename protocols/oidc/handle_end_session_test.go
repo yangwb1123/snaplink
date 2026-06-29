@@ -86,6 +86,7 @@ func newEndSessionDeps(t *testing.T) *endSessionDeps {
 }
 
 func TestHandleEndSession_InvalidHint400(t *testing.T) {
+	t.Parallel()
 	d := newEndSessionDeps(t)
 	ctx, rec := newCtx(http.MethodGet, "/end_session?id_token_hint=not-a-jwt")
 	oidc.HandleEndSession(d, ctx)
@@ -99,6 +100,7 @@ func TestHandleEndSession_InvalidHint400(t *testing.T) {
 }
 
 func TestHandleEndSession_ValidHintRedirectsWhenAllowlisted(t *testing.T) {
+	t.Parallel()
 	d := newEndSessionDeps(t)
 	_ = d.clients.Add(context.Background(), &core.Client{
 		ID:                     "rp-1",
@@ -129,6 +131,7 @@ func TestHandleEndSession_ValidHintRedirectsWhenAllowlisted(t *testing.T) {
 }
 
 func TestHandleEndSession_RejectedRedirect204(t *testing.T) {
+	t.Parallel()
 	d := newEndSessionDeps(t)
 	_ = d.clients.Add(context.Background(), &core.Client{
 		ID:                     "rp-1",
@@ -152,6 +155,7 @@ func TestHandleEndSession_RejectedRedirect204(t *testing.T) {
 }
 
 func TestHandleEndSession_NoRedirectURI204(t *testing.T) {
+	t.Parallel()
 	d := newEndSessionDeps(t)
 	_ = d.clients.Add(context.Background(), &core.Client{ID: "rp-1"})
 	hint := mintAccessToken(t, d.issuer, "user-1", "rp-1")
@@ -164,6 +168,7 @@ func TestHandleEndSession_NoRedirectURI204(t *testing.T) {
 }
 
 func TestHandleEndSession_FrontchannelLogoutRendered(t *testing.T) {
+	t.Parallel()
 	d := newEndSessionDeps(t)
 	d.fclIfr = []string{"https://rp.example/fcl"}
 	_ = d.clients.Add(context.Background(), &core.Client{
@@ -189,6 +194,7 @@ func TestHandleEndSession_FrontchannelLogoutRendered(t *testing.T) {
 }
 
 func TestHandleEndSession_ClientIDHintOnlyNoSessionKill(t *testing.T) {
+	t.Parallel()
 	d := newEndSessionDeps(t)
 	_ = d.clients.Add(context.Background(), &core.Client{
 		ID:                     "rp-1",
@@ -214,6 +220,7 @@ func TestHandleEndSession_ClientIDHintOnlyNoSessionKill(t *testing.T) {
 }
 
 func TestHandleEndSession_NoParamsNoClient204(t *testing.T) {
+	t.Parallel()
 	d := newEndSessionDeps(t)
 	ctx, rec := newCtx(http.MethodGet, "/end_session")
 	oidc.HandleEndSession(d, ctx)
@@ -223,6 +230,7 @@ func TestHandleEndSession_NoParamsNoClient204(t *testing.T) {
 }
 
 func TestHandleEndSession_RefreshTokensPurged(t *testing.T) {
+	t.Parallel()
 	d := newEndSessionDeps(t)
 	_ = d.clients.Add(context.Background(), &core.Client{ID: "rp-1"})
 	// Seed a refresh token for (user-1, rp-1); after logout it must be gone.

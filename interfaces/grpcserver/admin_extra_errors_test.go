@@ -50,6 +50,7 @@ func (e *erroringTenantStore) Close() error                                    {
 var _ tenant.Store = (*erroringTenantStore)(nil)
 
 func TestTenantAdmin_NilStoreFailsPrecondition(t *testing.T) {
+	t.Parallel()
 	conn := startTenantAdminGRPC(t, nil, nil, nil)
 	c := adminv1.NewTenantAdminServiceClient(conn)
 	ctx := context.Background()
@@ -89,6 +90,7 @@ func TestTenantAdmin_NilStoreFailsPrecondition(t *testing.T) {
 }
 
 func TestTenantAdmin_ValidationRejections(t *testing.T) {
+	t.Parallel()
 	store := &erroringTenantStore{} // passes nil-store gate
 	conn := startTenantAdminGRPC(t, store, nil, nil)
 	c := adminv1.NewTenantAdminServiceClient(conn)
@@ -112,6 +114,7 @@ func TestTenantAdmin_ValidationRejections(t *testing.T) {
 }
 
 func TestTenantAdmin_StoreErrorsAreInternal(t *testing.T) {
+	t.Parallel()
 	store := &erroringTenantStore{err: errors.New("db down")}
 	conn := startTenantAdminGRPC(t, store, nil, nil)
 	c := adminv1.NewTenantAdminServiceClient(conn)
@@ -132,6 +135,7 @@ func TestTenantAdmin_StoreErrorsAreInternal(t *testing.T) {
 }
 
 func TestTenantAdmin_GetTenantNotFound(t *testing.T) {
+	t.Parallel()
 	store := &erroringTenantStore{err: tenant.ErrTenantNotFound}
 	conn := startTenantAdminGRPC(t, store, nil, nil)
 	c := adminv1.NewTenantAdminServiceClient(conn)
@@ -141,6 +145,7 @@ func TestTenantAdmin_GetTenantNotFound(t *testing.T) {
 }
 
 func TestTenantAdmin_UpdateTenantNotFound(t *testing.T) {
+	t.Parallel()
 	store := &erroringTenantStore{err: tenant.ErrTenantNotFound}
 	conn := startTenantAdminGRPC(t, store, nil, nil)
 	c := adminv1.NewTenantAdminServiceClient(conn)
@@ -150,6 +155,7 @@ func TestTenantAdmin_UpdateTenantNotFound(t *testing.T) {
 }
 
 func TestTenantAdmin_GetDomainNotFound(t *testing.T) {
+	t.Parallel()
 	store := &erroringTenantStore{err: tenant.ErrDomainNotFound}
 	conn := startTenantAdminGRPC(t, store, nil, nil)
 	c := adminv1.NewTenantAdminServiceClient(conn)
@@ -187,6 +193,7 @@ func (s *sessionManagerStub) ListAll(context.Context) ([]*sso.Session, error) {
 var _ sso.SessionManager = (*sessionManagerStub)(nil)
 
 func TestTokenAdmin_ListSessions_UnsupportedIsUnimplemented(t *testing.T) {
+	t.Parallel()
 	sm := &sessionManagerStub{listAllErr: sso.ErrUnsupportedOperation}
 	conn := startAdminGRPC(t, nil, nil, sm, nil, nil, nil)
 	c := adminv1.NewTokenAdminServiceClient(conn)
@@ -196,6 +203,7 @@ func TestTokenAdmin_ListSessions_UnsupportedIsUnimplemented(t *testing.T) {
 }
 
 func TestTokenAdmin_ListSessions_ErrorIsInternal(t *testing.T) {
+	t.Parallel()
 	sm := &sessionManagerStub{listAllErr: errors.New("boom"), byUserErr: errors.New("boom")}
 	conn := startAdminGRPC(t, nil, nil, sm, nil, nil, nil)
 	c := adminv1.NewTokenAdminServiceClient(conn)
@@ -208,6 +216,7 @@ func TestTokenAdmin_ListSessions_ErrorIsInternal(t *testing.T) {
 }
 
 func TestTokenAdmin_IssueTempToken_MissingUserIsInvalidArgument(t *testing.T) {
+	t.Parallel()
 	tempStore := authenticators.NewMemoryTempTokenStore()
 	conn := startAdminGRPC(t, nil, nil, nil, nil, tempStore, nil)
 	c := adminv1.NewTokenAdminServiceClient(conn)
@@ -219,6 +228,7 @@ func TestTokenAdmin_IssueTempToken_MissingUserIsInvalidArgument(t *testing.T) {
 // --- UserAdmin: nil proto branch of userToProto ---
 
 func TestUserAdmin_GetReturnsNilProtoForNilUser(t *testing.T) {
+	t.Parallel()
 	// A provider that returns (nil, nil) exercises the nil branch of
 	// userToProto via the public Get path. Reuses the existing
 	// erroringUserProvider stub (declared in admin_user_token_errors_test.go).
@@ -276,6 +286,7 @@ var (
 )
 
 func TestTokenAdmin_RevokeTokenFanOut(t *testing.T) {
+	t.Parallel()
 	rec := &recognizingIssuer{}
 	sink := audit.NewMemorySink(4)
 	svc := grpcserver.NewTokenAdminService(grpcserver.TokenAdminConfig{
@@ -299,6 +310,7 @@ func TestTokenAdmin_RevokeTokenFanOut(t *testing.T) {
 }
 
 func TestTokenAdmin_RevokeTokenNoIssuerMatchIsNotFound(t *testing.T) {
+	t.Parallel()
 	svc := grpcserver.NewTokenAdminService(grpcserver.TokenAdminConfig{
 		Issuers: map[string]sso.TokenIssuer{"reject": &rejectingIssuer{}},
 	})
@@ -330,6 +342,7 @@ func (r *recordingDomainStore) PutDomain(_ context.Context, d *tenant.Domain) er
 }
 
 func TestRecordAdmin_NoActorContextStillAudits(t *testing.T) {
+	t.Parallel()
 	store := &recordingDomainStore{}
 	sink := audit.NewMemorySink(4)
 	conn := startTenantAdminGRPC(t, store, audit.New(sink), nil)

@@ -20,6 +20,7 @@ func newIPFailureCounterForTest(t *testing.T) *IPFailureCounter {
 }
 
 func TestSQLiteIPFailureCounter_RecordCountRoundtrip(t *testing.T) {
+	t.Parallel()
 	c := newIPFailureCounterForTest(t)
 	ctx := context.Background()
 	now := time.Now()
@@ -37,6 +38,7 @@ func TestSQLiteIPFailureCounter_RecordCountRoundtrip(t *testing.T) {
 }
 
 func TestSQLiteIPFailureCounter_RecordEmptyIPNoop(t *testing.T) {
+	t.Parallel()
 	c := newIPFailureCounterForTest(t)
 	if err := c.Record(context.Background(), "", "alice", time.Now()); err != nil {
 		t.Fatalf("Record: %v", err)
@@ -44,6 +46,7 @@ func TestSQLiteIPFailureCounter_RecordEmptyIPNoop(t *testing.T) {
 }
 
 func TestSQLiteIPFailureCounter_CountRespectsSince(t *testing.T) {
+	t.Parallel()
 	c := newIPFailureCounterForTest(t)
 	now := time.Now()
 	_ = c.Record(context.Background(), "ip1", "alice", now.Add(-1*time.Hour))
@@ -56,6 +59,7 @@ func TestSQLiteIPFailureCounter_CountRespectsSince(t *testing.T) {
 }
 
 func TestSQLiteIPFailureCounter_EmptySubjectNotInDistinct(t *testing.T) {
+	t.Parallel()
 	c := newIPFailureCounterForTest(t)
 	now := time.Now()
 	_ = c.Record(context.Background(), "ip1", "", now.Add(-1*time.Minute))
@@ -70,6 +74,7 @@ func TestSQLiteIPFailureCounter_EmptySubjectNotInDistinct(t *testing.T) {
 }
 
 func TestSQLiteIPFailureCounter_PruneOlder(t *testing.T) {
+	t.Parallel()
 	c := newIPFailureCounterForTest(t)
 	now := time.Now()
 	_ = c.Record(context.Background(), "ip1", "alice", now.Add(-2*time.Hour))
@@ -81,6 +86,7 @@ func TestSQLiteIPFailureCounter_PruneOlder(t *testing.T) {
 }
 
 func TestSQLiteIPFailureCounter_ClusterSharedSameDSN(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dsn := "file:" + filepath.Join(dir, "shared.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
 	a, _ := NewIPFailureCounter(dsn)
@@ -96,6 +102,7 @@ func TestSQLiteIPFailureCounter_ClusterSharedSameDSN(t *testing.T) {
 }
 
 func TestSQLiteIPFailureCounter_PingFailsAfterClose(t *testing.T) {
+	t.Parallel()
 	c := newIPFailureCounterForTest(t)
 	_ = c.Close()
 	if err := c.Ping(context.Background()); err == nil {

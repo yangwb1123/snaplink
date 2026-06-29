@@ -6,6 +6,7 @@ import (
 )
 
 func TestAppendUnique(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		dst  []string

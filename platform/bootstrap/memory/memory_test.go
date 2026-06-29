@@ -9,6 +9,7 @@ import (
 )
 
 func TestTracker_StartsAtZero(t *testing.T) {
+	t.Parallel()
 	tr := New()
 	v, err := tr.AppliedVersion(context.Background(), "ns")
 	if err != nil {
@@ -20,6 +21,7 @@ func TestTracker_StartsAtZero(t *testing.T) {
 }
 
 func TestTracker_MonotonicVersion(t *testing.T) {
+	t.Parallel()
 	tr := New()
 	ctx := context.Background()
 
@@ -44,6 +46,7 @@ func TestTracker_MonotonicVersion(t *testing.T) {
 }
 
 func TestTracker_NamespacesIsolated(t *testing.T) {
+	t.Parallel()
 	tr := New()
 	ctx := context.Background()
 	_ = tr.MarkApplied(ctx, "a", 5, "step")
@@ -61,6 +64,7 @@ func TestTracker_NamespacesIsolated(t *testing.T) {
 }
 
 func TestTracker_ConcurrentMarksSafe(t *testing.T) {
+	t.Parallel()
 	tr := New()
 	ctx := context.Background()
 	const n = 100
@@ -79,6 +83,7 @@ func TestTracker_ConcurrentMarksSafe(t *testing.T) {
 }
 
 func TestTracker_CloseIsNop(t *testing.T) {
+	t.Parallel()
 	tr := New()
 	if err := tr.Close(); err != nil {
 		t.Errorf("Close: %v", err)
@@ -86,5 +91,6 @@ func TestTracker_CloseIsNop(t *testing.T) {
 }
 
 func TestTracker_SatisfiesInterface(t *testing.T) {
+	t.Parallel()
 	var _ bootstrap.Tracker = New()
 }

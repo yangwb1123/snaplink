@@ -28,10 +28,12 @@ func decodeRecord(t *testing.T, buf *bytes.Buffer) map[string]any {
 }
 
 func TestSlogLoggerImplementsContextLogger(t *testing.T) {
+	t.Parallel()
 	var _ spi.ContextLogger = newBufSlogLogger(&bytes.Buffer{})
 }
 
 func TestSlogLoggerCtxAppendsTraceID(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	l := newBufSlogLogger(&buf)
 
@@ -52,6 +54,7 @@ func TestSlogLoggerCtxAppendsTraceID(t *testing.T) {
 }
 
 func TestSlogLoggerCtxOmitsTraceIDWhenAbsent(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	l := newBufSlogLogger(&buf)
 
@@ -69,6 +72,7 @@ func TestSlogLoggerCtxOmitsTraceIDWhenAbsent(t *testing.T) {
 }
 
 func TestSlogLoggerPlainCallUnchanged(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	l := newBufSlogLogger(&buf)
 

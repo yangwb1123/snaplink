@@ -27,6 +27,7 @@ func newTestProvider(t *testing.T) *sqlite.UserProvider {
 }
 
 func TestUserProvider_CreateThenGetByID(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	ctx := context.Background()
 
@@ -57,6 +58,7 @@ func TestUserProvider_CreateThenGetByID(t *testing.T) {
 }
 
 func TestUserProvider_GetByID_MissingReturnsErrNoSuchUser(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	_, err := p.GetByID(context.Background(), "ghost")
 	if !errors.Is(err, sso.ErrNoSuchUser) {
@@ -65,6 +67,7 @@ func TestUserProvider_GetByID_MissingReturnsErrNoSuchUser(t *testing.T) {
 }
 
 func TestUserProvider_GetByExternalID(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	ctx := context.Background()
 
@@ -85,6 +88,7 @@ func TestUserProvider_GetByExternalID(t *testing.T) {
 }
 
 func TestUserProvider_GetByExternalID_MissingReturnsErrNoSuchUser(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	_, err := p.GetByExternalID(context.Background(), "github", "nope")
 	if !errors.Is(err, sso.ErrNoSuchUser) {
@@ -93,6 +97,7 @@ func TestUserProvider_GetByExternalID_MissingReturnsErrNoSuchUser(t *testing.T) 
 }
 
 func TestUserProvider_CreateOrUpdate_PreservesCreatedAt(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	ctx := context.Background()
 
@@ -130,6 +135,7 @@ func TestUserProvider_CreateOrUpdate_PreservesCreatedAt(t *testing.T) {
 }
 
 func TestUserProvider_CreateOrUpdate_RejectsEmptyID(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	err := p.CreateOrUpdate(context.Background(), &sso.User{})
 	if err == nil {
@@ -138,6 +144,7 @@ func TestUserProvider_CreateOrUpdate_RejectsEmptyID(t *testing.T) {
 }
 
 func TestUserProvider_List_OrderById(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	ctx := context.Background()
 
@@ -161,6 +168,7 @@ func TestUserProvider_List_OrderById(t *testing.T) {
 }
 
 func TestUserProvider_Delete_RemovesUser(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	ctx := context.Background()
 
@@ -174,6 +182,7 @@ func TestUserProvider_Delete_RemovesUser(t *testing.T) {
 }
 
 func TestUserProvider_Delete_MissingIDIsIdempotent(t *testing.T) {
+	t.Parallel()
 	p := newTestProvider(t)
 	if err := p.Delete(context.Background(), "ghost"); err != nil {
 		t.Errorf("delete of missing id should be nil, got %v", err)
@@ -181,6 +190,7 @@ func TestUserProvider_Delete_MissingIDIsIdempotent(t *testing.T) {
 }
 
 func TestUserProvider_NilAttributes_RoundtripsAsNilOrEmpty(t *testing.T) {
+	t.Parallel()
 	// A User created without Attributes should come back the same way
 	// — no surprise allocation of an empty map.
 	p := newTestProvider(t)

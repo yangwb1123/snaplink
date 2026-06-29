@@ -10,6 +10,7 @@ import (
 )
 
 func TestStoredPasswordVerifier(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store := defaultimpl.NewMemoryPasswordCredentialStore()
 	_ = store.SetPassword(ctx, "uid-alice", "correct-horse")

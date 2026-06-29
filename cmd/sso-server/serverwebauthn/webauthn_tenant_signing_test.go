@@ -124,6 +124,7 @@ func newWebAuthnTenantDeps(t *testing.T, def, tenantA *defaultimpl.Ed25519JWTIss
 }
 
 func TestWebAuthnIDToken_PerTenantKey(t *testing.T) {
+	t.Parallel()
 	def := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))
 	tenantA := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))
 	if def.KeyID() == tenantA.KeyID() {
@@ -175,6 +176,7 @@ func TestWebAuthnIDToken_PerTenantKey(t *testing.T) {
 // shared key. The access token (also opaque) is still issued; only the
 // id_token is withheld, exactly as /auth/login behaves with no issuer.
 func TestWebAuthnIDToken_OpaqueTenantOmits(t *testing.T) {
+	t.Parallel()
 	def := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))
 	tenantA := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))
 	session := defaultimpl.NewSessionTokenIssuer() // TokenIssuer, not IDTokenIssuer
@@ -204,6 +206,7 @@ func TestWebAuthnIDToken_OpaqueTenantOmits(t *testing.T) {
 // (errWebAuthnNoIssuer → 500) — even earlier than the id_token step — never
 // falling back to a shared key for any token type.
 func TestWebAuthnIDToken_UnregisteredTenantFailsClosed(t *testing.T) {
+	t.Parallel()
 	def := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))
 	tenantA := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))
 
@@ -229,6 +232,7 @@ func TestWebAuthnIDToken_UnregisteredTenantFailsClosed(t *testing.T) {
 // legacy behavior — the shared IDTokenIssuer signs every client's
 // id_token, tenant or not.
 func TestWebAuthnIDToken_LegacyNoSelectorUsesSharedIssuer(t *testing.T) {
+	t.Parallel()
 	def := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Hour))
 
 	store := defaultimpl.NewMemoryClientStore()

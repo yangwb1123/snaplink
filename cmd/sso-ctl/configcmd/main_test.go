@@ -26,12 +26,14 @@ func writeTemp(t *testing.T, body string) string {
 }
 
 func TestRun_ValidConfig(t *testing.T) {
+	t.Parallel()
 	if code := Run([]string{"validate", "--file", writeTemp(t, validConfig)}); code != 0 {
 		t.Errorf("validate(valid) exit = %d, want 0", code)
 	}
 }
 
 func TestRun_InvalidConfig_Sentinel(t *testing.T) {
+	t.Parallel()
 	bad := strings.Replace(validConfig, "http://localhost:8080\n  base_url", "snaplink-sso\n  base_url", 1)
 	if code := Run([]string{"validate", "--file", writeTemp(t, bad)}); code != 1 {
 		t.Errorf("validate(sentinel issuer) exit = %d, want 1", code)
@@ -39,24 +41,28 @@ func TestRun_InvalidConfig_Sentinel(t *testing.T) {
 }
 
 func TestRun_MissingFileFlagIsUsageError(t *testing.T) {
+	t.Parallel()
 	if code := Run([]string{"validate"}); code != 2 {
 		t.Errorf("validate without --file exit = %d, want 2", code)
 	}
 }
 
 func TestRun_NoSubcommand(t *testing.T) {
+	t.Parallel()
 	if code := Run(nil); code != 2 {
 		t.Errorf("no subcommand exit = %d, want 2", code)
 	}
 }
 
 func TestRun_UnknownSubcommand(t *testing.T) {
+	t.Parallel()
 	if code := Run([]string{"frobnicate"}); code != 2 {
 		t.Errorf("unknown subcommand exit = %d, want 2", code)
 	}
 }
 
 func TestRun_Help(t *testing.T) {
+	t.Parallel()
 	if code := Run([]string{"-h"}); code != 0 {
 		t.Errorf("help exit = %d, want 0", code)
 	}

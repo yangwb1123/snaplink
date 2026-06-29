@@ -19,6 +19,7 @@ const validTraceparent = "00-" + sampleTraceID + "-00f067aa0ba902b7-01"
 // traceparent header, returning "" for absent or malformed headers (so a bad
 // header degrades to "no trace id" rather than erroring out the log path).
 func TestTraceIDFromRequest(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		traceparent string
@@ -44,6 +45,7 @@ func TestTraceIDFromRequest(t *testing.T) {
 // TestTraceContext verifies the request trace id is threaded into the returned
 // context so a ContextLogger can correlate log lines.
 func TestTraceContext(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest(http.MethodGet, "/x", nil)
 	r.Header.Set(core.HeaderTraceparent, validTraceparent)
 	ctx := TraceContext(r)
@@ -92,6 +94,7 @@ func (l *plainLogger) Error(msg string, _ ...any) { l.lastMsg = msg }
 // TestLogErrorCtx_ContextLogger verifies a ContextLogger is routed through the
 // *Ctx path carrying the request's trace id.
 func TestLogErrorCtx_ContextLogger(t *testing.T) {
+	t.Parallel()
 	lg := &captureLogger{}
 	d := &ServerDeps{Logger: lg}
 	r := httptest.NewRequest(http.MethodGet, "/x", nil)
@@ -112,6 +115,7 @@ func TestLogErrorCtx_ContextLogger(t *testing.T) {
 // TestLogErrorCtx_PlainLogger verifies a logger that does NOT implement
 // spi.ContextLogger falls back to plain Error.
 func TestLogErrorCtx_PlainLogger(t *testing.T) {
+	t.Parallel()
 	lg := &plainLogger{}
 	d := &ServerDeps{Logger: lg}
 	ctx := core.NewContext(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/x", nil))

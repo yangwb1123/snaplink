@@ -11,6 +11,7 @@ import (
 // TestBuildConsentStore_DisabledByDefault: an empty backend returns (nil, nil)
 // so consent enforcement stays off and the routes stay unmounted.
 func TestBuildConsentStore_DisabledByDefault(t *testing.T) {
+	t.Parallel()
 	s, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{}, nil, "")
 	if err != nil {
 		t.Fatalf("disabled build: %v", err)
@@ -22,6 +23,7 @@ func TestBuildConsentStore_DisabledByDefault(t *testing.T) {
 
 // TestBuildConsentStore_Memory: memory backend yields a usable store.
 func TestBuildConsentStore_Memory(t *testing.T) {
+	t.Parallel()
 	s, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "memory"}, nil, "")
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
@@ -33,6 +35,7 @@ func TestBuildConsentStore_Memory(t *testing.T) {
 
 // TestBuildConsentStore_SQLiteNeedsDSN: sqlite backend without a DSN errors.
 func TestBuildConsentStore_SQLiteNeedsDSN(t *testing.T) {
+	t.Parallel()
 	if _, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "sqlite"}, nil, ""); err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -40,6 +43,7 @@ func TestBuildConsentStore_SQLiteNeedsDSN(t *testing.T) {
 
 // TestBuildConsentStore_SQLiteOpensFile: sqlite backend with a DSN opens.
 func TestBuildConsentStore_SQLiteOpensFile(t *testing.T) {
+	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "consent.db") + "?_journal=WAL"
 	s, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{
 		Backend: "sqlite",
@@ -55,6 +59,7 @@ func TestBuildConsentStore_SQLiteOpensFile(t *testing.T) {
 
 // TestBuildConsentStore_UnknownBackend: an unknown backend is a loud error.
 func TestBuildConsentStore_UnknownBackend(t *testing.T) {
+	t.Parallel()
 	if _, err := serverbuildstore.BuildConsentStore(config.SelfServiceStoreConfig{Backend: "bogus"}, nil, ""); err == nil {
 		t.Fatal("expected error for unknown backend")
 	}

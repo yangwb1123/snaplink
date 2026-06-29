@@ -11,6 +11,7 @@ import (
 
 // Contract: noop always succeeds, returns zero token, Renew/Release nil.
 func TestNoop_AlwaysSucceeds(t *testing.T) {
+	t.Parallel()
 	l := noop.New()
 	h1, err := l.TryAcquire(context.Background(), "k", time.Second)
 	if err != nil {
@@ -39,6 +40,7 @@ func TestNoop_AlwaysSucceeds(t *testing.T) {
 
 // Sentinel identity check — anything testing for ErrLocked uses errors.Is.
 func TestSentinels_AreUnique(t *testing.T) {
+	t.Parallel()
 	if lock.ErrLocked == lock.ErrLockLost {
 		t.Fatal("ErrLocked and ErrLockLost must be distinct sentinels")
 	}

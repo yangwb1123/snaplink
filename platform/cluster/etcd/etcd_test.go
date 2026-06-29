@@ -17,12 +17,14 @@ import (
 )
 
 func TestNew_RequiresEndpoints(t *testing.T) {
+	t.Parallel()
 	if _, err := New(Config{}); err == nil {
 		t.Fatal("expected error for empty endpoints")
 	}
 }
 
 func TestNewWithClient_AppliesDefaults(t *testing.T) {
+	t.Parallel()
 	b := NewWithClient(nil, Config{})
 	if b.prefix != DefaultPrefix {
 		t.Errorf("prefix = %q, want default", b.prefix)
@@ -33,6 +35,7 @@ func TestNewWithClient_AppliesDefaults(t *testing.T) {
 }
 
 func TestNewWithClient_KeepsExplicitConfig(t *testing.T) {
+	t.Parallel()
 	b := NewWithClient(nil, Config{Prefix: "/x", EventTTL: time.Minute})
 	if b.prefix != "/x" || b.eventTTL != time.Minute {
 		t.Errorf("config not preserved: %q %v", b.prefix, b.eventTTL)
@@ -40,6 +43,7 @@ func TestNewWithClient_KeepsExplicitConfig(t *testing.T) {
 }
 
 func TestEventKey_UniqueAndPrefixed(t *testing.T) {
+	t.Parallel()
 	b := &Bus{prefix: DefaultPrefix}
 	k1, err := b.eventKey()
 	if err != nil {
@@ -55,6 +59,7 @@ func TestEventKey_UniqueAndPrefixed(t *testing.T) {
 }
 
 func TestEventJSONRoundtrip(t *testing.T) {
+	t.Parallel()
 	in := cluster.Event{
 		Kind:    cluster.KindTenantSuspension,
 		Key:     "tenant-9",
@@ -75,6 +80,7 @@ func TestEventJSONRoundtrip(t *testing.T) {
 }
 
 func TestDecodeEvent_SkipsDelete(t *testing.T) {
+	t.Parallel()
 	ev := &clientv3.Event{Type: mvccpb.DELETE, Kv: &mvccpb.KeyValue{}}
 	if _, ok := decodeEvent(ev); ok {
 		t.Fatal("DELETE should be skipped")
@@ -82,6 +88,7 @@ func TestDecodeEvent_SkipsDelete(t *testing.T) {
 }
 
 func TestDecodeEvent_SkipsGarbage(t *testing.T) {
+	t.Parallel()
 	ev := &clientv3.Event{Type: mvccpb.PUT, Kv: &mvccpb.KeyValue{Value: []byte("not json")}}
 	if _, ok := decodeEvent(ev); ok {
 		t.Fatal("undecodable value should be skipped")
@@ -89,6 +96,7 @@ func TestDecodeEvent_SkipsGarbage(t *testing.T) {
 }
 
 func TestDecodeEvent_NilKv(t *testing.T) {
+	t.Parallel()
 	if _, ok := decodeEvent(&clientv3.Event{Type: mvccpb.PUT}); ok {
 		t.Fatal("nil Kv should be skipped")
 	}

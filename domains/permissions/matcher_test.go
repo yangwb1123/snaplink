@@ -7,6 +7,7 @@ import (
 )
 
 func TestMatches(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		have []string // permission codes the user holds
@@ -48,6 +49,7 @@ func TestMatches(t *testing.T) {
 }
 
 func TestPermissionSet_Deduplicates(t *testing.T) {
+	t.Parallel()
 	in := []permissions.Permission{
 		{Code: "user:read"},
 		{Code: "user:read"},
@@ -72,6 +74,7 @@ func TestPermissionSet_Deduplicates(t *testing.T) {
 }
 
 func TestPermissionSet_EmptyInput(t *testing.T) {
+	t.Parallel()
 	got := permissions.PermissionSet(nil)
 	if len(got) != 0 {
 		t.Fatalf("expected empty set, got %v", got)

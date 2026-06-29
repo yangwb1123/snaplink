@@ -18,6 +18,7 @@ func writeTemp(t *testing.T, name, body string) string {
 }
 
 func TestFileSource_Happy(t *testing.T) {
+	t.Parallel()
 	p := writeTemp(t, "c.yaml", "server:\n  listen: :9999\n")
 	m, err := NewFileSource(p).Load(context.Background())
 	if err != nil {
@@ -33,6 +34,7 @@ func TestFileSource_Happy(t *testing.T) {
 }
 
 func TestFileSource_MissingRequired(t *testing.T) {
+	t.Parallel()
 	_, err := NewFileSource("/no/such/file.yaml").Load(context.Background())
 	if err == nil {
 		t.Fatalf("expected error for missing required file")
@@ -40,6 +42,7 @@ func TestFileSource_MissingRequired(t *testing.T) {
 }
 
 func TestFileSource_MissingOptional(t *testing.T) {
+	t.Parallel()
 	src := &FileSource{Path: "/no/such/file.yaml", Optional: true}
 	m, err := src.Load(context.Background())
 	if err != nil {
@@ -51,6 +54,7 @@ func TestFileSource_MissingOptional(t *testing.T) {
 }
 
 func TestFileSource_EmptyFile(t *testing.T) {
+	t.Parallel()
 	p := writeTemp(t, "empty.yaml", "")
 	m, err := NewFileSource(p).Load(context.Background())
 	if err != nil {
@@ -62,6 +66,7 @@ func TestFileSource_EmptyFile(t *testing.T) {
 }
 
 func TestFileSource_Malformed(t *testing.T) {
+	t.Parallel()
 	p := writeTemp(t, "bad.yaml", "server:\n  listen: : : :")
 	_, err := NewFileSource(p).Load(context.Background())
 	if err == nil {
@@ -70,12 +75,14 @@ func TestFileSource_Malformed(t *testing.T) {
 }
 
 func TestFileSource_NameIncludesPath(t *testing.T) {
+	t.Parallel()
 	if got := NewFileSource("/foo/bar.yaml").Name(); got != "file:/foo/bar.yaml" {
 		t.Errorf("Name = %q", got)
 	}
 }
 
 func TestLoad_BackwardCompat(t *testing.T) {
+	t.Parallel()
 	p := writeTemp(t, "compat.yaml", "server:\n  listen: :7070\nlogging:\n  level: debug\n")
 	cfg, err := Load(p)
 	if err != nil {
@@ -90,6 +97,7 @@ func TestLoad_BackwardCompat(t *testing.T) {
 }
 
 func TestLoad_AuditAsyncWiring(t *testing.T) {
+	t.Parallel()
 	// Lock the wire shape so cmd/sso-server's read of
 	// cfg.Audit.Async.* keeps working as the config layer evolves.
 	body := "server:\n  listen: :9090\naudit:\n  enabled: true\n  async:\n    enabled: true\n    buffer_size: 2048\n    workers: 4\n    record_timeout_ms: 1500\n"
@@ -113,6 +121,7 @@ func TestLoad_AuditAsyncWiring(t *testing.T) {
 }
 
 func TestLoad_TenantSuspensionCheckWiring(t *testing.T) {
+	t.Parallel()
 	body := "server:\n  listen: :9090\ntenant:\n  enabled: true\n  suspension_check:\n    enabled: true\n    cache_ttl: 1m\n"
 	p := writeTemp(t, "suspension.yaml", body)
 	cfg, err := Load(p)
@@ -128,6 +137,7 @@ func TestLoad_TenantSuspensionCheckWiring(t *testing.T) {
 }
 
 func TestLoad_DiscoveryDocCacheTTLWiring(t *testing.T) {
+	t.Parallel()
 	body := "server:\n  listen: :9090\n  discovery_doc_cache_ttl: 15s\n"
 	p := writeTemp(t, "discovery.yaml", body)
 	cfg, err := Load(p)
@@ -140,6 +150,7 @@ func TestLoad_DiscoveryDocCacheTTLWiring(t *testing.T) {
 }
 
 func TestLoad_SignedMetadataWiring(t *testing.T) {
+	t.Parallel()
 	body := "server:\n  listen: :9090\n  signed_metadata: true\n"
 	p := writeTemp(t, "signed-metadata.yaml", body)
 	cfg, err := Load(p)
@@ -152,6 +163,7 @@ func TestLoad_SignedMetadataWiring(t *testing.T) {
 }
 
 func TestLoad_DPoPNonceWiring(t *testing.T) {
+	t.Parallel()
 	body := "server:\n  listen: :9090\nsecurity:\n  dpop_nonce:\n    enabled: true\n    key_file: /etc/sso/dpop-nonce.key\n    ttl: 2m\n"
 	p := writeTemp(t, "dpop-nonce.yaml", body)
 	cfg, err := Load(p)
@@ -170,6 +182,7 @@ func TestLoad_DPoPNonceWiring(t *testing.T) {
 }
 
 func TestLoad_MissingFile_StillErrors(t *testing.T) {
+	t.Parallel()
 	_, err := Load("/no/such/path/config.yaml")
 	if err == nil {
 		t.Fatalf("expected error wrapping missing file")

@@ -8,6 +8,7 @@ import (
 )
 
 func TestCompareClientSecret_BcryptPath(t *testing.T) {
+	t.Parallel()
 	plaintext := "my-secret"
 	hash, err := bcrypt.GenerateFromPassword([]byte(plaintext), bcrypt.MinCost)
 	if err != nil {
@@ -26,6 +27,7 @@ func TestCompareClientSecret_BcryptPath(t *testing.T) {
 }
 
 func TestCompareClientSecret_PlaintextFallback(t *testing.T) {
+	t.Parallel()
 	// Stored value does not start with "$2" — falls back to constant-time
 	// string compare.
 	stored := "raw-plaintext"
@@ -42,6 +44,7 @@ func TestCompareClientSecret_PlaintextFallback(t *testing.T) {
 }
 
 func TestCompareClientSecret_EmptyStoredEmptyPlaintext(t *testing.T) {
+	t.Parallel()
 	// Both empty — conceptually equal but this should return true (constant-
 	// time path: len(a)==len(b)==0, subtle.ConstantTimeCompare([],[]) returns 1).
 	if !CompareClientSecret("", "") {
