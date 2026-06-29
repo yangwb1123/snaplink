@@ -3,19 +3,22 @@ package oidcsupport
 import (
 	"encoding/json"
 	"slices"
-	"strings"
 
 	"github.com/snaplink/sso/shared/core"
 )
 
-// releasableUserInfoClaims is the OIDC Core §5.1 Standard Claim set that the
-// §5.5 `claims` request parameter may surface from User.Attributes. It is an
-// ALLOWLIST (default-deny): User.Attributes also holds credential material
-// (password_hash / password_hash_format), SCIM plumbing (scim:*), and
-// auth-backend internals (krb5_*, radius_class, ...). Honoring an arbitrary
-// requested claim name read straight out of Attributes leaked the stored
-// password hash; an allowlist — unlike a denylist — can never surface a
-// future-added internal key.
+// releasableUserInfoClaims is the OIDC Core §5.1 Standard Claim set — the ONLY
+// User.Attributes keys releasable at /userinfo. DEFAULT-DENY by design:
+// User.Attributes is a shared bag that also holds credential material (the
+// bootstrap admin's generated plaintext seeded_password, password_hash*), SCIM
+// plumbing (scim:*), and per-backend internals (Kerberos realm/groups, RADIUS
+// Class, and operator-named fields like keytab/pin/otp/token/seed). Backend
+// authors do NOT name secret fields predictably, so only an allowlist — not a
+// denylist or name heuristic — reliably keeps them out of the response.
+//
+// Deployment-custom claims are intentionally NOT released here; doing so safely
+// requires an EXPLICIT operator-configured allowlist (a future extension point),
+// never a default-allow.
 var releasableUserInfoClaims = map[string]struct{}{
 	"name": {}, "given_name": {}, "family_name": {}, "middle_name": {},
 	"nickname": {}, "preferred_username": {}, "profile": {}, "picture": {},
@@ -24,31 +27,30 @@ var releasableUserInfoClaims = map[string]struct{}{
 	"phone_number_verified": {}, "address": {}, "updated_at": {},
 }
 
-// isSensitiveUserAttr reports whether a User.Attributes key holds credential or
-// storage-internal state that MUST NEVER appear in a /userinfo response.
-func isSensitiveUserAttr(name string) bool {
-	switch name {
-	case "password_hash", "password_hash_format":
-		return true
-	}
-	return strings.HasPrefix(name, "scim:")
+// isReleasableUserInfoClaim reports whether a User.Attributes key may appear in a
+// /userinfo response (default-deny — see releasableUserInfoClaims).
+func isReleasableUserInfoClaim(name string) bool {
+	_, ok := releasableUserInfoClaims[name]
+	return ok
 }
 
-// SanitizeUserForUserInfo returns a shallow copy of u with credential /
-// storage-internal attribute keys (password_hash*, scim:*) removed, safe to
-// serialize directly. The non-OIDC /userinfo path returns the user profile as-is
-// for tokens lacking the openid scope; without this it leaked the stored
-// password hash and SCIM plumbing to any bearer.
+// SanitizeUserForUserInfo returns a shallow copy of u with its Attributes
+// FILTERED to the releasable standard-claim allowlist, safe to serialize on the
+// non-OIDC /userinfo path (a token lacking the openid scope). Default-deny ensures
+// credential/internal attributes (seeded_password, password_hash*, scim:*,
+// backend internals) never leak, regardless of how a backend names them.
 func SanitizeUserForUserInfo(u *core.User) *core.User {
-	if u == nil || len(u.Attributes) == 0 {
+	if u == nil {
 		return u
 	}
-	clean := make(map[string]string, len(u.Attributes))
+	var clean map[string]string
 	for k, v := range u.Attributes {
-		if isSensitiveUserAttr(k) {
-			continue
+		if isReleasableUserInfoClaim(k) {
+			if clean == nil {
+				clean = make(map[string]string, len(u.Attributes))
+			}
+			clean[k] = v
 		}
-		clean[k] = v
 	}
 	cp := *u
 	cp.Attributes = clean
@@ -166,9 +168,10 @@ func projectRequestedClaims(out map[string]any, u *core.User, requestedClaims js
 		if _, alreadySet := out[claimName]; alreadySet {
 			continue
 		}
-		// Default-deny: only a standard OIDC claim name may be surfaced from
-		// Attributes, so a requested "password_hash" / "scim:*" can never leak.
-		if _, releasable := releasableUserInfoClaims[claimName]; !releasable {
+		// Default-deny: only a releasable standard OIDC claim may be surfaced from
+		// Attributes via the §5.5 claims parameter, so credential/internal keys
+		// (password_hash, seeded_password, scim:*, backend internals) never leak.
+		if !isReleasableUserInfoClaim(claimName) {
 			continue
 		}
 		if v, ok := u.Attributes[claimName]; ok && v != "" {

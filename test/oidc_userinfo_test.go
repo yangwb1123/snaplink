@@ -216,26 +216,33 @@ func TestUserInfo_OIDC_NonStandardFieldsOmitted(t *testing.T) {
 
 // ---------- legacy path (no openid scope) ----------
 
-func TestUserInfo_LegacyWithoutOpenIDReturnsFullUserObject(t *testing.T) {
+func TestUserInfo_LegacyWithoutOpenIDFiltersNonStandardAttributes(t *testing.T) {
 	srv, login := newUserInfoServer(t)
 	bearer := login([]string{"profile"}) // profile alone, no openid
 	out := fetchUserInfo(t, srv, bearer)
 	if out["id"] != uiUser {
 		t.Errorf("id = %v", out["id"])
 	}
-	// Legacy shape returns the full User struct; "provider" is the
+	// Legacy shape still returns the User struct fields; "provider" is the
 	// User.Provider first-class field set by the upsert path.
 	if out["provider"] != "password" {
 		t.Errorf("provider not echoed in legacy shape: %v", out)
 	}
-	// Attributes (full map) present in legacy mode — including
-	// non-OIDC custom_attr that would be filtered in OIDC mode.
+	// SECURITY: the legacy path now applies the same DEFAULT-DENY claim
+	// allowlist to Attributes as the OIDC path, so a non-standard custom_attr
+	// is filtered out (and so is any credential/internal key that shares the
+	// User.Attributes bag, e.g. password_hash / seeded_password) — closing the
+	// credential leak the raw full-user dump caused.
 	attrs, _ := out["attributes"].(map[string]any)
 	if attrs == nil {
 		t.Fatalf("attributes missing in legacy path: %v", out)
 	}
-	if attrs["custom_attr"] != "not-in-oidc" {
-		t.Errorf("custom_attr not echoed: %v", attrs)
+	if _, leaked := attrs["custom_attr"]; leaked {
+		t.Errorf("non-standard custom_attr leaked on legacy path (default-deny breached): %v", attrs)
+	}
+	// Releasable standard claims still flow.
+	if attrs["given_name"] != "Alice" {
+		t.Errorf("releasable standard claim given_name dropped on legacy path: %v", attrs)
 	}
 }
 
