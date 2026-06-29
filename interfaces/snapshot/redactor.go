@@ -68,6 +68,14 @@ func Compose(redactors ...Redactor) Redactor {
 // profile attributes (zeroing those would defeat the inspection use case the
 // redaction exists for).
 //
+// LIMITATION: the user scrub is a DENYLIST of known credential keys (see
+// secretUserAttrKeys), not an allowlist — the inspection use case requires
+// keeping a user's arbitrary profile attributes, which an allowlist could not do.
+// It covers every secret the bundled backends + bootstrap write to
+// User.Attributes, but a CUSTOM backend (or an import) that stores a secret under
+// a different key would NOT be scrubbed. Operators sharing a redacted snapshot
+// from a custom deployment MUST verify their secret-bearing keys are listed here.
+//
 // SAFETY: it ONLY mutates export-local copies. Export deep-copies clients AND
 // users (copyClientsForRedaction / copyUsersForRedaction) before invoking the
 // redactor — that struct copy is what isolates each export user from the live
@@ -110,8 +118,11 @@ func redactClientSecrets(c *sso.Client) {
 var secretUserAttrKeys = []string{"password_hash", "password_hash_format", "seeded_password"}
 
 // redactUserSecrets removes credential attribute keys from a user by ASSIGNING a
-// fresh Attributes map (never deleting from the existing one) so the source
-// user's map is never mutated even if the user was not deep-copied first.
+// fresh Attributes map (rather than deleting from the existing one), so the
+// source MAP object shared with the export copy is never mutated. The caller
+// MUST pass an export-local copy (copyUsersForRedaction): this reassigns u's
+// Attributes FIELD, so on a live *sso.User it would strip password_hash and
+// break login.
 func redactUserSecrets(u *sso.User) {
 	if len(u.Attributes) == 0 {
 		return
