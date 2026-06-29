@@ -95,7 +95,13 @@ func rejectSignupRateLimit(d Deps, ctx core.HandlerContext) bool {
 	key := middleware.RealClientIP(ctx.Request())
 	if ok, retryAfter := lim.Allow(key); !ok {
 		if retryAfter > 0 {
-			ctx.ResponseWriter().Header().Set(selfservicecore.HeaderRetryAfter, strconv.Itoa(int(retryAfter.Seconds())))
+			// Ceiling division: RFC 7231 interprets Retry-After: 0 as "retry
+			// immediately", so sub-second durations round up to 1.
+			secs := int(retryAfter / time.Second)
+			if retryAfter%time.Second > 0 {
+				secs++
+			}
+			ctx.ResponseWriter().Header().Set(selfservicecore.HeaderRetryAfter, strconv.Itoa(secs))
 		}
 		ctx.JSON(http.StatusTooManyRequests, d.ErrorBody("rate_limited"))
 		return true
@@ -269,7 +275,7 @@ func runRegistrationGates(d Deps, ctx core.HandlerContext, username, email, capt
 	if captchaToken != "" {
 		rctx = context.WithValue(rctx, spi.CaptchaTokenContextKey{}, captchaToken)
 	}
-	ip := ctx.Request().RemoteAddr
+	ip := middleware.RealClientIP(ctx.Request())
 	for _, gate := range gates {
 		if err := gate.CheckRegistration(rctx, username, email, ip); err != nil {
 			recordSelfRegister(d, ctx, username, false)
@@ -312,29 +318,3 @@ func checkPasswordPolicy(d Deps, rctx context.Context, ctx core.HandlerContext, 
 	return true
 }
 
-// signupClientIPKey derives a rate-limit key from the request's client IP.
-// Duplicated from interfaces/ratelimit.KeyByClientIP to avoid importing
-// interfaces/ratelimit from the protocols layer.
-func signupClientIPKey(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if ip := extractIP(xff); ip != "" {
-			return "ip:" + ip
-		}
-	}
-	if ip := extractIP(r.RemoteAddr); ip != "" {
-		return "ip:" + ip
-	}
-	return "ip:unknown"
-}
-
-func extractIP(addr string) string {
-	if addr == "" {
-		return ""
-	}
-	for i := 0; i < len(addr); i++ {
-		if addr[i] == ':' {
-			return addr[:i]
-		}
-	}
-	return addr
-}
