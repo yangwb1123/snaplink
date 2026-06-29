@@ -364,41 +364,79 @@ func (s *Server) ensureJITMembership(ctx HandlerContext, client *Client, userID 
 func (s *Server) createSession(ctx HandlerContext, userID, tenantID string) (*Session, error) {
 	rctx := ctx.Request().Context()
 
-	// Rolling eviction: when the user has reached the configured limit, evict
-	// the oldest session before creating the new one. Never blocks login.
-	if limit := s.maxSessionsPerUser; limit > 0 {
-		sessions, err := s.sessionMgr.ListByUser(rctx, userID)
-		if err != nil {
-			if s.logger != nil {
-				s.logger.Error("session limit: list by user failed",
-					"error", err, "user", userID)
-			}
-		} else if len(sessions) >= limit {
-			oldest := sessions[0]
-			for _, sess := range sessions[1:] {
-				if sess != nil && sess.CreatedAt.Before(oldest.CreatedAt) {
-					oldest = sess
-				}
-			}
-			if oldest != nil && oldest.ID != "" {
-				if err := s.sessionMgr.Destroy(rctx, oldest.ID); err != nil {
-					if s.logger != nil {
-						s.logger.Error("session limit: evict oldest failed",
-							"error", err, "user", userID, "session", oldest.ID)
-					}
-				}
-			}
-		}
-	}
-
+	// Create the session first so login is never gated on eviction success.
+	// Eviction (below) happens after the new session exists, so the worst case
+	// under concurrent logins is briefly limit+K sessions, not 0.
+	var (
+		sess *Session
+		err  error
+	)
 	if mc, ok := s.sessionMgr.(SessionMetaCreator); ok {
-		return mc.CreateWithMeta(rctx, userID, SessionMeta{
+		sess, err = mc.CreateWithMeta(rctx, userID, SessionMeta{
 			IP:        audit.ClientIP(ctx.Request()),
 			UserAgent: ctx.Request().UserAgent(),
 			TenantID:  tenantID,
 		})
+	} else {
+		sess, err = s.sessionMgr.Create(rctx, userID)
 	}
-	return s.sessionMgr.Create(rctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if s.maxSessionsPerUser > 0 {
+		s.pruneExcessSessions(rctx, userID, tenantID, s.maxSessionsPerUser)
+	}
+	return sess, nil
+}
+
+// pruneExcessSessions evicts the oldest sessions for (userID, tenantID) when
+// the count exceeds limit. Scoped to tenantID so a user's sessions across
+// tenants are independent; an empty tenantID matches tenant-unbound sessions.
+// Fail-open: any error is logged but does not block the caller.
+func (s *Server) pruneExcessSessions(rctx context.Context, userID, tenantID string, limit int) {
+	sessions, err := s.sessionMgr.ListByUser(rctx, userID)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("session limit: list failed", "error", err, "user", userID)
+		}
+		return
+	}
+	var scoped []*Session
+	for _, sess := range sessions {
+		if sess != nil && sess.TenantID == tenantID {
+			scoped = append(scoped, sess)
+		}
+	}
+	for len(scoped) > limit {
+		oldest := oldestSession(scoped)
+		if oldest == nil || oldest.ID == "" {
+			break
+		}
+		if err := s.sessionMgr.Destroy(rctx, oldest.ID); err != nil {
+			if s.logger != nil {
+				s.logger.Error("session limit: evict failed", "error", err, "user", userID, "session", oldest.ID)
+			}
+			break
+		}
+		trimmed := scoped[:0]
+		for _, sess := range scoped {
+			if sess.ID != oldest.ID {
+				trimmed = append(trimmed, sess)
+			}
+		}
+		scoped = trimmed
+	}
+}
+
+// oldestSession returns the session with the earliest CreatedAt from a slice.
+func oldestSession(sessions []*Session) *Session {
+	var oldest *Session
+	for _, sess := range sessions {
+		if oldest == nil || sess.CreatedAt.Before(oldest.CreatedAt) {
+			oldest = sess
+		}
+	}
+	return oldest
 }
 
 // describeScopes pairs each requested scope with its operator-defined human
