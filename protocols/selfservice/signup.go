@@ -110,8 +110,14 @@ func handleMandatoryVerificationSignup(d Deps, ctx core.HandlerContext, username
 }
 
 // issueVerificationToken generates, stores, and sends a signup verification
-// token. Returns false when it has already written an error response.
+// token. Cancels any prior pending token for the same username so only the
+// latest token is valid (prevents last-writer-wins races on concurrent
+// duplicate registrations). Returns false when it has already written an error
+// response.
 func issueVerificationToken(d Deps, ctx core.HandlerContext, rctx context.Context, username, email, pwHash string) bool {
+	if revoker, ok := d.EmailVerificationStore().(core.EmailVerificationRevoker); ok {
+		_, _ = revoker.RevokeByUsername(rctx, username)
+	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		d.Logger().Error("signup: generate verification token failed", "username", username, "error", err)

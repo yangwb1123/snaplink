@@ -90,6 +90,17 @@ type EmailVerificationStore interface {
 	Consume(ctx context.Context, token string) (*EmailVerificationToken, error)
 }
 
+// EmailVerificationRevoker is an OPTIONAL extension of EmailVerificationStore.
+// When implemented, it allows the signup handler to cancel any existing pending
+// token for a username before issuing a new one — prevents last-writer-wins
+// races where concurrent duplicate registrations strand the earlier token.
+// memory + sqlite peers implement it.
+type EmailVerificationRevoker interface {
+	// RevokeByUsername deletes any pending token for username. Idempotent;
+	// returns 0 and nil when no token exists.
+	RevokeByUsername(ctx context.Context, username string) (int, error)
+}
+
 // ErrVerificationTokenNotFound is the sentinel Consume returns when a token is
 // missing, expired, or already consumed. Callers MUST collapse all cases to a
 // single verification_invalid wire response.
