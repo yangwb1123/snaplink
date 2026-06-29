@@ -99,7 +99,14 @@ type HTTPLogoutNotifier struct {
 
 func NewHTTPLogoutNotifier() *HTTPLogoutNotifier {
 	return &HTTPLogoutNotifier{
-		Client: &http.Client{Timeout: DefaultBackchannelLogoutTimeout},
+		// Redirect-follow is disabled: a registered BackchannelLogoutURI that
+		// 302s to an internal host bypasses the https-only registration check
+		// (same redirect-to-internal SSRF class as CAEP/SAML). Treat the stored
+		// URI as authoritative; never follow redirects.
+		Client: &http.Client{
+			Timeout:       DefaultBackchannelLogoutTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 	}
 }
 
@@ -119,7 +126,10 @@ func (n *HTTPLogoutNotifier) Notify(ctx context.Context, uri string, logoutToken
 	req.Header.Set("Accept", "*/*")
 	client := n.Client
 	if client == nil {
-		client = &http.Client{Timeout: DefaultBackchannelLogoutTimeout}
+		client = &http.Client{
+			Timeout:       DefaultBackchannelLogoutTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}
 	}
 	resp, err := client.Do(req)
 	if err != nil {
