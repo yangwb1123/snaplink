@@ -324,24 +324,106 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 
 // normalizeUserCode delegates to oauth.NormalizeUserCode.
 
-// handleDeviceVerifyPage serves the RFC 8628 device verification HTML page at
+// handleDeviceVerifyPage serves the RFC 8628 device verification page at
 // GET /device/verify. No authentication is required — the page is a public
 // form where users enter the user_code displayed on their device.
 //
-// When called with ?check=USERCODE it returns JSON status (for the page's JS
-// polling) instead of HTML. The status endpoint is intentionally unauthenticated
-// because it only reveals states the device already learns through /token polling
-// (pending / approved / denied / expired / not_found).
+// Mode dispatch (query-param driven):
+//   ?check=USERCODE  — JSON status (for the page's JS polling). Unauthenticated;
+//                      only reveals states the device already learns via /token.
+//   ?info=USERCODE   — JSON device info (client_id, client_name, scopes) for the
+//                      page's sign-in view. Unauthenticated; only reveals what the
+//                      user already has from the device screen.
+//   (no check/info)  — HTML verification page with content negotiation:
+//                      Accept: text/html → HTML page; otherwise → 406.
+//
+// The HTML page includes code entry, inline authentication, and approval flow.
 func (s *Server) handleDeviceVerifyPage(ctx HandlerContext) {
 	if userCode := ctx.Query("check"); userCode != "" {
 		s.handleDeviceVerifyCheck(ctx, userCode)
+		return
+	}
+	if userCode := ctx.Query("info"); userCode != "" {
+		s.handleDeviceVerifyInfo(ctx, userCode)
 		return
 	}
 	if s.deviceCodeStore == nil {
 		ctx.JSON(http.StatusNotImplemented, errorBody(ErrDeviceCodeNotConfigured))
 		return
 	}
-	oidc.RenderDeviceVerifyPage(ctx.ResponseWriter(), ctx.Query("user_code"))
+	// Content negotiation: serve HTML when the client accepts text/html,
+	// otherwise return a JSON 406 to non-browser callers.
+	accept := ctx.Request().Header.Get("Accept")
+	if accept != "" && !acceptsHTML(accept) {
+		ctx.JSON(http.StatusNotAcceptable, errorBody(ErrInvalidRequest))
+		return
+	}
+	// Look up device code info to pass to the template when user_code is in query.
+	uc := normalizeUserCode(ctx.Query("user_code"))
+	data := oidc.DeviceVerifyData{
+		UserCode: ctx.Query("user_code"),
+	}
+	if uc != "" {
+		if dc, err := s.deviceCodeStore.GetByUserCode(ctx.Request().Context(), uc); err == nil && dc != nil {
+			data.ClientID = dc.ClientID
+			data.Scopes = dc.Scopes
+			if s.clientStore != nil {
+				if client, err := s.clientStore.Get(ctx.Request().Context(), dc.ClientID); err == nil && client != nil {
+					data.ClientName = client.Name
+				}
+			}
+		}
+	}
+	oidc.RenderDeviceVerifyPage(ctx.ResponseWriter(), data)
+}
+
+// acceptsHTML reports whether the Accept header indicates the client prefers
+// text/html over application/json.
+func acceptsHTML(accept string) bool {
+	// text/html explicitly listed, or no preference that excludes it.
+	return strings.Contains(accept, "text/html") || strings.Contains(accept, "*/*")
+}
+
+// handleDeviceVerifyInfo returns JSON info about a device code by user_code.
+// The response is intentionally limited to client_id, client_name, and scopes
+// — no tokens, no user identity, no secrets. Unauthenticated because the user
+// already knows the user_code (displayed on the device screen).
+func (s *Server) handleDeviceVerifyInfo(ctx HandlerContext, userCode string) {
+	if s.deviceCodeStore == nil {
+		ctx.JSON(http.StatusNotImplemented, map[string]string{"status": "error"})
+		return
+	}
+	uc := normalizeUserCode(userCode)
+	if uc == "" {
+		ctx.JSON(http.StatusOK, map[string]string{"status": "invalid"})
+		return
+	}
+	dc, err := s.deviceCodeStore.GetByUserCode(ctx.Request().Context(), uc)
+	if err != nil {
+		if errors.Is(err, oauth.ErrDeviceCodeNotFound) {
+			ctx.JSON(http.StatusOK, map[string]string{"status": "not_found"})
+		} else {
+			s.logger.Error("device verify info lookup failed", "error", err)
+			ctx.JSON(http.StatusInternalServerError, map[string]string{"status": "error"})
+		}
+		return
+	}
+	if dc.IsExpired() {
+		ctx.JSON(http.StatusOK, map[string]string{"status": "expired"})
+		return
+	}
+	clientName := ""
+	if s.clientStore != nil {
+		if client, err := s.clientStore.Get(ctx.Request().Context(), dc.ClientID); err == nil && client != nil {
+			clientName = client.Name
+		}
+	}
+	ctx.JSON(http.StatusOK, map[string]any{
+		"status":      "ok",
+		"client_id":   dc.ClientID,
+		"client_name": clientName,
+		"scopes":      dc.Scopes,
+	})
 }
 
 // handleDeviceVerifyCheck returns the current state of a user_code as JSON for
