@@ -196,3 +196,53 @@ type rcov2NopRevoker struct{}
 func (rcov2NopRevoker) RevokeAllForSubject(context.Context, string) (caep.RevocationResult, error) {
 	return caep.RevocationResult{}, nil
 }
+
+// TestRcov2M_MTLSCertIsNotClientAuth proves the RFC 8705 §3-vs-§2 fix: a binding
+// cert is NOT client authentication. A PUBLIC client (no secret) doing
+// client_credentials while presenting a client cert must be REJECTED with
+// invalid_client. The server implements only §3 cert-binding and never validates
+// the cert against the client, so accepting its mere presence as proof of
+// identity let any public client mint a client_credentials token.
+func TestRcov2M_MTLSCertIsNotClientAuth(t *testing.T) {
+	clientCert := rcov2ClientCert(t)
+
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{
+		ID: "public-cc", Secret: "", TokenStrategy: "jwt", Active: true, SkipConsent: true,
+	})
+	srv := sso.NewServer(
+		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
+		sso.WithClientStore(clients),
+		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithClientCertExtractor(sso.DefaultTLSPeerCertExtractor),
+	)
+	ts := httptest.NewUnstartedServer(srv.Handler())
+	ts.TLS = &tls.Config{ClientAuth: tls.RequestClientCert}
+	ts.StartTLS()
+	t.Cleanup(ts.Close)
+
+	certPool := x509.NewCertPool()
+	certPool.AddCert(ts.Certificate())
+	withCert := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
+		RootCAs:      certPool,
+		Certificates: []tls.Certificate{clientCert},
+	}}}
+
+	form := url.Values{
+		"grant_type": {"client_credentials"},
+		"client_id":  {"public-cc"},
+		"scope":      {"read"},
+	}
+	resp, err := withCert.Post(ts.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	body := rcov2ReadJSON(t, resp)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("public client + binding cert must be rejected, got %d body=%v", resp.StatusCode, body)
+	}
+	if body["error"] != "invalid_client" {
+		t.Errorf("error = %v, want invalid_client", body["error"])
+	}
+}

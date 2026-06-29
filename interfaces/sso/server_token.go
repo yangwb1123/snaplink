@@ -81,11 +81,15 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 		// ("","") == true), so without this gate anyone knowing a public
 		// client_id — public by design, embedded in SPA/mobile source — could
 		// mint a token bearing the client's full allowlist with no credential.
-		// Require a real proof of identity: a stored secret (already validated
-		// in authenticateTokenClient), a private_key_jwt assertion, or an mTLS
-		// client certificate. Collapses to invalid_client (oracle-safe, matching
-		// the rest of the client-auth ladder).
-		if client.Secret == "" && req.ClientAssertion == "" && mtlsX5T == "" {
+		// Require a VALIDATED proof of identity: a stored secret (validated in
+		// authenticateTokenClient) or a private_key_jwt assertion (validated in
+		// resolveAssertedClientID). NOT mtlsX5T: this server implements only RFC
+		// 8705 §3 (certificate-BINDING) — the cert is the thumbprint of WHATEVER
+		// the extractor returned and is NEVER validated against the registered
+		// client (no §2 tls_client_auth), so accepting its mere presence here let
+		// a public client mint a token by attaching any client cert. Collapses to
+		// invalid_client (oracle-safe, matching the rest of the client-auth ladder).
+		if client.Secret == "" && req.ClientAssertion == "" {
 			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
 			return
 		}
@@ -275,17 +279,15 @@ func (s *Server) enforceFAPITokenRules(ctx HandlerContext, req oauth.TokenReques
 	if !s.fapiValidator.Active() {
 		return false
 	}
-	// Classify the client-authentication method used on this token
-	// request so the FAPI client-auth rule can reject shared-secret
-	// auth. private_key_jwt (assertion) and mTLS (client cert) are
-	// the only FAPI-permitted methods; Basic / body secret map to
-	// the prohibited shared-secret methods.
+	// Classify the client-auth method ACTUALLY used. A mere mTLS binding cert
+	// (mtlsX5T) is NOT ClientAuthTLS: the server implements only RFC 8705 §3
+	// binding, never §2 tls_client_auth, so counting its presence as TLS auth let
+	// a Basic/secret client be misclassified as FAPI-compliant and bypass the
+	// shared-secret rejection. The cert still drives SenderConstrained below.
 	clientAuthMethod := fapi.ClientAuthNone
 	switch {
 	case req.ClientAssertion != "":
 		clientAuthMethod = fapi.ClientAuthPrivateKeyJWT
-	case mtlsX5T != "":
-		clientAuthMethod = fapi.ClientAuthTLS
 	case basicAuthUsed:
 		clientAuthMethod = fapi.ClientAuthSecretBasic
 	case req.ClientSecret != "":
