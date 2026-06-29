@@ -16,8 +16,104 @@ updates:
       prefix-development: chore
       include: scope
 
+  # ──────────────────────────────────────────────
+  # Infrastructure: identity / auth backends
+  # ──────────────────────────────────────────────
+
   - package-ecosystem: gomod
-    directory: "/kms/awskms"
+    directory: "/infrastructure/saml"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - saml
+
+  - package-ecosystem: gomod
+    directory: "/infrastructure/ldap"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - ldap
+
+  - package-ecosystem: gomod
+    directory: "/infrastructure/kerberos"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - kerberos
+
+  - package-ecosystem: gomod
+    directory: "/infrastructure/radius"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - radius
+
+  - package-ecosystem: gomod
+    directory: "/infrastructure/extauthz"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - extauthz
+
+  # ──────────────────────────────────────────────
+  # Infrastructure: caching / data
+  # ──────────────────────────────────────────────
+
+  - package-ecosystem: gomod
+    directory: "/infrastructure/redis"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - redis
+
+  - package-ecosystem: gomod
+    directory: "/infrastructure/postgres"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - postgres
+
+  # ──────────────────────────────────────────────
+  # KMS signing backends
+  # ──────────────────────────────────────────────
+
+  - package-ecosystem: gomod
+    directory: "/infrastructure/kms/awskms"
     schedule:
       interval: weekly
       day: monday
@@ -29,7 +125,7 @@ updates:
       - awskms
 
   - package-ecosystem: gomod
-    directory: "/kms/gcpkms"
+    directory: "/infrastructure/kms/gcpkms"
     schedule:
       interval: weekly
       day: monday
@@ -39,6 +135,50 @@ updates:
     labels:
       - dependencies
       - gcpkms
+
+  - package-ecosystem: gomod
+    directory: "/infrastructure/kms/azurekeyvault"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - azurekeyvault
+
+  - package-ecosystem: gomod
+    directory: "/infrastructure/kms/pkcs11"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - pkcs11
+
+  # ──────────────────────────────────────────────
+  # CLI / cmd
+  # ──────────────────────────────────────────────
+
+  - package-ecosystem: gomod
+    directory: "/cmd/sso-mcp"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - sso-mcp
+
+  # ──────────────────────────────────────────────
+  # Docker
+  # ──────────────────────────────────────────────
 
   - package-ecosystem: docker
     directory: "/ops/deploy/compose"
