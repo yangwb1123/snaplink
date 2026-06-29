@@ -100,9 +100,9 @@ func (j *ECDSAJWTIssuer) decodeAndCheckClaims(payloadB64 string) (ed25519Payload
 		return ed25519Payload{}, fmt.Errorf("ecdsa: payload parse: %w", err)
 	}
 
-	// Use monotonic-clock-safe comparisons: time.Since / time.Until
-	// incorporate Go's monotonic offset and are immune to wall-clock
-	// rewinding, which could otherwise resurrect an expired token.
+	// Stored JWT timestamps (Exp/Nbf) are Unix integers from external issuers;
+	// time.Unix() produces wall-clock times only. Monotonic safety cannot
+	// apply here — cross-process timestamps never carry a monotonic component.
 	if p.Exp != 0 && time.Since(time.Unix(p.Exp, 0)) >= j.maxClockSkew {
 		return ed25519Payload{}, errors.New("ecdsa: token expired")
 	}
