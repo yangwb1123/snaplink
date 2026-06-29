@@ -242,10 +242,11 @@ func registerAdminGateway(ctx context.Context, gw *runtime.ServeMux, a *app) err
 		return fmt.Errorf("gateway users: %w", err)
 	}
 	if err := adminv1.RegisterTokenAdminServiceHandlerServer(ctx, gw, grpcserver.NewTokenAdminService(grpcserver.TokenAdminConfig{
-		Sessions:  a.sessionMgr,
-		TempStore: a.tempStore,
-		Issuers:   a.tokenIssuers,
-		Recorder:  a.recorder,
+		Sessions:            a.sessionMgr,
+		TempStore:           a.tempStore,
+		Issuers:             a.tokenIssuers,
+		RevokeAcrossIssuers: a.server.RevokeAcrossIssuers,
+		Recorder:            a.recorder,
 	})); err != nil {
 		return fmt.Errorf("gateway tokens: %w", err)
 	}

@@ -138,10 +138,11 @@ func newGRPCServer(a *app) *grpc.Server {
 		adminv1.RegisterClientAdminServiceServer(s, grpcserver.NewClientAdminService(a.clientStore, a.recorder, a.server.InvalidateDiscoveryCache, a.server.InvalidateClientCache))
 		adminv1.RegisterUserAdminServiceServer(s, grpcserver.NewUserAdminService(a.userProvider, a.sessionMgr, a.recorder))
 		adminv1.RegisterTokenAdminServiceServer(s, grpcserver.NewTokenAdminService(grpcserver.TokenAdminConfig{
-			Sessions:  a.sessionMgr,
-			TempStore: a.tempStore,
-			Issuers:   a.tokenIssuers,
-			Recorder:  a.recorder,
+			Sessions:            a.sessionMgr,
+			TempStore:           a.tempStore,
+			Issuers:             a.tokenIssuers,
+			RevokeAcrossIssuers: a.server.RevokeAcrossIssuers,
+			Recorder:            a.recorder,
 		}))
 		adminv1.RegisterPermissionAdminServiceServer(s, grpcserver.NewPermissionAdminService(
 			a.provider, a.recorder,

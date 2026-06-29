@@ -28,7 +28,13 @@ type TokenAdminService struct {
 	tempStore    authenticators.TempTokenStore
 	tempTokenTTL time.Duration
 	issuers      map[string]sso.TokenIssuer // name -> issuer; for Revoke fan-out
-	recorder     *audit.Recorder
+	// revokeAcrossIssuers, when wired, revokes AND publishes the revocation on
+	// the cluster Bus (KindTokenRevoked) so peer replicas drop the token too.
+	// Without it, Revoke only mutates this replica's in-process deny-set, so a
+	// break-glass admin revoke on an N-replica fleet leaves the token valid on
+	// every other replica until its natural exp.
+	revokeAcrossIssuers func(context.Context, string) (revoked, failed []string)
+	recorder            *audit.Recorder
 }
 
 // TokenAdminConfig bundles the dependencies for NewTokenAdminService.
@@ -38,7 +44,12 @@ type TokenAdminConfig struct {
 	TempStore    authenticators.TempTokenStore
 	TempTokenTTL time.Duration
 	Issuers      map[string]sso.TokenIssuer
-	Recorder     *audit.Recorder
+	// RevokeAcrossIssuers is the cross-replica-publishing revoke seam
+	// (sso.Server.RevokeAcrossIssuers). When set, Revoke uses it so a revocation
+	// propagates to peer replicas; when nil, Revoke falls back to a local-only
+	// issuer fan-out (single-replica / embedder builds).
+	RevokeAcrossIssuers func(context.Context, string) (revoked, failed []string)
+	Recorder            *audit.Recorder
 }
 
 func NewTokenAdminService(cfg TokenAdminConfig) *TokenAdminService {
@@ -47,11 +58,12 @@ func NewTokenAdminService(cfg TokenAdminConfig) *TokenAdminService {
 		ttl = authenticators.DefaultTempTokenTTL
 	}
 	return &TokenAdminService{
-		sessions:     cfg.Sessions,
-		tempStore:    cfg.TempStore,
-		tempTokenTTL: ttl,
-		issuers:      cfg.Issuers,
-		recorder:     cfg.Recorder,
+		sessions:            cfg.Sessions,
+		tempStore:           cfg.TempStore,
+		tempTokenTTL:        ttl,
+		issuers:             cfg.Issuers,
+		revokeAcrossIssuers: cfg.RevokeAcrossIssuers,
+		recorder:            cfg.Recorder,
 	}
 }
 
@@ -99,12 +111,21 @@ func (s *TokenAdminService) Revoke(ctx context.Context, in *adminv1.RevokeReques
 			return nil, status.Errorf(codes.Internal, "destroy session: %v", err)
 		}
 	}
-	if in.Token != "" && len(s.issuers) > 0 {
-		// Fan out: any issuer that recognizes the token wins.
-		for _, iss := range s.issuers {
-			if err := iss.Revoke(ctx, in.Token); err == nil {
+	if in.Token != "" {
+		// Prefer the cross-replica-publishing seam so a break-glass revoke takes
+		// effect fleet-wide, not just on the replica that served this RPC.
+		if s.revokeAcrossIssuers != nil {
+			if hit, _ := s.revokeAcrossIssuers(ctx, in.Token); len(hit) > 0 {
 				revoked = append(revoked, sso.RevokedToken)
-				break
+			}
+		} else if len(s.issuers) > 0 {
+			// Local-only fallback (no publish seam wired): any issuer that
+			// recognizes the token wins.
+			for _, iss := range s.issuers {
+				if err := iss.Revoke(ctx, in.Token); err == nil {
+					revoked = append(revoked, sso.RevokedToken)
+					break
+				}
 			}
 		}
 	}
