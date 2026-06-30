@@ -24,6 +24,7 @@ type CIBAGrantDeps interface {
 	ApplyPairwiseSubject(ctx context.Context, client *core.Client, localSub string) string
 	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration, confirmationJKT string) (string, error)
 	MaybeEncryptIDToken(ctx context.Context, client *core.Client, signed string) (string, bool)
+	DPoPTokenTypeOr(defaultType, jkt string) string
 	RecordTokenIssued(ctx core.HandlerContext, clientID, strategy, subjectID string)
 	RecordRefreshTokenIssued(ctx core.HandlerContext, clientID, subjectID string, rotation bool)
 	RecordIDTokenIssued(ctx core.HandlerContext, clientID, subjectID string)
@@ -96,7 +97,7 @@ func cibaMintAndRespond(d CIBAGrantDeps, ctx core.HandlerContext, client *core.C
 	}
 	resp := map[string]any{
 		core.KeyAccessToken:   token.AccessToken,
-		core.KeyTokenType:     token.TokenType,
+		core.KeyTokenType:     d.DPoPTokenTypeOr(token.TokenType, dpopJKT),
 		core.KeyExpiresIn:     token.ExpiresIn,
 		core.KeyScope:         token.Scope,
 		core.KeyTokenStrategy: strategy,

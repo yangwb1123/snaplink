@@ -53,6 +53,7 @@ type TokenExchangeDeps interface {
 	ApplyPairwiseSubject(ctx context.Context, client *core.Client, localSub string) string
 	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration, confirmationJKT string) (string, error)
 	MaybeEncryptIDToken(ctx context.Context, client *core.Client, signed string) (string, bool)
+	DPoPTokenTypeOr(defaultType, jkt string) string
 	SPIFFEValidator() *security.SPIFFEValidator
 	SPIFFEAudience() string
 	JTIReplayStore() security.JTIReplayStore
@@ -109,7 +110,7 @@ func HandleTokenExchangeGrant(d TokenExchangeDeps, ctx core.HandlerContext, clie
 	st.resp = map[string]any{
 		core.KeyAccessToken:     st.token.AccessToken,
 		core.KeyIssuedTokenType: core.TokenTypeAccessToken,
-		core.KeyTokenType:       st.token.TokenType,
+		core.KeyTokenType:       d.DPoPTokenTypeOr(st.token.TokenType, req.DPoPJKT),
 		core.KeyExpiresIn:       st.token.ExpiresIn,
 		core.KeyScope:           st.token.Scope,
 		core.KeyTokenStrategy:   st.strategy,

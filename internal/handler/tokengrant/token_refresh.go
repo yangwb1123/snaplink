@@ -20,9 +20,11 @@ import (
 type RefreshGrantDeps interface {
 	RefreshTokenStore() oauth.RefreshTokenStore
 	RefreshGrace() RefreshGraceStore
+	SessionManager() core.SessionManager
 	IssuerForClient(c *core.Client) (string, core.TokenIssuer, error)
 	ApplyPairwiseSubject(ctx context.Context, client *core.Client, localSub string) string
 	IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration, confirmationJKT string) (string, error)
+	DPoPTokenTypeOr(defaultType, jkt string) string
 	RecordTokenIssued(ctx core.HandlerContext, clientID, strategy, subjectID string)
 	RecordRefreshTokenIssued(ctx core.HandlerContext, clientID, subjectID string, rotation bool)
 	RecordSubjectClientAccess(ctx context.Context, subject, clientID string)
@@ -80,6 +82,14 @@ func HandleRefreshGrant(d RefreshGrantDeps, ctx core.HandlerContext, client *cor
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
 		return
 	}
+	// Session liveness check (§2): when the refresh token carries a SID
+	// and a SessionManager is wired, verify the parent session is still
+	// alive. Session gone / expired / revoked → 400 invalid_grant. A
+	// store error is treated as "session not found" (fail-closed) — see
+	// the checkSessionLiveness contract.
+	if refreshCheckSessionLiveness(d, ctx, info) {
+		return
+	}
 	grantScopes, ok := refreshResolveScopes(ctx, info, scope)
 	if !ok {
 		return
@@ -130,7 +140,7 @@ func refreshIssueAndRotate(d RefreshGrantDeps, ctx core.HandlerContext, client *
 	d.RecordSubjectClientAccess(ctx.Request().Context(), info.UserID, client.ID)
 	resp := map[string]any{
 		core.KeyAccessToken:   token.AccessToken,
-		core.KeyTokenType:     token.TokenType,
+		core.KeyTokenType:     d.DPoPTokenTypeOr(token.TokenType, dpopJKT),
 		core.KeyRefreshToken:  newRefresh,
 		core.KeyExpiresIn:     token.ExpiresIn,
 		core.KeyScope:         token.Scope,
@@ -276,6 +286,35 @@ func refreshVelocityGate(d RefreshGrantDeps, ctx core.HandlerContext, client *co
 	d.IncRefreshRotationVelocityExceeded()
 	d.RecordRefreshRotationVelocity(ctx, client.ID, familyID, count, killed)
 	// Same wire shape as a reuse / bad refresh — oracle-leak collapse (§2).
+	ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+	return true
+}
+
+// refreshCheckSessionLiveness checks whether the parent session behind the
+// refresh token's SID is still alive. Returns true when the check failed and
+// the caller must return (response already written). Contract:
+//
+//   - info.SID == "" → no-op (returns false)
+//   - SessionManager not wired → no-op (returns false)
+//   - sm.Get() error → LOG + treat as "session not found" → fail-closed
+//   - session nil / expired / revoked → 400 invalid_grant (oracle-leak collapse)
+func refreshCheckSessionLiveness(d RefreshGrantDeps, ctx core.HandlerContext, info *oauth.RefreshToken) bool {
+	if info.SID == "" {
+		return false
+	}
+	sm := d.SessionManager()
+	if sm == nil {
+		return false
+	}
+	sess, sErr := sm.Get(ctx.Request().Context(), info.SID)
+	if sErr != nil {
+		d.LogErrorCtx(ctx, "session liveness check failed (fail-closed)",
+			"sid", info.SID, "error", sErr)
+	} else if sess != nil && !sess.IsExpired() && !sess.Revoked {
+		return false
+	}
+	d.LogErrorCtx(ctx, "session expired or revoked — refresh denied",
+		"sid", info.SID, "user_id", info.UserID)
 	ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
 	return true
 }
