@@ -3,13 +3,14 @@ package sso
 import (
 	"encoding/json"
 	"errors"
-	"github.com/snaplink/sso/domains/connections"
-	"github.com/snaplink/sso/protocols/oidc"
 	"net/http"
 	"strings"
 
+	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/internal/auth/login"
 	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/security"
 )
 
@@ -198,15 +199,22 @@ const (
 
 // resolveHomeRealm does B2B home-realm discovery for the interactive login
 // flow: it maps a login hint (email) to the enterprise connection serving its
-// domain. Returns false when no store is wired, the hint is empty, or no
-// connection matches — the caller then offers the normal provider list, so a
-// build without WithConnectionStore is byte-identical.
+// domain. Returns false when no store is wired, the hint is empty, no
+// connection matches, or the resolved connection belongs to a different tenant
+// than the request (cross-tenant HRD isolation).
 func (s *Server) resolveHomeRealm(ctx HandlerContext, loginHint string) (*connections.Connection, bool) {
 	if s.connectionStore == nil || strings.TrimSpace(loginHint) == "" {
 		return nil, false
 	}
 	conn, err := connections.Resolve(ctx.Request().Context(), s.connectionStore, loginHint)
 	if err != nil {
+		return nil, false
+	}
+	// Guard cross-tenant routing: reject when the request carries a resolved
+	// tenant that disagrees with the connection's tenant — the email domain
+	// may be globally registered but must not route to another org's IdP.
+	if r, ok := tenant.FromHandlerContext(ctx); ok && r != nil && r.Tenant != nil &&
+		r.Tenant.ID != "" && conn.TenantID != "" && conn.TenantID != r.Tenant.ID {
 		return nil, false
 	}
 	return conn, true
@@ -256,6 +264,14 @@ func (s *Server) handleHomeRealm(ctx HandlerContext) {
 	if err != nil {
 		s.logErrorCtx(ctx, "home-realm discovery failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	// Guard cross-tenant routing: the /auth/home-realm endpoint is served
+	// under a specific tenant's hostname; a connection that belongs to a
+	// different tenant must not be disclosed or routed to.
+	if res, ok := tenant.FromHandlerContext(ctx); ok && res != nil && res.Tenant != nil &&
+		res.Tenant.ID != "" && conn.TenantID != "" && conn.TenantID != res.Tenant.ID {
+		ctx.JSON(http.StatusOK, map[string]any{keyHRFound: false})
 		return
 	}
 	ctx.JSON(http.StatusOK, map[string]any{
