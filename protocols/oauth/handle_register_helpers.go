@@ -7,6 +7,7 @@ import (
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/security"
 )
 
 // recordRegistrationCreated writes the EventClientRegistered lifecycle event
@@ -37,7 +38,7 @@ func authorizeRegistration(d RegisterDeps, ctx core.HandlerContext, policy *DCRP
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrServerMisconfigured))
 		return false
 	}
-	if bearer := BearerToken(ctx.Request()); bearer != policy.InitialAccessToken {
+	if bearer := BearerToken(ctx.Request()); !security.CompareClientSecret(policy.InitialAccessToken, bearer) {
 		d.SetBearerChallenge(ctx, d.ResolveIssuer(ctx), core.ErrInvalidToken, "Initial access token missing or invalid")
 		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidToken))
 		return false
