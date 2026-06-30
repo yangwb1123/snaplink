@@ -176,12 +176,17 @@ func (b *appBuilder) wireSigningKeyRegistryOpts(signingKeyRegistry signingkeys.R
 // protected-resource metadata — the last Options before NewServer.
 func (b *appBuilder) wireFinalOptions() error {
 	cfg, logger := b.cfg, b.logger
-	// Mount the per-store storage-health admin report from the sources gathered
-	// alongside the /readyz checks. Empty (all-memory backends) ⇒ WithStorageHealth
-	// doesn't mount the route — byte-identical to a build without it.
-	if len(b.storageHealthSources) > 0 {
+	// Mount the per-store storage-health admin report only when the admin
+	// middleware is enabled. The route is under /api/v1/admin/ which the
+	// middleware guards with a bearer scope check; without admin enabled the
+	// route would be served unauthenticated, leaking internal store names,
+	// connectivity status, and on Ping errors raw driver strings with host/path
+	// details to any caller on the same network.
+	if len(b.storageHealthSources) > 0 && cfg.Admin.Enabled {
 		b.opts = append(b.opts, sso.WithStorageHealth(b.storageHealthSources...))
 		logger.Info("storage-health report enabled", "stores", len(b.storageHealthSources))
+	} else if len(b.storageHealthSources) > 0 && !cfg.Admin.Enabled {
+		logger.Info("storage-health report disabled: admin must be enabled to serve authenticated store diagnostics")
 	}
 
 	// Serve the hosted admin console SPA at /admin/. The filesystem is embedded
