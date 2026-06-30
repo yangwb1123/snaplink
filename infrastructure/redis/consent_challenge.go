@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -24,9 +25,10 @@ const (
 func consentChallengeKey(id string) string { return consentChallengePrefix + id }
 
 type consentChallengeRecord struct {
-	UserID   string   `json:"u"`
-	ClientID string   `json:"c"`
-	Scopes   []string `json:"s"`
+	UserID               string          `json:"u"`
+	ClientID             string          `json:"c"`
+	Scopes               []string        `json:"s"`
+	AuthorizationDetails json.RawMessage `json:"ad,omitempty"`
 }
 
 // ConsentChallengeStore is the Redis-backed, cluster-shared consent-gate
@@ -56,18 +58,23 @@ func (s *ConsentChallengeStore) Ping(ctx context.Context) error {
 	return s.rdb.Ping(ctx).Err()
 }
 
-// Issue mints a single-use challenge bound to (userID, clientID, scopes) under a
-// 5-minute TTL and returns the opaque id (16 random bytes, base64url) — the same
-// id shape as the memory peer. Best-effort write: a SET failure degrades to the
-// prior per-pod re-issue behavior, never weaker.
-func (s *ConsentChallengeStore) Issue(userID, clientID string, scopes []string) string {
+// Issue mints a single-use challenge bound to (userID, clientID, scopes,
+// authorizationDetails) under a 5-minute TTL. Best-effort write: a SET
+// failure degrades to the prior per-pod re-issue behavior, never weaker.
+func (s *ConsentChallengeStore) Issue(userID, clientID string, scopes []string, authorizationDetails json.RawMessage) string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	id := base64.RawURLEncoding.EncodeToString(b)
 	if s == nil || s.rdb == nil {
 		return id
 	}
-	blob, err := json.Marshal(consentChallengeRecord{UserID: userID, ClientID: clientID, Scopes: slices.Clone(scopes)})
+	rec := consentChallengeRecord{
+		UserID:               userID,
+		ClientID:             clientID,
+		Scopes:               slices.Clone(scopes),
+		AuthorizationDetails: append(json.RawMessage(nil), authorizationDetails...),
+	}
+	blob, err := json.Marshal(rec)
 	if err != nil {
 		return id
 	}
@@ -79,9 +86,9 @@ func (s *ConsentChallengeStore) Issue(userID, clientID string, scopes []string) 
 
 // Consume atomically validates + removes the challenge (GETDEL = single-use,
 // single-key). Returns true only if it exists (not TTL-expired), matches
-// userID+clientID, and the scope SETS are equal. Any miss/error/decode-failure
-// -> false (fail closed: the gate re-issues rather than wrongly accepting).
-func (s *ConsentChallengeStore) Consume(id, userID, clientID string, scopes []string) bool {
+// userID+clientID, scope sets, AND authorization_details bytes exactly. Any
+// miss/error/decode-failure -> false (fail closed: the gate re-issues).
+func (s *ConsentChallengeStore) Consume(id, userID, clientID string, scopes []string, authorizationDetails json.RawMessage) bool {
 	if s == nil || s.rdb == nil || id == "" {
 		return false
 	}
@@ -95,7 +102,19 @@ func (s *ConsentChallengeStore) Consume(id, userID, clientID string, scopes []st
 	if json.Unmarshal(blob, &rec) != nil {
 		return false
 	}
-	return rec.UserID == userID && rec.ClientID == clientID && scopesSetEqual(rec.Scopes, scopes)
+	if rec.UserID != userID || rec.ClientID != clientID || !scopesSetEqual(rec.Scopes, scopes) {
+		return false
+	}
+	return rawJSONEqual(rec.AuthorizationDetails, authorizationDetails)
+}
+
+// rawJSONEqual reports whether two raw JSON blobs are byte-identical,
+// treating nil and empty as equal (both represent "no value").
+func rawJSONEqual(a, b json.RawMessage) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	return bytes.Equal(a, b)
 }
 
 // scopesSetEqual is order-independent set equality, replicating consent.ScopesMatch

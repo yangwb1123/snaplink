@@ -2,6 +2,7 @@ package sso
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/snaplink/sso/internal/auth/consent"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/spi"
 )
 
@@ -190,7 +192,7 @@ func (s *Server) handleGetClient(ctx HandlerContext) {
 // challenge — the challenge is bound to (userID, clientID, exact scopes) and
 // expires after consent.ChallengeTTL, so a client cannot fabricate an approval
 // or reuse a challenge for a different scope set.
-func (s *Server) handleConsentGate(ctx HandlerContext, userID string, client *Client, scopes []string, prompt string, consentChallengeID string) (halted bool) {
+func (s *Server) handleConsentGate(ctx HandlerContext, userID string, client *Client, scopes []string, prompt string, consentChallengeID string, authorizationDetails json.RawMessage) (halted bool) {
 	requestCtx := ctx.Request().Context()
 	clientID := client.ID
 
@@ -218,8 +220,8 @@ func (s *Server) handleConsentGate(ctx HandlerContext, userID string, client *Cl
 	// Require a server-issued challenge that was previously returned in a
 	// consent_required response. A bare boolean would let any caller bypass
 	// the consent screen by fabricating the approval signal.
-	if consentChallengeID == "" || !s.consentChallenges.Consume(consentChallengeID, userID, clientID, scopes) {
-		s.issueConsentChallengeResponse(ctx, userID, client, scopes, consentChallengeID)
+	if consentChallengeID == "" || !s.consentChallenges.Consume(consentChallengeID, userID, clientID, scopes, authorizationDetails) {
+		s.issueConsentChallengeResponse(ctx, userID, client, scopes, consentChallengeID, authorizationDetails)
 		return true
 	}
 	// Challenge validated and consumed: record the grant and continue.
@@ -263,12 +265,12 @@ func (s *Server) evaluateConsentNeed(userID string, client *Client, scopes []str
 // but failed (expired / fabricated / replayed / wrong scopes — a first-time
 // prompt with an empty challenge is not a denial), then issues a fresh challenge
 // and writes the consent_required response.
-func (s *Server) issueConsentChallengeResponse(ctx HandlerContext, userID string, client *Client, scopes []string, consentChallengeID string) {
+func (s *Server) issueConsentChallengeResponse(ctx HandlerContext, userID string, client *Client, scopes []string, consentChallengeID string, authorizationDetails json.RawMessage) {
 	clientID := client.ID
 	if consentChallengeID != "" {
 		s.recordConsentEvent(ctx, audit.EventConsentDenied, audit.OutcomeFailure, userID, clientID, scopes)
 	}
-	challengeID := s.consentChallenges.Issue(userID, clientID, scopes)
+	challengeID := s.consentChallenges.Issue(userID, clientID, scopes, authorizationDetails)
 	resp := map[string]any{
 		KeyError:              ErrConsentRequired,
 		KeyConsentChallengeID: challengeID,
@@ -281,6 +283,12 @@ func (s *Server) issueConsentChallengeResponse(ctx HandlerContext, userID string
 		resp[KeyClientName] = client.Name
 	}
 	resp[KeyScopes] = s.describeScopes(scopes)
+	// RFC 9396 §7: expose the authorization_details so the consent UI can
+	// show the user exactly what they are being asked to authorize. Without
+	// this the UI can only display scopes, not the fine-grained RAR payload.
+	if len(authorizationDetails) > 0 {
+		resp[oauth.KeyAuthorizationDetails] = authorizationDetails
+	}
 	ctx.JSON(http.StatusOK, resp)
 }
 

@@ -37,7 +37,7 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req login.R
 	// authorization so req.Scope is the granted set that will appear in the
 	// issued token — the grant we check and record is authoritative for them.
 	if s.consentStore != nil {
-		if s.handleConsentGate(ctx, result.UserID, client, req.Scope, req.Prompt, req.ConsentChallengeID) {
+		if s.handleConsentGate(ctx, result.UserID, client, req.Scope, req.Prompt, req.ConsentChallengeID, req.AuthorizationDetails) {
 			return
 		}
 	}

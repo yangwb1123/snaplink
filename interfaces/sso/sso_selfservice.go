@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"encoding/json"
 	"io/fs"
 	"time"
 
@@ -18,8 +19,14 @@ import (
 // keeps the issue/approve round-trip working behind a no-affinity load balancer.
 // Signatures match consent.ChallengeStore, which satisfies this structurally.
 type ConsentChallengeStore interface {
-	Issue(userID, clientID string, scopes []string) string
-	Consume(id, userID, clientID string, scopes []string) bool
+	// Issue binds a challenge to (userID, clientID, scopes,
+	// authorizationDetails) and returns an opaque challenge ID.
+	Issue(userID, clientID string, scopes []string, authorizationDetails json.RawMessage) string
+	// Consume validates and atomically removes the challenge. Returns true
+	// only when all four bound fields match exactly and the challenge has
+	// not expired. The authorizationDetails binding prevents a client from
+	// changing RAR payload between the consent prompt and the re-POST.
+	Consume(id, userID, clientID string, scopes []string, authorizationDetails json.RawMessage) bool
 }
 
 // selfServiceState holds consent, signup, password-reset, email-change, MFA enrollment, data export/erasure, invitations, usage, JWKS body cache, and SPA-FS fields.
