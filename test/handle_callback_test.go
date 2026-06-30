@@ -175,6 +175,49 @@ func TestCallback_AutoDiscoverProvider(t *testing.T) {
 	}
 }
 
+// TestCallback_DeprovisionedUserBlocked proves that a federated callback for a
+// user who has been SCIM-deprovisioned (active=false) returns 401 callback_failed
+// and does NOT create a session, even though the authenticator succeeded.
+func TestCallback_DeprovisionedUserBlocked(t *testing.T) {
+	users := defaultimpl.NewMemoryUserProvider()
+	_ = users.CreateOrUpdate(context.Background(), &sso.User{
+		ID: "deprovisioned-alice",
+		Attributes: map[string]string{
+			"scim:active": "false",
+		},
+	})
+
+	sink := audit.NewMemorySink(50)
+	rec := audit.New(sink)
+	auth := &callbackAuth{
+		name: "oidc",
+		out:  &sso.AuthResult{UserID: "deprovisioned-alice", Provider: "oidc"},
+	}
+	srv := sso.NewServer(
+		sso.WithUserProvider(users),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithAuditRecorder(rec),
+		sso.WithAuthenticator(auth),
+	)
+	hs := httptest.NewServer(srv.Handler())
+	t.Cleanup(hs.Close)
+
+	resp, err := http.Get(hs.URL + "/auth/callback?provider=oidc&code=x&state=y")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnauthorized {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d want 401: deprovisioned user must be blocked; body=%s", resp.StatusCode, body)
+	}
+	var body map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body["error"] != "callback_failed" {
+		t.Errorf("error = %v, want callback_failed", body["error"])
+	}
+}
+
 func TestCallback_AutoDiscover_NoCandidateMatches(t *testing.T) {
 	// All authenticators reject — handler reports unknown_provider.
 	bad := &callbackAuth{name: "oidc", err: errors.New("nope")}

@@ -178,6 +178,14 @@ func (s *Server) finalizeCallbackSession(ctx HandlerContext, result *AuthResult)
 		Attributes: result.Attributes,
 	}
 	if s.userProvider != nil {
+		// Gate: reject deprovisioned users (SCIM active=false) before creating a
+		// session — mirrors rejectDeactivatedUser on the password/LDAP path. A
+		// not-found user (first federated login) is treated active (no SCIM state).
+		if u, err := s.userProvider.GetByID(ctx.Request().Context(), result.UserID); err == nil && u != nil && !u.IsActive() {
+			s.logger.Info("federated callback blocked: account deprovisioned", "user_id", result.UserID, "provider", result.Provider)
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrCallbackFailed))
+			return
+		}
 		if err := s.userProvider.CreateOrUpdate(ctx.Request().Context(), user); err != nil {
 			s.logger.Error("failed to upsert user", "error", err)
 			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
