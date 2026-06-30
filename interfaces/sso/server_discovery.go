@@ -16,6 +16,12 @@ import (
 
 const PathOIDCDiscovery = "/.well-known/openid-configuration"
 
+// defaultJWKSCacheTTL is the freshness window for the JWKS body cache.
+// 5 seconds balances key-rotation responsiveness against avoiding
+// per-request recomputation. When 0, the cache is disabled entirely
+// (legacy behavior).
+const defaultJWKSCacheTTL = 5 * time.Second
+
 // oidc.ProviderMetadata mirrors OpenID Connect Discovery 1.0 §3 +
 // RFC 8414 §2 fields. Optional fields are omitempty so the wire stays
 // minimal — relying parties branch on presence per the spec.

@@ -34,10 +34,12 @@ func NewServer(opts ...Option) *Server {
 	s.discoveryCacheTTL = defaultDiscoveryCacheTTL
 	s.discoveryDocCacheTTL = DefaultDiscoveryDocCacheTTL
 	s.authzPolicyBundleCacheTTL = DefaultAuthzPolicyBundleCacheTTL
+	s.jwksCacheTTL = defaultJWKSCacheTTL
 	s.consentChallenges = consent.NewChallengeStore()
 	for _, opt := range opts {
 		opt(s)
 	}
+	s.startedAt = time.Now()
 	// Tap the audit pipeline for the CAEP/SSF transmitter, if wired. Done
 	// here (after every option ran, so order between WithAuditRecorder and
 	// WithCAEPTransmitter doesn't matter) by fanning the recorder's sink

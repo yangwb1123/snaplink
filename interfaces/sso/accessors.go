@@ -2,6 +2,8 @@ package sso
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"github.com/snaplink/sso/domains/federation"
 	"net/http"
@@ -77,6 +79,16 @@ func (s *Server) SrvLogger() spi.Logger                     { return s.logger }
 func (s *Server) Issuer() string                            { return s.issuer }
 func (s *Server) SessionMgr() core.SessionManager           { return s.sessionMgr }
 func (s *Server) ClientStoreAccessor() core.ClientStore     { return s.clientStore }
+
+// DestroySession implements oidc.EndSessionDeps: destroys the server-side SSO
+// session so the session cookie cannot be reused after /end_session logout.
+// Fail-open: a nil session manager or store error is tolerated (logged by caller).
+func (s *Server) DestroySession(ctx context.Context, sessionID string) error {
+	if s.sessionMgr == nil {
+		return nil
+	}
+	return s.sessionMgr.Destroy(ctx, sessionID)
+}
 func (s *Server) TokenIssuers() map[string]core.TokenIssuer { return s.tokenIssuers }
 func (s *Server) LogoutTokenIssuer() LogoutTokenIssuer      { return s.logoutTokenIssuer }
 func (s *Server) LogoutNotifier() LogoutNotifier            { return s.logoutNotifier }
@@ -302,29 +314,45 @@ func (s *Server) FederationNow() time.Time { return time.Now() }
 // JWKS document cache methods.
 func (s *Server) ComputeJWKSDocument(compute func() ([]byte, error)) ([]byte, error) {
 	if s.jwksCacheTTL > 0 {
-		s.jwksBodyMu.RLock()
-		if time.Now().Before(s.jwksBodyExp) && len(s.jwksBodyCache) > 0 {
-			body := s.jwksBodyCache
-			s.jwksBodyMu.RUnlock()
-			return body, nil
+		if v, ok := s.jwksBodyCache.Load("default"); ok {
+			entry, _ := v.(*jwksCacheEntry)
+			if entry.Fresh() {
+				return entry.body, nil
+			}
 		}
-		s.jwksBodyMu.RUnlock()
 	}
+	// Cache miss or disabled: run the compute closure under single-flight
+	// so concurrent polls share one computation.
 	body, err := s.jwksFlight.Do(compute)
 	if err != nil {
 		return nil, err
 	}
 	if s.jwksCacheTTL > 0 {
-		s.jwksBodyMu.Lock()
-		s.jwksBodyCache = body
-		s.jwksBodyExp = time.Now().Add(s.jwksCacheTTL)
-		s.jwksBodyMu.Unlock()
+		// Compute ETag from body SHA-256 and store with jittered expiry.
+		sum := sha256.Sum256(body)
+		etag := `"` + base64.RawURLEncoding.EncodeToString(sum[:8]) + `"`
+		expiry := time.Now().Add(jitterTTL(s.jwksCacheTTL))
+		s.jwksBodyCache.Store("default", &jwksCacheEntry{body: body, etag: etag, expiry: expiry})
 	}
 	return body, nil
 }
 
+// CachedJWKSETag returns the ETag from the cached JWKS document, or empty
+// string when the cache is empty or expired. Lock-free read via sync.Map.
+func (s *Server) CachedJWKSETag() string {
+	v, ok := s.jwksBodyCache.Load("default")
+	if !ok {
+		return ""
+	}
+	entry, _ := v.(*jwksCacheEntry)
+	if entry == nil || !entry.Fresh() {
+		return ""
+	}
+	return entry.etag
+}
+
+// InvalidateJWKSBodyCache drops the cached JWKS document so the next
+// call to ComputeJWKSDocument recomputes from scratch.
 func (s *Server) InvalidateJWKSBodyCache() {
-	s.jwksBodyMu.Lock()
-	s.jwksBodyExp = time.Time{}
-	s.jwksBodyMu.Unlock()
+	s.jwksBodyCache.Delete("default")
 }

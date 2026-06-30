@@ -131,8 +131,8 @@ func TestJWKS_DefaultTTLAppliesWithoutOverride(t *testing.T) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	cc := resp.Header.Get("Cache-Control")
-	if !strings.Contains(cc, "max-age=300") {
-		t.Errorf("Cache-Control = %q want default max-age=300", cc)
+	if !strings.Contains(cc, "max-age=5") {
+		t.Errorf("Cache-Control = %q want default max-age=5", cc)
 	}
 }
 

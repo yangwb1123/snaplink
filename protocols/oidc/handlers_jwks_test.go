@@ -33,6 +33,7 @@ func (d *jwksDeps) JWKSCacheMaxAge() time.Duration            { return d.maxAge 
 func (d *jwksDeps) ComputeJWKSDocument(compute func() ([]byte, error)) ([]byte, error) {
 	return compute()
 }
+func (d *jwksDeps) CachedJWKSETag() string { return "" }
 
 // errorIssuer is a TokenIssuer + JWKSProvider whose JWKS() always fails, so
 // the handler's "provider failed → log + skip" branch is exercised without

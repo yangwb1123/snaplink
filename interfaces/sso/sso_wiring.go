@@ -74,4 +74,8 @@ type wiringState struct {
 	// `aud` MUST contain.
 	spiffeValidator *security.SPIFFEValidator
 	spiffeAudience  string
+
+	// startedAt records when NewServer completed. Used by /api/v1/status
+	// to compute uptime. Set automatically in NewServer; no option required.
+	startedAt time.Time
 }

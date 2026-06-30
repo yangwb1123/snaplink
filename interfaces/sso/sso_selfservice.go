@@ -2,7 +2,6 @@ package sso
 
 import (
 	"io/fs"
-	"sync"
 	"time"
 
 	"github.com/snaplink/sso/domains/metering"
@@ -145,17 +144,6 @@ type selfServiceState struct {
 	// (WithTenantUsageAggregator). Nil ⇒ the route is NOT mounted —
 	// byte-identical to a build without it.
 	usageAggregator metering.Aggregator
-
-	// jwksBodyCache holds the pre-marshaled JWKS document, valid for
-	// jwksCacheTTL. When jwksCacheTTL == 0 the cache is disabled and every
-	// serial poll runs the full issuer-walk + marshal (concurrent bursts still
-	// share one result via jwksFlight). Invalidated by InvalidateJWKSBodyCache
-	// when the key set changes (local rotation, peer adoption, client DCR).
-	// Thread-safe: reads hold jwksBodyMu RLock, writes hold it exclusively;
-	// zero-value jwksBodyExp ensures an uninitialized cache is always expired.
-	jwksBodyMu    sync.RWMutex
-	jwksBodyCache []byte
-	jwksBodyExp   time.Time
 
 	// adminConsoleFS, when non-nil, serves the hosted admin console SPA from
 	// an embedded or OS filesystem at /admin/. The console is a standalone

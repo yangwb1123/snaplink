@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -9,6 +10,31 @@ import (
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/security"
 )
+
+// jwksCacheEntry holds a cached JWKS document body, its ETag, and expiry
+// with jitter. Stored in cacheState.jwksBodyCache via sync.Map.
+type jwksCacheEntry struct {
+	body   []byte
+	etag   string
+	expiry time.Time
+}
+
+// Fresh reports whether the entry is still within its jittered TTL window.
+func (e *jwksCacheEntry) Fresh() bool {
+	return e != nil && time.Now().Before(e.expiry)
+}
+
+// jitterTTL returns base ± 20% random jitter. A zero or negative base
+// is returned unchanged (cache disabled).
+func jitterTTL(base time.Duration) time.Duration {
+	if base <= 0 {
+		return base
+	}
+	// Scale by [0.8, 1.2) so concurrent replicas don't all expire at
+	// the same wall-clock instant — thundering-herd avoidance.
+	f := 0.8 + 0.4*rand.Float64()
+	return time.Duration(float64(base) * f)
+}
 
 // cacheState holds discovery/JWKS body caches, the JWKS single-flight, pairwise subject config, and the Server-level signing-alg allowlist.
 type cacheState struct {
@@ -47,6 +73,14 @@ type cacheState struct {
 	// the in-flight one finishes recomputes — preserving the "JWKS
 	// reflects the new key immediately" contract (no staleness window).
 	jwksFlight servercache.JWKSSingleFlight
+
+	// JWKS body cache: the pre-marshaled JWKS document + ETag, cached
+	// for jwksCacheTTL with ±20% jitter so concurrent replicas don't
+	// all expire at the same clock tick. Keyed by "default" (single
+	// global doc). Lock-free reads via sync.Map; misses fall through to
+	// jwksFlight + issuer-walk. Invalidated by InvalidateJWKSBodyCache
+	// when the key set changes.
+	jwksBodyCache sync.Map
 
 	// OIDC Core §8 pairwise subject identifiers. Nil pairwiseStore
 	// disables the feature entirely — every client receives a public

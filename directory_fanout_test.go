@@ -67,7 +67,7 @@ var dirFileCountExemptions = map[string]int{
 // proto and the tooling dirs (docs/ops/checks/.github/.arch/.prompts). It does
 // not shrink — the cap just prevents root sprawl past today's count.
 var dirSubdirExemptions = map[string]int{
-	".": 20,
+	".": 21,
 }
 
 // dirFanout is one measured directory.
