@@ -132,6 +132,32 @@ func TestFinishRegistration_UnknownSessionReturnsError(t *testing.T) {
 	}
 }
 
+// TestFinishRegistration_UserMismatchRejected proves that when a valid session
+// belongs to "alice" but the caller presents a bearer for "bob", FinishRegistration
+// returns a mismatch error BEFORE any attestation is attempted. This guards against
+// session hijacking where a valid bearer for user B drives a ceremony begun by user A.
+func TestFinishRegistration_UserMismatchRejected(t *testing.T) {
+	t.Parallel()
+	h := newHelperForTest(t)
+	ctx := context.Background()
+
+	// Begin a registration for alice — this creates a live session.
+	_, sessionID, err := h.BeginRegistration(ctx, "alice", "Alice")
+	if err != nil {
+		t.Fatalf("BeginRegistration: %v", err)
+	}
+
+	// Attempt to finish with a bearer for "bob" — must fail.
+	req := httptest.NewRequest("POST", "/webauthn/registration/finish", strings.NewReader("{}"))
+	_, err = h.FinishRegistration(ctx, sessionID, "bob", req)
+	if err == nil {
+		t.Fatal("expected error for user mismatch, got nil")
+	}
+	if !strings.Contains(err.Error(), "mismatch") {
+		t.Fatalf("error %q does not mention mismatch", err)
+	}
+}
+
 func TestBeginLogin_UnknownUserReturnsError(t *testing.T) {
 	t.Parallel()
 	h := newHelperForTest(t)

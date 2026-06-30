@@ -343,12 +343,14 @@ func (h *Helper) FinishRegistration(ctx context.Context, sessionID, expectedUser
 	if err != nil {
 		return nil, err
 	}
-	if expectedUserID != "" && string(session.UserID) != expectedUserID {
-		return nil, fmt.Errorf("webauthn: session user mismatch")
-	}
 	user, err := h.userFromSession(ctx, session)
 	if err != nil {
 		return nil, err
+	}
+	// session.UserID is the binary WebAuthn handle (random bytes), NOT the
+	// SSO user ID. user.Name is the SSO subject stored at BeginRegistration.
+	if expectedUserID != "" && user.Name != expectedUserID {
+		return nil, fmt.Errorf("webauthn: session user mismatch")
 	}
 	cred, err := h.core.FinishRegistration(user, *session, r)
 	if err != nil {
