@@ -12,6 +12,20 @@ import (
 	"github.com/snaplink/sso/protocols/oauth"
 )
 
+// InvalidateConnectionCache publishes a KindConnectionChange event to the
+// cluster bus so every peer replica knows to reload its connection config
+// after a connection was created, updated, or deleted via the admin API.
+// Best-effort: a publish failure is logged but does not roll back the
+// store write (mirrors InvalidateClientCache's error handling).
+func (s *Server) InvalidateConnectionCache(connID string) {
+	if s.invalidationBus != nil {
+		evt := cluster.Event{Kind: cluster.KindConnectionChange, Key: connID}
+		if err := s.invalidationBus.Publish(context.Background(), evt); err != nil {
+			s.logger.Error("invalidation bus publish failed", "kind", string(evt.Kind), "key", connID, "error", err)
+		}
+	}
+}
+
 func (s *Server) InvalidateClientCache(clientID string) {
 	if s.clientStoreCacheRef != nil {
 		s.clientStoreCacheRef.Evict(clientID)
@@ -391,6 +405,11 @@ func (s *Server) applyInvalidation(ctx context.Context, evt cluster.Event) {
 		// No-op unless WithCoordinatedKeyRotation armed this replica.
 		s.applyCoordinatedKeyRotation(ctx, evt)
 		s.InvalidateJWKSBodyCache()
+	case cluster.KindConnectionChange:
+		// evt.Key is the connID whose config changed. No per-replica connection
+		// cache exists yet; when one is added, evict evt.Key here. The arm must
+		// be present so a mixed-version cluster doesn't hit the default (unknown
+		// kind) branch during the rollout window.
 	case cluster.KindTokenRevoked:
 		// A peer revoked an access token: ADD it to this replica's per-issuer
 		// in-process deny-set via the LOCAL-only revoke path (which never

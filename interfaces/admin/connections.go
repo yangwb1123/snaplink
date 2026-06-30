@@ -112,6 +112,7 @@ func HandleAdminUpsertConnection(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
+	d.InvalidateConnectionCache(req.ID)
 	recordAdminConnectionAction(d, ctx, audit.EventAdminConnectionUpserted, req.ID, req.TenantID)
 	ctx.JSON(http.StatusOK, connectionToJSON(conn))
 }
@@ -130,6 +131,7 @@ func HandleAdminDeleteConnection(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
+	d.InvalidateConnectionCache(id)
 	recordAdminConnectionAction(d, ctx, audit.EventAdminConnectionDeleted, id, "")
 	ctx.JSON(http.StatusNoContent, nil)
 }

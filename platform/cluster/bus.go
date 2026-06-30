@@ -65,6 +65,14 @@ const (
 	// Event only affects metadata freshness, never a credential decision.
 	KindClientChange EventKind = "client.change"
 
+	// KindConnectionChange signals that an enterprise connection was created,
+	// updated, or deleted via the admin API. Subscribers must reload their
+	// local connection config on the next home-realm-discovery lookup so
+	// stale IdP configs (including compromised ones that were deleted) are not
+	// served to users whose requests land on a peer replica. Best-effort:
+	// a dropped Event only prolongs the stale-config window by one cache TTL.
+	KindConnectionChange EventKind = "connection.change"
+
 	// KindSigningKeyRotation signals that the publishing replica rotated its
 	// signing key: a NEW kid is now the active signer and an OLD (demoted) kid
 	// is verify-only, scheduled for retirement at a wall-clock deadline. The

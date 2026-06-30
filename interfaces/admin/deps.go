@@ -27,4 +27,9 @@ type Deps interface {
 	EmailChangeStore() core.EmailChangeStore
 	Auditor() *audit.Recorder
 	Logger() spi.Logger
+	// InvalidateConnectionCache publishes a KindConnectionChange event to the
+	// cluster bus so peer replicas evict any cached connection config for connID.
+	// Called after every connection upsert and delete. Fire-and-forget: a bus
+	// failure is logged but does not roll back the already-committed store write.
+	InvalidateConnectionCache(connID string)
 }
