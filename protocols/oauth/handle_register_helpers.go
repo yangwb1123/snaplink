@@ -222,8 +222,9 @@ func buildUpdatedClient(req *DCRRequest, client *core.Client, ratToStore string)
 		// above), NOT req.TokenEndpointAuthMethod — otherwise a PUT omitting or
 		// changing that field could clear RequirePKCE on a still-public client,
 		// reaching the public-client-without-PKCE state the create path forbids.
-		RequirePKCE:      req.RequirePKCE || client.Secret == "",
-		AllowedResources:        append([]string(nil), req.AllowedResources...),
+		RequirePKCE:        req.RequirePKCE || client.Secret == "",
+		AllowedPKCEMethods: pkceMethodsForRegistration(req.RequirePKCE || client.Secret == ""),
+		AllowedResources:   append([]string(nil), req.AllowedResources...),
 		PostLogoutRedirectURIs:  append([]string(nil), req.PostLogoutRedirectURIs...),
 		GrantTypes:              append([]string(nil), req.GrantTypes...),
 
