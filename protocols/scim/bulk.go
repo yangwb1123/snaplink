@@ -161,7 +161,6 @@ func (h *Handler) decodeBulkRequest(w http.ResponseWriter, r *http.Request) (Bul
 func (h *Handler) runBulkOp(r *http.Request, op BulkOperation, bulkIDs map[string]string) (BulkOperation, bool) {
 	method := strings.ToUpper(strings.TrimSpace(op.Method))
 	rop := BulkOperation{Method: op.Method, BulkID: op.BulkID}
-
 	// RFC 7644 §3.7.2: a POST operation MUST carry a bulkId.
 	if method == http.MethodPost && op.BulkID == "" {
 		rop.Status = strconv.Itoa(http.StatusBadRequest)
@@ -169,23 +168,28 @@ func (h *Handler) runBulkOp(r *http.Request, op BulkOperation, bulkIDs map[strin
 		return rop, true
 	}
 
+	// RFC 7644 §3.7.2 allows any path except /Bulk itself — allowing recursive
+	// /Bulk dispatch causes unbounded goroutine-stack growth (DoS).
+	path := strings.TrimSpace(op.Path)
+	if strings.EqualFold(path, pathBulk) {
+		rop.Status = strconv.Itoa(http.StatusBadRequest)
+		rop.Response = marshalErr(newError(http.StatusBadRequest, scimTypeInvalidValue, "/Bulk is not a valid target for a bulk operation"))
+		return rop, true
+	}
 	// Resolve "bulkId:<id>" references (path + data) against prior POSTs.
-	path := resolveBulkRefs(op.Path, bulkIDs)
+	path = resolveBulkRefs(path, bulkIDs)
 	data := op.Data
 	if len(data) > 0 {
 		data = json.RawMessage(resolveBulkRefs(string(data), bulkIDs))
 	}
 
 	// Replay the operation through the handler's own dispatch.
-	sreq, err := http.NewRequestWithContext(r.Context(), method, h.basePath+path, bytes.NewReader(data))
+	rec, err := h.execBulkSubrequest(r, method, path, data)
 	if err != nil {
 		rop.Status = strconv.Itoa(http.StatusBadRequest)
 		rop.Response = marshalErr(newError(http.StatusBadRequest, scimTypeInvalidValue, "invalid operation method or path"))
 		return rop, true
 	}
-	sreq.Header.Set("Content-Type", contentTypeSCIM)
-	rec := &bulkCapture{}
-	h.ServeHTTP(rec, sreq)
 
 	rop.Status = strconv.Itoa(rec.code)
 	if rec.code >= 200 && rec.code < 300 {
@@ -203,6 +207,21 @@ func (h *Handler) runBulkOp(r *http.Request, op BulkOperation, bulkIDs map[strin
 	}
 	rop.Response = append(json.RawMessage(nil), rec.body.Bytes()...)
 	return rop, true
+}
+
+// execBulkSubrequest builds a sub-request for the given method/path/data and
+// dispatches it through the handler's own ServeHTTP, capturing the response.
+// Returns an error only when the request itself is malformed (invalid method
+// or path) — an HTTP error from the sub-handler is captured in *bulkCapture.
+func (h *Handler) execBulkSubrequest(r *http.Request, method, path string, data json.RawMessage) (*bulkCapture, error) {
+	sreq, err := http.NewRequestWithContext(r.Context(), method, h.basePath+path, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	sreq.Header.Set("Content-Type", contentTypeSCIM)
+	rec := &bulkCapture{}
+	h.ServeHTTP(rec, sreq)
+	return rec, nil
 }
 
 // me handles the SCIM /Me alias (RFC 7644 §3.11): it resolves the request to
