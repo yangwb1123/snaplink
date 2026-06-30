@@ -106,6 +106,9 @@ func planGroupPathOp(verb string, pp patchPath, value json.RawMessage, rawPath s
 		if err := json.Unmarshal(value, &s); err != nil {
 			return newError(http.StatusBadRequest, scimTypeInvalidValue, "displayName must be a string"), nil, false, "", false
 		}
+		if strings.TrimSpace(s) == "" {
+			return newError(http.StatusBadRequest, scimTypeInvalidValue, "displayName is required and cannot be empty"), nil, false, "", false
+		}
 		return ErrorResponse{}, nil, true, s, true
 
 	case pp.isAttr(pathAttrMembers) && pp.filter != nil:

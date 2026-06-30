@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -170,7 +171,13 @@ func (h *Handler) runBulkOp(r *http.Request, op BulkOperation, bulkIDs map[strin
 
 	// RFC 7644 §3.7.2 allows any path except /Bulk itself — allowing recursive
 	// /Bulk dispatch causes unbounded goroutine-stack growth (DoS).
+	// URL-decode before comparing: http.NewRequestWithContext decodes
+	// percent-encoded paths (e.g. /%42ulk → /Bulk) so the router still
+	// routes them to h.bulk even when EqualFold on the raw string passes.
 	path := strings.TrimSpace(op.Path)
+	if decoded, err := url.PathUnescape(path); err == nil {
+		path = decoded
+	}
 	if strings.EqualFold(path, pathBulk) {
 		rop.Status = strconv.Itoa(http.StatusBadRequest)
 		rop.Response = marshalErr(newError(http.StatusBadRequest, scimTypeInvalidValue, "/Bulk is not a valid target for a bulk operation"))
@@ -191,18 +198,22 @@ func (h *Handler) runBulkOp(r *http.Request, op BulkOperation, bulkIDs map[strin
 		return rop, true
 	}
 
+	return processBulkCapture(rop, rec, method, bulkIDs)
+}
+
+// processBulkCapture stamps the HTTP status onto rop and, on success, extracts
+// the created resource id+location and maps the bulkId for later references.
+// Success bodies are omitted (RFC 7644 §3.7 examples); location suffices.
+func processBulkCapture(rop BulkOperation, rec *bulkCapture, method string, bulkIDs map[string]string) (BulkOperation, bool) {
 	rop.Status = strconv.Itoa(rec.code)
 	if rec.code >= 200 && rec.code < 300 {
 		id, loc := createdIDAndLocation(rec.body.Bytes())
 		if loc != "" {
 			rop.Location = loc
 		}
-		// Map the bulkId so later operations can reference the new resource.
-		if method == http.MethodPost && op.BulkID != "" && id != "" {
-			bulkIDs[op.BulkID] = id
+		if method == http.MethodPost && rop.BulkID != "" && id != "" {
+			bulkIDs[rop.BulkID] = id
 		}
-		// Success bodies are omitted from the BulkResponse (RFC 7644 §3.7
-		// examples carry a body only on error); the location suffices.
 		return rop, false
 	}
 	rop.Response = append(json.RawMessage(nil), rec.body.Bytes()...)
