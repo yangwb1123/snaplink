@@ -10,12 +10,14 @@ import (
 //   - timestamp defaulting
 //   - error redirection through ErrorHandler instead of returning
 //   - nil-safe Record (so handlers can call it without conditional guards)
+//   - optional server-version stamping for deployment-identity in every event
 type Recorder struct {
-	sink     Sink
-	onError  ErrorHandler
-	now      func() time.Time
-	chain    *chainer
-	redactor Redactor
+	sink          Sink
+	onError       ErrorHandler
+	now           func() time.Time
+	chain         *chainer
+	redactor      Redactor
+	serverVersion string
 }
 
 type Option func(*Recorder)
@@ -63,6 +65,19 @@ func WithHashChain() Option {
 	}
 }
 
+// WithServerVersion sets the server version string that is stamped onto
+// every recorded event's ServerVersion field. This lets operators
+// correlate audit trails to specific binary versions during rolling
+// deployments. Pass the result of [buildinfo.Resolve] or a similar
+// version resolution. An empty string is a no-op (no stamping).
+func WithServerVersion(version string) Option {
+	return func(r *Recorder) {
+		if version != "" {
+			r.serverVersion = version
+		}
+	}
+}
+
 func New(sink Sink, opts ...Option) *Recorder {
 	r := &Recorder{sink: sink, now: time.Now}
 	for _, opt := range opts {
@@ -96,13 +111,21 @@ func (r *Recorder) AddSink(extra Sink) {
 // Record persists e. Safe to call on a nil Recorder (no-op) so handlers can
 // always invoke it without guard. Timestamp is filled in if zero. When the
 // Recorder was constructed with [WithHashChain], the event's PrevHash + Hash
-// fields are stamped before the sink sees it.
+// fields are stamped before the sink sees it. When a server version was
+// configured via [WithServerVersion], it is stamped onto every event.
 func (r *Recorder) Record(ctx context.Context, e *Event) {
 	if r == nil || r.sink == nil || e == nil {
 		return
 	}
 	if e.Timestamp.IsZero() {
 		e.Timestamp = r.now()
+	}
+	// Server-version identity: stamp the deployment version so audit
+	// consumers can correlate events with the binary that produced them
+	// even across a rolling deployment. Stamped before redaction and
+	// hashing so the version is part of the tamper-evident chain.
+	if r.serverVersion != "" {
+		e.ServerVersion = r.serverVersion
 	}
 	// Redaction runs BEFORE the hash chainer so the chain validates
 	// over the redacted form. A downstream verifier shouldn't need

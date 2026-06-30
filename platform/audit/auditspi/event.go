@@ -51,4 +51,11 @@ type Event struct {
 	// break. Empty for both = chain disabled.
 	PrevHash string `json:"prev_hash,omitempty"`
 	Hash     string `json:"hash,omitempty"`
+
+	// ServerVersion is the deploying software version, resolved at
+	// Recorder construction via the [WithServerVersion] option.
+	// Stamped onto every event so operators correlating audit trails
+	// across a rolling deployment can tell which binary version
+	// produced each record. Empty when the option is not wired.
+	ServerVersion string `json:"server_version,omitempty"`
 }
