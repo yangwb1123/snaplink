@@ -201,12 +201,8 @@ func tokExResolveActor(d TokenExchangeDeps, ctx core.HandlerContext, client *cor
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return true, false
 	}
-	actorClaims, _, aerr := d.ValidateAnyToken(ctx.Request().Context(), req.ActorToken)
-	if aerr != nil || actorClaims == nil {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
-		return true, false
-	}
-	if tokExActorJTIReplay(d, ctx, actorClaims) {
+	actorClaims, done := tokExValidateActor(d, ctx, req, st)
+	if done {
 		return true, false
 	}
 	// RFC 8693 §4.1.1: when the subject_token already carries an `act` claim
@@ -220,6 +216,27 @@ func tokExResolveActor(d TokenExchangeDeps, ctx core.HandlerContext, client *cor
 	}
 	st.actor = &core.ActorClaim{Subject: actorClaims.Subject, Actor: st.claims.Actor}
 	return false, false
+}
+
+// tokExValidateActor validates the actor_token JWT and enforces the RFC 8693
+// §4.4 `may_act` constraint from the subject_token. Returns the resolved actor
+// claims and done=true (response already written) when any check fails.
+func tokExValidateActor(d TokenExchangeDeps, ctx core.HandlerContext, req TokenExchangeRequest, st *tokExState) (actorClaims *core.TokenClaims, done bool) {
+	actorClaims, _, aerr := d.ValidateAnyToken(ctx.Request().Context(), req.ActorToken)
+	if aerr != nil || actorClaims == nil {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return nil, true
+	}
+	if tokExActorJTIReplay(d, ctx, actorClaims) {
+		return nil, true
+	}
+	// RFC 8693 §4.4: only the actor named in may_act may impersonate the subject.
+	// Oracle-safe: same error code as expired/unknown subject (no disclosure).
+	if st.claims.MayAct != nil && st.claims.MayAct.Subject != actorClaims.Subject {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return nil, true
+	}
+	return actorClaims, false
 }
 
 // tokExActorJTIReplay applies the actor_token jti-replay defense. Returns true

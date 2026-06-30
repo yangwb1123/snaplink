@@ -76,6 +76,13 @@ type TokenClaims struct {
 	// flight).
 	Actor *ActorClaim `json:"act,omitempty"`
 
+	// MayAct is the RFC 8693 §4.4 `may_act` claim from the
+	// subject_token, indicating the only actor authorized to
+	// exchange it. When non-nil, the AS MUST verify the actor
+	// token's subject matches MayAct.Subject. Nil means the
+	// token imposes no actor constraint (AS policy applies).
+	MayAct *ActorClaim `json:"may_act,omitempty"`
+
 	// RequestedClaims is the OIDC Core §5.5 `claims` parameter carried
 	// in the access token so /userinfo can project the RP-requested
 	// claims. Preserved as raw JSON. Empty = no extra projection beyond
