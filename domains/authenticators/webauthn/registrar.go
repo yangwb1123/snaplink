@@ -44,9 +44,11 @@ func (r *Registrar) BeginRegistration(ctx context.Context, userID, displayName s
 
 // FinishRegistration verifies the attestation in req against the session and
 // persists the credential against the session's user, returning the new
-// credential id (base64url, the /me/mfa factor handle).
-func (r *Registrar) FinishRegistration(ctx context.Context, sessionID string, req *http.Request) (string, error) {
-	cred, err := r.h.FinishRegistration(ctx, sessionID, req)
+// credential id (base64url, the /me/mfa factor handle). expectedUserID must
+// match the session's user (prevents ceremony-session hijacking by another
+// bearer). Pass "" only on the unauthenticated signup path (not via Registrar).
+func (r *Registrar) FinishRegistration(ctx context.Context, sessionID, expectedUserID string, req *http.Request) (string, error) {
+	cred, err := r.h.FinishRegistration(ctx, sessionID, expectedUserID, req)
 	if err != nil {
 		return "", err
 	}

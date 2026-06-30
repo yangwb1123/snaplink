@@ -361,8 +361,9 @@ type WebAuthnRegistrar interface {
 	// FinishRegistration verifies the attestation in r against the session and
 	// persists the credential against the session's user, returning the new
 	// credential id (base64url). The session — not request input — determines
-	// the owning user.
-	FinishRegistration(ctx context.Context, sessionID string, r *http.Request) (credentialID string, err error)
+	// the owning user. expectedUserID must match the session's user; pass ""
+	// to skip the check (unauthenticated ceremony path only).
+	FinishRegistration(ctx context.Context, sessionID, expectedUserID string, r *http.Request) (credentialID string, err error)
 }
 
 // TOTPEnroller is the server-side seam the self-service TOTP enrollment handlers

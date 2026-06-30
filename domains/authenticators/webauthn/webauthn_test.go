@@ -126,7 +126,7 @@ func TestFinishRegistration_UnknownSessionReturnsError(t *testing.T) {
 	t.Parallel()
 	h := newHelperForTest(t)
 	req := httptest.NewRequest("POST", "/webauthn/registration/finish", strings.NewReader("{}"))
-	_, err := h.FinishRegistration(context.Background(), "ghost-session", req)
+	_, err := h.FinishRegistration(context.Background(), "ghost-session", "", req)
 	if !errors.Is(err, ErrSessionUnknown) {
 		t.Fatalf("got %v, want ErrSessionUnknown", err)
 	}

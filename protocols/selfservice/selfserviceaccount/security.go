@@ -111,7 +111,7 @@ func HandleWebAuthnRegisterFinish(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrInvalidRequest))
 		return
 	}
-	credID, err := reg.FinishRegistration(ctx.Request().Context(), sessionID, ctx.Request())
+	credID, err := reg.FinishRegistration(ctx.Request().Context(), sessionID, userID, ctx.Request())
 	if err != nil {
 		d.Logger().Error("webauthn register finish failed", "user_id", userID, "error", err)
 		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrWebAuthnRegistration))

@@ -196,7 +196,7 @@ func (r *rcov2WebAuthnRegistrar) BeginRegistration(_ context.Context, userID, _ 
 	return []byte(`{"publicKey":{"challenge":"AAAA"}}`), r.session, nil
 }
 
-func (r *rcov2WebAuthnRegistrar) FinishRegistration(_ context.Context, sessionID string, _ *http.Request) (string, error) {
+func (r *rcov2WebAuthnRegistrar) FinishRegistration(_ context.Context, sessionID, _ string, _ *http.Request) (string, error) {
 	if r.fail || sessionID != r.session {
 		return "", errors.New("attestation invalid")
 	}

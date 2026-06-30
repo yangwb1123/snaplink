@@ -334,11 +334,17 @@ func (h *Helper) BeginRegistration(ctx context.Context, name, displayName string
 
 // FinishRegistration completes the ceremony. session is the ID
 // returned by the matching BeginRegistration; r is the request
-// carrying the attestation response in its body.
-func (h *Helper) FinishRegistration(ctx context.Context, sessionID string, r *http.Request) (*gw.Credential, error) {
+// carrying the attestation response in its body. When expectedUserID is
+// non-empty the session's user MUST match it — prevents an attacker from
+// driving a Finish with another user's Begin session (bearer hijacking).
+// Pass "" on the unauthenticated signup ceremony where no bearer exists.
+func (h *Helper) FinishRegistration(ctx context.Context, sessionID, expectedUserID string, r *http.Request) (*gw.Credential, error) {
 	session, err := h.sessions.Take(ctx, sessionID)
 	if err != nil {
 		return nil, err
+	}
+	if expectedUserID != "" && string(session.UserID) != expectedUserID {
+		return nil, fmt.Errorf("webauthn: session user mismatch")
 	}
 	user, err := h.userFromSession(ctx, session)
 	if err != nil {

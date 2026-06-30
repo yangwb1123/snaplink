@@ -45,7 +45,7 @@ func webauthnFinishRegistrationHandler(deps *WebAuthnDeps) http.HandlerFunc {
 			recordWebAuthnRegistration(deps, "failure")
 			return
 		}
-		cred, err := deps.Helper.FinishRegistration(r.Context(), sessionID, r)
+		cred, err := deps.Helper.FinishRegistration(r.Context(), sessionID, "", r)
 		if err != nil {
 			// Attestation-policy denial is a distinct disposition: the
 			// authenticator verified fine but its AAGUID isn't permitted.
