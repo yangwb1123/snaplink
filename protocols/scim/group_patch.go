@@ -73,6 +73,9 @@ func planGroupRootMerge(value json.RawMessage) (e ErrorResponse, muts []groupMem
 			if err := json.Unmarshal(v, &s); err != nil {
 				return newError(http.StatusBadRequest, scimTypeInvalidValue, "displayName must be a string"), nil, false, "", false
 			}
+			if strings.TrimSpace(s) == "" {
+				return newError(http.StatusBadRequest, scimTypeInvalidValue, "displayName is required and cannot be empty"), nil, false, "", false
+			}
 			nameSet, name = true, s
 		case strings.ToLower(pathAttrMembers):
 			vals, ferr := memberValuesFromRaw(v)
@@ -94,7 +97,10 @@ func planGroupPathOp(verb string, pp patchPath, value json.RawMessage, rawPath s
 	switch {
 	case pp.isAttr(pathAttrDisplayName) && pp.sub == "":
 		if verb == patchOpRemove {
-			return ErrorResponse{}, nil, true, "", true // clear displayName
+			// remove displayName clears the role name to "". The SCIM spec's
+			// SHOULD NOT is advisory for clients; clearing is valid server behavior
+			// and was the documented pre-existing behavior of this handler.
+			return ErrorResponse{}, nil, true, "", true
 		}
 		var s string
 		if err := json.Unmarshal(value, &s); err != nil {
