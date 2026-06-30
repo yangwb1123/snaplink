@@ -105,6 +105,7 @@ func (s *Server) mountMiddleware() {
 // service signup routes.
 func (s *Server) mountCoreOAuthOIDC() {
 	s.router.GET(PathHealth, s.handleHealth)
+	s.router.GET(PathStatus, s.handleStatus)
 	s.router.GET(PathJWKS, s.handleJWKS)
 	s.router.GET(PathOIDCDiscovery, s.handleOIDCDiscovery)
 	s.router.POST(PathLogin, s.handleLogin)

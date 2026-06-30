@@ -92,3 +92,31 @@ func (s *Server) handleStorageHealth(ctx HandlerContext) {
 func (s *Server) logErrorCtx(ctx core.HandlerContext, msg string, kv ...any) {
 	handler.LogErrorCtx(s.BuildHandlerDeps(), ctx, msg, kv...)
 }
+
+// handleStatus serves GET /api/v1/status — runtime server health + info.
+// Unauthenticated, read-only, no business logic.
+func (s *Server) handleStatus(ctx HandlerContext) {
+	bi := core.ReadBuildInfo()
+	uptime := time.Since(s.startedAt).Truncate(time.Second)
+
+	modules := map[string]string{}
+	if s.sessionMgr != nil {
+		modules["sessions"] = "ready"
+	}
+	if s.userProvider != nil {
+		modules["users"] = "ready"
+	}
+	if s.clientStore != nil {
+		modules["clients"] = "ready"
+	}
+
+	body := map[string]any{
+		"version":        bi.Version,
+		"commit":         bi.VCSRevision,
+		"build_time":     bi.VCSTime,
+		"uptime_seconds": int(uptime.Seconds()),
+		"modules":        modules,
+	}
+
+	ctx.JSON(http.StatusOK, body)
+}

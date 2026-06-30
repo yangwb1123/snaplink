@@ -319,4 +319,8 @@ const (
 	PathSAMLSLO         = "/saml/slo"
 	PathSAMLSLOContinue = "/saml/slo/continue"
 	PathSAMLSPSLO       = "/auth/saml/slo"
+
+	// PathStatus is the unauthenticated runtime server status endpoint.
+	// Returns version, uptime, and module health. Public (no auth required).
+	PathStatus = "/api/v1/status"
 )

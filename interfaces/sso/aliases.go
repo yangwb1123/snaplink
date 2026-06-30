@@ -364,6 +364,7 @@ const PathPAR = core.PathPAR
 const PathBackchannelAuth = core.PathBackchannelAuth
 const PathReadyz = core.PathReadyz
 const PathMetrics = core.PathMetrics
+const PathStatus = core.PathStatus
 const PathRevoke = core.PathRevoke
 const PathRevokeAll = core.PathRevokeAll
 const PathSAMLMetadata = core.PathSAMLMetadata
