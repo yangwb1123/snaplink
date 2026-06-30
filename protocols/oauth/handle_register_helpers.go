@@ -103,6 +103,18 @@ func registrationTenant(req *DCRRequest, policy *DCRPolicy) string {
 	return req.TenantID
 }
 
+// pkceMethodsForRegistration returns the AllowedPKCEMethods for a newly
+// registered client. When PKCE is required (public client or explicitly
+// requested), it defaults to S256 only — "plain" offers no protection against
+// an observer of the authorization request (RFC 7636 §4.2) and is prohibited
+// by OAuth 2.1. Operators can update AllowedPKCEMethods via the admin API.
+func pkceMethodsForRegistration(requirePKCE bool) []string {
+	if requirePKCE {
+		return []string{PKCEMethodS256}
+	}
+	return nil
+}
+
 func buildRegisteredClient(req *DCRRequest, policy *DCRPolicy, id, secret, regToken string, public bool) *core.Client {
 	tokenStrategy := req.TokenStrategy
 	if tokenStrategy == "" {
@@ -119,6 +131,7 @@ func buildRegisteredClient(req *DCRRequest, policy *DCRPolicy, id, secret, regTo
 		Active:                  policy.DefaultActive,
 		TenantID:                registrationTenant(req, policy),
 		RequirePKCE:             req.RequirePKCE || public, // public clients always PKCE
+		AllowedPKCEMethods:      pkceMethodsForRegistration(req.RequirePKCE || public),
 		AllowedResources:        append([]string(nil), req.AllowedResources...),
 		PostLogoutRedirectURIs:  append([]string(nil), req.PostLogoutRedirectURIs...),
 		RegistrationAccessToken: regToken,
