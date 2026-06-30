@@ -30,6 +30,11 @@ type EndSessionDeps interface {
 	FanOutBackchannelLogout(ctx core.HandlerContext, originClient *core.Client, subject, sid string)
 	RenderFrontchannelLogout(ctx core.HandlerContext, iframeURIs []string, redirectURI string)
 	RecordLogout(ctx core.HandlerContext, sessionID string, revoked []string)
+	// DestroySession kills the server-side SSO session by its `sid` claim so
+	// the session cookie cannot be reused after RP-Initiated Logout. nil
+	// implementations (no session manager wired) are acceptable — the method
+	// is called only when sid is non-empty.
+	DestroySession(ctx context.Context, sessionID string) error
 }
 
 // HandleEndSession implements OpenID Connect RP-Initiated Logout 1.0.
@@ -81,27 +86,16 @@ func HandleEndSession(d EndSessionDeps, ctx core.HandlerContext) {
 		return // a bad id_token_hint already wrote 400 invalid_token.
 	}
 
+	// Destroy the server-side SSO session so the browser's session cookie
+	// cannot be replayed after logout. Must happen before token revocation
+	// so the session is invalid even if the access-token revoke partially
+	// fails. Fail-open: a store error is logged by the implementation.
+	if sid != "" {
+		_ = d.DestroySession(ctx.Request().Context(), sid)
+	}
+
 	revokeEndSessionTokens(d, ctx, idTokenHint, userID, client)
-
-	// Capture FCL fan-out targets BEFORE the BCL fan-out runs: BCL's
-	// Forget-on-non-BCL behavior trims the SubjectClientIndex of clients
-	// without a BackchannelLogoutURI, so FCL gathered AFTER would silently
-	// drop those FCL-only peers. Render happens later; this only snapshots.
-	var fclIframes []string
-	if userID != "" {
-		fclIframes = d.GatherFrontchannelLogoutIframes(ctx, userID, client, sid)
-	}
-
-	// Back-Channel Logout — notify the id_token_hint's RP so its local
-	// session is torn down. No-op when BCL isn't wired / no backchannel uri.
-	if userID != "" && client != nil {
-		d.FanOutBackchannelLogout(ctx, client, userID, sid)
-	}
-
-	if userID != "" {
-		d.RecordLogout(ctx, "", []string{"id_token_hint"})
-	}
-
+	fclIframes := endSessionNotifyPeers(d, ctx, userID, client, sid)
 	target := composePostLogoutTarget(postLogoutURI, state, client)
 
 	// Front-Channel Logout — render the hidden-iframe page (with a
@@ -159,6 +153,24 @@ func resolveEndSessionClient(d EndSessionDeps, ctx core.HandlerContext, idTokenH
 		}
 	}
 	return client, "", "", false
+}
+
+// endSessionNotifyPeers gathers FCL iframes FIRST (BCL's SubjectClientIndex
+// housekeeping can trim FCL-only clients if called before the snapshot), then
+// fans out BCL notifications, and records the logout audit event. Returns the
+// FCL iframe list for the caller to render after the redirect target is known.
+func endSessionNotifyPeers(d EndSessionDeps, ctx core.HandlerContext, userID string, client *core.Client, sid string) []string {
+	var fclIframes []string
+	if userID != "" {
+		fclIframes = d.GatherFrontchannelLogoutIframes(ctx, userID, client, sid)
+	}
+	if userID != "" && client != nil {
+		d.FanOutBackchannelLogout(ctx, client, userID, sid)
+	}
+	if userID != "" {
+		d.RecordLogout(ctx, "", []string{"id_token_hint"})
+	}
+	return fclIframes
 }
 
 // revokeEndSessionTokens kills the id_token_hint's access-side counterpart (so a
