@@ -356,7 +356,10 @@ func TestBuildApp_FullFeatureSet(t *testing.T) {
 	}
 
 	// newGRPCServer registers every conditional admin service.
-	gs := newGRPCServer(a)
+	gs, err := newGRPCServer(a, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if gs == nil {
 		t.Fatal("nil grpc server")
 	}
@@ -404,7 +407,10 @@ func TestNewGRPCServer_MinimalRegistersCoreServices(t *testing.T) {
 		t.Fatalf("buildApp: %v", err)
 	}
 	defer shutdownApp(t, a)
-	gs := newGRPCServer(a)
+	gs, err := newGRPCServer(a, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if gs == nil {
 		t.Fatal("nil grpc server")
 	}

@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"time"
 
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/shared/spi"
@@ -22,6 +24,8 @@ import (
 	netpolicyv1 "github.com/snaplink/sso/gen/proto/netpolicy/v1"
 	"github.com/snaplink/sso/interfaces/grpcserver"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 )
 
 // buildHTTPServer wires the runtime handler and wraps it in an *http.Server with
@@ -95,11 +99,14 @@ func startPprofServer(cfg *config.Config, logger spi.Logger) *http.Server {
 // startGRPCServer registers + serves the gRPC services on grpcListen in a
 // goroutine. Returns (nil, nil) when grpcListen is empty (disabled). A bind
 // failure is fatal (returned); a clean stop sends nil on errCh.
-func startGRPCServer(a *app, grpcListen string, logger spi.Logger, errCh chan<- error) (*grpc.Server, error) {
+func startGRPCServer(a *app, grpcListen string, logger spi.Logger, tlsCert, tlsKey string, errCh chan<- error) (*grpc.Server, error) {
 	if grpcListen == "" {
 		return nil, nil
 	}
-	grpcSrv := newGRPCServer(a)
+	grpcSrv, err := newGRPCServer(a, tlsCert, tlsKey)
+	if err != nil {
+		return nil, fmt.Errorf("grpc server: %w", err)
+	}
 	ln, err := net.Listen("tcp", grpcListen)
 	if err != nil {
 		return nil, fmt.Errorf("grpc listen: %w", err)
@@ -115,21 +122,53 @@ func startGRPCServer(a *app, grpcListen string, logger spi.Logger, errCh chan<- 
 	return grpcSrv, nil
 }
 
-// newGRPCServer registers every available service on a fresh grpc.Server.
-// Phase A: Authorizer, Discovery (always — read-only, in-cluster trust model).
-// Phase B: AuditWriter + PolicyService when admin is enabled, gated by
-// AdminMiddleware's UnaryServerInterceptor. AuditWriter is a write endpoint
-// (it appends to the audit log); NetPolicy mutates network rules. Both require
-// admin auth: registering them without interceptors when admin.enabled=false
-// would leave mutation endpoints unauthenticated on the gRPC back-channel.
-func newGRPCServer(a *app) *grpc.Server {
+// newGRPCServer registers every available service on a fresh grpc.Server
+// with production-safe defaults: keepalive, max message size, connection
+// timeout, and optional TLS when tlsCert + tlsKey are both non-empty.
+func newGRPCServer(a *app, tlsCert, tlsKey string) (*grpc.Server, error) {
 	var opts []grpc.ServerOption
+
+	opts = append(opts,
+		grpc.MaxRecvMsgSize(16*1024*1024),            // 16 MB — big admin lists
+		grpc.MaxSendMsgSize(16*1024*1024),              // 16 MB — big admin responses
+		grpc.ConnectionTimeout(5*time.Second),           // guard against slow clients
+		grpc.MaxConcurrentStreams(100),                   // per-connection fairness
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionIdle:     15 * time.Minute, // close idle connections after 15m
+			MaxConnectionAge:      30 * time.Minute, // force reconnect every 30m
+			MaxConnectionAgeGrace: 5 * time.Second,  // grace for in-flight RPCs
+			Time:    60 * time.Second,               // ping interval
+			Timeout: 20 * time.Second,                // ping timeout
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             5 * time.Second, // minimum ping interval
+			PermitWithoutStream: false,            // require active stream for pings
+		}),
+		// Increase initial window sizes for large admin list responses.
+		grpc.InitialWindowSize(256 * 1024),     // 256 KB — stream window
+		grpc.InitialConnWindowSize(512 * 1024), // 512 KB — connection window
+	)
+
 	if a.adminMW != nil {
 		opts = append(opts,
 			grpc.UnaryInterceptor(a.adminMW.UnaryServerInterceptor()),
 			grpc.StreamInterceptor(a.adminMW.StreamServerInterceptor()),
 		)
 	}
+
+	// Optional TLS for gRPC (same cert as HTTP, or a dedicated gRPC pair).
+	if tlsCert != "" && tlsKey != "" {
+		cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+		if err != nil {
+			return nil, fmt.Errorf("grpc tls: %w", err)
+		}
+		tlsCfg := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		}
+		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsCfg)))
+	}
+
 	s := grpc.NewServer(opts...)
 	authzv1.RegisterAuthorizerServer(s, grpcserver.NewAuthzService(a.provider))
 	discoveryv1.RegisterDiscoveryServer(s, grpcserver.NewDiscoveryService(a.registry))
@@ -165,7 +204,7 @@ func newGRPCServer(a *app) *grpc.Server {
 				func(ctx context.Context, id string) { _, _ = a.server.RevokeTenantRefreshTokens(ctx, id) }))
 		}
 	}
-	return s
+	return s, nil
 }
 
 // buildHTTPHandler composes the SSO Server's runtime handler with the

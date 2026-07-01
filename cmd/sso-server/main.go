@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -90,6 +91,9 @@ func main() {
 
 	logger := newSlogLogger(cfg.Logging.Level)
 
+	// Go runtime tuning for consistent latency under load.
+	applyRuntimeTuning()
+
 	tracingShutdown := initTracing(cfg, logger)
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -100,6 +104,17 @@ func main() {
 	if err := run(cfg, logger, flags.tlsCert, flags.tlsKey, flags.grpcListen); err != nil {
 		logger.Error("server exited with error", "error", err)
 		os.Exit(1)
+	}
+}
+
+// applyRuntimeTuning adjusts Go runtime parameters for SSO-server workloads.
+// High-throughput token signing creates many short-lived objects; a higher
+// GC target reduces GC frequency at the cost of a small heap increase.
+func applyRuntimeTuning() {
+	// GC target: 200% instead of the default 100% — fewer GC cycles
+	// under spiky token-issuance load. Respects explicit env override.
+	if os.Getenv("GOGC") == "" {
+		debug.SetGCPercent(200)
 	}
 }
 
@@ -283,7 +298,7 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 	startHTTPServer(httpSrv, cfg, logger, tlsCert, tlsKey, errCh)
 	pprofSrv := startPprofServer(cfg, logger)
 
-	grpcSrv, err := startGRPCServer(a, grpcListen, logger, errCh)
+	grpcSrv, err := startGRPCServer(a, grpcListen, logger, tlsCert, tlsKey, errCh)
 	if err != nil {
 		return err
 	}
