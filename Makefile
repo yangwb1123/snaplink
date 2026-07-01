@@ -220,4 +220,7 @@ config-validate-all: ## Validate all 7 deploy config files against the server.
 		fi; \
 	done
 
-.PHONY: release-snapshot release docker-push docker-multiarch lint-all security-scan-all config-validate-all
+smoke-test: ## Run smoke tests against a running server.
+	sh ops/deploy/baremetal-ha/smoke.sh
+
+.PHONY: release-snapshot release docker-push docker-multiarch lint-all security-scan-all config-validate-all smoke-test
