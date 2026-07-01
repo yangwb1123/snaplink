@@ -9,8 +9,13 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/snaplink/sso/domains/permissions"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/audit/auditspi"
 	"github.com/snaplink/sso/shared/core"
 
 	"google.golang.org/grpc"
@@ -64,10 +69,15 @@ func (p providerAuthorizer) HasAdminScope(ctx context.Context, userID, clientID,
 // or an HTTP path prefix to the required scope. The default policy is:
 //   - GET / non-mutating  → admin:read
 //   - everything else     → admin:write
+//
+// When a recorder is wired (via SetAuditRecorder), the UnaryServerInterceptor
+// records an audit Event for every gated RPC (method, actor, duration, status).
 type Middleware struct {
 	validator    TokenValidator
 	authorizer   Authorizer
 	methodScopes map[string]string // optional override
+	rateLimiter  *rate.Limiter     // admin-wide rate limit; nil = unlimited
+	recorder     *audit.Recorder   // when set, every gRPC admin RPC is audited
 }
 
 // NewMiddleware wires a Server (the validator) and a permissions.Provider
@@ -87,6 +97,20 @@ func (a *Middleware) SetMethodScope(methodOrPath, scope string) {
 		a.methodScopes = map[string]string{}
 	}
 	a.methodScopes[methodOrPath] = scope
+}
+
+// SetRateLimit sets an admin-wide rate limit. rate is tokens per second;
+// burst is the maximum accumulated tokens.
+func (a *Middleware) SetRateLimit(tokensPerSec float64, burst int) {
+	a.rateLimiter = rate.NewLimiter(rate.Limit(tokensPerSec), burst)
+}
+
+// SetAuditRecorder wires an audit recorder that logs every gRPC admin RPC
+// (method, actor, duration, gRPC status code). The interceptor uses it to
+// emit an EventAdminGRPCCalled event for observability and compliance.
+// When recorder is nil, auditing is disabled (default).
+func (a *Middleware) SetAuditRecorder(r *audit.Recorder) {
+	a.recorder = r
 }
 
 // scopeForGRPC returns the required scope for a fully-qualified gRPC method.
@@ -185,18 +209,45 @@ func (a *Middleware) authorizeGRPC(ctx context.Context, fullMethod string) (cont
 }
 
 // UnaryServerInterceptor returns a grpc.UnaryServerInterceptor that gates every
-// admin/audit/netpolicy RPC (mirroring the HTTP edge). Other RPCs (authz,
-// discovery) pass through untouched.
+// admin/audit/netpolicy RPC (mirroring the HTTP edge) and, when a recorder is
+// wired, records an audit event for every gated call (method, actor, status).
+// Other RPCs (authz, discovery) pass through untouched.
 func (a *Middleware) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if !isGatedGRPCMethod(info.FullMethod) {
 			return handler(ctx, req)
 		}
-		ctx, err := a.authorizeGRPC(ctx, info.FullMethod)
+		actorCtx, err := a.authorizeGRPC(ctx, info.FullMethod)
 		if err != nil {
+			if a.recorder != nil {
+				a.recorder.Record(ctx, &audit.Event{
+					Type:      audit.EventAdminGRPCCalled,
+					Outcome:   audit.OutcomeFailure,
+					Reason:    info.FullMethod + ": denied",
+					Timestamp: time.Now(),
+				})
+			}
 			return nil, err
 		}
-		return handler(ctx, req)
+		start := time.Now()
+		resp, err := handler(actorCtx, req)
+		dur := time.Since(start)
+		if a.recorder != nil {
+			actorID, _, _ := ActorFromContext(actorCtx)
+			outcome := audit.OutcomeSuccess
+			if err != nil {
+				outcome = audit.OutcomeFailure
+			}
+			a.recorder.Record(ctx, &audit.Event{
+				Type:      audit.EventAdminGRPCCalled,
+				ActorID:   actorID,
+				Outcome:   outcome,
+				Reason:    info.FullMethod,
+				Metadata:  map[string]string{"duration": dur.String()},
+				Timestamp: time.Now(),
+			})
+		}
+		return resp, err
 	}
 }
 
@@ -232,6 +283,11 @@ func (a *Middleware) HTTPMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !IsProtectedPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
+			return
+		}
+		if a.rateLimiter != nil && !a.rateLimiter.Allow() {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, `{"error":"rate_limit_exceeded"}`, http.StatusTooManyRequests)
 			return
 		}
 		if a.validator == nil || a.authorizer == nil {

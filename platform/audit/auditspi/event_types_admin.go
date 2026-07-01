@@ -41,4 +41,9 @@ const (
 	EventAdminDomainDeleted              EventType = "admin_domain_deleted"
 	EventAdminSubjectExported            EventType = "admin_subject_exported"
 	EventAdminSubjectErased              EventType = "admin_subject_erased"
+	// EventAdminGRPCCalled is emitted by the gRPC admin audit interceptor
+	// for every gated RPC. The interceptor auto-records actor, method,
+	// duration, and grpc status — complementing the explicit per-RPC
+	// events the handlers emit themselves.
+	EventAdminGRPCCalled EventType = "admin_grpc_called"
 )

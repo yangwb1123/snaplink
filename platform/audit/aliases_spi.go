@@ -47,6 +47,7 @@ const (
 	EventAdminRoleUpdated                = auditspi.EventAdminRoleUpdated
 	EventAdminSubjectErased              = auditspi.EventAdminSubjectErased
 	EventAdminSubjectExported            = auditspi.EventAdminSubjectExported
+	EventAdminGRPCCalled                 = auditspi.EventAdminGRPCCalled
 	EventAdminTempTokenIssued            = auditspi.EventAdminTempTokenIssued
 	EventAdminTenantCreated              = auditspi.EventAdminTenantCreated
 	EventAdminTenantDeleted              = auditspi.EventAdminTenantDeleted
