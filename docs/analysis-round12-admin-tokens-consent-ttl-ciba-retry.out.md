@@ -1,9 +1,8 @@
-# TASK FAILED (exit=1, elapsed=2.6s)
+# TASK FAILED (exit=-1, elapsed=601.0s)
 
 ## stderr
 
 ```
-Upstream error from Nvidia: ResourceExhausted: Worker local total request limit reached (185/32)
-
+Task timed out after 300s
 ```
 

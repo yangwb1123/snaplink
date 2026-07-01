@@ -264,6 +264,20 @@ func (s *Server) authzErrorBodyDesc(ctx HandlerContext, code, desc string) map[s
 	}
 }
 
+// authzErrorBodyWithState returns the standard authorization error envelope
+// with `iss` per RFC 9207 §2 AND `state` echoed back per RFC 6749 §4.1.2.1
+// when non-empty. Use this in every /auth/login error path that has a
+// login.Request — it ensures the client's CSRF state token is returned both
+// on success AND on error, as the spec requires. Fall back to authzErrorBody
+// when no login request is in scope (e.g. MFA-only handlers).
+func (s *Server) authzErrorBodyWithState(ctx HandlerContext, code string, state string) map[string]string {
+	m := s.authzErrorBody(ctx, code)
+	if state != "" {
+		m[KeyState] = state
+	}
+	return m
+}
+
 // -----------------------------------------------------------------------------
 // OpenID Connect Form Post Response Mode 1.0.
 //

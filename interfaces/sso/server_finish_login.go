@@ -14,7 +14,8 @@ import (
 
 // matter whether MFA gated the request or not.
 func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req login.Request, client *Client) {
-	if s.upsertLoginUser(ctx, result) {
+	state := req.State
+	if s.upsertLoginUser(ctx, result, state) {
 		return
 	}
 
@@ -57,7 +58,7 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req login.R
 		return
 	}
 	if req.ResponseType != "" && req.ResponseType != "token" {
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrUnsupportedResponseType))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrUnsupportedResponseType, state))
 		return
 	}
 
@@ -68,7 +69,7 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req login.R
 // authentication result when a UserProvider is wired. On a store failure it has
 // ALREADY written the exact 500 internal body and returns halted=true; the
 // caller must return immediately. No provider = no-op (halted=false).
-func (s *Server) upsertLoginUser(ctx HandlerContext, result *AuthResult) bool {
+func (s *Server) upsertLoginUser(ctx HandlerContext, result *AuthResult, state string) bool {
 	if s.userProvider == nil {
 		return false
 	}
@@ -80,7 +81,7 @@ func (s *Server) upsertLoginUser(ctx HandlerContext, result *AuthResult) bool {
 	}
 	if err := s.userProvider.CreateOrUpdate(ctx.Request().Context(), user); err != nil {
 		s.logger.Error("failed to upsert user", "error", err)
-		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
 		return true
 	}
 	return false
@@ -100,7 +101,7 @@ func (s *Server) validateAndAuthorizeScope(ctx HandlerContext, req *login.Reques
 	// strict mode. Both reject with unsupported_response_type
 	// — strict mode requires explicit response_type=code.
 	if s.oauth21Strict && req.ResponseType != "code" {
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrUnsupportedResponseType))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrUnsupportedResponseType, req.State))
 		return nil, true
 	}
 
@@ -109,7 +110,7 @@ func (s *Server) validateAndAuthorizeScope(ctx HandlerContext, req *login.Reques
 	// issue, session create). Empty is always valid and falls
 	// through to the response_type's default mode.
 	if req.ResponseMode != "" && !s.isValidResponseMode(req.ResponseMode) {
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
 		return nil, true
 	}
 
@@ -128,7 +129,7 @@ func (s *Server) validateAndAuthorizeScope(ctx HandlerContext, req *login.Reques
 	granted, scopeErr := oauth.GrantedScopes(req.Scope, client)
 	if scopeErr != nil {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidScope)
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidScope))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidScope, req.State))
 		return nil, true
 	}
 	return granted, false
@@ -140,14 +141,15 @@ func (s *Server) validateAndAuthorizeScope(ctx HandlerContext, req *login.Reques
 // return them. Extracted verbatim from finishLogin to keep that orchestrator
 // within the complexity budget; req.Scope is already the granted set.
 func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client) {
+	state := req.State
 	if s.sessionMgr == nil {
-		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrSessionMgrNotConfigured))
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrSessionMgrNotConfigured, state))
 		return
 	}
 	session, err := s.createSession(ctx, result.UserID, client.TenantID)
 	if err != nil {
 		s.logger.Error("failed to create session", "error", err)
-		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
 		return
 	}
 	strategy, token, issuedSub, err := s.mintAccessToken(ctx, result, req, client, session)
@@ -182,10 +184,11 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 // the exact 500 body (no_token_strategy / internal) and returns a non-nil error;
 // the caller returns immediately.
 func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client, session *Session) (string, *Token, string, error) {
+	state := req.State
 	strategy, ti, err := s.issuerForClient(client)
 	if err != nil {
 		s.logger.Error("no token strategy for client", "client", client.ID, "error", err)
-		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrNoTokenStrategy))
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrNoTokenStrategy, state))
 		return "", nil, "", err
 	}
 	issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, result.UserID)
@@ -205,7 +208,7 @@ func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *lo
 	}, req.Scope)
 	if err != nil {
 		s.logger.Error("failed to issue token", "strategy", strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
 		return "", nil, "", err
 	}
 	return strategy, token, issuedSub, nil
@@ -299,17 +302,26 @@ func (s *Server) emitLoginIDToken(ctx HandlerContext, result *AuthResult, req *l
 	if !emit {
 		return "", false
 	}
+	// Project the RP-requested claims (OIDC Core §5.5) so id_token only carries
+	// what the client asked for — shrinking token size and respecting the client's
+	// declared claim preferences. When no claims parameter was sent, all attributes
+	// are included unchanged (backward compatible).
+	claims := result.Attributes
+	if len(req.Claims) > 0 {
+		claims = oidc.ProjectIDTokenClaims(claims, req.Claims)
+	}
 	idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-		Subject:      issuedSub,
-		Audience:     client.ID,
-		Nonce:        req.Nonce,
-		AuthTime:     time.Now(),
-		AMR:          handler.AmrForResult(result),
-		ACR:          result.AchievedACR,
-		Claims:       result.Attributes,
-		SID:          sid,
-		AccessToken:  accessToken,
-		DeviceSecret: deviceSecret,
+		Subject:         issuedSub,
+		Audience:        client.ID,
+		Nonce:           req.Nonce,
+		AuthTime:        time.Now(),
+		AMR:             handler.AmrForResult(result),
+		ACR:             result.AchievedACR,
+		Claims:          claims,
+		SID:             sid,
+		AccessToken:     accessToken,
+		DeviceSecret:    deviceSecret,
+		RequestedClaims: req.Claims,
 	})
 	if err != nil {
 		s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", result.UserID)
@@ -381,8 +393,9 @@ func validatePKCEForCode(req *login.Request, client *Client, oauth21Strict bool)
 // Extracted verbatim from finishLogin to keep that orchestrator within the
 // complexity budget; it owns the response in every path.
 func (s *Server) finishLoginCodeFlow(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client) {
+	state := req.State
 	if s.authCodeStore == nil {
-		ctx.JSON(http.StatusNotImplemented, s.authzErrorBody(ctx, ErrAuthCodeNotConfigured))
+		ctx.JSON(http.StatusNotImplemented, s.authzErrorBodyWithState(ctx, ErrAuthCodeNotConfigured, state))
 		return
 	}
 	// redirect_uri must be registered; OAuth 2.1 §4.1.3 additionally requires
@@ -390,18 +403,18 @@ func (s *Server) finishLoginCodeFlow(ctx HandlerContext, result *AuthResult, req
 	if req.RedirectURI == "" || !client.IsRedirectURIValid(req.RedirectURI) ||
 		(s.oauth21Strict && !isSecureRedirectURI(req.RedirectURI)) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRedirectURI)
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRedirectURI))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRedirectURI, state))
 		return
 	}
 	if code := validatePKCEForCode(req, client, s.oauth21Strict); code != "" {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, code)
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, code))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, code, state))
 		return
 	}
 	code, err := s.issueAuthCode(ctx.Request().Context(), result, req, client)
 	if err != nil {
 		s.logger.Error("failed to issue auth code", "error", err)
-		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
 		return
 	}
 	s.recordLoginSuccess(ctx, client.ID, req.Provider, "code", result.UserID, "")
@@ -421,7 +434,7 @@ func (s *Server) renderAuthCodeResponse(ctx HandlerContext, req *login.Request, 
 	if oidc.IsJARMResponseMode(req.ResponseMode) {
 		signer, ok := s.jarmSignerForClient(client)
 		if !ok || !oidc.RenderJARMResponse(ctx, signer, req.ResponseMode, req.RedirectURI, s.resolveIssuer(ctx), client.ID, code, req.State) {
-			ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequest))
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
 		}
 		return
 	}

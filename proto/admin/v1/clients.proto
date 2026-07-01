@@ -1,5 +1,10 @@
 syntax = "proto3";
 
+// Package admin/v1 — STABLE.
+// See docs/adr/ADR-0008-proto-versioning.md for the versioning policy.
+// Breaking changes are not permitted in this package without a minimum
+// 6-month deprecation window.
+
 package snaplink.admin.v1;
 
 import "google/api/annotations.proto";
@@ -52,8 +57,26 @@ message Client {
   bool   active         = 8;
 }
 
-message ListClientsRequest  {}
-message ListClientsResponse { repeated Client clients = 1; }
+message ListClientsRequest {
+  // Opaque cursor from the previous response. Empty on the first page.
+  string page_token = 1;
+  // Max items per page — server clamps to a system maximum (default 100).
+  // 0 means "use the server default".
+  int32  page_size  = 2;
+  // Sort field: "name", "id", "created_at". Prefix with "-" for descending.
+  // Empty means server-defined default order (typically by created_at desc).
+  string order_by   = 3;
+  // Simple filter expression: "field:value" or "field eq value" (impl-specific).
+  // Supported fields: name, active.
+  string filter     = 4;
+}
+message ListClientsResponse {
+  // Opaque cursor for the next page. Empty when there are no more results.
+  string next_page_token = 2;
+  // Approximate total count matching the filter (for UI display).
+  int32  total_size      = 3;
+  repeated Client clients = 1;
+}
 
 message GetClientRequest    { string id = 1; }
 message GetClientResponse   { Client client = 1; }

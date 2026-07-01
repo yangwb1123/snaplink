@@ -17,11 +17,14 @@ import (
 	"os"
 
 	"github.com/snaplink/sso/cmd/sso-ctl/auditverify"
+	"github.com/snaplink/sso/cmd/sso-ctl/clientscmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/configcmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/hashcmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/importcmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/migratecmd"
+	"github.com/snaplink/sso/cmd/sso-ctl/sessionscmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/snapshotcmd"
+	"github.com/snaplink/sso/cmd/sso-ctl/tokenscmd"
 )
 
 const progName = "sso-ctl"
@@ -34,16 +37,22 @@ func main() {
 	switch os.Args[1] {
 	case "audit-verify":
 		os.Exit(auditverify.Run(os.Args[2:]))
+	case "clients":
+		os.Exit(clientscmd.Run(os.Args[2:]))
 	case "import":
 		os.Exit(importcmd.Run(os.Args[2:]))
 	case "migrate":
 		os.Exit(migratecmd.Run(os.Args[2:]))
+	case "sessions":
+		os.Exit(sessionscmd.Run(os.Args[2:]))
 	case "snapshot":
 		os.Exit(snapshotcmd.Run(os.Args[2:]))
 	case "config":
 		os.Exit(configcmd.Run(os.Args[2:]))
 	case "hash":
 		os.Exit(hashcmd.Run(os.Args[2:]))
+	case "tokens":
+		os.Exit(tokenscmd.Run(os.Args[2:]))
 	case "version", "-v", "--version":
 		writeVersion(os.Stdout)
 	case "-h", "--help", "help":
@@ -63,11 +72,14 @@ Usage:
 
 Commands:
   audit-verify   Verify the audit-log hash chain (from a file or the live API).
+  clients        List OAuth clients or inspect a specific client.
   import         Bulk-import users from auth0 / keycloak / csv into a user store.
   migrate        Offline schema-migration status for a SQLite store.
+  sessions       List active sessions or revoke a specific session.
   snapshot       Inspect and verify sealed state snapshots.
   config         Validate a server config file offline (deploy pre-check).
   hash           Produce a server-compatible password hash (admin seeding).
+  tokens         Revoke an access token or issue a temporary token.
   version        Print the toolbelt version and build revision.
 
 Run "%s <command> -h" for command-specific flags.

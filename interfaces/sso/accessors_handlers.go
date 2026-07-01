@@ -276,6 +276,7 @@ var _ tokengrant.CIBAGrantDeps = (*Server)(nil)
 var _ tokengrant.TokenExchangeDeps = (*Server)(nil)
 var _ tokengrant.ClientCredentialsDeps = (*Server)(nil)
 var _ tokengrant.JWTBearerGrantDeps = (*Server)(nil)
+var _ tokengrant.SAML2BearerGrantDeps = (*Server)(nil)
 
 // SPIFFEValidator exposes the SPIFFE JWT-SVID validator (nil when WithSPIFFEJWTSVID
 // is unwired — the SVID fallback is then skipped).
@@ -379,4 +380,10 @@ func (s *Server) RecordIDTokenIssued(ctx HandlerContext, clientID, subjectID str
 // validator, or nil when the grant is not enabled.
 func (s *Server) JWTBearerAssertionValidator() tokengrant.JWTAssertionValidator {
 	return s.jwtBearerValidator
+}
+
+// SAML2AssertionValidator returns the RFC 7522 SAML 2.0 Bearer assertion
+// validator, or nil when the grant is not enabled.
+func (s *Server) SAML2AssertionValidator() tokengrant.SAMLAssertionValidator {
+	return s.saml2BearerValidator
 }

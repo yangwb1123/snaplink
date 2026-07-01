@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"context"
 	"net/http"
 	"slices"
 	"strings"
@@ -30,13 +31,36 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	// Content-Type: application/json (e.g., via fetch API with CORS disabled).
 	if origin := ctx.Request().Header.Get("Origin"); origin != "" && s.corsPolicy != nil {
 		if !s.isOriginAllowed(origin) {
+			s.logger.Info("origin_blocked",
+				"origin", origin,
+				"path", ctx.Request().URL.Path,
+				"method", ctx.Request().Method,
+				"client_ip", ctx.Request().RemoteAddr,
+				"user_agent", ctx.Request().UserAgent(),
+			)
 			ctx.JSON(http.StatusForbidden, errorBody(core.ErrInvalidRequest))
 			return
 		}
 	}
 
+	// Authorization request wall-clock deadline (WithAuthorizeRequestTimeout).
+	// When the upstream IdP or user interaction takes longer than the configured
+	// timeout, the handler returns interaction_required instead of hanging the
+	// browser tab forever. 0 (default) means no server-enforced deadline.
+	// This is NOT a replacement for the OIDC max_age parameter — max_age gates
+	// the freshness of the auth_time, while this gates total wall-clock duration.
+	if s.authzRequestTimeout > 0 {
+		r := ctx.Request()
+		timedCtx, cancel := context.WithTimeout(r.Context(), s.authzRequestTimeout)
+		defer cancel()
+		*r = *r.WithContext(timedCtx)
+	}
+
 	req, ok := s.bootstrapLoginRequest(ctx)
 	if !ok {
+		return
+	}
+	if s.checkLoginDeadline(ctx, req.State) {
 		return
 	}
 
@@ -47,9 +71,15 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		s.handlePromptNone(ctx, prompts, &req)
 		return
 	}
+	if s.checkLoginDeadline(ctx, req.State) {
+		return
+	}
 
 	// No provider selected yet: home-realm discovery (B2B) or generic provider list.
 	if s.respondLoginProviders(ctx, &req) {
+		return
+	}
+	if s.checkLoginDeadline(ctx, req.State) {
 		return
 	}
 
@@ -58,9 +88,15 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	if handled {
 		return
 	}
+	if s.checkLoginDeadline(ctx, req.State) {
+		return
+	}
 
 	// Post PAR+JAR-merge authz-request validation (order JAR -> FAPI -> param shapes).
 	if s.runPostMergeAuthzValidation(ctx, &req, client) {
+		return
+	}
+	if s.checkLoginDeadline(ctx, req.State) {
 		return
 	}
 
@@ -69,9 +105,15 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	if handled {
 		return
 	}
+	if s.checkLoginDeadline(ctx, req.State) {
+		return
+	}
 
 	// Post-credential gates (order ACR -> risk/step-up).
 	if s.runPostCredentialGates(ctx, &req, result, client) {
+		return
+	}
+	if s.checkLoginDeadline(ctx, req.State) {
 		return
 	}
 
@@ -98,7 +140,7 @@ func (s *Server) bootstrapLoginRequest(ctx HandlerContext) (login.Request, bool)
 	tokenNoStoreHeaders(ctx)
 	var req login.Request
 	if err := ctx.Bind(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, err.Error()))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
 		return req, false
 	}
 	if s.resolveLoginRequest(ctx, &req) {
@@ -208,27 +250,27 @@ func (s *Server) validateLoginAuthorizationParams(ctx HandlerContext, req *login
 	// would bloat AuthCode store entries and amplify redirect responses.
 	// Scope is joined with spaces to match the wire format length.
 	if code := oauth.CheckAuthParamLengths(
-		req.State, req.RedirectURI, req.Scope, req.Nonce, req.Resource,
+		req.State, req.RedirectURI, strings.Join(req.Scope, " "), req.Nonce, req.Resource,
 	); code != "" {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequest)
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
 		return true
 	}
 	if !client.AreResourcesAllowed(req.Resource) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidTarget)
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidTarget))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidTarget, req.State))
 		return true
 	}
 	if len(req.Claims) > 0 {
 		if err := oauth.ValidateClaimsParameter(req.Claims); err != nil {
 			s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequest)
-			ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, err.Error()))
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
 			return true
 		}
 	}
 	if _, err := oauth.ValidateAuthorizationDetails(req.AuthorizationDetails, client.AllowedAuthorizationDetailsTypes); err != nil {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, oauth.ErrInvalidAuthorizationDetails)
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, oauth.ErrInvalidAuthorizationDetails, err.Error()))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, oauth.ErrInvalidAuthorizationDetails, req.State))
 		return true
 	}
 	return false
@@ -245,7 +287,7 @@ func (s *Server) validateLoginAuthorizationParams(ctx HandlerContext, req *login
 func (s *Server) authenticateUser(ctx HandlerContext, req *login.Request, client *Client) (*AuthResult, bool) {
 	auth, err := s.getAuthenticator(req.Provider)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrUnsupportedProvider))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrUnsupportedProvider, req.State))
 		return nil, true
 	}
 	if loginURL := auth.LoginURL(req.State); loginURL != "" {
@@ -256,7 +298,7 @@ func (s *Server) authenticateUser(ctx HandlerContext, req *login.Request, client
 	if s.accountLockout != nil && lockKey != "" {
 		if locked, until, _ := s.accountLockout.IsLocked(ctx.Request().Context(), lockKey); locked {
 			s.recordAccountLocked(ctx, req.ClientID, req.Provider, lockKey, until)
-			ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrAccountLocked))
+			ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrAccountLocked, req.State))
 			return nil, true
 		}
 	}
@@ -293,12 +335,12 @@ func (s *Server) handleAuthFailure(ctx HandlerContext, req *login.Request, lockK
 	if s.accountLockout != nil && lockKey != "" {
 		if locked, until, _ := s.accountLockout.RegisterFailure(ctx.Request().Context(), lockKey); locked {
 			s.recordAccountLocked(ctx, req.ClientID, req.Provider, lockKey, until)
-			ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrAccountLocked))
+			ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrAccountLocked, req.State))
 			return
 		}
 	}
 	s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidCredentials)
-	ctx.JSON(http.StatusUnauthorized, s.authzErrorBody(ctx, ErrInvalidCredentials))
+	ctx.JSON(http.StatusUnauthorized, s.authzErrorBodyWithState(ctx, ErrInvalidCredentials, req.State))
 }
 
 // rejectDeactivatedUser enforces SCIM deprovisioning (RFC 7643 active=false):
@@ -318,7 +360,7 @@ func (s *Server) rejectDeactivatedUser(ctx HandlerContext, req *login.Request, u
 		return false
 	}
 	s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrAccountLocked)
-	ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrAccountLocked))
+	ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrAccountLocked, req.State))
 	return true
 }
 
@@ -353,7 +395,7 @@ func (s *Server) enforceLoginACR(ctx HandlerContext, req *login.Request, result 
 	}
 	if len(acrList) > 0 && !slices.Contains(acrList, result.AchievedACR) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrUnmetAuthReqs)
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrUnmetAuthReqs))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrUnmetAuthReqs, req.State))
 		return true
 	}
 	return false
@@ -394,27 +436,27 @@ func loginUsedPAR(req *login.Request) bool {
 // handleLogin to keep that orchestrator within the complexity budget.
 func (s *Server) resolveAndValidateLoginClient(ctx HandlerContext, req *login.Request) (*Client, bool) {
 	if req.ClientID == "" {
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMissingClientID))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrMissingClientID, req.State))
 		return nil, true
 	}
 	if s.clientStore == nil {
-		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrClientStoreNotConfigured))
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrClientStoreNotConfigured, req.State))
 		return nil, true
 	}
 	client, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
 	if err != nil {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidClient)
-		ctx.JSON(http.StatusUnauthorized, s.authzErrorBody(ctx, ErrInvalidClient))
+		ctx.JSON(http.StatusUnauthorized, s.authzErrorBodyWithState(ctx, ErrInvalidClient, req.State))
 		return nil, true
 	}
 	if !client.Active {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInactiveClient)
-		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrInactiveClient))
+		ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrInactiveClient, req.State))
 		return nil, true
 	}
 	if !clientTenantOK(ctx, client) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrTenantMismatch)
-		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrTenantMismatch))
+		ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrTenantMismatch, req.State))
 		return nil, true
 	}
 	if s.residencyGateLogin(ctx, req.ClientID, req.Provider, client.TenantID) {
@@ -422,17 +464,17 @@ func (s *Server) resolveAndValidateLoginClient(ctx HandlerContext, req *login.Re
 	}
 	if client.RequirePAR && !loginUsedPAR(req) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequest)
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, "client requires pushed authorization request"))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
 		return nil, true
 	}
 	if client.RequireSignedRequestObject && req.Request == "" {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequest)
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, "client requires signed request object"))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
 		return nil, true
 	}
 	if !client.IsAuthenticatorAllowed(req.Provider) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrAuthenticatorNotAllowed)
-		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrAuthenticatorNotAllowed))
+		ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrAuthenticatorNotAllowed, req.State))
 		return nil, true
 	}
 	return client, false
@@ -469,7 +511,7 @@ func (s *Server) enforceFAPIAuthorizationLogin(ctx HandlerContext, req *login.Re
 	}
 	if s.fapiValidator.Enforcing() {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequest)
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequest, "fapi: "+vs[0].RuleID+": "+vs[0].Detail))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
 		return true
 	}
 	return false
@@ -513,7 +555,7 @@ func (s *Server) evaluateLoginRisk(ctx HandlerContext, result *AuthResult, req *
 		}
 		if assessment.Decision == spi.DecisionDeny {
 			s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrRiskDenied)
-			ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrRiskDenied))
+			ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrRiskDenied, req.State))
 			return true
 		}
 		if assessment.Decision == spi.DecisionRequireMFA && s.mfaProvider != nil && s.mfaChallengeStore != nil {
@@ -526,3 +568,16 @@ func (s *Server) evaluateLoginRisk(ctx HandlerContext, result *AuthResult, req *
 	}
 	return false
 }
+
+// checkLoginDeadline checks whether the request context has exceeded its
+// deadline (set by WithAuthorizeRequestTimeout). When it has, it writes an
+// interaction_required error response and returns true so the caller returns.
+// Returns false when the context is still valid (proceed).
+func (s *Server) checkLoginDeadline(ctx HandlerContext, state string) bool {
+	if err := ctx.Request().Context().Err(); err != nil {
+		ctx.JSON(http.StatusGatewayTimeout, s.authzErrorBodyWithState(ctx, ErrInteractionRequired, state))
+		return true
+	}
+	return false
+}
+

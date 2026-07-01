@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS consent_grants (
     client_id  TEXT    NOT NULL,
     scopes     TEXT    NOT NULL DEFAULT '[]',
     granted_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (user_id, client_id)
 );
 
@@ -31,6 +32,8 @@ CREATE INDEX IF NOT EXISTS idx_consent_grants_user_id
 
 var consentMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline", SQL: consentSchema},
+	{Version: 2, Name: "add_expires_at", SQL: `
+ALTER TABLE consent_grants ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0`},
 }
 
 // ConsentStore is the SQLite-backed implementation of [core.ConsentStore].
@@ -88,16 +91,20 @@ func (s *ConsentStore) Ping(ctx context.Context) error {
 }
 
 // RecordConsent upserts a grant for (userID, clientID). An existing grant
-// is replaced in full (scopes + granted_at updated atomically).
+// is replaced in full (scopes + granted_at + expires_at updated atomically).
 func (s *ConsentStore) RecordConsent(ctx context.Context, grant core.ConsentGrant) error {
 	scopesJSON, err := json.Marshal(grant.Scopes)
 	if err != nil {
 		return fmt.Errorf("sqlite: marshal scopes: %w", err)
 	}
+	expiresAtNs := int64(0)
+	if !grant.ExpiresAt.IsZero() {
+		expiresAtNs = grant.ExpiresAt.UnixNano()
+	}
 	_, err = s.db.ExecContext(ctx, `
-        INSERT OR REPLACE INTO consent_grants (user_id, client_id, scopes, granted_at)
-        VALUES (?, ?, ?, ?)`,
-		grant.UserID, grant.ClientID, string(scopesJSON), grant.GrantedAt.UnixNano(),
+        INSERT OR REPLACE INTO consent_grants (user_id, client_id, scopes, granted_at, expires_at)
+        VALUES (?, ?, ?, ?, ?)`,
+		grant.UserID, grant.ClientID, string(scopesJSON), grant.GrantedAt.UnixNano(), expiresAtNs,
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: upsert consent_grant: %w", err)
@@ -109,7 +116,7 @@ func (s *ConsentStore) RecordConsent(ctx context.Context, grant core.ConsentGran
 // when none exists.
 func (s *ConsentStore) GetConsent(ctx context.Context, userID, clientID string) (core.ConsentGrant, error) {
 	row := s.db.QueryRowContext(ctx, `
-        SELECT user_id, client_id, scopes, granted_at
+        SELECT user_id, client_id, scopes, granted_at, expires_at
           FROM consent_grants WHERE user_id = ? AND client_id = ?`,
 		userID, clientID,
 	)
@@ -143,7 +150,7 @@ func (s *ConsentStore) RevokeConsent(ctx context.Context, userID, clientID strin
 // Returns an empty slice (not an error) when none exist.
 func (s *ConsentStore) ListByUser(ctx context.Context, userID string) ([]core.ConsentGrant, error) {
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT user_id, client_id, scopes, granted_at
+        SELECT user_id, client_id, scopes, granted_at, expires_at
           FROM consent_grants WHERE user_id = ?
           ORDER BY granted_at DESC`,
 		userID,
@@ -174,11 +181,15 @@ func scanConsentGrant(s scanner) (core.ConsentGrant, error) {
 		g           core.ConsentGrant
 		scopesJSON  string
 		grantedAtNs int64
+		expiresAtNs int64
 	)
-	if err := s.Scan(&g.UserID, &g.ClientID, &scopesJSON, &grantedAtNs); err != nil {
+	if err := s.Scan(&g.UserID, &g.ClientID, &scopesJSON, &grantedAtNs, &expiresAtNs); err != nil {
 		return core.ConsentGrant{}, err
 	}
 	g.GrantedAt = time.Unix(0, grantedAtNs).UTC()
+	if expiresAtNs != 0 {
+		g.ExpiresAt = time.Unix(0, expiresAtNs).UTC()
+	}
 	if scopesJSON != "" && scopesJSON != "[]" {
 		if err := json.Unmarshal([]byte(scopesJSON), &g.Scopes); err != nil {
 			return core.ConsentGrant{}, fmt.Errorf("sqlite: unmarshal scopes: %w", err)

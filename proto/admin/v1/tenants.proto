@@ -1,5 +1,10 @@
 syntax = "proto3";
 
+// Package admin/v1 — STABLE.
+// See docs/adr/ADR-0008-proto-versioning.md for the versioning policy.
+// Breaking changes are not permitted in this package without a minimum
+// 6-month deprecation window.
+
 package snaplink.admin.v1;
 
 import "google/api/annotations.proto";
@@ -94,8 +99,17 @@ message Domain {
   map<string, string> branding = 5;
 }
 
-message ListTenantsRequest  {}
-message ListTenantsResponse { repeated Tenant tenants = 1; }
+message ListTenantsRequest {
+  string page_token = 1;
+  int32  page_size  = 2;
+  string order_by   = 3;
+  string filter     = 4;
+}
+message ListTenantsResponse {
+  string next_page_token  = 2;
+  int32  total_size       = 3;
+  repeated Tenant tenants = 1;
+}
 
 message GetTenantRequest    { string id = 1; }
 message GetTenantResponse   { Tenant tenant = 1; }
@@ -115,8 +129,16 @@ message SetTenantStatusRequest {
 }
 message SetTenantStatusResponse { Tenant tenant = 1; }
 
-message ListDomainsRequest  { string tenant_id = 1; }
-message ListDomainsResponse { repeated Domain domains = 1; }
+message ListDomainsRequest {
+  string tenant_id  = 1;
+  string page_token = 2;
+  int32  page_size  = 3;
+}
+message ListDomainsResponse {
+  string next_page_token  = 2;
+  int32  total_size       = 3;
+  repeated Domain domains = 1;
+}
 
 message GetDomainRequest    { string hostname = 1; }
 message GetDomainResponse   { Domain domain = 1; }

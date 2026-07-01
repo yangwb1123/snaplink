@@ -359,13 +359,13 @@ func (s *Server) applyRequestObject(ctx HandlerContext, req *login.Request, clie
 	jarRaw, unwrapErr := security.JWEUnwrap(ctx.Request().Context(), req.Request, s.jarDecrypter)
 	if unwrapErr != nil {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequestObject)
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequestObject, unwrapErr.Error()))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequestObject, req.State))
 		return true
 	}
 	jar, jarErr := verifyJAR(ctx.Request().Context(), jarRaw, client, s.resolveIssuer(ctx), s.jtiReplayStore, s.jtiReplayFailClosed)
 	if jarErr != nil {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequestObject)
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyDesc(ctx, ErrInvalidRequestObject, jarErr.Error()))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequestObject, req.State))
 		return true
 	}
 	mergeVerifiedJAR(req, jar)

@@ -193,8 +193,20 @@ func revokeEndSessionTokens(d EndSessionDeps, ctx core.HandlerContext, idTokenHi
 // exact-matches the client's allowlist (no path tolerance — phishing defense per
 // §3), with state appended when supplied; otherwise the empty string. Shared by
 // both the FCL HTML page and the legacy 302 path so the defense is uniform.
+//
+// Defense-in-depth: the returned URL is validated as an absolute http/https URL
+// even when the allowlist matches, so a misconfigured allowlist entry (relative
+// path, javascript: URL, etc.) does not become an open redirect vector.
 func composePostLogoutTarget(postLogoutURI, state string, client *core.Client) string {
 	if postLogoutURI == "" || client == nil || !client.IsPostLogoutRedirectURIValid(postLogoutURI) {
+		return ""
+	}
+	// RFC 3986 §4.3: an absolute URI must have a scheme. Reject non-absolute
+	// and non-http(s) URIs as an anti-open-redirect defense — the allowlist
+	// check catches exact matches, but misconfiguration (relative path in the
+	// allowlist) or DCR without redirect_uri validation must not create a vector.
+	parsed, err := url.Parse(postLogoutURI)
+	if err != nil || !parsed.IsAbs() || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return ""
 	}
 	target := postLogoutURI

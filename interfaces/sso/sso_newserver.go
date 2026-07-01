@@ -36,6 +36,7 @@ func NewServer(opts ...Option) *Server {
 	s.authzPolicyBundleCacheTTL = DefaultAuthzPolicyBundleCacheTTL
 	s.jwksCacheTTL = defaultJWKSCacheTTL
 	s.consentChallenges = consent.NewChallengeStore()
+	s.panicRecovery = true
 	for _, opt := range opts {
 		opt(s)
 	}

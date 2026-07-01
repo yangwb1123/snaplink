@@ -1,0 +1,1 @@
+The `developer-guide.md` already exists at `/home/dwp/snaplink/docs/developer-guide.md` with the same content you pasted. Is there something specific you'd like to add or update in the guide, or is there another task I can help with?

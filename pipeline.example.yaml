@@ -7,42 +7,40 @@
 #   python pi-batch.py --pipeline pipeline.example.yaml --dry-run  # 预览
 #   python pi-batch.py --pipeline pipeline.example.yaml            # 执行
 
+git_commit: true  # 全局设置，所有阶段默认自动 git commit
+
 stages:
   # 阶段 1：分析阶段
   # 读取 docs/ 目录下所有 .md 文件，将文件内容作为 prompt 提交给 pi
   - name: analyze
     from_dir: docs
-    suffix: .md              # 读取的输入文件后缀
-    output_suffix: .out.md   # 输出的文件后缀（如 analysis.md -> analysis.out.md）
-    mode: serial             # 串行执行
-    workers: 1
+    suffix: .md
+    output_suffix: .out.md
+    mode: serial
 
   # 阶段 2：编排阶段
   # 使用阶段 1 的输出（.out.md 文件）作为输入
   # 对每个输入文件，应用多个角色模板生成对应的输出
   - name: orchestrate
-    from_outputs: analyze    # 引用阶段 1 的输出
+    from_outputs: analyze
     tasks:
-      # 架构师角色
       - role: architect
         prompt_template: prompts/architect.md
         output: docs/results/{input_stem}.arch.md
-        model: claude-sonnet:high
+        model: claude-sonnet
         timeout: 600
-      
-      # 产品经理角色
+
       - role: pm
         prompt_template: prompts/pm.md
         output: docs/results/{input_stem}.pm.md
         model: claude-sonnet
         timeout: 600
-      
-      # Tech Lead 角色
+
       - role: tech_lead
         prompt_template: prompts/tech_lead.md
         output: docs/results/{input_stem}.techlead.md
         model: claude-sonnet
         timeout: 600
-    
-    mode: parallel           # 并行执行不同角色
-    workers: 3               # 同时运行 3 个任务
+
+    mode: parallel
+    workers: 3

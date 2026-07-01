@@ -4,6 +4,11 @@
 // 	protoc        v7.34.1
 // source: admin/v1/clients.proto
 
+// Package admin/v1 — STABLE.
+// See docs/adr/ADR-0008-proto-versioning.md for the versioning policy.
+// Breaking changes are not permitted in this package without a minimum
+// 6-month deprecation window.
+
 package adminv1
 
 import (
@@ -126,7 +131,18 @@ func (x *Client) GetActive() bool {
 }
 
 type ListClientsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Opaque cursor from the previous response. Empty on the first page.
+	PageToken string `protobuf:"bytes,1,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	// Max items per page — server clamps to a system maximum (default 100).
+	// 0 means "use the server default".
+	PageSize int32 `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	// Sort field: "name", "id", "created_at". Prefix with "-" for descending.
+	// Empty means server-defined default order (typically by created_at desc).
+	OrderBy string `protobuf:"bytes,3,opt,name=order_by,json=orderBy,proto3" json:"order_by,omitempty"`
+	// Simple filter expression: "field:value" or "field eq value" (impl-specific).
+	// Supported fields: name, active.
+	Filter        string `protobuf:"bytes,4,opt,name=filter,proto3" json:"filter,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -161,9 +177,41 @@ func (*ListClientsRequest) Descriptor() ([]byte, []int) {
 	return file_admin_v1_clients_proto_rawDescGZIP(), []int{1}
 }
 
+func (x *ListClientsRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
+func (x *ListClientsRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListClientsRequest) GetOrderBy() string {
+	if x != nil {
+		return x.OrderBy
+	}
+	return ""
+}
+
+func (x *ListClientsRequest) GetFilter() string {
+	if x != nil {
+		return x.Filter
+	}
+	return ""
+}
+
 type ListClientsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Clients       []*Client              `protobuf:"bytes,1,rep,name=clients,proto3" json:"clients,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Opaque cursor for the next page. Empty when there are no more results.
+	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
+	// Approximate total count matching the filter (for UI display).
+	TotalSize     int32     `protobuf:"varint,3,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"`
+	Clients       []*Client `protobuf:"bytes,1,rep,name=clients,proto3" json:"clients,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -196,6 +244,20 @@ func (x *ListClientsResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ListClientsResponse.ProtoReflect.Descriptor instead.
 func (*ListClientsResponse) Descriptor() ([]byte, []int) {
 	return file_admin_v1_clients_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ListClientsResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
+}
+
+func (x *ListClientsResponse) GetTotalSize() int32 {
+	if x != nil {
+		return x.TotalSize
+	}
+	return 0
 }
 
 func (x *ListClientsResponse) GetClients() []*Client {
@@ -650,9 +712,17 @@ const file_admin_v1_clients_proto_rawDesc = "" +
 	"\x0eallowed_scopes\x18\x05 \x03(\tR\rallowedScopes\x125\n" +
 	"\x16allowed_authenticators\x18\x06 \x03(\tR\x15allowedAuthenticators\x12%\n" +
 	"\x0etoken_strategy\x18\a \x01(\tR\rtokenStrategy\x12\x16\n" +
-	"\x06active\x18\b \x01(\bR\x06active\"\x14\n" +
-	"\x12ListClientsRequest\"J\n" +
-	"\x13ListClientsResponse\x123\n" +
+	"\x06active\x18\b \x01(\bR\x06active\"\x83\x01\n" +
+	"\x12ListClientsRequest\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x01 \x01(\tR\tpageToken\x12\x1b\n" +
+	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\x12\x19\n" +
+	"\border_by\x18\x03 \x01(\tR\aorderBy\x12\x16\n" +
+	"\x06filter\x18\x04 \x01(\tR\x06filter\"\x91\x01\n" +
+	"\x13ListClientsResponse\x12&\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\x12\x1d\n" +
+	"\n" +
+	"total_size\x18\x03 \x01(\x05R\ttotalSize\x123\n" +
 	"\aclients\x18\x01 \x03(\v2\x19.snaplink.admin.v1.ClientR\aclients\"\"\n" +
 	"\x10GetClientRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"F\n" +

@@ -87,6 +87,10 @@ type wiringState struct {
 	// (nil = grant not supported). Wired via WithJWTBearerGrant.
 	jwtBearerValidator tokengrant.JWTAssertionValidator
 
+	// saml2BearerValidator is the RFC 7522 SAML 2.0 Bearer assertion validator
+	// (nil = grant not supported). Wired via WithSAML2BearerGrant.
+	saml2BearerValidator tokengrant.SAMLAssertionValidator
+
 	// tenantQuotaStore enforces per-tenant resource limits (clients, users,
 	// sessions). Nil = no quota enforcement (byte-identical to pre-quota build).
 	tenantQuotaStore TenantQuotaStore

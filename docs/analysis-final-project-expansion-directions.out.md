@@ -1,39 +1,93 @@
-# 综合分析报告审阅完毕
+OK so now I have a very clear picture. Let me summarize my findings:
 
-我已完整阅读您这份长达 14 节、覆盖 1612 个 Go 源文件的深度分析报告。以下是我的理解总结与几个需要确认的问题：
+**Direction 1 - OIDC Conformance**: 
+- ✅ VERIFIED: `claims_parameter_supported: true` is hardcoded (line 224)
+- ✅ VERIFIED: ClaimsSupported only includes basic OIDC claims (lines 378-381), NOT email/phone/address as report claims
+- ✅ VERIFIED: id_token path doesn't project claims - `ProjectIDTokenClaims` function exists but is NEVER CALLED
 
----
+**Direction 3 - Cross-replica coherence**:
+- ❌ WRONG: The report claims JTI replay, refresh family, and session are per-replica
+- BUT: Redis implementations exist for ALL THREE:
+  - `infrastructure/redis/jti_replay.go` - shared JTI replay
+  - `infrastructure/redis/session.go` - shared session manager  
+  - `infrastructure/redis/refresh_token.go` - shared refresh token with DeleteFamily
+- The ROADMAP.md explicitly states Redis backend is done (Direction ⑤)
 
-## 理解概要
+**Consent Store**:
+- ✅ VERIFIED: Consent store exists in multiple backends (memory, sqlite, redis, postgres)
 
-### 核心发现
-报告将 ROADMAP v5.0 的 30+ 项缺口全部标记为 **✅ 已落地**，结论是项目成熟度极高。在此基础上识别了 **五个后 v5.0 扩展方向**，按 ROI 排序：
+So the report has at least one MAJOR ERROR - Direction 3 is completely wrong because it ignores the existing Redis implementations.
 
-| 优先级 | 方向 | 工作量 | 核心价值 |
-|--------|------|--------|----------|
-| **P0** | ① OIDC 声明真实性 | **S** | 一致性认证（采购阻断） |
-| **P1** | ③ 跨副本原子层 | M | 多副本安全缺口 |
-| **P2** | ② 合规报告引擎 | L | SOC 2 / GDPR 企业销售 |
-| **P2** | ⑤ SLO 框架 | L | 生产运营可信度 |
-| **P3** | ④ 变更管理 | XL | SOC 2 CC7.1 治理合规 |
-
-### 报告亮点
-- **方向①**的具体修复路径清晰：`issue_payload.go` 接入 `core.ParseRequestedClaims`，只需 60 行
-- **方向③**精准指出 JTI 重放 / Refresh 家族击杀 / Session 状态是三处真正的**残余安全缺口**
-- Phase 分建议可行——方向①（当前 Sprint）→ 方向③+⑤（本月）→ 方向②+④（下季度）
+Let me provide a comprehensive analysis to the user. This is an exceptionally thorough analysis report. I've verified the key claims against the actual codebase and found a **critical error in Direction 3**. Let me present my findings:
 
 ---
 
-## 需要确认的几个问题
+## Verification Results: Report vs Codebase Reality
 
-在您决定下一步前，我想确认几个可能影响实施精度的细节：
+### Direction ① OIDC Conformance — ✅ MOSTLY ACCURATE
 
-1. **方向①**中 `ParseRequestedClaims` 的解析逻辑已在 `shared/core/claims_param.go` 存在——请问是否需要我首先对该函数做一次完整性审计，确认它能否直接用于 id_token 投影，还是需要扩展（例如 handling essential `=null` vs `=value` 约束）？
+| Report Claim | Verification | Status |
+|---|---|---|
+| `claims_parameter_supported: true` hardcoded (line 224) | **Confirmed** at `server_discovery_config.go:224` | ✅ Correct |
+| id_token path doesn't project `RequestedClaims` — carries raw JSON as `_claims_` (line 77) | **Confirmed**: `issue_payload.go:77` does `payload.RequestedClaims = append(json.RawMessage(nil), subject.RequestedClaims...)` — raw passthrough, no projection | ✅ Correct |
+| userinfo path **can** project (line 159) | **Confirmed**: `oidcsupport/userinfo.go:159` → `projectRequestedClaims()` calls `core.ParseRequestedClaims` and filters claims | ✅ Correct |
+| `ProjectIDTokenClaims` exists but unused | **Verified**: function exists at `protocols/oidc/oidcsupport/idtoken_claims.go:17` but is **never called anywhere in the codebase** (zero references outside its own file) | ✅ Correct — dead code |
+| `ClaimsSupported` declares `email`, `phone`, `address` | **Refuted**: `server_discovery_config.go:378-381` only declares `sub, iss, aud, exp, iat, nbf, scope, nonce, auth_time, amr, acr, azp` — no email/phone/address | ❌ Wrong claim |
 
-2. **方向③**中提到的 Redis SessionStore 对等体——我知道 `infrastructure/redis/session.go` 已存在。需要我检查它是否支持跨副本的直接读取（而不是仅写 + 总线同步），以判断现有的 Redis 实现能否作为共享后端直接使用？
-
-3. 报告提到**Phase 1（当前 Sprint）**优先方向①。您希望我现在就开始实施，还是先进行更详细的技术预研/代码审计再做决定？
+**Verdict**: Direction ①'s core finding is real — the `ProjectIDTokenClaims` function exists but is dead code, and the id_token path does not project claims per OIDC §5.5. However, the `ClaimsSupported` finding (#3) is wrong — the discovery document does NOT declare email/phone/address.
 
 ---
 
-请指示下一步方向。如果确认开工，我可以立即从方向①开始——先审计 `claims_param.go` 的完整性，再修复 `issue_payload.go`。
+### Direction ③ Cross-Replica Coherence — ❌ FUNDAMENTALLY WRONG
+
+The report claims these are **per-replica, non-shared** and calls this "the only real security gap." This is **factually incorrect** — Redis shared backends already exist for all three:
+
+| Report Claim | Actual Codebase | Status |
+|---|---|---|
+| JTI replay: "每个副本独立（memory / SQLite / Redis）" | `infrastructure/redis/jti_replay.go` — `redis.JTIReplayStore` uses `SetNX` (atomic test-and-set) on shared Redis, `sso:jti:<jti>` key with TTL. Wired via `WithJTIReplayStore()` | ❌ Already shared |
+| Refresh family: "每个副本独立 `DeleteFamily`" | `infrastructure/redis/refresh_token.go` — `redis.RefreshTokenStore.DeleteFamily()` uses shared Redis `SMEMBERS` + `DEL` on `sso:rt:family:<fid>`. Cross-replica atomic. | ❌ Already shared |
+| Session state: "30s TTL + 尽力而为总线" | `infrastructure/redis/session.go` — `redis.SessionManager` stores sessions in shared Redis hash (`sso:session:<id>`), with Lua atomic refresh script. Wired via `WithSessionManager()`. | ❌ Already shared |
+
+The ROADMAP.md itself confirms this was delivered:
+> **方向⑤ Redis 后端**：`redis/` 子模块覆盖全 ephemeral 热路径（session/refresh+family/authcode/par/jti/ratelimit/device/mfa/ciba）。
+
+**Verdict**: Direction ③ as described does not exist. The Redis backends provide exactly the cross-replica coherence the report proposes building. The report appears to have been written before the Redis direction was completed, or the analysis missed the `infrastructure/redis/` package entirely.
+
+The only remaining gap is **operator guidance** — documenting that production multi-replica deployments MUST use Redis backends (not memory/sqlite) for JTI/session/refresh stores. That's a docs/config issue, not a code gap.
+
+---
+
+### Direction ② Compliance Reporting — ✅ ACCURATE GAP
+
+Verified that:
+- `ConsentStore` exists (memory/sqlite/redis/postgres) — so the raw data is there
+- `audit.Query` does have tenant-scoped queries, but there are no pre-built compliance report endpoints
+- No `/api/v1/admin/reports/*` endpoints exist
+
+This direction's analysis is sound — the building blocks exist, but the packaged compliance reports do not.
+
+---
+
+### Directions ④⑤ — Plausible but not deeply verified
+
+---
+
+## Corrected Priority Matrix
+
+| Priority | Direction | Original Assessment | Corrected Assessment |
+|---|---|---|---|
+| **P0** | ① OIDC claim projection | S effort | **Still S** — wire `ProjectIDTokenClaims` into the id_token issuance path. Dead code exists, just needs to be called. |
+| **P1** | ③ Cross-replica coherence | M effort, security gap | **Does not exist** — Redis backends already solve this. Downgrade to **docs/config guidance** (S, trivial). |
+| **P1** | ② Compliance reporting | L effort | **Still L** — genuine gap, real value. |
+| **P2** | ⑤ SLO framework | L effort | Plausible, not disputed. |
+| **P3** | ④ Change management | XL effort | Plausible, not disputed. |
+
+---
+
+## Recommended Immediate Actions
+
+**Phase 1 (this sprint)**: Fix Direction ① — wire `oidcsupport.ProjectIDTokenClaims()` into the id_token build path in `infrastructure/defaultimpl/`. The function already exists and is tested-ready; it just needs to be called before building the ID token claim set. This is a ~20-line change.
+
+**Phase 2**: Skip Direction ③ (already solved) and move to Direction ② compliance reports, or Direction ⑤ SLO framework.
+
+Would you like me to proceed with implementing the id_token claim projection fix (Direction ①)?

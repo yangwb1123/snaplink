@@ -172,6 +172,13 @@ func (b *appBuilder) finalize() (*app, error) {
 		if rate, burst := srv.AdminRateLimit(); rate > 0 && burst > 0 {
 			rt.adminMW.SetRateLimit(rate, burst)
 		}
+		// Wire admin token store and idle timeout when both configured.
+		if store := srv.AdminTokenStore(); store != nil {
+			rt.adminMW.SetAdminTokenStore(store)
+			if ttl := srv.AdminSessionTTL(); ttl > 0 {
+				rt.adminMW.SetAdminSessionTTL(ttl)
+			}
+		}
 	}
 	rt.snapshots, err = b.wireSnapshotReleases()
 	if err != nil {

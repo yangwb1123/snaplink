@@ -23,6 +23,13 @@ const (
 	// an externally-signed JWT assertion for an access token. The assertion is
 	// validated against a configurable trust anchor (issuer JWKS or OIDC Discovery).
 	GrantJWTBearer = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+
+	// GrantTypeSAML2Bearer is the RFC 7522 SAML 2.0 Bearer Assertion Profile
+	// grant type URN. The client presents a base64-encoded SAML 2.0 assertion
+	// which is decoded, signature-verified, and validated (audience, conditions,
+	// SubjectConfirmation method=Bearer) before issuing OAuth tokens for the
+	// SAML NameID-mapped local user.
+	GrantTypeSAML2Bearer = "urn:ietf:params:oauth:grant-type:saml2-bearer"
 )
 
 // CIBAAMR is the AMR / provider value recorded for a token minted via the CIBA

@@ -77,6 +77,13 @@ type Middleware struct {
 	methodScopes map[string]string // optional override
 	rateLimiter  *rate.Limiter     // admin-wide rate limit; nil = unlimited
 	recorder     *audit.Recorder   // when set, every gRPC admin RPC is audited
+
+	// adminTokenStore tracks token metadata for idle-timeout enforcement.
+	// When set, every protected HTTP request updates LastUsedAt (Touch).
+	adminTokenStore core.AdminTokenStore
+
+	// sessionTTL is the idle timeout for admin bearer tokens. 0 = no timeout.
+	sessionTTL time.Duration
 }
 
 // NewMiddleware wires a Server (the validator) and a permissions.Provider
@@ -102,6 +109,19 @@ func (a *Middleware) SetMethodScope(methodOrPath, scope string) {
 // burst is the maximum accumulated tokens.
 func (a *Middleware) SetRateLimit(tokensPerSec float64, burst int) {
 	a.rateLimiter = rate.NewLimiter(rate.Limit(tokensPerSec), burst)
+}
+
+// SetAdminTokenStore wires a store for admin bearer token metadata.
+// When set, the HTTP middleware calls Touch() on every successful
+// request to track last-used-at for idle-timeout enforcement.
+func (a *Middleware) SetAdminTokenStore(store core.AdminTokenStore) {
+	a.adminTokenStore = store
+}
+
+// SetAdminSessionTTL sets the idle timeout for admin bearer tokens.
+// 0 disables idle timeout (default). Requires SetAdminTokenStore.
+func (a *Middleware) SetAdminSessionTTL(ttl time.Duration) {
+	a.sessionTTL = ttl
 }
 
 // SetAuditRecorder wires an audit recorder that logs every gRPC admin RPC
@@ -318,8 +338,33 @@ func (a *Middleware) HTTPMiddleware(next http.Handler) http.Handler {
 			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 			return
 		}
+
+		// Admin session idle-timeout enforcement + token-touch.
+		if a.enforceIdleTimeout(w, r, claims) {
+			return
+		}
+
 		next.ServeHTTP(w, r.WithContext(withActor(r.Context(), claims.Subject, clientID)))
 	})
+}
+
+// enforceIdleTimeout checks the admin bearer token's last-used-at against
+// the configured session TTL. When the token has been idle longer than the
+// TTL it writes a 401 session_expired response and returns true (the caller
+// must return immediately). On success (or when idle timeout is not configured)
+// it updates LastUsedAt via Touch and returns false so the request proceeds.
+func (a *Middleware) enforceIdleTimeout(w http.ResponseWriter, r *http.Request, claims *core.TokenClaims) bool {
+	if a.sessionTTL <= 0 || a.adminTokenStore == nil || claims.JTI == "" {
+		return false
+	}
+	meta, err := a.adminTokenStore.GetByID(r.Context(), claims.JTI)
+	if err == nil && !meta.LastUsedAt.IsZero() && time.Since(meta.LastUsedAt) > a.sessionTTL {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="admin", error="invalid_token", error_description="session expired"`)
+		http.Error(w, `{"error":"session_expired"}`, http.StatusUnauthorized)
+		return true
+	}
+	_ = a.adminTokenStore.Touch(r.Context(), claims.JTI)
+	return false
 }
 
 func bearerFromHTTP(r *http.Request) string {

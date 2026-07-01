@@ -47,6 +47,12 @@ type selfServiceState struct {
 	// credential store.
 	adminTokenStore core.AdminTokenStore
 
+	// adminSessionTTL sets an idle timeout for admin bearer tokens
+	// (WithAdminSessionTTL). When non-zero, the admin middleware
+	// rejects requests from tokens idle longer than this duration.
+	// 0 means no idle timeout (default).
+	adminSessionTTL time.Duration
+
 	// consentMaxTTL is the hard server-level ceiling on consent grant
 	// lifetime (WithConsentTTL). When >0, every recorded consent has
 	// ExpiresAt = GrantedAt + consentMaxTTL. After that, GetConsent

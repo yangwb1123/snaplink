@@ -14,6 +14,7 @@ stages:
   - name: requirement-analysis
     from_dir: docs/requirements
     mode: serial
+    git_commit: true
   
   # ═══════════════════════════════════════════════════════════
   # 阶段 1：技术方案设计
@@ -37,6 +38,7 @@ stages:
     
     mode: parallel
     workers: 2
+    git_commit: true
   
   # ═══════════════════════════════════════════════════════════
   # 阶段 2：代码实现
@@ -54,6 +56,7 @@ stages:
         timeout: 1200  # 代码实现需要更长时间
     
     mode: serial
+    git_commit: true
   
   # ═══════════════════════════════════════════════════════════
   # 阶段 3：代码审查
@@ -78,6 +81,7 @@ stages:
     
     mode: parallel
     workers: 2
+    git_commit: true
   
   # ═══════════════════════════════════════════════════════════
   # 阶段 4：测试编写
@@ -95,6 +99,7 @@ stages:
         timeout: 600
     
     mode: serial
+    git_commit: true
   
   # ═══════════════════════════════════════════════════════════
   # 阶段 5：最终审查
@@ -112,3 +117,4 @@ stages:
         timeout: 600
     
     mode: serial
+    git_commit: true

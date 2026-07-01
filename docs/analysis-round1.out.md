@@ -1,174 +1,137 @@
-现在我有足够的上下文。以下是针对您五个方向的逐条架构评审。
+Now I have a clear picture. Let me compile a thorough review of this analysis.
 
 ---
 
-## 方向一：托管 Web UI（Hosted Login + Admin Console + 自助门户）
+## 第一轮分析核查报告
 
-**验证：✅ 确认，方向成立且为真实缺口**
-
-三个 HTML 文件（login: 1129 行，admin: 1096 行，portal: 780 行）都是单体 HTML——嵌入式 CSS+JS，无框架。Login 页比"存根"完整些（有表单、错误展示、品牌注入），但缺少：
-
-- 打包/bundling 管道（无 Vite/Webpack）
-- SPA 路由（无 React Router 等价物）
-- 标准化 API 客户端层
-- consent 屏（当前 `/auth/consent` 只返回 JSON）
-- MFA 挑战 UI（当前 `/auth/mfa` 端点返回 JSON）
-- 密码重置/邮箱变更的完整 UI 流
-
-**但有一个架构约束你在分析中未提及**：Console 的 dogfood SSO 登录 (`client_id=sso-admin-console`) 引入了一个鸡生蛋问题——Admin Console 借 SSO 自身认证，但 SSO 初始化时没有 Admin Console 的 `client_id`/`secret`。这需要一个**引导注册序列**（注册表模式），或一个启动时自省 client store 的特殊客户端发现逻辑。Auth0/Keycloak 通过"内建客户端"（启动时隐式注册，不可删除）解决了这个问题。这个引导序列会影响 `bootstrap/` 包中的 Server 初始化代码。
-
-**推荐延迟优先排序**：方向一及方向四（通知引擎）强相关——前端需要传递模板给品牌化邮件/短信，而通知引擎需要 Web UI 进行模板管理。如果同时做两者，Sprint 对齐至关重要。
+对五个方向逐一核对了代码实际状态，结论如下：
 
 ---
 
-## 方向二：OIDC Conformance 正确性收口——`max_age`
+### 方向一：托管 Web UI ✅ 方向正确，细节有误
 
-**验证：⚠️ 部分不准确——缺口范围比所声称的小**
+**结论：核心判断成立，但行数严重失实。**
 
-我追踪了整个 `max_age` 代码路径：
-
-| 代码路径 | `max_age` 是否执行 | 正确性 |
+| 文件 | 分析声称 | 实际 |
 |---|---|---|
-| `handleSilentRenewal` → `silentRenewalFreshnessOK`（`protocols/oidc/handle_silent_renewal.go:217`） | **是**——比较 `time.Since(claims.AuthTime)` 与 `req.MaxAge` | ✅ 正确 |
-| `handleLogin` → `enforceLoginMaxAge`（`interfaces/sso/server_login.go:343`） | **否**——总是返回 `false`（"通过"） | ⚠️ 故意为之 |
+| `interfaces/web/login/index.html` | 981 行 | **150 行** |
+| `interfaces/web/admin/index.html` | 1073 行 | **148 行** |
+| `interfaces/web/portal/index.html` | 745 行 | **131 行** |
 
-你对交互式登录路线的描述是正确的——`enforceLoginMaxAge` 是个空壳函数，注释说"新鲜凭据总是满足任何 max_age 窗口"。这在**当前代码路径下是对的**：`handleLogin` 总是在检查 max_age 之前要求凭据。但对于 OIDC Core §3.1.2.6，当一个**活跃会话**在没有新凭据的情况下被重用（其他身份提供商有 `prompt=login` 或隐式 SSO 会话重用），存在缺口。
+三者确实是**单文件静态 HTML + 内联 JS**（含 SVG logo、表单、`fetch` 调用），不是 SPA 框架工程。方向判断成立——这些是"能跑的 demo"，不是可品牌化、可路由、可 i18n 的托管产品。
 
-一个真正有问题的场景是：**如果将来添加了 SSO cookie 驱动的无缝重新认证**（用户有一个活跃会话，`/auth/login` 调用在没有新凭据的情况下重用它）——那时候，`enforceLoginMaxAge` 需要检查会话的 `AuthTime` 而非返回 false。就当前架构而言，这是**预防性债务**，而非活跃漏洞。
+补充发现：
+- Discovery 仅声明 `prompt_values_supported=["none"]`（`server_discovery_config.go:435`），**确认**无法处理交互式 `prompt=login|consent|select_account`。
+- 分析中关于 dogfood、secret 不回显、多租户权限隔离、自助门户边界等考量是合理的。
 
-**纠正后的结论**：`max_age` 缺口是真实的，但局限于**未来 SSO 会话重用的假设路径**。在当前架构中，该函数正确地为交互式登录返回 false（新鲜凭据）。对这个分析的小修正是将其从"活跃 OIDC 合规差距"降级为"架构边缘情况，以防止未来回归"。我建议增加一个测试（`TestPreventSessionReuseBypassesMaxAge`），强制执行该函数的当前行为，以便当/如果添加 SSO 会话重用时，它不会在不经意间被破坏。
+**建议**：方向优先级应为 **P1**——这是从 SDK 到平台的可见门槛，且后端依赖（admin API、SCIM、permissions、tenant）已全部就绪。
 
 ---
 
-## 方向三：时钟安全与单调时间（Monotonic Clock + Skew Tolerance）
+### 方向二：OIDC Conformance — max_age 收口 ⚠️ 部分已证伪，但仍有真实缺口
 
-**验证：✅ 确认，但有一个你遗漏的重要细微差别**
+**分析声称**："没有任何代码检查上次认证是否在 max_age 窗口内"
 
-裸 `time.Now()` / `time.Since` 在以下位置使用：
+**核查结果：两路径中一路已实现，一路确为存根。**
 
-| 位置 | 使用 | 影响 |
+| 代码路径 | 状态 | 证据 |
 |---|---|---|
-| `protocols/oauth/oauthspi/refresh_token.go:111` | `time.Since(r.ExpiresAt) > 0` | 时钟回拨可延长到期令牌的生命周期 |
-| `protocols/oauth/oauthspi/auth_code.go:79` | 同上 | 同上 |
-| `protocols/oauth/oauthspi/device_code.go:42` | 同上 | 同上 |
-| `protocols/oauth/oauthspi/par.go` | 同上 | 同上 |
-| `shared/security/account_lockout.go:126,148` | `time.Now()` | 时钟回拨可延迟锁定期满 |
-| `infrastructure/defaultimpl/sqlite/sessions.go` | `expires_at > now()` | 回拨使已撤销的会话可重用 |
-| `platform/audit/chainer.go:34` | 严格单调时间戳 | 这段**确实有防护** |
-| `interfaces/sso/server_dpop.go:144` | `if p.IAT < now-int64(maxAge.Seconds())` | 回拨可接受旧 DPoP proof |
+| `silentRenewalFreshnessOK` (prompt=none) | ✅ 已正确实现 | `handle_silent_renewal.go:213-235` 检查 `time.Since(claims.AuthTime) > max_age` |
+| `enforceLoginMaxAge` (交互式 /auth/login) | ❌ **空存根** | `server_login.go:362-371`：函数体永远 `return false`，注释声称"fresh credentials always satisfy"，但 SSO 场景下（用户已有活跃 session、走自动登录）`AuthTime` 可能是数小时前的 |
 
-**但有一个重要事实你分析中遗漏了**：DPoP clock skew 通过 `WithDPoPMaxClockSkew` **已经可配置**（`interfaces/sso/server_dpop.go:420-428`），不是硬编码 60s。硬编码的值是默认值（`dpopProofMaxAgeDefault = 60s`），operator 可以在创建 Server 时覆盖。这是常见的 Go 选项模式。
+**真实缺口**：交互式登录路径的 `enforceLoginMaxAge` 需要在以下场景检查 `req.MaxAge`：
+1. 用户有活跃 session 但 `max_age` 已过期 → 应要求重新认证
+2. 用户刚输入凭据 → `AuthTime = now`，自然满足（现有注释的意图正确，但实现遗漏了 SSO/session-driven 场景）
 
-关于解决方案的架构建议：你不是建议替换每个 `time.Now()` 为 `monotime.Now()` 或 `clock.Now()`——这将是跨越数百个站点的侵入性更改。更好的方法是：
-
-1. **在关键点添加单调守卫**（`TokenValidator`、`SessionManager.Refresh`、`account_lockout`）——这些是安全关键的
-2. 将性能不关键的 `time.Now()` 调用（审计链中的 `chainer.go`）留在原地——它们**已经**被链式哈希覆盖，不对认证决策做出贡献
-3. 引入一个集中的 `shared/core/clock.go` 包，带有可模拟的 `Clock` 接口：
-
-```go
-type Clock interface {
-    Now() time.Time
-    Since(t time.Time) time.Duration
-}
-```
-
-将其通过选项注入 `Server`，默认使用 `time.Now` 包装。将迁移限制在安全关键的到期检查 + DPoP/Session/AccountLockout 验证上。
+**建议**：缩小范围到"补齐交互式路径的 `enforceLoginMaxAge`"，其余已证伪项（`at_hash`、AMR、`AchievedACR`、`auth_time`）从 backlog 中移除。优先级 **P2**。
 
 ---
 
-## 方向四：JTI Replay Store 熔断与安全硬化
+### 方向三：时钟安全 ⚠️ 部分已解决，Session Refresh 仍有风险
 
-**验证：✅ 确认，方向完全正确，且隐含的风险比第一眼看上去更大**
+**分析声称**：DPoP skew 硬编码 60s、session refresh 裸 `time.Now()`。
 
-接口文档自身承认了权衡（`shared/security/jti_replay.go:29`）：
+**核查结果**：
 
-```go
-// Errors are fail-open: store failures shouldn't block valid
-// requests, but callers SHOULD log them so operators can spot a
-// degraded replay-defense backend.
-```
-
-这是一种折中，但**攻击面的量化**在你的分析中缺失了。让我来量化它：
-
-**受影响的原语**（每个都携带 `jti`，可攻击重放）：
-
-| 路径 | 重放窗口持续时间 | 危害 |
+| 问题 | 状态 | 证据 |
 |---|---|---|
-| JAR `request_uri`（`security/jar_fetch.go`） | 单次请求生命周期（秒） | 用相同的 JWT 重放授权请求 |
-| DPoP Proof（`security/verify_dpop.go`） | `iat` 到 `iat+maxAge`（默认 60s） | 重用相同的 proof 绑定多个 access token |
-| 令牌交换 `actor_token`（`internal/auth/tokengrant/`） | 令牌到期（可变） | 重用 actor 身份 |
-| 密钥证明 `nonceStore.MarkSeen` | 时钟偏差窗口 | 重用密钥证明 |
-| TOTP 一次性代码（`authenticators/totp.go:213`） | TOTP 时间步长（30s） | 重用同一个 TOTP 代码 |
+| DPoP clock skew 硬编码 | ✅ **已可配** | `WithDPoPProofMaxAge` + `WithDPoPMaxClockSkew`（`server_dpop.go:403-428`） |
+| DPoP maxAge 不可配 | ✅ **已可配** | 同上 |
+| Session Refresh 裸 `time.Now()` | ❌ **确认存在** | `sqlite/sessions.go:208` `now := time.Now()`，`expires_at > ?` 比较用 UnixNano |
+| RefreshToken.IsExpired 裸 `time.Now()` | 未找到文件 | `oauthspi/` 下有 `IsExpired` 引用但需进一步确认 |
 
-**关键见解**：最严重的不是 DPoP（重放窗口只有 60s），而是 TOTP 一次性代码和令牌交换 actor token。攻击者可以：
+**真实风险**：NTP 回拨或 VM 快照回滚后，`time.Now()` 可能回退，导致 `expires_at > now()` 在已过期 session 上重新为真。SQLite 的 `WHERE expires_at > ?` 用的 `now.UnixNano()` 直接来自 `time.Now()`。
 
-1. 等待 Redis/etcd 超时（几毫秒到几秒）
-2. 发送一个携带先前成功使用的 `client_assertion` JWT（带有 jti）的 `POST /token`
-3. MarkSeen 失败 → 返回 `firstSighting=true` → JWT 被接受 → **客户端认证被绕过**
-
-我同意方向成立的结论。我补充如下细化：
-
-- **不要改变默认值**（fail-open 对可用性来说是正确的默认值）。添加一个**可选**的 `WithJTIReplayFailClosed() Option`，operator 在高安全性部署中可以设置（FAPI 强制模式、金融监管用例）。
-
-- 最有效的硬化并非来自 fail-closed，而是来自**在每个副本内增加一个内存 JTI 布隆过滤器作为 L1 缓存**。即使 Redis/etcd 宕机，本地过滤器也会捕获 99% 的重放，代价是短暂的误报（拒绝少数合法请求，记录它们并让 operator 调整）。模式：`BoomFilter → MarkSeen → if boom says "maybe seen", verify with backend; if boom says "definitely not seen", accept immediately`。
+**建议**：
+- Go 1.9+ 的 `time.Time` 内建单调时钟（`t.Add(d)` 用单调分量），但 `time.Now().UnixNano()` **丢弃**单调分量，回到壁钟。所以 SQLite 比较确实有风险。
+- 修复方案：在 Refresh 入口记录单调起点 `mono := time.Now()`，用 `mono.Add(ttl)` 计算新过期，用 `mono.Sub(start)` 比较——但跨请求的 `expires_at` 列存储必须用壁钟。真正的防线是**检测壁钟回拨**并在回拨时拒绝 Refresh。
+- 优先级 **P2**，与方向二的 max_age 缺口并行处理。
 
 ---
 
-## 方向五：Policy-as-Code 格式导出（OPA Rego / Cedar Bundle）
+### 方向四：JTI Replay Store 熔断 ✅ 方向正确且重要
 
-**验证：✅ 确认，但基础已比分析中意识到的更接近完整**
+**分析声称**：`MarkSeen` fail-open，store 故障期间可重放。
 
-`domains/permissions/policy_bundle.go` 已经导出 `PolicyBundle`（`version`、`roles[]`、`wildcard_semantics`）和 `CanonicalBytes()` 用于 ETag。`docs/examples/opa-authz-policy.rego` 包含一个完整的 **参考实现**，展示 sidecar 如何在本地评估授权：
+**核查结果：完全符合分析描述。**
+
+`security/jti_replay.go` 接口注释（第 20-22 行）明确声明：
+> *"Errors are fail-open: store failures shouldn't block valid requests, but callers SHOULD log them"*
+
+调用路径确认：
+- JAR `request_uri`（`server_login.go` → fetch → MarkSeen）
+- DPoP proof（`server_dpop.go:51` → `enforceDPoPReplay` → MarkSeen）
+- Token Exchange actor_token（`token_exchange_stages.go` → MarkSeen）
+
+**分析中提出的"token-exchange 的 actor_token 不能出两次"是硬性安全不变量**——这里 fail-open 是设计妥协，不是正确行为。对于这类场景应该有 fail-closed 降级路径。
+
+**建议**：
+1. 按调用方区分策略：JAR/DPoP 可 fail-open（已有 replay 的其他防线如 iat 窗口），但 **token-exchange 的 actor_token 单次消费必须 fail-closed**。
+2. 增加 `JTIReplayStore.Health()` 探针 + 熔断指标，让运维能观测降级状态。
+3. 优先级 **P1**——这是一个可利用的安全窗口。
+
+---
+
+### 方向五：Policy-as-Code 导出 ❌ 核心前提已满足，需重新定位
+
+**分析声称**：输出格式是自定义 JSON，非标准策略引擎格式。
+
+**核查结果：已有完整 OPA Rego 参考实现。**
 
 ```
-data.bundle → role definitions (+ wildcard rules)
-input.roles → from embedded token claims
-input.want  → permission required
-result      → data.authz.allow (true/false)
+docs/examples/opa-authz-policy.rego   ← 完整的 OPA Rego 策略（77行）
 ```
 
-这是一个**工作缺口**，但不是代码缺口——OPA 集成是**文档化的但未作为端点暴露**。实际需要的是：
+该文件包含：
+- 从 bundle 的 `roles[].permissions[]` 展开 `granted` 集合
+- 自描述 `wildcard_semantics`（all_token / domain_suffix / separator）
+- 精确匹配 + 域通配 + 全权三种 satisfy 规则
+- 默认 deny
+- 完整的使用文档和 `opa eval` 示例
 
-1. **添加 bundle serve 端点**（可能在 `interfaces/admin/permissions.go` 中）：`GET /api/v1/admin/authz/policy-bundle?client_id=X`——返回 `PolicyBundle` JSON。这个端点可以通过 5 行 handler + 路由注册创建
-2. **为 Rego 输出添加 Content-Type 协商**：`Accept: application/x-rego-bundle` 导致 `shared/security/policy_to_rego.go` 转换（尚无此转换器）
-3. 也许添加一个 `permissions.RegoConverter` SPI，将 RBAC 规则转换为 Rego 策略文本
+`PolicyBundle` 已具备：
+- 版本号（`PolicyBundleVersion`）
+- 规范化字节（`CanonicalBytes`）→ ETag 缓存友好
+- 自描述通配语义（sidecar 无需硬编码匹配规则）
+- 仅含角色定义（O(roles)），不含用户分配（无 PII 泄露）
 
-**关于你分析的一个细微修正**：OPA 参考策略使用**直接 RBAC 数据**（`data.bundle`），而非 OPA 原生格式（`.rego` bundle ARchive）。这是有意为之的——OPA 原生格式需要 `.tar.gz`，包含有版本控制的 `.rego` 模块。当前方法（一个 sidecar 拉取 JSON + 本地评估 `.rego`）重量更轻，与 sidecar 模式更契合。我建议**保持当前架构**，而非添加 Rego bundle 构建管线。
+**方向五应重新定位为**：
+1. **Cedar 格式导出**（目前仅有 OPA Rego，Cedar 是 AWS Verified Permissions 的标准）
+2. **Bundle 自动拉取/推送**（cluster.Bus 已有 `KindAuthzPolicyChange` 事件，但缺少 sidecar 拉取协议或 Webhook 推送）
+3. **OPA Bundle Server 协议**（让 OPA 直接 `services.sso` 拉取，而非手动 curl + jq）
+
+优先级从 P2 降为 **P3**——核心价值已交付，增量是格式和集成便利性。
 
 ---
 
-## 跨方向观察
+## 总结：优先级矩阵
 
-### 方向交叉性
+| 方向 | 原始判断 | 核查后修正 | 优先级 |
+|---|---|---|---|
+| 一、托管 Web UI | P1 | ✅ 确认，唯一门槛型缺失 | **P1** |
+| 二、max_age 缺口 | P2 | ⚠️ 缩窄为交互式路径一处空存根 | **P2** |
+| 三、时钟安全 | P2 | ⚠️ DPoP 已可配；仅 Session Refresh 有风险 | **P2**（缩窄） |
+| 四、JTI Replay 熔断 | P1 | ✅ 确认，token-exchange 路径需 fail-closed | **P1** |
+| 五、Policy-as-Code | P2 | ❌ OPA Rego 已就绪；增量是 Cedar + 自动拉取 | **P3**（降级） |
 
-这四个方向在架构上并不独立：
-
-| 方向群组 | 重叠 |
-|---|---|
-| Web UI（方向一）↔ 通知引擎（方向一缺失但良好的邻接） | 密码重置、邮箱验证、MFA 注册都需要通知 + UI |
-| 时钟安全（方向三）↔ JTI 硬化（方向四） | 两者都涉及令牌到期/重放。共享的 `Clock` 接口可同时服务两者 |
-| 策略导出（方向五）↔ JTI 硬化（方向四） | DPoP/JAR 重放保护也可编码为 OPA 可在网关评估的策略 |
-| max_age（方向二）↔ 时钟安全（方向三） | `silentRenewalFreshnessOK` 使用 `time.Since()`——如果时钟回拨，max_age 执行中断 |
-
-### 优先级排序（从您的分析中添加我自己的评估）
-
-鉴于代码库的成熟度极高且基础设施已到位：
-
-| 优先级 | 方向 | 理由 |
-|---|---|---|
-| **P0** | **方向四：JTI 硬化** | 安全回归风险——已识别的攻击窗口（TOTP 重放、actor token 重用）比方向二或方向三更直接可利用 |
-| **P1** | **方向三：时钟安全** | 攻击面广但需要架构成熟的解决方案。高价值但实施成本低于完整 ABAC。从 `RefreshToken.IsExpired` + `account_lockout` 开始 |
-| **P1** | **方向五：策略导出** | 几乎已就绪——缺少 5 行的端点 + 测试。对服务网格集成有立竿见影的效果 |
-| **P2** | **方向一：Web UI** | 高影响，但工期最长的项目。在添加 Web UI 之前需要一个设计文档，概述 SPA 框架选择 + API 契约 + 引导序列 |
-| **P2** | **方向二：max_age** | 不是活跃的合规缺口。在处理 SSO 会话重用之前是预防性债务。先标记，当 SSO 会话被添加时修复 |
-
-### 分析质量
-
-总的来说，方向选择覆盖面好，验证质量高。具体更新：
-
-- **方向二（max_age）**：降级——这段代码实际上对 prompt=none 是合规的；缺口在交互式 SSO 会话重用的假设路径上
-- **方向三（DPoP clock skew）**：小修正——`WithDPoPMaxClockSkew` 已存在；不是硬编码的 60s
-- **方向五（OPA Rego 集成）**：比所声称的更接近完整——`docs/examples/opa-authz-policy.rego` 已经是一个完整的参考实现；缺失的是 `GET /policy-bundle` 作为暴露端点和 Rego 转换器
-- **方向一（Web UI bootstrapping）**：添加了引导客户端注册的问题——这是更接近 PoC 时会出现的一个隐藏架构约束
-
-代码库在这项分析中总体表现良好——22 轮分析所声称的问题中，只有一个是完全不正确的（max_age），而且即使是那个也有细微差别。这是一个非常健壮的系统。
+**建议执行顺序**：方向四（安全硬伤）→ 方向一（平台门槛）→ 方向二+三（并行，规范合规性收口）→ 方向五（增量扩展）。

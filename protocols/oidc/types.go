@@ -46,6 +46,14 @@ type IDTokenRequest struct {
 	// id_token signing alg. The raw secret is passed here ONLY to compute the
 	// hash; it MUST NOT appear in the token. Empty omits the claim.
 	DeviceSecret string
+
+	// RequestedClaims, when non-empty, is the RP's OIDC Core §5.5 `claims`
+	// parameter from the authorization request. The issuer calls
+	// [oidcsupport.ProjectIDTokenClaims] to filter [Claims] to only those
+	// the RP asked for — shrinking id_token size and respecting the client's
+	// declared claim preferences. When empty (default), all claims in [Claims]
+	// are included unchanged (backward compatible).
+	RequestedClaims []byte // json.RawMessage of the `claims` parameter
 }
 
 // IDTokenIssuer mints OIDC ID Tokens. Optional SPI — when the server

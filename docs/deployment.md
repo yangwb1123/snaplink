@@ -66,19 +66,21 @@ Each pluggable concern picks a backend via its `backend:` key. **What the
 | Concern | `backend:` values the binary wires |
 |---|---|
 | Hot stores (auth-code, refresh, session, par, device, ciba, jti-replay, mfa-challenge) + `ratelimit` | `memory` (default) · `sqlite` (`<concern>.sqlite.dsn`) · **`redis`** (shared `redis:` block) |
-| Durable stores (clients, users, consent, permissions, …) | `memory` (default) · `sqlite` |
+| Durable stores (clients, users, consent, permissions, tenants, audit, …) | `memory` (default) · `sqlite` · **`postgres`** (shared `postgres:` block) |
 | `cluster` (the cross-replica event Bus) | `memory` · **`etcd`** (`etcd_endpoints`, `etcd_prefix`, …) |
 | `registry`, `netpolicy` | `memory` · `etcd` |
 | `config` source | file · env · `etcd` |
 
-> **Redis Cluster is now wired into the stock binary** (`backend: redis` on the
-> hot stores, configured by one shared `redis:` block — single/sentinel/cluster).
-> The Redis backends live in `infrastructure/redis/` (a separate Go module pulled
-> in by `cmd/sso-server` via go.mod `replace`), so go-redis enters the *binary*
-> build but not the SDK library packages. Sessions take their own
-> `identity.session_backend` so the hot session store can be Redis while durable
-> clients/users stay on a DB. Durable stores (clients/users/consent/permissions)
-> remain `memory`/`sqlite` until the Postgres/CockroachDB backend lands — see §6.
+> **Both Redis AND Postgres backends are now wired into the stock binary.** Redis
+> (`backend: redis` on the hot stores, configured by one shared `redis:` block —
+> single/sentinel/cluster) and Postgres/CockroachDB (`backend: postgres` on the
+> durable stores, one shared `postgres:` block). Each lives in a separate Go
+> module (`infrastructure/redis/`, `infrastructure/postgres/`) pulled in by
+> `cmd/sso-server` via go.mod `replace`, so their dependencies (go-redis, pgx)
+> enter the *binary* build but not the SDK library packages. Sessions take their
+> own `identity.session_backend` so the hot session store can be Redis while
+> durable clients/users stay on a Postgres cluster. See §6 for the full HA
+> topology.
 
 ## 4. How clients call it
 
@@ -174,13 +176,14 @@ So choose a tier:
 > **Tier B is a config choice on the stock binary now.** Set `backend: redis` on
 > the hot stores (auth_code, refresh, session via `identity.session_backend`,
 > par, device_code, ciba, jti_replay, mfa.challenge) and `ratelimit`, give a
-> shared `redis:` block (`mode: cluster`), and turn on the etcd Bus. go-redis is
-> pulled into the binary build (not the SDK library packages) via a go.mod
-> `replace` on the `infrastructure/redis` module. The **durable** stores
-> (clients/users/consent/permissions) stay `sqlite` until the Postgres/CockroachDB
-> backend ships; on a single durable node that is Tier-A-durable + Tier-B-hot.
+> shared `redis:` block (`mode: cluster`), set `backend: postgres` on the durable
+> stores (identity, permissions, tenant, audit, consent, …) with a shared
+> `postgres:` block, and turn on the etcd Bus. Both Redis and Postgres backends
+> are separate Go modules pulled into the binary build (not the SDK library
+> packages) via go.mod `replace` directives.
 
-Tier B `config.yaml` (hot → Redis Cluster; secrets via `SSO_REDIS__PASSWORD`):
+Tier B `config.yaml` (hot → Redis Cluster, durable → Postgres, coordination → etcd;
+secrets via `SSO_REDIS__PASSWORD` / `SSO_POSTGRES__DSN`):
 
 ```yaml
 redis:
@@ -189,12 +192,26 @@ redis:
   db: 0                 # cluster requires 0
   pool_size: 100
   read_timeout: 300ms   # fail-closed fast on /token
+
+postgres:
+  dialect: postgres      # postgres | cockroach
+  dsn: postgres://sso@pgbouncer:6432/sso?sslmode=verify-full
+  max_open_conns: 15     # N replicas x this < DB max_connections
+
 oauth:    { backend: redis }        # auth_code / refresh / device_code / par
 ciba:     { backend: redis }
 mfa:      { challenge: { backend: redis } }
 security: { jti_replay: { backend: redis }, rate_limit: { backend: redis } }
-identity: { session_backend: redis } # sessions on Redis; clients/users stay durable
-cluster:  { bus: { backend: etcd, endpoints: [etcd-0:2379] }, cross_replica_revocation: true }
+identity: { backend: postgres, session_backend: redis } # durable on DB, sessions hot
+permissions: { enabled: true, backend: postgres }
+tenant: { enabled: true, backend: postgres }
+audit: { enabled: true, backend: postgres, hash_chain: true }
+
+cluster:
+  bus: { backend: etcd, endpoints: [etcd-0:2379] }
+  cross_replica_revocation: true
+keys:
+  signing_key_registry: { backend: etcd, etcd_endpoints: [etcd-0:2379] }
 ```
 
 > **Operator hard requirement:** the Redis auth keyspace MUST run
@@ -213,15 +230,17 @@ Reference distributed topology (Tier B):
             ▼
    ┌───────────────────┐   N replicas, pod anti-affinity
    │  sso-server × N    │── gRPC/REST admin :8081
-   └───────────────────┘
-        │           │
-        ▼           ▼
-   Redis (shared    etcd (cluster Bus:
-   stores: codes,   revocation, key
-   sessions, …)     rotation, config,
-                    registry, netpolicy)
-        ▲
-        │  optional: KMS/HSM (kms/*), SAML-IdP, LDAP, RADIUS  (separate modules)
+   └─────┬──────┬──────┘
+         │      │
+    hot  │      │ durable
+    ┌────▼──┐ ┌─▼──────────┐
+    │ Redis  │ │ Postgres   │ etcd (cluster Bus:
+    │ Cluster│ │ /Cockroach │ revocation, key
+    │ codes, │ │ clients,   │ rotation, config,
+    │ sess,… │ │ users, …   │ registry, netpolicy)
+    └────────┘ └────────────┘
+         ▲
+         │  optional: KMS/HSM (kms/*), SAML-IdP, LDAP, RADIUS  (separate modules)
 
    downstream services ──hold──> ssoclient/remote (verify tokens LOCALLY, cached JWKS)
 ```
@@ -239,7 +258,7 @@ Reference distributed topology (Tier B):
 | CAEP/SSF (`protocols/caep`) | cross-replica SET transmit to the affected client | ✅ |
 | Token verification (downstream) | `ssoclient/remote` + cached JWKS | ✅ (off hot path) |
 | **Hot-path stores** (codes/sessions/refresh/par/device/ciba/jti/mfa-challenge) + ratelimit | **Redis Cluster** (`infrastructure/redis`) | ✅ `backend: redis` |
-| **Durable stores** (clients/users/consent/permissions) | Postgres/CockroachDB | ⚠️ planned — `memory`/`sqlite` today |
+| **Durable stores** (clients/users/consent/permissions/tenants/audit/…) | **Postgres/CockroachDB** (`infrastructure/postgres`) | ✅ `backend: postgres` |
 | Signing offload | `infrastructure/kms/*` (AWS/GCP/Azure KMS, PKCS#11) | via config (separate modules) |
 
 ## 8. Microservices decomposition

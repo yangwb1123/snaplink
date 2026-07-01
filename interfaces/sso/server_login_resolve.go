@@ -63,12 +63,12 @@ func (s *Server) fetchJARRequestURI(ctx HandlerContext, req *login.Request) bool
 // PAR store or an unknown/expired request_uri; false on success.
 func (s *Server) consumePARRequest(ctx HandlerContext, req *login.Request) bool {
 	if s.parStore == nil {
-		ctx.JSON(http.StatusNotImplemented, s.authzErrorBody(ctx, ErrPARNotConfigured))
+		ctx.JSON(http.StatusNotImplemented, s.authzErrorBodyWithState(ctx, ErrPARNotConfigured, req.State))
 		return true
 	}
 	stored, err := s.parStore.Consume(ctx.Request().Context(), req.RequestURI)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequestURI, req.State))
 		return true
 	}
 	// RFC 9126 §4: when client_id is present in the request, it MUST match the
@@ -76,7 +76,7 @@ func (s *Server) consumePARRequest(ctx HandlerContext, req *login.Request) bool 
 	// (e.g. one from their own PAR) while keeping the victim client's client_id in the
 	// URL would otherwise have the stored redirect_uri silently overwritten to theirs.
 	if req.ClientID != "" && stored.ClientID != "" && req.ClientID != stored.ClientID {
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequestURI))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequestURI, req.State))
 		return true
 	}
 	mergeStoredPARRequest(req, stored)
@@ -137,24 +137,24 @@ func mergeStoredPARRequest(req *login.Request, stored *oauth.PARRequest) {
 // renewed tokens or login_required).
 func (s *Server) handlePromptNone(ctx HandlerContext, prompts []string, req *login.Request) {
 	if req.ClientID == "" {
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMissingClientID))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrMissingClientID, req.State))
 		return
 	}
 	if s.clientStore == nil {
-		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrClientStoreNotConfigured))
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrClientStoreNotConfigured, req.State))
 		return
 	}
 	c, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
 	if err != nil {
-		ctx.JSON(http.StatusUnauthorized, s.authzErrorBody(ctx, ErrInvalidClient))
+		ctx.JSON(http.StatusUnauthorized, s.authzErrorBodyWithState(ctx, ErrInvalidClient, req.State))
 		return
 	}
 	if !c.Active {
-		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrInactiveClient))
+		ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrInactiveClient, req.State))
 		return
 	}
 	if !clientTenantOK(ctx, c) {
-		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrTenantMismatch))
+		ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrTenantMismatch, req.State))
 		return
 	}
 	if s.residencyGateLogin(ctx, c.ID, "silent_renewal", c.TenantID) {
@@ -163,7 +163,7 @@ func (s *Server) handlePromptNone(ctx HandlerContext, prompts []string, req *log
 	granted, scopeErr := oauth.GrantedScopes(req.Scope, c)
 	if scopeErr != nil {
 		s.recordLoginFailure(ctx, req.ClientID, "silent_renewal", ErrInvalidScope)
-		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidScope))
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidScope, req.State))
 		return
 	}
 	req.Scope = granted

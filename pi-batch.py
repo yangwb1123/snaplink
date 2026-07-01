@@ -64,6 +64,8 @@ class Stage:
     mode: str = "serial"
     workers: int = 4
     tasks: list = field(default_factory=list)
+    git_commit: bool = False
+    commit_message: str = ""
     
     def to_dict(self):
         return {
@@ -75,6 +77,8 @@ class Stage:
             "mode": self.mode,
             "workers": self.workers,
             "tasks": self.tasks,
+            "git_commit": self.git_commit,
+            "commit_message": self.commit_message,
         }
 
 
@@ -105,6 +109,10 @@ def load_pipeline(path: str) -> Pipeline:
         log.error("Invalid pipeline format. Expected 'stages' key.")
         sys.exit(1)
     
+    # Global git_commit setting (applied to all stages that don't set it explicitly)
+    global_git_commit = data.get("git_commit", False)
+    global_commit_message = data.get("commit_message", "")
+    
     stages = []
     for s in data["stages"]:
         stage = Stage(
@@ -116,6 +124,8 @@ def load_pipeline(path: str) -> Pipeline:
             mode=s.get("mode", "serial"),
             workers=s.get("workers", 4),
             tasks=s.get("tasks", []),
+            git_commit=s.get("git_commit", global_git_commit),
+            commit_message=s.get("commit_message", ""),
         )
         stages.append(stage)
     
@@ -245,6 +255,34 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
     log.info("")
     log.info("Stage '%s' completed: %d/%d tasks succeeded", 
              stage.name, len(outputs), len(tasks))
+    
+    # Git commit after stage
+    if stage.git_commit and outputs:
+        try:
+            import subprocess
+            commit_msg = stage.commit_message or "[pi-batch] Stage: %s - %d tasks completed" % (stage.name, len(outputs))
+            file_list = " ".join(["\"%s\"" % o for o in outputs])
+            
+            # Check if git repo exists
+            result = subprocess.run(
+                ["git", "rev-parse", "--git-dir"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                # Add and commit
+                subprocess.run(
+                    ["git", "add"] + outputs,
+                    capture_output=True, timeout=10
+                )
+                subprocess.run(
+                    ["git", "commit", "-m", commit_msg],
+                    capture_output=True, timeout=10
+                )
+                log.info("GIT COMMIT: %s (files: %d)", commit_msg, len(outputs))
+            else:
+                log.warning("Not a git repository, skipping git commit")
+        except Exception as e:
+            log.warning("Git commit failed: %s", e)
     
     return results
 
@@ -663,6 +701,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="reuse existing .out.md files (skip regeneration)")
     p.add_argument("--force", action="store_true",
                    help="force regeneration, overwrite existing .out.md (default)")
+    p.add_argument("--git-commit", action="store_true",
+                   help="auto git commit after each stage (overrides pipeline setting)")
+    p.add_argument("--no-git-commit", action="store_true",
+                   help="disable git commit (overrides pipeline setting)")
+    p.add_argument("--commit-prefix", default="[pi-batch]",
+                   help="prefix for auto-generated commit messages (default: [pi-batch])")
     p.add_argument("--dry-run", action="store_true",
                    help="print task list without executing")
     return p
@@ -675,6 +719,19 @@ def main() -> None:
     if args.pipeline:
         pipeline = load_pipeline(args.pipeline)
         reuse_outputs = args.reuse and not args.force
+        
+        # Apply git_commit override to all stages
+        if args.git_commit and not args.no_git_commit:
+            for stage in pipeline.stages:
+                stage.git_commit = True
+        elif args.no_git_commit:
+            for stage in pipeline.stages:
+                stage.git_commit = False
+        
+        # Apply commit message prefix
+        for stage in pipeline.stages:
+            if stage.git_commit and not stage.commit_message:
+                stage.commit_message = "%s Stage: %s" % (args.commit_prefix, stage.name)
         
         if dry_run := args.dry_run:
             run_pipeline(pipeline, model_override=args.model, dry_run=True, reuse=reuse_outputs)
@@ -743,6 +800,23 @@ def main() -> None:
             results = run_parallel(tasks, args.workers)
 
         print_summary(results)
+
+        # Git commit for single-stage modes
+        if not args.pipeline and args.git_commit and not args.no_git_commit:
+            import subprocess
+            outputs = [r.task.output for r in results if r.success and r.task.output]
+            if outputs:
+                try:
+                    subprocess.run(["git", "rev-parse", "--git-dir"],
+                                   capture_output=True, timeout=5)
+                    subprocess.run(["git", "add"] + outputs,
+                                   capture_output=True, timeout=10)
+                    msg = "%s Single batch: %d tasks" % (args.commit_prefix, len(outputs))
+                    subprocess.run(["git", "commit", "-m", msg],
+                                   capture_output=True, timeout=10)
+                    log.info("GIT COMMIT: %s (files: %d)", msg, len(outputs))
+                except Exception as e:
+                    log.warning("Git commit skipped: %s", e)
 
         if any(not r.success for r in results):
             sys.exit(1)

@@ -1,5 +1,10 @@
 syntax = "proto3";
 
+// Package admin/v1 — STABLE.
+// See docs/adr/ADR-0008-proto-versioning.md for the versioning policy.
+// Breaking changes are not permitted in this package without a minimum
+// 6-month deprecation window.
+
 package snaplink.admin.v1;
 
 import "google/api/annotations.proto";
@@ -41,9 +46,15 @@ message SessionToken {
 
 message ListSessionsRequest {
   // Filter to a single user; empty returns all active sessions.
-  string user_id = 1;
+  string user_id    = 1;
+  string page_token = 2;
+  int32  page_size  = 3;
 }
-message ListSessionsResponse { repeated SessionToken sessions = 1; }
+message ListSessionsResponse {
+  string next_page_token  = 2;
+  int32  total_size       = 3;
+  repeated SessionToken sessions = 1;
+}
 
 message RevokeRequest {
   // Provide either token (raw access token / session ID) OR session_id.

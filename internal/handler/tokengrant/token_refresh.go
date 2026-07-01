@@ -86,7 +86,7 @@ func HandleRefreshGrant(d RefreshGrantDeps, ctx core.HandlerContext, client *cor
 	// and a SessionManager is wired, verify the parent session is still
 	// alive. Session gone / expired / revoked → 400 invalid_grant. A
 	// store error is treated as "session not found" (fail-closed) — see
-	// the checkSessionLiveness contract.
+	// the refreshCheckSessionLiveness contract.
 	if refreshCheckSessionLiveness(d, ctx, info) {
 		return
 	}

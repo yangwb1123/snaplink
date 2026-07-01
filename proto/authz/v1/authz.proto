@@ -1,5 +1,10 @@
 syntax = "proto3";
 
+// Package authz/v1 — STABLE.
+// See docs/adr/ADR-0008-proto-versioning.md for the versioning policy.
+// Breaking changes are not permitted in this package without a minimum
+// 6-month deprecation window.
+
 package snaplink.authz.v1;
 
 option go_package = "github.com/snaplink/sso/gen/proto/authz/v1;authzv1";

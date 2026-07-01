@@ -1,5 +1,10 @@
 syntax = "proto3";
 
+// Package admin/v1 — STABLE.
+// See docs/adr/ADR-0008-proto-versioning.md for the versioning policy.
+// Breaking changes are not permitted in this package without a minimum
+// 6-month deprecation window.
+
 package snaplink.admin.v1;
 
 import "google/api/annotations.proto";
@@ -59,9 +64,14 @@ message ExportSnapshotResponse {
   string stored_as = 2;
 }
 
-message ListSnapshotsRequest {}
+message ListSnapshotsRequest {
+  string page_token = 1;
+  int32  page_size  = 2;
+}
 
 message ListSnapshotsResponse {
+  string next_page_token   = 2;
+  int32  total_size        = 3;
   repeated SnapshotMeta items = 1;
 }
 

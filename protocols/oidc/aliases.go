@@ -34,5 +34,6 @@ var (
 	SubjectTypesFor         = oidcsupport.SubjectTypesFor
 	IsValidResponseMode     = oidcsupport.IsValidResponseMode
 	ProjectUserInfoForOIDC  = oidcsupport.ProjectUserInfoForOIDC
+	ProjectIDTokenClaims     = oidcsupport.ProjectIDTokenClaims
 	SanitizeUserForUserInfo = oidcsupport.SanitizeUserForUserInfo
 )

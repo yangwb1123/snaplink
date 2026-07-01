@@ -179,7 +179,7 @@ func resolvePARClientAssertion(d PARDeps, ctx core.HandlerContext, req *parReque
 func validatePARRequestParams(ctx core.HandlerContext, req *parRequestForm, client *core.Client) bool {
 	// Parameter length limits — prevent DoS via oversized params that
 	// would bloat PAR store entries and amplify redirect responses.
-	if code := checkAuthParamLengths(
+	if code := CheckAuthParamLengths(
 		req.State, req.RedirectURI, req.Scope, req.Nonce, req.Resource,
 	); code != "" {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(code))

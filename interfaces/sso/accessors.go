@@ -119,6 +119,17 @@ func (s *Server) AdminRateLimit() (rate float64, burst int) {
 	return s.adminRateLimit.rate, s.adminRateLimit.burst
 }
 
+// AdminSessionTTL returns the configured admin bearer token idle timeout.
+// 0 means no idle timeout (default).
+func (s *Server) AdminSessionTTL() time.Duration {
+	return s.adminSessionTTL
+}
+
+// AdminTokenStore returns the wired admin token store, or nil.
+func (s *Server) AdminTokenStore() core.AdminTokenStore {
+	return s.adminTokenStore
+}
+
 func (s *Server) ConnectionStore() connections.Store { return s.connectionStore }
 // ConsentStore exposes the wired consent store (may be nil).
 func (s *Server) ConsentStore() ConsentStore { return s.consentStore }
