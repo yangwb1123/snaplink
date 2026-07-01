@@ -27,6 +27,12 @@ var (
 	// consented" and returns consent_required.
 	ErrNoConsentGrant = errors.New("sso: no consent grant found")
 
+	// ErrQuotaExceeded is returned by TenantQuotaStore.IncrementUsage
+	// when the operation would exceed the tenant's configured resource
+	// limit. The caller converts this to an appropriate HTTP/gRPC error
+	// (e.g. 403 Forbidden for admin API, invalid_request for token).
+	ErrQuotaExceeded = errors.New("sso: tenant resource quota exceeded")
+
 	// ErrPasswordMismatch is returned by PasswordCredentialStore.VerifyPassword
 	// when the supplied password does not match the stored hash OR no
 	// credential exists for the user. Callers MUST NOT distinguish the two

@@ -245,6 +245,22 @@ func (s *SessionManager) ListAll(ctx context.Context) ([]*sso.Session, error) {
 	return scanSessionList(rows)
 }
 
+// ListByTenant implements sso.SessionTenantLister — returns every session
+// stamped with tenantID. Empty tenantID returns empty list (no wildcard).
+func (s *SessionManager) ListByTenant(ctx context.Context, tenantID string) ([]*sso.Session, error) {
+	if tenantID == "" {
+		return []*sso.Session{}, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id
+          FROM sessions WHERE tenant_id = ?`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: list by tenant: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanSessionList(rows)
+}
+
 // DeleteByTenant implements sso.SessionTenantIndex — removes every session
 // stamped with tenantID across all users, returning the count deleted. Backs
 // proactive revocation on tenant suspension/deletion so a session minted while
@@ -304,4 +320,5 @@ var (
 	_ sso.SessionManager     = (*SessionManager)(nil)
 	_ sso.SessionMetaCreator = (*SessionManager)(nil)
 	_ sso.SessionTenantIndex = (*SessionManager)(nil)
+	_ sso.SessionTenantLister = (*SessionManager)(nil)
 )

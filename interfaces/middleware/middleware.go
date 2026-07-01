@@ -1,20 +1,49 @@
 // Package middleware holds the general HTTP middleware functions
-// — bearer-token validation, CORS, logging, and W3C trace context
-// propagation. Domain-specific middleware (admin auth, tenant
-// resolution, geo enrichment) lives in their respective subpackages
-// (admin/, tenant/, geo/).
+// — bearer-token validation, CORS, logging, panic recovery,
+// and W3C trace context propagation. Domain-specific middleware
+// (admin auth, tenant resolution, geo enrichment) lives in their
+// respective subpackages (admin/, tenant/, geo/).
 package middleware
 
 import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+	"runtime/debug"
 	"strings"
 
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
 )
+
+// Recover catches panics from downstream handlers and middlewares,
+// logs the stack trace, and returns 500 to the client instead of
+// crashing the process. Install as the outermost middleware wrapper
+// so it catches panics from every layer below.
+//
+// The standard-library Context ensures the ResponseWriter and Request
+// survive a panicking handler; ctx.JSON writes the error to the client.
+func Recover(l spi.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					stack := debug.Stack()
+					l.Error("panic recovered",
+						"panic", rec,
+						"stack", string(stack),
+						"path", r.URL.Path,
+					)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					_, _ = w.Write([]byte(`{"error":"` + core.ErrInternal + `"}`))
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
 // Auth validates Bearer tokens on protected routes. Failures
 // return 401 with the standard {error: invalid_token} body.
@@ -103,8 +132,18 @@ func Tracing() core.MiddlewareFunc {
 			}
 		}
 		current := tracer.StartChild(parent)
+
+		// Store the trace ID in the request context so error handlers
+		// and audit helpers can surface it to the caller.
+		*r = *r.WithContext(core.WithTraceID(r.Context(), current.TraceID))
+
 		r.Header.Set(core.HeaderTraceparent, tracer.FormatTraceparent(current))
 		w.Header().Set(core.HeaderTraceparent, tracer.FormatTraceparent(current))
+		// X-Trace-Id is the human-facing trace identifier — a stable,
+		// concise value the client can relay to support for debugging.
+		// It is the W3C TraceID portion of the traceparent, trimmed to
+		// a readable prefix length.
+		w.Header().Set(core.HeaderTraceID, current.TraceID)
 		if current.ParentSpanID != "" {
 			r.Header.Set(core.HeaderParentSpanID, current.ParentSpanID)
 		}

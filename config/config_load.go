@@ -107,6 +107,9 @@ func applyCodeDefaults(c *CodeAuthConfig, ttl time.Duration) {
 }
 
 func (c *Config) validate() error {
+	if err := ValidateVersion(c); err != nil {
+		return err
+	}
 	level := strings.ToLower(c.Logging.Level)
 	switch level {
 	case "debug", "info", "error":

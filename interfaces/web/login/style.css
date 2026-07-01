@@ -1,0 +1,283 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Brand surface — overridden at runtime from the tenant's /branding response. */
+:root {
+  --brand-primary: #6366f1;
+  --brand-primary-hover: #4f46e5;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #f3f4f6;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #111827;
+}
+
+.card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 4px 16px rgba(0,0,0,.06);
+  width: 100%;
+  max-width: 400px;
+  padding: 40px 36px 36px;
+}
+
+.logo {
+  text-align: center;
+  margin-bottom: 28px;
+}
+.logo svg { width: 44px; height: 44px; display: inline-block; }
+
+h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.view { display: none; }
+.view.active { display: block; }
+
+label {
+  display: block;
+  font-size: .875rem;
+  font-weight: 500;
+  margin-bottom: 4px;
+  color: #374151;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="email"],
+select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: .9375rem;
+  color: #111827;
+  background: #fff;
+  transition: border-color .15s;
+  appearance: none;
+}
+input:focus, select:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99,102,241,.15);
+}
+
+.field { margin-bottom: 16px; }
+
+.btn {
+  width: 100%;
+  padding: 11px;
+  border: none;
+  border-radius: 8px;
+  font-size: .9375rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, transform .1s;
+}
+.btn:active { transform: scale(.98); }
+.btn-primary { background: var(--brand-primary); color: #fff; }
+.btn-primary:hover { background: var(--brand-primary-hover); }
+.btn-secondary {
+  background: transparent;
+  color: #6366f1;
+  border: 1px solid #d1d5db;
+  margin-top: 8px;
+}
+.btn-secondary:hover { background: #f9fafb; }
+
+.btn-row { margin-top: 20px; }
+
+.error-box {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #991b1b;
+  font-size: .875rem;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  display: none;
+}
+.error-box.visible { display: block; }
+
+.success-box {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  color: #166534;
+  font-size: .875rem;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  text-align: center;
+  display: none;
+}
+.success-box.visible { display: block; }
+
+.scope-list {
+  list-style: none;
+  margin: 12px 0 20px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.scope-list li {
+  padding: 10px 14px;
+  font-size: .9rem;
+  border-bottom: 1px solid #f3f4f6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.scope-list li:last-child { border-bottom: none; }
+.scope-list li::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: #6366f1;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.client-name {
+  font-weight: 600;
+  color: #4f46e5;
+}
+
+.mfa-methods { margin-bottom: 16px; }
+.mfa-method-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  font-size: .9375rem;
+  color: #111827;
+  margin-bottom: 8px;
+  transition: border-color .15s, background .15s;
+}
+.mfa-method-btn:hover { border-color: #6366f1; background: #f5f3ff; }
+.mfa-method-btn.selected { border-color: #6366f1; background: #eef2ff; }
+
+.back-link {
+  display: block;
+  text-align: center;
+  margin-top: 16px;
+  font-size: .875rem;
+  color: #6b7280;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.back-link:hover { color: #4f46e5; }
+
+/* Self-service entry points below the login form (forgot password / signup). */
+.self-service {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #f3f4f6;
+  text-align: center;
+  font-size: .875rem;
+  color: #6b7280;
+}
+.self-service-link {
+  color: #6366f1;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.self-service-link:hover { color: #4f46e5; }
+
+/* Inline panels revealed from the self-service links; reuse the form fields. */
+.panel { display: none; margin-top: 8px; }
+.panel.active { display: block; }
+.panel h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+/* Home-realm-discovery notice (B2B enterprise-connection routing). */
+.hr-notice {
+  display: none;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  color: #3730a3;
+  font-size: .875rem;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+.hr-notice.visible { display: block; }
+
+.spinner {
+  display: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255,255,255,.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin .6s linear infinite;
+  margin: 0 auto;
+}
+.loading .spinner { display: inline-block; }
+.loading .btn-label { display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Dark mode — respects OS preference (login/consent pages). */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1117;
+    --bg-card: #1a1a2e;
+    --bg-input: #16213e;
+    --text: #e0e0e0;
+    --text-muted: #8892b0;
+    --border: #2a2a4a;
+    --brand-primary: #6366f1;
+    --brand-primary-hover: #4fc3f7;
+    --success: #166534;
+    --error-bg: #451a1a;
+    --error-border: #7f1d1d;
+    --error-text: #fca5a5;
+    --success-bg: #1a2930;
+    --success-border: #1e3a2f;
+    --success-text: #86efac;
+    --hr-bg: #1e1b4b;
+    --hr-border: #312e81;
+    --hr-text: #a5b4fc;
+  }
+  body { background: var(--bg); color: var(--text); }
+  .card { background: var(--bg-card); box-shadow: 0 1px 3px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.2); }
+  label { color: var(--text-muted); }
+  input[type="text"], input[type="password"], input[type="email"], select {
+    background: var(--bg-input); color: var(--text); border-color: var(--border);
+  }
+  input:focus, select:focus {
+    border-color: var(--brand-primary); box-shadow: 0 0 0 3px rgba(99,102,241,.25);
+  }
+  .btn-secondary { color: var(--brand-primary); border-color: var(--border); }
+  .btn-secondary:hover { background: var(--bg-input); }
+  .error-box { background: var(--error-bg); border-color: var(--error-border); color: var(--error-text); }
+  .success-box { background: var(--success-bg); border-color: var(--success-border); color: var(--success-text); }
+  .scope-list { border-color: var(--border); }
+  .scope-list li { border-bottom-color: var(--border); }
+  .scope-list li::before { background: var(--brand-primary); }
+  .client-name { color: var(--brand-primary); }
+  .mfa-method-btn { background: var(--bg-input); color: var(--text); border-color: var(--border); }
+  .mfa-method-btn:hover { border-color: var(--brand-primary); background: var(--hr-bg); }
+  .mfa-method-btn.selected { border-color: var(--brand-primary); background: var(--hr-bg); }
+  .back-link { color: var(--text-muted); }
+  .back-link:hover { color: var(--brand-primary); }
+  .self-service { border-top-color: var(--border); color: var(--text-muted); }
+  .self-service-link { color: var(--brand-primary); }
+  .hr-notice { background: var(--hr-bg); border-color: var(--hr-border); color: var(--hr-text); }
+  p[style*="color:#374151"] { color: var(--text-muted) !important; }
+  span[style*="color:#9ca3af"] { color: var(--text-muted) !important; }
+}

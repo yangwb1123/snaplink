@@ -331,6 +331,36 @@ type Client struct {
 	// clients have this set from the registration request's grant_types.
 	GrantTypes []string `json:"grant_types,omitempty" yaml:"grant_types,omitempty"`
 
+	// TokenEndpointAuthMethod names the RFC 7591 §2 client authentication
+	// method this client uses at /token (and /introspect, /revoke, /par).
+	// Set from DCR registration's token_endpoint_auth_method; empty means
+	// client_secret_basic (the OAuth 2.0 default). The list of accepted
+	// values mirrors the discovery doc:
+	//   "client_secret_basic", "client_secret_post", "private_key_jwt",
+	//   "tls_client_auth", "self_signed_tls", "none"
+	// DCR validation rejects unsupported values (dcr_validate.go).
+	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty" yaml:"token_endpoint_auth_method,omitempty"`
+
+	// TLSClientAuthSubjectDN is the RFC 8705 §2.1 expected Subject DN for
+	// tls_client_auth. The presented client cert's Subject DN MUST match
+	// this value exactly. Empty = no DN constraint (any valid cert from the
+	// CA is accepted). Only consulted when TokenEndpointAuthMethod is
+	// "tls_client_auth".
+	TLSClientAuthSubjectDN string `json:"tls_client_auth_subject_dn,omitempty" yaml:"tls_client_auth_subject_dn,omitempty"`
+
+	// TLSClientAuthSANDNS is the RFC 8705 §2.2 dNSName Subject Alternative
+	// Name expected for tls_client_auth. The presented client cert's SAN
+	// DNS entry MUST match this value. Empty = no SAN DNS constraint.
+	TLSClientAuthSANDNS string `json:"tls_client_auth_san_dns,omitempty" yaml:"tls_client_auth_san_dns,omitempty"`
+
+	// TLSClientAuthSANEmail is the RFC 8705 §2.2 rfc822Name Subject
+	// Alternative Name expected for tls_client_auth.
+	TLSClientAuthSANEmail string `json:"tls_client_auth_san_email,omitempty" yaml:"tls_client_auth_san_email,omitempty"`
+
+	// TLSClientAuthSANURI is the RFC 8705 §2.2 uniformResourceIdentifier
+	// Subject Alternative Name expected for tls_client_auth.
+	TLSClientAuthSANURI string `json:"tls_client_auth_san_uri,omitempty" yaml:"tls_client_auth_san_uri,omitempty"`
+
 	// Attributes is an open per-client extension bag for optional
 	// capabilities that don't warrant a first-class field. It carries
 	// REGISTERED, server-side configuration only — never request input.

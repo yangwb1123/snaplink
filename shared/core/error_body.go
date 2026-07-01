@@ -22,3 +22,16 @@ func ErrorBody(code string) map[string]string {
 func ErrorBodyDesc(code, desc string) map[string]string {
 	return map[string]string{KeyError: code, KeyErrorDescription: desc}
 }
+
+// ErrorBodyWithTrace returns the standard error envelope enriched with
+// the request's trace ID for client-side debugging. When traceID is
+// empty the trace_id field is omitted (backward compatible).
+//
+//	{ "error": code, "trace_id": "abc123" }
+func ErrorBodyWithTrace(code, traceID string) map[string]string {
+	body := map[string]string{KeyError: code}
+	if traceID != "" {
+		body["trace_id"] = traceID
+	}
+	return body
+}

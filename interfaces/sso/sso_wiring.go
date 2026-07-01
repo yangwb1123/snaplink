@@ -6,6 +6,7 @@ import (
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenant"
+	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/cluster"
@@ -81,4 +82,12 @@ type wiringState struct {
 	// startedAt records when NewServer completed. Used by /api/v1/status
 	// to compute uptime. Set automatically in NewServer; no option required.
 	startedAt time.Time
+
+	// jwtBearerValidator is the RFC 7523 JWT Bearer assertion validator
+	// (nil = grant not supported). Wired via WithJWTBearerGrant.
+	jwtBearerValidator tokengrant.JWTAssertionValidator
+
+	// tenantQuotaStore enforces per-tenant resource limits (clients, users,
+	// sessions). Nil = no quota enforcement (byte-identical to pre-quota build).
+	tenantQuotaStore TenantQuotaStore
 }

@@ -279,4 +279,13 @@ type Metrics struct {
 	// across replicas. Zero traffic when WithCrossReplicaRevocation isn't armed
 	// (or no bus is wired).
 	TokenRevocationsPropagatedTotal *prometheus.CounterVec // labels: direction
+
+	// Signup funnel — self-service registration conversion pipeline.
+	// outcome ∈ {success, failure} (bounded). Zero traffic when signup
+	// is not enabled.
+	SignupStartedTotal         *prometheus.CounterVec // labels: outcome
+	SignupVerifiedTotal        *prometheus.CounterVec // labels: outcome
+	SignupCompletedTotal       *prometheus.CounterVec // labels: outcome
+	PasswordResetRequestedTotal  *prometheus.CounterVec // labels: outcome
+	PasswordResetCompletedTotal  *prometheus.CounterVec // labels: outcome
 }

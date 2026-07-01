@@ -128,6 +128,10 @@ func (s *ConsentStore) GetConsent(ctx context.Context, userID, clientID string) 
 	if err != nil {
 		return core.ConsentGrant{}, fmt.Errorf("postgres: get consent_grant: %w", err)
 	}
+	// Expired grants are treated as not found.
+	if g.IsExpired() {
+		return core.ConsentGrant{}, core.ErrNoConsentGrant
+	}
 	return g, nil
 }
 

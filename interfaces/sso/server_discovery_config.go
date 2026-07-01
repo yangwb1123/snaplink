@@ -181,6 +181,15 @@ func (s *Server) applyClientAuthAndRequestParams(cfg *oidc.ProviderMetadata) {
 		"client_secret_basic",
 		"client_secret_post",
 		"private_key_jwt", // RFC 7521 + 7523
+		// RFC 8705 §2 — mTLS client certificate authentication.
+		// tls_client_auth = server verifies the client cert's subject
+		// DN or SAN against the registered TLSClientAuth* fields;
+		// self_signed_tls = the client presents a self-signed cert
+		// whose public key matches a registered JWK. Both are
+		// accepted by DCR (dcr_validate.go) and verified in the token
+		// handler's authenticateTokenClient path.
+		"tls_client_auth",
+		"self_signed_tls",
 		// RFC 6749 §2.1 / OIDC Core §9 — public clients (SPAs,
 		// native apps) authenticate only by client_id + PKCE,
 		// so `none` is the spec-defined method for them. DCR
@@ -193,9 +202,11 @@ func (s *Server) applyClientAuthAndRequestParams(cfg *oidc.ProviderMetadata) {
 	// pipeline as /token, so advertise the same list.
 	cfg.IntrospectionEndpointAuthMethodsSupported = []string{
 		"client_secret_basic", "client_secret_post", "private_key_jwt",
+		"tls_client_auth", "self_signed_tls",
 	}
 	cfg.RevocationEndpointAuthMethodsSupported = []string{
 		"client_secret_basic", "client_secret_post", "private_key_jwt",
+		"tls_client_auth", "self_signed_tls",
 	}
 	// RFC 9207 §3: this server always includes `iss` in
 	// authorization responses (see handleLogin + resolveIssuer).
@@ -321,6 +332,7 @@ func (s *Server) applyGrantEndpoints(cfg *oidc.ProviderMetadata, base string, cl
 		cfg.PushedAuthReqEndpoint = base + PathPAR
 		cfg.PushedAuthorizationRequestEndpointAuthMethodsSupported = []string{
 			"client_secret_basic", "client_secret_post", "private_key_jwt",
+			"tls_client_auth", "self_signed_tls",
 		}
 		if clientSnap.requirePAR {
 			cfg.RequirePushedAuthReq = true

@@ -1,0 +1,303 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+- Engineering system infrastructure:
+  - P0 — Harness layer with 6 automated gates (filesize, complexity, architecture, build/test, mock, security)
+  - P1 — Context layer (BOOTSTRAP, ARCHITECTURE, AGENTS docs)
+  - P2 — Skills layer (split-large-file, add-new-handler, refactor-high-complexity cards)
+  - P3 — Evaluation layer with coverage gates and TODO tracking
+  - P4 — Process layer (PR template, review checklist, ADR, check registry)
+  - P5 — Self-diagnosis engine (diagnose.sh, health-report)
+  - P6 — pi agent integration (.pi/ prompts, APPEND_SYSTEM.md)
+  - P7 — Developer experience (make help, dependabot, CODEOWNERS, issue templates)
+  - P8 — Trend monitor (weekly snapshot of engineering metrics)
+  - P9 — Security policy (vulnerability reporting, fail-open/closed docs)
+  - P10 — CI/CD integration (engineering.yml workflow, ci.yml harness step)
+- Self-bootstrapping: `make harness` regenerates all 25+ engineering files from
+  `docs/templates/engineering/generate-engineering.sh`
+- GitHub Actions workflow `engineering.yml` for PR gating
+- Dependabot configuration for automated dependency updates
+- Issue templates (bug report, feature request, technical debt)
+- CODEOWNERS file for PR routing
+- Developer guide, release process, security policy documentation
+
+### Changed
+- Makefile: 15+ new targets added (harness, filesize, complexity, architecture,
+  check-invariants, self-test, check-exemptions, health-report, diagnose,
+  trend, generate-engineering, make help)
+- .golangci.yml: Added funlen(60), gocyclo(15), gocognit(20) linters
+- AGENTS.md: Streamlined to focus on behavior rules and protocol invariants
+- CONTRIBUTING.md: Updated with engineering system references
+- ci.yml: Added engineering gates step before build
+
+### Fixed
+- Oracle-leak hardening patterns documented and checked
+- Anti-enumeration patterns (bcrypt dummy hash) verified
+- Cache-Control: no-store and WWW-Authenticate presence verified across 9+ files
+
+### Security
+- Security invariant checker (10 checks) enforces no-store headers,
+  bearer challenges, oracle-safe error responses, constant-time comparisons
+- Security policy defines fail-open vs fail-closed boundaries
+- Vulnerability reporting process documented
+
+## [0.10.0] — 2026-06-30
+
+### Added
+- P0–P10 engineering system infrastructure (see Unreleased for details)
+- Self-bootstrapping `make harness` target for engineering file generation
+- Security invariant checker (10 checks) enforcing no-store headers, bearer challenges,
+  oracle-safe error responses, and constant-time comparisons
+- Engineering gates GitHub Actions workflow for PR gating
+
+### Changed
+- AGENTS.md streamlined to focus on behavior rules and protocol invariants
+- CONTRIBUTING.md updated with engineering system references
+- .golangci.yml: Added funlen, gocyclo, gocognit linters
+
+### Fixed
+- Oracle-leak hardening patterns across OAuth/OIDC token endpoints
+- Anti-enumeration patterns (bcrypt dummy hash, uniform error responses)
+- Cache-Control: no-store and WWW-Authenticate header presence across 9+ files
+
+### Security
+- Security policy defines fail-open vs fail-closed boundaries
+- Vulnerability reporting process documented
+
+## [0.9.0] — 2026-06-29
+
+### Added
+- Idempotency-Key support for safe retry on `/token` endpoint
+- Request/response debug logging middleware
+- `WithAdminRateLimit` server option for admin API rate control
+- gRPC audit interceptor for admin RPCs
+- Production gRPC keepalive, TLS, max message size, and connection timeout configuration
+- `/api/v1/status` runtime info endpoint
+- Per-IP signup rate limiter via `WithSelfServiceSignupRateLimiter`
+- `/me/sessions*` alias routes for self-service portal
+- Configurable JWKS body cache with `sync.Map`, ETag, and jitter TTL
+
+### Changed
+- JWKS body cache refactored to `sync.Map` with jitter TTL for thundering-herd protection
+- Audit events now stamped with deploying server version
+- Refresh grace window: concurrent double-submit made idempotent
+
+### Fixed
+- DCR: RFC 7592 PUT no longer bypasses `AllowedPKCEMethods` restriction
+- DCR: RequirePKCE clients restricted to S256 by default
+- Connections: home-realm discovery scoped to request tenant
+- Consent: `authorization_details` bound to consent challenge (RFC 9396 §7)
+- SCIM: closed two R27 post-fix verify bypass paths
+- SCIM: reject empty `displayName` in path-less PATCH replace/add
+- SCIM: block `/Bulk` as a recursive bulk operation target
+- Admin: publish `KindConnectionChange` on connection CRUD to invalidate peer caches
+- Token exchange: enforce RFC 8693 §4.4 `may_act` constraint
+- OIDC: destroy server-side SSO session on RP-initiated logout
+- WebAuthn: compare `user.Name` not session `UserID` bytes in bearer binding
+- OAuth: constant-time comparison for initial access token
+- WebAuthn: bind self-service `FinishRegistration` to authenticated bearer
+- Token grant: report DPoP `token_type` in refresh, CIBA, and token-exchange responses
+- SSO: block deprovisioned users in federated OAuth callback path
+- Cmd: gate storage-health report behind `admin.enabled`
+- Various security test gaps tightened (R25 T-01 through T-04)
+
+## [0.8.0] — 2026-06-27
+
+### Added
+- Self-service registration abuse protection with per-IP rate limiter
+- SQLite refresh grace store for concurrent double-submit tolerance
+- Password policy SPI with configurable strength enforcement
+- Monotonic clock safety for token expiry comparisons
+- Email verification for self-service signup
+- Per-user max sessions enforcement
+- Introspection cache for high-throughput token validation
+- KDF cost matching for bcrypt hash comparison
+- Device flow HTML verification page with client info, inline login, and scope approval
+- WebAuthn discoverable conditional-mediation (passkey autofill) flow
+- gRPC admin E2E tests + proto versioning ADR
+
+### Fixed
+- Self-service: revoke-all endpoint now correctly destroys all sessions
+- Login: `rejectUnverifiedEmail` fails closed on `GetByID` error
+- Self-service: revoke-all destroys sessions correctly (test coverage added)
+- Self-service: real client IP used in registration gates + correct `Retry-After` ceiling
+- Login: nil guard for user provider + close MFA step-up verification bypass
+- Wire `rejectUnverifiedEmail` gate (was dead code)
+- Security: monotonic-clock-safe comparisons for token expiry
+- Device: remove unauthenticated metadata endpoint + thread DPoP binding
+- SCIM: preserve `userName` casing on write; `caseExact=false` is a match rule
+- Self-service: clone user before mutating and check `ErrNoSuchUser` explicitly
+- Config: validate schema version on load
+- SSO: sanitize `/readyz` error body for unauthenticated callers
+- Defaultimpl: lazy-sweep expired email verification tokens on `Issue`
+- Bootstrap: stop persisting `seeded_password` plaintext; clear on upgrade
+- Self-service: verify-email Mode A mount, nil guard, and failure audit
+- Admin: body-size cap on REST gateway and auth-gate Discovery writes
+- SCIM: filter DoS mitigation and case-insensitive `userName` uniqueness
+- SCIM: preserve `userName` casing on write
+- gRPC admin: redact credential attributes from admin user API responses
+- Token grant: enforce DPoP/mTLS sender-constraint continuity on exchange
+- SQLite schema version boot gates for all stores
+- OIDC: DOM XSS + open redirect in device verification page
+- Self-service: cancel stale pending token on concurrent re-registration (EV-F2)
+- SSO: TOCTOU + cross-tenant + nil-guard in per-user session eviction
+- Self-service: Mode B signup drops password + double-audit + no-fail-audit
+- Self-service post-fix verify caught 2 self-regressions (HIGH)
+- gRPC: gate AuditWriter and NetPolicy behind adminMW when admin enabled
+- JWKS: add configurable debounce interval for tests
+- Session: filter expired sessions in `Get/ListByUser` on memory and sqlite
+- PAR: enforce RFC 9126 §4 client binding on `request_uri` consume
+- SSO client: defend JWKS cache against kid-amplification DoS
+- Consent: preserve existing grant scopes on refresh, skip write on store outage
+
+## [0.7.0] — 2026-06-22
+
+### Added
+- Self-service signup flow with email verification (Mode A and Mode B)
+- Password reset flow for self-service users
+- Data export and account erasure self-service endpoints
+- Compliance module: GDPR/CCPA/PIPL erasure and export
+- OpenID SSF CAEP transmitter and receiver (push-only to affected client)
+- `ListByTenant` for tenant-scoped CAEP event delivery
+
+### Fixed
+- Login: wire `rejectUnverifiedEmail` gate (was dead code)
+- Self-service: corrected `verify-email` Mode A route mounting
+- Various gate violation fixes across auth flows
+
+## [0.6.0] — 2026-06-19
+
+### Added
+- OpenID Federation 1.0: entity configuration, trust chains, auto-registration, §8 fetch
+- CAEP/SSF receiver (fail-closed; jti-replay verified before processing)
+- Federation trust-chain validation (fail-closed)
+- Auto-registration: pre-registered client wins on conflict
+
+### Changed
+- Pre-registered client wins during federation auto-registration
+- Trust-chain failure produces byte-identical `invalid_client`
+
+### Security
+- CAEP receiver: fail-closed; jti-replay verified
+- Federation: anchor keys never fetched from network; all failures → `ErrTrustChainInvalid`
+- Client `caep_receiver_endpoint` validated at create/update (never request input)
+
+## [0.5.0] — 2026-06-16
+
+### Added
+- SCIM 2.0 provisioning (RFC 7643/7644) with CRUD operations
+- Multi-region data residency SPI with governance-mode resolvers
+- Region mismatch rejection at token issuance
+- `region_not_allowed` / `residency_violation` governance error codes
+
+### Fixed
+- SCIM: filter DoS mitigation and case-insensitive uniqueness enforcement
+- SCIM: closed multiple bypass paths in PATCH operations
+- SCIM: reject empty `displayName` in path-less PATCH replace/add
+- Region: write-gate on login, read-gate on access with governance codes
+
+## [0.4.0] — 2026-06-13
+
+### Added
+- FAPI 2.0 validator (Inspection/Enforce modes)
+- Risk scoring SPI with async behavioral detection
+- Anomaly detection framework (off request path, never feeds auth decision)
+- JAR fetch and JWE support for request objects
+- Pairwise subject identifiers
+- mTLS client certificate binding
+- Step-up authentication with ACR enforcement
+- JTI replay protection store
+
+### Security
+- Lockout policy enforcement
+- Asymmetric JWS algorithms only (EdDSA/ES256-512/RS256/PS256)
+- `alg=none` rejected before signature verification
+
+## [0.3.0] — 2026-06-11
+
+### Added
+- OpenID Connect core support: ID Token issuance, Userinfo endpoint, JWKS endpoint
+- End-Session endpoint (RP-initiated logout)
+- Silent renewal support
+- Form Post response mode
+- JARM (JWT Secured Authorization Response Mode)
+- OIDC discovery document derived from server state
+- `at_hash` claim when access token is in response
+
+### Changed
+- ID Tokens include `at_hash` when access token is in response
+- `aud` claim: unmarshals string or array; marshals single-aud as compact string per OIDC spec
+
+## [0.2.0] — 2026-06-02
+
+### Added
+- OAuth 2.0 authorization code grant with PKCE (S256 enforced)
+- OAuth 2.0 device authorization grant (RFC 8628)
+- OAuth 2.0 token refresh with rotation and family tracking
+- OAuth 2.0 PAR (Pushed Authorization Requests, RFC 9126)
+- DCR (Dynamic Client Registration, RFC 7591/7592)
+- RAR (Rich Authorization Requests, RFC 9396)
+- DPoP sender-constrained tokens
+- Token exchange (RFC 8693)
+- Client credentials grant
+- Refresh family rotation with `DeleteFamily` on replay
+- Oracle-leak hardening: unknown/expired/consumed/mismatch → `400 invalid_grant`
+- Cache-Control: no-store on all credential error responses
+- RFC 9207 `iss` parameter on auth response
+
+### Fixed
+- Oracle-leak: stale/missing PAR `request_uri` → `invalid_request_uri`
+- Refresh family: reuse → `DeleteFamily` → `invalid_grant`
+- Session refresh: refuses expired/revoked before extending
+
+## [0.1.0] — 2026-05-17
+
+### Added
+- Core SPI interfaces: User, Client, Session, Token, Subject, AuthRequest, AuthResult
+- Authenticator SPI with 7 pluggable authenticators (password, TOTP, SMS, email, WebAuthn, federated, passkey)
+- WebAuthn authenticator with AAGUID and FIDO MDS support
+- Memory stores for all interfaces (UserProvider, ClientStore, SessionManager, TokenIssuer)
+- Ed25519/ECDSA/RSA token issuers (each accepts only its own alg)
+- Audit module with pluggable sinks (memory, file, SQLite, HTTP)
+- Permissions module with roles, menu tree, and wildcard matcher (`user:*` ⊇ `user:read`)
+- Deploy artifacts: OpenResty gateway config, Dockerfile, Kubernetes manifests
+- Service discovery (memory/etcd) with hostname-beats-CIDR classification
+- Tenant resolution middleware with Host→Tenant mapping
+- Geo enrichment middleware with CIDR-keyed provider
+- Config: layered YAML + env + etcd + flag loader
+- gRPC Phase A services: AuditWriter, Authorizer, Discovery
+- gRPC Phase B: Network policy control plane (PolicyService, Classifier)
+- gRPC Phase C: Admin services (clients, users, tokens, permissions)
+- Bootstrap framework: first-run init with distributed lock (file/etcd), snapshot/restore
+- Release pinning: Pinner SPI, health probes, auto-rollback
+- Command-line: `sso-server` binary with production configuration and offline CLIs
+- JWT/JWKS support with configurable signing key rotation and leaderless key aggregation
+- RFC 9068 JWT access tokens with all required claims
+- Anti-enumeration patterns (bcrypt dummy hash, uniform error responses)
+- Cache-Control: no-store and 401 WWW-Authenticate on all credential endpoints
+- RFC 9207 `iss` parameter on auth response
+- SSO client SDK (local/remote/dev/bootstrap variants)
+- Admin middleware: Bearer + admin scope on both HTTP and gRPC transports
+- OpenResty gateway integration (JWT verify + request-id + audit + netpolicy)
+- Community health files: issue templates, PR template, CODEOWNERS
+- Makefile with build, test, lint, ci targets
+- CI: GitHub Actions workflow with lint, build, test, Docker
+
+[Unreleased]: https://github.com/dwp/snaplink/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/dwp/snaplink/releases/tag/v0.10.0
+[0.9.0]: https://github.com/dwp/snaplink/releases/tag/v0.9.0
+[0.8.0]: https://github.com/dwp/snaplink/releases/tag/v0.8.0
+[0.7.0]: https://github.com/dwp/snaplink/releases/tag/v0.7.0
+[0.6.0]: https://github.com/dwp/snaplink/releases/tag/v0.6.0
+[0.5.0]: https://github.com/dwp/snaplink/releases/tag/v0.5.0
+[0.4.0]: https://github.com/dwp/snaplink/releases/tag/v0.4.0
+[0.3.0]: https://github.com/dwp/snaplink/releases/tag/v0.3.0
+[0.2.0]: https://github.com/dwp/snaplink/releases/tag/v0.2.0
+[0.1.0]: https://github.com/dwp/snaplink/releases/tag/v0.1.0

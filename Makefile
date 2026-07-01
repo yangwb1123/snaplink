@@ -9,7 +9,7 @@ IMAGE_TAG ?= dev
 
 CLI = python cli.py
 
-.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking proto-gen docs-validate docs-serve release-snapshot release-check security-scan load-test lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all config-validate
+.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking proto-gen docs-validate docs-serve release-snapshot release-check security-scan load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all config-validate config-validate-all k8s-render k8s-diff
 
 # ── Go Dev (via $GO directly for speed) ──────────────────────────────
 
@@ -60,11 +60,22 @@ build: ## Compile to $(BIN_DIR)/.
 examples: ## Compile example apps to ensure they stay buildable.
 	$(GO) build ./docs/examples/...
 
-config-validate: ## Validate all config.yaml files against current server.
-	@for cfg in $$(find ops/deploy -name config.yaml); do \
-		echo "Validating $$cfg..."; \
-		$(GO) run ./cmd/sso-server --validate-only=$$cfg || exit 1; \
-	done
+config-validate: ## Validate all deploy config.yaml files against current server.
+	@echo "==> Validating all config.yaml files..."
+	@fail=0; \
+	for cfg in cmd/sso-server/config.yaml bin/config.yaml ops/deploy/compose/config.yaml ops/deploy/baremetal-ha/sso/config.yaml ops/deploy/k8s/config.yaml ops/deploy/k8s-prod/config.yaml docs/examples/basic/config.yaml; do \
+		echo -n "  $$cfg ... "; \
+		if [ -f "$$cfg" ]; then \
+			if $(GO) run ./cmd/sso-server --config="$$cfg" --validate-only 2>/dev/null; then \
+				echo "OK"; \
+			else \
+				echo "FAIL"; fail=1; \
+			fi; \
+		else \
+			echo "SKIP (not found)"; \
+		fi; \
+	done; \
+	exit $$fail
 
 docker: ## Build container image.
 	docker build -t $(IMAGE):$(IMAGE_TAG) .
@@ -223,4 +234,74 @@ config-validate-all: ## Validate all 7 deploy config files against the server.
 smoke-test: ## Run smoke tests against a running server.
 	sh ops/deploy/baremetal-ha/smoke.sh
 
-.PHONY: release-snapshot release docker-push docker-multiarch lint-all security-scan-all config-validate-all smoke-test
+k8s-render: ## Render all Kustomize overlays to flat YAML for auditing.
+	@command -v kustomize >/dev/null 2>&1 || { echo "kustomize not installed" >&2; exit 1; }
+	@mkdir -p $(BIN_DIR)/k8s-rendered/dev $(BIN_DIR)/k8s-rendered/prod
+	@echo "==> Rendering k8s (dev)..."
+	kustomize build ops/deploy/k8s > $(BIN_DIR)/k8s-rendered/dev/all.yaml
+	@echo "==> Rendering k8s-prod..."
+	kustomize build ops/deploy/k8s-prod > $(BIN_DIR)/k8s-rendered/prod/all.yaml
+	@echo "Rendered YAML in $(BIN_DIR)/k8s-rendered/"
+
+k8s-diff: ## Diff rendered output between dev and prod overlays.
+	@command -v kustomize >/dev/null 2>&1 || { echo "kustomize not installed" >&2; exit 1; }
+	@mkdir -p $(BIN_DIR)/k8s-rendered/dev $(BIN_DIR)/k8s-rendered/prod
+	@kustomize build ops/deploy/k8s > $(BIN_DIR)/k8s-rendered/dev/all.yaml
+	@kustomize build ops/deploy/k8s-prod > $(BIN_DIR)/k8s-rendered/prod/all.yaml
+	@echo "==> Diff between dev and prod overlays:"
+	@diff $(BIN_DIR)/k8s-rendered/dev/all.yaml $(BIN_DIR)/k8s-rendered/prod/all.yaml || true
+
+# ── Terraform Infrastructure ──────────────────────────────────────
+
+terraform-validate: ## Validate Terraform configurations.
+	@command -v terraform >/dev/null 2>&1 || { echo "terraform not installed" >&2; exit 1; }
+	@echo "==> Validating Terraform..."
+	cd ops/deploy/terraform && terraform init -backend=false -input=false >/dev/null
+	cd ops/deploy/terraform && terraform validate
+	@echo "Terraform configuration is valid"
+
+terraform-plan-dev: ## Plan Terraform changes for dev environment.
+	@command -v terraform >/dev/null 2>&1 || { echo "terraform not installed" >&2; exit 1; }
+	@echo "==> Planning Terraform (dev)..."
+	cd ops/deploy/terraform && terraform init -backend=false -input=false >/dev/null
+	cd ops/deploy/terraform && terraform plan -var-file="environments/dev/terraform.tfvars"
+
+terraform-plan-prod: ## Plan Terraform changes for prod environment.
+	@command -v terraform >/dev/null 2>&1 || { echo "terraform not installed" >&2; exit 1; }
+	@echo "==> Planning Terraform (prod)..."
+	cd ops/deploy/terraform && terraform init -backend=false -input=false >/dev/null
+	cd ops/deploy/terraform && terraform plan -var-file="environments/prod/terraform.tfvars"
+
+# ── License Compliance ───────────────────────────────────────────────
+
+licenses: ## Generate dependency license report (CSV) + check for forbidden licenses.
+	@echo "==> Installing go-licenses..."
+	@which go-licenses 2>/dev/null || go install github.com/google/go-licenses/v2@latest
+	@mkdir -p $(BIN_DIR)
+	@echo "==> Generating dependency-license CSV -> $(BIN_DIR)/licenses.csv..."
+	@go-licenses csv ./... > $(BIN_DIR)/licenses.csv 2>/dev/null || true
+	@echo "==> Checking for forbidden licenses (GPL/AGPL/SSPL)..."
+	@go-licenses check ./... 2>&1 || echo "[WARN] go-licenses check found issues — review $(BIN_DIR)/licenses.csv for details"
+	@echo "==> License report written to $(BIN_DIR)/licenses.csv"
+	@wc -l < $(BIN_DIR)/licenses.csv | xargs -I{} echo "    {} dependencies catalogued"
+
+licenses-check: ## CI gate: reject GPL/AGPL/SSPL dependencies.
+	@echo "==> Checking for forbidden licenses (CI gate)..."
+	@which go-licenses 2>/dev/null || go install github.com/google/go-licenses/v2@latest
+	@go-licenses check ./... 2>&1; status=$$?; \
+	if [ $$status -ne 0 ]; then \
+		echo "FAIL: Forbidden license detected — GPL/AGPL/SSPL are not allowed."; \
+		echo "      Run 'make licenses' for the full report."; \
+		exit 1; \
+	fi; \
+	echo "OK: All dependencies use permitted licenses"
+
+licenses-notice: ## Generate NOTICE.txt for distribution (Apache 2.0 §4).
+	@echo "==> Generating NOTICE.txt..."
+	@which go-licenses 2>/dev/null || go install github.com/google/go-licenses/v2@latest
+	@go-licenses csv ./... 2>/dev/null | awk -F, '$$2 ~ /Apache-2\.0/ {print "This software includes " $$1 " under the Apache License 2.0:"}' > NOTICE.txt
+	@echo "" >> NOTICE.txt
+	@echo "Full dependency list: see licenses.csv (make licenses)" >> NOTICE.txt
+	@echo "NOTICE.txt written ($$(wc -l < NOTICE.txt) lines)"
+
+.PHONY: licenses licenses-check licenses-notice release-snapshot release docker-push docker-multiarch lint-all security-scan-all config-validate-all smoke-test k8s-render k8s-diff terraform-validate terraform-plan-dev terraform-plan-prod

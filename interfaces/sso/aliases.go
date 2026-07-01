@@ -21,6 +21,14 @@ const (
 	FAPIModeEnforce    = fapi.ModeEnforce
 )
 
+// Client-authentication method names per RFC 8705 §2 / RFC 7591 §2.
+// These are the canonical values stored on [core.Client.TokenEndpointAuthMethod]
+// and accepted by DCR validation (oauthvalidate/dcr_validate.go).
+const (
+	ClientAuthTLS           = "tls_client_auth"
+	ClientAuthSelfSignedTLS = "self_signed_tls"
+)
+
 // --- General middleware re-exports (functions moved to middleware/) ---
 var AuthMiddleware = middleware.Auth
 var CORS = middleware.CORS
@@ -99,6 +107,9 @@ type SessionManager = core.SessionManager
 type SessionMeta = core.SessionMeta
 type SessionMetaCreator = core.SessionMetaCreator
 type SessionTenantIndex = core.SessionTenantIndex
+type SessionTenantLister = core.SessionTenantLister
+type TenantQuotaStore = core.TenantQuotaStore
+type TenantQuota = core.TenantQuota
 type TenantUserStore = core.TenantUserStore
 type TenantMembership = core.TenantMembership
 type TenantRole = core.TenantRole
@@ -232,6 +243,7 @@ const GrantDeviceCode = core.GrantDeviceCode
 const GrantRefreshToken = core.GrantRefreshToken
 const GrantTokenExchange = core.GrantTokenExchange
 const GrantCIBA = core.GrantCIBA
+const GrantJWTBearer = core.GrantJWTBearer
 const HeaderAccessControlHeaders = core.HeaderAccessControlHeaders
 const HeaderAccessControlMethods = core.HeaderAccessControlMethods
 const HeaderAccessControlOrigin = core.HeaderAccessControlOrigin
@@ -309,6 +321,8 @@ const PathAdminUserEmail = core.PathAdminUserEmail
 const PathAdminAccountLockoutClear = core.PathAdminAccountLockoutClear
 const PathAdminTokens = core.PathAdminTokens
 const PathAdminTokenByID = core.PathAdminTokenByID
+const PathAdminLogout = core.PathAdminLogout
+const PathAdminSessions = core.PathAdminSessions
 const PathAdminConnections = core.PathAdminConnections
 const PathAdminConnectionByID = core.PathAdminConnectionByID
 const PathAdminTenantMembers = core.PathAdminTenantMembers

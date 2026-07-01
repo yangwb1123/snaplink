@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"time"
 
@@ -10,6 +11,12 @@ import (
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
 )
+
+// maxCIBADeliveryRetries is the number of times to retry CIBA challenge
+// delivery before giving up. 3 retries with exponential backoff cover
+// transient APNs/FCM/SMS gateway blips without holding the request open
+// too long.
+const maxCIBADeliveryRetries = 3
 
 // CIBADeps is what HandleBackchannelAuth needs. *sso.Server satisfies
 // it via accessor methods (accessors.go). oauth/ must not import oidc/,
@@ -227,11 +234,12 @@ func issueAndDeliverCIBA(d CIBADeps, ctx core.HandlerContext, client *core.Clien
 		return
 	}
 
-	// Deliver the challenge out of band. Failure → 500 + clean up the
-	// dangling pending request (operators don't want auth_req_ids the
-	// user can never confirm).
-	if err := d.DeliverCIBAChallenge(ctx.Request().Context(), authReqID, subjectID, req.BindingMessage); err != nil {
-		d.SrvLogger().Error("ciba challenge delivery failed", "error", err)
+	// Deliver the challenge out of band with exponential-backoff retry
+	// so transient APNs/FCM/SMS gateway failures don't abort the entire
+	// CIBA flow. After all retries are exhausted the pending request is
+	// cleaned up (no dangling auth_req_id the user can never confirm).
+	if err := deliverCIBAWithRetry(d, ctx.Request().Context(), authReqID, subjectID, req.BindingMessage); err != nil {
+		d.SrvLogger().Error("ciba challenge delivery failed after retries", "error", err, "auth_req_id", authReqID)
 		_ = d.CIBAStore().Delete(ctx.Request().Context(), authReqID)
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
@@ -244,6 +252,32 @@ func issueAndDeliverCIBA(d CIBADeps, ctx core.HandlerContext, client *core.Clien
 		"expires_in":  int(ttl.Seconds()),
 		"interval":    int(interval.Seconds()),
 	})
+}
+
+// deliverCIBAWithRetry calls DeliverCIBAChallenge with exponential
+// backoff up to maxCIBADeliveryRetries attempts. Returns the last
+// error when all attempts fail.
+func deliverCIBAWithRetry(d CIBADeps, ctx context.Context, authReqID, subjectID, bindingMessage string) error {
+	var lastErr error
+	for attempt := range maxCIBADeliveryRetries {
+		if attempt > 0 {
+			// backoff: 50ms, 250ms, 1s (attempt 1, 2, 3)
+			backoff := time.Duration(math.Pow(5, float64(attempt))) * 10 * time.Millisecond
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		if err := d.DeliverCIBAChallenge(ctx, authReqID, subjectID, bindingMessage); err != nil {
+			lastErr = err
+			d.SrvLogger().Error("ciba challenge delivery failed, retrying",
+				"error", err, "attempt", attempt+1, "auth_req_id", authReqID)
+			continue
+		}
+		return nil
+	}
+	return lastErr
 }
 
 // persistCIBARequest validates the requested scope and persists the

@@ -35,13 +35,15 @@ func TestDiscovery_IntrospectionRevocationAuthMethods(t *testing.T) {
 	var doc map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&doc)
 
-	want := []string{"client_secret_basic", "client_secret_post", "private_key_jwt"}
+	want := []string{"client_secret_basic", "client_secret_post", "private_key_jwt",
+		"tls_client_auth", "self_signed_tls"}
 	sort.Strings(want)
 
 	for _, field := range []string{
 		"introspection_endpoint_auth_methods_supported",
 		"revocation_endpoint_auth_methods_supported",
 		"pushed_authorization_request_endpoint_auth_methods_supported",
+		"token_endpoint_auth_methods_supported",
 	} {
 		raw, ok := doc[field].([]any)
 		if !ok {

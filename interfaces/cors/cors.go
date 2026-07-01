@@ -54,6 +54,15 @@ type Policy struct {
 	// the browser). 0 = header omitted (browser default, typically
 	// 5 seconds). Common production value: 1 * time.Hour.
 	MaxAge time.Duration
+
+	// PathOverrides route-matches specific URL path prefixes against
+	// distinct CORS policies. The key is a URL path prefix (e.g.
+	// "/.well-known/jwks.json") and the value is the policy to apply
+	// when the request path starts with that prefix. Longer prefixes
+	// are checked first; the first match wins. Use this for endpoints
+	// that need a different CORS posture than the router-level default
+	// (e.g. a permissive /.well-known/jwks.json vs a strict /token).
+	PathOverrides map[string]Policy
 }
 
 // corsConfig holds the precomputed CORS values shared across all
@@ -156,16 +165,22 @@ func (c *corsConfig) writePreflight(w http.ResponseWriter) {
 
 // Middleware returns an http.Handler middleware enforcing p. When
 // AllowedOrigins is empty the middleware is identity (zero overhead
-// for deployments not using CORS).
+// for deployments not using CORS). When p.PathOverrides is non-empty,
+// the request path is checked against overrides BEFORE the default
+// policy — so /.well-known/jwks.json can have a permissive policy
+// while /token stays locked down.
 func Middleware(p Policy) func(http.Handler) http.Handler {
-	if len(p.AllowedOrigins) == 0 {
+	if len(p.AllowedOrigins) == 0 && len(p.PathOverrides) == 0 {
 		return func(next http.Handler) http.Handler { return next }
 	}
 
-	cfg := buildConfig(p)
+	defaultCfg := buildConfig(p)
+	overrideCfgs := buildOverrideConfigs(p.PathOverrides)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			cfg := resolveCORSConfig(r.URL.Path, defaultCfg, overrideCfgs)
+
 			origin := r.Header.Get(HeaderOrigin)
 			if origin == "" || !cfg.originAllowed(origin) {
 				// No origin, or not allowed — drop CORS headers
@@ -183,4 +198,45 @@ func Middleware(p Policy) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// buildOverrideConfigs constructs a sorted-by-length (longest first)
+// list of (prefix, config) pairs for path-override matching.
+func buildOverrideConfigs(overrides map[string]Policy) []prefixCORSConfig {
+	if len(overrides) == 0 {
+		return nil
+	}
+	cfgs := make([]prefixCORSConfig, 0, len(overrides))
+	for prefix, p := range overrides {
+		cfgs = append(cfgs, prefixCORSConfig{
+			prefix: prefix,
+			cfg:    buildConfig(p),
+		})
+	}
+	// Sort by prefix length descending so the most specific match wins.
+	for i := 0; i < len(cfgs); i++ {
+		for j := i + 1; j < len(cfgs); j++ {
+			if len(cfgs[j].prefix) > len(cfgs[i].prefix) {
+				cfgs[i], cfgs[j] = cfgs[j], cfgs[i]
+			}
+		}
+	}
+	return cfgs
+}
+
+// resolveCORSConfig returns the most specific path override for path,
+// or the default config when no override matches.
+func resolveCORSConfig(path string, defaultCfg corsConfig, overrides []prefixCORSConfig) corsConfig {
+	for _, oc := range overrides {
+		if len(path) >= len(oc.prefix) && path[:len(oc.prefix)] == oc.prefix {
+			return oc.cfg
+		}
+	}
+	return defaultCfg
+}
+
+// prefixCORSConfig pairs a URL prefix with its precomputed CORS config.
+type prefixCORSConfig struct {
+	prefix string
+	cfg    corsConfig
 }

@@ -1,188 +1,241 @@
+# Dependabot auto-update config — covers all 13 go.mod files across the monorepo.
+# Each module gets weekly PRs that bump out-of-date deps; the `gomod` ecosystem
+# handles Go module updates via `go get` + `go mod tidy`.
+#
+# ╔═══════════════════════════════════════════════════════════════════╗
+# ║  Adding or removing a go.mod?  Add/remove its entry here.       ║
+# ║  Every module must be listed — unlisted go.mod files never get  ║
+# ║  automated CVE fix PRs.                                         ║
+# ╚═══════════════════════════════════════════════════════════════════╝
+
 version: 2
 updates:
+  # ── Root module (sso-server, sso-ctl) ──────────────────────────
   - package-ecosystem: gomod
-    directory: "/"
+    directory: /
     schedule:
       interval: weekly
       day: monday
       time: "09:00"
-      timezone: Asia/Shanghai
+      timezone: Asia/Hong_Kong
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - auto-merge
+
+  # ── Nested infrastructure modules ──────────────────────────────
+  - package-ecosystem: gomod
+    directory: /infrastructure/saml
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Hong_Kong
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
     open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - gomod
-    commit-message:
-      prefix: chore
-      prefix-development: chore
-      include: scope
-
-  # ──────────────────────────────────────────────
-  # Infrastructure: identity / auth backends
-  # ──────────────────────────────────────────────
 
   - package-ecosystem: gomod
-    directory: "/infrastructure/saml"
+    directory: /infrastructure/ldap
     schedule:
       interval: weekly
       day: monday
       time: "09:00"
-      timezone: Asia/Shanghai
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - saml
+      timezone: Asia/Hong_Kong
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
 
   - package-ecosystem: gomod
-    directory: "/infrastructure/ldap"
+    directory: /infrastructure/redis
     schedule:
       interval: weekly
       day: monday
       time: "09:00"
-      timezone: Asia/Shanghai
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - ldap
+      timezone: Asia/Hong_Kong
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
 
   - package-ecosystem: gomod
-    directory: "/infrastructure/kerberos"
+    directory: /infrastructure/postgres
     schedule:
       interval: weekly
       day: monday
       time: "09:00"
-      timezone: Asia/Shanghai
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - kerberos
+      timezone: Asia/Hong_Kong
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
 
   - package-ecosystem: gomod
-    directory: "/infrastructure/radius"
+    directory: /infrastructure/kerberos
     schedule:
       interval: weekly
       day: monday
       time: "09:00"
-      timezone: Asia/Shanghai
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - radius
+      timezone: Asia/Hong_Kong
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
 
   - package-ecosystem: gomod
-    directory: "/infrastructure/extauthz"
+    directory: /infrastructure/radius
     schedule:
       interval: weekly
       day: monday
       time: "09:00"
-      timezone: Asia/Shanghai
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - extauthz
-
-  # ──────────────────────────────────────────────
-  # Infrastructure: caching / data
-  # ──────────────────────────────────────────────
+      timezone: Asia/Hong_Kong
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
 
   - package-ecosystem: gomod
-    directory: "/infrastructure/redis"
+    directory: /infrastructure/extauthz
     schedule:
       interval: weekly
       day: monday
       time: "09:00"
-      timezone: Asia/Shanghai
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - redis
+      timezone: Asia/Hong_Kong
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
 
   - package-ecosystem: gomod
-    directory: "/infrastructure/postgres"
+    directory: /infrastructure/kms/awskms
     schedule:
       interval: weekly
       day: monday
       time: "09:00"
-      timezone: Asia/Shanghai
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - postgres
-
-  # ──────────────────────────────────────────────
-  # KMS signing backends
-  # ──────────────────────────────────────────────
+      timezone: Asia/Hong_Kong
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
 
   - package-ecosystem: gomod
-    directory: "/infrastructure/kms/awskms"
+    directory: /infrastructure/kms/gcpkms
     schedule:
       interval: weekly
       day: monday
       time: "09:00"
-      timezone: Asia/Shanghai
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - awskms
+      timezone: Asia/Hong_Kong
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
 
   - package-ecosystem: gomod
-    directory: "/infrastructure/kms/gcpkms"
+    directory: /infrastructure/kms/azurekeyvault
     schedule:
       interval: weekly
       day: monday
       time: "09:00"
-      timezone: Asia/Shanghai
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - gcpkms
+      timezone: Asia/Hong_Kong
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
 
   - package-ecosystem: gomod
-    directory: "/infrastructure/kms/azurekeyvault"
+    directory: /infrastructure/kms/pkcs11
     schedule:
       interval: weekly
       day: monday
       time: "09:00"
-      timezone: Asia/Shanghai
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - azurekeyvault
+      timezone: Asia/Hong_Kong
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
 
   - package-ecosystem: gomod
-    directory: "/infrastructure/kms/pkcs11"
+    directory: /cmd/sso-mcp
     schedule:
       interval: weekly
       day: monday
       time: "09:00"
-      timezone: Asia/Shanghai
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - pkcs11
+      timezone: Asia/Hong_Kong
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
 
-  # ──────────────────────────────────────────────
-  # CLI / cmd
-  # ──────────────────────────────────────────────
-
-  - package-ecosystem: gomod
-    directory: "/cmd/sso-mcp"
+  # ── GitHub Actions (workflow tooling) ──────────────────────────
+  - package-ecosystem: github-actions
+    directory: /
     schedule:
       interval: weekly
       day: monday
       time: "09:00"
-      timezone: Asia/Shanghai
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - sso-mcp
-
-  # ──────────────────────────────────────────────
-  # Docker
-  # ──────────────────────────────────────────────
-
-  - package-ecosystem: docker
-    directory: "/ops/deploy/compose"
-    schedule:
-      interval: monthly
-    labels:
-      - docker
+      timezone: Asia/Hong_Kong
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5

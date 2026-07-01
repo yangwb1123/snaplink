@@ -67,6 +67,8 @@ type protocolState struct {
 	logoutTokenIssuer              LogoutTokenIssuer
 	logoutNotifier                 LogoutNotifier
 	backchannelLogoutMaxConcurrent int
+	customGrantHandlers            map[string]oauth.GrantHandler
+	grantRateLimiters              map[string]*rateLimiterEntry
 	accountLockout                 security.AccountLockout
 	jtiReplayStore                 security.JTIReplayStore
 	jtiReplayFailClosed            bool

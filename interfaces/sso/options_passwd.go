@@ -290,6 +290,24 @@ func WithConsentStore(cs ConsentStore) Option {
 	return func(s *Server) { s.consentStore = cs }
 }
 
+// WithConsentTTL sets a hard server-level ceiling on consent grant
+// lifetime. When >0, every recorded consent grant has an expiration
+// window of GrantedAt + maxTTL — after which GetConsent returns
+// ErrNoConsentGrant and the user must re-authorize. 0 (the default)
+// means no server-enforced expiry (consent lives until explicitly
+// revoked by the user or an admin).
+//
+// This is a HARD ceiling: the per-client ConsentRefreshInterval can
+// force re-consent earlier, but can NOT extend beyond this ceiling.
+// Combine with WithConsentStore to activate.
+func WithConsentTTL(maxTTL time.Duration) Option {
+	return func(s *Server) {
+		if maxTTL > 0 {
+			s.consentMaxTTL = maxTTL
+		}
+	}
+}
+
 // WithConsentChallengeStore overrides the in-process consent-gate challenge store
 // with a cluster-shared backend (e.g. redis). Without it, the single-use consent
 // nonce lives in the issuing replica's memory, so on a no-affinity load balancer

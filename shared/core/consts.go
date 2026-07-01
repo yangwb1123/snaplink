@@ -147,6 +147,12 @@ const (
 	// the /api/v1/admin/ prefix.
 	PathStorageHealth = "/api/v1/admin/storage-health"
 
+	// PathBackup is the admin backup trigger endpoint
+	// (POST /api/v1/admin/backup). Runs VACUUM INTO on each registered
+	// BackupSource and lists the backup results. Gated by AdminMiddleware
+	// (admin:write).
+	PathBackup = "/api/v1/admin/backup"
+
 	// PathTenantUsage is the read-only admin per-tenant usage/metering
 	// endpoint (GET /api/v1/admin/tenants/:id/usage?period=day|month&start=...).
 	// Returns aggregated login / token-issuance / active-user / MFA counts
@@ -204,6 +210,25 @@ const (
 	// lockout is keyed on <client_id>:<identifier> (the authenticated credential),
 	// not the userID. Mounted only when an AccountLockout is wired.
 	PathAdminAccountLockoutClear = "/admin/account-lockout/clear"
+
+	// PathAdminTokens lists active admin bearer tokens (GET, admin:read).
+	// PathAdminTokenByID revokes a single admin token (DELETE, admin:write).
+	// Group-relative; gated by AdminMiddleware. Mounted only when an
+	// AdminTokenStore is wired.
+	PathAdminTokens    = "/admin/tokens"
+	PathAdminTokenByID = "/admin/tokens/:id"
+
+	// PathAdminLogout revokes the admin bearer token used in the current
+	// request (POST, admin:write). Mounted only when an AdminTokenStore
+	// is wired. The token ID is extracted from the request context via
+	// auth middleware; on success the caller should discard the token.
+	PathAdminLogout = "/admin/logout"
+
+	// PathAdminSessions lists all active user sessions (GET, admin:read).
+	// Returns the full session list from SessionManager.ListAll. Mounted
+	// only when a SessionManager is wired. The admin SPA calls this to
+	// render the active-sessions overview.
+	PathAdminSessions = "/admin/sessions"
 
 	// PathAdminConnections / PathAdminConnectionByID manage B2B enterprise
 	// connections at runtime (list/get/upsert/delete) so operators can onboard a

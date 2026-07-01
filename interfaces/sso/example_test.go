@@ -1,112 +1,191 @@
 package sso_test
 
-// Compile-only godoc examples showing the recommended wiring for
-// common deployment shapes. These render on pkg.go.dev as the first
-// thing new contributors see when they land on the package.
+// Example_additionalWiring demonstrates common configuration patterns
+// for specific use cases. These complement the production and minimal
+// examples by showing how to wire specific features.
 
 import (
 	"context"
+	"embed"
+	"io/fs"
+	"net/http"
 	"time"
 
+	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/cors"
-	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/platform/tracing"
 )
 
-// Example_productionWiring composes every optional middleware in the
-// SDK for a production-grade single-binary deployment. The
-// middlewares stack outermost → innermost in [sso.Server.Handler]:
-//
-//	tracing → metrics → ratelimit → bodyLimit → cors → router
-//
-// /livez, /readyz, and /metrics are served OUTSIDE the stack so
-// kubelet probes and Prometheus scrapes never get throttled, traced,
-// or counted as noise.
-//
-// Each option is independent — omit any line below to opt out of
-// that concern with zero overhead (the middleware reduces to the
-// identity wrap when its option is unset).
-func Example_productionWiring() {
-	ctx := context.Background()
+// ExampleServer_withHostedLogin demonstrates mounting the hosted login
+// UI from an embedded filesystem. The login SPA is served at /auth/login
+// and handles the full authentication flow including MFA, consent, and
+// home-realm discovery.
+func ExampleServer_withHostedLogin() {
+	//go:embed static/login
+	var loginFS embed.FS
 
-	// 1. Tracing — boots the OTLP exporter from OTEL_* env vars.
-	// No-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset.
-	tracingShutdown, _ := tracing.Init(ctx, tracing.WithServiceName("sso-server"))
-	defer func() { _ = tracingShutdown(ctx) }()
-
-	// 2. SDK building blocks (the things every deployment needs).
-	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519Issuer("sso-server"))
-	users := defaultimpl.NewMemoryUserProvider()
-	clients := defaultimpl.NewMemoryClientStore()
-	sessions := defaultimpl.NewMemorySessionManager()
-
-	// 3. Observability — shared Metrics struct, fed to both the
-	// Server (HTTP request counters) and operator-side scrape (via
-	// /metrics, served outside the middleware stack).
-	m := metrics.New()
+	// Extract the subdirectory containing the login SPA assets.
+	loginSubFS, _ := fs.Sub(loginFS, "static/login")
 
 	srv := sso.NewServer(
-		// Identity + storage.
 		sso.WithIssuer("sso-server"),
-		sso.WithTokenIssuer("jwt", issuer),
+		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
 		sso.WithDefaultTokenStrategy("jwt"),
-		sso.WithUserProvider(users),
-		sso.WithClientStore(clients),
-		sso.WithSessionManager(sessions),
+		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
 
-		// Observability — Prometheus metrics + OTLP traces.
-		sso.WithMetrics(m),
-		sso.WithTracing("sso-server"),
-
-		// Security hardening.
-		sso.WithBodyLimit(1<<20), // 1 MiB per request
-		sso.WithRateLimit(ratelimit.Policy{
-			Default: ratelimit.NewMemoryLimiter(1, 60), // 1/s sustained, 60 burst
-			Prefixes: []ratelimit.PrefixRule{
-				// Tight bucket for the credential-stuffing-prone endpoints.
-				{Prefix: "/auth/login", Limiter: ratelimit.NewMemoryLimiter(10.0/60, 10)},
-				{Prefix: "/auth/send-code", Limiter: ratelimit.NewMemoryLimiter(10.0/60, 10)},
-			},
-		}),
-		sso.WithCORS(cors.Policy{
-			AllowedOrigins:   []string{"https://app.example.com"},
-			AllowedHeaders:   []string{"Authorization", "Content-Type"},
-			ExposedHeaders:   []string{"X-Request-ID", "Retry-After"},
-			AllowCredentials: true,
-			MaxAge:           time.Hour,
-		}),
-
-		// Operational.
-		sso.WithReadyCheck("user-provider", func(ctx context.Context) error {
-			// Trivial liveness check — replace with a real DB ping
-			// when you swap MemoryUserProvider for a SQL backend.
-			_, _ = users.List(ctx)
-			return nil
-		}),
+		// Mount the hosted login UI. The SPA is served at /auth/login
+		// and handles the full OAuth 2.0 / OIDC authentication flow.
+		sso.WithHostedLoginFS(loginSubFS),
 	)
 
-	// srv.Handler() returns the http.Handler with the full stack
-	// composed. Mount on your transport of choice:
-	//
-	//   http.ListenAndServe(":8080", srv.Handler())
+	// srv.Handler() now serves the login UI at /auth/login
 	_ = srv
 }
 
-// Example_minimumViable shows the smallest set of options needed for
-// a working sso-server — just the identity + storage primitives. No
-// observability, no security hardening. Suitable for tests and
-// throwaway dev runs only.
-func Example_minimumViable() {
+// ExampleServer_withPasswordAuthenticator shows how to configure a
+// password authenticator with custom verification logic. This is the
+// most common authenticator for username/password authentication.
+func ExampleServer_withPasswordAuthenticator() {
+	// Create a password authenticator with custom verification logic.
+	// In production, this would verify against your user database.
+	pw := authenticators.NewPasswordAuthenticator(
+		authenticators.PasswordVerifierFunc(
+			func(ctx context.Context, username, password string) (*sso.AuthResult, error) {
+				// Verify credentials against your user store.
+				// Return AuthResult with UserID, AuthMethods, and AchievedACR.
+				if username == "alice" && password == "secret" {
+					return &sso.AuthResult{
+						UserID:      "user-alice-123",
+						AuthMethods: []string{"pwd"},
+						AchievedACR: "urn:mace:incommon:iap:silver",
+					}, nil
+				}
+				// Return an error for invalid credentials.
+				return nil, authenticators.ErrInvalidCredentials
+			},
+		),
+	)
+
 	srv := sso.NewServer(
-		sso.WithIssuer("sso-dev"),
+		sso.WithIssuer("sso-server"),
+		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+
+		// Register the password authenticator.
+		sso.WithAuthenticator(pw),
+	)
+
+	_ = srv
+}
+
+// ExampleServer_withTokenStrategies demonstrates configuring multiple
+// token strategies (JWT, opaque) and selecting the default. Clients
+// can override the default via client.TokenStrategy.
+func ExampleServer_withTokenStrategies() {
+	jwtIssuer := defaultimpl.NewEd25519JWTIssuer()
+
+	srv := sso.NewServer(
+		sso.WithIssuer("sso-server"),
+
+		// Register multiple token issuers for different algorithms.
+		sso.WithTokenIssuer("jwt", jwtIssuer),
+		sso.WithTokenIssuer("jwt-rsa", defaultimpl.NewRSAJWTIssuer()),
+
+		// Set the default token strategy. Clients can override this
+		// via their Client.TokenStrategy field.
+		sso.WithDefaultTokenStrategy("jwt"),
+
+		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+	)
+
+	_ = srv
+}
+
+// ExampleServer_withSessionManagement shows how to configure session
+// lifetimes, idle timeouts, and concurrent session limits.
+func ExampleServer_withSessionManagement() {
+	sessionMgr := defaultimpl.NewMemorySessionManager()
+
+	srv := sso.NewServer(
+		sso.WithIssuer("sso-server"),
+		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+
+		// Configure session management.
+		sso.WithSessionManager(sessionMgr),
+
+		// Session lifetime and idle timeout.
+		sso.WithSessionLifetimes(
+			24*time.Hour,  // Absolute session lifetime
+			1*time.Hour,   // Idle timeout (no activity)
+		),
+
+		// Limit concurrent sessions per user (0 = unlimited).
+		sso.WithMaxSessionsPerUser(5),
+	)
+
+	_ = srv
+}
+
+// ExampleServer_withSecurityHeaders demonstrates enabling security
+// headers (HSTS, CSP, X-Frame-Options, etc.) for all responses.
+func ExampleServer_withSecurityHeaders() {
+	srv := sso.NewServer(
+		sso.WithIssuer("sso-server"),
+		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+
+		// Enable security headers for all responses.
+		sso.WithSecurityHeaders(),
+	)
+
+	// All responses now include:
+	// - Strict-Transport-Security (HSTS)
+	// - X-Content-Type-Options: nosniff
+	// - X-Frame-Options: DENY
+	// - Content-Security-Policy
+	// - Referrer-Policy
+	_ = srv
+}
+
+// ExampleServer_withCustomHTTPHandler shows how to wrap the SSO server's
+// HTTP handler with additional middleware or mount it on a subpath.
+func ExampleServer_withCustomHTTPHandler() {
+	srv := sso.NewServer(
+		sso.WithIssuer("sso-server"),
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
 		sso.WithDefaultTokenStrategy("jwt"),
 		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
 		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
 		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
 	)
-	_ = srv
+
+	// Get the base handler.
+	baseHandler := srv.Handler()
+
+	// Wrap with custom middleware.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Add custom logging, metrics, or other middleware here.
+		// Then call the base handler.
+		baseHandler.ServeHTTP(w, r)
+	})
+
+	// Mount on a subpath if needed.
+	mux := http.NewServeMux()
+	mux.Handle("/sso/", http.StripPrefix("/sso", handler))
+
+	// http.ListenAndServe(":8080", mux)
+	_ = handler
 }

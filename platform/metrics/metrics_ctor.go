@@ -39,6 +39,7 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 	// and every metric name/help/label/bucket is defined exactly once.
 	registerHTTPMetrics(factory, m)
 	registerLoginMetrics(factory, m)
+	registerSignupFunnelMetrics(factory, m)
 	registerMFACredentialMetrics(factory, m)
 	registerRetentionMetrics(factory, m)
 	registerAnomalyMetrics(factory, m)
@@ -110,6 +111,44 @@ func registerLoginMetrics(factory promauto.Factory, m *Metrics) {
 			Buckets: prometheus.DefBuckets,
 		},
 		[]string{LabelProvider, LabelOutcome},
+	)
+}
+
+func registerSignupFunnelMetrics(factory promauto.Factory, m *Metrics) {
+	m.SignupStartedTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameSignupStartedTotal,
+			Help: "Self-service signup flows initiated at /auth/register, by outcome (success/failure). Operators graph started→verified→completed to find the drop-off step.",
+		},
+		[]string{LabelOutcome},
+	)
+	m.SignupVerifiedTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameSignupVerifiedTotal,
+			Help: "Email verifications completed for self-service signup, by outcome (success/failure). Zero traffic when signup verification is not enabled.",
+		},
+		[]string{LabelOutcome},
+	)
+	m.SignupCompletedTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameSignupCompletedTotal,
+			Help: "Self-service signup funnels that reached the first-login milestone, by outcome (success/failure). A completed funnel = registered + verified (if required) + first successful login.",
+		},
+		[]string{LabelOutcome},
+	)
+	m.PasswordResetRequestedTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NamePasswordResetRequestedTotal,
+			Help: "Password reset flows initiated at /auth/forgot-password, by outcome (success/failure). Operators graph requested→completed to measure the email-delivery + user-action conversion rate.",
+		},
+		[]string{LabelOutcome},
+	)
+	m.PasswordResetCompletedTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NamePasswordResetCompletedTotal,
+			Help: "Password reset flows completed at /auth/reset-password, by outcome (success/failure). A completed reset sets a new credential; operators alert on a rising failure rate (broken link / expired token).",
+		},
+		[]string{LabelOutcome},
 	)
 }
 
@@ -398,4 +437,43 @@ func (m *Metrics) ObserveClientStoreCache(outcome string) {
 		return
 	}
 	m.ClientStoreCacheTotal.WithLabelValues(outcome).Inc()
+}
+
+// Signup funnel observation helpers. Nil-safe so callers can fire them
+// unconditionally; each is a no-op when the corresponding counter was
+// never registered (signup/password-reset not enabled).
+
+func (m *Metrics) ObserveSignupStarted(outcome string) {
+	if m == nil || m.SignupStartedTotal == nil {
+		return
+	}
+	m.SignupStartedTotal.WithLabelValues(outcome).Inc()
+}
+
+func (m *Metrics) ObserveSignupVerified(outcome string) {
+	if m == nil || m.SignupVerifiedTotal == nil {
+		return
+	}
+	m.SignupVerifiedTotal.WithLabelValues(outcome).Inc()
+}
+
+func (m *Metrics) ObserveSignupCompleted(outcome string) {
+	if m == nil || m.SignupCompletedTotal == nil {
+		return
+	}
+	m.SignupCompletedTotal.WithLabelValues(outcome).Inc()
+}
+
+func (m *Metrics) ObservePasswordResetRequested(outcome string) {
+	if m == nil || m.PasswordResetRequestedTotal == nil {
+		return
+	}
+	m.PasswordResetRequestedTotal.WithLabelValues(outcome).Inc()
+}
+
+func (m *Metrics) ObservePasswordResetCompleted(outcome string) {
+	if m == nil || m.PasswordResetCompletedTotal == nil {
+		return
+	}
+	m.PasswordResetCompletedTotal.WithLabelValues(outcome).Inc()
 }

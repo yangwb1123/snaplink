@@ -79,6 +79,10 @@ func (s *ConsentStore) GetConsent(ctx context.Context, userID, clientID string) 
 	if err := json.Unmarshal(raw, &g); err != nil {
 		return sso.ConsentGrant{}, fmt.Errorf("redis: decode consent grant: %w", err)
 	}
+	// Expired grants are treated as not found.
+	if g.IsExpired() {
+		return sso.ConsentGrant{}, sso.ErrNoConsentGrant
+	}
 	return g, nil
 }
 

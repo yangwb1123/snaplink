@@ -137,6 +137,7 @@ func buildRegisteredClient(req *DCRRequest, policy *DCRPolicy, id, secret, regTo
 		RegistrationAccessToken: regToken,
 
 		GrantTypes:                  append([]string(nil), req.GrantTypes...),
+		TokenEndpointAuthMethod:     req.TokenEndpointAuthMethod,
 		IDTokenEncryptedResponseAlg:  req.IDTokenEncryptedResponseAlg,
 		IDTokenEncryptedResponseEnc:  req.IDTokenEncryptedResponseEnc,
 		UserinfoEncryptedResponseAlg: req.UserinfoEncryptedResponseAlg,
@@ -204,6 +205,13 @@ func buildUpdatedClient(req *DCRRequest, client *core.Client, ratToStore string)
 	if tokenStrategy == "" {
 		tokenStrategy = client.TokenStrategy
 	}
+	// Preserve the stored TokenEndpointAuthMethod when the PUT omits it
+	// (the typical case — the caller sends only the fields it wants to
+	// update). When explicitly set, the update takes effect.
+	tokenAuthMethod := req.TokenEndpointAuthMethod
+	if tokenAuthMethod == "" {
+		tokenAuthMethod = client.TokenEndpointAuthMethod
+	}
 	return &core.Client{
 		ID:                      client.ID,
 		Secret:                  client.Secret, // unchanged
@@ -214,6 +222,7 @@ func buildUpdatedClient(req *DCRRequest, client *core.Client, ratToStore string)
 		AllowedScopes:           SplitScope(req.Scope),
 		AllowedAuthenticators:   append([]string(nil), req.AllowedAuthenticators...),
 		TokenStrategy:           tokenStrategy,
+		TokenEndpointAuthMethod: tokenAuthMethod,
 		// Tenant is immutable across a 7592 update: the secret (hence the client
 		// identity + tenant binding) is preserved, so a PUT MUST NOT let the
 		// holder re-home the client into another tenant.

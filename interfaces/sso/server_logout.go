@@ -11,6 +11,7 @@ import (
 	"github.com/snaplink/sso/internal/auth/consent"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
 )
 
@@ -251,6 +252,10 @@ func (s *Server) evaluateConsentNeed(userID string, client *Client, scopes []str
 		// Existing grant does not cover all the requested scopes — new scopes
 		// were added to the authorization request since the user last consented.
 		return true
+	case grant.IsExpired():
+		// Server-level consent TTL expired — the grant is stale even though
+		// the scopes still match. The user must re-authorize.
+		return true
 	case client.ConsentRefreshInterval > 0 && time.Since(grant.GrantedAt) > client.ConsentRefreshInterval:
 		// Periodic re-consent: the grant still covers the scopes but is older
 		// than this client's refresh cadence (high-risk clients re-confirm
@@ -295,12 +300,16 @@ func (s *Server) issueConsentChallengeResponse(ctx HandlerContext, userID string
 // recordConsentGrant persists an up-to-date consent grant (refreshing GrantedAt).
 // Fail-open on write errors.
 func (s *Server) recordConsentGrant(requestCtx context.Context, userID, clientID string, scopes []string) {
-	_ = s.consentStore.RecordConsent(requestCtx, ConsentGrant{
+	grant := ConsentGrant{
 		UserID:    userID,
 		ClientID:  clientID,
 		Scopes:    scopes,
 		GrantedAt: time.Now(),
-	})
+	}
+	if s.consentMaxTTL > 0 {
+		grant.ExpiresAt = grant.GrantedAt.Add(s.consentMaxTTL)
+	}
+	_ = s.consentStore.RecordConsent(requestCtx, grant)
 }
 
 // recordConsentEvent emits a user-initiated consent-lifecycle audit event
@@ -372,6 +381,20 @@ func (s *Server) ensureJITMembership(ctx HandlerContext, client *Client, userID 
 // strict enforcement; the soft cap is the intended design.
 func (s *Server) createSession(ctx HandlerContext, userID, tenantID string) (*Session, error) {
 	rctx := ctx.Request().Context()
+
+	// Tenant-level session quota check. When the tenant has reached its
+	// session limit, the creation is blocked with a 403. Fail-open: a
+	// store error logs but does not block login.
+	if s.tenantQuotaStore != nil && tenantID != "" {
+		if err := s.tenantQuotaStore.IncrementUsage(rctx, tenantID, core.ResourceSessions, 1); err != nil {
+			if err == core.ErrQuotaExceeded {
+				s.logger.Error("tenant session quota exceeded", "tenant_id", tenantID, "user", userID)
+				ctx.JSON(http.StatusForbidden, errorBody("quota_exceeded"))
+				return nil, core.ErrQuotaExceeded
+			}
+			s.logger.Error("tenant quota check failed", "tenant_id", tenantID, "error", err)
+		}
+	}
 
 	if s.maxSessionsPerUser > 0 {
 		s.evictOldestSession(rctx, userID, tenantID, s.maxSessionsPerUser)

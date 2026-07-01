@@ -69,7 +69,8 @@ func ValidateDCRMetadata(req *DCRMetadata, policy *DCRPolicy, supportedGrants []
 	}
 
 	switch req.TokenEndpointAuthMethod {
-	case "", "client_secret_basic", "client_secret_post", "none":
+	case "", "client_secret_basic", "client_secret_post", "none",
+		"tls_client_auth", "self_signed_tls":
 		// supported
 	default:
 		return ErrDCR("unsupported token_endpoint_auth_method: " + req.TokenEndpointAuthMethod)

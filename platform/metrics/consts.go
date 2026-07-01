@@ -53,6 +53,16 @@ const (
 
 	NameLoginAttemptsByTenantTotal = "sso_login_attempts_by_tenant_total"
 	NameTokensIssuedByTenantTotal  = "sso_tokens_issued_by_tenant_total"
+
+	// Signup funnel metrics — self-service registration conversion
+	// pipeline. Operators graph started → verified → completed to find
+	// the drop-off step (verification email never arrived, link expired,
+	// user abandoned, etc.).
+	NameSignupStartedTotal         = "sso_signup_started_total"
+	NameSignupVerifiedTotal        = "sso_signup_verified_total"
+	NameSignupCompletedTotal       = "sso_signup_completed_total"
+	NamePasswordResetRequestedTotal  = "sso_password_reset_requested_total"
+	NamePasswordResetCompletedTotal  = "sso_password_reset_completed_total"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by

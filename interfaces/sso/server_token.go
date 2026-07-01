@@ -11,6 +11,7 @@ import (
 	"github.com/snaplink/sso/protocols/fapi"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/security"
 )
 
 // idempotentResponseWriter wraps http.ResponseWriter to capture the
@@ -164,6 +165,8 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 			return
 		}
 		tokengrant.HandleClientCredentialsGrant(s, ctx, client, scopes, req.Resource, dpopJKT, mtlsX5T)
+	case GrantJWTBearer:
+		s.handleJWTBearerGrant(ctx, client, req, scopes, dpopJKT, mtlsX5T)
 	default:
 		ctx.JSON(http.StatusBadRequest, map[string]any{
 			KeyError:           ErrUnsupportedGrantType,
@@ -227,11 +230,18 @@ func (s *Server) resolveAssertedClientID(ctx HandlerContext, req *oauth.TokenReq
 }
 
 // authenticateTokenClient runs the client-identification + authentication
-// gate ladder (assertion -> lookup -> tenant -> secret -> resource) and
+// gate ladder (assertion -> lookup -> tenant -> mTLS/secret -> resource) and
 // returns the resolved client plus whether HTTP Basic creds were used. When
 // handled==true a response has ALREADY been written and the caller MUST return
-// immediately. Gate order is load-bearing: tenant precedes secret precedes
+// immediately. Gate order is load-bearing: tenant precedes auth precedes
 // resource, and every failure collapses to its oracle-safe wire code.
+//
+// mTLS client auth (RFC 8705 §2): clients registered with
+// token_endpoint_auth_method="tls_client_auth" present their certificate
+// instead of a client_secret. The cert must match the registered
+// TLSClientAuthSubjectDN, SAN DNS, SAN email, or SAN URI constraints.
+// Clients with "self_signed_tls" must present a self-signed cert whose
+// public key matches a registered JWK.
 func (s *Server) authenticateTokenClient(ctx HandlerContext, req *oauth.TokenRequest) (client *Client, basicAuthUsed bool, handled bool) {
 	// HTTP Basic auth takes precedence over body fields per RFC 6749 §2.3.1.
 	if id, secret, ok := basicClientCreds(ctx.Request()); ok {
@@ -253,10 +263,28 @@ func (s *Server) authenticateTokenClient(ctx HandlerContext, req *oauth.TokenReq
 		ctx.JSON(http.StatusForbidden, errorBody(ErrTenantMismatch))
 		return nil, basicAuthUsed, true
 	}
+
+	// mTLS client authentication (RFC 8705 §2): when the client is
+	// registered with tls_client_auth or self_signed_tls, verify the
+	// presented client certificate instead of the client_secret.
+	usingMTLS := s.authenticateMTLSClient(ctx, client)
+	if usingMTLS {
+		// mTLS auth handled the authentication; skip secret validation.
+		// However, if mTLS auth failed, authenticateMTLSClient already
+		// wrote the response and returned true (handled), so we'd have
+		// returned above. If we reach here, mTLS auth succeeded.
+	} else if client.TokenEndpointAuthMethod == ClientAuthTLS ||
+		client.TokenEndpointAuthMethod == ClientAuthSelfSignedTLS {
+		// Client requires mTLS but extraction/verification failed.
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+		return nil, basicAuthUsed, true
+	}
+
 	// Skip the client_secret check when the caller authenticated
-	// via JWT assertion — Client.JWKS verification stands in for
-	// the secret. RFC 7521 §4.2 prohibits requiring BOTH proofs.
-	if req.ClientAssertion == "" {
+	// via JWT assertion OR mTLS — both stand in for the secret.
+	if req.ClientAssertion == "" && !usingMTLS &&
+		client.TokenEndpointAuthMethod != ClientAuthTLS &&
+		client.TokenEndpointAuthMethod != ClientAuthSelfSignedTLS {
 		if err := s.clientStore.ValidateSecret(ctx.Request().Context(), req.ClientID, req.ClientSecret); err != nil {
 			// RFC 6749 §5.2: all client-authentication failures return
 			// invalid_client. Collapsing wrong-secret into the same code as
@@ -275,6 +303,64 @@ func (s *Server) authenticateTokenClient(ctx HandlerContext, req *oauth.TokenReq
 	}
 
 	return client, basicAuthUsed, false
+}
+
+// authenticateMTLSClient verifies the presented client certificate when the
+// client is registered with token_endpoint_auth_method="tls_client_auth" or
+// "self_signed_tls". Returns true when mTLS authentication was SUCCESSFULLY
+// verified (the calling gate skips secret validation). Returns false when no
+// mTLS auth was required or attempted. When verification fails, it writes the
+// response and calls handledCallback(false) before returning true so the caller
+// treats the request as handled.
+func (s *Server) authenticateMTLSClient(ctx HandlerContext, client *Client) bool {
+	authMethod := client.TokenEndpointAuthMethod
+	if authMethod != ClientAuthTLS && authMethod != ClientAuthSelfSignedTLS {
+		return false
+	}
+	if s.clientCertExtractor == nil {
+		return false
+	}
+	cert, ok := s.clientCertExtractor.ExtractClientCert(ctx.Request())
+	if !ok || cert == nil {
+		return false
+	}
+	switch authMethod {
+	case ClientAuthTLS:
+		if err := security.VerifyTLSClientAuth(cert,
+			client.TLSClientAuthSubjectDN,
+			client.TLSClientAuthSANDNS,
+			client.TLSClientAuthSANEmail,
+			client.TLSClientAuthSANURI,
+		); err != nil {
+			s.logger.Error("tls_client_auth failed",
+				"client_id", client.ID,
+				"error", err.Error(),
+				"subject", cert.Subject.String())
+			return false
+		}
+		return true
+	case ClientAuthSelfSignedTLS:
+		if len(client.JWKS) == 0 {
+			s.logger.Error("self_signed_tls failed: client has no JWKS",
+				"client_id", client.ID)
+			return false
+		}
+		// Check if any JWK matches the cert's public key.
+		for _, jwk := range client.JWKS {
+			match, err := security.CertPublicKeyMatchesJWK(cert,
+				jwk.Kty, jwk.Crv, jwk.X, jwk.Y, jwk.N, jwk.E)
+			if err != nil {
+				continue
+			}
+			if match {
+				return true
+			}
+		}
+		s.logger.Error("self_signed_tls failed: no matching JWK",
+			"client_id", client.ID)
+		return false
+	}
+	return false
 }
 
 // captureSenderConstraint validates an optional DPoP proof and/or extracts an
@@ -390,6 +476,11 @@ func (s *Server) enforceFAPITokenRules(ctx HandlerContext, req oauth.TokenReques
 // handler.*GrantDeps interfaces via accessors_token_grant.go, and the grant
 // orchestration lives in internal/handler (the only tier that may import BOTH
 // oauth — code/refresh stores — AND oidc — id_token issuance).
+
+// JWT Bearer Grant (RFC 7523) wrapper.
+func (s *Server) handleJWTBearerGrant(ctx HandlerContext, client *Client, req oauth.TokenRequest, scopes []string, dpopJKT, mtlsX5T string) {
+	tokengrant.HandleJWTBearerGrant(s, ctx, client, req.Assertion, scopes, req.Resource, dpopJKT, mtlsX5T)
+}
 
 // dispatchCustomGrant checks the custom grant handler registry and dispatches
 // to a registered GrantHandler if one matches the request's grant_type.

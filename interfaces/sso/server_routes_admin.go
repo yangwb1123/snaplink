@@ -30,6 +30,23 @@ func (s *Server) mountAdminAPIObservability(api Router) {
 	if s.usageAggregator != nil {
 		api.GET(PathTenantUsage, s.handleTenantUsage)
 	}
+	// SQLite backup trigger (opt-in WithBackupSource). Requires at least one
+	// registered backup source; byte-identical when none are wired.
+	if len(s.backupSources) > 0 {
+		api.POST(PathBackup, s.handleAdminBackup)
+	}
+	// Admin token lifecycle (opt-in WithAdminTokenStore). Without the
+	// store, admin tokens have no management surface.
+	if s.adminTokenStore != nil {
+		api.GET(PathAdminTokens, s.handleAdminListTokens)
+		api.POST(PathAdminLogout, s.handleAdminLogout)
+		api.DELETE(PathAdminTokenByID, s.handleAdminRevokeToken)
+	}
+	// Admin session listing (opt-in WithSessionManager). Without a session
+	// manager the admin SPA's sessions panel shows nothing.
+	if s.sessionMgr != nil {
+		api.GET(PathAdminSessions, s.handleAdminListSessions)
+	}
 }
 
 // mountAdminUserState registers the admin/helpdesk management of a user's

@@ -1,0 +1,8 @@
+# inherits root config settings
+version: "2"
+linters:
+  default: all
+  exclusions:
+    presets:
+      - common-false-positives
+      - legacy

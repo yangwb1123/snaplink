@@ -46,6 +46,11 @@ func (m *MemoryConsentStore) GetConsent(_ context.Context, userID, clientID stri
 	if !ok {
 		return core.ConsentGrant{}, core.ErrNoConsentGrant
 	}
+	// Expired grants are treated as "not found" so callers don't rely on stale
+	// consent decisions. The stale row is cleaned lazily on the next write.
+	if g.IsExpired() {
+		return core.ConsentGrant{}, core.ErrNoConsentGrant
+	}
 	return g, nil
 }
 

@@ -9,6 +9,13 @@ const DefaultFileName = "config.yaml"
 
 // Config is the root configuration document.
 type Config struct {
+	// Version is the configuration schema version. Must match
+	// CurrentSchemaVersion. When absent (0 or empty) the server
+	// prints a warning and loads the config with best-effort
+	// compatibility. Set to CurrentSchemaVersion to silence the
+	// warning and opt into forward-compat validation.
+	Version int `yaml:"version,omitempty"`
+
 	Server             ServerConfig                    `yaml:"server"`
 	Authenticators     AuthenticatorsConfig            `yaml:"authenticators"`
 	Logging            LoggingConfig                   `yaml:"logging"`

@@ -171,12 +171,20 @@ func resolvePARClientAssertion(d PARDeps, ctx core.HandlerContext, req *parReque
 	return true
 }
 
-// validatePARRequestParams runs the four post-auth parameter gates in
-// order. Each gate emits its OWN distinct wire code (redirect_uri /
-// resource / response_mode / authorization_details) — they are NOT
-// collapsed to a single error return. Returns false (after writing the
-// response) on the first failing gate.
+// validatePARRequestParams runs the post-auth parameter gates in
+// order. Each gate emits its OWN distinct wire code (length limits /
+// redirect_uri / resource / response_mode / authorization_details) —
+// they are NOT collapsed to a single error return. Returns false
+// (after writing the response) on the first failing gate.
 func validatePARRequestParams(ctx core.HandlerContext, req *parRequestForm, client *core.Client) bool {
+	// Parameter length limits — prevent DoS via oversized params that
+	// would bloat PAR store entries and amplify redirect responses.
+	if code := checkAuthParamLengths(
+		req.State, req.RedirectURI, req.Scope, req.Nonce, req.Resource,
+	); code != "" {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(code))
+		return false
+	}
 	if req.RedirectURI != "" && !client.IsRedirectURIValid(req.RedirectURI) {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRedirectURI))
 		return false

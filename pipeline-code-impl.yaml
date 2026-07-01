@@ -1,0 +1,114 @@
+# 代码实现 Pipeline - 简化版
+# 
+# 使用场景：快速实现代码任务
+# 
+# 使用方法：
+#   python3 pi-batch.py --pipeline pipeline-code-impl.yaml --mode parallel -w 3
+
+stages:
+  # ═══════════════════════════════════════════════════════════
+  # 阶段 0：需求理解
+  # 输入：需求文档或功能描述
+  # 输出：技术实现方案
+  # ═══════════════════════════════════════════════════════════
+  - name: requirement-analysis
+    from_dir: docs/requirements
+    mode: serial
+  
+  # ═══════════════════════════════════════════════════════════
+  # 阶段 1：技术方案设计
+  # 角色：Architect（架构设计）+ Tech Lead（实现计划）
+  # 输出：架构决策 + 实现任务拆解
+  # ═══════════════════════════════════════════════════════════
+  - name: technical-design
+    from_outputs: requirement-analysis
+    tasks:
+      - role: architect
+        prompt_template: prompts/architect.md
+        output: docs/results/{input_stem}.arch.md
+        model: claude-sonnet
+        timeout: 600
+      
+      - role: tech-lead
+        prompt_template: prompts/tech_lead.md
+        output: docs/results/{input_stem}.impl-plan.md
+        model: claude-sonnet
+        timeout: 600
+    
+    mode: parallel
+    workers: 2
+  
+  # ═══════════════════════════════════════════════════════════
+  # 阶段 2：代码实现
+  # 角色：Staff Engineer（代码编写）
+  # 输入：技术方案 + 实现计划
+  # 输出：实际代码
+  # ═══════════════════════════════════════════════════════════
+  - name: code-implementation
+    from_outputs: technical-design
+    tasks:
+      - role: implementer
+        prompt_template: prompts/code-implementer.md
+        output: docs/results/{input_stem}.code.md
+        model: claude-sonnet
+        timeout: 1200  # 代码实现需要更长时间
+    
+    mode: serial
+  
+  # ═══════════════════════════════════════════════════════════
+  # 阶段 3：代码审查
+  # 角色：Staff Engineer（代码质量）+ Security Engineer（安全检查）
+  # 输入：实现的代码
+  # 输出：审查意见 + 改进建议
+  # ═══════════════════════════════════════════════════════════
+  - name: code-review
+    from_outputs: code-implementation
+    tasks:
+      - role: reviewer
+        prompt_template: prompts/staff_engineer.md
+        output: docs/results/{input_stem}.review.md
+        model: claude-sonnet
+        timeout: 600
+      
+      - role: security-reviewer
+        prompt_template: prompts/security_engineer.md
+        output: docs/results/{input_stem}.security-review.md
+        model: claude-sonnet
+        timeout: 600
+    
+    mode: parallel
+    workers: 2
+  
+  # ═══════════════════════════════════════════════════════════
+  # 阶段 4：测试编写
+  # 角色：QA Lead（测试策略 + 测试代码）
+  # 输入：实现的代码 + 审查意见
+  # 输出：测试用例 + 测试代码
+  # ═══════════════════════════════════════════════════════════
+  - name: test-writing
+    from_outputs: code-review
+    tasks:
+      - role: qa-engineer
+        prompt_template: prompts/qa_lead.md
+        output: docs/results/{input_stem}.tests.md
+        model: claude-sonnet
+        timeout: 600
+    
+    mode: serial
+  
+  # ═══════════════════════════════════════════════════════════
+  # 阶段 5：最终审查
+  # 角色：Tech Lead（最终确认）
+  # 输入：代码 + 审查 + 测试
+  # 输出：最终确认 + 合并建议
+  # ═══════════════════════════════════════════════════════════
+  - name: final-review
+    from_outputs: test-writing
+    tasks:
+      - role: tech-lead
+        prompt_template: prompts/tech_lead.md
+        output: docs/results/{input_stem}.final.md
+        model: claude-sonnet
+        timeout: 600
+    
+    mode: serial

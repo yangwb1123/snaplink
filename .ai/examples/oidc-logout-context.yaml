@@ -1,0 +1,59 @@
+# Context file for OIDC RP-Initiated Logout review
+# Use with: python .ai/run-review.py --stage 02 --context .ai/examples/oidc-logout-context.yaml
+
+project: "Snaplink SSO"
+subsystem: "OIDC RP-Initiated Logout"
+repo: "/home/dwp/snaplink"
+
+files:
+  - interfaces/sso/server_logout.go
+  - interfaces/sso/server_routes_admin.go
+  - protocols/oidc/
+  - shared/core/consts_oauth.go
+  - shared/core/errors.go
+
+rfcs:
+  - OpenID Connect Core 1.0 (Section 16 — Security Considerations)
+  - OpenID Connect RP-Initiated Logout 1.0
+  - OpenID Connect Front-Channel Logout 1.0
+  - OpenID Connect Back-Channel Logout 1.0
+  - OpenID Connect Session Management 1.0
+  - RFC 6749 (OAuth 2.0 — Section 10 Security Considerations)
+  - RFC 7519 (JWT)
+  - RFC 7636 (PKCE)
+
+architecture_summary: |
+  The RP-Initiated Logout flow handles session termination when an RP
+  sends the user to the OP's end_session_endpoint. The implementation
+  coordinates:
+  1. id_token_hint validation (verify the JWT belongs to the current session)
+  2. post_logout_redirect_uri validation against registered URIs
+  3. Front-channel logout (iframe pings to registered logout URIs)
+  4. Back-channel logout (HTTP POST with logout_token to registered endpoints)
+  5. Session termination in the session store
+  6. Audit logging of the logout event
+
+storage: "Redis Cluster for sessions, PostgreSQL for client registrations and audit"
+
+load_profile: "200 req/s peak logout traffic, p99 < 150ms target"
+
+infra: "3-pod Kubernetes deployment, Redis Cluster (3 nodes), PostgreSQL HA (1 primary + 1 replica)"
+
+deployment_target: "Kubernetes, Prometheus + Grafana, structured JSON logs to Loki"
+
+slo_targets: "99.9% availability, p99 < 200ms, error rate < 0.1%"
+
+sprint_goal: "Harden OIDC logout against session fixation and CSRF; add back-channel logout support"
+
+team_size: 3
+sprint_duration: "2 weeks"
+velocity: "22 story points last sprint"
+age: "~8 months in codebase"
+
+# Stage-specific context overrides
+stage_09:
+  ALL_PRIOR_FINDINGS_SUMMARY: |
+    Aggregate findings from Stages 00-06 pending execution.
+    Fill in after running prior stages.
+  CRITICAL_COUNT: "0"
+  HIGH_COUNT: "0"

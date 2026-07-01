@@ -275,6 +275,7 @@ var _ tokengrant.DeviceGrantDeps = (*Server)(nil)
 var _ tokengrant.CIBAGrantDeps = (*Server)(nil)
 var _ tokengrant.TokenExchangeDeps = (*Server)(nil)
 var _ tokengrant.ClientCredentialsDeps = (*Server)(nil)
+var _ tokengrant.JWTBearerGrantDeps = (*Server)(nil)
 
 // SPIFFEValidator exposes the SPIFFE JWT-SVID validator (nil when WithSPIFFEJWTSVID
 // is unwired — the SVID fallback is then skipped).
@@ -372,4 +373,10 @@ func (s *Server) RecordRefreshTokenIssued(ctx HandlerContext, clientID, subjectI
 // RecordIDTokenIssued emits the id-token-issued audit event + metric.
 func (s *Server) RecordIDTokenIssued(ctx HandlerContext, clientID, subjectID string) {
 	s.recordIDTokenIssued(ctx, clientID, subjectID)
+}
+
+// JWTBearerAssertionValidator returns the RFC 7523 JWT Bearer assertion
+// validator, or nil when the grant is not enabled.
+func (s *Server) JWTBearerAssertionValidator() tokengrant.JWTAssertionValidator {
+	return s.jwtBearerValidator
 }

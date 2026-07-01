@@ -175,8 +175,7 @@ type SessionMetaCreator interface {
 // (a session minted while the tenant was Active surviving until natural expiry)
 // is closed proactively rather than waiting on the lazy suspension check.
 //
-// The pattern mirrors RefreshTokenClientPurger: callers type-assert before using,
-// so adding this interface never breaks an existing SessionManager. Backends that
+// Backends without an index (e.g. pure JWT issuers with no session storage) that
 // can't enumerate by tenant simply don't implement it — the server falls back to
 // revoking sessions via the tenant's membership roster (TenantUserStore).
 //
@@ -184,6 +183,17 @@ type SessionMetaCreator interface {
 // (SessionMeta.TenantID); an empty tenantID MUST be a no-op, not a wildcard.
 type SessionTenantIndex interface {
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
+}
+
+// SessionTenantLister is the OPTIONAL read-side counterpart of SessionTenantIndex.
+// A SessionManager MAY implement it to support per-tenant session listing for
+// tenant-admin dashboards. Backends without a tenant index simply don't implement
+// it — the admin UI falls back to listing all sessions and filtering client-side.
+//
+// ListByTenant only matches sessions whose TenantID was stamped at creation
+// (SessionMeta.TenantID); an empty tenantID returns an empty list (no wildcard).
+type SessionTenantLister interface {
+	ListByTenant(ctx context.Context, tenantID string) ([]*Session, error)
 }
 
 // TokenIssuer handles token lifecycle: issuance, validation, and revocation.
@@ -255,21 +265,64 @@ func (g *ConsentGrant) IsExpired() bool {
 // When nil (not wired), the Server skips all consent checks — behavior is
 // byte-identical to a pre-consent build.
 type ConsentStore interface {
-	// RecordConsent upserts a ConsentGrant for (userID, clientID).
-	// Scopes are the union of whatever the user approved.
 	RecordConsent(ctx context.Context, grant ConsentGrant) error
-
-	// GetConsent returns the current grant for (userID, clientID).
-	// Returns ErrNoConsentGrant if none exists.
 	GetConsent(ctx context.Context, userID, clientID string) (ConsentGrant, error)
-
-	// RevokeConsent removes the grant for (userID, clientID).
-	// No-op if none exists (idempotent).
 	RevokeConsent(ctx context.Context, userID, clientID string) error
-
-	// ListByUser returns all grants for userID, in descending GrantedAt order.
-	// Returns empty slice (not error) when none exist.
 	ListByUser(ctx context.Context, userID string) ([]ConsentGrant, error)
+}
+
+// ResourceType identifies a quota-bounded resource dimension.
+type ResourceType string
+
+const (
+	ResourceClients   ResourceType = "clients"
+	ResourceUsers     ResourceType = "users"
+	ResourceSessions  ResourceType = "sessions"
+	ResourceTokenRate ResourceType = "token_rate"
+)
+
+// TenantQuota defines the resource limits for a single tenant.
+// Zero values mean "unlimited" (backward compatible with deployments
+// that don't wire a quota store).
+type TenantQuota struct {
+	MaxClients  int `json:"max_clients,omitempty"`
+	MaxUsers    int `json:"max_users,omitempty"`
+	MaxSessions int `json:"max_sessions,omitempty"`
+	// MaxTokenRate is the maximum tokens per second this tenant may
+	// issue across all clients. 0 = unlimited.
+	MaxTokenRate int `json:"max_token_rate,omitempty"`
+}
+
+// TenantUsage records a tenant's current resource consumption.
+type TenantUsage struct {
+	Clients  int `json:"clients"`
+	Users    int `json:"users"`
+	Sessions int `json:"sessions"`
+	// TokenRate is the current 1-minute rolling average of token
+	// issuance requests per second.
+	TokenRate float64 `json:"token_rate,omitempty"`
+}
+
+// TenantQuotaStore persists and evaluates per-tenant resource quotas.
+// When nil (not wired), every Create/Register/Login operation proceeds
+// without quota checks — byte-identical to a pre-quota build.
+type TenantQuotaStore interface {
+	// GetQuota returns the configured quota for tenantID.
+	// Returns default (unlimited) quota when none is set.
+	GetQuota(ctx context.Context, tenantID string) (*TenantQuota, error)
+
+	// GetUsage returns the current resource consumption for tenantID.
+	GetUsage(ctx context.Context, tenantID string) (*TenantUsage, error)
+
+	// IncrementUsage atomically increments the counter for resource.
+	// Returns ErrQuotaExceeded when the increment would exceed the limit.
+	IncrementUsage(ctx context.Context, tenantID string, resource ResourceType, delta int64) error
+
+	// SetQuota updates the quota configuration for tenantID.
+	SetQuota(ctx context.Context, tenantID string, quota *TenantQuota) error
+
+	// ResetUsage resets usage counters (e.g. after billing period rollover).
+	ResetUsage(ctx context.Context, tenantID string) error
 }
 
 // PasswordCredentialStore persists per-user password hashes for the

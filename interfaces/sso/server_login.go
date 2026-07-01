@@ -12,11 +12,29 @@ import (
 	"github.com/snaplink/sso/protocols/fapi"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
+	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
 )
 
 func (s *Server) handleLogin(ctx HandlerContext) {
+	// CSRF protection: the login SPA sends application/json; reject
+	// form-encoded submissions that a cross-origin <form> could forge.
+	if ct := ctx.Request().Header.Get(core.HeaderContentType); ct != "" && !strings.HasPrefix(ct, "application/json") {
+		ctx.JSON(http.StatusUnsupportedMediaType, errorBody(core.ErrInvalidRequest))
+		return
+	}
+
+	// Defense-in-depth: validate Origin header against CORS allowed origins.
+	// This prevents cross-origin POST attacks even if an attacker can set
+	// Content-Type: application/json (e.g., via fetch API with CORS disabled).
+	if origin := ctx.Request().Header.Get("Origin"); origin != "" && s.corsPolicy != nil {
+		if !s.isOriginAllowed(origin) {
+			ctx.JSON(http.StatusForbidden, errorBody(core.ErrInvalidRequest))
+			return
+		}
+	}
+
 	req, ok := s.bootstrapLoginRequest(ctx)
 	if !ok {
 		return
@@ -179,12 +197,23 @@ func (s *Server) respondLoginProviders(ctx HandlerContext, req *login.Request) b
 	return true
 }
 
-// validateLoginAuthorizationParams enforces the request-parameter shapes: RFC
-// 8707 resource allowlist, OIDC §5.5 claims-parameter (must be a JSON object),
-// and RFC 9396 authorization_details (JSON array of {type,...}, type-allowlisted
-// when the client declares one). Empty allowlists disable enforcement (legacy
+// validateLoginAuthorizationParams enforces the request-parameter shapes:
+// parameter length limits (DoS prevention), RFC 8707 resource allowlist,
+// OIDC §5.5 claims-parameter (must be a JSON object), and RFC 9396
+// authorization_details (JSON array of {type,...}, type-allowlisted when
+// the client declares one). Empty allowlists disable enforcement (legacy
 // compat). Returns true when it wrote an error response.
 func (s *Server) validateLoginAuthorizationParams(ctx HandlerContext, req *login.Request, client *Client) bool {
+	// Parameter length limits — prevent DoS via oversized params that
+	// would bloat AuthCode store entries and amplify redirect responses.
+	// Scope is joined with spaces to match the wire format length.
+	if code := oauth.CheckAuthParamLengths(
+		req.State, req.RedirectURI, req.Scope, req.Nonce, req.Resource,
+	); code != "" {
+		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidRequest)
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidRequest))
+		return true
+	}
 	if !client.AreResourcesAllowed(req.Resource) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidTarget)
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrInvalidTarget))

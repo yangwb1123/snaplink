@@ -1,0 +1,28 @@
+# pi-batch pipeline: run Stage 02 (Security & RFC) then Stage 03 (Distributed)
+# on the OIDC RP-Initiated Logout subsystem.
+#
+# Usage:
+#   python pi-batch.py --pipeline .ai/examples/oidc-logout-pipeline.yaml
+#   python pi-batch.py --pipeline .ai/examples/oidc-logout-pipeline.yaml --reuse
+#
+# This pipeline uses the two-stage pi-batch pipeline feature:
+#   Stage A: generates filled prompts from context + templates
+#   Stage B: (manual or via run-review.py) sends filled prompts to pi
+#
+# For full workflow, prefer run-review.py which handles variable substitution.
+# This YAML demonstrates the pi-batch pipeline concept for batch execution.
+
+stages:
+  - name: security-rfc-review
+    from_dir: .ai/reviews/oidc-logout/prompts
+    suffix: .md
+    output_suffix: .out.md
+    mode: serial
+
+  - name: distributed-review
+    from_outputs: security-rfc-review
+    tasks:
+      - prompt_template: .ai/prompts/03-distributed-review.md
+        output: .ai/reviews/oidc-logout/stage-03-distributed.out.md
+        cwd: /home/dwp/snaplink
+        timeout: 600

@@ -19,6 +19,10 @@ const (
 	GrantDeviceCode        = "urn:ietf:params:oauth:grant-type:device_code"
 	GrantTokenExchange     = "urn:ietf:params:oauth:grant-type:token-exchange" // RFC 8693
 	GrantCIBA              = "urn:openid:params:grant-type:ciba"               // OIDC CIBA Core 1.0 §10.1
+	// GrantJWTBearer is the RFC 7523 JWT Bearer Token Grant — a client exchanges
+	// an externally-signed JWT assertion for an access token. The assertion is
+	// validated against a configurable trust anchor (issuer JWKS or OIDC Discovery).
+	GrantJWTBearer = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 )
 
 // CIBAAMR is the AMR / provider value recorded for a token minted via the CIBA
@@ -122,4 +126,5 @@ var SupportedGrants = []string{
 	GrantClientCredentials,
 	GrantDeviceCode,
 	GrantTokenExchange,
+	GrantJWTBearer,
 }

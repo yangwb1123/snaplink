@@ -138,6 +138,24 @@ func (m *MemorySessionManager) ListAll(_ context.Context) ([]*core.Session, erro
 	return out, nil
 }
 
+// ListByTenant implements core.SessionTenantLister — returns every session
+// stamped with tenantID (active or not). Empty tenantID returns empty list.
+// A tenant-admin dashboard calls this to show sessions for their org.
+func (m *MemorySessionManager) ListByTenant(_ context.Context, tenantID string) ([]*core.Session, error) {
+	if tenantID == "" {
+		return []*core.Session{}, nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*core.Session, 0)
+	for _, s := range m.sessions {
+		if s.TenantID == tenantID {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
 func randomHex(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
@@ -148,4 +166,5 @@ var (
 	_ core.SessionManager     = (*MemorySessionManager)(nil)
 	_ core.SessionMetaCreator = (*MemorySessionManager)(nil)
 	_ core.SessionTenantIndex = (*MemorySessionManager)(nil)
+	_ core.SessionTenantLister = (*MemorySessionManager)(nil)
 )

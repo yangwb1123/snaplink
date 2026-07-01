@@ -343,15 +343,19 @@ func (s *Server) handleDeviceVerifyPage(ctx HandlerContext) {
 		ctx.JSON(http.StatusNotImplemented, errorBody(ErrDeviceCodeNotConfigured))
 		return
 	}
+	// Look up user_code from query BEFORE content negotiation
+	// so JSON and HTML paths both have access to it.
+	uc := normalizeUserCode(ctx.Query("user_code"))
 	// Content negotiation: serve HTML when the client accepts text/html,
-	// otherwise return a JSON 406 to non-browser callers.
+	// serve JSON when the client accepts application/json (for CLI tools
+	// and automation), otherwise return JSON as the default.
 	accept := ctx.Request().Header.Get("Accept")
-	if accept != "" && !acceptsHTML(accept) {
-		ctx.JSON(http.StatusNotAcceptable, errorBody(ErrInvalidRequest))
+	if acceptsJSON(accept) || !acceptsHTML(accept) {
+		// JSON response for non-browser clients (CLI, curl, automation).
+		s.handleDeviceVerifyJSON(ctx, uc)
 		return
 	}
 	// Look up device code info to pass to the template when user_code is in query.
-	uc := normalizeUserCode(ctx.Query("user_code"))
 	data := oidc.DeviceVerifyData{
 		UserCode: ctx.Query("user_code"),
 	}
@@ -374,6 +378,23 @@ func (s *Server) handleDeviceVerifyPage(ctx HandlerContext) {
 func acceptsHTML(accept string) bool {
 	// text/html explicitly listed, or no preference that excludes it.
 	return strings.Contains(accept, "text/html") || strings.Contains(accept, "*/*")
+}
+
+// acceptsJSON reports whether the Accept header explicitly requests
+// application/json over text/html.
+func acceptsJSON(accept string) bool {
+	return strings.Contains(accept, "application/json")
+}
+
+// handleDeviceVerifyJSON returns the device verification state as JSON
+// for non-browser clients (CLI, curl, automation). uc is the normalized
+// user_code from the query parameter.
+func (s *Server) handleDeviceVerifyJSON(ctx HandlerContext, uc string) {
+	if uc == "" {
+		ctx.JSON(http.StatusOK, map[string]string{"status": "pending"})
+		return
+	}
+	s.handleDeviceVerifyCheck(ctx, uc)
 }
 
 // handleDeviceVerifyCheck returns the current state of a user_code as JSON for

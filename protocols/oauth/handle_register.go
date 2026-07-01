@@ -363,6 +363,7 @@ func projectClientToDCRResponse(c *core.Client, ctx core.HandlerContext) DCRResp
 		ClientName:             c.Name,
 		Scope:                  JoinScope(c.AllowedScopes),
 		TokenStrategy:          c.TokenStrategy,
+		TokenEndpointAuthMethod: c.TokenEndpointAuthMethod,
 		AllowedAuthenticators:  c.AllowedAuthenticators,
 		AllowedResources:       c.AllowedResources,
 		PostLogoutRedirectURIs: c.PostLogoutRedirectURIs,

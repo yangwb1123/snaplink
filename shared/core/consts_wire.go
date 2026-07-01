@@ -10,6 +10,7 @@ const (
 	HeaderIdempotencyKey = "Idempotency-Key"
 	HeaderContentType          = "Content-Type"
 	HeaderRequestID            = "X-Request-Id"
+	HeaderTraceID              = "X-Trace-Id"
 	HeaderTraceparent          = "Traceparent"
 	HeaderParentSpanID         = "X-Parent-Span-Id"
 	HeaderAccessControlOrigin  = "Access-Control-Allow-Origin"

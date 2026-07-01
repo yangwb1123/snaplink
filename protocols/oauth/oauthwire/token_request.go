@@ -33,4 +33,9 @@ type TokenRequest struct {
 	// RFC 7521 + 7523 JWT bearer client authentication.
 	ClientAssertion     string `json:"client_assertion"`
 	ClientAssertionType string `json:"client_assertion_type"`
+
+	// Assertion is the bearer JWT for the JWT Bearer Token Grant (RFC 7523 §2.1).
+	// The client presents a signed JWT as the authorization grant, rather than
+	// an authorization code, refresh token, or other credential.
+	Assertion string `json:"assertion"`
 }
