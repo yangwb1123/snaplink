@@ -1,8 +1,6 @@
 package sso
-
 import (
 	"time"
-
 	"github.com/snaplink/sso/domains/anomaly"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
@@ -13,20 +11,18 @@ import (
 	"github.com/snaplink/sso/platform/geo"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/netpolicy"
+	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
 )
-
 func WithPermissionProvider(p permissions.Provider) Option {
 	return func(s *Server) { s.permissions = p }
 }
-
 // WithEmbedPermissionsInLogin attaches a user's roles, permissions, and menu
 // tree to the /auth/login response — convenient for SPAs that want the
 // authorization surface immediately, instead of an extra round trip.
 func WithEmbedPermissionsInLogin() Option {
 	return func(s *Server) { s.embedPermissions = true }
 }
-
 // WithNetworkPolicy enables the network-classification control plane. store
 // is required; classifier is optional — when nil, the /classify and
 // /resolve-me endpoints respond 501.
@@ -40,7 +36,6 @@ func WithNetworkPolicy(store netpolicy.Store, classifier *netpolicy.Classifier) 
 		s.netClassifier = classifier
 	}
 }
-
 // WithNetworkPolicyAPI mounts the netpolicy REST endpoints
 // (GET/POST /api/v1/netpolicy/policies[/:name], DELETE on :name,
 // GET /api/v1/netpolicy/classify + /resolve-me). Requires WithNetworkPolicy.
@@ -49,7 +44,6 @@ func WithNetworkPolicy(store netpolicy.Store, classifier *netpolicy.Classifier) 
 func WithNetworkPolicyAPI() Option {
 	return func(s *Server) { s.netAPI = true }
 }
-
 // WithGeoProvider enables IP → geo enrichment on the auth path.
 // During Mount, the Server installs GeoMiddleware ahead of all
 // routes so handlers (and through them, AuthResult) can read the
@@ -60,7 +54,6 @@ func WithNetworkPolicyAPI() Option {
 func WithGeoProvider(p geo.Provider) Option {
 	return func(s *Server) { s.geoProvider = p }
 }
-
 // WithGeoMiddlewareOptions tunes how the geo middleware extracts
 // the client IP and bounds the lookup. Optional — the middleware
 // has sane defaults (XFF first hop → X-Real-IP → RemoteAddr,
@@ -69,7 +62,6 @@ func WithGeoProvider(p geo.Provider) Option {
 func WithGeoMiddlewareOptions(opts GeoMiddlewareOptions) Option {
 	return func(s *Server) { s.geoMiddlewareOpts = opts }
 }
-
 // WithRegionMiddleware installs the serving-region resolution middleware:
 // during Mount the Server runs region.Middleware(resolver, opts) immediately
 // after the geo middleware so the resolved serving-region ID is stashed on
@@ -446,6 +438,76 @@ func WithBodyLimitForPath(prefix string, maxBytes int64) Option {
 //	})
 func WithRateLimit(p ratelimit.Policy) Option {
 	return func(s *Server) { s.rateLimitPolicy = &p }
+}
+
+// WithAdminTokenStore wires a store for admin bearer token metadata,
+// enabling the GET/POST/DELETE /api/v1/admin/tokens lifecycle
+// endpoints. Without it, admin tokens have no management surface.
+func WithAdminTokenStore(store core.AdminTokenStore) Option {
+	return func(s *Server) { s.adminTokenStore = store }
+}
+
+// WithAdminRateLimit sets a server-level admin API rate limit. rate is
+// tokens per second; burst is the maximum accumulated tokens. When set,
+// the admin HTTP and gRPC middleware enforce this limit before processing
+// any admin request — protecting the control plane from accidental or
+// malicious overuse. 0 for rate disables the limit (default).
+//
+// Example: 10 tokens/s, burst 20 allows short bursts of up to 20
+// requests while sustaining 10/s.
+//
+//	srv := sso.NewServer(
+//	    sso.WithAdminRateLimit(10, 20),
+//	)
+func WithAdminRateLimit(tokensPerSec float64, burst int) Option {
+	return func(s *Server) {
+		s.adminRateLimit.rate = tokensPerSec
+		s.adminRateLimit.burst = burst
+	}
+}
+
+// WithAuthorizeRequestTimeout sets a wall-clock deadline on the
+// /auth/login handler. When the deadline elapses before the handler
+// completes, the server returns interaction_required to the client
+// so the user can retry instead of hanging indefinitely on a slow
+// upstream IdP. 0 (default) disables the timeout.
+//
+// Typical value: 5 minutes — generous enough for any OIDC/SAML
+// federation round-trip + user interaction, but prevents a wedged
+// provider from pinning a goroutine forever.
+func WithAuthorizeRequestTimeout(timeout time.Duration) Option {
+	return func(s *Server) {
+		if timeout > 0 {
+			s.authzRequestTimeout = timeout
+		}
+	}
+}
+
+// WithBackupSource registers a SQLite backup source so the admin
+// endpoint POST /api/v1/admin/backup can trigger VACUUM INTO on it.
+func WithBackupSource(src core.BackupSource) Option {
+	return func(s *Server) {
+		s.backupSources = append(s.backupSources, src)
+	}
+}
+
+// WithPanicRecovery installs a panic-recovery handler as the
+// outermost middleware wrapper. Any panic from the router, its
+// middlewares, or a handler returns HTTP 500 instead of crashing
+// the process. The panic is logged with a full stack trace via the
+// wired Logger — or NopLogger when no logger is set.
+//
+// Enabled by default.
+func WithPanicRecovery(enabled bool) Option {
+	return func(s *Server) { s.panicRecovery = enabled }
+}
+
+// WithCompression enables gzip response compression for responses
+// larger than 1 KB. The middleware checks the client's Accept-Encoding
+// header and transparently compresses responses. Useful for admin API
+// endpoints (ListClients, audit events) that return large JSON payloads.
+func WithCompression() Option {
+	return func(s *Server) { s.compressionEnabled = true }
 }
 
 // WithConsentStore wires a persistent consent record store. When set,

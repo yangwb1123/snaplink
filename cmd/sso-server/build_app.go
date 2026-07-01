@@ -168,6 +168,10 @@ func (b *appBuilder) finalize() (*app, error) {
 	}
 	if b.cfg.Admin.Enabled {
 		rt.adminMW = sso.NewAdminMiddleware(srv, b.provider)
+		// Apply admin rate limit when configured.
+		if rate, burst := srv.AdminRateLimit(); rate > 0 && burst > 0 {
+			rt.adminMW.SetRateLimit(rate, burst)
+		}
 	}
 	rt.snapshots, err = b.wireSnapshotReleases()
 	if err != nil {

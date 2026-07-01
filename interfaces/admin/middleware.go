@@ -15,7 +15,6 @@ import (
 
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/audit/auditspi"
 	"github.com/snaplink/sso/shared/core"
 
 	"google.golang.org/grpc"

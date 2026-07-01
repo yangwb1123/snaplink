@@ -112,8 +112,16 @@ func (s *Server) MFAChallengeStore() spi.MFAChallengeStore { return s.mfaChallen
 func (s *Server) MFAChallengeTTL() time.Duration           { return s.mfaChallengeTTL }
 func (s *Server) AnomalyRunner() *anomaly.Runner           { return s.anomalyRunner }
 
-func (s *Server) ConnectionStore() connections.Store        { return s.connectionStore }
-func (s *Server) ConsentStore() core.ConsentStore           { return s.consentStore }
+// AdminRateLimit returns the configured admin-wide rate limit.
+// rate is tokens per second; burst is the maximum accumulated tokens.
+// When both are 0 the admin rate limit is disabled (default).
+func (s *Server) AdminRateLimit() (rate float64, burst int) {
+	return s.adminRateLimit.rate, s.adminRateLimit.burst
+}
+
+func (s *Server) ConnectionStore() connections.Store { return s.connectionStore }
+// ConsentStore exposes the wired consent store (may be nil).
+func (s *Server) ConsentStore() ConsentStore { return s.consentStore }
 func (s *Server) TenantUserStore() core.TenantUserStore     { return s.tenantUserStore }
 func (s *Server) UserProviderAccessor() core.UserProvider   { return s.userProvider }
 func (s *Server) DeviceSecretStore() core.DeviceSecretStore { return s.deviceSecretStore }

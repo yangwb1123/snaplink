@@ -36,6 +36,30 @@ type selfServiceState struct {
 	// to a build without the feature.
 	consentStore ConsentStore
 
+	// backupSources holds the SQLite stores that support online backup
+	// via VACUUM INTO. The admin endpoint POST /api/v1/admin/backup
+	// enumerates these sources and streams each to the operator.
+	backupSources []core.BackupSource
+
+	// adminTokenStore persists admin bearer token metadata for
+	// lifecycle management (list, revoke). Without this store,
+	// admin tokens can only be revoked by clearing the underlying
+	// credential store.
+	adminTokenStore core.AdminTokenStore
+
+	// consentMaxTTL is the hard server-level ceiling on consent grant
+	// lifetime (WithConsentTTL). When >0, every recorded consent has
+	// ExpiresAt = GrantedAt + consentMaxTTL. After that, GetConsent
+	// returns ErrNoConsentGrant — the user must re-authorize. 0 (default)
+	// means no server-enforced expiry (consent lives until revoked).
+	consentMaxTTL time.Duration
+
+	// authzRequestTimeout is the per-login handler wall-clock deadline
+	// (WithAuthorizeRequestTimeout). When >0, handleLogin cancels the
+	// request context after this duration and returns interaction_required.
+	// 0 (default) means no server-enforced deadline.
+	authzRequestTimeout time.Duration
+
 	// scopeDescriptions maps a scope name to an operator-defined human
 	// description (WithScopeDescriptions). Surfaced in the consent_required
 	// response so the consent UI can render meaningful text for custom scopes
@@ -179,4 +203,13 @@ type selfServiceState struct {
 	// Nil (the default) means no password policy is enforced — behavior is
 	// byte-identical to a build without the feature.
 	passwordPolicyValidator spi.PasswordPolicyValidator
+
+	// adminRateLimitRate and adminRateLimitBurst configure admin-wide rate
+	// limiting (WithAdminRateLimit). When wired, the admin middleware limits
+	// total requests to rate tokens/sec with the given burst. 0 (default)
+	// disables admin rate limiting.
+	adminRateLimit struct {
+		rate  float64
+		burst int
+	}
 }
