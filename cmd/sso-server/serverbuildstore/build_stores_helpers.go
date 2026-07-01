@@ -10,7 +10,7 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	postgresbackend "github.com/snaplink/sso/postgres"
+	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
 
 	"github.com/snaplink/sso/shared/spi"
 
@@ -18,7 +18,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	redisbackend "github.com/snaplink/sso/redis"
+	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 	"github.com/snaplink/sso/interfaces/snapshot"
 
 	encryptionaes "github.com/snaplink/sso/interfaces/snapshot/encryptionaesgcm"

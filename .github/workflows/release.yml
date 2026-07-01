@@ -37,6 +37,12 @@ jobs:
       # .goreleaser.yaml is uncommented. Cheap to install up front.
       - uses: sigstore/cosign-installer@v3
 
+      # Docker buildx with the docker-container driver enables multi-platform
+      # builds (linux/amd64 + linux/arm64) for the ghcr.io images configured
+      # in .goreleaser.yaml dockers block. Without this step goreleaser falls
+      # back to the default docker driver which only supports single-platform.
+      - uses: docker/setup-buildx-action@v3
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           # Pin to the major; minor bumps within v2 are non-breaking.

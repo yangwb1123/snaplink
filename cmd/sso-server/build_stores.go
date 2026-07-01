@@ -10,8 +10,8 @@ import (
 
 	"github.com/snaplink/sso/shared/spi"
 
-	postgresbackend "github.com/snaplink/sso/postgres"
-	redisbackend "github.com/snaplink/sso/redis"
+	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
+	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/interfaces/sso"

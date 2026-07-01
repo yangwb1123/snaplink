@@ -18,7 +18,7 @@ import (
 	"github.com/snaplink/sso/config"
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	redisbackend "github.com/snaplink/sso/redis"
+	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 
 	"github.com/snaplink/sso/domains/federation"
 

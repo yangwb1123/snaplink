@@ -1,0 +1,93 @@
+# Production HA config: hot/ephemeral state on a Redis Cluster, durable
+# system-of-record on a Postgres-wire DB cluster, coordination on etcd.
+# Secrets (Redis password, Postgres DSN) are injected via the SSO_<SECTION>__<KEY>
+# env overrides from a Secret (see patch-deployment.yaml) — NOT committed here.
+#
+# This is the topology docs/deployment.md calls "Tier B" — safe for N replicas +
+# an HPA because every stateful concern is on a SHARED backend, not per-pod memory.
+
+server:
+  listen: ":8080"
+  # issuer MUST be the externally-reachable URL the edge terminates TLS on.
+  issuer: "https://sso.example.com"
+
+# ---- HOT / EPHEMERAL tier: one shared Redis Cluster, fanned out to every hot store ----
+redis:
+  mode: cluster
+  addrs:
+    - redis-0.redis.svc:6379
+    - redis-1.redis.svc:6379
+    - redis-2.redis.svc:6379
+  # password injected via env: SSO_REDIS__PASSWORD (from the Secret)
+  db: 0 # cluster mode requires 0 (validated at boot)
+  pool_size: 100
+  read_timeout: 300ms # fail-closed fast on /token
+  write_timeout: 300ms
+  # route_by_latency / read_only LEFT OFF: single-use + replay reads must hit the
+  # master, or replica lag could let a replay momentarily evade detection.
+  tls:
+    enabled: true
+    ca_file: /etc/redis-tls/ca.crt
+    server_name: redis.svc
+  # Operator HARD requirement on the cluster: maxmemory-policy noeviction (or
+  # volatile-ttl). Evicting a live refresh-family ledger or jti key silently
+  # breaks reuse/replay detection — a security regression, not a cache miss.
+
+oauth: { backend: redis } # auth_code / refresh / device_code / par
+ciba: { backend: redis }
+mfa:
+  challenge: { backend: redis }
+security:
+  jti_replay: { backend: redis }
+  rate_limit:
+    backend: redis # shared cluster-wide buckets (per-replica memory = N x the limit)
+    default_per_sec: 50
+    default_burst: 100
+
+# ---- DURABLE tier: Postgres-wire DB cluster (PostgreSQL+pgbouncer OR CockroachDB) ----
+# DSN injected via env: SSO_POSTGRES__DSN (from the Secret). Behind a tx-mode
+# pooler add default_query_exec_mode=simple_protocol to the DSN.
+postgres:
+  dialect: postgres # postgres | cockroach
+  max_open_conns: 15 # SMALL: the tx-mode pooler multiplexes; N replicas x this < DB max_connections
+  max_idle_conns: 5
+  conn_max_lifetime: 30m
+
+identity:
+  backend: postgres # clients + users (durable system-of-record)
+  session_backend: redis # sessions are HOT — keep them on the cluster, not the DB
+permissions: { enabled: true, backend: postgres }
+tenant: { enabled: true, backend: postgres }
+audit: { enabled: true, backend: postgres, hash_chain: true }
+self_service:
+  consent: { backend: postgres }
+  password: { backend: postgres }
+native_sso: { backend: postgres } # device_secrets
+server_pairwise_subjects_note: "set server.pairwise_subjects.backend: postgres if pairwise subjects are enabled"
+
+# ---- COORDINATION tier: etcd. REQUIRED once cross_replica_revocation is on ----
+cluster:
+  bus:
+    backend: etcd
+    etcd_endpoints: [etcd-0:2379, etcd-1:2379, etcd-2:2379]
+  cross_replica_revocation: true # FAILS BOOT without a live bus (intentional)
+registry:
+  backend: etcd
+  etcd_endpoints: [etcd-0:2379, etcd-1:2379, etcd-2:2379]
+
+keys:
+  rotation:
+    coordinated_cutover: true # FAIL-SAFE: deferred retire only widens the verify window
+  signing_key_registry:
+    backend: etcd # leaderless JWKS aggregation across replicas
+    etcd_endpoints: [etcd-0:2379, etcd-1:2379, etcd-2:2379]
+
+# ---- Other opt-in concerns: select a cluster-shared backend WHEN enabled (each
+# defaults to per-pod memory if unset, which breaks under a multi-replica LB):
+#   security.account_lockout.backend: redis           # shared failed-login counter
+#   self_service.password_reset.backend: redis        # issue/redeem split across replicas
+#   authenticators.totp.backend: postgres             # TOTP enrollment secret (durable)
+#   backchannel_logout.index.backend: redis           # BCL subject->client fan-out index
+#   oauth.refresh_token.rotation_grace_backend: redis # double-submit grace (avoids logout storm)
+#   webauthn.storage.users.backend: postgres          # passkey credentials (durable)
+#   webauthn.storage.sessions.backend: redis          # passkey ceremony challenge (hot)

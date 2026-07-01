@@ -15,7 +15,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	redisbackend "github.com/snaplink/sso/redis"
+	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 )
 
 // errRedisNotConfigured is the shared boot error for a backend:redis selection

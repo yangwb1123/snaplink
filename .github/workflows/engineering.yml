@@ -43,6 +43,12 @@ jobs:
       - name: Self-test (harness integrity)
         run: make self-test
 
+      - name: ADR compliance gate
+        run: make adr-compliance
+
+      - name: Checks unit tests (gate integrity)
+        run: make check-test
+
   diagnose:
     name: Codebase Health
     runs-on: ubuntu-latest

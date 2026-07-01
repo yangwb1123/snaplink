@@ -5,7 +5,7 @@ import (
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	redisbackend "github.com/snaplink/sso/redis"
+	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"strings"

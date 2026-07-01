@@ -1,3 +1,5 @@
+//go:build !no_kms_azurekeyvault
+
 // Package azurekeyvault provides a concrete Azure Key Vault-backed
 // [crypto.Signer] for the snaplink/sso JWT signing seam, so token signing
 // private keys never leave the vault — the #1 compliance requirement for FIPS

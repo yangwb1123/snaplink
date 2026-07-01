@@ -8,7 +8,7 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	postgresbackend "github.com/snaplink/sso/postgres"
+	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/config"

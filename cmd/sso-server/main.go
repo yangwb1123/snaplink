@@ -10,7 +10,10 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -117,12 +120,111 @@ func main() {
 // applyRuntimeTuning adjusts Go runtime parameters for SSO-server workloads.
 // High-throughput token signing creates many short-lived objects; a higher
 // GC target reduces GC frequency at the cost of a small heap increase.
+//
+// GOMAXPROCS and GOMEMLIMIT are detected from the cgroup (v1 or v2) when
+// running inside a container and no explicit env override is set. This
+// prevents CPU throttling jitter (GOMAXPROCS defaulting to host cores) and
+// OOM kills (GC seeing all host memory as available).
 func applyRuntimeTuning() {
 	// GC target: 200% instead of the default 100% — fewer GC cycles
 	// under spiky token-issuance load. Respects explicit env override.
 	if os.Getenv("GOGC") == "" {
 		debug.SetGCPercent(200)
 	}
+
+	// GOMAXPROCS: respect cgroup CPU quota when inside a container and
+	// GOMAXPROCS is not explicitly overridden. Detected by parsing
+	// cgroup v2's cpu.max or falling back to cgroup v1's cpu.cfs_*.
+	if os.Getenv("GOMAXPROCS") == "" {
+		if quota := detectCgroupCPUQuota(); quota > 0 {
+			runtime.GOMAXPROCS(quota)
+		}
+	}
+
+	// GOMEMLIMIT: set a soft memory limit from the cgroup memory.max
+	// (v2) or memory.limit_in_bytes (v1), at 90% of the limit so the
+	// GC kicks in before the OOM killer. Respects explicit env override
+	// and only applies when the limit is a reasonable finite value.
+	if os.Getenv("GOMEMLIMIT") == "" {
+		if memLimit := detectCgroupMemoryLimit(); memLimit > 0 && memLimit < (1<<62) {
+			// 90% of cgroup limit leaves headroom for OS / non-Go memory.
+			debug.SetMemoryLimit(int64(float64(memLimit) * 0.9))
+		}
+	}
+
+	// Disable HTTP/2 server-side when running behind a reverse proxy.
+	// Envoy, NGINX, and OpenResty all speak HTTP/1.1 or HTTP/2
+	// frontend — the server-to-proxy hop gains nothing from h2 and the
+	// extra complexity (HPACK, stream priority, goroutine-per-stream)
+	// is pure overhead.
+	if os.Getenv("GODEBUG") == "" {
+		os.Setenv("GODEBUG", "http2server=0")
+	}
+}
+
+// detectCgroupCPUQuota reads the cgroup CPU quota and returns the number of
+// CPUs available, or 0 if undetectable / unlimited.
+//
+// cgroup v2: /sys/fs/cgroup/cpu.max — format "$MAX $PERIOD"
+// cgroup v1: /sys/fs/cgroup/cpu/cpu.cfs_quota_us + cpu.cfs_period_us
+func detectCgroupCPUQuota() int {
+	// cgroup v2
+	data, err := os.ReadFile("/sys/fs/cgroup/cpu.max")
+	if err == nil {
+		parts := strings.Fields(strings.TrimSpace(string(data)))
+		if len(parts) >= 2 && parts[0] != "max" {
+			max, err1 := strconv.Atoi(parts[0])
+			period, err2 := strconv.Atoi(parts[1])
+			if err1 == nil && err2 == nil && period > 0 {
+				quota := max / period
+				if quota > 0 {
+					return quota
+				}
+			}
+		}
+		return 0 // max means unlimited
+	}
+
+	// cgroup v1
+	quotaB, err1 := os.ReadFile("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")
+	periodB, err2 := os.ReadFile("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
+	if err1 == nil && err2 == nil {
+		quota, err1 := strconv.Atoi(strings.TrimSpace(string(quotaB)))
+		period, err2 := strconv.Atoi(strings.TrimSpace(string(periodB)))
+		if err1 == nil && err2 == nil && quota > 0 && period > 0 {
+			return quota / period
+		}
+	}
+	return 0
+}
+
+// detectCgroupMemoryLimit reads the cgroup memory limit in bytes, or 0 if
+// undetectable / unlimited. cgroup v2 first, then v1.
+func detectCgroupMemoryLimit() int64 {
+	// cgroup v2
+	data, err := os.ReadFile("/sys/fs/cgroup/memory.max")
+	if err == nil {
+		s := strings.TrimSpace(string(data))
+		if s == "max" {
+			return 0 // unlimited
+		}
+		v, err := strconv.ParseInt(s, 10, 64)
+		if err == nil && v > 0 {
+			return v
+		}
+		return 0
+	}
+
+	// cgroup v1
+	data, err = os.ReadFile("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+	if err == nil {
+		s := strings.TrimSpace(string(data))
+		v, err := strconv.ParseInt(s, 10, 64)
+		if err == nil && v > 0 && v < (1<<62) {
+			return v
+		}
+	}
+	return 0
 }
 
 // app bundles the wired SDK components so both HTTP and gRPC servers can

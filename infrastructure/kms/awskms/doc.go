@@ -1,3 +1,5 @@
+//go:build !no_kms_awskms
+
 // Package awskms provides a concrete AWS KMS-backed [crypto.Signer] for
 // the snaplink/sso JWT signing seam, so token signing private keys never
 // leave the AWS KMS HSM — the #1 compliance requirement for FIPS 140-2/3,

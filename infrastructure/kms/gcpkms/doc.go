@@ -1,3 +1,5 @@
+//go:build !no_kms_gcpkms
+
 // Package gcpkms provides a concrete GCP Cloud KMS-backed [crypto.Signer]
 // for the snaplink/sso JWT signing seam, so token signing private keys
 // never leave the Cloud KMS HSM — the #1 compliance requirement for FIPS

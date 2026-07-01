@@ -9,7 +9,7 @@ IMAGE_TAG ?= dev
 
 CLI = python cli.py
 
-.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking proto-gen docs-validate docs-serve release-snapshot release-check security-scan load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all config-validate config-validate-all k8s-render k8s-diff
+.PHONY: help test race bench vet fmt build docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-serve release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e mod-tidy-all check-test skill-test adr-compliance
 
 # ── Go Dev (via $GO directly for speed) ──────────────────────────────
 
@@ -32,6 +32,29 @@ bench-all: ## Run benchmarks on all packages (same as bench).
 load-test: ## Load-test /token (requires k6).
 	@command -v k6 >/dev/null 2>&1 || { echo "k6 not installed" >&2; exit 1; }
 	k6 run ops/deploy/loadtest/token.js
+
+load-test-record: ## Record load test baseline to ops/deploy/loadtest/baseline.json.
+	@command -v k6 >/dev/null 2>&1 || { echo "k6 not installed" >&2; exit 1; }
+	@command -v jq >/dev/null 2>&1 || { echo "jq not installed" >&2; exit 1; }
+	cd ops/deploy/loadtest && bash record-baseline.sh baseline.json
+
+load-test-compare: ## Compare current load test results against baseline (threshold=20%%).
+	@command -v k6 >/dev/null 2>&1 || { echo "k6 not installed" >&2; exit 1; }
+	@command -v jq >/dev/null 2>&1 || { echo "jq not installed" >&2; exit 1; }
+	@command -v bc >/dev/null 2>&1 || { echo "bc not installed" >&2; exit 1; }
+	cd ops/deploy/loadtest && bash compare-baseline.sh baseline.json ${THRESHOLD:-20}
+
+load-test-ci: ## Run load test in CI (compare against baseline on target branch).
+	@command -v k6 >/dev/null 2>&1 || { echo "k6 not installed" >&2; exit 1; }
+	@command -v jq >/dev/null 2>&1 || { echo "jq not installed" >&2; exit 1; }
+	@command -v bc >/dev/null 2>&1 || { echo "bc not installed" >&2; exit 1; }
+	@echo "==> Load test CI: running baseline comparison..."
+	@cd ops/deploy/loadtest && \
+		if [ -f baseline.json ]; then \
+			bash compare-baseline.sh baseline.json ${THRESHOLD:-20}; \
+		else \
+			bash record-baseline.sh baseline.json; \
+		fi
 
 vet: ## Static analysis.
 	$(GO) vet ./...
@@ -56,6 +79,12 @@ fmt: ## Check gofmt.
 
 build: ## Compile to $(BIN_DIR)/.
 	$(CLI) build
+
+build-small: ## Compile sso-server with all optional KMS modules excluded (smaller binary, no CGO).
+	CGO_ENABLED=0 go build -tags 'no_kms_awskms no_kms_gcpkms no_kms_azurekeyvault no_pkcs11' -o $(BIN_DIR)/sso-server-small ./cmd/sso-server
+
+build-with-pkcs11: ## Compile sso-server with PKCS#11 support (requires CGO + libltdl-dev).
+	CGO_ENABLED=1 go build -o $(BIN_DIR)/sso-server-pkcs11 ./cmd/sso-server
 
 examples: ## Compile example apps to ensure they stay buildable.
 	$(GO) build ./docs/examples/...
@@ -115,7 +144,6 @@ ci-modules: ## Build + test all nested modules.
 	cd kms/gcpkms && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd kms/azurekeyvault && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd kms/pkcs11 && $(GO) build ./... && $(GO) test -race -count=1 ./...
-	cd redis && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd saml && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd ldap && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd extauthz && $(GO) build ./... && $(GO) test -race -count=1 ./...
@@ -123,13 +151,27 @@ ci-modules: ## Build + test all nested modules.
 	cd radius && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd cmd/sso-mcp && $(GO) build ./... && $(GO) test -race -count=1 ./...
 
-ci: fmt vet race build examples proto-lint ci-modules ## Run CI checks.
+ci: fmt vet race build examples proto-lint ci-modules config-validate-all ## Run CI checks.
+
+ci-full: ci terraform-validate k8s-render ## Run all CI checks including IaC validation (requires kustomize + terraform).
 
 mod-tidy-all: ## Run go mod tidy in all modules.
 	find . -name go.mod -not -path './.git/*' -execdir go mod tidy \;
 
 clean: ## Remove build artifacts.
 	rm -rf $(BIN_DIR)
+
+clean-all: ## Remove build artifacts + go build cache + tidy all modules.
+	rm -rf $(BIN_DIR)
+	$(GO) clean -cache
+	find . -name go.mod -not -path './.git/*' -execdir go mod tidy \;
+
+test-e2e: ## Run integration tests in test/ (package ssotest).
+	$(GO) test -race -count=1 ./test/...
+
+docker-scan: ## Scan Docker image with trivy.
+	@command -v trivy >/dev/null 2>&1 || { echo "trivy not installed (install from https://trivy.dev)" >&2; exit 1; }
+	trivy image --severity HIGH,CRITICAL $(IMAGE):$(IMAGE_TAG)
 
 # ── Engineering System Gates (delegated to CLI) ──────────────────────
 
@@ -186,6 +228,21 @@ trend: ## Record trend snapshot.
 health-report: ## Health report.
 	$(CLI) health-report
 
+check-test: ## Run checks/ unit tests (validate engineering gates themselves).
+	python -m pytest checks/ -v
+
+skill-test: ## Run skills/ unit tests (validate automated scripts).
+	@for skill_dir in docs/skills/*/; do \
+		if [ -f "$${skill_dir}test_skill.py" ]; then \
+			echo "=== Testing $$(basename $$skill_dir) ==="; \
+			cd "$$skill_dir" && python -m pytest test_skill.py -v; \
+			cd "$(CURDIR)"; \
+		fi; \
+	done
+
+adr-compliance: ## Check ADR compliance (ADR-0003, ADR-0004, ADR-0007).
+	$(CLI) adr-compliance
+
 # -------------------------------------------------------------------
 # Release & Docker targets.
 # -------------------------------------------------------------------
@@ -207,7 +264,7 @@ docker-multiarch: ## Build local multi-arch manifest (no push).
 
 lint-all: ## Run golangci-lint on root + all nested modules.
 	golangci-lint run ./...
-	@for dir in infrastructure/kms/awskms infrastructure/kms/gcpkms infrastructure/kms/azurekeyvault infrastructure/kms/pkcs11 infrastructure/redis infrastructure/saml infrastructure/ldap infrastructure/kerberos infrastructure/radius infrastructure/extauthz; do \
+	@for dir in infrastructure/kms/awskms infrastructure/kms/gcpkms infrastructure/kms/azurekeyvault infrastructure/kms/pkcs11 infrastructure/saml infrastructure/ldap infrastructure/kerberos infrastructure/radius infrastructure/extauthz cmd/sso-mcp; do \
 		echo "linting $$dir..."; \
 		cd "$$dir" && golangci-lint run ./...; \
 		cd "$(CURDIR)"; \
@@ -215,39 +272,63 @@ lint-all: ## Run golangci-lint on root + all nested modules.
 
 security-scan-all: ## Run gosec on root + all nested modules.
 	go run github.com/securego/gosec/v2/cmd/gosec@latest -no-fail ./...
-	@for dir in infrastructure/kms/awskms infrastructure/kms/gcpkms infrastructure/kms/azurekeyvault infrastructure/kms/pkcs11 infrastructure/redis infrastructure/saml infrastructure/ldap infrastructure/kerberos infrastructure/radius infrastructure/extauthz; do \
+	@for dir in infrastructure/kms/awskms infrastructure/kms/gcpkms infrastructure/kms/azurekeyvault infrastructure/kms/pkcs11 infrastructure/saml infrastructure/ldap infrastructure/kerberos infrastructure/radius infrastructure/extauthz cmd/sso-mcp; do \
 		echo "gosec $$dir..."; \
 		cd "$$dir" && go run github.com/securego/gosec/v2/cmd/gosec@latest -no-fail ./...; \
 		cd "$(CURDIR)"; \
 	done
 
 config-validate-all: ## Validate all 7 deploy config files against the server.
-	@for cfg in cmd/sso-server/config.yaml bin/config.yaml ops/deploy/compose/config.yaml ops/deploy/baremetal-ha/sso/config.yaml ops/deploy/k8s/config.yaml ops/deploy/k8s-prod/config.yaml docs/examples/basic/config.yaml; do \
-		echo -n "$$cfg ... "; \
-		if go run ./cmd/sso-server --config="$$cfg" --validate-only 2>/dev/null; then \
-			echo "OK"; \
+	@echo "==> Validating all config.yaml files..."
+	@fail=0; \
+	for cfg in cmd/sso-server/config.yaml bin/config.yaml ops/deploy/compose/config.yaml ops/deploy/baremetal-ha/sso/config.yaml ops/deploy/k8s/config.yaml ops/deploy/k8s-prod/config.yaml docs/examples/basic/config.yaml; do \
+		echo -n "  $$cfg ... "; \
+		if [ -f "$$cfg" ]; then \
+			if go run ./cmd/sso-server --config="$$cfg" --validate-only 2>/dev/null; then \
+				echo "OK"; \
+			else \
+				echo "FAIL"; fail=1; \
+			fi; \
 		else \
-			echo "FAIL"; \
+			echo "SKIP (not found)"; \
 		fi; \
-	done
+	done; \
+	exit $$fail
 
 smoke-test: ## Run smoke tests against a running server.
 	sh ops/deploy/baremetal-ha/smoke.sh
 
 k8s-render: ## Render all Kustomize overlays to flat YAML for auditing.
-	@command -v kustomize >/dev/null 2>&1 || { echo "kustomize not installed" >&2; exit 1; }
 	@mkdir -p $(BIN_DIR)/k8s-rendered/dev $(BIN_DIR)/k8s-rendered/prod
-	@echo "==> Rendering k8s (dev)..."
-	kustomize build ops/deploy/k8s > $(BIN_DIR)/k8s-rendered/dev/all.yaml
-	@echo "==> Rendering k8s-prod..."
-	kustomize build ops/deploy/k8s-prod > $(BIN_DIR)/k8s-rendered/prod/all.yaml
+	@echo "==> Rendering kustomize overlays (dev)..."
+	@KUSTOMIZE=$$(command -v kustomize 2>/dev/null || command -v kubectl 2>/dev/null); \
+	if [ -z "$$KUSTOMIZE" ]; then echo "kustomize or kubectl not installed" >&2; exit 1; fi; \
+	if echo "$$KUSTOMIZE" | grep -q kubectl; then \
+		kubectl kustomize ops/deploy/kustomize/overlays/dev > $(BIN_DIR)/k8s-rendered/dev/all.yaml; \
+	else \
+		kustomize build ops/deploy/kustomize/overlays/dev > $(BIN_DIR)/k8s-rendered/dev/all.yaml; \
+	fi
+	@echo "==> Rendering kustomize overlays (prod)..."
+	@KUSTOMIZE=$$(command -v kustomize 2>/dev/null || command -v kubectl 2>/dev/null); \
+	if echo "$$KUSTOMIZE" | grep -q kubectl; then \
+		kubectl kustomize ops/deploy/kustomize/overlays/prod > $(BIN_DIR)/k8s-rendered/prod/all.yaml; \
+	else \
+		kustomize build ops/deploy/kustomize/overlays/prod > $(BIN_DIR)/k8s-rendered/prod/all.yaml; \
+	fi
 	@echo "Rendered YAML in $(BIN_DIR)/k8s-rendered/"
 
 k8s-diff: ## Diff rendered output between dev and prod overlays.
-	@command -v kustomize >/dev/null 2>&1 || { echo "kustomize not installed" >&2; exit 1; }
-	@mkdir -p $(BIN_DIR)/k8s-rendered/dev $(BIN_DIR)/k8s-rendered/prod
-	@kustomize build ops/deploy/k8s > $(BIN_DIR)/k8s-rendered/dev/all.yaml
-	@kustomize build ops/deploy/k8s-prod > $(BIN_DIR)/k8s-rendered/prod/all.yaml
+	@echo "==> Building dev overlay..."
+	@KUSTOMIZE=$$(command -v kustomize 2>/dev/null || command -v kubectl 2>/dev/null); \
+	if [ -z "$$KUSTOMIZE" ]; then echo "kustomize or kubectl not installed" >&2; exit 1; fi; \
+	mkdir -p $(BIN_DIR)/k8s-rendered/dev $(BIN_DIR)/k8s-rendered/prod; \
+	if echo "$$KUSTOMIZE" | grep -q kubectl; then \
+		kubectl kustomize ops/deploy/kustomize/overlays/dev > $(BIN_DIR)/k8s-rendered/dev/all.yaml; \
+		kubectl kustomize ops/deploy/kustomize/overlays/prod > $(BIN_DIR)/k8s-rendered/prod/all.yaml; \
+	else \
+		kustomize build ops/deploy/kustomize/overlays/dev > $(BIN_DIR)/k8s-rendered/dev/all.yaml; \
+		kustomize build ops/deploy/kustomize/overlays/prod > $(BIN_DIR)/k8s-rendered/prod/all.yaml; \
+	fi
 	@echo "==> Diff between dev and prod overlays:"
 	@diff $(BIN_DIR)/k8s-rendered/dev/all.yaml $(BIN_DIR)/k8s-rendered/prod/all.yaml || true
 
@@ -304,4 +385,4 @@ licenses-notice: ## Generate NOTICE.txt for distribution (Apache 2.0 §4).
 	@echo "Full dependency list: see licenses.csv (make licenses)" >> NOTICE.txt
 	@echo "NOTICE.txt written ($$(wc -l < NOTICE.txt) lines)"
 
-.PHONY: licenses licenses-check licenses-notice release-snapshot release docker-push docker-multiarch lint-all security-scan-all config-validate-all smoke-test k8s-render k8s-diff terraform-validate terraform-plan-dev terraform-plan-prod
+.PHONY: licenses licenses-check licenses-notice release-snapshot release docker-push docker-multiarch lint-all security-scan-all config-validate-all smoke-test k8s-render k8s-diff terraform-validate terraform-plan-dev terraform-plan-prod check-test skill-test adr-compliance

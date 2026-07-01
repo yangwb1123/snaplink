@@ -1,0 +1,51 @@
+# Production HA overlay — shared backends, HPA, PDB, zone spreading, secrets.
+#
+#   kubectl apply -k ops/deploy/kustomize/overlays/prod/
+#
+# This is the canonical production overlay. The legacy ops/deploy/k8s-prod/
+# directory is maintained for backward compatibility.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: snaplink-sso
+
+resources:
+  - ../../base
+  - hpa.yaml
+  - pdb.yaml
+
+# Pin to a specific tag/digest in real deployments.
+images:
+  - name: snaplink/sso-server
+    newTag: prod
+
+replicas:
+  - name: sso-server
+    count: 3
+
+# Replace the base's minimal config with the HA config (redis cluster + postgres
+# + etcd). behavior:replace swaps the whole ConfigMap; the hashed-name + rollout
+# mechanism still applies.
+configMapGenerator:
+  - name: sso-server-config
+    behavior: replace
+    files:
+      - config.yaml
+
+# Placeholder secret. In production DELETE this and supply the secret out-of-band.
+secretGenerator:
+  - name: sso-server-secrets
+    literals:
+      - redis-password=CHANGE_ME
+      - postgres-dsn=postgres://sso@pgbouncer:6432/sso?sslmode=verify-full&default_query_exec_mode=simple_protocol
+
+patches:
+  - path: patch-deployment.yaml
+    target:
+      kind: Deployment
+      name: sso-server
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: snaplink-sso
+    includeSelectors: false

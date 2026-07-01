@@ -7,7 +7,7 @@
 // # Why a separate Go module
 //
 // This package lives in its own nested module
-// (github.com/snaplink/sso/redis) so the github.com/redis/go-redis
+// (github.com/snaplink/sso/infrastructure/redis) so the github.com/redis/go-redis
 // dependency NEVER enters the core sso module's go.mod. The core's
 // zero-external-SDK invariant is a firm property of the repo: operators
 // who need Redis opt in by importing this submodule from their own cmd

@@ -1,0 +1,23 @@
+# Dev overlay — minimal changes over the base.
+#
+#   kubectl apply -k ops/deploy/kustomize/overlays/dev/
+#
+# Difference from base:
+#   - Explicit image tag so CI / local dev deploys a known build
+#   - Can add dev-specific patches (e.g. smaller resource requests)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: snaplink-sso
+
+resources:
+  - ../../base
+
+images:
+  - name: snaplink/sso-server
+    newTag: dev
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: snaplink-sso
+    includeSelectors: false

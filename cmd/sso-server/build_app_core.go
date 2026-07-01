@@ -45,7 +45,7 @@ func (b *appBuilder) wireIdentitySigning() error {
 	if err != nil {
 		return fmt.Errorf("identity user_provider: %w", err)
 	}
-	sessionMgr, err := serverbuildstore.BuildSessionManager(cfg.Identity, cfg.Server.SessionTTL, b.redis)
+	sessionMgr, err := serverbuildstore.BuildSessionManager(cfg.Identity, cfg.Server.SessionTTL, b.redis, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("identity session_manager: %w", err)
 	}

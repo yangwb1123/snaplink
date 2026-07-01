@@ -25,3 +25,21 @@ var (
 	NewFileSource = sources.NewFileSource
 	NewFlagSource = sources.NewFlagSource
 )
+
+// SecretResolver aliases are intentionally NOT re-exported here: the
+// config.SecretResolver interface lives in package config (secrets.go),
+// and the implementations (StaticSecretResolver, ExecSecretResolver) live
+// in config/sources. Downstream code (cmd/sso-server) imports them directly
+// from config/sources and registers them via Loader.WithSecretResolvers.
+//
+// Example wiring:
+//
+//	import (
+//	    "github.com/snaplink/sso/config"
+//	    "github.com/snaplink/sso/config/sources"
+//	)
+//
+//	resolver := sources.NewExecSecretResolver("aws", myResolveFunc)
+//	cfg, err := config.NewLoader(sources...).
+//	    WithSecretResolvers(resolver).
+//	    Load(ctx)

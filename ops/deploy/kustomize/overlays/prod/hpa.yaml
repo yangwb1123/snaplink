@@ -1,0 +1,33 @@
+# HorizontalPodAutoscaler — SAFE only because the prod overlay puts every
+# stateful concern on a SHARED backend (Redis Cluster + Postgres). With the base
+# `memory` backend, scaling would drop per-pod auth codes / sessions on scale-up
+# and scale-down; with shared state, a new replica reads the same codes/sessions
+# and a terminating one loses nothing (modulo in-flight request draining, which
+# preStop + terminationGracePeriodSeconds handle).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: sso-server
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: sso-server
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    # Memory is a poor scale signal for a stateless issuer (it is flat); CPU
+    # tracks crypto (bcrypt / JWT signing) load. For latency-driven scaling,
+    # layer a custom/external metric (e.g. p95 /token latency or in-flight
+    # requests) via the Prometheus adapter — the binary already serves /metrics.
+  behavior:
+    scaleDown:
+      # Conservative scale-down so a brief traffic dip doesn't churn replicas
+      # mid-rollout; pairs with the PDB to keep quorum.
+      stabilizationWindowSeconds: 300

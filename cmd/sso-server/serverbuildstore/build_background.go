@@ -17,7 +17,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	redisbackend "github.com/snaplink/sso/redis"
+	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 
 	goredis "github.com/redis/go-redis/v9"
 

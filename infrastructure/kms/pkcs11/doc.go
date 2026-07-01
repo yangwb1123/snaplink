@@ -1,3 +1,5 @@
+//go:build !no_pkcs11
+
 // Package pkcs11 provides a concrete PKCS#11-backed [crypto.Signer] for the
 // snaplink/sso JWT signing seam, so token-signing private keys never leave
 // the cryptographic token (an on-prem HSM, a smart card, a YubiHSM, a Thales

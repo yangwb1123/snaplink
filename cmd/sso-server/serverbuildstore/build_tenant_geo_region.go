@@ -10,7 +10,7 @@ import (
 
 	"github.com/snaplink/sso/shared/spi"
 
-	postgresbackend "github.com/snaplink/sso/postgres"
+	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
 
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/connections"

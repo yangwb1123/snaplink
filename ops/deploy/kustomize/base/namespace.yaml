@@ -1,0 +1,10 @@
+# Dedicated namespace so RBAC, NetworkPolicy, and ResourceQuota can be
+# scoped without bleed into existing cluster tenants. Operators pinning
+# everything into an existing namespace can drop this file from the
+# kustomization base.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: snaplink-sso
+  labels:
+    app.kubernetes.io/part-of: snaplink-sso

@@ -1,3 +1,5 @@
+//go:build !no_pkcs11
+
 package pkcs11
 
 import (

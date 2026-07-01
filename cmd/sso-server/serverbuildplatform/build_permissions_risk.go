@@ -16,7 +16,7 @@ import (
 	"github.com/snaplink/sso/domains/permissions"
 
 	permsqlite "github.com/snaplink/sso/domains/permissions/sqlite"
-	postgresbackend "github.com/snaplink/sso/postgres"
+	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
 )
 
 // BuildPermissionsProvider returns the wired permissions.Provider

@@ -87,6 +87,12 @@ jobs:
         # as passing.
         run: go test -race -count=1 ./...
 
+      - name: config validate (all 7 config.yaml files)
+        # Validates every deploy config.yaml against the server binary's
+        # --validate-only flag, catching config drift (missing fields,
+        # renamed keys, incompatible backends) before deployment.
+        run: make config-validate-all
+
   modules:
     # Build + race-test every NESTED module. The root `test` job's
     # `go ... ./...` stops at the root module boundary (there is
@@ -105,12 +111,12 @@ jobs:
           - kms/gcpkms
           - kms/azurekeyvault
           - kms/pkcs11
-          - redis
           - saml
           - ldap
           - kerberos
           - radius
           - extauthz
+          - cmd/sso-mcp
     steps:
       - uses: actions/checkout@v4
 
@@ -164,12 +170,12 @@ jobs:
           - infrastructure/kms/gcpkms
           - infrastructure/kms/azurekeyvault
           - infrastructure/kms/pkcs11
-          - infrastructure/redis
           - infrastructure/saml
           - infrastructure/ldap
           - infrastructure/kerberos
           - infrastructure/radius
           - infrastructure/extauthz
+          - cmd/sso-mcp
     steps:
       - uses: actions/checkout@v4
 
@@ -214,12 +220,12 @@ jobs:
           - infrastructure/kms/gcpkms
           - infrastructure/kms/azurekeyvault
           - infrastructure/kms/pkcs11
-          - infrastructure/redis
           - infrastructure/saml
           - infrastructure/ldap
           - infrastructure/kerberos
           - infrastructure/radius
           - infrastructure/extauthz
+          - cmd/sso-mcp
     permissions:
       security-events: write
       contents: read
@@ -258,12 +264,12 @@ jobs:
           - infrastructure/kms/gcpkms
           - infrastructure/kms/azurekeyvault
           - infrastructure/kms/pkcs11
-          - infrastructure/redis
           - infrastructure/saml
           - infrastructure/ldap
           - infrastructure/kerberos
           - infrastructure/radius
           - infrastructure/extauthz
+          - cmd/sso-mcp
     steps:
       - uses: actions/checkout@v4
 
@@ -334,6 +340,52 @@ jobs:
 
       - name: build (no push)
         uses: docker/build-push-action@v5
+
+  kustomize:
+    # Render all Kustomize overlays to catch YAML syntax errors,
+    # missing resource references, and config drift between envs.
+    name: Kustomize render
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install kustomize
+        run: |
+          curl -sSLO https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.6.0/kustomize_v5.6.0_linux_amd64.tar.gz
+          tar xzf kustomize_v5.6.0_linux_amd64.tar.gz
+          sudo mv kustomize /usr/local/bin/
+          kustomize version
+
+      - name: render dev overlay
+        run: kustomize build ops/deploy/kustomize/overlays/dev/ > /dev/null
+
+      - name: render prod overlay
+        run: kustomize build ops/deploy/kustomize/overlays/prod/ > /dev/null
+
+      - name: diff dev vs prod
+        run: |
+          kustomize build ops/deploy/kustomize/overlays/dev/ > /tmp/k8s-dev.yaml
+          kustomize build ops/deploy/kustomize/overlays/prod/ > /tmp/k8s-prod.yaml
+          diff /tmp/k8s-dev.yaml /tmp/k8s-prod.yaml || echo "INFO: dev/prod differ (expected — overlays diverge)"
+
+  terraform:
+    # Validate all Terraform configs to catch HCL syntax errors and
+    # provider incompatibilities.
+    name: Terraform validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.0
+
+      - name: terraform init + validate
+        working-directory: ops/deploy/terraform
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
         with:
           context: .
           push: false

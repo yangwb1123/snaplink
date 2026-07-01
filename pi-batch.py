@@ -64,6 +64,8 @@ class Stage:
     mode: str = "serial"
     workers: int = 4
     tasks: list = field(default_factory=list)
+    commands: list = field(default_factory=list)  # shell commands to run after pi tasks
+    cwd: str = ""  # working directory for commands
     git_commit: bool = False
     commit_message: str = ""
     
@@ -77,6 +79,8 @@ class Stage:
             "mode": self.mode,
             "workers": self.workers,
             "tasks": self.tasks,
+            "commands": self.commands,
+            "cwd": self.cwd,
             "git_commit": self.git_commit,
             "commit_message": self.commit_message,
         }
@@ -109,9 +113,8 @@ def load_pipeline(path: str) -> Pipeline:
         log.error("Invalid pipeline format. Expected 'stages' key.")
         sys.exit(1)
     
-    # Global git_commit setting (applied to all stages that don't set it explicitly)
+    # Global settings (applied to all stages that don't set it explicitly)
     global_git_commit = data.get("git_commit", False)
-    global_commit_message = data.get("commit_message", "")
     
     stages = []
     for s in data["stages"]:
@@ -124,6 +127,8 @@ def load_pipeline(path: str) -> Pipeline:
             mode=s.get("mode", "serial"),
             workers=s.get("workers", 4),
             tasks=s.get("tasks", []),
+            commands=s.get("commands", []),
+            cwd=s.get("cwd", ""),
             git_commit=s.get("git_commit", global_git_commit),
             commit_message=s.get("commit_message", ""),
         )
@@ -256,6 +261,42 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
     log.info("Stage '%s' completed: %d/%d tasks succeeded", 
              stage.name, len(outputs), len(tasks))
     
+    # Execute shell commands after pi tasks
+    if stage.commands:
+        log.info("")
+        log.info("Running %d commands for stage '%s'...", len(stage.commands), stage.name)
+        cmd_cwd = stage.cwd or os.getcwd()
+        all_cmd_ok = True
+        for i, cmd in enumerate(stage.commands, 1):
+            log.info("CMD [%d/%d]: %s", i, len(stage.commands), cmd)
+            try:
+                proc = subprocess.run(
+                    cmd, shell=True, cwd=cmd_cwd,
+                    capture_output=True, text=True, timeout=600
+                )
+                if proc.returncode == 0:
+                    log.info("CMD OK (exit=0)")
+                    if proc.stdout:
+                        for line in proc.stdout.strip().split("\n")[-10:]:
+                            log.info("  | %s", line)
+                else:
+                    log.warning("CMD FAILED (exit=%d)", proc.returncode)
+                    if proc.stderr:
+                        for line in proc.stderr.strip().split("\n")[-10:]:
+                            log.warning("  | %s", line)
+                    if proc.stdout:
+                        for line in proc.stdout.strip().split("\n")[-5:]:
+                            log.info("  | %s", line)
+                    all_cmd_ok = False
+            except Exception as e:
+                log.warning("CMD ERROR: %s", e)
+                all_cmd_ok = False
+        
+        if all_cmd_ok:
+            log.info("All %d commands passed for stage '%s'", len(stage.commands), stage.name)
+        else:
+            log.warning("Some commands failed for stage '%s'", stage.name)
+    
     # Git commit after stage
     if stage.git_commit and outputs:
         try:
@@ -322,6 +363,12 @@ def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = F
             elif stage.from_outputs:
                 log.info("  Will use outputs from stage: %s", stage.from_outputs)
                 log.info("  Task templates: %d", len(stage.tasks))
+            if stage.commands:
+                log.info("  Commands: %d", len(stage.commands))
+                for cmd in stage.commands:
+                    log.info("    | %s", cmd)
+            if stage.git_commit:
+                log.info("  Git commit: YES")
             log.info("  Mode: %s", stage.mode)
             continue
         

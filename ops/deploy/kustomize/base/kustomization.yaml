@@ -1,0 +1,50 @@
+# Base Kustomization for the snaplink/sso server.
+#
+# Apply directly:
+#   kubectl apply -k ops/deploy/kustomize/base/
+#
+# Or reference from an overlay:
+#   resources:
+#     - ../base
+#
+# This is the canonical base directory. The legacy ops/deploy/k8s/ directory
+# is maintained for backward compatibility but new deployments should use
+# ops/deploy/kustomize/base/ + overlays/ for environment-specific differences.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: snaplink-sso
+
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml
+
+# configMapGenerator hashes config.yaml into the generated name so any
+# edit to the file triggers a rolling restart automatically. Adjacent
+# volume references in deployment.yaml are rewritten to the hashed
+# name; do NOT hand-write `name: sso-server-config-abc123` anywhere.
+configMapGenerator:
+  - name: sso-server-config
+    files:
+      - config.yaml
+
+# `labels:` is the post-deprecation replacement for `commonLabels`.
+# includeSelectors:false avoids rewriting Deployment .spec.selector,
+# which is immutable after creation and would block in-place updates.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: snaplink-sso
+    includeSelectors: false
+
+# An overlay typically adds:
+#   images:
+#     - name: snaplink/sso-server
+#       newName: ghcr.io/<org>/sso-server
+#       newTag: v0.1.0
+#   replicas:
+#     - name: sso-server
+#       count: 3
+#   patches:
+#     - path: ingress.yaml          # bring your own controller
+#     - path: hpa.yaml              # autoscaling per env

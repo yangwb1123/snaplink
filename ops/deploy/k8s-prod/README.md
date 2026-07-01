@@ -1,7 +1,14 @@
 # Production HA overlay
 
+> **⚠️ DEPRECATED**: This directory is maintained for backward compatibility.
+> New deployments should use the canonical structure at
+> **[ops/deploy/kustomize/overlays/prod/](../kustomize/overlays/prod/)**.
+>
+> This directory (`ops/deploy/k8s-prod/`) is identical to
+> `ops/deploy/kustomize/overlays/prod/`.
+
 N stateless `sso-server` replicas behind shared backends — the "Tier B"
-topology from [`docs/deployment.md`](../../../docs/deployment.md) §6. A Kustomize
+topology from [`docs/deployment.md`](../../docs/deployment.md) §6. A Kustomize
 overlay over the base in [`../k8s`](../k8s).
 
 ```bash
@@ -18,23 +25,15 @@ kubectl apply -k ops/deploy/k8s-prod/
 | `patch-deployment.yaml` | Secret-injected backend creds (`SSO_*` env), zone spread, `preStop` drain + `terminationGracePeriodSeconds`, tolerant readiness probe. |
 | `secretGenerator` | **Placeholder** — replace with sealed-secrets / external-secrets / Vault. |
 
-## External dependencies you must stand up (own StatefulSets / operators / managed services)
+## External dependencies you must stand up
 
 - **Redis Cluster** (≥ 3 masters + replicas). **HARD requirement:** the auth
-  keyspace must run `maxmemory-policy noeviction` (or `volatile-ttl`) — evicting
-  a refresh-family ledger or jti key silently breaks reuse/replay detection.
+  keyspace must run `maxmemory-policy noeviction` (or `volatile-ttl`).
 - **Postgres-wire DB cluster** — PostgreSQL (HA via Patroni / a managed service)
-  **or** CockroachDB (set `postgres.dialect: cockroach`). Front PostgreSQL with a
-  **transaction-mode pooler** (pgbouncer) so `replicas × postgres.max_open_conns`
-  stays under the DB's `max_connections`. In tx mode, server-side prepared
-  statements are unavailable — the DSN therefore sets
-  `default_query_exec_mode=simple_protocol` (already in the placeholder DSN). With
-  CockroachDB use its built-in pooling instead.
+  **or** CockroachDB (set `postgres.dialect: cockroach`).
 - **etcd** (3/5-node) — the cluster Bus + registry + leaderless JWKS aggregation.
-  `cluster.cross_replica_revocation: true` **fails boot** without a live bus
-  (intentional — a multi-replica fleet must not silently leak revoked tokens).
 - A **TLS-terminating edge** (Ingress / OpenResty / Envoy) that strips and
-  re-sets `X-Forwarded-*` — the XFF trust model + rate-limit IP keying depend on it.
+  re-sets `X-Forwarded-*`.
 
 ## Production checklist
 
@@ -43,5 +42,4 @@ kubectl apply -k ops/deploy/k8s-prod/
 3. Set `server.issuer` (config.yaml) to the externally-reachable HTTPS URL.
 4. Point `redis.addrs`, `postgres` DSN, and `cluster.bus.etcd_endpoints` at your
    real services; mount the Redis CA into the `sso-server-redis-tls` secret.
-5. Confirm `/readyz` gates on Redis + Postgres reachability (it does — those
-   ReadyChecks are wired automatically when the backends are configured).
+5. Confirm `/readyz` gates on Redis + Postgres reachability.

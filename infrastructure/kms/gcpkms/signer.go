@@ -1,3 +1,5 @@
+//go:build !no_kms_gcpkms
+
 package gcpkms
 
 import (

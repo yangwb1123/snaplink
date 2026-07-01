@@ -11,8 +11,8 @@ import (
 	"github.com/snaplink/sso/domains/authenticators"
 
 	"github.com/snaplink/sso/config"
-	postgresbackend "github.com/snaplink/sso/postgres"
-	redisbackend "github.com/snaplink/sso/redis"
+	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
+	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 )
 
 // BuildAuthenticators returns the configured authenticators, the temp

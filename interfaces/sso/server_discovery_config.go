@@ -428,11 +428,16 @@ func (s *Server) applyEndpointAuthSigningAlgs(cfg *oidc.ProviderMetadata) {
 // advertisement.
 func (s *Server) applyResponseModesAndProfiles(cfg *oidc.ProviderMetadata, ctx HandlerContext) {
 	// OIDC Core §3.1.2.1 — advertise "none" so SPAs know they can
-	// run silent renewal via id_token_hint. The other prompt
-	// values (login / consent / select_account) aren't surfaced
-	// today because this server doesn't render those UIs itself;
-	// the RP is responsible for the interactive flow.
-	cfg.PromptValuesSupported = []string{PromptNone}
+	// run silent renewal via id_token_hint. Also advertise consent
+	// when a ConsentStore is wired (server-side consent gates exist).
+	// The login and select_account prompts aren't surfaced because
+	// the RP drives the interactive flow; the server authenticates
+	// on demand.
+	prompts := []string{PromptNone}
+	if s.consentStore != nil {
+		prompts = append(prompts, PromptConsent)
+	}
+	cfg.PromptValuesSupported = prompts
 
 	// Form Post Response Mode 1.0: every shape this server can
 	// emit. `form_post` is the value-add (auto-POST HTML page);

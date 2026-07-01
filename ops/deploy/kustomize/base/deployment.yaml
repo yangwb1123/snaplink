@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sso-server
+  labels:
+    app.kubernetes.io/name: sso-server
+    app.kubernetes.io/part-of: snaplink-sso
+spec:
+  # 2 replicas is the smallest count that survives a single-node drain;
+  # bump up once an HPA (left out of the base — too opinionated) or a
+  # PodDisruptionBudget is layered on in an overlay.
+  #
+  # IMPORTANT — shared state: >1 replica is only CORRECT with a SHARED store.
+  # The binary's default stores are `memory` (per-pod), so with this base config
+  # the OAuth authorization_code flow breaks across replicas (a code minted on
+  # one pod is unknown to another, and login vs token come from different origins
+  # so LB affinity can't help). For real HA set the hot stores to `backend: redis`
+  # (a shared `redis:` block, mode: cluster) + the etcd cluster Bus — see
+  # docs/deployment.md §6. For a correct single-instance base instead, set
+  # replicas: 1 with sqlite on a PVC.
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sso-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sso-server
+        app.kubernetes.io/part-of: snaplink-sso
+    spec:
+      # Distribute replicas across nodes when possible — soft pref so
+      # single-node clusters (dev, edge) still schedule.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: sso-server
+                topologyKey: kubernetes.io/hostname
+
+      # Pod-level security. The container hardening below layers on
+      # top of these.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: sso-server
+          # Replace with your registry + a pinned tag (sha256@... is best)
+          # in an overlay. The base intentionally uses :latest so the
+          # quickstart works against `docker push` without tagging
+          # rituals; production deployments MUST pin.
+          image: snaplink/sso-server:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--config"
+            - "/etc/sso/config.yaml"
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: grpc
+              containerPort: 8081
+              protocol: TCP
+
+          # 12-factor env overrides. Any SSO_<UPPER>__<UPPER>... variable
+          # is picked up by config/source_env.go at boot and overrides
+          # the matching key in /etc/sso/config.yaml. Uncomment and tune
+          # per environment instead of forking the base ConfigMap.
+          env:
+            # - name: SSO_LOGGING__LEVEL
+            #   value: debug
+            # - name: SSO_AUDIT__MEMORY_CAPACITY
+            #   value: "50000"
+
+          # /livez and /readyz are served OUTSIDE the rate-limit +
+          # metrics middleware stack — kubelet probes hit them every
+          # few seconds and would otherwise consume the rate-limit
+          # bucket. /readyz aggregates any sso.WithReadyCheck(...)
+          # entries (db ping, etcd reachable, etc.). /livez is always
+          # 200 when the process is running.
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 1
+            periodSeconds: 5
+            failureThreshold: 2
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+
+          volumeMounts:
+            - name: config
+              mountPath: /etc/sso
+              readOnly: true
+            # The distroless static image has no writable tmp by default;
+            # if a feature ever needs /tmp, declare an emptyDir here.
+
+      volumes:
+        - name: config
+          configMap:
+            # Kustomize hashes the generated ConfigMap; the volume
+            # reference is rewritten to the hashed name so a config
+            # edit triggers a rolling restart.
+            name: sso-server-config

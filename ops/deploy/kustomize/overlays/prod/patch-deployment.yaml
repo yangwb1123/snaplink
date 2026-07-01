@@ -1,0 +1,62 @@
+# Prod hardening patch (strategic merge over the base Deployment): inject
+# backend secrets via env, spread across zones, drain gracefully on termination,
+# and make the readiness probe tolerant so a brief shared-store blip can't drain
+# the whole fleet at once.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sso-server
+spec:
+  template:
+    spec:
+      # Spread replicas across zones AND nodes so a single zone/node loss can't
+      # take out quorum (complements the base's soft node anti-affinity).
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: sso-server
+      # Give in-flight authorization_code / token exchanges time to finish.
+      # preStop flips the pod out of rotation (readiness drops once the endpoint
+      # controller observes termination) and the sleep lets the LB stop sending
+      # new requests before SIGTERM triggers the binary's 15s graceful shutdown.
+      terminationGracePeriodSeconds: 40
+      containers:
+        - name: sso-server
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sleep", "10"]
+          # Secrets from a Secret via the SSO_<SECTION>__<KEY> env-override
+          # mechanism (config/source_env.go) — no ConfigMap fork needed.
+          env:
+            - name: SSO_REDIS__PASSWORD
+              valueFrom:
+                secretKeyRef: { name: sso-server-secrets, key: redis-password }
+            - name: SSO_POSTGRES__DSN
+              valueFrom:
+                secretKeyRef: { name: sso-server-secrets, key: postgres-dsn }
+            - name: SSO_CLUSTER__BUS__ETCD_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: sso-server-secrets, key: etcd-password, optional: true }
+          # Tolerant readiness: a transient Redis/DB failover should NOT drain
+          # every replica simultaneously (that turns a partial outage into a
+          # total one). A higher failureThreshold + longer period gives the
+          # backend time to re-resolve before the pod leaves rotation. /livez
+          # stays always-200 so kubelet never kill-restarts the fleet mid-blip.
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 4
+          volumeMounts:
+            - name: redis-tls
+              mountPath: /etc/redis-tls
+              readOnly: true
+      volumes:
+        - name: redis-tls
+          secret:
+            secretName: sso-server-redis-tls
+            optional: true

@@ -19,8 +19,8 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	postgresbackend "github.com/snaplink/sso/postgres"
-	redisbackend "github.com/snaplink/sso/redis"
+	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
+	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 
 	"github.com/snaplink/sso/shared/security"
 )
@@ -255,19 +255,16 @@ func BuildUserProvider(cfg config.IdentityConfig, pg *sql.DB, dialect postgresba
 // sqlite selector as the rest of identity-domain stores so operators
 // running TokenStrategySession across multiple replicas get cross-
 // replica session redemption against a shared SQLite file.
-func BuildSessionManager(cfg config.IdentityConfig, ttl time.Duration, rdb goredis.Cmdable) (sso.SessionManager, error) {
+func BuildSessionManager(cfg config.IdentityConfig, ttl time.Duration, rdb goredis.Cmdable, pgDB *sql.DB, pgDialect postgresbackend.Dialect) (sso.SessionManager, error) {
 	// Sessions may run on a different backend than clients/users: the hot,
 	// ephemeral session store belongs in Redis Cluster for HA while identity
 	// stays on a durable DB. session_backend overrides; empty falls back to
-	// the identity backend — EXCEPT when that is postgres, which has no session
-	// store (sessions are hot, not durable). Require an explicit session_backend
-	// then, with a clear message instead of a confusing "unknown backend".
+	// the identity backend. Postgres is a valid option for unified-stack
+	// deployments (sessions are hot/ephemeral, but at moderate scale Postgres
+	// handles them fine — for high traffic prefer redis or sqlite).
 	backend := strings.ToLower(strings.TrimSpace(cfg.SessionBackend))
 	if backend == "" {
 		backend = strings.ToLower(strings.TrimSpace(cfg.Backend))
-		if backend == "postgres" {
-			return nil, errors.New("sessions cannot use the postgres identity backend (sessions are hot/ephemeral) — set identity.session_backend (redis for HA, or memory/sqlite)")
-		}
 	}
 	switch backend {
 	case "", "memory":
@@ -282,7 +279,12 @@ func BuildSessionManager(cfg config.IdentityConfig, ttl time.Duration, rdb gored
 			return nil, errors.New("identity session backend=redis but no redis block configured (set redis.addrs)")
 		}
 		return redisbackend.NewSessionManager(rdb, redisbackend.WithSessionTTL(ttl)), nil
+	case "postgres":
+		if pgDB == nil {
+			return nil, errPostgresNotConfigured("identity")
+		}
+		return postgresbackend.NewSessionManagerWithDB(pgDB, pgDialect, ttl)
 	default:
-		return nil, fmt.Errorf("unknown identity session backend %q (supported: memory, sqlite, redis)", backend)
+		return nil, fmt.Errorf("unknown identity session backend %q (supported: memory, sqlite, redis, postgres)", backend)
 	}
 }

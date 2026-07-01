@@ -1,3 +1,5 @@
+//go:build !no_kms_awskms
+
 package awskms
 
 import (

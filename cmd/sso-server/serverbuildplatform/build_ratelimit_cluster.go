@@ -10,7 +10,7 @@ import (
 
 	"github.com/snaplink/sso/shared/spi"
 
-	redisbackend "github.com/snaplink/sso/redis"
+	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 
 	"github.com/snaplink/sso/platform/cluster"
 

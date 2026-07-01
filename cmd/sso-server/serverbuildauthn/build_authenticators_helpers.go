@@ -14,7 +14,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/sso"
-	postgresbackend "github.com/snaplink/sso/postgres"
+	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
 	"golang.org/x/crypto/bcrypt"

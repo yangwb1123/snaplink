@@ -22,6 +22,9 @@ Commands:
     self-test             Harness self-test
     check-invariants      Security invariants
     check-root            Check root directory for business code violations
+    adr-compliance        Check ADR compliance (ADR-0003, ADR-0004, ADR-0007)
+    check-test            Run checks/ unit tests
+    skill-test            Run skills/ unit tests
     test                  Run go tests
     race                  Run tests with -race
     bench                 Run benchmarks
@@ -158,6 +161,36 @@ def cmd_check_root():
     return rb_run()
 
 
+def cmd_adr_compliance():
+    from checks.adr_compliance import run as ar_run
+    return ar_run()
+
+
+def cmd_check_test():
+    import subprocess
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", "checks/", "-v"],
+        cwd=str(ROOT)
+    ).returncode
+
+
+def cmd_skill_test():
+    import subprocess
+    from pathlib import Path
+    ec = 0
+    for skill_dir in sorted((ROOT / "docs" / "skills").iterdir()):
+        test_file = skill_dir / "test_skill.py"
+        if test_file.exists():
+            print(f"=== Testing {skill_dir.name} ===")
+            r = subprocess.run(
+                [sys.executable, "-m", "pytest", str(test_file), "-v"],
+                cwd=str(ROOT)
+            )
+            if r.returncode != 0:
+                ec = 1
+    return ec
+
+
 def cmd_test():
     return run("go", "test", "./...").returncode
 
@@ -168,7 +201,7 @@ def cmd_race():
 
 def cmd_bench():
     return run("go", "test", "-run=^$", "-bench=.", "-benchmem",
-               "./defaultimpl/", "./oauth/", "./ratelimit/", "./security/").returncode
+               "./...").returncode
 
 
 def cmd_vet():
@@ -248,6 +281,9 @@ COMMANDS = {
     "self-test": cmd_self_test,
     "check-invariants": cmd_check_invariants,
     "check-root": cmd_check_root,
+    "adr-compliance": cmd_adr_compliance,
+    "check-test": cmd_check_test,
+    "skill-test": cmd_skill_test,
     "test": cmd_test,
     "race": cmd_race,
     "bench": cmd_bench,

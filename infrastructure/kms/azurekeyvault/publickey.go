@@ -1,3 +1,5 @@
+//go:build !no_kms_azurekeyvault
+
 package azurekeyvault
 
 import (

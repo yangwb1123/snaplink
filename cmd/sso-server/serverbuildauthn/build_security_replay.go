@@ -13,8 +13,8 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	postgresbackend "github.com/snaplink/sso/postgres"
-	redisbackend "github.com/snaplink/sso/redis"
+	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
+	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 
 	"github.com/snaplink/sso/shared/security"
 )

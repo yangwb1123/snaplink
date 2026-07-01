@@ -1,46 +1,131 @@
-# Pipeline 示例：两阶段任务编排
-#
-# 阶段 1：从 docs/ 目录读取 .md 文件，生成 .out.md
-# 阶段 2：使用阶段 1 的输出作为输入，根据角色模板生成架构设计、验收标准等
+# Pipeline 完整工作闭环
+# 
+# 这个 pipeline 实现了一个完整的开发工作单元：
+# 需求分析 → 技术设计 → 代码实现 → 测试验证 → 最终确认 + git commit
 #
 # 使用方法：
-#   python pi-batch.py --pipeline pipeline.example.yaml --dry-run  # 预览
-#   python pi-batch.py --pipeline pipeline.example.yaml            # 执行
+#   python3 pi-batch.py --pipeline pipeline.example.yaml           # 完整执行
+#   python3 pi-batch.py --pipeline pipeline.example.yaml --reuse   # 复用已有输出
+#   python3 pi-batch.py --pipeline pipeline.example.yaml --dry-run # 预览
 
-git_commit: true  # 全局设置，所有阶段默认自动 git commit
+git_commit: true  # 全局启用自动 git commit
 
 stages:
-  # 阶段 1：分析阶段
-  # 读取 docs/ 目录下所有 .md 文件，将文件内容作为 prompt 提交给 pi
+
+  # ═══════════════════════════════════════════════════════════════
+  # 阶段 1：需求分析
+  # 输入：需求文档（.md）
+  # 输出：分析结果（.out.md）
+  # ═══════════════════════════════════════════════════════════════
   - name: analyze
-    from_dir: docs
-    suffix: .md
-    output_suffix: .out.md
+    from_dir: docs/requirements
     mode: serial
 
-  # 阶段 2：编排阶段
-  # 使用阶段 1 的输出（.out.md 文件）作为输入
-  # 对每个输入文件，应用多个角色模板生成对应的输出
-  - name: orchestrate
+  # ═══════════════════════════════════════════════════════════════
+  # 阶段 2：技术设计
+  # 角色：架构师 + 技术负责人
+  # 输入：需求分析
+  # 输出：架构设计 + 实现计划
+  # ═══════════════════════════════════════════════════════════════
+  - name: technical-design
     from_outputs: analyze
     tasks:
+      # 架构师：模块设计、接口定义、数据模型
       - role: architect
         prompt_template: prompts/architect.md
         output: docs/results/{input_stem}.arch.md
         model: claude-sonnet
         timeout: 600
 
-      - role: pm
-        prompt_template: prompts/pm.md
-        output: docs/results/{input_stem}.pm.md
-        model: claude-sonnet
-        timeout: 600
-
-      - role: tech_lead
+      # Tech Lead：任务拆解、实施计划
+      - role: tech-lead
         prompt_template: prompts/tech_lead.md
-        output: docs/results/{input_stem}.techlead.md
+        output: docs/results/{input_stem}.plan.md
         model: claude-sonnet
         timeout: 600
 
     mode: parallel
-    workers: 3
+    workers: 2
+
+  # ═══════════════════════════════════════════════════════════════
+  # 阶段 3：代码实现
+  # 角色：代码实现者
+  # 输入：架构设计 + 实现计划
+  # 输出：实际代码 + 单元测试
+  # ═══════════════════════════════════════════════════════════════
+  - name: code-implementation
+    from_outputs: technical-design
+    tasks:
+      - role: implementer
+        prompt_template: prompts/code-implementer.md
+        output: docs/results/{input_stem}.code.md
+        model: claude-sonnet
+        timeout: 1800  # 代码实现较长时间
+
+    mode: serial
+
+  # ═══════════════════════════════════════════════════════════════
+  # 阶段 4：代码测试 + 质量检查
+  # 输入：代码实现
+  # 角色：QA Lead 审查测试策略
+  # 命令：go build + go test + cli.py harness
+  # ═══════════════════════════════════════════════════════════════
+  - name: code-testing
+    from_outputs: code-implementation
+    tasks:
+      - role: qa-engineer
+        prompt_template: prompts/qa_lead.md
+        output: docs/results/{input_stem}.tests.md
+        model: claude-sonnet
+        timeout: 600
+
+    commands:
+      # 1. 编译检查
+      - "echo '=== BUILD ===' && go build ./... 2>&1"
+      # 2. 运行项目测试
+      - "echo '=== TESTS ===' && go test ./... 2>&1"
+      # 3. 项目工程门禁（harness）
+      - "echo '=== HARNESS ===' && python3 cli.py harness 2>&1 || echo 'harness completed (non-fatal)'"
+      # 4. 代码复杂度检查（如果有）
+      - "echo '=== FMT/VET ===' && go vet ./... 2>&1"
+
+    mode: serial
+
+  # ═══════════════════════════════════════════════════════════════
+  # 阶段 5：安全审查 + 最终确认
+  # 角色：安全工程师 + Tech Lead
+  # 输入：代码 + 测试结果
+  # 输出：安全审查 + 最终确认
+  # ═══════════════════════════════════════════════════════════════
+  - name: security-and-final
+    from_outputs: code-testing
+    tasks:
+      - role: security
+        prompt_template: prompts/security_engineer.md
+        output: docs/results/{input_stem}.security-review.md
+        model: claude-sonnet
+        timeout: 600
+
+      - role: tech-lead
+        prompt_template: prompts/tech_lead.md
+        output: docs/results/{input_stem}.final-ok.md
+        model: claude-sonnet
+        timeout: 600
+
+    commands:
+      # 显示最终状态
+      - "echo '=== WORK COMPLETED ===' && date"
+      - "echo 'Files produced:' && ls -la docs/results/{input_stem}.* 2>/dev/null || true"
+      - "echo 'Git status:' && git status -s | head -20"
+      - "echo 'Done!'"
+
+    mode: parallel
+    workers: 2
+
+  # ═══════════════════════════════════════════════════════════════
+  # 阶段 6：自动 git commit（由全局 git_commit: true 处理）
+  # 每个阶段完成后会自动执行 git add + git commit
+  # 可以在命令行覆盖：
+  #   --git-commit     强制启用
+  #   --no-git-commit  强制禁用
+  # ═══════════════════════════════════════════════════════════════

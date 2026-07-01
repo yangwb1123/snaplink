@@ -345,7 +345,7 @@ func TestStoreBuilders_SQLiteDSNRequired(t *testing.T) {
 	if _, err := serverbuildstore.BuildUserProvider(config.IdentityConfig{Backend: "sqlite"}, nil, ""); err == nil {
 		t.Error("serverbuildstore.BuildUserProvider: expected dsn-required error")
 	}
-	if _, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{Backend: "sqlite"}, 0, nil); err == nil {
+	if _, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{Backend: "sqlite"}, 0, nil, nil, ""); err == nil {
 		t.Error("serverbuildstore.BuildSessionManager: expected dsn-required error")
 	}
 	if _, err := serverbuildstore.BuildClientStore(config.IdentityConfig{Backend: "sqlite"}, nil, ""); err == nil {
@@ -367,7 +367,7 @@ func TestStoreBuilders_UnknownBackend(t *testing.T) {
 	if _, err := serverbuildstore.BuildUserProvider(config.IdentityConfig{Backend: "redis"}, nil, ""); err == nil {
 		t.Error("serverbuildstore.BuildUserProvider: expected unknown-backend error")
 	}
-	if _, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{Backend: "redis"}, 0, nil); err == nil {
+	if _, err := serverbuildstore.BuildSessionManager(config.IdentityConfig{Backend: "redis"}, 0, nil, nil, ""); err == nil {
 		t.Error("serverbuildstore.BuildSessionManager: expected unknown-backend error")
 	}
 	if _, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{Backend: "redis"}, nil); err == nil {

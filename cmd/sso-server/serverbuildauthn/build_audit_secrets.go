@@ -21,7 +21,7 @@ import (
 	"github.com/snaplink/sso/config"
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	postgresbackend "github.com/snaplink/sso/postgres"
+	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
 
 	"golang.org/x/crypto/bcrypt"
 )

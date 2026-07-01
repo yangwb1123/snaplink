@@ -7,7 +7,7 @@
 # See README.md for the etcdctl recipes that demonstrate the override.
 
 server:
-  issuer: snaplink-sso
+  issuer: sso-server
   base_url: http://localhost:8080
   listen: ":8080"
   session_ttl: 24h

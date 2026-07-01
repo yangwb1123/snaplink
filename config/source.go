@@ -53,14 +53,37 @@ type Source interface {
 // — this lets goccy/go-yaml's existing field-tag + custom-type
 // (time.Duration, Pointer-to-struct, etc.) handling do the heavy
 // lifting instead of reinventing reflection here.
+//
+// Secret resolution:
+// Before marshaling, the Loader walks the merged map and resolves every
+// leaf string value matching "secret://<provider>/<path>" via the
+// registered SecretResolvers. Register resolvers with WithSecretResolvers.
 type Loader struct {
-	sources []Source
+	sources  []Source
+	resolvers map[string]SecretResolver
 }
 
 // NewLoader builds a Loader from the given sources. Order matters:
 // sources[0] is lowest priority, sources[len-1] is highest.
 func NewLoader(sources ...Source) *Loader {
-	return &Loader{sources: sources}
+	return &Loader{sources: sources, resolvers: map[string]SecretResolver{}}
+}
+
+// WithSecretResolvers registers one or more SecretResolvers on the Loader.
+// Returns the receiver for fluent chaining.
+//
+// Example:
+//
+//	loader := config.NewLoader(fileSrc, envSrc, flagSrc).
+//	    WithSecretResolvers(awsResolver, gcpResolver)
+//
+// Each resolver is indexed by its Provider() name. If two resolvers have
+// the same provider name, the last one wins.
+func (l *Loader) WithSecretResolvers(resolvers ...SecretResolver) *Loader {
+	for _, r := range resolvers {
+		l.resolvers[r.Provider()] = r
+	}
+	return l
 }
 
 // Sources returns the Loader's source chain in priority order
@@ -91,6 +114,16 @@ func (l *Loader) Load(ctx context.Context) (*Config, error) {
 			deepMerge(merged, m)
 		}
 	}
+
+	// Resolve secret:// URLs in the merged config before marshaling.
+	// This lets operators store secret references in YAML, env, or flags
+	// and have them resolved at load time by the registered resolvers.
+	if len(l.resolvers) > 0 {
+		if err := ResolveSecretReferences(ctx, merged, l.resolvers); err != nil {
+			return nil, err
+		}
+	}
+
 	raw, err := yaml.Marshal(merged)
 	if err != nil {
 		return nil, fmt.Errorf("config: marshal merged: %w", err)
