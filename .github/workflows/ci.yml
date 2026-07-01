@@ -76,6 +76,11 @@ jobs:
       - name: go build
         run: go build ./...
 
+      - name: compile examples
+        # docs/examples/ import the SDK; compile them so API drift is
+        # caught before a user tries to follow the quickstart.
+        run: go build ./docs/examples/...
+
       - name: go test (race)
         # -race catches the concurrency bugs single-threaded runs hide.
         # -count=1 disables the test cache so flaky tests can't masquerade

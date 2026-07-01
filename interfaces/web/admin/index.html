@@ -446,6 +446,29 @@ td code {
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: #0f1117; }
 ::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 3px; }
+
+/* Dark mode — respects OS preference */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1a2e;
+    --bg-card: #16213e;
+    --bg-input: #0f3460;
+    --text: #e0e0e0;
+    --text-muted: #a0a0b0;
+    --border: #2a2a4a;
+    --accent: #4fc3f7;
+    --accent-hover: #29b6f6;
+    --success: #66bb6a;
+    --error: #ef5350;
+  }
+  body { background: var(--bg); color: var(--text); }
+  .card, .section { background: var(--bg-card); border-color: var(--border); }
+  input, select, textarea { background: var(--bg-input); color: var(--text); border-color: var(--border); }
+  th { background: var(--bg-card); }
+  td { border-color: var(--border); }
+  a { color: var(--accent); }
+  pre, code { background: var(--bg-input); }
+}
 </style>
 </head>
 <body>
