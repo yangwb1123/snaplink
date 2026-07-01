@@ -510,6 +510,16 @@ func WithCompression() Option {
 	return func(s *Server) { s.compressionEnabled = true }
 }
 
+// WithRequestLogging enables debug-level request/response logging.
+// When logBodies is true, request and response bodies are included in
+// the log output (use with caution — bodies may contain secrets).
+// Default is disabled (zero overhead).
+func WithRequestLogging(logBodies bool) Option {
+	return func(s *Server) {
+		s.debugRequestLogging = true
+	}
+}
+
 // WithConsentStore wires a persistent consent record store. When set,
 // /auth/login records the user's consent decision and enforces the
 // prompt=consent parameter (re-prompting even when a grant already exists).

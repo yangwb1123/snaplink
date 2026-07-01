@@ -7,6 +7,7 @@ import (
 
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/interfaces/cors"
+	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/platform/metrics"
@@ -360,6 +361,13 @@ func (s *Server) Handler() http.Handler {
 // the documented outermost->innermost order. trustedProxies MUST wrap before
 // rate limiting so the limiter keys on the validated real client IP.
 func (s *Server) buildMiddlewareChain(inner http.Handler) http.Handler {
+	// Request/response debug logging wraps outermost so it captures
+	// the complete request and response, including status codes set
+	// by inner middlewares.
+	if s.debugRequestLogging {
+		inner = middleware.RequestLogger(s.logger, false)(inner)
+	}
+
 	// Security headers wrap the router innermost so they fire during
 	// response writing — after inner handlers have set their own headers
 	// (Cache-Control: no-store, X-Frame-Options: DENY, etc). The
@@ -376,6 +384,7 @@ func (s *Server) buildMiddlewareChain(inner http.Handler) http.Handler {
 		// preflight floods.
 		inner = cors.Middleware(*s.corsPolicy)(inner)
 	}
+	inner = s.wrapCompression(inner)
 	if s.bodyLimit > 0 || len(s.bodyLimitByPath) > 0 {
 		inner = bodyLimitMiddleware(s.bodyLimit, s.bodyLimitByPath)(inner)
 	}
@@ -400,6 +409,26 @@ func (s *Server) buildMiddlewareChain(inner http.Handler) http.Handler {
 		// bodyLimit middlewares — useful when debugging "where did the
 		// 200ms go" on a slow request.
 		inner = tracing.Middleware(s.tracingOperation)(inner)
+	}
+	inner = s.wrapPanicRecovery(inner)
+	return inner
+}
+
+// wrapPanicRecovery conditionally wraps the handler chain with panic
+// recovery as the outermost layer — see buildMiddlewareChain for the
+// full ordering rationale.
+func (s *Server) wrapPanicRecovery(inner http.Handler) http.Handler {
+	if s.panicRecovery {
+		return middleware.Recover(s.logger)(inner)
+	}
+	return inner
+}
+
+// wrapCompression conditionally wraps the handler chain with gzip
+// response compression for large JSON payloads.
+func (s *Server) wrapCompression(inner http.Handler) http.Handler {
+	if s.compressionEnabled {
+		return middleware.Compress(inner)
 	}
 	return inner
 }

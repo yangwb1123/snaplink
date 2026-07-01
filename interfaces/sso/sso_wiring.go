@@ -32,6 +32,9 @@ type wiringState struct {
 	caepTransmitter         *caep.Transmitter
 	auditAPI                bool
 	requestIDMW             bool
+	panicRecovery           bool
+	compressionEnabled      bool
+	debugRequestLogging     bool   // when set, logs request/response bodies at DEBUG level
 	permissions             permissions.Provider
 	embedPermissions        bool
 	netStore                netpolicy.Store
