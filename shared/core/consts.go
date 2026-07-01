@@ -230,6 +230,14 @@ const (
 	// render the active-sessions overview.
 	PathAdminSessions = "/admin/sessions"
 
+	// PathAdminUserSessions lists the active sessions of ONE user (GET,
+	// admin:read) — complements PathAdminSessions (which lists EVERYONE's
+	// sessions) with the per-user view the admin console needs to show "user
+	// X's active logins" without the operator filtering the global list.
+	// Mounted only when a SessionManager is wired. The gRPC equivalent is
+	// TokenAdminService.ListSessions with UserId set.
+	PathAdminUserSessions = "/admin/users/:id/sessions"
+
 	// PathAdminConnections / PathAdminConnectionByID manage B2B enterprise
 	// connections at runtime (list/get/upsert/delete) so operators can onboard a
 	// new org's upstream IdP without a redeploy (config seeding only runs at

@@ -64,8 +64,9 @@ class Stage:
     mode: str = "serial"
     workers: int = 4
     tasks: list = field(default_factory=list)
-    commands: list = field(default_factory=list)  # shell commands to run after pi tasks
-    cwd: str = ""  # working directory for commands
+    commands: list = field(default_factory=list)
+    commands_parallel: bool = False  # if True, run commands concurrently
+    cwd: str = ""
     git_commit: bool = False
     commit_message: str = ""
     
@@ -80,6 +81,7 @@ class Stage:
             "workers": self.workers,
             "tasks": self.tasks,
             "commands": self.commands,
+            "commands_parallel": self.commands_parallel,
             "cwd": self.cwd,
             "git_commit": self.git_commit,
             "commit_message": self.commit_message,
@@ -128,6 +130,7 @@ def load_pipeline(path: str) -> Pipeline:
             workers=s.get("workers", 4),
             tasks=s.get("tasks", []),
             commands=s.get("commands", []),
+            commands_parallel=s.get("commands_parallel", False),
             cwd=s.get("cwd", ""),
             git_commit=s.get("git_commit", global_git_commit),
             commit_message=s.get("commit_message", ""),
@@ -264,33 +267,46 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
     # Execute shell commands after pi tasks
     if stage.commands:
         log.info("")
-        log.info("Running %d commands for stage '%s'...", len(stage.commands), stage.name)
+        log.info("Running %d commands for stage '%s'... (parallel=%s)",
+                 len(stage.commands), stage.name, stage.commands_parallel)
         cmd_cwd = stage.cwd or os.getcwd()
-        all_cmd_ok = True
-        for i, cmd in enumerate(stage.commands, 1):
-            log.info("CMD [%d/%d]: %s", i, len(stage.commands), cmd)
+        
+        def run_single_cmd(cmd: str, index: int) -> tuple:
+            log.info("CMD [%d/%d]: %s", index, len(stage.commands), cmd)
             try:
                 proc = subprocess.run(
                     cmd, shell=True, cwd=cmd_cwd,
                     capture_output=True, text=True, timeout=600
                 )
                 if proc.returncode == 0:
-                    log.info("CMD OK (exit=0)")
+                    log.info("CMD OK (exit=0) [%d/%d]", index, len(stage.commands))
                     if proc.stdout:
                         for line in proc.stdout.strip().split("\n")[-10:]:
                             log.info("  | %s", line)
                 else:
-                    log.warning("CMD FAILED (exit=%d)", proc.returncode)
+                    log.warning("CMD FAILED (exit=%d) [%d/%d]", proc.returncode, index, len(stage.commands))
                     if proc.stderr:
                         for line in proc.stderr.strip().split("\n")[-10:]:
                             log.warning("  | %s", line)
                     if proc.stdout:
                         for line in proc.stdout.strip().split("\n")[-5:]:
                             log.info("  | %s", line)
-                    all_cmd_ok = False
+                return True if proc.returncode == 0 else False
             except Exception as e:
-                log.warning("CMD ERROR: %s", e)
-                all_cmd_ok = False
+                log.warning("CMD ERROR [%d/%d]: %s", index, len(stage.commands), e)
+                return False
+        
+        if stage.commands_parallel:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=len(stage.commands)) as pool:
+                futs = {pool.submit(run_single_cmd, cmd, i): cmd for i, cmd in enumerate(stage.commands, 1)}
+                cmd_results = [f.result() for f in as_completed(futs)]
+                all_cmd_ok = all(cmd_results)
+        else:
+            all_cmd_ok = True
+            for i, cmd in enumerate(stage.commands, 1):
+                if not run_single_cmd(cmd, i):
+                    all_cmd_ok = False
         
         if all_cmd_ok:
             log.info("All %d commands passed for stage '%s'", len(stage.commands), stage.name)
@@ -364,7 +380,7 @@ def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = F
                 log.info("  Will use outputs from stage: %s", stage.from_outputs)
                 log.info("  Task templates: %d", len(stage.tasks))
             if stage.commands:
-                log.info("  Commands: %d", len(stage.commands))
+                log.info("  Commands: %d (parallel=%s)", len(stage.commands), stage.commands_parallel)
                 for cmd in stage.commands:
                     log.info("    | %s", cmd)
             if stage.git_commit:

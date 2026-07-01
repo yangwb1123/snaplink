@@ -80,14 +80,11 @@ stages:
         timeout: 600
 
     commands:
-      # 1. 编译检查
       - "echo '=== BUILD ===' && go build ./... 2>&1"
-      # 2. 运行项目测试
       - "echo '=== TESTS ===' && go test ./... 2>&1"
-      # 3. 项目工程门禁（harness）
       - "echo '=== HARNESS ===' && python3 cli.py harness 2>&1 || echo 'harness completed (non-fatal)'"
-      # 4. 代码复杂度检查（如果有）
       - "echo '=== FMT/VET ===' && go vet ./... 2>&1"
+    commands_parallel: true  # 4 个命令同时跑
 
     mode: serial
 
