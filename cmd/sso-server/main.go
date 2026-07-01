@@ -91,6 +91,13 @@ func main() {
 
 	logger := newSlogLogger(cfg.Logging.Level)
 
+	// --validate-only: load + validate config, then exit without
+	// starting the server. Useful for CI and pre-deployment checks.
+	if flags.validateOnly {
+		logger.Info("config valid")
+		return
+	}
+
 	// Go runtime tuning for consistent latency under load.
 	applyRuntimeTuning()
 

@@ -210,4 +210,14 @@ security-scan-all: ## Run gosec on root + all nested modules.
 		cd "$(CURDIR)"; \
 	done
 
-.PHONY: release-snapshot release docker-push docker-multiarch lint-all security-scan-all
+config-validate-all: ## Validate all 7 deploy config files against the server.
+	@for cfg in cmd/sso-server/config.yaml bin/config.yaml ops/deploy/compose/config.yaml ops/deploy/baremetal-ha/sso/config.yaml ops/deploy/k8s/config.yaml ops/deploy/k8s-prod/config.yaml docs/examples/basic/config.yaml; do \
+		echo -n "$$cfg ... "; \
+		if go run ./cmd/sso-server --config="$$cfg" --validate-only 2>/dev/null; then \
+			echo "OK"; \
+		else \
+			echo "FAIL"; \
+		fi; \
+	done
+
+.PHONY: release-snapshot release docker-push docker-multiarch lint-all security-scan-all config-validate-all

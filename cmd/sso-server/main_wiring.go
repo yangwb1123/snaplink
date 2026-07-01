@@ -25,6 +25,9 @@ type runtimeFlags struct {
 	// Optional centralized config endpoints (empty = etcd disabled).
 	etcdEndpoints string
 	etcdPrefix    string
+
+	// validateOnly when set loads and validates config then exits.
+	validateOnly bool
 }
 
 // parseRuntimeFlags registers every flag, binds config-bound ones to their
@@ -47,6 +50,7 @@ func parseRuntimeFlags() runtimeFlags {
 	grpcListen := flag.String("grpc-listen", ":8081", "gRPC listen address ('' to disable)")
 	tlsCert := flag.String("tls-cert", "", "TLS cert file (omit for HTTP)")
 	tlsKey := flag.String("tls-key", "", "TLS key file (omit for HTTP)")
+	validateOnly := flag.Bool("validate-only", false, "load and validate config then exit without starting the server")
 
 	// Optional centralized config: when --etcd-endpoints is set, an etcd
 	// Source slots into the Loader chain between env and flag, so a
@@ -64,6 +68,7 @@ func parseRuntimeFlags() runtimeFlags {
 		tlsKey:        *tlsKey,
 		etcdEndpoints: *etcdEndpoints,
 		etcdPrefix:    *etcdPrefix,
+		validateOnly:  *validateOnly,
 	}
 }
 
