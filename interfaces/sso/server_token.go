@@ -10,13 +10,69 @@ import (
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/fapi"
 	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/shared/core"
 )
+
+// idempotentResponseWriter wraps http.ResponseWriter to capture the
+// response body for idempotency caching.
+type idempotentResponseWriter struct {
+	http.ResponseWriter
+	key        string
+	cache      IdempotentCache
+	body       []byte
+	statusCode int
+}
+
+func (w *idempotentResponseWriter) WriteHeader(code int) {
+	w.statusCode = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *idempotentResponseWriter) Write(b []byte) (int, error) {
+	if w.statusCode == 0 {
+		w.statusCode = http.StatusOK
+	}
+	n, err := w.ResponseWriter.Write(b)
+	if err == nil && w.statusCode == http.StatusOK && w.key != "" && w.cache != nil {
+		w.body = append(w.body, b...)
+	}
+	return n, err
+}
 
 func (s *Server) handleToken(ctx HandlerContext) {
 	// RFC 6749 §5.1: token responses (success AND error) MUST carry
 	// Cache-Control: no-store + Pragma: no-cache so intermediaries never
 	// retain credentials. Set BEFORE any response body is written.
 	tokenNoStoreHeaders(ctx)
+
+	// Idempotency check: when an Idempotency-Key header is present
+	// AND we have a cached response, return it directly without
+	// processing the grant — safe retry semantics.
+	var idemKey string
+	var idemRW *idempotentResponseWriter
+	if s.idempotentCache != nil {
+		idemKey = ctx.Request().Header.Get("Idempotency-Key")
+		if idemKey != "" {
+			if cached, ok, _ := s.idempotentCache.Get(ctx.Request().Context(), idemKey); ok && len(cached) > 0 {
+				w := ctx.ResponseWriter()
+				w.Header().Set(HeaderContentType, ContentTypeJSON)
+				w.WriteHeader(http.StatusOK)
+				w.Write(cached)
+				return
+			}
+			idemRW = &idempotentResponseWriter{
+				ResponseWriter: ctx.ResponseWriter(),
+				key:            idemKey,
+				cache:          s.idempotentCache,
+			}
+			// Override the ResponseWriter on the underlying core.Context
+			// so that ctx.JSON() writes through our capture wrapper.
+			if c, ok := ctx.(*core.Context); ok {
+				c.SetResponseWriter(idemRW)
+			}
+		}
+	}
+
 	if err := s.requireDeps(DepTokenIssuer, DepClientStore); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
 		return
@@ -59,6 +115,13 @@ func (s *Server) handleToken(ctx HandlerContext) {
 	}
 
 	s.dispatchTokenGrant(ctx, client, req, dpopJKT, mtlsX5T)
+
+	// Cache the response body for idempotency on success.
+	if idemRW != nil && len(idemRW.body) > 0 {
+		if idemRW.statusCode == http.StatusOK {
+			_ = s.idempotentCache.Set(ctx.Request().Context(), idemKey, idemRW.body, 0)
+		}
+	}
 }
 
 // dispatchTokenGrant routes the authenticated, sender-constraint-captured token
@@ -69,6 +132,19 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 	var scopes []string
 	if req.Scope != "" {
 		scopes = strings.Split(req.Scope, " ")
+	}
+
+	// Custom grant handlers (registered via WithCustomGrant) take
+	// priority over the built-in switch — enabling third-party grant
+	// types without forking the codebase.
+	if s.dispatchCustomGrant(ctx, client, req, dpopJKT, mtlsX5T) {
+		return
+	}
+
+	// Per-grant-type rate limiting — checked before the built-in switch
+	// so all grants are covered uniformly.
+	if s.checkGrantRateLimit(ctx, req.GrantType) {
+		return
 	}
 
 	switch req.GrantType {
@@ -83,22 +159,8 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 	case GrantTokenExchange:
 		s.handleTokenExchangeGrant(ctx, client, buildTokenExchangeRequest(req, dpopJKT, mtlsX5T))
 	case GrantClientCredentials:
-		// RFC 6749 §4.4: the client_credentials grant MUST only be used by
-		// CONFIDENTIAL clients. A public client (no stored secret) passes the
-		// authentication ladder via the empty-secret match (CompareClientSecret
-		// ("","") == true), so without this gate anyone knowing a public
-		// client_id — public by design, embedded in SPA/mobile source — could
-		// mint a token bearing the client's full allowlist with no credential.
-		// Require a VALIDATED proof of identity: a stored secret (validated in
-		// authenticateTokenClient) or a private_key_jwt assertion (validated in
-		// resolveAssertedClientID). NOT mtlsX5T: this server implements only RFC
-		// 8705 §3 (certificate-BINDING) — the cert is the thumbprint of WHATEVER
-		// the extractor returned and is NEVER validated against the registered
-		// client (no §2 tls_client_auth), so accepting its mere presence here let
-		// a public client mint a token by attaching any client cert. Collapses to
-		// invalid_client (oracle-safe, matching the rest of the client-auth ladder).
-		if client.Secret == "" && req.ClientAssertion == "" {
-			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+		// RFC 6749 §4.4: only confidential clients may use this grant.
+		if s.denyPublicClientCredentials(ctx, client, req) {
 			return
 		}
 		tokengrant.HandleClientCredentialsGrant(s, ctx, client, scopes, req.Resource, dpopJKT, mtlsX5T)
@@ -328,6 +390,47 @@ func (s *Server) enforceFAPITokenRules(ctx HandlerContext, req oauth.TokenReques
 // handler.*GrantDeps interfaces via accessors_token_grant.go, and the grant
 // orchestration lives in internal/handler (the only tier that may import BOTH
 // oauth — code/refresh stores — AND oidc — id_token issuance).
+
+// dispatchCustomGrant checks the custom grant handler registry and dispatches
+// to a registered GrantHandler if one matches the request's grant_type.
+// Returns true (response already written) when a handler matched.
+func (s *Server) dispatchCustomGrant(ctx HandlerContext, client *Client, req oauth.TokenRequest, dpopJKT, mtlsX5T string) bool {
+	if len(s.customGrantHandlers) == 0 {
+		return false
+	}
+	handler, ok := s.customGrantHandlers[req.GrantType]
+	if !ok {
+		return false
+	}
+	handler.Handle(ctx, client, req, dpopJKT, mtlsX5T)
+	return true
+}
+
+// checkGrantRateLimit checks the per-grant-type rate limiter for the given
+// grant type. Returns true (response already written) when the rate limit
+// was exceeded.
+func (s *Server) checkGrantRateLimit(ctx HandlerContext, grantType string) bool {
+	entry, ok := s.grantRateLimiters[grantType]
+	if !ok || entry == nil || entry.limiter == nil {
+		return false
+	}
+	if !entry.limiter.Allow() {
+		ctx.JSON(http.StatusTooManyRequests, errorBody(ErrUnsupportedGrantType))
+		return true
+	}
+	return false
+}
+
+// denyPublicClientCredentials gates client_credentials to confidential
+// clients only (RFC 6749 §4.4). Returns true when the request should
+// be denied and a response has been written.
+func (s *Server) denyPublicClientCredentials(ctx HandlerContext, client *Client, req oauth.TokenRequest) bool {
+	if client.Secret == "" && req.ClientAssertion == "" {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+		return true
+	}
+	return false
+}
 
 // handleAuthCodeTokenGrant delegates the authorization_code token exchange.
 func (s *Server) handleAuthCodeTokenGrant(ctx HandlerContext, client *Client, req oauth.TokenRequest, scopes []string, dpopJKT, mtlsX5T string) {

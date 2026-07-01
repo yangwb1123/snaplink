@@ -238,6 +238,16 @@ type ConsentGrant struct {
 	ClientID  string    `json:"client_id"`
 	Scopes    []string  `json:"scopes"` // sorted, deduplicated
 	GrantedAt time.Time `json:"granted_at"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"` // server-enforced max TTL; zero = no expiry
+}
+
+// IsExpired returns true when ExpiresAt is non-zero and the grant has
+// passed its expiration deadline.
+func (g *ConsentGrant) IsExpired() bool {
+	if g.ExpiresAt.IsZero() {
+		return false
+	}
+	return time.Since(g.ExpiresAt) > 0
 }
 
 // ConsentStore persists end-user consent decisions. Callers are the
@@ -388,4 +398,20 @@ type TOTPEnroller interface {
 	// VerifyCode reports whether code matches secret at the current time
 	// (within the configured skew), WITHOUT consulting any store.
 	VerifyCode(secret []byte, code string) bool
+}
+
+// IdempotentCache provides idempotency-key semantics for the /token
+// endpoint. When a client sends an Idempotency-Key header, the server
+// caches the first successful response and returns it for subsequent
+// requests with the same key — preventing duplicate token issuance on
+// network-level retries.
+//
+// The implementation must be safe for concurrent access and should
+// enforce a TTL (typically aligned with the token's lifetime or a
+// maximum of 1 hour) so stale entries don't accumulate indefinitely.
+type IdempotentCache interface {
+	// Get returns the cached response for key, or nil when not found / expired.
+	Get(ctx context.Context, key string) ([]byte, bool, error)
+	// Set stores the response body for key with the given TTL.
+	Set(ctx context.Context, key string, body []byte, ttl time.Duration) error
 }

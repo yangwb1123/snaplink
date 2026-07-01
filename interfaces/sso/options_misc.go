@@ -520,6 +520,18 @@ func WithRequestLogging(logBodies bool) Option {
 	}
 }
 
+// WithIdempotentStore wires an idempotency cache for the /token endpoint.
+// When set, the server checks for an Idempotency-Key header on token
+// requests and caches the first successful response, returning it for
+// repeat requests with the same key — safe retry semantics without
+// duplicate token issuance.
+//
+// The cache TTL is typically aligned with the token lifetime or a
+// maximum of 1 hour. Pass nil to disable idempotency (default).
+func WithIdempotentStore(cache core.IdempotentCache) Option {
+	return func(s *Server) { s.idempotentCache = cache }
+}
+
 // WithConsentStore wires a persistent consent record store. When set,
 // /auth/login records the user's consent decision and enforces the
 // prompt=consent parameter (re-prompting even when a grant already exists).

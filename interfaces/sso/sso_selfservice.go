@@ -212,4 +212,9 @@ type selfServiceState struct {
 		rate  float64
 		burst int
 	}
+
+	// idempotentCache provides idempotency-key semantics for /token
+	// (WithIdempotentStore). When non-nil, the token handler checks for
+	// an Idempotency-Key header and caches successful responses.
+	idempotentCache core.IdempotentCache
 }

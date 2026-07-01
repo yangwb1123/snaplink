@@ -3,6 +3,11 @@ package core
 // HTTP header names and well-known values.
 const (
 	HeaderAuthorization        = "Authorization"
+	// HeaderIdempotencyKey is the HTTP header clients set to enable
+	// safe retry on the /token endpoint — the server caches the first
+	// successful response under this key and returns it for repeat
+	// requests, preventing duplicate token issuance on network retries.
+	HeaderIdempotencyKey = "Idempotency-Key"
 	HeaderContentType          = "Content-Type"
 	HeaderRequestID            = "X-Request-Id"
 	HeaderTraceparent          = "Traceparent"

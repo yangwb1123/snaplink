@@ -56,6 +56,9 @@ func NewContext(w http.ResponseWriter, r *http.Request) *Context {
 
 func (c *Context) Request() *http.Request              { return c.r }
 func (c *Context) ResponseWriter() http.ResponseWriter { return c.w }
+// SetResponseWriter replaces the underlying ResponseWriter. Used by
+// the idempotency wrapper to capture token response bodies.
+func (c *Context) SetResponseWriter(w http.ResponseWriter) { c.w = w }
 func (c *Context) Param(name string) string            { return c.params[name] }
 func (c *Context) Query(name string) string            { return c.r.URL.Query().Get(name) }
 
