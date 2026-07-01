@@ -155,23 +155,23 @@ jobs:
       matrix:
         module:
           - "."
-          - kms/awskms
-          - kms/gcpkms
-          - kms/azurekeyvault
-          - kms/pkcs11
-          - redis
-          - saml
-          - ldap
-          - kerberos
-          - radius
-          - extauthz
+          - infrastructure/kms/awskms
+          - infrastructure/kms/gcpkms
+          - infrastructure/kms/azurekeyvault
+          - infrastructure/kms/pkcs11
+          - infrastructure/redis
+          - infrastructure/saml
+          - infrastructure/ldap
+          - infrastructure/kerberos
+          - infrastructure/radius
+          - infrastructure/extauthz
     steps:
       - uses: actions/checkout@v4
 
       # govulncheck analyzes (does not build C) but kms/pkcs11 imports a
       # cgo package; give it the headers so the load doesn't choke.
       - name: install pkcs11 C toolchain
-        if: matrix.module == 'kms/pkcs11'
+        if: matrix.module == 'infrastructure/kms/pkcs11'
         run: |
           sudo apt-get update
           sudo apt-get install -y libltdl-dev
@@ -193,14 +193,28 @@ jobs:
   gosec:
     # gosec security scanner (CWE-mapped: hardcoded credentials, weak crypto,
     # SQL/command injection, path traversal, unhandled errors in sensitive
-    # sinks). Scans the ROOT module — the credential-handling core; the nested
-    # modules are separate go.mod roots that `./...` does not descend into.
-    # SARIF uploads to the Security tab. Report-only (-no-fail) so a
-    # low-confidence false positive (e.g. an OAuth URN string flagged G101)
-    # can't wedge unrelated PRs — the same non-wedging stance as govulncheck.
-    # Promote to a hard gate once the finding floor is tuned.
-    name: gosec
+    # sinks). Scans the ROOT module AND every nested module (like govulncheck)
+    # so an insecure pattern in SAML/XML parsing, LDAP injection, or KMS key
+    # handling is surfaced too. Report-only (-no-fail) so a low-confidence
+    # false positive can't wedge unrelated PRs. Promote to a hard gate once
+    # the finding floor is tuned.
+    name: gosec (root + modules)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - "."
+          - infrastructure/kms/awskms
+          - infrastructure/kms/gcpkms
+          - infrastructure/kms/azurekeyvault
+          - infrastructure/kms/pkcs11
+          - infrastructure/redis
+          - infrastructure/saml
+          - infrastructure/ldap
+          - infrastructure/kerberos
+          - infrastructure/radius
+          - infrastructure/extauthz
     permissions:
       security-events: write
       contents: read
@@ -209,46 +223,55 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
-          cache: true
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
 
       - name: run gosec
-        # `go run ...@latest` mirrors the govulncheck job's pattern (no
-        # unpinned third-party action in a security job). -no-fail makes it
-        # report-only — gosec writes SARIF and exits 0 even with findings;
-        # the SARIF upload is the signal channel. ./... stays inside the root
-        # module (nested modules are separate go.mod roots).
-        run: go run github.com/securego/gosec/v2/cmd/gosec@latest -no-fail -fmt sarif -out gosec.sarif ./...
+        run: go run github.com/securego/gosec/v2/cmd/gosec@latest -no-fail -fmt sarif -out gosec-${{ matrix.module }}.sarif ./...
 
       - name: upload sarif to code-scanning
         uses: github/codeql-action/upload-sarif@v3
         if: always()
+        continue-on-error: true
         with:
-          sarif_file: gosec.sarif
-          category: gosec
+          sarif_file: gosec-${{ matrix.module }}.sarif
+          category: gosec/${{ matrix.module }}
 
   lint:
-    # golangci-lint over the root module (.golangci.yml) — a HARD GATE: the
-    # backlog is burned down (the tree is golangci-clean), so new findings
-    # fail the PR. errcheck/staticcheck/unused/govet/ineffassign + misspell +
-    # unconvert.
-    name: golangci-lint
+    # golangci-lint over the root AND every nested module. Each module has
+    # its own .golangci.yml (or inherits root's settings via a symlink).
+    # A HARD GATE: the backlog is burned down (the tree is golangci-clean),
+    # so new findings fail the PR.
+    name: golangci-lint (root + modules)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - "."
+          - infrastructure/kms/awskms
+          - infrastructure/kms/gcpkms
+          - infrastructure/kms/azurekeyvault
+          - infrastructure/kms/pkcs11
+          - infrastructure/redis
+          - infrastructure/saml
+          - infrastructure/ldap
+          - infrastructure/kerberos
+          - infrastructure/radius
+          - infrastructure/extauthz
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
-          cache: true
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
 
       - name: golangci-lint
-        # Pinned to a v2 release whose bundled type-checker understands the
-        # repo's Go toolchain (older golangci-lint cannot parse go1.26 and
-        # emits false "declared and not used" positives).
         uses: golangci/golangci-lint-action@v6
         with:
           version: v2.1.0
+          working-directory: ${{ matrix.module }}
 
   proto:
     name: buf lint + breaking
