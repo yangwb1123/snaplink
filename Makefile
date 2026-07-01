@@ -9,7 +9,7 @@ IMAGE_TAG ?= dev
 
 CLI = python cli.py
 
-.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking docs-validate docs-serve release-snapshot release-check security-scan load-test lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance
+.PHONY: help test race bench vet fmt build docker ci ci-modules clean proto-lint proto-breaking proto-gen docs-validate docs-serve release-snapshot release-check security-scan load-test lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all config-validate
 
 # ── Go Dev (via $GO directly for speed) ──────────────────────────────
 
@@ -24,7 +24,10 @@ race: ## Run tests with the race detector.
 	$(GO) test -race -count=1 ./...
 
 bench: ## Run benchmarks.
-	$(GO) test -run='^$$' -bench=. -benchmem ./infrastructure/defaultimpl/ ./protocols/oauth/ ./interfaces/ratelimit/ ./shared/security/
+	$(GO) test -run='^$$' -bench=. -benchmem ./...
+
+bench-all: ## Run benchmarks on all packages (same as bench).
+	$(GO) test -run='^$$' -bench=. -benchmem ./...
 
 load-test: ## Load-test /token (requires k6).
 	@command -v k6 >/dev/null 2>&1 || { echo "k6 not installed" >&2; exit 1; }
@@ -35,6 +38,9 @@ vet: ## Static analysis.
 
 lint: ## Run golangci-lint.
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run --timeout 5m
+
+lint-all: ## Run golangci-lint on all nested modules.
+	find . -name go.mod -not -path './.git/*' -execdir sh -c 'echo "=== lint $$(pwd) ===" && golangci-lint run --timeout 5m' \;
 
 security-scan: ## SAST/SCA (govulncheck + gosec).
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
@@ -51,11 +57,23 @@ fmt: ## Check gofmt.
 build: ## Compile to $(BIN_DIR)/.
 	$(CLI) build
 
+examples: ## Compile example apps to ensure they stay buildable.
+	$(GO) build ./docs/examples/...
+
+config-validate: ## Validate all config.yaml files against current server.
+	@for cfg in $$(find ops/deploy -name config.yaml); do \
+		echo "Validating $$cfg..."; \
+		$(GO) run ./cmd/sso-server --validate-only=$$cfg || exit 1; \
+	done
+
 docker: ## Build container image.
 	docker build -t $(IMAGE):$(IMAGE_TAG) .
 
 proto-lint: ## Lint .proto files.
 	cd proto && $(GO) run github.com/bufbuild/buf/cmd/buf@latest lint
+
+proto-gen: ## Generate Go code from .proto files.
+	cd proto && buf generate
 
 proto-breaking: ## Check proto wire-breaking vs main.
 	cd proto && $(GO) run github.com/bufbuild/buf/cmd/buf@latest breaking \
@@ -94,7 +112,10 @@ ci-modules: ## Build + test all nested modules.
 	cd radius && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd cmd/sso-mcp && $(GO) build ./... && $(GO) test -race -count=1 ./...
 
-ci: fmt vet race build proto-lint ci-modules ## Run CI checks.
+ci: fmt vet race build examples proto-lint ci-modules ## Run CI checks.
+
+mod-tidy-all: ## Run go mod tidy in all modules.
+	find . -name go.mod -not -path './.git/*' -execdir go mod tidy \;
 
 clean: ## Remove build artifacts.
 	rm -rf $(BIN_DIR)
@@ -153,3 +174,24 @@ trend: ## Record trend snapshot.
 
 health-report: ## Health report.
 	$(CLI) health-report
+
+# -------------------------------------------------------------------
+# Release & Docker targets.
+# -------------------------------------------------------------------
+
+release-snapshot: ## Build snapshot binaries (local, no publish).
+	goreleaser release --snapshot --clean
+
+release: ## Build + publish to GitHub Releases (requires git tag).
+	goreleaser release --clean
+
+docker-push: ## Build + push multi-arch Docker image (requires git tag).
+	docker buildx build --platform linux/amd64,linux/arm64 \
+		-t ghcr.io/snaplink/sso-server:latest \
+		--push .
+
+docker-multiarch: ## Build local multi-arch manifest (no push).
+	docker buildx build --platform linux/amd64,linux/arm64 \
+		-t snaplink/sso-server:multiarch --load .
+
+.PHONY: release-snapshot release docker-push docker-multiarch

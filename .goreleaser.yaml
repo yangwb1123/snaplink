@@ -113,10 +113,24 @@ changelog:
       - "^typo"
 
 release:
-  # Disabled until a git remote and target are configured. Flip to
-  # `disable: false` (or remove the key) once GitHub Releases / a
-  # private registry / S3 is wired in the release workflow.
-  disable: true
+  # Enabled: GitHub Releases receives the binary archives when a vX.Y.Z tag
+  # is pushed. The release.yml workflow + GITHUB_TOKEN handle the upload.
+  # To opt out (dry-run only), temporarily flip back to `disable: true`.
+  disable: false
+
+# Docker multi-arch image, published alongside binary archives.
+# Requires GITHUB_TOKEN with packages:write scope (already set in release.yml).
+dockers:
+  - image_templates:
+      - "ghcr.io/snaplink/sso-server:{{ .Version }}"
+      - "ghcr.io/snaplink/sso-server:latest"
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/amd64,linux/arm64"
+      - "--label=org.opencontainers.image.title=sso-server"
+      - "--label=org.opencontainers.image.description=Snaplink SSO server"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source={{ .GitURL }}"
 
 # --- Future hooks, kept commented for visibility ---
 #
