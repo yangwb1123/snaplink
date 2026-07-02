@@ -116,6 +116,7 @@ jobs:
           - kerberos
           - radius
           - extauthz
+          - infrastructure/kafka
           - cmd/sso-mcp
     steps:
       - uses: actions/checkout@v4
@@ -175,6 +176,7 @@ jobs:
           - infrastructure/kerberos
           - infrastructure/radius
           - infrastructure/extauthz
+          - infrastructure/kafka
           - cmd/sso-mcp
     steps:
       - uses: actions/checkout@v4
@@ -225,6 +227,7 @@ jobs:
           - infrastructure/kerberos
           - infrastructure/radius
           - infrastructure/extauthz
+          - infrastructure/kafka
           - cmd/sso-mcp
     permissions:
       security-events: write
@@ -269,6 +272,7 @@ jobs:
           - infrastructure/kerberos
           - infrastructure/radius
           - infrastructure/extauthz
+          - infrastructure/kafka
           - cmd/sso-mcp
     steps:
       - uses: actions/checkout@v4

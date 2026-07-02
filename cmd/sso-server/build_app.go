@@ -77,6 +77,13 @@ type appBuilder struct {
 	asyncSink            *audit.AsyncSink
 	auditRetentionCancel context.CancelFunc
 	auditRetentionDone   <-chan struct{}
+	// auditKafkaSink is the RAW (pre-RetryingSink) Kafka audit sink, non-nil
+	// only when audit.kafka.enabled — retained so shutdownSubsystems can
+	// Close it (flush + disconnect the producer). audit.Sink (an interface)
+	// rather than a concrete type: the concrete implementation lives in the
+	// infrastructure/kafka nested module, which this (the core) module never
+	// imports.
+	auditKafkaSink audit.Sink
 
 	// Permissions.
 	provider permissions.Provider
@@ -276,7 +283,7 @@ func (b *appBuilder) assemble(rt serverRuntime) *app {
 		pgDB:                    b.pgDB,
 	}
 	// Pairs moved out of the literal to keep assemble within the length budget.
-	a.consentStore, a.mfaEnrollStore = b.consentStore, b.mfaEnrollStore
+	a.auditKafkaSink, a.consentStore, a.mfaEnrollStore = b.auditKafkaSink, b.consentStore, b.mfaEnrollStore
 	a.pushPruneCancel, a.pushPruneDone = b.pushPruneCancel, b.pushPruneDone
 	a.cibaPruneCancel, a.cibaPruneDone = b.cibaPruneCancel, b.cibaPruneDone
 	a.netStop, a.netCancel = b.netStop, b.netCancel

@@ -84,6 +84,18 @@ func shutdownSubsystems(ctx context.Context, a *app, logger spi.Logger) {
 			logger.Error("audit async drain timed out", "error", err)
 		}
 	}
+	// Close the Kafka producer AFTER the AsyncSink drain above — when
+	// audit.async.enabled wraps this sink, an in-flight async write could
+	// still be in flight to it until that drain completes; closing first
+	// would race a live WriteMessages call. The concrete type lives in the
+	// infrastructure/kafka nested module (never imported here), so the
+	// Close capability is reached via type assertion, same pattern as the
+	// CAEP transmitter below.
+	if closer, ok := a.auditKafkaSink.(interface{ Close(context.Context) error }); ok {
+		if err := closer.Close(ctx); err != nil {
+			logger.Error("audit kafka sink close failed", "error", err)
+		}
+	}
 	// Drain in-flight CAEP SET pushes so a shutting-down replica doesn't
 	// abandon a goroutine mid-POST. Bounded by the shutdown ctx; each send
 	// also has its own per-receiver timeout.
