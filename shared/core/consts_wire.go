@@ -2,13 +2,18 @@ package core
 
 // HTTP header names and well-known values.
 const (
-	HeaderAuthorization        = "Authorization"
+	HeaderAuthorization = "Authorization"
 	// HeaderIdempotencyKey is the HTTP header clients set to enable
 	// safe retry on the /token endpoint — the server caches the first
 	// successful response under this key and returns it for repeat
 	// requests, preventing duplicate token issuance on network retries.
 	HeaderIdempotencyKey = "Idempotency-Key"
-	HeaderContentType          = "Content-Type"
+	HeaderContentType    = "Content-Type"
+	// HeaderContentDisposition marks the tenant-export response as a
+	// downloadable attachment (see interfaces/admin's tenant export
+	// handler) so a browser/admin UI saves it as a file rather than
+	// rendering the JSON inline.
+	HeaderContentDisposition   = "Content-Disposition"
 	HeaderRequestID            = "X-Request-Id"
 	HeaderTraceID              = "X-Trace-Id"
 	HeaderTraceparent          = "Traceparent"

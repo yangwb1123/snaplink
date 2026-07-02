@@ -106,6 +106,12 @@ func (s *Server) mountAdminB2B(api Router) {
 		api.GET(PathAdminTenantMembers, s.handleAdminListTenantMembers)
 		api.PUT(PathAdminTenantMemberByID, s.handleAdminPutTenantMember)
 		api.DELETE(PathAdminTenantMemberByID, s.handleAdminRemoveTenantMember)
+		// Tenant export needs the roster (TenantUserStore) as its anchor
+		// dependency for the members/users sections; every other section
+		// (clients/connections/permissions/sessions/audit) is independently
+		// nil-gated inside compliance.TenantExporter, so this mount point is
+		// the natural "tenant management is wired at all" gate.
+		api.POST(PathAdminTenantExport, s.handleAdminExportTenant)
 	}
 	if s.invitationStore != nil {
 		api.POST(PathAdminTenantInvitations, s.handleAdminSendInvitation)

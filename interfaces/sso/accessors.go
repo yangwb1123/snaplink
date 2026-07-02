@@ -13,11 +13,11 @@ import (
 	"github.com/snaplink/sso/domains/anomaly"
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/permissions"
+	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/netpolicy"
-	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/protocols/compliance"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
@@ -69,16 +69,24 @@ func (s *Server) EncryptIDTokenForClient(ctx context.Context, client *Client, si
 	return s.maybeEncryptIDToken(ctx, client, signed)
 }
 
-func (s *Server) Auditor() *audit.Recorder                  { return s.auditor }
-func (s *Server) Permissions() permissions.Provider         { return s.permissions }
-func (s *Server) EmbedPermissions() bool                    { return s.embedPermissions }
-func (s *Server) NetStore() netpolicy.Store                 { return s.netStore }
-func (s *Server) NetClassifier() *netpolicy.Classifier      { return s.netClassifier }
-func (s *Server) Metrics() *metrics.Metrics                 { return s.metrics }
-func (s *Server) SrvLogger() spi.Logger                     { return s.logger }
-func (s *Server) Issuer() string                            { return s.issuer }
-func (s *Server) SessionMgr() core.SessionManager           { return s.sessionMgr }
-func (s *Server) ClientStoreAccessor() core.ClientStore     { return s.clientStore }
+func (s *Server) Auditor() *audit.Recorder              { return s.auditor }
+func (s *Server) Permissions() permissions.Provider     { return s.permissions }
+func (s *Server) EmbedPermissions() bool                { return s.embedPermissions }
+func (s *Server) NetStore() netpolicy.Store             { return s.netStore }
+func (s *Server) NetClassifier() *netpolicy.Classifier  { return s.netClassifier }
+func (s *Server) Metrics() *metrics.Metrics             { return s.metrics }
+func (s *Server) SrvLogger() spi.Logger                 { return s.logger }
+func (s *Server) Issuer() string                        { return s.issuer }
+func (s *Server) SessionMgr() core.SessionManager       { return s.sessionMgr }
+func (s *Server) ClientStoreAccessor() core.ClientStore { return s.clientStore }
+
+// ClientStore exposes the wired client store for the admin tenant-export
+// handler (admin.Deps). Distinct from ClientStoreAccessor only in name —
+// that older accessor predates this Deps interface and callers elsewhere
+// already depend on its name, so it stays rather than churn every call
+// site; a method may share its name with the package-level ClientStore
+// type alias (different namespace — see aliases.go) without conflict.
+func (s *Server) ClientStore() core.ClientStore { return s.clientStore }
 
 // DestroySession implements oidc.EndSessionDeps: destroys the server-side SSO
 // session so the session cookie cannot be reused after /end_session logout.
@@ -151,8 +159,9 @@ func (s *Server) ConnectionProber() connections.Prober {
 	}
 	return connections.NewHTTPProber(s.connectionProbeTimeout)
 }
+
 // ConsentStore exposes the wired consent store (may be nil).
-func (s *Server) ConsentStore() ConsentStore { return s.consentStore }
+func (s *Server) ConsentStore() ConsentStore                { return s.consentStore }
 func (s *Server) TenantUserStore() core.TenantUserStore     { return s.tenantUserStore }
 func (s *Server) UserProviderAccessor() core.UserProvider   { return s.userProvider }
 func (s *Server) DeviceSecretStore() core.DeviceSecretStore { return s.deviceSecretStore }

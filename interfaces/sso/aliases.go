@@ -335,6 +335,7 @@ const PathAdminConnectionHealth = core.PathAdminConnectionHealth
 const PathAdminConnectionProbe = core.PathAdminConnectionProbe
 const PathAdminTenantMembers = core.PathAdminTenantMembers
 const PathAdminTenantMemberByID = core.PathAdminTenantMemberByID
+const PathAdminTenantExport = core.PathAdminTenantExport
 const PathMyOrganizations = core.PathMyOrganizations
 const PathMyOrganizationByID = core.PathMyOrganizationByID
 const PathAdminTenantInvitations = core.PathAdminTenantInvitations
