@@ -1057,6 +1057,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: |
+            Tenant client-create quota exhausted. Wire code:
+            `quota_exceeded`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "501":
           description: DCR not enabled. Wire code `registration_not_configured`.
           content:
