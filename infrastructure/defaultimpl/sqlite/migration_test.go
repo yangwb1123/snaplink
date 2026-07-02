@@ -60,6 +60,64 @@ func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
 	}
 }
 
+// TestMigration_AuthCodesBackfillsDPoPBindingColumn proves the auth_codes v2
+// migration adds confirmation_jkt (RFC 9449 §10) to a database created before
+// that migration existed, preserving existing rows.
+func TestMigration_AuthCodesBackfillsDPoPBindingColumn(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dsn := "file:" + filepath.Join(t.TempDir(), "ac.db")
+
+	// Seed a pre-v2 database directly (bypassing the store entirely) so it
+	// looks exactly like a database created before the DPoP-binding column
+	// existed: the original 11 columns, no confirmation_jkt, and the schema
+	// version table already stamped at v1 (matches a real upgrade — the v1
+	// boot that created this table ran before v2 was added).
+	seed, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := seed.Exec(`CREATE TABLE auth_codes (
+		code TEXT PRIMARY KEY, user_id TEXT NOT NULL, client_id TEXT NOT NULL,
+		redirect_uri TEXT NOT NULL DEFAULT '', scopes TEXT NOT NULL DEFAULT '[]',
+		nonce TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '',
+		attributes TEXT NOT NULL DEFAULT '{}', code_challenge TEXT NOT NULL DEFAULT '',
+		code_challenge_method TEXT NOT NULL DEFAULT '', expires_at INTEGER NOT NULL)`); err != nil {
+		t.Fatalf("legacy table: %v", err)
+	}
+	if _, err := seed.Exec(`INSERT INTO auth_codes (code,user_id,client_id,expires_at)
+		VALUES ('old','u','c',2)`); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	if err := migrate.Run(ctx, seed, "auth_codes", []migrate.Migration{
+		{Version: 1, Name: "baseline", SQL: `SELECT 1`},
+	}); err != nil {
+		t.Fatalf("stamp v1: %v", err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("close seed: %v", err)
+	}
+
+	// NewAuthCodeStore reopens the SAME file and runs the real migration
+	// set — exactly what a pre-upgrade deployment's next boot does.
+	st, err := sqlite.NewAuthCodeStore(dsn)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	if _, err := st.DB().Exec(`SELECT confirmation_jkt FROM auth_codes`); err != nil {
+		t.Errorf("confirmation_jkt not backfilled: %v", err)
+	}
+	var code string
+	if err := st.DB().QueryRow(`SELECT code FROM auth_codes WHERE code='old'`).Scan(&code); err != nil {
+		t.Errorf("legacy row lost: %v", err)
+	}
+	if v, _ := migrate.CurrentVersion(ctx, st.DB(), "auth_codes"); v != 2 {
+		t.Errorf("version = %d, want 2", v)
+	}
+}
+
 // TestBusyTimeoutPragma verifies that the modernc.org/sqlite driver
 // honours the `_pragma=busy_timeout(N)` DSN form. The old mattn-style
 // `_busy_timeout=N` is silently ignored by this driver; using the wrong

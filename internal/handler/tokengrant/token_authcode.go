@@ -44,10 +44,11 @@ type AuthCodeGrantDeps interface {
 // exchange. Behavior is byte-identical to the prior root handler.
 //
 // Oracle-leak collapse (AGENTS.md §3): unknown / expired / consumed code,
-// client mismatch, redirect_uri mismatch, and PKCE failure ALL return 400
-// invalid_grant so an attacker cannot distinguish which check failed (RFC 6749
-// §5.2 defines no invalid_redirect_uri for the token endpoint). The code is
-// single-use — AuthCodeStore.Consume deletes it atomically.
+// client mismatch, redirect_uri mismatch, PKCE failure, and RFC 9449 §10
+// DPoP jkt mismatch ALL return 400 invalid_grant so an attacker cannot
+// distinguish which check failed (RFC 6749 §5.2 defines no
+// invalid_redirect_uri for the token endpoint). The code is single-use —
+// AuthCodeStore.Consume deletes it atomically.
 //
 // RFC 9068 §2.2: auth_time is stamped from AuthCode.AuthTime (the real
 // /auth/login moment), NOT the exchange time, and the AMR/ACR are propagated
@@ -61,7 +62,7 @@ func HandleAuthCodeGrant(d AuthCodeGrantDeps, ctx core.HandlerContext, client *c
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return
 	}
-	info, ok := authCodeValidate(d, ctx, client, req)
+	info, ok := authCodeValidate(d, ctx, client, req, dpopJKT)
 	if !ok {
 		return
 	}
@@ -144,14 +145,18 @@ func authCodeIssueAccessToken(d AuthCodeGrantDeps, ctx core.HandlerContext, clie
 // writing the wire response) when any check fails so the caller can return.
 //
 // Oracle-leak collapse: unknown/expired/consumed code, client mismatch,
-// redirect_uri mismatch, and PKCE failure ALL return 400 invalid_grant.
-// redirect_uri mismatch collapses here too — RFC 6749 §5.2 does NOT define
-// invalid_redirect_uri for the token endpoint (it is an authorization-endpoint
-// code); a §4.1.3 redirect_uri mismatch invalidates the grant, so the failure
-// is indistinguishable from a code/client/PKCE problem. PKCE is enforced ONLY
-// when info.CodeChallenge != ""; both the length-bounds violation and a
-// VerifyPKCE failure collapse to invalid_grant.
-func authCodeValidate(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core.Client, req oauth.TokenRequest) (*oauth.AuthCode, bool) {
+// redirect_uri mismatch, PKCE failure, and DPoP jkt mismatch ALL return 400
+// invalid_grant. redirect_uri mismatch collapses here too — RFC 6749 §5.2
+// does NOT define invalid_redirect_uri for the token endpoint (it is an
+// authorization-endpoint code); a §4.1.3 redirect_uri mismatch invalidates
+// the grant, so the failure is indistinguishable from a code/client/PKCE/
+// DPoP problem. PKCE is enforced ONLY when info.CodeChallenge != ""; both
+// the length-bounds violation and a VerifyPKCE failure collapse to
+// invalid_grant. RFC 9449 §10 DPoP code-binding is enforced ONLY when
+// info.ConfirmationJKT != "" (the client presented a DPoP proof at
+// /auth/login) — an exchange presenting no proof, or a proof under a
+// different key, collapses to the same invalid_grant.
+func authCodeValidate(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core.Client, req oauth.TokenRequest, dpopJKT string) (*oauth.AuthCode, bool) {
 	info, err := d.AuthCodeStore().Consume(ctx.Request().Context(), req.Code)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
@@ -174,6 +179,10 @@ func authCodeValidate(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core
 			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
 			return nil, false
 		}
+	}
+	if info.ConfirmationJKT != "" && info.ConfirmationJKT != dpopJKT {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return nil, false
 	}
 	return info, true
 }

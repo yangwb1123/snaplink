@@ -166,6 +166,20 @@ paths:
           access token + session id. The token's strategy
           (`jwt` / `session`) is determined by the client's
           `token_strategy` field in config.
+
+        **DPoP authorization-code binding** (RFC 9449 §10) — when
+        `response_type=code`, an optional `DPoP: <proof>` header on
+        THIS request binds the issued authorization code to that
+        proof's JWK thumbprint. The `/token` `authorization_code`
+        exchange must then present a DPoP proof under the SAME key
+        or the exchange fails `400 invalid_grant` — identical to
+        every other unknown/expired/consumed/mismatched code failure
+        (oracle-leak hardening), never a distinguishable error. A
+        malformed/invalid proof on THIS request fails the login
+        itself with `400 invalid_dpop_proof` (or `use_dpop_nonce`
+        + `DPoP-Nonce` header when §8 nonce enforcement is wired),
+        mirroring `/token`'s DPoP gate. Omitting the header keeps the
+        code unbound — fully backwards compatible.
       operationId: postLogin
       requestBody:
         required: true
@@ -611,9 +625,12 @@ paths:
         the response cross-user.
 
         **Oracle-leak hardening** — unknown / expired / consumed /
-        client-mismatch code or refresh-token failures all collapse
-        to a single `400 invalid_grant` response so an attacker
-        polling can't distinguish failure modes.
+        client-mismatch code or refresh-token failures, PKCE
+        verifier mismatches, and RFC 9449 §10 DPoP-bound-code jkt
+        mismatches (missing proof or a proof under a different key
+        than the one presented at `/auth/login`) all collapse to a
+        single `400 invalid_grant` response so an attacker polling
+        can't distinguish failure modes.
       operationId: postToken
       requestBody:
         required: true

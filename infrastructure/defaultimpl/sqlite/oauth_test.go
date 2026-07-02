@@ -40,6 +40,7 @@ func TestSQLiteAuthCode_RoundTrip(t *testing.T) {
 		Attributes:          map[string]string{"role": "admin"},
 		CodeChallenge:       "challenge-xyz",
 		CodeChallengeMethod: "S256",
+		ConfirmationJKT:     "jkt-abc123",
 		ExpiresAt:           time.Now().Add(time.Minute),
 	}
 	if err := st.Issue(context.Background(), "code-1", in); err != nil {
@@ -57,6 +58,34 @@ func TestSQLiteAuthCode_RoundTrip(t *testing.T) {
 	}
 	if out.CodeChallenge != "challenge-xyz" || out.CodeChallengeMethod != "S256" {
 		t.Errorf("PKCE fields lost: %+v", out)
+	}
+	if out.ConfirmationJKT != "jkt-abc123" {
+		t.Errorf("ConfirmationJKT (RFC 9449 §10 DPoP code binding) lost: got %q want jkt-abc123", out.ConfirmationJKT)
+	}
+}
+
+// TestSQLiteAuthCode_ConfirmationJKTDefaultsEmpty proves a code issued
+// without a DPoP proof at /auth/login round-trips ConfirmationJKT as "" —
+// the exchange-side gate (authCodeValidate) only fires when this is
+// non-empty, so an unbound code must never accidentally pick up a stray
+// value from the column default.
+func TestSQLiteAuthCode_ConfirmationJKTDefaultsEmpty(t *testing.T) {
+	t.Parallel()
+	st, err := sqlite.NewAuthCodeStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	_ = st.Issue(context.Background(), "code-unbound", &oauth.AuthCode{
+		UserID: "u", ClientID: "c", ExpiresAt: time.Now().Add(time.Minute),
+	})
+	out, err := st.Consume(context.Background(), "code-unbound")
+	if err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	if out.ConfirmationJKT != "" {
+		t.Errorf("ConfirmationJKT = %q, want empty (unbound code)", out.ConfirmationJKT)
 	}
 }
 
