@@ -317,6 +317,7 @@ const PathAdminUserMFA = core.PathAdminUserMFA
 const PathAdminUserMFAByID = core.PathAdminUserMFAByID
 const PathAdminUserPassword = core.PathAdminUserPassword
 const PathAdminUserDeviceSecrets = core.PathAdminUserDeviceSecrets
+const PathAdminUserRefreshTokens = core.PathAdminUserRefreshTokens
 const PathAdminUserPasswordResetTokens = core.PathAdminUserPasswordResetTokens
 const PathAdminUserEmailChangeTokens = core.PathAdminUserEmailChangeTokens
 const PathBackup = core.PathBackup

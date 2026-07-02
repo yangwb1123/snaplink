@@ -11,6 +11,7 @@ import (
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/protocols/oauth"
 )
 
 // newAdminUserMgmtHarness wires a server with consent + MFA-enrollment stores
@@ -164,6 +165,62 @@ func TestAdminUserDeviceSecrets_Revoke(t *testing.T) {
 	}
 	if _, err := ds.Consume(ctx, "s3"); err != nil {
 		t.Errorf("bob's device secret wrongly revoked: %v", err)
+	}
+}
+
+// TestAdminUserRefreshTokens_Revoke proves the admin bulk-revoke endpoint (a)
+// kills every refresh token the target user holds across MULTIPLE clients,
+// and (b) never touches another user's tokens.
+func TestAdminUserRefreshTokens_Revoke(t *testing.T) {
+	ctx := context.Background()
+	rt := defaultimpl.NewMemoryRefreshTokenStore()
+	exp := time.Now().Add(time.Hour)
+	// Alice holds tokens with two different clients; Bob holds one.
+	if err := rt.Issue(ctx, "alice-tok-app1", &oauth.RefreshToken{UserID: "u-alice", ClientID: "app-1", ExpiresAt: exp}); err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if err := rt.Issue(ctx, "alice-tok-app2", &oauth.RefreshToken{UserID: "u-alice", ClientID: "app-2", ExpiresAt: exp}); err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if err := rt.Issue(ctx, "bob-tok-app1", &oauth.RefreshToken{UserID: "u-bob", ClientID: "app-1", ExpiresAt: exp}); err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+
+	srv := sso.NewServer(
+		sso.WithIssuer("https://sso.example"),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+		sso.WithRefreshTokenStore(rt, time.Hour),
+	)
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+
+	code, body := doReq(t, hs, http.MethodDelete, "/api/v1/admin/users/u-alice/refresh-tokens", "")
+	if code != http.StatusOK {
+		t.Fatalf("revoke status=%d body=%v", code, body)
+	}
+	if got, _ := body["revoked"].(float64); int(got) != 2 {
+		t.Errorf("revoked = %v, want 2 (across both of alice's clients)", body["revoked"])
+	}
+
+	// Alice's tokens (both clients) are gone.
+	if _, err := rt.Consume(ctx, "alice-tok-app1"); err == nil {
+		t.Error("alice's app-1 refresh token still present after admin revoke")
+	}
+	if _, err := rt.Consume(ctx, "alice-tok-app2"); err == nil {
+		t.Error("alice's app-2 refresh token still present after admin revoke")
+	}
+	// Bob's token is untouched.
+	if _, err := rt.Consume(ctx, "bob-tok-app1"); err != nil {
+		t.Errorf("bob's refresh token wrongly revoked: %v", err)
+	}
+
+	// Idempotent: revoking again (nothing left) returns 0, not an error.
+	code2, body2 := doReq(t, hs, http.MethodDelete, "/api/v1/admin/users/u-alice/refresh-tokens", "")
+	if code2 != http.StatusOK {
+		t.Fatalf("second revoke status=%d body=%v", code2, body2)
+	}
+	if got, _ := body2["revoked"].(float64); int(got) != 0 {
+		t.Errorf("second revoke = %v, want 0", body2["revoked"])
 	}
 }
 

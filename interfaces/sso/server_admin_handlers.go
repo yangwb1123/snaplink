@@ -34,6 +34,9 @@ func (s *Server) handleAdminClearAccountLockout(ctx HandlerContext) {
 func (s *Server) handleAdminRevokeUserDeviceSecrets(ctx HandlerContext) {
 	admin.HandleAdminRevokeUserDeviceSecrets(s, ctx)
 }
+func (s *Server) handleAdminRevokeUserRefreshTokens(ctx HandlerContext) {
+	admin.HandleAdminRevokeUserRefreshTokens(s, ctx)
+}
 func (s *Server) handleAdminRevokeUserPasswordResetTokens(ctx HandlerContext) {
 	admin.HandleAdminRevokeUserPasswordResetTokens(s, ctx)
 }
