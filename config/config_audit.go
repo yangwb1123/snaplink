@@ -22,6 +22,55 @@ type AuditConfig struct {
 	PIIRedaction   AuditPIIRedactionConfig `yaml:"pii_redaction"`
 	Webhook        AuditWebhookConfig      `yaml:"webhook"`
 	Retention      AuditRetentionConfig    `yaml:"retention"`
+	// CEF, OCSF, and Syslog are three INDEPENDENT SIEM export formatters —
+	// any subset may be enabled simultaneously (e.g. CEF to one collector
+	// AND OCSF to another), unlike Webhook's single-format assumption. Each
+	// composes into the same sink stack as Webhook, after PII redaction
+	// (see cmd/sso-server/serverbuildauthn.BuildAuditSIEMSinks). Formatters
+	// only — no network transport; Output is stdout/stderr/a local file
+	// path, never a network address. Network SIEM delivery (Kafka/NATS) is
+	// a later roadmap item that reuses these exact byte-formatters.
+	CEF    AuditCEFConfig    `yaml:"cef"`
+	OCSF   AuditOCSFConfig   `yaml:"ocsf"`
+	Syslog AuditSyslogConfig `yaml:"syslog"`
+}
+
+// AuditCEFConfig enables an ArcSight CEF (Common Event Format) sink.
+// Vendor/Product/Version fill the CEF header's Device Vendor/Product/
+// Version fields; empty falls back to "Snaplink"/"SSO"/the running binary's
+// build version (see BuildAuditSIEMSinks) so a minimal `enabled: true,
+// output: stdout` config still produces a spec-valid header.
+type AuditCEFConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Output  string `yaml:"output"` // "stdout" | "stderr" | a file path (append, created 0600)
+	Vendor  string `yaml:"vendor"`
+	Product string `yaml:"product"`
+	Version string `yaml:"version"`
+}
+
+// AuditOCSFConfig enables an OCSF (Open Cybersecurity Schema Framework)
+// JSON-lines sink. No format-specific fields today — OCSF's product/vendor
+// metadata is fixed ("Snaplink"/"SSO") rather than config-supplied, unlike
+// CEF's header, since it is schema metadata rather than a wire-visible
+// header operators commonly need to override.
+type AuditOCSFConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Output  string `yaml:"output"` // "stdout" | "stderr" | a file path (append, created 0600)
+}
+
+// AuditSyslogConfig enables an RFC 5424 syslog sink (structured-data
+// carries Event.Metadata; RFC 3164 legacy BSD framing is NOT supported).
+// Facility follows RFC 5424 Table 1 (0-23); zero falls back to 10
+// (authpriv) — facility 0 (kernel) is never a realistic operator choice for
+// an application audit trail, so the zero-value-as-default convention used
+// elsewhere in this config is safe here too. Hostname empty resolves
+// os.Hostname() at wiring time; AppName empty defaults to "sso-server".
+type AuditSyslogConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Output   string `yaml:"output"` // "stdout" | "stderr" | a file path (append, created 0600)
+	Facility int    `yaml:"facility"`
+	Hostname string `yaml:"hostname"`
+	AppName  string `yaml:"app_name"`
 }
 
 // AuditRetentionConfig opts into background pruning of old audit
