@@ -53,7 +53,7 @@ func (b *appBuilder) wireConsentNativeSSOPRM() error {
 // wireConsentStore builds and wires the self-service consent store.
 func (b *appBuilder) wireConsentStore() error {
 	cfg, logger := b.cfg, b.logger
-	consentStore, err := serverbuildstore.BuildConsentStore(cfg.SelfService.Consent, b.pgDB, b.pgDialect)
+	consentStore, err := serverbuildstore.BuildConsentStore(cfg.SelfService.Consent.SelfServiceStoreConfig, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("self_service consent store: %w", err)
 	}
@@ -71,6 +71,14 @@ func (b *appBuilder) wireConsentStore() error {
 	b.consentStore = consentStore // retained for the GDPR eraser
 	b.opts = append(b.opts, sso.WithConsentStore(consentStore))
 	logger.Info("self-service consent enabled", "backend", cfg.SelfService.Consent.Backend)
+	// Server-wide consent grant TTL ceiling (self_service.consent.max_ttl).
+	// Without this, WithConsentTTL was an SDK-only option the stock binary
+	// could never reach — grants lived until explicitly revoked no matter
+	// what an operator wrote in YAML.
+	if cfg.SelfService.Consent.MaxTTL > 0 {
+		b.opts = append(b.opts, sso.WithConsentTTL(cfg.SelfService.Consent.MaxTTL))
+		logger.Info("consent grant max TTL enabled", "max_ttl", cfg.SelfService.Consent.MaxTTL)
+	}
 	// The consent GATE issues a single-use challenge nonce across two
 	// requests; with a Redis cluster wired, keep it cluster-shared so the
 	// approve re-POST consuming on a different replica doesn't loop forever.

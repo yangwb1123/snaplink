@@ -81,6 +81,12 @@ a shared *sql.DB pool per replica, not one pool per store. Selecting `redis`/
 `postgres` without its block is a boot error (`<domain>.backend=postgres but no
 postgres block configured (set postgres.dsn)`).
 
+## Self-Service
+
+| Key | Effect |
+|---|---|
+| `self_service.consent.max_ttl` | Hard server-wide ceiling on consent grant lifetime (`WithConsentTTL`): every recorded grant gets `ExpiresAt = GrantedAt + max_ttl`, after which `GetConsent` treats it as absent and `/auth/login` re-prompts. `0` (default) = no server-enforced expiry — permanent until revoked. Independent of, and can only be tightened by, a client's own `consent_refresh_interval`. Requires `self_service.consent.backend` to be set. |
+
 ## Redis (shared hot-store backend)
 
 One client (single/sentinel/cluster) fanned out to every `backend: redis` store.
