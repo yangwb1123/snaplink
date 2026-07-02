@@ -29,7 +29,6 @@ CREATE TABLE IF NOT EXISTS consent_grants (
     client_id  TEXT   NOT NULL,
     scopes     TEXT   NOT NULL DEFAULT '[]',
     granted_at BIGINT NOT NULL,
-    expires_at BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (user_id, client_id)
 );
 
