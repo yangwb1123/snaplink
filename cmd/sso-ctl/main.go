@@ -3,6 +3,7 @@
 // exactly two binaries — sso-server (the runtime) and sso-ctl (the toolbelt):
 //
 //	sso-ctl audit-verify ...   # verify the audit-log hash chain
+//	sso-ctl audit-export ...   # export a tamper-evident bulk audit bundle
 //	sso-ctl import ...         # bulk-import users (auth0 / keycloak / csv)
 //	sso-ctl migrate ...        # offline schema-migration status
 //	sso-ctl snapshot ...       # inspect / verify sealed state snapshots
@@ -16,6 +17,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/snaplink/sso/cmd/sso-ctl/auditexport"
 	"github.com/snaplink/sso/cmd/sso-ctl/auditverify"
 	"github.com/snaplink/sso/cmd/sso-ctl/clientscmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/configcmd"
@@ -37,6 +39,8 @@ func main() {
 	switch os.Args[1] {
 	case "audit-verify":
 		os.Exit(auditverify.Run(os.Args[2:]))
+	case "audit-export":
+		os.Exit(auditexport.Run(os.Args[2:]))
 	case "clients":
 		os.Exit(clientscmd.Run(os.Args[2:]))
 	case "import":
@@ -72,6 +76,7 @@ Usage:
 
 Commands:
   audit-verify   Verify the audit-log hash chain (from a file or the live API).
+  audit-export   Export a tamper-evident bulk audit bundle (compliance evidence).
   clients        List OAuth clients or inspect a specific client.
   import         Bulk-import users from auth0 / keycloak / csv into a user store.
   migrate        Offline schema-migration status for a SQLite store.

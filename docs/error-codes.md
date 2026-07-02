@@ -242,6 +242,23 @@ These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary 
 | `audit_not_enabled`      | 500  | API hit but `audit.api_enabled: false` (or no recorder configured) |
 | `audit_event_not_found`  | 404  | Specific event id queried but absent / evicted from the sink       |
 
+### Bulk export (SDK Go errors, `platform/audit/auditexport`)
+
+The `auditexport` package builds and verifies self-contained, tamper-evident
+audit bundles (used by `sso-ctl audit-export`). These are **SDK Go errors,
+not HTTP wire codes**: they never appear in any response this server emits
+and carry no `error`/`error_description` JSON body.
+
+| Sentinel               | Returned when                                                        |
+|------------------------|---------------------------------------------------------------------|
+| `ErrNilPager`          | `BuildExportBundle` called with a nil `QueryPager`                   |
+| `ErrNilBundle`         | `VerifyExportBundle` called with a nil bundle                        |
+| `ErrUnsupportedFormat` | Bundle `FormatVersion` differs from the reader's supported version  |
+
+Chain-integrity failures (a tampered event, a broken segment, or a head-hash
+mismatch) surface as descriptive `platform/audit` chain errors ("hash
+mismatch", "chain break") from the reused verifiers, not as new sentinels.
+
 ---
 
 ## Network policy (`/api/v1/netpolicy/*`)

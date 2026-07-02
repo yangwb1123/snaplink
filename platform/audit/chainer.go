@@ -126,6 +126,14 @@ func eventHash(e *Event) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// GenesisHash is the well-known PrevHash of a chain's first (genesis)
+// event. Chain-segment tooling — a bulk compliance export that may not
+// begin at true genesis (see the auditexport package) or the Prune
+// re-chain posture documented on the SQLite sink — needs a named symbol
+// for "this run starts at the chain's beginning" rather than a bare ""
+// literal at every call site.
+const GenesisHash = ""
+
 // VerifyChain walks a sequence of events in CHAIN ORDER (oldest →
 // newest) and confirms:
 //
@@ -141,7 +149,49 @@ func eventHash(e *Event) string {
 // get chain order. Easy mistake to make; the error message mentions
 // "chain order" to nudge debuggers in the right direction.
 func VerifyChain(events []*Event) error {
-	var prev string
+	return verifyChainFrom(events, GenesisHash)
+}
+
+// VerifyChainSegment verifies the internal continuity of a SLICE of a
+// larger chain, seeded from expectedPrevHash — the "boundary anchor":
+// the PrevHash the oldest exported event carried at export time. Passing
+// [GenesisHash] reproduces [VerifyChain] exactly; passing the Hash of
+// the last EXCLUDED event lets a mid-chain export (e.g. a Since/Until
+// compliance window) stay independently tamper-evident WITHOUT rewriting
+// any persisted Hash. The anchor is trusted input, but it is still bound
+// cryptographically: eventHash covers PrevHash, so rewriting events[0]'s
+// PrevHash to match a forged anchor breaks events[0]'s own Hash check.
+//
+// Fail-closed: any break or per-event tamper is a returned error.
+func VerifyChainSegment(events []*Event, expectedPrevHash string) error {
+	return verifyChainFrom(events, expectedPrevHash)
+}
+
+// VerifyEventIntegrity checks only that each event's Hash matches its
+// content (eventHash), NOT that the events link into a continuous chain.
+// It is the right check for an attribute-filtered export (by type, actor,
+// tenant, …): such a subset SKIPS intervening events, so PrevHash
+// linkage genuinely does not hold, but each retained event's content is
+// still tamper-evident on its own. Order-independent; a nil event is a
+// returned error.
+func VerifyEventIntegrity(events []*Event) error {
+	for i, e := range events {
+		if e == nil {
+			return fmt.Errorf("audit: VerifyEventIntegrity: nil event at index %d", i)
+		}
+		if recomputed := eventHash(e); e.Hash != recomputed {
+			return fmt.Errorf("audit: hash mismatch at index %d (id=%s): stored=%q, recomputed=%q (event was tampered with after recording)",
+				i, e.ID, e.Hash, recomputed)
+		}
+	}
+	return nil
+}
+
+// verifyChainFrom is the shared walk behind VerifyChain and
+// VerifyChainSegment: it seeds the running PrevHash with prev instead of
+// a hardcoded "" so the same recomputation logic serves both a
+// genesis-anchored full chain and a boundary-anchored segment.
+func verifyChainFrom(events []*Event, prev string) error {
 	for i, e := range events {
 		if e == nil {
 			return fmt.Errorf("audit: VerifyChain: nil event at index %d (events must be in chain order, oldest first)", i)
