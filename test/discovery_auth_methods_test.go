@@ -39,12 +39,24 @@ func TestDiscovery_IntrospectionRevocationAuthMethods(t *testing.T) {
 		"tls_client_auth", "self_signed_tls"}
 	sort.Strings(want)
 
+	// token_endpoint_auth_methods_supported additionally advertises "none":
+	// RFC 6749 §2.1 / OIDC Core §9 public clients (SPAs, native apps)
+	// authenticate only by client_id + PKCE (see
+	// server_discovery_config.go:193-199). Introspection/revocation/PAR
+	// share the same client-auth pipeline and correctly omit it.
+	wantToken := append(append([]string{}, want...), "none")
+	sort.Strings(wantToken)
+
 	for _, field := range []string{
 		"introspection_endpoint_auth_methods_supported",
 		"revocation_endpoint_auth_methods_supported",
 		"pushed_authorization_request_endpoint_auth_methods_supported",
 		"token_endpoint_auth_methods_supported",
 	} {
+		fieldWant := want
+		if field == "token_endpoint_auth_methods_supported" {
+			fieldWant = wantToken
+		}
 		raw, ok := doc[field].([]any)
 		if !ok {
 			t.Errorf("%s missing from discovery: %v", field, doc[field])
@@ -55,8 +67,8 @@ func TestDiscovery_IntrospectionRevocationAuthMethods(t *testing.T) {
 			got = append(got, v.(string))
 		}
 		sort.Strings(got)
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("%s = %v want %v", field, got, want)
+		if !reflect.DeepEqual(got, fieldWant) {
+			t.Errorf("%s = %v want %v", field, got, fieldWant)
 		}
 	}
 }

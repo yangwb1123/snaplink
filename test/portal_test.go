@@ -52,10 +52,25 @@ func TestPortal_ServesSPA(t *testing.T) {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	// The real embedded index.html drives the /me* endpoints.
-	for _, want := range []string{"Your account", "/me/password", "/sessions/me", "/me/mfa"} {
-		if !strings.Contains(string(body), want) {
-			t.Errorf("portal SPA missing %q", want)
+	// The real embedded index.html shell drives the page.
+	if !strings.Contains(string(body), "Your account") {
+		t.Errorf("portal SPA missing %q", "Your account")
+	}
+
+	// The /me* endpoint calls live in app.js (extracted from the inline
+	// script), served alongside index.html from the same /portal/ mount.
+	jsResp, err := http.Get(srv.URL + "/portal/app.js")
+	if err != nil {
+		t.Fatalf("GET /portal/app.js: %v", err)
+	}
+	defer func() { _ = jsResp.Body.Close() }()
+	if jsResp.StatusCode != http.StatusOK {
+		t.Fatalf("app.js status=%d, want 200", jsResp.StatusCode)
+	}
+	jsBody, _ := io.ReadAll(jsResp.Body)
+	for _, want := range []string{"/me/password", "/sessions/me", "/me/mfa"} {
+		if !strings.Contains(string(jsBody), want) {
+			t.Errorf("portal app.js missing %q", want)
 		}
 	}
 }
