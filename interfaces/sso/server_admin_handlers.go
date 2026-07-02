@@ -65,6 +65,12 @@ func (s *Server) handleAdminUpsertConnection(ctx HandlerContext) {
 func (s *Server) handleAdminDeleteConnection(ctx HandlerContext) {
 	admin.HandleAdminDeleteConnection(s, ctx)
 }
+func (s *Server) handleAdminListConnectionDomains(ctx HandlerContext) {
+	admin.HandleAdminListConnectionDomains(s, ctx)
+}
+func (s *Server) handleAdminVerifyConnectionDomain(ctx HandlerContext) {
+	admin.HandleAdminVerifyConnectionDomain(s, ctx)
+}
 
 // Tenant membership (admin).
 func (s *Server) handleAdminListTenantMembers(ctx HandlerContext) {

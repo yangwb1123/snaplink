@@ -83,6 +83,19 @@ a shared *sql.DB pool per replica, not one pool per store. Selecting `redis`/
 `postgres` without its block is a boot error (`<domain>.backend=postgres but no
 postgres block configured (set postgres.dsn)`).
 
+### B2B connection email-domain verification
+
+| Key | Effect |
+|---|---|
+| `connections.domain_verification.enabled` | `false` (default): last-write-wins `Upsert` — byte-identical to the pre-feature build. `true`: an admin-API `Upsert` claiming a domain another connection has already **verified** cannot steal its home-realm routing; the new claimant must prove control by publishing a DNS TXT record and calling `POST /api/v1/admin/connections/:id/domains/:domain/verify`. |
+| `connections.domain_verification.record_prefix` | DNS label prepended to the claimed domain to form the challenge record name (`<prefix>.<domain>`). Empty uses the built-in default (`_snaplink-domain-verify`). |
+
+Boot-time YAML-seeded connections (`connections.connections`) are always
+auto-verified regardless of the flag — the operator authoring the YAML is an
+equivalent trust level to a direct DB write. The verify endpoint uses the
+stdlib DNS resolver by default; an SDK embedder can inject a custom one via
+`sso.WithDomainVerificationResolver` (e.g. DNS-over-HTTPS).
+
 ## Redis (shared hot-store backend)
 
 One client (single/sentinel/cluster) fanned out to every `backend: redis` store.

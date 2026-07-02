@@ -288,6 +288,14 @@ const (
 	PathAdminConnections    = "/admin/connections"
 	PathAdminConnectionByID = "/admin/connections/:id"
 
+	// PathAdminConnectionDomains lists a connection's email-domain ownership
+	// claims (admin:read) — each with its DNS-TXT challenge record + status.
+	// PathAdminConnectionDomainVerify triggers a synchronous DNS-TXT check for
+	// one claimed domain (admin:write): a verified claim by ANOTHER connection
+	// blocks routing takeover, so a new claimant must prove DNS control here.
+	PathAdminConnectionDomains      = "/admin/connections/:id/domains"
+	PathAdminConnectionDomainVerify = "/admin/connections/:id/domains/:domain/verify"
+
 	// PathAdminTenantMembers / PathAdminTenantMemberByID manage a tenant's org
 	// roster (B2B membership, distinct from SCIM app roles). GET lists the roster
 	// (admin:read); PUT upserts a member's role + DELETE removes (admin:write).

@@ -29,6 +29,7 @@ const (
 	EventAdminClientSecretRotated        = auditspi.EventAdminClientSecretRotated
 	EventAdminClientUpdated              = auditspi.EventAdminClientUpdated
 	EventAdminConnectionDeleted          = auditspi.EventAdminConnectionDeleted
+	EventAdminConnectionDomainVerified   = auditspi.EventAdminConnectionDomainVerified
 	EventAdminConnectionUpserted         = auditspi.EventAdminConnectionUpserted
 	EventAdminConsentRevoked             = auditspi.EventAdminConsentRevoked
 	EventAdminDeviceSecretsRevoked       = auditspi.EventAdminDeviceSecretsRevoked

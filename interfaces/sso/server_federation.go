@@ -170,6 +170,11 @@ type federationMeshState struct {
 	// route is NOT mounted — byte-identical to a build without it.
 	connectionStore connections.Store
 
+	// domainVerificationResolver is the DNS-TXT resolver the admin
+	// connection-domain-verify handler uses (WithDomainVerificationResolver).
+	// Nil ⇒ the stdlib-backed production resolver (see DomainResolver accessor).
+	domainVerificationResolver connections.DNSResolver
+
 	// Opt-in Envoy/Istio ext_authz HTTP-mode authorization endpoint
 	// (cluster C1 mesh data-plane, the HTTP variant — the gRPC variant
 	// needs the go-control-plane proto dep and lives in a separate

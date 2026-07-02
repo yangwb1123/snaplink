@@ -25,6 +25,7 @@ const (
 	EventAdminAccountUnlocked            EventType = "admin_account_unlocked"
 	EventAdminConnectionUpserted         EventType = "admin_connection_upserted"
 	EventAdminConnectionDeleted          EventType = "admin_connection_deleted"
+	EventAdminConnectionDomainVerified   EventType = "admin_connection_domain_verified"
 	EventAdminTenantMemberAdded          EventType = "admin_tenant_member_added"
 	EventAdminTenantMemberRemoved        EventType = "admin_tenant_member_removed"
 	EventAdminRoleAdded                  EventType = "admin_role_added"

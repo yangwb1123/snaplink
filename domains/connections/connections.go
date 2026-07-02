@@ -67,6 +67,23 @@ type Store interface {
 	Upsert(ctx context.Context, c *Connection) error
 	// Delete removes the connection (and its domain routing). Idempotent.
 	Delete(ctx context.Context, id string) error
+
+	// DomainClaim returns connID's claim (pending or verified) on domain, or
+	// ErrNoDomainClaim if connID has never claimed it. Upsert creates the
+	// claim (with a fresh Token) the first time connID lists domain in its
+	// Domains. domain is matched case-insensitively.
+	DomainClaim(ctx context.Context, connID, domain string) (*DomainVerification, error)
+	// DomainClaims returns every claim (pending + verified) connID currently
+	// holds, so the admin UI can render "publish these TXT records" status.
+	DomainClaims(ctx context.Context, connID string) ([]*DomainVerification, error)
+	// VerifyDomain marks connID's claim on domain VERIFIED (idempotent) and
+	// promotes connID to the ByDomain routing owner, demoting any prior
+	// verified owner (DNS control changing hands is the correct signal).
+	// Returns ErrNoDomainClaim if connID has not claimed domain. This is the
+	// storage-only primitive: DNS-proof callers go through VerifyDomainOwnership,
+	// while a boot-time/operator-trusted caller may call it directly to skip
+	// the DNS round-trip.
+	VerifyDomain(ctx context.Context, connID, domain string) error
 }
 
 // DomainFromIdentifier extracts the lowercase home-realm domain from a login

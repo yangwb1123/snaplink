@@ -135,10 +135,23 @@ type TenantSeedConfig struct {
 // the runnable binary had no way to populate connections at all — the home-realm
 // feature was reachable only by SDK embedders calling Store.Upsert directly.
 type ConnectionsConfig struct {
-	Enabled     bool                    `yaml:"enabled"`
-	Backend     string                  `yaml:"backend"` // memory | sqlite
-	SQLite      ConnectionsSQLiteConfig `yaml:"sqlite"`
-	Connections []ConnectionSeedConfig  `yaml:"connections"`
+	Enabled            bool                     `yaml:"enabled"`
+	Backend            string                   `yaml:"backend"` // memory | sqlite
+	SQLite             ConnectionsSQLiteConfig  `yaml:"sqlite"`
+	Connections        []ConnectionSeedConfig   `yaml:"connections"`
+	DomainVerification DomainVerificationConfig `yaml:"domain_verification"`
+}
+
+// DomainVerificationConfig gates DNS-TXT email-domain ownership proof before a
+// runtime (admin-API) Upsert can steal another connection's already-VERIFIED
+// domain from home-realm routing. Disabled by default: last-write-wins Upsert,
+// byte-identical to the pre-feature behavior (a single-tenant deployment with a
+// trusted admin has no attacker to defend against). Boot-time YAML-seeded
+// connections are ALWAYS auto-verified regardless of this flag — the operator
+// authoring the YAML is an equivalent trust level to a direct DB write.
+type DomainVerificationConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	RecordPrefix string `yaml:"record_prefix"` // default connections.DefaultRecordPrefix
 }
 
 // ConnectionsSQLiteConfig is the SQLite backend's DSN.

@@ -14,6 +14,11 @@ import (
 // handlers run only after that gate, so they assume admin authorization.
 type Deps interface {
 	ConnectionStore() connections.Store
+	// DomainResolver is the DNS-TXT resolver the connection domain-verify
+	// handler uses to read a challenge record. Injectable (first-class DI) so
+	// tests run network-free with a fake and operators can supply a
+	// DNS-over-HTTPS resolver; the production default is stdlib-backed.
+	DomainResolver() connections.DNSResolver
 	TenantUserStore() core.TenantUserStore
 	InvitationStore() core.InvitationStore
 	InvitationSender() spi.InvitationSender

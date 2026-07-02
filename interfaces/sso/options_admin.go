@@ -1,6 +1,24 @@
 package sso
 
-import "time"
+import (
+	"time"
+
+	"github.com/snaplink/sso/domains/connections"
+)
+
+// WithDomainVerificationResolver injects the DNS-TXT resolver used by the admin
+// connection email-domain verification endpoint (first-class DI so tests run
+// network-free with a fake and operators can supply a DNS-over-HTTPS resolver).
+// Nil/unset uses the stdlib-backed production resolver. This only affects the
+// resolver; the enable flag + record prefix live on the connections.Store
+// (WithDomainVerificationRequired / config connections.domain_verification).
+func WithDomainVerificationResolver(r connections.DNSResolver) Option {
+	return func(s *Server) {
+		if r != nil {
+			s.domainVerificationResolver = r
+		}
+	}
+}
 
 // WithAdminSessionTTL sets an idle timeout for admin bearer tokens. When
 // a token has not been used for longer than the TTL, the admin middleware

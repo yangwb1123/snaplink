@@ -131,6 +131,16 @@ func (s *Server) AdminTokenStore() core.AdminTokenStore {
 }
 
 func (s *Server) ConnectionStore() connections.Store { return s.connectionStore }
+
+// DomainResolver returns the DNS-TXT resolver for admin connection-domain
+// verification, defaulting to the stdlib-backed production resolver when no
+// custom one was injected — so the SDK works with zero configuration.
+func (s *Server) DomainResolver() connections.DNSResolver {
+	if s.domainVerificationResolver != nil {
+		return s.domainVerificationResolver
+	}
+	return connections.NewDNSResolver()
+}
 // ConsentStore exposes the wired consent store (may be nil).
 func (s *Server) ConsentStore() ConsentStore { return s.consentStore }
 func (s *Server) TenantUserStore() core.TenantUserStore     { return s.tenantUserStore }

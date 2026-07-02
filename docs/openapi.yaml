@@ -4970,6 +4970,87 @@ paths:
         "204": { description: Connection deleted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/admin/connections/{id}/domains:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: List a connection's email-domain ownership claims.
+      description: |
+        Returns THIS connection's own email-domain claims (pending + verified),
+        each with the DNS TXT record name to publish and the challenge token.
+        admin:read. The token is public by design (DNS-TXT challenge, ACME
+        dns-01 style) — it is not a bearer secret. 404 if the connection does
+        not exist. Mounted only when a connection store is wired.
+      operationId: adminListConnectionDomains
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The connection's domain claims.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  domains:
+                    type: array
+                    items: { $ref: "#/components/schemas/ConnectionDomainClaim" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such connection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/admin/connections/{id}/domains/{domain}/verify:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: domain
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Verify a claimed email domain via its DNS TXT challenge.
+      description: |
+        Performs a synchronous DNS TXT lookup for the claimed domain's challenge
+        record and, on a match, marks the claim verified — promoting this
+        connection to the home-realm routing owner and demoting any prior
+        verified owner (proof of DNS control legitimately supersedes a stale
+        claim). admin:write. Returns 200 in BOTH outcomes: a not-yet-published
+        record is a state (verified:false, status:pending), not an error
+        (mirrors token introspection's active:false). 404 only when this
+        connection has not claimed the domain. Emits
+        admin_connection_domain_verified on success.
+      operationId: adminVerifyConnectionDomain
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The verification outcome (verified or still pending).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  verified: { type: boolean }
+                  status: { type: string, enum: [pending, verified] }
+                  record: { type: string }
+                  token: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: The connection has not claimed this domain.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
   /api/v1/admin/tenants/{id}/members:
     parameters:
       - name: id
@@ -8157,6 +8238,24 @@ components:
           type: object
           additionalProperties: { type: string }
           description: Opaque protocol-specific settings (e.g. oidc_issuer, oidc_client_id).
+
+    ConnectionDomainClaim:
+      type: object
+      description: |
+        One (connection, domain) email-domain ownership claim. The token is a
+        public DNS-TXT challenge value (ACME dns-01 style), not a bearer secret.
+      required: [domain, status, record, token]
+      properties:
+        domain: { type: string }
+        status: { type: string, enum: [pending, verified] }
+        record:
+          type: string
+          description: DNS TXT record name to publish (prefix + "." + domain).
+        token:
+          type: string
+          description: Challenge value to publish as the TXT record's content.
+        created_at: { type: string, format: date-time }
+        verified_at: { type: string, format: date-time }
 
     ErasureReport:
       type: object
