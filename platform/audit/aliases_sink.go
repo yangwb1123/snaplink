@@ -13,12 +13,14 @@ type (
 	BatchSink                = auditsink.BatchSink
 	FilteringOption          = auditsink.FilteringOption
 	FilteringSink            = auditsink.FilteringSink
+	Formatter                = auditsink.Formatter
 	RetryOption              = auditsink.RetryOption
 	RetryingSink             = auditsink.RetryingSink
 	TransientErrorClassifier = auditsink.TransientErrorClassifier
 	WebhookOption            = auditsink.WebhookOption
 	WebhookSink              = auditsink.WebhookSink
 	WriterSink               = auditsink.WriterSink
+	WriterSinkOption         = auditsink.WriterSinkOption
 )
 
 const (
@@ -33,8 +35,14 @@ var (
 	DefaultTransientClassifier = auditsink.DefaultTransientClassifier
 	ErrNonTransient            = auditsink.ErrNonTransient
 	ErrSinkWriteOnly           = auditsink.ErrSinkWriteOnly
+	FormatCEF                  = auditsink.FormatCEF
+	FormatOCSF                 = auditsink.FormatOCSF
+	FormatSyslog               = auditsink.FormatSyslog
+	NewCEFSink                 = auditsink.NewCEFSink
 	NewFilteringSink           = auditsink.NewFilteringSink
+	NewOCSFSink                = auditsink.NewOCSFSink
 	NewRetryingSink            = auditsink.NewRetryingSink
+	NewSyslogSink              = auditsink.NewSyslogSink
 	NewWebhookSink             = auditsink.NewWebhookSink
 	NewWriterSink              = auditsink.NewWriterSink
 	WithEventTypeFilter        = auditsink.WithEventTypeFilter
@@ -46,4 +54,5 @@ var (
 	WithWebhookHeader          = auditsink.WithWebhookHeader
 	WithWebhookSigningSecret   = auditsink.WithWebhookSigningSecret
 	WithWebhookTimeout         = auditsink.WithWebhookTimeout
+	WithWriterFormat           = auditsink.WithWriterFormat
 )

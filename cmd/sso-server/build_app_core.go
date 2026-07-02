@@ -203,13 +203,8 @@ func (b *appBuilder) wireAudit() error {
 	if err != nil {
 		return fmt.Errorf("audit: build primary sink: %w", err)
 	}
-	// Schema-version boot gate: refuse to start when the SQLite audit
-	// sink's live schema is ahead of what this binary knows. Skip for
-	// postgres (its migrate ran at construction).
-	if !strings.EqualFold(strings.TrimSpace(cfg.Audit.Backend), "postgres") {
-		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, primary, "audit", auditsqlite.AuditMaxVersion()); err != nil {
-			return fmt.Errorf("schema check audit: %w", err)
-		}
+	if err := b.checkAuditSchema(primary); err != nil {
+		return err
 	}
 	if err := b.startAuditRetention(primary, primaryName); err != nil {
 		return err
@@ -220,6 +215,9 @@ func (b *appBuilder) wireAudit() error {
 		if err != nil {
 			return err
 		}
+	}
+	if sink, err = b.wireAuditSIEM(sink); err != nil {
+		return err
 	}
 	// Async wrap when configured. The buffered hot path keeps slow
 	// (e.g. webhook) sinks from blocking request latency. Memory
@@ -242,6 +240,35 @@ func (b *appBuilder) wireAudit() error {
 	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "audit-"+primaryName, primary)
 	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "audit-"+primaryName, primary)
 	return nil
+}
+
+// checkAuditSchema refuses to start when the SQLite audit sink's live
+// schema is ahead of what this binary knows; postgres's migrate already ran
+// at construction so it is skipped.
+func (b *appBuilder) checkAuditSchema(primary audit.Sink) error {
+	if strings.EqualFold(strings.TrimSpace(b.cfg.Audit.Backend), "postgres") {
+		return nil
+	}
+	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, primary, "audit", auditsqlite.AuditMaxVersion()); err != nil {
+		return fmt.Errorf("schema check audit: %w", err)
+	}
+	return nil
+}
+
+// wireAuditSIEM fans sink out to every enabled CEF/OCSF/syslog formatter —
+// three independent config blocks, so any subset may be active
+// simultaneously. Formatter sinks are local/stdout/file targets (no
+// RetryingSink): network SIEM delivery is a later roadmap item that reuses
+// these exact byte-formatters over a different transport.
+func (b *appBuilder) wireAuditSIEM(sink audit.Sink) (audit.Sink, error) {
+	siemSinks, err := serverbuildauthn.BuildAuditSIEMSinks(b.cfg.Audit, b.logger)
+	if err != nil {
+		return nil, fmt.Errorf("audit: build siem sinks: %w", err)
+	}
+	if len(siemSinks) == 0 {
+		return sink, nil
+	}
+	return audit.NewMultiSink(append([]audit.Sink{sink}, siemSinks...)...), nil
 }
 
 // startAuditRetention boots the retention prune loop against the SQLite primary
