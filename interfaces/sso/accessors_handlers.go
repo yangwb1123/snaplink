@@ -157,6 +157,20 @@ func (s *Server) MFAEnrollmentStore() core.MFAEnrollmentStore { return s.mfaEnro
 // accessor satisfies both selfservicecore.Deps and admin.Deps.
 func (s *Server) RecoveryCodeStore() core.RecoveryCodeStore { return s.recoveryCodeStore }
 
+// TrustedDeviceStore returns the trusted-device MFA-skip store (nil when
+// unwired). Satisfies selfservicecore.Deps.
+func (s *Server) TrustedDeviceStore() core.TrustedDeviceStore { return s.trustedDeviceStore }
+
+// TrustedDeviceTTL returns the configured "remember this device" grant TTL,
+// falling back to core.DefaultTrustedDeviceTTL when WithTrustedDeviceStore
+// was called with ttl <= 0 (or not called at all).
+func (s *Server) TrustedDeviceTTL() time.Duration {
+	if s.trustedDeviceTTL > 0 {
+		return s.trustedDeviceTTL
+	}
+	return core.DefaultTrustedDeviceTTL
+}
+
 // TOTPEnroller returns the TOTP enroller (nil when unwired).
 func (s *Server) TOTPEnroller() core.TOTPEnroller { return s.totpEnroller }
 

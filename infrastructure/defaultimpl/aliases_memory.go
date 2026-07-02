@@ -64,25 +64,27 @@ var (
 
 // --- memorystorecredential ---
 type (
-	MemoryEmailChangeStore            = memorystorecredential.MemoryEmailChangeStore
-	MemoryEmailVerificationStore      = memorystorecredential.MemoryEmailVerificationStore
-	MemoryIPFailureCounter            = memorystorecredential.MemoryIPFailureCounter
+	MemoryEmailChangeStore        = memorystorecredential.MemoryEmailChangeStore
+	MemoryEmailVerificationStore  = memorystorecredential.MemoryEmailVerificationStore
+	MemoryIPFailureCounter        = memorystorecredential.MemoryIPFailureCounter
 	MemoryJTIReplayStore          = memorystorecredential.MemoryJTIReplayStore
 	MemoryPasswordCredentialStore = memorystorecredential.MemoryPasswordCredentialStore
 	MemoryPasswordResetStore      = memorystorecredential.MemoryPasswordResetStore
 	MemoryRecentLoginStore        = memorystorecredential.MemoryRecentLoginStore
 	MemoryRecentLoginStoreOption  = memorystorecredential.MemoryRecentLoginStoreOption
 	MemoryRecoveryCodeStore       = memorystorecredential.MemoryRecoveryCodeStore
+	MemoryTrustedDeviceStore      = memorystorecredential.MemoryTrustedDeviceStore
 )
 
 var (
-	NewMemoryEmailChangeStore            = memorystorecredential.NewMemoryEmailChangeStore
-	NewMemoryEmailVerificationStore      = memorystorecredential.NewMemoryEmailVerificationStore
-	NewMemoryIPFailureCounter            = memorystorecredential.NewMemoryIPFailureCounter
+	NewMemoryEmailChangeStore        = memorystorecredential.NewMemoryEmailChangeStore
+	NewMemoryEmailVerificationStore  = memorystorecredential.NewMemoryEmailVerificationStore
+	NewMemoryIPFailureCounter        = memorystorecredential.NewMemoryIPFailureCounter
 	NewMemoryJTIReplayStore          = memorystorecredential.NewMemoryJTIReplayStore
 	NewMemoryPasswordCredentialStore = memorystorecredential.NewMemoryPasswordCredentialStore
 	NewMemoryPasswordResetStore      = memorystorecredential.NewMemoryPasswordResetStore
 	NewMemoryRecentLoginStore        = memorystorecredential.NewMemoryRecentLoginStore
 	NewMemoryRecoveryCodeStore       = memorystorecredential.NewMemoryRecoveryCodeStore
+	NewMemoryTrustedDeviceStore      = memorystorecredential.NewMemoryTrustedDeviceStore
 	WithRecentLoginPerSubjectCap     = memorystorecredential.WithRecentLoginPerSubjectCap
 )

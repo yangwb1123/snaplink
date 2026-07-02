@@ -223,6 +223,11 @@ type SubjectRevoker interface {
 type RevocationResult struct {
 	RefreshTokensRevoked int
 	SessionsDestroyed    int
+	// TrustedDevicesRevoked counts "remember this device" MFA-skip grants
+	// killed by the optional fourth leg (WithTrustedDeviceRevocation). Zero
+	// when that leg isn't wired — distinct from "wired but nothing to
+	// revoke", which the receiver's audit trail doesn't need to tell apart.
+	TrustedDevicesRevoked int
 }
 
 // SubjectResolver maps a SET subject identifier to a LOCAL user id. The

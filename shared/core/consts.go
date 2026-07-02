@@ -45,8 +45,8 @@ const (
 	// /me/*-namespace variants of the /sessions/me* paths. These follow the
 	// self-service /me/* convention (cf. PathMe, PathMyMFA) and provide a
 	// single discoverable prefix for the self-service portal SPA.
-	PathMeSessions         = "/me/sessions"
-	PathMeSessionByID      = "/me/sessions/:id"
+	PathMeSessions          = "/me/sessions"
+	PathMeSessionByID       = "/me/sessions/:id"
 	PathMeSessionsRevokeAll = "/me/sessions/revoke-all"
 
 	PathMyConsents    = "/consents/me"
@@ -121,6 +121,15 @@ const (
 	// plaintext codes exactly once; GET returns the remaining count only
 	// (never the codes). Mounted only when a RecoveryCodeStore is wired.
 	PathMyMFARecoveryCodes = "/me/mfa/recovery-codes"
+
+	// PathMyDevices lists the authenticated user's trusted (MFA-skip) devices
+	// (GET); PathMyDeviceByID revokes one (DELETE). PathMyDevicesTrust marks
+	// the CURRENT device trusted (POST) — gated on the caller's bearer token
+	// having completed MFA THIS session (amr contains "mfa"), so a stolen
+	// session that never stepped up can never mint a skip grant.
+	PathMyDevices      = "/me/devices"
+	PathMyDeviceByID   = "/me/devices/:id"
+	PathMyDevicesTrust = "/me/devices/trust"
 
 	// PathMyWebAuthnRegisterBegin / Finish are AUTHENTICATED self-service passkey
 	// registration (POST). Unlike the signup ceremony (/webauthn/registration/*,

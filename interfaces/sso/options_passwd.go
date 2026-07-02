@@ -179,6 +179,31 @@ func WithRecoveryCodeStore(store RecoveryCodeStore) Option {
 	return func(srv *Server) { srv.recoveryCodeStore = store }
 }
 
+// WithTrustedDeviceStore wires the "remember this device" MFA-skip store. It
+// mounts the self-service surface GET /me/devices (list), POST
+// /me/devices/trust (mark the CURRENT device trusted — gated on the
+// caller's bearer token having completed MFA THIS session, i.e. its amr
+// contains "mfa"), and DELETE /me/devices/:id (revoke one) — and it arms the
+// /auth/login step-up-skip check: when the configured RiskScorer demands
+// DecisionRequireMFA, a request presenting a live grant
+// (login.Request.DeviceToken) for the SAME (user, client) pair skips the
+// challenge.
+//
+// ttl bounds how long a single grant stays valid; pass 0 to inherit
+// [core.DefaultTrustedDeviceTTL] (30 days). There is no renew-on-use, so a
+// forgotten device decays on its own rather than staying trusted forever.
+// When nil (the default), neither the self-service routes nor the
+// login-time skip are active — byte-identical to a build without this
+// feature.
+func WithTrustedDeviceStore(store TrustedDeviceStore, ttl time.Duration) Option {
+	return func(srv *Server) {
+		srv.trustedDeviceStore = store
+		if ttl > 0 {
+			srv.trustedDeviceTTL = ttl
+		}
+	}
+}
+
 // WithTOTPEnroller wires the seam the self-service TOTP enrollment endpoints
 // (POST /me/mfa/totp/begin + /confirm) use to mint/encode/decode secrets, build
 // the otpauth provisioning URI, and verify the confirm code. Use
