@@ -63,7 +63,10 @@ func BuildAuthenticatorsDurable(cfg *config.Config, logger spi.Logger, passwordS
 		return nil, nil, nil, nil, err
 	}
 	auths = appendPhoneAuthenticator(auths, cfg.Authenticators.Phone, codeStore, logger)
-	auths = appendEmailAuthenticator(auths, cfg.Authenticators.Email, codeStore, logger)
+	auths, err = appendEmailAuthenticator(auths, cfg.Authenticators.Email, codeStore, cfg.SMTP, logger)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
 
 	if a := cfg.Authenticators.TempToken; a != nil && a.Enabled {
 		tempStore = buildTempTokenStore(rdb)

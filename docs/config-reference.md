@@ -123,6 +123,30 @@ See [deployment.md](deployment.md) for the HA topology and
 `ops/deploy/k8s-prod/config.yaml` for the canonical production selection
 (durable → postgres, hot → redis, coordination → etcd).
 
+## Email (SMTP)
+
+Built-in outbound email sender (`infrastructure/defaultimpl/emailsmtp`) that
+delivers password-reset, email-verification, email-change, org-invitation,
+and email-OTP messages over `net/smtp` — no external mail-provider dependency.
+`smtp.enabled=false` or an empty `smtp.host` leaves the four SDK sender
+options unwired, same no-op-delivery behavior as a build without this. Send
+is ASYNC fire-and-forget (a background goroutine bounded by `smtp.timeout`) so
+`/auth/forgot-password` stays constant-time regardless of SMTP latency
+(anti-enumeration) — send failures are logged, never surfaced to the caller.
+
+| Key | Effect |
+|---|---|
+| `smtp.enabled` | Master switch; `false` = byte-identical no-op delivery |
+| `smtp.host` | SMTP relay hostname (also required — enabling without a host is a no-op) |
+| `smtp.port` | SMTP relay port (`587` STARTTLS, `25` plaintext relay; implicit-TLS `465` is a follow-up, not yet supported) |
+| `smtp.username` | AUTH username; empty = no AUTH attempted |
+| `smtp.password` | AUTH password — supports `secret://` resolution (`config/secrets.go`) and the `SSO_SMTP__PASSWORD` env override; never commit a plaintext value |
+| `smtp.from` | Envelope + `From:` header address |
+| `smtp.starttls` | Documents intent; `net/smtp.SendMail` negotiates STARTTLS automatically whenever the server advertises it and falls back to plaintext otherwise |
+| `smtp.timeout` | Per-send bound for the background dispatch goroutine; 0 = 10s default |
+| `smtp.templates_dir` | Filesystem overlay for the five go:embed default templates (`password_reset`/`email_verification`/`email_change`/`invitation`/`otp`); empty = embedded defaults only |
+| `smtp.link_base_url` | Prefixed to reset/verify/invite links — required because the sender only ever sees the token/target its `spi.*Sender` method receives, never `server.issuer` |
+
 ## Tenant & Region
 
 | Key | Effect |

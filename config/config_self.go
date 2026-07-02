@@ -62,6 +62,38 @@ type SelfServiceStoreConfig struct {
 	SQLite  IdentitySQLiteConfig `yaml:"sqlite"`
 }
 
+// SMTPConfig wires the built-in outbound email sender
+// (infrastructure/defaultimpl/emailsmtp) that delivers password-reset,
+// email-verification, email-change, org-invitation, and email-OTP messages
+// over net/smtp. Enabled=false or an empty Host leaves cmd's four SDK sender
+// options unwired — same no-op-delivery behavior as before this existed
+// (byte-identical).
+type SMTPConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	Username string `yaml:"username"`
+	// Password supports secret:// resolution (config/secrets.go) and the
+	// SSO_SMTP__PASSWORD env override — never commit a plaintext password.
+	Password string `yaml:"password"`
+	From     string `yaml:"from"`
+	// StartTLS documents intent (net/smtp.SendMail negotiates STARTTLS
+	// automatically whenever the server advertises it, and falls back to
+	// plaintext otherwise, so there is no separate code branch to gate).
+	// Implicit TLS (port 465) is a deferred follow-up.
+	StartTLS bool `yaml:"starttls"`
+	// Timeout bounds each background send; 0 = SDK default (10s).
+	Timeout time.Duration `yaml:"timeout"`
+	// TemplatesDir overlays the five go:embed default templates
+	// (password_reset/email_verification/email_change/invitation/otp) from
+	// disk when set; empty = embedded defaults only.
+	TemplatesDir string `yaml:"templates_dir"`
+	// LinkBaseURL is prefixed to reset/verify/invite links; required because
+	// the sender only sees the token/target from its SPI signature, never
+	// server.issuer.
+	LinkBaseURL string `yaml:"link_base_url"`
+}
+
 // MeshConfig opts into the service-mesh data-plane integrations
 // (cluster C1). Today it carries the ext_authz HTTP-mode authorization
 // endpoint (the gRPC ext_authz variant needs the go-control-plane proto

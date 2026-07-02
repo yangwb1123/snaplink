@@ -9,6 +9,7 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
@@ -131,19 +132,40 @@ func appendPhoneAuthenticator(auths []sso.Authenticator, a *config.CodeAuthConfi
 	))
 }
 
-func appendEmailAuthenticator(auths []sso.Authenticator, a *config.CodeAuthConfig, codeStore authenticators.CodeStore, logger spi.Logger) []sso.Authenticator {
+func appendEmailAuthenticator(auths []sso.Authenticator, a *config.CodeAuthConfig, codeStore authenticators.CodeStore, smtpCfg config.SMTPConfig, logger spi.Logger) ([]sso.Authenticator, error) {
 	if a == nil || !a.Enabled {
-		return auths
+		return auths, nil
+	}
+	sender, err := buildEmailOTPSender(smtpCfg, logger)
+	if err != nil {
+		return nil, err
 	}
 	return append(auths, authenticators.NewEmailAuthenticator(
 		codeStore,
-		authenticators.EmailSenderFunc(func(_ context.Context, email, code string) error {
-			logger.Info("email stub", "email", email, "code", code)
-			return nil
-		}),
+		sender,
 		authenticators.WithEmailCodeLength(a.CodeLength),
 		authenticators.WithEmailCodeTTL(a.CodeTTL),
-	))
+	)), nil
+}
+
+// buildEmailOTPSender resolves the email-OTP transport EmailAuthenticator
+// dials: the built-in SMTP sender when smtp.enabled and a host is configured,
+// else the pre-existing log-only stub (byte-identical to before this
+// existed). Reuses serverbuildplatform.BuildEmailSender (same translation +
+// nil-on-disabled semantics as the four shared/spi token senders) rather than
+// duplicating the config.SMTPConfig -> emailsmtp.Config mapping here.
+func buildEmailOTPSender(smtpCfg config.SMTPConfig, logger spi.Logger) (authenticators.EmailSender, error) {
+	sender, err := serverbuildplatform.BuildEmailSender(smtpCfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("email-otp smtp sender: %w", err)
+	}
+	if sender == nil {
+		return authenticators.EmailSenderFunc(func(_ context.Context, email, code string) error {
+			logger.Info("email stub", "email", email, "code", code)
+			return nil
+		}), nil
+	}
+	return authenticators.EmailSenderFunc(sender.Send), nil
 }
 
 func appendKeyPairAuthenticator(auths []sso.Authenticator, a *config.KeyPairConfig, replay authReplayStoreFn, logger spi.Logger) ([]sso.Authenticator, error) {

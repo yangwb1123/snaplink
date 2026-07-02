@@ -63,6 +63,7 @@ type Config struct {
 	SAML               SAMLConfig                      `yaml:"saml"`
 	HostedLogin        HostedLoginConfig               `yaml:"hosted_login"`
 	SelfService        SelfServiceConfig               `yaml:"self_service"`
+	SMTP               SMTPConfig                      `yaml:"smtp"`
 	NativeSSO          NativeSSOConfig                 `yaml:"native_sso"`
 	ProtectedResource  ProtectedResourceMetadataConfig `yaml:"protected_resource_metadata"`
 }

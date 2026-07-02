@@ -18,6 +18,7 @@ import (
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenant"
+	"github.com/snaplink/sso/infrastructure/defaultimpl/emailsmtp"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
@@ -87,6 +88,14 @@ type appBuilder struct {
 
 	// Self-service password store (shared by login verifier + change EP).
 	passwordStore sso.PasswordCredentialStore
+
+	// emailSender is the built-in SMTP sender backing the four shared/spi
+	// token-delivery options (nil when smtp.enabled=false or no host is
+	// configured). serverbuildauthn builds its OWN Sender instance for the
+	// email-OTP transport (see appendEmailAuthenticator) — kept independent
+	// so authenticator wiring doesn't depend on self-service build order;
+	// both share the same config.SMTPConfig -> emailsmtp.Config translation.
+	emailSender *emailsmtp.Sender
 
 	// Authenticators.
 	tempStore       authenticators.TempTokenStore
