@@ -2,6 +2,8 @@ package auditexport
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -139,6 +141,128 @@ func TestRun_OpenErrorExitsOne(t *testing.T) {
 	if code != 1 || err == nil {
 		t.Fatalf("run over missing ro db: code=%d err=%v, want (1, err)", code, err)
 	}
+}
+
+// TestRun_ExportModeROSucceeds proves the old failure mode is gone: a
+// ?mode=ro DSN against an EXISTING store used to fail ("readonly
+// database") because the constructor ran migrate.Run's BEGIN IMMEDIATE.
+// OpenReadOnly never migrates, so the export now runs.
+func TestRun_ExportModeROSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.db")
+	out := filepath.Join(dir, "evidence.json")
+	seedStore(t, path, 4)
+
+	code := captureQuiet(t, func() int {
+		return Run([]string{"--dsn", "file:" + path + "?mode=ro", "--out", out})
+	})
+	if code != 0 {
+		t.Fatalf("export over ?mode=ro exit=%d, want 0", code)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read bundle: %v", err)
+	}
+	var b libexport.ExportBundle
+	if err := json.Unmarshal(raw, &b); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if b.EventCount != 4 {
+		t.Fatalf("EventCount=%d, want 4", b.EventCount)
+	}
+}
+
+// TestRun_ExportDoesNotModifyStore asserts the export is read-only at the
+// file level: the db file is byte-identical before and after, so the tool
+// neither takes a write lock nor mutates the schema of a live store.
+func TestRun_ExportDoesNotModifyStore(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.db")
+	out := filepath.Join(dir, "evidence.json")
+	seedStore(t, path, 6)
+	before := hashFile(t, path)
+
+	code := captureQuiet(t, func() int { return Run([]string{"--dsn", "file:" + path, "--out", out}) })
+	if code != 0 {
+		t.Fatalf("export exit=%d, want 0", code)
+	}
+	if after := hashFile(t, path); after != before {
+		t.Fatalf("export mutated the db file: hash %s -> %s", before, after)
+	}
+}
+
+// TestRunVerify_Pass round-trips through the offline-verify verb: export a
+// bundle, then verify the finished file with no store access.
+func TestRunVerify_Pass(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.db")
+	out := filepath.Join(dir, "evidence.json")
+	seedStore(t, path, 5)
+	if code := captureQuiet(t, func() int { return Run([]string{"--dsn", path, "--out", out}) }); code != 0 {
+		t.Fatalf("export exit=%d", code)
+	}
+
+	code, err := runVerify(out)
+	if code != 0 || err != nil {
+		t.Fatalf("runVerify(clean) = (%d, %v), want (0, nil)", code, err)
+	}
+}
+
+// TestRunVerify_TamperFails proves a byte-flipped event in the bundle file
+// makes offline verify exit non-zero with a message.
+func TestRunVerify_TamperFails(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.db")
+	out := filepath.Join(dir, "evidence.json")
+	seedStore(t, path, 5)
+	if code := captureQuiet(t, func() int { return Run([]string{"--dsn", path, "--out", out}) }); code != 0 {
+		t.Fatalf("export exit=%d", code)
+	}
+
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read bundle: %v", err)
+	}
+	var b libexport.ExportBundle
+	if err := json.Unmarshal(raw, &b); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	// ActorID is a hashed field (eventHash covers every field but ID/Hash),
+	// so mutating it in a middle event breaks chain-segment verification.
+	b.Events[2].ActorID = "tampered"
+	tampered, err := json.Marshal(&b)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(out, tampered, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	code, err := runVerify(out)
+	if code == 0 || err == nil {
+		t.Fatalf("runVerify(tampered) = (%d, %v), want non-zero + error", code, err)
+	}
+}
+
+// TestRunVerify_MissingFile exits non-zero on a bundle path that does not
+// exist.
+func TestRunVerify_MissingFile(t *testing.T) {
+	code, err := runVerify(filepath.Join(t.TempDir(), "nope.json"))
+	if code != 1 || err == nil {
+		t.Fatalf("runVerify(missing) = (%d, %v), want (1, err)", code, err)
+	}
+}
+
+// hashFile returns a hex SHA-256 of the db file so a read-only open can be
+// asserted byte-preserving.
+func hashFile(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read db file: %v", err)
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 func TestBuildQuery_BadSince(t *testing.T) {

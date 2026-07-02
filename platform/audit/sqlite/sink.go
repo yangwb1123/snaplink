@@ -53,6 +53,12 @@ ALTER TABLE audit_events ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_audit_events_tenant ON audit_events(tenant_id);
 `
 
+// migrationNamespace is the per-backend key migrate.Run uses for this
+// sink's schema_migrations_<ns> table. OpenReadOnly reads the recorded
+// version under the SAME key so an offline tool rejects a schema its
+// query path cannot understand instead of migrating it.
+const migrationNamespace = "audit"
+
 // schema mirrors audit.Event field-by-field for the queryable
 // columns; metadata + the hash-chain pair stay in a JSON blob so
 // future Event-struct additions don't require a migration.
@@ -111,7 +117,7 @@ func New(dsn string) (*Sink, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("audit/sqlite: ping: %w", err)
 	}
-	if err := migrate.Run(context.Background(), db, "audit", migrations); err != nil {
+	if err := migrate.Run(context.Background(), db, migrationNamespace, migrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("audit/sqlite: migrate: %w", err)
 	}
@@ -121,10 +127,57 @@ func New(dsn string) (*Sink, error) {
 // NewWithDB wraps an existing *sql.DB — shared-pool deployments
 // reuse the same connection across SDK subsystems.
 func NewWithDB(db *sql.DB) (*Sink, error) {
-	if err := migrate.Run(context.Background(), db, "audit", migrations); err != nil {
+	if err := migrate.Run(context.Background(), db, migrationNamespace, migrations); err != nil {
 		return nil, fmt.Errorf("audit/sqlite: migrate: %w", err)
 	}
 	return &Sink{db: db}, nil
+}
+
+// OpenReadOnly opens dsn for QUERY-ONLY access and returns the sink
+// WITHOUT running migrations. Unlike New it never executes migrate.Run
+// (no BEGIN IMMEDIATE, no DDL), so it neither fails on a genuinely
+// read-only handle (file:...?mode=ro) nor takes a write lock that could
+// mutate a live audit store's schema when the caller's binary carries
+// migrations the file has not applied. It is the constructor an offline
+// export / inspection tool MUST use against a production audit database.
+//
+// The schema is verified, not migrated: a database whose recorded version
+// differs from this binary's expected version is rejected with a clear
+// error rather than silently upgraded (rollback here is restore-from-
+// snapshot, not a schema op) or read through a query path that references
+// columns it lacks. Caller owns Close().
+func OpenReadOnly(dsn string) (*Sink, error) {
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("audit/sqlite: open: %w", err)
+	}
+	ctx := context.Background()
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("audit/sqlite: ping: %w", err)
+	}
+	if err := checkSchemaCurrent(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return &Sink{db: db}, nil
+}
+
+// checkSchemaCurrent confirms the live DB's recorded audit-schema version
+// matches the version this binary's query path expects, using only
+// read-only probes (safe on a mode=ro handle). A mismatch is fatal: an
+// older file lacks columns the query references; a newer file may have
+// changed them under this binary.
+func checkSchemaCurrent(ctx context.Context, db *sql.DB) error {
+	live, err := migrate.CurrentVersion(ctx, db, migrationNamespace)
+	if err != nil {
+		return fmt.Errorf("audit/sqlite: read schema version: %w", err)
+	}
+	want := migrate.MaxVersion(migrations)
+	if live != want {
+		return fmt.Errorf("audit/sqlite: schema version mismatch: database at v%d, binary expects v%d (open read-write to migrate, or use a matching binary version)", live, want)
+	}
+	return nil
 }
 
 // Close releases the SQLite connection. Idempotent.

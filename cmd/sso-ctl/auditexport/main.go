@@ -1,16 +1,23 @@
 // Package auditexport is the sso-ctl subcommand that extracts a filtered,
 // tamper-evident bulk export of the audit hash chain into a self-contained
-// JSON bundle for compliance evidence.
+// JSON bundle for compliance evidence, and offline-verifies such a bundle.
 //
 // Usage:
 //
 //	sso-ctl audit-export --dsn <sqlite-dsn> --since 2026-01-01T00:00:00Z --until 2026-04-01T00:00:00Z --out evidence-q1.json
+//	sso-ctl audit-export --verify evidence-q1.json
 //
 // The bundle carries a boundary anchor so a date-range export that does
 // not begin at true chain genesis stays independently verifiable via
-// auditexport.VerifyExportBundle. The export is READ-ONLY: pass a
-// read-only DSN (file:...?mode=ro) to inspect a live database safely,
-// mirroring `sso-ctl migrate status`.
+// auditexport.VerifyExportBundle. The --verify mode re-runs that check on
+// a finished bundle file with no store access, so an auditor who received
+// only the JSON can confirm it is untampered.
+//
+// The export is strictly READ-ONLY: the store is opened via
+// auditsqlite.OpenReadOnly, which NEVER migrates the schema — so a
+// read-only DSN (file:...?mode=ro) works, and a read-write DSN is never
+// write-locked or schema-mutated by this tool. A schema whose version does
+// not match the binary is reported, never migrated.
 //
 // A bundle may hold PII, so the tool never logs event contents — it
 // prints only counts, the boundary hash, and the output path to stderr,
@@ -19,8 +26,8 @@
 // v1 supports the direct --dsn mode only; a --from-url mode against the
 // live /api/v1/audit/events API is a planned follow-up.
 //
-// Exit codes: 0 wrote a verified bundle (including an empty window), 1
-// load / verify error, 2 CLI misuse.
+// Exit codes: 0 wrote / verified a clean bundle (including an empty
+// window), 1 load / verify error (incl. a tampered bundle), 2 CLI misuse.
 package auditexport
 
 import (
@@ -45,6 +52,7 @@ const progName = "sso-ctl audit-export"
 // consistent vocabulary across audit-verify and audit-export.
 const (
 	flagDSN       = "dsn"
+	flagVerify    = "verify"
 	flagOut       = "out"
 	flagType      = "type"
 	flagOutcome   = "outcome"
@@ -62,7 +70,7 @@ const (
 // options holds the resolved CLI inputs. run takes it by value so tests
 // can drive the export core without a FlagSet or os.Exit paths.
 type options struct {
-	dsn, out                                            string
+	dsn, verify, out                                    string
 	typ, outcome, actorID, clientID, tenantID, provider string
 	requestID, traceID, since, until                    string
 	limit                                               int
@@ -81,18 +89,33 @@ func Run(args []string) int {
 	fs.Usage = usage
 	bindFlags(fs, &o)
 	_ = fs.Parse(args)
-	if o.dsn == "" {
-		usageErr("--" + flagDSN + " is required")
-	}
-	code, err := run(o)
+	code, err := dispatch(o)
 	if err != nil {
 		errorf("%v", err)
 	}
 	return code
 }
 
+// dispatch routes to offline-verify (--verify) or export (--dsn). The two
+// modes are mutually exclusive: --verify reads a finished bundle file and
+// needs no store, so pairing it with --dsn is a usage error; exactly one
+// of the two must be given.
+func dispatch(o options) (int, error) {
+	if o.verify != "" {
+		if o.dsn != "" {
+			usageErr("--%s and --%s are mutually exclusive", flagVerify, flagDSN)
+		}
+		return runVerify(o.verify)
+	}
+	if o.dsn == "" {
+		usageErr("--%s (export) or --%s <bundle> (offline verify) is required", flagDSN, flagVerify)
+	}
+	return run(o)
+}
+
 func bindFlags(fs *flag.FlagSet, o *options) {
-	fs.StringVar(&o.dsn, flagDSN, "", "SQLite DSN to export from (required; append ?mode=ro for a live DB)")
+	fs.StringVar(&o.dsn, flagDSN, "", "SQLite DSN to export from (required for export; opened read-only, append ?mode=ro for a live DB)")
+	fs.StringVar(&o.verify, flagVerify, "", "offline-verify a bundle file instead of exporting (no --dsn); non-zero exit on tamper")
 	fs.StringVar(&o.out, flagOut, "", "output file for the JSON bundle (default: stdout)")
 	fs.StringVar(&o.typ, flagType, "", "filter: event type")
 	fs.StringVar(&o.outcome, flagOutcome, "", "filter: outcome (success|failure)")
@@ -115,7 +138,11 @@ func run(o options) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	sink, err := auditsqlite.New(o.dsn)
+	// OpenReadOnly never migrates: a read-only DSN works and a live
+	// read-write store is never write-locked or schema-mutated by an
+	// export. Using New here would BEGIN IMMEDIATE + apply DDL — a write
+	// from a read-only tool.
+	sink, err := auditsqlite.OpenReadOnly(o.dsn)
 	if err != nil {
 		return 1, fmt.Errorf("open audit store: %w", err)
 	}
@@ -129,6 +156,27 @@ func run(o options) (int, error) {
 		return 1, err
 	}
 	printSummary(bundle, o.out)
+	return 0, nil
+}
+
+// runVerify loads a previously exported bundle file and re-verifies it
+// offline (no store access), so the recipient of a JSON evidence file can
+// confirm it is untampered. Returns (0,nil) on a clean bundle and (1,err)
+// on any load / parse failure or verification break so the process exits
+// non-zero on tamper.
+func runVerify(path string) (int, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 1, fmt.Errorf("read bundle: %w", err)
+	}
+	var b auditexport.ExportBundle
+	if err := json.Unmarshal(raw, &b); err != nil {
+		return 1, fmt.Errorf("parse bundle %s: %w", path, err)
+	}
+	if err := auditexport.VerifyExportBundle(&b); err != nil {
+		return 1, fmt.Errorf("bundle FAILED verification: %w", err)
+	}
+	printVerifyOK(&b)
 	return 0, nil
 }
 
@@ -197,19 +245,33 @@ func printSummary(b *auditexport.ExportBundle, out string) {
 	if out != "" {
 		dst = out
 	}
-	anchor := b.BoundaryPrevHash
-	if anchor == "" {
-		anchor = "(genesis)"
-	}
 	fmt.Fprintf(os.Stderr, "exported %d verified event(s) to %s (contiguous=%t, boundary_prev_hash=%s)\n",
-		b.EventCount, dst, b.Contiguous, anchor)
+		b.EventCount, dst, b.Contiguous, anchorLabel(b))
+}
+
+// printVerifyOK writes the offline-verify pass summary to STDERR with only
+// non-sensitive counts — no event contents.
+func printVerifyOK(b *auditexport.ExportBundle) {
+	fmt.Fprintf(os.Stderr, "bundle verified: %d event(s) (contiguous=%t, boundary_prev_hash=%s, head_hash=%s)\n",
+		b.EventCount, b.Contiguous, anchorLabel(b), b.HeadHash)
+}
+
+// anchorLabel renders the boundary anchor for a summary line, naming the
+// empty genesis anchor explicitly so a reader doesn't mistake it for a
+// missing value.
+func anchorLabel(b *auditexport.ExportBundle) string {
+	if b.BoundaryPrevHash == "" {
+		return "(genesis)"
+	}
+	return b.BoundaryPrevHash
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, progName+` — export a tamper-evident bulk audit bundle for compliance evidence.
+	fmt.Fprint(os.Stderr, progName+` — export or offline-verify a tamper-evident bulk audit bundle for compliance evidence.
 
 Usage:
   `+progName+` --dsn <sqlite-dsn> [filters] [--out evidence.json]
+  `+progName+` --verify <bundle.json>
 
 Flags:
 `)

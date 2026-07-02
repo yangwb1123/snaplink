@@ -3,7 +3,7 @@
 // exactly two binaries — sso-server (the runtime) and sso-ctl (the toolbelt):
 //
 //	sso-ctl audit-verify ...   # verify the audit-log hash chain
-//	sso-ctl audit-export ...   # export a tamper-evident bulk audit bundle
+//	sso-ctl audit-export ...   # export or offline-verify a tamper-evident bulk audit bundle
 //	sso-ctl import ...         # bulk-import users (auth0 / keycloak / csv)
 //	sso-ctl migrate ...        # offline schema-migration status
 //	sso-ctl snapshot ...       # inspect / verify sealed state snapshots
@@ -76,7 +76,7 @@ Usage:
 
 Commands:
   audit-verify   Verify the audit-log hash chain (from a file or the live API).
-  audit-export   Export a tamper-evident bulk audit bundle (compliance evidence).
+  audit-export   Export or offline-verify a tamper-evident bulk audit bundle (compliance evidence).
   clients        List OAuth clients or inspect a specific client.
   import         Bulk-import users from auth0 / keycloak / csv into a user store.
   migrate        Offline schema-migration status for a SQLite store.

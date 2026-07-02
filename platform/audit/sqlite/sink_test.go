@@ -2,12 +2,18 @@ package sqlite
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/migrate"
 )
 
 // TestSink_RecordThenGet round-trips one event through INSERT +
@@ -485,7 +491,130 @@ func TestSink_HashChainResumesAcrossRestart(t *testing.T) {
 	}
 }
 
+// TestOpenReadOnly_QueriesWithoutMigrating proves an offline tool can
+// read an existing store through OpenReadOnly, and that opening it does
+// NOT touch the file — the whole point of the read-only path (New would
+// BEGIN IMMEDIATE + apply DDL, a write from a read tool).
+func TestOpenReadOnly_QueriesWithoutMigrating(t *testing.T) {
+	t.Parallel()
+	dsn := "file:" + filepath.Join(t.TempDir(), "audit.db")
+	seed, err := New(dsn)
+	if err != nil {
+		t.Fatalf("seed open: %v", err)
+	}
+	mustRecord(t, seed, &audit.Event{ID: "e1", Type: audit.EventLogin, Outcome: audit.OutcomeSuccess, Timestamp: time.Now().UTC()})
+	if err := seed.Close(); err != nil {
+		t.Fatalf("seed close: %v", err)
+	}
+	before := hashFile(t, dsn)
+
+	ro, err := OpenReadOnly(dsn)
+	if err != nil {
+		t.Fatalf("OpenReadOnly: %v", err)
+	}
+	t.Cleanup(func() { _ = ro.Close() })
+	got, err := ro.Query(context.Background(), audit.Query{})
+	if err != nil {
+		t.Fatalf("read-only Query: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "e1" {
+		t.Fatalf("read-only Query = %+v, want the seeded event", got)
+	}
+	if after := hashFile(t, dsn); after != before {
+		t.Fatalf("OpenReadOnly mutated the db file: hash %s -> %s", before, after)
+	}
+}
+
+// TestOpenReadOnly_RejectsModeRO proves the documented read-only DSN
+// (?mode=ro) — which New cannot open because migrate.Run's BEGIN
+// IMMEDIATE fails "readonly database" — now works through OpenReadOnly.
+func TestOpenReadOnly_ModeRO(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "audit.db")
+	seed, err := New("file:" + path)
+	if err != nil {
+		t.Fatalf("seed open: %v", err)
+	}
+	mustRecord(t, seed, &audit.Event{ID: "e1", Type: audit.EventLogin, Outcome: audit.OutcomeSuccess, Timestamp: time.Now().UTC()})
+	_ = seed.Close()
+
+	ro, err := OpenReadOnly("file:" + path + "?mode=ro")
+	if err != nil {
+		t.Fatalf("OpenReadOnly mode=ro: %v", err)
+	}
+	t.Cleanup(func() { _ = ro.Close() })
+	got, err := ro.Query(context.Background(), audit.Query{})
+	if err != nil || len(got) != 1 {
+		t.Fatalf("mode=ro Query: got=%d err=%v, want 1 event", len(got), err)
+	}
+}
+
+// TestOpenReadOnly_RejectsUnmigratedDB proves the schema is verified, not
+// migrated: a database that carries no audit migrations (version 0) is
+// refused with a clear error rather than silently upgraded.
+func TestOpenReadOnly_RejectsUnmigratedDB(t *testing.T) {
+	t.Parallel()
+	dsn := "file:" + filepath.Join(t.TempDir(), "empty.db")
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// Force file creation without any audit migration.
+	if _, err := db.Exec(`CREATE TABLE unrelated (x INTEGER)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	_ = db.Close()
+
+	if _, err := OpenReadOnly(dsn); err == nil {
+		t.Fatal("OpenReadOnly over an unmigrated db: want error, got nil")
+	}
+}
+
+// TestOpenReadOnly_DoesNotMigrateBehindDB is the core invariant proof: a
+// store one schema version BEHIND this binary must be REJECTED, never
+// silently migrated. New would BEGIN IMMEDIATE + ALTER TABLE it (a schema
+// write from an export tool); OpenReadOnly refuses and leaves the file
+// byte-identical.
+func TestOpenReadOnly_DoesNotMigrateBehindDB(t *testing.T) {
+	t.Parallel()
+	dsn := "file:" + filepath.Join(t.TempDir(), "audit.db")
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// Seed ONLY the v1 baseline so the DB sits a version behind the
+	// binary's declared max.
+	if err := migrate.Run(context.Background(), db, migrationNamespace, migrations[:1]); err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	_ = db.Close()
+	before := hashFile(t, dsn)
+
+	if _, err := OpenReadOnly(dsn); err == nil {
+		t.Fatal("OpenReadOnly over a v1 db: want schema-mismatch error, got nil")
+	}
+	if after := hashFile(t, dsn); after != before {
+		t.Fatalf("OpenReadOnly migrated a behind-schema db: hash %s -> %s", before, after)
+	}
+}
+
 func idFor(i int) string { return "e" + string(rune('0'+i)) }
+
+// hashFile returns a hex SHA-256 of the file at a file: DSN, used to
+// assert a read-only open leaves the database byte-identical.
+func hashFile(t *testing.T, dsn string) string {
+	t.Helper()
+	path := strings.TrimPrefix(dsn, "file:")
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read db file: %v", err)
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
 
 func sliceEqual(a, b []string) bool {
 	if len(a) != len(b) {
