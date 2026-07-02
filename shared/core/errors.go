@@ -74,6 +74,12 @@ const (
 	ErrTenantMismatch            = "tenant_mismatch"
 	ErrRegionNotAllowed          = "region_not_allowed"
 	ErrResidencyViolation        = "residency_violation"
+	// ErrQuotaExceededCode is the wire-format code returned when a tenant's
+	// per-resource quota (sessions + clients) is reached. It is a governance
+	// code, NOT a credential oracle (same doctrine as region_not_allowed) — it
+	// only surfaces on tenant-scoped resource creation, never on a credential
+	// check. Distinct from the ErrQuotaExceeded Go sentinel above.
+	ErrQuotaExceededCode         = "quota_exceeded"
 	ErrNoTokenStrategy           = "no_token_strategy"
 	ErrNetPolicyNotConfigured    = "netpolicy_not_configured"
 	ErrNetPolicyNotFound         = "netpolicy_not_found"

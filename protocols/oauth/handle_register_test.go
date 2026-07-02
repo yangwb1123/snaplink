@@ -31,6 +31,7 @@ func (d *registerDeps) SetBearerChallenge(core.HandlerContext, string, string, s
 func (d *registerDeps) RequireClientStore() error                                      { return d.reqErr }
 func (d *registerDeps) Auditor() *audit.Recorder                                       { return nil }
 func (d *registerDeps) InvalidateClientCache(id string)                                { d.invalidated = append(d.invalidated, id) }
+func (d *registerDeps) CheckClientCreateQuota(core.HandlerContext, string) bool        { return false }
 
 var _ RegisterDeps = (*registerDeps)(nil)
 

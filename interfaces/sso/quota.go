@@ -18,7 +18,7 @@ func (s *Server) checkQuotaBeforeCreate(ctx HandlerContext, tenantID string, res
 	if err := s.tenantQuotaStore.IncrementUsage(ctx.Request().Context(), tenantID, resource, 1); err != nil {
 		if err == core.ErrQuotaExceeded {
 			s.logger.Error("tenant quota exceeded", "tenant_id", tenantID, "resource", resource)
-			ctx.JSON(http.StatusForbidden, errorBody("quota_exceeded"))
+			ctx.JSON(http.StatusForbidden, errorBody(core.ErrQuotaExceededCode))
 			return true
 		}
 		s.logger.Error("quota check failed", "tenant_id", tenantID, "resource", resource, "error", err)
@@ -26,6 +26,16 @@ func (s *Server) checkQuotaBeforeCreate(ctx HandlerContext, tenantID string, res
 		return false
 	}
 	return false
+}
+
+// CheckClientCreateQuota is the oauth.RegisterDeps seam that makes the tenant
+// client-create quota LIVE on the DCR /register path. It charges one unit of
+// core.ResourceClients against the tenant; returns true when a 403
+// quota_exceeded was already written (the caller must stop). Skips (false) when
+// no quota store is wired or the client is tenant-less, and fails OPEN on a
+// non-quota store error — matching the createSession session-quota precedent.
+func (s *Server) CheckClientCreateQuota(ctx HandlerContext, tenantID string) bool {
+	return s.checkQuotaBeforeCreate(ctx, tenantID, core.ResourceClients)
 }
 
 // rateLimiterEntry pairs a token bucket limiter with the grant type it

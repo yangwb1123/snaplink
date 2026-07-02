@@ -389,7 +389,7 @@ func (s *Server) createSession(ctx HandlerContext, userID, tenantID string) (*Se
 		if err := s.tenantQuotaStore.IncrementUsage(rctx, tenantID, core.ResourceSessions, 1); err != nil {
 			if err == core.ErrQuotaExceeded {
 				s.logger.Error("tenant session quota exceeded", "tenant_id", tenantID, "user", userID)
-				ctx.JSON(http.StatusForbidden, errorBody("quota_exceeded"))
+				ctx.JSON(http.StatusForbidden, errorBody(core.ErrQuotaExceededCode))
 				return nil, core.ErrQuotaExceeded
 			}
 			s.logger.Error("tenant quota check failed", "tenant_id", tenantID, "error", err)
