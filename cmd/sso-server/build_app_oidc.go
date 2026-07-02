@@ -111,6 +111,12 @@ func (b *appBuilder) wireCAEPTransmitter() {
 	if d := cfg.CAEP.SETTTL; d > 0 {
 		caepOpts = append(caepOpts, caep.WithSETTTL(d))
 	}
+	if n := cfg.CAEP.DeliveryRetryMaxAttempts; n > 1 {
+		caepOpts = append(caepOpts, caep.WithDeliveryRetry(n))
+	}
+	if cfg.CAEP.DeliveryRetryInitialBackoff > 0 || cfg.CAEP.DeliveryRetryMaxBackoff > 0 {
+		caepOpts = append(caepOpts, caep.WithDeliveryRetryBackoff(cfg.CAEP.DeliveryRetryInitialBackoff, cfg.CAEP.DeliveryRetryMaxBackoff))
+	}
 	caepTx := caep.NewTransmitter(b.jwtIssuer, b.clientStore, caepOpts...)
 	b.opts = append(b.opts, sso.WithCAEPTransmitter(caepTx))
 	logger.Info("caep: OpenID Shared Signals transmitter enabled — signed SETs pushed to affected clients' registered receivers on revocation/suspension/family-reuse events")

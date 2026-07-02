@@ -11,6 +11,16 @@ type CAEPConfig struct {
 	// SETTTL bounds the lifetime stamped into each SET. 0 = SDK default (2m).
 	SETTTL time.Duration `yaml:"set_ttl"`
 
+	// DeliveryRetryMaxAttempts caps TOTAL SET delivery attempts per
+	// receiver, including the first. 0 or 1 (the default) = single-shot.
+	// Broadcast stays best-effort/fail-open — retry only widens the window.
+	DeliveryRetryMaxAttempts int `yaml:"delivery_retry_max_attempts"`
+	// DeliveryRetryInitialBackoff is the first inter-attempt wait
+	// (doubling, jittered). 0 = SDK default (500ms).
+	DeliveryRetryInitialBackoff time.Duration `yaml:"delivery_retry_initial_backoff"`
+	// DeliveryRetryMaxBackoff caps the per-attempt wait. 0 = SDK default (5s).
+	DeliveryRetryMaxBackoff time.Duration `yaml:"delivery_retry_max_backoff"`
+
 	// Receiver opts into the INBOUND half of OpenID Shared Signals — the
 	// CAEP/SSF push-delivery receiver that CONSUMES SETs from trusted
 	// upstream transmitters and revokes local access. Independent of the

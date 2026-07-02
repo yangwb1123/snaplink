@@ -112,7 +112,7 @@ rather than expect key continuity (acceptable — hot state is short-TTL).
 
 | Key | Effect |
 |---|---|
-| `caep.{enabled,receiver_timeout,set_ttl}` | SSF SET transmitter/receiver config |
+| `caep.{enabled,receiver_timeout,set_ttl,delivery_retry_max_attempts,delivery_retry_initial_backoff,delivery_retry_max_backoff}` | SSF SET transmitter/receiver config |
 
 ## WebAuthn
 

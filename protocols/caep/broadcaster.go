@@ -55,11 +55,15 @@ const (
 const EventCAEPBroadcastFailed audit.EventType = "caep_broadcast_failed"
 
 // SET delivery outcome labels for the sso_caep_sets_total metric. Bounded
-// cardinality by construction (three fixed values).
+// cardinality by construction (four fixed values).
 const (
 	OutcomeSuccess = "success"
 	OutcomeFailed  = "failed"
 	OutcomeDropped = "dropped"
+	// OutcomeRetried counts each RE-attempt of a SET delivery (opt-in retry
+	// only; emitted once per retry, never on the first attempt), so a
+	// retried-then-succeeded delivery shows as retried(s) + one success.
+	OutcomeRetried = "retried"
 )
 
 // DefaultReceiverTimeout caps a single SET POST. A slow/dead receiver
@@ -107,6 +111,19 @@ type Transmitter struct {
 	// wg tracks in-flight async sends so Close can drain them on shutdown
 	// rather than abandoning goroutines mid-POST.
 	wg sync.WaitGroup
+
+	// Delivery retry (opt-in): retryMaxAttempts caps TOTAL attempts per SET
+	// per receiver (1 = single-shot, byte-identical to pre-retry). The
+	// backoff bounds are the jittered exponential schedule between attempts.
+	retryMaxAttempts    int
+	retryInitialBackoff time.Duration
+	retryMaxBackoff     time.Duration
+
+	// stop is closed once by Close (via stopOnce, since existing tests call
+	// Close multiple times) to abort any pending retry backoff so shutdown
+	// drains promptly rather than pinning on the remaining retry chain.
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 // Option configures a Transmitter at construction.
@@ -186,6 +203,12 @@ func NewTransmitter(signer JWTSigner, clients core.ClientStore, opts ...Option) 
 		},
 		timeout: DefaultReceiverTimeout,
 		setTTL:  DefaultSETTTL,
+		// Retry defaults to OFF (single attempt) so a default-configured
+		// transmitter behaves byte-identically to the pre-retry code.
+		retryMaxAttempts:    1,
+		retryInitialBackoff: DefaultDeliveryRetryInitialBackoff,
+		retryMaxBackoff:     DefaultDeliveryRetryMaxBackoff,
+		stop:                make(chan struct{}),
 	}
 	if ts, ok := clients.(core.TenantScopedClientStore); ok {
 		t.tenantScoped = ts
@@ -286,27 +309,29 @@ func (t *Transmitter) deliver(clientID, endpoint, auth string, req buildSETReque
 			t.fail(clientID, endpoint, fmt.Sprintf("panic: %v", r))
 		}
 	}()
-
-	// context.Background() is the correct PARENT: the request that
-	// triggered the event has already returned, so there is no live
-	// request context to inherit (inheriting one would cancel the send
-	// immediately). We add the per-receiver deadline so a hung receiver
-	// can't pin this goroutine.
-	ctx, cancel := context.WithTimeout(context.Background(), t.timeout)
-	defer cancel()
-
-	set, err := mintSET(ctx, t.signer, req, t.setTTL)
-	if err != nil {
-		t.fail(clientID, endpoint, "mint: "+err.Error())
-		return
+	var lastErr error
+	for attempt := 0; attempt < t.retryMaxAttempts; attempt++ {
+		if attempt > 0 {
+			if !t.waitBackoff(attempt - 1) {
+				break // shutting down: report the last real failure, skip the re-attempt
+			}
+			if t.metric != nil {
+				t.metric(OutcomeRetried)
+			}
+		}
+		err := t.attemptDelivery(endpoint, auth, req)
+		if err == nil {
+			if t.metric != nil {
+				t.metric(OutcomeSuccess)
+			}
+			return
+		}
+		lastErr = err
+		if !retryableDeliveryError(err) {
+			break
+		}
 	}
-	if err := t.post(ctx, endpoint, auth, set); err != nil {
-		t.fail(clientID, endpoint, err.Error())
-		return
-	}
-	if t.metric != nil {
-		t.metric(OutcomeSuccess)
-	}
+	t.fail(clientID, endpoint, lastErr.Error())
 }
 
 // contentTypeSecEvent is the SSF push-delivery Content-Type for the SET body:
@@ -343,7 +368,7 @@ func (t *Transmitter) post(ctx context.Context, endpoint, auth, set string) erro
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
-	return fmt.Errorf("non-2xx status %d", resp.StatusCode)
+	return &receiverStatusError{status: resp.StatusCode}
 }
 
 // fail is the shared error tail: count the drop + record the internal
@@ -381,6 +406,10 @@ func (t *Transmitter) Query(context.Context, audit.Query) ([]*audit.Event, error
 // Close drains in-flight async sends so a shutting-down server doesn't
 // abandon goroutines mid-POST. Bounded by each send's own timeout.
 func (t *Transmitter) Close(ctx context.Context) error {
+	// Abort any pending retry backoff so drain is bounded by the in-flight
+	// POST, not the remaining retry chain. stopOnce guards the double-Close
+	// existing tests perform (closing an already-closed channel panics).
+	t.stopOnce.Do(func() { close(t.stop) })
 	done := make(chan struct{})
 	go func() { t.wg.Wait(); close(done) }()
 	select {

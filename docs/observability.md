@@ -26,7 +26,7 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_token_revocations_propagated_total` | Counter | direction (published\|adopted) |
 | `sso_fapi_violations_total` | Counter | rule, mode |
 | `sso_ciba_ping_total` | Counter | outcome |
-| `sso_caep_sets_total` | Counter | outcome |
+| `sso_caep_sets_total` | Counter | outcome (success\|failed\|dropped\|retried) |
 | `sso_refresh_rotation_velocity_exceeded_total` | Counter | — |
 | `sso_client_store_cache_total` | Counter | outcome (hit\|miss) |
 
