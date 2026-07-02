@@ -20,6 +20,31 @@ func WithDomainVerificationResolver(r connections.DNSResolver) Option {
 	}
 }
 
+// WithConnectionProber injects the reachability check the admin
+// POST /api/v1/admin/connections/:id/probe endpoint uses to test a
+// connection's configured upstream (first-class DI so tests run
+// network-free with a fake). Nil/unset uses the stdlib-backed production
+// HTTP prober (OIDC discovery / SAML metadata fetch), bounded by
+// WithConnectionProbeTimeout.
+func WithConnectionProber(p connections.Prober) Option {
+	return func(s *Server) {
+		if p != nil {
+			s.connectionProber = p
+		}
+	}
+}
+
+// WithConnectionProbeTimeout bounds the production HTTP prober's per-probe
+// round-trip (connections.DefaultProbeTimeout, 10s, when unset). No effect
+// when WithConnectionProber supplies a custom Prober.
+func WithConnectionProbeTimeout(d time.Duration) Option {
+	return func(s *Server) {
+		if d > 0 {
+			s.connectionProbeTimeout = d
+		}
+	}
+}
+
 // WithAdminSessionTTL sets an idle timeout for admin bearer tokens. When
 // a token has not been used for longer than the TTL, the admin middleware
 // rejects the request and the caller must re-authenticate. 0 (default)

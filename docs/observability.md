@@ -31,6 +31,7 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_client_store_cache_total` | Counter | outcome (hit\|miss) |
 | `sso_audit_async_drops_{queue_full,closed,inner_error}_total` | Counter | — |
 | `sso_audit_async_queue_{depth,capacity}` | Gauge | — |
+| `sso_connection_health_probes_total` | Counter | type (oidc\|saml), outcome (healthy\|degraded\|unreachable) |
 
 ## Audit
 

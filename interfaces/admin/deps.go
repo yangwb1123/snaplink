@@ -3,6 +3,7 @@ package admin
 import (
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
@@ -19,6 +20,15 @@ type Deps interface {
 	// tests run network-free with a fake and operators can supply a
 	// DNS-over-HTTPS resolver; the production default is stdlib-backed.
 	DomainResolver() connections.DNSResolver
+	// ConnectionProber performs the admin-triggered reachability check
+	// (POST .../connections/:id/probe) against a connection's configured
+	// upstream. Injectable (first-class DI) so tests run network-free with a
+	// fake; the production default issues the real OIDC discovery / SAML
+	// metadata fetch.
+	ConnectionProber() connections.Prober
+	// Metrics returns the wired Prometheus collectors, or nil when
+	// sso.WithMetrics was never configured — every call site nil-checks.
+	Metrics() *metrics.Metrics
 	TenantUserStore() core.TenantUserStore
 	InvitationStore() core.InvitationStore
 	InvitationSender() spi.InvitationSender

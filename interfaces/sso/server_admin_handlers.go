@@ -71,6 +71,12 @@ func (s *Server) handleAdminListConnectionDomains(ctx HandlerContext) {
 func (s *Server) handleAdminVerifyConnectionDomain(ctx HandlerContext) {
 	admin.HandleAdminVerifyConnectionDomain(s, ctx)
 }
+func (s *Server) handleAdminGetConnectionHealth(ctx HandlerContext) {
+	admin.HandleAdminGetConnectionHealth(s, ctx)
+}
+func (s *Server) handleAdminProbeConnection(ctx HandlerContext) {
+	admin.HandleAdminProbeConnection(s, ctx)
+}
 
 // Tenant membership (admin).
 func (s *Server) handleAdminListTenantMembers(ctx HandlerContext) {

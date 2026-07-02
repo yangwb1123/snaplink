@@ -141,6 +141,16 @@ func (s *Server) DomainResolver() connections.DNSResolver {
 	}
 	return connections.NewDNSResolver()
 }
+
+// ConnectionProber returns the wired reachability prober for the admin
+// connection-test endpoint, defaulting to the stdlib-backed production HTTP
+// prober (bounded by connectionProbeTimeout) when no custom one was injected.
+func (s *Server) ConnectionProber() connections.Prober {
+	if s.connectionProber != nil {
+		return s.connectionProber
+	}
+	return connections.NewHTTPProber(s.connectionProbeTimeout)
+}
 // ConsentStore exposes the wired consent store (may be nil).
 func (s *Server) ConsentStore() ConsentStore { return s.consentStore }
 func (s *Server) TenantUserStore() core.TenantUserStore     { return s.tenantUserStore }

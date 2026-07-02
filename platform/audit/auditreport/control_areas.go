@@ -26,8 +26,8 @@ type controlAreaDef struct {
 // EventAdmin* ones) to avoid double counting a subject-export/erase
 // action under both the admin-actions and privacy buckets.
 //
-// auditspi/event_types_admin.go currently declares 40 EventAdmin* consts:
-// 37 land in CC6.3 below, EventAdminSigningKeyRotated lands in CC6.6
+// auditspi/event_types_admin.go currently declares 41 EventAdmin* consts:
+// 38 land in CC6.3 below, EventAdminSigningKeyRotated lands in CC6.6
 // (cryptographic key management, not a generic privileged action), and
 // EventAdminSubjectExported/EventAdminSubjectErased land in Privacy. This
 // count is a manual cross-check for a human reading this file — the
@@ -86,6 +86,7 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventAdminConnectionUpserted,
 			audit.EventAdminConnectionDeleted,
 			audit.EventAdminConnectionDomainVerified,
+			audit.EventAdminConnectionProbed,
 			audit.EventAdminTenantMemberAdded,
 			audit.EventAdminTenantMemberRemoved,
 			audit.EventAdminRoleAdded,

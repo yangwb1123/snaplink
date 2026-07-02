@@ -45,6 +45,9 @@ var connectionMigrations = []migrate.Migration{
 	// domain verification. connection_domains stays the verified-only routing
 	// index; connection_domain_claims tracks pending + verified claims.
 	{Version: 2, Name: "domain_claims", SQL: connectionDomainClaimsSchema},
+	// v3 adds the per-connection health table backing the admin-triggered
+	// reachability probe (POST .../connections/:id/probe).
+	{Version: 3, Name: "connection_health", SQL: connectionHealthSchema},
 }
 
 // Store is the SQLite connections.Store.
@@ -195,6 +198,9 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `DELETE FROM connection_domains WHERE connection_id = ?`, id); err != nil {
 		return fmt.Errorf("sqlite: delete domains: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM connection_health WHERE connection_id = ?`, id); err != nil {
+		return fmt.Errorf("sqlite: delete health: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM connections WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("sqlite: delete connection: %w", err)

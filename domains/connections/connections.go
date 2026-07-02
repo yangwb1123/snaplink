@@ -84,6 +84,20 @@ type Store interface {
 	// while a boot-time/operator-trusted caller may call it directly to skip
 	// the DNS round-trip.
 	VerifyDomain(ctx context.Context, connID, domain string) error
+
+	// Health returns id's last recorded probe outcome (RunProbe /
+	// RecordHealth). Never ErrNoConnection — an id with no probe history yet
+	// (a brand-new connection, or one the store has never heard of) returns
+	// DefaultConnectionHealth(id), status HealthUnknown, not an error; the
+	// caller is responsible for confirming the connection itself exists via
+	// Get before treating "unknown" as meaningful.
+	Health(ctx context.Context, id string) (*ConnectionHealth, error)
+	// RecordHealth persists the outcome of one probe attempt against id's
+	// upstream IdP, overwriting any prior record. The caller (RunProbe)
+	// stamps LastCheckedAt on every call and LastSuccessAt only on a
+	// HealthHealthy outcome, so a failed probe can retain the timestamp of
+	// the connection's last known-good state instead of losing it.
+	RecordHealth(ctx context.Context, id string, h *ConnectionHealth) error
 }
 
 // DomainFromIdentifier extracts the lowercase home-realm domain from a login

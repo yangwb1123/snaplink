@@ -175,6 +175,16 @@ type federationMeshState struct {
 	// Nil ⇒ the stdlib-backed production resolver (see DomainResolver accessor).
 	domainVerificationResolver connections.DNSResolver
 
+	// connectionProber is the reachability check the admin
+	// POST .../connections/:id/probe handler uses (WithConnectionProber).
+	// Nil ⇒ the stdlib-backed production HTTP prober, bounded by
+	// connectionProbeTimeout (see ConnectionProber accessor).
+	connectionProber connections.Prober
+	// connectionProbeTimeout bounds the production HTTP prober's per-probe
+	// round-trip (WithConnectionProbeTimeout). Zero ⇒
+	// connections.DefaultProbeTimeout. No effect when connectionProber is set.
+	connectionProbeTimeout time.Duration
+
 	// Opt-in Envoy/Istio ext_authz HTTP-mode authorization endpoint
 	// (cluster C1 mesh data-plane, the HTTP variant — the gRPC variant
 	// needs the go-control-plane proto dep and lives in a separate

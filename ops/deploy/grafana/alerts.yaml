@@ -187,6 +187,26 @@ groups:
             reachability, throttling, and sso_signing_operations_total
             error rates.
 
+      - alert: SSOConnectionUnreachable
+        # B2B enterprise connections have no background poller (probes are
+        # admin-triggered, e.g. from a cron hitting POST .../probe) - any
+        # unreachable outcome means an org's upstream IdP has gone dark and
+        # that org's users cannot federate in until it recovers.
+        expr: |
+          sum(increase(sso_connection_health_probes_total{outcome="unreachable"}[15m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: sso-server
+        annotations:
+          summary: "SSO B2B connection probe reported unreachable"
+          description: |
+            {{ $value | humanize }} unreachable probe(s) in the last 15m.
+            Check GET /api/v1/admin/connections/:id/health per connection to
+            find which one, and its last_error for the transport/status
+            detail. The upstream IdP outage blocks that org's home-realm
+            login until it recovers or an admin re-probes successfully.
+
       - alert: SSOSigningKeyAggregationDegraded
         # Leaderless JWKS aggregation lost its registry subscription:
         # this replica keeps signing locally but STOPS adopting peers'

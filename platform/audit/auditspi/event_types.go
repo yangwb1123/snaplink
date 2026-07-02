@@ -218,7 +218,7 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventAdminDeviceSecretsRevoked: {}, EventAdminPasswordResetTokensRevoked: {},
 	EventAdminEmailChangeTokensRevoked: {}, EventAdminUserEmailChanged: {},
 	EventAdminAccountUnlocked: {}, EventAdminConnectionUpserted: {}, EventAdminConnectionDeleted: {},
-	EventAdminConnectionDomainVerified: {}, EventAdminRecoveryCodesReset: {},
+	EventAdminConnectionDomainVerified: {}, EventAdminConnectionProbed: {}, EventAdminRecoveryCodesReset: {},
 	EventAdminTenantMemberAdded: {}, EventAdminTenantMemberRemoved: {}, EventAdminRoleAdded: {},
 	EventAdminRoleUpdated: {}, EventAdminRoleRemoved: {}, EventAdminRoleAssigned: {},
 	EventAdminRoleUnassigned: {}, EventAdminMenusUpdated: {}, EventAdminTenantCreated: {},
