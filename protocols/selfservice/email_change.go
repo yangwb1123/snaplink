@@ -69,6 +69,11 @@ func HandleMyEmailChange(d Deps, ctx core.HandlerContext, userID string) {
 // completed by the user who started the change), and commits the new email via
 // the UserProvider. Oracle-safe: unknown/expired/consumed token, or a token
 // for a different user, ALL collapse to one email_change_invalid (400).
+// Consuming the token IS proof the bearer controls the new address, so this
+// also stamps email_verified=true — the same guarantee signup verification
+// gives via updateVerifiedEmail in verify_email.go — otherwise a stale/unset
+// flag would carry forward onto the new address and could wrongly lock the
+// account out of login when mandatory verification is enabled.
 func HandleMyEmailVerify(d Deps, ctx core.HandlerContext, userID string) {
 	middleware.TokenNoStoreHeaders(ctx)
 	var req struct {
@@ -90,8 +95,18 @@ func HandleMyEmailVerify(d Deps, ctx core.HandlerContext, userID string) {
 		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrEmailChangeInvalid))
 		return
 	}
-	u.Email = tok.NewEmail
-	if err := d.UserProvider().CreateOrUpdate(rctx, u); err != nil {
+	// Clone the user (and its Attributes map) before mutating: u may alias a
+	// pointer a concurrent reader holds in the provider's cache — same race
+	// documented on verify_email.go's updateVerifiedEmail, which this mirrors.
+	updated := *u
+	attrs := make(map[string]string, len(u.Attributes)+1)
+	for k, v := range u.Attributes {
+		attrs[k] = v
+	}
+	attrs["email_verified"] = "true"
+	updated.Attributes = attrs
+	updated.Email = tok.NewEmail
+	if err := d.UserProvider().CreateOrUpdate(rctx, &updated); err != nil {
 		d.Logger().Error("email change: commit failed", "user_id", userID, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
 		return

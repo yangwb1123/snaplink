@@ -1397,8 +1397,10 @@ paths:
       summary: Complete a verified email change.
       description: |
         Consumes the single-use token, checks it belongs to the authenticated
-        caller, and commits the new email. Oracle-safe: unknown / expired /
-        consumed token, or one for a different user, ALL collapse to
+        caller, and commits the new email. Consuming the token — delivered
+        only to the new address — is itself proof of control, so this also
+        marks the account's email as verified. Oracle-safe: unknown / expired
+        / consumed token, or one for a different user, ALL collapse to
         email_change_invalid (400). `Cache-Control: no-store`.
       operationId: verifyMyEmail
       security:
