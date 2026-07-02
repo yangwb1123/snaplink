@@ -26,11 +26,12 @@ type controlAreaDef struct {
 // EventAdmin* ones) to avoid double counting a subject-export/erase
 // action under both the admin-actions and privacy buckets.
 //
-// auditspi/event_types_admin.go currently declares 40 EventAdmin* consts:
+// auditspi/event_types_admin.go currently declares 41 EventAdmin* consts:
 // 37 land in CC6.3 below, EventAdminSigningKeyRotated lands in CC6.6
 // (cryptographic key management, not a generic privileged action), and
-// EventAdminSubjectExported/EventAdminSubjectErased land in Privacy. This
-// count is a manual cross-check for a human reading this file — the
+// EventAdminSubjectExported/EventAdminSubjectErased/EventAdminTenantExported
+// land in Privacy. This count is a manual cross-check for a human reading
+// this file — the
 // enforced source of truth is drift_test.go's
 // TestEveryKnownEventTypeIsClaimedOrExplicitlyUncategorized, which fails
 // CI (not just a stale comment) the moment a new EventAdmin* const is
@@ -133,6 +134,7 @@ var controlAreaDefs = []controlAreaDef{
 		eventTypes: []audit.EventType{
 			audit.EventAdminSubjectExported,
 			audit.EventAdminSubjectErased,
+			audit.EventAdminTenantExported,
 			audit.EventSubjectDataExported,
 			audit.EventSubjectSelfErased,
 		},

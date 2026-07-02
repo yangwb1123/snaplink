@@ -45,8 +45,8 @@ const (
 	// /me/*-namespace variants of the /sessions/me* paths. These follow the
 	// self-service /me/* convention (cf. PathMe, PathMyMFA) and provide a
 	// single discoverable prefix for the self-service portal SPA.
-	PathMeSessions         = "/me/sessions"
-	PathMeSessionByID      = "/me/sessions/:id"
+	PathMeSessions          = "/me/sessions"
+	PathMeSessionByID       = "/me/sessions/:id"
 	PathMeSessionsRevokeAll = "/me/sessions/revoke-all"
 
 	PathMyConsents    = "/consents/me"
@@ -302,6 +302,15 @@ const (
 	// Mounted only when a TenantUserStore is wired.
 	PathAdminTenantMembers    = "/admin/tenants/:id/members"
 	PathAdminTenantMemberByID = "/admin/tenants/:id/members/:user_id"
+
+	// PathAdminTenantExport triggers + downloads a coherent offboarding/
+	// migration bundle for one tenant (clients, roster, connections,
+	// permissions, session + audit summaries — see
+	// protocols/compliance.TenantExporter). POST, admin:write — deliberately
+	// above the GET-default admin:read like PathBackup, since assembling this
+	// bundle is a heavier, more sensitive operation than the roster/connection
+	// GETs. Mounted only when a TenantUserStore is wired (see mountAdminB2B).
+	PathAdminTenantExport = "/admin/tenants/:id/export"
 
 	// PathMyOrganizations / PathMyOrganizationByID are the self-service org views:
 	// GET lists the orgs the bearer subject belongs to; DELETE leaves one. Mounted

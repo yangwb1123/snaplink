@@ -43,6 +43,12 @@ const (
 	EventAdminDomainDeleted              EventType = "admin_domain_deleted"
 	EventAdminSubjectExported            EventType = "admin_subject_exported"
 	EventAdminSubjectErased              EventType = "admin_subject_erased"
+	// EventAdminTenantExported is emitted by the admin tenant-export endpoint
+	// (offboarding/environment-migration bundle) — the tenant-scoped sibling
+	// of EventAdminSubjectExported, filed in the same Privacy control area
+	// (see auditreport/control_areas.go) since both are bulk personal-data
+	// export actions, not generic admin CRUD.
+	EventAdminTenantExported EventType = "admin_tenant_exported"
 	// EventAdminSigningKeyRotated is emitted by the KeyAdmin RotateSigningKey
 	// RPC for an operator-initiated (on-demand) rotation. The scheduled loop
 	// keeps EventSigningKeyRotated; this admin-namespaced variant carries the

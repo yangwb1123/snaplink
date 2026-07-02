@@ -225,6 +225,7 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventAdminTenantUpdated: {}, EventAdminTenantDeleted: {}, EventAdminTenantStatusChanged: {},
 	EventAdminDomainCreated: {}, EventAdminDomainUpdated: {}, EventAdminDomainDeleted: {},
 	EventAdminSubjectExported: {}, EventAdminSubjectErased: {}, EventAdminGRPCCalled: {},
+	EventAdminTenantExported:    {},
 	EventAdminSigningKeyRotated: {},
 	// system / platform (event_types_system.go)
 	EventBootstrapStepApplied: {}, EventBootstrapStepSkipped: {}, EventBootstrapStepFailed: {},

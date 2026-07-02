@@ -82,6 +82,7 @@ func (s *Server) handleAdminPutTenantMember(ctx HandlerContext) {
 func (s *Server) handleAdminRemoveTenantMember(ctx HandlerContext) {
 	admin.HandleAdminRemoveTenantMember(s, ctx)
 }
+func (s *Server) handleAdminExportTenant(ctx HandlerContext) { admin.HandleAdminExportTenant(s, ctx) }
 
 // Invitations (admin).
 func (s *Server) handleAdminSendInvitation(ctx HandlerContext) {

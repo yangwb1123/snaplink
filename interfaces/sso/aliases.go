@@ -333,6 +333,7 @@ const PathAdminConnectionDomains = core.PathAdminConnectionDomains
 const PathAdminConnectionDomainVerify = core.PathAdminConnectionDomainVerify
 const PathAdminTenantMembers = core.PathAdminTenantMembers
 const PathAdminTenantMemberByID = core.PathAdminTenantMemberByID
+const PathAdminTenantExport = core.PathAdminTenantExport
 const PathMyOrganizations = core.PathMyOrganizations
 const PathMyOrganizationByID = core.PathMyOrganizationByID
 const PathAdminTenantInvitations = core.PathAdminTenantInvitations

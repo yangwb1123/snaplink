@@ -54,6 +54,7 @@ const (
 	EventAdminTempTokenIssued            = auditspi.EventAdminTempTokenIssued
 	EventAdminTenantCreated              = auditspi.EventAdminTenantCreated
 	EventAdminTenantDeleted              = auditspi.EventAdminTenantDeleted
+	EventAdminTenantExported             = auditspi.EventAdminTenantExported
 	EventAdminTenantMemberAdded          = auditspi.EventAdminTenantMemberAdded
 	EventAdminTenantMemberRemoved        = auditspi.EventAdminTenantMemberRemoved
 	EventAdminTenantStatusChanged        = auditspi.EventAdminTenantStatusChanged

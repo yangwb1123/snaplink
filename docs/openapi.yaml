@@ -5128,6 +5128,73 @@ paths:
         "204": { description: Membership removed. }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/admin/tenants/{id}/export:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Export a whole tenant's data (offboarding / environment migration).
+      description: |
+        Assembles a coherent, redacted bundle of everything the server holds
+        for one tenant — clients, org roster + user profiles, pending
+        invitations, B2B enterprise connections, per-client roles +
+        assignments, and a sessions + audit SUMMARY (aggregated counts, never
+        raw session or audit records) — suitable for customer offboarding or
+        migrating a tenant to a new environment. Each resource section
+        reuses the corresponding store's tenant-scoped list method and is
+        independently skipped (never erroring the whole export) when its
+        backing store isn't wired.
+
+        `admin:write` — deliberately above the GET-default `admin:read` used
+        by the roster/connection GETs on this same path prefix, since
+        assembling this bundle is a heavier, more sensitive read (see
+        `POST /api/v1/admin/backup` for the same reasoning). Client secrets,
+        RFC 7592 registration tokens, invitation tokens, and connection
+        config keys that look credential-bearing are never included in
+        plaintext.
+
+        In a multi-tenant deployment where the request resolved a
+        host-bound tenant (`domains/tenant` middleware) that disagrees with
+        `id`, the request is rejected with `403 tenant_mismatch` before any
+        data is assembled. Best-effort: a partial store failure still
+        returns the sections that DID succeed (`207`), never nothing.
+        The response carries `Content-Disposition: attachment` so a browser
+        or admin UI downloads it as a file. Mounted only when a
+        TenantUserStore is wired (the roster is this export's anchor
+        dependency). Emits `admin_tenant_exported`.
+      operationId: adminExportTenant
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Export bundle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantExport"
+        "207":
+          description: Partial export bundle — at least one section's store failed; see the audit log for detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantExport"
+        "400":
+          description: Missing tenant id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: tenant_mismatch — the request's resolved (host-bound) tenant disagrees with `id`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /me/organizations:
     get:
       tags: [self-service]
@@ -8509,6 +8576,96 @@ components:
           type: array
           items: { type: string }
           description: Per-step failures; present on a 207 partial erasure.
+
+    TenantExport:
+      type: object
+      description: |
+        Offboarding/environment-migration bundle for one tenant (see
+        `POST /api/v1/admin/tenants/{id}/export` and
+        protocols/compliance.TenantExporter). Every resource array is
+        OMITTED (not present-but-empty) when its backing store wasn't
+        wired, so a recipient can tell "no data" apart from "not exported".
+      required: [format_version, tenant_id, generated_at, sessions_summary, manifest]
+      properties:
+        format_version:
+          type: integer
+          example: 1
+        tenant_id:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+        clients:
+          type: array
+          items: { $ref: "#/components/schemas/ClientMetadata" }
+          description: Secrets and RFC 7592 registration tokens are never included.
+        members:
+          type: array
+          items: { $ref: "#/components/schemas/TenantMembership" }
+        users:
+          type: array
+          items: { $ref: "#/components/schemas/User" }
+          description: One profile per roster member. Credential attributes (password_hash, seeded_password, ...) are stripped.
+        invitations:
+          type: array
+          items:
+            type: object
+            properties:
+              tenant_id: { type: string }
+              email: { type: string }
+              role: { type: string, enum: [member, admin, guest] }
+              expires_at: { type: string, format: date-time }
+          description: The live token value is never included.
+        connections:
+          type: array
+          items: { $ref: "#/components/schemas/Connection" }
+          description: Config keys that look credential-bearing (secret/password/private/token) are stripped.
+        roles:
+          type: array
+          items:
+            type: object
+            properties:
+              client_id: { type: string }
+              roles:
+                type: array
+                items: { $ref: "#/components/schemas/Role" }
+        assignments:
+          type: array
+          items:
+            type: object
+            properties:
+              client_id: { type: string }
+              assignments:
+                type: array
+                items: { $ref: "#/components/schemas/Assignment" }
+        sessions_summary:
+          type: object
+          description: Aggregated counts, never raw session records — sessions are ephemeral, environment-local state.
+          properties:
+            supported: { type: boolean, description: False when the wired SessionManager can't list by tenant. }
+            total: { type: integer }
+            active: { type: integer }
+            revoked: { type: integer }
+        audit_summary:
+          type: object
+          description: Aggregated event counts by type/outcome/client/provider (audit.Facets), never raw events. Absent when unavailable (distinct from zero events).
+          properties:
+            total: { type: integer }
+            outcomes: { type: object, additionalProperties: { type: integer } }
+            types: { type: object, additionalProperties: { type: integer } }
+            clients: { type: object, additionalProperties: { type: integer } }
+            providers: { type: object, additionalProperties: { type: integer } }
+        manifest:
+          type: object
+          required: [sections, checksum]
+          properties:
+            sections:
+              type: object
+              additionalProperties: { type: integer }
+              description: Per-section item count (e.g. clients, members, users, sessions, audit_events).
+            checksum:
+              type: string
+              description: sha256 hex digest over the bundle's data payload — lets a recipient confirm a downloaded bundle matches what was generated.
 
     AuthzPolicyBundle:
       type: object
