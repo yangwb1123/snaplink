@@ -219,7 +219,7 @@ func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (
 	}
 	body := map[string]any{
 		core.KeyActive:    true,
-		core.KeyTokenType: core.TokenTypeBearer,
+		core.KeyTokenType: dpopTokenTypeOr(core.TokenTypeBearer, claims.ConfirmationJKT),
 		core.KeySub:       claims.Subject,
 		core.KeyIss:       claims.Issuer,
 		core.KeyTokenHint: "access_token",
@@ -298,7 +298,7 @@ func introspectRefresh(store RefreshTokenStore, ctx core.HandlerContext, token s
 	}
 	body := map[string]any{
 		core.KeyActive:    true,
-		core.KeyTokenType: core.TokenTypeBearer,
+		core.KeyTokenType: dpopTokenTypeOr(core.TokenTypeBearer, info.ConfirmationJKT),
 		core.KeySub:       info.UserID,
 		core.KeyClientID:  info.ClientID,
 		core.KeyTokenHint: "refresh_token",
@@ -341,4 +341,21 @@ func authenticateIntrospectionClient(clientStore core.ClientStore, ctx core.Hand
 func tokenHash(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
+}
+
+// dpopTokenTypeOr returns core.TokenTypeNameDPoP when jkt is non-empty
+// (the token carries an RFC 9449 §4 DPoP key-binding confirmation),
+// else defaultType. Mirrors interfaces/sso's dpopTokenTypeOr used when
+// tokens are ISSUED at /token; that copy can't be imported here
+// (protocols/oauth sits below interfaces/sso — AGENTS.md §0.2 import
+// direction), so introspection — which reports on already-issued
+// tokens — keeps its own equivalent. RFC 7662 §2.2 callers (resource
+// servers) rely on token_type to decide whether a DPoP proof is
+// mandatory on every subsequent request; reporting "Bearer" for a
+// sender-constrained token would let them skip that check entirely.
+func dpopTokenTypeOr(defaultType, jkt string) string {
+	if jkt != "" {
+		return core.TokenTypeNameDPoP
+	}
+	return defaultType
 }

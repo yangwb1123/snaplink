@@ -356,3 +356,66 @@ func TestIntrospectionEmitsCnf(t *testing.T) {
 		t.Errorf("cnf emitted for an unbound token: %v", body[core.KeyCnf])
 	}
 }
+
+// TestIntrospectionTokenTypeReflectsDPoPBinding is the RFC 9449 §7 regression
+// guard: a DPoP-bound token (cnf.jkt present) MUST introspect with
+// token_type=DPoP, not Bearer — mirroring the /token endpoint's
+// DPoPTokenTypeOr behavior (interfaces/sso/server_dpop.go). A resource
+// server that trusts introspection's token_type to decide whether to demand
+// a DPoP proof would otherwise treat a sender-constrained token as a plain
+// bearer credential, defeating the entire point of the binding.
+func TestIntrospectionTokenTypeReflectsDPoPBinding(t *testing.T) {
+	t.Parallel()
+
+	t.Run("access token", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		d := newIntrospectDeps(cs, newMemRefreshStore())
+		d.validate = func(context.Context, string) (*core.TokenClaims, string, error) {
+			return &core.TokenClaims{Subject: "u", ClientID: "rp", ConfirmationJKT: "jkt-abc"}, "jwt", nil
+		}
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
+			"token=valid&client_id=rp&client_secret=s")
+		HandleIntrospect(d, ctx)
+		body := decodeBody(t, rec)
+		if got := body[core.KeyTokenType]; got != core.TokenTypeNameDPoP {
+			t.Fatalf("token_type = %v, want %s for a DPoP-bound access token", got, core.TokenTypeNameDPoP)
+		}
+	})
+
+	t.Run("access token without binding stays Bearer", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		d := newIntrospectDeps(cs, newMemRefreshStore())
+		d.validate = func(context.Context, string) (*core.TokenClaims, string, error) {
+			return &core.TokenClaims{Subject: "u", ClientID: "rp"}, "jwt", nil
+		}
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
+			"token=valid&client_id=rp&client_secret=s")
+		HandleIntrospect(d, ctx)
+		body := decodeBody(t, rec)
+		if got := body[core.KeyTokenType]; got != core.TokenTypeBearer {
+			t.Fatalf("token_type = %v, want %s for an unbound access token", got, core.TokenTypeBearer)
+		}
+	})
+
+	t.Run("refresh token", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		rs := newMemRefreshStore()
+		now := time.Now()
+		_ = rs.Issue(context.Background(), "rtok", &RefreshToken{
+			UserID: "user-9", ClientID: "rp", Scopes: []string{"offline_access"},
+			IssuedAt: now, ExpiresAt: now.Add(24 * time.Hour),
+			ConfirmationJKT: "jkt-xyz",
+		})
+		d := newIntrospectDeps(cs, rs)
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
+			"token=rtok&token_type_hint=refresh_token&client_id=rp&client_secret=s")
+		HandleIntrospect(d, ctx)
+		body := decodeBody(t, rec)
+		if got := body[core.KeyTokenType]; got != core.TokenTypeNameDPoP {
+			t.Fatalf("token_type = %v, want %s for a DPoP-bound refresh token", got, core.TokenTypeNameDPoP)
+		}
+	})
+}
