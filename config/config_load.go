@@ -131,6 +131,9 @@ func (c *Config) validate() error {
 			return errors.New("config: client.id required")
 		}
 	}
+	if c.Backup.Keep < 0 {
+		return fmt.Errorf("config: backup.keep must be >= 0 (0 disables retention), got %d", c.Backup.Keep)
+	}
 	return nil
 }
 
@@ -161,6 +164,12 @@ func (c *Config) ServerOptions() []sso.Option {
 	}
 	if c.Security.CORS.Enabled && len(c.Security.CORS.AllowedOrigins) > 0 {
 		opts = append(opts, sso.WithCORS(c.Security.CORS.toPolicy()))
+	}
+	if c.Backup.Dir != "" {
+		opts = append(opts, sso.WithBackupDir(c.Backup.Dir))
+	}
+	if c.Backup.Keep > 0 {
+		opts = append(opts, sso.WithBackupRetention(c.Backup.Keep))
 	}
 	return opts
 }

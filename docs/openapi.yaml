@@ -3448,6 +3448,55 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/backup:
+    post:
+      tags: [admin]
+      summary: Trigger an online VACUUM INTO backup of every registered SQLite source.
+      description: |
+        Runs `VACUUM INTO` against each registered `BackupSource` and
+        writes a timestamped snapshot file
+        (`<BackupFilePrefix><source>-<UTC stamp>.db`) into the configured
+        destination directory (`backup.dir` / `WithBackupDir`; defaults to
+        the OS temp dir). Filenames use a fixed-width UTC timestamp so
+        lexicographic order equals chronological order — this is what the
+        optional retention pruner (`backup.keep` / `WithBackupRetention`)
+        relies on when deleting all but the newest N files per source.
+
+        Returns `200` with a per-source result array even when an
+        individual source fails: a failed `BackupTo` reports
+        `status: "failed"` only (detail goes to the server log, not the
+        response — same fail-open contract as `/api/v1/admin/storage-health`).
+        A successful source reports `path`, `size_bytes`, and
+        `duration_ms`; when retention is enabled it also reports `pruned`
+        (count of files removed for that source).
+
+        Admin-gated — the admin middleware enforces `admin:write` (the
+        path sits under `/api/v1/admin/`). Opt-in via one or more
+        `WithBackupSource` calls; the route is not mounted (404) when no
+        sources are wired.
+      operationId: triggerBackup
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The per-source backup result summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupReport"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Bearer lacks the `admin:write` scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   # ---- Admin gRPC services exposed via grpc-gateway ----
   #
   # Every endpoint below requires the AdminMiddleware Bearer-validated
@@ -7950,6 +7999,50 @@ components:
             Operator-facing reachability/schema error when the store is down
             or its schema couldn't be read. A generic message — never the
             connection string or any credential.
+
+    BackupReport:
+      type: object
+      required: [status, sources]
+      description: |
+        Result summary for POST /api/v1/admin/backup. One entry per
+        registered BackupSource.
+      properties:
+        status:
+          type: string
+          example: ok
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/BackupSourceResult"
+
+    BackupSourceResult:
+      type: object
+      required: [name, status]
+      description: One backup source's result entry.
+      properties:
+        name:
+          type: string
+          description: The BackupSource's operator-facing label.
+          example: clients
+        status:
+          type: string
+          enum: [ok, failed]
+        path:
+          type: string
+          description: Absolute path of the written backup file. Present only on success.
+          example: /var/lib/sso/backups/sso-backup-clients-20260702T153000.000000000.db
+        size_bytes:
+          type: integer
+          description: On-disk size of the backup file. Present only on success.
+          example: 40960
+        duration_ms:
+          type: integer
+          description: Wall-clock duration of the VACUUM INTO call, in milliseconds. Present only on success.
+          example: 12
+        pruned:
+          type: integer
+          description: Count of older backup files deleted by retention for this source. Present only when backup.keep / WithBackupRetention is enabled.
+          example: 3
 
     LivenessResponse:
       type: object

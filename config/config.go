@@ -32,6 +32,7 @@ type Config struct {
 	Bootstrap          BootstrapConfig                 `yaml:"bootstrap"`
 	Snapshot           SnapshotConfig                  `yaml:"snapshot"`
 	Releases           ReleasesConfig                  `yaml:"releases"`
+	Backup             BackupConfig                    `yaml:"backup"`
 	Geo                GeoConfig                       `yaml:"geo"`
 	Region             RegionConfig                    `yaml:"region"`
 	Tenant             TenantConfig                    `yaml:"tenant"`

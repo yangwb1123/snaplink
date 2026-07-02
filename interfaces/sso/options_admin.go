@@ -25,3 +25,23 @@ func WithAdminSessionTTL(ttl time.Duration) Option {
 		}
 	}
 }
+
+// WithBackupDir sets the destination directory for POST /api/v1/admin/backup
+// (VACUUM INTO snapshots). Empty (default) falls back to the OS temp dir.
+func WithBackupDir(dir string) Option {
+	return func(s *Server) {
+		if dir != "" {
+			s.backupDir = dir
+		}
+	}
+}
+
+// WithBackupRetention keeps only the newest keep backup files per source
+// after each successful backup. 0 (default) disables pruning.
+func WithBackupRetention(keep int) Option {
+	return func(s *Server) {
+		if keep > 0 {
+			s.backupKeep = keep
+		}
+	}
+}

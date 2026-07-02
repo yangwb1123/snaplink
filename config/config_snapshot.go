@@ -170,3 +170,12 @@ type ReleaseProbeConfig struct {
 	Polls   int                    `yaml:"polls"`
 	Backoff time.Duration          `yaml:"backoff"`
 }
+
+// BackupConfig configures the admin online-backup endpoint
+// (POST /api/v1/admin/backup). Dir is where VACUUM INTO snapshots land
+// (empty = OS temp dir); Keep retains only the newest N backup files per
+// source after each run (0 = keep all).
+type BackupConfig struct {
+	Dir  string `yaml:"dir"`
+	Keep int    `yaml:"keep"`
+}

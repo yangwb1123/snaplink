@@ -159,7 +159,17 @@ const (
 	// (POST /api/v1/admin/backup). Runs VACUUM INTO on each registered
 	// BackupSource and lists the backup results. Gated by AdminMiddleware
 	// (admin:write).
-	PathBackup = "/api/v1/admin/backup"
+	//
+	// Group-relative: mounted on the /api/v1 router group (see the
+	// PathTenantUsage comment below for the double-prefix regression a
+	// full "/api/v1/..." value causes — this constant previously had
+	// that bug, which made the endpoint permanently unreachable).
+	PathBackup = "/admin/backup"
+
+	// BackupFilePrefix names admin-triggered backup files
+	// (<prefix><source>-<utc-stamp>.db); the retention pruner filters on
+	// it so unrelated files sharing the destination dir are never deleted.
+	BackupFilePrefix = "sso-backup-"
 
 	// PathTenantUsage is the read-only admin per-tenant usage/metering
 	// endpoint (GET /api/v1/admin/tenants/:id/usage?period=day|month&start=...).

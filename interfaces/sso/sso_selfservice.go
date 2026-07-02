@@ -41,6 +41,14 @@ type selfServiceState struct {
 	// enumerates these sources and streams each to the operator.
 	backupSources []core.BackupSource
 
+	// backupDir overrides where admin-triggered backups land
+	// (WithBackupDir). Empty = os.TempDir(), preserving the
+	// pre-config behavior of writing under the OS temp dir.
+	backupDir string
+	// backupKeep bounds retained backup files per source
+	// (WithBackupRetention). 0 = keep everything.
+	backupKeep int
+
 	// adminTokenStore persists admin bearer token metadata for
 	// lifecycle management (list, revoke). Without this store,
 	// admin tokens can only be revoked by clearing the underlying
