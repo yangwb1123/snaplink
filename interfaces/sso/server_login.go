@@ -59,7 +59,7 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 // written and the caller MUST return.
 func (s *Server) rejectNonJSONLogin(ctx HandlerContext) bool {
 	if ct := ctx.Request().Header.Get(core.HeaderContentType); ct != "" && !strings.HasPrefix(ct, "application/json") {
-		ctx.JSON(http.StatusUnsupportedMediaType, errorBody(core.ErrInvalidRequest))
+		ctx.JSON(http.StatusUnsupportedMediaType, errorBody(ctx, core.ErrInvalidRequest))
 		return true
 	}
 	return false
@@ -85,7 +85,7 @@ func (s *Server) rejectDisallowedLoginOrigin(ctx HandlerContext) bool {
 		"client_ip", ctx.Request().RemoteAddr,
 		"user_agent", ctx.Request().UserAgent(),
 	)
-	ctx.JSON(http.StatusForbidden, errorBody(core.ErrInvalidRequest))
+	ctx.JSON(http.StatusForbidden, errorBody(ctx, core.ErrInvalidRequest))
 	return true
 }
 

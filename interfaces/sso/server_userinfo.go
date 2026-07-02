@@ -34,7 +34,7 @@ func (s *Server) handleMeshExtAuthz(ctx HandlerContext) {
 	// ALLOW would let a different bearer's identity be injected upstream.
 	tokenNoStoreHeaders(ctx)
 	if err := s.requireDeps(DepTokenIssuer); err != nil {
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrServerMisconfigured))
 		return
 	}
 

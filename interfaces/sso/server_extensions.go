@@ -134,7 +134,7 @@ func (s *Server) handleSSFReceive(ctx HandlerContext) {
 	if s.caepReceiver == nil {
 		// Defensive: the route is only mounted when the receiver is wired,
 		// but guard so a future refactor can't reach a nil receiver.
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrServerMisconfigured))
 		return
 	}
 
@@ -153,7 +153,7 @@ func (s *Server) handleSSFReceive(ctx HandlerContext) {
 		// authentic + addressed here, but the revoke/resolve store faltered).
 		// 500 so the transmitter retries — we must not ack a revocation we
 		// didn't perform. No oracle: the body is a generic internal error.
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return
 	}
 	if !res.Acked {

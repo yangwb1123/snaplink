@@ -256,7 +256,7 @@ func (s *Server) residencyGateTokenGrant(ctx HandlerContext, client *Client) (ha
 		return false
 	}
 	if err := s.checkTenantResidency(ctx.Request().Context(), client.TenantID, servingRegion, true); err != nil {
-		ctx.JSON(http.StatusForbidden, errorBody(s.mapResidencyError(err)))
+		ctx.JSON(http.StatusForbidden, errorBody(ctx, s.mapResidencyError(err)))
 		return true
 	}
 	return false
