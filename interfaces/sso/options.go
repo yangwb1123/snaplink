@@ -192,6 +192,35 @@ func WithJARM(signer oidc.JARMSigner) Option {
 	return func(s *Server) { s.jarmSigner = signer }
 }
 
+// WithIntrospectionSigning enables RFC 9701 JWT-formatted /token/introspect
+// responses. signer MUST be a DEDICATED key — NEVER the issuer wired via
+// WithTokenIssuer/WithIDTokenIssuer for access/ID tokens, and never the
+// WithJARM signer either — so a compromise of the introspection-response
+// key can't be used to forge bearer tokens, and vice versa. Construct a
+// second defaultimpl.Ed25519JWTIssuer / ECDSAJWTIssuer / RSAJWTIssuer
+// purely for this role (it satisfies oauth.IntrospectionSigner out of the
+// box); it rotates on its own independent schedule via its own
+// RotateKey/RotateNow, exactly like the per-tenant issuers registered
+// through WithTenantTokenIssuer.
+//
+// When signer also implements core.JWKSProvider (every shipped issuer type
+// does), its public key(s) publish in /.well-known/jwks.json with
+// "use": "introspection" — distinct from the "sig" access/ID-token keys —
+// so a resource server can locate the right verification key from
+// discovery alone. Once wired, /token/introspect returns the JWT format
+// (Content-Type application/token-introspection+jwt) whenever the
+// introspecting client sends `Accept: application/token-introspection+jwt`
+// (RFC 9701 §5); callers that don't send it keep getting plain RFC 7662
+// JSON — existing integrations are unaffected. Discovery additionally
+// advertises introspection_signing_alg_values_supported.
+//
+// Option absent (default) = byte-identical to a build without this
+// feature: no discovery field, no extra JWKS entries, every
+// /token/introspect response stays plain JSON regardless of Accept.
+func WithIntrospectionSigning(signer oauth.IntrospectionSigner) Option {
+	return func(s *Server) { s.introspectionSigner = signer }
+}
+
 // WithDefaultTokenStrategy names the strategy used when a Client does not
 // specify its own.
 func WithDefaultTokenStrategy(name string) Option {

@@ -725,7 +725,30 @@ paths:
         Basic > body > private_key_jwt. Caller MUST be a registered
         client; anonymous introspection is intentionally not
         supported.
+
+        RFC 9701 signed responses (opt-in, default OFF): send
+        `Accept: application/token-introspection+jwt` to receive the
+        response as a signed JWT instead of plain JSON — ONLY honored
+        when the deployment has wired a DEDICATED introspection
+        signing key (`sso.WithIntrospectionSigning`; see
+        `introspection_signing_alg_values_supported` in discovery).
+        Without that signer wired, the Accept header is silently
+        ignored and the response stays plain JSON — existing
+        integrations are unaffected. The JWT nests the full RFC 7662
+        body under a `token_introspection` claim (top-level `iss` /
+        `aud` / `iat` only — never `sub`/`exp`, per §8's
+        substitution-attack defense) and carries
+        `typ: token-introspection+jwt` in its header.
       operationId: postIntrospect
+      parameters:
+        - name: Accept
+          in: header
+          required: false
+          schema: { type: string }
+          description: |
+            `application/token-introspection+jwt` opts into the RFC
+            9701 signed-JWT response format (see above). Any other
+            value, or omission, gets plain JSON.
       requestBody:
         required: true
         content:
@@ -748,6 +771,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/IntrospectResponse"
+            application/token-introspection+jwt:
+              schema:
+                type: string
+                description: |
+                  RFC 9701 §5.1 signed introspection response (compact
+                  JWS, not JSON) — see the endpoint description for
+                  the opt-in trigger and claim shape.
         "401":
           description: Client authentication failed.
           content:
@@ -8792,6 +8822,16 @@ components:
           type: array
           items:
             type: string
+        introspection_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+          description: |
+            RFC 9701 §7. Present ONLY when a dedicated introspection
+            signer is wired (WithIntrospectionSigning) — its presence
+            is how a resource server discovers the JWT-formatted
+            /token/introspect response is available before ever
+            sending the opt-in Accept header.
         id_token_encryption_alg_values_supported:
           type: array
           description: Present only when a JWE response encrypter is wired (WithJWEResponseEncrypter).

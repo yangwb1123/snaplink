@@ -9,7 +9,9 @@ import (
 	"fmt"
 
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // SignUserInfo implements [oidc.UserinfoSigner]. Wraps the supplied
@@ -31,21 +33,7 @@ func (j *Ed25519JWTIssuer) SignUserInfo(ctx context.Context, audience string, cl
 			claims["aud"] = audience
 		}
 	}
-	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTyp, Kid: kid}
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return "", err
-	}
-	pb, err := json.Marshal(claims)
-	if err != nil {
-		return "", err
-	}
-	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig, err := sgn.Sign(ctx, []byte(signingInput))
-	if err != nil {
-		return "", fmt.Errorf("ed25519: sign userinfo: %w", err)
-	}
-	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+	return j.signClaims(ctx, sgn, kid, jwtTyp, claims)
 }
 
 // SignMetadata implements [oidc.MetadataSigner]. Wraps the discovery
@@ -53,11 +41,34 @@ func (j *Ed25519JWTIssuer) SignUserInfo(ctx context.Context, audience string, cl
 // userinfo tokens. Header includes `kid` so an RP that's already
 // fetched JWKS can pick the right key for verification.
 func (j *Ed25519JWTIssuer) SignMetadata(ctx context.Context, claims map[string]any) (string, error) {
-	sgn, kid := j.currentKey()
 	if claims == nil {
 		return "", nil
 	}
-	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTyp, Kid: kid}
+	sgn, kid := j.currentKey()
+	return j.signClaims(ctx, sgn, kid, jwtTyp, claims)
+}
+
+// SignIntrospectionJWT implements [oauth.IntrospectionSigner] — RFC 9701
+// JWT-formatted /token/introspect responses. Deployments MUST point this
+// at a DEDICATED Ed25519JWTIssuer instance (its own key), never the
+// access/ID-token issuer — see oauth.IntrospectionSigner. The typ header
+// is core.JWTTypIntrospection, distinct from the generic "JWT" typ
+// SignUserInfo/SignMetadata use, per the RFC's substitution-attack
+// defense (§8): an RS checking typ can never mistake this JWT for a
+// bearer access token.
+func (j *Ed25519JWTIssuer) SignIntrospectionJWT(ctx context.Context, claims map[string]any) (string, error) {
+	if claims == nil {
+		return "", nil
+	}
+	sgn, kid := j.currentKey()
+	return j.signClaims(ctx, sgn, kid, core.JWTTypIntrospection, claims)
+}
+
+// signClaims is the shared JWS assembler for the free-form claim-map
+// signers (userinfo, metadata, introspection) — mirrors the ECDSA/RSA
+// issuers' helper of the same name/shape.
+func (j *Ed25519JWTIssuer) signClaims(ctx context.Context, sgn Ed25519Signer, kid, typ string, claims map[string]any) (string, error) {
+	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: typ, Kid: kid}
 	hb, err := json.Marshal(header)
 	if err != nil {
 		return "", err
@@ -69,7 +80,7 @@ func (j *Ed25519JWTIssuer) SignMetadata(ctx context.Context, claims map[string]a
 	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
 	sig, err := sgn.Sign(ctx, []byte(signingInput))
 	if err != nil {
-		return "", fmt.Errorf("ed25519: sign metadata: %w", err)
+		return "", fmt.Errorf("ed25519: sign claims: %w", err)
 	}
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
@@ -181,3 +192,7 @@ var _ oidc.IDTokenIssuer = (*Ed25519JWTIssuer)(nil)
 // Compile-time check: same key also mints OIDC Back-Channel
 // Logout tokens.
 var _ sso.LogoutTokenIssuer = (*Ed25519JWTIssuer)(nil)
+
+// Compile-time check: an Ed25519JWTIssuer instance (a DEDICATED one, per
+// oauth.IntrospectionSigner's doc) can sign RFC 9701 introspection JWTs.
+var _ oauth.IntrospectionSigner = (*Ed25519JWTIssuer)(nil)

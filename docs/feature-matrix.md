@@ -9,6 +9,7 @@ OAuth 2.0 / OIDC / SSO feature compliance matrix. Extracted from AGENTS.md.
 | RFC 6749 §6 refresh_token | `/token` | `WithRefreshTokenStore`; grace: `WithRefreshRotationGrace(window)` | `oauth/refresh_token.go` |
 | RFC 7636 PKCE | `/auth/login` + `/token` | per-request / `Client.RequirePKCE` | `oauth/auth_code.go` |
 | RFC 7662 introspection | `/token/introspect` | always | `oauth/handle_introspect.go` |
+| RFC 9701 signed introspection | `/token/introspect` (`Accept: application/token-introspection+jwt`) | `WithIntrospectionSigning(signer)`; default OFF; DEDICATED key (never the access/ID-token signer), independently rotated; JWKS `use:introspection` | `oauth/handle_introspect.go` |
 | RFC 7009 revocation | `/token/revoke[-all]` | always; bulk: `RefreshTokenSubjectIndex`; cross-replica: `WithCrossReplicaRevocation`; durable: `With{Algo}RevocationStore` | `oauth/handle_revoke.go` |
 | RFC 8628 device | `/device/{code,verify}`, `/token` | `WithDeviceCodeStore` | `oauth/device_code.go` |
 | RFC 8693 token-exchange | `/token` | always; refresh: `WithRefreshTokenStore`; actor replay: `WithJTIReplayStore` | `handlers.go` + `oauth/token_exchange_helpers.go` |

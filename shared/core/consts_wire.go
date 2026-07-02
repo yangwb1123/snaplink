@@ -21,6 +21,19 @@ const (
 	TokenTypeBearer = "Bearer"
 	ContentTypeJSON = "application/json"
 
+	// ContentTypeTokenIntrospectionJWT is both the RFC 9701 §5 `Accept`
+	// request header value an introspecting client sends to opt into a
+	// JWT-formatted /token/introspect response, and the `Content-Type`
+	// the response carries when the server honors it.
+	ContentTypeTokenIntrospectionJWT = "application/token-introspection+jwt"
+	// JWTTypIntrospection is the RFC 9701 §5.1 JOSE `typ` header value
+	// stamped on a signed introspection-response JWT. Deliberately
+	// DISTINCT from the generic "JWT" typ used for ID/metadata/userinfo
+	// JWTs — §8 relies on it so a resource server (or an on-path
+	// attacker) can never mistake this response for a bearer access
+	// token by typ alone.
+	JWTTypIntrospection = "token-introspection+jwt"
+
 	CORSAllowedMethods = "GET, POST, OPTIONS"
 	CORSAllowedHeaders = "Content-Type, Authorization"
 	CORSAllowAllOrigin = "*"
@@ -101,6 +114,13 @@ const (
 	KeyCnf        = "cnf"
 	KeyCnfX5TS256 = "x5t#S256"
 	KeyCnfJKT     = "jkt"
+
+	// KeyTokenIntrospection is the RFC 9701 §5.1 claim that nests the full
+	// RFC 7662 introspection response inside the signed JWT wrapper. The
+	// nesting (rather than flattening `active`/`sub`/`exp`/etc. onto the
+	// JWT's own top-level claims) is the RFC's defense against a naive
+	// verifier mistaking the introspection JWT for a bearer access token.
+	KeyTokenIntrospection = "token_introspection"
 
 	// OIDC response key for the ID Token (OIDC Core §3.1.3.3).
 	KeyIDToken = "id_token"

@@ -11,10 +11,10 @@ import (
 	connectionssqlite "github.com/snaplink/sso/domains/connections/sqlite"
 	tenantsqlite "github.com/snaplink/sso/domains/tenant/sqlite"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
-	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 	"github.com/snaplink/sso/shared/security"
 )
 
@@ -208,7 +208,18 @@ func (b *appBuilder) wireOAuthGrantStores() error {
 	if err := b.wireCIBA(); err != nil {
 		return err
 	}
-	return b.wireJARM()
+	return b.wireResponseSigners()
+}
+
+// wireResponseSigners wires the opt-in JARM (authorization response) and
+// RFC 9701 (introspection response) JWT signers, in order. Split out of
+// wireOAuthGrantStores to keep that function under the function-length
+// budget (AGENTS.md §0.1) as the grant-store list grows.
+func (b *appBuilder) wireResponseSigners() error {
+	if err := b.wireJARM(); err != nil {
+		return err
+	}
+	return b.wireIntrospectionSigning()
 }
 
 // wireRefreshToken wires the refresh-token store + the opt-in rotation-grace
@@ -355,5 +366,31 @@ func (b *appBuilder) wireJARM() error {
 	}
 	b.opts = append(b.opts, sso.WithJARM(js))
 	b.logger.Info("jarm: enabled (response_mode=jwt)", "signing_alg", b.signingAlg)
+	return nil
+}
+
+// wireIntrospectionSigning wires RFC 9701 JWT-formatted /token/introspect
+// responses. Unlike wireJARM (which reuses b.jwtIssuer, the primary
+// signing issuer), this builds a SEPARATE issuer from
+// keys.introspection_signing — a distinct key with its own kid + rotation
+// lifecycle — because a resource server trusting introspection JWTs must
+// never be able to forge (or be forged by) a bearer access/ID token
+// through key reuse (AGENTS.md: dedicated signer requirement).
+func (b *appBuilder) wireIntrospectionSigning() error {
+	cfg := b.cfg.Keys.IntrospectionSigning
+	if !cfg.Enabled {
+		return nil
+	}
+	issuer, alg, extSigner, err := serverbuildsign.BuildSigningIssuer(cfg.SigningConfig, b.cfg.Server, b.metricsRegistry, b.logger)
+	if err != nil {
+		return fmt.Errorf("keys.introspection_signing: %w", err)
+	}
+	signer, ok := any(issuer).(oauth.IntrospectionSigner)
+	if !ok {
+		return fmt.Errorf("keys.introspection_signing.alg %q does not implement introspection-response signing", alg)
+	}
+	b.opts = append(b.opts, sso.WithIntrospectionSigning(signer))
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "introspection-external-signer", extSigner)
+	b.logger.Info("introspection signing: enabled (RFC 9701 JWT introspection responses)", "signing_alg", alg)
 	return nil
 }

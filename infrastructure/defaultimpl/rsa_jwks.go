@@ -11,7 +11,9 @@ import (
 	"fmt"
 
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // SignUserInfo implements oidc.UserinfoSigner — same RSA key. Stamps
@@ -42,8 +44,24 @@ func (j *RSAJWTIssuer) SignMetadata(ctx context.Context, claims map[string]any) 
 	return j.signClaims(ctx, sgn, kid, jwtTyp, claims)
 }
 
+// SignIntrospectionJWT implements [oauth.IntrospectionSigner] — RFC 9701
+// JWT-formatted /token/introspect responses. Deployments MUST point this
+// at a DEDICATED RSAJWTIssuer instance (its own key), never the
+// access/ID-token issuer — see oauth.IntrospectionSigner. The typ header
+// is core.JWTTypIntrospection, distinct from the generic "JWT" typ
+// SignUserInfo/SignMetadata use, per the RFC's substitution-attack
+// defense (§8): an RS checking typ can never mistake this JWT for a
+// bearer access token.
+func (j *RSAJWTIssuer) SignIntrospectionJWT(ctx context.Context, claims map[string]any) (string, error) {
+	if claims == nil {
+		return "", nil
+	}
+	sgn, kid := j.currentKey()
+	return j.signClaims(ctx, sgn, kid, core.JWTTypIntrospection, claims)
+}
+
 // signClaims is the shared JWS assembler for the free-form claim-map
-// signers (userinfo, metadata).
+// signers (userinfo, metadata, introspection).
 func (j *RSAJWTIssuer) signClaims(ctx context.Context, sgn RSASigner, kid, typ string, claims map[string]any) (string, error) {
 	header := rsaHeader{Alg: j.alg, Typ: typ, Kid: kid}
 	hb, err := json.Marshal(header)
@@ -162,11 +180,12 @@ func rsaFingerprintKid(pub *rsa.PublicKey) string {
 // defaultimpl package never imports the peripheral caep subsystem. SignJWT
 // satisfies caep.JWTSigner structurally regardless.
 var (
-	_ sso.TokenIssuer       = (*RSAJWTIssuer)(nil)
-	_ oidc.IDTokenIssuer    = (*RSAJWTIssuer)(nil)
-	_ oidc.UserinfoSigner   = (*RSAJWTIssuer)(nil)
-	_ oidc.MetadataSigner   = (*RSAJWTIssuer)(nil)
-	_ sso.LogoutTokenIssuer = (*RSAJWTIssuer)(nil)
-	_ sso.TokenFormatHinter = (*RSAJWTIssuer)(nil)
-	_ sso.JWKSProvider      = (*RSAJWTIssuer)(nil)
+	_ sso.TokenIssuer           = (*RSAJWTIssuer)(nil)
+	_ oidc.IDTokenIssuer        = (*RSAJWTIssuer)(nil)
+	_ oidc.UserinfoSigner       = (*RSAJWTIssuer)(nil)
+	_ oidc.MetadataSigner       = (*RSAJWTIssuer)(nil)
+	_ sso.LogoutTokenIssuer     = (*RSAJWTIssuer)(nil)
+	_ sso.TokenFormatHinter     = (*RSAJWTIssuer)(nil)
+	_ sso.JWKSProvider          = (*RSAJWTIssuer)(nil)
+	_ oauth.IntrospectionSigner = (*RSAJWTIssuer)(nil)
 )

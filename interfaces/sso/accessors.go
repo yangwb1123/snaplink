@@ -13,11 +13,11 @@ import (
 	"github.com/snaplink/sso/domains/anomaly"
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/permissions"
+	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/netpolicy"
-	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/protocols/compliance"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
@@ -69,16 +69,16 @@ func (s *Server) EncryptIDTokenForClient(ctx context.Context, client *Client, si
 	return s.maybeEncryptIDToken(ctx, client, signed)
 }
 
-func (s *Server) Auditor() *audit.Recorder                  { return s.auditor }
-func (s *Server) Permissions() permissions.Provider         { return s.permissions }
-func (s *Server) EmbedPermissions() bool                    { return s.embedPermissions }
-func (s *Server) NetStore() netpolicy.Store                 { return s.netStore }
-func (s *Server) NetClassifier() *netpolicy.Classifier      { return s.netClassifier }
-func (s *Server) Metrics() *metrics.Metrics                 { return s.metrics }
-func (s *Server) SrvLogger() spi.Logger                     { return s.logger }
-func (s *Server) Issuer() string                            { return s.issuer }
-func (s *Server) SessionMgr() core.SessionManager           { return s.sessionMgr }
-func (s *Server) ClientStoreAccessor() core.ClientStore     { return s.clientStore }
+func (s *Server) Auditor() *audit.Recorder              { return s.auditor }
+func (s *Server) Permissions() permissions.Provider     { return s.permissions }
+func (s *Server) EmbedPermissions() bool                { return s.embedPermissions }
+func (s *Server) NetStore() netpolicy.Store             { return s.netStore }
+func (s *Server) NetClassifier() *netpolicy.Classifier  { return s.netClassifier }
+func (s *Server) Metrics() *metrics.Metrics             { return s.metrics }
+func (s *Server) SrvLogger() spi.Logger                 { return s.logger }
+func (s *Server) Issuer() string                        { return s.issuer }
+func (s *Server) SessionMgr() core.SessionManager       { return s.sessionMgr }
+func (s *Server) ClientStoreAccessor() core.ClientStore { return s.clientStore }
 
 // DestroySession implements oidc.EndSessionDeps: destroys the server-side SSO
 // session so the session cookie cannot be reused after /end_session logout.
@@ -105,8 +105,24 @@ func (s *Server) SubjectRefreshRevoker() oidc.SubjectRefreshRevoker {
 	return nil
 }
 
-func (s *Server) MetadataSigner() oidc.MetadataSigner      { return s.metadataSigner }
-func (s *Server) JARMSigner() oidc.JARMSigner              { return s.jarmSigner }
+func (s *Server) MetadataSigner() oidc.MetadataSigner            { return s.metadataSigner }
+func (s *Server) JARMSigner() oidc.JARMSigner                    { return s.jarmSigner }
+func (s *Server) IntrospectionSigner() oauth.IntrospectionSigner { return s.introspectionSigner }
+
+// IntrospectionSigningKeys returns the wired introspection signer's public
+// key set with "use": "introspection" (RFC 9701) for JWKS aggregation, or
+// nil when no signer is wired or the signer doesn't publish keys (e.g. a
+// custom KMS-backed IntrospectionSigner that opts out of JWKS discovery).
+// Wraps on every call rather than caching a decorated field — JWKS
+// aggregation itself runs behind ComputeJWKSDocument's single-flight, so
+// the extra allocation here is on the cache-miss path only.
+func (s *Server) IntrospectionSigningKeys() core.JWKSProvider {
+	jp, ok := s.introspectionSigner.(core.JWKSProvider)
+	if !ok {
+		return nil
+	}
+	return oauth.NewIntrospectionKeySet(jp)
+}
 func (s *Server) MFAProvider() spi.MFAProvider             { return s.mfaProvider }
 func (s *Server) MFAChallengeStore() spi.MFAChallengeStore { return s.mfaChallengeStore }
 func (s *Server) MFAChallengeTTL() time.Duration           { return s.mfaChallengeTTL }
@@ -141,8 +157,9 @@ func (s *Server) DomainResolver() connections.DNSResolver {
 	}
 	return connections.NewDNSResolver()
 }
+
 // ConsentStore exposes the wired consent store (may be nil).
-func (s *Server) ConsentStore() ConsentStore { return s.consentStore }
+func (s *Server) ConsentStore() ConsentStore                { return s.consentStore }
 func (s *Server) TenantUserStore() core.TenantUserStore     { return s.tenantUserStore }
 func (s *Server) UserProviderAccessor() core.UserProvider   { return s.userProvider }
 func (s *Server) DeviceSecretStore() core.DeviceSecretStore { return s.deviceSecretStore }
