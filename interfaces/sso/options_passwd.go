@@ -286,6 +286,13 @@ func WithSelfEditableProfileAttributes(keys ...string) Option {
 	}
 }
 
+// WithConsentStore wires a persistent consent record store. When set,
+// /auth/login records the user's consent decision and enforces the
+// prompt=consent parameter (re-prompting even when a grant already exists).
+// When the requested scopes are not fully covered by an existing grant,
+// consent_required is returned (HTTP 200) so the SPA can surface a
+// consent screen. When nil (the default), all consent enforcement is skipped
+// — behavior is byte-identical to a build without this feature.
 func WithConsentStore(cs ConsentStore) Option {
 	return func(s *Server) { s.consentStore = cs }
 }
