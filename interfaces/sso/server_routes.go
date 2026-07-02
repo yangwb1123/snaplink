@@ -62,6 +62,7 @@ func (s *Server) Mount() {
 	s.mountCoreOAuthOIDC()
 	s.mountSelfServiceProfile()
 	s.mountSelfServiceCredentials()
+	s.mountOrgAdminSelfService()
 	s.mountClusterEndpoints()
 	s.mountFederationEndpoints()
 	api := s.router.Group(PathAPIPrefix)

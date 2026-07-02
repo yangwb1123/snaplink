@@ -105,6 +105,28 @@ func (s *Server) handleAcceptInvitation(ctx HandlerContext) {
 	selfservice.HandleAcceptInvitation(s, ctx)
 }
 
+// Delegated org-admin self-service endpoints (/me/organizations/:tenant_id/*).
+// Subject-bearer, authorized by tenant-admin MEMBERSHIP (not the global admin
+// scope) — logic + audit live in selfserviceaccount/orgadmin.go.
+func (s *Server) handleOrgAdminListMembers(ctx HandlerContext) {
+	selfservice.HandleOrgAdminListMembers(s, ctx)
+}
+func (s *Server) handleOrgAdminPutMember(ctx HandlerContext) {
+	selfservice.HandleOrgAdminPutMember(s, ctx)
+}
+func (s *Server) handleOrgAdminRemoveMember(ctx HandlerContext) {
+	selfservice.HandleOrgAdminRemoveMember(s, ctx)
+}
+func (s *Server) handleOrgAdminSendInvitation(ctx HandlerContext) {
+	selfservice.HandleOrgAdminSendInvitation(s, ctx)
+}
+func (s *Server) handleOrgAdminListInvitations(ctx HandlerContext) {
+	selfservice.HandleOrgAdminListInvitations(s, ctx)
+}
+func (s *Server) handleOrgAdminRevokeInvitation(ctx HandlerContext) {
+	selfservice.HandleOrgAdminRevokeInvitation(s, ctx)
+}
+
 // handleAdminListSessions returns all active sessions (delegates to
 // SessionManager.ListAll). Gated by admin:read scope via the admin
 // middleware. Mounted only when a SessionManager is wired.

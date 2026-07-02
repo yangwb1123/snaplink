@@ -28,22 +28,7 @@ func (s *Server) checkTenantNotSuspended(ctx context.Context, claims *TokenClaim
 		// Unknown client or unbound client — nothing to gate on.
 		return nil
 	}
-	if suspended, decided := s.checkSuspensionCache(client.TenantID); decided {
-		if suspended {
-			return ErrTenantSuspended
-		}
-		return nil
-	}
-	t, err := s.tenantStore.GetTenant(ctx, client.TenantID)
-	if err != nil || t == nil {
-		// Fail open on store outage; don't 401 the world.
-		return nil
-	}
-	suspended := t.Status == tenant.StatusSuspended
-	if s.tenantSuspensionCache != nil {
-		s.tenantSuspensionCache.put(client.TenantID, suspended)
-	}
-	if suspended {
+	if s.TenantSuspended(ctx, client.TenantID) {
 		return ErrTenantSuspended
 	}
 	return nil

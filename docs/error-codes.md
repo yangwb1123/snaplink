@@ -35,6 +35,8 @@ exact emission site.
 | `region_not_allowed`                  | 403  | Serving region is outside the tenant's data-residency `AllowedRegions` | Route the request to an allowed region |
 | `residency_violation`                 | 403  | Operation would place tenant data outside its residency boundary   | Use a region within the tenant's policy    |
 | `quota_exceeded`                      | 403  | Tenant has reached its per-resource quota (sessions on login; clients on DCR `/register`). Governance code, not a credential oracle | Raise the tenant's quota, or reset usage |
+| `forbidden`                           | 403  | Delegated org-admin surface (`/me/organizations/{tenant_id}/*`): the caller is not a `TenantRoleAdmin` of the path tenant. Tenant-absent, not-a-member, and member-but-not-admin ALL collapse to this one code (anti-enumeration — no branch reveals which) | Only an org admin may manage that org |
+| `last_org_admin`                      | 409  | Delegated org-admin surface: removing or demoting the org's FINAL admin (including self-removal / self-demotion) was refused — it would orphan the org | Appoint another admin before removing/demoting the last one |
 | `authenticator_not_allowed_for_client`| 403  | Client's `allowed_authenticators` list excludes this provider      | Use a method the client permits            |
 | `risk_denied`                         | 403  | `RiskScorer` returned `DecisionDeny`                               | Step up auth, or wait + retry              |
 | `unsupported_provider`                | 400  | `provider` field is not a registered authenticator name            | Use a valid provider name                  |
