@@ -292,11 +292,14 @@ func mfaLockoutKey(subjectID string) string {
 
 // resumeLoginAfterMFA decodes the frozen pre-step-up state, folds the verified
 // second factor into the AMR (RFC 8176), re-looks-up the client (it may have been
-// deactivated / tenant-suspended in the verify window), re-applies the residency
-// write-gate from THIS request's serving region, and resumes finishLogin (which
-// writes the response — indistinguishable from a non-gated login bar the round
-// trip). CredentialHealth is re-attached out-of-band because it is json:"-" and
-// doesn't survive the embedded Result round trip.
+// deactivated / tenant-suspended in the verify window), re-checks the USER's SCIM
+// active flag (it may have been deprovisioned in the same window -- the MFA
+// challenge TTL can be minutes, and rejectDeactivatedUser only ran once, at the
+// FIRST /auth/login request, before the challenge existed), re-applies the
+// residency write-gate from THIS request's serving region, and resumes
+// finishLogin (which writes the response — indistinguishable from a non-gated
+// login bar the round trip). CredentialHealth is re-attached out-of-band because
+// it is json:"-" and doesn't survive the embedded Result round trip.
 func (s *Server) resumeLoginAfterMFA(ctx HandlerContext, challenge *spi.MFAChallenge, method, challengeID string) {
 	state := &mfaResumeState{}
 	if err := json.Unmarshal(challenge.RequestState, state); err != nil {
@@ -322,6 +325,16 @@ func (s *Server) resumeLoginAfterMFA(ctx HandlerContext, challenge *spi.MFAChall
 		// the factor that failed.
 		s.recordMFAFailure(ctx, challenge.SubjectID, challengeID, method, "client_unavailable")
 		ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, ErrInactiveClient))
+		return
+	}
+	// SCIM deprovisioning re-check on the SECOND leg: rejectDeactivatedUser only
+	// ran once, at the FIRST /auth/login request, before the MFA challenge (and
+	// its multi-minute TTL) existed. Without this, an admin/SCIM connector that
+	// PATCHes active=false during the pending-challenge window would have that
+	// revocation silently ignored -- the second factor alone would still mint
+	// tokens. Reuses the SAME account_locked audit/response path as the
+	// password-leg check, so this isn't a new distinguishable error shape.
+	if s.rejectDeactivatedUser(ctx, &state.Request, state.Result.UserID) {
 		return
 	}
 	s.recordMFASuccessEvent(ctx, challenge.SubjectID, client.ID, state.Result.Provider, method, challengeID)
