@@ -38,6 +38,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // totpStubStore is an in-memory authenticators.TOTPStore for the
@@ -681,5 +682,50 @@ func TestMFA_EmailVerificationGate_FailClosedOnMissingUser(t *testing.T) {
 	}
 	if body["error"] != sso.ErrEmailNotVerified {
 		t.Errorf("error = %v, want %v", body["error"], sso.ErrEmailNotVerified)
+	}
+}
+
+// TestMFA_DeactivatedUserDuringChallenge_Blocks is a regression test for a
+// TOCTOU gap: resumeLoginAfterMFA re-validates the CLIENT (deactivated /
+// tenant-suspended) between challenge issuance and completion, but never
+// re-checked the USER's SCIM active flag. An admin/SCIM connector that
+// PATCHes a user to active=false in the window between the primary
+// credential leg (/auth/login, which DOES call rejectDeactivatedUser) and
+// the completed MFA challenge (/auth/mfa, a separate request, possibly
+// minutes later per the challenge TTL) must still have that revocation
+// honored — tokens must not be minted for a user who is no longer active
+// by the time the second factor completes.
+func TestMFA_DeactivatedUserDuringChallenge_Blocks(t *testing.T) {
+	users := defaultimpl.NewMemoryUserProvider()
+	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: "alice"})
+
+	srv, _, secret := buildMFAHarness(t, sso.WithUserProvider(users))
+
+	status, body := loginMFA(t, srv)
+	if status != http.StatusOK {
+		t.Fatalf("login status = %d want 200; body=%v", status, body)
+	}
+	chal, _ := body["mfa_challenge_id"].(string)
+	if chal == "" {
+		t.Fatalf("mfa_challenge_id missing; body=%v", body)
+	}
+
+	// Deactivate alice (SCIM active=false) between challenge issuance and
+	// completion -- simulates an admin/connector revoking access mid-flow.
+	_ = users.CreateOrUpdate(context.Background(), &sso.User{
+		ID:         "alice",
+		Attributes: map[string]string{core.UserAttrActive: core.UserAttrInactive},
+	})
+
+	code := validTOTPCode(t, secret)
+	status, body = completeMFA(t, srv, chal, authenticators.MethodTOTP, code)
+	if status != http.StatusForbidden {
+		t.Fatalf("MFA completion for deactivated user: status = %d, want 403 (account_locked); body=%v", status, body)
+	}
+	if body["error"] != sso.ErrAccountLocked {
+		t.Errorf("error = %v, want %v", body["error"], sso.ErrAccountLocked)
+	}
+	if body["access_token"] != nil {
+		t.Errorf("deactivated user obtained a token via MFA resume: %v", body)
 	}
 }
