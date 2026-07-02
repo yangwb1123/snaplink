@@ -111,3 +111,25 @@ func (s *Server) mountAdminB2B(api Router) {
 		api.DELETE(PathAdminTenantInvitationByEmail, s.handleAdminRevokeInvitation)
 	}
 }
+
+// mountOrgAdminSelfService registers the DELEGATED org-admin surface
+// (/me/organizations/:tenant_id/*). Despite living beside the admin-API
+// registrars, these routes hang off s.router DIRECTLY — NOT the /api/v1 admin
+// group — because they are subject-bearer self-service endpoints authorized by
+// tenant-admin MEMBERSHIP (requireTenantAdmin), not by the global admin scope
+// AdminMiddleware enforces. Gated on the tenant-user store (the membership gate);
+// the invitation sub-block additionally needs the invitation store. Byte-
+// identical to a build without those stores.
+func (s *Server) mountOrgAdminSelfService() {
+	if s.tenantUserStore == nil {
+		return
+	}
+	s.router.GET(PathOrgAdminMembers, s.handleOrgAdminListMembers)
+	s.router.PUT(PathOrgAdminMemberByID, s.handleOrgAdminPutMember)
+	s.router.DELETE(PathOrgAdminMemberByID, s.handleOrgAdminRemoveMember)
+	if s.invitationStore != nil {
+		s.router.POST(PathOrgAdminInvitations, s.handleOrgAdminSendInvitation)
+		s.router.GET(PathOrgAdminInvitations, s.handleOrgAdminListInvitations)
+		s.router.DELETE(PathOrgAdminInvitationByEmail, s.handleOrgAdminRevokeInvitation)
+	}
+}

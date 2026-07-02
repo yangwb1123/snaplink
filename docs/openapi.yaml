@@ -5304,6 +5304,236 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /me/organizations/{tenant_id}/members:
+    parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [self-service]
+      summary: List the roster of an org you administer (delegated org-admin).
+      description: |
+        Delegated org-admin surface. Returns the roster of `tenant_id` when the
+        bearer subject is a `TenantRoleAdmin` of that org — authorized by
+        tenant-admin MEMBERSHIP, NOT the platform admin scope. `tenant_id` comes
+        from the path only. `Cache-Control: no-store`. Mounted only when a
+        TenantUserStore is wired.
+      operationId: orgAdminListMembers
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The org roster.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+                    items: { $ref: "#/components/schemas/TenantMembership" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: |
+            forbidden — the caller is not an admin of this org. Tenant-absent,
+            not-a-member, and member-but-not-admin ALL return this identical body
+            (anti-enumeration).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /me/organizations/{tenant_id}/members/{user_id}:
+    parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: user_id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [self-service]
+      summary: Change an existing member's org role (delegated org-admin).
+      description: |
+        Changes an EXISTING member's role (member|admin|guest; granting admin is
+        allowed). Invite-only growth: a non-member target returns 404 — new
+        members join via invitations, never a direct PUT. Refused on a suspended
+        org, and refused (409 last_org_admin) when it would demote the org's last
+        admin (incl. self). Emits admin_tenant_member_added with via=org_admin.
+      operationId: orgAdminPutMember
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { type: string, enum: [member, admin, guest] }
+      responses:
+        "200": { description: Member role changed. }
+        "400":
+          description: Invalid role.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: forbidden (not an admin of this org) or access_denied (org suspended).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: not_found — the target user is not a member of this org.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: last_org_admin — demoting the org's final admin is refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [self-service]
+      summary: Remove a member from an org you administer (delegated org-admin).
+      description: |
+        Removes a member from `tenant_id`. Refused on a suspended org, and refused
+        (409 last_org_admin) when it would remove the org's last admin (incl.
+        self). Emits admin_tenant_member_removed with via=org_admin.
+      operationId: orgAdminRemoveMember
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { description: Member removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: forbidden (not an admin of this org) or access_denied (org suspended).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: last_org_admin — removing the org's final admin is refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /me/organizations/{tenant_id}/invitations:
+    parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [self-service]
+      summary: List pending invitations for an org you administer (no token value).
+      description: |
+        Lists pending invitations (email + role + expiry) for `tenant_id`. NEVER
+        returns the token value. `Cache-Control: no-store`.
+      operationId: orgAdminListInvitations
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Pending invitations (metadata only).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invitations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        email: { type: string }
+                        role: { type: string, enum: [member, admin, guest] }
+                        expires_at: { type: string, format: date-time }
+                        expired: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: forbidden — the caller is not an admin of this org.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [self-service]
+      summary: Send an invitation for an org you administer (delegated org-admin).
+      description: |
+        Mints a single-use invitation token and delivers it via the configured
+        InvitationSender. Body: {email, role} (role member|admin|guest; default
+        member). The token is NEVER returned — 501 when no sender is wired.
+        Refused on a suspended org. Emits invitation_sent with via=org_admin.
+      operationId: orgAdminSendInvitation
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string }
+                role: { type: string, enum: [member, admin, guest] }
+      responses:
+        "202": { description: Invitation sent. }
+        "400":
+          description: Missing email or invalid role.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: forbidden (not an admin of this org) or access_denied (org suspended).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501": { description: No InvitationSender is wired. }
+
+  /me/organizations/{tenant_id}/invitations/{email}:
+    parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: email
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [self-service]
+      summary: Revoke every pending invitation for a recipient (delegated org-admin).
+      description: |
+        Bulk-deletes all pending invitation tokens for (tenant_id, email).
+        Refused on a suspended org. Idempotent: 204 whether or not anything was
+        pending (no pending-invitation oracle). Emits invitation_revoked with
+        via=org_admin.
+      operationId: orgAdminRevokeInvitation
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { description: Invitations revoked (or none pending). }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: forbidden (not an admin of this org) or access_denied (org suspended).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/users/{id}/device-secrets:
     parameters:
       - name: id

@@ -132,6 +132,17 @@ const (
 	ErrUseDPoPNonce              = "use_dpop_nonce"
 	ErrResendTooSoon             = "resend_too_soon"
 	ErrNotFound                  = "not_found"
+	// ErrForbidden is the single, generic 403 the delegated org-admin gate
+	// (requireTenantAdmin) returns for EVERY authorization failure — tenant
+	// absent, caller not a member, or caller a member but not an admin. The three
+	// cases MUST be byte-identical on the wire so a caller cannot probe org
+	// existence or another org's roster (anti-enumeration). It is NOT a credential
+	// oracle: a subject already knows its own memberships via /me/organizations.
+	ErrForbidden = "forbidden"
+	// ErrLastOrgAdmin is the 409 returned when removing or demoting the FINAL
+	// admin of an org (including self-removal / self-demotion) — doing so would
+	// orphan the org with no one able to administer it.
+	ErrLastOrgAdmin              = "last_org_admin"
 	ErrNotSupported              = "not_supported"
 	ErrRegistrationDenied        = "registration_denied"
 	ErrPasswordPolicyViolation   = "password_policy_violation"

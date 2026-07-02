@@ -324,6 +324,28 @@ const (
 	// only when an InvitationStore AND a TenantUserStore are wired.
 	PathMyInvitationAccept = "/me/invitations/accept"
 
+	// Delegated org-admin surface (w2.11). A TenantRoleAdmin of :tenant_id manages
+	// ONLY that org's roster + invitations via the SUBJECT bearer, WITHOUT holding
+	// the platform-wide admin scope. These hang off the /me self-service tree (not
+	// /api/v1/admin, which is unconditionally gated by the global admin scope) and
+	// are authorized by tenant-admin MEMBERSHIP; :tenant_id comes from the path
+	// only. Mounted only when a TenantUserStore is wired (invitation sub-block also
+	// needs an InvitationStore).
+	//
+	// PathOrgAdminMembers / PathOrgAdminMemberByID: GET the roster; PUT changes an
+	// EXISTING member's role (invite-only growth — non-member target is a 404, not
+	// a direct add); DELETE removes a member.
+	PathOrgAdminMembers    = "/me/organizations/:tenant_id/members"
+	PathOrgAdminMemberByID = "/me/organizations/:tenant_id/members/:user_id"
+
+	// PathOrgAdminInvitations sends (POST {email, role}) + lists (GET, never the
+	// token) pending invitations for the admin's own org.
+	PathOrgAdminInvitations = "/me/organizations/:tenant_id/invitations"
+
+	// PathOrgAdminInvitationByEmail revokes (DELETE) every pending invitation for a
+	// recipient email in the admin's own org.
+	PathOrgAdminInvitationByEmail = "/me/organizations/:tenant_id/invitations/:email"
+
 	// PathSSFReceive is the default mount point for the opt-in OpenID
 	// Shared Signals (CAEP/SSF) push-delivery RECEIVER (RFC 8935) — the
 	// inbound half of Shared Signals. A CONFIGURED trusted upstream
