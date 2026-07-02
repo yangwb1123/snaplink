@@ -90,6 +90,8 @@ const (
 	EventDeviceCodeApproved              = auditspi.EventDeviceCodeApproved
 	EventDeviceCodeDenied                = auditspi.EventDeviceCodeDenied
 	EventDeviceCodeIssued                = auditspi.EventDeviceCodeIssued
+	EventDeviceTrusted                   = auditspi.EventDeviceTrusted
+	EventDeviceTrustRevoked              = auditspi.EventDeviceTrustRevoked
 	EventEmailChangeRequested            = auditspi.EventEmailChangeRequested
 	EventEmailChanged                    = auditspi.EventEmailChanged
 	EventFAPIComplianceViolation         = auditspi.EventFAPIComplianceViolation
@@ -105,6 +107,7 @@ const (
 	EventLogoutNotified                  = auditspi.EventLogoutNotified
 	EventMFAFailure                      = auditspi.EventMFAFailure
 	EventMFARequired                     = auditspi.EventMFARequired
+	EventMFASkippedTrustedDevice         = auditspi.EventMFASkippedTrustedDevice
 	EventMFASuccess                      = auditspi.EventMFASuccess
 	EventNativeSSOExchange               = auditspi.EventNativeSSOExchange
 	EventNativeSSOExchangeFailure        = auditspi.EventNativeSSOExchangeFailure

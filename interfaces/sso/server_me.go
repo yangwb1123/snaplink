@@ -123,6 +123,33 @@ func (s *Server) handleChangeMyPassword(ctx HandlerContext) {
 	selfservice.HandleChangeMyPassword(s, ctx)
 }
 
+// handleMyTrustedDevices delegates to selfservice.HandleMyTrustedDevices.
+func (s *Server) handleMyTrustedDevices(ctx HandlerContext) {
+	selfservice.HandleMyTrustedDevices(s, ctx)
+}
+
+// handleTrustMyDevice delegates to selfservice.HandleTrustMyDevice.
+func (s *Server) handleTrustMyDevice(ctx HandlerContext) { selfservice.HandleTrustMyDevice(s, ctx) }
+
+// handleRevokeMyTrustedDevice delegates to selfservice.HandleRevokeMyTrustedDevice.
+func (s *Server) handleRevokeMyTrustedDevice(ctx HandlerContext) {
+	selfservice.HandleRevokeMyTrustedDevice(s, ctx)
+}
+
+// mountTrustedDeviceRoutes registers the self-service "remember this device"
+// MFA-skip surface (GET/POST/DELETE /me/devices*). Called from
+// mountSelfServiceCredentials (server_routes.go); kept here — rather than
+// grown inline there — to keep that orchestrator within the per-function
+// line budget. Byte-identical without a store wired.
+func (s *Server) mountTrustedDeviceRoutes() {
+	if s.trustedDeviceStore == nil {
+		return
+	}
+	s.router.GET(PathMyDevices, s.handleMyTrustedDevices)
+	s.router.POST(PathMyDevicesTrust, s.handleTrustMyDevice)
+	s.router.DELETE(PathMyDeviceByID, s.handleRevokeMyTrustedDevice)
+}
+
 // handleMyWebAuthnRegisterBegin delegates to selfservice.HandleWebAuthnRegisterBegin.
 func (s *Server) handleMyWebAuthnRegisterBegin(ctx HandlerContext) {
 	selfservice.HandleWebAuthnRegisterBegin(s, ctx)

@@ -863,6 +863,13 @@ paths:
         is `501 refresh_token_not_configured` — operators relying on
         this endpoint must wire a store that supports bulk lookup
         (SQLite + memory both do; custom backends opt in).
+
+        Also cascades to every trusted-device ("remember this device")
+        MFA-skip grant for the bearer's subject, across ALL clients —
+        the same account-compromise-adjacent signal that a self-service
+        password change or "sign out everywhere" already revokes on.
+        Best-effort/fail-open and a no-op (0) when no
+        `TrustedDeviceStore` is wired.
       operationId: postRevokeAll
       security:
         - bearerAuth: []
@@ -884,6 +891,12 @@ paths:
                     type: integer
                     description: Number of refresh tokens deleted.
                     example: 3
+                  trusted_devices_revoked:
+                    type: integer
+                    description: |
+                      Number of trusted-device MFA-skip grants revoked
+                      (0 when no TrustedDeviceStore is wired).
+                    example: 1
         "401":
           description: |
             Missing or invalid bearer. WWW-Authenticate carries the
@@ -1544,6 +1557,11 @@ paths:
         authenticated as their own account, so a wrong current password
         returns `invalid_password` (not an enumeration leak). Mounted only when
         a password credential store is wired. `Cache-Control: no-store`.
+
+        Account-compromise signal: when a `TrustedDeviceStore` is wired, a
+        successful change also revokes every one of the caller's "remember
+        this device" MFA-skip grants (`GET/POST/DELETE /me/devices*`), so a
+        grant minted under the old password cannot outlive it.
       operationId: changeMyPassword
       security:
         - bearerAuth: []
@@ -1867,6 +1885,135 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /me/devices:
+    get:
+      tags: [self-service]
+      summary: List the authenticated user's trusted (MFA-skip) devices.
+      description: |
+        Returns non-sensitive metadata (id, client_id, label, timestamps) for
+        each live "remember this device" grant — never the device token or
+        its hash, which the store retains only as a one-way hash and never
+        returns again once `POST /me/devices/trust` has minted it. Mounted
+        only when a `TrustedDeviceStore` is wired. `Cache-Control: no-store`.
+      operationId: listMyTrustedDevices
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The user's live trusted-device grants.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TrustedDevice"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No `TrustedDeviceStore` wired on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /me/devices/trust:
+    post:
+      tags: [self-service]
+      summary: Mark the current device trusted, skipping MFA on future logins.
+      description: |
+        Mints a fresh "remember this device" grant for (caller, the bearer
+        token's client) and returns the plaintext device token EXACTLY
+        ONCE — the store persists only its SHA-256 hash from here on, the
+        same discipline as recovery codes and refresh tokens. A later
+        `POST /auth/login` to the SAME client presenting `device_token` skips
+        a risk-scorer-demanded MFA challenge until the grant expires (bounded
+        TTL, default 30 days — never permanent; no renew-on-use).
+
+        Gated on the caller's OWN bearer token having completed MFA THIS
+        session (`amr` contains `mfa`): a token minted from a plain password
+        login — even a valid, unexpired one — cannot mint a skip grant. This
+        is the load-bearing control against "steal a live session, silently
+        upgrade to a standing MFA bypass". Failing that check returns RFC
+        9470 `insufficient_user_authentication` — oracle-safe to name
+        explicitly here, since this is a legitimate step-up demand on the
+        caller's own account, not a credential-guessing surface. Mounted only
+        when a `TrustedDeviceStore` is wired. `Cache-Control: no-store`.
+      operationId: trustMyDevice
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                  description: Optional cosmetic display hint (e.g. "Chrome on macOS"). Never used in any security decision.
+      responses:
+        "201":
+          description: Grant minted; device_token shown exactly once.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  device_id: { type: string }
+                  device_token:
+                    type: string
+                    description: Bearer-equivalent MFA-skip credential. Capture now — never retrievable again.
+                  label: { type: string }
+                  expires_at: { type: string, format: date-time }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            `insufficient_user_authentication` — the caller's bearer token did
+            not complete an MFA step-up this session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No `TrustedDeviceStore` wired on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /me/devices/{id}:
+    delete:
+      tags: [self-service]
+      summary: Revoke one of the authenticated user's trusted-device grants.
+      description: |
+        Revokes the grant by id, immediately ending its ability to skip MFA.
+        A grant belonging to another user (or a missing id) returns the same
+        404 — ownership is enforced via the user-scoped list, so a cross-user
+        delete can never remove someone else's grant. `Cache-Control: no-store`.
+      operationId: revokeMyTrustedDevice
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Grant revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such grant for this user, or no `TrustedDeviceStore` wired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /.well-known/oauth-protected-resource:
     get:
       tags: [discovery]
@@ -1935,6 +2082,12 @@ paths:
         carries no `sid`, every session is revoked. Scope mirrors single-
         session revoke (sessions only — bulk refresh-token revocation remains
         `/token/revoke-all`). Requires a SessionManager; `Cache-Control: no-store`.
+
+        Also cascades to every trusted-device ("remember this device")
+        MFA-skip grant for the caller, even the ones preserved by the
+        default keep-current-session behavior — a compromise remediation
+        must not spare a standing MFA-skip grant. Best-effort/fail-open;
+        a no-op when no `TrustedDeviceStore` is wired.
       operationId: revokeMySessions
       security:
         - bearerAuth: []
@@ -6966,6 +7119,14 @@ components:
         state:
           type: string
           description: Opaque value echoed back to redirect-based flows.
+        device_token:
+          type: string
+          description: |
+            Opaque "remember this device" grant minted by a prior
+            `POST /me/devices/trust`. When the configured RiskScorer would
+            otherwise demand step-up MFA, a live grant for the SAME
+            (user, client) skips the challenge. Omit on an untrusted or
+            first-time device — the ordinary MFA gate applies unchanged.
 
     LoginResponse:
       type: object
@@ -7135,6 +7296,36 @@ components:
           example:
             session: "sess-echoed-from-mfa_method_data"
             assertion: '{"id":"...","rawId":"...","type":"public-key","response":{"clientDataJSON":"...","authenticatorData":"...","signature":"...","userHandle":"..."}}'
+
+    TrustedDevice:
+      type: object
+      description: |
+        Metadata for one "remember this device" MFA-skip grant, as returned
+        by `GET /me/devices`. Never carries the device token or its hash —
+        the token is shown exactly once, at `POST /me/devices/trust` time.
+      properties:
+        id:
+          type: string
+          description: Opaque grant id, used by `DELETE /me/devices/{id}`.
+        user_id:
+          type: string
+        client_id:
+          type: string
+          description: The OAuth client this grant applies to; a login skips MFA only for THIS client.
+        label:
+          type: string
+          description: Cosmetic display hint (e.g. "Chrome on macOS"). Never used in any security decision.
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: Bounded TTL (default 30 days). Never extended on use — a forgotten device decays on its own.
+        last_used_at:
+          type: string
+          format: date-time
+          description: Zero/absent until the grant's first successful MFA-skip login.
 
     SendCodeRequest:
       type: object

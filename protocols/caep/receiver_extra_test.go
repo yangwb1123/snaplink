@@ -564,6 +564,58 @@ func TestStoreRevoker_RefreshOnly(t *testing.T) {
 	}
 }
 
+// TestStoreRevoker_TrustedDeviceLeg proves an upstream session-revoked /
+// account-disabled SET (the receiver's ONLY reason to call
+// RevokeAllForSubject) also kills any standing "remember this device"
+// MFA-skip grant for the subject — otherwise a compromised account flagged
+// by a federated IdP would still let the attacker skip MFA locally via an
+// old trusted-device token that predates the compromise signal. The leg is
+// opt-in (WithTrustedDeviceRevocation) so every pre-existing 3-arg
+// NewStoreRevoker call site is unaffected.
+func TestStoreRevoker_TrustedDeviceLeg(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	sessions := defaultimpl.NewMemorySessionManager(time.Hour)
+	devices := defaultimpl.NewMemoryTrustedDeviceStore()
+	if _, _, err := devices.Trust(ctx, "u4", "app", "", time.Hour); err != nil {
+		t.Fatalf("seed trust: %v", err)
+	}
+	rev, err := caep.NewStoreRevoker(sessions, nil, nil, caep.WithTrustedDeviceRevocation(devices))
+	if err != nil {
+		t.Fatalf("new revoker: %v", err)
+	}
+	res, err := rev.RevokeAllForSubject(ctx, "u4")
+	if err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if res.TrustedDevicesRevoked != 1 {
+		t.Errorf("trusted devices revoked = %d, want 1", res.TrustedDevicesRevoked)
+	}
+	remaining, err := devices.ListByUser(ctx, "u4")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Errorf("remaining trusted devices = %d, want 0", len(remaining))
+	}
+}
+
+// TestStoreRevoker_NoTrustedDeviceLeg_LeavesCountZero proves the leg is
+// truly opt-in: without WithTrustedDeviceRevocation, RevokeAllForSubject
+// never touches a wired TrustedDeviceStore it wasn't given.
+func TestStoreRevoker_NoTrustedDeviceLeg_LeavesCountZero(t *testing.T) {
+	t.Parallel()
+	sessions := defaultimpl.NewMemorySessionManager(time.Hour)
+	rev, _ := caep.NewStoreRevoker(sessions, nil, nil)
+	res, err := rev.RevokeAllForSubject(context.Background(), "u5")
+	if err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if res.TrustedDevicesRevoked != 0 {
+		t.Errorf("trusted devices revoked = %d, want 0 (leg not wired)", res.TrustedDevicesRevoked)
+	}
+}
+
 // --- StoreRevoker rejects an empty subject. ---
 
 func TestStoreRevoker_EmptySubject_Errors(t *testing.T) {

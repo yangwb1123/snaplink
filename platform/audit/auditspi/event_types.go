@@ -90,6 +90,17 @@ const (
 	EventRecoveryCodesRegenerated EventType = "mfa_recovery_codes_regenerated"
 )
 
+// Trusted-device (remember-this-device) MFA-skip events (self-service +
+// login-time). Trusted and revoked are user-initiated mutations of the
+// grant itself; skipped fires on every LOGIN that used a live grant to
+// bypass a risk-scorer step-up demand, so operators can distinguish
+// "verified factor" from "trusted device" in the mfa_success-adjacent trail.
+const (
+	EventDeviceTrusted           EventType = "device_trusted"
+	EventDeviceTrustRevoked      EventType = "device_trust_revoked"
+	EventMFASkippedTrustedDevice EventType = "mfa_skipped_trusted_device"
+)
+
 // Consent lifecycle events (user-initiated).
 const (
 	EventConsentGranted EventType = "consent_granted"
@@ -192,6 +203,8 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventTOTPEnrolled: {}, EventTOTPEnrollFailed: {},
 	// MFA recovery-code regeneration (self-service)
 	EventRecoveryCodesRegenerated: {},
+	// trusted-device MFA-skip (self-service + login-time)
+	EventDeviceTrusted: {}, EventDeviceTrustRevoked: {}, EventMFASkippedTrustedDevice: {},
 	// consent
 	EventConsentGranted: {}, EventConsentRevoked: {}, EventConsentDenied: {},
 	// self-service + email change

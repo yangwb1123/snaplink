@@ -138,6 +138,15 @@ the attestation certificate.
 | `totp_enrollment_not_supported` | 501  | The wired `MFAEnrollmentStore` is not a `TOTPEnrollmentWriter`, or no `TOTPEnroller` is wired                            | Not a client error — operator must wire enrollment      |
 | `webauthn_registration_failed`  | 400  | `/me/mfa/webauthn/finish` could not complete: expired/unknown session, bad attestation, or malformed body — collapsed (cause in logs) | Retry the passkey registration from begin               |
 
+### Trusted devices (`/me/devices*`, `/auth/login`)
+
+| Code                                  | HTTP | Emitted when                                                                                                                                | Client should                                                    |
+|----------------------------------------|------|----------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------|
+| `insufficient_user_authentication`     | 403  | `POST /me/devices/trust` was called with a bearer token that did not complete an MFA step-up THIS session (`amr` lacks `mfa`) — RFC 9470. Named explicitly (not collapsed) because this is a legitimate step-up demand on the caller's own account, not a credential-guessing surface. | Complete `/auth/mfa` first, then retry with the resulting token   |
+| `not_found`                            | 404  | Any `/me/devices*` route hit with no `TrustedDeviceStore` wired, or `DELETE /me/devices/{id}` for an id not owned by the caller (or unknown) — both collapse to the same 404, oracle-safe | Not a client error when unwired; otherwise the grant is already gone |
+
+`POST /auth/login` never surfaces a trusted-device-specific error: an unknown, expired, wrong-user, or wrong-client `device_token` is indistinguishable from an absent one and silently falls through to the ordinary `mfa_required` challenge (same anti-enumeration discipline as `RecoveryCodeStore.Consume`). A successful skip records the `mfa_skipped_trusted_device` audit event instead of a wire-visible signal.
+
 ### Account recovery (`/auth/forgot-password`, `/auth/reset-password`)
 
 | Code            | HTTP | Emitted when                                                                                                                         | Client should                                  |

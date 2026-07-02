@@ -60,6 +60,9 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventWebAuthnRegistered,
 			audit.EventWebAuthnAttestationDenied,
 			audit.EventRecoveryCodesRegenerated,
+			audit.EventDeviceTrusted,
+			audit.EventDeviceTrustRevoked,
+			audit.EventMFASkippedTrustedDevice,
 		},
 	},
 	{

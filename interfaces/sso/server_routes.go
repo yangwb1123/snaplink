@@ -221,6 +221,7 @@ func (s *Server) mountSelfServiceCredentials() {
 		s.router.POST(PathMyMFARecoveryCodes, s.handleGenerateRecoveryCodes)
 		s.router.GET(PathMyMFARecoveryCodes, s.handleGetRecoveryCodesCount)
 	}
+	s.mountTrustedDeviceRoutes()
 	// Self-service passkey registration (authenticated, bearer-bound). Mounts
 	// independently of the enrollment store: the registered credential lands in
 	// the WebAuthn store the Registrar wraps and surfaces in /me/mfa via the

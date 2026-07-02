@@ -33,16 +33,21 @@ var (
 	HandleAcceptInvitation       = selfserviceaccount.HandleAcceptInvitation
 
 	// Delegated org-admin surface (w2.11): /me/organizations/:tenant_id/*.
-	HandleOrgAdminListMembers     = selfserviceaccount.HandleOrgAdminListMembers
-	HandleOrgAdminPutMember       = selfserviceaccount.HandleOrgAdminPutMember
-	HandleOrgAdminRemoveMember    = selfserviceaccount.HandleOrgAdminRemoveMember
-	HandleOrgAdminSendInvitation  = selfserviceaccount.HandleOrgAdminSendInvitation
-	HandleOrgAdminListInvitations = selfserviceaccount.HandleOrgAdminListInvitations
+	HandleOrgAdminListMembers      = selfserviceaccount.HandleOrgAdminListMembers
+	HandleOrgAdminPutMember        = selfserviceaccount.HandleOrgAdminPutMember
+	HandleOrgAdminRemoveMember     = selfserviceaccount.HandleOrgAdminRemoveMember
+	HandleOrgAdminSendInvitation   = selfserviceaccount.HandleOrgAdminSendInvitation
+	HandleOrgAdminListInvitations  = selfserviceaccount.HandleOrgAdminListInvitations
 	HandleOrgAdminRevokeInvitation = selfserviceaccount.HandleOrgAdminRevokeInvitation
-	HandleMyMFAFactors           = selfserviceaccount.HandleMyMFAFactors
-	HandleDeleteMyMFAFactor      = selfserviceaccount.HandleDeleteMyMFAFactor
-	HandleTOTPEnrollBegin        = selfserviceaccount.HandleTOTPEnrollBegin
-	HandleTOTPEnrollConfirm      = selfserviceaccount.HandleTOTPEnrollConfirm
-	HandleGenerateRecoveryCodes  = selfserviceaccount.HandleGenerateRecoveryCodes
-	HandleGetRecoveryCodesCount  = selfserviceaccount.HandleGetRecoveryCodesCount
+	HandleMyMFAFactors             = selfserviceaccount.HandleMyMFAFactors
+	HandleDeleteMyMFAFactor        = selfserviceaccount.HandleDeleteMyMFAFactor
+	HandleTOTPEnrollBegin          = selfserviceaccount.HandleTOTPEnrollBegin
+	HandleTOTPEnrollConfirm        = selfserviceaccount.HandleTOTPEnrollConfirm
+	HandleGenerateRecoveryCodes    = selfserviceaccount.HandleGenerateRecoveryCodes
+	HandleGetRecoveryCodesCount    = selfserviceaccount.HandleGetRecoveryCodesCount
+
+	// Trusted-device MFA-skip self-service (w2.15): /me/devices*.
+	HandleMyTrustedDevices      = selfserviceaccount.HandleMyTrustedDevices
+	HandleTrustMyDevice         = selfserviceaccount.HandleTrustMyDevice
+	HandleRevokeMyTrustedDevice = selfserviceaccount.HandleRevokeMyTrustedDevice
 )

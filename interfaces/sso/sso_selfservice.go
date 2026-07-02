@@ -131,10 +131,10 @@ type selfServiceState struct {
 	// tokens (SHA-256 hashed); emailVerificationSender delivers them.
 	// signupRequireVerification gates mandatory verification mode (Mode B);
 	// emailVerificationTTL bounds token validity (default 15 min).
-	emailVerificationStore   core.EmailVerificationStore
-	emailVerificationSender  spi.EmailVerificationSender
+	emailVerificationStore    core.EmailVerificationStore
+	emailVerificationSender   spi.EmailVerificationSender
 	signupRequireVerification bool
-	emailVerificationTTL     time.Duration
+	emailVerificationTTL      time.Duration
 
 	// signupEnabled gates POST /auth/register (opt-in self-service signup).
 	// Mounts only when also a UserProvider + PasswordCredentialStore are wired
@@ -164,6 +164,18 @@ type selfServiceState struct {
 	// (WithRecoveryCodeStore). Nil ⇒ those routes are NOT mounted —
 	// byte-identical to a build without it.
 	recoveryCodeStore RecoveryCodeStore
+
+	// trustedDeviceStore backs the self-service GET/POST/DELETE /me/devices*
+	// "remember this device" surface AND the /auth/login step-up-skip check
+	// (WithTrustedDeviceStore). Nil ⇒ the self-service routes are NOT mounted
+	// and a login NEVER skips a risk-scorer-demanded MFA challenge —
+	// byte-identical to a build without this feature.
+	trustedDeviceStore TrustedDeviceStore
+
+	// trustedDeviceTTL bounds how long a single Trust grant can skip MFA
+	// (WithTrustedDeviceStore's ttl argument). <= 0 ⇒ falls back to
+	// core.DefaultTrustedDeviceTTL at read time (TrustedDeviceTTL()).
+	trustedDeviceTTL time.Duration
 
 	// totpEnroller backs POST /me/mfa/totp/{begin,confirm} (WithTOTPEnroller).
 	// The enrollment routes mount only when this AND an mfaEnrollmentStore that

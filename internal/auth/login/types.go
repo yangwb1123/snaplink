@@ -29,4 +29,12 @@ type Request struct {
 	UILocales            string            `json:"ui_locales"`
 	Claims               json.RawMessage   `json:"claims"`
 	ConsentChallengeID   string            `json:"consent_challenge_id"`
+
+	// DeviceToken is the opaque "remember this device" grant minted by a
+	// prior POST /me/devices/trust (core.TrustedDeviceStore). When the
+	// configured RiskScorer would otherwise demand step-up MFA, a request
+	// presenting a live grant for the SAME (user, client) skips the
+	// challenge. Empty on an untrusted or first-time device — the ordinary
+	// MFA gate applies unchanged.
+	DeviceToken string `json:"device_token"`
 }
