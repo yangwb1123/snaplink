@@ -7,6 +7,7 @@ import (
 	"regexp"
 
 	"github.com/goccy/go-yaml"
+	"github.com/snaplink/sso/config/sources"
 )
 
 // Source is one contributor to the merged configuration document.
@@ -59,7 +60,7 @@ type Source interface {
 // leaf string value matching "secret://<provider>/<path>" via the
 // registered SecretResolvers. Register resolvers with WithSecretResolvers.
 type Loader struct {
-	sources  []Source
+	sources   []Source
 	resolvers map[string]SecretResolver
 }
 
@@ -129,6 +130,23 @@ func (l *Loader) Load(ctx context.Context) (*Config, error) {
 		return nil, fmt.Errorf("config: marshal merged: %w", err)
 	}
 
+	c, err := decodeStrictWithFallback(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	c.applyDefaults()
+	if err := c.validate(); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// decodeStrictWithFallback decodes the merged YAML with
+// DisallowUnknownField first so operators catch typos; on unknown keys it
+// warns and re-decodes without the restriction so existing configs continue
+// to work.
+func decodeStrictWithFallback(raw []byte) (*Config, error) {
 	c := &Config{}
 
 	// Strict pass — reject unknown fields so operators catch typos.
@@ -147,11 +165,6 @@ func (l *Loader) Load(ctx context.Context) (*Config, error) {
 				"hint", "check the YAML config file(s) for typos or keys that no longer exist",
 			)
 		}
-	}
-
-	c.applyDefaults()
-	if err := c.validate(); err != nil {
-		return nil, err
 	}
 	return c, nil
 }
@@ -194,3 +207,45 @@ func deepMerge(dst, src map[string]any) {
 		dst[k] = v
 	}
 }
+
+// The pluggable config Source backends (env, file, flag) live in the config/sources
+// leaf package so this directory stays within the per-directory file-count budget —
+// mirroring the existing config/etcd backend. These aliases preserve the historical
+// config.{EnvSource,FileSource,FlagSource} / config.New*Source import surface for the
+// server wiring (cmd/sso-server) and the internal Load() path; each backend satisfies
+// the Source interface structurally, so no interface guard or import-back is needed.
+
+type (
+	EnvSource  = sources.EnvSource
+	FileSource = sources.FileSource
+	FlagSource = sources.FlagSource
+)
+
+const (
+	DefaultEnvPrefix    = sources.DefaultEnvPrefix
+	DefaultEnvSeparator = sources.DefaultEnvSeparator
+)
+
+var (
+	NewEnvSource  = sources.NewEnvSource
+	NewFileSource = sources.NewFileSource
+	NewFlagSource = sources.NewFlagSource
+)
+
+// SecretResolver aliases are intentionally NOT re-exported here: the
+// config.SecretResolver interface lives in package config (secrets.go),
+// and the implementations (StaticSecretResolver, ExecSecretResolver) live
+// in config/sources. Downstream code (cmd/sso-server) imports them directly
+// from config/sources and registers them via Loader.WithSecretResolvers.
+//
+// Example wiring:
+//
+//	import (
+//	    "github.com/snaplink/sso/config"
+//	    "github.com/snaplink/sso/config/sources"
+//	)
+//
+//	resolver := sources.NewExecSecretResolver("aws", myResolveFunc)
+//	cfg, err := config.NewLoader(sources...).
+//	    WithSecretResolvers(resolver).
+//	    Load(ctx)
