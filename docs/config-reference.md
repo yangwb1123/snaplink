@@ -6,7 +6,7 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 
 | Key | Effect |
 |---|---|
-| `oauth.<store>.backend` | `memory`\|`sqlite` per store |
+| `oauth.backend` | ONE key for the four hot stores (auth_code / refresh_token / device_code / par): `memory`\|`sqlite`\|`redis` |
 | `oauth.jar` | RFC 9101 §5.2.2 request_uri fetcher (HTTPS, no-redirect) |
 | `dpop.{proof_max_age,max_clock_skew}` | DPoP iat-window (default 60s each); 0 = SDK default (byte-identical) |
 | `security.jti_replay.fail_closed` | Store error → reject (treat-as-replay) instead of fail-open |
@@ -37,26 +37,49 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 
 ## Storage Backend Toggles
 
-| Subsystem | Key |
-|---|---|
-| Identity (User/Client/Session) | `identity.backend` |
-| OAuth stores | `oauth.<store>.backend` |
-| JTI replay / Lockout | `security.{jti_replay,account_lockout}.backend` |
-| Pairwise / BCL index | `server.pairwise_subjects.backend` / `backchannel_logout.index.backend` |
-| Rate limiter | `security.rate_limit.backend` |
-| WebAuthn | `webauthn.storage.{users,sessions}.backend` |
-| MFA / Push / CIBA | `mfa.{challenge,provider.push}.backend` / `ciba.backend` |
-| Audit / Permissions | `audit.backend` / `permissions.backend` |
-| Tenants + Domains | `tenant.backend` |
-| Anomaly detectors | `anomaly.{recent_login,ip_failure}.backend` |
-| Signing-key registry | `keys.signing_key_registry.backend` |
-| Network policy / Registry | `network.store.backend` / `registry.backend` |
+Every store picks its substrate via a `backend:` key; `memory` is the default.
+Values below are exactly what the binary's boot-time dispatch accepts
+(`cmd/sso-server/serverbuild*`); an unknown value fails loud at startup.
 
-Each `backend` accepts `memory` (default) or `sqlite`. The **hot** stores also
-accept **`redis`** (auth_code/refresh/device/par via `oauth.backend`, plus
-`ciba`, `mfa.challenge`, `security.jti_replay`, `security.rate_limit`, and
-sessions via `identity.session_backend`). All `backend: redis` stores share the
-ONE `redis:` connection block below.
+| Store | Key | Accepted backends |
+|---|---|---|
+| Clients + Users (durable identity) | `identity.backend` | `memory` · `sqlite` · `postgres` |
+| Sessions (hot; falls back to `identity.backend`) | `identity.session_backend` | `memory` · `sqlite` · `redis` · `postgres` |
+| OAuth hot stores (auth_code / refresh_token / device_code / par — one key) | `oauth.backend` | `memory` · `sqlite` · `redis` |
+| Refresh rotation grace | `oauth.refresh_token.rotation_grace_backend` | `memory` · `sqlite` · `redis` |
+| CIBA requests | `ciba.backend` | `memory` · `sqlite` · `redis` |
+| MFA challenge | `mfa.challenge.backend` | `memory` · `sqlite` · `redis` |
+| MFA push approvals | `mfa.provider.push.backend` | `memory` · `sqlite` |
+| TOTP enrollment | `authenticators.totp.backend` | `memory` · `sqlite` · `postgres` (empty infers sqlite when `sqlite_dsn` set, else memory) |
+| WebAuthn passkey credentials | `webauthn.storage.users.backend` | `memory` · `sqlite` · `postgres` |
+| WebAuthn ceremony sessions | `webauthn.storage.sessions.backend` | `memory` · `sqlite` · `redis` |
+| JTI replay | `security.jti_replay.backend` | `memory` · `sqlite` · `redis` |
+| Account lockout | `security.account_lockout.backend` | `memory` · `sqlite` · `redis` |
+| Rate limiter | `security.rate_limit.backend` | `memory` · `sqlite` · `redis` |
+| Pairwise subjects | `server.pairwise_subjects.backend` | `memory` · `sqlite` · `postgres` |
+| BCL subject-client index | `backchannel_logout.index.backend` | `memory` · `sqlite` · `redis` |
+| Native SSO device_secrets | `native_sso.backend` | off (`""`) · `memory` · `sqlite` · `postgres` |
+| Self-service consent | `self_service.consent.backend` | off · `memory` · `sqlite` · `postgres` |
+| Self-service password credentials | `self_service.password.backend` | off · `memory` · `sqlite` · `postgres` |
+| Password reset tokens | `self_service.password_reset.backend` | off · `memory` · `sqlite` · `redis` |
+| Tenants + Domains | `tenant.backend` | `memory` · `sqlite` · `postgres` |
+| Tenant usage metering | `tenant.usage_metering.backend` | off · `memory` · `sqlite` (reads the audit DB) |
+| B2B connections | `connections.backend` | `memory` · `sqlite` |
+| Audit primary sink | `audit.backend` | `memory` · `sqlite` · `postgres` |
+| Permissions | `permissions.backend` | `memory` · `sqlite` · `postgres` |
+| Anomaly detectors | `anomaly.{recent_login,ip_failure}.backend` | `memory` · `sqlite` |
+| Signing-key revocation | `keys.signing.revocation_backend` | `memory` · `sqlite` |
+| Signing-key registry | `keys.signing_key_registry.backend` | off · `memory` · `etcd` |
+| Cross-replica bus | `cluster.bus.backend` | off · `memory` · `etcd` |
+| Service registry | `registry.backend` | `memory` · `etcd` |
+| Network policy store | `network.store` | `memory` · `etcd` |
+| Bootstrap lock | `bootstrap.lock.backend` | `noop` · `file` · `etcd` |
+
+All `backend: redis` **hot** stores share the ONE `redis:` block below. All
+`backend: postgres` **durable** stores share the ONE `postgres:` block below —
+a shared *sql.DB pool per replica, not one pool per store. Selecting `redis`/
+`postgres` without its block is a boot error (`<domain>.backend=postgres but no
+postgres block configured (set postgres.dsn)`).
 
 ## Redis (shared hot-store backend)
 
@@ -80,6 +103,25 @@ Operator hard requirement: the Redis auth keyspace MUST run
 ledger or jti key silently breaks reuse/replay detection (a security regression).
 Single-node→cluster migration is not drop-in (hash-tag key layout changes); drain
 rather than expect key continuity (acceptable — hot state is short-TTL).
+
+## Postgres (shared durable-store backend)
+
+One shared pool (`cmd/sso-server` `wirePostgres`) fanned out to every
+`backend: postgres` store; registers a `/readyz` check named `postgres`.
+`dialect: cockroach` switches advisory-locks to serialization-retry semantics.
+DSN is typically injected via env (`SSO_POSTGRES__DSN`) or a `secret://` ref.
+
+| Key | Effect |
+|---|---|
+| `postgres.dsn` | pgx DSN (required to enable the block). Behind a tx-mode pooler (pgbouncer) append `default_query_exec_mode=simple_protocol` |
+| `postgres.dialect` | `""`\|`postgres`\|`cockroach` |
+| `postgres.max_open_conns` | pool cap — N replicas x this MUST stay under DB `max_connections` |
+| `postgres.max_idle_conns` | idle pool size |
+| `postgres.conn_max_lifetime` / `postgres.conn_max_idle_time` | connection recycling |
+
+See [deployment.md](deployment.md) for the HA topology and
+`ops/deploy/k8s-prod/config.yaml` for the canonical production selection
+(durable → postgres, hot → redis, coordination → etcd).
 
 ## Tenant & Region
 
