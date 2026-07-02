@@ -39,6 +39,9 @@ import (
 	"fmt"
 	"regexp"
 	"time"
+
+	"github.com/snaplink/sso/platform/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // ErrSchemaTooNew is returned by CheckSchema when the live database schema is
@@ -124,16 +127,35 @@ func validate(migrations []Migration) error {
 // transaction. It is idempotent: re-running with no new migrations is a
 // no-op. Safe for concurrent callers against the same database (they
 // serialize on the write lock).
+//
+// Every call site passes context.Background() (Run always runs at backend
+// construction, before any request is in flight — see the callers across
+// */sqlite), so the migrate.run span this starts is always a fresh root;
+// that is the expected shape, not a missed parent.
 func Run(ctx context.Context, db *sql.DB, namespace string, migrations []Migration) error {
+	ctx, span := tracing.StartSpan(ctx, "migrate.run")
+	defer span.End()
+	span.SetAttributes(attribute.String("migrate.namespace", namespace))
+
+	applied, err := run(ctx, db, namespace, migrations)
+	span.SetAttributes(attribute.Int("migrate.applied", applied))
+	tracing.SetError(span, err)
+	return err
+}
+
+// run is Run's original body, returning the count of migrations actually
+// applied alongside the original error semantics — split out so the span
+// setup/teardown in Run never has to touch this control flow.
+func run(ctx context.Context, db *sql.DB, namespace string, migrations []Migration) (int, error) {
 	table, err := versionTable(namespace)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if err := validate(migrations); err != nil {
-		return err
+		return 0, err
 	}
 	if len(migrations) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	// Pin one connection so the manual BEGIN IMMEDIATE / COMMIT pair runs
@@ -141,12 +163,12 @@ func Run(ctx context.Context, db *sql.DB, namespace string, migrations []Migrati
 	// across pooled connections).
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		return fmt.Errorf("migrate(%s): acquire conn: %w", namespace, err)
+		return 0, fmt.Errorf("migrate(%s): acquire conn: %w", namespace, err)
 	}
 	defer func() { _ = conn.Close() }()
 
 	if err := beginImmediate(ctx, conn, namespace); err != nil {
-		return err
+		return 0, err
 	}
 	committed := false
 	defer func() {
@@ -157,17 +179,18 @@ func Run(ctx context.Context, db *sql.DB, namespace string, migrations []Migrati
 
 	current, err := ensureVersionTable(ctx, conn, namespace, table)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if err := applyPending(ctx, conn, namespace, table, current, migrations); err != nil {
-		return err
+	applied, err := applyPending(ctx, conn, namespace, table, current, migrations)
+	if err != nil {
+		return applied, err
 	}
 
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return fmt.Errorf("migrate(%s): commit: %w", namespace, err)
+		return applied, fmt.Errorf("migrate(%s): commit: %w", namespace, err)
 	}
 	committed = true
-	return nil
+	return applied, nil
 }
 
 // beginImmediate arms the pinned connection's busy timeout and opens the
@@ -208,22 +231,26 @@ func ensureVersionTable(ctx context.Context, conn *sql.Conn, namespace, table st
 
 // applyPending runs every migration whose Version exceeds current, in slice
 // order, recording each in the version table. Runs inside the migration
-// transaction so a mid-way failure rolls the whole batch back.
-func applyPending(ctx context.Context, conn *sql.Conn, namespace, table string, current int, migrations []Migration) error {
+// transaction so a mid-way failure rolls the whole batch back. Returns the
+// count of migrations actually applied (for the caller's span attribute)
+// alongside the original error semantics.
+func applyPending(ctx context.Context, conn *sql.Conn, namespace, table string, current int, migrations []Migration) (int, error) {
+	applied := 0
 	for _, m := range migrations {
 		if m.Version <= current {
 			continue
 		}
 		if err := applyOne(ctx, conn, namespace, m); err != nil {
-			return err
+			return applied, err
 		}
 		if _, err := conn.ExecContext(ctx,
 			fmt.Sprintf(`INSERT INTO %s (version, name, applied_at) VALUES (?, ?, ?)`, table),
 			m.Version, m.Name, time.Now().UnixNano()); err != nil {
-			return fmt.Errorf("migrate(%s): record v%d: %w", namespace, m.Version, err)
+			return applied, fmt.Errorf("migrate(%s): record v%d: %w", namespace, m.Version, err)
 		}
+		applied++
 	}
-	return nil
+	return applied, nil
 }
 
 // applyOne executes a single migration's forward step (Func or SQL). validate

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/platform/audit/auditspi"
+	"github.com/snaplink/sso/platform/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // DefaultRetryMaxAttempts caps how many times the worker tries to
@@ -130,31 +132,52 @@ func NewRetryingSink(inner auditspi.Sink, opts ...RetryOption) *RetryingSink {
 // responsibility for matching ctx lifetime to acceptable max latency.
 // AsyncSink's deliver passes context.Background plus a per-event
 // timeout, which is the right shape here.
+//
+// The whole retry chain is one span (audit.sink.retry), a child of
+// whatever span ctx already carries: the inner sink's own Record (e.g.
+// WebhookSink) starts its own child span per attempt, so a slow/failing
+// attempt is visible as a nested span under this one without the retry
+// loop itself needing per-attempt spans.
 func (r *RetryingSink) Record(ctx context.Context, e *auditspi.Event) error {
+	ctx, span := tracing.StartSpan(ctx, "audit.sink.retry")
+	defer span.End()
+
+	attempts, err := r.recordWithRetry(ctx, e)
+	span.SetAttributes(attribute.Int("audit.retry.attempts", attempts))
+	tracing.SetError(span, err)
+	return err
+}
+
+// recordWithRetry is the retry loop proper, split out of Record so the
+// span setup/teardown above never has to touch this control flow. Returns
+// the number of delivery attempts made alongside the original error
+// semantics (nil on success, last error otherwise).
+func (r *RetryingSink) recordWithRetry(ctx context.Context, e *auditspi.Event) (attempts int, err error) {
 	var lastErr error
 	for attempt := 0; attempt < r.maxAttempts; attempt++ {
 		select {
 		case <-ctx.Done():
 			if lastErr != nil {
-				return lastErr
+				return attempts, lastErr
 			}
-			return ctx.Err()
+			return attempts, ctx.Err()
 		default:
 		}
-		err := r.inner.Record(ctx, e)
-		if err == nil {
-			return nil
+		attempts++
+		recErr := r.inner.Record(ctx, e)
+		if recErr == nil {
+			return attempts, nil
 		}
-		lastErr = err
-		if !r.isTransient(err) {
-			return err
+		lastErr = recErr
+		if !r.isTransient(recErr) {
+			return attempts, recErr
 		}
 		if attempt == r.maxAttempts-1 {
 			break
 		}
 		r.sleep(r.backoff(attempt))
 	}
-	return lastErr
+	return attempts, lastErr
 }
 
 // backoff returns the sleep before retry N (0-indexed). Exponential

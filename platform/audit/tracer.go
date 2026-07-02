@@ -1,11 +1,17 @@
 package audit
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/snaplink/sso/platform/tracing"
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // W3C Trace Context constants (https://www.w3.org/TR/trace-context/).
@@ -164,4 +170,30 @@ func allZero(s string) bool {
 		}
 	}
 	return true
+}
+
+// deliverSpanCtx parents an OTel async-delivery span on whatever trace the
+// Event itself carries, and returns the resulting context + started span.
+//
+// AsyncSink.Record deliberately does NOT forward the request ctx into the
+// worker (a cancelled request ctx must never abort delivery — see the
+// comment on Record), so by the time deliver/deliverBatch run, ctx is
+// always context.Background() (+ an optional timeout) and carries no live
+// OTel span. The Event's TraceID/SpanID above are the only surviving link
+// back to the request that recorded it, so tracing.ParentFromIDs
+// reconstructs the OTel parent from THOSE rather than from ctx. A
+// pre-tracing or malformed Event (empty/invalid ids) falls through to a
+// fresh root span — expected for e.g. an event recorded before the tracing
+// middleware ran.
+func deliverSpanCtx(ctx context.Context, name string, e *Event) (context.Context, oteltrace.Span) {
+	ctx = tracing.ParentFromIDs(ctx, e.TraceID, e.SpanID)
+	return tracing.StartSpan(ctx, name)
+}
+
+// sinkTypeAttr names the concrete Sink implementation being delivered to —
+// a compile-time-bounded set of Go type names (WebhookSink, SyslogSink,
+// ...), never an operator-controlled string, so it's safe as a low-
+// cardinality span attribute per the AGENTS.md bounded-cardinality rule.
+func sinkTypeAttr(sink any) attribute.KeyValue {
+	return attribute.String("audit.sink.type", fmt.Sprintf("%T", sink))
 }

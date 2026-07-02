@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/platform/audit/auditspi"
+	"github.com/snaplink/sso/platform/tracing"
 	"github.com/snaplink/sso/shared/security/securityverify"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // DefaultWebhookTimeout is applied when WebhookOptions.Timeout is zero.
@@ -74,16 +76,25 @@ func NewWebhookSink(url string, opts ...WebhookOption) *WebhookSink {
 }
 
 func (w *WebhookSink) Record(ctx context.Context, e *auditspi.Event) error {
+	// Child of whatever span the caller's ctx carries — for the common
+	// AsyncSink -> WebhookSink composition that's the reconstructed
+	// audit.sink.deliver span (see audit.deliverSpanCtx); called directly
+	// (synchronous Recorder, no AsyncSink) it's the live request span.
+	ctx, span := tracing.StartSpan(ctx, "audit.webhook.deliver")
+	defer span.End()
+
 	if e.ID == "" {
 		e.ID = auditspi.NewEventID()
 	}
 	body, err := json.Marshal(e)
 	if err != nil {
+		tracing.SetError(span, err)
 		return err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.url, bytes.NewReader(body))
 	if err != nil {
+		tracing.SetError(span, err)
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -99,12 +110,16 @@ func (w *WebhookSink) Record(ctx context.Context, e *auditspi.Event) error {
 
 	resp, err := w.client.Do(req)
 	if err != nil {
+		tracing.SetError(span, err)
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	span.SetAttributes(attribute.Int("http.response.status_code", resp.StatusCode))
 
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("audit webhook: status %d", resp.StatusCode)
+		err := fmt.Errorf("audit webhook: status %d", resp.StatusCode)
+		tracing.SetError(span, err)
+		return err
 	}
 	return nil
 }
