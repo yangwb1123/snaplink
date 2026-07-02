@@ -1,9 +1,10 @@
 // Package importcmd is the bulk user-import subcommand for the sso-ctl
 // multi-command binary. It bulk-imports users from external identity providers
-// (Auth0, Keycloak, generic CSV) into the SSO server's SQLite user store. It
-// writes directly to the database without requiring a running server instance,
-// making it safe to use as a migration pre-step before the first deploy or as
-// part of a scripted cutover.
+// (Auth0, Keycloak, generic CSV) into the SSO server's user store — sqlite or
+// postgres, selected with --backend. It writes directly to the database
+// without requiring a running server instance, making it safe to use as a
+// migration pre-step before the first deploy or as part of a scripted
+// cutover.
 //
 // Supported formats:
 //
@@ -16,6 +17,7 @@
 //	sso-ctl import --dsn file:/var/lib/sso/sso.db --format auth0 --file export.json
 //	sso-ctl import --dsn file:/var/lib/sso/sso.db --format csv  --file users.csv --dry-run
 //	cat export.json | sso-ctl import --dsn ./sso.db --format keycloak --file -
+//	sso-ctl import --backend postgres --dsn 'postgres://sso@db:5432/sso?sslmode=disable' --format keycloak --file realm.json
 //
 // The tool writes one user per row into the "users" table via an upsert
 // (CREATE OR UPDATE semantics). Password hashes are stored in the
@@ -27,7 +29,8 @@
 // legacy hash and transparently upgrade it to bcrypt.
 //
 // A --dry-run counts the records that would be imported and prints a sample
-// without touching the database.
+// without touching the database. Both backends run their schema migration on
+// open, so there is no separate migrate step before importing.
 package importcmd
 
 import (
@@ -67,6 +70,8 @@ type importedUser struct {
 // importFlags holds the parsed command-line configuration for an import run.
 type importFlags struct {
 	dsn       string
+	backend   string
+	dialect   string
 	format    string
 	file      string
 	dryRun    bool
@@ -97,7 +102,7 @@ func Run(args []string) int {
 		return 0
 	}
 
-	db, err := openDB(cfg.dsn)
+	db, err := openDB(cfg.backend, cfg.dsn, cfg.dialect)
 	if err != nil {
 		fatalf("open db: %v", err)
 	}
@@ -114,11 +119,13 @@ func Run(args []string) int {
 // original flag.ExitOnError + Usage behavior.
 func parseFlags(args []string) importFlags {
 	fs := flag.NewFlagSet(progName, flag.ExitOnError)
-	dsn := fs.String("dsn", "", "SQLite DSN for the SSO user store (required unless --dry-run)")
+	dsn := fs.String("dsn", "", "user store DSN (required unless --dry-run); sqlite file DSN or postgres connection string, per --backend")
+	backend := fs.String("backend", backendSQLite, "user store backend: sqlite | postgres")
+	dialect := fs.String("dialect", "", "postgres dialect: postgres | cockroach (only with --backend postgres)")
 	format := fs.String("format", "", "input format: auth0 | keycloak | csv (required)")
 	file := fs.String("file", "-", "path to the import file, or - for stdin")
 	dryRun := fs.Bool("dry-run", false, "print what would be imported without writing")
-	batchSize := fs.Int("batch-size", 100, "rows per transaction (ignored for dry-run)")
+	batchSize := fs.Int("batch-size", 100, "rows per batch (ignored for dry-run)")
 	fs.Usage = usageFunc(fs)
 
 	if err := fs.Parse(args); err != nil {
@@ -136,6 +143,8 @@ func parseFlags(args []string) importFlags {
 	}
 	return importFlags{
 		dsn:       *dsn,
+		backend:   *backend,
+		dialect:   *dialect,
 		format:    *format,
 		file:      *file,
 		dryRun:    *dryRun,
@@ -146,10 +155,10 @@ func parseFlags(args []string) importFlags {
 // usageFunc returns the flag-set usage printer for the CLI.
 func usageFunc(fs *flag.FlagSet) func() {
 	return func() {
-		fmt.Fprintf(os.Stderr, `%s — bulk user import from Auth0 / Keycloak / CSV into SSO SQLite.
+		fmt.Fprintf(os.Stderr, `%s — bulk user import from Auth0 / Keycloak / CSV into the SSO user store.
 
 Usage:
-  %s --dsn <sqlite-dsn> --format <fmt> [--file <path>] [--dry-run]
+  %s --dsn <dsn> --format <fmt> [--backend sqlite|postgres] [--file <path>] [--dry-run]
 
 Flags:
 `, progName, progName)
@@ -163,7 +172,8 @@ Formats:
 Examples:
   %s --dsn file:/var/lib/sso/sso.db --format auth0 --file users.json
   cat realm.json | %s --dsn ./sso.db --format keycloak --file -
-`, progName, progName)
+  %s --backend postgres --dsn 'postgres://sso@db:5432/sso?sslmode=disable' --format keycloak --file realm.json
+`, progName, progName, progName)
 	}
 }
 

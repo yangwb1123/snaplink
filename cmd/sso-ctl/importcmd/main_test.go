@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 )
 
 // ---- parser tests ----
@@ -340,10 +338,10 @@ func TestOpenInput_Missing(t *testing.T) {
 
 // ---- DB write path ----
 
-func newTestProvider(t *testing.T) *sqlite.UserProvider {
+func newTestProvider(t *testing.T) userStore {
 	t.Helper()
 	dsn := "file:" + filepath.Join(t.TempDir(), "users.db")
-	p, err := openDB(dsn)
+	p, err := openDB("sqlite", dsn, "")
 	if err != nil {
 		t.Fatalf("openDB: %v", err)
 	}
@@ -352,7 +350,7 @@ func newTestProvider(t *testing.T) *sqlite.UserProvider {
 }
 
 func TestOpenDB_BadDSN(t *testing.T) {
-	if _, err := openDB("file:/nonexistent-dir-zzz/users.db?mode=ro"); err == nil {
+	if _, err := openDB("sqlite", "file:/nonexistent-dir-zzz/users.db?mode=ro", ""); err == nil {
 		t.Fatal("expected error opening DB in a missing directory")
 	}
 }
@@ -527,7 +525,7 @@ func TestRun_FullImport(t *testing.T) {
 	}
 
 	// Re-open the DB and confirm persistence.
-	p, err := openDB(dsn)
+	p, err := openDB("sqlite", dsn, "")
 	if err != nil {
 		t.Fatalf("reopen db: %v", err)
 	}
@@ -563,4 +561,71 @@ func captureStdout(t *testing.T, fn func()) string {
 	out := <-done
 	os.Stdout = orig
 	return string(bytes.TrimSpace(out))
+}
+
+func TestOpenDB_UnknownBackend(t *testing.T) {
+	t.Parallel()
+	if _, err := openDB("mysql", "dsn", ""); err == nil {
+		t.Fatal("expected error for unsupported --backend")
+	}
+}
+
+// postgres.Open rejects an empty DSN before dialing (infrastructure/postgres/pool.go),
+// so this exercises the postgres branch without a live database.
+func TestOpenDB_PostgresEmptyDSN(t *testing.T) {
+	t.Parallel()
+	if _, err := openDB("postgres", "", ""); err == nil {
+		t.Fatal("expected error for postgres backend with empty DSN")
+	}
+}
+
+// testPostgresDSN returns the integration DSN or skips — CI without a DB skips.
+func testPostgresDSN(t *testing.T) string {
+	t.Helper()
+	dsn := os.Getenv("SSO_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("SSO_TEST_POSTGRES_DSN not set — skipping postgres integration test")
+	}
+	return dsn
+}
+
+// TestRunImport_Postgres_PersistsAndUpserts drives the full write path against
+// a real Postgres users table via the same userStore seam the CLI uses, then
+// re-reads through core.UserProvider to confirm the hash attributes landed.
+// Unique IDs + Delete cleanup (not TRUNCATE) — the infrastructure/postgres
+// package tests TRUNCATE this table and may run concurrently on the same DSN.
+func TestRunImport_Postgres_PersistsAndUpserts(t *testing.T) {
+	t.Parallel()
+	p, err := openDB("postgres", testPostgresDSN(t), os.Getenv("SSO_TEST_POSTGRES_DIALECT"))
+	if err != nil {
+		t.Fatalf("openDB postgres: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+	ctx := context.Background()
+	id := "importtest:" + strings.ToLower(t.Name())
+	t.Cleanup(func() { _ = p.Delete(ctx, id) })
+
+	users := []importedUser{{
+		ID: id, ExternalID: "pg-1", Provider: "auth0",
+		Email: "pg@x.z", Name: "PG", Hash: "$2b$h", HashFormat: "bcrypt",
+	}}
+	if err := runImport(ctx, p, users, 100); err != nil {
+		t.Fatalf("runImport: %v", err)
+	}
+	got, err := p.GetByID(ctx, id)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	// Seam contract with domains/authenticators.StoredHashVerifier.
+	if got.Attributes["password_hash"] != "$2b$h" || got.Attributes["password_hash_format"] != "bcrypt" {
+		t.Errorf("hash attrs did not round-trip: %+v", got.Attributes)
+	}
+	users[0].Name = "PG2"
+	if err := runImport(ctx, p, users, 100); err != nil {
+		t.Fatalf("re-import: %v", err)
+	}
+	got2, _ := p.GetByID(ctx, id)
+	if got2.Name != "PG2" {
+		t.Errorf("upsert did not update name; got %q", got2.Name)
+	}
 }

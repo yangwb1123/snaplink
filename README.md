@@ -201,6 +201,7 @@ make build      # or: python cli.py build   ->   ./bin/{sso-server, sso-ctl}
 
 sso-ctl audit-verify --from-url https://sso --bearer "$ADMIN_TOKEN"   # verify the audit hash chain
 sso-ctl import --dsn file:sso.db --format auth0|keycloak|csv --file export.json
+sso-ctl import --backend postgres --dsn 'postgres://sso@db:5432/sso?sslmode=disable' --format keycloak --file realm.json
 sso-ctl migrate status --dsn 'file:sso.db?mode=ro' --json
 sso-ctl snapshot verify --dir ./snapshots --id <id> --passphrase-file pass.txt
 ```

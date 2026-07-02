@@ -7,21 +7,56 @@ import (
 	"strings"
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	"github.com/snaplink/sso/infrastructure/postgres"
 	sso "github.com/snaplink/sso/interfaces/sso"
 )
 
-func openDB(dsn string) (*sqlite.UserProvider, error) {
-	p, err := sqlite.NewUserProvider(dsn)
-	if err != nil {
-		return nil, fmt.Errorf("sqlite: %w", err)
-	}
-	return p, nil
+// Backend selector values — match the server's identity.backend vocabulary
+// (cmd/sso-server/serverbuildstore.BuildUserProvider).
+const (
+	backendSQLite   = "sqlite"
+	backendPostgres = "postgres"
+)
+
+// userStore is the store seam the importer needs: the portable
+// core.UserProvider read/write contract plus lifecycle Close.
+// *sqlite.UserProvider and *postgres.UserProvider both satisfy it.
+type userStore interface {
+	sso.UserProvider
+	Close() error
 }
 
-// runImport writes the users to the database in batches. Each batch is a
-// single SQLite transaction so a single failure doesn't abort the entire
-// import — the bad batch is reported and the next batch continues.
-func runImport(ctx context.Context, p *sqlite.UserProvider, users []importedUser, batchSize int) error {
+// openDB dials the selected backend and runs its schema migration, so import
+// works against a fresh database with no separate migrate step. The postgres
+// package blank-imports the pgx driver itself; the sqlite driver comes from
+// this package's modernc.org/sqlite blank import (main.go).
+func openDB(backend, dsn, dialect string) (userStore, error) {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case "", backendSQLite:
+		p, err := sqlite.NewUserProvider(dsn)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite: %w", err)
+		}
+		return p, nil
+	case backendPostgres:
+		p, err := postgres.NewUserProvider(postgres.Config{
+			DSN:     dsn,
+			Dialect: postgres.Dialect(dialect), // "" normalizes to postgres
+		})
+		if err != nil {
+			return nil, err // already "postgres: ..."-prefixed by the package
+		}
+		return p, nil
+	default:
+		return nil, fmt.Errorf("unknown --backend %q (supported: sqlite, postgres)", backend)
+	}
+}
+
+// runImport writes the users to the database in batches. Batching bounds
+// error reporting to a manageable chunk size — writes are per-row
+// CreateOrUpdate upserts on every backend, not a single transaction, so one
+// bad row doesn't abort the batch and one bad batch doesn't abort the import.
+func runImport(ctx context.Context, p userStore, users []importedUser, batchSize int) error {
 	if batchSize <= 0 {
 		batchSize = 100
 	}
@@ -52,7 +87,7 @@ func runImport(ctx context.Context, p *sqlite.UserProvider, users []importedUser
 // writeBatch calls CreateOrUpdate for each user in the batch, accumulating
 // errors. It returns the count of successfully written users. All users are
 // attempted even if some fail.
-func writeBatch(ctx context.Context, p *sqlite.UserProvider, batch []importedUser) (int, error) {
+func writeBatch(ctx context.Context, p userStore, batch []importedUser) (int, error) {
 	ok := 0
 	var errs []string
 	for _, u := range batch {
