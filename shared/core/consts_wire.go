@@ -44,23 +44,28 @@ const (
 const (
 	KeyError            = "error"
 	KeyErrorDescription = "error_description"
-	KeyStatus           = "status"
-	KeyIssuer           = "issuer"
-	KeyVersion          = "version"
-	KeyVCSRevision      = "vcs_revision"
-	KeyVCSTime          = "vcs_time"
-	KeyProviders        = "providers"
-	KeySupportedGrants  = "supported_grants"
-	KeySessionID        = "session_id"
-	KeyAccessToken      = "access_token"
-	KeyRefreshToken     = "refresh_token"
-	KeyTokenType        = "token_type"
-	KeyExpiresIn        = "expires_in"
-	KeyScope            = "scope"
-	KeyRevoked          = "revoked"
-	KeyTokenStrategy    = "token_strategy"
-	KeyRecommendedLang  = "recommended_language"
-	KeyCountryCode      = "country_code"
+	// KeyTraceID is the optional error-envelope field carrying the
+	// request's W3C trace ID (see TraceIDFromContext), so a client can
+	// hand support the exact value that correlates to server-side
+	// audit/trace records without having to capture response headers.
+	KeyTraceID         = "trace_id"
+	KeyStatus          = "status"
+	KeyIssuer          = "issuer"
+	KeyVersion         = "version"
+	KeyVCSRevision     = "vcs_revision"
+	KeyVCSTime         = "vcs_time"
+	KeyProviders       = "providers"
+	KeySupportedGrants = "supported_grants"
+	KeySessionID       = "session_id"
+	KeyAccessToken     = "access_token"
+	KeyRefreshToken    = "refresh_token"
+	KeyTokenType       = "token_type"
+	KeyExpiresIn       = "expires_in"
+	KeyScope           = "scope"
+	KeyRevoked         = "revoked"
+	KeyTokenStrategy   = "token_strategy"
+	KeyRecommendedLang = "recommended_language"
+	KeyCountryCode     = "country_code"
 	// KeyServingRegion names the region deployment that served the login
 	// response (multi-region / data-residency layer). DISTINCT from
 	// geo's "region" (an ISO 3166-2 client-IP subdivision) — this is WHICH

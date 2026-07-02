@@ -15,6 +15,23 @@ When the server has extra detail it includes `error_description`:
 { "error": "invalid_request", "error_description": "json: cannot unmarshal" }
 ```
 
+When the Tracing middleware populated a W3C trace ID for the request,
+error responses emitted via `interfaces/sso`'s `errorBody`/
+`authzErrorBody`/`authzErrorBodyDesc` helpers also carry `trace_id` —
+the same value returned in the `X-Trace-Id` response header — so a
+client can hand support one identifier that correlates directly to
+server-side audit/trace records:
+
+```json
+{ "error": "invalid_request", "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736" }
+```
+
+`trace_id` is omitted entirely (not an empty string) when no trace
+context is available, e.g. requests that bypass the Tracing
+middleware. Not every error-writing call site is wired yet — see
+`shared/core/error_body.go` (`ErrorBodyWithTrace`) and
+`interfaces/sso/handlers.go` (`errorBody`) for the current coverage.
+
 Defined as Go constants in `consts.go` (and in the per-handler files
 for the audit / permission code subsets) — grep there if you need the
 exact emission site.

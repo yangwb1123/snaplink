@@ -205,12 +205,12 @@ const QueryClientID = "client_id"
 func (s *Server) authenticatedSubject(ctx HandlerContext) (userID, clientID string, ok bool) {
 	tokenString := bearerToken(ctx.Request())
 	if tokenString == "" {
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingToken))
+		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrMissingToken))
 		return "", "", false
 	}
 	claims, _, err := s.validateAnyToken(ctx.Request().Context(), tokenString)
 	if err != nil {
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidToken))
 		return "", "", false
 	}
 	clientID = ctx.Query(QueryClientID)
@@ -296,12 +296,12 @@ const ctxKeyLoginStart = "_sso_login_start"
 // fine). Reuses the existing wire error vocabulary — no new error code.
 func (s *Server) handleAuthzPolicyBundle(ctx HandlerContext) {
 	if s.permissions == nil {
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return
 	}
 	clientID := ctx.Request().URL.Query().Get(core.KeyClientID)
 	if clientID == "" {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrMissingClientID))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrMissingClientID))
 		return
 	}
 	// 404 on an unknown client so an enumeration of role definitions can't
@@ -310,7 +310,7 @@ func (s *Server) handleAuthzPolicyBundle(ctx HandlerContext) {
 	// is still derivable purely from the permissions provider).
 	if s.clientStore != nil {
 		if _, err := s.clientStore.Get(ctx.Request().Context(), clientID); err != nil {
-			ctx.JSON(http.StatusNotFound, errorBody(ErrClientNotFound))
+			ctx.JSON(http.StatusNotFound, errorBody(ctx, ErrClientNotFound))
 			return
 		}
 	}
@@ -326,7 +326,7 @@ func (s *Server) handleAuthzPolicyBundle(ctx HandlerContext) {
 	bundle, err := permissions.BuildPolicyBundle(ctx.Request().Context(), s.permissions, clientID)
 	if err != nil {
 		s.logger.Error("authz policy bundle build failed", "client_id", clientID, "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return
 	}
 	s.serveAuthzPolicyBundle(ctx, clientID, base, bundle)
@@ -347,7 +347,7 @@ func (s *Server) serveAuthzPolicyBundle(ctx HandlerContext, clientID, base strin
 	body, err := json.Marshal(bundle)
 	if err != nil {
 		s.logger.Error("authz policy bundle marshal failed", "client_id", clientID, "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return
 	}
 	// ETag is hashed over the bundle's CANONICAL bytes (role content,
@@ -361,9 +361,15 @@ func (s *Server) serveAuthzPolicyBundle(ctx HandlerContext, clientID, base strin
 	oidc.WriteDoc(ctx, entry, s.authzPolicyBundleCacheTTL)
 }
 
-// errorBody delegates to core/error_body.go. Keep the lowercase name so the
-// 100+ call sites stay one-line.
-func errorBody(code string) map[string]string { return core.ErrorBody(code) }
+// errorBody delegates to core/error_body.go, enriching the envelope with
+// the request's trace ID (core.TraceIDFromContext) when the Tracing
+// middleware populated one on ctx.Request().Context() — nil/absent trace
+// ID falls back to the plain envelope so this is a strict superset of the
+// pre-trace-id behavior. Keep the lowercase name so the 90+ call sites
+// stay one-line.
+func errorBody(ctx HandlerContext, code string) map[string]string {
+	return core.ErrorBodyWithTrace(code, core.TraceIDFromContext(ctx.Request().Context()))
+}
 
 // bearerToken delegates to oauth.BearerToken — see that function for
 // the RFC 6750 §2.1 missing-vs-bad-credential distinction.

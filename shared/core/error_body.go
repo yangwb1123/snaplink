@@ -31,7 +31,7 @@ func ErrorBodyDesc(code, desc string) map[string]string {
 func ErrorBodyWithTrace(code, traceID string) map[string]string {
 	body := map[string]string{KeyError: code}
 	if traceID != "" {
-		body["trace_id"] = traceID
+		body[KeyTraceID] = traceID
 	}
 	return body
 }

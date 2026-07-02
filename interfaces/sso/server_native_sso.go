@@ -59,7 +59,7 @@ func (s *Server) issueDeviceSecret(ctx context.Context, subject, sid, clientID s
 func (s *Server) handleDeviceSecretExchange(ctx HandlerContext, idTokenClaims *TokenClaims, rawIDToken, deviceSecret string, client *Client, req tokengrant.TokenExchangeRequest) {
 	fail := func(reason string) {
 		s.recordNativeSSOFailure(ctx, client.ID, idTokenClaims.Subject, reason)
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidGrant))
 	}
 
 	binding, ok := s.validateDeviceSecretExchange(ctx, idTokenClaims, rawIDToken, deviceSecret, req, fail)
@@ -180,7 +180,7 @@ func (s *Server) mintNativeSSOAccessToken(ctx HandlerContext, idTokenClaims *Tok
 	strategy, ti, err := s.issuerForClient(client)
 	if err != nil {
 		// Misconfiguration, not a credential failure.
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrNoTokenStrategy))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrNoTokenStrategy))
 		return nil, "", "", false
 	}
 	localSub, _ := s.resolveLocalSubject(ctx.Request().Context(), idTokenClaims.Subject)
@@ -198,7 +198,7 @@ func (s *Server) mintNativeSSOAccessToken(ctx HandlerContext, idTokenClaims *Tok
 	}, scopes)
 	if err != nil {
 		s.logErrorCtx(ctx, "native sso token issuance failed", "strategy", strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return nil, "", "", false
 	}
 	return token, strategy, issuedSub, true
