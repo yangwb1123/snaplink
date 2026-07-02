@@ -114,6 +114,13 @@ type ProviderMetadata struct {
 	// support alongside the jwt response_modes.
 	AuthorizationSigningAlgValuesSupported []string `json:"authorization_signing_alg_values_supported,omitempty"`
 
+	// RFC 9701 §7 — JWS algs the AS uses to sign a JWT-formatted
+	// /token/introspect response. Omitted unless a DEDICATED
+	// introspection signer is wired (WithIntrospectionSigning); its
+	// presence is how a resource server discovers the feature is
+	// available at all before ever sending the opt-in Accept header.
+	IntrospectionSigningAlgValuesSupported []string `json:"introspection_signing_alg_values_supported,omitempty"`
+
 	// OIDC Core §5.5 — true when the AS accepts the `claims`
 	// request parameter. Always true here (the parameter is
 	// validated for JSON-object shape and threaded into

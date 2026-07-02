@@ -87,6 +87,7 @@ type protocolState struct {
 	dpopProofClockSkew             time.Duration
 	metadataSigner                 oidc.MetadataSigner
 	jarmSigner                     oidc.JARMSigner
+	introspectionSigner            oauth.IntrospectionSigner
 	jwksCacheTTL                   time.Duration
 	supportedACRValues             []string
 	opPolicyURI                    string

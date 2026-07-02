@@ -36,6 +36,10 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 | `keys.rotation.coordinated_cutover` | `WithCoordinatedKeyRotation`: broadcasts demoted+new kids + `now+GracePeriod` retire deadline over `cluster.Bus` (`KindSigningKeyRotation`); FAIL-SAFE: deferred retire only widens verify window, never retires early |
 | `keys.signing.revocation_backend` | `With{Algo}RevocationStore` for durable revocation across restarts; `SeedRevocations` re-seeds at boot |
 | `keys.signing_key_registry.{backend,replica_id,lease_ttl}` | Opt-in leaderless aggregation (`memory`\|`etcd`). `WithSigningKeyReplicaID` REQUIRED when wired. Degraded → `/readyz` 503 + `signing_key_aggregation_degraded` audit |
+| `keys.introspection_signing.enabled` | RFC 9701 JWT-formatted `/token/introspect` responses (`sso.WithIntrospectionSigning`). Default `false` = byte-identical to a build without the feature. Builds a SEPARATE issuer from `keys.signing` — its own key, never the access/ID-token signer — so a compromise of one can't forge the other's output |
+| `keys.introspection_signing.{alg,external,revocation_backend,revocation_dsn}` | Same shape + semantics as the matching `keys.signing.*` fields, reused for the dedicated introspection key (its own `BuildSigningIssuer` call). Rotation is independent of `keys.rotation` (which targets only the primary key) — call `RotateKey`/`RotateNow` directly on the constructed issuer; a named-role admin-rotation RPC is a deferred follow-on |
+| `GET /.well-known/jwks.json` `use: introspection` entry | Published only when `keys.introspection_signing.enabled`; distinguishes the dedicated key from the `sig` (access/ID token) and `enc` (JAR/response JWE) entries |
+| `introspection_signing_alg_values_supported` (discovery) | Advertised only when `keys.introspection_signing.enabled`; a resource server sends `Accept: application/token-introspection+jwt` on `/token/introspect` to opt into the signed response per request — callers that don't send it keep getting plain RFC 7662 JSON |
 
 ## Storage Backend Toggles
 

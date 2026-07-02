@@ -113,8 +113,24 @@ func (s *Server) SubjectRefreshRevoker() oidc.SubjectRefreshRevoker {
 	return nil
 }
 
-func (s *Server) MetadataSigner() oidc.MetadataSigner      { return s.metadataSigner }
-func (s *Server) JARMSigner() oidc.JARMSigner              { return s.jarmSigner }
+func (s *Server) MetadataSigner() oidc.MetadataSigner            { return s.metadataSigner }
+func (s *Server) JARMSigner() oidc.JARMSigner                    { return s.jarmSigner }
+func (s *Server) IntrospectionSigner() oauth.IntrospectionSigner { return s.introspectionSigner }
+
+// IntrospectionSigningKeys returns the wired introspection signer's public
+// key set with "use": "introspection" (RFC 9701) for JWKS aggregation, or
+// nil when no signer is wired or the signer doesn't publish keys (e.g. a
+// custom KMS-backed IntrospectionSigner that opts out of JWKS discovery).
+// Wraps on every call rather than caching a decorated field — JWKS
+// aggregation itself runs behind ComputeJWKSDocument's single-flight, so
+// the extra allocation here is on the cache-miss path only.
+func (s *Server) IntrospectionSigningKeys() core.JWKSProvider {
+	jp, ok := s.introspectionSigner.(core.JWKSProvider)
+	if !ok {
+		return nil
+	}
+	return oauth.NewIntrospectionKeySet(jp)
+}
 func (s *Server) MFAProvider() spi.MFAProvider             { return s.mfaProvider }
 func (s *Server) MFAChallengeStore() spi.MFAChallengeStore { return s.mfaChallengeStore }
 func (s *Server) MFAChallengeTTL() time.Duration           { return s.mfaChallengeTTL }

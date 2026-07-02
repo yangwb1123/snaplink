@@ -38,6 +38,11 @@ type IntrospectDeps interface {
 	// IntrospectionCacheTTL returns the TTL for cached introspection
 	// results. Only meaningful when IntrospectionCache() is non-nil.
 	IntrospectionCacheTTL() time.Duration
+	// IntrospectionSigner returns the optional RFC 9701 dedicated signer
+	// for JWT-formatted introspection responses. nil (the default) means
+	// the feature is off — every response is plain RFC 7662 JSON
+	// regardless of what the caller's Accept header requests.
+	IntrospectionSigner() IntrospectionSigner
 }
 
 // introspectRequest is the bound form/JSON body for /token/introspect.
@@ -102,13 +107,15 @@ func HandleIntrospect(d IntrospectDeps, ctx core.HandlerContext) {
 		return
 	}
 
-	serveIntrospectWithCache(d, ctx, req.Token, req.TokenTypeHint)
+	serveIntrospectWithCache(d, ctx, req.Token, req.TokenTypeHint, req.ClientID)
 }
 
 // serveIntrospectWithCache performs the resolution + optional-cache step of
 // HandleIntrospect. Cache is keyed by SHA-256(token) so raw tokens are never
 // stored in plaintext; both active and inactive results are cached.
-func serveIntrospectWithCache(d IntrospectDeps, ctx core.HandlerContext, token, hint string) {
+// clientID is the ALREADY-AUTHENTICATED introspecting client (RFC 9701 §5.1
+// `aud` when the JWT response format is in play).
+func serveIntrospectWithCache(d IntrospectDeps, ctx core.HandlerContext, token, hint, clientID string) {
 	// OPTIONAL cache check: keyed by SHA-256(token) so the raw token
 	// is never stored in plaintext. When the cache is unwired, both
 	// d.IntrospectionCache() and the cache itself are nil — every
@@ -118,7 +125,7 @@ func serveIntrospectWithCache(d IntrospectDeps, ctx core.HandlerContext, token, 
 	if cache != nil {
 		cacheKey = tokenHash(token)
 		if cached, ok := cache.Get(cacheKey); ok {
-			ctx.JSON(http.StatusOK, cached.Body)
+			writeIntrospectionResponse(d, ctx, cached.Body, clientID)
 			return
 		}
 	}
@@ -127,7 +134,7 @@ func serveIntrospectWithCache(d IntrospectDeps, ctx core.HandlerContext, token, 
 		if cache != nil {
 			cache.Set(cacheKey, &CachedResult{Body: body}, d.IntrospectionCacheTTL())
 		}
-		ctx.JSON(http.StatusOK, body)
+		writeIntrospectionResponse(d, ctx, body, clientID)
 		return
 	}
 
@@ -136,7 +143,37 @@ func serveIntrospectWithCache(d IntrospectDeps, ctx core.HandlerContext, token, 
 	if cache != nil {
 		cache.Set(cacheKey, &CachedResult{Body: inactive}, d.IntrospectionCacheTTL())
 	}
-	ctx.JSON(http.StatusOK, inactive)
+	writeIntrospectionResponse(d, ctx, inactive, clientID)
+}
+
+// writeIntrospectionResponse serves body as plain RFC 7662 JSON, unless the
+// introspecting client's Accept header requests the RFC 9701 §5 JWT format
+// AND a dedicated IntrospectionSigner is wired — in which case it signs and
+// serves application/token-introspection+jwt instead. A client that sends
+// the Accept header against a server that hasn't enabled the feature
+// silently gets the same plain JSON it always got: content negotiation
+// degrades gracefully rather than erroring, so a speculative Accept header
+// can never break an existing integration (default-off requirement).
+//
+// A wired signer that FAILS to sign responds 500 rather than silently
+// downgrading to JSON — the caller explicitly asked for an authenticated
+// response and a silent format downgrade would defeat that ask exactly
+// when the server is unable to honor it.
+func writeIntrospectionResponse(d IntrospectDeps, ctx core.HandlerContext, body map[string]any, clientID string) {
+	signer := d.IntrospectionSigner()
+	if signer == nil || !WantsIntrospectionJWT(ctx.Request().Header.Get("Accept")) {
+		ctx.JSON(http.StatusOK, body)
+		return
+	}
+	jwt, err := SignIntrospectionResponse(ctx.Request().Context(), signer, d.ResolveIssuer(ctx), clientID, body)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	w := ctx.ResponseWriter()
+	w.Header().Set(core.HeaderContentType, core.ContentTypeTokenIntrospectionJWT)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(jwt))
 }
 
 // authenticateIntrospectClient runs the hint-independent client-auth gate
@@ -341,4 +378,105 @@ func authenticateIntrospectionClient(clientStore core.ClientStore, ctx core.Hand
 func tokenHash(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
+}
+
+// --- RFC 9701 (JWT Response for OAuth Token Introspection) -----------------
+//
+// Kept in this file rather than a separate one: protocols/oauth is already
+// at its frozen directory_fanout_test.go file-count ceiling (AGENTS.md
+// §0.1 "Go files per dir ≤ 10" — this dir is a grandfathered exemption
+// that may only shrink), so new introspection-only surface area is added
+// here rather than growing the file count further.
+
+// IntrospectionSigner is the seam RFC 9701 (JWT Response for OAuth Token
+// Introspection) uses to sign the /token/introspect response. Structurally
+// close to oidc.MetadataSigner/oidc.JARMSigner (SignMetadata), but kept as
+// its OWN interface (own method name) so a general-purpose issuer type
+// (Ed25519/ECDSA/RSA*JWTIssuer) can implement both roles as two distinct
+// methods — the introspection method stamps the RFC 9701 §5.1 `typ`
+// ("token-introspection+jwt") instead of the generic "JWT" typ JARM/
+// metadata use, which is the RFC's defense against a resource server
+// mistaking this response for a bearer access token.
+//
+// AGENTS.md requires this to be a DEDICATED key, never the issuer that
+// mints access/ID tokens — wire a SEPARATE issuer instance via
+// sso.WithIntrospectionSigning, mirroring the per-tenant-issuer pattern
+// (WithTenantTokenIssuer) of an independently keyed + independently
+// rotated named signer role rather than overloading the primary one.
+type IntrospectionSigner interface {
+	SignIntrospectionJWT(ctx context.Context, claims map[string]any) (string, error)
+}
+
+// JWKUseIntrospection is the "use" value stamped on the dedicated
+// introspection signer's published JWK(s), distinguishing them in the
+// aggregated /.well-known/jwks.json from the "sig" (access/ID token) and
+// "enc" (JAR/response JWE) entries so a resource server can locate the
+// right verification key without an out-of-band channel.
+const JWKUseIntrospection = "introspection"
+
+// IntrospectionKeySet decorates a core.JWKSProvider — typically the SAME
+// dedicated issuer instance passed to sso.WithIntrospectionSigning — so
+// its published JWKS entries carry "use": JWKUseIntrospection instead of
+// the generic "sig" the general-purpose issuer types normally stamp. This
+// keeps Ed25519/ECDSA/RSA*JWTIssuer free of a narrow, single-feature "use"
+// value while still publishing the dedicated key through the existing
+// JWKS aggregation path (see oidc.JWKSDeps.IntrospectionSigningKeys).
+type IntrospectionKeySet struct {
+	core.JWKSProvider
+}
+
+// NewIntrospectionKeySet wraps p. Returns nil when p is nil so callers can
+// chain a possibly-absent signer's type assertion straight through without
+// a separate nil check (a nil *IntrospectionKeySet stored in a non-nil
+// interface would otherwise be a classic Go footgun).
+func NewIntrospectionKeySet(p core.JWKSProvider) *IntrospectionKeySet {
+	if p == nil {
+		return nil
+	}
+	return &IntrospectionKeySet{JWKSProvider: p}
+}
+
+// JWKS re-publishes the wrapped provider's keys with Use overridden to
+// JWKUseIntrospection. Every other field (kty/kid/alg/x/y/n/e) is passed
+// through unchanged — only the usage tag differs.
+func (k *IntrospectionKeySet) JWKS(ctx context.Context) ([]core.JWK, error) {
+	keys, err := k.JWKSProvider.JWKS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]core.JWK, len(keys))
+	for i, jwk := range keys {
+		jwk.Use = JWKUseIntrospection
+		out[i] = jwk
+	}
+	return out, nil
+}
+
+// WantsIntrospectionJWT reports whether the request's Accept header asks
+// for the RFC 9701 §5 JWT-formatted introspection response
+// (core.ContentTypeTokenIntrospectionJWT). Matches like the existing
+// acceptsHTML/acceptsJSON content-negotiation helpers elsewhere in this
+// codebase — a raw substring check rather than full RFC 9110 media-range
+// parsing (q-values, wildcards), which is more precision than a single
+// exact media type warrants.
+func WantsIntrospectionJWT(accept string) bool {
+	return strings.Contains(accept, core.ContentTypeTokenIntrospectionJWT)
+}
+
+// SignIntrospectionResponse signs body (the already-computed RFC 7662
+// introspection map — active:false or the populated active:true shape)
+// into the RFC 9701 JWT wrapper. Per §5.1: iss identifies this AS, aud
+// identifies the introspecting client (the resource server that will
+// consume the response), iat is the signing moment. sub/exp are
+// deliberately NEVER set at the top level (§8 substitution-attack
+// defense) — the entire introspection payload, including any exp/sub it
+// carries, lives ONLY inside the nested core.KeyTokenIntrospection claim.
+func SignIntrospectionResponse(ctx context.Context, signer IntrospectionSigner, issuer, clientID string, body map[string]any) (string, error) {
+	claims := map[string]any{
+		core.KeyIss:                issuer,
+		core.KeyAud:                clientID,
+		core.KeyIat:                time.Now().Unix(),
+		core.KeyTokenIntrospection: body,
+	}
+	return signer.SignIntrospectionJWT(ctx, claims)
 }
