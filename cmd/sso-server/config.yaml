@@ -114,6 +114,7 @@ self_service:
     backend: ""         # "" (disabled) | memory | sqlite
     sqlite:
       dsn: ""           # e.g. file:/var/lib/sso/consent.db?_journal=WAL&_pragma=busy_timeout(5000)
+    max_ttl: 0s         # hard server-wide ceiling on grant lifetime; 0 = no server-enforced expiry
   # Self-service password change (/me/password). When enabled, the YAML
   # password users (authenticators.password.users) are imported into this store
   # by their bcrypt hash at boot and login is served FROM it, so a password
