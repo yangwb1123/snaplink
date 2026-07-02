@@ -68,6 +68,21 @@ type AuthCode struct {
 	// logout. Empty = no session anchor.
 	SID string
 
+	// ConfirmationJKT is the RFC 9449 §10 DPoP JWK thumbprint this
+	// authorization code is bound to, captured when the client presents a
+	// DPoP proof AT /auth/login (the authorization step) — distinct from
+	// the access/refresh token cnf.jkt binding, which is derived from
+	// whatever proof arrives separately at the /token EXCHANGE. Empty means
+	// unbound (no DPoP was presented at issue time); the exchange skips the
+	// gate entirely, exactly like the pre-feature behavior. When non-empty,
+	// the authorization_code grant MUST reject an exchange whose presented
+	// DPoP proof key doesn't match — otherwise an attacker who intercepts a
+	// code minted for one client's DPoP key could redeem it under a key of
+	// their own choosing. A mismatch collapses to the SAME invalid_grant as
+	// every other AuthCode failure (oracle-leak hardening, AGENTS.md §3) —
+	// it must never surface as a distinguishable error.
+	ConfirmationJKT string
+
 	ExpiresAt time.Time
 }
 

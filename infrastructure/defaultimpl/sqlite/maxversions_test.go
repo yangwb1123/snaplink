@@ -58,4 +58,7 @@ func TestMaxVersions_AllReturnPositive(t *testing.T) {
 	if got := sqlite.RefreshTokensMaxVersion(); got != 4 {
 		t.Errorf("RefreshTokensMaxVersion() = %d, want 4 (v4 adds confirmation_jkt DPoP binding)", got)
 	}
+	if got := sqlite.AuthCodesMaxVersion(); got != 2 {
+		t.Errorf("AuthCodesMaxVersion() = %d, want 2 (v2 adds confirmation_jkt DPoP code binding)", got)
+	}
 }
