@@ -54,37 +54,9 @@ func CertPublicKeyMatchesJWK(cert *x509.Certificate, kty, crv, x, y, n, e string
 	pub := cert.PublicKey
 	switch kty {
 	case "RSA":
-		rsaPub, ok := pub.(*rsa.PublicKey)
-		if !ok {
-			return false, nil
-		}
-		nBytes, err := base64.RawURLEncoding.DecodeString(n)
-		if err != nil {
-			return false, err
-		}
-		eBytes, err := base64.RawURLEncoding.DecodeString(e)
-		if err != nil {
-			return false, err
-		}
-		gotN := new(big.Int).SetBytes(nBytes)
-		gotE := decodePublicExponent(eBytes)
-		return rsaPub.N.Cmp(gotN) == 0 && rsaPub.E == gotE, nil
+		return rsaPublicKeyMatchesJWK(pub, n, e)
 	case "EC":
-		ecPub, ok := pub.(*ecdsa.PublicKey)
-		if !ok {
-			return false, nil
-		}
-		xBytes, err := base64.RawURLEncoding.DecodeString(x)
-		if err != nil {
-			return false, err
-		}
-		yBytes, err := base64.RawURLEncoding.DecodeString(y)
-		if err != nil {
-			return false, err
-		}
-		gotX := new(big.Int).SetBytes(xBytes)
-		gotY := new(big.Int).SetBytes(yBytes)
-		return ecPub.X.Cmp(gotX) == 0 && ecPub.Y.Cmp(gotY) == 0, nil
+		return ecPublicKeyMatchesJWK(pub, x, y)
 	case "OKP":
 		edPub, ok := pub.(ed25519.PublicKey)
 		if !ok {
@@ -97,6 +69,46 @@ func CertPublicKeyMatchesJWK(cert *x509.Certificate, kty, crv, x, y, n, e string
 		return string(edPub) == string(xBytes), nil
 	}
 	return false, errors.New("unsupported JWK kty: " + kty)
+}
+
+// rsaPublicKeyMatchesJWK compares an RSA certificate public key against raw
+// JWK n/e material — extracted verbatim from CertPublicKeyMatchesJWK.
+func rsaPublicKeyMatchesJWK(pub any, n, e string) (bool, error) {
+	rsaPub, ok := pub.(*rsa.PublicKey)
+	if !ok {
+		return false, nil
+	}
+	nBytes, err := base64.RawURLEncoding.DecodeString(n)
+	if err != nil {
+		return false, err
+	}
+	eBytes, err := base64.RawURLEncoding.DecodeString(e)
+	if err != nil {
+		return false, err
+	}
+	gotN := new(big.Int).SetBytes(nBytes)
+	gotE := decodePublicExponent(eBytes)
+	return rsaPub.N.Cmp(gotN) == 0 && rsaPub.E == gotE, nil
+}
+
+// ecPublicKeyMatchesJWK compares an EC certificate public key against raw
+// JWK x/y material — extracted verbatim from CertPublicKeyMatchesJWK.
+func ecPublicKeyMatchesJWK(pub any, x, y string) (bool, error) {
+	ecPub, ok := pub.(*ecdsa.PublicKey)
+	if !ok {
+		return false, nil
+	}
+	xBytes, err := base64.RawURLEncoding.DecodeString(x)
+	if err != nil {
+		return false, err
+	}
+	yBytes, err := base64.RawURLEncoding.DecodeString(y)
+	if err != nil {
+		return false, err
+	}
+	gotX := new(big.Int).SetBytes(xBytes)
+	gotY := new(big.Int).SetBytes(yBytes)
+	return ecPub.X.Cmp(gotX) == 0 && ecPub.Y.Cmp(gotY) == 0, nil
 }
 
 // IsTLSClientCert returns true when the request carries a verified TLS
