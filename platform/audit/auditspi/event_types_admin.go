@@ -16,6 +16,7 @@ const (
 	EventAdminTempTokenIssued            EventType = "admin_temp_token_issued"
 	EventAdminConsentRevoked             EventType = "admin_consent_revoked"
 	EventAdminMFAFactorRemoved           EventType = "admin_mfa_factor_removed"
+	EventAdminRecoveryCodesReset         EventType = "admin_recovery_codes_reset"
 	EventAdminPasswordReset              EventType = "admin_password_reset"
 	EventAdminDeviceSecretsRevoked       EventType = "admin_device_secrets_revoked"
 	EventAdminPasswordResetTokensRevoked EventType = "admin_password_reset_tokens_revoked"

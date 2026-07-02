@@ -19,6 +19,7 @@ type Deps interface {
 	InvitationSender() spi.InvitationSender
 	ConsentStore() core.ConsentStore
 	MFAEnrollmentStore() core.MFAEnrollmentStore
+	RecoveryCodeStore() core.RecoveryCodeStore
 	PasswordCredentialStore() core.PasswordCredentialStore
 	UserProvider() core.UserProvider
 	AccountLockout() security.AccountLockout

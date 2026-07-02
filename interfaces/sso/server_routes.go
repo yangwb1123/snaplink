@@ -215,6 +215,11 @@ func (s *Server) mountSelfServiceCredentials() {
 			s.router.POST(PathMyMFATOTPConfirm, s.handleTOTPEnrollConfirm)
 		}
 	}
+	// Self-service MFA recovery codes (regenerate + remaining count); byte-identical without a store.
+	if s.recoveryCodeStore != nil {
+		s.router.POST(PathMyMFARecoveryCodes, s.handleGenerateRecoveryCodes)
+		s.router.GET(PathMyMFARecoveryCodes, s.handleGetRecoveryCodesCount)
+	}
 	// Self-service passkey registration (authenticated, bearer-bound). Mounts
 	// independently of the enrollment store: the registered credential lands in
 	// the WebAuthn store the Registrar wraps and surfaces in /me/mfa via the

@@ -83,6 +83,9 @@ func (s *Server) mountAdminUserState(api Router) {
 	if s.accountLockout != nil {
 		api.POST(PathAdminAccountLockoutClear, s.handleAdminClearAccountLockout)
 	}
+	if s.recoveryCodeStore != nil {
+		api.POST(PathAdminUserRecoveryCodes, s.handleAdminResetUserRecoveryCodes)
+	}
 }
 
 // mountAdminB2B registers the admin management of enterprise connections,

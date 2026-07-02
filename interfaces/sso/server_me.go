@@ -108,6 +108,16 @@ func (s *Server) handleTOTPEnrollConfirm(ctx HandlerContext) {
 	selfservice.HandleTOTPEnrollConfirm(s, ctx)
 }
 
+// handleGenerateRecoveryCodes delegates to selfservice.HandleGenerateRecoveryCodes.
+func (s *Server) handleGenerateRecoveryCodes(ctx HandlerContext) {
+	selfservice.HandleGenerateRecoveryCodes(s, ctx)
+}
+
+// handleGetRecoveryCodesCount delegates to selfservice.HandleGetRecoveryCodesCount.
+func (s *Server) handleGetRecoveryCodesCount(ctx HandlerContext) {
+	selfservice.HandleGetRecoveryCodesCount(s, ctx)
+}
+
 // handleChangeMyPassword delegates to selfservice.HandleChangeMyPassword.
 func (s *Server) handleChangeMyPassword(ctx HandlerContext) {
 	selfservice.HandleChangeMyPassword(s, ctx)

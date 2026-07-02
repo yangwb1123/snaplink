@@ -40,6 +40,7 @@ const (
 	EventAdminMenusUpdated               = auditspi.EventAdminMenusUpdated
 	EventAdminPasswordReset              = auditspi.EventAdminPasswordReset
 	EventAdminPasswordResetTokensRevoked = auditspi.EventAdminPasswordResetTokensRevoked
+	EventAdminRecoveryCodesReset         = auditspi.EventAdminRecoveryCodesReset
 	EventAdminRoleAdded                  = auditspi.EventAdminRoleAdded
 	EventAdminRoleAssigned               = auditspi.EventAdminRoleAssigned
 	EventAdminRoleRemoved                = auditspi.EventAdminRoleRemoved
@@ -117,6 +118,7 @@ const (
 	EventRefreshRotationVelocityExceeded = auditspi.EventRefreshRotationVelocityExceeded
 	EventRefreshTokenIssued              = auditspi.EventRefreshTokenIssued
 	EventRefreshTokenReuse               = auditspi.EventRefreshTokenReuse
+	EventRecoveryCodesRegenerated        = auditspi.EventRecoveryCodesRegenerated
 	EventReleaseDeleted                  = auditspi.EventReleaseDeleted
 	EventReleasePinned                   = auditspi.EventReleasePinned
 	EventReleaseRegistered               = auditspi.EventReleaseRegistered

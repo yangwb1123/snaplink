@@ -116,6 +116,12 @@ const (
 	PathMyMFATOTPBegin   = "/me/mfa/totp/begin"
 	PathMyMFATOTPConfirm = "/me/mfa/totp/confirm"
 
+	// PathMyMFARecoveryCodes is self-service MFA recovery-code management:
+	// POST regenerates the batch (revoke-then-generate), returning the
+	// plaintext codes exactly once; GET returns the remaining count only
+	// (never the codes). Mounted only when a RecoveryCodeStore is wired.
+	PathMyMFARecoveryCodes = "/me/mfa/recovery-codes"
+
 	// PathMyWebAuthnRegisterBegin / Finish are AUTHENTICATED self-service passkey
 	// registration (POST). Unlike the signup ceremony (/webauthn/registration/*,
 	// username from the body), these bind the new credential to the BEARER
@@ -206,6 +212,12 @@ const (
 	PathAdminUserConsentByID = "/admin/users/:id/consents/:client_id"
 	PathAdminUserMFA         = "/admin/users/:id/mfa"
 	PathAdminUserMFAByID     = "/admin/users/:id/mfa/:factor_id"
+
+	// PathAdminUserRecoveryCodes is the helpdesk MFA recovery reset (POST,
+	// admin:write): it revokes ALL of a user's remaining recovery codes and
+	// NEVER returns codes to the operator (the user regenerates their own via
+	// PathMyMFARecoveryCodes). Mounted only when a RecoveryCodeStore is wired.
+	PathAdminUserRecoveryCodes = "/admin/users/:id/mfa/recovery-codes"
 
 	// PathAdminUserPassword sets a user's password on their behalf (POST,
 	// admin:write) — the helpdesk "reset this user's password" flow. Body:

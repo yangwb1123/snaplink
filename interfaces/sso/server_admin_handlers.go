@@ -31,6 +31,9 @@ func (s *Server) handleAdminSetUserEmail(ctx HandlerContext) {
 func (s *Server) handleAdminClearAccountLockout(ctx HandlerContext) {
 	admin.HandleAdminClearAccountLockout(s, ctx)
 }
+func (s *Server) handleAdminResetUserRecoveryCodes(ctx HandlerContext) {
+	admin.HandleAdminResetUserRecoveryCodes(s, ctx)
+}
 func (s *Server) handleAdminRevokeUserDeviceSecrets(ctx HandlerContext) {
 	admin.HandleAdminRevokeUserDeviceSecrets(s, ctx)
 }

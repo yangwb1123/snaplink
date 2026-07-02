@@ -160,6 +160,11 @@ type selfServiceState struct {
 	// Nil ⇒ the routes are NOT mounted — byte-identical to a build without it.
 	mfaEnrollmentStore MFAEnrollmentStore
 
+	// recoveryCodeStore backs POST/GET /me/mfa/recovery-codes + the admin reset
+	// (WithRecoveryCodeStore). Nil ⇒ those routes are NOT mounted —
+	// byte-identical to a build without it.
+	recoveryCodeStore RecoveryCodeStore
+
 	// totpEnroller backs POST /me/mfa/totp/{begin,confirm} (WithTOTPEnroller).
 	// The enrollment routes mount only when this AND an mfaEnrollmentStore that
 	// implements TOTPEnrollmentWriter are both wired — byte-identical off.

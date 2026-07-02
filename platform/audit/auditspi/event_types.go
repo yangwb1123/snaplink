@@ -83,6 +83,13 @@ const (
 	EventTOTPEnrollFailed EventType = "mfa_totp_enroll_failed"
 )
 
+// MFA recovery-code events (self-service). Regeneration is the only
+// self-service mutation worth auditing; redemption rides the existing
+// mfa_success/mfa_failure events via the MFAProvider dispatch.
+const (
+	EventRecoveryCodesRegenerated EventType = "mfa_recovery_codes_regenerated"
+)
+
 // Consent lifecycle events (user-initiated).
 const (
 	EventConsentGranted EventType = "consent_granted"

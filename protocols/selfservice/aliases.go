@@ -35,4 +35,6 @@ var (
 	HandleDeleteMyMFAFactor      = selfserviceaccount.HandleDeleteMyMFAFactor
 	HandleTOTPEnrollBegin        = selfserviceaccount.HandleTOTPEnrollBegin
 	HandleTOTPEnrollConfirm      = selfserviceaccount.HandleTOTPEnrollConfirm
+	HandleGenerateRecoveryCodes  = selfserviceaccount.HandleGenerateRecoveryCodes
+	HandleGetRecoveryCodesCount  = selfserviceaccount.HandleGetRecoveryCodesCount
 )

@@ -103,6 +103,9 @@ type Deps interface {
 	TOTPEnroller() core.TOTPEnroller
 	NewMFAFactorID() (string, error)
 
+	// MFA recovery codes (POST/GET /me/mfa/recovery-codes). Nil when unwired.
+	RecoveryCodeStore() core.RecoveryCodeStore
+
 	// GDPR self-service
 	DataExporter() *compliance.Exporter
 	AccountEraser() *compliance.Eraser

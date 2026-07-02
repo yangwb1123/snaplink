@@ -153,6 +153,10 @@ func (s *Server) WebAuthnRegistrar() core.WebAuthnRegistrar { return s.webauthnR
 // MFAEnrollmentStore returns the MFA enrollment store (nil when unwired).
 func (s *Server) MFAEnrollmentStore() core.MFAEnrollmentStore { return s.mfaEnrollmentStore }
 
+// RecoveryCodeStore returns the MFA recovery-code store (nil when unwired). One
+// accessor satisfies both selfservicecore.Deps and admin.Deps.
+func (s *Server) RecoveryCodeStore() core.RecoveryCodeStore { return s.recoveryCodeStore }
+
 // TOTPEnroller returns the TOTP enroller (nil when unwired).
 func (s *Server) TOTPEnroller() core.TOTPEnroller { return s.totpEnroller }
 
