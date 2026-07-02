@@ -259,6 +259,17 @@ Chain-integrity failures (a tampered event, a broken segment, or a head-hash
 mismatch) surface as descriptive `platform/audit` chain errors ("hash
 mismatch", "chain break") from the reused verifiers, not as new sentinels.
 
+### SOC2 evidence pack (SDK Go errors, `platform/audit/auditreport`)
+
+The `auditreport` package (used by `sso-ctl soc2-report`) packages a
+previously-built, previously-verified `auditexport.ExportBundle` into a
+control-area evidence report. It defines **no new sentinels of its own**:
+`BuildSOC2Report` and `VerifyAndBuildSOC2Report` both return the existing
+`auditexport.ErrNilBundle` on a nil bundle, and `VerifyAndBuildSOC2Report`
+propagates whatever chain-verification error `auditexport.VerifyExportBundle`
+returns on a tampered/unverifiable bundle unchanged — it never re-implements
+or re-wraps that check. Same non-wire-code caveat as above.
+
 ---
 
 ## Network policy (`/api/v1/netpolicy/*`)

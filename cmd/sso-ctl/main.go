@@ -4,6 +4,7 @@
 //
 //	sso-ctl audit-verify ...   # verify the audit-log hash chain
 //	sso-ctl audit-export ...   # export or offline-verify a tamper-evident bulk audit bundle
+//	sso-ctl soc2-report ...    # build a SOC2-flavored evidence pack over a verified audit-export bundle
 //	sso-ctl import ...         # bulk-import users (auth0 / keycloak / csv)
 //	sso-ctl migrate ...        # offline schema-migration status
 //	sso-ctl snapshot ...       # inspect / verify sealed state snapshots
@@ -26,43 +27,47 @@ import (
 	"github.com/snaplink/sso/cmd/sso-ctl/migratecmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/sessionscmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/snapshotcmd"
+	"github.com/snaplink/sso/cmd/sso-ctl/soc2report"
 	"github.com/snaplink/sso/cmd/sso-ctl/tokenscmd"
 )
 
 const progName = "sso-ctl"
+
+// subcommands maps each dispatchable tool name to its Run function. A
+// map-based dispatch keeps main's cyclomatic complexity flat as tools are
+// added — a growing switch statement here was the near-budget shape this
+// table replaces (see AGENTS.md's function-complexity gate): adding a new
+// sso-ctl subcommand now costs one map entry, not one more branch in main.
+var subcommands = map[string]func([]string) int{
+	"audit-verify": auditverify.Run,
+	"audit-export": auditexport.Run,
+	"soc2-report":  soc2report.Run,
+	"clients":      clientscmd.Run,
+	"import":       importcmd.Run,
+	"migrate":      migratecmd.Run,
+	"sessions":     sessionscmd.Run,
+	"snapshot":     snapshotcmd.Run,
+	"config":       configcmd.Run,
+	"hash":         hashcmd.Run,
+	"tokens":       tokenscmd.Run,
+}
 
 func main() {
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
 	}
-	switch os.Args[1] {
-	case "audit-verify":
-		os.Exit(auditverify.Run(os.Args[2:]))
-	case "audit-export":
-		os.Exit(auditexport.Run(os.Args[2:]))
-	case "clients":
-		os.Exit(clientscmd.Run(os.Args[2:]))
-	case "import":
-		os.Exit(importcmd.Run(os.Args[2:]))
-	case "migrate":
-		os.Exit(migratecmd.Run(os.Args[2:]))
-	case "sessions":
-		os.Exit(sessionscmd.Run(os.Args[2:]))
-	case "snapshot":
-		os.Exit(snapshotcmd.Run(os.Args[2:]))
-	case "config":
-		os.Exit(configcmd.Run(os.Args[2:]))
-	case "hash":
-		os.Exit(hashcmd.Run(os.Args[2:]))
-	case "tokens":
-		os.Exit(tokenscmd.Run(os.Args[2:]))
+	cmd, args := os.Args[1], os.Args[2:]
+	if run, ok := subcommands[cmd]; ok {
+		os.Exit(run(args))
+	}
+	switch cmd {
 	case "version", "-v", "--version":
 		writeVersion(os.Stdout)
 	case "-h", "--help", "help":
 		usage()
 	default:
-		fmt.Fprintf(os.Stderr, "%s: unknown subcommand %q\n", progName, os.Args[1])
+		fmt.Fprintf(os.Stderr, "%s: unknown subcommand %q\n", progName, cmd)
 		usage()
 		os.Exit(2)
 	}
@@ -77,6 +82,7 @@ Usage:
 Commands:
   audit-verify   Verify the audit-log hash chain (from a file or the live API).
   audit-export   Export or offline-verify a tamper-evident bulk audit bundle (compliance evidence).
+  soc2-report    Build a SOC2-flavored evidence pack over a verified audit-export bundle.
   clients        List OAuth clients or inspect a specific client.
   import         Bulk-import users from auth0 / keycloak / csv into a user store.
   migrate        Offline schema-migration status for a SQLite store.
