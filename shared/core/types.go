@@ -12,40 +12,6 @@ import (
 	"time"
 )
 
-// User represents an authenticated user.
-type User struct {
-	ID         string            `json:"id"`
-	ExternalID string            `json:"external_id,omitempty"`
-	Provider   string            `json:"provider,omitempty"`
-	Email      string            `json:"email,omitempty"`
-	Name       string            `json:"name,omitempty"`
-	Attributes map[string]string `json:"attributes,omitempty"`
-	CreatedAt  time.Time         `json:"created_at"`
-	UpdatedAt  time.Time         `json:"updated_at"`
-}
-
-// UserAttrActive is the User.Attributes key SCIM writes the RFC 7643 `active`
-// flag to (protocols/scim). UserAttrInactive is its deprovisioned value. Only an
-// explicit "false" means deactivated; an absent or any other value is active, so
-// non-SCIM deployments (which never write the key) are unaffected.
-const (
-	UserAttrActive   = "scim:active"
-	UserAttrInactive = "false"
-)
-
-// IsActive reports whether the user may authenticate. False ONLY when SCIM has
-// deprovisioned the account (Attributes["scim:active"] == "false"); absent /
-// any other value is active. A nil user is treated as active (the caller's
-// not-found / non-SCIM path decides separately). The login path MUST consult
-// this AFTER credential verification so a deprovisioned user cannot obtain
-// tokens even with a correct credential (RFC 7643 §4.1.2 active=false).
-func (u *User) IsActive() bool {
-	if u == nil {
-		return true
-	}
-	return u.Attributes[UserAttrActive] != UserAttrInactive
-}
-
 // Client represents a registered application that can request tokens.
 //
 // Per-app policy lives here:
