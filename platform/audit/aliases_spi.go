@@ -48,6 +48,7 @@ const (
 	EventAdminRoleUpdated                = auditspi.EventAdminRoleUpdated
 	EventAdminSubjectErased              = auditspi.EventAdminSubjectErased
 	EventAdminSubjectExported            = auditspi.EventAdminSubjectExported
+	EventAdminSigningKeyRotated          = auditspi.EventAdminSigningKeyRotated
 	EventAdminGRPCCalled                 = auditspi.EventAdminGRPCCalled
 	EventAdminTempTokenIssued            = auditspi.EventAdminTempTokenIssued
 	EventAdminTenantCreated              = auditspi.EventAdminTenantCreated

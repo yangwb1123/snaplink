@@ -359,6 +359,17 @@ func (j *RSAJWTIssuer) RetireKey(kid string) error {
 	return nil
 }
 
+// RotateNow is the alg-uniform runtime-rotation seam the admin API drives; see
+// the Ed25519JWTIssuer.RotateNow doc for why the nullary shape exists.
+func (j *RSAJWTIssuer) RotateNow() (string, error) { return j.RotateKey(nil) }
+
+// ScheduleRetire arranges the grace-delayed overlap-window retire of kid on a
+// background context; see Ed25519JWTIssuer.ScheduleRetire for the fail-safe
+// rationale. after<=0 keeps the demoted key until a manual RetireKey.
+func (j *RSAJWTIssuer) ScheduleRetire(kid string, after time.Duration) {
+	j.scheduleRetire(context.Background(), kid, after)
+}
+
 // rsaHeader is the JOSE header for RSA JWTs.
 type rsaHeader struct {
 	Alg string `json:"alg"`

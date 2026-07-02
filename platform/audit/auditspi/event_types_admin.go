@@ -42,6 +42,11 @@ const (
 	EventAdminDomainDeleted              EventType = "admin_domain_deleted"
 	EventAdminSubjectExported            EventType = "admin_subject_exported"
 	EventAdminSubjectErased              EventType = "admin_subject_erased"
+	// EventAdminSigningKeyRotated is emitted by the KeyAdmin RotateSigningKey
+	// RPC for an operator-initiated (on-demand) rotation. The scheduled loop
+	// keeps EventSigningKeyRotated; this admin-namespaced variant carries the
+	// actor so a break-glass rotation is attributable in the audit trail.
+	EventAdminSigningKeyRotated EventType = "admin_signing_key_rotated"
 	// EventAdminGRPCCalled is emitted by the gRPC admin audit interceptor
 	// for every gated RPC. The interceptor auto-records actor, method,
 	// duration, and grpc status — complementing the explicit per-RPC

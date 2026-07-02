@@ -20,6 +20,7 @@ import (
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/emailsmtp"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	"github.com/snaplink/sso/interfaces/grpcserver"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/metrics"
@@ -171,6 +172,8 @@ func (b *appBuilder) finalize() (*app, error) {
 	if err != nil {
 		return nil, err
 	}
+	// On-demand signing-key rotation admin service (needs srv for the hook).
+	rt.keyAdmin = b.buildKeyAdminService(srv)
 	if b.cfg.Admin.Enabled {
 		rt.adminMW = sso.NewAdminMiddleware(srv, b.provider)
 		// Apply admin rate limit when configured.
@@ -220,6 +223,7 @@ type serverRuntime struct {
 	cluster           *clusterWiring
 	snapshots         *snapshotReleaseWiring
 	adminMW           *sso.AdminMiddleware
+	keyAdmin          *grpcserver.KeyAdminService
 	busStop           <-chan struct{}
 	signingKeyStop    <-chan struct{}
 	keyRotationStop   <-chan struct{}
@@ -232,23 +236,23 @@ func (b *appBuilder) assemble(rt serverRuntime) *app {
 	cw, srw := rt.cluster, rt.snapshots
 	a := &app{
 		server: rt.server, recorder: b.recorder, provider: b.provider, registry: cw.reg,
-		netStore:                b.netStore,
-		classifier:              b.classifier,
-		clientStore:             b.clientStore,
-		userProvider:            b.userProvider,
-		sessionMgr:              b.sessionMgr,
-		tempStore:               b.tempStore,
-		tokenIssuers:            b.tokenIssuers,
-		idTokenIssuer:           b.jwtIssuer,
-		refreshTokenStore:       b.refreshTokenStore,
-		refreshTokenTTL:         b.refreshTokenTTL,
-		adminMW:                 rt.adminMW,
-		snapshotPipeline:        srw.pipeline,
-		snapshotStorage:         srw.storage,
-		snapshotter:             srw.snapshotter,
-		snapshotRestorer:        srw.restorer,
-		releaseRegistry:         srw.releaseRegistry,
-		releaseStore:            srw.releaseStore,
+		netStore:          b.netStore,
+		classifier:        b.classifier,
+		clientStore:       b.clientStore,
+		userProvider:      b.userProvider,
+		sessionMgr:        b.sessionMgr,
+		tempStore:         b.tempStore,
+		tokenIssuers:      b.tokenIssuers,
+		idTokenIssuer:     b.jwtIssuer,
+		refreshTokenStore: b.refreshTokenStore,
+		refreshTokenTTL:   b.refreshTokenTTL,
+		adminMW:           rt.adminMW,
+		snapshotPipeline:  srw.pipeline,
+		snapshotStorage:   srw.storage,
+		snapshotter:       srw.snapshotter,
+		snapshotRestorer:  srw.restorer,
+		keyAdmin:          rt.keyAdmin,
+		releaseRegistry:   srw.releaseRegistry, releaseStore: srw.releaseStore,
 		tenantStore:             b.tenantStore,
 		connectionStore:         b.connectionStore,
 		regionResolver:          b.regionResolver,

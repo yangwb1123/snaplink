@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+// Package admin/v1 — STABLE.
+// See docs/adr/ADR-0008-proto-versioning.md for the versioning policy.
+// Breaking changes are not permitted in this package without a minimum
+// 6-month deprecation window.
+
+package snaplink.admin.v1;
+
+import "google/api/annotations.proto";
+
+option go_package = "github.com/snaplink/sso/gen/proto/admin/v1;adminv1";
+
+// KeyAdminService is the admin surface for the server's signing keypair.
+// RotateSigningKey triggers an on-demand rotation of the PRIMARY JWT signing
+// key (e.g. suspected compromise, or an operator who never enabled the
+// scheduled loop); ListSigningKeys enumerates the public key metadata every
+// wired issuer publishes. RotateSigningKey requires admin:write; ListSigningKeys
+// requires admin:read — same interceptor rules as the sibling admin services.
+//
+// The demoted key is kept VERIFY-ONLY for a grace window (never retired early),
+// so tokens minted just before the rotation stay verifiable until they expire.
+// An external (KMS/HSM) signer owns its key lifecycle in the backend, so
+// RotateSigningKey refuses (FAILED_PRECONDITION) rather than mint a key the KMS
+// never sees. A custom issuer without runtime-rotation support degrades to
+// UNIMPLEMENTED (mirroring the scheduler's graceful skip).
+service KeyAdminService {
+  rpc RotateSigningKey(RotateSigningKeyRequest) returns (RotateSigningKeyResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/keys/rotate"
+      body: "*"
+    };
+  }
+  rpc ListSigningKeys(ListSigningKeysRequest) returns (ListSigningKeysResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/keys" };
+  }
+}
+
+message RotateSigningKeyRequest {
+  // Optional overlap-window (seconds) the demoted key stays verify-only before
+  // retirement. 0 = the server default (keys.rotation.grace_period when set,
+  // else 24h). When set, it MUST be >= 60 (operators MUST keep it >= the max
+  // access-token TTL, or tokens minted just before the rotation are stranded).
+  int64 grace_seconds = 1;
+}
+message RotateSigningKeyResponse {
+  // The demoted kid (kept verify-only through the grace window) and the newly
+  // promoted signing kid. Never carries private key material.
+  string old_kid = 1;
+  string new_kid = 2;
+  // The grace window actually applied (seconds).
+  int64 grace_seconds = 3;
+}
+
+message ListSigningKeysRequest {}
+message SigningKeyInfo {
+  string kid = 1;
+  string alg = 2;
+  // "active" (currently signing) or "verify_only" (demoted / adopted peer key).
+  string state = 3;
+}
+message ListSigningKeysResponse {
+  repeated SigningKeyInfo keys = 1;
+}

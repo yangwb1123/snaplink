@@ -4381,6 +4381,64 @@ paths:
                 $ref: "#/components/schemas/RotateSecretResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/admin/keys:
+    get:
+      tags: [admin]
+      summary: List signing keys (public metadata).
+      description: |
+        Enumerates the public signing-key metadata every wired issuer
+        publishes — `kid`, `alg`, and `state` (`active` = currently signing,
+        `verify_only` = demoted or adopted peer key). Returns NO private key
+        material. Requires the `admin:read` scope.
+      operationId: adminKeyList
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Signing-key metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListSigningKeysResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/keys/rotate:
+    post:
+      tags: [admin]
+      summary: Rotate the primary signing key on demand.
+      description: |
+        Promotes a fresh signing key on the primary JWT issuer and demotes the
+        current key to VERIFY-ONLY for a grace window (never retired early), so
+        tokens minted just before the rotation stay verifiable until they
+        expire. Reuses the scheduled-rotation side effects (audit,
+        discovery-cache bust, metrics, JWKS re-publish, coordinated cutover
+        broadcast) and records `admin_signing_key_rotated`. Requires the
+        `admin:write` scope.
+
+        Returns `400` when a supplied `grace_seconds` is below 60. Returns
+        `501` when the configured issuer has no runtime-rotation support
+        (custom `WithTokenIssuer`), and `412` when an external KMS/HSM signer
+        owns the key lifecycle (rotate it in the backend instead — an
+        in-process rotate would mint a key the KMS never sees).
+      operationId: adminKeyRotate
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotateSigningKeyRequest"
+      responses:
+        "200":
+          description: The demoted and newly promoted kids.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotateSigningKeyResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/admin/users:
     get:
       tags: [admin]
@@ -7656,6 +7714,47 @@ components:
         secret:
           type: string
           description: New client_secret — display once.
+
+    RotateSigningKeyRequest:
+      type: object
+      properties:
+        grace_seconds:
+          type: integer
+          format: int64
+          description: |
+            Optional overlap window (seconds) the demoted key stays
+            verify-only before retirement. 0 = server default
+            (`keys.rotation.grace_period` when set, else 24h). When set it
+            MUST be >= 60, and operators MUST keep it >= the max access-token
+            TTL or tokens minted just before the rotation are stranded.
+    RotateSigningKeyResponse:
+      type: object
+      properties:
+        old_kid:
+          type: string
+          description: The demoted kid, kept verify-only through the grace window.
+        new_kid:
+          type: string
+          description: The newly promoted signing kid.
+        grace_seconds:
+          type: integer
+          format: int64
+          description: The grace window actually applied (seconds).
+    SigningKeyInfo:
+      type: object
+      properties:
+        kid: { type: string }
+        alg: { type: string }
+        state:
+          type: string
+          description: "\"active\" (currently signing) or \"verify_only\"."
+    ListSigningKeysResponse:
+      type: object
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/SigningKeyInfo"
 
     # ---- User admin schemas ----
 

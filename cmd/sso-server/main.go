@@ -24,6 +24,7 @@ import (
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/domains/authenticators/webauthn"
+	"github.com/snaplink/sso/interfaces/grpcserver"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/buildinfo"
@@ -266,6 +267,10 @@ type app struct {
 	refreshTokenTTL   time.Duration
 
 	adminMW *sso.AdminMiddleware // nil when admin disabled
+
+	// keyAdmin serves the on-demand signing-key rotation + list RPCs. Always
+	// constructed; registered only when the admin plane is enabled.
+	keyAdmin *grpcserver.KeyAdminService
 
 	// Snapshot subsystem (Phase D-2). All four nil when snapshot disabled.
 	snapshotPipeline *snapshot.Pipeline

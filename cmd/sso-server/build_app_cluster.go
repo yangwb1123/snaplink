@@ -12,6 +12,7 @@ import (
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/grpcserver"
 	"github.com/snaplink/sso/interfaces/snapshot"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
@@ -26,6 +27,64 @@ import (
 // only implements manual RotateKey/RetireKey will not, and degrades gracefully.
 type rotatableIssuer interface {
 	StartRotation(context.Context, defaultimpl.RotationConfig) <-chan struct{}
+}
+
+// defaultRuntimeRotateGrace is the fallback overlap window for an on-demand
+// admin rotation when keys.rotation.grace_period is unset (the scheduled loop
+// may be disabled entirely). It MUST be >= the max access-token TTL so tokens
+// minted just before the rotation stay verifiable; 24h dwarfs any sane
+// access-token lifetime. Operators running shorter windows set grace_period.
+const defaultRuntimeRotateGrace = 24 * time.Hour
+
+// runtimeKeyRotator is the on-demand rotation seam cmd needs from the primary
+// JWT signing issuer. All three built-in software algs satisfy it; a custom
+// WithTokenIssuer without RotateNow does not (→ Unimplemented), and an external
+// signer is refused before this even matters (→ FailedPrecondition).
+type runtimeKeyRotator interface {
+	RotateNow() (string, error)
+	ScheduleRetire(kid string, after time.Duration)
+	KeyID() string
+}
+
+// buildKeyAdminService wires the admin runtime signing-key rotation RPC. The
+// rotate closure REUSES makeRotateHook so an on-demand rotation produces the
+// SAME side effects as the scheduled loop (audit + discovery bust + metrics +
+// PublishSigningKeys + coordinated broadcast), then arranges the grace-delayed
+// local retire. An external signer owns its lifecycle in the KMS/HSM (the RPC
+// refuses with FailedPrecondition); a non-rotatable issuer leaves rotate nil
+// (→ Unimplemented). List works regardless (public JWKS metadata only).
+func (b *appBuilder) buildKeyAdminService(srv *sso.Server) *grpcserver.KeyAdminService {
+	external := strings.TrimSpace(b.cfg.Keys.Signing.External) != ""
+	grace := b.cfg.Keys.Rotation.GracePeriod
+	if grace <= 0 {
+		grace = defaultRuntimeRotateGrace
+	}
+	cfg := grpcserver.KeyAdminConfig{
+		ExternalManaged: external,
+		DefaultGrace:    grace,
+		Issuers:         b.tokenIssuers,
+		Recorder:        b.recorder,
+	}
+	if rotator, ok := b.jwtIssuer.(runtimeKeyRotator); ok && !external {
+		cfg.Rotate = b.makeRuntimeRotate(srv, rotator)
+	}
+	return grpcserver.NewKeyAdminService(cfg)
+}
+
+// makeRuntimeRotate is the injected rotate closure: promote a fresh key, fire
+// the shared side-effect hook with the request's grace, then schedule the
+// demoted key's grace-delayed retire.
+func (b *appBuilder) makeRuntimeRotate(srv *sso.Server, rotator runtimeKeyRotator) func(context.Context, time.Duration) (string, string, error) {
+	return func(_ context.Context, grace time.Duration) (string, string, error) {
+		old := rotator.KeyID()
+		nw, err := rotator.RotateNow()
+		if err != nil {
+			return old, "", err
+		}
+		b.makeRotateHook(srv, grace)(old, nw)
+		rotator.ScheduleRetire(old, grace)
+		return old, nw, nil
+	}
 }
 
 // snapshotReleaseWiring bundles the snapshot + release subsystem handles the

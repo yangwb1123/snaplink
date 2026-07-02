@@ -263,6 +263,11 @@ func registerAdminGateway(ctx context.Context, gw *runtime.ServeMux, a *app) err
 		func(_ context.Context, id string) { a.server.InvalidateAuthzPolicyBundleCache(id) })); err != nil {
 		return fmt.Errorf("gateway permissions: %w", err)
 	}
+	if a.keyAdmin != nil {
+		if err := adminv1.RegisterKeyAdminServiceHandlerServer(ctx, gw, a.keyAdmin); err != nil {
+			return fmt.Errorf("gateway keys: %w", err)
+		}
+	}
 	if a.snapshotPipeline != nil {
 		if err := adminv1.RegisterSnapshotAdminServiceHandlerServer(ctx, gw, grpcserver.NewSnapshotAdminService(
 			a.snapshotPipeline, a.snapshotStorage, a.snapshotter, a.snapshotRestorer, a.recorder)); err != nil {

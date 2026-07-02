@@ -388,3 +388,21 @@ func (j *Ed25519JWTIssuer) RetireKey(kid string) error {
 	delete(j.verifyKeys, kid)
 	return nil
 }
+
+// RotateNow is the alg-uniform runtime-rotation seam the admin API drives:
+// it generates a fresh key and promotes it (demoting the current key to
+// verify-only), returning the new kid. RotateKey's signature is alg-specific
+// (it takes an *ed25519* private key), so no shared interface can call it —
+// RotateNow gives all three built-in issuers one nullary shape the cmd
+// orchestration closure can assert on structurally.
+func (j *Ed25519JWTIssuer) RotateNow() (string, error) { return j.RotateKey(nil) }
+
+// ScheduleRetire drops kid after `after`, arranging the SAME grace-delayed
+// overlap-window retire the scheduled loop does via scheduleRetire. Bound to
+// a background context (the process lifetime): a runtime admin rotate has no
+// request-scoped ctx to outlive the grace window, and a leaked timer here is
+// fail-safe — it can only ever KEEP a demoted key verifiable longer, never
+// retire it early. after<=0 keeps the demoted key until a manual RetireKey.
+func (j *Ed25519JWTIssuer) ScheduleRetire(kid string, after time.Duration) {
+	j.scheduleRetire(context.Background(), kid, after)
+}
