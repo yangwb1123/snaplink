@@ -3,7 +3,6 @@ package selfserviceaccount
 import (
 	"net/http"
 	"slices"
-	"strconv"
 
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -170,27 +169,6 @@ func recordDeviceTrustRevoked(d Deps, ctx core.HandlerContext, userID, deviceID,
 		ActorIP: audit.ClientIP(ctx.Request()),
 	}
 	audit.SetMeta(evt, "device_id", deviceID)
-	audit.SetMeta(evt, "reason", reason)
-	aud.Record(ctx.Request().Context(), evt)
-}
-
-// recordDeviceTrustRevokedBulk emits ONE device_trust_revoked audit event for
-// a RevokeAll sweep (e.g. triggered by HandleChangeMyPassword) — a count
-// instead of a device_id, so a bulk cleanup doesn't fan out into N events for
-// what the caller experiences as a single action. No-op when count is 0 (the
-// user had no trusted devices — not audit-worthy).
-func recordDeviceTrustRevokedBulk(d Deps, ctx core.HandlerContext, userID string, count int, reason string) {
-	aud := d.Auditor()
-	if aud == nil || count == 0 {
-		return
-	}
-	evt := &audit.Event{
-		Type:    audit.EventDeviceTrustRevoked,
-		Outcome: audit.OutcomeSuccess,
-		ActorID: userID,
-		ActorIP: audit.ClientIP(ctx.Request()),
-	}
-	audit.SetMeta(evt, "count", strconv.Itoa(count))
 	audit.SetMeta(evt, "reason", reason)
 	aud.Record(ctx.Request().Context(), evt)
 }

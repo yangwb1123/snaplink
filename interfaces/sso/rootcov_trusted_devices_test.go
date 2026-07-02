@@ -309,3 +309,122 @@ func TestRcovTrustedDevices_PasswordChangeRevokesGrants(t *testing.T) {
 		t.Fatalf("login after password change with the OLD device_token = %v, want mfa_required", out)
 	}
 }
+
+// rcovTrustAndAssertSkip logs in with MFA, mints a trust grant, and confirms
+// the device_token skips MFA on a fresh login BEFORE the revocation call
+// under test runs — the "before" half of every cascade test below.
+func rcovTrustAndAssertSkip(t *testing.T, s *rcovServer) (access, deviceToken string) {
+	t.Helper()
+	access = rcovLoginWithMFA(t, s)
+	_, out := rcovPostJSON(t, s.http.URL+"/me/devices/trust", access, nil)
+	deviceToken, _ = out["device_token"].(string)
+	if deviceToken == "" {
+		t.Fatalf("no device_token: %v", out)
+	}
+	status, out := rcovPostJSON(t, s.http.URL+"/auth/login", "", map[string]any{
+		"provider":     "password",
+		"client_id":    rcovClient,
+		"credential":   map[string]string{"username": rcovUsername, "password": rcovPassword},
+		"device_token": deviceToken,
+	})
+	if status != http.StatusOK || out["error"] == "mfa_required" {
+		t.Fatalf("login with a freshly-trusted device_token = status=%d body=%v, want 200 skip", status, out)
+	}
+	return access, deviceToken
+}
+
+// rcovAssertDeviceTokenNowRequiresMFA is the "after" half: the SAME
+// device_token that skipped MFA above must now be treated as an ordinary
+// unknown/expired one — anti-enumeration means this is indistinguishable
+// from "never trusted," not a distinguishable error.
+func rcovAssertDeviceTokenNowRequiresMFA(t *testing.T, s *rcovServer, deviceToken string) {
+	t.Helper()
+	_, out := rcovPostJSON(t, s.http.URL+"/auth/login", "", map[string]any{
+		"provider":     "password",
+		"client_id":    rcovClient,
+		"credential":   map[string]string{"username": rcovUsername, "password": rcovPassword},
+		"device_token": deviceToken,
+	})
+	if out["error"] != "mfa_required" {
+		t.Fatalf("login with a revoked device_token = %v, want mfa_required", out)
+	}
+}
+
+// TestRcovTrustedDevices_SignOutEverywhereRevokesGrants proves the security
+// gap this fix closes: DELETE /sessions/me ("sign out everywhere" — the
+// standard first remediation for suspected compromise) must cascade to
+// every trusted-device MFA-skip grant, exactly like a password change
+// already does. Without the cascade, an attacker who minted a grant off a
+// transiently-stolen already-MFA'd bearer token would keep a standing
+// MFA-skip even after the legitimate user "signed out everywhere."
+func TestRcovTrustedDevices_SignOutEverywhereRevokesGrants(t *testing.T) {
+	t.Parallel()
+	tds := defaultimpl.NewMemoryTrustedDeviceStore()
+	s := rcovNewServer(t,
+		sso.WithRiskScorer(rcovRequireMFAScorer{}),
+		sso.WithMFAProvider(rcovTOTPProvider{}),
+		sso.WithMFAChallengeStore(defaultimpl.NewMemoryMFAChallengeStore(), 5*time.Minute),
+		sso.WithTrustedDeviceStore(tds, 30*24*time.Hour),
+	)
+	access, deviceToken := rcovTrustAndAssertSkip(t, s)
+
+	// ?all=true so the caller's OWN current session is revoked too — proves
+	// the cascade doesn't depend on which sessions survive.
+	status, out := rcovDo(t, http.MethodDelete, s.http.URL+"/sessions/me?all=true", access, nil)
+	if status != http.StatusOK {
+		t.Fatalf("sign-out-everywhere status=%d body=%v, want 200", status, out)
+	}
+
+	rcovAssertDeviceTokenNowRequiresMFA(t, s, deviceToken)
+}
+
+// TestRcovTrustedDevices_RevokeAllMySessionsRevokesGrants covers the second
+// self-service "kill everything" endpoint, POST /me/sessions/revoke-all,
+// which — unlike DELETE /sessions/me — always revokes every session with no
+// keepCurrent carve-out. It must cascade to trusted-device grants too.
+func TestRcovTrustedDevices_RevokeAllMySessionsRevokesGrants(t *testing.T) {
+	t.Parallel()
+	tds := defaultimpl.NewMemoryTrustedDeviceStore()
+	s := rcovNewServer(t,
+		sso.WithRiskScorer(rcovRequireMFAScorer{}),
+		sso.WithMFAProvider(rcovTOTPProvider{}),
+		sso.WithMFAChallengeStore(defaultimpl.NewMemoryMFAChallengeStore(), 5*time.Minute),
+		sso.WithTrustedDeviceStore(tds, 30*24*time.Hour),
+	)
+	access, deviceToken := rcovTrustAndAssertSkip(t, s)
+
+	status, out := rcovPostJSON(t, s.http.URL+"/me/sessions/revoke-all", access, nil)
+	if status != http.StatusOK {
+		t.Fatalf("revoke-all-sessions status=%d body=%v, want 200", status, out)
+	}
+
+	rcovAssertDeviceTokenNowRequiresMFA(t, s, deviceToken)
+}
+
+// TestRcovTrustedDevices_TokenRevokeAllRevokesGrants covers the OAuth-token
+// "logout everywhere" endpoint POST /token/revoke-all (protocols/oauth), the
+// second production choke point identified alongside the self-service
+// sessions endpoints — it too must cascade to trusted-device grants, since
+// it is an equally standard compromise-remediation call a client SDK might
+// drive instead of the self-service portal.
+func TestRcovTrustedDevices_TokenRevokeAllRevokesGrants(t *testing.T) {
+	t.Parallel()
+	tds := defaultimpl.NewMemoryTrustedDeviceStore()
+	s := rcovNewServer(t,
+		sso.WithRiskScorer(rcovRequireMFAScorer{}),
+		sso.WithMFAProvider(rcovTOTPProvider{}),
+		sso.WithMFAChallengeStore(defaultimpl.NewMemoryMFAChallengeStore(), 5*time.Minute),
+		sso.WithTrustedDeviceStore(tds, 30*24*time.Hour),
+	)
+	access, deviceToken := rcovTrustAndAssertSkip(t, s)
+
+	status, out := rcovPostJSON(t, s.http.URL+"/token/revoke-all", access, nil)
+	if status != http.StatusOK {
+		t.Fatalf("token revoke-all status=%d body=%v, want 200", status, out)
+	}
+	if out["trusted_devices_revoked"] != float64(1) {
+		t.Errorf("trusted_devices_revoked = %v, want 1", out["trusted_devices_revoked"])
+	}
+
+	rcovAssertDeviceTokenNowRequiresMFA(t, s, deviceToken)
+}

@@ -3,6 +3,7 @@ package selfservice
 import (
 	"net/http"
 
+	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
 	"github.com/snaplink/sso/shared/core"
 )
 
@@ -67,6 +68,15 @@ func HandleDeleteMySession(d Deps, ctx core.HandlerContext) {
 // Scope mirrors single-session revoke (DELETE /sessions/me/:id): it destroys
 // sessions only. Bulk refresh-token revocation remains the OAuth-token concern
 // of /token/revoke-all. Credential-adjacent, so the same no-store headers.
+//
+// This is the standard first remediation a user reaches for on suspected
+// account compromise, so — like a password change — it also cascades to
+// every trusted-device MFA-skip grant (see destroyUserSessions). Kept even
+// when keepCurrent preserves the caller's OWN session: an attacker who minted
+// a grant off a transiently-stolen bearer token holds a SEPARATE session (or
+// none at all, since Trust only needs a still-valid access token, not a live
+// server-side session), so "keep my current session" must not also spare
+// their standing MFA-skip.
 func HandleRevokeMySessions(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
 	claims, ok := d.MeClaimsOrChallenge(ctx)
@@ -74,7 +84,7 @@ func HandleRevokeMySessions(d Deps, ctx core.HandlerContext) {
 		return
 	}
 	keepCurrent := claims.SID != "" && ctx.Query("all") != "true"
-	destroyUserSessions(d, ctx, claims.Subject, claims.SID, keepCurrent)
+	destroyUserSessions(d, ctx, claims.Subject, claims.SID, keepCurrent, "sign_out_everywhere")
 }
 
 // HandleRevokeAllMySessions serves POST /me/sessions/revoke-all — force
@@ -89,12 +99,16 @@ func HandleRevokeAllMySessions(d Deps, ctx core.HandlerContext) {
 	if !ok {
 		return
 	}
-	destroyUserSessions(d, ctx, claims.Subject, "", false)
+	destroyUserSessions(d, ctx, claims.Subject, "", false, "revoke_all_sessions")
 }
 
 // destroyUserSessions lists and destroys sessions for the given user. When
-// keepCurrent is true, the session identified by currentSID is preserved.
-func destroyUserSessions(d Deps, ctx core.HandlerContext, userID, currentSID string, keepCurrent bool) {
+// keepCurrent is true, the session identified by currentSID is preserved. On
+// success it also revokes every trusted-device MFA-skip grant for userID
+// (selfservicecore.RevokeTrustedDevicesOnCompromiseSignal, best-effort /
+// fail-open, same as the password-change hook) — a stolen bearer token that
+// minted a grant must not survive the user's own sign-out response.
+func destroyUserSessions(d Deps, ctx core.HandlerContext, userID, currentSID string, keepCurrent bool, reason string) {
 	sessions, err := d.SessionManager().ListByUser(ctx.Request().Context(), userID)
 	if err != nil {
 		d.Logger().Error("list sessions failed", "user_id", userID, "error", err)
@@ -113,5 +127,6 @@ func destroyUserSessions(d Deps, ctx core.HandlerContext, userID, currentSID str
 		}
 		revoked++
 	}
+	selfservicecore.RevokeTrustedDevicesOnCompromiseSignal(d, ctx, userID, reason)
 	ctx.JSON(http.StatusOK, map[string]any{"revoked": revoked})
 }

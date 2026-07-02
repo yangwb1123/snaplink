@@ -27,6 +27,12 @@ type RevokeDeps interface {
 	AuditPartialRevokeFailure(ctx core.HandlerContext, revoked, failed []string)
 	SetBearerChallenge(ctx core.HandlerContext, realm, errorCode, errorDesc string)
 	SrvLogger() spi.Logger
+
+	// TrustedDeviceStore returns the "remember this device" MFA-skip store
+	// (nil when unwired). HandleRevokeAll uses it to cascade "logout
+	// everywhere" into every standing trusted-device grant for the caller —
+	// see revokeTrustedDevicesOnRevokeAll.
+	TrustedDeviceStore() core.TrustedDeviceStore
 }
 
 // revokeRequest is the parsed body/form for HandleRevoke (RFC 7009),
@@ -187,10 +193,41 @@ func HandleRevokeAll(d RevokeDeps, ctx core.HandlerContext) {
 	revoked, failed := d.RevokeAcrossIssuers(ctx.Request().Context(), BearerToken(ctx.Request()))
 	d.AuditPartialRevokeFailure(ctx, revoked, failed)
 
+	// "Logout everywhere" is exactly the account-compromise-adjacent signal
+	// that must also kill any standing trusted-device MFA-skip grant: an
+	// attacker who minted a grant off a transiently-stolen already-MFA'd
+	// bearer token must not keep a standing MFA-skip after the legitimate
+	// user revokes all their tokens. Every client, not just clientID — a
+	// full logout-everywhere from ANY client is a strong enough signal to
+	// distrust every device across every app the user holds a grant for
+	// (mirrors the password-change and sign-out-everywhere hooks).
+	devicesRevoked := revokeTrustedDevicesOnRevokeAll(d, ctx, lookupSub)
+
 	ctx.JSON(http.StatusOK, map[string]any{
-		core.KeyStatus:           core.StatusOK,
-		"refresh_tokens_revoked": deleted,
+		core.KeyStatus:            core.StatusOK,
+		"refresh_tokens_revoked":  deleted,
+		"trusted_devices_revoked": devicesRevoked,
 	})
+}
+
+// revokeTrustedDevicesOnRevokeAll invalidates every trusted-device MFA-skip
+// grant for lookupSub. Best-effort / fail-open: a store error is logged, not
+// surfaced, because the refresh-token + access-token revocation this handler
+// exists for has already succeeded — a cleanup-step failure must not turn
+// into a 500 for a "logout everywhere" call that otherwise worked. No-op
+// (returns 0) when no store is wired, matching every other TrustedDeviceStore
+// consumer's nil-store contract.
+func revokeTrustedDevicesOnRevokeAll(d RevokeDeps, ctx core.HandlerContext, lookupSub string) int {
+	store := d.TrustedDeviceStore()
+	if store == nil {
+		return 0
+	}
+	n, err := store.RevokeAll(ctx.Request().Context(), lookupSub)
+	if err != nil {
+		d.SrvLogger().Error("revoke trusted devices failed", "subject", lookupSub, "error", err)
+		return 0
+	}
+	return n
 }
 
 // authenticateRevokeAllBearer authenticates the bearer presented to the

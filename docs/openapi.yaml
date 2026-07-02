@@ -816,6 +816,13 @@ paths:
         is `501 refresh_token_not_configured` — operators relying on
         this endpoint must wire a store that supports bulk lookup
         (SQLite + memory both do; custom backends opt in).
+
+        Also cascades to every trusted-device ("remember this device")
+        MFA-skip grant for the bearer's subject, across ALL clients —
+        the same account-compromise-adjacent signal that a self-service
+        password change or "sign out everywhere" already revokes on.
+        Best-effort/fail-open and a no-op (0) when no
+        `TrustedDeviceStore` is wired.
       operationId: postRevokeAll
       security:
         - bearerAuth: []
@@ -837,6 +844,12 @@ paths:
                     type: integer
                     description: Number of refresh tokens deleted.
                     example: 3
+                  trusted_devices_revoked:
+                    type: integer
+                    description: |
+                      Number of trusted-device MFA-skip grants revoked
+                      (0 when no TrustedDeviceStore is wired).
+                    example: 1
         "401":
           description: |
             Missing or invalid bearer. WWW-Authenticate carries the
@@ -2022,6 +2035,12 @@ paths:
         carries no `sid`, every session is revoked. Scope mirrors single-
         session revoke (sessions only — bulk refresh-token revocation remains
         `/token/revoke-all`). Requires a SessionManager; `Cache-Control: no-store`.
+
+        Also cascades to every trusted-device ("remember this device")
+        MFA-skip grant for the caller, even the ones preserved by the
+        default keep-current-session behavior — a compromise remediation
+        must not spare a standing MFA-skip grant. Best-effort/fail-open;
+        a no-op when no `TrustedDeviceStore` is wired.
       operationId: revokeMySessions
       security:
         - bearerAuth: []

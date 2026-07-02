@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
 	"github.com/snaplink/sso/shared/core"
 )
 
@@ -56,34 +57,13 @@ func HandleChangeMyPassword(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
 		return
 	}
-	revokeTrustedDevicesOnCompromiseSignal(d, ctx, userID, "password_change")
+	// A changed password is the strongest account-compromise-adjacent signal
+	// this handler sees: a trusted-device grant minted under the OLD password
+	// must not silently outlive it. Shared with the "sign out everywhere" /
+	// "revoke all sessions" self-service call sites (sessions.go) and
+	// /token/revoke-all — see selfservicecore.RevokeTrustedDevicesOnCompromiseSignal.
+	selfservicecore.RevokeTrustedDevicesOnCompromiseSignal(d, ctx, userID, "password_change")
 	ctx.JSON(http.StatusNoContent, nil)
-}
-
-// revokeTrustedDevicesOnCompromiseSignal invalidates every "remember this
-// device" MFA-skip grant for userID. Called after a self-service password
-// change: a changed password is the strongest account-compromise-adjacent
-// signal this handler sees, and a trusted-device grant minted under the OLD
-// password must not silently outlive it — otherwise an attacker who
-// resets/changes the password (e.g. via a separate compromised recovery
-// path) could still ride an old device's MFA-skip grant into the account.
-//
-// Best-effort / fail-open: the store error is logged, not surfaced, because
-// the password change itself already succeeded — the caller must not see a
-// 500 for a cleanup step that failed after their real request was honored.
-// No-op when no store is wired (byte-identical to a build without this
-// feature).
-func revokeTrustedDevicesOnCompromiseSignal(d Deps, ctx core.HandlerContext, userID, reason string) {
-	store := d.TrustedDeviceStore()
-	if store == nil {
-		return
-	}
-	n, err := store.RevokeAll(ctx.Request().Context(), userID)
-	if err != nil {
-		d.Logger().Error("revoke trusted devices failed", "user_id", userID, "reason", reason, "error", err)
-		return
-	}
-	recordDeviceTrustRevokedBulk(d, ctx, userID, n, reason)
 }
 
 // HandleWebAuthnRegisterBegin serves POST /me/mfa/webauthn/begin — starts an

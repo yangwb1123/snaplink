@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystorecredential"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
@@ -24,6 +25,7 @@ type revokeDeps struct {
 	resolveLocal func(ctx context.Context, sub string) (string, error)
 	revokeAcross func(ctx context.Context, token string) (revoked, failed []string)
 	authCreds    func(ctx core.HandlerContext, id, secret string) error
+	trustedDevs  core.TrustedDeviceStore
 }
 
 func (d *revokeDeps) ClientStoreAccessor() core.ClientStore     { return d.clients }
@@ -49,6 +51,7 @@ func (d *revokeDeps) RevokeAcrossIssuers(ctx context.Context, t string) ([]strin
 func (d *revokeDeps) AuditPartialRevokeFailure(core.HandlerContext, []string, []string) {}
 func (d *revokeDeps) SetBearerChallenge(core.HandlerContext, string, string, string)    {}
 func (d *revokeDeps) SrvLogger() spi.Logger                                             { return spi.NopLogger{} }
+func (d *revokeDeps) TrustedDeviceStore() core.TrustedDeviceStore                       { return d.trustedDevs }
 
 var _ RevokeDeps = (*revokeDeps)(nil)
 
@@ -336,6 +339,68 @@ func TestHandleRevokeAll(t *testing.T) {
 		HandleRevokeAll(d, ctx)
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("status = %d, want 401", rec.Code)
+		}
+	})
+
+	// TestHandleRevokeAll_CascadesToTrustedDevices is the failing-test-first
+	// proof for the /token/revoke-all cascade: an attacker who minted a
+	// trusted-device grant off a transiently-stolen already-MFA'd bearer
+	// token must lose that standing MFA-skip the moment the legitimate user
+	// calls "logout everywhere" — mirrors
+	// TestRcovTrustedDevices_PasswordChangeRevokesGrants at the
+	// interfaces/sso layer, but exercised directly against HandleRevokeAll
+	// since that's the actual /token/revoke-all choke point.
+	t.Run("cascades to trusted-device grants", func(t *testing.T) {
+		cs := newMemClientStore()
+		rs := newMemRefreshStore()
+		tds := memorystorecredential.NewMemoryTrustedDeviceStore()
+		ctxbg := context.Background()
+
+		token, _, err := tds.Trust(ctxbg, "u", "rp", "laptop", time.Hour)
+		if err != nil {
+			t.Fatalf("seed trust: %v", err)
+		}
+		if ok, _ := tds.Verify(ctxbg, "u", "rp", token); !ok {
+			t.Fatal("seed grant should verify before revoke-all")
+		}
+
+		d := newRevokeDeps(cs, rs)
+		d.trustedDevs = tds
+		d.validate = func(context.Context, string) (*core.TokenClaims, string, error) {
+			return &core.TokenClaims{Subject: "u", ClientID: "rp", Audience: []string{"https://api.example.com"}}, "jwt", nil
+		}
+		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, `{}`)
+		ctx.Request().Header.Set("Authorization", "Bearer good")
+		HandleRevokeAll(d, ctx)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		body := decodeBody(t, rec)
+		if body["trusted_devices_revoked"] != float64(1) {
+			t.Errorf("trusted_devices_revoked = %v, want 1", body["trusted_devices_revoked"])
+		}
+		if ok, err := tds.Verify(ctxbg, "u", "rp", token); ok || err != nil {
+			t.Fatalf("grant still verifies after revoke-all: ok=%v err=%v, want ok=false", ok, err)
+		}
+	})
+
+	t.Run("no-op when TrustedDeviceStore unwired", func(t *testing.T) {
+		cs := newMemClientStore()
+		rs := newMemRefreshStore()
+		_ = rs.Issue(context.Background(), "rt1", &RefreshToken{UserID: "u", ClientID: "rp", ExpiresAt: time.Now().Add(time.Hour)})
+		d := newRevokeDeps(cs, rs)
+		d.validate = func(context.Context, string) (*core.TokenClaims, string, error) {
+			return &core.TokenClaims{Subject: "u", ClientID: "rp", Audience: []string{"https://api.example.com"}}, "jwt", nil
+		}
+		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, `{}`)
+		ctx.Request().Header.Set("Authorization", "Bearer good")
+		HandleRevokeAll(d, ctx)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (byte-identical without a store wired)", rec.Code)
+		}
+		body := decodeBody(t, rec)
+		if body["trusted_devices_revoked"] != float64(0) {
+			t.Errorf("trusted_devices_revoked = %v, want 0", body["trusted_devices_revoked"])
 		}
 	})
 }
