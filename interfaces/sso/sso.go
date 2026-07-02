@@ -1,11 +1,20 @@
 package sso
 
+import (
+	"context"
+	"github.com/snaplink/sso/domains/federation"
+	"github.com/snaplink/sso/interfaces/sso/servercache"
+	"github.com/snaplink/sso/internal/auth/consent"
+	"github.com/snaplink/sso/shared/spi"
+	"time"
+)
+
 // Server is the core SSO orchestrator. Its ~60 fields are grouped into
-// anonymously-embedded sub-structs (sso_wiring.go, sso_federation_mesh.go,
-// sso_cluster.go, sso_protocol.go, sso_cache.go, sso_selfservice.go) by concern,
-// so no single file holds the whole god-struct. Embedding is anonymous, so every
-// s.<field> access and every With* option keeps working unchanged via Go field
-// promotion — the struct's public shape and behavior are identical.
+// anonymously-embedded sub-structs (sso_wiring.go, server_federation.go,
+// sso_protocol.go, sso_selfservice.go) by concern, so no single file holds
+// the whole god-struct. Embedding is anonymous, so every s.<field> access and
+// every With* option keeps working unchanged via Go field promotion — the
+// struct's public shape and behavior are identical.
 type Server struct {
 	wiringState
 	federationMeshState
@@ -13,4 +22,133 @@ type Server struct {
 	protocolState
 	cacheState
 	selfServiceState
+}
+
+// Option configures the Server.
+type Option func(*Server)
+
+// ReadyCheck is a named health-check function for /readyz.
+type ReadyCheck func(ctx context.Context) error
+
+type namedReadyCheck struct {
+	Name    string
+	Check   ReadyCheck
+	Timeout time.Duration // 0 -> use the aggregate deadline
+}
+
+func NewServer(opts ...Option) *Server {
+	// Fields are assigned (not set via a composite literal) because the Server
+	// struct's fields live in anonymously-embedded sub-structs (sso_*.go); a
+	// keyed literal can't name promoted fields, but assignment through the outer
+	// selector can. End state is identical to the previous literal.
+	s := &Server{}
+	s.authenticators = make(map[string]Authenticator)
+	s.tokenIssuers = make(map[string]TokenIssuer)
+	s.tenantTokenStrategies = make(map[string]string)
+	s.issuer = DefaultIssuer
+	s.logger = spi.NopLogger{}
+	s.discoveryCacheTTL = defaultDiscoveryCacheTTL
+	s.discoveryDocCacheTTL = DefaultDiscoveryDocCacheTTL
+	s.authzPolicyBundleCacheTTL = DefaultAuthzPolicyBundleCacheTTL
+	s.jwksCacheTTL = defaultJWKSCacheTTL
+	s.consentChallenges = consent.NewChallengeStore()
+	s.panicRecovery = true
+	for _, opt := range opts {
+		opt(s)
+	}
+	s.startedAt = time.Now()
+	// Tap the audit pipeline for the CAEP/SSF transmitter, if wired. Done
+	// here (after every option ran, so order between WithAuditRecorder and
+	// WithCAEPTransmitter doesn't matter) by fanning the recorder's sink
+	// out to the transmitter. When the transmitter is unwired this branch
+	// is skipped entirely, so a build without it is byte-identical.
+	if s.caepTransmitter != nil && s.auditor != nil {
+		s.auditor.AddSink(s.caepTransmitter)
+	}
+	// Per-tenant metrics (§5): register the opt-in vectors when BOTH a
+	// tenant allowlist AND a metrics registry are wired. Done post-options
+	// (order between WithMetrics and WithTenantMetricsAllowlist is
+	// irrelevant); EnableTenantMetrics is idempotent. Without both, the
+	// vectors stay nil and nothing is registered or emitted (byte-identical).
+	if len(s.tenantMetricsAllowlist) > 0 && s.metrics != nil {
+		s.metrics.EnableTenantMetrics()
+	}
+	// OpenID Federation 1.0 automatic client registration (slice 3) then the
+	// opt-in per-login ClientStore metadata cache. Order between these two
+	// ClientStore decorators is load-bearing: the cache MUST wrap the
+	// federation decorator (OUTERMOST) so a Get hit short-circuits before the
+	// inner federation/operator store. See each helper's doc for the
+	// byte-identical preconditions when a precondition does not hold.
+	s.applyFederationAutoRegistration()
+	s.applyClientStoreCache()
+	return s
+}
+
+// applyFederationAutoRegistration decorates the wired ClientStore so an
+// authorization-endpoint Get MISS for a valid HTTPS federation entity ID
+// resolves the RP's trust chain on-the-fly and derives a policy-constrained
+// client. Called post-options (order between WithClientStore /
+// WithFederationEntity / WithFederationAutoRegistration is irrelevant) and ONLY
+// when all three preconditions hold: the opt-in flag, a wired ClientStore, and a
+// federation resolver with configured trust anchors (Resolver().Enabled()).
+// Absent any one, no decoration occurs and every s.clientStore.Get is
+// byte-identical to a non-federation build (the decorator is never even
+// constructed). The decorator forwards every other method to the wrapped store;
+// only Get adds the on-miss federation fallback, and a pre-registered client
+// always wins.
+func (s *Server) applyFederationAutoRegistration() {
+	if !s.federationAutoRegister || s.clientStore == nil ||
+		s.federationEntity == nil || !s.federationEntity.Resolver().Enabled() {
+		return
+	}
+	// Source the abuse-resistance knobs (negative-cache TTL + size, the
+	// resolution concurrency cap) from the SAME federation Config the
+	// resolver was built from. Zero/unset values pass through as the SDK
+	// defaults (the With* options no-op on a non-positive arg). These bound
+	// the UNAUTHENTICATED resolution-on-authz surface (a fake-but-HTTPS
+	// client_id flood); see federation/doc.go for the operator rate-limit +
+	// egress-policy that complete the defense.
+	fedCfg := s.federationEntity.Config()
+	s.clientStore = federation.NewRegistrationClientStore(
+		s.clientStore,
+		s.federationEntity.Resolver(),
+		federation.WithRegistrationLogger(func(msg string, args ...any) {
+			// A federation resolution/mapping miss is an EXPECTED,
+			// oracle-safe outcome (an unknown client_id that resembles an
+			// entity ID but doesn't validate), not a server error — log at
+			// Info for operator visibility without alerting noise.
+			s.logger.Info(msg, args...)
+		}),
+		federation.WithRegistrationNegativeCacheTTL(fedCfg.ResolutionNegativeCacheTTL),
+		federation.WithRegistrationNegativeCacheMaxSize(fedCfg.ResolutionNegativeCacheMaxSize),
+		federation.WithRegistrationMaxConcurrency(fedCfg.MaxConcurrentResolutions),
+		// §7 trust-mark requirement (slice 4b): an EXTRA admission gate
+		// sourced from the SAME federation Config. Empty
+		// RequiredTrustMarkTypes ⇒ inert (byte-identical to the slice-3
+		// path); when set, an auto-registering RP must carry a valid
+		// configured-issuer-signed mark of each required type.
+		federation.WithRegistrationTrustMarks(fedCfg),
+	)
+}
+
+// applyClientStoreCache decorates the wired ClientStore with the opt-in
+// per-login metadata cache (WithClientStoreCache). Called LAST (after the
+// federation registration decorator) so the cache is the OUTERMOST layer: a Get
+// hit short-circuits before the inner federation/operator store, and the cache
+// transparently caches the federation decorator's on-miss derived clients too.
+// Called post-options so order between WithClientStore / WithClientStoreCache /
+// WithFederationAutoRegistration is irrelevant. Only when a positive TTL was
+// requested AND a ClientStore is wired; otherwise no wrapper is constructed and
+// every s.clientStore.Get is byte-identical to a non-caching build.
+// ValidateSecret bypasses the cache (§2).
+func (s *Server) applyClientStoreCache() {
+	if s.clientStoreCacheTTL <= 0 || s.clientStore == nil {
+		return
+	}
+	var onOutcome func(string)
+	if s.metrics != nil {
+		onOutcome = s.metrics.ObserveClientStoreCache
+	}
+	s.clientStoreCacheRef = servercache.NewClientStoreCache(s.clientStore, s.clientStoreCacheTTL, onOutcome)
+	s.clientStore = s.clientStoreCacheRef
 }

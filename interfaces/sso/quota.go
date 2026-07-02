@@ -1,9 +1,9 @@
 package sso
 
 import (
-	"net/http"
-
 	"github.com/snaplink/sso/shared/core"
+	"golang.org/x/time/rate"
+	"net/http"
 )
 
 // checkQuotaBeforeCreate checks if the tenant has capacity to create a
@@ -24,4 +24,10 @@ func (s *Server) checkQuotaBeforeCreate(ctx HandlerContext, tenantID string, res
 		return false
 	}
 	return false
+}
+
+// rateLimiterEntry pairs a token bucket limiter with the grant type it
+// gates. Stored in grantRateLimiters by grant type URN.
+type rateLimiterEntry struct {
+	limiter *rate.Limiter
 }
