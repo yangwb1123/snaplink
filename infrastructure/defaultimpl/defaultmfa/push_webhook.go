@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/snaplink/sso/shared/security/securityverify"
 )
 
 // HTTPWebhookPushTransport delivers MFA push approvals to an
@@ -36,13 +38,17 @@ import (
 //   - context cancellation honored mid-retry.
 //
 // Auth: BearerToken / extra Headers populated on every request.
-// Operators relying on signed payloads (HMAC body signing, mTLS
-// client cert) fork this — the SPI for that varies per gateway.
+// Set SigningSecret (WithPushWebhookSigningSecret) for HMAC-SHA256 body
+// signing — every attempt carries securityverify.WebhookSignatureHeader
+// (t=<unix>,v1=<hex>), re-signed with a fresh timestamp per retry so a
+// captured signature cannot be replayed. mTLS client certs stay a
+// gateway concern (thread a custom Client via WithPushWebhookClient).
 type HTTPWebhookPushTransport struct {
 	URL            string
 	Client         *http.Client
 	Headers        map[string]string
 	BearerToken    string
+	SigningSecret  []byte
 	MaxAttempts    int
 	InitialBackoff time.Duration
 	MaxBackoff     time.Duration
@@ -92,6 +98,18 @@ func WithPushWebhookRetry(maxAttempts int, initial, max time.Duration) PushWebho
 		t.MaxAttempts = maxAttempts
 		t.InitialBackoff = initial
 		t.MaxBackoff = max
+	}
+}
+
+// WithPushWebhookSigningSecret enables HMAC-SHA256 payload signing — every
+// attempt carries securityverify.WebhookSignatureHeader (t=<unix>,v1=<hex>),
+// letting the gateway authenticate origin, integrity, and freshness. Empty is
+// a no-op.
+func WithPushWebhookSigningSecret(secret string) PushWebhookOption {
+	return func(t *HTTPWebhookPushTransport) {
+		if secret != "" {
+			t.SigningSecret = []byte(secret)
+		}
 	}
 }
 
@@ -185,6 +203,13 @@ func (t *HTTPWebhookPushTransport) sendOnce(ctx context.Context, body []byte) er
 	}
 	for k, v := range t.Headers {
 		req.Header.Set(k, v)
+	}
+	// After the static-headers loop, inside sendOnce: each retry attempt gets
+	// a fresh timestamp, and the computed signature wins over any operator
+	// static header of the same name.
+	if len(t.SigningSecret) > 0 {
+		req.Header.Set(securityverify.WebhookSignatureHeader,
+			securityverify.SignWebhookPayload(t.SigningSecret, time.Now(), body))
 	}
 	resp, err := t.Client.Do(req)
 	if err != nil {

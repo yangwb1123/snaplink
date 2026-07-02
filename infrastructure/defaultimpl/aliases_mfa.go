@@ -62,4 +62,5 @@ var (
 	WithPushWebhookClient          = defaultmfa.WithPushWebhookClient
 	WithPushWebhookHeader          = defaultmfa.WithPushWebhookHeader
 	WithPushWebhookRetry           = defaultmfa.WithPushWebhookRetry
+	WithPushWebhookSigningSecret   = defaultmfa.WithPushWebhookSigningSecret
 )

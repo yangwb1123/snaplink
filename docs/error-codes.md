@@ -407,6 +407,25 @@ never gets a `scim+json` body.
 
 ---
 
+## SDK webhook signature verification (outbound webhooks)
+
+The outbound webhook transports (audit `WebhookSink`, MFA/CIBA push) can
+sign every delivery with HMAC-SHA256 (`X-Signature: t=<unix>,v1=<hex>`,
+Stripe/Svix style) when a `signing_secret` is configured. `security.
+VerifyWebhookSignature` is a receiver-side helper for a peer service to
+authenticate those deliveries — it returns the sentinels below. These are
+**SDK Go errors, not HTTP wire codes**: they never appear in any response
+this SSO server emits (it is the sender, not the receiver), and they carry
+no `error`/`error_description` JSON body.
+
+| Sentinel                       | Returned when                                                        |
+|--------------------------------|---------------------------------------------------------------------|
+| `ErrWebhookSignatureMalformed` | Header missing/garbled — absent `t`/`v1` part, or non-hex `v1`       |
+| `ErrWebhookSignatureMismatch`  | Recomputed HMAC (constant-time `hmac.Equal`) differs — wrong secret or tampered body |
+| `ErrWebhookSignatureExpired`   | Signed timestamp outside the caller's tolerance (freshness check; skipped when tolerance <= 0) |
+
+---
+
 ## Conventions
 
 - **Stability:** codes here are stable wire contract — adding new codes

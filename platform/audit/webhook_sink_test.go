@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/shared/security"
 )
 
 func TestWebhookSink_PostsJSON(t *testing.T) {
@@ -118,5 +119,67 @@ func TestWebhookSink_NetworkErrorPropagates(t *testing.T) {
 	)
 	if err := s.Record(context.Background(), &audit.Event{Type: audit.EventLogin}); err == nil {
 		t.Fatal("expected network error")
+	}
+}
+
+func TestWebhookSink_SignsPayload(t *testing.T) {
+	t.Parallel()
+	const secret = "whsec-test"
+	var (
+		mu   sync.Mutex
+		sig  string
+		body []byte
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		sig = r.Header.Get(security.WebhookSignatureHeader)
+		body = b
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	s := audit.NewWebhookSink(srv.URL, audit.WithWebhookSigningSecret(secret))
+	if err := s.Record(context.Background(), &audit.Event{Type: audit.EventLogin, ActorID: "alice"}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if sig == "" {
+		t.Fatal("signature header missing")
+	}
+	if err := security.VerifyWebhookSignature([]byte(secret), sig, body, time.Now(), security.DefaultWebhookSignatureTolerance); err != nil {
+		t.Fatalf("VerifyWebhookSignature: %v", err)
+	}
+	if err := security.VerifyWebhookSignature([]byte("wrong"), sig, body, time.Now(), security.DefaultWebhookSignatureTolerance); err == nil {
+		t.Fatal("verification with wrong secret must fail")
+	}
+}
+
+func TestWebhookSink_NoSignatureWithoutSecret(t *testing.T) {
+	t.Parallel()
+	var (
+		mu  sync.Mutex
+		sig string
+		hit bool
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		sig, hit = r.Header.Get(security.WebhookSignatureHeader), true
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	s := audit.NewWebhookSink(srv.URL)
+	if err := s.Record(context.Background(), &audit.Event{Type: audit.EventLogin}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !hit || sig != "" {
+		t.Fatalf("hit=%v sig=%q; want hit with empty signature header", hit, sig)
 	}
 }

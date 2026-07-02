@@ -288,6 +288,9 @@ func (b *appBuilder) wireAuditWebhook(primary audit.Sink, w config.AuditWebhookC
 	for k, v := range w.Headers {
 		webhookOpts = append(webhookOpts, audit.WithWebhookHeader(k, v))
 	}
+	if w.SigningSecret != "" {
+		webhookOpts = append(webhookOpts, audit.WithWebhookSigningSecret(w.SigningSecret))
+	}
 	webhook := audit.NewWebhookSink(w.URL, webhookOpts...)
 	retryOpts := []audit.RetryOption{}
 	if w.Retry.MaxAttempts > 0 {
@@ -304,6 +307,7 @@ func (b *appBuilder) wireAuditWebhook(primary audit.Sink, w config.AuditWebhookC
 		"url", w.URL,
 		"max_attempts", w.Retry.MaxAttempts,
 		"header_count", len(w.Headers),
+		"signed", w.SigningSecret != "",
 	)
 	return audit.NewMultiSink(primary, retrying), nil
 }

@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/shared/security"
 )
 
 func TestHTTPWebhookPushTransport_RejectsEmptyURL(t *testing.T) {
@@ -184,6 +186,47 @@ func TestHTTPWebhookPushTransport_MultipleHeadersAccumulate(t *testing.T) {
 	_ = tr.Send(context.Background(), "ch", "alice", nil)
 	if seen.Get("X-A") != "1" || seen.Get("X-B") != "2" {
 		t.Errorf("custom headers missing: %v", seen)
+	}
+}
+
+func TestHTTPWebhookPushTransport_SignsPayload(t *testing.T) {
+	t.Parallel()
+	const secret = "whsec-test"
+	var (
+		mu   sync.Mutex
+		sig  string
+		body []byte
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		sig = r.Header.Get(security.WebhookSignatureHeader)
+		body = b
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	tr, err := defaultimpl.NewHTTPWebhookPushTransport(srv.URL,
+		defaultimpl.WithPushWebhookSigningSecret(secret),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := tr.Send(context.Background(), "ch-1", "alice", nil); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if sig == "" {
+		t.Fatal("signature header missing")
+	}
+	if err := security.VerifyWebhookSignature([]byte(secret), sig, body, time.Now(), security.DefaultWebhookSignatureTolerance); err != nil {
+		t.Fatalf("VerifyWebhookSignature: %v", err)
+	}
+	if err := security.VerifyWebhookSignature([]byte("wrong"), sig, body, time.Now(), security.DefaultWebhookSignatureTolerance); err == nil {
+		t.Fatal("verification with wrong secret must fail")
 	}
 }
 

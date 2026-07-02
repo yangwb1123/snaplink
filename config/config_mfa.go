@@ -42,6 +42,13 @@ type MFAPushWebhookConfig struct {
 	RetryMaxAttempts    int               `yaml:"retry_max_attempts"`
 	RetryInitialBackoff time.Duration     `yaml:"retry_initial_backoff"`
 	RetryMaxBackoff     time.Duration     `yaml:"retry_max_backoff"`
+	// SigningSecret enables HMAC-SHA256 payload signing (X-Signature:
+	// t=<unix>,v1=<hex>) on every delivery, re-signed with a fresh timestamp
+	// per retry. Empty disables. CIBAConfig.Webhook reuses this struct, so
+	// ciba.webhook.signing_secret works identically. Inject via env
+	// (SSO_MFA__PROVIDER__PUSH__WEBHOOK__SIGNING_SECRET) or a secret://
+	// reference — never commit the literal to YAML.
+	SigningSecret string `yaml:"signing_secret"`
 }
 
 type MFAPushSQLiteConfig struct {

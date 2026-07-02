@@ -39,5 +39,6 @@ var (
 	WithRetryMaxBackoff        = auditsink.WithRetryMaxBackoff
 	WithWebhookHTTPClient      = auditsink.WithWebhookHTTPClient
 	WithWebhookHeader          = auditsink.WithWebhookHeader
+	WithWebhookSigningSecret   = auditsink.WithWebhookSigningSecret
 	WithWebhookTimeout         = auditsink.WithWebhookTimeout
 )

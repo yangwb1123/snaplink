@@ -71,6 +71,11 @@ type AuditWebhookConfig struct {
 	Timeout time.Duration           `yaml:"timeout"`
 	Headers map[string]string       `yaml:"headers"`
 	Retry   AuditWebhookRetryConfig `yaml:"retry"`
+	// SigningSecret enables HMAC-SHA256 payload signing (X-Signature:
+	// t=<unix>,v1=<hex>) on every delivery. Empty disables. Inject via
+	// SSO_AUDIT__WEBHOOK__SIGNING_SECRET or a secret:// reference — never
+	// commit the literal to YAML.
+	SigningSecret string `yaml:"signing_secret"`
 }
 
 // AuditWebhookRetryConfig tunes the retry wrapper around the webhook

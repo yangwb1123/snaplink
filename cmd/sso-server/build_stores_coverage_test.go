@@ -596,12 +596,20 @@ func TestBuildPushWebhookTransport_HappyPathWithAllOptions(t *testing.T) {
 		RetryMaxAttempts:    3,
 		RetryInitialBackoff: 50 * time.Millisecond,
 		RetryMaxBackoff:     time.Second,
+		SigningSecret:       "whsec-x",
 	})
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	if tr == nil {
 		t.Fatal("transport nil despite valid config")
+	}
+	wh, ok := tr.(*defaultimpl.HTTPWebhookPushTransport)
+	if !ok {
+		t.Fatalf("transport type = %T; want *defaultimpl.HTTPWebhookPushTransport", tr)
+	}
+	if len(wh.SigningSecret) == 0 {
+		t.Error("SigningSecret not wired onto transport")
 	}
 }
 

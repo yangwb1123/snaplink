@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/platform/audit/auditspi"
+	"github.com/snaplink/sso/shared/security/securityverify"
 )
 
 // DefaultWebhookTimeout is applied when WebhookOptions.Timeout is zero.
@@ -20,9 +21,10 @@ const DefaultWebhookTimeout = 5 * time.Second
 //
 // Like WriterSink, this is write-only — Get and Query return ErrSinkWriteOnly.
 type WebhookSink struct {
-	url     string
-	client  *http.Client
-	headers map[string]string
+	url           string
+	client        *http.Client
+	headers       map[string]string
+	signingSecret []byte
 }
 
 // WebhookOption configures a WebhookSink at construction.
@@ -44,6 +46,17 @@ func WithWebhookHTTPClient(c *http.Client) WebhookOption {
 	return func(w *WebhookSink) {
 		if c != nil {
 			w.client = c
+		}
+	}
+}
+
+// WithWebhookSigningSecret enables HMAC-SHA256 payload signing — every POST
+// carries securityverify.WebhookSignatureHeader (t=<unix>,v1=<hex>), letting
+// receivers authenticate origin, integrity, and freshness. Empty is a no-op.
+func WithWebhookSigningSecret(secret string) WebhookOption {
+	return func(w *WebhookSink) {
+		if secret != "" {
+			w.signingSecret = []byte(secret)
 		}
 	}
 }
@@ -76,6 +89,12 @@ func (w *WebhookSink) Record(ctx context.Context, e *auditspi.Event) error {
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range w.headers {
 		req.Header.Set(k, v)
+	}
+	// After the static-headers loop: a computed signature wins over any
+	// operator static header of the same name.
+	if len(w.signingSecret) > 0 {
+		req.Header.Set(securityverify.WebhookSignatureHeader,
+			securityverify.SignWebhookPayload(w.signingSecret, time.Now(), body))
 	}
 
 	resp, err := w.client.Do(req)

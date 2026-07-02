@@ -33,6 +33,9 @@ const (
 	HeaderCertEncodingPEM       = securityverify.HeaderCertEncodingPEM
 	HeaderCertEncodingBase64DER = securityverify.HeaderCertEncodingBase64DER
 	HeaderCertEncodingURLPEM    = securityverify.HeaderCertEncodingURLPEM
+
+	WebhookSignatureHeader           = securityverify.WebhookSignatureHeader
+	DefaultWebhookSignatureTolerance = securityverify.DefaultWebhookSignatureTolerance
 )
 
 var (
@@ -55,4 +58,10 @@ var (
 	BuildStepUpChallenge         = securityverify.BuildStepUpChallenge
 	QuoteAuthParam               = securityverify.QuoteAuthParam
 	MustBuildStepUpChallenge     = securityverify.MustBuildStepUpChallenge
+
+	SignWebhookPayload           = securityverify.SignWebhookPayload
+	VerifyWebhookSignature       = securityverify.VerifyWebhookSignature
+	ErrWebhookSignatureMalformed = securityverify.ErrWebhookSignatureMalformed
+	ErrWebhookSignatureMismatch  = securityverify.ErrWebhookSignatureMismatch
+	ErrWebhookSignatureExpired   = securityverify.ErrWebhookSignatureExpired
 )

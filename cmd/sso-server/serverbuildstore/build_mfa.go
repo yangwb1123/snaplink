@@ -197,6 +197,9 @@ func BuildPushWebhookTransport(cfg config.MFAPushWebhookConfig) (defaultimpl.Pus
 	for k, v := range cfg.Headers {
 		opts = append(opts, defaultimpl.WithPushWebhookHeader(k, v))
 	}
+	if cfg.SigningSecret != "" {
+		opts = append(opts, defaultimpl.WithPushWebhookSigningSecret(cfg.SigningSecret))
+	}
 	if cfg.Timeout > 0 {
 		opts = append(opts, defaultimpl.WithPushWebhookClient(&http.Client{Timeout: cfg.Timeout}))
 	}
