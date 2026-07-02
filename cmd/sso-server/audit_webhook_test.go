@@ -13,7 +13,207 @@ import (
 
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/shared/security"
 )
+
+// subCollector captures webhook deliveries for the subscription tests: the
+// event types received and (when signed) the last signature header + raw body
+// so a test can verify the HMAC with the Wave-1 receiver-side verifier.
+type subCollector struct {
+	mu    sync.Mutex
+	types []string
+	sig   string
+	body  []byte
+}
+
+func newSubCollector(t *testing.T) (*subCollector, *httptest.Server) {
+	t.Helper()
+	c := &subCollector{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var ev map[string]any
+		_ = json.Unmarshal(b, &ev)
+		c.mu.Lock()
+		if typ, ok := ev["type"].(string); ok {
+			c.types = append(c.types, typ)
+		}
+		if s := r.Header.Get(security.WebhookSignatureHeader); s != "" {
+			c.sig, c.body = s, b
+		}
+		c.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	return c, srv
+}
+
+func (c *subCollector) snapshot() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.types...)
+}
+
+// With audit.async disabled the recorder drives every sink synchronously
+// through the MultiSink, so each webhook POST has completed by the time
+// Record returns — no polling needed. These tests rely on that ordering.
+func TestBuildApp_AuditWebhookSubscriptionsDisjointDelivery(t *testing.T) {
+	t.Parallel()
+	const loginSecret = "whsec-login"
+	loginC, loginSrv := newSubCollector(t)
+	adminC, adminSrv := newSubCollector(t)
+
+	cfg := &config.Config{}
+	cfg.Audit.Enabled = true
+	cfg.Audit.MemoryCapacity = 32
+	cfg.Audit.Webhook.Enabled = true
+	cfg.Audit.Webhook.Subscriptions = []config.AuditWebhookSubscription{
+		{Name: "login-only", URL: loginSrv.URL, EventTypes: []string{string(audit.EventLogin)}, SigningSecret: loginSecret},
+		{Name: "admin", URL: adminSrv.URL, EventTypes: []string{"admin_" + audit.EventTypeWildcardSuffix}},
+	}
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer func() { _ = a.registry.Close() }()
+
+	a.recorder.Record(context.Background(), &audit.Event{Type: audit.EventLogin, ActorID: "u"})
+	a.recorder.Record(context.Background(), &audit.Event{Type: audit.EventAdminClientCreated, ActorID: "admin"})
+	a.recorder.Record(context.Background(), &audit.Event{Type: audit.EventLogout, ActorID: "u"})
+
+	if got := loginC.snapshot(); len(got) != 1 || got[0] != string(audit.EventLogin) {
+		t.Fatalf("login-only subscription received %v, want [login]", got)
+	}
+	if got := adminC.snapshot(); len(got) != 1 || got[0] != string(audit.EventAdminClientCreated) {
+		t.Fatalf("admin subscription received %v, want [admin_client_created]", got)
+	}
+
+	// The login subscription is signed — prove the delivered payload verifies
+	// with the Wave-1 receiver-side verifier (and fails under a wrong secret).
+	loginC.mu.Lock()
+	sig, body := loginC.sig, loginC.body
+	loginC.mu.Unlock()
+	if sig == "" {
+		t.Fatal("login subscription payload not signed")
+	}
+	if err := security.VerifyWebhookSignature([]byte(loginSecret), sig, body, time.Now(), security.DefaultWebhookSignatureTolerance); err != nil {
+		t.Fatalf("VerifyWebhookSignature: %v", err)
+	}
+	if err := security.VerifyWebhookSignature([]byte("wrong"), sig, body, time.Now(), security.DefaultWebhookSignatureTolerance); err == nil {
+		t.Fatal("verification with wrong secret must fail")
+	}
+}
+
+func TestBuildApp_AuditWebhookScalarPlusSubscriptionCoexist(t *testing.T) {
+	t.Parallel()
+	// Legacy scalar url = implicit unfiltered "default" firehose; the
+	// explicit subscription filters. Both fan out from the one MultiSink.
+	scalarC, scalarSrv := newSubCollector(t)
+	filteredC, filteredSrv := newSubCollector(t)
+
+	cfg := &config.Config{}
+	cfg.Audit.Enabled = true
+	cfg.Audit.MemoryCapacity = 32
+	cfg.Audit.Webhook.Enabled = true
+	cfg.Audit.Webhook.URL = scalarSrv.URL // legacy scalar
+	cfg.Audit.Webhook.Subscriptions = []config.AuditWebhookSubscription{
+		{Name: "logins", URL: filteredSrv.URL, EventTypes: []string{string(audit.EventLogin)}},
+	}
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer func() { _ = a.registry.Close() }()
+
+	a.recorder.Record(context.Background(), &audit.Event{Type: audit.EventLogin, ActorID: "u"})
+	a.recorder.Record(context.Background(), &audit.Event{Type: audit.EventLogout, ActorID: "u"})
+
+	if got := scalarC.snapshot(); len(got) != 2 {
+		t.Fatalf("legacy scalar (firehose) received %v, want 2 events", got)
+	}
+	if got := filteredC.snapshot(); len(got) != 1 || got[0] != string(audit.EventLogin) {
+		t.Fatalf("filtered subscription received %v, want [login]", got)
+	}
+}
+
+func TestBuildApp_AuditWebhookEmptyEventTypesIsFirehose(t *testing.T) {
+	t.Parallel()
+	c, srv := newSubCollector(t)
+
+	cfg := &config.Config{}
+	cfg.Audit.Enabled = true
+	cfg.Audit.MemoryCapacity = 32
+	cfg.Audit.Webhook.Enabled = true
+	cfg.Audit.Webhook.Subscriptions = []config.AuditWebhookSubscription{
+		{Name: "all", URL: srv.URL}, // no event_types -> firehose
+	}
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer func() { _ = a.registry.Close() }()
+
+	a.recorder.Record(context.Background(), &audit.Event{Type: audit.EventLogin})
+	a.recorder.Record(context.Background(), &audit.Event{Type: audit.EventLogout})
+	if got := c.snapshot(); len(got) != 2 {
+		t.Fatalf("empty-filter subscription received %v, want both events (firehose)", got)
+	}
+}
+
+func TestBuildApp_AuditWebhookRejectsDuplicateName(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{}
+	cfg.Audit.Enabled = true
+	cfg.Audit.MemoryCapacity = 16
+	cfg.Audit.Webhook.Enabled = true
+	cfg.Audit.Webhook.Subscriptions = []config.AuditWebhookSubscription{
+		{Name: "dup", URL: "https://a.internal/audit"},
+		{Name: "dup", URL: "https://b.internal/audit"},
+	}
+	if _, err := buildApp(cfg, quietLogger()); err == nil {
+		t.Fatal("expected error on duplicate subscription name")
+	}
+}
+
+func TestBuildApp_AuditWebhookRejectsDefaultNameCollision(t *testing.T) {
+	t.Parallel()
+	// Scalar url reserves the implicit "default" name; an explicit entry
+	// reusing it collides at boot.
+	cfg := &config.Config{}
+	cfg.Audit.Enabled = true
+	cfg.Audit.MemoryCapacity = 16
+	cfg.Audit.Webhook.Enabled = true
+	cfg.Audit.Webhook.URL = "https://scalar.internal/audit"
+	cfg.Audit.Webhook.Subscriptions = []config.AuditWebhookSubscription{
+		{Name: "default", URL: "https://other.internal/audit"},
+	}
+	if _, err := buildApp(cfg, quietLogger()); err == nil {
+		t.Fatal("expected error when a subscription reuses the reserved default name")
+	}
+}
+
+func TestBuildApp_AuditWebhookRejectsMissingNameOrURL(t *testing.T) {
+	t.Parallel()
+	nameless := &config.Config{}
+	nameless.Audit.Enabled = true
+	nameless.Audit.MemoryCapacity = 16
+	nameless.Audit.Webhook.Enabled = true
+	nameless.Audit.Webhook.Subscriptions = []config.AuditWebhookSubscription{{URL: "https://x.internal/a"}}
+	if _, err := buildApp(nameless, quietLogger()); err == nil {
+		t.Fatal("expected error on subscription with empty name")
+	}
+
+	urlless := &config.Config{}
+	urlless.Audit.Enabled = true
+	urlless.Audit.MemoryCapacity = 16
+	urlless.Audit.Webhook.Enabled = true
+	urlless.Audit.Webhook.Subscriptions = []config.AuditWebhookSubscription{{Name: "n"}}
+	if _, err := buildApp(urlless, quietLogger()); err == nil {
+		t.Fatal("expected error on subscription with empty url")
+	}
+}
 
 func TestBuildApp_AuditWebhookRequiresURL(t *testing.T) {
 	t.Parallel()

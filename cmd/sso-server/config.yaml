@@ -229,6 +229,26 @@ audit:
       max_attempts: 3
       initial_backoff: 100ms
       max_backoff: 5s
+    # Optional: fan out to multiple endpoints, each with its own
+    # event-type filter. The scalar url above (when set) is compiled as
+    # an implicit unfiltered subscription named "default". Each entry
+    # needs a unique name + url; event_types selects delivery — exact
+    # types or a trailing-* prefix wildcard (admin_* matches every
+    # admin_ event); empty event_types = firehose (all events). Unknown
+    # (custom) type strings are accepted with a boot log line.
+    # subscriptions:
+    #   - name: siem
+    #     url: "https://siem.internal/audit"
+    #     event_types: ["login", "login_failure", "admin_*"]
+    #     # signing_secret is a credential — use a secret:// ref, not a literal:
+    #     signing_secret: "secret://aws/audit/siem-whsec"
+    #     headers:
+    #       X-Api-Key: "secret://aws/audit/siem-apikey"
+    #     retry:
+    #       max_attempts: 5
+    #   - name: security-alerts
+    #     url: "https://alerts.internal/hook"
+    #     event_types: ["refresh_token_reuse_detected", "account_locked", "anomaly_detected"]
   # Background pruning of old audit events. Active only when
   # backend=sqlite (the memory ring buffer self-prunes by capacity).
   # When enabled, cmd launches a goroutine that wakes every interval
