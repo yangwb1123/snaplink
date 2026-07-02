@@ -1,13 +1,14 @@
 package sso
 
 import (
+	"net/http"
+	"time"
+
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/federation"
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/protocols/caep"
 	"github.com/snaplink/sso/protocols/oidc"
-	"net/http"
-	"time"
 )
 
 func (s *Server) BuildOPMetadata(ctx HandlerContext, base string) federation.OPFederationMetadata {

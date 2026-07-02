@@ -1,6 +1,11 @@
 package sso
 
 import (
+	"math/rand"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/snaplink/sso/domains/anomaly"
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/middleware"
@@ -14,10 +19,6 @@ import (
 	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
-	"math/rand"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
 // protocolState holds risk/MFA/anomaly/metrics/transport wiring and the OAuth/OIDC grant + discovery static configuration fields.

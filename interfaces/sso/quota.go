@@ -1,9 +1,11 @@
 package sso
 
 import (
-	"github.com/snaplink/sso/shared/core"
-	"golang.org/x/time/rate"
 	"net/http"
+
+	"golang.org/x/time/rate"
+
+	"github.com/snaplink/sso/shared/core"
 )
 
 // checkQuotaBeforeCreate checks if the tenant has capacity to create a

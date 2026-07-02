@@ -2,15 +2,16 @@ package tokengrant
 
 import (
 	"context"
+	"net/http"
+	"slices"
+	"time"
+
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
-	"net/http"
-	"slices"
-	"time"
 )
 
 // TokenExchangeRequest is the subset of /token parameters the RFC 8693

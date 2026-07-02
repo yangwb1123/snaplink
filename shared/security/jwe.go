@@ -3,8 +3,9 @@ package security
 import (
 	"context"
 	"errors"
-	"github.com/snaplink/sso/shared/core"
 	"strings"
+
+	"github.com/snaplink/sso/shared/core"
 )
 
 // JWEDecrypter unwraps the encrypted variant of an RFC 9101 JAR

@@ -2,11 +2,12 @@ package sso
 
 import (
 	"context"
+	"time"
+
 	"github.com/snaplink/sso/domains/federation"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
 	"github.com/snaplink/sso/internal/auth/consent"
 	"github.com/snaplink/sso/shared/spi"
-	"time"
 )
 
 // Server is the core SSO orchestrator. Its ~60 fields are grouped into

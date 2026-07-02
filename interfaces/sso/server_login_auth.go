@@ -1,12 +1,13 @@
 package sso
 
 import (
+	"net/http"
+	"slices"
+
 	"github.com/snaplink/sso/internal/auth/login"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
-	"net/http"
-	"slices"
 )
 
 // authenticateUser resolves the authenticator and validates credentials: a

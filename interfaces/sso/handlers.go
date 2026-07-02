@@ -3,6 +3,8 @@ package sso
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
+
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/platform/audit"
@@ -10,7 +12,6 @@ import (
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/core"
-	"net/http"
 )
 
 // tracer is shared by audit-event helpers for parsing inbound W3C
