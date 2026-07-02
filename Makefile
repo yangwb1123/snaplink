@@ -149,6 +149,7 @@ ci-modules: ## Build + test all nested modules.
 	cd extauthz && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd kerberos && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd radius && $(GO) build ./... && $(GO) test -race -count=1 ./...
+	cd infrastructure/kafka && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd cmd/sso-mcp && $(GO) build ./... && $(GO) test -race -count=1 ./...
 
 ci: fmt vet race build examples proto-lint ci-modules config-validate-all ## Run CI checks.
@@ -264,7 +265,7 @@ docker-multiarch: ## Build local multi-arch manifest (no push).
 
 lint-all: ## Run golangci-lint on root + all nested modules.
 	golangci-lint run ./...
-	@for dir in infrastructure/kms/awskms infrastructure/kms/gcpkms infrastructure/kms/azurekeyvault infrastructure/kms/pkcs11 infrastructure/saml infrastructure/ldap infrastructure/kerberos infrastructure/radius infrastructure/extauthz cmd/sso-mcp; do \
+	@for dir in infrastructure/kms/awskms infrastructure/kms/gcpkms infrastructure/kms/azurekeyvault infrastructure/kms/pkcs11 infrastructure/saml infrastructure/ldap infrastructure/kerberos infrastructure/radius infrastructure/extauthz infrastructure/kafka cmd/sso-mcp; do \
 		echo "linting $$dir..."; \
 		cd "$$dir" && golangci-lint run ./...; \
 		cd "$(CURDIR)"; \
@@ -272,7 +273,7 @@ lint-all: ## Run golangci-lint on root + all nested modules.
 
 security-scan-all: ## Run gosec on root + all nested modules.
 	go run github.com/securego/gosec/v2/cmd/gosec@latest -no-fail ./...
-	@for dir in infrastructure/kms/awskms infrastructure/kms/gcpkms infrastructure/kms/azurekeyvault infrastructure/kms/pkcs11 infrastructure/saml infrastructure/ldap infrastructure/kerberos infrastructure/radius infrastructure/extauthz cmd/sso-mcp; do \
+	@for dir in infrastructure/kms/awskms infrastructure/kms/gcpkms infrastructure/kms/azurekeyvault infrastructure/kms/pkcs11 infrastructure/saml infrastructure/ldap infrastructure/kerberos infrastructure/radius infrastructure/extauthz infrastructure/kafka cmd/sso-mcp; do \
 		echo "gosec $$dir..."; \
 		cd "$$dir" && go run github.com/securego/gosec/v2/cmd/gosec@latest -no-fail ./...; \
 		cd "$(CURDIR)"; \
