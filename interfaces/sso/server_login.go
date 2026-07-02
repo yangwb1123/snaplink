@@ -12,42 +12,14 @@ import (
 )
 
 func (s *Server) handleLogin(ctx HandlerContext) {
-	// CSRF protection: the login SPA sends application/json; reject
-	// form-encoded submissions that a cross-origin <form> could forge.
-	if ct := ctx.Request().Header.Get(core.HeaderContentType); ct != "" && !strings.HasPrefix(ct, "application/json") {
-		ctx.JSON(http.StatusUnsupportedMediaType, errorBody(core.ErrInvalidRequest))
+	if s.rejectNonJSONLogin(ctx) {
 		return
 	}
-
-	// Defense-in-depth: validate Origin header against CORS allowed origins.
-	// This prevents cross-origin POST attacks even if an attacker can set
-	// Content-Type: application/json (e.g., via fetch API with CORS disabled).
-	if origin := ctx.Request().Header.Get("Origin"); origin != "" && s.corsPolicy != nil {
-		if !s.isOriginAllowed(origin) {
-			s.logger.Info("origin_blocked",
-				"origin", origin,
-				"path", ctx.Request().URL.Path,
-				"method", ctx.Request().Method,
-				"client_ip", ctx.Request().RemoteAddr,
-				"user_agent", ctx.Request().UserAgent(),
-			)
-			ctx.JSON(http.StatusForbidden, errorBody(core.ErrInvalidRequest))
-			return
-		}
+	if s.rejectDisallowedLoginOrigin(ctx) {
+		return
 	}
-
-	// Authorization request wall-clock deadline (WithAuthorizeRequestTimeout).
-	// When the upstream IdP or user interaction takes longer than the configured
-	// timeout, the handler returns interaction_required instead of hanging the
-	// browser tab forever. 0 (default) means no server-enforced deadline.
-	// This is NOT a replacement for the OIDC max_age parameter — max_age gates
-	// the freshness of the auth_time, while this gates total wall-clock duration.
-	if s.authzRequestTimeout > 0 {
-		r := ctx.Request()
-		timedCtx, cancel := context.WithTimeout(r.Context(), s.authzRequestTimeout)
-		defer cancel()
-		*r = *r.WithContext(timedCtx)
-	}
+	cancel := s.armAuthzRequestTimeout(ctx)
+	defer cancel()
 
 	req, ok := s.bootstrapLoginRequest(ctx)
 	if !ok {
@@ -68,49 +40,128 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 		return
 	}
 
-	// No provider selected yet: home-realm discovery (B2B) or generic provider list.
-	if s.respondLoginProviders(ctx, &req) {
-		return
-	}
-	if s.checkLoginDeadline(ctx, req.State) {
-		return
-	}
-
-	// Pre-authentication client gates (existence/active/tenant/residency/PAR-JAR-required/allowlist).
-	client, handled := s.resolveAndValidateLoginClient(ctx, &req)
+	client, handled := s.preAuthLoginGates(ctx, &req)
 	if handled {
 		return
 	}
-	if s.checkLoginDeadline(ctx, req.State) {
-		return
-	}
 
-	// Post PAR+JAR-merge authz-request validation (order JAR -> FAPI -> param shapes).
-	if s.runPostMergeAuthzValidation(ctx, &req, client) {
-		return
-	}
-	if s.checkLoginDeadline(ctx, req.State) {
-		return
-	}
-
-	// Resolve authenticator + validate credentials (federated redirect, lockout gate, verify).
-	result, handled := s.authenticateUser(ctx, &req, client)
+	result, handled := s.credentialLoginStage(ctx, &req, client)
 	if handled {
-		return
-	}
-	if s.checkLoginDeadline(ctx, req.State) {
-		return
-	}
-
-	// Post-credential gates (order ACR -> risk/step-up).
-	if s.runPostCredentialGates(ctx, &req, result, client) {
-		return
-	}
-	if s.checkLoginDeadline(ctx, req.State) {
 		return
 	}
 
 	s.finishLogin(ctx, result, req, client)
+}
+
+// rejectNonJSONLogin is the /auth/login CSRF gate: the login SPA sends
+// application/json, so form-encoded submissions that a cross-origin <form>
+// could forge are rejected with 415. Returns true when the response was
+// written and the caller MUST return.
+func (s *Server) rejectNonJSONLogin(ctx HandlerContext) bool {
+	if ct := ctx.Request().Header.Get(core.HeaderContentType); ct != "" && !strings.HasPrefix(ct, "application/json") {
+		ctx.JSON(http.StatusUnsupportedMediaType, errorBody(core.ErrInvalidRequest))
+		return true
+	}
+	return false
+}
+
+// rejectDisallowedLoginOrigin is defense-in-depth against cross-origin POST:
+// the Origin header is validated against the CORS allowed origins even if an
+// attacker can set Content-Type: application/json (e.g., via fetch API with
+// CORS disabled). Returns true when the 403 was written and the caller MUST
+// return.
+func (s *Server) rejectDisallowedLoginOrigin(ctx HandlerContext) bool {
+	origin := ctx.Request().Header.Get("Origin")
+	if origin == "" || s.corsPolicy == nil {
+		return false
+	}
+	if s.isOriginAllowed(origin) {
+		return false
+	}
+	s.logger.Info("origin_blocked",
+		"origin", origin,
+		"path", ctx.Request().URL.Path,
+		"method", ctx.Request().Method,
+		"client_ip", ctx.Request().RemoteAddr,
+		"user_agent", ctx.Request().UserAgent(),
+	)
+	ctx.JSON(http.StatusForbidden, errorBody(core.ErrInvalidRequest))
+	return true
+}
+
+// armAuthzRequestTimeout applies the authorization-request wall-clock deadline
+// (WithAuthorizeRequestTimeout). When the upstream IdP or user interaction
+// takes longer than the configured timeout, the handler returns
+// interaction_required instead of hanging the browser tab forever. 0 (default)
+// means no server-enforced deadline. This is NOT a replacement for the OIDC
+// max_age parameter — max_age gates the freshness of the auth_time, while this
+// gates total wall-clock duration. The caller MUST defer the returned cancel.
+func (s *Server) armAuthzRequestTimeout(ctx HandlerContext) context.CancelFunc {
+	if s.authzRequestTimeout <= 0 {
+		return func() {}
+	}
+	r := ctx.Request()
+	timedCtx, cancel := context.WithTimeout(r.Context(), s.authzRequestTimeout)
+	*r = *r.WithContext(timedCtx)
+	return cancel
+}
+
+// preAuthLoginGates runs the pre-credential stages in their original order —
+// provider listing / home-realm discovery, client existence + active + tenant
+// + residency + PAR-JAR-required + allowlist gates, then the post PAR+JAR-merge
+// authz-request validation (order JAR -> FAPI -> param shapes) — with the
+// login deadline re-checked between stages. handled=true means a response was
+// ALREADY written and the caller MUST return.
+func (s *Server) preAuthLoginGates(ctx HandlerContext, req *login.Request) (*Client, bool) {
+	// No provider selected yet: home-realm discovery (B2B) or generic provider list.
+	if s.respondLoginProviders(ctx, req) {
+		return nil, true
+	}
+	if s.checkLoginDeadline(ctx, req.State) {
+		return nil, true
+	}
+
+	// Pre-authentication client gates (existence/active/tenant/residency/PAR-JAR-required/allowlist).
+	client, handled := s.resolveAndValidateLoginClient(ctx, req)
+	if handled {
+		return nil, true
+	}
+	if s.checkLoginDeadline(ctx, req.State) {
+		return nil, true
+	}
+
+	// Post PAR+JAR-merge authz-request validation (order JAR -> FAPI -> param shapes).
+	if s.runPostMergeAuthzValidation(ctx, req, client) {
+		return nil, true
+	}
+	if s.checkLoginDeadline(ctx, req.State) {
+		return nil, true
+	}
+	return client, false
+}
+
+// credentialLoginStage resolves the authenticator, validates credentials
+// (federated redirect, lockout gate, verify), then runs the post-credential
+// gates (order ACR -> risk/step-up) — with the login deadline re-checked
+// between stages, exactly as the stages ran inline in handleLogin.
+// handled=true means a response was ALREADY written and the caller MUST
+// return.
+func (s *Server) credentialLoginStage(ctx HandlerContext, req *login.Request, client *Client) (*AuthResult, bool) {
+	result, handled := s.authenticateUser(ctx, req, client)
+	if handled {
+		return nil, true
+	}
+	if s.checkLoginDeadline(ctx, req.State) {
+		return nil, true
+	}
+
+	if s.runPostCredentialGates(ctx, req, result, client) {
+		return nil, true
+	}
+	if s.checkLoginDeadline(ctx, req.State) {
+		return nil, true
+	}
+	return result, false
 }
 
 // bootstrapLoginRequest performs the /auth/login prologue — identical in
@@ -141,6 +192,3 @@ func (s *Server) bootstrapLoginRequest(ctx HandlerContext) (login.Request, bool)
 	}
 	return req, true
 }
-
-
-

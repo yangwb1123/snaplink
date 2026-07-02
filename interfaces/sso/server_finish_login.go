@@ -49,12 +49,18 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req login.R
 	// Fail-open + best-effort — never blocks login.
 	s.ensureJITMembership(ctx, client, result.UserID)
 
-	// OAuth 2.0 authorization_code branch: instead of minting a token here,
-	// persist a short-lived code bound to (user, client, redirect_uri) and
-	// return it so the relying party can exchange it via /token. The branch
-	// always owns the response, so finishLogin returns immediately after it.
+	s.finishLoginDispatch(ctx, result, &req, client, state)
+}
+
+// finishLoginDispatch routes the authenticated request to its response_type
+// branch. OAuth 2.0 authorization_code: instead of minting a token here,
+// persist a short-lived code bound to (user, client, redirect_uri) and return
+// it so the relying party can exchange it via /token. The branch always owns
+// the response. Any other non-empty response_type except "token" rejects with
+// unsupported_response_type; empty and "token" direct-mint.
+func (s *Server) finishLoginDispatch(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client, state string) {
 	if req.ResponseType == "code" {
-		s.finishLoginCodeFlow(ctx, result, &req, client)
+		s.finishLoginCodeFlow(ctx, result, req, client)
 		return
 	}
 	if req.ResponseType != "" && req.ResponseType != "token" {
@@ -62,7 +68,7 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req login.R
 		return
 	}
 
-	s.finishLoginDirectMint(ctx, result, &req, client)
+	s.finishLoginDirectMint(ctx, result, req, client)
 }
 
 // upsertLoginUser provisions/refreshes the local user record from the

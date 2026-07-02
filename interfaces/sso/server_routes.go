@@ -361,33 +361,7 @@ func (s *Server) Handler() http.Handler {
 // the documented outermost->innermost order. trustedProxies MUST wrap before
 // rate limiting so the limiter keys on the validated real client IP.
 func (s *Server) buildMiddlewareChain(inner http.Handler) http.Handler {
-	// Request/response debug logging wraps outermost so it captures
-	// the complete request and response, including status codes set
-	// by inner middlewares.
-	if s.debugRequestLogging {
-		inner = middleware.RequestLogger(s.logger, false)(inner)
-	}
-
-	// Security headers wrap the router innermost so they fire during
-	// response writing — after inner handlers have set their own headers
-	// (Cache-Control: no-store, X-Frame-Options: DENY, etc). The
-	// headerOnceResponseWriter pattern prevents overwriting already-set
-	// headers. Probe endpoints (/livez, /readyz, /metrics) are served by
-	// buildProbeMux outside this chain and are NOT affected.
-	if s.securityHeadersEnabled {
-		inner = handler.SecurityHeaders(inner)
-	}
-	if s.corsPolicy != nil {
-		// CORS sits innermost (just outside the router) so preflight
-		// 204s don't traverse routing, but still get counted by metrics
-		// and rate-limited like any other request — defensive against
-		// preflight floods.
-		inner = cors.Middleware(*s.corsPolicy)(inner)
-	}
-	inner = s.wrapCompression(inner)
-	if s.bodyLimit > 0 || len(s.bodyLimitByPath) > 0 {
-		inner = bodyLimitMiddleware(s.bodyLimit, s.bodyLimitByPath)(inner)
-	}
+	inner = s.wrapInnerMiddlewares(inner)
 	if s.rateLimitPolicy != nil {
 		inner = ratelimit.Middleware(*s.rateLimitPolicy)(inner)
 	}
@@ -411,6 +385,35 @@ func (s *Server) buildMiddlewareChain(inner http.Handler) http.Handler {
 		inner = tracing.Middleware(s.tracingOperation)(inner)
 	}
 	inner = s.wrapPanicRecovery(inner)
+	return inner
+}
+
+// wrapInnerMiddlewares applies the innermost slice of the chain in the exact
+// order it ran inline in buildMiddlewareChain: request/response debug logging,
+// then security headers, CORS, compression, and body limiting.
+//
+// Security headers wrap the router innermost so they fire during response
+// writing — after inner handlers have set their own headers (Cache-Control:
+// no-store, X-Frame-Options: DENY, etc). The headerOnceResponseWriter pattern
+// prevents overwriting already-set headers. Probe endpoints (/livez, /readyz,
+// /metrics) are served by buildProbeMux outside this chain and are NOT
+// affected. CORS sits just outside the router so preflight 204s don't
+// traverse routing, but still get counted by metrics and rate-limited like
+// any other request — defensive against preflight floods.
+func (s *Server) wrapInnerMiddlewares(inner http.Handler) http.Handler {
+	if s.debugRequestLogging {
+		inner = middleware.RequestLogger(s.logger, false)(inner)
+	}
+	if s.securityHeadersEnabled {
+		inner = handler.SecurityHeaders(inner)
+	}
+	if s.corsPolicy != nil {
+		inner = cors.Middleware(*s.corsPolicy)(inner)
+	}
+	inner = s.wrapCompression(inner)
+	if s.bodyLimit > 0 || len(s.bodyLimitByPath) > 0 {
+		inner = bodyLimitMiddleware(s.bodyLimit, s.bodyLimitByPath)(inner)
+	}
 	return inner
 }
 
