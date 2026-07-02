@@ -17,6 +17,7 @@ OAuth 2.0 / OIDC / SSO feature compliance matrix. Extracted from AGENTS.md.
 | RFC 7591/7592 DCR | `/register[/:id]` | `WithDynamicClientRegistration` | `oauth/handle_register.go` |
 | OIDC Core ID Token | `id_token` w/ `openid` | `WithIDTokenIssuer`; `at_hash` when `access_token` in same response | `handler.go` + `oidc/userinfo_signing.go` |
 | OIDC Discovery 1.0 | `/.well-known/openid-configuration` | always | `handlers.go` + `oidc/discovery_doc_cache.go` |
+| RFC 8414 AS Metadata (alias) | `/.well-known/oauth-authorization-server` | always | Same handler/body as OIDC discovery |
 | OIDC RP-Initiated Logout | `/end_session` | always | `oidc/handle_end_session.go` |
 | OIDC BCL 1.0 | `/logout`, `/end_session` | `WithBackchannelLogout`; multi-RP: `WithSubjectClientIndex` | `server_extensions.go` |
 | OIDC FCL 1.0 | `/end_session` | `Client.FrontchannelLogoutURI` | `server_extensions.go` |

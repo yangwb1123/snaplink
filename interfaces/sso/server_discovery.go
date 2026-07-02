@@ -16,6 +16,17 @@ import (
 
 const PathOIDCDiscovery = "/.well-known/openid-configuration"
 
+// mountDiscovery registers the OIDC Discovery 1.0 endpoint plus its RFC 8414
+// §3 alias. One handler serves both paths: the discovery document already
+// carries every RFC 8414 field, and sharing the handler means both routes
+// share the base-URL-keyed body cache, so responses are byte-identical.
+// Extracted from mountCoreOAuthOIDC, which sits exactly at the 50-line
+// function budget — the alias could not be added there.
+func (s *Server) mountDiscovery() {
+	s.router.GET(PathOIDCDiscovery, s.handleOIDCDiscovery)
+	s.router.GET(PathOAuthAuthorizationServerMetadata, s.handleOIDCDiscovery)
+}
+
 // defaultJWKSCacheTTL is the freshness window for the JWKS body cache.
 // 5 seconds balances key-rotation responsiveness against avoiding
 // per-request recomputation. When 0, the cache is disabled entirely

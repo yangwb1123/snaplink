@@ -108,7 +108,7 @@ func (s *Server) mountCoreOAuthOIDC() {
 	s.router.GET(PathHealth, s.handleHealth)
 	s.router.GET(PathStatus, s.handleStatus)
 	s.router.GET(PathJWKS, s.handleJWKS)
-	s.router.GET(PathOIDCDiscovery, s.handleOIDCDiscovery)
+	s.mountDiscovery()
 	s.router.POST(PathLogin, s.handleLogin)
 	s.router.POST(PathMFAComplete, s.handleMFAComplete)
 	s.router.POST(PathSendCode, s.handleSendCode)

@@ -7,6 +7,7 @@ package sso_test
 // handle_password_reset.go get covered. Reuses rcov* helpers.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -228,5 +229,43 @@ func TestRcovDisc_PasswordReset(t *testing.T) {
 	})
 	if status != http.StatusBadRequest {
 		t.Errorf("reset replay = %d, want 400 (body=%v)", status, out)
+	}
+}
+
+// TestRcovDisc_RFC8414Alias verifies the RFC 8414 §3 well-known alias serves
+// the exact same metadata document as the OIDC discovery path — same handler,
+// same base-URL-keyed body cache, byte-identical bytes and ETag.
+func TestRcovDisc_RFC8414Alias(t *testing.T) {
+	t.Parallel()
+	s := rcovNewServer(t)
+
+	get := func(path string) (int, []byte, string) {
+		t.Helper()
+		resp, err := http.Get(s.http.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return resp.StatusCode, raw, resp.Header.Get("ETag")
+	}
+
+	codeOIDC, bodyOIDC, etagOIDC := get(sso.PathOIDCDiscovery)
+	codeAlias, bodyAlias, etagAlias := get(sso.PathOAuthAuthorizationServerMetadata)
+	if codeOIDC != http.StatusOK || codeAlias != http.StatusOK {
+		t.Fatalf("status: openid-configuration=%d oauth-authorization-server=%d, want 200/200", codeOIDC, codeAlias)
+	}
+	if !bytes.Equal(bodyOIDC, bodyAlias) {
+		t.Errorf("alias body differs from openid-configuration body")
+	}
+	if etagOIDC != etagAlias {
+		t.Errorf("ETag mismatch: oidc=%q alias=%q", etagOIDC, etagAlias)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(bodyAlias, &doc); err != nil {
+		t.Fatalf("alias body not JSON: %v", err)
+	}
+	if doc["issuer"] == nil || doc["authorization_endpoint"] == nil || doc["token_endpoint"] == nil {
+		t.Errorf("alias doc missing RFC 8414 required fields: %v", doc)
 	}
 }

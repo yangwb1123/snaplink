@@ -63,6 +63,14 @@ const (
 	// resource. Opt-in via WithProtectedResourceMetadata.
 	PathProtectedResourceMetadata = "/.well-known/oauth-protected-resource"
 
+	// PathOAuthAuthorizationServerMetadata is the RFC 8414 §3 well-known
+	// path for OAuth 2.0 Authorization Server Metadata. Served by the SAME
+	// handler as the OIDC discovery document — that document is a compatible
+	// superset of RFC 8414 §2 metadata (clients ignore unknown fields), so
+	// pure-OAuth clients (notably MCP agents, which resolve this suffix
+	// rather than openid-configuration) can discover the AS without OIDC.
+	PathOAuthAuthorizationServerMetadata = "/.well-known/oauth-authorization-server"
+
 	// PathMe is the authenticated self-service account overview: the bearer's
 	// own profile plus active-session and granted-app counts. The entry point
 	// a self-service portal lands on.

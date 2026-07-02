@@ -2287,6 +2287,36 @@ paths:
         "304":
           description: Not Modified — body matches the supplied If-None-Match.
 
+  /.well-known/oauth-authorization-server:
+    get:
+      tags: [discovery]
+      summary: RFC 8414 OAuth 2.0 Authorization Server Metadata (alias).
+      description: |
+        Byte-identical alias of `/.well-known/openid-configuration` — the
+        same handler serves both paths (same body cache, same `ETag`).
+        Published for pure-OAuth clients (notably MCP agents) that resolve
+        the RFC 8414 well-known suffix instead of OIDC discovery; the OIDC
+        document is a compatible superset of RFC 8414 §2 metadata.
+      operationId: getOAuthAuthorizationServerMetadata
+      responses:
+        "200":
+          description: Live OIDC + RFC 8414 metadata (identical to /.well-known/openid-configuration).
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: '`public, max-age=<ttl>` when caching is enabled.'
+            ETag:
+              schema:
+                type: string
+              description: Short sha256 prefix of the response body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenIDConfiguration"
+        "304":
+          description: Not Modified — body matches the supplied If-None-Match.
+
   /.well-known/openid-federation:
     get:
       tags: [federation]

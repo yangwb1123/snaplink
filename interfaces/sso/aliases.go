@@ -362,6 +362,7 @@ const PathMyConsents = core.PathMyConsents
 const PathMyConsentByID = core.PathMyConsentByID
 const PathBranding = core.PathBranding
 const PathProtectedResourceMetadata = core.PathProtectedResourceMetadata
+const PathOAuthAuthorizationServerMetadata = core.PathOAuthAuthorizationServerMetadata
 const PathMe = core.PathMe
 const PathMyPassword = core.PathMyPassword
 const PathMyMFA = core.PathMyMFA
