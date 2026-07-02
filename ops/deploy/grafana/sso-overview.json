@@ -244,6 +244,65 @@
         }
       ],
       "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+
+    {
+      "id": 40,
+      "type": "row",
+      "title": "Audit pipeline & signing health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 }
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "Audit async drops / sec by cause",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 33 },
+      "description": "Any non-zero series is silent audit-trail loss - the async sink is fail-open by design (SSOAuditEventsDropped alert).",
+      "targets": [
+        { "expr": "sum(rate(sso_audit_async_drops_queue_full_total{instance=~\"$instance\"}[5m]))", "legendFormat": "queue_full" },
+        { "expr": "sum(rate(sso_audit_async_drops_closed_total{instance=~\"$instance\"}[5m]))", "legendFormat": "closed" },
+        { "expr": "sum(rate(sso_audit_async_drops_inner_error_total{instance=~\"$instance\"}[5m]))", "legendFormat": "inner_error" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    },
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "Audit queue fill ratio",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 33 },
+      "description": "sso_audit_async_queue_depth / capacity per instance. Drops begin at 1.0; alert fires at 0.8.",
+      "targets": [
+        { "expr": "sso_audit_async_queue_depth{instance=~\"$instance\"} / sso_audit_async_queue_capacity{instance=~\"$instance\"}", "legendFormat": "{{instance}}" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "red", "value": 0.8 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 43,
+      "type": "timeseries",
+      "title": "Signing health (KMS backend + key aggregation)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 33 },
+      "description": "Gauges sit at 1 when healthy; no series when no external signer / registry is wired. Adoption errors indicate a peer publishing bad keys.",
+      "targets": [
+        { "expr": "min by (alg) (sso_signing_backend_up{instance=~\"$instance\"})", "legendFormat": "backend up {{alg}}" },
+        { "expr": "min(sso_signing_key_aggregation_up{instance=~\"$instance\"})", "legendFormat": "aggregation up" },
+        { "expr": "sum by (reason) (rate(sso_signing_key_adoption_errors_total{instance=~\"$instance\"}[5m]))", "legendFormat": "adoption errors {{reason}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
     }
   ]
 }

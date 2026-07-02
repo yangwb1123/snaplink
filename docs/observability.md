@@ -29,6 +29,8 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_caep_sets_total` | Counter | outcome (success\|failed\|dropped\|retried) |
 | `sso_refresh_rotation_velocity_exceeded_total` | Counter | — |
 | `sso_client_store_cache_total` | Counter | outcome (hit\|miss) |
+| `sso_audit_async_drops_{queue_full,closed,inner_error}_total` | Counter | — |
+| `sso_audit_async_queue_{depth,capacity}` | Gauge | — |
 
 ## Audit
 

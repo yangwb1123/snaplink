@@ -120,3 +120,89 @@ groups:
             Prometheus has been unable to scrape {{ $labels.instance }}
             for at least 2 minutes. Check /readyz manually (it bypasses
             the rate limiter so it should respond even under attack).
+
+      - alert: SSOAuditEventsDropped
+        # Any drop is SILENT audit-trail loss: the async sink is
+        # deliberately fail-open (auth keeps working) so this alert is
+        # the only signal. queue_full = buffer saturated at Record
+        # time; closed = Record after Close (shutdown-ordering bug in
+        # the embedding app); inner_error = the leaf sink rejected an
+        # event the worker dequeued.
+        expr: |
+          sum(increase(sso_audit_async_drops_queue_full_total[5m]))
+            + sum(increase(sso_audit_async_drops_closed_total[5m]))
+            + sum(increase(sso_audit_async_drops_inner_error_total[5m]))
+            > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: sso-server
+        annotations:
+          summary: "SSO audit events dropped - silent audit-trail loss"
+          description: |
+            {{ $value | humanize }} audit events dropped in the last 5m.
+            Check the per-cause panel on the sso-overview dashboard:
+            queue_full means the inner sink can't keep up (grow
+            audit.async.buffer / workers), inner_error means the leaf
+            sink is rejecting events (network / validation), closed
+            means Record after Close (fix shutdown ordering).
+
+      - alert: SSOAuditQueueSaturated
+        # >80% fill sustained means the buffer is about to overflow
+        # into queue_full drops - the early-warning stage of
+        # SSOAuditEventsDropped. Both gauges are per-instance scrapes
+        # with identical labels so plain division vector-matches.
+        expr: |
+          sso_audit_async_queue_depth
+            / sso_audit_async_queue_capacity
+            > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          component: sso-server
+        annotations:
+          summary: "SSO audit async queue >80% full on {{ $labels.instance }}"
+          description: |
+            Queue fill ratio is {{ $value | humanizePercentage }} for 5m.
+            The inner sink is falling behind sustained event volume -
+            drops begin at 100%. Increase audit.async.buffer, add
+            workers, or investigate the slow leaf sink.
+
+      - alert: SSOSigningBackendDown
+        # sso_signing_backend_up is only ever set when an external
+        # KMS/HSM signer is wired, and token issuance fails CLOSED on
+        # signing errors - 0 here means live /token 5xx for that alg,
+        # firing before /readyz drains the replica.
+        expr: sso_signing_backend_up == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: sso-server
+        annotations:
+          summary: "SSO signing backend down for alg {{ $labels.alg }} on {{ $labels.instance }}"
+          description: |
+            The last external signing operation for {{ $labels.alg }}
+            failed and the backend has not recovered in 2m. Token
+            issuance for this alg is failing closed. Check KMS/HSM
+            reachability, throttling, and sso_signing_operations_total
+            error rates.
+
+      - alert: SSOSigningKeyAggregationDegraded
+        # Leaderless JWKS aggregation lost its registry subscription:
+        # this replica keeps signing locally but STOPS adopting peers'
+        # newly-rotated keys, so peer-issued tokens start failing
+        # verification here after the next rotation.
+        expr: sso_signing_key_aggregation_up == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: sso-server
+        annotations:
+          summary: "SSO signing-key aggregation degraded on {{ $labels.instance }}"
+          description: |
+            The signing-key registry subscription has been down for 5m
+            (Subscribe channel closed, loop retrying). Peer key
+            rotations are not being adopted - unknown-kid validation
+            failures follow the next rotation. Check the registry
+            backend (etcd) health and
+            sso_signing_key_adoption_errors_total by reason.

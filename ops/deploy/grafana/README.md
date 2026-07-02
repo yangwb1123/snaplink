@@ -6,8 +6,8 @@ Prometheus alert ruleset covering the most common SLO violations.
 
 ```
 deploy/grafana/
-├── sso-overview.json   # Grafana 10+ dashboard (12 panels across 4 rows)
-├── alerts.yaml         # Prometheus alerting rules (6 rules)
+├── sso-overview.json   # Grafana 10+ dashboard (15 panels across 5 rows)
+├── alerts.yaml         # Prometheus alerting rules (10 rules)
 └── README.md           # you are here
 ```
 
@@ -39,21 +39,28 @@ keep the default "All".
 | Go runtime | Goroutines                                  | `go_goroutines`                                                 |
 | Go runtime | Heap allocated                              | `go_memstats_alloc_bytes`                                       |
 | Go runtime | GC pause p99                                | `go_gc_duration_seconds{quantile="1"}`                          |
+| Audit pipeline & signing health | Audit async drops / sec by cause      | `sso_audit_async_drops_{queue_full,closed,inner_error}_total`   |
+| Audit pipeline & signing health | Audit queue fill ratio                | `sso_audit_async_queue_depth` / `sso_audit_async_queue_capacity`|
+| Audit pipeline & signing health | Signing health (KMS backend + key aggregation) | `sso_signing_backend_up`, `sso_signing_key_aggregation_up`, `sso_signing_key_adoption_errors_total` |
 
 ## Wire the alerts
 
 `alerts.yaml` is shaped for direct use as Prometheus's alerting
-configuration — six rules with `for:` debounce windows tuned to be
+configuration — ten rules with `for:` debounce windows tuned to be
 quiet under normal load:
 
-| Rule                       | Severity | Condition                                              |
-|----------------------------|----------|--------------------------------------------------------|
-| `SSOHighHTTPErrorRate`     | warning  | 5xx rate > 5% for 5m                                   |
-| `SSOHighLoginFailureRate`  | warning  | login failure ratio > 20% for 10m (creds-stuffing)     |
-| `SSORateLimitSaturated`    | info     | 429s firing at > 0.5/s for 5m                          |
-| `SSOLatencyP95High`        | warning  | p95 request latency > 1s for 10m                       |
-| `SSORiskScorerSilent`      | warning  | login traffic exists but risk decisions == 0 for 15m   |
-| `SSOInstanceDown`          | critical | `up == 0` for 2m                                       |
+| Rule                               | Severity | Condition                                              |
+|-------------------------------------|----------|--------------------------------------------------------|
+| `SSOHighHTTPErrorRate`             | warning  | 5xx rate > 5% for 5m                                   |
+| `SSOHighLoginFailureRate`          | warning  | login failure ratio > 20% for 10m (creds-stuffing)     |
+| `SSORateLimitSaturated`            | info     | 429s firing at > 0.5/s for 5m                          |
+| `SSOLatencyP95High`                | warning  | p95 request latency > 1s for 10m                       |
+| `SSORiskScorerSilent`              | warning  | login traffic exists but risk decisions == 0 for 15m   |
+| `SSOInstanceDown`                  | critical | `up == 0` for 2m                                       |
+| `SSOAuditEventsDropped`            | critical | any audit async drop counter increased over 5m         |
+| `SSOAuditQueueSaturated`           | warning  | audit queue depth / capacity > 80% for 5m               |
+| `SSOSigningBackendDown`            | critical | `sso_signing_backend_up == 0` for 2m (per alg)          |
+| `SSOSigningKeyAggregationDegraded` | warning  | `sso_signing_key_aggregation_up == 0` for 5m            |
 
 ### kube-prometheus-stack
 
