@@ -65,16 +65,8 @@ const (
 var version = ""
 
 func main() {
-	// Report version and exit before any config work, so `sso-server version`
-	// (or -version) works without a valid config file. The server itself runs
-	// directly (no `run` subcommand) — `sso-server [-config ...]` is the
-	// conventional, unchanged invocation.
-	if len(os.Args) >= 2 {
-		switch os.Args[1] {
-		case "version", "-version", "--version", "-v":
-			buildinfo.Write(os.Stdout, "sso-server", version)
-			return
-		}
+	if wroteVersion() {
+		return
 	}
 
 	flags := parseRuntimeFlags()
@@ -115,6 +107,22 @@ func main() {
 		logger.Error("server exited with error", "error", err)
 		os.Exit(1)
 	}
+}
+
+// wroteVersion reports the build version and returns true when the first
+// argument asks for it — checked before any config work, so `sso-server
+// version` (or -version) works without a valid config file. The server itself
+// runs directly (no `run` subcommand) — `sso-server [-config ...]` is the
+// conventional, unchanged invocation.
+func wroteVersion() bool {
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "version", "-version", "--version", "-v":
+			buildinfo.Write(os.Stdout, "sso-server", version)
+			return true
+		}
+	}
+	return false
 }
 
 // applyRuntimeTuning adjusts Go runtime parameters for SSO-server workloads.

@@ -71,23 +71,12 @@ func runList(args []string) int {
 		return 2
 	}
 
-	client := apiclient.New()
 	path := "/api/v1/admin/tokens/sessions"
 	if *userID != "" {
 		path += "?user_id=" + *userID
 	}
-	resp, err := client.Get(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: list failed: %v\n", progName, err)
-		return 1
-	}
-	body, err := apiclient.ReadBody(resp)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", progName, err)
-		return 1
-	}
-	if resp.StatusCode != 200 {
-		fmt.Fprintf(os.Stderr, "%s: list failed (HTTP %d): %s\n", progName, resp.StatusCode, string(body))
+	body, ok := fetchList(path)
+	if !ok {
 		return 1
 	}
 
@@ -121,6 +110,28 @@ func runList(args []string) int {
 		apiclient.WriteJSON(result.Sessions)
 	}
 	return 0
+}
+
+// fetchList GETs an admin list endpoint and returns the response body.
+// ok=false means the error was already printed to stderr (exit 1), exactly
+// as the ladder ran inline in runList.
+func fetchList(path string) ([]byte, bool) {
+	client := apiclient.New()
+	resp, err := client.Get(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: list failed: %v\n", progName, err)
+		return nil, false
+	}
+	body, err := apiclient.ReadBody(resp)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", progName, err)
+		return nil, false
+	}
+	if resp.StatusCode != 200 {
+		fmt.Fprintf(os.Stderr, "%s: list failed (HTTP %d): %s\n", progName, resp.StatusCode, string(body))
+		return nil, false
+	}
+	return body, true
 }
 
 func runRevoke(args []string) int {

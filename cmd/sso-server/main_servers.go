@@ -126,27 +126,44 @@ func startGRPCServer(a *app, grpcListen string, logger spi.Logger, tlsCert, tlsK
 // with production-safe defaults: keepalive, max message size, connection
 // timeout, and optional TLS when tlsCert + tlsKey are both non-empty.
 func newGRPCServer(a *app, tlsCert, tlsKey string) (*grpc.Server, error) {
+	opts, err := grpcServerOptions(a, tlsCert, tlsKey)
+	if err != nil {
+		return nil, err
+	}
+	s := grpc.NewServer(opts...)
+	authzv1.RegisterAuthorizerServer(s, grpcserver.NewAuthzService(a.provider))
+	discoveryv1.RegisterDiscoveryServer(s, grpcserver.NewDiscoveryService(a.registry))
+	if a.adminMW != nil {
+		registerAdminGRPCServices(s, a)
+	}
+	return s, nil
+}
+
+// grpcServerOptions assembles the production-safe server options — keepalive,
+// max message size, connection timeout, admin interceptors, and optional TLS
+// when tlsCert + tlsKey are both non-empty.
+func grpcServerOptions(a *app, tlsCert, tlsKey string) ([]grpc.ServerOption, error) {
 	var opts []grpc.ServerOption
 
 	opts = append(opts,
-		grpc.MaxRecvMsgSize(16*1024*1024),            // 16 MB — big admin lists
-		grpc.MaxSendMsgSize(16*1024*1024),              // 16 MB — big admin responses
-		grpc.ConnectionTimeout(5*time.Second),           // guard against slow clients
-		grpc.MaxConcurrentStreams(100),                   // per-connection fairness
+		grpc.MaxRecvMsgSize(16*1024*1024),     // 16 MB — big admin lists
+		grpc.MaxSendMsgSize(16*1024*1024),     // 16 MB — big admin responses
+		grpc.ConnectionTimeout(5*time.Second), // guard against slow clients
+		grpc.MaxConcurrentStreams(100),        // per-connection fairness
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			MaxConnectionIdle:     15 * time.Minute, // close idle connections after 15m
 			MaxConnectionAge:      30 * time.Minute, // force reconnect every 30m
 			MaxConnectionAgeGrace: 5 * time.Second,  // grace for in-flight RPCs
-			Time:    60 * time.Second,               // ping interval
-			Timeout: 20 * time.Second,                // ping timeout
+			Time:                  60 * time.Second, // ping interval
+			Timeout:               20 * time.Second, // ping timeout
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             5 * time.Second, // minimum ping interval
-			PermitWithoutStream: false,            // require active stream for pings
+			PermitWithoutStream: false,           // require active stream for pings
 		}),
 		// Increase initial window sizes for large admin list responses.
-		grpc.InitialWindowSize(256 * 1024),     // 256 KB — stream window
-		grpc.InitialConnWindowSize(512 * 1024), // 512 KB — connection window
+		grpc.InitialWindowSize(256*1024),     // 256 KB — stream window
+		grpc.InitialConnWindowSize(512*1024), // 512 KB — connection window
 	)
 
 	if a.adminMW != nil {
@@ -168,43 +185,43 @@ func newGRPCServer(a *app, tlsCert, tlsKey string) (*grpc.Server, error) {
 		}
 		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsCfg)))
 	}
+	return opts, nil
+}
 
-	s := grpc.NewServer(opts...)
-	authzv1.RegisterAuthorizerServer(s, grpcserver.NewAuthzService(a.provider))
-	discoveryv1.RegisterDiscoveryServer(s, grpcserver.NewDiscoveryService(a.registry))
-	if a.adminMW != nil {
-		auditv1.RegisterAuditWriterServer(s, grpcserver.NewAuditService(a.recorder))
-		if a.netStore != nil {
-			netpolicyv1.RegisterPolicyServiceServer(s, grpcserver.NewNetPolicyService(a.netStore, a.classifier, a.recorder))
-		}
-		adminv1.RegisterClientAdminServiceServer(s, grpcserver.NewClientAdminService(a.clientStore, a.recorder, a.server.InvalidateDiscoveryCache, a.server.InvalidateClientCache))
-		adminv1.RegisterUserAdminServiceServer(s, grpcserver.NewUserAdminService(a.userProvider, a.sessionMgr, a.recorder))
-		adminv1.RegisterTokenAdminServiceServer(s, grpcserver.NewTokenAdminService(grpcserver.TokenAdminConfig{
-			Sessions:            a.sessionMgr,
-			TempStore:           a.tempStore,
-			Issuers:             a.tokenIssuers,
-			RevokeAcrossIssuers: a.server.RevokeAcrossIssuers,
-			Recorder:            a.recorder,
-		}))
-		adminv1.RegisterPermissionAdminServiceServer(s, grpcserver.NewPermissionAdminService(
-			a.provider, a.recorder,
-			func(_ context.Context, id string) { a.server.InvalidateAuthzPolicyBundleCache(id) }))
-		if a.snapshotPipeline != nil {
-			adminv1.RegisterSnapshotAdminServiceServer(s, grpcserver.NewSnapshotAdminService(
-				a.snapshotPipeline, a.snapshotStorage, a.snapshotter, a.snapshotRestorer, a.recorder))
-		}
-		if a.releaseStore != nil {
-			adminv1.RegisterReleaseAdminServiceServer(s, grpcserver.NewReleaseAdminService(
-				a.releaseRegistry, a.releaseStore, a.recorder))
-		}
-		if a.tenantStore != nil {
-			adminv1.RegisterTenantAdminServiceServer(s, grpcserver.NewTenantAdminService(
-				a.tenantStore, a.recorder, a.server.InvalidateTenantSuspensionCache,
-				a.server.InvalidateTenantResidencyCache,
-				func(ctx context.Context, id string) { _, _ = a.server.RevokeTenantRefreshTokens(ctx, id) }))
-		}
+// registerAdminGRPCServices registers the admin-plane services — reached only
+// when the admin middleware is wired, exactly as the registrations ran inline
+// in newGRPCServer.
+func registerAdminGRPCServices(s *grpc.Server, a *app) {
+	auditv1.RegisterAuditWriterServer(s, grpcserver.NewAuditService(a.recorder))
+	if a.netStore != nil {
+		netpolicyv1.RegisterPolicyServiceServer(s, grpcserver.NewNetPolicyService(a.netStore, a.classifier, a.recorder))
 	}
-	return s, nil
+	adminv1.RegisterClientAdminServiceServer(s, grpcserver.NewClientAdminService(a.clientStore, a.recorder, a.server.InvalidateDiscoveryCache, a.server.InvalidateClientCache))
+	adminv1.RegisterUserAdminServiceServer(s, grpcserver.NewUserAdminService(a.userProvider, a.sessionMgr, a.recorder))
+	adminv1.RegisterTokenAdminServiceServer(s, grpcserver.NewTokenAdminService(grpcserver.TokenAdminConfig{
+		Sessions:            a.sessionMgr,
+		TempStore:           a.tempStore,
+		Issuers:             a.tokenIssuers,
+		RevokeAcrossIssuers: a.server.RevokeAcrossIssuers,
+		Recorder:            a.recorder,
+	}))
+	adminv1.RegisterPermissionAdminServiceServer(s, grpcserver.NewPermissionAdminService(
+		a.provider, a.recorder,
+		func(_ context.Context, id string) { a.server.InvalidateAuthzPolicyBundleCache(id) }))
+	if a.snapshotPipeline != nil {
+		adminv1.RegisterSnapshotAdminServiceServer(s, grpcserver.NewSnapshotAdminService(
+			a.snapshotPipeline, a.snapshotStorage, a.snapshotter, a.snapshotRestorer, a.recorder))
+	}
+	if a.releaseStore != nil {
+		adminv1.RegisterReleaseAdminServiceServer(s, grpcserver.NewReleaseAdminService(
+			a.releaseRegistry, a.releaseStore, a.recorder))
+	}
+	if a.tenantStore != nil {
+		adminv1.RegisterTenantAdminServiceServer(s, grpcserver.NewTenantAdminService(
+			a.tenantStore, a.recorder, a.server.InvalidateTenantSuspensionCache,
+			a.server.InvalidateTenantResidencyCache,
+			func(ctx context.Context, id string) { _, _ = a.server.RevokeTenantRefreshTokens(ctx, id) }))
+	}
 }
 
 // buildHTTPHandler composes the SSO Server's runtime handler with the
