@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"strings"
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
@@ -17,6 +19,7 @@ import (
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/interfaces/sso"
 )
 
@@ -121,10 +124,24 @@ func (b *appBuilder) wireGeoRegionRisk() error {
 	}
 	if geoProvider != nil {
 		b.opts = append(b.opts, sso.WithGeoProvider(geoProvider))
-		if cfg.Geo.LookupTimeout > 0 {
-			b.opts = append(b.opts, sso.WithGeoMiddlewareOptions(sso.GeoMiddlewareOptions{
-				Timeout: cfg.Geo.LookupTimeout,
-			}))
+		geoOpts := sso.GeoMiddlewareOptions{Timeout: cfg.Geo.LookupTimeout}
+		trustedProxiesConfigured := len(cfg.Security.TrustedProxies.CIDRs) > 0
+		if trustedProxiesConfigured {
+			// TrustedProxiesConfig's doc comment promises the validated
+			// real client IP feeds "rate-limiting AND geo enrichment" —
+			// without this, geo (and any RiskConfig.CountryDenyList rule
+			// that reads RiskRequest.Geo) falls back to
+			// geo.DefaultIPExtractor, which trusts the raw, leftmost
+			// X-Forwarded-For hop verbatim. That lets any caller — even
+			// one that legitimately traverses the configured trusted
+			// proxy — steer the resolved country by prepending an
+			// arbitrary forged hop, regardless of trusted_proxies being
+			// configured. Route geo through the same TrustedProxies-
+			// validated IP the rate limiter already uses.
+			geoOpts.IPExtractor = trustedProxyIPExtractor
+		}
+		if cfg.Geo.LookupTimeout > 0 || trustedProxiesConfigured {
+			b.opts = append(b.opts, sso.WithGeoMiddlewareOptions(geoOpts))
 		}
 	}
 
@@ -142,6 +159,16 @@ func (b *appBuilder) wireGeoRegionRisk() error {
 		b.opts = append(b.opts, sso.WithRiskScorer(riskScorer))
 	}
 	return nil
+}
+
+// trustedProxyIPExtractor resolves the geo (and, transitively, risk-scorer)
+// client IP from the TrustedProxies-validated address instead of trusting
+// forwarded headers directly. middleware.RealClientIP degrades to
+// r.RemoteAddr — never a raw, attacker-supplied X-Forwarded-For hop — when
+// TrustedProxies middleware didn't run, so this is never less safe than
+// geo.DefaultIPExtractor even on a request that bypasses the chain.
+func trustedProxyIPExtractor(r *http.Request) net.IP {
+	return net.ParseIP(middleware.RealClientIP(r))
 }
 
 // wireRegion wires the serving-region resolver + residency enforcement.

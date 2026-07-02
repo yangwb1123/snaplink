@@ -23,6 +23,7 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 | Key | Effect |
 |---|---|
 | `security.mtls.backend` | `tls`\|`header`; `header` for reverse-proxy edges (`X-SSL-Client-Cert`); edge MUST strip from untrusted traffic |
+| `security.trusted_proxies.{cidrs,hops}` | CIDR allowlist for XFF-aware real-IP extraction; gates rate-limit IP keying AND geo/risk-scorer IP resolution (`WithGeoMiddlewareOptions.IPExtractor` — falls back to `X-Forwarded-For`'s raw leftmost hop when unset) |
 | `spiffe.{enabled,trust_domain,audience,jwks_file,max_clock_skew}` | Enabled requires ALL of `trust_domain`+`audience`+`jwks_file`; cmd fails loud on missing |
 
 ## Signing Keys
