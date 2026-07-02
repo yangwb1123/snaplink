@@ -17,7 +17,6 @@ import (
 // a seeded DB so the JSON encoder path (not just the table renderer) is
 // exercised end-to-end through the open + Status + render pipeline.
 func TestRunStatus_JSONOutput(t *testing.T) {
-	t.Parallel()
 	out := captureStdout(t, func() {
 		if err := runStatus([]string{"--dsn", seedDB(t), "--json"}); err != nil {
 			t.Fatalf("runStatus --json: %v", err)
@@ -32,7 +31,6 @@ func TestRunStatus_JSONOutput(t *testing.T) {
 // end (open + Status + table render), confirming the seeded namespace
 // surfaces in the header-prefixed rows.
 func TestRunStatus_TableOutput(t *testing.T) {
-	t.Parallel()
 	out := captureStdout(t, func() {
 		if err := runStatus([]string{"--dsn", seedDB(t)}); err != nil {
 			t.Fatalf("runStatus table: %v", err)
@@ -46,7 +44,6 @@ func TestRunStatus_TableOutput(t *testing.T) {
 // TestRunStatus_BadFlag — an unknown flag makes the flag set's Parse
 // fail, which runStatus surfaces as an error rather than panicking.
 func TestRunStatus_BadFlag(t *testing.T) {
-	t.Parallel()
 	if err := runStatus([]string{"--not-a-flag"}); err == nil {
 		t.Fatal("expected parse error for unknown flag")
 	}
@@ -57,7 +54,6 @@ func TestRunStatus_BadFlag(t *testing.T) {
 // returns cleanly for an empty DB; here we instead assert the empty-DB
 // path renders the "no migrated namespaces" line.
 func TestRunStatus_EmptyDB(t *testing.T) {
-	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "empty.db")
 	out := captureStdout(t, func() {
 		if err := runStatus([]string{"--dsn", dsn}); err != nil {
@@ -74,7 +70,6 @@ func TestRunStatus_EmptyDB(t *testing.T) {
 // the expected version/name/applied_at columns makes the per-table
 // SELECT fail, so Status returns an error the CLI surfaces.
 func TestRunStatus_StatusReadError(t *testing.T) {
-	t.Parallel()
 	dsn := "file:" + filepath.Join(t.TempDir(), "broken.db")
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -96,7 +91,6 @@ func TestRunStatus_StatusReadError(t *testing.T) {
 // TestUsage_PrintsBanner — the usage banner names the program + the
 // status subcommand so a bare invocation is actionable.
 func TestUsage_PrintsBanner(t *testing.T) {
-	t.Parallel()
 	out := captureStderr(t, usage)
 	for _, want := range []string{progName, "status", "--dsn"} {
 		if !strings.Contains(out, want) {
@@ -108,7 +102,6 @@ func TestUsage_PrintsBanner(t *testing.T) {
 // TestStatus_OnSeededDB sanity-checks the migrate.Status read the CLI
 // relies on: a DB seeded with one namespace reports version 1 for it.
 func TestStatus_OnSeededDB(t *testing.T) {
-	t.Parallel()
 	dsn := seedDB(t)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -127,7 +120,6 @@ func TestStatus_OnSeededDB(t *testing.T) {
 // TestRun_HelpReturns drives the help branch of Run, which returns exit
 // code 0 — covering the arg-dispatch switch + usage call.
 func TestRun_HelpReturns(t *testing.T) {
-	t.Parallel()
 	var code int
 	_ = captureStderr(t, func() { code = Run([]string{"--help"}) })
 	if code != 0 {
@@ -139,7 +131,6 @@ func TestRun_HelpReturns(t *testing.T) {
 // (dispatch → runStatus → exit code 0). Uses a seeded DB so runStatus
 // succeeds and Run returns 0.
 func TestRun_StatusSuccess(t *testing.T) {
-	t.Parallel()
 	dsn := seedDB(t)
 	var code int
 	_ = captureStdout(t, func() { code = Run([]string{"status", "--dsn", dsn}) })
@@ -150,7 +141,6 @@ func TestRun_StatusSuccess(t *testing.T) {
 
 // TestRun_NoArgs — a bare invocation prints usage and returns exit code 2.
 func TestRun_NoArgs(t *testing.T) {
-	t.Parallel()
 	var code int
 	_ = captureStderr(t, func() { code = Run(nil) })
 	if code != 2 {
@@ -161,7 +151,6 @@ func TestRun_NoArgs(t *testing.T) {
 // TestRun_UnknownSubcommand — an unrecognized subcommand prints usage and
 // returns exit code 2.
 func TestRun_UnknownSubcommand(t *testing.T) {
-	t.Parallel()
 	var code int
 	_ = captureStderr(t, func() { code = Run([]string{"bogus"}) })
 	if code != 2 {
@@ -172,7 +161,6 @@ func TestRun_UnknownSubcommand(t *testing.T) {
 // TestRun_StatusError — a status invocation whose runStatus fails (missing
 // --dsn) returns exit code 1.
 func TestRun_StatusError(t *testing.T) {
-	t.Parallel()
 	var code int
 	_ = captureStderr(t, func() { code = Run([]string{"status"}) })
 	if code != 1 {

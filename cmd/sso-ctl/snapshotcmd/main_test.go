@@ -20,7 +20,6 @@ import (
 // destination get a clear "no snapshots" line, not a silent
 // success.
 func TestRunList_EmptyDir(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 	out := captureStdout(t, func() {
 		if err := runList([]string{"--dir", dir}); err != nil {
@@ -36,7 +35,6 @@ func TestRunList_EmptyDir(t *testing.T) {
 // should surface the id and basic envelope metadata in a single
 // row.
 func TestRunList_WithSnapshots(t *testing.T) {
-	t.Parallel()
 	dir, id := writeSampleSnapshot(t, "")
 	out := captureStdout(t, func() {
 		if err := runList([]string{"--dir", dir}); err != nil {
@@ -51,7 +49,6 @@ func TestRunList_WithSnapshots(t *testing.T) {
 // TestRunInspect_PrintsEnvelopeMetadata — inspect prints JSON
 // header projection; verify a representative field round-trips.
 func TestRunInspect_PrintsEnvelopeMetadata(t *testing.T) {
-	t.Parallel()
 	dir, id := writeSampleSnapshot(t, "")
 	out := captureStdout(t, func() {
 		if err := runInspect([]string{"--dir", dir, "--id", id}); err != nil {
@@ -70,7 +67,6 @@ func TestRunInspect_PrintsEnvelopeMetadata(t *testing.T) {
 // snapshot opens cleanly with the no-op sealer, prints a success
 // line + summary.
 func TestRunVerify_UnencryptedSucceeds(t *testing.T) {
-	t.Parallel()
 	dir, id := writeSampleSnapshot(t, "")
 	out := captureStdout(t, func() {
 		if err := runVerify([]string{"--dir", dir, "--id", id}); err != nil {
@@ -86,7 +82,6 @@ func TestRunVerify_UnencryptedSucceeds(t *testing.T) {
 // passphrase encryption then trying to verify without one should
 // fail clearly, not silently no-op.
 func TestRunVerify_EncryptedRequiresPassphrase(t *testing.T) {
-	t.Parallel()
 	dir, id := writeSampleSnapshot(t, "hunter2")
 	err := runVerify([]string{"--dir", dir, "--id", id})
 	if err == nil {
@@ -101,7 +96,6 @@ func TestRunVerify_EncryptedRequiresPassphrase(t *testing.T) {
 // through the argon2id+chacha20poly1305 sealer with the matching
 // passphrase.
 func TestRunVerify_EncryptedWithPassphraseSucceeds(t *testing.T) {
-	t.Parallel()
 	dir, id := writeSampleSnapshot(t, "hunter2")
 	out := captureStdout(t, func() {
 		if err := runVerify([]string{"--dir", dir, "--id", id, "--passphrase", "hunter2"}); err != nil {
@@ -116,7 +110,6 @@ func TestRunVerify_EncryptedWithPassphraseSucceeds(t *testing.T) {
 // TestRunVerify_PassphraseFileSurfacesIOError — typo'd
 // --passphrase-file path → loud error.
 func TestRunVerify_PassphraseFileSurfacesIOError(t *testing.T) {
-	t.Parallel()
 	dir, id := writeSampleSnapshot(t, "hunter2")
 	err := runVerify([]string{"--dir", dir, "--id", id, "--passphrase-file", "/no/such/file"})
 	if err == nil {
@@ -128,7 +121,6 @@ func TestRunVerify_PassphraseFileSurfacesIOError(t *testing.T) {
 // supply both inline + file get a clear rejection instead of
 // silent precedence behavior they have to discover.
 func TestRunVerify_MutuallyExclusivePassphraseFlags(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 	err := runVerify([]string{"--dir", dir, "--id", "any", "--passphrase", "x", "--passphrase-file", "/tmp/y"})
 	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
