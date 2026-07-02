@@ -3,6 +3,7 @@ package sso
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -379,6 +380,30 @@ func (s *Server) handleAuditFacets(ctx HandlerContext)    { audit.HandleFacets(s
 // JWKS handler (delegator — body in oidc/handlers.go).
 func (s *Server) handleJWKS(ctx HandlerContext) { oidc.HandleJWKS(s, ctx) }
 
+// parseUsageWindow parses the period/start query parameters shared by the
+// usage/metering admin endpoints. On malformed input it writes the 400
+// itself and returns ok=false.
+func (s *Server) parseUsageWindow(ctx HandlerContext) (metering.UsagePeriod, time.Time, bool) {
+	period := metering.UsagePeriod(ctx.Query("period"))
+	if period == "" {
+		period = metering.PeriodDay
+	}
+	if period != metering.PeriodDay && period != metering.PeriodMonth {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return "", time.Time{}, false
+	}
+	startStr := ctx.Query("start")
+	if startStr == "" {
+		return period, time.Now().UTC(), true
+	}
+	start, err := time.ParseInLocation("2006-01-02", startStr, time.UTC)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		return "", time.Time{}, false
+	}
+	return period, start, true
+}
+
 // handleTenantUsage serves GET /api/v1/admin/tenants/:id/usage.
 // Admin-gated (admin:read) by the /api/v1/admin/ prefix.
 //
@@ -393,26 +418,9 @@ func (s *Server) handleTenantUsage(ctx HandlerContext) {
 		return
 	}
 
-	period := metering.UsagePeriod(ctx.Request().URL.Query().Get("period"))
-	if period == "" {
-		period = metering.PeriodDay
-	}
-	if period != metering.PeriodDay && period != metering.PeriodMonth {
-		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+	period, start, ok := s.parseUsageWindow(ctx)
+	if !ok {
 		return
-	}
-
-	startStr := ctx.Request().URL.Query().Get("start")
-	var start time.Time
-	if startStr == "" {
-		start = time.Now().UTC()
-	} else {
-		var err error
-		start, err = time.ParseInLocation("2006-01-02", startStr, time.UTC)
-		if err != nil {
-			ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
-			return
-		}
 	}
 
 	u, err := s.usageAggregator.Usage(ctx.Request().Context(), tenantID, period, start)
@@ -422,6 +430,44 @@ func (s *Server) handleTenantUsage(ctx HandlerContext) {
 		return
 	}
 	ctx.JSON(http.StatusOK, u)
+}
+
+// handleAdminTopTenants serves GET /api/v1/admin/usage/top-tenants.
+// Admin-gated (admin:read) by the /api/v1/admin/ prefix.
+//
+// Query parameters:
+//
+//	period=day|month   (default: day)
+//	start=YYYY-MM-DD   (default: today UTC)
+//	limit=N            (default: 10; implementations clamp the maximum)
+func (s *Server) handleAdminTopTenants(ctx HandlerContext) {
+	period, start, ok := s.parseUsageWindow(ctx)
+	if !ok {
+		return
+	}
+	limit := 10
+	if v := ctx.Query("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+			return
+		}
+		limit = n
+	}
+	tops, err := s.usageAggregator.TopTenants(ctx.Request().Context(), period, start, limit)
+	if err != nil {
+		s.logger.Error("top-tenants usage aggregation failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		return
+	}
+	if tops == nil {
+		tops = []*metering.TenantUsage{}
+	}
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyStatus: StatusOK,
+		"tenants": tops,
+		"total":   len(tops),
+	})
 }
 
 // meSubjectOrChallenge extracts the bearer subject for /sessions/me and

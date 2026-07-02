@@ -3902,6 +3902,57 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/admin/usage/top-tenants:
+    get:
+      tags: [admin]
+      summary: Top-tenants usage leaderboard.
+      description: |
+        Returns the N tenants with the most successful logins over a period,
+        with the same aggregated counters as the per-tenant usage report
+        (logins, tokens issued, active users, MFA challenges), computed from
+        the audit_events table. Admin-gated (admin:read) via the
+        /api/v1/admin/ prefix. Mounted only when a usage aggregator is wired
+        (tenant.usage_metering).
+      operationId: getAdminTopTenants
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: period
+          in: query
+          required: false
+          schema: { type: string, enum: [day, month], default: day }
+        - name: start
+          in: query
+          required: false
+          description: "Start date YYYY-MM-DD (default: today UTC)."
+          schema: { type: string, format: date }
+        - name: limit
+          in: query
+          required: false
+          description: "Number of tenants to return."
+          schema: { type: integer, minimum: 1, default: 10 }
+      responses:
+        "200":
+          description: Top-tenants usage leaderboard.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  tenants:
+                    type: array
+                    items: { type: object }
+                  total: { type: integer }
+        "400":
+          description: Malformed period/start/limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/v1/admin/tenants/{id}:set-status:
     parameters:
       - name: id

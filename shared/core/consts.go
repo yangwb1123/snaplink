@@ -173,6 +173,18 @@ const (
 	// documented path AND outside the AdminMiddleware /api/v1/admin/ gate.
 	PathTenantUsage = "/admin/tenants/:id/usage"
 
+	// PathAdminTopTenants is the read-only admin top-tenants usage leaderboard
+	// (GET /api/v1/admin/usage/top-tenants?period=day|month&start=...&limit=N).
+	// Returns the N tenants with the most successful logins in the period,
+	// with the same aggregated counters as PathTenantUsage. Gated by
+	// AdminMiddleware (admin:read). Only mounted when
+	// WithTenantUsageAggregator is wired.
+	//
+	// Group-relative: mounted on the /api/v1 router group — see the
+	// PathTenantUsage comment for the double-prefix regression a full
+	// "/api/v1/..." value causes.
+	PathAdminTopTenants = "/admin/usage/top-tenants"
+
 	// Admin/helpdesk management of a user's self-service state. All
 	// group-relative (mounted on /api/v1, gated by AdminMiddleware via the
 	// /api/v1/admin/ prefix: GET = admin:read, DELETE = admin:write).

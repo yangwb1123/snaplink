@@ -29,6 +29,7 @@ func (s *Server) mountAdminAPIObservability(api Router) {
 	// Not mounted without the aggregator — byte-identical to a build without it.
 	if s.usageAggregator != nil {
 		api.GET(PathTenantUsage, s.handleTenantUsage)
+		api.GET(PathAdminTopTenants, s.handleAdminTopTenants)
 	}
 	// SQLite backup trigger (opt-in WithBackupSource). Requires at least one
 	// registered backup source; byte-identical when none are wired.
