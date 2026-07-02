@@ -96,6 +96,22 @@ equivalent trust level to a direct DB write. The verify endpoint uses the
 stdlib DNS resolver by default; an SDK embedder can inject a custom one via
 `sso.WithDomainVerificationResolver` (e.g. DNS-over-HTTPS).
 
+### B2B connection health probing
+
+| Key | Effect |
+|---|---|
+| `connections.probe.timeout` | Bounds a single admin-triggered reachability probe's (`POST /api/v1/admin/connections/:id/probe`) HTTP round-trip. `<=0` (default) uses the SDK default, `connections.DefaultProbeTimeout` (10s). |
+
+The probe fetches OIDC discovery (`{oidc_issuer}/.well-known/openid-configuration`)
+for `type: oidc` connections or the SAML metadata document (`saml_metadata_url`)
+for `type: saml`, and persists the outcome (`unknown` \| `healthy` \| `degraded`
+\| `unreachable`) plus `last_checked_at` / `last_success_at` / a bounded-length
+`last_error`, readable via `GET /api/v1/admin/connections/:id/health`. An SDK
+embedder can inject a custom prober (e.g. for a protocol this SDK doesn't
+natively probe) via `sso.WithConnectionProber`. Each probe increments
+`sso_connection_health_probes_total{type,outcome}` — see
+[observability.md](observability.md).
+
 ## Redis (shared hot-store backend)
 
 One client (single/sentinel/cluster) fanned out to every `backend: redis` store.

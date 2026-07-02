@@ -26,23 +26,29 @@ const (
 	EventAdminConnectionUpserted         EventType = "admin_connection_upserted"
 	EventAdminConnectionDeleted          EventType = "admin_connection_deleted"
 	EventAdminConnectionDomainVerified   EventType = "admin_connection_domain_verified"
-	EventAdminTenantMemberAdded          EventType = "admin_tenant_member_added"
-	EventAdminTenantMemberRemoved        EventType = "admin_tenant_member_removed"
-	EventAdminRoleAdded                  EventType = "admin_role_added"
-	EventAdminRoleUpdated                EventType = "admin_role_updated"
-	EventAdminRoleRemoved                EventType = "admin_role_removed"
-	EventAdminRoleAssigned               EventType = "admin_role_assigned"
-	EventAdminRoleUnassigned             EventType = "admin_role_unassigned"
-	EventAdminMenusUpdated               EventType = "admin_menus_updated"
-	EventAdminTenantCreated              EventType = "admin_tenant_created"
-	EventAdminTenantUpdated              EventType = "admin_tenant_updated"
-	EventAdminTenantDeleted              EventType = "admin_tenant_deleted"
-	EventAdminTenantStatusChanged        EventType = "admin_tenant_status_changed"
-	EventAdminDomainCreated              EventType = "admin_domain_created"
-	EventAdminDomainUpdated              EventType = "admin_domain_updated"
-	EventAdminDomainDeleted              EventType = "admin_domain_deleted"
-	EventAdminSubjectExported            EventType = "admin_subject_exported"
-	EventAdminSubjectErased              EventType = "admin_subject_erased"
+	// EventAdminConnectionProbed is emitted by the admin-triggered reachability
+	// probe (POST .../connections/:id/probe) on EVERY attempt, success or
+	// failure — the outcome rides in the health_status meta field, not the
+	// event type, so the SIEM/report-side vocabulary stays fixed regardless of
+	// how many health states this feature grows.
+	EventAdminConnectionProbed    EventType = "admin_connection_probed"
+	EventAdminTenantMemberAdded   EventType = "admin_tenant_member_added"
+	EventAdminTenantMemberRemoved EventType = "admin_tenant_member_removed"
+	EventAdminRoleAdded           EventType = "admin_role_added"
+	EventAdminRoleUpdated         EventType = "admin_role_updated"
+	EventAdminRoleRemoved         EventType = "admin_role_removed"
+	EventAdminRoleAssigned        EventType = "admin_role_assigned"
+	EventAdminRoleUnassigned      EventType = "admin_role_unassigned"
+	EventAdminMenusUpdated        EventType = "admin_menus_updated"
+	EventAdminTenantCreated       EventType = "admin_tenant_created"
+	EventAdminTenantUpdated       EventType = "admin_tenant_updated"
+	EventAdminTenantDeleted       EventType = "admin_tenant_deleted"
+	EventAdminTenantStatusChanged EventType = "admin_tenant_status_changed"
+	EventAdminDomainCreated       EventType = "admin_domain_created"
+	EventAdminDomainUpdated       EventType = "admin_domain_updated"
+	EventAdminDomainDeleted       EventType = "admin_domain_deleted"
+	EventAdminSubjectExported     EventType = "admin_subject_exported"
+	EventAdminSubjectErased       EventType = "admin_subject_erased"
 	// EventAdminSigningKeyRotated is emitted by the KeyAdmin RotateSigningKey
 	// RPC for an operator-initiated (on-demand) rotation. The scheduled loop
 	// keeps EventSigningKeyRotated; this admin-namespaced variant carries the

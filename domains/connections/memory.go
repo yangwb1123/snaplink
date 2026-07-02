@@ -17,6 +17,7 @@ type MemoryStore struct {
 	byID        map[string]*Connection
 	domainIndex map[string]string                         // lowercase domain -> verified routing owner
 	claims      map[string]map[string]*DomainVerification // connID -> lowercase domain -> claim
+	health      map[string]*ConnectionHealth              // connID -> last recorded probe outcome
 }
 
 var _ Store = (*MemoryStore)(nil)
@@ -30,6 +31,7 @@ func NewMemoryStore(opts ...StoreOption) *MemoryStore {
 		byID:        make(map[string]*Connection),
 		domainIndex: make(map[string]string),
 		claims:      make(map[string]map[string]*DomainVerification),
+		health:      make(map[string]*ConnectionHealth),
 	}
 }
 
@@ -91,6 +93,7 @@ func (m *MemoryStore) Delete(_ context.Context, id string) error {
 	defer m.mu.Unlock()
 	delete(m.byID, id)
 	delete(m.claims, id)
+	delete(m.health, id)
 	for d, cid := range m.domainIndex {
 		if cid == id {
 			delete(m.domainIndex, d)

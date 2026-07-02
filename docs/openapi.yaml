@@ -5051,6 +5051,76 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
 
+  /api/v1/admin/connections/{id}/health:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: Read a connection's last recorded reachability probe outcome.
+      description: |
+        Returns the LAST recorded probe result for this connection — it never
+        triggers a fresh check itself (see the sibling `/probe` endpoint for
+        that). admin:read. A connection that has never been probed reads back
+        `status: unknown` with no timestamps. 404 if the connection does not
+        exist. Mounted only when a connection store is wired.
+      operationId: adminGetConnectionHealth
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The connection's last recorded health.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConnectionHealth" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such connection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/admin/connections/{id}/probe:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Synchronously test a connection's upstream reachability.
+      description: |
+        Performs a lightweight reachability/handshake check against the
+        connection's configured upstream — an OIDC discovery fetch
+        (`{oidc_issuer}/.well-known/openid-configuration`) for `type: oidc`,
+        or a metadata fetch (`saml_metadata_url`) for `type: saml` — and
+        persists the outcome, superseding any prior recorded health.
+        admin:write. Always returns 200 with the recorded result, even when
+        the outcome is `degraded` or `unreachable` (the CHECK itself
+        succeeded; the result may be bad news — mirrors the domain-verify
+        endpoint's "not yet verified is a state, not an error" contract).
+        404 only when the connection does not exist. Emits
+        `admin_connection_probed` and increments
+        `sso_connection_health_probes_total{type,outcome}`. Mounted only when
+        a connection store is wired.
+      operationId: adminProbeConnection
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The freshly-recorded probe outcome.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConnectionHealth" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such connection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
   /api/v1/admin/tenants/{id}/members:
     parameters:
       - name: id
@@ -8486,6 +8556,39 @@ components:
           description: Challenge value to publish as the TXT record's content.
         created_at: { type: string, format: date-time }
         verified_at: { type: string, format: date-time }
+
+    ConnectionHealth:
+      type: object
+      description: |
+        The last recorded outcome of an admin-triggered reachability probe
+        against a connection's configured upstream IdP.
+      required: [connection_id, status]
+      properties:
+        connection_id: { type: string }
+        status:
+          type: string
+          enum: [unknown, healthy, degraded, unreachable]
+          description: |
+            unknown: never probed. healthy: the upstream returned a
+            well-formed discovery/metadata document. degraded: the upstream
+            responded, but with an error status or malformed document.
+            unreachable: the probe could not complete the handshake at all
+            (DNS failure, connection refused, TLS error, timeout), or the
+            connection has no probeable upstream configured.
+        last_checked_at:
+          type: string
+          format: date-time
+          description: When the last probe ran, regardless of outcome.
+        last_success_at:
+          type: string
+          format: date-time
+          description: When the connection was last observed healthy. Omitted if never healthy.
+        last_error:
+          type: string
+          description: |
+            Bounded-length, secret-free detail from the last probe (transport
+            or status-code text only — never upstream response body).
+            Omitted when status is healthy.
 
     ErasureReport:
       type: object

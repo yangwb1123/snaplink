@@ -109,6 +109,9 @@ func (b *appBuilder) wireConnectionsAndCache() error {
 			return fmt.Errorf("schema check connections: %w", err)
 		}
 		b.opts = append(b.opts, sso.WithConnectionStore(connectionStore))
+		if cfg.Connections.Probe.Timeout > 0 {
+			b.opts = append(b.opts, sso.WithConnectionProbeTimeout(cfg.Connections.Probe.Timeout))
+		}
 		// SQLite-backed connections store implements Ping → /readyz; memory
 		// silently no-ops (serverbuildsign.AppendReadyCheck only registers satisfying types).
 		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-connections", connectionStore)

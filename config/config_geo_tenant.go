@@ -140,6 +140,16 @@ type ConnectionsConfig struct {
 	SQLite             ConnectionsSQLiteConfig  `yaml:"sqlite"`
 	Connections        []ConnectionSeedConfig   `yaml:"connections"`
 	DomainVerification DomainVerificationConfig `yaml:"domain_verification"`
+	Probe              ConnectionsProbeConfig   `yaml:"probe"`
+}
+
+// ConnectionsProbeConfig bounds the admin-triggered reachability probe
+// (POST /api/v1/admin/connections/:id/probe — OIDC discovery / SAML metadata
+// fetch against the connection's configured upstream).
+type ConnectionsProbeConfig struct {
+	// Timeout bounds a single probe's HTTP round-trip. <=0 uses
+	// connections.DefaultProbeTimeout (10s).
+	Timeout time.Duration `yaml:"timeout"`
 }
 
 // DomainVerificationConfig gates DNS-TXT email-domain ownership proof before a

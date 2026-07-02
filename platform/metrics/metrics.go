@@ -288,4 +288,17 @@ type Metrics struct {
 	SignupCompletedTotal       *prometheus.CounterVec // labels: outcome
 	PasswordResetRequestedTotal  *prometheus.CounterVec // labels: outcome
 	PasswordResetCompletedTotal  *prometheus.CounterVec // labels: outcome
+
+	// ConnectionHealthProbesTotal counts admin-triggered B2B enterprise-
+	// connection reachability probes (POST .../connections/:id/probe), by
+	// type ∈ {oidc, saml} (bounded, Connection.Type) and outcome ∈ {healthy,
+	// degraded, unreachable} (bounded — HealthUnknown is the pre-probe
+	// default, never an actual probe OUTCOME). No connection_id label: a B2B
+	// deployment's connection count is admin-controlled but grows unbounded
+	// over the deployment's lifetime, so the alert signal is a RISING
+	// unreachable rate (SSOConnectionUnreachable in ops/deploy/grafana/
+	// alerts.yaml) — GET /admin/connections/:id/health for which connection.
+	// Zero traffic until an admin runs at least one probe (no background
+	// poller in this slice).
+	ConnectionHealthProbesTotal *prometheus.CounterVec // labels: type, outcome
 }

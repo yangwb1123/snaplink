@@ -296,6 +296,15 @@ const (
 	PathAdminConnectionDomains      = "/admin/connections/:id/domains"
 	PathAdminConnectionDomainVerify = "/admin/connections/:id/domains/:domain/verify"
 
+	// PathAdminConnectionHealth returns a connection's last recorded probe
+	// outcome — status/last-success/last-error (admin:read). Never triggers a
+	// fresh probe itself. PathAdminConnectionProbe synchronously triggers ONE
+	// (OIDC discovery fetch or SAML metadata fetch, per Connection.Type) and
+	// persists the result (admin:write). Mounted only when a connection store
+	// is wired.
+	PathAdminConnectionHealth = "/admin/connections/:id/health"
+	PathAdminConnectionProbe  = "/admin/connections/:id/probe"
+
 	// PathAdminTenantMembers / PathAdminTenantMemberByID manage a tenant's org
 	// roster (B2B membership, distinct from SCIM app roles). GET lists the roster
 	// (admin:read); PUT upserts a member's role + DELETE removes (admin:write).

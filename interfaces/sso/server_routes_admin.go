@@ -99,6 +99,8 @@ func (s *Server) mountAdminB2B(api Router) {
 		api.DELETE(PathAdminConnectionByID, s.handleAdminDeleteConnection)
 		api.GET(PathAdminConnectionDomains, s.handleAdminListConnectionDomains)
 		api.POST(PathAdminConnectionDomainVerify, s.handleAdminVerifyConnectionDomain)
+		api.GET(PathAdminConnectionHealth, s.handleAdminGetConnectionHealth)
+		api.POST(PathAdminConnectionProbe, s.handleAdminProbeConnection)
 	}
 	if s.tenantUserStore != nil {
 		api.GET(PathAdminTenantMembers, s.handleAdminListTenantMembers)

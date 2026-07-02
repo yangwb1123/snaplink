@@ -63,6 +63,10 @@ const (
 	NameSignupCompletedTotal       = "sso_signup_completed_total"
 	NamePasswordResetRequestedTotal  = "sso_password_reset_requested_total"
 	NamePasswordResetCompletedTotal  = "sso_password_reset_completed_total"
+
+	// NameConnectionHealthProbesTotal counts admin-triggered B2B enterprise-
+	// connection reachability probes. See platform/metrics.go's field doc.
+	NameConnectionHealthProbesTotal = "sso_connection_health_probes_total"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by
@@ -87,6 +91,10 @@ const (
 	LabelReason      = "reason"    // bounded per metric; see AdoptionReason* below
 	LabelTenant      = "tenant"    // bounded by an operator allowlist + the "other" bucket
 	LabelDirection   = "direction" // bounded: published | adopted
+
+	// LabelConnectionType is the B2B enterprise-connection protocol —
+	// domains/connections.ConnectionType's wire values, bounded to oidc | saml.
+	LabelConnectionType = "type"
 )
 
 // Cross-replica token-revocation propagation directions
