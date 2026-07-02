@@ -13,7 +13,10 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/tracing"
 	"github.com/snaplink/sso/shared/core"
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // Client metadata keys (anti-exfil: the receiver address is read ONLY
@@ -243,6 +246,13 @@ func (t *Transmitter) Record(ctx context.Context, e *audit.Event) error {
 	// receiver, and a fresh read is cheap relative to the outbound POST.
 	// This is the simplest correct design (decision: resolve fresh, no bus).
 	clients := t.resolveClients(ctx, mapped)
+	// Detach ONCE for the whole fan-out: every dispatched goroutine gets its
+	// own span parented on THIS Record call's live span (if any), but none
+	// of them inherit ctx's cancellation — Record's caller (the audit
+	// pipeline) routinely returns before an outbound POST completes, and a
+	// cancelled ctx must not abort a fan-out this function already
+	// committed to (mirrors AsyncSink.Record's identical reasoning).
+	dctx := tracing.DetachedContext(ctx)
 	for _, c := range clients {
 		endpoint := receiverEndpoint(c)
 		if endpoint == "" {
@@ -259,7 +269,7 @@ func (t *Transmitter) Record(ctx context.Context, e *audit.Event) error {
 			Events:   mapped.events,
 		}
 		t.wg.Add(1)
-		go t.deliver(c.ID, endpoint, auth, req)
+		go t.deliver(dctx, c.ID, endpoint, auth, req)
 	}
 	return nil
 }
@@ -300,13 +310,24 @@ func (t *Transmitter) resolveClients(ctx context.Context, m mappedEvent) []*core
 // receiver can neither block the triggering operation nor crash the
 // process. Best-effort by contract: every failure is counted + audited,
 // never surfaced (there is no caller to return to).
-func (t *Transmitter) deliver(clientID, endpoint, auth string, req buildSETRequest) {
+//
+// The whole retry chain (see attemptDelivery / waitBackoff) is ONE span:
+// each re-attempt is a span event, not a child span, so a flaky receiver
+// doesn't fan out an unbounded number of spans per SET.
+func (t *Transmitter) deliver(ctx context.Context, clientID, endpoint, auth string, req buildSETRequest) {
 	defer t.wg.Done()
+
+	ctx, span := tracing.StartSpan(ctx, "caep.transmitter.deliver")
+	defer span.End()
+	span.SetAttributes(attribute.String("caep.client_id", clientID))
+
 	// recover() so a panic (e.g. in a custom http.Client transport) is
 	// contained as a delivery failure instead of taking down the goroutine.
 	defer func() {
 		if r := recover(); r != nil {
-			t.fail(clientID, endpoint, fmt.Sprintf("panic: %v", r))
+			reason := fmt.Sprintf("panic: %v", r)
+			tracing.SetError(span, errors.New(reason))
+			t.fail(clientID, endpoint, reason)
 		}
 	}()
 	var lastErr error
@@ -318,12 +339,14 @@ func (t *Transmitter) deliver(clientID, endpoint, auth string, req buildSETReque
 			if t.metric != nil {
 				t.metric(OutcomeRetried)
 			}
+			span.AddEvent("retry", oteltrace.WithAttributes(attribute.Int("caep.attempt", attempt+1)))
 		}
-		err := t.attemptDelivery(endpoint, auth, req)
+		err := t.attemptDelivery(ctx, endpoint, auth, req)
 		if err == nil {
 			if t.metric != nil {
 				t.metric(OutcomeSuccess)
 			}
+			span.SetAttributes(attribute.String("outcome", OutcomeSuccess), attribute.Int("caep.attempts", attempt+1))
 			return
 		}
 		lastErr = err
@@ -331,6 +354,8 @@ func (t *Transmitter) deliver(clientID, endpoint, auth string, req buildSETReque
 			break
 		}
 	}
+	span.SetAttributes(attribute.String("outcome", OutcomeFailed))
+	tracing.SetError(span, lastErr)
 	t.fail(clientID, endpoint, lastErr.Error())
 }
 

@@ -66,3 +66,22 @@ Middleware stack (probes registered OUTSIDE):
 /metrics, /livez, /readyz                         ← outside ratelimit
 tracing → ratelimit → bodyLimit → metrics → CORS → router
 ```
+
+### Async-path spans
+
+`platform/tracing` exposes `StartSpan`/`DetachedContext`/`ParentFromIDs`/`SetError`
+so background code doesn't hand-roll `otel.Tracer(...)` lookups. Four
+background paths that run after their triggering request has already
+returned are instrumented with this seam:
+
+| Span | Package | Parenting |
+|---|---|---|
+| `audit.sink.deliver` / `audit.sink.deliver_batch` | `platform/audit` (`AsyncSink`) | `Event.TraceID`/`SpanID` (ctx itself is `context.Background()` by design — see `AsyncSink.Record`) via `tracing.ParentFromIDs` |
+| `audit.webhook.deliver` | `platform/audit/auditsink` (`WebhookSink`) | whatever span the caller's ctx carries (nests under `audit.sink.deliver` when composed via `AsyncSink`) |
+| `audit.sink.retry` | `platform/audit/auditsink` (`RetryingSink`) | same as above; one span per `Record` call, attempts as an attribute, NOT one span per retry |
+| `caep.transmitter.deliver` | `protocols/caep` (`Transmitter`) | `Record`'s live span via `tracing.DetachedContext` (cancellation is dropped, the span link is not); re-attempts are span events, not child spans |
+| `cluster.bus.publish` / `cluster.bus.subscribe` | `platform/cluster/{memory,etcd}` | `ctx` directly — these run synchronously on the caller's goroutine |
+| `migrate.run` | `platform/migrate` | `ctx` directly; every shipped caller passes `context.Background()` at backend construction, so this is always a fresh root span in practice |
+
+A rootless span here (no parent) is expected, not a bug: it means the
+triggering request already returned before the background work ran.

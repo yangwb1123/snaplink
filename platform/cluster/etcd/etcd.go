@@ -25,8 +25,10 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/platform/cluster"
+	"github.com/snaplink/sso/platform/tracing"
 	mvccpb "go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Defaults applied when a corresponding Config field is zero.
@@ -100,28 +102,48 @@ func NewWithClient(cli *clientv3.Client, cfg Config) *Bus {
 	return &Bus{client: cli, prefix: cfg.Prefix, eventTTL: cfg.EventTTL}
 }
 
-// Publish writes evt to a unique short-lived key under the prefix.
+// Publish writes evt to a unique short-lived key under the prefix. Unlike
+// the memory peer this is a real network round-trip (Grant + Put), so the
+// span it starts is the one genuinely worth timing in a trace backend.
 func (b *Bus) Publish(ctx context.Context, evt cluster.Event) error {
+	ctx, span := tracing.StartSpan(ctx, "cluster.bus.publish")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("cluster.bus.backend", "etcd"),
+		attribute.String("cluster.bus.kind", string(evt.Kind)),
+	)
+
 	body, err := json.Marshal(evt)
 	if err != nil {
-		return fmt.Errorf("cluster/etcd: marshal event: %w", err)
+		err = fmt.Errorf("cluster/etcd: marshal event: %w", err)
+		tracing.SetError(span, err)
+		return err
 	}
 	lease, err := b.client.Grant(ctx, int64(b.eventTTL.Seconds()))
 	if err != nil {
-		return fmt.Errorf("cluster/etcd: grant lease: %w", err)
+		err = fmt.Errorf("cluster/etcd: grant lease: %w", err)
+		tracing.SetError(span, err)
+		return err
 	}
 	key, err := b.eventKey()
 	if err != nil {
+		tracing.SetError(span, err)
 		return err
 	}
 	if _, err := b.client.Put(ctx, key, string(body), clientv3.WithLease(lease.ID)); err != nil {
-		return fmt.Errorf("cluster/etcd: put event: %w", err)
+		err = fmt.Errorf("cluster/etcd: put event: %w", err)
+		tracing.SetError(span, err)
+		return err
 	}
 	return nil
 }
 
 // Subscribe runs a prefix WATCH and emits one Event per published PUT.
 func (b *Bus) Subscribe(ctx context.Context) (<-chan cluster.Event, error) {
+	_, span := tracing.StartSpan(ctx, "cluster.bus.subscribe")
+	defer span.End()
+	span.SetAttributes(attribute.String("cluster.bus.backend", "etcd"))
+
 	out := make(chan cluster.Event, 16)
 	wch := b.client.Watch(ctx, b.prefix, clientv3.WithPrefix())
 	go func() {
