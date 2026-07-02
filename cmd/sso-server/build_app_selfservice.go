@@ -62,9 +62,11 @@ func (b *appBuilder) wireSelfServicePassword() error {
 		return err
 	}
 	// GDPR Art. 15 self-service data export (/me/data-export), reusing the same
-	// exporter stores as the admin compliance route. Opt-in.
+	// exporter stores as the admin compliance route. Opt-in. Extra (consent +
+	// MFA enrollments) is late-bound in finalize() once those stores wire.
 	if cfg.SelfService.DataExport && b.userProvider != nil {
-		b.opts = append(b.opts, selfServiceDataExportOption(b.userProvider, b.sessionMgr))
+		b.dataExporter = newSelfServiceExporter(b.userProvider, b.sessionMgr)
+		b.opts = append(b.opts, sso.WithSelfServiceDataExport(b.dataExporter))
 		logger.Info("self-service data export enabled (/me/data-export)")
 	}
 	return nil

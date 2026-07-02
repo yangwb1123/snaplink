@@ -110,6 +110,11 @@ type appBuilder struct {
 	// finalize can late-bind Consent + MFAEnrollments AFTER their stores wire
 	// (it's constructed in wireDomains, before those stores exist).
 	accountEraser *compliance.Eraser
+	// dataExporter is the self-service /me/data-export exporter, retained so
+	// finalize can late-bind Extra (consent + MFA enrollments) AFTER their
+	// stores wire (it's constructed in wireDomains, before those stores exist)
+	// — same ordering problem as accountEraser above, same fix.
+	dataExporter *compliance.Exporter
 
 	// Region.
 	regionResolver region.Resolver
@@ -159,17 +164,8 @@ func (b *appBuilder) finalize() (*app, error) {
 	if err := b.wireFinalOptions(); err != nil {
 		return nil, err
 	}
-	// Late-bind the self-service eraser's consent + MFA stores: they wire in
-	// wireFinalOptions, AFTER wireDomains constructed the eraser (build order), so
-	// the eraser captured them nil. The SDK holds it by pointer and reads these at
-	// erase time, so setting them now makes self-erasure clear consent + MFA
-	// enrollments too — matching the admin erase path.
-	if b.accountEraser != nil {
-		b.accountEraser.Consent = b.consentStore
-		b.accountEraser.MFAEnrollments = b.mfaEnrollStore
-	}
+	b.lateBindComplianceStores()
 	srv = sso.NewServer(b.opts...)
-
 	rt := serverRuntime{server: srv, cluster: cw}
 	rt.busStop, rt.signingKeyStop, rt.keyRotationStop, rt.keyRotationCancel, err = b.startBackgroundWorkers(srv, cw)
 	if err != nil {
@@ -197,6 +193,24 @@ func (b *appBuilder) finalize() (*app, error) {
 		return nil, err
 	}
 	return b.assemble(rt), nil
+}
+
+// lateBindComplianceStores sets Consent + MFAEnrollments on the self-service
+// eraser and exporter AFTER wireFinalOptions has wired those stores. Both
+// compliance.Eraser/Exporter pointers are constructed early in wireDomains
+// (before consentStore/mfaEnrollStore exist), so a one-shot assignment at
+// construction time would silently capture nil — the SDK holds each by
+// pointer and reads these fields at request time, so setting them here (once,
+// right before NewServer) makes self-erasure AND self-export agree with the
+// admin compliance routes on what "the subject's consent + MFA data" is.
+func (b *appBuilder) lateBindComplianceStores() {
+	if b.accountEraser != nil {
+		b.accountEraser.Consent = b.consentStore
+		b.accountEraser.MFAEnrollments = b.mfaEnrollStore
+	}
+	if b.dataExporter != nil {
+		b.dataExporter.Extra = compliance.SubjectExporters(b.consentStore, b.mfaEnrollStore)
+	}
 }
 
 // serverRuntime carries the post-NewServer handles assemble folds into the

@@ -1339,7 +1339,9 @@ paths:
       summary: Export the authenticated user's own data (GDPR Art. 15).
       description: |
         Returns a portable JSON bundle of the bearer's OWN data (profile,
-        sessions, and any registered exporter domains), scoped to the caller's
+        sessions, and any registered exporter domains — including `consent`
+        recorded consent grants and `mfa_enrollments` registered second-factor
+        metadata, when those stores are wired), scoped to the caller's
         subject — the self-service counterpart to the admin-gated
         /api/v1/compliance export. Best-effort: a per-store failure yields a
         partial bundle (recorded in the audit event), never an error. Mounted
@@ -2901,7 +2903,9 @@ paths:
       description: |
         Assembles a portable JSON bundle of the subject's data across
         the wired stores (profile + active sessions + any registered
-        SubjectExporter domains). Admin-gated — leaks the subject's PII;
+        SubjectExporter domains — including `consent` recorded consent
+        grants and `mfa_enrollments` registered second-factor metadata,
+        when those stores are wired). Admin-gated — leaks the subject's PII;
         the admin middleware enforces `admin:read`. Refresh tokens are
         intentionally excluded (opaque credentials are never exported).
         Best-effort: a partial store failure still returns 200 with the
