@@ -6,10 +6,9 @@ package sso_test
 
 import (
 	"context"
-	"embed"
+	"errors"
 	"io/fs"
 	"net/http"
-	"time"
 
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
@@ -21,11 +20,12 @@ import (
 // and handles the full authentication flow including MFA, consent, and
 // home-realm discovery.
 func ExampleServer_withHostedLogin() {
-	//go:embed static/login
-	var loginFS embed.FS
-
-	// Extract the subdirectory containing the login SPA assets.
-	loginSubFS, _ := fs.Sub(loginFS, "static/login")
+	// In production, embed the SPA assets at package level:
+	//
+	//	//go:embed static/login
+	//	var loginFS embed.FS
+	//	loginSubFS, _ := fs.Sub(loginFS, "static/login")
+	var loginSubFS fs.FS // nil leaves /login/ unmounted
 
 	srv := sso.NewServer(
 		sso.WithIssuer("sso-server"),
@@ -63,7 +63,7 @@ func ExampleServer_withPasswordAuthenticator() {
 					}, nil
 				}
 				// Return an error for invalid credentials.
-				return nil, authenticators.ErrInvalidCredentials
+				return nil, errors.New(sso.ErrInvalidCredentials)
 			},
 		),
 	)
@@ -122,12 +122,6 @@ func ExampleServer_withSessionManagement() {
 
 		// Configure session management.
 		sso.WithSessionManager(sessionMgr),
-
-		// Session lifetime and idle timeout.
-		sso.WithSessionLifetimes(
-			24*time.Hour,  // Absolute session lifetime
-			1*time.Hour,   // Idle timeout (no activity)
-		),
 
 		// Limit concurrent sessions per user (0 = unlimited).
 		sso.WithMaxSessionsPerUser(5),
