@@ -219,6 +219,16 @@ const (
 	// DeviceSecretStore that implements DeviceSecretRevoker is wired.
 	PathAdminUserDeviceSecrets = "/admin/users/:id/device-secrets"
 
+	// PathAdminUserRefreshTokens revokes ALL of a user's outstanding OAuth 2.0
+	// refresh tokens across EVERY client (DELETE, admin:write) — the helpdesk
+	// "compromised account, log out everywhere right now" lockout. Complements
+	// the self-service /token/revoke-all and /me/sessions/revoke-all, which only
+	// reach the AUTHENTICATED caller's own tokens; this reaches an arbitrary
+	// user on an admin's behalf. Group-relative. Mounted only when the wired
+	// RefreshTokenStore implements the optional RefreshTokenSubjectIndex
+	// extension (else 501).
+	PathAdminUserRefreshTokens = "/admin/users/:id/refresh-tokens"
+
 	// PathAdminUserPasswordResetTokens / PathAdminUserEmailChangeTokens revoke
 	// ALL of a user's pending forgot-password / email-change verification tokens
 	// (DELETE, admin:write) — helpdesk invalidation when a token was sent to the

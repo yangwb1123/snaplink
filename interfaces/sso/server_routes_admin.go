@@ -72,6 +72,9 @@ func (s *Server) mountAdminUserState(api Router) {
 	if s.deviceSecretStore != nil {
 		api.DELETE(PathAdminUserDeviceSecrets, s.handleAdminRevokeUserDeviceSecrets)
 	}
+	if s.refreshTokenStore != nil {
+		api.DELETE(PathAdminUserRefreshTokens, s.handleAdminRevokeUserRefreshTokens)
+	}
 	if s.passwordResetStore != nil {
 		api.GET(PathAdminUserPasswordResetTokens, s.handleAdminListUserPasswordResetTokens)
 		api.DELETE(PathAdminUserPasswordResetTokens, s.handleAdminRevokeUserPasswordResetTokens)
