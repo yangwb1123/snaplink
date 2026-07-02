@@ -3,6 +3,9 @@ package grpcadmin
 import (
 	"context"
 	"errors"
+	"sort"
+	"strconv"
+	"strings"
 
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -65,7 +68,10 @@ func NewClientAdminService(store sso.ClientStore, recorder *audit.Recorder, onDi
 	return &ClientAdminService{store: store, recorder: recorder, onDiscoveryChange: onDiscoveryChange, onClientChange: onClientChange}
 }
 
-func (s *ClientAdminService) List(ctx context.Context, _ *adminv1.ListClientsRequest) (*adminv1.ListClientsResponse, error) {
+// List applies filter -> sort -> offset pagination over a full store.List(ctx)
+// scan. See admin_paginate.go for why this bounds the RESPONSE but not the
+// server-side materialization.
+func (s *ClientAdminService) List(ctx context.Context, in *adminv1.ListClientsRequest) (*adminv1.ListClientsResponse, error) {
 	if s.store == nil {
 		return nil, status.Error(codes.FailedPrecondition, "client store not configured")
 	}
@@ -73,11 +79,100 @@ func (s *ClientAdminService) List(ctx context.Context, _ *adminv1.ListClientsReq
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list: %v", err)
 	}
-	out := &adminv1.ListClientsResponse{Clients: make([]*adminv1.Client, 0, len(all))}
-	for _, c := range all {
+	all, err = filterClients(all, in.GetFilter())
+	if err != nil {
+		return nil, err
+	}
+	if err = sortClients(all, in.GetOrderBy()); err != nil {
+		return nil, err
+	}
+	offset, err := decodeOffset(in.GetPageToken())
+	if err != nil {
+		return nil, err
+	}
+	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(all))
+	out := &adminv1.ListClientsResponse{
+		Clients:       make([]*adminv1.Client, 0, hi-lo),
+		TotalSize:     int32(len(all)),
+		NextPageToken: encodeOffset(hi, len(all)),
+	}
+	for _, c := range all[lo:hi] {
 		out.Clients = append(out.Clients, clientToProto(c, false))
 	}
 	return out, nil
+}
+
+// filterClients narrows all to rows matching expr, or returns all unchanged
+// when expr is empty. Unrecognized fields and unparseable expressions both
+// reach clientMatches' default case, which errors — see parseAdminFilter.
+func filterClients(all []*sso.Client, expr string) ([]*sso.Client, error) {
+	field, value, ok := parseAdminFilter(expr)
+	if !ok {
+		return all, nil
+	}
+	out := make([]*sso.Client, 0, len(all))
+	for _, c := range all {
+		match, err := clientMatches(c, field, value)
+		if err != nil {
+			return nil, err
+		}
+		if match {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+// clientMatches evaluates one filter field against a client. Users field set
+// is documented separately in admin_users.go — the two entities intentionally
+// support different filter fields (Client has no email/created_at).
+func clientMatches(c *sso.Client, field, value string) (bool, error) {
+	switch strings.ToLower(field) {
+	case "id":
+		return c.ID == value, nil
+	case "name":
+		return strings.Contains(strings.ToLower(c.Name), strings.ToLower(value)), nil
+	case "active":
+		want, err := strconv.ParseBool(value)
+		if err != nil {
+			return false, status.Errorf(codes.InvalidArgument, "invalid filter value for active: %q", value)
+		}
+		return c.Active == want, nil
+	default:
+		return false, status.Errorf(codes.InvalidArgument, "unsupported filter field %q", field)
+	}
+}
+
+// sortClients orders all in place by order_by (default: id ascending, the
+// MANDATORY stable sort that makes offset paging deterministic over the
+// memory store's random map iteration).
+func sortClients(all []*sso.Client, orderBy string) error {
+	field, desc := parseOrderBy(orderBy)
+	less, err := clientLess(field)
+	if err != nil {
+		return err
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		if desc {
+			return less(all[j], all[i])
+		}
+		return less(all[i], all[j])
+	})
+	return nil
+}
+
+// clientLess returns the comparator for one order_by field. 'created_at'
+// aliases to the id default because core.Client has no CreatedAt field
+// (unlike core.User) — documented asymmetry, see admin_users.go userLess.
+func clientLess(field string) (func(a, b *sso.Client) bool, error) {
+	switch strings.ToLower(field) {
+	case "", "id", "created_at":
+		return func(a, b *sso.Client) bool { return a.ID < b.ID }, nil
+	case "name":
+		return func(a, b *sso.Client) bool { return a.Name < b.Name }, nil
+	default:
+		return nil, status.Errorf(codes.InvalidArgument, "unsupported order_by field %q", field)
+	}
 }
 
 func (s *ClientAdminService) Get(ctx context.Context, in *adminv1.GetClientRequest) (*adminv1.GetClientResponse, error) {

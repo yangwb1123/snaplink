@@ -3,6 +3,8 @@ package grpcadmin
 import (
 	"context"
 	"errors"
+	"sort"
+	"strings"
 
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -25,7 +27,10 @@ func NewUserAdminService(users sso.UserProvider, sessions sso.SessionManager, re
 	return &UserAdminService{users: users, sessions: sessions, recorder: recorder}
 }
 
-func (s *UserAdminService) List(ctx context.Context, _ *adminv1.ListUsersRequest) (*adminv1.ListUsersResponse, error) {
+// List applies filter -> sort -> offset pagination over a full
+// s.users.List(ctx) scan. See admin_paginate.go for why this bounds the
+// RESPONSE but not the server-side materialization.
+func (s *UserAdminService) List(ctx context.Context, in *adminv1.ListUsersRequest) (*adminv1.ListUsersResponse, error) {
 	if s.users == nil {
 		return nil, status.Error(codes.FailedPrecondition, "user provider not configured")
 	}
@@ -33,11 +38,101 @@ func (s *UserAdminService) List(ctx context.Context, _ *adminv1.ListUsersRequest
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list: %v", err)
 	}
-	out := &adminv1.ListUsersResponse{Users: make([]*adminv1.User, 0, len(all))}
-	for _, u := range all {
+	all, err = filterUsers(all, in.GetFilter())
+	if err != nil {
+		return nil, err
+	}
+	if err = sortUsers(all, in.GetOrderBy()); err != nil {
+		return nil, err
+	}
+	offset, err := decodeOffset(in.GetPageToken())
+	if err != nil {
+		return nil, err
+	}
+	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(all))
+	out := &adminv1.ListUsersResponse{
+		Users:         make([]*adminv1.User, 0, hi-lo),
+		TotalSize:     int32(len(all)),
+		NextPageToken: encodeOffset(hi, len(all)),
+	}
+	for _, u := range all[lo:hi] {
 		out.Users = append(out.Users, userToProto(u))
 	}
 	return out, nil
+}
+
+// filterUsers narrows all to rows matching expr, or returns all unchanged
+// when expr is empty. Field set is the STABLE proto-package contract:
+// id/provider/external_id (exact) + name/email (substring).
+func filterUsers(all []*sso.User, expr string) ([]*sso.User, error) {
+	field, value, ok := parseAdminFilter(expr)
+	if !ok {
+		return all, nil
+	}
+	out := make([]*sso.User, 0, len(all))
+	for _, u := range all {
+		match, err := userMatches(u, field, value)
+		if err != nil {
+			return nil, err
+		}
+		if match {
+			out = append(out, u)
+		}
+	}
+	return out, nil
+}
+
+// userMatches evaluates one filter field against a user.
+func userMatches(u *sso.User, field, value string) (bool, error) {
+	switch strings.ToLower(field) {
+	case "id":
+		return u.ID == value, nil
+	case "provider":
+		return u.Provider == value, nil
+	case "external_id":
+		return u.ExternalID == value, nil
+	case "name":
+		return strings.Contains(strings.ToLower(u.Name), strings.ToLower(value)), nil
+	case "email":
+		return strings.Contains(strings.ToLower(u.Email), strings.ToLower(value)), nil
+	default:
+		return false, status.Errorf(codes.InvalidArgument, "unsupported filter field %q", field)
+	}
+}
+
+// sortUsers orders all in place by order_by (default: id ascending, the
+// MANDATORY stable sort that makes offset paging deterministic over the
+// memory store's random map iteration).
+func sortUsers(all []*sso.User, orderBy string) error {
+	field, desc := parseOrderBy(orderBy)
+	less, err := userLess(field)
+	if err != nil {
+		return err
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		if desc {
+			return less(all[j], all[i])
+		}
+		return less(all[i], all[j])
+	})
+	return nil
+}
+
+// userLess returns the comparator for one order_by field. Unlike
+// clientLess, 'created_at' maps to the real core.User.CreatedAt field here
+// (core.User has one; core.Client does not) — the documented order_by
+// asymmetry between the two List RPCs.
+func userLess(field string) (func(a, b *sso.User) bool, error) {
+	switch strings.ToLower(field) {
+	case "", "id":
+		return func(a, b *sso.User) bool { return a.ID < b.ID }, nil
+	case "created_at":
+		return func(a, b *sso.User) bool { return a.CreatedAt.Before(b.CreatedAt) }, nil
+	case "provider":
+		return func(a, b *sso.User) bool { return a.Provider < b.Provider }, nil
+	default:
+		return nil, status.Errorf(codes.InvalidArgument, "unsupported order_by field %q", field)
+	}
 }
 
 func (s *UserAdminService) Get(ctx context.Context, in *adminv1.GetUserRequest) (*adminv1.GetUserResponse, error) {

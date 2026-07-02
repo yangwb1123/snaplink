@@ -4145,9 +4145,45 @@ paths:
         `secret` is write-only — never returned on List/Get. Use
         RotateSecret to mint a fresh secret an operator can copy
         once.
+
+        Results are filtered, then sorted, then paged — `order_by`
+        and `filter` MUST be held constant across a paging sequence
+        (the page_token offset is only valid against that same
+        filtered+sorted view). Default sort is `id` ascending.
       operationId: adminClientList
       security:
         - bearerAuth: []
+      parameters:
+        - name: page_token
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            Opaque cursor from a previous response's
+            `next_page_token`. Omit for the first page.
+        - name: page_size
+          in: query
+          required: false
+          schema: { type: integer, format: int32 }
+          description: |
+            Max rows to return. Default 100, clamped to a maximum
+            of 1000. Values <= 0 fall back to the default.
+        - name: order_by
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            One of `id`, `name`, `created_at` (alias for `id` —
+            clients have no created_at field), optionally prefixed
+            with `-` for descending. Defaults to `id` ascending.
+        - name: filter
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            `field:value` or `field eq value`. Supported fields:
+            `id`, `name` (substring), `active` (bool). Omit to
+            match all.
       responses:
         "200":
           description: Clients list.
@@ -4155,6 +4191,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ListClientsResponse"
+        "400":
+          description: '`invalid page_token`, or an unsupported `order_by`/`filter` field or value.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
     post:
       tags: [admin]
@@ -4268,9 +4310,46 @@ paths:
     get:
       tags: [admin]
       summary: List users.
+      description: |
+        Results are filtered, then sorted, then paged — `order_by`
+        and `filter` MUST be held constant across a paging sequence
+        (the page_token offset is only valid against that same
+        filtered+sorted view). Default sort is `id` ascending.
       operationId: adminUserList
       security:
         - bearerAuth: []
+      parameters:
+        - name: page_token
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            Opaque cursor from a previous response's
+            `next_page_token`. Omit for the first page.
+        - name: page_size
+          in: query
+          required: false
+          schema: { type: integer, format: int32 }
+          description: |
+            Max rows to return. Default 100, clamped to a maximum
+            of 1000. Values <= 0 fall back to the default.
+        - name: order_by
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            One of `id`, `created_at`, `provider`, optionally
+            prefixed with `-` for descending. Defaults to `id`
+            ascending. Unlike the clients endpoint, `created_at` is
+            a real field here (users have one).
+        - name: filter
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            `field:value` or `field eq value`. Supported fields:
+            `id`, `provider`, `external_id` (exact), `name`,
+            `email` (substring). Omit to match all.
       responses:
         "200":
           description: Users list.
@@ -4278,6 +4357,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ListUsersResponse"
+        "400":
+          description: '`invalid page_token`, or an unsupported `order_by`/`filter` field or value.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
     post:
       tags: [admin]
@@ -7444,6 +7529,13 @@ components:
         clients:
           type: array
           items: { $ref: "#/components/schemas/AdminClient" }
+        next_page_token:
+          type: string
+          description: Pass as `page_token` to fetch the next page. Empty on the last page.
+        total_size:
+          type: integer
+          format: int32
+          description: Count of clients matching `filter` (approximate under concurrent mutation — see the List description).
 
     GetAdminClientResponse:
       type: object
@@ -7500,6 +7592,13 @@ components:
         users:
           type: array
           items: { $ref: "#/components/schemas/AdminUser" }
+        next_page_token:
+          type: string
+          description: Pass as `page_token` to fetch the next page. Empty on the last page.
+        total_size:
+          type: integer
+          format: int32
+          description: Count of users matching `filter` (approximate under concurrent mutation — see the List description).
 
     GetAdminUserResponse:
       type: object
