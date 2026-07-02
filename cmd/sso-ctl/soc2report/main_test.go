@@ -139,6 +139,49 @@ func TestRun_TamperedBundleFailsClosed(t *testing.T) {
 	}
 }
 
+// TestRun_TamperedBundleRemovesStaleOutFile covers the re-run scenario
+// TestRun_TamperedBundleFailsClosed doesn't: --out already holds a report
+// from a PRIOR successful run (e.g. the bundle was tampered with after
+// that run). A fail-closed refusal must not leave that stale, now-invalid
+// report sitting at --out where an operator could mistake it for evidence
+// that the CURRENT bundle verified — the file must be gone, not just
+// un-added-to.
+func TestRun_TamperedBundleRemovesStaleOutFile(t *testing.T) {
+	dir := t.TempDir()
+	bundlePath := filepath.Join(dir, "bundle.json")
+	out := filepath.Join(dir, "soc2.json")
+	seedBundle(t, bundlePath, 5)
+
+	if err := os.WriteFile(out, []byte(`{"stale":"report from a prior run"}`), 0o600); err != nil {
+		t.Fatalf("seed stale --out file: %v", err)
+	}
+
+	raw, err := os.ReadFile(bundlePath)
+	if err != nil {
+		t.Fatalf("read bundle: %v", err)
+	}
+	var b libexport.ExportBundle
+	if err := json.Unmarshal(raw, &b); err != nil {
+		t.Fatalf("unmarshal bundle: %v", err)
+	}
+	b.Events[2].ActorID = "tampered"
+	tampered, err := json.Marshal(&b)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(bundlePath, tampered, 0o600); err != nil {
+		t.Fatalf("write tampered bundle: %v", err)
+	}
+
+	code, err := run(options{bundle: bundlePath, out: out})
+	if code != 1 || err == nil {
+		t.Fatalf("run(tampered) = (%d, %v), want (1, err)", code, err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Fatalf("stale --out file must be removed on verify failure, got err=%v", statErr)
+	}
+}
+
 // TestValidateOptions_RequiresBundle covers the CLI-misuse path (exit 2
 // in Run, via usageErr) without invoking os.Exit directly — usageErr
 // itself is a thin, untested-in-isolation wrapper shared with every

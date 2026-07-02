@@ -190,6 +190,8 @@ var KnownEventTypes = map[EventType]struct{}{
 	// password reset + TOTP enroll
 	EventPasswordResetRequested: {}, EventPasswordResetCompleted: {}, EventPasswordResetFailed: {},
 	EventTOTPEnrolled: {}, EventTOTPEnrollFailed: {},
+	// MFA recovery-code regeneration (self-service)
+	EventRecoveryCodesRegenerated: {},
 	// consent
 	EventConsentGranted: {}, EventConsentRevoked: {}, EventConsentDenied: {},
 	// self-service + email change
@@ -216,12 +218,14 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventAdminDeviceSecretsRevoked: {}, EventAdminPasswordResetTokensRevoked: {},
 	EventAdminEmailChangeTokensRevoked: {}, EventAdminUserEmailChanged: {},
 	EventAdminAccountUnlocked: {}, EventAdminConnectionUpserted: {}, EventAdminConnectionDeleted: {},
+	EventAdminConnectionDomainVerified: {}, EventAdminRecoveryCodesReset: {},
 	EventAdminTenantMemberAdded: {}, EventAdminTenantMemberRemoved: {}, EventAdminRoleAdded: {},
 	EventAdminRoleUpdated: {}, EventAdminRoleRemoved: {}, EventAdminRoleAssigned: {},
 	EventAdminRoleUnassigned: {}, EventAdminMenusUpdated: {}, EventAdminTenantCreated: {},
 	EventAdminTenantUpdated: {}, EventAdminTenantDeleted: {}, EventAdminTenantStatusChanged: {},
 	EventAdminDomainCreated: {}, EventAdminDomainUpdated: {}, EventAdminDomainDeleted: {},
 	EventAdminSubjectExported: {}, EventAdminSubjectErased: {}, EventAdminGRPCCalled: {},
+	EventAdminSigningKeyRotated: {},
 	// system / platform (event_types_system.go)
 	EventBootstrapStepApplied: {}, EventBootstrapStepSkipped: {}, EventBootstrapStepFailed: {},
 	EventBootstrapLockAcquired: {}, EventBootstrapLockReleased: {}, EventBootstrapLockLost: {},

@@ -25,6 +25,16 @@ type controlAreaDef struct {
 // types are filed under "Privacy" rather than "CC6.3" (even the
 // EventAdmin* ones) to avoid double counting a subject-export/erase
 // action under both the admin-actions and privacy buckets.
+//
+// auditspi/event_types_admin.go currently declares 40 EventAdmin* consts:
+// 37 land in CC6.3 below, EventAdminSigningKeyRotated lands in CC6.6
+// (cryptographic key management, not a generic privileged action), and
+// EventAdminSubjectExported/EventAdminSubjectErased land in Privacy. This
+// count is a manual cross-check for a human reading this file — the
+// enforced source of truth is drift_test.go's
+// TestEveryKnownEventTypeIsClaimedOrExplicitlyUncategorized, which fails
+// CI (not just a stale comment) the moment a new EventAdmin* const is
+// added here without a bucket decision.
 var controlAreaDefs = []controlAreaDef{
 	{
 		code: "CC6.1",
@@ -75,6 +85,7 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventAdminAccountUnlocked,
 			audit.EventAdminConnectionUpserted,
 			audit.EventAdminConnectionDeleted,
+			audit.EventAdminConnectionDomainVerified,
 			audit.EventAdminTenantMemberAdded,
 			audit.EventAdminTenantMemberRemoved,
 			audit.EventAdminRoleAdded,
@@ -98,6 +109,7 @@ var controlAreaDefs = []controlAreaDef{
 		name: "Cryptographic key management",
 		eventTypes: []audit.EventType{
 			audit.EventSigningKeyRotated,
+			audit.EventAdminSigningKeyRotated,
 			audit.EventSigningKeyRotationCoordinated,
 			audit.EventSigningKeyAggregationDegraded,
 			audit.EventSigningKeyAggregationRecovered,
