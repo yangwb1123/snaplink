@@ -102,5 +102,6 @@ func (s *Server) mountAdminB2B(api Router) {
 	if s.invitationStore != nil {
 		api.POST(PathAdminTenantInvitations, s.handleAdminSendInvitation)
 		api.GET(PathAdminTenantInvitations, s.handleAdminListInvitations)
+		api.DELETE(PathAdminTenantInvitationByEmail, s.handleAdminRevokeInvitation)
 	}
 }

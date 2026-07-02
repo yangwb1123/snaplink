@@ -42,6 +42,13 @@ type InvitationStore interface {
 	// Implementations MAY include expired rows; callers MUST NOT surface the token
 	// value (the Token json tag enforces this on the wire).
 	ListByTenant(ctx context.Context, tenantID string) ([]*Invitation, error)
+
+	// Revoke deletes ALL pending invitations for (tenantID, email). The admin
+	// roster identifies an invitation by recipient email — the token is a live
+	// credential (json:"-") and is never surfaced — and re-sends can leave
+	// multiple live tokens for one recipient, so revocation is a bulk delete.
+	// Idempotent: nothing pending is a no-op (no pending-invitation oracle).
+	Revoke(ctx context.Context, tenantID, email string) error
 }
 
 // ErrInvitationNotFound is the sentinel Consume returns when an invitation is

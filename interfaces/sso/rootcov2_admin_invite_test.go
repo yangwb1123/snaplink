@@ -127,3 +127,82 @@ func TestRcov2AI_SendInvitation(t *testing.T) {
 
 	_ = time.Now
 }
+
+// TestRcov2AI_RevokeInvitation drives the admin revoke-invitation handler:
+// send, revoke (204), list shows nothing pending, repeat revoke is still 204
+// (idempotent — no pending-invitation oracle), and the admin gate rejects an
+// unauthenticated caller.
+func TestRcov2AI_RevokeInvitation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	users := defaultimpl.NewMemoryUserProvider()
+	_ = users.CreateOrUpdate(ctx, &sso.User{ID: rcovUser})
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{
+		ID: rcovClient, Secret: rcovSecret, AllowedAuthenticators: []string{"password"},
+		TokenStrategy: "jwt", Active: true, SkipConsent: true,
+	})
+
+	prov := permissions.NewMemoryProvider()
+	_ = prov.AddRole(ctx, "", permissions.Role{Code: "root", Permissions: []string{"admin:*"}})
+	_ = prov.AssignRoles(ctx, rcovUser, "", []string{"root"})
+	_ = prov.AddRole(ctx, rcovClient, permissions.Role{Code: "root", Permissions: []string{"admin:*"}})
+	_ = prov.AssignRoles(ctx, rcovUser, rcovClient, []string{"root"})
+
+	sender := &rcov2AdminInviteSender{}
+	srv := sso.NewServer(
+		sso.WithUserProvider(users),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithClientStore(clients),
+		sso.WithAuthenticator(rcov2PasswordAuth()),
+		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithInvitationStore(defaultimpl.NewMemoryInvitationStore()),
+		sso.WithInvitationSender(sender),
+		sso.WithTenantUserStore(defaultimpl.NewMemoryTenantUserStore()),
+		sso.WithPermissionProvider(prov),
+		sso.WithEmbedPermissionsInLogin(),
+	)
+	mw := sso.NewAdminMiddleware(srv, prov)
+	httpSrv := httptest.NewServer(mw.HTTPMiddleware(srv.Handler()))
+	t.Cleanup(httpSrv.Close)
+
+	// Login (admin).
+	status, out := rcovPostJSON(t, httpSrv.URL+"/auth/login", "", map[string]any{
+		"provider":   "password",
+		"client_id":  rcovClient,
+		"credential": map[string]string{"username": rcovUsername, "password": rcovPassword},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("admin login = %d body=%v", status, out)
+	}
+	token, _ := out["access_token"].(string)
+	if token == "" {
+		t.Fatalf("no admin token: %v", out)
+	}
+
+	base := httpSrv.URL + "/api/v1/admin/tenants/org-9/invitations"
+
+	status, _ = rcovPostJSON(t, base, token, map[string]any{"email": "leaver@org-9.example", "role": "member"})
+	if status != http.StatusAccepted {
+		t.Fatalf("send invitation = %d", status)
+	}
+	status, _ = rcovDo(t, http.MethodDelete, base+"/leaver@org-9.example", token, nil)
+	if status != http.StatusNoContent {
+		t.Fatalf("revoke invitation = %d, want 204", status)
+	}
+	status, lOut := rcovDo(t, http.MethodGet, base, token, nil)
+	if invs, _ := lOut["invitations"].([]any); status != http.StatusOK || len(invs) != 0 {
+		t.Errorf("list after revoke = %d/%d invites, want 200/0 (body=%v)", status, len(invs), lOut)
+	}
+	// Idempotent repeat -> still 204 (no pending-invitation oracle).
+	status, _ = rcovDo(t, http.MethodDelete, base+"/leaver@org-9.example", token, nil)
+	if status != http.StatusNoContent {
+		t.Errorf("repeat revoke = %d, want 204", status)
+	}
+	// Unauthenticated -> admin gate 401.
+	status, _ = rcovDo(t, http.MethodDelete, base+"/leaver@org-9.example", "", nil)
+	if status != http.StatusUnauthorized {
+		t.Errorf("unauth revoke = %d, want 401", status)
+	}
+}

@@ -332,6 +332,7 @@ const PathAdminTenantMemberByID = core.PathAdminTenantMemberByID
 const PathMyOrganizations = core.PathMyOrganizations
 const PathMyOrganizationByID = core.PathMyOrganizationByID
 const PathAdminTenantInvitations = core.PathAdminTenantInvitations
+const PathAdminTenantInvitationByEmail = core.PathAdminTenantInvitationByEmail
 const PathMyInvitationAccept = core.PathMyInvitationAccept
 const PathSSFReceive = core.PathSSFReceive
 const PathFederationEntityConfig = core.PathFederationEntityConfig

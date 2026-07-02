@@ -272,6 +272,11 @@ const (
 	// InvitationStore is wired.
 	PathAdminTenantInvitations = "/admin/tenants/:id/invitations"
 
+	// PathAdminTenantInvitationByEmail revokes (DELETE) every pending org
+	// invitation for a recipient email. admin:write. Mounted only when an
+	// InvitationStore is wired.
+	PathAdminTenantInvitationByEmail = "/admin/tenants/:id/invitations/:email"
+
 	// PathMyInvitationAccept redeems an org invitation token (POST {token}): the
 	// authenticated subject joins the invited tenant at the invited role. Mounted
 	// only when an InvitationStore AND a TenantUserStore are wired.

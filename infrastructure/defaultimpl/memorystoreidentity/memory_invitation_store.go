@@ -60,4 +60,16 @@ func (m *MemoryInvitationStore) ListByTenant(_ context.Context, tenantID string)
 	return out, nil
 }
 
+// Revoke deletes every invitation for (tenantID, email). Idempotent.
+func (m *MemoryInvitationStore) Revoke(_ context.Context, tenantID, email string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for token, inv := range m.invts {
+		if inv.TenantID == tenantID && inv.Email == email {
+			delete(m.invts, token)
+		}
+	}
+	return nil
+}
+
 var _ core.InvitationStore = (*MemoryInvitationStore)(nil)

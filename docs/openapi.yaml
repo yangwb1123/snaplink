@@ -4813,6 +4813,35 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "501": { description: No InvitationSender is wired. }
 
+  /api/v1/admin/tenants/{id}/invitations/{email}:
+    delete:
+      tags: [admin]
+      summary: Revoke every pending invitation for a recipient email.
+      description: |
+        Bulk-deletes all pending invitation tokens for (tenant, email) —
+        re-sends can leave multiple live tokens per recipient. Idempotent:
+        returns 204 whether or not anything was pending (no
+        pending-invitation oracle). Requires admin:write.
+      operationId: adminRevokeInvitation
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: email
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Invitations revoked (or none pending).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /me/invitations/accept:
     post:
       tags: [self-service]

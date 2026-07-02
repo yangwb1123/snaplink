@@ -92,6 +92,7 @@ const (
 	EventInvalidationBusDegraded         = auditspi.EventInvalidationBusDegraded
 	EventInvalidationBusReconnected      = auditspi.EventInvalidationBusReconnected
 	EventInvitationAccepted              = auditspi.EventInvitationAccepted
+	EventInvitationRevoked               = auditspi.EventInvitationRevoked
 	EventInvitationSent                  = auditspi.EventInvitationSent
 	EventLogin                           = auditspi.EventLogin
 	EventLoginFailure                    = auditspi.EventLoginFailure

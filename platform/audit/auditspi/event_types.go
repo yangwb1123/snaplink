@@ -109,6 +109,7 @@ const (
 	EventOrgMemberAutoProvisioned EventType = "org_member_auto_provisioned"
 	EventInvitationSent           EventType = "invitation_sent"
 	EventInvitationAccepted       EventType = "invitation_accepted"
+	EventInvitationRevoked        EventType = "invitation_revoked"
 )
 
 // Credential health signals (non-blocking login-time).

@@ -81,6 +81,9 @@ func (s *Server) handleAdminSendInvitation(ctx HandlerContext) {
 func (s *Server) handleAdminListInvitations(ctx HandlerContext) {
 	admin.HandleAdminListInvitations(s, ctx)
 }
+func (s *Server) handleAdminRevokeInvitation(ctx HandlerContext) {
+	admin.HandleAdminRevokeInvitation(s, ctx)
+}
 
 // Self-service organization endpoints (/me).
 func (s *Server) handleMyOrganizations(ctx HandlerContext) {

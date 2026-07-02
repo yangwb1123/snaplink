@@ -84,3 +84,36 @@ func TestMemoryInvitationStore_CrossTenantIsolation(t *testing.T) {
 		t.Errorf("globex roster wrongly affected: %d, want 1", len(globex))
 	}
 }
+
+func TestMemoryInvitationStore_RevokeByTenantEmail(t *testing.T) {
+	t.Parallel()
+	s := defaultimpl.NewMemoryInvitationStore()
+	ctx := context.Background()
+	exp := time.Now().Add(time.Minute)
+	// Two live tokens for the same recipient (re-send) + another recipient + another tenant.
+	_ = s.Issue(ctx, &core.Invitation{Token: "r1", TenantID: "acme", Email: "gone@e.com", Role: core.TenantRoleMember, ExpiresAt: exp})
+	_ = s.Issue(ctx, &core.Invitation{Token: "r2", TenantID: "acme", Email: "gone@e.com", Role: core.TenantRoleAdmin, ExpiresAt: exp})
+	_ = s.Issue(ctx, &core.Invitation{Token: "k1", TenantID: "acme", Email: "keep@e.com", Role: core.TenantRoleMember, ExpiresAt: exp})
+	_ = s.Issue(ctx, &core.Invitation{Token: "g1", TenantID: "globex", Email: "gone@e.com", Role: core.TenantRoleGuest, ExpiresAt: exp})
+
+	if err := s.Revoke(ctx, "acme", "gone@e.com"); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	// EVERY token for the recipient is dead — a revoked invite can never be accepted.
+	if _, err := s.Consume(ctx, "r1"); !errors.Is(err, core.ErrInvitationNotFound) {
+		t.Errorf("r1 after revoke err = %v, want ErrInvitationNotFound", err)
+	}
+	if _, err := s.Consume(ctx, "r2"); !errors.Is(err, core.ErrInvitationNotFound) {
+		t.Errorf("r2 after revoke err = %v, want ErrInvitationNotFound", err)
+	}
+	if acme, _ := s.ListByTenant(ctx, "acme"); len(acme) != 1 || acme[0].Email != "keep@e.com" {
+		t.Errorf("acme roster after revoke = %+v, want only keep@e.com", acme)
+	}
+	if globex, _ := s.ListByTenant(ctx, "globex"); len(globex) != 1 {
+		t.Errorf("globex roster wrongly affected: %d, want 1", len(globex))
+	}
+	// Idempotent: nothing pending is a no-op, not an error (no pending-invite oracle).
+	if err := s.Revoke(ctx, "acme", "gone@e.com"); err != nil {
+		t.Errorf("repeat Revoke err = %v, want nil", err)
+	}
+}

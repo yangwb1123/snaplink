@@ -164,4 +164,15 @@ func (s *InvitationStore) ListByTenant(ctx context.Context, tenantID string) ([]
 	return out, rows.Err()
 }
 
+// Revoke deletes every invitation for (tenantID, email). Idempotent — zero
+// rows affected is success (no pending-invitation oracle).
+func (s *InvitationStore) Revoke(ctx context.Context, tenantID, email string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM invitations WHERE tenant_id = $1 AND email = $2`, tenantID, email)
+	if err != nil {
+		return fmt.Errorf("postgres: revoke invitation: %w", err)
+	}
+	return nil
+}
+
 var _ core.InvitationStore = (*InvitationStore)(nil)

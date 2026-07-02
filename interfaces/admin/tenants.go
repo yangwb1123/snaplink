@@ -188,3 +188,23 @@ func HandleAdminListInvitations(d Deps, ctx core.HandlerContext) {
 	}
 	ctx.JSON(http.StatusOK, map[string]any{"invitations": out})
 }
+
+// HandleAdminRevokeInvitation serves DELETE /api/v1/admin/tenants/:id/invitations/:email
+// — revoke every pending invitation for a recipient. admin:write. Idempotent
+// (204 whether or not anything was pending — no pending-invitation oracle).
+// Emits invitation_revoked (never the token/email).
+func HandleAdminRevokeInvitation(d Deps, ctx core.HandlerContext) {
+	tenantID := ctx.Param("id")
+	email := ctx.Param("email")
+	if tenantID == "" || email == "" {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+	if err := d.InvitationStore().Revoke(ctx.Request().Context(), tenantID, email); err != nil {
+		d.Logger().Error("revoke invitation failed", "tenant_id", tenantID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	recordAdminUserAction(d, ctx, audit.EventInvitationRevoked, "", core.KeyTenantID, tenantID)
+	ctx.JSON(http.StatusNoContent, nil)
+}
