@@ -134,6 +134,36 @@ func TestEmailChange_HappyPath(t *testing.T) {
 	}
 }
 
+func TestEmailChange_SetsEmailVerified(t *testing.T) {
+	srv, users, sender, loginAs := newEmailChangeHarness(t, true)
+	tok := loginAs()
+
+	// Account starts with no email_verified attribute at all (never signed up
+	// through mandatory verification) — the change flow must still stamp it,
+	// since delivering the token to the NEW address is itself proof of control.
+	if u, _ := users.GetByID(context.Background(), "u-alice"); u == nil || u.Attributes["email_verified"] == "true" {
+		t.Fatalf("precondition: u-alice email_verified = %v, want unset", u)
+	}
+
+	code, body := postEmail(t, srv, "/me/email/change", tok, map[string]any{"new_email": "new@example.com"})
+	if code != http.StatusOK || body["status"] != "sent" {
+		t.Fatalf("change = %d %v, want 200 sent", code, body)
+	}
+	_, changeTok, _ := sender.last()
+
+	code, body = postEmail(t, srv, "/me/email/verify", tok, map[string]any{"token": changeTok})
+	if code != http.StatusOK || body["email"] != "new@example.com" {
+		t.Fatalf("verify = %d %v, want 200 email=new@example.com", code, body)
+	}
+	u, err := users.GetByID(context.Background(), "u-alice")
+	if err != nil || u == nil {
+		t.Fatalf("GetByID: %v %v", u, err)
+	}
+	if u.Attributes["email_verified"] != "true" {
+		t.Errorf("email_verified = %q, want %q — the token round-trip to the new address proves ownership", u.Attributes["email_verified"], "true")
+	}
+}
+
 func TestEmailChange_RejectsBadEmailAndToken(t *testing.T) {
 	srv, _, _, loginAs := newEmailChangeHarness(t, true)
 	tok := loginAs()
