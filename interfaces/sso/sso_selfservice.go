@@ -62,6 +62,13 @@ type selfServiceState struct {
 	// 0 means no idle timeout (default).
 	adminSessionTTL time.Duration
 
+	// breakGlassStore persists break-glass (emergency support) admin
+	// sessions (WithBreakGlassStore) — bounded, audited on-behalf-of grants
+	// for SOC 2 CC6.1/CC6.2, PCI DSS 7.2, HIPAA §164.312(a) support
+	// workflows. Nil ⇒ the /api/v1/admin/break-glass* routes are NOT
+	// mounted — byte-identical to a build without the feature.
+	breakGlassStore core.BreakGlassStore
+
 	// consentMaxTTL is the hard server-level ceiling on consent grant
 	// lifetime (WithConsentTTL). When >0, every recorded consent has
 	// ExpiresAt = GrantedAt + consentMaxTTL. After that, GetConsent

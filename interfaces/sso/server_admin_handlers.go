@@ -1,12 +1,15 @@
 package sso
 
 import (
+	"context"
+	"net/http"
+	"time"
+
 	"github.com/snaplink/sso/interfaces/admin"
 	"github.com/snaplink/sso/platform/rotation"
 	"github.com/snaplink/sso/platform/sse"
 	"github.com/snaplink/sso/protocols/selfservice"
 	"github.com/snaplink/sso/shared/core"
-	"net/http"
 )
 
 // Admin/helpdesk user-management handlers are thin wrappers delegating to the
@@ -182,6 +185,22 @@ func (s *Server) handleAdminRevokeToken(ctx HandlerContext) {
 	ctx.JSON(http.StatusOK, map[string]string{KeyStatus: StatusOK})
 }
 
+// Break-glass (emergency support) admin sessions — thin wrappers. The
+// lifecycle logic (reason/TTL validation, impersonation-session minting,
+// revocation cascade, audit metadata) lives in admin/break_glass.go.
+func (s *Server) handleAdminCreateBreakGlass(ctx HandlerContext) {
+	admin.HandleCreateBreakGlass(s, ctx)
+}
+func (s *Server) handleAdminListBreakGlass(ctx HandlerContext) {
+	admin.HandleListBreakGlass(s, ctx)
+}
+func (s *Server) handleAdminRevokeBreakGlass(ctx HandlerContext) {
+	admin.HandleRevokeBreakGlass(s, ctx)
+}
+func (s *Server) handleAdminApproveBreakGlass(ctx HandlerContext) {
+	admin.HandleApproveBreakGlass(s, ctx)
+}
+
 // handleAdminLogout revokes the admin bearer token used in the current
 // request. The token is validated and its jti (matching AdminToken.ID)
 // is used to revoke it. On success the caller should discard the token.
@@ -219,4 +238,40 @@ func (s *Server) handleAdminLogout(ctx HandlerContext) {
 // other handler in this file, not by this handler itself.
 func (s *Server) handleAdminEventsStream(ctx HandlerContext) {
 	sse.HandleStream(s.sseBroker, s.sseHeartbeat, ctx)
+}
+
+// RunBreakGlassSweeper wakes every interval and sweeps expired break-glass
+// admin sessions: destroys their impersonation sessions and emits
+// admin_break_glass_expired for each. This is the ACTIVE enforcement of "a
+// break-glass grant's derived session/token becomes invalid immediately at
+// expiry" — the lazy expiry applied on Get/List only flips the REPORTED
+// status for a caller who happens to read the store; nothing else revokes
+// the derived session until this sweep runs.
+//
+// Same shutdown contract as the other retention loops in
+// cmd/sso-server/serverbuildstore (RunAuditRetention et al.): exits on ctx
+// cancellation, a sweep error is logged but never tears down the loop, and
+// it is the OPERATOR's responsibility to start it in a goroutine — it is not
+// started automatically by NewServer/Mount, so embedding the SDK in tests or
+// short-lived processes never leaks it.
+//
+//	go srv.RunBreakGlassSweeper(ctx, time.Minute)
+//
+// No-op when no BreakGlassStore is wired or interval <= 0.
+func (s *Server) RunBreakGlassSweeper(ctx context.Context, interval time.Duration) {
+	if s.breakGlassStore == nil || interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := admin.SweepBreakGlassOnce(s, ctx); err != nil {
+				s.logger.Error("break-glass sweep failed", "error", err)
+			}
+		}
+	}
 }

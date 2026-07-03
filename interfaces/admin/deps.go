@@ -27,6 +27,13 @@ type Deps interface {
 	EmailChangeStore() core.EmailChangeStore
 	Auditor() *audit.Recorder
 	Logger() spi.Logger
+	// SessionMgr backs break-glass impersonation session minting +
+	// revocation cascade (readonly-scope grants never call it — no session
+	// is minted, so a nil SessionManager only disables impersonate/escalate).
+	SessionMgr() core.SessionManager
+	// BreakGlassStore persists break-glass (emergency support) admin
+	// sessions. Nil ⇒ the break-glass routes are NOT mounted.
+	BreakGlassStore() core.BreakGlassStore
 	// InvalidateConnectionCache publishes a KindConnectionChange event to the
 	// cluster bus so peer replicas evict any cached connection config for connID.
 	// Called after every connection upsert and delete. Fire-and-forget: a bus

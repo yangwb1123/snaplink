@@ -32,6 +32,7 @@ func (s *Server) mountAdminSurface() {
 	s.mountAdminUserState(api)
 	s.mountAdminB2B(api)
 	s.mountConfigAuditAPI(api)
+	s.mountAdminBreakGlass(api)
 }
 
 // mountAdminAPIObservability registers the client lookup plus the opt-in audit,
@@ -478,4 +479,21 @@ func (s *Server) RecordConfigChange(ctx context.Context, actor, tenantID, resour
 	if err := s.configAuditStore.Record(ctx, entry); err != nil {
 		s.logger.Error("config history record failed", "resource", resource, "resource_id", resourceID, "error", err)
 	}
+}
+
+// mountAdminBreakGlass registers the break-glass (emergency support) admin
+// session lifecycle: create (bounded, audited on-behalf-of grant, reason
+// mandatory), list pending+active, revoke (cascades derived-session
+// destruction), approve (two-person rule — the approver must differ from the
+// creator). Mounted only when a BreakGlassStore is wired — byte-identical
+// without it. GET is admin:read; POST/DELETE are admin:write via the
+// default AdminMiddleware method-scope rule.
+func (s *Server) mountAdminBreakGlass(api Router) {
+	if s.breakGlassStore == nil {
+		return
+	}
+	api.POST(PathAdminBreakGlass, s.handleAdminCreateBreakGlass)
+	api.GET(PathAdminBreakGlass, s.handleAdminListBreakGlass)
+	api.DELETE(PathAdminBreakGlassByID, s.handleAdminRevokeBreakGlass)
+	api.POST(PathAdminBreakGlassApprove, s.handleAdminApproveBreakGlass)
 }

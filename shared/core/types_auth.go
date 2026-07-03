@@ -32,6 +32,15 @@ type Session struct {
 	// load-bearing on its own (the suspension check + roster-based revocation
 	// remain the enforcement floor).
 	TenantID string `json:"tenant_id,omitempty"`
+
+	// Kind distinguishes special session classes from interactive logins.
+	// Currently the only value is SessionKindAdminImpersonation — a session
+	// minted under a break-glass admin grant — so audit enrichment can
+	// separate "the user did this" from "support did this as the user".
+	// Best-effort like IP/UserAgent: persisted only by managers that store
+	// it (memory does); never security load-bearing — break-glass tracks
+	// its derived sessions by ID for the revocation cascade.
+	Kind string `json:"kind,omitempty"`
 }
 
 // IsExpired checks if the session has expired.

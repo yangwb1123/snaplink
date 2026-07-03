@@ -41,6 +41,13 @@ const (
 	EventAdminDomainDeleted              EventType = "admin_domain_deleted"
 	EventAdminSubjectExported            EventType = "admin_subject_exported"
 	EventAdminSubjectErased              EventType = "admin_subject_erased"
+	// Break-glass lifecycle events. Every one carries the SOC 2 evidence
+	// chain in Metadata: admin_id, target_user_id, admin_session_id,
+	// break_glass_reason — "who acted as whom, when, and why".
+	EventAdminBreakGlassCreated  EventType = "admin_break_glass_created"
+	EventAdminBreakGlassApproved EventType = "admin_break_glass_approved"
+	EventAdminBreakGlassRevoked  EventType = "admin_break_glass_revoked"
+	EventAdminBreakGlassExpired  EventType = "admin_break_glass_expired"
 	// EventAdminGRPCCalled is emitted by the gRPC admin audit interceptor
 	// for every gated RPC. The interceptor auto-records actor, method,
 	// duration, and grpc status — complementing the explicit per-RPC

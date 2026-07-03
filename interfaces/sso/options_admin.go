@@ -7,6 +7,7 @@ import (
 	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/platform/rotation"
 	"github.com/snaplink/sso/platform/sse"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // WithAdminSessionTTL sets an idle timeout for admin bearer tokens. When
@@ -141,4 +142,20 @@ func WithConfigDriftDetection(interval time.Duration, replicaID string) Option {
 		s.configDriftInterval = interval
 		s.configReplicaID = replicaID
 	}
+}
+
+// WithBreakGlassStore wires a store for break-glass (emergency support)
+// admin sessions, enabling the POST/GET /api/v1/admin/break-glass,
+// DELETE .../{id}, and POST .../{id}/approve lifecycle endpoints. Without
+// it, no break-glass surface exists — byte-identical to a build without the
+// feature. Pair with a WithSessionManager so impersonate/escalate scope
+// grants can mint their marked target-user session; a readonly-only
+// deployment works without a SessionManager.
+//
+// Derived sessions are only ever actually revoked by an active sweep — see
+// Server.RunBreakGlassSweeper, which the operator should run in a goroutine
+// alongside this option (the same pattern as the audit/CIBA/snapshot
+// retention loops in cmd/sso-server).
+func WithBreakGlassStore(store core.BreakGlassStore) Option {
+	return func(s *Server) { s.breakGlassStore = store }
 }

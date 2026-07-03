@@ -5033,6 +5033,151 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/admin/break-glass:
+    post:
+      tags: [admin]
+      summary: Create a break-glass (emergency support) admin session.
+      description: |
+        Requests a bounded, audited on-behalf-of grant for `target_user_id`.
+        admin:write. `reason` (a ticket/incident reference) is mandatory —
+        SOC 2 CC6.1: an unexplained break-glass is itself an audit finding.
+        `ttl_seconds` defaults to 900 (15m) and is capped at 3600 (1h)
+        regardless of caller input. `require_approval: true` creates a
+        PENDING grant that a DIFFERENT admin must approve via
+        `POST /api/v1/admin/break-glass/{id}/approve` before it can be used;
+        otherwise the grant activates immediately, minting its impersonation
+        session up front for `impersonate`/`escalate` scope only —
+        `readonly` (the default) never mints a session, so it is
+        structurally incapable of acting as the user. Emits
+        `admin_break_glass_created`. Mounted only when a BreakGlassStore is
+        wired.
+      operationId: adminCreateBreakGlass
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_user_id, reason]
+              properties:
+                target_user_id: { type: string }
+                reason: { type: string, description: "mandatory ticket/incident reference" }
+                scope: { type: string, enum: [readonly, impersonate, escalate], default: readonly }
+                ttl_seconds: { type: integer, description: "default 900 (15m), max 3600 (1h)" }
+                require_approval: { type: boolean, default: false }
+                tenant_id: { type: string }
+      responses:
+        "201":
+          description: The created break-glass session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminSession" }
+        "400":
+          description: Missing/blank reason or target_user_id, invalid scope, or ttl_seconds over the 1h cap.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    get:
+      tags: [admin]
+      summary: List pending + active break-glass admin sessions.
+      description: |
+        Excludes revoked and (lazily) expired grants — admin:read. Mounted
+        only when a BreakGlassStore is wired.
+      operationId: adminListBreakGlass
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The pending + active break-glass sessions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/AdminSession" }
+                  total: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/break-glass/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [admin]
+      summary: Revoke a break-glass admin session.
+      description: |
+        Revokes the grant and cascades destruction of every impersonation
+        session minted under it, so it can never be used again even though
+        the underlying session's own TTL hasn't lapsed yet. admin:write.
+        Idempotent on an already revoked/expired grant. Emits
+        `admin_break_glass_revoked`.
+      operationId: adminRevokeBreakGlass
+      security:
+        - bearerAuth: []
+      responses:
+        "200": { description: Revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such break-glass session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/break-glass/{id}/approve:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Approve a pending break-glass admin session (two-person rule).
+      description: |
+        A SECOND admin approves a pending grant, minting its impersonation
+        session (`impersonate`/`escalate` scope only) now that two-person
+        control is satisfied. admin:write. The approver MUST differ from
+        the grant's creator — self-approval returns
+        `break_glass_self_approval`; approving a non-pending grant (already
+        active/revoked/expired) returns `break_glass_not_pending`. Emits
+        `admin_break_glass_approved`.
+      operationId: adminApproveBreakGlass
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The activated break-glass session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminSession" }
+        "400":
+          description: Self-approval rejected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such break-glass session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Grant is not pending approval.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/connections:
     get:
       tags: [admin]
@@ -8343,6 +8488,30 @@ components:
         user_id: { type: string }
         role: { type: string, enum: [member, admin, guest] }
         created_at: { type: string, format: date-time }
+
+    AdminSession:
+      type: object
+      description: |
+        A break-glass (emergency support) admin session: a bounded, audited
+        window in which admin_user_id may act on behalf of target_user_id.
+        SOC 2 CC6.1/CC6.2, PCI DSS 7.2, HIPAA §164.312(a) evidence chain.
+      required: [id, admin_user_id, target_user_id, reason, scope, status, expires_at, created_at]
+      properties:
+        id: { type: string }
+        admin_user_id: { type: string, description: "the support admin who created the grant" }
+        target_user_id: { type: string }
+        tenant_id: { type: string }
+        reason: { type: string, description: "mandatory ticket/incident reference" }
+        scope: { type: string, enum: [readonly, impersonate, escalate] }
+        status: { type: string, enum: [pending, active, revoked, expired] }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        approved_by: { type: string, description: "empty until a second admin approves a pending grant" }
+        audit_id: { type: string, description: "links to the admin_break_glass_created audit event" }
+        session_ids:
+          type: array
+          items: { type: string }
+          description: Impersonation sessions minted under this grant (impersonate/escalate scope only).
 
     Connection:
       type: object

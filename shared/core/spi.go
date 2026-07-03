@@ -157,6 +157,12 @@ type SessionMeta struct {
 	// flow had no tenant in scope, and a manager that doesn't persist it stays
 	// byte-identical (tenant suspension then falls back to the roster path).
 	TenantID string
+
+	// Kind, when set, marks the session class (see Session.Kind). The
+	// break-glass flow passes SessionKindAdminImpersonation here so the
+	// minted session is distinguishable from an interactive login.
+	// Best-effort: a manager that doesn't persist it stays byte-identical.
+	Kind string
 }
 
 // SessionMetaCreator is the OPTIONAL extension a SessionManager implements to
