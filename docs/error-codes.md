@@ -284,6 +284,10 @@ mounted only when a `BreakGlassStore` is wired.
 | `break_glass_ttl_exceeded`        | 400  | Requested `ttl_seconds` exceeds the 1-hour cap (`core.MaxBreakGlassTTL`)                        |
 | `break_glass_self_approval`       | 400  | `POST .../{id}/approve` called by the same admin who created the pending grant                  |
 | `break_glass_not_pending`         | 409  | `POST .../{id}/approve` targets a grant that is not `pending` (already active/revoked/expired)  |
+| `break_glass_not_impersonable`    | 403  | `POST .../{id}/impersonate` on a `readonly`-scope grant (only impersonate/escalate can mint a bearer — structural) |
+| `break_glass_not_active`          | 409  | `POST .../{id}/impersonate` on a grant that is not `active` (pending/expired/revoked)           |
+| `break_glass_not_owner`           | 403  | `POST .../{id}/impersonate` by an admin other than the grant's designated `admin_user_id`       |
+| `impersonation_unavailable`       | 500  | `POST .../{id}/impersonate` could not mint the bearer (no token issuer resolvable / issuance failed) |
 | `not_found`                       | 404  | Unknown break-glass session id, or no `BreakGlassStore` wired                                    |
 
 ---

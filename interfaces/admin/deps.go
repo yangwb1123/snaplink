@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"context"
+
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/platform/audit"
@@ -38,6 +40,19 @@ type Deps interface {
 	// BreakGlassStore persists break-glass (emergency support) admin
 	// sessions. Nil ⇒ the break-glass routes are NOT mounted.
 	BreakGlassStore() core.BreakGlassStore
+	// MintImpersonationToken issues the marked, TTL-bounded bearer that
+	// authenticates as a.TargetUserID through the SAME token-issuance path a
+	// normal user token uses — so the target user's own permission/scope
+	// boundary applies and NOTHING is widened (NON-BYPASS). It refuses any
+	// grant that is not impersonate/escalate scope and clamps the lifetime to
+	// a.ExpiresAt. Returns an error (never a partial token) when no token
+	// issuer is resolvable or issuance fails.
+	MintImpersonationToken(ctx context.Context, a core.AdminSession) (core.ImpersonationCredential, error)
+	// RevokeToken denies a bearer across every registered issuer (publishing on
+	// the cluster bus like /token/revoke). The break-glass cascade uses it to
+	// kill impersonation credentials the instant a grant is revoked/expired, and
+	// to clean up a token whose atomic attach lost a race. Best-effort.
+	RevokeToken(ctx context.Context, token string)
 	// InvalidateConnectionCache publishes a KindConnectionChange event to the
 	// cluster bus so peer replicas evict any cached connection config for connID.
 	// Called after every connection upsert and delete. Fire-and-forget: a bus

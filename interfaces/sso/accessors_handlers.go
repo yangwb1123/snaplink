@@ -3,6 +3,7 @@ package sso
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/snaplink/sso/shared/security"
@@ -50,6 +51,70 @@ func (s *Server) RevokeAcrossIssuers(ctx context.Context, token string) (revoked
 		s.publishTokenRevocation(ctx, token, jwtExpUnsafe(token))
 	}
 	return revoked, failed
+}
+
+// MintImpersonationToken implements admin.Deps: it mints the marked,
+// TTL-bounded bearer a break-glass impersonate/escalate grant hands to the
+// support admin. The token's sub is the TARGET user and it carries NO scope,
+// so every downstream authorization check resolves the target's OWN boundary
+// (NON-BYPASS) — never the admin's. The admin appears only in the RFC 8693
+// `act` claim and break_glass_admin_session_id; amr=break_glass marks it so it
+// can never read as the user authenticating themselves. It reuses the exact
+// issuerForClient + TokenIssuer.Issue path a normal login uses (no fork) and
+// clamps the lifetime to the grant window (a.ExpiresAt).
+func (s *Server) MintImpersonationToken(ctx context.Context, a core.AdminSession) (core.ImpersonationCredential, error) {
+	// Structural backstop: a readonly (or any non-impersonate/escalate) grant
+	// can NEVER produce a bearer, independent of the handler's own scope gate.
+	if a.Scope != core.AdminScopeImpersonate && a.Scope != core.AdminScopeEscalate {
+		return core.ImpersonationCredential{}, fmt.Errorf("break-glass: scope %q may not impersonate", a.Scope)
+	}
+	ttl := time.Until(a.ExpiresAt)
+	if ttl <= 0 {
+		return core.ImpersonationCredential{}, fmt.Errorf("break-glass: grant window already closed")
+	}
+	_, ti, err := s.issuerForClient(nil)
+	if err != nil {
+		return core.ImpersonationCredential{}, fmt.Errorf("break-glass: no token issuer: %w", err)
+	}
+	sid := ""
+	if len(a.SessionIDs) > 0 {
+		sid = a.SessionIDs[0]
+	}
+	tok, err := ti.Issue(ctx, &Subject{
+		ID:       a.TargetUserID,
+		ClientID: core.BreakGlassImpersonationClientID,
+		AuthTime: time.Now(),
+		AMR:      []string{core.AMRBreakGlass},
+		TTL:      ttl,
+		SID:      sid,
+		Actor:    &core.ActorClaim{Subject: a.AdminUserID},
+		Claims: map[string]string{
+			core.ClaimBreakGlassAdminSessionID: a.ID,
+			core.ClaimBreakGlass:               "true",
+		},
+	}, nil)
+	if err != nil {
+		return core.ImpersonationCredential{}, fmt.Errorf("break-glass: issue impersonation token: %w", err)
+	}
+	return core.ImpersonationCredential{
+		Token:     tok.AccessToken,
+		TokenType: tok.TokenType,
+		ExpiresIn: tok.ExpiresIn,
+		ExpiresAt: time.Now().Add(ttl),
+		SessionID: sid,
+	}, nil
+}
+
+// RevokeToken implements admin.Deps: it denies a bearer across every registered
+// issuer (publishing on the cluster bus so peer replicas honor it too). The
+// break-glass cascade calls it to invalidate an impersonation credential the
+// instant a grant is revoked/expired. Best-effort — a nil/absent issuer is a
+// no-op, matching the logout revocation path.
+func (s *Server) RevokeToken(ctx context.Context, token string) {
+	if token == "" || len(s.tokenIssuers) == 0 {
+		return
+	}
+	_, _ = s.RevokeAcrossIssuers(ctx, token)
 }
 
 // AuditPartialRevokeFailure emits an audit event when some issuers failed to revoke.

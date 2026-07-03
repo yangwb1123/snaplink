@@ -306,6 +306,11 @@ const (
 	PathAdminBreakGlass        = "/admin/break-glass"
 	PathAdminBreakGlassByID    = "/admin/break-glass/:id"
 	PathAdminBreakGlassApprove = "/admin/break-glass/:id/approve"
+	// PathAdminBreakGlassImpersonate mints the live-impersonation bearer for an
+	// active+approved impersonate/escalate grant (admin:write). The bearer
+	// authenticates as the TARGET user under the target's own permission
+	// boundary and expires no later than the grant window.
+	PathAdminBreakGlassImpersonate = "/admin/break-glass/:id/impersonate"
 
 	// PathAdminSessions lists all active user sessions (GET, admin:read).
 	// Returns the full session list from SessionManager.ListAll. Mounted

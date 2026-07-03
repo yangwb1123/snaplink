@@ -483,9 +483,11 @@ func (s *Server) RecordConfigChange(ctx context.Context, actor, tenantID, resour
 // session lifecycle: create (bounded, audited on-behalf-of grant, reason
 // mandatory), list pending+active, revoke (cascades derived-session
 // destruction), approve (two-person rule — the approver must differ from the
-// creator). Mounted only when a BreakGlassStore is wired — byte-identical
-// without it. GET is admin:read; POST/DELETE are admin:write via the
-// default AdminMiddleware method-scope rule.
+// creator), and impersonate (mint a live target-user bearer for an
+// active+approved impersonate/escalate grant, bounded by the grant TTL).
+// Mounted only when a BreakGlassStore is wired — byte-identical without it.
+// GET is admin:read; POST/DELETE are admin:write via the default
+// AdminMiddleware method-scope rule.
 func (s *Server) mountAdminBreakGlass(api Router) {
 	if s.breakGlassStore == nil {
 		return
@@ -494,4 +496,5 @@ func (s *Server) mountAdminBreakGlass(api Router) {
 	api.GET(PathAdminBreakGlass, s.handleAdminListBreakGlass)
 	api.DELETE(PathAdminBreakGlassByID, s.handleAdminRevokeBreakGlass)
 	api.POST(PathAdminBreakGlassApprove, s.handleAdminApproveBreakGlass)
+	api.POST(PathAdminBreakGlassImpersonate, s.handleAdminImpersonateBreakGlass)
 }

@@ -92,6 +92,43 @@ const (
 // can distinguish "the user logged in" from "support acted as the user".
 const SessionKindAdminImpersonation = "admin_impersonation"
 
+const (
+	// BreakGlassImpersonationClientID is the synthetic OAuth client_id stamped
+	// on a break-glass impersonation access token. The emergency-support flow
+	// has no real relying party, but RFC 9068 §2.2 requires a client_id; a
+	// reserved URN keeps the token self-describing (unmistakably break-glass
+	// minted, never a real client) and cannot collide with any operator-
+	// registered client id — so the anti-abuse marking survives on the wire.
+	BreakGlassImpersonationClientID = "urn:snaplink:break-glass"
+	// AMRBreakGlass is the RFC 8176 authentication-method marker stamped on an
+	// impersonation token's amr, so it can NEVER be read as the target user
+	// having authenticated themselves (the distinguishability invariant).
+	AMRBreakGlass = "break_glass"
+	// ClaimBreakGlassAdminSessionID / ClaimBreakGlass are the impersonation
+	// token's Extra-claim keys carrying the SOC 2 evidence chain (which grant,
+	// and that this bearer is a break-glass credential) so "who acted as whom,
+	// under which grant" rides the credential into every downstream audit.
+	ClaimBreakGlassAdminSessionID = "break_glass_admin_session_id"
+	ClaimBreakGlass               = "break_glass"
+)
+
+// ImpersonationCredential is the marked, TTL-bounded bearer minted by the
+// break-glass POST .../{id}/impersonate endpoint. Its access token
+// authenticates as the TARGET user (sub = AdminSession.TargetUserID) — NEVER
+// the admin — so it flows through the exact same authorization checks any user
+// token does and grants no admin scope (NON-BYPASS). It carries the RFC 8693
+// `act` claim naming the admin plus ClaimBreakGlassAdminSessionID, and its
+// lifetime is clamped to the grant window (ExpiresAt <= AdminSession.ExpiresAt).
+type ImpersonationCredential struct {
+	Token     string    `json:"access_token"`
+	TokenType string    `json:"token_type"`
+	ExpiresIn int       `json:"expires_in"`
+	ExpiresAt time.Time `json:"-"`
+	// SessionID is the marked (Kind=admin_impersonation) session this bearer is
+	// anchored to via its `sid` claim. Empty when no SessionManager was wired.
+	SessionID string `json:"session_id,omitempty"`
+}
+
 // AdminSession is a break-glass (emergency support) grant: a bounded,
 // audited window in which AdminUserID may act on behalf of TargetUserID.
 // SOC 2 CC6.1/CC6.2, PCI DSS 7.2, and HIPAA 164.312(a) evidence chain.
@@ -122,6 +159,16 @@ type AdminSession struct {
 	// Revocation and expiry cascade SessionManager.Destroy over them —
 	// a derived session never outlives its break-glass window.
 	SessionIDs []string `json:"session_ids,omitempty"`
+
+	// ImpersonationTokens are the bearer credentials the .../impersonate
+	// endpoint minted under this grant. Held server-side SOLELY so the
+	// revoke/expiry cascade can deny them across every issuer the instant the
+	// grant ends — a stateless JWT cannot self-revoke, so the cascade needs the
+	// token value (the same pattern logout's RevokeAcrossIssuers uses). json:"-"
+	// keeps these bearer secrets off EVERY wire response (List/Get never echo
+	// them). Additive + best-effort: a legacy record reads the nil zero value
+	// and every existing store keeps working unchanged.
+	ImpersonationTokens []string `json:"-"`
 }
 
 // IsExpired reports whether the break-glass window has closed.
@@ -151,10 +198,20 @@ type BreakGlassStore interface {
 	// authority even when handlers pre-check.
 	Approve(ctx context.Context, id, approverID string, sessionIDs []string) (AdminSession, error)
 
-	// Revoke marks a record revoked and returns it (with SessionIDs, so
-	// the caller can cascade). Idempotent on an already revoked/expired
-	// record; unknown ID returns ErrAdminSessionNotFound.
+	// Revoke marks a record revoked and returns it (with SessionIDs +
+	// ImpersonationTokens, so the caller can cascade). Idempotent on an already
+	// revoked/expired record; unknown ID returns ErrAdminSessionNotFound.
 	Revoke(ctx context.Context, id string) (AdminSession, error)
+
+	// AttachImpersonationToken appends a freshly minted impersonation bearer to
+	// an ACTIVE grant's revocation set so the revoke/expiry cascade can later
+	// deny it. It re-checks the grant's live status atomically (lazy-expiry
+	// aware) — the store is the authority even when the handler pre-checks —
+	// returning ErrAdminSessionNotFound for an unknown id and
+	// ErrAdminSessionNotActive when the grant is not active (pending / expired /
+	// revoked). The caller MUST destroy the just-minted token on any error so a
+	// rejected attach never orphans a live impersonation credential.
+	AttachImpersonationToken(ctx context.Context, id, token string) (AdminSession, error)
 
 	// DeleteExpired removes every record past ExpiresAt and returns the
 	// ones that were still pending/active — the sweeper cascades session

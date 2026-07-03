@@ -5497,6 +5497,73 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/break-glass/{id}/impersonate:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Mint a live impersonation bearer for a break-glass grant.
+      description: |
+        The grant's designated admin mints a bearer that authenticates AS the
+        target user, for an ACTIVE + APPROVED `impersonate`/`escalate` grant
+        ONLY. admin:write. The token's `sub` is the TARGET user and it carries
+        NO scope, so every downstream authorization check resolves the target's
+        OWN permission boundary (NON-BYPASS) — never the admin's; the admin
+        appears only in the RFC 8693 `act` claim and `break_glass_admin_session_id`,
+        and `amr=break_glass` marks it so it can never read as the user
+        authenticating themselves. The bearer expires no later than the grant
+        window and is registered under the grant, so revoking or expiring the
+        grant (DELETE, or the sweeper) invalidates it immediately. `readonly`
+        grants are STRUCTURALLY rejected (`break_glass_not_impersonable`); a
+        non-active grant returns `break_glass_not_active`; any admin other than
+        the grant's `admin_user_id` returns `break_glass_not_owner`. Emits
+        `admin_break_glass_impersonation_started` with the full evidence chain.
+        Response is `Cache-Control: no-store`.
+      operationId: adminImpersonateBreakGlass
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The minted impersonation credential.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+                  token_type: { type: string, example: Bearer }
+                  expires_in: { type: integer }
+                  session_id: { type: string }
+                  admin_session_id: { type: string }
+                  admin_id: { type: string }
+                  target_user_id: { type: string }
+                  kind: { type: string, example: admin_impersonation }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Readonly scope (not impersonable) or caller is not the grant owner.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such break-glass session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Grant is not active (pending/expired/revoked).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/connections:
     get:
       tags: [admin]

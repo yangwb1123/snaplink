@@ -192,6 +192,7 @@ func HandleRevokeBreakGlass(d Deps, ctx core.HandlerContext) {
 		return
 	}
 	cascadeRevokeSessions(d, rctx, a.SessionIDs)
+	cascadeRevokeImpersonationTokens(d, rctx, a.ImpersonationTokens)
 	recordBreakGlassEvent(d, rctx, audit.ClientIP(ctx.Request()), audit.EventAdminBreakGlassRevoked, a)
 	ctx.JSON(http.StatusOK, map[string]string{core.KeyStatus: "revoked"})
 }
@@ -277,6 +278,7 @@ func SweepBreakGlassOnce(d Deps, ctx context.Context) (int, error) {
 	}
 	for _, a := range expired {
 		cascadeRevokeSessions(d, ctx, a.SessionIDs)
+		cascadeRevokeImpersonationTokens(d, ctx, a.ImpersonationTokens)
 		recordBreakGlassEvent(d, ctx, "", audit.EventAdminBreakGlassExpired, a)
 	}
 	return len(expired), nil
