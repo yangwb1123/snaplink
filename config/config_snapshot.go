@@ -1,6 +1,11 @@
 package config
 
-import "time"
+import (
+	"time"
+
+	"github.com/snaplink/sso/domains/conditionalaccess"
+	"github.com/snaplink/sso/domains/tokenpolicy"
+)
 
 // TTL bounds how long the lease lives between heartbeats; the Runner
 // renews on TTL/3. Blocking switches contention behavior between
@@ -272,4 +277,82 @@ type RotationConfig struct {
 	// serving. <=0 uses the rotation package defaults.
 	RetryBase time.Duration `yaml:"retry_base"`
 	RetryMax  time.Duration `yaml:"retry_max"`
+}
+
+// TokenPolicyConfig opts into the token-policy governance engine
+// (domains/tokenpolicy, sso.WithTokenPolicy): rules clamp access-token TTLs
+// downward (max_ttl) and deny dangerous scope combinations, and the read-only
+// governance view is served at GET /api/v1/admin/token-policies (NEVER exposes
+// secret material). Disabled by default: an absent section (no File, no inline
+// Policies) wires nothing, byte-identical to a build without the feature. A
+// store lookup error at request time FAILS OPEN (issue the token) per §3.
+//
+// Rules come from EITHER an external bundle (File — a standalone document whose
+// top-level token_policies: list is parsed via tokenpolicy.ParseYAML) OR the
+// inline Policies list; setting both is a config error (ambiguous source).
+//
+// Lives beside the other governance/lifecycle subsystems (snapshot/DR/rotation)
+// in this file because config/ is at its frozen per-directory file-count ceiling
+// (directory_fanout_test.go) — new sections fold into a topically-related file.
+type TokenPolicyConfig struct {
+	// File is an optional path to a standalone token-policy bundle (top-level
+	// token_policies: list). Mutually exclusive with Policies.
+	File string `yaml:"file"`
+	// Policies inlines the rule list directly in the server config (same schema
+	// as a bundle's token_policies: entries).
+	Policies []tokenpolicy.Policy `yaml:"policies"`
+}
+
+// AccessPolicyConfig opts into the zero-trust conditional-access (CAP) engine
+// (domains/conditionalaccess, sso.WithConditionalAccess) and mounts the
+// read-only governance view GET /api/v1/admin/access-policies. This wave the
+// engine is ADVISORY (evaluated via Server.EvaluateConditionalAccess, not wired
+// into /auth/login), so enabling it changes no live auth decision. Disabled by
+// default: an absent section (no File, no inline Policies) wires nothing,
+// byte-identical to a build without the feature.
+//
+// Policies come from EITHER an external bundle (File — parsed via the strict
+// conditionalaccess YAML loader, unknown keys rejected) OR the inline Policies
+// list; setting both is a config error. DegradedTrust / DefaultDeny tune the
+// engine's fail modes (a missing signal substitutes DegradedTrust; DefaultDeny
+// flips the no-policy-matched verdict from allow to deny).
+type AccessPolicyConfig struct {
+	// File is an optional path to a standalone CAP policy bundle. Mutually
+	// exclusive with Policies.
+	File string `yaml:"file"`
+	// Policies inlines the CAP rule list directly in the server config.
+	Policies []conditionalaccess.Policy `yaml:"policies"`
+	// DegradedTrust is the conservative trust value substituted when a signal is
+	// missing; <=0 or >1 normalizes to the engine default (0.3).
+	DegradedTrust float64 `yaml:"degraded_trust"`
+	// DefaultDeny flips the no-match verdict to deny (a zero-trust posture) and
+	// governs the fallback when the policy store is unavailable.
+	DefaultDeny bool `yaml:"default_deny"`
+}
+
+// DegradationConfig opts into the disaster-recovery degraded-service control
+// plane (platform/lifecycle/degradation, sso.WithDegradationManager): an
+// atomically-swappable service Mode the enforcement gate consults to shed
+// non-essential request classes, plus the admin GET/POST /api/v1/admin/dr/mode
+// read+toggle. Disabled by default: an absent section installs no gate and
+// mounts no route (byte-identical); the manager's normal mode is itself a
+// pass-through, so even an enabled-but-normal build has no request-path effect
+// beyond one atomic load per request.
+type DegradationConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// InitialMode is the posture the server boots into: normal (default) |
+	// read_only | auth_only | local_only | maintenance. An empty value is
+	// normal; an unrecognized value fails loud at boot rather than silently
+	// falling back to a request-shedding posture.
+	InitialMode string `yaml:"initial_mode"`
+
+	// AutoReadOnlyOnStoreLoss is an operator INTENT flag: the server should drop
+	// to read_only when a backing datastore's health signal is lost. cmd has no
+	// continuous storage-health push loop today (health is pull-based via
+	// /readyz + the storage-health admin report), so there is no clean seam to
+	// drive this automatically — the manager is EXPOSED via /api/v1/admin/dr/mode
+	// for an operator or an external health loop to call SetMode(read_only). The
+	// flag is honored as a boot-time log acknowledgement until such a loop exists.
+	AutoReadOnlyOnStoreLoss bool `yaml:"auto_read_only_on_store_loss"`
 }

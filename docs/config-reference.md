@@ -207,6 +207,38 @@ Disabled by default; the read-only governance inventory (`GET /api/v1/admin/cred
 | `rotation.tick` | Scheduler due-check poll resolution (how late a due rotation can fire, NOT the cadence); `<=0` = `rotation.DefaultSchedulerTick` |
 | `rotation.retry_base` / `rotation.retry_max` | Failure-retry backoff (base doubled per consecutive failure, capped) while the old credential keeps serving; `<=0` = package defaults |
 
+Enabling `rotation` also wires `sso.WithCredentialCompromise` against the SAME Scheduler, mounting the emergency `POST /api/v1/admin/credentials/{type}/compromise` (`admin:write`) — force-rotates a leaked credential class OFF schedule with NO overlap window; the response is the new version's governance metadata only, never the secret.
+
+## Token Policies
+
+Token-policy governance engine (`domains/tokenpolicy`, `sso.WithTokenPolicy`). Disabled by default; an absent section is byte-identical to a build without it. A store lookup error at issuance FAILS OPEN (issue the token). The read-only governance view is `GET /api/v1/admin/token-policies` (never exposes secret material). Provide rules via EITHER `token_policies.file` OR `token_policies.policies` — setting both fails loud at boot.
+
+| Key | Effect |
+|---|---|
+| `token_policies.file` | Path to a standalone bundle whose top-level `token_policies:` list is parsed by `tokenpolicy.ParseYAML`. Mutually exclusive with `token_policies.policies` |
+| `token_policies.policies` | Inline rule list (same schema as a bundle entry): `name`, optional selector (`client_id`, `scopes`), and dimensions (`max_ttl`, `max_refresh_depth`, `max_active_sessions`, `require_renew_after`, `block_scope_combos`). Rules only ever TIGHTEN (clamp TTL downward, deny scope combos) |
+
+## Conditional Access
+
+Zero-trust conditional-access (CAP) engine (`domains/conditionalaccess`, `sso.WithConditionalAccess`), mounting the read-only view `GET /api/v1/admin/access-policies`. Disabled by default. This wave the engine is ADVISORY — evaluated via `Server.EvaluateConditionalAccess`, NOT wired into the live `/auth/login` control flow — so enabling it changes no live auth decision. Provide policies via EITHER `access_policies.file` OR `access_policies.policies`; both fails loud.
+
+| Key | Effect |
+|---|---|
+| `access_policies.file` | Path to a standalone CAP policy bundle, parsed by the strict `conditionalaccess` loader (unknown keys rejected). Mutually exclusive with `access_policies.policies` |
+| `access_policies.policies` | Inline CAP rule list (`name`, `priority`, `enabled`, `dry_run`, `conditions`, `actions`) |
+| `access_policies.degraded_trust` | Conservative trust value substituted when a signal is missing; `<=0` or `>1` normalizes to the engine default (`0.3`) |
+| `access_policies.default_deny` | Flips the no-policy-matched verdict from allow to deny (a zero-trust posture) and governs the fallback when the store is unavailable |
+
+## Degraded-Service Modes
+
+Disaster-recovery degraded-service control plane (`platform/lifecycle/degradation`, `sso.WithDegradationManager`). Disabled by default: an absent section installs no gate and mounts no route (byte-identical). An enabled-but-`normal` build is a pass-through (one atomic load per request).
+
+| Key | Effect |
+|---|---|
+| `degradation.enabled` | Builds the degraded-service `Manager` and wires `sso.WithDegradationManager`, mounting the admin `GET`/`POST /api/v1/admin/dr/mode` read+toggle. The enforcement middleware sheds the request classes the active mode names with `503` + `Retry-After` (probes always pass) |
+| `degradation.initial_mode` | Boot posture: `normal` (default) \| `read_only` \| `auth_only` \| `local_only` \| `maintenance`. An unrecognized value fails loud at boot |
+| `degradation.auto_read_only_on_store_loss` | Operator INTENT flag. cmd has no continuous storage-health push loop today (health is pull-based via `/readyz` + the storage-health admin report), so there is no clean auto-driver seam — the manager is EXPOSED for an operator or external health loop to drive `SetMode(read_only)` via `POST /api/v1/admin/dr/mode`. Honored as a boot-time log acknowledgement |
+
 ## Break-glass
 
 Emergency ("break-glass") admin sessions. Disabled by default; without it no break-glass surface exists.

@@ -157,6 +157,13 @@ type appBuilder struct {
 	breakGlassStore       core.BreakGlassStore
 	breakGlassCancel      context.CancelFunc
 	breakGlassDone        <-chan struct{}
+
+	// degradationMgr is the disaster-recovery degraded-service Manager
+	// (degradation.enabled). It has no background loop — the admin
+	// /api/v1/admin/dr/mode endpoints wired by WithDegradationManager drive it —
+	// so it carries no cancel/done pair; retained only so the *app can expose the
+	// current posture (and a future health loop can call SetMode). Nil when off.
+	degradationMgr *sso.DegradationManager
 }
 
 // finalize wires the cluster subsystems + the last Options, constructs the
@@ -310,6 +317,7 @@ func (b *appBuilder) assembleExtras(a *app, rt serverRuntime) {
 	a.credentialSchedCancel, a.credentialSchedDone = b.credentialSchedCancel, b.credentialSchedDone
 	a.configDriftCancel, a.configDriftDone = b.configDriftCancel, b.configDriftDone
 	a.breakGlassCancel, a.breakGlassDone = b.breakGlassCancel, b.breakGlassDone
+	a.degradationMgr = b.degradationMgr
 }
 
 // drFields extracts the DR handles from dw; a nil dw (dr.enabled=false)

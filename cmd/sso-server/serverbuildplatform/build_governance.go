@@ -1,13 +1,19 @@
 package serverbuildplatform
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/goccy/go-yaml"
 
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/domains/conditionalaccess"
+	"github.com/snaplink/sso/domains/tokenpolicy"
+	tokenpolicymemory "github.com/snaplink/sso/domains/tokenpolicy/memory"
+	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/configaudit"
 	configauditsqlite "github.com/snaplink/sso/platform/configaudit/sqlite"
 	"github.com/snaplink/sso/platform/lifecycle/rotation"
@@ -101,4 +107,97 @@ func EffectiveConfigSnapshot(cfg *config.Config) (map[string]any, error) {
 		return nil, fmt.Errorf("config snapshot: unmarshal: %w", err)
 	}
 	return configaudit.Redact(m), nil
+}
+
+// BuildTokenPolicyStore builds the tokenpolicy.Store backing sso.WithTokenPolicy
+// when the token_policies section is present — either an external bundle (File,
+// a standalone document whose top-level token_policies: list ParseYAML decodes)
+// or the inline Policies list. Returns (nil, nil) when the section is absent
+// (byte-identical to a build without the feature). File and inline Policies are
+// mutually exclusive: an ambiguous dual source fails loud at boot.
+func BuildTokenPolicyStore(cfg config.TokenPolicyConfig) (tokenpolicy.Store, error) {
+	file := strings.TrimSpace(cfg.File)
+	if file == "" && len(cfg.Policies) == 0 {
+		return nil, nil
+	}
+	if file != "" && len(cfg.Policies) > 0 {
+		return nil, errors.New("token_policies: set either file or inline policies, not both")
+	}
+	policies := cfg.Policies
+	if file != "" {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("token_policies.file: %w", err)
+		}
+		parsed, err := tokenpolicy.ParseYAML(data)
+		if err != nil {
+			return nil, fmt.Errorf("token_policies.file: %w", err)
+		}
+		policies = parsed
+	}
+	return tokenpolicymemory.NewFromSlice(policies), nil
+}
+
+// BuildConditionalAccess builds the conditionalaccess.Store + engine Config
+// backing sso.WithConditionalAccess when the access_policies section is present
+// — either an external bundle (File, parsed by the strict CAP loader) or the
+// inline Policies list. Returns (nil, zero Config, nil) when absent
+// (byte-identical to a build without the feature). File and inline Policies are
+// mutually exclusive.
+func BuildConditionalAccess(cfg config.AccessPolicyConfig) (conditionalaccess.Store, conditionalaccess.Config, error) {
+	file := strings.TrimSpace(cfg.File)
+	if file == "" && len(cfg.Policies) == 0 {
+		return nil, conditionalaccess.Config{}, nil
+	}
+	if file != "" && len(cfg.Policies) > 0 {
+		return nil, conditionalaccess.Config{}, errors.New("access_policies: set either file or inline policies, not both")
+	}
+	store := conditionalaccess.NewMemoryStore()
+	if err := loadAccessPolicies(store, file, cfg.Policies); err != nil {
+		return nil, conditionalaccess.Config{}, err
+	}
+	return store, conditionalaccess.Config{DegradedTrust: cfg.DegradedTrust, DefaultDeny: cfg.DefaultDeny}, nil
+}
+
+// loadAccessPolicies seeds store from the bundle file (strict loader, unknown
+// keys rejected) or the inline list (validated on Put). Extracted to keep
+// BuildConditionalAccess within the function-length budget. A returned error
+// makes the caller discard the fresh store, so partial seeding never leaks.
+func loadAccessPolicies(store *conditionalaccess.MemoryStore, file string, inline []conditionalaccess.Policy) error {
+	ctx := context.Background()
+	if file != "" {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return fmt.Errorf("access_policies.file: %w", err)
+		}
+		if err := conditionalaccess.LoadInto(ctx, store, data); err != nil {
+			return fmt.Errorf("access_policies.file: %w", err)
+		}
+		return nil
+	}
+	for _, p := range inline {
+		if err := store.Put(ctx, p); err != nil {
+			return fmt.Errorf("access_policies: %w", err)
+		}
+	}
+	return nil
+}
+
+// BuildDegradationManager builds the degraded-service Manager backing
+// sso.WithDegradationManager when degradation.enabled, starting in the
+// configured initial mode. Returns (nil, nil) when disabled — byte-identical to
+// a build without the gate. An unrecognized initial_mode fails loud rather than
+// silently booting into an unknown, request-shedding posture.
+func BuildDegradationManager(cfg config.DegradationConfig) (*sso.DegradationManager, error) {
+	if !cfg.Enabled {
+		return nil, nil
+	}
+	mode := sso.DegradationModeNormal
+	if m := strings.TrimSpace(cfg.InitialMode); m != "" {
+		mode = sso.DegradationMode(m)
+		if !mode.Valid() {
+			return nil, fmt.Errorf("degradation.initial_mode %q invalid (normal|read_only|auth_only|local_only|maintenance)", cfg.InitialMode)
+		}
+	}
+	return sso.NewDegradationManager(mode), nil
 }
