@@ -66,11 +66,23 @@ func shutdownApp(t *testing.T, a *app) {
 		a.breakGlassCancel()
 		waitBounded(a.breakGlassDone)
 	}
+	if a.continuousVerifyCancel != nil {
+		a.continuousVerifyCancel()
+		waitBounded(a.continuousVerifyDone)
+	}
+	if a.tokenAnomalySweepCancel != nil {
+		a.tokenAnomalySweepCancel()
+		waitBounded(a.tokenAnomalySweepDone)
+	}
 	if c, ok := a.configAuditStore.(io.Closer); ok {
 		_ = c.Close()
 	}
 	if a.anomalyRT != nil {
 		a.anomalyRT.close(ctx)
+	}
+	// Drain the token-usage recorder AFTER its sweep stopped (mirrors run()).
+	if a.tokenUsageRecorder != nil {
+		_ = a.tokenUsageRecorder.Close(ctx)
 	}
 	if a.auditAsyncSink != nil {
 		_ = a.auditAsyncSink.Close(ctx)

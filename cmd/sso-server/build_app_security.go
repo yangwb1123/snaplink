@@ -207,7 +207,40 @@ func (b *appBuilder) wireGovernance() error {
 		return err
 	}
 	b.wireSessionTrustDecay()
+	if err := b.wireTokenAnomaly(); err != nil {
+		return err
+	}
 	return b.wireDegradation()
+}
+
+// wireTokenAnomaly builds the wave-4 token-behavior anomaly subsystem
+// (token_anomaly.enabled) and appends its two Options. The detector is a
+// tokenusage.Store decorator, so enabling it ALSO wires the wave-1 token-usage
+// recorder (WithTokenUsageRecorder) as its telemetry substrate: the recorder
+// drains usage events into the detector off the request path, and
+// startGovernanceWorkers starts the periodic RunTokenAnomalyDetection sweep. The
+// recorder is Started here (pre-NewServer) so its drainer is alive before the
+// first event; it is Closed at shutdown. No-op (byte-identical build) when the
+// section is disabled.
+func (b *appBuilder) wireTokenAnomaly() error {
+	rec, detector, err := serverbuildplatform.BuildTokenAnomaly(b.cfg.TokenAnomaly, b.logger)
+	if err != nil {
+		return fmt.Errorf("token anomaly: %w", err)
+	}
+	if detector == nil {
+		return nil
+	}
+	// Start the drainer before the Server can Offer the first usage event.
+	rec.Start()
+	b.tokenUsageRecorder = rec
+	b.tokenAnomalyDetector = detector
+	b.opts = append(b.opts,
+		sso.WithTokenUsageRecorder(rec),
+		sso.WithTokenAnomalyDetector(detector),
+	)
+	b.logger.Info("token anomaly detector enabled — off-path geo/velocity/rate-spike findings + token-usage telemetry",
+		"sweep_interval", b.cfg.TokenAnomaly.SweepInterval)
+	return nil
 }
 
 // wireTokenPolicy builds the token-policy governance store (external bundle or
@@ -385,8 +418,25 @@ func (b *appBuilder) startGovernanceWorkers(srv *sso.Server) error {
 		b.continuousVerifyCancel = cancel
 		b.continuousVerifyDone = srv.StartContinuousVerification(ctx)
 	}
+	b.startTokenAnomalySweep(srv)
 	b.startBreakGlassSweeper(srv)
 	return nil
+}
+
+// startTokenAnomalySweep runs Server.RunTokenAnomalyDetection in a goroutine
+// wrapped in the standard cancel+done pair. No-op when no detector is wired
+// (token_anomaly disabled). The recorder that feeds the detector is drained
+// separately at shutdown (main_shutdown.go).
+func (b *appBuilder) startTokenAnomalySweep(srv *sso.Server) {
+	if b.tokenAnomalyDetector == nil {
+		return
+	}
+	interval := b.cfg.TokenAnomaly.SweepInterval
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	b.tokenAnomalySweepCancel, b.tokenAnomalySweepDone = cancel, done
+	go func() { defer close(done); srv.RunTokenAnomalyDetection(ctx, interval) }()
+	b.logger.Info("token anomaly sweep enabled", "interval", interval)
 }
 
 // startBreakGlassSweeper runs Server.RunBreakGlassSweeper in a goroutine wrapped

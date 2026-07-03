@@ -38,6 +38,13 @@ func governanceEnabledConfig() *config.Config {
 	}
 	cfg.Degradation.Enabled = true
 	cfg.Degradation.InitialMode = "read_only"
+	// Wave-4 cmd wiring: the zero-trust session-trust-decay agent + the
+	// token-behavior anomaly detector, each enabled via its own config section.
+	cfg.SessionTrustDecay.Interval = time.Hour
+	cfg.SessionTrustDecay.Factor = 0.95
+	cfg.SessionTrustDecay.Floor = 0.5
+	cfg.TokenAnomaly.Enabled = true
+	cfg.TokenAnomaly.SweepInterval = time.Hour
 	return cfg
 }
 
@@ -73,6 +80,9 @@ var governanceAdminPaths = []string{
 	"/api/v1/admin/token-policies",
 	"/api/v1/admin/access-policies",
 	"/api/v1/admin/dr/mode",
+	// Wave-4: token-anomaly co-wires the usage read API + the suspicious list.
+	"/api/v1/admin/tokens/usage",
+	"/api/v1/admin/tokens/suspicious",
 }
 
 // governanceCompromisePath is the POST-only emergency compromise route; the
@@ -107,6 +117,19 @@ func TestGovernance_WiredWhenEnabled(t *testing.T) {
 		t.Error("degradation manager not built with degradation.enabled")
 	} else if got := a.degradationMgr.Mode(); got != sso.DegradationModeReadOnly {
 		t.Errorf("degradation initial mode = %q; want %q", got, sso.DegradationModeReadOnly)
+	}
+	// Wave-4 zero-trust: the continuous-verification agent lifecycle pair is set
+	// whenever session_trust_decay is enabled (the agent is inert-but-handled when
+	// the session store can't persist the step-up flag).
+	if a.continuousVerifyCancel == nil || a.continuousVerifyDone == nil {
+		t.Error("continuous-verification agent not started with session_trust_decay enabled")
+	}
+	// Wave-4 token governance: the anomaly sweep + its recorder are co-wired.
+	if a.tokenAnomalySweepCancel == nil || a.tokenAnomalySweepDone == nil {
+		t.Error("token anomaly sweep not started with token_anomaly.enabled")
+	}
+	if a.tokenUsageRecorder == nil {
+		t.Error("token usage recorder not co-wired with token_anomaly.enabled")
 	}
 
 	// Routes reachable (the Options reached the Server): a mounted admin route
@@ -147,6 +170,15 @@ func TestGovernance_NotWiredWhenDisabled(t *testing.T) {
 	}
 	if a.degradationMgr != nil {
 		t.Error("degradation manager built with degradation disabled")
+	}
+	if a.continuousVerifyCancel != nil || a.continuousVerifyDone != nil {
+		t.Error("continuous-verification agent started with session_trust_decay absent")
+	}
+	if a.tokenAnomalySweepCancel != nil || a.tokenAnomalySweepDone != nil {
+		t.Error("token anomaly sweep started with token_anomaly disabled")
+	}
+	if a.tokenUsageRecorder != nil {
+		t.Error("token usage recorder wired with token_anomaly disabled")
 	}
 
 	ts := httptest.NewServer(a.server.Handler())

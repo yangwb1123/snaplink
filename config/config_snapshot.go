@@ -391,3 +391,52 @@ type SessionTrustDecayConfig struct {
 	// range defaults to 1.0.
 	InitialScore float64 `yaml:"initial_score"`
 }
+
+// TokenAnomalyConfig opts into the wave-4 token-behavior anomaly detector
+// (sso.WithTokenAnomalyDetector, Phase 3 token governance): a
+// tokenanomaly.Detector decorates the token-usage recorder's store, captures
+// per-thumbprint geo/velocity observations off the request path, and a periodic
+// Server.RunTokenAnomalyDetection sweep turns them (plus the per-client rate
+// buckets) into governance findings surfaced on GET
+// /api/v1/admin/tokens/suspicious. DETECTION / REPORTING ONLY — a finding NEVER
+// feeds an auth decision (same contract as anomaly.Runner).
+//
+// Enabling this ALSO wires the wave-1 token-usage recorder
+// (sso.WithTokenUsageRecorder) as the detector's telemetry substrate: the
+// detector is a tokenusage.Store decorator, so it only observes events the
+// recorder drains off the request path. That co-wiring also mounts the
+// token-usage / portfolio admin read APIs — the recorder is not independently
+// configurable this wave (it exists only to feed the detector).
+//
+// Disabled by default: an absent section (enabled=false) wires neither the
+// recorder nor the detector and starts no sweep — byte-identical to a build
+// without the feature.
+type TokenAnomalyConfig struct {
+	// Enabled turns the whole subsystem on. SweepInterval MUST be > 0 when set
+	// (a sweep with no cadence would never emit a finding).
+	Enabled bool `yaml:"enabled"`
+	// SweepInterval is the Server.RunTokenAnomalyDetection cadence — how often
+	// the off-path Analyze pass converts observations into findings.
+	SweepInterval time.Duration `yaml:"sweep_interval"`
+
+	// MaxFindings bounds the in-memory finding store the sweep upserts into
+	// (<=0 ⇒ the package default; it is a rolling operational view, not an
+	// archive).
+	MaxFindings int `yaml:"max_findings"`
+	// QueueSize bounds the recorder's drop-on-full ingest queue (<=0 ⇒ default).
+	QueueSize int `yaml:"queue_size"`
+	// MaxBuckets bounds the token-usage aggregation store the detector decorates
+	// (<=0 ⇒ default).
+	MaxBuckets int `yaml:"max_buckets"`
+
+	// Detector tuning — all optional (a zero value keeps the adaptive package
+	// default, so operators rarely touch these). MaxThumbprints caps the
+	// per-thumbprint observation table; Window is the analysis look-back;
+	// VelocityGap is the impossible-travel interval; SpikeFactor / SpikeMinCount
+	// shape the per-client rate-spike signal.
+	MaxThumbprints int           `yaml:"max_thumbprints"`
+	Window         time.Duration `yaml:"window"`
+	VelocityGap    time.Duration `yaml:"velocity_gap"`
+	SpikeFactor    float64       `yaml:"spike_factor"`
+	SpikeMinCount  int64         `yaml:"spike_min_count"`
+}

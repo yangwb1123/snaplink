@@ -244,6 +244,21 @@ Zero-trust session-trust-decay (`shared/trust`, `platform/lifecycle/continuousve
 
 The agent emits a `session_trust_stepup` audit event and increments `sso_zero_trust_session_stepup_total` for each session it marks.
 
+## Token Anomaly Detection
+
+Token-behavior anomaly detection (`domains/tokenanomaly`, `sso.WithTokenAnomalyDetector`, Phase 3 token governance). A `tokenanomaly.Detector` DECORATES the token-usage store, captures per-thumbprint geo/velocity observations off the request path, and a periodic `Server.RunTokenAnomalyDetection` sweep turns them (plus the per-client rate buckets) into governance findings on `GET /api/v1/admin/tokens/suspicious`. **DETECTION / REPORTING ONLY** — a finding NEVER feeds an auth decision (same hard contract as `anomaly.Runner`). **Disabled by default**: an absent section (`enabled=false`) starts no sweep and wires nothing — byte-identical to a build without the feature.
+
+Because the detector is a `tokenusage.Store` decorator, enabling it **also co-wires the wave-1 token-usage recorder** (`sso.WithTokenUsageRecorder`) as its telemetry substrate: the recorder drains usage events into the detector off the request path. That co-wiring also mounts the token-usage / portfolio admin read APIs (`GET /api/v1/admin/tokens/usage`, `/portfolio`, `/subjects/:subject`, `POST /revoke`). The recorder is not independently configurable this wave — it exists to feed the detector. When `metrics.enabled` is also set, `NewServer` arms the findings counter (`sso_token_anomaly_findings_total`) and the usage counters.
+
+| Key | Effect |
+|---|---|
+| `token_anomaly.enabled` | Builds the token-usage recorder + the anomaly detector decorating its store, wires both Options, and starts the background sweep. `token_anomaly.sweep_interval` MUST be `> 0` when enabled (fails loud at boot otherwise) |
+| `token_anomaly.sweep_interval` | Cadence of the off-path `RunTokenAnomalyDetection` sweep — how often observations become findings (e.g. `1m`) |
+| `token_anomaly.max_findings` | Bound on the in-memory finding store the sweep upserts into (`<=0` = package default). A rolling operational view, not an archive |
+| `token_anomaly.queue_size` | Bound on the recorder's drop-on-full ingest queue (`<=0` = default). Lower sheds telemetry load sooner; a full queue drops events (fail-open — telemetry loss never adds `/token` latency) |
+| `token_anomaly.max_buckets` | Bound on the token-usage aggregation store the detector decorates (`<=0` = default) |
+| `token_anomaly.max_thumbprints` / `window` / `velocity_gap` / `spike_factor` / `spike_min_count` | Optional detector tuning (each zero value keeps the adaptive package default): observation-table cap, analysis look-back, impossible-travel interval, and the per-client rate-spike multiple + absolute floor |
+
 ## Degraded-Service Modes
 
 Disaster-recovery degraded-service control plane (`platform/lifecycle/degradation`, `sso.WithDegradationManager`). Disabled by default: an absent section installs no gate and mounts no route (byte-identical). An enabled-but-`normal` build is a pass-through (one atomic load per request).

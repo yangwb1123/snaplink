@@ -10,6 +10,7 @@ import (
 
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/conditionalaccess"
+	"github.com/snaplink/sso/domains/tokenanomaly"
 	"github.com/snaplink/sso/domains/tokenpolicy"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/configaudit"
@@ -280,5 +281,49 @@ func TestBuildDegradationManager_InvalidMode(t *testing.T) {
 	t.Parallel()
 	if _, err := BuildDegradationManager(config.DegradationConfig{Enabled: true, InitialMode: "bogus"}); err == nil {
 		t.Fatal("expected error: invalid initial_mode")
+	}
+}
+
+// --- Wave-4 governance wiring: token-anomaly detector -------------------------
+
+func TestBuildTokenAnomaly_DisabledReturnsNil(t *testing.T) {
+	t.Parallel()
+	rec, det, err := BuildTokenAnomaly(config.TokenAnomalyConfig{}, govLogger())
+	if err != nil {
+		t.Fatalf("BuildTokenAnomaly: %v", err)
+	}
+	if rec != nil || det != nil {
+		t.Fatalf("disabled token_anomaly must return (nil, nil); got rec=%v det=%v", rec, det)
+	}
+}
+
+func TestBuildTokenAnomaly_RequiresSweepIntervalWhenEnabled(t *testing.T) {
+	t.Parallel()
+	// Enabled with SweepInterval left 0 — a sweep with no cadence never emits.
+	if _, _, err := BuildTokenAnomaly(config.TokenAnomalyConfig{Enabled: true}, govLogger()); err == nil {
+		t.Fatal("expected error: sweep_interval required when token_anomaly.enabled")
+	}
+}
+
+// TestBuildTokenAnomaly_EnabledCoWiresRecorderAndDetector proves the detector is
+// the recorder's store (the decorator co-wiring the whole feature depends on):
+// only then does the recorder's drain feed the detector's observation table.
+func TestBuildTokenAnomaly_EnabledCoWiresRecorderAndDetector(t *testing.T) {
+	t.Parallel()
+	cfg := config.TokenAnomalyConfig{Enabled: true, SweepInterval: time.Hour, MaxFindings: 8}
+	rec, det, err := BuildTokenAnomaly(cfg, govLogger())
+	if err != nil {
+		t.Fatalf("BuildTokenAnomaly: %v", err)
+	}
+	if rec == nil || det == nil {
+		t.Fatal("enabled token_anomaly must return a recorder + detector")
+	}
+	// The recorder must drain into the detector (the tokenusage.Store decorator),
+	// not into a bare aggregation store — otherwise the detector never observes.
+	if got, ok := rec.UsageStore().(*tokenanomaly.Detector); !ok || got != det {
+		t.Fatalf("recorder store = %T; want the returned *tokenanomaly.Detector (co-wired)", rec.UsageStore())
+	}
+	if det.Findings() == nil {
+		t.Error("detector must expose its finding store for the admin read API")
 	}
 }

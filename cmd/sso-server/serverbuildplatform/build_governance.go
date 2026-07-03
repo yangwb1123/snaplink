@@ -11,8 +11,12 @@ import (
 
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/conditionalaccess"
+	"github.com/snaplink/sso/domains/tokenanomaly"
+	tokenanomalymemory "github.com/snaplink/sso/domains/tokenanomaly/memory"
 	"github.com/snaplink/sso/domains/tokenpolicy"
 	tokenpolicymemory "github.com/snaplink/sso/domains/tokenpolicy/memory"
+	"github.com/snaplink/sso/domains/tokenusage"
+	tokenusagememory "github.com/snaplink/sso/domains/tokenusage/memory"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/configaudit"
 	configauditsqlite "github.com/snaplink/sso/platform/configaudit/sqlite"
@@ -200,4 +204,83 @@ func BuildDegradationManager(cfg config.DegradationConfig) (*sso.DegradationMana
 		}
 	}
 	return sso.NewDegradationManager(mode), nil
+}
+
+// BuildTokenAnomaly assembles the wave-4 token-behavior anomaly subsystem when
+// token_anomaly.enabled: a bounded token-usage aggregation store, the
+// tokenanomaly.Detector that DECORATES it (capturing per-thumbprint geo/velocity
+// observations), and the tokenusage.Recorder whose drain goroutine feeds the
+// detector off the request path. The detector is returned so the caller wires it
+// as BOTH the recorder's store (already done here — the recorder drains into the
+// detector) AND via sso.WithTokenAnomalyDetector; the recorder is returned so the
+// caller can Start it and pass it to sso.WithTokenUsageRecorder.
+//
+// Returns (nil, nil, nil) when disabled — byte-identical to a build without it.
+// The detector only observes what the recorder drains, so the two are co-wired:
+// the token-usage recorder is not a separately-configurable feature this wave.
+func BuildTokenAnomaly(cfg config.TokenAnomalyConfig, logger spi.Logger) (*tokenusage.Recorder, *tokenanomaly.Detector, error) {
+	if !cfg.Enabled {
+		return nil, nil, nil
+	}
+	if cfg.SweepInterval <= 0 {
+		return nil, nil, errors.New("token_anomaly.sweep_interval must be > 0 when token_anomaly.enabled")
+	}
+	// The detector decorates this store (forwarding Record/Query verbatim) and
+	// the recorder drains into the detector — so every usage event both
+	// aggregates into a bucket AND feeds the anomaly observation table.
+	store := tokenusagememory.New(usageStoreOptions(cfg)...)
+	findings := tokenanomalymemory.NewFindingStore(findingStoreOptions(cfg)...)
+	detector := tokenanomaly.NewDetector(store, findings, detectorOptions(cfg)...)
+	rec := tokenusage.NewRecorder(detector, recorderOptions(cfg, logger)...)
+	return rec, detector, nil
+}
+
+// usageStoreOptions maps the bucket-cap knob to the memory usage store,
+// leaving the package default in place when unset.
+func usageStoreOptions(cfg config.TokenAnomalyConfig) []tokenusagememory.Option {
+	if cfg.MaxBuckets > 0 {
+		return []tokenusagememory.Option{tokenusagememory.WithMaxBuckets(cfg.MaxBuckets)}
+	}
+	return nil
+}
+
+// findingStoreOptions maps the finding-store cap to the memory finding store.
+func findingStoreOptions(cfg config.TokenAnomalyConfig) []tokenanomalymemory.Option {
+	if cfg.MaxFindings > 0 {
+		return []tokenanomalymemory.Option{tokenanomalymemory.WithMaxFindings(cfg.MaxFindings)}
+	}
+	return nil
+}
+
+// recorderOptions maps the recorder knobs; the logger is always set so a drain
+// error surfaces on the operator's configured logger rather than being silent.
+func recorderOptions(cfg config.TokenAnomalyConfig, logger spi.Logger) []tokenusage.RecorderOption {
+	opts := []tokenusage.RecorderOption{tokenusage.WithRecorderLogger(logger)}
+	if cfg.QueueSize > 0 {
+		opts = append(opts, tokenusage.WithQueueSize(cfg.QueueSize))
+	}
+	return opts
+}
+
+// detectorOptions maps the optional detector-tuning knobs; each zero value is
+// left to the detector's adaptive package default (WithXxx ignores non-positive
+// inputs, so passing zeros is safe, but skipping them keeps intent explicit).
+func detectorOptions(cfg config.TokenAnomalyConfig) []tokenanomaly.Option {
+	var opts []tokenanomaly.Option
+	if cfg.MaxThumbprints > 0 {
+		opts = append(opts, tokenanomaly.WithMaxThumbprints(cfg.MaxThumbprints))
+	}
+	if cfg.Window > 0 {
+		opts = append(opts, tokenanomaly.WithWindow(cfg.Window))
+	}
+	if cfg.VelocityGap > 0 {
+		opts = append(opts, tokenanomaly.WithVelocityGap(cfg.VelocityGap))
+	}
+	if cfg.SpikeFactor > 1 {
+		opts = append(opts, tokenanomaly.WithSpikeFactor(cfg.SpikeFactor))
+	}
+	if cfg.SpikeMinCount > 0 {
+		opts = append(opts, tokenanomaly.WithSpikeMinCount(cfg.SpikeMinCount))
+	}
+	return opts
 }
