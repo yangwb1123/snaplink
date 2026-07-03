@@ -63,3 +63,48 @@ func (m *Metrics) SetTokenUsageTrackedBuckets(n int) {
 	}
 	m.TokenUsageTrackedBuckets.Set(float64(n))
 }
+
+// EnableTokenPolicyMetrics lazily constructs + registers the token-policy
+// engine collectors. Called by the Server ONLY when a token-policy store is
+// wired (WithTokenPolicy) — without it the vectors stay nil and nothing is
+// registered or emitted (byte-identical off, §5). Folded here beside the
+// token-usage metrics rather than a new file to hold platform/metrics under
+// its directory-fanout budget. Idempotent.
+func (m *Metrics) EnableTokenPolicyMetrics() {
+	if m == nil || m.TokenPolicyEvaluationsTotal != nil {
+		return
+	}
+	factory := promauto.With(m.Registry)
+	m.TokenPolicyEvaluationsTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameTokenPolicyEvaluationsTotal,
+			Help: "Token-policy gate evaluations on the issuance path, by decision (allow/deny). Bounded labels only — the per-reason denial breakdown is on sso_token_policy_denials_total, never on client/scope cardinality. Zero traffic when no WithTokenPolicy store is wired.",
+		},
+		[]string{LabelDecision},
+	)
+	m.TokenPolicyDenialsTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameTokenPolicyDenialsTotal,
+			Help: "Token-policy denials by reason (scope_combo_blocked / refresh_depth_exceeded / active_sessions_exceeded — the closed tokenpolicy.DenyReason set). A rising count means a governance rule is actively blocking issuance; the paired wire error stays a generic invalid_scope/invalid_grant (oracle-safe). Zero traffic when no policy store is wired.",
+		},
+		[]string{LabelReason},
+	)
+}
+
+// ObserveTokenPolicyEvaluation bumps the evaluation counter for a decision
+// (PolicyDecisionAllow / PolicyDecisionDeny). Nil-safe.
+func (m *Metrics) ObserveTokenPolicyEvaluation(decision string) {
+	if m == nil || m.TokenPolicyEvaluationsTotal == nil {
+		return
+	}
+	m.TokenPolicyEvaluationsTotal.WithLabelValues(decision).Inc()
+}
+
+// ObserveTokenPolicyDenial bumps the denial counter for a bounded reason.
+// Nil-safe.
+func (m *Metrics) ObserveTokenPolicyDenial(reason string) {
+	if m == nil || m.TokenPolicyDenialsTotal == nil {
+		return
+	}
+	m.TokenPolicyDenialsTotal.WithLabelValues(reason).Inc()
+}

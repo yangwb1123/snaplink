@@ -2,9 +2,11 @@ package sso
 
 import (
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/snaplink/sso/domains/anomaly"
+	"github.com/snaplink/sso/domains/tokenpolicy"
 	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/metrics"
@@ -55,7 +57,73 @@ func (s *Server) issuerForClient(c *Client) (string, TokenIssuer, error) {
 	if !ok {
 		return name, nil, fmt.Errorf("token strategy %q not registered", name)
 	}
-	return name, ti, nil
+	// Token-policy engine (opt-in): wrap the resolved issuer so the max_ttl
+	// dimension clamps the access-token lifetime downward UNIFORMLY across
+	// every grant + the /auth/login direct mint (all funnel through here),
+	// without touching each ti.Issue call site. Byte-identical no-op when no
+	// policy store is wired — NewClampingIssuer returns ti unchanged.
+	return name, tokenpolicy.NewClampingIssuer(ti, s.tokenPolicyStore), nil
+}
+
+// enforceTokenPolicy runs the wired token-policy engine's DENY dimensions for
+// a token request. On a deny it writes the ORACLE-SAFE wire error (generic
+// invalid_scope / invalid_grant — the specific tokenpolicy reason lands ONLY
+// in the metric + a server-side log, never the wire, per §3) and returns true
+// so the caller returns immediately.
+//
+// Byte-identical no-op (returns false) when no policy store is wired. TTL
+// clamping is NOT done here — it is applied uniformly by the ClampingIssuer on
+// the issuance path; this gate handles the deny dimensions the caller's seam
+// has inputs for (scope combos at every seam; refresh depth / active sessions
+// when the caller supplies those counts).
+//
+// Availability (§3 Fail Modes): a policy-store lookup error FAILS OPEN
+// (proceed with issuance) — a governance-store outage must never block token
+// minting, matching the tenant-suspension / risk-scorer stance.
+func (s *Server) enforceTokenPolicy(ctx HandlerContext, in tokenpolicy.PolicyInput) bool {
+	if s.tokenPolicyStore == nil {
+		return false
+	}
+	policies, err := s.tokenPolicyStore.Policies(ctx.Request().Context())
+	if err != nil {
+		s.logger.Error("token policy load failed — proceeding (fail-open)", "error", err)
+		return false
+	}
+	dec := tokenpolicy.Evaluate(in, policies)
+	if !dec.Deny {
+		s.metrics.ObserveTokenPolicyEvaluation(metrics.PolicyDecisionAllow)
+		return false
+	}
+	s.metrics.ObserveTokenPolicyEvaluation(metrics.PolicyDecisionDeny)
+	s.metrics.ObserveTokenPolicyDenial(string(dec.Reason))
+	s.logger.Info("token policy denied issuance", "client", in.ClientID, "reason", string(dec.Reason))
+	ctx.JSON(http.StatusBadRequest, errorBody(wireCodeForPolicyDeny(dec.Reason)))
+	return true
+}
+
+// wireCodeForPolicyDeny maps a tokenpolicy.DenyReason to the generic OAuth
+// wire error it surfaces as: a scope problem is invalid_scope; every other
+// governance limit collapses to invalid_grant. The reason itself NEVER
+// distinguishes on the wire (§3 oracle-leak collapse).
+func wireCodeForPolicyDeny(r tokenpolicy.DenyReason) string {
+	if r == tokenpolicy.DenyScopeCombo {
+		return ErrInvalidScope
+	}
+	return ErrInvalidGrant
+}
+
+// denyTokenScopeCombo is the /token-issuance seam over enforceTokenPolicy for
+// the block_scope_combos dimension: it evaluates only client + granted scopes
+// (Kind access), so the refresh-depth / active-session dimensions never fire
+// here (they need per-grant inputs this seam lacks). Returns true (response
+// written) on a deny. Kept as a one-line call site so dispatchTokenGrant stays
+// within the function-length budget and never imports the tokenpolicy types.
+func (s *Server) denyTokenScopeCombo(ctx HandlerContext, clientID string, scopes []string) bool {
+	return s.enforceTokenPolicy(ctx, tokenpolicy.PolicyInput{
+		ClientID: clientID,
+		Scopes:   scopes,
+		Kind:     tokenpolicy.KindAccess,
+	})
 }
 
 // idTokenIssuerForClient selects the oidc.IDTokenIssuer that should mint

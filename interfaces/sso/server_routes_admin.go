@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -67,6 +66,11 @@ func (s *Server) mountAdminAPIObservability(api Router) {
 	// without a recorder — byte-identical to a build without it.
 	if s.tokenUsageRecorder != nil {
 		api.GET(PathAdminTokenUsage, s.handleAdminTokenUsage)
+	}
+	// Token-policy governance read API (opt-in WithTokenPolicy). Admin-gated
+	// (admin:read); not mounted without a store — byte-identical without it.
+	if s.tokenPolicyStore != nil {
+		api.GET(PathAdminTokenPolicies, s.handleAdminTokenPolicies)
 	}
 	s.mountAdminAPILifecycle(api)
 }
@@ -356,14 +360,6 @@ func (s *Server) handleAdminEndpoints(ctx HandlerContext) {
 		KeyStatus:   StatusOK,
 		"endpoints": live,
 	})
-}
-
-// handleAdminTokenUsage serves GET /api/v1/admin/tokens/usage — the
-// aggregated token-usage telemetry read API. Admin-gated (admin:read) by
-// the /api/v1/admin/ prefix; only mounted when a Recorder is wired, so
-// s.tokenUsageRecorder is always non-nil here.
-func (s *Server) handleAdminTokenUsage(ctx HandlerContext) {
-	tokenusage.HandleAdminUsage(s.tokenUsageRecorder.UsageStore(), s.logger, ctx)
 }
 
 // applyConfigAuditWiring wires the config-audit change-capture hook (AGENTS.md

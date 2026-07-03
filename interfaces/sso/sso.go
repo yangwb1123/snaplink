@@ -113,6 +113,13 @@ func (s *Server) applyMetricsWiring() {
 	if len(s.tenantMetricsAllowlist) > 0 && s.metrics != nil {
 		s.metrics.EnableTenantMetrics()
 	}
+	// Token-policy counters (§5): registered when BOTH a policy store
+	// (WithTokenPolicy) AND a metrics registry are wired. Placed before the
+	// token-usage early-return below so a policy-only deployment (no usage
+	// recorder) still gets its counters. Idempotent + byte-identical off.
+	if s.tokenPolicyStore != nil && s.metrics != nil {
+		s.metrics.EnableTokenPolicyMetrics()
+	}
 	// Token-usage hooks: armed only when BOTH a Recorder
 	// (WithTokenUsageRecorder) AND a metrics registry (WithMetrics) are
 	// wired. Without a recorder there is nothing to hook; without metrics the

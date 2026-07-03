@@ -155,6 +155,11 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 		scopes = strings.Split(req.Scope, " ")
 	}
 
+	// Token-policy engine (opt-in): block dangerous scope combos (no-op unwired).
+	if s.denyTokenScopeCombo(ctx, client.ID, scopes) {
+		return
+	}
+
 	// Custom grant handlers (registered via WithCustomGrant) take
 	// priority over the built-in switch — enabling third-party grant
 	// types without forking the codebase.
