@@ -280,6 +280,21 @@ type Metrics struct {
 	// (or no bus is wired).
 	TokenRevocationsPropagatedTotal *prometheus.CounterVec // labels: direction
 
+	// Token-usage telemetry (zero traffic when no TokenUsageRecorder is
+	// wired). OPT-IN via EnableTokenUsageMetrics — without both a recorder
+	// AND a metrics registry the vectors stay nil and nothing is registered
+	// or emitted (byte-identical off, mirrors EnableTenantMetrics).
+	// EventsTotal counts events successfully aggregated, by kind
+	// (access/refresh/id) + endpoint (token/introspect/userinfo) — both
+	// bounded (§5); no client/subject label. DroppedTotal counts events
+	// shed by the recorder's bounded queue (load-shedding — non-zero means
+	// issuance traffic outpaces the drain). TrackedBuckets gauges the
+	// store's current bucket cardinality so operators see a bounded store
+	// approach its eviction cap before history silently rolls off.
+	TokenUsageEventsTotal    *prometheus.CounterVec // labels: kind, endpoint
+	TokenUsageDroppedTotal   prometheus.Counter     // no labels
+	TokenUsageTrackedBuckets prometheus.Gauge       // no labels
+
 	// Signup funnel — self-service registration conversion pipeline.
 	// outcome ∈ {success, failure} (bounded). Zero traffic when signup
 	// is not enabled.

@@ -3,6 +3,7 @@ package sso
 import (
 	"net/http"
 
+	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/protocols/oauth"
 )
 
@@ -55,6 +56,21 @@ func (s *Server) mountAdminAPIObservability(api Router) {
 		api.GET(PathTenantUsage, s.handleTenantUsage)
 		api.GET(PathAdminTopTenants, s.handleAdminTopTenants)
 	}
+	// Token-usage telemetry read API (opt-in WithTokenUsageRecorder). Gated by
+	// AdminMiddleware (admin:read) via the /api/v1/admin/ prefix. Not mounted
+	// without a recorder — byte-identical to a build without it.
+	if s.tokenUsageRecorder != nil {
+		api.GET(PathAdminTokenUsage, s.handleAdminTokenUsage)
+	}
+	s.mountAdminAPILifecycle(api)
+}
+
+// mountAdminAPILifecycle registers the admin management/lifecycle endpoints
+// (backup, admin-token lifecycle, session listing, credential inventory).
+// Split from mountAdminAPIObservability purely to keep each under the
+// function-length budget; every block is opt-in and byte-identical when its
+// backing store/registry is unwired.
+func (s *Server) mountAdminAPILifecycle(api Router) {
 	// SQLite backup trigger (opt-in WithBackupSource). Requires at least one
 	// registered backup source; byte-identical when none are wired.
 	if len(s.backupSources) > 0 {
@@ -329,4 +345,12 @@ func (s *Server) handleAdminEndpoints(ctx HandlerContext) {
 		KeyStatus:   StatusOK,
 		"endpoints": live,
 	})
+}
+
+// handleAdminTokenUsage serves GET /api/v1/admin/tokens/usage — the
+// aggregated token-usage telemetry read API. Admin-gated (admin:read) by
+// the /api/v1/admin/ prefix; only mounted when a Recorder is wired, so
+// s.tokenUsageRecorder is always non-nil here.
+func (s *Server) handleAdminTokenUsage(ctx HandlerContext) {
+	tokenusage.HandleAdminUsage(s.tokenUsageRecorder.UsageStore(), s.logger, ctx)
 }

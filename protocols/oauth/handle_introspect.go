@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/tenant"
+	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
@@ -38,6 +39,10 @@ type IntrospectDeps interface {
 	// IntrospectionCacheTTL returns the TTL for cached introspection
 	// results. Only meaningful when IntrospectionCache() is non-nil.
 	IntrospectionCacheTTL() time.Duration
+	// TokenUsageRecorder returns the optional token-usage telemetry
+	// recorder. A nil recorder (telemetry disabled) makes every Offer a
+	// no-op — introspection behavior is unaffected either way.
+	TokenUsageRecorder() *tokenusage.Recorder
 }
 
 // introspectRequest is the bound form/JSON body for /token/introspect.
@@ -190,7 +195,7 @@ func authenticateIntrospectClient(d IntrospectDeps, clientStore core.ClientStore
 // wrong hint doesn't mark a valid token inactive.
 func resolveIntrospection(d IntrospectDeps, ctx core.HandlerContext, token, hint string) (map[string]any, bool) {
 	if hint == "refresh_token" {
-		if body, ok := introspectRefresh(d.RefreshTokenStore(), ctx, token); ok {
+		if body, ok := introspectRefresh(d, ctx, token); ok {
 			return body, true
 		}
 		if body, ok := introspectAccess(d, ctx, token); ok {
@@ -201,7 +206,7 @@ func resolveIntrospection(d IntrospectDeps, ctx core.HandlerContext, token, hint
 	if body, ok := introspectAccess(d, ctx, token); ok {
 		return body, true
 	}
-	if body, ok := introspectRefresh(d.RefreshTokenStore(), ctx, token); ok {
+	if body, ok := introspectRefresh(d, ctx, token); ok {
 		return body, true
 	}
 	return nil, false
@@ -226,7 +231,28 @@ func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (
 		core.KeyStrategy:  issuerName,
 	}
 	populateAccessIntrospectionBody(body, claims)
+	recordIntrospectionUsage(d, claims)
 	return body, true
+}
+
+// recordIntrospectionUsage Offers a token-usage telemetry event for an
+// ACTIVE access-token introspection. Off the request hot path: Offer never
+// blocks, and a nil recorder (telemetry disabled) is a safe no-op. The
+// client-id fallback mirrors populateAccessIntrospectionBody's so the
+// aggregated bucket and the response body agree on which client "owns" the
+// token.
+func recordIntrospectionUsage(d IntrospectDeps, claims *core.TokenClaims) {
+	clientID := claims.ClientID
+	if clientID == "" && len(claims.Audience) > 0 {
+		clientID = claims.Audience[0]
+	}
+	d.TokenUsageRecorder().Offer(tokenusage.Event{
+		Thumbprint: tokenusage.Thumbprint(claims.JTI),
+		Kind:       tokenusage.KindAccess,
+		Endpoint:   tokenusage.EndpointIntrospect,
+		ClientID:   clientID,
+		SubjectID:  claims.Subject,
+	})
 }
 
 // populateAccessIntrospectionBody copies the optional RFC 7662 / RFC 9068
@@ -287,8 +313,8 @@ func populateAccessIntrospectionBody(body map[string]any, claims *core.TokenClai
 // introspectRefresh queries the optional RefreshTokenInspector.
 // Returns (nil, false) when the store doesn't implement the
 // inspector extension OR the token is unknown / expired.
-func introspectRefresh(store RefreshTokenStore, ctx core.HandlerContext, token string) (map[string]any, bool) {
-	insp, ok := store.(RefreshTokenInspector)
+func introspectRefresh(d IntrospectDeps, ctx core.HandlerContext, token string) (map[string]any, bool) {
+	insp, ok := d.RefreshTokenStore().(RefreshTokenInspector)
 	if !ok {
 		return nil, false
 	}
@@ -312,6 +338,12 @@ func introspectRefresh(store RefreshTokenStore, ctx core.HandlerContext, token s
 	if len(info.Scopes) > 0 {
 		body[core.KeyScope] = strings.Join(info.Scopes, " ")
 	}
+	d.TokenUsageRecorder().Offer(tokenusage.Event{
+		Kind:      tokenusage.KindRefresh,
+		Endpoint:  tokenusage.EndpointIntrospect,
+		ClientID:  info.ClientID,
+		SubjectID: info.UserID,
+	})
 	return body, true
 }
 

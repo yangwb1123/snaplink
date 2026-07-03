@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
 )
@@ -25,11 +26,12 @@ var errTestInvalidClient = errors.New("oauth_test: invalid client assertion")
 // *sso.Server (accessors.go); it can't be reached here without a cycle, so
 // this re-implements the same delegation with real stores.
 type introspectDeps struct {
-	clients  core.ClientStore
-	refresh  RefreshTokenStore
-	issuers  map[string]core.TokenIssuer
-	validate func(ctx context.Context, token string) (*core.TokenClaims, string, error)
-	verifyCA func(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
+	clients       core.ClientStore
+	refresh       RefreshTokenStore
+	issuers       map[string]core.TokenIssuer
+	validate      func(ctx context.Context, token string) (*core.TokenClaims, string, error)
+	verifyCA      func(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
+	usageRecorder *tokenusage.Recorder
 }
 
 func (d *introspectDeps) ClientStoreAccessor() core.ClientStore     { return d.clients }
@@ -44,8 +46,9 @@ func (d *introspectDeps) VerifyJWTClientAssertion(ctx context.Context, a, f, i s
 	return d.verifyCA(ctx, a, f, i)
 }
 
-func (d *introspectDeps) IntrospectionCache() IntrospectionCache { return nil }
-func (d *introspectDeps) IntrospectionCacheTTL() time.Duration  { return 0 }
+func (d *introspectDeps) IntrospectionCache() IntrospectionCache   { return nil }
+func (d *introspectDeps) IntrospectionCacheTTL() time.Duration     { return 0 }
+func (d *introspectDeps) TokenUsageRecorder() *tokenusage.Recorder { return d.usageRecorder }
 
 var _ IntrospectDeps = (*introspectDeps)(nil)
 

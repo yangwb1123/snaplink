@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/anomaly"
+	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/protocols/oidc"
@@ -305,10 +306,20 @@ func (s *Server) recordCodeSent(ctx HandlerContext, provider, target string, ok 
 	audit.RecordCodeSent(s.auditor, ctx, provider, target, ok)
 }
 
-// recordTokenIssued emits a token_issued event (used for grant flows).
+// recordTokenIssued emits a token_issued event (used for grant flows) and,
+// when a Recorder is wired, Offers a token-usage telemetry event. This is
+// the single choke point every grant handler in internal/handler/tokengrant
+// already funnels through (via the Deps interface), so usage telemetry
+// reaches every grant without touching those hot files.
 func (s *Server) recordTokenIssued(ctx HandlerContext, clientID, strategy, subjectID string) {
 	s.recordTenantTokenIssued(ctx, clientID, strategy)
 	audit.RecordTokenIssued(s.auditor, ctx, clientID, strategy, subjectID)
+	s.tokenUsageRecorder.Offer(tokenusage.Event{
+		Kind:      tokenusage.KindAccess,
+		Endpoint:  tokenusage.EndpointToken,
+		ClientID:  clientID,
+		SubjectID: subjectID,
+	})
 }
 
 // recordRefreshTokenIssued emits a refresh_token_issued event. Set
@@ -316,12 +327,24 @@ func (s *Server) recordTokenIssued(ctx HandlerContext, clientID, strategy, subje
 // issue (login / authz_code) from rotation (refresh_token grant).
 func (s *Server) recordRefreshTokenIssued(ctx HandlerContext, clientID, subjectID string, rotation bool) {
 	audit.RecordRefreshTokenIssued(s.auditor, ctx, clientID, subjectID, rotation)
+	s.tokenUsageRecorder.Offer(tokenusage.Event{
+		Kind:      tokenusage.KindRefresh,
+		Endpoint:  tokenusage.EndpointToken,
+		ClientID:  clientID,
+		SubjectID: subjectID,
+	})
 }
 
 // recordIDTokenIssued emits an id_token_issued event whenever an
 // OIDC id_token is appended to the response.
 func (s *Server) recordIDTokenIssued(ctx HandlerContext, clientID, subjectID string) {
 	audit.RecordIDTokenIssued(s.auditor, ctx, clientID, subjectID)
+	s.tokenUsageRecorder.Offer(tokenusage.Event{
+		Kind:      tokenusage.KindID,
+		Endpoint:  tokenusage.EndpointToken,
+		ClientID:  clientID,
+		SubjectID: subjectID,
+	})
 }
 
 // recordDeviceCodeIssued emits a device_code_issued event at the

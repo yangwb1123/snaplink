@@ -311,6 +311,7 @@ const PathAuthzPolicyBundle = core.PathAuthzPolicyBundle
 const PathStorageHealth = core.PathStorageHealth
 const PathTenantUsage = core.PathTenantUsage
 const PathAdminTopTenants = core.PathAdminTopTenants
+const PathAdminTokenUsage = core.PathAdminTokenUsage
 const PathAdminUserConsents = core.PathAdminUserConsents
 const PathAdminUserConsentByID = core.PathAdminUserConsentByID
 const PathAdminUserMFA = core.PathAdminUserMFA
