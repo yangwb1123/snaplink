@@ -244,6 +244,28 @@ func listReplicaNames(dir string) ([]string, error) {
 	return names, nil
 }
 
+// LatestReplica returns the newest retained replica's file name and bytes —
+// the freshest verified copy the RecoveryOrchestrator's integrity + restore
+// steps recover from. Returns ErrNoReplica when the target dir holds none.
+// The snap_<utc-stamp>_ naming convention makes lexicographic order equal
+// chronological order, so the last name after sorting is the newest.
+func (r *SnapshotReplicator) LatestReplica() (string, []byte, error) {
+	names, err := listReplicaNames(r.TargetDir)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(names) == 0 {
+		return "", nil, ErrNoReplica
+	}
+	sort.Strings(names)
+	name := names[len(names)-1]
+	data, err := os.ReadFile(filepath.Join(r.TargetDir, name))
+	if err != nil {
+		return "", nil, fmt.Errorf("dr: read replica %q: %w", name, err)
+	}
+	return name, data, nil
+}
+
 // LastSuccess returns the wall-clock time of the last verified replication;
 // ok is false when none has succeeded yet.
 func (r *SnapshotReplicator) LastSuccess() (time.Time, bool) {

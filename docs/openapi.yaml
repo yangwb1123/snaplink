@@ -3958,6 +3958,33 @@ paths:
                         name: { type: string }
                         size_bytes: { type: integer }
                         modified_at: { type: string, format: date-time }
+                  last_drill:
+                    type: object
+                    description: |
+                      The DR "report card" from the most recent orchestrated
+                      recovery/drill (RecoveryOrchestrator.Run): the measured
+                      RTO vs target and the ordered per-step outcomes. Present
+                      only when a recovery orchestrator is wired to the DR
+                      readiness aggregate and has run at least once; omitted
+                      otherwise.
+                    properties:
+                      started_at: { type: string, format: date-time }
+                      succeeded: { type: boolean }
+                      replica_name: { type: string }
+                      aborted_at_step: { type: string }
+                      measured_rto_seconds: { type: number }
+                      rto_target_seconds: { type: number }
+                      rto_within_target: { type: boolean }
+                      steps:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name: { type: string }
+                            outcome: { type: string, enum: [success, failure, skipped] }
+                            duration_seconds: { type: number }
+                            detail: { type: string }
+                            error: { type: string }
         "401":
           $ref: "#/components/responses/Unauthorized"
 

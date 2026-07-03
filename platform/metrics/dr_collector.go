@@ -41,6 +41,7 @@ type DRCollector struct {
 	lag       *prometheus.Desc
 	recovery  *prometheus.Desc
 	readyDesc *prometheus.Desc
+	drill     *prometheus.Desc
 }
 
 // NewDRCollector wires a collector for readiness. Register exactly once per
@@ -64,6 +65,11 @@ func NewDRCollector(readiness *dr.DRReadiness) *DRCollector {
 			"DR readiness verdict: 1 while a verified replica exists within the RPO target, 0 otherwise. Report-only — this gauge never gates auth traffic; wiring it into /readyz is a separate operator opt-in (dr.gate_readiness).",
 			nil, nil,
 		),
+		drill: prometheus.NewDesc(
+			dr.MetricLastDrillSuccess,
+			"Outcome of the most recent orchestrated DR recovery/drill (RecoveryOrchestrator.Run): 1 on end-to-end success, 0 when it aborted at a step. Absent until the first drill runs through an orchestrator wired to the readiness aggregate.",
+			nil, nil,
+		),
 	}
 }
 
@@ -72,6 +78,7 @@ func (c *DRCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.lag
 	ch <- c.recovery
 	ch <- c.readyDesc
+	ch <- c.drill
 }
 
 // Collect implements prometheus.Collector. Reads happen at scrape time — no
@@ -98,6 +105,17 @@ func (c *DRCollector) Collect(ch chan<- prometheus.Metric) {
 	if c.readiness.Tracker != nil {
 		if secs, ok := c.readiness.Tracker.LastRecoverySeconds(); ok {
 			ch <- prometheus.MustNewConstMetric(c.recovery, prometheus.GaugeValue, secs)
+		}
+	}
+	// Last-drill outcome only exists once an orchestrator has run; stays
+	// absent otherwise (matches the lag/recovery "absent until fired" shape).
+	if c.readiness.Orchestrator != nil {
+		if rep := c.readiness.Orchestrator.LastReport(); rep != nil {
+			drillVal := 0.0
+			if rep.Succeeded {
+				drillVal = 1
+			}
+			ch <- prometheus.MustNewConstMetric(c.drill, prometheus.GaugeValue, drillVal)
 		}
 	}
 }
