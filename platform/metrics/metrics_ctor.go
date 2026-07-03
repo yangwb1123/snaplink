@@ -49,6 +49,7 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 	registerCAEPMetrics(factory, m)
 	registerRefreshRevocationMetrics(factory, m)
 	registerFeatureGateMetrics(factory, m)
+	registerCredentialRotationMetrics(factory, m)
 
 	return m
 }

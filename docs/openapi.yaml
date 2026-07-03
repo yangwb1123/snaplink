@@ -3509,6 +3509,49 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/credentials:
+    get:
+      tags: [admin]
+      summary: Credential-rotation governance inventory (type, version, status, next rotation due).
+      description: |
+        Read-only inventory of every credential class registered with the
+        platform/rotation Scheduler (the unified automatic-rotation
+        framework): for each class it reports the CURRENT (active) version's
+        id/kid, version number, algorithm, and created_at, plus when its next
+        rotation is due; a version still inside its post-rotation overlap
+        window is listed a second time with status `retiring` and the
+        `not_after` deadline it stops being accepted at.
+
+        GOVERNANCE metadata only — the response NEVER carries secret
+        material, mirroring `/api/v1/admin/storage-health`'s observability-
+        without-a-trust-boundary-crossing contract.
+
+        Admin-gated — the admin middleware enforces `admin:read` (the path
+        sits under `/api/v1/admin/`). Opt-in via `WithCredentialRotation`;
+        the route is not mounted (404) when no registry is wired.
+      operationId: getCredentialInventory
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The credential-rotation governance inventory.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CredentialInventoryResponse"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Bearer lacks the `admin:read` scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/backup:
     post:
       tags: [admin]
@@ -8060,6 +8103,57 @@ components:
             Operator-facing reachability/schema error when the store is down
             or its schema couldn't be read. A generic message — never the
             connection string or any credential.
+
+    CredentialInventoryResponse:
+      type: object
+      required: [status, credentials]
+      description: Response body for GET /api/v1/admin/credentials.
+      properties:
+        status:
+          type: string
+          example: ok
+        credentials:
+          type: array
+          items:
+            $ref: "#/components/schemas/CredentialInventoryEntry"
+
+    CredentialInventoryEntry:
+      type: object
+      required: [id, type, version, status, created_at]
+      description: |
+        One credential VERSION's governance metadata. NEVER carries secret
+        material. A credential class shows up to twice: once for its current
+        `active` version (with `next_rotation` set) and, during a post-
+        rotation overlap window, once more for the demoted version with
+        status `retiring` and `not_after` set.
+      properties:
+        id:
+          type: string
+          description: Version handle (a kid or a synthetic "type/vN" id) — never derived from the secret bytes.
+          example: webhook_hmac/v3
+        type:
+          type: string
+          description: The credential class (bounded vocabulary — one constant per subsystem registered with the rotation framework).
+          example: webhook_hmac
+        version:
+          type: integer
+        status:
+          type: string
+          enum: [active, retiring, retired, compromised]
+        created_at:
+          type: string
+          format: date-time
+        not_after:
+          type: string
+          format: date-time
+          description: When a `retiring` version stops being accepted. Omitted for the active version.
+        algorithm:
+          type: string
+          example: HMAC-SHA256
+        next_rotation:
+          type: string
+          format: date-time
+          description: When this credential class's next scheduled rotation is due. Present only on the active version's entry.
 
     BackupReport:
       type: object

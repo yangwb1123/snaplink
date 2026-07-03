@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/metering"
+	"github.com/snaplink/sso/platform/rotation"
 	"github.com/snaplink/sso/protocols/compliance"
 	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
 	"github.com/snaplink/sso/shared/core"
@@ -189,6 +190,16 @@ type selfServiceState struct {
 	// (WithTenantUsageAggregator). Nil ⇒ the route is NOT mounted —
 	// byte-identical to a build without it.
 	usageAggregator metering.Aggregator
+
+	// credentialRegistry backs GET /api/v1/admin/credentials
+	// (WithCredentialRotation) — the governance inventory (type, version,
+	// status, next rotation due) of every credential class registered with
+	// the platform/rotation Scheduler. NEVER exposes secret material. Nil ⇒
+	// the route is NOT mounted — byte-identical to a build without it. The
+	// Scheduler itself is started/stopped by the composition root (cmd), same
+	// lifecycle discipline as the signing-key rotation loop — the Server only
+	// reads the registry's snapshot.
+	credentialRegistry *rotation.Registry
 
 	// adminConsoleFS, when non-nil, serves the hosted admin console SPA from
 	// an embedded or OS filesystem at /admin/. The console is a standalone

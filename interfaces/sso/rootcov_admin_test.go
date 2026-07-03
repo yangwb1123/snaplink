@@ -36,8 +36,10 @@ type rcovAdminEnv struct {
 // rcovNewAdminServer builds a server wired with the B2B + self-service stores,
 // fronts it with AdminMiddleware authorizing rcovUser as admin:*, and returns a
 // logged-in token. The middleware authorizes on (subject, audience) where the
-// audience is the token's client_id.
-func rcovNewAdminServer(t *testing.T) *rcovAdminEnv {
+// audience is the token's client_id. extra appends additional Options (e.g. a
+// feature-specific admin endpoint under test) without every existing call site
+// needing to change.
+func rcovNewAdminServer(t *testing.T, extra ...sso.Option) *rcovAdminEnv {
 	t.Helper()
 	ctx := context.Background()
 
@@ -62,7 +64,7 @@ func rcovNewAdminServer(t *testing.T) *rcovAdminEnv {
 	_ = prov.AddRole(ctx, rcovClient, permissions.Role{Code: "root", Permissions: []string{"admin:*"}})
 	_ = prov.AssignRoles(ctx, rcovUser, rcovClient, []string{"root"})
 
-	srv := sso.NewServer(
+	opts := []sso.Option{
 		sso.WithUserProvider(users),
 		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
 		sso.WithClientStore(clients),
@@ -80,7 +82,8 @@ func rcovNewAdminServer(t *testing.T) *rcovAdminEnv {
 		sso.WithDeviceSecretStore(defaultimpl.NewMemoryDeviceSecretStore(), time.Hour),
 		sso.WithAccountLockout(security.NewMemoryAccountLockout()),
 		sso.WithPermissionProvider(prov),
-	)
+	}
+	srv := sso.NewServer(append(opts, extra...)...)
 
 	mw := sso.NewAdminMiddleware(srv, prov)
 	httpSrv := httptest.NewServer(mw.HTTPMiddleware(srv.Handler()))

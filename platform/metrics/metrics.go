@@ -297,6 +297,12 @@ type Metrics struct {
 	// files across a fleet. Set once per gate at NewServer() time — gates
 	// are not runtime-mutable, so this never changes after boot.
 	FeatureGateEnabled *prometheus.GaugeVec // labels: feature
+
+	// Credential-rotation framework (platform/rotation Scheduler). Zero
+	// traffic when no Scheduler is running. See credential_rotation.go for
+	// the label/outcome vocabulary and the nil-safe observe helpers.
+	CredentialRotationsTotal *prometheus.CounterVec // labels: credential_type, outcome
+	CredentialAgeSeconds     *prometheus.GaugeVec   // labels: credential_type
 }
 
 // SetFeatureGateEnabled records the boot-time state of one FeatureGates

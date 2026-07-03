@@ -158,6 +158,61 @@ func TestWebhookSink_SignsPayload(t *testing.T) {
 	}
 }
 
+// TestWebhookSink_RotatingSecretSignsWithCurrentVersion proves the
+// end-to-end wiring of the credential-rotation framework's webhook rotator
+// (WebhookSecretRotator) to a real outbound sender: after a Rotate, the sink
+// signs with the NEW secret, and a receiver still holding the demoted secret
+// authenticates it via RotatingWebhookSecret.Verify during the overlap
+// window rather than rejecting it outright.
+func TestWebhookSink_RotatingSecretSignsWithCurrentVersion(t *testing.T) {
+	t.Parallel()
+	rws, err := security.NewRotatingWebhookSecret([]byte("initial-webhook-secret-32-bytes"))
+	if err != nil {
+		t.Fatalf("NewRotatingWebhookSecret: %v", err)
+	}
+
+	var (
+		mu   sync.Mutex
+		sig  string
+		body []byte
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		sig = r.Header.Get(security.WebhookSignatureHeader)
+		body = b
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	s := audit.NewWebhookSink(srv.URL, audit.WithWebhookRotatingSecret(rws))
+
+	// Rotate BEFORE the first delivery — the send must use the CURRENT
+	// (post-rotation) secret, not whatever was installed at construction.
+	if _, err := rws.Rotate(time.Now(), time.Hour); err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	if err := s.Record(context.Background(), &audit.Event{Type: audit.EventLogin, ActorID: "alice"}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	mu.Lock()
+	gotSig, gotBody := sig, body
+	mu.Unlock()
+	if gotSig == "" {
+		t.Fatal("signature header missing")
+	}
+	if err := security.VerifyWebhookSignature(rws.Current(), gotSig, gotBody, time.Now(), security.DefaultWebhookSignatureTolerance); err != nil {
+		t.Fatalf("delivery did not verify against the post-rotation secret: %v", err)
+	}
+	// The RotatingWebhookSecret's own dual-accept Verify still authenticates
+	// it too (it's the current version).
+	if err := rws.Verify(gotSig, gotBody, time.Now(), security.DefaultWebhookSignatureTolerance); err != nil {
+		t.Fatalf("RotatingWebhookSecret.Verify rejected a signature made with its own current secret: %v", err)
+	}
+}
+
 func TestWebhookSink_NoSignatureWithoutSecret(t *testing.T) {
 	t.Parallel()
 	var (
