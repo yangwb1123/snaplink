@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"net/url"
 	"time"
@@ -41,11 +42,58 @@ type Session struct {
 	// it (memory does); never security load-bearing — break-glass tracks
 	// its derived sessions by ID for the revocation cascade.
 	Kind string `json:"kind,omitempty"`
+
+	// TrustScore + TrustSetAt back the zero-trust session-trust-decay feature
+	// (WithSessionTrustDecay, Direction 3 Phase 3). TrustScore is the [0,1]
+	// confidence bound to the session at creation; TrustSetAt is the instant it
+	// was set — the decay baseline the trust curve erodes from
+	// (shared/trust.DecayedScore). Both are ADDITIVE + best-effort: a legacy row
+	// / a manager that doesn't persist them reads the zero value, and the zero
+	// value is the feature-off contract — TrustSetAt zero means "no trust signal
+	// bound", so DecayedScore returns the raw score and the min-trust gate
+	// fail-OPENS (never a hard deny on absent scoring data). Never on the wire in
+	// a token; purely internal session state.
+	TrustScore float64   `json:"trust_score,omitempty"`
+	TrustSetAt time.Time `json:"trust_set_at,omitempty"`
+
+	// StepUpRequired is the advisory flag the ContinuousVerificationAgent sets
+	// (platform/lifecycle/continuousverify) when a live session's decayed trust
+	// fell below the configured floor: the next request through a min-trust gate
+	// observes it and issues an RFC 9470 step-up challenge. Additive + best-
+	// effort like TrustScore: the zero value (false) is the default and leaves
+	// behavior byte-identical. Cleared implicitly on re-authentication (a fresh
+	// session with a fresh score), never security load-bearing on its own — the
+	// gate re-derives from the live decayed score too.
+	StepUpRequired bool `json:"step_up_required,omitempty"`
 }
 
 // IsExpired checks if the session has expired.
 func (s *Session) IsExpired() bool {
 	return time.Since(s.ExpiresAt) > 0
+}
+
+// SessionTrustManager is the OPTIONAL extension a SessionManager MAY implement
+// so the zero-trust continuous-verification agent (platform/lifecycle/
+// continuousverify) can update a live session's decayed trust state. Backends
+// without session storage (pure JWT issuers) simply don't implement it — the
+// agent then finds no marker on the wired manager and no-ops for that build,
+// leaving behavior byte-identical (the feature needs a session store anyway).
+//
+// Both methods are best-effort + fail-open at the call site: the agent logs and
+// continues on error rather than wedging its sweep, since the decay/gate are
+// advisory infra that must never hard-deny on their own error.
+type SessionTrustManager interface {
+	// MarkStepUp sets Session.StepUpRequired on the identified session so the
+	// next request through a min-trust gate is challenged for step-up. Idempotent
+	// (re-marking an already-flagged session is a no-op). A missing session is
+	// not an error (it may have expired between the sweep's List and this call).
+	MarkStepUp(ctx context.Context, sessionID string) error
+
+	// SetTrust (re)binds a session's trust baseline (TrustScore + TrustSetAt) —
+	// used to seed the score at creation from an out-of-band scorer or to reset
+	// the decay baseline after a re-verification. A missing session is not an
+	// error.
+	SetTrust(ctx context.Context, sessionID string, score float64, setAt time.Time) error
 }
 
 // AuthRequest holds the input for an authentication attempt.

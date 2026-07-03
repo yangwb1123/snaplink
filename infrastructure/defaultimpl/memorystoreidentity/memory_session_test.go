@@ -243,3 +243,46 @@ func TestMemorySessionManager_DeleteByTenant(t *testing.T) {
 		t.Errorf("empty-tenant delete must not wipe store, remaining = %d", len(all))
 	}
 }
+
+// TestMemorySessionManager_TrustRoundTrip proves the trust-decay fields
+// round-trip through CreateWithMeta and that MarkStepUp / SetTrust
+// (core.SessionTrustManager) persist — parity with the sqlite peer.
+func TestMemorySessionManager_TrustRoundTrip(t *testing.T) {
+	t.Parallel()
+	m := NewMemorySessionManager(time.Hour)
+	ctx := context.Background()
+	base := time.Now().Add(-30 * time.Minute)
+
+	s, err := m.CreateWithMeta(ctx, "alice", core.SessionMeta{TrustScore: 0.8, TrustSetAt: base})
+	if err != nil {
+		t.Fatalf("CreateWithMeta: %v", err)
+	}
+	got, _ := m.Get(ctx, s.ID)
+	if got.TrustScore != 0.8 || !got.TrustSetAt.Equal(base) || got.StepUpRequired {
+		t.Fatalf("trust not round-tripped: %#v", got)
+	}
+
+	if err := m.MarkStepUp(ctx, s.ID); err != nil {
+		t.Fatalf("MarkStepUp: %v", err)
+	}
+	if got, _ := m.Get(ctx, s.ID); !got.StepUpRequired {
+		t.Fatalf("MarkStepUp did not persist")
+	}
+
+	newBase := time.Now()
+	if err := m.SetTrust(ctx, s.ID, 0.5, newBase); err != nil {
+		t.Fatalf("SetTrust: %v", err)
+	}
+	got2, _ := m.Get(ctx, s.ID)
+	if got2.TrustScore != 0.5 || !got2.TrustSetAt.Equal(newBase) || got2.StepUpRequired {
+		t.Fatalf("SetTrust state wrong: %#v", got2)
+	}
+
+	// Missing rows are no-ops (not errors).
+	if err := m.MarkStepUp(ctx, "nope"); err != nil {
+		t.Errorf("MarkStepUp missing = %v, want nil", err)
+	}
+	if err := m.SetTrust(ctx, "nope", 0.9, newBase); err != nil {
+		t.Errorf("SetTrust missing = %v, want nil", err)
+	}
+}

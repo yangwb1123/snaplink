@@ -11,6 +11,7 @@ const (
 	NameTokensIssuedTotal               = "sso_tokens_issued_total"
 	NameRiskDecisionsTotal              = "sso_risk_decisions_total"
 	NameConditionalAccessDecisionsTotal = "sso_conditional_access_decisions_total"
+	NameSessionTrustStepUpTotal         = "sso_zero_trust_session_stepup_total"
 	NameMFAChallengesTotal              = "sso_mfa_challenges_total"
 	NameMFACompletionsTotal             = "sso_mfa_completions_total"
 	NameRetentionPrunedTotal            = "sso_retention_pruned_total"

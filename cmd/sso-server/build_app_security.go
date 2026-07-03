@@ -206,6 +206,7 @@ func (b *appBuilder) wireGovernance() error {
 	if err := b.wireConditionalAccess(); err != nil {
 		return err
 	}
+	b.wireSessionTrustDecay()
 	return b.wireDegradation()
 }
 
@@ -241,6 +242,31 @@ func (b *appBuilder) wireConditionalAccess() error {
 	b.opts = append(b.opts, sso.WithConditionalAccess(store, capCfg))
 	b.logger.Info("conditional-access engine enabled (advisory)", "default_deny", capCfg.DefaultDeny)
 	return nil
+}
+
+// wireSessionTrustDecay wires the zero-trust session-trust-decay feature
+// (sso.WithSessionTrustDecay): trust bound at login decays over time, the
+// ContinuousVerificationAgent (started in startGovernanceWorkers) marks below-
+// floor sessions, and Server.RequireSessionTrust gates high-risk operations.
+// No-op (byte-identical) when the section is absent or the curve is invalid.
+func (b *appBuilder) wireSessionTrustDecay() {
+	cfg := b.cfg.SessionTrustDecay
+	if cfg.Interval <= 0 || cfg.Factor <= 0 || cfg.Factor >= 1 {
+		return
+	}
+	b.opts = append(b.opts, sso.WithSessionTrustDecay(sso.SessionTrustDecayConfig{
+		Interval:        cfg.Interval,
+		Factor:          cfg.Factor,
+		Floor:           cfg.Floor,
+		MinScore:        cfg.MinScore,
+		SweepInterval:   cfg.SweepInterval,
+		StepUpACRValues: cfg.StepUpACRValues,
+		StepUpMaxAge:    cfg.StepUpMaxAge,
+		InitialScore:    cfg.InitialScore,
+	}))
+	b.sessionTrustDecayOn = true
+	b.logger.Info("session trust decay enabled — continuous-verification agent + min-trust gate",
+		"interval", cfg.Interval, "factor", cfg.Factor, "floor", cfg.Floor)
 }
 
 // wireDegradation builds the degraded-service Manager and wires
@@ -353,6 +379,11 @@ func (b *appBuilder) startGovernanceWorkers(srv *sso.Server) error {
 			return fmt.Errorf("config drift detection: %w", err)
 		}
 		b.configDriftCancel, b.configDriftDone = cancel, done
+	}
+	if b.sessionTrustDecayOn {
+		ctx, cancel := context.WithCancel(context.Background())
+		b.continuousVerifyCancel = cancel
+		b.continuousVerifyDone = srv.StartContinuousVerification(ctx)
 	}
 	b.startBreakGlassSweeper(srv)
 	return nil

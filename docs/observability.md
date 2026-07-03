@@ -35,6 +35,7 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_dr_snapshot_replication_lag_seconds` | Gauge | — (absent until the first successful DR replication) |
 | `sso_dr_last_recovery_seconds` | Gauge | — (absent until a recovery is timed via `RecoveryTimeTracker`) |
 | `sso_dr_readiness` | Gauge | — (1 = verified replica within RPO target, 0 otherwise; see [dr-framework.md](dr-framework.md)) |
+| `sso_zero_trust_session_stepup_total` | Counter | — (live sessions the continuous-verification agent marked for step-up because their decayed trust fell below the floor; zero until `session_trust_decay` is wired) |
 
 ## Audit
 

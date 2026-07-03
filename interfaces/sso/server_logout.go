@@ -411,11 +411,19 @@ func (s *Server) createSession(ctx HandlerContext, userID, clientID, tenantID st
 	}
 
 	if mc, ok := s.sessionMgr.(SessionMetaCreator); ok {
-		return mc.CreateWithMeta(rctx, userID, SessionMeta{
+		meta := SessionMeta{
 			IP:        audit.ClientIP(ctx.Request()),
 			UserAgent: ctx.Request().UserAgent(),
 			TenantID:  tenantID,
-		})
+		}
+		// Zero-trust: bind the initial trust score + decay baseline at login when
+		// WithSessionTrustDecay is wired. Off by default ⇒ zero values ⇒ the decay
+		// curve / min-trust gate fail-open (byte-identical).
+		if s.sessionTrust.enabled() {
+			meta.TrustScore = s.sessionTrust.initialScore
+			meta.TrustSetAt = time.Now()
+		}
+		return mc.CreateWithMeta(rctx, userID, meta)
 	}
 	return s.sessionMgr.Create(rctx, userID)
 }

@@ -18,4 +18,11 @@ func registerConditionalAccessMetrics(factory promauto.Factory, m *Metrics) {
 		},
 		[]string{LabelAction},
 	)
+
+	m.SessionTrustStepUpTotal = factory.NewCounter(
+		prometheus.CounterOpts{
+			Name: NameSessionTrustStepUpTotal,
+			Help: "Live sessions the zero-trust continuous-verification agent marked for step-up because their decayed trust score fell below the configured floor. No labels (bounded). Zero traffic when WithSessionTrustDecay isn't wired.",
+		},
+	)
 }

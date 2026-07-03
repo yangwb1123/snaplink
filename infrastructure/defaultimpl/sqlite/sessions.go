@@ -68,7 +68,26 @@ ALTER TABLE sessions ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_sessions_tenant_id
     ON sessions(tenant_id);`,
 	},
+	{
+		// v4: ADD COLUMN trust_score + trust_set_at + step_up_required — the
+		// zero-trust session-trust-decay state (WithSessionTrustDecay). Defaults
+		// (0 / 0 / 0) mean "no trust bound", so existing rows read the feature-off
+		// zero value and the decay/gate fail-open on them (byte-identical). No
+		// index: the continuous-verification agent scans the full live set on a
+		// slow cadence, not a keyed lookup.
+		Version: 4,
+		Name:    "session-trust-decay",
+		SQL: `
+ALTER TABLE sessions ADD COLUMN trust_score      REAL    NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN trust_set_at     INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN step_up_required INTEGER NOT NULL DEFAULT 0;`,
+	},
 }
+
+// sessionCols is the SELECT/RETURNING projection shared by every read path, kept
+// in one place so the v4 trust-decay columns can't drift between the queries and
+// scanSession's field order.
+const sessionCols = "id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id, trust_score, trust_set_at, step_up_required"
 
 // SessionManager is the SQLite-backed implementation of
 // [sso.SessionManager]. Suitable for multi-replica deployments and
@@ -151,19 +170,21 @@ func (s *SessionManager) CreateWithMeta(ctx context.Context, userID string, meta
 	}
 	now := time.Now().UTC()
 	session := &sso.Session{
-		ID:        id,
-		UserID:    userID,
-		CreatedAt: now,
-		ExpiresAt: now.Add(s.ttl),
-		IP:        meta.IP,
-		UserAgent: meta.UserAgent,
-		TenantID:  meta.TenantID,
+		ID:         id,
+		UserID:     userID,
+		CreatedAt:  now,
+		ExpiresAt:  now.Add(s.ttl),
+		IP:         meta.IP,
+		UserAgent:  meta.UserAgent,
+		TenantID:   meta.TenantID,
+		TrustScore: meta.TrustScore,
+		TrustSetAt: meta.TrustSetAt,
 	}
 	_, err = s.db.ExecContext(ctx, `
-        INSERT INTO sessions (id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id)
-        VALUES (?, ?, ?, ?, 0, ?, ?, ?)`,
+        INSERT INTO sessions (id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id, trust_score, trust_set_at, step_up_required)
+        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 0)`,
 		session.ID, session.UserID, session.CreatedAt.UnixNano(), session.ExpiresAt.UnixNano(),
-		session.IP, session.UserAgent, session.TenantID,
+		session.IP, session.UserAgent, session.TenantID, session.TrustScore, unixNanoOrZero(session.TrustSetAt),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: insert session: %w", err)
@@ -174,7 +195,7 @@ func (s *SessionManager) CreateWithMeta(ctx context.Context, userID string, meta
 func (s *SessionManager) Get(ctx context.Context, sessionID string) (*sso.Session, error) {
 	now := time.Now().UnixNano()
 	row := s.db.QueryRowContext(ctx, `
-        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id
+        SELECT `+sessionCols+`
           FROM sessions WHERE id = ? AND revoked = 0 AND expires_at > ?`, sessionID, now)
 	out, err := scanSession(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -209,7 +230,7 @@ func (s *SessionManager) Refresh(ctx context.Context, sessionID string) (*sso.Se
 	row := s.db.QueryRowContext(ctx, `
         UPDATE sessions SET expires_at = ?
           WHERE id = ? AND revoked = 0 AND expires_at > ?
-        RETURNING id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id`,
+        RETURNING `+sessionCols,
 		now.Add(s.ttl).UnixNano(), sessionID, now.UnixNano(),
 	)
 	out, err := scanSession(row)
@@ -225,7 +246,7 @@ func (s *SessionManager) Refresh(ctx context.Context, sessionID string) (*sso.Se
 func (s *SessionManager) ListByUser(ctx context.Context, userID string) ([]*sso.Session, error) {
 	now := time.Now().UnixNano()
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id
+        SELECT `+sessionCols+`
           FROM sessions WHERE user_id = ? AND revoked = 0 AND expires_at > ?`, userID, now)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list by user: %w", err)
@@ -236,7 +257,7 @@ func (s *SessionManager) ListByUser(ctx context.Context, userID string) ([]*sso.
 
 func (s *SessionManager) ListAll(ctx context.Context) ([]*sso.Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id
+        SELECT `+sessionCols+`
           FROM sessions`)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list all: %w", err)
@@ -252,7 +273,7 @@ func (s *SessionManager) ListByTenant(ctx context.Context, tenantID string) ([]*
 		return []*sso.Session{}, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id
+        SELECT `+sessionCols+`
           FROM sessions WHERE tenant_id = ?`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list by tenant: %w", err)
@@ -278,19 +299,65 @@ func (s *SessionManager) DeleteByTenant(ctx context.Context, tenantID string) (i
 	return int(n), nil
 }
 
+// MarkStepUp implements sso.SessionTrustManager: it sets step_up_required so the
+// next request through a min-trust gate is challenged for step-up. A missing row
+// affects zero rows (not an error) — the session may have expired between the
+// agent's List and this call. Best-effort advisory state, never a hard deny.
+func (s *SessionManager) MarkStepUp(ctx context.Context, sessionID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET step_up_required = 1 WHERE id = ?`, sessionID)
+	if err != nil {
+		return fmt.Errorf("sqlite: mark session step-up: %w", err)
+	}
+	return nil
+}
+
+// SetTrust implements sso.SessionTrustManager: it (re)binds the session's trust
+// baseline and clears any prior step-up flag (a fresh baseline supersedes a
+// below-floor decision so a re-verified session isn't perpetually challenged). A
+// missing row affects zero rows (not an error).
+func (s *SessionManager) SetTrust(ctx context.Context, sessionID string, score float64, setAt time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE sessions SET trust_score = ?, trust_set_at = ?, step_up_required = 0 WHERE id = ?`,
+		score, unixNanoOrZero(setAt), sessionID)
+	if err != nil {
+		return fmt.Errorf("sqlite: set session trust: %w", err)
+	}
+	return nil
+}
+
 func scanSession(s scanner) (*sso.Session, error) {
 	var (
 		out                              sso.Session
 		createdAtUnixNs, expiresAtUnixNs int64
 		revokedInt                       int64
+		trustSetAtUnixNs                 int64
+		stepUpInt                        int64
 	)
-	if err := s.Scan(&out.ID, &out.UserID, &createdAtUnixNs, &expiresAtUnixNs, &revokedInt, &out.IP, &out.UserAgent, &out.TenantID); err != nil {
+	if err := s.Scan(&out.ID, &out.UserID, &createdAtUnixNs, &expiresAtUnixNs, &revokedInt,
+		&out.IP, &out.UserAgent, &out.TenantID, &out.TrustScore, &trustSetAtUnixNs, &stepUpInt); err != nil {
 		return nil, err
 	}
 	out.CreatedAt = time.Unix(0, createdAtUnixNs).UTC()
 	out.ExpiresAt = time.Unix(0, expiresAtUnixNs).UTC()
 	out.Revoked = revokedInt != 0
+	// trust_set_at stores 0 for "no baseline bound" (the feature-off default);
+	// map it back to a zero time so DecayedScore/gate fail-open rather than
+	// treating the Unix epoch as a real, very-stale baseline.
+	if trustSetAtUnixNs != 0 {
+		out.TrustSetAt = time.Unix(0, trustSetAtUnixNs).UTC()
+	}
+	out.StepUpRequired = stepUpInt != 0
 	return &out, nil
+}
+
+// unixNanoOrZero renders a trust baseline for storage: a zero time maps to the
+// sentinel 0 (no baseline bound), never a huge negative UnixNano, so scanSession
+// can round-trip "unset" faithfully.
+func unixNanoOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UnixNano()
 }
 
 func scanSessionList(rows *sql.Rows) ([]*sso.Session, error) {
@@ -317,8 +384,9 @@ func randomSessionID() (string, error) {
 }
 
 var (
-	_ sso.SessionManager     = (*SessionManager)(nil)
-	_ sso.SessionMetaCreator = (*SessionManager)(nil)
-	_ sso.SessionTenantIndex = (*SessionManager)(nil)
+	_ sso.SessionManager      = (*SessionManager)(nil)
+	_ sso.SessionMetaCreator  = (*SessionManager)(nil)
+	_ sso.SessionTenantIndex  = (*SessionManager)(nil)
 	_ sso.SessionTenantLister = (*SessionManager)(nil)
+	_ sso.SessionTrustManager = (*SessionManager)(nil)
 )

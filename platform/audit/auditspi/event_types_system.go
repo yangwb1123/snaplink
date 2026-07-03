@@ -63,3 +63,10 @@ const (
 	EventInvalidationBusDegraded    EventType = "invalidation_bus_degraded"
 	EventInvalidationBusReconnected EventType = "invalidation_bus_reconnected"
 )
+
+// Zero-trust continuous-verification events. Emitted off the request path by the
+// ContinuousVerificationAgent when a live session's decayed trust falls below the
+// configured floor and it is marked for step-up.
+const (
+	EventSessionTrustStepUp EventType = "session_trust_stepup"
+)

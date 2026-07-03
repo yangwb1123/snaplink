@@ -77,6 +77,7 @@ type Config struct {
 	TokenPolicies      TokenPolicyConfig               `yaml:"token_policies"`
 	AccessPolicies     AccessPolicyConfig              `yaml:"access_policies"`
 	Degradation        DegradationConfig               `yaml:"degradation"`
+	SessionTrustDecay  SessionTrustDecayConfig         `yaml:"session_trust_decay"`
 }
 
 // FeatureGatesConfig controls which optional protocol surfaces the server

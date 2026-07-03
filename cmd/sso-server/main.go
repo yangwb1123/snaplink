@@ -409,6 +409,11 @@ type app struct {
 	breakGlassCancel      context.CancelFunc
 	breakGlassDone        <-chan struct{}
 
+	// continuousVerify* — the zero-trust ContinuousVerificationAgent loop
+	// (session_trust_decay enabled), nil when off.
+	continuousVerifyCancel context.CancelFunc
+	continuousVerifyDone   <-chan struct{}
+
 	// degradationMgr is the DR degraded-service Manager (degradation.enabled),
 	// nil when off. No shutdown handle — the manager owns no goroutine; its only
 	// runtime surface is the admin /api/v1/admin/dr/mode toggle. Held so the mode

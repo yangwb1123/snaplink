@@ -174,6 +174,8 @@ func shutdownSchedulers(ctx context.Context, a *app, logger spi.Logger) {
 		"config drift detection loop did not exit cleanly")
 	stopScheduler(ctx, logger, a.breakGlassCancel, a.breakGlassDone,
 		"break-glass sweeper did not exit cleanly")
+	stopScheduler(ctx, logger, a.continuousVerifyCancel, a.continuousVerifyDone,
+		"continuous-verification agent did not exit cleanly")
 }
 
 // stopScheduler cancels a background scheduler and waits for its done channel

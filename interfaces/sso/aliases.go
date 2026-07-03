@@ -138,6 +138,7 @@ type SessionMeta = core.SessionMeta
 type SessionMetaCreator = core.SessionMetaCreator
 type SessionTenantIndex = core.SessionTenantIndex
 type SessionTenantLister = core.SessionTenantLister
+type SessionTrustManager = core.SessionTrustManager
 type TenantQuotaStore = core.TenantQuotaStore
 type TenantQuota = core.TenantQuota
 type TenantUserStore = core.TenantUserStore

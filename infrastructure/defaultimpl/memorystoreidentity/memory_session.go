@@ -39,19 +39,49 @@ func (m *MemorySessionManager) CreateWithMeta(_ context.Context, userID string, 
 	id := randomHex(sessionIDBytes)
 	now := time.Now()
 	session := &core.Session{
-		ID:        id,
-		UserID:    userID,
-		CreatedAt: now,
-		ExpiresAt: now.Add(m.ttl),
-		IP:        meta.IP,
-		UserAgent: meta.UserAgent,
-		TenantID:  meta.TenantID,
-		Kind:      meta.Kind,
+		ID:         id,
+		UserID:     userID,
+		CreatedAt:  now,
+		ExpiresAt:  now.Add(m.ttl),
+		IP:         meta.IP,
+		UserAgent:  meta.UserAgent,
+		TenantID:   meta.TenantID,
+		Kind:       meta.Kind,
+		TrustScore: meta.TrustScore,
+		TrustSetAt: meta.TrustSetAt,
 	}
 	m.mu.Lock()
 	m.sessions[id] = session
 	m.mu.Unlock()
 	return session, nil
+}
+
+// MarkStepUp implements core.SessionTrustManager: it flags the session for a
+// step-up challenge on its next request. A missing session is not an error
+// (it may have expired between the agent's List and this call — the flag would
+// be moot anyway). Best-effort advisory state, never a hard deny.
+func (m *MemorySessionManager) MarkStepUp(_ context.Context, sessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s, ok := m.sessions[sessionID]; ok {
+		s.StepUpRequired = true
+	}
+	return nil
+}
+
+// SetTrust implements core.SessionTrustManager: it (re)binds the session's
+// trust baseline. A missing session is a no-op (not an error).
+func (m *MemorySessionManager) SetTrust(_ context.Context, sessionID string, score float64, setAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s, ok := m.sessions[sessionID]; ok {
+		s.TrustScore = score
+		s.TrustSetAt = setAt
+		// A fresh baseline supersedes a prior below-floor decision: clear the
+		// flag so a re-verified session isn't perpetually challenged.
+		s.StepUpRequired = false
+	}
+	return nil
 }
 
 // DeleteByTenant implements core.SessionTenantIndex: it removes every session
@@ -164,8 +194,9 @@ func randomHex(n int) string {
 }
 
 var (
-	_ core.SessionManager     = (*MemorySessionManager)(nil)
-	_ core.SessionMetaCreator = (*MemorySessionManager)(nil)
-	_ core.SessionTenantIndex = (*MemorySessionManager)(nil)
+	_ core.SessionManager      = (*MemorySessionManager)(nil)
+	_ core.SessionMetaCreator  = (*MemorySessionManager)(nil)
+	_ core.SessionTenantIndex  = (*MemorySessionManager)(nil)
 	_ core.SessionTenantLister = (*MemorySessionManager)(nil)
+	_ core.SessionTrustManager = (*MemorySessionManager)(nil)
 )

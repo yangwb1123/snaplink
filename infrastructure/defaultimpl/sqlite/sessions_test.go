@@ -453,6 +453,103 @@ func TestSessionManager_MigrationFromV2(t *testing.T) {
 	}
 }
 
+// TestSessionManager_MigrationFromV3 verifies the v4 trust-decay ALTERs apply
+// cleanly to a DB created at v3 (sessions without trust state) and that a LEGACY
+// row inserted before v4 reads the feature-off zero value — proving the added
+// fields are additive + backward-compatible (a pre-existing session behaves
+// exactly as today: no bound trust, no step-up flag).
+func TestSessionManager_MigrationFromV3(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	dsn := "file:" + filepath.Join(dir, "v3.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := db.PingContext(ctx); err != nil {
+		t.Fatalf("ping: %v", err)
+	}
+	// Apply ONLY v1..v3 so the trust columns added by v4 are absent, then insert
+	// a row through the v3 column set — a genuine pre-upgrade session.
+	if err := migrate.Run(ctx, db, "sessions", sessionMigrations[:3]); err != nil {
+		t.Fatalf("v3 setup: %v", err)
+	}
+	now := time.Now()
+	if _, err := db.ExecContext(ctx, `
+        INSERT INTO sessions (id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id)
+        VALUES ('legacy', 'bob', ?, ?, 0, '', '', '')`,
+		now.UnixNano(), now.Add(time.Hour).UnixNano()); err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+	_ = db.Close()
+
+	// Reopen through the real constructor → runs v4.
+	mgr, err := NewSessionManager(dsn, time.Hour)
+	if err != nil {
+		t.Fatalf("NewSessionManager (migrate v3->v4): %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close() })
+	if v := SessionsMaxVersion(); v < 4 {
+		t.Fatalf("SessionsMaxVersion = %d, want >=4", v)
+	}
+
+	legacy, err := mgr.Get(ctx, "legacy")
+	if err != nil {
+		t.Fatalf("get legacy row after migration: %v", err)
+	}
+	if legacy.TrustScore != 0 || !legacy.TrustSetAt.IsZero() || legacy.StepUpRequired {
+		t.Fatalf("legacy row carried trust state after v4: score=%v setAt=%v flag=%v",
+			legacy.TrustScore, legacy.TrustSetAt, legacy.StepUpRequired)
+	}
+}
+
+// TestSessionManager_TrustRoundTrip proves the v4 trust fields round-trip through
+// CreateWithMeta and that MarkStepUp / SetTrust (sso.SessionTrustManager) persist.
+func TestSessionManager_TrustRoundTrip(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mgr := newSessionManagerForTest(t)
+	base := time.Now().Add(-30 * time.Minute).Truncate(time.Nanosecond)
+
+	s, err := mgr.CreateWithMeta(ctx, "alice", sso.SessionMeta{TrustScore: 0.8, TrustSetAt: base})
+	if err != nil {
+		t.Fatalf("CreateWithMeta: %v", err)
+	}
+	got, err := mgr.Get(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.TrustScore != 0.8 || !got.TrustSetAt.Equal(base) || got.StepUpRequired {
+		t.Fatalf("trust not round-tripped: score=%v setAt=%v flag=%v", got.TrustScore, got.TrustSetAt, got.StepUpRequired)
+	}
+
+	if err := mgr.MarkStepUp(ctx, s.ID); err != nil {
+		t.Fatalf("MarkStepUp: %v", err)
+	}
+	if got, _ := mgr.Get(ctx, s.ID); !got.StepUpRequired {
+		t.Fatalf("MarkStepUp did not persist the flag")
+	}
+
+	// SetTrust rebinds the baseline AND clears the step-up flag.
+	newBase := time.Now().Truncate(time.Nanosecond)
+	if err := mgr.SetTrust(ctx, s.ID, 0.5, newBase); err != nil {
+		t.Fatalf("SetTrust: %v", err)
+	}
+	got2, _ := mgr.Get(ctx, s.ID)
+	if got2.TrustScore != 0.5 || !got2.TrustSetAt.Equal(newBase) || got2.StepUpRequired {
+		t.Fatalf("SetTrust state wrong: score=%v setAt=%v flag=%v", got2.TrustScore, got2.TrustSetAt, got2.StepUpRequired)
+	}
+
+	// Missing rows are a no-op (not an error) for both mutators.
+	if err := mgr.MarkStepUp(ctx, "nope"); err != nil {
+		t.Errorf("MarkStepUp on missing row = %v, want nil", err)
+	}
+	if err := mgr.SetTrust(ctx, "nope", 0.9, newBase); err != nil {
+		t.Errorf("SetTrust on missing row = %v, want nil", err)
+	}
+}
+
 // openV1Sessions creates a sessions DB at schema v1 only (no device-context
 // columns), simulating a deployment that predates the v2 migration.
 func openV1Sessions(t *testing.T, dsn string) (*sql.DB, error) {

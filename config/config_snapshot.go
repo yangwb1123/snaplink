@@ -356,3 +356,38 @@ type DegradationConfig struct {
 	// flag is honored as a boot-time log acknowledgement until such a loop exists.
 	AutoReadOnlyOnStoreLoss bool `yaml:"auto_read_only_on_store_loss"`
 }
+
+// SessionTrustDecayConfig opts into the zero-trust session-trust-decay feature
+// (sso.WithSessionTrustDecay, Direction 3 Phase 3): a trust score bound to each
+// session at login decays over time, a background ContinuousVerificationAgent
+// marks below-floor sessions for step-up, and the min-trust gate
+// (Server.RequireSessionTrust) challenges high-risk operations.
+//
+// Disabled by default: an absent section (or interval<=0 / factor outside (0,1))
+// wires nothing — no decay stamped at login, no agent, and the gate fail-opens
+// (byte-identical to a build without the feature).
+type SessionTrustDecayConfig struct {
+	// Interval + Factor define the exponential decay curve (score *= Factor once
+	// per Interval). Both must be set for the feature to enable.
+	Interval time.Duration `yaml:"interval"`
+	Factor   float64       `yaml:"factor"`
+
+	// Floor is the agent's step-up threshold; a live session whose decayed score
+	// drops below Floor is marked for step-up.
+	Floor float64 `yaml:"floor"`
+
+	// MinScore is the asymptotic lower bound the decayed score never falls below.
+	MinScore float64 `yaml:"min_score"`
+
+	// SweepInterval is the agent's polling cadence (<=0 ⇒ the package default).
+	SweepInterval time.Duration `yaml:"sweep_interval"`
+
+	// StepUpACRValues / StepUpMaxAge shape the RFC 9470 step-up challenge the gate
+	// returns; when both are empty the gate demands a fresh re-authentication.
+	StepUpACRValues []string `yaml:"step_up_acr_values"`
+	StepUpMaxAge    int      `yaml:"step_up_max_age"`
+
+	// InitialScore is the trust bound to a session at login (0 < v <= 1); out of
+	// range defaults to 1.0.
+	InitialScore float64 `yaml:"initial_score"`
+}
