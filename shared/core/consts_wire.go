@@ -184,3 +184,14 @@ const (
 	ErrPermissionProviderNotConfigured = "permission_provider_not_configured"
 	ErrPermissionLookupFailed          = "permission_lookup_failed"
 )
+
+// Token Portfolio governance route paths (Phase 3 of token governance).
+// Relocated from consts.go to keep that file within the per-file line budget
+// while shared/core stays at its frozen file count. Group-relative on the
+// /api/v1 router group; admin-gated (GET admin:read, POST admin:write).
+const (
+	PathAdminTokenPortfolio  = "/admin/tokens/portfolio"
+	PathAdminTokenSubject    = "/admin/tokens/subjects/:subject"
+	PathAdminTokenSuspicious = "/admin/tokens/suspicious"
+	PathAdminTokenRevoke     = "/admin/tokens/revoke"
+)

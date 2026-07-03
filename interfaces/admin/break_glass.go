@@ -62,6 +62,13 @@ func HandleCreateBreakGlass(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(errCode))
 		return
 	}
+	// Privilege floor: an impersonate/escalate grant may NEVER target an admin —
+	// checked here so the grant can't even be established (structural), and again
+	// at the .../impersonate bearer mint (TOCTOU: target could gain admin later).
+	// readonly grants only view, so they're exempt.
+	if a.Scope != core.AdminScopeReadonly && refuseTargetPrivileged(d, ctx, a.AdminSession) {
+		return
+	}
 
 	rctx := ctx.Request().Context()
 	if !a.wasApprovalRequired {
@@ -192,6 +199,7 @@ func HandleRevokeBreakGlass(d Deps, ctx core.HandlerContext) {
 		return
 	}
 	cascadeRevokeSessions(d, rctx, a.SessionIDs)
+	cascadeRevokeImpersonationTokens(d, rctx, a.ImpersonationTokens)
 	recordBreakGlassEvent(d, rctx, audit.ClientIP(ctx.Request()), audit.EventAdminBreakGlassRevoked, a)
 	ctx.JSON(http.StatusOK, map[string]string{core.KeyStatus: "revoked"})
 }
@@ -277,6 +285,7 @@ func SweepBreakGlassOnce(d Deps, ctx context.Context) (int, error) {
 	}
 	for _, a := range expired {
 		cascadeRevokeSessions(d, ctx, a.SessionIDs)
+		cascadeRevokeImpersonationTokens(d, ctx, a.ImpersonationTokens)
 		recordBreakGlassEvent(d, ctx, "", audit.EventAdminBreakGlassExpired, a)
 	}
 	return len(expired), nil

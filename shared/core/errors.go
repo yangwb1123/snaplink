@@ -46,6 +46,10 @@ var (
 	ErrAdminSessionNotFound     = errors.New("sso: admin session not found")
 	ErrAdminSessionNotPending   = errors.New("sso: admin session is not pending approval")
 	ErrAdminSessionSelfApproval = errors.New("sso: admin session approver must differ from creator")
+	// ErrAdminSessionNotActive is returned by BreakGlassStore.AttachImpersonationToken
+	// when the grant is not active (pending / expired / revoked) — a token must
+	// never be minted (or kept) against a grant outside its live window.
+	ErrAdminSessionNotActive = errors.New("sso: admin session is not active")
 )
 
 // Stable error code strings returned to API callers in JSON error bodies.
@@ -148,6 +152,22 @@ const (
 	ErrBreakGlassTTLExceeded      = "break_glass_ttl_exceeded"
 	ErrBreakGlassSelfApproval     = "break_glass_self_approval"
 	ErrBreakGlassNotPending       = "break_glass_not_pending"
+	// Break-glass live-impersonation (POST .../{id}/impersonate).
+	// ErrBreakGlassNotImpersonable rejects a readonly-scope grant STRUCTURALLY
+	// — no impersonation bearer can ever be minted for it. ErrBreakGlassNotActive
+	// rejects a grant outside its live window. ErrBreakGlassNotOwner rejects a
+	// caller who is not the grant's designated admin (only that admin may act as
+	// the target). ErrImpersonationUnavailable means no token issuer is
+	// resolvable to mint the bearer (server misconfiguration).
+	ErrBreakGlassNotImpersonable = "break_glass_not_impersonable"
+	ErrBreakGlassNotActive       = "break_glass_not_active"
+	ErrBreakGlassNotOwner        = "break_glass_not_owner"
+	ErrImpersonationUnavailable  = "impersonation_unavailable"
+	// ErrBreakGlassTargetPrivileged (403) refuses to create OR impersonate a grant
+	// whose TARGET user holds an admin scope. Impersonating an admin would let
+	// support act with that admin's OWN boundary — the escalation break-glass must
+	// never enable — so a privileged target is a HARD refusal, not a config toggle.
+	ErrBreakGlassTargetPrivileged = "break_glass_target_privileged"
 	// Credential compromise-response (POST /api/v1/admin/credentials/{type}/compromise).
 	ErrCompromiseReasonRequired        = "compromise_reason_required"
 	ErrCredentialCompromiseUnsupported = "credential_compromise_unsupported"

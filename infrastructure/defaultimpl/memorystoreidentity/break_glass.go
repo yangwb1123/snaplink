@@ -96,6 +96,24 @@ func (s *MemoryBreakGlassStore) Revoke(_ context.Context, id string) (core.Admin
 	return a, nil
 }
 
+func (s *MemoryBreakGlassStore) AttachImpersonationToken(_ context.Context, id, token string) (core.AdminSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.sessions[id]
+	if !ok {
+		return core.AdminSession{}, core.ErrAdminSessionNotFound
+	}
+	// Re-check the live status under the write lock: a grant that expired or was
+	// revoked between the handler's read and this write must NOT gain a live
+	// bearer. The store is the atomic authority (mirrors Approve).
+	if lazyExpireAdminSession(a).Status != core.AdminSessionActive {
+		return core.AdminSession{}, core.ErrAdminSessionNotActive
+	}
+	a.ImpersonationTokens = append(a.ImpersonationTokens, token)
+	s.sessions[id] = a
+	return a, nil
+}
+
 func (s *MemoryBreakGlassStore) DeleteExpired(_ context.Context) ([]core.AdminSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

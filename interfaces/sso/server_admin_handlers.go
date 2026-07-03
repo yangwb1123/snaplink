@@ -402,6 +402,9 @@ func (s *Server) handleAdminRevokeBreakGlass(ctx HandlerContext) {
 func (s *Server) handleAdminApproveBreakGlass(ctx HandlerContext) {
 	admin.HandleApproveBreakGlass(s, ctx)
 }
+func (s *Server) handleAdminImpersonateBreakGlass(ctx HandlerContext) {
+	admin.HandleImpersonateBreakGlass(s, ctx)
+}
 
 // handleAdminLogout revokes the admin bearer token used in the current
 // request. The token is validated and its jti (matching AdminToken.ID)

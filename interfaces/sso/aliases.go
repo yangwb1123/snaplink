@@ -370,6 +370,7 @@ const PathAdminEventsStream = core.PathAdminEventsStream
 const PathAdminBreakGlass = core.PathAdminBreakGlass
 const PathAdminBreakGlassByID = core.PathAdminBreakGlassByID
 const PathAdminBreakGlassApprove = core.PathAdminBreakGlassApprove
+const PathAdminBreakGlassImpersonate = core.PathAdminBreakGlassImpersonate
 const PathAdminConnections = core.PathAdminConnections
 const PathAdminConnectionByID = core.PathAdminConnectionByID
 const PathAdminTenantMembers = core.PathAdminTenantMembers

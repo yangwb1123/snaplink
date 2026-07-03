@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // stubSink is a Sink double whose behavior tests configure. Only Record is
@@ -56,6 +57,47 @@ func TestRecorder_RecordPersistsEvent(t *testing.T) {
 	}
 	if got[0].Type != audit.EventLogin {
 		t.Errorf("type = %q, want %q", got[0].Type, audit.EventLogin)
+	}
+}
+
+// TestRecorder_BreakGlassActorEnrichesEveryEvent proves the request-path SOC 2
+// evidence chain: when the action runs under a break-glass impersonation bearer
+// (attribution stamped on the context), EVERY recorded event carries the acting
+// admin + grant id alongside the target subject (the event's own ActorID). An
+// ordinary context adds nothing (byte-identical).
+func TestRecorder_BreakGlassActorEnrichesEveryEvent(t *testing.T) {
+	t.Parallel()
+	s := &stubSink{}
+	r := audit.New(s)
+
+	// Ordinary request: no break-glass keys.
+	r.Record(context.Background(), &audit.Event{Type: audit.EventLogin, ActorID: "user-1"})
+
+	// Under a break-glass bearer: the acting admin + grant id are stamped.
+	ctx := core.ContextWithBreakGlassActor(context.Background(),
+		core.BreakGlassActor{AdminID: "admin-a", AdminSessionID: "bg_42"})
+	r.Record(ctx, &audit.Event{Type: audit.EventLogin, ActorID: "user-1"})
+
+	got := s.snapshot()
+	if len(got) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(got))
+	}
+	if _, ok := got[0].Metadata[core.MetaBreakGlassAdminID]; ok {
+		t.Fatalf("ordinary event must carry no break-glass attribution, got %v", got[0].Metadata)
+	}
+	e := got[1]
+	if e.ActorID != "user-1" {
+		t.Fatalf("event ActorID = %q, want the TARGET user-1 (never the admin)", e.ActorID)
+	}
+	want := map[string]string{
+		core.MetaBreakGlassAdminID:         "admin-a",
+		core.ClaimBreakGlassAdminSessionID: "bg_42",
+		core.ClaimBreakGlass:               "true",
+	}
+	for k, v := range want {
+		if e.Metadata[k] != v {
+			t.Errorf("metadata[%q] = %q, want %q", k, e.Metadata[k], v)
+		}
 	}
 }
 

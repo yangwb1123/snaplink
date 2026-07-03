@@ -48,6 +48,11 @@ const (
 	EventAdminBreakGlassApproved EventType = "admin_break_glass_approved"
 	EventAdminBreakGlassRevoked  EventType = "admin_break_glass_revoked"
 	EventAdminBreakGlassExpired  EventType = "admin_break_glass_expired"
+	// EventAdminBreakGlassImpersonationStarted is emitted by
+	// POST /api/v1/admin/break-glass/{id}/impersonate the moment a live
+	// impersonation bearer is minted for the target user — the SOC 2 CC6.1
+	// record that admin_id began acting AS target_user_id under this grant.
+	EventAdminBreakGlassImpersonationStarted EventType = "admin_break_glass_impersonation_started"
 	// EventAdminGRPCCalled is emitted by the gRPC admin audit interceptor
 	// for every gated RPC. The interceptor auto-records actor, method,
 	// duration, and grpc status — complementing the explicit per-RPC

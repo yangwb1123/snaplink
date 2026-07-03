@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/infrastructure/defaultimpl/defaulttoken"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/shared/core"
@@ -38,6 +40,15 @@ type bgTestDeps struct {
 	sessions   core.SessionManager
 	breakGlass core.BreakGlassStore
 	auditor    *audit.Recorder
+	sink       *audit.MemorySink
+	// tokens is a REAL revocable opaque-token issuer (no mock): break-glass
+	// impersonation mints its bearer through it and the cascade revokes it, so
+	// the handler's revoke-invalidates path is exercised end to end.
+	tokens *defaulttoken.SessionTokenIssuer
+	// privilegedTargets are user ids the privilege floor must treat as admins
+	// (TargetHoldsAdminScope). Empty ⇒ no target is privileged, so the floor is a
+	// no-op and every pre-existing break-glass test behaves unchanged.
+	privilegedTargets map[string]bool
 }
 
 func (d *bgTestDeps) SessionMgr() core.SessionManager                       { return d.sessions }
@@ -59,6 +70,41 @@ func (d *bgTestDeps) PasswordResetStore() core.PasswordResetStore           { re
 func (d *bgTestDeps) EmailChangeStore() core.EmailChangeStore               { return nil }
 func (d *bgTestDeps) InvalidateConnectionCache(string)                      {}
 
+// MintImpersonationToken mirrors *sso.Server's real mint but through the test's
+// own real SessionTokenIssuer: sub=target, act=admin, break_glass_admin_session_id
+// in Extra, no scope. It refuses any non-impersonate/escalate scope structurally.
+func (d *bgTestDeps) MintImpersonationToken(ctx context.Context, a core.AdminSession) (core.ImpersonationCredential, error) {
+	if a.Scope != core.AdminScopeImpersonate && a.Scope != core.AdminScopeEscalate {
+		return core.ImpersonationCredential{}, errors.New("scope may not impersonate")
+	}
+	sid := ""
+	if len(a.SessionIDs) > 0 {
+		sid = a.SessionIDs[0]
+	}
+	tok, err := d.tokens.Issue(ctx, &core.Subject{
+		ID:       a.TargetUserID,
+		ClientID: core.BreakGlassImpersonationClientID,
+		SID:      sid,
+		Actor:    &core.ActorClaim{Subject: a.AdminUserID},
+		Claims: map[string]string{
+			core.ClaimBreakGlassAdminSessionID: a.ID,
+			core.ClaimBreakGlass:               "true",
+		},
+	}, nil)
+	if err != nil {
+		return core.ImpersonationCredential{}, err
+	}
+	return core.ImpersonationCredential{Token: tok.AccessToken, TokenType: tok.TokenType, ExpiresIn: tok.ExpiresIn, SessionID: sid}, nil
+}
+
+func (d *bgTestDeps) RevokeToken(ctx context.Context, token string) { _ = d.tokens.Revoke(ctx, token) }
+
+// TargetHoldsAdminScope mirrors *sso.Server's real floor: a configured set of
+// privileged targets stands in for the permissions.Provider admin-scope lookup.
+func (d *bgTestDeps) TargetHoldsAdminScope(_ context.Context, targetUserID, _ string) (bool, error) {
+	return d.privilegedTargets[targetUserID], nil
+}
+
 // newBGTestDeps wires the real memory stores break-glass needs.
 func newBGTestDeps() *bgTestDeps {
 	sink := audit.NewMemorySink(64)
@@ -66,6 +112,8 @@ func newBGTestDeps() *bgTestDeps {
 		sessions:   memorystoreidentity.NewMemorySessionManager(time.Hour),
 		breakGlass: memorystoreidentity.NewMemoryBreakGlassStore(),
 		auditor:    audit.New(sink),
+		sink:       sink,
+		tokens:     defaulttoken.NewSessionTokenIssuer(),
 	}
 }
 
@@ -298,6 +346,234 @@ func TestSweepBreakGlassOnce_ExpiresAndCascades(t *testing.T) {
 	}
 	if _, err := d.breakGlass.Get(rctx, "bg_active"); err == nil {
 		t.Fatalf("swept record should be gone from the store")
+	}
+}
+
+// bgCreateActiveImpersonate creates an immediately-active impersonate grant
+// (require_approval omitted) and returns its id.
+func bgCreateActiveImpersonate(t *testing.T, d *bgTestDeps, admin, target string) string {
+	t.Helper()
+	body := `{"target_user_id":"` + target + `","reason":"ticket-1","scope":"impersonate"}`
+	ctx, w := bgCtx(admin, "", body)
+	HandleCreateBreakGlass(d, ctx)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body=%s", w.Code, w.Body.String())
+	}
+	return decodeSession(t, w).ID
+}
+
+func decodeMap(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil {
+		t.Fatalf("decode response: %v (body=%s)", err, w.Body.String())
+	}
+	return m
+}
+
+func TestBreakGlassImpersonate_ReadonlyStructurallyRejected(t *testing.T) {
+	d := newBGTestDeps()
+	ctx, w := bgCtx("admin-a", "", `{"target_user_id":"user-1","reason":"t1","scope":"readonly"}`)
+	HandleCreateBreakGlass(d, ctx)
+	id := decodeSession(t, w).ID
+
+	ictx, iw := bgCtx("admin-a", id, "")
+	HandleImpersonateBreakGlass(d, ictx)
+	if iw.Code != http.StatusForbidden {
+		t.Fatalf("readonly impersonate status = %d, want 403, body=%s", iw.Code, iw.Body.String())
+	}
+	if got := decodeErr(t, iw); got != core.ErrBreakGlassNotImpersonable {
+		t.Fatalf("error = %q, want %q", got, core.ErrBreakGlassNotImpersonable)
+	}
+	stored, _ := d.breakGlass.Get(context.Background(), id)
+	if len(stored.ImpersonationTokens) != 0 {
+		t.Fatalf("readonly grant must never register a token, got %v", stored.ImpersonationTokens)
+	}
+}
+
+func TestBreakGlassImpersonate_PendingRejected(t *testing.T) {
+	d := newBGTestDeps()
+	ctx, w := bgCtx("admin-a", "", `{"target_user_id":"user-1","reason":"t1","scope":"impersonate","require_approval":true}`)
+	HandleCreateBreakGlass(d, ctx)
+	id := decodeSession(t, w).ID // still pending — no second approval yet
+
+	ictx, iw := bgCtx("admin-a", id, "")
+	HandleImpersonateBreakGlass(d, ictx)
+	if iw.Code != http.StatusConflict {
+		t.Fatalf("pending impersonate status = %d, want 409, body=%s", iw.Code, iw.Body.String())
+	}
+	if got := decodeErr(t, iw); got != core.ErrBreakGlassNotActive {
+		t.Fatalf("error = %q, want %q", got, core.ErrBreakGlassNotActive)
+	}
+}
+
+func TestBreakGlassImpersonate_NonOwnerRejected(t *testing.T) {
+	d := newBGTestDeps()
+	id := bgCreateActiveImpersonate(t, d, "admin-a", "user-1")
+
+	// A DIFFERENT admin (admin-b) must not be able to act under admin-a's grant.
+	ictx, iw := bgCtx("admin-b", id, "")
+	HandleImpersonateBreakGlass(d, ictx)
+	if iw.Code != http.StatusForbidden {
+		t.Fatalf("non-owner impersonate status = %d, want 403, body=%s", iw.Code, iw.Body.String())
+	}
+	if got := decodeErr(t, iw); got != core.ErrBreakGlassNotOwner {
+		t.Fatalf("error = %q, want %q", got, core.ErrBreakGlassNotOwner)
+	}
+}
+
+func TestBreakGlassImpersonate_RevokedGrantRejected(t *testing.T) {
+	d := newBGTestDeps()
+	id := bgCreateActiveImpersonate(t, d, "admin-a", "user-1")
+	rctx, _ := bgCtx("admin-a", id, "")
+	HandleRevokeBreakGlass(d, rctx)
+
+	ictx, iw := bgCtx("admin-a", id, "")
+	HandleImpersonateBreakGlass(d, ictx)
+	if iw.Code != http.StatusConflict {
+		t.Fatalf("revoked impersonate status = %d, want 409, body=%s", iw.Code, iw.Body.String())
+	}
+	if got := decodeErr(t, iw); got != core.ErrBreakGlassNotActive {
+		t.Fatalf("error = %q, want %q", got, core.ErrBreakGlassNotActive)
+	}
+}
+
+func TestBreakGlassImpersonate_PrivilegedTargetRefused(t *testing.T) {
+	d := newBGTestDeps()
+	id := bgCreateActiveImpersonate(t, d, "admin-a", "user-1")
+
+	// The target becomes privileged AFTER the grant was created (TOCTOU): the
+	// live-bearer mint MUST re-check the floor and refuse.
+	d.privilegedTargets = map[string]bool{"user-1": true}
+
+	ictx, iw := bgCtx("admin-a", id, "")
+	HandleImpersonateBreakGlass(d, ictx)
+	if iw.Code != http.StatusForbidden {
+		t.Fatalf("privileged-target impersonate = %d, want 403, body=%s", iw.Code, iw.Body.String())
+	}
+	if got := decodeErr(t, iw); got != core.ErrBreakGlassTargetPrivileged {
+		t.Fatalf("error = %q, want %q", got, core.ErrBreakGlassTargetPrivileged)
+	}
+	// The error path is still a credential endpoint — no-store on EVERY response.
+	if iw.Header().Get("Cache-Control") != "no-store" || iw.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("403 error response must carry no-store/no-cache, got %q/%q",
+			iw.Header().Get("Cache-Control"), iw.Header().Get("Pragma"))
+	}
+	// No bearer was minted or registered under the grant.
+	stored, _ := d.breakGlass.Get(context.Background(), id)
+	if len(stored.ImpersonationTokens) != 0 {
+		t.Fatalf("a refused privileged-target mint must register no token, got %v", stored.ImpersonationTokens)
+	}
+}
+
+func TestBreakGlassImpersonate_ActiveMintsMarkedTargetTokenAndRevokeInvalidates(t *testing.T) {
+	d := newBGTestDeps()
+	rctx := context.Background()
+	id := bgCreateActiveImpersonate(t, d, "admin-a", "user-1")
+
+	ictx, iw := bgCtx("admin-a", id, "")
+	HandleImpersonateBreakGlass(d, ictx)
+	if iw.Code != http.StatusOK {
+		t.Fatalf("impersonate status = %d, want 200, body=%s", iw.Code, iw.Body.String())
+	}
+	if iw.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("credential response must be no-store, got %q", iw.Header().Get("Cache-Control"))
+	}
+	resp := decodeMap(t, iw)
+	token, _ := resp[core.KeyAccessToken].(string)
+	if token == "" {
+		t.Fatalf("no access_token in impersonate response: %v", resp)
+	}
+	if resp[respKeyKind] != core.SessionKindAdminImpersonation {
+		t.Fatalf("kind = %v, want %s", resp[respKeyKind], core.SessionKindAdminImpersonation)
+	}
+
+	// NON-BYPASS: the minted token authenticates as the TARGET user, and it
+	// carries the evidence chain (which grant it acts under).
+	claims, err := d.tokens.Validate(rctx, token)
+	if err != nil {
+		t.Fatalf("minted token must validate: %v", err)
+	}
+	if claims.Subject != "user-1" {
+		t.Fatalf("token sub = %q, want target user-1 (never the admin)", claims.Subject)
+	}
+	if claims.Extra[core.ClaimBreakGlassAdminSessionID] != id {
+		t.Fatalf("token missing break-glass grant id in claims: %v", claims.Extra)
+	}
+
+	// The token is registered under the grant for the cascade.
+	stored, _ := d.breakGlass.Get(rctx, id)
+	if len(stored.ImpersonationTokens) != 1 || stored.ImpersonationTokens[0] != token {
+		t.Fatalf("token not registered under grant: %v", stored.ImpersonationTokens)
+	}
+
+	// Revoking the grant invalidates the impersonation credential immediately.
+	rc, _ := bgCtx("admin-a", id, "")
+	HandleRevokeBreakGlass(d, rc)
+	if _, err := d.tokens.Validate(rctx, token); err == nil {
+		t.Fatalf("revoking the grant MUST invalidate the impersonation token")
+	}
+}
+
+func TestBreakGlassImpersonate_ExpirySweepRevokesToken(t *testing.T) {
+	d := newBGTestDeps()
+	rctx := context.Background()
+	// A token minted under a now-expired active grant.
+	tok, err := d.tokens.Issue(rctx, &core.Subject{ID: "user-1"}, nil)
+	if err != nil {
+		t.Fatalf("seed token: %v", err)
+	}
+	past := time.Now().Add(-time.Minute)
+	a := core.AdminSession{
+		ID: "bg_exp", AdminUserID: "admin-a", TargetUserID: "user-1", Reason: "t1",
+		Scope: core.AdminScopeImpersonate, Status: core.AdminSessionActive,
+		CreatedAt: past.Add(-time.Hour), ExpiresAt: past, ApprovedBy: "admin-b",
+		ImpersonationTokens: []string{tok.AccessToken},
+	}
+	if err := d.breakGlass.Create(rctx, a); err != nil {
+		t.Fatalf("seed grant: %v", err)
+	}
+	if _, err := d.tokens.Validate(rctx, tok.AccessToken); err != nil {
+		t.Fatalf("token should be valid before sweep: %v", err)
+	}
+	if _, err := SweepBreakGlassOnce(d, rctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if _, err := d.tokens.Validate(rctx, tok.AccessToken); err == nil {
+		t.Fatalf("expiry sweep MUST revoke the impersonation token")
+	}
+}
+
+func TestBreakGlassImpersonate_StartedAuditCarriesEvidenceChain(t *testing.T) {
+	d := newBGTestDeps()
+	id := bgCreateActiveImpersonate(t, d, "admin-a", "user-1")
+	ictx, iw := bgCtx("admin-a", id, "")
+	HandleImpersonateBreakGlass(d, ictx)
+	if iw.Code != http.StatusOK {
+		t.Fatalf("impersonate status = %d, body=%s", iw.Code, iw.Body.String())
+	}
+	evts, err := d.sink.Query(context.Background(), audit.Query{})
+	if err != nil {
+		t.Fatalf("query audit: %v", err)
+	}
+	var found *audit.Event
+	for _, e := range evts {
+		if e.Type == audit.EventAdminBreakGlassImpersonationStarted {
+			found = e
+		}
+	}
+	if found == nil {
+		t.Fatal("no admin_break_glass_impersonation_started event recorded")
+	}
+	want := map[string]string{
+		metaKeyAdminID:        "admin-a",
+		metaKeyTargetUserID:   "user-1",
+		metaKeyAdminSessionID: id,
+	}
+	for k, v := range want {
+		if found.Metadata[k] != v {
+			t.Errorf("started event metadata[%q] = %q, want %q", k, found.Metadata[k], v)
+		}
 	}
 }
 
