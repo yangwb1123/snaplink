@@ -94,4 +94,9 @@ type wiringState struct {
 	// tenantQuotaStore enforces per-tenant resource limits (clients, users,
 	// sessions). Nil = no quota enforcement (byte-identical to pre-quota build).
 	tenantQuotaStore TenantQuotaStore
+
+	// featureGates controls which optional protocol surfaces Mount()
+	// registers routes for (attack-surface reduction). Zero value = every
+	// gate unset ⇒ byte-identical to a pre-gate build (see FeatureGates).
+	featureGates FeatureGates
 }

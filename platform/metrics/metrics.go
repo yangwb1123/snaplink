@@ -288,4 +288,27 @@ type Metrics struct {
 	SignupCompletedTotal       *prometheus.CounterVec // labels: outcome
 	PasswordResetRequestedTotal  *prometheus.CounterVec // labels: outcome
 	PasswordResetCompletedTotal  *prometheus.CounterVec // labels: outcome
+
+	// FeatureGateEnabled is a startup-set gauge — 1 while a protocol
+	// surface's routes are mounted, 0 while it was explicitly disabled via
+	// feature_gates. Labeled by feature (bounded: the fixed gate set).
+	// Attack-surface changes are security-relevant, so operators can graph
+	// "which surfaces are exposed on this replica" without diffing config
+	// files across a fleet. Set once per gate at NewServer() time — gates
+	// are not runtime-mutable, so this never changes after boot.
+	FeatureGateEnabled *prometheus.GaugeVec // labels: feature
+}
+
+// SetFeatureGateEnabled records the boot-time state of one FeatureGates
+// surface. Nil-safe so the Server can call it unconditionally whether or
+// not metrics are wired.
+func (m *Metrics) SetFeatureGateEnabled(feature string, enabled bool) {
+	if m == nil || m.FeatureGateEnabled == nil {
+		return
+	}
+	v := 0.0
+	if enabled {
+		v = 1
+	}
+	m.FeatureGateEnabled.WithLabelValues(feature).Set(v)
 }

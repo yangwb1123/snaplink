@@ -171,6 +171,13 @@ func (c *Config) ServerOptions() []sso.Option {
 	if c.Backup.Keep > 0 {
 		opts = append(opts, sso.WithBackupRetention(c.Backup.Keep))
 	}
+	// Only wired when the operator touched at least one feature_gates key —
+	// an all-nil FeatureGatesConfig is functionally identical to omitting
+	// the option (every gate already defaults to on), so skipping the call
+	// keeps ServerOptions' output byte-identical to a pre-gate build.
+	if c.FeatureGates.anySet() {
+		opts = append(opts, sso.WithFeatureGates(c.FeatureGates.toSSOGates()))
+	}
 	return opts
 }
 

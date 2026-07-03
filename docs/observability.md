@@ -31,6 +31,7 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_client_store_cache_total` | Counter | outcome (hit\|miss) |
 | `sso_audit_async_drops_{queue_full,closed,inner_error}_total` | Counter | — |
 | `sso_audit_async_queue_{depth,capacity}` | Gauge | — |
+| `sso_feature_gate_enabled` | Gauge | feature (oidc\|ciba\|caep\|federation\|self_service\|admin_api\|web_spa) — set once at boot, 1=mounted / 0=disabled via `feature_gates` |
 
 ## Audit
 
@@ -43,6 +44,7 @@ Compose `Async → Multi → Retry → leaf`. Hash chain: `PrevHash`+`Hash`; ver
 - Use `SetMeta(e, k, v)`. NEVER `e.Metadata = map{...}` (clobbers enrichment).
 - Every Event carries W3C `TraceID`/`SpanID`.
 - Optional `FacetQuerier` (type-asserted, `GET /api/v1/audit/facets`); 501 when unsupported.
+- `feature_gates_disabled` — emitted once at boot ONLY when an operator explicitly disabled ≥1 `feature_gates` surface; `Reason`/`disabled_gates` metadata lists the gate names (comma-joined). A build that never touches `feature_gates` emits nothing new here.
 
 ### Retention Schedulers
 

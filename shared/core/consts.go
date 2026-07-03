@@ -241,6 +241,14 @@ const (
 	// not the userID. Mounted only when an AccountLockout is wired.
 	PathAdminAccountLockoutClear = "/admin/account-lockout/clear"
 
+	// PathAdminEndpoints serves the runtime endpoint inventory (GET,
+	// admin:read): every route this replica registered, its method, and the
+	// FeatureGates surface it belongs to. Group-relative; gated by
+	// AdminMiddleware like the rest of /api/v1/admin/. Always mounted
+	// whenever the admin surface itself is (AdminAPI on) — an operator asking
+	// "what's actually exposed" should never itself require guessing a flag.
+	PathAdminEndpoints = "/admin/endpoints"
+
 	// PathAdminTokens lists active admin bearer tokens (GET, admin:read).
 	// PathAdminTokenByID revokes a single admin token (DELETE, admin:write).
 	// Group-relative; gated by AdminMiddleware. Mounted only when an
