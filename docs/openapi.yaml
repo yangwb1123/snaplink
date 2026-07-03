@@ -16,9 +16,10 @@
 # + Dynamic Client Registration (/register, /register/{client_id};
 # RFC 7591 + 7592).
 # Plus the operator-side surfaces: GET /api/v1/clients/{id} (open),
-# the audit query API (/api/v1/audit/events[/{id}], /api/v1/audit/facets), the netpolicy
-# CRUD + classify surface (/api/v1/netpolicy/...), and the full admin
-# gRPC service surface exposed via grpc-gateway under /api/v1/admin/* —
+# the audit query API (/api/v1/audit/events[/{id}], /api/v1/audit/facets),
+# the realtime admin event stream (/api/v1/admin/events/stream, SSE), the
+# netpolicy CRUD + classify surface (/api/v1/netpolicy/...), and the full
+# admin gRPC service surface exposed via grpc-gateway under /api/v1/admin/* —
 # Snapshot, Release, Tenant, Domain, Client, User, Token, Permission.
 # Coverage scope is now complete for every endpoint cmd/sso-server
 # registers in its reference configuration.
@@ -2916,6 +2917,78 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/events/stream:
+    get:
+      tags: [admin]
+      summary: Realtime admin event stream (Server-Sent Events).
+      description: |
+        Streams a redacted summary of every recorded audit event as it
+        happens — `text/event-stream` (Server-Sent Events), meant to be
+        consumed with the browser's `EventSource` API. Each frame's `data`
+        is an `AdminEventSummary` (id, type, actor, tenant, client, resource
+        reference, timestamp) — NEVER secrets, raw tokens, IPs, user agents,
+        session/token ids, or the free-form audit metadata blob. Fetch full
+        detail via `GET /api/v1/audit/events/{id}` using the `id`.
+
+        Reconnect support: send the last received SSE `id:` back as the
+        `Last-Event-ID` header (browsers do this automatically on
+        `EventSource` reconnect) to replay events missed while disconnected,
+        bounded by the server's replay ring (`events.replay_buffer`; a gap
+        wider than the ring is silently skipped — delivery is at-least-once
+        WITHIN the window, so consumers should treat events as idempotent
+        notifications, not a gapless log).
+
+        A `: keep-alive` comment line is sent every
+        `events.heartbeat_interval` to keep intermediary proxies from idling
+        out an otherwise-quiet connection.
+
+        Requires `WithSSEBroker` (`events.enabled: true`); without an audit
+        recorder ALSO wired (`audit.enabled: true`) the route mounts but
+        never emits (no source to tap). Admin-gated (`admin:read`) like
+        every other `/api/v1/admin/*` endpoint — a connect attempt past
+        `events.max_subscribers` gets 503 rather than growing server memory
+        unbounded.
+      operationId: streamAdminEvents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: event_types
+          in: query
+          schema: { type: string }
+          description: Comma-separated audit event-type allowlist (e.g. `login,logout`). Empty = every type.
+        - name: tenant_id
+          in: query
+          schema: { type: string }
+          description: Restrict the stream to one tenant's events. Empty = every tenant.
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string }
+          description: Resume after this event id, replaying anything still in the server's replay ring.
+      responses:
+        "200":
+          description: |
+            `text/event-stream` — the connection stays open; the client
+            keeps reading. Each frame:
+            `id: <n>\nevent: <type>\ndata: <json AdminEventSummary>\n\n`.
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/AdminEventSummary"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: |
+            `event_stream_busy` — the broker is already serving
+            `events.max_subscribers` live connections.
           content:
             application/json:
               schema:
@@ -6990,6 +7063,35 @@ components:
           items:
             type: object
             description: RFC 7517 JWK object.
+
+    AdminEventSummary:
+      type: object
+      required: [id, type, timestamp]
+      description: |
+        Redacted projection of one AuditEvent pushed to
+        GET /api/v1/admin/events/stream. Deliberately carries ONLY
+        reference fields — never secrets, raw tokens, IPs, user agents,
+        session/token ids, or the free-form audit Metadata blob. Fetch full
+        detail via GET /api/v1/audit/events/{id} using id.
+      properties:
+        id:
+          type: string
+          description: The underlying AuditEvent.ID — look up full detail with it.
+        type:
+          type: string
+          description: Canonical event type (login, logout, refresh_token_issued, ...).
+        outcome:
+          type: string
+          enum: [success, failure]
+        actor_id: { type: string }
+        tenant_id: { type: string }
+        client_id: { type: string }
+        resource:
+          type: string
+          description: The event's Reason field — a target reference or short cause, never credential material.
+        timestamp:
+          type: string
+          format: date-time
 
     AuditEvent:
       type: object

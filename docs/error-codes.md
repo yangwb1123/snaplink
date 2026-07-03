@@ -243,6 +243,17 @@ These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary 
 
 ---
 
+## Realtime admin event stream (`/api/v1/admin/events/stream`)
+
+| Code                 | HTTP | Emitted when                                                              |
+|----------------------|------|----------------------------------------------------------------------------|
+| `event_stream_busy`  | 503  | The broker is already serving `events.max_subscribers` live connections    |
+
+No admin-scope-specific code: a missing/invalid bearer or insufficient scope
+falls through to the same 401/403 the rest of `/api/v1/admin/*` uses.
+
+---
+
 ## Network policy (`/api/v1/netpolicy/*`)
 
 | Code                       | HTTP | Emitted when                                                       |

@@ -2,6 +2,7 @@ package sso
 
 import (
 	"github.com/snaplink/sso/interfaces/admin"
+	"github.com/snaplink/sso/platform/sse"
 	"github.com/snaplink/sso/protocols/selfservice"
 	"github.com/snaplink/sso/shared/core"
 	"net/http"
@@ -188,4 +189,12 @@ func (s *Server) handleAdminLogout(ctx HandlerContext) {
 		return
 	}
 	ctx.JSON(http.StatusOK, map[string]string{KeyStatus: "logged_out"})
+}
+
+// handleAdminEventsStream implements GET /api/v1/admin/events/stream (see
+// platform/sse). Mounted only when WithSSEBroker is wired; admin:read is
+// enforced by the admin middleware via the /api/v1/admin/ prefix like every
+// other handler in this file, not by this handler itself.
+func (s *Server) handleAdminEventsStream(ctx HandlerContext) {
+	sse.HandleStream(s.sseBroker, s.sseHeartbeat, ctx)
 }

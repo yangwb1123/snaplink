@@ -36,6 +36,23 @@ func closeAppStores(a *app) {
 	}
 }
 
+// closeSSEBroker evicts every live admin event-stream subscriber BEFORE the
+// HTTP graceful drain. http.Server.Shutdown does not cancel in-flight request
+// contexts, so an idle EventSource connection would otherwise sit open until
+// the shutdown deadline forces a hard Close (dropping every other in-flight
+// request too); closing the broker first makes the stream handler's
+// channel-closed branch return immediately, and the client reconnects with
+// Last-Event-ID once the next instance is up. No-op when events.enabled is
+// false (Server.SSEBroker returns nil).
+func closeSSEBroker(a *app) {
+	if a.server == nil {
+		return
+	}
+	if broker := a.server.SSEBroker(); broker != nil {
+		broker.Close()
+	}
+}
+
 // shutdownServers gracefully stops the HTTP, pprof, and gRPC listeners under the
 // shared shutdown deadline. HTTP falls back to a hard Close on graceful-shutdown
 // error; gRPC falls back to Stop when GracefulStop outlives ctx.

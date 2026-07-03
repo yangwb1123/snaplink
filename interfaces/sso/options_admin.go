@@ -1,6 +1,10 @@
 package sso
 
-import "time"
+import (
+	"time"
+
+	"github.com/snaplink/sso/platform/sse"
+)
 
 // WithAdminSessionTTL sets an idle timeout for admin bearer tokens. When
 // a token has not been used for longer than the TTL, the admin middleware
@@ -42,6 +46,37 @@ func WithBackupRetention(keep int) Option {
 	return func(s *Server) {
 		if keep > 0 {
 			s.backupKeep = keep
+		}
+	}
+}
+
+// WithSSEBroker mounts GET /api/v1/admin/events/stream — the realtime
+// admin event source (Server-Sent Events). When an audit recorder is ALSO
+// wired, NewServer taps its pipeline (the same AddSink/MultiSink seam
+// WithCAEPTransmitter uses) so every recorded event is projected to a
+// redacted Summary and published to b; without a recorder the route still
+// mounts but never emits (the broker has no source).
+//
+// The caller owns b's lifecycle: construct it with sse.NewBroker and Close
+// it during shutdown, BEFORE the HTTP graceful drain, so idle EventSource
+// connections don't pin Shutdown to its full deadline (Server.SSEBroker
+// exposes it back for exactly that). Default-off: a nil (unset) broker is
+// byte-identical to a build without the feature.
+func WithSSEBroker(b *sse.Broker) Option {
+	return func(s *Server) { s.sseBroker = b }
+}
+
+// SSEBroker returns the wired broker (nil when unset), so cmd can Close it
+// during shutdown without retaining its own reference.
+func (s *Server) SSEBroker() *sse.Broker { return s.sseBroker }
+
+// WithSSEHeartbeat overrides the admin event stream's keep-alive comment
+// interval. <= 0 (the default) leaves the SDK default (sse.DefaultHeartbeat)
+// in effect. Has no effect without WithSSEBroker.
+func WithSSEHeartbeat(d time.Duration) Option {
+	return func(s *Server) {
+		if d > 0 {
+			s.sseHeartbeat = d
 		}
 	}
 }

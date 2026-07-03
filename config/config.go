@@ -25,6 +25,7 @@ type Config struct {
 	Authenticators     AuthenticatorsConfig            `yaml:"authenticators"`
 	Logging            LoggingConfig                   `yaml:"logging"`
 	Audit              AuditConfig                     `yaml:"audit"`
+	Events             EventsConfig                    `yaml:"events"`
 	Permissions        PermissionsConfig               `yaml:"permissions"`
 	Network            NetworkConfig                   `yaml:"network"`
 	Clients            []ClientConfig                  `yaml:"clients"`

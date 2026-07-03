@@ -7,6 +7,7 @@ import (
 	"github.com/snaplink/sso/domains/federation"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
 	"github.com/snaplink/sso/internal/auth/consent"
+	"github.com/snaplink/sso/platform/sse"
 	"github.com/snaplink/sso/shared/spi"
 )
 
@@ -58,14 +59,7 @@ func NewServer(opts ...Option) *Server {
 		opt(s)
 	}
 	s.startedAt = time.Now()
-	// Tap the audit pipeline for the CAEP/SSF transmitter, if wired. Done
-	// here (after every option ran, so order between WithAuditRecorder and
-	// WithCAEPTransmitter doesn't matter) by fanning the recorder's sink
-	// out to the transmitter. When the transmitter is unwired this branch
-	// is skipped entirely, so a build without it is byte-identical.
-	if s.caepTransmitter != nil && s.auditor != nil {
-		s.auditor.AddSink(s.caepTransmitter)
-	}
+	s.applyAuditSinkTaps()
 	// Per-tenant metrics (§5): register the opt-in vectors when BOTH a
 	// tenant allowlist AND a metrics registry are wired. Done post-options
 	// (order between WithMetrics and WithTenantMetricsAllowlist is
@@ -83,6 +77,25 @@ func NewServer(opts ...Option) *Server {
 	s.applyFederationAutoRegistration()
 	s.applyClientStoreCache()
 	return s
+}
+
+// applyAuditSinkTaps fans the audit recorder's sink out to every opt-in
+// consumer of the audit pipeline (CAEP/SSF transmitter, realtime admin event
+// stream). Called post-options (order between WithAuditRecorder and
+// WithCAEPTransmitter / WithSSEBroker doesn't matter) so both taps see every
+// event uniformly. Each tap is independently opt-in: when its half is
+// unwired, or no recorder is wired at all, that branch is skipped entirely —
+// a build using neither feature is byte-identical.
+func (s *Server) applyAuditSinkTaps() {
+	if s.auditor == nil {
+		return
+	}
+	if s.caepTransmitter != nil {
+		s.auditor.AddSink(s.caepTransmitter)
+	}
+	if s.sseBroker != nil {
+		s.auditor.AddSink(sse.NewSink(s.sseBroker))
+	}
 }
 
 // applyFederationAutoRegistration decorates the wired ClientStore so an
