@@ -77,3 +77,74 @@ type SPIFFEConfig struct {
 // (clients[].attributes.caep_receiver_endpoint). Disabled = byte-identical
 // to no transmitter. The SET is signed by the same key already in JWKS, so
 // no extra signing config is needed.
+
+// TrustConfig opts into computing a Zero Trust Framework Phase 1 trust score
+// (shared/trust) at login/token time — the mesh-adjacent building blocks
+// this file already configures (ext_authz, SPIFFE) are exactly the policy
+// enforcement points a later phase would gate on this score, hence its home
+// here rather than a new config_trust.go (the config/ directory is at its
+// frozen file-count ceiling — see directory_fanout_test.go's
+// dirFileCountExemptions). It is a pure SCORING foundation: no
+// conditional-access policy engine and no continuous/session-decay
+// verification (Phase 2+, not implemented). Default (Enabled=false) means
+// nothing is computed — byte-identical to a build without the feature.
+//
+// This section describes the shape an embedder's cmd wiring translates into
+// shared/trust constructors (WeightedComposite + the reference scorers) —
+// the reference sso-server binary does not auto-wire it; operators wanting
+// trust scoring today construct the scorers directly via the SDK.
+type TrustConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// Weights sets each reference scorer's relative contribution to the
+	// composite. Keys are the scorer's Name() ("geo_risk", "ip_reputation",
+	// "behavior", "device_posture"); a missing key excludes that scorer.
+	Weights map[string]float64 `yaml:"weights"`
+
+	Geo           TrustGeoConfig           `yaml:"geo"`
+	IPReputation  TrustIPReputationConfig  `yaml:"ip_reputation"`
+	Behavior      TrustBehaviorConfig      `yaml:"behavior"`
+	DevicePosture TrustDevicePostureConfig `yaml:"device_posture"`
+	Serialization TrustSerializationConfig `yaml:"serialization"`
+}
+
+// TrustGeoConfig configures trust.GeoRiskScorer's country lists.
+type TrustGeoConfig struct {
+	TrustedCountries []string `yaml:"trusted_countries"`
+	DeniedCountries  []string `yaml:"denied_countries"`
+}
+
+// TrustIPReputationConfig configures trust.IPReputationScorer's window and
+// thresholds. Zero values fall back to the scorer's package defaults
+// (trust.DefaultIPReputationWindow / DefaultIPFailureThreshold /
+// DefaultIPDistinctSubjectThreshold).
+type TrustIPReputationConfig struct {
+	Window                   time.Duration `yaml:"window"`
+	FailureThreshold         int           `yaml:"failure_threshold"`
+	DistinctSubjectThreshold int           `yaml:"distinct_subject_threshold"`
+	FloorOnError             float64       `yaml:"floor_on_error"`
+}
+
+// TrustBehaviorConfig configures trust.BehaviorScorer's history depth. Zero
+// HistoryLimit falls back to trust.DefaultBehaviorHistoryLimit.
+type TrustBehaviorConfig struct {
+	HistoryLimit int     `yaml:"history_limit"`
+	FloorOnError float64 `yaml:"floor_on_error"`
+}
+
+// TrustDevicePostureConfig configures the reserved trust.DevicePostureScorer
+// stub (see trust.NewDevicePostureScorer) — DefaultScore is clamped to
+// [0,1] and returned verbatim until an MDM integration replaces this
+// scorer.
+type TrustDevicePostureConfig struct {
+	DefaultScore float64 `yaml:"default_score"`
+}
+
+// TrustSerializationConfig mirrors trust.SerializationConfig — see there for
+// the default-off wire-safety contract (both flags false ⇒ no session
+// metadata, no token claim, byte-identical to scoring never having run).
+type TrustSerializationConfig struct {
+	StampSessionMetadata bool   `yaml:"stamp_session_metadata"`
+	IncludeTokenClaim    bool   `yaml:"include_token_claim"`
+	ClaimName            string `yaml:"claim_name"`
+}
