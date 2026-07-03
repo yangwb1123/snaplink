@@ -288,6 +288,26 @@ mounted only when a `BreakGlassStore` is wired.
 
 ---
 
+## Credential compromise-response (`/api/v1/admin/credentials/{type}/compromise`)
+
+Emergency compromise-response: an operator declares a credential class leaked,
+force-rotating it OFF schedule with NO overlap window so the leaked version is
+retired from the verify set instantly. Returns the new version's GOVERNANCE
+metadata only — NEVER the secret. Gated by the same `admin:write` scope as the
+rest of `/api/v1/admin/*`; mounted only when `WithCredentialCompromise` is
+wired. Emits `admin_credential_compromised` with the compliance evidence chain
+(`credential_type`, `credential_reason`, `credential_old_version`,
+`credential_new_version`).
+
+| Code                                 | HTTP | Emitted when                                                                                          |
+|--------------------------------------|------|------------------------------------------------------------------------------------------------------|
+| `compromise_reason_required`         | 400  | The mandatory `reason` was omitted or blank — an unexplained compromise is itself an audit finding    |
+| `credential_compromise_unsupported`  | 400  | The class's rotator cannot instantly retire its secret (implements `CredentialRotator` but not `CompromiseRotator`) — the framework refuses rather than leave the leaked secret accepted through an overlap |
+| `not_found`                          | 404  | Unknown credential `{type}` (never registered), or no compromise scheduler wired                      |
+| `internal_error`                     | 500  | Minting the replacement failed — the OLD credential keeps serving; retry                              |
+
+---
+
 ## Server / configuration
 
 These indicate operator misconfiguration; clients shouldn't try to

@@ -53,4 +53,10 @@ const (
 	// duration, and grpc status — complementing the explicit per-RPC
 	// events the handlers emit themselves.
 	EventAdminGRPCCalled EventType = "admin_grpc_called"
+	// EventAdminCredentialCompromised is emitted by
+	// POST /api/v1/admin/credentials/{type}/compromise: an operator declared a
+	// credential class leaked, force-rotating it off schedule with NO overlap.
+	// Metadata carries the compliance evidence chain: credential_type,
+	// credential_reason, credential_old_version, credential_new_version.
+	EventAdminCredentialCompromised EventType = "admin_credential_compromised"
 )

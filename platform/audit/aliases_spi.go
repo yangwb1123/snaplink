@@ -35,6 +35,7 @@ const (
 	EventAdminConnectionDeleted          = auditspi.EventAdminConnectionDeleted
 	EventAdminConnectionUpserted         = auditspi.EventAdminConnectionUpserted
 	EventAdminConsentRevoked             = auditspi.EventAdminConsentRevoked
+	EventAdminCredentialCompromised      = auditspi.EventAdminCredentialCompromised
 	EventAdminDeviceSecretsRevoked       = auditspi.EventAdminDeviceSecretsRevoked
 	EventAdminDomainCreated              = auditspi.EventAdminDomainCreated
 	EventAdminDomainDeleted              = auditspi.EventAdminDomainDeleted

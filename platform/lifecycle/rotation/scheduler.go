@@ -18,12 +18,16 @@ const (
 	DefaultRetryMax      = 15 * time.Minute
 )
 
-// Scheduler event outcomes (Event.Outcome), bounded to three values so the
+// Scheduler event outcomes (Event.Outcome), bounded to four values so the
 // audit/metric fan-out stays bounded-cardinality.
 const (
 	EventRotated      = "rotated"
 	EventRotateFailed = "rotate_failed"
 	EventRetired      = "retired"
+	// EventCompromised: an off-schedule emergency rotation via Compromise —
+	// the previous version was retired INSTANTLY (no overlap). Meta is the
+	// fresh active version; Reason carries the operator justification.
+	EventCompromised = "compromised"
 )
 
 // Event describes one scheduler action for the operator fan-out seam
@@ -31,10 +35,11 @@ const (
 // same OnRotate-callback pattern the signing-key rotation loop uses.
 type Event struct {
 	Type    corecredential.CredentialType
-	Outcome string // EventRotated | EventRotateFailed | EventRetired
+	Outcome string // EventRotated | EventRotateFailed | EventRetired | EventCompromised
 	Meta    corecredential.CredentialMeta
 	Err     error     // set on EventRotateFailed only
 	NextDue time.Time // next attempt (retry backoff on failure)
+	Reason  string    // operator justification; set on EventCompromised only
 }
 
 // Scheduler drives every Registry rotator: rotations fire when due, a
@@ -42,11 +47,12 @@ type Event struct {
 // keeps serving (the framework never leaves a class with zero usable
 // credentials), and demoted versions retire when their overlap closes.
 type Scheduler struct {
-	reg     *Registry
-	store   corecredential.CredentialStatusStore // optional; fail-open governance metadata
-	logger  spi.Logger
-	metrics *metrics.Metrics // nil-safe observe helpers
-	onEvent func(Event)
+	reg      *Registry
+	store    corecredential.CredentialStatusStore  // optional; fail-open governance metadata
+	notifier corecredential.DependentPartyNotifier // never nil (NopDependentPartyNotifier default)
+	logger   spi.Logger
+	metrics  *metrics.Metrics // nil-safe observe helpers
+	onEvent  func(Event)
 
 	tick      time.Duration
 	retryBase time.Duration
@@ -66,6 +72,18 @@ type SchedulerOption func(*Scheduler)
 // write error must not wedge the loop.
 func WithStatusStore(store corecredential.CredentialStatusStore) SchedulerOption {
 	return func(s *Scheduler) { s.store = store }
+}
+
+// WithNotifier wires the DependentPartyNotifier fired on every rotation AND
+// compromise (JWKS-changed broadcast, SAML metadata-update signal, ...). Nil is
+// ignored (the NopDependentPartyNotifier default stays). Notify is best-effort:
+// its error is logged and never rolls back the already-completed rotation.
+func WithNotifier(n corecredential.DependentPartyNotifier) SchedulerOption {
+	return func(s *Scheduler) {
+		if n != nil {
+			s.notifier = n
+		}
+	}
 }
 
 // WithSchedulerTick overrides the due-check polling resolution.
@@ -113,6 +131,7 @@ func WithSchedulerLogger(l spi.Logger) SchedulerOption {
 func NewScheduler(reg *Registry, opts ...SchedulerOption) *Scheduler {
 	s := &Scheduler{
 		reg:       reg,
+		notifier:  corecredential.NopDependentPartyNotifier{},
 		logger:    spi.NopLogger{},
 		tick:      DefaultSchedulerTick,
 		retryBase: DefaultRetryBase,
@@ -210,7 +229,31 @@ func (s *Scheduler) rotateOne(ctx context.Context, d dueRotation, now time.Time)
 	demoted, next := s.reg.applySuccess(d.credType, meta, now)
 	s.persistRotation(ctx, meta, demoted)
 	s.metrics.ObserveCredentialRotation(string(d.credType), metrics.OutcomeSuccess)
+	s.notify(ctx, d.rotator, meta, false, "")
 	s.emit(Event{Type: d.credType, Outcome: EventRotated, Meta: meta, NextDue: next})
+}
+
+// notify fans a rotation/compromise out to the wired DependentPartyNotifier.
+// The affected-dependent set is read from the rotator when it implements
+// corecredential.DependencyReporter (else empty — nothing to notify). Fail-open:
+// a notifier error is logged and swallowed, since the new secret is already
+// installed and serving by the time this runs.
+func (s *Scheduler) notify(ctx context.Context, rotator corecredential.CredentialRotator, meta corecredential.CredentialMeta, compromised bool, reason string) {
+	var deps []corecredential.Dependency
+	if dr, ok := rotator.(corecredential.DependencyReporter); ok {
+		deps = dr.Dependents()
+	}
+	notice := corecredential.RotationNotice{
+		Type:        meta.Type,
+		NewMeta:     meta,
+		Compromised: compromised,
+		Reason:      reason,
+		Dependents:  deps,
+	}
+	if err := s.notifier.Notify(ctx, notice); err != nil {
+		s.logger.Error("dependent-party notification failed — rotation already completed",
+			"type", string(meta.Type), "compromised", compromised, "error", err)
+	}
 }
 
 func (s *Scheduler) persistRotation(ctx context.Context, meta corecredential.CredentialMeta, demoted *corecredential.CredentialMeta) {

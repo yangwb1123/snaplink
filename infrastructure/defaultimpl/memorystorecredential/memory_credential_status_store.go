@@ -86,3 +86,40 @@ func (m *MemoryCredentialStatusStore) UpdateStatus(_ context.Context, credType c
 }
 
 var _ corecredential.CredentialStatusStore = (*MemoryCredentialStatusStore)(nil)
+
+// MemoryDependentPartyNotifier is an in-process
+// [corecredential.DependentPartyNotifier] that records every notice instead of
+// dispatching it to a real transport. It is the memory reference impl the
+// rotation framework and its tests use to assert "the notifier fired for the
+// right credential with the right affected set" — governance metadata only, so
+// a plain slice+mutex is the right shape. NOT a mock: it is a real, wireable
+// notifier (a deployment with no external dependents can use it as a durable
+// local record of what changed).
+type MemoryDependentPartyNotifier struct {
+	mu      sync.Mutex
+	notices []corecredential.RotationNotice
+}
+
+// NewMemoryDependentPartyNotifier returns an empty recording notifier.
+func NewMemoryDependentPartyNotifier() *MemoryDependentPartyNotifier {
+	return &MemoryDependentPartyNotifier{}
+}
+
+// Notify appends a copy of the notice (defensively copying the Dependents slice
+// so a caller reusing its backing array cannot mutate a recorded notice).
+func (n *MemoryDependentPartyNotifier) Notify(_ context.Context, notice corecredential.RotationNotice) error {
+	notice.Dependents = append([]corecredential.Dependency(nil), notice.Dependents...)
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.notices = append(n.notices, notice)
+	return nil
+}
+
+// Notices returns a snapshot of every recorded notice in fire order.
+func (n *MemoryDependentPartyNotifier) Notices() []corecredential.RotationNotice {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]corecredential.RotationNotice(nil), n.notices...)
+}
+
+var _ corecredential.DependentPartyNotifier = (*MemoryDependentPartyNotifier)(nil)
