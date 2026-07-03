@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/snaplink/sso/domains/tokenpolicy"
+	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/interfaces/admin"
 	"github.com/snaplink/sso/platform/lifecycle/rotation"
 	"github.com/snaplink/sso/platform/sse"
@@ -164,6 +166,23 @@ func (s *Server) handleAdminListCredentials(ctx HandlerContext) {
 		KeyStatus:     StatusOK,
 		"credentials": inventory,
 	})
+}
+
+// handleAdminTokenUsage serves GET /api/v1/admin/tokens/usage — the
+// aggregated token-usage telemetry read API. Admin-gated (admin:read) by
+// the /api/v1/admin/ prefix; only mounted when a Recorder is wired, so
+// s.tokenUsageRecorder is always non-nil here.
+func (s *Server) handleAdminTokenUsage(ctx HandlerContext) {
+	tokenusage.HandleAdminUsage(s.tokenUsageRecorder.UsageStore(), s.logger, ctx)
+}
+
+// handleAdminTokenPolicies serves GET /api/v1/admin/token-policies — the
+// read-only token-policy governance view. Admin-gated (admin:read) by the
+// /api/v1/admin/ prefix; only mounted when WithTokenPolicy is wired, so
+// s.tokenPolicyStore is always non-nil here. Governance metadata only — the
+// policy set holds no secret material.
+func (s *Server) handleAdminTokenPolicies(ctx HandlerContext) {
+	tokenpolicy.HandleAdminPolicies(s.tokenPolicyStore, s.logger, ctx)
 }
 
 // handleAdminRevokeToken revokes a single admin bearer token by ID.

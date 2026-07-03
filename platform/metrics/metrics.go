@@ -328,6 +328,18 @@ type Metrics struct {
 	// effective config has diverged, never a blocked request. Zero traffic
 	// when drift detection isn't armed (WithConfigDriftDetection).
 	ConfigDriftDetectedTotal prometheus.Counter
+
+	// Token-policy engine (opt-in via WithTokenPolicy + WithMetrics). Zero
+	// traffic when no policy store is wired — OPT-IN via
+	// EnableTokenPolicyMetrics, so without both a store AND metrics the
+	// vectors stay nil and nothing is registered or emitted (byte-identical
+	// off, §5). EvaluationsTotal counts every policy gate evaluation by
+	// decision (allow/deny); DenialsTotal breaks the deny subset down by
+	// reason (the closed tokenpolicy.DenyReason set) — both bounded, no
+	// client/subject/scope label. See token_policy.go (folded into
+	// metrics_token.go) for the observe helpers.
+	TokenPolicyEvaluationsTotal *prometheus.CounterVec // labels: decision
+	TokenPolicyDenialsTotal     *prometheus.CounterVec // labels: reason
 }
 
 // SetFeatureGateEnabled records the boot-time state of one FeatureGates

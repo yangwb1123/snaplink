@@ -208,6 +208,19 @@ const (
 	// "/api/v1/..." value causes.
 	PathAdminTokenUsage = "/admin/tokens/usage"
 
+	// PathAdminTokenPolicies is the read-only admin token-policy governance
+	// view (GET /api/v1/admin/token-policies): the active token-policy rule
+	// set in force on this replica — max_ttl / max_refresh_depth /
+	// max_active_sessions / require_renew / block_scope_combos. Governance
+	// metadata only (client/scope selectors + numeric limits, no secrets).
+	// Gated by AdminMiddleware (admin:read); only mounted when
+	// WithTokenPolicy is wired.
+	//
+	// Group-relative: mounted on the /api/v1 router group — see the
+	// PathTenantUsage comment for the double-prefix regression a full
+	// "/api/v1/..." value causes.
+	PathAdminTokenPolicies = "/admin/token-policies"
+
 	// Admin/helpdesk management of a user's self-service state. All
 	// group-relative (mounted on /api/v1, gated by AdminMiddleware via the
 	// /api/v1/admin/ prefix: GET = admin:read, DELETE = admin:write).

@@ -5,6 +5,7 @@ import (
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenant"
+	"github.com/snaplink/sso/domains/tokenpolicy"
 	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/platform/geo"
@@ -254,6 +255,26 @@ func WithAnomalyRunner(r *anomaly.Runner) Option {
 // when the first event arrives.
 func WithTokenUsageRecorder(r *tokenusage.Recorder) Option {
 	return func(s *Server) { s.tokenUsageRecorder = r }
+}
+
+// WithTokenPolicy wires the token-policy engine (Phase 2 of token
+// governance) — a [tokenpolicy.Store] whose active rules clamp access-token
+// TTLs downward (max_ttl, applied uniformly via a ClampingIssuer on the
+// issuance path) and deny dangerous scope combinations (block_scope_combos)
+// with an oracle-safe generic error. When BOTH this option AND [WithMetrics]
+// are set, NewServer arms the policy counters
+// (sso_token_policy_evaluations_total / _denials_total) and mounts the admin
+// governance read API GET /api/v1/admin/token-policies.
+//
+// nil store → no policy layer: issuance is byte-identical to a build without
+// the feature (the ClampingIssuer returns the raw issuer and the gate is a
+// no-op). A store lookup error at request time FAILS OPEN (issue the token)
+// — a governance-store outage must never break token issuance.
+//
+// Seed a [tokenpolicy/memory.Store] from [tokenpolicy.ParseYAML] output for a
+// YAML-configured rule set.
+func WithTokenPolicy(store tokenpolicy.Store) Option {
+	return func(s *Server) { s.tokenPolicyStore = store }
 }
 
 // WithMFAChallengeStore persists in-flight MFA challenges (the state

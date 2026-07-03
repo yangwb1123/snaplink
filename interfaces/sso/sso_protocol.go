@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/anomaly"
+	"github.com/snaplink/sso/domains/tokenpolicy"
 	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/middleware"
@@ -30,7 +31,11 @@ type protocolState struct {
 	mfaChallengeTTL    time.Duration
 	anomalyRunner      *anomaly.Runner
 	tokenUsageRecorder *tokenusage.Recorder
-	metrics            *metrics.Metrics
+	// tokenPolicyStore holds the opt-in token-policy engine (WithTokenPolicy).
+	// Nil = no policy layer: issuerForClient returns the raw issuer and
+	// enforceTokenPolicy is a no-op, so issuance is byte-identical to today.
+	tokenPolicyStore tokenpolicy.Store
+	metrics          *metrics.Metrics
 	// trustedProxies validates X-Forwarded-For chains when wired via
 	// WithTrustedProxies. When non-nil its Middleware is inserted outermost
 	// in Handler() (before rate limiting and every other middleware), so
