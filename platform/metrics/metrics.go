@@ -54,6 +54,12 @@ type Metrics struct {
 	// Risk scoring (zero traffic when no RiskScorer wired).
 	RiskDecisionsTotal *prometheus.CounterVec // labels: decision
 
+	// Zero-trust conditional-access decisions (zero traffic when
+	// WithConditionalAccess isn't wired). Bounded {action} ∈ {allow, deny,
+	// require_step_up} — the resolved CAP verdict, never a per-policy or
+	// per-subject label (§5).
+	ConditionalAccessDecisionsTotal *prometheus.CounterVec // labels: action
+
 	// Per-login ClientStore cache (zero traffic when WithClientStoreCache
 	// isn't wired). Bounded {outcome} ∈ {hit, miss} — NO per-client_id label.
 	ClientStoreCacheTotal *prometheus.CounterVec // labels: outcome
@@ -283,9 +289,21 @@ type Metrics struct {
 	// Signup funnel — self-service registration conversion pipeline.
 	// outcome ∈ {success, failure} (bounded). Zero traffic when signup
 	// is not enabled.
-	SignupStartedTotal         *prometheus.CounterVec // labels: outcome
-	SignupVerifiedTotal        *prometheus.CounterVec // labels: outcome
-	SignupCompletedTotal       *prometheus.CounterVec // labels: outcome
-	PasswordResetRequestedTotal  *prometheus.CounterVec // labels: outcome
-	PasswordResetCompletedTotal  *prometheus.CounterVec // labels: outcome
+	SignupStartedTotal          *prometheus.CounterVec // labels: outcome
+	SignupVerifiedTotal         *prometheus.CounterVec // labels: outcome
+	SignupCompletedTotal        *prometheus.CounterVec // labels: outcome
+	PasswordResetRequestedTotal *prometheus.CounterVec // labels: outcome
+	PasswordResetCompletedTotal *prometheus.CounterVec // labels: outcome
+}
+
+// ObserveConditionalAccessDecision bumps the zero-trust CAP decision counter for
+// the resolved action ("allow" / "deny" / "require_step_up"). Nil-safe so the
+// server can fire it unconditionally whether or not metrics or the CAP engine
+// are wired. action is a bounded 3-value dimension (§5) — never a per-policy or
+// per-subject label.
+func (m *Metrics) ObserveConditionalAccessDecision(action string) {
+	if m == nil || m.ConditionalAccessDecisionsTotal == nil {
+		return
+	}
+	m.ConditionalAccessDecisionsTotal.WithLabelValues(action).Inc()
 }

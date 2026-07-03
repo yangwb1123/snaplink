@@ -48,6 +48,12 @@ func (s *Server) mountAdminAPIObservability(api Router) {
 	if s.sessionMgr != nil {
 		api.GET(PathAdminSessions, s.handleAdminListSessions)
 	}
+	// Zero-trust conditional-access governance view (opt-in
+	// WithConditionalAccess). Read-only; not mounted without the engine —
+	// byte-identical to a build without it.
+	if s.capStore != nil {
+		api.GET(PathAdminAccessPolicies, s.handleAdminListAccessPolicies)
+	}
 }
 
 // mountAdminUserState registers the admin/helpdesk management of a user's

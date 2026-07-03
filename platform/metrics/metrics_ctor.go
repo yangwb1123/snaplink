@@ -48,8 +48,19 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 	registerClusterHealthMetrics(factory, m)
 	registerCAEPMetrics(factory, m)
 	registerRefreshRevocationMetrics(factory, m)
+	registerConditionalAccessMetrics(factory, m)
 
 	return m
+}
+
+func registerConditionalAccessMetrics(factory promauto.Factory, m *Metrics) {
+	m.ConditionalAccessDecisionsTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameConditionalAccessDecisionsTotal,
+			Help: "Zero-trust conditional-access decisions, by resolved action (allow/deny/require_step_up). Zero traffic when WithConditionalAccess isn't wired.",
+		},
+		[]string{LabelAction},
+	)
 }
 
 func registerHTTPMetrics(factory promauto.Factory, m *Metrics) {

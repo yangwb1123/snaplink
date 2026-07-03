@@ -3497,6 +3497,52 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/access-policies:
+    get:
+      tags: [admin]
+      summary: List the zero-trust conditional-access (CAP) policies (governance view).
+      description: |
+        Read-only governance view of the wired zero-trust conditional-access
+        policies, ordered by evaluation precedence (priority descending, then
+        name) so an operator sees exactly the order the engine resolves them
+        in. Each policy carries its conditions (`user.member_of`,
+        `device.managed`, `risk_score` comparison, geo, time window) and its
+        actions (`allow` / `deny` / `require_step_up` / `restrict_scopes` /
+        `log`).
+
+        The engine is ADVISORY: the server exposes an evaluation entry point
+        (an allow / deny / require-step-up decision, degrading to a
+        conservative trust floor when a signal is missing rather than denying
+        outright), but it is not wired into the live `/auth/login` control flow
+        in this release. Policy authoring is out of band (a YAML bundle loaded
+        at boot), so this endpoint only lists.
+
+        Admin-gated — the admin middleware enforces `admin:read` (the path
+        sits under `/api/v1/admin/`). Opt-in via `WithConditionalAccess`; the
+        route is not mounted (404) when the engine is not wired.
+      operationId: listAccessPolicies
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The conditional-access policy list, in evaluation order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessPolicyList"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Bearer lacks the `admin:read` scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   # ---- Admin gRPC services exposed via grpc-gateway ----
   #
   # Every endpoint below requires the AdminMiddleware Bearer-validated
@@ -8043,6 +8089,87 @@ components:
           type: integer
           description: Count of older backup files deleted by retention for this source. Present only when backup.keep / WithBackupRetention is enabled.
           example: 3
+
+    AccessPolicyList:
+      type: object
+      required: [policies, total]
+      description: |
+        Result of GET /api/v1/admin/access-policies. Policies are ordered by
+        evaluation precedence (priority desc, then name).
+      properties:
+        total:
+          type: integer
+          example: 2
+        policies:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccessPolicy"
+
+    AccessPolicy:
+      type: object
+      required: [name, enabled]
+      description: One zero-trust conditional-access policy.
+      properties:
+        name:
+          type: string
+          description: Stable unique identifier (the upsert key).
+          example: restrict-admin-access
+        priority:
+          type: integer
+          description: Higher priority is evaluated first; ties break on condition specificity then name.
+          example: 100
+        enabled:
+          type: boolean
+        dry_run:
+          type: boolean
+          description: Report-only. A match is recorded but not enforced (staging a policy before enforcing).
+        conditions:
+          type: object
+          description: AND-combined predicate; a field left unset is unconstrained.
+          properties:
+            user_member_of:
+              type: array
+              items: { type: string }
+              description: Any-of. Matches when the subject is in at least one of these groups.
+            device_managed:
+              type: boolean
+              description: Tri-state (omitted = unconstrained). true matches only a managed device; false matches an unmanaged or unreported device.
+            risk_score:
+              type: string
+              description: Comparison against derived risk (1 - effective trust), e.g. "> 0.5".
+              example: "> 0.5"
+            geo_in:
+              type: array
+              items: { type: string }
+              description: Any-of ISO 3166-1 alpha-2 countries; an unknown country never matches (geo is fail-open).
+            geo_not_in:
+              type: array
+              items: { type: string }
+            time_after:
+              type: string
+              description: UTC "HH:MM" inclusive lower bound of the allowed window.
+              example: "08:00"
+            time_before:
+              type: string
+              description: UTC "HH:MM" exclusive upper bound; when before < after the window wraps midnight.
+              example: "18:00"
+        actions:
+          type: object
+          description: Deny beats require_step_up beats allow; restrict_scopes and log ride along.
+          properties:
+            allow:
+              type: boolean
+            deny:
+              type: boolean
+            require_step_up:
+              type: string
+              example: mfa
+            restrict_scopes:
+              type: array
+              items: { type: string }
+              example: ["admin:read"]
+            log:
+              type: boolean
 
     LivenessResponse:
       type: object

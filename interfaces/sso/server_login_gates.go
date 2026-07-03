@@ -1,13 +1,41 @@
 package sso
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
+	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/internal/auth/login"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 )
+
+// EvaluateConditionalAccess resolves the wired zero-trust conditional-access
+// policies against ac and returns the advisory Decision. It is the SDK entry
+// point for callers that want a CAP decision (an external PEP, a gateway, an
+// embedding app's own gate).
+//
+// ADVISORY this wave: the Server deliberately does NOT call this from its live
+// /auth/login control flow (see runPostCredentialGates) — the PEP integration
+// is a later phase. When WithConditionalAccess is not wired the engine is nil
+// and this returns a permissive allow, so a caller can invoke it
+// unconditionally.
+//
+// A policy-store outage does not deny every request: the engine falls back to
+// the configured default verdict (fail-closed only if the operator set
+// Config.DefaultDeny) and the error is logged here.
+func (s *Server) EvaluateConditionalAccess(ctx context.Context, ac AccessContext) ConditionalAccessDecision {
+	if s.capEngine == nil {
+		return ConditionalAccessDecision{Verdict: conditionalaccess.VerdictAllow}
+	}
+	dec, err := s.capEngine.Evaluate(ctx, ac)
+	if err != nil {
+		s.logger.Error("conditional access policy store unavailable", "error", err)
+	}
+	s.metrics.ObserveConditionalAccessDecision(string(dec.Verdict))
+	return dec
+}
 
 // runPostMergeAuthzValidation runs the authorization-request validation guards
 // that must see the EFFECTIVE request, i.e. after the PAR and JAR merges have

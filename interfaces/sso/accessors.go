@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/anomaly"
+	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/platform/audit"
@@ -131,6 +132,11 @@ func (s *Server) AdminTokenStore() core.AdminTokenStore {
 }
 
 func (s *Server) ConnectionStore() connections.Store { return s.connectionStore }
+
+// ConditionalAccessStore exposes the wired zero-trust CAP policy store (may be
+// nil) for the admin governance view. Satisfies admin.Deps.
+func (s *Server) ConditionalAccessStore() conditionalaccess.Store { return s.capStore }
+
 // ConsentStore exposes the wired consent store (may be nil).
 func (s *Server) ConsentStore() ConsentStore { return s.consentStore }
 func (s *Server) TenantUserStore() core.TenantUserStore     { return s.tenantUserStore }

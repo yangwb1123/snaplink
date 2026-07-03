@@ -26,6 +26,9 @@ func TestNew_ConstructsAllVectors(t *testing.T) {
 	if m.RiskDecisionsTotal == nil {
 		t.Error("risk decisions collector not initialized")
 	}
+	if m.ConditionalAccessDecisionsTotal == nil {
+		t.Error("conditional-access decisions collector not initialized")
+	}
 	if m.AnomaliesDetectedTotal == nil || m.AnomalyDispatchDropsTotal == nil || m.AnomalyInspectErrorsTotal == nil {
 		t.Error("anomaly collectors not initialized")
 	}
