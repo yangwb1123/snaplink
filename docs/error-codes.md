@@ -426,6 +426,37 @@ no `error`/`error_description` JSON body.
 
 ---
 
+## SDK resource-server token validation (`interfaces/ssoclient/rs`)
+
+The `rs` package is the resource-server (RS) side of the SDK: a microservice
+consuming this server's access tokens uses it to validate them (locally via
+JWKS or remotely via RFC 7662 introspection) and to verify RFC 9449 DPoP
+proofs, without re-implementing the AS's security gates. Like the webhook
+sentinels above, these are **SDK Go errors, not HTTP wire codes** — branch on
+them with `errors.Is`. The package's own `HTTPMiddleware` deliberately
+collapses all of them to the standard RFC 6750 `WWW-Authenticate:
+error="invalid_token"` challenge on the wire, so a caller-visible 401 can
+never become a token-validation oracle.
+
+| Sentinel                 | Returned when                                                                 |
+|--------------------------|--------------------------------------------------------------------------------|
+| `ErrConfig`              | `Config` cannot support the requested operation (missing `Issuer`, no key source for local mode, no `IntrospectURL` for remote mode) |
+| `ErrTokenMalformed`      | Token is not a 3-segment compact JWS, a segment fails to decode, or a REQUIRED claim (RFC 9068 §2.2 `exp`) is absent |
+| `ErrTokenTypeMismatch`   | JOSE header `typ` is not the RFC 9068 access-token type (`at+jwt` / `application/at+jwt`) — e.g. an ID token or logout token presented as an access token |
+| `ErrSignatureInvalid`    | `alg` outside the allowlist, unknown `kid`, or JWS signature verification failed — one sentinel for the whole class so callers cannot build an oracle distinguishing "unknown key" from "bad signature" |
+| `ErrIssuerMismatch`      | `iss` differs from `Config.Issuer`                                             |
+| `ErrAudienceMismatch`    | `aud` does not contain `Config.ExpectedAud`                                    |
+| `ErrTokenExpired`        | `exp` is in the past beyond `Config.MaxClockSkew`                              |
+| `ErrTokenNotYetValid`    | `nbf` or `iat` is in the future beyond `Config.MaxClockSkew`                   |
+| `ErrTokenInactive`       | RFC 7662 introspection answered `{"active": false}`                            |
+| `ErrIntrospection`       | The introspection round-trip itself failed (transport error, non-200, unparseable body) — distinct from `ErrTokenInactive` so callers can choose their AS-outage fail mode separately from a genuine rejection |
+| `ErrDPoPInvalid`         | Any RFC 9449 proof failure: malformed proof, bad signature, `htm`/`htu` mismatch, stale `iat`, missing `ath` binding, key thumbprint != token `cnf.jkt`, or a `cnf`-bound token presented without a proof |
+| `ErrDPoPReplayed`        | The proof `jti` was already seen inside its acceptance window                  |
+| `ErrInsufficientScope`   | `CheckScope`/`CheckAnyScope` found a required scope absent                     |
+| `ErrSubjectMissing`      | `RequireSubject` found no `sub` claim (e.g. a `client_credentials` token reaching a user-only endpoint) |
+
+---
+
 ## Conventions
 
 - **Stability:** codes here are stable wire contract — adding new codes
