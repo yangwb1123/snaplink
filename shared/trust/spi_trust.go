@@ -1,5 +1,5 @@
 // Package trust defines the trust-scoring SPI (Zero Trust Framework Phase 1
-// — see docs/analysis-five-directions-token-governance-credential-rotation-zt-dr-attack-surface.md,
+// — see docs/archive/analysis-five-directions-token-governance-credential-rotation-zt-dr-attack-surface.md,
 // "Direction 3") plus the reference scorers and a weighted composite
 // aggregator. It covers ONLY the scoring foundation: NO conditional-access
 // policy engine and NO continuous/session-decay verification (those are
