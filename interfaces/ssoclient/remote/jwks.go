@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"sync"
 	"time"
@@ -46,6 +47,10 @@ type JWKSCache struct {
 	loaded              bool
 	lastForcedFetch     time.Time // debounce: tracks last on-demand miss fetch
 	forcedFetchInterval time.Duration
+	// etag is the validator from the last 200 response; sent back as
+	// If-None-Match so an unrotated key set costs a 304 with no body
+	// (the JWKS doc can be tens of KB with several RSA keys published).
+	etag string
 
 	refreshInterval time.Duration
 	closeOnce       sync.Once
@@ -120,6 +125,14 @@ func (j *JWKSCache) Get(ctx context.Context, kid string) (ed25519.PublicKey, err
 	return ed25519.PublicKey(raw), nil
 }
 
+// GetJWK returns the raw JWK for kid, fetching on first call or cache miss.
+// It is the multi-algorithm accessor for callers (the rs resource-server SDK,
+// this package's own ValidateToken) that verify via security.VerifyCompactJWS
+// and therefore need the JWK itself, not a pre-decoded Ed25519 key.
+func (j *JWKSCache) GetJWK(ctx context.Context, kid string) (core.JWK, error) {
+	return j.getJWK(ctx, kid)
+}
+
 // getJWK returns the raw JWK for kid, fetching on first call or cache miss.
 // Two defenses against amplification from attacker-controlled kids:
 //   - singleflight: N concurrent miss requests collapse to one upstream call
@@ -171,12 +184,27 @@ func (j *JWKSCache) getJWK(ctx context.Context, kid string) (core.JWK, error) {
 // Close stops the background refresher. Safe to call more than once.
 func (j *JWKSCache) Close() { j.closeOnce.Do(func() { close(j.done) }) }
 
+// StartRefresher ties the cache lifetime to ctx: when ctx is canceled the
+// cache closes exactly as if Close had been called. The background refresher
+// itself always starts inside NewJWKSCache — this is the optional hook for
+// callers that manage lifecycles through contexts rather than explicit Close
+// (e.g. an RS process shutting everything down off one root context).
+func (j *JWKSCache) StartRefresher(ctx context.Context) {
+	go func() {
+		select {
+		case <-ctx.Done():
+			j.Close()
+		case <-j.done:
+		}
+	}()
+}
+
 func (j *JWKSCache) refreshLoop() {
-	t := time.NewTicker(j.refreshInterval)
-	defer t.Stop()
 	for {
+		t := time.NewTimer(jitteredInterval(j.refreshInterval))
 		select {
 		case <-j.done:
+			t.Stop()
 			return
 		case <-t.C:
 			ctx, cancel := context.WithTimeout(context.Background(), j.client.Timeout)
@@ -186,16 +214,38 @@ func (j *JWKSCache) refreshLoop() {
 	}
 }
 
+// jitteredInterval spreads each refresh across +/-10% of the base interval so
+// a fleet of replicas restarted together (a deploy) does not re-synchronize
+// into a thundering herd against the JWKS endpoint on every tick.
+func jitteredInterval(base time.Duration) time.Duration {
+	spread := int64(base) / 10
+	if spread <= 0 {
+		return base
+	}
+	return base + time.Duration(rand.Int64N(2*spread+1)-spread)
+}
+
 func (j *JWKSCache) fetch(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, j.url, nil)
 	if err != nil {
 		return err
+	}
+	j.mu.RLock()
+	etag, loaded := j.etag, j.loaded
+	j.mu.RUnlock()
+	// If-None-Match only once a key set is actually held: a 304 with no
+	// cached keys would strand the cache empty forever.
+	if etag != "" && loaded {
+		req.Header.Set("If-None-Match", etag)
 	}
 	resp, err := j.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("ssoclient/remote: jwks fetch: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotModified {
+		return nil // validator matched — cached keys stay authoritative
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("ssoclient/remote: jwks status %d", resp.StatusCode)
 	}
@@ -203,11 +253,25 @@ func (j *JWKSCache) fetch(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	keys, err := decodeJWKSKeys(body)
+	if err != nil {
+		return err
+	}
+	j.mu.Lock()
+	j.keys = keys
+	j.loaded = true
+	j.etag = resp.Header.Get("ETag")
+	j.mu.Unlock()
+	return nil
+}
+
+// decodeJWKSKeys parses a JWKS document into the kid-indexed verify map.
+func decodeJWKSKeys(body []byte) (map[string]core.JWK, error) {
 	var doc struct {
 		Keys []core.JWK `json:"keys"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return fmt.Errorf("ssoclient/remote: jwks parse: %w", err)
+		return nil, fmt.Errorf("ssoclient/remote: jwks parse: %w", err)
 	}
 	keys := make(map[string]core.JWK, len(doc.Keys))
 	for _, k := range doc.Keys {
@@ -225,11 +289,7 @@ func (j *JWKSCache) fetch(ctx context.Context) error {
 		}
 	}
 	if len(keys) == 0 {
-		return errors.New("ssoclient/remote: jwks contained no usable asymmetric keys")
+		return nil, errors.New("ssoclient/remote: jwks contained no usable asymmetric keys")
 	}
-	j.mu.Lock()
-	j.keys = keys
-	j.loaded = true
-	j.mu.Unlock()
-	return nil
+	return keys, nil
 }

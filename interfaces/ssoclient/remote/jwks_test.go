@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -149,4 +150,114 @@ func TestJWKSCache_ClosedoesNotPanic(t *testing.T) {
 	)
 	cache.Close()
 	cache.Close() // idempotent
+}
+
+// TestJWKSCache_ETagRevalidationSkipsBody proves an unrotated JWKS costs the
+// caller a 304 with no body: the cache sends back the validator from the
+// last 200, and a 304 response must leave the previously cached keys intact
+// rather than stranding the cache empty.
+func TestJWKSCache_ETagRevalidationSkipsBody(t *testing.T) {
+	t.Parallel()
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	var hits, notModified atomic.Int64
+	const etag = `"etag-1"`
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/jwks.json", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if r.Header.Get("If-None-Match") == etag {
+			notModified.Add(1)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"keys":[{"kty":"OKP","crv":"Ed25519","kid":"test-kid","x":%q}]}`,
+			base64.RawURLEncoding.EncodeToString(pub))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cache := remote.NewJWKSCache(srv.URL+"/.well-known/jwks.json", remote.WithJWKSForcedFetchInterval(time.Nanosecond))
+	defer cache.Close()
+
+	if _, err := cache.Get(context.Background(), "test-kid"); err != nil {
+		t.Fatalf("prime Get: %v", err)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("priming hits = %d, want 1", hits.Load())
+	}
+
+	// An unknown kid forces another on-demand fetch; the server must answer
+	// 304 because the cache now holds and resends the ETag.
+	_, _ = cache.Get(context.Background(), "unknown-kid")
+	if hits.Load() != 2 {
+		t.Fatalf("hits after second fetch = %d, want 2", hits.Load())
+	}
+	if notModified.Load() != 1 {
+		t.Fatalf("notModified = %d, want 1 (If-None-Match should have matched)", notModified.Load())
+	}
+	// The 304 must not have emptied the cache: the original key still resolves.
+	if _, err := cache.Get(context.Background(), "test-kid"); err != nil {
+		t.Fatalf("Get after 304: %v", err)
+	}
+}
+
+// TestJWKSCache_StartRefresherClosesOnContextCancel proves the optional
+// context-lifecycle hook tears the background refresh loop down exactly like
+// an explicit Close — and that a caller's own Close racing with it is still
+// safe (sync.Once, not a double-close panic).
+func TestJWKSCache_StartRefresherClosesOnContextCancel(t *testing.T) {
+	t.Parallel()
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	url, hits, stop := jwksServer(t, pub)
+	defer stop()
+
+	cache := remote.NewJWKSCache(url, remote.WithJWKSRefreshInterval(5*time.Millisecond))
+	ctx, cancel := context.WithCancel(context.Background())
+	cache.StartRefresher(ctx)
+
+	time.Sleep(20 * time.Millisecond) // let a couple of refresh ticks land
+	cancel()
+	time.Sleep(20 * time.Millisecond) // let the StartRefresher goroutine observe it
+	seenAtCancel := hits.Load()
+	time.Sleep(50 * time.Millisecond)
+	if got := hits.Load(); got != seenAtCancel {
+		t.Fatalf("refresh continued after context cancel: hits went from %d to %d", seenAtCancel, got)
+	}
+	cache.Close() // must not panic even though StartRefresher already closed it
+}
+
+// TestJWKSCache_ConcurrentGetIsRaceFree drives Get from many goroutines
+// against both a known and a rotating-unknown kid while the background
+// refresher is also ticking, so `go test -race` exercises the cache's
+// locking (mu around keys/etag/loaded/lastForcedFetch) under real
+// contention rather than only the single-goroutine call patterns above.
+func TestJWKSCache_ConcurrentGetIsRaceFree(t *testing.T) {
+	t.Parallel()
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	url, _, stop := jwksServer(t, pub)
+	defer stop()
+
+	cache := remote.NewJWKSCache(url,
+		remote.WithJWKSRefreshInterval(2*time.Millisecond),
+		remote.WithJWKSForcedFetchInterval(time.Millisecond),
+	)
+	defer cache.Close()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				kid := "test-kid"
+				if j%2 == 0 {
+					kid = fmt.Sprintf("unknown-%d-%d", i, j)
+				}
+				_, _ = cache.Get(context.Background(), kid)
+				_, _ = cache.GetJWK(context.Background(), kid)
+			}
+		}(i)
+	}
+	wg.Wait()
 }
