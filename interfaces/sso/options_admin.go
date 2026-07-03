@@ -2,8 +2,10 @@ package sso
 
 import (
 	"context"
+	"strings"
 	"time"
 
+	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/platform/lifecycle/rotation"
 	"github.com/snaplink/sso/platform/sse"
@@ -178,4 +180,88 @@ func WithConfigDriftDetection(interval time.Duration, replicaID string) Option {
 // retention loops in cmd/sso-server).
 func WithBreakGlassStore(store core.BreakGlassStore) Option {
 	return func(s *Server) { s.breakGlassStore = store }
+}
+
+// configHistoryResourceByEventType classifies an audit.EventType into the
+// config_history "resource" column, restricted to the event types that
+// ALREADY broadcast a cluster Kind*Change (client/tenant/policy) per
+// AGENTS.md's change-capture requirement. Every other admin event type is
+// skipped: a resource-scoped config_history pairs with the running/applied
+// diff endpoint, it is not a second general admin audit log (that already
+// exists at /api/v1/audit/events). Lives beside the config-audit wiring
+// options (relocated from server_routes_admin.go to hold that file under the
+// 500-line budget).
+var configHistoryResourceByEventType = map[audit.EventType]string{
+	audit.EventAdminClientCreated:       "client",
+	audit.EventAdminClientUpdated:       "client",
+	audit.EventAdminClientDeleted:       "client",
+	audit.EventAdminClientSecretRotated: "client",
+	audit.EventAdminTenantCreated:       "tenant",
+	audit.EventAdminTenantUpdated:       "tenant",
+	audit.EventAdminTenantDeleted:       "tenant",
+	audit.EventAdminTenantStatusChanged: "tenant",
+	audit.EventAdminRoleAdded:           "policy",
+	audit.EventAdminRoleUpdated:         "policy",
+	audit.EventAdminRoleRemoved:         "policy",
+	audit.EventAdminRoleAssigned:        "policy",
+	audit.EventAdminRoleUnassigned:      "policy",
+	audit.EventAdminMenusUpdated:        "policy",
+}
+
+// recordConfigHistoryFromAudit is the audit.Recorder ConfigChangeHook wired
+// in NewServer when both an auditor and a configAuditStore are present
+// (see sso.go). It is the "narrowest existing seam" AGENTS.md's
+// change-capture requirement asks for: every admin mutation across gRPC
+// (grpcadmin's recordAdmin helper) and REST already funnels through
+// Recorder.Record with the actor stamped from the admin auth context
+// (sso.AdminActorFromContext / the REST admin middleware), so hooking here
+// captures every client/tenant/policy change without touching a single
+// admin_*.go call site.
+//
+// Limitation (documented, not fixed here — see AGENTS.md scope discipline):
+// this generic seam only carries the changed entity's ID (via the
+// "target="+id Reason convention every admin handler already uses), not its
+// before/after field values, so the recorded Patch is empty — a presence-
+// only history entry, not a field-level diff. [Server.RecordConfigChange]
+// is the field-accurate alternative for a call site that has both states.
+func (s *Server) recordConfigHistoryFromAudit(ctx context.Context, e *audit.Event) {
+	resource, ok := configHistoryResourceByEventType[e.Type]
+	if !ok || s.configAuditStore == nil {
+		return
+	}
+	entry := configaudit.Entry{
+		Actor:      e.ActorID,
+		Resource:   resource,
+		ResourceID: strings.TrimPrefix(e.Reason, "target="),
+		Patch:      []configaudit.Op{},
+		Reason:     string(e.Type),
+	}
+	if err := s.configAuditStore.Record(ctx, entry); err != nil {
+		s.logger.Error("config history record failed", "resource", resource, "error", err)
+	}
+}
+
+// RecordConfigChange appends a field-level config_history entry for a
+// single resource mutation: before/after are the resource's own JSON-
+// shaped representation (NOT the whole server config) — e.g. a client
+// struct round-tripped through json.Marshal/Unmarshal into map[string]any.
+// actor should come from the caller's admin auth context
+// (sso.AdminActorFromContext for gRPC, the REST admin middleware's stashed
+// subject for HTTP). No-op when no configAuditStore is wired, so callers
+// may invoke it unconditionally.
+func (s *Server) RecordConfigChange(ctx context.Context, actor, tenantID, resource, resourceID string, before, after map[string]any, reason string) {
+	if s.configAuditStore == nil {
+		return
+	}
+	entry := configaudit.Entry{
+		Actor:      actor,
+		TenantID:   tenantID,
+		Resource:   resource,
+		ResourceID: resourceID,
+		Patch:      configaudit.RedactOps(configaudit.Diff(before, after)),
+		Reason:     reason,
+	}
+	if err := s.configAuditStore.Record(ctx, entry); err != nil {
+		s.logger.Error("config history record failed", "resource", resource, "resource_id", resourceID, "error", err)
+	}
 }

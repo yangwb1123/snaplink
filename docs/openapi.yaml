@@ -4723,6 +4723,255 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/admin/tokens/portfolio:
+    get:
+      tags: [admin]
+      summary: Token portfolio overview.
+      description: |
+        Phase 3 of token governance. Returns an aggregated overview from the
+        opt-in token-usage store: total events, issuance total (token endpoint)
+        + per-kind and per-client distribution, introspection/userinfo
+        presentation totals, and a per-minute issuance trend. Governance data
+        only (counts, never token values or subjects). Same optional filters as
+        the usage read API; the window echoes back. Admin-gated (admin:read).
+        Mounted only when a token-usage recorder is wired
+        (WithTokenUsageRecorder).
+      operationId: getAdminTokenPortfolio
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: client_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Aggregated portfolio overview.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  portfolio:
+                    type: object
+                    properties:
+                      window:
+                        type: object
+                        properties:
+                          since: { type: string }
+                          until: { type: string }
+                      total_events: { type: integer }
+                      issued_total: { type: integer }
+                      introspections: { type: integer }
+                      userinfo: { type: integer }
+                      by_kind:
+                        type: object
+                        additionalProperties: { type: integer }
+                      by_client:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            client_id: { type: string }
+                            issued: { type: integer }
+                      trend:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            minute: { type: string, format: date-time }
+                            issued: { type: integer }
+        "400":
+          description: Malformed since/until.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/tokens/subjects/{subject}:
+    get:
+      tags: [admin]
+      summary: Per-subject active-token view.
+      description: |
+        Returns the count of active refresh tokens a subject holds, read
+        through the existing RefreshTokenSubjectCounter. Governance data only
+        (a count, never token values). Optional ?client_id= scopes the count to
+        one client. When the wired refresh store cannot count, the response
+        reports counted=false. Admin-gated (admin:read). Mounted with
+        WithTokenUsageRecorder.
+      operationId: getAdminTokenSubject
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: subject
+          in: path
+          required: true
+          schema: { type: string }
+        - name: client_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Per-subject active-token count.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  subject: { type: string }
+                  client_id: { type: string }
+                  counted: { type: boolean }
+                  active_refresh_tokens: { type: integer }
+        "400":
+          description: Missing subject.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/tokens/suspicious:
+    get:
+      tags: [admin]
+      summary: Suspicious-token anomaly list.
+      description: |
+        Returns the token-behavior anomalies detected OFF the request path by
+        the opt-in TokenAnomalyDetector (multi_geo / velocity / rate_spike).
+        DETECTION / REPORTING ONLY — a finding never feeds an authentication or
+        authorization decision. Each row carries a token thumbprint
+        (SHA-256(jti), never the token value), a coarse ISO-3166 geo set, and
+        the subject — consistent with the usage-telemetry privacy stance.
+        Admin-gated (admin:read). Mounted only when a detector is wired
+        (WithTokenAnomalyDetector).
+      operationId: getAdminTokenSuspicious
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: query
+          required: false
+          description: Filter to one finding type.
+          schema: { type: string, enum: [multi_geo, velocity, rate_spike] }
+        - name: severity
+          in: query
+          required: false
+          schema: { type: string, enum: [warn, critical] }
+        - name: limit
+          in: query
+          required: false
+          description: Max rows, most-recent first; <= 0 or absent = all.
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Detected token-behavior anomalies.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  findings:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type: { type: string, enum: [multi_geo, velocity, rate_spike] }
+                        severity: { type: string, enum: [warn, critical] }
+                        token_thumbprint: { type: string }
+                        client_id: { type: string }
+                        subject_id: { type: string }
+                        geos: { type: array, items: { type: string } }
+                        detail: { type: string }
+                        count: { type: integer }
+                        first_seen: { type: string, format: date-time }
+                        last_seen: { type: string, format: date-time }
+                  total: { type: integer }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/tokens/revoke:
+    post:
+      tags: [admin]
+      summary: Bulk-revoke workflow.
+      description: |
+        Revokes a BOUNDED set of refresh tokens — all for a subject and/or a
+        client — through the EXISTING RefreshTokenSubjectIndex /
+        RefreshTokenClientPurger machinery (the same paths /token/revoke-all and
+        tenant suspension use; no new revocation store is built). At least one
+        of subject / client_id MUST be set — a blank scope is rejected, never a
+        wildcard-all. Revocation-storm protection: a subject batch is
+        pre-counted; a batch over the hard cap is refused
+        (bulk_revoke_batch_too_large), and a batch over the soft cap — or any
+        client-wide revoke, which can't be cheaply pre-counted — requires
+        confirm=true (bulk_revoke_confirmation_required). Already-issued
+        stateless access tokens are not enumerable without their values, so they
+        expire naturally (same as /token/revoke-all); refresh-token deletion is
+        cluster-consistent via the shared store. Emits an admin_tokens_bulk_revoked
+        governance audit event. Admin-gated (admin:write).
+      operationId: postAdminTokenRevoke
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                subject: { type: string }
+                client_id: { type: string }
+                confirm:
+                  type: boolean
+                  description: Required for a batch over the soft cap or any client-wide revoke.
+      responses:
+        "200":
+          description: Refresh tokens revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  revoked_count: { type: integer }
+                  subject: { type: string }
+                  client_id: { type: string }
+        "400":
+          description: Malformed body or empty (subject AND client) scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: >-
+            Revocation-storm protection: bulk_revoke_confirmation_required (add
+            confirm=true) or bulk_revoke_batch_too_large (narrow the scope).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: No refresh-token store (or bulk-capable extension) is wired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/tenants/{id}:set-status:
     parameters:
       - name: id

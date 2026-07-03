@@ -15,6 +15,7 @@ import (
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
+	"github.com/snaplink/sso/domains/tokenanomaly"
 	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/cluster"
@@ -145,6 +146,11 @@ func (s *Server) AnomalyRunner() *anomaly.Runner           { return s.anomalyRun
 // method on a nil *tokenusage.Recorder is a safe no-op, so callers never
 // need a nil check.
 func (s *Server) TokenUsageRecorder() *tokenusage.Recorder { return s.tokenUsageRecorder }
+
+// TokenAnomalyDetector returns the opt-in token-behavior anomaly detector, or
+// nil when [WithTokenAnomalyDetector] was never wired. Every method on a nil
+// *tokenanomaly.Detector is a safe no-op.
+func (s *Server) TokenAnomalyDetector() *tokenanomaly.Detector { return s.tokenAnomalyDetector }
 
 // AdminRateLimit returns the configured admin-wide rate limit.
 // rate is tokens per second; burst is the maximum accumulated tokens.

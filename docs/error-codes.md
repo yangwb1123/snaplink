@@ -306,6 +306,16 @@ wired. Emits `admin_credential_compromised` with the compliance evidence chain
 | `not_found`                          | 404  | Unknown credential `{type}` (never registered), or no compromise scheduler wired                      |
 | `internal_error`                     | 500  | Minting the replacement failed — the OLD credential keeps serving; retry                              |
 
+### Token portfolio bulk-revoke (`POST /api/v1/admin/tokens/revoke`)
+
+Revocation-storm protection for the admin bulk-revoke workflow. Neither code is
+a credential oracle — the caller is an authenticated admin (admin:write).
+
+| Code                                 | HTTP | Emitted when                                                                                          |
+|--------------------------------------|------|------------------------------------------------------------------------------------------------------|
+| `bulk_revoke_confirmation_required`  | 409  | The batch is large enough (over the soft cap) — or is a client-wide revoke that can't be pre-counted — to demand an explicit `confirm: true` |
+| `bulk_revoke_batch_too_large`        | 409  | The batch exceeds the hard cap and must be narrowed (a subject/client revoke that would wipe more than the storm ceiling), even with `confirm` |
+
 ---
 
 ## Server / configuration

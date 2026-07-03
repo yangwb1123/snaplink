@@ -352,6 +352,16 @@ type Metrics struct {
 	// own unlabeled counter rather than a DenyReason on DenialsTotal.
 	TokenPolicyRenewRequiredTotal prometheus.Counter
 
+	// Token-behavior anomaly findings (opt-in via WithTokenAnomalyDetector +
+	// WithMetrics). Zero traffic when no detector is wired — OPT-IN via
+	// EnableTokenAnomalyMetrics, so without both a detector AND metrics the
+	// vector stays nil and nothing is registered or emitted (byte-identical
+	// off, §5). Counts each finding EMITTED by an Analyze sweep, by type (the
+	// closed multi_geo/velocity/rate_spike set) × severity (warn/critical) —
+	// both bounded, no thumbprint/client/subject label. Detection is off the
+	// request path and never feeds an auth decision.
+	TokenAnomalyFindingsTotal *prometheus.CounterVec // labels: anomaly_type, severity
+
 	// Disaster-recovery degraded-service posture (zero traffic when no
 	// DegradationManager is wired). DegradationMode is a state gauge: the active
 	// mode's series reads 1 and every other mode reads 0, so operators alert on
