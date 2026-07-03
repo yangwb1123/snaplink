@@ -4,12 +4,110 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/internal/auth/login"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/continuousverify"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/security"
+	"github.com/snaplink/sso/shared/trust"
 )
+
+// stepUpTrustDescription is the RFC 6750 error_description on the RFC 9470
+// step-up challenge the min-trust gate returns. Developer-facing only — SPAs
+// MUST branch on the error CODE (insufficient_user_authentication), never this
+// text (AGENTS.md: descriptions stay out of the auth decision).
+const stepUpTrustDescription = "session trust below threshold; step-up required"
+
+// SessionTrustDecayConfig configures the zero-trust session-trust-decay feature
+// (WithSessionTrustDecay, Direction 3 Phase 3): a trust score bound to each
+// session at login decays over time, a background ContinuousVerificationAgent
+// marks below-floor sessions for step-up, and a min-trust gate
+// (Server.RequireSessionTrust) challenges high-risk operations.
+//
+// The zero value leaves the feature OFF (Factor/Interval unset ⇒ decay
+// disabled), so a Server built without this option is byte-identical to today.
+type SessionTrustDecayConfig struct {
+	// Interval + Factor define the exponential decay curve: the bound score is
+	// multiplied by Factor (in the open range (0,1), e.g. 0.95) once per Interval
+	// of elapsed time. Interval <= 0 or a Factor outside (0,1) disables the whole
+	// feature (the fields are the enable switch).
+	Interval time.Duration
+	Factor   float64
+
+	// Floor is the continuous-verification agent's step-up threshold: a live
+	// session whose decayed score drops below Floor is marked for step-up.
+	Floor float64
+
+	// MinScore is the asymptotic lower bound the decayed score never falls below
+	// (avoids decaying an old-but-legitimate session to a hard 0). Zero leaves the
+	// natural exp-toward-0 curve.
+	MinScore float64
+
+	// SweepInterval is the agent's polling cadence (<=0 ⇒ the package default,
+	// continuousverify.DefaultSweepInterval).
+	SweepInterval time.Duration
+
+	// StepUpACRValues / StepUpMaxAge shape the RFC 9470 step-up challenge the
+	// min-trust gate returns below threshold. When both are empty the gate demands
+	// a fresh re-authentication (a 1-second max_age window).
+	StepUpACRValues []string
+	StepUpMaxAge    int
+
+	// InitialScore is the trust bound to a session at login (0 < v <= 1); any
+	// value outside that range defaults to 1.0 — fully trusted at login, decaying
+	// thereafter.
+	InitialScore float64
+}
+
+// sessionTrustWiring is the resolved WithSessionTrustDecay state held on the
+// Server (an unexported value so the public surface stays the flat config +
+// option, mirroring capStore/capEngine).
+type sessionTrustWiring struct {
+	cfg          trust.DecayConfig
+	sweep        time.Duration
+	stepUpACR    []string
+	stepUpMaxAge int
+	initialScore float64
+}
+
+// enabled reports whether the feature is active (decay configured). The zero
+// value is disabled, so every consumer (login stamping, the gate, the agent)
+// short-circuits to byte-identical-off behavior.
+func (w sessionTrustWiring) enabled() bool { return w.cfg.Enabled() }
+
+// WithSessionTrustDecay wires the zero-trust session-trust-decay feature. A
+// config whose decay curve is invalid/unset (Factor outside (0,1) or Interval
+// <= 0) is a no-op — byte-identical to a build without the option. Start the
+// background agent with Server.StartContinuousVerification under the process
+// lifecycle; gate high-risk operations with Server.RequireSessionTrust.
+func WithSessionTrustDecay(cfg SessionTrustDecayConfig) Option {
+	return func(s *Server) {
+		dc := trust.DecayConfig{
+			Interval: cfg.Interval,
+			Factor:   cfg.Factor,
+			Floor:    cfg.Floor,
+			MinScore: cfg.MinScore,
+		}
+		if !dc.Enabled() {
+			return
+		}
+		init := cfg.InitialScore
+		if init <= 0 || init > 1 {
+			init = 1.0
+		}
+		s.sessionTrust = sessionTrustWiring{
+			cfg:          dc,
+			sweep:        cfg.SweepInterval,
+			stepUpACR:    cfg.StepUpACRValues,
+			stepUpMaxAge: cfg.StepUpMaxAge,
+			initialScore: init,
+		}
+	}
+}
 
 // EvaluateConditionalAccess resolves the wired zero-trust conditional-access
 // policies against ac and returns the advisory Decision. It is the SDK entry
@@ -35,6 +133,84 @@ func (s *Server) EvaluateConditionalAccess(ctx context.Context, ac AccessContext
 	}
 	s.metrics.ObserveConditionalAccessDecision(string(dec.Verdict))
 	return dec
+}
+
+// RequireSessionTrust is the zero-trust min-trust gate for a high-risk operation
+// (an admin mutation, a self-service credential change): it challenges the caller
+// for RFC 9470 step-up when the session identified by sessionID has a decayed
+// trust below minTrust — or the ContinuousVerificationAgent already flagged it.
+// It returns true when it OWNS the response (a 401 + WWW-Authenticate step-up
+// challenge is written); false to proceed with the operation.
+//
+// FAIL-OPEN (spec Edge Cases): returns false (proceed) whenever the feature is
+// off, the gate is disabled for this operation (minTrust <= 0), or the session
+// can't be read (missing / store outage). The gate is advisory infra and MUST
+// NOT lock a user out on absent scoring data — the enforcement floor stays the
+// normal auth/session checks.
+func (s *Server) RequireSessionTrust(ctx HandlerContext, sessionID string, minTrust float64) bool {
+	if !s.sessionTrust.enabled() || minTrust <= 0 || sessionID == "" || s.sessionMgr == nil {
+		return false
+	}
+	sess, err := s.sessionMgr.Get(ctx.Request().Context(), sessionID)
+	if err != nil || sess == nil {
+		return false
+	}
+	if !trust.StepUpRequiredForTrust(*sess, time.Now(), s.sessionTrust.cfg, minTrust) {
+		return false
+	}
+	s.writeStepUpChallenge(ctx)
+	return true
+}
+
+// writeStepUpChallenge stamps the RFC 9470 WWW-Authenticate step-up challenge
+// (built from the configured acr_values / max_age demand) plus no-store headers
+// and a 401 with the oracle-safe generic insufficient_user_authentication body.
+// When neither demand is configured it falls back to a 1-second max_age window —
+// an effectively-immediate re-authentication demand (RFC 9470 has no semantics
+// for a challenge that demands nothing).
+func (s *Server) writeStepUpChallenge(ctx HandlerContext) {
+	challenge := security.StepUpChallenge{
+		ACRValues:   s.sessionTrust.stepUpACR,
+		MaxAge:      s.sessionTrust.stepUpMaxAge,
+		Realm:       s.resolveIssuer(ctx),
+		Description: stepUpTrustDescription,
+	}
+	if len(challenge.ACRValues) == 0 && challenge.MaxAge == 0 {
+		challenge.MaxAge = 1
+	}
+	tokenNoStoreHeaders(ctx)
+	if header, err := security.BuildStepUpChallenge(challenge); err == nil {
+		ctx.ResponseWriter().Header().Set("WWW-Authenticate", header)
+	}
+	ctx.JSON(http.StatusUnauthorized, errorBody(security.ErrInsufficientUserAuthentication))
+}
+
+// StartContinuousVerification launches the zero-trust ContinuousVerificationAgent
+// (Direction 3 Phase 3) — a background loop that periodically decays live
+// sessions' trust and marks below-floor ones for step-up. The returned channel
+// closes when the loop exits; cancel ctx to stop it (mirrors
+// StartSigningKeyAggregation). Inert (returns a closed channel) when the feature
+// is off or the wired SessionManager can't persist the step-up flag
+// (SessionTrustManager), so the caller may invoke it unconditionally.
+func (s *Server) StartContinuousVerification(ctx context.Context) <-chan struct{} {
+	marker, _ := s.sessionMgr.(SessionTrustManager)
+	if !s.sessionTrust.enabled() || s.sessionMgr == nil || marker == nil {
+		done := make(chan struct{})
+		close(done)
+		return done
+	}
+	opts := []continuousverify.Option{
+		continuousverify.WithMetrics(s.metrics),
+		continuousverify.WithLogger(s.logger),
+		continuousverify.WithEventHook(func(e continuousverify.Event) {
+			audit.RecordSessionTrustStepUp(s.auditor, context.Background(), e.SessionID, e.UserID, e.Score, e.Floor)
+		}),
+	}
+	if s.sessionTrust.sweep > 0 {
+		opts = append(opts, continuousverify.WithSweepInterval(s.sessionTrust.sweep))
+	}
+	agent := continuousverify.NewAgent(s.sessionMgr, marker, s.sessionTrust.cfg, opts...)
+	return agent.Start(ctx)
 }
 
 // runPostMergeAuthzValidation runs the authorization-request validation guards

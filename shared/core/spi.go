@@ -163,6 +163,15 @@ type SessionMeta struct {
 	// minted session is distinguishable from an interactive login.
 	// Best-effort: a manager that doesn't persist it stays byte-identical.
 	Kind string
+
+	// TrustScore + TrustSetAt bind an initial zero-trust score to the session at
+	// creation (Session.TrustScore / TrustSetAt). Set by the login flow ONLY when
+	// WithSessionTrustDecay is wired; both zero (the default) means "no trust
+	// bound" and the session behaves byte-identically to today. A manager that
+	// doesn't persist them stays byte-identical (the decay/gate then fail-open on
+	// the zero baseline).
+	TrustScore float64
+	TrustSetAt time.Time
 }
 
 // SessionMetaCreator is the OPTIONAL extension a SessionManager implements to

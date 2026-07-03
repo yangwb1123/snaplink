@@ -229,6 +229,21 @@ Zero-trust conditional-access (CAP) engine (`domains/conditionalaccess`, `sso.Wi
 | `access_policies.degraded_trust` | Conservative trust value substituted when a signal is missing; `<=0` or `>1` normalizes to the engine default (`0.3`) |
 | `access_policies.default_deny` | Flips the no-policy-matched verdict from allow to deny (a zero-trust posture) and governs the fallback when the store is unavailable |
 
+## Session Trust Decay (continuous verification)
+
+Zero-trust session-trust-decay (`shared/trust`, `platform/lifecycle/continuousverify`, `sso.WithSessionTrustDecay`). A trust score bound to each session at login decays over time; a background `ContinuousVerificationAgent` marks below-floor sessions for step-up; and the min-trust gate `Server.RequireSessionTrust(ctx, sessionID, minTrust)` returns an RFC 9470 step-up challenge (`insufficient_user_authentication`) for a high-risk operation whose session trust has decayed. **Disabled by default**: an absent section (or `interval<=0` / `factor` outside `(0,1)`) stamps no trust at login, starts no agent, and the gate fail-opens — byte-identical to a build without the feature. FAIL-OPEN throughout: a missing trust signal (legacy/zero-value session), a store outage, or a scoring gap NEVER hard-denies — the decay/agent are advisory infra.
+
+| Key | Effect |
+|---|---|
+| `session_trust_decay.interval` + `session_trust_decay.factor` | The exponential decay curve: the bound score is multiplied by `factor` (in `(0,1)`, e.g. `0.95`) once per `interval` (e.g. `5m`). Both are the enable switch — `interval<=0` or `factor` outside `(0,1)` disables the feature |
+| `session_trust_decay.floor` | The agent's step-up threshold; a live session whose decayed score drops below `floor` is marked for step-up on its next request |
+| `session_trust_decay.min_score` | Asymptotic lower bound the decayed score never falls below (avoids decaying an old-but-legitimate session to a hard `0`) |
+| `session_trust_decay.sweep_interval` | The agent's polling cadence (`<=0` = 1m default). Off the request hot path |
+| `session_trust_decay.step_up_acr_values` / `session_trust_decay.step_up_max_age` | Shape the RFC 9470 challenge the gate returns; both empty ⇒ the gate demands a fresh re-authentication |
+| `session_trust_decay.initial_score` | Trust bound to a session at login (`0 < v <= 1`); out of range defaults to `1.0` (fully trusted at login, decaying thereafter) |
+
+The agent emits a `session_trust_stepup` audit event and increments `sso_zero_trust_session_stepup_total` for each session it marks.
+
 ## Degraded-Service Modes
 
 Disaster-recovery degraded-service control plane (`platform/lifecycle/degradation`, `sso.WithDegradationManager`). Disabled by default: an absent section installs no gate and mounts no route (byte-identical). An enabled-but-`normal` build is a pass-through (one atomic load per request).

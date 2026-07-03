@@ -44,7 +44,15 @@ type protocolState struct {
 	// engine is ADVISORY this wave (not wired into the live /auth/login flow).
 	capStore  conditionalaccess.Store
 	capEngine *conditionalaccess.Engine
-	metrics   *metrics.Metrics
+
+	// sessionTrust holds the zero-trust session-trust-decay wiring
+	// (WithSessionTrustDecay, Direction 3 Phase 3). Its zero value (decay
+	// disabled) means: no trust stamped at session creation, no continuous-
+	// verification agent, and RequireSessionTrust fail-opens — byte-identical
+	// to a build without the feature.
+	sessionTrust sessionTrustWiring
+
+	metrics *metrics.Metrics
 
 	// trustedProxies validates X-Forwarded-For chains when wired via
 	// WithTrustedProxies. When non-nil its Middleware is inserted outermost

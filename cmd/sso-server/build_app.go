@@ -158,6 +158,13 @@ type appBuilder struct {
 	breakGlassCancel      context.CancelFunc
 	breakGlassDone        <-chan struct{}
 
+	// sessionTrustDecayOn is set by wireSessionTrustDecay when the zero-trust
+	// session-trust-decay feature is enabled; startGovernanceWorkers then launches
+	// the ContinuousVerificationAgent under the continuousVerify cancel/done pair.
+	sessionTrustDecayOn    bool
+	continuousVerifyCancel context.CancelFunc
+	continuousVerifyDone   <-chan struct{}
+
 	// degradationMgr is the disaster-recovery degraded-service Manager
 	// (degradation.enabled). It has no background loop — the admin
 	// /api/v1/admin/dr/mode endpoints wired by WithDegradationManager drive it —
@@ -317,6 +324,7 @@ func (b *appBuilder) assembleExtras(a *app, rt serverRuntime) {
 	a.credentialSchedCancel, a.credentialSchedDone = b.credentialSchedCancel, b.credentialSchedDone
 	a.configDriftCancel, a.configDriftDone = b.configDriftCancel, b.configDriftDone
 	a.breakGlassCancel, a.breakGlassDone = b.breakGlassCancel, b.breakGlassDone
+	a.continuousVerifyCancel, a.continuousVerifyDone = b.continuousVerifyCancel, b.continuousVerifyDone
 	a.degradationMgr = b.degradationMgr
 }
 

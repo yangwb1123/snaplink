@@ -98,6 +98,7 @@ const (
 	EventIDTokenIssued                   = auditspi.EventIDTokenIssued
 	EventInvalidationBusDegraded         = auditspi.EventInvalidationBusDegraded
 	EventInvalidationBusReconnected      = auditspi.EventInvalidationBusReconnected
+	EventSessionTrustStepUp              = auditspi.EventSessionTrustStepUp
 	EventInvitationAccepted              = auditspi.EventInvitationAccepted
 	EventInvitationRevoked               = auditspi.EventInvitationRevoked
 	EventInvitationSent                  = auditspi.EventInvitationSent

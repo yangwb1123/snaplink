@@ -60,6 +60,14 @@ type Metrics struct {
 	// per-subject label (§5).
 	ConditionalAccessDecisionsTotal *prometheus.CounterVec // labels: action
 
+	// SessionTrustStepUpTotal counts live sessions the ContinuousVerification
+	// agent marked for step-up because their decayed trust fell below the floor
+	// (platform/lifecycle/continuousverify). No labels — a per-session/user label
+	// would be unbounded (§5); the step_up_required session flag + audit event
+	// carry the per-session detail. Zero traffic when WithSessionTrustDecay isn't
+	// wired.
+	SessionTrustStepUpTotal prometheus.Counter
+
 	// Per-login ClientStore cache (zero traffic when WithClientStoreCache
 	// isn't wired). Bounded {outcome} ∈ {hit, miss} — NO per-client_id label.
 	ClientStoreCacheTotal *prometheus.CounterVec // labels: outcome
@@ -387,4 +395,14 @@ func (m *Metrics) ObserveConditionalAccessDecision(action string) {
 		return
 	}
 	m.ConditionalAccessDecisionsTotal.WithLabelValues(action).Inc()
+}
+
+// ObserveSessionTrustStepUp bumps the zero-trust continuous-verification step-up
+// counter once per session the agent marks below-floor. Nil-safe so the agent
+// can fire it unconditionally whether or not metrics are wired.
+func (m *Metrics) ObserveSessionTrustStepUp() {
+	if m == nil || m.SessionTrustStepUpTotal == nil {
+		return
+	}
+	m.SessionTrustStepUpTotal.Inc()
 }

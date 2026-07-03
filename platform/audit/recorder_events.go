@@ -10,6 +10,7 @@ package audit
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/snaplink/sso/shared/core"
 )
@@ -245,6 +246,28 @@ func RecordSigningKeyAggregationRecovered(rec *Recorder, ctx context.Context) {
 		Type:    EventSigningKeyAggregationRecovered,
 		Outcome: OutcomeSuccess,
 	})
+}
+
+// RecordSessionTrustStepUp emits a session_trust_stepup event when the zero-trust
+// ContinuousVerificationAgent marks a live session for step-up because its decayed
+// trust fell below the floor. Runs off the request path (the agent's sweep
+// goroutine), so it takes a plain context.Context like the aggregation siblings.
+// The decayed score + floor land in Metadata via SetMeta (bounded, numeric — no
+// PII); the session + subject identify the affected login. Outcome is failure to
+// surface it as a security signal in outcome-filtered views.
+func RecordSessionTrustStepUp(rec *Recorder, ctx context.Context, sessionID, userID string, score, floor float64) {
+	if rec == nil {
+		return
+	}
+	e := &Event{
+		Type:      EventSessionTrustStepUp,
+		Outcome:   OutcomeFailure,
+		SessionID: sessionID,
+		ActorID:   userID,
+	}
+	SetMeta(e, "score", strconv.FormatFloat(score, 'f', 2, 64))
+	SetMeta(e, "floor", strconv.FormatFloat(floor, 'f', 2, 64))
+	rec.Record(ctx, e)
 }
 
 // RecordSigningKeyRotationCoordinated emits a signing_key_rotation_coordinated
