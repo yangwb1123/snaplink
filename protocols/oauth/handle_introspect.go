@@ -43,6 +43,13 @@ type IntrospectDeps interface {
 	// recorder. A nil recorder (telemetry disabled) makes every Offer a
 	// no-op — introspection behavior is unaffected either way.
 	TokenUsageRecorder() *tokenusage.Recorder
+	// IntrospectionRenewExceeded reports whether the wired token-policy engine's
+	// require_renew dimension marks this access token as needing refresh (used
+	// past its require_renew fraction of TTL). When true the handler reports the
+	// token INACTIVE (governance force-refresh, not a deny). Default-OFF: a nil
+	// token-policy store returns false, so introspection is byte-identical
+	// without a wired policy.
+	IntrospectionRenewExceeded(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) bool
 }
 
 // introspectRequest is the bound form/JSON body for /token/introspect.
@@ -222,6 +229,16 @@ func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (
 	if err != nil || claims == nil {
 		return nil, false
 	}
+	// Token-policy require_renew (opt-in, default-off): a token used past its
+	// require_renew fraction of TTL is reported INACTIVE so the resource server
+	// forces a refresh. This is a GOVERNANCE property, not a deny — {active:false}
+	// is the oracle-safe RFC 7662 §2.2 signal. Falls through to the inactive
+	// response (resolveIntrospection). No-op (never fires) when no policy store
+	// is wired, so introspection stays byte-identical.
+	if d.IntrospectionRenewExceeded(ctx.Request().Context(), introspectClientID(claims),
+		claims.Scopes, claims.IssuedAt, claims.ExpiresAt) {
+		return nil, false
+	}
 	body := map[string]any{
 		core.KeyActive:    true,
 		core.KeyTokenType: dpopTokenTypeOr(core.TokenTypeBearer, claims.ConfirmationJKT),
@@ -233,6 +250,20 @@ func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (
 	populateAccessIntrospectionBody(body, claims)
 	recordIntrospectionUsage(d, claims)
 	return body, true
+}
+
+// introspectClientID resolves the client that "owns" the token for token-policy
+// selection: the RFC 9068 client_id claim, falling back to the first audience
+// entry (older tokens / non-9068 issuers). Mirrors recordIntrospectionUsage's
+// fallback so the renew check and the usage bucket agree on the owning client.
+func introspectClientID(claims *core.TokenClaims) string {
+	if claims.ClientID != "" {
+		return claims.ClientID
+	}
+	if len(claims.Audience) > 0 {
+		return claims.Audience[0]
+	}
+	return ""
 }
 
 // recordIntrospectionUsage Offers a token-usage telemetry event for an

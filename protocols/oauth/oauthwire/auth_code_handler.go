@@ -198,6 +198,9 @@ type IssueRefreshTokenParams struct {
 	// ConfirmationJKT binds this refresh token to the DPoP key the client
 	// used at issue time (RFC 9449 §5). Empty = unbound.
 	ConfirmationJKT string
+	// Generation is the new token's rotation depth (0 at first issue,
+	// parent+1 at rotation) — the token-policy max_refresh_depth input.
+	Generation int
 }
 
 // IssueRefreshToken generates and stores a refresh token.
@@ -240,6 +243,7 @@ func IssueRefreshToken(ctx context.Context, p IssueRefreshTokenParams) (string, 
 		Acr:                  p.ACR,
 		AuthTime:             p.AuthTime,
 		ConfirmationJKT:      p.ConfirmationJKT,
+		Generation:           p.Generation,
 	}
 	if err := p.RefreshTokenStore.Issue(ctx, token, entry); err != nil {
 		return "", fmt.Errorf("store refresh token: %w", err)

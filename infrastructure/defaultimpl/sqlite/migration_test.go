@@ -44,19 +44,27 @@ func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
 	_ = sqlite.NewRefreshTokenStoreWithDB(db)
 
 	// The later columns must now exist (a SELECT referencing them succeeds) —
-	// including the v3 RFC 9068 auth-context columns (amr/acr/auth_time) and the
-	// v4 RFC 9449 DPoP key-binding column (confirmation_jkt).
+	// including the v3 RFC 9068 auth-context columns (amr/acr/auth_time), the
+	// v4 RFC 9449 DPoP key-binding column (confirmation_jkt), and the v5
+	// token-policy max_refresh_depth column (generation).
 	if _, err := db.Exec(`SELECT family_id, resources, authorization_details, sid,
-		amr, acr, auth_time, confirmation_jkt FROM refresh_tokens`); err != nil {
+		amr, acr, auth_time, confirmation_jkt, generation FROM refresh_tokens`); err != nil {
 		t.Errorf("legacy columns not backfilled: %v", err)
+	}
+	// The backfilled generation column defaults to 0 on the pre-existing row.
+	var gen int
+	if err := db.QueryRow(`SELECT generation FROM refresh_tokens WHERE token='old'`).Scan(&gen); err != nil {
+		t.Errorf("generation not readable: %v", err)
+	} else if gen != 0 {
+		t.Errorf("legacy row generation = %d, want 0", gen)
 	}
 	// Existing row preserved.
 	var token string
 	if err := db.QueryRow(`SELECT token FROM refresh_tokens WHERE token='old'`).Scan(&token); err != nil {
 		t.Errorf("legacy row lost: %v", err)
 	}
-	if v, _ := migrate.CurrentVersion(ctx, db, "refresh_tokens"); v != 4 {
-		t.Errorf("version = %d, want 4", v)
+	if v, _ := migrate.CurrentVersion(ctx, db, "refresh_tokens"); v != 5 {
+		t.Errorf("version = %d, want 5", v)
 	}
 }
 

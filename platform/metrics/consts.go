@@ -61,8 +61,9 @@ const (
 	NameTokenUsageTrackedBuckets = "sso_token_usage_tracked_buckets"
 
 	// Token-policy engine (opt-in via WithTokenPolicy + WithMetrics).
-	NameTokenPolicyEvaluationsTotal = "sso_token_policy_evaluations_total"
-	NameTokenPolicyDenialsTotal     = "sso_token_policy_denials_total"
+	NameTokenPolicyEvaluationsTotal   = "sso_token_policy_evaluations_total"
+	NameTokenPolicyDenialsTotal       = "sso_token_policy_denials_total"
+	NameTokenPolicyRenewRequiredTotal = "sso_token_policy_renew_required_total"
 
 	// Signup funnel metrics — self-service registration conversion
 	// pipeline. Operators graph started → verified → completed to find

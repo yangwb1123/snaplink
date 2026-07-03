@@ -32,6 +32,10 @@ type introspectDeps struct {
 	validate      func(ctx context.Context, token string) (*core.TokenClaims, string, error)
 	verifyCA      func(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
 	usageRecorder *tokenusage.Recorder
+	// renewExceeded stands in for the token-policy require_renew seam. Nil =
+	// default-off (never exceeded), so an unset hook keeps introspection
+	// byte-identical to a build without a wired policy.
+	renewExceeded func(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) bool
 }
 
 func (d *introspectDeps) ClientStoreAccessor() core.ClientStore     { return d.clients }
@@ -49,6 +53,12 @@ func (d *introspectDeps) VerifyJWTClientAssertion(ctx context.Context, a, f, i s
 func (d *introspectDeps) IntrospectionCache() IntrospectionCache   { return nil }
 func (d *introspectDeps) IntrospectionCacheTTL() time.Duration     { return 0 }
 func (d *introspectDeps) TokenUsageRecorder() *tokenusage.Recorder { return d.usageRecorder }
+func (d *introspectDeps) IntrospectionRenewExceeded(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) bool {
+	if d.renewExceeded == nil {
+		return false
+	}
+	return d.renewExceeded(ctx, clientID, scopes, issuedAt, expiresAt)
+}
 
 var _ IntrospectDeps = (*introspectDeps)(nil)
 
@@ -328,6 +338,71 @@ func TestHandleIntrospect(t *testing.T) {
 // TestIntrospectionEmitsCnf is the RFC 7662 §2.2 regression guard: introspection
 // MUST echo the sender-constraint confirmation so a resource server can enforce
 // RFC 8705 §3.3 (mTLS) / RFC 9449 §7 (DPoP) binding. Previously omitted entirely.
+// TestHandleIntrospect_RequireRenew proves the token-policy require_renew seam:
+// default-off (nil hook) an active token introspects ACTIVE, byte-identical; a
+// token past its renew threshold is reported {active:false} (the oracle-safe
+// RFC 7662 §2.2 governance signal, not a metadata leak); and a token within its
+// threshold stays active (governance is not a blanket deny). It also asserts the
+// owning client_id reaches the seam so a per-client require_renew rule can select.
+func TestHandleIntrospect_RequireRenew(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	claims := func() (*core.TokenClaims, string, error) {
+		return &core.TokenClaims{
+			Subject: "user-1", Issuer: "https://issuer.test", ClientID: "rp",
+			Scopes: []string{"openid"}, IssuedAt: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour),
+		}, "jwt", nil
+	}
+	newDeps := func() *introspectDeps {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		d := newIntrospectDeps(cs, newMemRefreshStore())
+		d.validate = func(context.Context, string) (*core.TokenClaims, string, error) { return claims() }
+		return d
+	}
+
+	t.Run("default-off reports active (byte-identical)", func(t *testing.T) {
+		d := newDeps() // renewExceeded hook left nil
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=valid&client_id=rp&client_secret=s")
+		HandleIntrospect(d, ctx)
+		if got := decodeBody(t, rec)["active"]; got != true {
+			t.Fatalf("active = %v, want true (no policy wired)", got)
+		}
+	})
+
+	t.Run("past renew threshold reports inactive", func(t *testing.T) {
+		d := newDeps()
+		var sawClient string
+		d.renewExceeded = func(_ context.Context, clientID string, _ []string, _, _ time.Time) bool {
+			sawClient = clientID
+			return true
+		}
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=valid&client_id=rp&client_secret=s")
+		HandleIntrospect(d, ctx)
+		body := decodeBody(t, rec)
+		if body["active"] != false {
+			t.Fatalf("active = %v, want false (past renew threshold)", body["active"])
+		}
+		// §2.2: an inactive response carries active only, no metadata leak.
+		if len(body) != 1 {
+			t.Fatalf("inactive body leaked metadata: %v", body)
+		}
+		if sawClient != "rp" {
+			t.Fatalf("seam saw client_id %q, want rp", sawClient)
+		}
+	})
+
+	t.Run("within renew threshold stays active", func(t *testing.T) {
+		d := newDeps()
+		d.renewExceeded = func(context.Context, string, []string, time.Time, time.Time) bool { return false }
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=valid&client_id=rp&client_secret=s")
+		HandleIntrospect(d, ctx)
+		if got := decodeBody(t, rec)["active"]; got != true {
+			t.Fatalf("active = %v, want true (within threshold)", got)
+		}
+	})
+}
+
 func TestIntrospectionEmitsCnf(t *testing.T) {
 	t.Parallel()
 	// mTLS-bound token -> cnf.x5t#S256.

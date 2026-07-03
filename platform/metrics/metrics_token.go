@@ -89,6 +89,21 @@ func (m *Metrics) EnableTokenPolicyMetrics() {
 		},
 		[]string{LabelReason},
 	)
+	m.TokenPolicyRenewRequiredTotal = factory.NewCounter(
+		prometheus.CounterOpts{
+			Name: NameTokenPolicyRenewRequiredTotal,
+			Help: "Access-token introspections reported inactive because the token passed its require_renew fraction of TTL (governance force-refresh, not an issuance denial). Zero traffic when no policy store is wired or no rule sets require_renew_after.",
+		},
+	)
+}
+
+// ObserveTokenPolicyRenewRequired bumps the require_renew introspection counter
+// (a token reported inactive for exceeding its renew threshold). Nil-safe.
+func (m *Metrics) ObserveTokenPolicyRenewRequired() {
+	if m == nil || m.TokenPolicyRenewRequiredTotal == nil {
+		return
+	}
+	m.TokenPolicyRenewRequiredTotal.Inc()
 }
 
 // ObserveTokenPolicyEvaluation bumps the evaluation counter for a decision

@@ -37,6 +37,29 @@ func Evaluate(in PolicyInput, policies []Policy) PolicyDecision {
 	return d
 }
 
+// RenewExceeded reports whether a token has passed its require_renew fraction
+// of its own TTL and must therefore be reported inactive / needing refresh at
+// the RS / introspection layer. renewAfter is the strictest matching
+// RequireRenewAfter fraction ([PolicyDecision.RenewAfter]); it compares the
+// ELAPSED fraction (now - issuedAt) / (expiresAt - issuedAt) against it.
+//
+// This is a GOVERNANCE property, not an issuance deny — the token is still
+// cryptographically valid; policy just wants it rotated sooner than its hard
+// expiry. FAIL-SAFE: an unset fraction (renewAfter <= 0), a zero issue/expiry
+// timestamp, or a non-positive TTL all yield false, so a token whose renewal
+// window cannot be measured is NEVER spuriously reported inactive.
+func RenewExceeded(renewAfter float64, issuedAt, expiresAt, now time.Time) bool {
+	if renewAfter <= 0 || issuedAt.IsZero() || expiresAt.IsZero() {
+		return false
+	}
+	ttl := expiresAt.Sub(issuedAt)
+	if ttl <= 0 {
+		return false
+	}
+	threshold := time.Duration(renewAfter * float64(ttl))
+	return now.Sub(issuedAt) >= threshold
+}
+
 // matches reports whether policy p's selector applies to the request: its
 // ClientID (empty = any) equals the request's, AND every selector scope is
 // present in the request's granted scopes.

@@ -2,13 +2,16 @@ package sso
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/snaplink/sso/internal/handler"
 
+	"github.com/snaplink/sso/domains/tokenpolicy"
 	"github.com/snaplink/sso/internal/auth/login"
+	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/protocols/oauth"
 )
 
@@ -84,6 +87,7 @@ func (s *Server) issueRefreshToken(
 		AuthTime:             authCtx.AuthTime,
 		ClientTTLOverride:    clientTTLOverride,
 		ConfirmationJKT:      confirmationJKT,
+		Generation:           authCtx.Generation,
 	})
 }
 
@@ -168,6 +172,87 @@ func (s *Server) resolveCallbackAuthenticator(provider, code, state string) (Aut
 	return nil, false
 }
 
+// errMaxActiveSessions is the sentinel createSession returns when a wired
+// token-policy max_active_sessions cap would be exceeded by minting another
+// session for this (user, client). Unlike the tenant-quota path, createSession
+// writes NO response for it — the login caller maps it to a clean access_denied
+// and owns the single wire write, so there is no double WriteHeader.
+var errMaxActiveSessions = errors.New("sso: max active sessions reached")
+
+// sessionPolicyCapExceeded reports whether minting another session for (userID,
+// clientID) would breach the wired token-policy max_active_sessions dimension.
+// Default-OFF: a nil token-policy store returns false immediately, so a login
+// with no policy wired is byte-identical to before the feature. This is a
+// GOVERNANCE property, not a credential check — every uncertainty FAILS OPEN
+// (returns false, allow the session): a policy-store load error or a ListByUser
+// count error must never block a legitimate login (same stance as
+// tenant-suspension / risk-scorer, AGENTS.md §3 Fail Modes). It reuses
+// ListByUser — the same enumerator the WithMaxSessionsPerUser eviction cap uses
+// — to count the subject's live sessions, and enforces the cap BEFORE the mint
+// so an over-cap login is refused rather than evicting a peer session.
+func (s *Server) sessionPolicyCapExceeded(ctx HandlerContext, userID, clientID string) bool {
+	if s.tokenPolicyStore == nil || s.sessionMgr == nil {
+		return false
+	}
+	policies, err := s.tokenPolicyStore.Policies(ctx.Request().Context())
+	if err != nil {
+		s.logger.Error("token policy load failed — allowing session (fail-open)", "error", err)
+		return false
+	}
+	sessions, err := s.sessionMgr.ListByUser(ctx.Request().Context(), userID)
+	if err != nil {
+		s.logger.Error("session cap: list by user failed — allowing session (fail-open)",
+			"error", err, "user", userID)
+		return false
+	}
+	dec := tokenpolicy.Evaluate(tokenpolicy.PolicyInput{
+		ClientID:       clientID,
+		Subject:        userID,
+		ActiveSessions: len(sessions),
+	}, policies)
+	// Only the active-sessions dimension can fire on this seam (no scopes / no
+	// refresh depth supplied); guard on the reason so an unrelated deny can never
+	// block a login.
+	if !dec.Deny || dec.Reason != tokenpolicy.DenyActiveSessions {
+		return false
+	}
+	s.metrics.ObserveTokenPolicyEvaluation(metrics.PolicyDecisionDeny)
+	s.metrics.ObserveTokenPolicyDenial(string(dec.Reason))
+	s.logger.Info("token policy denied session creation",
+		"client", clientID, "user", userID, "active", len(sessions))
+	return true
+}
+
+// IntrospectionRenewExceeded reports whether an access token being introspected
+// has passed its wired require_renew fraction of TTL and should be reported
+// INACTIVE (governance force-refresh). Default-OFF: a nil token-policy store
+// returns false, so introspection is byte-identical without a wired policy.
+// FAIL-OPEN on a store error (false) — a governance-store outage must never
+// flip a cryptographically valid token to inactive. Bumps the renew-required
+// metric on a positive result (the only place that governance signal surfaces).
+func (s *Server) IntrospectionRenewExceeded(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) bool {
+	if s.tokenPolicyStore == nil {
+		return false
+	}
+	policies, err := s.tokenPolicyStore.Policies(ctx)
+	if err != nil {
+		s.logger.Error("token policy load failed — reporting token active (fail-open)", "error", err)
+		return false
+	}
+	dec := tokenpolicy.Evaluate(tokenpolicy.PolicyInput{
+		ClientID: clientID,
+		Scopes:   scopes,
+		Kind:     tokenpolicy.KindAccess,
+	}, policies)
+	if !tokenpolicy.RenewExceeded(dec.RenewAfter, issuedAt, expiresAt, time.Now()) {
+		return false
+	}
+	s.metrics.ObserveTokenPolicyRenewRequired()
+	s.logger.Info("token past require_renew threshold — reported inactive at introspection",
+		"client", clientID)
+	return true
+}
+
 // finalizeCallbackSession upserts the user (when a UserProvider is configured)
 // and creates a session, writing the success or 500 error response.
 func (s *Server) finalizeCallbackSession(ctx HandlerContext, result *AuthResult) {
@@ -193,8 +278,15 @@ func (s *Server) finalizeCallbackSession(ctx HandlerContext, result *AuthResult)
 		}
 	}
 
-	session, err := s.createSession(ctx, result.UserID, "")
+	// Federated callback has no OAuth client in play — pass an empty clientID
+	// (and tenant), so only a fleet-wide (empty-selector) max_active_sessions
+	// policy applies to this login.
+	session, err := s.createSession(ctx, result.UserID, "", "")
 	if err != nil {
+		if errors.Is(err, errMaxActiveSessions) {
+			ctx.JSON(http.StatusForbidden, errorBody(ErrAccessDenied))
+			return
+		}
 		s.logger.Error("failed to create session", "error", err)
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
 		return
