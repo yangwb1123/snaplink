@@ -179,3 +179,59 @@ type BackupConfig struct {
 	Dir  string `yaml:"dir"`
 	Keep int    `yaml:"keep"`
 }
+
+// DRConfig configures the disaster-recovery framework foundations
+// (docs/dr-framework.md): a background loop that periodically exports the
+// SAME sealed snapshot the manual/retention snapshot pipeline above
+// produces and copies it to an off-node DR replica mount, plus the RPO/RTO
+// targets DRReadiness measures the live replica against.
+//
+// Disabled by default (Enabled: false) — a zero-value DRConfig wires
+// nothing, matching every other opt-in subsystem in this file. Requires
+// snapshot.enabled=true: DR replicates the configured snapshot pipeline's
+// export, it does not stand up a second one.
+type DRConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// TargetDir is the DR replica mount the replicator copies verified
+	// snapshot envelopes into. Required when Enabled — an operator who
+	// forgets it fails loud at boot rather than silently writing nowhere.
+	TargetDir string `yaml:"target_dir"`
+
+	// Interval between replication cycles. <=0 defaults to
+	// dr.DefaultReplicationInterval (15m) at wiring time. The first cycle
+	// always fires immediately regardless of Interval (see
+	// SnapshotReplicator.Run), so a fresh boot isn't "not ready" for a
+	// full interval with no operational reason.
+	Interval time.Duration `yaml:"interval"`
+
+	// Keep bounds the retained replica count in TargetDir; older replicas
+	// are pruned after each successful cycle. <=0 defaults to
+	// dr.DefaultReplicationKeep (7).
+	Keep int `yaml:"keep"`
+
+	// RPOTarget is the maximum acceptable staleness of the last verified
+	// replica; DRReadiness compares the live replication lag against it.
+	// <=0 disables the age comparison — Ready reports true as soon as any
+	// replica exists (no RPO commitment configured to violate).
+	RPOTarget time.Duration `yaml:"rpo_target"`
+
+	// RTOTarget is the maximum acceptable measured recovery duration.
+	// Surfaced alongside the RecoveryTimeTracker history on the admin
+	// status endpoint for operator comparison; it does not gate anything
+	// live (RTO is only known after a drill actually runs).
+	RTOTarget time.Duration `yaml:"rto_target"`
+
+	// RTOHistory bounds the retained measured-RTO record count kept for
+	// the admin status endpoint. <=0 defaults to dr.DefaultRTOHistory (32).
+	RTOHistory int `yaml:"rto_history"`
+
+	// GateReadiness wires the DR readiness verdict into this replica's
+	// /readyz probe. Default false: DR status stays report-only (admin
+	// status endpoint + Prometheus gauges) and never affects the
+	// platform's readiness signal on its own — a stale/missing DR replica
+	// is an operator page, not a reason to pull auth traffic out of
+	// rotation. Set true only when an operator has decided DR staleness
+	// SHOULD take this replica out of the Kubernetes/LB pool.
+	GateReadiness bool `yaml:"gate_readiness"`
+}

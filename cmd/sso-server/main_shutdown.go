@@ -137,6 +137,8 @@ func shutdownSchedulers(ctx context.Context, a *app, logger spi.Logger) {
 		"audit retention scheduler did not exit cleanly")
 	stopScheduler(ctx, logger, a.snapshotRetentionCancel, a.snapshotRetentionDone,
 		"snapshot retention scheduler did not exit cleanly")
+	stopScheduler(ctx, logger, a.drReplicationCancel, a.drReplicationDone,
+		"dr snapshot replication scheduler did not exit cleanly")
 	stopScheduler(ctx, logger, a.pushPruneCancel, a.pushPruneDone,
 		"push approval pruner did not exit cleanly")
 	stopScheduler(ctx, logger, a.cibaPruneCancel, a.cibaPruneDone,

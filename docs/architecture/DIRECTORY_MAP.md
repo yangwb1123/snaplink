@@ -13,7 +13,7 @@ segment IS the layer. The dependency direction is **enforced** by
 shared/          dependency-free kernel        core · spi · security
 domains/         business capabilities         tenant · region · permissions · federation · connections · metering · anomaly · authenticators
 protocols/       identity-protocol use-cases   oauth · oidc · scim · fapi · caep · selfservice · compliance
-platform/        cross-cutting capabilities    cluster · signingkeys · registry · netpolicy · metrics · tracing · bootstrap · releases · migrate · geo · audit
+platform/        cross-cutting capabilities    cluster · signingkeys · registry · netpolicy · metrics · tracing · bootstrap · releases · migrate · geo · audit · dr
 interfaces/      inbound delivery + Server API grpcserver · adapters · admin · middleware · cors · ratelimit · web · ssoclient · snapshot · sso(the public Server)
 infrastructure/  concrete SPI impls            defaultimpl · ldap · kerberos · radius · saml · redis · extauthz · kms/*
 internal/        unexported helpers            internal/auth/* (domains) · internal/handler (interfaces)

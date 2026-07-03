@@ -175,4 +175,19 @@ See [deployment.md](deployment.md) for the HA topology and
 | Key | Effect |
 |---|---|
 | `backup.dir` | Destination directory for `POST /api/v1/admin/backup` (`VACUUM INTO` snapshots); empty (default) = OS temp dir. Filenames are timestamped (`sso-backup-<source>-<UTC stamp>.db`), so without `backup.keep` the directory grows monotonically — one file per source per triggered backup, never overwritten |
+
+## Disaster Recovery
+
+See [dr-framework.md](dr-framework.md) for failure levels, RPO/RTO targets, and the recovery runbook. Disabled by default; requires `snapshot.enabled: true`.
+
+| Key | Effect |
+|---|---|
+| `dr.enabled` | Starts the background `SnapshotReplicator` loop. Requires `snapshot.enabled: true` — fails loud at boot otherwise |
+| `dr.target_dir` | DR replica mount the replicator copies checksum-verified snapshot envelopes into |
+| `dr.interval` | Replication cycle interval; default 15m. First cycle fires immediately on boot |
+| `dr.keep` | Retained replica count in `target_dir`; default 7 |
+| `dr.rpo_target` | Max acceptable replica staleness; `<=0` disables the age check (any replica counts as ready) |
+| `dr.rto_target` | Reported alongside measured recovery history on the admin status endpoint; does not gate anything live |
+| `dr.rto_history` | Bounded measured-RTO record count kept in memory; default 32 |
+| `dr.gate_readiness` | Folds the DR readiness verdict into `/readyz`. Default false — DR status stays report-only (`GET /api/v1/admin/dr/status` + `sso_dr_*` metrics) and never blocks auth traffic on its own |
 | `backup.keep` | Retain only the newest N backup files per source after each run; `0` (default) disables retention (keep all). Pruning filters on the per-source filename prefix, so unrelated files sharing the directory are never deleted |
