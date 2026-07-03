@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/anomaly"
+	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/tokenpolicy"
 	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/interfaces/cors"
@@ -35,7 +36,15 @@ type protocolState struct {
 	// Nil = no policy layer: issuerForClient returns the raw issuer and
 	// enforceTokenPolicy is a no-op, so issuance is byte-identical to today.
 	tokenPolicyStore tokenpolicy.Store
-	metrics          *metrics.Metrics
+	// capStore + capEngine back the zero-trust conditional-access policy engine
+	// (WithConditionalAccess). Both nil ⇒ the engine is unwired: the admin
+	// governance route is not mounted and EvaluateConditionalAccess returns a
+	// permissive allow — byte-identical to a build without the feature. The
+	// engine is ADVISORY this wave (not wired into the live /auth/login flow).
+	capStore  conditionalaccess.Store
+	capEngine *conditionalaccess.Engine
+	metrics   *metrics.Metrics
+
 	// trustedProxies validates X-Forwarded-For chains when wired via
 	// WithTrustedProxies. When non-nil its Middleware is inserted outermost
 	// in Handler() (before rate limiting and every other middleware), so

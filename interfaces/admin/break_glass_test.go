@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
 	"github.com/snaplink/sso/platform/audit"
@@ -44,6 +45,7 @@ func (d *bgTestDeps) BreakGlassStore() core.BreakGlassStore                 { re
 func (d *bgTestDeps) Auditor() *audit.Recorder                              { return d.auditor }
 func (d *bgTestDeps) Logger() spi.Logger                                    { return bgTestLogger{} }
 func (d *bgTestDeps) ConnectionStore() connections.Store                    { return nil }
+func (d *bgTestDeps) ConditionalAccessStore() conditionalaccess.Store       { return nil }
 func (d *bgTestDeps) TenantUserStore() core.TenantUserStore                 { return nil }
 func (d *bgTestDeps) InvitationStore() core.InvitationStore                 { return nil }
 func (d *bgTestDeps) InvitationSender() spi.InvitationSender                { return nil }

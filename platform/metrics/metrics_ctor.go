@@ -51,6 +51,7 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 	registerFeatureGateMetrics(factory, m)
 	registerCredentialRotationMetrics(factory, m)
 	registerConfigAuditMetrics(factory, m)
+	registerConditionalAccessMetrics(factory, m)
 
 	return m
 }

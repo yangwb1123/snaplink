@@ -221,6 +221,14 @@ const (
 	// "/api/v1/..." value causes.
 	PathAdminTokenPolicies = "/admin/token-policies"
 
+	// PathAdminAccessPolicies is the read-only zero-trust conditional-access
+	// (CAP) policy governance view (GET /api/v1/admin/access-policies). It
+	// returns the wired policies ordered by evaluation precedence so an
+	// operator sees exactly the order the engine resolves them in. Gated by
+	// AdminMiddleware (admin:read). Only mounted when WithConditionalAccess is
+	// wired.
+	PathAdminAccessPolicies = "/admin/access-policies"
+
 	// Admin/helpdesk management of a user's self-service state. All
 	// group-relative (mounted on /api/v1, gated by AdminMiddleware via the
 	// /api/v1/admin/ prefix: GET = admin:read, DELETE = admin:write).

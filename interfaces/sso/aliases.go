@@ -2,6 +2,7 @@
 package sso
 
 import (
+	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/interfaces/admin"
 	"github.com/snaplink/sso/interfaces/middleware"
@@ -20,6 +21,15 @@ const (
 	FAPIModeInspection = fapi.ModeInspection
 	FAPIModeEnforce    = fapi.ModeEnforce
 )
+
+// Zero-trust Conditional Access Policy (CAP) re-exports so SDK callers
+// configure WithConditionalAccess and read EvaluateConditionalAccess results
+// without importing the domains/conditionalaccess package directly.
+type ConditionalAccessStore = conditionalaccess.Store
+type ConditionalAccessPolicy = conditionalaccess.Policy
+type ConditionalAccessConfig = conditionalaccess.Config
+type AccessContext = conditionalaccess.AccessContext
+type ConditionalAccessDecision = conditionalaccess.Decision
 
 // Client-authentication method names per RFC 8705 §2 / RFC 7591 §2.
 // These are the canonical values stored on [core.Client.TokenEndpointAuthMethod]
@@ -317,6 +327,7 @@ const PathTenantUsage = core.PathTenantUsage
 const PathAdminTopTenants = core.PathAdminTopTenants
 const PathAdminTokenUsage = core.PathAdminTokenUsage
 const PathAdminTokenPolicies = core.PathAdminTokenPolicies
+const PathAdminAccessPolicies = core.PathAdminAccessPolicies
 const PathAdminUserConsents = core.PathAdminUserConsents
 const PathAdminUserConsentByID = core.PathAdminUserConsentByID
 const PathAdminUserMFA = core.PathAdminUserMFA

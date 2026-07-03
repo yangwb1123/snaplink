@@ -59,6 +59,11 @@ func (s *Server) handleAdminListUserEmailChangeTokens(ctx HandlerContext) {
 	admin.HandleAdminListUserEmailChangeTokens(s, ctx)
 }
 
+// Zero-trust conditional-access (CAP) governance view (admin).
+func (s *Server) handleAdminListAccessPolicies(ctx HandlerContext) {
+	admin.HandleAdminListAccessPolicies(s, ctx)
+}
+
 // B2B org-management handlers — thin wrappers. The enterprise-connection,
 // tenant-membership, and invitation admin logic lives in admin/{connections,tenants}.go;
 // the self-service /me organization endpoints in selfservice/organizations.go.

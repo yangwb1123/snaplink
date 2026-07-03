@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/shared/core"
@@ -14,6 +15,9 @@ import (
 // handlers run only after that gate, so they assume admin authorization.
 type Deps interface {
 	ConnectionStore() connections.Store
+	// ConditionalAccessStore backs the read-only zero-trust CAP governance
+	// view; may be nil when WithConditionalAccess isn't wired.
+	ConditionalAccessStore() conditionalaccess.Store
 	TenantUserStore() core.TenantUserStore
 	InvitationStore() core.InvitationStore
 	InvitationSender() spi.InvitationSender

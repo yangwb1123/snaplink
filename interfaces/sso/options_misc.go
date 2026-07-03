@@ -2,6 +2,7 @@ package sso
 
 import (
 	"github.com/snaplink/sso/domains/anomaly"
+	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenant"
@@ -393,5 +394,23 @@ func WithReadyCheckTimeout(name string, timeout time.Duration) Option {
 		// later WithReadyCheck call will populate Check + leave the
 		// Timeout the pre-registered value.
 		s.readyChecks = append(s.readyChecks, namedReadyCheck{Name: name, Timeout: timeout})
+	}
+}
+
+// WithConditionalAccess wires the zero-trust conditional-access policy (CAP)
+// engine over the given policy store and config, and mounts the read-only
+// governance view GET /api/v1/admin/access-policies (admin:read).
+//
+// This wave the engine is ADVISORY: callers get a decision via
+// [Server.EvaluateConditionalAccess], but it is deliberately NOT wired into the
+// live /auth/login control flow (that PEP integration is a later phase). A nil
+// store is a no-op — byte-identical to a build without the feature.
+func WithConditionalAccess(store conditionalaccess.Store, cfg conditionalaccess.Config) Option {
+	return func(s *Server) {
+		if store == nil {
+			return
+		}
+		s.capStore = store
+		s.capEngine = conditionalaccess.NewEngine(store, cfg)
 	}
 }
