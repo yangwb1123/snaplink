@@ -54,6 +54,11 @@ const (
 	NameLoginAttemptsByTenantTotal = "sso_login_attempts_by_tenant_total"
 	NameTokensIssuedByTenantTotal  = "sso_tokens_issued_by_tenant_total"
 
+	// Token-usage telemetry (opt-in via WithTokenUsageRecorder + WithMetrics).
+	NameTokenUsageEventsTotal    = "sso_token_usage_events_total"
+	NameTokenUsageDroppedTotal   = "sso_token_usage_dropped_total"
+	NameTokenUsageTrackedBuckets = "sso_token_usage_tracked_buckets"
+
 	// Signup funnel metrics — self-service registration conversion
 	// pipeline. Operators graph started → verified → completed to find
 	// the drop-off step (verification email never arrived, link expired,
@@ -87,6 +92,8 @@ const (
 	LabelReason      = "reason"    // bounded per metric; see AdoptionReason* below
 	LabelTenant      = "tenant"    // bounded by an operator allowlist + the "other" bucket
 	LabelDirection   = "direction" // bounded: published | adopted
+	LabelKind        = "kind"      // bounded: access | refresh | id
+	LabelEndpoint    = "endpoint"  // bounded: token | introspect | userinfo
 )
 
 // Cross-replica token-revocation propagation directions

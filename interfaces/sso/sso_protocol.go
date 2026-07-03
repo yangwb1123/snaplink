@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/anomaly"
+	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/interfaces/ratelimit"
@@ -23,12 +24,13 @@ import (
 
 // protocolState holds risk/MFA/anomaly/metrics/transport wiring and the OAuth/OIDC grant + discovery static configuration fields.
 type protocolState struct {
-	riskScorer        spi.RiskScorer
-	mfaProvider       spi.MFAProvider
-	mfaChallengeStore spi.MFAChallengeStore
-	mfaChallengeTTL   time.Duration
-	anomalyRunner     *anomaly.Runner
-	metrics           *metrics.Metrics
+	riskScorer         spi.RiskScorer
+	mfaProvider        spi.MFAProvider
+	mfaChallengeStore  spi.MFAChallengeStore
+	mfaChallengeTTL    time.Duration
+	anomalyRunner      *anomaly.Runner
+	tokenUsageRecorder *tokenusage.Recorder
+	metrics            *metrics.Metrics
 	// trustedProxies validates X-Forwarded-For chains when wired via
 	// WithTrustedProxies. When non-nil its Middleware is inserted outermost
 	// in Handler() (before rate limiting and every other middleware), so

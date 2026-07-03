@@ -1,5 +1,7 @@
 package sso
 
+import "github.com/snaplink/sso/domains/tokenusage"
+
 // Admin REST API route registration, extracted from Mount (server_routes.go).
 // All routes hang off the /api/v1 group created in Mount; the /api/v1/admin/*
 // paths are gated by AdminMiddleware (GET admin:read, mutations admin:write).
@@ -30,6 +32,12 @@ func (s *Server) mountAdminAPIObservability(api Router) {
 	if s.usageAggregator != nil {
 		api.GET(PathTenantUsage, s.handleTenantUsage)
 		api.GET(PathAdminTopTenants, s.handleAdminTopTenants)
+	}
+	// Token-usage telemetry read API (opt-in WithTokenUsageRecorder). Gated by
+	// AdminMiddleware (admin:read) via the /api/v1/admin/ prefix. Not mounted
+	// without a recorder — byte-identical to a build without it.
+	if s.tokenUsageRecorder != nil {
+		api.GET(PathAdminTokenUsage, s.handleAdminTokenUsage)
 	}
 	// SQLite backup trigger (opt-in WithBackupSource). Requires at least one
 	// registered backup source; byte-identical when none are wired.
@@ -105,4 +113,12 @@ func (s *Server) mountAdminB2B(api Router) {
 		api.GET(PathAdminTenantInvitations, s.handleAdminListInvitations)
 		api.DELETE(PathAdminTenantInvitationByEmail, s.handleAdminRevokeInvitation)
 	}
+}
+
+// handleAdminTokenUsage serves GET /api/v1/admin/tokens/usage — the
+// aggregated token-usage telemetry read API. Admin-gated (admin:read) by
+// the /api/v1/admin/ prefix; only mounted when a Recorder is wired, so
+// s.tokenUsageRecorder is always non-nil here.
+func (s *Server) handleAdminTokenUsage(ctx HandlerContext) {
+	tokenusage.HandleAdminUsage(s.tokenUsageRecorder.UsageStore(), s.logger, ctx)
 }

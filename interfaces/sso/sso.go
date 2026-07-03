@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/federation"
+	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
 	"github.com/snaplink/sso/internal/auth/consent"
 	"github.com/snaplink/sso/shared/spi"
@@ -74,6 +75,7 @@ func NewServer(opts ...Option) *Server {
 	if len(s.tenantMetricsAllowlist) > 0 && s.metrics != nil {
 		s.metrics.EnableTenantMetrics()
 	}
+	s.applyTokenUsageMetrics()
 	// OpenID Federation 1.0 automatic client registration (slice 3) then the
 	// opt-in per-login ClientStore metadata cache. Order between these two
 	// ClientStore decorators is load-bearing: the cache MUST wrap the
@@ -83,6 +85,25 @@ func NewServer(opts ...Option) *Server {
 	s.applyFederationAutoRegistration()
 	s.applyClientStoreCache()
 	return s
+}
+
+// applyTokenUsageMetrics arms the token-usage recorder's Prometheus hooks
+// when BOTH a Recorder (WithTokenUsageRecorder) AND a metrics registry
+// (WithMetrics) are wired. Order between the two options is irrelevant;
+// EnableTokenUsageMetrics is idempotent. Without a recorder there is
+// nothing to hook; without metrics the recorder still records to its
+// store, just with no hooks fired — byte-identical to a build without
+// either piece.
+func (s *Server) applyTokenUsageMetrics() {
+	if s.tokenUsageRecorder == nil || s.metrics == nil {
+		return
+	}
+	s.metrics.EnableTokenUsageMetrics()
+	s.tokenUsageRecorder.SetHooks(tokenusage.Hooks{
+		Recorded: s.metrics.ObserveTokenUsageEvent,
+		Dropped:  s.metrics.ObserveTokenUsageDropped,
+		Tracked:  s.metrics.SetTokenUsageTrackedBuckets,
+	})
 }
 
 // applyFederationAutoRegistration decorates the wired ClientStore so an

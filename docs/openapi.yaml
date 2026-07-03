@@ -4002,6 +4002,70 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/admin/tokens/usage:
+    get:
+      tags: [admin]
+      summary: Aggregated token-usage telemetry.
+      description: |
+        Returns per-minute aggregated (client_id, kind, endpoint) buckets from
+        the opt-in token-usage store — the operator question "which clients
+        are issuing/introspecting which token kinds, how much" that raw audit
+        events don't answer at scale. Populated asynchronously off the
+        request hot path (a bounded-buffer recorder drains into the store; a
+        saturated buffer drops events rather than adding /token latency), so
+        very recent activity may lag slightly behind the store's cardinality
+        cap. `kind` is one of access|refresh|id; `endpoint` is one of
+        token|introspect. Admin-gated (admin:read) via the /api/v1/admin/
+        prefix. Mounted only when a token-usage recorder is wired
+        (WithTokenUsageRecorder).
+      operationId: getAdminTokenUsage
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: client_id
+          in: query
+          required: false
+          description: Filter to one client; empty returns every client's buckets.
+          schema: { type: string }
+        - name: since
+          in: query
+          required: false
+          description: "RFC 3339 timestamp, inclusive lower bound."
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          required: false
+          description: "RFC 3339 timestamp, EXCLUSIVE upper bound."
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Aggregated token-usage buckets.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  buckets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        minute: { type: string, format: date-time }
+                        client_id: { type: string }
+                        kind: { type: string, enum: [access, refresh, id] }
+                        endpoint: { type: string, enum: [token, introspect] }
+                        count: { type: integer }
+                  total: { type: integer }
+        "400":
+          description: Malformed since/until.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/v1/admin/tenants/{id}:set-status:
     parameters:
       - name: id

@@ -45,8 +45,8 @@ const (
 	// /me/*-namespace variants of the /sessions/me* paths. These follow the
 	// self-service /me/* convention (cf. PathMe, PathMyMFA) and provide a
 	// single discoverable prefix for the self-service portal SPA.
-	PathMeSessions         = "/me/sessions"
-	PathMeSessionByID      = "/me/sessions/:id"
+	PathMeSessions          = "/me/sessions"
+	PathMeSessionByID       = "/me/sessions/:id"
 	PathMeSessionsRevokeAll = "/me/sessions/revoke-all"
 
 	PathMyConsents    = "/consents/me"
@@ -194,6 +194,19 @@ const (
 	// PathTenantUsage comment for the double-prefix regression a full
 	// "/api/v1/..." value causes.
 	PathAdminTopTenants = "/admin/usage/top-tenants"
+
+	// PathAdminTokenUsage is the read-only admin token-usage telemetry
+	// endpoint (GET /api/v1/admin/tokens/usage?client_id=&since=&until=).
+	// Returns per-minute aggregated (client, kind, endpoint) buckets from
+	// the opt-in token-usage store — the operator question "which clients
+	// are issuing/introspecting which token kinds, how much" that raw
+	// audit events don't answer at scale. Gated by AdminMiddleware
+	// (admin:read). Only mounted when WithTokenUsageRecorder is wired.
+	//
+	// Group-relative: mounted on the /api/v1 router group — see the
+	// PathTenantUsage comment for the double-prefix regression a full
+	// "/api/v1/..." value causes.
+	PathAdminTokenUsage = "/admin/tokens/usage"
 
 	// Admin/helpdesk management of a user's self-service state. All
 	// group-relative (mounted on /api/v1, gated by AdminMiddleware via the

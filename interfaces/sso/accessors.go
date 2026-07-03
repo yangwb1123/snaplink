@@ -13,6 +13,7 @@ import (
 	"github.com/snaplink/sso/domains/anomaly"
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/permissions"
+	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/platform/metrics"
@@ -111,6 +112,13 @@ func (s *Server) MFAProvider() spi.MFAProvider             { return s.mfaProvide
 func (s *Server) MFAChallengeStore() spi.MFAChallengeStore { return s.mfaChallengeStore }
 func (s *Server) MFAChallengeTTL() time.Duration           { return s.mfaChallengeTTL }
 func (s *Server) AnomalyRunner() *anomaly.Runner           { return s.anomalyRunner }
+
+// TokenUsageRecorder returns the opt-in token-usage telemetry recorder, or
+// nil when [WithTokenUsageRecorder] was never wired. Satisfies
+// oauth.IntrospectDeps for the /token/introspect usage-recording seam; every
+// method on a nil *tokenusage.Recorder is a safe no-op, so callers never
+// need a nil check.
+func (s *Server) TokenUsageRecorder() *tokenusage.Recorder { return s.tokenUsageRecorder }
 
 // AdminRateLimit returns the configured admin-wide rate limit.
 // rate is tokens per second; burst is the maximum accumulated tokens.
