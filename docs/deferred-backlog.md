@@ -3,9 +3,9 @@
 Consolidated, de-duplicated list of directions that the historical analysis
 docs proposed but that are **not yet implemented** in the code (verified by
 grep against the current tree, not by trusting the source docs' own stale
-claims). The point-in-time analysis docs those items came from now live under
-[`docs/archive/`](archive/); this file is the single living index of what
-remains open.
+claims). The point-in-time analysis docs those items came from are preserved
+in the project's git history (removed from the working tree during a docs
+cleanup); this file is the single living index of what remains open.
 
 Status legend for each theme: **none** (nothing built) / **partial** (a
 related capability exists but the proposed feature does not).
@@ -159,5 +159,6 @@ related capability exists but the proposed feature does not).
 
 ---
 
-*Generated from a grep-verified audit of the archived analysis docs. For the
-full rationale behind any item, see the cited doc under `docs/archive/`.*
+*Generated from a grep-verified audit of the historical analysis docs. For the
+full rationale behind any item, retrieve the cited doc from git history
+(e.g. `git log --all --diff-filter=D -- 'docs/<name>.md'` then `git show`).*
