@@ -39,6 +39,7 @@ import (
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/interfaces/snapshot"
+	"github.com/snaplink/sso/platform/lifecycle/dr"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/netpolicy"
 	"github.com/snaplink/sso/platform/registry"
@@ -293,6 +294,16 @@ type app struct {
 	// audit retention pair for snapshot retention.
 	snapshotRetentionCancel context.CancelFunc
 	snapshotRetentionDone   <-chan struct{}
+
+	// DR subsystem (docs/dr-framework.md). drReadiness aggregates the
+	// SnapshotReplicator + RecoveryTimeTracker for the admin status
+	// endpoint (and, only when dr.gate_readiness opts in, the /readyz
+	// check); drReplicationCancel/Done mirror the snapshot-retention pair
+	// above for graceful shutdown of the background replication loop. All
+	// nil unless dr.enabled.
+	drReadiness         *dr.DRReadiness
+	drReplicationCancel context.CancelFunc
+	drReplicationDone   <-chan struct{}
 
 	// pushPruneCancel + pushPruneDone — same pattern for the
 	// PushApprovalStore PruneExpired loop. SQLite backend only;

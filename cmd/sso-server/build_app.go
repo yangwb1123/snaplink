@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto"
 	"database/sql"
+	"fmt"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -19,8 +20,11 @@ import (
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenant"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	"github.com/snaplink/sso/interfaces/snapshot"
+	"github.com/snaplink/sso/interfaces/snapshot/storageinline"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/dr"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/netpolicy"
 	"github.com/snaplink/sso/protocols/compliance"
@@ -166,21 +170,15 @@ func (b *appBuilder) finalize() (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	if b.cfg.Admin.Enabled {
-		rt.adminMW = sso.NewAdminMiddleware(srv, b.provider)
-		// Apply admin rate limit when configured.
-		if rate, burst := srv.AdminRateLimit(); rate > 0 && burst > 0 {
-			rt.adminMW.SetRateLimit(rate, burst)
-		}
-		// Wire admin token store and idle timeout when both configured.
-		if store := srv.AdminTokenStore(); store != nil {
-			rt.adminMW.SetAdminTokenStore(store)
-			if ttl := srv.AdminSessionTTL(); ttl > 0 {
-				rt.adminMW.SetAdminSessionTTL(ttl)
-			}
-		}
-	}
+	rt.adminMW = b.wireAdminMW(srv)
 	rt.snapshots, err = b.wireSnapshotReleases()
+	if err != nil {
+		return nil, err
+	}
+	// DR replication reuses the just-built snapshot pipeline's export, so it
+	// wires AFTER wireSnapshotReleases — before that call srw.pipeline is
+	// always nil.
+	rt.dr, err = b.wireDR(rt.snapshots)
 	if err != nil {
 		return nil, err
 	}
@@ -190,12 +188,34 @@ func (b *appBuilder) finalize() (*app, error) {
 	return b.assemble(rt), nil
 }
 
+// wireAdminMW builds the admin middleware (rate limit + token store + idle
+// timeout) when admin is enabled; nil otherwise (admin disabled — matches
+// the original inline assembly byte-identically). Split out of finalize to
+// keep it under the function-length budget.
+func (b *appBuilder) wireAdminMW(srv *sso.Server) *sso.AdminMiddleware {
+	if !b.cfg.Admin.Enabled {
+		return nil
+	}
+	mw := sso.NewAdminMiddleware(srv, b.provider)
+	if rate, burst := srv.AdminRateLimit(); rate > 0 && burst > 0 {
+		mw.SetRateLimit(rate, burst)
+	}
+	if store := srv.AdminTokenStore(); store != nil {
+		mw.SetAdminTokenStore(store)
+		if ttl := srv.AdminSessionTTL(); ttl > 0 {
+			mw.SetAdminSessionTTL(ttl)
+		}
+	}
+	return mw
+}
+
 // serverRuntime carries the post-NewServer handles assemble folds into the
 // *app alongside the appBuilder's pre-NewServer state.
 type serverRuntime struct {
 	server            *sso.Server
 	cluster           *clusterWiring
 	snapshots         *snapshotReleaseWiring
+	dr                *drWiring
 	adminMW           *sso.AdminMiddleware
 	busStop           <-chan struct{}
 	signingKeyStop    <-chan struct{}
@@ -248,10 +268,97 @@ func (b *appBuilder) assemble(rt serverRuntime) *app {
 		redisClient:             b.redis,
 		pgDB:                    b.pgDB,
 	}
-	// Pairs moved out of the literal to keep assemble within the length budget.
+	b.assembleExtras(a, rt)
+	return a
+}
+
+// assembleExtras sets the *app fields left out of the assemble() composite
+// literal to keep assemble within the function-length budget — pure field
+// mapping, no behavior.
+func (b *appBuilder) assembleExtras(a *app, rt serverRuntime) {
 	a.consentStore, a.mfaEnrollStore = b.consentStore, b.mfaEnrollStore
 	a.pushPruneCancel, a.pushPruneDone = b.pushPruneCancel, b.pushPruneDone
 	a.cibaPruneCancel, a.cibaPruneDone = b.cibaPruneCancel, b.cibaPruneDone
 	a.netStop, a.netCancel = b.netStop, b.netCancel
-	return a
+	a.drReadiness, a.drReplicationCancel, a.drReplicationDone = drFields(rt.dr)
+}
+
+// drFields extracts the DR handles from dw; a nil dw (dr.enabled=false)
+// returns all-zero values, matching the "nil means off" convention every
+// other optional subsystem here follows.
+func drFields(dw *drWiring) (*dr.DRReadiness, context.CancelFunc, <-chan struct{}) {
+	if dw == nil {
+		return nil, nil, nil
+	}
+	return dw.readiness, dw.cancel, dw.done
+}
+
+// drWiring carries the DR subsystem's post-construction handles: the
+// SnapshotReplicator background loop's Cancel+Done lifecycle pair (same
+// shape as snapshot/audit retention, see main_shutdown.go) and the
+// DRReadiness aggregate the admin status endpoint + optional /readyz gate
+// both read from.
+type drWiring struct {
+	readiness *dr.DRReadiness
+	cancel    context.CancelFunc
+	done      <-chan struct{}
+}
+
+// wireDR starts the background snapshot-replication loop when dr.enabled.
+// Requires the snapshot subsystem (srw.pipeline + srw.snapshotter) to
+// already be wired — DR replicates the SAME sealed export the manual/
+// retention snapshot pipeline produces; it does not stand up a second
+// export path. Returns (nil, nil) when dr.enabled is false, matching the
+// nil-means-off convention every other optional subsystem here follows.
+func (b *appBuilder) wireDR(srw *snapshotReleaseWiring) (*drWiring, error) {
+	cfg := b.cfg.DR
+	if !cfg.Enabled {
+		return nil, nil
+	}
+	if srw.pipeline == nil || srw.snapshotter == nil {
+		return nil, fmt.Errorf("dr.enabled requires snapshot.enabled=true (DR replicates the configured snapshot pipeline's export)")
+	}
+	replicator, err := dr.NewSnapshotReplicator(
+		buildDRExportFunc(srw.pipeline, srw.snapshotter),
+		cfg.TargetDir, cfg.Interval, cfg.Keep, b.logger,
+	)
+	if err != nil {
+		return nil, err
+	}
+	tracker := dr.NewRecoveryTimeTracker(cfg.RTOHistory)
+	readiness := dr.NewDRReadiness(replicator, tracker, cfg.RPOTarget, cfg.RTOTarget)
+	if b.metricsRegistry != nil {
+		b.metricsRegistry.Registry.MustRegister(metrics.NewDRCollector(readiness))
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := replicator.Run(ctx)
+	b.logger.Info("dr: snapshot replication scheduler enabled",
+		"target_dir", replicator.TargetDir, "interval", replicator.Interval, "keep", replicator.Keep,
+		"rpo_target", cfg.RPOTarget, "gate_readiness", cfg.GateReadiness)
+	return &drWiring{readiness: readiness, cancel: cancel, done: done}, nil
+}
+
+// buildDRExportFunc adapts the snapshot Export + Pipeline.Save pair to
+// dr.ExportFunc. Pipeline.Save writes through a snapshot.Storage, so an
+// in-memory storageinline.Storage captures the sealed envelope bytes for
+// this one call without a second persistent write — exactly the "dummy
+// backend" use case documented on that package (the caller only wants the
+// SealedEnvelope bytes back, the replicator owns the actual DR-mount copy).
+func buildDRExportFunc(pipeline *snapshot.Pipeline, snapshotter *snapshot.Snapshotter) dr.ExportFunc {
+	return func(ctx context.Context) (string, []byte, error) {
+		snap, err := snapshotter.Export(ctx, snapshot.ExportOptions{})
+		if err != nil {
+			return "", nil, fmt.Errorf("dr: snapshot export: %w", err)
+		}
+		buf := inline.New()
+		if err := pipeline.Save(ctx, snap, buf, snap.SnapshotID); err != nil {
+			return "", nil, fmt.Errorf("dr: seal: %w", err)
+		}
+		data, ok := buf.Bytes(snap.SnapshotID)
+		if !ok {
+			return "", nil, fmt.Errorf("dr: sealed envelope missing after save")
+		}
+		return snap.SnapshotID, data, nil
+	}
 }

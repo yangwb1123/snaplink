@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/rotation"
+	"github.com/snaplink/sso/platform/lifecycle/rotation"
 	"github.com/snaplink/sso/shared/core/corecredential"
 )
 

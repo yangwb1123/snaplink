@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/metering"
-	"github.com/snaplink/sso/platform/rotation"
+	"github.com/snaplink/sso/platform/lifecycle/rotation"
 	"github.com/snaplink/sso/protocols/compliance"
 	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
 	"github.com/snaplink/sso/shared/core"

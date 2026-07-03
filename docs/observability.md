@@ -32,6 +32,9 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_audit_async_drops_{queue_full,closed,inner_error}_total` | Counter | — |
 | `sso_audit_async_queue_{depth,capacity}` | Gauge | — |
 | `sso_feature_gate_enabled` | Gauge | feature (oidc\|ciba\|caep\|federation\|self_service\|admin_api\|web_spa) — set once at boot, 1=mounted / 0=disabled via `feature_gates` |
+| `sso_dr_snapshot_replication_lag_seconds` | Gauge | — (absent until the first successful DR replication) |
+| `sso_dr_last_recovery_seconds` | Gauge | — (absent until a recovery is timed via `RecoveryTimeTracker`) |
+| `sso_dr_readiness` | Gauge | — (1 = verified replica within RPO target, 0 otherwise; see [dr-framework.md](dr-framework.md)) |
 
 ## Audit
 

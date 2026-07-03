@@ -34,6 +34,7 @@ type Config struct {
 	Admin              AdminConfig                     `yaml:"admin"`
 	Bootstrap          BootstrapConfig                 `yaml:"bootstrap"`
 	Snapshot           SnapshotConfig                  `yaml:"snapshot"`
+	DR                 DRConfig                        `yaml:"dr"`
 	Releases           ReleasesConfig                  `yaml:"releases"`
 	Backup             BackupConfig                    `yaml:"backup"`
 	Geo                GeoConfig                       `yaml:"geo"`

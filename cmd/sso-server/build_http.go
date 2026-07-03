@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -30,6 +31,51 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handl
 	if err := mountSAMLHandler(cfg, a, logger); err != nil {
 		return nil, err
 	}
+	if err := mountDRStatusHandler(cfg, a, logger); err != nil {
+		return nil, err
+	}
+	return wrapAdminAndBuildMux(cfg, a, base, logger)
+}
+
+// pathAdminDRStatus is a read-only observability endpoint, mounted the same
+// way as the other admin-gated GET surfaces (tenant usage, sessions): it
+// lives under /api/v1/admin/ so admin.IsProtectedPath gates it via the
+// path-prefix check applied to the WHOLE router below, not by any route-
+// registration-time wiring.
+const pathAdminDRStatus = "/api/v1/admin/dr/status"
+
+// mountDRStatusHandler registers GET /api/v1/admin/dr/status when dr.enabled
+// wired a readiness aggregate. Mounted AFTER a.server.Handler() so the
+// router exists (same requirement as the WebAuthn/push/compliance/SCIM/SAML
+// late-bound routes above — see Handle's doc comment).
+//
+// Only when the operator explicitly opts in via dr.gate_readiness does this
+// ALSO fold the same verdict into /readyz — default is report-only: a
+// stale/missing DR replica never fails /readyz or blocks auth traffic on its
+// own (docs/dr-framework.md).
+func mountDRStatusHandler(cfg *config.Config, a *app, logger spi.Logger) error {
+	if a.drReadiness == nil {
+		return nil
+	}
+	if err := a.server.Handle(http.MethodGet, pathAdminDRStatus, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(a.drReadiness.Status(r.Context()))
+	}); err != nil {
+		return err
+	}
+	if cfg.DR.GateReadiness {
+		a.server.AddReadyCheck("dr", a.drReadiness.ReadyCheck)
+	}
+	logger.Info("dr: admin status endpoint mounted", "path", pathAdminDRStatus, "gate_readiness", cfg.DR.GateReadiness)
+	return nil
+}
+
+// wrapAdminAndBuildMux is the tail of buildHTTPHandler split out to keep it
+// under the function-length budget: wraps base with the admin middleware so
+// every /api/v1/admin/* (and /api/v1/audit,compliance,scim,netpolicy) path
+// gets the same Bearer + scope gate, then composes the admin gRPC-gateway
+// mux on top when both admin and the REST gateway are enabled.
+func wrapAdminAndBuildMux(cfg *config.Config, a *app, base http.Handler, logger spi.Logger) (http.Handler, error) {
 	// Wrap base with the admin middleware so /api/v1/audit/* and
 	// /api/v1/netpolicy/policies* + /classify get the same Bearer +
 	// scope gate as /api/v1/admin/*. isAdminProtectedPath inside

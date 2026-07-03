@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/platform/configaudit"
-	"github.com/snaplink/sso/platform/rotation"
+	"github.com/snaplink/sso/platform/lifecycle/rotation"
 	"github.com/snaplink/sso/platform/sse"
 	"github.com/snaplink/sso/shared/core"
 )
