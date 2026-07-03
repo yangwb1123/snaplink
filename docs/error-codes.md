@@ -407,6 +407,24 @@ never gets a `scim+json` body.
 
 ---
 
+## Disaster recovery / degraded service (`sso.WithDegradationManager`)
+
+The degraded-service gate (opt-in via `sso.WithDegradationManager`) refuses the
+request classes the active DR mode sheds. Probes (`/livez`, `/readyz`,
+`/metrics`) and the DR control endpoint (`/api/v1/admin/dr/mode`) always pass so
+the replica stays observable and recoverable. Per mode: `read_only` refuses
+mutating writes except the token plane (`/token`, `/token/introspect`);
+`auth_only` refuses everything but the `/auth/*` + `/token*` + `/.well-known/*`
+plane; `local_only` refuses remote-dependent endpoints (`/auth/home-realm`,
+`/fetch`, `/ssf/receive`); `maintenance` refuses every non-probe request.
+
+| Code               | HTTP | Emitted when                                                        | Headers                  |
+|--------------------|------|--------------------------------------------------------------------|--------------------------|
+| `service_degraded` | 503  | The active DR mode refuses the request class                       | `Retry-After: <seconds>` |
+| `invalid_mode`     | 400  | `POST /api/v1/admin/dr/mode` given a mode outside the fixed enum   |                          |
+
+---
+
 ## SDK webhook signature verification (outbound webhooks)
 
 The outbound webhook transports (audit `WebhookSink`, MFA/CIBA push) can

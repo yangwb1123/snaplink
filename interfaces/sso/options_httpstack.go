@@ -115,6 +115,32 @@ func WithAdminTokenStore(store core.AdminTokenStore) Option {
 	return func(s *Server) { s.adminTokenStore = store }
 }
 
+// WithDegradationManager installs the disaster-recovery degraded-service gate.
+// The manager holds an atomically-swappable mode (normal / read_only /
+// auth_only / local_only / maintenance); when the mode is anything but normal
+// the enforcement middleware refuses the request classes that mode sheds with
+// 503 + Retry-After (probes always pass), and the admin GET/POST
+// /api/v1/admin/dr/mode endpoints let an operator read + set the mode. A health
+// loop that detects a datastore heartbeat loss can drive the same posture by
+// calling m.SetMode(ctx, DegradationModeReadOnly, reason) directly.
+//
+// nil (the default) ⇒ no gate is installed and no route is mounted, so a build
+// without this option is byte-identical. The manager's default mode is normal,
+// which is itself a pass-through — installing the option but leaving the mode at
+// normal has no request-path effect beyond one atomic load per request.
+func WithDegradationManager(m *DegradationManager) Option {
+	return func(s *Server) {
+		if m == nil {
+			return
+		}
+		s.degradation = m
+		// Register the audit + metric side effects. The hook reads s.auditor /
+		// s.metrics lazily at fire time, so option ORDER relative to
+		// WithAuditRecorder / WithMetrics does not matter.
+		m.OnChange(s.onDegradationChange)
+	}
+}
+
 // WithAdminRateLimit sets a server-level admin API rate limit. rate is
 // tokens per second; burst is the maximum accumulated tokens. When set,
 // the admin HTTP and gRPC middleware enforce this limit before processing

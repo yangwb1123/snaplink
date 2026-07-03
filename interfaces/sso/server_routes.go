@@ -362,6 +362,12 @@ func (s *Server) Handler() http.Handler {
 // rate limiting so the limiter keys on the validated real client IP.
 func (s *Server) buildMiddlewareChain(inner http.Handler) http.Handler {
 	inner = s.wrapInnerMiddlewares(inner)
+	if s.degradation != nil {
+		// DR gate sits just inside rate limiting (flood protection still applies
+		// to a shedding replica) and just outside body-limit (a refused write
+		// short-circuits before the body is read). Metrics still counts the 503.
+		inner = s.degradationGate()(inner)
+	}
 	if s.rateLimitPolicy != nil {
 		inner = ratelimit.Middleware(*s.rateLimitPolicy)(inner)
 	}

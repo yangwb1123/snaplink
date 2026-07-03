@@ -58,35 +58,41 @@ const (
 	// pipeline. Operators graph started → verified → completed to find
 	// the drop-off step (verification email never arrived, link expired,
 	// user abandoned, etc.).
-	NameSignupStartedTotal         = "sso_signup_started_total"
-	NameSignupVerifiedTotal        = "sso_signup_verified_total"
-	NameSignupCompletedTotal       = "sso_signup_completed_total"
-	NamePasswordResetRequestedTotal  = "sso_password_reset_requested_total"
-	NamePasswordResetCompletedTotal  = "sso_password_reset_completed_total"
+	NameSignupStartedTotal          = "sso_signup_started_total"
+	NameSignupVerifiedTotal         = "sso_signup_verified_total"
+	NameSignupCompletedTotal        = "sso_signup_completed_total"
+	NamePasswordResetRequestedTotal = "sso_password_reset_requested_total"
+	NamePasswordResetCompletedTotal = "sso_password_reset_completed_total"
+
+	// Disaster-recovery degraded-service posture. NameDegradationMode is a state
+	// gauge (active mode == 1); NameDegradedRejectionsTotal counts gate refusals.
+	NameDegradationMode         = "sso_degradation_mode"
+	NameDegradedRejectionsTotal = "sso_degraded_rejections_total"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by
 // design — see the doc on each collector for the rationale.
 const (
-	LabelMethod      = "method"
-	LabelStatusClass = "status_class"
-	LabelProvider    = "provider"
-	LabelOutcome     = "outcome"
-	LabelStrategy    = "strategy"
-	LabelDecision    = "decision"
-	LabelMFAMethod   = "mfa_method"
-	LabelSubsystem   = "subsystem" // audit | snapshot | push_approvals
-	LabelAnomalyType = "anomaly_type"
-	LabelSeverity    = "severity"
-	LabelDropReason  = "reason"
-	LabelDetector    = "detector"
-	LabelFAPIRule    = "rule"      // bounded: the 5 fapi:* baseline rule ids
-	LabelFAPIMode    = "mode"      // inspection | enforce
-	LabelAlg         = "alg"       // bounded: eddsa | es256 | rs256 | ps256
-	LabelSignal      = "signal"    // bounded: weak | compromised
-	LabelReason      = "reason"    // bounded per metric; see AdoptionReason* below
-	LabelTenant      = "tenant"    // bounded by an operator allowlist + the "other" bucket
-	LabelDirection   = "direction" // bounded: published | adopted
+	LabelMethod          = "method"
+	LabelStatusClass     = "status_class"
+	LabelProvider        = "provider"
+	LabelOutcome         = "outcome"
+	LabelStrategy        = "strategy"
+	LabelDecision        = "decision"
+	LabelMFAMethod       = "mfa_method"
+	LabelSubsystem       = "subsystem" // audit | snapshot | push_approvals
+	LabelAnomalyType     = "anomaly_type"
+	LabelSeverity        = "severity"
+	LabelDropReason      = "reason"
+	LabelDetector        = "detector"
+	LabelFAPIRule        = "rule"      // bounded: the 5 fapi:* baseline rule ids
+	LabelFAPIMode        = "mode"      // inspection | enforce
+	LabelAlg             = "alg"       // bounded: eddsa | es256 | rs256 | ps256
+	LabelSignal          = "signal"    // bounded: weak | compromised
+	LabelReason          = "reason"    // bounded per metric; see AdoptionReason* below
+	LabelTenant          = "tenant"    // bounded by an operator allowlist + the "other" bucket
+	LabelDirection       = "direction" // bounded: published | adopted
+	LabelDegradationMode = "mode"      // bounded: the 5 degraded-service modes
 )
 
 // Cross-replica token-revocation propagation directions

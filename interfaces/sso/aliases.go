@@ -7,9 +7,28 @@ import (
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/platform/geo"
+	"github.com/snaplink/sso/platform/lifecycle/degradation"
 	"github.com/snaplink/sso/protocols/fapi"
 	"github.com/snaplink/sso/shared/core"
 )
+
+// --- Disaster-recovery degraded-service re-exports (moved to
+// platform/lifecycle/degradation) so callers configure WithDegradationManager
+// without importing the platform package directly. ---
+type (
+	DegradationManager = degradation.Manager
+	DegradationMode    = degradation.Mode
+)
+
+const (
+	DegradationModeNormal      = degradation.ModeNormal
+	DegradationModeReadOnly    = degradation.ModeReadOnly
+	DegradationModeAuthOnly    = degradation.ModeAuthOnly
+	DegradationModeLocalOnly   = degradation.ModeLocalOnly
+	DegradationModeMaintenance = degradation.ModeMaintenance
+)
+
+var NewDegradationManager = degradation.NewManager
 
 // FAPIMode re-exports fapi.Mode so callers configure WithFAPIProfile
 // without importing the fapi package directly.

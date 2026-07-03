@@ -283,9 +283,19 @@ type Metrics struct {
 	// Signup funnel — self-service registration conversion pipeline.
 	// outcome ∈ {success, failure} (bounded). Zero traffic when signup
 	// is not enabled.
-	SignupStartedTotal         *prometheus.CounterVec // labels: outcome
-	SignupVerifiedTotal        *prometheus.CounterVec // labels: outcome
-	SignupCompletedTotal       *prometheus.CounterVec // labels: outcome
-	PasswordResetRequestedTotal  *prometheus.CounterVec // labels: outcome
-	PasswordResetCompletedTotal  *prometheus.CounterVec // labels: outcome
+	SignupStartedTotal          *prometheus.CounterVec // labels: outcome
+	SignupVerifiedTotal         *prometheus.CounterVec // labels: outcome
+	SignupCompletedTotal        *prometheus.CounterVec // labels: outcome
+	PasswordResetRequestedTotal *prometheus.CounterVec // labels: outcome
+	PasswordResetCompletedTotal *prometheus.CounterVec // labels: outcome
+
+	// Disaster-recovery degraded-service posture (zero traffic when no
+	// DegradationManager is wired). DegradationMode is a state gauge: the active
+	// mode's series reads 1 and every other mode reads 0, so operators alert on
+	// `sso_degradation_mode{mode="normal"} == 0` (the replica left normal
+	// service). DegradedRejectionsTotal counts requests the gate refused, by
+	// mode + method (both bounded) — a rising series is the direct measure of
+	// how much traffic the current posture is shedding.
+	DegradationMode         *prometheus.GaugeVec   // labels: mode
+	DegradedRejectionsTotal *prometheus.CounterVec // labels: mode, method
 }

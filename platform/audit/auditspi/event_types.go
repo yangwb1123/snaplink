@@ -156,3 +156,8 @@ const (
 	EventNativeSSOExchange        EventType = "native_sso_exchange"
 	EventNativeSSOExchangeFailure EventType = "native_sso_exchange_failure"
 )
+
+// Disaster-recovery degraded-service control-plane events.
+const (
+	EventDegradationModeChanged EventType = "degradation_mode_changed"
+)

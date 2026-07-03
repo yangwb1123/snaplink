@@ -48,8 +48,26 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 	registerClusterHealthMetrics(factory, m)
 	registerCAEPMetrics(factory, m)
 	registerRefreshRevocationMetrics(factory, m)
+	registerDegradationMetrics(factory, m)
 
 	return m
+}
+
+func registerDegradationMetrics(factory promauto.Factory, m *Metrics) {
+	m.DegradationMode = factory.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: NameDegradationMode,
+			Help: "Current degraded-service (DR) mode: the active mode's series reads 1, all others 0.",
+		},
+		[]string{LabelDegradationMode},
+	)
+	m.DegradedRejectionsTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameDegradedRejectionsTotal,
+			Help: "Requests refused by the degraded-service gate, by mode and HTTP method.",
+		},
+		[]string{LabelDegradationMode, LabelMethod},
+	)
 }
 
 func registerHTTPMetrics(factory promauto.Factory, m *Metrics) {

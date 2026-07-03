@@ -3497,6 +3497,104 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/dr/mode:
+    get:
+      tags: [admin]
+      summary: Read the current disaster-recovery degraded-service mode.
+      description: |
+        Returns the active DR mode. Opt-in via `WithDegradationManager`; the
+        route is not mounted (404) when the manager is not wired. Admin-gated —
+        the admin middleware enforces `admin:read` (the path sits under
+        `/api/v1/admin/`). Always reachable regardless of the current mode
+        (like the probes) so an operator can inspect + recover posture.
+      operationId: getDegradationMode
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The current mode.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DegradationMode"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Bearer lacks the `admin:read` scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [admin]
+      summary: Set the disaster-recovery degraded-service mode.
+      description: |
+        Switches the server to a degraded-service posture. When the mode is
+        anything but `normal`, the enforcement gate refuses the request classes
+        that mode sheds with `503 service_degraded` + `Retry-After`:
+        `read_only` blocks mutating writes except the token plane; `auth_only`
+        keeps only the `/auth/*` + `/token*` + `/.well-known/*` plane;
+        `local_only` sheds remote-dependent endpoints (`/auth/home-realm`,
+        `/fetch`, `/ssf/receive`); `maintenance` refuses every non-probe request.
+        Probes and this endpoint always stay reachable.
+
+        Opt-in via `WithDegradationManager`; not mounted (404) when unwired.
+        Admin-gated — the admin middleware enforces `admin:write` (the path sits
+        under `/api/v1/admin/`). A health loop that detects a datastore
+        heartbeat loss can drive the same posture out-of-band by calling
+        `Manager.SetMode`.
+      operationId: setDegradationMode
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode:
+                  type: string
+                  enum: [normal, read_only, auth_only, local_only, maintenance]
+                reason:
+                  type: string
+                  description: Free-text operator note recorded on the audit event.
+      responses:
+        "200":
+          description: The applied mode + whether it changed.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/DegradationMode"
+                  - type: object
+                    properties:
+                      changed:
+                        type: boolean
+        "400":
+          description: Body unparseable (`invalid_request`) or mode outside the enum (`invalid_mode`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Bearer lacks the `admin:write` scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   # ---- Admin gRPC services exposed via grpc-gateway ----
   #
   # Every endpoint below requires the AdminMiddleware Bearer-validated
@@ -7999,6 +8097,18 @@ components:
             Operator-facing reachability/schema error when the store is down
             or its schema couldn't be read. A generic message — never the
             connection string or any credential.
+
+    DegradationMode:
+      type: object
+      required: [mode]
+      description: |
+        The disaster-recovery degraded-service posture. Exactly one mode is
+        active at a time.
+      properties:
+        mode:
+          type: string
+          enum: [normal, read_only, auth_only, local_only, maintenance]
+          example: read_only
 
     BackupReport:
       type: object

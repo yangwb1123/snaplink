@@ -48,6 +48,14 @@ func (s *Server) mountAdminAPIObservability(api Router) {
 	if s.sessionMgr != nil {
 		api.GET(PathAdminSessions, s.handleAdminListSessions)
 	}
+	// DR degraded-service mode read + toggle (opt-in WithDegradationManager).
+	// Admin-gated (GET admin:read, POST admin:write) via the /api/v1/admin/
+	// prefix. Not mounted without the manager — byte-identical to a build
+	// without the feature.
+	if s.degradation != nil {
+		api.GET(PathDRMode, s.handleGetDRMode)
+		api.POST(PathDRMode, s.handleSetDRMode)
+	}
 }
 
 // mountAdminUserState registers the admin/helpdesk management of a user's
