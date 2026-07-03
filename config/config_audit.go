@@ -119,3 +119,45 @@ type AuditAsyncConfig struct {
 	Workers         int  `yaml:"workers"`
 	RecordTimeoutMs int  `yaml:"record_timeout_ms"`
 }
+
+// EventsConfig opts into the realtime admin event stream — GET
+// /api/v1/admin/events/stream (Server-Sent Events), consumed with the
+// browser's EventSource API. Disabled by default: a deployment without it
+// is byte-identical (no extra sink, no route, no goroutines). It only
+// EMITS when audit.enabled is also true — the broker is wired as an
+// additional audit Sink (the same AddSink/MultiSink fan-out audit.webhook
+// uses), so it carries only whatever the audit Recorder already records,
+// projected to a redacted summary (never secrets, raw tokens, or the
+// free-form audit metadata blob — see sse.Summary).
+//
+// Lives beside AuditConfig (not its own config_events.go) because the config
+// package directory is at its frozen non-test .go file ceiling (see
+// directory_fanout_test.go dirFileCountExemptions) — the ceiling may only
+// shrink, so new sections fold into an existing, topically-related file.
+type EventsConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// SubscriberBuffer bounds the per-connection channel: how many unread
+	// events a single admin console tab may lag behind before it is evicted
+	// as a slow consumer. <= 0 falls back to the SDK default
+	// (sse.DefaultSubscriberBuffer) — the publisher NEVER blocks on a slow
+	// reader regardless of this value.
+	SubscriberBuffer int `yaml:"subscriber_buffer"`
+
+	// ReplayBuffer bounds the ring of recently-published events kept for
+	// Last-Event-ID reconnects. <= 0 falls back to the SDK default
+	// (sse.DefaultReplayBuffer). A reconnect gap wider than this window is
+	// silently skipped — delivery is at-least-once WITHIN the window.
+	ReplayBuffer int `yaml:"replay_buffer"`
+
+	// MaxSubscribers caps concurrently live streaming connections. A connect
+	// attempt past the cap gets 503 event_stream_busy rather than growing
+	// server memory unbounded. <= 0 falls back to the SDK default
+	// (sse.DefaultMaxSubscribers).
+	MaxSubscribers int `yaml:"max_subscribers"`
+
+	// HeartbeatInterval spaces the SSE comment keep-alive frames that stop
+	// intermediary proxies from idling out a quiet connection. <= 0 falls
+	// back to the SDK default (sse.DefaultHeartbeat).
+	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
+}

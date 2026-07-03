@@ -12,6 +12,7 @@ import (
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/metrics"
+	"github.com/snaplink/sso/platform/sse"
 	"github.com/snaplink/sso/protocols/caep"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
@@ -120,6 +121,35 @@ func (b *appBuilder) wireCAEPTransmitter() {
 	caepTx := caep.NewTransmitter(b.jwtIssuer, b.clientStore, caepOpts...)
 	b.opts = append(b.opts, sso.WithCAEPTransmitter(caepTx))
 	logger.Info("caep: OpenID Shared Signals transmitter enabled — signed SETs pushed to affected clients' registered receivers on revocation/suspension/family-reuse events")
+}
+
+// wireSSEEvents wires the realtime admin event stream (GET
+// /api/v1/admin/events/stream). Default-off: skipping this leaves b.opts
+// untouched, so a build without events.enabled is byte-identical. The
+// broker is retrievable back off the built Server (Server.SSEBroker) so
+// shutdown can Close it without appBuilder/app retaining a second reference.
+func (b *appBuilder) wireSSEEvents() {
+	ec := b.cfg.Events
+	if !ec.Enabled {
+		return
+	}
+	broker := sse.NewBroker(sse.Options{
+		SubscriberBuffer: ec.SubscriberBuffer,
+		ReplayBuffer:     ec.ReplayBuffer,
+		MaxSubscribers:   ec.MaxSubscribers,
+	})
+	b.opts = append(b.opts, sso.WithSSEBroker(broker))
+	if ec.HeartbeatInterval > 0 {
+		b.opts = append(b.opts, sso.WithSSEHeartbeat(ec.HeartbeatInterval))
+	}
+	if !b.cfg.Audit.Enabled {
+		// Fail-open, not fail-loud: the broker is still a valid mount (an SDK
+		// consumer could publish to it directly), it just has no source until
+		// audit is also enabled.
+		b.logger.Info("events.enabled but audit.enabled is false — the event stream route is mounted but will never emit (no audit recorder to tap)")
+	}
+	b.logger.Info("events: realtime admin event stream enabled",
+		"max_subscribers", ec.MaxSubscribers, "replay_buffer", ec.ReplayBuffer)
 }
 
 // wireFederation wires OpenID Federation 1.0 entity config, trust-chain

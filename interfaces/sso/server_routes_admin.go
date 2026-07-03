@@ -93,6 +93,11 @@ func (s *Server) mountAdminAPILifecycle(api Router) {
 	if s.credentialRegistry != nil {
 		api.GET(PathAdminCredentials, s.handleAdminListCredentials)
 	}
+	// Realtime admin event stream (opt-in WithSSEBroker). Mounted only when
+	// a broker is wired — byte-identical to a build without it.
+	if s.sseBroker != nil {
+		api.GET(PathAdminEventsStream, s.handleAdminEventsStream)
+	}
 }
 
 // mountAdminUserState registers the admin/helpdesk management of a user's

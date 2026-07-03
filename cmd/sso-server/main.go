@@ -433,6 +433,7 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
+	closeSSEBroker(a)
 	shutdownServers(ctx, logger, httpSrv, pprofSrv, grpcSrv)
 	shutdownSubsystems(ctx, a, logger)
 	logger.Info("server stopped cleanly")

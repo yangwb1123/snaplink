@@ -107,6 +107,11 @@ func fullFeatureConfig(t *testing.T) *config.Config {
 	cfg.Audit.Async.BufferSize = 16
 	cfg.Audit.Async.Workers = 2
 
+	cfg.Events.Enabled = true
+	cfg.Events.MaxSubscribers = 4
+	cfg.Events.ReplayBuffer = 8
+	cfg.Events.HeartbeatInterval = time.Hour
+
 	cfg.Permissions.Enabled = true
 	cfg.Permissions.EmbedInLogin = true
 
@@ -345,6 +350,12 @@ func TestBuildApp_FullFeatureSet(t *testing.T) {
 	if a.snapshotPipeline == nil || a.releaseStore == nil || a.tenantStore == nil {
 		t.Fatal("snapshot/release/tenant subsystems not wired")
 	}
+	if a.server.SSEBroker() == nil {
+		t.Fatal("SSE broker not wired with events.enabled")
+	}
+	// closeSSEBroker (called ahead of the HTTP graceful drain in run(); see
+	// main_shutdown.go) must be safe to call on a live broker.
+	closeSSEBroker(a)
 
 	// buildHTTPHandler walks the admin gateway + SCIM + compliance branches.
 	h, err := buildHTTPHandler(cfg, a, quietLogger())

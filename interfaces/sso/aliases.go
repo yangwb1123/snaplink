@@ -329,6 +329,7 @@ const PathAdminTokenByID = core.PathAdminTokenByID
 const PathAdminLogout = core.PathAdminLogout
 const PathAdminSessions = core.PathAdminSessions
 const PathAdminCredentials = core.PathAdminCredentials
+const PathAdminEventsStream = core.PathAdminEventsStream
 const PathAdminConnections = core.PathAdminConnections
 const PathAdminConnectionByID = core.PathAdminConnectionByID
 const PathAdminTenantMembers = core.PathAdminTenantMembers

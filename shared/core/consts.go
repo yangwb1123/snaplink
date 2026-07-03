@@ -297,6 +297,12 @@ const (
 	// crossing). Group-relative; gated by AdminMiddleware. Mounted only when
 	// WithCredentialRotation is wired.
 	PathAdminCredentials = "/admin/credentials"
+	// PathAdminEventsStream is the realtime admin event source (GET,
+	// admin:read, text/event-stream — see platform/sse). Group-relative;
+	// gated by AdminMiddleware via the /api/v1/admin/ prefix like every
+	// other admin path here. Mounted only when a Broker is wired
+	// (WithSSEBroker) — byte-identical to a build without it.
+	PathAdminEventsStream = "/admin/events/stream"
 
 	// PathAdminConnections / PathAdminConnectionByID manage B2B enterprise
 	// connections at runtime (list/get/upsert/delete) so operators can onboard a

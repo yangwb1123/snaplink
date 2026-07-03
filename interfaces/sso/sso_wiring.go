@@ -12,6 +12,7 @@ import (
 	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/platform/geo"
 	"github.com/snaplink/sso/platform/netpolicy"
+	"github.com/snaplink/sso/platform/sse"
 	"github.com/snaplink/sso/protocols/caep"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
@@ -32,6 +33,8 @@ type wiringState struct {
 	auditor                 *audit.Recorder
 	caepTransmitter         *caep.Transmitter
 	auditAPI                bool
+	sseBroker               *sse.Broker
+	sseHeartbeat            time.Duration
 	requestIDMW             bool
 	panicRecovery           bool
 	compressionEnabled      bool
