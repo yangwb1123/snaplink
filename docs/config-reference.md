@@ -176,3 +176,14 @@ See [deployment.md](deployment.md) for the HA topology and
 |---|---|
 | `backup.dir` | Destination directory for `POST /api/v1/admin/backup` (`VACUUM INTO` snapshots); empty (default) = OS temp dir. Filenames are timestamped (`sso-backup-<source>-<UTC stamp>.db`), so without `backup.keep` the directory grows monotonically — one file per source per triggered backup, never overwritten |
 | `backup.keep` | Retain only the newest N backup files per source after each run; `0` (default) disables retention (keep all). Pruning filters on the per-source filename prefix, so unrelated files sharing the directory are never deleted |
+
+## Feature Gates (attack-surface reduction)
+
+| Key | Effect |
+|---|---|
+| `feature_gates.{oidc,ciba,caep,federation,self_service,admin_api,web_spa}` | Each is `*bool`; omitted (default) or `true` = routes mounted (today's behavior); explicit `false` = `Mount()` never registers that surface's routes — a probe gets a router-native 404, not a reachable-but-declining handler. A surface's own opt-in config (e.g. `caep.receiver`) keeps gating its routes on TOP of this — the gate never re-enables a surface that isn't otherwise wired |
+| `feature_gates.oidc` | Gates `/userinfo` + `/end_session`; discovery drops `userinfo_endpoint`/`end_session_endpoint` (both `omitempty`) when off |
+| `feature_gates.ciba` | Gates `POST /backchannel-authentication` (previously mounted unconditionally, 501-ing without a CIBA store — this is the first way to make it a 404 instead) |
+| `feature_gates.admin_api` | Gates the ENTIRE `/api/v1/admin/*` group (incl. the new `GET /api/v1/admin/endpoints` runtime inventory); off ⇒ `Mount()` never creates the `/api/v1` admin group |
+| GET `/api/v1/admin/endpoints` | Admin-gated (`admin:read`) runtime inventory: method + path + `feature_gates` surface (or `core`) for every route THIS replica actually registered |
+| Startup visibility | Any explicitly-disabled gate emits a `feature_gates_disabled` audit event + log line + sets `sso_feature_gate_enabled{feature=...}` to 0 (1 for every enabled gate) — attack-surface changes are security-relevant |

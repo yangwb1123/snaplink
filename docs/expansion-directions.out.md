@@ -1,21 +1,18 @@
-Saved as `docs/expansion-directions-auth-plane-2026-07-01.md`. This document is distinct from the existing `analysis-expansion-directions.md` (Chinese, infrastructure-centric) — it targets the **auth-plane architecture** layer.
+This is a thorough and well-structured analysis of expansion directions for the snaplink SSO Server. I've absorbed the full context.
 
-### Key Observations vs. Existing Analysis
+Key observations from the document:
 
-| Dimension | Existing (Chinese) | Your New (English) |
-|---|---|---|
-| Focus | Infrastructure/enterprise integration | Auth-plane architecture & RS optimization |
-| Primary audience | Ops / IT admins | Platform architects / security engineers |
-| Foundational dependency | Job Queue needed before others | Token Exchange + Introspection are self-contained |
-| Overlap on Adaptive Auth | Yes — but existing is a lighter sketch | Yours goes deeper on `DeviceFingerprint` SPI and policy engine specifics |
-| Uniqueness | Webhooks + Notifications + ABAC | Token chain governance + Session hub + Introspection suite |
+1. **Thorough gap analysis** — each direction identifies concrete building blocks that exist, their current limitations, and why bridging them matters.
 
-### Which to Pursue First?
+2. **The common thread** is composition: the building blocks are largely in place (anomaly detection, risk scorers, token exchange, session stores, audit, introspection cache), but they operate independently rather than as coordinated subsystems.
 
-Your recommendation to start with **Directions 2 & 5** is sound — they're contained, medium-effort, and hit production pain points directly. A few additional notes from my reading of the codebase:
+3. **The sequencing recommendation makes sense** — Directions 2 (Token Exchange Governance) and 5 (Introspection Suite) are self-contained, medium-effort, and solve real production-scale pain points. Direction 3 (Session Hub) is architecturally ambitious but delivers the most value for the project's multi-protocol positioning.
 
-**Direction 2 (Token Exchange Governance):** The `act` chain is currently in `protocols/oauth/token_exchange.go` as a linked list with `ActorClaim` recursion. The circulation detector can be implemented as a cheap hash-set walk (`O(depth)`) before the serialization step — the performance impact is negligible since `MaxActChainDepth=10`. The scope-minimization change is the riskiest part (semantic change to `scope` behavior) — I'd recommend a feature flag (`strict_token_exchange_scope: true`) for gradual rollout.
+What would you like to do next? I can:
 
-**Direction 5 (Introspection):** The batch endpoint needs careful RPS budgeting — even with oracle-safe responses, a `POST /token/introspect/batch` with 10K hashes is a memscan on the token store. A per-client rate-limit on batch size + a `max_batch_keys` config parameter would prevent abuse without hurting the caching use case.
+- **Explore the current codebase** for any of these directions — audit the relevant packages, read the existing SPIs, and assess what would need to change.
+- **Draft a technical design** for a specific direction with concrete package layouts, interface definitions, and migration paths.
+- **Begin implementation** of one direction — starting with the SPI definitions, then the memory/defaultimpl, then integration into the server.
+- **Review the document itself** against the codebase — validate the gap claims against actual source, identify any missing edge cases, or surface any constraints the analysis overlooked.
 
-Would you like me to dive into any specific direction with a more detailed implementation plan — SPI interfaces, package layout, integration points, and test strategy?
+Which direction interests you most, and what level of engagement would be useful?

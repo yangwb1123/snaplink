@@ -1,0 +1,8 @@
+{{- if not (lookup "v1" "Namespace" "" (include "sso-server.namespace" .)) }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "sso-server.namespace" . }}
+  labels:
+    {{- include "sso-server.labels" . | nindent 4 }}
+{{- end }}

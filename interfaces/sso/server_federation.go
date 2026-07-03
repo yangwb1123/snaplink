@@ -149,6 +149,93 @@ func WithFederationAutoRegistration() Option {
 // WithFederationEntity is not configured).
 func (s *Server) FederationEntity() *federation.EntityHandler { return s.federationEntity }
 
+// mountClusterEndpoints registers the full-path admin/cluster endpoints
+// (authz policy bundle, storage health, mesh ext_authz, CAEP/SSF receiver),
+// each opt-in and gated on its wiring. Moved from server_routes.go (which
+// was at the line budget) — this file already holds the fields these routes
+// gate on (federationMeshState).
+func (s *Server) mountClusterEndpoints() {
+	// Authorization policy bundle export (decentralized authz). Full
+	// path (not group-relative) registered directly on the router; its
+	// /api/v1/admin/ prefix means AdminMiddleware gates it as admin:read.
+	// Only mounted when a permissions provider is wired — the bundle is
+	// the role-DEFINITION half of that model. AdminAPI-gated like the rest
+	// of the /api/v1/admin/ surface.
+	if s.permissions != nil && s.adminAPIGateOn() {
+		s.router.GET(PathAuthzPolicyBundle, s.handleAuthzPolicyBundle)
+	}
+
+	// Per-store storage-health report (opt-in WithStorageHealth). Full-path
+	// admin endpoint gated by AdminMiddleware via the /api/v1/admin/ prefix.
+	// Only mounted when at least one source is wired AND AdminAPI is on —
+	// byte-identical to a build without it.
+	if len(s.storageHealthSources) > 0 && s.adminAPIGateOn() {
+		s.router.GET(PathStorageHealth, s.handleStorageHealth)
+	}
+
+	// Mesh ext_authz HTTP endpoint (opt-in, cluster C1). The sidecar may
+	// call it with the original request method, so register both GET and
+	// POST at the configured path. Not mounted unless WithMeshExtAuthz is
+	// wired — byte-identical to a build without it.
+	if s.meshExtAuthz {
+		path := s.meshExtAuthzPath
+		if path == "" {
+			path = PathMeshExtAuthz
+		}
+		s.router.GET(path, s.handleMeshExtAuthz)
+		s.router.POST(path, s.handleMeshExtAuthz)
+	}
+
+	// CAEP/SSF push-delivery RECEIVER (opt-in, the inbound half of OpenID
+	// Shared Signals). A trusted upstream transmitter POSTs a signed SET
+	// here; the receiver validates it fail-closed and revokes the mapped
+	// subject's local access. Not mounted unless WithCAEPReceiver is wired
+	// AND the CAEP gate is on — byte-identical to a build without it.
+	if s.caepReceiver != nil && s.caepGateOn() {
+		s.router.POST(PathSSFReceive, s.handleSSFReceive)
+	}
+}
+
+// mountFederationEndpoints registers the RFC 9728 protected-resource metadata,
+// the OpenID Federation 1.0 entity configuration (+ §8 fetch when this server
+// is a superior), and the B2B home-realm discovery routes — each opt-in, and
+// all behind the Federation feature gate.
+func (s *Server) mountFederationEndpoints() {
+	if !s.federationGateOn() {
+		return
+	}
+	// OpenID Federation 1.0 entity configuration (opt-in). Serves the OP's
+	// self-signed Entity Statement at the well-known endpoint so the OP is
+	// discoverable as a federation ENTITY. Not mounted unless
+	// RFC 9728 Protected Resource Metadata (opt-in). Public discovery doc;
+	// unmounted when not wired (byte-identical).
+	if s.protectedResourceMetadata != nil {
+		s.router.GET(PathProtectedResourceMetadata, s.handleProtectedResourceMetadata)
+	}
+	// WithFederationEntity is wired — byte-identical to a build without it.
+	if s.federationEntity != nil {
+		s.router.GET(PathFederationEntityConfig, s.handleFederationEntityConfig)
+		// OpenID Federation 1.0 §8 Federation Fetch endpoint — mounted ONLY when
+		// this server is configured as a SUPERIOR (≥1 subordinate). It issues
+		// SIGNED Subordinate Statements about configured subordinates so a
+		// resolver can climb THROUGH this server. With no subordinates the route
+		// is NOT mounted AND the entity config advertises no
+		// federation_fetch_endpoint — byte-identical to the slice-1 leaf OP.
+		if s.federationEntity.HasSubordinates() {
+			s.router.GET(PathFederationFetch, s.handleFederationFetch)
+		}
+	}
+
+	// Home-realm discovery (opt-in B2B). Given a login identifier (email) it
+	// returns the enterprise connection serving that domain so the login UI
+	// routes the user to the right upstream IdP. Not mounted unless
+	// WithConnectionStore is wired — byte-identical to a build without it.
+	if s.connectionStore != nil {
+		s.router.GET(PathHomeRealm, s.handleHomeRealm)
+		s.router.POST(PathHomeRealm, s.handleHomeRealm)
+	}
+}
+
 // federationMeshState holds OpenID Federation, CAEP receiver, B2B connections, Envoy/Istio mesh ext_authz, and storage-health fields.
 type federationMeshState struct {
 	// CAEP/SSF RECEIVER (the inbound half of OpenID Shared Signals — the

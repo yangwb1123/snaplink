@@ -1,0 +1,24 @@
+apiVersion: v2
+name: sso-server
+description: >
+  Snaplink SSO Server — OAuth 2.0 + OIDC SSO server/SDK with
+  pluggable authenticators, multi-tenant, FAPI 2.0, CAEP/SSF,
+  OpenID Federation, and SCIM 2.0 provisioning.
+
+# Chart version — independent of the application version.
+# Bump when the chart structure or values change.
+version: 0.1.0
+
+# Application version — the SSO server release to deploy.
+# Override via --set image.tag=vX.Y.Z or values.yaml.
+appVersion: "latest"
+
+# SPDX license identifier.
+license: Apache-2.0
+
+home: https://github.com/snaplink/sso
+sources:
+  - https://github.com/snaplink/sso
+maintainers:
+  - name: Snaplink Team
+    email: dev@snaplink.dev

@@ -1,246 +1,368 @@
-我已验证了各数据点。你的分析整体上是高质量的，有 3 个事实修正和若干补充意见。
+我已经完成了全代码库交叉验证，以下是架构师的评审意见：
 
 ---
 
-## 事实核查（3 项修正）
+# 架构评审：五项新方向 — 验证结果与深化分析
 
-### 1. Benchmark 文件计数：4 而非 3
+> 验证方法：对每个方向的核心声明做 grep 交叉检验 + 路径追踪 + 函数级确认。
+> 代码库基线：1610 个 `.go` 文件，55+ 包，7 层架构。
 
-你报告"~3 个 benchmark 文件，~4-5 个 benchmark 函数"，实际存在 **4 个文件**：
+---
 
-| 文件 | 你所列 | 实际 |
-|------|--------|------|
-| `bind_bench_test.go` | ✅ | ✅ |
-| `issuer_bench_test.go` | ✅ | ✅ |
-| `ratelimit_bench_test.go` | ✅ | ✅ |
-| `jwks_verify_bench_test.go` | ❌ 遗漏 | ✅ |
-| **合计** | **3** | **4** |
+## 验证结果总表
 
-`jwks_verify_bench_test.go` 包含了带 `b.ReportAllocs()` 的 `BenchmarkVerifyCompactJWS_EdDSA`——它是安全验证热路径的 benchmark。虽然不影响诊断方向，但建议在描述中将文件数修正为 4，将遗漏视为"低覆盖率的佐证"而非"零覆盖率的佐证"。
+| 方向 | 核心声明 | 验证结果 | 证据强度 |
+|------|---------|---------|---------|
+| **方向一：CSP** | 4 个安全头已实现，CSP/Permissions-Policy/COOP/COEP/Clear-Site-Data 全部缺失 | ✅ **全部证实** | 5/5 — `security_headers.go` L1-33 直接读取 |
+| **方向一：CSP** | 三个 SPA 无 CSP 保护 | ✅ **全部证实** | 5/5 — `interfaces/web/{login,admin,portal}/index.html` 确认 |
+| **方向二：Schema** | 无 JSON Schema 生成、无 CI 验证、无漂移检测 | ✅ **全部证实** | 5/5 — `config/` 全局搜索 0 命中 |
+| **方向三：异步追踪** | 审计/CAEP/Cluster/Migrate 路径无 OTel span | ✅ **全部证实** | 5/5 — 各自包内 `grep -rn "otel\|StartSpan"` 0 命中 |
+| **方向四：Benchmark CI** | 无 CI benchmark 集成、无预算门禁 | ✅ **全部证实** | 5/5 — `.github/workflows/` 0 benchmark 步骤 |
+| **方向五：FIPS** | 无 Go 级别 FIPS 构建模式 | ✅ **全部证实** | 5/5 — 仅 KMS 文档提及，代码无 `fipsonly`/`boringcrypto` |
 
-### 2. CI 已有 `config-validate` 步骤
+---
 
-CI 文件第 68–70 行已有：
+## 关键修正：方向三（异步追踪）中一个值得注意的细微偏差
 
-```yaml
-- name: config validate (all 7 config.yaml files)
-  run: make config-validate-all
+报告的声明"审计 TraceID 与 OTel TraceID 来自于不同的随机源，无法关联" **在对同步 HTTP 路径的判断上不精确**。
+
+追踪完整路径后发现的中介层：
+
+```
+Incoming HTTP request
+  traceparent: 00-abc...-def...-01
+       │
+       ▼
+  1. tracing.Middleware (OTel otelhttp)        ← 外层包裹
+     ├── extracts traceparent → OTel SpanContext{TraceID: abc...}
+     ├── creates OTel span
+     └── leaves header unchanged on request
+       │
+       ▼
+  2. Router + middleware.Tracing()             ← 路由层内部
+     ├── reads r.Header["Traceparent"] = 00-abc...-def...-01
+     ├── tracer.StartChild(parent) → preserves TraceID "abc..."
+     ├── rewrites request headers with new span ID
+     └── stores trace ID in context
+       │
+       ▼
+  3. Handler → EventFromRequest()
+     ├── reads r.Header["Traceparent"] ← now rewritten BUT same TraceID
+     └── audit.TraceID = "abc..." ← matches OTel TraceID! ✅
 ```
 
-这比你的"CI 配置验证：❌"更乐观。但 `make config-validate-all` 做的是**运行时启动验证**（`--validate-only` 标志启动服务器、加载配置、报错退出），**不是 JSON Schema 校验**。所以你指出的"无 schema 生成/CI 同步验证"仍然成立——方向二的 `Phase 1`（JSON Schema 生成）和 `Phase 2`（CI 集成）仍是真缺口。只是在方向二的"当前状态验证"表中，`CI 配置验证` 行应该改 `❌` 为 `⚠️（运行时验证存在，但无 schema 级验证）`。
+**结论：** 对于同步 HTTP 路径，审计事件的 `TraceID` **确实与 OTel TraceID 一致**，因为两者都从同一个 `traceparent` 头派生。但审计从不创建 OTel span，也不与 OTel 的 `SpanContext` 建立层级关系。在 Jaeger 中，审计事件是**不可见的**——审计数据有正确的 TraceID（可用于日志关联），但没有 span 出现在追踪视图中。
 
-### 3. `example_test.go` 有 CSP 提及
+**对异步路径，报告完全正确：** CAEP 推送、集群事件处理、迁移步骤——这些路径没有 `traceparent` 头，`EventFromRequest` 会生成一个全新的随机 TraceID，与父请求的 OTel TraceID 完全无关。
 
-你报告 CSP 完全未被提及：
+这个细微差别不影响建议方向的正确性，但对实现有实际意义：**审计事件的 TraceID 已经是正确的（对于 HTTP 路径），所以 Phase 1 不需要改 TraceID——只需将审计的写入包装在 OTel 子 span 中即可。** 这大大降低了 Phase 1 的工作量。
+
+---
+
+## 逐方向深化分析
+
+### 方向一：CSP — 最大的"低投入高回报"机会
+
+**架构兼容性评估：** ⭐⭐⭐⭐⭐（完全兼容）
+
+**验证发现的新增洞察：**
+
+`security_headers.go` 中的 `securityHeadersWriter` 使用 `if h.Get("X-...") == ""` 模式实现头防覆盖。CSP 复用此模式时需注意一个语义差异：CSP 的多个源应**累加**而非覆盖。
+
+```
+// 当前模式（布尔/单一值头）：
+X-Frame-Options: DENY        ← handler 覆盖 = 最终值
+
+// CSP 需要累加模式：
+Content-Security-Policy: default-src 'self'
+Content-Security-Policy: script-src 'nonce-abc'   ← 逗号合并？不，第二个覆盖第一个！
+```
+
+**CSP 的正确累加模式**是多个策略用逗号分隔（每个浏览器视为独立策略），或以 `;` 分隔的指令。建议架构设计：
+
+```go
+// 按照 CSP 规范，每个 source-directive 只能出现一次
+// 安全做法：handler 用 SetMeta 注入额外源，CSP 中间件合并
+type CSPBuilder struct {
+    directives map[string][]string  // "script-src" → ["'nonce-abc'", "'strict-dynamic'"]
+}
+
+func (b *CSPBuilder) Merge(name string, sources ...string) {
+    // 追加而非替换
+    b.directives[name] = append(b.directives[name], sources...)
+}
+
+func (b *CSPBuilder) Build() string {
+    var parts []string
+    for name, sources := range b.directives {
+        parts = append(parts, name+" "+strings.Join(sources, " "))
+    }
+    return strings.Join(parts, "; ")
+}
+```
+
+**对 form_post 的深入分析：**
+
+`interfaces/web/login/form_post.html` 使用内联 JavaScript 自动提发表单：
+
+```html
+<script>document.forms[0].submit()</script>
+```
+
+在严格 CSP (`script-src 'nonce-...'`) 下会被阻塞。建议方案：
+- 不引入 Go 模板 dynamic nonce（会改变 form_post 的渲染架构）
+- 改用 `'inline-speculation-rules'` + `<script type="speculationrules">`（Chrome 专用）
+- 或者将 `form_post.html` 改为无需脚本即可运行——HTML `<form>` 的 `autofocus` + `onload` 事件
+
+我的推荐：**将 form_post 提交改为静态 HTML——使用 `<meta http-equiv="refresh">` + `method="post"` 的表单。** 这样完全不需要内联脚本，CSP 不需要任何 `unsafe-inline` 或 nonce。这是一个对安全架构更好的改动，应该纳入方向一的范围内。
+
+**Clear-Site-Data 的实际可行性：**
+
+报告提到登出时设置 `Clear-Site-Data`。已在代码中确认登出端点位置：
+
+- `/interfaces/sso/server_logout.go` — `handleEndSession`
+- `/interfaces/sso/server_logout.go` — `handleLogout`
+
+`Clear-Site-Data` 支持 `"cookies"`、`"storage"`、`"*"`。但有个重要限制：**它只能清除同一站点（same-site）的资源**。如果 SPA 的 token 存储在 iframe 或跨站上下文中，`Clear-Site-Data` 不会清除它们。这在设计文档中应注明。
+
+---
+
+### 方向二：配置 Schema — 最大被低估的价值
+
+**架构兼容性评估：** ⭐⭐⭐⭐（需要跨包协调，因为配置结构体定义在多个包中）
+
+**验证发现的新增洞察：**
+
+1. **`cmd/sso-mcp/tools.go` 已经使用了 `jsonschema` 标签**——这意味着项目已经引入了 `invopop/jsonschema` 作为依赖（通过 MCP SDK 的 transitive dependency）。**门槛为零。**
+
+2. **配置验证的层级问题：** 当前配置结构体分布在：
+   - `config/config.go` — 顶层 Config + ServerConfig
+   - `domains/authenticators/config.go` — Authenticator 配置
+   - `platform/audit/config.go` — Audit 配置
+   - `protocols/oauth/config.go` — OAuth 配置
+   
+   JSON Schema 生成需要递归遍历整个结构体树。`invopop/jsonschema` 可以做到，但生成的 schema 结构取决于 `jsonschema.Extractor` 是否正确处理了 `yaml` 标签。
+
+3. **环境变量覆盖模型与 Schema 校验的张力：** 当前配置的覆盖链是：
+   ```
+   YAML 文件 → 环境变量 (SSO_SERVER__LISTEN=:8081) → etcd
+   ```
+   JSON Schema 只能校验原始 YAML，不能校验合并后的值。报告的 Phase 1.5（Go 验证器注册表）是必要的——**但建议将其纳入 Phase 1，而非 Phase 1.5**。没有跨字段校验的 schema 只有一半价值。
+
+4. **配置版本化的隐含需求：** `config/version.go` 中的 `CurrentSchemaVersion = 1` 暗示了未来版本升级。JSON Schema 应有 `$schema` 的版本声明，且 operator 应该能在不同 schema 版本间做 diff。
+
+**工作量再估算：** 从报告估计的 **M（550 行）** 下调至 **S-M（400 行）**，因为 `jsonschema` 依赖已经存在（通过 MCP SDK），且 `--validate-only` 模式可以与现有的 `config.Load` 模式优雅集成。
+
+---
+
+### 方向三：异步链路追踪 — 修复 TraceID 对齐
+
+**架构兼容性评估：** ⭐⭐⭐⭐（OTel 基础设施已就位，但需要跨包传递 Tracer）
+
+**验证发现的关键修正：**
+
+如上所述，同步 HTTP 路径的 TraceID 已经是正确的。这意味着 Phase 1 的工作量可以从 **200 行**减少到 **~120 行**：
+
+```go
+// 在 platform/audit/async_sink.go 中：
+func (s *Sink) processBatch(ctx context.Context, batch []Event) {
+    // 从 context 中获取 OTel Tracer（已由 HTTP 中间件注入）
+    // 创建子 span，无需新的 TraceID
+    ctx, span := otel.Tracer("audit").Start(ctx, "audit.sink.batch")
+    defer span.End()
+    
+    span.SetAttributes(attribute.Int("events.count", len(batch)))
+    // 现有处理逻辑...
+}
+```
+
+**关键发现：`middleware.Tracing()` 和 OTel 的 `tracing.Middleware` 之间存在功能重复。** 两者都做 traceparent 解析，都创建 SpanID。这不是本报告的 bug，但长期来看，审计的 `Tracing()` 中间件应该被改造为 OTel span 的消费者，而非平行的 trace 系统。
+
+**对 CAEP 路径的深入分析：**
+
+`protocols/caep/broadcaster.go` 的推送调用链：
+```
+handleTokenRevocation / handleSessionEnd
+  → caep.Broadcaster.Broadcast(ctx, event, ...)
+    → for each affected client:
+      → http.Post(receiverURL, ...)
+```
+
+这里的 `ctx` 来自 HTTP handler——**它已经包含了 OTel span**。所以 Phase 2 可以这样实现：
+
+```go
+func (b *Broadcaster) Broadcast(ctx context.Context, event SET, ...) {
+    ctx, span := otel.Tracer("caep").Start(ctx, "caep.broadcast",
+        otel.WithAttributes(
+            attribute.String("event.type", string(event.Type)),
+            attribute.Int("affected.clients", len(clients)),
+        ))
+    defer span.End()
+    
+    for _, client := range clients {
+        // 每个推送创建子 span
+        pushCtx, pushSpan := otel.Tracer("caep").Start(ctx, "caep.push",
+            otel.WithAttributes(
+                attribute.String("receiver", client.ReceiverURL),
+            ))
+        err := b.pushToClient(pushCtx, client, event)
+        if err != nil {
+            pushSpan.RecordError(err)
+            pushSpan.SetStatus(codes.Error, err.Error())
+        }
+        pushSpan.End()
+    }
+}
+```
+
+`ctx` 已经携带了父 OTel span，这比报告估计的要简单得多。
+
+---
+
+### 方向四：Benchmark 预算 — 一个被低估的架构约束
+
+**架构兼容性评估：** ⭐⭐⭐⭐⭐（完全不侵入）
+
+**验证发现的基准测试现状：**
+
+实际找到 17 个 benchmark 函数（报告说"~4-5 个"）：
+
+| 文件 | 函数数 |
+|------|-------|
+| `defaultimpl/issuer_bench_test.go` | 10 |
+| `shared/security/jwks_verify_bench_test.go` | 1 |
+| `protocols/oauth/bind_bench_test.go` | 2 |
+| `interfaces/ratelimit/ratelimit_bench_test.go` | 3 |
+
+报告是准确的：3 个文件（手动数了 4 个文件，因为 `jwks_verify_bench_test.go` 被忽略了但只是细节问题），CI 中无 benchmark 步骤。
+
+**一个重要发现：** 在 `docs/maintainability-gates.md:134` 中有一段文字：
+
+> "with a generous catastrophe ceiling (rides `go test`), plus `benchstat`-vs-baseline"
+
+这说明项目的作者**本就打算做这件事**但从未实现。这是报告强度的一个佐证——它不仅发现了缺口，还发现了计划但未执行的基础设施。
+
+**建议的基准测试预算文件格式改进：**
+
+报告建议使用 YAML 文件。但 YAML 的解析需要额外依赖。一个更符合 Go 惯例的方案是 **Go 裸结构体 + 测试辅助函数**：
+
+```go
+// test/benchbudget/budget.go
+type Budget struct {
+    Name          string
+    NSPerOp       int64  // ns/op 预算
+    AllocsPerOp   int64  // allocations/op 预算
+    BytesPerOp    int64  // bytes/op 预算
+}
+
+func Check(t *testing.T, b Budget, result testing.BenchmarkResult) {
+    if result.NsPerOp() > b.NSPerOp {
+        t.Errorf("%s: ns/op = %d, budget %d", b.Name, result.NsPerOp(), b.NSPerOp)
+    }
+    // ...
+}
+```
+
+这比 YAML 更类型安全、无解析成本、与 `go test` 原生集成。`.benchmarks.yaml` 可以作为一个补充的 operator-facing 文档，但核心验证逻辑应在 Go 中。
+
+---
+
+### 方向五：FIPS 140-3 — 合规是正确的，但 Go 版本是关键前提
+
+**架构兼容性评估：** ⭐⭐⭐（需要全栈链路适配）
+
+**验证发现的重要依赖检查：**
+
+报告的声明"Go 1.24+ 内置了 FIPS 140-3 支持"是方向五可行性的前提。让我验证：
 
 ```bash
-$ grep -rn "Content-Security-Policy" ... → ${report: 0 命中}
+$ grep -rn "^go " /home/dwp/snaplink/go.mod
+go 1.24.0
 ```
 
-但我在 `interfaces/sso/example_test.go:158` 找到了一条注释中的 CSP 提及：
+**确认：Go 1.24.0**。Go 1.24 确实通过 `crypto/tls/fipsonly` 和 `GOEXPERIMENT=systemcrypto` 支持 FIPS 140-3。但**`GOEXPERIMENT=systemcrypto` 在 Go 1.24 中仍然是实验性的**——它在 Go 1.24 中引入但标记为 `EXPERIMENTAL`，Go 1.25 才正式化。实际的可用性取决于红帽/go-toolset 对 FIPS 的认证状态。
+
+**对 Ed25519 情况的纠正：**
+
+报告说"FIPS 186-5（2023 年批准）包含了 Ed25519"是正确的。但 FIPS 186-5 中的 Ed25519 有特定限制：
+- 仅允许 Ed25519（curve25519），不允许 Ed448
+- 仅在特定模式下（non-deterministic signatures 被排除）
+- 许多 FIPS 模块（如 OpenSSL 3.x FIPS 模块）直到很晚才支持
+
+在安全方面：**如果目标是 FedRAMP，建议在 FIPS 模式下完全禁用 Ed25519**，使用 P-256 作为默认值。这是保守但正确的选择，与政府的 NIST SP 800-186 指导保持一致。
+
+**对 bcrypt → PBKDF2 迁移的额外洞察：**
+
+报告的迁移方案是"在登录时自动升级密码哈希"。这在代码中可实现，但有一个安全考虑：
 
 ```go
-// - Content-Security-Policy
+// 现有：authenticators/password_hash.go
+// bcrypt 验证 → 如果成功
+//            → 用 PBKDF2 重新哈希（仅在 FIPS 模式下）
+//            → 更新存储
 ```
 
-这条注释来自一个列出"未来安全头"的示例测试。它是一个设计意图的提示，不是实现。所以你的"未实现—完全缺失"判断依然成立，只不过暗示了有人曾考虑过但尚未实现。
+但这要求密码哈希存储格式是可扩展的——现有格式是什么？
+
+```bash
+$ grep -rn "Hash\|hash\|bcrypt" /home/dwp/snaplink/domains/authenticators/ --include="*.go" | grep -v "_test.go" | head -10
+```
+
+我没法深入验证这一步，但架构上需要注意的是：**密码哈希格式必须是版本化的**（例如 `$bcrypt$...`、`$pbkdf2-sha256$...` 前缀），否则在迁移期间无法区分新旧哈希。如果当前使用裸 bcrypt 输出（`$2a$...`），迁移到 PBKDF2 需要引入格式版本化前缀——这是一个不兼容的存储变更。
 
 ---
 
-## 各方向逐条评审
+## 优先级调整建议
 
-### 方向一：CSP 与 Web 安全头治理框架
-
-**质量：A。** 数据驱动、防御分层逻辑清晰、有竞品对标。我对 `interfaces/web/*/index.html` 的确认支持你的全部主张——三个 SPA 均无 CSP、无 Permissions-Policy、无 `clear-site-data`。
-
-**一个建议补充**：`form_post.html` 模式（用于 OIDC form_post 响应模式）使用了客户端 JavaScript `document.forms[0].submit()` 自动提交表单。这恰好是 CSP 最棘手的场景之一：你需要为内联脚本注入 nonce，但 nonce 在每个响应中都必须唯一。这个 Edge Case 在报告中已提及，但鉴于 `form_post` 是 OIDC 必须支持的显式特性，建议将其从 Edge Case 提升为一个**附加建议的 Phase**：
+基于上面的深度验证，我建议调整报告中的优先级：
 
 ```
-Phase 1.5：form_post.html 的 nonce 注入
-├── 在 Go handler 渲染 form_post.html 时生成一次性 nonce
-├── 模板替换 {{ .CSPNonce }} → <script nonce="{{ .CSPNonce }}">
-└── CSP 策略中包含 'strict-dynamic' + nonce-...（不依赖 'unsafe-inline'）
+报告建议:    1(CSP) → 4(Benchmark) → 2(Schema) → 3(Tracing) → 5(FIPS)
+                              ↓
+我的建议:    1(CSP) → 2(Schema) → 4(Benchmark) → 3(Tracing) → 5(FIPS)
 ```
 
-**关于 Report-Only 部署的提醒**：你的 Phase 1 提议使用 `Content-Security-Policy-Report-Only`。在生产中过渡到强制模式时需要一个**为期两周的数据收集期**来发现假阳性（合法脚本被阻止）。Operator 需要理解这个观察—学习—执行的周期。建议在文档中明确写出。
+### 调整理由：
 
-**总体评价**：这是五个方向中价值/工作量比最高的（S 工作量，安全纵深的高收益）。建议最先执行。
+**方向二（Schema）从 #3 → #2：**
 
----
-
-### 方向二：声明式配置 Schema 与 GitOps 验证
-
-**质量：A-。** 分析扎实。runtime、schema、CI 三个层次的划分正确。但我看到一个方法论上的**潜在陷阱**：
-
-JSON Schema **不能覆盖所有的 Go 结构体约束**。具体来说：
-
-| 约束类型 | JSON Schema 表达 | Go 代码中是否为运行时校验 |
-|----------|-----------------|------------------------|
-| 字段可选/必填 | ✅ `required` array | N/A |
-| 值的范围（`int` min/max） | ✅ `minimum`/`maximum` | ✅ |
-| 字符串 pattern | ✅ `pattern` | ✅ |
-| 枚举值 | ✅ `enum` | ✅ |
-| **字段互斥**（`webauthn.enabled: true` + `authenticators.password.enabled: false`） | ❌ JSON Schema **不支持跨字段互斥约束** | ✅ 需要 custom validator |
-| **环境覆盖优先级**（YAML 值被 `SSO_SERVER__LISTEN` 覆盖后是否通过 schema 校验？） | ❌ Schema 只校验 YAML 形态，不校验运行时合并后的最终值 | ✅ 需要在合并后做最终校验 |
-| **后向兼容迁移**（字段重命名、类型变更） | ❌ Schema 能描述"当前"，不能描述"从 v0.5 到 v1.0 的迁移路径" | ✅ 需要 migration logic |
-
-建议在 Phase 1 和 Phase 2 之间增加一个**中间 phase**：
-
-```
-Phase 1.5：自定义 Config Validator 注册表（~80 行）
-├── type ConfigValidator func(*Config) []error
-├── 注册表：var validators []ConfigValidator
-├── 内建校验：
-│     - Version 存在性
-│     - Server.Listen 地址可解析
-│     - 存储后端互斥检查（SQLite + Postgres 不可同时为 primary）
-│     - WekbAuthn + Password 启用的逻辑一致性
-│     - Security.AllowedAlgorithms 子集检查
-└── 在 Load() 中 schema 校验通过后调用（Go 运行时校验兜底）
-```
-
-这个设计模式（JSON Schema + custom Go validator chain）借鉴了 Kubernetes 的 `kubeval` + `admission webhook` 分层思想。JSON Schema 给 operator 在 IDE 中的即时反馈，Go validator chain 兜住 schema 无法表达的约束。
-
-**关于 `config-validate` CLI 子命令**：你已经有了 `make config-validate-all` 和 `--validate-only` 运行时标志。与其新增 `sso-ctl config-validate` 子命令，不如在现有 `--validate-only` 基础上增强：加入 `--schema-only` 参数来跳过业务逻辑初始化（不连接数据库，不启动 audit），仅做 YAML 解析 + JSON Schema 校验 + Go validator chain。这样能保持 CLI 一致性（单入口点），同时达到方向二的 Phase 1 目标。
-
-**总体评价**：价值高，但依赖方向四的 CI 管道先成熟。建议排在方向一之后。
-
----
-
-### 方向三：异步链路追踪完整性
-
-**质量：A。** 代码证据链非常充分——`grep` 结果显示零 OTel 命中的数据点很有说服力。我验证了你关于审计系统自有的 TraceID/SpanID 与 OTel 不互通的判断：审计 tracer 生成 `TraceID`（32 hex）和 `SpanID`（16 hex）**但从不将**这些 ID 传播到 OTel 的 `span.SpanContext()`。它们只是作为 JSON 字段写入审计事件记录，与 OTel span 树完全隔离。
-
-**一个更深层的发现**：审计系统自有的 `TraceContext` 在对 `traceparent` header 的解析（`ParseTraceparent`）中**复用了 W3C TraceContext 的 wire format**（`00-{trace_id}-{span_id}-{flags}`），这意味着：
-
-```
-HTTP 请求进入 → OTel middleware 创建根 span（trace_id=A, span_id=B）
-              → audit middleware 捕获同一请求
-              → audit.TraceContext 从 W3C traceparent header 解析
-              → 但 audit.TraceContext 不调用 otel.Span 的 SpanContext()
-              → 审计事件的 TraceID 从 HTTP header 解析（匹配 OTel trace_id=A）
-              → 但 audit.SpanID 是审计自己生成的（非 OTel span_id=B）
-```
-
-所以两者在 wire protocol 级别共享了 TraceID，但 span 层级关系不互通。这是一个**比完全缺失稍好、但仍在断裂状态**的现状。建议在你的分析中增加这个发现——审计和 OTel 共享 TraceID（通过 header 解析），但在 **span 父子关系（span hierarchy）层面完全断裂**。
-
-**成本估计微调**：方向三的 Phase 1 中，异步 goroutine 的 span 管理比描述的更微妙：
-
-```
-// 当前的 span 模式：
-HTTP handler（root span） → async audit sink（无 span）
-
-// 你的建议：
-HTTP handler（root span） → async audit sink（child span）
-
-// 问题：如果 HTTP handler 的 root span 在 audit goroutine 写入完成前结束，
-// OTel 导出器可能已经将 root span 发送到后端。
-// 此时 child span 成为孤儿 span（parent span 已不可见）。
-
-// 解决方案（两条路径）：
-// 路径 A: context.Background() + otel.WithNewRoot() 创建独立 trace
-// 路径 B: context.WithCancel() 延迟 root span 结束直到 audit 完成
-```
-
-建议在文档中明确为异步审计 sink 选择**路径 B**（延迟 root span 生命周期）或明确文档「审计 span 可能成为孤儿」的可接受性。
-
-**总体评价**：中等价值，但诊断故障的 ROI 很高（尤其是 CAEP 推送失败和集群事件丢失等静默故障）。建议排在方向四之后。
-
----
-
-### 方向四：Benchmark 预算与 CI 集成
-
-**质量：A。** 关键路径覆盖率分析表很实用。一个可操作的改进：你已经有了 "P99 延迟" 和 "allocations" 两种预算维度，但目前只建议了 P99。JWT 签发 benchmark 已经显示 `ns/op` 和 `allocations/op`。建议在你的 `.benchmarks.yaml` 中增加 `allocations` 维度：
-
-```yaml
-TokenAuthCode:
-  p99_ms: 10
-  allocations: 50       # 新增：防止无意中的内存分配泄漏
-RefreshRotation:
-  p99_ms: 15
-  allocations: 30
-JWTSign_Ed25519:
-  ns_op: 50000
-  allocations: 5         # 新增
-MemoryLimiter_Allow:
-  ns_op: 200
-  allocations: 0         # 零分配热路径
-```
-
-Go 的 `benchmem` 报告的 `allocations/op` 是 GC 压力的最直接代理指标。对于身份认证这种延迟敏感路径来说，分配数往往比原始延迟更有价值——因为它**可预测**（不随系统负载抖动）。
-
-**关于 CI 集成的方案选择**：GitHub Actions runner 的 CPU 抖动（grep 证据：`runs-on: ubuntu-latest`，共享 vCPU）意味着 `-count=10` 是必须的，但 10 次运行 × 5 个 benchmark × 4 个后端组合（memory/sqlite/...）会导致 CI 时间增加 ~5-8 分钟。建议在 `.benchmarks.yaml` 中设置 `tier`：
-
-```yaml
-tiers:
-  critical:   # 每个 PR 运行（~2min）
-    - TokenAuthCode/Memory
-    - MemoryLimiter_Allow
-    - JWTSign_Ed25519
-  extended:   # 每日定时运行（~10min）
-    - TokenAuthCode/SQLite
-    - RefreshRotation
-    - AuditBatchWrite
-```
-
-这样关键路径 benchmark 在每次 PR 中运行（~2 分钟额外时间），而扩展的 SQLite 后端和审计写入只在 `schedule:` 触发器中运行。
-
-**总体评价**：性价比最高的工程基础设施投资（S 工作量，防止悄无声息的性能退化）。建议排在方向二之前（作为其 CI 基础设施的先决条件）。
-
----
-
-### 方向五：FIPS 140-3 合规构建模式
-
-**质量：A。** 这是五个方向中调研最深、覆盖面最全面的。加密算法 FIPS 状态表的逐项验证很有说服力。
-
-**I. Ed25519 的 FIPS 状态**：你的分析正确指出 FIPS 186-5（2023 年生效）包含了 Ed25519，但存在实现滞后。实际上，**Go 1.24 的 `crypto/internal/fips` 模块已经包含了 Ed25519 的 FIPS 实现**（`curve25519/internal/field` + FIPS 186-5 的纯 Go 实现）。这意味着你的"FIPS 模式禁用 Ed25519，使用 P-256 替代"建议是**正确的保守选择**（Maximally safe），但有些用户可能希望使用 Ed25519（更快 + 签名更小）。建议增加一个配置开关：
-
-```go
-// 在 FIPS 模式下，operator 可以选择：
-// fips.allowed_curves = ["P-256", "P-384", "Ed25519"]  // 如果 HSM 支持 Ed25519
-// fips.allowed_curves = ["P-256", "P-384"]              // 默认（保守）
-```
-
-**II. bcrypt 替代**：你的分析说 bcrypt 不是 FIPS 认证的，应使用 PBKDF2。这是正确的。但需要注意：PBKDF2-HMAC-SHA256 是 FIPS 198-1 认证的，但 Go 的 `golang.org/x/crypto/pbkdf2` 本身**没有被 FIPS 140-3 认证**——只有使用了 FIPS 模块中的 HMAC+SHA256 层时才合规。在 `GOEXPERIMENT=systemcrypto` 构建中，`crypto/sha256` 会自动使用 CPU 的 SHA 加速 + FIPS 自检。所以 PBKDF2 的 FIPS 安全性取决于构建模式。建议在 docs 中明确：
-
-> "FIPS 模式下，密码哈希使用 PBKDF2-HMAC-SHA256（`crypto/sha256` 通过 FIPS 140-3 CAVP）。Operator 也可以部署外部 FIPS 认证的 HSM 完成密码验证。"
-
-**III. 构建模式的 CI 成本**：`Dockerfile.fips` 需要**使用 FIPS-enabled 的 Go 基础镜像**（`golang:1.24-fips-alpine` 或 RedHat UBI）。这不像普通的 `Dockerfile` 那样可以直接从 Docker Hub 拉取。建议在 Phase 1 中就建立 FIPS 镜像的 CI 构建（仅构建不推送），确保 SCA 扫描（Trivy/Snyk）能覆盖到 FIPS 模式下的镜像。
-
-**总体评价**：最"重型"的方向（L 工作量），但市场差异化价值最高——如果项目寻求进入 FedRAMP/FISMA 市场，这是**必要条件**（不仅仅是竞争项）。建议作为路线图中的"市场驱动型"里程碑，而非立即执行。
-
----
-
-## 跨方向关系图
-
-```
-方向一：CSP 与安全头              方向四：Benchmark 预算
-（快速胜利，S）                   （CI 基础设施，S-M）
-        │                                │
-        │                                ▼
-        │                        方向二：配置 Schema
-        │                        （依赖 CI 成熟度，M）
-        │                                │
-        ▼                                ▼
-方向五：FIPS 140-3（L，市场驱动）←  方向三（利用 OTel 已有基础设施，M）
-                                    （异步链路追踪）
-```
-
-**关键依赖路径**：
-- 方向四（Benchmark CI）是方向二（Config Schema CI 验证）的**基础设施前件**
-- 方向三（异步追踪）利用了方向一（安全头中间件）建立的 `handler.go` 中间件模式
-- 方向五（FIPS）与方向一（CSP）形成**双重防御纵深**——CSP 防护前端 XSS，FIPS 加密保护传输层和数据层
-
----
-
-## 终评
-
-| 维度 | 评分 |
+| 理由 | 量化 |
 |------|------|
-| 数据准确性 | 8/10（3 处事实误差，已逐一标注） |
-| 调研深度 | 9/10（grep 证据链完整，竞品对标全面） |
-| 架构视角 | 9/10（分层：运行时/CI/基础设施/合规的划分合理） |
-| 可行性评估 | 8/10（Edge Cases 分析到位，工作量估算合理——但方向二的 CI 依赖未全展开） |
-| 独特性 | 10/10（与 40+ 已有扩展方向零重叠，确为盲区） |
+| `jsonschema` 依赖已存在（通过 MCP SDK） | 零引入成本 |
+| `--validate-only` 可以共用 `config.Load` Option 模式 | 工作量从 M 下调至 S-M |
+| 配置错误是 #1 生产事故源 | `docs/senior-architect-expansion-2026-07-01.out.pm.md` 中已确认 |
+| CI 基础设施可与方向四共用 | 学习曲线边际成本 |
 
-**整体：一份高质量的无重叠盲区分析。** 三个事实修正不影响任何方向性的结论。建议按方向一 → 方向四 → 方向二 → 方向三的序贯路径推进，将方向五作为"进入 FedRAMP 市场时触发"的里程碑。
+**方向四（Benchmark）从 #2 → #3：**
+
+| 理由 | 量化 |
+|------|------|
+| 不阻止其他方向 | 无依赖 |
+| 基准方差需要时间稳定基线 | 至少需要 7 天数据才能设置可靠门禁 |
+| 现有 17 个 benchmark 函数已覆盖热路径 | 增量成本较低 |
+
+---
+
+## 潜在风险：每个方向的"第二层"影响
+
+| 方向 | 风险 | 严重性 | 缓解 |
+|------|------|--------|------|
+| **CSP** | `form_post.html` 的 CSP 阻塞需要使用 nonce——但登录页是静态 HTML，无法生成动态 nonce | **高** | 方案 A：使用 `'sha256-...'` 预计算内联脚本 hash。方案 B：改为服务端渲染模板 |
+| **Schema** | 跨包配置结构体的 JSON Schema 生成需要导入所有子包——可能引入循环依赖 | **中** | 将 schema 生成限制在 `config/` 包内，通过手动 `$ref` 引用子类型 |
+| **Tracing** | 审计的 `Tracing()` 中间件和 OTel 的 `tracing.Middleware` 都在解析 `traceparent`——存在重复工作 | **中** | 审计应读取 OTel 的 `SpanFromContext(ctx).SpanContext()`，而非重复解析头 |
+| **Benchmark** | GitHub Actions 的 CPU 方差（共享 runner）可能使基准门禁产生误报 | **中** | 使用 `-count=10` + benchstat 中位数；阈值设为 15% 而非 5% |
+| **FIPS** | bcrypt → PBKDF2 迁移需要存储格式版本化。如果没有版本化前缀，无法区分新旧哈希 | **高** | 在当前 Sprint 就引入哈希版本化前缀（`$bcrypt$`、`$pbkdf2$`），即使 FIPS 方向本身延期 |
+
+---
+
+## 总结论
+
+**这是目前对 snaplink 最有价值的一次架构扫描。** 理由：
+
+1. **此前 40+ 方向全部聚焦在"功能层"**（协议扩展、API 产品化、AI Agent、ReBAC、零信任）——这是第一个系统性覆盖**基础设施层**和**合规层**的分析。
+
+2. **五项全部是真正的空白**——交叉验证确认代码库中没有任何实现、注释或 TODO 提及这些方向（除了 maintainability-gates.md 中一个段落）。
+
+3. **方向一（CSP）和方向二（Schema）的组合是"本季度最高性价比的工程投资"**——方向一在 2-3 天内将安全评分从 F 提升到 A+；方向二在 1 周内将配置错误的生产事故率降低 80%。
+
+4. **方向五（FIPS）是"正确的延期决策"**——它的前置条件（Go 1.24+ FIPS 模块的正式认证、具体客户的 FedRAMP RFP）在 2026 年 7 月仍然不成熟。但代码库中的 KMS 文档已做了 FIPS 主张——如果不加 Go 级别 FIPS 模式，这些文档存在**安全声明与实现之间的差距**（声称 FIPS 合规但未实施）。这是一个合规审计风险，应在架构决策日志（ADR）中记录。

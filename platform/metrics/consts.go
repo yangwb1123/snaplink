@@ -63,6 +63,12 @@ const (
 	NameSignupCompletedTotal       = "sso_signup_completed_total"
 	NamePasswordResetRequestedTotal  = "sso_password_reset_requested_total"
 	NamePasswordResetCompletedTotal  = "sso_password_reset_completed_total"
+
+	// NameFeatureGateEnabled is a startup snapshot: 1 while a protocol
+	// surface's routes are mounted, 0 while an operator explicitly turned
+	// it off via feature_gates. Set once at boot (gates are not runtime-
+	// mutable), not a request-path counter.
+	NameFeatureGateEnabled = "sso_feature_gate_enabled"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by
@@ -87,6 +93,7 @@ const (
 	LabelReason      = "reason"    // bounded per metric; see AdoptionReason* below
 	LabelTenant      = "tenant"    // bounded by an operator allowlist + the "other" bucket
 	LabelDirection   = "direction" // bounded: published | adopted
+	LabelFeature     = "feature"   // bounded: the fixed FeatureGates surface names
 )
 
 // Cross-replica token-revocation propagation directions

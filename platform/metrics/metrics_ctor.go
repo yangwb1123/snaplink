@@ -48,6 +48,7 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 	registerClusterHealthMetrics(factory, m)
 	registerCAEPMetrics(factory, m)
 	registerRefreshRevocationMetrics(factory, m)
+	registerFeatureGateMetrics(factory, m)
 
 	return m
 }
@@ -393,6 +394,16 @@ func registerRefreshRevocationMetrics(factory promauto.Factory, m *Metrics) {
 			Help: "Cross-replica access-token revocation propagation events, by direction (published/adopted). published = this replica broadcast a token-revoked Event after a local /token/revoke; adopted = this replica added a peer-published revoked token to its own in-process deny-set. No token/jti label (bounded cardinality). Purely additive + best-effort. Zero traffic when cross-replica revocation isn't armed.",
 		},
 		[]string{LabelDirection},
+	)
+}
+
+func registerFeatureGateMetrics(factory promauto.Factory, m *Metrics) {
+	m.FeatureGateEnabled = factory.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: NameFeatureGateEnabled,
+			Help: "Whether a protocol surface's routes are mounted (1) or explicitly disabled via feature_gates (0). Set once at boot per feature (bounded cardinality — the fixed gate set), never on the request path.",
+		},
+		[]string{LabelFeature},
 	)
 }
 

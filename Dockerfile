@@ -1,13 +1,14 @@
-# Multi-stage build for cmd/sso-server. Stage 1 compiles a fully static
-# binary inside the official Go toolchain image; stage 2 ships only the
-# binary on a distroless base so the runtime image is tiny (~20MB) and
-# has no shell / no package manager / no userland tools an attacker can
-# pivot through.
+# Multi-stage build for cmd/sso-server and cmd/sso-mcp.
+# Stage 0: builder — compiles both fully static binaries inside the
+# official Go toolchain image. Stage 1a: sso-server runtime (distroless,
+# default target). Stage 1b: sso-mcp runtime (distroless, target=build-mcp).
 #
-# Build:    docker build -t snaplink/sso-server .
-# Run:      docker run --rm -p 8080:8080 -p 8081:8081 \
-#               -v $(pwd)/cmd/sso-server/config.yaml:/etc/sso/config.yaml \
-#               snaplink/sso-server --config /etc/sso/config.yaml
+# Build sso-server:   docker build -t snaplink/sso-server .
+# Build sso-mcp:      docker build --target sso-mcp -t snaplink/sso-mcp .
+# Run sso-server:
+#   docker run --rm -p 8080:8080 -p 8081:8081 \
+#       -v $(pwd)/cmd/sso-server/config.yaml:/etc/sso/config.yaml \
+#       snaplink/sso-server --config /etc/sso/config.yaml
 #
 # The image does NOT bake in a config file — operators bind-mount or
 # template their own. The default cmd/sso-server/config.yaml in this
@@ -22,13 +23,12 @@ RUN apk add --no-cache git ca-certificates
 
 WORKDIR /src
 
-# Cache the module download as its own layer so source edits don't
-# re-pull go.sum on every build.
+# ── Layer 1: root module dependencies ─────────────────────────────
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Cache each sub-module separately so a source change in one doesn't
-# force re-downloading every module's dependency tree.
+# ── Layer 2: sibling module dependencies (each in its own layer
+#    so a source change in one doesn't invalidate another) ─────────
 COPY cmd/sso-mcp/go.mod cmd/sso-mcp/go.sum ./cmd/sso-mcp/
 RUN go mod download ./cmd/sso-mcp/
 
@@ -53,20 +53,18 @@ RUN go mod download ./infrastructure/kms/pkcs11/
 COPY infrastructure/ldap/go.mod infrastructure/ldap/go.sum ./infrastructure/ldap/
 RUN go mod download ./infrastructure/ldap/
 
-COPY infrastructure/postgres/go.mod infrastructure/postgres/go.sum ./infrastructure/postgres/
-RUN go mod download ./infrastructure/postgres/
-
 COPY infrastructure/radius/go.mod infrastructure/radius/go.sum ./infrastructure/radius/
 RUN go mod download ./infrastructure/radius/
-
-COPY infrastructure/redis/go.mod infrastructure/redis/go.sum ./infrastructure/redis/
-RUN go mod download ./infrastructure/redis/
 
 COPY infrastructure/saml/go.mod infrastructure/saml/go.sum ./infrastructure/saml/
 RUN go mod download ./infrastructure/saml/
 
+# ── Layer 3: source code ──────────────────────────────────────────
 COPY . .
 
+# ═════════════════════════════════════════════════════════════════
+# Build sso-server  (http REST + gRPC — the main binary)
+# ═════════════════════════════════════════════════════════════════
 # CGO_ENABLED=0 + -ldflags="-s -w" gives a self-contained, stripped
 # binary that runs on distroless static. -trimpath strips local paths
 # from stack traces for reproducibility.
@@ -76,11 +74,20 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -o /out/sso-server \
     ./cmd/sso-server
 
-# ---- runtime ----
-# distroless/static is the right base for a static Go binary: no libc,
-# no shell, runs as UID 65532 (nonroot) by default. The :nonroot tag
-# pins that UID even if the upstream default changes.
-FROM gcr.io/distroless/static:nonroot
+# ═════════════════════════════════════════════════════════════════
+# Build sso-mcp  (MCP protocol gateway)
+# ═════════════════════════════════════════════════════════════════
+# sso-mcp is a nested module (has its own go.mod), so the build
+# must run from ./cmd/sso-mcp with the module's own dependency
+# tree. Identical hardening flags.
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -trimpath \
+    -ldflags="-s -w" \
+    -o /out/sso-mcp \
+    ./cmd/sso-mcp
+
+# ---- runtime: sso-server (default target) ----
+FROM gcr.io/distroless/static:nonroot AS sso-server
 
 COPY --from=builder /out/sso-server /sso-server
 
@@ -91,3 +98,14 @@ EXPOSE 8081
 
 USER nonroot:nonroot
 ENTRYPOINT ["/sso-server"]
+
+# ---- runtime: sso-mcp (target=build-mcp) ----
+FROM gcr.io/distroless/static:nonroot AS sso-mcp
+
+COPY --from=builder /out/sso-mcp /sso-mcp
+
+# MCP server listens on configurable port (default 8082).
+EXPOSE 8082
+
+USER nonroot:nonroot
+ENTRYPOINT ["/sso-mcp"]

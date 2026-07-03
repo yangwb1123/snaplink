@@ -1,0 +1,77 @@
+# OIDC Conformance Test Suite — docker compose
+#
+# Runs the OpenID Foundation's conformance test suite against a local
+# SSO server instance.
+#
+# Usage:
+#   docker compose up -d
+#   # Open http://localhost:8080 in a browser
+#   # Configure the test suite to point at http://localhost:8180 (sso-server)
+#
+# The sso-server container is built from the local source tree. The
+# conformance-suite container is the official OpenID Foundation image.
+#
+# Environment variables in config.env override defaults.
+
+services:
+  # SSO server under test — built from the local source tree
+  sso-server:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.test
+    ports:
+      - "8180:8080"
+    environment:
+      - SSO_ISSUER=http://localhost:8180
+      - SSO_STORAGE=sqlite
+      - SSO_SIGNUP_ENABLED=true
+      - SSO_DCR_ENABLED=true
+      - SSO_ALLOW_OPEN_REGISTRATION=true
+      - SSO_LOG_LEVEL=debug
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+      start_period: 5s
+    networks:
+      - conformance-net
+
+  # OIDF conformance test suite
+  conformance-suite:
+    image: openid/conformance-suite:latest
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    environment:
+      - CONFORMANCE_DB_HOST=conformance-db
+      - CONFORMANCE_DB_PORT=5432
+      - CONFORMANCE_DB_NAME=conformance
+      - CONFORMANCE_DB_USER=conformance
+      - CONFORMANCE_DB_PASSWORD=conformance
+      - CONFORMANCE_SERVER_EXTERNAL_URL=http://localhost:8080
+      - CONFORMANCE_SSO_SERVER=http://sso-server:8080
+      - CONFORMANCE_SSO_DISCOVERY=http://sso-server:8080/.well-known/openid-configuration
+    depends_on:
+      sso-server:
+        condition: service_healthy
+      conformance-db:
+        condition: service_started
+    networks:
+      - conformance-net
+
+  # Database for conformance test suite
+  conformance-db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_DB=conformance
+      - POSTGRES_USER=conformance
+      - POSTGRES_PASSWORD=conformance
+    ports:
+      - "5432:5432"
+    networks:
+      - conformance-net
+
+networks:
+  conformance-net:
+    driver: bridge

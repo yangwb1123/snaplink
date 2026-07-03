@@ -2,11 +2,14 @@ package sso
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/snaplink/sso/domains/federation"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
 	"github.com/snaplink/sso/internal/auth/consent"
+	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/shared/spi"
 )
 
@@ -58,22 +61,7 @@ func NewServer(opts ...Option) *Server {
 		opt(s)
 	}
 	s.startedAt = time.Now()
-	// Tap the audit pipeline for the CAEP/SSF transmitter, if wired. Done
-	// here (after every option ran, so order between WithAuditRecorder and
-	// WithCAEPTransmitter doesn't matter) by fanning the recorder's sink
-	// out to the transmitter. When the transmitter is unwired this branch
-	// is skipped entirely, so a build without it is byte-identical.
-	if s.caepTransmitter != nil && s.auditor != nil {
-		s.auditor.AddSink(s.caepTransmitter)
-	}
-	// Per-tenant metrics (§5): register the opt-in vectors when BOTH a
-	// tenant allowlist AND a metrics registry are wired. Done post-options
-	// (order between WithMetrics and WithTenantMetricsAllowlist is
-	// irrelevant); EnableTenantMetrics is idempotent. Without both, the
-	// vectors stay nil and nothing is registered or emitted (byte-identical).
-	if len(s.tenantMetricsAllowlist) > 0 && s.metrics != nil {
-		s.metrics.EnableTenantMetrics()
-	}
+	s.applyAuditAndMetricsWiring()
 	// OpenID Federation 1.0 automatic client registration (slice 3) then the
 	// opt-in per-login ClientStore metadata cache. Order between these two
 	// ClientStore decorators is load-bearing: the cache MUST wrap the
@@ -82,7 +70,34 @@ func NewServer(opts ...Option) *Server {
 	// byte-identical preconditions when a precondition does not hold.
 	s.applyFederationAutoRegistration()
 	s.applyClientStoreCache()
+	// Attack-surface visibility: emit the metric snapshot + (if any gate is
+	// off) the audit event + log line for FeatureGates. Last, so it reflects
+	// the fully-resolved config regardless of option order.
+	s.recordFeatureGateStartup()
 	return s
+}
+
+// applyAuditAndMetricsWiring taps the audit pipeline for the CAEP/SSF
+// transmitter and registers the opt-in per-tenant metric vectors, both
+// post-options so wiring order between the relevant With* calls is
+// irrelevant. Extracted from NewServer (which sits at the function-length
+// budget) — each block's own byte-identical-when-unwired precondition is
+// unchanged by the extraction.
+func (s *Server) applyAuditAndMetricsWiring() {
+	// Tap the audit pipeline for the CAEP/SSF transmitter, if wired, by
+	// fanning the recorder's sink out to the transmitter. When the
+	// transmitter is unwired this branch is skipped entirely, so a build
+	// without it is byte-identical.
+	if s.caepTransmitter != nil && s.auditor != nil {
+		s.auditor.AddSink(s.caepTransmitter)
+	}
+	// Per-tenant metrics (§5): register the opt-in vectors when BOTH a
+	// tenant allowlist AND a metrics registry are wired. EnableTenantMetrics
+	// is idempotent. Without both, the vectors stay nil and nothing is
+	// registered or emitted (byte-identical).
+	if len(s.tenantMetricsAllowlist) > 0 && s.metrics != nil {
+		s.metrics.EnableTenantMetrics()
+	}
 }
 
 // applyFederationAutoRegistration decorates the wired ClientStore so an
@@ -152,4 +167,57 @@ func (s *Server) applyClientStoreCache() {
 	}
 	s.clientStoreCacheRef = servercache.NewClientStoreCache(s.clientStore, s.clientStoreCacheTTL, onOutcome)
 	s.clientStore = s.clientStoreCacheRef
+}
+
+// gateState pairs a gate's wire name with its resolved on/off value, for
+// recordFeatureGateStartup — the single place that fans a gate's boolean out
+// to the metric + audit + log surfaces.
+type gateState struct {
+	name string
+	on   bool
+}
+
+func (s *Server) allGateStates() []gateState {
+	return []gateState{
+		{"oidc", s.oidcGateOn()},
+		{"ciba", s.cibaGateOn()},
+		{"caep", s.caepGateOn()},
+		{"federation", s.federationGateOn()},
+		{"self_service", s.selfServiceGateOn()},
+		{"admin_api", s.adminAPIGateOn()},
+		{"web_spa", s.webSPAGateOn()},
+	}
+}
+
+// recordFeatureGateStartup logs, audits, and records a metric for every gate
+// an operator explicitly disabled. Called once from NewServer, after every
+// option (including WithFeatureGates) has run. Disabling a protocol surface
+// is a deliberate attack-surface change, so it gets the same visibility as
+// any other security-relevant configuration — but a build that never
+// touches FeatureGates (every gate on) emits nothing new here beyond the
+// (all-1) metric snapshot, keeping the common case's audit trail
+// byte-identical to a pre-gate server.
+func (s *Server) recordFeatureGateStartup() {
+	states := s.allGateStates()
+	var disabled []string
+	for _, g := range states {
+		s.metrics.SetFeatureGateEnabled(g.name, g.on)
+		if !g.on {
+			disabled = append(disabled, g.name)
+		}
+	}
+	if len(disabled) == 0 {
+		return
+	}
+	sort.Strings(disabled)
+	joined := strings.Join(disabled, ",")
+	s.logger.Info("sso: protocol surfaces disabled via feature_gates", "disabled", joined)
+	e := &audit.Event{
+		Type:      audit.EventFeatureGatesDisabled,
+		Outcome:   audit.OutcomeSuccess,
+		Timestamp: time.Now(),
+		Reason:    joined,
+	}
+	audit.SetMeta(e, "disabled_gates", joined)
+	s.auditor.Record(context.Background(), e)
 }

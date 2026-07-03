@@ -1,0 +1,198 @@
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  SSO Server Helm Chart values                              ║
+# ║                                                            ║
+# ║  All values have defaults. Override via --set, -f, or      ║
+# ║  a custom values file.                                     ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+# ── Global overrides ──────────────────────────────────────────
+global:
+  # Namespace override. Default: sso-server (from Chart name).
+  namespaceOverride: ""
+
+# ── Image ─────────────────────────────────────────────────────
+image:
+  # Repository on GitHub Container Registry.
+  repository: ghcr.io/snaplink/sso-server
+  # Image tag. Override with --set image.tag=vX.Y.Z.
+  # Production deployments MUST pin a semver tag or digest.
+  tag: latest
+  # Pull policy. Always is safest for :latest, IfNotPresent for tags.
+  pullPolicy: IfNotPresent
+
+# ── ImagePullSecrets ──────────────────────────────────────────
+imagePullSecrets: []
+
+# ── Service account ───────────────────────────────────────────
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# ── Deployment ────────────────────────────────────────────────
+deployment:
+  # Number of replicas.
+  # IMPORTANT — shared state: >1 replica is only CORRECT with
+  # SHARED backends (Redis + Postgres + etcd). With the default
+  # `memory` stores, auth codes created on one pod are unknown
+  # to another. Set replicas: 1 for single-instance with sqlite/PVC.
+  replicas: 2
+
+  # Update strategy.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  # Pod-level security context.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+
+  # Container-level security context.
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: [ALL]
+
+  # Resource requests and limits.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # Pod anti-affinity (preferred) — spread across nodes.
+  podAntiAffinity:
+    enabled: true
+    topologyKey: kubernetes.io/hostname
+    weight: 100
+
+  # Topology spread constraints (for multi-zone clusters).
+  topologySpreadConstraints: []
+
+  # Additional environment variables.
+  # Example:
+  # env:
+  #   - name: SSO_LOGGING__LEVEL
+  #     value: debug
+  env: []
+
+  # Additional volumes (for secrets, etc.)
+  extraVolumes: []
+  extraVolumeMounts: []
+
+  # Graceful shutdown.
+  terminationGracePeriodSeconds: 30
+
+  # Lifecycle hooks.
+  lifecycle: {}
+
+  # Annotations on pods.
+  podAnnotations: {}
+
+  # Labels on pods.
+  podLabels: {}
+
+# ── Probes ────────────────────────────────────────────────────
+livenessProbe:
+  enabled: true
+  path: /livez
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  enabled: true
+  path: /readyz
+  initialDelaySeconds: 1
+  periodSeconds: 5
+  failureThreshold: 2
+
+# ── Service ───────────────────────────────────────────────────
+service:
+  # Service type.
+  type: ClusterIP
+  # Port mappings.
+  ports:
+    http:
+      port: 8080
+      targetPort: http
+      protocol: TCP
+      name: http
+    grpc:
+      port: 8081
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  # LoadBalancer / NodePort only.
+  loadBalancerIP: ""
+  nodePorts: {}
+
+# ── Ingress ───────────────────────────────────────────────────
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: sso.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+    # - secretName: sso-tls
+    #   hosts:
+    #     - sso.example.com
+
+# ── Config ────────────────────────────────────────────────────
+# SSO server configuration. Maps directly to the ConfigMap
+# mounted at /etc/sso/config.yaml.
+config:
+  server:
+    issuer: sso-server
+    base_url: http://sso-server:8080
+    listen: ":8080"
+    session_ttl: 24h
+    token_ttl: 1h
+    default_token_strategy: jwt
+
+  logging:
+    level: info
+
+  audit:
+    enabled: true
+    api_enabled: false
+    memory_capacity: 10000
+
+# ── Autoscaling (HPA) ─────────────────────────────────────────
+autoscaling:
+  enabled: false
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  # targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+
+# ── PodDisruptionBudget ───────────────────────────────────────
+pdb:
+  enabled: false
+  minAvailable: 2
+  # maxUnavailable: 1
+
+# ── Network options ───────────────────────────────────────────
+# nodeSelector, tolerations, affinity for advanced scheduling.
+nodeSelector: {}
+tolerations: []
+affinity: {}

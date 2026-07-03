@@ -157,13 +157,11 @@ func baseAdvertisedGrants() []string {
 }
 
 func buildBaseMetadata(s *Server, base string) oidc.ProviderMetadata {
-	return oidc.ProviderMetadata{
+	cfg := oidc.ProviderMetadata{
 		Issuer:                        base,
 		AuthorizationEndpoint:         base + PathLogin,
 		TokenEndpoint:                 base + PathToken,
-		UserInfoEndpoint:              base + PathUserInfo,
 		JWKSURI:                       base + PathJWKS,
-		EndSessionEndpoint:            base + PathEndSession,
 		RevocationEndpoint:            base + PathRevoke,
 		IntrospectionEndpoint:         base + PathIntrospect,
 		ResponseTypesSupported:        responseTypesFor(s),
@@ -171,6 +169,15 @@ func buildBaseMetadata(s *Server, base string) oidc.ProviderMetadata {
 		SubjectTypesSupported:         subjectTypesFor(s),
 		CodeChallengeMethodsSupported: codeChallengeMethodsFor(s),
 	}
+	// userinfo_endpoint / end_session_endpoint are both omitempty — branch
+	// the doc (rather than always setting them) so an OIDC-gated-off
+	// deployment's discovery document matches its actually-mounted routes
+	// (mountOIDCUserEndpoints skips both when the gate is off).
+	if s.oidcGateOn() {
+		cfg.UserInfoEndpoint = base + PathUserInfo
+		cfg.EndSessionEndpoint = base + PathEndSession
+	}
+	return cfg
 }
 
 // applyClientAuthAndRequestParams advertises the client-authentication methods
@@ -299,7 +306,7 @@ func (s *Server) applyMFAIssuerSigning(cfg *oidc.ProviderMetadata, ctx HandlerCo
 // the user from login_hint/id_token_hint rather than a user_code, so the
 // user_code parameter is unsupported.
 func (s *Server) applyCIBABackchannel(cfg *oidc.ProviderMetadata, base string) {
-	if s.cibaStore == nil {
+	if s.cibaStore == nil || !s.cibaGateOn() {
 		return
 	}
 	cfg.BackchannelAuthenticationEndpoint = base + PathBackchannelAuth

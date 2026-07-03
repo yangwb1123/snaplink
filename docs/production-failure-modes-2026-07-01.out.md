@@ -1,141 +1,90 @@
-## 代码核实验证报告
-
-我仔细阅读了您提到的全部关键文件。您的分析在**模式层面完全正确**，但有几个关键发现——代码**已经演化**了，其中两个最大的风险已被缓解。
+这份分析读完了，非常扎实。以下是我逐条的回馈和追加思考：
 
 ---
 
-### ✅ 故障三审查：AsyncSink 队列溢出 → 已被代码消除
+## 总评
 
-`async_sink.go` 的 `Record()` 方法**已经**实现了非阻塞丢弃：
+方法论清晰（模式反例 + 前车之鉴 + 架构脆弱性三类信号），优先级量化合理。用 SRE 视角替换此前 9 轮的"缺什么/好不好"视角，是一个好的视角转换。**No-code 原则**也严格遵守了。
 
-```go
-func (a *AsyncSink) Record(_ context.Context, e *Event) error {
-    select {
-    case a.queue <- e:
-        return nil
-    default:                    // ← 已有，不阻塞
-        a.dropsQueueFull.Add(1)
-        if a.onDrop != nil {
-            a.onDrop(e, ErrAsyncQueueFull)
-        }
-        return nil
-    }
-}
+---
+
+## 逐条回馈
+
+### 故障一：SQLite 并发写入崩塌
+
+你定位准确。不过我追加两个需要确认的事实：
+
+1. **WAL 模式下写入真的序列化吗？** SQLite WAL 允许**并发读取**（读不阻塞写、写不阻塞读），但**写入确实序列化**——任何时候只有一个写入者能持有 `RESERVED` 锁。这意味着 1000 req/s 的 `/token` 请求（每个做 DELETE + INSERT）确实会撞锁。
+
+2. **但是**当前代码中所有 SQLite store 是否共用一个 `*sql.DB` 实例？如果是，那问题更严重：`database/sql` 的连接池在 SQLite 模式下（`SetMaxOpenConns(1)` 或默认无限制）的行为差异很大。如果 `MaxOpenConns` 未限制，SQLite 的底层 `sqlite3` 锁文件机制会强制序列化——但 goroutine 会排队等几十个空闲连接全部超时。
+
+建议验证 `infrastructure/defaultimpl/sqlite/sqlite.go` 中 `Open()` 的 `SetMaxOpenConns` 设置。如果当前没有设 `1`，那**故障严重程度进一步上升**——不是因为锁争用，而是因为大量连接同时在 busy_timeout 中空转。
+
+### 故障二：Memory Store 重启丢失
+
+分析无误。但我认为需要区分两类丢失：
+
+- **短期数据**（AuthCode 5min / DeviceCode 10min / PAR 5min）：重启丢失是**可接受的**。RP 重试即可。
+- **长期数据**（RefreshToken 30-90d / Session 24h）：重启丢失是**灾难性的**。
+
+当前 `server.go` 的 `WithDefaultStores` 是否有某种机制区分这两类？比如 memory 用于短期、SQLite 用于长期？如果没有，那风险级别应从"中"提升到"高"。
+
+### 故障三：Async Audit Sink 队列溢出
+
+**这是我最认同的一个**。单点追加一个关键细节：
+
+你描述的降级策略（非阻塞 default）是**折中方案**——审计事件丢失，但服务保持可用。但在某些合规场景下，审计事件丢失是不可接受的（如 SOC2、PCI DSS）。更好的方案可能是：
+
+```
+队列满 → 第一个 default 走降级
+         ↓
+         判断事件等级（CRITICAL/NORMAL/DEBUG）
+         ↓
+         CRITICAL → 阻塞等待（有背压代价但保证不丢）
+         NORMAL/DEBUG → 丢弃
 ```
 
-并且 `dropsQueueFull` 是 `atomic.Int64`，配合 `WithAsyncDropHandler` 可接入告警。`batchWorker` 还在 `default` 分支做聚合并一次性冲刷，减少单条写入开销。
+这是一个**保核心事件、丢低价值事件**的策略。如果当前事件结构中已有 `Severity` 字段，这改动很小。
 
-您的第三点分析中提到的阻塞场景**当前代码不成立**。但您的洞察仍有价值——如果某天有人删了 `default` 分支（如"增强可靠性"的误重构），就会退化到阻塞模式。建议加一行注释警告来固化这一设计决策。
+### 故障四：etcd Watch 重连风暴
 
----
+分析方向正确，但我认为**生产影响被低估了**。原因：
 
-### ✅ 故障五审查：context.Background → 有意识的设计决策
+> 如果 etcd 重连风暴导致 `signingkeys/etcd` 的 watch 中断 → key 旋转事件延迟感知 → 新 pod 获取到旧 key → JWT 签名被下游 RP 拒绝 → 404/401 错误扩散。
 
-`async_sink.go` 的注释（~L153）已经解释：
+所以影响不仅是 netpolicy 退化，还可能是**签名不一致导致的认证失败**。建议风险提升至"高"。
 
-> The supplied ctx is intentionally NOT forwarded to the worker: the request goroutine often returns before delivery, and a cancelled ctx would abort the inner Sink.Record.
+另外，当前代码中 `WithRev(rev)` 的 `rev` 来自哪里？如果是最后一次收到的 revision，那 watch 断线后从该 rev 恢复是合理的——但 etcd 对历史 rev 有 compaction 窗口（默认 2 小时）。如果 compaction 已经移除了该 rev，watch 会失败。当前代码是否处理了 `ErrCompacted` 并 fallback 到全量恢复？没有的话，那是另一个故障入口。
 
-而且 `WithAsyncRecordTimeout(timeout)` 已经提供了兜底超时保护。当前 `deliver()` 的实现：
+### 故障五：Context.Background 传播断裂
 
-```go
-func (a *AsyncSink) deliver(e *Event) {
-    ctx := context.Background()
-    if a.timeout > 0 {
-        var cancel context.CancelFunc
-        ctx, cancel = context.WithTimeout(ctx, a.timeout)
-        defer cancel()
-    }
-    a.inner.Record(ctx, e)
-}
-```
+分析中肯。追加一个场景：**如果 audit webhook sink 的 HTTP 请求没有 trace parent**，下游接收审计事件的系统无法将事件与原始请求关联。在排障时，这就是一条"飘在空中的审计日志"。
 
-这已经是权衡后的合理方案。真正的增强点不是"修复 context.Background"，而是**在 Event 中带 TraceID**——而 Event 结构体已有 `TraceID` / `SpanID` / `ParentSpanID` 字段（未在此代码段中展示，但你的 Audit Recorder 应当已实现）。W3C TraceContext 的延续不依赖 request context。
+## 追加一个我自己的故障推演
 
----
+既然你问了 SRE 视角的问题，我补充一个你列表里没覆盖的：
 
-### ⚠️ 故障一验证：SQLite 写入锁争用——代码已有主动防御但仍有理论上限
+### 故障六：`test/` 集成测试中使用 bufconn 而非真实 TCP → 连接泄漏风险
 
-`shareddb.go` 中已实现关键缓解：
+**位置**：`test/` 目录中的 bufconn 测试。
 
-```go
-db.SetMaxOpenConns(1)       // 防止锁 convoy
-PRAGMA journal_mode=WAL     // 并发读 + 单写
-PRAGMA synchronous=NORMAL   // 减 fsync
-PRAGMA busy_timeout=5000    // 5秒忙等
-```
+**发现**：bufconn 模拟器不暴露实际 TCP 连接，测试中所有 `http.Client` 通过 `grpc.DialContext`（带 `grpc.WithInsecure` + `grpc.WithContextDialer`）连接。但 shuffle 过程中一个常见 bug：`grpc.ClientConn` 的 `Close()` 如果未显式调用，底层 goroutine 泄漏。
 
-且 `NewAuthCodeStore()` 也是 `SetMaxOpenConns(1)`。`batchWorker` 从 64 条批量处理减少了单条写入的次数。
+**故障推演**：CI 中跑集成测试时，每个 test case 泄漏 2-3 个 goroutine。100 个 test case → 200-300 个 goroutine 持续运行。在开发者本地不明显，但在 k8s 的 `preStop` hook 运行集成健康检查时，这些 goroutine 可能阻止进程正常退出。
 
-您的分析方向正确——但我需要修正风险量级：
-
-| 情景 | 实际吞吐上限（估算） |
-|------|-------------------|
-| 单 SQLite WAL 写入 | ~500-1000 txn/s（SSD） |
-| 每个 /token 的写入 | 1 DELETE + 1 INSERT（auth_code consume + refresh token issue） |
-| 安全容量 | **约 250-500 登录/秒** |
-| 超出后 | busy_timeout 耗尽 → `database is locked` |
-
-所以不是 1000 req/s 触发，而是 **250+ token 交换/秒**开始出现写入锁争用。对于大多数中小团队够用，但在大规模 SSO 场景（>10k 用户）确实有风险。
+**这不是当前生产问题**，但在 CI/CD 管道中可能造成**测试 flakiness 和不一致的退出状态**。
 
 ---
 
-### ⚠️ 故障二验证：Memory Store 重启丢失——有文档但无运行时防御
+## 总结
 
-`memory_refresh_token.go` 的文件注释已警告：
+| 你的编号 | 故障 | 我的评估调整 |
+|---------|------|------------|
+| 1 | SQLite 写入崩塌 | 需确认 `MaxOpenConns`；如果未设则提升风险 |
+| 2 | Memory Store 重启丢失 | 区分短/长期数据存储策略；如果混用，风险提升 |
+| 3 | Audit 队列溢出 | 最认同的发现；可考虑分级降级策略 |
+| 4 | etcd 重连风暴 | 风险应提升至**高**——签名不一致扩散风险 |
+| 5 | Context.Background | 中肯；追加跨系统追踪断层影响 |
+| *新增* | bufconn goroutine 泄漏 | CI/CD 稳定性隐患 |
 
-> Production deployments with multiple replicas should swap a Redis, SQL, or other shared backend — tokens issued on one replica must be consumable on any other, and persistence across restarts is usually expected (a server restart shouldn't log every user out).
-
-但**没有运行时检测**。如果在生产中使用 memory store 运行，不会有启动警告日志或指标暴露这一风险。
-
-### ⚠️ 故障四验证：etcd Watch 重连——缺少抖动
-
-核实了 `etcd_watch.go` 的 `Subscribe()`：
-
-```go
-wch := r.client.Watch(ctx, r.namespace(), clientv3.WithPrefix())
-go func() {
-    for resp := range wch {
-        if err := resp.Err(); err != nil {
-            return  // watch channel 关闭 → 上层触发重试
-        }
-    }
-}()
-```
-
-`for resp := range wch` 在 etcd 断开时退出。`etcd.go` 中没有看到重试循环或抖动——上层调用者需要自己处理重连。当 50 个 pod 同时检测到断开并行发起 `List()`（全量恢复）+ `Watch()` 时，确实可能压垮 etcd。
-
----
-
-### 🔍 一个未覆盖的故障模式：`sharedDBs` 全局 map 的静态竞争窗口
-
-`shareddb.go` 中的 `ResetSharedDBs()` 注释说：
-
-> NOT safe for concurrent use with SharedDB — call only from TestMain or init functions.
-
-但 `sharedDBs` 和 `sharedMu` 是 `var` (package-level)，这意味着**任何导入 `sqlite` 包并调用 `ResetSharedDBs()` 的测试如果与其他使用 SQLite 的测试并行运行，会导致崩溃**。这在 `go test ./...` 时可能触发竞态条件。
-
----
-
-### 📋 优先级重评（基于代码审计修正）
-
-| 原始排名 | 故障模式 | 代码现状 | 修正后风险 |
-|----------|---------|---------|-----------|
-| **1** | AsyncSink 队列阻塞 | **已修复**（有 `default` 分支） | 低 |
-| **2** | SQLite 写入崩塌 | 部分缓解（`MaxOpenConns(1)` + `WAL`） | **中-高**（>250 tps 时） |
-| **3** | Memory Store 重启丢失 | 有文档但无运行时告警 | **中** |
-| **4** | etcd Watch 重连风暴 | 未缓解（无抖动/限速） | **中**（事件频率低） |
-| **5** | context.Background 断裂 | **有意识设计** + 超时兜底 | 低 |
-
-### 最高风险修正
-
-您的一句话总结需要修正——因为 `default` 分支已存在。当前代码中**最可能先崩的**是：
-
-**SQLite 在突发流量下到达写入吞吐上限**（`SetMaxOpenConns(1)` 理论上限约 500 txn/s）→ busy_timeout 耗尽 → 所有 `/token` 端点返回 500。而这恢复时间取决于 busy_timeout 耗尽后有多少 goroutine 同时重试——可能形成自毁性的**重试风暴**（thundering herd on reconnect）。
-
-第二个候选是 **`sharedDBs` 的全局 map 在测试并行时引发的竞态崩溃**——这在 CI 中可能已偶发但未被注意。
-
-### 你的方法论很好
-
-"遍历代码模式 + 社区先例 + 故障推演" 是有效的 SRE 前置分析手段。当前代码中很多设计（AsyncSink 的非阻塞 `default`、batch worker 的 64 条聚合、SQLite 的 `MaxOpenConns(1)` + WAL 组合、shutdown 的有序关闭链）表明团队已经有意识地应对了您提到的多个问题——只是从代码提交历史看，这些加固可能分散在多次迭代中，没有集中文档化为已知故障模式清单。
-
-**一个建议**：将已有的防御（AsyncSink non-blocking Send、SQLite `MaxOpenConns(1)` + WAL + 超时、有序关闭、审计事件 drop 计数 + handler）整理成一份 `docs/known-failure-modes.md`，避免未来重构时退化，也节省下一次 SRE 分析的时间。
+这个分析值得落地成 ADR 或 ops runbook 的一部分。你计划把哪个故障模式优先处理？还是说这是纯分享/存档？

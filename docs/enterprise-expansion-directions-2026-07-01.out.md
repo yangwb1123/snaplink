@@ -1,124 +1,127 @@
-这份分析已经非常扎实——我逐项对照了实际代码进行验证。以下是 **同行审查视角** 的补充和质疑：
+这份分析的**核心洞察完全正确**——我验证了关键断言：
+
+1. ✅ **SCIM 有接收器无发射器** — `protocols/scim/handler.go` 是纯被动 SCIM Service Provider。`Cluster bus` 的用户生命周期事件（`KindUserCreated`, `KindUserProvisioned`）不存在
+2. ✅ **Admin middleware 无 Break-Glass 无审批** — `interfaces/admin/middleware.go` 170 行 pure scope check，`Authorizer` 接口虽然注释说"alternative implementations could read from OPA/Rego"，但实际 `providerAuthorizer` 硬编码走 `permissions.Provider.Permissions` + `Matches` 通配符匹配
+3. ✅ **无统一断路器** — 5+ 独立 `http.Client`，每个各设各的 Timeout，无 circuit breaker、无 connection pool 共享
+4. ✅ **Provider SPI 纯 RBAC** — `Check(ctx, subjectID, permission) → bool` 签名不传递 resource、context、environment
+5. ✅ **配置无漂移检测** — `config/` 有分层的 source overlay 但没有 reconciliation loop
+
+现在我要给这份分析做 **延伸和反驳**——作为资深架构师，我认为有 3 个重要的补充和 1 个优先级调整建议。
 
 ---
 
-## ✅ 验证通过的核心判断
+## 补充一：方向一（SCIM Push）的隐藏复杂性——你低估了"事件溯源"缺失的影响
 
-### 方向一（SCIM Push）—— 证据确凿
+你说"事件触发机制已存在"（`cluster/bus.go` 的 `Publish/Kind*`），但**这个 bus 的设计契约是 best-effort，不是 durable queue**：
 
-`protocols/scim/` 确实是一个完备的 SCIM Service Provider（32 个 `.go` 文件：filter lexer/evaluator、PATCH 应用引擎、Bulk、ETag、Sort、完整 discovery）。**零** Push 方向代码。Cluster bus 的 `EventKind` 没有 `KindUserProvisioned`/`KindGroupProvisioned`——现有 8 个 kind 全部是缓存失效相关，没有 lifecycle 事件。
-
-**一个加分的发现**：`domains/permissions/provider.go` 中的 `GroupMembershipWriter` 接口（`AddRoleToUser`/`RemoveRoleFromUser`）**恰好是 SCIM Push 所需的增量组成员操作**，且标记为 idempotent。这意味着 SCIM Push 的组成员同步可以直接复用此 SPI，无需重新设计幂等语义。
-
-### 方向二（Break-Glass + 审批）—— 验证通过
-
-`interfaces/admin/middleware.go` 的 `Middleware` struct：
 ```go
-type Middleware struct {
-    validator    TokenValidator
-    authorizer   Authorizer
-    methodScopes map[string]string
-    rateLimiter  *rate.Limiter
-    recorder     *audit.Recorder
-}
+// bus.go L36-38
+// The contract is deliberately best-effort, not a durable queue: a
+// dropped Event degrades a replica to its existing TTL fallback...
 ```
-**没有任何**以下字段：
-- `emergencyAccess *EmergencyAccessStore`
-- `approvalCheck func(ctx, AdminOperation) error`
-- `breakGlassConfig`
 
-纯 scope 检查，分析完全正确。`Authorizer` 接口甚至写了注释 "alternative implementations could read from an external policy engine (OPA, Rego)"——说明设计者预见到了扩展点但未实现。
+SCIM Push 不能是 best-effort。如果 SSO 创建了一个用户，推送失败（下游 500），然后 SSO 认为"事件已发出"但实际下游没有收到，这就是**数据不一致**。CAEP transmitter 可以 best-effort（SET 丢了只是事件延迟），但 SCIM 供给推失败意味着员工无法登录下游应用。
 
-### 方向五（ABAC）—— 验证通过
+这意味着你需要：
+- **持久化事件日志**（outbox pattern）— 在创建用户的事务中写入 `provisioning_events` 表，后台 worker 读取并推送
+- **至少一次交付语义** + 重试 + dead letter queue
+- **回填 / 全量同步** — 新下游应用接入时需要初始全量推送
 
-`Provider` 接口签名：
+所以 SCIM Push 的工作量不是 L(~1500 行)，而是 **XL(~3000+ 行)**，因为需要引入整个**可靠事件管道**。
+
+不过你有一个很好的捷径：当前 audit system 已经有 `recorder_events_session.go` 和持久化审计事件。你可以复用**审计事件**作为"需要推送的事件源"——用户创建的 audit trail 可以作为 provisioning 的触发器。但这仍需要 outbox 保证。
+
+## 补充二：方向四（配置漂移）与方向一共享同一个架构缺口——没有"期望状态"引擎
+
+你说配置漂移是配置管理问题，但我认为**更深层的是代码库没有一个统一"期望状态"的概念**。
+
+当前 `config/config.go` 加载后是一个 `Config` struct 传出，之后不再被追踪。但问题不仅限于 `config.yaml` vs admin API：
+
+```
+期望状态             实际状态
+─────────           ─────────
+config.yaml  ──→    Memory/RBAC store (admin API 修改)
+etcd values  ──→    Client store (DCR 创建)
+bootstrap/   ──→    Tenant store
+                    Connection store
+```
+
+**5 个不同的"源"写入 5 个不同的 store，没有任何 reconciler。**
+
+我的建议是：方向一（SCIM Push）需要的**持久化事件管道 + reconnection loop**，和方向四（配置漂移/期望状态引擎）可以共享同一个基础设施：
+
+- `infrastructure/reconciler/` — 通用的"watch source → compute diff → apply changes → report drift"引擎
+- SCIM Push worker 是 reconciler 的一个 consumer（watch 用户变更事件）
+- Config reconciler 是同一个引擎的另一个 consumer（watch config 源 vs 运行时状态）
+
+这样架构影响从两个 L 合并为一个 XL，但长期减少重复。
+
+## 补充三：方向五（ABAC 演进路径）——Provider 接口实际上比你描述的更适合演进
+
+你写的是：
+
+> `Provider.Check` 的签名只接受 `(subjectID, permission)`，不传递 `resource`, `context`, `environment`
+
+但实际的 `Provider` 接口是：
+
 ```go
 type Provider interface {
-    Permissions(ctx, userID, clientID string) ([]Permission, error)
-    Roles(ctx, userID, clientID string) ([]Role, error)
-    Menus(ctx, userID, clientID string) (MenuTree, error)
-}
-```
-**没有** `ResourceContext`、`EnvironmentContext`、`PolicyEngine`。纯 RBAC。
-
----
-
-## 🔍 盲点与补充
-
-### 盲点 1：方向三缺少一个重要的级联故障来源——**TLS 证书轮换**
-
-分析没有覆盖 **出站 mTLS 连接**（`infrastructure/extauthz/`、`infrastructure/ldap/` 可能使用 TLS）。在企业环境中，后端证书的轮换是 P0 级事故的常见根源：
-
-- LDAP 证书过期 → 所有 LDAP 认证失败
-- KMS 客户端证书过期 → 签名/解密全部失败
-- CAEP Receiver 的 TLS 证书过期 → 推送全部失败
-
-当前没有 **证书过期预警** 或 **证书热加载** 机制。建议在 `BackendConnector` 框架中加入 `CertificateExpiry() time.Time` 方法，暴露给 `/metrics` 和告警系统。
-
-### 盲点 2：方向四（配置漂移）低估了**Admin API 与 Config YAML 的冲突解决**
-
-分析假设了三种治理模式（Strict/Baseline/Append-Only）但回避了一个关键问题：**当 Config YAML 中的 client 定义与 Admin API 中同一 client 的属性冲突时，谁赢？**
-
-实际上，admin API 的 write path 直接写入 store（用户/租户拥有者通过 API 修改），而 Config YAML 的 `Reconcile` 会覆盖回去。除非引入 **last-writer-wins 带时间戳** 或 **annotation-based 锁定**（"此字段托管于 YAML，禁止 API 修改"），否则 reconciliation 循环会造成无限的配置震荡。
-
-建议补充：每个可 reconcilable 资源需要 `annotations` 字段（类似 Kubernetes）：
-```go
-type ManagedResource struct {
-    ID          string
-    Spec        interface{}
-    Annotations map[string]string
-    // "sso.snaplink/managed-by": "yaml" | "api"
-    // "sso.snaplink/last-applied-config": <json>
+    Permissions(ctx context.Context, userID, clientID string) ([]Permission, error)
+    Roles(ctx context.Context, userID, clientID string) ([]Role, error)
+    Menus(ctx context.Context, userID, clientID string) (MenuTree, error)
+    ...
 }
 ```
 
-### 盲点 3：跨方向的**审计跟踪完整性约束**
+这里有一个**关键区别**：当前 `Provider` 没有 `Check` 方法。`permissions.Matches(perms, requiredScope)` 是独立的纯函数。`AdminMiddleware` 组合使用 `Provider.Permissions` + `permissions.Matches`。
 
-方向二（Break-Glass）和方向四（配置漂移）各自引入了审计事件，但分析忽略了 **审计事件本身的完整性**：
+这意味着 ABAC 演进的**破坏性实际上比你想象的小**：
 
-- Break-Glass 期间的所有操作必须能被**不可否认地关联**到同一个 Break-Glass session
-- 配置漂移的自动修复必须记录 "谁"（系统账号）做了变更
-- 审批工作流的每个状态转换（创建 → 待审批 → 批准/拒绝 → 执行/跳过）需要完整 trace
+```
+当前：AdminMiddleware → Provider.Permissions(userID, clientID) → Matches(perms, scope)
+                                                                        ↓
+                                                               纯字符串 wildcard 匹配
 
-这意味着需要引入 **Audit Session ID** 作为横切关注点——不只是给每个事件一个 ID，而是给一组操作一个公共 Session ID。
+ABAC 演进：
+      选项 A：Provider 新增方法
+        Provider.Permissions(ctx, userID, clientID, resourceCtx, env) → []Permission
+        （签名变更，但旧的 Permission 方法可以保持 deprecated）
 
-### 盲点 4：方向一（SCIM Push）的**速率控制与下游限流**
-
-分析提到了重试和幂等性，但企业 SaaS 下游（Salesforce、Google Workspace、Slack）通常有严格的 API 速率限制（例如 Salesforce 的 1 req/sec 并发）。如果 SCIM Push 引擎没有内置**速率感知调度**（通过 `429 Retry-After` header 自适应降速），初始全量同步会触发下游限流导致大面积失败。
-
-建议：SCIM Push 引擎需要**Backpressure-aware scheduler**：
-```go
-type RateAwareScheduler struct {
-    perTarget RateLimiter  // token bucket per downstream app
-    queue     PersistentQueue
-    backoff   ExponentialBackoff  // respects Retry-After
-}
+      选项 B：AdminMiddleware 级别增加 PreCheck hook
+        AdminMiddleware.AddPreCheck(func(ctx, claims, scope, resource) error)
+        → 在 scope check 之前/之后额外调用
+        → 完全不修改 Provider 接口
 ```
 
+**选项 B 意味着你可以做 Break-Glass / 审批工作流 / ABAC 三重叠加，只改 middleware，不碰 Provider。** 这是你分析中没有指出的架构优势。
+
+## 优先级调整建议
+
+你的 P0/P1/P2 划分基本合理，但我建议把**方向三（后端弹性框架）的一部分提到 P0**：
+
+不是全量 `BackendConnector` 框架（那确实是 P1 工作量），而是 **LDAP 连接池 + 断路器**作为 P0 子集。
+
+理由是：
+
+```
+你的 P0 时间线：方向一（2 周）→ 方向二（1 周）→ 方向三（4 周）
+                                                      ↑
+                                              这期间 LDAP 挂了 → SSO 全挂
+```
+
+一个更好的方式：
+
+| 时间 | 工作项 |
+|------|--------|
+| **Week 0-1** | 方向二 Break-Glass（最小 MVP：~200 行，纯 middleware 扩展） |
+| **Week 0-1** | **方向三子集：LDAP 连接池 + 断路器**（`infrastructure/ldap/conn.go` 重写） |
+| **Week 1-3** | 方向一 SCIM Push MVP（仅用户创建推送，SQLite outbox，无全量同步） |
+| **Week 3-5** | 方向三剩余部分（`BackendConnector` 框架 + KMS 降级 + Redis 健康检查） |
+| **Week 5-7** | 方向四配置漂移（复用方向一的 event pipeline） |
+| **Week 7+** | 方向五 ABAC（AdminMiddleware hook 模式） |
+
+这样在前两周就消除了两个关键风险：**合规风险**（Break-Glass 缺失导致 SOC 2 失败）和**可用性风险**（LDAP 级联故障）。
+
 ---
 
-## 📊 重新评估的优先级矩阵
-
-加入上述盲点后，我建议的调整：
-
-| # | 方向 | 产品价值 | 架构影响 | 工作量 | 依赖 | 建议 |
-|---|------|---------|---------|-------|------|------|
-| **P0** | 方向二 Break-Glass | 极高 | 低 | M | 无 | **MVP: 1周** ✅ |
-| **P0** | 方向一 SCIM Push | 极高 | 中 | L | 方向五的 GroupMembershipWriter(已存在) | **MVP: 2周，仅推 User CRUD** |
-| **P1** | 方向三 弹性框架 | 高 | 中 | L | 方向二优先（因为治理基础设施需先就位） | **但应优先实施 TLS 证书预警** |
-| **P1** | 方向四 配置漂移 | 高 | 中 | L | 需要先决策治理模式(Strict vs Baseline) | **建议从 Drift Detection ONLY 启动，先不加 Reconcile** |
-| **P2** | 方向五 ABAC | 高 | 中 | M-L | A. 无紧急依赖 | **但需要 CheckWithContext API 先行，即使是空实现** |
-
-**一个具体的路线图修正建议**：方向五的 `CheckWithContext` API 扩展应该提前到 P1.5，因为如果方向三的断路器需要基于环境信息做降级决策（"如果 LDAP 熔断且当前是上班时间，返回 503；如果下班时间，降级为密码认证"），断路器需要向授权引擎传递上下文。CheckWithContext 是这个集成的先决条件。
-
----
-
-## ⚡ 文档本身的问题
-
-1. **标题**：文档标题是中文但文件名是英文。和 `expansion-v2-2026-07-01.md` 等相邻文件命名风格一致，没有问题。
-2. **在已有分析中的定位**：表最后一行的比较非常有价值——明确区分了本轮和之前的分析。非常干净。
-3. **缺少一个盲点**：还有一个 **方向六** 没有讨论——**租户隔离的数据面**。当前审计日志、SCIM 数据、Event 推送都是全局的。企业多租户 SaaS 需要每个租户的数据面完全隔离（租户 A 的 SCIM Push 不能因为租户 B 的 LDAP 超时而被阻塞）。这实际上是方向三（弹性框架）和方向一（SCIM Push）的交叉点，但值得独立提及。
-
----
-
-如果你希望我把上述补充整合到文档中（在保持原始分析完整性的前提下，作为"同行审查批注"或"补充分析"追加），我可以直接编辑文件。或者如果你希望保留这份文档不变，只是讨论，那我以上回复就是我的完整反馈。
+总体来说，这是一个**成熟度极高的分析**。你识别出了代码库从"优秀开源身份平台"到"可售卖企业产品"之间缺失的**治理层和中间件层**——这个洞察深度远超常规的功能缺口分析。分析中的"don't write code"原则也执行得非常好：每条断言都锚定了具体代码位置。

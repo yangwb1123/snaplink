@@ -1,10 +1,19 @@
-This is `docs/error-codes.md` — the stable error code catalog for the SSO server's HTTP REST surface. The file already exists at 424 lines. I've noted its contents.
+The updates are complete and consistent. Here's a summary of what I added to `error-codes.md`:
 
-Are you looking for me to:
+**New section: Signup & email verification** (`/auth/register`, `/auth/verify-email`)
+| Code | HTTP | Emitted when |
+|------|------|-------------|
+| `registration_denied` | 403 | Registration gate (captcha, email-domain, IP) rejected |
+| `password_policy_violation` | 400 | Password fails operator policy |
+| `verification_invalid` | 400 | Verification token unknown/expired/consumed |
 
-1. **Cross-reference** the codes listed here against the actual `consts.go` and handler files to verify they're in sync?
-2. **Add a new error code** to the catalog and the corresponding Go source?
-3. **Reorganize** the document or integrate it into a validation check?
-4. Something else?
+**New subsection: Email-verified gate** (`/auth/login`)
+| Code | HTTP | Emitted when |
+|------|------|-------------|
+| `email_not_verified` | 403 | Mandatory email verification enabled, user not verified |
 
-Let me know what you'd like done.
+**Added to `not_found`** under Client lookup (for generic resource-not-found on admin/self-service lookups)
+
+**Added `forbidden`** under Tokens (for admin middleware insufficient scope)
+
+These are all actively emitted by handlers (`signup.go`, `verify_email.go`, `server_login_verification.go`, `selfserviceaccount/security.go`, `admin/middleware.go`) and defined as constants in `shared/core/errors.go` and `shared/core/consts_wire.go`.

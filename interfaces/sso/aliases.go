@@ -322,6 +322,7 @@ const PathAdminUserEmailChangeTokens = core.PathAdminUserEmailChangeTokens
 const PathBackup = core.PathBackup
 const PathAdminUserEmail = core.PathAdminUserEmail
 const PathAdminAccountLockoutClear = core.PathAdminAccountLockoutClear
+const PathAdminEndpoints = core.PathAdminEndpoints
 const PathAdminTokens = core.PathAdminTokens
 const PathAdminTokenByID = core.PathAdminTokenByID
 const PathAdminLogout = core.PathAdminLogout

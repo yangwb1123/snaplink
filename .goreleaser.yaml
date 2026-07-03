@@ -64,6 +64,28 @@ builds:
       - goos: windows
         goarch: arm64
 
+  - id: sso-mcp
+    # SSO MCP protocol gateway — exposes SSO resources via the Model Context
+    # Protocol (MCP). Pure-Go, no-CGO build, same matrix as sso-ctl.
+    main: ./cmd/sso-mcp
+    binary: sso-mcp
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
 archives:
   - id: default
     # tar.gz everywhere except Windows (zip — Powershell unpacks it
@@ -132,26 +154,39 @@ dockers:
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.source={{ .GitURL }}"
 
-# --- Future hooks, kept commented for visibility ---
-#
-# signs:
-#   # Keyless cosign signing via Sigstore + the workflow's OIDC token.
-#   # Requires the release workflow to have `id-token: write` permission
-#   # (already set in release.yml). Activate when registry / public
-#   # consumers need attestable provenance.
-#   - cmd: cosign
-#     stdin: '{{ .Env.COSIGN_PASSWORD }}'
-#     args:
-#       - "sign-blob"
-#       - "--yes"
-#       - "--output-signature=${signature}"
-#       - "${artifact}"
-#     artifacts: all
-#     output: true
-#
-# dockers:
-#   # goreleaser-driven container build (alternative to the standalone
-#   # Dockerfile). The standalone path is canonical today; revisit when
-#   # release wants single-source-of-truth.
-#   - image_templates: ["ghcr.io/snaplink/sso-server:{{ .Version }}"]
-#     dockerfile: Dockerfile
+  - image_templates:
+      - "ghcr.io/snaplink/sso-mcp:{{ .Version }}"
+      - "ghcr.io/snaplink/sso-mcp:latest"
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/amd64,linux/arm64"
+      - "--target=sso-mcp"
+      - "--label=org.opencontainers.image.title=sso-mcp"
+      - "--label=org.opencontainers.image.description=Snaplink SSO MCP gateway"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source={{ .GitURL }}"
+
+# Keyless cosign signing via Sigstore + the workflow's OIDC token.
+# Requires the release workflow to have `id-token: write` permission
+# (already set in release.yml). Signatures are uploaded alongside
+# artifacts for end-user verification.
+signs:
+  - cmd: cosign
+    args:
+      - "sign-blob"
+      - "--yes"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+    artifacts: all
+    output: true
+
+# Container image signing — cosign signs each pushed image with the
+# OIDC token from the release workflow (keyless mode). Verification:
+#   cosign verify ghcr.io/snaplink/sso-server:{{ .Version }}
+docker_signs:
+  - cmd: cosign
+    artifacts: all
+    args:
+      - "sign"
+      - "--yes"
+      - "${artifact}"

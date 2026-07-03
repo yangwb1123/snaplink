@@ -1,3 +1,8 @@
-The `review-checklist.md` already exists at `/home/dwp/snaplink/docs/review-checklist.md` with the exact content you shared. It's already in place as a project document. 
+This checklist is already present in the repo at `docs/review-checklist.md`. It aligns closely with the engineering gates, security requirements, and code quality standards defined in `AGENTS.md`.
 
-Is there a specific review task you'd like me to perform using this checklist, or did you want me to update/add anything to it?
+What would you like to do with this?
+
+- **Review a PR/commit** against this checklist?
+- **Update/enhance** the checklist (e.g., adding items from the latest `AGENTS.md` or recent analysis documents)?
+- **Use it as a gate** in a CI pipeline or automation workflow?
+- Something else?

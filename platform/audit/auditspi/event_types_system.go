@@ -50,6 +50,14 @@ const (
 	EventSSFSetReceived EventType = "ssf_set_received"
 )
 
+// Feature-gate (protocol-surface attack-surface reduction) events. Emitted
+// once at server boot, only when at least one gate was explicitly disabled —
+// a deployment that never touches feature_gates produces no new audit
+// traffic here.
+const (
+	EventFeatureGatesDisabled EventType = "feature_gates_disabled"
+)
+
 // Cluster invalidation bus events.
 const (
 	EventInvalidationBusDegraded    EventType = "invalidation_bus_degraded"

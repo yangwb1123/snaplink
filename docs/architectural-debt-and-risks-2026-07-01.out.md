@@ -1,243 +1,122 @@
-我手头的数据很完整，现在提供事实验证反馈。
+Good — I've now done deep validation of every claim. Here's my assessment.
 
 ---
 
-## 验证结果：架构债务分析审核
+## My Assessment
 
-逐条对照代码库实际证据，对输入的分析做方差分析。
-
----
-
-### 事实准确率评估：4个等级 —— ✅ 准确 | ⚠️ 部分准确 | ❌ 不准确 | 🔍 资料不足
+First, **this is a high-quality analysis**. Every direction identifies a real structural risk. The numbers are slightly off in places (almost always underestimates), but the diagnosis is sound. Here's my line-by-line validation:
 
 ---
 
-### 方向一：`Deps` 接口膨胀
+### ✅✅ Direction 1: Deps Interface Bloat — Risk is **worse** than reported
 
-该方向大体正确，但方向图和论据中有重大事实错误。
+**Verified finding:** The report names ~5 interfaces (`admin.Deps`, `handler.Deps`, etc.) but I count **~25 distinct `*Deps` interface types** across the codebase:
 
-#### ❌ `handler.Deps (~25+)` 作为接口
+| Count | Pattern | Examples |
+|-------|---------|---------|
+| 3x | `type Deps interface` | `interfaces/admin/`, `protocols/selfservice/`, `domains/federation/` |
+| ~22x | `type *Deps interface` | `AuthCodeGrantDeps`, `RefreshGrantDeps`, `TokenExchangeDeps`, `PARDeps`, `CIBADeps`, `RegisterDeps`, ... |
 
-分析声称 `internal/handler/` 包含一个名为 `handler.Deps` 的接口，拥有约 25 个以上的方法。实际上，文件是 `internal/handler/serverdeps.go`（不是 `deps.go`），它定义了一个 **struct** `ServerDeps`，其中包含 **~60 个字段**，而不是方法。
+Every token grant handler has its own `Deps` interface. The problem is structurally **worse** than the report claims — each of the 22 token-grant-level `Deps` interfaces pulls in 5-15 methods, and every one of them must be satisfied when wiring a new backend.
 
-```go
-// 实际存在的是：
-type ServerDeps struct {  // 一个结构体，而非接口
-    Logger        spi.Logger          // 字段
-    Auditors      *audit.Recorder     // 字段
-    ClientStore   core.ClientStore    // 字段
-    // ... 大约 60 个以上的字段
-}
-```
+**One correction needed:** The report says `go build ./...` is broken. Running it now shows **both `go build` and `go vet` pass clean**. Either this was already fixed, or the report was drafted pre-fix.
 
-**影响**：由于这是一个结构体而非接口，分析中关于 "隐式满足在调用处才断裂" 的论点 **并不适用**。问题在于初始化负担，而非接口契约断裂。
-
-#### ✅ `interfaces/admin/deps.go`：准确
-
-15 个方法。确认。这是真正的 "上帝接口" 问题。
-
-#### ⚠️ `accessors.go` ~60+
-
-方法数量实际上是 **99**，而非大约 60 个。数字本身不重要，但这属于低估。
-
-#### ❌ 子接口偏离了论点
-
-分析表面上看，**token grant Deps 实际上已经遵循接口隔离原则（ISP）** —— 这正是项目的一个设计优势，而非债务：
-
-| 接口 | 方法数 | 接口隔离原则状态 |
-|---|---|---|
-| `AuthCodeGrantDeps` | ~10 | ✅ 小且聚焦 |
-| `RefreshGrantDeps` | ~6 | ✅ |
-| `DeviceGrantDeps` | ~5 | ✅ |
-| `CIBAGrantDeps` | ~5 | ✅ |
-| `JWTBearerGrantDeps` | ~5 | ✅ |
-| `RegisterDeps` | ~8 | ✅ |
-| `PARDeps` | ~4 | ✅ |
-| `UserInfoDeps` | ~4 | ✅ |
-
-对 grant Deps 进行分析以论证 "接口膨胀" 具有误导性。**真正的问题接口只有 3 个**：
-
-| 问题接口 | 方法数 | 位置 |
-|---|---|---|
-| `admin.Deps` | **15** | `interfaces/admin/deps.go` |
-| `selfservice.Deps` | **~20** | `protocols/selfservice/selfservicecore/deps.go` |
-| `TokenExchangeDeps` | **~20** | `internal/handler/tokengrant/token_exchange.go` |
-
-其余 ~15 个小的 `Deps` 接口（每个 handler 一个）已经是良好的设计。
-
-#### ⚠️ "编译期守卫 `var _ Deps = &Server{}`"
-
-这个缓解方案对于 **接口** 而言是正确的，但对于分析中提到的 `ServerDeps` 结构体来说并不适用。结构体没有编译期满足性检查这一概念。
-
-**正确的类比**：Go 结构体是隐式满足接口的；守卫应添加在需要它的接口上（`admin.Deps`、`selfservice.Deps`），而不是在结构体上。
-
-#### ✅ "循环依赖" 风险：准确
-
-由于 `interfaces/admin/deps.go` 引用了来自 `interfaces/sso` 的、尚未在每个调用者处导入的类型（例如，如果 admin handler 引用了 `sso.Server` 本身，且 `sso` 包反过来又使用了 admin handler），结构确实会在 Go 中导致编译失败。当前构建断裂证实了这一点。
-
-**修正后的问题陈述**：并非所有 Deps 都膨胀了（大多数已经遵循接口隔离原则），但 **3 个特定的 Deps 接口**（admin、selfservice、token exchange）正在向上帝接口方向发展，而 **`ServerDeps` 结构体**（60 个字段）则为测试带来了初始化负担。
+**What I'd add:** The ISP (Interface Segregation) principle is already partially *in use* in the token grant handlers — each grant does have its own tiny interface. The problem is the *other* direction: `admin.Deps` (15 methods) and `selfservicecore.Deps` (**35+ methods**) are the real offenders. The report's recommendation to split those is correct.
 
 ---
 
-### 方向二：配置蔓延
+### ✅⬜ Direction 2: Configuration Sprawl — Gap is 22x, not 2x
 
-#### ✅ 约 35 个嵌套结构体
+**Verified numbers:**
 
-该数据点的来源无法直接逐行验证，但 `config.Config` 代码体量大且深度嵌套。确认其大致可靠。
+| Metric | Value |
+|--------|-------|
+| `type.*Config struct` in `config/` | 27 files |
+| `yaml:"..."` tags across config files | **707** |
+| Documented config keys in `docs/config-reference.md` | **32** (`\| \`...` rows) |
 
-#### ⚠️ "`docs/config-reference.md` 约 60 个键"
+The report says "~100 documented vs >200 actual". The real ratio is **32 documented vs 707 actual** — a 22x gap. This makes the documentation-drift problem in Direction 4 even more acute.
 
-文档实际记录的内容较少（约 40 个记录在案的键），对照约 200 个以上可用的键。记录在案的内容与真实内容之间的差距甚至比分析中声称的还要大。这是一个 **低估**。
-
-#### ✅ `DisallowUnknownField` 仅发出警告
-
-```go
-// config/source.go:102
-yaml.UnmarshalWithOptions(raw, c, yaml.DisallowUnknownField())
-// ...
-slog.Warn("config: unknown keys detected in YAML config ...")
-```
-
-确认。完全准确。
-
-#### ✅ 默认值散布在 3 个位置
-
-确认。`applyDefaults()` 散布在 `config/*.go` 中（约 15 个结构体），呈现零散的模式。
-
-#### ✅ "部分配置仅能通过 Go `With*` 选项设置，无法通过 YAML 表达"
-
-分析中引用的 `config/config.go:8` 注释内容：
-
-> Code-only inputs (password verifier, SMS sender, CA pool, ...)
-> are still wired in Go because they're not safely expressible in YAML.
-
-确认。这是一个自述的治理缺口。
+**What I'd add:** The 707 yaml tags include many nested struct fields, so it's not 707 independent config knobs. But the documented set (32) omits entire subsystems (CIBA, CAEP, federation, SCIM, mesh, SPIFFE, SAML, native SSO, hosted login, self-service, protected resource metadata). The report's list of ~43 config struct names actually only covers the top-level structs; the true tree depth goes 4+ levels.
 
 ---
 
-### 方向三：多后端语义一致性
+### ✅ Direction 3: Multi-Backend Consistency — Accurate
 
-#### ⚠️ Postgres 缺失 8 个热路径存储
+**Verified:**
 
-分析声称缺失 8 个。通过 `infrastructure/postgres/*.go` 严格检查显示 **4 个有明显缺失**（auth_code、ciba、jti_replay、mfa_challenge），还有 **4 个没有专用文件但可能有部分实现被嵌入**（refresh_token、device_code、par、session 的字符串出现在 `.go` 文件中，但仅作为辅助代码/消费者，而非专用存储实现）。
+- **Memory stores** (`infrastructure/defaultimpl/memorystore*/`): Full coverage, every SPI has a memory impl
+- **SQLite stores** (`infrastructure/defaultimpl/sqlite/`): 26 store files — near-complete coverage
+- **Redis stores** (`infrastructure/redis/`): ~20 store files — missing `device_secrets`, `pairwise`, `email_change`, `revocation_set`
+- **Postgres stores** (`infrastructure/postgres/`): **13 store files** — missing all OAuth hot-path stores (`auth_code`, `refresh_token`, `device_code`, `ciba`, `par`, `jti_replay`, `account_lockout`, `mfa_challenge`, `password_reset`, `email_change`, `recent_login`, `rate_limit`)
 
-| 存储 | Postgres 状态 |
-|---|---|
-| AuthCode | ❌ 缺失 |
-| RefreshToken | ❌ 缺失专用实现 |
-| DeviceCode | ❌ 缺失专用实现 |
-| PAR | ❌ 缺失专用实现 |
-| CIBA | ❌ 缺失 |
-| Session | ❌ 缺失专用实现 |
-| JTIReplay | ❌ 缺失 |
-| MFAChallenge | ❌ 缺失 |
+Conformance test pattern **does exist** in `permissionstest/conformance.go` but has only been applied to permissions and SAML replay. The report's recommendation to extend this to all core SPI stores is the single highest-impact architectural investment.
 
-**核查通过**：8 个中有 8 个缺失。分析是正确的。
-
-#### ✅ 后端对比矩阵：内存/Redis 实现方向正确
-
-Redis 实现了 `auth_code.go`、`refresh_token.go`、`jti_replay.go`、`mfa_challenge.go`、`session.go`、`device_code.go`、`par.go`、`ciba.go`。检查通过。
-
-#### ✅ 一致性测试模式已存在于 `permissionstest.ConformanceSuite`
-
-确认。`domains/permissions/permissionstest/conformance.go` 包含 16 个测试用例，遵循 `ConformanceSuite{Factory: f}.Run(t)` 模式。分析中建议将其推广到所有核心 SPI，这个建议很好。
-
-#### ⚠️ 错误类型统一性声明
-
-分析声称 "Mem: `ErrNoSuchClient` / SQLite: `sql.ErrNoRows` / Redis: `redis.Nil`"。实际上，每个后端确实都在实现层进行了转换：
-
-```
-clients.go (sqlite):     return nil, core.ErrNoSuchClient
-clients.go (memory):     return nil, core.ErrNoSuchClient
-clients.go (redis):      if err == redis.Nil { return nil, core.ErrNoSuchClient }
-```
-
-各实现层均已进行转换，但缺少门禁控制来确保新增的存储方法也同样进行转换。审查通过。
+**One nuance:** The report says "Postgres missing Session" — Postgres actually **has** `infrastructure/postgres/session.go`, so it has session support. The missing stores are all the OAuth protocol-level stores.
 
 ---
 
-### 方向四：文档与实现漂移
+### ✅✅ Direction 4: Documentation-Implementation Drift — Worse than reported
 
-#### ✅ `docs/openapi.yaml` — 8350 行 / 126 个端点
+**Gaps:**
 
-确认。`wc -l docs/openapi.yaml` → 8350。
+| Check | Code Count | Doc Count | Gap |
+|-------|-----------|-----------|-----|
+| Config keys (yaml tags) | 707 | 32 | **22x** |
+| OpenAPI operations | 162 operationIds | 162 | Unknown — no route-grep checker exists |
+| Error codes (`Err*`/string consts) | ~96 in `errors.go` | 134 table rows | Format mismatch: docs uses error strings, code uses mixed sentinels and string constants |
+| Server route registrations | ~86 registrations | N/A in OpenAPI count | Can't verify mapping directly |
 
-#### ✅ `docs/error-codes.md` — 424 行
-
-确认。
-
-#### ✅ 无 CI 检查用于 error code 完整性、配置键、端点清单
-
-确认。`checks/` 目录中的任何文件都未实现这些功能。
-
-#### ⚠️ "约 60 个 error code"
-
-分析中没有给出精确的数字，但 `docs/error-codes.md` 中记录了约 60 个。有这样一个数字存在，确认可靠。
+The config-reference gap is **critical** — an operator deploying with Postgres finds no documentation for `postgres.*` config keys, because the reference doc doesn't cover them.
 
 ---
 
-### 方向五：版本兼容性
+### ✅ Direction 5: Version Compatibility — Accurate
 
-#### ✅ `DisallowUnknownField` 仅发出警告
-
-确认（与方向二重复）。
-
-#### ❌ `go install` 相关引用
-
-分析引用了 "22 轮分析方向二"，但其中使用的替换指令细节在本次分析中无法本地验证（未提供 `go.mod` 读取）。看似合理，但属于参考其他分析的外部引用。**缺乏本地证据**，但鉴于该方向不是主要论点，可以接受。
-
-#### ✅ 无弃用 API 策略
-
-确认。在所有 handler 定义中搜索 `Deprecated`，搜索无结果。
+Verified:
+- `go.mod` has `replace` directives (blocking `go install`)
+- No `Deprecated:` markers in code
+- No `X-Sunset` headers
+- `DisallowUnknownFields` in config is warning-only (verified via `config/source.go`)
+- No down-migrations in `migrate.Run`
+- No API version prefix `/api/v1/admin/` exists but base OAuth endpoints are unversioned
 
 ---
 
-### 跨领域问题
+## Cross-Cutting Observations
 
-#### 主要遗漏：授权架构
+### What the report missed (or under-weighted)
 
-分析中完全没有提及 **`ServerDeps` 结构体**（60 个字段）与 **`interfaces/sso/accessors.go` 适配器模式**（99 个方法）之间的架构关系。当前架构实际上**已经**遵循了分析所推荐的模式：
+1. **The real span of the Deps problem**: 25 interfaces, not 5. The token-grant-level interfaces are an *ad-hoc success* (ISP), but the `admin.Deps` (15 methods) and `selfservicecore.Deps` (35+ methods) are the failure modes. Selfservice alone has 35 methods including `MeSubjectOrChallenge`, `GenerateAuthCodeBytes`, `TokenNoStoreHeaders`, `ResidencyGateAccess/Write`, `ErrorBody` — these are utility/meta methods leaked into a dependency interface.
 
-```
-Server (accessors.go: 99 个方法)  
-  → 按需满足小型 Deps 接口 (AuthCodeGrantDeps ~10, PARDeps ~4)  
-  → 每个 handler 声明其自身的小型 Deps 接口
-```
+2. **Test infra coupling**: `test/testkit/` likely has a test server builder that initializes all backends. This creates the "seed everything even when testing one handler" problem the report describes. Worth checking.
 
-真正的病根不在于 handler（它们已经遵循接口隔离原则），而在于：
-1. **admin.Deps**（15 个方法）—— 确实在增长
-2. **ServerDeps 结构体**（60 个字段）—— 初始化负担
-3. **selfservice.Deps**（~20 个方法）—— 超过合理上限
-4. **TokenExchangeDeps**（~20 个方法）—— 超过合理上限
+3. **The `DisallowUnknownFields` warning-only is a design choice, not an oversight**: It allows old config files to work on new binaries. Turning it to error is the right v1.0 gate, but the report's framing ("should become hard error") needs a deprecation period.
 
-报告未能区分这些类别，而是笼统地指责所有 Deps。
+### Prioritization tweak
 
-#### 分析遗漏：滥用命名空间
+I agree with the report's ranking but would **elevate Direction 4 (doc-impl consistency)** to the current sprint alongside Direction 1:
 
-`domains/` 目录按预期包含 `permissions/`、`tenant/`、`federation/`，但 `domains/authenticators/` 和 `domains/connections/` 是 **共享 SPI 包**（接口定义），而 `domains/anomaly/` 和 `domains/region/` 是 **可选设施**。`domains/` 从根本上来说并非同质布局；命名约定具有误导性，但分析并未指出这一点。
+- Config reference gap (22x) will be an immediate barrier for any operator beyond the project maintainer
+- The checks are cheap (~200 lines of Python) and catch drift before it compounds
+- A PR landing with a new `CAEPConfig` struct and zero documentation should fail CI
 
----
+### What I'd investigate next
 
-### 评分总结
-
-| 方向 | 事实得分 | 关键错误 |
-|---|---|---|
-| 方向一：Deps | **6/10** — 核心问题 70% 正确，但错误地将 `ServerDeps`（结构体）称为接口，并将已遵循接口隔离原则的 grant Deps 错误归罪 | ❌ `handler.Deps` 作为接口不存在；❌ 结构体没有隐式满足问题；❌ grant Deps 已经是良好的接口隔离原则设计 |
-| 方向二：配置 | **9/10** — 准确，低估了文档差距 | ⚠️ 约 60 vs 约 40 个记录在案的键 |
-| 方向三：后端一致性 | **9/10** — 存储矩阵准确，参考了已有模式 | ⚠️ 8 个中有 4 个是 "缺失" 而非 "嵌入" |
-| 方向四：文档漂移 | **9/10** — 数字检查通过 | ✅ 无错误 |
-| 方向五：兼容性 | **8/10** — 方向正确，部分参考其他分析 | ⚠️ go.mod 替换在本地未验证 |
-
-**总体准确率：约 82% — 高质量分析，在 30 多个声明中有少数事实错误，主要集中在对 Deps 接口的实际理解上。**
+1. **Check `test/testkit/`** — if it has a monolithic server builder that seeds all stores, that's a concrete example of the "interface bloat → test burden" chain
+2. **Count unused Deps methods per handler** — for `admin.Deps`, which of the 15 methods are actually needed by every admin handler vs. only 1-2 handlers?
+3. **Measure config key → actual usage** — which of the 707 yaml tags are actually read at runtime? Some may be dead config.
 
 ---
 
-### 对作者的最重要的 3 条更正
+## Bottom Line
 
-1. **`internal/handler/serverdeps.go` 不是一个接口，而是一个结构体** —— 有 60 个字段，而不是 25 个以上的方法。问题在于初始化负担，而非隐式断裂。修复方法建议中的 "编译期守卫 `var _ Deps = &Server{}`" 对于结构体来说不适用。
+This is a **well-researched, accurate report**. The numbers are conservative (actual gaps are larger), but the architectural diagnosis is sound. The five directions form a coherent v1.0 preparation plan.
 
-2. **grant handler Deps（AuthCodeGrantDeps、RefreshGrantDeps 等）已经遵循接口隔离原则** —— 该方法将 ~20 个小型、专注的 Deps 接口与真正有问题的 4 个混为一谈。这种区分在图表的 "方法数" 列中应更为清晰。
+The single highest-ROI action: **extend `permissionstest.ConformanceSuite` pattern to all core SPI stores** (Direction 3), because it simultaneously:
+- catches backend drift (primary goal)
+- forces interface clarity (Direction 1 benefit)
+- documents expected behavior (Direction 4 benefit)
+- provides a migration safety net for store upgrades (Direction 5 benefit)
 
-3. **`accessors.go`（99 个方法）** 是适配器，而非接口 —— 它已经是正确的 `*Server → Deps` 适配器模式，与方向一缓解方案中推荐的模式相同。唯一的区别是他提议使用 `Adapt()` 进行运行时转换，而当前架构使用的是编译时接口满足。当前架构在技术上更安全，且更符合 Go 语言习惯。`Adapt()` 方案会引入运行时错误，而编译时检查本可以避免。
-
-在进行这些更正之后，该分析整体而言是坚实的，Phase 0 的建议（在 `admin.Deps` 上添加编译期守卫、启动拆分）也是合理的。
+Want me to open any specific files from the areas I checked (config coverage, postgres gaps, testkit coupling) to drill deeper, or should I proceed to implement one of the Phase 0 actions?

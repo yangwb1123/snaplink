@@ -1,11 +1,7 @@
-I've read the file. This is the observability reference covering:
+这个内容已经与 `docs/observability.md` 完全一致。该文件已包含您分享的所有内容 — 指标表格、审计流水线/约束/保留调度器、以及追踪中间件堆栈。
 
-1. **Metrics** — 21 bounded-cardinality metrics (no per-path/per-user labels)
-2. **Audit** — pipeline composition (`Async → Multi → Retry → leaf`), hard constraints (`SetMeta` only, W3C trace/span IDs), retention schedulers
-3. **Tracing** — middleware ordering (probes outside ratelimit, tracing first inside)
-
-Is there something specific you'd like to do with this file or related code? For example:
-- Verify consistency against actual metric registrations in code
-- Check that audit events use `SetMeta` everywhere
-- Review retention scheduler implementations
-- Add a new metric or audit event type
+有什么具体的事情想让我做吗？例如：
+- 对照实际代码验证指标注册或审计事件使用情况
+- 检查 `SetMeta` 是否在所有审计事件中被正确使用
+- 添加新的指标或审计事件类型
+- 将任何变更与 AGENTS.md 中的观测性章节同步

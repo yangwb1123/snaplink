@@ -88,6 +88,7 @@ const (
 	EventEmailChangeRequested            = auditspi.EventEmailChangeRequested
 	EventEmailChanged                    = auditspi.EventEmailChanged
 	EventFAPIComplianceViolation         = auditspi.EventFAPIComplianceViolation
+	EventFeatureGatesDisabled            = auditspi.EventFeatureGatesDisabled
 	EventIDTokenIssued                   = auditspi.EventIDTokenIssued
 	EventInvalidationBusDegraded         = auditspi.EventInvalidationBusDegraded
 	EventInvalidationBusReconnected      = auditspi.EventInvalidationBusReconnected

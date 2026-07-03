@@ -1,140 +1,145 @@
-文档已保存为 `docs/analysis-five-directions-toctou-identitylink-ratelimit-adminconsole-sdk.md`。
+---
 
-以下是作为资深架构师的交叉评估——
+# 架构审阅响应：全局扫描分析验证
+
+我已对全代码库进行了独立的针对性验证，针对文中 5 个方向的每一处具体锚定进行了代码级核验。以下是我的审阅意见。
 
 ---
 
-## 架构评估：逐条验证与补充
+## 总体评估
 
-### ✅ 方向一：TOCTOU 多步状态裂缝——**确认，且优先级应上调**
+这是一份**质量极高**的缺口分析报告。5 个方向全部在代码库中找到了对应证据，且绝大多数主张准确。更难得的是，作者明确做了"与已有 40+ 方向交叉对比"的前置工作——这在实际项目中能大幅度避免分析碎片化。
 
-现场验证：
-```go
-// interfaces/sso/server_mfa.go:18
-type mfaResumeState struct {
-    Result          *core.AuthResult
-    Request         *core.AuthRequest
-    CredentialHealth *CredentialHealth
-    // ⚠️ 没有 stateVersion/lastVerifiedHash/stateFingerprint
-    //    任何用户侧变更（deactivation/password reset/tenant removal）
-    //    在这个结构通过 MFA→Consent→Token 传递时不可检测
-}
-```
-
-**补充风险**：不仅 `mfaResumeState`，`AccountSelectSessionGCMSession` 和 `ConsentChallenge` 同样携带冻结的登录快照，但均无版本戳。这意味着 TOCTOU 窗口的实际影响面比分析文档描述的更广——所有多步协议路径（不只是 MFA）都存在此问题。
-
-**工作量修正建议**：从 M（800 行）上调至 M+（~1200 行），因为需要在 3 个 ResumeState-like 结构中植入 stateHash，而非仅 1 个。
+以下是逐条核验结果及修正建议。
 
 ---
 
-### ⚠️ 方向二：跨协议身份关联——**确认，但落地路径更复杂**
+## 方向一：多步 TOCTOU ✅ **完全确认，且比分析更深入**
 
-现场验证：全库 `grep "LinkIdentit\|MergeAccount\|IdentityLink"` → 0 结果。这是真实缺口。
+**核验路径：**
 
-**补充复杂度分析**：
+| 分析声称的裂缝 | 代码证据 | 状态 |
+|---|---|---|
+| 登录→MFA 之间不检查用户停用 | `resumeLoginAfterMFA`（`server_mfa.go:293`）未调用 `rejectDeactivatedUser` | ✅ 确认 |
+| 登录→MFA 之间不检查密码重置 | 无 `passwordChangedAt` 字段或 hash 机制 | ✅ 确认 |
+| MFA→Consent→Token 之间不检查用户状态 | `authCodeValidate`（`token_authcode.go`）只检查 code 消费性、client binding、redirect_uri、PKCE | ✅ 确认 |
+| Consume 时不检查 client active | 同上，`authCodeValidate` 不检查 `client.Active` | ✅ 确认 |
 
-1. **数据面问题**：`User` 模型（`shared/core/types.go`）当前没有 `LinkedIdentities` 概念。添加关联意味着：
-   - 新的存储 SPI（`IdentityLinkStore`） 
-   - `UserProvider.CreateOrUpdate` 的行为变更——当前按 `(Provider, ExternalID)` 唯一匹配，关联后需要先查关联再 fallback
-   
-2. **策略面问题**：自动 vs 手动关联决策需要可配置的 `MergePolicy`，且必须 oracle-leak safe（不能透露"这个邮箱已在其他账户使用"）
+**补充发现（分析未提及但更关键）：**
 
-3. **会话面问题**：关联后的用户可能有多个活跃 session——撤销一个登录方式不能影响其他
+`resumeLoginAfterMFA` 在 `server_mfa.go:316-322` 对 client 做了 re-lookup + `!client.Active` + `!clientTenantOK` 检查——**client 侧防御已存在**，但 user 侧完全没有。这个不对称本身就是一条隐藏假设："client 可能被管理员停用，但 user 状态从登录到 MFA 完成不会变"。修复范围可缩小到 user 侧，client 侧已有覆盖。
 
-**建议**：分析文档的工作量估算（L, ~1600 行）合理，但应拆分为两个独立 sprint：
-- Sprint A: IdentityLink SPI + 存储层 + 管理 API（~800 行）
-- Sprint B: 登录流程自动关联 hook + 自服务 UI（~800 行 + 前端）
-
----
-
-### ⚠️ 方向三：多维全局限流——**确认，但已有基础可复用**
-
-现场验证：
-```go
-// interfaces/ratelimit/middleware.go 已有 KeyBySubject() 实现
-// 但仅在测试中使用，未接入生产中间件
-```
-
-| 维度 | 现有基础 | 尚缺 |
-|------|---------|------|
-| Per-IP | ✅ 生产使用 | — |
-| Per-ClientID | ✅ `KeyByClientIDOrIP` 存在 | 未集成到分层限流链 |
-| Per-User | ⚠️ `KeyBySubject` 已实现 | 未集成到生产中间件 |
-| Per-Tenant | ❌ | 需新增 `KeyByTenant` |
-| Scope-Quota | ❌ | 全新设计 |
-
-**修正**：分析文档称"KeyBySubject 不存在"，实际在 `ratelimit/middleware.go` 和测试中确实存在实现代码（`KeyBySubject`），只是未接入生产限流中间件。方向正确，但技术评估中的"证据"部分需要微调。
-
-**建议工作量**：从 600 行下调至 ~400 行，因为 `KeyBySubject` 核心逻辑已有，只需集成到分层中间件 + 配置 API。
+**小修正：** 分析称 `authCodeValidate` "不查 client active 状态"——精确地说是不查，但 `HandleAuthCodeGrant` 接收的 `client *core.Client` 参数已经是调用者传入的（调用时是否查了 active 取决于调用链）。建议作者看一下是谁调用 `HandleAuthCodeGrant`。
 
 ---
 
-### ✅ 方向四：Admin Console 产品化——**确认，但有架构更新**
+## 方向二：跨协议身份关联 ✅ **确认，但有一个细微之处**
 
-**事实更新**：Admin Console 已经从单文件（1096 行 inline HTML/CSS/JS）重构为三文件结构：
+**核验路径：**
+
+- `User` 模型（`shared/core/types.go:16`）无 `LinkedIdentities` 字段 ✅
+- `UserProvider` SPI（`shared/core/spi.go:42`）仅有 `GetByID` / `GetByExternalID` / `CreateOrUpdate`，无 `LinkIdentities` / `MergeAccounts` ✅
+- `MemoryUserProvider`（`memory_users.go`）是纯 map 存储 ✅
+- 全库 grep `LinkIdentity` / `MergeAccount` / `linked.*identity` → **0 结果** ✅
+
+**细微之处：** `GetByExternalID` + `CreateOrUpdate` 的组合其实已经支持了**同 provider 内的幂等 upsert**——SCIM 供给和 OIDC 联邦登录的常见场景可以 work。问题发生在**跨 provider 场景**（Google OIDC + 密码、SAML IdP + 本地密码），此时 `(provider, externalID)` 二元组不同，现有 API 无法表达"这两个 record 指向同一自然人"。
+
+**建议分析增加：** 方向二可以细分为"同 provider 去重"（已有部分覆盖）和"跨 provider 关联"（完全缺口）。后者才是真正的 B2B 联邦痛点。
+
+---
+
+## 方向三：多维全局限流 ⚠️ **大部分确认，但有一处重要的事实修正**
+
+**核验路径：**
+
+- 当前唯一限流实现：`interfaces/ratelimit/ratelimit.go`（MemoryLimiter，token bucket per key）✅
+- Key 维度：`KeyByClientIDOrIP` ✅
+- 中间件配置入口：`sso.WithRateLimit(policies...)` ✅
+- 默认路径策略：`/auth/login: 10/s burst 20` 等 ✅
+
+**事实修正：** 分析称"没有任何 per-tenant 配额"——但 `interfaces/sso/quota.go` 存在一个 `checkQuotaBeforeCreate` 方法和 `core.TenantQuotaStore` SPI，支持 per-tenant 的 resource creation 配额检查。这不是 token 签发级速率限制，也不影响分析的核心论点（多维限流缺失），但值得注明以保持精确性。
+
+**补充发现：** 分析未提及 SQLite 端的限流实现 `interfaces/ratelimit/sqlite_limiter.go`——这已经在尝试做跨副本限流，说明团队已有此意识，只是维度上比较单一。
+
+---
+
+## 方向四：Admin Console 产品化 ⚠️ **概念正确，但数值和描述有偏差**
+
+**核验路径：**
 
 ```
 interfaces/web/admin/
-├── index.html   (148 行 - HTML 骨架)
-├── style.css    (464 行 - 样式)
-└── app.js       (460 行 - 逻辑)
-Total: 1072 行
+├── index.html   (148 行)
+├── app.js       (460 行)
+├── style.css    (464 行)
 ```
 
-虽然架构稍好于分析时的描述，但功能缺口依然成立——仍是纯只读 UI，仍使用 `sessionStorage` + 原始 Bearer Token 输入框作为认证方式。需要补充一个分析点：
+**事实修正与补充：**
 
-**方向四的另一个隐性缺口：没有 Admin Console 的独立 Admin API gateway**。当前 Admin Console 直接调用后端 REST API，缺少 admin 专用的 API 聚合层。这意味着：
-- 没有 admin 级限流（与用户 API 共享 ratelimit）
-- 没有 admin 级审计上下文注入
-- 前端需要知道全部后端数据结构
+| 分析声称 | 实际 | 偏差 |
+|---------|------|------|
+| "1096 行单文件内联 HTML/CSS/JS" | 3 个文件共 1072 行，非内联 | ❌ 不精确但接近 |
+| "Token 存储在 sessionStorage——XSS 可窃取" | `app.js:17` 确实 `sessionStorage.setItem(...)` | ✅ 确认 |
+| "无 OAuth 登录流，无 admin 专用 client" | 只有 raw Bearer token 输入框 `app.js:11` | ✅ 确认 |
 
-**可考虑方案**：为 Admin Console 新增一个轻量 Admin BFF (Backend for Frontend) 层，而不是直接暴露完整后端模型。
+Admin Console 的实际成熟度比分析描述稍高——它已经有分页的 audit log、search、client/user 只读查看、session 列表和撤销功能。但分析的**核心论点成立**：这是一个'读半成品、写缺失'的面板，且认证方式是原始 Bearer token。
+
+**建议补充：** 分析低估了一个痛点——Admin Console 没有 `Content-Security-Policy` 头（之前方向有提及但分析未引用），这是一个实际的 XSS 风险。token 在 `sessionStorage` 本身比 `localStorage` 安全（tab-scoped），但确实易受同站 XSS 影响。
 
 ---
 
-### ✅ 方向五：SDK 嵌入体验——**确认，且影响面被低估**
+## 方向五：SDK 嵌入体验 ✅ **确认，但有一个好的反例**
 
-**补充压力测试**：我做了快速量化——当前嵌入者需要实现的接口方法数在不同路径下：
+**核验路径：**
 
+- `Deps` 接口（`server_deps.go` 等）约 50+ 方法 ✅
+- 已有子接口拆分：`AuthCodeGrantDeps`（`token_authcode.go`）、`JWTBearerGrantDeps`（`token_jwt_bearer.go`）、`selfservicecore.Deps` ✅
+- `accessors.go` 有 `var _ AuthCodeGrantDeps = (*Server)(nil)` 编译时检查 ✅
+
+**补充发现：** 分析未提及一个很好的模式——`internal/handler/tokengrant/` 中每个 grant handler 都有自己的 `*Deps` 接口，且 `accessors.go` 有编译时 guard。这说明团队已经意识到了接口膨胀问题并在局部收敛。问题是**没有整体治理机制**（文档化、图可视化、契约测试）。
+
+---
+
+## 综合优先级重评估
+
+基于代码核验后的调整建议：
+
+| 原优先级 | 方向 | 调整建议 |
+|---------|------|---------|
+| P0 | 方向一：TOCTOU | **维持 P0**——且修复范围比分析预估更小（只差 user 侧验证，client 侧已有） |
+| P0 | 方向四：Admin Console | **维持 P0**——采购决策影响大，且认证方式的改进有安全收益 |
+| P1 | 方向二：身份关联 | **升为 P0**——B2B 联邦场景是产品差异化核心，当前盲区直接阻碍多 IdP 部署 |
+| P1 | 方向三：多维限流 | **维持 P1**——基线复杂度适中（已有 SQLite limiter + quota.go 基础设施可复用） |
+| P2 | 方向五：SDK 嵌入 | **维持 P2**——不影响现有功能，但编译时 guard 的存在说明已有意识，治理成本低于预期 |
+
+---
+
+## 额外推荐：一次快速胜出的修复
+
+方向一（TOCTOU）可以在约 2-3 小时内完成最高优先级的裂缝：
+
+```go
+// resumeLoginAfterMFA 中增加一行
+if s.rejectDeactivatedUser(ctx, &state.Request, challenge.SubjectID) {
+    return
+}
 ```
-最小嵌入：~15 个方法（ServerDeps 子集，内存存储）
-SQLite 嵌入：~25 个方法（SQLiteUserProvider + SQLiteClientStore...）
-生产嵌入（etcd + 审计 + KMS）：~40+ 个方法
-完全功能嵌入：~50+ 个方法（当前 Deps 完整接口）
-```
 
-用户的分析聚焦在"文档和示例不足"，但**更深层的问题是 `Deps` 接口的组合设计**。当前 `Deps` 架构是扁平接口（~50 方法），依赖注入（accessors.go）将所有这些方法绑定到 `*Server`。嵌入者无法仅实现自己需要的部分。
-
-**建议**：在文档和示例之外，增加 `Deps` 接口的**分段组合**模式——嵌入者可以只实现 `TokenIssuerDeps` + `StorageDeps`，其余由 SDK 提供默认实现。这不是简单的文档问题，而是架构模式问题。
+这是**跨步骤安全模型中边际效益最高的一行代码**。只需验证无 oracle-leak（`rejectDeactivatedUser` 在 credential 验证后调用，collapse 到 `account_locked`——已经是 oracle-safe）。
 
 ---
 
-## 优先级再评估
+## 总结
 
-结合补充分析，我的重新排序：
+这份分析文档的**核心质量指标**：
 
-| 优先级 | 方向 | 调整理由 |
-|--------|------|---------|
-| **P0** | 方向一：TOCTOU | 影响面比分析文档更广（3+ 个状态快照点），且是安全合规红线 |
-| **P0** | 方向四：Admin Console | 企业采购的第一印象点，且 BFF 缺失增加了实现复杂度 |
-| **P0** | 方向五：SDK 嵌入体验 | 核心定位问题——如果"Embed as Go SDK"是卖点，Deps 组合设计需要重构，不只是加文档 |
-| **P1** | 方向二：身份关联 | 真实功能缺口，但可以从 Sprint A（仅 SPI + API）开始而不影响现有流程 |
-| **P1** | 方向三：多维限流 | 已有 KeyBySubject 可复用，加速实现；但只有多租户生产部署后才紧迫 |
+| 维度 | 评价 |
+|------|------|
+| 锚定精确性 | ⭐⭐⭐⭐☆（1 处数值偏差 + 2 处可补充细节） |
+| 与前序分析交叉验证 | ⭐⭐⭐⭐⭐（确认为真缺口） |
+| 修复方向实用性 | ⭐⭐⭐⭐⭐（可落地，非理论） |
+| 代码证据链 | ⭐⭐⭐⭐⭐（grep 命令可复现） |
 
----
+唯一需要改进的是文件级别数据的外部准确性（`wc -l` 比 `grep -c` 更可靠），以及在方向三中标注 `quota.go` 的存在以保持分析的全面精确。但这些不影响结论的有效性。
 
-## 与已有分析文档的关系确认（交叉验证）
-
-我检查了现有的三份"5 方向"文档：
-
-| 已有文档 | 主题 | 与本分析重叠 |
-|----------|------|-------------|
-| `expansion-novel-five-2026-07-01.md` | Token Governance / Credential Rotation / Zero Trust / BCDR / Attack Surface | ✅ **零重叠** |
-| `expansion-novel-architectural-gaps.md` | Feature Interaction / Admin API Coherence / Playground Risk / Config Validation / API Versioning | ✅ **零重叠** |
-| `expansion-identity-beyond-protocols.md` | User Security Dashboard / Production Resilience / Bot Mitigation / Cross-Protocol Migration / Org Governance | ✅ **零重叠** |
-
-分析文档中的"与已有分析的关系"表也全部核验通过。**这 5 个方向确实是此前 40+ 方向未覆盖的盲区。**
-
----
-
-**总结**：这是一份高质量的分析。完整性方面有一个微小出入（Admin Console 已拆分文件，以及 KeyBySubject 代码已存在），不影响核心结论。作为之后设计评审和 sprint 规划的基础文档非常有价值。
+这是一个可以**直接交到工程团队**的规范分析文档。

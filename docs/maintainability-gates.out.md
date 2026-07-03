@@ -1,52 +1,21 @@
-Here's the full gate status across all 6 maintainability gates:
+I've now compared the documentation against the actual gate tests. There are **significant discrepancies** — the doc describes a pristine state, but the codebase has accumulated violations across every gate:
 
----
+### Discrepancies found
 
-## Gate Audit Results — 6 gates, 5 failures
+| Gate | Doc claim | Reality |
+|---|---|---|
+| **File ≤ 500 lines** | "Every production file is under budget" | 17 files over (12 generated `admin/v1/*.pb*.go`, `cmd/sso-ctl/generate/templates.go`, `interfaces/sso/options_misc.go`, `interfaces/sso/server_token.go`, `shared/core/types.go`) |
+| **Cyclo ≤ 15** | "`cycloExemptions` map empty (cap 0)" — empty but violations exist | 6 functions over: generated `admin/v1/*.pb.gw.go` (4x), `server_login.go:handleLogin` (21), `server_token.go:handleToken` (17) |
+| **Func len ≤ 50** | "`funcLenExemptions` map empty (cap 0)" — same | 26 functions over (mostly generated handlers + several hand-written ones) |
+| **Layer boundaries** | 9 grandfathered exemptions | `admin/v1` is **unclassified** — not in `layerName()` |
+| **Dir go-file fan-out** | Dirs at/under grandfathered caps | 3 new over-cap dirs (`admin/v1`: 21, `internal/handler/tokengrant`: 11, `shared/security`: 11) + **4 regressions** (config 26→28, defaultimpl 26→27, sso 57→65, core 23→24) |
+| **Dir subdir fan-out** | `.` at frozen 21 | `.` regressed to 23 subdirs |
+| **Dir depth ≤ 3** | All ≤ 3 | 8 `docs/skills/*/__pycache__` dirs at depth 4 |
 
-### ✅ Passing (4 subtests)
-| Gate | Status |
-|---|---|
-| `TestArchitecture_ImportBoundaries` | ✅ Pass |
-| `TestArchitecture_DirectoryDepth` | ✅ Pass |
-| `TestArchitecture_DirectoryFanoutExemptionsDoNotGrow` | ✅ Pass |
-| `TestMaintainability_ExemptionsDoNotGrow` / `FileSizeExemptionsDoNotGrow` | ✅ Pass |
+The doc's `fileSizeExemptions`, `cycloExemptions`, and `funcLenExemptions` maps are indeed empty (matching the doc), but that's because the violations were never exempted — they just appeared as new violations.
 
-### ❌ Failing (5 subtests)
+What would you like me to do?
 
-#### 1. `TestArchitecture_LayerBoundaries` — `admin/v1` unclassified
-The `admin/v1` package (generated protobuf) has no layer classification. Needs an entry in `layerName()` or an exemption.
-
-#### 2. `TestArchitecture_DirectoryFileFanout` — 7 violations
-- **Over 10-file budget (new):** `admin/v1` (20), `internal/handler/tokengrant` (11), `shared/security` (11)
-- **Exempt dirs regressed past frozen ceiling:** `config` (27 > 26), `infrastructure/defaultimpl` (27 > 26), `interfaces/sso` (61 > 57), `shared/core` (24 > 23)
-
-#### 3. `TestArchitecture_DirectorySubdirFanout` — root regressed
-Root `.` has 22 subdirs vs frozen ceiling of 21.
-
-#### 4. `TestMaintainability_FileSizeBudget` — 17 files over 500 lines
-Mostly generated protobuf stubs (`admin/v1/*.pb.go`, `.pb.gw.go`, `*_grpc.pb.go`) plus 4 hand-written files:
-- `cmd/sso-ctl/generate/templates.go` (589)
-- `interfaces/sso/options_misc.go` (549)
-- `interfaces/sso/server_login.go` (583)
-- `interfaces/sso/server_token.go` (554)
-- `shared/core/types.go` (503)
-
-#### 5. `TestMaintainability_CyclomaticComplexity` — 6 functions over cyclo 15
-- 4 generated functions in `admin/v1/*.pb.gw.go`
-- 2 hand-written: `(*Server).handleLogin` (cyclo 21), `(*Server).handleToken` (cyclo 17)
-
-#### 6. `TestMaintainability_FunctionLength` — 24 functions over 50 lines
-- 14 generated functions in `admin/v1/*.pb.gw.go`
-- 10 hand-written in `interfaces/sso/`, `cmd/sso-ctl/`, `cmd/sso-server/`, `shared/security/`
-
----
-
-The new root-cause is clear: the `admin/v1/` protobuf-generated package (created after the gates were seeded) isn't classified in the layer model, its generated-file functions blow both cyclo and length budgets, and its file count pushes fanout limits. The hand-written files that exceed budgets are a secondary concern.
-
-Would you like me to fix these one at a time? The logical order would be:
-
-1. **Classify `admin/v1`** in `architecture_layer_test.go` as a generated/composition layer
-2. **Regenerate the directory fanout exemptions** (which will account for the new `admin/v1` dir and the root subdir count)
-3. **Add size/cyclo/length exemptions** for the generated `admin/v1/*.pb.go` / `.pb.gw.go` / `*_grpc.pb.go` files (they're generated code — the doc explicitly says "non-generated production `.go` file" for the file-size budget)
-4. **Refactor the hand-written violations** (the 4 over-500-line files, the 2 high-cyclo functions, the 10 long functions)
+1. **Fix the violations** to bring the codebase back into compliance with the docs
+2. **Update the docs** to reflect the current state
+3. **Re-seed the gate exemptions** (run `SEED_MAINTAINABILITY=1` and `SEED_DIRFANOUT=1`) to match current reality, then fix forward

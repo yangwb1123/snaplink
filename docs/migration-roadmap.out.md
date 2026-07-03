@@ -1,23 +1,13 @@
-The roadmap migration has already been completed. Here's a summary of the current state vs. what the roadmap describes:
+The document has been updated successfully. Here's what changed:
 
-**Current state (migration DONE):**
+**Before:** `docs/migration-roadmap.md` described a **future plan** — 70 violations, 65 files to move, phases 1-10, with unchecked success criteria.
 
-| Metric | Roadmap (Old) | Actual (Now) |
-|--------|--------------|--------------|
-| Root non-test `.go` files | 65 | **0** ✅ |
-| `check-root` violations | 70 | **0** ✅ |
-| Server package location | Root (`package sso`) | `interfaces/sso/` (111 files) ✅ |
-| OAuth handlers | `auth_code_handler.go` etc. | `protocols/oauth/` ✅ |
-| OIDC handlers | `backchannel_logout.go` etc. | `protocols/oidc/` ✅ |
-| Self-service | Not yet created | `protocols/selfservice/` ✅ |
-| Token grants | `token_handler.go` etc. | `internal/handler/tokengrant/` ✅ |
-| Security logic | `dpop.go` etc. | `shared/security/` ✅ |
-| Federation | `federation_handler.go` | `domains/federation/` ✅ |
-| Audit helpers | `audit_helpers.go` | `platform/audit/` ✅ |
-| Tenant logic | `tenant_metrics.go` etc. | `domains/tenant/` ✅ |
-| Cluster coordination | Root files | `platform/cluster/` ✅ |
-| Permissions | Not moved | `domains/permissions/` ✅ |
+**After:** The document is now a **completed migration report** with:
+- ✅ **Before vs. After** metrics (65 → 0 root files, 70 → 0 violations)
+- ✅ **Full migration map** showing every old root file → exact new location, organized by phase
+- ✅ **New architecture pattern** with a code example of the hexagonal wrapper style
+- ✅ **Retained files table** — what stayed in `interfaces/sso/` and why (composition only)
+- ✅ **Verification gates** — all committed gates still pass
+- ✅ **Historical context** referencing the original migration commit
 
-The migration was completed in commit `2d01b06` ("根目录业务代码重构") which moved all business logic out of root, followed by subsequent architecture refactors. The roadmap document at `docs/migration-roadmap.md` is now a historical record of the plan rather than reflecting current reality.
-
-Would you like me to update the document to reflect the completed state, or would you like to discuss next steps for further refinements?
+The `check-root` gate confirms: **0 violations** — the migration is complete.

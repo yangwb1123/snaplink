@@ -7,6 +7,8 @@ package config
 import (
 	"fmt"
 	"log/slog"
+
+	"github.com/snaplink/sso/interfaces/sso"
 )
 
 // Default config file name searched if no path is given.
@@ -66,6 +68,69 @@ type Config struct {
 	NativeSSO          NativeSSOConfig                 `yaml:"native_sso"`
 	ProtectedResource  ProtectedResourceMetadataConfig `yaml:"protected_resource_metadata"`
 	Trust              TrustConfig                     `yaml:"trust"`
+	FeatureGates       FeatureGatesConfig              `yaml:"feature_gates"`
+}
+
+// FeatureGatesConfig controls which optional protocol surfaces the server
+// mounts routes for (attack-surface reduction for deployment shapes that
+// only need a subset of the SSO server's protocol coverage). Every field is
+// a *bool so the YAML/env loader can distinguish "operator did not mention
+// this key" (nil — the surface stays exactly as it was before this config
+// section existed) from an explicit `false` (the surface's routes are NOT
+// registered at all). See sso.FeatureGates for the full semantics, including
+// why a surface's own opt-in config (e.g. caep.receiver) keeps gating its
+// routes on top of this rather than being overridden by it.
+//
+// Declared here (rather than its own config_gates.go) because config/ is at
+// its frozen per-directory file-count ceiling (directory_fanout_test.go) —
+// this is a root-level `feature_gates:` YAML section exactly like every
+// other top-level Config field, so config.go is its natural home.
+//
+// YAML:
+//
+//	feature_gates:
+//	  oidc: false          # OAuth-2.0-only deployment
+//	  admin_api: false     # no admin tooling for this replica
+//
+// ENV (SSO_ prefix, "__" nesting, matches every other config section):
+//
+//	SSO_FEATURE_GATES__OIDC=false
+type FeatureGatesConfig struct {
+	OIDC        *bool `yaml:"oidc"`
+	CIBA        *bool `yaml:"ciba"`
+	CAEP        *bool `yaml:"caep"`
+	Federation  *bool `yaml:"federation"`
+	SelfService *bool `yaml:"self_service"`
+	AdminAPI    *bool `yaml:"admin_api"`
+	WebSPA      *bool `yaml:"web_spa"`
+}
+
+// toSSOGates converts the YAML/env-sourced config into the sso.FeatureGates
+// value ServerOptions() feeds to sso.WithFeatureGates. A field-by-field copy
+// (rather than a type alias) keeps the config package's wire schema and the
+// SDK's runtime type free to evolve independently.
+func (c FeatureGatesConfig) toSSOGates() sso.FeatureGates {
+	return sso.FeatureGates{
+		OIDC:        c.OIDC,
+		CIBA:        c.CIBA,
+		CAEP:        c.CAEP,
+		Federation:  c.Federation,
+		SelfService: c.SelfService,
+		AdminAPI:    c.AdminAPI,
+		WebSPA:      c.WebSPA,
+	}
+}
+
+// anySet reports whether the operator mentioned at least one feature_gates
+// key. ServerOptions() only appends sso.WithFeatureGates when this is true —
+// an all-nil FeatureGatesConfig is functionally IDENTICAL to never calling
+// the option at all (every gate already defaults to on), so skipping the
+// call keeps ServerOptions' output byte-identical to a pre-gate build
+// (existing tests assert its exact length) rather than merely
+// behaviorally equivalent.
+func (c FeatureGatesConfig) anySet() bool {
+	return c.OIDC != nil || c.CIBA != nil || c.CAEP != nil || c.Federation != nil ||
+		c.SelfService != nil || c.AdminAPI != nil || c.WebSPA != nil
 }
 
 // CurrentSchemaVersion is the expected version value for the current

@@ -62,12 +62,10 @@ func (s *Server) Mount() {
 	s.mountCoreOAuthOIDC()
 	s.mountSelfServiceProfile()
 	s.mountSelfServiceCredentials()
+	s.mountBrandingEndpoint()
 	s.mountClusterEndpoints()
 	s.mountFederationEndpoints()
-	api := s.router.Group(PathAPIPrefix)
-	s.mountAdminAPIObservability(api)
-	s.mountAdminUserState(api)
-	s.mountAdminB2B(api)
+	s.mountAdminSurface()
 }
 
 // mountMiddleware lazily creates the router and installs the global middleware
@@ -116,13 +114,13 @@ func (s *Server) mountCoreOAuthOIDC() {
 	// Unauthenticated forgot-password flow. Requires the reset-token store AND
 	// the credential store (reset must SetPassword on success) — byte-identical
 	// without both.
-	if s.passwordResetStore != nil && s.passwordCredentialStore != nil {
+	if s.passwordResetStore != nil && s.passwordCredentialStore != nil && s.selfServiceGateOn() {
 		s.router.POST(PathForgotPassword, s.handleForgotPassword)
 		s.router.POST(PathResetPassword, s.handleResetPassword)
 	}
 	// Opt-in self-service signup. Needs a UserProvider (create) + credential
 	// store (set password). Default-off — byte-identical when not enabled.
-	if s.signupEnabled && s.userProvider != nil && s.passwordCredentialStore != nil {
+	if s.signupEnabled && s.userProvider != nil && s.passwordCredentialStore != nil && s.selfServiceGateOn() {
 		// Mode B (mandatory verification) requires the store + sender; without
 		// them the handler nil-derefs on EmailVerificationStore.Issue(). Suppress
 		// the route rather than panic at request time.
@@ -145,20 +143,67 @@ func (s *Server) mountCoreOAuthOIDC() {
 	s.router.GET(PathDeviceVerify, s.handleDeviceVerifyPage)
 	s.router.POST(PathDeviceVerify, s.handleDeviceVerify)
 	s.router.POST(PathPAR, s.handlePAR)
-	s.router.POST(PathBackchannelAuth, s.handleBackchannelAuth)
+	s.mountCIBAEndpoint()
 	s.router.POST(oauth.PathRegister, s.handleRegister)
 	s.router.GET(oauth.PathRegisterByID, s.handleRegistrationGet)
 	s.router.PUT(oauth.PathRegisterByID, s.handleRegistrationPut)
 	s.router.DELETE(oauth.PathRegisterByID, s.handleRegistrationDelete)
-	s.router.GET(PathUserInfo, s.handleUserInfo)
+	s.mountOIDCUserEndpoints()
 	s.router.POST(PathLogout, s.handleLogout)
+}
+
+// gateOn resolves a single FeatureGates field: nil (unset) or an explicit
+// true both mean ON — only an explicit false turns a surface off. This is
+// what makes an operator's own opt-in config (e.g. WithCAEPReceiver) keep a
+// gate effectively on even when FeatureGates never mentions it, per the
+// FeatureGates doc.
+func gateOn(explicit *bool) bool {
+	return explicit == nil || *explicit
+}
+
+// The seven gate-check methods below are the single source of truth Mount()
+// and the endpoint inventory (server_routes_admin.go) both consult — keeping
+// them as named methods (rather than inlining gateOn(s.featureGates.X) at
+// each call site) means the inventory can never drift from what Mount()
+// actually decided.
+func (s *Server) oidcGateOn() bool        { return gateOn(s.featureGates.OIDC) }
+func (s *Server) cibaGateOn() bool        { return gateOn(s.featureGates.CIBA) }
+func (s *Server) caepGateOn() bool        { return gateOn(s.featureGates.CAEP) }
+func (s *Server) federationGateOn() bool  { return gateOn(s.featureGates.Federation) }
+func (s *Server) selfServiceGateOn() bool { return gateOn(s.featureGates.SelfService) }
+func (s *Server) adminAPIGateOn() bool    { return gateOn(s.featureGates.AdminAPI) }
+func (s *Server) webSPAGateOn() bool      { return gateOn(s.featureGates.WebSPA) }
+
+// mountOIDCUserEndpoints registers the OIDC-specific /userinfo and
+// /end_session routes. Split out of mountCoreOAuthOIDC (which sits at the
+// function-length budget) so the OIDC gate check lives in exactly one place.
+func (s *Server) mountOIDCUserEndpoints() {
+	if !s.oidcGateOn() {
+		return
+	}
+	s.router.GET(PathUserInfo, s.handleUserInfo)
 	s.router.GET(PathEndSession, s.handleEndSession)
+}
+
+// mountCIBAEndpoint registers POST /backchannel-authentication. Before
+// FeatureGates existed this route was mounted unconditionally (the handler
+// itself 501s without a CIBA store) — the gate is the first way to hide it
+// from a probe entirely rather than let it 501.
+func (s *Server) mountCIBAEndpoint() {
+	if s.cibaGateOn() {
+		s.router.POST(PathBackchannelAuth, s.handleBackchannelAuth)
+	}
 }
 
 // mountSelfServiceProfile registers the authenticated /me* self-service
 // endpoints for permissions/menus/roles, sessions, consents, org membership,
-// and profile — each gated on its backing store.
+// and profile — each gated on its backing store, and all of them behind the
+// SelfService feature gate (a deployment that never wants an end-user-facing
+// self-service surface hides the whole group).
 func (s *Server) mountSelfServiceProfile() {
+	if !s.selfServiceGateOn() {
+		return
+	}
 	s.router.GET(PathMyPermissions, s.handleMyPermissions)
 	s.router.GET(PathMyMenus, s.handleMyMenus)
 	s.router.GET(PathMyRoles, s.handleMyRoles)
@@ -200,8 +245,14 @@ func (s *Server) mountSelfServiceProfile() {
 
 // mountSelfServiceCredentials registers the authenticated /me* credential +
 // privacy endpoints (MFA factors, passkey registration, GDPR export/erasure,
-// verified email change) and the public per-host branding lookup.
+// verified email change), gated on both their backing store and the
+// SelfService feature gate. The public per-host branding lookup used to live
+// here too; it moved to mountBrandingEndpoint (gated by WebSPA instead — it
+// serves the hosted login SPA, not an authenticated self-service action).
 func (s *Server) mountSelfServiceCredentials() {
+	if !s.selfServiceGateOn() {
+		return
+	}
 	// Self-service MFA factor management. Mounted only with an enrollment
 	// store; byte-identical without one.
 	if s.mfaEnrollmentStore != nil {
@@ -237,93 +288,22 @@ func (s *Server) mountSelfServiceCredentials() {
 		s.router.POST(PathMyEmailChange, s.handleMyEmailChange)
 		s.router.POST(PathMyEmailVerify, s.handleMyEmailVerify)
 	}
-	// Public per-host branding lookup for the hosted login SPA. Only mounted
-	// with a tenant store (Domain.Branding is its source) — byte-identical to
-	// a single-tenant build without it.
-	if s.tenantStore != nil {
+}
+
+// mountBrandingEndpoint registers the public per-host branding lookup the
+// hosted login SPA consumes. Gated by WebSPA (not SelfService) and a tenant
+// store (Domain.Branding is its source) — byte-identical to a build without
+// either.
+func (s *Server) mountBrandingEndpoint() {
+	if s.tenantStore != nil && s.webSPAGateOn() {
 		s.router.GET(PathBranding, s.handleBranding)
 	}
 }
 
-// mountClusterEndpoints registers the full-path admin/cluster endpoints
-// (authz policy bundle, storage health, mesh ext_authz, CAEP/SSF receiver),
-// each opt-in and gated on its wiring.
-func (s *Server) mountClusterEndpoints() {
-	// Authorization policy bundle export (decentralized authz). Full
-	// path (not group-relative) registered directly on the router; its
-	// /api/v1/admin/ prefix means AdminMiddleware gates it as admin:read.
-	// Only mounted when a permissions provider is wired — the bundle is
-	// the role-DEFINITION half of that model.
-	if s.permissions != nil {
-		s.router.GET(PathAuthzPolicyBundle, s.handleAuthzPolicyBundle)
-	}
-
-	// Per-store storage-health report (opt-in WithStorageHealth). Full-path
-	// admin endpoint gated by AdminMiddleware via the /api/v1/admin/ prefix.
-	// Only mounted when at least one source is wired — byte-identical to a
-	// build without it.
-	if len(s.storageHealthSources) > 0 {
-		s.router.GET(PathStorageHealth, s.handleStorageHealth)
-	}
-
-	// Mesh ext_authz HTTP endpoint (opt-in, cluster C1). The sidecar may
-	// call it with the original request method, so register both GET and
-	// POST at the configured path. Not mounted unless WithMeshExtAuthz is
-	// wired — byte-identical to a build without it.
-	if s.meshExtAuthz {
-		path := s.meshExtAuthzPath
-		if path == "" {
-			path = PathMeshExtAuthz
-		}
-		s.router.GET(path, s.handleMeshExtAuthz)
-		s.router.POST(path, s.handleMeshExtAuthz)
-	}
-
-	// CAEP/SSF push-delivery RECEIVER (opt-in, the inbound half of OpenID
-	// Shared Signals). A trusted upstream transmitter POSTs a signed SET
-	// here; the receiver validates it fail-closed and revokes the mapped
-	// subject's local access. Not mounted unless WithCAEPReceiver is wired —
-	// byte-identical to a build without it.
-	if s.caepReceiver != nil {
-		s.router.POST(PathSSFReceive, s.handleSSFReceive)
-	}
-}
-
-// mountFederationEndpoints registers the RFC 9728 protected-resource metadata,
-// the OpenID Federation 1.0 entity configuration (+ §8 fetch when this server
-// is a superior), and the B2B home-realm discovery routes — each opt-in.
-func (s *Server) mountFederationEndpoints() {
-	// OpenID Federation 1.0 entity configuration (opt-in). Serves the OP's
-	// self-signed Entity Statement at the well-known endpoint so the OP is
-	// discoverable as a federation ENTITY. Not mounted unless
-	// RFC 9728 Protected Resource Metadata (opt-in). Public discovery doc;
-	// unmounted when not wired (byte-identical).
-	if s.protectedResourceMetadata != nil {
-		s.router.GET(PathProtectedResourceMetadata, s.handleProtectedResourceMetadata)
-	}
-	// WithFederationEntity is wired — byte-identical to a build without it.
-	if s.federationEntity != nil {
-		s.router.GET(PathFederationEntityConfig, s.handleFederationEntityConfig)
-		// OpenID Federation 1.0 §8 Federation Fetch endpoint — mounted ONLY when
-		// this server is configured as a SUPERIOR (≥1 subordinate). It issues
-		// SIGNED Subordinate Statements about configured subordinates so a
-		// resolver can climb THROUGH this server. With no subordinates the route
-		// is NOT mounted AND the entity config advertises no
-		// federation_fetch_endpoint — byte-identical to the slice-1 leaf OP.
-		if s.federationEntity.HasSubordinates() {
-			s.router.GET(PathFederationFetch, s.handleFederationFetch)
-		}
-	}
-
-	// Home-realm discovery (opt-in B2B). Given a login identifier (email) it
-	// returns the enterprise connection serving that domain so the login UI
-	// routes the user to the right upstream IdP. Not mounted unless
-	// WithConnectionStore is wired — byte-identical to a build without it.
-	if s.connectionStore != nil {
-		s.router.GET(PathHomeRealm, s.handleHomeRealm)
-		s.router.POST(PathHomeRealm, s.handleHomeRealm)
-	}
-}
+// mountClusterEndpoints and mountFederationEndpoints (cluster/mesh/CAEP-
+// receiver and OpenID Federation + B2B home-realm route registration) moved
+// to server_federation.go, alongside federationMeshState (the fields they
+// gate on) and the federation handlers — this file was at the line budget.
 
 // Handler returns the http.Handler for the server.
 //
@@ -459,22 +439,23 @@ func (s *Server) buildProbeMux(inner http.Handler) http.Handler {
 	// http.FileServerFS + StripPrefix pattern means /admin/index.html is
 	// reachable as /admin/ and the browser can navigate without path leakage
 	// into the SSO routing layer. Not wired by default — byte-identical to a
-	// build without the console when adminConsoleFS is nil.
-	if s.adminConsoleFS != nil {
+	// build without the console when adminConsoleFS is nil (or WebSPA is off).
+	if s.adminConsoleFS != nil && s.webSPAGateOn() {
 		mux.Handle(pathAdminConsolePrefix, http.StripPrefix(pathAdminConsolePrefix, http.FileServerFS(s.adminConsoleFS)))
 	}
 	// Hosted login SPA (opt-in). Served from /login/ so the browser can
 	// reach the SPA while the JSON /auth/login endpoint remains at its
 	// existing path (no overlap). Zero protocol changes — the SPA calls
 	// /auth/login over JSON like any other client. Not wired by default —
-	// byte-identical to a build without the UI when hostedLoginFS is nil.
-	if s.hostedLoginFS != nil {
+	// byte-identical to a build without the UI when hostedLoginFS is nil (or
+	// WebSPA is off).
+	if s.hostedLoginFS != nil && s.webSPAGateOn() {
 		mux.Handle(pathHostedLoginPrefix, http.StripPrefix(pathHostedLoginPrefix, http.FileServerFS(s.hostedLoginFS)))
 	}
 	// End-user self-service portal SPA (opt-in). Served from /portal/; it calls
 	// the /me* endpoints over JSON with the user's own bearer. Not wired by
-	// default — byte-identical when portalFS is nil.
-	if s.portalFS != nil {
+	// default — byte-identical when portalFS is nil (or WebSPA is off).
+	if s.portalFS != nil && s.webSPAGateOn() {
 		mux.Handle(pathPortalPrefix, http.StripPrefix(pathPortalPrefix, http.FileServerFS(s.portalFS)))
 	}
 	mux.Handle("/", inner)

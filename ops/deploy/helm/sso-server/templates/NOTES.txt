@@ -1,0 +1,15 @@
+🎯 SSO Server {{ .Chart.AppVersion }} deployed!
+
+  Chart version: {{ .Chart.Version }}
+  Release name:  {{ .Release.Name }}
+  Namespace:     {{ include "sso-server.namespace" . }}
+
+Get the service URL:
+  export POD_NAME=$(kubectl get pods --namespace {{ include "sso-server.namespace" . }} -l "app.kubernetes.io/name={{ include "sso-server.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -o jsonpath="{.items[0].metadata.name}")
+  kubectl --namespace {{ include "sso-server.namespace" . }} port-forward $POD_NAME 8080:8080
+
+Then test:
+  curl http://localhost:8080/.well-known/openid-configuration
+
+📖 For configuration reference, see:
+  https://github.com/snaplink/sso/blob/main/docs/deployment.md

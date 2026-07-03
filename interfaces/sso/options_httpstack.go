@@ -199,3 +199,80 @@ func WithRequestLogging(logBodies bool) Option {
 func WithIdempotentStore(cache core.IdempotentCache) Option {
 	return func(s *Server) { s.idempotentCache = cache }
 }
+
+// FeatureGates controls which optional protocol surfaces Mount() registers
+// routes for — attack-surface reduction for deployment shapes that only need
+// a subset of the SSO server's protocol coverage (e.g. an OAuth-2.0-only
+// gateway that never wants /userinfo or /end_session routable at all).
+//
+// Every field is a *bool so three states are distinguishable:
+//   - nil (the zero value, and every field an operator omits from
+//     `feature_gates:` in YAML): the gate follows today's behavior — ON.
+//     This is what makes the whole feature byte-identical when unused.
+//   - explicit true: ON, same as unset.
+//   - explicit false: OFF — the surface's routes are NOT registered, so a
+//     probe against them gets the router's native 404, indistinguishable
+//     from a path that was never defined (no "route exists but rejects you"
+//     signal to leak).
+//
+// A surface's own opt-in config (e.g. WithCAEPReceiver, WithFederationEntity)
+// keeps gating its routes on TOP of this — the gate is an extra AND, never a
+// replacement. So "config presence implies the gate is on unless explicitly
+// disabled" falls out for free: with the field unset the gate is already ON,
+// and an explicit false always wins regardless of what else is configured.
+type FeatureGates struct {
+	// OIDC gates the OpenID Connect-specific endpoints layered on top of
+	// bare OAuth 2.0: /userinfo and /end_session. Off ⇒ a deployment
+	// advertising itself as OAuth-2.0-only doesn't expose them at all.
+	OIDC *bool
+	// CIBA gates POST /backchannel-authentication (OIDC CIBA Core 1.0).
+	// Unlike every other route this Mount() registers, the CIBA route was
+	// previously mounted UNCONDITIONALLY even without a CIBA store wired
+	// (the handler itself 501s) — this gate is the first way to hide it.
+	CIBA *bool
+	// CAEP gates the inbound OpenID Shared Signals (CAEP/SSF) push-delivery
+	// receiver, POST /ssf/receive. Only relevant when WithCAEPReceiver is
+	// also wired — otherwise the route was never mounted anyway.
+	CAEP *bool
+	// Federation gates the OpenID Federation 1.0 + RFC 9728 discovery
+	// surface: the protected-resource metadata document, the federation
+	// entity configuration (+ §8 fetch when this server is a superior),
+	// and B2B home-realm discovery.
+	Federation *bool
+	// SelfService gates the end-user self-service surface: unauthenticated
+	// signup/forgot-password/reset-password/verify-email, and the
+	// authenticated /me* profile, sessions, consents, org-membership, MFA
+	// factor, passkey, data-export, and account-erasure endpoints.
+	SelfService *bool
+	// AdminAPI gates the entire /api/v1/admin/* REST surface (client
+	// lookups excluded — those live at /api/v1/clients and are not
+	// admin-scoped). Off ⇒ operators who run admin tooling out-of-band
+	// (or not at all) don't expose the admin bearer-auth challenge surface.
+	AdminAPI *bool
+	// WebSPA gates the opt-in static SPA bundles (admin console, hosted
+	// login, self-service portal) served outside the SSO router, plus the
+	// per-host branding lookup those SPAs consume.
+	WebSPA *bool
+}
+
+// WithFeatureGates installs deployment-shape attack-surface gating: any
+// field left nil keeps its route set exactly as it was before FeatureGates
+// existed (byte-identical). An explicit false on a field hides the
+// corresponding routes entirely — Mount() does not register them, so a
+// probe gets a router-native 404 rather than an endpoint that exists but
+// declines the request.
+//
+//	srv := sso.NewServer(
+//	    sso.WithFeatureGates(sso.FeatureGates{
+//	        OIDC:   sso.Bool(false), // OAuth-2.0-only deployment
+//	        WebSPA: sso.Bool(false), // API-only, no hosted UI
+//	    }),
+//	)
+func WithFeatureGates(g FeatureGates) Option {
+	return func(s *Server) { s.featureGates = g }
+}
+
+// Bool returns a pointer to b — a convenience so callers can write
+// sso.Bool(false) inline in a FeatureGates literal instead of declaring a
+// local variable to take its address.
+func Bool(b bool) *bool { return &b }

@@ -1,1 +1,8 @@
-该文件已存在于 `/home/dwp/snaplink/docs/config-reference.md` 中，内容与您提供的内容完全一致。您对此配置参考文件有什么想了解或讨论的吗？
+The file `/home/dwp/snaplink/docs/config-reference.md` already exists with the content you've shown — it matches exactly. 
+
+What would you like to do with it? For example:
+
+- **Review** it against the AGENTS.md to ensure completeness/correctness?
+- **Expand** it with additional sections or config keys not yet documented?
+- **Cross-reference** it with the actual Go config code to verify accuracy?
+- **Something else**?
