@@ -1,12 +1,17 @@
 package serverbuildplatform
 
 import (
+	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/domains/conditionalaccess"
+	"github.com/snaplink/sso/domains/tokenpolicy"
+	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/shared/core/corecredential"
 	"github.com/snaplink/sso/shared/spi"
@@ -124,5 +129,156 @@ func TestEffectiveConfigSnapshot_RedactsAndIsDigestible(t *testing.T) {
 	}
 	if _, err := configaudit.Digest(snap); err != nil {
 		t.Fatalf("snapshot must be JSON-digestible: %v", err)
+	}
+}
+
+// --- Wave-3 governance wiring: token policy / conditional access / degradation --
+
+func TestBuildTokenPolicyStore_AbsentReturnsNil(t *testing.T) {
+	t.Parallel()
+	store, err := BuildTokenPolicyStore(config.TokenPolicyConfig{})
+	if err != nil {
+		t.Fatalf("BuildTokenPolicyStore: %v", err)
+	}
+	if store != nil {
+		t.Fatalf("absent token_policies must return nil store; got %v", store)
+	}
+}
+
+func TestBuildTokenPolicyStore_InlinePolicies(t *testing.T) {
+	t.Parallel()
+	store, err := BuildTokenPolicyStore(config.TokenPolicyConfig{
+		Policies: []tokenpolicy.Policy{{Name: "cap", MaxTTL: time.Hour}},
+	})
+	if err != nil {
+		t.Fatalf("BuildTokenPolicyStore: %v", err)
+	}
+	if store == nil {
+		t.Fatal("inline policies must return a store")
+	}
+	ps, err := store.Policies(context.Background())
+	if err != nil || len(ps) != 1 || ps[0].Name != "cap" {
+		t.Fatalf("Policies = %v, %v; want the one seeded rule", ps, err)
+	}
+}
+
+func TestBuildTokenPolicyStore_FileBundle(t *testing.T) {
+	t.Parallel()
+	p := filepath.Join(t.TempDir(), "tp.yaml")
+	if err := os.WriteFile(p, []byte("token_policies:\n  - name: from-file\n    max_ttl: 15m\n"), 0o600); err != nil {
+		t.Fatalf("write bundle: %v", err)
+	}
+	store, err := BuildTokenPolicyStore(config.TokenPolicyConfig{File: p})
+	if err != nil {
+		t.Fatalf("BuildTokenPolicyStore(file): %v", err)
+	}
+	ps, _ := store.Policies(context.Background())
+	if len(ps) != 1 || ps[0].Name != "from-file" {
+		t.Fatalf("file bundle policies = %v; want one 'from-file' rule", ps)
+	}
+}
+
+func TestBuildTokenPolicyStore_FileAndInlineConflict(t *testing.T) {
+	t.Parallel()
+	_, err := BuildTokenPolicyStore(config.TokenPolicyConfig{
+		File:     "x.yaml",
+		Policies: []tokenpolicy.Policy{{Name: "cap"}},
+	})
+	if err == nil {
+		t.Fatal("expected error: file + inline policies are mutually exclusive")
+	}
+}
+
+func TestBuildConditionalAccess_AbsentReturnsNil(t *testing.T) {
+	t.Parallel()
+	store, _, err := BuildConditionalAccess(config.AccessPolicyConfig{})
+	if err != nil {
+		t.Fatalf("BuildConditionalAccess: %v", err)
+	}
+	if store != nil {
+		t.Fatalf("absent access_policies must return nil store; got %v", store)
+	}
+}
+
+func TestBuildConditionalAccess_InlinePolicies(t *testing.T) {
+	t.Parallel()
+	store, capCfg, err := BuildConditionalAccess(config.AccessPolicyConfig{
+		DefaultDeny: true,
+		Policies:    []conditionalaccess.Policy{{Name: "deny", Enabled: true, Actions: conditionalaccess.Actions{Deny: true}}},
+	})
+	if err != nil {
+		t.Fatalf("BuildConditionalAccess: %v", err)
+	}
+	if store == nil {
+		t.Fatal("inline policies must return a store")
+	}
+	if !capCfg.DefaultDeny {
+		t.Error("engine config must carry default_deny through")
+	}
+	ps, _ := store.List(context.Background())
+	if len(ps) != 1 || ps[0].Name != "deny" {
+		t.Fatalf("List = %v; want the one seeded policy", ps)
+	}
+}
+
+func TestBuildConditionalAccess_FileAndInlineConflict(t *testing.T) {
+	t.Parallel()
+	_, _, err := BuildConditionalAccess(config.AccessPolicyConfig{
+		File:     "x.yaml",
+		Policies: []conditionalaccess.Policy{{Name: "p", Enabled: true}},
+	})
+	if err == nil {
+		t.Fatal("expected error: file + inline are mutually exclusive")
+	}
+}
+
+func TestBuildConditionalAccess_InvalidInlineRejected(t *testing.T) {
+	t.Parallel()
+	// An empty policy name fails conditionalaccess.Policy.Validate on Put.
+	_, _, err := BuildConditionalAccess(config.AccessPolicyConfig{
+		Policies: []conditionalaccess.Policy{{Name: ""}},
+	})
+	if err == nil {
+		t.Fatal("expected error: invalid inline policy rejected")
+	}
+}
+
+func TestBuildDegradationManager_DisabledReturnsNil(t *testing.T) {
+	t.Parallel()
+	m, err := BuildDegradationManager(config.DegradationConfig{})
+	if err != nil {
+		t.Fatalf("BuildDegradationManager: %v", err)
+	}
+	if m != nil {
+		t.Fatalf("disabled degradation must return nil; got %v", m)
+	}
+}
+
+func TestBuildDegradationManager_InitialMode(t *testing.T) {
+	t.Parallel()
+	m, err := BuildDegradationManager(config.DegradationConfig{Enabled: true, InitialMode: "read_only"})
+	if err != nil {
+		t.Fatalf("BuildDegradationManager: %v", err)
+	}
+	if m == nil || m.Mode() != sso.DegradationModeReadOnly {
+		t.Fatalf("manager mode = %v; want read_only", m)
+	}
+}
+
+func TestBuildDegradationManager_DefaultModeNormal(t *testing.T) {
+	t.Parallel()
+	m, err := BuildDegradationManager(config.DegradationConfig{Enabled: true})
+	if err != nil {
+		t.Fatalf("BuildDegradationManager: %v", err)
+	}
+	if m == nil || m.Mode() != sso.DegradationModeNormal {
+		t.Fatalf("manager mode = %v; want normal (default)", m)
+	}
+}
+
+func TestBuildDegradationManager_InvalidMode(t *testing.T) {
+	t.Parallel()
+	if _, err := BuildDegradationManager(config.DegradationConfig{Enabled: true, InitialMode: "bogus"}); err == nil {
+		t.Fatal("expected error: invalid initial_mode")
 	}
 }

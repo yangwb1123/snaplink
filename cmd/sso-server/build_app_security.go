@@ -200,6 +200,74 @@ func (b *appBuilder) wireGovernance() error {
 		return err
 	}
 	b.wireBreakGlass()
+	if err := b.wireTokenPolicy(); err != nil {
+		return err
+	}
+	if err := b.wireConditionalAccess(); err != nil {
+		return err
+	}
+	return b.wireDegradation()
+}
+
+// wireTokenPolicy builds the token-policy governance store (external bundle or
+// inline rules) and wires sso.WithTokenPolicy — clamps access-token TTLs down
+// and denies dangerous scope combos, plus mounts GET /api/v1/admin/token-policies.
+// No-op (byte-identical build) when the token_policies section is absent.
+func (b *appBuilder) wireTokenPolicy() error {
+	store, err := serverbuildplatform.BuildTokenPolicyStore(b.cfg.TokenPolicies)
+	if err != nil {
+		return fmt.Errorf("token policies: %w", err)
+	}
+	if store == nil {
+		return nil
+	}
+	b.opts = append(b.opts, sso.WithTokenPolicy(store))
+	b.logger.Info("token policy engine enabled — access-token TTL clamp + scope-combo governance")
+	return nil
+}
+
+// wireConditionalAccess builds the zero-trust conditional-access store + engine
+// config and wires sso.WithConditionalAccess (ADVISORY this wave — not in the
+// live /auth/login control flow), mounting GET /api/v1/admin/access-policies.
+// No-op when the access_policies section is absent.
+func (b *appBuilder) wireConditionalAccess() error {
+	store, capCfg, err := serverbuildplatform.BuildConditionalAccess(b.cfg.AccessPolicies)
+	if err != nil {
+		return fmt.Errorf("access policies: %w", err)
+	}
+	if store == nil {
+		return nil
+	}
+	b.opts = append(b.opts, sso.WithConditionalAccess(store, capCfg))
+	b.logger.Info("conditional-access engine enabled (advisory)", "default_deny", capCfg.DefaultDeny)
+	return nil
+}
+
+// wireDegradation builds the degraded-service Manager and wires
+// sso.WithDegradationManager, mounting the admin /api/v1/admin/dr/mode read+toggle.
+// The manager holds no background loop of its own — the admin endpoint (and any
+// external health loop calling SetMode) is the operator's toggle seam. No-op when
+// the degradation section is disabled.
+func (b *appBuilder) wireDegradation() error {
+	mgr, err := serverbuildplatform.BuildDegradationManager(b.cfg.Degradation)
+	if err != nil {
+		return fmt.Errorf("degradation: %w", err)
+	}
+	if mgr == nil {
+		return nil
+	}
+	b.degradationMgr = mgr
+	b.opts = append(b.opts, sso.WithDegradationManager(mgr))
+	if b.cfg.Degradation.AutoReadOnlyOnStoreLoss {
+		// No continuous storage-health push loop exists in cmd today (health is
+		// pull-based via /readyz + the storage-health admin report), so there is
+		// no clean seam to auto-drive SetMode. Surface the intent: an operator or
+		// external health loop drives read_only via the mounted dr/mode endpoint.
+		b.logger.Info("degradation: auto_read_only_on_store_loss set — no auto-driver seam; drive SetMode(read_only) via POST /api/v1/admin/dr/mode",
+			"initial_mode", mgr.Mode())
+		return nil
+	}
+	b.logger.Info("degradation: degraded-service gate enabled", "initial_mode", mgr.Mode())
 	return nil
 }
 
@@ -215,7 +283,11 @@ func (b *appBuilder) wireCredentialRotation() error {
 	if reg == nil {
 		return nil
 	}
-	b.opts = append(b.opts, sso.WithCredentialRotation(reg))
+	// The SAME Scheduler drives both the read-only inventory (WithCredentialRotation)
+	// and the emergency compromise-response path (WithCredentialCompromise) — it owns
+	// the status store + dependent-party notifier the compromise fan-out reuses — so
+	// POST /api/v1/admin/credentials/{type}/compromise mounts whenever rotation is on.
+	b.opts = append(b.opts, sso.WithCredentialRotation(reg), sso.WithCredentialCompromise(sched))
 	b.credentialScheduler = sched
 	return nil
 }

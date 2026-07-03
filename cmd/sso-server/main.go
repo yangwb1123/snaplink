@@ -409,6 +409,12 @@ type app struct {
 	breakGlassCancel      context.CancelFunc
 	breakGlassDone        <-chan struct{}
 
+	// degradationMgr is the DR degraded-service Manager (degradation.enabled),
+	// nil when off. No shutdown handle — the manager owns no goroutine; its only
+	// runtime surface is the admin /api/v1/admin/dr/mode toggle. Held so the mode
+	// is inspectable and an external health loop can drive SetMode.
+	degradationMgr *sso.DegradationManager
+
 	// redisClient is the one shared Redis client fanned out to every
 	// redis-backed store; nil when no redis block is configured. Closed once at
 	// shutdown to release its connection pool.
