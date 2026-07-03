@@ -31,6 +31,10 @@ const respKeyKind = "kind"
 // here AND again at mint — no bearer can ever exist for them. No-store on the
 // response (it carries a credential); the 401 challenge is owned by AdminMiddleware.
 func HandleImpersonateBreakGlass(d Deps, ctx core.HandlerContext) {
+	// No-store FIRST so EVERY response (200 AND the 403/404/409/500 errors below)
+	// carries the credential-endpoint cache headers — an error path still touched
+	// a credential-minting endpoint (RFC 6749 §5.1 / AGENTS.md credential contract).
+	middleware.TokenNoStoreHeaders(ctx)
 	store := d.BreakGlassStore()
 	if store == nil {
 		ctx.JSON(http.StatusNotFound, core.ErrorBody(core.ErrNotFound))
@@ -51,7 +55,31 @@ func HandleImpersonateBreakGlass(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(status, core.ErrorBody(code))
 		return
 	}
+	if refuseTargetPrivileged(d, ctx, a) {
+		return
+	}
 	mintAndRespondImpersonation(d, ctx, store, a)
+}
+
+// refuseTargetPrivileged blocks minting an impersonation credential for a target
+// that holds an admin scope — impersonating an admin would let support act with
+// the ADMIN's OWN boundary, the one thing break-glass must never do. Fail-CLOSED:
+// a permissions-provider error refuses (we cannot prove the target is safe). No
+// provider wired ⇒ TargetHoldsAdminScope returns (false, nil) ⇒ the floor is a
+// no-op, preserving break-glass for deployments without RBAC. clientID is the
+// acting admin's token audience (the same the admin gate authorized against).
+// Oracle-safe 403 with a generic code — the endpoint is already admin:write gated.
+func refuseTargetPrivileged(d Deps, ctx core.HandlerContext, a core.AdminSession) bool {
+	_, clientID, _ := ActorFromContext(ctx.Request().Context())
+	privileged, err := d.TargetHoldsAdminScope(ctx.Request().Context(), a.TargetUserID, clientID)
+	if err != nil {
+		d.Logger().Error("break-glass target privilege check failed", "id", a.ID, "error", err)
+	}
+	if err != nil || privileged {
+		ctx.JSON(http.StatusForbidden, core.ErrorBody(core.ErrBreakGlassTargetPrivileged))
+		return true
+	}
+	return false
 }
 
 // checkImpersonable is the gate a grant MUST clear before an impersonation
@@ -93,7 +121,9 @@ func mintAndRespondImpersonation(d Deps, ctx core.HandlerContext, store core.Bre
 		return
 	}
 	recordBreakGlassEvent(d, rctx, audit.ClientIP(ctx.Request()), audit.EventAdminBreakGlassImpersonationStarted, updated)
-	middleware.TokenNoStoreHeaders(ctx)
+	// No-store headers were already set at HandleImpersonateBreakGlass entry so
+	// every response (incl. errors) carries them; the 200 credential body inherits
+	// them here without a second call.
 	ctx.JSON(http.StatusOK, impersonationResponse(updated, cred))
 }
 

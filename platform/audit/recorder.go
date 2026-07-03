@@ -3,6 +3,8 @@ package audit
 import (
 	"context"
 	"time"
+
+	"github.com/snaplink/sso/shared/core"
 )
 
 // Recorder is the entry point used by handlers / SDKs. It buffers nothing,
@@ -151,6 +153,16 @@ func (r *Recorder) Record(ctx context.Context, e *Event) {
 	// hashing so the version is part of the tamper-evident chain.
 	if r.serverVersion != "" {
 		e.ServerVersion = r.serverVersion
+	}
+	// Break-glass request-path attribution: when the action was performed under a
+	// break-glass impersonation bearer, stamp the acting admin + grant id alongside
+	// the target subject (Event.ActorID) so the SOC 2 evidence chain rides EVERY
+	// event, not just the mint. Stamped before redaction + hashing so it's part of
+	// the tamper-evident chain. No-op (byte-identical) for an ordinary request.
+	if bg, ok := core.BreakGlassActorFromContext(ctx); ok {
+		SetMeta(e, core.ClaimBreakGlass, "true")
+		SetMeta(e, core.MetaBreakGlassAdminID, bg.AdminID)
+		SetMeta(e, core.ClaimBreakGlassAdminSessionID, bg.AdminSessionID)
 	}
 	// Redaction runs BEFORE the hash chainer so the chain validates
 	// over the redacted form. A downstream verifier shouldn't need

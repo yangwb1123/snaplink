@@ -330,6 +330,101 @@ func TestBreakGlassRoutes_ImpersonateMintsTargetBoundedRevocableBearer(t *testin
 
 func asString(v any) string { s, _ := v.(string); return s }
 
+// TestBreakGlassRoutes_ImpersonationTokenNotExchangeable proves the break-glass
+// laundering path is closed: the marked impersonation bearer, fed as the RFC 8693
+// subject_token, is REFUSED (invalid_request) before any fresh token is minted —
+// so it cannot be re-minted into a token that keeps sub=target but escapes the
+// revocation cascade, sheds act=admin, and gets the issuer-default TTL.
+func TestBreakGlassRoutes_ImpersonationTokenNotExchangeable(t *testing.T) {
+	srv, baseURL, tokenA, _ := bgImpNewServer(t)
+	ctx := context.Background()
+
+	// Mint a real impersonation bearer (sub=target, amr=break_glass, act=admin).
+	_, created := rcovPostJSON(t, baseURL+"/api/v1/admin/break-glass", tokenA, map[string]any{
+		"target_user_id": bgImpTarget, "reason": "ticket-x", "scope": "impersonate",
+	})
+	id, _ := created["id"].(string)
+	_, imp := rcovDo(t, http.MethodPost, baseURL+"/api/v1/admin/break-glass/"+id+"/impersonate", tokenA, nil)
+	bearer, _ := imp["access_token"].(string)
+	if bearer == "" {
+		t.Fatalf("no impersonation bearer minted: %v", imp)
+	}
+	// Sanity: the bearer really does carry the break-glass marker.
+	claims, err := srv.ValidateToken(ctx, bearer)
+	if err != nil || !bgIsImpersonation(claims) {
+		t.Fatalf("minted bearer must carry the break-glass marker, claims=%+v err=%v", claims, err)
+	}
+
+	// Feed it as the subject_token of a token-exchange — MUST be refused.
+	status, out := rcovPostJSON(t, baseURL+"/token", "", map[string]any{
+		"grant_type":         "urn:ietf:params:oauth:grant-type:token-exchange",
+		"subject_token":      bearer,
+		"subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+		"client_id":          bgRoutesClient,
+		"client_secret":      bgRoutesSecret,
+	})
+	if status != http.StatusBadRequest || out["error"] != "invalid_request" {
+		t.Fatalf("exchange of a break-glass bearer = %d %v, want 400 invalid_request", status, out)
+	}
+	// No fresh token was minted — sub=target stays unreachable via the exchange.
+	if out["access_token"] != nil {
+		t.Fatalf("a break-glass bearer must NOT be exchangeable into a fresh token, got %v", out["access_token"])
+	}
+}
+
+// bgIsImpersonation reports whether validated claims carry the break-glass marker
+// (mirrors core.IsBreakGlassImpersonationClaims without importing shared/core into
+// the assertion — the test only reads the wire-visible claim shape).
+func bgIsImpersonation(c *sso.TokenClaims) bool {
+	if c == nil {
+		return false
+	}
+	if c.Extra["break_glass_admin_session_id"] != "" || c.Extra["break_glass"] == "true" {
+		return true
+	}
+	for _, m := range c.AMR {
+		if m == "break_glass" {
+			return true
+		}
+	}
+	return false
+}
+
+// TestBreakGlassRoutes_PrivilegedTargetRefused proves the privilege floor: a
+// break-glass grant may NEVER target an admin. Creating an impersonate grant
+// against a PRIVILEGED user (admin:* under the real provider) is refused at
+// creation with a generic 403 — making "impersonate a super-admin" structurally
+// impossible, and no grant (hence no bearer) is ever established.
+func TestBreakGlassRoutes_PrivilegedTargetRefused(t *testing.T) {
+	_, baseURL, tokenA, _ := bgImpNewServer(t)
+
+	// bgAdminBUser holds admin:* in the seeded provider — a privileged target.
+	status, out := rcovPostJSON(t, baseURL+"/api/v1/admin/break-glass", tokenA, map[string]any{
+		"target_user_id": bgAdminBUser, "reason": "ticket-z", "scope": "impersonate",
+	})
+	if status != http.StatusForbidden || out["error"] != "break_glass_target_privileged" {
+		t.Fatalf("impersonate-admin create = %d %v, want 403 break_glass_target_privileged", status, out)
+	}
+
+	// The grant was NOT persisted — nothing to later impersonate through.
+	status, list := rcovDo(t, http.MethodGet, baseURL+"/api/v1/admin/break-glass", tokenA, nil)
+	if status != http.StatusOK {
+		t.Fatalf("list status = %d body=%v", status, list)
+	}
+	if total, _ := list["total"].(float64); total != 0 {
+		t.Fatalf("a refused privileged-target create must persist no grant, total=%v", list["total"])
+	}
+
+	// A readonly grant against the same admin is still allowed — it only VIEWS,
+	// it never acts as the user, so the floor doesn't apply.
+	status, ro := rcovPostJSON(t, baseURL+"/api/v1/admin/break-glass", tokenA, map[string]any{
+		"target_user_id": bgAdminBUser, "reason": "ticket-z", "scope": "readonly",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("readonly grant against an admin should be allowed, got %d %v", status, ro)
+	}
+}
+
 // TestBreakGlassRoutes_ImpersonateGates proves readonly (structural), pending,
 // and non-owner grants can NOT mint an impersonation bearer over the real path.
 func TestBreakGlassRoutes_ImpersonateGates(t *testing.T) {

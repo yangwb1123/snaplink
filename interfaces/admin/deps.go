@@ -48,6 +48,18 @@ type Deps interface {
 	// a.ExpiresAt. Returns an error (never a partial token) when no token
 	// issuer is resolvable or issuance fails.
 	MintImpersonationToken(ctx context.Context, a core.AdminSession) (core.ImpersonationCredential, error)
+	// TargetHoldsAdminScope reports whether targetUserID holds an admin scope
+	// (admin:read / admin:write, incl. the admin:* wildcard) — the SAME
+	// permissions check AdminMiddleware runs on the acting admin. The break-glass
+	// impersonation floor uses it to REFUSE minting a bearer for a PRIVILEGED
+	// target: impersonating an admin would let support act with that admin's OWN
+	// boundary, the one escalation break-glass must never enable. clientID is the
+	// acting admin's token audience; implementations SHOULD also consult the
+	// empty/global client so a globally-assigned admin is still caught. When no
+	// permissions.Provider is wired it returns (false, nil) — the floor is a no-op,
+	// preserving break-glass for deployments without RBAC. A provider error is
+	// surfaced so the caller can fail CLOSED (refuse) rather than mint blindly.
+	TargetHoldsAdminScope(ctx context.Context, targetUserID, clientID string) (bool, error)
 	// RevokeToken denies a bearer across every registered issuer (publishing on
 	// the cluster bus like /token/revoke). The break-glass cascade uses it to
 	// kill impersonation credentials the instant a grant is revoked/expired, and

@@ -3,12 +3,15 @@ package sso
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/snaplink/sso/shared/security"
 
 	"github.com/snaplink/sso/domains/federation"
+	"github.com/snaplink/sso/domains/permissions"
+	"github.com/snaplink/sso/interfaces/admin"
 	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -103,6 +106,40 @@ func (s *Server) MintImpersonationToken(ctx context.Context, a core.AdminSession
 		ExpiresAt: time.Now().Add(ttl),
 		SessionID: sid,
 	}, nil
+}
+
+// TargetHoldsAdminScope implements admin.Deps: it reports whether targetUserID
+// holds any admin scope (admin:read/write, incl. admin:*), reusing the SAME
+// permissions.Provider + wildcard matcher AdminMiddleware authorizes the acting
+// admin with. The break-glass floor refuses to impersonate such a target. It
+// checks both the acting admin's clientID and the empty/global client so an admin
+// assigned globally (a common setup) is caught regardless of the caller's client.
+// No provider wired ⇒ (false, nil): the floor becomes a no-op, preserving the
+// pre-existing break-glass behavior for deployments without RBAC.
+func (s *Server) TargetHoldsAdminScope(ctx context.Context, targetUserID, clientID string) (bool, error) {
+	if s.permissions == nil {
+		return false, nil
+	}
+	scopes := []string{admin.ScopeRead, admin.ScopeWrite}
+	clients := []string{clientID}
+	if clientID != "" {
+		clients = append(clients, "") // also consult the empty/global assignment scope
+	}
+	for _, cid := range clients {
+		perms, err := s.permissions.Permissions(ctx, targetUserID, cid)
+		if err != nil {
+			if errors.Is(err, permissions.ErrUserNotFound) {
+				continue // no roles under this client ⇒ not privileged here
+			}
+			return false, err
+		}
+		for _, want := range scopes {
+			if permissions.Matches(perms, want) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // RevokeToken implements admin.Deps: it denies a bearer across every registered

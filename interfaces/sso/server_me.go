@@ -35,7 +35,28 @@ func (s *Server) meClaimsOrChallenge(ctx HandlerContext) (*core.TokenClaims, boo
 		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
 		return nil, false
 	}
+	stampBreakGlassActor(ctx, claims)
 	return claims, true
+}
+
+// stampBreakGlassActor propagates break-glass impersonation attribution onto the
+// request context so every audit event a downstream handler records under this
+// bearer (via ctx.Request().Context()) carries the acting admin + grant id — not
+// just the mint event. It mutates the request in place because the self-service
+// handlers read ctx.Request().Context() afresh for each audit.Record call; a
+// returned-but-unthreaded context would be dropped. No-op (byte-identical) for an
+// ordinary user bearer — the marker is absent.
+func stampBreakGlassActor(ctx HandlerContext, claims *core.TokenClaims) {
+	if !core.IsBreakGlassImpersonationClaims(claims) {
+		return
+	}
+	adminID := ""
+	if claims.Actor != nil {
+		adminID = claims.Actor.Subject
+	}
+	bg := core.BreakGlassActor{AdminID: adminID, AdminSessionID: claims.Extra[core.ClaimBreakGlassAdminSessionID]}
+	r := ctx.Request()
+	*r = *r.WithContext(core.ContextWithBreakGlassActor(r.Context(), bg))
 }
 
 // handleBranding serves GET /branding — the public white-label lookup the

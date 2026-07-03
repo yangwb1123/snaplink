@@ -110,7 +110,60 @@ const (
 	// under which grant" rides the credential into every downstream audit.
 	ClaimBreakGlassAdminSessionID = "break_glass_admin_session_id"
 	ClaimBreakGlass               = "break_glass"
+	// MetaBreakGlassAdminID is the audit Event.Metadata key naming the admin
+	// acting through a break-glass impersonation bearer on the REQUEST path. The
+	// event's ActorID stays the TARGET subject (the bearer authenticates as the
+	// target); this key + ClaimBreakGlassAdminSessionID + ClaimBreakGlass restore
+	// the admin+target SOC 2 evidence chain on EVERY action, not just the mint.
+	MetaBreakGlassAdminID = "break_glass_admin_id"
 )
+
+// IsBreakGlassImpersonationClaims reports whether validated token claims carry
+// the break-glass live-impersonation marker. Belt-and-suspenders: ANY surviving
+// marker (the durable break_glass_admin_session_id evidence claim, the break_glass
+// boolean claim, or amr=break_glass) is sufficient — a break-glass impersonation
+// bearer must be recognizable even if one marker is stripped. Used to (1) REFUSE
+// the RFC 8693 token-exchange laundering path (the token is NON-DELEGABLE) and
+// (2) enrich request-path audit attribution with the acting admin.
+func IsBreakGlassImpersonationClaims(c *TokenClaims) bool {
+	if c == nil {
+		return false
+	}
+	if c.Extra[ClaimBreakGlassAdminSessionID] != "" || c.Extra[ClaimBreakGlass] == "true" {
+		return true
+	}
+	for _, m := range c.AMR {
+		if m == AMRBreakGlass {
+			return true
+		}
+	}
+	return false
+}
+
+// BreakGlassActor is the acting-admin attribution carried on the request context
+// while an action is performed under a break-glass impersonation bearer, so the
+// audit Recorder can stamp the admin + grant id onto every event the action
+// produces (the target subject remains the event's primary ActorID).
+type BreakGlassActor struct {
+	AdminID        string
+	AdminSessionID string
+}
+
+type breakGlassActorKey struct{}
+
+// ContextWithBreakGlassActor stamps the break-glass acting-admin attribution onto
+// ctx. The bearer-validation seam calls this when a request presents a break-glass
+// impersonation token; audit.Recorder.Record reads it back.
+func ContextWithBreakGlassActor(ctx context.Context, a BreakGlassActor) context.Context {
+	return context.WithValue(ctx, breakGlassActorKey{}, a)
+}
+
+// BreakGlassActorFromContext returns the break-glass acting-admin attribution
+// stamped by ContextWithBreakGlassActor, or ok=false for an ordinary request.
+func BreakGlassActorFromContext(ctx context.Context) (BreakGlassActor, bool) {
+	a, ok := ctx.Value(breakGlassActorKey{}).(BreakGlassActor)
+	return a, ok
+}
 
 // ImpersonationCredential is the marked, TTL-bounded bearer minted by the
 // break-glass POST .../{id}/impersonate endpoint. Its access token

@@ -163,6 +163,11 @@ const (
 	ErrBreakGlassNotActive       = "break_glass_not_active"
 	ErrBreakGlassNotOwner        = "break_glass_not_owner"
 	ErrImpersonationUnavailable  = "impersonation_unavailable"
+	// ErrBreakGlassTargetPrivileged (403) refuses to create OR impersonate a grant
+	// whose TARGET user holds an admin scope. Impersonating an admin would let
+	// support act with that admin's OWN boundary — the escalation break-glass must
+	// never enable — so a privileged target is a HARD refusal, not a config toggle.
+	ErrBreakGlassTargetPrivileged = "break_glass_target_privileged"
 	// Credential compromise-response (POST /api/v1/admin/credentials/{type}/compromise).
 	ErrCompromiseReasonRequired        = "compromise_reason_required"
 	ErrCredentialCompromiseUnsupported = "credential_compromise_unsupported"

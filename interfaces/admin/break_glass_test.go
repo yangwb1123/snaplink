@@ -45,6 +45,10 @@ type bgTestDeps struct {
 	// impersonation mints its bearer through it and the cascade revokes it, so
 	// the handler's revoke-invalidates path is exercised end to end.
 	tokens *defaulttoken.SessionTokenIssuer
+	// privilegedTargets are user ids the privilege floor must treat as admins
+	// (TargetHoldsAdminScope). Empty ⇒ no target is privileged, so the floor is a
+	// no-op and every pre-existing break-glass test behaves unchanged.
+	privilegedTargets map[string]bool
 }
 
 func (d *bgTestDeps) SessionMgr() core.SessionManager                       { return d.sessions }
@@ -94,6 +98,12 @@ func (d *bgTestDeps) MintImpersonationToken(ctx context.Context, a core.AdminSes
 }
 
 func (d *bgTestDeps) RevokeToken(ctx context.Context, token string) { _ = d.tokens.Revoke(ctx, token) }
+
+// TargetHoldsAdminScope mirrors *sso.Server's real floor: a configured set of
+// privileged targets stands in for the permissions.Provider admin-scope lookup.
+func (d *bgTestDeps) TargetHoldsAdminScope(_ context.Context, targetUserID, _ string) (bool, error) {
+	return d.privilegedTargets[targetUserID], nil
+}
 
 // newBGTestDeps wires the real memory stores break-glass needs.
 func newBGTestDeps() *bgTestDeps {
@@ -425,6 +435,34 @@ func TestBreakGlassImpersonate_RevokedGrantRejected(t *testing.T) {
 	}
 	if got := decodeErr(t, iw); got != core.ErrBreakGlassNotActive {
 		t.Fatalf("error = %q, want %q", got, core.ErrBreakGlassNotActive)
+	}
+}
+
+func TestBreakGlassImpersonate_PrivilegedTargetRefused(t *testing.T) {
+	d := newBGTestDeps()
+	id := bgCreateActiveImpersonate(t, d, "admin-a", "user-1")
+
+	// The target becomes privileged AFTER the grant was created (TOCTOU): the
+	// live-bearer mint MUST re-check the floor and refuse.
+	d.privilegedTargets = map[string]bool{"user-1": true}
+
+	ictx, iw := bgCtx("admin-a", id, "")
+	HandleImpersonateBreakGlass(d, ictx)
+	if iw.Code != http.StatusForbidden {
+		t.Fatalf("privileged-target impersonate = %d, want 403, body=%s", iw.Code, iw.Body.String())
+	}
+	if got := decodeErr(t, iw); got != core.ErrBreakGlassTargetPrivileged {
+		t.Fatalf("error = %q, want %q", got, core.ErrBreakGlassTargetPrivileged)
+	}
+	// The error path is still a credential endpoint — no-store on EVERY response.
+	if iw.Header().Get("Cache-Control") != "no-store" || iw.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("403 error response must carry no-store/no-cache, got %q/%q",
+			iw.Header().Get("Cache-Control"), iw.Header().Get("Pragma"))
+	}
+	// No bearer was minted or registered under the grant.
+	stored, _ := d.breakGlass.Get(context.Background(), id)
+	if len(stored.ImpersonationTokens) != 0 {
+		t.Fatalf("a refused privileged-target mint must register no token, got %v", stored.ImpersonationTokens)
 	}
 }
 

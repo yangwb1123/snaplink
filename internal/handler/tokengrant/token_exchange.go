@@ -88,7 +88,9 @@ func HandleTokenExchangeGrant(d TokenExchangeDeps, ctx core.HandlerContext, clie
 		return
 	}
 	st := &tokExState{confJKT: req.DPoPJKT, confX5T: req.MTLSX5T}
-	if tokExResolveSubject(d, ctx, req, st) {
+	// tokExRefuseNonDelegable rejects a NON-DELEGABLE break-glass subject_token
+	// before any mint; short-circuited so st.claims is read only after resolve.
+	if tokExResolveSubject(d, ctx, req, st) || tokExRefuseNonDelegable(ctx, st) {
 		return
 	}
 	if tokExStepUp(ctx, req, st) {
@@ -124,6 +126,23 @@ func HandleTokenExchangeGrant(d TokenExchangeDeps, ctx core.HandlerContext, clie
 	}
 
 	ctx.JSON(http.StatusOK, st.resp)
+}
+
+// tokExRefuseNonDelegable refuses to exchange a subject_token that carries the
+// break-glass live-impersonation marker. Such a credential is deliberately
+// NON-DELEGABLE: exchanging it would mint a fresh token that keeps sub=target but
+// (a) escapes the AdminSession revocation cascade (never registered under
+// ImpersonationTokens), (b) sheds the act=admin attribution, and (c) takes the
+// issuer-default TTL instead of the <=15m grant window. Oracle-safe: collapses to
+// the SAME invalid_request the pre-flight type gates emit, revealing nothing about
+// the token beyond "this request is not allowed". Returns true when it has written
+// a response and the caller must stop — BEFORE any new token is minted.
+func tokExRefuseNonDelegable(ctx core.HandlerContext, st *tokExState) bool {
+	if core.IsBreakGlassImpersonationClaims(st.claims) {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return true
+	}
+	return false
 }
 
 // tokExIssueIDToken mints an id_token when requested_token_type is id_token.
