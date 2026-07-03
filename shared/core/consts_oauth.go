@@ -124,6 +124,15 @@ const (
 	DefaultPasswordResetTTL = 15 * time.Minute
 	// DefaultEmailChangeTTL bounds a verified-email-change token's validity.
 	DefaultEmailChangeTTL = 15 * time.Minute
+	// DefaultBreakGlassTTL is the window granted to a break-glass admin
+	// session when the caller omits ttl_seconds — short by design, the same
+	// rationale as DefaultPasswordResetTTL: an unbounded grant is the audit
+	// finding a break-glass control exists to prevent.
+	DefaultBreakGlassTTL = 15 * time.Minute
+	// MaxBreakGlassTTL is the hard ceiling on a break-glass admin session
+	// regardless of caller input; requests above it are rejected rather than
+	// silently clamped, so an operator's monitoring sees the misuse attempt.
+	MaxBreakGlassTTL = time.Hour
 )
 
 // SupportedGrants is the canonical list returned for unsupported_grant_type errors.

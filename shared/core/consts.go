@@ -254,6 +254,17 @@ const (
 	// auth middleware; on success the caller should discard the token.
 	PathAdminLogout = "/admin/logout"
 
+	// Break-glass (emergency support) admin sessions. POST creates a
+	// bounded, audited on-behalf-of grant (admin:write; reason mandatory);
+	// GET lists pending + active grants (admin:read); DELETE revokes one
+	// and cascades destruction of its impersonation sessions (admin:write);
+	// POST .../approve activates a pending grant — the approver MUST
+	// differ from the creator. Group-relative; gated by AdminMiddleware.
+	// Mounted only when a BreakGlassStore is wired.
+	PathAdminBreakGlass        = "/admin/break-glass"
+	PathAdminBreakGlassByID    = "/admin/break-glass/:id"
+	PathAdminBreakGlassApprove = "/admin/break-glass/:id/approve"
+
 	// PathAdminSessions lists all active user sessions (GET, admin:read).
 	// Returns the full session list from SessionManager.ListAll. Mounted
 	// only when a SessionManager is wired. The admin SPA calls this to

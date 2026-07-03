@@ -39,6 +39,13 @@ var (
 	// (anti-enumeration); the store runs a cost-matched dummy compare on the
 	// unknown-user path for timing parity.
 	ErrPasswordMismatch = errors.New("sso: password mismatch")
+
+	// Break-glass admin session sentinels (BreakGlassStore). Self-approval
+	// and not-pending are enforced IN the store so the invariant holds for
+	// every caller, not just the HTTP handlers that also pre-check.
+	ErrAdminSessionNotFound     = errors.New("sso: admin session not found")
+	ErrAdminSessionNotPending   = errors.New("sso: admin session is not pending approval")
+	ErrAdminSessionSelfApproval = errors.New("sso: admin session approver must differ from creator")
 )
 
 // Stable error code strings returned to API callers in JSON error bodies.
@@ -129,4 +136,8 @@ const (
 	ErrNotSupported              = "not_supported"
 	ErrRegistrationDenied        = "registration_denied"
 	ErrPasswordPolicyViolation   = "password_policy_violation"
+	ErrBreakGlassReasonRequired  = "break_glass_reason_required"
+	ErrBreakGlassTTLExceeded     = "break_glass_ttl_exceeded"
+	ErrBreakGlassSelfApproval    = "break_glass_self_approval"
+	ErrBreakGlassNotPending      = "break_glass_not_pending"
 )

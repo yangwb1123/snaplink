@@ -252,6 +252,24 @@ These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary 
 
 ---
 
+## Admin break-glass sessions (`/api/v1/admin/break-glass*`)
+
+Break-glass (emergency support) admin sessions: a bounded, audited window
+in which a support admin acts on behalf of a target user. SOC 2
+CC6.1/CC6.2, PCI DSS 7.2, HIPAA §164.312(a) evidence chain. Gated by the
+same `admin:read`/`admin:write` scopes as the rest of `/api/v1/admin/*`;
+mounted only when a `BreakGlassStore` is wired.
+
+| Code                              | HTTP | Emitted when                                                                                   |
+|------------------------------------|------|-------------------------------------------------------------------------------------------------|
+| `break_glass_reason_required`     | 400  | `POST /api/v1/admin/break-glass` omitted (or blank) the mandatory ticket/incident `reason`      |
+| `break_glass_ttl_exceeded`        | 400  | Requested `ttl_seconds` exceeds the 1-hour cap (`core.MaxBreakGlassTTL`)                        |
+| `break_glass_self_approval`       | 400  | `POST .../{id}/approve` called by the same admin who created the pending grant                  |
+| `break_glass_not_pending`         | 409  | `POST .../{id}/approve` targets a grant that is not `pending` (already active/revoked/expired)  |
+| `not_found`                       | 404  | Unknown break-glass session id, or no `BreakGlassStore` wired                                    |
+
+---
+
 ## Server / configuration
 
 These indicate operator misconfiguration; clients shouldn't try to

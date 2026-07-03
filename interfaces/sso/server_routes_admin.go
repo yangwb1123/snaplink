@@ -106,3 +106,20 @@ func (s *Server) mountAdminB2B(api Router) {
 		api.DELETE(PathAdminTenantInvitationByEmail, s.handleAdminRevokeInvitation)
 	}
 }
+
+// mountAdminBreakGlass registers the break-glass (emergency support) admin
+// session lifecycle: create (bounded, audited on-behalf-of grant, reason
+// mandatory), list pending+active, revoke (cascades derived-session
+// destruction), approve (two-person rule — the approver must differ from the
+// creator). Mounted only when a BreakGlassStore is wired — byte-identical
+// without it. GET is admin:read; POST/DELETE are admin:write via the
+// default AdminMiddleware method-scope rule.
+func (s *Server) mountAdminBreakGlass(api Router) {
+	if s.breakGlassStore == nil {
+		return
+	}
+	api.POST(PathAdminBreakGlass, s.handleAdminCreateBreakGlass)
+	api.GET(PathAdminBreakGlass, s.handleAdminListBreakGlass)
+	api.DELETE(PathAdminBreakGlassByID, s.handleAdminRevokeBreakGlass)
+	api.POST(PathAdminBreakGlassApprove, s.handleAdminApproveBreakGlass)
+}

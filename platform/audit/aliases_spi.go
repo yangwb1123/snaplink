@@ -24,6 +24,10 @@ const (
 	DefaultQueryLimit                    = auditspi.DefaultQueryLimit
 	EventAccountLocked                   = auditspi.EventAccountLocked
 	EventAdminAccountUnlocked            = auditspi.EventAdminAccountUnlocked
+	EventAdminBreakGlassApproved         = auditspi.EventAdminBreakGlassApproved
+	EventAdminBreakGlassCreated          = auditspi.EventAdminBreakGlassCreated
+	EventAdminBreakGlassExpired          = auditspi.EventAdminBreakGlassExpired
+	EventAdminBreakGlassRevoked          = auditspi.EventAdminBreakGlassRevoked
 	EventAdminClientCreated              = auditspi.EventAdminClientCreated
 	EventAdminClientDeleted              = auditspi.EventAdminClientDeleted
 	EventAdminClientSecretRotated        = auditspi.EventAdminClientSecretRotated

@@ -46,6 +46,7 @@ func (m *MemorySessionManager) CreateWithMeta(_ context.Context, userID string, 
 		IP:        meta.IP,
 		UserAgent: meta.UserAgent,
 		TenantID:  meta.TenantID,
+		Kind:      meta.Kind,
 	}
 	m.mu.Lock()
 	m.sessions[id] = session

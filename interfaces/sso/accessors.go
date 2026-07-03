@@ -130,6 +130,13 @@ func (s *Server) AdminTokenStore() core.AdminTokenStore {
 	return s.adminTokenStore
 }
 
+// BreakGlassStore returns the wired break-glass (emergency support) admin
+// session store, or nil. Nil means the /api/v1/admin/break-glass* routes are
+// not mounted at all — byte-identical to a build without the feature.
+func (s *Server) BreakGlassStore() core.BreakGlassStore {
+	return s.breakGlassStore
+}
+
 func (s *Server) ConnectionStore() connections.Store { return s.connectionStore }
 // ConsentStore exposes the wired consent store (may be nil).
 func (s *Server) ConsentStore() ConsentStore { return s.consentStore }
