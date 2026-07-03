@@ -126,6 +126,24 @@ func (s *Server) denyTokenScopeCombo(ctx HandlerContext, clientID string, scopes
 	})
 }
 
+// EnforceRefreshDepthPolicy is the refresh-grant seam over enforceTokenPolicy
+// for the max_refresh_depth dimension: it evaluates the family's current
+// rotation depth (the just-consumed token's Generation) so the engine can deny
+// a family that has rotated too many times. depth is passed as RefreshDepth
+// with Kind refresh, so the scope-combo / active-session dimensions never fire
+// on this seam (the refresh grant supplies only client + scopes + depth).
+// Returns true (oracle-safe invalid_grant already written) on a deny; a
+// byte-identical no-op returning false when no token-policy store is wired.
+func (s *Server) EnforceRefreshDepthPolicy(ctx HandlerContext, clientID, subject string, scopes []string, depth int) bool {
+	return s.enforceTokenPolicy(ctx, tokenpolicy.PolicyInput{
+		ClientID:     clientID,
+		Subject:      subject,
+		Scopes:       scopes,
+		Kind:         tokenpolicy.KindRefresh,
+		RefreshDepth: depth,
+	})
+}
+
 // idTokenIssuerForClient selects the oidc.IDTokenIssuer that should mint
 // the ID token for the given client, mirroring issuerForClient so a
 // tenant's id_tokens are signed by the SAME key as its access tokens —

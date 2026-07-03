@@ -222,3 +222,39 @@ func TestEvaluate_NoPoliciesIsAllowWithRequestedTTL(t *testing.T) {
 		t.Fatalf("empty-policy decision = %+v, want allow/42m/0", got)
 	}
 }
+
+// TestRenewExceeded is the pure require_renew boundary truth table: a token past
+// its renew fraction of TTL exceeds; an unmeasurable one (unset fraction / zero
+// timestamps / non-positive TTL) NEVER does (fail-safe — a token whose renewal
+// window can't be measured is never spuriously reported inactive).
+func TestRenewExceeded(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1_700_000_000, 0)
+	// TTL 60s. issued40 → 40s elapsed (0.666 fraction); issued30 → 30s (0.5).
+	issued40 := now.Add(-40 * time.Second)
+	issued30 := now.Add(-30 * time.Second)
+	expires := now.Add(20 * time.Second)
+	expires30 := now.Add(30 * time.Second)
+	cases := []struct {
+		name            string
+		renewAfter      float64
+		issued, expires time.Time
+		want            bool
+	}{
+		{"unset fraction never exceeds", 0, issued40, expires, false},
+		{"past 0.5 threshold", 0.5, issued40, expires, true},
+		{"below 0.8 threshold", 0.8, issued40, expires, false},
+		{"boundary elapsed==threshold is inclusive", 0.5, issued30, expires30, true},
+		{"zero issued time fails safe", 0.5, time.Time{}, expires, false},
+		{"zero expiry time fails safe", 0.5, issued40, time.Time{}, false},
+		{"non-positive TTL fails safe", 0.5, now, now.Add(-time.Second), false},
+		{"negative fraction fails safe", -0.1, issued40, expires, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RenewExceeded(tc.renewAfter, tc.issued, tc.expires, now); got != tc.want {
+				t.Fatalf("RenewExceeded(%v) = %v, want %v", tc.renewAfter, got, tc.want)
+			}
+		})
+	}
+}

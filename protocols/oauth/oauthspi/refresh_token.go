@@ -89,18 +89,36 @@ type RefreshToken struct {
 	// DPoP proof does not carry the same key — a stolen refresh token can't be
 	// redeemed with an attacker-controlled key.
 	ConfirmationJKT string `json:"confirmation_jkt,omitempty"`
+
+	// Generation is this token's ROTATION DEPTH within its family: 0 at first
+	// issue (login / auth_code / device / CIBA / token-exchange), incremented by
+	// one on every refresh rotation. It is the input the token-policy engine's
+	// max_refresh_depth dimension reads to cap how many times a family may
+	// rotate (OAuth 2.1 hardening). Unlike Amr/Acr/AuthTime — which propagate
+	// UNCHANGED across rotation — Generation is the one lineage field that
+	// increments. A token persisted before this field existed reads 0 (the
+	// additive-migration default), so an un-capped fleet stays byte-identical
+	// to the pre-feature behavior. omitempty keeps the JSON-backed stores
+	// (redis) forward/backward compatible: a 0 generation is simply absent
+	// from the blob and unmarshals back to 0.
+	Generation int `json:"generation,omitempty"`
 }
 
-// RefreshAuthContext groups the original authentication-event claims threaded
-// into IssueRefreshToken so they can be persisted on the RefreshToken record
-// and propagated unchanged across rotation (RFC 9068 §2.2). Grouping them keeps
-// the already-long issue signature from gaining one positional parameter per
-// claim. A zero value (no AMR/ACR/AuthTime) reproduces the pre-feature
-// behavior exactly.
+// RefreshAuthContext groups the per-issue refresh-record context threaded into
+// IssueRefreshToken so the already-long issue signature does not gain one
+// positional parameter per field. AMR/ACR/AuthTime are the original
+// authentication-event claims (RFC 9068 §2.2) persisted so rotation can
+// re-stamp them UNCHANGED. Generation is the rotation lineage depth — the ONE
+// field that is NOT unchanged across rotation: first issue leaves it 0, and the
+// refresh handler passes parent+1 so the token-policy max_refresh_depth cap has
+// its input. A zero value reproduces the pre-feature behavior exactly.
 type RefreshAuthContext struct {
 	AMR      []string
 	ACR      string
 	AuthTime time.Time
+	// Generation is the new token's rotation depth (0 at first issue,
+	// parent Generation + 1 at rotation). Persisted onto RefreshToken.Generation.
+	Generation int
 }
 
 // IsExpired reports whether the refresh token's lifetime has elapsed.

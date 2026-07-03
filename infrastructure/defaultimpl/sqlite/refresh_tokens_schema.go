@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     amr                    TEXT    NOT NULL DEFAULT '[]',
     acr                    TEXT    NOT NULL DEFAULT '',
     auth_time              INTEGER NOT NULL DEFAULT 0,
-    confirmation_jkt       TEXT    NOT NULL DEFAULT ''
+    confirmation_jkt       TEXT    NOT NULL DEFAULT '',
+    generation             INTEGER NOT NULL DEFAULT 0
 );`
 
 // refreshTokensIndexDDL creates indexes + the family ledger. Runs AFTER
@@ -89,6 +90,11 @@ var refreshTokenMigrations = []migrate.Migration{
 	// the baseline DDL; pre-v4 DBs get it here. Existing rows default to ''
 	// (unbound), preserving the pre-feature behavior exactly.
 	{Version: 4, Name: "refresh_token_dpop_binding", Func: addRefreshTokenDPoPBinding},
+	// v5 backfills the rotation-generation column (token-policy max_refresh_depth
+	// input). Fresh DBs get it from the baseline DDL; pre-v5 DBs get it here.
+	// Existing rows default to 0 — a pre-feature token reads generation 0, so an
+	// un-capped fleet is byte-identical to before the feature.
+	{Version: 5, Name: "refresh_token_generation", Func: addRefreshTokenGeneration},
 }
 
 // addRefreshTokenAuthContext adds amr/acr/auth_time (preserve original
@@ -145,6 +151,23 @@ func ensureRefreshTokenSchema(ctx context.Context, x migrate.Execer) error {
 		return err
 	}
 	return nil
+}
+
+// addRefreshTokenGeneration adds the generation column (token-policy
+// max_refresh_depth rotation counter) to a pre-existing refresh_tokens table.
+// Idempotent via the column-exists check; existing rows default to 0 so a
+// token issued before the feature reads generation 0.
+func addRefreshTokenGeneration(ctx context.Context, x migrate.Execer) error {
+	has, err := refreshTokenColumnExists(ctx, x, "generation")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	_, err = x.ExecContext(ctx,
+		`ALTER TABLE refresh_tokens ADD COLUMN generation INTEGER NOT NULL DEFAULT 0`)
+	return err
 }
 
 // addRefreshTokenDPoPBinding adds confirmation_jkt (RFC 9449 DPoP key binding)

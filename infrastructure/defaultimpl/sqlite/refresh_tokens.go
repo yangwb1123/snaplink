@@ -100,14 +100,16 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
 	_, err = s.db.ExecContext(ctx, `
         INSERT INTO refresh_tokens (token, user_id, client_id, provider,
             scopes, attributes, issued_at, expires_at, family_id, resources,
-            authorization_details, sid, amr, acr, auth_time, confirmation_jkt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            authorization_details, sid, amr, acr, auth_time, confirmation_jkt,
+            generation)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		token, info.UserID, info.ClientID, info.Provider,
 		string(scopes), string(attrs),
 		info.IssuedAt.UnixNano(), info.ExpiresAt.UnixNano(),
 		info.FamilyID, string(resources),
 		string(info.AuthorizationDetails), info.SID,
 		string(amr), info.Acr, authTimeNs, info.ConfirmationJKT,
+		info.Generation,
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: insert refresh_token: %w", err)
@@ -144,7 +146,7 @@ func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*oauth.R
         RETURNING user_id, client_id, provider, scopes, attributes,
                   issued_at, expires_at, family_id, resources,
                   authorization_details, sid, amr, acr, auth_time,
-                  confirmation_jkt`, token)
+                  confirmation_jkt, generation`, token)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Reuse-detection path.
@@ -177,7 +179,7 @@ func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*oauth.R
         SELECT user_id, client_id, provider, scopes, attributes,
                issued_at, expires_at, family_id, resources,
                authorization_details, sid, amr, acr, auth_time,
-               confirmation_jkt
+               confirmation_jkt, generation
         FROM refresh_tokens WHERE token = ?`, token)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -332,6 +334,7 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 		issuedAtUnixNs, expiresAtUnixNs            int64
 		authTimeUnixNs                             int64
 		confirmationJKT                            string
+		generation                                 int
 	)
 	if err := s.Scan(
 		&out.UserID, &out.ClientID, &provider,
@@ -340,11 +343,12 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 		&familyID, &resources,
 		&authDetails, &sid,
 		&amrJSON, &acr, &authTimeUnixNs,
-		&confirmationJKT,
+		&confirmationJKT, &generation,
 	); err != nil {
 		return nil, err
 	}
 	out.ConfirmationJKT = confirmationJKT
+	out.Generation = generation
 	if authDetails != "" {
 		out.AuthorizationDetails = json.RawMessage(authDetails)
 	}

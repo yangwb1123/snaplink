@@ -346,6 +346,11 @@ type Metrics struct {
 	// metrics_token.go) for the observe helpers.
 	TokenPolicyEvaluationsTotal *prometheus.CounterVec // labels: decision
 	TokenPolicyDenialsTotal     *prometheus.CounterVec // labels: reason
+	// TokenPolicyRenewRequiredTotal counts access-token introspections reported
+	// inactive because the token passed its require_renew fraction of TTL — a
+	// governance signal (force-refresh), NOT an issuance denial, so it is its
+	// own unlabeled counter rather than a DenyReason on DenialsTotal.
+	TokenPolicyRenewRequiredTotal prometheus.Counter
 
 	// Disaster-recovery degraded-service posture (zero traffic when no
 	// DegradationManager is wired). DegradationMode is a state gauge: the active

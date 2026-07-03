@@ -379,8 +379,18 @@ func (s *Server) ensureJITMembership(ctx HandlerContext, client *Client, userID 
 // logins two goroutines may both pass the >= limit check and both create (the
 // count transiently reaches limit+1). A distributed lock would be needed for
 // strict enforcement; the soft cap is the intended design.
-func (s *Server) createSession(ctx HandlerContext, userID, tenantID string) (*Session, error) {
+func (s *Server) createSession(ctx HandlerContext, userID, clientID, tenantID string) (*Session, error) {
 	rctx := ctx.Request().Context()
+
+	// Token-policy max_active_sessions (opt-in, default-off): reject a new
+	// session once the subject is at/over the wired per-(user[,client]) cap.
+	// Enforced BEFORE any mutation (tenant-quota increment, Create) so a
+	// rejected login leaves no orphaned session or quota drift. Returns a
+	// sentinel WITHOUT writing a response — the login caller owns the single
+	// wire write (a clean access_denied), avoiding a double WriteHeader.
+	if s.sessionPolicyCapExceeded(ctx, userID, clientID) {
+		return nil, errMaxActiveSessions
+	}
 
 	// Tenant-level session quota check. When the tenant has reached its
 	// session limit, the creation is blocked with a 403. Fail-open: a

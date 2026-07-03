@@ -32,6 +32,13 @@ type RefreshGrantDeps interface {
 	RecordRefreshRotationVelocity(ctx core.HandlerContext, clientID, familyID string, count, killed int)
 	IncRefreshRotationVelocityExceeded()
 	LogErrorCtx(ctx core.HandlerContext, msg string, kv ...any)
+	// EnforceRefreshDepthPolicy runs the wired token-policy engine's
+	// max_refresh_depth dimension against the family's current rotation depth.
+	// It writes the ORACLE-SAFE generic invalid_grant (the specific reason lands
+	// only in the metric + server log) and returns true when the cap is hit so
+	// the caller returns immediately. Byte-identical no-op (returns false) when
+	// no token-policy store is wired — the default-off contract.
+	EnforceRefreshDepthPolicy(ctx core.HandlerContext, clientID, subject string, scopes []string, depth int) bool
 }
 
 // HandleRefreshGrant processes the RFC 6749 §6 refresh_token grant. Behavior is
@@ -70,16 +77,7 @@ func HandleRefreshGrant(d RefreshGrantDeps, ctx core.HandlerContext, client *cor
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
 		return
 	}
-	// Bind the token to the client that's exchanging it (RFC 6749 §6).
-	if info.ClientID != client.ID {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
-		return
-	}
-	// RFC 9449 §5: if the refresh token was issued with a DPoP key binding,
-	// the presenter MUST use the SAME key — a stolen refresh token can't be
-	// redeemed with an attacker-controlled key.
-	if info.ConfirmationJKT != "" && dpopJKT != info.ConfirmationJKT {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+	if refreshBindGuard(ctx, client, info, dpopJKT) {
 		return
 	}
 	// Session liveness check (§2): when the refresh token carries a SID
@@ -94,10 +92,34 @@ func HandleRefreshGrant(d RefreshGrantDeps, ctx core.HandlerContext, client *cor
 	if !ok {
 		return
 	}
+	// Token-policy max_refresh_depth (opt-in, no-op unwired): deny once the
+	// family's rotation depth (info.Generation) reaches the cap — same
+	// invalid_grant collapse as every other refresh failure (oracle-leak).
+	if d.EnforceRefreshDepthPolicy(ctx, client.ID, info.UserID, grantScopes, info.Generation) {
+		return
+	}
 	if refreshVelocityGate(d, ctx, client, store, info.FamilyID) {
 		return
 	}
 	refreshIssueAndRotate(d, ctx, client, info, refreshToken, grantScopes, dpopJKT, mtlsX5T)
+}
+
+// refreshBindGuard enforces RFC 6749 §6 client binding and RFC 9449 §5 DPoP
+// key binding on the consumed token: the exchanging client MUST match the one
+// the token was issued to, and a DPoP-bound token MUST be presented with the
+// SAME key (a stolen refresh token can't be redeemed with an attacker-
+// controlled key). Either mismatch collapses to 400 invalid_grant (oracle-leak).
+// Returns true (response written) on a mismatch.
+func refreshBindGuard(ctx core.HandlerContext, client *core.Client, info *oauth.RefreshToken, dpopJKT string) bool {
+	if info.ClientID != client.ID {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return true
+	}
+	if info.ConfirmationJKT != "" && dpopJKT != info.ConfirmationJKT {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return true
+	}
+	return false
 }
 
 // refreshIssueAndRotate is the success tail (reached only after Consume, client
@@ -128,7 +150,9 @@ func refreshIssueAndRotate(d RefreshGrantDeps, ctx core.HandlerContext, client *
 		info.AuthorizationDetails, info.SID,
 		// RFC 9068 §2.2: a rotation propagates the ORIGINAL auth context unchanged
 		// (does NOT reset auth_time, keeps amr/acr) so the chain never down-trusts.
-		oauth.RefreshAuthContext{AMR: info.Amr, ACR: info.Acr, AuthTime: info.AuthTime},
+		// Generation is the ONE field that advances: parent+1 records this
+		// rotation's depth for the next max_refresh_depth evaluation.
+		oauth.RefreshAuthContext{AMR: info.Amr, ACR: info.Acr, AuthTime: info.AuthTime, Generation: info.Generation + 1},
 		client.RefreshTokenTTL, info.ConfirmationJKT) // RFC 9449: key binding propagates unchanged
 	if err != nil {
 		d.LogErrorCtx(ctx, "refresh token rotation failed", "error", err)

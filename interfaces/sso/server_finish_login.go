@@ -1,13 +1,14 @@
 package sso
 
 import (
-	"github.com/snaplink/sso/internal/auth/login"
-	"github.com/snaplink/sso/internal/handler"
+	"errors"
 	"net/http"
 	"slices"
 	"time"
 
 	"github.com/snaplink/sso/domains/region"
+	"github.com/snaplink/sso/internal/auth/login"
+	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
 )
@@ -152,8 +153,14 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrSessionMgrNotConfigured, state))
 		return
 	}
-	session, err := s.createSession(ctx, result.UserID, client.TenantID)
+	session, err := s.createSession(ctx, result.UserID, client.ID, client.TenantID)
 	if err != nil {
+		if errors.Is(err, errMaxActiveSessions) {
+			// Token-policy max_active_sessions cap: a clean login-time refusal.
+			// The specific dimension stays off the wire (metric + log only).
+			ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrAccessDenied, state))
+			return
+		}
 		s.logger.Error("failed to create session", "error", err)
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
 		return
