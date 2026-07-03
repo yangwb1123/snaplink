@@ -283,9 +283,19 @@ type Metrics struct {
 	// Signup funnel — self-service registration conversion pipeline.
 	// outcome ∈ {success, failure} (bounded). Zero traffic when signup
 	// is not enabled.
-	SignupStartedTotal         *prometheus.CounterVec // labels: outcome
-	SignupVerifiedTotal        *prometheus.CounterVec // labels: outcome
-	SignupCompletedTotal       *prometheus.CounterVec // labels: outcome
-	PasswordResetRequestedTotal  *prometheus.CounterVec // labels: outcome
-	PasswordResetCompletedTotal  *prometheus.CounterVec // labels: outcome
+	SignupStartedTotal          *prometheus.CounterVec // labels: outcome
+	SignupVerifiedTotal         *prometheus.CounterVec // labels: outcome
+	SignupCompletedTotal        *prometheus.CounterVec // labels: outcome
+	PasswordResetRequestedTotal *prometheus.CounterVec // labels: outcome
+	PasswordResetCompletedTotal *prometheus.CounterVec // labels: outcome
+
+	// ConfigDriftDetectedTotal counts cross-replica configuration-drift
+	// detections (platform/configaudit.DriftDetector): this replica's
+	// running-config digest disagreed with a peer's broadcast digest. No
+	// labels — a per-peer-replica-id label would be unbounded (§5) and the
+	// paired config_drift_detected audit event already carries the peer id
+	// for investigation. Report-only: a rising count means SOME replica's
+	// effective config has diverged, never a blocked request. Zero traffic
+	// when drift detection isn't armed (WithConfigDriftDetection).
+	ConfigDriftDetectedTotal prometheus.Counter
 }

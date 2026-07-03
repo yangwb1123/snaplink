@@ -13,11 +13,12 @@ import (
 	"github.com/snaplink/sso/domains/anomaly"
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/permissions"
+	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/cluster"
+	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/netpolicy"
-	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/protocols/compliance"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
@@ -69,16 +70,40 @@ func (s *Server) EncryptIDTokenForClient(ctx context.Context, client *Client, si
 	return s.maybeEncryptIDToken(ctx, client, signed)
 }
 
-func (s *Server) Auditor() *audit.Recorder                  { return s.auditor }
-func (s *Server) Permissions() permissions.Provider         { return s.permissions }
-func (s *Server) EmbedPermissions() bool                    { return s.embedPermissions }
-func (s *Server) NetStore() netpolicy.Store                 { return s.netStore }
-func (s *Server) NetClassifier() *netpolicy.Classifier      { return s.netClassifier }
-func (s *Server) Metrics() *metrics.Metrics                 { return s.metrics }
-func (s *Server) SrvLogger() spi.Logger                     { return s.logger }
-func (s *Server) Issuer() string                            { return s.issuer }
-func (s *Server) SessionMgr() core.SessionManager           { return s.sessionMgr }
-func (s *Server) ClientStoreAccessor() core.ClientStore     { return s.clientStore }
+func (s *Server) Auditor() *audit.Recorder              { return s.auditor }
+func (s *Server) ConfigAuditStore() configaudit.Store   { return s.configAuditStore }
+func (s *Server) Permissions() permissions.Provider     { return s.permissions }
+func (s *Server) EmbedPermissions() bool                { return s.embedPermissions }
+func (s *Server) NetStore() netpolicy.Store             { return s.netStore }
+func (s *Server) NetClassifier() *netpolicy.Classifier  { return s.netClassifier }
+func (s *Server) Metrics() *metrics.Metrics             { return s.metrics }
+func (s *Server) SrvLogger() spi.Logger                 { return s.logger }
+func (s *Server) Issuer() string                        { return s.issuer }
+func (s *Server) SessionMgr() core.SessionManager       { return s.sessionMgr }
+func (s *Server) ClientStoreAccessor() core.ClientStore { return s.clientStore }
+
+// AppliedConfigSnapshot implements configaudit.HandlerDeps: the redacted
+// effective-config snapshot captured once at startup (WithConfigSnapshots).
+// Returns configaudit.ErrSnapshotUnavailable when no snapshot was ever
+// wired, so the HTTP handler can answer 501 rather than a bare 500.
+func (s *Server) AppliedConfigSnapshot() (map[string]any, error) {
+	if s.configAppliedSnapshot == nil {
+		return nil, configaudit.ErrSnapshotUnavailable
+	}
+	return s.configAppliedSnapshot, nil
+}
+
+// RunningConfigSnapshot implements configaudit.HandlerDeps: the CURRENT
+// effective-config snapshot. Falls back to AppliedConfigSnapshot when no
+// live snapshot function was wired (WithConfigSnapshots without a
+// runningFn) — correct, since with no live source there is nothing to
+// drift FROM.
+func (s *Server) RunningConfigSnapshot(ctx context.Context) (map[string]any, error) {
+	if s.configRunningSnapshotFn != nil {
+		return s.configRunningSnapshotFn(ctx)
+	}
+	return s.AppliedConfigSnapshot()
+}
 
 // DestroySession implements oidc.EndSessionDeps: destroys the server-side SSO
 // session so the session cookie cannot be reused after /end_session logout.
@@ -131,8 +156,9 @@ func (s *Server) AdminTokenStore() core.AdminTokenStore {
 }
 
 func (s *Server) ConnectionStore() connections.Store { return s.connectionStore }
+
 // ConsentStore exposes the wired consent store (may be nil).
-func (s *Server) ConsentStore() ConsentStore { return s.consentStore }
+func (s *Server) ConsentStore() ConsentStore                { return s.consentStore }
 func (s *Server) TenantUserStore() core.TenantUserStore     { return s.tenantUserStore }
 func (s *Server) UserProviderAccessor() core.UserProvider   { return s.userProvider }
 func (s *Server) DeviceSecretStore() core.DeviceSecretStore { return s.deviceSecretStore }

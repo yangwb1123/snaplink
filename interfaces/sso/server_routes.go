@@ -68,6 +68,7 @@ func (s *Server) Mount() {
 	s.mountAdminAPIObservability(api)
 	s.mountAdminUserState(api)
 	s.mountAdminB2B(api)
+	s.mountConfigAuditAPI(api)
 }
 
 // mountMiddleware lazily creates the router and installs the global middleware

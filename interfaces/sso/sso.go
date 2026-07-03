@@ -66,6 +66,7 @@ func NewServer(opts ...Option) *Server {
 	if s.caepTransmitter != nil && s.auditor != nil {
 		s.auditor.AddSink(s.caepTransmitter)
 	}
+	s.applyConfigAuditWiring()
 	// Per-tenant metrics (§5): register the opt-in vectors when BOTH a
 	// tenant allowlist AND a metrics registry are wired. Done post-options
 	// (order between WithMetrics and WithTenantMetricsAllowlist is

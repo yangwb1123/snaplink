@@ -141,6 +141,8 @@ See [deployment.md](deployment.md) for the HA topology and
 | `metrics.tenant_label_allowlist` | `WithTenantMetricsAllowlist` — bounded per-tenant login/issue metrics + `"other"` bucket; empty = off |
 | `audit.webhook.signing_secret` | HMAC-SHA256 payload signing on the audit `WebhookSink` — every POST carries `X-Signature: t=<unix>,v1=<hex>`; empty = off; receivers verify with `security.VerifyWebhookSignature`. Inject via env/`secret://`, never YAML literal |
 | `mfa.provider.push.webhook.signing_secret` | Same HMAC-SHA256 `X-Signature` signing on the MFA push webhook transport, re-signed with a fresh timestamp per retry; empty = off. `ciba.webhook.signing_secret` shares the same `MFAPushWebhookConfig` struct, so it behaves identically for CIBA notifications |
+| `config_audit.enabled` / `.backend` / `.sqlite.dsn` | Runtime-config audit (`platform/configaudit`): `GET /api/v1/admin/config/{running,applied,diff,history}` + the client/tenant/policy change-capture hook. `sso.WithConfigSnapshots` / `WithConfigAuditStore` do the actual wiring — the YAML section documents backend choice only |
+| `config_audit.drift.interval` | `sso.WithConfigDriftDetection` — cross-replica config-digest broadcast (`cluster.KindConfigDigest`) + compare loop; `<= 0` (default) = off, report-only |
 
 ## Cluster
 
@@ -150,6 +152,7 @@ See [deployment.md](deployment.md) for the HA topology and
 | Coordinated key cutover | `WithCoordinatedKeyRotation` | Broadcasts demoted+new kids over `cluster.Bus`; FAIL-SAFE deferred retire |
 | Client cache invalidation | `identity.client_cache.enabled` | `KindClientChange` busts per-login TTL cache on every client mutation |
 | Authz policy invalidation | `WithAuthzPolicyBundleCacheTTL` (default 5m) | `KindAuthzPolicyChange` via `InvalidateAuthzPolicyBundleCache`; fail-open |
+| Config drift detection | `config_audit.drift.interval` / `WithConfigDriftDetection` | `KindConfigDigest` broadcast + compare; mismatch -> `config_drift_detected` audit event + `sso_config_drift_detected_total`; report-only, never blocks |
 
 ## CAEP / SSF
 

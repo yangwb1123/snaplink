@@ -18,6 +18,11 @@ type Recorder struct {
 	chain         *chainer
 	redactor      Redactor
 	serverVersion string
+	// configChangeHook, when set via SetConfigChangeHook, runs on every
+	// subsequent Record call AFTER redaction + hash-chain stamping (so it
+	// observes the same event a Sink would). nil (the default) costs one
+	// pointer nil-check per Record.
+	configChangeHook func(context.Context, *Event)
 }
 
 type Option func(*Recorder)
@@ -89,6 +94,26 @@ func New(sink Sink, opts ...Option) *Recorder {
 // Sink returns the underlying sink. Used by query endpoints.
 func (r *Recorder) Sink() Sink { return r.sink }
 
+// SetConfigChangeHook wires fn to run on every subsequent Record call. Like
+// AddSink, this mutates shared state — call it during wiring, before the
+// Recorder is shared with request handlers. A nil fn disables the hook.
+//
+// This is the "narrowest existing seam" AGENTS.md's config-audit
+// change-capture requirement asks for: every admin mutation (gRPC's
+// recordAdmin helper AND the REST admin handlers) already funnels through
+// Record with the actor stamped from the admin auth context, so hooking
+// here — rather than at each individual admin_*.go call site — captures
+// every admin event with zero changes to any of them. interfaces/sso wires
+// this to append a platform/configaudit.Store entry for the client/tenant/
+// policy event types (see Server.recordConfigHistoryFromAudit); it stays a
+// plain func here so platform/audit has no dependency on configaudit.
+func (r *Recorder) SetConfigChangeHook(fn func(context.Context, *Event)) {
+	if r == nil {
+		return
+	}
+	r.configChangeHook = fn
+}
+
 // AddSink fans every recorded event out to extra IN ADDITION to the
 // existing sink, by wrapping the current sink in a MultiSink. The
 // original sink stays first, so reads (Get/Query) keep being served by
@@ -138,5 +163,8 @@ func (r *Recorder) Record(ctx context.Context, e *Event) {
 	}
 	if err := r.sink.Record(ctx, e); err != nil && r.onError != nil {
 		r.onError(err)
+	}
+	if r.configChangeHook != nil {
+		r.configChangeHook(ctx, e)
 	}
 }

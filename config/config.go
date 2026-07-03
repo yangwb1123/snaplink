@@ -65,6 +65,7 @@ type Config struct {
 	SelfService        SelfServiceConfig               `yaml:"self_service"`
 	NativeSSO          NativeSSOConfig                 `yaml:"native_sso"`
 	ProtectedResource  ProtectedResourceMetadataConfig `yaml:"protected_resource_metadata"`
+	ConfigAudit        ConfigAuditConfig               `yaml:"config_audit"`
 }
 
 // CurrentSchemaVersion is the expected version value for the current

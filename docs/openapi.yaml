@@ -3448,6 +3448,167 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/config/running:
+    get:
+      tags: [admin]
+      summary: Current effective config snapshot (redacted).
+      description: |
+        Returns the server's CURRENT effective configuration as a redacted
+        JSON object — secret/password/dsn/token/key-shaped leaf fields are
+        replaced with "***". Compare against `/api/v1/admin/config/applied`
+        (captured at startup) to spot runtime drift (an admin API mutation, a
+        hand-edited config file not yet reloaded, etc.).
+
+        Admin-gated (`admin:read`, path under `/api/v1/admin/`). Not mounted
+        (404) unless `WithConfigSnapshots` was wired. Falls back to the
+        applied snapshot when no live running-snapshot function was supplied.
+      operationId: getRunningConfig
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The redacted running config snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigSnapshotResponse"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: "`config_audit_not_available` — no snapshot source wired."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/config/applied:
+    get:
+      tags: [admin]
+      summary: Config snapshot as loaded at startup (redacted).
+      description: |
+        Returns the redacted configuration snapshot captured ONCE at server
+        startup, before any admin mutation could change runtime state. See
+        `/api/v1/admin/config/running` for the current-state counterpart.
+
+        Admin-gated (`admin:read`). Not mounted (404) unless
+        `WithConfigSnapshots` was wired.
+      operationId: getAppliedConfig
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The redacted applied config snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigSnapshotResponse"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: "`config_audit_not_available` — no snapshot source wired."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/config/diff:
+    get:
+      tags: [admin]
+      summary: RFC 6902 JSON Patch from applied to running config (redacted).
+      description: |
+        Returns the minimal JSON Patch (add/replace/remove only) turning the
+        applied (startup) config into the current running config. Object
+        keys are diffed recursively; arrays are compared by whole-value
+        equality (a changed array is one whole-array `replace`, never a
+        per-element diff). Secret-shaped values are redacted to "***" in the
+        patch — the path/op still show THAT a secret changed, never what it
+        changed to.
+
+        Admin-gated (`admin:read`). Not mounted (404) unless
+        `WithConfigSnapshots` was wired.
+      operationId: getConfigDiff
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The redacted patch (empty array when running == applied).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigDiffResponse"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: "`config_audit_not_available` — no snapshot source wired."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/config/history:
+    get:
+      tags: [admin]
+      summary: Runtime-configuration change history (config_history).
+      description: |
+        Returns persisted config_history entries (an admin client/tenant/
+        policy mutation, each with actor + redacted RFC 6902 patch + reason),
+        newest first, optionally filtered.
+
+        Admin-gated (`admin:read`). Not mounted (404) unless
+        `WithConfigAuditStore` was wired.
+      operationId: listConfigHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: resource
+          in: query
+          schema: { type: string }
+          description: Exact match, e.g. "client" | "tenant" | "policy".
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+          description: RFC 3339. Entries recorded before this are excluded.
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Matching entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigHistoryResponse"
+        "400":
+          description: Malformed `since` / `limit`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: "`config_audit_not_available` — no config-audit store wired."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/backup:
     post:
       tags: [admin]
@@ -7076,6 +7237,76 @@ components:
       properties:
         facets:
           $ref: "#/components/schemas/AuditFacets"
+
+    ConfigSnapshotResponse:
+      type: object
+      description: |
+        A redacted config snapshot (applied or running). Any leaf key whose
+        lowercased name contains secret/password/dsn/token/key is replaced
+        with "***" before this is ever serialized.
+      properties:
+        applied:
+          type: object
+          additionalProperties: true
+          description: Present on GET /api/v1/admin/config/applied.
+        running:
+          type: object
+          additionalProperties: true
+          description: Present on GET /api/v1/admin/config/running.
+
+    ConfigPatchOp:
+      type: object
+      required: [op, path]
+      description: One RFC 6902 JSON Patch operation.
+      properties:
+        op:
+          type: string
+          enum: [add, replace, remove]
+        path:
+          type: string
+          description: RFC 6901 JSON Pointer.
+        value:
+          description: Absent for `remove`; "***" when the leaf key is secret-shaped.
+
+    ConfigDiffResponse:
+      type: object
+      required: [patch]
+      properties:
+        patch:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConfigPatchOp"
+
+    ConfigHistoryEntry:
+      type: object
+      required: [id, recorded_at, actor, resource, resource_id, patch]
+      properties:
+        id: { type: string }
+        recorded_at: { type: string, format: date-time }
+        actor:
+          type: string
+          description: Admin subject id, from the admin auth context.
+        tenant_id: { type: string }
+        resource:
+          type: string
+          description: "client | tenant | policy | ..."
+        resource_id: { type: string }
+        patch:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConfigPatchOp"
+        reason: { type: string }
+
+    ConfigHistoryResponse:
+      type: object
+      required: [entries, count]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConfigHistoryEntry"
+        count:
+          type: integer
 
     NetPolicy:
       type: object

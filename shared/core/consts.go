@@ -45,8 +45,8 @@ const (
 	// /me/*-namespace variants of the /sessions/me* paths. These follow the
 	// self-service /me/* convention (cf. PathMe, PathMyMFA) and provide a
 	// single discoverable prefix for the self-service portal SPA.
-	PathMeSessions         = "/me/sessions"
-	PathMeSessionByID      = "/me/sessions/:id"
+	PathMeSessions          = "/me/sessions"
+	PathMeSessionByID       = "/me/sessions/:id"
 	PathMeSessionsRevokeAll = "/me/sessions/revoke-all"
 
 	PathMyConsents    = "/consents/me"
@@ -391,4 +391,18 @@ const (
 	// PathStatus is the unauthenticated runtime server status endpoint.
 	// Returns version, uptime, and module health. Public (no auth required).
 	PathStatus = "/api/v1/status"
+
+	// PathAdminConfigRunning / PathAdminConfigApplied / PathAdminConfigDiff /
+	// PathAdminConfigHistory serve the runtime-configuration-audit admin API
+	// (GET, admin:read): the server's CURRENT effective config snapshot, the
+	// config captured at STARTUP, an RFC 6902 JSON Patch between the two, and
+	// the persisted config_history change log. Every snapshot/patch value is
+	// redacted (secret/password/dsn/token/key-shaped fields become "***").
+	// Mounted only when a config-snapshot source is wired
+	// (sso.WithConfigSnapshots); the history endpoint additionally requires
+	// sso.WithConfigAuditStore.
+	PathAdminConfigRunning = "/admin/config/running"
+	PathAdminConfigApplied = "/admin/config/applied"
+	PathAdminConfigDiff    = "/admin/config/diff"
+	PathAdminConfigHistory = "/admin/config/history"
 )
