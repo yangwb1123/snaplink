@@ -8,6 +8,7 @@ import (
 
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/cluster"
+	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/protocols/oauth"
 )
@@ -417,9 +418,43 @@ func (s *Server) applyInvalidation(ctx context.Context, evt cluster.Event) {
 		// unless WithCrossReplicaRevocation armed this replica. See
 		// cross_replica_revocation.go.
 		s.applyTokenRevocation(ctx, evt)
+	case cluster.KindConfigDigest:
+		// Handled by configaudit.DriftDetector's own bus subscription, not here.
 	default:
 		// Unknown kind from a newer peer — ignore rather than error, so a
 		// mixed-version cluster degrades gracefully during a rollout.
+	}
+}
+
+// StartConfigDriftDetection begins the opt-in cross-replica config-digest
+// broadcast+compare loop (WithConfigDriftDetection). No-op (an
+// already-closed channel, nil error) when no invalidation bus is wired or
+// the interval is <= 0 — see configaudit.DriftDetector.Run. Call it once
+// with the process run context, alongside StartInvalidationBus.
+func (s *Server) StartConfigDriftDetection(ctx context.Context) (<-chan struct{}, error) {
+	dd := configaudit.NewDriftDetector(
+		s.invalidationBus, s.configReplicaID, s.configDriftInterval,
+		s.runningConfigDigest, s.auditor, s.logger, s.onConfigDriftMismatch,
+	)
+	return dd.Run(ctx)
+}
+
+// runningConfigDigest composes RunningConfigSnapshot + configaudit.Digest
+// into the single func(ctx) (string, error) DriftDetector needs.
+func (s *Server) runningConfigDigest(ctx context.Context) (string, error) {
+	snap, err := s.RunningConfigSnapshot(ctx)
+	if err != nil {
+		return "", err
+	}
+	return configaudit.Digest(snap)
+}
+
+// onConfigDriftMismatch is the DriftDetector metric hook: a peer's running-
+// config digest disagreed with this replica's own. Report-only — never
+// blocks or changes behavior (see configaudit.DriftDetector's doc).
+func (s *Server) onConfigDriftMismatch(_, _, _ string) {
+	if s.metrics != nil {
+		s.metrics.ConfigDriftDetectedTotal.Inc()
 	}
 }
 

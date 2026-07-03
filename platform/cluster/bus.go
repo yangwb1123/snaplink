@@ -114,6 +114,19 @@ const (
 	// (mesh-internal bus; same trust model as KindTenantSuspension). Best-effort
 	// like every kind.
 	KindTokenRevoked EventKind = "token_revoked"
+
+	// KindConfigDigest carries this replica's current effective-config
+	// digest (platform/configaudit.Digest output) so peers can compare it to
+	// their own and flag configuration drift. UNLIKE every other kind,
+	// applying it invalidates nothing — the comparison is purely REPORT-ONLY
+	// (an audit event + a metric bump on mismatch, never a behavior change),
+	// so a garbage or missing payload is simply ignored. Event.Key carries
+	// the PUBLISHING replica's ID (not an entity ID, unlike every other
+	// kind) so a receiver can attribute a mismatch to a specific peer;
+	// Event.Payload carries the digest itself (MetaConfigDigest). Off by
+	// default — only wired when platform/configaudit.DriftDetector.Run is
+	// started with a positive interval (config/config_configaudit.go).
+	KindConfigDigest EventKind = "config_digest"
 )
 
 // Token-revocation Event.Payload keys (KindTokenRevoked). Map keys on the
@@ -163,6 +176,10 @@ const (
 	// the new-key half.
 	MetaNewJWK = "new_jwk"
 )
+
+// MetaConfigDigest is the Event.Payload key for the sha256 hex digest
+// carried by a KindConfigDigest Event (platform/configaudit.Digest output).
+const MetaConfigDigest = "config_digest"
 
 // Event is one coordination signal. Key identifies the affected entity
 // (e.g. a tenant ID); Payload carries optional kind-specific detail and

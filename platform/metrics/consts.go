@@ -63,17 +63,19 @@ const (
 	// pipeline. Operators graph started → verified → completed to find
 	// the drop-off step (verification email never arrived, link expired,
 	// user abandoned, etc.).
-	NameSignupStartedTotal         = "sso_signup_started_total"
-	NameSignupVerifiedTotal        = "sso_signup_verified_total"
-	NameSignupCompletedTotal       = "sso_signup_completed_total"
-	NamePasswordResetRequestedTotal  = "sso_password_reset_requested_total"
-	NamePasswordResetCompletedTotal  = "sso_password_reset_completed_total"
+	NameSignupStartedTotal          = "sso_signup_started_total"
+	NameSignupVerifiedTotal         = "sso_signup_verified_total"
+	NameSignupCompletedTotal        = "sso_signup_completed_total"
+	NamePasswordResetRequestedTotal = "sso_password_reset_requested_total"
+	NamePasswordResetCompletedTotal = "sso_password_reset_completed_total"
 
 	// NameFeatureGateEnabled is a startup snapshot: 1 while a protocol
 	// surface's routes are mounted, 0 while an operator explicitly turned
 	// it off via feature_gates. Set once at boot (gates are not runtime-
 	// mutable), not a request-path counter.
 	NameFeatureGateEnabled = "sso_feature_gate_enabled"
+
+	NameConfigDriftDetectedTotal = "sso_config_drift_detected_total"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by

@@ -1,15 +1,17 @@
 package sso
 
 import (
+	"context"
 	"time"
 
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenant"
-	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
+	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/cluster"
+	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/platform/geo"
 	"github.com/snaplink/sso/platform/netpolicy"
 	"github.com/snaplink/sso/platform/sse"
@@ -38,7 +40,7 @@ type wiringState struct {
 	requestIDMW             bool
 	panicRecovery           bool
 	compressionEnabled      bool
-	debugRequestLogging     bool   // when set, logs request/response bodies at DEBUG level
+	debugRequestLogging     bool // when set, logs request/response bodies at DEBUG level
 	permissions             permissions.Provider
 	embedPermissions        bool
 	netStore                netpolicy.Store
@@ -102,4 +104,22 @@ type wiringState struct {
 	// registers routes for (attack-surface reduction). Zero value = every
 	// gate unset ⇒ byte-identical to a pre-gate build (see FeatureGates).
 	featureGates FeatureGates
+	// configAuditStore persists runtime-configuration change history
+	// (platform/configaudit). Nil = the change-capture hook + the
+	// GET .../config/history admin endpoint are both off.
+	configAuditStore configaudit.Store
+	// configAppliedSnapshot is the redacted effective-config snapshot
+	// captured ONCE at startup (WithConfigSnapshots). configRunningSnapshotFn
+	// recomputes the CURRENT effective snapshot on demand for
+	// GET .../config/running, GET .../config/diff, and the drift-digest
+	// loop; nil falls back to configAppliedSnapshot in RunningConfigSnapshot
+	// (correct: with no live snapshot source there is nothing to drift FROM,
+	// so running == applied and the diff/digest endpoints report no change).
+	configAppliedSnapshot   map[string]any
+	configRunningSnapshotFn func(context.Context) (map[string]any, error)
+	// configDriftInterval / configReplicaID configure the opt-in
+	// cross-replica config-digest broadcast loop (WithConfigDriftDetection).
+	// Zero interval (the default) means the feature is off.
+	configDriftInterval time.Duration
+	configReplicaID     string
 }

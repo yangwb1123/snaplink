@@ -64,6 +64,7 @@ func NewServer(opts ...Option) *Server {
 	}
 	s.startedAt = time.Now()
 	s.applyAuditSinkTaps()
+	s.applyConfigAuditWiring()
 	s.applyMetricsWiring()
 	// OpenID Federation 1.0 automatic client registration (slice 3) then the
 	// opt-in per-login ClientStore metadata cache. Order between these two

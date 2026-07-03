@@ -70,6 +70,7 @@ type Config struct {
 	ProtectedResource  ProtectedResourceMetadataConfig `yaml:"protected_resource_metadata"`
 	Trust              TrustConfig                     `yaml:"trust"`
 	FeatureGates       FeatureGatesConfig              `yaml:"feature_gates"`
+	ConfigAudit        ConfigAuditConfig               `yaml:"config_audit"`
 }
 
 // FeatureGatesConfig controls which optional protocol surfaces the server

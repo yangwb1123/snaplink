@@ -427,4 +427,18 @@ const (
 	// PathStatus is the unauthenticated runtime server status endpoint.
 	// Returns version, uptime, and module health. Public (no auth required).
 	PathStatus = "/api/v1/status"
+
+	// PathAdminConfigRunning / PathAdminConfigApplied / PathAdminConfigDiff /
+	// PathAdminConfigHistory serve the runtime-configuration-audit admin API
+	// (GET, admin:read): the server's CURRENT effective config snapshot, the
+	// config captured at STARTUP, an RFC 6902 JSON Patch between the two, and
+	// the persisted config_history change log. Every snapshot/patch value is
+	// redacted (secret/password/dsn/token/key-shaped fields become "***").
+	// Mounted only when a config-snapshot source is wired
+	// (sso.WithConfigSnapshots); the history endpoint additionally requires
+	// sso.WithConfigAuditStore.
+	PathAdminConfigRunning = "/admin/config/running"
+	PathAdminConfigApplied = "/admin/config/applied"
+	PathAdminConfigDiff    = "/admin/config/diff"
+	PathAdminConfigHistory = "/admin/config/history"
 )

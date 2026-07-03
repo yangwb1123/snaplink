@@ -161,3 +161,48 @@ type EventsConfig struct {
 	// back to the SDK default (sse.DefaultHeartbeat).
 	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
 }
+
+// ConfigAuditConfig configures runtime-configuration audit + drift
+// detection (platform/configaudit) — a sibling of AuditConfig above (event
+// audit), living in the same file rather than a new config_configaudit.go
+// because config/ is already at its frozen per-directory file-count
+// ceiling (directory_fanout_test.go). When Enabled is false, no config
+// snapshot/history wiring happens and the GET /api/v1/admin/config/* API
+// is not mounted — byte-identical to a build without the feature.
+//
+// Backend selects the [configaudit.Store] backend ("memory" or "sqlite"),
+// mirroring AuditConfig.Backend's shape. Retention reuses the same
+// interval/max-age shape as AuditRetentionConfig (AGENTS.md: "config_history
+// reuses the existing audit.retention config").
+type ConfigAuditConfig struct {
+	Enabled   bool                       `yaml:"enabled"`
+	Backend   string                     `yaml:"backend"` // memory | sqlite
+	Sqlite    ConfigAuditSqliteConfig    `yaml:"sqlite"`
+	Retention ConfigAuditRetentionConfig `yaml:"retention"`
+	Drift     ConfigAuditDriftConfig     `yaml:"drift"`
+}
+
+// ConfigAuditSqliteConfig is the SQLite backend's DSN, matching
+// AuditSqliteConfig's shape.
+type ConfigAuditSqliteConfig struct {
+	DSN string `yaml:"dsn"`
+}
+
+// ConfigAuditRetentionConfig bounds config_history growth. Mirrors
+// AuditRetentionConfig; unlike audit events (potentially very high
+// volume), config-history entries are one per admin mutation, so most
+// deployments can leave this disabled and rely on the MemoryStore/SQLite
+// row count instead.
+type ConfigAuditRetentionConfig struct {
+	Enabled  bool          `yaml:"enabled"`
+	MaxAge   time.Duration `yaml:"max_age"`
+	Interval time.Duration `yaml:"interval"`
+}
+
+// ConfigAuditDriftConfig opts into the cross-replica config-digest
+// broadcast loop (platform/configaudit.DriftDetector). Interval <= 0
+// (the default) disables it entirely — a report-only observability
+// feature that never runs unless an operator explicitly asks for it.
+type ConfigAuditDriftConfig struct {
+	Interval time.Duration `yaml:"interval"`
+}

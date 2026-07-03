@@ -252,6 +252,13 @@ These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary 
 No admin-scope-specific code: a missing/invalid bearer or insufficient scope
 falls through to the same 401/403 the rest of `/api/v1/admin/*` uses.
 
+## Config audit (`/api/v1/admin/config/*`)
+
+| Code                          | HTTP | Emitted when                                                                                         |
+|-------------------------------|------|-------------------------------------------------------------------------------------------------------|
+| `config_audit_not_available`  | 501  | `.../running`\|`.../applied`\|`.../diff` hit with no `WithConfigSnapshots` wired, or `.../history` hit with no `WithConfigAuditStore` wired |
+| `invalid_request`             | 400  | `.../history?since=` is not RFC3339, or `?limit=` is not an integer                                    |
+
 ---
 
 ## Network policy (`/api/v1/netpolicy/*`)
