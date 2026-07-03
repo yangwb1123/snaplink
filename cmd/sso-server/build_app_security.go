@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
+	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -174,4 +178,145 @@ func (b *appBuilder) wireMTLSLockoutProxiesCORS() error {
 		logger.Info("security: cors enabled", "allowed_origins", c.AllowedOrigins)
 	}
 	return nil
+}
+
+// --- Governance plane: credential rotation, config-audit, break-glass -------
+//
+// These three wave-1 admin-plane subsystems all follow the same two-phase
+// shape: wireGovernance appends their Options BEFORE NewServer (so the routes
+// mount + the Server holds its read seams), then startGovernanceWorkers launches
+// their background loops AFTER the Server is constructed, each under the standard
+// cancel+done shutdown lifecycle (main_shutdown.go stopScheduler).
+
+// wireGovernance appends the credential-rotation, config-audit, and break-glass
+// Options and builds their backing registry/store, leaving the loops for
+// startGovernanceWorkers. Each sub-wire is a no-op (byte-identical build) when
+// its config section is disabled.
+func (b *appBuilder) wireGovernance() error {
+	if err := b.wireCredentialRotation(); err != nil {
+		return err
+	}
+	if err := b.wireConfigAudit(); err != nil {
+		return err
+	}
+	b.wireBreakGlass()
+	return nil
+}
+
+// wireCredentialRotation builds the rotation Registry + Scheduler (seeding the
+// webhook-HMAC rotator from the audit webhook signing secret) and wires the
+// Server's read access to the governance inventory.
+func (b *appBuilder) wireCredentialRotation() error {
+	reg, sched, err := serverbuildplatform.BuildCredentialRotation(
+		b.cfg.Rotation, []byte(b.cfg.Audit.Webhook.SigningSecret), b.logger, b.metricsRegistry)
+	if err != nil {
+		return fmt.Errorf("credential rotation: %w", err)
+	}
+	if reg == nil {
+		return nil
+	}
+	b.opts = append(b.opts, sso.WithCredentialRotation(reg))
+	b.credentialScheduler = sched
+	return nil
+}
+
+// wireConfigAudit builds the config-history store, captures the redacted
+// applied-config snapshot once, and appends the snapshot/history/drift Options.
+func (b *appBuilder) wireConfigAudit() error {
+	cfg := b.cfg.ConfigAudit
+	if !cfg.Enabled {
+		return nil
+	}
+	store, err := serverbuildplatform.BuildConfigAuditStore(cfg)
+	if err != nil {
+		return fmt.Errorf("config audit store: %w", err)
+	}
+	applied, err := serverbuildplatform.EffectiveConfigSnapshot(b.cfg)
+	if err != nil {
+		return fmt.Errorf("config audit snapshot: %w", err)
+	}
+	fullCfg := b.cfg
+	running := func(context.Context) (map[string]any, error) {
+		return serverbuildplatform.EffectiveConfigSnapshot(fullCfg)
+	}
+	b.configAuditStore = store
+	b.opts = append(b.opts,
+		sso.WithConfigAuditStore(store),
+		sso.WithConfigSnapshots(applied, running),
+	)
+	if cfg.Drift.Interval > 0 {
+		b.opts = append(b.opts, sso.WithConfigDriftDetection(cfg.Drift.Interval, b.driftReplicaID()))
+	}
+	b.logger.Info("config audit enabled",
+		"backend", configAuditBackend(cfg.Backend), "drift_interval", cfg.Drift.Interval)
+	return nil
+}
+
+// wireBreakGlass wires the in-memory break-glass store enabling the
+// emergency-admin-session endpoints; the expiry sweeper is started later.
+func (b *appBuilder) wireBreakGlass() {
+	if !b.cfg.BreakGlass.Enabled {
+		return
+	}
+	store := memorystoreidentity.NewMemoryBreakGlassStore()
+	b.breakGlassStore = store
+	b.opts = append(b.opts, sso.WithBreakGlassStore(store))
+}
+
+// startGovernanceWorkers launches the governance background loops after the
+// Server is constructed: the rotation scheduler, the config-drift broadcast
+// loop, and the break-glass expiry sweeper. Each records a cancel+done pair for
+// graceful shutdown.
+func (b *appBuilder) startGovernanceWorkers(srv *sso.Server) error {
+	if b.credentialScheduler != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		b.credentialSchedCancel = cancel
+		b.credentialSchedDone = b.credentialScheduler.Start(ctx)
+	}
+	if b.cfg.ConfigAudit.Enabled && b.cfg.ConfigAudit.Drift.Interval > 0 {
+		ctx, cancel := context.WithCancel(context.Background())
+		done, err := srv.StartConfigDriftDetection(ctx)
+		if err != nil {
+			cancel()
+			return fmt.Errorf("config drift detection: %w", err)
+		}
+		b.configDriftCancel, b.configDriftDone = cancel, done
+	}
+	b.startBreakGlassSweeper(srv)
+	return nil
+}
+
+// startBreakGlassSweeper runs Server.RunBreakGlassSweeper in a goroutine wrapped
+// in the standard cancel+done pair. No-op when no break-glass store is wired.
+func (b *appBuilder) startBreakGlassSweeper(srv *sso.Server) {
+	if b.breakGlassStore == nil {
+		return
+	}
+	interval := b.cfg.BreakGlass.SweeperInterval
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	b.breakGlassCancel, b.breakGlassDone = cancel, done
+	go func() { defer close(done); srv.RunBreakGlassSweeper(ctx, interval) }()
+	b.logger.Info("break-glass sweeper enabled", "interval", interval)
+}
+
+// driftReplicaID resolves the id the config-drift broadcast tags its digest
+// with, reusing the signing-key registry's replica id (or the derived service
+// id) so operators can correlate the two cross-replica loops.
+func (b *appBuilder) driftReplicaID() string {
+	if id := strings.TrimSpace(b.cfg.Keys.SigningKeyRegistry.ReplicaID); id != "" {
+		return id
+	}
+	return serverbuildplatform.ResolveServiceID(b.cfg.Registry.ServiceID, b.cfg.Server.Issuer)
+}
+
+// configAuditBackend maps an empty backend to its "memory" default for logging.
+func configAuditBackend(backend string) string {
+	if strings.TrimSpace(backend) == "" {
+		return "memory"
+	}
+	return backend
 }

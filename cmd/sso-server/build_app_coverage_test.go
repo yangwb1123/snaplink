@@ -54,6 +54,21 @@ func shutdownApp(t *testing.T, a *app) {
 		a.keyRotationCancel()
 		waitBounded(a.keyRotationStop)
 	}
+	if a.credentialSchedCancel != nil {
+		a.credentialSchedCancel()
+		waitBounded(a.credentialSchedDone)
+	}
+	if a.configDriftCancel != nil {
+		a.configDriftCancel()
+		waitBounded(a.configDriftDone)
+	}
+	if a.breakGlassCancel != nil {
+		a.breakGlassCancel()
+		waitBounded(a.breakGlassDone)
+	}
+	if c, ok := a.configAuditStore.(io.Closer); ok {
+		_ = c.Close()
+	}
 	if a.anomalyRT != nil {
 		a.anomalyRT.close(ctx)
 	}

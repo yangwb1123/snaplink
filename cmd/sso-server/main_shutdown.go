@@ -19,6 +19,12 @@ func closeAppStores(a *app) {
 	if c, ok := a.connectionStore.(io.Closer); ok {
 		_ = c.Close()
 	}
+	// configaudit.Store has no Close on the interface; the sqlite backend does.
+	// The governance schedulers are already stopped (shutdownSubsystems ran
+	// before this deferred close), so no writer races the connection close.
+	if c, ok := a.configAuditStore.(io.Closer); ok {
+		_ = c.Close()
+	}
 	if a.tenantStore != nil {
 		_ = a.tenantStore.Close()
 	}
@@ -162,6 +168,12 @@ func shutdownSchedulers(ctx context.Context, a *app, logger spi.Logger) {
 		"ciba request pruner did not exit cleanly")
 	stopScheduler(ctx, logger, a.refreshGracePruneCancel, a.refreshGracePruneDone,
 		"refresh grace pruner did not exit cleanly")
+	stopScheduler(ctx, logger, a.credentialSchedCancel, a.credentialSchedDone,
+		"credential rotation scheduler did not exit cleanly")
+	stopScheduler(ctx, logger, a.configDriftCancel, a.configDriftDone,
+		"config drift detection loop did not exit cleanly")
+	stopScheduler(ctx, logger, a.breakGlassCancel, a.breakGlassDone,
+		"break-glass sweeper did not exit cleanly")
 }
 
 // stopScheduler cancels a background scheduler and waits for its done channel

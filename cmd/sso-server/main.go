@@ -28,6 +28,7 @@ import (
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/buildinfo"
 	"github.com/snaplink/sso/platform/cluster"
+	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/spi"
@@ -389,6 +390,24 @@ type app struct {
 	// rotation is disabled); keyRotationStop closes when it has exited.
 	keyRotationCancel context.CancelFunc
 	keyRotationStop   <-chan struct{}
+
+	// Governance subsystems (wave-2 cmd wiring). Each cancel/done pair uses
+	// the standard scheduler shutdown lifecycle (main_shutdown.go). All
+	// nil/zero when the owning config section is disabled.
+	//
+	// credentialSched* — the platform/lifecycle/rotation Scheduler loop
+	// (rotation.enabled). configAuditStore + configDrift* — the
+	// platform/configaudit history store (closed at shutdown when it is an
+	// io.Closer) + the cross-replica drift-broadcast loop (config_audit.enabled
+	// with drift.interval>0). breakGlass* — the core.BreakGlassStore expiry
+	// sweeper (break_glass.enabled).
+	credentialSchedCancel context.CancelFunc
+	credentialSchedDone   <-chan struct{}
+	configAuditStore      configaudit.Store
+	configDriftCancel     context.CancelFunc
+	configDriftDone       <-chan struct{}
+	breakGlassCancel      context.CancelFunc
+	breakGlassDone        <-chan struct{}
 
 	// redisClient is the one shared Redis client fanned out to every
 	// redis-backed store; nil when no redis block is configured. Closed once at

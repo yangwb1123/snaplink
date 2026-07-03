@@ -86,6 +86,26 @@ type AdminConfig struct {
 	APIRESTEnabled bool `yaml:"api_rest_enabled"`
 }
 
+// BreakGlassConfig opts into emergency ("break-glass") admin sessions
+// (core.BreakGlassStore + the POST/GET/DELETE/approve /api/v1/admin/break-glass
+// lifecycle endpoints, sso.WithBreakGlassStore). Disabled by default: without
+// it no break-glass surface exists.
+//
+// SweeperInterval drives the ACTIVE expiry sweeper (Server.RunBreakGlassSweeper)
+// — the loop that destroys a grant's derived impersonation sessions the moment
+// it expires. <=0 defaults to 1m at wiring time. The grant TTL default + cap
+// and the per-request require_approval flag are SDK-side (core.DefaultBreakGlassTTL
+// / core.MaxBreakGlassTTL / the create-request body), not server config, so they
+// are intentionally not knobs here.
+//
+// Lives beside AdminConfig because config/ is at its frozen per-directory
+// file-count ceiling (directory_fanout_test.go) — new sections fold into a
+// topically-related file rather than a new config_*.go.
+type BreakGlassConfig struct {
+	Enabled         bool          `yaml:"enabled"`
+	SweeperInterval time.Duration `yaml:"sweeper_interval"`
+}
+
 // BootstrapConfig configures the first-run init Runner. StatePath is the
 // JSON file the file-backed Tracker writes to (defaults to "bootstrap.json"
 // when empty). Set Disabled=true to skip the runner entirely (useful in

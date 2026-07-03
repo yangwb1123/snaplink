@@ -24,11 +24,14 @@ import (
 	"github.com/snaplink/sso/interfaces/snapshot/storageinline"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/platform/lifecycle/dr"
+	"github.com/snaplink/sso/platform/lifecycle/rotation"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/netpolicy"
 	"github.com/snaplink/sso/protocols/compliance"
 	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
 )
 
@@ -138,6 +141,22 @@ type appBuilder struct {
 	// for expired refresh_grace_cache rows).
 	refreshGracePruneCancel context.CancelFunc
 	refreshGracePruneDone   <-chan struct{}
+
+	// Governance subsystems (wave-2 cmd wiring). credentialScheduler is built
+	// by wireCredentialRotation (pre-NewServer) and Started by
+	// startGovernanceWorkers (post-NewServer); the cancel/done pairs mirror the
+	// audit/snapshot retention lifecycle. configAuditStore is retained so
+	// assemble folds it into the *app for Close at shutdown. All nil when the
+	// owning config section is disabled.
+	credentialScheduler   *rotation.Scheduler
+	credentialSchedCancel context.CancelFunc
+	credentialSchedDone   <-chan struct{}
+	configAuditStore      configaudit.Store
+	configDriftCancel     context.CancelFunc
+	configDriftDone       <-chan struct{}
+	breakGlassStore       core.BreakGlassStore
+	breakGlassCancel      context.CancelFunc
+	breakGlassDone        <-chan struct{}
 }
 
 // finalize wires the cluster subsystems + the last Options, constructs the
@@ -154,6 +173,9 @@ func (b *appBuilder) finalize() (*app, error) {
 	if err := b.wireFinalOptions(); err != nil {
 		return nil, err
 	}
+	if err := b.wireGovernance(); err != nil {
+		return nil, err
+	}
 	// Late-bind the self-service eraser's consent + MFA stores: they wire in
 	// wireFinalOptions, AFTER wireDomains constructed the eraser (build order), so
 	// the eraser captured them nil. The SDK holds it by pointer and reads these at
@@ -168,6 +190,9 @@ func (b *appBuilder) finalize() (*app, error) {
 	rt := serverRuntime{server: srv, cluster: cw}
 	rt.busStop, rt.signingKeyStop, rt.keyRotationStop, rt.keyRotationCancel, err = b.startBackgroundWorkers(srv, cw)
 	if err != nil {
+		return nil, err
+	}
+	if err := b.startGovernanceWorkers(srv); err != nil {
 		return nil, err
 	}
 	rt.adminMW = b.wireAdminMW(srv)
@@ -281,6 +306,10 @@ func (b *appBuilder) assembleExtras(a *app, rt serverRuntime) {
 	a.cibaPruneCancel, a.cibaPruneDone = b.cibaPruneCancel, b.cibaPruneDone
 	a.netStop, a.netCancel = b.netStop, b.netCancel
 	a.drReadiness, a.drReplicationCancel, a.drReplicationDone = drFields(rt.dr)
+	a.configAuditStore = b.configAuditStore
+	a.credentialSchedCancel, a.credentialSchedDone = b.credentialSchedCancel, b.credentialSchedDone
+	a.configDriftCancel, a.configDriftDone = b.configDriftCancel, b.configDriftDone
+	a.breakGlassCancel, a.breakGlassDone = b.breakGlassCancel, b.breakGlassDone
 }
 
 // drFields extracts the DR handles from dw; a nil dw (dr.enabled=false)

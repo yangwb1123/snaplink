@@ -72,6 +72,8 @@ type Config struct {
 	Trust              TrustConfig                     `yaml:"trust"`
 	FeatureGates       FeatureGatesConfig              `yaml:"feature_gates"`
 	ConfigAudit        ConfigAuditConfig               `yaml:"config_audit"`
+	Rotation           RotationConfig                  `yaml:"rotation"`
+	BreakGlass         BreakGlassConfig                `yaml:"break_glass"`
 }
 
 // FeatureGatesConfig controls which optional protocol surfaces the server
