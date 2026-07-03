@@ -218,11 +218,31 @@ func TestJWKSCache_StartRefresherClosesOnContextCancel(t *testing.T) {
 
 	time.Sleep(20 * time.Millisecond) // let a couple of refresh ticks land
 	cancel()
-	time.Sleep(20 * time.Millisecond) // let the StartRefresher goroutine observe it
-	seenAtCancel := hits.Load()
-	time.Sleep(50 * time.Millisecond)
-	if got := hits.Load(); got != seenAtCancel {
-		t.Fatalf("refresh continued after context cancel: hits went from %d to %d", seenAtCancel, got)
+
+	// After cancel the refresher must stop. Poll until the hit count stops
+	// advancing across a window comfortably wider than the refresh interval:
+	// that proves the loop returned, without depending on absolute scheduler
+	// timing (which starves under parallel -race load and made a fixed-sleep
+	// assertion flaky). A live 5ms-interval loop would tick ~8x per window, so
+	// two equal reads means it has genuinely stopped.
+	const quietWindow = 40 * time.Millisecond
+	deadline := time.Now().Add(2 * time.Second)
+	var stable int64
+	for {
+		before := hits.Load()
+		time.Sleep(quietWindow)
+		stable = hits.Load()
+		if stable == before {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("refresher did not stop after context cancel: hits still advancing (%d -> %d)", before, stable)
+		}
+	}
+	// Belt-and-suspenders: a further quiet window yields no additional fetches.
+	time.Sleep(quietWindow)
+	if got := hits.Load(); got != stable {
+		t.Fatalf("refresh continued after refresher stopped: hits went from %d to %d", stable, got)
 	}
 	cache.Close() // must not panic even though StartRefresher already closed it
 }
