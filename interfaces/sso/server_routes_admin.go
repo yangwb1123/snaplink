@@ -5,6 +5,17 @@ import (
 
 	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/shared/core"
+)
+
+// Token Portfolio admin route-path re-exports (relocated from aliases.go to
+// keep that file within the per-file line budget). Consumed by the admin
+// token-portfolio route mounts below.
+const (
+	PathAdminTokenPortfolio  = core.PathAdminTokenPortfolio
+	PathAdminTokenSubject    = core.PathAdminTokenSubject
+	PathAdminTokenSuspicious = core.PathAdminTokenSuspicious
+	PathAdminTokenRevoke     = core.PathAdminTokenRevoke
 )
 
 // Admin REST API route registration, extracted from Mount (server_routes.go).

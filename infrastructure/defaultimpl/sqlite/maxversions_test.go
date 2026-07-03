@@ -52,8 +52,8 @@ func TestMaxVersions_AllReturnPositive(t *testing.T) {
 
 	// Stores with appended migrations must report the higher version (proves
 	// MaxVersion reads the slice, not a hardcoded 1).
-	if got := sqlite.SessionsMaxVersion(); got != 3 {
-		t.Errorf("SessionsMaxVersion() = %d, want 3 (v3 tenant binding)", got)
+	if got := sqlite.SessionsMaxVersion(); got != 4 {
+		t.Errorf("SessionsMaxVersion() = %d, want 4 (v4 session trust-score columns)", got)
 	}
 	if got := sqlite.RefreshTokensMaxVersion(); got != 5 {
 		t.Errorf("RefreshTokensMaxVersion() = %d, want 5 (v5 adds generation for max_refresh_depth)", got)
