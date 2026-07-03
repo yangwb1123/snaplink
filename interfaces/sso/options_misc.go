@@ -6,6 +6,7 @@ import (
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenant"
+	"github.com/snaplink/sso/domains/tokenanomaly"
 	"github.com/snaplink/sso/domains/tokenpolicy"
 	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/platform/cluster"
@@ -276,6 +277,29 @@ func WithTokenUsageRecorder(r *tokenusage.Recorder) Option {
 // YAML-configured rule set.
 func WithTokenPolicy(store tokenpolicy.Store) Option {
 	return func(s *Server) { s.tokenPolicyStore = store }
+}
+
+// WithTokenAnomalyDetector wires the token-behavior anomaly detector (Phase 3
+// of token governance) — a [tokenanomaly.Detector] that decorates the
+// token-usage store, captures per-thumbprint geo/velocity observations off the
+// request path, and (when Server.RunTokenAnomalyDetection is started) sweeps
+// them plus the per-client rate buckets into governance findings. DETECTION /
+// REPORTING ONLY — a finding NEVER feeds an auth decision (same contract as
+// WithAnomalyRunner). When BOTH this option AND [WithMetrics] are set,
+// NewServer arms the findings counter (sso_token_anomaly_findings_total) via
+// the detector's hook; the findings surface on the admin read API GET
+// /api/v1/admin/tokens/suspicious.
+//
+// The SAME detector value MUST also be the store passed to the
+// [tokenusage.Recorder] this server uses (the detector is a tokenusage.Store
+// decorator) so the recorder's drain feeds it observations; wire it as both
+// the recorder's store and here.
+//
+// nil detector → the suspicious route is not mounted and
+// RunTokenAnomalyDetection is a no-op: behavior is byte-identical to a build
+// without the feature.
+func WithTokenAnomalyDetector(d *tokenanomaly.Detector) Option {
+	return func(s *Server) { s.tokenAnomalyDetector = d }
 }
 
 // WithMFAChallengeStore persists in-flight MFA challenges (the state

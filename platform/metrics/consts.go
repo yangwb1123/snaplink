@@ -65,6 +65,10 @@ const (
 	NameTokenPolicyDenialsTotal       = "sso_token_policy_denials_total"
 	NameTokenPolicyRenewRequiredTotal = "sso_token_policy_renew_required_total"
 
+	// Token-behavior anomaly detection (opt-in via WithTokenAnomalyDetector +
+	// WithMetrics). Bounded labels: the closed finding-type set × severity.
+	NameTokenAnomalyFindingsTotal = "sso_token_anomaly_findings_total"
+
 	// Signup funnel metrics — self-service registration conversion
 	// pipeline. Operators graph started → verified → completed to find
 	// the drop-off step (verification email never arrived, link expired,

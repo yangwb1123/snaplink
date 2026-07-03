@@ -120,6 +120,15 @@ func (s *Server) applyMetricsWiring() {
 	if s.tokenPolicyStore != nil && s.metrics != nil {
 		s.metrics.EnableTokenPolicyMetrics()
 	}
+	// Token-anomaly findings counter (§5): armed when BOTH a detector
+	// (WithTokenAnomalyDetector) AND a metrics registry are wired. Placed
+	// before the token-usage early-return so a detector-only deployment still
+	// gets its counter. Idempotent + byte-identical off. The hook fires only
+	// on the off-path Analyze sweep, never the request path.
+	if s.tokenAnomalyDetector != nil && s.metrics != nil {
+		s.metrics.EnableTokenAnomalyMetrics()
+		s.tokenAnomalyDetector.SetFindingHook(s.metrics.ObserveTokenAnomalyFinding)
+	}
 	// Token-usage hooks: armed only when BOTH a Recorder
 	// (WithTokenUsageRecorder) AND a metrics registry (WithMetrics) are
 	// wired. Without a recorder there is nothing to hook; without metrics the

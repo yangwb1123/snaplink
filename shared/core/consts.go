@@ -221,6 +221,21 @@ const (
 	// "/api/v1/..." value causes.
 	PathAdminTokenPolicies = "/admin/token-policies"
 
+	// Token Portfolio governance surface (Phase 3 of token governance).
+	// Group-relative on the /api/v1 router group (a full "/api/v1/..." value
+	// double-prefixes — see PathTenantUsage) and admin-gated (GET admin:read,
+	// POST admin:write). Portfolio: overview (totals + distribution + issuance
+	// trend) from the usage store. Subject: a subject's active refresh-token
+	// count via RefreshTokenSubjectCounter. Suspicious: off-path-detected
+	// anomalies (reporting only, never an auth decision; token_thumbprint, never
+	// token values). Revoke: bulk-revoke over the EXISTING refresh-token
+	// revocation SPIs with revocation-storm caps. Portfolio/subject/revoke mount
+	// with WithTokenUsageRecorder; suspicious with WithTokenAnomalyDetector.
+	PathAdminTokenPortfolio  = "/admin/tokens/portfolio"
+	PathAdminTokenSubject    = "/admin/tokens/subjects/:subject"
+	PathAdminTokenSuspicious = "/admin/tokens/suspicious"
+	PathAdminTokenRevoke     = "/admin/tokens/revoke"
+
 	// PathAdminAccessPolicies is the read-only zero-trust conditional-access
 	// (CAP) policy governance view (GET /api/v1/admin/access-policies). It
 	// returns the wired policies ordered by evaluation precedence so an

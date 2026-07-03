@@ -8,6 +8,7 @@ import (
 
 	"github.com/snaplink/sso/domains/anomaly"
 	"github.com/snaplink/sso/domains/conditionalaccess"
+	"github.com/snaplink/sso/domains/tokenanomaly"
 	"github.com/snaplink/sso/domains/tokenpolicy"
 	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/interfaces/cors"
@@ -37,6 +38,13 @@ type protocolState struct {
 	// Nil = no policy layer: issuerForClient returns the raw issuer and
 	// enforceTokenPolicy is a no-op, so issuance is byte-identical to today.
 	tokenPolicyStore tokenpolicy.Store
+	// tokenAnomalyDetector holds the opt-in token-behavior anomaly detector
+	// (WithTokenAnomalyDetector), Phase 3 of token governance. Nil = no
+	// detector: the suspicious-token admin route is not mounted and
+	// RunTokenAnomalyDetection is a no-op, so behavior is byte-identical to a
+	// build without the feature. Detection is off the request path and NEVER
+	// feeds an auth decision.
+	tokenAnomalyDetector *tokenanomaly.Detector
 	// capStore + capEngine back the zero-trust conditional-access policy engine
 	// (WithConditionalAccess). Both nil ⇒ the engine is unwired: the admin
 	// governance route is not mounted and EvaluateConditionalAccess returns a

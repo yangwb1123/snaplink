@@ -123,3 +123,33 @@ func (m *Metrics) ObserveTokenPolicyDenial(reason string) {
 	}
 	m.TokenPolicyDenialsTotal.WithLabelValues(reason).Inc()
 }
+
+// EnableTokenAnomalyMetrics lazily constructs + registers the token-behavior
+// anomaly-findings collector. Called by the Server ONLY when a
+// TokenAnomalyDetector is wired (WithTokenAnomalyDetector) — without it the
+// vector stays nil and nothing is registered or emitted (byte-identical off,
+// §5). Folded here beside the token-usage/policy metrics rather than a new
+// file to hold platform/metrics under its directory-fanout budget. Idempotent.
+func (m *Metrics) EnableTokenAnomalyMetrics() {
+	if m == nil || m.TokenAnomalyFindingsTotal != nil {
+		return
+	}
+	factory := promauto.With(m.Registry)
+	m.TokenAnomalyFindingsTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameTokenAnomalyFindingsTotal,
+			Help: "Token-behavior anomaly findings emitted by the off-path detector, by type (multi_geo/velocity/rate_spike — the closed set) and severity (warn/critical). Detection/reporting only — a finding never feeds an auth decision; the per-token detail (thumbprint/geos/subject) is on the /api/v1/admin/tokens/suspicious read API, never on label cardinality. Zero traffic when no WithTokenAnomalyDetector is wired.",
+		},
+		[]string{LabelAnomalyType, LabelSeverity},
+	)
+}
+
+// ObserveTokenAnomalyFinding bumps the findings counter for a bounded
+// (type, severity) pair. Nil-safe so the detector hook can fire
+// unconditionally; no-op until EnableTokenAnomalyMetrics ran.
+func (m *Metrics) ObserveTokenAnomalyFinding(findingType, severity string) {
+	if m == nil || m.TokenAnomalyFindingsTotal == nil {
+		return
+	}
+	m.TokenAnomalyFindingsTotal.WithLabelValues(findingType, severity).Inc()
+}

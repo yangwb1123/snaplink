@@ -1,11 +1,8 @@
 package sso
 
 import (
-	"context"
 	"net/http"
-	"strings"
 
-	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/protocols/oauth"
 )
@@ -61,18 +58,39 @@ func (s *Server) mountAdminAPIObservability(api Router) {
 		api.GET(PathTenantUsage, s.handleTenantUsage)
 		api.GET(PathAdminTopTenants, s.handleAdminTopTenants)
 	}
-	// Token-usage telemetry read API (opt-in WithTokenUsageRecorder). Gated by
-	// AdminMiddleware (admin:read) via the /api/v1/admin/ prefix. Not mounted
-	// without a recorder — byte-identical to a build without it.
+	s.mountAdminTokenGovernance(api)
+	s.mountAdminAPILifecycle(api)
+}
+
+// mountAdminTokenGovernance registers the token-governance read/action surface:
+// the usage telemetry read API, the Phase-3 Token Portfolio suite (overview +
+// per-subject view + bulk-revoke), the token-policy governance view, and the
+// suspicious-token anomaly list. Each block is gated on its own opt-in backing
+// so the registered route set is byte-identical to a build without the feature.
+func (s *Server) mountAdminTokenGovernance(api Router) {
+	// Token-usage telemetry + the Token Portfolio panel APIs (opt-in
+	// WithTokenUsageRecorder). The whole panel surface — overview, per-subject
+	// active-token view, and the bulk-revoke workflow — is gated on the usage
+	// recorder that backs the panel; the subject/revoke handlers degrade
+	// gracefully when no refresh store is wired. Admin-gated (GET admin:read,
+	// POST admin:write) via the /api/v1/admin/ prefix.
 	if s.tokenUsageRecorder != nil {
 		api.GET(PathAdminTokenUsage, s.handleAdminTokenUsage)
+		api.GET(PathAdminTokenPortfolio, s.handleAdminTokenPortfolio)
+		api.GET(PathAdminTokenSubject, s.handleAdminTokenSubject)
+		api.POST(PathAdminTokenRevoke, s.handleAdminBulkRevoke)
 	}
 	// Token-policy governance read API (opt-in WithTokenPolicy). Admin-gated
 	// (admin:read); not mounted without a store — byte-identical without it.
 	if s.tokenPolicyStore != nil {
 		api.GET(PathAdminTokenPolicies, s.handleAdminTokenPolicies)
 	}
-	s.mountAdminAPILifecycle(api)
+	// Suspicious-token anomaly list (opt-in WithTokenAnomalyDetector). Read-only
+	// governance/reporting; not mounted without a detector — byte-identical
+	// without it.
+	if s.tokenAnomalyDetector != nil {
+		api.GET(PathAdminTokenSuspicious, s.handleAdminTokenSuspicious)
+	}
 }
 
 // mountAdminAPILifecycle registers the admin management/lifecycle endpoints
@@ -397,87 +415,10 @@ func (s *Server) handleConfigApplied(ctx HandlerContext) { configaudit.HandleApp
 func (s *Server) handleConfigDiff(ctx HandlerContext)    { configaudit.HandleDiff(s, ctx) }
 func (s *Server) handleConfigHistory(ctx HandlerContext) { configaudit.HandleHistory(s, ctx) }
 
-// configHistoryResourceByEventType classifies an audit.EventType into the
-// config_history "resource" column, restricted to the event types that
-// ALREADY broadcast a cluster Kind*Change (client/tenant/policy) per
-// AGENTS.md's change-capture requirement. Every other admin event type is
-// skipped: a resource-scoped config_history pairs with the running/applied
-// diff endpoint, it is not a second general admin audit log (that already
-// exists at /api/v1/audit/events).
-var configHistoryResourceByEventType = map[audit.EventType]string{
-	audit.EventAdminClientCreated:       "client",
-	audit.EventAdminClientUpdated:       "client",
-	audit.EventAdminClientDeleted:       "client",
-	audit.EventAdminClientSecretRotated: "client",
-	audit.EventAdminTenantCreated:       "tenant",
-	audit.EventAdminTenantUpdated:       "tenant",
-	audit.EventAdminTenantDeleted:       "tenant",
-	audit.EventAdminTenantStatusChanged: "tenant",
-	audit.EventAdminRoleAdded:           "policy",
-	audit.EventAdminRoleUpdated:         "policy",
-	audit.EventAdminRoleRemoved:         "policy",
-	audit.EventAdminRoleAssigned:        "policy",
-	audit.EventAdminRoleUnassigned:      "policy",
-	audit.EventAdminMenusUpdated:        "policy",
-}
-
-// recordConfigHistoryFromAudit is the audit.Recorder ConfigChangeHook wired
-// in NewServer when both an auditor and a configAuditStore are present
-// (see sso.go). It is the "narrowest existing seam" AGENTS.md's
-// change-capture requirement asks for: every admin mutation across gRPC
-// (grpcadmin's recordAdmin helper) and REST already funnels through
-// Recorder.Record with the actor stamped from the admin auth context
-// (sso.AdminActorFromContext / the REST admin middleware), so hooking here
-// captures every client/tenant/policy change without touching a single
-// admin_*.go call site.
-//
-// Limitation (documented, not fixed here — see AGENTS.md scope discipline):
-// this generic seam only carries the changed entity's ID (via the
-// "target="+id Reason convention every admin handler already uses), not its
-// before/after field values, so the recorded Patch is empty — a presence-
-// only history entry, not a field-level diff. [Server.RecordConfigChange]
-// is the field-accurate alternative for a call site that has both states.
-func (s *Server) recordConfigHistoryFromAudit(ctx context.Context, e *audit.Event) {
-	resource, ok := configHistoryResourceByEventType[e.Type]
-	if !ok || s.configAuditStore == nil {
-		return
-	}
-	entry := configaudit.Entry{
-		Actor:      e.ActorID,
-		Resource:   resource,
-		ResourceID: strings.TrimPrefix(e.Reason, "target="),
-		Patch:      []configaudit.Op{},
-		Reason:     string(e.Type),
-	}
-	if err := s.configAuditStore.Record(ctx, entry); err != nil {
-		s.logger.Error("config history record failed", "resource", resource, "error", err)
-	}
-}
-
-// RecordConfigChange appends a field-level config_history entry for a
-// single resource mutation: before/after are the resource's own JSON-
-// shaped representation (NOT the whole server config) — e.g. a client
-// struct round-tripped through json.Marshal/Unmarshal into map[string]any.
-// actor should come from the caller's admin auth context
-// (sso.AdminActorFromContext for gRPC, the REST admin middleware's stashed
-// subject for HTTP). No-op when no configAuditStore is wired, so callers
-// may invoke it unconditionally.
-func (s *Server) RecordConfigChange(ctx context.Context, actor, tenantID, resource, resourceID string, before, after map[string]any, reason string) {
-	if s.configAuditStore == nil {
-		return
-	}
-	entry := configaudit.Entry{
-		Actor:      actor,
-		TenantID:   tenantID,
-		Resource:   resource,
-		ResourceID: resourceID,
-		Patch:      configaudit.RedactOps(configaudit.Diff(before, after)),
-		Reason:     reason,
-	}
-	if err := s.configAuditStore.Record(ctx, entry); err != nil {
-		s.logger.Error("config history record failed", "resource", resource, "resource_id", resourceID, "error", err)
-	}
-}
+// The config-history change-capture helpers (configHistoryResourceByEventType,
+// recordConfigHistoryFromAudit, RecordConfigChange) live in options_admin.go —
+// relocated there beside the config-audit wiring options to hold this file
+// under the 500-line maintainability budget.
 
 // mountAdminBreakGlass registers the break-glass (emergency support) admin
 // session lifecycle: create (bounded, audited on-behalf-of grant, reason
