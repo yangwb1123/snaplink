@@ -13,8 +13,35 @@ import (
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/tracing"
 	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/shared/core"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+// Route-path re-exports (relocated from aliases.go to keep that file within
+// the per-file line budget). Beside Mount, which consumes them.
+const (
+	PathMeshExtAuthz     = core.PathMeshExtAuthz
+	PathNetPolicies      = core.PathNetPolicies
+	PathNetPolicyByName  = core.PathNetPolicyByName
+	PathNetPolicyClassify = core.PathNetPolicyClassify
+	PathNetPolicyResolveMe = core.PathNetPolicyResolveMe
+	PathPAR              = core.PathPAR
+	PathBackchannelAuth  = core.PathBackchannelAuth
+	PathReadyz           = core.PathReadyz
+	PathMetrics          = core.PathMetrics
+	PathStatus           = core.PathStatus
+	PathRevoke           = core.PathRevoke
+	PathRevokeAll        = core.PathRevokeAll
+	PathSAMLMetadata     = core.PathSAMLMetadata
+	PathSAMLSSO          = core.PathSAMLSSO
+	PathSAMLSSOCallback  = core.PathSAMLSSOCallback
+	PathSAMLSLO          = core.PathSAMLSLO
+	PathSAMLSLOContinue  = core.PathSAMLSLOContinue
+	PathSAMLSPSLO        = core.PathSAMLSPSLO
+	PathSendCode         = core.PathSendCode
+	PathToken            = core.PathToken
+	PathUserInfo         = core.PathUserInfo
 )
 
 func (s *Server) RegisterAuthenticator(a Authenticator) {
@@ -342,6 +369,12 @@ func (s *Server) Handler() http.Handler {
 // rate limiting so the limiter keys on the validated real client IP.
 func (s *Server) buildMiddlewareChain(inner http.Handler) http.Handler {
 	inner = s.wrapInnerMiddlewares(inner)
+	if s.degradation != nil {
+		// DR gate sits just inside rate limiting (flood protection still applies
+		// to a shedding replica) and just outside body-limit (a refused write
+		// short-circuits before the body is read). Metrics still counts the 503.
+		inner = s.degradationGate()(inner)
+	}
 	if s.rateLimitPolicy != nil {
 		inner = ratelimit.Middleware(*s.rateLimitPolicy)(inner)
 	}

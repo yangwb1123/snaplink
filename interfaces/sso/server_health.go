@@ -7,7 +7,11 @@ import (
 	"sort"
 	"time"
 
+	"github.com/snaplink/sso/interfaces/admin"
+	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/internal/handler"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/degradation"
 	"github.com/snaplink/sso/shared/core"
 )
 
@@ -207,3 +211,104 @@ func (s *Server) collectStatusStats(_ context.Context) map[string]int {
 // handleStatus. Mirrors the internal/handler constant so status and
 // the admin storage-health endpoint use the same timeout.
 const storageHealthProbeTimeout = 3 * time.Second
+
+// --- Disaster-recovery degraded-service (DR) control plane ---
+
+// PathDRMode is the admin degraded-service mode endpoint. Mounted under the
+// /api/v1 group (full path /api/v1/admin/dr/mode), so the admin middleware
+// gates GET as admin:read and POST as admin:write via the /api/v1/admin/ prefix.
+const PathDRMode = "/admin/dr/mode"
+
+// DR enforcement-policy path prefixes. Held as named consts (not inline
+// literals) so the auth-plane / discovery reads the auth_only mode keeps open
+// cannot silently drift from the routes actually mounted.
+const (
+	drAuthPlanePrefix = "/auth/"        // /auth/login, /auth/mfa, /auth/send-code, ...
+	drWellKnownPrefix = "/.well-known/" // JWKS + discovery — needed to CONSUME issued tokens
+)
+
+// degradationPolicy declares which requests each degraded mode permits, wired
+// from the server's real endpoint paths. See degradation.Policy for the
+// per-mode semantics; the sets here are the concrete instantiation:
+//   - probes always pass;
+//   - read_only keeps the token issuance/introspection plane writable;
+//   - auth_only keeps only the auth + token + key/discovery plane;
+//   - local_only sheds the remote-dependent endpoints (home-realm upstream
+//     discovery, federation fetch, inbound shared-signals push).
+func (s *Server) degradationPolicy() degradation.Policy {
+	return degradation.Policy{
+		// Probes + the DR toggle itself stay reachable in every mode so an
+		// operator can always lift the posture over HTTP (full path = the
+		// /api/v1 group prefix + the admin-relative PathDRMode).
+		ProbePaths:     []string{PathLivez, PathReadyz, PathMetrics, PathAPIPrefix + PathDRMode},
+		ReadOnlyExempt: []string{PathToken, PathIntrospect},
+		AuthOnlyAllow:  []string{drAuthPlanePrefix, PathToken, drWellKnownPrefix},
+		LocalOnlyBlock: []string{PathSSFReceive, PathFederationFetch, PathHomeRealm},
+	}
+}
+
+// degradationGate builds the enforcement middleware. Called only when
+// s.degradation is wired (see buildMiddlewareChain), so a build without the
+// feature never constructs it. It seeds the state gauge with the boot posture
+// and increments the degraded-rejection counter on every refusal.
+func (s *Server) degradationGate() func(http.Handler) http.Handler {
+	if s.metrics != nil && s.metrics.DegradationMode != nil {
+		s.metrics.DegradationMode.WithLabelValues(string(s.degradation.Mode())).Set(1)
+	}
+	return middleware.Degradation(middleware.DegradationConfig{
+		Controller: s.degradation,
+		Policy:     s.degradationPolicy(),
+		OnReject: func(mode degradation.Mode, r *http.Request) {
+			if s.metrics != nil && s.metrics.DegradedRejectionsTotal != nil {
+				s.metrics.DegradedRejectionsTotal.WithLabelValues(string(mode), r.Method).Inc()
+			}
+		},
+	})
+}
+
+// onDegradationChange is the manager change hook: it moves the state gauge and
+// records the transition to the audit trail (with the acting admin, when the
+// change came through the admin endpoint). Registered by WithDegradationManager.
+func (s *Server) onDegradationChange(ctx context.Context, from, to degradation.Mode, reason string) {
+	s.logger.Info("degradation mode changed", "from", string(from), "to", string(to), "reason", reason)
+	if s.metrics != nil && s.metrics.DegradationMode != nil {
+		s.metrics.DegradationMode.WithLabelValues(string(from)).Set(0)
+		s.metrics.DegradationMode.WithLabelValues(string(to)).Set(1)
+	}
+	if s.auditor == nil {
+		return
+	}
+	e := &audit.Event{Type: audit.EventDegradationModeChanged, Outcome: audit.OutcomeSuccess, Timestamp: time.Now()}
+	if actor, _, ok := admin.ActorFromContext(ctx); ok {
+		e.ActorID = actor
+	}
+	e.Reason = reason
+	audit.SetMeta(e, "from", string(from))
+	audit.SetMeta(e, "to", string(to))
+	s.auditor.Record(ctx, e)
+}
+
+// handleGetDRMode serves GET /api/v1/admin/dr/mode — the current posture.
+func (s *Server) handleGetDRMode(ctx HandlerContext) {
+	ctx.JSON(http.StatusOK, map[string]string{"mode": string(s.degradation.Mode())})
+}
+
+// handleSetDRMode serves POST /api/v1/admin/dr/mode — sets the posture. Body:
+// {"mode": "<mode>", "reason": "<why>"}. An unknown mode returns 400
+// invalid_mode; a malformed body returns 400 invalid_request.
+func (s *Server) handleSetDRMode(ctx HandlerContext) {
+	var req struct {
+		Mode   string `json:"mode"`
+		Reason string `json:"reason"`
+	}
+	if err := ctx.Bind(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, map[string]string{core.KeyError: core.ErrInvalidRequest})
+		return
+	}
+	changed, err := s.degradation.SetMode(ctx.Request().Context(), degradation.Mode(req.Mode), req.Reason)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, map[string]string{core.KeyError: core.ErrInvalidMode})
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"mode": req.Mode, "changed": changed})
+}

@@ -8,9 +8,28 @@ import (
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/platform/geo"
+	"github.com/snaplink/sso/platform/lifecycle/degradation"
 	"github.com/snaplink/sso/protocols/fapi"
 	"github.com/snaplink/sso/shared/core"
 )
+
+// --- Disaster-recovery degraded-service re-exports (moved to
+// platform/lifecycle/degradation) so callers configure WithDegradationManager
+// without importing the platform package directly. ---
+type (
+	DegradationManager = degradation.Manager
+	DegradationMode    = degradation.Mode
+)
+
+const (
+	DegradationModeNormal      = degradation.ModeNormal
+	DegradationModeReadOnly    = degradation.ModeReadOnly
+	DegradationModeAuthOnly    = degradation.ModeAuthOnly
+	DegradationModeLocalOnly   = degradation.ModeLocalOnly
+	DegradationModeMaintenance = degradation.ModeMaintenance
+)
+
+var NewDegradationManager = degradation.NewManager
 
 // FAPIMode re-exports fapi.Mode so callers configure WithFAPIProfile
 // without importing the fapi package directly.
@@ -409,27 +428,6 @@ const PathMyEmailChange = core.PathMyEmailChange
 const PathMyEmailVerify = core.PathMyEmailVerify
 const PathMyWebAuthnRegisterBegin = core.PathMyWebAuthnRegisterBegin
 const PathMyWebAuthnRegisterFinish = core.PathMyWebAuthnRegisterFinish
-const PathMeshExtAuthz = core.PathMeshExtAuthz
-const PathNetPolicies = core.PathNetPolicies
-const PathNetPolicyByName = core.PathNetPolicyByName
-const PathNetPolicyClassify = core.PathNetPolicyClassify
-const PathNetPolicyResolveMe = core.PathNetPolicyResolveMe
-const PathPAR = core.PathPAR
-const PathBackchannelAuth = core.PathBackchannelAuth
-const PathReadyz = core.PathReadyz
-const PathMetrics = core.PathMetrics
-const PathStatus = core.PathStatus
-const PathRevoke = core.PathRevoke
-const PathRevokeAll = core.PathRevokeAll
-const PathSAMLMetadata = core.PathSAMLMetadata
-const PathSAMLSSO = core.PathSAMLSSO
-const PathSAMLSSOCallback = core.PathSAMLSSOCallback
-const PathSAMLSLO = core.PathSAMLSLO
-const PathSAMLSLOContinue = core.PathSAMLSLOContinue
-const PathSAMLSPSLO = core.PathSAMLSPSLO
-const PathSendCode = core.PathSendCode
-const PathToken = core.PathToken
-const PathUserInfo = core.PathUserInfo
 const PKCEMethodPlain = core.PKCEMethodPlain
 const PKCEMethodS256 = core.PKCEMethodS256
 const PKCEVerifierMaxLen = core.PKCEVerifierMaxLen

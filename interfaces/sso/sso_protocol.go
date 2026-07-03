@@ -15,6 +15,7 @@ import (
 	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
 	"github.com/snaplink/sso/internal/handler/tokengrant"
+	"github.com/snaplink/sso/platform/lifecycle/degradation"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/signingkeys"
 	"github.com/snaplink/sso/protocols/fapi"
@@ -52,9 +53,13 @@ type protocolState struct {
 	// rather than the raw header. Nil = no XFF validation; every XFF
 	// consumer trusts the raw header unconditionally — safe only behind an
 	// edge that strips and re-adds XFF.
-	trustedProxies                 *middleware.TrustedProxies
-	tenantMetricsAllowlist         map[string]struct{} // nil/empty = per-tenant metrics off (§5)
-	rateLimitPolicy                *ratelimit.Policy
+	trustedProxies         *middleware.TrustedProxies
+	tenantMetricsAllowlist map[string]struct{} // nil/empty = per-tenant metrics off (§5)
+	rateLimitPolicy        *ratelimit.Policy
+	// degradation holds the DR degraded-service mode. Nil (default) ⇒ the
+	// enforcement gate is not installed and no /admin/dr/mode route is mounted,
+	// so a build without WithDegradationManager is byte-identical.
+	degradation                    *degradation.Manager
 	bodyLimit                      int64
 	bodyLimitByPath                map[string]int64 // exact-prefix overrides; longest prefix wins
 	readyChecks                    []namedReadyCheck

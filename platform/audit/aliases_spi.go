@@ -87,6 +87,7 @@ const (
 	EventConsentDenied                   = auditspi.EventConsentDenied
 	EventConsentGranted                  = auditspi.EventConsentGranted
 	EventConsentRevoked                  = auditspi.EventConsentRevoked
+	EventDegradationModeChanged          = auditspi.EventDegradationModeChanged
 	EventDeviceCodeApproved              = auditspi.EventDeviceCodeApproved
 	EventDeviceCodeDenied                = auditspi.EventDeviceCodeDenied
 	EventDeviceCodeIssued                = auditspi.EventDeviceCodeIssued

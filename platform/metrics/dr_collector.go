@@ -2,9 +2,30 @@ package metrics
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/snaplink/sso/platform/lifecycle/dr"
 )
+
+// registerDegradationMetrics registers the DR degraded-service posture vectors
+// (state gauge + refusal counter). Lives here beside the DR readiness collector
+// (thematically DR) to keep metrics_ctor.go within its per-file line budget.
+func registerDegradationMetrics(factory promauto.Factory, m *Metrics) {
+	m.DegradationMode = factory.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: NameDegradationMode,
+			Help: "Current degraded-service (DR) mode: the active mode's series reads 1, all others 0.",
+		},
+		[]string{LabelDegradationMode},
+	)
+	m.DegradedRejectionsTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameDegradedRejectionsTotal,
+			Help: "Requests refused by the degraded-service gate, by mode and HTTP method.",
+		},
+		[]string{LabelDegradationMode, LabelMethod},
+	)
+}
 
 // DRCollector exposes a platform/dr.DRReadiness aggregate as Prometheus
 // gauges. Reads happen at scrape time against the readiness aggregate's own

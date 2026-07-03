@@ -81,34 +81,40 @@ const (
 	NameFeatureGateEnabled = "sso_feature_gate_enabled"
 
 	NameConfigDriftDetectedTotal = "sso_config_drift_detected_total"
+
+	// Disaster-recovery degraded-service posture. NameDegradationMode is a state
+	// gauge (active mode == 1); NameDegradedRejectionsTotal counts gate refusals.
+	NameDegradationMode         = "sso_degradation_mode"
+	NameDegradedRejectionsTotal = "sso_degraded_rejections_total"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by
 // design — see the doc on each collector for the rationale.
 const (
-	LabelMethod      = "method"
-	LabelStatusClass = "status_class"
-	LabelProvider    = "provider"
-	LabelOutcome     = "outcome"
-	LabelStrategy    = "strategy"
-	LabelDecision    = "decision"
-	LabelAction      = "action" // bounded: allow | deny | require_step_up (CAP verdicts)
-	LabelMFAMethod   = "mfa_method"
-	LabelSubsystem   = "subsystem" // audit | snapshot | push_approvals
-	LabelAnomalyType = "anomaly_type"
-	LabelSeverity    = "severity"
-	LabelDropReason  = "reason"
-	LabelDetector    = "detector"
-	LabelFAPIRule    = "rule"      // bounded: the 5 fapi:* baseline rule ids
-	LabelFAPIMode    = "mode"      // inspection | enforce
-	LabelAlg         = "alg"       // bounded: eddsa | es256 | rs256 | ps256
-	LabelSignal      = "signal"    // bounded: weak | compromised
-	LabelReason      = "reason"    // bounded per metric; see AdoptionReason* below
-	LabelTenant      = "tenant"    // bounded by an operator allowlist + the "other" bucket
-	LabelDirection   = "direction" // bounded: published | adopted
-	LabelFeature     = "feature"   // bounded: the fixed FeatureGates surface names
-	LabelKind        = "kind"      // bounded: access | refresh | id
-	LabelEndpoint    = "endpoint"  // bounded: token | introspect | userinfo
+	LabelMethod          = "method"
+	LabelStatusClass     = "status_class"
+	LabelProvider        = "provider"
+	LabelOutcome         = "outcome"
+	LabelStrategy        = "strategy"
+	LabelDecision        = "decision"
+	LabelAction          = "action" // bounded: allow | deny | require_step_up (CAP verdicts)
+	LabelMFAMethod       = "mfa_method"
+	LabelSubsystem       = "subsystem" // audit | snapshot | push_approvals
+	LabelAnomalyType     = "anomaly_type"
+	LabelSeverity        = "severity"
+	LabelDropReason      = "reason"
+	LabelDetector        = "detector"
+	LabelFAPIRule        = "rule"      // bounded: the 5 fapi:* baseline rule ids
+	LabelFAPIMode        = "mode"      // inspection | enforce
+	LabelAlg             = "alg"       // bounded: eddsa | es256 | rs256 | ps256
+	LabelSignal          = "signal"    // bounded: weak | compromised
+	LabelReason          = "reason"    // bounded per metric; see AdoptionReason* below
+	LabelTenant          = "tenant"    // bounded by an operator allowlist + the "other" bucket
+	LabelDirection       = "direction" // bounded: published | adopted
+	LabelFeature         = "feature"   // bounded: the fixed FeatureGates surface names
+	LabelKind            = "kind"      // bounded: access | refresh | id
+	LabelEndpoint        = "endpoint"  // bounded: token | introspect | userinfo
+	LabelDegradationMode = "mode"      // bounded: the 5 degraded-service modes
 )
 
 // Token-policy evaluation outcomes (sso_token_policy_evaluations_total),
