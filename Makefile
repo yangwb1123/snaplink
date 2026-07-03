@@ -9,7 +9,7 @@ IMAGE_TAG ?= dev
 
 CLI = python cli.py
 
-.PHONY: help test race bench vet fmt build docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-serve release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e mod-tidy-all check-test skill-test adr-compliance
+.PHONY: help test race bench vet fmt build docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-serve release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance
 
 # ── Go Dev (via $GO directly for speed) ──────────────────────────────
 
@@ -168,6 +168,12 @@ clean-all: ## Remove build artifacts + go build cache + tidy all modules.
 
 test-e2e: ## Run integration tests in test/ (package ssotest).
 	$(GO) test -race -count=1 ./test/...
+
+backend-semantics: ## Cross-backend semantic-equivalence tests (memory vs sqlite; fast — run every PR).
+	$(GO) test ./test/backendsemantics/... -race -count=1
+
+chaos-test: ## Fault-injection chaos tests (storage error fail-open/closed, panic recovery, clock jumps); slower — run on main/pre-release, not every PR.
+	$(GO) test -tags chaos ./test/chaos/... -race -count=2
 
 docker-scan: ## Scan Docker image with trivy.
 	@command -v trivy >/dev/null 2>&1 || { echo "trivy not installed (install from https://trivy.dev)" >&2; exit 1; }
