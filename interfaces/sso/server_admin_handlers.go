@@ -2,14 +2,19 @@ package sso
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/snaplink/sso/interfaces/admin"
+	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/lifecycle/rotation"
 	"github.com/snaplink/sso/platform/sse"
 	"github.com/snaplink/sso/protocols/selfservice"
 	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/core/corecredential"
 )
 
 // Admin/helpdesk user-management handlers are thin wrappers delegating to the
@@ -164,6 +169,115 @@ func (s *Server) handleAdminListCredentials(ctx HandlerContext) {
 		KeyStatus:     StatusOK,
 		"credentials": inventory,
 	})
+}
+
+// handleAdminEndpoints serves GET /api/v1/admin/endpoints (admin:read via
+// AdminMiddleware, same as every other /api/v1/admin/ route): the live
+// route inventory for THIS replica, so an operator can answer "what is
+// actually exposed" without cross-referencing config against source.
+func (s *Server) handleAdminEndpoints(ctx HandlerContext) {
+	live := make([]endpointInfo, 0, len(endpointCandidates()))
+	for _, c := range endpointCandidates() {
+		if c.on(s) {
+			live = append(live, c.endpointInfo)
+		}
+	}
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyStatus:   StatusOK,
+		"endpoints": live,
+	})
+}
+
+// Compliance evidence-chain metadata keys every credential-compromise audit
+// event carries: "who declared what leaked, when, and why", answerable from a
+// single event without cross-referencing the rotation store.
+const (
+	metaKeyCredentialType       = "credential_type"
+	metaKeyCredentialReason     = "credential_reason"
+	metaKeyCredentialOldVersion = "credential_old_version"
+	metaKeyCredentialNewVersion = "credential_new_version"
+)
+
+// compromiseCredentialRequest is the POST body: the mandatory operator reason.
+type compromiseCredentialRequest struct {
+	Reason string `json:"reason"`
+}
+
+// handleAdminCompromiseCredential serves POST
+// /api/v1/admin/credentials/{type}/compromise (admin:write): an operator
+// declares the credential class leaked, force-rotating it OFF schedule with NO
+// overlap so the leaked version is retired from the verify set instantly. The
+// response is the new version's GOVERNANCE metadata only — NEVER the secret.
+// reason is mandatory: an unexplained compromise is itself an audit finding.
+// Mounted only when WithCredentialCompromise is wired.
+func (s *Server) handleAdminCompromiseCredential(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	if s.credentialScheduler == nil {
+		ctx.JSON(http.StatusNotFound, errorBody(ErrNotFound))
+		return
+	}
+	credType := corecredential.CredentialType(ctx.Param("type"))
+	if credType == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	var req compromiseCredentialRequest
+	if err := bindOAuthParams(ctx, &req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrCompromiseReasonRequired))
+		return
+	}
+	result, err := s.credentialScheduler.Compromise(ctx.Request().Context(), credType, reason)
+	if err != nil {
+		s.writeCompromiseError(ctx, credType, err)
+		return
+	}
+	s.recordCredentialCompromise(ctx, credType, reason, result)
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyStatus:    StatusOK,
+		"credential": result.New,
+	})
+}
+
+// writeCompromiseError maps a Scheduler.Compromise failure to its HTTP
+// response. An unknown type is a 404 (the caller is an authorized admin, so
+// this is not an enumeration oracle); a class whose rotator cannot instantly
+// retire its secret is a 400; a mint failure is a 500 (the old credential
+// keeps serving — the operator should retry).
+func (s *Server) writeCompromiseError(ctx HandlerContext, credType corecredential.CredentialType, err error) {
+	switch {
+	case errors.Is(err, rotation.ErrUnknownCredentialType):
+		ctx.JSON(http.StatusNotFound, errorBody(ErrNotFound))
+	case errors.Is(err, corecredential.ErrCompromiseUnsupported):
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrCredentialCompromiseUnsupported))
+	default:
+		s.logger.Error("credential compromise failed", "type", string(credType), "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+	}
+}
+
+// recordCredentialCompromise emits the admin_credential_compromised audit event
+// with the compliance evidence chain. No-op when no Auditor is wired.
+func (s *Server) recordCredentialCompromise(ctx HandlerContext, credType corecredential.CredentialType, reason string, result rotation.CompromiseResult) {
+	if s.auditor == nil {
+		return
+	}
+	actor, _, _ := admin.ActorFromContext(ctx.Request().Context())
+	evt := &audit.Event{
+		Type:    audit.EventAdminCredentialCompromised,
+		Outcome: audit.OutcomeSuccess,
+		ActorID: actor,
+		ActorIP: audit.ClientIP(ctx.Request()),
+	}
+	audit.SetMeta(evt, metaKeyCredentialType, string(credType))
+	audit.SetMeta(evt, metaKeyCredentialReason, reason)
+	audit.SetMeta(evt, metaKeyCredentialOldVersion, strconv.Itoa(result.Compromised.Version))
+	audit.SetMeta(evt, metaKeyCredentialNewVersion, strconv.Itoa(result.New.Version))
+	s.auditor.Record(ctx.Request().Context(), evt)
 }
 
 // handleAdminRevokeToken revokes a single admin bearer token by ID.

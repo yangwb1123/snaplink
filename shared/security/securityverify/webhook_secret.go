@@ -154,10 +154,20 @@ func NewWebhookSecretRotator(secret *RotatingWebhookSecret, overlap time.Duratio
 	return &WebhookSecretRotator{secret: secret, overlap: overlap}
 }
 
-var _ corecredential.CredentialRotator = (*WebhookSecretRotator)(nil)
+var (
+	_ corecredential.CredentialRotator  = (*WebhookSecretRotator)(nil)
+	_ corecredential.DependencyReporter = (*WebhookSecretRotator)(nil)
+)
 
 func (w *WebhookSecretRotator) Type() corecredential.CredentialType {
 	return corecredential.CredentialTypeWebhookHMAC
+}
+
+// Dependents reports that rotating the webhook HMAC secret affects outbound
+// webhook receivers — they must adopt the new verification secret (both are
+// accepted during the overlap window) before the old one is retired.
+func (w *WebhookSecretRotator) Dependents() []corecredential.Dependency {
+	return []corecredential.Dependency{corecredential.DependencyWebhookReceivers}
 }
 
 func (w *WebhookSecretRotator) OverlapWindow() time.Duration { return w.overlap }

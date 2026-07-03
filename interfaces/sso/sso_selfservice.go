@@ -208,6 +208,13 @@ type selfServiceState struct {
 	// reads the registry's snapshot.
 	credentialRegistry *rotation.Registry
 
+	// credentialScheduler backs POST /api/v1/admin/credentials/{type}/compromise
+	// (WithCredentialCompromise) — the emergency compromise-response path. It is
+	// the SAME rotation.Scheduler that drives scheduled rotation (it owns the
+	// status store + dependent-party notifier the compromise fan-out reuses).
+	// Nil ⇒ the route is NOT mounted — byte-identical to a build without it.
+	credentialScheduler *rotation.Scheduler
+
 	// adminConsoleFS, when non-nil, serves the hosted admin console SPA from
 	// an embedded or OS filesystem at /admin/. The console is a standalone
 	// single-page app — it communicates with the server only via the standard

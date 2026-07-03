@@ -72,6 +72,26 @@ func WithCredentialRotation(reg *rotation.Registry) Option {
 	return func(s *Server) { s.credentialRegistry = reg }
 }
 
+// WithCredentialCompromise mounts POST
+// /api/v1/admin/credentials/{type}/compromise (admin:write) — the emergency
+// compromise-response path: declaring a credential class leaked force-rotates
+// it OFF schedule with NO overlap window, so the leaked version is retired from
+// the verify set instantly. The response is the new version's GOVERNANCE
+// metadata only — NEVER the secret material.
+//
+// Pass the SAME rotation.Scheduler wired to drive scheduled rotation (it owns
+// the status store + dependent-party notifier the compromise fan-out reuses),
+// AND the registry it wraps to WithCredentialRotation so the GET inventory
+// reflects a compromise. The Server only INVOKES Compromise on demand; the
+// scheduler's own Start/Stop lifecycle is the composition root's (cmd)
+// responsibility, same as WithCredentialRotation.
+//
+// Nil (the default) leaves the route unmounted — byte-identical to a build
+// without this feature.
+func WithCredentialCompromise(sched *rotation.Scheduler) Option {
+	return func(s *Server) { s.credentialScheduler = sched }
+}
+
 // WithSSEBroker mounts GET /api/v1/admin/events/stream — the realtime
 // admin event source (Server-Sent Events). When an audit recorder is ALSO
 // wired, NewServer taps its pipeline (the same AddSink/MultiSink seam

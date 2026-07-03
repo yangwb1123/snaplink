@@ -167,6 +167,51 @@ func (r *Registry) applyFailure(credType corecredential.CredentialType, now time
 	return e.failures, e.nextDue
 }
 
+// rotatorFor returns the rotator registered for credType. ok is false for an
+// unregistered class — the compromise path maps that to ErrUnknownCredentialType.
+func (r *Registry) rotatorFor(credType corecredential.CredentialType) (corecredential.CredentialRotator, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.entries[credType]
+	if !ok {
+		return nil, false
+	}
+	return e.rotator, true
+}
+
+// applyCompromise installs the emergency replacement version and, UNLIKE
+// applySuccess, keeps NO overlap window: the previously-active version is
+// marked compromised and the demoted-retiring version (if any) is force-retired
+// — both drop out of the live snapshot immediately, mirroring the rotator's
+// RotateCompromised, which retired the old SECRET the instant it minted the new
+// one. Returns the compromised (previously-active) + force-retired metas for
+// status-store/audit fan-out, plus the next regular due time. ok is false for
+// an unknown class (never registered).
+func (r *Registry) applyCompromise(credType corecredential.CredentialType, meta corecredential.CredentialMeta, now time.Time) (compromised, retired *corecredential.CredentialMeta, next time.Time, ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, found := r.entries[credType]
+	if !found {
+		return nil, nil, time.Time{}, false
+	}
+	if prev := e.current; prev.Version > 0 {
+		prev.Status = corecredential.CredentialStatusCompromised
+		prev.NotAfter = now // no overlap: leaked version is not accepted past now
+		compromised = &prev
+	}
+	if e.retiring != nil {
+		forced := *e.retiring
+		forced.Status = corecredential.CredentialStatusRetired
+		forced.NotAfter = now
+		retired = &forced
+	}
+	e.current = meta
+	e.retiring = nil
+	e.failures = 0
+	e.nextDue = now.Add(e.interval)
+	return compromised, retired, e.nextDue, true
+}
+
 // retireDue collapses overlap windows that have closed: each retiring
 // version at/past its NotAfter is dropped from the live snapshot and
 // returned with Status retired for store/audit fan-out.

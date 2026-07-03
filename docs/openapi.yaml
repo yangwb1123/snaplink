@@ -3521,6 +3521,75 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/credentials/{type}/compromise:
+    post:
+      tags: [admin]
+      summary: Emergency credential compromise-response — force-rotate a leaked credential with no overlap.
+      description: |
+        Declares the credential class `{type}` leaked, force-rotating it OFF
+        schedule with NO overlap window — the compromised version is retired
+        from the verify set INSTANTLY (unlike a routine rotation, which keeps
+        the demoted version accepted through its overlap so async consumers
+        migrate). Also fires the dependent-party notifier (e.g. a JWKS-changed
+        broadcast) so affected relying parties re-fetch.
+
+        Returns the NEW version's GOVERNANCE metadata only — NEVER the secret
+        material. `reason` (a ticket/incident reference) is mandatory: an
+        unexplained compromise is itself an audit finding. Emits
+        `admin_credential_compromised` carrying the compliance evidence chain
+        (credential_type, credential_reason, credential_old_version,
+        credential_new_version). admin:write; response is `Cache-Control:
+        no-store`. Mounted only when `WithCredentialCompromise` is wired.
+      operationId: adminCompromiseCredential
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: path
+          required: true
+          description: The credential class to compromise (e.g. `jwe_decryption`, `webhook_hmac`).
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, description: "mandatory ticket/incident reference" }
+      responses:
+        "200":
+          description: The freshly-installed version's governance metadata (never the secret).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  credential:
+                    type: object
+                    properties:
+                      id: { type: string, example: jwe-enc/v2 }
+                      type: { type: string, example: jwe_decryption }
+                      version: { type: integer, example: 2 }
+                      status: { type: string, example: active }
+                      created_at: { type: string, format: date-time }
+                      algorithm: { type: string, example: RSA-OAEP-256 }
+        "400":
+          description: Blank reason (`compromise_reason_required`) or a class that cannot be instantly retired (`credential_compromise_unsupported`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Unknown credential type, or no compromise scheduler wired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/endpoints:
     get:
       tags: [admin]

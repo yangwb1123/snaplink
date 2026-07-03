@@ -140,4 +140,7 @@ const (
 	ErrBreakGlassTTLExceeded     = "break_glass_ttl_exceeded"
 	ErrBreakGlassSelfApproval    = "break_glass_self_approval"
 	ErrBreakGlassNotPending      = "break_glass_not_pending"
+	// Credential compromise-response (POST /api/v1/admin/credentials/{type}/compromise).
+	ErrCompromiseReasonRequired        = "compromise_reason_required"
+	ErrCredentialCompromiseUnsupported = "credential_compromise_unsupported"
 )

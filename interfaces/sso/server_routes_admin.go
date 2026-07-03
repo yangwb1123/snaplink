@@ -99,6 +99,11 @@ func (s *Server) mountAdminAPILifecycle(api Router) {
 	if s.credentialRegistry != nil {
 		api.GET(PathAdminCredentials, s.handleAdminListCredentials)
 	}
+	// Emergency credential compromise-response (opt-in WithCredentialCompromise).
+	// admin:write via the default AdminMiddleware method-scope rule.
+	if s.credentialScheduler != nil {
+		api.POST(PathAdminCredentialCompromise, s.handleAdminCompromiseCredential)
+	}
 	// Realtime admin event stream (opt-in WithSSEBroker). Mounted only when
 	// a broker is wired — byte-identical to a build without it.
 	if s.sseBroker != nil {
@@ -339,23 +344,6 @@ func endpointCandidates() []endpointCandidate {
 	all = append(all, selfServiceEndpointCandidates()...)
 	all = append(all, adminAPIEndpointCandidates()...)
 	return all
-}
-
-// handleAdminEndpoints serves GET /api/v1/admin/endpoints (admin:read via
-// AdminMiddleware, same as every other /api/v1/admin/ route): the live
-// route inventory for THIS replica, so an operator can answer "what is
-// actually exposed" without cross-referencing config against source.
-func (s *Server) handleAdminEndpoints(ctx HandlerContext) {
-	live := make([]endpointInfo, 0, len(endpointCandidates()))
-	for _, c := range endpointCandidates() {
-		if c.on(s) {
-			live = append(live, c.endpointInfo)
-		}
-	}
-	ctx.JSON(http.StatusOK, map[string]any{
-		KeyStatus:   StatusOK,
-		"endpoints": live,
-	})
 }
 
 // handleAdminTokenUsage serves GET /api/v1/admin/tokens/usage — the

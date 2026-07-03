@@ -65,6 +65,7 @@ var (
 // --- memorystorecredential ---
 type (
 	MemoryCredentialStatusStore   = memorystorecredential.MemoryCredentialStatusStore
+	MemoryDependentPartyNotifier  = memorystorecredential.MemoryDependentPartyNotifier
 	MemoryEmailChangeStore        = memorystorecredential.MemoryEmailChangeStore
 	MemoryEmailVerificationStore  = memorystorecredential.MemoryEmailVerificationStore
 	MemoryIPFailureCounter        = memorystorecredential.MemoryIPFailureCounter
@@ -77,6 +78,7 @@ type (
 
 var (
 	NewMemoryCredentialStatusStore   = memorystorecredential.NewMemoryCredentialStatusStore
+	NewMemoryDependentPartyNotifier  = memorystorecredential.NewMemoryDependentPartyNotifier
 	NewMemoryEmailChangeStore        = memorystorecredential.NewMemoryEmailChangeStore
 	NewMemoryEmailVerificationStore  = memorystorecredential.NewMemoryEmailVerificationStore
 	NewMemoryIPFailureCounter        = memorystorecredential.NewMemoryIPFailureCounter

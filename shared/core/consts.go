@@ -308,6 +308,13 @@ const (
 	// crossing). Group-relative; gated by AdminMiddleware. Mounted only when
 	// WithCredentialRotation is wired.
 	PathAdminCredentials = "/admin/credentials"
+	// PathAdminCredentialCompromise is the emergency compromise-response
+	// endpoint (POST, admin:write): declare a credential class leaked to
+	// force an off-schedule rotation with NO overlap window — the leaked
+	// version is retired instantly. Returns the new version's GOVERNANCE
+	// metadata only, NEVER the secret material. Group-relative; gated by
+	// AdminMiddleware. Mounted only when WithCredentialCompromise is wired.
+	PathAdminCredentialCompromise = "/admin/credentials/:type/compromise"
 	// PathAdminEventsStream is the realtime admin event source (GET,
 	// admin:read, text/event-stream — see platform/sse). Group-relative;
 	// gated by AdminMiddleware via the /api/v1/admin/ prefix like every
