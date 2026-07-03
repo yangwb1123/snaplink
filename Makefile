@@ -175,6 +175,9 @@ backend-semantics: ## Cross-backend semantic-equivalence tests (memory vs sqlite
 chaos-test: ## Fault-injection chaos tests (storage error fail-open/closed, panic recovery, clock jumps); slower — run on main/pre-release, not every PR.
 	$(GO) test -tags chaos ./test/chaos/... -race -count=2
 
+dr-drill: ## DR failover drill harness (replicate/corrupt/restore + signing-key + audit-chain invariants over real snapshot machinery). Run on demand / pre-release, NOT in default ci.
+	$(GO) test ./test/dr/... -race -count=1 -v
+
 docker-scan: ## Scan Docker image with trivy.
 	@command -v trivy >/dev/null 2>&1 || { echo "trivy not installed (install from https://trivy.dev)" >&2; exit 1; }
 	trivy image --severity HIGH,CRITICAL $(IMAGE):$(IMAGE_TAG)

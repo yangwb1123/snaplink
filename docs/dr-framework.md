@@ -12,6 +12,7 @@ config keys.
 - [4. SnapshotReplicator](#4-snapshotreplicator)
 - [5. Readiness reporting](#5-readiness-reporting)
 - [6. Recovery validation runbook](#6-recovery-validation-runbook)
+- [7. RecoveryOrchestrator + automated failover drill](#7-recoveryorchestrator--automated-failover-drill)
 
 ---
 
@@ -104,7 +105,9 @@ or DR drill to populate it) into one verdict, surfaced two ways:
 - **Prometheus** — `sso_dr_readiness` (1/0, always present once wired),
   `sso_dr_snapshot_replication_lag_seconds` (absent until the first
   successful replication), `sso_dr_last_recovery_seconds` (absent until a
-  recovery is timed). See [observability.md](observability.md).
+  recovery is timed), `sso_dr_last_drill_success` (1/0, absent until a
+  `RecoveryOrchestrator` drill has run — see §7). See
+  [observability.md](observability.md).
 - **`/readyz`** — only when the operator explicitly sets
   `dr.gate_readiness: true`. This is the one place a DR verdict can affect
   live traffic (taking a replica out of a Kubernetes/LB rotation), so it is
@@ -177,3 +180,79 @@ tooling required.
    against `dr.rto_target`; feed the number back into `dr.rto_target` if
    it's consistently missed — the target should reflect what the runbook
    actually achieves, not an aspirational number nobody has verified.
+
+## 7. RecoveryOrchestrator + automated failover drill
+
+The runbook in §6 is the human procedure. `platform/lifecycle/dr.RecoveryOrchestrator`
+is its **testable, stepwise** counterpart: it sequences the control-plane
+recovery over the SAME snapshot machinery §4 replicates with, times the whole
+thing as a measured RTO, and emits a structured report card instead of a
+free-text incident note. It exists so the recovery path is exercised
+regularly — a DR plan nobody has run is a hypothesis, not a plan.
+
+### 7.1 The four steps
+
+`RecoveryOrchestrator.Run(ctx)` executes, in order, and **aborts at the first
+failure** (later steps are recorded `skipped`, and the report says where it
+stopped — failing over onto unverified or broken data is worse than not
+failing over at all, per the §Edge-cases point "a corrupted DR is worse than
+not switching"):
+
+1. **`verify_integrity`** — reads the newest replica from `dr.target_dir` and
+   runs it through the snapshot `Pipeline.Load`, which recomputes and compares
+   the envelope's embedded plaintext SHA-256. A bit-rotted or tampered replica
+   aborts the drill here, before anything is promoted.
+2. **`promote_replica`** — the deployment-specific act of making the replica
+   primary (repoint DNS/LB, flip a standby to read-write). This lives OUTSIDE
+   the process, so it is a `ReplicaPromoter` seam; a drill wires the no-op
+   `MemoryReplicaPromoter` (a drill must NOT actually cut traffic over).
+3. **`restore_state`** — applies the verified replica's control-plane state
+   into the target stores via the existing `snapshot.Restorer` (a
+   `StateRestorer` seam). Signing keys, sessions, and tokens are NOT part of
+   this — they are out of snapshot scope (§1); the DR region carries the
+   primary's signing **public** keys independently via leaderless verify-key
+   adoption, so pre-failover tokens keep verifying.
+4. **`readiness_probe`** — reuses `DRReadiness.ReadyCheck` to confirm the
+   recovered replica is within its RPO target before it is declared live.
+
+Each step returns a typed `StepResult` (name, outcome, duration, detail/error).
+The whole run yields a `RecoveryReport` — the **report card** — carrying the
+measured RTO, the configured `rto_target`, whether it landed within target, and
+every step's outcome. When an orchestrator is wired to the `DRReadiness`
+aggregate, the latest report is surfaced two ways:
+
+- `GET /api/v1/admin/dr/status` → the `last_drill` sub-field (same admin-gated,
+  report-only endpoint as §5 — no new route).
+- Prometheus `sso_dr_last_drill_success` (1 on end-to-end success, 0 on abort;
+  absent until the first drill).
+
+### 7.2 Running the drill
+
+The drill harness (`test/dr/`, `package drtest`) is the executable test of the
+whole path. It drives the **real** `Snapshotter` / `Pipeline` / `Replicator` /
+`Restorer` against `t.TempDir` mounts — no mocks — and asserts the four
+invariants that matter after a failover:
+
+```
+make dr-drill        # or: go test ./test/dr/... -race -count=1 -v
+```
+
+| Drill scenario | Invariant proven |
+|---|---|
+| replicate → corrupt the replica → `Run` | integrity step detects it and aborts before promotion; DR target left untouched |
+| replicate → restore | DR-target clients/roles/assignments/bootstrap-version round-trip the primary |
+| issue token pre-failover → restore | the pre-failover token still verifies on the DR side (signing keys survive a control-plane restore) |
+| record audit events across a restore | the audit hash chain stays continuous (`VerifyChain` passes) |
+
+`make dr-drill` is deliberately **not** part of the default `make ci` target —
+run it on demand and before a release, alongside `make chaos-test`.
+
+### 7.3 Scope boundary
+
+The orchestrator orchestrates over the EXISTING snapshot-based control-plane
+replication (§1 tier 1, §4). It does **not** perform raw cross-region
+backend-byte replication (SQLite files, the Postgres volume, the Redis
+keyspace, the etcd store) — those remain operator-managed per each backend's
+own strategy in §3. Step 2 (`promote_replica`) is likewise a seam, not an
+implementation: the actual DNS/LB cutover is deployment-specific and stays the
+operator's to wire.

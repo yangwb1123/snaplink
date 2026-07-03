@@ -28,4 +28,12 @@ const (
 	// verified replica exists and its age is within the RPO target), 0
 	// otherwise.
 	MetricReadiness = "sso_dr_readiness"
+
+	// MetricLastDrillSuccess is 1 when the most recent orchestrated recovery
+	// (RecoveryOrchestrator.Run) succeeded end-to-end, 0 when it aborted at a
+	// step. Absent until the first recovery/drill has run through an
+	// orchestrator wired to the readiness aggregate — a bare replication
+	// deployment (no orchestrator) never emits it, keeping the metric surface
+	// byte-identical to before.
+	MetricLastDrillSuccess = "sso_dr_last_drill_success"
 )

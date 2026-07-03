@@ -39,6 +39,13 @@ type Status struct {
 	// itself; the age check above already covers staleness.
 	Retention      []ReplicaFile `json:"retention,omitempty"`
 	RetentionError string        `json:"retention_error,omitempty"`
+
+	// LastDrill is the most recent RecoveryOrchestrator report (the DR
+	// "report card": measured RTO vs target + per-step outcomes), present
+	// only when a RecoveryOrchestrator is wired to this aggregate and has
+	// run at least once. Nil (omitted) otherwise — byte-identical to a
+	// deployment that never runs recovery drills.
+	LastDrill *RecoveryReport `json:"last_drill,omitempty"`
 }
 
 // DRReadiness aggregates a SnapshotReplicator's live replication lag against
@@ -54,6 +61,12 @@ type Status struct {
 type DRReadiness struct {
 	Replicator *SnapshotReplicator
 	Tracker    *RecoveryTimeTracker
+
+	// Orchestrator, when wired, contributes its last RecoveryReport to
+	// Status (the DR report card) and the sso_dr_last_drill_success gauge.
+	// Optional: nil leaves Status.LastDrill nil and the gauge absent —
+	// byte-identical to a deployment that never runs recovery drills.
+	Orchestrator *RecoveryOrchestrator
 
 	// RPOTarget is the maximum acceptable replica staleness. <=0 disables
 	// the age comparison (Ready is true whenever any replica exists).
@@ -124,6 +137,9 @@ func (d *DRReadiness) Status(_ context.Context) Status {
 	d.fillReplicatorStatus(&st)
 	if d.Tracker != nil {
 		st.RTOHistory = d.Tracker.History()
+	}
+	if d.Orchestrator != nil {
+		st.LastDrill = d.Orchestrator.LastReport()
 	}
 	return st
 }

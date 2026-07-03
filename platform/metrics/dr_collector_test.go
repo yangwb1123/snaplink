@@ -72,4 +72,45 @@ func TestDRCollector_AfterReplicationAndRecovery_AllThreeReported(t *testing.T) 
 	if !strings.Contains(scrape, dr.MetricReadiness+" 1") {
 		t.Errorf("expected %s 1 (ready, fresh replica), got:\n%s", dr.MetricReadiness, scrape)
 	}
+	// No orchestrator wired => the last-drill gauge stays absent.
+	if strings.Contains(scrape, dr.MetricLastDrillSuccess) {
+		t.Errorf("%s should be absent with no orchestrator wired:\n%s", dr.MetricLastDrillSuccess, scrape)
+	}
+}
+
+func TestDRCollector_LastDrillSuccessReportedAfterOrchestratedRun(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	replicator, err := dr.NewSnapshotReplicator(
+		func(context.Context) (string, []byte, error) { return "snap_drill", []byte("payload"), nil },
+		t.TempDir(), 0, 0, nil)
+	if err != nil {
+		t.Fatalf("NewSnapshotReplicator: %v", err)
+	}
+	if err := replicator.ReplicateOnce(ctx); err != nil {
+		t.Fatalf("ReplicateOnce: %v", err)
+	}
+	name, data, err := replicator.LatestReplica()
+	if err != nil {
+		t.Fatalf("LatestReplica: %v", err)
+	}
+	verifier := dr.NewMemoryReplicaVerifier()
+	verifier.Register(name, data)
+	orch, err := dr.NewRecoveryOrchestrator(dr.OrchestratorConfig{Replicator: replicator, Verifier: verifier})
+	if err != nil {
+		t.Fatalf("NewRecoveryOrchestrator: %v", err)
+	}
+	if rep := orch.Run(ctx); !rep.Succeeded {
+		t.Fatalf("drill run failed: %+v", rep)
+	}
+	readiness := dr.NewDRReadiness(replicator, nil, time.Hour, 0)
+	readiness.Orchestrator = orch
+
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(metrics.NewDRCollector(readiness))
+	scrape := scrapeRegistry(t, reg)
+
+	if !strings.Contains(scrape, dr.MetricLastDrillSuccess+" 1") {
+		t.Errorf("expected %s 1 after a successful orchestrated drill, got:\n%s", dr.MetricLastDrillSuccess, scrape)
+	}
 }
