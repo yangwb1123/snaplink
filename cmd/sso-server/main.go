@@ -39,6 +39,7 @@ import (
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenant"
+	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/interfaces/snapshot"
 	"github.com/snaplink/sso/platform/lifecycle/dr"
 	"github.com/snaplink/sso/platform/metrics"
@@ -413,6 +414,15 @@ type app struct {
 	// (session_trust_decay enabled), nil when off.
 	continuousVerifyCancel context.CancelFunc
 	continuousVerifyDone   <-chan struct{}
+
+	// tokenUsageRecorder is the bounded-buffer token-usage telemetry recorder
+	// backing the wave-4 anomaly detector (token_anomaly.enabled); its queue is
+	// drained at shutdown so events captured in the final milliseconds still feed
+	// the detector. tokenAnomalySweep* stops the RunTokenAnomalyDetection loop via
+	// the standard scheduler lifecycle. All nil when off.
+	tokenUsageRecorder      *tokenusage.Recorder
+	tokenAnomalySweepCancel context.CancelFunc
+	tokenAnomalySweepDone   <-chan struct{}
 
 	// degradationMgr is the DR degraded-service Manager (degradation.enabled),
 	// nil when off. No shutdown handle — the manager owns no goroutine; its only

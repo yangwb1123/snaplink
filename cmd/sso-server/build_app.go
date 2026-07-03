@@ -19,6 +19,8 @@ import (
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenant"
+	"github.com/snaplink/sso/domains/tokenanomaly"
+	"github.com/snaplink/sso/domains/tokenusage"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/snapshot"
 	"github.com/snaplink/sso/interfaces/snapshot/storageinline"
@@ -164,6 +166,17 @@ type appBuilder struct {
 	sessionTrustDecayOn    bool
 	continuousVerifyCancel context.CancelFunc
 	continuousVerifyDone   <-chan struct{}
+
+	// Token-anomaly subsystem (wave-4 cmd wiring, token_anomaly.enabled).
+	// tokenUsageRecorder is the bounded-buffer telemetry substrate whose drain
+	// feeds tokenAnomalyDetector (the tokenusage.Store decorator it wraps); both
+	// are built pre-NewServer by wireTokenAnomaly and the RunTokenAnomalyDetection
+	// sweep is Started post-NewServer under the tokenAnomalySweep cancel/done pair.
+	// The recorder is Closed at shutdown to drain its queue. All nil when off.
+	tokenUsageRecorder      *tokenusage.Recorder
+	tokenAnomalyDetector    *tokenanomaly.Detector
+	tokenAnomalySweepCancel context.CancelFunc
+	tokenAnomalySweepDone   <-chan struct{}
 
 	// degradationMgr is the disaster-recovery degraded-service Manager
 	// (degradation.enabled). It has no background loop — the admin
@@ -325,6 +338,8 @@ func (b *appBuilder) assembleExtras(a *app, rt serverRuntime) {
 	a.configDriftCancel, a.configDriftDone = b.configDriftCancel, b.configDriftDone
 	a.breakGlassCancel, a.breakGlassDone = b.breakGlassCancel, b.breakGlassDone
 	a.continuousVerifyCancel, a.continuousVerifyDone = b.continuousVerifyCancel, b.continuousVerifyDone
+	a.tokenUsageRecorder = b.tokenUsageRecorder
+	a.tokenAnomalySweepCancel, a.tokenAnomalySweepDone = b.tokenAnomalySweepCancel, b.tokenAnomalySweepDone
 	a.degradationMgr = b.degradationMgr
 }
 

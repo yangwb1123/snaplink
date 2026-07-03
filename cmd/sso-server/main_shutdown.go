@@ -97,6 +97,15 @@ func shutdownSubsystems(ctx context.Context, a *app, logger spi.Logger) {
 	if a.anomalyRT != nil {
 		a.anomalyRT.close(ctx)
 	}
+	// Drain the token-usage recorder's bounded queue so events captured in the
+	// final milliseconds still feed the anomaly detector. The sweep loop is
+	// already stopped (shutdownSchedulers ran above), so no Analyze races the
+	// drain. Bounded by the shared shutdown ctx.
+	if a.tokenUsageRecorder != nil {
+		if err := a.tokenUsageRecorder.Close(ctx); err != nil {
+			logger.Error("token usage recorder drain timed out", "error", err)
+		}
+	}
 	// Drain the audit AsyncSink queue under the same shutdown
 	// deadline. Events queued during the final ~milliseconds before
 	// SIGTERM matter — they're typically the shutdown events
@@ -176,6 +185,8 @@ func shutdownSchedulers(ctx context.Context, a *app, logger spi.Logger) {
 		"break-glass sweeper did not exit cleanly")
 	stopScheduler(ctx, logger, a.continuousVerifyCancel, a.continuousVerifyDone,
 		"continuous-verification agent did not exit cleanly")
+	stopScheduler(ctx, logger, a.tokenAnomalySweepCancel, a.tokenAnomalySweepDone,
+		"token anomaly sweep did not exit cleanly")
 }
 
 // stopScheduler cancels a background scheduler and waits for its done channel
