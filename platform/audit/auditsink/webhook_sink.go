@@ -21,10 +21,11 @@ const DefaultWebhookTimeout = 5 * time.Second
 //
 // Like WriterSink, this is write-only — Get and Query return ErrSinkWriteOnly.
 type WebhookSink struct {
-	url           string
-	client        *http.Client
-	headers       map[string]string
-	signingSecret []byte
+	url            string
+	client         *http.Client
+	headers        map[string]string
+	signingSecret  []byte
+	rotatingSecret *securityverify.RotatingWebhookSecret
 }
 
 // WebhookOption configures a WebhookSink at construction.
@@ -61,6 +62,18 @@ func WithWebhookSigningSecret(secret string) WebhookOption {
 	}
 }
 
+// WithWebhookRotatingSecret enables HMAC-SHA256 payload signing from a
+// securityverify.RotatingWebhookSecret instead of a static string, so the
+// credential-rotation framework (platform/rotation) can mint a fresh secret
+// on its schedule without an operator manually redistributing it: every send
+// signs with the CURRENT version, and a receiver validating with the SAME
+// RotatingWebhookSecret (or a static VerifyWebhookSignature kept in sync
+// out-of-band) keeps accepting the prior secret until its overlap window
+// closes. Takes precedence over WithWebhookSigningSecret when both are set.
+func WithWebhookRotatingSecret(s *securityverify.RotatingWebhookSecret) WebhookOption {
+	return func(w *WebhookSink) { w.rotatingSecret = s }
+}
+
 func NewWebhookSink(url string, opts ...WebhookOption) *WebhookSink {
 	w := &WebhookSink{
 		url:     url,
@@ -91,10 +104,16 @@ func (w *WebhookSink) Record(ctx context.Context, e *auditspi.Event) error {
 		req.Header.Set(k, v)
 	}
 	// After the static-headers loop: a computed signature wins over any
-	// operator static header of the same name.
-	if len(w.signingSecret) > 0 {
+	// operator static header of the same name. A rotating secret takes
+	// precedence over a static one — Current() always returns the version
+	// the rotation scheduler most recently installed.
+	secret := w.signingSecret
+	if w.rotatingSecret != nil {
+		secret = w.rotatingSecret.Current()
+	}
+	if len(secret) > 0 {
 		req.Header.Set(securityverify.WebhookSignatureHeader,
-			securityverify.SignWebhookPayload(w.signingSecret, time.Now(), body))
+			securityverify.SignWebhookPayload(secret, time.Now(), body))
 	}
 
 	resp, err := w.client.Do(req)

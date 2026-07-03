@@ -1,6 +1,10 @@
 package sso
 
-import "time"
+import (
+	"time"
+
+	"github.com/snaplink/sso/platform/rotation"
+)
 
 // WithAdminSessionTTL sets an idle timeout for admin bearer tokens. When
 // a token has not been used for longer than the TTL, the admin middleware
@@ -44,4 +48,22 @@ func WithBackupRetention(keep int) Option {
 			s.backupKeep = keep
 		}
 	}
+}
+
+// WithCredentialRotation wires the platform/rotation Registry backing GET
+// /api/v1/admin/credentials — a read-only governance inventory (type,
+// version, status, created_at, next rotation due) of every credential class
+// registered for automatic rotation. NEVER exposes secret material.
+//
+// The Registry is a passive snapshot source: build it (rotation.NewRegistry,
+// then Register each corecredential.CredentialRotator), wrap it in a
+// rotation.Scheduler, and Start/Stop the Scheduler from the composition root
+// (cmd) — the same lifecycle discipline as the signing-key rotation loop.
+// This option only wires the Server's READ access to reg; it does not start
+// anything.
+//
+// Nil (the default) leaves the route unmounted — byte-identical to a build
+// without this feature.
+func WithCredentialRotation(reg *rotation.Registry) Option {
+	return func(s *Server) { s.credentialRegistry = reg }
 }

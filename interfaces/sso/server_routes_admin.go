@@ -48,6 +48,11 @@ func (s *Server) mountAdminAPIObservability(api Router) {
 	if s.sessionMgr != nil {
 		api.GET(PathAdminSessions, s.handleAdminListSessions)
 	}
+	// Credential-rotation governance inventory (opt-in WithCredentialRotation).
+	// Not mounted without a registry — byte-identical to a build without it.
+	if s.credentialRegistry != nil {
+		api.GET(PathAdminCredentials, s.handleAdminListCredentials)
+	}
 }
 
 // mountAdminUserState registers the admin/helpdesk management of a user's

@@ -2,6 +2,7 @@ package sso
 
 import (
 	"github.com/snaplink/sso/interfaces/admin"
+	"github.com/snaplink/sso/platform/rotation"
 	"github.com/snaplink/sso/protocols/selfservice"
 	"github.com/snaplink/sso/shared/core"
 	"net/http"
@@ -137,6 +138,27 @@ func (s *Server) handleAdminListTokens(ctx HandlerContext) {
 	ctx.JSON(http.StatusOK, map[string]any{
 		KeyStatus: StatusOK,
 		"tokens":  tokens,
+	})
+}
+
+// handleAdminListCredentials returns the credential-rotation governance
+// inventory: for every credential class registered with the
+// platform/rotation Scheduler, its type, version, lifecycle status,
+// created_at, and next rotation due. GOVERNANCE metadata only — the
+// underlying rotation.Registry never held secret material, so there is
+// nothing here to redact. Mounted only when WithCredentialRotation is wired.
+func (s *Server) handleAdminListCredentials(ctx HandlerContext) {
+	if s.credentialRegistry == nil {
+		ctx.JSON(http.StatusNotFound, errorBody(ErrNotFound))
+		return
+	}
+	inventory := s.credentialRegistry.Inventory()
+	if inventory == nil {
+		inventory = []rotation.InventoryEntry{}
+	}
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyStatus:     StatusOK,
+		"credentials": inventory,
 	})
 }
 

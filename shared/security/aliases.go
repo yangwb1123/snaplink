@@ -20,6 +20,9 @@ type (
 	StaticJWKS                = securityverify.StaticJWKS
 	SPIFFEValidator           = securityverify.SPIFFEValidator
 	SPIFFEValidatorOption     = securityverify.SPIFFEValidatorOption
+
+	RotatingWebhookSecret = securityverify.RotatingWebhookSecret
+	WebhookSecretRotator  = securityverify.WebhookSecretRotator
 )
 
 const (
@@ -36,6 +39,7 @@ const (
 
 	WebhookSignatureHeader           = securityverify.WebhookSignatureHeader
 	DefaultWebhookSignatureTolerance = securityverify.DefaultWebhookSignatureTolerance
+	WebhookSecretBytes               = securityverify.WebhookSecretBytes
 )
 
 var (
@@ -64,4 +68,7 @@ var (
 	ErrWebhookSignatureMalformed = securityverify.ErrWebhookSignatureMalformed
 	ErrWebhookSignatureMismatch  = securityverify.ErrWebhookSignatureMismatch
 	ErrWebhookSignatureExpired   = securityverify.ErrWebhookSignatureExpired
+
+	NewRotatingWebhookSecret = securityverify.NewRotatingWebhookSecret
+	NewWebhookSecretRotator  = securityverify.NewWebhookSecretRotator
 )

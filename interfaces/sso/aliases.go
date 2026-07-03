@@ -326,6 +326,7 @@ const PathAdminTokens = core.PathAdminTokens
 const PathAdminTokenByID = core.PathAdminTokenByID
 const PathAdminLogout = core.PathAdminLogout
 const PathAdminSessions = core.PathAdminSessions
+const PathAdminCredentials = core.PathAdminCredentials
 const PathAdminConnections = core.PathAdminConnections
 const PathAdminConnectionByID = core.PathAdminConnectionByID
 const PathAdminTenantMembers = core.PathAdminTenantMembers

@@ -268,6 +268,15 @@ const (
 	// TokenAdminService.ListSessions with UserId set.
 	PathAdminUserSessions = "/admin/users/:id/sessions"
 
+	// PathAdminCredentials is the read-only admin inventory of every
+	// credential class registered with the platform/rotation Scheduler (GET,
+	// admin:read): type, version, lifecycle status, created_at, and next
+	// rotation due — GOVERNANCE data only, NEVER the secret material itself
+	// (mirrors PathStorageHealth: observability without a trust-boundary
+	// crossing). Group-relative; gated by AdminMiddleware. Mounted only when
+	// WithCredentialRotation is wired.
+	PathAdminCredentials = "/admin/credentials"
+
 	// PathAdminConnections / PathAdminConnectionByID manage B2B enterprise
 	// connections at runtime (list/get/upsert/delete) so operators can onboard a
 	// new org's upstream IdP without a redeploy (config seeding only runs at
