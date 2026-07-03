@@ -235,3 +235,41 @@ type DRConfig struct {
 	// SHOULD take this replica out of the Kubernetes/LB pool.
 	GateReadiness bool `yaml:"gate_readiness"`
 }
+
+// RotationConfig opts into the unified credential-rotation framework
+// (platform/lifecycle/rotation): a background Scheduler rotates each registered
+// credential class on Interval with an Overlap verify-window, and the read-only
+// governance inventory is served at GET /api/v1/admin/credentials
+// (sso.WithCredentialRotation — NEVER exposes secret material).
+//
+// The only CredentialRotator the SDK currently ships is the webhook-HMAC secret
+// rotator (securityverify.WebhookSecretRotator); cmd seeds it from
+// audit.webhook.signing_secret (empty ⇒ a fresh random secret). Disabled by
+// default: a zero-value RotationConfig wires nothing, matching every other
+// opt-in subsystem here.
+//
+// Lives beside the other lifecycle subsystems (snapshot/DR/releases) in this
+// file because config/ is at its frozen per-directory file-count ceiling
+// (directory_fanout_test.go) — new sections fold into a topically-related file.
+type RotationConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// Interval is the per-class rotation cadence. Required (> 0) when Enabled —
+	// a rotator with no interval would never fire, so cmd fails loud at boot.
+	Interval time.Duration `yaml:"interval"`
+
+	// Overlap is the window a demoted secret stays verify-only after a rotation,
+	// so in-flight deliveries signed pre-rotation still authenticate. <=0 drops
+	// the previous secret immediately (no overlap).
+	Overlap time.Duration `yaml:"overlap"`
+
+	// Tick is the scheduler's due-check polling resolution (how late a due
+	// rotation can fire), NOT the cadence. <=0 uses rotation.DefaultSchedulerTick.
+	Tick time.Duration `yaml:"tick"`
+
+	// RetryBase / RetryMax bound the failure-retry backoff (base doubled per
+	// consecutive failure, capped at max) while the old credential keeps
+	// serving. <=0 uses the rotation package defaults.
+	RetryBase time.Duration `yaml:"retry_base"`
+	RetryMax  time.Duration `yaml:"retry_max"`
+}

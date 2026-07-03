@@ -141,7 +141,7 @@ See [deployment.md](deployment.md) for the HA topology and
 | `metrics.tenant_label_allowlist` | `WithTenantMetricsAllowlist` — bounded per-tenant login/issue metrics + `"other"` bucket; empty = off |
 | `audit.webhook.signing_secret` | HMAC-SHA256 payload signing on the audit `WebhookSink` — every POST carries `X-Signature: t=<unix>,v1=<hex>`; empty = off; receivers verify with `security.VerifyWebhookSignature`. Inject via env/`secret://`, never YAML literal |
 | `mfa.provider.push.webhook.signing_secret` | Same HMAC-SHA256 `X-Signature` signing on the MFA push webhook transport, re-signed with a fresh timestamp per retry; empty = off. `ciba.webhook.signing_secret` shares the same `MFAPushWebhookConfig` struct, so it behaves identically for CIBA notifications |
-| `config_audit.enabled` / `.backend` / `.sqlite.dsn` | Runtime-config audit (`platform/configaudit`): `GET /api/v1/admin/config/{running,applied,diff,history}` + the client/tenant/policy change-capture hook. `sso.WithConfigSnapshots` / `WithConfigAuditStore` do the actual wiring — the YAML section documents backend choice only |
+| `config_audit.enabled` / `.backend` / `.sqlite.dsn` | Runtime-config audit (`platform/configaudit`): when enabled, cmd builds the `configaudit.Store` (`memory`\|`sqlite`), captures the redacted applied-config snapshot once at boot, and wires `sso.WithConfigSnapshots` + `WithConfigAuditStore`, mounting `GET /api/v1/admin/config/{running,applied,diff,history}` + the client/tenant/policy change-capture hook |
 | `config_audit.drift.interval` | `sso.WithConfigDriftDetection` — cross-replica config-digest broadcast (`cluster.KindConfigDigest`) + compare loop; `<= 0` (default) = off, report-only |
 
 ## Cluster
@@ -194,6 +194,27 @@ See [dr-framework.md](dr-framework.md) for failure levels, RPO/RTO targets, and 
 | `dr.rto_history` | Bounded measured-RTO record count kept in memory; default 32 |
 | `dr.gate_readiness` | Folds the DR readiness verdict into `/readyz`. Default false — DR status stays report-only (`GET /api/v1/admin/dr/status` + `sso_dr_*` metrics) and never blocks auth traffic on its own |
 | `backup.keep` | Retain only the newest N backup files per source after each run; `0` (default) disables retention (keep all). Pruning filters on the per-source filename prefix, so unrelated files sharing the directory are never deleted |
+
+## Credential Rotation
+
+Disabled by default; the read-only governance inventory (`GET /api/v1/admin/credentials`) never exposes secret material.
+
+| Key | Effect |
+|---|---|
+| `rotation.enabled` | Builds a `platform/lifecycle/rotation` Registry + Scheduler and wires `sso.WithCredentialRotation`. Registers the webhook-HMAC secret rotator (seeded from `audit.webhook.signing_secret`; empty ⇒ a fresh random secret). The Scheduler Start/Stops with the process lifecycle |
+| `rotation.interval` | Per-class rotation cadence; required (`> 0`) when enabled — the first rotation fires one interval after boot |
+| `rotation.overlap` | Window a demoted secret stays verify-only after each rotation so in-flight pre-rotation deliveries still authenticate; `<=0` = no overlap |
+| `rotation.tick` | Scheduler due-check poll resolution (how late a due rotation can fire, NOT the cadence); `<=0` = `rotation.DefaultSchedulerTick` |
+| `rotation.retry_base` / `rotation.retry_max` | Failure-retry backoff (base doubled per consecutive failure, capped) while the old credential keeps serving; `<=0` = package defaults |
+
+## Break-glass
+
+Emergency ("break-glass") admin sessions. Disabled by default; without it no break-glass surface exists.
+
+| Key | Effect |
+|---|---|
+| `break_glass.enabled` | Builds the in-memory `core.BreakGlassStore` and wires `sso.WithBreakGlassStore`, mounting the `POST`/`GET`/`DELETE`/`approve` `/api/v1/admin/break-glass` lifecycle endpoints |
+| `break_glass.sweeper_interval` | Cadence of the active expiry sweeper (`Server.RunBreakGlassSweeper`) that destroys a grant's derived sessions at expiry; `<=0` = 1m. The grant TTL default/cap (`core.DefaultBreakGlassTTL`/`MaxBreakGlassTTL`) and per-request `require_approval` are SDK-side, not config |
 
 ## Feature Gates (attack-surface reduction)
 
