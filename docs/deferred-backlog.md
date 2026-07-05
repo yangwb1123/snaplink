@@ -50,9 +50,6 @@ related capability exists but the proposed feature does not).
   approval/review workflow) deliberately out of scope for the pass that
   added the above. _Sources: health-and-dx-2026-07-01,
   expansion-analysis-20260701, expansion-directions-2026-07-01-v3._
-- **Repo hygiene** — none. `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, devcontainer +
-  hot-reload dev tooling, CI status/coverage badges, more godoc `Example*` funcs.
-  _Sources: dx-and-build-infra-2026-07-01, analysis-round15-login…._
 
 ## Security headers, crypto & versioning
 
