@@ -7801,14 +7801,25 @@ components:
             RFC 7521 + 7523 JWT bearer client authentication. Signed
             by a key in `Client.JWKS`. iss / sub MUST equal
             client_id; aud MUST include this AS issuer or the
-            token endpoint URL.
+            token endpoint URL. Also carries a cloud workload-identity
+            token (AWS/GCP/Azure) when client_assertion_type is the
+            workload-identity URN below — that token is signed by the
+            CLOUD provider, verified against ITS OWN published JWKS
+            (not `Client.JWKS`), and mapped onto the client's
+            registered workload identity.
         client_assertion_type:
           type: string
           enum:
             - urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+            - urn:snaplink:params:oauth:client-assertion-type:workload-identity
           description: |
-            MUST be the jwt-bearer URN when `client_assertion` is
-            supplied; otherwise rejected with `invalid_request`.
+            MUST be the jwt-bearer URN, or the workload-identity URN
+            when the client is registered with
+            token_endpoint_auth_method=workload_identity, whenever
+            `client_assertion` is supplied; otherwise rejected with
+            `invalid_request`. For workload-identity, `client_id`
+            (form field or Basic auth) is REQUIRED — the cloud token's
+            verified identity is not itself this server's client_id.
 
     TokenIssuance:
       type: object
@@ -8020,6 +8031,7 @@ components:
           type: string
           enum:
             - urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+            - urn:snaplink:params:oauth:client-assertion-type:workload-identity
 
     PARResponse:
       type: object

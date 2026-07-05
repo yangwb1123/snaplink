@@ -1,43 +1,129 @@
 package sso
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/security"
 )
 
-// resolveAssertedClientID applies RFC 7521 §4.2 + RFC 7523 §2.2 JWT-bearer
-// client authentication when the request carries a client_assertion. The JWT
-// replaces client_secret as proof of identity: it MUST be signed by a key in
-// Client.JWKS; iss / sub MUST equal the client_id; aud MUST include the AS
-// issuer or token endpoint URL; exp MUST be in the future. Replay defense (jti
-// tracking) reuses the security.JTIReplayStore wiring JAR already opts into. On
-// success req.ClientID is overwritten with the asserted id. Returns true
-// (handled) when a response was ALREADY written; the caller MUST then stop.
+// ClientAuthWorkloadIdentity marks a registered Client as requiring a cloud
+// workload-identity token (AWS/GCP/Azure — see
+// shared/security/securityverify's package doc for per-cloud status)
+// instead of a client_secret or private_key_jwt. Not IANA-registered (no
+// such token_endpoint_auth_method value exists yet); the plain, unprefixed
+// name mirrors how ClientAuthTLS/ClientAuthSelfSignedTLS are also this
+// server's own conventions rather than RFC 8414-published strings.
+const ClientAuthWorkloadIdentity = "workload_identity"
+
+// ClientAssertionTypeWorkloadIdentity marks an inbound client_assertion as a
+// cloud-issued workload-identity token, verified against the CLOUD's own
+// published JWKS (WithWorkloadIdentityProviders) instead of the client's
+// registered JWKS — contrast ClientAssertionTypeJWTBearer, which verifies
+// against Client.JWKS. Scoped under a snaplink: URN so it can never collide
+// with a future IETF-registered client-assertion-type.
+const ClientAssertionTypeWorkloadIdentity = "urn:snaplink:params:oauth:client-assertion-type:workload-identity"
+
+// resolveAssertedClientID applies RFC 7521 §4.2 client-assertion-based
+// authentication when the request carries a client_assertion, dispatching on
+// client_assertion_type. Returns true (handled) when a response was ALREADY
+// written; the caller MUST then stop.
+//
+//   - ClientAssertionTypeJWTBearer (RFC 7523 §2.2, private_key_jwt): the JWT
+//     replaces client_secret as proof of identity, verified against
+//     Client.JWKS. On success req.ClientID is OVERWRITTEN with the asserted
+//     id (the JWT `sub` IS the client_id — see verifyJWTClientAssertion).
+//   - ClientAssertionTypeWorkloadIdentity: a cloud-issued token, verified
+//     against the cloud's OWN JWKS and mapped onto the identity the
+//     ALREADY-known req.ClientID (form client_id) is configured to expect —
+//     see verifyWorkloadIdentityClientAssertion. req.ClientID is NOT
+//     rewritten (a cloud subject is not this server's client_id).
+//   - anything else → invalid_request (an unsupported assertion type).
 func (s *Server) resolveAssertedClientID(ctx HandlerContext, req *oauth.TokenRequest) bool {
 	if req.ClientAssertion == "" && req.ClientAssertionType == "" {
 		return false
 	}
-	if req.ClientAssertionType != ClientAssertionTypeJWTBearer {
+	switch req.ClientAssertionType {
+	case ClientAssertionTypeJWTBearer:
+		assertedID, err := verifyJWTClientAssertion(
+			ctx.Request().Context(),
+			req.ClientAssertion,
+			req.ClientID,
+			s.clientStore,
+			s.resolveIssuer(ctx),
+			s.jtiReplayStore,
+			s.jtiReplayFailClosed,
+		)
+		if err != nil {
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+			return true
+		}
+		req.ClientID = assertedID
+		return false
+	case ClientAssertionTypeWorkloadIdentity:
+		if err := s.verifyWorkloadIdentityClientAssertion(ctx, req); err != nil {
+			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+			return true
+		}
+		return false
+	default:
 		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
 		return true
 	}
-	assertedID, err := verifyJWTClientAssertion(
-		ctx.Request().Context(),
-		req.ClientAssertion,
-		req.ClientID,
-		s.clientStore,
-		s.resolveIssuer(ctx),
-		s.jtiReplayStore,
-		s.jtiReplayFailClosed,
-	)
-	if err != nil {
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
-		return true
+}
+
+// verifyWorkloadIdentityClientAssertion authenticates a client configured
+// for cloud workload-identity auth (ClientAuthWorkloadIdentity): the inbound
+// client_assertion is a cloud-issued token, verified against the CLOUD's OWN
+// published JWKS — NOT the client's registered JWKS (contrast
+// verifyJWTClientAssertion). Unlike JWT-bearer, the cloud token's verified
+// identity is NOT this server's client_id, so req.ClientID (the form
+// client_id, or HTTP Basic username — see authenticateTokenClient) drives
+// the lookup and is never overwritten.
+//
+// Gate order, each failing to the SAME opaque error (oracle-leak hardening,
+// AGENTS.md §3 "private_key_jwt failure -> invalid_client"):
+//
+//  1. req.ClientID resolves to a registered client configured with
+//     TokenEndpointAuthMethod == ClientAuthWorkloadIdentity and both
+//     required Client.Attributes present.
+//  2. the named provider validates the token: signature against the cloud's
+//     JWKS, temporal window, issuer, and aud == this server's issuer
+//     (mirrors the private_key_jwt aud-binding requirement — WHICH relying
+//     party the token was minted for).
+//  3. the mapped identity's Subject equals the client's registered
+//     AttrWorkloadIdentitySubject EXACTLY — the security crux: it is what
+//     stops ANY OTHER workload the cloud provider will vouch for from
+//     impersonating a DIFFERENT registered client.
+func (s *Server) verifyWorkloadIdentityClientAssertion(ctx HandlerContext, req *oauth.TokenRequest) error {
+	if req.ClientID == "" {
+		return errors.New("workload_identity: client_id required")
 	}
-	req.ClientID = assertedID
-	return false
+	client, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
+	if err != nil || client == nil {
+		return errors.New("workload_identity: client not found")
+	}
+	if client.TokenEndpointAuthMethod != ClientAuthWorkloadIdentity {
+		return errors.New("workload_identity: client not configured for workload identity")
+	}
+	providerName := client.Attributes[security.AttrWorkloadIdentityProvider]
+	expectedSubject := client.Attributes[security.AttrWorkloadIdentitySubject]
+	if providerName == "" || expectedSubject == "" {
+		return errors.New("workload_identity: client missing provider/subject attributes")
+	}
+	provider, ok := s.workloadIdentityProviders[providerName]
+	if !ok {
+		return errors.New("workload_identity: provider not configured")
+	}
+	identity, err := provider.Validate(ctx.Request().Context(), req.ClientAssertion, s.resolveIssuer(ctx))
+	if err != nil {
+		return err
+	}
+	if identity.Subject != expectedSubject {
+		return errors.New("workload_identity: subject mismatch")
+	}
+	return nil
 }
 
 // authenticateTokenClient runs the client-identification + authentication

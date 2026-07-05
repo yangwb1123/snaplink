@@ -5,6 +5,7 @@ import (
 
 	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/shared/security"
 )
 
 // WithCustomGrant registers an external grant handler for the given
@@ -78,5 +79,45 @@ func WithGrantTypeRateLimit(grantType string, tokensPerSec float64, burst int) O
 			lim = rate.NewLimiter(rate.Limit(tokensPerSec), burst)
 		}
 		s.grantRateLimiters[grantType] = &rateLimiterEntry{limiter: lim}
+	}
+}
+
+// WithWorkloadIdentityProviders accepts one or more cloud workload-identity
+// tokens (AWS/GCP/Azure) as /token client authentication, in place of a
+// client_secret or private_key_jwt — the cloud analog of WithSPIFFEJWTSVID,
+// but wired as a client-auth method rather than a token-exchange
+// subject_token. Today only security.NewGCPWorkloadIdentityValidator ships;
+// AWS/Azure are documented follow-ups (see the securityverify package doc).
+//
+// A client opts in per-registration by setting TokenEndpointAuthMethod to
+// ClientAuthWorkloadIdentity and populating two Client.Attributes:
+//
+//   - security.AttrWorkloadIdentityProvider — which registered provider's
+//     Name() to use ("gcp").
+//   - security.AttrWorkloadIdentitySubject — the EXPECTED verified
+//     WorkloadIdentity.Subject (e.g. a GCP service-account email). This is
+//     the security crux: it is what stops any OTHER workload the cloud
+//     provider will happily vouch for from impersonating THIS client.
+//
+// The request then presents the cloud-issued token as client_assertion with
+// client_assertion_type=ClientAssertionTypeWorkloadIdentity (RFC 7521 §4.2
+// shape, reusing the SAME two wire fields private_key_jwt already binds —
+// no new endpoint, no new param).
+//
+// Multiple calls accumulate providers (keyed by Name()); registering the
+// same name twice replaces the previous one. No call at all (the default)
+// leaves the feature entirely off: ClientAuthWorkloadIdentity then never
+// succeeds, byte-identical to today.
+func WithWorkloadIdentityProviders(providers ...security.WorkloadIdentityProvider) Option {
+	return func(s *Server) {
+		if s.workloadIdentityProviders == nil {
+			s.workloadIdentityProviders = make(map[string]security.WorkloadIdentityProvider, len(providers))
+		}
+		for _, p := range providers {
+			if p == nil || p.Name() == "" {
+				continue
+			}
+			s.workloadIdentityProviders[p.Name()] = p
+		}
 	}
 }

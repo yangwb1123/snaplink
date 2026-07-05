@@ -23,6 +23,14 @@ type (
 
 	RotatingWebhookSecret = securityverify.RotatingWebhookSecret
 	WebhookSecretRotator  = securityverify.WebhookSecretRotator
+
+	CloudProvider                   = securityverify.CloudProvider
+	WorkloadIdentity                = securityverify.WorkloadIdentity
+	WorkloadIdentityProvider        = securityverify.WorkloadIdentityProvider
+	WorkloadIdentityValidator       = securityverify.WorkloadIdentityValidator
+	WorkloadIdentityValidatorOption = securityverify.WorkloadIdentityValidatorOption
+	HTTPJWKSSource                  = securityverify.HTTPJWKSSource
+	HTTPJWKSSourceOption            = securityverify.HTTPJWKSSourceOption
 )
 
 const (
@@ -40,6 +48,21 @@ const (
 	WebhookSignatureHeader           = securityverify.WebhookSignatureHeader
 	DefaultWebhookSignatureTolerance = securityverify.DefaultWebhookSignatureTolerance
 	WebhookSecretBytes               = securityverify.WebhookSecretBytes
+
+	DefaultWorkloadIdentityMaxClockSkew = securityverify.DefaultWorkloadIdentityMaxClockSkew
+	DefaultJWKSCacheTTL                 = securityverify.DefaultJWKSCacheTTL
+	DefaultJWKSMaxStaleAge              = securityverify.DefaultJWKSMaxStaleAge
+	AttrWorkloadIdentityProvider        = securityverify.AttrWorkloadIdentityProvider
+	AttrWorkloadIdentitySubject         = securityverify.AttrWorkloadIdentitySubject
+	AttrGCPProjectID                    = securityverify.AttrGCPProjectID
+	AttrGCPServiceAccount               = securityverify.AttrGCPServiceAccount
+	AttrGCPInstanceName                 = securityverify.AttrGCPInstanceName
+	AttrGCPZone                         = securityverify.AttrGCPZone
+	GCPIssuer                           = securityverify.GCPIssuer
+	GCPJWKSURL                          = securityverify.GCPJWKSURL
+	CloudProviderGCP                    = securityverify.CloudProviderGCP
+	CloudProviderAWS                    = securityverify.CloudProviderAWS
+	CloudProviderAzure                  = securityverify.CloudProviderAzure
 )
 
 var (
@@ -71,4 +94,14 @@ var (
 
 	NewRotatingWebhookSecret = securityverify.NewRotatingWebhookSecret
 	NewWebhookSecretRotator  = securityverify.NewWebhookSecretRotator
+
+	ErrWorkloadIdentityInvalid       = securityverify.ErrWorkloadIdentityInvalid
+	NewWorkloadIdentityValidator     = securityverify.NewWorkloadIdentityValidator
+	NewGCPWorkloadIdentityValidator  = securityverify.NewGCPWorkloadIdentityValidator
+	NewHTTPJWKSSource                = securityverify.NewHTTPJWKSSource
+	WithWorkloadIdentityMaxClockSkew = securityverify.WithWorkloadIdentityMaxClockSkew
+	WithWorkloadIdentityAllowedAlgs  = securityverify.WithWorkloadIdentityAllowedAlgs
+	WithJWKSCacheTTL                 = securityverify.WithJWKSCacheTTL
+	WithJWKSMaxStaleAge              = securityverify.WithJWKSMaxStaleAge
+	WithJWKSHTTPClient               = securityverify.WithJWKSHTTPClient
 )

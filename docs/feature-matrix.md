@@ -44,6 +44,7 @@ OAuth 2.0 / OIDC / SSO feature compliance matrix. Extracted from AGENTS.md.
 | MFA orchestration | `/auth/login` + `/auth/mfa` | `WithMFAProvider` + `WithMFAChallengeStore` | `handlers.go` + `spi/mfa.go` |
 | Per-account lockout | `/auth/login` | `WithAccountLockout` | `security/account_lockout.go` |
 | SPIFFE JWT-SVID token-exchange | `/token` | `WithSPIFFEJWTSVID(trustDomain, audience, JWKSSource)` | `security/spiffe_svid.go` |
+| Cloud workload-identity client auth (GCP; AWS/Azure follow-up) | `/token` client authentication | `WithWorkloadIdentityProviders(security.NewGCPWorkloadIdentityValidator(...))` + `Client.TokenEndpointAuthMethod=workload_identity` | `security/securityverify/workload_identity.go` + `securityverify/workload_identity_gcp.go` |
 | OpenID SSF v1 SET transmitter | push to RP receiver | `WithCAEPTransmitter` | `caep/` |
 | OpenID SSF v1 SET receiver | `/ssf/receive` | `WithCAEPReceiver` | `caep/receiver.go` |
 | Envoy ext_authz HTTP | `/mesh/ext-authz` | `WithMeshExtAuthz(path)` | `handler.go` + `mesh_authz.go` |
