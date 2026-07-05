@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/federation"
-	"github.com/snaplink/sso/domains/sessionhub"
 	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
 	"github.com/snaplink/sso/internal/auth/consent"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
 	"github.com/snaplink/sso/platform/sse"
 	"github.com/snaplink/sso/shared/spi"
 )
@@ -75,7 +75,7 @@ func NewServer(opts ...Option) *Server {
 	// byte-identical preconditions when a precondition does not hold.
 	s.applyFederationAutoRegistration()
 	s.applyClientStoreCache()
-	// Cross-protocol session hub (domains/sessionhub): constructed post-options
+	// Cross-protocol session hub (platform/lifecycle/sessionhub): constructed post-options
 	// so it captures whatever SessionManager WithSessionManager wired. Always
 	// on (unlike the other apply* helpers here) — see applySessionHub.
 	s.applySessionHub()

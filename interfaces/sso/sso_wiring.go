@@ -8,7 +8,6 @@ import (
 
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
-	"github.com/snaplink/sso/domains/sessionhub"
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
 	"github.com/snaplink/sso/internal/handler/tokengrant"
@@ -16,6 +15,7 @@ import (
 	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/platform/geo"
+	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
 	"github.com/snaplink/sso/platform/lifecycle/webhook"
 	"github.com/snaplink/sso/platform/netpolicy"
 	"github.com/snaplink/sso/platform/sse"
@@ -67,9 +67,10 @@ type wiringState struct {
 	// no audit-sink tap — byte-identical to a build without the feature.
 	webhookEngine *webhook.Engine
 
-	// sessionHub is the Cross-protocol Session Hub coordinator (domains/
-	// sessionhub): given a global_sid it terminates every linked protocol
-	// leg by composing the core-session destroy + OIDC back-channel fan-out
+	// sessionHub is the Cross-protocol Session Hub coordinator
+	// (platform/lifecycle/sessionhub): given a global_sid it terminates every
+	// linked protocol leg by composing the core-session destroy + OIDC
+	// back-channel fan-out
 	// (always wired here, in applySessionHub) and, optionally, the SAML SLO
 	// fan-out (wired post-construction by infrastructure/saml's Deps.SessionHub
 	// calling Coordinator.SetSAMLTrigger — a separate module, so it cannot be
@@ -200,3 +201,29 @@ type discardResponseWriter struct{}
 func (discardResponseWriter) Header() http.Header         { return http.Header{} }
 func (discardResponseWriter) Write(p []byte) (int, error) { return len(p), nil }
 func (discardResponseWriter) WriteHeader(int)             {}
+
+// SessionHub returns the cross-protocol session-hub coordinator (Cross-
+// protocol Session Hub backlog item): given a global_sid, it terminates every
+// linked protocol leg by composing the already-existing per-protocol
+// mechanisms (core session destroy, OIDC back-channel logout fan-out, and —
+// once infrastructure/saml's Deps.SessionHub is wired to this same value and
+// calls Coordinator.SetSAMLTrigger — SAML IdP-initiated SLO fan-out). Never
+// nil: constructed in NewServer regardless of which optional mechanisms end
+// up wired, so it is always safe to call. Relocated from accessors.go to keep
+// that file within the per-file line budget; belongs beside the sessionHub
+// field and its background-context shim here.
+func (s *Server) SessionHub() *sessionhub.Coordinator { return s.sessionHub }
+
+// TriggerBackchannelLogout implements sessionhub.OIDCLogoutTrigger: it
+// composes the existing OIDC Back-Channel Logout 1.0 fan-out
+// (fanOutBackchannelLogout) for a caller that only has a plain
+// context.Context — the Coordinator — rather than a full HandlerContext (an
+// HTTP request/response pair). No new logout mechanism is implemented here;
+// this only adapts the calling convention (newBackgroundHandlerContext,
+// above). A nil originClient means the fan-out is driven purely off the
+// subjectClientIndex (every RP the subject is known to, not just one) — the
+// correct behavior for a Coordinator-driven logout, which isn't scoped to any
+// single triggering client.
+func (s *Server) TriggerBackchannelLogout(ctx context.Context, subject, sid string) {
+	s.fanOutBackchannelLogout(newBackgroundHandlerContext(ctx), nil, subject, sid)
+}

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/domains/sessionhub"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
 	"github.com/snaplink/sso/saml/idp"
 	"github.com/snaplink/sso/saml/sp"
 	"github.com/snaplink/sso/shared/spi"
@@ -80,7 +80,7 @@ type Deps struct {
 	SAMLLogoutReplayStore idp.LogoutReplayStore
 
 	// SessionHub OPTIONALLY wires this SAML build into the operator's
-	// Cross-protocol Session Hub coordinator (domains/sessionhub) — pass the
+	// Cross-protocol Session Hub coordinator (platform/lifecycle/sessionhub) — pass the
 	// SAME instance the core Server exposes via Server.SessionHub() (they must
 	// be the same object; sessionhub.Coordinator is not itself shared any
 	// other way). When set:

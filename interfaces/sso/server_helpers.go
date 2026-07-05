@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/anomaly"
-	"github.com/snaplink/sso/domains/sessionhub"
 	"github.com/snaplink/sso/domains/tokenpolicy"
 	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/protocols/oidc"
 )
@@ -361,7 +361,7 @@ func (s *Server) recordLogout(ctx HandlerContext, sessionID string, revoked []st
 }
 
 // linkGlobalSession records the "core" leg of a fresh login's cross-protocol
-// global_sid (domains/sessionhub Cross-protocol Session Hub) — purely
+// global_sid (platform/lifecycle/sessionhub Cross-protocol Session Hub) — purely
 // additive bookkeeping: nothing in this server's request/response path reads
 // it today, so calling this has zero observable effect on /auth/login or
 // /auth/callback. Best-effort: a LinkStore error is logged, never surfaced —

@@ -21,9 +21,9 @@ import (
 	crewjam "github.com/crewjam/saml"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/snaplink/sso/domains/sessionhub"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
 	samlmod "github.com/snaplink/sso/saml"
 	"github.com/snaplink/sso/saml/sp"
 )
