@@ -131,6 +131,10 @@ type ECDSAJWTIssuer struct {
 	// signer performs the raw ECDSA signing. Defaults to the in-process
 	// software signer; WithECDSAExternalSigner swaps in a KMS/HSM signer.
 	signer ECDSASigner
+
+	// clock is nil by default (nowFrom falls back to time.Now()) — see
+	// WithECDSAClock.
+	clock Clock
 }
 
 // ECDSAOption configures the issuer at construction time.
@@ -169,6 +173,14 @@ func WithECDSAKey(priv *ecdsa.PrivateKey) ECDSAOption {
 // WithECDSAKeyID overrides the auto-derived kid.
 func WithECDSAKeyID(kid string) ECDSAOption {
 	return func(j *ECDSAJWTIssuer) { j.keyID = kid }
+}
+
+// WithECDSAClock overrides the wall clock Issue/IssueIDToken/
+// IssueLogoutToken read for iat/nbf/exp. Test-only knob — see
+// WithEd25519Clock for the full rationale; nil (the default) is
+// byte-identical to the pre-Clock-injection code.
+func WithECDSAClock(c Clock) ECDSAOption {
+	return func(j *ECDSAJWTIssuer) { j.clock = c }
 }
 
 // WithECDSAVerifyKey adds a verify-only public key (the retired half of a

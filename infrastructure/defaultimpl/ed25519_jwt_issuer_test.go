@@ -167,3 +167,40 @@ func TestEd25519JWT_KidIsDeterministic(t *testing.T) {
 		t.Fatalf("same key should yield same kid; got %q vs %q", a.KeyID(), b.KeyID())
 	}
 }
+
+// fixedClock is a defaultimpl.Clock stub that always returns a fixed
+// instant. Shared across the Ed25519/ECDSA/RSA clock-injection tests
+// (same defaultimpl_test package).
+type fixedClock struct{ t time.Time }
+
+func (f fixedClock) Now() time.Time { return f.t }
+
+// TestEd25519JWT_ClockInjectionControlsClaims proves WithEd25519Clock is
+// actually read by Issue's iat/exp computation, not a decorative field —
+// the injected clock is offset from real time (30min in the past) so the
+// minted token is still valid (nbf <= now <= exp) when Validate runs
+// against the REAL wall clock, which the Clock option deliberately does
+// NOT touch (see WithEd25519Clock's doc: issuance only).
+func TestEd25519JWT_ClockInjectionControlsClaims(t *testing.T) {
+	t.Parallel()
+	fixed := time.Now().Add(-30 * time.Minute).Truncate(time.Second)
+	ttl := time.Hour
+	iss := defaultimpl.NewEd25519JWTIssuer(
+		defaultimpl.WithEd25519TokenTTL(ttl),
+		defaultimpl.WithEd25519Clock(fixedClock{t: fixed}),
+	)
+	tok, err := iss.Issue(context.Background(), &sso.Subject{ID: "u"}, nil)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	claims, err := iss.Validate(context.Background(), tok.AccessToken)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !claims.IssuedAt.Equal(fixed) {
+		t.Errorf("IssuedAt = %v, want %v", claims.IssuedAt, fixed)
+	}
+	if want := fixed.Add(ttl); !claims.ExpiresAt.Equal(want) {
+		t.Errorf("ExpiresAt = %v, want %v", claims.ExpiresAt, want)
+	}
+}

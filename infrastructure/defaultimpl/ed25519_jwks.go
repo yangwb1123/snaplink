@@ -5,8 +5,6 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
-	"fmt"
 
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/protocols/oidc"
@@ -32,20 +30,7 @@ func (j *Ed25519JWTIssuer) SignUserInfo(ctx context.Context, audience string, cl
 		}
 	}
 	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTyp, Kid: kid}
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return "", err
-	}
-	pb, err := json.Marshal(claims)
-	if err != nil {
-		return "", err
-	}
-	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig, err := sgn.Sign(ctx, []byte(signingInput))
-	if err != nil {
-		return "", fmt.Errorf("ed25519: sign userinfo: %w", err)
-	}
-	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+	return signCompactJWS(ctx, sgn, header, claims, "ed25519: sign userinfo")
 }
 
 // SignMetadata implements [oidc.MetadataSigner]. Wraps the discovery
@@ -58,20 +43,7 @@ func (j *Ed25519JWTIssuer) SignMetadata(ctx context.Context, claims map[string]a
 		return "", nil
 	}
 	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTyp, Kid: kid}
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return "", err
-	}
-	pb, err := json.Marshal(claims)
-	if err != nil {
-		return "", err
-	}
-	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig, err := sgn.Sign(ctx, []byte(signingInput))
-	if err != nil {
-		return "", fmt.Errorf("ed25519: sign metadata: %w", err)
-	}
-	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+	return signCompactJWS(ctx, sgn, header, claims, "ed25519: sign metadata")
 }
 
 // JWKS returns the issuer's public keys as JWKs for inclusion in

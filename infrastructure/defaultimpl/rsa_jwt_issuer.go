@@ -106,6 +106,10 @@ type RSAJWTIssuer struct {
 	// signer performs the raw RSA signing. Defaults to the in-process
 	// software signer; WithRSAExternalSigner swaps in a KMS/HSM signer.
 	signer RSASigner
+
+	// clock is nil by default (nowFrom falls back to time.Now()) — see
+	// WithRSAClock.
+	clock Clock
 }
 
 // RSAOption configures the issuer at construction time.
@@ -149,6 +153,14 @@ func WithRSAKey(priv *rsa.PrivateKey) RSAOption {
 // WithRSAKeyID overrides the auto-derived kid.
 func WithRSAKeyID(kid string) RSAOption {
 	return func(j *RSAJWTIssuer) { j.keyID = kid }
+}
+
+// WithRSAClock overrides the wall clock Issue/IssueIDToken/
+// IssueLogoutToken read for iat/nbf/exp. Test-only knob — see
+// WithEd25519Clock for the full rationale; nil (the default) is
+// byte-identical to the pre-Clock-injection code.
+func WithRSAClock(c Clock) RSAOption {
+	return func(j *RSAJWTIssuer) { j.clock = c }
 }
 
 // WithRSAVerifyKey adds a verify-only public key (the retired half of a

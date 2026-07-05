@@ -118,6 +118,10 @@ type Ed25519JWTIssuer struct {
 	// signer holding privateKey; WithEd25519ExternalSigner swaps in a
 	// KMS/HSM-backed signer (private key never enters this process).
 	signer Ed25519Signer
+
+	// clock is nil by default (nowFrom falls back to time.Now()) — see
+	// WithEd25519Clock.
+	clock Clock
 }
 
 // currentKey snapshots the active signer + its kid together under the
@@ -184,6 +188,16 @@ func WithEd25519Key(priv ed25519.PrivateKey) Ed25519Option {
 // WithEd25519KeyID overrides the auto-derived kid.
 func WithEd25519KeyID(kid string) Ed25519Option {
 	return func(j *Ed25519JWTIssuer) { j.keyID = kid }
+}
+
+// WithEd25519Clock overrides the wall clock Issue/IssueIDToken/
+// IssueLogoutToken read for iat/nbf/exp. Test-only knob: nil (the
+// default every issuer starts with) means every call reads the real
+// time.Now(), byte-identical to the code before Clock existed. Wiring a
+// fixed or steppable Clock lets a test assert exact claim values without
+// sleeping or tolerating a timing window.
+func WithEd25519Clock(c Clock) Ed25519Option {
+	return func(j *Ed25519JWTIssuer) { j.clock = c }
 }
 
 // WithEd25519VerifyKey adds a public key the issuer will accept on

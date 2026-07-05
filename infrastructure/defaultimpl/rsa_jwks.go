@@ -7,8 +7,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/json"
-	"fmt"
 
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/protocols/oidc"
@@ -46,20 +44,7 @@ func (j *RSAJWTIssuer) SignMetadata(ctx context.Context, claims map[string]any) 
 // signers (userinfo, metadata).
 func (j *RSAJWTIssuer) signClaims(ctx context.Context, sgn RSASigner, kid, typ string, claims map[string]any) (string, error) {
 	header := rsaHeader{Alg: j.alg, Typ: typ, Kid: kid}
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return "", err
-	}
-	pb, err := json.Marshal(claims)
-	if err != nil {
-		return "", err
-	}
-	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig, err := sgn.Sign(ctx, []byte(signingInput))
-	if err != nil {
-		return "", fmt.Errorf("rsa: sign claims: %w", err)
-	}
-	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+	return signCompactJWS(ctx, sgn, header, claims, "rsa: sign claims")
 }
 
 // JWKS publishes the RSA public key(s) per RFC 7518 §6.3: kty "RSA", n/e.

@@ -2,11 +2,9 @@ package defaultimpl
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/protocols/oidc"
@@ -17,7 +15,7 @@ func (j *ECDSAJWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scopes
 	if subject == nil || subject.ID == "" {
 		return nil, errors.New("ecdsa: subject required")
 	}
-	now := time.Now()
+	now := nowFrom(j.clock)
 	// Per-issuance TTL override (Client.AccessTokenTTL via Subject.TTL)
 	// wins over the issuer default. Matches the Ed25519 issuer.
 	effectiveTTL := effectiveAccessTTL(subject, j.tokenTTL)
@@ -37,15 +35,10 @@ func (j *ECDSAJWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scopes
 	// byte-for-byte identical across signers.
 	payload := buildAccessPayload(j.issuer, subject, scopes, jti, now, expiresAt)
 
-	signingInput, err := ecdsaSigningInput(header, payload)
+	token, err := signCompactJWS(ctx, sgn, header, payload, "ecdsa: sign access token")
 	if err != nil {
 		return nil, err
 	}
-	sig, err := sgn.Sign(ctx, signingInput)
-	if err != nil {
-		return nil, fmt.Errorf("ecdsa: sign access token: %w", err)
-	}
-	token := string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig)
 
 	return &sso.Token{
 		AccessToken: token,
@@ -67,7 +60,7 @@ func (j *ECDSAJWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRequ
 	if ttl <= 0 {
 		ttl = j.tokenTTL
 	}
-	now := time.Now()
+	now := nowFrom(j.clock)
 	header := ecdsaHeader{Alg: jwtAlgES256, Typ: jwtTyp, Kid: kid}
 	payload := ed25519IDPayload{
 		Iss:   j.issuer,
@@ -89,41 +82,7 @@ func (j *ECDSAJWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRequ
 	payload.AtHash = accessTokenHash(jwtAlgES256, req.AccessToken)
 	// Native SSO 1.0 §3.1: ds_hash binds an accompanying device_secret.
 	payload.DsHash = accessTokenHash(jwtAlgES256, req.DeviceSecret)
-	signingInput, err := ecdsaIDSigningInput(header, payload)
-	if err != nil {
-		return "", err
-	}
-	sig, err := sgn.Sign(ctx, signingInput)
-	if err != nil {
-		return "", fmt.Errorf("ecdsa: sign id token: %w", err)
-	}
-	return string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig), nil
-}
-
-// ecdsaSigningInput JOSE-encodes the access-token header + payload.
-func ecdsaSigningInput(header ecdsaHeader, payload ed25519Payload) ([]byte, error) {
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return nil, err
-	}
-	pb, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	return []byte(base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)), nil
-}
-
-// ecdsaIDSigningInput is the ID-token mirror of ecdsaSigningInput.
-func ecdsaIDSigningInput(header ecdsaHeader, payload ed25519IDPayload) ([]byte, error) {
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return nil, err
-	}
-	pb, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	return []byte(base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)), nil
+	return signCompactJWS(ctx, sgn, header, payload, "ecdsa: sign id token")
 }
 
 // IssueLogoutToken mints an OIDC BCL 1.0 §2.4 Back-Channel Logout token
@@ -141,7 +100,7 @@ func (j *ECDSAJWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.LogoutTo
 	if err != nil {
 		return "", fmt.Errorf("ecdsa: generate jti: %w", err)
 	}
-	now := time.Now()
+	now := nowFrom(j.clock)
 	header := ecdsaHeader{Alg: jwtAlgES256, Typ: logoutTokenTyp, Kid: kid}
 	payload := ed25519LogoutPayload{
 		Iss:    j.issuer,
@@ -153,20 +112,7 @@ func (j *ECDSAJWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.LogoutTo
 		Events: map[string]json.RawMessage{backchannelLogoutEvent: json.RawMessage("{}")},
 		SID:    req.SID,
 	}
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return "", err
-	}
-	pb, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig, err := sgn.Sign(ctx, []byte(signingInput))
-	if err != nil {
-		return "", fmt.Errorf("ecdsa: sign logout token: %w", err)
-	}
-	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+	return signCompactJWS(ctx, sgn, header, payload, "ecdsa: sign logout token")
 }
 
 // SignJWT signs an arbitrary claims object as a compact JWS using the
@@ -182,18 +128,5 @@ func (j *ECDSAJWTIssuer) SignJWT(ctx context.Context, typ string, claims any) (s
 	}
 	sgn, kid := j.currentKey()
 	header := ecdsaHeader{Alg: jwtAlgES256, Typ: typ, Kid: kid}
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return "", err
-	}
-	pb, err := json.Marshal(claims)
-	if err != nil {
-		return "", err
-	}
-	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig, err := sgn.Sign(ctx, []byte(signingInput))
-	if err != nil {
-		return "", fmt.Errorf("ecdsa: sign jwt (typ=%s): %w", typ, err)
-	}
-	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+	return signCompactJWS(ctx, sgn, header, claims, "ecdsa: sign jwt (typ="+typ+")")
 }

@@ -2,11 +2,9 @@ package defaultimpl
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/protocols/oidc"
@@ -17,7 +15,7 @@ func (j *RSAJWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scopes [
 	if subject == nil || subject.ID == "" {
 		return nil, errors.New("rsa: subject required")
 	}
-	now := time.Now()
+	now := nowFrom(j.clock)
 	effectiveTTL := effectiveAccessTTL(subject, j.tokenTTL)
 	expiresAt := now.Add(effectiveTTL)
 
@@ -29,15 +27,10 @@ func (j *RSAJWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scopes [
 
 	payload := buildAccessPayload(j.issuer, subject, scopes, jti, now, expiresAt)
 
-	signingInput, err := rsaSigningInput(header, payload)
+	token, err := signCompactJWS(ctx, sgn, header, payload, "rsa: sign access token")
 	if err != nil {
 		return nil, err
 	}
-	sig, err := sgn.Sign(ctx, signingInput)
-	if err != nil {
-		return nil, fmt.Errorf("rsa: sign access token: %w", err)
-	}
-	token := string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig)
 
 	return &sso.Token{
 		AccessToken: token,
@@ -58,7 +51,7 @@ func (j *RSAJWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenReques
 	if ttl <= 0 {
 		ttl = j.tokenTTL
 	}
-	now := time.Now()
+	now := nowFrom(j.clock)
 	header := rsaHeader{Alg: j.alg, Typ: jwtTyp, Kid: kid}
 	payload := ed25519IDPayload{
 		Iss:   j.issuer,
@@ -81,41 +74,7 @@ func (j *RSAJWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenReques
 	payload.AtHash = accessTokenHash(j.alg, req.AccessToken)
 	// Native SSO 1.0 §3.1: ds_hash binds an accompanying device_secret.
 	payload.DsHash = accessTokenHash(j.alg, req.DeviceSecret)
-	signingInput, err := rsaIDSigningInput(header, payload)
-	if err != nil {
-		return "", err
-	}
-	sig, err := sgn.Sign(ctx, signingInput)
-	if err != nil {
-		return "", fmt.Errorf("rsa: sign id token: %w", err)
-	}
-	return string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig), nil
-}
-
-// rsaSigningInput JOSE-encodes the access-token header + payload.
-func rsaSigningInput(header rsaHeader, payload ed25519Payload) ([]byte, error) {
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return nil, err
-	}
-	pb, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	return []byte(base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)), nil
-}
-
-// rsaIDSigningInput is the ID-token mirror of rsaSigningInput.
-func rsaIDSigningInput(header rsaHeader, payload ed25519IDPayload) ([]byte, error) {
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return nil, err
-	}
-	pb, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	return []byte(base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)), nil
+	return signCompactJWS(ctx, sgn, header, payload, "rsa: sign id token")
 }
 
 // IssueLogoutToken mints an OIDC BCL 1.0 §2.4 logout token with the same
@@ -133,7 +92,7 @@ func (j *RSAJWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.LogoutToke
 	if err != nil {
 		return "", fmt.Errorf("rsa: generate jti: %w", err)
 	}
-	now := time.Now()
+	now := nowFrom(j.clock)
 	header := rsaHeader{Alg: j.alg, Typ: logoutTokenTyp, Kid: kid}
 	payload := ed25519LogoutPayload{
 		Iss:    j.issuer,
@@ -145,20 +104,7 @@ func (j *RSAJWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.LogoutToke
 		Events: map[string]json.RawMessage{backchannelLogoutEvent: json.RawMessage("{}")},
 		SID:    req.SID,
 	}
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return "", err
-	}
-	pb, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig, err := sgn.Sign(ctx, []byte(signingInput))
-	if err != nil {
-		return "", fmt.Errorf("rsa: sign logout token: %w", err)
-	}
-	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+	return signCompactJWS(ctx, sgn, header, payload, "rsa: sign logout token")
 }
 
 // SignJWT signs an arbitrary claims object as a compact JWS using the
@@ -174,18 +120,5 @@ func (j *RSAJWTIssuer) SignJWT(ctx context.Context, typ string, claims any) (str
 	}
 	sgn, kid := j.currentKey()
 	header := rsaHeader{Alg: j.alg, Typ: typ, Kid: kid}
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return "", err
-	}
-	pb, err := json.Marshal(claims)
-	if err != nil {
-		return "", err
-	}
-	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig, err := sgn.Sign(ctx, []byte(signingInput))
-	if err != nil {
-		return "", fmt.Errorf("rsa: sign jwt (typ=%s): %w", typ, err)
-	}
-	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+	return signCompactJWS(ctx, sgn, header, claims, "rsa: sign jwt (typ="+typ+")")
 }
