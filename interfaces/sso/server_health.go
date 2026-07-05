@@ -212,6 +212,34 @@ func (s *Server) collectStatusStats(_ context.Context) map[string]int {
 // the admin storage-health endpoint use the same timeout.
 const storageHealthProbeTimeout = 3 * time.Second
 
+// mountAPIVersionPreview registers GET /api/v2alpha/version when opted in
+// (WithAPIVersionPreview). This is ADR-0008's ONE example route proving the
+// "/api/v2alpha" path-prefix routing mechanism actually works — it is
+// deliberately NOT a commitment to a full v2 API surface (see the ADR's
+// tiered version-progression lifecycle: v2alpha is a no-guarantees preview).
+// False (the default) ⇒ Mount() never registers it, byte-identical to a
+// build without this feature.
+func (s *Server) mountAPIVersionPreview() {
+	if !s.apiV2AlphaPreview {
+		return
+	}
+	s.router.GET(core.PathAPIVersionPreview, s.handleAPIVersionPreview)
+}
+
+// handleAPIVersionPreview serves GET /api/v2alpha/version — a read-only,
+// unauthenticated capability probe advertising the API versioning tiers this
+// deployment understands (ADR-0008's Decision table): "v1" is always stable;
+// "v2alpha" (this very endpoint) is preview/no-guarantees. supported_versions
+// echoes WithAPIVersioning's configured list, if any, so a client can confirm
+// what Accept-Version tokens the negotiation middleware will accept.
+func (s *Server) handleAPIVersionPreview(ctx HandlerContext) {
+	ctx.JSON(http.StatusOK, map[string]any{
+		"api_version":        "v2alpha",
+		"stability":          "preview",
+		"supported_versions": s.apiVersionSupported,
+	})
+}
+
 // --- Disaster-recovery degraded-service (DR) control plane ---
 
 // PathDRMode is the admin degraded-service mode endpoint. Mounted under the

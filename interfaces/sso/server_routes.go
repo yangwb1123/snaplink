@@ -93,6 +93,7 @@ func (s *Server) Mount() {
 	s.mountClusterEndpoints()
 	s.mountFederationEndpoints()
 	s.mountAdminSurface()
+	s.mountAPIVersionPreview()
 }
 
 // mountMiddleware lazily creates the router and installs the global middleware
@@ -316,25 +317,13 @@ func (s *Server) wrapInnerMiddlewares(inner http.Handler) http.Handler {
 	if s.bodyLimit > 0 || len(s.bodyLimitByPath) > 0 {
 		inner = bodyLimitMiddleware(s.bodyLimit, s.bodyLimitByPath)(inner)
 	}
-	return inner
-}
-
-// wrapPanicRecovery conditionally wraps the handler chain with panic
-// recovery as the outermost layer — see buildMiddlewareChain for the
-// full ordering rationale.
-func (s *Server) wrapPanicRecovery(inner http.Handler) http.Handler {
-	if s.panicRecovery {
-		return middleware.Recover(s.logger)(inner)
-	}
-	return inner
-}
-
-// wrapCompression conditionally wraps the handler chain with gzip
-// response compression for large JSON payloads.
-func (s *Server) wrapCompression(inner http.Handler) http.Handler {
-	if s.compressionEnabled {
-		return middleware.Compress(inner)
-	}
+	// Accept-Version negotiation + Sunset/Deprecation headers (ADR-0008):
+	// outermost of this cluster so an unsupported requested version is
+	// rejected before body-limit/compression/CORS/security-headers run.
+	// wrapPanicRecovery/wrapCompression live in sso_wiring.go (beside the
+	// fields they read) — this file is at the line budget; wrapAPIVersioning
+	// joins them there for the same reason.
+	inner = s.wrapAPIVersioning(inner)
 	return inner
 }
 

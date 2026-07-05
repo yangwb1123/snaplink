@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/interfaces/cors"
+	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/lifecycle/rebac"
@@ -353,4 +354,51 @@ func WithRebacEngine(e *rebac.Engine) Option {
 // without the feature: no outbound SCIM traffic, ever.
 func WithSCIMProvisioner(sink audit.Sink) Option {
 	return func(s *Server) { s.scimProvisionSink = sink }
+}
+
+// WithAPIVersioning enables Accept-Version request-header negotiation
+// (ADR-0008): supported lists every version token this deployment accepts
+// (e.g. "v1", "v2alpha"). A request that sends Accept-Version naming a
+// value NOT in this list is rejected with 400
+// {"error":"unsupported_version"} before its route handler runs; a request
+// that sends NO Accept-Version header — every client today — is completely
+// unaffected. Omitting this option (the default) disables negotiation
+// entirely: the header is never even inspected, so behavior is
+// byte-identical to a build without this feature.
+func WithAPIVersioning(supported ...string) Option {
+	return func(s *Server) { s.apiVersionSupported = append([]string(nil), supported...) }
+}
+
+// WithAPIDeprecation marks the WHOLE API deprecated: every response carries
+// the Deprecation header (+ Sunset when policy.Sunset is set, + Link when
+// policy.Link is set). Combine with WithRouteDeprecation to ALSO (or
+// instead) annotate individual endpoints — a path matching both gets the
+// route-specific policy. Omitting this option (the default) means no
+// response ever carries these headers.
+func WithAPIDeprecation(policy middleware.DeprecationPolicy) Option {
+	return func(s *Server) { s.deprecationPolicy = &policy }
+}
+
+// WithRouteDeprecation marks a single endpoint or a path-prefix group
+// deprecated. path is matched exactly, or — when it ends in "/" — as a
+// prefix (e.g. "/api/v1/admin/" matches every admin route). May be called
+// multiple times to annotate several endpoints/groups independently.
+// Omitting this option (the default) means no route carries these headers.
+func WithRouteDeprecation(path string, policy middleware.DeprecationPolicy) Option {
+	return func(s *Server) {
+		if s.routeDeprecations == nil {
+			s.routeDeprecations = map[string]middleware.DeprecationPolicy{}
+		}
+		s.routeDeprecations[path] = policy
+	}
+}
+
+// WithAPIVersionPreview mounts GET /api/v2alpha/version — ADR-0008's ONE
+// example route proving the "/api/v2alpha" path-prefix routing mechanism
+// works, without building out a full v2 API surface. The response echoes
+// this deployment's versioning posture (api_version, stability,
+// supported_versions). Omitting this option (the default) means Mount()
+// never registers the route — byte-identical to a build without it.
+func WithAPIVersionPreview() Option {
+	return func(s *Server) { s.apiV2AlphaPreview = true }
 }
