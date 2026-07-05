@@ -24,6 +24,7 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 |---|---|
 | `security.mtls.backend` | `tls`\|`header`; `header` for reverse-proxy edges (`X-SSL-Client-Cert`); edge MUST strip from untrusted traffic |
 | `security.trusted_proxies.{cidrs,hops}` | CIDR allowlist for XFF-aware real-IP extraction; gates rate-limit IP keying AND geo/risk-scorer IP resolution (`WithGeoMiddlewareOptions.IPExtractor` — falls back to `X-Forwarded-For`'s raw leftmost hop when unset) |
+| `security.security_headers.{enabled,csp_directives,permissions_policy}` | Off by default. Adds CSP (with a per-request `script-src` nonce) + Permissions-Policy to every response, INCLUDING the admin console / hosted login / portal SPA bundles; also adds `Clear-Site-Data` on `POST /logout` and a non-dry-run `POST /me/account/erase`. `csp_directives`/`permissions_policy` override the SDK's conservative default (`handler.DefaultSecurityHeadersPolicy`) — leave unset to use it |
 | `spiffe.{enabled,trust_domain,audience,jwks_file,max_clock_skew}` | Enabled requires ALL of `trust_domain`+`audience`+`jwks_file`; cmd fails loud on missing |
 
 ## Signing Keys

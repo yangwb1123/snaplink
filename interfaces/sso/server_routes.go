@@ -418,7 +418,7 @@ func (s *Server) wrapInnerMiddlewares(inner http.Handler) http.Handler {
 		inner = middleware.RequestLogger(s.logger, false)(inner)
 	}
 	if s.securityHeadersEnabled {
-		inner = handler.SecurityHeaders(inner)
+		inner = handler.SecurityHeaders(s.resolvedSecurityHeadersPolicy())(inner)
 	}
 	if s.corsPolicy != nil {
 		inner = cors.Middleware(*s.corsPolicy)(inner)
@@ -474,7 +474,7 @@ func (s *Server) buildProbeMux(inner http.Handler) http.Handler {
 	// into the SSO routing layer. Not wired by default — byte-identical to a
 	// build without the console when adminConsoleFS is nil (or WebSPA is off).
 	if s.adminConsoleFS != nil && s.webSPAGateOn() {
-		mux.Handle(pathAdminConsolePrefix, http.StripPrefix(pathAdminConsolePrefix, http.FileServerFS(s.adminConsoleFS)))
+		mux.Handle(pathAdminConsolePrefix, s.wrapSecurityHeaders(http.StripPrefix(pathAdminConsolePrefix, http.FileServerFS(s.adminConsoleFS))))
 	}
 	// Hosted login SPA (opt-in). Served from /login/ so the browser can
 	// reach the SPA while the JSON /auth/login endpoint remains at its
@@ -483,13 +483,13 @@ func (s *Server) buildProbeMux(inner http.Handler) http.Handler {
 	// byte-identical to a build without the UI when hostedLoginFS is nil (or
 	// WebSPA is off).
 	if s.hostedLoginFS != nil && s.webSPAGateOn() {
-		mux.Handle(pathHostedLoginPrefix, http.StripPrefix(pathHostedLoginPrefix, http.FileServerFS(s.hostedLoginFS)))
+		mux.Handle(pathHostedLoginPrefix, s.wrapSecurityHeaders(http.StripPrefix(pathHostedLoginPrefix, http.FileServerFS(s.hostedLoginFS))))
 	}
 	// End-user self-service portal SPA (opt-in). Served from /portal/; it calls
 	// the /me* endpoints over JSON with the user's own bearer. Not wired by
 	// default — byte-identical when portalFS is nil (or WebSPA is off).
 	if s.portalFS != nil && s.webSPAGateOn() {
-		mux.Handle(pathPortalPrefix, http.StripPrefix(pathPortalPrefix, http.FileServerFS(s.portalFS)))
+		mux.Handle(pathPortalPrefix, s.wrapSecurityHeaders(http.StripPrefix(pathPortalPrefix, http.FileServerFS(s.portalFS))))
 	}
 	mux.Handle("/", inner)
 	return mux

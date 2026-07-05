@@ -24,3 +24,15 @@ func TokenNoStoreHeaders(ctx core.HandlerContext) {
 	h.Set("Cache-Control", "no-store")
 	h.Set("Pragma", "no-cache")
 }
+
+// ClearSiteData sets the Clear-Site-Data response header, instructing the
+// browser to purge cache, cookies, and storage for this origin. Used on
+// POST /logout and POST /me/account/erase — the two endpoints that represent
+// a DEFINITIVE end to the user's session on this origin (unlike a single
+// token revoke, which may leave other sessions/tabs on this origin alive).
+// Callers gate this behind the security-headers feature flag
+// (sso.Server.ClearSiteData); this function always sets the header when
+// called, unconditionally.
+func ClearSiteData(ctx core.HandlerContext) {
+	ctx.ResponseWriter().Header().Set("Clear-Site-Data", `"cache", "cookies", "storage"`)
+}

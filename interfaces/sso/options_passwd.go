@@ -3,6 +3,7 @@ package sso
 import (
 	"github.com/snaplink/sso/domains/metering"
 	"github.com/snaplink/sso/interfaces/middleware"
+	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
 	"io/fs"
 	"time"
@@ -383,11 +384,20 @@ func WithPasswordCredentialStore(s PasswordCredentialStore) Option {
 }
 
 // WithSecurityHeaders enables a global HTTP middleware that adds browser-security
-// response headers to every SSO router endpoint:
+// response headers to every SSO router endpoint AND the opt-in SPA bundles
+// (admin console, hosted login, self-service portal — see WithAdminConsoleFS /
+// WithHostedLoginFS / WithSelfServicePortalFS):
 //
 //   - X-Content-Type-Options: nosniff
 //   - X-Frame-Options: DENY
 //   - Referrer-Policy: no-referrer
+//   - Content-Security-Policy: handler.DefaultSecurityHeadersPolicy's
+//     conservative default, with a fresh cryptographically random nonce
+//     appended to script-src on every request. The same nonce is stashed in
+//     the request context (core.CSPNonceFromContext) so an HTML renderer
+//     downstream — the OIDC form_post / JARM auto-submit pages — can stamp a
+//     matching nonce="..." attribute on an inline <script>.
+//   - Permissions-Policy: camera/microphone/geolocation/payment/usb denied
 //   - Strict-Transport-Security: max-age=31536000; includeSubDomains (TLS only)
 //
 // Headers already set by inner handlers are NOT overwritten (existing per-handler
@@ -395,12 +405,31 @@ func WithPasswordCredentialStore(s PasswordCredentialStore) Option {
 // by credential endpoints is also preserved. HSTS is only emitted when the request
 // arrived over TLS to avoid breaking the dev HTTP workflow.
 //
-// Probe endpoints (/livez, /readyz, /metrics) are served outside the router chain
-// and are NOT affected — they remain header-free.
+// This ALSO gates Clear-Site-Data on POST /logout and POST /me/account/erase —
+// see ClearSiteData's doc — since both represent a definitive end to the
+// session on this origin.
 //
-// Off by default (byte-identical to a build without the feature).
+// Probe endpoints (/livez, /readyz, /metrics) remain header-free (served
+// outside the middleware chain, per Handler's doc).
+//
+// Off by default (byte-identical to a build without the feature). Use
+// WithSecurityHeadersPolicy to override the CSP directives / Permissions-Policy
+// instead of the SDK's conservative default.
 func WithSecurityHeaders() Option {
 	return func(s *Server) { s.securityHeadersEnabled = true }
+}
+
+// WithSecurityHeadersPolicy is WithSecurityHeaders with an operator-supplied
+// policy overriding the SDK's default CSP directives / Permissions-Policy. A
+// zero-value field in policy still falls back to the default (nil
+// CSPDirectives -> handler.DefaultSecurityHeadersPolicy's directives; empty
+// PermissionsPolicy -> its default value), so an operator can override just
+// one of the two.
+func WithSecurityHeadersPolicy(policy handler.SecurityHeadersPolicy) Option {
+	return func(s *Server) {
+		s.securityHeadersEnabled = true
+		s.securityHeadersPolicy = &policy
+	}
 }
 
 // WithPasswordPolicy wires a password policy validator that checks proposed

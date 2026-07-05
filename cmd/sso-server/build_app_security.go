@@ -14,6 +14,7 @@ import (
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/internal/handler"
 )
 
 // wireBodyAndRateLimit wires the request body-size limits + the rate limiter.
@@ -178,6 +179,26 @@ func (b *appBuilder) wireMTLSLockoutProxiesCORS() error {
 		logger.Info("security: cors enabled", "allowed_origins", c.AllowedOrigins)
 	}
 	return nil
+}
+
+// wireSecurityHeaders wires the opt-in security-headers framework: CSP (with
+// a per-request script-src nonce) + Permissions-Policy + Clear-Site-Data on
+// logout/erase, on top of the always-emitted X-Content-Type-Options/
+// X-Frame-Options/Referrer-Policy/HSTS. Off by default; a bare enabled:true
+// with no directive overrides uses the SDK's conservative default policy.
+// Split out of wireMTLSLockoutProxiesCORS (which sits at the function-length
+// budget) rather than grown inline.
+func (b *appBuilder) wireSecurityHeaders() {
+	sh := b.cfg.Security.SecurityHeaders
+	if !sh.Enabled {
+		return
+	}
+	b.opts = append(b.opts, sso.WithSecurityHeadersPolicy(handler.SecurityHeadersPolicy{
+		CSPDirectives:     sh.CSPDirectives,
+		PermissionsPolicy: sh.PermissionsPolicy,
+	}))
+	b.logger.Info("security: security headers enabled (CSP + Permissions-Policy + nonce)",
+		"csp_directives_overridden", len(sh.CSPDirectives) > 0)
 }
 
 // --- Governance plane: credential rotation, config-audit, break-glass -------

@@ -190,7 +190,11 @@ func (b *appBuilder) wireEdge() error {
 	if err := b.wireCAEPReceiverMesh(); err != nil {
 		return err
 	}
-	return b.wireMTLSLockoutProxiesCORS()
+	if err := b.wireMTLSLockoutProxiesCORS(); err != nil {
+		return err
+	}
+	b.wireSecurityHeaders()
+	return nil
 }
 
 // wireRedis builds the ONE shared Redis client when a redis block is declared,

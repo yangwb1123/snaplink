@@ -15,6 +15,7 @@ import (
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
+	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/platform/lifecycle/degradation"
 	"github.com/snaplink/sso/platform/metrics"
@@ -75,13 +76,19 @@ type protocolState struct {
 	// degradation holds the DR degraded-service mode. Nil (default) ⇒ the
 	// enforcement gate is not installed and no /admin/dr/mode route is mounted,
 	// so a build without WithDegradationManager is byte-identical.
-	degradation                    *degradation.Manager
-	bodyLimit                      int64
-	bodyLimitByPath                map[string]int64 // exact-prefix overrides; longest prefix wins
-	readyChecks                    []namedReadyCheck
-	tracingOperation               string
-	corsPolicy                     *cors.Policy
-	securityHeadersEnabled         bool
+	degradation            *degradation.Manager
+	bodyLimit              int64
+	bodyLimitByPath        map[string]int64 // exact-prefix overrides; longest prefix wins
+	readyChecks            []namedReadyCheck
+	tracingOperation       string
+	corsPolicy             *cors.Policy
+	securityHeadersEnabled bool
+	// securityHeadersPolicy overrides the default CSP directives /
+	// Permissions-Policy (WithSecurityHeadersPolicy). Nil ⇒
+	// handler.DefaultSecurityHeadersPolicy, resolved lazily by
+	// resolvedSecurityHeadersPolicy so a bare WithSecurityHeaders() stays
+	// byte-identical to before this field existed.
+	securityHeadersPolicy          *handler.SecurityHeadersPolicy
 	issuer                         string
 	authCodeStore                  oauth.AuthCodeStore
 	authCodeTTL                    time.Duration

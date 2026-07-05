@@ -37,6 +37,11 @@ func (s *Server) handleLogout(ctx HandlerContext) {
 
 	s.recordLogout(ctx, req.SessionID, revoked)
 
+	// POST /logout is a definitive end to this session on this origin —
+	// distinct from a per-token revoke, which may leave other sessions/tabs
+	// alive. No-op unless security headers are enabled.
+	s.ClearSiteData(ctx)
+
 	ctx.JSON(http.StatusOK, map[string]any{
 		KeyStatus:  StatusLoggedOut,
 		KeyRevoked: revoked,

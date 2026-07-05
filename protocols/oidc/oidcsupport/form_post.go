@@ -14,13 +14,21 @@ import (
 // (HTML5 spec). Every field uses html/template's default contextual
 // escaping (attribute value=), so an attacker can't break out of
 // the form fields.
+//
+// The auto-submit is a <script nonce="..."> tag rather than a
+// <body onload="..."> attribute: when WithSecurityHeaders is enabled, CSP's
+// script-src has no 'unsafe-inline' (see handler.DefaultSecurityHeadersPolicy),
+// and a nonce source only ever satisfies a <script> element, never an inline
+// event-handler attribute. Nonce is omitted (empty attribute) when security
+// headers aren't enabled — the page still works because there is no CSP
+// header restricting it in that case.
 var formPostTemplate = template.Must(template.New("formPost").Parse(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Submitting…</title>
 </head>
-<body onload="document.forms[0].submit()">
+<body>
 <noscript>
 <p>JavaScript is required to complete sign-in. Please click the button below to continue.</p>
 </noscript>
@@ -30,6 +38,7 @@ var formPostTemplate = template.Must(template.New("formPost").Parse(`<!DOCTYPE h
 <input type="hidden" name="iss" value="{{.Iss}}">
 <noscript><button type="submit">Continue</button></noscript>
 </form>
+<script{{if .Nonce}} nonce="{{.Nonce}}"{{end}}>document.forms[0].submit()</script>
 </body>
 </html>
 `))
@@ -42,6 +51,9 @@ type FormPostData struct {
 	Code        string
 	State       string
 	Iss         string
+	// Nonce is the per-request CSP nonce (core.CSPNonceFromContext), empty
+	// when security headers are not enabled for this request.
+	Nonce string
 }
 
 // RenderFormPostResponse writes the OIDC Form Post Response Mode 1.0
@@ -65,5 +77,6 @@ func RenderFormPostResponse(ctx core.HandlerContext, redirectURI, code, state, i
 		Code:        code,
 		State:       state,
 		Iss:         iss,
+		Nonce:       core.CSPNonceFromContext(ctx.Request().Context()),
 	})
 }

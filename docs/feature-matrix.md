@@ -54,4 +54,5 @@ OAuth 2.0 / OIDC / SSO feature compliance matrix. Extracted from AGENTS.md.
 | WebAuthn attestation policy | `/webauthn/registration/finish` | `webauthn.Config.{AttestationConveyance,AttestationPolicy,MDS}` | `authenticators/webauthn/` |
 | Multi-region data residency | `/auth/login` + `/userinfo` + mesh + WebAuthn | `WithRegionMiddleware` + `WithTenantResidencyCheck` | `region/region.go` + `server_extensions.go` |
 | SCIM 2.0 | `/api/v1/scim/v2/` | `scim.NewHandler(users, basePath, ...)` | `scim/handler.go` |
+| CSP Level 3 + Permissions-Policy + Clear-Site-Data | every response + admin/login/portal SPA bundles + `/logout`, `/me/account/erase` | `WithSecurityHeaders` / `WithSecurityHeadersPolicy` | `internal/handler/security_headers.go` |
 | OpenID Federation 1.0 (5 slices) | `/.well-known/openid-federation`, `/fetch` | `WithFederationEntity(cfg, signer)` | `federation/` + `handlers.go` + `sso.go` |
