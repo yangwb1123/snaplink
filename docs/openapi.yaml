@@ -1966,6 +1966,79 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /me/identities:
+    get:
+      tags: [self-service]
+      summary: List the authenticated user's linked external identities.
+      description: |
+        Returns the bearer subject's ACTIVE identity links (federated IdP
+        subjects, or another local account folded in) — see
+        `domains/identitylink`. Requires an identity-link store to be wired
+        (`WithIdentityLinkStore`); `Cache-Control: no-store`.
+      operationId: listMyIdentities
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The user's linked identities.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  identities:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        user_id: { type: string }
+                        provider: { type: string }
+                        subject: { type: string }
+                        status: { type: string, enum: [active, revoked] }
+                        linked_at: { type: string, format: date-time }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /me/identities/{id}:
+    delete:
+      tags: [self-service]
+      summary: Unlink one of the authenticated user's own linked identities.
+      description: |
+        Removes the identity link by id. An id belonging to another user, or
+        unknown/already-unlinked, returns the same 404 (oracle-safe —
+        ownership is enforced via the user-scoped list). Refuses with 409
+        `identity_unlink_last_method` when this is the user's LAST remaining
+        active link AND the account has no other authentication method (a
+        local password credential) — the "don't lock yourself out" guard.
+        `Cache-Control: no-store`. Emits an `identity_unlinked` audit event
+        keyed on the subject.
+      operationId: deleteMyIdentity
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Identity unlinked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such identity link for this user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Refused — this is the user's last remaining authentication method.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /branding:
     get:
       tags: [self-service]

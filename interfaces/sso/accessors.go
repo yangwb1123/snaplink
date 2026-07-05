@@ -13,6 +13,7 @@ import (
 	"github.com/snaplink/sso/domains/anomaly"
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/domains/identitylink"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenantcollab"
@@ -283,6 +284,34 @@ func (s *Server) ResidencyGateWrite(ctx HandlerContext, claims *TokenClaims) (st
 // RecordConsentRevoked emits the consent-revoked audit event (selfservice seam).
 func (s *Server) RecordConsentRevoked(ctx HandlerContext, userID, clientID string) {
 	s.recordConsentEvent(ctx, audit.EventConsentRevoked, audit.OutcomeSuccess, userID, clientID, nil)
+}
+
+// IdentityLinkStore exposes the wired self-service identity-link store (may
+// be nil — see domains/identitylink). Satisfies selfservicecore.Deps.
+func (s *Server) IdentityLinkStore() identitylink.Store { return s.identityLinkStore }
+
+// IdentityMergePolicy exposes the operator's wired conflict-resolution
+// strategy (WithIdentityMergePolicy), or nil when unwired. This is the
+// extension point a CUSTOM authenticator/login integration calls
+// identitylink.Resolve with — see the domains/identitylink package doc for
+// why the stock /auth/login handler does not invoke it itself.
+func (s *Server) IdentityMergePolicy() identitylink.MergePolicy { return s.identityMergePolicy }
+
+// RecordIdentityUnlinked emits the identity-unlinked audit event (selfservice
+// seam) for DELETE /me/identities/:id.
+func (s *Server) RecordIdentityUnlinked(ctx HandlerContext, userID, linkID, provider string) {
+	if s.auditor == nil {
+		return
+	}
+	evt := &audit.Event{
+		Type:    audit.EventIdentityUnlinked,
+		Outcome: audit.OutcomeSuccess,
+		ActorID: userID,
+		ActorIP: audit.ClientIP(ctx.Request()),
+	}
+	audit.SetMeta(evt, "identity_id", linkID)
+	audit.SetMeta(evt, "provider", provider)
+	s.auditor.Record(ctx.Request().Context(), evt)
 }
 
 // Tenant metrics accessors.

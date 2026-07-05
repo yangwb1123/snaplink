@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/snaplink/sso/domains/identitylink"
 	"github.com/snaplink/sso/shared/core"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -102,7 +103,21 @@ func (m *MemoryPasswordCredentialStore) VerifyPassword(_ context.Context, userID
 	return nil
 }
 
+// HasPassword implements identitylink.PasswordPresenceChecker: reports
+// whether userID has a stored credential, WITHOUT the timing-equalization
+// VerifyPassword performs. Safe to expose directly — this is a
+// governance/guard query (the self-service identity-unlink "don't lock
+// yourself out" check) on the CALLER's OWN authenticated subject, not a login
+// path, so there is no anti-enumeration concern to preserve.
+func (m *MemoryPasswordCredentialStore) HasPassword(_ context.Context, userID string) (bool, error) {
+	m.mu.RLock()
+	_, ok := m.hashes[userID]
+	m.mu.RUnlock()
+	return ok, nil
+}
+
 var (
-	_ core.PasswordCredentialStore = (*MemoryPasswordCredentialStore)(nil)
-	_ core.PasswordHashImporter    = (*MemoryPasswordCredentialStore)(nil)
+	_ core.PasswordCredentialStore         = (*MemoryPasswordCredentialStore)(nil)
+	_ core.PasswordHashImporter            = (*MemoryPasswordCredentialStore)(nil)
+	_ identitylink.PasswordPresenceChecker = (*MemoryPasswordCredentialStore)(nil)
 )

@@ -35,4 +35,6 @@ var (
 	HandleDeleteMyMFAFactor      = selfserviceaccount.HandleDeleteMyMFAFactor
 	HandleTOTPEnrollBegin        = selfserviceaccount.HandleTOTPEnrollBegin
 	HandleTOTPEnrollConfirm      = selfserviceaccount.HandleTOTPEnrollConfirm
+	HandleMyIdentities           = selfserviceaccount.HandleMyIdentities
+	HandleUnlinkMyIdentity       = selfserviceaccount.HandleUnlinkMyIdentity
 )

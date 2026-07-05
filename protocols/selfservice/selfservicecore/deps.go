@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/snaplink/sso/domains/identitylink"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/compliance"
 	"github.com/snaplink/sso/shared/core"
@@ -80,6 +81,11 @@ type Deps interface {
 	// Consent self-service (GET /consents/me, DELETE /consents/me/:client_id).
 	ConsentStore() core.ConsentStore
 	RecordConsentRevoked(ctx core.HandlerContext, userID, clientID string)
+
+	// Identity-linking self-service (GET /me/identities, DELETE
+	// /me/identities/:id). See domains/identitylink.
+	IdentityLinkStore() identitylink.Store
+	RecordIdentityUnlinked(ctx core.HandlerContext, userID, linkID, provider string)
 
 	// Profile self-service (GET/PATCH /me).
 	ResolveIssuer(ctx core.HandlerContext) string
