@@ -9140,7 +9140,19 @@ components:
           example: invalid_credentials
         error_description:
           type: string
-          description: Optional human-readable detail.
+          description: Optional human-readable detail (always English).
+        error_description_localized:
+          type: string
+          description: |
+            OPT-IN, additive field (shared/i18n): present only on the
+            authorization-endpoint error surface (e.g. `/auth/login`), only
+            when the server has a Localizer configured (`WithLocalizer`), and
+            only when it holds a translation for this `error` code in the
+            resolved locale. The locale is the top-quality tag from the
+            request's `Accept-Language` header, falling back to the
+            already-resolved `recommended_language` geo hint. Never replaces
+            `error_description` — clients should still branch on `error`, not
+            on either description field.
 
     TenantMembership:
       type: object

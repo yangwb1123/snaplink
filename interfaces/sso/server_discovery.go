@@ -261,19 +261,23 @@ func (s *Server) resolveIssuer(ctx HandlerContext) string {
 // NOT in token / userinfo / callback handlers, which are not
 // authorization responses.
 func (s *Server) authzErrorBody(ctx HandlerContext, code string) map[string]string {
-	return map[string]string{
+	m := map[string]string{
 		KeyError: code,
 		KeyIss:   s.resolveIssuer(ctx),
 	}
+	s.localizeErrorBody(ctx, m, code)
+	return m
 }
 
 // authzErrorBodyDesc is authzErrorBody plus an error_description.
 func (s *Server) authzErrorBodyDesc(ctx HandlerContext, code, desc string) map[string]string {
-	return map[string]string{
+	m := map[string]string{
 		KeyError:            code,
 		KeyErrorDescription: desc,
 		KeyIss:              s.resolveIssuer(ctx),
 	}
+	s.localizeErrorBody(ctx, m, code)
+	return m
 }
 
 // authzErrorBodyWithState returns the standard authorization error envelope

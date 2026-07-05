@@ -1,0 +1,7 @@
+{
+  "invalid_credentials": "The username or password you entered is incorrect.",
+  "invalid_request": "The request is missing a required parameter or is otherwise malformed.",
+  "account_locked": "This account has been temporarily locked after too many failed sign-in attempts.",
+  "mfa_invalid": "The verification code is invalid or has expired.",
+  "email_not_verified": "Please verify your email address before signing in."
+}

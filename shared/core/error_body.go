@@ -35,3 +35,20 @@ func ErrorBodyWithTrace(code, traceID string) map[string]string {
 	}
 	return body
 }
+
+// ErrorBodyWithLocalizedDesc adds error_description_localized to an
+// already-built error envelope (mutates body in place and returns it for
+// chaining). This is a purely ADDITIVE, opt-in enrichment — same shape as
+// ErrorBodyWithTrace's trace_id: the existing `error` / `error_description`
+// fields are left exactly as the caller built them, so a response built
+// without this call (no Localizer configured, or no translation found for
+// this key/locale — see shared/i18n) is byte-identical to today. An empty
+// desc is a no-op (nothing to add).
+//
+//	{ "error": code, "error_description_localized": desc }
+func ErrorBodyWithLocalizedDesc(body map[string]string, desc string) map[string]string {
+	if desc != "" {
+		body[KeyErrorDescriptionLocalized] = desc
+	}
+	return body
+}

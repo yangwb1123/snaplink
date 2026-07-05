@@ -15,6 +15,25 @@ When the server has extra detail it includes `error_description`:
 { "error": "invalid_request", "error_description": "json: cannot unmarshal" }
 ```
 
+**Opt-in localization**: when an operator wires `sso.WithLocalizer` (see
+`shared/i18n`), the authorization-endpoint error surface (e.g.
+`/auth/login`) additionally carries `error_description_localized` — the
+translated string for `error` in the locale picked from the request's
+`Accept-Language` header, falling back to the already-resolved
+`recommended_language` geo hint:
+
+```json
+{
+  "error": "invalid_credentials",
+  "error_description_localized": "El nombre de usuario o la contraseña que ingresaste es incorrecto."
+}
+```
+
+This field is absent unless a Localizer is configured AND it has a
+translation for that code/locale — an unconfigured server's responses are
+byte-identical to today. Still branch on `error`, never on either
+description field.
+
 Defined as Go constants in `consts.go` (and in the per-handler files
 for the audit / permission code subsets) — grep there if you need the
 exact emission site.
