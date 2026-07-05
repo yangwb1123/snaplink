@@ -201,6 +201,14 @@ type IssueRefreshTokenParams struct {
 	// Generation is the new token's rotation depth (0 at first issue,
 	// parent+1 at rotation) — the token-policy max_refresh_depth input.
 	Generation int
+	// FamilyCreatedAt propagates the family's original issuance moment across
+	// a ROTATION (FamilyID already set). Ignored on a first issue (FamilyID
+	// empty) — IssueRefreshToken stamps "now" itself in that branch, since
+	// there is no earlier record to propagate from. Zero on a rotation call
+	// means the caller's record predates this field; the absolute-max-
+	// lifetime cap then simply never fires for that family (additive-
+	// migration default, see oauthspi.RefreshToken.FamilyCreatedAt).
+	FamilyCreatedAt time.Time
 }
 
 // IssueRefreshToken generates and stores a refresh token.
@@ -210,24 +218,49 @@ func IssueRefreshToken(ctx context.Context, p IssueRefreshTokenParams) (string, 
 	if err != nil {
 		return "", fmt.Errorf("generate refresh token: %w", err)
 	}
-	// TTL resolution precedence: per-client override > server-wide
-	// configuration > default.
-	ttl := p.ClientTTLOverride
-	if ttl <= 0 {
-		ttl = p.RefreshTokenTTL
-	}
-	if ttl <= 0 {
-		ttl = 30 * 24 * time.Hour // DefaultRefreshTokenTTL fallback
-	}
-	if p.FamilyID == "" {
+	ttl := resolveRefreshTTL(p)
+	freshFamily := p.FamilyID == ""
+	if freshFamily {
 		fid, err := GenerateAuthCodeBytes()
 		if err != nil {
 			return "", fmt.Errorf("generate refresh family id: %w", err)
 		}
 		p.FamilyID = fid
 	}
+	entry := buildRefreshTokenEntry(p, ttl, freshFamily)
+	if err := p.RefreshTokenStore.Issue(ctx, token, entry); err != nil {
+		return "", fmt.Errorf("store refresh token: %w", err)
+	}
+	return token, nil
+}
+
+// resolveRefreshTTL applies the TTL resolution precedence: per-client
+// override > server-wide configuration > default. Extracted from
+// IssueRefreshToken for the function-length budget.
+func resolveRefreshTTL(p IssueRefreshTokenParams) time.Duration {
+	if p.ClientTTLOverride > 0 {
+		return p.ClientTTLOverride
+	}
+	if p.RefreshTokenTTL > 0 {
+		return p.RefreshTokenTTL
+	}
+	return 30 * 24 * time.Hour // DefaultRefreshTokenTTL fallback
+}
+
+// buildRefreshTokenEntry assembles the persisted RefreshToken record.
+// freshFamily is true when p.FamilyID was empty at call time (IssueRefreshToken
+// has already minted a fresh one by the time this runs) — the absolute-max-
+// lifetime clock (FamilyCreatedAt) then starts NOW, since there is no earlier
+// record to propagate from; a rotation instead propagates whatever the
+// caller supplied. Extracted from IssueRefreshToken for the function-length
+// budget.
+func buildRefreshTokenEntry(p IssueRefreshTokenParams, ttl time.Duration, freshFamily bool) *oauthspi.RefreshToken {
 	now := time.Now()
-	entry := &oauthspi.RefreshToken{
+	familyCreatedAt := p.FamilyCreatedAt
+	if freshFamily {
+		familyCreatedAt = now
+	}
+	return &oauthspi.RefreshToken{
 		UserID:               p.UserID,
 		ClientID:             p.ClientID,
 		Provider:             p.Provider,
@@ -244,9 +277,6 @@ func IssueRefreshToken(ctx context.Context, p IssueRefreshTokenParams) (string, 
 		AuthTime:             p.AuthTime,
 		ConfirmationJKT:      p.ConfirmationJKT,
 		Generation:           p.Generation,
+		FamilyCreatedAt:      familyCreatedAt,
 	}
-	if err := p.RefreshTokenStore.Issue(ctx, token, entry); err != nil {
-		return "", fmt.Errorf("store refresh token: %w", err)
-	}
-	return token, nil
 }

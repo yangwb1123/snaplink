@@ -10,15 +10,62 @@ type OAuthConfig struct {
 	// memory-only (no SQLite backend yet). Each individually-enabled
 	// store inherits this choice unless the store's own Backend
 	// override is set.
-	Backend      string                  `yaml:"backend"`
-	SQLite       OAuthSQLiteConfig       `yaml:"sqlite"`
-	AuthCode     OAuthStoreConfig        `yaml:"auth_code"`
-	RefreshToken OAuthRefreshTokenConfig `yaml:"refresh_token"`
-	DeviceCode   OAuthDeviceCodeConfig   `yaml:"device_code"`
-	PAR          OAuthStoreConfig        `yaml:"par"`
-	JAR          OAuthJARConfig          `yaml:"jar"`
-	JARM         OAuthJARMConfig         `yaml:"jarm"`
-	Compliance   OAuthComplianceConfig   `yaml:"compliance"`
+	Backend       string                   `yaml:"backend"`
+	SQLite        OAuthSQLiteConfig        `yaml:"sqlite"`
+	AuthCode      OAuthStoreConfig         `yaml:"auth_code"`
+	RefreshToken  OAuthRefreshTokenConfig  `yaml:"refresh_token"`
+	DeviceCode    OAuthDeviceCodeConfig    `yaml:"device_code"`
+	PAR           OAuthStoreConfig         `yaml:"par"`
+	JAR           OAuthJARConfig           `yaml:"jar"`
+	JARM          OAuthJARMConfig          `yaml:"jarm"`
+	Compliance    OAuthComplianceConfig    `yaml:"compliance"`
+	Introspection OAuthIntrospectionConfig `yaml:"introspection"`
+	TokenExchange OAuthTokenExchangeConfig `yaml:"token_exchange"`
+}
+
+// OAuthTokenExchangeConfig groups RFC 8693 token-exchange governance knobs.
+// The hop-authorization Policy SPI itself (domains/tokenexchange.Policy) is
+// deliberately NOT YAML-driven — like spi.RiskScorer / spi.MFAProvider, it
+// encodes operator-specific business rules an inline config schema can't
+// generically express; wire a custom implementation (or the reference
+// domains/tokenexchange/memory.Store) via sso.WithTokenExchangePolicy.
+type OAuthTokenExchangeConfig struct {
+	// MaxChainLifetime caps an RFC 8693 delegation chain's total age —
+	// measured from the subject_token's AuthTime (the original end-user
+	// login or SPIFFE SVID presentation, propagated UNCHANGED across every
+	// exchange hop), independent of any single hop's access-token TTL. 0
+	// (default) disables the cap — byte-identical to pre-feature behavior.
+	MaxChainLifetime time.Duration `yaml:"max_chain_lifetime"`
+}
+
+// OAuthIntrospectionConfig groups /token/introspect tuning: response caching,
+// signed (JWT) responses, and batch requests. All fields default off/zero —
+// byte-identical to today's plain-JSON, uncached, single-token behavior.
+type OAuthIntrospectionConfig struct {
+	// CacheTTL enables the optional short-lived cache (protocols/oauth.
+	// IntrospectionCache) for /token/introspect responses keyed by
+	// SHA-256(token), so a burst of introspection calls for the same token
+	// doesn't all pay full JWT verification. 0 (default) = disabled. Backed
+	// by an in-process handler.MemoryIntrospectionCache; a multi-replica
+	// deployment wanting a SHARED cache should wire a custom
+	// oauth.IntrospectionCache via sso.WithIntrospectionCache instead.
+	CacheTTL time.Duration `yaml:"cache_ttl"`
+	// SignedResponseEnabled opts into RFC 9701-style JWT-signed introspection
+	// responses, reusing the server's existing token-signing key (no
+	// separate key is minted) — the introspection-side analogue of JARM. A
+	// wired signer only takes effect when the introspecting client ALSO
+	// opts in per-request via `Accept: application/token-introspection+jwt`;
+	// a request without that header always gets plain JSON.
+	SignedResponseEnabled bool `yaml:"signed_response_enabled"`
+	// BatchEnabled opts into accepting a `tokens` array in the
+	// /token/introspect request body (JSON `{"tokens":[...]}"` or repeated
+	// form field `tokens`) and returning an array of RFC 7662 result bodies
+	// in one round trip. Default false: an inbound `tokens` field is
+	// ignored and the single-`token` behavior is unchanged.
+	BatchEnabled bool `yaml:"batch_enabled"`
+	// MaxBatchSize caps how many tokens one batch request may include.
+	// <= 0 falls back to oauth.DefaultMaxIntrospectBatchSize.
+	MaxBatchSize int `yaml:"max_batch_size"`
 }
 
 // OAuthJARMConfig opts into JARM (JWT Secured Authorization Response
@@ -77,6 +124,15 @@ type OAuthJARConfig struct {
 // embedding so existing YAML configs (enabled/ttl) continue to work.
 type OAuthRefreshTokenConfig struct {
 	OAuthStoreConfig `yaml:",inline"`
+
+	// AbsoluteMaxLifetime caps a refresh-token FAMILY's total age since
+	// original issuance (FamilyCreatedAt), enforced at rotation time
+	// independent of the per-token TTL/idle-expiry (TTL above) and the
+	// rotation-velocity cap (MaxRotationsPerWindow/RotationWindow) — a family
+	// that keeps rotating on schedule never re-triggers either of those. 0
+	// (the default) disables the cap: a family may rotate forever, exactly
+	// as before this field existed.
+	AbsoluteMaxLifetime time.Duration `yaml:"absolute_max_lifetime"`
 }
 
 // OAuthStoreConfig is the shared shape for the simple TTL-only stores.

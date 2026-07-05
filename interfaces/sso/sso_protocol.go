@@ -9,6 +9,7 @@ import (
 	"github.com/snaplink/sso/domains/anomaly"
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/tokenanomaly"
+	"github.com/snaplink/sso/domains/tokenexchange"
 	"github.com/snaplink/sso/domains/tokenpolicy"
 	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/interfaces/cors"
@@ -39,6 +40,14 @@ type protocolState struct {
 	// Nil = no policy layer: issuerForClient returns the raw issuer and
 	// enforceTokenPolicy is a no-op, so issuance is byte-identical to today.
 	tokenPolicyStore tokenpolicy.Store
+	// maxTokenExchangeChainLifetime is the optional hard ceiling on an RFC
+	// 8693 token-exchange delegation chain's total age (WithMaxTokenExchangeChainLifetime).
+	// 0 (default) disables the check — byte-identical to pre-feature behavior.
+	maxTokenExchangeChainLifetime time.Duration
+	// tokenExchangePolicy is the optional operator-defined hop-authorization
+	// SPI (WithTokenExchangePolicy). Nil = every exchange hop is allowed,
+	// byte-identical to pre-feature behavior.
+	tokenExchangePolicy tokenexchange.Policy
 	// tokenAnomalyDetector holds the opt-in token-behavior anomaly detector
 	// (WithTokenAnomalyDetector), Phase 3 of token governance. Nil = no
 	// detector: the suspicious-token admin route is not mounted and
@@ -91,18 +100,22 @@ type protocolState struct {
 	// degradation holds the DR degraded-service mode. Nil (default) ⇒ the
 	// enforcement gate is not installed and no /admin/dr/mode route is mounted,
 	// so a build without WithDegradationManager is byte-identical.
-	degradation                    *degradation.Manager
-	bodyLimit                      int64
-	bodyLimitByPath                map[string]int64 // exact-prefix overrides; longest prefix wins
-	readyChecks                    []namedReadyCheck
-	tracingOperation               string
-	corsPolicy                     *cors.Policy
-	securityHeadersEnabled         bool
-	issuer                         string
-	authCodeStore                  oauth.AuthCodeStore
-	authCodeTTL                    time.Duration
-	refreshTokenStore              oauth.RefreshTokenStore
-	refreshTokenTTL                time.Duration
+	degradation            *degradation.Manager
+	bodyLimit              int64
+	bodyLimitByPath        map[string]int64 // exact-prefix overrides; longest prefix wins
+	readyChecks            []namedReadyCheck
+	tracingOperation       string
+	corsPolicy             *cors.Policy
+	securityHeadersEnabled bool
+	issuer                 string
+	authCodeStore          oauth.AuthCodeStore
+	authCodeTTL            time.Duration
+	refreshTokenStore      oauth.RefreshTokenStore
+	refreshTokenTTL        time.Duration
+	// refreshAbsoluteMaxLifetime is the optional hard ceiling on a refresh-
+	// token family's total age since original issuance (WithRefreshAbsoluteMaxLifetime).
+	// 0 (the default) disables the cap — byte-identical to pre-feature behavior.
+	refreshAbsoluteMaxLifetime     time.Duration
 	refreshGrace                   tokengrant.RefreshGraceStore
 	idTokenIssuer                  oidc.IDTokenIssuer
 	deviceCodeStore                oauth.DeviceCodeStore
@@ -352,4 +365,14 @@ type cacheState struct {
 	// SHORTER than the token's remaining lifetime; 60s is safe for
 	// typical access tokens with 5-60 minute lifetimes.
 	introspectionCacheTTL time.Duration
+	// introspectionSigner is the optional RFC 9701-style signed-introspection
+	// signer (WithIntrospectionSigner). Nil (the default) means every
+	// /token/introspect response stays plain JSON regardless of the
+	// client's Accept header.
+	introspectionSigner oauth.IntrospectionSigner
+	// introspectionBatchEnabled / introspectionBatchMaxSize gate the
+	// opt-in batch /token/introspect capability (WithIntrospectionBatch).
+	// Disabled by default: an inbound `tokens` field is ignored entirely.
+	introspectionBatchEnabled bool
+	introspectionBatchMaxSize int
 }

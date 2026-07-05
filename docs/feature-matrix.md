@@ -6,12 +6,12 @@ OAuth 2.0 / OIDC / SSO feature compliance matrix. Extracted from AGENTS.md.
 |---|---|---|---|
 | RFC 6749 §4.1 authorization_code | `/auth/login` + `/token` | `WithAuthCodeStore` | `oauth/auth_code.go` |
 | RFC 6749 §4.4 client_credentials | `/token` | always | `oauth/client_creds.go` |
-| RFC 6749 §6 refresh_token | `/token` | `WithRefreshTokenStore`; grace: `WithRefreshRotationGrace(window)` | `oauth/refresh_token.go` |
+| RFC 6749 §6 refresh_token | `/token` | `WithRefreshTokenStore`; grace: `WithRefreshRotationGrace(window)`; family absolute-max-lifetime: `WithRefreshAbsoluteMaxLifetime(d)` | `oauth/refresh_token.go` |
 | RFC 7636 PKCE | `/auth/login` + `/token` | per-request / `Client.RequirePKCE` | `oauth/auth_code.go` |
-| RFC 7662 introspection | `/token/introspect` | always | `oauth/handle_introspect.go` |
+| RFC 7662 introspection | `/token/introspect` | always; cache: `WithIntrospectionCache`; RFC 9701-style signed response: `WithIntrospectionSigner` (opt-in per-request via `Accept: application/token-introspection+jwt`); batch: `WithIntrospectionBatch(maxSize)` | `oauth/handle_introspect.go` + `oauth/introspect_cache.go` |
 | RFC 7009 revocation | `/token/revoke[-all]` | always; bulk: `RefreshTokenSubjectIndex`; cross-replica: `WithCrossReplicaRevocation`; durable: `With{Algo}RevocationStore` | `oauth/handle_revoke.go` |
 | RFC 8628 device | `/device/{code,verify}`, `/token` | `WithDeviceCodeStore` | `oauth/device_code.go` |
-| RFC 8693 token-exchange | `/token` | always; refresh: `WithRefreshTokenStore`; actor replay: `WithJTIReplayStore` | `handlers.go` + `oauth/token_exchange_helpers.go` |
+| RFC 8693 token-exchange | `/token` | always; refresh: `WithRefreshTokenStore`; actor replay: `WithJTIReplayStore`; act-chain cycle detection: always-on; chain-lifetime cap: `WithMaxTokenExchangeChainLifetime(d)`; hop authorization: `WithTokenExchangePolicy(policy)` (`domains/tokenexchange` SPI + `memory.Store` reference impl) | `handlers.go` + `internal/handler/tokengrant/token_exchange.go` |
 | RFC 8707 resource indicators | every issuance | `Client.AllowedResources` | per-grant |
 | RFC 9126 PAR | `/par` | `WithPARStore` | `oauth/handle_par.go` |
 | RFC 7591/7592 DCR | `/register[/:id]` | `WithDynamicClientRegistration` | `oauth/handle_register.go` |

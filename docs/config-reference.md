@@ -8,6 +8,11 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 |---|---|
 | `oauth.backend` | ONE key for the four hot stores (auth_code / refresh_token / device_code / par): `memory`\|`sqlite`\|`redis` |
 | `oauth.jar` | RFC 9101 §5.2.2 request_uri fetcher (HTTPS, no-redirect) |
+| `oauth.refresh_token.absolute_max_lifetime` | Hard ceiling on a refresh-token family's total age since original issuance, enforced at rotation independent of the per-token TTL/rotation-velocity cap; 0 (default) = no cap |
+| `oauth.token_exchange.max_chain_lifetime` | Hard ceiling on an RFC 8693 token-exchange delegation chain's age (measured from the subject_token's `AuthTime`, propagated unchanged across hops); 0 (default) = no cap. The hop-authorization `TokenExchangePolicy` SPI (`domains/tokenexchange`) and act-chain cycle detection are always-on / Option-wired, not YAML-driven — see `sso.WithTokenExchangePolicy` |
+| `oauth.introspection.cache_ttl` | Opt-in short-lived cache for `/token/introspect` responses keyed by `SHA-256(token)` (`handler.MemoryIntrospectionCache`); 0 (default) = no caching |
+| `oauth.introspection.signed_response_enabled` | Opt-in RFC 9701-style JWT-signed `/token/introspect` responses, reusing the existing signing-key infra; takes effect only when the client ALSO sends `Accept: application/token-introspection+jwt` |
+| `oauth.introspection.{batch_enabled,max_batch_size}` | Opt-in `tokens` array support on `/token/introspect` (one round trip, results returned under `results`); `max_batch_size` defaults to `oauth.DefaultMaxIntrospectBatchSize` (50) when unset |
 | `dpop.{proof_max_age,max_clock_skew}` | DPoP iat-window (default 60s each); 0 = SDK default (byte-identical) |
 | `security.jti_replay.fail_closed` | Store error → reject (treat-as-replay) instead of fail-open |
 | `identity.client_cache.{enabled,ttl}` | Per-login ClientStore.Get TTL cache (default 30s); `KindClientChange` bus-invalidated on every mutation |

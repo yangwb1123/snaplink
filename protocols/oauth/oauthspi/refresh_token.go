@@ -102,6 +102,20 @@ type RefreshToken struct {
 	// (redis) forward/backward compatible: a 0 generation is simply absent
 	// from the blob and unmarshals back to 0.
 	Generation int `json:"generation,omitempty"`
+
+	// FamilyCreatedAt is when this refresh-token FAMILY was first issued (the
+	// original login / auth_code exchange / device / CIBA / token-exchange
+	// grant), stamped once at IssueRefreshToken's "new family" branch (FamilyID
+	// was empty) and propagated UNCHANGED across every rotation thereafter —
+	// the same discipline as Amr/Acr/AuthTime. It is the input the OPTIONAL
+	// absolute-max-lifetime cap reads: unlike the per-token TTL/idle-expiry
+	// above, a family that keeps rotating legitimately never re-triggers
+	// those, so this is the only signal that bounds a family's TOTAL age. A
+	// token persisted before this field existed (or a rotation whose caller
+	// never threaded it) reads zero, which SKIPS the cap check entirely (see
+	// RefreshGrantDeps.RefreshAbsoluteMaxLifetime) — an additive-migration
+	// default that never retroactively kills a pre-existing family.
+	FamilyCreatedAt time.Time `json:"family_created_at,omitempty"`
 }
 
 // RefreshAuthContext groups the per-issue refresh-record context threaded into
@@ -119,6 +133,11 @@ type RefreshAuthContext struct {
 	// Generation is the new token's rotation depth (0 at first issue,
 	// parent Generation + 1 at rotation). Persisted onto RefreshToken.Generation.
 	Generation int
+	// FamilyCreatedAt propagates the family's original issuance moment
+	// unchanged across rotation (see RefreshToken.FamilyCreatedAt). Left zero
+	// at first issue — IssueRefreshToken stamps "now" itself when it mints a
+	// brand-new FamilyID, so callers only need to thread this at ROTATION.
+	FamilyCreatedAt time.Time
 }
 
 // IsExpired reports whether the refresh token's lifetime has elapsed.

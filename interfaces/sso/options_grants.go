@@ -1,8 +1,11 @@
 package sso
 
 import (
+	"time"
+
 	"golang.org/x/time/rate"
 
+	"github.com/snaplink/sso/domains/tokenexchange"
 	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/protocols/oauth"
 )
@@ -78,5 +81,80 @@ func WithGrantTypeRateLimit(grantType string, tokensPerSec float64, burst int) O
 			lim = rate.NewLimiter(rate.Limit(tokensPerSec), burst)
 		}
 		s.grantRateLimiters[grantType] = &rateLimiterEntry{limiter: lim}
+	}
+}
+
+// WithRefreshAbsoluteMaxLifetime opts into a hard ceiling on a refresh-token
+// FAMILY's total age since original issuance, enforced at rotation time
+// independent of the per-token TTL / idle-expiry / rotation-velocity cap the
+// store already applies. A family that keeps rotating on schedule never
+// re-triggers those defenses, so this closes the "stays alive forever"
+// gap — once now-FamilyCreatedAt exceeds d, the next rotation attempt fails
+// closed with the same invalid_grant every other refresh failure returns
+// (oracle-leak collapse, AGENTS.md §3).
+//
+// d <= 0 (the default) disables the cap — byte-identical to today.
+func WithRefreshAbsoluteMaxLifetime(d time.Duration) Option {
+	return func(s *Server) { s.refreshAbsoluteMaxLifetime = d }
+}
+
+// WithMaxTokenExchangeChainLifetime opts into a hard ceiling on how old an
+// RFC 8693 token-exchange delegation chain's underlying credential may be —
+// measured from the subject_token's AuthTime (the original end-user login or
+// SPIFFE SVID presentation), which every exchange hop propagates UNCHANGED.
+// This is independent of any single hop's access-token TTL: a chain that
+// keeps getting re-exchanged with fresh short-lived tokens never otherwise
+// re-triggers an age check.
+//
+// d <= 0 (the default) disables the cap — byte-identical to today.
+func WithMaxTokenExchangeChainLifetime(d time.Duration) Option {
+	return func(s *Server) { s.maxTokenExchangeChainLifetime = d }
+}
+
+// WithTokenExchangePolicy wires an operator-defined tokenexchange.Policy that
+// HandleTokenExchangeGrant consults on every exchange (after the hop's
+// actor/scopes/resources are resolved, before anything is minted) to allow or
+// deny that SPECIFIC delegation — e.g. "service A may never act on behalf of
+// service B". A reference in-memory implementation is
+// domains/tokenexchange/memory.Store.
+//
+// nil (the default) is a no-op: every hop is allowed, byte-identical to a
+// build without this feature.
+func WithTokenExchangePolicy(policy tokenexchange.Policy) Option {
+	return func(s *Server) { s.tokenExchangePolicy = policy }
+}
+
+// WithIntrospectionSigner enables optional RFC 9701-style JWT-signed
+// /token/introspect responses, reusing the server's existing signing-key
+// infrastructure — pass the SAME issuer already wired via WithMetadataSigner
+// / WithJARM (or any type satisfying SignMetadata); no separate key is
+// minted. A wired signer only takes effect when the introspecting client
+// ALSO opts in per-request via `Accept: application/token-introspection+jwt`
+// — a wired-but-unrequested signer is a no-op.
+//
+// nil (the default) leaves every /token/introspect response byte-identical
+// plain JSON.
+func WithIntrospectionSigner(signer oauth.IntrospectionSigner) Option {
+	return func(s *Server) { s.introspectionSigner = signer }
+}
+
+// WithIntrospectionBatch opts into accepting a `tokens` array in the
+// /token/introspect request body (JSON `{"tokens":[...]}"` or repeated form
+// field `tokens`) and returning an array of RFC 7662 result bodies in one
+// round trip, sharing the same optional IntrospectionCache per token.
+//
+// maxSize caps how many tokens one request may include (a request over the
+// cap is rejected with invalid_request); maxSize <= 0 uses
+// oauth.DefaultMaxIntrospectBatchSize. Calling this Option is itself the
+// enable signal — without it an inbound `tokens` field is ignored entirely
+// and single-token behavior is byte-identical to today.
+func WithIntrospectionBatch(maxSize int) Option {
+	return func(s *Server) {
+		s.introspectionBatchEnabled = true
+		if maxSize > 0 {
+			s.introspectionBatchMaxSize = maxSize
+		} else {
+			s.introspectionBatchMaxSize = oauth.DefaultMaxIntrospectBatchSize
+		}
 	}
 }

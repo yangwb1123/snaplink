@@ -7,8 +7,12 @@ const (
 	// safe retry on the /token endpoint — the server caches the first
 	// successful response under this key and returns it for repeat
 	// requests, preventing duplicate token issuance on network retries.
-	HeaderIdempotencyKey       = "Idempotency-Key"
-	HeaderContentType          = "Content-Type"
+	HeaderIdempotencyKey = "Idempotency-Key"
+	HeaderContentType    = "Content-Type"
+	// HeaderAccept is the request header a client sets to content-negotiate
+	// an alternate response representation — e.g. RFC 9701-style signed JWT
+	// introspection responses (Accept: application/token-introspection+jwt).
+	HeaderAccept               = "Accept"
 	HeaderRequestID            = "X-Request-Id"
 	HeaderTraceID              = "X-Trace-Id"
 	HeaderTraceparent          = "Traceparent"

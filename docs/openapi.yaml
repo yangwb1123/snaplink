@@ -730,6 +730,23 @@ paths:
         Basic > body > private_key_jwt. Caller MUST be a registered
         client; anonymous introspection is intentionally not
         supported.
+
+        Optional response caching (`oauth.introspection.cache_ttl` /
+        `WithIntrospectionCache`) is transparent — same response shape,
+        just possibly served from a short-lived cache keyed by
+        `SHA-256(token)`.
+
+        Optional RFC 9701-style signed responses: when the server has
+        `WithIntrospectionSigner` wired AND this request sets
+        `Accept: application/token-introspection+jwt`, the body is a
+        compact JWT (`Content-Type: application/token-introspection+jwt`)
+        nesting the `IntrospectResponse` under a `token_introspection`
+        claim (substitution-attack defense) instead of plain JSON.
+        Wired-but-unrequested (or requested-but-unwired) both fall back
+        to plain JSON.
+
+        Optional batch mode: see `IntrospectRequest.tokens` /
+        `IntrospectBatchResponse`.
       operationId: postIntrospect
       requestBody:
         required: true
@@ -746,13 +763,31 @@ paths:
             Introspection succeeded. `active: false` means revoked /
             expired / never-issued (RFC 7662 §2.2 — same wire shape
             for all three so callers can't enumerate token state).
+            A batch request (`tokens`) returns `IntrospectBatchResponse`
+            instead. A signed-response opt-in (see above) returns a
+            compact JWT body instead of JSON, wrapping the SAME shape.
           headers:
             Cache-Control:
               schema: { type: string, example: no-store }
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/IntrospectResponse"
+                oneOf:
+                  - $ref: "#/components/schemas/IntrospectResponse"
+                  - $ref: "#/components/schemas/IntrospectBatchResponse"
+            application/token-introspection+jwt:
+              schema:
+                type: string
+                description: Compact JWT (see description above).
+        "400":
+          description: |
+            Batch request over `max_batch_size`, or (signed-response
+            opt-in) a signing failure — both `invalid_request` /
+            `internal_error` per the wire code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Client authentication failed.
           content:
@@ -8166,13 +8201,28 @@ components:
         token:
           type: string
           description: The token to introspect.
+        tokens:
+          type: array
+          items: { type: string }
+          description: |
+            Opt-in batch mode (`oauth.introspection.batch_enabled` /
+            `WithIntrospectionBatch`): introspect every listed token in
+            one round trip instead of `token`. Ignored entirely when the
+            capability is disabled server-side — a `token`-less request
+            then falls through to the ordinary `token` validation
+            (400 `invalid_request`), so an unconfigured server's
+            behavior is unaffected by this field's presence. A request
+            over the configured `max_batch_size` is rejected outright
+            (400 `invalid_request`) rather than silently truncated.
+            See `IntrospectBatchResponse`.
         token_type_hint:
           type: string
           enum: [access_token, refresh_token]
           description: |
             Lookup shortcut. Server falls back to the other store
             when the hint misses, so an incorrect hint is a perf
-            hit but never a correctness bug.
+            hit but never a correctness bug. Applies to every token in
+            `tokens` too, when batching.
         client_id:
           type: string
         client_secret:
@@ -8217,6 +8267,19 @@ components:
           description: |
             RFC 7800 confirmation method. Present when the token was
             DPoP- or mTLS-bound; carries `jkt` or `x5t#S256`.
+
+    IntrospectBatchResponse:
+      type: object
+      required: [results]
+      description: |
+        Returned instead of `IntrospectResponse` when the request used
+        the opt-in `tokens` batch field (see `IntrospectRequest.tokens`).
+      properties:
+        results:
+          type: array
+          description: One `IntrospectResponse` per requested token, in the SAME order as the request's `tokens` array.
+          items:
+            $ref: "#/components/schemas/IntrospectResponse"
 
     RevokeRequest:
       type: object

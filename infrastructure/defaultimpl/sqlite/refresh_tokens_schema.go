@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     acr                    TEXT    NOT NULL DEFAULT '',
     auth_time              INTEGER NOT NULL DEFAULT 0,
     confirmation_jkt       TEXT    NOT NULL DEFAULT '',
-    generation             INTEGER NOT NULL DEFAULT 0
+    generation             INTEGER NOT NULL DEFAULT 0,
+    family_created_at      INTEGER NOT NULL DEFAULT 0
 );`
 
 // refreshTokensIndexDDL creates indexes + the family ledger. Runs AFTER
@@ -95,6 +96,13 @@ var refreshTokenMigrations = []migrate.Migration{
 	// Existing rows default to 0 — a pre-feature token reads generation 0, so an
 	// un-capped fleet is byte-identical to before the feature.
 	{Version: 5, Name: "refresh_token_generation", Func: addRefreshTokenGeneration},
+	// v6 backfills family_created_at (the absolute-max-lifetime cap's input —
+	// see oauthspi.RefreshToken.FamilyCreatedAt). Fresh DBs get it from the
+	// baseline DDL; pre-v6 DBs get it here. Existing rows default to 0 (the
+	// same "unset" sentinel auth_time uses), which SKIPS the cap check for
+	// those families rather than fabricating a start time — an additive
+	// migration that never retroactively kills a pre-existing family.
+	{Version: 6, Name: "refresh_token_family_created_at", Func: addRefreshTokenFamilyCreatedAt},
 }
 
 // addRefreshTokenAuthContext adds amr/acr/auth_time (preserve original
@@ -182,6 +190,23 @@ func addRefreshTokenDPoPBinding(ctx context.Context, x migrate.Execer) error {
 	}
 	_, err = x.ExecContext(ctx,
 		`ALTER TABLE refresh_tokens ADD COLUMN confirmation_jkt TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+// addRefreshTokenFamilyCreatedAt adds family_created_at (the absolute-max-
+// lifetime cap's input) to a pre-existing refresh_tokens table. Idempotent
+// via the column-exists check; existing rows default to 0 (unset — cap
+// check skipped, same discipline as auth_time's 0 sentinel).
+func addRefreshTokenFamilyCreatedAt(ctx context.Context, x migrate.Execer) error {
+	has, err := refreshTokenColumnExists(ctx, x, "family_created_at")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	_, err = x.ExecContext(ctx,
+		`ALTER TABLE refresh_tokens ADD COLUMN family_created_at INTEGER NOT NULL DEFAULT 0`)
 	return err
 }
 

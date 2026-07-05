@@ -16,6 +16,7 @@ import (
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tokenanomaly"
+	"github.com/snaplink/sso/domains/tokenexchange"
 	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/cluster"
@@ -46,16 +47,47 @@ func (s *Server) AuthCodeStore() oauth.AuthCodeStore         { return s.authCode
 func (s *Server) AuthCodeTTL() time.Duration                 { return s.authCodeTTL }
 func (s *Server) RefreshTokenStore() oauth.RefreshTokenStore { return s.refreshTokenStore }
 func (s *Server) RefreshTokenTTL() time.Duration             { return s.refreshTokenTTL }
-func (s *Server) DeviceCodeStore() oauth.DeviceCodeStore     { return s.deviceCodeStore }
-func (s *Server) DeviceCodeTTL() time.Duration               { return s.deviceCodeTTL }
-func (s *Server) DeviceCodeInterval() time.Duration          { return s.deviceCodeInterval }
-func (s *Server) DeviceVerifyBaseURL() string                { return s.deviceVerifyBaseURL }
-func (s *Server) PARStore() oauth.PARStore                   { return s.parStore }
-func (s *Server) PARTTL() time.Duration                      { return s.parTTL }
-func (s *Server) CIBAStore() oauth.CIBAStore                 { return s.cibaStore }
-func (s *Server) CIBARequestTTL() time.Duration              { return s.cibaRequestTTL }
-func (s *Server) CIBAPollInterval() time.Duration            { return s.cibaPollInterval }
-func (s *Server) DCRPolicy() *oauth.DCRPolicy                { return s.dcrPolicy }
+
+// RefreshAbsoluteMaxLifetime returns the configured hard ceiling on a
+// refresh-token family's total age (WithRefreshAbsoluteMaxLifetime). 0 means
+// disabled — every family may rotate indefinitely, as before this feature.
+func (s *Server) RefreshAbsoluteMaxLifetime() time.Duration { return s.refreshAbsoluteMaxLifetime }
+
+// MaxTokenExchangeChainLifetime returns the configured hard ceiling on an RFC
+// 8693 token-exchange delegation chain's total age (WithMaxTokenExchangeChainLifetime).
+// 0 means disabled.
+func (s *Server) MaxTokenExchangeChainLifetime() time.Duration {
+	return s.maxTokenExchangeChainLifetime
+}
+
+// TokenExchangePolicy returns the wired operator-defined hop-authorization
+// SPI (WithTokenExchangePolicy), or nil when unwired (every hop allowed).
+func (s *Server) TokenExchangePolicy() tokenexchange.Policy { return s.tokenExchangePolicy }
+
+// IntrospectionSigner returns the wired RFC 9701-style signed-introspection
+// signer (WithIntrospectionSigner), or nil when unwired (every response
+// stays plain JSON).
+func (s *Server) IntrospectionSigner() oauth.IntrospectionSigner { return s.introspectionSigner }
+
+// IntrospectionBatchMaxSize returns the configured cap on batch
+// /token/introspect requests, or 0 when the capability is disabled
+// (WithIntrospectionBatch never called) — the default-off contract.
+func (s *Server) IntrospectionBatchMaxSize() int {
+	if !s.introspectionBatchEnabled {
+		return 0
+	}
+	return s.introspectionBatchMaxSize
+}
+func (s *Server) DeviceCodeStore() oauth.DeviceCodeStore { return s.deviceCodeStore }
+func (s *Server) DeviceCodeTTL() time.Duration           { return s.deviceCodeTTL }
+func (s *Server) DeviceCodeInterval() time.Duration      { return s.deviceCodeInterval }
+func (s *Server) DeviceVerifyBaseURL() string            { return s.deviceVerifyBaseURL }
+func (s *Server) PARStore() oauth.PARStore               { return s.parStore }
+func (s *Server) PARTTL() time.Duration                  { return s.parTTL }
+func (s *Server) CIBAStore() oauth.CIBAStore             { return s.cibaStore }
+func (s *Server) CIBARequestTTL() time.Duration          { return s.cibaRequestTTL }
+func (s *Server) CIBAPollInterval() time.Duration        { return s.cibaPollInterval }
+func (s *Server) DCRPolicy() *oauth.DCRPolicy            { return s.dcrPolicy }
 
 func (s *Server) JTIReplayStore() security.JTIReplayStore         { return s.jtiReplayStore }
 func (s *Server) SubjectClientIndex() security.SubjectClientIndex { return s.subjectClientIndex }

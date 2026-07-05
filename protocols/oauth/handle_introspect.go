@@ -50,6 +50,16 @@ type IntrospectDeps interface {
 	// token-policy store returns false, so introspection is byte-identical
 	// without a wired policy.
 	IntrospectionRenewExceeded(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) bool
+	// IntrospectionSigner returns the optional signer for RFC 9701-style
+	// signed JWT introspection responses (WithIntrospectionSigner). Nil (the
+	// default) means every response stays plain JSON regardless of the
+	// client's Accept header.
+	IntrospectionSigner() IntrospectionSigner
+	// IntrospectionBatchMaxSize returns the configured cap on how many
+	// tokens one batch /token/introspect request may include, or 0 when the
+	// batch capability is disabled (the default) — an inbound `tokens`
+	// field is then ignored entirely and single-token behavior is unchanged.
+	IntrospectionBatchMaxSize() int
 }
 
 // introspectRequest is the bound form/JSON body for /token/introspect.
@@ -60,6 +70,12 @@ type introspectRequest struct {
 	ClientSecret        string `json:"client_secret"`
 	ClientAssertion     string `json:"client_assertion"`      // RFC 7521 + 7523
 	ClientAssertionType string `json:"client_assertion_type"` // RFC 7521 + 7523
+	// Tokens opts into a batch request: introspect every listed token in one
+	// call. Honored ONLY when the operator enabled the capability
+	// (IntrospectionBatchMaxSize > 0); otherwise ignored entirely, so an
+	// unconfigured server's behavior is byte-identical even if a caller
+	// happens to send this field.
+	Tokens []string `json:"tokens,omitempty"`
 }
 
 // HandleIntrospect implements RFC 7662 OAuth 2.0 Token Introspection.
@@ -109,46 +125,32 @@ func HandleIntrospect(d IntrospectDeps, ctx core.HandlerContext) {
 		return
 	}
 
+	// Batch mode (opt-in): an inbound `tokens` array is honored ONLY when
+	// the operator enabled the capability; otherwise it's silently ignored
+	// and a `token`-less request falls through to the single-token
+	// invalid_request below, exactly as it always has.
+	if maxBatch := d.IntrospectionBatchMaxSize(); maxBatch > 0 && len(req.Tokens) > 0 {
+		serveIntrospectBatch(d, ctx, req.Tokens, req.TokenTypeHint, maxBatch)
+		return
+	}
+
 	if req.Token == "" {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return
 	}
 
-	serveIntrospectWithCache(d, ctx, req.Token, req.TokenTypeHint)
+	serveIntrospectWithCache(d, ctx, req.Token, req.TokenTypeHint, req.ClientID)
 }
 
 // serveIntrospectWithCache performs the resolution + optional-cache step of
-// HandleIntrospect. Cache is keyed by SHA-256(token) so raw tokens are never
-// stored in plaintext; both active and inactive results are cached.
-func serveIntrospectWithCache(d IntrospectDeps, ctx core.HandlerContext, token, hint string) {
-	// OPTIONAL cache check: keyed by SHA-256(token) so the raw token
-	// is never stored in plaintext. When the cache is unwired, both
-	// d.IntrospectionCache() and the cache itself are nil — every
-	// branch falls through to full verification.
-	cache := d.IntrospectionCache()
-	var cacheKey string
-	if cache != nil {
-		cacheKey = tokenHash(token)
-		if cached, ok := cache.Get(cacheKey); ok {
-			ctx.JSON(http.StatusOK, cached.Body)
-			return
-		}
-	}
-
-	if body, ok := resolveIntrospection(d, ctx, token, hint); ok {
-		if cache != nil {
-			cache.Set(cacheKey, &CachedResult{Body: body}, d.IntrospectionCacheTTL())
-		}
-		ctx.JSON(http.StatusOK, body)
+// HandleIntrospect, then the optional RFC 9701 signed-response step. aud is
+// the introspecting client's id, stamped into a signed response's `aud`.
+func serveIntrospectWithCache(d IntrospectDeps, ctx core.HandlerContext, token, hint, aud string) {
+	body := introspectOne(d, ctx, token, hint)
+	if writeSignedIntrospection(d, ctx, aud, body) {
 		return
 	}
-
-	// Unknown / expired / revoked → §2.2 mandates {active: false} only.
-	inactive := map[string]any{core.KeyActive: false}
-	if cache != nil {
-		cache.Set(cacheKey, &CachedResult{Body: inactive}, d.IntrospectionCacheTTL())
-	}
-	ctx.JSON(http.StatusOK, inactive)
+	ctx.JSON(http.StatusOK, body)
 }
 
 // authenticateIntrospectClient runs the hint-independent client-auth gate
