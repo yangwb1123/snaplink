@@ -243,6 +243,15 @@ func (t *Transmitter) Record(ctx context.Context, e *audit.Event) error {
 	// receiver, and a fresh read is cheap relative to the outbound POST.
 	// This is the simplest correct design (decision: resolve fresh, no bus).
 	clients := t.resolveClients(ctx, mapped)
+	// Detach from ctx's cancellation/deadline BEFORE spawning: the triggering
+	// request typically returns (and its ctx is cancelled by net/http) well
+	// before delivery completes, and inheriting that cancellation would abort
+	// every SET POST almost immediately. context.WithoutCancel keeps the
+	// VALUES ctx carries — the OTel span context otelhttp attached, and any
+	// shared/core trace ID the tracing middleware stamped — so a span or log
+	// line downstream in deliver still joins the originating request's trace
+	// instead of rooting a disconnected one.
+	deliveryCtx := context.WithoutCancel(ctx)
 	for _, c := range clients {
 		endpoint := receiverEndpoint(c)
 		if endpoint == "" {
@@ -259,7 +268,7 @@ func (t *Transmitter) Record(ctx context.Context, e *audit.Event) error {
 			Events:   mapped.events,
 		}
 		t.wg.Add(1)
-		go t.deliver(c.ID, endpoint, auth, req)
+		go t.deliver(deliveryCtx, c.ID, endpoint, auth, req)
 	}
 	return nil
 }
@@ -300,13 +309,19 @@ func (t *Transmitter) resolveClients(ctx context.Context, m mappedEvent) []*core
 // receiver can neither block the triggering operation nor crash the
 // process. Best-effort by contract: every failure is counted + audited,
 // never surfaced (there is no caller to return to).
-func (t *Transmitter) deliver(clientID, endpoint, auth string, req buildSETRequest) {
+//
+// ctx is the triggering Record call's context, already detached from
+// cancellation (see Record) but still carrying its trace values — threaded
+// through to attemptDelivery/fail so a span or trace-correlated log emitted
+// during mint/POST/failure-audit joins the ORIGINATING request's trace
+// rather than rooting a new one.
+func (t *Transmitter) deliver(ctx context.Context, clientID, endpoint, auth string, req buildSETRequest) {
 	defer t.wg.Done()
 	// recover() so a panic (e.g. in a custom http.Client transport) is
 	// contained as a delivery failure instead of taking down the goroutine.
 	defer func() {
 		if r := recover(); r != nil {
-			t.fail(clientID, endpoint, fmt.Sprintf("panic: %v", r))
+			t.fail(ctx, clientID, endpoint, fmt.Sprintf("panic: %v", r))
 		}
 	}()
 	var lastErr error
@@ -319,7 +334,7 @@ func (t *Transmitter) deliver(clientID, endpoint, auth string, req buildSETReque
 				t.metric(OutcomeRetried)
 			}
 		}
-		err := t.attemptDelivery(endpoint, auth, req)
+		err := t.attemptDelivery(ctx, endpoint, auth, req)
 		if err == nil {
 			if t.metric != nil {
 				t.metric(OutcomeSuccess)
@@ -331,7 +346,7 @@ func (t *Transmitter) deliver(clientID, endpoint, auth string, req buildSETReque
 			break
 		}
 	}
-	t.fail(clientID, endpoint, lastErr.Error())
+	t.fail(ctx, clientID, endpoint, lastErr.Error())
 }
 
 // contentTypeSecEvent is the SSF push-delivery Content-Type for the SET body:
@@ -374,7 +389,11 @@ func (t *Transmitter) post(ctx context.Context, endpoint, auth, set string) erro
 // fail is the shared error tail: count the drop + record the internal
 // caep_broadcast_failed audit event + log. Distinguishes a transport
 // drop (failed) — the conventional label for "tried, did not land".
-func (t *Transmitter) fail(clientID, endpoint, reason string) {
+//
+// ctx is deliver's (already cancellation-detached) context, so the failure
+// audit event still carries the originating request's trace value forward
+// instead of rooting a disconnected one.
+func (t *Transmitter) fail(ctx context.Context, clientID, endpoint, reason string) {
 	if t.metric != nil {
 		t.metric(OutcomeFailed)
 	}
@@ -389,7 +408,7 @@ func (t *Transmitter) fail(clientID, endpoint, reason string) {
 			Reason:   reason,
 		}
 		audit.SetMeta(e, metaReceiverEndpoint, endpoint)
-		t.recorder.Record(context.Background(), e)
+		t.recorder.Record(ctx, e)
 	}
 }
 
