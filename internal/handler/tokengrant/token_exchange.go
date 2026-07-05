@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/snaplink/sso/domains/tenantcollab"
 	"github.com/snaplink/sso/domains/tokenexchange"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -78,6 +79,23 @@ type TokenExchangeDeps interface {
 	// unwired, every hop allowed — byte-identical to pre-feature behavior).
 	// See tokExEnforcePolicy.
 	TokenExchangePolicy() tokenexchange.Policy
+	// ExternalUserStore returns the OPTIONAL cross-tenant guest-record store
+	// (WithExternalUserStore, domains/tenantcollab). Nil = the cross-tenant
+	// B2B collaboration gate is a complete no-op — byte-identical to a build
+	// without this feature. See tokExEnforceTenantCollaboration.
+	ExternalUserStore() tenantcollab.ExternalUserStore
+	// TenantCollaborationStore returns the OPTIONAL tenant-to-tenant trust
+	// allow-list (WithTenantCollaborationStore, domains/tenantcollab). Nil is
+	// the same no-op as a nil ExternalUserStore above — BOTH must be wired
+	// for the cross-tenant gate to activate.
+	TenantCollaborationStore() tenantcollab.CollaborationStore
+	// HomeTenantForClient resolves the TenantID of the client identified by
+	// clientID (i.e. the client a subject_token's ClientID claim names — the
+	// client it was ORIGINALLY issued to), used to discover a token-exchange
+	// subject's home tenant. Returns "" for an unknown/untenanted client or
+	// an unwired ClientStore — treated as "no home tenant to police" by the
+	// cross-tenant gate, exactly like an empty exchanging-client TenantID.
+	HomeTenantForClient(ctx context.Context, clientID string) string
 }
 
 // HandleTokenExchangeGrant processes the RFC 8693 token-exchange grant. Behavior
@@ -162,6 +180,10 @@ func tokExResolveActorAndAuthorize(d TokenExchangeDeps, ctx core.HandlerContext,
 		return true
 	}
 	if tokExResolveTargetsAndScopes(d, ctx, client, req, st) {
+		return true
+	}
+	// Cross-tenant B2B collaboration gate (opt-in; nil stores are a no-op).
+	if tokExEnforceTenantCollaboration(d, ctx, client, st) {
 		return true
 	}
 	// Operator-defined hop authorization (opt-in; nil Policy is a no-op).
@@ -350,4 +372,104 @@ func tokExEnforcePolicy(d TokenExchangeDeps, ctx core.HandlerContext, client *co
 		return true
 	}
 	return false
+}
+
+// tokExEnforceTenantCollaboration is the OPTIONAL cross-tenant B2B
+// collaboration gate (domains/tenantcollab). It activates ONLY when BOTH an
+// ExternalUserStore and a TenantCollaborationStore are wired (either nil is
+// a complete no-op — byte-identical to a build without this feature) AND the
+// subject_token's home tenant (the TenantID of the client it was originally
+// issued to) differs from the exchanging client's own tenant — a genuine
+// cross-tenant hop. Same-tenant exchanges, and any exchange where either
+// side has no tenant at all, are UNAFFECTED: there is no boundary here for
+// this gate to police (AGENTS.md §3 Tenant & Residency — this only ever
+// NARROWS a cross-tenant exchange, never widens the pre-existing
+// tenant-isolation guarantee).
+//
+// A genuine cross-tenant hop requires BOTH an explicit TenantCollaboration
+// trust row AND a matching GuestRecord registration (tokExAuthorizeGuestHop);
+// either miss collapses to the SAME invalid_grant every other token-exchange
+// failure returns (oracle-leak collapse, AGENTS.md §3) — this gate's whole
+// purpose is to let an operator BLOCK unregistered cross-tenant hops, so
+// leaking WHICH check failed would hand back a tenant-topology oracle.
+//
+// On success, the guest's registered Roles further narrow the already-
+// resolved scope set (never widen it): a requested scope outside the
+// guest's Roles is invalid_scope, mirroring the client-allowlist narrowing
+// tokExResolveScope already applies. The hop is then audited with BOTH the
+// guest-tenant context and the originating home-tenant identity so a SIEM
+// can always trace the action back to its home account. Returns true when
+// it has written a response and the caller must stop.
+func tokExEnforceTenantCollaboration(d TokenExchangeDeps, ctx core.HandlerContext, client *core.Client, st *tokExState) bool {
+	extStore := d.ExternalUserStore()
+	collabStore := d.TenantCollaborationStore()
+	if extStore == nil || collabStore == nil {
+		return false
+	}
+	guestTenant := client.TenantID
+	if guestTenant == "" {
+		return false
+	}
+	homeTenant := d.HomeTenantForClient(ctx.Request().Context(), st.claims.ClientID)
+	if homeTenant == "" || homeTenant == guestTenant {
+		return false
+	}
+	guest, ok := tokExAuthorizeGuestHop(ctx, collabStore, extStore, guestTenant, homeTenant, st.claims.Subject)
+	if !ok {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return true
+	}
+	if len(guest.Roles) > 0 {
+		for _, s := range st.scopes {
+			if !slices.Contains(guest.Roles, s) {
+				// A requested scope exceeds this guest's entitlement — REJECT
+				// rather than silently narrow (same philosophy as
+				// oauthvalidate.GrantedScopes rule 3: silent narrowing would
+				// hide a misconfigured/over-reaching caller from its operator).
+				ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidScope))
+				return true
+			}
+		}
+	}
+	tokExAuditCrossTenant(d, ctx, client, homeTenant, guestTenant, st.claims.Subject)
+	return false
+}
+
+// tokExAuthorizeGuestHop consults the trust + registration stores for a
+// genuine cross-tenant hop. ok=false (deny) on ANY error or missing record —
+// fail-closed, no partial trust. guest.HomeTenantID is cross-checked against
+// the independently-resolved homeTenant so a registration claiming a
+// DIFFERENT home tenant than the subject_token's actual origin is treated as
+// tampering/misconfiguration, not a trusted guest hop.
+func tokExAuthorizeGuestHop(ctx core.HandlerContext, collabStore tenantcollab.CollaborationStore, extStore tenantcollab.ExternalUserStore, guestTenant, homeTenant, subjectID string) (*tenantcollab.GuestRecord, bool) {
+	trusted, terr := collabStore.IsTrusted(ctx.Request().Context(), guestTenant, homeTenant)
+	if terr != nil || !trusted {
+		return nil, false
+	}
+	guest, gerr := extStore.Get(ctx.Request().Context(), guestTenant, subjectID)
+	if gerr != nil || guest == nil || guest.HomeTenantID != homeTenant {
+		return nil, false
+	}
+	return guest, true
+}
+
+// tokExAuditCrossTenant records the cross-tenant B2B collaboration audit
+// trail: the guest-tenant context (ClientID, guest_tenant_id) AND the
+// originating home-tenant identity (original_subject, original_tenant) so a
+// SIEM can always trace a guest action back to its home account.
+func tokExAuditCrossTenant(d TokenExchangeDeps, ctx core.HandlerContext, client *core.Client, homeTenant, guestTenant, subjectID string) {
+	if d.Auditor() == nil {
+		return
+	}
+	evt := &audit.Event{
+		Type:     audit.EventCrossTenantTokenExchange,
+		Outcome:  audit.OutcomeSuccess,
+		ActorID:  subjectID,
+		ClientID: client.ID,
+		ActorIP:  audit.ClientIP(ctx.Request()),
+	}
+	audit.SetMeta(evt, core.KeyOriginalSubject, subjectID)
+	audit.SetMeta(evt, core.KeyOriginalTenant, homeTenant)
+	audit.SetMeta(evt, core.KeyGuestTenantID, guestTenant)
+	d.Auditor().Record(ctx.Request().Context(), evt)
 }

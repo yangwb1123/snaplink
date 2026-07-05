@@ -161,6 +161,15 @@ const (
 	KeySPIFFENamespace      = "spiffe_namespace"
 	KeySPIFFEServiceAccount = "spiffe_service_account"
 
+	// Cross-tenant B2B collaboration audit metadata keys (domains/tenantcollab)
+	// — written via audit.SetMeta on the cross_tenant_token_exchange event.
+	// original_subject/original_tenant are the SPEC-NAMED fields a SIEM traces
+	// a guest action back to its home account with; guest_tenant_id completes
+	// the picture with the tenant that granted the guest access.
+	KeyOriginalSubject = "original_subject"
+	KeyOriginalTenant  = "original_tenant"
+	KeyGuestTenantID   = "guest_tenant_id"
+
 	// ScopeOpenID triggers OIDC ID Token issuance when an oidc.IDTokenIssuer
 	// is wired (OIDC Core §3.1.2.1).
 	ScopeOpenID = "openid"

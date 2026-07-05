@@ -123,6 +123,14 @@ const (
 	EventSPIFFEJWTSVIDAccepted EventType = "spiffe_jwt_svid_accepted"
 )
 
+// Cross-tenant B2B collaboration (domains/tenantcollab): a token-exchange
+// hop whose subject_token's home tenant differs from the exchanging
+// client's tenant, accepted under an explicit TenantCollaboration trust +
+// GuestRecord registration.
+const (
+	EventCrossTenantTokenExchange EventType = "cross_tenant_token_exchange"
+)
+
 // FAPI 2.0 compliance violations.
 const (
 	EventFAPIComplianceViolation EventType = "fapi_compliance_violation"

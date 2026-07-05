@@ -5,6 +5,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/snaplink/sso/domains/tenantcollab"
 	"github.com/snaplink/sso/domains/tokenexchange"
 	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -122,6 +123,33 @@ func WithMaxTokenExchangeChainLifetime(d time.Duration) Option {
 // build without this feature.
 func WithTokenExchangePolicy(policy tokenexchange.Policy) Option {
 	return func(s *Server) { s.tokenExchangePolicy = policy }
+}
+
+// WithExternalUserStore wires the cross-tenant B2B collaboration guest-record
+// store (domains/tenantcollab.ExternalUserStore) — the lightweight pointer
+// registering that a user who natively belongs to another tenant may act as
+// a guest of a client's tenant, without duplicating that user's record. A
+// reference in-memory implementation is domains/tenantcollab/memory.
+//
+// This gate (tokExEnforceTenantCollaboration) only activates once BOTH this
+// AND WithTenantCollaborationStore are wired; nil (the default, either or
+// both) is a no-op — every token-exchange behaves byte-identically to a
+// build without this feature.
+func WithExternalUserStore(store tenantcollab.ExternalUserStore) Option {
+	return func(s *Server) { s.externalUserStore = store }
+}
+
+// WithTenantCollaborationStore wires the cross-tenant B2B collaboration
+// trust allow-list (domains/tenantcollab.CollaborationStore) — the explicit,
+// opt-in record that a guest tenant accepts guest tokens whose home is a
+// named other tenant. Absence of a row (or of this store entirely) is NO
+// TRUST — the default, fail-closed stance (AGENTS.md §3). A reference
+// in-memory implementation is domains/tenantcollab/memory.
+//
+// Like WithExternalUserStore, this only takes effect once BOTH stores are
+// wired; nil (the default) is a no-op.
+func WithTenantCollaborationStore(store tenantcollab.CollaborationStore) Option {
+	return func(s *Server) { s.tenantCollaborationStore = store }
 }
 
 // WithIntrospectionSigner enables optional RFC 9701-style JWT-signed
