@@ -34,6 +34,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/domains/identitylink"
+	identitylinkmemory "github.com/snaplink/sso/domains/identitylink/memory"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystorecredential"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
 	"github.com/snaplink/sso/platform/audit"
@@ -44,12 +46,15 @@ import (
 )
 
 type testDeps struct {
-	users       *memorystoreidentity.MemoryUserProvider
-	passwords   *memorystorecredential.MemoryPasswordCredentialStore
-	sessions    *memorystoreidentity.MemorySessionManager
-	consents    *memorystoreidentity.MemoryConsentStore
-	tenantUsers *memorystoreidentity.MemoryTenantUserStore
-	invitations *memorystoreidentity.MemoryInvitationStore
+	users         *memorystoreidentity.MemoryUserProvider
+	passwords     *memorystorecredential.MemoryPasswordCredentialStore
+	sessions      *memorystoreidentity.MemorySessionManager
+	consents      *memorystoreidentity.MemoryConsentStore
+	tenantUsers   *memorystoreidentity.MemoryTenantUserStore
+	invitations   *memorystoreidentity.MemoryInvitationStore
+	identityLinks *identitylinkmemory.Store
+
+	identityUnlinked []string
 
 	mfaStore core.MFAEnrollmentStore // *localMFAStore (default) or *localMFAStorePlain (no TOTPEnrollmentWriter)
 	totp     core.TOTPEnroller
@@ -78,15 +83,16 @@ type testDeps struct {
 // TOTPEnrollmentWriter" 501 branch swap in newLocalMFAStorePlain instead.
 func newTestDeps() *testDeps {
 	return &testDeps{
-		users:       memorystoreidentity.NewMemoryUserProvider(),
-		passwords:   memorystorecredential.NewMemoryPasswordCredentialStore(),
-		sessions:    memorystoreidentity.NewMemorySessionManager(),
-		consents:    memorystoreidentity.NewMemoryConsentStore(),
-		tenantUsers: memorystoreidentity.NewMemoryTenantUserStore(),
-		invitations: memorystoreidentity.NewMemoryInvitationStore(),
-		mfaStore:    newLocalMFAStore(),
-		authSubject: "user-1",
-		authClaims:  &core.TokenClaims{Subject: "user-1"},
+		users:         memorystoreidentity.NewMemoryUserProvider(),
+		passwords:     memorystorecredential.NewMemoryPasswordCredentialStore(),
+		sessions:      memorystoreidentity.NewMemorySessionManager(),
+		consents:      memorystoreidentity.NewMemoryConsentStore(),
+		tenantUsers:   memorystoreidentity.NewMemoryTenantUserStore(),
+		invitations:   memorystoreidentity.NewMemoryInvitationStore(),
+		identityLinks: identitylinkmemory.New(),
+		mfaStore:      newLocalMFAStore(),
+		authSubject:   "user-1",
+		authClaims:    &core.TokenClaims{Subject: "user-1"},
 	}
 }
 
@@ -126,6 +132,8 @@ func (d *testDeps) TokenNoStoreHeaders(ctx core.HandlerContext) {
 	h.Set("Pragma", "no-cache")
 }
 
+func (d *testDeps) ClearSiteData(ctx core.HandlerContext) {}
+
 func (d *testDeps) ErrorBody(code string) map[string]any {
 	out := map[string]any{}
 	for k, v := range core.ErrorBody(code) {
@@ -152,6 +160,11 @@ func (d *testDeps) MeClaimsOrChallenge(ctx core.HandlerContext) (*core.TokenClai
 
 func (d *testDeps) ConsentStore() core.ConsentStore                          { return d.consents }
 func (d *testDeps) RecordConsentRevoked(core.HandlerContext, string, string) {}
+
+func (d *testDeps) IdentityLinkStore() identitylink.Store { return d.identityLinks }
+func (d *testDeps) RecordIdentityUnlinked(_ core.HandlerContext, userID, linkID, provider string) {
+	d.identityUnlinked = append(d.identityUnlinked, userID+":"+linkID+":"+provider)
+}
 
 func (d *testDeps) ResolveIssuer(core.HandlerContext) string { return "https://issuer.test" }
 func (d *testDeps) SelfEditableAttrs() map[string]struct{}   { return d.selfEditableAttrs }

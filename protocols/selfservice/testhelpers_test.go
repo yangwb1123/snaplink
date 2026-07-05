@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystorecredential"
+	"github.com/snaplink/sso/domains/identitylink"
+	identitylinkmemory "github.com/snaplink/sso/domains/identitylink/memory"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/compliance"
@@ -44,6 +46,9 @@ type testDeps struct {
 	consents      *memorystoreidentity.MemoryConsentStore
 	tenantUsers   *memorystoreidentity.MemoryTenantUserStore
 	invitations   *memorystoreidentity.MemoryInvitationStore
+	identityLinks *identitylinkmemory.Store
+
+	identityUnlinked []string
 
 	emailChangeTTL   time.Duration
 	passwordResetTTL time.Duration
@@ -96,6 +101,7 @@ func newTestDeps() *testDeps {
 		consents:      memorystoreidentity.NewMemoryConsentStore(),
 		tenantUsers:   memorystoreidentity.NewMemoryTenantUserStore(),
 		invitations:   memorystoreidentity.NewMemoryInvitationStore(),
+		identityLinks: identitylinkmemory.New(),
 		authSubject:   "user-1",
 		authClaims:    &core.TokenClaims{Subject: "user-1"},
 	}
@@ -152,6 +158,8 @@ func (d *testDeps) TokenNoStoreHeaders(ctx core.HandlerContext) {
 	h.Set("Pragma", "no-cache")
 }
 
+func (d *testDeps) ClearSiteData(ctx core.HandlerContext) {}
+
 func (d *testDeps) ErrorBody(code string) map[string]any {
 	out := map[string]any{}
 	for k, v := range core.ErrorBody(code) {
@@ -179,6 +187,11 @@ func (d *testDeps) MeClaimsOrChallenge(ctx core.HandlerContext) (*core.TokenClai
 func (d *testDeps) ConsentStore() core.ConsentStore { return d.consents }
 func (d *testDeps) RecordConsentRevoked(_ core.HandlerContext, userID, clientID string) {
 	d.consentRevoked = append(d.consentRevoked, userID+":"+clientID)
+}
+
+func (d *testDeps) IdentityLinkStore() identitylink.Store { return d.identityLinks }
+func (d *testDeps) RecordIdentityUnlinked(_ core.HandlerContext, userID, linkID, provider string) {
+	d.identityUnlinked = append(d.identityUnlinked, userID+":"+linkID+":"+provider)
 }
 
 func (d *testDeps) ResolveIssuer(core.HandlerContext) string { return "https://issuer.test" }
