@@ -25,6 +25,8 @@ the [root README](../README.md) for integration, or jump to a section below.
 - [feature-matrix.md](feature-matrix.md) — supported RFCs / features and their wiring.
 - [observability.md](observability.md) — metrics, tracing, audit hash chain, probes.
 - [security-policy.md](security-policy.md) — the security model and reporting.
+- [wasmauthz.md](wasmauthz.md) — the pluggable WASM authorization engine: ABI
+  contract, how to author a compatible policy module, fail-closed guarantee.
 
 ## Architecture
 

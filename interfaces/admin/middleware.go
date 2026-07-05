@@ -157,9 +157,15 @@ func (a *Middleware) scopeForGRPC(method string) string {
 	return ScopeWrite
 }
 
-// scopeForHTTP returns the required scope for an HTTP request based on its
-// method. GET/HEAD/OPTIONS need read; everything else needs write.
+// scopeForHTTP returns the required scope for an HTTP request: a
+// SetMethodScope path-prefix override wins when one matches (see
+// methodScopeForPath in governance.go — e.g. an admin debug endpoint that
+// must accept a POST body yet is read-only); otherwise GET/HEAD/OPTIONS
+// need read and everything else needs write.
 func (a *Middleware) scopeForHTTP(r *http.Request) string {
+	if scope, ok := a.methodScopeForPath(r.URL.Path); ok {
+		return scope
+	}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return ScopeRead

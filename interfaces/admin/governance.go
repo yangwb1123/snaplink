@@ -361,6 +361,25 @@ func checkWriteQuota(w http.ResponseWriter, r *http.Request, q *adminQuotaConfig
 	return true
 }
 
+// methodScopeForPath returns the longest-matching path-prefix override
+// registered via SetMethodScope, if any — the HTTP-side counterpart of
+// scopeForGRPC's exact-match lookup in middleware.go. methodScopes is empty
+// unless a caller explicitly registers an override (no production wiring did
+// before wasmauthz's admin:read-despite-POST route), so this is a byte-
+// identical no-op for every path with no override — just like the other
+// transport-level checks in this file. Longest-prefix-wins mirrors this
+// SDK's other prefix-keyed overrides (see WithBodyLimitForPath,
+// WithRouteDeprecation in interfaces/sso).
+func (a *Middleware) methodScopeForPath(path string) (string, bool) {
+	bestPrefix, bestScope := "", ""
+	for prefix, scope := range a.methodScopes {
+		if len(prefix) > len(bestPrefix) && strings.HasPrefix(path, prefix) {
+			bestPrefix, bestScope = prefix, scope
+		}
+	}
+	return bestScope, bestPrefix != ""
+}
+
 // tenantHintFromClaims extracts a best-effort tenant identifier from the
 // validated bearer's Extra claims — the SAME map RFC 9068 extra claims ride
 // in elsewhere in this SDK. Empty when the token carries none (a global

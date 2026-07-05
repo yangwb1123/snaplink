@@ -12,6 +12,7 @@ import (
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/internal/handler"
+	"github.com/snaplink/sso/platform/lifecycle/wasmauthz"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/tracing"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -252,6 +253,32 @@ func (s *Server) mountAPIDocsUI(api Router) {
 	}
 	api.GET(pathAdminAPIDocs, s.apiDocsUIHandler)
 	api.GET(pathAdminAPIDocsSpec, s.apiDocsSpecHandler)
+}
+
+// Pluggable WASM authorization-decision engine (platform/lifecycle/wasmauthz)
+// admin debug route: a single POST, so unlike the webhook/netpolicy blocks
+// there is no separate mutation handler to delegate — see the package doc
+// for why POST (a JSON body) rather than rebac's GET+query-params shape.
+// Placed here (rather than beside mountRebacAdminAPI in handlers.go, which
+// is at its directory's frozen file-count ceiling) beside mountAPIDocsUI,
+// the other opt-in admin-mount function this file already hosts.
+func (s *Server) handleWASMAuthzCheck(ctx HandlerContext) { wasmauthz.HandleCheck(s, ctx) }
+
+// PathAdminWASMAuthzCheck route-path re-export — aliases.go is at its line
+// budget, same reason as the Token Portfolio / crypto-inventory / rebac consts.
+const PathAdminWASMAuthzCheck = core.PathAdminWASMAuthzCheck
+
+// mountWASMAuthzAdminAPI registers the opt-in WASM authz engine's ONE
+// operational-debugging route (opt-in WithWASMAuthzEngine). Not mounted
+// without an engine — byte-identical to a build without the feature. This
+// is deliberately the ONLY wasmauthz route: the package is a primitive an
+// operator consults from their own integration code, not a full admin CRUD
+// surface (see the package doc).
+func (s *Server) mountWASMAuthzAdminAPI(api Router) {
+	if s.wasmAuthzEngine == nil {
+		return
+	}
+	api.POST(PathAdminWASMAuthzCheck, s.handleWASMAuthzCheck)
 }
 
 // WithAPIDocsUI mounts a read-only, self-contained API-documentation

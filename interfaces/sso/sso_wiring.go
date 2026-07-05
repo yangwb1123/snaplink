@@ -19,6 +19,7 @@ import (
 	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
 	"github.com/snaplink/sso/platform/lifecycle/rebac"
 	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
+	"github.com/snaplink/sso/platform/lifecycle/wasmauthz"
 	"github.com/snaplink/sso/platform/lifecycle/webhook"
 	"github.com/snaplink/sso/platform/netpolicy"
 	"github.com/snaplink/sso/platform/sse"
@@ -101,6 +102,13 @@ type wiringState struct {
 	// doc); the only Server-side use is the operational-debugging
 	// endpoint below.
 	rebacEngine *rebac.Engine
+
+	// wasmAuthzEngine is the opt-in pluggable WASM authorization-decision
+	// engine (WithWASMAuthzEngine, platform/lifecycle/wasmauthz). Nil = no
+	// admin debug route mounted — byte-identical to a build without the
+	// feature. Like rebacEngine, this is NOT consulted by any built-in
+	// gate; the only Server-side use is the operational-debugging endpoint.
+	wasmAuthzEngine *wasmauthz.Engine
 
 	// scimProvisionSink is the opt-in outbound SCIM 2.0 provisioning push
 	// (WithSCIMProvisioner; typically a *scimprovision.Sink from

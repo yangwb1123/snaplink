@@ -24,12 +24,9 @@ const (
 	PathCheckSessionIframe = core.PathCheckSessionIframe
 )
 
-// Crypto-material-inventory admin route-path re-exports — aliases.go is at
-// its line budget, same reason as the Token Portfolio consts above.
-const (
-	PathAdminCryptoKeys          = core.PathAdminCryptoKeys
-	PathAdminCryptoKeyCompromise = core.PathAdminCryptoKeyCompromise
-)
+// Crypto-material-inventory admin route-path re-exports moved to aliases.go
+// (which now has room; this file was at its line budget adding the
+// wasmauthz mount call below).
 
 // Admin REST API route registration, extracted from Mount (server_routes.go).
 // All routes hang off the /api/v1 group created in Mount; the /api/v1/admin/*
@@ -56,6 +53,7 @@ func (s *Server) mountAdminSurface() {
 	s.mountCryptoInventoryAPI(api)
 	s.mountWebhookAdminAPI(api)
 	s.mountRebacAdminAPI(api)
+	s.mountWASMAuthzAdminAPI(api)
 	s.mountAdminCompliance(api)
 	s.mountAdminChangeApproval(api)
 	s.mountAPIDocsUI(api)

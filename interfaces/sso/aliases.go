@@ -326,6 +326,12 @@ const PathAdminSessions = core.PathAdminSessions
 const PathAdminCredentials = core.PathAdminCredentials
 const PathAdminCredentialCompromise = core.PathAdminCredentialCompromise
 const PathAdminEventsStream = core.PathAdminEventsStream
+
+// Crypto-material-inventory admin route-path re-exports, relocated here from
+// server_routes_admin.go (which ran out of room adding the wasmauthz mount).
+const PathAdminCryptoKeys = core.PathAdminCryptoKeys
+const PathAdminCryptoKeyCompromise = core.PathAdminCryptoKeyCompromise
+
 const PathAdminBreakGlass = core.PathAdminBreakGlass
 const PathAdminBreakGlassByID = core.PathAdminBreakGlassByID
 const PathAdminBreakGlassApprove = core.PathAdminBreakGlassApprove

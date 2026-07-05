@@ -236,6 +236,13 @@ const (
 	// is wired (defensive — the route is only mounted when one is). Not a
 	// credential oracle: the caller is an authenticated admin.
 	ErrRebacNotConfigured = "rebac_not_configured"
+	// ErrWASMAuthzNotConfigured guards POST /api/v1/admin/wasmauthz/check
+	// (the pluggable WASM authorization-decision engine's operational-
+	// debugging endpoint, platform/lifecycle/wasmauthz, opt-in
+	// sso.WithWASMAuthzEngine) when no Engine is wired (defensive — the
+	// route is only mounted when one is). Not a credential oracle: the
+	// caller is an authenticated admin.
+	ErrWASMAuthzNotConfigured = "wasmauthz_not_configured"
 	// ErrSessionInvalid is the 404 wire code for a stateful authentication-
 	// ceremony session that is unknown, expired, or whose resolved identity
 	// vanished mid-ceremony (see ErrCeremonySessionInvalid above). Mirrors the

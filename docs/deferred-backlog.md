@@ -19,8 +19,13 @@ related capability exists but the proposed feature does not).
   authentication via `WithWorkloadIdentityProviders`); Azure AD Workload
   Identity Federation (likely reuses the shared `securityverify` core via a
   tenant-scoped JWKS URL) remains. _Source: expansion-2026-07-01._
-- **Edge MQTT + WASM** — none. MQTT `cluster.Bus` backend, WASM authz engine,
-  WASM authenticator, MQTT CAEP channel. _Source: analysis-round11._
+- **Edge MQTT + WASM** — partial. WASM authz engine implemented
+  (`platform/lifecycle/wasmauthz`, opt-in `sso.WithWASMAuthzEngine`, one
+  admin debug endpoint `POST /api/v1/admin/wasmauthz/check`; see
+  `docs/wasmauthz.md`). Still open: MQTT `cluster.Bus` backend, WASM
+  AUTHENTICATOR (a distinct feature — verifying a credential in WASM, not
+  authorizing an already-authenticated request; not attempted), MQTT CAEP
+  channel. _Source: analysis-round11._
 
 ## Enterprise governance & compliance
 

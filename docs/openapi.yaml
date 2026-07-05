@@ -4983,6 +4983,67 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/wasmauthz/check:
+    post:
+      tags: [admin]
+      summary: Evaluate the hosted WASM authorization policy (operational debugging).
+      description: |
+        Answers what the pluggable, WebAssembly-hosted authorization-decision
+        engine (`platform/lifecycle/wasmauthz`) would decide for the given
+        request: the JSON body is marshaled, handed to the operator-supplied
+        compiled WASM policy module, and the module's JSON decision is
+        returned as-is. POST (unlike `rebac/check`'s GET+query-params) because
+        the request has a richer, nested shape (a free-form `context` map)
+        that does not fit cleanly into query parameters. admin:read — a
+        read-only decision probe, no state mutation. Opt-in via
+        `WithWASMAuthzEngine`; the route is not mounted (404) when no engine
+        is wired. This is the ONLY wasmauthz admin route — an operational
+        debugging tool, never a live authorization decision path; wasmauthz is
+        an independent authorization primitive consulted by an operator's own
+        integration code, never by `/auth/login` or any other built-in gate.
+        See `docs/wasmauthz.md` for the exact host/guest ABI contract.
+      operationId: wasmAuthzCheck
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject, action, resource]
+              properties:
+                subject: { type: string, example: alice }
+                action: { type: string, example: read }
+                resource: { type: string, example: "doc:1" }
+                context:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: Free-form key/value context (roles, tenant id, IP, ...).
+      responses:
+        "200":
+          description: The policy module's decision.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  allowed: { type: boolean }
+                  reason: { type: string }
+        "400":
+          description: The request body is not valid JSON.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500":
+          description: No `WithWASMAuthzEngine` wired, or the hosted WASM module's Authorize call failed (guest trap, malformed decision JSON, out-of-bounds pointer, or timeout).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/dr/mode:
     get:
       tags: [admin]

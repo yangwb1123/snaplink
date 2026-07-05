@@ -12,6 +12,7 @@ require (
 	github.com/labstack/echo/v4 v4.15.2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redis/go-redis/v9 v9.20.0
+	github.com/tetratelabs/wazero v1.12.0
 	go.etcd.io/etcd/api/v3 v3.6.11
 	go.etcd.io/etcd/client/v3 v3.6.11
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0
