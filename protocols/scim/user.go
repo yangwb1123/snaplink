@@ -190,10 +190,10 @@ func nonPrimaryEmails(r *Resource) []Email {
 	return out
 }
 
-// userToResource rebuilds a SCIM Resource from a stored core.User,
+// UserToResource rebuilds a SCIM Resource from a stored core.User,
 // inverting toUser. location is the absolute resource URL stamped into
 // meta.location (RFC 7643 §3.1) — pass "" to omit it.
-func userToResource(u *core.User, location string) Resource {
+func UserToResource(u *core.User, location string) Resource {
 	r := Resource{
 		Schemas:     []string{SchemaUser},
 		ID:          u.ID,

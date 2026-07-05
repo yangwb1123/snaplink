@@ -114,12 +114,13 @@ func (s *Server) applySessionHub() {
 
 // applyAuditSinkTaps fans the audit recorder's sink out to every opt-in
 // consumer of the audit pipeline (CAEP/SSF transmitter, realtime admin event
-// stream, the generic webhook egress engine). Called post-options (order
-// between WithAuditRecorder and WithCAEPTransmitter / WithSSEBroker /
-// WithWebhookEngine doesn't matter) so every tap sees every event uniformly.
-// Each tap is independently opt-in: when its half is unwired, or no recorder
-// is wired at all, that branch is skipped entirely — a build using none of
-// these features is byte-identical.
+// stream, the generic webhook egress engine, the outbound SCIM provisioning
+// push). Called post-options (order between WithAuditRecorder and
+// WithCAEPTransmitter / WithSSEBroker / WithWebhookEngine / WithSCIMProvisioner
+// doesn't matter) so every tap sees every event uniformly. Each tap is
+// independently opt-in: when its half is unwired, or no recorder is wired at
+// all, that branch is skipped entirely — a build using none of these
+// features is byte-identical.
 func (s *Server) applyAuditSinkTaps() {
 	if s.auditor == nil {
 		return
@@ -132,6 +133,9 @@ func (s *Server) applyAuditSinkTaps() {
 	}
 	if s.webhookEngine != nil {
 		s.auditor.AddSink(s.webhookEngine)
+	}
+	if s.scimProvisionSink != nil {
+		s.auditor.AddSink(s.scimProvisionSink)
 	}
 }
 

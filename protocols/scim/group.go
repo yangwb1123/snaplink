@@ -20,8 +20,16 @@ import (
 // push therefore drives the same RBAC surface that /permissions/me,
 // /roles/me, and login-embed read — no parallel group store.
 type GroupResource struct {
-	Schemas     []string      `json:"schemas"`
-	ID          string        `json:"id,omitempty"`
+	Schemas []string `json:"schemas"`
+	ID      string   `json:"id,omitempty"`
+	// ExternalID is the common RFC 7643 §3.1 attribute the INBOUND receiver
+	// ignores today (a Group here is a permissions.Role, which has no
+	// external-id column). protocols/scimprovision's OUTBOUND push sets it
+	// to this server's own role code so a downstream SCIM app can resolve
+	// "have I already provisioned this group" via
+	// GET .../Groups?filter=externalId eq "..." without assuming the two
+	// systems share an id space.
+	ExternalID  string        `json:"externalId,omitempty"`
 	DisplayName string        `json:"displayName,omitempty"`
 	Members     []GroupMember `json:"members,omitempty"`
 	Meta        *Meta         `json:"meta,omitempty"`
@@ -184,13 +192,13 @@ func (gr groupRole) userRoleCodes(ctx context.Context, userID string) ([]string,
 	return out, nil
 }
 
-// roleToGroup renders a stored Role + its membership into a SCIM Group
+// RoleToGroup renders a stored Role + its membership into a SCIM Group
 // resource. location is the absolute resource URL stamped into
 // meta.location (RFC 7643 §3.1); pass "" to omit it. Group meta carries
 // no created/lastModified because the permissions model has no role
 // timestamps — those attributes are optional (RFC 7643 §3.1), and a
 // connector that needs them can fall back to its own bookkeeping.
-func roleToGroup(role permissions.Role, memberIDs []string, location string) GroupResource {
+func RoleToGroup(role permissions.Role, memberIDs []string, location string) GroupResource {
 	g := GroupResource{
 		Schemas:     []string{SchemaGroup},
 		ID:          role.Code,
@@ -205,4 +213,18 @@ func roleToGroup(role permissions.Role, memberIDs []string, location string) Gro
 		g.Members = append(g.Members, GroupMember{Value: id, Type: resourceTypeUser})
 	}
 	return g
+}
+
+// FindRoleByCode looks up perms's role with the given roleCode under
+// clientID — exported so protocols/scimprovision (the OUTBOUND push
+// counterpart of this INBOUND receiver) resolves the SAME group identity
+// this package's own /Groups handlers use, rather than a parallel lookup.
+func FindRoleByCode(ctx context.Context, perms permissions.Provider, clientID, roleCode string) (permissions.Role, bool, error) {
+	return groupRole{perms: perms, clientID: clientID}.findRole(ctx, roleCode)
+}
+
+// RoleMembers returns the sorted user ids assigned roleCode under clientID —
+// exported for the same reason as FindRoleByCode.
+func RoleMembers(ctx context.Context, perms permissions.Provider, clientID, roleCode string) ([]string, error) {
+	return groupRole{perms: perms, clientID: clientID}.members(ctx, roleCode)
 }

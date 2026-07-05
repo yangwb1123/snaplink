@@ -10,6 +10,8 @@ import (
 
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/ratelimit"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/webhook"
 	"github.com/snaplink/sso/shared/core"
 )
 
@@ -302,3 +304,37 @@ func WithFeatureGates(g FeatureGates) Option {
 // sso.Bool(false) inline in a FeatureGates literal instead of declaring a
 // local variable to take its address.
 func Bool(b bool) *bool { return &b }
+
+// WithWebhookEngine wires a [webhook.Engine] — the generic event/webhook
+// egress engine — as an additional audit Sink (the same AddSink/MultiSink
+// seam WithCAEPTransmitter and WithSSEBroker use) and mounts the admin
+// subscription + dead-letter-queue management routes (GET/POST
+// /api/v1/admin/webhooks/subscriptions, DELETE .../{id}, GET
+// .../deadletters, POST .../deadletters/{id}/replay).
+//
+// nil (the default) leaves both the sink tap and the routes unmounted —
+// byte-identical to a build without the feature. A wired engine with ZERO
+// registered subscriptions is ALSO byte-identical traffic-wise: matching a
+// recorded event against an empty subscription set is a cheap no-op with no
+// outbound POST.
+func WithWebhookEngine(e *webhook.Engine) Option {
+	return func(s *Server) { s.webhookEngine = e }
+}
+
+// WithSCIMProvisioner wires an outbound SCIM 2.0 provisioning push — the
+// reverse direction of the SCIM /Users + /Groups receiver — as an
+// additional audit Sink (the same AddSink/MultiSink seam
+// WithWebhookEngine/WithCAEPTransmitter/WithSSEBroker use). Pass a
+// [scimprovision.Sink] (protocols/scimprovision); the parameter is typed as
+// the narrower [audit.Sink] interface rather than the concrete type so this
+// package does not need to import protocols/scimprovision (which itself
+// imports protocols/scim for the shared wire types — importing the
+// concrete type here would close an import cycle through
+// infrastructure/defaultimpl's existing grandfathered dependency back into
+// this package).
+//
+// nil (the default) leaves the sink tap unwired — byte-identical to a build
+// without the feature: no outbound SCIM traffic, ever.
+func WithSCIMProvisioner(sink audit.Sink) Option {
+	return func(s *Server) { s.scimProvisionSink = sink }
+}

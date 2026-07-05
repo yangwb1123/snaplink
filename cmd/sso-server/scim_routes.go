@@ -7,7 +7,9 @@ import (
 	"github.com/snaplink/sso/interfaces/admin"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/webhook"
 	"github.com/snaplink/sso/protocols/scim"
+	"github.com/snaplink/sso/protocols/scimprovision"
 	"github.com/snaplink/sso/shared/core"
 )
 
@@ -110,4 +112,51 @@ func scimRouteTable(groupsEnabled bool) []scimRoute {
 		)
 	}
 	return routes
+}
+
+// wireSCIMProvisioning builds the OUTBOUND SCIM 2.0 provisioning push
+// (protocols/scimprovision) — the reverse direction of mountSCIMRoutes'
+// inbound receiver — and wires it as an additional audit Sink
+// (sso.WithSCIMProvisioner, the same AddSink/MultiSink seam
+// wireWebhookEngine uses). Default-off: skipping this leaves b.opts
+// untouched, so a build without scim.push.enabled is byte-identical.
+//
+// GroupClientID falls back to scim.groups.group_client_id so a deployment
+// that already configured inbound Groups doesn't have to repeat itself; a
+// nil b.provider (permissions not configured) is safe — group/role events
+// simply become no-ops, matching how the inbound receiver's own /Groups
+// surface is independently optional.
+func (b *appBuilder) wireSCIMProvisioning() {
+	pc := b.cfg.SCIM.Push
+	if !pc.Enabled {
+		return
+	}
+	groupClientID := pc.GroupClientID
+	if groupClientID == "" {
+		groupClientID = b.cfg.SCIM.Groups.GroupClientID
+	}
+
+	var provOpts []scimprovision.HTTPOption
+	if pc.BearerToken != "" {
+		provOpts = append(provOpts, scimprovision.WithBearerToken(pc.BearerToken))
+	}
+	if pc.Timeout > 0 {
+		provOpts = append(provOpts, scimprovision.WithHTTPTimeout(pc.Timeout))
+	}
+	provisioner := scimprovision.NewHTTPSCIMProvisioner(pc.BaseURL, provOpts...)
+
+	sinkOpts := []scimprovision.Option{
+		scimprovision.WithLogger(b.logger),
+		scimprovision.WithFailureRecorder(b.recorder),
+		// Process-local dead-letter ring (mirrors wireWebhookEngine's
+		// MemoryDeadLetterStore — a restart loses undelivered entries,
+		// the same discipline the primary audit ring buffer has).
+		scimprovision.WithDeadLetterStore(webhook.NewMemoryDeadLetterStore(0)),
+	}
+	if pc.Retry.MaxAttempts > 0 || pc.Retry.InitialBackoff > 0 || pc.Retry.MaxBackoff > 0 {
+		sinkOpts = append(sinkOpts, scimprovision.WithDeliveryRetry(pc.Retry.MaxAttempts, pc.Retry.InitialBackoff, pc.Retry.MaxBackoff))
+	}
+	sink := scimprovision.NewSink(b.userProvider, b.provider, groupClientID, provisioner, sinkOpts...)
+	b.opts = append(b.opts, sso.WithSCIMProvisioner(sink))
+	b.logger.Info("scim: outbound provisioning push enabled", "base_url", pc.BaseURL, "group_client_id", groupClientID)
 }

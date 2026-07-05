@@ -166,6 +166,21 @@ See [deployment.md](deployment.md) for the HA topology and
 |---|---|
 | `caep.{enabled,receiver_timeout,set_ttl,delivery_retry_max_attempts,delivery_retry_initial_backoff,delivery_retry_max_backoff}` | SSF SET transmitter/receiver config |
 
+## SCIM Push Provisioning
+
+Outbound SCIM 2.0 provisioning (`protocols/scimprovision`, `sso.WithSCIMProvisioner`) — the reverse direction of the SCIM `/Users` + `/Groups` receiver (`scim.groups.*` above): pushes user create/update/delete and group-membership changes to ONE downstream SCIM 2.0 application, as an additional audit Sink (same tap as `webhooks.*`). Disabled by default (`scim.push.enabled: false`) — zero outbound SCIM traffic, byte-identical to a build without the feature.
+
+| Key | Effect |
+|---|---|
+| `scim.push.enabled` | Builds an `HTTPSCIMProvisioner` + `scimprovision.Sink` and wires `sso.WithSCIMProvisioner`. `false` (default) = no sink tap, no outbound requests |
+| `scim.push.base_url` | Downstream SCIM 2.0 service root (e.g. `https://app.example.com/scim/v2`); `/Users` and `/Groups` resolve relative to it. Required when enabled |
+| `scim.push.bearer_token` | `Authorization: Bearer <token>` on every outbound request (RFC 7644 §2's common auth model). Inject via `SSO_SCIM__PUSH__BEARER_TOKEN` or a `secret://` reference — never commit the literal to YAML |
+| `scim.push.timeout` | Per-request HTTP timeout; 0 = SDK default (10s) |
+| `scim.push.group_client_id` | Which `permissions.Role` fleet to push as SCIM Groups; falls back to `scim.groups.group_client_id` when unset |
+| `scim.push.retry.{max_attempts,initial_backoff,max_backoff}` | Per-delivery retry/backoff (reuses `platform/audit/auditsink.RetryingSink`); a delivery that exhausts its budget lands in a process-local `platform/lifecycle/webhook.MemoryDeadLetterStore` |
+
+Downstream identity resolution uses `externalId` (RFC 7643 §3.1) + a `filter=externalId eq "..."` lookup (RFC 7644 §3.4.2.2), resolved fresh on every call — no local id-mapping table. A downstream that doesn't support filtering on `externalId` is a known limitation of the reference `HTTPSCIMProvisioner`; see `protocols/scimprovision/doc.go`.
+
 ## WebAuthn
 
 | Key | Effect |

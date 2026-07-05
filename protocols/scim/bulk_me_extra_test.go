@@ -183,8 +183,8 @@ func TestStorageErrorMapping(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get("Content-Type") != contentTypeSCIM {
-		t.Errorf("500 Content-Type = %q, want %q", rec.Header().Get("Content-Type"), contentTypeSCIM)
+	if rec.Header().Get("Content-Type") != ContentTypeSCIM {
+		t.Errorf("500 Content-Type = %q, want %q", rec.Header().Get("Content-Type"), ContentTypeSCIM)
 	}
 	if e := decodeError(t, rec); e.Status != "500" {
 		t.Errorf("error status = %q, want 500", e.Status)

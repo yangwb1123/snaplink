@@ -322,7 +322,7 @@ func (h *Handler) audit(r *http.Request, typ audit.EventType, subjectID string) 
 }
 
 func (h *Handler) writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", contentTypeSCIM)
+	w.Header().Set("Content-Type", ContentTypeSCIM)
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
 }

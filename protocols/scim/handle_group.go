@@ -52,7 +52,7 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.auditGroup(r, audit.EventAdminRoleAdded, id)
-	h.writeGroupResource(w, http.StatusCreated, roleToGroup(role, members, h.groupLocation(id)))
+	h.writeGroupResource(w, http.StatusCreated, RoleToGroup(role, members, h.groupLocation(id)))
 }
 
 func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request, id string) {
@@ -70,7 +70,7 @@ func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request, id string) {
 		h.writeError(w, h.storageError(err))
 		return
 	}
-	g := roleToGroup(role, members, h.groupLocation(id))
+	g := RoleToGroup(role, members, h.groupLocation(id))
 	version := stampGroupVersion(&g)
 	// If-None-Match: an unchanged group read returns 304 (RFC 7644 §3.14).
 	if ifNoneMatchMatches(r, version) {
@@ -136,7 +136,7 @@ func (h *Handler) materializeGroups(r *http.Request, roles []permissions.Role) (
 			e := h.storageError(err)
 			return nil, &e
 		}
-		resources = append(resources, roleToGroup(role, members, h.groupLocation(role.Code)))
+		resources = append(resources, RoleToGroup(role, members, h.groupLocation(role.Code)))
 	}
 	return resources, nil
 }
@@ -207,7 +207,7 @@ func (h *Handler) replaceGroup(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 	h.auditGroup(r, audit.EventAdminRoleUpdated, id)
-	h.writeGroupResource(w, http.StatusOK, roleToGroup(role, desired, h.groupLocation(id)))
+	h.writeGroupResource(w, http.StatusOK, RoleToGroup(role, desired, h.groupLocation(id)))
 }
 
 // patchGroup applies a SCIM PATCH (RFC 7644 §3.5.2) to a group:
@@ -263,7 +263,7 @@ func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request, id string) 
 		return
 	}
 	h.auditGroup(r, audit.EventAdminRoleUpdated, id)
-	h.writeGroupResource(w, http.StatusOK, roleToGroup(role, members, h.groupLocation(id)))
+	h.writeGroupResource(w, http.StatusOK, RoleToGroup(role, members, h.groupLocation(id)))
 }
 
 // planGroupPatch validates the full PATCH op list against the group schema

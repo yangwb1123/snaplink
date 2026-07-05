@@ -222,6 +222,11 @@ func (s *Server) WebhookEngine() *webhook.Engine { return s.webhookEngine }
 // dependency surface (Auditor() is declared above; WebhookEngine() just above).
 var _ webhook.HandlerDeps = (*Server)(nil)
 
+// SCIMProvisionSink returns the wired outbound SCIM 2.0 provisioning sink
+// (nil when unset — see WithSCIMProvisioner). Typed as audit.Sink rather
+// than the concrete *scimprovision.Sink; see that option's doc for why.
+func (s *Server) SCIMProvisionSink() audit.Sink { return s.scimProvisionSink }
+
 // ConditionalAccessStore exposes the wired zero-trust CAP policy store (may be
 // nil) for the admin governance view. Satisfies admin.Deps.
 func (s *Server) ConditionalAccessStore() conditionalaccess.Store { return s.capStore }

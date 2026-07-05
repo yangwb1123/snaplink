@@ -177,6 +177,7 @@ func (b *appBuilder) wireEdge() error {
 	b.wireCAEPTransmitter()
 	b.wireSSEEvents()
 	b.wireWebhookEngine()
+	b.wireSCIMProvisioning()
 	if err := b.wireFederation(); err != nil {
 		return err
 	}

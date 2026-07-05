@@ -16,6 +16,12 @@ type DPoPConfig struct {
 // false to mount Users only.
 type SCIMConfig struct {
 	Groups SCIMGroupsConfig `yaml:"groups"`
+	// Push opts into OUTBOUND SCIM 2.0 provisioning
+	// (protocols/scimprovision, sso.WithSCIMProvisioner): the reverse
+	// direction of this section's inbound Users/Groups receiver. Disabled
+	// by default — zero outbound traffic, byte-identical to a build
+	// without the feature.
+	Push SCIMPushConfig `yaml:"push"`
 }
 
 // SCIMGroupsConfig configures the SCIM /Groups <-> permissions.Role
@@ -23,6 +29,45 @@ type SCIMConfig struct {
 type SCIMGroupsConfig struct {
 	Enabled       bool   `yaml:"enabled"`
 	GroupClientID string `yaml:"group_client_id"`
+}
+
+// SCIMPushConfig configures the OUTBOUND SCIM provisioner: a Sink sibling
+// to the primary audit sink (like AuditWebhookConfig below, NOT the
+// dynamic multi-target platform/lifecycle/webhook.Engine) that pushes
+// user create/update/delete and group-membership changes to ONE downstream
+// SCIM 2.0 application. A single, statically-configured target mirrors
+// AuditWebhookConfig's shape because a provisioning target is normally one
+// fixed downstream app an operator wires at deploy time, not something end
+// users register at runtime.
+type SCIMPushConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// BaseURL is the downstream SCIM 2.0 service root (e.g.
+	// "https://app.example.com/scim/v2"); /Users and /Groups are resolved
+	// relative to it. Required when Enabled.
+	BaseURL string `yaml:"base_url"`
+	// BearerToken authenticates every outbound request
+	// (Authorization: Bearer <token>) — SCIM's common auth model (RFC 7644
+	// §2). Inject via SSO_SCIM__PUSH__BEARER_TOKEN or a secret:// reference
+	// — never commit the literal to YAML (mirrors
+	// AuditWebhookConfig.SigningSecret's convention).
+	BearerToken string `yaml:"bearer_token"`
+	// Timeout bounds a single outbound HTTP call. 0 = SDK default (10s).
+	Timeout time.Duration `yaml:"timeout"`
+	// GroupClientID scopes which permissions.Role changes are pushed as
+	// SCIM Groups. 0-value "" falls back to Groups.GroupClientID so a
+	// deployment that already configured inbound Groups doesn't repeat
+	// itself; set explicitly to push a DIFFERENT client's roles than the
+	// receiver accepts.
+	GroupClientID string              `yaml:"group_client_id"`
+	Retry         SCIMPushRetryConfig `yaml:"retry"`
+}
+
+// SCIMPushRetryConfig tunes the per-delivery retry wrapper, mirroring
+// AuditWebhookRetryConfig's shape.
+type SCIMPushRetryConfig struct {
+	MaxAttempts    int           `yaml:"max_attempts"`
+	InitialBackoff time.Duration `yaml:"initial_backoff"`
+	MaxBackoff     time.Duration `yaml:"max_backoff"`
 }
 
 // CIBAConfig opts into OIDC CIBA (Client-Initiated Backchannel

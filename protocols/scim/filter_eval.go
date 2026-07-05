@@ -116,6 +116,8 @@ func groupAttrs(g GroupResource) attrLookup {
 		switch path {
 		case "displayname":
 			return single(g.DisplayName)
+		case "externalid":
+			return single(g.ExternalID)
 		case "id":
 			return single(g.ID)
 		case "members", "members.value":

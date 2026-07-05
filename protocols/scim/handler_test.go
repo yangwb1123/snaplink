@@ -93,8 +93,8 @@ func TestUserRoundTrip(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, want 201; body=%s", rec.Code, rec.Body.String())
 	}
-	if ct := rec.Header().Get("Content-Type"); ct != contentTypeSCIM {
-		t.Errorf("create Content-Type = %q, want %q", ct, contentTypeSCIM)
+	if ct := rec.Header().Get("Content-Type"); ct != ContentTypeSCIM {
+		t.Errorf("create Content-Type = %q, want %q", ct, ContentTypeSCIM)
 	}
 	created := decodeResource(t, rec)
 	if created.ID != "id-1" {
