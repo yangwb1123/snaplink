@@ -90,6 +90,7 @@ const (
 	EventConsentDenied                       = auditspi.EventConsentDenied
 	EventConsentGranted                      = auditspi.EventConsentGranted
 	EventConsentRevoked                      = auditspi.EventConsentRevoked
+	EventCrossTenantTokenExchange            = auditspi.EventCrossTenantTokenExchange
 	EventDegradationModeChanged              = auditspi.EventDegradationModeChanged
 	EventDeviceCodeApproved                  = auditspi.EventDeviceCodeApproved
 	EventDeviceCodeDenied                    = auditspi.EventDeviceCodeDenied

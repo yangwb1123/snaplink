@@ -8,6 +8,7 @@ import (
 
 	"github.com/snaplink/sso/domains/anomaly"
 	"github.com/snaplink/sso/domains/conditionalaccess"
+	"github.com/snaplink/sso/domains/tenantcollab"
 	"github.com/snaplink/sso/domains/tokenanomaly"
 	"github.com/snaplink/sso/domains/tokenexchange"
 	"github.com/snaplink/sso/domains/tokenpolicy"
@@ -48,6 +49,13 @@ type protocolState struct {
 	// SPI (WithTokenExchangePolicy). Nil = every exchange hop is allowed,
 	// byte-identical to pre-feature behavior.
 	tokenExchangePolicy tokenexchange.Policy
+	// externalUserStore + tenantCollaborationStore back the cross-tenant B2B
+	// collaboration gate (WithExternalUserStore / WithTenantCollaborationStore,
+	// domains/tenantcollab). EITHER nil disables the gate entirely — byte-
+	// identical to a build without this feature; BOTH must be wired to
+	// activate it (see tokExEnforceTenantCollaboration).
+	externalUserStore        tenantcollab.ExternalUserStore
+	tenantCollaborationStore tenantcollab.CollaborationStore
 	// tokenAnomalyDetector holds the opt-in token-behavior anomaly detector
 	// (WithTokenAnomalyDetector), Phase 3 of token governance. Nil = no
 	// detector: the suspicious-token admin route is not mounted and
