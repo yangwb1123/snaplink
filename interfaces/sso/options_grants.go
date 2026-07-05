@@ -10,7 +10,29 @@ import (
 	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oauth/txntoken"
+	"github.com/snaplink/sso/shared/i18n"
 )
+
+// WithLocalizer opts into error-response localization: when set, the
+// authorization-endpoint error envelope (authzErrorBody / authzErrorBodyDesc,
+// used by /auth/login and every other authorization-response error path — see
+// server_discovery.go) adds an error_description_localized field alongside
+// the existing error / error_description. The locale is the top-quality tag
+// from the request's Accept-Language header, falling back to whatever
+// platform/geo already resolved as this request's recommended_language — the
+// two mechanisms share one signal rather than compete (see shared/i18n
+// package doc).
+//
+// nil (the default) is a byte-identical no-op: Accept-Language is never even
+// read, and no wire field is added. A configured Localizer with no
+// translation for a given (code, locale) is likewise silent — the response
+// is the SAME as if no Localizer were wired. Use i18n.NewDefaultLocalizer for
+// the small demonstration en/es bundle, or i18n.NewMemoryLocalizer /
+// i18n.LoadBundles over your own catalog. Relocated from options_misc.go to
+// keep that file within the per-file line budget.
+func WithLocalizer(l i18n.Localizer) Option {
+	return func(s *Server) { s.localizer = l }
+}
 
 // WithCustomGrant registers an external grant handler for the given
 // grant type URN. When a /token request's grant_type matches a

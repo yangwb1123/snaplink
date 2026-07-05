@@ -20,6 +20,7 @@ import (
 	"github.com/snaplink/sso/platform/netpolicy"
 	"github.com/snaplink/sso/platform/sse"
 	"github.com/snaplink/sso/protocols/caep"
+	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/i18n"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
@@ -234,4 +235,26 @@ func (s *Server) SessionHub() *sessionhub.Coordinator { return s.sessionHub }
 // single triggering client.
 func (s *Server) TriggerBackchannelLogout(ctx context.Context, subject, sid string) {
 	s.fanOutBackchannelLogout(newBackgroundHandlerContext(ctx), nil, subject, sid)
+}
+
+// localizeErrorBody enriches m in place with error_description_localized
+// when WithLocalizer is configured AND it holds a translation for code in
+// the request's preferred locale (Accept-Language, falling back to the geo
+// recommended_language already resolved for this request). Byte-identical
+// no-op — m untouched — with no Localizer wired, or when it has no entry
+// for this (code, locale): see WithLocalizer. Relocated from
+// server_helpers.go to keep that file within the per-file line budget;
+// belongs beside the localizer field here.
+func (s *Server) localizeErrorBody(ctx HandlerContext, m map[string]string, code string) {
+	if s.localizer == nil {
+		return
+	}
+	geoLang := ""
+	if info, ok := GeoFromHandlerContext(ctx); ok {
+		geoLang = info.RecommendedLanguage
+	}
+	locale := i18n.PreferredLocale(ctx.Request().Header.Get(core.HeaderAcceptLanguage), geoLang)
+	if desc, ok := s.localizer.Localize(code, locale); ok {
+		core.ErrorBodyWithLocalizedDesc(m, desc)
+	}
 }
