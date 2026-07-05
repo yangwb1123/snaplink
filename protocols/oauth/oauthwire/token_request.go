@@ -45,4 +45,10 @@ type TokenRequest struct {
 	// The client presents a signed JWT as the authorization grant, rather than
 	// an authorization code, refresh token, or other credential.
 	Assertion string `json:"assertion"`
+
+	// AgentSessionID is for the delegation_token grant
+	// (core.GrantTypeAgentDelegation, domains/tokenexchange/agentidentity):
+	// the previously-created AgentSession id a human's authorization of an
+	// AI agent produced. Ignored by every other grant type.
+	AgentSessionID string `json:"agent_session_id"`
 }

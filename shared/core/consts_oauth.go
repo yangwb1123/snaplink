@@ -30,6 +30,16 @@ const (
 	// SubjectConfirmation method=Bearer) before issuing OAuth tokens for the
 	// SAML NameID-mapped local user.
 	GrantTypeSAML2Bearer = "urn:ietf:params:oauth:grant-type:saml2-bearer"
+
+	// GrantTypeAgentDelegation is the delegation_token grant type URN
+	// (domains/tokenexchange/agentidentity): an AI agent — an identity
+	// distinct from any human User or OAuth Client — redeems a previously
+	// created, human-authorized AgentSession for an access token whose
+	// `sub` is the AGENT's own identity but whose `act` claim (RFC 8693
+	// §4.1, ActorClaim) points back to the delegating human. Vendor-
+	// namespaced (urn:snaplink:...) rather than urn:ietf:params:... — this
+	// is a snaplink-specific extension, not an IETF-registered grant type.
+	GrantTypeAgentDelegation = "urn:snaplink:params:oauth:grant-type:delegation"
 )
 
 // CIBAAMR is the AMR / provider value recorded for a token minted via the CIBA

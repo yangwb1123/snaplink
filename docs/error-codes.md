@@ -202,6 +202,23 @@ These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary 
 | `device_secret_not_configured`| 501  | `device_sso` scope requested on `/token` but no `WithDeviceSecretStore` wired (OpenID Native SSO 1.0) | Operator wires the store              |
 | `ciba_not_configured`         | 501  | `/backchannel-authentication` or `grant_type=urn:openid:params:grant-type:ciba` hit but no `WithCIBA` wired | Operator wires the store              |
 
+### AI-agent identity + delegation grant (`/token` `grant_type=urn:snaplink:params:oauth:grant-type:delegation`)
+
+Opt-in (`sso.WithAgentDelegationGrant`; domains/tokenexchange/agentidentity) — an
+AI agent redeems a previously-created, human-authorized `AgentSession` for an
+access token whose `sub` is the agent's own identity and whose `act` claim
+(RFC 8693 §4.1) points back to the delegating human. Unwired, this
+`grant_type` is never registered and falls through to the ordinary
+`unsupported_grant_type` response below — byte-identical to a build without
+this feature. No new error codes: every failure reuses the SAME codes the
+other grants above use, for the SAME oracle-leak reasons.
+
+| Code             | HTTP | Emitted when                                                                            | Client should                                 |
+|------------------|------|-------------------------------------------------------------------------------------------|-----------------------------------------------|
+| `invalid_request`| 400  | `agent_session_id` omitted                                                                | Include `agent_session_id`                    |
+| `invalid_grant`  | 400  | The `AgentSession` is unknown, expired, or revoked; its `Agent` is unregistered; or the human's live entitlement could not be resolved — ALL collapse to this one code (oracle-leak hardening) | Treat as terminal; the human must re-authorize the agent |
+| `invalid_scope`  | 400  | The three-way intersection (agent policy ∩ session grant ∩ live human entitlement) came out empty, or the caller's requested `scope` includes a value outside that intersection | Request a narrower (or no) `scope`            |
+
 ### Device flow + CIBA poll (`/device/code`, `/device/verify`, `/backchannel-authentication`, `/token`)
 
 | Code                    | HTTP | Emitted when                                                              | Client should                                            |
