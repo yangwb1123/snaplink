@@ -12,20 +12,13 @@ related capability exists but the proposed feature does not).
 
 ---
 
-## Authorization model
-
-- **ReBAC / relationship tuples** — none. Zanzibar-style `RelationTupleStore` +
-  check engine; `conditionalaccess` covers attribute conditions only. _Sources:
-  expansion-v2, analysis-expansion-directions._
-
 ## Novel / future protocols
 
-- **Cloud workload-identity connectors** — partial. GCP fully implemented
-  (`security.NewGCPWorkloadIdentityValidator`, `/token` client authentication
-  via `WithWorkloadIdentityProviders`); AWS (no single stable published JWKS —
-  needs its own design pass) and Azure AD Workload Identity Federation (likely
-  reuses the shared `securityverify` core via a tenant-scoped JWKS URL) remain.
-  _Source: expansion-2026-07-01._
+- **Cloud workload-identity connectors** — partial. GCP and AWS implemented
+  (`security.NewGCPWorkloadIdentityValidator`, AWS preset, `/token` client
+  authentication via `WithWorkloadIdentityProviders`); Azure AD Workload
+  Identity Federation (likely reuses the shared `securityverify` core via a
+  tenant-scoped JWKS URL) remains. _Source: expansion-2026-07-01._
 - **Edge MQTT + WASM** — none. MQTT `cluster.Bus` backend, WASM authz engine,
   WASM authenticator, MQTT CAEP channel. _Source: analysis-round11._
 
@@ -54,20 +47,15 @@ related capability exists but the proposed feature does not).
 - **FIPS 140-3 build mode** — none. Build tags, `Dockerfile.fips`, GOEXPERIMENT,
   FIPS issuer, crypto-algorithm governance. _Sources: architecture-analysis,
   senior-architect-expansion-2026-07-01._
-- **Config JSON-Schema + hot reload** — partial. Schema generation + validator
-  chain + `SIGHUP`/`ReloadConfig` hot reload (`DisallowUnknownFields` is warn-only
-  today). _Sources: architecture-analysis, ops-api-productization-2026-07-01,
+- **Config JSON-Schema + hot reload** — partial. Schema generation
+  (`config/schema`, `sso-ctl config validate-schema`) + validator chain +
+  `SIGHUP` hot reload done for `logging.level`; rate-limit and feature-gate
+  hot-reload deferred (need a broader wiring pass through their consumers).
+  _Sources: architecture-analysis, ops-api-productization-2026-07-01,
   senior-architect-expansion-2026-07-01, architectural-debt-and-risks-2026-07-01._
-- **API versioning / deprecation** — none. `Sunset`/`Deprecation` headers,
-  `Accept-Version` negotiation, v2alpha path (ADR-0008 documents the strategy).
-  _Source: expansion-novel-architectural-gaps._
 
 ## Observability, performance & tests
 
-- **OTel spans across async paths** — partial. Span hierarchy bridge for the
-  async audit sink / CAEP / cluster bus / migrate paths (`context.Background()`
-  currently breaks the trace). _Sources: senior-architect-expansion-2026-07-01,
-  architecture-analysis, runtime-performance…._
 - **Benchmark budget CI gate** — none. `.benchmarks.yaml` + `benchstat`
   regression gate. _Sources: architecture-analysis, senior-architect-expansion-2026-07-01._
 - **Hot-path performance** — partial. `sync.Pool` buffer pooling for JWT
@@ -82,19 +70,9 @@ related capability exists but the proposed feature does not).
   invariants (family-keyed `DeleteFamily`, dual device/user-code indices) that
   sharding would turn into real races, not just missed optimizations.
   _Sources: runtime-performance…, edgecases-and-perf-2026-07-01._
-- **Per-tenant rate-limit metric** — none. `sso_rate_limit_hits{tenant_id}`.
-  _Source: ops-api-productization-2026-07-01._
-- **Signing-key hygiene metrics** — none. `PruneVerifyKeys`, verify-set-size
-  gauge, per-key/alg signing-usage counters. _Source: ops-api-productization-2026-07-01._
 - **Doc/code drift CI checkers** — none. OpenAPI-operationId→route,
   error-code→consts, config-key→docs coverage checks. _Source:
   architectural-debt-and-risks-2026-07-01._
-- **Unit-test coverage gaps** — none. `grpcadmin`, `protocols/selfservice`,
-  `platform/audit` (auditspi/auditsink), `serverbuildstore`/`serverbuildauthn`
-  still have zero unit tests. _Source: test-coverage-gaps-2026-07-01._
-- **Input-limit hardening** — partial. `authorization_details` depth/size/count
-  limits, scope-count cap, `MaxTokenBytes` gate, `aud` normalization to array.
-  _Sources: edgecases-and-perf-2026-07-01, expansion-2026-07-01._
 
 ---
 
