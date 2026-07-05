@@ -229,7 +229,7 @@ func (h *Handler) execBulkSubrequest(r *http.Request, method, path string, data 
 	if err != nil {
 		return nil, err
 	}
-	sreq.Header.Set("Content-Type", contentTypeSCIM)
+	sreq.Header.Set("Content-Type", ContentTypeSCIM)
 	rec := &bulkCapture{}
 	h.ServeHTTP(rec, sreq)
 	return rec, nil

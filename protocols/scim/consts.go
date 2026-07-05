@@ -32,10 +32,10 @@ const resourceTypeUser = "User"
 // Group resource (RFC 7643 §3.1 / §4.2).
 const resourceTypeGroup = "Group"
 
-// contentTypeSCIM is the media type for SCIM payloads (RFC 7644 §3.1).
+// ContentTypeSCIM is the media type for SCIM payloads (RFC 7644 §3.1).
 // Responses set it; requests are accepted regardless of Content-Type so
 // off-the-shelf provisioning clients that send application/json work.
-const contentTypeSCIM = "application/scim+json"
+const ContentTypeSCIM = "application/scim+json"
 
 // Route path suffixes. The Handler is mountable under any base prefix;
 // these are the SCIM-relative paths it dispatches on. Operators mount it

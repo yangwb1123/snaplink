@@ -54,7 +54,7 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(r, audit.EventAdminUserCreated, id)
-	h.writeUserResource(w, http.StatusCreated, userToResource(u, h.location(id)))
+	h.writeUserResource(w, http.StatusCreated, UserToResource(u, h.location(id)))
 }
 
 func (h *Handler) getUser(w http.ResponseWriter, r *http.Request, id string) {
@@ -67,7 +67,7 @@ func (h *Handler) getUser(w http.ResponseWriter, r *http.Request, id string) {
 		h.writeError(w, h.storageError(err))
 		return
 	}
-	res := userToResource(u, h.location(id))
+	res := UserToResource(u, h.location(id))
 	version := stampUserVersion(&res)
 	// If-None-Match: a GET whose cached ETag still matches gets 304 with no
 	// body (RFC 7644 §3.14 / RFC 7232 §3.2), saving the client a re-parse.
@@ -121,7 +121,7 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	h.audit(r, audit.EventAdminUserUpdated, id)
-	h.writeUserResource(w, http.StatusOK, userToResource(u, h.location(id)))
+	h.writeUserResource(w, http.StatusOK, UserToResource(u, h.location(id)))
 }
 
 // validateReplaceUser enforces the PUT body invariants: userName is required,
@@ -148,7 +148,7 @@ func (h *Handler) validateReplaceUser(w http.ResponseWriter, r *http.Request, re
 }
 
 // patchUser applies a SCIM PATCH (RFC 7644 §3.5.2) to a stored user. WHY
-// load -> userToResource -> apply ops -> toUser: PATCH mutates the SAME
+// load -> UserToResource -> apply ops -> toUser: PATCH mutates the SAME
 // Resource view that create/replace produce, so the attribute<->core.User
 // mapping stays single-source. The deprovision case Azure AD / Okta send
 // (replace active=false) flows straight through to scim:active. PATCH is
@@ -173,7 +173,7 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	res := userToResource(existing, "")
+	res := UserToResource(existing, "")
 	if e, ok := applyUserPatch(&res, ops); !ok {
 		h.writeError(w, e)
 		return
@@ -201,7 +201,7 @@ func (h *Handler) patchUserCommit(w http.ResponseWriter, r *http.Request, res Re
 		return true
 	}
 	h.audit(r, audit.EventAdminUserUpdated, id)
-	h.writeUserResource(w, http.StatusOK, userToResource(u, h.location(id)))
+	h.writeUserResource(w, http.StatusOK, UserToResource(u, h.location(id)))
 	return false
 }
 
@@ -252,7 +252,7 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 	// the attribute semantics identical to what a GET returns.
 	resources := make([]Resource, 0, len(all))
 	for _, u := range all {
-		resources = append(resources, userToResource(u, h.location(u.ID)))
+		resources = append(resources, UserToResource(u, h.location(u.ID)))
 	}
 	resources, ferr := h.filterUsers(r, resources)
 	if ferr != nil {

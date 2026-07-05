@@ -204,13 +204,13 @@ func (h *Handler) writeGroupResource(w http.ResponseWriter, code int, g GroupRes
 // return (same projection + version) so a client's cached ETag compares
 // against the same value the read handed it.
 func currentUserVersion(u *core.User, location string) string {
-	return userVersion(userToResource(u, location))
+	return userVersion(UserToResource(u, location))
 }
 
 // currentGroupVersion computes the ETag of the stored group as it is NOW,
 // for an If-Match precondition check, mirroring currentUserVersion.
 func currentGroupVersion(role permissions.Role, memberIDs []string, location string) string {
-	return groupVersion(roleToGroup(role, memberIDs, location))
+	return groupVersion(RoleToGroup(role, memberIDs, location))
 }
 
 // preconditionFailed is the SCIM error for an If-Match mismatch on a write

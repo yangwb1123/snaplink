@@ -69,6 +69,14 @@ type wiringState struct {
 	// no audit-sink tap — byte-identical to a build without the feature.
 	webhookEngine *webhook.Engine
 
+	// scimProvisionSink is the opt-in outbound SCIM 2.0 provisioning push
+	// (WithSCIMProvisioner; typically a *scimprovision.Sink from
+	// protocols/scimprovision, typed here as audit.Sink — see
+	// WithSCIMProvisioner's doc for why). Nil = no audit-sink tap —
+	// byte-identical to a build without the feature (zero outbound SCIM
+	// traffic).
+	scimProvisionSink audit.Sink
+
 	// sessionHub is the Cross-protocol Session Hub coordinator
 	// (platform/lifecycle/sessionhub): given a global_sid it terminates every
 	// linked protocol leg by composing the core-session destroy + OIDC
