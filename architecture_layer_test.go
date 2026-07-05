@@ -78,6 +78,15 @@ func layerName(rel string) string {
 		// example apps moved under docs/ — composition (wire everything, demo only).
 		return "composition"
 	}
+	if strings.HasPrefix(rel, "docs/docscheck") {
+		// doc/code drift CI checkers (_test.go only today, so this walk's own
+		// _test.go skip means the gate never actually visits it — classified
+		// anyway per AGENTS.md §0.6.6, and so a future non-test helper file
+		// here doesn't newly trip "unclassified package"). Composition: it
+		// reads the whole tree (routes, error codes, config schema) the same
+		// way test/ and cmd/ do, never the reverse.
+		return "composition"
+	}
 	if rel == "" {
 		// root package: the public Server type + server_*.go HTTP handlers.
 		return "interfaces"

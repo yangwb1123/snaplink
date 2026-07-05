@@ -65,9 +65,6 @@ related capability exists but the proposed feature does not).
   invariants (family-keyed `DeleteFamily`, dual device/user-code indices) that
   sharding would turn into real races, not just missed optimizations.
   _Sources: runtime-performance…, edgecases-and-perf-2026-07-01._
-- **Doc/code drift CI checkers** — none. OpenAPI-operationId→route,
-  error-code→consts, config-key→docs coverage checks. _Source:
-  architectural-debt-and-risks-2026-07-01._
 
 ---
 
