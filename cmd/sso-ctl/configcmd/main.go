@@ -7,10 +7,16 @@
 //
 //	sso-ctl config validate --file config.yaml
 //	sso-ctl config validate --file config.yaml --print
+//	sso-ctl config schema [--out schema.json]
+//	sso-ctl config validate-schema --file config.yaml
 //
 // validate exits 0 when the config loads and passes validation, 1 otherwise.
 // --print additionally dumps the fully-resolved config (after defaults are
 // applied) as JSON, so operators can see exactly what the server would run.
+//
+// schema and validate-schema are implemented in schema.go — see its doc for
+// how they relate to the warn-only schema check Loader.Load already runs on
+// every boot.
 package configcmd
 
 import (
@@ -35,6 +41,10 @@ func Run(args []string) int {
 	switch args[0] {
 	case "validate":
 		return runValidate(args[1:])
+	case "schema":
+		return runSchema(args[1:])
+	case "validate-schema":
+		return runValidateSchema(args[1:])
 	case "-h", "--help", "help":
 		usage()
 		return 0
@@ -50,17 +60,27 @@ func usage() {
 
 Usage:
   `+progName+` validate --file <config.yaml> [--print]
+  `+progName+` schema [--out <schema.json>]
+  `+progName+` validate-schema --file <config.yaml>
 
 Subcommands:
-  validate   Load and validate a config file (same loader the server uses).
+  validate         Load and validate a config file (same loader the server uses).
+  schema           Print the generated JSON Schema for config.Config.
+  validate-schema  Validate a config file against the generated schema; exits 1
+                   on any violation (unknown key or type mismatch) — a strict
+                   CI-gate sibling of the warn-only check the server runs on
+                   every boot.
 
 Flags:
-  --file     Path to the config file (required).
+  --file     Path to the config file (required for validate / validate-schema).
   --print    Also print the fully-resolved config (after defaults) as JSON.
+  --out      Write the schema to a file instead of stdout (schema only).
 
 Examples:
   `+progName+` validate --file ./config.yaml
-  `+progName+` validate --file /etc/sso/config.yaml --print`)
+  `+progName+` validate --file /etc/sso/config.yaml --print
+  `+progName+` schema --out docs/config.schema.json
+  `+progName+` validate-schema --file ./config.yaml`)
 }
 
 func runValidate(args []string) int {

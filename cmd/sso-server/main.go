@@ -9,12 +9,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"database/sql"
@@ -22,6 +20,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/snaplink/sso/config"
+	configreload "github.com/snaplink/sso/config/reload"
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/domains/authenticators/webauthn"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -106,7 +105,8 @@ func main() {
 		_ = tracingShutdown(ctx)
 	}()
 
-	if err := run(cfg, logger, flags.tlsCert, flags.tlsKey, flags.grpcListen); err != nil {
+	reloader := newConfigReloader(cfg, sources, logger)
+	if err := run(cfg, logger, flags.tlsCert, flags.tlsKey, flags.grpcListen, reloader); err != nil {
 		logger.Error("server exited with error", "error", err)
 		os.Exit(1)
 	}
@@ -441,7 +441,7 @@ type app struct {
 	pgDB *sql.DB
 }
 
-func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen string) error {
+func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen string, reloader *configreload.Reloader) error {
 	a, err := buildApp(cfg, logger)
 	if err != nil {
 		return err
@@ -473,12 +473,7 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 
 	logEndpoints(cfg, grpcListen)
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	select {
-	case sig := <-sigCh:
-		logger.Info("shutdown signal received", "signal", sig.String())
-	case err := <-errCh:
+	if err := waitForShutdown(logger, errCh, reloader); err != nil {
 		return err
 	}
 
