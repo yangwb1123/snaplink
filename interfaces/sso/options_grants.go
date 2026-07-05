@@ -5,6 +5,7 @@ import (
 
 	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/protocols/oauth/txntoken"
 )
 
 // WithCustomGrant registers an external grant handler for the given
@@ -78,5 +79,40 @@ func WithGrantTypeRateLimit(grantType string, tokensPerSec float64, burst int) O
 			lim = rate.NewLimiter(rate.Limit(tokensPerSec), burst)
 		}
 		s.grantRateLimiters[grantType] = &rateLimiterEntry{limiter: lim}
+	}
+}
+
+// WithTransactionTokens opts into RFC 9321 OAuth 2.0 Transaction Tokens: a
+// short-lived, workload-identity-bound token minted from an inbound access
+// token (or, for a further hop, from a previously-issued Txn-Token) that a
+// downstream microservice within the same trust domain verifies LOCALLY
+// (signature + exp + aud) with no round trip back to this server.
+//
+// It reuses the EXISTING RFC 8693 token-exchange grant + /token endpoint —
+// a request is routed here only when requested_token_type names
+// txntoken.TokenType; every other requested_token_type is unaffected and
+// keeps flowing through the ordinary token-exchange handler.
+//
+//   - issuer mints the Txn-Token (see txntoken.NewIssuer). Required.
+//   - validator re-validates a Txn-Token presented as a NESTED
+//     subject_token, so a multi-hop internal call chain stays auditable —
+//     each hop prepends its own requesting client_id onto the `act`
+//     chain, mirroring the RFC 8693 §4.1.1 act-chain prepend the ordinary
+//     token-exchange grant already performs. nil validator still allows
+//     first-hop minting (from an ordinary access token); only chaining
+//     from an existing Txn-Token is refused (fail-closed, invalid_grant —
+//     never a panic).
+//
+// nil issuer is a no-op — the feature stays entirely OFF, byte-identical
+// to a build without this package: a requested_token_type naming the
+// Txn-Token URN falls through to the ordinary token-exchange handler's
+// existing invalid_request collapse for an unrecognized type.
+func WithTransactionTokens(issuer *txntoken.Issuer, validator *txntoken.Validator) Option {
+	return func(s *Server) {
+		if issuer == nil {
+			return
+		}
+		s.txnTokenIssuer = issuer
+		s.txnTokenValidator = validator
 	}
 }

@@ -30,6 +30,13 @@ type TokenRequest struct {
 	// least as strong as one in this list.
 	ACRValues string `json:"acr_values"`
 
+	// RFC 9321 Transaction Token Request parameters. Reached only when
+	// requested_token_type names the Txn-Token URN (txntoken.TokenType);
+	// every other requested_token_type ignores these two fields exactly
+	// as it does today.
+	Purp           string `json:"purp"`
+	RequestContext string `json:"request_context"`
+
 	// RFC 7521 + 7523 JWT bearer client authentication.
 	ClientAssertion     string `json:"client_assertion"`
 	ClientAssertionType string `json:"client_assertion_type"`

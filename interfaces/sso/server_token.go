@@ -10,6 +10,7 @@ import (
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/fapi"
 	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/protocols/oauth/txntoken"
 	"github.com/snaplink/sso/shared/core"
 )
 
@@ -183,7 +184,7 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 	case GrantCIBA:
 		s.handleCIBATokenGrant(ctx, client, req.AuthReqID, dpopJKT, mtlsX5T)
 	case GrantTokenExchange:
-		s.handleTokenExchangeGrant(ctx, client, buildTokenExchangeRequest(req, dpopJKT, mtlsX5T))
+		s.dispatchTokenExchangeOrTxnToken(ctx, client, req, dpopJKT, mtlsX5T)
 	case GrantClientCredentials:
 		// RFC 6749 §4.4: only confidential clients may use this grant.
 		if s.denyPublicClientCredentials(ctx, client, req) {
@@ -198,6 +199,23 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 			KeySupportedGrants: SupportedGrants,
 		})
 	}
+}
+
+// dispatchTokenExchangeOrTxnToken routes a grant_type=token-exchange request
+// to the RFC 9321 Transaction Token mint OR the ordinary RFC 8693 exchange
+// handler, distinguished only by requested_token_type. Extracted from
+// dispatchTokenGrant's switch to hold that function within budget.
+//
+// s.txnTokenIssuer is nil unless WithTransactionTokens was called, so an
+// unconfigured server is byte-identical: the request falls through and the
+// ordinary handler's requested_token_type allowlist rejects an unrecognized
+// value exactly as it does today.
+func (s *Server) dispatchTokenExchangeOrTxnToken(ctx HandlerContext, client *Client, req oauth.TokenRequest, dpopJKT, mtlsX5T string) {
+	if s.txnTokenIssuer != nil && req.RequestedTokenType == txntoken.TokenType {
+		s.handleTransactionTokenGrant(ctx, client, req)
+		return
+	}
+	s.handleTokenExchangeGrant(ctx, client, buildTokenExchangeRequest(req, dpopJKT, mtlsX5T))
 }
 
 // buildTokenExchangeRequest maps the parsed /token parameters onto the RFC 8693
@@ -410,3 +428,28 @@ func (s *Server) handleTokenExchangeGrant(ctx HandlerContext, client *Client, re
 func mergeTargets(primary, secondary []string) []string {
 	return oauth.MergeTargets(primary, secondary)
 }
+
+// handleTransactionTokenGrant delegates the RFC 9321 Transaction Token mint.
+// Reached ONLY when WithTransactionTokens wired an Issuer AND the request's
+// requested_token_type names the Txn-Token URN (see dispatchTokenGrant).
+func (s *Server) handleTransactionTokenGrant(ctx HandlerContext, client *Client, req oauth.TokenRequest) {
+	txntoken.HandleGrant(s, s.txnTokenIssuer, s.txnTokenValidator, ctx, client, buildTxnTokenRequest(req))
+}
+
+// buildTxnTokenRequest maps the parsed /token parameters onto the RFC 9321
+// Transaction Token request. Kept alongside buildTokenExchangeRequest for
+// the same reason: hold dispatchTokenGrant within the function-length budget.
+func buildTxnTokenRequest(req oauth.TokenRequest) txntoken.Request {
+	return txntoken.Request{
+		SubjectToken:     req.SubjectToken,
+		SubjectTokenType: req.SubjectTokenType,
+		Audience:         req.Audience,
+		Purpose:          req.Purp,
+		RequestContext:   req.RequestContext,
+	}
+}
+
+// var _ txntoken.Deps = (*Server)(nil) proves *Server satisfies HandleGrant's
+// dependency interface via ValidateAnyToken (accessors_handlers.go),
+// RecordTokenIssued (accessors_handlers.go), and SrvLogger (accessors.go).
+var _ txntoken.Deps = (*Server)(nil)
