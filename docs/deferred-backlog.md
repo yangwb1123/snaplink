@@ -12,14 +12,6 @@ related capability exists but the proposed feature does not).
 
 ---
 
-## Eventing & integration
-
-- **SCIM push provisioning** — partial. SCIM is receiver-only; add an outbound
-  `SCIMProvisioner` SPI that pushes to downstream apps. _Source:
-  enterprise-expansion-directions-2026-07-01._
-- **Event-driven identity lifecycle automation** — none. `LifecycleEventBus`,
-  outbound `scimclient`, lifecycle webhooks. _Source: expansion-directions-2026-07-01-v3._
-
 ## Authorization model
 
 - **ReBAC / relationship tuples** — none. Zanzibar-style `RelationTupleStore` +
@@ -28,28 +20,21 @@ related capability exists but the proposed feature does not).
 
 ## Novel / future protocols
 
-- **Cloud workload-identity connectors** — none. AWS/GCP/Azure IMDS /
-  `AssumeRoleWithWebIdentity` / `WorkloadIdentityProvider`. _Source: expansion-2026-07-01._
-- **AI-agent identity + delegation grant** — none. `AgentProvider` SPI,
-  `AgentSession`, `delegation_token` grant. _Source: expansion-round31._
+- **Cloud workload-identity connectors** — partial. GCP fully implemented
+  (`security.NewGCPWorkloadIdentityValidator`, `/token` client authentication
+  via `WithWorkloadIdentityProviders`); AWS (no single stable published JWKS —
+  needs its own design pass) and Azure AD Workload Identity Federation (likely
+  reuses the shared `securityverify` core via a tenant-scoped JWKS URL) remain.
+  _Source: expansion-2026-07-01._
 - **Edge MQTT + WASM** — none. MQTT `cluster.Bus` backend, WASM authz engine,
   WASM authenticator, MQTT CAEP channel. _Source: analysis-round11._
 
 ## Enterprise governance & compliance
 
-- **Admin governance framework** — partial. Per-tenant/admin write quotas,
-  change-approval workflow, `DestructiveActionGuard`, admin IP-allowlist/geo-lock,
-  universal write-reason (rate-limit + break-glass approval exist). _Sources:
-  senior-architect-expansion-2026-07-02, expansion-novel-directions-2026-07-02,
-  analysis-final-project-expansion-directions._
 - **Declarative multi-cluster config governance** — partial. K8s CRDs, config
   Operator/GitOps reconciler, canary rollout, cross-cluster diff (only
   intra-cluster drift detection exists). _Sources: senior-architect-expansion-2026-07-02,
   expansion-novel-directions-2026-07-02, enterprise-expansion-directions-2026-07-01._
-- **Compliance reporting** — partial. SOC2 evidence pack, GDPR Art.30 data-map,
-  active-consents report, automated data-retention-policy engine (erasure/export
-  primitives exist). _Sources: analysis-final-project-expansion-directions,
-  expansion-analysis-20260701._
 
 ## Productization & DX
 
@@ -60,8 +45,6 @@ related capability exists but the proposed feature does not).
   client generation, embedded Swagger/Redoc at `/api/v1/admin/docs`, TS/Python
   consumer SDKs, developer app portal + review workflow. _Sources: health-and-dx-2026-07-01,
   expansion-analysis-20260701, expansion-directions-2026-07-01-v3._
-- **i18n / L10n infrastructure** — none. `shared/i18n` Localizer + translation
-  bundles for SPA/error/audit surfaces. _Source: health-and-dx-2026-07-01._
 - **Repo hygiene** — none. `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, devcontainer +
   hot-reload dev tooling, CI status/coverage badges, more godoc `Example*` funcs.
   _Sources: dx-and-build-infra-2026-07-01, analysis-round15-login…._
@@ -87,9 +70,17 @@ related capability exists but the proposed feature does not).
   architecture-analysis, runtime-performance…._
 - **Benchmark budget CI gate** — none. `.benchmarks.yaml` + `benchstat`
   regression gate. _Sources: architecture-analysis, senior-architect-expansion-2026-07-01._
-- **Hot-path performance** — none. `sync.Pool` buffer pooling for JWT issuance,
-  sharded/keyed mutexes for memory OAuth stores, `TimeSource`/`Clock` injection,
-  bounded memory stores (MaxEntries/reaper) for JTI/refresh/authcode/PAR.
+- **Hot-path performance** — partial. `sync.Pool` buffer pooling for JWT
+  issuance, sharded locks for the auth-code/PAR memory OAuth stores, and
+  injectable `Clock` (Ed25519/ECDSA/RSA issuers) are done. Bounded memory
+  stores (MaxEntries/reaper) for JTI/refresh/device-code/PAR remain — deferred
+  because `infrastructure/defaultimpl`, `interfaces/sso`, `config/`, and
+  `shared/security` are all already at their frozen file-count ceilings, so
+  wiring a reaper lifecycle across 5 store types needs its own focused pass
+  with file-count budget planned in. Sharding the refresh-token and
+  device-code stores was deliberately NOT done — both have cross-key
+  invariants (family-keyed `DeleteFamily`, dual device/user-code indices) that
+  sharding would turn into real races, not just missed optimizations.
   _Sources: runtime-performance…, edgecases-and-perf-2026-07-01._
 - **Per-tenant rate-limit metric** — none. `sso_rate_limit_hits{tenant_id}`.
   _Source: ops-api-productization-2026-07-01._
