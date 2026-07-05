@@ -178,6 +178,25 @@ func (s *Server) DestroySession(ctx context.Context, sessionID string) error {
 	}
 	return s.sessionMgr.Destroy(ctx, sessionID)
 }
+
+// ClearSessionManagementCookie implements oidc.EndSessionDeps: expires the
+// OpenID Connect Session Management 1.0 browser-state cookie so a later
+// check_session_iframe comparison observes "changed". A no-op when
+// WithOIDCSessionManagement was never wired — writing a Set-Cookie header
+// in that case would break /end_session's byte-identical-when-off contract.
+func (s *Server) ClearSessionManagementCookie(ctx core.HandlerContext) {
+	if !s.sessionManagementEnabled {
+		return
+	}
+	http.SetCookie(ctx.ResponseWriter(), &http.Cookie{
+		Name:     oidc.CheckSessionCookieName,
+		Value:    "",
+		Path:     PathCheckSessionIframe,
+		MaxAge:   -1,
+		Secure:   true,
+		SameSite: http.SameSiteNoneMode,
+	})
+}
 func (s *Server) TokenIssuers() map[string]core.TokenIssuer { return s.tokenIssuers }
 func (s *Server) LogoutTokenIssuer() LogoutTokenIssuer      { return s.logoutTokenIssuer }
 func (s *Server) LogoutNotifier() LogoutNotifier            { return s.logoutNotifier }

@@ -87,6 +87,12 @@ const (
 	KeyState           = "state"
 	KeyRedirectURI     = "redirect_uri"
 	KeyIssuedTokenType = "issued_token_type" // RFC 8693 token-exchange response key
+	// KeySessionState is the OpenID Connect Session Management 1.0 §2
+	// `session_state` authentication-response field — present only when
+	// WithOIDCSessionManagement is wired AND the request carried the
+	// `openid` scope (an RP with no session-management support just
+	// ignores the extra field).
+	KeySessionState = "session_state"
 
 	// RFC 7662 introspection response keys.
 	KeyActive    = "active"

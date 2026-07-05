@@ -2582,6 +2582,44 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /check_session_iframe:
+    get:
+      tags: [discovery]
+      summary: OpenID Connect Session Management 1.0 OP iframe.
+      description: |
+        A static, cacheable HTML+JS page an RP embeds in a hidden iframe to
+        detect End-User login-state changes without polling a credentialed
+        endpoint. Mounted only when `WithOIDCSessionManagement` is wired
+        (default off; also requires the OIDC feature gate) — 404s otherwise.
+
+        Protocol (OpenID Connect Session Management 1.0 §2): the RP's own
+        page postMessages `client_id + " " + session_state` (the value
+        returned by `/auth/login`) to this iframe. The iframe reads its own
+        `op_browser_state` cookie, recomputes
+        `Base64url(SHA-256(client_id + " " + origin + " " + browser_state + " " + salt))`
+        (origin + salt both taken from the incoming message — origin from
+        the browser-supplied `MessageEvent.origin`, salt from the
+        `session_state` suffix after the last `.`), and postMessages back
+        `"unchanged"`, `"changed"`, or `"error"` to the RP's origin only.
+
+        Deliberately NOT served with `X-Frame-Options: DENY` — unlike every
+        other rendered page in this SDK, this one is designed to be framed.
+      operationId: getCheckSessionIframe
+      responses:
+        "200":
+          description: Static HTML+JS page implementing the OP-iframe protocol above.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: '`public, max-age=3600` — content is deployment-constant.'
+          content:
+            text/html:
+              schema:
+                type: string
+        "404":
+          description: WithOIDCSessionManagement is not wired, or the OIDC feature gate is off.
+
   /webauthn/registration/begin:
     post:
       tags: [webauthn]
@@ -7780,6 +7818,17 @@ components:
         session_id:
           type: string
           description: Server-side session handle for logout calls.
+        session_state:
+          type: string
+          description: |
+            OpenID Connect Session Management 1.0 §2 `session_state` — present
+            only when the server has `WithOIDCSessionManagement` wired AND the
+            request's `scope` included `openid`. An RP's hidden iframe
+            postMessages `client_id + " " + session_state` to the OP's
+            `check_session_iframe` to detect subsequent login-state changes
+            (logout, re-login) without polling a credentialed endpoint. A
+            matching non-HttpOnly, path-scoped cookie is set alongside it and
+            cleared at `/end_session`.
         token_strategy:
           type: string
           enum: [jwt, session]
@@ -10055,6 +10104,14 @@ components:
           type: string
           format: uri
           description: OIDC RP-Initiated Logout 1.0.
+        check_session_iframe:
+          type: string
+          format: uri
+          description: |
+            OpenID Connect Session Management 1.0 §3. Present only when
+            `WithOIDCSessionManagement` is wired (default off) AND OIDC is
+            gated on — omitted otherwise, so discovery stays byte-identical
+            for deployments that never opt in.
         backchannel_logout_supported:
           type: boolean
         backchannel_logout_session_supported:

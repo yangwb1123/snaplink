@@ -16,6 +16,12 @@ const (
 	PathAdminTokenSubject    = core.PathAdminTokenSubject
 	PathAdminTokenSuspicious = core.PathAdminTokenSuspicious
 	PathAdminTokenRevoke     = core.PathAdminTokenRevoke
+	// PathCheckSessionIframe re-exports core.PathCheckSessionIframe (OpenID
+	// Connect Session Management 1.0 §2) here — rather than in aliases.go,
+	// which sits at the file-line budget — for the endpoint-inventory entry
+	// below; interfaces/sso/server_userinfo.go and server_discovery_config.go
+	// reference this SAME package-level const.
+	PathCheckSessionIframe = core.PathCheckSessionIframe
 )
 
 // Crypto-material-inventory admin route-path re-exports — aliases.go is at
@@ -294,6 +300,9 @@ func gatedProtocolEndpointCandidates() []endpointCandidate {
 	return []endpointCandidate{
 		{endpointInfo{http.MethodGet, PathUserInfo, "oidc"}, func(s *Server) bool { return s.oidcGateOn() }},
 		{endpointInfo{http.MethodGet, PathEndSession, "oidc"}, func(s *Server) bool { return s.oidcGateOn() }},
+		{endpointInfo{http.MethodGet, PathCheckSessionIframe, "oidc"}, func(s *Server) bool {
+			return s.oidcGateOn() && s.sessionManagementEnabled
+		}},
 		{endpointInfo{http.MethodPost, PathBackchannelAuth, "ciba"}, func(s *Server) bool { return s.cibaGateOn() }},
 		{endpointInfo{http.MethodPost, PathSSFReceive, "caep"}, func(s *Server) bool {
 			return s.caepGateOn() && s.caepReceiver != nil

@@ -274,6 +274,7 @@ func (s *Server) augmentDirectMintResponse(ctx HandlerContext, result *AuthResul
 			s.recordIDTokenIssued(ctx, client.ID, result.UserID)
 		}
 	}
+	s.applySessionManagement(ctx, req, client, session, resp)
 	if deviceSecretValue != "" {
 		resp[KeyDeviceSecret] = deviceSecretValue
 	}

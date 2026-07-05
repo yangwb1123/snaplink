@@ -51,6 +51,16 @@ func (b *appBuilder) wireResponseEncryption() error {
 	return nil
 }
 
+// wireSessionManagement wires OpenID Connect Session Management 1.0 when
+// oidc.session_management.enabled is set — see sso.WithOIDCSessionManagement.
+func (b *appBuilder) wireSessionManagement() {
+	if !b.cfg.OIDC.SessionManagement.Enabled {
+		return
+	}
+	b.opts = append(b.opts, sso.WithOIDCSessionManagement())
+	b.logger.Info("oidc session management: enabled — /auth/login stamps session_state, GET /check_session_iframe mounted, discovery advertises check_session_iframe")
+}
+
 // wireDCRBackchannel wires dynamic client registration and backchannel logout.
 func (b *appBuilder) wireDCRBackchannel() error {
 	cfg, logger := b.cfg, b.logger

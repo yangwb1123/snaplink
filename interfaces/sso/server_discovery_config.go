@@ -176,6 +176,9 @@ func buildBaseMetadata(s *Server, base string) oidc.ProviderMetadata {
 	if s.oidcGateOn() {
 		cfg.UserInfoEndpoint = base + PathUserInfo
 		cfg.EndSessionEndpoint = base + PathEndSession
+		if s.sessionManagementEnabled {
+			cfg.CheckSessionIframe = base + PathCheckSessionIframe
+		}
 	}
 	return cfg
 }

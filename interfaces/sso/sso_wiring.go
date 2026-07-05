@@ -122,4 +122,12 @@ type wiringState struct {
 	// Zero interval (the default) means the feature is off.
 	configDriftInterval time.Duration
 	configReplicaID     string
+
+	// sessionManagementEnabled opts into OpenID Connect Session Management
+	// 1.0 (WithOIDCSessionManagement): /auth/login stamps `session_state` +
+	// a browser-state cookie, /end_session clears it, and discovery
+	// advertises check_session_iframe. Default false — byte-identical to a
+	// pre-feature build (no cookie, no session_state, no discovery field,
+	// route unmounted).
+	sessionManagementEnabled bool
 }

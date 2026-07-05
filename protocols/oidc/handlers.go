@@ -13,6 +13,16 @@ import (
 	"github.com/snaplink/sso/shared/spi"
 )
 
+// HandleCheckSessionIframe implements the OpenID Connect Session Management
+// 1.0 §2 check_session_iframe endpoint. It takes no Deps: the page is
+// static, and the login-state comparison happens entirely client-side (the
+// postMessage protocol embedded in RenderCheckSessionIframe), keyed off the
+// CheckSessionCookieName cookie stamped at /auth/login and cleared at
+// /end_session.
+func HandleCheckSessionIframe(ctx core.HandlerContext) {
+	RenderCheckSessionIframe(ctx)
+}
+
 // JWKSDeps is what the /jwks.json handler needs. *sso.Server satisfies
 // it via the accessor methods on sso.Server.
 type JWKSDeps interface {

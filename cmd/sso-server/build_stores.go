@@ -169,6 +169,7 @@ func (b *appBuilder) wireEdge() error {
 	if err := b.wireResponseEncryption(); err != nil {
 		return err
 	}
+	b.wireSessionManagement()
 	if err := b.wireDCRBackchannel(); err != nil {
 		return err
 	}
