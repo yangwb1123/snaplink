@@ -18,6 +18,13 @@ const (
 	PathAdminTokenRevoke     = core.PathAdminTokenRevoke
 )
 
+// Crypto-material-inventory admin route-path re-exports — aliases.go is at
+// its line budget, same reason as the Token Portfolio consts above.
+const (
+	PathAdminCryptoKeys          = core.PathAdminCryptoKeys
+	PathAdminCryptoKeyCompromise = core.PathAdminCryptoKeyCompromise
+)
+
 // Admin REST API route registration, extracted from Mount (server_routes.go).
 // All routes hang off the /api/v1 group created in Mount; the /api/v1/admin/*
 // paths are gated by AdminMiddleware (GET admin:read, mutations admin:write).
@@ -40,6 +47,7 @@ func (s *Server) mountAdminSurface() {
 	s.mountAdminB2B(api)
 	s.mountConfigAuditAPI(api)
 	s.mountAdminBreakGlass(api)
+	s.mountCryptoInventoryAPI(api)
 }
 
 // mountAdminAPIObservability registers the client lookup plus the opt-in audit,
@@ -449,4 +457,16 @@ func (s *Server) mountAdminBreakGlass(api Router) {
 	api.DELETE(PathAdminBreakGlassByID, s.handleAdminRevokeBreakGlass)
 	api.POST(PathAdminBreakGlassApprove, s.handleAdminApproveBreakGlass)
 	api.POST(PathAdminBreakGlassImpersonate, s.handleAdminImpersonateBreakGlass)
+}
+
+// mountCryptoInventoryAPI registers the cryptographic-material inventory
+// admin endpoints (opt-in WithCryptoInventory): GET the catalog (admin:read),
+// POST a compromise report (admin:write). Not mounted without an Inventory —
+// byte-identical to a build without the feature.
+func (s *Server) mountCryptoInventoryAPI(api Router) {
+	if s.cryptoInventory == nil {
+		return
+	}
+	api.GET(PathAdminCryptoKeys, s.handleAdminListCryptoKeys)
+	api.POST(PathAdminCryptoKeyCompromise, s.handleAdminReportKeyCompromise)
 }

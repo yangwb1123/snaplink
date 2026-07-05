@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/metering"
+	"github.com/snaplink/sso/platform/lifecycle/cryptoinventory"
 	"github.com/snaplink/sso/platform/lifecycle/rotation"
 	"github.com/snaplink/sso/protocols/compliance"
 	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
@@ -214,6 +215,16 @@ type selfServiceState struct {
 	// status store + dependent-party notifier the compromise fan-out reuses).
 	// Nil ⇒ the route is NOT mounted — byte-identical to a build without it.
 	credentialScheduler *rotation.Scheduler
+
+	// cryptoInventory backs GET /api/v1/admin/crypto/keys and POST
+	// /api/v1/admin/crypto/keys/:id/compromise (WithCryptoInventory) — the
+	// cryptographic-material governance catalog (platform/lifecycle/
+	// cryptoinventory): signing keys, JWE keys, KMS-backed keys, and any
+	// manually-registered trust anchors, each with id/algorithm/purpose/
+	// created_at/status/backing store. NEVER exposes key material. Nil ⇒
+	// neither route is mounted — byte-identical to a build without the
+	// feature.
+	cryptoInventory cryptoinventory.Inventory
 
 	// adminConsoleFS, when non-nil, serves the hosted admin console SPA from
 	// an embedded or OS filesystem at /admin/. The console is a standalone
