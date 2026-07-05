@@ -378,6 +378,7 @@ func adminAPIEndpointCandidates() []endpointCandidate {
 		{endpointInfo{http.MethodPost, prefix + PathAdminTenantInvitations, "admin_api"}, on(func(s *Server) bool { return s.invitationStore != nil })},
 		{endpointInfo{http.MethodGet, PathAuthzPolicyBundle, "admin_api"}, on(func(s *Server) bool { return s.permissions != nil })},
 		{endpointInfo{http.MethodGet, PathStorageHealth, "admin_api"}, on(func(s *Server) bool { return len(s.storageHealthSources) > 0 })},
+		{endpointInfo{http.MethodGet, PathAdminFederationHealth, "admin_api"}, on(func(s *Server) bool { return s.federationHealth != nil })},
 	}
 }
 

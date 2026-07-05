@@ -3521,6 +3521,54 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/federation/health:
+    get:
+      tags: [admin]
+      summary: Federation peer metadata-health listing (fetch success/failure + TLS cert expiry).
+      description: |
+        Read-only listing of every OpenID Federation 1.0 peer this server's
+        trust-chain resolver has fetched from (an entity's Entity
+        Configuration, or a superior's Subordinate Statement endpoint): last
+        fetch success/failure time, consecutive-failure count, and the
+        peer's last-observed TLS leaf-certificate expiry. Each entry carries
+        a derived `cert_expiring` flag against a config-gated threshold
+        (`federation.connection_health.cert_expiry_warning`, default 30
+        days) — a QUERYABLE list an operator polls or scrapes into their own
+        alerting, NOT an active push/notification channel.
+
+        PURE OBSERVABILITY: health is recorded by a decorator wrapped around
+        the resolver's existing fetch path and is NEVER consulted by
+        trust-chain validation — this endpoint cannot affect, and is not
+        affected by, the fail-closed trust-chain decision.
+
+        Admin-gated — the admin middleware enforces `admin:read` (the path
+        sits under `/api/v1/admin/`). Opt-in via
+        `federation.connection_health.enabled` /
+        `WithFederationConnectionHealth`; the route is not mounted (404)
+        when no health store is wired.
+      operationId: getFederationHealth
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The federation peer health listing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FederationHealthReport"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Bearer lacks the `admin:read` scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/credentials/{type}/compromise:
     post:
       tags: [admin]
@@ -9331,6 +9379,58 @@ components:
             Operator-facing reachability/schema error when the store is down
             or its schema couldn't be read. A generic message — never the
             connection string or any credential.
+
+    FederationHealthReport:
+      type: object
+      required: [peers, cert_expiry_warning_seconds, generated_at]
+      description: |
+        Per-peer federation fetch-health report for operator observability.
+        One entry per federation Entity Identifier this server's trust-chain
+        resolver has fetched from.
+      properties:
+        peers:
+          type: array
+          items:
+            $ref: "#/components/schemas/FederationPeerHealth"
+        cert_expiry_warning_seconds:
+          type: integer
+          description: The config-gated "expiring soon" threshold (seconds) applied to compute cert_expiring.
+          example: 2592000
+        generated_at:
+          type: string
+          format: date-time
+          description: When the report rendered.
+
+    FederationPeerHealth:
+      type: object
+      required: [peer_id, consecutive_failures, cert_expiring]
+      description: One federation peer's fetch-path health entry.
+      properties:
+        peer_id:
+          type: string
+          description: The peer's federation Entity Identifier.
+          example: https://op.partner.example
+        last_success_at:
+          type: string
+          format: date-time
+          description: When a fetch from this peer last succeeded. Omitted if never observed.
+        last_failure_at:
+          type: string
+          format: date-time
+          description: When a fetch from this peer last failed. Omitted if never observed.
+        last_error:
+          type: string
+          description: The most recent failure's error text. Omitted when the last attempt succeeded or none was made.
+        consecutive_failures:
+          type: integer
+          description: Fetch failures since the last success (reset to 0 on success).
+        cert_not_after:
+          type: string
+          format: date-time
+          description: The peer's TLS leaf-certificate NotAfter, as last observed on a fresh handshake. Omitted when never observed.
+        cert_expiring:
+          type: boolean
+          description: True when cert_not_after is known and falls within cert_expiry_warning_seconds of generated_at.
 
     CredentialInventoryResponse:
       type: object

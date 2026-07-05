@@ -6,10 +6,17 @@ import (
 
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/federation"
+	federationhealth "github.com/snaplink/sso/domains/federation/health"
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/protocols/caep"
 	"github.com/snaplink/sso/protocols/oidc"
+	"github.com/snaplink/sso/shared/core"
 )
+
+// PathAdminFederationHealth re-export (relocated here rather than aliases.go,
+// which is at the per-file line budget — mirrors the Token Portfolio paths'
+// relocation to server_routes_admin.go for the same reason).
+const PathAdminFederationHealth = core.PathAdminFederationHealth
 
 func (s *Server) BuildOPMetadata(ctx HandlerContext, base string) federation.OPFederationMetadata {
 	cfg := s.buildOIDCConfiguration(ctx, base)
@@ -149,12 +156,67 @@ func WithFederationAutoRegistration() Option {
 // WithFederationEntity is not configured).
 func (s *Server) FederationEntity() *federation.EntityHandler { return s.federationEntity }
 
-// mountClusterEndpoints registers the full-path admin/cluster endpoints
-// (authz policy bundle, storage health, mesh ext_authz, CAEP/SSF receiver),
-// each opt-in and gated on its wiring. Moved from server_routes.go (which
-// was at the line budget) — this file already holds the fields these routes
-// gate on (federationMeshState).
-func (s *Server) mountClusterEndpoints() {
+// WithFederationConnectionHealth wires an OPTIONAL observability store
+// tracking each federation peer's fetch-path health (last success/failure,
+// consecutive-failure count, last-observed TLS certificate expiry) and mounts
+// the read-only GET PathAdminFederationHealth admin listing. PURE
+// OBSERVABILITY: the store is populated by a decorator
+// (federationhealth.NewObservingFetcher) wrapped around whatever
+// EntityStatementFetcher the trust-chain resolver uses — pass the SAME
+// wrapped fetcher to WithFederationEntity's resolverOpts
+// (federation.WithTrustChainFetcher) so tracking and surfacing share one
+// store. The decorator never alters a fetch's result, so trust-chain
+// validation and its fail-closed semantics are completely unaffected (AGENTS.md:
+// health tracking wraps the fetch path, it is never a new gate).
+//
+// certExpiryWarning is the config-gated "expiring soon" threshold a tracked
+// peer's certificate must fall within to be flagged cert_expiring in the
+// listing (a queryable list, NOT an active alert/notification channel).
+// <= 0 ⇒ federationhealth.DefaultCertExpiryWarning (30 days).
+//
+// A nil store leaves the Server's field nil — the route is NOT mounted and
+// behavior is byte-identical to a build without it (default-off).
+func WithFederationConnectionHealth(store federationhealth.ConnectionHealth, certExpiryWarning time.Duration) Option {
+	return func(s *Server) {
+		if store == nil {
+			return
+		}
+		s.federationHealth = store
+		s.federationCertExpiryWarning = certExpiryWarning
+	}
+}
+
+// FederationConnectionHealth returns the wired health store (nil when
+// WithFederationConnectionHealth is not configured). Satisfies
+// federationhealth.Deps for HandleListPeerHealth.
+func (s *Server) FederationConnectionHealth() federationhealth.ConnectionHealth {
+	return s.federationHealth
+}
+
+// FederationCertExpiryWarning returns the configured "expiring soon"
+// threshold (<= 0 when unconfigured — HandleListPeerHealth applies its
+// default). Satisfies federationhealth.Deps.
+func (s *Server) FederationCertExpiryWarning() time.Duration { return s.federationCertExpiryWarning }
+
+// FederationHealthNow is the clock federationhealth.HandleListPeerHealth
+// computes the cert_expiring classification against. Satisfies
+// federationhealth.Deps.
+func (s *Server) FederationHealthNow() time.Time { return time.Now() }
+
+// handleFederationHealth delegates to the hexagonal federation peer-health
+// listing handler (*Server satisfies federationhealth.Deps via the accessors
+// above). Only mounted when WithFederationConnectionHealth is wired.
+func (s *Server) handleFederationHealth(ctx HandlerContext) {
+	federationhealth.HandleListPeerHealth(s, ctx)
+}
+
+// mountClusterObservabilityEndpoints registers the full-path admin
+// observability GET routes (authz policy bundle, storage health, federation
+// peer connection health) — split out of mountClusterEndpoints purely to
+// keep it under the function-length budget. Each block is opt-in and
+// AdminAPI-gated; byte-identical to a build without it when its backing
+// store/registry is unwired.
+func (s *Server) mountClusterObservabilityEndpoints() {
 	// Authorization policy bundle export (decentralized authz). Full
 	// path (not group-relative) registered directly on the router; its
 	// /api/v1/admin/ prefix means AdminMiddleware gates it as admin:read.
@@ -172,6 +234,27 @@ func (s *Server) mountClusterEndpoints() {
 	if len(s.storageHealthSources) > 0 && s.adminAPIGateOn() {
 		s.router.GET(PathStorageHealth, s.handleStorageHealth)
 	}
+
+	// Federation peer connection-health admin listing (opt-in
+	// WithFederationConnectionHealth). Full-path admin endpoint gated by
+	// AdminMiddleware via the /api/v1/admin/ prefix (mirrors
+	// PathStorageHealth). Only mounted when a health store is wired AND
+	// AdminAPI is on — byte-identical to a build without it. Independent of
+	// the federation feature gate: like storage-health, this is pure
+	// observability, so a snapshot recorded before the feature was disabled
+	// stays readable during a rollback/DR drill.
+	if s.federationHealth != nil && s.adminAPIGateOn() {
+		s.router.GET(PathAdminFederationHealth, s.handleFederationHealth)
+	}
+}
+
+// mountClusterEndpoints registers the full-path admin/cluster endpoints
+// (authz policy bundle, storage health, mesh ext_authz, CAEP/SSF receiver),
+// each opt-in and gated on its wiring. Moved from server_routes.go (which
+// was at the line budget) — this file already holds the fields these routes
+// gate on (federationMeshState).
+func (s *Server) mountClusterEndpoints() {
+	s.mountClusterObservabilityEndpoints()
 
 	// Mesh ext_authz HTTP endpoint (opt-in, cluster C1). The sidecar may
 	// call it with the original request method, so register both GET and
@@ -303,4 +386,16 @@ type federationMeshState struct {
 	// *sql.DB — cmd collects these at the same point it gathers Ping-capable
 	// stores for /readyz.
 	storageHealthSources []StorageHealthSource
+
+	// Opt-in federation peer connection-health observability
+	// (WithFederationConnectionHealth). Nil ⇒ the
+	// PathAdminFederationHealth route is NOT mounted — byte-identical to a
+	// build without it. PURE OBSERVABILITY: populated by a decorator wrapped
+	// around the trust-chain resolver's EntityStatementFetcher; never
+	// consulted by trust-chain validation itself.
+	federationHealth federationhealth.ConnectionHealth
+	// federationCertExpiryWarning is the config-gated "expiring soon"
+	// threshold surfaced on GET .../federation/health. <= 0 ⇒
+	// federationhealth.DefaultCertExpiryWarning.
+	federationCertExpiryWarning time.Duration
 }
