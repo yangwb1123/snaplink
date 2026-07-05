@@ -77,6 +77,34 @@ type CORSConfig struct {
 	MaxAge           time.Duration `yaml:"max_age"`
 }
 
+// RARLimitsConfig bounds an RFC 9396 authorization_details payload's SHAPE
+// before the server fully unmarshals it — an arbitrarily deep or huge JSON
+// blob would otherwise cost unbounded CPU during parse, ahead of the
+// existing client type-allowlist check (sso.ValidateAuthorizationDetails).
+// Every field's zero value disables that specific check (unbounded) —
+// byte-identical to a build without this section until an operator opts
+// in. Composes with (does not replace) SecurityConfig.BodyLimit, which
+// caps the WHOLE request body; this caps only the authorization_details
+// value once it's been bound out of that body. Maps to
+// sso.WithAuthorizationDetailsLimits.
+//
+// Lives here (not its own config_rar.go) because config/ is at its frozen
+// per-directory file-count ceiling — see BreakGlassConfig's doc above.
+type RARLimitsConfig struct {
+	MaxBytes    int `yaml:"max_bytes"`
+	MaxElements int `yaml:"max_elements"`
+	MaxDepth    int `yaml:"max_depth"`
+}
+
+// ScopeLimitConfig caps the number of space-separated scopes accepted in a
+// single request's `scope` parameter on /auth/login and /par. MaxCount <= 0
+// (default) = unbounded — byte-identical to today. This is a token-COUNT
+// cap, distinct from protocols/oauth's existing hardcoded MaxScopeLen BYTE
+// cap. Maps to sso.WithMaxScopeCount.
+type ScopeLimitConfig struct {
+	MaxCount int `yaml:"max_count"`
+}
+
 // AdminConfig toggles the admin control plane. When Enabled is true the
 // sso-server mounts the four admin gRPC services and the grpc-gateway
 // REST proxy under /api/v1/admin/. APIRESTEnabled defaults to true when

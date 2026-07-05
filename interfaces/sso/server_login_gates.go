@@ -328,6 +328,14 @@ func (s *Server) validateLoginAuthorizationParams(ctx HandlerContext, req *login
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, core.ErrInvalidRequest, req.State))
 		return true
 	}
+	// Scope-count cap — a byte-length-bounded scope string can still carry
+	// an excessive NUMBER of short scope tokens; <= 0 (default) is
+	// unbounded, same as before this gate existed.
+	if max := s.maxScopeCount; max > 0 && len(req.Scope) > max {
+		s.recordLoginFailure(ctx, req.ClientID, req.Provider, core.ErrInvalidScope)
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, core.ErrInvalidScope, req.State))
+		return true
+	}
 	if !client.AreResourcesAllowed(req.Resource) {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, core.ErrInvalidTarget)
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, core.ErrInvalidTarget, req.State))
@@ -340,13 +348,23 @@ func (s *Server) validateLoginAuthorizationParams(ctx HandlerContext, req *login
 			return true
 		}
 	}
-	if _, err := oauth.ValidateAuthorizationDetails(req.AuthorizationDetails, client.AllowedAuthorizationDetailsTypes); err != nil {
+	if _, err := oauth.ValidateAuthorizationDetails(req.AuthorizationDetails, client.AllowedAuthorizationDetailsTypes, s.rarLimits); err != nil {
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, oauth.ErrInvalidAuthorizationDetails)
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, oauth.ErrInvalidAuthorizationDetails, req.State))
 		return true
 	}
 	return false
 }
+
+// RARLimits returns the configured RFC 9396 authorization_details shape
+// caps (depth/size/element-count). Also satisfies oauth.PARDeps so
+// HandlePAR enforces the SAME limits as /auth/login.
+func (s *Server) RARLimits() oauth.RARLimits { return s.rarLimits }
+
+// MaxScopeCount returns the configured cap on the number of space-separated
+// scopes accepted in a single request's `scope` parameter; <= 0 (default)
+// means unbounded. Also satisfies oauth.PARDeps.
+func (s *Server) MaxScopeCount() int { return s.maxScopeCount }
 
 // loginUsedPAR reports whether the authorization request was driven by a real
 // RFC 9126 pushed authorization request, NOT an RFC 9101 JAR-by-reference

@@ -1,6 +1,7 @@
 package oauthvalidate
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -42,6 +43,89 @@ type authorizationDetail struct {
 	Type string `json:"type"`
 }
 
+// RARLimits bounds an authorization_details payload's SHAPE before it is
+// unmarshaled into typed values — a client can otherwise hand the server an
+// arbitrarily large or deeply-nested JSON blob and force it to walk that
+// structure (recursive descent + allocation) before the type-allowlist check
+// in ValidateAuthorizationDetails ever runs. Every field's zero value
+// disables that specific check (unbounded) — an unconfigured RARLimits{} is
+// byte-identical to the behavior before this type existed.
+//
+// Composes with, rather than replaces, the generic whole-request
+// SecurityConfig.BodyLimit: BodyLimit caps the entire HTTP body, RARLimits
+// additionally caps the shape of just the authorization_details value once
+// it's been bound out of that body.
+type RARLimits struct {
+	// MaxBytes caps the raw serialized size (len of the JSON value) of
+	// authorization_details. 0 = unbounded.
+	MaxBytes int
+	// MaxElements caps the number of elements the top-level JSON array (or
+	// direct children of a top-level object) may contain. 0 = unbounded.
+	MaxElements int
+	// MaxDepth caps the deepest nested object/array in the payload. 0 =
+	// unbounded.
+	MaxDepth int
+}
+
+// checkRARShape walks raw with a streaming token decoder — no intermediate
+// Go values, no recursive descent — so its cost is bounded by
+// min(len(raw), byte-offset of the first violating token) rather than by
+// whatever size or nesting an attacker sends. It is called BEFORE
+// ValidateAuthorizationDetails' json.Unmarshal so a hostile payload is
+// rejected ahead of that more expensive walk.
+//
+// A malformed-JSON error from the decoder is swallowed (returns nil): the
+// subsequent json.Unmarshal in ValidateAuthorizationDetails produces the
+// authoritative "invalid JSON" error — this pass only enforces shape.
+func checkRARShape(raw []byte, limits RARLimits) error {
+	if limits.MaxBytes > 0 && len(raw) > limits.MaxBytes {
+		return errors.New("authorization_details: exceeds maximum size")
+	}
+	if limits.MaxDepth <= 0 && limits.MaxElements <= 0 {
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	depth, topElements := 0, 0
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			// EOF (done, no violation found) and malformed JSON (Unmarshal
+			// below reports the authoritative error) both fall through here.
+			return nil
+		}
+		depth, topElements = advanceRARToken(tok, depth, topElements)
+		if limits.MaxDepth > 0 && depth > limits.MaxDepth {
+			return errors.New("authorization_details: exceeds maximum nesting depth")
+		}
+		if limits.MaxElements > 0 && topElements > limits.MaxElements {
+			return errors.New("authorization_details: exceeds maximum element count")
+		}
+	}
+}
+
+// advanceRARToken folds one decoded JSON token into (depth, topElements).
+// A scalar or a container-opening delim seen at depth==1 is a direct child
+// of the top-level container — i.e. one RAR element — so it bumps
+// topElements; a container-opening delim also increments depth, a closing
+// one decrements it. Split out of checkRARShape to keep both functions well
+// under the cyclomatic-complexity budget.
+func advanceRARToken(tok json.Token, depth, topElements int) (int, int) {
+	delim, isDelim := tok.(json.Delim)
+	if !isDelim {
+		if depth == 1 {
+			topElements++
+		}
+		return depth, topElements
+	}
+	if delim == '[' || delim == '{' {
+		if depth == 1 {
+			topElements++
+		}
+		return depth + 1, topElements
+	}
+	return depth - 1, topElements
+}
+
 // CloneRawJSON returns a copy of the raw JSON bytes — guards
 // against aliasing when storing authorization_details across
 // request-scoped and persistence-scoped lifetimes. Nil-safe.
@@ -60,9 +144,18 @@ func CloneRawJSON(raw json.RawMessage) json.RawMessage {
 // validate, nothing to enforce. Callers use the parsed return
 // value only for type-checking against the allowlist; payload
 // stamping reuses the raw JSON directly.
-func ValidateAuthorizationDetails(raw json.RawMessage, allowed []string) ([]authorizationDetail, error) {
+//
+// limits is checked FIRST, via checkRARShape, before the json.Unmarshal
+// below walks the payload into typed values — a zero-value RARLimits{}
+// (the default when a caller has no configured limits) skips that pass
+// entirely and this function behaves exactly as it did before limits
+// existed.
+func ValidateAuthorizationDetails(raw json.RawMessage, allowed []string, limits RARLimits) ([]authorizationDetail, error) {
 	if len(raw) == 0 {
 		return nil, nil
+	}
+	if err := checkRARShape(raw, limits); err != nil {
+		return nil, err
 	}
 	var details []authorizationDetail
 	if err := json.Unmarshal(raw, &details); err != nil {

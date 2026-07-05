@@ -23,6 +23,12 @@ type PARDeps interface {
 	ResolveIssuer(ctx core.HandlerContext) string
 	VerifyJWTClientAssertion(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
 	SrvLogger() spi.Logger
+	// RARLimits returns the configured authorization_details shape caps
+	// (depth/size/element-count); zero-value RARLimits{} = unbounded.
+	RARLimits() RARLimits
+	// MaxScopeCount returns the configured cap on the number of
+	// space-separated scopes accepted in a single request; <= 0 = unbounded.
+	MaxScopeCount() int
 }
 
 // HandlePAR implements RFC 9126 Pushed Authorization Requests.
@@ -71,7 +77,7 @@ func HandlePAR(d PARDeps, ctx core.HandlerContext) {
 		return
 	}
 
-	if !validatePARRequestParams(ctx, &req, client) {
+	if !validatePARRequestParams(d, ctx, &req, client) {
 		return
 	}
 
@@ -176,13 +182,20 @@ func resolvePARClientAssertion(d PARDeps, ctx core.HandlerContext, req *parReque
 // redirect_uri / resource / response_mode / authorization_details) —
 // they are NOT collapsed to a single error return. Returns false
 // (after writing the response) on the first failing gate.
-func validatePARRequestParams(ctx core.HandlerContext, req *parRequestForm, client *core.Client) bool {
+func validatePARRequestParams(d PARDeps, ctx core.HandlerContext, req *parRequestForm, client *core.Client) bool {
 	// Parameter length limits — prevent DoS via oversized params that
 	// would bloat PAR store entries and amplify redirect responses.
 	if code := CheckAuthParamLengths(
 		req.State, req.RedirectURI, req.Scope, req.Nonce, req.Resource,
 	); code != "" {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(code))
+		return false
+	}
+	// Scope-count cap — a byte-length-bounded scope string can still carry
+	// an excessive NUMBER of short scope tokens; unconfigured (<= 0) is
+	// unbounded, same as before this gate existed.
+	if max := d.MaxScopeCount(); max > 0 && len(SplitScope(req.Scope)) > max {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidScope))
 		return false
 	}
 	if req.RedirectURI != "" && !client.IsRedirectURIValid(req.RedirectURI) {
@@ -203,8 +216,10 @@ func validatePARRequestParams(ctx core.HandlerContext, req *parRequestForm, clie
 	// RFC 9396: validate authorization_details up front so a
 	// malformed / disallowed payload fails at PAR time rather than
 	// surfacing later at /auth/login (PAR's whole point is to move
-	// validation upstream of the user-agent redirect).
-	if _, err := ValidateAuthorizationDetails(req.AuthorizationDetails, client.AllowedAuthorizationDetailsTypes); err != nil {
+	// validation upstream of the user-agent redirect). RARLimits bounds
+	// the payload's shape (depth/size/element-count) BEFORE the full
+	// unmarshal below walks it.
+	if _, err := ValidateAuthorizationDetails(req.AuthorizationDetails, client.AllowedAuthorizationDetailsTypes, d.RARLimits()); err != nil {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBodyDesc(ErrInvalidAuthorizationDetails, err.Error()))
 		return false
 	}

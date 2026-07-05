@@ -405,4 +405,20 @@ type cacheState struct {
 	// Disabled by default: an inbound `tokens` field is ignored entirely.
 	introspectionBatchEnabled bool
 	introspectionBatchMaxSize int
+
+	// maxTokenBytes caps the byte length of an inbound bearer token
+	// validateAnyToken will attempt to parse/verify (WithMaxTokenBytes).
+	// <= 0 (default) = unbounded — defense-in-depth against a caller
+	// handing the server a deliberately huge "token" string to soak up
+	// parsing CPU ahead of the inevitable verification failure.
+	maxTokenBytes int
+	// rarLimits bounds an RFC 9396 authorization_details payload's shape
+	// (WithAuthorizationDetailsLimits); zero-value = unbounded, applied at
+	// both /auth/login (validateLoginAuthorizationParams) and /par
+	// (HandlePAR via the RARLimits accessor).
+	rarLimits oauth.RARLimits
+	// maxScopeCount caps the number of space-separated scopes accepted in
+	// a single request's `scope` parameter (WithMaxScopeCount); <= 0
+	// (default) = unbounded. Applied at both /auth/login and /par.
+	maxScopeCount int
 }

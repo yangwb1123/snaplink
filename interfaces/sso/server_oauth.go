@@ -305,19 +305,40 @@ func (s *Server) ValidateToken(ctx context.Context, token string) (*TokenClaims,
 	return claims, err
 }
 
+// validateTokenPreChecks runs the two Server-level defense-in-depth gates
+// BEFORE any issuer sees the token: a byte-length ceiling (WithMaxTokenBytes)
+// and the JWS `alg` allowlist (WithSupportedSigningAlgs). Split out of
+// validateAnyToken to keep it within the function-length budget; both
+// checks are unbounded/no-op (nil error) unless the operator configured
+// them, so this is byte-identical to today when neither option is wired.
+func (s *Server) validateTokenPreChecks(token string) error {
+	// Byte-length gate: a caller handing the server a deliberately huge
+	// "token" string shouldn't get to spend CPU on base64 + JSON parsing
+	// before the eventual (inevitable) verification failure. The generic
+	// error below is intentional: every caller of validateAnyToken already
+	// collapses ANY non-nil error to the standard oracle-safe
+	// invalid_token/inactive response, never inspecting content.
+	if s.maxTokenBytes > 0 && len(token) > s.maxTokenBytes {
+		return fmt.Errorf("token exceeds max_token_bytes (%d)", s.maxTokenBytes)
+	}
+	// alg allowlist gate: reject any compact-JWS bearer whose header `alg`
+	// isn't allowed BEFORE any issuer runs — so the verification algorithm
+	// is fixed by the operator, never picked by the RP. Opaque (non-JWT)
+	// tokens carry no JOSE header and pass through untouched to the
+	// session/opaque issuers.
+	if len(s.supportedSigningAlgs) > 0 {
+		if alg, ok := jwsHeaderAlg(token); ok && !algAllowed(alg, s.supportedSigningAlgs) {
+			return fmt.Errorf("token alg %q not in supported_signing_algs", alg)
+		}
+	}
+	return nil
+}
+
 // validateAnyToken tries each registered issuer until one accepts the token.
 // Returned issuerName lets callers correlate revocations or audit logs.
 func (s *Server) validateAnyToken(ctx context.Context, token string) (*TokenClaims, string, error) {
-	// Server-level alg allowlist gate (defense-in-depth). When
-	// configured via WithSupportedSigningAlgs, reject any compact-JWS
-	// bearer whose header `alg` isn't allowed BEFORE any issuer runs —
-	// so the verification algorithm is fixed by the operator, never
-	// picked by the RP. Opaque (non-JWT) tokens carry no JOSE header
-	// and pass through untouched to the session/opaque issuers.
-	if len(s.supportedSigningAlgs) > 0 {
-		if alg, ok := jwsHeaderAlg(token); ok && !algAllowed(alg, s.supportedSigningAlgs) {
-			return nil, "", fmt.Errorf("token alg %q not in supported_signing_algs", alg)
-		}
+	if err := s.validateTokenPreChecks(token); err != nil {
+		return nil, "", err
 	}
 	var lastErr error
 	for name, ti := range s.tokenIssuers {
