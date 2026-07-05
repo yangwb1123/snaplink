@@ -220,7 +220,11 @@ Token-policy governance engine (`domains/tokenpolicy`, `sso.WithTokenPolicy`). D
 
 ## Conditional Access
 
-Zero-trust conditional-access (CAP) engine (`domains/conditionalaccess`, `sso.WithConditionalAccess`), mounting the read-only view `GET /api/v1/admin/access-policies`. Disabled by default. This wave the engine is ADVISORY — evaluated via `Server.EvaluateConditionalAccess`, NOT wired into the live `/auth/login` control flow — so enabling it changes no live auth decision. Provide policies via EITHER `access_policies.file` OR `access_policies.policies`; both fails loud.
+Zero-trust conditional-access (CAP) engine (`domains/conditionalaccess`, `sso.WithConditionalAccess`), mounting the read-only view `GET /api/v1/admin/access-policies`. Disabled by default. The engine is ALWAYS evaluable via `Server.EvaluateConditionalAccess`; it additionally becomes a LIVE Policy Enforcement Point on `/auth/login` — after credential validation, before token/session issuance — only when `access_policies.enforce` is `true`. With `enforce` left `false` (the default), a wired store changes no live auth decision, matching every prior release's advisory-only behavior. Provide policies via EITHER `access_policies.file` OR `access_policies.policies`; both fails loud.
+
+A matched `deny` verdict returns `403 conditional_access_denied`; a matched `require_step_up` verdict routes through the SAME MFA orchestration `mfa.*` configures (`WithMFAProvider` + `WithMFAChallengeStore`) — without both wired it decays to allow, never inventing a step-up path the deployment hasn't configured. A trust-scorer or policy-store outage always FAILS OPEN on `/auth/login` (logs and proceeds), regardless of `default_deny` — a risk signal must never become an account-lockout oracle.
+
+Pair with `sso.WithTrustScorer` (a `shared/trust.TrustScorer`, typically a `trust.WeightedComposite`) and `sso.WithDeviceFingerprint` (a `conditionalaccess.DeviceFingerprint`, e.g. `conditionalaccess.NewMemoryDeviceFingerprint()`) to feed the engine real trust-score and device-posture signals; both are Go-level SDK options with no YAML surface (no reference implementation to declare declaratively), so operators wire them directly like a custom `RiskScorer`.
 
 | Key | Effect |
 |---|---|
@@ -228,6 +232,7 @@ Zero-trust conditional-access (CAP) engine (`domains/conditionalaccess`, `sso.Wi
 | `access_policies.policies` | Inline CAP rule list (`name`, `priority`, `enabled`, `dry_run`, `conditions`, `actions`) |
 | `access_policies.degraded_trust` | Conservative trust value substituted when a signal is missing; `<=0` or `>1` normalizes to the engine default (`0.3`) |
 | `access_policies.default_deny` | Flips the no-policy-matched verdict from allow to deny (a zero-trust posture) and governs the fallback when the store is unavailable |
+| `access_policies.enforce` | Activates the live `/auth/login` PEP. `false` (default) keeps the engine advisory-only even with policies configured — stage policies (`dry_run` entries, `enforce: false`) and check the admin governance view before flipping this on |
 
 ## Session Trust Decay (continuous verification)
 

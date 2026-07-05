@@ -222,6 +222,33 @@ func TestBuildConditionalAccess_InlinePolicies(t *testing.T) {
 	}
 }
 
+func TestBuildConditionalAccess_EnforceDefaultsFalse(t *testing.T) {
+	t.Parallel()
+	_, capCfg, err := BuildConditionalAccess(config.AccessPolicyConfig{
+		Policies: []conditionalaccess.Policy{{Name: "deny", Enabled: true, Actions: conditionalaccess.Actions{Deny: true}}},
+	})
+	if err != nil {
+		t.Fatalf("BuildConditionalAccess: %v", err)
+	}
+	if capCfg.Enforce {
+		t.Error("Enforce must default to false (advisory-only) when the YAML section omits it")
+	}
+}
+
+func TestBuildConditionalAccess_EnforcePassesThrough(t *testing.T) {
+	t.Parallel()
+	_, capCfg, err := BuildConditionalAccess(config.AccessPolicyConfig{
+		Enforce:  true,
+		Policies: []conditionalaccess.Policy{{Name: "deny", Enabled: true, Actions: conditionalaccess.Actions{Deny: true}}},
+	})
+	if err != nil {
+		t.Fatalf("BuildConditionalAccess: %v", err)
+	}
+	if !capCfg.Enforce {
+		t.Error("engine config must carry enforce through")
+	}
+}
+
 func TestBuildConditionalAccess_FileAndInlineConflict(t *testing.T) {
 	t.Parallel()
 	_, _, err := BuildConditionalAccess(config.AccessPolicyConfig{

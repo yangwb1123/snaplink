@@ -42,6 +42,15 @@ const (
 	HeaderAuthScopes   = "X-Auth-Scopes"
 	HeaderAuthExpires  = "X-Auth-Expires"
 	HeaderAuthRoles    = "X-Auth-Roles"
+
+	// HeaderDeviceID is a client-supplied opaque device identifier (a mobile
+	// app's persisted install UUID, a first-party browser cookie) that feeds
+	// the zero-trust conditional-access engine's DeviceFingerprint lookup at
+	// /auth/login. Deliberately NOT a trust boundary: an absent or spoofed
+	// value only ever degrades the CAP engine's device-posture signal to
+	// PostureUnknown (its already-conservative default), it is never treated
+	// as a credential or an identity claim.
+	HeaderDeviceID = "X-Device-Id"
 )
 
 // JSON response keys used across handlers.

@@ -305,17 +305,20 @@ type TokenPolicyConfig struct {
 
 // AccessPolicyConfig opts into the zero-trust conditional-access (CAP) engine
 // (domains/conditionalaccess, sso.WithConditionalAccess) and mounts the
-// read-only governance view GET /api/v1/admin/access-policies. This wave the
-// engine is ADVISORY (evaluated via Server.EvaluateConditionalAccess, not wired
-// into /auth/login), so enabling it changes no live auth decision. Disabled by
-// default: an absent section (no File, no inline Policies) wires nothing,
-// byte-identical to a build without the feature.
+// read-only governance view GET /api/v1/admin/access-policies. The engine is
+// ALWAYS evaluable via Server.EvaluateConditionalAccess; it additionally
+// becomes a live /auth/login Policy Enforcement Point only when Enforce is
+// true. Disabled by default: an absent section (no File, no inline Policies)
+// wires nothing, byte-identical to a build without the feature — and even a
+// wired-but-Enforce:false section changes no live auth decision.
 //
 // Policies come from EITHER an external bundle (File — parsed via the strict
 // conditionalaccess YAML loader, unknown keys rejected) OR the inline Policies
 // list; setting both is a config error. DegradedTrust / DefaultDeny tune the
 // engine's fail modes (a missing signal substitutes DegradedTrust; DefaultDeny
-// flips the no-policy-matched verdict from allow to deny).
+// flips the no-policy-matched verdict from allow to deny). A policy-store
+// outage at /auth/login always fails OPEN regardless of DefaultDeny (AGENTS.md
+// "Fail Modes") — DefaultDeny only governs the no-match-with-live-data case.
 type AccessPolicyConfig struct {
 	// File is an optional path to a standalone CAP policy bundle. Mutually
 	// exclusive with Policies.
@@ -328,6 +331,12 @@ type AccessPolicyConfig struct {
 	// DefaultDeny flips the no-match verdict to deny (a zero-trust posture) and
 	// governs the fallback when the policy store is unavailable.
 	DefaultDeny bool `yaml:"default_deny"`
+	// Enforce activates the live /auth/login PEP (sso.ConditionalAccessConfig.Enforce):
+	// false (the default) keeps the engine advisory-only, matching every prior
+	// release's behavior. Operators should stage policies with Enforce:false +
+	// dry_run policy entries, confirm the admin governance view looks right,
+	// THEN flip this on.
+	Enforce bool `yaml:"enforce"`
 }
 
 // DegradationConfig opts into the disaster-recovery degraded-service control
