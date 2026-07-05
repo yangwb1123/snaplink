@@ -229,6 +229,16 @@ feature existed (no extra signal handler is even registered).
 | Everything else (`security.rate_limit.*`, `feature_gates.*`, storage backends, `server.listen`, TLS material, cluster/etcd endpoints, …) | Detected if changed, reported under `ignored_requires_restart`, and left COMPLETELY untouched — never silently misapplied. `security.rate_limit.*` and `feature_gates.*` look "safe" (no store/connection to reprovision) but aren't wired: the rate-limit `Policy` is baked by value into the mounted middleware at `Handler()`-construction time, and feature-gated route groups are decided once at `Mount()` — both need a restart to actually take effect. See `config/reload`'s package doc for the full rationale per excluded group |
 | A failed reload (e.g. the file was hand-edited into an invalid state) | Logged (`config reload failed; continuing with previous configuration`) and otherwise ignored — the process keeps running on its last-good configuration; SIGHUP can never crash a running server |
 
+## SIEM Export Formats
+
+| Key / Command | Effect |
+|---|---|
+| `audit.cef.*` / `audit.ocsf.*` / `audit.syslog.*` | Three INDEPENDENT SIEM export formatters (`platform/audit/auditsink/{cef,ocsf,syslog}.go`) — any subset may be enabled simultaneously (e.g. CEF to one collector AND OCSF to another). Each composes a `WriterSink` into the same `MultiSink` fan-out as `audit.webhook`, wired AFTER PII redaction (inside the `Recorder`), so operators get the same redacted view every other sink sees. Formatters only: `output` is `stdout`, `stderr`, or a local file path (opened append-only, created `0600`) — no network transport (deferred to a future Kafka/NATS export item, which reuses these exact byte-formatters) |
+| `audit.cef.{enabled,output}` | Enables an ArcSight CEF sink. `vendor`/`product`/`version` fill the CEF header's Device Vendor/Product/Version fields; empty falls back to `Snaplink`/`SSO`/the running binary's build version |
+| `audit.ocsf.{enabled,output}` | Enables an OCSF (Open Cybersecurity Schema Framework) NDJSON sink — one OCSF Authentication/Account Change/Authorize Session/API Activity-class JSON object per line, with `product.name`/`product.vendor_name` fixed to `SSO`/`Snaplink` |
+| `audit.syslog.{enabled,output,facility,hostname,app_name}` | Enables an RFC 5424 syslog sink (structured-data carries `Event.Metadata`; RFC 3164 legacy BSD framing is NOT supported). `facility` follows RFC 5424 Table 1 (0-23); `0` (the Go zero value) falls back to `10` (authpriv), since facility 0 (kernel) is never a realistic choice for an application audit trail. `hostname` empty resolves `os.Hostname()` at wiring time; `app_name` empty defaults to `sso-server` |
+| SIEM severity | All three formatters project ONE shared internal severity scale (`Outcome` + a small per-`EventType` override table in `auditsink`) into their own range: CEF `0-10`, OCSF `severity_id` `1-6`, syslog `0-7` — an event escalated once is escalated identically across every export format |
+
 ## Cluster
 
 | Feature | Config | Behavior |
