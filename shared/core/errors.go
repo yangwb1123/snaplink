@@ -50,6 +50,19 @@ var (
 	// when the grant is not active (pending / expired / revoked) — a token must
 	// never be minted (or kept) against a grant outside its live window.
 	ErrAdminSessionNotActive = errors.New("sso: admin session is not active")
+
+	// ErrCeremonySessionInvalid is a sentinel an Authenticator's Authenticate
+	// MAY wrap (fmt.Errorf("...: %w", core.ErrCeremonySessionInvalid)) to
+	// signal that the credential failure is a STATEFUL CEREMONY problem — an
+	// unknown/expired challenge session, or the identity resolved from it
+	// vanishing mid-ceremony — rather than a plain wrong credential. The
+	// generic /auth/login failure path (handleAuthFailure) collapses this the
+	// SAME oracle-safe way the authenticator's OWN ceremony endpoints do (e.g.
+	// WebAuthn's 404 session_invalid) instead of the default 401
+	// invalid_credentials, so a client can't distinguish "unknown session"
+	// from "unknown user" by response shape, NOR distinguish reaching that
+	// state via /auth/login from reaching it via the ceremony's own endpoint.
+	ErrCeremonySessionInvalid = errors.New("sso: authentication ceremony session invalid or expired")
 )
 
 // Stable error code strings returned to API callers in JSON error bodies.
@@ -211,4 +224,17 @@ const (
 	ErrWebhookNotConfigured        = "webhook_not_configured"
 	ErrWebhookSubscriptionNotFound = "webhook_subscription_not_found"
 	ErrWebhookDeadLetterNotFound   = "webhook_deadletter_not_found"
+	// ErrSessionInvalid is the 404 wire code for a stateful authentication-
+	// ceremony session that is unknown, expired, or whose resolved identity
+	// vanished mid-ceremony (see ErrCeremonySessionInvalid above). Mirrors the
+	// WebAuthn ceremony endpoints' existing oracle-safe collapse so the SAME
+	// failure renders identically whether reached via /auth/login or a
+	// ceremony's own dedicated endpoint.
+	ErrSessionInvalid = "session_invalid"
+	// ErrPasswordlessRequired (400) is returned by /auth/login when
+	// Client.AllowPasswordlessOnly is true and the request named the
+	// "password" provider — the client must complete a WebAuthn passkey
+	// ceremony (provider=webauthn) instead. Not a credential oracle: it is a
+	// per-client POLICY gate evaluated before any credential is read.
+	ErrPasswordlessRequired = "passwordless_required"
 )

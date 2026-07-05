@@ -53,6 +53,7 @@ OAuth 2.0 / OIDC / SSO feature compliance matrix. Extracted from AGENTS.md.
 | Kerberos/SPNEGO | `/auth/kerberos` | `kerberos` nested module | `kerberos/handler.go` |
 | RADIUS authenticator | via `WithAuthenticator` | `radius` nested module | `radius/authenticator.go` |
 | WebAuthn attestation policy | `/webauthn/registration/finish` | `webauthn.Config.{AttestationConveyance,AttestationPolicy,MDS}` | `authenticators/webauthn/` |
+| WebAuthn passwordless PRIMARY login | `/auth/login` `provider=webauthn` | `webauthn.primary_auth_enabled`; per-client `Client.AllowPasswordlessOnly` | `authenticators/webauthn/conditional_login.go` |
 | Multi-region data residency | `/auth/login` + `/userinfo` + mesh + WebAuthn | `WithRegionMiddleware` + `WithTenantResidencyCheck` | `region/region.go` + `server_extensions.go` |
 | SCIM 2.0 | `/api/v1/scim/v2/` | `scim.NewHandler(users, basePath, ...)` | `scim/handler.go` |
 | CSP Level 3 + Permissions-Policy + Clear-Site-Data | every response + admin/login/portal SPA bundles + `/logout`, `/me/account/erase` | `WithSecurityHeaders` / `WithSecurityHeadersPolicy` | `internal/handler/security_headers.go` |

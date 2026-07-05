@@ -65,7 +65,34 @@ func (s *Server) resolveAndValidateLoginClient(ctx HandlerContext, req *login.Re
 		ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, core.ErrAuthenticatorNotAllowed, req.State))
 		return nil, true
 	}
+	if s.rejectPasswordWhenPasswordlessOnly(ctx, req, client) {
+		return nil, true
+	}
 	return client, false
+}
+
+// passwordProviderName is the well-known Authenticator.Name() for the
+// built-in password authenticator (domains/authenticators.MethodPassword).
+// Duplicated here rather than imported: that package depends on this one
+// (for the sso.AuthResult/AuthRequest aliases every authenticator uses), so
+// importing it back would cycle. AllowPasswordlessOnly refuses login
+// attempts naming exactly this provider.
+const passwordProviderName = "password"
+
+// rejectPasswordWhenPasswordlessOnly enforces Client.AllowPasswordlessOnly:
+// when set, the "password" provider is refused for THIS client (400
+// passwordless_required) so an app that has opted into passkey-only login
+// can't be downgraded to a shared secret. Every OTHER registered
+// authenticator (webauthn, totp step-up, phone, email, ...) is untouched.
+// False/unset (default) is a pure no-op — byte-identical to a pre-flag
+// build. Returns true when it wrote the rejection response.
+func (s *Server) rejectPasswordWhenPasswordlessOnly(ctx HandlerContext, req *login.Request, client *Client) bool {
+	if !client.AllowPasswordlessOnly || req.Provider != passwordProviderName {
+		return false
+	}
+	s.recordLoginFailure(ctx, req.ClientID, req.Provider, core.ErrPasswordlessRequired)
+	ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, core.ErrPasswordlessRequired, req.State))
+	return true
 }
 
 // enforceFAPIAuthorizationLogin runs the FAPI 2.0 §5.3.1 authorization-request

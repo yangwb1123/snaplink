@@ -153,6 +153,21 @@ type Client struct {
 	// PAR remains an optional shortcut.
 	RequirePAR bool `json:"require_par,omitempty" yaml:"require_par,omitempty"`
 
+	// AllowPasswordlessOnly, when true, refuses the "password" authenticator
+	// for THIS client at /auth/login (400 passwordless_required) — the
+	// client must complete a WebAuthn passkey ceremony (provider=webauthn)
+	// instead. Mirrors RequirePKCE/RequirePAR: a narrow, per-client
+	// tightening enforced in resolveAndValidateLoginClient BEFORE any
+	// credential is read. Deliberately narrower than AllowedAuthenticators —
+	// which would force the operator to enumerate every non-password
+	// provider they still want to allow (totp step-up, phone/email OTP,
+	// keypair, ...) — this flag refuses exactly one named provider and
+	// leaves every other registered authenticator untouched. When false (the
+	// default), this is a pure no-op: password login proceeds exactly as
+	// before, additive alongside any WebAuthn-primary authenticator that
+	// happens to be registered.
+	AllowPasswordlessOnly bool `json:"allow_passwordless_only,omitempty" yaml:"allow_passwordless_only,omitempty"`
+
 	// AllowedRequestURIs is the RFC 9101 §5.2.2 allowlist of URLs
 	// the AS will fetch a JAR request object from when the RP
 	// passes `request_uri=<URL>` on /auth/login. Each entry MUST
