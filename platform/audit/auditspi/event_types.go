@@ -135,7 +135,7 @@ const (
 	EventSPIFFEJWTSVIDAccepted EventType = "spiffe_jwt_svid_accepted"
 )
 
-// Cross-tenant B2B collaboration (domains/tenantcollab): a token-exchange
+// Cross-tenant B2B collaboration (domains/tenant): a token-exchange
 // hop whose subject_token's home tenant differs from the exchanging
 // client's tenant, accepted under an explicit TenantCollaboration trust +
 // GuestRecord registration.

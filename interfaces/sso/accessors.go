@@ -13,10 +13,8 @@ import (
 	"github.com/snaplink/sso/domains/anomaly"
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
-	"github.com/snaplink/sso/domains/identitylink"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
-	"github.com/snaplink/sso/domains/tenantcollab"
 	"github.com/snaplink/sso/domains/tokenanomaly"
 	"github.com/snaplink/sso/domains/tokenexchange"
 	"github.com/snaplink/sso/domains/tokenusage"
@@ -65,34 +63,6 @@ func (s *Server) MaxTokenExchangeChainLifetime() time.Duration {
 // TokenExchangePolicy returns the wired operator-defined hop-authorization
 // SPI (WithTokenExchangePolicy), or nil when unwired (every hop allowed).
 func (s *Server) TokenExchangePolicy() tokenexchange.Policy { return s.tokenExchangePolicy }
-
-// ExternalUserStore returns the wired cross-tenant guest-record store
-// (WithExternalUserStore), or nil when unwired.
-func (s *Server) ExternalUserStore() tenantcollab.ExternalUserStore { return s.externalUserStore }
-
-// TenantCollaborationStore returns the wired cross-tenant trust allow-list
-// (WithTenantCollaborationStore), or nil when unwired.
-func (s *Server) TenantCollaborationStore() tenantcollab.CollaborationStore {
-	return s.tenantCollaborationStore
-}
-
-// HomeTenantForClient resolves the TenantID of the client identified by
-// clientID, or "" when the client is unknown, untenanted, or no ClientStore
-// is wired. Used exclusively by the token-exchange cross-tenant B2B
-// collaboration gate to discover a subject_token's home tenant (the tenant
-// owning the client it was ORIGINALLY issued to) — mirrors the same
-// s.clientStore.Get(ctx, claims.ClientID) lookup checkTenantNotSuspended
-// already performs for the tenant-suspension gate.
-func (s *Server) HomeTenantForClient(ctx context.Context, clientID string) string {
-	if s.clientStore == nil || clientID == "" {
-		return ""
-	}
-	c, err := s.clientStore.Get(ctx, clientID)
-	if err != nil || c == nil {
-		return ""
-	}
-	return c.TenantID
-}
 
 // IntrospectionSigner returns the wired RFC 9701-style signed-introspection
 // signer (WithIntrospectionSigner), or nil when unwired (every response
@@ -285,17 +255,6 @@ func (s *Server) ResidencyGateWrite(ctx HandlerContext, claims *TokenClaims) (st
 func (s *Server) RecordConsentRevoked(ctx HandlerContext, userID, clientID string) {
 	s.recordConsentEvent(ctx, audit.EventConsentRevoked, audit.OutcomeSuccess, userID, clientID, nil)
 }
-
-// IdentityLinkStore exposes the wired self-service identity-link store (may
-// be nil — see domains/identitylink). Satisfies selfservicecore.Deps.
-func (s *Server) IdentityLinkStore() identitylink.Store { return s.identityLinkStore }
-
-// IdentityMergePolicy exposes the operator's wired conflict-resolution
-// strategy (WithIdentityMergePolicy), or nil when unwired. This is the
-// extension point a CUSTOM authenticator/login integration calls
-// identitylink.Resolve with — see the domains/identitylink package doc for
-// why the stock /auth/login handler does not invoke it itself.
-func (s *Server) IdentityMergePolicy() identitylink.MergePolicy { return s.identityMergePolicy }
 
 // RecordIdentityUnlinked emits the identity-unlinked audit event (selfservice
 // seam) for DELETE /me/identities/:id.

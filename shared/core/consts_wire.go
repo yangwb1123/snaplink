@@ -167,7 +167,7 @@ const (
 	KeySPIFFENamespace      = "spiffe_namespace"
 	KeySPIFFEServiceAccount = "spiffe_service_account"
 
-	// Cross-tenant B2B collaboration audit metadata keys (domains/tenantcollab)
+	// Cross-tenant B2B collaboration audit metadata keys (domains/tenant)
 	// — written via audit.SetMeta on the cross_tenant_token_exchange event.
 	// original_subject/original_tenant are the SPEC-NAMED fields a SIEM traces
 	// a guest action back to its home account with; guest_tenant_id completes

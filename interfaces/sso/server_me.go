@@ -3,11 +3,25 @@ package sso
 import (
 	"net/http"
 
+	"github.com/snaplink/sso/domains/identitylink"
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/protocols/selfservice"
 
 	"github.com/snaplink/sso/shared/core"
 )
+
+// IdentityLinkStore exposes the wired self-service identity-link store (may
+// be nil — see domains/identitylink). Satisfies selfservicecore.Deps.
+// Relocated from accessors.go to keep that file within the per-file line
+// budget; belongs beside the /me/identities wiring here.
+func (s *Server) IdentityLinkStore() identitylink.Store { return s.identityLinkStore }
+
+// IdentityMergePolicy exposes the operator's wired conflict-resolution
+// strategy (WithIdentityMergePolicy), or nil when unwired. This is the
+// extension point a CUSTOM authenticator/login integration calls
+// identitylink.Resolve with — see the domains/identitylink package doc for
+// why the stock /auth/login handler does not invoke it itself.
+func (s *Server) IdentityMergePolicy() identitylink.MergePolicy { return s.identityMergePolicy }
 
 func (s *Server) meSubjectOrChallenge(ctx HandlerContext) (userID string, ok bool) {
 	claims, ok := s.meClaimsOrChallenge(ctx)

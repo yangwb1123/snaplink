@@ -1,4 +1,4 @@
-package tenantcollab
+package tenant
 
 import "testing"
 

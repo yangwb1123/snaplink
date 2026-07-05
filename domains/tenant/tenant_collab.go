@@ -1,10 +1,12 @@
-// Package tenantcollab is the cross-tenant B2B collaboration layer: it lets
-// tenant A register a lightweight "guest" pointer to a user who natively
-// belongs to tenant B — WITHOUT duplicating that user's record anywhere —
-// and lets tenant B's user then exchange their home-tenant token for one
-// scoped to tenant A (see internal/handler/tokengrant/token_exchange.go's
-// tokExEnforceTenantCollaboration, the RFC 8693 resolution path this domain
-// backs).
+// Cross-tenant B2B collaboration: tenant A can register a lightweight
+// "guest" pointer to a user who natively belongs to tenant B — WITHOUT
+// duplicating that user's record anywhere — and tenant B's user can then
+// exchange their home-tenant token for one scoped to tenant A (see
+// internal/handler/tokengrant/token_exchange.go's
+// tokExEnforceTenantCollaboration, the RFC 8693 resolution path this backs).
+// Lives in this package (rather than its own domains/tenantcollab) because
+// domains/ is at its frozen per-directory subdir-fanout ceiling
+// (directory_fanout_test.go) and this feature is tenant-scoped by nature.
 //
 // Two DISTINCT, cooperating records model the whole feature:
 //
@@ -35,7 +37,7 @@
 // memory.ExternalUserStore + memory.CollaborationStore are the in-process
 // reference implementations; any Store backend a deployment needs (sqlite,
 // etcd, ...) implements the same two interfaces.
-package tenantcollab
+package tenant
 
 import (
 	"context"
@@ -130,10 +132,10 @@ type ExternalUserStore interface {
 // externalSubjectID) has no registration. Callers MUST NOT distinguish "no
 // such tenant" from "no such subject" from "subject not registered" — all
 // collapse to this single response (mirrors core.ErrNoMembership).
-var ErrNoGuestRecord = errors.New("tenantcollab: no such guest record")
+var ErrNoGuestRecord = errors.New("tenant: no such guest record")
 
 // ErrInvalidGuestRecord wraps GuestRecord.Validate failures.
-var ErrInvalidGuestRecord = errors.New("tenantcollab: invalid guest record")
+var ErrInvalidGuestRecord = errors.New("tenant: invalid guest record")
 
 // TenantCollaboration is the explicit, opt-in tenant-to-tenant trust
 // relationship: GuestTenantID has decided to accept guest tokens whose home
@@ -166,7 +168,7 @@ func (c *TenantCollaboration) Validate() error {
 }
 
 // ErrInvalidCollaboration wraps TenantCollaboration.Validate failures.
-var ErrInvalidCollaboration = errors.New("tenantcollab: invalid tenant collaboration")
+var ErrInvalidCollaboration = errors.New("tenant: invalid tenant collaboration")
 
 // CollaborationStore persists [TenantCollaboration] trust rows. When nil (not
 // wired), the cross-tenant B2B collaboration gate is a complete no-op —

@@ -6,7 +6,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/snaplink/sso/domains/tenantcollab"
+	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/domains/tokenexchange"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -83,12 +83,12 @@ type TokenExchangeDeps interface {
 	// (WithExternalUserStore, domains/tenantcollab). Nil = the cross-tenant
 	// B2B collaboration gate is a complete no-op — byte-identical to a build
 	// without this feature. See tokExEnforceTenantCollaboration.
-	ExternalUserStore() tenantcollab.ExternalUserStore
+	ExternalUserStore() tenant.ExternalUserStore
 	// TenantCollaborationStore returns the OPTIONAL tenant-to-tenant trust
 	// allow-list (WithTenantCollaborationStore, domains/tenantcollab). Nil is
 	// the same no-op as a nil ExternalUserStore above — BOTH must be wired
 	// for the cross-tenant gate to activate.
-	TenantCollaborationStore() tenantcollab.CollaborationStore
+	TenantCollaborationStore() tenant.CollaborationStore
 	// HomeTenantForClient resolves the TenantID of the client identified by
 	// clientID (i.e. the client a subject_token's ClientID claim names — the
 	// client it was ORIGINALLY issued to), used to discover a token-exchange
@@ -441,7 +441,7 @@ func tokExEnforceTenantCollaboration(d TokenExchangeDeps, ctx core.HandlerContex
 // the independently-resolved homeTenant so a registration claiming a
 // DIFFERENT home tenant than the subject_token's actual origin is treated as
 // tampering/misconfiguration, not a trusted guest hop.
-func tokExAuthorizeGuestHop(ctx core.HandlerContext, collabStore tenantcollab.CollaborationStore, extStore tenantcollab.ExternalUserStore, guestTenant, homeTenant, subjectID string) (*tenantcollab.GuestRecord, bool) {
+func tokExAuthorizeGuestHop(ctx core.HandlerContext, collabStore tenant.CollaborationStore, extStore tenant.ExternalUserStore, guestTenant, homeTenant, subjectID string) (*tenant.GuestRecord, bool) {
 	trusted, terr := collabStore.IsTrusted(ctx.Request().Context(), guestTenant, homeTenant)
 	if terr != nil || !trusted {
 		return nil, false

@@ -4,18 +4,18 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/domains/tenantcollab"
+	"github.com/snaplink/sso/domains/tenant"
 )
 
 func TestExternalUserStore_AddGetRemove(t *testing.T) {
 	ctx := context.Background()
 	s := NewExternalUserStore()
 
-	if _, err := s.Get(ctx, "guest", "u1"); err != tenantcollab.ErrNoGuestRecord {
+	if _, err := s.Get(ctx, "guest", "u1"); err != tenant.ErrNoGuestRecord {
 		t.Fatalf("Get on empty store: err=%v want ErrNoGuestRecord", err)
 	}
 
-	rec := &tenantcollab.GuestRecord{
+	rec := &tenant.GuestRecord{
 		GuestTenantID:     "guest",
 		HomeTenantID:      "home",
 		ExternalSubjectID: "u1",
@@ -42,7 +42,7 @@ func TestExternalUserStore_AddGetRemove(t *testing.T) {
 	if err := s.Remove(ctx, "guest", "u1"); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
-	if _, err := s.Get(ctx, "guest", "u1"); err != tenantcollab.ErrNoGuestRecord {
+	if _, err := s.Get(ctx, "guest", "u1"); err != tenant.ErrNoGuestRecord {
 		t.Fatalf("Get after Remove: err=%v want ErrNoGuestRecord", err)
 	}
 	// Idempotent.
@@ -54,8 +54,8 @@ func TestExternalUserStore_AddGetRemove(t *testing.T) {
 func TestExternalUserStore_AddUpserts(t *testing.T) {
 	ctx := context.Background()
 	s := NewExternalUserStore()
-	_ = s.Add(ctx, &tenantcollab.GuestRecord{GuestTenantID: "g", HomeTenantID: "h", ExternalSubjectID: "u1", Roles: []string{"read"}})
-	_ = s.Add(ctx, &tenantcollab.GuestRecord{GuestTenantID: "g", HomeTenantID: "h", ExternalSubjectID: "u1", Roles: []string{"read", "write"}})
+	_ = s.Add(ctx, &tenant.GuestRecord{GuestTenantID: "g", HomeTenantID: "h", ExternalSubjectID: "u1", Roles: []string{"read"}})
+	_ = s.Add(ctx, &tenant.GuestRecord{GuestTenantID: "g", HomeTenantID: "h", ExternalSubjectID: "u1", Roles: []string{"read", "write"}})
 
 	all, err := s.ListByGuestTenant(ctx, "g")
 	if err != nil {
@@ -72,7 +72,7 @@ func TestExternalUserStore_AddUpserts(t *testing.T) {
 func TestExternalUserStore_AddRejectsInvalid(t *testing.T) {
 	ctx := context.Background()
 	s := NewExternalUserStore()
-	if err := s.Add(ctx, &tenantcollab.GuestRecord{GuestTenantID: "g", ExternalSubjectID: "u1"}); err == nil {
+	if err := s.Add(ctx, &tenant.GuestRecord{GuestTenantID: "g", ExternalSubjectID: "u1"}); err == nil {
 		t.Fatal("expected validation error for missing home_tenant_id")
 	}
 }
@@ -80,8 +80,8 @@ func TestExternalUserStore_AddRejectsInvalid(t *testing.T) {
 func TestExternalUserStore_ListByGuestTenantIsolatesTenants(t *testing.T) {
 	ctx := context.Background()
 	s := NewExternalUserStore()
-	_ = s.Add(ctx, &tenantcollab.GuestRecord{GuestTenantID: "g1", HomeTenantID: "h", ExternalSubjectID: "u1"})
-	_ = s.Add(ctx, &tenantcollab.GuestRecord{GuestTenantID: "g2", HomeTenantID: "h", ExternalSubjectID: "u2"})
+	_ = s.Add(ctx, &tenant.GuestRecord{GuestTenantID: "g1", HomeTenantID: "h", ExternalSubjectID: "u1"})
+	_ = s.Add(ctx, &tenant.GuestRecord{GuestTenantID: "g2", HomeTenantID: "h", ExternalSubjectID: "u2"})
 
 	g1, _ := s.ListByGuestTenant(ctx, "g1")
 	if len(g1) != 1 || g1[0].ExternalSubjectID != "u1" {
@@ -99,7 +99,7 @@ func TestCollaborationStore_PutIsTrustedRemove(t *testing.T) {
 		t.Fatalf("IsTrusted on empty store: trusted=%v err=%v (want false, nil)", trusted, err)
 	}
 
-	if err := s.Put(ctx, &tenantcollab.TenantCollaboration{GuestTenantID: "guest", HomeTenantID: "home"}); err != nil {
+	if err := s.Put(ctx, &tenant.TenantCollaboration{GuestTenantID: "guest", HomeTenantID: "home"}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	trusted, err = s.IsTrusted(ctx, "guest", "home")
@@ -124,7 +124,7 @@ func TestCollaborationStore_PutIsTrustedRemove(t *testing.T) {
 func TestCollaborationStore_PutRejectsInvalid(t *testing.T) {
 	ctx := context.Background()
 	s := NewCollaborationStore()
-	if err := s.Put(ctx, &tenantcollab.TenantCollaboration{GuestTenantID: "acme", HomeTenantID: "acme"}); err == nil {
+	if err := s.Put(ctx, &tenant.TenantCollaboration{GuestTenantID: "acme", HomeTenantID: "acme"}); err == nil {
 		t.Fatal("expected validation error for guest==home tenant")
 	}
 }
@@ -132,9 +132,9 @@ func TestCollaborationStore_PutRejectsInvalid(t *testing.T) {
 func TestCollaborationStore_ListByGuestTenant(t *testing.T) {
 	ctx := context.Background()
 	s := NewCollaborationStore()
-	_ = s.Put(ctx, &tenantcollab.TenantCollaboration{GuestTenantID: "guest", HomeTenantID: "home1"})
-	_ = s.Put(ctx, &tenantcollab.TenantCollaboration{GuestTenantID: "guest", HomeTenantID: "home2"})
-	_ = s.Put(ctx, &tenantcollab.TenantCollaboration{GuestTenantID: "other", HomeTenantID: "home1"})
+	_ = s.Put(ctx, &tenant.TenantCollaboration{GuestTenantID: "guest", HomeTenantID: "home1"})
+	_ = s.Put(ctx, &tenant.TenantCollaboration{GuestTenantID: "guest", HomeTenantID: "home2"})
+	_ = s.Put(ctx, &tenant.TenantCollaboration{GuestTenantID: "other", HomeTenantID: "home1"})
 
 	list, err := s.ListByGuestTenant(ctx, "guest")
 	if err != nil {
@@ -146,6 +146,6 @@ func TestCollaborationStore_ListByGuestTenant(t *testing.T) {
 }
 
 var (
-	_ tenantcollab.ExternalUserStore  = (*ExternalUserStore)(nil)
-	_ tenantcollab.CollaborationStore = (*CollaborationStore)(nil)
+	_ tenant.ExternalUserStore  = (*ExternalUserStore)(nil)
+	_ tenant.CollaborationStore = (*CollaborationStore)(nil)
 )

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/snaplink/sso/domains/region"
+	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/platform/metrics"
 	"net/http"
 	"strconv"
@@ -13,6 +14,36 @@ import (
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
 )
+
+// ExternalUserStore returns the wired cross-tenant guest-record store
+// (WithExternalUserStore), or nil when unwired. Relocated from accessors.go
+// to keep that file within the per-file line budget; belongs beside the
+// other tenant-scoped accessors here.
+func (s *Server) ExternalUserStore() tenant.ExternalUserStore { return s.externalUserStore }
+
+// TenantCollaborationStore returns the wired cross-tenant trust allow-list
+// (WithTenantCollaborationStore), or nil when unwired.
+func (s *Server) TenantCollaborationStore() tenant.CollaborationStore {
+	return s.tenantCollaborationStore
+}
+
+// HomeTenantForClient resolves the TenantID of the client identified by
+// clientID, or "" when the client is unknown, untenanted, or no ClientStore
+// is wired. Used exclusively by the token-exchange cross-tenant B2B
+// collaboration gate to discover a subject_token's home tenant (the tenant
+// owning the client it was ORIGINALLY issued to) — mirrors the same
+// s.clientStore.Get(ctx, claims.ClientID) lookup checkTenantNotSuspended
+// already performs for the tenant-suspension gate.
+func (s *Server) HomeTenantForClient(ctx context.Context, clientID string) string {
+	if s.clientStore == nil || clientID == "" {
+		return ""
+	}
+	c, err := s.clientStore.Get(ctx, clientID)
+	if err != nil || c == nil {
+		return ""
+	}
+	return c.TenantID
+}
 
 // Active credential revocation on tenant suspension/deletion.
 //

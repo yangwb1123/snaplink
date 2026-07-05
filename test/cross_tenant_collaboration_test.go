@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/domains/authenticators"
-	"github.com/snaplink/sso/domains/tenantcollab"
-	tenantcollabmem "github.com/snaplink/sso/domains/tenantcollab/memory"
+	"github.com/snaplink/sso/domains/tenant"
+	tenantcollabmem "github.com/snaplink/sso/domains/tenant/memory"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
@@ -176,7 +176,7 @@ func TestCrossTenant_DeniedWithNoTrustOrRegistration(t *testing.T) {
 func TestCrossTenant_DeniedWithTrustButNoRegistration(t *testing.T) {
 	h := newCrossTenantHarness(t, true)
 	ctx := context.Background()
-	if err := h.collab.Put(ctx, &tenantcollab.TenantCollaboration{
+	if err := h.collab.Put(ctx, &tenant.TenantCollaboration{
 		GuestTenantID: ctcGuestTenant, HomeTenantID: ctcHomeTenant,
 	}); err != nil {
 		t.Fatalf("Put collaboration: %v", err)
@@ -197,7 +197,7 @@ func TestCrossTenant_DeniedWithTrustButNoRegistration(t *testing.T) {
 func TestCrossTenant_DeniedWithRegistrationButNoTrust(t *testing.T) {
 	h := newCrossTenantHarness(t, true)
 	ctx := context.Background()
-	if err := h.extUsers.Add(ctx, &tenantcollab.GuestRecord{
+	if err := h.extUsers.Add(ctx, &tenant.GuestRecord{
 		GuestTenantID: ctcGuestTenant, HomeTenantID: ctcHomeTenant, ExternalSubjectID: ctcUser,
 	}); err != nil {
 		t.Fatalf("Add guest record: %v", err)
@@ -221,12 +221,12 @@ func TestCrossTenant_DeniedWithRegistrationButNoTrust(t *testing.T) {
 func TestCrossTenant_AllowedWithTrustAndRegistration(t *testing.T) {
 	h := newCrossTenantHarness(t, true)
 	ctx := context.Background()
-	if err := h.collab.Put(ctx, &tenantcollab.TenantCollaboration{
+	if err := h.collab.Put(ctx, &tenant.TenantCollaboration{
 		GuestTenantID: ctcGuestTenant, HomeTenantID: ctcHomeTenant,
 	}); err != nil {
 		t.Fatalf("Put collaboration: %v", err)
 	}
-	if err := h.extUsers.Add(ctx, &tenantcollab.GuestRecord{
+	if err := h.extUsers.Add(ctx, &tenant.GuestRecord{
 		GuestTenantID: ctcGuestTenant, HomeTenantID: ctcHomeTenant, ExternalSubjectID: ctcUser,
 		Roles: []string{"read", "write"},
 	}); err != nil {
@@ -267,8 +267,8 @@ func TestCrossTenant_AllowedWithTrustAndRegistration(t *testing.T) {
 func TestCrossTenant_GuestRolesNarrowScope(t *testing.T) {
 	h := newCrossTenantHarness(t, true)
 	ctx := context.Background()
-	_ = h.collab.Put(ctx, &tenantcollab.TenantCollaboration{GuestTenantID: ctcGuestTenant, HomeTenantID: ctcHomeTenant})
-	_ = h.extUsers.Add(ctx, &tenantcollab.GuestRecord{
+	_ = h.collab.Put(ctx, &tenant.TenantCollaboration{GuestTenantID: ctcGuestTenant, HomeTenantID: ctcHomeTenant})
+	_ = h.extUsers.Add(ctx, &tenant.GuestRecord{
 		GuestTenantID: ctcGuestTenant, HomeTenantID: ctcHomeTenant, ExternalSubjectID: ctcUser,
 		Roles: []string{"read"}, // deliberately excludes "write"
 	})
