@@ -40,6 +40,7 @@ func (s *Server) mountAdminSurface() {
 	s.mountAdminB2B(api)
 	s.mountConfigAuditAPI(api)
 	s.mountAdminBreakGlass(api)
+	s.mountAdminCompliance(api)
 }
 
 // mountAdminAPIObservability registers the client lookup plus the opt-in audit,
@@ -378,6 +379,10 @@ func adminAPIEndpointCandidates() []endpointCandidate {
 		{endpointInfo{http.MethodPost, prefix + PathAdminTenantInvitations, "admin_api"}, on(func(s *Server) bool { return s.invitationStore != nil })},
 		{endpointInfo{http.MethodGet, PathAuthzPolicyBundle, "admin_api"}, on(func(s *Server) bool { return s.permissions != nil })},
 		{endpointInfo{http.MethodGet, PathStorageHealth, "admin_api"}, on(func(s *Server) bool { return len(s.storageHealthSources) > 0 })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminComplianceDataMap, "admin_api"}, func(s *Server) bool { return s.adminAPIGateOn() }},
+		{endpointInfo{http.MethodGet, prefix + PathAdminComplianceSOC2Evidence, "admin_api"}, on(func(s *Server) bool { return s.auditor != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminComplianceConsents, "admin_api"}, on(func(s *Server) bool { return s.consentStore != nil && s.userProvider != nil })},
+		{endpointInfo{http.MethodPost, prefix + PathAdminComplianceRetentionSweep, "admin_api"}, on(func(s *Server) bool { return s.dataRetention.Enabled })},
 	}
 }
 

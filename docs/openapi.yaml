@@ -3590,6 +3590,179 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/compliance/soc2-evidence:
+    get:
+      tags: [admin]
+      summary: SOC2 evidence pack — access review, change management, access revocation.
+      description: |
+        Reporting/aggregation layer over data ALREADY recorded elsewhere — no
+        new tracking. Assembles: current admin role assignments per client
+        (CC6.1 access review, via `domains/permissions`), admin mutations
+        recorded in the audit trail since `since` (CC8.1 change management),
+        and token/session/credential revocation events since `since` (CC6.2/
+        CC6.3 access revocation). Best-effort: a failing section is reported
+        in the body's `errors`/`skipped` rather than a 500. admin:read.
+        Mounted only when an audit recorder is wired (`WithAuditRecorder`).
+      operationId: adminSOC2Evidence
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: since
+          in: query
+          required: false
+          description: RFC 3339 timestamp bounding the change-management/access-revocation sections (inclusive). Default 90 days ago.
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: The assembled evidence pack.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  generated_at: { type: string, format: date-time }
+                  since: { type: string, format: date-time }
+                  access_review: { type: array, items: { type: object } }
+                  change_management: { type: array, items: { type: object } }
+                  access_revocation: { type: array, items: { type: object } }
+                  skipped: { type: array, items: { type: string } }
+                  errors: { type: array, items: { type: string } }
+        "400":
+          description: Malformed `since`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/compliance/data-map:
+    get:
+      tags: [admin]
+      summary: GDPR Art. 30 data map — the categories of personal data this server processes.
+      description: |
+        A mostly-static, code-derived report describing each category of
+        personal data the server's default SPIs process (user profile,
+        sessions, consent grants, MFA enrollments, refresh tokens, audit
+        log): what it contains, which store persists it, and its retention
+        behavior. Describes the SYSTEM's data model, not a live per-subject
+        query (see `/me/data-export` for that). admin:read. Always mounted
+        when the admin API surface is on.
+      operationId: adminComplianceDataMap
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The assembled data map.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  generated_at: { type: string, format: date-time }
+                  categories:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        description: { type: string }
+                        store: { type: string }
+                        fields: { type: array, items: { type: string } }
+                        legal_basis: { type: string }
+                        retention_policy: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/compliance/consents:
+    get:
+      tags: [admin]
+      summary: Active OAuth consent grants, system-wide.
+      description: |
+        Every currently-active (granted, non-expired) OAuth consent grant
+        across every user, using the existing `core.ConsentStore` (per-user
+        `ListByUser`) plus the `core.UserProvider` roster — the same
+        composition `protocols/compliance.Eraser` already uses to walk a
+        subject's data. Revocation is a hard delete in every ConsentStore
+        backend, so a revoked grant never appears. admin:read. Mounted only
+        when both a ConsentStore and a UserProvider are wired.
+      operationId: adminComplianceActiveConsents
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The assembled listing.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  generated_at: { type: string, format: date-time }
+                  total: { type: integer }
+                  consents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        user_id: { type: string }
+                        client_id: { type: string }
+                        scopes: { type: array, items: { type: string } }
+                        granted_at: { type: string, format: date-time }
+                        expires_at: { type: string, format: date-time }
+                  errors: { type: array, items: { type: string } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/compliance/retention-sweep:
+    post:
+      tags: [admin]
+      summary: Trigger one automated data-retention sweep pass on demand.
+      description: |
+        Runs ONE pass of the configured opt-in data-retention sweep
+        (`protocols/compliance.RetentionSweeper`): destroys sessions past
+        their TTL, flags (or, with `AutoEraseDormant`, erases via the
+        self-service Eraser) accounts with no recent session activity, and
+        reports (never deletes) a count of audit events past a configured
+        retention window. Every step is best-effort — a failing step is
+        listed in the response's `errors`, never aborting the others.
+        admin:write. Mounted only when `WithDataRetentionSweep` configured
+        `Enabled: true`; an operator may ALSO run this sweep on an interval
+        via `Server.RunDataRetentionSweep`.
+      operationId: adminTriggerRetentionSweep
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run:
+                  type: boolean
+                  description: One-way override — can only ADD a dry run for this call, never remove an operator-configured one.
+      responses:
+        "200":
+          description: The sweep's outcome.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  generated_at: { type: string, format: date-time }
+                  dry_run: { type: boolean }
+                  sessions_expired_found: { type: integer }
+                  sessions_destroyed: { type: integer }
+                  dormant_accounts_flagged: { type: array, items: { type: string } }
+                  dormant_accounts_erased: { type: integer }
+                  audit_events_past_retention: { type: integer }
+                  skipped: { type: array, items: { type: string } }
+                  errors: { type: array, items: { type: string } }
+        "400":
+          description: Malformed request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/admin/endpoints:
     get:
       tags: [admin]
