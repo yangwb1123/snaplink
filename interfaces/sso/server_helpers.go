@@ -1,11 +1,13 @@
 package sso
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/snaplink/sso/domains/anomaly"
+	"github.com/snaplink/sso/domains/sessionhub"
 	"github.com/snaplink/sso/domains/tokenpolicy"
 	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/platform/audit"
@@ -356,6 +358,22 @@ func (s *Server) recordCredentialHealth(ctx HandlerContext, clientID, userID str
 // recordLogout emits a logout event with what was actually revoked.
 func (s *Server) recordLogout(ctx HandlerContext, sessionID string, revoked []string) {
 	audit.RecordLogout(s.auditor, ctx, sessionID, revoked)
+}
+
+// linkGlobalSession records the "core" leg of a fresh login's cross-protocol
+// global_sid (domains/sessionhub Cross-protocol Session Hub) — purely
+// additive bookkeeping: nothing in this server's request/response path reads
+// it today, so calling this has zero observable effect on /auth/login or
+// /auth/callback. Best-effort: a LinkStore error is logged, never surfaced —
+// a login must never fail because of session-hub bookkeeping.
+func (s *Server) linkGlobalSession(rctx context.Context, session *Session, userID string) {
+	if s.sessionHub == nil || session == nil {
+		return
+	}
+	gsid := sessionhub.NewGlobalSID()
+	if err := s.sessionHub.Link(rctx, gsid, sessionhub.ProtocolCore, session.ID, userID); err != nil {
+		s.logger.Error("sessionhub: link core session failed", "error", err, "session_id", session.ID)
+	}
 }
 
 // recordLogoutNotifySuccess emits a `logout_notified` audit

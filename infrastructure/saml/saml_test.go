@@ -21,6 +21,7 @@ import (
 	crewjam "github.com/crewjam/saml"
 	dsig "github.com/russellhaering/goxmldsig"
 
+	"github.com/snaplink/sso/domains/sessionhub"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
 	samlmod "github.com/snaplink/sso/saml"
@@ -186,6 +187,90 @@ func TestACS_ReplayedAssertion_Rejected(t *testing.T) {
 	rec := postACS(handler, resp, "")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("replay POST status = %d, want 400", rec.Code)
+	}
+}
+
+// spyLinkStore is a real sessionhub.LinkStore (delegating to a
+// sessionhub.MemoryLinkStore) that also records every Link call, so the test
+// can assert on WHAT was linked without needing white-box access to the
+// unexported acsHandler.sessionHub field.
+type spyLinkStore struct {
+	*sessionhub.MemoryLinkStore
+	linked []sessionhub.LinkRecord
+}
+
+func (s *spyLinkStore) Link(ctx context.Context, rec sessionhub.LinkRecord) error {
+	s.linked = append(s.linked, rec)
+	return s.MemoryLinkStore.Link(ctx, rec)
+}
+
+// TestACS_ValidAssertion_LinksCoreAndSAMLLegs proves the Cross-protocol
+// Session Hub wiring (Deps.SessionHub): a successful SAML SP login records
+// BOTH a "core" leg (the just-created session) and a "saml" leg under one
+// global_sid, so a later sessionhub.Coordinator.Logout on that global_sid
+// knows to drive the SAML fan-out too. Deps.SessionHub is nil in every other
+// test in this file — those stay byte-identical (nothing recorded).
+func TestACS_ValidAssertion_LinksCoreAndSAMLLegs(t *testing.T) {
+	t.Parallel()
+	idp := newIDPKey(t)
+	spy := &spyLinkStore{MemoryLinkStore: sessionhub.NewMemoryLinkStore(0)}
+	hub := sessionhub.NewCoordinator(spy, nil, nil, nil)
+
+	res, err := samlmod.Build(samlmod.Deps{
+		SessionManager: defaultimpl.NewMemorySessionManager(),
+		UserProvider:   defaultimpl.NewMemoryUserProvider(),
+		ClientStore:    defaultimpl.NewMemoryClientStore(),
+		SessionHub:     hub,
+	}, samlmod.Config{
+		SPs: []sp.SPConfig{{
+			Name:        "test-idp",
+			EntityID:    spEntity,
+			ACSURL:      acsURL,
+			IDPCert:     idp.certPEM(),
+			IDPEntityID: idpEntity,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("saml.Build: %v", err)
+	}
+	var acs http.HandlerFunc
+	for _, h := range res.Handlers {
+		if h.Path == sso.PathSAMLSSOCallback && h.Method == http.MethodPost {
+			acs = h.Handler
+		}
+	}
+	if acs == nil {
+		t.Fatalf("Build produced no POST %s handler", sso.PathSAMLSSOCallback)
+	}
+
+	resp := mintSignedResponse(t, idp, "alice@example.com", map[string]string{"email": "alice@example.com"})
+	rec := postACS(acs, resp, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	sid := body[sso.KeySessionID]
+
+	if len(spy.linked) != 2 {
+		t.Fatalf("linked records = %+v, want 2 (core + saml)", spy.linked)
+	}
+	var sawCore, sawSAML bool
+	for _, rec := range spy.linked {
+		if rec.Subject != "alice@example.com" || rec.ExternalRef != sid {
+			t.Errorf("unexpected link record: %+v (want subject alice@example.com, ref %s)", rec, sid)
+		}
+		switch rec.Protocol {
+		case sessionhub.ProtocolCore:
+			sawCore = true
+		case sessionhub.ProtocolSAML:
+			sawSAML = true
+		}
+	}
+	if !sawCore || !sawSAML {
+		t.Fatalf("expected both core and saml legs, got %+v", spy.linked)
 	}
 }
 

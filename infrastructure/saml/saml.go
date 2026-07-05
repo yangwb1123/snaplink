@@ -1,12 +1,14 @@
 package saml
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/snaplink/sso/domains/sessionhub"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/saml/idp"
@@ -76,6 +78,23 @@ type Deps struct {
 	// replay stores are wired per-SP on sp.SPConfig.AssertionReplayStore /
 	// LogoutReplayStore, since each upstream IdP federation has its own.)
 	SAMLLogoutReplayStore idp.LogoutReplayStore
+
+	// SessionHub OPTIONALLY wires this SAML build into the operator's
+	// Cross-protocol Session Hub coordinator (domains/sessionhub) — pass the
+	// SAME instance the core Server exposes via Server.SessionHub() (they must
+	// be the same object; sessionhub.Coordinator is not itself shared any
+	// other way). When set:
+	//   - the SP-side ACS handler (acsHandler.serve) records BOTH a "core" and
+	//     a "saml" leg for every session it creates, so Coordinator.Logout can
+	//     later find and terminate it alongside every other protocol leg of
+	//     the same login;
+	//   - when cfg.IdP.Enabled, Build additionally calls
+	//     SessionHub.SetSAMLTrigger(idpHandlers) so the coordinator can drive
+	//     THIS server's IdP-initiated SLO fan-out (idp.Handlers.Fanout) to
+	//     downstream SPs.
+	// nil (the default) ⇒ neither behavior — byte-identical to a build
+	// without this field, exactly the pre-session-hub SAML behavior.
+	SessionHub *sessionhub.Coordinator
 }
 
 // Config wraps the per-IdP SP configs the operator wants to wire. One SPConfig
@@ -211,6 +230,7 @@ func Build(deps Deps, cfg Config) (*BuildResult, error) {
 			sessions:     deps.SessionManager,
 			users:        deps.UserProvider,
 			logger:       logger,
+			sessionHub:   deps.SessionHub,
 		}
 		handlers = append(handlers, HandlerSpec{
 			Method:  http.MethodPost,
@@ -254,6 +274,17 @@ func Build(deps Deps, cfg Config) (*BuildResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("saml: build IdP: %w", err)
 		}
+		// Complete the Cross-protocol Session Hub wiring loop: idpHandlers.Fanout
+		// already structurally satisfies sessionhub.SAMLLogoutTrigger (same
+		// method shape), so the coordinator can now drive THIS server's
+		// IdP-initiated SLO fan-out. Deliberately NOT exposed via BuildResult —
+		// wiring it here (rather than handing the raw *idp.Handlers to the
+		// operator) is what lets Coordinator.Logout compose it without any
+		// caller needing to know the SAML module exists. Nil deps.SessionHub
+		// (the default) ⇒ skipped, byte-identical to a build without this field.
+		if deps.SessionHub != nil {
+			deps.SessionHub.SetSAMLTrigger(idpHandlers)
+		}
 		handlers = append(handlers,
 			HandlerSpec{Method: http.MethodGet, Path: sso.PathSAMLMetadata, Handler: idpHandlers.Metadata},
 			// /saml/sso accepts both bindings: HTTP-Redirect (GET) +
@@ -287,6 +318,13 @@ type acsHandler struct {
 	sessions     sso.SessionManager
 	users        sso.UserProvider
 	logger       spi.Logger
+
+	// sessionHub, when non-nil (Deps.SessionHub), records this login's
+	// cross-protocol global_sid: a "core" leg (the just-created session) plus
+	// a "saml" leg, so a later Coordinator.Logout on that global_sid knows to
+	// ALSO drive the SAML SLO fan-out for this subject. nil ⇒ no recording,
+	// byte-identical to the pre-session-hub ACS handler.
+	sessionHub *sessionhub.Coordinator
 }
 
 // serve handles POST /auth/saml/callback. It is a credential-bearing endpoint
@@ -357,11 +395,31 @@ func (h *acsHandler) serve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, sso.ErrInternal)
 		return
 	}
+	h.linkGlobalSession(r.Context(), session.ID, result.UserID)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		sso.KeySessionID: session.ID,
 		sso.KeyStatus:    sso.StatusAuthenticated,
 	})
+}
+
+// linkGlobalSession records the cross-protocol global_sid for a SAML SP
+// login: a "core" leg (this session) plus a "saml" leg, so
+// sessionhub.Coordinator.Logout later knows this login's SAML fan-out is
+// "applicable". Best-effort and purely additive — a nil sessionHub (the
+// default) or a LinkStore error never affects the ACS response; the session
+// the caller just created is unaffected either way.
+func (h *acsHandler) linkGlobalSession(ctx context.Context, sessionID, subject string) {
+	if h.sessionHub == nil {
+		return
+	}
+	gsid := sessionhub.NewGlobalSID()
+	if err := h.sessionHub.Link(ctx, gsid, sessionhub.ProtocolCore, sessionID, subject); err != nil {
+		h.logger.Error("saml: sessionhub link core leg failed", "error", err)
+	}
+	if err := h.sessionHub.Link(ctx, gsid, sessionhub.ProtocolSAML, sessionID, subject); err != nil {
+		h.logger.Error("saml: sessionhub link saml leg failed", "error", err)
+	}
 }
 
 // dispatch selects the SPAuthenticator for this callback. With a single SP it

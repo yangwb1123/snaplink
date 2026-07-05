@@ -165,6 +165,7 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
 		return
 	}
+	s.linkGlobalSession(ctx.Request().Context(), session, result.UserID)
 	strategy, token, issuedSub, err := s.mintAccessToken(ctx, result, req, client, session)
 	if err != nil {
 		// mintAccessToken has already written the exact 500 body.

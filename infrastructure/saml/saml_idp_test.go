@@ -17,6 +17,7 @@ import (
 	"github.com/beevik/etree"
 	crewjam "github.com/crewjam/saml"
 
+	"github.com/snaplink/sso/domains/sessionhub"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
 	samlmod "github.com/snaplink/sso/saml"
@@ -79,6 +80,71 @@ func TestBuild_IdPEnabled_MountsThreeHandlers(t *testing.T) {
 		if !seen {
 			t.Errorf("IdP handler %q not mounted", k)
 		}
+	}
+}
+
+// TestBuild_IdPEnabled_WiresSessionHubSAMLTrigger proves the Cross-protocol
+// Session Hub wiring loop completes end-to-end: when Deps.SessionHub is set
+// AND cfg.IdP.Enabled, Build registers the IdP's Fanout as the coordinator's
+// SAML SLO trigger — so a later sessionhub.Coordinator.Logout call for a
+// subject with a recorded SAML leg can drive THIS server's downstream-SP
+// logout fan-out. Without Deps.SessionHub (every other IdP test in this
+// file), the coordinator never even exists — byte-identical to pre-session-hub.
+func TestBuild_IdPEnabled_WiresSessionHubSAMLTrigger(t *testing.T) {
+	t.Parallel()
+	issuer, _ := newRSAIssuer(t)
+	hub := sessionhub.NewCoordinator(nil, nil, nil, nil)
+	if hub.HasSAMLTrigger() {
+		t.Fatal("fresh coordinator should have no SAML trigger wired yet")
+	}
+
+	_, err := samlmod.Build(samlmod.Deps{
+		ClientStore:     defaultimpl.NewMemoryClientStore(),
+		SessionManager:  defaultimpl.NewMemorySessionManager(),
+		UserProvider:    defaultimpl.NewMemoryUserProvider(),
+		IssuerForClient: func(*sso.Client) (string, sso.TokenIssuer, error) { return "t", issuer, nil },
+		Issuer:          asIssuer,
+		SessionHub:      hub,
+	}, samlmod.Config{
+		IdP: samlmod.IdPConfig{Enabled: true},
+	})
+	if err != nil {
+		t.Fatalf("Build IdP-only with SessionHub: %v", err)
+	}
+	if !hub.HasSAMLTrigger() {
+		t.Fatal("Build with IdP.Enabled + Deps.SessionHub should wire the coordinator's SAML trigger")
+	}
+}
+
+// TestBuild_SPOnly_DoesNotWireSAMLTrigger proves the trigger side of the loop
+// is IdP-only: an SP-only Build (no cfg.IdP.Enabled) records the ACS "saml"
+// leg (see TestACS_ValidAssertion_LinksCoreAndSAMLLegs) but has no Fanout
+// mechanism to offer — there's nothing to notify downstream (this server
+// isn't an IdP to anyone), so SetSAMLTrigger is correctly never called.
+func TestBuild_SPOnly_DoesNotWireSAMLTrigger(t *testing.T) {
+	t.Parallel()
+	idpKeyPair := newIDPKey(t)
+	hub := sessionhub.NewCoordinator(nil, nil, nil, nil)
+
+	_, err := samlmod.Build(samlmod.Deps{
+		SessionManager: defaultimpl.NewMemorySessionManager(),
+		UserProvider:   defaultimpl.NewMemoryUserProvider(),
+		ClientStore:    defaultimpl.NewMemoryClientStore(),
+		SessionHub:     hub,
+	}, samlmod.Config{
+		SPs: []sp.SPConfig{{
+			Name:        "test-idp",
+			EntityID:    spEntity,
+			ACSURL:      acsURL,
+			IDPCert:     idpKeyPair.certPEM(),
+			IDPEntityID: idpEntity,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("saml.Build: %v", err)
+	}
+	if hub.HasSAMLTrigger() {
+		t.Fatal("SP-only Build should not wire a SAML trigger (no IdP fan-out to offer)")
 	}
 }
 

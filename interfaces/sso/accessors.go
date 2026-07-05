@@ -15,6 +15,7 @@ import (
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
+	"github.com/snaplink/sso/domains/sessionhub"
 	"github.com/snaplink/sso/domains/tokenanomaly"
 	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/platform/audit"
@@ -120,6 +121,30 @@ func (s *Server) DestroySession(ctx context.Context, sessionID string) error {
 func (s *Server) TokenIssuers() map[string]core.TokenIssuer { return s.tokenIssuers }
 func (s *Server) LogoutTokenIssuer() LogoutTokenIssuer      { return s.logoutTokenIssuer }
 func (s *Server) LogoutNotifier() LogoutNotifier            { return s.logoutNotifier }
+
+// SessionHub returns the cross-protocol session-hub coordinator (Cross-
+// protocol Session Hub backlog item): given a global_sid, it terminates every
+// linked protocol leg by composing the already-existing per-protocol
+// mechanisms (core session destroy, OIDC back-channel logout fan-out, and —
+// once infrastructure/saml's Deps.SessionHub is wired to this same value and
+// calls Coordinator.SetSAMLTrigger — SAML IdP-initiated SLO fan-out). Never
+// nil: constructed in NewServer regardless of which optional mechanisms end
+// up wired, so it is always safe to call.
+func (s *Server) SessionHub() *sessionhub.Coordinator { return s.sessionHub }
+
+// TriggerBackchannelLogout implements sessionhub.OIDCLogoutTrigger: it
+// composes the existing OIDC Back-Channel Logout 1.0 fan-out
+// (fanOutBackchannelLogout) for a caller that only has a plain
+// context.Context — the Coordinator — rather than a full HandlerContext (an
+// HTTP request/response pair). No new logout mechanism is implemented here;
+// this only adapts the calling convention (newBackgroundHandlerContext, in
+// sso_wiring.go). A nil originClient means the fan-out is driven purely off
+// the subjectClientIndex (every RP the subject is known to, not just one) —
+// the correct behavior for a Coordinator-driven logout, which isn't scoped to
+// any single triggering client.
+func (s *Server) TriggerBackchannelLogout(ctx context.Context, subject, sid string) {
+	s.fanOutBackchannelLogout(newBackgroundHandlerContext(ctx), nil, subject, sid)
+}
 
 func (s *Server) IDTokenIssuer() oidc.IDTokenIssuer { return s.idTokenIssuer }
 
