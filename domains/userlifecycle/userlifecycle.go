@@ -15,6 +15,28 @@
 // in sweep.go. Every applied transition is recorded in the account's history so
 // an operator (and an audit sink) can reconstruct "who moved this account to
 // which state, when, and why".
+//
+// # Event-driven reactions (bus.go)
+//
+// LifecycleEventBus is the in-process complement to the EventAdminUserLifecycleChanged
+// audit event RecordTransition already emits: an operator registers a Go
+// function (bus.OnUserArchived(func(ctx, userID) error { ... }), or the
+// generic On/OnAsync for any State) that runs synchronously or
+// asynchronously the moment a user crosses into that state — no HTTP, no
+// operator-configured destination, no new instrumentation in transitions.go
+// or sweep.go.
+//
+// This is deliberately a DIFFERENT package concern from
+// platform/lifecycle/webhook (studied before writing this): that package is
+// generic OUTBOUND egress — "POST this event vocabulary to this
+// operator-registered URL" — and already covers "notify an external system"
+// for ANY audited event, lifecycle transitions included, via a subscription
+// on EventAdminUserLifecycleChanged. What it does NOT cover is an in-process
+// Go callback wired at compile/wiring time with direct access to this
+// server's own SPIs (SessionManager, RefreshTokenSubjectIndex, ...) — that
+// is the gap LifecycleEventBus closes. Both taps compose independently onto
+// the SAME audit.Recorder via AddSink; neither depends on the other, and an
+// operator may wire one, both, or neither.
 package userlifecycle
 
 import (
