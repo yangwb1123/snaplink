@@ -19,14 +19,43 @@ type MetricsConfig struct {
 // overhead. See AGENTS.md §8d / §8f / §8g for the runtime behavior
 // of each.
 type SecurityConfig struct {
-	BodyLimit      BodyLimitConfig      `yaml:"body_limit"`
-	RateLimit      RateLimitConfig      `yaml:"rate_limit"`
-	CORS           CORSConfig           `yaml:"cors"`
-	DPoPNonce      DPoPNonceConfig      `yaml:"dpop_nonce"`
-	JTIReplay      JTIReplayConfig      `yaml:"jti_replay"`
-	AccountLockout AccountLockoutConfig `yaml:"account_lockout"`
-	MTLS           MTLSConfig           `yaml:"mtls"`
-	TrustedProxies TrustedProxiesConfig `yaml:"trusted_proxies"`
+	BodyLimit       BodyLimitConfig       `yaml:"body_limit"`
+	RateLimit       RateLimitConfig       `yaml:"rate_limit"`
+	CORS            CORSConfig            `yaml:"cors"`
+	DPoPNonce       DPoPNonceConfig       `yaml:"dpop_nonce"`
+	JTIReplay       JTIReplayConfig       `yaml:"jti_replay"`
+	AccountLockout  AccountLockoutConfig  `yaml:"account_lockout"`
+	MTLS            MTLSConfig            `yaml:"mtls"`
+	TrustedProxies  TrustedProxiesConfig  `yaml:"trusted_proxies"`
+	SecurityHeaders SecurityHeadersConfig `yaml:"security_headers"`
+}
+
+// SecurityHeadersConfig opts into the security-headers framework: CSP (with a
+// per-request script-src nonce), Permissions-Policy, X-Content-Type-Options,
+// Referrer-Policy, and (TLS-only) HSTS on every HTML-serving response —
+// including the opt-in admin console / hosted login / self-service portal SPA
+// bundles, which are served outside the SSO router's own middleware chain and
+// so need the same wrap applied explicitly (see sso.WithSecurityHeaders's
+// doc). Also adds Clear-Site-Data on POST /logout and POST /me/account/erase,
+// instructing the browser to purge this origin's cache/cookies/storage on a
+// definitive session end.
+//
+// Off by default — byte-identical to a build without this feature; this
+// touches response headers on EVERY existing endpoint, so it must never
+// activate unless explicitly enabled. CSPDirectives / PermissionsPolicy let
+// an operator override the SDK's conservative default (see
+// handler.DefaultSecurityHeadersPolicy); leave both empty/unset to use it.
+type SecurityHeadersConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// CSPDirectives overrides the Content-Security-Policy directive list
+	// (e.g. ["default-src 'self'", "object-src 'none'"]). Empty ⇒ the SDK
+	// default. A per-request nonce is appended to script-src automatically —
+	// do not include one here.
+	CSPDirectives []string `yaml:"csp_directives"`
+	// PermissionsPolicy overrides the raw Permissions-Policy header value.
+	// Empty ⇒ the SDK default (camera/microphone/geolocation/payment/usb
+	// denied).
+	PermissionsPolicy string `yaml:"permissions_policy"`
 }
 
 // TrustedProxiesConfig opts into XFF-aware real-IP extraction.

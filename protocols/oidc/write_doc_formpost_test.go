@@ -146,3 +146,33 @@ func TestRenderFormPostResponse_EscapesUntrustedValues(t *testing.T) {
 		t.Errorf("unescaped script payload leaked into HTML:\n%s", body)
 	}
 }
+
+func TestRenderFormPostResponse_NoInlineEventHandlerAttribute(t *testing.T) {
+	t.Parallel()
+	ctx, rec := newCtx(http.MethodGet, "/auth/login")
+	oidc.RenderFormPostResponse(ctx, "https://rp.example/cb", "c", "", "iss")
+	body := rec.Body.String()
+	// The auto-submit must be a <script> tag, not an inline onload="" event
+	// handler — a strict CSP script-src (no 'unsafe-inline') blocks the
+	// latter but a nonce-tagged <script> still runs.
+	if strings.Contains(body, "onload=") {
+		t.Errorf("inline onload attribute survives — breaks under a strict CSP script-src:\n%s", body)
+	}
+	if !strings.Contains(body, "<script>document.forms[0].submit()</script>") {
+		t.Errorf("expected the auto-submit in a bare <script> tag when no nonce is set:\n%s", body)
+	}
+}
+
+func TestRenderFormPostResponse_StampsCSPNonceOnScriptTag(t *testing.T) {
+	t.Parallel()
+	req := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
+	req = req.WithContext(core.WithCSPNonce(req.Context(), "test-nonce-123"))
+	rec := httptest.NewRecorder()
+	ctx := core.NewContext(rec, req)
+
+	oidc.RenderFormPostResponse(ctx, "https://rp.example/cb", "c", "", "iss")
+	body := rec.Body.String()
+	if !strings.Contains(body, `<script nonce="test-nonce-123">document.forms[0].submit()</script>`) {
+		t.Errorf("script tag missing the per-request CSP nonce:\n%s", body)
+	}
+}

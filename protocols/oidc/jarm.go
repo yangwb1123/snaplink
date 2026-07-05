@@ -14,13 +14,18 @@ import (
 // Mirrors the Form Post Response Mode template but carries the single
 // signed `response` field. Field uses html/template attribute-value
 // escaping so the JWT can't break out of the form.
+//
+// The auto-submit is a <script nonce="..."> tag rather than a
+// <body onload="..."> attribute — see oidcsupport.formPostTemplate's doc for
+// why (CSP's script-src has no 'unsafe-inline'; a nonce source only ever
+// satisfies a <script> element, never an inline event-handler attribute).
 var jarmFormPostTemplate = template.Must(template.New("jarmFormPost").Parse(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Submitting…</title>
 </head>
-<body onload="document.forms[0].submit()">
+<body>
 <noscript>
 <p>JavaScript is required to complete sign-in. Please click the button below to continue.</p>
 </noscript>
@@ -28,6 +33,7 @@ var jarmFormPostTemplate = template.Must(template.New("jarmFormPost").Parse(`<!D
 <input type="hidden" name="response" value="{{.Response}}">
 <noscript><button type="submit">Continue</button></noscript>
 </form>
+<script{{if .Nonce}} nonce="{{.Nonce}}"{{end}}>document.forms[0].submit()</script>
 </body>
 </html>
 `))
@@ -37,6 +43,9 @@ var jarmFormPostTemplate = template.Must(template.New("jarmFormPost").Parse(`<!D
 type jarmFormPostData struct {
 	RedirectURI string
 	Response    string
+	// Nonce is the per-request CSP nonce (core.CSPNonceFromContext), empty
+	// when security headers are not enabled for this request.
+	Nonce string
 }
 
 // JARM response modes per JWT Secured Authorization Response Mode
@@ -161,6 +170,7 @@ func renderJARMFormPost(ctx core.HandlerContext, redirectURI, jwt string) {
 	_ = jarmFormPostTemplate.Execute(w, jarmFormPostData{
 		RedirectURI: redirectURI,
 		Response:    jwt,
+		Nonce:       core.CSPNonceFromContext(ctx.Request().Context()),
 	})
 }
 

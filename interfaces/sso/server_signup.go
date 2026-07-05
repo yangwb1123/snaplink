@@ -2,8 +2,11 @@ package sso
 
 import (
 	"context"
+	"net/http"
 	"time"
 
+	"github.com/snaplink/sso/interfaces/middleware"
+	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/protocols/selfservice"
 	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
 	"github.com/snaplink/sso/shared/core"
@@ -85,6 +88,45 @@ func (s *Server) GenerateAuthCodeBytes() (string, error) {
 // TokenNoStoreHeaders sets no-store headers.
 func (s *Server) TokenNoStoreHeaders(ctx HandlerContext) {
 	tokenNoStoreHeaders(ctx)
+}
+
+// resolvedSecurityHeadersPolicy returns the operator-supplied CSP/Permissions-
+// Policy override (WithSecurityHeadersPolicy), or the zero value when unset —
+// handler.SecurityHeaders resolves a zero-value field to
+// handler.DefaultSecurityHeadersPolicy itself, so callers never need to.
+func (s *Server) resolvedSecurityHeadersPolicy() handler.SecurityHeadersPolicy {
+	if s.securityHeadersPolicy != nil {
+		return *s.securityHeadersPolicy
+	}
+	return handler.SecurityHeadersPolicy{}
+}
+
+// wrapSecurityHeaders applies the security-headers middleware (CSP +
+// Permissions-Policy + per-request nonce + the existing default-deny headers)
+// to h when WithSecurityHeaders/WithSecurityHeadersPolicy is wired. Used for
+// the opt-in SPA bundles (admin console, hosted login, portal), which are
+// served OUTSIDE the SSO router's own middleware chain (buildProbeMux) and so
+// need this applied explicitly. No-op (returns h unchanged) when the feature
+// is off — byte-identical to a build without it.
+func (s *Server) wrapSecurityHeaders(h http.Handler) http.Handler {
+	if !s.securityHeadersEnabled {
+		return h
+	}
+	return handler.SecurityHeaders(s.resolvedSecurityHeadersPolicy())(h)
+}
+
+// ClearSiteData sets the Clear-Site-Data response header — instructing the
+// browser to purge cache/cookies/storage for this origin — when security
+// headers are enabled (WithSecurityHeaders / WithSecurityHeadersPolicy).
+// Callers use this ONLY on a DEFINITIVE end to the session on this origin
+// (POST /logout, POST /me/account/erase when not a dry run) — never on a
+// per-token revoke, which may leave other sessions/tabs on this origin
+// alive. No-op (byte-identical) when security headers are not enabled.
+func (s *Server) ClearSiteData(ctx HandlerContext) {
+	if !s.securityHeadersEnabled {
+		return
+	}
+	middleware.ClearSiteData(ctx)
 }
 
 // ErrorBody creates an error response body.

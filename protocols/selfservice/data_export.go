@@ -96,6 +96,11 @@ func HandleMyAccountErase(d Deps, ctx core.HandlerContext) {
 		return
 	}
 	RecordSelfErase(d, ctx, userID, report)
+	if !req.DryRun {
+		// A dry run previews without mutating anything — only a REAL erase is
+		// the definitive session end Clear-Site-Data is for.
+		d.ClearSiteData(ctx)
+	}
 	ctx.JSON(http.StatusOK, map[string]any{
 		"user_id":                report.UserID,
 		"dry_run":                report.DryRun,

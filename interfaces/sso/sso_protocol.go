@@ -17,6 +17,7 @@ import (
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
+	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/platform/lifecycle/degradation"
 	"github.com/snaplink/sso/platform/metrics"
@@ -116,11 +117,17 @@ type protocolState struct {
 	tracingOperation       string
 	corsPolicy             *cors.Policy
 	securityHeadersEnabled bool
-	issuer                 string
-	authCodeStore          oauth.AuthCodeStore
-	authCodeTTL            time.Duration
-	refreshTokenStore      oauth.RefreshTokenStore
-	refreshTokenTTL        time.Duration
+	// securityHeadersPolicy overrides the default CSP directives /
+	// Permissions-Policy (WithSecurityHeadersPolicy). Nil ⇒
+	// handler.DefaultSecurityHeadersPolicy, resolved lazily by
+	// resolvedSecurityHeadersPolicy so a bare WithSecurityHeaders() stays
+	// byte-identical to before this field existed.
+	securityHeadersPolicy *handler.SecurityHeadersPolicy
+	issuer                string
+	authCodeStore         oauth.AuthCodeStore
+	authCodeTTL           time.Duration
+	refreshTokenStore     oauth.RefreshTokenStore
+	refreshTokenTTL       time.Duration
 	// refreshAbsoluteMaxLifetime is the optional hard ceiling on a refresh-
 	// token family's total age since original issuance (WithRefreshAbsoluteMaxLifetime).
 	// 0 (the default) disables the cap — byte-identical to pre-feature behavior.

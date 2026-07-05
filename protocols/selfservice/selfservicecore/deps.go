@@ -69,6 +69,11 @@ type Deps interface {
 	GenerateAuthCodeBytes() (string, error)
 	TokenNoStoreHeaders(ctx core.HandlerContext)
 	ErrorBody(errCode string) map[string]any
+	// ClearSiteData sets Clear-Site-Data (cache/cookies/storage) when security
+	// headers are enabled, instructing the browser to purge this origin's
+	// state after a definitive account erasure. No-op otherwise — see
+	// sso.Server.ClearSiteData's doc.
+	ClearSiteData(ctx core.HandlerContext)
 
 	// Bearer validation for authenticated /me endpoints.
 	MeSubjectOrChallenge(ctx core.HandlerContext) (userID string, ok bool)

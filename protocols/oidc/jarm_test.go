@@ -132,6 +132,22 @@ func TestRenderJARMResponse_FormPostDelivery(t *testing.T) {
 	if rec.Header().Get("X-Frame-Options") != "DENY" {
 		t.Error("form_post must set X-Frame-Options: DENY")
 	}
+	if strings.Contains(body, "onload=") {
+		t.Errorf("inline onload attribute survives — breaks under a strict CSP script-src:\n%s", body)
+	}
+}
+
+func TestRenderJARMResponse_FormPostStampsCSPNonce(t *testing.T) {
+	t.Parallel()
+	req := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
+	req = req.WithContext(core.WithCSPNonce(req.Context(), "jarm-nonce-456"))
+	rec := httptest.NewRecorder()
+	ctx := core.NewContext(rec, req)
+	oidc.RenderJARMResponse(ctx, &fakeSigner{}, oidc.ResponseModeFormPostJWT, "https://rp.example/cb", "iss", "c", "code", "")
+	body := rec.Body.String()
+	if !strings.Contains(body, `<script nonce="jarm-nonce-456">document.forms[0].submit()</script>`) {
+		t.Errorf("script tag missing the per-request CSP nonce:\n%s", body)
+	}
 }
 
 func TestRenderJARMResponse_SignFailureReturnsFalse(t *testing.T) {

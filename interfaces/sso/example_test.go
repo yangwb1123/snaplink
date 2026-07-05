@@ -130,8 +130,10 @@ func ExampleServer_withSessionManagement() {
 	_ = srv
 }
 
-// ExampleServer_withSecurityHeaders demonstrates enabling security
-// headers (HSTS, CSP, X-Frame-Options, etc.) for all responses.
+// ExampleServer_withSecurityHeaders demonstrates enabling the security-headers
+// framework (HSTS, CSP with a per-request nonce, Permissions-Policy,
+// X-Frame-Options, etc.) for all responses — including the opt-in SPA bundles
+// and Clear-Site-Data on logout/account-erasure.
 func ExampleServer_withSecurityHeaders() {
 	srv := sso.NewServer(
 		sso.WithIssuer("sso-server"),
@@ -141,16 +143,22 @@ func ExampleServer_withSecurityHeaders() {
 		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
 		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
 
-		// Enable security headers for all responses.
+		// Enable security headers for all responses. Use
+		// WithSecurityHeadersPolicy instead to override the CSP directives /
+		// Permissions-Policy.
 		sso.WithSecurityHeaders(),
 	)
 
 	// All responses now include:
-	// - Strict-Transport-Security (HSTS)
+	// - Strict-Transport-Security (HSTS, TLS only)
 	// - X-Content-Type-Options: nosniff
 	// - X-Frame-Options: DENY
-	// - Content-Security-Policy
+	// - Content-Security-Policy (with a fresh script-src nonce per request)
+	// - Permissions-Policy
 	// - Referrer-Policy
+	//
+	// POST /logout and a non-dry-run POST /me/account/erase additionally get
+	// Clear-Site-Data, since both are a definitive end to the session.
 	_ = srv
 }
 

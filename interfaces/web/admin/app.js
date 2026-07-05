@@ -5,6 +5,14 @@ var auditCurrentPage = 1;
 var auditHasMore = false;
 var auditDebounceTimer = null;
 var auditPageSize = 50;
+// clientsCache / usersCache hold the last-fetched list keyed by id, so the
+// delegated "View" click handlers below can look up the full record without
+// re-fetching it or round-tripping it through an inline onclick="" attribute
+// (a CSP script-src with no 'unsafe-inline' — the SDK's conservative
+// security-headers default — blocks inline event-handler attributes; only
+// listeners attached via addEventListener run).
+var clientsCache = {};
+var usersCache = {};
 
 // ---- Auth ----
 function doLogin() {
@@ -213,6 +221,7 @@ function loadClients() {
     return r.json();
   }).then(function(d) {
     var clients = d.clients || [];
+    clientsCache = {};
     if (!clients.length) {
       setContent('clients-content', '<div class="empty">No clients found.</div>');
       return;
@@ -221,13 +230,14 @@ function loadClients() {
     html += '<th>ID</th><th>Name</th><th>Status</th><th>Strategy</th><th>Scopes</th><th></th>';
     html += '</tr></thead><tbody>';
     clients.forEach(function(c) {
+      clientsCache[c.id] = c;
       html += '<tr>';
       html += '<td><code>' + esc(c.id) + '</code></td>';
       html += '<td>' + esc(c.name) + '</td>';
       html += '<td>' + badge(c.active, 'Active', 'badge-green', 'Inactive', 'badge-red') + '</td>';
       html += '<td><span class="badge badge-blue">' + esc(c.token_strategy || 'jwt') + '</span></td>';
       html += '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc((c.allowed_scopes || []).join(' ')) + '</td>';
-      html += '<td><button class="btn btn-sm" onclick="showClientDetail(' + JSON.stringify(JSON.stringify(c)) + ')">View</button></td>';
+      html += '<td><button class="btn btn-sm" data-action="view-client" data-id="' + esc(c.id) + '">View</button></td>';
       html += '</tr>';
     });
     html += '</tbody></table>';
@@ -237,8 +247,8 @@ function loadClients() {
   });
 }
 
-function showClientDetail(jsonStr) {
-  var c = JSON.parse(jsonStr);
+function showClientDetail(c) {
+  if (!c) return;
   document.getElementById('clients-list').style.display = 'none';
   document.getElementById('client-detail').classList.add('open');
 
@@ -277,6 +287,7 @@ function loadUsers() {
     return r.json();
   }).then(function(d) {
     var users = d.users || [];
+    usersCache = {};
     if (!users.length) {
       setContent('users-content', '<div class="empty">No users found.</div>');
       return;
@@ -285,11 +296,12 @@ function loadUsers() {
     html += '<th>ID</th><th>External ID</th><th>Provider</th><th></th>';
     html += '</tr></thead><tbody>';
     users.forEach(function(u) {
+      usersCache[u.id] = u;
       html += '<tr>';
       html += '<td><code>' + esc(u.id) + '</code></td>';
       html += '<td>' + esc(u.external_id || '—') + '</td>';
       html += '<td><span class="badge badge-blue">' + esc(u.provider || '—') + '</span></td>';
-      html += '<td><button class="btn btn-sm" onclick="showUserDetail(' + JSON.stringify(JSON.stringify(u)) + ')">View</button></td>';
+      html += '<td><button class="btn btn-sm" data-action="view-user" data-id="' + esc(u.id) + '">View</button></td>';
       html += '</tr>';
     });
     html += '</tbody></table>';
@@ -299,8 +311,8 @@ function loadUsers() {
   });
 }
 
-function showUserDetail(jsonStr) {
-  var u = JSON.parse(jsonStr);
+function showUserDetail(u) {
+  if (!u) return;
   document.getElementById('users-list').style.display = 'none';
   document.getElementById('user-detail').classList.add('open');
 
@@ -352,7 +364,7 @@ function loadSessions() {
       html += '<td>' + esc(s.user_id) + '</td>';
       html += '<td>' + esc(fmtTime(s.created_at_unix)) + '</td>';
       html += '<td>' + esc(fmtTime(s.expires_at_unix)) + '</td>';
-      html += '<td><button class="btn btn-danger" onclick="revokeSession(' + JSON.stringify(s.id) + ')">Revoke</button></td>';
+      html += '<td><button class="btn btn-danger" data-action="revoke-session" data-id="' + esc(s.id) + '">Revoke</button></td>';
       html += '</tr>';
     });
     html += '</tbody></table>';
@@ -449,6 +461,48 @@ function auditPage(dir) {
 document.getElementById('token-input').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') doLogin();
 });
+
+// ---- Event wiring ----
+// Every control below used to be an inline onclick/oninput/onchange
+// attribute. Those are inline scripts under CSP (script-src), so with the
+// SDK's security-headers default enabled (no 'unsafe-inline') the browser
+// would silently refuse to run them. addEventListener always runs regardless
+// of CSP script-src, so wiring is centralized here instead.
+function wireStaticEventHandlers() {
+  document.getElementById('login-btn').addEventListener('click', doLogin);
+  document.getElementById('logout-btn').addEventListener('click', doLogout);
+  document.querySelectorAll('.nav-item').forEach(function(el) {
+    el.addEventListener('click', function() { navigate(el.dataset.page); });
+  });
+  document.getElementById('client-detail-back').addEventListener('click', function() {
+    closeDetail('client');
+  });
+  document.getElementById('user-detail-back').addEventListener('click', function() {
+    closeDetail('user');
+  });
+  document.getElementById('audit-search').addEventListener('input', debouncedAuditLoad);
+  document.getElementById('audit-outcome').addEventListener('change', function() { loadAudit(1); });
+  document.getElementById('audit-prev').addEventListener('click', function() { auditPage(-1); });
+  document.getElementById('audit-next').addEventListener('click', function() { auditPage(1); });
+
+  // Delegated listeners for rows rendered after the initial page load
+  // (client/user "View", session "Revoke") — the parent container node is
+  // stable across setContent() re-renders, so one listener attached here
+  // covers every future render.
+  document.getElementById('clients-content').addEventListener('click', function(e) {
+    var btn = e.target.closest('[data-action="view-client"]');
+    if (btn) showClientDetail(clientsCache[btn.dataset.id]);
+  });
+  document.getElementById('users-content').addEventListener('click', function(e) {
+    var btn = e.target.closest('[data-action="view-user"]');
+    if (btn) showUserDetail(usersCache[btn.dataset.id]);
+  });
+  document.getElementById('sessions-content').addEventListener('click', function(e) {
+    var btn = e.target.closest('[data-action="revoke-session"]');
+    if (btn) revokeSession(btn.dataset.id);
+  });
+}
+wireStaticEventHandlers();
 
 // ---- Boot ----
 (function() {
