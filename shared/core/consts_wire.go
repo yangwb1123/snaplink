@@ -208,3 +208,13 @@ const (
 const (
 	PathAdminFederationHealth = "/api/v1/admin/federation/health"
 )
+
+// PathAdminCryptoKeys / PathAdminCryptoKeyCompromise back the
+// cryptographic-material inventory (GET admin:read; POST admin:write) —
+// see platform/lifecycle/cryptoinventory. Mounted only when
+// WithCryptoInventory is wired. Relocated from consts.go for the same
+// per-file budget reason as PathAdminFederationHealth above.
+const (
+	PathAdminCryptoKeys          = "/admin/crypto/keys"
+	PathAdminCryptoKeyCompromise = "/admin/crypto/keys/:id/compromise"
+)
