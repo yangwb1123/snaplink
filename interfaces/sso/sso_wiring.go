@@ -2,10 +2,13 @@ package sso
 
 import (
 	"context"
+	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
+	"github.com/snaplink/sso/domains/sessionhub"
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
 	"github.com/snaplink/sso/internal/handler/tokengrant"
@@ -63,6 +66,17 @@ type wiringState struct {
 	// (WithWebhookEngine). Nil = no admin subscription/dead-letter routes,
 	// no audit-sink tap — byte-identical to a build without the feature.
 	webhookEngine *webhook.Engine
+
+	// sessionHub is the Cross-protocol Session Hub coordinator (domains/
+	// sessionhub): given a global_sid it terminates every linked protocol
+	// leg by composing the core-session destroy + OIDC back-channel fan-out
+	// (always wired here, in applySessionHub) and, optionally, the SAML SLO
+	// fan-out (wired post-construction by infrastructure/saml's Deps.SessionHub
+	// calling Coordinator.SetSAMLTrigger — a separate module, so it cannot be
+	// a NewServer option without a wiring cycle). Never nil after NewServer;
+	// the login flow populates it (one "core" leg per session) regardless of
+	// whether anything ever reads it — see linkGlobalSession.
+	sessionHub *sessionhub.Coordinator
 
 	// clientStoreCacheTTL opts into the per-login ClientStore metadata
 	// cache (WithClientStoreCache). > 0 ⇒ NewServer decorates s.clientStore
@@ -137,3 +151,52 @@ type wiringState struct {
 	// route unmounted).
 	sessionManagementEnabled bool
 }
+
+// newBackgroundHandlerContext adapts a plain context.Context into a
+// HandlerContext for handler code (like fanOutBackchannelLogout, see
+// Server.TriggerBackchannelLogout in accessors.go) that is normally only
+// invoked from a real HTTP request but must also be reachable from a non-HTTP
+// caller — the sessionhub.Coordinator. Audit/tenant/geo enrichment that reads
+// request headers or ctx.Get simply finds nothing set — the SAME graceful
+// "nothing to enrich" path a real request with those headers absent already
+// takes; nothing panics or errors.
+func newBackgroundHandlerContext(ctx context.Context) HandlerContext {
+	req := (&http.Request{Header: make(http.Header), URL: &url.URL{}}).WithContext(ctx)
+	return &backgroundHandlerContext{req: req}
+}
+
+// backgroundHandlerContext is the minimal HandlerContext implementation
+// newBackgroundHandlerContext returns. Every method beyond Request/Set/Get is
+// an inert no-op — the code paths driven through it (BCL fan-out) never write
+// an HTTP response or read a route param/query/body.
+type backgroundHandlerContext struct {
+	req *http.Request
+	kv  map[string]any
+}
+
+func (b *backgroundHandlerContext) Request() *http.Request { return b.req }
+func (b *backgroundHandlerContext) ResponseWriter() http.ResponseWriter {
+	return discardResponseWriter{}
+}
+func (b *backgroundHandlerContext) Param(string) string  { return "" }
+func (b *backgroundHandlerContext) Query(string) string  { return "" }
+func (b *backgroundHandlerContext) Bind(any) error       { return nil }
+func (b *backgroundHandlerContext) JSON(int, any)        {}
+func (b *backgroundHandlerContext) Redirect(int, string) {}
+func (b *backgroundHandlerContext) Set(key string, val any) {
+	if b.kv == nil {
+		b.kv = make(map[string]any)
+	}
+	b.kv[key] = val
+}
+func (b *backgroundHandlerContext) Get(key string) any { return b.kv[key] }
+
+// discardResponseWriter is the http.ResponseWriter backgroundHandlerContext
+// hands out. A caller driving logic through it (the Coordinator path) never
+// has a real response in flight, so nothing ever inspects the values written
+// here — it exists only so ResponseWriter() has a non-nil value to return.
+type discardResponseWriter struct{}
+
+func (discardResponseWriter) Header() http.Header         { return http.Header{} }
+func (discardResponseWriter) Write(p []byte) (int, error) { return len(p), nil }
+func (discardResponseWriter) WriteHeader(int)             {}

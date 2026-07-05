@@ -292,6 +292,7 @@ func (s *Server) finalizeCallbackSession(ctx HandlerContext, result *AuthResult)
 		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
 		return
 	}
+	s.linkGlobalSession(ctx.Request().Context(), session, result.UserID)
 
 	ctx.JSON(http.StatusOK, map[string]string{
 		KeySessionID: session.ID,

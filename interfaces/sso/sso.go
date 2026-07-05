@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/federation"
+	"github.com/snaplink/sso/domains/sessionhub"
 	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
 	"github.com/snaplink/sso/internal/auth/consent"
@@ -74,11 +75,41 @@ func NewServer(opts ...Option) *Server {
 	// byte-identical preconditions when a precondition does not hold.
 	s.applyFederationAutoRegistration()
 	s.applyClientStoreCache()
+	// Cross-protocol session hub (domains/sessionhub): constructed post-options
+	// so it captures whatever SessionManager WithSessionManager wired. Always
+	// on (unlike the other apply* helpers here) — see applySessionHub.
+	s.applySessionHub()
 	// Attack-surface visibility: emit the metric snapshot + (if any gate is
 	// off) the audit event + log line for FeatureGates. Last, so it reflects
 	// the fully-resolved config regardless of option order.
 	s.recordFeatureGateStartup()
 	return s
+}
+
+// applySessionHub constructs the Cross-protocol Session Hub coordinator
+// (always — this is bookkeeping infrastructure, not an opt-in feature, so
+// there is no "byte-identical when unwired" precondition to gate on). It
+// wires:
+//   - a fresh bounded in-memory LinkStore (no operator seam yet; add one
+//     alongside a future WithSessionHubLinkStore if a shared backend is
+//     needed for a multi-replica deployment);
+//   - CoreSessionTerminator = s.sessionMgr, whatever WithSessionManager set
+//     (nil is fine — Coordinator.Logout then just skips that leg, exactly
+//     like every other nil-SPI fail-open in this server);
+//   - OIDCLogoutTrigger = s itself, via TriggerBackchannelLogout (accessors.go).
+//
+// The SAML leg is deliberately NOT wired here: the concrete SAML IdP handlers
+// (infrastructure/saml, a separate Go module) are built FROM this
+// already-constructed Server (they need IssuerForClient/SessionMgr), so
+// wiring them requires infrastructure/saml's Deps.SessionHub to call
+// s.sessionHub.SetSAMLTrigger(...) AFTER both exist — see that package.
+func (s *Server) applySessionHub() {
+	s.sessionHub = sessionhub.NewCoordinator(
+		sessionhub.NewMemoryLinkStore(0),
+		s.sessionMgr,
+		s,
+		s.logger,
+	)
 }
 
 // applyAuditSinkTaps fans the audit recorder's sink out to every opt-in
