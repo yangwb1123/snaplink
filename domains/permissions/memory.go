@@ -18,8 +18,12 @@ import (
 //	assignmentsByUser[userID][clientID]            = []roleCode
 //	resources[id]                                  = *Resource
 //	resourceIndex[tenant|client|type|name]         = id   (uniqueness)
+//	ssodConflicts[clientID]                        = [][]roleCode (Static SoD)
+//	dsodConflicts[clientID]                        = [][]roleCode (Dynamic SoD)
+//	activeRoles[userID\x00clientID\x00sessionID]   = []roleCode (DSoD activation)
 //
 // Resource catalog methods + matching logic live in memory_resources.go.
+// Separation of Duty (SoD) methods + matching logic live in memory_sod.go.
 type MemoryProvider struct {
 	mu                sync.RWMutex
 	rolesByClient     map[string]map[string]Role
@@ -27,6 +31,15 @@ type MemoryProvider struct {
 	assignmentsByUser map[string]map[string][]string
 	resources         map[string]*Resource
 	resourceIndex     map[string]string
+
+	// ssodConflicts backs SoDProvider: role-code sets that may never be
+	// held by the same subject at once, enforced inline by AssignRoles
+	// and AddRoleToUser below. dsodConflicts + activeRoles back
+	// SessionRoleActivator and are an INDEPENDENT table — a role pair may
+	// be DSoD-only (holdable together, exclusive only to activate).
+	ssodConflicts map[string][][]string
+	dsodConflicts map[string][][]string
+	activeRoles   map[string][]string
 }
 
 func NewMemoryProvider() *MemoryProvider {
@@ -36,6 +49,9 @@ func NewMemoryProvider() *MemoryProvider {
 		assignmentsByUser: make(map[string]map[string][]string),
 		resources:         make(map[string]*Resource),
 		resourceIndex:     make(map[string]string),
+		ssodConflicts:     make(map[string][][]string),
+		dsodConflicts:     make(map[string][][]string),
+		activeRoles:       make(map[string][]string),
 	}
 }
 
@@ -82,6 +98,9 @@ func (m *MemoryProvider) RemoveRole(_ context.Context, clientID, roleCode string
 			m.assignmentsByUser[userID] = byClient
 		}
 	}
+	// ...and any DSoD session activations (memory_sod.go): a removed
+	// role code must not linger as "active" if the code is later reused.
+	m.stripActiveRole(clientID, roleCode)
 	return nil
 }
 
@@ -108,10 +127,16 @@ func (m *MemoryProvider) GetMenus(_ context.Context, clientID string) (MenuTree,
 
 // AssignRoles grants the user the given role codes under clientID. The set
 // becomes the new role list (not a merge) — to merge, fetch via Roles() and
-// re-Assign.
+// re-Assign. Rejects the whole call with *ConflictError (see sod.go) when
+// roles holds two-or-more codes from the same SoDProvider-declared SSoD
+// conflict set — an unconfigured Provider (no declared sets) never trips
+// this, so pre-SoD callers are unaffected.
 func (m *MemoryProvider) AssignRoles(_ context.Context, userID, clientID string, roles []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if c := findConflict(clientID, m.ssodConflicts[clientID], roles); c != nil {
+		return c
+	}
 	if m.assignmentsByUser[userID] == nil {
 		m.assignmentsByUser[userID] = make(map[string][]string)
 	}
@@ -150,7 +175,9 @@ func (m *MemoryProvider) UnassignRoles(_ context.Context, userID, clientID strin
 // rather than AssignRoles: AssignRoles replaces the whole set, so a SCIM
 // "add one member" would have to read-modify-write and could race a
 // concurrent membership change; doing the read+append under m.mu keeps
-// the grant atomic.
+// the grant atomic. Same SSoD conflict check as AssignRoles (see sod.go),
+// evaluated against the user's resulting FULL role set so an added role
+// can't create a conflict with one already held.
 func (m *MemoryProvider) AddRoleToUser(_ context.Context, userID, clientID, roleCode string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -161,7 +188,11 @@ func (m *MemoryProvider) AddRoleToUser(_ context.Context, userID, clientID, role
 	if slices.Contains(cur, roleCode) {
 		return nil
 	}
-	m.assignmentsByUser[userID][clientID] = append(append([]string{}, cur...), roleCode)
+	next := append(append([]string{}, cur...), roleCode)
+	if c := findConflict(clientID, m.ssodConflicts[clientID], next); c != nil {
+		return c
+	}
+	m.assignmentsByUser[userID][clientID] = next
 	return nil
 }
 

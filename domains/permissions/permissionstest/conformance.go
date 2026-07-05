@@ -58,6 +58,16 @@ func (s ConformanceSuite) Run(t *testing.T) {
 		{"Menus_FiltersByUserPermissions", testMenusFiltersByUserPermissions},
 		{"GroupMembership_AddPreservesOthers", testGroupMembershipAddPreservesOthers},
 		{"GroupMembership_RemoveIsScoped", testGroupMembershipRemoveIsScoped},
+		{"SoD_StaticConflictBlocksAssign", testSoDStaticConflictBlocksAssign},
+		{"SoD_StaticConflictAllowsNonConflicting", testSoDStaticConflictAllowsNonConflicting},
+		{"SoD_StaticConflictBlocksAddRoleToUser", testSoDStaticConflictBlocksAddRoleToUser},
+		{"SoD_ClearingConflictsRestoresDefault", testSoDClearingConflictsRestoresDefault},
+		{"SoD_InvalidConflictSetRejected", testSoDInvalidConflictSetRejected},
+		{"SoD_DynamicActivateRequiresAssignment", testSoDDynamicActivateRequiresAssignment},
+		{"SoD_DynamicActivateBlocksConflict", testSoDDynamicActivateBlocksConflict},
+		{"SoD_DynamicHoldBothActivateOne", testSoDDynamicHoldBothActivateOne},
+		{"SoD_DynamicActiveRolesScopedPerSession", testSoDDynamicActiveRolesScopedPerSession},
+		{"SoD_DynamicDeactivateSessionClears", testSoDDynamicDeactivateSessionClears},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
