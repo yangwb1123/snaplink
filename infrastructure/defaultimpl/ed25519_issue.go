@@ -18,7 +18,7 @@ func (j *Ed25519JWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scop
 	if subject == nil || subject.ID == "" {
 		return nil, errors.New("ed25519: subject required")
 	}
-	now := time.Now()
+	now := nowFrom(j.clock)
 	// Per-issuance TTL override (Client.AccessTokenTTL) wins over
 	// the issuer's configured tokenTTL. Zero = use the issuer's
 	// default — preserves backwards compatibility for callers
@@ -41,15 +41,10 @@ func (j *Ed25519JWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scop
 
 	payload := buildAccessPayload(j.issuer, subject, scopes, jti, now, expiresAt)
 
-	signingInput, err := jwtSigningInput(header, payload)
+	token, err := signCompactJWS(ctx, sgn, header, payload, "ed25519: sign access token")
 	if err != nil {
 		return nil, err
 	}
-	sig, err := sgn.Sign(ctx, signingInput)
-	if err != nil {
-		return nil, fmt.Errorf("ed25519: sign access token: %w", err)
-	}
-	token := string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig)
 
 	return &sso.Token{
 		AccessToken: token,
@@ -89,7 +84,7 @@ func (j *Ed25519JWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRe
 	if ttl <= 0 {
 		ttl = j.tokenTTL
 	}
-	now := time.Now()
+	now := nowFrom(j.clock)
 	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: jwtTyp, Kid: kid}
 	payload := ed25519IDPayload{
 		Iss:   j.issuer,
@@ -112,43 +107,7 @@ func (j *Ed25519JWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRe
 	// Native SSO 1.0 §3.1: ds_hash binds an accompanying device_secret, same
 	// left-half-hash construction as at_hash. Empty secret omits the claim.
 	payload.DsHash = accessTokenHash(jwtAlgEdDSA, req.DeviceSecret)
-	signingInput, err := idTokenSigningInput(header, payload)
-	if err != nil {
-		return "", err
-	}
-	sig, err := sgn.Sign(ctx, signingInput)
-	if err != nil {
-		return "", fmt.Errorf("ed25519: sign id token: %w", err)
-	}
-	return string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig), nil
-}
-
-// idTokenSigningInput is the ID-token mirror of jwtSigningInput — same
-// JOSE encoding, but parametrized on the ID payload shape.
-func idTokenSigningInput(header ed25519Header, payload ed25519IDPayload) ([]byte, error) {
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return nil, err
-	}
-	pb, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	encoded := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	return []byte(encoded), nil
-}
-
-func jwtSigningInput(header ed25519Header, payload ed25519Payload) ([]byte, error) {
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return nil, err
-	}
-	pb, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	encoded := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	return []byte(encoded), nil
+	return signCompactJWS(ctx, sgn, header, payload, "ed25519: sign id token")
 }
 
 // The compile-time check that this issuer satisfies caep.JWTSigner lives
@@ -178,20 +137,7 @@ func (j *Ed25519JWTIssuer) SignJWT(ctx context.Context, typ string, claims any) 
 	}
 	sgn, kid := j.currentKey()
 	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: typ, Kid: kid}
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return "", err
-	}
-	pb, err := json.Marshal(claims)
-	if err != nil {
-		return "", err
-	}
-	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig, err := sgn.Sign(ctx, []byte(signingInput))
-	if err != nil {
-		return "", fmt.Errorf("ed25519: sign jwt (typ=%s): %w", typ, err)
-	}
-	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+	return signCompactJWS(ctx, sgn, header, claims, "ed25519: sign jwt (typ="+typ+")")
 }
 
 // logoutTokenTyp is OIDC BCL 1.0 §2.4's REQUIRED `typ` header.
@@ -244,7 +190,7 @@ func (j *Ed25519JWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.Logout
 	if err != nil {
 		return "", fmt.Errorf("ed25519: generate jti: %w", err)
 	}
-	now := time.Now()
+	now := nowFrom(j.clock)
 	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: logoutTokenTyp, Kid: kid}
 	payload := ed25519LogoutPayload{
 		Iss:    j.issuer,
@@ -256,18 +202,5 @@ func (j *Ed25519JWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.Logout
 		Events: map[string]json.RawMessage{backchannelLogoutEvent: json.RawMessage("{}")},
 		SID:    req.SID,
 	}
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return "", err
-	}
-	pb, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig, err := sgn.Sign(ctx, []byte(signingInput))
-	if err != nil {
-		return "", fmt.Errorf("ed25519: sign logout token: %w", err)
-	}
-	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+	return signCompactJWS(ctx, sgn, header, payload, "ed25519: sign logout token")
 }

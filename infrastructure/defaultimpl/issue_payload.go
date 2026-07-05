@@ -1,8 +1,13 @@
 package defaultimpl
 
 import (
+	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/snaplink/sso/interfaces/sso"
@@ -82,4 +87,112 @@ func applyOptionalClaims(payload *ed25519Payload, subject *sso.Subject) {
 	if len(subject.Resources) > 0 {
 		payload.Aud = audClaim(append([]string(nil), subject.Resources...))
 	}
+}
+
+// jwsSigner is the structural signing contract every {Ed25519,ECDSA,RSA}
+// {Algo}Signer interface already declares (identical `Sign(ctx, message)
+// ([]byte, error)` method set). Declaring it once here — rather than
+// exporting a shared type the three per-algorithm Signer interfaces would
+// need to embed — lets signCompactJWS accept any of them without a public
+// API change; Go's structural typing does the rest.
+type jwsSigner interface {
+	Sign(ctx context.Context, message []byte) ([]byte, error)
+}
+
+// signingBufPool pools the scratch buffer signCompactJWS assembles a
+// compact JWS into. Every {Ed25519,ECDSA,RSA} issuer's Issue /
+// IssueIDToken / IssueLogoutToken / SignJWT / SignUserInfo / SignMetadata
+// funnels through it, so pooling here cuts allocations on the single
+// hottest path in the server: minting an access token. New always hands
+// out an empty *bytes.Buffer; signCompactJWS resets it before use, so no
+// caller ever observes a stale byte from a prior issuance.
+var signingBufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
+
+// signCompactJWS marshals header+payload, base64url-encodes them into a
+// pooled buffer, signs the assembled signing input, and appends the
+// base64url signature — producing the exact "header.payload.signature"
+// compact JWS every issuer minted before this helper existed: same
+// json.Marshal calls, same base64.RawURLEncoding, same '.' separators,
+// only the intermediate allocations change. A json.Marshal error is
+// returned unwrapped (matching the pre-pooling per-issuer helpers, which
+// never wrapped it — realistically unreachable since every header/payload
+// here is a fixed, always-serializable struct or a pass-through
+// json.RawMessage); a Sign error is wrapped with errPrefix, matching each
+// issuer's former inline ": %w" wrap byte-for-byte.
+//
+// The pooled buffer backs the slice handed to sgn.Sign. That's safe
+// because every {Algo}Signer in this codebase signs SYNCHRONOUSLY and
+// never retains the message slice past the call returning: the software
+// signers hash/sign in place (crypto/ed25519, crypto/ecdsa, crypto/rsa),
+// and the KMS/HSM cryptosigner bridge (cryptosigner.go) does the same
+// round trip before returning. The buffer is only returned to the pool
+// AFTER Sign has returned and the final token string has been copied out
+// of it (buf.String() below always copies), so no concurrent issuance can
+// observe or mutate it mid-flight.
+func signCompactJWS(ctx context.Context, sgn jwsSigner, header, payload any, errPrefix string) (string, error) {
+	hb, err := json.Marshal(header)
+	if err != nil {
+		return "", err
+	}
+	pb, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+
+	buf, _ := signingBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer signingBufPool.Put(buf)
+
+	writeB64Segment(buf, hb)
+	buf.WriteByte('.')
+	writeB64Segment(buf, pb)
+
+	sig, err := sgn.Sign(ctx, buf.Bytes())
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", errPrefix, err)
+	}
+
+	buf.WriteByte('.')
+	writeB64Segment(buf, sig)
+	return buf.String(), nil
+}
+
+// writeB64Segment appends the RawURLEncoding base64 of src directly into
+// buf's backing array via the Go 1.21+ AvailableBuffer idiom, avoiding the
+// intermediate string base64.RawURLEncoding.EncodeToString(src) would
+// otherwise allocate. Once buf's capacity has warmed up (steady state
+// after the first few pool uses), this appends with zero further
+// allocations.
+func writeB64Segment(buf *bytes.Buffer, src []byte) {
+	n := base64.RawURLEncoding.EncodedLen(len(src))
+	buf.Grow(n)
+	dst := buf.AvailableBuffer()[:n]
+	base64.RawURLEncoding.Encode(dst, src)
+	buf.Write(dst)
+}
+
+// Clock abstracts the wall-clock read every {Ed25519,ECDSA,RSA} issuer
+// makes at issuance time (the iat/nbf/exp timestamps stamped into every
+// minted token). Its ONLY purpose is deterministic testing — a test can
+// wire a fixed or steppable Clock via With{Ed25519,ECDSA,RSA}Clock to
+// assert exact claim values without sleeping or tolerating a timing
+// window.
+type Clock interface {
+	Now() time.Time
+}
+
+// nowFrom returns c.Now(), or the real wall clock when c is nil. Every
+// issuance call site uses this instead of calling time.Now() directly.
+// Every issuer's zero-value clock field is nil, so an issuer built
+// without a With*Clock option is byte-identical to the pre-Clock-
+// injection code in every production deployment — nowFrom changes ONLY
+// which clock answers Now(); claim computation (exp = now.Add(ttl),
+// etc.) is unchanged.
+func nowFrom(c Clock) time.Time {
+	if c == nil {
+		return time.Now()
+	}
+	return c.Now()
 }

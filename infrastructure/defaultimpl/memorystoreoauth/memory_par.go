@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"sync"
 
 	"github.com/snaplink/sso/protocols/oauth"
 )
@@ -20,13 +19,17 @@ const parURIBytes = 24
 // shared-DB backend — a request_uri minted on one replica MUST be
 // consumable on the replica handling the subsequent /auth/login
 // redirect.
+//
+// entries is sharded (see sharded_map.go) — same rationale as
+// MemoryAuthCodeStore: single-key Issue/Consume, no cross-request_uri
+// scan, so splitting the lock across independent shards is safe and
+// cuts contention on the PAR issue+consume round trip.
 type MemoryPARStore struct {
-	mu      sync.Mutex
-	entries map[string]*oauth.PARRequest
+	entries *shardedMap[*oauth.PARRequest]
 }
 
 func NewMemoryPARStore() *MemoryPARStore {
-	return &MemoryPARStore{entries: make(map[string]*oauth.PARRequest)}
+	return &MemoryPARStore{entries: newShardedMap[*oauth.PARRequest]()}
 }
 
 func (m *MemoryPARStore) Issue(_ context.Context, req *oauth.PARRequest) (string, error) {
@@ -58,17 +61,12 @@ func (m *MemoryPARStore) Issue(_ context.Context, req *oauth.PARRequest) (string
 		Claims:               cloneRawBytes(req.Claims),
 		ExpiresAt:            req.ExpiresAt,
 	}
-	m.mu.Lock()
-	m.entries[uri] = stored
-	m.mu.Unlock()
+	m.entries.Store(uri, stored)
 	return uri, nil
 }
 
 func (m *MemoryPARStore) Consume(_ context.Context, requestURI string) (*oauth.PARRequest, error) {
-	m.mu.Lock()
-	entry, ok := m.entries[requestURI]
-	delete(m.entries, requestURI)
-	m.mu.Unlock()
+	entry, ok := m.entries.LoadAndDelete(requestURI)
 	if !ok {
 		return nil, oauth.ErrPARNotFound
 	}

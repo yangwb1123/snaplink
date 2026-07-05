@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"maps"
-	"sync"
 
 	"github.com/snaplink/sso/protocols/oauth"
 )
@@ -19,23 +18,26 @@ const authCodeBytes = 32
 // MemoryAuthCodeStore is an in-process oauth.AuthCodeStore. Production
 // deployments with multiple replicas should swap a Redis or SQL backend
 // — codes issued on one replica must be consumable on any other.
+//
+// entries is sharded (see sharded_map.go) — every code is looked up by
+// its own key with no cross-code scan, so partitioning the lock across
+// mapShardCount independent mutexes is safe and cuts contention on the
+// hottest OAuth path (issued + consumed on every authorization_code
+// login) without changing Issue/Consume's behavior at all.
 type MemoryAuthCodeStore struct {
-	mu      sync.Mutex
-	entries map[string]*oauth.AuthCode
+	entries *shardedMap[*oauth.AuthCode]
 }
 
 // NewMemoryAuthCodeStore returns a ready-to-use store with no TTL of its
 // own — TTLs are stamped per-oauth.AuthCode at Issue time.
 func NewMemoryAuthCodeStore() *MemoryAuthCodeStore {
-	return &MemoryAuthCodeStore{entries: make(map[string]*oauth.AuthCode)}
+	return &MemoryAuthCodeStore{entries: newShardedMap[*oauth.AuthCode]()}
 }
 
 func (m *MemoryAuthCodeStore) Issue(_ context.Context, code string, info *oauth.AuthCode) error {
 	if code == "" || info == nil {
 		return oauth.ErrAuthCodeNotFound
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	// Copy slice to avoid aliasing caller's underlying array — a future
 	// mutation of info.Scopes by the caller must not be visible at
 	// Consume time.
@@ -46,7 +48,7 @@ func (m *MemoryAuthCodeStore) Issue(_ context.Context, code string, info *oauth.
 	if len(info.AuthorizationDetails) > 0 {
 		authDetails = append(json.RawMessage(nil), info.AuthorizationDetails...)
 	}
-	m.entries[code] = &oauth.AuthCode{
+	m.entries.Store(code, &oauth.AuthCode{
 		UserID:               info.UserID,
 		ClientID:             info.ClientID,
 		RedirectURI:          info.RedirectURI,
@@ -63,15 +65,12 @@ func (m *MemoryAuthCodeStore) Issue(_ context.Context, code string, info *oauth.
 		AuthorizationDetails: authDetails,
 		SID:                  info.SID,
 		ExpiresAt:            info.ExpiresAt,
-	}
+	})
 	return nil
 }
 
 func (m *MemoryAuthCodeStore) Consume(_ context.Context, code string) (*oauth.AuthCode, error) {
-	m.mu.Lock()
-	entry, ok := m.entries[code]
-	delete(m.entries, code) // single-use — delete on every Consume attempt
-	m.mu.Unlock()
+	entry, ok := m.entries.LoadAndDelete(code) // single-use — delete on every Consume attempt
 
 	if !ok {
 		return nil, oauth.ErrAuthCodeNotFound

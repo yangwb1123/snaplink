@@ -6,8 +6,6 @@ import (
 	"crypto/elliptic"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
-	"fmt"
 
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/protocols/oidc"
@@ -46,20 +44,7 @@ func (j *ECDSAJWTIssuer) SignMetadata(ctx context.Context, claims map[string]any
 // signers (userinfo, metadata).
 func (j *ECDSAJWTIssuer) signClaims(ctx context.Context, sgn ECDSASigner, kid, typ string, claims map[string]any) (string, error) {
 	header := ecdsaHeader{Alg: jwtAlgES256, Typ: typ, Kid: kid}
-	hb, err := json.Marshal(header)
-	if err != nil {
-		return "", err
-	}
-	pb, err := json.Marshal(claims)
-	if err != nil {
-		return "", err
-	}
-	signingInput := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
-	sig, err := sgn.Sign(ctx, []byte(signingInput))
-	if err != nil {
-		return "", fmt.Errorf("ecdsa: sign claims: %w", err)
-	}
-	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+	return signCompactJWS(ctx, sgn, header, claims, "ecdsa: sign claims")
 }
 
 // JWKS publishes the EC public key(s) per RFC 7518 §6.2: kty "EC", crv

@@ -220,6 +220,34 @@ func TestECDSAJWT_ExpiredRejected(t *testing.T) {
 	}
 }
 
+// TestECDSAJWT_ClockInjectionControlsClaims proves WithECDSAClock is
+// actually read by Issue's iat/exp computation — see the Ed25519
+// sibling (ed25519_jwt_issuer_test.go) for the full rationale, including
+// why the injected clock is offset (not equal) to real time.
+func TestECDSAJWT_ClockInjectionControlsClaims(t *testing.T) {
+	t.Parallel()
+	fixed := time.Now().Add(-30 * time.Minute).Truncate(time.Second)
+	ttl := time.Hour
+	iss := defaultimpl.NewECDSAJWTIssuer(
+		defaultimpl.WithECDSATokenTTL(ttl),
+		defaultimpl.WithECDSAClock(fixedClock{t: fixed}),
+	)
+	tok, err := iss.Issue(context.Background(), &sso.Subject{ID: "u"}, nil)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	claims, err := iss.Validate(context.Background(), tok.AccessToken)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !claims.IssuedAt.Equal(fixed) {
+		t.Errorf("IssuedAt = %v, want %v", claims.IssuedAt, fixed)
+	}
+	if want := fixed.Add(ttl); !claims.ExpiresAt.Equal(want) {
+		t.Errorf("ExpiresAt = %v, want %v", claims.ExpiresAt, want)
+	}
+}
+
 func TestECDSAJWT_IDTokenAndUserinfo(t *testing.T) {
 	t.Parallel()
 	iss := defaultimpl.NewECDSAJWTIssuer(defaultimpl.WithECDSAIssuer("op"))
