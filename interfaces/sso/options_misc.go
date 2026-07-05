@@ -149,6 +149,66 @@ func WithCoordinatedKeyRotation() Option {
 	return func(srv *Server) { srv.coordinatedKeyRotation = true }
 }
 
+// PruneVerifyKeys is a hygiene SAFETY NET, distinct from reconcileAdopted's
+// real-time set-diff (signing_key_aggregation_loop.go), which already drops a
+// kid the instant its peer stops announcing it. This drops every kid from a
+// replica this Server hasn't reconciled AT ALL within retention — the
+// fail-safe for a missed/lost EventKeysRemoved. Never touches local
+// RotateKey/RetireKey. Returns the kids-dropped count; safe on any schedule
+// (ticker, cron, ad hoc). retention <= 0 is a no-op guard.
+func (s *Server) PruneVerifyKeys(retention time.Duration) int {
+	if retention <= 0 {
+		return 0
+	}
+	now := time.Now()
+	var toDrop []string
+	s.adoptedPeerMu.Lock()
+	for replicaID, lastSeen := range s.lastSeenPeer {
+		if now.Sub(lastSeen) > retention {
+			toDrop = append(toDrop, s.releaseReplicaKidsLocked(replicaID)...)
+		}
+	}
+	s.adoptedPeerMu.Unlock()
+	s.dropVerifyKidsFromIssuers(toDrop)
+	s.metrics.ObserveSigningKeyPruned(len(toDrop))
+	s.refreshVerifyKeysGauge()
+	return len(toDrop)
+}
+
+// releaseReplicaKidsLocked forgets replicaID's adopted kids + last-seen
+// stamp, decrementing each kid's cross-replica refcount, and returns the
+// kids whose refcount reached zero. Caller MUST hold adoptedPeerMu. Shared by
+// dropAllAdopted (explicit removal) and PruneVerifyKeys (retention sweep).
+func (s *Server) releaseReplicaKidsLocked(replicaID string) []string {
+	kids := s.adoptedPeerKids[replicaID]
+	delete(s.adoptedPeerKids, replicaID)
+	delete(s.lastSeenPeer, replicaID)
+	var toDrop []string
+	for _, kid := range kids {
+		if s.adoptedKidRefs == nil {
+			break
+		}
+		s.adoptedKidRefs[kid]--
+		if s.adoptedKidRefs[kid] <= 0 {
+			delete(s.adoptedKidRefs, kid)
+			toDrop = append(toDrop, kid)
+		}
+	}
+	return toDrop
+}
+
+// refreshVerifyKeysGauge publishes the peer-adopted verify-set size. Nil-safe;
+// called after every adoptedKidRefs mutation so the gauge never drifts.
+func (s *Server) refreshVerifyKeysGauge() {
+	if s.metrics == nil {
+		return
+	}
+	s.adoptedPeerMu.Lock()
+	n := len(s.adoptedKidRefs)
+	s.adoptedPeerMu.Unlock()
+	s.metrics.SetSigningVerifyKeys(n)
+}
+
 // WithCrossReplicaRevocation opts this Server into cross-replica access-token
 // revocation propagation. It REQUIRES an invalidation bus
 // ([WithInvalidationBus]); without one it is inert.

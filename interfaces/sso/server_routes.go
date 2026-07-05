@@ -376,7 +376,7 @@ func (s *Server) buildMiddlewareChain(inner http.Handler) http.Handler {
 		inner = s.degradationGate()(inner)
 	}
 	if s.rateLimitPolicy != nil {
-		inner = ratelimit.Middleware(*s.rateLimitPolicy)(inner)
+		inner = ratelimit.Middleware(s.resolvedRateLimitPolicy())(inner)
 	}
 	if s.trustedProxies != nil {
 		// TrustedProxies sits just outside the rate limiter so that

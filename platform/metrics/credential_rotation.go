@@ -63,3 +63,60 @@ func (m *Metrics) SetCredentialAge(credType string, seconds float64) {
 	}
 	m.CredentialAgeSeconds.WithLabelValues(credType).Set(seconds)
 }
+
+// registerSigningKeyHygieneMetrics registers the peer-adopted-verify-key
+// prune counter + verify-set-size gauge (interfaces/sso PruneVerifyKeys) and
+// the per-issuer signing-usage counter. Kept here — beside the credential
+// rotation metrics it complements — rather than in metrics_ctor.go, which is
+// near its per-file line budget.
+func registerSigningKeyHygieneMetrics(factory promauto.Factory, m *Metrics) {
+	m.SigningKeyPrunedTotal = factory.NewCounter(
+		prometheus.CounterOpts{
+			Name: NameSigningKeyPrunedTotal,
+			Help: "Peer-adopted verify-only signing keys removed by a PruneVerifyKeys hygiene sweep because their announcing replica hadn't been reconciled within the retention window. A safety net for a missed/lost peer-removal event, distinct from the per-announcement set-diff reconciliation that already runs on every registry update. Zero traffic when no signing-key registry is wired.",
+		},
+	)
+
+	m.SigningVerifyKeysTotal = factory.NewGauge(
+		prometheus.GaugeOpts{
+			Name: NameSigningVerifyKeySetSize,
+			Help: "Current size of the peer-adopted verify-only key set (the leaderless signing-key aggregation's memory footprint), refreshed on every adopt/drop/prune. Zero/unset when no signing-key registry is wired.",
+		},
+	)
+
+	m.SigningUsageTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameSigningUsageTotal,
+			Help: "In-process JWT signing operations by alg + kid. Distinct from sso_signing_operations_total (external KMS/HSM round-trips only); watch usage shift from an old kid to a new one right after a RotateKey call as evidence the cutover took effect. Zero traffic unless an issuer's WithXMetrics option wires this in.",
+		},
+		[]string{LabelAlg, LabelKid},
+	)
+}
+
+// ObserveSigningKeyPruned adds n to the signing-key prune counter. Nil-safe;
+// n == 0 is a no-op (no-op sweeps don't need to touch the series).
+func (m *Metrics) ObserveSigningKeyPruned(n int) {
+	if m == nil || m.SigningKeyPrunedTotal == nil || n <= 0 {
+		return
+	}
+	m.SigningKeyPrunedTotal.Add(float64(n))
+}
+
+// SetSigningVerifyKeys publishes the peer-adopted verify-set's current size.
+// Nil-safe; called after every adopt/drop/prune that changes it.
+func (m *Metrics) SetSigningVerifyKeys(n int) {
+	if m == nil || m.SigningVerifyKeysTotal == nil {
+		return
+	}
+	m.SigningVerifyKeysTotal.Set(float64(n))
+}
+
+// ObserveSigningUsage bumps the per-(alg,kid) signing-usage counter. Nil-safe
+// so an issuer can call it unconditionally whether or not WithXMetrics wired
+// a Metrics in.
+func (m *Metrics) ObserveSigningUsage(alg, kid string) {
+	if m == nil || m.SigningUsageTotal == nil {
+		return
+	}
+	m.SigningUsageTotal.WithLabelValues(alg, kid).Inc()
+}

@@ -37,6 +37,7 @@ func (j *RSAJWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scopes [
 	if err != nil {
 		return nil, fmt.Errorf("rsa: sign access token: %w", err)
 	}
+	j.recordSigningUsage(kid)
 	token := string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig)
 
 	return &sso.Token{
@@ -89,6 +90,7 @@ func (j *RSAJWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenReques
 	if err != nil {
 		return "", fmt.Errorf("rsa: sign id token: %w", err)
 	}
+	j.recordSigningUsage(kid)
 	return string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
@@ -158,6 +160,7 @@ func (j *RSAJWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.LogoutToke
 	if err != nil {
 		return "", fmt.Errorf("rsa: sign logout token: %w", err)
 	}
+	j.recordSigningUsage(kid)
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
@@ -187,5 +190,6 @@ func (j *RSAJWTIssuer) SignJWT(ctx context.Context, typ string, claims any) (str
 	if err != nil {
 		return "", fmt.Errorf("rsa: sign jwt (typ=%s): %w", typ, err)
 	}
+	j.recordSigningUsage(kid)
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }

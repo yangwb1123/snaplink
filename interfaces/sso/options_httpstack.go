@@ -6,8 +6,10 @@ package sso
 // options_misc.go to keep both files within the 500-line budget.
 
 import (
+	"net/http"
 	"time"
 
+	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/shared/core"
@@ -106,6 +108,27 @@ func WithBodyLimitForPath(prefix string, maxBytes int64) Option {
 //	})
 func WithRateLimit(p ratelimit.Policy) Option {
 	return func(s *Server) { s.rateLimitPolicy = &p }
+}
+
+// resolvedRateLimitPolicy returns a copy of s.rateLimitPolicy with the
+// server's Metrics + tenant resolver filled in when WithRateLimit's Policy
+// didn't already set them explicitly. Read at Handler()-build time (not at
+// WithRateLimit call time) so option ORDER relative to WithMetrics /
+// WithTenantStore never matters. The tenant resolver runs a store lookup
+// ONLY on the reject path (see ratelimit.Policy.TenantKeyFunc), so it adds
+// no cost to allowed traffic.
+func (s *Server) resolvedRateLimitPolicy() ratelimit.Policy {
+	p := *s.rateLimitPolicy
+	if p.Metrics == nil {
+		p.Metrics = s.metrics
+	}
+	if p.TenantKeyFunc == nil && s.tenantStore != nil {
+		store, opts := s.tenantStore, s.tenantMiddlewareOpts
+		p.TenantKeyFunc = func(r *http.Request) string {
+			return tenant.ResolveTenantID(r.Context(), store, opts, r)
+		}
+	}
+	return p
 }
 
 // WithAdminTokenStore wires a store for admin bearer token metadata,

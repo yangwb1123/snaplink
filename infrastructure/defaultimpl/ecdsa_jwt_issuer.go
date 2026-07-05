@@ -13,7 +13,12 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/metrics"
 )
+
+// metricsAlgES256 is this family's bounded sso_signing_key_usage_total alg
+// label (mirrors normalizeAlgLabel in cmd/sso-server/serverbuildsign).
+const metricsAlgES256 = "es256"
 
 // ECDSA / ES256 JWT constants.
 const (
@@ -131,6 +136,10 @@ type ECDSAJWTIssuer struct {
 	// signer performs the raw ECDSA signing. Defaults to the in-process
 	// software signer; WithECDSAExternalSigner swaps in a KMS/HSM signer.
 	signer ECDSASigner
+
+	// metrics records per-(alg,kid) signing usage (see recordSigningUsage).
+	// nil (the default) when WithECDSAMetrics isn't wired.
+	metrics *metrics.Metrics
 }
 
 // ECDSAOption configures the issuer at construction time.
@@ -169,6 +178,20 @@ func WithECDSAKey(priv *ecdsa.PrivateKey) ECDSAOption {
 // WithECDSAKeyID overrides the auto-derived kid.
 func WithECDSAKeyID(kid string) ECDSAOption {
 	return func(j *ECDSAJWTIssuer) { j.keyID = kid }
+}
+
+// WithECDSAMetrics wires per-(alg,kid) signing-usage observability
+// (sso_signing_key_usage_total). Optional — omitted or nil keeps every Sign
+// call a no-op observation.
+func WithECDSAMetrics(m *metrics.Metrics) ECDSAOption {
+	return func(j *ECDSAJWTIssuer) { j.metrics = m }
+}
+
+// recordSigningUsage bumps the signing-usage counter for a successful
+// in-process sign. Nil-safe; called from every Issue*/SignJWT method right
+// after their sgn.Sign succeeds.
+func (j *ECDSAJWTIssuer) recordSigningUsage(kid string) {
+	j.metrics.ObserveSigningUsage(metricsAlgES256, kid)
 }
 
 // WithECDSAVerifyKey adds a verify-only public key (the retired half of a

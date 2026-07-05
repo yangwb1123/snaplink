@@ -38,11 +38,12 @@ func resolveExternalSigner(sc config.SigningConfig, m *metrics.Metrics, logger s
 	return extSigner, kid, nil
 }
 
-func buildEd25519SigningIssuer(srv config.ServerConfig, extSigner crypto.Signer, extKID string, revStore defaultimpl.RevocationStore) (SigningIssuer, string, crypto.Signer, error) {
+func buildEd25519SigningIssuer(srv config.ServerConfig, extSigner crypto.Signer, extKID string, revStore defaultimpl.RevocationStore, m *metrics.Metrics) (SigningIssuer, string, crypto.Signer, error) {
 	opts := []defaultimpl.Ed25519Option{
 		defaultimpl.WithEd25519Issuer(srv.Issuer),
 		defaultimpl.WithEd25519TokenTTL(srv.TokenTTL),
 		defaultimpl.WithEd25519MaxClockSkew(srv.MaxClockSkew),
+		defaultimpl.WithEd25519Metrics(m),
 	}
 	if extSigner != nil {
 		sgn, pub, err := cryptosigner.Ed25519(extSigner)
@@ -61,11 +62,12 @@ func buildEd25519SigningIssuer(srv config.ServerConfig, extSigner crypto.Signer,
 	return iss, "EdDSA", extSigner, nil
 }
 
-func buildECDSASigningIssuer(srv config.ServerConfig, extSigner crypto.Signer, extKID string, revStore defaultimpl.RevocationStore) (SigningIssuer, string, crypto.Signer, error) {
+func buildECDSASigningIssuer(srv config.ServerConfig, extSigner crypto.Signer, extKID string, revStore defaultimpl.RevocationStore, m *metrics.Metrics) (SigningIssuer, string, crypto.Signer, error) {
 	opts := []defaultimpl.ECDSAOption{
 		defaultimpl.WithECDSAIssuer(srv.Issuer),
 		defaultimpl.WithECDSATokenTTL(srv.TokenTTL),
 		defaultimpl.WithECDSAMaxClockSkew(srv.MaxClockSkew),
+		defaultimpl.WithECDSAMetrics(m),
 	}
 	if extSigner != nil {
 		sgn, pub, err := cryptosigner.ECDSA(extSigner)
@@ -84,7 +86,7 @@ func buildECDSASigningIssuer(srv config.ServerConfig, extSigner crypto.Signer, e
 	return iss, "ES256", extSigner, nil
 }
 
-func buildRSASigningIssuer(alg string, srv config.ServerConfig, extSigner crypto.Signer, extKID string, revStore defaultimpl.RevocationStore) (SigningIssuer, string, crypto.Signer, error) {
+func buildRSASigningIssuer(alg string, srv config.ServerConfig, extSigner crypto.Signer, extKID string, revStore defaultimpl.RevocationStore, m *metrics.Metrics) (SigningIssuer, string, crypto.Signer, error) {
 	signingAlg := "RS256"
 	if alg == "ps256" {
 		signingAlg = "PS256"
@@ -94,6 +96,7 @@ func buildRSASigningIssuer(alg string, srv config.ServerConfig, extSigner crypto
 		defaultimpl.WithRSAAlg(signingAlg),
 		defaultimpl.WithRSATokenTTL(srv.TokenTTL),
 		defaultimpl.WithRSAMaxClockSkew(srv.MaxClockSkew),
+		defaultimpl.WithRSAMetrics(m),
 	}
 	if extSigner != nil {
 		sgn, pub, err := cryptosigner.RSA(extSigner, signingAlg)

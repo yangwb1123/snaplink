@@ -183,6 +183,14 @@ type clusterState struct {
 	// misconfig). Guarded by adoptedPeerMu (same lock as adoptedPeerKids, so
 	// the per-replica kid set and its refcounts mutate atomically together).
 	adoptedKidRefs map[string]int
+	// lastSeenPeer records, per peer replicaID, the last time reconcileAdopted
+	// processed an announcement from it. PruneVerifyKeys is a SAFETY-NET sweep
+	// (distinct from the real-time set-diff reconciliation that already runs
+	// on every announcement): a replica whose entry falls behind the caller's
+	// retention window gets its adopted kids dropped even though no explicit
+	// EventKeysRemoved ever arrived — the fail-safe for a subscription that
+	// silently missed one. Guarded by adoptedPeerMu.
+	lastSeenPeer map[string]time.Time
 	// issuerAlgs caches each token issuer's signing alg (from its JWKS at
 	// wiring time) so the event handler can route an announced key to the
 	// matching-alg issuer without re-querying JWKS per event. Built lazily,

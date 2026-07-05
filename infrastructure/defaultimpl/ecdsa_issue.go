@@ -45,6 +45,7 @@ func (j *ECDSAJWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scopes
 	if err != nil {
 		return nil, fmt.Errorf("ecdsa: sign access token: %w", err)
 	}
+	j.recordSigningUsage(kid)
 	token := string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig)
 
 	return &sso.Token{
@@ -97,6 +98,7 @@ func (j *ECDSAJWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRequ
 	if err != nil {
 		return "", fmt.Errorf("ecdsa: sign id token: %w", err)
 	}
+	j.recordSigningUsage(kid)
 	return string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
@@ -166,6 +168,7 @@ func (j *ECDSAJWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.LogoutTo
 	if err != nil {
 		return "", fmt.Errorf("ecdsa: sign logout token: %w", err)
 	}
+	j.recordSigningUsage(kid)
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
@@ -195,5 +198,6 @@ func (j *ECDSAJWTIssuer) SignJWT(ctx context.Context, typ string, claims any) (s
 	if err != nil {
 		return "", fmt.Errorf("ecdsa: sign jwt (typ=%s): %w", typ, err)
 	}
+	j.recordSigningUsage(kid)
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }

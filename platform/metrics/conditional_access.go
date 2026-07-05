@@ -26,3 +26,26 @@ func registerConditionalAccessMetrics(factory promauto.Factory, m *Metrics) {
 		},
 	)
 }
+
+// registerRateLimitMetrics registers the per-tenant rate-limit-hits counter.
+// Split into its own file (like registerConditionalAccessMetrics above) so
+// metrics_ctor.go stays within its per-file line budget.
+func registerRateLimitMetrics(factory promauto.Factory, m *Metrics) {
+	m.RateLimitHitsTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameRateLimitHitsTotal,
+			Help: "Requests rejected by the rate limiter (interfaces/ratelimit), by resolved tenant. tenant is TenantLabelUnknown when no TenantKeyFunc is wired (single-tenant deployments). Zero traffic when WithRateLimit isn't wired.",
+		},
+		[]string{LabelTenant},
+	)
+}
+
+// ObserveRateLimitHit bumps the rate-limit-hits counter for the resolved
+// tenant label (or TenantLabelUnknown). Nil-safe so the ratelimit middleware
+// can call it unconditionally whether or not metrics are wired.
+func (m *Metrics) ObserveRateLimitHit(tenant string) {
+	if m == nil || m.RateLimitHitsTotal == nil {
+		return
+	}
+	m.RateLimitHitsTotal.WithLabelValues(tenant).Inc()
+}

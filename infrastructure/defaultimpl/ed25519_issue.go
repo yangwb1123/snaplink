@@ -49,6 +49,7 @@ func (j *Ed25519JWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scop
 	if err != nil {
 		return nil, fmt.Errorf("ed25519: sign access token: %w", err)
 	}
+	j.recordSigningUsage(kid)
 	token := string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig)
 
 	return &sso.Token{
@@ -120,6 +121,7 @@ func (j *Ed25519JWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRe
 	if err != nil {
 		return "", fmt.Errorf("ed25519: sign id token: %w", err)
 	}
+	j.recordSigningUsage(kid)
 	return string(signingInput) + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
@@ -191,6 +193,7 @@ func (j *Ed25519JWTIssuer) SignJWT(ctx context.Context, typ string, claims any) 
 	if err != nil {
 		return "", fmt.Errorf("ed25519: sign jwt (typ=%s): %w", typ, err)
 	}
+	j.recordSigningUsage(kid)
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
@@ -269,5 +272,6 @@ func (j *Ed25519JWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.Logout
 	if err != nil {
 		return "", fmt.Errorf("ed25519: sign logout token: %w", err)
 	}
+	j.recordSigningUsage(kid)
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }

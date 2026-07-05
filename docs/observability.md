@@ -36,6 +36,10 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_dr_last_recovery_seconds` | Gauge | — (absent until a recovery is timed via `RecoveryTimeTracker`) |
 | `sso_dr_readiness` | Gauge | — (1 = verified replica within RPO target, 0 otherwise; see [dr-framework.md](dr-framework.md)) |
 | `sso_zero_trust_session_stepup_total` | Counter | — (live sessions the continuous-verification agent marked for step-up because their decayed trust fell below the floor; zero until `session_trust_decay` is wired) |
+| `sso_rate_limit_hits_total` | Counter | tenant (resolved tenant ID, or `unknown` when no tenant resolver is wired — see `WithRateLimit`/`ratelimit.Policy.TenantKeyFunc`) |
+| `sso_signing_key_pruned_total` | Counter | — (peer-adopted verify-only keys removed by `Server.PruneVerifyKeys`'s retention-window safety net; distinct from the real-time per-announcement reconciliation) |
+| `sso_signing_verify_key_set_size` | Gauge | — (current size of the peer-adopted verify-only key set; the memory footprint `PruneVerifyKeys` manages) |
+| `sso_signing_key_usage_total` | Counter | alg, kid (in-process JWT signing operations; wire via `WithEd25519Metrics`/`WithECDSAMetrics`/`WithRSAMetrics`) |
 
 ## Audit
 
