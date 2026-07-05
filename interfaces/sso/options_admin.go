@@ -2,12 +2,16 @@ package sso
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/snaplink/sso/domains/userlifecycle"
+	"github.com/snaplink/sso/interfaces/admin"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/configaudit"
+	"github.com/snaplink/sso/platform/lifecycle/cryptoinventory"
 	"github.com/snaplink/sso/platform/lifecycle/rotation"
 	"github.com/snaplink/sso/platform/sse"
 	"github.com/snaplink/sso/shared/core"
@@ -93,6 +97,22 @@ func WithCredentialRotation(reg *rotation.Registry) Option {
 // without this feature.
 func WithCredentialCompromise(sched *rotation.Scheduler) Option {
 	return func(s *Server) { s.credentialScheduler = sched }
+}
+
+// WithCryptoInventory mounts GET /api/v1/admin/crypto/keys (admin:read) and
+// POST /api/v1/admin/crypto/keys/{id}/compromise (admin:write) — the
+// cryptographic-material governance catalog: signing keys, JWE keys,
+// KMS-backed keys, and any manually-registered trust anchors. inv is built by
+// the composition root from the platform/lifecycle/cryptoinventory Source
+// adapters it already has concrete references to (JWKSSource wrapping the
+// wired TokenIssuers, RotationSource wrapping a WithCredentialRotation
+// registry, StaticSource for KMS/trust-anchor entries with no live Go
+// introspection seam) — see cryptoinventory.NewMemoryInventory.
+//
+// Nil (the default) leaves both routes unmounted — byte-identical to a build
+// without the feature.
+func WithCryptoInventory(inv cryptoinventory.Inventory) Option {
+	return func(s *Server) { s.cryptoInventory = inv }
 }
 
 // WithSSEBroker mounts GET /api/v1/admin/events/stream — the realtime
@@ -345,4 +365,113 @@ func (s *Server) userDeprovisionDeps() userlifecycle.SweepDeps {
 		Logger:     s.logger,
 		Config:     s.userDeprovision,
 	}
+}
+
+// cryptoKeyCompromiseRequest is the POST body: the mandatory operator reason,
+// mirroring compromiseCredentialRequest.
+type cryptoKeyCompromiseRequest struct {
+	Reason string `json:"reason"`
+}
+
+// Compliance evidence-chain metadata keys the crypto-key-compromise audit
+// event carries, mirroring the credential-compromise metaKeyCredential* keys.
+const (
+	metaKeyCryptoKeyID     = "crypto_key_id"
+	metaKeyCryptoKeyReason = "crypto_key_reason"
+	metaKeyCryptoKeySource = "crypto_key_source"
+)
+
+// handleAdminListCryptoKeys serves GET /api/v1/admin/crypto/keys (admin:read):
+// the live cryptographic-material catalog (signing keys, JWE keys,
+// KMS-backed keys, manually-registered trust anchors), optionally filtered by
+// ?status=&purpose=&algorithm=. GOVERNANCE metadata only — never key
+// material. Mounted only when WithCryptoInventory is wired.
+func (s *Server) handleAdminListCryptoKeys(ctx HandlerContext) {
+	if s.cryptoInventory == nil {
+		ctx.JSON(http.StatusNotFound, errorBody(ErrNotFound))
+		return
+	}
+	f := cryptoinventory.Filter{
+		Status:    cryptoinventory.Status(ctx.Query("status")),
+		Purpose:   cryptoinventory.Purpose(ctx.Query("purpose")),
+		Algorithm: ctx.Query("algorithm"),
+	}
+	keys, err := s.cryptoInventory.ListKeys(ctx.Request().Context(), f)
+	if err != nil {
+		s.logger.Error("admin list crypto keys failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	if keys == nil {
+		keys = []cryptoinventory.Entry{}
+	}
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyStatus: StatusOK,
+		"keys":    keys,
+	})
+}
+
+// handleAdminReportKeyCompromise serves POST
+// /api/v1/admin/crypto/keys/{id}/compromise (admin:write): records the
+// catalogued key {id} compromised — inventory bookkeeping/alerting ONLY,
+// NEVER the authoritative revocation (see platform/lifecycle/cryptoinventory's
+// package doc) — and best-effort triggers the owning source's OWN retirement
+// mechanism when one is wired. reason is mandatory: an unexplained compromise
+// is itself an audit finding. Mounted only when WithCryptoInventory is wired.
+func (s *Server) handleAdminReportKeyCompromise(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	if s.cryptoInventory == nil {
+		ctx.JSON(http.StatusNotFound, errorBody(ErrNotFound))
+		return
+	}
+	keyID := ctx.Param("id")
+	if keyID == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	var req cryptoKeyCompromiseRequest
+	if err := bindOAuthParams(ctx, &req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		return
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		ctx.JSON(http.StatusBadRequest, errorBody(ErrCompromiseReasonRequired))
+		return
+	}
+	entry, err := s.cryptoInventory.ReportKeyCompromise(ctx.Request().Context(), keyID, reason)
+	if err != nil {
+		if errors.Is(err, cryptoinventory.ErrKeyNotFound) {
+			ctx.JSON(http.StatusNotFound, errorBody(ErrNotFound))
+			return
+		}
+		s.logger.Error("admin key compromise report failed", "key_id", keyID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		return
+	}
+	s.recordKeyCompromise(ctx, entry, reason)
+	ctx.JSON(http.StatusOK, map[string]any{
+		KeyStatus: StatusOK,
+		"key":     entry,
+	})
+}
+
+// recordKeyCompromise emits the admin_crypto_key_compromised audit event with
+// the compliance evidence chain. No-op when no Auditor is wired, mirroring
+// recordCredentialCompromise.
+func (s *Server) recordKeyCompromise(ctx HandlerContext, entry cryptoinventory.Entry, reason string) {
+	if s.auditor == nil {
+		return
+	}
+	actor, _, _ := admin.ActorFromContext(ctx.Request().Context())
+	evt := &audit.Event{
+		Type:    audit.EventAdminCryptoKeyCompromised,
+		Outcome: audit.OutcomeSuccess,
+		ActorID: actor,
+		ActorIP: audit.ClientIP(ctx.Request()),
+	}
+	audit.SetMeta(evt, metaKeyCryptoKeyID, entry.KeyID)
+	audit.SetMeta(evt, metaKeyCryptoKeyReason, reason)
+	audit.SetMeta(evt, metaKeyCryptoKeySource, entry.Source)
+	s.auditor.Record(ctx.Request().Context(), evt)
 }

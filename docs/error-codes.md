@@ -311,6 +311,27 @@ wired. Emits `admin_credential_compromised` with the compliance evidence chain
 | `not_found`                          | 404  | Unknown credential `{type}` (never registered), or no compromise scheduler wired                      |
 | `internal_error`                     | 500  | Minting the replacement failed — the OLD credential keeps serving; retry                              |
 
+---
+
+## Cryptographic material inventory (`/api/v1/admin/crypto/keys`)
+
+Read-only catalog of every cryptographic key the server knows about (signing
+keys, JWE keys, KMS-backed keys, manually-registered trust anchors), plus an
+emergency compromise-report endpoint. Mounted only when `WithCryptoInventory`
+is wired. Reporting a compromise is INVENTORY BOOKKEEPING/ALERTING, NOT the
+authoritative key revocation — see `platform/lifecycle/cryptoinventory`'s
+package doc; it best-effort triggers the owning concern's own retirement
+mechanism (a signing-key issuer's `RetireKey`/`DropVerifyKey`, or
+`platform/lifecycle/rotation`'s emergency `Compromise` path) when one is
+wired. Emits `admin_crypto_key_compromised` with the compliance evidence chain
+(`crypto_key_id`, `crypto_key_reason`, `crypto_key_source`).
+
+| Code                          | HTTP | Emitted when                                                                                     |
+|-------------------------------|------|---------------------------------------------------------------------------------------------------|
+| `compromise_reason_required`  | 400  | The mandatory `reason` was omitted or blank — an unexplained compromise is itself an audit finding |
+| `not_found`                   | 404  | Unknown key `{id}` (no registered Source currently reports it), or no inventory wired              |
+| `internal_error`              | 500  | The inventory's Source(s) could not be read                                                        |
+
 ### Token portfolio bulk-revoke (`POST /api/v1/admin/tokens/revoke`)
 
 Revocation-storm protection for the admin bulk-revoke workflow. Neither code is

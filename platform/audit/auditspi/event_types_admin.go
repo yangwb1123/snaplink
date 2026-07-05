@@ -71,4 +71,12 @@ const (
 	// Metadata carries the compliance evidence chain: credential_type,
 	// credential_reason, credential_old_version, credential_new_version.
 	EventAdminCredentialCompromised EventType = "admin_credential_compromised"
+	// EventAdminCryptoKeyCompromised is emitted by
+	// POST /api/v1/admin/crypto/keys/{id}/compromise: an operator declared a
+	// catalogued cryptographic key leaked. Bookkeeping/alerting ONLY — see
+	// platform/lifecycle/cryptoinventory's package doc; the actual key
+	// retirement (when one is triggered) runs through the owning concern's own
+	// mechanism, not this event. Metadata carries the compliance evidence
+	// chain: crypto_key_id, crypto_key_reason, crypto_key_source.
+	EventAdminCryptoKeyCompromised EventType = "admin_crypto_key_compromised"
 )

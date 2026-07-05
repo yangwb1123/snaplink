@@ -3779,6 +3779,121 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/crypto/keys:
+    get:
+      tags: [admin]
+      summary: Cryptographic material inventory (signing keys, JWE keys, KMS-backed keys, trust anchors).
+      description: |
+        Read-only catalog of every cryptographic key the server knows about,
+        pulled live from the registered platform/lifecycle/cryptoinventory
+        Sources (never a second, duplicated store of the key material
+        itself): signing keys, JWE encryption keys, KMS-backed keys, and any
+        manually-registered mTLS trust anchors. Each entry carries its key id,
+        algorithm, purpose (`sign`/`encrypt`/`verify`), created_at, lifecycle
+        status, and backing store (`memory`/`file`/`kms:<provider>`).
+
+        GOVERNANCE metadata only — NEVER key material. Optional
+        `?status=`, `?purpose=`, `?algorithm=` filters. Admin-gated
+        (`admin:read`). Opt-in via `WithCryptoInventory`; the route is not
+        mounted (404) when no inventory is wired.
+      operationId: getCryptoKeyInventory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [active, retiring, retired, compromised] }
+        - name: purpose
+          in: query
+          required: false
+          schema: { type: string, enum: [sign, encrypt, verify] }
+        - name: algorithm
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The cryptographic-material inventory.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CryptoKeyInventoryResponse"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: "`not_found` — no inventory wired (`WithCryptoInventory` not set)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/crypto/keys/{id}/compromise:
+    post:
+      tags: [admin]
+      summary: Report a catalogued cryptographic key compromised (inventory bookkeeping, not revocation).
+      description: |
+        Records the catalogued key `{id}` as compromised — inventory
+        bookkeeping and alerting ONLY, never the authoritative key-revocation
+        mechanism (see platform/lifecycle/cryptoinventory's package doc). When
+        the Source that owns the key also supports on-demand retirement, this
+        best-effort triggers it too (a signing-key issuer's
+        `RetireKey`/`DropVerifyKey`, or `platform/lifecycle/rotation`'s
+        emergency `Compromise` path for a corecredential-registered class).
+
+        `reason` (a ticket/incident reference) is mandatory: an unexplained
+        compromise is itself an audit finding. Emits
+        `admin_crypto_key_compromised` carrying the compliance evidence chain
+        (crypto_key_id, crypto_key_reason, crypto_key_source). admin:write;
+        response is `Cache-Control: no-store`. Mounted only when
+        `WithCryptoInventory` is wired.
+      operationId: adminReportCryptoKeyCompromise
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The catalogued key id to report compromised.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, description: "mandatory ticket/incident reference" }
+      responses:
+        "200":
+          description: The key's updated governance metadata (never key material).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  key:
+                    $ref: "#/components/schemas/CryptoKeyInventoryEntry"
+        "400":
+          description: Blank reason (`compromise_reason_required`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Unknown key id, or no inventory wired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/config/applied:
     get:
       tags: [admin]
@@ -9591,6 +9706,56 @@ components:
           type: string
           format: date-time
           description: When this credential class's next scheduled rotation is due. Present only on the active version's entry.
+
+    CryptoKeyInventoryResponse:
+      type: object
+      required: [status, keys]
+      description: Response body for GET /api/v1/admin/crypto/keys.
+      properties:
+        status:
+          type: string
+          example: ok
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/CryptoKeyInventoryEntry"
+
+    CryptoKeyInventoryEntry:
+      type: object
+      required: [key_id, purpose, status, source]
+      description: |
+        One catalogued piece of cryptographic key material. NEVER carries
+        secret or private key bytes — only the governance metadata safe to
+        log and return from an admin endpoint.
+      properties:
+        key_id:
+          type: string
+          example: kid-1
+        algorithm:
+          type: string
+          example: EdDSA
+        purpose:
+          type: string
+          enum: [sign, encrypt, verify]
+        created_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [active, retiring, retired, compromised]
+        backing_store:
+          type: string
+          description: Where the key material actually lives.
+          example: "kms:awskms"
+        source:
+          type: string
+          description: Which registered Source produced this entry.
+          example: signingkeys
+        compromised_at:
+          type: string
+          format: date-time
+        compromise_reason:
+          type: string
 
     DegradationMode:
       type: object
