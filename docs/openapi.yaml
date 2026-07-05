@@ -5840,6 +5840,189 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/changes:
+    post:
+      tags: [admin]
+      summary: Propose a generic admin change requiring a second admin's approval.
+      description: |
+        Generalizes the break-glass propose/approve/self-approval-refusal
+        shape beyond emergency-access grants to arbitrary admin mutation
+        types. admin:write. `reason` is mandatory (an unexplained governed
+        change is itself an audit finding). `action_type` must be in the
+        configured `admin_change_approval.action_types` allow-list when
+        that list is non-empty (empty = any `action_type` accepted). The
+        record starts `pending`; a DIFFERENT admin must call
+        `POST /api/v1/admin/changes/{id}/approve` before an `Applier` (if
+        the deployment registered one for `action_type`) applies it. Emits
+        `admin_change_proposed`. Mounted only when an ApprovalStore is
+        wired (`WithChangeApprovalStore`).
+      operationId: adminProposeChange
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action_type, reason]
+              properties:
+                action_type: { type: string }
+                payload: { type: object, description: "caller-defined JSON, interpreted only by the registered Applier" }
+                reason: { type: string, description: "mandatory justification" }
+      responses:
+        "201":
+          description: The created change request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChangeRequest" }
+        "400":
+          description: Missing/blank reason or action_type, or action_type not in the configured allow-list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No ApprovalStore wired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      tags: [admin]
+      summary: List admin change requests (pending, decided, and applied).
+      description: |
+        admin:read. Mounted only when an ApprovalStore is wired.
+      operationId: adminListChanges
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Every change request, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  changes:
+                    type: array
+                    items: { $ref: "#/components/schemas/ChangeRequest" }
+                  total: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/changes/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: Get one admin change request.
+      description: |
+        admin:read. Mounted only when an ApprovalStore is wired.
+      operationId: adminGetChange
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The change request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChangeRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Unknown change request id, or no ApprovalStore wired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/changes/{id}/approve:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Approve a pending admin change (two-person rule).
+      description: |
+        A SECOND admin approves a pending change. admin:write. The approver
+        MUST differ from the proposer — self-approval returns
+        `change_self_approval`; approving an already-decided change returns
+        `change_not_pending`. When an `Applier` is registered for the
+        change's `action_type`, it is invoked immediately and the response
+        reflects the outcome (`applied` on success, `failed` with
+        `failure_note` set on error — approval already happened, so a
+        failed apply is reported, not undone). Emits
+        `admin_change_approved` and, when an Applier ran,
+        `admin_change_applied` or `admin_change_apply_failed`.
+      operationId: adminApproveChange
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The decided (and possibly applied) change request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChangeRequest" }
+        "400":
+          description: Self-approval rejected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such change request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Change request is not pending.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/changes/{id}/reject:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Reject a pending admin change.
+      description: |
+        Any admin (including the proposer) may reject a pending change; it
+        is never applied. admin:write. Emits `admin_change_rejected`.
+      operationId: adminRejectChange
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The rejected change request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChangeRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such change request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Change request is not pending.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/connections:
     get:
       tags: [admin]
@@ -9174,6 +9357,26 @@ components:
           type: array
           items: { type: string }
           description: Impersonation sessions minted under this grant (impersonate/escalate scope only).
+
+    ChangeRequest:
+      type: object
+      description: |
+        A generic, two-person-controlled admin change request
+        (domains/admingovernance) — generalizes AdminSession's
+        propose/approve/self-approval-refusal shape beyond emergency-access
+        grants to arbitrary admin mutation types.
+      required: [id, action_type, reason, proposed_by, status, created_at]
+      properties:
+        id: { type: string }
+        action_type: { type: string }
+        payload: { type: object, description: "the caller-supplied payload, echoed back verbatim" }
+        reason: { type: string, description: "mandatory justification" }
+        proposed_by: { type: string }
+        approved_by: { type: string, description: "empty until a second admin approves/rejects" }
+        status: { type: string, enum: [pending, approved, applied, rejected, failed] }
+        failure_note: { type: string, description: "set only when status is failed (the registered Applier returned an error)" }
+        created_at: { type: string, format: date-time }
+        decided_at: { type: string, format: date-time }
 
     Connection:
       type: object

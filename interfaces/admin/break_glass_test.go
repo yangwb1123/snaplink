@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/domains/admingovernance"
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/defaulttoken"
@@ -69,6 +70,11 @@ func (d *bgTestDeps) DeviceSecretStore() core.DeviceSecretStore             { re
 func (d *bgTestDeps) PasswordResetStore() core.PasswordResetStore           { return nil }
 func (d *bgTestDeps) EmailChangeStore() core.EmailChangeStore               { return nil }
 func (d *bgTestDeps) InvalidateConnectionCache(string)                      {}
+func (d *bgTestDeps) ApprovalStore() admingovernance.ApprovalStore          { return nil }
+func (d *bgTestDeps) ChangeRegistry() *admingovernance.Registry             { return nil }
+func (d *bgTestDeps) ApprovalActionTypes() admingovernance.RequiredActionTypes {
+	return nil
+}
 
 // MintImpersonationToken mirrors *sso.Server's real mint but through the test's
 // own real SessionTokenIssuer: sub=target, act=admin, break_glass_admin_session_id

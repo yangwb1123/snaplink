@@ -293,6 +293,52 @@ mounted only when a `BreakGlassStore` is wired.
 
 ---
 
+## Admin governance framework
+
+Four independently opt-in admin-plane governance mechanisms
+(`domains/admingovernance`). None change behavior unless explicitly
+configured — see `docs/config-reference.md` for the `admin_write_quota`,
+`admin_change_approval`, `admin_destructive_actions`, and
+`admin_ip_allowlist` config sections.
+
+### Generic change-approval workflow (`/api/v1/admin/changes*`)
+
+Generalizes the break-glass propose/approve/self-approval-refusal shape
+beyond emergency-access grants to arbitrary admin mutation types: an admin
+proposes an `action_type` + payload, a DIFFERENT admin approves it, and —
+when the deployment registered an `Applier` for that `action_type` — the
+approval immediately applies the change. Gated by the same
+`admin:read`/`admin:write` scopes as the rest of `/api/v1/admin/*`; mounted
+only when an `ApprovalStore` is wired (`WithChangeApprovalStore`).
+
+| Code                                | HTTP | Emitted when                                                                                     |
+|--------------------------------------|------|---------------------------------------------------------------------------------------------------|
+| `change_reason_required`            | 400  | `POST /api/v1/admin/changes` omitted (or blank) the mandatory `reason`                            |
+| `change_action_type_required`       | 400  | `POST /api/v1/admin/changes` omitted (or blank) `action_type`                                     |
+| `change_action_type_not_allowed`    | 400  | `action_type` is not in the configured `admin_change_approval.action_types` allow-list             |
+| `change_self_approval`              | 400  | `POST .../{id}/approve` (or `.../reject`) called by the same admin who proposed the change         |
+| `change_not_pending`                | 409  | `POST .../{id}/approve` or `.../reject` targets a change that is not `pending` (already decided)   |
+| `not_found`                          | 404  | Unknown change-request id, or no `ApprovalStore` wired                                             |
+
+### Transport-level checks (`AdminMiddleware`, all of `/api/v1/admin/*`)
+
+These three run in `interfaces/admin.Middleware.HTTPMiddleware`, before any
+handler — the SAME choke point every REST admin request passes through,
+including the grpc-gateway-proxied tenant/client/user/token/permission CRUD
+services. Each is wired via a setter on the constructed `AdminMiddleware`
+(`SetWriteQuota` / `SetDestructiveActions` / `SetIPAllowlist`), not an
+`sso.Option` — mirroring the existing `SetRateLimit`/`SetAdminTokenStore`
+convention. All are local literals (not `core.Err*`) because this layer has
+no `core.HandlerContext` to hang a `core.ErrorBody` off.
+
+| Code                                  | HTTP | Emitted when                                                                                     |
+|-----------------------------------------|------|-----------------------------------------------------------------------------------------------|
+| `admin_ip_denied`                     | 403  | `SetIPAllowlist` is configured and the request's IP/geo fails the allow-list (checked BEFORE bearer auth) |
+| `destructive_confirmation_required`   | 409  | `SetDestructiveActions` classifies (method, path) as destructive and the request is missing `X-Confirm: true` |
+| `admin_write_quota_exceeded`          | 429  | `SetWriteQuota` is configured and the acting tenant/admin has exhausted its fixed-window write budget (carries `Retry-After`) |
+
+---
+
 ## Credential compromise-response (`/api/v1/admin/credentials/{type}/compromise`)
 
 Emergency compromise-response: an operator declares a credential class leaked,

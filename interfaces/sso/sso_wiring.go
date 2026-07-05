@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/snaplink/sso/domains/admingovernance"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenant"
@@ -122,4 +123,12 @@ type wiringState struct {
 	// Zero interval (the default) means the feature is off.
 	configDriftInterval time.Duration
 	configReplicaID     string
+
+	// approvalStore + changeRegistry + approvalActionTypes back the generic
+	// change-approval workflow (WithChangeApprovalStore). Nil store ⇒ the
+	// /api/v1/admin/changes routes are NOT mounted — byte-identical to a
+	// build without this feature.
+	approvalStore       admingovernance.ApprovalStore
+	changeRegistry      *admingovernance.Registry
+	approvalActionTypes admingovernance.RequiredActionTypes
 }

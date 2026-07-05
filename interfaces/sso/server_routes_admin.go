@@ -40,6 +40,7 @@ func (s *Server) mountAdminSurface() {
 	s.mountAdminB2B(api)
 	s.mountConfigAuditAPI(api)
 	s.mountAdminBreakGlass(api)
+	s.mountAdminChangeApproval(api)
 }
 
 // mountAdminAPIObservability registers the client lookup plus the opt-in audit,

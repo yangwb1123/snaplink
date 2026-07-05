@@ -179,4 +179,17 @@ const (
 	// authenticated admin.
 	ErrBulkRevokeConfirmationRequired = "bulk_revoke_confirmation_required"
 	ErrBulkRevokeBatchTooLarge        = "bulk_revoke_batch_too_large"
+	// Generic change-approval workflow (POST /api/v1/admin/changes and
+	// .../{id}/approve|reject — domains/admingovernance), generalizing the
+	// break-glass propose/approve shape beyond emergency-access grants.
+	// ErrChangeReasonRequired / ErrChangeActionTypeRequired mirror break-glass's
+	// mandatory-reason validation. ErrChangeActionTypeNotAllowed is returned when
+	// AdminChangeApprovalConfig.ActionTypes is non-empty and the caller proposed
+	// a type outside it. ErrChangeSelfApproval / ErrChangeNotPending are the wire
+	// form of admingovernance.ErrChangeSelfApproval / ErrChangeNotPending.
+	ErrChangeReasonRequired       = "change_reason_required"
+	ErrChangeActionTypeRequired   = "change_action_type_required"
+	ErrChangeActionTypeNotAllowed = "change_action_type_not_allowed"
+	ErrChangeSelfApproval         = "change_self_approval"
+	ErrChangeNotPending           = "change_not_pending"
 )

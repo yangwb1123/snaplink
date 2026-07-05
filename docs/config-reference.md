@@ -278,6 +278,27 @@ Emergency ("break-glass") admin sessions. Disabled by default; without it no bre
 | `break_glass.enabled` | Builds the in-memory `core.BreakGlassStore` and wires `sso.WithBreakGlassStore`, mounting the `POST`/`GET`/`DELETE`/`approve` `/api/v1/admin/break-glass` lifecycle endpoints |
 | `break_glass.sweeper_interval` | Cadence of the active expiry sweeper (`Server.RunBreakGlassSweeper`) that destroys a grant's derived sessions at expiry; `<=0` = 1m. The grant TTL default/cap (`core.DefaultBreakGlassTTL`/`MaxBreakGlassTTL`) and per-request `require_approval` are SDK-side, not config |
 
+## Admin Governance Framework
+
+Four independently opt-in `/api/v1/admin/*` governance mechanisms
+(`domains/admingovernance`). Every section below defaults to `enabled: false`
+— an absent/disabled section wires nothing, byte-identical to a build
+without this framework. See `docs/error-codes.md` "Admin governance
+framework" for the wire error codes each mechanism returns.
+
+| Key | Effect |
+|---|---|
+| `admin_write_quota.enabled` | Wires a per-tenant/admin write-op QUOTA onto the admin middleware (`AdminMiddleware.SetWriteQuota`) — a hard, fixed-window budget on POST/PUT/PATCH/DELETE under `/api/v1/admin/`, distinct from `security.rate_limit`'s token-bucket RATE (which never resets wholesale, only refills) |
+| `admin_write_quota.limit` / `admin_write_quota.window` | Max writes allowed per fixed window (e.g. `limit: 500`, `window: 1h`); `<=0` on either disables enforcement even when `enabled: true` |
+| `admin_write_quota.key_by` | `tenant` keys the budget by the acting admin's tenant (falling back to admin identity when the token carries none); anything else (including omitted) keys by admin identity — each admin gets an independent budget |
+| `admin_change_approval.enabled` | Builds an in-memory `admingovernance.ApprovalStore` and wires `sso.WithChangeApprovalStore`, mounting the generic two-person change-approval workflow: `POST`/`GET /api/v1/admin/changes`, `GET .../{id}`, `POST .../{id}/approve\|reject`. Generalizes break-glass's propose/approve/self-approval-refusal shape to arbitrary admin mutation types. The shipped binary registers NO `Applier` — an approved change stays `approved` unless a forked `main` registers one into its own `*admingovernance.Registry` |
+| `admin_change_approval.action_types` | Allow-list restricting `POST /api/v1/admin/changes`'s `action_type` to these values; empty (default) accepts any `action_type` |
+| `admin_destructive_actions.enabled` | Wires a destructive-action confirmation guard onto the admin middleware (`AdminMiddleware.SetDestructiveActions`): a request matching a configured `(method, path_prefix)` rule is refused (`409`) unless it carries `X-Confirm: true` — mirrors the `{confirm: true}` convention the bulk-revoke-by-user and self-service account-erase endpoints already use, generalized to a header because this gate runs BEFORE any handler parses a body (and must also cover the grpc-gateway-proxied tenant/client/user/token/permission CRUD services) |
+| `admin_destructive_actions.rules[].method` / `.path_prefix` / `.action` | One classified-destructive rule; `path_prefix` matches by prefix (not exact template) since a resolved request path carries the real id, e.g. `path_prefix: /api/v1/admin/tenants/` catches every tenant id. `action` is an operator-chosen label for logging only |
+| `admin_ip_allowlist.enabled` | Wires an IP-allowlist/geo-lock onto the admin middleware (`AdminMiddleware.SetIPAllowlist`), checked BEFORE bearer auth. Composes with the EXISTING `geo.Provider` (reused via `Server.GeoProvider()`) rather than reimplementing IP/geo resolution |
+| `admin_ip_allowlist.cidrs` | CIDR allow-list checked directly against the request IP (via the same `geo.DefaultIPExtractor` the enrichment middleware uses); empty = this dimension is not enforced |
+| `admin_ip_allowlist.countries` | ISO 3166-1 alpha-2 allow-list checked against the WIRED `geo.Provider`'s resolution for the request IP. Unlike geo enrichment elsewhere (fail-open, UX-only), a configured `countries` list with NO resolved geo info FAILS CLOSED — an explicitly opted-in governance gate must never silently no-op. When BOTH `cidrs` and `countries` are configured, a request must satisfy BOTH (AND across dimensions) |
+
 ## Feature Gates (attack-surface reduction)
 
 | Key | Effect |
