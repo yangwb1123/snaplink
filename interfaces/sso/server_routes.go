@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/snaplink/sso/docs"
 	"github.com/snaplink/sso/domains/region"
+	"github.com/snaplink/sso/interfaces/apidocs"
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/interfaces/ratelimit"
@@ -224,6 +226,60 @@ func (s *Server) mountCIBAEndpoint() {
 // gate on) and the federation handlers — this file was at the line budget.
 // mountSelfServiceCredentials (the /me* credential + privacy endpoints,
 // including MFA recovery codes) lives in server_me.go for the same reason.
+
+// Opt-in embedded API-docs viewer route paths (WithAPIDocsUI). Unexported
+// and local to this file — like pathAdminConsolePrefix et al. above, they
+// are pure internal wiring detail, not part of the SDK's public surface —
+// rather than re-exported core.Path* consts, since shared/core/consts.go
+// is at its own line budget and nothing outside this package needs them.
+const (
+	pathAdminAPIDocs     = "/admin/docs"
+	pathAdminAPIDocsSpec = "/admin/docs/openapi.json"
+)
+
+// mountAPIDocsUI registers the opt-in embedded API-documentation viewer
+// (WithAPIDocsUI): GET .../docs (self-contained HTML) + GET
+// .../docs/openapi.json (the same spec as parsed JSON, for tooling).
+// Unlike the OPEN static SPA bundles buildProbeMux serves below (admin
+// console, hosted login, portal — generic UI shells with no sensitive
+// content), these two routes hang off the AdminMiddleware-gated
+// /api/v1/admin/ group mountAdminSurface builds, because the full live
+// endpoint + schema inventory they expose IS operationally sensitive.
+// Not mounted without the option — byte-identical to a build without it.
+func (s *Server) mountAPIDocsUI(api Router) {
+	if s.apiDocsUIHandler == nil {
+		return
+	}
+	api.GET(pathAdminAPIDocs, s.apiDocsUIHandler)
+	api.GET(pathAdminAPIDocsSpec, s.apiDocsSpecHandler)
+}
+
+// WithAPIDocsUI mounts a read-only, self-contained API-documentation
+// viewer for docs/openapi.yaml at GET /api/v1/admin/docs (+ its
+// machine-readable GET /api/v1/admin/docs/openapi.json companion). Both
+// hang off the /api/v1/admin/ prefix, so AdminMiddleware gates them
+// exactly like every other admin route (admin:read) — the full endpoint +
+// schema inventory is operationally sensitive, not public. See
+// interfaces/apidocs's package doc for what the viewer is (and is not: no
+// CDN script, no vendored Swagger-UI/Redoc bundle). Relocated from
+// options_httpstack.go (which was at the line budget) to sit beside
+// mountAPIDocsUI, the route registration it feeds.
+//
+// nil (the default, i.e. this option never called) leaves both routes
+// unmounted — byte-identical to a build without this feature: the spec
+// stays a static file in docs/, never served over HTTP.
+func WithAPIDocsUI() Option {
+	return func(s *Server) {
+		ui, spec, err := apidocs.New(docs.OpenAPISpec)
+		if err != nil {
+			// Only reachable with a hand-corrupted embedded spec (CI's
+			// `make docs-validate` guards the committed file) — fail safe by
+			// leaving the feature off rather than mounting a broken page.
+			return
+		}
+		s.apiDocsUIHandler, s.apiDocsSpecHandler = ui, spec
+	}
+}
 
 // Handler returns the http.Handler for the server.
 //

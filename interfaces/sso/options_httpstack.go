@@ -478,3 +478,6 @@ func WithRouteDeprecation(path string, policy middleware.DeprecationPolicy) Opti
 func WithAPIVersionPreview() Option {
 	return func(s *Server) { s.apiV2AlphaPreview = true }
 }
+
+// WithAPIDocsUI moved to server_routes.go, beside mountAPIDocsUI (the route
+// registration it feeds), to keep this file within the per-file line budget.

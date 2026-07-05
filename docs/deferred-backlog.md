@@ -34,9 +34,21 @@ related capability exists but the proposed feature does not).
 - **Admin Console write-CRUD SPA** — partial. Productized UI for clients/users/
   tenants + dogfood OAuth/PKCE login (currently a stub console + raw bearer).
   _Sources: expansion-architecture-gaps-2026-07-01, analysis-five-directions-toctou…._
-- **Multi-language SDK generation + developer portal** — none. `oapi-codegen`
-  client generation, embedded Swagger/Redoc at `/api/v1/admin/docs`, TS/Python
-  consumer SDKs, developer app portal + review workflow. _Sources: health-and-dx-2026-07-01,
+- **Multi-language SDK generation + developer portal** — partial. Embedded
+  read-only API-docs viewer at `/api/v1/admin/docs` (+ a `/openapi.json`
+  companion), opt-in via `WithAPIDocsUI` (`interfaces/apidocs`; no CDN
+  script, no vendored Swagger-UI/Redoc bundle — a small hand-rolled page in
+  the same style as the admin/login/portal SPAs). A curated TS + Python
+  consumer-SDK generator (`cmd/gensdk`, committed output at
+  `docs/sdks/{typescript,python}`, same "generated but checked in" pattern
+  as `gen/proto/*.pb.go`) covering core OAuth2/OIDC + token lifecycle +
+  self-service + a small representative admin sample — NOT the full
+  ~150-route grpc-gateway-generated admin CRUD surface, nor SCIM/CAEP/
+  federation (see `docs/sdks/*/README.md` for the exact allowlist and
+  simplifications). The developer app portal + review workflow remains
+  undone — a separate, large feature (an application UI + backend
+  approval/review workflow) deliberately out of scope for the pass that
+  added the above. _Sources: health-and-dx-2026-07-01,
   expansion-analysis-20260701, expansion-directions-2026-07-01-v3._
 - **Repo hygiene** — none. `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, devcontainer +
   hot-reload dev tooling, CI status/coverage badges, more godoc `Example*` funcs.
