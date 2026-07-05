@@ -238,7 +238,7 @@ const (
 	// per-client POLICY gate evaluated before any credential is read.
 	ErrPasswordlessRequired = "passwordless_required"
 	// Generic change-approval workflow (POST /api/v1/admin/changes and
-	// .../{id}/approve|reject — domains/admingovernance), generalizing the
+	// .../{id}/approve|reject — platform/lifecycle/admingovernance), generalizing the
 	// break-glass propose/approve shape beyond emergency-access grants.
 	// ErrChangeReasonRequired / ErrChangeActionTypeRequired mirror break-glass's
 	// mandatory-reason validation. ErrChangeActionTypeNotAllowed is returned when

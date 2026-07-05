@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/domains/admingovernance"
 	"github.com/snaplink/sso/domains/userlifecycle"
 	"github.com/snaplink/sso/interfaces/admin"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/configaudit"
+	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
 	"github.com/snaplink/sso/platform/lifecycle/cryptoinventory"
 	"github.com/snaplink/sso/platform/lifecycle/rotation"
 	"github.com/snaplink/sso/platform/sse"
@@ -493,32 +493,3 @@ func WithChangeApprovalStore(store admingovernance.ApprovalStore, registry *admi
 		s.approvalActionTypes = admingovernance.NewRequiredActionTypes(actionTypes)
 	}
 }
-
-// mountAdminChangeApproval registers the generic change-approval workflow
-// routes. Mounted only when a store is wired — byte-identical to a build
-// without WithChangeApprovalStore. Defined here (rather than
-// server_routes_admin.go) to keep that file under the maintainability
-// budget; called from mountAdminSurface.
-func (s *Server) mountAdminChangeApproval(api Router) {
-	if s.approvalStore == nil {
-		return
-	}
-	// core.PathAdminChanges* used directly (not re-exported as sso.Path*
-	// like most admin paths) — aliases.go is at its frozen 500-line
-	// maintainability budget with no room for a new entry.
-	api.POST(core.PathAdminChanges, s.handleAdminProposeChange)
-	api.GET(core.PathAdminChanges, s.handleAdminListChanges)
-	api.GET(core.PathAdminChangeByID, s.handleAdminGetChange)
-	api.POST(core.PathAdminChangeApprove, s.handleAdminApproveChange)
-	api.POST(core.PathAdminChangeReject, s.handleAdminRejectChange)
-}
-
-// Generic change-approval workflow handlers — thin wrappers delegating to
-// the admin package's HandleAdminX free functions (*Server satisfies
-// admin.Deps via accessors.go); the logic + audit live in
-// interfaces/admin/governance.go.
-func (s *Server) handleAdminProposeChange(ctx HandlerContext) { admin.HandleAdminProposeChange(s, ctx) }
-func (s *Server) handleAdminListChanges(ctx HandlerContext)   { admin.HandleAdminListChanges(s, ctx) }
-func (s *Server) handleAdminGetChange(ctx HandlerContext)     { admin.HandleAdminGetChange(s, ctx) }
-func (s *Server) handleAdminApproveChange(ctx HandlerContext) { admin.HandleAdminApproveChange(s, ctx) }
-func (s *Server) handleAdminRejectChange(ctx HandlerContext)  { admin.HandleAdminRejectChange(s, ctx) }

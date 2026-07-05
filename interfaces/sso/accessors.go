@@ -10,7 +10,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/snaplink/sso/domains/admingovernance"
 	"github.com/snaplink/sso/domains/anomaly"
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
@@ -72,15 +71,6 @@ func (s *Server) TokenExchangePolicy() tokenexchange.Policy { return s.tokenExch
 // stays plain JSON).
 func (s *Server) IntrospectionSigner() oauth.IntrospectionSigner { return s.introspectionSigner }
 
-// IntrospectionBatchMaxSize returns the configured cap on batch
-// /token/introspect requests, or 0 when the capability is disabled
-// (WithIntrospectionBatch never called) — the default-off contract.
-func (s *Server) IntrospectionBatchMaxSize() int {
-	if !s.introspectionBatchEnabled {
-		return 0
-	}
-	return s.introspectionBatchMaxSize
-}
 func (s *Server) DeviceCodeStore() oauth.DeviceCodeStore { return s.deviceCodeStore }
 func (s *Server) DeviceCodeTTL() time.Duration           { return s.deviceCodeTTL }
 func (s *Server) DeviceCodeInterval() time.Duration      { return s.deviceCodeInterval }
@@ -211,16 +201,6 @@ func (s *Server) AdminTokenStore() core.AdminTokenStore {
 // not mounted at all — byte-identical to a build without the feature.
 func (s *Server) BreakGlassStore() core.BreakGlassStore {
 	return s.breakGlassStore
-}
-
-// ApprovalStore / ChangeRegistry / ApprovalActionTypes back the generic
-// change-approval workflow (domains/admingovernance). Satisfies admin.Deps.
-// A nil ApprovalStore means the /api/v1/admin/changes routes are not
-// mounted at all — byte-identical to a build without the feature.
-func (s *Server) ApprovalStore() admingovernance.ApprovalStore { return s.approvalStore }
-func (s *Server) ChangeRegistry() *admingovernance.Registry    { return s.changeRegistry }
-func (s *Server) ApprovalActionTypes() admingovernance.RequiredActionTypes {
-	return s.approvalActionTypes
 }
 
 // GeoProvider returns the wired geo.Provider (WithGeoProvider), or nil. Lets

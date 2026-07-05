@@ -72,23 +72,23 @@ const (
 	// instead of it. Absent unless a Localizer is configured AND it has a
 	// translation for this (code, locale) pair.
 	KeyErrorDescriptionLocalized = "error_description_localized"
-	KeyStatus           = "status"
-	KeyIssuer           = "issuer"
-	KeyVersion          = "version"
-	KeyVCSRevision      = "vcs_revision"
-	KeyVCSTime          = "vcs_time"
-	KeyProviders        = "providers"
-	KeySupportedGrants  = "supported_grants"
-	KeySessionID        = "session_id"
-	KeyAccessToken      = "access_token"
-	KeyRefreshToken     = "refresh_token"
-	KeyTokenType        = "token_type"
-	KeyExpiresIn        = "expires_in"
-	KeyScope            = "scope"
-	KeyRevoked          = "revoked"
-	KeyTokenStrategy    = "token_strategy"
-	KeyRecommendedLang  = "recommended_language"
-	KeyCountryCode      = "country_code"
+	KeyStatus                    = "status"
+	KeyIssuer                    = "issuer"
+	KeyVersion                   = "version"
+	KeyVCSRevision               = "vcs_revision"
+	KeyVCSTime                   = "vcs_time"
+	KeyProviders                 = "providers"
+	KeySupportedGrants           = "supported_grants"
+	KeySessionID                 = "session_id"
+	KeyAccessToken               = "access_token"
+	KeyRefreshToken              = "refresh_token"
+	KeyTokenType                 = "token_type"
+	KeyExpiresIn                 = "expires_in"
+	KeyScope                     = "scope"
+	KeyRevoked                   = "revoked"
+	KeyTokenStrategy             = "token_strategy"
+	KeyRecommendedLang           = "recommended_language"
+	KeyCountryCode               = "country_code"
 	// KeyServingRegion names the region deployment that served the login
 	// response (multi-region / data-residency layer). DISTINCT from
 	// geo's "region" (an ISO 3166-2 client-IP subdivision) — this is WHICH
@@ -288,4 +288,15 @@ const (
 	KeyWebhookSubscription  = "subscription"
 	KeyWebhookDeadLetters   = "dead_letters"
 	KeyWebhookDeadLetter    = "dead_letter"
+)
+
+// PathAdminChanges / PathAdminChangeByID / PathAdminChangeApprove /
+// PathAdminChangeReject serve the generic change-approval workflow
+// (platform/lifecycle/admingovernance). Relocated from consts.go for the same
+// per-file budget reason as the other consts in this file.
+const (
+	PathAdminChanges       = "/admin/changes"
+	PathAdminChangeByID    = "/admin/changes/:id"
+	PathAdminChangeApprove = "/admin/changes/:id/approve"
+	PathAdminChangeReject  = "/admin/changes/:id/reject"
 )

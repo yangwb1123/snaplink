@@ -14,7 +14,9 @@ import (
 	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
 )
 
 // buildApp is pure server-assembly wiring: it reads config and constructs the
@@ -328,6 +330,35 @@ func (b *appBuilder) wirePostgres() error {
 	}
 	b.logger.Info("postgres: shared durable pool configured (HA db-cluster backend)", "dialect", d)
 	return nil
+}
+
+// wireBreakGlass wires the in-memory break-glass store enabling the
+// emergency-admin-session endpoints; the expiry sweeper is started later.
+// Relocated from build_app_security.go to keep that file within the
+// per-file line budget.
+func (b *appBuilder) wireBreakGlass() {
+	if !b.cfg.BreakGlass.Enabled {
+		return
+	}
+	store := memorystoreidentity.NewMemoryBreakGlassStore()
+	b.breakGlassStore = store
+	b.opts = append(b.opts, sso.WithBreakGlassStore(store))
+}
+
+// wireChangeApproval wires the in-memory ApprovalStore enabling the generic
+// change-approval workflow (POST/GET /api/v1/admin/changes + .../approve|
+// reject). No Applier is registered here — the shipped binary only exposes
+// the propose/approve book-keeping; a forked main wanting a change to take
+// automatic effect on approval registers its own admingovernance.Applier
+// into a *admingovernance.Registry and passes it to WithChangeApprovalStore
+// instead (an operator extension point, same shape as WithCredentialRotation
+// requiring the caller's own rotation.Scheduler).
+func (b *appBuilder) wireChangeApproval() {
+	if !b.cfg.AdminChangeApproval.Enabled {
+		return
+	}
+	store := admingovernance.NewMemoryApprovalStore()
+	b.opts = append(b.opts, sso.WithChangeApprovalStore(store, nil, b.cfg.AdminChangeApproval.ActionTypes))
 }
 
 // --- helpers ---

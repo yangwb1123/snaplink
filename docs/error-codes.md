@@ -374,7 +374,7 @@ mounted only when a `BreakGlassStore` is wired.
 ## Admin governance framework
 
 Four independently opt-in admin-plane governance mechanisms
-(`domains/admingovernance`). None change behavior unless explicitly
+(`platform/lifecycle/admingovernance`). None change behavior unless explicitly
 configured — see `docs/config-reference.md` for the `admin_write_quota`,
 `admin_change_approval`, `admin_destructive_actions`, and
 `admin_ip_allowlist` config sections.

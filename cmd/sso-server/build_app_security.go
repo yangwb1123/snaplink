@@ -10,8 +10,6 @@ import (
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
-	"github.com/snaplink/sso/domains/admingovernance"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -406,33 +404,6 @@ func (b *appBuilder) wireConfigAudit() error {
 	b.logger.Info("config audit enabled",
 		"backend", configAuditBackend(cfg.Backend), "drift_interval", cfg.Drift.Interval)
 	return nil
-}
-
-// wireBreakGlass wires the in-memory break-glass store enabling the
-// emergency-admin-session endpoints; the expiry sweeper is started later.
-func (b *appBuilder) wireBreakGlass() {
-	if !b.cfg.BreakGlass.Enabled {
-		return
-	}
-	store := memorystoreidentity.NewMemoryBreakGlassStore()
-	b.breakGlassStore = store
-	b.opts = append(b.opts, sso.WithBreakGlassStore(store))
-}
-
-// wireChangeApproval wires the in-memory ApprovalStore enabling the generic
-// change-approval workflow (POST/GET /api/v1/admin/changes + .../approve|
-// reject). No Applier is registered here — the shipped binary only exposes
-// the propose/approve book-keeping; a forked main wanting a change to take
-// automatic effect on approval registers its own admingovernance.Applier
-// into a *admingovernance.Registry and passes it to WithChangeApprovalStore
-// instead (an operator extension point, same shape as WithCredentialRotation
-// requiring the caller's own rotation.Scheduler).
-func (b *appBuilder) wireChangeApproval() {
-	if !b.cfg.AdminChangeApproval.Enabled {
-		return
-	}
-	store := admingovernance.NewMemoryApprovalStore()
-	b.opts = append(b.opts, sso.WithChangeApprovalStore(store, nil, b.cfg.AdminChangeApproval.ActionTypes))
 }
 
 // startGovernanceWorkers launches the governance background loops after the

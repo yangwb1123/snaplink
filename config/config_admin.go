@@ -107,7 +107,7 @@ type AdminWriteQuotaConfig struct {
 }
 
 // AdminChangeApprovalConfig opts into the generic two-person change-approval
-// workflow (domains/admingovernance): an admin PROPOSES an action_type +
+// workflow (platform/lifecycle/admingovernance): an admin PROPOSES an action_type +
 // payload (POST /api/v1/admin/changes), a DIFFERENT admin APPROVES it
 // (POST .../{id}/approve), and — when the deployment registered an Applier
 // for that action_type — the approval immediately applies the change.
@@ -130,7 +130,7 @@ type AdminChangeApprovalConfig struct {
 // body (and it must also cover the grpc-gateway-proxied admin services,
 // which never see interfaces/admin's own JSON body binding). Rules is a
 // configured (method, path-prefix) allow-list — see
-// domains/admingovernance.DestructiveRule; Enabled=false (the default)
+// platform/lifecycle/admingovernance.DestructiveRule; Enabled=false (the default)
 // leaves every mutation exactly as it behaves today. Wired via
 // AdminMiddleware.SetDestructiveActions.
 type AdminDestructiveActionsConfig struct {
@@ -153,7 +153,7 @@ type AdminDestructiveActionRule struct {
 // middleware uses); Countries are checked against whatever geo.Provider the
 // deployment already wires. Both lists empty (the default) disables the
 // check; when both are configured a request must satisfy BOTH dimensions
-// (see domains/admingovernance.Allowed). Wired via
+// (see platform/lifecycle/admingovernance.Allowed). Wired via
 // AdminMiddleware.SetIPAllowlist.
 type AdminIPAllowlistConfig struct {
 	Enabled   bool     `yaml:"enabled"`

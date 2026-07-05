@@ -84,7 +84,7 @@ const (
 	// /api/v1/admin/webhooks/subscriptions[/:id].
 	EventAdminWebhookSubscriptionCreated EventType = "admin_webhook_subscription_created"
 	EventAdminWebhookSubscriptionDeleted EventType = "admin_webhook_subscription_deleted"
-	// Generic change-approval workflow lifecycle events (domains/admingovernance,
+	// Generic change-approval workflow lifecycle events (platform/lifecycle/admingovernance,
 	// POST /api/v1/admin/changes and .../{id}/approve|reject). Metadata carries
 	// change_id, action_type, proposed_by, and — from Approved onward —
 	// approved_by, mirroring the break-glass evidence chain's "who did what,
@@ -96,7 +96,7 @@ const (
 	EventAdminChangeApplyFailed EventType = "admin_change_apply_failed"
 	// EventAdminWriteQuotaExceeded / EventAdminIPDenied are emitted by
 	// AdminMiddleware when the opt-in write-quota or IP/geo allowlist gate
-	// (domains/admingovernance) blocks a request, when an audit Recorder is
+	// (platform/lifecycle/admingovernance) blocks a request, when an audit Recorder is
 	// wired via SetAuditRecorder. Governance/observability only — neither
 	// gate depends on the audit event landing.
 	EventAdminWriteQuotaExceeded EventType = "admin_write_quota_exceeded"

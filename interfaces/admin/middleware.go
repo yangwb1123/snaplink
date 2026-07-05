@@ -13,9 +13,9 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/snaplink/sso/domains/admingovernance"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
 	"github.com/snaplink/sso/shared/core"
 
 	"google.golang.org/grpc"

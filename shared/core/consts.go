@@ -493,11 +493,4 @@ const (
 	PathAdminConfigApplied = "/admin/config/applied"
 	PathAdminConfigDiff    = "/admin/config/diff"
 	PathAdminConfigHistory = "/admin/config/history"
-
-	// PathAdminChanges / PathAdminChangeByID / PathAdminChangeApprove /
-	// PathAdminChangeReject serve the generic change-approval workflow.
-	PathAdminChanges       = "/admin/changes"
-	PathAdminChangeByID    = "/admin/changes/:id"
-	PathAdminChangeApprove = "/admin/changes/:id/approve"
-	PathAdminChangeReject  = "/admin/changes/:id/reject"
 )

@@ -9,10 +9,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/domains/admingovernance"
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/domains/userlifecycle"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
@@ -40,6 +41,7 @@ func (d *gcTestDeps) ConsentStore() core.ConsentStore                          {
 func (d *gcTestDeps) MFAEnrollmentStore() core.MFAEnrollmentStore              { return nil }
 func (d *gcTestDeps) PasswordCredentialStore() core.PasswordCredentialStore    { return nil }
 func (d *gcTestDeps) UserProvider() core.UserProvider                          { return nil }
+func (d *gcTestDeps) LifecycleStore() userlifecycle.Store                      { return nil }
 func (d *gcTestDeps) AccountLockout() security.AccountLockout                  { return nil }
 func (d *gcTestDeps) DeviceSecretStore() core.DeviceSecretStore                { return nil }
 func (d *gcTestDeps) PasswordResetStore() core.PasswordResetStore              { return nil }

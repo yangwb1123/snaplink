@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/snaplink/sso/domains/admingovernance"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenant"
@@ -16,6 +15,7 @@ import (
 	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/platform/geo"
+	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
 	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
 	"github.com/snaplink/sso/platform/lifecycle/webhook"
 	"github.com/snaplink/sso/platform/netpolicy"
@@ -289,4 +289,29 @@ func (s *Server) localizeErrorBody(ctx HandlerContext, m map[string]string, code
 	if desc, ok := s.localizer.Localize(code, locale); ok {
 		core.ErrorBodyWithLocalizedDesc(m, desc)
 	}
+}
+
+// ApprovalStore / ChangeRegistry / ApprovalActionTypes back the generic
+// change-approval workflow (domains/admingovernance). Satisfies admin.Deps.
+// A nil ApprovalStore means the /api/v1/admin/changes routes are not
+// mounted at all — byte-identical to a build without the feature. Relocated
+// from accessors.go to keep that file within the per-file line budget;
+// belongs beside the approvalStore/changeRegistry/approvalActionTypes
+// fields here.
+func (s *Server) ApprovalStore() admingovernance.ApprovalStore { return s.approvalStore }
+func (s *Server) ChangeRegistry() *admingovernance.Registry    { return s.changeRegistry }
+func (s *Server) ApprovalActionTypes() admingovernance.RequiredActionTypes {
+	return s.approvalActionTypes
+}
+
+// IntrospectionBatchMaxSize returns the configured cap on batch
+// /token/introspect requests, or 0 when the capability is disabled
+// (WithIntrospectionBatch never called) — the default-off contract.
+// Relocated from accessors.go to keep that file within the per-file line
+// budget.
+func (s *Server) IntrospectionBatchMaxSize() int {
+	if !s.introspectionBatchEnabled {
+		return 0
+	}
+	return s.introspectionBatchMaxSize
 }

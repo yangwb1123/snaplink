@@ -308,7 +308,7 @@ Emergency ("break-glass") admin sessions. Disabled by default; without it no bre
 ## Admin Governance Framework
 
 Four independently opt-in `/api/v1/admin/*` governance mechanisms
-(`domains/admingovernance`). Every section below defaults to `enabled: false`
+(`platform/lifecycle/admingovernance`). Every section below defaults to `enabled: false`
 — an absent/disabled section wires nothing, byte-identical to a build
 without this framework. See `docs/error-codes.md` "Admin governance
 framework" for the wire error codes each mechanism returns.

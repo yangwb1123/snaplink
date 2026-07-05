@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/domains/admingovernance"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/geo"
+	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 )
