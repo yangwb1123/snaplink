@@ -38,6 +38,13 @@ const (
 	EventAdminConsentRevoked                 = auditspi.EventAdminConsentRevoked
 	EventAdminCredentialCompromised          = auditspi.EventAdminCredentialCompromised
 	EventAdminCryptoKeyCompromised           = auditspi.EventAdminCryptoKeyCompromised
+	EventAdminChangeApplied                  = auditspi.EventAdminChangeApplied
+	EventAdminChangeApplyFailed              = auditspi.EventAdminChangeApplyFailed
+	EventAdminChangeApproved                 = auditspi.EventAdminChangeApproved
+	EventAdminChangeProposed                 = auditspi.EventAdminChangeProposed
+	EventAdminChangeRejected                 = auditspi.EventAdminChangeRejected
+	EventAdminIPDenied                       = auditspi.EventAdminIPDenied
+	EventAdminWriteQuotaExceeded             = auditspi.EventAdminWriteQuotaExceeded
 	EventAdminDeviceSecretsRevoked           = auditspi.EventAdminDeviceSecretsRevoked
 	EventAdminDomainCreated                  = auditspi.EventAdminDomainCreated
 	EventAdminDomainDeleted                  = auditspi.EventAdminDomainDeleted

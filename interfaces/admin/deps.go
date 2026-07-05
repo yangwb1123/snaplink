@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 
+	"github.com/snaplink/sso/domains/admingovernance"
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/userlifecycle"
@@ -75,4 +76,17 @@ type Deps interface {
 	// Called after every connection upsert and delete. Fire-and-forget: a bus
 	// failure is logged but does not roll back the already-committed store write.
 	InvalidateConnectionCache(connID string)
+	// ApprovalStore persists the generic change-approval workflow's pending/
+	// decided ChangeRequests (domains/admingovernance). Nil ⇒ the
+	// /api/v1/admin/changes routes are NOT mounted.
+	ApprovalStore() admingovernance.ApprovalStore
+	// ChangeRegistry resolves the Applier (if any) that performs the real
+	// mutation a ChangeRequest.ActionType describes, invoked the instant a
+	// SECOND admin approves it. May be nil (every change then stays
+	// Approved — never auto-applied — for the caller's own follow-through).
+	ChangeRegistry() *admingovernance.Registry
+	// ApprovalActionTypes is the configured allow-list POST .../changes
+	// checks a proposal's action_type against (AdminChangeApprovalConfig.
+	// ActionTypes). Empty ⇒ unrestricted — every action_type accepted.
+	ApprovalActionTypes() admingovernance.RequiredActionTypes
 }

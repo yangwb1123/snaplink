@@ -56,6 +56,7 @@ func (s *Server) mountAdminSurface() {
 	s.mountCryptoInventoryAPI(api)
 	s.mountWebhookAdminAPI(api)
 	s.mountAdminCompliance(api)
+	s.mountAdminChangeApproval(api)
 }
 
 // mountAdminAPIObservability registers the client lookup plus the opt-in audit,

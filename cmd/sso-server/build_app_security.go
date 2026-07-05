@@ -10,6 +10,7 @@ import (
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
+	"github.com/snaplink/sso/domains/admingovernance"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/cors"
@@ -221,6 +222,7 @@ func (b *appBuilder) wireGovernance() error {
 		return err
 	}
 	b.wireBreakGlass()
+	b.wireChangeApproval()
 	if err := b.wireTokenPolicy(); err != nil {
 		return err
 	}
@@ -415,6 +417,22 @@ func (b *appBuilder) wireBreakGlass() {
 	store := memorystoreidentity.NewMemoryBreakGlassStore()
 	b.breakGlassStore = store
 	b.opts = append(b.opts, sso.WithBreakGlassStore(store))
+}
+
+// wireChangeApproval wires the in-memory ApprovalStore enabling the generic
+// change-approval workflow (POST/GET /api/v1/admin/changes + .../approve|
+// reject). No Applier is registered here — the shipped binary only exposes
+// the propose/approve book-keeping; a forked main wanting a change to take
+// automatic effect on approval registers its own admingovernance.Applier
+// into a *admingovernance.Registry and passes it to WithChangeApprovalStore
+// instead (an operator extension point, same shape as WithCredentialRotation
+// requiring the caller's own rotation.Scheduler).
+func (b *appBuilder) wireChangeApproval() {
+	if !b.cfg.AdminChangeApproval.Enabled {
+		return
+	}
+	store := admingovernance.NewMemoryApprovalStore()
+	b.opts = append(b.opts, sso.WithChangeApprovalStore(store, nil, b.cfg.AdminChangeApproval.ActionTypes))
 }
 
 // startGovernanceWorkers launches the governance background loops after the

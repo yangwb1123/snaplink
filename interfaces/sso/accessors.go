@@ -10,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/snaplink/sso/domains/admingovernance"
 	"github.com/snaplink/sso/domains/anomaly"
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
@@ -21,6 +22,7 @@ import (
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/platform/configaudit"
+	"github.com/snaplink/sso/platform/geo"
 	"github.com/snaplink/sso/platform/lifecycle/webhook"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/netpolicy"
@@ -210,6 +212,22 @@ func (s *Server) AdminTokenStore() core.AdminTokenStore {
 func (s *Server) BreakGlassStore() core.BreakGlassStore {
 	return s.breakGlassStore
 }
+
+// ApprovalStore / ChangeRegistry / ApprovalActionTypes back the generic
+// change-approval workflow (domains/admingovernance). Satisfies admin.Deps.
+// A nil ApprovalStore means the /api/v1/admin/changes routes are not
+// mounted at all — byte-identical to a build without the feature.
+func (s *Server) ApprovalStore() admingovernance.ApprovalStore { return s.approvalStore }
+func (s *Server) ChangeRegistry() *admingovernance.Registry    { return s.changeRegistry }
+func (s *Server) ApprovalActionTypes() admingovernance.RequiredActionTypes {
+	return s.approvalActionTypes
+}
+
+// GeoProvider returns the wired geo.Provider (WithGeoProvider), or nil. Lets
+// a caller wiring a SECOND consumer of geo data (e.g. AdminMiddleware's
+// IP-allowlist country dimension) reuse the SAME provider instance rather
+// than constructing another one.
+func (s *Server) GeoProvider() geo.Provider { return s.geoProvider }
 
 func (s *Server) ConnectionStore() connections.Store { return s.connectionStore }
 

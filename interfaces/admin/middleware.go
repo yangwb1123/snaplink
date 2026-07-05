@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/snaplink/sso/domains/admingovernance"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/shared/core"
@@ -84,6 +85,15 @@ type Middleware struct {
 
 	// sessionTTL is the idle timeout for admin bearer tokens. 0 = no timeout.
 	sessionTTL time.Duration
+
+	// quota / ipPolicy / destructive are the admin governance framework's
+	// transport-level checks (see governance.go): a per-tenant/admin write
+	// QUOTA (distinct from rateLimiter's token-bucket rate), an optional
+	// IP-allowlist/geo-lock, and a destructive-action confirmation guard.
+	// All nil/empty by default — byte-identical to a build without them.
+	quota       *adminQuotaConfig
+	ipPolicy    *adminIPPolicy
+	destructive admingovernance.DestructiveSet
 }
 
 // NewMiddleware wires a Server (the validator) and a permissions.Provider
@@ -304,38 +314,23 @@ func (a *Middleware) HTTPMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// IP-allowlist/geo-lock runs BEFORE anything else: a disallowed
+		// network must never reach rate-limiting or auth machinery (no
+		// oracle — the response is identical regardless of what a valid
+		// token would have done).
+		if !checkIPPolicy(w, r, a.ipPolicy) {
+			return
+		}
 		if a.rateLimiter != nil && !a.rateLimiter.Allow() {
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, `{"error":"rate_limit_exceeded"}`, http.StatusTooManyRequests)
 			return
 		}
-		if a.validator == nil || a.authorizer == nil {
-			http.Error(w, `{"error":"admin_auth_not_configured"}`, http.StatusServiceUnavailable)
+		if !checkDestructiveConfirm(w, r, a.destructive) {
 			return
 		}
-		token := bearerFromHTTP(r)
-		if token == "" {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="admin"`)
-			http.Error(w, `{"error":"missing_token"}`, http.StatusUnauthorized)
-			return
-		}
-		claims, err := a.validator.ValidateToken(r.Context(), token)
-		if err != nil {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="admin", error="invalid_token"`)
-			http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
-			return
-		}
-		clientID := ""
-		if len(claims.Audience) > 0 {
-			clientID = claims.Audience[0]
-		}
-		ok, err := a.authorizer.HasAdminScope(r.Context(), claims.Subject, clientID, a.scopeForHTTP(r))
-		if err != nil {
-			http.Error(w, `{"error":"internal_error"}`, http.StatusInternalServerError)
-			return
-		}
+		claims, clientID, ok := a.authenticateHTTP(w, r)
 		if !ok {
-			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 			return
 		}
 
@@ -343,9 +338,48 @@ func (a *Middleware) HTTPMiddleware(next http.Handler) http.Handler {
 		if a.enforceIdleTimeout(w, r, claims) {
 			return
 		}
+		if !checkWriteQuota(w, r, a.quota, claims.Subject, tenantHintFromClaims(claims)) {
+			return
+		}
 
 		next.ServeHTTP(w, r.WithContext(withActor(r.Context(), claims.Subject, clientID)))
 	})
+}
+
+// authenticateHTTP validates the bearer token and admin scope for r, writing
+// the appropriate 401/403/500/503 response and returning ok=false on any
+// failure. Split out of HTTPMiddleware to stay under the function-length
+// budget.
+func (a *Middleware) authenticateHTTP(w http.ResponseWriter, r *http.Request) (claims *core.TokenClaims, clientID string, ok bool) {
+	if a.validator == nil || a.authorizer == nil {
+		http.Error(w, `{"error":"admin_auth_not_configured"}`, http.StatusServiceUnavailable)
+		return nil, "", false
+	}
+	token := bearerFromHTTP(r)
+	if token == "" {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="admin"`)
+		http.Error(w, `{"error":"missing_token"}`, http.StatusUnauthorized)
+		return nil, "", false
+	}
+	claims, err := a.validator.ValidateToken(r.Context(), token)
+	if err != nil {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="admin", error="invalid_token"`)
+		http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
+		return nil, "", false
+	}
+	if len(claims.Audience) > 0 {
+		clientID = claims.Audience[0]
+	}
+	allowed, err := a.authorizer.HasAdminScope(r.Context(), claims.Subject, clientID, a.scopeForHTTP(r))
+	if err != nil {
+		http.Error(w, `{"error":"internal_error"}`, http.StatusInternalServerError)
+		return nil, "", false
+	}
+	if !allowed {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		return nil, "", false
+	}
+	return claims, clientID, true
 }
 
 // enforceIdleTimeout checks the admin bearer token's last-used-at against

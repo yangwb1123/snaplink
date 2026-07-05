@@ -86,6 +86,81 @@ type AdminConfig struct {
 	APIRESTEnabled bool `yaml:"api_rest_enabled"`
 }
 
+// AdminWriteQuotaConfig opts into a hard, fixed-window cap on the number of
+// admin WRITE operations (POST/PUT/PATCH/DELETE under /api/v1/admin/) a
+// given tenant or admin identity may perform per window — a QUOTA (a bounded
+// budget that resets wholesale on a schedule), distinct from
+// SecurityConfig.RateLimit's token-bucket rate. Wired via
+// AdminMiddleware.SetWriteQuota (interfaces/admin), not an sso.Option — the
+// admin middleware, like its existing SetRateLimit/SetAdminTokenStore
+// knobs, is configured directly on the constructed *sso.AdminMiddleware.
+// Disabled by default: Enabled=false leaves every request byte-identical to
+// a build without this feature.
+type AdminWriteQuotaConfig struct {
+	Enabled bool          `yaml:"enabled"`
+	Limit   int           `yaml:"limit"`
+	Window  time.Duration `yaml:"window"`
+	// KeyBy selects the quota dimension: "tenant" keys by the acting admin's
+	// tenant (falling back to admin identity when the token carries none);
+	// anything else (including the empty default) keys by admin identity.
+	KeyBy string `yaml:"key_by"`
+}
+
+// AdminChangeApprovalConfig opts into the generic two-person change-approval
+// workflow (domains/admingovernance): an admin PROPOSES an action_type +
+// payload (POST /api/v1/admin/changes), a DIFFERENT admin APPROVES it
+// (POST .../{id}/approve), and — when the deployment registered an Applier
+// for that action_type — the approval immediately applies the change.
+// Generalizes core.BreakGlassStore's propose/approve/self-approval-refusal
+// shape beyond emergency-access grants. ActionTypes, when non-empty,
+// restricts Propose to only the listed action_type values (empty = any
+// action_type accepted). Disabled by default: no /api/v1/admin/changes
+// routes are mounted.
+type AdminChangeApprovalConfig struct {
+	Enabled     bool     `yaml:"enabled"`
+	ActionTypes []string `yaml:"action_types"`
+}
+
+// AdminDestructiveActionsConfig opts into a pre-check on admin mutations
+// classified destructive (tenant deletion, client deletion, bulk token
+// revocation, ...): the caller MUST send the X-Confirm: true header,
+// mirroring the {confirm: true} convention the bulk-revoke-by-user and
+// self-service account-erase endpoints already use, generalized to a
+// transport-level header because this gate runs BEFORE any handler parses a
+// body (and it must also cover the grpc-gateway-proxied admin services,
+// which never see interfaces/admin's own JSON body binding). Rules is a
+// configured (method, path-prefix) allow-list — see
+// domains/admingovernance.DestructiveRule; Enabled=false (the default)
+// leaves every mutation exactly as it behaves today. Wired via
+// AdminMiddleware.SetDestructiveActions.
+type AdminDestructiveActionsConfig struct {
+	Enabled bool                         `yaml:"enabled"`
+	Rules   []AdminDestructiveActionRule `yaml:"rules"`
+}
+
+// AdminDestructiveActionRule is one entry of AdminDestructiveActionsConfig.Rules.
+type AdminDestructiveActionRule struct {
+	Method     string `yaml:"method"`
+	PathPrefix string `yaml:"path_prefix"`
+	Action     string `yaml:"action"`
+}
+
+// AdminIPAllowlistConfig opts into restricting /api/v1/admin/* access to
+// configured IP ranges and/or geographic regions. Composes with the
+// EXISTING geo enrichment SPI (platform/geo.Provider) rather than
+// reimplementing IP-to-geo resolution: CIDRs are checked directly against
+// the request IP (via the SAME geo.DefaultIPExtractor the enrichment
+// middleware uses); Countries are checked against whatever geo.Provider the
+// deployment already wires. Both lists empty (the default) disables the
+// check; when both are configured a request must satisfy BOTH dimensions
+// (see domains/admingovernance.Allowed). Wired via
+// AdminMiddleware.SetIPAllowlist.
+type AdminIPAllowlistConfig struct {
+	Enabled   bool     `yaml:"enabled"`
+	CIDRs     []string `yaml:"cidrs"`
+	Countries []string `yaml:"countries"`
+}
+
 // BreakGlassConfig opts into emergency ("break-glass") admin sessions
 // (core.BreakGlassStore + the POST/GET/DELETE/approve /api/v1/admin/break-glass
 // lifecycle endpoints, sso.WithBreakGlassStore). Disabled by default: without

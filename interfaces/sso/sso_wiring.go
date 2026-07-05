@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/snaplink/sso/domains/admingovernance"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenant"
@@ -183,6 +184,14 @@ type wiringState struct {
 	// pre-feature build (no cookie, no session_state, no discovery field,
 	// route unmounted).
 	sessionManagementEnabled bool
+
+	// approvalStore + changeRegistry + approvalActionTypes back the generic
+	// change-approval workflow (WithChangeApprovalStore). Nil store ⇒ the
+	// /api/v1/admin/changes routes are NOT mounted — byte-identical to a
+	// build without this feature.
+	approvalStore       admingovernance.ApprovalStore
+	changeRegistry      *admingovernance.Registry
+	approvalActionTypes admingovernance.RequiredActionTypes
 }
 
 // newBackgroundHandlerContext adapts a plain context.Context into a

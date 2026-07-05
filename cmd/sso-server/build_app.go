@@ -13,6 +13,7 @@ import (
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/domains/admingovernance"
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/domains/authenticators/webauthn"
 	"github.com/snaplink/sso/domains/connections"
@@ -258,7 +259,42 @@ func (b *appBuilder) wireAdminMW(srv *sso.Server) *sso.AdminMiddleware {
 			mw.SetAdminSessionTTL(ttl)
 		}
 	}
+	b.wireAdminGovernanceMW(mw, srv)
 	return mw
+}
+
+// wireAdminGovernanceMW wires the admin governance framework's
+// transport-level checks onto mw: the per-tenant/admin write quota, the
+// destructive-action confirmation guard, and the IP-allowlist/geo-lock.
+// Each is independently opt-in (its own config section); an unconfigured
+// section calls no setter, leaving mw byte-identical on that axis. Split
+// out of wireAdminMW to keep it under the function-length budget. The
+// IP-allowlist's country dimension reuses srv.GeoProvider() (the SAME
+// provider WithGeoProvider wired for the enrichment middleware) rather than
+// building a second one.
+func (b *appBuilder) wireAdminGovernanceMW(mw *sso.AdminMiddleware, srv *sso.Server) {
+	cfg := b.cfg
+	if q := cfg.AdminWriteQuota; q.Enabled {
+		mw.SetWriteQuota(admingovernance.NewMemoryWriteQuotaStore(), q.Limit, q.Window, q.KeyBy)
+		b.logger.Info("admin governance: write quota enabled", "limit", q.Limit, "window", q.Window, "key_by", q.KeyBy)
+	}
+	if d := cfg.AdminDestructive; d.Enabled {
+		rules := make([]admingovernance.DestructiveRule, 0, len(d.Rules))
+		for _, r := range d.Rules {
+			rules = append(rules, admingovernance.DestructiveRule{Method: r.Method, PathPrefix: r.PathPrefix, Action: r.Action})
+		}
+		mw.SetDestructiveActions(admingovernance.NewDestructiveSet(rules))
+		b.logger.Info("admin governance: destructive-action confirmation guard enabled", "rules", len(rules))
+	}
+	if ip := cfg.AdminIPAllowlist; ip.Enabled {
+		allow, err := admingovernance.ParseIPAllowlistConfig(ip.CIDRs, ip.Countries)
+		if err != nil {
+			b.logger.Error("admin governance: invalid ip allowlist config, gate NOT installed", "error", err)
+			return
+		}
+		mw.SetIPAllowlist(allow, srv.GeoProvider())
+		b.logger.Info("admin governance: ip allowlist/geo-lock enabled", "cidrs", len(ip.CIDRs), "countries", len(ip.Countries))
+	}
 }
 
 // serverRuntime carries the post-NewServer handles assemble folds into the
