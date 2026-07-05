@@ -8,6 +8,9 @@ import (
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
+	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/domains/federation"
+	federationhealth "github.com/snaplink/sso/domains/federation/health"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -163,7 +166,8 @@ func (b *appBuilder) wireFederation() error {
 	if err != nil {
 		return fmt.Errorf("federation: %w", err)
 	}
-	b.opts = append(b.opts, sso.WithFederationEntity(fedCfg, b.jwtIssuer))
+	resolverOpts := b.wireFederationConnectionHealth(cfg.Federation.ConnectionHealth)
+	b.opts = append(b.opts, sso.WithFederationEntity(fedCfg, b.jwtIssuer, resolverOpts...))
 	logger.Info("federation: OpenID Federation 1.0 entity configuration enabled — self-signed Entity Statement served at /.well-known/openid-federation",
 		"authority_hints", len(fedCfg.AuthorityHints),
 		"trust_anchors", len(fedCfg.TrustAnchors),
@@ -200,6 +204,28 @@ func (b *appBuilder) wireFederation() error {
 		)
 	}
 	return nil
+}
+
+// wireFederationConnectionHealth opts into the federation metadata-health
+// lifecycle (PURE OBSERVABILITY — see config.FederationHealthConfig): when
+// enabled, it builds a MemoryConnectionHealth store, wraps the SAME hardened
+// default fetcher (federation.NewDefaultFetcher) with a recording decorator,
+// wires the store into the SDK (mounting the admin listing), and returns the
+// WithTrustChainFetcher option so the trust-chain resolver's fetches flow
+// through the SAME wrapped fetcher the admin listing reads from. Disabled
+// (default) ⇒ returns nil, so WithFederationEntity gets no extra resolver
+// options and behavior is byte-identical to a build without this package.
+func (b *appBuilder) wireFederationConnectionHealth(cfg config.FederationHealthConfig) []federation.TrustChainResolverOption {
+	if !cfg.Enabled {
+		return nil
+	}
+	store := federationhealth.NewMemoryConnectionHealth()
+	observed := federationhealth.NewObservingFetcher(federation.NewDefaultFetcher(), store)
+	b.opts = append(b.opts, sso.WithFederationConnectionHealth(store, cfg.CertExpiryWarning))
+	b.logger.Info("federation: connection-health tracking enabled — GET /api/v1/admin/federation/health lists per-peer fetch health + TLS certificate expiry",
+		"cert_expiry_warning", cfg.CertExpiryWarning,
+	)
+	return []federation.TrustChainResolverOption{federation.WithTrustChainFetcher(observed)}
 }
 
 // wireProfilesAndMetadata wires OAuth2.1 strict mode, the FAPI compliance

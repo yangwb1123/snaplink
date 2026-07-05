@@ -215,6 +215,17 @@ func (f *httpFetcher) get(ctx context.Context, rawURL, accept string) ([]byte, e
 	return body, nil
 }
 
+// NewDefaultFetcher returns the hardened production EntityStatementFetcher
+// (https-only, SSRF-guarded dial, no redirects, bounded timeout + body size —
+// see the file header for the full model). NewTrustChainResolver already uses
+// this fetcher by default when no WithTrustChainFetcher option overrides it;
+// it is exported so an OPTIONAL decorator (e.g. a connection-health observer
+// that records fetch outcomes for observability) can WRAP the SAME hardened
+// fetcher instead of reimplementing its SSRF/timeout/size hardening.
+func NewDefaultFetcher() EntityStatementFetcher {
+	return newHTTPFetcher()
+}
+
 // entityConfigurationURL appends the well-known federation path to an entity
 // identifier (OpenID Federation 1.0 §9). The entity ID may carry a path
 // component, so the well-known segment is inserted, not naively concatenated:

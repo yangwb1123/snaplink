@@ -190,6 +190,31 @@ type FederationConfig struct {
 	// absurd-cardinality leaf). A leaf over the cap fails the gate closed. 0 ⇒ SDK
 	// default (64). Relevant whenever required_trust_mark_types is non-empty.
 	MaxLeafTrustMarks int `yaml:"max_leaf_trust_marks"`
+
+	// ConnectionHealth opts into the federation metadata-health lifecycle:
+	// per-peer fetch observability (last success/failure, consecutive
+	// failures, last-observed TLS certificate expiry), surfaced read-only at
+	// GET /api/v1/admin/federation/health. Default-off (zero value): no
+	// wrapping, no store, no route — byte-identical to a build without it.
+	ConnectionHealth FederationHealthConfig `yaml:"connection_health"`
+}
+
+// FederationHealthConfig opts into tracking each federation peer's
+// fetch-path health. PURE OBSERVABILITY: it wraps the SAME hardened
+// EntityStatementFetcher the trust-chain resolver already uses via a
+// decorator that never alters a fetch's result — trust-chain validation and
+// its fail-closed semantics are unaffected either way. This is a queryable
+// list an operator polls (or scrapes into their own alerting), NOT a new
+// outbound push/notification channel.
+type FederationHealthConfig struct {
+	// Enabled turns on peer health tracking + mounts the admin listing.
+	// False (default) ⇒ byte-identical to a build without this package.
+	Enabled bool `yaml:"enabled"`
+	// CertExpiryWarning is the "expiring soon" threshold: a tracked peer
+	// whose last-observed TLS leaf certificate expires within this window is
+	// flagged cert_expiring in the admin listing. 0 ⇒ SDK default (30 days).
+	// Only relevant when Enabled.
+	CertExpiryWarning time.Duration `yaml:"cert_expiry_warning"`
 }
 
 // TrustMarkIssuerConfig names one operator-authorized Trust Mark Issuer for the

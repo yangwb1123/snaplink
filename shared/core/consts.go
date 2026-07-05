@@ -427,6 +427,16 @@ const (
 	// max-age — NOT a credential endpoint).
 	PathFederationFetch = "/fetch"
 
+	// PathAdminFederationHealth is the read-only admin listing of federation
+	// peer metadata health: last fetch success/failure, consecutive failures,
+	// and last-observed TLS certificate expiry (+ a derived cert_expiring
+	// flag). Full path (not group-relative), gated by AdminMiddleware via the
+	// /api/v1/admin/ prefix — mirrors PathStorageHealth. Only mounted when a
+	// federation.ConnectionHealth store is wired (opt-in
+	// WithFederationConnectionHealth); pure observability, never consulted by
+	// trust-chain validation.
+	PathAdminFederationHealth = "/api/v1/admin/federation/health"
+
 	PathNetPolicies        = "/netpolicy/policies"
 	PathNetPolicyByName    = "/netpolicy/policies/:name"
 	PathNetPolicyClassify  = "/netpolicy/classify"
