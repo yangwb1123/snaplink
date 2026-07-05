@@ -1,0 +1,37 @@
+# Benchmark budget CI gate — opt-in, non-blocking. Runs the gated hot-path
+# benchmark set (JWT issuance/validation, JWKS, OAuth store concurrency,
+# param binding, rate limiting — see ops/deploy/benchgate/benchmarks.yaml)
+# and fails if a benchmark regresses beyond benchmarks.yaml's
+# threshold_percent vs. the checked-in baseline
+# (ops/deploy/benchgate/baseline.txt).
+#
+# Deliberately NOT wired into ci.yml and NOT triggered on push/pull_request:
+# shared GitHub-hosted runners have noisy, non-dedicated CPUs, so a
+# wall-clock benchmark gate blocking every PR would trade a real
+# reliability regression (flaky, unrelated PR failures) for a soft
+# performance signal. Runs on a schedule and on-demand instead — see
+# docs/deferred-backlog.md "Benchmark budget CI gate".
+name: benchmark-gate
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # weekly, Monday 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  bench-gate:
+    name: benchmark regression check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: make bench-gate
+        run: make bench-gate
