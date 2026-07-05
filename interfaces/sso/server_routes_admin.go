@@ -191,6 +191,12 @@ func (s *Server) mountAdminUserState(api Router) {
 	if s.accountLockout != nil {
 		api.POST(PathAdminAccountLockoutClear, s.handleAdminClearAccountLockout)
 	}
+	// User-lifecycle state machine. Needs the roster (userProvider) for the
+	// existence check + the sweep, and the lifecycle store for state/history.
+	if s.userLifecycleStore != nil && s.userProvider != nil {
+		api.GET(PathAdminUserLifecycle, s.handleAdminGetUserLifecycle)
+		api.POST(PathAdminUserLifecycle, s.handleAdminTransitionUserLifecycle)
+	}
 }
 
 // mountAdminB2B registers the admin management of enterprise connections,
@@ -367,6 +373,7 @@ func adminAPIEndpointCandidates() []endpointCandidate {
 		{endpointInfo{http.MethodGet, prefix + PathAdminSessions, "admin_api"}, on(func(s *Server) bool { return s.sessionMgr != nil })},
 		{endpointInfo{http.MethodGet, prefix + PathAdminUserConsents, "admin_api"}, on(func(s *Server) bool { return s.consentStore != nil })},
 		{endpointInfo{http.MethodGet, prefix + PathAdminUserMFA, "admin_api"}, on(func(s *Server) bool { return s.mfaEnrollmentStore != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminUserLifecycle, "admin_api"}, on(func(s *Server) bool { return s.userLifecycleStore != nil && s.userProvider != nil })},
 		{endpointInfo{http.MethodPost, prefix + PathAdminUserPassword, "admin_api"}, on(func(s *Server) bool { return s.passwordCredentialStore != nil })},
 		{endpointInfo{http.MethodPost, prefix + PathAdminUserEmail, "admin_api"}, on(func(s *Server) bool { return s.userProvider != nil })},
 		{endpointInfo{http.MethodDelete, prefix + PathAdminUserDeviceSecrets, "admin_api"}, on(func(s *Server) bool { return s.deviceSecretStore != nil })},

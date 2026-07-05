@@ -65,6 +65,7 @@ const (
 	EventAdminUserCreated                    = auditspi.EventAdminUserCreated
 	EventAdminUserDeleted                    = auditspi.EventAdminUserDeleted
 	EventAdminUserEmailChanged               = auditspi.EventAdminUserEmailChanged
+	EventAdminUserLifecycleChanged           = auditspi.EventAdminUserLifecycleChanged
 	EventAdminUserUpdated                    = auditspi.EventAdminUserUpdated
 	EventAnomalyDetected                     = auditspi.EventAnomalyDetected
 	EventBootstrapLockAcquired               = auditspi.EventBootstrapLockAcquired

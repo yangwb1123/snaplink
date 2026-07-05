@@ -5,13 +5,20 @@ package auditspi
 // one of these. ActorID is the admin who issued the call; Reason
 // carries "target=<resource>" for easy auditing.
 const (
-	EventAdminClientCreated              EventType = "admin_client_created"
-	EventAdminClientUpdated              EventType = "admin_client_updated"
-	EventAdminClientDeleted              EventType = "admin_client_deleted"
-	EventAdminClientSecretRotated        EventType = "admin_client_secret_rotated"
-	EventAdminUserCreated                EventType = "admin_user_created"
-	EventAdminUserUpdated                EventType = "admin_user_updated"
-	EventAdminUserDeleted                EventType = "admin_user_deleted"
+	EventAdminClientCreated       EventType = "admin_client_created"
+	EventAdminClientUpdated       EventType = "admin_client_updated"
+	EventAdminClientDeleted       EventType = "admin_client_deleted"
+	EventAdminClientSecretRotated EventType = "admin_client_secret_rotated"
+	EventAdminUserCreated         EventType = "admin_user_created"
+	EventAdminUserUpdated         EventType = "admin_user_updated"
+	EventAdminUserDeleted         EventType = "admin_user_deleted"
+	// EventAdminUserLifecycleChanged is emitted for every applied user-lifecycle
+	// state transition — both operator-driven (POST /admin/users/:id/lifecycle,
+	// ActorID = admin) and the auto-deprovisioning sweep (ActorID = "system").
+	// Metadata carries target_user, from_state, to_state, and (when supplied) a
+	// reason, so a single record answers "who moved which account, whither, and
+	// why".
+	EventAdminUserLifecycleChanged       EventType = "admin_user_lifecycle_changed"
 	EventAdminTokenRevoked               EventType = "admin_token_revoked"
 	EventAdminTempTokenIssued            EventType = "admin_temp_token_issued"
 	EventAdminConsentRevoked             EventType = "admin_consent_revoked"

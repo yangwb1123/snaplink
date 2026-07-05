@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/snaplink/sso/domains/userlifecycle"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/platform/lifecycle/rotation"
@@ -263,5 +264,85 @@ func (s *Server) RecordConfigChange(ctx context.Context, actor, tenantID, resour
 	}
 	if err := s.configAuditStore.Record(ctx, entry); err != nil {
 		s.logger.Error("config history record failed", "resource", resource, "resource_id", resourceID, "error", err)
+	}
+}
+
+// WithUserLifecycle wires the user-lifecycle state machine: it mounts the admin
+// GET/POST /api/v1/admin/users/:id/lifecycle endpoints (backed by store) so
+// operators can inspect and drive an account through INVITED -> ACTIVE ->
+// {SUSPENDED, INACTIVE} -> ARCHIVED -> PURGED, each transition validated against
+// the legal-transition table and audited (admin_user_lifecycle_changed).
+//
+// The store is GOVERNANCE metadata: a user with no record reads as ACTIVE, and
+// it NEVER gates authentication (core.User.IsActive still owns the login
+// decision). Nil (the default) leaves the endpoints unmounted — byte-identical
+// to a build without the feature. Pair with WithUserAutoDeprovision to also
+// advance dormant accounts on a schedule.
+func WithUserLifecycle(store userlifecycle.Store) Option {
+	return func(s *Server) { s.userLifecycleStore = store }
+}
+
+// WithUserAutoDeprovision arms the OPTIONAL background sweep that advances
+// dormant accounts (ACTIVE -> INACTIVE past cfg.DormantAfter; INACTIVE ->
+// ARCHIVED past cfg.DormantAfter+cfg.ArchiveAfter), using activity as the "last
+// active" signal. It REQUIRES WithUserLifecycle (the sweep persists via that
+// store).
+//
+// OFF by default and OFF unless BOTH configured AND started: cfg.DormantAfter
+// <= 0 (the zero value) makes the sweep a no-op, and even when configured the
+// operator must start Server.RunUserAutoDeprovision in a goroutine (the same
+// discipline as RunBreakGlassSweeper) — NewServer never starts it. A build that
+// only wires the store, or omits this option, keeps existing behavior exactly.
+func WithUserAutoDeprovision(cfg userlifecycle.DeprovisionConfig, activity userlifecycle.LastActiveSource) Option {
+	return func(s *Server) {
+		s.userDeprovision = cfg
+		s.userLifecycleActivity = activity
+	}
+}
+
+// LifecycleStore exposes the wired user-lifecycle store to the admin lifecycle
+// handlers (admin.Deps); nil when WithUserLifecycle isn't set.
+func (s *Server) LifecycleStore() userlifecycle.Store { return s.userLifecycleStore }
+
+// RunUserAutoDeprovision wakes every interval and runs one auto-deprovisioning
+// sweep (userlifecycle.SweepOnce): dormant ACTIVE accounts move to INACTIVE and
+// (when configured) long-dormant INACTIVE accounts to ARCHIVED. Same shutdown
+// contract as RunBreakGlassSweeper: it exits on ctx cancellation, a sweep error
+// is logged but never tears down the loop, and it is the OPERATOR's
+// responsibility to start it in a goroutine — NewServer/Mount never start it, so
+// embedding the SDK never leaks it.
+//
+//	go srv.RunUserAutoDeprovision(ctx, time.Hour)
+//
+// No-op when the store/activity source is unwired, the config is disabled
+// (DormantAfter <= 0), or interval <= 0 — byte-identical to a build without it.
+func (s *Server) RunUserAutoDeprovision(ctx context.Context, interval time.Duration) {
+	if s.userLifecycleStore == nil || s.userLifecycleActivity == nil ||
+		!s.userDeprovision.Enabled() || interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := userlifecycle.SweepOnce(ctx, s.userDeprovisionDeps()); err != nil {
+				s.logger.Error("user auto-deprovision sweep failed", "error", err)
+			}
+		}
+	}
+}
+
+// userDeprovisionDeps assembles the SweepDeps from the wired server state.
+func (s *Server) userDeprovisionDeps() userlifecycle.SweepDeps {
+	return userlifecycle.SweepDeps{
+		Users:      s.userProvider,
+		Lifecycle:  s.userLifecycleStore,
+		LastActive: s.userLifecycleActivity,
+		Auditor:    s.auditor,
+		Logger:     s.logger,
+		Config:     s.userDeprovision,
 	}
 }

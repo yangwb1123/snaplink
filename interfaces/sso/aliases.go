@@ -352,6 +352,7 @@ const PathAdminUserConsents = core.PathAdminUserConsents
 const PathAdminUserConsentByID = core.PathAdminUserConsentByID
 const PathAdminUserMFA = core.PathAdminUserMFA
 const PathAdminUserMFAByID = core.PathAdminUserMFAByID
+const PathAdminUserLifecycle = core.PathAdminUserLifecycle
 const PathAdminUserPassword = core.PathAdminUserPassword
 const PathAdminUserDeviceSecrets = core.PathAdminUserDeviceSecrets
 const PathAdminUserPasswordResetTokens = core.PathAdminUserPasswordResetTokens
