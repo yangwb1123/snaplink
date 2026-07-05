@@ -14,6 +14,7 @@ import (
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/netpolicy"
 	"github.com/snaplink/sso/shared/spi"
+	"github.com/snaplink/sso/shared/trust"
 	"time"
 )
 
@@ -425,10 +426,18 @@ func WithReadyCheckTimeout(name string, timeout time.Duration) Option {
 // engine over the given policy store and config, and mounts the read-only
 // governance view GET /api/v1/admin/access-policies (admin:read).
 //
-// This wave the engine is ADVISORY: callers get a decision via
-// [Server.EvaluateConditionalAccess], but it is deliberately NOT wired into the
-// live /auth/login control flow (that PEP integration is a later phase). A nil
-// store is a no-op — byte-identical to a build without the feature.
+// Callers always get a decision via [Server.EvaluateConditionalAccess]. The
+// engine ADDITIONALLY becomes a live Policy Enforcement Point on /auth/login
+// — after credential validation, before token/session issuance — only when
+// cfg.Enforce is true (see [conditionalaccess.Config.Enforce]); with
+// Enforce left false (the default) wiring a store changes no live auth
+// decision, matching the historical advisory-only behavior. A nil store is a
+// no-op — byte-identical to a build without the feature either way.
+//
+// Pair with [WithTrustScorer] and [WithDeviceFingerprint] to feed the engine
+// the trust-score and device-posture signals it evaluates policies against;
+// without them AccessContext.TrustScoreKnown/DevicePosture stay at their
+// fail-open defaults (the engine's existing degraded-trust floor).
 func WithConditionalAccess(store conditionalaccess.Store, cfg conditionalaccess.Config) Option {
 	return func(s *Server) {
 		if store == nil {
@@ -437,4 +446,30 @@ func WithConditionalAccess(store conditionalaccess.Store, cfg conditionalaccess.
 		s.capStore = store
 		s.capEngine = conditionalaccess.NewEngine(store, cfg)
 	}
+}
+
+// WithTrustScorer wires a [trust.TrustScorer] (typically a
+// [trust.WeightedComposite] over the reference geo/IP-reputation/behavior
+// scorers) as the conditional-access engine's trust-score signal source at
+// /auth/login. Only consulted when [WithConditionalAccess] is ALSO wired
+// with Config.Enforce set — otherwise it is inert (the SDK does not call an
+// unused scorer). A scorer that errors is logged and treated as "no score
+// available" (AccessContext.TrustScoreKnown=false): the CAP engine already
+// degrades that to its conservative floor rather than denying, so a flaky
+// trust data source can never become an account-lockout lever.
+func WithTrustScorer(scorer trust.TrustScorer) Option {
+	return func(s *Server) { s.trustScorer = scorer }
+}
+
+// WithDeviceFingerprint wires a [conditionalaccess.DeviceFingerprint] as the
+// conditional-access engine's device-posture signal source at /auth/login:
+// the Server looks up the caller-supplied device fingerprint (the
+// [core.HeaderDeviceID] request header) and feeds the result into
+// AccessContext.DevicePosture. Only consulted when [WithConditionalAccess] is
+// ALSO wired with Config.Enforce set. Nil (the default), a missing header, a
+// lookup miss, and a lookup ERROR all degrade identically to
+// [conditionalaccess.PostureUnknown] — a data-source outage here fails open,
+// never denies.
+func WithDeviceFingerprint(fp conditionalaccess.DeviceFingerprint) Option {
+	return func(s *Server) { s.deviceFingerprint = fp }
 }

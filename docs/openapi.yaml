@@ -195,7 +195,8 @@ paths:
             - `LoginDiscoveryResponse` — `provider` was omitted; the
               server returns the providers this client may use.
             - `MFARequiredResponse` — credentials accepted but the
-              configured RiskScorer demanded a step-up factor.
+              configured RiskScorer, OR a zero-trust conditional-access (CAP)
+              engine wired with live enforcement, demanded a step-up factor.
               `mfa_challenge_id` + `mfa_methods` direct the client
               to POST `/auth/mfa` next.
           content:
@@ -218,7 +219,10 @@ paths:
             Client inactive / tenant mismatch / authenticator not allowed /
             data-residency violation (`region_not_allowed` when the serving
             region is outside the tenant's allowed set, `residency_violation`
-            when a write would leave the home region under enforced writes).
+            when a write would leave the home region under enforced writes) /
+            risk-denied (`risk_denied`) / conditional-access denied
+            (`conditional_access_denied`, only when the CAP engine is wired
+            with live enforcement and a matched policy's verdict is deny).
           content:
             application/json:
               schema:
@@ -4001,12 +4005,20 @@ paths:
         actions (`allow` / `deny` / `require_step_up` / `restrict_scopes` /
         `log`).
 
-        The engine is ADVISORY: the server exposes an evaluation entry point
-        (an allow / deny / require-step-up decision, degrading to a
-        conservative trust floor when a signal is missing rather than denying
-        outright), but it is not wired into the live `/auth/login` control flow
-        in this release. Policy authoring is out of band (a YAML bundle loaded
-        at boot), so this endpoint only lists.
+        The server always exposes an evaluation entry point (an allow / deny /
+        require-step-up decision, degrading to a conservative trust floor when
+        a signal is missing rather than denying outright). It ADDITIONALLY
+        becomes a live `/auth/login` Policy Enforcement Point — after
+        credential validation, before token/session issuance — only when the
+        engine's `enforce` config is set; a matched `deny` blocks the login
+        (`403 conditional_access_denied`) and a matched `require_step_up`
+        routes through the existing MFA orchestration (never inventing a
+        step-up path the deployment hasn't configured). With `enforce` left at
+        its default `false`, wiring policies changes no live auth decision —
+        this endpoint remains a pure read-only view either way. A trust-scorer
+        or policy-store outage always fails OPEN on `/auth/login` regardless of
+        `enforce`/`default_deny`. Policy authoring is out of band (a YAML
+        bundle loaded at boot), so this endpoint only lists.
 
         Admin-gated — the admin middleware enforces `admin:read` (the path
         sits under `/api/v1/admin/`). Opt-in via `WithConditionalAccess`; the

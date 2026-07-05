@@ -89,7 +89,13 @@ const (
 	ErrNetPolicyNotConfigured    = "netpolicy_not_configured"
 	ErrNetPolicyNotFound         = "netpolicy_not_found"
 	ErrRiskDenied                = "risk_denied"
-	ErrPayloadTooLarge           = "payload_too_large"
+	// ErrConditionalAccessDenied is returned (403) when the zero-trust
+	// conditional-access (CAP) engine is wired with live enforcement
+	// (ConditionalAccessConfig.Enforce) and a matched policy's Decision.Verdict
+	// is VerdictDeny. Distinct from ErrRiskDenied (a different, independently
+	// optional gate) so audit/SIEM can tell which subsystem refused the login.
+	ErrConditionalAccessDenied = "conditional_access_denied"
+	ErrPayloadTooLarge         = "payload_too_large"
 	// ErrServiceDegraded is returned (503) by the degraded-service gate when the
 	// active DR mode refuses a request class (read_only write, non-auth-plane
 	// request in auth_only, remote-dependent call in local_only, any non-probe

@@ -147,7 +147,9 @@ func BuildTokenPolicyStore(cfg config.TokenPolicyConfig) (tokenpolicy.Store, err
 // — either an external bundle (File, parsed by the strict CAP loader) or the
 // inline Policies list. Returns (nil, zero Config, nil) when absent
 // (byte-identical to a build without the feature). File and inline Policies are
-// mutually exclusive.
+// mutually exclusive. cfg.Enforce passes straight through to Config.Enforce —
+// false (the default) keeps the engine advisory-only even when policies are
+// configured; see AccessPolicyConfig's doc for the staged-rollout pattern.
 func BuildConditionalAccess(cfg config.AccessPolicyConfig) (conditionalaccess.Store, conditionalaccess.Config, error) {
 	file := strings.TrimSpace(cfg.File)
 	if file == "" && len(cfg.Policies) == 0 {
@@ -160,7 +162,7 @@ func BuildConditionalAccess(cfg config.AccessPolicyConfig) (conditionalaccess.St
 	if err := loadAccessPolicies(store, file, cfg.Policies); err != nil {
 		return nil, conditionalaccess.Config{}, err
 	}
-	return store, conditionalaccess.Config{DegradedTrust: cfg.DegradedTrust, DefaultDeny: cfg.DefaultDeny}, nil
+	return store, conditionalaccess.Config{DegradedTrust: cfg.DegradedTrust, DefaultDeny: cfg.DefaultDeny, Enforce: cfg.Enforce}, nil
 }
 
 // loadAccessPolicies seeds store from the bundle file (strict loader, unknown

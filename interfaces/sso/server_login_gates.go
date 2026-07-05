@@ -111,18 +111,18 @@ func WithSessionTrustDecay(cfg SessionTrustDecayConfig) Option {
 
 // EvaluateConditionalAccess resolves the wired zero-trust conditional-access
 // policies against ac and returns the advisory Decision. It is the SDK entry
-// point for callers that want a CAP decision (an external PEP, a gateway, an
-// embedding app's own gate).
+// point for callers that want a CAP decision without live enforcement (an
+// external PEP, a gateway, an embedding app's own gate, or an operator dry-
+// running policies before flipping Config.Enforce).
 //
-// ADVISORY this wave: the Server deliberately does NOT call this from its live
-// /auth/login control flow (see runPostCredentialGates) — the PEP integration
-// is a later phase. When WithConditionalAccess is not wired the engine is nil
-// and this returns a permissive allow, so a caller can invoke it
+// This is DISTINCT from the live /auth/login gate (enforceConditionalAccessLogin
+// in server_login_client.go, gated on Config.Enforce): this method always just
+// RETURNS the Decision — the caller decides what to do with it — and, per its
+// own documented contract, a policy-store outage here falls back to the
+// configured default verdict (fail-closed only if the operator set
+// Config.DefaultDeny). When WithConditionalAccess is not wired the engine is
+// nil and this returns a permissive allow, so a caller can invoke it
 // unconditionally.
-//
-// A policy-store outage does not deny every request: the engine falls back to
-// the configured default verdict (fail-closed only if the operator set
-// Config.DefaultDeny) and the error is logged here.
 func (s *Server) EvaluateConditionalAccess(ctx context.Context, ac AccessContext) ConditionalAccessDecision {
 	if s.capEngine == nil {
 		return ConditionalAccessDecision{Verdict: conditionalaccess.VerdictAllow}
@@ -246,7 +246,7 @@ func (s *Server) runPostMergeAuthzValidation(ctx HandlerContext, req *login.Requ
 // runPostCredentialGates runs the gates that apply once credentials are
 // validated. It returns true the instant an inner guard wrote a response,
 // preserving the exact status+code and short-circuit ORDER of the original
-// inline sequence (ACR -> max_age -> risk -> email-verification):
+// inline sequence (ACR -> max_age -> risk -> conditional-access -> email-verification):
 //
 //   - OIDC §3.1.2.6 / §5.5.1.1 ACR enforcement (acr_values OR claims
 //     id_token.acr), checked immediately after credential validation so it
@@ -256,6 +256,11 @@ func (s *Server) runPostMergeAuthzValidation(ctx HandlerContext, req *login.Requ
 //     scorer configured; scorer errors fail OPEN by contract. Returns true when
 //     it owns the response (risk-denied, or an MFA challenge was issued and the
 //     client must follow up at /auth/mfa); false to proceed to finishLogin.
+//   - Zero-trust conditional-access PEP (enforceConditionalAccessLogin). Skipped
+//     entirely (zero overhead) unless a store is wired AND Config.Enforce is
+//     set; a trust-scorer or policy-store error fails OPEN by contract. Same
+//     true/false contract as the risk gate — an MFA challenge here reuses the
+//     SAME WithMFAProvider/WithMFAChallengeStore wiring the risk gate does.
 //   - Email-verification gate — only active when WithSignupRequireVerification is
 //     set. Runs AFTER credential validation (oracle-safe: attacker who knows the
 //     password cannot distinguish "no such user" from "unverified").
@@ -267,6 +272,9 @@ func (s *Server) runPostCredentialGates(ctx HandlerContext, req *login.Request, 
 		return true
 	}
 	if s.evaluateLoginRisk(ctx, result, req, client) {
+		return true
+	}
+	if s.enforceConditionalAccessLogin(ctx, result, req, client) {
 		return true
 	}
 	if s.rejectUnverifiedEmail(ctx, req, result) {

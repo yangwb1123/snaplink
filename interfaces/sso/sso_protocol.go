@@ -24,6 +24,7 @@ import (
 	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
+	"github.com/snaplink/sso/shared/trust"
 )
 
 // protocolState holds risk/MFA/anomaly/metrics/transport wiring and the OAuth/OIDC grant + discovery static configuration fields.
@@ -49,9 +50,24 @@ type protocolState struct {
 	// (WithConditionalAccess). Both nil ⇒ the engine is unwired: the admin
 	// governance route is not mounted and EvaluateConditionalAccess returns a
 	// permissive allow — byte-identical to a build without the feature. The
-	// engine is ADVISORY this wave (not wired into the live /auth/login flow).
+	// engine is advisory-only (EvaluateConditionalAccess + the admin view)
+	// unless its Config.Enforce is also set, in which case
+	// enforceConditionalAccessLogin (server_login_client.go) additionally acts
+	// on its Decision from the live /auth/login control flow.
 	capStore  conditionalaccess.Store
 	capEngine *conditionalaccess.Engine
+	// trustScorer is the optional composite trust signal (WithTrustScorer)
+	// consulted by enforceConditionalAccessLogin to populate
+	// AccessContext.TrustScore. Nil ⇒ TrustScoreKnown stays false and the CAP
+	// engine degrades to its own conservative floor (fail-open on a missing
+	// signal) — same contract as trust.TrustScorer callers everywhere else.
+	trustScorer trust.TrustScorer
+	// deviceFingerprint is the optional device-posture signal source
+	// (WithDeviceFingerprint) consulted by enforceConditionalAccessLogin to
+	// populate AccessContext.DevicePosture. Nil ⇒ posture stays
+	// conditionalaccess.PostureUnknown — the engine's existing conservative
+	// default for a device that never reports.
+	deviceFingerprint conditionalaccess.DeviceFingerprint
 
 	// sessionTrust holds the zero-trust session-trust-decay wiring
 	// (WithSessionTrustDecay, Direction 3 Phase 3). Its zero value (decay

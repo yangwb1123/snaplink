@@ -4,12 +4,14 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/internal/auth/login"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/geo"
 	"github.com/snaplink/sso/protocols/fapi"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
+	"github.com/snaplink/sso/shared/trust"
 )
 
 // resolveAndValidateLoginClient looks up the requesting client and runs the
@@ -153,4 +155,165 @@ func (s *Server) evaluateLoginRisk(ctx HandlerContext, result *AuthResult, req *
 		}
 	}
 	return false
+}
+
+// enforceConditionalAccessLogin is the LIVE Policy Enforcement Point: called
+// from runPostCredentialGates (server_login_gates.go) after credential
+// validation but BEFORE token/session issuance, it builds the request's
+// trust signals (the wired trust.TrustScorer composite score +
+// DeviceFingerprint lookup) and acts on the engine's Decision. A complete
+// no-op — zero signal collection, zero engine call — unless BOTH a store is
+// wired (WithConditionalAccess) AND its Config.Enforce is true, so a
+// deployment that only wants the advisory EvaluateConditionalAccess /
+// admin-view behavior (Enforce left false, the default) sees byte-identical
+// /auth/login behavior.
+//
+// Fail-open contract (AGENTS.md "Fail Modes"): the trust scorer and the
+// engine's policy store are both risk SIGNALS, not credential checks. Either
+// one erroring (an unreachable data source) is logged and the login
+// PROCEEDS — never denied — so an attacker cannot starve/poison a signal
+// source into a mass account-lockout oracle. Only a verdict the engine
+// computed from data it successfully read is ever acted on:
+//   - VerdictDeny blocks the login (403 conditional_access_denied).
+//   - VerdictRequireStepUp reuses the EXISTING RiskScorer step-up mechanism
+//     (WithMFAProvider + WithMFAChallengeStore) rather than inventing a
+//     parallel one: without both wired, it decays to allow — the same
+//     historical no-op RiskScorer's RequireMFA falls back to.
+//   - VerdictAllow (including the engine's own no-policy-matched default)
+//     proceeds.
+//
+// Returns true when it owns the response (denied, or an MFA challenge was
+// issued and the client must follow up at /auth/mfa); false to proceed.
+func (s *Server) enforceConditionalAccessLogin(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client) bool {
+	if s.capEngine == nil || !s.capEngine.Config().Enforce {
+		return false
+	}
+	reqCtx := ctx.Request().Context()
+	dec, err := s.capEngine.Evaluate(reqCtx, s.buildAccessContext(ctx, result, req, client))
+	if err != nil {
+		// Data-source outage: fail OPEN regardless of the engine's own
+		// configured default verdict (Config.DefaultDeny governs the advisory
+		// EvaluateConditionalAccess path, not this live gate) — a poisoned or
+		// unreachable signal source must never become an account-lockout lever.
+		s.logger.Error("conditional access policy store unavailable; failing open", "error", err, "user", result.UserID, "client", req.ClientID)
+		return false
+	}
+	if s.metrics != nil {
+		s.metrics.ObserveConditionalAccessDecision(string(dec.Verdict))
+	}
+	switch dec.Verdict {
+	case conditionalaccess.VerdictDeny:
+		s.recordLoginFailure(ctx, req.ClientID, req.Provider, core.ErrConditionalAccessDenied)
+		ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, core.ErrConditionalAccessDenied, req.State))
+		return true
+	case conditionalaccess.VerdictRequireStepUp:
+		if s.mfaProvider != nil && s.mfaChallengeStore != nil {
+			s.issueMFAChallenge(ctx, result, *req, client)
+			return true
+		}
+	}
+	return false
+}
+
+// buildAccessContext assembles the conditional-access engine's per-request
+// AccessContext: the wired trust.TrustScorer composite score (degrading to
+// "unknown" on error or when unwired) and the DeviceFingerprint posture
+// lookup (degrading to PostureUnknown identically). Groups is left
+// unpopulated — no group/role-membership signal source is wired into the
+// login path this wave, so a user.member_of policy condition simply never
+// matches (Conditions.specificity treats an empty condition as
+// unconstrained, never as a deny).
+func (s *Server) buildAccessContext(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client) conditionalaccess.AccessContext {
+	signals := s.buildTrustSignals(ctx, result, client)
+	ac := conditionalaccess.AccessContext{
+		DevicePosture:   s.lookupDevicePosture(ctx, signals),
+		Country:         signals.Geo.CountryCode,
+		Now:             time.Now(),
+		RequestedScopes: req.Scope,
+		Subject:         result.UserID,
+		ClientID:        client.ID,
+	}
+	if s.trustScorer == nil {
+		return ac
+	}
+	score, err := s.trustScorer.Score(ctx.Request().Context(), signals)
+	if err != nil {
+		// Fail-open on the data source: leave TrustScoreKnown false so the
+		// engine substitutes its own conservative degraded-trust floor
+		// (Config.DegradedTrust) instead of this gate manufacturing a value.
+		s.logger.Error("trust scorer failed; conditional access falls back to the degraded-trust floor", "error", err, "user", result.UserID)
+		return ac
+	}
+	ac.TrustScore = score.Value
+	ac.TrustScoreKnown = true
+	return ac
+}
+
+// buildTrustSignals captures the request-time trust.TrustSignals available at
+// /auth/login: remote IP, geo (when the geo middleware ran), subject/client,
+// the live AMR/ACR this authentication achieved, and whatever device hints
+// the caller sent (User-Agent + the opaque X-Device-Id fingerprint header).
+func (s *Server) buildTrustSignals(ctx HandlerContext, result *AuthResult, client *Client) trust.TrustSignals {
+	var geoInfo core.GeoInfo
+	if g, ok := GeoFromHandlerContext(ctx); ok && g != nil {
+		geoInfo = *g
+	}
+	hints := make(map[string]string, 2)
+	if ua := ctx.Request().UserAgent(); ua != "" {
+		hints[trustHintUserAgent] = ua
+	}
+	if fp := deviceFingerprintFromRequest(ctx); fp != "" {
+		hints[trustHintDeviceID] = fp
+	}
+	return trust.TrustSignals{
+		RemoteIP:    audit.ClientIP(ctx.Request()),
+		Geo:         geoInfo,
+		UserID:      result.UserID,
+		ClientID:    client.ID,
+		Time:        time.Now(),
+		AMR:         result.AuthMethods,
+		ACR:         result.AchievedACR,
+		DeviceHints: hints,
+	}
+}
+
+// trustHintUserAgent / trustHintDeviceID key the free-form
+// trust.TrustSignals.DeviceHints map this login wiring populates.
+const (
+	trustHintUserAgent = "user_agent"
+	trustHintDeviceID  = "device_id"
+)
+
+// deviceFingerprintFromRequest reads the caller-supplied opaque device
+// fingerprint. Never derived from the User-Agent alone — that header is
+// shared by every user on the same browser/OS build, so using it as a
+// device-identity KEY would misattribute one device's posture to another;
+// an absent header means "no fingerprint offered", not "unknown device
+// posture manufactured from a coarse hint".
+func deviceFingerprintFromRequest(ctx HandlerContext) string {
+	return ctx.Request().Header.Get(core.HeaderDeviceID)
+}
+
+// lookupDevicePosture resolves the wired DeviceFingerprint's posture for this
+// request. Nil provider, an absent fingerprint, a lookup miss, and a lookup
+// ERROR all degrade identically to PostureUnknown — the engine's existing
+// conservative default for a device that never reports (fail-open on the
+// data source; a lookup outage must never read as "confirmed unmanaged").
+func (s *Server) lookupDevicePosture(ctx HandlerContext, signals trust.TrustSignals) conditionalaccess.DevicePosture {
+	if s.deviceFingerprint == nil {
+		return conditionalaccess.PostureUnknown
+	}
+	fp := signals.DeviceHints[trustHintDeviceID]
+	if fp == "" {
+		return conditionalaccess.PostureUnknown
+	}
+	posture, ok, err := s.deviceFingerprint.Lookup(ctx.Request().Context(), fp)
+	if err != nil {
+		s.logger.Error("device fingerprint lookup failed; degrading to unknown posture", "error", err)
+		return conditionalaccess.PostureUnknown
+	}
+	if !ok {
+		return conditionalaccess.PostureUnknown
+	}
+	return posture
 }

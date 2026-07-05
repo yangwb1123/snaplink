@@ -36,6 +36,7 @@ exact emission site.
 | `residency_violation`                 | 403  | Operation would place tenant data outside its residency boundary   | Use a region within the tenant's policy    |
 | `authenticator_not_allowed_for_client`| 403  | Client's `allowed_authenticators` list excludes this provider      | Use a method the client permits            |
 | `risk_denied`                         | 403  | `RiskScorer` returned `DecisionDeny`                               | Step up auth, or wait + retry              |
+| `conditional_access_denied`           | 403  | Zero-trust conditional-access (CAP) engine wired with `enforce: true` and a matched policy's verdict is deny | Step up auth, or wait + retry |
 | `unsupported_provider`                | 400  | `provider` field is not a registered authenticator name            | Use a valid provider name                  |
 | `unknown_provider`                    | 400  | OAuth/OIDC callback received an unknown provider in `state`        | Restart the auth flow                      |
 | `unsupported_grant_type`              | 400  | `/token` received an unrecognized `grant_type`                     | Use a supported grant type                 |

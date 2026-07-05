@@ -21,9 +21,18 @@
 //     likewise fail-open (UX-only): an unknown country skips a geo-gated policy
 //     instead of tripping a geo deny.
 //
-// This wave the engine is ADVISORY: the Server exposes an evaluation entry
-// point and a read-only admin governance view, but it is NOT wired into the
-// live /auth/login control flow (that PEP integration is a later phase).
+// PEP integration: the Server exposes an advisory evaluation entry point
+// (Server.EvaluateConditionalAccess), a read-only admin governance view, AND —
+// when Config.Enforce is set — a live gate on /auth/login (after credential
+// validation, before token/session issuance) that acts on the Decision:
+// VerdictDeny blocks the login, VerdictRequireStepUp routes through the SAME
+// MFA orchestration a RiskScorer's RequireMFA uses (never inventing a step-up
+// path the deployment hasn't already configured). Config.Enforce defaults to
+// false (the historical advisory-only behavior), so wiring a store via
+// WithConditionalAccess without also setting Enforce changes no live auth
+// decision. A DeviceFingerprint (see devicefingerprint.go) is the engine's
+// device-posture signal source, feeding AccessContext.DevicePosture the same
+// way a trust.TrustScorer feeds AccessContext.TrustScore.
 package conditionalaccess
 
 import (
@@ -82,6 +91,17 @@ type Config struct {
 	// zero-trust default-deny posture). It also governs the fallback verdict
 	// when the policy store is unavailable in Engine.Evaluate.
 	DefaultDeny bool
+	// Enforce activates LIVE enforcement at /auth/login (the PEP integration):
+	// when true, a wired Server acts on Decision.Verdict — VerdictDeny blocks
+	// the login, VerdictRequireStepUp routes through the configured MFA
+	// step-up (only when one is wired; see the Server's login gate). The zero
+	// value (false) is the historical ADVISORY-only behavior: the engine
+	// still answers EvaluateConditionalAccess and serves the read-only admin
+	// view, but /auth/login itself is byte-identical to a build without this
+	// field set. This is deliberately independent of DefaultDeny — DefaultDeny
+	// picks the verdict for a NO-MATCH/store-outage case, Enforce picks
+	// whether any verdict (match or default) is ever ACTED on.
+	Enforce bool
 }
 
 // degradedTrust returns the normalized floor. Kept a method so the pure Decide

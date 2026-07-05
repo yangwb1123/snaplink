@@ -260,9 +260,11 @@ func (b *appBuilder) wireTokenPolicy() error {
 	return nil
 }
 
-// wireConditionalAccess builds the zero-trust conditional-access store + engine
-// config and wires sso.WithConditionalAccess (ADVISORY this wave — not in the
-// live /auth/login control flow), mounting GET /api/v1/admin/access-policies.
+// wireConditionalAccess builds the zero-trust conditional-access store +
+// engine config and wires sso.WithConditionalAccess, mounting GET
+// /api/v1/admin/access-policies. The engine only becomes a live /auth/login
+// Policy Enforcement Point when access_policies.enforce is true; otherwise it
+// stays advisory-only (Server.EvaluateConditionalAccess + the admin view).
 // No-op when the access_policies section is absent.
 func (b *appBuilder) wireConditionalAccess() error {
 	store, capCfg, err := serverbuildplatform.BuildConditionalAccess(b.cfg.AccessPolicies)
@@ -273,7 +275,7 @@ func (b *appBuilder) wireConditionalAccess() error {
 		return nil
 	}
 	b.opts = append(b.opts, sso.WithConditionalAccess(store, capCfg))
-	b.logger.Info("conditional-access engine enabled (advisory)", "default_deny", capCfg.DefaultDeny)
+	b.logger.Info("conditional-access engine enabled", "enforce", capCfg.Enforce, "default_deny", capCfg.DefaultDeny)
 	return nil
 }
 
