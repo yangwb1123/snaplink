@@ -224,6 +224,12 @@ const (
 	ErrWebhookNotConfigured        = "webhook_not_configured"
 	ErrWebhookSubscriptionNotFound = "webhook_subscription_not_found"
 	ErrWebhookDeadLetterNotFound   = "webhook_deadletter_not_found"
+	// ErrRebacNotConfigured guards GET /api/v1/admin/rebac/check (the ReBAC
+	// relationship-tuple engine's operational-debugging endpoint,
+	// platform/lifecycle/rebac, opt-in sso.WithRebacEngine) when no Engine
+	// is wired (defensive — the route is only mounted when one is). Not a
+	// credential oracle: the caller is an authenticated admin.
+	ErrRebacNotConfigured = "rebac_not_configured"
 	// ErrSessionInvalid is the 404 wire code for a stateful authentication-
 	// ceremony session that is unknown, expired, or whose resolved identity
 	// vanished mid-ceremony (see ErrCeremonySessionInvalid above). Mirrors the

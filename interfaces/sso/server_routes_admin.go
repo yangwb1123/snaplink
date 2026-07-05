@@ -55,6 +55,7 @@ func (s *Server) mountAdminSurface() {
 	s.mountAdminBreakGlass(api)
 	s.mountCryptoInventoryAPI(api)
 	s.mountWebhookAdminAPI(api)
+	s.mountRebacAdminAPI(api)
 	s.mountAdminCompliance(api)
 	s.mountAdminChangeApproval(api)
 }
