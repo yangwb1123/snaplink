@@ -12,6 +12,10 @@
 /bin/
 /dist/
 
+# air (github.com/air-verse/air) hot-reload build output — see .air.toml /
+# `make dev`. Not a go.mod dependency, just a local dev-loop artifact dir.
+/tmp/
+
 # Editor / OS noise
 .DS_Store
 *.swp

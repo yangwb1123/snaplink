@@ -113,6 +113,11 @@ tasks:
     cmds:
       - '{{.CLI}} bench'
 
+  dev:
+    desc: Hot-reload dev loop for cmd/sso-server (air, fetched on demand via go run — see .air.toml)
+    cmds:
+      - go run github.com/air-verse/air@latest -c .air.toml
+
   vet:
     desc: Run go vet
     cmds:

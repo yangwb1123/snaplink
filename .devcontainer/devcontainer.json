@@ -1,0 +1,38 @@
+{
+  "name": "snaplink-sso",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  // Python is added as a devcontainer "feature" (rather than apt-get in the
+  // Dockerfile) so it's reliably pinned to 3.12+ (pyproject.toml's
+  // `requires-python`) regardless of what the Debian base image ships.
+  // cli.py backs most `make <gate>` targets (harness, filesize, complexity,
+  // architecture, coverage, check-root, ...).
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12"
+    },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go"
+      ],
+      "settings": {
+        "go.useLanguageServer": true,
+        "go.lintTool": "golangci-lint",
+        "go.toolsManagement.autoUpdate": true
+      }
+    }
+  },
+  // Warms the module cache (all `go.mod` deps for the root module) so the
+  // first `go build` / `go test` / editor gopls run inside the container
+  // isn't waiting on a cold network fetch. Root module only — nested
+  // modules under kms/*, saml/, ldap/, kerberos/, radius/, extauthz/,
+  // redis/ are fetched on demand by `make ci-modules` / `make lint-all`.
+  "postCreateCommand": "go build ./...",
+  "remoteEnv": {
+    "CGO_ENABLED": "0"
+  }
+}

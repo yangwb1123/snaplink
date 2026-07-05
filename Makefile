@@ -9,7 +9,7 @@ IMAGE_TAG ?= dev
 
 CLI = python cli.py
 
-.PHONY: help test race bench vet fmt build docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-serve release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance
+.PHONY: help test race bench vet fmt build docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-serve release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
 
 # ── Go Dev (via $GO directly for speed) ──────────────────────────────
 
@@ -152,6 +152,9 @@ docs-serve: ## Serve openapi.yaml in swagger-ui.
 playground: ## Run Web UI playground.
 	@echo "SSO playground at http://localhost:8090 (ctrl-c to stop)"
 	@go run ./examples/playground
+
+dev: ## Hot-reload dev loop for cmd/sso-server (air-verse/air, fetched on demand — see .air.toml; not a go.mod dependency).
+	$(GO) run github.com/air-verse/air@latest -c .air.toml
 
 ci-modules: ## Build + test all nested modules.
 	cd kms/awskms && $(GO) build ./... && $(GO) test -race -count=1 ./...
