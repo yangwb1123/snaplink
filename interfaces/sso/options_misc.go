@@ -14,6 +14,7 @@ import (
 	"github.com/snaplink/sso/platform/lifecycle/webhook"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/netpolicy"
+	"github.com/snaplink/sso/shared/i18n"
 	"github.com/snaplink/sso/shared/spi"
 	"github.com/snaplink/sso/shared/trust"
 	"time"
@@ -421,6 +422,26 @@ func WithReadyCheckTimeout(name string, timeout time.Duration) Option {
 		// Timeout the pre-registered value.
 		s.readyChecks = append(s.readyChecks, namedReadyCheck{Name: name, Timeout: timeout})
 	}
+}
+
+// WithLocalizer opts into error-response localization: when set, the
+// authorization-endpoint error envelope (authzErrorBody / authzErrorBodyDesc,
+// used by /auth/login and every other authorization-response error path — see
+// server_discovery.go) adds an error_description_localized field alongside
+// the existing error / error_description. The locale is the top-quality tag
+// from the request's Accept-Language header, falling back to whatever
+// platform/geo already resolved as this request's recommended_language — the
+// two mechanisms share one signal rather than compete (see shared/i18n
+// package doc).
+//
+// nil (the default) is a byte-identical no-op: Accept-Language is never even
+// read, and no wire field is added. A configured Localizer with no
+// translation for a given (code, locale) is likewise silent — the response
+// is the SAME as if no Localizer were wired. Use i18n.NewDefaultLocalizer for
+// the small demonstration en/es bundle, or i18n.NewMemoryLocalizer /
+// i18n.LoadBundles over your own catalog.
+func WithLocalizer(l i18n.Localizer) Option {
+	return func(s *Server) { s.localizer = l }
 }
 
 // WithConditionalAccess wires the zero-trust conditional-access policy (CAP)

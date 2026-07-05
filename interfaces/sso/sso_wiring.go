@@ -20,6 +20,7 @@ import (
 	"github.com/snaplink/sso/platform/netpolicy"
 	"github.com/snaplink/sso/platform/sse"
 	"github.com/snaplink/sso/protocols/caep"
+	"github.com/snaplink/sso/shared/i18n"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
 )
@@ -78,6 +79,13 @@ type wiringState struct {
 	// the login flow populates it (one "core" leg per session) regardless of
 	// whether anything ever reads it — see linkGlobalSession.
 	sessionHub *sessionhub.Coordinator
+
+	// localizer opts into error-response localization (WithLocalizer): when
+	// set, authzErrorBody/authzErrorBodyDesc add an error_description_localized
+	// field selected by the request's Accept-Language header (falling back to
+	// the geo-resolved recommended_language). Nil (the default) is a
+	// byte-identical no-op — see shared/i18n package doc.
+	localizer i18n.Localizer
 
 	// clientStoreCacheTTL opts into the per-login ClientStore metadata
 	// cache (WithClientStoreCache). > 0 ⇒ NewServer decorates s.clientStore

@@ -1,0 +1,7 @@
+{
+  "invalid_credentials": "El nombre de usuario o la contraseña que ingresaste es incorrecto.",
+  "invalid_request": "La solicitud no incluye un parámetro obligatorio o tiene un formato incorrecto.",
+  "account_locked": "Esta cuenta se ha bloqueado temporalmente tras demasiados intentos fallidos de inicio de sesión.",
+  "mfa_invalid": "El código de verificación no es válido o ha expirado.",
+  "email_not_verified": "Verifica tu dirección de correo electrónico antes de iniciar sesión."
+}

@@ -25,6 +25,12 @@ const (
 	// failover window instead of hammering a shedding replica.
 	HeaderRetryAfter = "Retry-After"
 
+	// HeaderAcceptLanguage is read ONLY by the opt-in i18n enrichment
+	// (shared/i18n.PreferredLocale) to pick a locale for
+	// error_description_localized — never for anything security- or
+	// routing-relevant, so there is no X-Forwarded-*-style trust concern.
+	HeaderAcceptLanguage = "Accept-Language"
+
 	BearerPrefix    = "Bearer "
 	TokenTypeBearer = "Bearer"
 	ContentTypeJSON = "application/json"
@@ -61,6 +67,11 @@ const (
 const (
 	KeyError            = "error"
 	KeyErrorDescription = "error_description"
+	// KeyErrorDescriptionLocalized is the OPT-IN additive field a Localizer
+	// (shared/i18n) contributes alongside KeyErrorDescription — never
+	// instead of it. Absent unless a Localizer is configured AND it has a
+	// translation for this (code, locale) pair.
+	KeyErrorDescriptionLocalized = "error_description_localized"
 	KeyStatus           = "status"
 	KeyIssuer           = "issuer"
 	KeyVersion          = "version"

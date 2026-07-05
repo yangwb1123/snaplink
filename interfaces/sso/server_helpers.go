@@ -13,6 +13,8 @@ import (
 	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/protocols/oidc"
+	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/i18n"
 )
 
 func (s *Server) getAuthenticator(name string) (Authenticator, error) {
@@ -483,4 +485,24 @@ func (s *Server) recordRefreshRotationVelocity(ctx HandlerContext, clientID, fam
 // recordCallbackFailure emits a callback_failure event.
 func (s *Server) recordCallbackFailure(ctx HandlerContext, provider, reason string) {
 	audit.RecordCallbackFailure(s.auditor, ctx, provider, reason)
+}
+
+// localizeErrorBody enriches m in place with error_description_localized
+// when WithLocalizer is configured AND it holds a translation for code in
+// the request's preferred locale (Accept-Language, falling back to the geo
+// recommended_language already resolved for this request). Byte-identical
+// no-op — m untouched — with no Localizer wired, or when it has no entry
+// for this (code, locale): see WithLocalizer.
+func (s *Server) localizeErrorBody(ctx HandlerContext, m map[string]string, code string) {
+	if s.localizer == nil {
+		return
+	}
+	geoLang := ""
+	if info, ok := GeoFromHandlerContext(ctx); ok {
+		geoLang = info.RecommendedLanguage
+	}
+	locale := i18n.PreferredLocale(ctx.Request().Header.Get(core.HeaderAcceptLanguage), geoLang)
+	if desc, ok := s.localizer.Localize(code, locale); ok {
+		core.ErrorBodyWithLocalizedDesc(m, desc)
+	}
 }
