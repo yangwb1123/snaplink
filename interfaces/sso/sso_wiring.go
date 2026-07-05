@@ -114,6 +114,21 @@ type wiringState struct {
 	spiffeValidator *security.SPIFFEValidator
 	spiffeAudience  string
 
+	// Cloud workload-identity client authentication (AWS/GCP/Azure
+	// analog of the SPIFFE path above, but as a /token client-
+	// authentication method rather than a token-exchange subject_token).
+	// Keyed by WorkloadIdentityProvider.Name() ("gcp", ...; wired via
+	// WithWorkloadIdentityProviders). A Client opts in by setting
+	// TokenEndpointAuthMethod to ClientAuthWorkloadIdentity plus both
+	// Client.Attributes[security.AttrWorkloadIdentityProvider] (which key
+	// of this map to use) and
+	// Client.Attributes[security.AttrWorkloadIdentitySubject] (the
+	// expected verified identity). Nil/empty map = the feature is
+	// entirely off: no client can be configured with
+	// ClientAuthWorkloadIdentity in a way that ever succeeds, since the
+	// provider lookup always misses.
+	workloadIdentityProviders map[string]security.WorkloadIdentityProvider
+
 	// startedAt records when NewServer completed. Used by /api/v1/status
 	// to compute uptime. Set automatically in NewServer; no option required.
 	startedAt time.Time
