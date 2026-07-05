@@ -25,6 +25,13 @@ docker build -t snaplink/sso-server .      # the root Dockerfile
 sso-server version                          # build version / VCS revision
 ```
 
+FIPS 140-3 build (opt-in, default off — see [docs/fips.md](fips.md)):
+
+```bash
+GOFIPS140=latest CGO_ENABLED=0 go build -o sso-server ./cmd/sso-server
+docker build --build-arg GOFIPS140=latest -t snaplink/sso-server-fips .
+```
+
 Two binaries ship: **`sso-server`** (the runtime) and **`sso-ctl`** (offline
 operator toolbelt: `audit-verify`, `import`, `migrate`, `snapshot`, `config
 validate`, `hash`, `version`).

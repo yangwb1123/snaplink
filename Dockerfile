@@ -13,9 +13,24 @@
 # The image does NOT bake in a config file — operators bind-mount or
 # template their own. The default cmd/sso-server/config.yaml in this
 # repo is a good starting point but is tuned for local dev.
+#
+# FIPS 140-3 build (see docs/fips.md): pass --build-arg GOFIPS140=latest to
+# link both binaries against Go's native FIPS 140-3 Cryptographic Module —
+# NO cgo, NO BoringCrypto, same distroless-static runtime image. Default
+# (unset / "off") produces a BYTE-IDENTICAL image to before this arg existed
+# (verified: GOFIPS140=off and an unset GOFIPS140 build to identical output).
+#   docker build --build-arg GOFIPS140=latest -t snaplink/sso-server-fips .
+# Pair with keys.signing.fips_mode: true in config.yaml so the server
+# ALSO validates its own signing-algorithm choice at startup — the build
+# arg alone only affects Go's stdlib crypto, not this server's config.
 
 # ---- builder ----
 FROM golang:1.26-alpine AS builder
+
+# GOFIPS140: "off" (default, byte-identical to no FIPS support at all) |
+# "latest" | a pinned module version (e.g. "v1.0.0") | "inprocess" |
+# "certified" — see docs/fips.md for the tradeoffs between these.
+ARG GOFIPS140=off
 
 # git is needed by `go build` when modules pull from a private VCS;
 # harmless here, fixes the most-common future surprise.
@@ -67,8 +82,9 @@ COPY . .
 # ═════════════════════════════════════════════════════════════════
 # CGO_ENABLED=0 + -ldflags="-s -w" gives a self-contained, stripped
 # binary that runs on distroless static. -trimpath strips local paths
-# from stack traces for reproducibility.
-RUN CGO_ENABLED=0 GOOS=linux go build \
+# from stack traces for reproducibility. GOFIPS140 (see ARG above) is a
+# pure-Go stdlib build flag — orthogonal to CGO_ENABLED=0, never requires it.
+RUN CGO_ENABLED=0 GOOS=linux GOFIPS140=${GOFIPS140} go build \
     -trimpath \
     -ldflags="-s -w" \
     -o /out/sso-server \
@@ -80,7 +96,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # sso-mcp is a nested module (has its own go.mod), so the build
 # must run from ./cmd/sso-mcp with the module's own dependency
 # tree. Identical hardening flags.
-RUN CGO_ENABLED=0 GOOS=linux go build \
+RUN CGO_ENABLED=0 GOOS=linux GOFIPS140=${GOFIPS140} go build \
     -trimpath \
     -ldflags="-s -w" \
     -o /out/sso-mcp \

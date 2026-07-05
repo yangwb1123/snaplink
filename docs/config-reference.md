@@ -46,6 +46,8 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 | `keys.rotation.coordinated_cutover` | `WithCoordinatedKeyRotation`: broadcasts demoted+new kids + `now+GracePeriod` retire deadline over `cluster.Bus` (`KindSigningKeyRotation`); FAIL-SAFE: deferred retire only widens verify window, never retires early |
 | `keys.signing.revocation_backend` | `With{Algo}RevocationStore` for durable revocation across restarts; `SeedRevocations` re-seeds at boot |
 | `keys.signing_key_registry.{backend,replica_id,lease_ttl}` | Opt-in leaderless aggregation (`memory`\|`etcd`). `WithSigningKeyReplicaID` REQUIRED when wired. Degraded → `/readyz` 503 + `signing_key_aggregation_degraded` audit |
+| `keys.signing.fips_mode` | Off by default. When `true`, `BuildSigningIssuer` requires the binary's Go Cryptographic Module to actually be active (`GOFIPS140`/`GODEBUG=fips140`) and validates `keys.signing.alg` against a FIPS 186-5-approved allowlist (default: all four supported algs — see [docs/fips.md](fips.md) for why Ed25519 is included) before constructing the issuer |
+| `keys.signing.fips_allowed_algs` | Optional narrower allowlist consulted only when `fips_mode` is `true`; empty (default) = the package's full approved set |
 
 ## Storage Backend Toggles
 

@@ -20,6 +20,7 @@ import (
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 
 	"github.com/snaplink/sso/platform/metrics"
+	"github.com/snaplink/sso/shared/security/fipspolicy"
 )
 
 // buildApp wires every SDK component the config asks for and returns them
@@ -60,7 +61,15 @@ func BuildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *met
 		return nil, "", nil, err
 	}
 
-	switch alg := strings.ToLower(strings.TrimSpace(sc.Alg)); alg {
+	alg := strings.ToLower(strings.TrimSpace(sc.Alg))
+	// Single centralized gate (AGENTS.md: don't scatter FIPS-awareness
+	// across crypto call sites) — checked before any alg-specific issuer
+	// is constructed, so a rejected alg never partially wires a signer.
+	if err := fipspolicy.ValidateIssuerAlg(sc.FIPSMode, alg, sc.FIPSAllowedAlgs); err != nil {
+		return nil, "", nil, err
+	}
+
+	switch alg {
 	case "", "eddsa", "ed25519":
 		return buildEd25519SigningIssuer(srv, extSigner, extKID, revStore, m)
 	case "es256", "ecdsa":

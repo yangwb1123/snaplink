@@ -979,6 +979,12 @@ keys:
   # the scheduled loop is skipped (manual RotateKey/RetireKey still work).
   signing:
     alg: eddsa             # eddsa | es256 | rs256 | ps256 (ps256 = FAPI-preferred)
+    # FIPS 140-3 build mode (opt-in, default false — see docs/fips.md).
+    # Requires building/running with GOFIPS140 or GODEBUG=fips140=on/only;
+    # otherwise the server refuses to start rather than silently run
+    # ordinary (non-FIPS) crypto while claiming to be FIPS-mode.
+    # fips_mode: false
+    # fips_allowed_algs: []  # optional narrower allowlist; default = eddsa/es256/rs256/ps256
   rotation:
     enabled: false
     interval: 2160h           # 90d
