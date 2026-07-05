@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"github.com/snaplink/sso/domains/identitylink"
 	"github.com/snaplink/sso/domains/metering"
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
@@ -295,6 +296,28 @@ func WithSelfEditableProfileAttributes(keys ...string) Option {
 // — behavior is byte-identical to a build without this feature.
 func WithConsentStore(cs ConsentStore) Option {
 	return func(s *Server) { s.consentStore = cs }
+}
+
+// WithIdentityLinkStore wires the self-service identity-linking store (see
+// domains/identitylink): when set, GET/DELETE /me/identities let the
+// authenticated user list and unlink their own external identities. When nil
+// (the default), neither route is mounted — byte-identical to a build
+// without the feature.
+func WithIdentityLinkStore(store identitylink.Store) Option {
+	return func(s *Server) { s.identityLinkStore = store }
+}
+
+// WithIdentityMergePolicy wires the operator's chosen conflict-resolution
+// strategy for the "external identity already linked to a different
+// account" collision (identitylink.MergePolicy). This is an EXTENSION
+// POINT: the stock /auth/login handler does not consult it — a custom
+// Authenticator/login integration retrieves it via Server.IdentityMergePolicy
+// and Server.IdentityLinkStore to call identitylink.Resolve itself (see the
+// domains/identitylink package doc). Unwired (nil) is equivalent to
+// identitylink.RejectPolicy{} once such an integration calls Resolve — the
+// safe default, never a silent allow.
+func WithIdentityMergePolicy(policy identitylink.MergePolicy) Option {
+	return func(s *Server) { s.identityMergePolicy = policy }
 }
 
 // WithConsentTTL sets a hard server-level ceiling on consent grant

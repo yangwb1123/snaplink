@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"time"
 
+	"github.com/snaplink/sso/domains/identitylink"
 	"github.com/snaplink/sso/domains/metering"
 	"github.com/snaplink/sso/domains/userlifecycle"
 	"github.com/snaplink/sso/platform/lifecycle/cryptoinventory"
@@ -285,4 +286,20 @@ type selfServiceState struct {
 	// The zero value is OFF: RunUserAutoDeprovision is a no-op, so existing
 	// behavior is unchanged unless an operator BOTH wires it AND starts the loop.
 	userDeprovision userlifecycle.DeprovisionConfig
+
+	// identityLinkStore backs the self-service identity-linking surface
+	// (GET/DELETE /me/identities, WithIdentityLinkStore). Nil ⇒ neither route
+	// is mounted — byte-identical to a build without the feature. See
+	// domains/identitylink.
+	identityLinkStore identitylink.Store
+
+	// identityMergePolicy is the operator's chosen conflict-resolution
+	// strategy for identitylink.Resolve (WithIdentityMergePolicy) — an
+	// extension point a CUSTOM login/authenticator integration retrieves via
+	// Server.IdentityMergePolicy(); the stock /auth/login handler does not
+	// call it (see the domains/identitylink package doc for why). Nil means
+	// "use identitylink.RejectPolicy{}" once Resolve is actually invoked —
+	// NOT "feature off"; identitylink.Resolve documents this deliberately
+	// safe-by-default nil handling.
+	identityMergePolicy identitylink.MergePolicy
 }

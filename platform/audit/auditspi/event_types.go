@@ -90,6 +90,18 @@ const (
 	EventConsentDenied  EventType = "consent_denied"
 )
 
+// Identity-linking self-service + merge-policy events (domains/identitylink).
+// EventIdentityUnlinked is user-initiated (DELETE /me/identities/:id).
+// EventIdentityMerged / EventIdentityMergeRejected record a MergePolicy's
+// verdict on a same-external-identity-different-account conflict — emitted
+// by whichever integration calls identitylink.RecordMergeDecision, since the
+// stock /auth/login handler does not invoke MergePolicy itself.
+const (
+	EventIdentityUnlinked      EventType = "identity_unlinked"
+	EventIdentityMerged        EventType = "identity_merged"
+	EventIdentityMergeRejected EventType = "identity_merge_rejected"
+)
+
 // Self-service registration and account management.
 const (
 	EventSelfRegistered      EventType = "self_registered"

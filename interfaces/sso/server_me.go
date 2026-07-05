@@ -172,3 +172,141 @@ func (s *Server) handleMyConsents(ctx HandlerContext) { selfservice.HandleMyCons
 
 // handleDeleteMyConsent delegates to selfservice.HandleDeleteMyConsent.
 func (s *Server) handleDeleteMyConsent(ctx HandlerContext) { selfservice.HandleDeleteMyConsent(s, ctx) }
+
+// PathMyIdentities lists (GET) the authenticated user's linked external
+// identities (federated IdP subjects, or other local accounts folded in);
+// PathMyIdentityByID unlinks one (DELETE). See domains/identitylink for the
+// self-service identity-linking / account-merge-safety feature these back.
+// Defined here (rather than shared/core/consts.go, which is near its own
+// budget) — mirrors the existing PathHomeRealm/PathDRMode/PathOIDCDiscovery
+// precedent of package-local path constants.
+const (
+	PathMyIdentities   = "/me/identities"
+	PathMyIdentityByID = "/me/identities/:id"
+)
+
+// handleMyIdentities delegates to selfservice.HandleMyIdentities.
+func (s *Server) handleMyIdentities(ctx HandlerContext) { selfservice.HandleMyIdentities(s, ctx) }
+
+// handleUnlinkMyIdentity delegates to selfservice.HandleUnlinkMyIdentity.
+func (s *Server) handleUnlinkMyIdentity(ctx HandlerContext) {
+	selfservice.HandleUnlinkMyIdentity(s, ctx)
+}
+
+// mountSelfServiceProfile, mountSelfServiceCredentials, and
+// mountBrandingEndpoint relocated here from server_routes.go, which sat at
+// the 500-line file budget — this file (self-service /me* handlers) is
+// their natural home and had ample headroom. Mount() (server_routes.go)
+// still calls them; only the definitions moved.
+
+// mountSelfServiceProfile registers the authenticated /me* self-service
+// endpoints for permissions/menus/roles, sessions, consents, identities, org
+// membership, and profile — each gated on its backing store, and all of them
+// behind the SelfService feature gate (a deployment that never wants an
+// end-user-facing self-service surface hides the whole group).
+func (s *Server) mountSelfServiceProfile() {
+	if !s.selfServiceGateOn() {
+		return
+	}
+	s.router.GET(PathMyPermissions, s.handleMyPermissions)
+	s.router.GET(PathMyMenus, s.handleMyMenus)
+	s.router.GET(PathMyRoles, s.handleMyRoles)
+	if s.sessionMgr != nil {
+		s.router.GET(PathMySessions, s.handleMySessions)
+		s.router.DELETE(PathMySessions, s.handleRevokeMySessions)
+		s.router.DELETE(PathMySessionByID, s.handleDeleteMySession)
+		// /me/sessions* self-service endpoints follow the /me/* naming
+		// convention used by the rest of the self-service API surface.
+		s.router.GET(PathMeSessions, s.handleMeSessions)
+		s.router.DELETE(PathMeSessionByID, s.handleDeleteMeSession)
+		s.router.POST(PathMeSessionsRevokeAll, s.handleMeSessionsRevokeAll)
+	}
+	if s.consentStore != nil {
+		s.router.GET(PathMyConsents, s.handleMyConsents)
+		s.router.DELETE(PathMyConsentByID, s.handleDeleteMyConsent)
+	}
+	// Self-service identity linking: list the caller's linked external
+	// identities + unlink one. Mounted only when a Store is wired
+	// (WithIdentityLinkStore) — byte-identical to a build without it.
+	if s.identityLinkStore != nil {
+		s.router.GET(PathMyIdentities, s.handleMyIdentities)
+		s.router.DELETE(PathMyIdentityByID, s.handleUnlinkMyIdentity)
+	}
+	// Self-service B2B org membership: list my orgs + leave one.
+	if s.tenantUserStore != nil {
+		s.router.GET(PathMyOrganizations, s.handleMyOrganizations)
+		s.router.DELETE(PathMyOrganizationByID, s.handleLeaveMyOrganization)
+		// Accept an invitation (joins an org) — needs both stores.
+		if s.invitationStore != nil {
+			s.router.POST(PathMyInvitationAccept, s.handleAcceptInvitation)
+		}
+	}
+	// Self-service account overview. Mounted with a user directory (the
+	// profile is its core); byte-identical without one.
+	if s.userProvider != nil {
+		s.router.GET(PathMe, s.handleMe)
+		s.router.PATCH(PathMe, s.handlePatchMe)
+	}
+	// Self-service password change. Mounted only with a password credential
+	// store; byte-identical without one.
+	if s.passwordCredentialStore != nil {
+		s.router.POST(PathMyPassword, s.handleChangeMyPassword)
+	}
+}
+
+// mountSelfServiceCredentials registers the authenticated /me* credential +
+// privacy endpoints (MFA factors, passkey registration, GDPR export/erasure,
+// verified email change), gated on both their backing store and the
+// SelfService feature gate. The public per-host branding lookup used to live
+// here too; it moved to mountBrandingEndpoint (gated by WebSPA instead — it
+// serves the hosted login SPA, not an authenticated self-service action).
+func (s *Server) mountSelfServiceCredentials() {
+	if !s.selfServiceGateOn() {
+		return
+	}
+	// Self-service MFA factor management. Mounted only with an enrollment
+	// store; byte-identical without one.
+	if s.mfaEnrollmentStore != nil {
+		s.router.GET(PathMyMFA, s.handleMyMFAFactors)
+		s.router.DELETE(PathMyMFAByID, s.handleDeleteMyMFAFactor)
+		// Self-service TOTP enrollment (the write-half). Mounted only when the
+		// enrollment store can persist a TOTP factor AND a TOTP enroller is
+		// wired to verify the confirm code — byte-identical otherwise.
+		if _, ok := s.mfaEnrollmentStore.(TOTPEnrollmentWriter); ok && s.totpEnroller != nil {
+			s.router.POST(PathMyMFATOTPBegin, s.handleTOTPEnrollBegin)
+			s.router.POST(PathMyMFATOTPConfirm, s.handleTOTPEnrollConfirm)
+		}
+	}
+	// Self-service passkey registration (authenticated, bearer-bound). Mounts
+	// independently of the enrollment store: the registered credential lands in
+	// the WebAuthn store the Registrar wraps and surfaces in /me/mfa via the
+	// WebAuthn adapter. Byte-identical when no registrar is wired.
+	if s.webauthnRegistrar != nil {
+		s.router.POST(PathMyWebAuthnRegisterBegin, s.handleMyWebAuthnRegisterBegin)
+		s.router.POST(PathMyWebAuthnRegisterFinish, s.handleMyWebAuthnRegisterFinish)
+	}
+	// GDPR Art. 15 self-service data export of the bearer's own data.
+	if s.dataExporter != nil {
+		s.router.GET(PathMyDataExport, s.handleMyDataExport)
+	}
+	// GDPR Art. 17 self-service account erasure (opt-in, irreversible).
+	if s.accountEraser != nil {
+		s.router.POST(PathMyAccountErase, s.handleMyAccountErase)
+	}
+	// Verified email change. Needs the token store + sender (deliver to the new
+	// address) + a UserProvider (commit the new email). Byte-identical without.
+	if s.emailChangeStore != nil && s.emailChangeSender != nil && s.userProvider != nil {
+		s.router.POST(PathMyEmailChange, s.handleMyEmailChange)
+		s.router.POST(PathMyEmailVerify, s.handleMyEmailVerify)
+	}
+}
+
+// mountBrandingEndpoint registers the public per-host branding lookup the
+// hosted login SPA consumes. Gated by WebSPA (not SelfService) and a tenant
+// store (Domain.Branding is its source) — byte-identical to a build without
+// either.
+func (s *Server) mountBrandingEndpoint() {
+	if s.tenantStore != nil && s.webSPAGateOn() {
+		s.router.GET(PathBranding, s.handleBranding)
+	}
+}

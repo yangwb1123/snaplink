@@ -195,4 +195,11 @@ const (
 	ErrIllegalLifecycleTransition = "illegal_lifecycle_transition"
 	ErrUnknownLifecycleState      = "unknown_lifecycle_state"
 	ErrLifecycleStateConflict     = "lifecycle_state_conflict"
+	// ErrIdentityUnlinkLastMethod (409, DELETE /me/identities/:id) refuses to
+	// remove a user's LAST remaining linked identity when the account has no
+	// other usable authentication method (see domains/identitylink.GuardUnlink)
+	// — the "don't let a user lock themselves out" guard. Not a credential
+	// oracle: the caller is the authenticated owner of the identity being
+	// unlinked.
+	ErrIdentityUnlinkLastMethod = "identity_unlink_last_method"
 )

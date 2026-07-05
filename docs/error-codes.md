@@ -370,6 +370,44 @@ oracle — the caller is an authenticated admin.
 
 ---
 
+## Identity linking / account-merge safety (`/me/identities`)
+
+Self-service identity linking (`domains/identitylink`, `WithIdentityLinkStore`).
+GET lists the caller's own ACTIVE linked external identities (federated IdP
+subjects, or another local account folded in); DELETE unlinks one. Both are
+credential-adjacent (`no-store` headers) and require the SAME bearer-validated
+`/me/*` authentication as every other self-service endpoint. Routes are
+mounted only when a `Store` is wired — byte-identical to a build without the
+feature.
+
+The DELETE guards against unlinking a user's LAST remaining authentication
+method: it is refused when the identity being removed is the caller's only
+active link AND the account has no other usable method (checked via the
+optional `PasswordCredentialStore` extension `identitylink.PasswordPresenceChecker`;
+a store that doesn't implement it is treated as "no password", failing
+CLOSED so a user is never silently locked out). Every successful unlink emits
+`identity_unlinked` (`identity_id`, `provider`).
+
+`domains/identitylink.MergePolicy` is a separate, related extension point (not
+an HTTP endpoint): the decision seam for when a login flow discovers that an
+external identity is already linked to a DIFFERENT local account than the one
+currently resolving. The stock `/auth/login` handler does not invoke it — a
+custom authenticator/login integration retrieves it via
+`Server.IdentityMergePolicy` / `Server.IdentityLinkStore` and calls
+`identitylink.Resolve` itself. The default `RejectPolicy` always refuses (safe
+default); the reference `LinkOnlyMergePolicy` merges ONLY the identity link
+records onto the winning account (sessions/consents/tokens are NOT merged —
+see the package doc). Both outcomes are recorded via
+`identitylink.RecordMergeDecision` as `identity_merged` / `identity_merge_rejected`.
+
+| Code                            | HTTP | Emitted when                                                                                     |
+|----------------------------------|------|---------------------------------------------------------------------------------------------------|
+| `invalid_request`                | 400  | The `:id` path segment on DELETE is missing/blank                                                 |
+| `not_found`                       | 404  | The link id is unknown, already unlinked, or belongs to a DIFFERENT user (oracle-safe: one response either way) |
+| `identity_unlink_last_method`     | 409  | Removing this link would leave the account with no remaining way to authenticate                  |
+
+---
+
 ## Server / configuration
 
 These indicate operator misconfiguration; clients shouldn't try to

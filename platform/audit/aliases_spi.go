@@ -99,6 +99,9 @@ const (
 	EventFAPIComplianceViolation             = auditspi.EventFAPIComplianceViolation
 	EventFeatureGatesDisabled                = auditspi.EventFeatureGatesDisabled
 	EventIDTokenIssued                       = auditspi.EventIDTokenIssued
+	EventIdentityMerged                      = auditspi.EventIdentityMerged
+	EventIdentityMergeRejected               = auditspi.EventIdentityMergeRejected
+	EventIdentityUnlinked                    = auditspi.EventIdentityUnlinked
 	EventInvalidationBusDegraded             = auditspi.EventInvalidationBusDegraded
 	EventInvalidationBusReconnected          = auditspi.EventInvalidationBusReconnected
 	EventSessionTrustStepUp                  = auditspi.EventSessionTrustStepUp
