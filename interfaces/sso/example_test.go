@@ -9,11 +9,89 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"time"
 
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/shared/security"
 )
+
+// Example_minimumViable constructs the smallest server that can complete a
+// full OAuth 2.0 authorization_code + OIDC flow: the three mandatory SPIs
+// (UserProvider, ClientStore, SessionManager), one token issuer used for
+// both the access token and the ID token, and an AuthCodeStore to turn on
+// the authorization_code grant. See the root README's "30-second tour" for
+// the runnable end-to-end version (docs/examples/quickstart).
+func Example_minimumViable() {
+	issuer := defaultimpl.NewEd25519JWTIssuer()
+
+	srv := sso.NewServer(
+		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithTokenIssuer("jwt", issuer),
+		sso.WithIDTokenIssuer(issuer),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithAuthCodeStore(defaultimpl.NewMemoryAuthCodeStore(), 0),
+	)
+
+	// srv.Handler() implements http.Handler — wire it into any net/http
+	// listener: http.ListenAndServe(":8080", srv.Handler())
+	_ = srv
+}
+
+// Example_productionWiring layers the hardening + operability options a
+// production deployment typically wants on top of Example_minimumViable:
+// refresh-token rotation, Pushed Authorization Requests (PAR), account
+// lockout, audit recording, the security-headers framework, OAuth 2.1
+// strict mode, and a per-user session cap. Every piece is opt-in via its
+// own With* option — omit any one of them and the corresponding
+// endpoint/behavior is simply not enabled; nothing here is required to
+// reach Example_minimumViable's baseline flow.
+func Example_productionWiring() {
+	issuer := defaultimpl.NewEd25519JWTIssuer()
+	auditor := audit.New(audit.NewMemorySink(1000))
+
+	srv := sso.NewServer(
+		sso.WithIssuer("https://sso.example.com"),
+		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithTokenIssuer("jwt", issuer),
+		sso.WithIDTokenIssuer(issuer),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithAuthCodeStore(defaultimpl.NewMemoryAuthCodeStore(), 0),
+
+		// Refresh tokens with family-rotation reuse detection (a replayed
+		// post-rotation token kills the whole family, per RFC 6819 §5.2.2.3).
+		sso.WithRefreshTokenStore(defaultimpl.NewMemoryRefreshTokenStore(), 30*24*time.Hour),
+
+		// Pushed Authorization Requests — required by FAPI 2.0 / Open
+		// Banking profiles, recommended for every confidential client.
+		sso.WithPARStore(defaultimpl.NewMemoryPARStore(), 90*time.Second),
+
+		// Lock an account out after repeated failed logins. Swap the
+		// in-process default for a shared backend across replicas.
+		sso.WithAccountLockout(security.NewMemoryAccountLockout()),
+
+		// Ship login/logout/token-lifecycle events to an audit sink.
+		sso.WithAuditRecorder(auditor),
+
+		// HSTS, CSP with a per-request nonce, X-Frame-Options, etc. on
+		// every response.
+		sso.WithSecurityHeaders(),
+
+		// Reject non-PKCE, non-S256, non-code-only flows.
+		sso.WithOAuth21StrictMode(true),
+
+		// Cap concurrent sessions per user (0 = unlimited).
+		sso.WithMaxSessionsPerUser(5),
+	)
+
+	_ = srv
+}
 
 // ExampleServer_withHostedLogin demonstrates mounting the hosted login
 // UI from an embedded filesystem. The login SPA is served at /auth/login

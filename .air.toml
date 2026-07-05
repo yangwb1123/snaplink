@@ -1,0 +1,35 @@
+# Hot-reload dev loop for `cmd/sso-server`, driven by
+# github.com/air-verse/air (https://github.com/air-verse/air).
+#
+# NOT a go.mod dependency: `make dev` runs air the same way this
+# Makefile already runs other tools on demand (`proto-lint`,
+# `docs-validate`, `release-check` all `go run <tool>@latest`) — a
+# devDependency a contributor opts into locally, not a runtime or
+# supply-chain addition to the SDK itself.
+#
+# Usage: `make dev`  (equivalent to `go run github.com/air-verse/air@latest -c .air.toml`)
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/sso-server ./cmd/sso-server"
+  bin = "tmp/sso-server"
+  # cmd/sso-server's `-config` flag defaults to "config.yaml" (resolved
+  # against the process's cwd, not the binary's location) — pass the
+  # in-repo dev config explicitly so `make dev` works from the repo root.
+  full_bin = "./tmp/sso-server -config ./cmd/sso-server/config.yaml"
+  include_ext = ["go", "yaml", "yml"]
+  exclude_dir = ["tmp", "bin", "docs", "ops", "gen", "test", ".git", ".devcontainer"]
+  exclude_regex = ["_test\\.go$"]
+  delay = 1000
+  stop_on_error = true
+  send_interrupt = true
+  kill_delay = "2s"
+
+[log]
+  time = true
+
+[misc]
+  # Remove ./tmp on exit — it holds only the rebuilt binary, nothing a
+  # contributor wants to `git status` on.
+  clean_on_exit = true

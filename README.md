@@ -1,5 +1,8 @@
 # snaplink / sso
 
+[![ci](https://github.com/snaplink/sso/actions/workflows/ci.yml/badge.svg)](https://github.com/snaplink/sso/actions/workflows/ci.yml)
+[![engineering gates](https://github.com/snaplink/sso/actions/workflows/engineering.yml/badge.svg)](https://github.com/snaplink/sso/actions/workflows/engineering.yml)
+
 An OAuth 2.0 + OpenID Connect **SSO server**, shipped two ways: as a **Go SDK** you
 embed as a library, and as a **runnable binary** you configure with YAML. Pure
 Go (no CGO), no external SaaS dependencies; in-memory and pure-Go SQLite default
@@ -227,6 +230,8 @@ go test ./test/ -race        # cross-wired HTTP + JWKS integration suite
 
 - `docs/openapi.yaml` — the full HTTP API contract.
 - `docs/examples/` — runnable samples (quickstart, basic, embedded-app, remote-app, appcore, grpc-client, playground).
-- `interfaces/sso/example_test.go` — godoc SDK templates (render on pkg.go.dev).
+- `interfaces/sso/example_test.go`, `interfaces/ssoclient/{local,dev}/example_test.go` — godoc SDK templates (render on pkg.go.dev).
 - `AGENTS.md` — architecture, layering, and the engineering conventions enforced by the committed gates.
+- `CONTRIBUTING.md` — build/test commands, the hard engineering gates, commit conventions, and the PR process. `CODE_OF_CONDUCT.md` — community standards.
+- `.devcontainer/` — a ready-to-use Go + Python dev environment (VS Code Dev Containers / GitHub Codespaces); `make dev` — hot-reload loop for `cmd/sso-server` (see `.air.toml`).
 - `proto/` + `gen/proto/` — gRPC service + REST-gateway definitions.
