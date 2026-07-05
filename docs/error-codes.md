@@ -485,6 +485,22 @@ see the package doc). Both outcomes are recorded via
 
 ---
 
+## Compliance reporting (`/api/v1/admin/compliance/*`)
+
+Reporting/aggregation layer over data already recorded elsewhere (`platform/audit`,
+`domains/permissions`, `core.ConsentStore`) — see `protocols/compliance`. No new
+error codes: every failure reuses `invalid_request` / `internal_error`. All four
+are opt-in and admin-gated (GET routes `admin:read`, the sweep trigger `admin:write`).
+
+| Endpoint | Mounted when | Notes |
+|---|---|---|
+| `GET .../soc2-evidence` | an audit recorder is wired (`WithAuditRecorder`) | SOC2 evidence pack: current role assignments (CC6.1), admin mutations since `?since=` (CC8.1, default last 90d), token/session/credential revocations (CC6.2/CC6.3). Best-effort: a failing section is listed in the response body's `errors`/`skipped`, never a 500, EXCEPT a malformed `?since=` which is `400 invalid_request`. |
+| `GET .../data-map` | always, when the admin API is on | GDPR Art. 30 processing-activity record. Static/code-derived — no query parameters, no failure mode beyond the admin gate itself. |
+| `GET .../consents` | a `ConsentStore` AND a `UserProvider` are wired | Every currently-active (non-expired) OAuth consent grant, system-wide. A store failure is `500 internal_error`. |
+| `POST .../retention-sweep` | `WithDataRetentionSweep` configured `Enabled: true` | Triggers one automated data-retention sweep pass on demand (session-TTL cleanup, dormant-account flag/erase, audit-retention count). Body `{"dry_run": bool}` is optional and can only ADD a dry run, never remove an operator-configured one; a malformed body is `400 invalid_request`. Per-step failures are best-effort (`errors` in the response), never abort the whole sweep. |
+
+---
+
 ## Server / configuration
 
 These indicate operator misconfiguration; clients shouldn't try to

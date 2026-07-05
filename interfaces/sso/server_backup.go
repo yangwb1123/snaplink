@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/snaplink/sso/protocols/compliance"
 	"github.com/snaplink/sso/shared/core"
 )
 
@@ -96,4 +98,117 @@ func pruneBackups(dir, prefix string, keep int) (int, error) {
 		pruned++
 	}
 	return pruned, firstErr
+}
+
+// --- Compliance reporting + automated data retention (protocols/compliance) ---
+//
+// Path consts + admin-route wiring live here rather than shared/core/consts.go
+// / server_routes_admin.go / options_admin.go: all three sit within a few
+// lines of the 500-line maintainability budget, while this file has the most
+// headroom of any in the package. See server_routes_admin.go's Token
+// Portfolio consts for the established precedent of localizing new admin
+// route paths to their mounting file when the canonical file has no room.
+const (
+	PathAdminComplianceSOC2Evidence   = "/admin/compliance/soc2-evidence"
+	PathAdminComplianceDataMap        = "/admin/compliance/data-map"
+	PathAdminComplianceConsents       = "/admin/compliance/consents"
+	PathAdminComplianceRetentionSweep = "/admin/compliance/retention-sweep"
+)
+
+// WithDataRetentionSweep opts into the automated data-retention sweep
+// (protocols/compliance.RetentionSweeper): session-TTL cleanup, dormant-
+// account flagging (or, with cfg.AutoEraseDormant, erasure via the
+// self-service Eraser wired by WithSelfServiceAccountErasure), and a
+// report-only count of audit events past a configured retention window. OFF
+// by default (cfg.Enabled == false is the zero value); even when configured,
+// the operator must start Server.RunDataRetentionSweep in a goroutine — the
+// same discipline as RunBreakGlassSweeper. A build that never calls this
+// option is byte-identical to one without the feature.
+func WithDataRetentionSweep(cfg compliance.RetentionConfig) Option {
+	return func(s *Server) { s.dataRetention = cfg }
+}
+
+// retentionSweeper assembles a compliance.RetentionSweeper from currently-
+// wired server state. It reuses the self-service Eraser
+// (WithSelfServiceAccountErasure) for the dormant-account auto-erase step
+// rather than requiring a second wiring option — Eraser.EraseSubject already
+// accepts any subject id, not just the caller's own.
+func (s *Server) retentionSweeper() *compliance.RetentionSweeper {
+	return &compliance.RetentionSweeper{
+		Users:    s.userProvider,
+		Sessions: s.sessionMgr,
+		Eraser:   s.accountEraser,
+		Auditor:  s.auditor,
+		Logger:   s.logger,
+	}
+}
+
+// mountAdminCompliance registers the compliance-reporting admin surface: the
+// SOC2 evidence pack + GDPR Art. 30 data map + active-consents report
+// (admin:read), and the data-retention-sweep manual trigger (admin:write).
+// The data map is static/code-derived, so it needs no backing store and is
+// always mounted within the admin surface; the other reports mount only when
+// their backing data source is wired, and the retention trigger mounts only
+// when WithDataRetentionSweep configured it on — each byte-identical to a
+// build without the respective feature.
+func (s *Server) mountAdminCompliance(api Router) {
+	api.GET(PathAdminComplianceDataMap, s.handleAdminComplianceDataMap)
+	if s.auditor != nil {
+		api.GET(PathAdminComplianceSOC2Evidence, s.handleAdminSOC2Evidence)
+	}
+	if s.consentStore != nil && s.userProvider != nil {
+		api.GET(PathAdminComplianceConsents, s.handleAdminActiveConsents)
+	}
+	if s.dataRetention.Enabled {
+		api.POST(PathAdminComplianceRetentionSweep, s.handleAdminTriggerRetentionSweep)
+	}
+}
+
+func (s *Server) handleAdminSOC2Evidence(ctx HandlerContext) {
+	r := &compliance.SOC2Reporter{Permissions: s.permissions, Clients: s.clientStore, Audit: s.auditor.Sink()}
+	compliance.HandleAdminSOC2Report(r, s.logger, ctx)
+}
+
+func (s *Server) handleAdminComplianceDataMap(ctx HandlerContext) {
+	opts := compliance.DataMapOptions{ConsentMaxTTL: s.consentMaxTTL}
+	compliance.HandleAdminDataMap(opts, s.logger, ctx)
+}
+
+func (s *Server) handleAdminActiveConsents(ctx HandlerContext) {
+	r := &compliance.ActiveConsentsReporter{Users: s.userProvider, Consent: s.consentStore}
+	compliance.HandleAdminActiveConsents(r, s.logger, ctx)
+}
+
+func (s *Server) handleAdminTriggerRetentionSweep(ctx HandlerContext) {
+	compliance.HandleAdminTriggerRetentionSweep(s.retentionSweeper(), s.dataRetention, s.logger, ctx)
+}
+
+// RunDataRetentionSweep wakes every interval and runs one automated
+// data-retention sweep (protocols/compliance.RetentionSweeper.Sweep). Same
+// shutdown contract as RunBreakGlassSweeper: it exits on ctx cancellation, a
+// sweep error is logged but never tears down the loop, and starting it is the
+// OPERATOR's responsibility — NewServer/Mount never start it, so embedding
+// the SDK never leaks the goroutine.
+//
+//	go srv.RunDataRetentionSweep(ctx, time.Hour)
+//
+// No-op when the sweep is disabled (WithDataRetentionSweep not called, or
+// cfg.Enabled == false) or interval <= 0 — byte-identical to a build without it.
+func (s *Server) RunDataRetentionSweep(ctx context.Context, interval time.Duration) {
+	if !s.dataRetention.Enabled || interval <= 0 {
+		return
+	}
+	sweeper := s.retentionSweeper()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := sweeper.Sweep(ctx, s.dataRetention); err != nil {
+				s.logger.Error("data retention sweep failed", "error", err)
+			}
+		}
+	}
 }

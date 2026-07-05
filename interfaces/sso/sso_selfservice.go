@@ -302,4 +302,13 @@ type selfServiceState struct {
 	// NOT "feature off"; identitylink.Resolve documents this deliberately
 	// safe-by-default nil handling.
 	identityMergePolicy identitylink.MergePolicy
+
+	// dataRetention gates the automated data-retention sweep
+	// (WithDataRetentionSweep, server_backup.go) — session-TTL cleanup,
+	// dormant-account flagging/erasure, and an audit-retention report. The
+	// zero value (Enabled == false) is OFF: byte-identical to a build without
+	// the feature. Even when configured, the operator must start
+	// Server.RunDataRetentionSweep in a goroutine, same discipline as
+	// RunBreakGlassSweeper.
+	dataRetention compliance.RetentionConfig
 }
