@@ -14,14 +14,6 @@ related capability exists but the proposed feature does not).
 
 ## Eventing & integration
 
-- **Generic event/webhook egress engine** — none. `EventSubscription` store +
-  delivery engine + dead-letter queue + HMAC signing + retry/backoff for
-  lifecycle events (`user.created`, `client.secret_rotated`, `credential.expiring`,
-  …). Today only CAEP/SSF (to affected RPs) and the admin SSE stream exist; there
-  is no operator-configurable outbound webhook system.
-  _Sources: expansion-v2, expansion-analysis-20260701, expansion-directions,
-  expansion-directions-auth-plane, analysis-novel-directions-passkey…,
-  expansion-directions-2026-07-01-v3, analysis-expansion-directions._
 - **SCIM push provisioning** — partial. SCIM is receiver-only; add an outbound
   `SCIMProvisioner` SPI that pushes to downstream apps. _Source:
   enterprise-expansion-directions-2026-07-01._
@@ -34,25 +26,8 @@ related capability exists but the proposed feature does not).
   check engine; `conditionalaccess` covers attribute conditions only. _Sources:
   expansion-v2, analysis-expansion-directions._
 
-## Sessions, identity & tokens
-
-- **Cross-protocol Session Hub** — none. `global_sid` + unified logout across
-  OIDC/SAML/Kerberos/WebAuthn. _Sources: expansion-directions,
-  expansion-directions-auth-plane, expansion-identity-beyond-protocols._
-- **Identity linking / account merging** — none. `IdentityLinkStore`,
-  `/me/identities`, `MergePolicy`. _Sources: expansion-architecture-gaps-2026-07-01,
-  analysis-five-directions-toctou…, expansion-identity-beyond-protocols._
-- **Passwordless passkey as primary authenticator** — partial. WebAuthn is a
-  second factor only; add `WebAuthnPrimaryAuthenticator`, `provider=webauthn` at
-  `/auth/login`, `AllowPasswordlessOnly`. _Sources: expansion-v2,
-  analysis-novel-directions-passkey…._
-- **OIDC Session Management 1.0** — none. `check_session_iframe` /
-  `end_session_iframe` / `session_state`. _Sources: completeness-audit (x2),
-  analysis-round6._
-
 ## Novel / future protocols
 
-- **RFC 9321 Transaction Tokens** — none. _Source: expansion-2026-07-01._
 - **Cloud workload-identity connectors** — none. AWS/GCP/Azure IMDS /
   `AssumeRoleWithWebIdentity` / `WorkloadIdentityProvider`. _Source: expansion-2026-07-01._
 - **AI-agent identity + delegation grant** — none. `AgentProvider` SPI,
@@ -62,10 +37,6 @@ related capability exists but the proposed feature does not).
 
 ## Enterprise governance & compliance
 
-- **Cross-tenant B2B collaboration** — none. `ExternalUserStore`/guest records,
-  cross-tenant token-exchange grant, `TenantCollaboration` trust model,
-  `original_subject`/`original_tenant` audit fields. _Sources:
-  senior-architect-expansion-2026-07-02, expansion-novel-directions-2026-07-02._
 - **Admin governance framework** — partial. Per-tenant/admin write quotas,
   change-approval workflow, `DestructiveActionGuard`, admin IP-allowlist/geo-lock,
   universal write-reason (rate-limit + break-glass approval exist). _Sources:
@@ -97,9 +68,6 @@ related capability exists but the proposed feature does not).
 
 ## Security headers, crypto & versioning
 
-- **Security-headers framework** — none. CSP + Permissions-Policy +
-  Clear-Site-Data + per-request nonce on SPA/form_post surfaces. _Sources:
-  architecture-analysis, runtime-performance…, senior-architect-expansion-2026-07-01._
 - **FIPS 140-3 build mode** — none. Build tags, `Dockerfile.fips`, GOEXPERIMENT,
   FIPS issuer, crypto-algorithm governance. _Sources: architecture-analysis,
   senior-architect-expansion-2026-07-01._
