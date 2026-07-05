@@ -11,10 +11,11 @@ import (
 	connectionssqlite "github.com/snaplink/sso/domains/connections/sqlite"
 	tenantsqlite "github.com/snaplink/sso/domains/tenant/sqlite"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
-	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 	"github.com/snaplink/sso/shared/security"
 )
 
@@ -177,38 +178,66 @@ func (b *appBuilder) wireOAuthGrantStores() error {
 	if err := b.wireRefreshToken(); err != nil {
 		return err
 	}
-	// GDPR Art. 17 self-service account erasure (/me/account/erase). Wired with
-	// a complete eraser (incl. refresh-token revocation via the subject index
-	// when the store supports it) so a self-deletion also cuts off tokens.
-	// Opt-in + irreversible.
-	if cfg.SelfService.AccountDeletion && b.userProvider != nil {
-		var refreshIdx oauth.RefreshTokenSubjectIndex
-		if idx, ok := b.refreshTokenStore.(oauth.RefreshTokenSubjectIndex); ok {
-			refreshIdx = idx
-		}
-		// Consent + MFAEnrollments are late-bound in finalize (their stores wire
-		// after this runs); retain the eraser pointer so that binding lands.
-		b.accountEraser = newSelfServiceEraser(b.userProvider, b.sessionMgr, refreshIdx, b.clientStore)
-		b.opts = append(b.opts, sso.WithSelfServiceAccountErasure(b.accountEraser))
-		b.logger.Info("self-service account erasure enabled (/me/account/erase)")
-	}
+	b.wireAccountErasure()
 	if err := b.wireDeviceCodePAR(); err != nil {
 		return err
 	}
-	if jar := cfg.OAuth.JAR; jar.Enabled {
-		f := security.NewHTTPJARFetcher()
-		if jar.Timeout > 0 {
-			f.Client.Timeout = jar.Timeout
-		}
-		if jar.MaxBytes > 0 {
-			f.MaxBytes = jar.MaxBytes
-		}
-		b.opts = append(b.opts, sso.WithJARFetcher(f))
-	}
+	b.wireJARFetcher()
 	if err := b.wireCIBA(); err != nil {
 		return err
 	}
-	return b.wireJARM()
+	b.wireTokenExchangeChainLifetime()
+	if err := b.wireJARM(); err != nil {
+		return err
+	}
+	return b.wireIntrospection()
+}
+
+// wireAccountErasure wires GDPR Art. 17 self-service account erasure
+// (/me/account/erase) with a complete eraser (incl. refresh-token revocation
+// via the subject index when the store supports it) so a self-deletion also
+// cuts off tokens. Opt-in + irreversible; extracted from
+// wireOAuthGrantStores for the function-length budget.
+func (b *appBuilder) wireAccountErasure() {
+	if !b.cfg.SelfService.AccountDeletion || b.userProvider == nil {
+		return
+	}
+	var refreshIdx oauth.RefreshTokenSubjectIndex
+	if idx, ok := b.refreshTokenStore.(oauth.RefreshTokenSubjectIndex); ok {
+		refreshIdx = idx
+	}
+	// Consent + MFAEnrollments are late-bound in finalize (their stores wire
+	// after this runs); retain the eraser pointer so that binding lands.
+	b.accountEraser = newSelfServiceEraser(b.userProvider, b.sessionMgr, refreshIdx, b.clientStore)
+	b.opts = append(b.opts, sso.WithSelfServiceAccountErasure(b.accountEraser))
+	b.logger.Info("self-service account erasure enabled (/me/account/erase)")
+}
+
+// wireJARFetcher wires the RFC 9101 §5.2.2 request_uri fetcher. Extracted
+// from wireOAuthGrantStores for the function-length budget.
+func (b *appBuilder) wireJARFetcher() {
+	jar := b.cfg.OAuth.JAR
+	if !jar.Enabled {
+		return
+	}
+	f := security.NewHTTPJARFetcher()
+	if jar.Timeout > 0 {
+		f.Client.Timeout = jar.Timeout
+	}
+	if jar.MaxBytes > 0 {
+		f.MaxBytes = jar.MaxBytes
+	}
+	b.opts = append(b.opts, sso.WithJARFetcher(f))
+}
+
+// wireTokenExchangeChainLifetime wires the optional RFC 8693 token-exchange
+// chain-lifetime cap. Extracted from wireOAuthGrantStores for the
+// function-length budget.
+func (b *appBuilder) wireTokenExchangeChainLifetime() {
+	if d := b.cfg.OAuth.TokenExchange.MaxChainLifetime; d > 0 {
+		b.opts = append(b.opts, sso.WithMaxTokenExchangeChainLifetime(d))
+		b.logger.Info("token-exchange chain max lifetime enabled", "max_lifetime", d)
+	}
 }
 
 // wireRefreshToken wires the refresh-token store + the opt-in rotation-grace
@@ -230,6 +259,10 @@ func (b *appBuilder) wireRefreshToken() error {
 	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-oauth-refresh-tokens", store)
 	b.refreshTokenStore = store
 	b.refreshTokenTTL = cfg.OAuth.RefreshToken.TTL
+	if d := cfg.OAuth.RefreshToken.AbsoluteMaxLifetime; d > 0 {
+		b.opts = append(b.opts, sso.WithRefreshAbsoluteMaxLifetime(d))
+		b.logger.Info("refresh-token absolute max lifetime enabled", "max_lifetime", d)
+	}
 	return b.wireRefreshRotationGrace()
 }
 
@@ -355,5 +388,28 @@ func (b *appBuilder) wireJARM() error {
 	}
 	b.opts = append(b.opts, sso.WithJARM(js))
 	b.logger.Info("jarm: enabled (response_mode=jwt)", "signing_alg", b.signingAlg)
+	return nil
+}
+
+// wireIntrospection wires the /token/introspect response-caching, signed-JWT
+// response, and batch tuning knobs (all opt-in, oauth.OAuthIntrospectionConfig).
+func (b *appBuilder) wireIntrospection() error {
+	cfg := b.cfg.OAuth.Introspection
+	if cfg.CacheTTL > 0 {
+		b.opts = append(b.opts, sso.WithIntrospectionCache(handler.NewMemoryIntrospectionCache(), cfg.CacheTTL))
+		b.logger.Info("introspection response cache enabled", "ttl", cfg.CacheTTL)
+	}
+	if cfg.SignedResponseEnabled {
+		is, ok := any(b.jwtIssuer).(oauth.IntrospectionSigner)
+		if !ok {
+			return fmt.Errorf("oauth.introspection.signed_response_enabled but the %s signing issuer does not implement introspection signing", b.signingAlg)
+		}
+		b.opts = append(b.opts, sso.WithIntrospectionSigner(is))
+		b.logger.Info("introspection: signed JWT responses enabled (opt-in via Accept header)", "signing_alg", b.signingAlg)
+	}
+	if cfg.BatchEnabled {
+		b.opts = append(b.opts, sso.WithIntrospectionBatch(cfg.MaxBatchSize))
+		b.logger.Info("introspection: batch requests enabled", "max_batch_size", cfg.MaxBatchSize)
+	}
 	return nil
 }

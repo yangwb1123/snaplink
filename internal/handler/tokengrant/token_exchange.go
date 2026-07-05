@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/snaplink/sso/domains/tokenexchange"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
@@ -66,6 +67,17 @@ type TokenExchangeDeps interface {
 	RecordIDTokenIssued(ctx core.HandlerContext, clientID, subjectID string)
 	RecordSubjectClientAccess(ctx context.Context, subject, clientID string)
 	SrvLogger() spi.Logger
+	// MaxTokenExchangeChainLifetime returns the OPTIONAL hard ceiling on how
+	// old the delegation chain's underlying credential (subject_token's
+	// AuthTime — the original end-user login or SPIFFE SVID presentation,
+	// which every exchange hop propagates UNCHANGED) may be. 0 disables the
+	// check — byte-identical to pre-feature behavior. See
+	// tokExEnforceChainLifetime.
+	MaxTokenExchangeChainLifetime() time.Duration
+	// TokenExchangePolicy returns the OPTIONAL hop-authorization SPI (nil =
+	// unwired, every hop allowed — byte-identical to pre-feature behavior).
+	// See tokExEnforcePolicy.
+	TokenExchangePolicy() tokenexchange.Policy
 }
 
 // HandleTokenExchangeGrant processes the RFC 8693 token-exchange grant. Behavior
@@ -93,16 +105,16 @@ func HandleTokenExchangeGrant(d TokenExchangeDeps, ctx core.HandlerContext, clie
 	if tokExResolveSubject(d, ctx, req, st) || tokExRefuseNonDelegable(ctx, st) {
 		return
 	}
+	// Chain-level TTL (independent of any single hop's token TTL): the whole
+	// delegation chain traces back to one credential-establishing event
+	// (AuthTime), so this is checked as soon as st.claims is resolved.
+	if tokExEnforceChainLifetime(d, ctx, st) {
+		return
+	}
 	if tokExStepUp(ctx, req, st) {
 		return
 	}
-	// Actor resolution: both-or-neither presence, the Native SSO device-secret
-	// delegated path (which fully handles + returns), JTI-replay, and the act
-	// chain prepend.
-	if done, delegated := tokExResolveActor(d, ctx, client, req, st); done || delegated {
-		return
-	}
-	if tokExResolveTargetsAndScopes(d, ctx, client, req, st) {
+	if tokExResolveActorAndAuthorize(d, ctx, client, req, st) {
 		return
 	}
 	if tokExResolveSubjectAndIssue(d, ctx, client, st) {
@@ -126,6 +138,34 @@ func HandleTokenExchangeGrant(d TokenExchangeDeps, ctx core.HandlerContext, clie
 	}
 
 	ctx.JSON(http.StatusOK, st.resp)
+}
+
+// tokExResolveActorAndAuthorize runs the three stages between step-up and
+// issuance: actor resolution (including RFC 8693 §4.1.1 act-chain prepend +
+// cycle detection), target/scope resolution, and the OPTIONAL operator-
+// defined hop-policy hook. Extracted from HandleTokenExchangeGrant to keep it
+// within the function-length budget; behavior/gate order is unchanged.
+// Returns true when it has written a response (or fully handled a delegated
+// device-secret exchange) and the caller must stop.
+func tokExResolveActorAndAuthorize(d TokenExchangeDeps, ctx core.HandlerContext, client *core.Client, req TokenExchangeRequest, st *tokExState) bool {
+	// Actor resolution: both-or-neither presence, the Native SSO device-secret
+	// delegated path (which fully handles + returns), JTI-replay, and the act
+	// chain prepend.
+	if done, delegated := tokExResolveActor(d, ctx, client, req, st); done || delegated {
+		return true
+	}
+	// Cycle detection (A -> B -> ... -> A): st.actor is the chain AFTER
+	// tokExResolveActor's prepend, so this catches a newly-added actor that
+	// already appears deeper in the chain it was just linked onto.
+	if tokExActorChainHasCycle(st.actor) {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return true
+	}
+	if tokExResolveTargetsAndScopes(d, ctx, client, req, st) {
+		return true
+	}
+	// Operator-defined hop authorization (opt-in; nil Policy is a no-op).
+	return tokExEnforcePolicy(d, ctx, client, req, st)
 }
 
 // tokExRefuseNonDelegable refuses to exchange a subject_token that carries the
@@ -227,4 +267,87 @@ func tokExMintIDToken(d TokenExchangeDeps, ctx core.HandlerContext, client *core
 		return "", false
 	}
 	return enc, true
+}
+
+// tokExEnforceChainLifetime enforces the OPTIONAL hard ceiling on the
+// delegation chain's total age, independent of any single hop's access-token
+// TTL. st.claims.AuthTime is the ORIGINAL credential-establishing moment (the
+// end-user login, or the instant a SPIFFE JWT-SVID was presented) — every
+// token-exchange hop propagates it UNCHANGED (RFC 9068 §2.2, AGENTS.md §3),
+// so it is the one signal that survives no matter how many times the chain
+// has already been re-exchanged; the per-token TTL/exp does NOT (each hop
+// gets a fresh one). Returns true (invalid_grant already written, fail-
+// closed, oracle-leak collapse) when the cap is exceeded. A non-positive cap
+// (disabled, the default) or a zero AuthTime (a service-to-service subject
+// with no end-user/SPIFFE anchor — e.g. a plain client_credentials-derived
+// token) skip the check entirely: there is nothing to measure the chain's
+// age from, so this is byte-identical to pre-feature behavior for those.
+func tokExEnforceChainLifetime(d TokenExchangeDeps, ctx core.HandlerContext, st *tokExState) bool {
+	maxAge := d.MaxTokenExchangeChainLifetime()
+	if maxAge <= 0 || st.claims.AuthTime.IsZero() {
+		return false
+	}
+	if time.Since(st.claims.AuthTime) <= maxAge {
+		return false
+	}
+	ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+	return true
+}
+
+// tokExActorChainHasCycle detects an RFC 8693 §4.1 act-chain delegation
+// cycle: the same actor identity appearing twice in one chain (A -> B -> A).
+// A legitimate multi-hop delegation always ADDS a new, distinct link; a
+// repeat most plausibly signals either a compromised/looping service
+// topology or a replayed/crafted subject_token — worth refusing outright
+// rather than letting the chain grow unboundedly cyclic. actor is st.actor
+// AFTER tokExResolveActor's prepend (actor.Subject is the just-added link,
+// actor.Actor is the chain it was linked onto); nil (no actor_token
+// presented this hop) can never cycle.
+func tokExActorChainHasCycle(actor *core.ActorClaim) bool {
+	if actor == nil {
+		return false
+	}
+	for a := actor.Actor; a != nil; a = a.Actor {
+		if a.Subject == actor.Subject {
+			return true
+		}
+	}
+	return false
+}
+
+// tokExEnforcePolicy consults the OPTIONAL operator-defined
+// tokenexchange.Policy after the hop's actor/scopes/resources are fully
+// resolved — the last gate before anything is minted. Nil Policy (unwired,
+// the default) is a no-op. An error OR an explicit deny both collapse to the
+// SAME invalid_grant every other token-exchange failure returns (fail-
+// closed + oracle-leak collapse, AGENTS.md §3): this SPI's whole purpose is
+// to let an operator BLOCK specific delegations, so silently allowing on an
+// evaluation error would defeat it. Returns true when it has written a
+// response and the caller must stop.
+func tokExEnforcePolicy(d TokenExchangeDeps, ctx core.HandlerContext, client *core.Client, req TokenExchangeRequest, st *tokExState) bool {
+	policy := d.TokenExchangePolicy()
+	if policy == nil {
+		return false
+	}
+	actorSubject := ""
+	if st.actor != nil {
+		actorSubject = st.actor.Subject
+	}
+	allow, err := policy.Allow(ctx.Request().Context(), tokenexchange.Hop{
+		SubjectID:          st.claims.Subject,
+		ActorSubject:       actorSubject,
+		ClientID:           client.ID,
+		RequestedTokenType: req.RequestedTokenType,
+		Scopes:             st.scopes,
+		Resources:          st.resources,
+	})
+	if err != nil {
+		d.SrvLogger().Error("token exchange policy evaluation failed; denying (fail-closed)",
+			"error", err, "client", client.ID)
+	}
+	if err != nil || !allow {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+		return true
+	}
+	return false
 }

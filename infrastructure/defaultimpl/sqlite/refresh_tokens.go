@@ -76,45 +76,51 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
 	if token == "" || info == nil {
 		return oauth.ErrRefreshTokenNotFound
 	}
-	scopes, err := json.Marshal(info.Scopes)
+	scopes, attrs, resources, amr, err := marshalRefreshJSONCols(info)
 	if err != nil {
-		return fmt.Errorf("sqlite: marshal scopes: %w", err)
+		return err
 	}
-	attrs, err := json.Marshal(info.Attributes)
-	if err != nil {
-		return fmt.Errorf("sqlite: marshal attributes: %w", err)
-	}
-	resources, err := json.Marshal(info.Resources)
-	if err != nil {
-		return fmt.Errorf("sqlite: marshal resources: %w", err)
-	}
-	amr, err := json.Marshal(info.Amr)
-	if err != nil {
-		return fmt.Errorf("sqlite: marshal amr: %w", err)
-	}
-	// Zero AuthTime stores 0 (auth_time omitted on rotation), not a bogus epoch.
-	var authTimeNs int64
-	if !info.AuthTime.IsZero() {
-		authTimeNs = info.AuthTime.UnixNano()
-	}
+	// Zero-sentinel discipline for the two "may be unset" timestamps: a zero
+	// AuthTime stores 0 (auth_time omitted on rotation, not a bogus epoch);
+	// a zero FamilyCreatedAt (a caller that never threaded it — pre-feature
+	// record, or the absolute-max-lifetime cap never configured) also stores
+	// 0, which SKIPS that cap check rather than fabricating a start time.
 	_, err = s.db.ExecContext(ctx, `
         INSERT INTO refresh_tokens (token, user_id, client_id, provider,
             scopes, attributes, issued_at, expires_at, family_id, resources,
             authorization_details, sid, amr, acr, auth_time, confirmation_jkt,
-            generation)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            generation, family_created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		token, info.UserID, info.ClientID, info.Provider,
 		string(scopes), string(attrs),
 		info.IssuedAt.UnixNano(), info.ExpiresAt.UnixNano(),
 		info.FamilyID, string(resources),
 		string(info.AuthorizationDetails), info.SID,
-		string(amr), info.Acr, authTimeNs, info.ConfirmationJKT,
-		info.Generation,
+		string(amr), info.Acr, unixNanoOrZero(info.AuthTime), info.ConfirmationJKT,
+		info.Generation, unixNanoOrZero(info.FamilyCreatedAt),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: insert refresh_token: %w", err)
 	}
 	return s.mirrorRefreshFamily(ctx, token, info.FamilyID)
+}
+
+// marshalRefreshJSONCols JSON-encodes the slice/map columns of a RefreshToken
+// for storage. Extracted from Issue for the function-length budget.
+func marshalRefreshJSONCols(info *oauth.RefreshToken) (scopes, attrs, resources, amr []byte, err error) {
+	if scopes, err = json.Marshal(info.Scopes); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("sqlite: marshal scopes: %w", err)
+	}
+	if attrs, err = json.Marshal(info.Attributes); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("sqlite: marshal attributes: %w", err)
+	}
+	if resources, err = json.Marshal(info.Resources); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("sqlite: marshal resources: %w", err)
+	}
+	if amr, err = json.Marshal(info.Amr); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("sqlite: marshal amr: %w", err)
+	}
+	return scopes, attrs, resources, amr, nil
 }
 
 // mirrorRefreshFamily records the (token, family_id) pair in the reuse-detection
@@ -146,7 +152,7 @@ func (s *RefreshTokenStore) Consume(ctx context.Context, token string) (*oauth.R
         RETURNING user_id, client_id, provider, scopes, attributes,
                   issued_at, expires_at, family_id, resources,
                   authorization_details, sid, amr, acr, auth_time,
-                  confirmation_jkt, generation`, token)
+                  confirmation_jkt, generation, family_created_at`, token)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Reuse-detection path.
@@ -179,7 +185,7 @@ func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*oauth.R
         SELECT user_id, client_id, provider, scopes, attributes,
                issued_at, expires_at, family_id, resources,
                authorization_details, sid, amr, acr, auth_time,
-               confirmation_jkt, generation
+               confirmation_jkt, generation, family_created_at
         FROM refresh_tokens WHERE token = ?`, token)
 	out, err := scanRefreshToken(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -335,6 +341,7 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 		authTimeUnixNs                             int64
 		confirmationJKT                            string
 		generation                                 int
+		familyCreatedAtUnixNs                      int64
 	)
 	if err := s.Scan(
 		&out.UserID, &out.ClientID, &provider,
@@ -343,7 +350,7 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 		&familyID, &resources,
 		&authDetails, &sid,
 		&amrJSON, &acr, &authTimeUnixNs,
-		&confirmationJKT, &generation,
+		&confirmationJKT, &generation, &familyCreatedAtUnixNs,
 	); err != nil {
 		return nil, err
 	}
@@ -360,6 +367,11 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 	// the claim rather than emitting the Unix epoch.
 	if authTimeUnixNs != 0 {
 		out.AuthTime = time.Unix(0, authTimeUnixNs).UTC()
+	}
+	// Same 0-sentinel discipline for family_created_at — see the Issue-side
+	// comment; a zero value SKIPS the absolute-max-lifetime check.
+	if familyCreatedAtUnixNs != 0 {
+		out.FamilyCreatedAt = time.Unix(0, familyCreatedAtUnixNs).UTC()
 	}
 	out.IssuedAt = time.Unix(0, issuedAtUnixNs).UTC()
 	out.ExpiresAt = time.Unix(0, expiresAtUnixNs).UTC()

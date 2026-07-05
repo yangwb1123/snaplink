@@ -36,6 +36,11 @@ type introspectDeps struct {
 	// default-off (never exceeded), so an unset hook keeps introspection
 	// byte-identical to a build without a wired policy.
 	renewExceeded func(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) bool
+	// signer / batchMaxSize stand in for WithIntrospectionSigner /
+	// WithIntrospectionBatch. Zero values (nil / 0) reproduce the default-off
+	// byte-identical behavior every other test in this file relies on.
+	signer       IntrospectionSigner
+	batchMaxSize int
 }
 
 func (d *introspectDeps) ClientStoreAccessor() core.ClientStore     { return d.clients }
@@ -59,6 +64,9 @@ func (d *introspectDeps) IntrospectionRenewExceeded(ctx context.Context, clientI
 	}
 	return d.renewExceeded(ctx, clientID, scopes, issuedAt, expiresAt)
 }
+
+func (d *introspectDeps) IntrospectionSigner() IntrospectionSigner { return d.signer }
+func (d *introspectDeps) IntrospectionBatchMaxSize() int           { return d.batchMaxSize }
 
 var _ IntrospectDeps = (*introspectDeps)(nil)
 

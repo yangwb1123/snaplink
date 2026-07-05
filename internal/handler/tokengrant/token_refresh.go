@@ -39,6 +39,10 @@ type RefreshGrantDeps interface {
 	// the caller returns immediately. Byte-identical no-op (returns false) when
 	// no token-policy store is wired — the default-off contract.
 	EnforceRefreshDepthPolicy(ctx core.HandlerContext, clientID, subject string, scopes []string, depth int) bool
+	// RefreshAbsoluteMaxLifetime returns the configured hard ceiling on a
+	// refresh-token family's total age since original issuance (0 = disabled,
+	// the default-off contract — see refreshEnforceAbsoluteMaxLifetime).
+	RefreshAbsoluteMaxLifetime() time.Duration
 }
 
 // HandleRefreshGrant processes the RFC 6749 §6 refresh_token grant. Behavior is
@@ -78,6 +82,9 @@ func HandleRefreshGrant(d RefreshGrantDeps, ctx core.HandlerContext, client *cor
 		return
 	}
 	if refreshBindGuard(ctx, client, info, dpopJKT) {
+		return
+	}
+	if refreshEnforceAbsoluteMaxLifetime(d, ctx, info) {
 		return
 	}
 	// Session liveness check (§2): when the refresh token carries a SID
@@ -122,6 +129,31 @@ func refreshBindGuard(ctx core.HandlerContext, client *core.Client, info *oauth.
 	return false
 }
 
+// refreshEnforceAbsoluteMaxLifetime enforces the OPTIONAL hard ceiling on a
+// refresh-token FAMILY's total age since its original issuance
+// (info.FamilyCreatedAt), independent of the per-rotation TTL/idle-expiry the
+// store already enforces. It closes a gap the existing per-token TTL +
+// rotation-velocity + reuse defenses don't cover: a family that keeps
+// rotating legitimately (an active client refreshing on schedule) never
+// re-triggers those, so absent this cap a single family could stay alive
+// indefinitely. FAIL-CLOSED on a hit — the SAME invalid_grant wire shape as
+// every other refresh failure (oracle-leak collapse, AGENTS.md §3), matching
+// the family-reuse/rotation-velocity precedent in this file. A non-positive
+// cap (disabled, the default) or a zero FamilyCreatedAt (a record minted
+// before this field existed, or before the cap was ever configured) skip the
+// check entirely — byte-identical to pre-feature behavior.
+func refreshEnforceAbsoluteMaxLifetime(d RefreshGrantDeps, ctx core.HandlerContext, info *oauth.RefreshToken) bool {
+	maxAge := d.RefreshAbsoluteMaxLifetime()
+	if maxAge <= 0 || info.FamilyCreatedAt.IsZero() {
+		return false
+	}
+	if time.Since(info.FamilyCreatedAt) <= maxAge {
+		return false
+	}
+	ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
+	return true
+}
+
 // refreshIssueAndRotate is the success tail (reached only after Consume, client
 // bind, scope resolution and the velocity gate all pass): mint the access token,
 // rotate the refresh token within the SAME family, record metrics, cache the
@@ -145,15 +177,7 @@ func refreshIssueAndRotate(d RefreshGrantDeps, ctx core.HandlerContext, client *
 	// Rotation: issue a NEW refresh token (the old one was deleted by Consume).
 	// Pass info.FamilyID so the new leaf joins the same family — stores that track
 	// families can detect any future reuse anywhere in the chain.
-	newRefresh, err := d.IssueRefreshToken(ctx.Request().Context(),
-		info.UserID, client.ID, info.Provider, grantScopes, info.Attributes, info.FamilyID, info.Resources,
-		info.AuthorizationDetails, info.SID,
-		// RFC 9068 §2.2: a rotation propagates the ORIGINAL auth context unchanged
-		// (does NOT reset auth_time, keeps amr/acr) so the chain never down-trusts.
-		// Generation is the ONE field that advances: parent+1 records this
-		// rotation's depth for the next max_refresh_depth evaluation.
-		oauth.RefreshAuthContext{AMR: info.Amr, ACR: info.Acr, AuthTime: info.AuthTime, Generation: info.Generation + 1},
-		client.RefreshTokenTTL, info.ConfirmationJKT) // RFC 9449: key binding propagates unchanged
+	newRefresh, err := refreshRotateFamily(d, ctx, client, info, grantScopes)
 	if err != nil {
 		d.LogErrorCtx(ctx, "refresh token rotation failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
@@ -177,6 +201,23 @@ func refreshIssueAndRotate(d RefreshGrantDeps, ctx core.HandlerContext, client *
 		grace.Remember(refreshToken, resp, time.Now())
 	}
 	ctx.JSON(http.StatusOK, resp)
+}
+
+// refreshRotateFamily issues the rotated refresh token, threading the
+// original auth context (RFC 9068 §2.2: AMR/ACR/AuthTime propagate
+// UNCHANGED so the chain never down-trusts) and the family lineage fields —
+// Generation is the one field that advances (parent+1, the max_refresh_depth
+// input); FamilyCreatedAt propagates unchanged (the absolute-max-lifetime
+// input). Extracted from refreshIssueAndRotate for the function-length budget.
+func refreshRotateFamily(d RefreshGrantDeps, ctx core.HandlerContext, client *core.Client, info *oauth.RefreshToken, grantScopes []string) (string, error) {
+	return d.IssueRefreshToken(ctx.Request().Context(),
+		info.UserID, client.ID, info.Provider, grantScopes, info.Attributes, info.FamilyID, info.Resources,
+		info.AuthorizationDetails, info.SID,
+		oauth.RefreshAuthContext{
+			AMR: info.Amr, ACR: info.Acr, AuthTime: info.AuthTime, Generation: info.Generation + 1,
+			FamilyCreatedAt: info.FamilyCreatedAt,
+		},
+		client.RefreshTokenTTL, info.ConfirmationJKT) // RFC 9449: key binding propagates unchanged
 }
 
 // refreshRotatedSubject builds the Subject for a rotated access token. RFC 9068:

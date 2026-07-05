@@ -88,6 +88,7 @@ func (s *Server) issueRefreshToken(
 		ClientTTLOverride:    clientTTLOverride,
 		ConfirmationJKT:      confirmationJKT,
 		Generation:           authCtx.Generation,
+		FamilyCreatedAt:      authCtx.FamilyCreatedAt,
 	})
 }
 
