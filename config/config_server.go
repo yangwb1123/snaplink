@@ -83,6 +83,45 @@ type ServerConfig struct {
 	// from consent screens / integrator docs. Each field is
 	// independently optional — empty values are omitted.
 	OperatorMetadata OperatorMetadataConfig `yaml:"operator_metadata"`
+
+	// APIVersioning wires the opt-in Accept-Version negotiation +
+	// Sunset/Deprecation response headers + the v2alpha proof-of-mechanism
+	// route (ADR-0008). Every sub-field's zero value disables its own
+	// mechanism — a deployment that never sets api_versioning: behaves
+	// byte-identically to today for every route.
+	APIVersioning APIVersioningConfig `yaml:"api_versioning"`
+}
+
+// APIVersioningConfig is the YAML shape of ADR-0008's API versioning
+// mechanism: Accept-Version request-header negotiation, Sunset/Deprecation
+// response headers (whole-API or per-route), and the v2alpha example route.
+type APIVersioningConfig struct {
+	// SupportedVersions lists the Accept-Version tokens this deployment
+	// accepts (e.g. ["v1", "v2alpha"]). Empty (the default) disables
+	// negotiation — every request, with or without the header, is
+	// unaffected.
+	SupportedVersions []string `yaml:"supported_versions"`
+	// Deprecation marks the WHOLE API deprecated (Sunset + Deprecation
+	// response headers on every response). The zero value (Since, Sunset,
+	// and Link all unset) adds no headers.
+	Deprecation DeprecationConfig `yaml:"deprecation"`
+	// RouteDeprecations marks specific endpoints or path-prefix groups
+	// deprecated, keyed by exact path or a "/"-suffixed prefix. Empty (the
+	// default) adds no per-route headers.
+	RouteDeprecations map[string]DeprecationConfig `yaml:"route_deprecations"`
+	// V2AlphaPreview mounts GET /api/v2alpha/version, the one example route
+	// proving the v2alpha path-prefix mechanism ADR-0008 documents. False
+	// (the default) ⇒ the route is not mounted.
+	V2AlphaPreview bool `yaml:"v2alpha_preview"`
+}
+
+// DeprecationConfig is the YAML shape of a middleware.DeprecationPolicy
+// (interfaces/sso can't be imported from config — see AGENTS.md §0.2 layer
+// direction — so this is a plain-data mirror the cmd layer translates).
+type DeprecationConfig struct {
+	Since  time.Time `yaml:"since"`
+	Sunset time.Time `yaml:"sunset"`
+	Link   string    `yaml:"link"`
 }
 
 // PairwiseSubjectsConfig wires WithPairwiseSubjectStore +

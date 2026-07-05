@@ -336,6 +336,20 @@ recover from them, just surface to operations.
 | `client_store_not_configured`     | 500  | Login attempted but no ClientStore exists                    |
 | `no_token_strategy`               | 500  | Client's `token_strategy` doesn't match any registered issuer |
 | `not_supported`                   | 501  | SDK-exported code (`sso.ErrNotSupported`) for a feature an embedder's handler chooses not to implement; the stock server never emits it |
+| `unsupported_version`             | 400  | The request's `Accept-Version` header names a value not in `WithAPIVersioning`'s configured list |
+
+**API versioning / deprecation** (ADR-0008, opt-in): `WithAPIVersioning("v1", ...)`
+enables `Accept-Version` request-header negotiation — a request that sends no
+`Accept-Version` header (every client today) is completely unaffected; a
+request that sends the header must name a supported value or gets
+`400 unsupported_version` before its route handler runs. `WithAPIDeprecation`
+and `WithRouteDeprecation` add the `Deprecation` + RFC 8594 `Sunset` (+
+optional `Link: <url>; rel="sunset"`) response headers to the whole API or to
+specific endpoints/prefixes; omitting both means no response ever carries
+these headers. `WithAPIVersionPreview` mounts `GET /api/v2alpha/version`, the
+ADR's one example route proving the `/api/v2alpha` path-prefix mechanism
+works — it is not a commitment to a full v2 API surface. All four are
+independently opt-in and unmounted/off by default.
 
 ---
 

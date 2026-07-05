@@ -179,4 +179,10 @@ const (
 	// authenticated admin.
 	ErrBulkRevokeConfirmationRequired = "bulk_revoke_confirmation_required"
 	ErrBulkRevokeBatchTooLarge        = "bulk_revoke_batch_too_large"
+	// ErrUnsupportedVersion is returned (400) when a request's Accept-Version
+	// header names a version this deployment does not support (see
+	// interfaces/middleware.AcceptVersion, ADR-0008). Only checked when
+	// WithAPIVersioning configured a non-empty Supported list — an absent
+	// header, or an unconfigured server, never emits this code.
+	ErrUnsupportedVersion = "unsupported_version"
 )

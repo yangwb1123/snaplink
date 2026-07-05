@@ -180,6 +180,7 @@ func (b *appBuilder) wireEdge() error {
 	if err := b.wireProfilesAndMetadata(); err != nil {
 		return err
 	}
+	b.wireAPIVersioning()
 	b.wireMetricsCollector()
 	if err := b.wireBodyAndRateLimit(); err != nil {
 		return err

@@ -124,14 +124,74 @@ paths:
         Returns 200 with the issuer name as long as the process is
         running. Used by Kubernetes liveness / readiness probes and by
         load balancers as a cheap "is this instance alive" check.
+
+        Shown here as the representative example of two opt-in,
+        API-wide mechanisms (ADR-0008) that MAY apply to ANY endpoint,
+        not just this one: `Accept-Version` request negotiation, and
+        `Deprecation`/`Sunset` response headers. Both are no-ops on
+        every endpoint unless the operator has explicitly configured
+        them (`sso.WithAPIVersioning` / `sso.WithAPIDeprecation` /
+        `sso.WithRouteDeprecation`).
       operationId: getHealth
+      parameters:
+        - $ref: "#/components/parameters/AcceptVersion"
       responses:
         "200":
           description: Server is alive.
+          headers:
+            Deprecation:
+              $ref: "#/components/headers/Deprecation"
+            Sunset:
+              $ref: "#/components/headers/Sunset"
+            Link:
+              $ref: "#/components/headers/DeprecationLink"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+        "400":
+          description: |
+            `Accept-Version` named a value the deployment does not
+            support (only possible when `sso.WithAPIVersioning` is
+            configured).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v2alpha/version:
+    get:
+      tags: [discovery]
+      summary: ADR-0008 v2alpha proof-of-mechanism route (opt-in, preview).
+      description: |
+        Read-only, unauthenticated capability probe proving the
+        `/api/v2alpha` path-prefix routing mechanism works — deliberately
+        NOT a commitment to a full v2 API surface (see ADR-0008's tiered
+        version-progression lifecycle: v2alpha is preview / no
+        compatibility guarantees). Only mounted when
+        `sso.WithAPIVersionPreview` is configured; absent otherwise
+        (router-native 404, byte-identical to a build without this
+        feature).
+      operationId: getAPIVersionPreview
+      responses:
+        "200":
+          description: This deployment's versioning posture.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_version:
+                    type: string
+                    example: v2alpha
+                  stability:
+                    type: string
+                    example: preview
+                  supported_versions:
+                    type: array
+                    items:
+                      type: string
+                    example: ["v1"]
 
   /.well-known/jwks.json:
     get:
@@ -7267,6 +7327,51 @@ components:
         Ed25519-signed JWT issued by `/auth/login`. Verify locally
         against `/.well-known/jwks.json` rather than round-tripping
         the server.
+
+  parameters:
+    AcceptVersion:
+      name: Accept-Version
+      in: header
+      required: false
+      description: |
+        Opt-in API version negotiation (ADR-0008, `sso.WithAPIVersioning`).
+        Omit this header entirely for today's default behavior — every
+        endpoint is completely unaffected. When the operator has configured
+        a supported-version list and this header names a value NOT in it,
+        the request is rejected with `400 unsupported_version` before the
+        route handler runs. Deployments that never call `WithAPIVersioning`
+        ignore this header even if a client sends it.
+      schema:
+        type: string
+        example: v1
+
+  headers:
+    Deprecation:
+      description: |
+        Present only when the operator has opted an endpoint (or the whole
+        API) into deprecation via `sso.WithAPIDeprecation` /
+        `sso.WithRouteDeprecation` (ADR-0008). Value is `true`, or an
+        HTTP-date naming when the deprecation began
+        (draft-ietf-httpapi-deprecation-header convention). Absent on every
+        response of an unconfigured deployment.
+      schema:
+        type: string
+        example: "true"
+    Sunset:
+      description: |
+        RFC 8594 Sunset date — present only alongside `Deprecation` when the
+        operator configured a specific removal date. Absent otherwise.
+      schema:
+        type: string
+        example: "Tue, 01 Jun 2027 00:00:00 GMT"
+    DeprecationLink:
+      description: |
+        Optional migration-guide URL alongside `Sunset`, formatted
+        `<url>; rel="sunset"` per RFC 8288. Absent unless the operator
+        configured one.
+      schema:
+        type: string
+        example: '<https://example.com/migrate>; rel="sunset"'
 
   responses:
     BadRequest:

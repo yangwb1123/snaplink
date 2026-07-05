@@ -2,11 +2,13 @@ package sso
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenant"
+	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
 	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/platform/audit"
@@ -22,25 +24,46 @@ import (
 
 // wiringState holds core provider wiring plus tenant/region/geo/network and client-store-cache/SPIFFE fields.
 type wiringState struct {
-	authenticators          map[string]Authenticator
-	tokenIssuers            map[string]TokenIssuer // strategy name -> issuer
-	defaultTokenStrategy    string
-	tenantTokenStrategies   map[string]string // tenant id -> strategy (issuer) name
-	userProvider            UserProvider
-	clientStore             ClientStore
-	sessionMgr              SessionManager
-	maxSessionsPerUser      int // 0 = unlimited (backward compatible)
-	router                  Router
-	logger                  spi.Logger
-	auditor                 *audit.Recorder
-	caepTransmitter         *caep.Transmitter
-	auditAPI                bool
-	sseBroker               *sse.Broker
-	sseHeartbeat            time.Duration
-	requestIDMW             bool
-	panicRecovery           bool
-	compressionEnabled      bool
-	debugRequestLogging     bool // when set, logs request/response bodies at DEBUG level
+	authenticators        map[string]Authenticator
+	tokenIssuers          map[string]TokenIssuer // strategy name -> issuer
+	defaultTokenStrategy  string
+	tenantTokenStrategies map[string]string // tenant id -> strategy (issuer) name
+	userProvider          UserProvider
+	clientStore           ClientStore
+	sessionMgr            SessionManager
+	maxSessionsPerUser    int // 0 = unlimited (backward compatible)
+	router                Router
+	logger                spi.Logger
+	auditor               *audit.Recorder
+	caepTransmitter       *caep.Transmitter
+	auditAPI              bool
+	sseBroker             *sse.Broker
+	sseHeartbeat          time.Duration
+	requestIDMW           bool
+	panicRecovery         bool
+	compressionEnabled    bool
+	debugRequestLogging   bool // when set, logs request/response bodies at DEBUG level
+
+	// apiVersionSupported lists the version tokens (e.g. "v1", "v2alpha")
+	// this deployment accepts via Accept-Version request-header negotiation
+	// (WithAPIVersioning, ADR-0008). Nil/empty (the default) disables
+	// negotiation entirely: a request — with or without the header — is
+	// unaffected, additive by construction.
+	apiVersionSupported []string
+	// deprecationPolicy stamps RFC 8594 Sunset + the Deprecation response
+	// header on EVERY response when set (WithAPIDeprecation). Nil (the
+	// default) adds neither header to any response.
+	deprecationPolicy *middleware.DeprecationPolicy
+	// routeDeprecations stamps the same headers on individual endpoints or
+	// path-prefix groups only, keyed by exact path or a "/"-suffixed prefix
+	// (WithRouteDeprecation). Nil/empty (the default) leaves every route's
+	// headers untouched.
+	routeDeprecations map[string]middleware.DeprecationPolicy
+	// apiV2AlphaPreview mounts the one-route ADR-0008 v2alpha proof-of-
+	// mechanism endpoint, GET /api/v2alpha/version (WithAPIVersionPreview).
+	// False (the default) ⇒ Mount() never registers it — byte-identical to
+	// a build without this feature.
+	apiV2AlphaPreview       bool
 	permissions             permissions.Provider
 	embedPermissions        bool
 	netStore                netpolicy.Store
@@ -122,4 +145,49 @@ type wiringState struct {
 	// Zero interval (the default) means the feature is off.
 	configDriftInterval time.Duration
 	configReplicaID     string
+}
+
+// wrapPanicRecovery conditionally wraps the handler chain with panic
+// recovery as the outermost layer — see server_routes.go's
+// buildMiddlewareChain for the full ordering rationale. Relocated here (from
+// server_routes.go, which sits at the line budget) to sit beside the
+// panicRecovery field it reads.
+func (s *Server) wrapPanicRecovery(inner http.Handler) http.Handler {
+	if s.panicRecovery {
+		return middleware.Recover(s.logger)(inner)
+	}
+	return inner
+}
+
+// wrapCompression conditionally wraps the handler chain with gzip response
+// compression for large JSON payloads. Relocated here (from
+// server_routes.go, which sits at the line budget) to sit beside the
+// compressionEnabled field it reads.
+func (s *Server) wrapCompression(inner http.Handler) http.Handler {
+	if s.compressionEnabled {
+		return middleware.Compress(inner)
+	}
+	return inner
+}
+
+// wrapAPIVersioning conditionally applies Accept-Version negotiation
+// (rejects an unsupported requested version before body-limit/compression/
+// CORS/security-headers ever run) and the Sunset/Deprecation response-header
+// stamp (ADR-0008). Both sub-mechanisms are independently opt-in — a build
+// that never calls WithAPIVersioning/WithAPIDeprecation/WithRouteDeprecation
+// leaves inner completely untouched, so every existing route stays
+// byte-identical. Placed beside the fields it reads for the same reason
+// wrapPanicRecovery/wrapCompression live here rather than in
+// server_routes.go (which is at the line budget).
+func (s *Server) wrapAPIVersioning(inner http.Handler) http.Handler {
+	if len(s.apiVersionSupported) > 0 {
+		inner = middleware.AcceptVersion(middleware.AcceptVersionConfig{Supported: s.apiVersionSupported})(inner)
+	}
+	if s.deprecationPolicy != nil || len(s.routeDeprecations) > 0 {
+		inner = middleware.Deprecation(middleware.DeprecationConfig{
+			Global: s.deprecationPolicy,
+			Routes: s.routeDeprecations,
+		})(inner)
+	}
+	return inner
 }

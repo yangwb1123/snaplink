@@ -21,6 +21,25 @@ const (
 	// failover window instead of hammering a shedding replica.
 	HeaderRetryAfter = "Retry-After"
 
+	// HeaderAcceptVersion is the opt-in request header a client sets to
+	// negotiate a specific API version (see interfaces/middleware.AcceptVersion,
+	// ADR-0008). Only consulted when WithAPIVersioning configured a non-empty
+	// supported-version list; an absent header or absent config leaves the
+	// request unaffected — additive by construction.
+	HeaderAcceptVersion = "Accept-Version"
+	// HeaderDeprecation is the response header (draft-ietf-httpapi-deprecation-header
+	// convention) marking an endpoint or the whole API as deprecated: "true",
+	// or an HTTP-date naming when the deprecation began. See
+	// interfaces/middleware.Deprecation.
+	HeaderDeprecation = "Deprecation"
+	// HeaderSunset is the RFC 8594 response header naming the HTTP-date a
+	// deprecated resource stops being available. See
+	// interfaces/middleware.Deprecation.
+	HeaderSunset = "Sunset"
+	// HeaderLink carries the RFC 8288 sunset migration-guide URL alongside
+	// HeaderSunset, e.g. `Link: <https://...>; rel="sunset"`.
+	HeaderLink = "Link"
+
 	BearerPrefix    = "Bearer "
 	TokenTypeBearer = "Bearer"
 	ContentTypeJSON = "application/json"
@@ -195,3 +214,12 @@ const (
 	PathAdminTokenSuspicious = "/admin/tokens/suspicious"
 	PathAdminTokenRevoke     = "/admin/tokens/revoke"
 )
+
+// PathAPIVersionPreview is the ADR-0008 v2alpha proof-of-mechanism route: a
+// single read-only capability probe (GET) demonstrating that a "/api/v2alpha"
+// path-prefix CAN be routed, without committing to a full v2 API surface.
+// Full path (not group-relative — it deliberately sits OUTSIDE the stable
+// /api/v1 group). Only mounted when WithAPIVersionPreview is wired
+// (byte-identical off otherwise). Relocated here (not consts.go) because
+// consts.go is at its per-file line budget.
+const PathAPIVersionPreview = "/api/v2alpha/version"

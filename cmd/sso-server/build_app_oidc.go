@@ -10,6 +10,7 @@ import (
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/sse"
@@ -247,6 +248,37 @@ func (b *appBuilder) wireProfilesAndMetadata() error {
 		}
 	}
 	return nil
+}
+
+// wireAPIVersioning wires ADR-0008's opt-in HTTP API versioning mechanism:
+// Accept-Version request-header negotiation, Sunset/Deprecation response
+// headers (whole-API and/or per-route), and the v2alpha proof-of-mechanism
+// route. Every sub-mechanism's own zero value keeps it off — a deployment
+// that never sets server.api_versioning: behaves byte-identically to today.
+func (b *appBuilder) wireAPIVersioning() {
+	av := b.cfg.Server.APIVersioning
+	if len(av.SupportedVersions) > 0 {
+		b.opts = append(b.opts, sso.WithAPIVersioning(av.SupportedVersions...))
+		b.logger.Info("api_versioning: Accept-Version negotiation enabled", "supported", av.SupportedVersions)
+	}
+	if dep := av.Deprecation; !dep.Since.IsZero() || !dep.Sunset.IsZero() || dep.Link != "" {
+		b.opts = append(b.opts, sso.WithAPIDeprecation(middleware.DeprecationPolicy{
+			Since: dep.Since, Sunset: dep.Sunset, Link: dep.Link,
+		}))
+		b.logger.Info("api_versioning: whole-API Deprecation/Sunset headers enabled")
+	}
+	for path, dep := range av.RouteDeprecations {
+		b.opts = append(b.opts, sso.WithRouteDeprecation(path, middleware.DeprecationPolicy{
+			Since: dep.Since, Sunset: dep.Sunset, Link: dep.Link,
+		}))
+	}
+	if len(av.RouteDeprecations) > 0 {
+		b.logger.Info("api_versioning: per-route Deprecation/Sunset headers enabled", "routes", len(av.RouteDeprecations))
+	}
+	if av.V2AlphaPreview {
+		b.opts = append(b.opts, sso.WithAPIVersionPreview())
+		b.logger.Info("api_versioning: v2alpha proof-of-mechanism route enabled at GET /api/v2alpha/version")
+	}
 }
 
 // wirePairwiseSubjects wires the OIDC pairwise subject store + salt.
