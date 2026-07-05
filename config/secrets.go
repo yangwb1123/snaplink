@@ -75,6 +75,39 @@ func resolveMap(ctx context.Context, m map[string]any, resolvers map[string]Secr
 			if err := resolveMap(ctx, val, resolvers); err != nil {
 				return fmt.Errorf("config: %s: %w", k, err)
 			}
+		case []any:
+			// Recurse into sequences too — YAML lists (e.g. the audit
+			// webhook subscriptions[]) unmarshal to []any, and a secret://
+			// ref nested in a list element would otherwise ship to unmarshal
+			// verbatim. Non-string / non-container elements are left as-is,
+			// so existing plain-string lists are untouched.
+			if err := resolveSlice(ctx, val, resolvers); err != nil {
+				return fmt.Errorf("config: %s: %w", k, err)
+			}
+		}
+	}
+	return nil
+}
+
+func resolveSlice(ctx context.Context, s []any, resolvers map[string]SecretResolver) error {
+	for i, v := range s {
+		switch val := v.(type) {
+		case string:
+			resolved, err := resolveIfSecret(ctx, val, resolvers)
+			if err != nil {
+				return fmt.Errorf("config: resolve secret at index %d: %w", i, err)
+			}
+			if resolved != nil {
+				s[i] = *resolved
+			}
+		case map[string]any:
+			if err := resolveMap(ctx, val, resolvers); err != nil {
+				return fmt.Errorf("config: index %d: %w", i, err)
+			}
+		case []any:
+			if err := resolveSlice(ctx, val, resolvers); err != nil {
+				return fmt.Errorf("config: index %d: %w", i, err)
+			}
 		}
 	}
 	return nil

@@ -1,0 +1,155 @@
+package sqlite_test
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"testing"
+
+	"github.com/snaplink/sso/domains/connections"
+	csqlite "github.com/snaplink/sso/domains/connections/sqlite"
+
+	_ "modernc.org/sqlite" // register the pure-Go "sqlite" driver for the manual sql.Open.
+)
+
+// fakeResolver is the hermetic DNS double (no real network).
+type fakeResolver struct {
+	records map[string][]string
+	err     error
+}
+
+func (f fakeResolver) LookupTXT(_ context.Context, name string) ([]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.records[name], nil
+}
+
+func newVerifiedStore(t *testing.T) *csqlite.Store {
+	t.Helper()
+	s, err := csqlite.New("file:"+t.TempDir()+"/conn.db", connections.WithDomainVerificationRequired(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
+// TestSQLite_MigrationV2 confirms the domain-claim migration lifts the reported
+// max version so the boot schema-guard reflects it.
+func TestSQLite_MigrationV2(t *testing.T) {
+	t.Parallel()
+	if got := csqlite.ConnectionsMaxVersion(); got < 2 {
+		t.Errorf("ConnectionsMaxVersion() = %d, want >= 2 (domain_claims migration)", got)
+	}
+	// New() runs migrations; a clean open proves v2 applies on top of v1.
+	_ = newVerifiedStore(t)
+}
+
+// TestSQLite_DomainVerificationRequired_BlocksHijack mirrors the memory-store
+// security test against the durable backend.
+func TestSQLite_DomainVerificationRequired_BlocksHijack(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newVerifiedStore(t)
+
+	if err := s.Upsert(ctx, &connections.Connection{ID: "a", Domains: []string{"shared.com"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.VerifyDomain(ctx, "a", "shared.com"); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := connections.Resolve(ctx, s, "x@shared.com"); c == nil || c.ID != "a" {
+		t.Fatalf("connA should own shared.com, got %v", c)
+	}
+
+	// connB's unproven claim must not steal routing.
+	if err := s.Upsert(ctx, &connections.Connection{ID: "b", Domains: []string{"shared.com"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := connections.Resolve(ctx, s, "x@shared.com"); c == nil || c.ID != "a" {
+		t.Fatalf("hijack blocked: routing must stay connA, got %v", c)
+	}
+	claimB, err := s.DomainClaim(ctx, "b", "shared.com")
+	if err != nil || claimB.Status != connections.DomainPending {
+		t.Fatalf("connB claim = %+v / %v, want pending", claimB, err)
+	}
+
+	// Wrong proof: no takeover.
+	wrong := fakeResolver{records: map[string][]string{claimB.Record: {"nope"}}}
+	if ok, _ := connections.VerifyDomainOwnership(ctx, s, wrong, "b", "shared.com", 0); ok {
+		t.Error("wrong TXT must not verify")
+	}
+	if c, _ := connections.Resolve(ctx, s, "x@shared.com"); c.ID != "a" {
+		t.Error("routing must still be connA")
+	}
+
+	// Correct proof: DNS control supersedes.
+	right := fakeResolver{records: map[string][]string{claimB.Record: {claimB.Token}}}
+	if ok, err := connections.VerifyDomainOwnership(ctx, s, right, "b", "shared.com", 0); !ok || err != nil {
+		t.Fatalf("valid proof should verify connB: %v/%v", ok, err)
+	}
+	if c, _ := connections.Resolve(ctx, s, "x@shared.com"); c == nil || c.ID != "b" {
+		t.Fatalf("verified connB should now route, got %v", c)
+	}
+	if a, _ := s.DomainClaim(ctx, "a", "shared.com"); a == nil || a.Status != connections.DomainPending {
+		t.Errorf("prior owner must be demoted to pending, got %+v", a)
+	}
+}
+
+// TestSQLite_VerifyDomainOwnership_FailClosedOnStoreError proves a store read
+// failure fails CLOSED: VerifyDomainOwnership returns the error and cannot
+// silently authorize a takeover. A closed real store induces the error (no mock).
+func TestSQLite_VerifyDomainOwnership_FailClosedOnStoreError(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", "file:"+t.TempDir()+"/conn.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := csqlite.NewWithDB(db, connections.WithDomainVerificationRequired(true))
+	if err := s.Upsert(ctx, &connections.Connection{ID: "a", Domains: []string{"acme.com"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	// Close the underlying pool so a genuine DB error (not a nil deref) surfaces.
+	_ = db.Close()
+
+	res := fakeResolver{records: map[string][]string{
+		connections.DomainVerificationRecordName("", "acme.com"): {"anything"},
+	}}
+	ok, err := connections.VerifyDomainOwnership(ctx, s, res, "a", "acme.com", 0)
+	if ok {
+		t.Fatal("a store error must NOT report verified")
+	}
+	if err == nil {
+		t.Fatal("a store read error must be surfaced (fail-closed), got nil")
+	}
+	if errors.Is(err, connections.ErrNoDomainClaim) {
+		t.Fatal("a DB failure must not masquerade as ErrNoDomainClaim")
+	}
+}
+
+// TestSQLite_DomainVerificationNotRequired_Unaffected confirms the default store
+// is byte-identical last-write-wins with auto-verified claims.
+func TestSQLite_DomainVerificationNotRequired_Unaffected(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, err := csqlite.New("file:" + t.TempDir() + "/conn.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	if err := s.Upsert(ctx, &connections.Connection{ID: "a", Domains: []string{"shared.com"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if claim, err := s.DomainClaim(ctx, "a", "shared.com"); err != nil || claim.Status != connections.DomainVerified {
+		t.Fatalf("default mode must auto-verify: %+v / %v", claim, err)
+	}
+	if err := s.Upsert(ctx, &connections.Connection{ID: "b", Domains: []string{"shared.com"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := connections.Resolve(ctx, s, "x@shared.com"); err != nil || c.ID != "b" {
+		t.Errorf("default mode last-write-wins: %v / %v", c, err)
+	}
+}

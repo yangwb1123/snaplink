@@ -55,25 +55,39 @@ func (b *appBuilder) wireSelfServicePassword() error {
 		b.opts = append(b.opts, sso.WithPasswordCredentialStore(passwordStore))
 		logger.Info("self-service password change enabled", "backend", cfg.SelfService.Password.Backend)
 	}
-	// Opt-in self-service signup (POST /auth/register). Needs the password store
-	// (to set the new account's password). Default-off — open signup is an abuse
-	// surface; enable deliberately for B2C.
-	if cfg.SelfService.Signup {
-		if passwordStore == nil {
-			return errors.New("self_service.signup requires self_service.password to be enabled")
-		}
-		b.opts = append(b.opts, sso.WithSelfServiceSignup())
-		logger.Info("self-service signup enabled (/auth/register)")
+	if err := b.wireSelfServiceSignup(); err != nil {
+		return err
+	}
+	if err := b.wireEmailSenders(); err != nil {
+		return err
 	}
 	if err := b.wirePasswordReset(); err != nil {
 		return err
 	}
 	// GDPR Art. 15 self-service data export (/me/data-export), reusing the same
-	// exporter stores as the admin compliance route. Opt-in.
+	// exporter stores as the admin compliance route. Opt-in. Extra (consent +
+	// MFA enrollments) is late-bound in finalize() once those stores wire.
 	if cfg.SelfService.DataExport && b.userProvider != nil {
-		b.opts = append(b.opts, selfServiceDataExportOption(b.userProvider, b.sessionMgr))
+		b.dataExporter = newSelfServiceExporter(b.userProvider, b.sessionMgr)
+		b.opts = append(b.opts, sso.WithSelfServiceDataExport(b.dataExporter))
 		logger.Info("self-service data export enabled (/me/data-export)")
 	}
+	return nil
+}
+
+// wireSelfServiceSignup opts in the unauthenticated self-service registration
+// endpoint POST /auth/register (creates a user + sets a password, reusing the
+// wired password store). Default-off — open signup is an abuse surface most
+// enterprise deployments don't want; enable deliberately for B2C.
+func (b *appBuilder) wireSelfServiceSignup() error {
+	if !b.cfg.SelfService.Signup {
+		return nil
+	}
+	if b.passwordStore == nil {
+		return errors.New("self_service.signup requires self_service.password to be enabled")
+	}
+	b.opts = append(b.opts, sso.WithSelfServiceSignup())
+	b.logger.Info("self-service signup enabled (/auth/register)")
 	return nil
 }
 
@@ -109,8 +123,37 @@ func (b *appBuilder) wirePasswordReset() error {
 			return u.Email, nil
 		}),
 	)
-	logger.Info("forgot-password store wired; provide a PasswordResetSender via the SDK to deliver tokens (delivery is a no-op until then)",
-		"backend", cfg.SelfService.PasswordReset.Backend)
+	if b.emailSender != nil {
+		logger.Info("forgot-password store wired; delivery via the built-in SMTP sender",
+			"backend", cfg.SelfService.PasswordReset.Backend)
+	} else {
+		logger.Info("forgot-password store wired; provide a PasswordResetSender via the SDK to deliver tokens (delivery is a no-op until then)",
+			"backend", cfg.SelfService.PasswordReset.Backend)
+	}
+	return nil
+}
+
+// wireEmailSenders builds the built-in SMTP sender (nil, byte-identical
+// no-op when smtp.enabled=false or no host is set) and, when built, wires it
+// as all four shared/spi token-delivery senders — one SMTP config, one
+// transport, one template set backing password reset, email verification,
+// email change, and org invitations.
+func (b *appBuilder) wireEmailSenders() error {
+	sender, err := serverbuildplatform.BuildEmailSender(b.cfg.SMTP, b.logger)
+	if err != nil {
+		return fmt.Errorf("smtp sender: %w", err)
+	}
+	if sender == nil {
+		return nil
+	}
+	b.emailSender = sender
+	b.opts = append(b.opts,
+		sso.WithPasswordResetSender(sender),
+		sso.WithEmailVerificationSender(sender),
+		sso.WithEmailChangeSender(sender),
+		sso.WithInvitationSender(sender),
+	)
+	b.logger.Info("built-in SMTP email delivery enabled", "host", b.cfg.SMTP.Host, "port", b.cfg.SMTP.Port)
 	return nil
 }
 

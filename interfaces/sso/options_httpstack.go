@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/snaplink/sso/domains/conditionalaccess"
+	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/middleware"
@@ -377,6 +379,57 @@ func WithRebacEngine(e *rebac.Engine) Option {
 // without the feature: no outbound SCIM traffic, ever.
 func WithSCIMProvisioner(sink audit.Sink) Option {
 	return func(s *Server) { s.scimProvisionSink = sink }
+}
+
+// WebhookEngine returns the wired generic event/webhook egress engine (nil
+// when unset), satisfying webhook.HandlerDeps for the admin subscription +
+// dead-letter-queue management routes. Relocated from accessors.go (beside
+// its WithWebhookEngine option here) to keep that file within the per-file
+// line budget.
+func (s *Server) WebhookEngine() *webhook.Engine { return s.webhookEngine }
+
+// Compile-time proof that *Server satisfies the webhook admin handlers'
+// dependency surface (Auditor() lives in accessors.go; WebhookEngine() just above).
+var _ webhook.HandlerDeps = (*Server)(nil)
+
+// RebacEngine returns the wired rebac.Engine (nil when unset), satisfying
+// rebac.HandlerDeps for the admin debug route.
+func (s *Server) RebacEngine() *rebac.Engine { return s.rebacEngine }
+
+var _ rebac.HandlerDeps = (*Server)(nil)
+
+// SCIMProvisionSink returns the wired outbound SCIM 2.0 provisioning sink
+// (nil when unset — see WithSCIMProvisioner). Typed as audit.Sink rather
+// than the concrete *scimprovision.Sink; see that option's doc for why.
+func (s *Server) SCIMProvisionSink() audit.Sink { return s.scimProvisionSink }
+
+// ConditionalAccessStore exposes the wired zero-trust CAP policy store (may be
+// nil) for the admin governance view. Satisfies admin.Deps.
+func (s *Server) ConditionalAccessStore() conditionalaccess.Store { return s.capStore }
+
+// DomainResolver returns the DNS-TXT resolver for admin connection-domain
+// verification, defaulting to the stdlib-backed production resolver when no
+// custom one was injected — so the SDK works with zero configuration.
+func (s *Server) DomainResolver() connections.DNSResolver {
+	if s.domainVerificationResolver != nil {
+		return s.domainVerificationResolver
+	}
+	return connections.NewDNSResolver()
+}
+
+// WithDomainVerificationResolver injects the DNS-TXT resolver used by the admin
+// connection email-domain verification endpoint (first-class DI so tests run
+// network-free with a fake and operators can supply a DNS-over-HTTPS resolver).
+// Nil/unset uses the stdlib-backed production resolver. This only affects the
+// resolver; the enable flag + record prefix live on the connections.Store
+// (WithDomainVerificationRequired / config connections.domain_verification).
+// Relocated from options_admin.go to keep that file within the line budget.
+func WithDomainVerificationResolver(r connections.DNSResolver) Option {
+	return func(s *Server) {
+		if r != nil {
+			s.domainVerificationResolver = r
+		}
+	}
 }
 
 // WithAPIVersioning enables Accept-Version request-header negotiation

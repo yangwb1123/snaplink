@@ -85,6 +85,7 @@ type Config struct {
 	SessionTrustDecay   SessionTrustDecayConfig         `yaml:"session_trust_decay"`
 	TokenAnomaly        TokenAnomalyConfig              `yaml:"token_anomaly"`
 	Webhooks            WebhooksConfig                  `yaml:"webhooks"`
+	SMTP                SMTPConfig                      `yaml:"smtp"`
 }
 
 // FeatureGatesConfig controls which optional protocol surfaces the server

@@ -82,44 +82,75 @@ func BuildConnectionStore(cfg *config.Config, logger spi.Logger) (connections.St
 	if !cfg.Connections.Enabled {
 		return nil, nil
 	}
-	var store connections.Store
-	switch strings.ToLower(cfg.Connections.Backend) {
-	case "", "memory":
-		store = connections.NewMemoryStore()
-		logger.Info("connection store: memory (in-process)")
-	case "sqlite":
-		if cfg.Connections.SQLite.DSN == "" {
-			return nil, errors.New("connections.sqlite.dsn required when connections.backend=sqlite")
-		}
-		s, err := connectionssqlite.New(cfg.Connections.SQLite.DSN)
-		if err != nil {
-			return nil, fmt.Errorf("connections sqlite: %w", err)
-		}
-		store = s
-		logger.Info("connection store: sqlite (cluster-shared)", "dsn", cfg.Connections.SQLite.DSN)
-	default:
-		return nil, fmt.Errorf("unknown connections.backend %q (supported: memory, sqlite)", cfg.Connections.Backend)
+	opts := connectionStoreOptions(cfg.Connections.DomainVerification)
+	store, err := buildConnectionBackend(cfg.Connections, logger, opts)
+	if err != nil {
+		return nil, err
 	}
-
-	ctx := context.Background()
-	for _, c := range cfg.Connections.Connections {
-		if err := store.Upsert(ctx, &connections.Connection{
-			ID:          c.ID,
-			TenantID:    c.TenantID,
-			Type:        connections.ConnectionType(c.Type),
-			DisplayName: c.DisplayName,
-			Domains:     c.Domains,
-			Enabled:     c.Enabled,
-			Config:      c.Config,
-		}); err != nil {
-			if closer, ok := store.(io.Closer); ok {
-				_ = closer.Close()
-			}
-			return nil, fmt.Errorf("seed connection %q: %w", c.ID, err)
+	if err := seedConnections(store, cfg.Connections); err != nil {
+		if closer, ok := store.(io.Closer); ok {
+			_ = closer.Close()
 		}
+		return nil, err
 	}
 	logger.Info("connection seed complete", "connections", len(cfg.Connections.Connections))
 	return store, nil
+}
+
+// connectionStoreOptions maps the domain-verification config onto store options.
+func connectionStoreOptions(dv config.DomainVerificationConfig) []connections.StoreOption {
+	return []connections.StoreOption{
+		connections.WithDomainVerificationRequired(dv.Enabled),
+		connections.WithDomainVerificationRecordPrefix(dv.RecordPrefix),
+	}
+}
+
+func buildConnectionBackend(cfg config.ConnectionsConfig, logger spi.Logger, opts []connections.StoreOption) (connections.Store, error) {
+	switch strings.ToLower(cfg.Backend) {
+	case "", "memory":
+		logger.Info("connection store: memory (in-process)")
+		return connections.NewMemoryStore(opts...), nil
+	case "sqlite":
+		if cfg.SQLite.DSN == "" {
+			return nil, errors.New("connections.sqlite.dsn required when connections.backend=sqlite")
+		}
+		s, err := connectionssqlite.New(cfg.SQLite.DSN, opts...)
+		if err != nil {
+			return nil, fmt.Errorf("connections sqlite: %w", err)
+		}
+		logger.Info("connection store: sqlite (cluster-shared)", "dsn", cfg.SQLite.DSN)
+		return s, nil
+	default:
+		return nil, fmt.Errorf("unknown connections.backend %q (supported: memory, sqlite)", cfg.Backend)
+	}
+}
+
+// seedConnections Upserts each YAML-declared connection. A seeded connection is
+// operator-authored (trusted like a direct DB write), so its domains are
+// auto-verified when runtime verification is required — otherwise a seeded
+// connection would never route until an admin ran the DNS challenge.
+func seedConnections(store connections.Store, cfg config.ConnectionsConfig) error {
+	ctx := context.Background()
+	for _, c := range cfg.Connections {
+		if err := store.Upsert(ctx, &connections.Connection{
+			ID: c.ID, TenantID: c.TenantID, Type: connections.ConnectionType(c.Type),
+			DisplayName: c.DisplayName, Domains: c.Domains, Enabled: c.Enabled, Config: c.Config,
+		}); err != nil {
+			return fmt.Errorf("seed connection %q: %w", c.ID, err)
+		}
+		if !cfg.DomainVerification.Enabled {
+			continue
+		}
+		for _, dm := range c.Domains {
+			if strings.TrimSpace(dm) == "" {
+				continue
+			}
+			if err := store.VerifyDomain(ctx, c.ID, dm); err != nil {
+				return fmt.Errorf("seed verify %q/%q: %w", c.ID, dm, err)
+			}
+		}
+	}
+	return nil
 }
 
 // BuildGeoProvider materialises the geo.Provider from GeoConfig.

@@ -34,6 +34,7 @@ const (
 	EventAdminClientSecretRotated            = auditspi.EventAdminClientSecretRotated
 	EventAdminClientUpdated                  = auditspi.EventAdminClientUpdated
 	EventAdminConnectionDeleted              = auditspi.EventAdminConnectionDeleted
+	EventAdminConnectionDomainVerified       = auditspi.EventAdminConnectionDomainVerified
 	EventAdminConnectionUpserted             = auditspi.EventAdminConnectionUpserted
 	EventAdminConsentRevoked                 = auditspi.EventAdminConsentRevoked
 	EventAdminCredentialCompromised          = auditspi.EventAdminCredentialCompromised
@@ -54,6 +55,7 @@ const (
 	EventAdminMenusUpdated                   = auditspi.EventAdminMenusUpdated
 	EventAdminPasswordReset                  = auditspi.EventAdminPasswordReset
 	EventAdminPasswordResetTokensRevoked     = auditspi.EventAdminPasswordResetTokensRevoked
+	EventAdminRecoveryCodesReset             = auditspi.EventAdminRecoveryCodesReset
 	EventAdminRoleAdded                      = auditspi.EventAdminRoleAdded
 	EventAdminRoleAssigned                   = auditspi.EventAdminRoleAssigned
 	EventAdminRoleRemoved                    = auditspi.EventAdminRoleRemoved
@@ -61,6 +63,7 @@ const (
 	EventAdminRoleUpdated                    = auditspi.EventAdminRoleUpdated
 	EventAdminSubjectErased                  = auditspi.EventAdminSubjectErased
 	EventAdminSubjectExported                = auditspi.EventAdminSubjectExported
+	EventAdminSigningKeyRotated              = auditspi.EventAdminSigningKeyRotated
 	EventAdminGRPCCalled                     = auditspi.EventAdminGRPCCalled
 	EventAdminTempTokenIssued                = auditspi.EventAdminTempTokenIssued
 	EventAdminTenantCreated                  = auditspi.EventAdminTenantCreated
@@ -143,6 +146,7 @@ const (
 	EventRefreshRotationVelocityExceeded     = auditspi.EventRefreshRotationVelocityExceeded
 	EventRefreshTokenIssued                  = auditspi.EventRefreshTokenIssued
 	EventRefreshTokenReuse                   = auditspi.EventRefreshTokenReuse
+	EventRecoveryCodesRegenerated            = auditspi.EventRecoveryCodesRegenerated
 	EventReleaseDeleted                      = auditspi.EventReleaseDeleted
 	EventReleasePinned                       = auditspi.EventReleasePinned
 	EventReleaseRegistered                   = auditspi.EventReleaseRegistered

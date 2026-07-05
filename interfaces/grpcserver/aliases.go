@@ -12,6 +12,8 @@ import "github.com/snaplink/sso/interfaces/grpcserver/grpcadmin"
 
 type (
 	ClientAdminService     = grpcadmin.ClientAdminService
+	KeyAdminService        = grpcadmin.KeyAdminService
+	KeyAdminConfig         = grpcadmin.KeyAdminConfig
 	PermissionAdminService = grpcadmin.PermissionAdminService
 	ReleaseAdminService    = grpcadmin.ReleaseAdminService
 	SnapshotAdminService   = grpcadmin.SnapshotAdminService
@@ -23,6 +25,7 @@ type (
 
 var (
 	NewClientAdminService     = grpcadmin.NewClientAdminService
+	NewKeyAdminService        = grpcadmin.NewKeyAdminService
 	NewPermissionAdminService = grpcadmin.NewPermissionAdminService
 	NewReleaseAdminService    = grpcadmin.NewReleaseAdminService
 	NewSnapshotAdminService   = grpcadmin.NewSnapshotAdminService

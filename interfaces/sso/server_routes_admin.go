@@ -215,6 +215,9 @@ func (s *Server) mountAdminUserState(api Router) {
 		api.GET(PathAdminUserLifecycle, s.handleAdminGetUserLifecycle)
 		api.POST(PathAdminUserLifecycle, s.handleAdminTransitionUserLifecycle)
 	}
+	if s.recoveryCodeStore != nil {
+		api.POST(PathAdminUserRecoveryCodes, s.handleAdminResetUserRecoveryCodes)
+	}
 }
 
 // mountAdminB2B registers the admin management of enterprise connections,
@@ -226,6 +229,8 @@ func (s *Server) mountAdminB2B(api Router) {
 		api.POST(PathAdminConnections, s.handleAdminUpsertConnection)
 		api.GET(PathAdminConnectionByID, s.handleAdminGetConnection)
 		api.DELETE(PathAdminConnectionByID, s.handleAdminDeleteConnection)
+		api.GET(PathAdminConnectionDomains, s.handleAdminListConnectionDomains)
+		api.POST(PathAdminConnectionDomainVerify, s.handleAdminVerifyConnectionDomain)
 	}
 	if s.tenantUserStore != nil {
 		api.GET(PathAdminTenantMembers, s.handleAdminListTenantMembers)
@@ -486,14 +491,9 @@ func (s *Server) mountAdminBreakGlass(api Router) {
 	api.POST(PathAdminBreakGlassImpersonate, s.handleAdminImpersonateBreakGlass)
 }
 
-// mountCryptoInventoryAPI registers the cryptographic-material inventory
-// admin endpoints (opt-in WithCryptoInventory): GET the catalog (admin:read),
-// POST a compromise report (admin:write). Not mounted without an Inventory —
-// byte-identical to a build without the feature.
-func (s *Server) mountCryptoInventoryAPI(api Router) {
-	if s.cryptoInventory == nil {
-		return
-	}
-	api.GET(PathAdminCryptoKeys, s.handleAdminListCryptoKeys)
-	api.POST(PathAdminCryptoKeyCompromise, s.handleAdminReportKeyCompromise)
-}
+// mountCryptoInventoryAPI moved to signing_key_aggregation.go (another
+// admin-facing crypto-material surface, and this file was at the line
+// budget).
+
+// mountOrgAdminSelfService moved to sso_selfservice.go (a better thematic
+// home, and this file was at the line budget).

@@ -25,10 +25,12 @@ type (
 	PushTransport               = defaultmfa.PushTransport
 	PushTransportFunc           = defaultmfa.PushTransportFunc
 	PushWebhookOption           = defaultmfa.PushWebhookOption
+	RecoveryMFAProvider         = defaultmfa.RecoveryMFAProvider
 )
 
 const (
 	MethodPush           = defaultmfa.MethodPush
+	MethodRecovery       = defaultmfa.MethodRecovery
 	PushApprovalApproved = defaultmfa.PushApprovalApproved
 	PushApprovalDenied   = defaultmfa.PushApprovalDenied
 	PushApprovalPending  = defaultmfa.PushApprovalPending
@@ -47,6 +49,9 @@ var (
 	ErrPushMissingSubject          = defaultmfa.ErrPushMissingSubject
 	ErrPushSubjectMismatch         = defaultmfa.ErrPushSubjectMismatch
 	ErrPushUnsupportedMethod       = defaultmfa.ErrPushUnsupportedMethod
+	ErrRecoveryCodeInvalid         = defaultmfa.ErrRecoveryCodeInvalid
+	ErrRecoveryMissingCode         = defaultmfa.ErrRecoveryMissingCode
+	ErrRecoveryUnsupportedMethod   = defaultmfa.ErrRecoveryUnsupportedMethod
 	NewCompositeMFAEnrollmentStore = defaultmfa.NewCompositeMFAEnrollmentStore
 	NewHTTPWebhookPushTransport    = defaultmfa.NewHTTPWebhookPushTransport
 	NewMemoryMFAChallengeStore     = defaultmfa.NewMemoryMFAChallengeStore
@@ -55,6 +60,7 @@ var (
 	NewMemoryTOTPEnrollmentStore   = defaultmfa.NewMemoryTOTPEnrollmentStore
 	NewMultiMFAProvider            = defaultmfa.NewMultiMFAProvider
 	NewPushMFAProvider             = defaultmfa.NewPushMFAProvider
+	NewRecoveryMFAProvider         = defaultmfa.NewRecoveryMFAProvider
 	WithPushChannelNotify          = defaultmfa.WithPushChannelNotify
 	WithPushMaxWait                = defaultmfa.WithPushMaxWait
 	WithPushPollInterval           = defaultmfa.WithPushPollInterval

@@ -2,10 +2,12 @@ package ssotest
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/snaplink/sso/domains/connections"
@@ -117,5 +119,104 @@ func TestAdminConnections_NotMountedWithoutStore(t *testing.T) {
 	code, _ := doReq(t, hs, http.MethodGet, "/api/v1/admin/connections?tenant_id=t1", "")
 	if code != http.StatusNotFound {
 		t.Errorf("unmounted list status=%d, want 404", code)
+	}
+}
+
+// fakeDomainResolver is the hermetic (no real network) DNS double used to drive
+// the admin domain-verify endpoint.
+type fakeDomainResolver struct {
+	mu      sync.Mutex
+	records map[string][]string
+}
+
+func (f *fakeDomainResolver) LookupTXT(_ context.Context, name string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.records[name], nil
+}
+
+func (f *fakeDomainResolver) publish(name string, values ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.records == nil {
+		f.records = map[string][]string{}
+	}
+	f.records[name] = values
+}
+
+func newVerifiedConnHarness(t *testing.T) (*httptest.Server, *fakeDomainResolver) {
+	t.Helper()
+	store := connections.NewMemoryStore(connections.WithDomainVerificationRequired(true))
+	res := &fakeDomainResolver{}
+	srv := sso.NewServer(
+		sso.WithIssuer("https://sso.example"),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+		sso.WithConnectionStore(store),
+		sso.WithDomainVerificationResolver(res),
+	)
+	hs := httptest.NewServer(srv.Handler())
+	t.Cleanup(hs.Close)
+	return hs, res
+}
+
+// firstDomainClaim extracts the single claim from a GET .../domains response.
+func firstDomainClaim(t *testing.T, body map[string]any) map[string]any {
+	t.Helper()
+	list, _ := body["domains"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("want exactly one domain claim, got %v", body)
+	}
+	claim, _ := list[0].(map[string]any)
+	return claim
+}
+
+func TestAdminConnections_DomainVerification_Endpoints(t *testing.T) {
+	srv, res := newVerifiedConnHarness(t)
+
+	// Seed a connection claiming acme.com (pending, not yet routing).
+	if code, body := postJSON(t, srv, "/api/v1/admin/connections", map[string]any{
+		"id": "acme", "tenant_id": "t1", "type": "oidc",
+		"domains": []string{"acme.com"}, "enabled": true,
+	}); code != http.StatusOK {
+		t.Fatalf("upsert = %d body=%v", code, body)
+	}
+
+	// List domains: the claim is pending with a challenge token + record.
+	code, body := doReq(t, srv, http.MethodGet, "/api/v1/admin/connections/acme/domains", "")
+	if code != http.StatusOK {
+		t.Fatalf("list domains = %d body=%v", code, body)
+	}
+	claim := firstDomainClaim(t, body)
+	if claim["status"] != "pending" || claim["token"] == "" || claim["record"] == "" {
+		t.Fatalf("claim = %v, want pending with token+record", claim)
+	}
+	record, _ := claim["record"].(string)
+	token, _ := claim["token"].(string)
+
+	// Verify before publishing the TXT record: 200, still pending (not an error).
+	code, body = doReq(t, srv, http.MethodPost, "/api/v1/admin/connections/acme/domains/acme.com/verify", "")
+	if code != http.StatusOK || body["verified"] != false || body["status"] != "pending" {
+		t.Fatalf("premature verify = %d body=%v", code, body)
+	}
+
+	// Publish the correct TXT value, then verify succeeds.
+	res.publish(record, token)
+	code, body = doReq(t, srv, http.MethodPost, "/api/v1/admin/connections/acme/domains/acme.com/verify", "")
+	if code != http.StatusOK || body["verified"] != true || body["status"] != "verified" {
+		t.Fatalf("verify = %d body=%v", code, body)
+	}
+
+	// The listing now reflects verified.
+	_, body = doReq(t, srv, http.MethodGet, "/api/v1/admin/connections/acme/domains", "")
+	if firstDomainClaim(t, body)["status"] != "verified" {
+		t.Errorf("listing should show verified, got %v", body)
+	}
+
+	// 404s: unknown connection, and a domain this connection never claimed.
+	if code, _ := doReq(t, srv, http.MethodGet, "/api/v1/admin/connections/nope/domains", ""); code != http.StatusNotFound {
+		t.Errorf("list domains for missing connection = %d, want 404", code)
+	}
+	if code, _ := doReq(t, srv, http.MethodPost, "/api/v1/admin/connections/acme/domains/other.com/verify", ""); code != http.StatusNotFound {
+		t.Errorf("verify unclaimed domain = %d, want 404", code)
 	}
 }

@@ -118,6 +118,27 @@ func HandleAdminRemoveUserMFA(d Deps, ctx core.HandlerContext) {
 	ctx.JSON(http.StatusNoContent, nil)
 }
 
+// HandleAdminResetUserRecoveryCodes serves POST
+// /api/v1/admin/users/:id/mfa/recovery-codes — the helpdesk MFA recovery reset.
+// admin:write. It ONLY revokes the user's remaining recovery codes and NEVER
+// returns codes to the operator: exposing a user's credentials to helpdesk is a
+// security smell, so the user regenerates their own via /me/mfa/recovery-codes.
+// Emits admin_recovery_codes_reset.
+func HandleAdminResetUserRecoveryCodes(d Deps, ctx core.HandlerContext) {
+	userID := ctx.Param("id")
+	if userID == "" {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+	if err := d.RecoveryCodeStore().RevokeAll(ctx.Request().Context(), userID); err != nil {
+		d.Logger().Error("admin reset recovery codes failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	recordAdminUserAction(d, ctx, audit.EventAdminRecoveryCodesReset, userID, "", "")
+	ctx.JSON(http.StatusNoContent, nil)
+}
+
 // recordAdminUserAction emits an admin_* audit event for a helpdesk action on a
 // user's self-service state. ActorID is the acting ADMIN (from the
 // AdminMiddleware-stamped context); the target user + the affected

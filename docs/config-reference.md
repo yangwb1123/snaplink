@@ -41,6 +41,8 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 |---|---|
 | `keys.signing.alg` | `eddsa`\|`es256`\|`rs256`\|`ps256` |
 | `keys.rotation.*` | Wires `StartRotation` loop; emits `signing_key_rotated` audit + `sso_signing_key_rotations_total`; busts signed-discovery cache |
+| `keys.rotation.grace_period` | Overlap window the demoted key stays verify-only. Also the DEFAULT for on-demand `POST /api/v1/admin/keys/rotate` (see below); when unset the admin rotate falls back to a 24h constant. MUST be >= the max access-token TTL or tokens minted just before a rotation are stranded |
+| `POST /api/v1/admin/keys/rotate`, `GET /api/v1/admin/keys` | On-demand `KeyAdminService` (admin:write / admin:read): rotate the primary signing key now (reusing the scheduled side effects) or list public key metadata. Request `grace_seconds` (>=60) overrides `grace_period`; external-signer builds refuse (412), non-rotatable issuers return 501 |
 | `keys.rotation.coordinated_cutover` | `WithCoordinatedKeyRotation`: broadcasts demoted+new kids + `now+GracePeriod` retire deadline over `cluster.Bus` (`KindSigningKeyRotation`); FAIL-SAFE: deferred retire only widens verify window, never retires early |
 | `keys.signing.revocation_backend` | `With{Algo}RevocationStore` for durable revocation across restarts; `SeedRevocations` re-seeds at boot |
 | `keys.signing_key_registry.{backend,replica_id,lease_ttl}` | Opt-in leaderless aggregation (`memory`\|`etcd`). `WithSigningKeyReplicaID` REQUIRED when wired. Degraded → `/readyz` 503 + `signing_key_aggregation_degraded` audit |
@@ -91,6 +93,19 @@ a shared *sql.DB pool per replica, not one pool per store. Selecting `redis`/
 `postgres` without its block is a boot error (`<domain>.backend=postgres but no
 postgres block configured (set postgres.dsn)`).
 
+### B2B connection email-domain verification
+
+| Key | Effect |
+|---|---|
+| `connections.domain_verification.enabled` | `false` (default): last-write-wins `Upsert` — byte-identical to the pre-feature build. `true`: an admin-API `Upsert` claiming a domain another connection has already **verified** cannot steal its home-realm routing; the new claimant must prove control by publishing a DNS TXT record and calling `POST /api/v1/admin/connections/:id/domains/:domain/verify`. |
+| `connections.domain_verification.record_prefix` | DNS label prepended to the claimed domain to form the challenge record name (`<prefix>.<domain>`). Empty uses the built-in default (`_snaplink-domain-verify`). |
+
+Boot-time YAML-seeded connections (`connections.connections`) are always
+auto-verified regardless of the flag — the operator authoring the YAML is an
+equivalent trust level to a direct DB write. The verify endpoint uses the
+stdlib DNS resolver by default; an SDK embedder can inject a custom one via
+`sso.WithDomainVerificationResolver` (e.g. DNS-over-HTTPS).
+
 ## Redis (shared hot-store backend)
 
 One client (single/sentinel/cluster) fanned out to every `backend: redis` store.
@@ -133,6 +148,30 @@ See [deployment.md](deployment.md) for the HA topology and
 `ops/deploy/k8s-prod/config.yaml` for the canonical production selection
 (durable → postgres, hot → redis, coordination → etcd).
 
+## Email (SMTP)
+
+Built-in outbound email sender (`infrastructure/defaultimpl/emailsmtp`) that
+delivers password-reset, email-verification, email-change, org-invitation,
+and email-OTP messages over `net/smtp` — no external mail-provider dependency.
+`smtp.enabled=false` or an empty `smtp.host` leaves the four SDK sender
+options unwired, same no-op-delivery behavior as a build without this. Send
+is ASYNC fire-and-forget (a background goroutine bounded by `smtp.timeout`) so
+`/auth/forgot-password` stays constant-time regardless of SMTP latency
+(anti-enumeration) — send failures are logged, never surfaced to the caller.
+
+| Key | Effect |
+|---|---|
+| `smtp.enabled` | Master switch; `false` = byte-identical no-op delivery |
+| `smtp.host` | SMTP relay hostname (also required — enabling without a host is a no-op) |
+| `smtp.port` | SMTP relay port (`587` STARTTLS, `25` plaintext relay; implicit-TLS `465` is a follow-up, not yet supported) |
+| `smtp.username` | AUTH username; empty = no AUTH attempted |
+| `smtp.password` | AUTH password — supports `secret://` resolution (`config/secrets.go`) and the `SSO_SMTP__PASSWORD` env override; never commit a plaintext value |
+| `smtp.from` | Envelope + `From:` header address |
+| `smtp.starttls` | Documents intent; `net/smtp.SendMail` negotiates STARTTLS automatically whenever the server advertises it and falls back to plaintext otherwise |
+| `smtp.timeout` | Per-send bound for the background dispatch goroutine; 0 = 10s default |
+| `smtp.templates_dir` | Filesystem overlay for the five go:embed default templates (`password_reset`/`email_verification`/`email_change`/`invitation`/`otp`); empty = embedded defaults only |
+| `smtp.link_base_url` | Prefixed to reset/verify/invite links — required because the sender only ever sees the token/target its `spi.*Sender` method receives, never `server.issuer` |
+
 ## Tenant & Region
 
 | Key | Effect |
@@ -149,6 +188,11 @@ See [deployment.md](deployment.md) for the HA topology and
 | `mfa.provider.push.prune_interval` | `sqlite.PushApprovalStore.PruneExpired` |
 | `metrics.tenant_label_allowlist` | `WithTenantMetricsAllowlist` — bounded per-tenant login/issue metrics + `"other"` bucket; empty = off |
 | `audit.webhook.signing_secret` | HMAC-SHA256 payload signing on the audit `WebhookSink` — every POST carries `X-Signature: t=<unix>,v1=<hex>`; empty = off; receivers verify with `security.VerifyWebhookSignature`. Inject via env/`secret://`, never YAML literal |
+| `audit.webhook.subscriptions[]` | Fan the audit stream to multiple endpoints, each with its own event-type filter. Per entry the stack is `RetryingSink(FilteringSink(WebhookSink))`, all fanned into the one `MultiSink` beside the primary sink. The legacy scalar `audit.webhook.url` (when set) is compiled as an implicit **unfiltered** subscription named `default`; both may be set together |
+| `audit.webhook.subscriptions[].name` | REQUIRED, unique across the list (boot fails on empty or duplicate). Names the subscription in logs (and reserves identity for future per-subscription metrics); the name `default` is reserved for the legacy scalar url when that is set |
+| `audit.webhook.subscriptions[].url` | REQUIRED delivery endpoint for this subscription (boot fails when empty) |
+| `audit.webhook.subscriptions[].event_types` | Delivery filter. Each entry is an **exact** type (`login`) or a **trailing-`*` prefix wildcard** (`admin_*` matches every `admin_` event); no other globbing. **Empty list = firehose** (all events). Unknown/custom type strings are accepted (custom event types are legal) with a boot log line |
+| `audit.webhook.subscriptions[].{timeout,headers,signing_secret,retry}` | Per-subscription transport, mirroring the scalar webhook fields (fall back to library defaults when zero). `signing_secret` reuses the same HMAC-SHA256 `X-Signature` signing; it is a credential — inject via a `secret://` reference (resolved inside the list), never a YAML literal |
 | `mfa.provider.push.webhook.signing_secret` | Same HMAC-SHA256 `X-Signature` signing on the MFA push webhook transport, re-signed with a fresh timestamp per retry; empty = off. `ciba.webhook.signing_secret` shares the same `MFAPushWebhookConfig` struct, so it behaves identically for CIBA notifications |
 | `config_audit.enabled` / `.backend` / `.sqlite.dsn` | Runtime-config audit (`platform/configaudit`): when enabled, cmd builds the `configaudit.Store` (`memory`\|`sqlite`), captures the redacted applied-config snapshot once at boot, and wires `sso.WithConfigSnapshots` + `WithConfigAuditStore`, mounting `GET /api/v1/admin/config/{running,applied,diff,history}` + the client/tenant/policy change-capture hook |
 | `config_audit.drift.interval` | `sso.WithConfigDriftDetection` — cross-replica config-digest broadcast (`cluster.KindConfigDigest`) + compare loop; `<= 0` (default) = off, report-only |

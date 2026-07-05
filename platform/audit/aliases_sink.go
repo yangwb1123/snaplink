@@ -11,6 +11,8 @@ import "github.com/snaplink/sso/platform/audit/auditsink"
 
 type (
 	BatchSink                = auditsink.BatchSink
+	FilteringOption          = auditsink.FilteringOption
+	FilteringSink            = auditsink.FilteringSink
 	RetryOption              = auditsink.RetryOption
 	RetryingSink             = auditsink.RetryingSink
 	TransientErrorClassifier = auditsink.TransientErrorClassifier
@@ -24,15 +26,18 @@ const (
 	DefaultRetryMaxAttempts    = auditsink.DefaultRetryMaxAttempts
 	DefaultRetryMaxBackoff     = auditsink.DefaultRetryMaxBackoff
 	DefaultWebhookTimeout      = auditsink.DefaultWebhookTimeout
+	EventTypeWildcardSuffix    = auditsink.EventTypeWildcardSuffix
 )
 
 var (
 	DefaultTransientClassifier = auditsink.DefaultTransientClassifier
 	ErrNonTransient            = auditsink.ErrNonTransient
 	ErrSinkWriteOnly           = auditsink.ErrSinkWriteOnly
+	NewFilteringSink           = auditsink.NewFilteringSink
 	NewRetryingSink            = auditsink.NewRetryingSink
 	NewWebhookSink             = auditsink.NewWebhookSink
 	NewWriterSink              = auditsink.NewWriterSink
+	WithEventTypeFilter        = auditsink.WithEventTypeFilter
 	WithRetryClassifier        = auditsink.WithRetryClassifier
 	WithRetryInitialBackoff    = auditsink.WithRetryInitialBackoff
 	WithRetryMaxAttempts       = auditsink.WithRetryMaxAttempts

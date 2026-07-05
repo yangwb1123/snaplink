@@ -11,6 +11,7 @@ import (
 	"github.com/snaplink/sso/platform/lifecycle/cryptoinventory"
 	"github.com/snaplink/sso/platform/lifecycle/rotation"
 	"github.com/snaplink/sso/protocols/compliance"
+	"github.com/snaplink/sso/protocols/selfservice"
 	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
@@ -171,6 +172,11 @@ type selfServiceState struct {
 	// Nil ⇒ the routes are NOT mounted — byte-identical to a build without it.
 	mfaEnrollmentStore MFAEnrollmentStore
 
+	// recoveryCodeStore backs POST/GET /me/mfa/recovery-codes + the admin reset
+	// (WithRecoveryCodeStore). Nil ⇒ those routes are NOT mounted —
+	// byte-identical to a build without it.
+	recoveryCodeStore RecoveryCodeStore
+
 	// totpEnroller backs POST /me/mfa/totp/{begin,confirm} (WithTOTPEnroller).
 	// The enrollment routes mount only when this AND an mfaEnrollmentStore that
 	// implements TOTPEnrollmentWriter are both wired — byte-identical off.
@@ -311,4 +317,53 @@ type selfServiceState struct {
 	// Server.RunDataRetentionSweep in a goroutine, same discipline as
 	// RunBreakGlassSweeper.
 	dataRetention compliance.RetentionConfig
+}
+
+// mountOrgAdminSelfService registers the DELEGATED org-admin surface
+// (/me/organizations/:tenant_id/*). Despite living beside the admin-API
+// registrars in server_routes_admin.go historically, these routes hang off
+// s.router DIRECTLY — NOT the /api/v1 admin group — because they are
+// subject-bearer self-service endpoints authorized by tenant-admin
+// MEMBERSHIP (requireTenantAdmin), not by the global admin scope
+// AdminMiddleware enforces. Gated on the tenant-user store (the membership
+// gate); the invitation sub-block additionally needs the invitation store.
+// Byte-identical to a build without those stores. Relocated here (from
+// server_routes_admin.go, which was at the line budget) since this is the
+// self-service surface file.
+func (s *Server) mountOrgAdminSelfService() {
+	if s.tenantUserStore == nil {
+		return
+	}
+	s.router.GET(PathOrgAdminMembers, s.handleOrgAdminListMembers)
+	s.router.PUT(PathOrgAdminMemberByID, s.handleOrgAdminPutMember)
+	s.router.DELETE(PathOrgAdminMemberByID, s.handleOrgAdminRemoveMember)
+	if s.invitationStore != nil {
+		s.router.POST(PathOrgAdminInvitations, s.handleOrgAdminSendInvitation)
+		s.router.GET(PathOrgAdminInvitations, s.handleOrgAdminListInvitations)
+		s.router.DELETE(PathOrgAdminInvitationByEmail, s.handleOrgAdminRevokeInvitation)
+	}
+}
+
+// Delegated org-admin self-service endpoints (/me/organizations/:tenant_id/*).
+// Subject-bearer, authorized by tenant-admin MEMBERSHIP (not the global admin
+// scope) — logic + audit live in selfserviceaccount/orgadmin.go. Relocated
+// from server_admin_handlers.go (which was at the line budget) to sit
+// beside mountOrgAdminSelfService.
+func (s *Server) handleOrgAdminListMembers(ctx HandlerContext) {
+	selfservice.HandleOrgAdminListMembers(s, ctx)
+}
+func (s *Server) handleOrgAdminPutMember(ctx HandlerContext) {
+	selfservice.HandleOrgAdminPutMember(s, ctx)
+}
+func (s *Server) handleOrgAdminRemoveMember(ctx HandlerContext) {
+	selfservice.HandleOrgAdminRemoveMember(s, ctx)
+}
+func (s *Server) handleOrgAdminSendInvitation(ctx HandlerContext) {
+	selfservice.HandleOrgAdminSendInvitation(s, ctx)
+}
+func (s *Server) handleOrgAdminListInvitations(ctx HandlerContext) {
+	selfservice.HandleOrgAdminListInvitations(s, ctx)
+}
+func (s *Server) handleOrgAdminRevokeInvitation(ctx HandlerContext) {
+	selfservice.HandleOrgAdminRevokeInvitation(s, ctx)
 }

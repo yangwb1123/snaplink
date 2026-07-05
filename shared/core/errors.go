@@ -98,10 +98,16 @@ const (
 	ErrTenantMismatch            = "tenant_mismatch"
 	ErrRegionNotAllowed          = "region_not_allowed"
 	ErrResidencyViolation        = "residency_violation"
-	ErrNoTokenStrategy           = "no_token_strategy"
-	ErrNetPolicyNotConfigured    = "netpolicy_not_configured"
-	ErrNetPolicyNotFound         = "netpolicy_not_found"
-	ErrRiskDenied                = "risk_denied"
+	// ErrQuotaExceededCode is the wire-format code returned when a tenant's
+	// per-resource quota (sessions + clients) is reached. It is a governance
+	// code, NOT a credential oracle (same doctrine as region_not_allowed) — it
+	// only surfaces on tenant-scoped resource creation, never on a credential
+	// check. Distinct from the ErrQuotaExceeded Go sentinel above.
+	ErrQuotaExceededCode      = "quota_exceeded"
+	ErrNoTokenStrategy        = "no_token_strategy"
+	ErrNetPolicyNotConfigured = "netpolicy_not_configured"
+	ErrNetPolicyNotFound      = "netpolicy_not_found"
+	ErrRiskDenied             = "risk_denied"
 	// ErrConditionalAccessDenied is returned (403) when the zero-trust
 	// conditional-access (CAP) engine is wired with live enforcement
 	// (ConditionalAccessConfig.Enforce) and a matched policy's Decision.Verdict
@@ -262,4 +268,15 @@ const (
 	// WithAPIVersioning configured a non-empty Supported list — an absent
 	// header, or an unconfigured server, never emits this code.
 	ErrUnsupportedVersion = "unsupported_version"
+	// ErrForbidden is the single, generic 403 the delegated org-admin gate
+	// (requireTenantAdmin) returns for EVERY authorization failure — tenant
+	// absent, caller not a member, or caller a member but not an admin. The three
+	// cases MUST be byte-identical on the wire so a caller cannot probe org
+	// existence or another org's roster (anti-enumeration). It is NOT a credential
+	// oracle: a subject already knows its own memberships via /me/organizations.
+	ErrForbidden = "forbidden"
+	// ErrLastOrgAdmin is the 409 returned when removing or demoting the FINAL
+	// admin of an org (including self-removal / self-demotion) — doing so would
+	// orphan the org with no one able to administer it.
+	ErrLastOrgAdmin = "last_org_admin"
 )

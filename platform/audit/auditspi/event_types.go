@@ -95,6 +95,13 @@ const (
 	EventTOTPEnrollFailed EventType = "mfa_totp_enroll_failed"
 )
 
+// MFA recovery-code events (self-service). Regeneration is the only
+// self-service mutation worth auditing; redemption rides the existing
+// mfa_success/mfa_failure events via the MFAProvider dispatch.
+const (
+	EventRecoveryCodesRegenerated EventType = "mfa_recovery_codes_regenerated"
+)
+
 // Consent lifecycle events (user-initiated).
 const (
 	EventConsentGranted EventType = "consent_granted"
@@ -193,3 +200,73 @@ const (
 const (
 	EventDegradationModeChanged EventType = "degradation_mode_changed"
 )
+
+// KnownEventTypes is the set of every event type the SDK emits itself
+// (across this file plus event_types_admin.go and event_types_system.go).
+// It exists so operator-facing tooling — e.g. the audit webhook subscription
+// wiring — can flag a mistyped event_types filter entry while still allowing
+// unknown strings through (custom event types are legal per EventType's doc).
+// It is a filter/UX aid ONLY and is never consulted on the record path.
+var KnownEventTypes = map[EventType]struct{}{
+	// core auth + token lifecycle
+	EventLogin: {}, EventLoginFailure: {}, EventLogout: {}, EventTokenIssued: {},
+	EventTokenRevoked: {}, EventCodeSent: {}, EventCallbackFailure: {},
+	EventClientAccess: {}, EventPermissionQuery: {},
+	// DCR
+	EventClientRegistered: {}, EventClientUpdated: {}, EventClientDeleted: {},
+	// network policy
+	EventNetPolicyApply: {}, EventNetPolicyDelete: {},
+	// back-channel logout + partial revoke
+	EventLogoutNotified: {}, EventPartialRevokeFailure: {},
+	// tenant + lockout
+	EventTenantTokensRevoked: {}, EventTenantSessionsRevoked: {}, EventAccountLocked: {},
+	// MFA + anomaly
+	EventMFARequired: {}, EventMFASuccess: {}, EventMFAFailure: {}, EventAnomalyDetected: {},
+	// webauthn
+	EventWebAuthnRegistered: {}, EventWebAuthnAttestationDenied: {},
+	// password reset + TOTP enroll
+	EventPasswordResetRequested: {}, EventPasswordResetCompleted: {}, EventPasswordResetFailed: {},
+	EventTOTPEnrolled: {}, EventTOTPEnrollFailed: {},
+	// consent
+	EventConsentGranted: {}, EventConsentRevoked: {}, EventConsentDenied: {},
+	// self-service + email change
+	EventSelfRegistered: {}, EventSubjectDataExported: {}, EventSubjectSelfErased: {},
+	EventEmailChangeRequested: {}, EventEmailChanged: {},
+	// org membership
+	EventOrgLeft: {}, EventOrgMemberAutoProvisioned: {}, EventInvitationSent: {},
+	EventInvitationAccepted: {}, EventInvitationRevoked: {},
+	// credential health + SPIFFE + FAPI
+	EventPasswordWeak: {}, EventPasswordCompromised: {}, EventSPIFFEJWTSVIDAccepted: {},
+	EventFAPIComplianceViolation: {},
+	// refresh rotation + token lifecycle
+	EventRefreshTokenReuse: {}, EventRefreshRotationVelocityExceeded: {},
+	EventRefreshTokenIssued: {}, EventIDTokenIssued: {}, EventDeviceCodeIssued: {},
+	EventDeviceCodeApproved: {}, EventDeviceCodeDenied: {},
+	// CIBA + native SSO
+	EventCIBAAuthRequest: {}, EventCIBAApproved: {}, EventCIBADenied: {}, EventCIBAPingFailed: {},
+	EventNativeSSOExchange: {}, EventNativeSSOExchangeFailure: {},
+	// admin control-plane (event_types_admin.go)
+	EventAdminClientCreated: {}, EventAdminClientUpdated: {}, EventAdminClientDeleted: {},
+	EventAdminClientSecretRotated: {}, EventAdminUserCreated: {}, EventAdminUserUpdated: {},
+	EventAdminUserDeleted: {}, EventAdminTokenRevoked: {}, EventAdminTempTokenIssued: {},
+	EventAdminConsentRevoked: {}, EventAdminMFAFactorRemoved: {}, EventAdminPasswordReset: {},
+	EventAdminDeviceSecretsRevoked: {}, EventAdminPasswordResetTokensRevoked: {},
+	EventAdminEmailChangeTokensRevoked: {}, EventAdminUserEmailChanged: {},
+	EventAdminAccountUnlocked: {}, EventAdminConnectionUpserted: {}, EventAdminConnectionDeleted: {},
+	EventAdminTenantMemberAdded: {}, EventAdminTenantMemberRemoved: {}, EventAdminRoleAdded: {},
+	EventAdminRoleUpdated: {}, EventAdminRoleRemoved: {}, EventAdminRoleAssigned: {},
+	EventAdminRoleUnassigned: {}, EventAdminMenusUpdated: {}, EventAdminTenantCreated: {},
+	EventAdminTenantUpdated: {}, EventAdminTenantDeleted: {}, EventAdminTenantStatusChanged: {},
+	EventAdminDomainCreated: {}, EventAdminDomainUpdated: {}, EventAdminDomainDeleted: {},
+	EventAdminSubjectExported: {}, EventAdminSubjectErased: {}, EventAdminGRPCCalled: {},
+	// system / platform (event_types_system.go)
+	EventBootstrapStepApplied: {}, EventBootstrapStepSkipped: {}, EventBootstrapStepFailed: {},
+	EventBootstrapLockAcquired: {}, EventBootstrapLockReleased: {}, EventBootstrapLockLost: {},
+	EventBootstrapLockContended: {}, EventSnapshotExported: {}, EventSnapshotRestored: {},
+	EventSnapshotDeleted: {}, EventReleaseRegistered: {}, EventReleasePinned: {},
+	EventReleaseRolledBack: {}, EventReleaseDeleted: {}, EventSigningKeyRotated: {},
+	EventSigningKeyAggregationDegraded: {}, EventSigningKeyAggregationRecovered: {},
+	EventSigningKeyRotationCoordinated: {}, EventSigningKeyAdoptionErrorsTotal: {},
+	EventCAEPSetSent: {}, EventSSFSetReceived: {},
+	EventInvalidationBusDegraded: {}, EventInvalidationBusReconnected: {},
+}

@@ -9,20 +9,27 @@ import (
 
 // MemoryStore is the in-process connections.Store. It maintains a
 // lowercase-domain -> connection-ID index so home-realm discovery (ByDomain)
-// is O(1).
+// is O(1). domainIndex holds ONLY the current verified routing owner per
+// domain; per-connection ownership claims (pending + verified) live in claims.
 type MemoryStore struct {
 	mu          sync.RWMutex
+	cfg         StoreConfig
 	byID        map[string]*Connection
-	domainIndex map[string]string // lowercase domain -> connection ID
+	domainIndex map[string]string                         // lowercase domain -> verified routing owner
+	claims      map[string]map[string]*DomainVerification // connID -> lowercase domain -> claim
 }
 
 var _ Store = (*MemoryStore)(nil)
 
-// NewMemoryStore returns an empty in-process connection store.
-func NewMemoryStore() *MemoryStore {
+// NewMemoryStore returns an empty in-process connection store. Options are
+// variadic so the historical zero-arg call sites keep compiling unchanged; with
+// no options the store behaves byte-identically to the pre-verification build.
+func NewMemoryStore(opts ...StoreOption) *MemoryStore {
 	return &MemoryStore{
+		cfg:         ApplyStoreOptions(opts...),
 		byID:        make(map[string]*Connection),
 		domainIndex: make(map[string]string),
+		claims:      make(map[string]map[string]*DomainVerification),
 	}
 }
 
@@ -74,30 +81,16 @@ func (m *MemoryStore) Upsert(_ context.Context, c *Connection) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Drop this connection's stale domain-index entries first so a removed
-	// domain stops routing.
-	for d, id := range m.domainIndex {
-		if id == c.ID {
-			delete(m.domainIndex, d)
-		}
-	}
 	stored := cloneConnection(c)
 	m.byID[c.ID] = stored
-	// Last-write-wins per domain: a domain routes to exactly one connection (an
-	// org owns its domain). Re-claiming a domain reassigns it.
-	for _, d := range stored.Domains {
-		nd := strings.ToLower(strings.TrimSpace(d))
-		if nd != "" {
-			m.domainIndex[nd] = c.ID
-		}
-	}
-	return nil
+	return m.reconcileClaimsLocked(stored)
 }
 
 func (m *MemoryStore) Delete(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.byID, id)
+	delete(m.claims, id)
 	for d, cid := range m.domainIndex {
 		if cid == id {
 			delete(m.domainIndex, d)

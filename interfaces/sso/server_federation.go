@@ -7,6 +7,7 @@ import (
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/federation"
 	federationhealth "github.com/snaplink/sso/domains/federation/health"
+	"github.com/snaplink/sso/interfaces/admin"
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/protocols/caep"
 	"github.com/snaplink/sso/protocols/oidc"
@@ -340,6 +341,11 @@ type federationMeshState struct {
 	// route is NOT mounted — byte-identical to a build without it.
 	connectionStore connections.Store
 
+	// domainVerificationResolver is the DNS-TXT resolver the admin
+	// connection-domain-verify handler uses (WithDomainVerificationResolver).
+	// Nil ⇒ the stdlib-backed production resolver (see DomainResolver accessor).
+	domainVerificationResolver connections.DNSResolver
+
 	// Opt-in Envoy/Istio ext_authz HTTP-mode authorization endpoint
 	// (cluster C1 mesh data-plane, the HTTP variant — the gRPC variant
 	// needs the go-control-plane proto dep and lives in a separate
@@ -398,4 +404,20 @@ type federationMeshState struct {
 	// threshold surfaced on GET .../federation/health. <= 0 ⇒
 	// federationhealth.DefaultCertExpiryWarning.
 	federationCertExpiryWarning time.Duration
+}
+
+// Enterprise connection email-domain verification (admin). Relocated from
+// server_admin_handlers.go (which was at the line budget) to sit beside
+// this file's other connectionStore-backed handlers.
+func (s *Server) handleAdminListConnectionDomains(ctx HandlerContext) {
+	admin.HandleAdminListConnectionDomains(s, ctx)
+}
+func (s *Server) handleAdminVerifyConnectionDomain(ctx HandlerContext) {
+	admin.HandleAdminVerifyConnectionDomain(s, ctx)
+}
+
+// Zero-trust conditional-access (CAP) governance view (admin). Relocated
+// from server_admin_handlers.go (which was at the line budget).
+func (s *Server) handleAdminListAccessPolicies(ctx HandlerContext) {
+	admin.HandleAdminListAccessPolicies(s, ctx)
 }

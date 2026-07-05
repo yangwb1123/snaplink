@@ -110,15 +110,15 @@ func TestAppendPhoneAuthenticator_NilDisabledAndEnabled(t *testing.T) {
 func TestAppendEmailAuthenticator_NilDisabledAndEnabled(t *testing.T) {
 	t.Parallel()
 	codeStore := authenticators.NewMemoryCodeStore()
-	if got := appendEmailAuthenticator(nil, nil, codeStore, testLogger()); len(got) != 0 {
-		t.Fatalf("nil config: got=%v", got)
+	if got, err := appendEmailAuthenticator(nil, nil, codeStore, config.SMTPConfig{}, testLogger()); err != nil || len(got) != 0 {
+		t.Fatalf("nil config: got=%v, err=%v", got, err)
 	}
-	if got := appendEmailAuthenticator(nil, &config.CodeAuthConfig{Enabled: false}, codeStore, testLogger()); len(got) != 0 {
-		t.Fatalf("disabled config: got=%v", got)
+	if got, err := appendEmailAuthenticator(nil, &config.CodeAuthConfig{Enabled: false}, codeStore, config.SMTPConfig{}, testLogger()); err != nil || len(got) != 0 {
+		t.Fatalf("disabled config: got=%v, err=%v", got, err)
 	}
-	got := appendEmailAuthenticator(nil, &config.CodeAuthConfig{Enabled: true, CodeLength: 6}, codeStore, testLogger())
-	if len(got) != 1 || got[0].Name() != authenticators.MethodEmail {
-		t.Fatalf("got=%v, want one %q authenticator", got, authenticators.MethodEmail)
+	got, err := appendEmailAuthenticator(nil, &config.CodeAuthConfig{Enabled: true, CodeLength: 6}, codeStore, config.SMTPConfig{}, testLogger())
+	if err != nil || len(got) != 1 || got[0].Name() != authenticators.MethodEmail {
+		t.Fatalf("got=%v, err=%v, want one %q authenticator", got, err, authenticators.MethodEmail)
 	}
 }
 

@@ -134,6 +134,15 @@ func TestRcovAdmin_Gate(t *testing.T) {
 	if status != http.StatusUnauthorized {
 		t.Errorf("bad-bearer admin = %d, want 401", status)
 	}
+	// The connection domain-verification routes are gated identically.
+	status, _ = rcovDo(t, http.MethodGet, env.url+"/api/v1/admin/connections/conn-1/domains", "", nil)
+	if status != http.StatusUnauthorized {
+		t.Errorf("no-bearer domain list = %d, want 401", status)
+	}
+	status, _ = rcovDo(t, http.MethodPost, env.url+"/api/v1/admin/connections/conn-1/domains/acme.example/verify", "", nil)
+	if status != http.StatusUnauthorized {
+		t.Errorf("no-bearer domain verify = %d, want 401", status)
+	}
 }
 
 // TestRcovAdmin_Connections covers the enterprise-connection CRUD handlers.
@@ -164,6 +173,15 @@ func TestRcovAdmin_Connections(t *testing.T) {
 	status, _ = rcovDo(t, http.MethodGet, env.url+"/api/v1/admin/connections/conn-1", env.token, nil)
 	if status != http.StatusOK {
 		t.Errorf("get connection = %d, want 200", status)
+	}
+
+	// List its domain claims (default mode auto-verifies the seeded domain).
+	status, out = rcovDo(t, http.MethodGet, env.url+"/api/v1/admin/connections/conn-1/domains", env.token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("list domains = %d body=%v", status, out)
+	}
+	if domains, _ := out["domains"].([]any); len(domains) != 1 {
+		t.Errorf("domain claims = %v, want 1", out)
 	}
 
 	// Get a missing connection => 404.

@@ -18,6 +18,10 @@ import (
 	"github.com/snaplink/sso/shared/core"
 )
 
+// WithDomainVerificationResolver moved to options_httpstack.go, beside the
+// DomainResolver() accessor it feeds, to keep this file within the per-file
+// line budget.
+
 // WithAdminSessionTTL sets an idle timeout for admin bearer tokens. When
 // a token has not been used for longer than the TTL, the admin middleware
 // rejects the request and the caller must re-authenticate. 0 (default)

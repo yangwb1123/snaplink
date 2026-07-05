@@ -14,11 +14,13 @@ import (
 	"github.com/snaplink/sso/shared/core"
 )
 
-// selfServiceDataExportOption wires GET /me/data-export (GDPR Art. 15 self-
-// service) from the same stores the admin compliance export uses — scoped at
-// request time to the authenticated bearer's own subject by the handler.
-func selfServiceDataExportOption(users core.UserProvider, sessions core.SessionManager) sso.Option {
-	return sso.WithSelfServiceDataExport(&compliance.Exporter{Users: users, Sessions: sessions})
+// newSelfServiceExporter builds the /me/data-export exporter (GDPR Art. 15
+// self-service), scoped at request time to the authenticated bearer's own
+// subject by the handler. Consent + MFAEnrollments are NOT set here — those
+// stores wire later (build ordering), so the caller retains this pointer and
+// finalize late-binds them before serving (mirrors newSelfServiceEraser).
+func newSelfServiceExporter(users core.UserProvider, sessions core.SessionManager) *compliance.Exporter {
+	return &compliance.Exporter{Users: users, Sessions: sessions}
 }
 
 // selfServiceAccountEraseOption wires POST /me/account/erase (GDPR Art. 17
@@ -88,7 +90,14 @@ func complianceExportHandler(deps *complianceDeps) http.HandlerFunc {
 			writeComplianceError(w, http.StatusBadRequest, "invalid_path")
 			return
 		}
-		exporter := &compliance.Exporter{Users: deps.Users, Sessions: deps.Sessions}
+		exporter := &compliance.Exporter{
+			Users:    deps.Users,
+			Sessions: deps.Sessions,
+			// Closes the Eraser/Exporter asymmetry: the admin erase path already
+			// clears consent + MFA enrollments (below), so Art. 15 export must
+			// surface the same two domains before they're gone.
+			Extra: compliance.SubjectExporters(deps.Consent, deps.MFAEnrollments),
+		}
 		bundle, opErr := exporter.ExportSubject(r.Context(), id)
 		recordCompliance(deps.Recorder, audit.EventAdminSubjectExported, id, r, opErr)
 		// Best-effort: deliver whatever was gathered even on partial

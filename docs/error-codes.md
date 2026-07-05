@@ -53,6 +53,9 @@ exact emission site.
 | `tenant_mismatch`                     | 403  | Client is bound to a tenant the request didn't resolve to          | Use the right hostname / tenant context    |
 | `region_not_allowed`                  | 403  | Serving region is outside the tenant's data-residency `AllowedRegions` | Route the request to an allowed region |
 | `residency_violation`                 | 403  | Operation would place tenant data outside its residency boundary   | Use a region within the tenant's policy    |
+| `quota_exceeded`                      | 403  | Tenant has reached its per-resource quota (sessions on login; clients on DCR `/register`). Governance code, not a credential oracle | Raise the tenant's quota, or reset usage |
+| `forbidden`                           | 403  | Delegated org-admin surface (`/me/organizations/{tenant_id}/*`): the caller is not a `TenantRoleAdmin` of the path tenant. Tenant-absent, not-a-member, and member-but-not-admin ALL collapse to this one code (anti-enumeration — no branch reveals which) | Only an org admin may manage that org |
+| `last_org_admin`                      | 409  | Delegated org-admin surface: removing or demoting the org's FINAL admin (including self-removal / self-demotion) was refused — it would orphan the org | Appoint another admin before removing/demoting the last one |
 | `authenticator_not_allowed_for_client`| 403  | Client's `allowed_authenticators` list excludes this provider      | Use a method the client permits            |
 | `passwordless_required`              | 400  | Client's `allow_passwordless_only` is true and `provider=password` was requested — every OTHER provider (`webauthn`, `totp`, phone/email, ...) stays available | Use `provider=webauthn` (passkey) instead |
 | `risk_denied`                         | 403  | `RiskScorer` returned `DecisionDeny`                               | Step up auth, or wait + retry              |
@@ -300,6 +303,34 @@ other grants above use, for the SAME oracle-leak reasons.
 |--------------------------|------|--------------------------------------------------------------------|
 | `audit_not_enabled`      | 500  | API hit but `audit.api_enabled: false` (or no recorder configured) |
 | `audit_event_not_found`  | 404  | Specific event id queried but absent / evicted from the sink       |
+
+### Bulk export (SDK Go errors, `platform/audit/auditexport`)
+
+The `auditexport` package builds and verifies self-contained, tamper-evident
+audit bundles (used by `sso-ctl audit-export`). These are **SDK Go errors,
+not HTTP wire codes**: they never appear in any response this server emits
+and carry no `error`/`error_description` JSON body.
+
+| Sentinel               | Returned when                                                        |
+|------------------------|---------------------------------------------------------------------|
+| `ErrNilPager`          | `BuildExportBundle` called with a nil `QueryPager`                   |
+| `ErrNilBundle`         | `VerifyExportBundle` called with a nil bundle                        |
+| `ErrUnsupportedFormat` | Bundle `FormatVersion` differs from the reader's supported version  |
+
+Chain-integrity failures (a tampered event, a broken segment, or a head-hash
+mismatch) surface as descriptive `platform/audit` chain errors ("hash
+mismatch", "chain break") from the reused verifiers, not as new sentinels.
+
+### SOC2 evidence pack (SDK Go errors, `platform/audit/auditreport`)
+
+The `auditreport` package (used by `sso-ctl soc2-report`) packages a
+previously-built, previously-verified `auditexport.ExportBundle` into a
+control-area evidence report. It defines **no new sentinels of its own**:
+`BuildSOC2Report` and `VerifyAndBuildSOC2Report` both return the existing
+`auditexport.ErrNilBundle` on a nil bundle, and `VerifyAndBuildSOC2Report`
+propagates whatever chain-verification error `auditexport.VerifyExportBundle`
+returns on a tampered/unverifiable bundle unchanged — it never re-implements
+or re-wraps that check. Same non-wire-code caveat as above.
 
 ---
 

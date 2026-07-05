@@ -117,9 +117,11 @@ func (d *testDeps) EmailVerificationTTL() time.Duration                  { retur
 func (d *testDeps) RegistrationGates() []spi.RegistrationGate            { return nil }
 func (d *testDeps) SignupRateLimiter() selfservicecore.RateLimiter       { return nil }
 
-func (d *testDeps) SessionManager() core.SessionManager   { return d.sessions }
-func (d *testDeps) TenantUserStore() core.TenantUserStore { return d.tenantUsers }
-func (d *testDeps) InvitationStore() core.InvitationStore { return d.invitations }
+func (d *testDeps) SessionManager() core.SessionManager          { return d.sessions }
+func (d *testDeps) TenantUserStore() core.TenantUserStore        { return d.tenantUsers }
+func (d *testDeps) InvitationStore() core.InvitationStore        { return d.invitations }
+func (d *testDeps) InvitationSender() spi.InvitationSender       { return nil }
+func (d *testDeps) TenantSuspended(context.Context, string) bool { return false }
 
 func (d *testDeps) Auditor() *audit.Recorder { return d.auditor }
 func (d *testDeps) Logger() spi.Logger       { return spi.NopLogger{} }
@@ -186,6 +188,7 @@ func (d *testDeps) ResidencyGateWrite(core.HandlerContext, *core.TokenClaims) (s
 func (d *testDeps) WebAuthnRegistrar() core.WebAuthnRegistrar   { return d.webauthn }
 func (d *testDeps) MFAEnrollmentStore() core.MFAEnrollmentStore { return d.mfaStore }
 func (d *testDeps) TOTPEnroller() core.TOTPEnroller             { return d.totp }
+func (d *testDeps) RecoveryCodeStore() core.RecoveryCodeStore   { return nil }
 
 func (d *testDeps) NewMFAFactorID() (string, error) {
 	d.factorSeq++

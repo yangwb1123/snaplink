@@ -170,3 +170,43 @@ func TestHomeRealm_LoginFlowByteIdenticalWithoutStore(t *testing.T) {
 		t.Errorf("the default should return the provider list, got %v", out)
 	}
 }
+
+// TestHomeRealm_DomainVerificationRequired_HijackBlocked: with verification
+// enabled, a second connection that merely Upserts a domain another connection
+// has already VERIFIED cannot take over home-realm routing — its claim stays
+// pending, so ByDomain (and thus /auth/home-realm) still routes to the owner.
+func TestHomeRealm_DomainVerificationRequired_HijackBlocked(t *testing.T) {
+	ctx := context.Background()
+	store := connections.NewMemoryStore(connections.WithDomainVerificationRequired(true))
+	if err := store.Upsert(ctx, &connections.Connection{
+		ID: "acme-okta", TenantID: "acme", Type: connections.TypeOIDC,
+		DisplayName: "Acme Okta", Domains: []string{"shared.com"}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.VerifyDomain(ctx, "acme-okta", "shared.com"); err != nil {
+		t.Fatal(err)
+	}
+	// A hostile connection claims the same domain with no proof of ownership.
+	if err := store.Upsert(ctx, &connections.Connection{
+		ID: "evil", TenantID: "evil", Type: connections.TypeOIDC,
+		DisplayName: "Evil", Domains: []string{"shared.com"}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := sso.NewServer(
+		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithConnectionStore(store),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	status, body := postHomeRealm(t, httpSrv, "user@shared.com")
+	if status != http.StatusOK || body["found"] != true || body["connection_id"] != "acme-okta" {
+		t.Fatalf("hijack must be blocked: HRD should route to the verified owner, got %d / %v", status, body)
+	}
+}

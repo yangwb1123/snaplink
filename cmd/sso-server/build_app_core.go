@@ -275,42 +275,19 @@ func (b *appBuilder) startAuditRetention(primary audit.Sink, primaryName string)
 	return nil
 }
 
-// wireAuditWebhook wraps the primary sink with a retrying webhook fan-out.
-// Compose order: MultiSink(Primary, RetryingSink(WebhookSink)) so in-process
-// /audit query reads still see every event.
+// wireAuditWebhook fans the primary sink out to every configured webhook
+// subscription. Compose order: MultiSink(Primary, sub1, sub2, ...) where each
+// sub is RetryingSink(FilteringSink(WebhookSink)) — so in-process /audit query
+// reads still see every event while each subscription receives only its
+// selected event types. The legacy scalar url stays supported (implicit
+// unfiltered "default" subscription); per-subscription compilation lives in
+// serverbuildauthn to keep this a thin wire step.
 func (b *appBuilder) wireAuditWebhook(primary audit.Sink, w config.AuditWebhookConfig) (audit.Sink, error) {
-	if w.URL == "" {
-		return nil, errors.New("audit.webhook.url required when audit.webhook.enabled")
+	subSinks, err := serverbuildauthn.BuildAuditWebhookSinks(w, b.logger)
+	if err != nil {
+		return nil, err
 	}
-	webhookOpts := []audit.WebhookOption{}
-	if w.Timeout > 0 {
-		webhookOpts = append(webhookOpts, audit.WithWebhookTimeout(w.Timeout))
-	}
-	for k, v := range w.Headers {
-		webhookOpts = append(webhookOpts, audit.WithWebhookHeader(k, v))
-	}
-	if w.SigningSecret != "" {
-		webhookOpts = append(webhookOpts, audit.WithWebhookSigningSecret(w.SigningSecret))
-	}
-	webhook := audit.NewWebhookSink(w.URL, webhookOpts...)
-	retryOpts := []audit.RetryOption{}
-	if w.Retry.MaxAttempts > 0 {
-		retryOpts = append(retryOpts, audit.WithRetryMaxAttempts(w.Retry.MaxAttempts))
-	}
-	if w.Retry.InitialBackoff > 0 {
-		retryOpts = append(retryOpts, audit.WithRetryInitialBackoff(w.Retry.InitialBackoff))
-	}
-	if w.Retry.MaxBackoff > 0 {
-		retryOpts = append(retryOpts, audit.WithRetryMaxBackoff(w.Retry.MaxBackoff))
-	}
-	retrying := audit.NewRetryingSink(webhook, retryOpts...)
-	b.logger.Info("audit: webhook fan-out enabled",
-		"url", w.URL,
-		"max_attempts", w.Retry.MaxAttempts,
-		"header_count", len(w.Headers),
-		"signed", w.SigningSecret != "",
-	)
-	return audit.NewMultiSink(primary, retrying), nil
+	return audit.NewMultiSink(append([]audit.Sink{primary}, subSinks...)...), nil
 }
 
 // wireAuditAsync wraps the sink in a buffered AsyncSink and starts it.

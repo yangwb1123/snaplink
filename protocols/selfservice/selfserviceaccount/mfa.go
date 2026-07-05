@@ -3,6 +3,7 @@ package selfserviceaccount
 import (
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/snaplink/sso/platform/audit"
@@ -148,6 +149,77 @@ func HandleTOTPEnrollConfirm(d Deps, ctx core.HandlerContext) {
 	}
 	recordTOTPEnrollSuccess(d, ctx, userID, factorID)
 	ctx.JSON(http.StatusCreated, map[string]any{"factor_id": factorID, "label": label})
+}
+
+// HandleGenerateRecoveryCodes serves POST /me/mfa/recovery-codes — regenerate
+// the caller's single-use MFA recovery codes. It revokes any prior batch first
+// so a leaked earlier set dies, then mints a fresh batch and returns the
+// plaintext codes EXACTLY ONCE (they are hashed at rest and never retrievable
+// again). Recovery codes are credentials, so the no-store headers are mandatory.
+func HandleGenerateRecoveryCodes(d Deps, ctx core.HandlerContext) {
+	d.TokenNoStoreHeaders(ctx)
+	userID, ok := d.MeSubjectOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	store := d.RecoveryCodeStore()
+	if store == nil {
+		ctx.JSON(http.StatusNotImplemented, d.ErrorBody(core.ErrNotFound))
+		return
+	}
+	if err := store.RevokeAll(ctx.Request().Context(), userID); err != nil {
+		d.Logger().Error("recovery codes: revoke failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+		return
+	}
+	codes, err := store.Generate(ctx.Request().Context(), userID, core.DefaultRecoveryCodeCount)
+	if err != nil {
+		d.Logger().Error("recovery codes: generate failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+		return
+	}
+	recordRecoveryCodesRegenerated(d, ctx, userID, len(codes))
+	ctx.JSON(http.StatusCreated, map[string]any{"recovery_codes": codes, "count": len(codes)})
+}
+
+// HandleGetRecoveryCodesCount serves GET /me/mfa/recovery-codes — return the
+// number of unused codes the caller has left (for a low-pool warning). It NEVER
+// returns the codes themselves; the plaintext is shown once at generation only.
+func HandleGetRecoveryCodesCount(d Deps, ctx core.HandlerContext) {
+	d.TokenNoStoreHeaders(ctx)
+	userID, ok := d.MeSubjectOrChallenge(ctx)
+	if !ok {
+		return
+	}
+	store := d.RecoveryCodeStore()
+	if store == nil {
+		ctx.JSON(http.StatusNotImplemented, d.ErrorBody(core.ErrNotFound))
+		return
+	}
+	n, err := store.CountRemaining(ctx.Request().Context(), userID)
+	if err != nil {
+		d.Logger().Error("recovery codes: count failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"remaining": n})
+}
+
+// recordRecoveryCodesRegenerated emits the self-service regeneration audit
+// event. The codes are NEVER recorded — only the count, for operator context.
+func recordRecoveryCodesRegenerated(d Deps, ctx core.HandlerContext, userID string, count int) {
+	aud := d.Auditor()
+	if aud == nil {
+		return
+	}
+	evt := &audit.Event{
+		Type:    audit.EventRecoveryCodesRegenerated,
+		Outcome: audit.OutcomeSuccess,
+		ActorID: userID,
+		ActorIP: audit.ClientIP(ctx.Request()),
+	}
+	audit.SetMeta(evt, "count", strconv.Itoa(count))
+	aud.Record(ctx.Request().Context(), evt)
 }
 
 // recordTOTPEnrollSuccess / recordTOTPEnrollFailure emit the enrollment audit

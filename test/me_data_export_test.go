@@ -15,7 +15,12 @@ import (
 	"github.com/snaplink/sso/protocols/compliance"
 )
 
-func newDataExportHarness(t *testing.T, withExport bool) (*httptest.Server, func() string) {
+// dataExportExtra is an optional []compliance.SubjectExporter to attach to
+// the harness's Exporter, letting individual tests cover the Exporter+Extra
+// -> HTTP response path (compliance.SubjectExporters output specifically)
+// independently of the cmd/sso-server build-ordering concern covered by
+// cmd/sso-server's TestBuildApp_SelfServiceDataExport_* tests.
+func newDataExportHarness(t *testing.T, withExport bool, extra ...compliance.SubjectExporter) (*httptest.Server, func() string) {
 	t.Helper()
 	users := defaultimpl.NewMemoryUserProvider()
 	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: "u-alice", Email: "alice@example.com", Name: "Alice"})
@@ -40,7 +45,7 @@ func newDataExportHarness(t *testing.T, withExport bool) (*httptest.Server, func
 		sso.WithDefaultTokenStrategy("jwt"),
 	}
 	if withExport {
-		opts = append(opts, sso.WithSelfServiceDataExport(&compliance.Exporter{Users: users, Sessions: sessions}))
+		opts = append(opts, sso.WithSelfServiceDataExport(&compliance.Exporter{Users: users, Sessions: sessions, Extra: extra}))
 	}
 	hs := httptest.NewServer(sso.NewServer(opts...).Handler())
 	t.Cleanup(hs.Close)
@@ -96,5 +101,38 @@ func TestMyDataExport_NotMountedWithoutExporter(t *testing.T) {
 	srv, loginAs := newDataExportHarness(t, false)
 	if code, _ := doReq(t, srv, http.MethodGet, "/me/data-export", loginAs()); code != http.StatusNotFound {
 		t.Errorf("without exporter = %d, want 404 (unmounted)", code)
+	}
+}
+
+// TestMyDataExport_IncludesConsentAndMFA drives the Exporter+Extra->HTTP
+// response path with real memory consent + MFA-enrollment stores wired as
+// SubjectExporters, proving GDPR Art. 15 self-service export now returns the
+// same two domains the self-service account-erase path already deletes.
+func TestMyDataExport_IncludesConsentAndMFA(t *testing.T) {
+	consentStore := defaultimpl.NewMemoryConsentStore()
+	if err := consentStore.RecordConsent(context.Background(), sso.ConsentGrant{
+		UserID: "u-alice", ClientID: "exp-app", Scopes: []string{"openid"}, GrantedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("record consent: %v", err)
+	}
+	mfaStore := defaultimpl.NewMemoryMFAEnrollmentStore()
+	mfaStore.AddFactor("u-alice", sso.MFAEnrolledFactor{ID: "f1", Method: "totp", AddedAt: time.Now()})
+
+	srv, loginAs := newDataExportHarness(t, true, compliance.SubjectExporters(consentStore, mfaStore)...)
+	code, body := doReq(t, srv, http.MethodGet, "/me/data-export", loginAs())
+	if code != http.StatusOK {
+		t.Fatalf("status=%d body=%v", code, body)
+	}
+	data, _ := body["data"].(map[string]any)
+	if data == nil {
+		t.Fatalf("export has no data section: %v", body)
+	}
+	consentData, ok := data[compliance.ExportKeyConsent].([]any)
+	if !ok || len(consentData) != 1 {
+		t.Errorf("data.consent = %v, want one grant", data[compliance.ExportKeyConsent])
+	}
+	mfaData, ok := data[compliance.ExportKeyMFAEnrollments].([]any)
+	if !ok || len(mfaData) != 1 {
+		t.Errorf("data.mfa_enrollments = %v, want one factor", data[compliance.ExportKeyMFAEnrollments])
 	}
 }

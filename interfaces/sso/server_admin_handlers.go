@@ -44,6 +44,9 @@ func (s *Server) handleAdminSetUserEmail(ctx HandlerContext) {
 func (s *Server) handleAdminClearAccountLockout(ctx HandlerContext) {
 	admin.HandleAdminClearAccountLockout(s, ctx)
 }
+func (s *Server) handleAdminResetUserRecoveryCodes(ctx HandlerContext) {
+	admin.HandleAdminResetUserRecoveryCodes(s, ctx)
+}
 func (s *Server) handleAdminRevokeUserDeviceSecrets(ctx HandlerContext) {
 	admin.HandleAdminRevokeUserDeviceSecrets(s, ctx)
 }
@@ -69,10 +72,8 @@ func (s *Server) handleAdminTransitionUserLifecycle(ctx HandlerContext) {
 	admin.HandleAdminTransitionUserLifecycle(s, ctx)
 }
 
-// Zero-trust conditional-access (CAP) governance view (admin).
-func (s *Server) handleAdminListAccessPolicies(ctx HandlerContext) {
-	admin.HandleAdminListAccessPolicies(s, ctx)
-}
+// handleAdminListAccessPolicies (zero-trust CAP governance view) moved to
+// server_federation.go — this file was at the line budget.
 
 // B2B org-management handlers — thin wrappers. The enterprise-connection,
 // tenant-membership, and invitation admin logic lives in admin/{connections,tenants}.go;
@@ -89,6 +90,10 @@ func (s *Server) handleAdminUpsertConnection(ctx HandlerContext) {
 func (s *Server) handleAdminDeleteConnection(ctx HandlerContext) {
 	admin.HandleAdminDeleteConnection(s, ctx)
 }
+
+// handleAdminListConnectionDomains / handleAdminVerifyConnectionDomain moved
+// to server_federation.go (which already handles connectionStore-backed
+// home-realm discovery) — this file was at the line budget.
 
 // Tenant membership (admin).
 func (s *Server) handleAdminListTenantMembers(ctx HandlerContext) {
@@ -122,6 +127,10 @@ func (s *Server) handleLeaveMyOrganization(ctx HandlerContext) {
 func (s *Server) handleAcceptInvitation(ctx HandlerContext) {
 	selfservice.HandleAcceptInvitation(s, ctx)
 }
+
+// Delegated org-admin self-service endpoint wrappers moved to
+// sso_selfservice.go (beside mountOrgAdminSelfService) — this file was at
+// the line budget.
 
 // handleAdminListSessions returns all active sessions (delegates to
 // SessionManager.ListAll). Gated by admin:read scope via the admin

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 )
 
 type stubSource struct {
@@ -182,5 +183,165 @@ func TestLoader_UnknownKey_Warns(t *testing.T) {
 	// at least one actionable message is guaranteed.
 	if !strings.Contains(logged, "unknown") {
 		t.Error("expected slog warning about unknown keys, got none")
+	}
+}
+
+// fakeSecretResolver is a deterministic in-memory SecretResolver for tests:
+// no network, no external SaaS. Resolve counts calls so a test can prove a
+// leaf was (or was not) visited by the walker.
+type fakeSecretResolver struct {
+	provider string
+	values   map[string]string
+	calls    int
+}
+
+func (f *fakeSecretResolver) Provider() string { return f.provider }
+
+func (f *fakeSecretResolver) Resolve(_ context.Context, path string) (string, error) {
+	f.calls++
+	v, ok := f.values[path]
+	if !ok {
+		return "", errors.New("fake resolver: unknown path " + path)
+	}
+	return v, nil
+}
+
+// TestResolveSecretReferences_ResolvesInsideSlice covers the []any recursion
+// fix: a secret:// ref nested inside a list element (audit webhook
+// subscriptions) MUST resolve. Without the fix the walker skipped slices and
+// the reference shipped to YAML unmarshal verbatim, breaking the feature.
+func TestResolveSecretReferences_ResolvesInsideSlice(t *testing.T) {
+	r := &fakeSecretResolver{provider: "test", values: map[string]string{"whsec-siem": "RESOLVED-SIEM"}}
+	m := map[string]any{
+		"audit": map[string]any{
+			"webhook": map[string]any{
+				"subscriptions": []any{
+					map[string]any{
+						"name":           "siem",
+						"url":            "https://siem.internal/audit",
+						"signing_secret": "secret://test/whsec-siem",
+					},
+				},
+			},
+		},
+	}
+	if err := ResolveSecretReferences(context.Background(), m, map[string]SecretResolver{"test": r}); err != nil {
+		t.Fatalf("ResolveSecretReferences: %v", err)
+	}
+	subs := m["audit"].(map[string]any)["webhook"].(map[string]any)["subscriptions"].([]any)
+	got := subs[0].(map[string]any)["signing_secret"]
+	if got != "RESOLVED-SIEM" {
+		t.Fatalf("in-slice signing_secret = %v, want RESOLVED-SIEM", got)
+	}
+}
+
+// TestResolveSecretReferences_HeadersMapInsideSlice proves the walker recurses
+// map -> slice -> map -> map leaf (a header value carrying a secret:// ref
+// inside a list element).
+func TestResolveSecretReferences_HeadersMapInsideSlice(t *testing.T) {
+	r := &fakeSecretResolver{provider: "test", values: map[string]string{"tok": "Bearer XYZ"}}
+	m := map[string]any{
+		"subscriptions": []any{
+			map[string]any{
+				"headers": map[string]any{"Authorization": "secret://test/tok"},
+			},
+		},
+	}
+	if err := ResolveSecretReferences(context.Background(), m, map[string]SecretResolver{"test": r}); err != nil {
+		t.Fatalf("ResolveSecretReferences: %v", err)
+	}
+	hdrs := m["subscriptions"].([]any)[0].(map[string]any)["headers"].(map[string]any)
+	if hdrs["Authorization"] != "Bearer XYZ" {
+		t.Fatalf("in-slice header = %v, want Bearer XYZ", hdrs["Authorization"])
+	}
+}
+
+// TestResolveSecretReferences_NoBehaviorChangeForExistingShapes locks the
+// invariant that the []any addition changes nothing for the shapes that
+// already worked: map-leaf secrets still resolve; plain (non-secret) strings,
+// plain string slices, and non-string scalars are left byte-for-byte
+// untouched. resolveMap touches ALL config, so this is the regression guard.
+func TestResolveSecretReferences_NoBehaviorChangeForExistingShapes(t *testing.T) {
+	r := &fakeSecretResolver{provider: "test", values: map[string]string{"db": "postgres://real"}}
+	m := map[string]any{
+		"postgres": map[string]any{"dsn": "secret://test/db"}, // map-leaf secret (pre-existing path)
+		"server":   map[string]any{"listen": ":9090"},         // plain string, no ref
+		"clients": []any{ // plain string slice must be untouched
+			map[string]any{
+				"id":            "web",
+				"redirect_uris": []any{"https://a.example/cb", "https://b.example/cb"},
+			},
+		},
+		"metrics": map[string]any{"enabled": true, "port": 9000}, // non-string scalars
+	}
+	if err := ResolveSecretReferences(context.Background(), m, map[string]SecretResolver{"test": r}); err != nil {
+		t.Fatalf("ResolveSecretReferences: %v", err)
+	}
+	if got := m["postgres"].(map[string]any)["dsn"]; got != "postgres://real" {
+		t.Fatalf("map-leaf secret = %v, want postgres://real", got)
+	}
+	if got := m["server"].(map[string]any)["listen"]; got != ":9090" {
+		t.Fatalf("plain string mutated: %v", got)
+	}
+	uris := m["clients"].([]any)[0].(map[string]any)["redirect_uris"].([]any)
+	if uris[0] != "https://a.example/cb" || uris[1] != "https://b.example/cb" {
+		t.Fatalf("plain string slice mutated: %v", uris)
+	}
+	if r.calls != 1 {
+		t.Fatalf("resolver called %d times, want 1 (only the single secret leaf)", r.calls)
+	}
+}
+
+// TestLoad_AuditWebhookSubscriptions proves the subscriptions[] list decodes
+// through the real loader path (merge -> yaml -> strict decode) into the typed
+// AuditWebhookSubscription slice, including the event_types list and per-entry
+// timeout / headers / retry.
+func TestLoad_AuditWebhookSubscriptions(t *testing.T) {
+	src := &stubSource{name: "test", data: map[string]any{
+		"audit": map[string]any{
+			"enabled": true,
+			"webhook": map[string]any{
+				"enabled": true,
+				"subscriptions": []any{
+					map[string]any{
+						"name":           "siem",
+						"url":            "https://siem.internal/audit",
+						"event_types":    []any{"login", "admin_*"},
+						"timeout":        "3s",
+						"headers":        map[string]any{"X-Key": "v"},
+						"signing_secret": "shh",
+						"retry":          map[string]any{"max_attempts": 5},
+					},
+				},
+			},
+		},
+	}}
+
+	cfg, err := NewLoader(src).Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	subs := cfg.Audit.Webhook.Subscriptions
+	if len(subs) != 1 {
+		t.Fatalf("subscriptions len=%d want 1", len(subs))
+	}
+	s := subs[0]
+	if s.Name != "siem" || s.URL != "https://siem.internal/audit" {
+		t.Fatalf("name/url = %q/%q", s.Name, s.URL)
+	}
+	if len(s.EventTypes) != 2 || s.EventTypes[0] != "login" || s.EventTypes[1] != "admin_*" {
+		t.Fatalf("event_types = %v want [login admin_*]", s.EventTypes)
+	}
+	if s.Timeout != 3*time.Second {
+		t.Fatalf("timeout = %v want 3s", s.Timeout)
+	}
+	if s.Headers["X-Key"] != "v" {
+		t.Fatalf("headers = %v", s.Headers)
+	}
+	if s.SigningSecret != "shh" {
+		t.Fatalf("signing_secret = %q", s.SigningSecret)
+	}
+	if s.Retry.MaxAttempts != 5 {
+		t.Fatalf("retry.max_attempts = %d want 5", s.Retry.MaxAttempts)
 	}
 }

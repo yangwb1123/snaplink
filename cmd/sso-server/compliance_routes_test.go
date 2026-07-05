@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/platform/audit"
@@ -34,6 +35,47 @@ func complianceTestDeps(t *testing.T) (*complianceDeps, *audit.MemorySink) {
 		Clients:  clients,
 		Recorder: audit.New(sink),
 	}, sink
+}
+
+// TestComplianceExportHandler_IncludesConsentAndMFA proves the admin export
+// wiring closes the Eraser/Exporter asymmetry: consent + MFA enrollments,
+// which the erase handler already clears, now also appear in the export
+// bundle when their stores are wired.
+func TestComplianceExportHandler_IncludesConsentAndMFA(t *testing.T) {
+	t.Parallel()
+	deps, _ := complianceTestDeps(t)
+	consentStore := defaultimpl.NewMemoryConsentStore()
+	if err := consentStore.RecordConsent(context.Background(), core.ConsentGrant{
+		UserID: "u1", ClientID: "c1", Scopes: []string{"openid"}, GrantedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("record consent: %v", err)
+	}
+	mfaStore := defaultimpl.NewMemoryMFAEnrollmentStore()
+	mfaStore.AddFactor("u1", core.MFAEnrolledFactor{ID: "f1", Method: "totp", AddedAt: time.Now()})
+	deps.Consent = consentStore
+	deps.MFAEnrollments = mfaStore
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/compliance/users/u1/export", nil)
+	complianceExportHandler(deps)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var bundle struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	consentData, ok := bundle.Data["consent"].([]any)
+	if !ok || len(consentData) != 1 {
+		t.Errorf("bundle.data.consent = %#v, want one grant", bundle.Data["consent"])
+	}
+	mfaData, ok := bundle.Data["mfa_enrollments"].([]any)
+	if !ok || len(mfaData) != 1 {
+		t.Errorf("bundle.data.mfa_enrollments = %#v, want one factor", bundle.Data["mfa_enrollments"])
+	}
 }
 
 func TestComplianceExportHandler(t *testing.T) {

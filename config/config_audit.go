@@ -76,6 +76,38 @@ type AuditWebhookConfig struct {
 	// SSO_AUDIT__WEBHOOK__SIGNING_SECRET or a secret:// reference — never
 	// commit the literal to YAML.
 	SigningSecret string `yaml:"signing_secret"`
+	// Subscriptions fans the audit stream out to multiple endpoints, each
+	// with its own event-type filter. The legacy scalar URL above (when
+	// set) is compiled as one additional, unfiltered subscription named
+	// "default" — so a list entry may not reuse that name when a scalar URL
+	// is also configured. Empty EventTypes on a subscription = firehose (all
+	// events); non-empty restricts delivery to matching types. See
+	// AuditWebhookSubscription for the matching semantics.
+	Subscriptions []AuditWebhookSubscription `yaml:"subscriptions"`
+}
+
+// AuditWebhookSubscription is one filtered audit webhook endpoint. Name is
+// REQUIRED and must be unique across the list (boot fails otherwise); it names
+// the subscription in logs and reserves the identity for future
+// per-subscription metrics.
+//
+// EventTypes selects which events reach this endpoint. Each entry is either an
+// exact audit event type (e.g. "login") or a trailing-* prefix wildcard (e.g.
+// "admin_*" — matches every admin_ event); no other globbing is supported.
+// An EMPTY EventTypes list is a firehose (every event). Unknown type strings
+// are accepted (custom event types are legal) with a boot-time log line.
+//
+// Timeout, Headers, SigningSecret, and Retry mirror the scalar webhook fields
+// and fall back to library defaults when zero. SigningSecret is a credential:
+// inject it via a secret:// reference, never a YAML literal.
+type AuditWebhookSubscription struct {
+	Name          string                  `yaml:"name"`
+	URL           string                  `yaml:"url"`
+	EventTypes    []string                `yaml:"event_types"`
+	Timeout       time.Duration           `yaml:"timeout"`
+	Headers       map[string]string       `yaml:"headers"`
+	SigningSecret string                  `yaml:"signing_secret"`
+	Retry         AuditWebhookRetryConfig `yaml:"retry"`
 }
 
 // AuditWebhookRetryConfig tunes the retry wrapper around the webhook

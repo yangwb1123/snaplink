@@ -59,9 +59,11 @@ func (d *bgTestDeps) Auditor() *audit.Recorder                              { re
 func (d *bgTestDeps) Logger() spi.Logger                                    { return bgTestLogger{} }
 func (d *bgTestDeps) ConnectionStore() connections.Store                    { return nil }
 func (d *bgTestDeps) ConditionalAccessStore() conditionalaccess.Store       { return nil }
+func (d *bgTestDeps) DomainResolver() connections.DNSResolver               { return nil }
 func (d *bgTestDeps) TenantUserStore() core.TenantUserStore                 { return nil }
 func (d *bgTestDeps) InvitationStore() core.InvitationStore                 { return nil }
 func (d *bgTestDeps) InvitationSender() spi.InvitationSender                { return nil }
+func (d *bgTestDeps) RecoveryCodeStore() core.RecoveryCodeStore             { return nil }
 func (d *bgTestDeps) ConsentStore() core.ConsentStore                       { return nil }
 func (d *bgTestDeps) MFAEnrollmentStore() core.MFAEnrollmentStore           { return nil }
 func (d *bgTestDeps) PasswordCredentialStore() core.PasswordCredentialStore { return nil }

@@ -21,7 +21,9 @@ import (
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/domains/tokenanomaly"
 	"github.com/snaplink/sso/domains/tokenusage"
+	"github.com/snaplink/sso/infrastructure/defaultimpl/emailsmtp"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	"github.com/snaplink/sso/interfaces/grpcserver"
 	"github.com/snaplink/sso/interfaces/snapshot"
 	"github.com/snaplink/sso/interfaces/snapshot/storageinline"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -98,6 +100,14 @@ type appBuilder struct {
 	// Self-service password store (shared by login verifier + change EP).
 	passwordStore sso.PasswordCredentialStore
 
+	// emailSender is the built-in SMTP sender backing the four shared/spi
+	// token-delivery options (nil when smtp.enabled=false or no host is
+	// configured). serverbuildauthn builds its OWN Sender instance for the
+	// email-OTP transport (see appendEmailAuthenticator) — kept independent
+	// so authenticator wiring doesn't depend on self-service build order;
+	// both share the same config.SMTPConfig -> emailsmtp.Config translation.
+	emailSender *emailsmtp.Sender
+
 	// Authenticators.
 	tempStore       authenticators.TempTokenStore
 	totpAuth        *authenticators.TOTPAuthenticator
@@ -111,6 +121,11 @@ type appBuilder struct {
 	// finalize can late-bind Consent + MFAEnrollments AFTER their stores wire
 	// (it's constructed in wireDomains, before those stores exist).
 	accountEraser *compliance.Eraser
+	// dataExporter is the self-service /me/data-export exporter, retained so
+	// finalize can late-bind Extra (consent + MFA enrollments) AFTER their
+	// stores wire (it's constructed in wireDomains, before those stores exist)
+	// — same ordering problem as accountEraser above, same fix.
+	dataExporter *compliance.Exporter
 
 	// Region.
 	regionResolver region.Resolver
@@ -204,17 +219,11 @@ func (b *appBuilder) finalize() (*app, error) {
 	if err := b.wireGovernance(); err != nil {
 		return nil, err
 	}
-	// Late-bind the self-service eraser's consent + MFA stores: they wire in
-	// wireFinalOptions, AFTER wireDomains constructed the eraser (build order), so
-	// the eraser captured them nil. The SDK holds it by pointer and reads these at
-	// erase time, so setting them now makes self-erasure clear consent + MFA
-	// enrollments too — matching the admin erase path.
-	if b.accountEraser != nil {
-		b.accountEraser.Consent = b.consentStore
-		b.accountEraser.MFAEnrollments = b.mfaEnrollStore
-	}
+	// Late-bind the self-service eraser + exporter's consent + MFA stores: they
+	// wire in wireFinalOptions, AFTER wireDomains constructed the eraser/exporter
+	// (build order), so both captured them nil. See lateBindComplianceStores.
+	b.lateBindComplianceStores()
 	srv = sso.NewServer(b.opts...)
-
 	rt := serverRuntime{server: srv, cluster: cw}
 	rt.busStop, rt.signingKeyStop, rt.keyRotationStop, rt.keyRotationCancel, err = b.startBackgroundWorkers(srv, cw)
 	if err != nil {
@@ -223,6 +232,8 @@ func (b *appBuilder) finalize() (*app, error) {
 	if err := b.startGovernanceWorkers(srv); err != nil {
 		return nil, err
 	}
+	// On-demand signing-key rotation admin service (needs srv for the hook).
+	rt.keyAdmin = b.buildKeyAdminService(srv)
 	rt.adminMW = b.wireAdminMW(srv)
 	rt.snapshots, err = b.wireSnapshotReleases()
 	if err != nil {
@@ -297,6 +308,24 @@ func (b *appBuilder) wireAdminGovernanceMW(mw *sso.AdminMiddleware, srv *sso.Ser
 	}
 }
 
+// lateBindComplianceStores sets Consent + MFAEnrollments on the self-service
+// eraser and exporter AFTER wireFinalOptions has wired those stores. Both
+// compliance.Eraser/Exporter pointers are constructed early in wireDomains
+// (before consentStore/mfaEnrollStore exist), so a one-shot assignment at
+// construction time would silently capture nil — the SDK holds each by
+// pointer and reads these fields at request time, so setting them here (once,
+// right before NewServer) makes self-erasure AND self-export agree with the
+// admin compliance routes on what "the subject's consent + MFA data" is.
+func (b *appBuilder) lateBindComplianceStores() {
+	if b.accountEraser != nil {
+		b.accountEraser.Consent = b.consentStore
+		b.accountEraser.MFAEnrollments = b.mfaEnrollStore
+	}
+	if b.dataExporter != nil {
+		b.dataExporter.Extra = compliance.SubjectExporters(b.consentStore, b.mfaEnrollStore)
+	}
+}
+
 // serverRuntime carries the post-NewServer handles assemble folds into the
 // *app alongside the appBuilder's pre-NewServer state.
 type serverRuntime struct {
@@ -305,6 +334,7 @@ type serverRuntime struct {
 	snapshots         *snapshotReleaseWiring
 	dr                *drWiring
 	adminMW           *sso.AdminMiddleware
+	keyAdmin          *grpcserver.KeyAdminService
 	busStop           <-chan struct{}
 	signingKeyStop    <-chan struct{}
 	keyRotationStop   <-chan struct{}
@@ -317,23 +347,23 @@ func (b *appBuilder) assemble(rt serverRuntime) *app {
 	cw, srw := rt.cluster, rt.snapshots
 	a := &app{
 		server: rt.server, recorder: b.recorder, provider: b.provider, registry: cw.reg,
-		netStore:                b.netStore,
-		classifier:              b.classifier,
-		clientStore:             b.clientStore,
-		userProvider:            b.userProvider,
-		sessionMgr:              b.sessionMgr,
-		tempStore:               b.tempStore,
-		tokenIssuers:            b.tokenIssuers,
-		idTokenIssuer:           b.jwtIssuer,
-		refreshTokenStore:       b.refreshTokenStore,
-		refreshTokenTTL:         b.refreshTokenTTL,
-		adminMW:                 rt.adminMW,
-		snapshotPipeline:        srw.pipeline,
-		snapshotStorage:         srw.storage,
-		snapshotter:             srw.snapshotter,
-		snapshotRestorer:        srw.restorer,
-		releaseRegistry:         srw.releaseRegistry,
-		releaseStore:            srw.releaseStore,
+		netStore:          b.netStore,
+		classifier:        b.classifier,
+		clientStore:       b.clientStore,
+		userProvider:      b.userProvider,
+		sessionMgr:        b.sessionMgr,
+		tempStore:         b.tempStore,
+		tokenIssuers:      b.tokenIssuers,
+		idTokenIssuer:     b.jwtIssuer,
+		refreshTokenStore: b.refreshTokenStore,
+		refreshTokenTTL:   b.refreshTokenTTL,
+		adminMW:           rt.adminMW,
+		snapshotPipeline:  srw.pipeline,
+		snapshotStorage:   srw.storage,
+		snapshotter:       srw.snapshotter,
+		snapshotRestorer:  srw.restorer,
+		keyAdmin:          rt.keyAdmin,
+		releaseRegistry:   srw.releaseRegistry, releaseStore: srw.releaseStore,
 		tenantStore:             b.tenantStore,
 		connectionStore:         b.connectionStore,
 		regionResolver:          b.regionResolver,

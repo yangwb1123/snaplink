@@ -90,6 +90,7 @@ func (s *Server) Mount() {
 	s.mountSelfServiceProfile()
 	s.mountSelfServiceCredentials()
 	s.mountBrandingEndpoint()
+	s.mountOrgAdminSelfService()
 	s.mountClusterEndpoints()
 	s.mountFederationEndpoints()
 	s.mountAdminSurface()
@@ -221,6 +222,8 @@ func (s *Server) mountCIBAEndpoint() {
 // receiver and OpenID Federation + B2B home-realm route registration) moved
 // to server_federation.go, alongside federationMeshState (the fields they
 // gate on) and the federation handlers — this file was at the line budget.
+// mountSelfServiceCredentials (the /me* credential + privacy endpoints,
+// including MFA recovery codes) lives in server_me.go for the same reason.
 
 // Handler returns the http.Handler for the server.
 //

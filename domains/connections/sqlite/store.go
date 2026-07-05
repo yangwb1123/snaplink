@@ -41,17 +41,24 @@ CREATE INDEX IF NOT EXISTS idx_connections_tenant ON connections(tenant_id);
 
 var connectionMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline", SQL: connectionSchema},
+	// v2 adds the per-(connection,domain) ownership-claim table backing DNS-TXT
+	// domain verification. connection_domains stays the verified-only routing
+	// index; connection_domain_claims tracks pending + verified claims.
+	{Version: 2, Name: "domain_claims", SQL: connectionDomainClaimsSchema},
 }
 
 // Store is the SQLite connections.Store.
 type Store struct {
-	db *sql.DB
+	db  *sql.DB
+	cfg connections.StoreConfig
 }
 
 var _ connections.Store = (*Store)(nil)
 
-// New opens dsn, migrates, and returns the store.
-func New(dsn string) (*Store, error) {
+// New opens dsn, migrates, and returns the store. Options are variadic so the
+// historical single-arg call sites keep compiling unchanged; with no options
+// the store behaves byte-identically to the pre-verification build.
+func New(dsn string, opts ...connections.StoreOption) (*Store, error) {
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: open: %w", err)
@@ -64,13 +71,13 @@ func New(dsn string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate connections: %w", err)
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, cfg: connections.ApplyStoreOptions(opts...)}, nil
 }
 
 // NewWithDB wraps an existing *sql.DB (shared-pool deployments).
-func NewWithDB(db *sql.DB) *Store {
+func NewWithDB(db *sql.DB, opts ...connections.StoreOption) *Store {
 	_ = migrate.Run(context.Background(), db, "connections", connectionMigrations)
-	return &Store{db: db}
+	return &Store{db: db, cfg: connections.ApplyStoreOptions(opts...)}
 }
 
 // Close releases the connection. Idempotent.
@@ -174,22 +181,8 @@ func (s *Store) Upsert(ctx context.Context, c *connections.Connection) error {
 		string(domainsJSON), string(configJSON)); err != nil {
 		return fmt.Errorf("sqlite: upsert connection: %w", err)
 	}
-	// Rebuild this connection's domain routing: drop its old rows, then insert
-	// the current set (re-claiming a domain reassigns it via the PK conflict).
-	if _, err := tx.ExecContext(ctx, `DELETE FROM connection_domains WHERE connection_id = ?`, c.ID); err != nil {
-		return fmt.Errorf("sqlite: clear domains: %w", err)
-	}
-	for _, dm := range c.Domains {
-		nd := strings.ToLower(strings.TrimSpace(dm))
-		if nd == "" {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO connection_domains (domain, connection_id) VALUES (?, ?)
-             ON CONFLICT(domain) DO UPDATE SET connection_id=excluded.connection_id`,
-			nd, c.ID); err != nil {
-			return fmt.Errorf("sqlite: index domain: %w", err)
-		}
+	if err := s.reconcileDomainsTx(ctx, tx, c.ID, c.Domains); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

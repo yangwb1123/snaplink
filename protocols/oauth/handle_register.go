@@ -21,6 +21,14 @@ type RegisterDeps interface {
 	SetBearerChallenge(ctx core.HandlerContext, realm, errorCode, errorDesc string)
 	RequireClientStore() error
 
+	// CheckClientCreateQuota charges one client against the tenant's
+	// resource quota before persistence. It returns true when a 403
+	// quota_exceeded response was already written (the caller MUST stop);
+	// false when the create may proceed. It is nil-safe on tenant-less
+	// clients (open registration) and fails OPEN on a store outage — the
+	// same governance posture as the session-creation quota gate.
+	CheckClientCreateQuota(ctx core.HandlerContext, tenantID string) bool
+
 	// Auditor returns the audit Recorder so the self-service DCR
 	// create/update/delete paths can record a credential-lifecycle event
 	// (EventClientRegistered/Updated/Deleted) — the forensic counterpart to
@@ -166,6 +174,11 @@ func HandleRegister(d RegisterDeps, ctx core.HandlerContext) {
 		return
 	}
 	client := buildRegisteredClient(&req, policy, id, secret, regToken, public)
+	// Tenant client-create quota gate; a 403 quota_exceeded was already written
+	// when this returns true (open-registration clients are tenant-less → no-op).
+	if d.CheckClientCreateQuota(ctx, client.TenantID) {
+		return
+	}
 	if err := d.ClientStoreAccessor().Add(ctx.Request().Context(), client); err != nil {
 		d.SrvLogger().Error("dcr persist failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))

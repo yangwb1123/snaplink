@@ -203,3 +203,17 @@ func (s *Server) refreshVerifyKeysGauge() {
 	s.adoptedPeerMu.Unlock()
 	s.metrics.SetSigningVerifyKeys(n)
 }
+
+// mountCryptoInventoryAPI registers the cryptographic-material inventory
+// admin endpoints (opt-in WithCryptoInventory): GET the catalog (admin:read),
+// POST a compromise report (admin:write). Not mounted without an Inventory —
+// byte-identical to a build without the feature. Relocated from
+// server_routes_admin.go (which was at the line budget) to sit beside this
+// file's other admin-facing crypto-material surface.
+func (s *Server) mountCryptoInventoryAPI(api Router) {
+	if s.cryptoInventory == nil {
+		return
+	}
+	api.GET(PathAdminCryptoKeys, s.handleAdminListCryptoKeys)
+	api.POST(PathAdminCryptoKeyCompromise, s.handleAdminReportKeyCompromise)
+}

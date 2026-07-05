@@ -343,3 +343,74 @@ const (
 // (byte-identical off otherwise). Relocated here (not consts.go) because
 // consts.go is at its per-file line budget.
 const PathAPIVersionPreview = "/api/v2alpha/version"
+
+// B2B connections/tenant-membership/org-invitation/delegated-org-admin path
+// consts, relocated from consts.go for the same per-file budget reason as
+// the other consts in this file.
+const (
+	// PathAdminConnections / PathAdminConnectionByID manage B2B enterprise
+	// connections at runtime (list/get/upsert/delete) so operators can onboard a
+	// new org's upstream IdP without a redeploy (config seeding only runs at
+	// boot). GET ?tenant_id= lists a tenant's connections; admin:read for GET,
+	// admin:write for POST/DELETE. Mounted only when a connection store is wired.
+	PathAdminConnections    = "/admin/connections"
+	PathAdminConnectionByID = "/admin/connections/:id"
+
+	// PathAdminConnectionDomains lists a connection's email-domain ownership
+	// claims (admin:read) — each with its DNS-TXT challenge record + status.
+	// PathAdminConnectionDomainVerify triggers a synchronous DNS-TXT check for
+	// one claimed domain (admin:write): a verified claim by ANOTHER connection
+	// blocks routing takeover, so a new claimant must prove DNS control here.
+	PathAdminConnectionDomains      = "/admin/connections/:id/domains"
+	PathAdminConnectionDomainVerify = "/admin/connections/:id/domains/:domain/verify"
+
+	// PathAdminTenantMembers / PathAdminTenantMemberByID manage a tenant's org
+	// roster (B2B membership, distinct from SCIM app roles). GET lists the roster
+	// (admin:read); PUT upserts a member's role + DELETE removes (admin:write).
+	// Mounted only when a TenantUserStore is wired.
+	PathAdminTenantMembers    = "/admin/tenants/:id/members"
+	PathAdminTenantMemberByID = "/admin/tenants/:id/members/:user_id"
+
+	// PathMyOrganizations / PathMyOrganizationByID are the self-service org views:
+	// GET lists the orgs the bearer subject belongs to; DELETE leaves one. Mounted
+	// only when a TenantUserStore is wired.
+	PathMyOrganizations    = "/me/organizations"
+	PathMyOrganizationByID = "/me/organizations/:tenant_id"
+
+	// PathAdminTenantInvitations sends (POST {email, role}) + lists (GET) pending
+	// org invitations for a tenant. admin:write / admin:read. Mounted only when an
+	// InvitationStore is wired.
+	PathAdminTenantInvitations = "/admin/tenants/:id/invitations"
+
+	// PathAdminTenantInvitationByEmail revokes (DELETE) every pending org
+	// invitation for a recipient email. admin:write. Mounted only when an
+	// InvitationStore is wired.
+	PathAdminTenantInvitationByEmail = "/admin/tenants/:id/invitations/:email"
+
+	// PathMyInvitationAccept redeems an org invitation token (POST {token}): the
+	// authenticated subject joins the invited tenant at the invited role. Mounted
+	// only when an InvitationStore AND a TenantUserStore are wired.
+	PathMyInvitationAccept = "/me/invitations/accept"
+
+	// Delegated org-admin surface (w2.11). A TenantRoleAdmin of :tenant_id manages
+	// ONLY that org's roster + invitations via the SUBJECT bearer, WITHOUT holding
+	// the platform-wide admin scope. These hang off the /me self-service tree (not
+	// /api/v1/admin, which is unconditionally gated by the global admin scope) and
+	// are authorized by tenant-admin MEMBERSHIP; :tenant_id comes from the path
+	// only. Mounted only when a TenantUserStore is wired (invitation sub-block also
+	// needs an InvitationStore).
+	//
+	// PathOrgAdminMembers / PathOrgAdminMemberByID: GET the roster; PUT changes an
+	// EXISTING member's role (invite-only growth — non-member target is a 404, not
+	// a direct add); DELETE removes a member.
+	PathOrgAdminMembers    = "/me/organizations/:tenant_id/members"
+	PathOrgAdminMemberByID = "/me/organizations/:tenant_id/members/:user_id"
+
+	// PathOrgAdminInvitations sends (POST {email, role}) + lists (GET, never the
+	// token) pending invitations for the admin's own org.
+	PathOrgAdminInvitations = "/me/organizations/:tenant_id/invitations"
+
+	// PathOrgAdminInvitationByEmail revokes (DELETE) every pending invitation for a
+	// recipient email in the admin's own org.
+	PathOrgAdminInvitationByEmail = "/me/organizations/:tenant_id/invitations/:email"
+)

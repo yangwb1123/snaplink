@@ -1196,6 +1196,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: |
+            Tenant client-create quota exhausted. Wire code:
+            `quota_exceeded`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "501":
           description: DCR not enabled. Wire code `registration_not_configured`.
           content:
@@ -1470,7 +1478,9 @@ paths:
       summary: Export the authenticated user's own data (GDPR Art. 15).
       description: |
         Returns a portable JSON bundle of the bearer's OWN data (profile,
-        sessions, and any registered exporter domains), scoped to the caller's
+        sessions, and any registered exporter domains — including `consent`
+        recorded consent grants and `mfa_enrollments` registered second-factor
+        metadata, when those stores are wired), scoped to the caller's
         subject — the self-service counterpart to the admin-gated
         /api/v1/compliance export. Best-effort: a per-store failure yields a
         partial bundle (recorded in the audit event), never an error. Mounted
@@ -1792,6 +1802,69 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "501":
           description: TOTP enrollment is not wired on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /me/mfa/recovery-codes:
+    post:
+      tags: [self-service]
+      summary: Regenerate the caller's single-use MFA recovery codes.
+      description: |
+        Revokes any prior batch (so a leaked earlier set dies), mints a fresh
+        batch, and returns the plaintext codes EXACTLY ONCE — they are hashed at
+        rest and never retrievable again. Recovery codes are credentials:
+        `Cache-Control: no-store`. Redemption is separate — spend a code as a
+        second factor via `POST /auth/mfa` with `mfa_method=recovery`. Mounted
+        only when a recovery-code store is wired.
+      operationId: regenerateMyRecoveryCodes
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: A fresh batch of recovery codes (shown once).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recovery_codes:
+                    type: array
+                    items: { type: string }
+                    description: Plaintext codes, shown only in this response.
+                  count: { type: integer, description: Number of codes issued. }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "501":
+          description: Recovery codes are not wired on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      tags: [self-service]
+      summary: Count the caller's remaining recovery codes.
+      description: |
+        Returns the number of unused codes (for a low-pool warning). NEVER
+        returns the codes themselves — the plaintext is shown only at
+        generation. `Cache-Control: no-store`.
+      operationId: countMyRecoveryCodes
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The remaining unused recovery-code count.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  remaining: { type: integer }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "501":
+          description: Recovery codes are not wired on this server.
           content:
             application/json:
               schema:
@@ -3080,7 +3153,9 @@ paths:
       description: |
         Assembles a portable JSON bundle of the subject's data across
         the wired stores (profile + active sessions + any registered
-        SubjectExporter domains). Admin-gated — leaks the subject's PII;
+        SubjectExporter domains — including `consent` recorded consent
+        grants and `mfa_enrollments` registered second-factor metadata,
+        when those stores are wired). Admin-gated — leaks the subject's PII;
         the admin middleware enforces `admin:read`. Refresh tokens are
         intentionally excluded (opaque credentials are never exported).
         Best-effort: a partial store failure still returns 200 with the
@@ -5955,9 +6030,45 @@ paths:
         `secret` is write-only — never returned on List/Get. Use
         RotateSecret to mint a fresh secret an operator can copy
         once.
+
+        Results are filtered, then sorted, then paged — `order_by`
+        and `filter` MUST be held constant across a paging sequence
+        (the page_token offset is only valid against that same
+        filtered+sorted view). Default sort is `id` ascending.
       operationId: adminClientList
       security:
         - bearerAuth: []
+      parameters:
+        - name: page_token
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            Opaque cursor from a previous response's
+            `next_page_token`. Omit for the first page.
+        - name: page_size
+          in: query
+          required: false
+          schema: { type: integer, format: int32 }
+          description: |
+            Max rows to return. Default 100, clamped to a maximum
+            of 1000. Values <= 0 fall back to the default.
+        - name: order_by
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            One of `id`, `name`, `created_at` (alias for `id` —
+            clients have no created_at field), optionally prefixed
+            with `-` for descending. Defaults to `id` ascending.
+        - name: filter
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            `field:value` or `field eq value`. Supported fields:
+            `id`, `name` (substring), `active` (bool). Omit to
+            match all.
       responses:
         "200":
           description: Clients list.
@@ -5965,6 +6076,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ListClientsResponse"
+        "400":
+          description: '`invalid page_token`, or an unsupported `order_by`/`filter` field or value.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
     post:
       tags: [admin]
@@ -6074,13 +6191,108 @@ paths:
                 $ref: "#/components/schemas/RotateSecretResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/admin/keys:
+    get:
+      tags: [admin]
+      summary: List signing keys (public metadata).
+      description: |
+        Enumerates the public signing-key metadata every wired issuer
+        publishes — `kid`, `alg`, and `state` (`active` = currently signing,
+        `verify_only` = demoted or adopted peer key). Returns NO private key
+        material. Requires the `admin:read` scope.
+      operationId: adminKeyList
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Signing-key metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListSigningKeysResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/keys/rotate:
+    post:
+      tags: [admin]
+      summary: Rotate the primary signing key on demand.
+      description: |
+        Promotes a fresh signing key on the primary JWT issuer and demotes the
+        current key to VERIFY-ONLY for a grace window (never retired early), so
+        tokens minted just before the rotation stay verifiable until they
+        expire. Reuses the scheduled-rotation side effects (audit,
+        discovery-cache bust, metrics, JWKS re-publish, coordinated cutover
+        broadcast) and records `admin_signing_key_rotated`. Requires the
+        `admin:write` scope.
+
+        Returns `400` when a supplied `grace_seconds` is below 60. Returns
+        `501` when the configured issuer has no runtime-rotation support
+        (custom `WithTokenIssuer`), and `412` when an external KMS/HSM signer
+        owns the key lifecycle (rotate it in the backend instead — an
+        in-process rotate would mint a key the KMS never sees).
+      operationId: adminKeyRotate
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotateSigningKeyRequest"
+      responses:
+        "200":
+          description: The demoted and newly promoted kids.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotateSigningKeyResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/admin/users:
     get:
       tags: [admin]
       summary: List users.
+      description: |
+        Results are filtered, then sorted, then paged — `order_by`
+        and `filter` MUST be held constant across a paging sequence
+        (the page_token offset is only valid against that same
+        filtered+sorted view). Default sort is `id` ascending.
       operationId: adminUserList
       security:
         - bearerAuth: []
+      parameters:
+        - name: page_token
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            Opaque cursor from a previous response's
+            `next_page_token`. Omit for the first page.
+        - name: page_size
+          in: query
+          required: false
+          schema: { type: integer, format: int32 }
+          description: |
+            Max rows to return. Default 100, clamped to a maximum
+            of 1000. Values <= 0 fall back to the default.
+        - name: order_by
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            One of `id`, `created_at`, `provider`, optionally
+            prefixed with `-` for descending. Defaults to `id`
+            ascending. Unlike the clients endpoint, `created_at` is
+            a real field here (users have one).
+        - name: filter
+          in: query
+          required: false
+          schema: { type: string }
+          description: |
+            `field:value` or `field eq value`. Supported fields:
+            `id`, `provider`, `external_id` (exact), `name`,
+            `email` (substring). Omit to match all.
       responses:
         "200":
           description: Users list.
@@ -6088,6 +6300,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ListUsersResponse"
+        "400":
+          description: '`invalid page_token`, or an unsupported `order_by`/`filter` field or value.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
     post:
       tags: [admin]
@@ -6433,6 +6651,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/users/{id}/mfa/recovery-codes:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Reset a user's MFA recovery codes (helpdesk).
+      description: |
+        Revokes ALL of the user's remaining recovery codes — the "lost my codes"
+        helpdesk flow. admin:write; emits admin_recovery_codes_reset. NEVER
+        returns codes to the operator (a user's credentials must not be exposed
+        to helpdesk); the user regenerates their own via
+        `POST /me/mfa/recovery-codes`. Mounted only when a recovery-code store is
+        wired.
+      operationId: adminUserResetRecoveryCodes
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { description: Recovery codes revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/v1/admin/users/{id}/password:
     parameters:
@@ -7043,6 +7284,87 @@ paths:
         "204": { description: Connection deleted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/admin/connections/{id}/domains:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: List a connection's email-domain ownership claims.
+      description: |
+        Returns THIS connection's own email-domain claims (pending + verified),
+        each with the DNS TXT record name to publish and the challenge token.
+        admin:read. The token is public by design (DNS-TXT challenge, ACME
+        dns-01 style) — it is not a bearer secret. 404 if the connection does
+        not exist. Mounted only when a connection store is wired.
+      operationId: adminListConnectionDomains
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The connection's domain claims.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  domains:
+                    type: array
+                    items: { $ref: "#/components/schemas/ConnectionDomainClaim" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such connection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/admin/connections/{id}/domains/{domain}/verify:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: domain
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Verify a claimed email domain via its DNS TXT challenge.
+      description: |
+        Performs a synchronous DNS TXT lookup for the claimed domain's challenge
+        record and, on a match, marks the claim verified — promoting this
+        connection to the home-realm routing owner and demoting any prior
+        verified owner (proof of DNS control legitimately supersedes a stale
+        claim). admin:write. Returns 200 in BOTH outcomes: a not-yet-published
+        record is a state (verified:false, status:pending), not an error
+        (mirrors token introspection's active:false). 404 only when this
+        connection has not claimed the domain. Emits
+        admin_connection_domain_verified on success.
+      operationId: adminVerifyConnectionDomain
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The verification outcome (verified or still pending).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  verified: { type: boolean }
+                  status: { type: string, enum: [pending, verified] }
+                  record: { type: string }
+                  token: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: The connection has not claimed this domain.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
   /api/v1/admin/tenants/{id}/members:
     parameters:
       - name: id
@@ -7295,6 +7617,236 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me/organizations/{tenant_id}/members:
+    parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [self-service]
+      summary: List the roster of an org you administer (delegated org-admin).
+      description: |
+        Delegated org-admin surface. Returns the roster of `tenant_id` when the
+        bearer subject is a `TenantRoleAdmin` of that org — authorized by
+        tenant-admin MEMBERSHIP, NOT the platform admin scope. `tenant_id` comes
+        from the path only. `Cache-Control: no-store`. Mounted only when a
+        TenantUserStore is wired.
+      operationId: orgAdminListMembers
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The org roster.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+                    items: { $ref: "#/components/schemas/TenantMembership" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: |
+            forbidden — the caller is not an admin of this org. Tenant-absent,
+            not-a-member, and member-but-not-admin ALL return this identical body
+            (anti-enumeration).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /me/organizations/{tenant_id}/members/{user_id}:
+    parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: user_id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [self-service]
+      summary: Change an existing member's org role (delegated org-admin).
+      description: |
+        Changes an EXISTING member's role (member|admin|guest; granting admin is
+        allowed). Invite-only growth: a non-member target returns 404 — new
+        members join via invitations, never a direct PUT. Refused on a suspended
+        org, and refused (409 last_org_admin) when it would demote the org's last
+        admin (incl. self). Emits admin_tenant_member_added with via=org_admin.
+      operationId: orgAdminPutMember
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { type: string, enum: [member, admin, guest] }
+      responses:
+        "200": { description: Member role changed. }
+        "400":
+          description: Invalid role.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: forbidden (not an admin of this org) or access_denied (org suspended).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: not_found — the target user is not a member of this org.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: last_org_admin — demoting the org's final admin is refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [self-service]
+      summary: Remove a member from an org you administer (delegated org-admin).
+      description: |
+        Removes a member from `tenant_id`. Refused on a suspended org, and refused
+        (409 last_org_admin) when it would remove the org's last admin (incl.
+        self). Emits admin_tenant_member_removed with via=org_admin.
+      operationId: orgAdminRemoveMember
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { description: Member removed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: forbidden (not an admin of this org) or access_denied (org suspended).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: last_org_admin — removing the org's final admin is refused.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /me/organizations/{tenant_id}/invitations:
+    parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [self-service]
+      summary: List pending invitations for an org you administer (no token value).
+      description: |
+        Lists pending invitations (email + role + expiry) for `tenant_id`. NEVER
+        returns the token value. `Cache-Control: no-store`.
+      operationId: orgAdminListInvitations
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Pending invitations (metadata only).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invitations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        email: { type: string }
+                        role: { type: string, enum: [member, admin, guest] }
+                        expires_at: { type: string, format: date-time }
+                        expired: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: forbidden — the caller is not an admin of this org.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [self-service]
+      summary: Send an invitation for an org you administer (delegated org-admin).
+      description: |
+        Mints a single-use invitation token and delivers it via the configured
+        InvitationSender. Body: {email, role} (role member|admin|guest; default
+        member). The token is NEVER returned — 501 when no sender is wired.
+        Refused on a suspended org. Emits invitation_sent with via=org_admin.
+      operationId: orgAdminSendInvitation
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string }
+                role: { type: string, enum: [member, admin, guest] }
+      responses:
+        "202": { description: Invitation sent. }
+        "400":
+          description: Missing email or invalid role.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: forbidden (not an admin of this org) or access_denied (org suspended).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501": { description: No InvitationSender is wired. }
+
+  /me/organizations/{tenant_id}/invitations/{email}:
+    parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: email
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [self-service]
+      summary: Revoke every pending invitation for a recipient (delegated org-admin).
+      description: |
+        Bulk-deletes all pending invitation tokens for (tenant_id, email).
+        Refused on a suspended org. Idempotent: 204 whether or not anything was
+        pending (no pending-invitation oracle). Emits invitation_revoked with
+        via=org_admin.
+      operationId: orgAdminRevokeInvitation
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { description: Invitations revoked (or none pending). }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: forbidden (not an admin of this org) or access_denied (org suspended).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/admin/users/{id}/device-secrets:
     parameters:
@@ -10027,6 +10579,13 @@ components:
         clients:
           type: array
           items: { $ref: "#/components/schemas/AdminClient" }
+        next_page_token:
+          type: string
+          description: Pass as `page_token` to fetch the next page. Empty on the last page.
+        total_size:
+          type: integer
+          format: int32
+          description: Count of clients matching `filter` (approximate under concurrent mutation — see the List description).
 
     GetAdminClientResponse:
       type: object
@@ -10049,6 +10608,47 @@ components:
         secret:
           type: string
           description: New client_secret — display once.
+
+    RotateSigningKeyRequest:
+      type: object
+      properties:
+        grace_seconds:
+          type: integer
+          format: int64
+          description: |
+            Optional overlap window (seconds) the demoted key stays
+            verify-only before retirement. 0 = server default
+            (`keys.rotation.grace_period` when set, else 24h). When set it
+            MUST be >= 60, and operators MUST keep it >= the max access-token
+            TTL or tokens minted just before the rotation are stranded.
+    RotateSigningKeyResponse:
+      type: object
+      properties:
+        old_kid:
+          type: string
+          description: The demoted kid, kept verify-only through the grace window.
+        new_kid:
+          type: string
+          description: The newly promoted signing kid.
+        grace_seconds:
+          type: integer
+          format: int64
+          description: The grace window actually applied (seconds).
+    SigningKeyInfo:
+      type: object
+      properties:
+        kid: { type: string }
+        alg: { type: string }
+        state:
+          type: string
+          description: "\"active\" (currently signing) or \"verify_only\"."
+    ListSigningKeysResponse:
+      type: object
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/SigningKeyInfo"
 
     # ---- User admin schemas ----
 
@@ -10083,6 +10683,13 @@ components:
         users:
           type: array
           items: { $ref: "#/components/schemas/AdminUser" }
+        next_page_token:
+          type: string
+          description: Pass as `page_token` to fetch the next page. Empty on the last page.
+        total_size:
+          type: integer
+          format: int32
+          description: Count of users matching `filter` (approximate under concurrent mutation — see the List description).
 
     GetAdminUserResponse:
       type: object
@@ -10553,6 +11160,24 @@ components:
         last_error: { type: string }
         first_failed_at: { type: string, format: date-time }
         last_failed_at: { type: string, format: date-time }
+
+    ConnectionDomainClaim:
+      type: object
+      description: |
+        One (connection, domain) email-domain ownership claim. The token is a
+        public DNS-TXT challenge value (ACME dns-01 style), not a bearer secret.
+      required: [domain, status, record, token]
+      properties:
+        domain: { type: string }
+        status: { type: string, enum: [pending, verified] }
+        record:
+          type: string
+          description: DNS TXT record name to publish (prefix + "." + domain).
+        token:
+          type: string
+          description: Challenge value to publish as the TXT record's content.
+        created_at: { type: string, format: date-time }
+        verified_at: { type: string, format: date-time }
 
     ErasureReport:
       type: object

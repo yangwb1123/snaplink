@@ -23,6 +23,7 @@ const (
 	EventAdminTempTokenIssued            EventType = "admin_temp_token_issued"
 	EventAdminConsentRevoked             EventType = "admin_consent_revoked"
 	EventAdminMFAFactorRemoved           EventType = "admin_mfa_factor_removed"
+	EventAdminRecoveryCodesReset         EventType = "admin_recovery_codes_reset"
 	EventAdminPasswordReset              EventType = "admin_password_reset"
 	EventAdminDeviceSecretsRevoked       EventType = "admin_device_secrets_revoked"
 	EventAdminPasswordResetTokensRevoked EventType = "admin_password_reset_tokens_revoked"
@@ -31,6 +32,7 @@ const (
 	EventAdminAccountUnlocked            EventType = "admin_account_unlocked"
 	EventAdminConnectionUpserted         EventType = "admin_connection_upserted"
 	EventAdminConnectionDeleted          EventType = "admin_connection_deleted"
+	EventAdminConnectionDomainVerified   EventType = "admin_connection_domain_verified"
 	EventAdminTenantMemberAdded          EventType = "admin_tenant_member_added"
 	EventAdminTenantMemberRemoved        EventType = "admin_tenant_member_removed"
 	EventAdminRoleAdded                  EventType = "admin_role_added"
@@ -60,6 +62,11 @@ const (
 	// impersonation bearer is minted for the target user — the SOC 2 CC6.1
 	// record that admin_id began acting AS target_user_id under this grant.
 	EventAdminBreakGlassImpersonationStarted EventType = "admin_break_glass_impersonation_started"
+	// EventAdminSigningKeyRotated is emitted by the KeyAdmin RotateSigningKey
+	// RPC for an operator-initiated (on-demand) rotation. The scheduled loop
+	// keeps EventSigningKeyRotated; this admin-namespaced variant carries the
+	// actor so a break-glass rotation is attributable in the audit trail.
+	EventAdminSigningKeyRotated EventType = "admin_signing_key_rotated"
 	// EventAdminGRPCCalled is emitted by the gRPC admin audit interceptor
 	// for every gated RPC. The interceptor auto-records actor, method,
 	// duration, and grpc status — complementing the explicit per-RPC

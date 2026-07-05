@@ -116,6 +116,12 @@ const (
 	PathMyMFATOTPBegin   = "/me/mfa/totp/begin"
 	PathMyMFATOTPConfirm = "/me/mfa/totp/confirm"
 
+	// PathMyMFARecoveryCodes is self-service MFA recovery-code management:
+	// POST regenerates the batch (revoke-then-generate), returning the
+	// plaintext codes exactly once; GET returns the remaining count only
+	// (never the codes). Mounted only when a RecoveryCodeStore is wired.
+	PathMyMFARecoveryCodes = "/me/mfa/recovery-codes"
+
 	// PathMyWebAuthnRegisterBegin / Finish are AUTHENTICATED self-service passkey
 	// registration (POST). Unlike the signup ceremony (/webauthn/registration/*,
 	// username from the body), these bind the new credential to the BEARER
@@ -249,6 +255,12 @@ const (
 	// UserProvider are wired.
 	PathAdminUserLifecycle = "/admin/users/:id/lifecycle"
 
+	// PathAdminUserRecoveryCodes is the helpdesk MFA recovery reset (POST,
+	// admin:write): it revokes ALL of a user's remaining recovery codes and
+	// NEVER returns codes to the operator (the user regenerates their own via
+	// PathMyMFARecoveryCodes). Mounted only when a RecoveryCodeStore is wired.
+	PathAdminUserRecoveryCodes = "/admin/users/:id/mfa/recovery-codes"
+
 	// PathAdminUserPassword sets a user's password on their behalf (POST,
 	// admin:write) — the helpdesk "reset this user's password" flow. Body:
 	// {new_password}. Group-relative; gated by AdminMiddleware. Mounted only
@@ -356,41 +368,9 @@ const (
 	// (WithSSEBroker) — byte-identical to a build without it.
 	PathAdminEventsStream = "/admin/events/stream"
 
-	// PathAdminConnections / PathAdminConnectionByID manage B2B enterprise
-	// connections at runtime (list/get/upsert/delete) so operators can onboard a
-	// new org's upstream IdP without a redeploy (config seeding only runs at
-	// boot). GET ?tenant_id= lists a tenant's connections; admin:read for GET,
-	// admin:write for POST/DELETE. Mounted only when a connection store is wired.
-	PathAdminConnections    = "/admin/connections"
-	PathAdminConnectionByID = "/admin/connections/:id"
-
-	// PathAdminTenantMembers / PathAdminTenantMemberByID manage a tenant's org
-	// roster (B2B membership, distinct from SCIM app roles). GET lists the roster
-	// (admin:read); PUT upserts a member's role + DELETE removes (admin:write).
-	// Mounted only when a TenantUserStore is wired.
-	PathAdminTenantMembers    = "/admin/tenants/:id/members"
-	PathAdminTenantMemberByID = "/admin/tenants/:id/members/:user_id"
-
-	// PathMyOrganizations / PathMyOrganizationByID are the self-service org views:
-	// GET lists the orgs the bearer subject belongs to; DELETE leaves one. Mounted
-	// only when a TenantUserStore is wired.
-	PathMyOrganizations    = "/me/organizations"
-	PathMyOrganizationByID = "/me/organizations/:tenant_id"
-
-	// PathAdminTenantInvitations sends (POST {email, role}) + lists (GET) pending
-	// org invitations for a tenant. admin:write / admin:read. Mounted only when an
-	// InvitationStore is wired.
-	PathAdminTenantInvitations = "/admin/tenants/:id/invitations"
-
-	// PathAdminTenantInvitationByEmail revokes (DELETE) every pending org
-	// invitation for a recipient email. admin:write. Mounted only when an
-	// InvitationStore is wired.
-	PathAdminTenantInvitationByEmail = "/admin/tenants/:id/invitations/:email"
-
-	// PathMyInvitationAccept redeems an org invitation token (POST {token}): the
-	// authenticated subject joins the invited tenant at the invited role. Mounted
-	// only when an InvitationStore AND a TenantUserStore are wired.
-	PathMyInvitationAccept = "/me/invitations/accept"
+	// The B2B connections/tenant-membership/org-invitation/delegated-org-admin
+	// path block (PathAdminConnections..PathOrgAdminInvitationByEmail) moved to
+	// consts_wire.go to keep this file within the per-file line budget.
 
 	// PathSSFReceive is the default mount point for the opt-in OpenID
 	// Shared Signals (CAEP/SSF) push-delivery RECEIVER (RFC 8935) — the

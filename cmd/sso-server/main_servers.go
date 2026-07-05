@@ -208,6 +208,9 @@ func registerAdminGRPCServices(s *grpc.Server, a *app) {
 	adminv1.RegisterPermissionAdminServiceServer(s, grpcserver.NewPermissionAdminService(
 		a.provider, a.recorder,
 		func(_ context.Context, id string) { a.server.InvalidateAuthzPolicyBundleCache(id) }))
+	if a.keyAdmin != nil {
+		adminv1.RegisterKeyAdminServiceServer(s, a.keyAdmin)
+	}
 	if a.snapshotPipeline != nil {
 		adminv1.RegisterSnapshotAdminServiceServer(s, grpcserver.NewSnapshotAdminService(
 			a.snapshotPipeline, a.snapshotStorage, a.snapshotter, a.snapshotRestorer, a.recorder))

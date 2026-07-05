@@ -167,6 +167,20 @@ func WithMFAEnrollmentStore(s MFAEnrollmentStore) Option {
 	return func(srv *Server) { srv.mfaEnrollmentStore = s }
 }
 
+// WithRecoveryCodeStore wires the single-use MFA recovery-code store. It mounts
+// the self-service endpoints POST/GET /me/mfa/recovery-codes (regenerate +
+// remaining-count) and the admin reset POST
+// /api/v1/admin/users/:id/mfa/recovery-codes. When nil (the default), those
+// routes are not mounted — byte-identical to a build without this feature.
+//
+// Redemption at /auth/mfa is separate: pass the SAME store to
+// defaultimpl.NewRecoveryMFAProvider(store) and compose it into WithMFAProvider
+// (via defaultimpl.NewMultiMFAProvider) so "recovery" surfaces in mfa_methods
+// and a code can be spent as a second factor.
+func WithRecoveryCodeStore(store RecoveryCodeStore) Option {
+	return func(srv *Server) { srv.recoveryCodeStore = store }
+}
+
 // WithTOTPEnroller wires the seam the self-service TOTP enrollment endpoints
 // (POST /me/mfa/totp/begin + /confirm) use to mint/encode/decode secrets, build
 // the otpauth provisioning URI, and verify the confirm code. Use

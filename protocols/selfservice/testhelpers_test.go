@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystorecredential"
 	"github.com/snaplink/sso/domains/identitylink"
 	identitylinkmemory "github.com/snaplink/sso/domains/identitylink/memory"
+	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystorecredential"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/compliance"
@@ -137,9 +137,11 @@ func (d *testDeps) EmailVerificationTTL() time.Duration            { return d.em
 func (d *testDeps) RegistrationGates() []spi.RegistrationGate      { return d.registrationGates }
 func (d *testDeps) SignupRateLimiter() selfservicecore.RateLimiter { return d.rateLimiter }
 
-func (d *testDeps) SessionManager() core.SessionManager   { return d.sessions }
-func (d *testDeps) TenantUserStore() core.TenantUserStore { return d.tenantUsers }
-func (d *testDeps) InvitationStore() core.InvitationStore { return d.invitations }
+func (d *testDeps) SessionManager() core.SessionManager          { return d.sessions }
+func (d *testDeps) TenantUserStore() core.TenantUserStore        { return d.tenantUsers }
+func (d *testDeps) InvitationStore() core.InvitationStore        { return d.invitations }
+func (d *testDeps) InvitationSender() spi.InvitationSender       { return nil }
+func (d *testDeps) TenantSuspended(context.Context, string) bool { return false }
 
 func (d *testDeps) Auditor() *audit.Recorder { return d.auditor }
 func (d *testDeps) Logger() spi.Logger       { return spi.NopLogger{} }
@@ -217,6 +219,7 @@ func (d *testDeps) ResidencyGateWrite(core.HandlerContext, *core.TokenClaims) (s
 func (d *testDeps) WebAuthnRegistrar() core.WebAuthnRegistrar   { return nil }
 func (d *testDeps) MFAEnrollmentStore() core.MFAEnrollmentStore { return nil }
 func (d *testDeps) TOTPEnroller() core.TOTPEnroller             { return nil }
+func (d *testDeps) RecoveryCodeStore() core.RecoveryCodeStore   { return nil }
 
 func (d *testDeps) NewMFAFactorID() (string, error) {
 	d.factorSeq++

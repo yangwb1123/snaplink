@@ -61,6 +61,18 @@ type Deps interface {
 	TenantUserStore() core.TenantUserStore
 	InvitationStore() core.InvitationStore
 
+	// InvitationSender delivers a minted org-invitation token out-of-band. Nil
+	// when unwired: the delegated org-admin send endpoint answers 501 rather than
+	// return the token in a response (the token is a live credential).
+	InvitationSender() spi.InvitationSender
+
+	// TenantSuspended reports whether tenantID is currently suspended, using the
+	// same cache + FAIL-OPEN doctrine as the token-validation gate (suspension not
+	// wired, no tenant store, or a store outage all report false). The delegated
+	// org-admin surface consults it to refuse MUTATIONS on a suspended org while
+	// still allowing reads.
+	TenantSuspended(ctx context.Context, tenantID string) bool
+
 	// Audit and logging
 	Auditor() *audit.Recorder
 	Logger() spi.Logger
@@ -113,6 +125,9 @@ type Deps interface {
 	MFAEnrollmentStore() core.MFAEnrollmentStore
 	TOTPEnroller() core.TOTPEnroller
 	NewMFAFactorID() (string, error)
+
+	// MFA recovery codes (POST/GET /me/mfa/recovery-codes). Nil when unwired.
+	RecoveryCodeStore() core.RecoveryCodeStore
 
 	// GDPR self-service
 	DataExporter() *compliance.Exporter

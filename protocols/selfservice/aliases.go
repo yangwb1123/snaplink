@@ -31,10 +31,20 @@ var (
 	HandleMyOrganizations        = selfserviceaccount.HandleMyOrganizations
 	HandleLeaveMyOrganization    = selfserviceaccount.HandleLeaveMyOrganization
 	HandleAcceptInvitation       = selfserviceaccount.HandleAcceptInvitation
-	HandleMyMFAFactors           = selfserviceaccount.HandleMyMFAFactors
-	HandleDeleteMyMFAFactor      = selfserviceaccount.HandleDeleteMyMFAFactor
-	HandleTOTPEnrollBegin        = selfserviceaccount.HandleTOTPEnrollBegin
-	HandleTOTPEnrollConfirm      = selfserviceaccount.HandleTOTPEnrollConfirm
-	HandleMyIdentities           = selfserviceaccount.HandleMyIdentities
-	HandleUnlinkMyIdentity       = selfserviceaccount.HandleUnlinkMyIdentity
+
+	// Delegated org-admin surface (w2.11): /me/organizations/:tenant_id/*.
+	HandleOrgAdminListMembers      = selfserviceaccount.HandleOrgAdminListMembers
+	HandleOrgAdminPutMember        = selfserviceaccount.HandleOrgAdminPutMember
+	HandleOrgAdminRemoveMember     = selfserviceaccount.HandleOrgAdminRemoveMember
+	HandleOrgAdminSendInvitation   = selfserviceaccount.HandleOrgAdminSendInvitation
+	HandleOrgAdminListInvitations  = selfserviceaccount.HandleOrgAdminListInvitations
+	HandleOrgAdminRevokeInvitation = selfserviceaccount.HandleOrgAdminRevokeInvitation
+	HandleMyMFAFactors             = selfserviceaccount.HandleMyMFAFactors
+	HandleDeleteMyMFAFactor        = selfserviceaccount.HandleDeleteMyMFAFactor
+	HandleTOTPEnrollBegin          = selfserviceaccount.HandleTOTPEnrollBegin
+	HandleTOTPEnrollConfirm        = selfserviceaccount.HandleTOTPEnrollConfirm
+	HandleMyIdentities             = selfserviceaccount.HandleMyIdentities
+	HandleUnlinkMyIdentity         = selfserviceaccount.HandleUnlinkMyIdentity
+	HandleGenerateRecoveryCodes    = selfserviceaccount.HandleGenerateRecoveryCodes
+	HandleGetRecoveryCodesCount    = selfserviceaccount.HandleGetRecoveryCodesCount
 )

@@ -143,6 +143,16 @@ func (s *Server) handleTOTPEnrollConfirm(ctx HandlerContext) {
 	selfservice.HandleTOTPEnrollConfirm(s, ctx)
 }
 
+// handleGenerateRecoveryCodes delegates to selfservice.HandleGenerateRecoveryCodes.
+func (s *Server) handleGenerateRecoveryCodes(ctx HandlerContext) {
+	selfservice.HandleGenerateRecoveryCodes(s, ctx)
+}
+
+// handleGetRecoveryCodesCount delegates to selfservice.HandleGetRecoveryCodesCount.
+func (s *Server) handleGetRecoveryCodesCount(ctx HandlerContext) {
+	selfservice.HandleGetRecoveryCodesCount(s, ctx)
+}
+
 // handleChangeMyPassword delegates to selfservice.HandleChangeMyPassword.
 func (s *Server) handleChangeMyPassword(ctx HandlerContext) {
 	selfservice.HandleChangeMyPassword(s, ctx)
@@ -290,6 +300,11 @@ func (s *Server) mountSelfServiceCredentials() {
 			s.router.POST(PathMyMFATOTPBegin, s.handleTOTPEnrollBegin)
 			s.router.POST(PathMyMFATOTPConfirm, s.handleTOTPEnrollConfirm)
 		}
+	}
+	// Self-service MFA recovery codes (regenerate + remaining count); byte-identical without a store.
+	if s.recoveryCodeStore != nil {
+		s.router.POST(PathMyMFARecoveryCodes, s.handleGenerateRecoveryCodes)
+		s.router.GET(PathMyMFARecoveryCodes, s.handleGetRecoveryCodesCount)
 	}
 	// Self-service passkey registration (authenticated, bearer-bound). Mounts
 	// independently of the enrollment store: the registered credential lands in

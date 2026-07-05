@@ -34,6 +34,8 @@ func (d *gcTestDeps) ChangeRegistry() *admingovernance.Registry                {
 func (d *gcTestDeps) ApprovalActionTypes() admingovernance.RequiredActionTypes { return d.actionTypes }
 func (d *gcTestDeps) ConnectionStore() connections.Store                       { return nil }
 func (d *gcTestDeps) ConditionalAccessStore() conditionalaccess.Store          { return nil }
+func (d *gcTestDeps) DomainResolver() connections.DNSResolver                  { return nil }
+func (d *gcTestDeps) RecoveryCodeStore() core.RecoveryCodeStore                { return nil }
 func (d *gcTestDeps) TenantUserStore() core.TenantUserStore                    { return nil }
 func (d *gcTestDeps) InvitationStore() core.InvitationStore                    { return nil }
 func (d *gcTestDeps) InvitationSender() spi.InvitationSender                   { return nil }

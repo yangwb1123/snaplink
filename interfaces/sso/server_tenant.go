@@ -84,6 +84,34 @@ func (s *Server) RevokeTenantRefreshTokens(ctx context.Context, tenantID string)
 	return total, err
 }
 
+// TenantSuspended reports whether tenantID is currently suspended. It reuses the
+// exact cache + FAIL-OPEN doctrine of the token-validation gate
+// (checkTenantNotSuspended): when suspension is not wired, no tenant store is
+// present, or the store read fails / the tenant is not found, it reports false
+// (fail-open — an availability blip must NOT freeze the world). A fresh live read
+// is cached when a suspension cache is wired.
+//
+// It is the tenantID-keyed seam the delegated org-admin surface uses to refuse
+// MUTATIONS on a suspended org: the token gate keys off the token's client
+// tenant, whereas this keys off an explicit tenant ID from the request path.
+func (s *Server) TenantSuspended(ctx context.Context, tenantID string) bool {
+	if !s.tenantSuspensionEnabled || s.tenantStore == nil || tenantID == "" {
+		return false
+	}
+	if suspended, decided := s.checkSuspensionCache(tenantID); decided {
+		return suspended
+	}
+	t, err := s.tenantStore.GetTenant(ctx, tenantID)
+	if err != nil || t == nil {
+		return false // fail-open on store outage / not-found
+	}
+	suspended := t.Status == tenant.StatusSuspended
+	if s.tenantSuspensionCache != nil {
+		s.tenantSuspensionCache.put(tenantID, suspended)
+	}
+	return suspended
+}
+
 // revokeTenantRefreshTokens purges every refresh token issued to any client
 // belonging to tenantID. Returns (0, nil) when the client store can't
 // enumerate by tenant (no TenantScopedClientStore) or the refresh store can't
