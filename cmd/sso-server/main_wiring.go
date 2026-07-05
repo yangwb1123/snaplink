@@ -7,6 +7,7 @@ import (
 
 	"github.com/snaplink/sso/config"
 	configetcd "github.com/snaplink/sso/config/etcd"
+	configreload "github.com/snaplink/sso/config/reload"
 	"github.com/snaplink/sso/platform/tracing"
 	"github.com/snaplink/sso/shared/spi"
 )
@@ -107,6 +108,19 @@ func buildConfigSources(f runtimeFlags) ([]config.Source, func(), error) {
 	}
 	sources = append(sources, flagSrc)
 	return sources, cleanup, nil
+}
+
+// newConfigReloader builds the OPTIONAL SIGHUP hot-reload orchestrator,
+// seeded with cfg and re-reading from the SAME source chain buildConfigSources
+// assembled at boot. logger.SetLevel is the only currently-wired safe-reload
+// hook — logging.level is genuinely live (a *slog.LevelVar), everything else
+// a reload detects changed is reported but left untouched. See
+// waitForShutdown (main_shutdown.go) and config/reload's package doc for the
+// full rationale.
+func newConfigReloader(cfg *config.Config, sources []config.Source, logger *slogLogger) *configreload.Reloader {
+	return configreload.New(cfg, func(ctx context.Context) (*config.Config, error) {
+		return config.LoadFromSources(ctx, sources...)
+	}, logger.SetLevel)
 }
 
 // initTracing wires OTLP tracing and returns its shutdown func. The call is

@@ -9,17 +9,35 @@ import (
 )
 
 func newSlogLogger(level string) *slogLogger {
-	var lvl slog.Level
+	var levelVar slog.LevelVar
+	levelVar.Set(parseLogLevel(level))
+	// &levelVar (not a fixed slog.Level) so SetLevel below can change
+	// verbosity on an already-constructed handler — HandlerOptions.Level
+	// re-reads a *LevelVar on every log call.
+	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: &levelVar})
+	return &slogLogger{inner: slog.New(h), level: &levelVar}
+}
+
+// parseLogLevel maps the config-file/flag string to a slog.Level,
+// defaulting unrecognized values to Info (matching config.applyDefaults'
+// own "info" default).
+func parseLogLevel(level string) slog.Level {
 	switch level {
 	case "debug":
-		lvl = slog.LevelDebug
+		return slog.LevelDebug
 	case "error":
-		lvl = slog.LevelError
+		return slog.LevelError
 	default:
-		lvl = slog.LevelInfo
+		return slog.LevelInfo
 	}
-	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})
-	return &slogLogger{inner: slog.New(h)}
+}
+
+// SetLevel changes the logger's live verbosity — the hook
+// config/reload.Reloader calls when a SIGHUP-triggered reload finds
+// logging.level changed. Safe for concurrent use: slog.LevelVar guards
+// itself.
+func (l *slogLogger) SetLevel(level string) {
+	l.level.Set(parseLogLevel(level))
 }
 
 func (l *slogLogger) Info(msg string, kv ...any)  { l.inner.Info(msg, kv...) }

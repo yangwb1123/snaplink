@@ -67,3 +67,54 @@ func TestRun_Help(t *testing.T) {
 		t.Errorf("help exit = %d, want 0", code)
 	}
 }
+
+func TestRun_Schema_Stdout(t *testing.T) {
+	t.Parallel()
+	if code := Run([]string{"schema"}); code != 0 {
+		t.Errorf("schema exit = %d, want 0", code)
+	}
+}
+
+func TestRun_Schema_OutFile(t *testing.T) {
+	t.Parallel()
+	out := filepath.Join(t.TempDir(), "schema.json")
+	if code := Run([]string{"schema", "--out", out}); code != 0 {
+		t.Fatalf("schema --out exit = %d, want 0", code)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read schema file: %v", err)
+	}
+	if !strings.Contains(string(data), `"$schema"`) {
+		t.Errorf("schema file does not look like JSON Schema: %s", data)
+	}
+}
+
+func TestRun_ValidateSchema_ValidConfig(t *testing.T) {
+	t.Parallel()
+	if code := Run([]string{"validate-schema", "--file", writeTemp(t, validConfig)}); code != 0 {
+		t.Errorf("validate-schema(valid) exit = %d, want 0", code)
+	}
+}
+
+func TestRun_ValidateSchema_UnknownKey(t *testing.T) {
+	t.Parallel()
+	bad := validConfig + "\nnot_a_real_top_level_key: true\n"
+	if code := Run([]string{"validate-schema", "--file", writeTemp(t, bad)}); code != 1 {
+		t.Errorf("validate-schema(unknown key) exit = %d, want 1", code)
+	}
+}
+
+func TestRun_ValidateSchema_MissingFileFlagIsUsageError(t *testing.T) {
+	t.Parallel()
+	if code := Run([]string{"validate-schema"}); code != 2 {
+		t.Errorf("validate-schema without --file exit = %d, want 2", code)
+	}
+}
+
+func TestRun_ValidateSchema_MissingFile(t *testing.T) {
+	t.Parallel()
+	if code := Run([]string{"validate-schema", "--file", filepath.Join(t.TempDir(), "nope.yaml")}); code != 1 {
+		t.Errorf("validate-schema(missing file) exit = %d, want 1", code)
+	}
+}

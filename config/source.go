@@ -7,6 +7,7 @@ import (
 	"regexp"
 
 	"github.com/goccy/go-yaml"
+	"github.com/snaplink/sso/config/schema"
 	"github.com/snaplink/sso/config/sources"
 )
 
@@ -125,6 +126,8 @@ func (l *Loader) Load(ctx context.Context) (*Config, error) {
 		}
 	}
 
+	checkSchema(merged)
+
 	raw, err := yaml.Marshal(merged)
 	if err != nil {
 		return nil, fmt.Errorf("config: marshal merged: %w", err)
@@ -140,6 +143,49 @@ func (l *Loader) Load(ctx context.Context) (*Config, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+// checkSchema runs an ADDITIONAL validation pass alongside (not replacing)
+// Loader.Load's strict/lenient YAML decode. Operates on `merged` (the
+// pre-decode map[string]any) so it sees unknown keys at any nesting depth
+// with a full path — an improvement over decodeStrictWithFallback's
+// single-level, regex-extracted unknown_keys warning. Deliberately
+// warn-only, same as that existing check: see schema.Validate's doc for why
+// a generated schema must not become a hard load-time gate. Callers wanting
+// a hard gate (e.g. a CI pre-deploy check) use `sso-ctl config
+// validate-schema`, which treats the same violations as fatal.
+func checkSchema(merged map[string]any) {
+	if violations := schema.Validate(Schema(), merged); len(violations) > 0 {
+		logSchemaViolations(violations)
+	}
+}
+
+// configSchema is generated once at package init — Config's shape is
+// static (reflection only inspects the TYPE, never a value), so there is
+// nothing to recompute per Load call.
+var configSchema = schema.Generate(Config{})
+
+// Schema returns the reflection-generated JSON Schema document describing
+// Config's shape (field names, types, and a best-effort required set — see
+// the schema package's doc for the heuristic's limits). Exposed so
+// `sso-ctl config schema` can emit it and `sso-ctl config validate-schema`
+// can run the same check as Loader.Load's warn-only pass as a hard CI gate.
+func Schema() *schema.Document {
+	return configSchema
+}
+
+// logSchemaViolations logs every schema.Violation Loader.Load's schema
+// check found, at WARN — see Load's doc for why this stays advisory rather
+// than failing the load.
+func logSchemaViolations(violations []schema.Violation) {
+	details := make([]string, len(violations))
+	for i, v := range violations {
+		details[i] = v.String()
+	}
+	slog.Warn("config: schema violations detected — see docs/config-reference.md's JSON Schema section",
+		"violations", details,
+		"hint", "run `sso-ctl config validate-schema --file <path>` for a strict, path+type-annotated report",
+	)
 }
 
 // decodeStrictWithFallback decodes the merged YAML with

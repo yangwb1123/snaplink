@@ -391,4 +391,13 @@ func (b *appBuilder) wireChangeApproval() {
 
 // slogLogger adapts log/slog to the spi.Logger interface so the SDK can hand
 // off to whatever sink the operator wants (stdout, journald, file...).
-type slogLogger struct{ inner *slog.Logger }
+//
+// level is the *slog.LevelVar backing inner's handler — slog.HandlerOptions
+// reads it on EVERY log call (it's not baked in at construction), so
+// level.Set (see SetLevel in main_logger.go) changes verbosity live. This is
+// what makes logging.level the one config field config/reload's Reloader
+// can genuinely apply without a restart.
+type slogLogger struct {
+	inner *slog.Logger
+	level *slog.LevelVar
+}

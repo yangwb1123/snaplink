@@ -3,12 +3,74 @@ package main
 import (
 	"context"
 	"io"
+	"os"
+	"os/signal"
+	"syscall"
 
+	configreload "github.com/snaplink/sso/config/reload"
 	"github.com/snaplink/sso/shared/spi"
 	"google.golang.org/grpc"
 
 	"net/http"
 )
+
+// waitForShutdown blocks until SIGINT/SIGTERM requests a shutdown, a fatal
+// error appears on errCh, or — when reloader is non-nil — SIGHUP requests a
+// config hot-reload. A SIGHUP reload is applied in place and logged; the
+// wait then RESUMES, it never causes the process to exit. Returns nil on a
+// clean shutdown signal, or the error read from errCh.
+//
+// reloader == nil (e.g. a build that never wires one) means SIGHUP is not
+// even registered — sending it falls back to the OS default action,
+// unchanged from before this feature existed.
+func waitForShutdown(logger spi.Logger, errCh <-chan error, reloader *configreload.Reloader) error {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	var hupCh chan os.Signal
+	if reloader != nil {
+		hupCh = make(chan os.Signal, 1)
+		signal.Notify(hupCh, syscall.SIGHUP)
+	}
+	return waitLoop(logger, sigCh, hupCh, errCh, reloader)
+}
+
+// waitLoop is waitForShutdown's channel-driven core, split out so tests can
+// drive it with plain Go channels instead of real OS signal delivery.
+func waitLoop(logger spi.Logger, sigCh, hupCh <-chan os.Signal, errCh <-chan error, reloader *configreload.Reloader) error {
+	for {
+		select {
+		case sig := <-sigCh:
+			logger.Info("shutdown signal received", "signal", sig.String())
+			return nil
+		case err := <-errCh:
+			return err
+		case <-hupCh: // nil channel when reloader == nil: never selected
+			applyReload(logger, reloader)
+		}
+	}
+}
+
+// applyReload runs one SIGHUP-triggered config reload and logs the
+// outcome. A reload error (e.g. the config file was hand-edited into an
+// invalid state) is logged and otherwise ignored — the server keeps
+// running on its last-good configuration rather than let a bad edit take
+// down a running process.
+func applyReload(logger spi.Logger, reloader *configreload.Reloader) {
+	result, err := reloader.Reload(context.Background())
+	if err != nil {
+		logger.Error("config reload failed; continuing with previous configuration", "error", err)
+		return
+	}
+	if !result.Changed() {
+		logger.Info("config reload: no changes")
+		return
+	}
+	logger.Info("config reload applied",
+		"applied", result.Applied,
+		"ignored_requires_restart", result.Ignored,
+	)
+}
 
 // closeAppStores releases the long-lived backing stores at process exit. Order
 // mirrors the original LIFO defer chain (connections → tenant → netpolicy →

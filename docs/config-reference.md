@@ -153,6 +153,38 @@ See [deployment.md](deployment.md) for the HA topology and
 | `config_audit.enabled` / `.backend` / `.sqlite.dsn` | Runtime-config audit (`platform/configaudit`): when enabled, cmd builds the `configaudit.Store` (`memory`\|`sqlite`), captures the redacted applied-config snapshot once at boot, and wires `sso.WithConfigSnapshots` + `WithConfigAuditStore`, mounting `GET /api/v1/admin/config/{running,applied,diff,history}` + the client/tenant/policy change-capture hook |
 | `config_audit.drift.interval` | `sso.WithConfigDriftDetection` — cross-replica config-digest broadcast (`cluster.KindConfigDigest`) + compare loop; `<= 0` (default) = off, report-only |
 
+## Config JSON Schema & Validation
+
+`config/schema` reflects over `config.Config`'s `yaml` struct tags to generate a
+minimal JSON Schema (draft-07 subset: `type`/`properties`/`items`/`required`/
+`additionalProperties`) — no external schema-generation tool or dependency.
+`required` is a best-effort heuristic (absence of `,omitempty` on a plain
+scalar field); nested sections, pointers, slices, and maps are NEVER marked
+required, since Go's zero-value defaulting means every one of them is
+decodable when absent. Treat it as an IDE/documentation aid (e.g. for the
+redhat.vscode-yaml extension's autocompletion + typo-squiggles), not a
+strict "config fails to load without this key" contract.
+
+| Key / Command | Effect |
+|---|---|
+| `sso-ctl config schema [--out <file>]` | Prints the generated JSON Schema for `config.Config` (stdout, or `--out` to write a file) |
+| `sso-ctl config validate-schema --file <config.yaml>` | Validates ONE config file's raw YAML shape against the generated schema; exits 1 and prints every violation (`path: expected TYPE, got TYPE` / `path: unknown field`) on ANY mismatch — a strict CI / pre-deploy gate |
+| Loader.Load's built-in check | Every server boot ALSO runs the same `schema.Validate` over the fully-merged (file+env+etcd+flag) document and logs a WARNING (`config: schema violations detected`) listing every violation — alongside, not replacing, the existing `DisallowUnknownFields` warn-then-fallback decode. Deliberately warn-only: the schema cannot capture every decode-time flexibility goccy/go-yaml offers (e.g. `time.Duration` accepts both a duration string and a bare integer), so promoting it to a hard boot failure risks rejecting a config that would actually load fine. Use `validate-schema` in CI for a strict gate instead |
+
+## Hot Reload (SIGHUP)
+
+`cmd/sso-server` optionally re-reads its config on `SIGHUP` and applies the
+SAFE subset live, via `config/reload.Reloader` — entirely opt-in: a build (or
+caller) that never constructs a `Reloader` behaves exactly as before this
+feature existed (no extra signal handler is even registered).
+
+| Key / Behavior | Effect |
+|---|---|
+| `SIGHUP` (running `sso-server` process) | Re-reads config from the SAME source chain (file + env + etcd + flag) it booted with, diffs it against the previously-tracked config (`platform/configaudit.Diff`, the same JSON-Patch engine the admin running-vs-applied endpoint uses), applies the safe subset, and logs `config reload applied` with `applied` (what changed live) and `ignored_requires_restart` (everything else that changed but was left untouched) |
+| `logging.level` | The ONLY field wired live today: swaps the server's `*slog.LevelVar`, so verbosity changes with no restart and no dropped log lines |
+| Everything else (`security.rate_limit.*`, `feature_gates.*`, storage backends, `server.listen`, TLS material, cluster/etcd endpoints, …) | Detected if changed, reported under `ignored_requires_restart`, and left COMPLETELY untouched — never silently misapplied. `security.rate_limit.*` and `feature_gates.*` look "safe" (no store/connection to reprovision) but aren't wired: the rate-limit `Policy` is baked by value into the mounted middleware at `Handler()`-construction time, and feature-gated route groups are decided once at `Mount()` — both need a restart to actually take effect. See `config/reload`'s package doc for the full rationale per excluded group |
+| A failed reload (e.g. the file was hand-edited into an invalid state) | Logged (`config reload failed; continuing with previous configuration`) and otherwise ignored — the process keeps running on its last-good configuration; SIGHUP can never crash a running server |
+
 ## Cluster
 
 | Feature | Config | Behavior |
