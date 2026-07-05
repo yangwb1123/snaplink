@@ -57,6 +57,7 @@ func (s *Server) mountAdminSurface() {
 	s.mountWebhookAdminAPI(api)
 	s.mountAdminCompliance(api)
 	s.mountAdminChangeApproval(api)
+	s.mountAPIDocsUI(api)
 }
 
 // mountAdminAPIObservability registers the client lookup plus the opt-in audit,

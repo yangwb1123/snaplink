@@ -250,6 +250,19 @@ type selfServiceState struct {
 	// leaves /portal/ unmounted — byte-identical to a build without it.
 	portalFS fs.FS
 
+	// apiDocsUIHandler and apiDocsSpecHandler, when non-nil, serve the
+	// opt-in embedded API-documentation viewer (WithAPIDocsUI) at GET
+	// .../admin/docs (self-contained HTML) and GET .../admin/docs/openapi.json
+	// (the same document as plain JSON). Both hang off the AdminMiddleware-
+	// gated /api/v1/admin/ group (mountAPIDocsUI, server_routes.go) — unlike
+	// adminConsoleFS/hostedLoginFS/portalFS above, which are open static SPA
+	// shells served OUTSIDE the router entirely, the full endpoint + schema
+	// inventory this viewer exposes is operationally sensitive. Nil (the
+	// default) leaves both routes unmounted — byte-identical to a build
+	// without this option.
+	apiDocsUIHandler   HandlerFunc
+	apiDocsSpecHandler HandlerFunc
+
 	// passwordPolicyValidator checks proposed passwords against operator-
 	// configured complexity rules and password history (WithPasswordPolicy).
 	// Nil (the default) means no password policy is enforced — behavior is

@@ -8,6 +8,8 @@ package sso
 import (
 	"time"
 
+	"github.com/snaplink/sso/docs"
+	"github.com/snaplink/sso/interfaces/apidocs"
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/platform/audit"
@@ -337,4 +339,29 @@ func WithWebhookEngine(e *webhook.Engine) Option {
 // without the feature: no outbound SCIM traffic, ever.
 func WithSCIMProvisioner(sink audit.Sink) Option {
 	return func(s *Server) { s.scimProvisionSink = sink }
+}
+
+// WithAPIDocsUI mounts a read-only, self-contained API-documentation
+// viewer for docs/openapi.yaml at GET /api/v1/admin/docs (+ its
+// machine-readable GET /api/v1/admin/docs/openapi.json companion). Both
+// hang off the /api/v1/admin/ prefix, so AdminMiddleware gates them
+// exactly like every other admin route (admin:read) — the full endpoint +
+// schema inventory is operationally sensitive, not public. See
+// interfaces/apidocs's package doc for what the viewer is (and is not: no
+// CDN script, no vendored Swagger-UI/Redoc bundle).
+//
+// nil (the default, i.e. this option never called) leaves both routes
+// unmounted — byte-identical to a build without this feature: the spec
+// stays a static file in docs/, never served over HTTP.
+func WithAPIDocsUI() Option {
+	return func(s *Server) {
+		ui, spec, err := apidocs.New(docs.OpenAPISpec)
+		if err != nil {
+			// Only reachable with a hand-corrupted embedded spec (CI's
+			// `make docs-validate` guards the committed file) — fail safe by
+			// leaving the feature off rather than mounting a broken page.
+			return
+		}
+		s.apiDocsUIHandler, s.apiDocsSpecHandler = ui, spec
+	}
 }

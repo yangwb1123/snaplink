@@ -78,6 +78,14 @@ func layerName(rel string) string {
 		// example apps moved under docs/ — composition (wire everything, demo only).
 		return "composition"
 	}
+	if rel == "docs" {
+		// The embedded-OpenAPI-spec package (docs/openapi_embed.go) only — has
+		// zero internal imports of its own, so it sits at the kernel rank
+		// (shared) rather than composition like docs/examples: both
+		// interfaces/apidocs (rank interfaces) and cmd/gensdk (rank
+		// composition) need to import it DOWNWARD.
+		return "shared"
+	}
 	if rel == "" {
 		// root package: the public Server type + server_*.go HTTP handlers.
 		return "interfaces"

@@ -221,6 +221,33 @@ func (s *Server) mountCIBAEndpoint() {
 // to server_federation.go, alongside federationMeshState (the fields they
 // gate on) and the federation handlers — this file was at the line budget.
 
+// Opt-in embedded API-docs viewer route paths (WithAPIDocsUI). Unexported
+// and local to this file — like pathAdminConsolePrefix et al. above, they
+// are pure internal wiring detail, not part of the SDK's public surface —
+// rather than re-exported core.Path* consts, since shared/core/consts.go
+// is at its own line budget and nothing outside this package needs them.
+const (
+	pathAdminAPIDocs     = "/admin/docs"
+	pathAdminAPIDocsSpec = "/admin/docs/openapi.json"
+)
+
+// mountAPIDocsUI registers the opt-in embedded API-documentation viewer
+// (WithAPIDocsUI): GET .../docs (self-contained HTML) + GET
+// .../docs/openapi.json (the same spec as parsed JSON, for tooling).
+// Unlike the OPEN static SPA bundles buildProbeMux serves below (admin
+// console, hosted login, portal — generic UI shells with no sensitive
+// content), these two routes hang off the AdminMiddleware-gated
+// /api/v1/admin/ group mountAdminSurface builds, because the full live
+// endpoint + schema inventory they expose IS operationally sensitive.
+// Not mounted without the option — byte-identical to a build without it.
+func (s *Server) mountAPIDocsUI(api Router) {
+	if s.apiDocsUIHandler == nil {
+		return
+	}
+	api.GET(pathAdminAPIDocs, s.apiDocsUIHandler)
+	api.GET(pathAdminAPIDocsSpec, s.apiDocsSpecHandler)
+}
+
 // Handler returns the http.Handler for the server.
 //
 // Middleware wiring (outermost → innermost):
