@@ -17,6 +17,14 @@ type ProviderMetadata struct {
 	UserInfoEndpoint      string `json:"userinfo_endpoint,omitempty"`
 	JWKSURI               string `json:"jwks_uri"`
 	EndSessionEndpoint    string `json:"end_session_endpoint,omitempty"`
+	// CheckSessionIframe is the OpenID Connect Session Management 1.0 §3
+	// `check_session_iframe` URL — an RP-embeddable, OP-hosted static page
+	// (see oidcsupport.RenderCheckSessionIframe) that lets an RP detect
+	// End-User login-state changes via postMessage. Present only when
+	// WithOIDCSessionManagement is wired (default off) AND the OIDC gate is
+	// on — omitted (field vanishes from the JSON) otherwise, so discovery
+	// stays byte-identical for deployments that never opt in.
+	CheckSessionIframe    string `json:"check_session_iframe,omitempty"`
 	RevocationEndpoint    string `json:"revocation_endpoint,omitempty"`
 	IntrospectionEndpoint string `json:"introspection_endpoint,omitempty"`
 	RegistrationEndpoint  string `json:"registration_endpoint,omitempty"`

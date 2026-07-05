@@ -65,6 +65,7 @@ func (d *endSessionDeps) RenderFrontchannelLogout(ctx core.HandlerContext, ifram
 }
 func (d *endSessionDeps) RecordLogout(core.HandlerContext, string, []string) { d.logoutRec = true }
 func (d *endSessionDeps) DestroySession(_ context.Context, _ string) error   { return nil }
+func (d *endSessionDeps) ClearSessionManagementCookie(core.HandlerContext)   {}
 
 // mintAccessToken issues a genuine signed JWT carrying the given subject and
 // client binding, so the id_token_hint path exercises real verification.

@@ -16,24 +16,31 @@ const (
 	// (RFC 7591 Dynamic CLIENT Registration). Default-off — open signup is an
 	// abuse surface most enterprise deployments don't want (they provision via
 	// SCIM/admin); enable deliberately for B2C.
-	PathSignup          = "/auth/register"
-	PathCallback        = "/auth/callback"
-	PathToken           = "/token"
-	PathIntrospect      = "/token/introspect"
-	PathRevoke          = "/token/revoke"
-	PathRevokeAll       = "/token/revoke-all"
-	PathDeviceCode      = "/device/code"
-	PathDeviceVerify    = "/device/verify"
-	PathUserInfo        = "/userinfo"
-	PathLogout          = "/logout"
-	PathEndSession      = "/end_session"
-	PathPAR             = "/par"                        // RFC 9126 Pushed Authorization Requests
-	PathBackchannelAuth = "/backchannel-authentication" // OIDC CIBA Core 1.0 §7
-	PathAPIPrefix       = "/api/v1"
-	PathClientByID      = "/clients/:id"
-	PathAuditEvents     = "/audit/events"
-	PathAuditEventByID  = "/audit/events/:id"
-	PathAuditFacets     = "/audit/facets"
+	PathSignup       = "/auth/register"
+	PathCallback     = "/auth/callback"
+	PathToken        = "/token"
+	PathIntrospect   = "/token/introspect"
+	PathRevoke       = "/token/revoke"
+	PathRevokeAll    = "/token/revoke-all"
+	PathDeviceCode   = "/device/code"
+	PathDeviceVerify = "/device/verify"
+	PathUserInfo     = "/userinfo"
+	PathLogout       = "/logout"
+	PathEndSession   = "/end_session"
+	// PathCheckSessionIframe is the OpenID Connect Session Management 1.0 §2
+	// check_session_iframe endpoint — the OP-hosted, RP-embeddable static
+	// page a hidden iframe uses to detect End-User login-state changes.
+	// Path segment name matches the discovery field name verbatim (spec
+	// convention: RPs discover it as `check_session_iframe`, not a generic
+	// "/session" path).
+	PathCheckSessionIframe = "/check_session_iframe"
+	PathPAR                = "/par"                        // RFC 9126 Pushed Authorization Requests
+	PathBackchannelAuth    = "/backchannel-authentication" // OIDC CIBA Core 1.0 §7
+	PathAPIPrefix          = "/api/v1"
+	PathClientByID         = "/clients/:id"
+	PathAuditEvents        = "/audit/events"
+	PathAuditEventByID     = "/audit/events/:id"
+	PathAuditFacets        = "/audit/facets"
 
 	PathMyPermissions = "/permissions/me"
 	PathMyMenus       = "/menus/me"

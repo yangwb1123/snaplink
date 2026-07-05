@@ -35,6 +35,14 @@ type EndSessionDeps interface {
 	// implementations (no session manager wired) are acceptable — the method
 	// is called only when sid is non-empty.
 	DestroySession(ctx context.Context, sessionID string) error
+	// ClearSessionManagementCookie clears the OpenID Connect Session
+	// Management 1.0 browser-state cookie (see oidcsupport.
+	// CheckSessionCookieName) so a subsequent check_session_iframe
+	// comparison observes "changed" after RP-Initiated Logout. MUST be a
+	// no-op (write nothing) when WithOIDCSessionManagement was never
+	// wired — /end_session responses must stay byte-identical for
+	// deployments that never opt in.
+	ClearSessionManagementCookie(ctx core.HandlerContext)
 }
 
 // HandleEndSession implements OpenID Connect RP-Initiated Logout 1.0.
@@ -93,6 +101,10 @@ func HandleEndSession(d EndSessionDeps, ctx core.HandlerContext) {
 	if sid != "" {
 		_ = d.DestroySession(ctx.Request().Context(), sid)
 	}
+	// Clears the session-management browser-state cookie regardless of
+	// whether sid was resolved — a stale cookie from an interrupted login
+	// is just as "logged out" as a session that was never found.
+	d.ClearSessionManagementCookie(ctx)
 
 	revokeEndSessionTokens(d, ctx, idTokenHint, userID, client)
 	fclIframes := endSessionNotifyPeers(d, ctx, userID, client, sid)

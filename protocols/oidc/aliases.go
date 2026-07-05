@@ -20,6 +20,11 @@ const (
 	ResponseModeQuery    = oidcsupport.ResponseModeQuery
 	ResponseModeFragment = oidcsupport.ResponseModeFragment
 	ResponseModeFormPost = oidcsupport.ResponseModeFormPost
+	// CheckSessionCookieName re-exports the OpenID Connect Session
+	// Management 1.0 browser-state cookie name (see check_session_iframe.go)
+	// so the Server wiring can stamp/clear it without importing oidcsupport
+	// directly.
+	CheckSessionCookieName = oidcsupport.CheckSessionCookieName
 )
 
 var (
@@ -34,6 +39,11 @@ var (
 	SubjectTypesFor         = oidcsupport.SubjectTypesFor
 	IsValidResponseMode     = oidcsupport.IsValidResponseMode
 	ProjectUserInfoForOIDC  = oidcsupport.ProjectUserInfoForOIDC
-	ProjectIDTokenClaims     = oidcsupport.ProjectIDTokenClaims
+	ProjectIDTokenClaims    = oidcsupport.ProjectIDTokenClaims
 	SanitizeUserForUserInfo = oidcsupport.SanitizeUserForUserInfo
+	// OpenID Connect Session Management 1.0 §2/§3 — see session_state.go /
+	// check_session_iframe.go in oidcsupport for the implementation.
+	BuildSessionState        = oidcsupport.BuildSessionState
+	OriginFromURL            = oidcsupport.OriginFromURL
+	RenderCheckSessionIframe = oidcsupport.RenderCheckSessionIframe
 )

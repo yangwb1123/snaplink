@@ -64,6 +64,17 @@ type OIDCConfig struct {
 	// key from the client's registered JWKS (use:"enc"); no server-
 	// side key material is required.
 	ResponseEncryption ResponseEncryptionConfig `yaml:"response_encryption"`
+	// SessionManagement opts into OpenID Connect Session Management 1.0 —
+	// see SessionManagementConfig.
+	SessionManagement SessionManagementConfig `yaml:"session_management"`
+}
+
+// SessionManagementConfig opts into OpenID Connect Session Management 1.0:
+// `session_state` on /auth/login responses (openid scope only) + the
+// GET /check_session_iframe OP iframe + its discovery advertisement.
+// Default-off — byte-identical discovery/login-response shape otherwise.
+type SessionManagementConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // ResponseEncryptionConfig selects the JWE response-encryption backend.

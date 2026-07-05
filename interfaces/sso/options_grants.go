@@ -80,3 +80,21 @@ func WithGrantTypeRateLimit(grantType string, tokensPerSec float64, burst int) O
 		s.grantRateLimiters[grantType] = &rateLimiterEntry{limiter: lim}
 	}
 }
+
+// WithOIDCSessionManagement opts into OpenID Connect Session Management 1.0:
+// a `session_state` value is computed and returned on every /auth/login
+// response that carries the `openid` scope, a non-HttpOnly browser-state
+// cookie is stamped alongside it (cleared at /end_session), and discovery
+// advertises `check_session_iframe` — the RP-embeddable OP iframe served at
+// GET /check_session_iframe.
+//
+// Requires the OIDC feature gate to also be on (FeatureGates.OIDC); with the
+// gate off, /check_session_iframe stays unmounted and discovery omits the
+// field regardless of this option.
+//
+// Not called (the default): discovery never advertises check_session_iframe,
+// /auth/login never adds session_state or the cookie, and /check_session_iframe
+// 404s — byte-identical to a build predating this feature.
+func WithOIDCSessionManagement() Option {
+	return func(s *Server) { s.sessionManagementEnabled = true }
+}

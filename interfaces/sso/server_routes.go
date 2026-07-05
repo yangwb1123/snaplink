@@ -21,27 +21,27 @@ import (
 // Route-path re-exports (relocated from aliases.go to keep that file within
 // the per-file line budget). Beside Mount, which consumes them.
 const (
-	PathMeshExtAuthz     = core.PathMeshExtAuthz
-	PathNetPolicies      = core.PathNetPolicies
-	PathNetPolicyByName  = core.PathNetPolicyByName
-	PathNetPolicyClassify = core.PathNetPolicyClassify
+	PathMeshExtAuthz       = core.PathMeshExtAuthz
+	PathNetPolicies        = core.PathNetPolicies
+	PathNetPolicyByName    = core.PathNetPolicyByName
+	PathNetPolicyClassify  = core.PathNetPolicyClassify
 	PathNetPolicyResolveMe = core.PathNetPolicyResolveMe
-	PathPAR              = core.PathPAR
-	PathBackchannelAuth  = core.PathBackchannelAuth
-	PathReadyz           = core.PathReadyz
-	PathMetrics          = core.PathMetrics
-	PathStatus           = core.PathStatus
-	PathRevoke           = core.PathRevoke
-	PathRevokeAll        = core.PathRevokeAll
-	PathSAMLMetadata     = core.PathSAMLMetadata
-	PathSAMLSSO          = core.PathSAMLSSO
-	PathSAMLSSOCallback  = core.PathSAMLSSOCallback
-	PathSAMLSLO          = core.PathSAMLSLO
-	PathSAMLSLOContinue  = core.PathSAMLSLOContinue
-	PathSAMLSPSLO        = core.PathSAMLSPSLO
-	PathSendCode         = core.PathSendCode
-	PathToken            = core.PathToken
-	PathUserInfo         = core.PathUserInfo
+	PathPAR                = core.PathPAR
+	PathBackchannelAuth    = core.PathBackchannelAuth
+	PathReadyz             = core.PathReadyz
+	PathMetrics            = core.PathMetrics
+	PathStatus             = core.PathStatus
+	PathRevoke             = core.PathRevoke
+	PathRevokeAll          = core.PathRevokeAll
+	PathSAMLMetadata       = core.PathSAMLMetadata
+	PathSAMLSSO            = core.PathSAMLSSO
+	PathSAMLSSOCallback    = core.PathSAMLSSOCallback
+	PathSAMLSLO            = core.PathSAMLSLO
+	PathSAMLSLOContinue    = core.PathSAMLSLOContinue
+	PathSAMLSPSLO          = core.PathSAMLSPSLO
+	PathSendCode           = core.PathSendCode
+	PathToken              = core.PathToken
+	PathUserInfo           = core.PathUserInfo
 )
 
 func (s *Server) RegisterAuthenticator(a Authenticator) {
@@ -201,16 +201,10 @@ func (s *Server) selfServiceGateOn() bool { return gateOn(s.featureGates.SelfSer
 func (s *Server) adminAPIGateOn() bool    { return gateOn(s.featureGates.AdminAPI) }
 func (s *Server) webSPAGateOn() bool      { return gateOn(s.featureGates.WebSPA) }
 
-// mountOIDCUserEndpoints registers the OIDC-specific /userinfo and
-// /end_session routes. Split out of mountCoreOAuthOIDC (which sits at the
-// function-length budget) so the OIDC gate check lives in exactly one place.
-func (s *Server) mountOIDCUserEndpoints() {
-	if !s.oidcGateOn() {
-		return
-	}
-	s.router.GET(PathUserInfo, s.handleUserInfo)
-	s.router.GET(PathEndSession, s.handleEndSession)
-}
+// mountOIDCUserEndpoints registers the OIDC-specific /userinfo,
+// /end_session, and (session-management-gated) /check_session_iframe
+// routes. Defined in server_userinfo.go — out of this file, which sits at
+// the line budget — beside the handlers it mounts.
 
 // mountCIBAEndpoint registers POST /backchannel-authentication. Before
 // FeatureGates existed this route was mounted unconditionally (the handler
