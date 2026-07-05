@@ -20,42 +20,37 @@ import (
 // verified identity onto something THIS server recognizes — a
 // pre-registered Client here, rather than a Subject on a token-exchange.
 //
-// Shared core / per-cloud preset split (this file / workload_identity_gcp.go):
+// Shared core / per-cloud preset split (this file / workload_identity_presets.go):
 // signature verification, temporal checks, issuer/audience binding, and JWKS
 // fetch-with-cache are ALL cloud-agnostic and live once in
-// WorkloadIdentityValidator. Each cloud only supplies its stable issuer +
-// JWKS URL + a claims-mapping function (claimsMapper) that projects that
-// cloud's token shape onto the common WorkloadIdentity result — so adding a
-// cloud never means re-deriving signature verification.
+// WorkloadIdentityValidator. Each cloud only supplies its issuer + JWKS URL
+// (or, for AWS, how to DERIVE the JWKS URL from an operator-supplied issuer)
+// + a claims-mapping function (claimsMapper) that projects that cloud's
+// token shape onto the common WorkloadIdentity result — so adding a cloud
+// never means re-deriving signature verification.
 //
-// Scope of THIS change: the shared core (this file) + GCP fully implemented
-// (workload_identity_gcp.go — metadata-server-issued OIDC ID tokens for
-// GCE/GKE workloads, verified against Google's stable public JWKS). AWS and
-// Azure are DELIBERATE FOLLOW-UPS, not started:
+// Status: GCP and AWS are fully implemented (workload_identity_presets.go —
+// GCP: metadata-server-issued OIDC ID tokens verified against Google's
+// stable public JWKS; AWS: an operator-configured OIDC issuer, typically a
+// per-cluster EKS OIDC provider URL, with the JWKS URL derived from it via
+// the `<issuer>/.well-known/jwks.json` convention). Azure is a DELIBERATE
+// FOLLOW-UP, not started:
 //
-//   - AWS has no single stable, globally-published JWKS the way GCP/Azure
-//     do — the IMDSv2 instance identity document is PKCS7-signed with a
-//     per-region hardcoded certificate (not JWKS/JWT shaped at all), and
-//     AssumeRoleWithWebIdentity accepts tokens from WHATEVER OIDC provider
-//     the AWS account trusts (commonly the customer's own EKS cluster OIDC
-//     issuer, which is per-cluster, not a stable AWS-owned endpoint). A
-//     faithful AWS preset needs its own design pass for "which issuer" — it
-//     is NOT a drop-in NewWorkloadIdentityValidator(name, issuer, jwksURL,
-//     mapper) call like GCP.
 //   - Azure AD Workload Identity Federation tokens ARE OIDC-shaped
 //     (issuer `https://login.microsoftonline.com/{tenant}/v2.0`, discovery
 //     at the tenant's `/.well-known/openid-configuration`), so it likely
 //     CAN reuse WorkloadIdentityValidator directly via
 //     NewHTTPJWKSSource(tenantJWKSURL) plus an azureClaimsMapper (oid + tid
 //     + appid claims) once a tenant-scoped constructor is added — smaller
-//     lift than AWS, still deferred to keep this change to one fully-tested
-//     cloud.
+//     lift than AWS was, still deferred to keep each change reviewable one
+//     cloud at a time.
 //
 // Wiring: interfaces/sso.WithWorkloadIdentityProviders registers one or more
 // WorkloadIdentityProvider values; a Client opts in by setting
 // TokenEndpointAuthMethod to the workload-identity method AND both
-// AttrWorkloadIdentityProvider ("gcp") and AttrWorkloadIdentitySubject (the
-// expected mapped identity, e.g. a GCP service-account email) in
+// AttrWorkloadIdentityProvider ("gcp"/"aws") and AttrWorkloadIdentitySubject
+// (the expected mapped identity, e.g. a GCP service-account email or an AWS
+// EKS "system:serviceaccount:<namespace>:<name>" subject) in
 // Client.Attributes — mirroring how CAEP reads its receiver endpoint out of
 // Client.Attributes instead of growing core.Client.
 
@@ -64,7 +59,7 @@ type CloudProvider string
 
 const (
 	CloudProviderGCP   CloudProvider = "gcp"
-	CloudProviderAWS   CloudProvider = "aws"   // reserved: see package doc follow-up
+	CloudProviderAWS   CloudProvider = "aws"
 	CloudProviderAzure CloudProvider = "azure" // reserved: see package doc follow-up
 )
 

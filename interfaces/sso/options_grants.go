@@ -273,18 +273,20 @@ func WithTransactionTokens(issuer *txntoken.Issuer, validator *txntoken.Validato
 // tokens (AWS/GCP/Azure) as /token client authentication, in place of a
 // client_secret or private_key_jwt — the cloud analog of WithSPIFFEJWTSVID,
 // but wired as a client-auth method rather than a token-exchange
-// subject_token. Today only security.NewGCPWorkloadIdentityValidator ships;
-// AWS/Azure are documented follow-ups (see the securityverify package doc).
+// subject_token. security.NewGCPWorkloadIdentityValidator and
+// security.NewAWSWorkloadIdentityValidator ship today; Azure is a documented
+// follow-up (see the securityverify package doc).
 //
 // A client opts in per-registration by setting TokenEndpointAuthMethod to
 // ClientAuthWorkloadIdentity and populating two Client.Attributes:
 //
 //   - security.AttrWorkloadIdentityProvider — which registered provider's
-//     Name() to use ("gcp").
+//     Name() to use ("gcp", "aws").
 //   - security.AttrWorkloadIdentitySubject — the EXPECTED verified
-//     WorkloadIdentity.Subject (e.g. a GCP service-account email). This is
-//     the security crux: it is what stops any OTHER workload the cloud
-//     provider will happily vouch for from impersonating THIS client.
+//     WorkloadIdentity.Subject (e.g. a GCP service-account email, or an AWS
+//     EKS "system:serviceaccount:<namespace>:<name>" subject). This is the
+//     security crux: it is what stops any OTHER workload the cloud provider
+//     will happily vouch for from impersonating THIS client.
 //
 // The request then presents the cloud-issued token as client_assertion with
 // client_assertion_type=ClientAssertionTypeWorkloadIdentity (RFC 7521 §4.2
