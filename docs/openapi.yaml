@@ -7412,6 +7412,16 @@ components:
             Provider-specific credential map. Standard keys:
             `username` + `password` (password), `target` + `code`
             (phone / email), `assertion` (keypair).
+            `provider=webauthn` (opt-in passwordless passkey PRIMARY login,
+            `webauthn.primary_auth_enabled`): `session_id` (from the
+            unauthenticated `POST /webauthn/login/conditional/begin`
+            discoverable-credential ceremony) + `assertion` (the raw JSON
+            body `navigator.credentials.get()` produced). No username —
+            the signed-in identity is resolved from the passkey's
+            discoverable credential. Unknown/expired `session_id` (or a
+            vanished user) renders `session_invalid` (404), the SAME
+            oracle-safe collapse the standalone WebAuthn ceremony
+            endpoints use.
         scope:
           type: array
           items:
@@ -8170,6 +8180,13 @@ components:
         require_pkce: { type: boolean }
         require_par: { type: boolean }
         require_signed_request_object: { type: boolean }
+        allow_passwordless_only:
+          type: boolean
+          description: |
+            When true, refuses provider=password at /auth/login for this
+            client (400 passwordless_required) — every other provider
+            (webauthn, totp, phone/email, ...) stays available. Default
+            false is a pure no-op.
         allowed_request_uris:
           type: array
           items: { type: string }

@@ -97,6 +97,7 @@ func (b *appBuilder) seedClients(clientStore sso.ClientStore) error {
 			AllowedPKCEMethods:               c.AllowedPKCEMethods,
 			RequireSignedRequestObject:       c.RequireSignedRequestObject,
 			RequirePAR:                       c.RequirePAR,
+			AllowPasswordlessOnly:            c.AllowPasswordlessOnly,
 			AllowedRequestURIs:               c.AllowedRequestURIs,
 			DeviceCodeTTL:                    c.DeviceCodeTTL,
 			DeviceCodePollInterval:           c.DeviceCodePollInterval,

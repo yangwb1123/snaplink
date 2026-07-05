@@ -35,6 +35,7 @@ exact emission site.
 | `region_not_allowed`                  | 403  | Serving region is outside the tenant's data-residency `AllowedRegions` | Route the request to an allowed region |
 | `residency_violation`                 | 403  | Operation would place tenant data outside its residency boundary   | Use a region within the tenant's policy    |
 | `authenticator_not_allowed_for_client`| 403  | Client's `allowed_authenticators` list excludes this provider      | Use a method the client permits            |
+| `passwordless_required`              | 400  | Client's `allow_passwordless_only` is true and `provider=password` was requested — every OTHER provider (`webauthn`, `totp`, phone/email, ...) stays available | Use `provider=webauthn` (passkey) instead |
 | `risk_denied`                         | 403  | `RiskScorer` returned `DecisionDeny`                               | Step up auth, or wait + retry              |
 | `unsupported_provider`                | 400  | `provider` field is not a registered authenticator name            | Use a valid provider name                  |
 | `unknown_provider`                    | 400  | OAuth/OIDC callback received an unknown provider in `state`        | Restart the auth flow                      |
@@ -119,6 +120,22 @@ the attestation certificate.
   AAGUID. So without MDS this is an OPERATIONAL control — honest-client gating,
   audit visibility of which AAGUIDs registered, and blocking non-attesting
   software authenticators — NOT a defense against a hostile registrant.
+
+### WebAuthn passwordless PRIMARY login (`/auth/login` `provider=webauthn`)
+
+Opt-in via `webauthn.primary_auth_enabled` (requires `webauthn.enabled`).
+Registers a `core.Authenticator` under the name `webauthn` in the SAME
+`s.authenticators` registry every other provider uses — a client selects it
+with `{"provider": "webauthn", "credential": {"session_id": "...",
+"assertion": "..."}}`, obtaining `session_id` from the existing
+UNAUTHENTICATED `POST /webauthn/login/conditional/begin` (discoverable
+credential / passkey autofill; no username). Purely additive: password login
+and WebAuthn-as-second-factor (step-up MFA) are unchanged either way.
+
+| Code                | HTTP | Emitted when                                                                                                       | Client should                                     |
+|----------------------|------|---------------------------------------------------------------------------------------------------------------------|----------------------------------------------------|
+| `session_invalid`    | 404  | `session_id` is unknown/expired, or the resolved passkey's user vanished mid-ceremony — the SAME oracle-safe collapse the standalone WebAuthn ceremony endpoints use (§ above); a caller cannot tell "no such session" from "no such user" apart, nor tell it reached this via `/auth/login` vs. `/webauthn/login/conditional/finish` | Restart from `POST /webauthn/login/conditional/begin` |
+| `invalid_credentials`| 401  | `session_id`/`assertion` missing, or the assertion failed verification for any OTHER reason (bad signature, challenge mismatch, cloned authenticator) | Restart the ceremony                              |
 
 ### MFA orchestration (`/auth/login`, `/auth/mfa`)
 

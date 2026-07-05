@@ -37,15 +37,20 @@ type ClientConfig struct {
 	AllowedPKCEMethods               []string      `yaml:"allowed_pkce_methods,omitempty"`
 	RequireSignedRequestObject       bool          `yaml:"require_signed_request_object,omitempty"`
 	RequirePAR                       bool          `yaml:"require_par,omitempty"`
-	AllowedRequestURIs               []string      `yaml:"allowed_request_uris,omitempty"`
-	DeviceCodeTTL                    time.Duration `yaml:"device_code_ttl,omitempty"`
-	DeviceCodePollInterval           time.Duration `yaml:"device_code_poll_interval,omitempty"`
-	UserinfoSignedResponseAlg        string        `yaml:"userinfo_signed_response_alg,omitempty"`
-	BackchannelLogoutURI             string        `yaml:"backchannel_logout_uri,omitempty"`
-	SubjectType                      string        `yaml:"subject_type,omitempty"`
-	SectorIdentifierURI              string        `yaml:"sector_identifier_uri,omitempty"`
-	FrontchannelLogoutURI            string        `yaml:"frontchannel_logout_uri,omitempty"`
-	JWKS                             []ClientJWK   `yaml:"jwks,omitempty"`
+	// AllowPasswordlessOnly mirrors sso.Client.AllowPasswordlessOnly: when
+	// true, this client refuses the "password" provider at /auth/login and
+	// requires a WebAuthn passkey (provider=webauthn) instead. Every other
+	// authenticator stays available. Default false = no-op.
+	AllowPasswordlessOnly     bool          `yaml:"allow_passwordless_only,omitempty"`
+	AllowedRequestURIs        []string      `yaml:"allowed_request_uris,omitempty"`
+	DeviceCodeTTL             time.Duration `yaml:"device_code_ttl,omitempty"`
+	DeviceCodePollInterval    time.Duration `yaml:"device_code_poll_interval,omitempty"`
+	UserinfoSignedResponseAlg string        `yaml:"userinfo_signed_response_alg,omitempty"`
+	BackchannelLogoutURI      string        `yaml:"backchannel_logout_uri,omitempty"`
+	SubjectType               string        `yaml:"subject_type,omitempty"`
+	SectorIdentifierURI       string        `yaml:"sector_identifier_uri,omitempty"`
+	FrontchannelLogoutURI     string        `yaml:"frontchannel_logout_uri,omitempty"`
+	JWKS                      []ClientJWK   `yaml:"jwks,omitempty"`
 
 	// Per-client consent policy (operator-provisioned; never DCR-settable).
 	// SkipConsent bypasses the consent gate for trusted first-party clients;

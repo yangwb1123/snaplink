@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"errors"
 	"net/http"
 	"slices"
 
@@ -63,7 +64,13 @@ func (s *Server) authenticateUser(ctx HandlerContext, req *login.Request, client
 
 // handleAuthFailure writes the authentication-failure response: it attributes the
 // failure to per-account lockout (and emits account_locked when that trips)
-// BEFORE the generic login_failure audit, then collapses to invalid_credentials.
+// BEFORE the generic login_failure audit, then collapses to invalid_credentials
+// — UNLESS the authenticator flagged the failure as a stateful ceremony problem
+// (core.ErrCeremonySessionInvalid), in which case it renders the SAME
+// oracle-safe 404 session_invalid a ceremony's own dedicated endpoint would
+// (e.g. WebAuthn's /webauthn/login/*): a client must not be able to tell
+// "unknown session" from "unknown user" by response shape, nor tell it
+// reached that state via /auth/login vs. the ceremony's own endpoint.
 func (s *Server) handleAuthFailure(ctx HandlerContext, req *login.Request, lockKey string, err error) {
 	s.logErrorCtx(ctx, "authentication failed", "provider", req.Provider, "error", err)
 	if s.accountLockout != nil && lockKey != "" {
@@ -72,6 +79,11 @@ func (s *Server) handleAuthFailure(ctx HandlerContext, req *login.Request, lockK
 			ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, core.ErrAccountLocked, req.State))
 			return
 		}
+	}
+	if errors.Is(err, core.ErrCeremonySessionInvalid) {
+		s.recordLoginFailure(ctx, req.ClientID, req.Provider, core.ErrSessionInvalid)
+		ctx.JSON(http.StatusNotFound, s.authzErrorBodyWithState(ctx, core.ErrSessionInvalid, req.State))
+		return
 	}
 	s.recordLoginFailure(ctx, req.ClientID, req.Provider, core.ErrInvalidCredentials)
 	ctx.JSON(http.StatusUnauthorized, s.authzErrorBodyWithState(ctx, core.ErrInvalidCredentials, req.State))

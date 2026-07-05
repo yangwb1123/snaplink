@@ -166,6 +166,7 @@ See [deployment.md](deployment.md) for the HA topology and
 |---|---|
 | `webauthn.attestation.policy_mode` | `off`\|`allowlist`\|`denylist`; active mode REQUIRES `conveyance: direct\|enterprise` + ≥1 AAGUID |
 | `webauthn.attestation.mds.*` | FIDO MDS integration (JWS-rooted at production root; startup snapshot; reload by restart) |
+| `webauthn.primary_auth_enabled` | Opt-in passwordless passkey PRIMARY login: registers a `core.Authenticator` under `provider=webauthn` at `/auth/login` (discoverable credential, no username). Requires `webauthn.enabled`; default false is byte-identical — purely additive alongside password + WebAuthn-as-second-factor. Per-client `allow_passwordless_only` (in `clients[]`) then refuses `provider=password` for that client (400 `passwordless_required`) while leaving every other provider available |
 
 ## Snapshot
 

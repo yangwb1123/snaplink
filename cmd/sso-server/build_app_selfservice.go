@@ -242,7 +242,33 @@ func (b *appBuilder) wireWebAuthnMFA() error {
 		b.opts = append(b.opts, sso.WithWebAuthnRegistrar(webauthn.NewRegistrar(webauthnHelper)))
 		logger.Info("self-service passkey registration enabled (/me/mfa/webauthn)")
 	}
+	if err := b.wireWebAuthnPrimaryAuth(webauthnHelper); err != nil {
+		return err
+	}
 	return b.wireMFAProvider()
+}
+
+// wireWebAuthnPrimaryAuth opts into passwordless passkey PRIMARY login
+// (cfg.WebAuthn.primary_auth_enabled): it registers a
+// webauthn.WebAuthnPrimaryAuthenticator under provider="webauthn" in the
+// SAME s.authenticators registry every other authenticator uses, sharing the
+// helper already built above with the step-up MFA path + the standalone
+// /webauthn/* ceremony routes. Default-off and purely additive: when the
+// flag is false (or the WebAuthn subsystem itself is disabled, so helper is
+// nil), /auth/login behaves byte-identically to a build without this
+// feature — the existing password + WebAuthn-second-factor flow is
+// untouched either way.
+func (b *appBuilder) wireWebAuthnPrimaryAuth(webauthnHelper *webauthn.Helper) error {
+	if webauthnHelper == nil || !b.cfg.WebAuthn.PrimaryAuthEnabled {
+		return nil
+	}
+	primaryAuth, err := webauthn.NewWebAuthnPrimaryAuthenticator(webauthnHelper, webauthn.WithWebAuthnPrimaryLogger(b.logger))
+	if err != nil {
+		return fmt.Errorf("webauthn primary authenticator: %w", err)
+	}
+	b.opts = append(b.opts, sso.WithAuthenticator(primaryAuth))
+	b.logger.Info("passwordless passkey primary login enabled (/auth/login provider=webauthn)")
+	return nil
 }
 
 // wireMFAEnrollment composes every available factor source (TOTP secrets +

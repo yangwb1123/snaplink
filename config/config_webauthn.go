@@ -55,6 +55,21 @@ type WebAuthnConfig struct {
 	// to a pre-policy build: no attestation requested, no AAGUID gating
 	// (today's "any authenticator" behavior).
 	Attestation WebAuthnAttestationConfig `yaml:"attestation"`
+
+	// PrimaryAuthEnabled opts into passwordless passkey PRIMARY login: a
+	// discoverable-credential (resident key) WebAuthn ceremony registered as
+	// a full core.Authenticator under provider="webauthn" at /auth/login —
+	// the user identifies by presenting their passkey, with no separate
+	// password step. This is entirely ADDITIVE: it does not replace or
+	// disable the existing WebAuthn-as-second-factor (step-up MFA) ceremony,
+	// which keeps working unchanged, and it shares the SAME Helper (and
+	// therefore the same enrolled credentials + RP config) as that step-up
+	// path and the standalone /webauthn/login/conditional/{begin,finish}
+	// ceremony endpoints. Default false: the "webauthn" primary authenticator
+	// is not registered and /auth/login behaves byte-identically to a build
+	// without this flag. Requires Enabled=true (the WebAuthn subsystem must
+	// be on) — ignored otherwise.
+	PrimaryAuthEnabled bool `yaml:"primary_auth_enabled"`
 }
 
 // WebAuthnAttestationConfig configures authenticator attestation for
