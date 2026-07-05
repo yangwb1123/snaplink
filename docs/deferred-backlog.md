@@ -33,13 +33,6 @@ related capability exists but the proposed feature does not).
 - **ReBAC / relationship tuples** — none. Zanzibar-style `RelationTupleStore` +
   check engine; `conditionalaccess` covers attribute conditions only. _Sources:
   expansion-v2, analysis-expansion-directions._
-- **RBAC Separation of Duty** — none. Static/dynamic SoD (mutually-exclusive
-  role constraints, session-role activation) in `domains/permissions`. _Sources:
-  completeness-audit-2026-07-01, completeness-audit-07-01._
-- **Live PEP wiring for the conditional-access engine** — partial. The CAP
-  engine is advisory; wire it into `/auth/login` for risk-weighted MFA before
-  token issuance, plus a `DeviceFingerprint` SPI. _Source:
-  expansion-directions-auth-plane-2026-07-01._
 
 ## Sessions, identity & tokens
 
@@ -49,9 +42,6 @@ related capability exists but the proposed feature does not).
 - **Identity linking / account merging** — none. `IdentityLinkStore`,
   `/me/identities`, `MergePolicy`. _Sources: expansion-architecture-gaps-2026-07-01,
   analysis-five-directions-toctou…, expansion-identity-beyond-protocols._
-- **User lifecycle state machine** — none. INVITED/SUSPENDED/INACTIVE/ARCHIVED/
-  PURGED states, dormancy detection, auto-deprovisioning, `/admin/users/:id/lifecycle`.
-  _Sources: expansion-round31, expansion-v2, expansion-directions-2026-07-01-v3._
 - **Passwordless passkey as primary authenticator** — partial. WebAuthn is a
   second factor only; add `WebAuthnPrimaryAuthenticator`, `provider=webauthn` at
   `/auth/login`, `AllowPasswordlessOnly`. _Sources: expansion-v2,
@@ -59,11 +49,6 @@ related capability exists but the proposed feature does not).
 - **OIDC Session Management 1.0** — none. `check_session_iframe` /
   `end_session_iframe` / `session_state`. _Sources: completeness-audit (x2),
   analysis-round6._
-- **Token lifecycle refinements** — partial. refresh-token absolute
-  max-lifetime cap; introspection stale-while-revalidate; signed introspection
-  responses + batch endpoint; token-exchange cycle detection + chain-level TTL +
-  `TokenExchangePolicy` SPI. _Sources: completeness-audit (x2), expansion-directions,
-  expansion-directions-auth-plane._
 
 ## Novel / future protocols
 
@@ -94,8 +79,6 @@ related capability exists but the proposed feature does not).
   active-consents report, automated data-retention-policy engine (erasure/export
   primitives exist). _Sources: analysis-final-project-expansion-directions,
   expansion-analysis-20260701._
-- **Federation metadata health lifecycle** — none. `ConnectionHealth` SPI,
-  cert-expiry alerts, `/admin/federation/health`. _Source: expansion-directions-2026-07-01-v3._
 
 ## Productization & DX
 
@@ -127,9 +110,6 @@ related capability exists but the proposed feature does not).
 - **API versioning / deprecation** — none. `Sunset`/`Deprecation` headers,
   `Accept-Version` negotiation, v2alpha path (ADR-0008 documents the strategy).
   _Source: expansion-novel-architectural-gaps._
-- **Cryptographic material inventory** — none. `platform/cryptoinventory`
-  Inventory SPI + admin `ListKeys`/`ReportKeyCompromise`. _Source:
-  analysis-novel-directions-passkey…._
 
 ## Observability, performance & tests
 
