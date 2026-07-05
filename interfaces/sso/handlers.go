@@ -7,8 +7,8 @@ import (
 
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/tenant"
-	"github.com/snaplink/sso/domains/webhook"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/webhook"
 	"github.com/snaplink/sso/platform/netpolicy"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
@@ -233,7 +233,7 @@ func (s *Server) handleClassifyNetPolicy(ctx HandlerContext)  { netpolicy.Handle
 func (s *Server) handleResolveMeNetPolicy(ctx HandlerContext) { netpolicy.HandleResolveMe(s, ctx) }
 
 // Generic event/webhook egress engine endpoint handlers moved to
-// domains/webhook/handlers.go. Methods below stay as thin delegators so the
+// platform/lifecycle/webhook/handlers.go. Methods below stay as thin delegators so the
 // existing route binding via method values keeps working.
 func (s *Server) handleWebhookListSubscriptions(ctx HandlerContext) {
 	webhook.HandleListSubscriptions(s, ctx)
@@ -249,6 +249,33 @@ func (s *Server) handleWebhookListDeadLetters(ctx HandlerContext) {
 }
 func (s *Server) handleWebhookReplayDeadLetter(ctx HandlerContext) {
 	webhook.HandleReplayDeadLetter(s, ctx)
+}
+
+// Generic event/webhook egress engine admin route-path re-exports —
+// aliases.go and server_routes_admin.go are both at their line budget, same
+// reason as the Token Portfolio consts in server_routes_admin.go.
+const (
+	PathAdminWebhookSubscriptions    = core.PathAdminWebhookSubscriptions
+	PathAdminWebhookSubscriptionByID = core.PathAdminWebhookSubscriptionByID
+	PathAdminWebhookDeadLetters      = core.PathAdminWebhookDeadLetters
+	PathAdminWebhookDeadLetterReplay = core.PathAdminWebhookDeadLetterReplay
+)
+
+// mountWebhookAdminAPI registers the opt-in generic event/webhook egress
+// engine's admin surface (opt-in WithWebhookEngine): subscription
+// management + dead-letter-queue inspection/replay. Not mounted without an
+// engine — byte-identical to a build without the feature. Relocated from
+// server_routes_admin.go to keep that file within the per-file line budget;
+// belongs beside the handler delegators above.
+func (s *Server) mountWebhookAdminAPI(api Router) {
+	if s.webhookEngine == nil {
+		return
+	}
+	api.GET(PathAdminWebhookSubscriptions, s.handleWebhookListSubscriptions)
+	api.POST(PathAdminWebhookSubscriptions, s.handleWebhookCreateSubscription)
+	api.DELETE(PathAdminWebhookSubscriptionByID, s.handleWebhookDeleteSubscription)
+	api.GET(PathAdminWebhookDeadLetters, s.handleWebhookListDeadLetters)
+	api.POST(PathAdminWebhookDeadLetterReplay, s.handleWebhookReplayDeadLetter)
 }
 
 // ClassifyRequest is exposed for embedders that want to classify a request

@@ -258,7 +258,7 @@ const (
 	PathCheckSessionIframe = "/check_session_iframe"
 )
 
-// Generic event/webhook egress engine (domains/webhook, opt-in
+// Generic event/webhook egress engine (platform/lifecycle/webhook, opt-in
 // sso.WithWebhookEngine): admin subscription management + dead-letter-queue
 // inspection/replay. Group-relative on the /api/v1 router group; GET is
 // admin:read, POST/DELETE are admin:write via the default AdminMiddleware

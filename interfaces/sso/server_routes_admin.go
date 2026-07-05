@@ -31,16 +31,6 @@ const (
 	PathAdminCryptoKeyCompromise = core.PathAdminCryptoKeyCompromise
 )
 
-// Generic event/webhook egress engine admin route-path re-exports —
-// aliases.go is at its line budget, same reason as the Token Portfolio
-// consts above.
-const (
-	PathAdminWebhookSubscriptions    = core.PathAdminWebhookSubscriptions
-	PathAdminWebhookSubscriptionByID = core.PathAdminWebhookSubscriptionByID
-	PathAdminWebhookDeadLetters      = core.PathAdminWebhookDeadLetters
-	PathAdminWebhookDeadLetterReplay = core.PathAdminWebhookDeadLetterReplay
-)
-
 // Admin REST API route registration, extracted from Mount (server_routes.go).
 // All routes hang off the /api/v1 group created in Mount; the /api/v1/admin/*
 // paths are gated by AdminMiddleware (GET admin:read, mutations admin:write).
@@ -65,21 +55,6 @@ func (s *Server) mountAdminSurface() {
 	s.mountAdminBreakGlass(api)
 	s.mountCryptoInventoryAPI(api)
 	s.mountWebhookAdminAPI(api)
-}
-
-// mountWebhookAdminAPI registers the opt-in generic event/webhook egress
-// engine's admin surface (opt-in WithWebhookEngine): subscription
-// management + dead-letter-queue inspection/replay. Not mounted without an
-// engine — byte-identical to a build without the feature.
-func (s *Server) mountWebhookAdminAPI(api Router) {
-	if s.webhookEngine == nil {
-		return
-	}
-	api.GET(PathAdminWebhookSubscriptions, s.handleWebhookListSubscriptions)
-	api.POST(PathAdminWebhookSubscriptions, s.handleWebhookCreateSubscription)
-	api.DELETE(PathAdminWebhookSubscriptionByID, s.handleWebhookDeleteSubscription)
-	api.GET(PathAdminWebhookDeadLetters, s.handleWebhookListDeadLetters)
-	api.POST(PathAdminWebhookDeadLetterReplay, s.handleWebhookReplayDeadLetter)
 }
 
 // mountAdminAPIObservability registers the client lookup plus the opt-in audit,

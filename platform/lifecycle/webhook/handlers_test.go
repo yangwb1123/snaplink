@@ -18,8 +18,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/domains/webhook"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/webhook"
 	"github.com/snaplink/sso/shared/core"
 )
 

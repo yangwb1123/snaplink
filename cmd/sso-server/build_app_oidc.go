@@ -11,10 +11,10 @@ import (
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/federation"
 	federationhealth "github.com/snaplink/sso/domains/federation/health"
-	"github.com/snaplink/sso/domains/webhook"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/lifecycle/webhook"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/sse"
 	"github.com/snaplink/sso/protocols/caep"
@@ -167,7 +167,7 @@ func (b *appBuilder) wireSSEEvents() {
 }
 
 // wireWebhookEngine wires the generic event/webhook egress engine
-// (domains/webhook): a MultiSink sibling to the primary audit sink that
+// (platform/lifecycle/webhook): a MultiSink sibling to the primary audit sink that
 // fans matching events out to runtime-registered EventSubscriptions
 // (managed via the admin API, not YAML — see WebhooksConfig). Default-off:
 // skipping this leaves b.opts untouched, so a build without

@@ -208,7 +208,7 @@ type ConfigAuditDriftConfig struct {
 }
 
 // WebhooksConfig opts into the generic event/webhook egress engine
-// (domains/webhook, sso.WithWebhookEngine): a MultiSink sibling to the
+// (platform/lifecycle/webhook, sso.WithWebhookEngine): a MultiSink sibling to the
 // primary audit sink (and to audit.webhook above) that fans matching
 // events out to whichever EventSubscriptions are registered at runtime via
 // the admin API (POST /api/v1/admin/webhooks/subscriptions) — the

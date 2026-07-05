@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/domains/webhook"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/webhook"
 )
 
 func TestMemoryDeadLetterStore_AddAssignsID(t *testing.T) {

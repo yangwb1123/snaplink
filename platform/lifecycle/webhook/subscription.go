@@ -62,7 +62,7 @@ func (s EventSubscription) Validate() error {
 // validateHTTPSURL enforces the same anti-SSRF/anti-exfil invariant
 // protocols/caep.ValidateReceiverEndpoint applies to CAEP receiver
 // endpoints: an absolute https URL with a host. Declared independently
-// (rather than imported) because domains/webhook sits BELOW protocols/caep
+// (rather than imported) because platform/lifecycle/webhook sits BELOW protocols/caep
 // in the layer ordering (AGENTS.md §0.2 / architecture_layer_test.go) — a
 // domains package may never import a protocols package.
 func validateHTTPSURL(raw string) error {

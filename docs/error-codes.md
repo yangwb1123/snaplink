@@ -277,7 +277,7 @@ falls through to the same 401/403 the rest of `/api/v1/admin/*` uses.
 
 ## Generic event/webhook egress engine (`/api/v1/admin/webhooks/*`)
 
-Opt-in (`sso.WithWebhookEngine`) admin surface for the `domains/webhook`
+Opt-in (`sso.WithWebhookEngine`) admin surface for the `platform/lifecycle/webhook`
 egress engine: operators register a destination URL + a set of
 `audit.EventType` values they want pushed, HMAC-signed per-subscription
 (`X-Signature`, same scheme as the audit-log webhook and CAEP). Not mounted
