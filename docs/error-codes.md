@@ -68,6 +68,7 @@ exact emission site.
 | `consent_required`                    | 200  | A `ConsentStore` is wired and the user has not yet granted the requested scopes (or `prompt=consent` forced re-consent). HTTP 200 so SPAs can distinguish it from a transport error. Always carries `iss`. The consent UI records the grant via `ConsentStore.RecordConsent`, then retries the login. | Show your consent dialog; retry after grant |
 | `account_selection_required`          | 400  | (reserved) `prompt=none` set when account-picker UI is required                                                     | Fall back to the visible chooser           |
 | `unmet_authentication_requirements`   | 400  | The RP supplied `acr_values` but the authenticator's `AchievedACR` is absent or not in that set (OIDC Core §3.1.2.6 / §5.5.1.1) | Route user through a stronger authentication method or re-prompt |
+| `email_not_verified`                  | 403  | Login succeeded but the account's email has not completed self-service verification, and the deployment requires it before minting a session | Complete the email verification flow, then retry login |
 
 ### Code delivery (`/auth/send-code`)
 
@@ -179,6 +180,9 @@ and WebAuthn-as-second-factor (step-up MFA) are unchanged either way.
 | (none)          | 200  | `/auth/forgot-password` ALWAYS returns 200 `{status:"sent"}` — unknown identifier / no delivery address / send failure are indistinguishable (anti-enumeration) | Tell the user "if the account exists, a reset was sent" |
 | `reset_invalid` | 400  | `/auth/reset-password` could not complete: unknown / expired / already-consumed token, user gone, or set-password error — all collapsed (cause in the audit log) | Request a new reset from `/auth/forgot-password` |
 | `account_exists` | 409  | `POST /auth/register` (opt-in self-service signup) was called with a username that already exists — signup never overwrites an existing account | Choose a different username, or sign in / recover the password |
+| `password_policy_violation` | 400 | `POST /auth/register` (or `POST /me/password`) supplied a password rejected by the wired `PasswordPolicyValidator` | Choose a password meeting the operator's policy |
+| `registration_denied`   | 403  | `POST /auth/register` was rejected by a wired `RegistrationGate` (e.g. CAPTCHA, allow/deny-list, abuse heuristic) | Retry through the gate's expected flow (e.g. solve the CAPTCHA) |
+| `verification_invalid`  | 400  | `POST /auth/verify-email` (mandatory signup email verification) got an unknown / expired / already-consumed token, or the username was claimed between register and verify — all collapsed | Restart signup from `POST /auth/register` |
 | `confirmation_required` | 400  | `POST /me/account/erase` was called for a real (non dry-run) deletion without `confirm` matching the caller's own subject | Re-submit with `confirm` set to the subject |
 | `email_change_invalid`  | 400  | `POST /me/email/verify` got an unknown / expired / already-consumed token, or one belonging to a different user — all collapsed | Restart from `POST /me/email/change` |
 | `invitation_invalid`    | 400  | `POST /me/invitations/accept` got an unknown / expired / already-consumed org-invitation token — all collapsed (cause in logs) | Request a fresh invitation from an org admin |
@@ -344,6 +348,7 @@ via the default `AdminMiddleware` method-scope rule.
 | `webhook_not_configured`         | 500  | Any `/api/v1/admin/webhooks/*` route hit with no `WithWebhookEngine` wired (defensive; routes are only mounted when one is) |
 | `invalid_request`                | 400  | `POST .../subscriptions` body is malformed JSON, or fails `EventSubscription.Validate` (missing/non-https `url`, empty `event_types`, or empty `secret`) |
 | `webhook_deadletter_not_found`   | 404  | `POST .../deadletters/{id}/replay` on an unknown dead-letter id                                    |
+| `webhook_subscription_not_found` | —    | Reserved wire code (`core.ErrWebhookSubscriptionNotFound`) for an unknown subscription id; `DELETE .../subscriptions/{id}` is currently idempotent (200 regardless), so no handler emits this yet |
 | `internal_error`                 | 502  | `POST .../deadletters/{id}/replay` could not resolve the subscription, or the replay POST itself failed — the entry stays queued for a later retry |
 
 ---

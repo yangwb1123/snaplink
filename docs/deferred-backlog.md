@@ -86,9 +86,6 @@ related capability exists but the proposed feature does not).
   _Source: ops-api-productization-2026-07-01._
 - **Signing-key hygiene metrics** — none. `PruneVerifyKeys`, verify-set-size
   gauge, per-key/alg signing-usage counters. _Source: ops-api-productization-2026-07-01._
-- **Doc/code drift CI checkers** — none. OpenAPI-operationId→route,
-  error-code→consts, config-key→docs coverage checks. _Source:
-  architectural-debt-and-risks-2026-07-01._
 - **Unit-test coverage gaps** — none. `grpcadmin`, `protocols/selfservice`,
   `platform/audit` (auditspi/auditsink), `serverbuildstore`/`serverbuildauthn`
   still have zero unit tests. _Source: test-coverage-gaps-2026-07-01._

@@ -22,6 +22,7 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 | Key | Effect |
 |---|---|
 | `server.issuer` | MUST differ from `sso.DefaultIssuer`; stamped into JWT `iss`, discovery `issuer`, every RFC 9207 `iss` |
+| `oidc.response_encryption.backend` | JWE-encrypts `id_token` + `/userinfo` responses for clients registering `id_token_encrypted_response_alg`/`userinfo_encrypted_response_alg`: `""` (off, default) \| `rsa` (RSA-OAEP-256) \| `ecdh` (ECDH-ES[+A256KW]) \| `multi` (both, routed per-client by registered key type). Stateless — reads each recipient's public key from the client's registered JWKS |
 
 ## Security
 
@@ -136,6 +137,7 @@ See [deployment.md](deployment.md) for the HA topology and
 |---|---|
 | `tenant.suspension_check.cache_ttl` | Cache TTL for suspension checks (default 30s); admin SetStatus MUST call `InvalidateTenantSuspensionCache` |
 | `region.{serving_region,header_name,allowed_regions,residency_check_cache_ttl}` | Multi-region residency; write-gate on login mint, read-gate on resource access; admin mutation MUST call `InvalidateTenantResidencyCache` |
+| `geo.backend` | IP → geo enrichment middleware's `geo.Provider`: `static` (default; in-process operator-curated CIDR table, see `geo.static.*`) |
 
 ## Audit & Metrics
 
@@ -194,6 +196,18 @@ Downstream identity resolution uses `externalId` (RFC 7643 §3.1) + a `filter=ex
 | Key | Effect |
 |---|---|
 | `snapshot.redact_secrets` | Zeros `Client.Secret` on export-local copies (NOT restorable — use encryption for backup); default nil ⇒ byte-identical |
+| `snapshot.storage.backend` | Where `Pipeline` persists envelopes: `file` (default; `snapshot.storage.file.dir`, defaults to `./snapshots`) \| `inline` (in-memory; tests only) |
+| `snapshot.encryption.backend` | Sealer for snapshot envelopes: `none` (default; plaintext JSON) \| `passphrase` (argon2id + XChaCha20-Poly1305; `passphrase`/`passphrase_file`) \| `key` (operator-supplied 32-byte `key`/`key_file`, e.g. from a KMS-issued DEK) |
+
+## Releases
+
+Admin app version pin / rollback subsystem (Phase D-3, `POST /api/v1/admin/releases*`). Disabled by default (`releases.enabled`).
+
+| Key | Effect |
+|---|---|
+| `releases.store.backend` | Where `Release` records persist: `file` (default; one `<id>.json` per release + a CURRENT marker, `releases.store.file.dir`) \| `memory` (lost on restart; tests/demos) |
+| `releases.pinner.backend` | Deploy mechanism a `Pin`/`Rollback` invokes: `noop` (default; records the call only) \| `static` (on-disk bundle symlink swap) \| `docker` (`docker compose pull && up -d`) |
+| `releases.probe.backend` | Post-`Pin` health probe: `""` (default; no probe, Pin always "succeeds") \| `http` (GETs `releases.probe.http.url`, 2xx = healthy; `polls`/`backoff` control the retry loop) |
 
 ## Backup
 
