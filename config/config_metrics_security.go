@@ -27,6 +27,14 @@ type SecurityConfig struct {
 	AccountLockout AccountLockoutConfig `yaml:"account_lockout"`
 	MTLS           MTLSConfig           `yaml:"mtls"`
 	TrustedProxies TrustedProxiesConfig `yaml:"trusted_proxies"`
+	// RARLimits, ScopeLimit, and MaxTokenBytes are the input-limit-hardening
+	// knobs: RFC 9396 authorization_details shape caps, a scope-count cap,
+	// and a bearer-token byte-length cap respectively. All default to
+	// unbounded (zero value) — byte-identical to a build without this
+	// section. See RARLimitsConfig / ScopeLimitConfig docs (config_admin.go).
+	RARLimits     RARLimitsConfig  `yaml:"rar_limits"`
+	ScopeLimit    ScopeLimitConfig `yaml:"scope_limit"`
+	MaxTokenBytes int              `yaml:"max_token_bytes"`
 }
 
 // TrustedProxiesConfig opts into XFF-aware real-IP extraction.

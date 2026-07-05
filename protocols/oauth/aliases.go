@@ -43,6 +43,7 @@ type (
 	DCRMetadata                 = oauthvalidate.DCRMetadata
 	DCRPolicy                   = oauthvalidate.DCRPolicy
 	ClaimRequest                = oauthvalidate.ClaimRequest
+	RARLimits                   = oauthvalidate.RARLimits
 )
 
 const (

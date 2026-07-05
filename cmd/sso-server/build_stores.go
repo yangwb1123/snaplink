@@ -184,6 +184,7 @@ func (b *appBuilder) wireEdge() error {
 	if err := b.wireBodyAndRateLimit(); err != nil {
 		return err
 	}
+	b.wireInputLimits()
 	if err := b.wireJTIReplaySPIFFE(); err != nil {
 		return err
 	}
@@ -191,6 +192,30 @@ func (b *appBuilder) wireEdge() error {
 		return err
 	}
 	return b.wireMTLSLockoutProxiesCORS()
+}
+
+// wireInputLimits wires the RFC 9396 authorization_details shape caps, the
+// scope-count cap, and the bearer-token byte-length cap — the remaining
+// input-limit-hardening knobs alongside wireBodyAndRateLimit's generic
+// whole-request body cap. Each is independently opt-in; an absent or
+// all-zero config section leaves the corresponding Option unset, so a
+// deployment without this section in its YAML is byte-identical to one
+// built before these knobs existed.
+func (b *appBuilder) wireInputLimits() {
+	cfg, logger := b.cfg, b.logger
+	if rl := cfg.Security.RARLimits; rl.MaxBytes > 0 || rl.MaxElements > 0 || rl.MaxDepth > 0 {
+		b.opts = append(b.opts, sso.WithAuthorizationDetailsLimits(rl.MaxBytes, rl.MaxElements, rl.MaxDepth))
+		logger.Info("security: authorization_details limits enabled",
+			"max_bytes", rl.MaxBytes, "max_elements", rl.MaxElements, "max_depth", rl.MaxDepth)
+	}
+	if n := cfg.Security.ScopeLimit.MaxCount; n > 0 {
+		b.opts = append(b.opts, sso.WithMaxScopeCount(n))
+		logger.Info("security: scope count cap enabled", "max_count", n)
+	}
+	if n := cfg.Security.MaxTokenBytes; n > 0 {
+		b.opts = append(b.opts, sso.WithMaxTokenBytes(n))
+		logger.Info("security: max token bytes enabled", "max_bytes", n)
+	}
 }
 
 // wireRedis builds the ONE shared Redis client when a redis block is declared,

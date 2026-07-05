@@ -89,6 +89,48 @@ func WithSupportedSigningAlgs(algs ...string) Option {
 	}
 }
 
+// WithMaxTokenBytes caps the byte length of an inbound bearer token
+// validateAnyToken will attempt to parse/verify. A token longer than n is
+// rejected immediately — before any base64/JSON header decode or issuer
+// Validate call — with the same generic invalid_token/inactive response
+// every other validation failure gets (oracle-safe: no new observable
+// behavior, just an earlier exit). Defense-in-depth against a caller
+// handing the server a deliberately huge "token" string to soak up parsing
+// CPU ahead of the inevitable signature-verification failure.
+//
+// n <= 0 (default, unset) = unbounded — byte-identical to a build without
+// this option.
+func WithMaxTokenBytes(n int) Option {
+	return func(s *Server) { s.maxTokenBytes = n }
+}
+
+// WithAuthorizationDetailsLimits bounds an RFC 9396 authorization_details
+// payload's SHAPE (see oauth.RARLimits) before /auth/login and /par
+// unmarshal it into typed values: maxBytes caps the raw serialized size,
+// maxElements caps the top-level array's element count, maxDepth caps the
+// deepest nesting level. Each argument's zero value disables that specific
+// check; WithAuthorizationDetailsLimits(0, 0, 0) (or never calling this
+// option) is byte-identical to a build without it — authorization_details
+// stays bounded only by the generic WithBodyLimit on the whole request.
+func WithAuthorizationDetailsLimits(maxBytes, maxElements, maxDepth int) Option {
+	return func(s *Server) {
+		s.rarLimits = oauth.RARLimits{MaxBytes: maxBytes, MaxElements: maxElements, MaxDepth: maxDepth}
+	}
+}
+
+// WithMaxScopeCount caps the number of space-separated scopes accepted in a
+// single request's `scope` parameter on /auth/login and /par, rejecting an
+// over-cap request with the standard invalid_scope wire code. Composes
+// with (does not replace) protocols/oauth's existing hardcoded MaxScopeLen
+// BYTE cap — this is a token-COUNT cap, catching a request built from many
+// short scope tokens that would slip under the byte ceiling.
+//
+// n <= 0 (default, unset) = unbounded — byte-identical to a build without
+// this option.
+func WithMaxScopeCount(n int) Option {
+	return func(s *Server) { s.maxScopeCount = n }
+}
+
 // WithAccountLockout wires a per-account brute-force defense.
 // Complements `WithRateLimit` — rate limit catches IP-level
 // volume; account lockout catches per-account targeting that

@@ -15,10 +15,12 @@ import (
 // parDeps is a thin test adapter wiring the real in-memory PARStore +
 // ClientStore into the PARDeps surface (production adapter: *sso.Server).
 type parDeps struct {
-	clients  core.ClientStore
-	par      PARStore
-	ttl      time.Duration
-	verifyCA func(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
+	clients       core.ClientStore
+	par           PARStore
+	ttl           time.Duration
+	verifyCA      func(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
+	rarLimits     RARLimits
+	maxScopeCount int
 }
 
 func (d *parDeps) ClientStoreAccessor() core.ClientStore    { return d.clients }
@@ -30,6 +32,8 @@ func (d *parDeps) VerifyJWTClientAssertion(ctx context.Context, a, f, i string) 
 	return d.verifyCA(ctx, a, f, i)
 }
 func (d *parDeps) SrvLogger() spi.Logger { return spi.NopLogger{} }
+func (d *parDeps) RARLimits() RARLimits  { return d.rarLimits }
+func (d *parDeps) MaxScopeCount() int    { return d.maxScopeCount }
 
 var _ PARDeps = (*parDeps)(nil)
 
@@ -182,6 +186,64 @@ func TestHandlePAR(t *testing.T) {
 		}
 		if got := decodeBody(t, rec)["error"]; got != ErrInvalidAuthorizationDetails {
 			t.Fatalf("error = %v, want %s", got, ErrInvalidAuthorizationDetails)
+		}
+	})
+
+	t.Run("scope count exceeded", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		d := newPARDeps(cs, newMemPARStore())
+		d.maxScopeCount = 2
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
+			"client_id=rp&client_secret=s&scope=a%20b%20c")
+		HandlePAR(d, ctx)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", rec.Code)
+		}
+		if got := decodeBody(t, rec)["error"]; got != core.ErrInvalidScope {
+			t.Fatalf("error = %v, want %s", got, core.ErrInvalidScope)
+		}
+	})
+
+	t.Run("scope count within configured cap ok", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		d := newPARDeps(cs, newMemPARStore())
+		d.maxScopeCount = 3
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
+			"client_id=rp&client_secret=s&scope=a%20b%20c&redirect_uri=https://rp.test/cb")
+		HandlePAR(d, ctx)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201", rec.Code)
+		}
+	})
+
+	t.Run("authorization_details exceeds configured element limit", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		d := newPARDeps(cs, newMemPARStore())
+		d.rarLimits = RARLimits{MaxElements: 1}
+		body := `{"client_id":"rp","client_secret":"s","authorization_details":[{"type":"a"},{"type":"b"}]}`
+		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, body)
+		HandlePAR(d, ctx)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", rec.Code)
+		}
+		if got := decodeBody(t, rec)["error"]; got != ErrInvalidAuthorizationDetails {
+			t.Fatalf("error = %v, want %s", got, ErrInvalidAuthorizationDetails)
+		}
+	})
+
+	t.Run("authorization_details unconfigured limits stay unbounded", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		ps := newMemPARStore()
+		d := newPARDeps(cs, ps)
+		body := `{"client_id":"rp","client_secret":"s","authorization_details":[{"type":"a"},{"type":"b"},{"type":"c"}]}`
+		ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, body)
+		HandlePAR(d, ctx)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201 (zero-value RARLimits must be unbounded)", rec.Code)
 		}
 	})
 
