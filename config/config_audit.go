@@ -206,3 +206,34 @@ type ConfigAuditRetentionConfig struct {
 type ConfigAuditDriftConfig struct {
 	Interval time.Duration `yaml:"interval"`
 }
+
+// WebhooksConfig opts into the generic event/webhook egress engine
+// (domains/webhook, sso.WithWebhookEngine): a MultiSink sibling to the
+// primary audit sink (and to audit.webhook above) that fans matching
+// events out to whichever EventSubscriptions are registered at runtime via
+// the admin API (POST /api/v1/admin/webhooks/subscriptions) — the
+// subscriptions themselves are dynamic and intentionally NOT expressible in
+// YAML (same story as EventsConfig's SSE broker), so this section carries
+// only the engine-wide enablement + delivery tuning.
+//
+// Lives beside AuditConfig (not its own config_webhooks.go) because config/
+// is at its frozen per-directory file-count ceiling
+// (directory_fanout_test.go) — the ceiling may only shrink, so a new
+// section folds into an existing, topically-related file.
+type WebhooksConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// DeliveryTimeout bounds a single webhook POST. 0 = SDK default (10s).
+	DeliveryTimeout time.Duration `yaml:"delivery_timeout"`
+	// DeadLetterCapacity bounds the in-memory dead-letter ring
+	// (GET /api/v1/admin/webhooks/deadletters). 0 = SDK default (1000).
+	DeadLetterCapacity int                 `yaml:"dead_letter_capacity"`
+	Retry              WebhooksRetryConfig `yaml:"retry"`
+}
+
+// WebhooksRetryConfig tunes the per-delivery retry wrapper, mirroring
+// AuditWebhookRetryConfig's shape.
+type WebhooksRetryConfig struct {
+	MaxAttempts    int           `yaml:"max_attempts"`
+	InitialBackoff time.Duration `yaml:"initial_backoff"`
+	MaxBackoff     time.Duration `yaml:"max_backoff"`
+}

@@ -7,6 +7,7 @@ import (
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tenant"
+	"github.com/snaplink/sso/domains/webhook"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
 	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/platform/audit"
@@ -57,6 +58,11 @@ type wiringState struct {
 	regionResolver          region.Resolver
 	regionMiddlewareOpts    region.MiddlewareOptions
 	invalidationBus         cluster.Bus
+
+	// webhookEngine is the opt-in generic event/webhook egress engine
+	// (WithWebhookEngine). Nil = no admin subscription/dead-letter routes,
+	// no audit-sink tap — byte-identical to a build without the feature.
+	webhookEngine *webhook.Engine
 
 	// clientStoreCacheTTL opts into the per-login ClientStore metadata
 	// cache (WithClientStoreCache). > 0 ⇒ NewServer decorates s.clientStore

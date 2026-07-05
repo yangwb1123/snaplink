@@ -202,4 +202,13 @@ const (
 	// oracle: the caller is the authenticated owner of the identity being
 	// unlinked.
 	ErrIdentityUnlinkLastMethod = "identity_unlink_last_method"
+	// Generic webhook egress engine (domains/webhook, opt-in
+	// sso.WithWebhookEngine). NotConfigured guards the admin subscription/
+	// dead-letter endpoints when no Engine is wired (defensive — the routes
+	// are only mounted when one is). SubscriptionNotFound/DeadLetterNotFound
+	// are 404s for an unknown id; neither is a credential oracle (the caller
+	// is an authenticated admin).
+	ErrWebhookNotConfigured        = "webhook_not_configured"
+	ErrWebhookSubscriptionNotFound = "webhook_subscription_not_found"
+	ErrWebhookDeadLetterNotFound   = "webhook_deadletter_not_found"
 )

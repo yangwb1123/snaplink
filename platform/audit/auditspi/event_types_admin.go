@@ -79,4 +79,9 @@ const (
 	// mechanism, not this event. Metadata carries the compliance evidence
 	// chain: crypto_key_id, crypto_key_reason, crypto_key_source.
 	EventAdminCryptoKeyCompromised EventType = "admin_crypto_key_compromised"
+	// Generic event/webhook egress engine (domains/webhook) subscription
+	// lifecycle — emitted by POST/DELETE
+	// /api/v1/admin/webhooks/subscriptions[/:id].
+	EventAdminWebhookSubscriptionCreated EventType = "admin_webhook_subscription_created"
+	EventAdminWebhookSubscriptionDeleted EventType = "admin_webhook_subscription_deleted"
 )

@@ -160,10 +160,11 @@ func (b *appBuilder) wireDomains() error {
 }
 
 // wireEdge runs the delivery-edge sub-builders (response encryption, DCR/
-// backchannel, CAEP transmitter, realtime admin event stream, federation,
-// profiles/metadata, metrics, body/rate-limit, JTI-replay/SPIFFE, CAEP
-// receiver/mesh, mTLS/lockout/proxies/CORS), in the original
-// Option-application order. wireCAEPTransmitter, wireSSEEvents, and
+// backchannel, CAEP transmitter, realtime admin event stream, generic
+// webhook egress engine, federation, profiles/metadata, metrics,
+// body/rate-limit, JTI-replay/SPIFFE, CAEP receiver/mesh,
+// mTLS/lockout/proxies/CORS), in the original Option-application order.
+// wireCAEPTransmitter, wireSSEEvents, wireWebhookEngine, and
 // wireMetricsCollector return no error and keep their original positions.
 func (b *appBuilder) wireEdge() error {
 	if err := b.wireResponseEncryption(); err != nil {
@@ -175,6 +176,7 @@ func (b *appBuilder) wireEdge() error {
 	}
 	b.wireCAEPTransmitter()
 	b.wireSSEEvents()
+	b.wireWebhookEngine()
 	if err := b.wireFederation(); err != nil {
 		return err
 	}

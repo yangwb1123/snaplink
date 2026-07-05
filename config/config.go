@@ -80,6 +80,7 @@ type Config struct {
 	Degradation        DegradationConfig               `yaml:"degradation"`
 	SessionTrustDecay  SessionTrustDecayConfig         `yaml:"session_trust_decay"`
 	TokenAnomaly       TokenAnomalyConfig              `yaml:"token_anomaly"`
+	Webhooks           WebhooksConfig                  `yaml:"webhooks"`
 }
 
 // FeatureGatesConfig controls which optional protocol surfaces the server

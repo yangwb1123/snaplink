@@ -257,3 +257,24 @@ const (
 const (
 	PathCheckSessionIframe = "/check_session_iframe"
 )
+
+// Generic event/webhook egress engine (domains/webhook, opt-in
+// sso.WithWebhookEngine): admin subscription management + dead-letter-queue
+// inspection/replay. Group-relative on the /api/v1 router group; GET is
+// admin:read, POST/DELETE are admin:write via the default AdminMiddleware
+// method-scope rule. Mounted only when an Engine is wired — byte-identical
+// to a build without the feature.
+const (
+	PathAdminWebhookSubscriptions    = "/admin/webhooks/subscriptions"
+	PathAdminWebhookSubscriptionByID = "/admin/webhooks/subscriptions/:id"
+	PathAdminWebhookDeadLetters      = "/admin/webhooks/deadletters"
+	PathAdminWebhookDeadLetterReplay = "/admin/webhooks/deadletters/:id/replay"
+)
+
+// Generic webhook egress engine response keys.
+const (
+	KeyWebhookSubscriptions = "subscriptions"
+	KeyWebhookSubscription  = "subscription"
+	KeyWebhookDeadLetters   = "dead_letters"
+	KeyWebhookDeadLetter    = "dead_letter"
+)

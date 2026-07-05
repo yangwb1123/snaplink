@@ -4371,6 +4371,164 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/webhooks/subscriptions:
+    get:
+      tags: [admin]
+      summary: List generic event/webhook egress subscriptions.
+      description: |
+        Lists every registered EventSubscription (enabled and disabled
+        alike), oldest first. Never returns the raw signing secret — each
+        entry carries `has_secret` instead. admin:read. Opt-in via
+        `WithWebhookEngine`; the route is not mounted (404) when no engine
+        is wired.
+      operationId: webhookListSubscriptions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The registered subscriptions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscriptions:
+                    type: array
+                    items: { $ref: "#/components/schemas/WebhookSubscription" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500":
+          description: No `WithWebhookEngine` wired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [admin]
+      summary: Register a webhook egress subscription.
+      description: |
+        Registers a destination URL plus the `audit.EventType` vocabulary it
+        wants pushed. `secret` is REQUIRED — every delivery is HMAC-SHA256
+        signed with it (`X-Signature: t=<unix>,v1=<hex>`, the same scheme the
+        audit-log webhook and CAEP use). `url` must be an absolute `https`
+        URL with a host. `event_types` must be non-empty — there is no
+        implicit "everything" wildcard. Emits
+        `admin_webhook_subscription_created`. admin:write.
+      operationId: webhookCreateSubscription
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookSubscriptionCreateRequest" }
+      responses:
+        "201":
+          description: The created subscription.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscription: { $ref: "#/components/schemas/WebhookSubscription" }
+        "400":
+          description: Malformed JSON, or fails validation (missing/non-https url, empty event_types, empty secret).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/webhooks/subscriptions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [admin]
+      summary: Delete a webhook egress subscription.
+      description: |
+        Removes the subscription. admin:write. Idempotent (an unknown id
+        succeeds). Emits `admin_webhook_subscription_deleted`.
+      operationId: webhookDeleteSubscription
+      security:
+        - bearerAuth: []
+      responses:
+        "200": { description: Subscription deleted. }
+        "400": { description: Empty id. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/webhooks/deadletters:
+    get:
+      tags: [admin]
+      summary: List dead-lettered webhook deliveries.
+      description: |
+        Lists deliveries that exhausted their retry budget, newest first,
+        bounded by a per-store capacity ring (default 1000). Optionally
+        narrowed to one subscription. admin:read. Opt-in via
+        `WithWebhookEngine`.
+      operationId: webhookListDeadLetters
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: subscription_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The matching dead-letter entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dead_letters:
+                    type: array
+                    items: { $ref: "#/components/schemas/WebhookDeadLetterEntry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/webhooks/deadletters/{id}/replay:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Replay a dead-lettered webhook delivery.
+      description: |
+        Re-attempts delivery to the entry's subscription, resolved FRESH (a
+        since-rotated secret or since-edited URL is honored). A single
+        attempt — no retry chain. Success removes the entry from the queue;
+        a repeat failure updates the same entry's attempt count/last error
+        in place. admin:write.
+      operationId: webhookReplayDeadLetter
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Replay succeeded; the entry was removed from the queue.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dead_letter: { $ref: "#/components/schemas/WebhookDeadLetterEntry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Unknown dead-letter id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Subscription resolve or the replay POST itself failed; the entry stays queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/dr/mode:
     get:
       tags: [admin]
@@ -9723,6 +9881,59 @@ components:
           type: object
           additionalProperties: { type: string }
           description: Opaque protocol-specific settings (e.g. oidc_issuer, oidc_client_id).
+
+    WebhookSubscription:
+      type: object
+      description: |
+        A registered generic event/webhook egress destination. NEVER carries
+        the raw signing secret — see has_secret.
+      required: [id, url, event_types, disabled, has_secret, created_at]
+      properties:
+        id: { type: string }
+        url: { type: string, format: uri, example: "https://example.com/hooks/sso" }
+        event_types:
+          type: array
+          items: { type: string }
+          description: The subscribed audit.EventType values (the same vocabulary every audit consumer sees).
+          example: ["admin_user_created", "admin_client_secret_rotated"]
+        description: { type: string }
+        disabled: { type: boolean }
+        has_secret:
+          type: boolean
+          description: Whether a signing secret is set (the value itself is never returned).
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    WebhookSubscriptionCreateRequest:
+      type: object
+      required: [url, event_types, secret]
+      properties:
+        url: { type: string, format: uri, example: "https://example.com/hooks/sso" }
+        event_types:
+          type: array
+          items: { type: string }
+          example: ["admin_user_created", "admin_client_secret_rotated"]
+        secret:
+          type: string
+          description: HMAC-SHA256 signing secret. REQUIRED — never returned by any read endpoint.
+        description: { type: string }
+        disabled: { type: boolean }
+
+    WebhookDeadLetterEntry:
+      type: object
+      description: One delivery that exhausted its retry budget.
+      required: [id, subscription_id, url, event, attempts, last_error]
+      properties:
+        id: { type: string }
+        subscription_id: { type: string }
+        url: { type: string }
+        event:
+          type: object
+          description: The full audit event that failed to deliver (same shape as GET /api/v1/audit/events entries).
+        attempts: { type: integer }
+        last_error: { type: string }
+        first_failed_at: { type: string, format: date-time }
+        last_failed_at: { type: string, format: date-time }
 
     ErasureReport:
       type: object

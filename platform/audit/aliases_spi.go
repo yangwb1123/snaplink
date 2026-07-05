@@ -68,6 +68,8 @@ const (
 	EventAdminUserEmailChanged               = auditspi.EventAdminUserEmailChanged
 	EventAdminUserLifecycleChanged           = auditspi.EventAdminUserLifecycleChanged
 	EventAdminUserUpdated                    = auditspi.EventAdminUserUpdated
+	EventAdminWebhookSubscriptionCreated     = auditspi.EventAdminWebhookSubscriptionCreated
+	EventAdminWebhookSubscriptionDeleted     = auditspi.EventAdminWebhookSubscriptionDeleted
 	EventAnomalyDetected                     = auditspi.EventAnomalyDetected
 	EventBootstrapLockAcquired               = auditspi.EventBootstrapLockAcquired
 	EventBootstrapLockContended              = auditspi.EventBootstrapLockContended
