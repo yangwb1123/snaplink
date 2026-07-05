@@ -246,3 +246,14 @@ const (
 	PathAdminCryptoKeys          = "/admin/crypto/keys"
 	PathAdminCryptoKeyCompromise = "/admin/crypto/keys/:id/compromise"
 )
+
+// PathCheckSessionIframe is the OpenID Connect Session Management 1.0 §2
+// check_session_iframe endpoint — the OP-hosted, RP-embeddable static page a
+// hidden iframe uses to detect End-User login-state changes. Path segment
+// name matches the discovery field name verbatim (spec convention: RPs
+// discover it as `check_session_iframe`, not a generic "/session" path).
+// Relocated from consts.go for the same per-file budget reason as the other
+// consts in this file.
+const (
+	PathCheckSessionIframe = "/check_session_iframe"
+)

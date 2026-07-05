@@ -70,6 +70,28 @@ func (s *Server) applySessionManagement(ctx HandlerContext, req *login.Request, 
 	})
 }
 
+// ClearSessionManagementCookie implements oidc.EndSessionDeps: expires the
+// OpenID Connect Session Management 1.0 browser-state cookie so a later
+// check_session_iframe comparison observes "changed". A no-op when
+// WithOIDCSessionManagement was never wired — writing a Set-Cookie header
+// in that case would break /end_session's byte-identical-when-off contract.
+// Relocated from accessors.go to keep that file within the per-file line
+// budget; it belongs beside applySessionManagement, the other half of this
+// cookie's lifecycle.
+func (s *Server) ClearSessionManagementCookie(ctx core.HandlerContext) {
+	if !s.sessionManagementEnabled {
+		return
+	}
+	http.SetCookie(ctx.ResponseWriter(), &http.Cookie{
+		Name:     oidc.CheckSessionCookieName,
+		Value:    "",
+		Path:     PathCheckSessionIframe,
+		MaxAge:   -1,
+		Secure:   true,
+		SameSite: http.SameSiteNoneMode,
+	})
+}
+
 // handleMeshExtAuthz is the Envoy/Istio ext_authz HTTP-mode authorization
 // endpoint (cluster C1 mesh data-plane). A mesh sidecar calls it per
 // request: a 200 ALLOWs (and the sidecar injects the X-Auth-* response
