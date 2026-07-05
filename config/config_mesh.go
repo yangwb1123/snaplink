@@ -71,6 +71,39 @@ type SPIFFEConfig struct {
 	MaxClockSkew time.Duration `yaml:"max_clock_skew"`
 }
 
+// TxnTokenConfig opts into RFC 9321 OAuth 2.0 Transaction Tokens: minting a
+// short-lived, workload-identity-bound token from an inbound access token
+// (or, for a further hop, from a previously-issued Txn-Token) that a
+// downstream microservice within the same Trust Domain verifies LOCALLY —
+// no round trip back to this server. Lives here (not a new
+// config_txntoken.go) for the SAME reason TrustConfig below does: the
+// config/ directory is at its frozen file-count ceiling — see
+// directory_fanout_test.go's dirFileCountExemptions.
+//
+// Disabled (the default) ⇒ byte-identical to a build without the feature.
+// Mirrors TrustConfig's wiring model: the reference sso-server binary does
+// NOT auto-wire this section (an Issuer/Validator pair is signing-key
+// infrastructure — reusing the server's own signing issuer, whose
+// SignJWT/JWKS methods already satisfy txntoken.Signer / core.JWKSProvider
+// — not a simple bool flag). Operators wanting Transaction Tokens today
+// construct txntoken.NewIssuer / txntoken.NewValidator directly and call
+// sso.WithTransactionTokens; this section documents the shape a future
+// cmd wiring would translate into that call.
+type TxnTokenConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// TrustDomain is the Trust Domain name every minted Txn-Token's `aud`
+	// carries, and the ONLY value an inbound `audience` request parameter
+	// may name (RFC 9321: a Txn-Token is valid in exactly one trust
+	// domain, unlike a multi-audience exchanged access token). Required
+	// when Enabled.
+	TrustDomain string `yaml:"trust_domain"`
+
+	// TTL bounds a minted Txn-Token's lifetime. 0 ⇒ txntoken.DefaultTTL
+	// (30s) — deliberately much shorter than a normal access token.
+	TTL time.Duration `yaml:"ttl"`
+}
+
 // CAEPConfig opts into the OpenID Shared Signals (CAEP/RISC) transmitter:
 // real-time cross-RP revocation by pushing signed Security Event Tokens
 // (RFC 8417) to the affected client's registered receiver endpoint

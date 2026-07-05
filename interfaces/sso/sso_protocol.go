@@ -23,6 +23,7 @@ import (
 	"github.com/snaplink/sso/platform/signingkeys"
 	"github.com/snaplink/sso/protocols/fapi"
 	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/protocols/oauth/txntoken"
 	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
@@ -166,6 +167,20 @@ type protocolState struct {
 	opPolicyURI                    string
 	opTosURI                       string
 	serviceDocumentation           string
+
+	// txnTokenIssuer / txnTokenValidator opt this Server into RFC 9321
+	// Transaction Tokens (WithTransactionTokens). Nil issuer (the
+	// default) ⇒ the feature is entirely off: dispatchTokenGrant's
+	// token-exchange branch never diverges from the ordinary RFC 8693
+	// handler, so a requested_token_type naming the Txn-Token URN falls
+	// through to that handler's existing invalid_request collapse —
+	// byte-identical to a build without this package. txnTokenValidator
+	// re-validates a Txn-Token presented as a NESTED subject_token (so a
+	// multi-hop chain stays auditable); nil validator with a non-nil
+	// issuer still allows first-hop minting, only nested chaining is
+	// refused (fail-closed, not a panic).
+	txnTokenIssuer    *txntoken.Issuer
+	txnTokenValidator *txntoken.Validator
 }
 
 // clusterState holds cross-replica signing-key aggregation, invalidation-bus degradation, coordinated key-rotation, and cross-replica revocation fields.

@@ -584,6 +584,22 @@ paths:
         | `urn:ietf:params:oauth:grant-type:device_code` | RFC 8628 §3.4 | `device_code` |
         | `urn:ietf:params:oauth:grant-type:token-exchange` | RFC 8693 §2 | `subject_token`, `subject_token_type` (+ optional `actor_token`/`actor_token_type`, `audience`, `requested_token_type`, `acr_values`) |
 
+        **RFC 9321 Transaction Tokens** (opt-in via `WithTransactionTokens`)
+        reuse this SAME `token-exchange` grant: set
+        `requested_token_type: urn:ietf:params:oauth:token-type:txn-token`
+        and `audience` to the deployment's Trust Domain to mint a
+        short-lived, workload-identity-bound Txn-Token from an inbound
+        access token — or, for a further internal hop, from a
+        previously-issued Txn-Token passed as `subject_token` with
+        `subject_token_type: urn:ietf:params:oauth:token-type:txn-token`
+        (each hop prepends its own client_id onto the token's `act` chain,
+        mirroring the ordinary exchange's RFC 8693 §4.1.1 act-chain
+        prepend). Optional `purp` (purpose) and `request_context` (a JSON
+        object) parameters are embedded verbatim in the minted token's
+        `purp` / `rctx` claims. Unconfigured, this requested_token_type
+        value is rejected exactly like any other unrecognized one
+        (`invalid_request`) — byte-identical to a build without it.
+
         **Client authentication** — per RFC 6749 §2.3.1, `Authorization:
         Basic <base64(client_id:client_secret)>` beats body
         `client_id` / `client_secret`. RFC 7521 + 7523 `private_key_jwt`
@@ -8158,6 +8174,7 @@ components:
             - urn:ietf:params:oauth:token-type:refresh_token
             - urn:ietf:params:oauth:token-type:id_token
             - urn:ietf:params:oauth:token-type:jwt
+            - urn:ietf:params:oauth:token-type:txn-token
           example: urn:ietf:params:oauth:token-type:access_token
           description: |
             RFC 8693 §3 token-type URI naming the subject_token's
@@ -8178,6 +8195,13 @@ components:
             `invalid_grant` (no per-cause oracle). When the feature is
             off, a spiffe-sub subject_token is rejected exactly like any
             other invalid subject_token.
+
+            `urn:ietf:params:oauth:token-type:txn-token` (RFC 9321,
+            `WithTransactionTokens`): presents a PREVIOUSLY-issued
+            Txn-Token for a further internal hop. The server re-validates
+            it locally (signature + typ + exp + aud) and prepends the
+            requesting client_id onto its `act` chain rather than
+            re-validating against the original access-token issuer.
         actor_token:
           type: string
           description: |
@@ -8222,12 +8246,22 @@ components:
           enum:
             - urn:ietf:params:oauth:token-type:access_token
             - urn:ietf:params:oauth:token-type:refresh_token
+            - urn:ietf:params:oauth:token-type:txn-token
           description: |
             RFC 8693 §2.1 — the token type the caller wants minted.
             Absent → defaults to access_token. Refresh-token output
             requires `WithRefreshTokenStore` wired (else
             `invalid_request` rather than silently minting an access
             token).
+
+            `urn:ietf:params:oauth:token-type:txn-token` (RFC 9321,
+            `WithTransactionTokens`) mints a short-lived,
+            workload-identity-bound Transaction Token instead of an
+            ordinary access token — see `purp` / `request_context`
+            below and the endpoint description's Transaction Tokens
+            paragraph. Unconfigured, this value is rejected exactly
+            like any other unrecognized requested_token_type
+            (`invalid_request`).
         acr_values:
           type: string
           description: |
@@ -8236,6 +8270,23 @@ components:
             doesn't satisfy this demand (RFC 9470 step-up). Surfaces
             as `insufficient_user_authentication` — same wire shape
             resource servers issue, so SPAs branch uniformly.
+        purp:
+          type: string
+          description: |
+            RFC 9321 Transaction Tokens — the caller-supplied purpose
+            of THIS specific request (e.g. `order.create`), embedded
+            in the minted Txn-Token's `purp` claim. Only meaningful
+            with `requested_token_type=urn:ietf:params:oauth:token-type:txn-token`;
+            ignored otherwise.
+        request_context:
+          type: string
+          description: |
+            RFC 9321 Transaction Tokens — an OPTIONAL caller-supplied
+            JSON object (e.g. `{"trace_id":"..."}`) embedded verbatim
+            in the minted Txn-Token's `rctx` claim. Malformed JSON is
+            rejected with `invalid_request`. Only meaningful with
+            `requested_token_type=urn:ietf:params:oauth:token-type:txn-token`;
+            ignored otherwise.
         client_assertion:
           type: string
           description: |
@@ -8259,10 +8310,13 @@ components:
           type: string
         token_type:
           type: string
-          enum: [Bearer, DPoP]
+          enum: [Bearer, DPoP, N_A]
           description: |
             `Bearer` for the legacy path; `DPoP` when the issuance
-            was DPoP-bound (RFC 9449 §5).
+            was DPoP-bound (RFC 9449 §5). `N_A` (RFC 8693 §2.2.1) on a
+            Transaction Token response — a Txn-Token is never sent via
+            the `Authorization: Bearer` header, so neither bearer name
+            applies.
         expires_in:
           type: integer
           description: Access-token lifetime in seconds.
@@ -8293,6 +8347,7 @@ components:
           enum:
             - urn:ietf:params:oauth:token-type:access_token
             - urn:ietf:params:oauth:token-type:refresh_token
+            - urn:ietf:params:oauth:token-type:txn-token
           description: |
             RFC 8693 §2.2.1 — present on token-exchange responses.
             Mirrors the inbound `requested_token_type` (or defaults
@@ -8315,6 +8370,12 @@ components:
             walk this chain to reconstruct provenance for audit +
             authorization decisions. RFC 8693 §4.1.1 permits
             arbitrary nesting depth.
+
+            `urn:ietf:params:oauth:token-type:txn-token` (RFC 9321):
+            `access_token` carries the minted Txn-Token (`typ:
+            txn-token+jwt`), `token_type` is `N_A`, and its own `act`
+            claim follows the SAME nested-chain shape — the requesting
+            client_id at each hop, outermost = most recent.
 
     IntrospectRequest:
       type: object

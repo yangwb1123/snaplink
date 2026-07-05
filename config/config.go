@@ -62,6 +62,7 @@ type Config struct {
 	DPoP               DPoPConfig                      `yaml:"dpop"`
 	CAEP               CAEPConfig                      `yaml:"caep"`
 	SPIFFE             SPIFFEConfig                    `yaml:"spiffe"`
+	TxnToken           TxnTokenConfig                  `yaml:"txn_token"`
 	Mesh               MeshConfig                      `yaml:"mesh"`
 	Federation         FederationConfig                `yaml:"federation"`
 	SAML               SAMLConfig                      `yaml:"saml"`
