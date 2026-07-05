@@ -241,6 +241,14 @@ const (
 	PathAdminUserMFA         = "/admin/users/:id/mfa"
 	PathAdminUserMFAByID     = "/admin/users/:id/mfa/:factor_id"
 
+	// PathAdminUserLifecycle is the user-lifecycle state-machine endpoint: GET
+	// (admin:read) returns the account's current lifecycle state, the moves
+	// legal from it, and its transition history; POST (admin:write) requests a
+	// transition validated against the legal-transition table. Group-relative;
+	// gated by AdminMiddleware. Mounted only when a userlifecycle.Store AND a
+	// UserProvider are wired.
+	PathAdminUserLifecycle = "/admin/users/:id/lifecycle"
+
 	// PathAdminUserPassword sets a user's password on their behalf (POST,
 	// admin:write) — the helpdesk "reset this user's password" flow. Body:
 	// {new_password}. Group-relative; gated by AdminMiddleware. Mounted only

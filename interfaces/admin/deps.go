@@ -5,6 +5,7 @@ import (
 
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/domains/userlifecycle"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
@@ -27,6 +28,10 @@ type Deps interface {
 	MFAEnrollmentStore() core.MFAEnrollmentStore
 	PasswordCredentialStore() core.PasswordCredentialStore
 	UserProvider() core.UserProvider
+	// LifecycleStore backs the user-lifecycle state-machine admin endpoints
+	// (GET/POST /admin/users/:id/lifecycle); may be nil when WithUserLifecycle
+	// isn't wired, in which case those routes are not mounted.
+	LifecycleStore() userlifecycle.Store
 	AccountLockout() security.AccountLockout
 	DeviceSecretStore() core.DeviceSecretStore
 	PasswordResetStore() core.PasswordResetStore

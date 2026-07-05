@@ -179,4 +179,14 @@ const (
 	// authenticated admin.
 	ErrBulkRevokeConfirmationRequired = "bulk_revoke_confirmation_required"
 	ErrBulkRevokeBatchTooLarge        = "bulk_revoke_batch_too_large"
+	// User lifecycle state machine (POST /api/v1/admin/users/:id/lifecycle).
+	// IllegalLifecycleTransition: the requested target state is not reachable
+	// from the account's current state per the legal-transition table.
+	// UnknownLifecycleState: the requested `state` is not a recognized value.
+	// LifecycleStateConflict (409): the account's state changed between the read
+	// and the write — re-read and retry. None are credential oracles (the caller
+	// is an authenticated admin).
+	ErrIllegalLifecycleTransition = "illegal_lifecycle_transition"
+	ErrUnknownLifecycleState      = "unknown_lifecycle_state"
+	ErrLifecycleStateConflict     = "lifecycle_state_conflict"
 )

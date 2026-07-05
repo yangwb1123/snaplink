@@ -60,6 +60,15 @@ func (s *Server) handleAdminListUserEmailChangeTokens(ctx HandlerContext) {
 	admin.HandleAdminListUserEmailChangeTokens(s, ctx)
 }
 
+// User-lifecycle state machine (admin) — thin wrappers; the state-machine +
+// validation live in domains/userlifecycle, the handlers in admin/lifecycle.go.
+func (s *Server) handleAdminGetUserLifecycle(ctx HandlerContext) {
+	admin.HandleAdminGetUserLifecycle(s, ctx)
+}
+func (s *Server) handleAdminTransitionUserLifecycle(ctx HandlerContext) {
+	admin.HandleAdminTransitionUserLifecycle(s, ctx)
+}
+
 // Zero-trust conditional-access (CAP) governance view (admin).
 func (s *Server) handleAdminListAccessPolicies(ctx HandlerContext) {
 	admin.HandleAdminListAccessPolicies(s, ctx)

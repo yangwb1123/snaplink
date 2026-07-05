@@ -321,6 +321,31 @@ a credential oracle — the caller is an authenticated admin (admin:write).
 | `bulk_revoke_confirmation_required`  | 409  | The batch is large enough (over the soft cap) — or is a client-wide revoke that can't be pre-counted — to demand an explicit `confirm: true` |
 | `bulk_revoke_batch_too_large`        | 409  | The batch exceeds the hard cap and must be narrowed (a subject/client revoke that would wipe more than the storm ceiling), even with `confirm` |
 
+## User lifecycle state machine (`/api/v1/admin/users/:id/lifecycle`)
+
+The user-lifecycle state machine (`WithUserLifecycle`). GET (`admin:read`)
+returns the account's current state, the states reachable from it in one legal
+move, and the transition history; POST (`admin:write`) requests a transition
+validated against the legal-transition table. The states are
+`invited → active → {suspended, inactive} → archived → purged`; the legal edges
+are INVITED→{ACTIVE, ARCHIVED}, ACTIVE→{SUSPENDED, INACTIVE, ARCHIVED},
+SUSPENDED→{ACTIVE, ARCHIVED}, INACTIVE→{ACTIVE, ARCHIVED}, ARCHIVED→{ACTIVE,
+PURGED}, and PURGED is terminal. A user with no record is implicitly `active`.
+Every applied transition emits `admin_user_lifecycle_changed` (`target_user`,
+`from_state`, `to_state`, `reason`); the optional auto-deprovisioning sweep
+(`WithUserAutoDeprovision`, OFF by default) advances dormant accounts through
+ACTIVE→INACTIVE→ARCHIVED with `system` as the actor. Routes are mounted only when
+the store AND a `UserProvider` are wired. None of these codes is a credential
+oracle — the caller is an authenticated admin.
+
+| Code                             | HTTP | Emitted when                                                                                     |
+|----------------------------------|------|--------------------------------------------------------------------------------------------------|
+| `illegal_lifecycle_transition`   | 400  | The requested target state is not reachable from the account's current state per the legal-transition table |
+| `unknown_lifecycle_state`        | 400  | The requested `state` is not a recognized lifecycle state value                                  |
+| `lifecycle_state_conflict`       | 409  | The account's state changed between the read and the write (a concurrent transition) — re-read and retry |
+| `invalid_request`                | 400  | The `:id` path segment or the `state` body field is missing/blank                                |
+| `not_found`                      | 404  | The `UserProvider` has no user with that `:id`                                                    |
+
 ---
 
 ## Server / configuration

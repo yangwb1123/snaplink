@@ -12,6 +12,7 @@ import (
 
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/domains/userlifecycle"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/defaulttoken"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
 	"github.com/snaplink/sso/platform/audit"
@@ -64,6 +65,7 @@ func (d *bgTestDeps) ConsentStore() core.ConsentStore                       { re
 func (d *bgTestDeps) MFAEnrollmentStore() core.MFAEnrollmentStore           { return nil }
 func (d *bgTestDeps) PasswordCredentialStore() core.PasswordCredentialStore { return nil }
 func (d *bgTestDeps) UserProvider() core.UserProvider                       { return nil }
+func (d *bgTestDeps) LifecycleStore() userlifecycle.Store                   { return nil }
 func (d *bgTestDeps) AccountLockout() security.AccountLockout               { return nil }
 func (d *bgTestDeps) DeviceSecretStore() core.DeviceSecretStore             { return nil }
 func (d *bgTestDeps) PasswordResetStore() core.PasswordResetStore           { return nil }

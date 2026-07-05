@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/metering"
+	"github.com/snaplink/sso/domains/userlifecycle"
 	"github.com/snaplink/sso/platform/lifecycle/rotation"
 	"github.com/snaplink/sso/protocols/compliance"
 	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
@@ -139,10 +140,10 @@ type selfServiceState struct {
 	// tokens (SHA-256 hashed); emailVerificationSender delivers them.
 	// signupRequireVerification gates mandatory verification mode (Mode B);
 	// emailVerificationTTL bounds token validity (default 15 min).
-	emailVerificationStore   core.EmailVerificationStore
-	emailVerificationSender  spi.EmailVerificationSender
+	emailVerificationStore    core.EmailVerificationStore
+	emailVerificationSender   spi.EmailVerificationSender
 	signupRequireVerification bool
-	emailVerificationTTL     time.Duration
+	emailVerificationTTL      time.Duration
 
 	// signupEnabled gates POST /auth/register (opt-in self-service signup).
 	// Mounts only when also a UserProvider + PasswordCredentialStore are wired
@@ -256,4 +257,21 @@ type selfServiceState struct {
 	// (WithIdempotentStore). When non-nil, the token handler checks for
 	// an Idempotency-Key header and caches successful responses.
 	idempotentCache core.IdempotentCache
+
+	// userLifecycleStore backs the user-lifecycle state-machine admin endpoints
+	// (GET/POST /api/v1/admin/users/:id/lifecycle) and the auto-deprovisioning
+	// sweep (WithUserLifecycle). Nil ⇒ neither is mounted nor run —
+	// byte-identical to a build without the feature. A user with no record reads
+	// as ACTIVE (the implicit default), so wiring the store alone changes nothing.
+	userLifecycleStore userlifecycle.Store
+
+	// userLifecycleActivity supplies the "last active" dormancy signal the
+	// auto-deprovisioning sweep compares against userDeprovision.DormantAfter
+	// (WithUserAutoDeprovision). Nil ⇒ the sweep is inert.
+	userLifecycleActivity userlifecycle.LastActiveSource
+
+	// userDeprovision gates the auto-deprovisioning sweep (WithUserAutoDeprovision).
+	// The zero value is OFF: RunUserAutoDeprovision is a no-op, so existing
+	// behavior is unchanged unless an operator BOTH wires it AND starts the loop.
+	userDeprovision userlifecycle.DeprovisionConfig
 }
