@@ -51,9 +51,6 @@ related capability exists but the proposed feature does not).
 
 ## Security headers, crypto & versioning
 
-- **FIPS 140-3 build mode** — none. Build tags, `Dockerfile.fips`, GOEXPERIMENT,
-  FIPS issuer, crypto-algorithm governance. _Sources: architecture-analysis,
-  senior-architect-expansion-2026-07-01._
 - **Config JSON-Schema + hot reload** — partial. Schema generation + validator
   chain + `SIGHUP`/`ReloadConfig` hot reload (`DisallowUnknownFields` is warn-only
   today). _Sources: architecture-analysis, ops-api-productization-2026-07-01,

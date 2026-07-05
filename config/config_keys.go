@@ -65,6 +65,29 @@ type SigningConfig struct {
 	// RevocationDSN is the SQLite DSN for the durable revocation store.
 	// Required when RevocationBackend = "sqlite"; ignored otherwise.
 	RevocationDSN string `yaml:"revocation_dsn"`
+
+	// FIPSMode opts into FIPS 140-3 crypto-algorithm governance at issuer-
+	// construction time (see docs/fips.md; gate lives in
+	// shared/security/fipspolicy). Building/running with GOFIPS140=latest
+	// (or GODEBUG=fips140=on) already puts Go's OWN crypto primitives
+	// (crypto/ecdsa, crypto/rsa, crypto/ed25519 — all three) into FIPS
+	// 140-3 mode; this flag adds what Go's runtime mode alone does not:
+	// (1) a startup assertion that the binary actually IS FIPS-enabled,
+	// catching an operator who set this without a GOFIPS140 build/GODEBUG,
+	// and (2) the optional FIPSAllowedAlgs narrowing below. Default false:
+	// byte-identical to every existing deployment.
+	FIPSMode bool `yaml:"fips_mode"`
+
+	// FIPSAllowedAlgs optionally narrows the signing algorithm this
+	// deployment accepts when FIPSMode is true, beyond the package default
+	// (eddsa/es256/rs256/ps256 are all FIPS 186-5 approved digital-signature
+	// algorithms — see shared/security/fipspolicy's doc comment for the
+	// verification trail, including why Ed25519 is NOT excluded by
+	// default). Set this to, e.g., ["es256", "rs256", "ps256"] for a
+	// compliance posture that wants ECDSA/RSA only. Empty (default) =
+	// accept the package's full approved set. Ignored when FIPSMode is
+	// false.
+	FIPSAllowedAlgs []string `yaml:"fips_allowed_algs"`
 }
 
 // KeyRotationConfig drives the automatic signing-key rotation loop.
