@@ -59,6 +59,18 @@ const (
 	EventMFAFailure  EventType = "mfa_failure"
 )
 
+// AI-agent identity + delegation events (domains/tokenexchange/agentidentity).
+const (
+	// EventAgentDelegationTokenIssued records a successful delegation_token
+	// mint: which agent minted, acting for which human, under which
+	// AgentSession, with which (already-narrowed) scopes.
+	EventAgentDelegationTokenIssued EventType = "agent_delegation_token_issued"
+	// EventAgentSessionRevoked records an AgentSession revocation — either a
+	// single session (ActorID = session id) or a cohort revoke of every
+	// session belonging to one human (ActorID = human subject).
+	EventAgentSessionRevoked EventType = "agent_session_revoked"
+)
+
 // Anomaly detection events (off the request hot path).
 const (
 	EventAnomalyDetected EventType = "anomaly_detected"

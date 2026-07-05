@@ -1,17 +1,22 @@
 package sso
 
 import (
+	"context"
 	"time"
 
 	"golang.org/x/time/rate"
 
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/domains/tokenexchange"
+	"github.com/snaplink/sso/domains/tokenexchange/agentidentity"
 	"github.com/snaplink/sso/internal/handler/tokengrant"
+	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oauth/txntoken"
+	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/i18n"
 	"github.com/snaplink/sso/shared/security"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 // WithLocalizer opts into error-response localization: when set, the
@@ -303,3 +308,102 @@ func WithWorkloadIdentityProviders(providers ...security.WorkloadIdentityProvide
 		}
 	}
 }
+
+// WithAgentDelegationGrant enables the delegation_token grant
+// (core.GrantTypeAgentDelegation, domains/tokenexchange/agentidentity): an
+// AI agent redeems a previously-created, human-authorized AgentSession for
+// an access token whose `sub` is the agent's own identity and whose `act`
+// claim points back to the delegating human, with scopes narrowed to the
+// live intersection of the agent's policy, the session's grant, and the
+// human's CURRENT entitlement (never widened — see agentidentity.Deps).
+//
+// All three arguments are REQUIRED: unlike most opt-in gates in this
+// codebase, a partially-wired delegation grant would be worse than no
+// grant at all (it could only under-check the "never widen past the
+// human's entitlement" guarantee this feature exists to provide), so ANY
+// nil argument leaves the grant type entirely unregistered — a
+// grant_type=urn:snaplink:params:oauth:grant-type:delegation request falls
+// through to the ordinary unsupported_grant_type response, byte-identical
+// to a build without this feature.
+//
+//   - provider resolves agent identities (agentidentity.AgentProvider).
+//     agentidentity.NewMemoryAgentProvider is the in-process reference
+//     implementation.
+//   - sessions persists the bounded, revocable delegation records
+//     (agentidentity.AgentSessionStore). agentidentity.NewMemoryAgentSessionStore
+//     is the in-process reference implementation; revoking a session there
+//     (or via agentidentity.RevokeSession / RevokeAllForHuman, which also
+//     audit the action) is checked at EVERY subsequent mint attempt,
+//     fail-closed.
+//   - entitlements resolves a human subject's CURRENT scope entitlement,
+//     called fresh on every mint (never a cached snapshot) — e.g. wrapping
+//     an operator's permissions.Provider role expansion.
+func WithAgentDelegationGrant(provider agentidentity.AgentProvider, sessions agentidentity.AgentSessionStore, entitlements agentidentity.EntitlementsFunc) Option {
+	return func(s *Server) {
+		if provider == nil || sessions == nil || entitlements == nil {
+			return
+		}
+		h := &agentDelegationHandler{
+			server:       s,
+			provider:     provider,
+			sessions:     sessions,
+			entitlements: entitlements,
+		}
+		if s.customGrantHandlers == nil {
+			s.customGrantHandlers = make(map[string]oauth.GrantHandler)
+		}
+		s.customGrantHandlers[core.GrantTypeAgentDelegation] = h
+	}
+}
+
+// agentDelegationHandler is an oauth.GrantHandler that delegates to
+// agentidentity.HandleGrant, satisfying agentidentity.Deps itself: the
+// Mint-side capabilities (IssuerForClient, DPoPTokenTypeOr,
+// RecordTokenIssued, Auditor, SrvLogger) forward to the server — every one
+// of those methods already exists for the OTHER grant handlers — while
+// Agents/Sessions/HumanScopes serve the three pieces WithAgentDelegationGrant
+// captured, keeping *Server itself free of any new agent-identity-specific
+// field or accessor.
+type agentDelegationHandler struct {
+	server       *Server
+	provider     agentidentity.AgentProvider
+	sessions     agentidentity.AgentSessionStore
+	entitlements agentidentity.EntitlementsFunc
+}
+
+func (h *agentDelegationHandler) GrantType() string { return core.GrantTypeAgentDelegation }
+
+func (h *agentDelegationHandler) Handle(ctx core.HandlerContext, client *core.Client, req oauth.TokenRequest, dpopJKT, mtlsX5T string) {
+	agentidentity.HandleGrant(h, ctx, client, agentidentity.Request{
+		AgentSessionID: req.AgentSessionID,
+		Scope:          req.Scope,
+		Resource:       req.Resource,
+	}, dpopJKT, mtlsX5T)
+}
+
+func (h *agentDelegationHandler) Agents() agentidentity.AgentProvider       { return h.provider }
+func (h *agentDelegationHandler) Sessions() agentidentity.AgentSessionStore { return h.sessions }
+
+func (h *agentDelegationHandler) HumanScopes(ctx context.Context, humanSubject string) ([]string, error) {
+	return h.entitlements(ctx, humanSubject)
+}
+
+func (h *agentDelegationHandler) IssuerForClient(c *core.Client) (string, core.TokenIssuer, error) {
+	return h.server.IssuerForClient(c)
+}
+
+func (h *agentDelegationHandler) DPoPTokenTypeOr(defaultType, jkt string) string {
+	return h.server.DPoPTokenTypeOr(defaultType, jkt)
+}
+
+func (h *agentDelegationHandler) RecordTokenIssued(ctx core.HandlerContext, clientID, strategy, subjectID string) {
+	h.server.RecordTokenIssued(ctx, clientID, strategy, subjectID)
+}
+
+func (h *agentDelegationHandler) Auditor() *audit.Recorder { return h.server.Auditor() }
+
+func (h *agentDelegationHandler) SrvLogger() spi.Logger { return h.server.SrvLogger() }
+
+// var _ agentidentity.Deps = (*agentDelegationHandler)(nil) proves the
+// wrapper satisfies HandleGrant's dependency interface.
+var _ agentidentity.Deps = (*agentDelegationHandler)(nil)

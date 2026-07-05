@@ -583,6 +583,24 @@ paths:
         | `client_credentials` | RFC 6749 §4.4 | (none beyond client auth) |
         | `urn:ietf:params:oauth:grant-type:device_code` | RFC 8628 §3.4 | `device_code` |
         | `urn:ietf:params:oauth:grant-type:token-exchange` | RFC 8693 §2 | `subject_token`, `subject_token_type` (+ optional `actor_token`/`actor_token_type`, `audience`, `requested_token_type`, `acr_values`) |
+        | `urn:snaplink:params:oauth:grant-type:delegation` | opt-in, `WithAgentDelegationGrant` | `agent_session_id` (+ optional `scope` to narrow) |
+
+        **AI-agent identity + delegation** (opt-in via
+        `WithAgentDelegationGrant`, domains/tokenexchange/agentidentity) —
+        an AI agent (a first-class identity distinct from any human user or
+        OAuth client) redeems a previously-created `AgentSession` — the
+        bounded, revocable record a human's authorization produced — for an
+        access token whose `sub` is the AGENT's own identity but whose
+        `act` claim (RFC 8693 §4.1) points back to the delegating human.
+        The granted `scope` is the live intersection of the agent's own
+        policy, the session's original grant, and the human's CURRENT
+        entitlement (re-resolved on every mint, never a cached snapshot) —
+        it can only narrow over time, never widen. An expired or revoked
+        `AgentSession` fails closed with `invalid_grant`, checked
+        unconditionally before anything else. Unconfigured, this
+        `grant_type` is never registered and falls straight through to the
+        ordinary `unsupported_grant_type` response — byte-identical to a
+        build without this feature.
 
         **RFC 9321 Transaction Tokens** (opt-in via `WithTransactionTokens`)
         reuse this SAME `token-exchange` grant: set
@@ -673,6 +691,11 @@ paths:
                   subject_token_type: urn:ietf:params:oauth:token-type:access_token
                   audience: [https://downstream-api.example.com]
                   requested_token_type: urn:ietf:params:oauth:token-type:access_token
+              agentDelegation:
+                value:
+                  grant_type: urn:snaplink:params:oauth:grant-type:delegation
+                  agent_session_id: agsess_xJzq...
+                  client_id: agent-orchestrator
           application/json:
             schema:
               $ref: "#/components/schemas/TokenRequest"
@@ -8281,9 +8304,12 @@ components:
             - client_credentials
             - urn:ietf:params:oauth:grant-type:device_code
             - urn:ietf:params:oauth:grant-type:token-exchange
+            - urn:snaplink:params:oauth:grant-type:delegation
           description: |
             Selects the grant branch. See the endpoint description
-            for the required-field table.
+            for the required-field table. The delegation grant is
+            opt-in (`WithAgentDelegationGrant`) — unconfigured, it is
+            rejected exactly like any other unrecognized grant_type.
         client_id:
           type: string
           description: |
@@ -8480,6 +8506,15 @@ components:
             `invalid_request`. For workload-identity, `client_id`
             (form field or Basic auth) is REQUIRED — the cloud token's
             verified identity is not itself this server's client_id.
+        agent_session_id:
+          type: string
+          description: |
+            For `grant_type=urn:snaplink:params:oauth:grant-type:delegation`
+            (opt-in, `WithAgentDelegationGrant`) — the id of the
+            `AgentSession` a human's authorization of an AI agent
+            produced. An unknown, expired, or revoked session
+            collapses to `invalid_grant`. Ignored by every other
+            grant type.
 
     TokenIssuance:
       type: object
