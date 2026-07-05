@@ -6,6 +6,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/domains/tokenexchange"
 	"github.com/snaplink/sso/domains/tokenexchange/agentidentity"
@@ -18,6 +19,24 @@ import (
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
 )
+
+// WithDomainVerificationResolver injects the DNS-TXT resolver used by the admin
+// connection email-domain verification endpoint (first-class DI so tests run
+// network-free with a fake and operators can supply a DNS-over-HTTPS resolver).
+// Nil/unset uses the stdlib-backed production resolver. This only affects the
+// resolver; the enable flag + record prefix live on the connections.Store
+// (WithDomainVerificationRequired / config connections.domain_verification).
+// Relocated from options_admin.go, then from options_httpstack.go (which ran
+// out of room adding WithWASMAuthzEngine), to keep both files within budget;
+// the DomainResolver() accessor that reads this field stays in
+// options_httpstack.go beside ConditionalAccessStore().
+func WithDomainVerificationResolver(r connections.DNSResolver) Option {
+	return func(s *Server) {
+		if r != nil {
+			s.domainVerificationResolver = r
+		}
+	}
+}
 
 // WithLocalizer opts into error-response localization: when set, the
 // authorization-endpoint error envelope (authzErrorBody / authzErrorBodyDesc,

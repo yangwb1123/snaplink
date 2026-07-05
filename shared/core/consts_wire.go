@@ -316,6 +316,23 @@ const (
 	PathAdminRebacCheck = "/admin/rebac/check"
 )
 
+// Pluggable WASM authorization-decision engine (platform/lifecycle/wasmauthz,
+// opt-in sso.WithWASMAuthzEngine): a single operational-debugging
+// admin:read endpoint over the hosted policy module's Authorize call.
+// POST (not GET, unlike PathAdminRebacCheck) because the request body has a
+// richer, nested shape (a Context map) than fits cleanly into query
+// parameters. Mounted only when an Engine is wired — byte-identical to a
+// build without the feature.
+const (
+	PathAdminWASMAuthzCheck = "/admin/wasmauthz/check"
+)
+
+// WASM authz Check response keys.
+const (
+	KeyWASMAuthzAllowed = "allowed"
+	KeyWASMAuthzReason  = "reason"
+)
+
 // ReBAC Check response keys.
 const (
 	KeyRebacAllowed  = "allowed"

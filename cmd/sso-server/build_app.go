@@ -261,6 +261,12 @@ func (b *appBuilder) wireAdminMW(srv *sso.Server) *sso.AdminMiddleware {
 		return nil
 	}
 	mw := sso.NewAdminMiddleware(srv, b.provider)
+	// The wasmauthz admin debug route is a read-only decision probe (POST,
+	// for its JSON body, but no state mutation) — override the default
+	// GET=read/mutation=write HTTP rule for just this one path so it needs
+	// admin:read rather than admin:write. See interfaces/admin/governance.go's
+	// methodScopeForPath for the (longest-prefix) override lookup.
+	mw.SetMethodScope(sso.PathAPIPrefix+sso.PathAdminWASMAuthzCheck, sso.AdminScopeRead)
 	if rate, burst := srv.AdminRateLimit(); rate > 0 && burst > 0 {
 		mw.SetRateLimit(rate, burst)
 	}

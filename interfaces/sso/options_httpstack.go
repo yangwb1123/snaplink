@@ -17,6 +17,7 @@ import (
 	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/lifecycle/rebac"
+	"github.com/snaplink/sso/platform/lifecycle/wasmauthz"
 	"github.com/snaplink/sso/platform/lifecycle/webhook"
 	"github.com/snaplink/sso/shared/core"
 )
@@ -363,6 +364,23 @@ func WithRebacEngine(e *rebac.Engine) Option {
 	return func(s *Server) { s.rebacEngine = e }
 }
 
+// WithWASMAuthzEngine wires a [wasmauthz.Engine] — a pluggable, WebAssembly-
+// hosted authorization-decision engine (platform/lifecycle/wasmauthz) — and
+// mounts ONE operational-debugging admin route: POST
+// /api/v1/admin/wasmauthz/check (JSON body; POST rather than rebac's GET+
+// query-params check because a wasmauthz.Request has a richer, nested shape
+// — a Context map — that doesn't fit cleanly into query parameters). Like
+// WithRebacEngine, this does NOT tap the audit-sink pipeline or any built-in
+// gate — the hosted WASM policy module is consulted by an operator's OWN
+// integration code (see the package doc), so wiring it changes NOTHING
+// about /auth/login or any other request path.
+//
+// nil (the default) leaves the route unmounted — byte-identical to a build
+// without the feature.
+func WithWASMAuthzEngine(e *wasmauthz.Engine) Option {
+	return func(s *Server) { s.wasmAuthzEngine = e }
+}
+
 // WithSCIMProvisioner wires an outbound SCIM 2.0 provisioning push — the
 // reverse direction of the SCIM /Users + /Groups receiver — as an
 // additional audit Sink (the same AddSink/MultiSink seam
@@ -398,6 +416,12 @@ func (s *Server) RebacEngine() *rebac.Engine { return s.rebacEngine }
 
 var _ rebac.HandlerDeps = (*Server)(nil)
 
+// WASMAuthzEngine returns the wired wasmauthz.Engine (nil when unset),
+// satisfying wasmauthz.HandlerDeps for the admin debug route.
+func (s *Server) WASMAuthzEngine() *wasmauthz.Engine { return s.wasmAuthzEngine }
+
+var _ wasmauthz.HandlerDeps = (*Server)(nil)
+
 // SCIMProvisionSink returns the wired outbound SCIM 2.0 provisioning sink
 // (nil when unset — see WithSCIMProvisioner). Typed as audit.Sink rather
 // than the concrete *scimprovision.Sink; see that option's doc for why.
@@ -417,20 +441,8 @@ func (s *Server) DomainResolver() connections.DNSResolver {
 	return connections.NewDNSResolver()
 }
 
-// WithDomainVerificationResolver injects the DNS-TXT resolver used by the admin
-// connection email-domain verification endpoint (first-class DI so tests run
-// network-free with a fake and operators can supply a DNS-over-HTTPS resolver).
-// Nil/unset uses the stdlib-backed production resolver. This only affects the
-// resolver; the enable flag + record prefix live on the connections.Store
-// (WithDomainVerificationRequired / config connections.domain_verification).
-// Relocated from options_admin.go to keep that file within the line budget.
-func WithDomainVerificationResolver(r connections.DNSResolver) Option {
-	return func(s *Server) {
-		if r != nil {
-			s.domainVerificationResolver = r
-		}
-	}
-}
+// WithDomainVerificationResolver moved to options_grants.go (this file was
+// at the line budget after adding WithWASMAuthzEngine below).
 
 // WithAPIVersioning enables Accept-Version request-header negotiation
 // (ADR-0008): supported lists every version token this deployment accepts

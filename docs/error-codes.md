@@ -405,6 +405,29 @@ code. Not mounted without a wired engine.
 
 ---
 
+## Pluggable WASM authorization engine (`/api/v1/admin/wasmauthz/check`)
+
+Opt-in (`sso.WithWASMAuthzEngine`) ONE-route operational-debugging surface for
+the `platform/lifecycle/wasmauthz` pluggable, WebAssembly-hosted
+authorization-decision engine: `POST .../check` (JSON body — a
+`wasmauthz.Request`) evaluates the operator-supplied WASM policy module and
+returns its `wasmauthz.Decision`. admin:read (a read-only decision probe,
+despite POST). This is a FOURTH, independent authorization model alongside
+`domains/permissions` (RBAC), `domains/conditionalaccess` (attribute-based),
+and `platform/lifecycle/rebac` (Zanzibar-style ReBAC) — none of the four
+consult each other, and wasmauthz is not wired into `/auth/login` or any
+other built-in gate; an operator consults `wasmauthz.Engine.Authorize` from
+their own integration code. Not mounted without a wired engine. See
+`docs/wasmauthz.md` for the ABI contract a WASM policy module must implement.
+
+| Code                        | HTTP | Emitted when                                                                                       |
+|------------------------------|------|-----------------------------------------------------------------------------------------------------|
+| `wasmauthz_not_configured`  | 500  | `POST /api/v1/admin/wasmauthz/check` hit with no `WithWASMAuthzEngine` wired (defensive; the route is only mounted when one is) |
+| `invalid_request`           | 400  | The request body is not valid JSON (fails to bind to `wasmauthz.Request`)                          |
+| `internal_error`            | 500  | The wired `wasmauthz.Engine`'s `Authorize` call failed — a guest trap, a malformed JSON decision, an out-of-bounds guest pointer, or the per-call timeout firing. FAIL-CLOSED: any real integration calling `Engine.Authorize` directly must treat this same failure as a denial, never as "inconclusive, so allow" (see `docs/wasmauthz.md`) |
+
+---
+
 ## Admin break-glass sessions (`/api/v1/admin/break-glass*`)
 
 Break-glass (emergency support) admin sessions: a bounded, audited window
