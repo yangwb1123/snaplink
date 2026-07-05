@@ -78,8 +78,13 @@ func retryableDeliveryError(err error) bool {
 // the revoke action, so a byte-identical retransmit of a SET that 500ed
 // would be rejected as a replay. A new jti + iat per attempt is safe —
 // the events payload is identical and idempotent on the receiver.
-func (t *Transmitter) attemptDelivery(endpoint, auth string, req buildSETRequest) error {
-	ctx, cancel := context.WithTimeout(context.Background(), t.timeout)
+//
+// parent is deliver's (already cancellation-detached) context: the
+// per-attempt timeout is layered on top of it rather than context.Background()
+// so the mint/POST still carries the originating request's trace value —
+// WithTimeout's own deadline is unaffected since parent carries none.
+func (t *Transmitter) attemptDelivery(parent context.Context, endpoint, auth string, req buildSETRequest) error {
+	ctx, cancel := context.WithTimeout(parent, t.timeout)
 	defer cancel()
 	set, err := mintSET(ctx, t.signer, req, t.setTTL)
 	if err != nil {

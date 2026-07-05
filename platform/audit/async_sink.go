@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/snaplink/sso/shared/core"
 )
 
 // DefaultAsyncBufferSize is the queue capacity when WithAsyncBuffer is
@@ -186,7 +188,7 @@ func (a *AsyncSink) worker() {
 }
 
 func (a *AsyncSink) deliver(e *Event) {
-	ctx := context.Background()
+	ctx := traceContext(e)
 	if a.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, a.timeout)
@@ -235,18 +237,28 @@ func (a *AsyncSink) batchWorker() {
 }
 
 func (a *AsyncSink) deliverBatch(batch []*Event) {
+	bs, ok := a.inner.(BatchSink)
+	if !ok || len(batch) == 1 {
+		// Per-event fallback: each event still gets ITS OWN trace ID via
+		// deliver/traceContext below.
+		for _, e := range batch {
+			a.deliver(e)
+		}
+		return
+	}
+	// A genuine multi-event batch fans events in from potentially many
+	// unrelated originating requests — that IS the point of batching
+	// (amortising one SQLite transaction across several Record calls). There
+	// is no single caller trace to hand RecordBatch without falsely linking
+	// N-1 events to one arbitrary request's trace, so this intentionally
+	// stays on context.Background() (see AGENTS.md: async work not tied to
+	// one originating request keeps Background). Per-event correlation still
+	// lives on each Event.TraceID field for whoever reads the batch back out.
 	ctx := context.Background()
 	if a.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, a.timeout)
 		defer cancel()
-	}
-	bs, ok := a.inner.(BatchSink)
-	if !ok || len(batch) == 1 {
-		for _, e := range batch {
-			a.deliver(e)
-		}
-		return
 	}
 	if err := bs.RecordBatch(ctx, batch); err != nil {
 		a.dropsInnerError.Add(int64(len(batch)))
@@ -258,6 +270,24 @@ func (a *AsyncSink) deliverBatch(batch []*Event) {
 	}
 }
 
+// traceContext rebuilds a context carrying e's trace ID via the shared/core
+// convention (the same one audit event enrichment already stamps onto
+// Event.TraceID from the inbound W3C traceparent — see
+// handler_helpers.go:EventFromRequest). The delivery worker runs on a
+// detached goroutine with no caller context available (Record intentionally
+// drops its ctx argument — a cancelled request ctx would otherwise abort a
+// delivery the request itself has already returned from), so re-hydrating
+// the trace ID here is what lets a downstream Sink/logger that reads
+// core.TraceIDFromContext still correlate this delivery with the request
+// that produced e, instead of every async write looking like an unrelated
+// background operation.
+func traceContext(e *Event) context.Context {
+	if e == nil || e.TraceID == "" {
+		return context.Background()
+	}
+	return core.WithTraceID(context.Background(), e.TraceID)
+}
+
 // Record enqueues e for background delivery and returns nil. The
 // request-path caller never sees a propagated error; drops are reported
 // only via the AsyncDropHandler.
@@ -265,7 +295,10 @@ func (a *AsyncSink) deliverBatch(batch []*Event) {
 // The supplied ctx is intentionally NOT forwarded to the worker: the
 // request goroutine often returns before delivery, and a cancelled ctx
 // would abort the inner Sink.Record. Trace IDs ride on the Event itself
-// (TraceID / SpanID / ParentSpanID), so observability is preserved.
+// (TraceID / SpanID / ParentSpanID) instead, and deliver/deliverBatch
+// re-hydrate the trace ID onto a fresh context (see traceContext) before
+// calling the inner Sink, so observability survives the handoff without
+// tying delivery's lifetime to the request's.
 func (a *AsyncSink) Record(_ context.Context, e *Event) error {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
