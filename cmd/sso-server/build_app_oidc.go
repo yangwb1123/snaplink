@@ -8,6 +8,7 @@ import (
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
+	"github.com/snaplink/sso/domains/webhook"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -150,6 +151,39 @@ func (b *appBuilder) wireSSEEvents() {
 	}
 	b.logger.Info("events: realtime admin event stream enabled",
 		"max_subscribers", ec.MaxSubscribers, "replay_buffer", ec.ReplayBuffer)
+}
+
+// wireWebhookEngine wires the generic event/webhook egress engine
+// (domains/webhook): a MultiSink sibling to the primary audit sink that
+// fans matching events out to runtime-registered EventSubscriptions
+// (managed via the admin API, not YAML — see WebhooksConfig). Default-off:
+// skipping this leaves b.opts untouched, so a build without
+// webhooks.enabled is byte-identical. Subscriptions and dead-letters are
+// process-local (MemorySubscriptionStore / MemoryDeadLetterStore); a
+// restart loses them, matching MemorySink's discipline for the primary
+// audit ring buffer.
+func (b *appBuilder) wireWebhookEngine() {
+	wc := b.cfg.Webhooks
+	if !wc.Enabled {
+		return
+	}
+	opts := []webhook.Option{
+		webhook.WithLogger(b.logger),
+		webhook.WithFailureRecorder(b.recorder),
+	}
+	if wc.DeliveryTimeout > 0 {
+		opts = append(opts, webhook.WithDeliveryTimeout(wc.DeliveryTimeout))
+	}
+	if wc.Retry.MaxAttempts > 0 || wc.Retry.InitialBackoff > 0 || wc.Retry.MaxBackoff > 0 {
+		opts = append(opts, webhook.WithDeliveryRetry(wc.Retry.MaxAttempts, wc.Retry.InitialBackoff, wc.Retry.MaxBackoff))
+	}
+	eng := webhook.NewEngine(
+		webhook.NewMemorySubscriptionStore(),
+		webhook.NewMemoryDeadLetterStore(wc.DeadLetterCapacity),
+		opts...,
+	)
+	b.opts = append(b.opts, sso.WithWebhookEngine(eng))
+	b.logger.Info("webhooks: generic event/webhook egress engine enabled — manage subscriptions via POST /api/v1/admin/webhooks/subscriptions")
 }
 
 // wireFederation wires OpenID Federation 1.0 entity config, trust-chain

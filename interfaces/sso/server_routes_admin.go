@@ -18,6 +18,16 @@ const (
 	PathAdminTokenRevoke     = core.PathAdminTokenRevoke
 )
 
+// Generic event/webhook egress engine admin route-path re-exports —
+// aliases.go is at its line budget, same reason as the Token Portfolio
+// consts above.
+const (
+	PathAdminWebhookSubscriptions    = core.PathAdminWebhookSubscriptions
+	PathAdminWebhookSubscriptionByID = core.PathAdminWebhookSubscriptionByID
+	PathAdminWebhookDeadLetters      = core.PathAdminWebhookDeadLetters
+	PathAdminWebhookDeadLetterReplay = core.PathAdminWebhookDeadLetterReplay
+)
+
 // Admin REST API route registration, extracted from Mount (server_routes.go).
 // All routes hang off the /api/v1 group created in Mount; the /api/v1/admin/*
 // paths are gated by AdminMiddleware (GET admin:read, mutations admin:write).
@@ -40,6 +50,22 @@ func (s *Server) mountAdminSurface() {
 	s.mountAdminB2B(api)
 	s.mountConfigAuditAPI(api)
 	s.mountAdminBreakGlass(api)
+	s.mountWebhookAdminAPI(api)
+}
+
+// mountWebhookAdminAPI registers the opt-in generic event/webhook egress
+// engine's admin surface (opt-in WithWebhookEngine): subscription
+// management + dead-letter-queue inspection/replay. Not mounted without an
+// engine — byte-identical to a build without the feature.
+func (s *Server) mountWebhookAdminAPI(api Router) {
+	if s.webhookEngine == nil {
+		return
+	}
+	api.GET(PathAdminWebhookSubscriptions, s.handleWebhookListSubscriptions)
+	api.POST(PathAdminWebhookSubscriptions, s.handleWebhookCreateSubscription)
+	api.DELETE(PathAdminWebhookSubscriptionByID, s.handleWebhookDeleteSubscription)
+	api.GET(PathAdminWebhookDeadLetters, s.handleWebhookListDeadLetters)
+	api.POST(PathAdminWebhookDeadLetterReplay, s.handleWebhookReplayDeadLetter)
 }
 
 // mountAdminAPIObservability registers the client lookup plus the opt-in audit,
@@ -378,6 +404,8 @@ func adminAPIEndpointCandidates() []endpointCandidate {
 		{endpointInfo{http.MethodPost, prefix + PathAdminTenantInvitations, "admin_api"}, on(func(s *Server) bool { return s.invitationStore != nil })},
 		{endpointInfo{http.MethodGet, PathAuthzPolicyBundle, "admin_api"}, on(func(s *Server) bool { return s.permissions != nil })},
 		{endpointInfo{http.MethodGet, PathStorageHealth, "admin_api"}, on(func(s *Server) bool { return len(s.storageHealthSources) > 0 })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminWebhookSubscriptions, "admin_api"}, on(func(s *Server) bool { return s.webhookEngine != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminWebhookDeadLetters, "admin_api"}, on(func(s *Server) bool { return s.webhookEngine != nil })},
 	}
 }
 

@@ -64,4 +64,9 @@ const (
 	// Metadata carries the compliance evidence chain: credential_type,
 	// credential_reason, credential_old_version, credential_new_version.
 	EventAdminCredentialCompromised EventType = "admin_credential_compromised"
+	// Generic event/webhook egress engine (domains/webhook) subscription
+	// lifecycle — emitted by POST/DELETE
+	// /api/v1/admin/webhooks/subscriptions[/:id].
+	EventAdminWebhookSubscriptionCreated EventType = "admin_webhook_subscription_created"
+	EventAdminWebhookSubscriptionDeleted EventType = "admin_webhook_subscription_deleted"
 )

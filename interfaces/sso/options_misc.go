@@ -9,6 +9,7 @@ import (
 	"github.com/snaplink/sso/domains/tokenanomaly"
 	"github.com/snaplink/sso/domains/tokenpolicy"
 	"github.com/snaplink/sso/domains/tokenusage"
+	"github.com/snaplink/sso/domains/webhook"
 	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/platform/geo"
 	"github.com/snaplink/sso/platform/metrics"
@@ -437,4 +438,20 @@ func WithConditionalAccess(store conditionalaccess.Store, cfg conditionalaccess.
 		s.capStore = store
 		s.capEngine = conditionalaccess.NewEngine(store, cfg)
 	}
+}
+
+// WithWebhookEngine wires a [webhook.Engine] — the generic event/webhook
+// egress engine — as an additional audit Sink (the same AddSink/MultiSink
+// seam WithCAEPTransmitter and WithSSEBroker use) and mounts the admin
+// subscription + dead-letter-queue management routes (GET/POST
+// /api/v1/admin/webhooks/subscriptions, DELETE .../{id}, GET
+// .../deadletters, POST .../deadletters/{id}/replay).
+//
+// nil (the default) leaves both the sink tap and the routes unmounted —
+// byte-identical to a build without the feature. A wired engine with ZERO
+// registered subscriptions is ALSO byte-identical traffic-wise: matching a
+// recorded event against an empty subscription set is a cheap no-op with no
+// outbound POST.
+func WithWebhookEngine(e *webhook.Engine) Option {
+	return func(s *Server) { s.webhookEngine = e }
 }

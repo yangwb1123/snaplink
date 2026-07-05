@@ -17,6 +17,7 @@ import (
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tokenanomaly"
 	"github.com/snaplink/sso/domains/tokenusage"
+	"github.com/snaplink/sso/domains/webhook"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/platform/configaudit"
@@ -178,6 +179,15 @@ func (s *Server) BreakGlassStore() core.BreakGlassStore {
 }
 
 func (s *Server) ConnectionStore() connections.Store { return s.connectionStore }
+
+// WebhookEngine returns the wired generic event/webhook egress engine (nil
+// when unset), satisfying webhook.HandlerDeps for the admin subscription +
+// dead-letter-queue management routes.
+func (s *Server) WebhookEngine() *webhook.Engine { return s.webhookEngine }
+
+// Compile-time proof that *Server satisfies the webhook admin handlers'
+// dependency surface (Auditor() is declared above; WebhookEngine() just above).
+var _ webhook.HandlerDeps = (*Server)(nil)
 
 // ConditionalAccessStore exposes the wired zero-trust CAP policy store (may be
 // nil) for the admin governance view. Satisfies admin.Deps.

@@ -7,6 +7,7 @@ import (
 
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/tenant"
+	"github.com/snaplink/sso/domains/webhook"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/netpolicy"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -230,6 +231,25 @@ func (s *Server) handleApplyNetPolicy(ctx HandlerContext)     { netpolicy.Handle
 func (s *Server) handleDeleteNetPolicy(ctx HandlerContext)    { netpolicy.HandleDelete(s, ctx) }
 func (s *Server) handleClassifyNetPolicy(ctx HandlerContext)  { netpolicy.HandleClassify(s, ctx) }
 func (s *Server) handleResolveMeNetPolicy(ctx HandlerContext) { netpolicy.HandleResolveMe(s, ctx) }
+
+// Generic event/webhook egress engine endpoint handlers moved to
+// domains/webhook/handlers.go. Methods below stay as thin delegators so the
+// existing route binding via method values keeps working.
+func (s *Server) handleWebhookListSubscriptions(ctx HandlerContext) {
+	webhook.HandleListSubscriptions(s, ctx)
+}
+func (s *Server) handleWebhookCreateSubscription(ctx HandlerContext) {
+	webhook.HandleCreateSubscription(s, ctx)
+}
+func (s *Server) handleWebhookDeleteSubscription(ctx HandlerContext) {
+	webhook.HandleDeleteSubscription(s, ctx)
+}
+func (s *Server) handleWebhookListDeadLetters(ctx HandlerContext) {
+	webhook.HandleListDeadLetters(s, ctx)
+}
+func (s *Server) handleWebhookReplayDeadLetter(ctx HandlerContext) {
+	webhook.HandleReplayDeadLetter(s, ctx)
+}
 
 // ClassifyRequest is exposed for embedders that want to classify a request
 // in their own middleware. Returns nil when no classifier is wired or no

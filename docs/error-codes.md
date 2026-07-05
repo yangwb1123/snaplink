@@ -270,6 +270,24 @@ falls through to the same 401/403 the rest of `/api/v1/admin/*` uses.
 
 ---
 
+## Generic event/webhook egress engine (`/api/v1/admin/webhooks/*`)
+
+Opt-in (`sso.WithWebhookEngine`) admin surface for the `domains/webhook`
+egress engine: operators register a destination URL + a set of
+`audit.EventType` values they want pushed, HMAC-signed per-subscription
+(`X-Signature`, same scheme as the audit-log webhook and CAEP). Not mounted
+without a wired engine. GET is `admin:read`; POST/DELETE are `admin:write`
+via the default `AdminMiddleware` method-scope rule.
+
+| Code                             | HTTP | Emitted when                                                                                     |
+|-----------------------------------|------|---------------------------------------------------------------------------------------------------|
+| `webhook_not_configured`         | 500  | Any `/api/v1/admin/webhooks/*` route hit with no `WithWebhookEngine` wired (defensive; routes are only mounted when one is) |
+| `invalid_request`                | 400  | `POST .../subscriptions` body is malformed JSON, or fails `EventSubscription.Validate` (missing/non-https `url`, empty `event_types`, or empty `secret`) |
+| `webhook_deadletter_not_found`   | 404  | `POST .../deadletters/{id}/replay` on an unknown dead-letter id                                    |
+| `internal_error`                 | 502  | `POST .../deadletters/{id}/replay` could not resolve the subscription, or the replay POST itself failed — the entry stays queued for a later retry |
+
+---
+
 ## Admin break-glass sessions (`/api/v1/admin/break-glass*`)
 
 Break-glass (emergency support) admin sessions: a bounded, audited window
