@@ -8,10 +8,12 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/metrics"
 )
 
 // RSA JWT constants.
@@ -110,6 +112,10 @@ type RSAJWTIssuer struct {
 	// clock is nil by default (nowFrom falls back to time.Now()) — see
 	// WithRSAClock.
 	clock Clock
+
+	// metrics records per-(alg,kid) signing usage (see recordSigningUsage).
+	// nil (the default) when WithRSAMetrics isn't wired.
+	metrics *metrics.Metrics
 }
 
 // RSAOption configures the issuer at construction time.
@@ -161,6 +167,22 @@ func WithRSAKeyID(kid string) RSAOption {
 // byte-identical to the pre-Clock-injection code.
 func WithRSAClock(c Clock) RSAOption {
 	return func(j *RSAJWTIssuer) { j.clock = c }
+}
+
+// WithRSAMetrics wires per-(alg,kid) signing-usage observability
+// (sso_signing_key_usage_total). Optional — omitted or nil keeps every Sign
+// call a no-op observation.
+func WithRSAMetrics(m *metrics.Metrics) RSAOption {
+	return func(j *RSAJWTIssuer) { j.metrics = m }
+}
+
+// recordSigningUsage bumps the signing-usage counter for a successful
+// in-process sign. Nil-safe; called from every Issue*/SignJWT method right
+// after their sgn.Sign succeeds. alg is lowercased (RS256/PS256 -> rs256/
+// ps256) to match the bounded metric-label vocabulary normalizeAlgLabel uses
+// for the external-signer path.
+func (j *RSAJWTIssuer) recordSigningUsage(kid string) {
+	j.metrics.ObserveSigningUsage(strings.ToLower(j.alg), kid)
 }
 
 // WithRSAVerifyKey adds a verify-only public key (the retired half of a

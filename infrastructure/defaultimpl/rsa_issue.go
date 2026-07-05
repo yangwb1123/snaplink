@@ -31,6 +31,7 @@ func (j *RSAJWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scopes [
 	if err != nil {
 		return nil, err
 	}
+	j.recordSigningUsage(kid)
 
 	return &sso.Token{
 		AccessToken: token,
@@ -74,7 +75,12 @@ func (j *RSAJWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenReques
 	payload.AtHash = accessTokenHash(j.alg, req.AccessToken)
 	// Native SSO 1.0 §3.1: ds_hash binds an accompanying device_secret.
 	payload.DsHash = accessTokenHash(j.alg, req.DeviceSecret)
-	return signCompactJWS(ctx, sgn, header, payload, "rsa: sign id token")
+	token, err := signCompactJWS(ctx, sgn, header, payload, "rsa: sign id token")
+	if err != nil {
+		return "", err
+	}
+	j.recordSigningUsage(kid)
+	return token, nil
 }
 
 // IssueLogoutToken mints an OIDC BCL 1.0 §2.4 logout token with the same
@@ -104,7 +110,12 @@ func (j *RSAJWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.LogoutToke
 		Events: map[string]json.RawMessage{backchannelLogoutEvent: json.RawMessage("{}")},
 		SID:    req.SID,
 	}
-	return signCompactJWS(ctx, sgn, header, payload, "rsa: sign logout token")
+	token, err := signCompactJWS(ctx, sgn, header, payload, "rsa: sign logout token")
+	if err != nil {
+		return "", err
+	}
+	j.recordSigningUsage(kid)
+	return token, nil
 }
 
 // SignJWT signs an arbitrary claims object as a compact JWS using the
@@ -120,5 +131,10 @@ func (j *RSAJWTIssuer) SignJWT(ctx context.Context, typ string, claims any) (str
 	}
 	sgn, kid := j.currentKey()
 	header := rsaHeader{Alg: j.alg, Typ: typ, Kid: kid}
-	return signCompactJWS(ctx, sgn, header, claims, "rsa: sign jwt (typ="+typ+")")
+	token, err := signCompactJWS(ctx, sgn, header, claims, "rsa: sign jwt (typ="+typ+")")
+	if err != nil {
+		return "", err
+	}
+	j.recordSigningUsage(kid)
+	return token, nil
 }

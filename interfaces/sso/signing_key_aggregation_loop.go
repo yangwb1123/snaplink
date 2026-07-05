@@ -245,6 +245,20 @@ func (s *Server) reconcileAdopted(replicaID string, keys []core.JWK) {
 	}
 
 	s.adoptedPeerMu.Lock()
+	toDrop := s.diffAdoptedRefcountsLocked(replicaID, announced, announcedSet)
+	s.adoptedPeerMu.Unlock()
+
+	s.dropVerifyKidsFromIssuers(toDrop)
+	s.refreshVerifyKeysGauge()
+}
+
+// diffAdoptedRefcountsLocked updates replicaID's adopted kid set + the
+// cross-replica refcounts by SET DIFFERENCE (see reconcileAdopted's doc above
+// for why), stamps lastSeenPeer for PruneVerifyKeys' retention sweep — even on
+// a no-op reconcile, so its window measures "how long since we last heard
+// from this replica", not "how long since its kids changed" — and returns the
+// kids whose refcount reached zero. Caller MUST hold adoptedPeerMu.
+func (s *Server) diffAdoptedRefcountsLocked(replicaID string, announced []string, announcedSet map[string]struct{}) []string {
 	if s.adoptedPeerKids == nil {
 		s.adoptedPeerKids = make(map[string][]string)
 	}
@@ -275,9 +289,11 @@ func (s *Server) reconcileAdopted(replicaID string, keys []core.JWK) {
 		}
 	}
 	s.adoptedPeerKids[replicaID] = announced
-	s.adoptedPeerMu.Unlock()
-
-	s.dropVerifyKidsFromIssuers(toDrop)
+	if s.lastSeenPeer == nil {
+		s.lastSeenPeer = make(map[string]time.Time)
+	}
+	s.lastSeenPeer[replicaID] = time.Now()
+	return toDrop
 }
 
 // dropVerifyKidsFromIssuers removes the given kids from every issuer's
@@ -296,6 +312,10 @@ func (s *Server) dropVerifyKidsFromIssuers(kids []string) {
 		}
 	}
 }
+
+// refreshVerifyKeysGauge, PruneVerifyKeys, and releaseReplicaKidsLocked
+// (the signing-key hygiene sweep) live in options_misc.go, alongside
+// WithCoordinatedKeyRotation — this file was at the line budget.
 
 // adoptPeerKey routes one announced JWK to a matching-alg issuer and adopts it verify-only.
 func (s *Server) adoptPeerKey(replicaID string, jwk core.JWK) (string, bool) {
@@ -428,19 +448,8 @@ func isRSAJWK(jwk core.JWK) bool   { return jwk.Kty == jwkKtyRSA }
 // dropAllAdopted forgets every peer key this replica adopted from replicaID.
 func (s *Server) dropAllAdopted(replicaID string) {
 	s.adoptedPeerMu.Lock()
-	kids := s.adoptedPeerKids[replicaID]
-	delete(s.adoptedPeerKids, replicaID)
-	var toDrop []string
-	for _, kid := range kids {
-		if s.adoptedKidRefs == nil {
-			break
-		}
-		s.adoptedKidRefs[kid]--
-		if s.adoptedKidRefs[kid] <= 0 {
-			delete(s.adoptedKidRefs, kid)
-			toDrop = append(toDrop, kid)
-		}
-	}
+	toDrop := s.releaseReplicaKidsLocked(replicaID)
 	s.adoptedPeerMu.Unlock()
 	s.dropVerifyKidsFromIssuers(toDrop)
+	s.refreshVerifyKeysGauge()
 }

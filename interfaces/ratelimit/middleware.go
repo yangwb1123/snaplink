@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/interfaces/middleware"
+	"github.com/snaplink/sso/platform/metrics"
 )
 
 // Policy maps an incoming request to the limiter that gates it. Prefix
@@ -28,6 +29,18 @@ type Policy struct {
 	// (KeyByClientIP) keys per source IP. Plug in custom for
 	// per-(IP,client_id) buckets, per-API-key, etc.
 	Key KeyFunc
+
+	// Metrics, when set, records sso_rate_limit_hits_total for every
+	// rejected request. nil (the default) skips rate-limit metrics
+	// entirely — the right behavior when WithMetrics isn't wired.
+	Metrics *metrics.Metrics
+
+	// TenantKeyFunc resolves the tenant label for the rate-limit-hits
+	// metric. Called ONLY on the reject path — never on allowed requests —
+	// so a store-backed lookup adds no latency to normal traffic. nil (the
+	// default, single-tenant-safe value) always yields
+	// metrics.TenantLabelUnknown.
+	TenantKeyFunc KeyFunc
 }
 
 // PrefixRule pairs a URL path prefix with the limiter that applies
@@ -112,12 +125,30 @@ func Middleware(p Policy) func(http.Handler) http.Handler {
 			}
 			ok, retry := lim.Allow(keyFn(r))
 			if !ok {
+				p.recordRejection(r)
 				writeTooManyRequests(w, retry)
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// recordRejection bumps sso_rate_limit_hits_total for a rejected request.
+// Nil-safe (no-op when Metrics isn't wired). The tenant label resolves via
+// TenantKeyFunc ONLY here, on the already-slow-path reject — never on
+// allowed traffic — so a store-backed resolver adds no hot-path cost.
+func (p Policy) recordRejection(r *http.Request) {
+	if p.Metrics == nil {
+		return
+	}
+	tenant := metrics.TenantLabelUnknown
+	if p.TenantKeyFunc != nil {
+		if v := p.TenantKeyFunc(r); v != "" {
+			tenant = v
+		}
+	}
+	p.Metrics.ObserveRateLimitHit(tenant)
 }
 
 // limiterFor returns the Limiter that applies to a given request path,

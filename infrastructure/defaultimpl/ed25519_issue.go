@@ -45,6 +45,7 @@ func (j *Ed25519JWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scop
 	if err != nil {
 		return nil, err
 	}
+	j.recordSigningUsage(kid)
 
 	return &sso.Token{
 		AccessToken: token,
@@ -107,7 +108,12 @@ func (j *Ed25519JWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRe
 	// Native SSO 1.0 §3.1: ds_hash binds an accompanying device_secret, same
 	// left-half-hash construction as at_hash. Empty secret omits the claim.
 	payload.DsHash = accessTokenHash(jwtAlgEdDSA, req.DeviceSecret)
-	return signCompactJWS(ctx, sgn, header, payload, "ed25519: sign id token")
+	token, err := signCompactJWS(ctx, sgn, header, payload, "ed25519: sign id token")
+	if err != nil {
+		return "", err
+	}
+	j.recordSigningUsage(kid)
+	return token, nil
 }
 
 // The compile-time check that this issuer satisfies caep.JWTSigner lives
@@ -137,7 +143,12 @@ func (j *Ed25519JWTIssuer) SignJWT(ctx context.Context, typ string, claims any) 
 	}
 	sgn, kid := j.currentKey()
 	header := ed25519Header{Alg: jwtAlgEdDSA, Typ: typ, Kid: kid}
-	return signCompactJWS(ctx, sgn, header, claims, "ed25519: sign jwt (typ="+typ+")")
+	token, err := signCompactJWS(ctx, sgn, header, claims, "ed25519: sign jwt (typ="+typ+")")
+	if err != nil {
+		return "", err
+	}
+	j.recordSigningUsage(kid)
+	return token, nil
 }
 
 // logoutTokenTyp is OIDC BCL 1.0 §2.4's REQUIRED `typ` header.
@@ -202,5 +213,10 @@ func (j *Ed25519JWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.Logout
 		Events: map[string]json.RawMessage{backchannelLogoutEvent: json.RawMessage("{}")},
 		SID:    req.SID,
 	}
-	return signCompactJWS(ctx, sgn, header, payload, "ed25519: sign logout token")
+	token, err := signCompactJWS(ctx, sgn, header, payload, "ed25519: sign logout token")
+	if err != nil {
+		return "", err
+	}
+	j.recordSigningUsage(kid)
+	return token, nil
 }

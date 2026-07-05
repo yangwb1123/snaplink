@@ -62,11 +62,11 @@ func BuildSigningIssuer(sc config.SigningConfig, srv config.ServerConfig, m *met
 
 	switch alg := strings.ToLower(strings.TrimSpace(sc.Alg)); alg {
 	case "", "eddsa", "ed25519":
-		return buildEd25519SigningIssuer(srv, extSigner, extKID, revStore)
+		return buildEd25519SigningIssuer(srv, extSigner, extKID, revStore, m)
 	case "es256", "ecdsa":
-		return buildECDSASigningIssuer(srv, extSigner, extKID, revStore)
+		return buildECDSASigningIssuer(srv, extSigner, extKID, revStore, m)
 	case "rs256", "ps256", "rsa":
-		return buildRSASigningIssuer(alg, srv, extSigner, extKID, revStore)
+		return buildRSASigningIssuer(alg, srv, extSigner, extKID, revStore, m)
 	default:
 		return nil, "", nil, fmt.Errorf("keys.signing.alg %q unsupported (supported: eddsa, es256, rs256, ps256)", alg)
 	}

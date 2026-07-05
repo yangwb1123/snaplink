@@ -10,7 +10,14 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/metrics"
 )
+
+// metricsAlgEdDSA is this family's bounded sso_signing_key_usage_total alg
+// label, matching cmd/sso-server/serverbuildsign.normalizeAlgLabel's
+// vocabulary so the external-signer and in-process metrics agree on alg
+// spelling.
+const metricsAlgEdDSA = "eddsa"
 
 // Ed25519 JWT constants.
 const (
@@ -122,6 +129,11 @@ type Ed25519JWTIssuer struct {
 	// clock is nil by default (nowFrom falls back to time.Now()) — see
 	// WithEd25519Clock.
 	clock Clock
+
+	// metrics records per-(alg,kid) signing usage (see recordSigningUsage).
+	// nil (the default) when WithEd25519Metrics isn't wired — every call is a
+	// no-op, matching every other optional metric in this codebase.
+	metrics *metrics.Metrics
 }
 
 // currentKey snapshots the active signer + its kid together under the
@@ -198,6 +210,21 @@ func WithEd25519KeyID(kid string) Ed25519Option {
 // sleeping or tolerating a timing window.
 func WithEd25519Clock(c Clock) Ed25519Option {
 	return func(j *Ed25519JWTIssuer) { j.clock = c }
+}
+
+// WithEd25519Metrics wires per-(alg,kid) signing-usage observability
+// (sso_signing_key_usage_total). Optional — a nil or omitted Metrics keeps
+// every Sign call a no-op observation, byte-identical to a build without it.
+func WithEd25519Metrics(m *metrics.Metrics) Ed25519Option {
+	return func(j *Ed25519JWTIssuer) { j.metrics = m }
+}
+
+// recordSigningUsage bumps the signing-usage counter for a successful
+// in-process sign. Nil-safe; called from every Issue*/SignJWT method right
+// after their sgn.Sign succeeds, never from JWKS/lookup paths that don't
+// actually sign.
+func (j *Ed25519JWTIssuer) recordSigningUsage(kid string) {
+	j.metrics.ObserveSigningUsage(metricsAlgEdDSA, kid)
 }
 
 // WithEd25519VerifyKey adds a public key the issuer will accept on

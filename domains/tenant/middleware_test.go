@@ -440,3 +440,74 @@ func TestMiddleware_EndToEndThroughExtractorAndStore(t *testing.T) {
 		t.Errorf("end-to-end resolution failed: %+v", r)
 	}
 }
+
+// --- ResolveTenantID: the standalone resolver used by callers OUTSIDE the
+// router's middleware chain (the rate-limit rejection metric), which cannot
+// read FromHandlerContext because they run before Middleware in the stack.
+
+func TestResolveTenantID_NilStoreReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	req := httptest.NewRequest(http.MethodGet, "http://acme.com/", nil)
+	req.Host = "acme.com"
+	if got := ResolveTenantID(context.Background(), nil, MiddlewareOptions{}, req); got != "" {
+		t.Errorf("nil store: got %q, want empty", got)
+	}
+}
+
+func TestResolveTenantID_NilRequestReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	s := newMemStore()
+	s.seedActive("acme.com", "t1")
+	if got := ResolveTenantID(context.Background(), s, MiddlewareOptions{}, nil); got != "" {
+		t.Errorf("nil request: got %q, want empty", got)
+	}
+}
+
+func TestResolveTenantID_ResolvesActiveTenant(t *testing.T) {
+	t.Parallel()
+	s := newMemStore()
+	s.seedActive("acme.com", "t1")
+	req := httptest.NewRequest(http.MethodGet, "http://acme.com/", nil)
+	req.Host = "acme.com"
+	if got := ResolveTenantID(context.Background(), s, MiddlewareOptions{}, req); got != "t1" {
+		t.Errorf("got %q, want t1", got)
+	}
+}
+
+func TestResolveTenantID_UnknownHostReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	s := newMemStore() // no domains seeded
+	req := httptest.NewRequest(http.MethodGet, "http://ghost.com/", nil)
+	req.Host = "ghost.com"
+	if got := ResolveTenantID(context.Background(), s, MiddlewareOptions{}, req); got != "" {
+		t.Errorf("unknown host: got %q, want empty", got)
+	}
+}
+
+func TestResolveTenantID_SuspendedTenantHiddenByDefault(t *testing.T) {
+	t.Parallel()
+	s := newMemStore()
+	s.tenants["t1"] = &Tenant{ID: "t1", Slug: "t1", Status: StatusSuspended}
+	s.domains["acme.com"] = &Domain{Hostname: "acme.com", TenantID: "t1"}
+	req := httptest.NewRequest(http.MethodGet, "http://acme.com/", nil)
+	req.Host = "acme.com"
+	if got := ResolveTenantID(context.Background(), s, MiddlewareOptions{}, req); got != "" {
+		t.Errorf("suspended tenant: got %q, want empty (default IncludeSuspended=false)", got)
+	}
+	opts := MiddlewareOptions{IncludeSuspended: true}
+	if got := ResolveTenantID(context.Background(), s, opts, req); got != "t1" {
+		t.Errorf("suspended tenant with IncludeSuspended: got %q, want t1", got)
+	}
+}
+
+func TestResolveTenantID_EmptyHostSkipsLookup(t *testing.T) {
+	t.Parallel()
+	s := newMemStore()
+	s.seedActive("acme.com", "t1")
+	req := httptest.NewRequest(http.MethodGet, "http://acme.com/", nil)
+	req.Host = "acme.com"
+	opts := MiddlewareOptions{HostExtractor: func(*http.Request) string { return "" }}
+	if got := ResolveTenantID(context.Background(), s, opts, req); got != "" {
+		t.Errorf("empty-host extractor: got %q, want empty", got)
+	}
+}

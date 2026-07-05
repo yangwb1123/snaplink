@@ -92,6 +92,20 @@ const (
 	// gauge (active mode == 1); NameDegradedRejectionsTotal counts gate refusals.
 	NameDegradationMode         = "sso_degradation_mode"
 	NameDegradedRejectionsTotal = "sso_degraded_rejections_total"
+
+	// NameRateLimitHitsTotal counts requests the rate limiter rejected
+	// (interfaces/ratelimit), by resolved tenant. Zero traffic when
+	// WithRateLimit isn't wired.
+	NameRateLimitHitsTotal = "sso_rate_limit_hits_total"
+
+	// Signing-key hygiene: pruning stale peer-adopted verify-only keys
+	// (PruneVerifyKeys), the resulting verify-set memory footprint, and
+	// per-kid signing usage. See credential_rotation.go for the register +
+	// observe helpers — kept there (near budget) rather than growing
+	// metrics_ctor.go further.
+	NameSigningKeyPrunedTotal   = "sso_signing_key_pruned_total"
+	NameSigningVerifyKeySetSize = "sso_signing_verify_key_set_size"
+	NameSigningUsageTotal       = "sso_signing_key_usage_total"
 )
 
 // Label names used by the metric vectors. Bounded cardinality by
@@ -121,7 +135,20 @@ const (
 	LabelKind            = "kind"      // bounded: access | refresh | id
 	LabelEndpoint        = "endpoint"  // bounded: token | introspect | userinfo
 	LabelDegradationMode = "mode"      // bounded: the 5 degraded-service modes
+
+	// LabelKid is the signing-key kid dimension on sso_signing_key_usage_total.
+	// Bounded by the issuing replica's own rotation policy — at most a
+	// handful of kids are ever "active or recently demoted" per alg at once,
+	// changing only on a RotateKey call, never on request input (§5).
+	LabelKid = "kid"
 )
+
+// TenantLabelUnknown is the sso_rate_limit_hits_total fallback bucket used
+// when no tenant resolver is wired at all (single-tenant deployments, or a
+// multi-tenant deployment that hasn't opted a resolver into rate-limit
+// observability). Distinct from TenantLabelOther (a resolved-but-unlisted
+// tenant): this means "tenant resolution never ran for this request".
+const TenantLabelUnknown = "unknown"
 
 // Token-policy evaluation outcomes (sso_token_policy_evaluations_total),
 // bounded to two values (§5). The per-denial breakdown lives on

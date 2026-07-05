@@ -39,6 +39,7 @@ func (j *ECDSAJWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scopes
 	if err != nil {
 		return nil, err
 	}
+	j.recordSigningUsage(kid)
 
 	return &sso.Token{
 		AccessToken: token,
@@ -82,7 +83,12 @@ func (j *ECDSAJWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRequ
 	payload.AtHash = accessTokenHash(jwtAlgES256, req.AccessToken)
 	// Native SSO 1.0 §3.1: ds_hash binds an accompanying device_secret.
 	payload.DsHash = accessTokenHash(jwtAlgES256, req.DeviceSecret)
-	return signCompactJWS(ctx, sgn, header, payload, "ecdsa: sign id token")
+	token, err := signCompactJWS(ctx, sgn, header, payload, "ecdsa: sign id token")
+	if err != nil {
+		return "", err
+	}
+	j.recordSigningUsage(kid)
+	return token, nil
 }
 
 // IssueLogoutToken mints an OIDC BCL 1.0 §2.4 Back-Channel Logout token
@@ -112,7 +118,12 @@ func (j *ECDSAJWTIssuer) IssueLogoutToken(ctx context.Context, req *sso.LogoutTo
 		Events: map[string]json.RawMessage{backchannelLogoutEvent: json.RawMessage("{}")},
 		SID:    req.SID,
 	}
-	return signCompactJWS(ctx, sgn, header, payload, "ecdsa: sign logout token")
+	token, err := signCompactJWS(ctx, sgn, header, payload, "ecdsa: sign logout token")
+	if err != nil {
+		return "", err
+	}
+	j.recordSigningUsage(kid)
+	return token, nil
 }
 
 // SignJWT signs an arbitrary claims object as a compact JWS using the
@@ -128,5 +139,10 @@ func (j *ECDSAJWTIssuer) SignJWT(ctx context.Context, typ string, claims any) (s
 	}
 	sgn, kid := j.currentKey()
 	header := ecdsaHeader{Alg: jwtAlgES256, Typ: typ, Kid: kid}
-	return signCompactJWS(ctx, sgn, header, claims, "ecdsa: sign jwt (typ="+typ+")")
+	token, err := signCompactJWS(ctx, sgn, header, claims, "ecdsa: sign jwt (typ="+typ+")")
+	if err != nil {
+		return "", err
+	}
+	j.recordSigningUsage(kid)
+	return token, nil
 }

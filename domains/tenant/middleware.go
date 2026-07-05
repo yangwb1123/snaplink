@@ -133,6 +133,50 @@ func FromHandlerContext(hctx core.HandlerContext) (*Resolved, bool) {
 	return r, ok
 }
 
+// ResolveTenantID performs the same Host -> Domain -> Tenant lookup as
+// Middleware, returning just the resolved tenant ID (or "" on any failure or
+// absence). Exposed for callers OUTSIDE the router's per-request middleware
+// chain — e.g. the rate-limit rejection metric, which runs BEFORE Middleware
+// in the HTTP stack and so cannot read FromHandlerContext. Honors the same
+// Timeout/HostExtractor/IncludeSuspended knobs as Middleware so the result is
+// identical whichever path resolved it.
+//
+// Callers on a hot path should NOT invoke this per-request — it costs a
+// store round-trip. It's intended for already-slow-path callers (a rejected
+// request) where the extra lookup is negligible relative to the reject
+// itself.
+func ResolveTenantID(ctx context.Context, store Store, opts MiddlewareOptions, r *http.Request) string {
+	if store == nil || r == nil {
+		return ""
+	}
+	extract := opts.HostExtractor
+	if extract == nil {
+		extract = DefaultHostExtractor
+	}
+	host := extract(r)
+	if host == "" {
+		return ""
+	}
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = DefaultLookupTimeout
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	dom, err := store.GetDomain(lookupCtx, host)
+	if err != nil {
+		return ""
+	}
+	t, err := store.GetTenant(lookupCtx, dom.TenantID)
+	if err != nil || t == nil {
+		return ""
+	}
+	if t.Status != StatusActive && !opts.IncludeSuspended {
+		return ""
+	}
+	return t.ID
+}
+
 // DefaultHostExtractor pulls the hostname from the standard places:
 // the Host header (mandatory in HTTP/1.1), or the first hop of an
 // X-Forwarded-Host when present (only trust when the AS sits behind

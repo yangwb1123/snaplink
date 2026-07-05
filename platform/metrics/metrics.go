@@ -379,6 +379,40 @@ type Metrics struct {
 	// how much traffic the current posture is shedding.
 	DegradationMode         *prometheus.GaugeVec   // labels: mode
 	DegradedRejectionsTotal *prometheus.CounterVec // labels: mode, method
+
+	// RateLimitHitsTotal counts requests the rate limiter (interfaces/ratelimit)
+	// rejected with 429, by resolved tenant. tenant is the tenant.Store lookup
+	// result for the request's Host (config-bounded: at most as many distinct
+	// values as tenants/domains actually configured, never raw request input)
+	// when a TenantKeyFunc is wired on the Policy, else TenantLabelUnknown —
+	// the single-tenant-safe default. The lookup runs ONLY on the reject path
+	// (never on allowed traffic), so normal request latency is unaffected.
+	// Zero traffic when WithRateLimit isn't wired.
+	RateLimitHitsTotal *prometheus.CounterVec // labels: tenant
+
+	// Signing-key hygiene (peer-adopted verify-only keys from the leaderless
+	// aggregation registry, see platform/signingkeys + PruneVerifyKeys).
+	// SigningKeyPrunedTotal counts keys a hygiene sweep removed because their
+	// announcing replica hadn't been reconciled within the retention window
+	// (a safety net for a missed/lost EventKeysRemoved, distinct from the
+	// per-request set-diff reconciliation that already runs on every
+	// announcement). SigningVerifyKeysTotal gauges the CURRENT size of that
+	// peer-adopted verify set — the memory footprint PruneVerifyKeys manages —
+	// refreshed on every adopt/drop/prune. Both zero/unset when no signing-key
+	// registry is wired.
+	SigningKeyPrunedTotal  prometheus.Counter
+	SigningVerifyKeysTotal prometheus.Gauge
+
+	// SigningUsageTotal counts each IN-PROCESS sign performed by a JWT issuer
+	// (Ed25519/ECDSA/RSA), by alg + kid. Distinct from SigningOperationsTotal
+	// (external KMS/HSM round-trips only) — this covers the software-signer
+	// path so operators can watch usage shift from an old kid to a new one
+	// right after a RotateKey call, the direct evidence a rotation cutover
+	// actually took effect, and size PruneVerifyKeys' retention window off real
+	// traffic. kid cardinality is bounded by the issuer's own rotation policy
+	// (§5), never request input. Zero traffic unless an issuer's WithXMetrics
+	// option wires this Metrics in.
+	SigningUsageTotal *prometheus.CounterVec // labels: alg, kid
 }
 
 // SetFeatureGateEnabled records the boot-time state of one FeatureGates
