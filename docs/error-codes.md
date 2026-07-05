@@ -348,6 +348,27 @@ via the default `AdminMiddleware` method-scope rule.
 
 ---
 
+## ReBAC relationship-tuple engine (`/api/v1/admin/rebac/check`)
+
+Opt-in (`sso.WithRebacEngine`) ONE-route operational-debugging surface for
+the `platform/lifecycle/rebac` Zanzibar-style relationship-based access
+control (ReBAC) primitive: `GET .../check?object=&relation=&subject=`
+answers whether `subject` has `relation` on `object`, walking direct tuples
+plus one level of group-membership indirection. admin:read. This is a THIRD,
+independent authorization model alongside `domains/permissions` (RBAC) and
+`domains/conditionalaccess` (attribute-based) — none of the three consult
+each other, and rebac is not wired into `/auth/login` or any other built-in
+gate; an operator consults `rebac.Engine.Check` from their own integration
+code. Not mounted without a wired engine.
+
+| Code                    | HTTP | Emitted when                                                                                       |
+|-------------------------|------|-----------------------------------------------------------------------------------------------------|
+| `rebac_not_configured`  | 500  | `GET /api/v1/admin/rebac/check` hit with no `WithRebacEngine` wired (defensive; the route is only mounted when one is) |
+| `invalid_request`       | 400  | `object`, `relation`, or `subject` query parameter missing                                          |
+| `internal_error`        | 500  | The wired `RelationTupleStore` returned an error while resolving the Check                          |
+
+---
+
 ## Admin break-glass sessions (`/api/v1/admin/break-glass*`)
 
 Break-glass (emergency support) admin sessions: a bounded, audited window

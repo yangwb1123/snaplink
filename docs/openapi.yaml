@@ -4725,6 +4725,68 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/rebac/check:
+    get:
+      tags: [admin]
+      summary: Evaluate a ReBAC relationship-tuple Check query (operational debugging).
+      description: |
+        Answers whether `subject` has `relation` on `object`, per the
+        Zanzibar-style relationship-tuple engine (`platform/lifecycle/rebac`):
+        a direct tuple match, or one level of group-membership indirection
+        (a tuple whose subject is a userset reference like
+        `group:eng#member`, expanded once against that userset's own
+        tuples — nested groups are NOT expanded further). admin:read. Opt-in
+        via `WithRebacEngine`; the route is not mounted (404) when no engine
+        is wired. This is the ONLY rebac admin route — an operational
+        debugging tool, not a tuple-management CRUD surface; tuples are
+        written through the `RelationTupleStore` Go API by the operator's own
+        integration code. rebac is an independent authorization primitive:
+        it is never consulted by `/auth/login` or any other built-in gate.
+      operationId: rebacCheck
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: object
+          in: query
+          required: true
+          description: 'The "namespace:id" object being checked, e.g. "document:42".'
+          schema: { type: string }
+        - name: relation
+          in: query
+          required: true
+          description: 'The relation being checked, e.g. "viewer".'
+          schema: { type: string }
+        - name: subject
+          in: query
+          required: true
+          description: 'The "namespace:id" subject being checked, e.g. "user:alice".'
+          schema: { type: string }
+      responses:
+        "200":
+          description: The Check result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  allowed: { type: boolean }
+                  object: { type: string }
+                  relation: { type: string }
+                  subject: { type: string }
+        "400":
+          description: A required query parameter (object, relation, subject) is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500":
+          description: No `WithRebacEngine` wired, or the backing RelationTupleStore errored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/dr/mode:
     get:
       tags: [admin]

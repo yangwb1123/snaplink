@@ -16,6 +16,7 @@ import (
 	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/platform/geo"
 	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
+	"github.com/snaplink/sso/platform/lifecycle/rebac"
 	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
 	"github.com/snaplink/sso/platform/lifecycle/webhook"
 	"github.com/snaplink/sso/platform/netpolicy"
@@ -69,6 +70,15 @@ type wiringState struct {
 	// (WithWebhookEngine). Nil = no admin subscription/dead-letter routes,
 	// no audit-sink tap — byte-identical to a build without the feature.
 	webhookEngine *webhook.Engine
+
+	// rebacEngine is the opt-in Zanzibar-style relationship-tuple Check
+	// engine (WithRebacEngine, platform/lifecycle/rebac). Nil = no admin
+	// debug route mounted — byte-identical to a build without the
+	// feature. Unlike the other authorization layers wired on Server,
+	// this engine is NOT consulted by any built-in gate (see the package
+	// doc); the only Server-side use is the operational-debugging
+	// endpoint below.
+	rebacEngine *rebac.Engine
 
 	// scimProvisionSink is the opt-in outbound SCIM 2.0 provisioning push
 	// (WithSCIMProvisioner; typically a *scimprovision.Sink from

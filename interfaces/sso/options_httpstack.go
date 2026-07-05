@@ -11,6 +11,7 @@ import (
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/rebac"
 	"github.com/snaplink/sso/platform/lifecycle/webhook"
 	"github.com/snaplink/sso/shared/core"
 )
@@ -319,6 +320,21 @@ func Bool(b bool) *bool { return &b }
 // outbound POST.
 func WithWebhookEngine(e *webhook.Engine) Option {
 	return func(s *Server) { s.webhookEngine = e }
+}
+
+// WithRebacEngine wires a [rebac.Engine] — the Zanzibar-style relationship-
+// tuple Check engine (platform/lifecycle/rebac) — and mounts ONE
+// operational-debugging admin route: GET /api/v1/admin/rebac/check?object=
+// &relation=&subject=. Unlike WithWebhookEngine/WithCAEPTransmitter, this
+// does NOT tap the audit-sink pipeline or any built-in gate — rebac is an
+// independent authorization primitive an operator consults from their own
+// integration code (see the package doc), so wiring it changes NOTHING
+// about /auth/login or any other request path.
+//
+// nil (the default) leaves the route unmounted — byte-identical to a build
+// without the feature.
+func WithRebacEngine(e *rebac.Engine) Option {
+	return func(s *Server) { s.rebacEngine = e }
 }
 
 // WithSCIMProvisioner wires an outbound SCIM 2.0 provisioning push — the

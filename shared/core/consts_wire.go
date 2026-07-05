@@ -290,6 +290,22 @@ const (
 	KeyWebhookDeadLetter    = "dead_letter"
 )
 
+// ReBAC relationship-tuple engine (platform/lifecycle/rebac, opt-in
+// sso.WithRebacEngine): a single operational-debugging admin:read endpoint
+// over the Check engine. Mounted only when an Engine is wired —
+// byte-identical to a build without the feature.
+const (
+	PathAdminRebacCheck = "/admin/rebac/check"
+)
+
+// ReBAC Check response keys.
+const (
+	KeyRebacAllowed  = "allowed"
+	KeyRebacObject   = "object"
+	KeyRebacRelation = "relation"
+	KeyRebacSubject  = "subject"
+)
+
 // PathAdminChanges / PathAdminChangeByID / PathAdminChangeApprove /
 // PathAdminChangeReject serve the generic change-approval workflow
 // (platform/lifecycle/admingovernance). Relocated from consts.go for the same

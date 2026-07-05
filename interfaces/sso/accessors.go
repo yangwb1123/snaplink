@@ -22,6 +22,7 @@ import (
 	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/platform/geo"
+	"github.com/snaplink/sso/platform/lifecycle/rebac"
 	"github.com/snaplink/sso/platform/lifecycle/webhook"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/netpolicy"
@@ -219,6 +220,12 @@ func (s *Server) WebhookEngine() *webhook.Engine { return s.webhookEngine }
 // Compile-time proof that *Server satisfies the webhook admin handlers'
 // dependency surface (Auditor() is declared above; WebhookEngine() just above).
 var _ webhook.HandlerDeps = (*Server)(nil)
+
+// RebacEngine returns the wired rebac.Engine (nil when unset), satisfying
+// rebac.HandlerDeps for the admin debug route.
+func (s *Server) RebacEngine() *rebac.Engine { return s.rebacEngine }
+
+var _ rebac.HandlerDeps = (*Server)(nil)
 
 // SCIMProvisionSink returns the wired outbound SCIM 2.0 provisioning sink
 // (nil when unset — see WithSCIMProvisioner). Typed as audit.Sink rather

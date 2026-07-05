@@ -9,6 +9,7 @@ import (
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/interfaces/admin"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/rebac"
 	"github.com/snaplink/sso/platform/lifecycle/webhook"
 	"github.com/snaplink/sso/platform/netpolicy"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -277,6 +278,28 @@ func (s *Server) mountWebhookAdminAPI(api Router) {
 	api.DELETE(PathAdminWebhookSubscriptionByID, s.handleWebhookDeleteSubscription)
 	api.GET(PathAdminWebhookDeadLetters, s.handleWebhookListDeadLetters)
 	api.POST(PathAdminWebhookDeadLetterReplay, s.handleWebhookReplayDeadLetter)
+}
+
+// ReBAC relationship-tuple engine (platform/lifecycle/rebac) admin debug
+// route: a single GET, so unlike the webhook/netpolicy blocks above there is
+// no mutation handler to delegate.
+func (s *Server) handleRebacCheck(ctx HandlerContext) { rebac.HandleCheck(s, ctx) }
+
+// PathAdminRebacCheck route-path re-export — aliases.go is at its line
+// budget, same reason as the Token Portfolio / crypto-inventory consts.
+const PathAdminRebacCheck = core.PathAdminRebacCheck
+
+// mountRebacAdminAPI registers the opt-in ReBAC Check engine's ONE
+// operational-debugging route (opt-in WithRebacEngine). Not mounted without
+// an engine — byte-identical to a build without the feature. This is
+// deliberately the ONLY rebac route: the package is a primitive an operator
+// consults from their own integration code, not a full admin CRUD surface
+// (see the package doc).
+func (s *Server) mountRebacAdminAPI(api Router) {
+	if s.rebacEngine == nil {
+		return
+	}
+	api.GET(PathAdminRebacCheck, s.handleRebacCheck)
 }
 
 // ClassifyRequest is exposed for embedders that want to classify a request
