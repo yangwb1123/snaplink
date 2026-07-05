@@ -9,7 +9,7 @@ IMAGE_TAG ?= dev
 
 CLI = python cli.py
 
-.PHONY: help test race bench vet fmt build docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-serve release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance
+.PHONY: help test race bench vet fmt build docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-serve release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance
 
 # ── Go Dev (via $GO directly for speed) ──────────────────────────────
 
@@ -28,6 +28,20 @@ bench: ## Run benchmarks.
 
 bench-all: ## Run benchmarks on all packages (same as bench).
 	$(GO) test -run='^$$' -bench=. -benchmem ./...
+
+# Benchmark budget CI gate (ops/deploy/benchgate/): opt-in perf-regression
+# check for the gated hot-path benchmark set (JWT issuance/validation, JWKS,
+# OAuth store concurrency, param binding, rate limiting — see
+# benchmarks.yaml). Deliberately NOT a dependency of `ci`/`race`: benchmarks
+# are noisier and much slower than the race-detector suite other agents rely
+# on as a hard, fast gate. Run manually pre-release, or from the separate,
+# non-blocking .github/workflows/benchmark-gate.yml — never wire into a
+# PR-blocking job.
+bench-gate: ## Benchmark budget CI gate: fails if a gated hot-path benchmark regresses beyond threshold vs. baseline. Opt-in — NOT part of `make ci`.
+	bash ops/deploy/benchgate/compare-baseline.sh
+
+bench-gate-record: ## Regenerate ops/deploy/benchgate/baseline.txt from the current tree. Run manually after an accepted perf change.
+	bash ops/deploy/benchgate/record-baseline.sh
 
 load-test: ## Load-test /token (requires k6).
 	@command -v k6 >/dev/null 2>&1 || { echo "k6 not installed" >&2; exit 1; }

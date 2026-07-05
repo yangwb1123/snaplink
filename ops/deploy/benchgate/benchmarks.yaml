@@ -1,0 +1,41 @@
+# Benchmark budget CI gate — declares the gated "hot path" benchmark set
+# plus the regression threshold `compare-baseline.sh` checks them against.
+# See docs/deferred-backlog.md "Benchmark budget CI gate" and AGENTS.md
+# "Hot-path performance" (sync.Pool JWT-issuance buffers, sharded OAuth
+# store locks) for why these specific paths are gated.
+#
+# Deliberately explicit (pkg, -bench regex) pairs — NOT a blanket
+# `-bench=. ./...` — so a newly-added Benchmark* elsewhere in the tree does
+# NOT silently join the gate. Promoting a hot path into the gate is a
+# deliberate, reviewed action.
+#
+# Format is intentionally flat (no nested maps/anchors/multi-line scalars):
+# ops/deploy/benchgate/run-benchmarks.sh reads it with a plain awk/bash
+# state machine so this CI-only tool script never needs a YAML-parsing
+# dependency. Keep "benchmarks:" as the LAST section in this file — the
+# parser reads everything after that line to EOF.
+
+# Fail if any gated benchmark's sec/op regresses more than this percent
+# vs. the checked-in baseline (ops/deploy/benchgate/baseline.txt), AND
+# benchstat itself considers the change statistically significant (default
+# alpha=0.05) — this avoids failing the gate on single-run noise.
+threshold_percent: 10
+
+# -count passed to `go test -bench`. benchstat needs several samples per
+# side for a meaningful confidence interval / significance test; the
+# baseline MUST be recorded with this same count (record-baseline.sh and
+# compare-baseline.sh both go through run-benchmarks.sh, so they always
+# match).
+count: 6
+
+benchmarks:
+  - pkg: ./infrastructure/defaultimpl
+    bench: ^Benchmark(Ed25519|ECDSA|RSA)(Issue|Validate|IssueValidate|JWKS)$
+  - pkg: ./shared/security
+    bench: ^BenchmarkVerifyCompactJWS_EdDSA$
+  - pkg: ./infrastructure/defaultimpl/memorystoreoauth
+    bench: ^BenchmarkMemory(AuthCodeStore|PARStore)_ConcurrentIssueConsume$
+  - pkg: ./protocols/oauth
+    bench: ^BenchmarkBindParams(Form|JSON)$
+  - pkg: ./interfaces/ratelimit
+    bench: ^BenchmarkMemoryLimiterAllow

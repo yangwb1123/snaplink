@@ -1,0 +1,150 @@
+goos: linux
+goarch: amd64
+pkg: github.com/snaplink/sso/infrastructure/defaultimpl
+cpu: AMD Ryzen 7 7840HS w/ Radeon 780M Graphics     
+BenchmarkEd25519Issue-16            	   55147	     21540 ns/op	    1692 B/op	      15 allocs/op
+BenchmarkEd25519Issue-16            	   54340	     21698 ns/op	    1691 B/op	      15 allocs/op
+BenchmarkEd25519Issue-16            	   53662	     21570 ns/op	    1691 B/op	      15 allocs/op
+BenchmarkEd25519Issue-16            	   55224	     21557 ns/op	    1691 B/op	      15 allocs/op
+BenchmarkEd25519Issue-16            	   56385	     21572 ns/op	    1691 B/op	      15 allocs/op
+BenchmarkEd25519Issue-16            	   53656	     21519 ns/op	    1692 B/op	      15 allocs/op
+BenchmarkEd25519Validate-16         	   24711	     48522 ns/op	    3664 B/op	      48 allocs/op
+BenchmarkEd25519Validate-16         	   24087	     49887 ns/op	    3664 B/op	      48 allocs/op
+BenchmarkEd25519Validate-16         	   23972	     49434 ns/op	    3664 B/op	      48 allocs/op
+BenchmarkEd25519Validate-16         	   23746	     50320 ns/op	    3664 B/op	      48 allocs/op
+BenchmarkEd25519Validate-16         	   24614	     49083 ns/op	    3664 B/op	      48 allocs/op
+BenchmarkEd25519Validate-16         	   24237	     48366 ns/op	    3664 B/op	      48 allocs/op
+BenchmarkEd25519IssueValidate-16    	   16632	     72472 ns/op	    5365 B/op	      63 allocs/op
+BenchmarkEd25519IssueValidate-16    	   16736	     72367 ns/op	    5365 B/op	      63 allocs/op
+BenchmarkEd25519IssueValidate-16    	   16849	     72021 ns/op	    5366 B/op	      63 allocs/op
+BenchmarkEd25519IssueValidate-16    	   16221	     71838 ns/op	    5366 B/op	      63 allocs/op
+BenchmarkEd25519IssueValidate-16    	   16780	     71467 ns/op	    5365 B/op	      63 allocs/op
+BenchmarkEd25519IssueValidate-16    	   16510	     71828 ns/op	    5366 B/op	      63 allocs/op
+BenchmarkEd25519JWKS-16             	 6592233	       185.2 ns/op	     240 B/op	       3 allocs/op
+BenchmarkEd25519JWKS-16             	 6338998	       182.3 ns/op	     240 B/op	       3 allocs/op
+BenchmarkEd25519JWKS-16             	 6590673	       184.5 ns/op	     240 B/op	       3 allocs/op
+BenchmarkEd25519JWKS-16             	 6453804	       185.0 ns/op	     240 B/op	       3 allocs/op
+BenchmarkEd25519JWKS-16             	 6383498	       188.3 ns/op	     240 B/op	       3 allocs/op
+BenchmarkEd25519JWKS-16             	 6588433	       185.3 ns/op	     240 B/op	       3 allocs/op
+BenchmarkECDSAIssue-16              	   42453	     28977 ns/op	    7978 B/op	      78 allocs/op
+BenchmarkECDSAIssue-16              	   40720	     29655 ns/op	    7978 B/op	      78 allocs/op
+BenchmarkECDSAIssue-16              	   38936	     30496 ns/op	    7978 B/op	      78 allocs/op
+BenchmarkECDSAIssue-16              	   39684	     30921 ns/op	    7979 B/op	      78 allocs/op
+BenchmarkECDSAIssue-16              	   39478	     30458 ns/op	    7978 B/op	      78 allocs/op
+BenchmarkECDSAIssue-16              	   40284	     30766 ns/op	    7978 B/op	      78 allocs/op
+BenchmarkECDSAValidate-16           	   18237	     63617 ns/op	    4528 B/op	      60 allocs/op
+BenchmarkECDSAValidate-16           	   18968	     63572 ns/op	    4528 B/op	      60 allocs/op
+BenchmarkECDSAValidate-16           	   18644	     63296 ns/op	    4528 B/op	      60 allocs/op
+BenchmarkECDSAValidate-16           	   19251	     64257 ns/op	    4528 B/op	      60 allocs/op
+BenchmarkECDSAValidate-16           	   19032	     63274 ns/op	    4528 B/op	      60 allocs/op
+BenchmarkECDSAValidate-16           	   19045	     63210 ns/op	    4528 B/op	      60 allocs/op
+BenchmarkECDSAJWKS-16               	 4047602	       297.6 ns/op	     336 B/op	       5 allocs/op
+BenchmarkECDSAJWKS-16               	 4217522	       287.6 ns/op	     336 B/op	       5 allocs/op
+BenchmarkECDSAJWKS-16               	 4152043	       290.9 ns/op	     336 B/op	       5 allocs/op
+BenchmarkECDSAJWKS-16               	 4050931	       284.2 ns/op	     336 B/op	       5 allocs/op
+BenchmarkECDSAJWKS-16               	 4170879	       289.5 ns/op	     336 B/op	       5 allocs/op
+BenchmarkECDSAJWKS-16               	 4144731	       293.7 ns/op	     336 B/op	       5 allocs/op
+BenchmarkRSAIssue-16                	    1510	    796504 ns/op	    2496 B/op	      17 allocs/op
+BenchmarkRSAIssue-16                	    1509	    791380 ns/op	    2496 B/op	      17 allocs/op
+BenchmarkRSAIssue-16                	    1488	    815137 ns/op	    2497 B/op	      17 allocs/op
+BenchmarkRSAIssue-16                	    1513	    815979 ns/op	    2496 B/op	      17 allocs/op
+BenchmarkRSAIssue-16                	    1465	    791337 ns/op	    2497 B/op	      17 allocs/op
+BenchmarkRSAIssue-16                	    1516	    813934 ns/op	    2496 B/op	      17 allocs/op
+BenchmarkRSAValidate-16             	   37170	     32222 ns/op	    4912 B/op	      49 allocs/op
+BenchmarkRSAValidate-16             	   37840	     31594 ns/op	    4912 B/op	      49 allocs/op
+BenchmarkRSAValidate-16             	   36612	     32514 ns/op	    4912 B/op	      49 allocs/op
+BenchmarkRSAValidate-16             	   36829	     31318 ns/op	    4912 B/op	      49 allocs/op
+BenchmarkRSAValidate-16             	   38648	     31800 ns/op	    4912 B/op	      49 allocs/op
+BenchmarkRSAValidate-16             	   37844	     31578 ns/op	    4912 B/op	      49 allocs/op
+BenchmarkRSAJWKS-16                 	 1737842	       657.6 ns/op	    1108 B/op	       5 allocs/op
+BenchmarkRSAJWKS-16                 	 1826775	       692.5 ns/op	    1108 B/op	       5 allocs/op
+BenchmarkRSAJWKS-16                 	 1717894	       688.0 ns/op	    1108 B/op	       5 allocs/op
+BenchmarkRSAJWKS-16                 	 1734759	       699.7 ns/op	    1108 B/op	       5 allocs/op
+BenchmarkRSAJWKS-16                 	 1611999	       719.1 ns/op	    1108 B/op	       5 allocs/op
+BenchmarkRSAJWKS-16                 	 1771063	       681.5 ns/op	    1108 B/op	       5 allocs/op
+PASS
+ok  	github.com/snaplink/sso/infrastructure/defaultimpl	99.436s
+goos: linux
+goarch: amd64
+pkg: github.com/snaplink/sso/shared/security
+cpu: AMD Ryzen 7 7840HS w/ Radeon 780M Graphics     
+BenchmarkVerifyCompactJWS_EdDSA-16    	   27145	     43790 ns/op	     976 B/op	      12 allocs/op
+BenchmarkVerifyCompactJWS_EdDSA-16    	   27129	     43934 ns/op	     976 B/op	      12 allocs/op
+BenchmarkVerifyCompactJWS_EdDSA-16    	   26901	     43292 ns/op	     976 B/op	      12 allocs/op
+BenchmarkVerifyCompactJWS_EdDSA-16    	   27777	     43321 ns/op	     976 B/op	      12 allocs/op
+BenchmarkVerifyCompactJWS_EdDSA-16    	   27504	     43492 ns/op	     976 B/op	      12 allocs/op
+BenchmarkVerifyCompactJWS_EdDSA-16    	   27639	     43352 ns/op	     976 B/op	      12 allocs/op
+PASS
+ok  	github.com/snaplink/sso/shared/security	9.829s
+goos: linux
+goarch: amd64
+pkg: github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreoauth
+cpu: AMD Ryzen 7 7840HS w/ Radeon 780M Graphics     
+BenchmarkMemoryAuthCodeStore_ConcurrentIssueConsume-16    	 8758906	       142.9 ns/op	     464 B/op	       4 allocs/op
+BenchmarkMemoryAuthCodeStore_ConcurrentIssueConsume-16    	 8498270	       146.1 ns/op	     464 B/op	       4 allocs/op
+BenchmarkMemoryAuthCodeStore_ConcurrentIssueConsume-16    	 8481973	       147.0 ns/op	     464 B/op	       4 allocs/op
+BenchmarkMemoryAuthCodeStore_ConcurrentIssueConsume-16    	 7813274	       148.2 ns/op	     464 B/op	       4 allocs/op
+BenchmarkMemoryAuthCodeStore_ConcurrentIssueConsume-16    	 7923486	       148.5 ns/op	     464 B/op	       4 allocs/op
+BenchmarkMemoryAuthCodeStore_ConcurrentIssueConsume-16    	 8338272	       148.8 ns/op	     464 B/op	       4 allocs/op
+BenchmarkMemoryPARStore_ConcurrentIssueConsume-16         	 7502420	       161.4 ns/op	     480 B/op	       4 allocs/op
+BenchmarkMemoryPARStore_ConcurrentIssueConsume-16         	 7370648	       158.9 ns/op	     480 B/op	       4 allocs/op
+BenchmarkMemoryPARStore_ConcurrentIssueConsume-16         	 7526660	       163.6 ns/op	     480 B/op	       4 allocs/op
+BenchmarkMemoryPARStore_ConcurrentIssueConsume-16         	 7431768	       161.6 ns/op	     480 B/op	       4 allocs/op
+BenchmarkMemoryPARStore_ConcurrentIssueConsume-16         	 7271380	       162.0 ns/op	     480 B/op	       4 allocs/op
+BenchmarkMemoryPARStore_ConcurrentIssueConsume-16         	 7332027	       162.5 ns/op	     480 B/op	       4 allocs/op
+PASS
+ok  	github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreoauth	16.383s
+goos: linux
+goarch: amd64
+pkg: github.com/snaplink/sso/protocols/oauth
+cpu: AMD Ryzen 7 7840HS w/ Radeon 780M Graphics     
+BenchmarkBindParamsForm-16    	  193446	      6348 ns/op	    9895 B/op	      61 allocs/op
+BenchmarkBindParamsForm-16    	  190977	      6371 ns/op	    9895 B/op	      61 allocs/op
+BenchmarkBindParamsForm-16    	  182424	      6305 ns/op	    9895 B/op	      61 allocs/op
+BenchmarkBindParamsForm-16    	  186204	      6379 ns/op	    9895 B/op	      61 allocs/op
+BenchmarkBindParamsForm-16    	  186560	      6365 ns/op	    9895 B/op	      61 allocs/op
+BenchmarkBindParamsForm-16    	  190533	      6477 ns/op	    9895 B/op	      61 allocs/op
+BenchmarkBindParamsJSON-16    	  198211	      5505 ns/op	    7333 B/op	      44 allocs/op
+BenchmarkBindParamsJSON-16    	  217006	      5549 ns/op	    7333 B/op	      44 allocs/op
+BenchmarkBindParamsJSON-16    	  205878	      5483 ns/op	    7333 B/op	      44 allocs/op
+BenchmarkBindParamsJSON-16    	  223502	      5544 ns/op	    7333 B/op	      44 allocs/op
+BenchmarkBindParamsJSON-16    	  219664	      5917 ns/op	    7333 B/op	      44 allocs/op
+BenchmarkBindParamsJSON-16    	  204093	      6011 ns/op	    7333 B/op	      44 allocs/op
+PASS
+ok  	github.com/snaplink/sso/protocols/oauth	15.149s
+goos: linux
+goarch: amd64
+pkg: github.com/snaplink/sso/interfaces/ratelimit
+cpu: AMD Ryzen 7 7840HS w/ Radeon 780M Graphics     
+BenchmarkMemoryLimiterAllowSingleKey-16    	 5640997	       213.7 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowSingleKey-16    	 5374851	       214.7 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowSingleKey-16    	 5711439	       205.7 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowSingleKey-16    	 5631866	       207.2 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowSingleKey-16    	 5533982	       203.3 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowSingleKey-16    	 5749959	       204.6 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/100-16 	 5416702	       219.3 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/100-16 	 5521206	       219.7 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/100-16 	 5427256	       223.9 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/100-16 	 5535228	       218.9 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/100-16 	 5363664	       218.2 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/100-16 	 5368578	       220.7 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/1000-16         	 4803582	       254.8 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/1000-16         	 4706990	       255.0 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/1000-16         	 4775823	       249.1 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/1000-16         	 4916320	       251.3 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/1000-16         	 4602848	       253.6 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/1000-16         	 4605750	       249.8 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/10000-16        	 2318361	       511.7 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/10000-16        	 2305734	       519.2 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/10000-16        	 2354078	       519.0 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/10000-16        	 2296718	       511.9 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/10000-16        	 2369325	       511.1 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowManyKeys/10000-16        	 2336078	       527.5 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowParallel-16              	19685709	        58.33 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowParallel-16              	19245373	        61.19 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowParallel-16              	19054436	        61.90 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowParallel-16              	17494228	        62.17 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowParallel-16              	18991438	        67.10 ns/op	      64 B/op	       1 allocs/op
+BenchmarkMemoryLimiterAllowParallel-16              	17368736	        70.84 ns/op	      64 B/op	       1 allocs/op
+PASS
+ok  	github.com/snaplink/sso/interfaces/ratelimit	43.622s

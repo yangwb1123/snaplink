@@ -53,8 +53,6 @@ related capability exists but the proposed feature does not).
 
 ## Observability, performance & tests
 
-- **Benchmark budget CI gate** — none. `.benchmarks.yaml` + `benchstat`
-  regression gate. _Sources: architecture-analysis, senior-architect-expansion-2026-07-01._
 - **Hot-path performance** — partial. `sync.Pool` buffer pooling for JWT
   issuance, sharded locks for the auth-code/PAR memory OAuth stores, and
   injectable `Clock` (Ed25519/ECDSA/RSA issuers) are done. Bounded memory
