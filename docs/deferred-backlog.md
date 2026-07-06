@@ -72,8 +72,21 @@ related capability exists but the proposed feature does not).
   referenced a field that doesn't exist on the proto message at all
   (removed). Fixed by reading the correct camelCase names client-side
   (NOT by changing the wire format — that would be a breaking change for
-  any other REST consumer of this already-shipped API). Users/Tenants
-  full CRUD and the dogfood OAuth/PKCE login remain undone.
+  any other REST consumer of this already-shipped API). Users and Tenants
+  CRUD are now done too, same page/panel pattern as Clients: Users gets
+  create/edit/delete (attributes as a `key=value`-per-line textarea, same
+  idiom as the Clients form's newline-separated redirect URIs); Tenants
+  gets its own new nav page + create/edit/delete plus a dedicated
+  Suspend/Activate action wired to `TenantAdminService.SetTenantStatus`
+  (kept separate from the Edit form deliberately — the backend split
+  status from Update specifically so a status flip stays a surgical,
+  race-free RPC, and routing it through the generic Update would defeat
+  that). Every new request/response shape (camelCase field names again —
+  `externalId`, `homeRegion`, `allowedRegions`, `enforceWrites`, ...) was
+  confirmed empirically the same way as the Clients fix, against the real
+  `UserAdminService`/`TenantAdminService` behind a real grpc-gateway mux,
+  not assumed from the .proto alone. Domains (hostname→tenant mapping)
+  CRUD and the dogfood OAuth/PKCE login remain undone.
   _Sources: expansion-architecture-gaps-2026-07-01, analysis-five-directions-toctou…._
 - **Multi-language SDK generation + developer portal** — partial. Embedded
   read-only API-docs viewer at `/api/v1/admin/docs` (+ a `/openapi.json`

@@ -24,6 +24,15 @@ var currentClientDetail = null;
 // this is belt-and-suspenders against a stale/empty value).
 var clientFormMode = 'create';
 var clientFormOriginalId = '';
+// Same shape as the client-form state above, for the Users and Tenants
+// create/edit forms.
+var currentUserDetail = null;
+var userFormMode = 'create';
+var userFormOriginalId = '';
+var currentTenantDetail = null;
+var tenantFormMode = 'create';
+var tenantFormOriginalId = '';
+var tenantsCache = {};
 
 // ---- Auth ----
 function doLogin() {
@@ -76,6 +85,7 @@ function navigate(page) {
   if (page === 'dashboard') loadDashboard();
   else if (page === 'clients') loadClients();
   else if (page === 'users') loadUsers();
+  else if (page === 'tenants') loadTenants();
   else if (page === 'sessions') loadSessions();
   else if (page === 'audit') loadAudit(1);
 }
@@ -116,6 +126,32 @@ function fmtTime(unix) {
 function badge(val, trueLabel, trueClass, falseLabel, falseClass) {
   if (val) return '<span class="badge ' + trueClass + '">' + esc(trueLabel) + '</span>';
   return '<span class="badge ' + falseClass + '">' + esc(falseLabel) + '</span>';
+}
+
+// splitLines / splitSpace tokenize a textarea/input's raw value for the
+// repeated-string proto fields (redirect_uris, allowed_regions, ...).
+function splitLines(s) { return s.split('\n').map(function(x) { return x.trim(); }).filter(Boolean); }
+function splitSpace(s) { return s.trim().split(/\s+/).filter(Boolean); }
+
+// parseKeyValueLines turns a "key=value" per-line textarea into a plain
+// object — used for the User/Tenant map<string,string> fields
+// (attributes/settings). A line with no "=" is skipped rather than
+// guessed at.
+function parseKeyValueLines(s) {
+  var out = {};
+  splitLines(s).forEach(function(line) {
+    var i = line.indexOf('=');
+    if (i <= 0) return;
+    out[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  });
+  return out;
+}
+
+// formatKeyValueLines is parseKeyValueLines' inverse, for pre-filling an
+// edit form from an already-fetched record's map field.
+function formatKeyValueLines(obj) {
+  if (!obj || typeof obj !== 'object') return '';
+  return Object.keys(obj).map(function(k) { return k + '=' + obj[k]; }).join('\n');
 }
 
 // ---- Dashboard ----
@@ -346,8 +382,6 @@ function hideClientFormError() {
 // directly onto the proto Client message (google.api.http body:"client"),
 // not a {"client":{...}} wrapper.
 function readClientForm() {
-  var splitLines = function(s) { return s.split('\n').map(function(x) { return x.trim(); }).filter(Boolean); };
-  var splitSpace = function(s) { return s.trim().split(/\s+/).filter(Boolean); };
   return {
     id: document.getElementById('cf-id').value.trim(),
     name: document.getElementById('cf-name').value.trim(),
@@ -459,10 +493,19 @@ function closeDetail(type) {
   } else if (type === 'user') {
     document.getElementById('users-list').style.display = '';
     document.getElementById('user-detail').classList.remove('open');
+    document.getElementById('user-form-panel').classList.remove('open');
+    currentUserDetail = null;
+  } else if (type === 'tenant') {
+    document.getElementById('tenants-list').style.display = '';
+    document.getElementById('tenant-detail').classList.remove('open');
+    document.getElementById('tenant-form-panel').classList.remove('open');
+    currentTenantDetail = null;
   }
 }
 
 // ---- Users ----
+// Same camelCase-from-protojson note as the Clients section above applies
+// here (externalId, not external_id).
 function loadUsers() {
   closeDetail('user');
   setContent('users-content', '<div class="loading">Loading...</div>');
@@ -497,7 +540,9 @@ function loadUsers() {
 
 function showUserDetail(u) {
   if (!u) return;
+  currentUserDetail = u;
   document.getElementById('users-list').style.display = 'none';
+  document.getElementById('user-form-panel').classList.remove('open');
   document.getElementById('user-detail').classList.add('open');
 
   var rows = [
@@ -523,6 +568,265 @@ function showUserDetail(u) {
     return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>';
   }).join('');
   document.getElementById('user-detail-table').innerHTML = html;
+  document.getElementById('user-detail-actions').innerHTML =
+    '<button class="btn btn-sm" data-action="edit-user">Edit</button>' +
+    '<button class="btn btn-danger" data-action="delete-user">Delete</button>';
+}
+
+// ---- Users: create / edit form ----
+function showUserForm(mode, u) {
+  userFormMode = mode;
+  userFormOriginalId = u ? u.id : '';
+  document.getElementById('users-list').style.display = 'none';
+  document.getElementById('user-detail').classList.remove('open');
+  document.getElementById('user-form-panel').classList.add('open');
+  hideUserFormError();
+  document.getElementById('user-form-title').textContent = mode === 'edit' ? 'Edit User' : 'New User';
+  document.getElementById('uf-id').disabled = mode === 'edit';
+  document.getElementById('uf-id').value = u ? (u.id || '') : '';
+  document.getElementById('uf-external-id').value = u ? (u.externalId || '') : '';
+  document.getElementById('uf-provider').value = u ? (u.provider || '') : '';
+  document.getElementById('uf-attributes').value = u ? formatKeyValueLines(u.attributes) : '';
+}
+
+function hideUserForm() {
+  document.getElementById('user-form-panel').classList.remove('open');
+  document.getElementById('users-list').style.display = '';
+}
+
+function showUserFormError(msg) {
+  var el = document.getElementById('user-form-error');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+function hideUserFormError() {
+  document.getElementById('user-form-error').style.display = 'none';
+}
+
+function readUserForm() {
+  return {
+    id: document.getElementById('uf-id').value.trim(),
+    externalId: document.getElementById('uf-external-id').value.trim(),
+    provider: document.getElementById('uf-provider').value.trim(),
+    attributes: parseKeyValueLines(document.getElementById('uf-attributes').value)
+  };
+}
+
+function submitUserForm() {
+  var body = readUserForm();
+  if (!body.id) {
+    showUserFormError('User ID is required.');
+    return;
+  }
+  var isEdit = userFormMode === 'edit';
+  var url = '/api/v1/admin/users' + (isEdit ? '/' + encodeURIComponent(userFormOriginalId) : '');
+  apiFetch(url, {
+    method: isEdit ? 'PUT' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function(r) {
+    if (!r.ok) return gatewayErrorMessage(r);
+    hideUserForm();
+    loadUsers();
+  }).catch(function(e) {
+    showUserFormError(e.message);
+  });
+}
+
+function editCurrentUser() {
+  if (!currentUserDetail) return;
+  showUserForm('edit', currentUserDetail);
+}
+
+function deleteCurrentUser() {
+  if (!currentUserDetail) return;
+  if (!confirm('Delete user "' + currentUserDetail.id + '"? This cannot be undone.')) return;
+  apiFetch('/api/v1/admin/users/' + encodeURIComponent(currentUserDetail.id), { method: 'DELETE' })
+    .then(function(r) {
+      if (!r.ok) return gatewayErrorMessage(r);
+      closeDetail('user');
+      loadUsers();
+    }).catch(function(e) { alert('Delete failed: ' + e.message); });
+}
+
+// ---- Tenants ----
+function loadTenants() {
+  closeDetail('tenant');
+  setContent('tenants-content', '<div class="loading">Loading...</div>');
+  apiFetch('/api/v1/admin/tenants').then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(d) {
+    var tenants = d.tenants || [];
+    tenantsCache = {};
+    if (!tenants.length) {
+      setContent('tenants-content', '<div class="empty">No tenants found.</div>');
+      return;
+    }
+    var html = '<table><thead><tr>';
+    html += '<th>ID</th><th>Name</th><th>Slug</th><th>Status</th><th></th>';
+    html += '</tr></thead><tbody>';
+    tenants.forEach(function(t) {
+      tenantsCache[t.id] = t;
+      html += '<tr>';
+      html += '<td><code>' + esc(t.id) + '</code></td>';
+      html += '<td>' + esc(t.name) + '</td>';
+      html += '<td>' + esc(t.slug || '—') + '</td>';
+      html += '<td>' + badge(t.status === 'active', 'Active', 'badge-green', esc(t.status || 'suspended'), 'badge-red') + '</td>';
+      html += '<td><button class="btn btn-sm" data-action="view-tenant" data-id="' + esc(t.id) + '">View</button></td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    setContent('tenants-content', html);
+  }).catch(function(e) {
+    setContent('tenants-content', '<div class="error-msg">' + esc(e.message) + '</div>');
+  });
+}
+
+function showTenantDetail(t) {
+  if (!t) return;
+  currentTenantDetail = t;
+  document.getElementById('tenants-list').style.display = 'none';
+  document.getElementById('tenant-form-panel').classList.remove('open');
+  document.getElementById('tenant-detail').classList.add('open');
+
+  var rows = [
+    ['ID', '<code>' + esc(t.id) + '</code>'],
+    ['Name', esc(t.name)],
+    ['Slug', esc(t.slug || '—')],
+    ['Status', badge(t.status === 'active', 'Active', 'badge-green', esc(t.status || 'suspended'), 'badge-red')],
+    ['Home Region', esc(t.homeRegion || '—')],
+    ['Allowed Regions', esc((t.allowedRegions || []).join(', ') || '—')],
+    ['Enforce Writes', badge(t.enforceWrites, 'Yes', 'badge-green', 'No', 'badge-gray')],
+  ];
+  if (t.settings && typeof t.settings === 'object') {
+    for (var k in t.settings) {
+      rows.push(['Setting: ' + esc(k), esc(t.settings[k])]);
+    }
+  }
+  var html = rows.map(function(r) {
+    return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>';
+  }).join('');
+  document.getElementById('tenant-detail-table').innerHTML = html;
+  renderTenantDetailActions(t);
+}
+
+// renderTenantDetailActions: Suspend/Activate uses the dedicated
+// SetTenantStatus RPC (surgical status-only flip on the server, avoiding
+// a read-modify-write race with the settings/regions the plain Edit form
+// covers) rather than routing status through Update.
+function renderTenantDetailActions(t) {
+  var html = '<button class="btn btn-sm" data-action="edit-tenant">Edit</button>';
+  if (t.status === 'active') {
+    html += '<button class="btn btn-danger" data-action="suspend-tenant">Suspend</button>';
+  } else {
+    html += '<button class="btn btn-success" data-action="activate-tenant">Activate</button>';
+  }
+  html += '<button class="btn btn-danger" data-action="delete-tenant">Delete</button>';
+  document.getElementById('tenant-detail-actions').innerHTML = html;
+}
+
+// ---- Tenants: create / edit form ----
+function showTenantForm(mode, t) {
+  tenantFormMode = mode;
+  tenantFormOriginalId = t ? t.id : '';
+  document.getElementById('tenants-list').style.display = 'none';
+  document.getElementById('tenant-detail').classList.remove('open');
+  document.getElementById('tenant-form-panel').classList.add('open');
+  hideTenantFormError();
+  document.getElementById('tenant-form-title').textContent = mode === 'edit' ? 'Edit Tenant' : 'New Tenant';
+  document.getElementById('tf-id').disabled = mode === 'edit';
+  document.getElementById('tf-id').value = t ? (t.id || '') : '';
+  document.getElementById('tf-slug').value = t ? (t.slug || '') : '';
+  document.getElementById('tf-name').value = t ? (t.name || '') : '';
+  document.getElementById('tf-home-region').value = t ? (t.homeRegion || '') : '';
+  document.getElementById('tf-allowed-regions').value = t ? (t.allowedRegions || []).join(' ') : '';
+  document.getElementById('tf-settings').value = t ? formatKeyValueLines(t.settings) : '';
+  document.getElementById('tf-enforce-writes').checked = t ? !!t.enforceWrites : false;
+}
+
+function hideTenantForm() {
+  document.getElementById('tenant-form-panel').classList.remove('open');
+  document.getElementById('tenants-list').style.display = '';
+}
+
+function showTenantFormError(msg) {
+  var el = document.getElementById('tenant-form-error');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+function hideTenantFormError() {
+  document.getElementById('tenant-form-error').style.display = 'none';
+}
+
+// readTenantForm deliberately omits `status` — a NEW tenant's status
+// defaults to the server's own CreateTenant default, and an EXISTING
+// tenant's status is only ever changed via the dedicated Suspend/Activate
+// actions (SetTenantStatus), never through this form/Update.
+function readTenantForm() {
+  return {
+    id: document.getElementById('tf-id').value.trim(),
+    slug: document.getElementById('tf-slug').value.trim(),
+    name: document.getElementById('tf-name').value.trim(),
+    homeRegion: document.getElementById('tf-home-region').value.trim(),
+    allowedRegions: splitSpace(document.getElementById('tf-allowed-regions').value),
+    settings: parseKeyValueLines(document.getElementById('tf-settings').value),
+    enforceWrites: document.getElementById('tf-enforce-writes').checked
+  };
+}
+
+function submitTenantForm() {
+  var body = readTenantForm();
+  if (!body.id) {
+    showTenantFormError('Tenant ID is required.');
+    return;
+  }
+  var isEdit = tenantFormMode === 'edit';
+  var url = '/api/v1/admin/tenants' + (isEdit ? '/' + encodeURIComponent(tenantFormOriginalId) : '');
+  apiFetch(url, {
+    method: isEdit ? 'PUT' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function(r) {
+    if (!r.ok) return gatewayErrorMessage(r);
+    hideTenantForm();
+    loadTenants();
+  }).catch(function(e) {
+    showTenantFormError(e.message);
+  });
+}
+
+function editCurrentTenant() {
+  if (!currentTenantDetail) return;
+  showTenantForm('edit', currentTenantDetail);
+}
+
+function deleteCurrentTenant() {
+  if (!currentTenantDetail) return;
+  if (!confirm('Delete tenant "' + currentTenantDetail.name + '" (' + currentTenantDetail.id + ')? This cannot be undone.')) return;
+  apiFetch('/api/v1/admin/tenants/' + encodeURIComponent(currentTenantDetail.id), { method: 'DELETE' })
+    .then(function(r) {
+      if (!r.ok) return gatewayErrorMessage(r);
+      closeDetail('tenant');
+      loadTenants();
+    }).catch(function(e) { alert('Delete failed: ' + e.message); });
+}
+
+function setCurrentTenantStatus(status) {
+  if (!currentTenantDetail) return;
+  apiFetch('/api/v1/admin/tenants/' + encodeURIComponent(currentTenantDetail.id) + ':set-status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: status })
+  }).then(function(r) {
+    if (!r.ok) return gatewayErrorMessage(r);
+    return r.json();
+  }).then(function(d) {
+    showTenantDetail(d.tenant);
+    loadTenants();
+  }).catch(function(e) { alert('Status change failed: ' + e.message); });
 }
 
 // ---- Sessions ----
@@ -664,6 +968,9 @@ function wireStaticEventHandlers() {
   document.getElementById('user-detail-back').addEventListener('click', function() {
     closeDetail('user');
   });
+  document.getElementById('tenant-detail-back').addEventListener('click', function() {
+    closeDetail('tenant');
+  });
   document.getElementById('client-new-btn').addEventListener('click', function() {
     showClientForm('create', null);
   });
@@ -678,6 +985,35 @@ function wireStaticEventHandlers() {
       'approve-client': approveCurrentClient,
       'reject-client': rejectCurrentClient,
       'rotate-secret': rotateCurrentClientSecret
+    };
+    var fn = actions[btn.dataset.action];
+    if (fn) fn();
+  });
+  document.getElementById('user-new-btn').addEventListener('click', function() {
+    showUserForm('create', null);
+  });
+  document.getElementById('user-form-back').addEventListener('click', hideUserForm);
+  document.getElementById('user-form-save').addEventListener('click', submitUserForm);
+  document.getElementById('user-detail-actions').addEventListener('click', function(e) {
+    var btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    var actions = { 'edit-user': editCurrentUser, 'delete-user': deleteCurrentUser };
+    var fn = actions[btn.dataset.action];
+    if (fn) fn();
+  });
+  document.getElementById('tenant-new-btn').addEventListener('click', function() {
+    showTenantForm('create', null);
+  });
+  document.getElementById('tenant-form-back').addEventListener('click', hideTenantForm);
+  document.getElementById('tenant-form-save').addEventListener('click', submitTenantForm);
+  document.getElementById('tenant-detail-actions').addEventListener('click', function(e) {
+    var btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    var actions = {
+      'edit-tenant': editCurrentTenant,
+      'delete-tenant': deleteCurrentTenant,
+      'suspend-tenant': function() { setCurrentTenantStatus('suspended'); },
+      'activate-tenant': function() { setCurrentTenantStatus('active'); }
     };
     var fn = actions[btn.dataset.action];
     if (fn) fn();
@@ -698,6 +1034,10 @@ function wireStaticEventHandlers() {
   document.getElementById('users-content').addEventListener('click', function(e) {
     var btn = e.target.closest('[data-action="view-user"]');
     if (btn) showUserDetail(usersCache[btn.dataset.id]);
+  });
+  document.getElementById('tenants-content').addEventListener('click', function(e) {
+    var btn = e.target.closest('[data-action="view-tenant"]');
+    if (btn) showTenantDetail(tenantsCache[btn.dataset.id]);
   });
   document.getElementById('sessions-content').addEventListener('click', function(e) {
     var btn = e.target.closest('[data-action="revoke-session"]');

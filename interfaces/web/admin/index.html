@@ -41,6 +41,9 @@
         <div class="nav-item" data-page="users">
           <span class="nav-icon">&#9651;</span> Users
         </div>
+        <div class="nav-item" data-page="tenants">
+          <span class="nav-icon">&#9633;</span> Tenants
+        </div>
         <div class="nav-item" data-page="sessions">
           <span class="nav-icon">&#9711;</span> Sessions <span id="sessions-count" class="badge badge-gray" style="margin-left:auto"></span>
         </div>
@@ -148,6 +151,9 @@
       <div id="page-users" class="page">
         <h1 class="page-title">Users</h1>
         <div id="users-list">
+          <div class="list-toolbar">
+            <button class="btn btn-primary" id="user-new-btn">+ New User</button>
+          </div>
           <div id="users-content"></div>
         </div>
         <div id="user-detail" class="detail-panel">
@@ -155,6 +161,90 @@
           <div class="card">
             <div class="card-title">User Details</div>
             <table id="user-detail-table" class="kv-table"></table>
+            <div class="form-actions" id="user-detail-actions"></div>
+          </div>
+        </div>
+        <div id="user-form-panel" class="detail-panel">
+          <button class="detail-back" id="user-form-back">&#8592; Back to list</button>
+          <div class="card">
+            <div class="card-title" id="user-form-title">New User</div>
+            <div class="form-group">
+              <label for="uf-id">User ID</label>
+              <input type="text" id="uf-id" placeholder="u-1234">
+            </div>
+            <div class="form-group">
+              <label for="uf-external-id">External ID</label>
+              <input type="text" id="uf-external-id" placeholder="idp-subject-id">
+            </div>
+            <div class="form-group">
+              <label for="uf-provider">Provider</label>
+              <input type="text" id="uf-provider" placeholder="local">
+            </div>
+            <div class="form-group">
+              <label for="uf-attributes">Attributes (one key=value per line)</label>
+              <textarea id="uf-attributes" rows="4" placeholder="email=user@example.com"></textarea>
+            </div>
+            <div id="user-form-error" class="error-msg" style="display:none"></div>
+            <div class="form-actions">
+              <button class="btn btn-primary" id="user-form-save">Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tenants -->
+      <div id="page-tenants" class="page">
+        <h1 class="page-title">Tenants</h1>
+        <div id="tenants-list">
+          <div class="list-toolbar">
+            <button class="btn btn-primary" id="tenant-new-btn">+ New Tenant</button>
+          </div>
+          <div id="tenants-content"></div>
+        </div>
+        <div id="tenant-detail" class="detail-panel">
+          <button class="detail-back" id="tenant-detail-back">&#8592; Back to list</button>
+          <div class="card">
+            <div class="card-title">Tenant Details</div>
+            <table id="tenant-detail-table" class="kv-table"></table>
+            <div class="form-actions" id="tenant-detail-actions"></div>
+          </div>
+        </div>
+        <div id="tenant-form-panel" class="detail-panel">
+          <button class="detail-back" id="tenant-form-back">&#8592; Back to list</button>
+          <div class="card">
+            <div class="card-title" id="tenant-form-title">New Tenant</div>
+            <div class="form-group">
+              <label for="tf-id">Tenant ID</label>
+              <input type="text" id="tf-id" placeholder="acme">
+            </div>
+            <div class="form-group">
+              <label for="tf-slug">Slug</label>
+              <input type="text" id="tf-slug" placeholder="acme">
+            </div>
+            <div class="form-group">
+              <label for="tf-name">Name</label>
+              <input type="text" id="tf-name" placeholder="Acme Corp">
+            </div>
+            <div class="form-group">
+              <label for="tf-home-region">Home Region</label>
+              <input type="text" id="tf-home-region" placeholder="us-east">
+            </div>
+            <div class="form-group">
+              <label for="tf-allowed-regions">Allowed Regions (space-separated)</label>
+              <input type="text" id="tf-allowed-regions" placeholder="us-east eu-west">
+            </div>
+            <div class="form-group">
+              <label for="tf-settings">Settings (one key=value per line)</label>
+              <textarea id="tf-settings" rows="4" placeholder="theme=dark"></textarea>
+            </div>
+            <div class="checkbox-row">
+              <input type="checkbox" id="tf-enforce-writes">
+              <label for="tf-enforce-writes">Enforce Writes (reject writes outside allowed regions)</label>
+            </div>
+            <div id="tenant-form-error" class="error-msg" style="display:none"></div>
+            <div class="form-actions">
+              <button class="btn btn-primary" id="tenant-form-save">Save</button>
+            </div>
           </div>
         </div>
       </div>
