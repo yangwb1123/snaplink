@@ -377,6 +377,13 @@ func (a *SPAuthenticator) verifyLogoutRequestSignature(raw []byte) error {
 		// on a frozen clock (real cert windows are wide; tests freeze time).
 		ctx.Clock = dsig.NewFakeClockAt(a.now())
 	}
+	// rejectWeakSignatureAlgorithms rejects a SHA-1 SignatureMethod/DigestMethod
+	// before verifying (goxmldsig itself would accept SHA-1; see
+	// weak_signature_algorithms.go), matching the detached redirect path's
+	// no-SHA-1 allowlist.
+	if err := rejectWeakSignatureAlgorithms(root); err != nil {
+		return err
+	}
 	if _, err := ctx.Validate(root); err != nil {
 		return err
 	}

@@ -126,6 +126,14 @@ func NewSPAuthenticator(cfg SPConfig) (*SPAuthenticator, error) {
 		// can: it rejects an unsolicited (empty-InResponseTo) response.
 		AllowIDPInitiated: true,
 		ValidateRequestID: requestIDValidator(cfg.AllowIDPInitiated),
+
+		// SHA-1 hardening: crewjam's default assertion-signature validation calls
+		// goxmldsig's ValidationContext.Validate directly, whose algorithm map still
+		// accepts RSA-SHA1/ECDSA-SHA1/SHA-1 with no per-context knob. This hook
+		// rejects a SHA-1 SignatureMethod/DigestMethod before delegating to that same
+		// Validate, so the enveloped POST assertion path enforces the same no-SHA-1
+		// allowlist as the detached redirect path (see redirect_sig.go).
+		SignatureVerifier: envelopedAlgGuard{},
 	}
 
 	a := &SPAuthenticator{}
