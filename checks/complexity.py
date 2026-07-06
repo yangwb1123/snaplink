@@ -1,40 +1,27 @@
 #!/usr/bin/env python3
-"""Cyclomatic and cognitive complexity gate."""
+"""Cyclomatic and cognitive complexity gate.
+
+Thresholds, exempt functions, ignore pattern, and tool paths live in
+engineering.yaml (`complexity:` section) — see checks/config.py.
+"""
 import subprocess
 import sys
 from pathlib import Path
-import os
 
-MAX_CYCLO = 15
-MAX_COGNIT = 20
+# Allow standalone invocation (python checks/complexity.py) as well as package import.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-EXEMPT_FUNCS = [
-    "handleLogin", "handleToken", "finishLogin", "Mount",
-    "buildOIDCConfiguration", "verifyJWTClientAssertion", "verifyJAR",
-    "projectUserInfoForOIDC", "handleTokenExchangeGrant",
-    "handleDeviceSecretExchange", "handleMFAComplete",
-    "verifyDPoPProof", "checkTenantResidency", "checkTenantNotSuspended",
-    "MeshAuthorize", "handleLogout", "handleCIBATokenGrant",
-    "handleDeviceTokenGrant", "handleDeviceCode", "handleUserInfo",
-    "handleRefreshTokenGrant", "resolveLoginRequest",
-    "computeDiscoverySnapshot", "fanOutBackchannelLogout", "handleDeviceVerify",
-    "HandleSilentRenewal", "HandleEndSession", "MaybeSignUserInfo", "HandleJWKS",
-    "HandleBackchannelAuth", "HandlePAR", "formIntoStruct", "HandleIntrospect",
-    "parseClaimsSection", "HandleRegister",
-    "Validate", "Score",
-    "VerifyCompactJWS",
-    "matchAttributes",
-    "Match",
-]
+from checks.config import get_config
 
-IGNORE_PATTERN = "gen/proto/|_test.go|cmd/|test/|grpcserver/|.claude/|federation/|saml/|kms/|caep/|scim/|ldap/|kerberos/|redis/|extauthz/|radius/|snapshot/|examples/|defaultimpl/sqlite/|bootstrap/|permissions/sqlite/|signingkeys/|audit/sqlite/|migrate/|releases/|compliance/|cors/|connections/|netpolicy/|registry/|tenant/|config/|mfa/|cluster/|anomaly/|middleware/|ratelimit/|metrics/|spi/|admin/|geo/"
+_cx = get_config().complexity
+MAX_CYCLO = _cx.max_cyclomatic
+MAX_COGNIT = _cx.max_cognitive
+EXEMPT_FUNCS = list(_cx.exempt_functions)
+IGNORE_PATTERN = _cx.ignore_pattern
 
 
 def is_exempt(name: str) -> bool:
-    for e in EXEMPT_FUNCS:
-        if e in name:
-            return True
-    return False
+    return any(e in name for e in EXEMPT_FUNCS)
 
 
 def run_gocyclo(tool: str) -> list[dict]:
@@ -54,10 +41,9 @@ def run_gocyclo(tool: str) -> list[dict]:
 
 def run_tool(tool: str, name: str, max_val: int) -> int:
     print(f"--- {name} (max {max_val}) ---")
-    if not os.access(tool, os.X_OK) if os.path.isfile(tool) else False:
-        if subprocess.run(["which", tool], capture_output=True).returncode != 0:
-            print("  (tool not found)")
-            return 0
+    if subprocess.run(["which", tool], capture_output=True).returncode != 0:
+        print("  (tool not found)")
+        return 0
     funcs = run_gocyclo(tool)
     has_fail = 0
     for f in funcs:
@@ -72,9 +58,8 @@ def run_tool(tool: str, name: str, max_val: int) -> int:
 
 
 def run() -> int:
-    home = Path.home()
-    gocyclo = str(home / "go" / "bin" / "gocyclo")
-    gocognit = str(home / "go" / "bin" / "gocognit")
+    gocyclo = str(Path(_cx.gocyclo_path).expanduser())
+    gocognit = str(Path(_cx.gocognit_path).expanduser())
     ec = 0
     ec += run_tool(gocyclo, "cyclomatic complexity", MAX_CYCLO)
     ec += run_tool(gocognit, "cognitive complexity", MAX_COGNIT)

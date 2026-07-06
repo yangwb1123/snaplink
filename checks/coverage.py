@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Coverage regression check with per-package targets."""
+"""Coverage regression check with per-package targets.
+
+Targets live in engineering.yaml (`coverage.targets`) — see checks/config.py.
+"""
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-TARGETS = {
-    "core": 35,
-    "oauth": 20,
-    "oidc": 15,
-    "security": 45,
-    ".": 10,
-    "defaultimpl": 65,
-}
+# Allow standalone invocation (python checks/coverage.py) as well as package import.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from checks.config import get_config
+
+TARGETS = dict(get_config().coverage_targets)
 
 
 def run() -> int:

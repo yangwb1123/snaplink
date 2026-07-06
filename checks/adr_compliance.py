@@ -8,6 +8,12 @@ ADR-0007 (directory fan-out): checks per-directory subdir count ≤ 15.
 import sys
 from pathlib import Path
 
+# Allow standalone invocation (python checks/adr_compliance.py) as well as package import.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from checks.directory_fanout import MAX_SUBDIRS, EXEMPT_DIRS
+from checks.directory_fanout import check as _fanout_check
+
 ROOT = Path.cwd()
 
 # ADR-0003: Protocol packages live under protocols/ (confirmed by current directory map).
@@ -30,10 +36,9 @@ MEMORY_PROVIDERS = {
     "memory.PARStore": "core.PARStore",
 }
 
-# ADR-0007: Directory fan-out budget (matches directory_fanout_test.go)
-MAX_SUBDIRS = 15
-EXEMPT_DIRS = {".git", ".claude", "gen", "vendor", "testdata",
-               "ops", "kms", "__pycache__", ".pytest_cache"}
+# ADR-0007: Directory fan-out budget (mirrors directory_fanout_test.go;
+# MAX_SUBDIRS/EXEMPT_DIRS come from the shared checks/directory_fanout.py
+# gate, itself driven by engineering.yaml's `directory_fanout:` section).
 
 # Known layer directories under root (from AGENTS.md DIRECTORY_MAP)
 RECOGNIZED_LAYER_DIRS = {
@@ -42,25 +47,6 @@ RECOGNIZED_LAYER_DIRS = {
     "proto", "gen", "checks", "scripts", "docs",
     "test", "examples", "config", "migrate", "internal",
     "admin", "kms", "cluster", "permissions",
-}
-
-# Files that SHOULD be at root (server composition + config)
-ROOT_ALLOWED_FILES = {
-    "README.md", "LICENSE", "AGENTS.md", "CLAUDE.md",
-    "go.mod", "go.sum", "Makefile", "Taskfile.yml",
-    "cli.py", "pyproject.toml",
-    "Dockerfile", ".gitignore", ".editorconfig",
-    ".golangci.yml", ".goreleaser.yaml",
-    "CHANGELOG.md", "AUTOMATION_WORKFLOW_SUMMARY.md",
-    "GIT_AUTO_COMMIT_GUIDE.md",
-    "architecture_gate_test.go", "architecture_layer_test.go",
-    "directory_fanout_test.go", "maintainability_budget_test.go",
-    "maintainability_complexity_test.go", "maxdepth_test.go",
-}
-
-# Recognized files at root (from AGENTS.md §0.4)
-ROOT_ALLOWED_PREFIXES = {
-    "server_", "options",
 }
 
 
@@ -153,28 +139,8 @@ def check_adr0004() -> list[str]:
 
 
 def check_adr0007() -> list[str]:
-    """ADR-0007: Directory fan-out — check per-directory subdir count ≤ 15."""
-    violations = []
-
-    for dirpath in sorted(ROOT.rglob("*")):
-        if not dirpath.is_dir():
-            continue
-        rel = str(dirpath.relative_to(ROOT))
-        if any(part in EXEMPT_DIRS for part in Path(rel).parts):
-            continue
-        if rel.startswith("."):
-            continue
-
-        # Count subdirectories (immediate children)
-        subdirs = [d for d in dirpath.iterdir() if d.is_dir() and not d.name.startswith(".")]
-        subdir_count = len(subdirs)
-
-        if subdir_count > MAX_SUBDIRS:
-            violations.append(
-                f"  ADR-0007: {rel}/ has {subdir_count} subdirs (max {MAX_SUBDIRS})"
-            )
-
-    return violations
+    """ADR-0007: Directory fan-out — delegates to the generic directory_fanout gate."""
+    return [f"  ADR-0007: {v}" for v in _fanout_check(ROOT)]
 
 
 def run() -> int:

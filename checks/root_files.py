@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""Root file count gate: non-exempt files must be <= 15."""
+"""Root file count gate: non-exempt files must be <= the configured max.
+
+Max count and the allowed-file list live in engineering.yaml
+(`root_policy:` section) — see checks/config.py.
+"""
 import sys
 from pathlib import Path
 
-EXEMPT = {
-    # Project docs live under docs/ and .github/; agent-OS docs under
-    # docs/agent-os/. Only the canonical agent entry points (AGENTS.md +
-    # its CLAUDE.md loader) and build/config remain at root.
-    "README.md", "LICENSE",
-    "AGENTS.md", "CLAUDE.md",
-    "go.mod", "go.sum", "Makefile", "Taskfile.yml", "cli.py", "pyproject.toml",
-    "Dockerfile", ".gitignore", ".editorconfig", ".golangci.yml", ".goreleaser.yaml",
-}
+# Allow standalone invocation (python checks/root_files.py) as well as package import.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from checks.config import get_config
+
+_rp = get_config().root_policy
+EXEMPT = set(_rp.allowed_files)
+MAX = _rp.max_files
 
 
 def run() -> int:
@@ -31,7 +34,6 @@ def run() -> int:
         count += 1
         violations.append(f"  {name}")
 
-    MAX = 15
     if count > MAX:
         print(f"FAIL: {count} non-exempt files in root (max {MAX})")
         print("\n".join(violations))

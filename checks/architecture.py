@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
-"""Architecture dependency direction gate."""
+"""Architecture dependency direction gate.
+
+The forbidden-import map and excluded dirs live in engineering.yaml
+(`architecture:` section) — see checks/config.py and AGENTS.md §0.2.
+"""
 import sys
 from pathlib import Path
 
+# Allow standalone invocation (python checks/architecture.py) as well as package import.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from checks.config import get_config
+
 ROOT = Path.cwd()
 
-# AGENTS.md §0.2: handlers.go -> oauth/ -> security/ -> core/
-#                      -> oidc/   -> security/ -> core/
-FORBIDDEN = {
-    "core": ["oauth", "oidc", "admin", "security", "defaultimpl", "cmd"],
-    "security": ["oauth", "oidc", "admin", "defaultimpl", "cmd"],
-    "oauth": ["oidc", "admin", "defaultimpl", "cmd"],
-    "oidc": ["oauth", "admin", "defaultimpl", "cmd"],
-    "admin": ["defaultimpl", "cmd"],
-    "defaultimpl": ["admin", "cmd"],
-}
-
-EXCLUDED_DIRS = {".git", ".claude", "gen", "proto", "vendor", "kms", "redis",
-                 "saml", "ldap", "kerberos", "radius", "extauthz", "examples", "cmd"}
+_cfg = get_config()
+_arch = _cfg.architecture
+FORBIDDEN = dict(_arch.forbidden)
+EXCLUDED_DIRS = set(_arch.excluded_dirs)
+MODULE_PREFIX = f'"{_cfg.project.module}/'
 
 
 def get_package(dir_path: Path) -> str:
@@ -38,9 +39,9 @@ def check_package(dir_path: Path) -> list[str]:
             continue
         content = go_file.read_text()
         for line in content.split("\n"):
-            if '"github.com/snaplink/sso/' not in line:
+            if MODULE_PREFIX not in line:
                 continue
-            imp = line.split('"github.com/snaplink/sso/')[1].split('"')[0]
+            imp = line.split(MODULE_PREFIX)[1].split('"')[0]
             imp_pkg = imp.split("/")[0]
             if imp_pkg in forbidden_pkgs:
                 rel_dir = dir_path.relative_to(ROOT)
@@ -48,7 +49,7 @@ def check_package(dir_path: Path) -> list[str]:
     return violations
 
 
-def run(package_dirs: list[Path] | None = None) -> int:
+def run(package_dirs: list[Path] = None) -> int:
     print("--- architecture check ---")
     all_violations = []
     if package_dirs:

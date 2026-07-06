@@ -87,10 +87,10 @@ def run() -> int:
             p(f"{d} exists")
         else:
             f(f"{d} missing")
-    if (ROOT / "skills").is_dir():
-        p("skills/ exists")
+    if (ROOT / "docs" / "skills").is_dir():
+        p("docs/skills/ exists")
     else:
-        f("skills/ missing")
+        f("docs/skills/ missing")
     if (ROOT / "checks" / "filesize.py").exists():
         p("checks/ package exists")
     else:

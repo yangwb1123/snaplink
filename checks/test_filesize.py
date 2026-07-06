@@ -52,6 +52,30 @@ class TestCheckFile(unittest.TestCase):
         f.write_text("\n".join(f"line {i}" for i in range(MAX_LINES + 10)))
         self.assertFalse(check_file(f, self.root))
 
+    def test_oversized_file_outside_root_still_fails(self):
+        """A path outside `root` (e.g. a CLI arg pointing elsewhere, as
+        checks/self_test.py's probe does) must not raise -- it should still
+        be size-checked, just without exemption/ignore-pattern matching."""
+        f = self.root / "main.go"
+        f.write_text("\n".join(f"line {i}" for i in range(MAX_LINES + 10)))
+        other_root = Path(tempfile.mkdtemp())
+        self.assertFalse(check_file(f, other_root))
+
+    def test_relative_path_arg_resolves_correctly(self):
+        """A relative Path (as produced by the CLI's `[Path(a) for a in
+        sys.argv[1:]]`) must resolve against cwd before comparing to root,
+        not raise ValueError."""
+        import os
+        f = self.root / "sub" / "main.go"
+        f.parent.mkdir()
+        f.write_text("short file\n")
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(self.root)
+            self.assertTrue(check_file(Path("sub/main.go"), self.root))
+        finally:
+            os.chdir(old_cwd)
+
     def test_ignored_pattern_skipped(self):
         for pat in IGNORE_PATTERNS:
             f = self.root / pat.strip("/") / "ignored.go"

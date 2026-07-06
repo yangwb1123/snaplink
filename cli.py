@@ -11,30 +11,34 @@ Commands:
     accept                Full acceptance suite (EVALUATION.md)
     harness               Full engineering gates (filesize + complexity + architecture)
     complexity            Cyclomatic + cognitive complexity check
-    architecture          Dependency direction check
-    coverage              Run test coverage
-    evaluate              Coverage + coverage-check
-    review [spec]         Review checklist / feature review
-    diagnose              Run diagnosis
-    trend                 Record trend snapshot
-    health-report         Health report
-    check-exemptions      Check exemption sync
-    self-test             Harness self-test
-    check-invariants      Security invariants
-    check-root            Check root directory for business code violations
-    adr-compliance        Check ADR compliance (ADR-0003, ADR-0004, ADR-0007)
-    check-test            Run checks/ unit tests
-    skill-test            Run skills/ unit tests
-    test                  Run go tests
-    race                  Run tests with -race
-    bench                 Run benchmarks
-    vet                   Run go vet
-    fmt                   Check gofmt
-    build                 Build binaries to bin/
-    lint                  Run golangci-lint
-    security-scan         Run govulncheck + gosec
-    skill <name> [args..] Run a skill by directory name
-    help                  Show this message
+    architecture           Dependency direction check
+    coverage               Run test coverage
+    evaluate               Coverage + coverage-check
+    review [spec]          Review checklist / feature review
+    diagnose               Run diagnosis
+    trend                  Record trend snapshot
+    health-report          Health report
+    check-exemptions       Check exemption sync
+    self-test              Harness self-test
+    check-invariants       Security invariants
+    check-root             Check root directory for business code violations
+    adr-compliance         Check ADR compliance (ADR-0003, ADR-0004, ADR-0007)
+    check-test             Run checks/ unit tests
+    skill-test             Run skills/ unit tests
+    test                   Run go tests
+    race                   Run tests with -race
+    bench                  Run benchmarks
+    vet                    Run go vet
+    fmt                    Check gofmt
+    build                  Build binaries to bin/
+    lint                   Run golangci-lint
+    security-scan          Run govulncheck + gosec
+    skill <name> [args..]  Run a skill by directory name
+    help                   Show this message
+
+Gate thresholds/paths (filesize/complexity/architecture/root-policy/
+directory-fanout/coverage/build) are declared in engineering.yaml, not
+hardcoded here — see checks/config.py and docs/agent-os/CHECKS_REGISTRY.md.
 """
 
 import argparse
@@ -42,9 +46,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path.cwd()
 
-# Ensure checks/ is on the path
+# Ensure checks/ (and engineering.yaml, resolved relative to cwd) is on the path
 sys.path.insert(0, str(ROOT))
 
 
@@ -53,7 +57,7 @@ def run(*args: str, **kwargs) -> subprocess.CompletedProcess:
 
 
 def cmd_generate():
-    sys.path.insert(0, str(ROOT / "scripts"))
+    sys.path.insert(0, str(ROOT / "ops" / "scripts"))
     from generate_engineering import run as gen_run
     return gen_run()
 
@@ -114,7 +118,7 @@ def cmd_evaluate():
     return cv_run()
 
 
-def cmd_review(spec: str | None):
+def cmd_review(spec=None):
     if spec:
         from checks.review_feature import run as rv_run
         return rv_run(spec)
@@ -125,13 +129,13 @@ def cmd_review(spec: str | None):
 
 
 def cmd_diagnose():
-    sys.path.insert(0, str(ROOT / "scripts"))
+    sys.path.insert(0, str(ROOT / "ops" / "scripts"))
     from diagnose import run as diag_run
     return diag_run()
 
 
 def cmd_trend():
-    sys.path.insert(0, str(ROOT / "scripts"))
+    sys.path.insert(0, str(ROOT / "ops" / "scripts"))
     from trend import run as tr_run
     return tr_run()
 
@@ -167,7 +171,6 @@ def cmd_adr_compliance():
 
 
 def cmd_check_test():
-    import subprocess
     return subprocess.run(
         [sys.executable, "-m", "pytest", "checks/", "-v"],
         cwd=str(ROOT)
@@ -175,10 +178,10 @@ def cmd_check_test():
 
 
 def cmd_skill_test():
-    import subprocess
-    from pathlib import Path
+    from checks.config import get_config
     ec = 0
-    for skill_dir in sorted((ROOT / "docs" / "skills").iterdir()):
+    skills_dir = ROOT / get_config().skills_dir
+    for skill_dir in sorted(skills_dir.iterdir()):
         test_file = skill_dir / "test_skill.py"
         if test_file.exists():
             print(f"=== Testing {skill_dir.name} ===")
@@ -220,12 +223,8 @@ def cmd_fmt():
 
 
 def cmd_build():
-    bin_dir = ROOT / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    r1 = run("go", "build", "-trimpath", "-o", str(bin_dir / "sso-server"), "./cmd/sso-server")
-    if r1.returncode != 0:
-        return r1.returncode
-    return run("go", "build", "-trimpath", "-o", str(bin_dir / "sso-ctl"), "./cmd/sso-ctl").returncode
+    from checks.build import run as build_run
+    return build_run()
 
 
 def cmd_lint():
@@ -241,17 +240,18 @@ def cmd_security_scan():
                "-quiet", "./...").returncode
 
 
-def cmd_skill(args: list[str]):
+def cmd_skill(args: list):
+    from checks.config import get_config
+    skill_dir = ROOT / get_config().skills_dir
     if not args:
         print("Usage: python cli.py skill <name> [args..]", file=sys.stderr)
-        skill_dir = ROOT / "skills"
         print("\nAvailable skills:", file=sys.stderr)
         for d in sorted(skill_dir.iterdir()):
             if d.is_dir() and not d.name.startswith("_") and d.name != "shared":
                 print(f"  {d.name}", file=sys.stderr)
         return 1
     name = args[0]
-    skill_path = ROOT / "skills" / name / "run.py"
+    skill_path = skill_dir / name / "run.py"
     if not skill_path.exists():
         print(f"ERROR: skill '{name}' not found at {skill_path}", file=sys.stderr)
         return 1
