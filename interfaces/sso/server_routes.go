@@ -7,6 +7,7 @@ import (
 
 	"github.com/snaplink/sso/docs"
 	"github.com/snaplink/sso/domains/region"
+	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/interfaces/apidocs"
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/middleware"
@@ -352,7 +353,12 @@ func (s *Server) buildMiddlewareChain(inner http.Handler) http.Handler {
 		inner = s.degradationGate()(inner)
 	}
 	if s.rateLimitPolicy != nil {
-		inner = ratelimit.Middleware(s.resolvedRateLimitPolicy())(inner)
+		// A PolicyStore (rather than baking the resolved Policy straight
+		// into the closure) lets SetRateLimitPolicy swap the live limiters
+		// later — e.g. from a SIGHUP config reload — without rebuilding
+		// this middleware chain. See ratelimit.DynamicMiddleware's doc.
+		s.rateLimitStore = ratelimit.NewPolicyStore(s.resolvedRateLimitPolicy())
+		inner = ratelimit.DynamicMiddleware(s.rateLimitStore)(inner)
 	}
 	if s.trustedProxies != nil {
 		// TrustedProxies sits just outside the rate limiter so that
@@ -375,6 +381,35 @@ func (s *Server) buildMiddlewareChain(inner http.Handler) http.Handler {
 	}
 	inner = s.wrapPanicRecovery(inner)
 	return inner
+}
+
+// SetRateLimitPolicy atomically swaps the live rate-limit Policy — the
+// runtime hook config/reload uses to apply a security.rate_limit.* change
+// without a restart. Applies the SAME Metrics/TenantKeyFunc defaulting
+// resolvedRateLimitPolicy applies at boot, so a caller passing a bare
+// ratelimit.Policy (e.g. from serverbuildplatform.BuildRateLimitPolicy)
+// still gets metrics + per-tenant rejection labeling wired automatically.
+//
+// Returns false as a no-op when rate limiting was never enabled at boot (no
+// WithRateLimit option) — there is no already-installed middleware slot to
+// swap into, mirroring feature_gates' "can't add a gate after boot"
+// limitation. Only the NUMBERS inside an already-enabled policy can be made
+// live; turning rate limiting on/off entirely still needs a restart.
+func (s *Server) SetRateLimitPolicy(p ratelimit.Policy) bool {
+	if s.rateLimitStore == nil {
+		return false
+	}
+	if p.Metrics == nil {
+		p.Metrics = s.metrics
+	}
+	if p.TenantKeyFunc == nil && s.tenantStore != nil {
+		store, opts := s.tenantStore, s.tenantMiddlewareOpts
+		p.TenantKeyFunc = func(r *http.Request) string {
+			return tenant.ResolveTenantID(r.Context(), store, opts, r)
+		}
+	}
+	s.rateLimitStore.Set(p)
+	return true
 }
 
 // wrapInnerMiddlewares applies the innermost slice of the chain in the exact

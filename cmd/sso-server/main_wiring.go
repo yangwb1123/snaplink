@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"strings"
 
+	goredis "github.com/redis/go-redis/v9"
+
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/config"
 	configetcd "github.com/snaplink/sso/config/etcd"
 	configreload "github.com/snaplink/sso/config/reload"
+	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/tracing"
 	"github.com/snaplink/sso/shared/spi"
 )
@@ -121,6 +126,27 @@ func newConfigReloader(cfg *config.Config, sources []config.Source, logger *slog
 	return configreload.New(cfg, func(ctx context.Context) (*config.Config, error) {
 		return config.LoadFromSources(ctx, sources...)
 	}, logger.SetLevel)
+}
+
+// wireRateLimitReload wires reloader's SetRateLimitHook so a SIGHUP config
+// reload rebuilds security.rate_limit.* (via the SAME
+// serverbuildplatform.BuildRateLimitPolicy the boot path uses) and hot-swaps
+// it into srv's already-installed rate-limit middleware — see
+// config/reload's package doc for why this needed a dedicated hook instead
+// of the blanket "safe field" treatment logging.level gets. redis is the
+// shared client rate_limit.backend=redis rebuilds against; nil when no
+// redis block is configured (matches wireBodyAndRateLimit's boot-time call).
+func wireRateLimitReload(reloader *configreload.Reloader, srv *sso.Server, redis goredis.UniversalClient) {
+	reloader.SetRateLimitHook(func(rl config.RateLimitConfig) error {
+		policy, err := serverbuildplatform.BuildRateLimitPolicy(rl, redis)
+		if err != nil {
+			return err
+		}
+		if !srv.SetRateLimitPolicy(policy) {
+			return errors.New("rate limit hot-reload: not enabled at boot (no WithRateLimit)")
+		}
+		return nil
+	})
 }
 
 // initTracing wires OTLP tracing and returns its shutdown func. The call is

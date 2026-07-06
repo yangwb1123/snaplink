@@ -10,22 +10,29 @@
 // reviews it and adds it to the allowlist, rather than silently starting to
 // (maybe incorrectly) apply live the moment it's added to the struct.
 //
-// Currently wired safe field:
+// Currently wired safe fields:
 //
 //   - logging.level — swaps the *slog.LevelVar the caller's setLogLevel
 //     callback controls. Nothing else in the request/response path reads
 //     Logging.Level after boot, so this is a pure, side-effect-free change.
+//   - security.rate_limit.* — rebuilds the whole ratelimit.Policy (via the
+//     caller's setRateLimitPolicy hook, wired with SetRateLimitHook) and
+//     swaps it into the already-installed ratelimit.PolicyStore
+//     (interfaces/sso's Server.SetRateLimitPolicy). Unlike a plain
+//     `ratelimit.Middleware(policy)` closure — which bakes in a Policy VALUE
+//     once at Handler()-build time, so a later mutation has no effect on the
+//     already-built handler chain — DynamicMiddleware reads its Policy from
+//     the store fresh on every request, so a swap takes effect immediately.
+//     Every leaf field under security.rate_limit is treated as ONE atomic
+//     unit (matched by JSON-Pointer PREFIX, not exact path, and rebuilt as a
+//     whole via the same BuildRateLimitPolicy the boot path uses) rather
+//     than applied field-by-field, since limiters are re-created wholesale
+//     on every rebuild anyway (in-memory bucket state resets — a safe,
+//     side-effect-free change, not a correctness concern).
 //
-// Deliberately NOT wired yet, despite looking "safe" on paper (numeric
-// knobs, feature toggles — no store/connection to re-provision):
+// Deliberately NOT wired yet, despite looking "safe" on paper (a toggle,
+// no store/connection to re-provision):
 //
-//   - security.rate_limit.* — interfaces/sso/server_routes.go builds the
-//     rate-limit middleware ONCE at Handler()-construction time:
-//     `ratelimit.Middleware(*s.rateLimitPolicy)(inner)`. Middleware(p Policy)
-//     takes p BY VALUE, so mutating the Policy (or its Limiters) after that
-//     call has already run has no effect on the already-built handler chain.
-//     Making this genuinely live needs a mutable-limiter registry threaded
-//     through cmd/sso-server's wiring — a separate, focused change.
 //   - feature_gates.* — interfaces/sso decides which route groups Mount()
 //     registers ONCE, at server-construction time. Toggling a gate after
 //     boot cannot add or remove already-registered/unregistered mux routes
@@ -46,6 +53,7 @@ package reload
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/goccy/go-yaml"
@@ -56,10 +64,28 @@ import (
 
 // safeReloadPaths lists the RFC 6901 JSON-Pointer paths (matching
 // configaudit.Diff's Op.Path shape) this package treats as safe to apply
-// to a live server. See the package doc for what's deliberately excluded
-// and why.
+// to a live server, exactly (one leaf field, one apply case). See the
+// package doc for what's deliberately excluded and why.
 var safeReloadPaths = map[string]bool{
 	"/logging/level": true,
+}
+
+// safeReloadPrefixes lists JSON-Pointer path PREFIXES treated as safe when
+// ANY field under them changes. Used for blocks — like security.rate_limit,
+// which nests a nested Prefixes slice — rebuilt as a whole, atomic unit
+// rather than matched leaf-by-leaf; see the package doc.
+var safeReloadPrefixes = []string{
+	"/security/rate_limit",
+}
+
+// hasSafePrefix reports whether path falls under one of safeReloadPrefixes.
+func hasSafePrefix(path string) bool {
+	for _, prefix := range safeReloadPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // Result reports what one Reload call did.
@@ -95,6 +121,28 @@ type Reloader struct {
 	// instead of Applied — Reload never claims to have applied a change
 	// that had nowhere to land.
 	setLogLevel func(level string)
+
+	// setRateLimitPolicy applies a reloaded security.rate_limit.* block
+	// live — typically a closure over
+	// serverbuildplatform.BuildRateLimitPolicy + Server.SetRateLimitPolicy.
+	// nil means no hook was wired, so a rate_limit change is reported as
+	// Ignored instead of Applied. Set via SetRateLimitHook (not a New
+	// constructor param, to avoid breaking existing callers' positional
+	// argument lists).
+	setRateLimitPolicy func(config.RateLimitConfig) error
+}
+
+// SetRateLimitHook wires the callback Reload uses to apply a live
+// security.rate_limit.* change — see the package doc for why this needed a
+// dedicated wiring point instead of blanket "safe field" treatment (the
+// rate-limit middleware bakes in a Policy VALUE at Handler()-build time).
+// nil (the default) makes any detected rate_limit change appear in
+// Result.Ignored instead of Result.Applied, mirroring setLogLevel's
+// unwired-hook contract.
+func (r *Reloader) SetRateLimitHook(fn func(config.RateLimitConfig) error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.setRateLimitPolicy = fn
 }
 
 // New builds a Reloader seeded with the config the process booted with.
@@ -164,25 +212,46 @@ func (r *Reloader) Reload(ctx context.Context) (Result, error) {
 	// redacting before diffing would make two different secrets diff to
 	// "no change".
 	ops := configaudit.RedactOps(configaudit.Diff(beforeMap, afterMap))
+	return r.applyOps(ops, newCfg), nil
+}
 
+// applyOps classifies every diff op as an exact safeReloadPaths match, a
+// safeReloadPrefixes block match, or unsafe, and applies each accordingly.
+// Split out of Reload to stay within the function-length budget. Called
+// with r.mu held.
+func (r *Reloader) applyOps(ops []configaudit.Op, newCfg *config.Config) Result {
 	var res Result
+	rateLimitChanged := false
 	for _, op := range ops {
-		if !safeReloadPaths[op.Path] {
+		switch {
+		case safeReloadPaths[op.Path]:
+			applied := r.applySafe(op.Path, newCfg)
+			if len(applied) == 0 {
+				// Recognized as safe-shaped, but nothing actually applied it
+				// (e.g. no setLogLevel hook was wired) — report it exactly
+				// like any other restart-required change rather than silently
+				// dropping it.
+				res.Ignored = append(res.Ignored, op.Path)
+				continue
+			}
+			res.Applied = append(res.Applied, applied...)
+		case hasSafePrefix(op.Path):
+			// Deferred to after the loop: every leaf under security.rate_limit
+			// rebuilds as ONE atomic Policy, not once per changed leaf field
+			// (see applyRateLimit's doc).
+			rateLimitChanged = true
+		default:
 			res.Ignored = append(res.Ignored, op.Path)
-			continue
 		}
-		applied := r.applySafe(op.Path, newCfg)
-		if len(applied) == 0 {
-			// Recognized as safe-shaped, but nothing actually applied it
-			// (e.g. no setLogLevel hook was wired) — report it exactly
-			// like any other restart-required change rather than silently
-			// dropping it.
-			res.Ignored = append(res.Ignored, op.Path)
-			continue
-		}
-		res.Applied = append(res.Applied, applied...)
 	}
-	return res, nil
+	if rateLimitChanged {
+		if applied := r.applyRateLimit(newCfg); applied != "" {
+			res.Applied = append(res.Applied, applied)
+		} else {
+			res.Ignored = append(res.Ignored, "/security/rate_limit")
+		}
+	}
+	return res
 }
 
 // applySafe applies one recognized safe-reload path onto the tracked
@@ -211,6 +280,26 @@ func (r *Reloader) applyLogLevel(newCfg *config.Config) []string {
 	r.setLogLevel(newLevel)
 	r.current.Logging.Level = newLevel
 	return []string{fmt.Sprintf("logging.level: %q -> %q", old, newLevel)}
+}
+
+// applyRateLimit rebuilds the whole security.rate_limit.* Policy from
+// newCfg and hands it to the wired setRateLimitPolicy hook — reported as
+// Applied only when the hook is actually wired, mirroring applyLogLevel's
+// unwired-hook contract. Called ONCE per Reload regardless of how many
+// individual rate_limit leaf fields changed (see Reload's doc): the hook
+// (typically serverbuildplatform.BuildRateLimitPolicy +
+// Server.SetRateLimitPolicy) always rebuilds the ENTIRE Policy from the
+// whole RateLimitConfig, so applying per-leaf would just redo the same
+// rebuild multiple times for one logical change.
+func (r *Reloader) applyRateLimit(newCfg *config.Config) string {
+	if r.setRateLimitPolicy == nil {
+		return ""
+	}
+	if err := r.setRateLimitPolicy(newCfg.Security.RateLimit); err != nil {
+		return ""
+	}
+	r.current.Security.RateLimit = newCfg.Security.RateLimit
+	return "security.rate_limit: policy rebuilt"
 }
 
 // snapshotMap renders cfg the same way

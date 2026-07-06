@@ -137,6 +137,115 @@ func TestReload_NilSourceReturnsError(t *testing.T) {
 	}
 }
 
+func TestReload_AppliesRateLimitAndCallsHook(t *testing.T) {
+	var gotCfg config.RateLimitConfig
+	initial := baseConfig()
+	initial.Security.RateLimit.DefaultPerSec = 1
+	next := baseConfig()
+	next.Security.RateLimit.DefaultPerSec = 5
+	next.Security.RateLimit.DefaultBurst = 10
+
+	r := New(initial, func(context.Context) (*config.Config, error) { return next, nil }, nil)
+	r.SetRateLimitHook(func(cfg config.RateLimitConfig) error {
+		gotCfg = cfg
+		return nil
+	})
+
+	res, err := r.Reload(context.Background())
+	if err != nil {
+		t.Fatalf("Reload() error = %v", err)
+	}
+	if gotCfg.DefaultPerSec != 5 || gotCfg.DefaultBurst != 10 {
+		t.Errorf("rate limit hook got %+v, want DefaultPerSec=5 DefaultBurst=10", gotCfg)
+	}
+	if len(res.Applied) != 1 || res.Applied[0] != "security.rate_limit: policy rebuilt" {
+		t.Fatalf("Applied = %v, want exactly one rate_limit entry", res.Applied)
+	}
+	if len(res.Ignored) != 0 {
+		t.Errorf("Ignored = %v, want none", res.Ignored)
+	}
+	if got := r.Current().Security.RateLimit.DefaultPerSec; got != 5 {
+		t.Errorf("Current().Security.RateLimit.DefaultPerSec = %v, want 5", got)
+	}
+}
+
+func TestReload_RateLimitMultipleLeafChangesApplyOnce(t *testing.T) {
+	// Changing BOTH DefaultPerSec and DefaultBurst in one reload must call
+	// the hook exactly once (one rebuilt Policy), not once per changed leaf.
+	var calls int
+	initial := baseConfig()
+	next := baseConfig()
+	next.Security.RateLimit.DefaultPerSec = 5
+	next.Security.RateLimit.DefaultBurst = 10
+
+	r := New(initial, func(context.Context) (*config.Config, error) { return next, nil }, nil)
+	r.SetRateLimitHook(func(config.RateLimitConfig) error {
+		calls++
+		return nil
+	})
+
+	res, err := r.Reload(context.Background())
+	if err != nil {
+		t.Fatalf("Reload() error = %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("rate limit hook called %d times, want exactly 1", calls)
+	}
+	if len(res.Applied) != 1 {
+		t.Errorf("Applied = %v, want exactly one entry", res.Applied)
+	}
+}
+
+func TestReload_RateLimitWithoutHookIsReportedAsIgnored(t *testing.T) {
+	initial := baseConfig()
+	next := baseConfig()
+	next.Security.RateLimit.DefaultPerSec = 5
+
+	r := New(initial, func(context.Context) (*config.Config, error) { return next, nil }, nil)
+
+	res, err := r.Reload(context.Background())
+	if err != nil {
+		t.Fatalf("Reload() error = %v", err)
+	}
+	if len(res.Applied) != 0 {
+		t.Errorf("Applied = %v, want none (no rate-limit hook wired)", res.Applied)
+	}
+	found := false
+	for _, p := range res.Ignored {
+		if p == "/security/rate_limit" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Ignored = %v, want it to contain /security/rate_limit", res.Ignored)
+	}
+	if got := r.Current().Security.RateLimit.DefaultPerSec; got != 0 {
+		t.Errorf("Current().Security.RateLimit.DefaultPerSec = %v, want untouched", got)
+	}
+}
+
+func TestReload_RateLimitHookErrorIsReportedAsIgnored(t *testing.T) {
+	initial := baseConfig()
+	next := baseConfig()
+	next.Security.RateLimit.DefaultPerSec = 5
+
+	r := New(initial, func(context.Context) (*config.Config, error) { return next, nil }, nil)
+	r.SetRateLimitHook(func(config.RateLimitConfig) error {
+		return errors.New("bad backend")
+	})
+
+	res, err := r.Reload(context.Background())
+	if err != nil {
+		t.Fatalf("Reload() error = %v", err)
+	}
+	if len(res.Applied) != 0 {
+		t.Errorf("Applied = %v, want none (hook errored)", res.Applied)
+	}
+	if got := r.Current().Security.RateLimit.DefaultPerSec; got != 0 {
+		t.Errorf("Current().Security.RateLimit.DefaultPerSec = %v, want untouched after a hook error", got)
+	}
+}
+
 func TestReload_ConcurrentReloadsAreSafe(t *testing.T) {
 	initial := baseConfig()
 	r := New(initial, func(context.Context) (*config.Config, error) { return baseConfig(), nil }, func(string) {})

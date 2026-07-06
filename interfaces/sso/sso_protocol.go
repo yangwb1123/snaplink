@@ -108,6 +108,7 @@ type protocolState struct {
 	trustedProxies         *middleware.TrustedProxies
 	tenantMetricsAllowlist map[string]struct{} // nil/empty = per-tenant metrics off (§5)
 	rateLimitPolicy        *ratelimit.Policy
+	rateLimitStore         *ratelimit.PolicyStore
 	// degradation holds the DR degraded-service mode. Nil (default) ⇒ the
 	// enforcement gate is not installed and no /admin/dr/mode route is mounted,
 	// so a build without WithDegradationManager is byte-identical.

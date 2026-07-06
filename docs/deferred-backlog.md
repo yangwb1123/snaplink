@@ -62,9 +62,15 @@ related capability exists but the proposed feature does not).
 
 - **Config JSON-Schema + hot reload** — partial. Schema generation
   (`config/schema`, `sso-ctl config validate-schema`) + validator chain +
-  `SIGHUP` hot reload done for `logging.level`; rate-limit and feature-gate
-  hot-reload deferred (need a broader wiring pass through their consumers).
-  _Sources: architecture-analysis, ops-api-productization-2026-07-01,
+  `SIGHUP` hot reload done for `logging.level` AND `security.rate_limit.*`
+  (`ratelimit.DynamicMiddleware` + `ratelimit.PolicyStore` +
+  `Server.SetRateLimitPolicy`, wired via `config/reload`'s
+  `SetRateLimitHook` — the whole Policy rebuilds as one atomic unit per
+  reload, in-memory bucket state resets); feature-gate hot-reload remains
+  deferred — toggling a gate after boot cannot add/remove already-registered
+  mux routes without a full re-Mount, which this SDK does not support at
+  runtime (a fundamentally harder problem than rate-limit's numeric-knob
+  swap). _Sources: architecture-analysis, ops-api-productization-2026-07-01,
   senior-architect-expansion-2026-07-01, architectural-debt-and-risks-2026-07-01._
 
 ## Observability, performance & tests

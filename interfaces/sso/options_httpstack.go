@@ -123,7 +123,8 @@ func WithRateLimit(p ratelimit.Policy) Option {
 // WithRateLimit call time) so option ORDER relative to WithMetrics /
 // WithTenantStore never matters. The tenant resolver runs a store lookup
 // ONLY on the reject path (see ratelimit.Policy.TenantKeyFunc), so it adds
-// no cost to allowed traffic.
+// no cost to allowed traffic. SetRateLimitPolicy (accessors.go) applies the
+// SAME defaulting rules to a later live policy swap.
 func (s *Server) resolvedRateLimitPolicy() ratelimit.Policy {
 	p := *s.rateLimitPolicy
 	if p.Metrics == nil {

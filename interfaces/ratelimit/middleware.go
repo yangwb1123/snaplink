@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/snaplink/sso/interfaces/middleware"
@@ -118,6 +119,59 @@ func Middleware(p Policy) func(http.Handler) http.Handler {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			lim := p.limiterFor(r.URL.Path)
+			if lim == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			ok, retry := lim.Allow(keyFn(r))
+			if !ok {
+				p.recordRejection(r)
+				writeTooManyRequests(w, retry)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// PolicyStore holds a live-swappable Policy for [DynamicMiddleware]. Unlike
+// [Middleware], which closes over a Policy VALUE once at construction time
+// (so a later mutation has no effect on the already-built handler chain —
+// see the config/reload package doc for why that blocks hot-reloading
+// security.rate_limit.*), DynamicMiddleware reads the CURRENT Policy from a
+// PolicyStore on every request, so [PolicyStore.Set] takes effect
+// immediately without rebuilding the middleware chain.
+type PolicyStore struct {
+	p atomic.Pointer[Policy]
+}
+
+// NewPolicyStore returns a PolicyStore initialized to initial.
+func NewPolicyStore(initial Policy) *PolicyStore {
+	s := &PolicyStore{}
+	s.p.Store(&initial)
+	return s
+}
+
+// Set atomically replaces the store's Policy. Safe for concurrent use with
+// Get and with DynamicMiddleware serving requests.
+func (s *PolicyStore) Set(p Policy) { s.p.Store(&p) }
+
+// Get returns the store's current Policy.
+func (s *PolicyStore) Get() Policy { return *s.p.Load() }
+
+// DynamicMiddleware is [Middleware]'s live-reloadable counterpart: it reads
+// store's CURRENT Policy on every request instead of closing over a fixed
+// value, so a later [PolicyStore.Set] (e.g. from a SIGHUP config reload)
+// changes rate-limiting behavior immediately.
+func DynamicMiddleware(store *PolicyStore) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p := store.Get()
+			keyFn := p.Key
+			if keyFn == nil {
+				keyFn = KeyByClientIP
+			}
 			lim := p.limiterFor(r.URL.Path)
 			if lim == nil {
 				next.ServeHTTP(w, r)
