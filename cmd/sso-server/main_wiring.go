@@ -150,20 +150,26 @@ func wireRateLimitReload(reloader *configreload.Reloader, srv *sso.Server, redis
 	})
 }
 
-// wireFeatureGateReload wires reloader's SetAdminAPIGateHook/
-// SetWebSPAGateHook so a SIGHUP config reload flips feature_gates.admin_api /
-// feature_gates.web_spa on the already-built srv, live, without a restart.
-// Unlike wireRateLimitReload, neither hook here needs to rebuild anything —
-// srv.Mount() always registers the /api/v1/admin/* group and the SPA static
-// bundles behind a request-time gate check now (see interfaces/sso's
-// mountAdminSurface / buildProbeMux docs), so the two Set*GateEnabled
-// methods just flip an already-installed atomic flag. See those methods'
-// docs (interfaces/sso/accessors.go) for the one asymmetry that still
-// surfaces as Result.Ignored: SetWebSPAGateEnabled reports no effect when no
-// SPA filesystem was ever wired via a With*FS option at NewServer time.
+// wireFeatureGateReload wires reloader's Set*GateHook for all seven
+// feature_gates.* fields so a SIGHUP config reload flips any of them on the
+// already-built srv, live, without a restart. Unlike wireRateLimitReload,
+// none of these hooks needs to rebuild anything — srv.Mount() always
+// registers every gated route group behind a request-time gate check now
+// (see interfaces/sso's mount* docs), so each Set*GateEnabled method just
+// flips an already-installed atomic flag. See those methods' docs
+// (interfaces/sso/accessors.go, accessors_feature_gates.go) for the
+// asymmetries that still surface as Result.Ignored: SetWebSPAGateEnabled,
+// SetCAEPGateEnabled, and SetFederationGateEnabled each report no effect
+// when nothing was ever wired for them to affect (no SPA filesystem, no
+// CAEP receiver, none of the federation sub-features, respectively).
 func wireFeatureGateReload(reloader *configreload.Reloader, srv *sso.Server) {
 	reloader.SetAdminAPIGateHook(srv.SetAdminAPIGateEnabled)
 	reloader.SetWebSPAGateHook(srv.SetWebSPAGateEnabled)
+	reloader.SetOIDCGateHook(srv.SetOIDCGateEnabled)
+	reloader.SetCIBAGateHook(srv.SetCIBAGateEnabled)
+	reloader.SetCAEPGateHook(srv.SetCAEPGateEnabled)
+	reloader.SetFederationGateHook(srv.SetFederationGateEnabled)
+	reloader.SetSelfServiceGateHook(srv.SetSelfServiceGateEnabled)
 }
 
 // initTracing wires OTLP tracing and returns its shutdown func. The call is

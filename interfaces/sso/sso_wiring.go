@@ -199,16 +199,21 @@ type wiringState struct {
 	// registers routes for (attack-surface reduction). Zero value = every
 	// gate unset ⇒ byte-identical to a pre-gate build (see FeatureGates).
 	featureGates FeatureGates
-	// adminAPILive / webSPALive hold the LIVE, hot-reloadable admin_api /
-	// web_spa gate values read by adminAPIGateOn/webSPAGateOn
+	// adminAPILive / webSPALive / oidcLive / cibaLive / caepLive /
+	// federationLive / selfServiceLive hold the LIVE, hot-reloadable
+	// feature_gates.* values read by the seven *GateOn methods
 	// (server_routes.go) — seeded from featureGates once in NewServer
-	// (sso.go), then flipped in place by SetAdminAPIGateEnabled/
-	// SetWebSPAGateEnabled (accessors.go), which config/reload's
-	// SetAdminAPIGateHook/SetWebSPAGateHook wire a SIGHUP reload to. Read
-	// from the request-handling goroutine, written from the reload
-	// goroutine — must be atomic.
-	adminAPILive atomic.Bool
-	webSPALive   atomic.Bool
+	// (sso.go), then flipped in place by the matching Set*GateEnabled method
+	// (accessors_feature_gates.go), which config/reload's Set*GateHook wires
+	// a SIGHUP reload to. Read from the request-handling goroutine, written
+	// from the reload goroutine — must be atomic.
+	adminAPILive    atomic.Bool
+	webSPALive      atomic.Bool
+	oidcLive        atomic.Bool
+	cibaLive        atomic.Bool
+	caepLive        atomic.Bool
+	federationLive  atomic.Bool
+	selfServiceLive atomic.Bool
 	// configAuditStore persists runtime-configuration change history
 	// (platform/configaudit). Nil = the change-capture hook + the
 	// GET .../config/history admin endpoint are both off.

@@ -31,33 +31,28 @@
 //     on every rebuild anyway (in-memory bucket state resets — a safe,
 //     side-effect-free change, not a correctness concern).
 //
-//   - feature_gates.admin_api / feature_gates.web_spa — interfaces/sso now
-//     mounts BOTH surfaces UNCONDITIONALLY at Mount() time and wraps each
+//   - feature_gates.{admin_api,web_spa,oidc,ciba,caep,federation,
+//     self_service} — interfaces/sso now mounts every one of these seven
+//     route groups UNCONDITIONALLY at Mount() time and wraps each
 //     registered route in a request-time gate check
 //     (shared/core.GatedRouter / GateHTTPHandler) instead of deciding
-//     "mount or don't" once, at boot. Reload flips that live check via
-//     SetAdminAPIGateHook / SetWebSPAGateHook — wired to
-//     Server.SetAdminAPIGateEnabled / SetWebSPAGateEnabled — with NO restart
-//     and no re-Mount. One asymmetry survives, and it is reported as
-//     Ignored rather than silently claimed Applied: SetWebSPAGateEnabled
-//     returns false when NONE of the SPA filesystems (admin console /
-//     hosted login / portal / developer portal) were ever wired via a
-//     With*FS option at NewServer time — a gate can only suppress/reveal an
-//     ALREADY-mounted route, it can never conjure a filesystem that was
-//     never constructed. admin_api has no such gap: mountAdminSurface's
-//     group (at minimum the client lookup + the endpoint inventory) is
-//     unconditional, so SetAdminAPIGateEnabled is always effective.
+//     "mount or don't" once, at boot. Reload flips the matching live check
+//     via each field's Set*GateHook — wired to the matching
+//     Server.Set*GateEnabled method — with NO restart and no re-Mount. Some
+//     of these have an asymmetry that surfaces as Ignored rather than
+//     silently claimed Applied, when the underlying route group has
+//     NOTHING mounted for the flag to affect (no SPA filesystem for
+//     web_spa, no CAEP receiver for caep, none of protected-resource-
+//     metadata/federation-entity/connection-store for federation) — a gate
+//     can only suppress/reveal an ALREADY-mounted route, it can never
+//     conjure one that was never constructed. admin_api/oidc/ciba/
+//     self_service have no such gap: each always has at least one
+//     unconditionally-mounted route in its group, so its Set*GateEnabled is
+//     always effective.
 //
 // Still deliberately NOT wired, despite looking "safe" on paper (a toggle,
 // no store/connection to re-provision):
 //
-//   - every OTHER feature_gates.* field (oidc/ciba/caep/federation/
-//     self_service) — interfaces/sso still decides those route groups ONCE,
-//     at server-construction time, with no live re-check inside the
-//     registered handler (unlike admin_api/web_spa above). Toggling one of
-//     these after boot cannot add or remove already-registered/unregistered
-//     mux routes without a full re-Mount, which this SDK does not support
-//     at runtime.
 //   - storage backends, listen addresses, TLS material, cluster/etcd
 //     endpoints, DSNs — all require closing and re-opening a connection or
 //     listener; applying them in place risks leaking the old
@@ -88,9 +83,14 @@ import (
 // to a live server, exactly (one leaf field, one apply case). See the
 // package doc for what's deliberately excluded and why.
 var safeReloadPaths = map[string]bool{
-	"/logging/level":           true,
-	"/feature_gates/admin_api": true,
-	"/feature_gates/web_spa":   true,
+	"/logging/level":              true,
+	"/feature_gates/admin_api":    true,
+	"/feature_gates/web_spa":      true,
+	"/feature_gates/oidc":         true,
+	"/feature_gates/ciba":         true,
+	"/feature_gates/caep":         true,
+	"/feature_gates/federation":   true,
+	"/feature_gates/self_service": true,
 }
 
 // safeReloadPrefixes lists JSON-Pointer path PREFIXES treated as safe when
@@ -164,6 +164,22 @@ type Reloader struct {
 	// Ignored. Set via SetAdminAPIGateHook / SetWebSPAGateHook.
 	setAdminAPIGate func(enabled bool) bool
 	setWebSPAGate   func(enabled bool) bool
+
+	// setOIDCGate / setCIBAGate / setCAEPGate / setFederationGate /
+	// setSelfServiceGate are feature_gates.{oidc,ciba,caep,federation,
+	// self_service}'s analogs of setAdminAPIGate/setWebSPAGate above —
+	// typically the matching Server.Set*GateEnabled method. Each returns
+	// false when the change had nowhere to land (see those methods' docs),
+	// reported as Ignored rather than Applied. nil (the default) means no
+	// hook was wired — also Ignored. Set via the matching Set*GateHook,
+	// defined in reload_feature_gates.go (which also holds the apply*
+	// methods for all seven gates) to keep this file under the maintainability
+	// line budget.
+	setOIDCGate        func(enabled bool) bool
+	setCIBAGate        func(enabled bool) bool
+	setCAEPGate        func(enabled bool) bool
+	setFederationGate  func(enabled bool) bool
+	setSelfServiceGate func(enabled bool) bool
 }
 
 // SetRateLimitHook wires the callback Reload uses to apply a live
@@ -177,28 +193,6 @@ func (r *Reloader) SetRateLimitHook(fn func(config.RateLimitConfig) error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.setRateLimitPolicy = fn
-}
-
-// SetAdminAPIGateHook wires the callback Reload uses to apply a live
-// feature_gates.admin_api change — typically Server.SetAdminAPIGateEnabled.
-// nil (the default) makes a detected admin_api change appear in
-// Result.Ignored instead of Result.Applied, mirroring every other unwired-
-// hook contract in this file.
-func (r *Reloader) SetAdminAPIGateHook(fn func(enabled bool) bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.setAdminAPIGate = fn
-}
-
-// SetWebSPAGateHook is feature_gates.web_spa's analog of
-// SetAdminAPIGateHook — typically Server.SetWebSPAGateEnabled. See the
-// package doc for the one asymmetry that survives even with a hook wired:
-// the hook itself can still report false (no SPA filesystem was ever
-// wired), which Reload also surfaces as Ignored, not Applied.
-func (r *Reloader) SetWebSPAGateHook(fn func(enabled bool) bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.setWebSPAGate = fn
 }
 
 // New builds a Reloader seeded with the config the process booted with.
@@ -321,6 +315,16 @@ func (r *Reloader) applySafe(path string, newCfg *config.Config) []string {
 		return stringOrNil(r.applyAdminAPIGate(newCfg))
 	case "/feature_gates/web_spa":
 		return stringOrNil(r.applyWebSPAGate(newCfg))
+	case "/feature_gates/oidc":
+		return stringOrNil(r.applyOIDCGate(newCfg))
+	case "/feature_gates/ciba":
+		return stringOrNil(r.applyCIBAGate(newCfg))
+	case "/feature_gates/caep":
+		return stringOrNil(r.applyCAEPGate(newCfg))
+	case "/feature_gates/federation":
+		return stringOrNil(r.applyFederationGate(newCfg))
+	case "/feature_gates/self_service":
+		return stringOrNil(r.applySelfServiceGate(newCfg))
 	default:
 		// A path was added to safeReloadPaths without a matching apply
 		// case here — treat as not-yet-wired rather than silently no-op.
@@ -337,52 +341,6 @@ func stringOrNil(applied string) []string {
 		return nil
 	}
 	return []string{applied}
-}
-
-// resolveGate mirrors interfaces/sso's unexported gateOn: nil (the operator
-// never mentioned the field) or an explicit true both mean the surface is
-// ON — only an explicit false turns it off. Duplicated here rather than
-// imported (interfaces/sso does not export it) — this package intentionally
-// stays decoupled from interfaces/sso, talking to it only through the
-// setAdminAPIGate/setWebSPAGate func hooks a caller wires in.
-func resolveGate(explicit *bool) bool {
-	return explicit == nil || *explicit
-}
-
-// applyAdminAPIGate applies a reloaded feature_gates.admin_api change live
-// via the wired setAdminAPIGate hook. Reported as Applied only when a hook
-// is wired AND it reports success — see SetAdminAPIGateHook's doc for why
-// this hook, unlike setRateLimitPolicy, has no "not enabled at boot" failure
-// mode in practice (mountAdminSurface's group is unconditional).
-func (r *Reloader) applyAdminAPIGate(newCfg *config.Config) string {
-	if r.setAdminAPIGate == nil {
-		return ""
-	}
-	old := resolveGate(r.current.FeatureGates.AdminAPI)
-	resolved := resolveGate(newCfg.FeatureGates.AdminAPI)
-	if !r.setAdminAPIGate(resolved) {
-		return ""
-	}
-	r.current.FeatureGates.AdminAPI = newCfg.FeatureGates.AdminAPI
-	return fmt.Sprintf("feature_gates.admin_api: %v -> %v", old, resolved)
-}
-
-// applyWebSPAGate is feature_gates.web_spa's analog of applyAdminAPIGate.
-// Unlike admin_api, the wired hook (Server.SetWebSPAGateEnabled) CAN report
-// false here — when no SPA filesystem was ever wired at NewServer time there
-// is no already-mounted route for this gate to affect, so the change is
-// reported as Ignored (by the "" return) rather than falsely Applied.
-func (r *Reloader) applyWebSPAGate(newCfg *config.Config) string {
-	if r.setWebSPAGate == nil {
-		return ""
-	}
-	old := resolveGate(r.current.FeatureGates.WebSPA)
-	resolved := resolveGate(newCfg.FeatureGates.WebSPA)
-	if !r.setWebSPAGate(resolved) {
-		return ""
-	}
-	r.current.FeatureGates.WebSPA = newCfg.FeatureGates.WebSPA
-	return fmt.Sprintf("feature_gates.web_spa: %v -> %v", old, resolved)
 }
 
 // applyLogLevel is the single currently-wired safe-reload case. Reports the

@@ -15,9 +15,12 @@ import (
 	"testing"
 
 	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/protocols/caep"
+	"github.com/snaplink/sso/shared/security"
 )
 
 // fgAdminEnv bundles an AdminMiddleware-fronted httptest server plus a bearer
@@ -172,6 +175,105 @@ func TestFeatureGates_CIBAOff_Hides404(t *testing.T) {
 	list := fgAdminEndpoints(t, env)
 	if fgInventoryHasPath(list, sso.PathBackchannelAuth) {
 		t.Errorf("inventory lists %s with ciba gate off", sso.PathBackchannelAuth)
+	}
+}
+
+// TestFeatureGates_CAEPOff_Hides404 proves the CAEP gate removes
+// POST /ssf/receive entirely, even with a receiver wired via
+// WithCAEPReceiver — the gate suppresses reachability of an
+// already-constructed receiver, it does not need the receiver absent.
+func TestFeatureGates_CAEPOff_Hides404(t *testing.T) {
+	t.Parallel()
+	rcv, err := caep.NewReceiver(
+		"https://rp.example.com",
+		defaultimpl.NewMemoryJTIReplayStore(),
+		fgNopRevoker{},
+		defaultimpl.NewMemoryUserProvider(),
+		[]caep.TrustedTransmitter{{
+			Issuer: "https://transmitter.example.com",
+			JWKS:   security.NewStaticJWKS(nil),
+		}},
+	)
+	if err != nil {
+		t.Fatalf("caep.NewReceiver: %v", err)
+	}
+	env := fgNewAdminServer(t,
+		sso.WithCAEPReceiver(rcv),
+		sso.WithFeatureGates(sso.FeatureGates{CAEP: sso.Bool(false)}),
+	)
+
+	status, _ := rcovDo(t, http.MethodPost, env.url+"/ssf/receive", "", nil)
+	if status != http.StatusNotFound {
+		t.Errorf("POST /ssf/receive with caep off = %d, want 404", status)
+	}
+	list := fgAdminEndpoints(t, env)
+	if fgInventoryHasPath(list, sso.PathSSFReceive) {
+		t.Errorf("inventory lists %s with caep gate off", sso.PathSSFReceive)
+	}
+}
+
+// fgNopRevoker is a no-op caep.SubjectRevoker — the gate-off path never
+// reaches the receiver's decision logic, so it is never invoked.
+type fgNopRevoker struct{}
+
+func (fgNopRevoker) RevokeAllForSubject(context.Context, string) (caep.RevocationResult, error) {
+	return caep.RevocationResult{}, nil
+}
+
+// TestFeatureGates_FederationOff_Hides404 proves the Federation gate removes
+// the RFC 9728 protected-resource metadata document (representative of the
+// whole federation sub-feature group) even though WithProtectedResourceMetadata
+// is wired.
+func TestFeatureGates_FederationOff_Hides404(t *testing.T) {
+	t.Parallel()
+	env := fgNewAdminServer(t,
+		sso.WithProtectedResourceMetadata(sso.ProtectedResourceMetadata{ResourceName: "Gate Test Resource"}),
+		sso.WithFeatureGates(sso.FeatureGates{Federation: sso.Bool(false)}),
+	)
+
+	status, _ := rcovDo(t, http.MethodGet, env.url+"/.well-known/oauth-protected-resource", "", nil)
+	if status != http.StatusNotFound {
+		t.Errorf("GET /.well-known/oauth-protected-resource with federation off = %d, want 404", status)
+	}
+	list := fgAdminEndpoints(t, env)
+	if fgInventoryHasPath(list, sso.PathProtectedResourceMetadata) {
+		t.Errorf("inventory lists %s with federation gate off", sso.PathProtectedResourceMetadata)
+	}
+}
+
+// TestFeatureGates_FederationOff_HomeRealmAlsoHidden proves the same gate
+// suppresses a DIFFERENT sub-feature in the same group (B2B home-realm
+// discovery, gated only on WithConnectionStore) — the group-level gate
+// covers every sub-block, not just the one the previous test exercised.
+func TestFeatureGates_FederationOff_HomeRealmAlsoHidden(t *testing.T) {
+	t.Parallel()
+	env := fgNewAdminServer(t,
+		sso.WithConnectionStore(connections.NewMemoryStore()),
+		sso.WithFeatureGates(sso.FeatureGates{Federation: sso.Bool(false)}),
+	)
+
+	status, _ := rcovDo(t, http.MethodGet, env.url+sso.PathHomeRealm+"?login_hint=user@example.com", "", nil)
+	if status != http.StatusNotFound {
+		t.Errorf("GET %s with federation off = %d, want 404", sso.PathHomeRealm, status)
+	}
+}
+
+// TestFeatureGates_SelfServiceOff_Hides404 proves the SelfService gate
+// removes the always-mounted /me/permissions,/me/menus,/me/roles group
+// (mountSelfServiceProfile registers these unconditionally of any backing
+// store) entirely at the router level.
+func TestFeatureGates_SelfServiceOff_Hides404(t *testing.T) {
+	t.Parallel()
+	env := fgNewAdminServer(t, sso.WithFeatureGates(sso.FeatureGates{SelfService: sso.Bool(false)}))
+
+	for _, path := range []string{sso.PathMyPermissions, sso.PathMyMenus, sso.PathMyRoles} {
+		if status, _ := rcovDo(t, http.MethodGet, env.url+path, "", nil); status != http.StatusNotFound {
+			t.Errorf("GET %s with self_service off = %d, want 404", path, status)
+		}
+	}
+	list := fgAdminEndpoints(t, env)
+	if fgInventoryHasPath(list, sso.PathMyPermissions) {
+		t.Errorf("inventory lists %s with self_service gate off", sso.PathMyPermissions)
 	}
 }
 

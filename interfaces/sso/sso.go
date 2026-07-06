@@ -83,10 +83,7 @@ func NewServer(opts ...Option) *Server {
 	// so it captures whatever SessionManager WithSessionManager wired. Always
 	// on (unlike the other apply* helpers here) — see applySessionHub.
 	s.applySessionHub()
-	// Seed the LIVE hot-reloadable gate flags before Mount() reads them
-	// (sso_wiring.go's adminAPILive/webSPALive doc has the full rationale).
-	s.adminAPILive.Store(gateOn(s.featureGates.AdminAPI))
-	s.webSPALive.Store(gateOn(s.featureGates.WebSPA))
+	s.seedFeatureGateLiveFlags()
 	// Attack-surface visibility: emit the metric snapshot + (if any gate is
 	// off) the audit event + log line for FeatureGates. Last, so it reflects
 	// the fully-resolved config regardless of option order.

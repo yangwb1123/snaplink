@@ -21,17 +21,19 @@ func (s *Server) handleCheckSessionIframe(ctx HandlerContext) { oidc.HandleCheck
 
 // mountOIDCUserEndpoints registers the OIDC-specific /userinfo,
 // /end_session, and (session-management-gated) /check_session_iframe
-// routes. Moved out of server_routes.go (which sat at the line budget) so
-// the OIDC gate check + the session-management gate live beside the
-// handlers they mount.
+// routes UNCONDITIONALLY, gating reachability LIVE via core.GatedRouter so
+// feature_gates.oidc is hot-reloadable (SetOIDCGateEnabled) with no
+// re-Mount. sessionManagementEnabled stays a boot-time nil/bool check — it
+// is a separate opt-in feature (WithOIDCSessionManagement), not the OIDC
+// gate. Moved out of server_routes.go (which sat at the line budget) so the
+// OIDC gate check + the session-management gate live beside the handlers
+// they mount.
 func (s *Server) mountOIDCUserEndpoints() {
-	if !s.oidcGateOn() {
-		return
-	}
-	s.router.GET(PathUserInfo, s.handleUserInfo)
-	s.router.GET(PathEndSession, s.handleEndSession)
+	gr := core.NewGatedRouter(s.router, s.oidcGateOn)
+	gr.GET(PathUserInfo, s.handleUserInfo)
+	gr.GET(PathEndSession, s.handleEndSession)
 	if s.sessionManagementEnabled {
-		s.router.GET(PathCheckSessionIframe, s.handleCheckSessionIframe)
+		gr.GET(PathCheckSessionIframe, s.handleCheckSessionIframe)
 	}
 }
 

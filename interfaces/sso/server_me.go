@@ -173,17 +173,17 @@ func (s *Server) handleRevokeMyTrustedDevice(ctx HandlerContext) {
 }
 
 // mountTrustedDeviceRoutes registers the self-service "remember this device"
-// MFA-skip surface (GET/POST/DELETE /me/devices*). Called from
-// mountSelfServiceCredentials (server_routes.go); kept here — rather than
-// grown inline there — to keep that orchestrator within the per-function
-// line budget. Byte-identical without a store wired.
-func (s *Server) mountTrustedDeviceRoutes() {
+// MFA-skip surface (GET/POST/DELETE /me/devices*) on gr, the SAME
+// SelfService-gated core.GatedRouter mountSelfServiceCredentials builds — so
+// this group hot-toggles with the rest of the self-service surface instead
+// of needing its own gate. Byte-identical without a store wired.
+func (s *Server) mountTrustedDeviceRoutes(gr Router) {
 	if s.trustedDeviceStore == nil {
 		return
 	}
-	s.router.GET(PathMyDevices, s.handleMyTrustedDevices)
-	s.router.POST(PathMyDevicesTrust, s.handleTrustMyDevice)
-	s.router.DELETE(PathMyDeviceByID, s.handleRevokeMyTrustedDevice)
+	gr.GET(PathMyDevices, s.handleMyTrustedDevices)
+	gr.POST(PathMyDevicesTrust, s.handleTrustMyDevice)
+	gr.DELETE(PathMyDeviceByID, s.handleRevokeMyTrustedDevice)
 }
 
 // handleMyWebAuthnRegisterBegin delegates to selfservice.HandleWebAuthnRegisterBegin.
@@ -251,111 +251,150 @@ func (s *Server) handleUnlinkMyIdentity(ctx HandlerContext) {
 // their natural home and had ample headroom. Mount() (server_routes.go)
 // still calls them; only the definitions moved.
 
+// mountUnauthenticatedSelfServiceRoutes registers the unauthenticated
+// forgot/reset-password flow and the opt-in self-service signup/verify
+// routes — called from mountCoreOAuthOIDC (server_routes.go), relocated
+// here (which was at the line budget) to sit beside the rest of the
+// self-service mount functions. Each route is gated on its backing store (a
+// boot-time nil-check, unchanged) AND mounted through the SAME
+// SelfService-gated core.GatedRouter mountSelfServiceProfile /
+// mountSelfServiceCredentials use, so it hot-toggles with the rest of the
+// self-service surface (SetSelfServiceGateEnabled) instead of needing its
+// own gate.
+func (s *Server) mountUnauthenticatedSelfServiceRoutes() {
+	selfServiceGR := core.NewGatedRouter(s.router, s.selfServiceGateOn)
+	// Unauthenticated forgot-password flow. Requires the reset-token store AND
+	// the credential store (reset must SetPassword on success) — byte-identical
+	// without both.
+	if s.passwordResetStore != nil && s.passwordCredentialStore != nil {
+		selfServiceGR.POST(PathForgotPassword, s.handleForgotPassword)
+		selfServiceGR.POST(PathResetPassword, s.handleResetPassword)
+	}
+	// Opt-in self-service signup. Needs a UserProvider (create) + credential
+	// store (set password). Default-off — byte-identical when not enabled.
+	if s.signupEnabled && s.userProvider != nil && s.passwordCredentialStore != nil {
+		// Mode B (mandatory verification) requires the store + sender; without
+		// them the handler nil-derefs on EmailVerificationStore.Issue(). Suppress
+		// the route rather than panic at request time.
+		if !s.signupRequireVerification || (s.emailVerificationStore != nil && s.emailVerificationSender != nil) {
+			selfServiceGR.POST(PathSignup, s.handleSelfRegister)
+		}
+		// Verification endpoint: Mode B needs store + sender (both required for
+		// the register route above). Mode A opt-in (?send_verification=true) only
+		// needs the store — the sender was already invoked at register time.
+		// Mount whenever the store is wired so Mode A opt-in verify does not 404.
+		if s.emailVerificationStore != nil {
+			selfServiceGR.POST(PathVerifyEmail, s.handleVerifyEmail)
+		}
+	}
+}
+
 // mountSelfServiceProfile registers the authenticated /me* self-service
 // endpoints for permissions/menus/roles, sessions, consents, identities, org
-// membership, and profile — each gated on its backing store, and all of them
-// behind the SelfService feature gate (a deployment that never wants an
-// end-user-facing self-service surface hides the whole group).
+// membership, and profile — each gated on its backing store (a boot-time
+// nil-check, unchanged), all mounted UNCONDITIONALLY and gated LIVE as one
+// group via core.GatedRouter (SetSelfServiceGateEnabled) instead of the
+// previous single boot-time early-return, so a deployment can hot-toggle the
+// whole end-user-facing self-service surface with no re-Mount.
 func (s *Server) mountSelfServiceProfile() {
-	if !s.selfServiceGateOn() {
-		return
-	}
-	s.router.GET(PathMyPermissions, s.handleMyPermissions)
-	s.router.GET(PathMyMenus, s.handleMyMenus)
-	s.router.GET(PathMyRoles, s.handleMyRoles)
+	gr := core.NewGatedRouter(s.router, s.selfServiceGateOn)
+	gr.GET(PathMyPermissions, s.handleMyPermissions)
+	gr.GET(PathMyMenus, s.handleMyMenus)
+	gr.GET(PathMyRoles, s.handleMyRoles)
 	if s.sessionMgr != nil {
-		s.router.GET(PathMySessions, s.handleMySessions)
-		s.router.DELETE(PathMySessions, s.handleRevokeMySessions)
-		s.router.DELETE(PathMySessionByID, s.handleDeleteMySession)
+		gr.GET(PathMySessions, s.handleMySessions)
+		gr.DELETE(PathMySessions, s.handleRevokeMySessions)
+		gr.DELETE(PathMySessionByID, s.handleDeleteMySession)
 		// /me/sessions* self-service endpoints follow the /me/* naming
 		// convention used by the rest of the self-service API surface.
-		s.router.GET(PathMeSessions, s.handleMeSessions)
-		s.router.DELETE(PathMeSessionByID, s.handleDeleteMeSession)
-		s.router.POST(PathMeSessionsRevokeAll, s.handleMeSessionsRevokeAll)
+		gr.GET(PathMeSessions, s.handleMeSessions)
+		gr.DELETE(PathMeSessionByID, s.handleDeleteMeSession)
+		gr.POST(PathMeSessionsRevokeAll, s.handleMeSessionsRevokeAll)
 	}
 	if s.consentStore != nil {
-		s.router.GET(PathMyConsents, s.handleMyConsents)
-		s.router.DELETE(PathMyConsentByID, s.handleDeleteMyConsent)
+		gr.GET(PathMyConsents, s.handleMyConsents)
+		gr.DELETE(PathMyConsentByID, s.handleDeleteMyConsent)
 	}
 	// Self-service identity linking: list the caller's linked external
 	// identities + unlink one. Mounted only when a Store is wired
 	// (WithIdentityLinkStore) — byte-identical to a build without it.
 	if s.identityLinkStore != nil {
-		s.router.GET(PathMyIdentities, s.handleMyIdentities)
-		s.router.DELETE(PathMyIdentityByID, s.handleUnlinkMyIdentity)
+		gr.GET(PathMyIdentities, s.handleMyIdentities)
+		gr.DELETE(PathMyIdentityByID, s.handleUnlinkMyIdentity)
 	}
 	// Self-service B2B org membership: list my orgs + leave one.
 	if s.tenantUserStore != nil {
-		s.router.GET(PathMyOrganizations, s.handleMyOrganizations)
-		s.router.DELETE(PathMyOrganizationByID, s.handleLeaveMyOrganization)
+		gr.GET(PathMyOrganizations, s.handleMyOrganizations)
+		gr.DELETE(PathMyOrganizationByID, s.handleLeaveMyOrganization)
 		// Accept an invitation (joins an org) — needs both stores.
 		if s.invitationStore != nil {
-			s.router.POST(PathMyInvitationAccept, s.handleAcceptInvitation)
+			gr.POST(PathMyInvitationAccept, s.handleAcceptInvitation)
 		}
 	}
 	// Self-service account overview. Mounted with a user directory (the
 	// profile is its core); byte-identical without one.
 	if s.userProvider != nil {
-		s.router.GET(PathMe, s.handleMe)
-		s.router.PATCH(PathMe, s.handlePatchMe)
+		gr.GET(PathMe, s.handleMe)
+		gr.PATCH(PathMe, s.handlePatchMe)
 	}
 	// Self-service password change. Mounted only with a password credential
 	// store; byte-identical without one.
 	if s.passwordCredentialStore != nil {
-		s.router.POST(PathMyPassword, s.handleChangeMyPassword)
+		gr.POST(PathMyPassword, s.handleChangeMyPassword)
 	}
 }
 
 // mountSelfServiceCredentials registers the authenticated /me* credential +
 // privacy endpoints (MFA factors, passkey registration, GDPR export/erasure,
-// verified email change), gated on both their backing store and the
-// SelfService feature gate. The public per-host branding lookup used to live
-// here too; it moved to mountBrandingEndpoint (gated by WebSPA instead — it
-// serves the hosted login SPA, not an authenticated self-service action).
+// verified email change), each gated on its backing store (a boot-time
+// nil-check, unchanged) and mounted UNCONDITIONALLY + gated LIVE as one
+// group via core.GatedRouter (SetSelfServiceGateEnabled) instead of the
+// previous single boot-time early-return. The public per-host branding
+// lookup used to live here too; it moved to mountBrandingEndpoint (gated by
+// WebSPA instead — it serves the hosted login SPA, not an authenticated
+// self-service action).
 func (s *Server) mountSelfServiceCredentials() {
-	if !s.selfServiceGateOn() {
-		return
-	}
+	gr := core.NewGatedRouter(s.router, s.selfServiceGateOn)
 	// Self-service MFA factor management. Mounted only with an enrollment
 	// store; byte-identical without one.
 	if s.mfaEnrollmentStore != nil {
-		s.router.GET(PathMyMFA, s.handleMyMFAFactors)
-		s.router.DELETE(PathMyMFAByID, s.handleDeleteMyMFAFactor)
+		gr.GET(PathMyMFA, s.handleMyMFAFactors)
+		gr.DELETE(PathMyMFAByID, s.handleDeleteMyMFAFactor)
 		// Self-service TOTP enrollment (the write-half). Mounted only when the
 		// enrollment store can persist a TOTP factor AND a TOTP enroller is
 		// wired to verify the confirm code — byte-identical otherwise.
 		if _, ok := s.mfaEnrollmentStore.(TOTPEnrollmentWriter); ok && s.totpEnroller != nil {
-			s.router.POST(PathMyMFATOTPBegin, s.handleTOTPEnrollBegin)
-			s.router.POST(PathMyMFATOTPConfirm, s.handleTOTPEnrollConfirm)
+			gr.POST(PathMyMFATOTPBegin, s.handleTOTPEnrollBegin)
+			gr.POST(PathMyMFATOTPConfirm, s.handleTOTPEnrollConfirm)
 		}
 	}
 	// Self-service MFA recovery codes (regenerate + remaining count); byte-identical without a store.
 	if s.recoveryCodeStore != nil {
-		s.router.POST(PathMyMFARecoveryCodes, s.handleGenerateRecoveryCodes)
-		s.router.GET(PathMyMFARecoveryCodes, s.handleGetRecoveryCodesCount)
+		gr.POST(PathMyMFARecoveryCodes, s.handleGenerateRecoveryCodes)
+		gr.GET(PathMyMFARecoveryCodes, s.handleGetRecoveryCodesCount)
 	}
-	s.mountTrustedDeviceRoutes()
+	s.mountTrustedDeviceRoutes(gr)
 	// Self-service passkey registration (authenticated, bearer-bound). Mounts
 	// independently of the enrollment store: the registered credential lands in
 	// the WebAuthn store the Registrar wraps and surfaces in /me/mfa via the
 	// WebAuthn adapter. Byte-identical when no registrar is wired.
 	if s.webauthnRegistrar != nil {
-		s.router.POST(PathMyWebAuthnRegisterBegin, s.handleMyWebAuthnRegisterBegin)
-		s.router.POST(PathMyWebAuthnRegisterFinish, s.handleMyWebAuthnRegisterFinish)
+		gr.POST(PathMyWebAuthnRegisterBegin, s.handleMyWebAuthnRegisterBegin)
+		gr.POST(PathMyWebAuthnRegisterFinish, s.handleMyWebAuthnRegisterFinish)
 	}
 	// GDPR Art. 15 self-service data export of the bearer's own data.
 	if s.dataExporter != nil {
-		s.router.GET(PathMyDataExport, s.handleMyDataExport)
+		gr.GET(PathMyDataExport, s.handleMyDataExport)
 	}
 	// GDPR Art. 17 self-service account erasure (opt-in, irreversible).
 	if s.accountEraser != nil {
-		s.router.POST(PathMyAccountErase, s.handleMyAccountErase)
+		gr.POST(PathMyAccountErase, s.handleMyAccountErase)
 	}
 	// Verified email change. Needs the token store + sender (deliver to the new
 	// address) + a UserProvider (commit the new email). Byte-identical without.
 	if s.emailChangeStore != nil && s.emailChangeSender != nil && s.userProvider != nil {
-		s.router.POST(PathMyEmailChange, s.handleMyEmailChange)
-		s.router.POST(PathMyEmailVerify, s.handleMyEmailVerify)
+		gr.POST(PathMyEmailChange, s.handleMyEmailChange)
+		gr.POST(PathMyEmailVerify, s.handleMyEmailVerify)
 	}
 }
 

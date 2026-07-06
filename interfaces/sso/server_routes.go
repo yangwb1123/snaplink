@@ -144,30 +144,7 @@ func (s *Server) mountCoreOAuthOIDC() {
 	s.router.POST(PathMFAComplete, s.handleMFAComplete)
 	s.router.POST(PathSendCode, s.handleSendCode)
 	s.router.GET(PathCallback, s.handleCallback)
-	// Unauthenticated forgot-password flow. Requires the reset-token store AND
-	// the credential store (reset must SetPassword on success) — byte-identical
-	// without both.
-	if s.passwordResetStore != nil && s.passwordCredentialStore != nil && s.selfServiceGateOn() {
-		s.router.POST(PathForgotPassword, s.handleForgotPassword)
-		s.router.POST(PathResetPassword, s.handleResetPassword)
-	}
-	// Opt-in self-service signup. Needs a UserProvider (create) + credential
-	// store (set password). Default-off — byte-identical when not enabled.
-	if s.signupEnabled && s.userProvider != nil && s.passwordCredentialStore != nil && s.selfServiceGateOn() {
-		// Mode B (mandatory verification) requires the store + sender; without
-		// them the handler nil-derefs on EmailVerificationStore.Issue(). Suppress
-		// the route rather than panic at request time.
-		if !s.signupRequireVerification || (s.emailVerificationStore != nil && s.emailVerificationSender != nil) {
-			s.router.POST(PathSignup, s.handleSelfRegister)
-		}
-		// Verification endpoint: Mode B needs store + sender (both required for
-		// the register route above). Mode A opt-in (?send_verification=true) only
-		// needs the store — the sender was already invoked at register time.
-		// Mount whenever the store is wired so Mode A opt-in verify does not 404.
-		if s.emailVerificationStore != nil {
-			s.router.POST(PathVerifyEmail, s.handleVerifyEmail)
-		}
-	}
+	s.mountUnauthenticatedSelfServiceRoutes()
 	s.router.POST(PathToken, s.handleToken)
 	s.router.POST(PathIntrospect, s.handleIntrospect)
 	s.router.POST(PathRevoke, s.handleRevoke)
@@ -185,6 +162,10 @@ func (s *Server) mountCoreOAuthOIDC() {
 	s.router.POST(PathLogout, s.handleLogout)
 }
 
+// mountUnauthenticatedSelfServiceRoutes (forgot/reset-password + opt-in
+// signup/verify) is defined in server_me.go, alongside the rest of the
+// self-service mount functions — this file was at the line budget.
+
 // gateOn resolves a single FeatureGates field: nil (unset) or an explicit
 // true both mean ON — only an explicit false turns a surface off. This is
 // what makes an operator's own opt-in config (e.g. WithCAEPReceiver) keep a
@@ -195,16 +176,17 @@ func gateOn(explicit *bool) bool {
 }
 
 // The seven gate-check methods below are the single source of truth Mount()
-// and the endpoint inventory (server_routes_admin.go) both consult. Two of
-// them — adminAPIGateOn/webSPAGateOn — read a LIVE flag (sso_wiring.go's
-// adminAPILive/webSPALive) instead of s.featureGates: those are the
-// hot-reloadable gates (accessors.go's SetAdminAPIGateEnabled/
-// SetWebSPAGateEnabled); the rest stay boot-time-only.
-func (s *Server) oidcGateOn() bool        { return gateOn(s.featureGates.OIDC) }
-func (s *Server) cibaGateOn() bool        { return gateOn(s.featureGates.CIBA) }
-func (s *Server) caepGateOn() bool        { return gateOn(s.featureGates.CAEP) }
-func (s *Server) federationGateOn() bool  { return gateOn(s.featureGates.Federation) }
-func (s *Server) selfServiceGateOn() bool { return gateOn(s.featureGates.SelfService) }
+// and the endpoint inventory (server_routes_admin.go) both consult. Every
+// one now reads a LIVE flag (sso_wiring.go's *Live atomic.Bool fields,
+// seeded from s.featureGates once in NewServer) rather than s.featureGates
+// directly — each is hot-reloadable via its matching Set*GateEnabled method
+// (accessors_feature_gates.go for the five here; SetAdminAPIGateEnabled/
+// SetWebSPAGateEnabled live in accessors.go).
+func (s *Server) oidcGateOn() bool        { return s.oidcLive.Load() }
+func (s *Server) cibaGateOn() bool        { return s.cibaLive.Load() }
+func (s *Server) caepGateOn() bool        { return s.caepLive.Load() }
+func (s *Server) federationGateOn() bool  { return s.federationLive.Load() }
+func (s *Server) selfServiceGateOn() bool { return s.selfServiceLive.Load() }
 func (s *Server) adminAPIGateOn() bool    { return s.adminAPILive.Load() }
 func (s *Server) webSPAGateOn() bool      { return s.webSPALive.Load() }
 
@@ -213,14 +195,16 @@ func (s *Server) webSPAGateOn() bool      { return s.webSPALive.Load() }
 // routes. Defined in server_userinfo.go — out of this file, which sits at
 // the line budget — beside the handlers it mounts.
 
-// mountCIBAEndpoint registers POST /backchannel-authentication. Before
-// FeatureGates existed this route was mounted unconditionally (the handler
-// itself 501s without a CIBA store) — the gate is the first way to hide it
-// from a probe entirely rather than let it 501.
+// mountCIBAEndpoint registers POST /backchannel-authentication
+// UNCONDITIONALLY, gating reachability LIVE via core.GatedRouter instead of
+// deciding "mount or don't" once at boot — so feature_gates.ciba is
+// hot-reloadable (SetCIBAGateEnabled) with no re-Mount. Before FeatureGates
+// existed this route was mounted unconditionally too (the handler itself
+// 501s without a CIBA store); the gate now additionally hides it from a
+// probe entirely while off, exactly as before, just live instead of
+// boot-time-only.
 func (s *Server) mountCIBAEndpoint() {
-	if s.cibaGateOn() {
-		s.router.POST(PathBackchannelAuth, s.handleBackchannelAuth)
-	}
+	core.NewGatedRouter(s.router, s.cibaGateOn).POST(PathBackchannelAuth, s.handleBackchannelAuth)
 }
 
 // mountClusterEndpoints and mountFederationEndpoints (cluster/mesh/CAEP-

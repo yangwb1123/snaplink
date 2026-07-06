@@ -274,31 +274,36 @@ func (s *Server) mountClusterEndpoints() {
 	// Shared Signals). A trusted upstream transmitter POSTs a signed SET
 	// here; the receiver validates it fail-closed and revokes the mapped
 	// subject's local access. Not mounted unless WithCAEPReceiver is wired
-	// AND the CAEP gate is on — byte-identical to a build without it.
-	if s.caepReceiver != nil && s.caepGateOn() {
-		s.router.POST(PathSSFReceive, s.handleSSFReceive)
+	// -- byte-identical to a build without it. feature_gates.caep is a LIVE,
+	// hot-reloadable core.GatedRouter check (SetCAEPGateEnabled) rather than
+	// a boot-time "mount or don't" decision; WithCAEPReceiver's nil-check
+	// stays boot-time-only since a gate can only toggle reachability of an
+	// already-wired receiver, never conjure one that was never constructed.
+	if s.caepReceiver != nil {
+		core.NewGatedRouter(s.router, s.caepGateOn).POST(PathSSFReceive, s.handleSSFReceive)
 	}
 }
 
 // mountFederationEndpoints registers the RFC 9728 protected-resource metadata,
 // the OpenID Federation 1.0 entity configuration (+ §8 fetch when this server
-// is a superior), and the B2B home-realm discovery routes — each opt-in, and
-// all behind the Federation feature gate.
+// is a superior), and the B2B home-realm discovery routes -- each opt-in on
+// its own backing wiring (a boot-time nil-check, unchanged), all mounted
+// UNCONDITIONALLY and gated LIVE as one group via core.GatedRouter instead of
+// the previous single boot-time early-return -- so feature_gates.federation is
+// hot-reloadable (SetFederationGateEnabled) with no re-Mount.
 func (s *Server) mountFederationEndpoints() {
-	if !s.federationGateOn() {
-		return
+	gr := core.NewGatedRouter(s.router, s.federationGateOn)
+	// RFC 9728 Protected Resource Metadata (opt-in). Public discovery doc;
+	// unmounted when not wired (byte-identical).
+	if s.protectedResourceMetadata != nil {
+		gr.GET(PathProtectedResourceMetadata, s.handleProtectedResourceMetadata)
 	}
 	// OpenID Federation 1.0 entity configuration (opt-in). Serves the OP's
 	// self-signed Entity Statement at the well-known endpoint so the OP is
 	// discoverable as a federation ENTITY. Not mounted unless
-	// RFC 9728 Protected Resource Metadata (opt-in). Public discovery doc;
-	// unmounted when not wired (byte-identical).
-	if s.protectedResourceMetadata != nil {
-		s.router.GET(PathProtectedResourceMetadata, s.handleProtectedResourceMetadata)
-	}
-	// WithFederationEntity is wired — byte-identical to a build without it.
+	// WithFederationEntity is wired -- byte-identical to a build without it.
 	if s.federationEntity != nil {
-		s.router.GET(PathFederationEntityConfig, s.handleFederationEntityConfig)
+		gr.GET(PathFederationEntityConfig, s.handleFederationEntityConfig)
 		// OpenID Federation 1.0 §8 Federation Fetch endpoint — mounted ONLY when
 		// this server is configured as a SUPERIOR (≥1 subordinate). It issues
 		// SIGNED Subordinate Statements about configured subordinates so a
@@ -306,7 +311,7 @@ func (s *Server) mountFederationEndpoints() {
 		// is NOT mounted AND the entity config advertises no
 		// federation_fetch_endpoint — byte-identical to the slice-1 leaf OP.
 		if s.federationEntity.HasSubordinates() {
-			s.router.GET(PathFederationFetch, s.handleFederationFetch)
+			gr.GET(PathFederationFetch, s.handleFederationFetch)
 		}
 	}
 
@@ -315,8 +320,8 @@ func (s *Server) mountFederationEndpoints() {
 	// routes the user to the right upstream IdP. Not mounted unless
 	// WithConnectionStore is wired — byte-identical to a build without it.
 	if s.connectionStore != nil {
-		s.router.GET(PathHomeRealm, s.handleHomeRealm)
-		s.router.POST(PathHomeRealm, s.handleHomeRealm)
+		gr.GET(PathHomeRealm, s.handleHomeRealm)
+		gr.POST(PathHomeRealm, s.handleHomeRealm)
 	}
 }
 
