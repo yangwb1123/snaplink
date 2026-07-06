@@ -13,7 +13,7 @@ import (
 // (create/rotate) — bcrypt is expensive and the hash includes the salt,
 // so it is a one-shot operation at mutation.
 func hashClientSecret(plaintext string) (string, error) {
-	h, err := bcrypt.GenerateFromPassword([]byte(plaintext), defaultimpl.BcryptCost)
+	h, err := bcrypt.GenerateFromPassword([]byte(plaintext), defaultimpl.BcryptCost())
 	if err != nil {
 		return "", err
 	}

@@ -52,7 +52,6 @@ type (
 )
 
 var (
-	BcryptCost                  = memorystoreidentity.BcryptCost
 	NewMemoryClientStore        = memorystoreidentity.NewMemoryClientStore
 	NewMemoryConsentStore       = memorystoreidentity.NewMemoryConsentStore
 	NewMemoryInvitationStore    = memorystoreidentity.NewMemoryInvitationStore
@@ -61,6 +60,21 @@ var (
 	NewMemoryTenantUserStore    = memorystoreidentity.NewMemoryTenantUserStore
 	NewMemoryUserProvider       = memorystoreidentity.NewMemoryUserProvider
 )
+
+// BcryptCost returns the bcrypt work factor memorystoreidentity's client
+// store uses to hash secrets. A plain `var BcryptCost = memorystoreidentity.BcryptCost`
+// alias (as used above for every other re-export in this file) copies the
+// int VALUE once at package-init time — it does not share storage with
+// memorystoreidentity.BcryptCost, so a later `defaultimpl.BcryptCost = x`
+// would silently never reach the variable hashClientSecret actually reads.
+// These forwarding functions read/write memorystoreidentity's live variable
+// instead.
+func BcryptCost() int { return memorystoreidentity.BcryptCost }
+
+// SetBcryptCost overrides the bcrypt work factor (test-only knob — lower
+// cost trades security for speed; never use in production). See
+// [BcryptCost]'s doc for why this can't be a plain exported var.
+func SetBcryptCost(cost int) { memorystoreidentity.BcryptCost = cost }
 
 // --- memorystorecredential ---
 type (

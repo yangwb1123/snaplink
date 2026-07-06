@@ -22,7 +22,7 @@ import (
 func TestMain(m *testing.M) {
 	// Lower bcrypt cost so the multiple AddSeed/Add calls in this suite
 	// don't make every test take ~100ms per client.
-	defaultimpl.BcryptCost = bcrypt.MinCost
+	defaultimpl.SetBcryptCost(bcrypt.MinCost)
 	os.Exit(m.Run())
 }
 

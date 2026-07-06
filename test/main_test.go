@@ -15,6 +15,6 @@ import (
 // exactly the same code paths — cost only governs how long key-stretching
 // runs, not correctness.
 func TestMain(m *testing.M) {
-	defaultimpl.BcryptCost = bcrypt.MinCost
+	defaultimpl.SetBcryptCost(bcrypt.MinCost)
 	os.Exit(m.Run())
 }
