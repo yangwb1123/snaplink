@@ -35,20 +35,47 @@ related capability exists but the proposed feature does not).
 ## Enterprise governance & compliance
 
 - **Declarative multi-cluster config governance** — partial. Cross-cluster
-  diff is now done as an HTTP primitive: `POST /api/v1/admin/config/cluster-diff`
+  diff is done as an HTTP primitive: `POST /api/v1/admin/config/cluster-diff`
   (`platform/configaudit.HandleClusterDiff`) accepts a peer cluster's config
   snapshot (typically fetched from that peer's own existing
   `GET .../config/running`) and returns the RFC 6902 patch against THIS
   cluster's running config, reusing the same `Diff`/`RedactOps` pipeline the
   existing intra-cluster applied-vs-running `GET .../config/diff` uses.
   Deliberately does NOT fetch the peer itself (no new outbound network
-  capability or peer-discovery mechanism) — an operator or a small external
-  reconciler script does the two-cluster fetch-then-post. K8s CRDs, a config
-  Operator/GitOps reconciler, and canary rollout remain undone — those need
-  a k8s client-go/controller-runtime dependency and a real reconciliation
-  loop, a much larger and qualitatively different undertaking than this
-  diff primitive; this HTTP endpoint is the natural building block a future
-  operator/reconciler would call, not a placeholder for it.
+  capability or peer-discovery mechanism) — the caller does the two-cluster
+  fetch-then-post.
+
+  The K8s-native half of this is now ALSO done: `cmd/sso-operator` (a
+  separate nested Go module, `github.com/snaplink/operator`, depending on
+  `sigs.k8s.io/controller-runtime` + `k8s.io/{api,apimachinery,client-go}`,
+  with zero dependency on the `github.com/snaplink/sso` SDK itself) ships an
+  `SSOConfigDrift` CRD (`sso.snaplink.io/v1alpha1`) + reconciler
+  (`cmd/sso-operator/controller`). Reconciling one resolves both
+  clusters' bearer tokens from referenced Secrets, does the
+  fetch-`config/running`-then-POST-`config/cluster-diff` round trip itself
+  on a `PollInterval` (default 5m), and reports `DriftDetected` /
+  `PatchOpCount` / `Message` in `.status` — `kubectl get ssoconfigdrift <name>
+  -o yaml` is now the declarative, K8s-native way to see two clusters'
+  drift, instead of a hand-run script. Fail-open: an HTTP/secret-lookup
+  error sets `.status.message` and requeues in 30s WITHOUT touching
+  `DriftDetected`/`PatchOpCount` (a transient failure is not evidence of "no
+  drift") and never fails the reconcile loop, mirroring
+  `platform/configaudit/drift.go`'s own report-only doctrine. Bearer tokens
+  are read from Secrets and used only in the outbound `Authorization`
+  header — never logged or written to Status.
+
+  Explicitly still OUT OF SCOPE (unchanged from before): config APPLY (the
+  operator never issues a write request against either cluster — the
+  cluster-diff endpoint it calls is diff-only, not apply), canary rollout,
+  auto-remediation ("reconcile B to match A" on any trigger), and a GitOps
+  reconciler that writes desired state FROM a Git repo INTO a cluster (this
+  operator only ever compares two already-running clusters against each
+  other). Extending to an apply mode would need an explicit opt-in spec
+  field (defaulting off), a new write-capable endpoint (cluster-diff stays
+  read-only by design), a canary/rollout strategy, and an audit trail
+  distinguishing "detected" from "applied" — a materially larger, separate
+  undertaking; see `cmd/sso-operator/doc.go` for the detailed next-step
+  sketch.
   _Sources: senior-architect-expansion-2026-07-02,
   expansion-novel-directions-2026-07-02, enterprise-expansion-directions-2026-07-01._
 
@@ -105,7 +132,7 @@ related capability exists but the proposed feature does not).
   textarea like the other map fields). **Every functional item under this
   backlog entry is now done.**
   _Sources: expansion-architecture-gaps-2026-07-01, analysis-five-directions-toctou…._
-- **Multi-language SDK generation + developer portal** — partial. Embedded
+- **Multi-language SDK generation + developer portal** — done. Embedded
   read-only API-docs viewer at `/api/v1/admin/docs` (+ a `/openapi.json`
   companion), opt-in via `WithAPIDocsUI` (`interfaces/apidocs`; no CDN
   script, no vendored Swagger-UI/Redoc bundle — a small hand-rolled page in
@@ -128,12 +155,25 @@ related capability exists but the proposed feature does not).
   (`ClientStore.ValidateSecret`), so a pending/deactivated client could have
   authenticated via a signed JWT assertion regardless of its review status;
   fixed with the same collapsed `invalid_client` wire shape as every other
-  rejection on that path. The developer-facing PORTAL UI (an application
-  browsing/submission page) remains undone — a frontend project, not a
-  bounded backend increment; an admin reviews pending registrations today
-  via the existing `GET /api/v1/admin/clients?filter=active:false` list. _Sources:
-  health-and-dx-2026-07-01, expansion-analysis-20260701,
-  expansion-directions-2026-07-01-v3._
+  rejection on that path. The developer-facing portal UI is now done too:
+  `interfaces/web/developer` (opt-in via `WithDeveloperPortalFS`, mounted
+  at `/developer/` only when `client_registration.enabled` — no point
+  offering self-registration when `/register` itself 501s) is a hand-rolled
+  SPA, same no-CDN convention as the other embedded SPAs, for an
+  ANONYMOUS third-party developer (not an admin, not a logged-in end
+  user): a Register tab calls `POST /register` (RFC 7591 DCR) and displays
+  the one-time `client_secret`/`registration_access_token`/
+  `registration_client_uri`; a Manage tab calls `GET`/`PUT`/`DELETE
+  /register/:client_id` (RFC 7592), authenticated by the
+  registration_access_token alone. The PUT path round-trips every field
+  the edit form doesn't expose (`grant_types`, `response_types`,
+  `allowed_authenticators`, `allowed_resources`,
+  `post_logout_redirect_uris`, ...) unchanged from the prior GET, since the
+  server takes those fields verbatim with no stored-value fallback —
+  confirmed by reading `buildUpdatedClient` (`protocols/oauth/
+  handle_register_helpers.go`), not assumed. **Every functional item under
+  this backlog entry is now done.** _Sources: health-and-dx-2026-07-01,
+  expansion-analysis-20260701, expansion-directions-2026-07-01-v3._
 
 ## Security headers, crypto & versioning
 

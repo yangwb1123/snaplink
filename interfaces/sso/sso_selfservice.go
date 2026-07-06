@@ -3,6 +3,7 @@ package sso
 import (
 	"encoding/json"
 	"io/fs"
+	"net/http"
 	"time"
 
 	"github.com/snaplink/sso/domains/identitylink"
@@ -268,6 +269,16 @@ type selfServiceState struct {
 	// leaves /portal/ unmounted — byte-identical to a build without it.
 	portalFS fs.FS
 
+	// developerPortalFS, when non-nil, serves the developer-portal SPA from
+	// an embedded or OS filesystem at /developer/. Unlike adminConsoleFS/
+	// portalFS above, this SPA authenticates an ANONYMOUS third-party
+	// developer, not an admin or logged-in end user: it calls POST
+	// /register (RFC 7591 DCR) to self-register a client, then GET/PUT/
+	// DELETE /register/:client_id (RFC 7592), authenticated by the
+	// registration_access_token issued at registration. Nil (the default)
+	// leaves /developer/ unmounted — byte-identical to a build without it.
+	developerPortalFS fs.FS
+
 	// apiDocsUIHandler and apiDocsSpecHandler, when non-nil, serve the
 	// opt-in embedded API-documentation viewer (WithAPIDocsUI) at GET
 	// .../admin/docs (self-contained HTML) and GET .../admin/docs/openapi.json
@@ -391,4 +402,40 @@ func (s *Server) handleOrgAdminListInvitations(ctx HandlerContext) {
 }
 func (s *Server) handleOrgAdminRevokeInvitation(ctx HandlerContext) {
 	selfservice.HandleOrgAdminRevokeInvitation(s, ctx)
+}
+
+// pathDeveloperPortalPrefix is the developer-portal SPA's mount prefix.
+// Held as a const (mirroring pathAdminConsolePrefix/pathHostedLoginPrefix/
+// pathPortalPrefix in server_routes.go, which is at its line budget — this
+// one lives here instead) so mountDeveloperPortalSPA's mux.Handle and
+// StripPrefix uses cannot drift apart.
+const pathDeveloperPortalPrefix = "/developer/"
+
+// WithDeveloperPortalFS serves the developer-portal SPA at /developer/ from
+// the provided filesystem (placed here rather than options_passwd.go,
+// which is at its line budget). Unlike WithAdminConsoleFS/
+// WithSelfServicePortalFS, this SPA authenticates an ANONYMOUS third-party
+// developer: it calls POST /register (RFC 7591 DCR) to self-register a
+// client, then GET/PUT/DELETE /register/:client_id (RFC 7592) with the
+// registration_access_token issued at registration — no admin bearer, no
+// end-user login. Typically wired by embedding web/developer with a
+// go:embed directive in the operator's cmd binary.
+//
+// Nil (the default) leaves /developer/ unmounted — byte-identical to a
+// build without the portal.
+func WithDeveloperPortalFS(developerFS fs.FS) Option {
+	return func(s *Server) { s.developerPortalFS = developerFS }
+}
+
+// mountDeveloperPortalSPA registers the developer-portal SPA's static
+// file server onto mux when wired, exactly mirroring the adminConsoleFS/
+// hostedLoginFS/portalFS mounts in server_routes.go's buildProbeMux (which
+// calls this — that file is at its line budget, so the conditional itself
+// lives here). No-op (byte-identical to a build without the feature) when
+// developerPortalFS is nil or the WebSPA gate is off.
+func (s *Server) mountDeveloperPortalSPA(mux *http.ServeMux) {
+	if s.developerPortalFS == nil || !s.webSPAGateOn() {
+		return
+	}
+	mux.Handle(pathDeveloperPortalPrefix, s.wrapSecurityHeaders(http.StripPrefix(pathDeveloperPortalPrefix, http.FileServerFS(s.developerPortalFS))))
 }

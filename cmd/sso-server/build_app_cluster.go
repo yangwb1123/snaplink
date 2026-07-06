@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverassets"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
@@ -248,20 +247,10 @@ func (b *appBuilder) wireFinalOptions() error {
 		logger.Info("storage-health report disabled: admin must be enabled to serve authenticated store diagnostics")
 	}
 
-	// Serve the hosted admin console SPA at /admin/. The filesystem is embedded
-	// in the binary at compile time via go:embed in admin_assets.go.
-	b.opts = append(b.opts, sso.WithAdminConsoleFS(serverassets.AdminSubFS()))
-
-	// Serve the hosted-login SPA at /login/ when opted in via config.
-	if cfg.HostedLogin.Enabled {
-		b.opts = append(b.opts, sso.WithHostedLoginFS(serverassets.LoginSubFS()))
-		logger.Info("hosted login UI enabled", "path", "/login/")
-		// The end-user self-service portal SPA pairs with the hosted login UI:
-		// once a user signs in they manage sessions/consents/password/MFA at
-		// /portal/ against the same /me* endpoints. Gated by the same flag.
-		b.opts = append(b.opts, sso.WithSelfServicePortalFS(serverassets.PortalSubFS()))
-		logger.Info("self-service portal UI enabled", "path", "/portal/")
-	}
+	// Hosted SPA bundles (admin console, hosted login, self-service portal,
+	// developer portal) — split into wireWebSPAs (main_wiring.go) to stay
+	// within this file's line budget.
+	b.wireWebSPAs()
 
 	return b.wireConsentNativeSSOPRM()
 }

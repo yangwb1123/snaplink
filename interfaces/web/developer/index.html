@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Developer Portal</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="shell">
+  <header class="top-nav">
+    <h1>Developer Portal</h1>
+    <div class="top-nav-tabs">
+      <button class="tab-btn active" id="tab-register-btn" data-tab="register">Register a New App</button>
+      <button class="tab-btn" id="tab-manage-btn" data-tab="manage">Manage an Existing App</button>
+    </div>
+  </header>
+
+  <main class="content">
+    <!-- Register -->
+    <section id="tab-register" class="tab active">
+      <div class="card">
+        <p class="intro">
+          Register a new OAuth 2.0 / OIDC client application. On success you
+          receive a <code>client_id</code> (and, for confidential clients, a
+          <code>client_secret</code>) plus a <strong>registration access
+          token</strong> — the credential this portal's Manage tab uses to
+          view or update your app later. <strong>The secret and access token
+          are shown ONCE and never again — save them immediately.</strong>
+        </p>
+      </div>
+      <div class="card">
+        <div class="form-group">
+          <label for="reg-name">App Name</label>
+          <input type="text" id="reg-name" placeholder="My App">
+        </div>
+        <div class="form-group">
+          <label for="reg-redirect-uris">Redirect URIs (one per line)</label>
+          <textarea id="reg-redirect-uris" rows="3" placeholder="https://myapp.example.com/callback"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="reg-scope">Scope (space-separated)</label>
+          <input type="text" id="reg-scope" placeholder="openid profile email">
+        </div>
+        <div class="form-group">
+          <label for="reg-auth-method">Client Type</label>
+          <select id="reg-auth-method">
+            <option value="client_secret_basic">Confidential (issues a client_secret)</option>
+            <option value="none">Public (no secret — PKCE required, e.g. a SPA or mobile app)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="reg-token-strategy">Token Strategy</label>
+          <select id="reg-token-strategy">
+            <option value="jwt">jwt</option>
+            <option value="session">session</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="reg-initial-access-token">Initial Access Token (only if your operator requires one)</label>
+          <input type="password" id="reg-initial-access-token" placeholder="Leave blank if registration is open" autocomplete="off">
+        </div>
+        <div id="register-error" class="error-msg" style="display:none"></div>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="register-submit-btn">Register App</button>
+        </div>
+      </div>
+
+      <div id="register-result" class="card result-card" style="display:none">
+        <div class="card-title">Save these now — they will not be shown again</div>
+        <table class="kv-table" id="register-result-table"></table>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="register-manage-btn">Manage This App</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Manage -->
+    <section id="tab-manage" class="tab">
+      <div class="card">
+        <div class="form-group">
+          <label for="mg-client-id">Client ID</label>
+          <input type="text" id="mg-client-id" placeholder="client id">
+        </div>
+        <div class="form-group">
+          <label for="mg-token">Registration Access Token</label>
+          <input type="password" id="mg-token" placeholder="registration access token" autocomplete="off">
+        </div>
+        <div id="manage-load-error" class="error-msg" style="display:none"></div>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="manage-load-btn">Load App</button>
+        </div>
+      </div>
+
+      <div id="manage-form-card" class="card" style="display:none">
+        <div class="card-title">App Configuration</div>
+        <div class="form-group">
+          <label for="mf-name">App Name</label>
+          <input type="text" id="mf-name">
+        </div>
+        <div class="form-group">
+          <label for="mf-redirect-uris">Redirect URIs (one per line)</label>
+          <textarea id="mf-redirect-uris" rows="3"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="mf-scope">Scope (space-separated)</label>
+          <input type="text" id="mf-scope">
+        </div>
+        <div class="form-group">
+          <label for="mf-token-strategy">Token Strategy</label>
+          <select id="mf-token-strategy">
+            <option value="jwt">jwt</option>
+            <option value="session">session</option>
+          </select>
+        </div>
+        <div id="manage-form-error" class="error-msg" style="display:none"></div>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="manage-save-btn">Save Changes</button>
+          <button class="btn btn-danger" id="manage-delete-btn">Delete App</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

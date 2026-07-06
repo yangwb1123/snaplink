@@ -27,3 +27,17 @@ var AdminFS embed.FS
 //
 //go:embed portal
 var PortalFS embed.FS
+
+// DeveloperFS embeds the developer-portal SPA assets. Pass the
+// sub-filesystem (fs.Sub(DeveloperFS, "developer")) to
+// sso.WithDeveloperPortalFS so the SPA is served at /developer/. Unlike
+// the admin console and self-service portal (both authenticated, either
+// via admin bearer or an end-user's own token), this SPA is for an
+// ANONYMOUS third-party developer: it calls POST /register (RFC 7591 DCR)
+// to self-register a new OAuth client, then GET/PUT/DELETE
+// /register/:client_id (RFC 7592) — authenticated by the
+// registration_access_token issued at registration, never an admin or
+// end-user credential.
+//
+//go:embed developer
+var DeveloperFS embed.FS

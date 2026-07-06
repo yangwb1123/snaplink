@@ -490,6 +490,7 @@ func (s *Server) buildProbeMux(inner http.Handler) http.Handler {
 	if s.portalFS != nil && s.webSPAGateOn() {
 		mux.Handle(pathPortalPrefix, s.wrapSecurityHeaders(http.StripPrefix(pathPortalPrefix, http.FileServerFS(s.portalFS))))
 	}
+	s.mountDeveloperPortalSPA(mux)
 	mux.Handle("/", inner)
 	return mux
 }
