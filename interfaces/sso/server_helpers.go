@@ -99,7 +99,7 @@ func (s *Server) enforceTokenPolicy(ctx HandlerContext, in tokenpolicy.PolicyInp
 	s.metrics.ObserveTokenPolicyEvaluation(metrics.PolicyDecisionDeny)
 	s.metrics.ObserveTokenPolicyDenial(string(dec.Reason))
 	s.logger.Info("token policy denied issuance", "client", in.ClientID, "reason", string(dec.Reason))
-	ctx.JSON(http.StatusBadRequest, errorBody(wireCodeForPolicyDeny(dec.Reason)))
+	ctx.JSON(http.StatusBadRequest, errorBody(ctx, wireCodeForPolicyDeny(dec.Reason)))
 	return true
 }
 

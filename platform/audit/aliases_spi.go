@@ -56,6 +56,7 @@ const (
 	EventAdminPasswordReset                  = auditspi.EventAdminPasswordReset
 	EventAdminPasswordResetTokensRevoked     = auditspi.EventAdminPasswordResetTokensRevoked
 	EventAdminRecoveryCodesReset             = auditspi.EventAdminRecoveryCodesReset
+	EventAdminRefreshTokensRevoked           = auditspi.EventAdminRefreshTokensRevoked
 	EventAdminRoleAdded                      = auditspi.EventAdminRoleAdded
 	EventAdminRoleAssigned                   = auditspi.EventAdminRoleAssigned
 	EventAdminRoleRemoved                    = auditspi.EventAdminRoleRemoved

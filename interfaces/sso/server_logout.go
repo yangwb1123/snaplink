@@ -25,7 +25,7 @@ func (s *Server) handleLogout(ctx HandlerContext) {
 	bearer := bearerToken(ctx.Request())
 
 	if req.SessionID == "" && bearer == "" {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrSessionIDOrBearerRequired))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrSessionIDOrBearerRequired))
 		return
 	}
 
@@ -129,19 +129,19 @@ func (s *Server) handleSendCode(ctx HandlerContext) {
 		Target   string `json:"target"`
 	}
 	if err := ctx.Bind(&req); err != nil || req.Provider == "" || req.Target == "" {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrProviderAndTargetRequired))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrProviderAndTargetRequired))
 		return
 	}
 
 	auth, err := s.getAuthenticator(req.Provider)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrUnsupportedProvider))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrUnsupportedProvider))
 		return
 	}
 
 	sender, ok := auth.(spi.CodeSender)
 	if !ok {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrProviderDoesNotSendCodes))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrProviderDoesNotSendCodes))
 		return
 	}
 
@@ -149,10 +149,10 @@ func (s *Server) handleSendCode(ctx HandlerContext) {
 		s.logger.Error("send code failed", "provider", req.Provider, "error", err)
 		s.recordCodeSent(ctx, req.Provider, req.Target, false)
 		if errors.Is(err, spi.ErrCodeCooldownActive) {
-			ctx.JSON(http.StatusTooManyRequests, errorBody(ErrResendTooSoon))
+			ctx.JSON(http.StatusTooManyRequests, errorBody(ctx, ErrResendTooSoon))
 			return
 		}
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrSendFailed))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrSendFailed))
 		return
 	}
 
@@ -163,19 +163,19 @@ func (s *Server) handleSendCode(ctx HandlerContext) {
 
 func (s *Server) handleGetClient(ctx HandlerContext) {
 	if s.clientStore == nil {
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrClientStoreNotConfigured))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrClientStoreNotConfigured))
 		return
 	}
 
 	clientID := ctx.Param("id")
 	if clientID == "" {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrMissingClientID))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrMissingClientID))
 		return
 	}
 
 	client, err := s.clientStore.Get(ctx.Request().Context(), clientID)
 	if err != nil {
-		ctx.JSON(http.StatusNotFound, errorBody(ErrClientNotFound))
+		ctx.JSON(http.StatusNotFound, errorBody(ctx, ErrClientNotFound))
 		return
 	}
 
@@ -404,7 +404,7 @@ func (s *Server) createSession(ctx HandlerContext, userID, clientID, tenantID st
 		if err := s.tenantQuotaStore.IncrementUsage(rctx, tenantID, core.ResourceSessions, 1); err != nil {
 			if err == core.ErrQuotaExceeded {
 				s.logger.Error("tenant session quota exceeded", "tenant_id", tenantID, "user", userID)
-				ctx.JSON(http.StatusForbidden, errorBody(core.ErrQuotaExceededCode))
+				ctx.JSON(http.StatusForbidden, errorBody(ctx, core.ErrQuotaExceededCode))
 				return nil, core.ErrQuotaExceeded
 			}
 			s.logger.Error("tenant quota check failed", "tenant_id", tenantID, "error", err)

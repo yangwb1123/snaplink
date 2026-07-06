@@ -130,9 +130,17 @@ func (s *Server) ClearSiteData(ctx HandlerContext) {
 }
 
 // ErrorBody creates an error response body.
+//
+// selfservicecore.Deps.ErrorBody has no HandlerContext parameter (it
+// predates trace-id enrichment and is called from ~85 sites across
+// protocols/selfservice), so unlike errorBody/authzErrorBody it can't
+// look up the request's trace ID — it stays on the plain envelope.
+// Widening the Deps interface to thread ctx through is out of scope
+// here; see errorBody (interfaces/sso/handlers.go) and authzErrorBody
+// (server_discovery.go) for the trace-id-enriched equivalents.
 func (s *Server) ErrorBody(errCode string) map[string]any {
 	result := make(map[string]any)
-	for k, v := range errorBody(errCode) {
+	for k, v := range core.ErrorBody(errCode) {
 		result[k] = v
 	}
 	return result

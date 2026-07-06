@@ -8,9 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/domains/tokenanomaly"
-	"github.com/snaplink/sso/domains/tokenpolicy"
-	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/interfaces/admin"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/lifecycle/rotation"
@@ -49,6 +46,9 @@ func (s *Server) handleAdminResetUserRecoveryCodes(ctx HandlerContext) {
 }
 func (s *Server) handleAdminRevokeUserDeviceSecrets(ctx HandlerContext) {
 	admin.HandleAdminRevokeUserDeviceSecrets(s, ctx)
+}
+func (s *Server) handleAdminRevokeUserRefreshTokens(ctx HandlerContext) {
+	admin.HandleAdminRevokeUserRefreshTokens(s, ctx)
 }
 func (s *Server) handleAdminRevokeUserPasswordResetTokens(ctx HandlerContext) {
 	admin.HandleAdminRevokeUserPasswordResetTokens(s, ctx)
@@ -137,13 +137,13 @@ func (s *Server) handleAcceptInvitation(ctx HandlerContext) {
 // middleware. Mounted only when a SessionManager is wired.
 func (s *Server) handleAdminListSessions(ctx HandlerContext) {
 	if s.sessionMgr == nil {
-		ctx.JSON(http.StatusNotFound, errorBody(ErrNotFound))
+		ctx.JSON(http.StatusNotFound, errorBody(ctx, ErrNotFound))
 		return
 	}
 	sessions, err := s.sessionMgr.ListAll(ctx.Request().Context())
 	if err != nil {
 		s.logger.Error("admin list sessions failed", "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return
 	}
 	if sessions == nil {
@@ -159,7 +159,7 @@ func (s *Server) handleAdminListSessions(ctx HandlerContext) {
 // handleAdminListTokens returns the active admin bearer tokens.
 func (s *Server) handleAdminListTokens(ctx HandlerContext) {
 	if s.adminTokenStore == nil {
-		ctx.JSON(http.StatusNotFound, errorBody(ErrNotFound))
+		ctx.JSON(http.StatusNotFound, errorBody(ctx, ErrNotFound))
 		return
 	}
 	// Optional query param ?admin_id= to filter by issuing admin.
@@ -167,7 +167,7 @@ func (s *Server) handleAdminListTokens(ctx HandlerContext) {
 	tokens, err := s.adminTokenStore.List(ctx.Request().Context(), adminID)
 	if err != nil {
 		s.logger.Error("admin list tokens failed", "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return
 	}
 	ctx.JSON(http.StatusOK, map[string]any{
@@ -184,7 +184,7 @@ func (s *Server) handleAdminListTokens(ctx HandlerContext) {
 // nothing here to redact. Mounted only when WithCredentialRotation is wired.
 func (s *Server) handleAdminListCredentials(ctx HandlerContext) {
 	if s.credentialRegistry == nil {
-		ctx.JSON(http.StatusNotFound, errorBody(ErrNotFound))
+		ctx.JSON(http.StatusNotFound, errorBody(ctx, ErrNotFound))
 		return
 	}
 	inventory := s.credentialRegistry.Inventory()
@@ -197,85 +197,11 @@ func (s *Server) handleAdminListCredentials(ctx HandlerContext) {
 	})
 }
 
-// handleAdminTokenUsage serves GET /api/v1/admin/tokens/usage — the
-// aggregated token-usage telemetry read API. Admin-gated (admin:read) by
-// the /api/v1/admin/ prefix; only mounted when a Recorder is wired, so
-// s.tokenUsageRecorder is always non-nil here.
-func (s *Server) handleAdminTokenUsage(ctx HandlerContext) {
-	tokenusage.HandleAdminUsage(s.tokenUsageRecorder.UsageStore(), s.logger, ctx)
-}
-
-// handleAdminTokenPolicies serves GET /api/v1/admin/token-policies — the
-// read-only token-policy governance view. Admin-gated (admin:read) by the
-// /api/v1/admin/ prefix; only mounted when WithTokenPolicy is wired, so
-// s.tokenPolicyStore is always non-nil here. Governance metadata only — the
-// policy set holds no secret material.
-func (s *Server) handleAdminTokenPolicies(ctx HandlerContext) {
-	tokenpolicy.HandleAdminPolicies(s.tokenPolicyStore, s.logger, ctx)
-}
-
-// handleAdminTokenPortfolio serves GET /api/v1/admin/tokens/portfolio — the
-// aggregated token-portfolio overview (Phase 3 of token governance). Admin-
-// gated (admin:read) by the /api/v1/admin/ prefix; only mounted when a
-// Recorder is wired, so s.tokenUsageRecorder is always non-nil here.
-func (s *Server) handleAdminTokenPortfolio(ctx HandlerContext) {
-	tokenusage.HandleAdminPortfolio(s.tokenUsageRecorder.UsageStore(), s.logger, ctx)
-}
-
-// handleAdminTokenSubject serves GET /api/v1/admin/tokens/subjects/:subject —
-// the per-subject active-token count, read through the existing
-// RefreshTokenSubjectCounter. Governance data only. Admin-gated (admin:read).
-func (s *Server) handleAdminTokenSubject(ctx HandlerContext) {
-	admin.HandleSubjectTokens(s.refreshTokenStore, s.logger, ctx)
-}
-
-// handleAdminTokenSuspicious serves GET /api/v1/admin/tokens/suspicious — the
-// off-path-detected token-behavior anomalies (governance/reporting only; a
-// finding never feeds an auth decision). Admin-gated (admin:read); only mounted
-// when a detector is wired, so s.tokenAnomalyDetector is always non-nil here.
-func (s *Server) handleAdminTokenSuspicious(ctx HandlerContext) {
-	tokenanomaly.HandleAdminSuspicious(s.tokenAnomalyDetector.Findings(), s.logger, ctx)
-}
-
-// handleAdminBulkRevoke serves POST /api/v1/admin/tokens/revoke — the admin
-// bulk-revoke workflow (admin:write). Reuses the existing refresh-token
-// revocation SPIs with revocation-storm caps. no-store headers because it
-// mutates token state.
-func (s *Server) handleAdminBulkRevoke(ctx HandlerContext) {
-	tokenNoStoreHeaders(ctx)
-	admin.HandleBulkRevoke(s.refreshTokenStore, s.auditor, s.logger, ctx)
-}
-
-// RunTokenAnomalyDetection wakes every interval and runs one off-path
-// TokenAnomalyDetector.Analyze sweep — turning the accumulated per-thumbprint
-// observations + per-client rate buckets into governance findings on the
-// suspicious-token list + the findings metric. Same shutdown contract as
-// RunBreakGlassSweeper: it exits on ctx cancellation, a sweep error is logged
-// but never tears down the loop, and it is the OPERATOR's responsibility to
-// start it in a goroutine (NOT started automatically by NewServer/Mount, so
-// embedding the SDK in tests or short-lived processes never leaks it).
-//
-//	go srv.RunTokenAnomalyDetection(ctx, time.Minute)
-//
-// DETECTION / REPORTING ONLY — never feeds an auth decision. No-op when no
-// TokenAnomalyDetector is wired or interval <= 0.
-func (s *Server) RunTokenAnomalyDetection(ctx context.Context, interval time.Duration) {
-	if s.tokenAnomalyDetector == nil || interval <= 0 {
-		return
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if _, err := s.tokenAnomalyDetector.Analyze(ctx); err != nil {
-				s.logger.Error("token anomaly analyze failed", "error", err)
-			}
-		}
-	}
-}
+// The admin token-governance handlers (handleAdminTokenUsage,
+// handleAdminTokenPolicies, handleAdminTokenPortfolio, handleAdminTokenSubject,
+// handleAdminTokenSuspicious, handleAdminBulkRevoke, RunTokenAnomalyDetection)
+// live in sso.go — relocated there to hold this file under the 500-line
+// maintainability budget.
 
 // handleAdminEndpoints serves GET /api/v1/admin/endpoints (admin:read via
 // AdminMiddleware, same as every other /api/v1/admin/ route): the live
@@ -319,22 +245,22 @@ type compromiseCredentialRequest struct {
 func (s *Server) handleAdminCompromiseCredential(ctx HandlerContext) {
 	tokenNoStoreHeaders(ctx)
 	if s.credentialScheduler == nil {
-		ctx.JSON(http.StatusNotFound, errorBody(ErrNotFound))
+		ctx.JSON(http.StatusNotFound, errorBody(ctx, ErrNotFound))
 		return
 	}
 	credType := corecredential.CredentialType(ctx.Param("type"))
 	if credType == "" {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidRequest))
 		return
 	}
 	var req compromiseCredentialRequest
 	if err := bindOAuthParams(ctx, &req); err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidRequest))
 		return
 	}
 	reason := strings.TrimSpace(req.Reason)
 	if reason == "" {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrCompromiseReasonRequired))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrCompromiseReasonRequired))
 		return
 	}
 	result, err := s.credentialScheduler.Compromise(ctx.Request().Context(), credType, reason)
@@ -357,12 +283,12 @@ func (s *Server) handleAdminCompromiseCredential(ctx HandlerContext) {
 func (s *Server) writeCompromiseError(ctx HandlerContext, credType corecredential.CredentialType, err error) {
 	switch {
 	case errors.Is(err, rotation.ErrUnknownCredentialType):
-		ctx.JSON(http.StatusNotFound, errorBody(ErrNotFound))
+		ctx.JSON(http.StatusNotFound, errorBody(ctx, ErrNotFound))
 	case errors.Is(err, corecredential.ErrCompromiseUnsupported):
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrCredentialCompromiseUnsupported))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrCredentialCompromiseUnsupported))
 	default:
 		s.logger.Error("credential compromise failed", "type", string(credType), "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 	}
 }
 
@@ -389,17 +315,17 @@ func (s *Server) recordCredentialCompromise(ctx HandlerContext, credType corecre
 // handleAdminRevokeToken revokes a single admin bearer token by ID.
 func (s *Server) handleAdminRevokeToken(ctx HandlerContext) {
 	if s.adminTokenStore == nil {
-		ctx.JSON(http.StatusNotFound, errorBody(ErrNotFound))
+		ctx.JSON(http.StatusNotFound, errorBody(ctx, ErrNotFound))
 		return
 	}
 	tokenID := ctx.Param("id")
 	if tokenID == "" {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidRequest))
 		return
 	}
 	if err := s.adminTokenStore.Revoke(ctx.Request().Context(), tokenID); err != nil {
 		s.logger.Error("admin revoke token failed", "id", tokenID, "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return
 	}
 	ctx.JSON(http.StatusOK, map[string]string{KeyStatus: StatusOK})
@@ -429,27 +355,27 @@ func (s *Server) handleAdminImpersonateBreakGlass(ctx HandlerContext) {
 // is used to revoke it. On success the caller should discard the token.
 func (s *Server) handleAdminLogout(ctx HandlerContext) {
 	if s.adminTokenStore == nil {
-		ctx.JSON(http.StatusNotFound, errorBody(ErrNotFound))
+		ctx.JSON(http.StatusNotFound, errorBody(ctx, ErrNotFound))
 		return
 	}
 	token := bearerToken(ctx.Request())
 	if token == "" {
-		ctx.JSON(http.StatusUnauthorized, errorBody(core.ErrUnauthorized))
+		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, core.ErrUnauthorized))
 		return
 	}
 	claims, _, err := s.validateAnyToken(ctx.Request().Context(), token)
 	if err != nil || claims == nil {
-		ctx.JSON(http.StatusUnauthorized, errorBody(core.ErrInvalidToken))
+		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, core.ErrInvalidToken))
 		return
 	}
 	if claims.JTI == "" {
 		s.logger.Error("admin logout: token has no jti")
-		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, core.ErrInvalidRequest))
 		return
 	}
 	if err := s.adminTokenStore.Revoke(ctx.Request().Context(), claims.JTI); err != nil {
 		s.logger.Error("admin logout revoke failed", "jti", claims.JTI, "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, core.ErrInternal))
 		return
 	}
 	ctx.JSON(http.StatusOK, map[string]string{KeyStatus: "logged_out"})

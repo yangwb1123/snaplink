@@ -21,11 +21,11 @@ func generateUserCodeBytes() (string, error) { return oauth.GenerateUserCode() }
 // either is missing.
 func (s *Server) deviceCodePrereqs(ctx HandlerContext) bool {
 	if s.deviceCodeStore == nil {
-		ctx.JSON(http.StatusNotImplemented, errorBody(ErrDeviceCodeNotConfigured))
+		ctx.JSON(http.StatusNotImplemented, errorBody(ctx, ErrDeviceCodeNotConfigured))
 		return false
 	}
 	if err := s.requireDeps(DepClientStore); err != nil {
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrServerMisconfigured))
 		return false
 	}
 	return true
@@ -50,11 +50,11 @@ func (s *Server) handleDeviceCode(ctx HandlerContext) {
 		Resource []string `json:"resource"` // RFC 8707 resource indicators
 	}
 	if err := bindOAuthParams(ctx, &req); err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidRequest))
 		return
 	}
 	if req.ClientID == "" {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrMissingClientID))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrMissingClientID))
 		return
 	}
 	client, ok := s.resolveDeviceCodeClient(ctx, req.ClientID, req.Resource)
@@ -94,7 +94,7 @@ func (s *Server) handleDeviceCode(ctx HandlerContext) {
 func (s *Server) issueDeviceCode(ctx HandlerContext, dc *oauth.DeviceCode) bool {
 	if err := s.deviceCodeStore.Issue(ctx.Request().Context(), dc); err != nil {
 		s.logger.Error("device code issue failed", "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return false
 	}
 	s.recordDeviceCodeIssued(ctx, dc.ClientID)
@@ -126,19 +126,19 @@ func (s *Server) respondDeviceCode(ctx HandlerContext, deviceCode, userCode stri
 func (s *Server) resolveDeviceCodeClient(ctx HandlerContext, clientID string, resource []string) (*Client, bool) {
 	client, err := s.clientStore.Get(ctx.Request().Context(), clientID)
 	if err != nil {
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidClient))
 		return nil, false
 	}
 	if !client.Active {
-		ctx.JSON(http.StatusForbidden, errorBody(ErrInactiveClient))
+		ctx.JSON(http.StatusForbidden, errorBody(ctx, ErrInactiveClient))
 		return nil, false
 	}
 	if !clientTenantOK(ctx, client) {
-		ctx.JSON(http.StatusForbidden, errorBody(ErrTenantMismatch))
+		ctx.JSON(http.StatusForbidden, errorBody(ctx, ErrTenantMismatch))
 		return nil, false
 	}
 	if !client.AreResourcesAllowed(resource) {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidTarget))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidTarget))
 		return nil, false
 	}
 	return client, true
@@ -159,18 +159,18 @@ func (s *Server) mintDeviceCodeArtifacts(ctx HandlerContext, client *Client, sco
 	deviceCode, err := generateDeviceCodeBytes()
 	if err != nil {
 		s.logger.Error("device code generation failed", "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return "", "", nil, false
 	}
 	userCode, err := generateUserCodeBytes()
 	if err != nil {
 		s.logger.Error("user code generation failed", "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return "", "", nil, false
 	}
 	scopes, err := oauth.GrantedScopes(splitScope(scope), client)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidScope))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidScope))
 		return "", "", nil, false
 	}
 	return deviceCode, userCode, scopes, true
@@ -221,11 +221,11 @@ func (s *Server) buildDeviceVerificationURI(r *http.Request, userCode string) (s
 // state so the next device poll succeeds (or returns access_denied).
 func (s *Server) handleDeviceVerify(ctx HandlerContext) {
 	if s.deviceCodeStore == nil {
-		ctx.JSON(http.StatusNotImplemented, errorBody(ErrDeviceCodeNotConfigured))
+		ctx.JSON(http.StatusNotImplemented, errorBody(ctx, ErrDeviceCodeNotConfigured))
 		return
 	}
 	if err := s.requireDeps(DepTokenIssuer); err != nil {
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrServerMisconfigured))
 		return
 	}
 
@@ -239,12 +239,12 @@ func (s *Server) handleDeviceVerify(ctx HandlerContext) {
 		Approve  bool   `json:"approve"`
 	}
 	if err := bindOAuthParams(ctx, &req); err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidRequest))
 		return
 	}
 	userCode := normalizeUserCode(req.UserCode)
 	if userCode == "" {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidRequest))
 		return
 	}
 	// All user_code lookups go through the normalized form so
@@ -252,7 +252,7 @@ func (s *Server) handleDeviceVerify(ctx HandlerContext) {
 	// entry (typo tolerance on a code the user typed by hand).
 	dc, err := s.deviceCodeStore.GetByUserCode(ctx.Request().Context(), userCode)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidGrant))
 		return
 	}
 
@@ -271,12 +271,12 @@ func (s *Server) handleDeviceVerify(ctx HandlerContext) {
 func (s *Server) authenticateDeviceVerifyBearer(ctx HandlerContext) (*TokenClaims, bool) {
 	bearer := bearerToken(ctx.Request())
 	if bearer == "" {
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingToken))
+		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrMissingToken))
 		return nil, false
 	}
 	claims, _, err := s.validateAnyToken(ctx.Request().Context(), bearer)
 	if err != nil || claims == nil {
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidToken))
 		return nil, false
 	}
 	return claims, true
@@ -294,13 +294,13 @@ func (s *Server) applyDeviceDecision(ctx HandlerContext, dc *oauth.DeviceCode, c
 	if approve {
 		if err := s.deviceCodeStore.Approve(ctx.Request().Context(),
 			dc.UserCode, claims.Subject, provider, claims.Extra); err != nil {
-			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+			ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidGrant))
 			return false
 		}
 		return true
 	}
 	if err := s.deviceCodeStore.Deny(ctx.Request().Context(), dc.UserCode); err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidGrant))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidGrant))
 		return false
 	}
 	return true
@@ -340,7 +340,7 @@ func (s *Server) handleDeviceVerifyPage(ctx HandlerContext) {
 		return
 	}
 	if s.deviceCodeStore == nil {
-		ctx.JSON(http.StatusNotImplemented, errorBody(ErrDeviceCodeNotConfigured))
+		ctx.JSON(http.StatusNotImplemented, errorBody(ctx, ErrDeviceCodeNotConfigured))
 		return
 	}
 	// Look up user_code from query BEFORE content negotiation

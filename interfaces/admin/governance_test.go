@@ -14,6 +14,7 @@ import (
 	"github.com/snaplink/sso/domains/userlifecycle"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
+	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
@@ -48,6 +49,7 @@ func (d *gcTestDeps) AccountLockout() security.AccountLockout                  {
 func (d *gcTestDeps) DeviceSecretStore() core.DeviceSecretStore                { return nil }
 func (d *gcTestDeps) PasswordResetStore() core.PasswordResetStore              { return nil }
 func (d *gcTestDeps) EmailChangeStore() core.EmailChangeStore                  { return nil }
+func (d *gcTestDeps) RefreshTokenStore() oauth.RefreshTokenStore               { return nil }
 func (d *gcTestDeps) InvalidateConnectionCache(string)                         {}
 func (d *gcTestDeps) Auditor() *audit.Recorder                                 { return nil }
 func (d *gcTestDeps) Logger() spi.Logger                                       { return bgTestLogger{} }

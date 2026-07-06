@@ -462,3 +462,7 @@ func (s *Server) onConfigDriftMismatch(_, _, _ string) {
 // when the token is allowed to proceed (no tenant binding, no store,
 // store unreachable, or tenant active) and ErrTenantSuspended when
 // the token's tenant has been suspended.
+
+// applyConfigAuditWiring, mountConfigAuditAPI, and the handleConfig* wrappers
+// live in sso_wiring.go (relocated there to hold this file under the
+// 500-line maintainability budget).

@@ -263,7 +263,7 @@ func (s *Server) handleHomeRealm(ctx HandlerContext) {
 	}
 	if err != nil {
 		s.logErrorCtx(ctx, "home-realm discovery failed", "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return
 	}
 	// Guard cross-tenant routing: the /auth/home-realm endpoint is served

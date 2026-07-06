@@ -7,7 +7,10 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/federation"
+	"github.com/snaplink/sso/domains/tokenanomaly"
+	"github.com/snaplink/sso/domains/tokenpolicy"
 	"github.com/snaplink/sso/domains/tokenusage"
+	"github.com/snaplink/sso/interfaces/admin"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
 	"github.com/snaplink/sso/internal/auth/consent"
 	"github.com/snaplink/sso/platform/audit"
@@ -303,4 +306,84 @@ func (s *Server) recordFeatureGateStartup() {
 	}
 	audit.SetMeta(e, "disabled_gates", joined)
 	s.auditor.Record(context.Background(), e)
+}
+
+// handleAdminTokenUsage serves GET /api/v1/admin/tokens/usage — the
+// aggregated token-usage telemetry read API. Admin-gated (admin:read) by
+// the /api/v1/admin/ prefix; only mounted when a Recorder is wired, so
+// s.tokenUsageRecorder is always non-nil here.
+func (s *Server) handleAdminTokenUsage(ctx HandlerContext) {
+	tokenusage.HandleAdminUsage(s.tokenUsageRecorder.UsageStore(), s.logger, ctx)
+}
+
+// handleAdminTokenPolicies serves GET /api/v1/admin/token-policies — the
+// read-only token-policy governance view. Admin-gated (admin:read) by the
+// /api/v1/admin/ prefix; only mounted when WithTokenPolicy is wired, so
+// s.tokenPolicyStore is always non-nil here. Governance metadata only — the
+// policy set holds no secret material.
+func (s *Server) handleAdminTokenPolicies(ctx HandlerContext) {
+	tokenpolicy.HandleAdminPolicies(s.tokenPolicyStore, s.logger, ctx)
+}
+
+// handleAdminTokenPortfolio serves GET /api/v1/admin/tokens/portfolio —
+// aggregated token-portfolio overview (Phase 3 of token governance). Admin-
+// gated (admin:read) by the /api/v1/admin/ prefix; only mounted when a
+// Recorder is wired, so s.tokenUsageRecorder is always non-nil here.
+func (s *Server) handleAdminTokenPortfolio(ctx HandlerContext) {
+	tokenusage.HandleAdminPortfolio(s.tokenUsageRecorder.UsageStore(), s.logger, ctx)
+}
+
+// handleAdminTokenSubject serves GET /api/v1/admin/tokens/subjects/:subject —
+// the per-subject active-token count, read through the existing
+// RefreshTokenSubjectCounter. Governance data only. Admin-gated (admin:read).
+func (s *Server) handleAdminTokenSubject(ctx HandlerContext) {
+	admin.HandleSubjectTokens(s.refreshTokenStore, s.logger, ctx)
+}
+
+// handleAdminTokenSuspicious serves GET /api/v1/admin/tokens/suspicious — the
+// off-path-detected token-behavior anomalies (governance/reporting only; a
+// finding never feeds an auth decision). Admin-gated (admin:read); only mounted
+// when a detector is wired, so s.tokenAnomalyDetector is always non-nil here.
+func (s *Server) handleAdminTokenSuspicious(ctx HandlerContext) {
+	tokenanomaly.HandleAdminSuspicious(s.tokenAnomalyDetector.Findings(), s.logger, ctx)
+}
+
+// handleAdminBulkRevoke serves POST /api/v1/admin/tokens/revoke — the admin
+// bulk-revoke workflow (admin:write). Reuses the existing refresh-token
+// revocation SPIs with revocation-storm caps. no-store headers because it
+// mutates token state.
+func (s *Server) handleAdminBulkRevoke(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	admin.HandleBulkRevoke(s.refreshTokenStore, s.auditor, s.logger, ctx)
+}
+
+// RunTokenAnomalyDetection wakes every interval and runs one off-path
+// TokenAnomalyDetector.Analyze sweep — turning the accumulated per-thumbprint
+// observations + per-client rate buckets into governance findings on the
+// suspicious-token list + the findings metric. Same shutdown contract as
+// RunBreakGlassSweeper: it exits on ctx cancellation, a sweep error is logged
+// but never tears down the loop, and it is the OPERATOR's responsibility to
+// start it in a goroutine (NOT started automatically by NewServer/Mount, so
+// embedding the SDK in tests or short-lived processes never leaks it).
+//
+//	go srv.RunTokenAnomalyDetection(ctx, time.Minute)
+//
+// DETECTION / REPORTING ONLY — never feeds an auth decision. No-op when no
+// TokenAnomalyDetector is wired or interval <= 0.
+func (s *Server) RunTokenAnomalyDetection(ctx context.Context, interval time.Duration) {
+	if s.tokenAnomalyDetector == nil || interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := s.tokenAnomalyDetector.Analyze(ctx); err != nil {
+				s.logger.Error("token anomaly analyze failed", "error", err)
+			}
+		}
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/snaplink/sso/domains/userlifecycle"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
+	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
@@ -43,6 +44,12 @@ type Deps interface {
 	DeviceSecretStore() core.DeviceSecretStore
 	PasswordResetStore() core.PasswordResetStore
 	EmailChangeStore() core.EmailChangeStore
+	// RefreshTokenStore backs HandleAdminRevokeUserRefreshTokens (the
+	// helpdesk "compromised account, log out everywhere" lockout). Type-
+	// asserted to oauth.RefreshTokenSubjectIndex — most callers already
+	// wire a store with a live subject index for /token/revoke-all, so
+	// this reuses the SAME store rather than adding a parallel one.
+	RefreshTokenStore() oauth.RefreshTokenStore
 	Auditor() *audit.Recorder
 	Logger() spi.Logger
 	// SessionMgr backs break-glass impersonation session minting +

@@ -19,7 +19,7 @@ func TestBuildApp_SelfServiceDataExport_IncludesConsentAndMFA(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{}
 	cfg.SelfService.DataExport = true
-	cfg.SelfService.Consent = config.SelfServiceStoreConfig{Backend: "memory"}
+	cfg.SelfService.Consent = config.ConsentConfig{SelfServiceStoreConfig: config.SelfServiceStoreConfig{Backend: "memory"}}
 	cfg.Authenticators.TOTP = &config.TOTPConfig{Enabled: true}
 
 	a, err := buildApp(cfg, quietLogger())

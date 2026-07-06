@@ -393,7 +393,7 @@ const (
 // material. Mounted only when WithCryptoInventory is wired.
 func (s *Server) handleAdminListCryptoKeys(ctx HandlerContext) {
 	if s.cryptoInventory == nil {
-		ctx.JSON(http.StatusNotFound, errorBody(ErrNotFound))
+		ctx.JSON(http.StatusNotFound, errorBody(ctx, ErrNotFound))
 		return
 	}
 	f := cryptoinventory.Filter{
@@ -404,7 +404,7 @@ func (s *Server) handleAdminListCryptoKeys(ctx HandlerContext) {
 	keys, err := s.cryptoInventory.ListKeys(ctx.Request().Context(), f)
 	if err != nil {
 		s.logger.Error("admin list crypto keys failed", "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return
 	}
 	if keys == nil {
@@ -426,32 +426,32 @@ func (s *Server) handleAdminListCryptoKeys(ctx HandlerContext) {
 func (s *Server) handleAdminReportKeyCompromise(ctx HandlerContext) {
 	tokenNoStoreHeaders(ctx)
 	if s.cryptoInventory == nil {
-		ctx.JSON(http.StatusNotFound, errorBody(ErrNotFound))
+		ctx.JSON(http.StatusNotFound, errorBody(ctx, ErrNotFound))
 		return
 	}
 	keyID := ctx.Param("id")
 	if keyID == "" {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidRequest))
 		return
 	}
 	var req cryptoKeyCompromiseRequest
 	if err := bindOAuthParams(ctx, &req); err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidRequest))
 		return
 	}
 	reason := strings.TrimSpace(req.Reason)
 	if reason == "" {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrCompromiseReasonRequired))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrCompromiseReasonRequired))
 		return
 	}
 	entry, err := s.cryptoInventory.ReportKeyCompromise(ctx.Request().Context(), keyID, reason)
 	if err != nil {
 		if errors.Is(err, cryptoinventory.ErrKeyNotFound) {
-			ctx.JSON(http.StatusNotFound, errorBody(ErrNotFound))
+			ctx.JSON(http.StatusNotFound, errorBody(ctx, ErrNotFound))
 			return
 		}
 		s.logger.Error("admin key compromise report failed", "key_id", keyID, "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return
 	}
 	s.recordKeyCompromise(ctx, entry, reason)

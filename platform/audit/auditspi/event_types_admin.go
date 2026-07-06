@@ -28,6 +28,7 @@ const (
 	EventAdminDeviceSecretsRevoked       EventType = "admin_device_secrets_revoked"
 	EventAdminPasswordResetTokensRevoked EventType = "admin_password_reset_tokens_revoked"
 	EventAdminEmailChangeTokensRevoked   EventType = "admin_email_change_tokens_revoked"
+	EventAdminRefreshTokensRevoked       EventType = "admin_refresh_tokens_revoked"
 	EventAdminUserEmailChanged           EventType = "admin_user_email_changed"
 	EventAdminAccountUnlocked            EventType = "admin_account_unlocked"
 	EventAdminConnectionUpserted         EventType = "admin_connection_upserted"

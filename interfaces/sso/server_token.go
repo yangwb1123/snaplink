@@ -52,13 +52,13 @@ func (s *Server) handleToken(ctx HandlerContext) {
 	}
 
 	if err := s.requireDeps(DepTokenIssuer, DepClientStore); err != nil {
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrServerMisconfigured))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrServerMisconfigured))
 		return
 	}
 
 	var req oauth.TokenRequest
 	if err := bindOAuthParams(ctx, &req); err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidRequest))
 		return
 	}
 
@@ -140,7 +140,7 @@ func (s *Server) finishTokenIdempotency(ctx HandlerContext, idemKey string, idem
 // unauthorized_client response was written and the caller MUST return.
 func (s *Server) rejectDisallowedGrantType(ctx HandlerContext, client *Client, grantType string) bool {
 	if len(client.GrantTypes) > 0 && !slices.Contains(client.GrantTypes, grantType) {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrUnauthorizedClient))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrUnauthorizedClient))
 		return true
 	}
 	return false
@@ -270,11 +270,11 @@ func (s *Server) captureSenderConstraint(ctx HandlerContext) (dpopJKT, mtlsX5T s
 			if errors.Is(err, ErrDPoPNonceRequired) {
 				s.stampDPoPNonce(ctx)
 				s.logger.Info("dpop nonce challenge", "method", ctx.Request().Method)
-				ctx.JSON(http.StatusBadRequest, errorBody(ErrUseDPoPNonce))
+				ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrUseDPoPNonce))
 				return "", "", true
 			}
 			s.logger.Error("dpop proof failed", "error", err)
-			ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidDPoPProof))
+			ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidDPoPProof))
 			return "", "", true
 		}
 		dpopJKT = binding.JKT
@@ -342,7 +342,7 @@ func (s *Server) enforceFAPITokenRules(ctx HandlerContext, req oauth.TokenReques
 		}
 	}
 	if s.fapiValidator.Enforcing() {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidRequest))
 		return true
 	}
 	return false
@@ -382,7 +382,7 @@ func (s *Server) checkGrantRateLimit(ctx HandlerContext, grantType string) bool 
 		return false
 	}
 	if !entry.limiter.Allow() {
-		ctx.JSON(http.StatusTooManyRequests, errorBody(ErrUnsupportedGrantType))
+		ctx.JSON(http.StatusTooManyRequests, errorBody(ctx, ErrUnsupportedGrantType))
 		return true
 	}
 	return false
@@ -393,7 +393,7 @@ func (s *Server) checkGrantRateLimit(ctx HandlerContext, grantType string) bool 
 // be denied and a response has been written.
 func (s *Server) denyPublicClientCredentials(ctx HandlerContext, client *Client, req oauth.TokenRequest) bool {
 	if client.Secret == "" && req.ClientAssertion == "" {
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidClient))
 		return true
 	}
 	return false

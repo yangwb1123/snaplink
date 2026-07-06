@@ -17,6 +17,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
+	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
@@ -73,6 +74,7 @@ func (d *bgTestDeps) AccountLockout() security.AccountLockout               { re
 func (d *bgTestDeps) DeviceSecretStore() core.DeviceSecretStore             { return nil }
 func (d *bgTestDeps) PasswordResetStore() core.PasswordResetStore           { return nil }
 func (d *bgTestDeps) EmailChangeStore() core.EmailChangeStore               { return nil }
+func (d *bgTestDeps) RefreshTokenStore() oauth.RefreshTokenStore            { return nil }
 func (d *bgTestDeps) InvalidateConnectionCache(string)                      {}
 func (d *bgTestDeps) ApprovalStore() admingovernance.ApprovalStore          { return nil }
 func (d *bgTestDeps) ChangeRegistry() *admingovernance.Registry             { return nil }

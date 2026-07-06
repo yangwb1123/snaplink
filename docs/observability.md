@@ -76,3 +76,11 @@ Middleware stack (probes registered OUTSIDE):
 /metrics, /livez, /readyz                         ← outside ratelimit
 tracing → ratelimit → bodyLimit → metrics → CORS → router
 ```
+
+`Tracing` stamps the W3C trace ID onto the request context
+(`core.WithTraceID`, read back via `core.TraceIDFromContext`) as well
+as the `X-Trace-Id` response header. Error responses written through
+`interfaces/sso`'s `errorBody`/`authzErrorBody`/`authzErrorBodyDesc`
+helpers also surface it as `trace_id` in the JSON body (see
+`docs/error-codes.md`) so a client can correlate a failed request to
+audit/trace records without inspecting response headers.

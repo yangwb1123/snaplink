@@ -133,13 +133,13 @@ func (s *Server) handleCallback(ctx HandlerContext) {
 	provider := ctx.Query("provider")
 
 	if code == "" || state == "" {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidCallback))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidCallback))
 		return
 	}
 
 	auth, ok := s.resolveCallbackAuthenticator(provider, code, state)
 	if !ok {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrUnknownProvider))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrUnknownProvider))
 		return
 	}
 
@@ -147,7 +147,7 @@ func (s *Server) handleCallback(ctx HandlerContext) {
 	if err != nil {
 		s.logger.Error("callback failed", "provider", auth.Name(), "error", err)
 		s.recordCallbackFailure(ctx, auth.Name(), ErrCallbackFailed)
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrCallbackFailed))
+		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrCallbackFailed))
 		return
 	}
 
@@ -269,12 +269,12 @@ func (s *Server) finalizeCallbackSession(ctx HandlerContext, result *AuthResult)
 		// not-found user (first federated login) is treated active (no SCIM state).
 		if u, err := s.userProvider.GetByID(ctx.Request().Context(), result.UserID); err == nil && u != nil && !u.IsActive() {
 			s.logger.Info("federated callback blocked: account deprovisioned", "user_id", result.UserID, "provider", result.Provider)
-			ctx.JSON(http.StatusUnauthorized, errorBody(ErrCallbackFailed))
+			ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrCallbackFailed))
 			return
 		}
 		if err := s.userProvider.CreateOrUpdate(ctx.Request().Context(), user); err != nil {
 			s.logger.Error("failed to upsert user", "error", err)
-			ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+			ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 			return
 		}
 	}
@@ -285,11 +285,11 @@ func (s *Server) finalizeCallbackSession(ctx HandlerContext, result *AuthResult)
 	session, err := s.createSession(ctx, result.UserID, "", "")
 	if err != nil {
 		if errors.Is(err, errMaxActiveSessions) {
-			ctx.JSON(http.StatusForbidden, errorBody(ErrAccessDenied))
+			ctx.JSON(http.StatusForbidden, errorBody(ctx, ErrAccessDenied))
 			return
 		}
 		s.logger.Error("failed to create session", "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return
 	}
 	s.linkGlobalSession(ctx.Request().Context(), session, result.UserID)

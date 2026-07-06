@@ -400,3 +400,41 @@ func (s *Server) wrapAPIVersioning(inner http.Handler) http.Handler {
 	}
 	return inner
 }
+
+// applyConfigAuditWiring wires the config-audit change-capture hook (AGENTS.md
+// "narrowest existing seam") post-options, in NewServer. Only when BOTH an
+// auditor and a configaudit.Store are present, so a build without
+// WithConfigAuditStore pays zero cost (the hook is never set, and
+// Recorder.Record's nil-check short-circuits on every call).
+func (s *Server) applyConfigAuditWiring() {
+	if s.auditor != nil && s.configAuditStore != nil {
+		s.auditor.SetConfigChangeHook(s.recordConfigHistoryFromAudit)
+	}
+}
+
+// mountConfigAuditAPI registers the runtime-configuration-audit admin API
+// (GET .../config/{running,applied,diff,history}). The snapshot endpoints
+// mount only when a config-snapshot source is wired (WithConfigSnapshots);
+// history additionally requires WithConfigAuditStore, so a deployment using
+// only the change-capture hook (no snapshot wiring) still gets a history
+// endpoint without the snapshot/diff routes erroring on every request.
+func (s *Server) mountConfigAuditAPI(api Router) {
+	if s.configAppliedSnapshot != nil || s.configRunningSnapshotFn != nil {
+		api.GET(PathAdminConfigRunning, s.handleConfigRunning)
+		api.GET(PathAdminConfigApplied, s.handleConfigApplied)
+		api.GET(PathAdminConfigDiff, s.handleConfigDiff)
+	}
+	if s.configAuditStore != nil {
+		api.GET(PathAdminConfigHistory, s.handleConfigHistory)
+	}
+}
+
+func (s *Server) handleConfigRunning(ctx HandlerContext) { configaudit.HandleRunning(s, ctx) }
+func (s *Server) handleConfigApplied(ctx HandlerContext) { configaudit.HandleApplied(s, ctx) }
+func (s *Server) handleConfigDiff(ctx HandlerContext)    { configaudit.HandleDiff(s, ctx) }
+func (s *Server) handleConfigHistory(ctx HandlerContext) { configaudit.HandleHistory(s, ctx) }
+
+// The config-history change-capture helpers (configHistoryResourceByEventType,
+// recordConfigHistoryFromAudit, RecordConfigChange) live in options_admin.go —
+// relocated there beside the config-audit wiring options to hold this file
+// under the 500-line maintainability budget.

@@ -1546,8 +1546,10 @@ paths:
       summary: Complete a verified email change.
       description: |
         Consumes the single-use token, checks it belongs to the authenticated
-        caller, and commits the new email. Oracle-safe: unknown / expired /
-        consumed token, or one for a different user, ALL collapse to
+        caller, and commits the new email. Consuming the token — delivered
+        only to the new address — is itself proof of control, so this also
+        marks the account's email as verified. Oracle-safe: unknown / expired
+        / consumed token, or one for a different user, ALL collapse to
         email_change_invalid (400). `Cache-Control: no-store`.
       operationId: verifyMyEmail
       security:
@@ -8006,6 +8008,45 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/users/{id}/refresh-tokens:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [admin]
+      summary: Revoke every OAuth 2.0 refresh token a user holds, across all clients.
+      description: |
+        Revokes ALL of the user's outstanding refresh tokens across EVERY
+        client — the "compromised account, log out everywhere right now"
+        helpdesk lockout. Complements the self-service /token/revoke-all and
+        /me/sessions/revoke-all, which only reach the AUTHENTICATED caller's
+        own (subject, client) pair; this reaches an arbitrary user, every
+        client, on an admin's behalf. admin:write; emits
+        admin_refresh_tokens_revoked with the count. Idempotent (no
+        outstanding tokens returns 0). Mounted only when a RefreshTokenStore
+        is wired; 501 when the wired store cannot enumerate by subject.
+      operationId: adminUserRevokeRefreshTokens
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Number of refresh tokens revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "501":
+          description: The wired RefreshTokenStore cannot revoke by subject.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/users/{id}/password-reset-tokens:
     parameters:
       - name: id
@@ -11157,6 +11198,17 @@ components:
             already-resolved `recommended_language` geo hint. Never replaces
             `error_description` — clients should still branch on `error`, not
             on either description field.
+        trace_id:
+          type: string
+          description: >-
+            Present only when the Tracing middleware populated a W3C trace ID
+            for the request and the handler emits its error envelope via one
+            of the trace-id-aware helpers (interfaces/sso's errorBody /
+            authzErrorBody family). Same value as the X-Trace-Id response
+            header — lets a client hand support one identifier that
+            correlates to server-side audit/trace records. Omitted (not an
+            empty string) when no trace context is available.
+          example: 4bf92f3577b34da6a3ce929d0e0e4736
 
     TenantMembership:
       type: object

@@ -256,14 +256,19 @@ func (s *Server) resolveIssuer(ctx HandlerContext) string {
 }
 
 // authzErrorBody returns the standard error envelope for an
-// authorization endpoint response with `iss` stamped per RFC 9207 §2.
-// Use this in handleLogin (and any future authorization endpoint) —
-// NOT in token / userinfo / callback handlers, which are not
-// authorization responses.
+// authorization endpoint response with `iss` stamped per RFC 9207 §2,
+// plus trace_id (core.TraceIDFromContext) when the Tracing middleware
+// populated one — omitted entirely otherwise, so this stays a strict
+// superset of the pre-trace-id envelope. Use this in handleLogin (and
+// any future authorization endpoint) — NOT in token / userinfo /
+// callback handlers, which are not authorization responses.
 func (s *Server) authzErrorBody(ctx HandlerContext, code string) map[string]string {
 	m := map[string]string{
 		KeyError: code,
 		KeyIss:   s.resolveIssuer(ctx),
+	}
+	if traceID := core.TraceIDFromContext(ctx.Request().Context()); traceID != "" {
+		m[core.KeyTraceID] = traceID
 	}
 	s.localizeErrorBody(ctx, m, code)
 	return m
@@ -271,12 +276,8 @@ func (s *Server) authzErrorBody(ctx HandlerContext, code string) map[string]stri
 
 // authzErrorBodyDesc is authzErrorBody plus an error_description.
 func (s *Server) authzErrorBodyDesc(ctx HandlerContext, code, desc string) map[string]string {
-	m := map[string]string{
-		KeyError:            code,
-		KeyErrorDescription: desc,
-		KeyIss:              s.resolveIssuer(ctx),
-	}
-	s.localizeErrorBody(ctx, m, code)
+	m := s.authzErrorBody(ctx, code)
+	m[KeyErrorDescription] = desc
 	return m
 }
 
@@ -393,7 +394,7 @@ func (s *Server) parseUsageWindow(ctx HandlerContext) (metering.UsagePeriod, tim
 		period = metering.PeriodDay
 	}
 	if period != metering.PeriodDay && period != metering.PeriodMonth {
-		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, core.ErrInvalidRequest))
 		return "", time.Time{}, false
 	}
 	startStr := ctx.Query("start")
@@ -402,7 +403,7 @@ func (s *Server) parseUsageWindow(ctx HandlerContext) (metering.UsagePeriod, tim
 	}
 	start, err := time.ParseInLocation("2006-01-02", startStr, time.UTC)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, core.ErrInvalidRequest))
 		return "", time.Time{}, false
 	}
 	return period, start, true
@@ -418,7 +419,7 @@ func (s *Server) parseUsageWindow(ctx HandlerContext) (metering.UsagePeriod, tim
 func (s *Server) handleTenantUsage(ctx HandlerContext) {
 	tenantID := ctx.Param("id")
 	if tenantID == "" {
-		ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, core.ErrInvalidRequest))
 		return
 	}
 
@@ -430,7 +431,7 @@ func (s *Server) handleTenantUsage(ctx HandlerContext) {
 	u, err := s.usageAggregator.Usage(ctx.Request().Context(), tenantID, period, start)
 	if err != nil {
 		s.logger.Error("tenant usage aggregation failed", "tenant_id", tenantID, "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, core.ErrInternal))
 		return
 	}
 	ctx.JSON(http.StatusOK, u)
@@ -453,7 +454,7 @@ func (s *Server) handleAdminTopTenants(ctx HandlerContext) {
 	if v := ctx.Query("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n <= 0 {
-			ctx.JSON(http.StatusBadRequest, errorBody(core.ErrInvalidRequest))
+			ctx.JSON(http.StatusBadRequest, errorBody(ctx, core.ErrInvalidRequest))
 			return
 		}
 		limit = n
@@ -461,7 +462,7 @@ func (s *Server) handleAdminTopTenants(ctx HandlerContext) {
 	tops, err := s.usageAggregator.TopTenants(ctx.Request().Context(), period, start, limit)
 	if err != nil {
 		s.logger.Error("top-tenants usage aggregation failed", "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(core.ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, core.ErrInternal))
 		return
 	}
 	if tops == nil {

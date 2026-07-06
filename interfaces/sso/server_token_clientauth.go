@@ -56,19 +56,19 @@ func (s *Server) resolveAssertedClientID(ctx HandlerContext, req *oauth.TokenReq
 			s.jtiReplayFailClosed,
 		)
 		if err != nil {
-			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+			ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidClient))
 			return true
 		}
 		req.ClientID = assertedID
 		return false
 	case ClientAssertionTypeWorkloadIdentity:
 		if err := s.verifyWorkloadIdentityClientAssertion(ctx, req); err != nil {
-			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+			ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidClient))
 			return true
 		}
 		return false
 	default:
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidRequest))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidRequest))
 		return true
 	}
 }
@@ -153,11 +153,11 @@ func (s *Server) authenticateTokenClient(ctx HandlerContext, req *oauth.TokenReq
 
 	client, err := s.clientStore.Get(ctx.Request().Context(), req.ClientID)
 	if err != nil {
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidClient))
 		return nil, basicAuthUsed, true
 	}
 	if !clientTenantOK(ctx, client) {
-		ctx.JSON(http.StatusForbidden, errorBody(ErrTenantMismatch))
+		ctx.JSON(http.StatusForbidden, errorBody(ctx, ErrTenantMismatch))
 		return nil, basicAuthUsed, true
 	}
 
@@ -168,7 +168,7 @@ func (s *Server) authenticateTokenClient(ctx HandlerContext, req *oauth.TokenReq
 	// RFC 8707 §2: each requested `resource` MUST be allowlisted on
 	// the client. Empty allowlist disables enforcement (legacy compat).
 	if !client.AreResourcesAllowed(req.Resource) {
-		ctx.JSON(http.StatusBadRequest, errorBody(ErrInvalidTarget))
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidTarget))
 		return nil, basicAuthUsed, true
 	}
 
@@ -192,7 +192,7 @@ func (s *Server) verifyTokenClientAuth(ctx HandlerContext, client *Client, req *
 	} else if client.TokenEndpointAuthMethod == ClientAuthTLS ||
 		client.TokenEndpointAuthMethod == ClientAuthSelfSignedTLS {
 		// Client requires mTLS but extraction/verification failed.
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidClient))
 		return false
 	}
 
@@ -207,7 +207,7 @@ func (s *Server) verifyTokenClientAuth(ctx HandlerContext, client *Client, req *
 			// unknown-client (above) is also oracle-safe — a distinct
 			// invalid_client_secret would let an attacker enumerate valid
 			// client_ids by the error code alone.
-			ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidClient))
+			ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidClient))
 			return false
 		}
 	}

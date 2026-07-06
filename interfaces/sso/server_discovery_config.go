@@ -88,7 +88,7 @@ func (s *Server) handleOIDCDiscovery(ctx HandlerContext) {
 	body, err := json.Marshal(cfg)
 	if err != nil {
 		s.logger.Error("discovery marshal failed", "error", err)
-		ctx.JSON(http.StatusInternalServerError, errorBody(ErrInternal))
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return
 	}
 	entry := buildDiscoveryDocEntry(body, s.discoveryDocCacheTTL)

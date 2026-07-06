@@ -331,6 +331,38 @@ func HandleAdminRevokeUserEmailChangeTokens(d Deps, ctx core.HandlerContext) {
 	ctx.JSON(http.StatusOK, map[string]any{"revoked": n})
 }
 
+// HandleAdminRevokeUserRefreshTokens serves
+// DELETE /api/v1/admin/users/:id/refresh-tokens — revoke EVERY outstanding
+// OAuth 2.0 refresh token a user holds, across ALL clients (helpdesk
+// "compromised account, log out everywhere right now"). admin:write.
+// Complements the self-service /token/revoke-all and /me/sessions/revoke-all,
+// which only reach the AUTHENTICATED caller's own (subject, client) pair; this
+// reaches an arbitrary user, every client, on an admin's behalf. 501 when the
+// wired RefreshTokenStore can't enumerate by subject; emits
+// admin_refresh_tokens_revoked with the count. Idempotent.
+func HandleAdminRevokeUserRefreshTokens(d Deps, ctx core.HandlerContext) {
+	userID := ctx.Param("id")
+	if userID == "" {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+	idx, ok := d.RefreshTokenStore().(oauth.RefreshTokenSubjectIndex)
+	if !ok {
+		ctx.JSON(http.StatusNotImplemented, core.ErrorBody(core.ErrNotFound))
+		return
+	}
+	// Empty clientID = no client filter — every client the user holds a
+	// refresh token for, not just one (oauthspi.RefreshTokenSubjectIndex).
+	n, err := idx.DeleteAllForSubject(ctx.Request().Context(), userID, "")
+	if err != nil {
+		d.Logger().Error("admin revoke refresh tokens failed", "user_id", userID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	recordAdminUserAction(d, ctx, audit.EventAdminRefreshTokensRevoked, userID, "revoked", fmt.Sprintf("%d", n))
+	ctx.JSON(http.StatusOK, map[string]any{"revoked": n})
+}
+
 // HandleAdminListUserPasswordResetTokens serves
 // GET /api/v1/admin/users/:id/password-reset-tokens — a helpdesk checks whether
 // a user has pending forgot-password tokens and when they expire. admin:read.

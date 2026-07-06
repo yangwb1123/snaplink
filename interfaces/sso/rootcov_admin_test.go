@@ -21,6 +21,7 @@ import (
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/security"
 )
 
@@ -31,6 +32,7 @@ type rcovAdminEnv struct {
 	token   string
 	conns   *connections.MemoryStore
 	tenants *defaultimpl.MemoryTenantUserStore
+	refresh *defaultimpl.MemoryRefreshTokenStore
 }
 
 // rcovNewAdminServer builds a server wired with the B2B + self-service stores,
@@ -55,6 +57,7 @@ func rcovNewAdminServer(t *testing.T, extra ...sso.Option) *rcovAdminEnv {
 
 	conns := connections.NewMemoryStore()
 	tenants := defaultimpl.NewMemoryTenantUserStore()
+	refresh := defaultimpl.NewMemoryRefreshTokenStore()
 
 	prov := permissions.NewMemoryProvider()
 	// admin:* under the empty-string client scope; the token audience is the
@@ -80,6 +83,7 @@ func rcovNewAdminServer(t *testing.T, extra ...sso.Option) *rcovAdminEnv {
 		sso.WithPasswordResetStore(defaultimpl.NewMemoryPasswordResetStore(), time.Hour),
 		sso.WithEmailChangeStore(defaultimpl.NewMemoryEmailChangeStore(), time.Hour),
 		sso.WithDeviceSecretStore(defaultimpl.NewMemoryDeviceSecretStore(), time.Hour),
+		sso.WithRefreshTokenStore(refresh, time.Hour),
 		sso.WithAccountLockout(security.NewMemoryAccountLockout()),
 		sso.WithPermissionProvider(prov),
 	}
@@ -102,7 +106,7 @@ func rcovNewAdminServer(t *testing.T, extra ...sso.Option) *rcovAdminEnv {
 	if token == "" {
 		t.Fatalf("no admin token: %v", out)
 	}
-	return &rcovAdminEnv{url: httpSrv.URL, token: token, conns: conns, tenants: tenants}
+	return &rcovAdminEnv{url: httpSrv.URL, token: token, conns: conns, tenants: tenants, refresh: refresh}
 }
 
 // rcovPasswordAuthAccepting returns a password authenticator accepting the
@@ -326,6 +330,12 @@ func TestRcovAdmin_UserManagement(t *testing.T) {
 		t.Errorf("admin revoke device secrets = %d, want 200/204", status)
 	}
 
+	// Refresh tokens revoke (idempotent) => 200/204.
+	status, _ = rcovDo(t, http.MethodDelete, base+"/refresh-tokens", env.token, nil)
+	if status != http.StatusNoContent && status != http.StatusOK {
+		t.Errorf("admin revoke refresh tokens = %d, want 200/204", status)
+	}
+
 	// Recovery-token list + revoke surfaces (empty but mounted).
 	status, _ = rcovDo(t, http.MethodGet, base+"/password-reset-tokens", env.token, nil)
 	if status != http.StatusOK {
@@ -342,5 +352,66 @@ func TestRcovAdmin_UserManagement(t *testing.T) {
 	status, _ = rcovDo(t, http.MethodDelete, base+"/email-change-tokens", env.token, nil)
 	if status != http.StatusNoContent && status != http.StatusOK {
 		t.Errorf("admin revoke email-change-tokens = %d", status)
+	}
+}
+
+// TestRcovAdmin_RefreshTokensRevoke proves the admin bulk-revoke-by-user
+// endpoint through the REAL AdminMiddleware gate: (a) it kills every refresh
+// token the target holds across MULTIPLE clients, (b) another user's tokens
+// are untouched, and (c) it 401s without a bearer at all — the same
+// admin:write gate every other admin mutation goes through (scopeForHTTP maps
+// DELETE to admin:write; there is no route-specific carve-out).
+func TestRcovAdmin_RefreshTokensRevoke(t *testing.T) {
+	t.Parallel()
+	env := rcovNewAdminServer(t)
+	ctx := context.Background()
+	exp := time.Now().Add(time.Hour)
+
+	const target = "rcov-target-carol"
+	const other = "rcov-target-dave"
+	if err := env.refresh.Issue(ctx, "carol-tok-app1", &oauth.RefreshToken{UserID: target, ClientID: "app-1", ExpiresAt: exp}); err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if err := env.refresh.Issue(ctx, "carol-tok-app2", &oauth.RefreshToken{UserID: target, ClientID: "app-2", ExpiresAt: exp}); err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if err := env.refresh.Issue(ctx, "dave-tok-app1", &oauth.RefreshToken{UserID: other, ClientID: "app-1", ExpiresAt: exp}); err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+
+	route := env.url + "/api/v1/admin/users/" + target + "/refresh-tokens"
+
+	// No bearer at all => 401 (admin:write is never reachable unauthenticated).
+	status, _ := rcovDo(t, http.MethodDelete, route, "", nil)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("no-bearer revoke = %d, want 401", status)
+	}
+	// carol's tokens must still be live after the rejected attempt.
+	if _, err := env.refresh.Consume(ctx, "carol-tok-app1"); err != nil {
+		t.Fatalf("carol's token consumed despite 401 rejection: %v", err)
+	}
+	// Re-issue the one we just consumed via Consume's read-and-delete probe.
+	if err := env.refresh.Issue(ctx, "carol-tok-app1", &oauth.RefreshToken{UserID: target, ClientID: "app-1", ExpiresAt: exp}); err != nil {
+		t.Fatalf("re-issue: %v", err)
+	}
+
+	// With a real admin:write bearer => 200, revoked count spans BOTH of
+	// carol's clients.
+	status, body := rcovDo(t, http.MethodDelete, route, env.token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("admin revoke = %d body=%v", status, body)
+	}
+	if got, _ := body["revoked"].(float64); int(got) != 2 {
+		t.Errorf("revoked = %v, want 2 (across carol's app-1 + app-2)", body["revoked"])
+	}
+	if _, err := env.refresh.Consume(ctx, "carol-tok-app1"); err == nil {
+		t.Error("carol's app-1 refresh token still present after admin revoke")
+	}
+	if _, err := env.refresh.Consume(ctx, "carol-tok-app2"); err == nil {
+		t.Error("carol's app-2 refresh token still present after admin revoke")
+	}
+	// dave's token is untouched by carol's bulk revoke.
+	if _, err := env.refresh.Consume(ctx, "dave-tok-app1"); err != nil {
+		t.Errorf("dave's refresh token wrongly revoked by carol's admin revoke: %v", err)
 	}
 }

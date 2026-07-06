@@ -182,7 +182,7 @@ func (s *Server) writeStepUpChallenge(ctx HandlerContext) {
 	if header, err := security.BuildStepUpChallenge(challenge); err == nil {
 		ctx.ResponseWriter().Header().Set("WWW-Authenticate", header)
 	}
-	ctx.JSON(http.StatusUnauthorized, errorBody(security.ErrInsufficientUserAuthentication))
+	ctx.JSON(http.StatusUnauthorized, errorBody(ctx, security.ErrInsufficientUserAuthentication))
 }
 
 // StartContinuousVerification launches the zero-trust ContinuousVerificationAgent

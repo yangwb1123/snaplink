@@ -14,9 +14,10 @@ type HostedLoginConfig struct {
 // memory|sqlite toggle. Self-service password change (/me/password) likewise
 // needs the operator's user-provisioning model and is wired by the embedder.
 type SelfServiceConfig struct {
-	// Consent backs the consent gate + records (/consents/me, consent_required).
-	// Enabling it turns ON consent enforcement at /auth/login.
-	Consent SelfServiceStoreConfig `yaml:"consent"`
+	// Consent backs the consent gate + records (/consents/me, consent_required)
+	// plus the optional server-wide consent grant TTL ceiling. Enabling it
+	// (Backend set) turns ON consent enforcement at /auth/login.
+	Consent ConsentConfig `yaml:"consent"`
 	// Password backs self-service password change (/me/password). When enabled,
 	// the YAML-seeded password users are imported into the store (by bcrypt
 	// hash) and login is served from it, so a password changed via /me/password
@@ -92,6 +93,20 @@ type SMTPConfig struct {
 	// the sender only sees the token/target from its SPI signature, never
 	// server.issuer.
 	LinkBaseURL string `yaml:"link_base_url"`
+}
+
+// ConsentConfig extends SelfServiceStoreConfig with the optional
+// server-wide consent grant TTL ceiling. Mirrors NativeSSOConfig's shape
+// (Backend + SQLite + TTL). MaxTTL wires interfaces/sso.WithConsentTTL: a
+// HARD ceiling on every recorded consent grant's lifetime, after which
+// GetConsent treats the grant as absent and /auth/login re-prompts. It is
+// independent of, and can only be tightened (never loosened) by, a
+// client's own ConsentRefreshInterval. 0 (the default) means no
+// server-enforced expiry — byte-identical to a build without this field
+// set.
+type ConsentConfig struct {
+	SelfServiceStoreConfig `yaml:",inline"`
+	MaxTTL                 time.Duration `yaml:"max_ttl"`
 }
 
 // MeshConfig opts into the service-mesh data-plane integrations

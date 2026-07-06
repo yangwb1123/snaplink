@@ -18,7 +18,7 @@ func (s *Server) checkQuotaBeforeCreate(ctx HandlerContext, tenantID string, res
 	if err := s.tenantQuotaStore.IncrementUsage(ctx.Request().Context(), tenantID, resource, 1); err != nil {
 		if err == core.ErrQuotaExceeded {
 			s.logger.Error("tenant quota exceeded", "tenant_id", tenantID, "resource", resource)
-			ctx.JSON(http.StatusForbidden, errorBody(core.ErrQuotaExceededCode))
+			ctx.JSON(http.StatusForbidden, errorBody(ctx, core.ErrQuotaExceededCode))
 			return true
 		}
 		s.logger.Error("quota check failed", "tenant_id", tenantID, "resource", resource, "error", err)

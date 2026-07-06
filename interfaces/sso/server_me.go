@@ -40,13 +40,13 @@ func (s *Server) meClaimsOrChallenge(ctx HandlerContext) (*core.TokenClaims, boo
 	tokenString := bearerToken(ctx.Request())
 	if tokenString == "" {
 		s.setResourceBearerChallenge(ctx, s.resolveIssuer(ctx), "", "")
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrMissingToken))
+		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrMissingToken))
 		return nil, false
 	}
 	claims, _, err := s.validateAnyToken(ctx.Request().Context(), tokenString)
 	if err != nil {
 		s.setResourceBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "The access token is invalid or expired")
-		ctx.JSON(http.StatusUnauthorized, errorBody(ErrInvalidToken))
+		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidToken))
 		return nil, false
 	}
 	stampBreakGlassActor(ctx, claims)
