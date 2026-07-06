@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,18 @@ func cfgAuditGet(t *testing.T, base, path string) (int, map[string]any) {
 	resp, err := http.Get(base + path)
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	var body map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	return resp.StatusCode, body
+}
+
+func cfgAuditPost(t *testing.T, base, path, jsonBody string) (int, map[string]any) {
+	t.Helper()
+	resp, err := http.Post(base+path, "application/json", strings.NewReader(jsonBody))
+	if err != nil {
+		t.Fatalf("POST %s: %v", path, err)
 	}
 	defer resp.Body.Close()
 	var body map[string]any
@@ -92,6 +105,33 @@ func TestConfigAuditAPI_SnapshotsWiredServesRedactedRunningAppliedDiff(t *testin
 	// even though the snapshot endpoints are live.
 	if code, _ := cfgAuditGet(t, httpSrv.URL, "/api/v1/admin/config/history"); code != http.StatusNotFound {
 		t.Errorf("GET history = %d, want 404 without WithConfigAuditStore", code)
+	}
+
+	code, body = cfgAuditPost(t, httpSrv.URL, "/api/v1/admin/config/cluster-diff",
+		`{"snapshot":{"rate_limit":10,"db_dsn":"peer-cluster-old-dsn"}}`)
+	if code != http.StatusOK {
+		t.Fatalf("POST cluster-diff = %d, body=%+v", code, body)
+	}
+	patch, ok = body[configaudit.KeyPatch].([]any)
+	if !ok || len(patch) != 2 {
+		t.Fatalf("expected a 2-op patch (rate_limit + db_dsn changed vs the peer snapshot), got %+v", body[configaudit.KeyPatch])
+	}
+	for _, raw := range patch {
+		op := raw.(map[string]any)
+		if op["path"] == "/db_dsn" && op["value"] != "***" {
+			t.Errorf("expected /db_dsn value redacted in the cluster diff, got %+v", op)
+		}
+	}
+}
+
+func TestConfigAuditAPI_ClusterDiffNotMountedWithoutSnapshots(t *testing.T) {
+	srv := sso.NewServer()
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	code, _ := cfgAuditPost(t, httpSrv.URL, "/api/v1/admin/config/cluster-diff", `{"snapshot":{"a":1}}`)
+	if code != http.StatusNotFound {
+		t.Errorf("POST cluster-diff = %d, want 404 (unmounted) when no snapshot is wired", code)
 	}
 }
 

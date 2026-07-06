@@ -491,8 +491,9 @@ const (
 	// Mounted only when a config-snapshot source is wired
 	// (sso.WithConfigSnapshots); the history endpoint additionally requires
 	// sso.WithConfigAuditStore.
-	PathAdminConfigRunning = "/admin/config/running"
-	PathAdminConfigApplied = "/admin/config/applied"
-	PathAdminConfigDiff    = "/admin/config/diff"
-	PathAdminConfigHistory = "/admin/config/history"
+	PathAdminConfigRunning     = "/admin/config/running"
+	PathAdminConfigApplied     = "/admin/config/applied"
+	PathAdminConfigDiff        = "/admin/config/diff"
+	PathAdminConfigHistory     = "/admin/config/history"
+	PathAdminConfigClusterDiff = "/admin/config/cluster-diff" // POST, admin:read override; see platform/configaudit.HandleClusterDiff
 )

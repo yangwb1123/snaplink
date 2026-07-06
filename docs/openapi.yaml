@@ -4713,6 +4713,61 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/config/cluster-diff:
+    post:
+      tags: [admin]
+      summary: RFC 6902 JSON Patch from a peer cluster's config to this cluster's running config (redacted).
+      description: |
+        The cross-cluster counterpart of `GET .../config/diff`: instead of
+        comparing this replica's own applied vs. running snapshot, the
+        caller supplies ANOTHER cluster's config snapshot (typically fetched
+        verbatim from that peer's own `GET .../config/running` response) and
+        this endpoint returns the patch that would turn the supplied peer
+        snapshot into this cluster's own running config. This server never
+        fetches a peer itself — there is no outbound network call or
+        peer-discovery mechanism here, only a diff computation reusing the
+        same redaction/patch pipeline as `GET .../config/diff`.
+
+        POST rather than GET because the peer snapshot is a body, not query
+        parameters. Despite POST, this is a read-only operation, so it
+        requires `admin:read` (a `SetMethodScope` override), not
+        `admin:write`. Not mounted (404) unless `WithConfigSnapshots` was
+        wired.
+      operationId: postConfigClusterDiff
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigClusterDiffRequest"
+      responses:
+        "200":
+          description: The redacted patch (empty array when the peer snapshot == this cluster's running config).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigDiffResponse"
+        "400":
+          description: Missing/empty `snapshot`, or a malformed JSON body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing / invalid admin bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: "`config_audit_not_available` — no running-config snapshot source wired."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/config/history:
     get:
       tags: [admin]
@@ -10705,6 +10760,18 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ConfigPatchOp"
+
+    ConfigClusterDiffRequest:
+      type: object
+      required: [snapshot]
+      description: |
+        A peer cluster's config snapshot to diff against this cluster's own
+        running config — typically the `running` field of that peer's own
+        `GET .../config/running` response, passed through verbatim.
+      properties:
+        snapshot:
+          type: object
+          additionalProperties: true
 
     ConfigHistoryEntry:
       type: object

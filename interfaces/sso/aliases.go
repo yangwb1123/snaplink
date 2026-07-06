@@ -367,6 +367,7 @@ const PathAdminConfigRunning = core.PathAdminConfigRunning
 const PathAdminConfigApplied = core.PathAdminConfigApplied
 const PathAdminConfigDiff = core.PathAdminConfigDiff
 const PathAdminConfigHistory = core.PathAdminConfigHistory
+const PathAdminConfigClusterDiff = core.PathAdminConfigClusterDiff
 const PathCallback = core.PathCallback
 const PathClientByID = core.PathClientByID
 const PathDeviceCode = core.PathDeviceCode

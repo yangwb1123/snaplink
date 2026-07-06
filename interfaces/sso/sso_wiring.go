@@ -462,16 +462,18 @@ func (s *Server) mountConfigAuditAPI(api Router) {
 		api.GET(PathAdminConfigRunning, s.handleConfigRunning)
 		api.GET(PathAdminConfigApplied, s.handleConfigApplied)
 		api.GET(PathAdminConfigDiff, s.handleConfigDiff)
+		api.POST(PathAdminConfigClusterDiff, s.handleConfigClusterDiff)
 	}
 	if s.configAuditStore != nil {
 		api.GET(PathAdminConfigHistory, s.handleConfigHistory)
 	}
 }
 
-func (s *Server) handleConfigRunning(ctx HandlerContext) { configaudit.HandleRunning(s, ctx) }
-func (s *Server) handleConfigApplied(ctx HandlerContext) { configaudit.HandleApplied(s, ctx) }
-func (s *Server) handleConfigDiff(ctx HandlerContext)    { configaudit.HandleDiff(s, ctx) }
-func (s *Server) handleConfigHistory(ctx HandlerContext) { configaudit.HandleHistory(s, ctx) }
+func (s *Server) handleConfigRunning(ctx HandlerContext)     { configaudit.HandleRunning(s, ctx) }
+func (s *Server) handleConfigApplied(ctx HandlerContext)     { configaudit.HandleApplied(s, ctx) }
+func (s *Server) handleConfigDiff(ctx HandlerContext)        { configaudit.HandleDiff(s, ctx) }
+func (s *Server) handleConfigClusterDiff(ctx HandlerContext) { configaudit.HandleClusterDiff(s, ctx) }
+func (s *Server) handleConfigHistory(ctx HandlerContext)     { configaudit.HandleHistory(s, ctx) }
 
 // The config-history change-capture helpers (configHistoryResourceByEventType,
 // recordConfigHistoryFromAudit, RecordConfigChange) live in options_admin.go —

@@ -34,9 +34,22 @@ related capability exists but the proposed feature does not).
 
 ## Enterprise governance & compliance
 
-- **Declarative multi-cluster config governance** — partial. K8s CRDs, config
-  Operator/GitOps reconciler, canary rollout, cross-cluster diff (only
-  intra-cluster drift detection exists). _Sources: senior-architect-expansion-2026-07-02,
+- **Declarative multi-cluster config governance** — partial. Cross-cluster
+  diff is now done as an HTTP primitive: `POST /api/v1/admin/config/cluster-diff`
+  (`platform/configaudit.HandleClusterDiff`) accepts a peer cluster's config
+  snapshot (typically fetched from that peer's own existing
+  `GET .../config/running`) and returns the RFC 6902 patch against THIS
+  cluster's running config, reusing the same `Diff`/`RedactOps` pipeline the
+  existing intra-cluster applied-vs-running `GET .../config/diff` uses.
+  Deliberately does NOT fetch the peer itself (no new outbound network
+  capability or peer-discovery mechanism) — an operator or a small external
+  reconciler script does the two-cluster fetch-then-post. K8s CRDs, a config
+  Operator/GitOps reconciler, and canary rollout remain undone — those need
+  a k8s client-go/controller-runtime dependency and a real reconciliation
+  loop, a much larger and qualitatively different undertaking than this
+  diff primitive; this HTTP endpoint is the natural building block a future
+  operator/reconciler would call, not a placeholder for it.
+  _Sources: senior-architect-expansion-2026-07-02,
   expansion-novel-directions-2026-07-02, enterprise-expansion-directions-2026-07-01._
 
 ## Productization & DX

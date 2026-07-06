@@ -81,6 +81,39 @@ func HandleDiff(d HandlerDeps, ctx core.HandlerContext) {
 	ctx.JSON(http.StatusOK, map[string]any{KeyPatch: RedactOps(Diff(applied, running))})
 }
 
+// ClusterDiffRequest is the POST body for HandleClusterDiff: a PEER
+// cluster's config snapshot to diff against this cluster's own running
+// config. Typically populated verbatim from that peer's own
+// GET .../config/running response body's "running" field — this endpoint
+// never fetches a peer itself, so wiring it adds no new outbound network
+// capability or peer-discovery mechanism, only a diff computation.
+type ClusterDiffRequest struct {
+	Snapshot map[string]any `json:"snapshot"`
+}
+
+// HandleClusterDiff implements POST /api/v1/admin/config/cluster-diff: an
+// RFC 6902 JSON Patch turning a caller-supplied PEER cluster's config
+// snapshot into THIS cluster's own running config, redacted. This is the
+// cross-cluster counterpart of HandleDiff (which only ever compares THIS
+// replica's own applied vs. running snapshots) — an operator (or a small
+// external reconciler) fetches two clusters' GET .../config/running
+// bodies and feeds one into the other's HandleClusterDiff to see what
+// would need to change to reconcile them, reusing the exact same
+// Diff/RedactOps pipeline rather than a new comparison mechanism.
+func HandleClusterDiff(d HandlerDeps, ctx core.HandlerContext) {
+	var req ClusterDiffRequest
+	if err := ctx.Bind(&req); err != nil || len(req.Snapshot) == 0 {
+		ctx.JSON(http.StatusBadRequest, map[string]string{core.KeyError: core.ErrInvalidRequest})
+		return
+	}
+	running, err := d.RunningConfigSnapshot(ctx.Request().Context())
+	if err != nil {
+		writeSnapshotError(d, ctx, "running config snapshot", err)
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{KeyPatch: RedactOps(Diff(req.Snapshot, running))})
+}
+
 // HandleHistory implements GET /api/v1/admin/config/history, optionally
 // filtered by ?resource=&since=&limit=.
 func HandleHistory(d HandlerDeps, ctx core.HandlerContext) {

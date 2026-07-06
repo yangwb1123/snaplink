@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/snaplink/sso/platform/configaudit"
@@ -39,6 +40,12 @@ func (d handlerDeps) SrvLogger() spi.Logger { return noopLogger{} }
 
 func httpCtx(rawQuery string) (core.HandlerContext, *httptest.ResponseRecorder) {
 	r := httptest.NewRequest("GET", "/api/v1/admin/config/history?"+rawQuery, nil)
+	w := httptest.NewRecorder()
+	return core.NewContext(w, r), w
+}
+
+func httpCtxPOST(body string) (core.HandlerContext, *httptest.ResponseRecorder) {
+	r := httptest.NewRequest("POST", "/api/v1/admin/config/cluster-diff", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	return core.NewContext(w, r), w
 }
@@ -128,6 +135,55 @@ func TestHandleDiff_AppliedUnavailable501(t *testing.T) {
 	configaudit.HandleDiff(d, ctx)
 	if w.Code != 501 {
 		t.Fatalf("status = %d, want 501", w.Code)
+	}
+}
+
+func TestHandleClusterDiff_ReturnsRedactedPatchAgainstPeerSnapshot(t *testing.T) {
+	d := handlerDeps{running: map[string]any{"rate_limit": float64(20), "db_dsn": "new-dsn"}}
+	ctx, w := httpCtxPOST(`{"snapshot":{"rate_limit":10,"db_dsn":"old-dsn"}}`)
+	configaudit.HandleClusterDiff(d, ctx)
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+	patch, ok := decodeBody(t, w)[configaudit.KeyPatch].([]any)
+	if !ok || len(patch) != 2 {
+		t.Fatalf("expected a 2-op patch, got %+v", decodeBody(t, w)[configaudit.KeyPatch])
+	}
+	for _, raw := range patch {
+		op := raw.(map[string]any)
+		if op["path"] == "/db_dsn" && op["value"] != "***" {
+			t.Errorf("expected /db_dsn value redacted in the diff, got %+v", op)
+		}
+		if op["path"] == "/rate_limit" && op["value"] != float64(20) {
+			t.Errorf("expected /rate_limit value preserved (this cluster's own), got %+v", op)
+		}
+	}
+}
+
+func TestHandleClusterDiff_EmptySnapshot400(t *testing.T) {
+	d := handlerDeps{running: map[string]any{"a": 1}}
+	ctx, w := httpCtxPOST(`{}`)
+	configaudit.HandleClusterDiff(d, ctx)
+	if w.Code != 400 {
+		t.Fatalf("status = %d, want 400, body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleClusterDiff_MalformedBody400(t *testing.T) {
+	d := handlerDeps{running: map[string]any{"a": 1}}
+	ctx, w := httpCtxPOST(`not-json`)
+	configaudit.HandleClusterDiff(d, ctx)
+	if w.Code != 400 {
+		t.Fatalf("status = %d, want 400, body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleClusterDiff_RunningUnavailable501(t *testing.T) {
+	d := handlerDeps{runningErr: configaudit.ErrSnapshotUnavailable}
+	ctx, w := httpCtxPOST(`{"snapshot":{"a":1}}`)
+	configaudit.HandleClusterDiff(d, ctx)
+	if w.Code != 501 {
+		t.Fatalf("status = %d, want 501, body=%s", w.Code, w.Body.String())
 	}
 }
 

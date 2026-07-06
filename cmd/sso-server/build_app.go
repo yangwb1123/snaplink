@@ -274,6 +274,9 @@ func (b *appBuilder) wireAdminMW(srv *sso.Server) *sso.AdminMiddleware {
 	// admin:read rather than admin:write. See interfaces/admin/governance.go's
 	// methodScopeForPath for the (longest-prefix) override lookup.
 	mw.SetMethodScope(sso.PathAPIPrefix+sso.PathAdminWASMAuthzCheck, sso.AdminScopeRead)
+	// Same override for the cross-cluster config-diff probe: POST for its
+	// JSON body, but it only reads + diffs, never mutates.
+	mw.SetMethodScope(sso.PathAPIPrefix+sso.PathAdminConfigClusterDiff, sso.AdminScopeRead)
 	if rate, burst := srv.AdminRateLimit(); rate > 0 && burst > 0 {
 		mw.SetRateLimit(rate, burst)
 	}
