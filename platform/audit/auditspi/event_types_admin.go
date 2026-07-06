@@ -9,9 +9,18 @@ const (
 	EventAdminClientUpdated       EventType = "admin_client_updated"
 	EventAdminClientDeleted       EventType = "admin_client_deleted"
 	EventAdminClientSecretRotated EventType = "admin_client_secret_rotated"
-	EventAdminUserCreated         EventType = "admin_user_created"
-	EventAdminUserUpdated         EventType = "admin_user_updated"
-	EventAdminUserDeleted         EventType = "admin_user_deleted"
+	// EventAdminClientApproved / EventAdminClientRejected are emitted by the
+	// developer-app registration review workflow (ClientAdminService.Approve
+	// / Reject) — distinct from the generic EventAdminClientUpdated so an
+	// operator's audit trail can tell "a pending registration was reviewed"
+	// apart from an ordinary field edit. Approve flips Active to true;
+	// Reject deletes the (never-activated) client outright, so its metadata
+	// carries the name captured just before deletion.
+	EventAdminClientApproved EventType = "admin_client_approved"
+	EventAdminClientRejected EventType = "admin_client_rejected"
+	EventAdminUserCreated    EventType = "admin_user_created"
+	EventAdminUserUpdated    EventType = "admin_user_updated"
+	EventAdminUserDeleted    EventType = "admin_user_deleted"
 	// EventAdminUserLifecycleChanged is emitted for every applied user-lifecycle
 	// state transition — both operator-driven (POST /admin/users/:id/lifecycle,
 	// ActorID = admin) and the auto-deprovisioning sweep (ActorID = "system").

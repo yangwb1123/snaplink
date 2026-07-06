@@ -29,8 +29,10 @@ const (
 	EventAdminBreakGlassExpired              = auditspi.EventAdminBreakGlassExpired
 	EventAdminBreakGlassImpersonationStarted = auditspi.EventAdminBreakGlassImpersonationStarted
 	EventAdminBreakGlassRevoked              = auditspi.EventAdminBreakGlassRevoked
+	EventAdminClientApproved                 = auditspi.EventAdminClientApproved
 	EventAdminClientCreated                  = auditspi.EventAdminClientCreated
 	EventAdminClientDeleted                  = auditspi.EventAdminClientDeleted
+	EventAdminClientRejected                 = auditspi.EventAdminClientRejected
 	EventAdminClientSecretRotated            = auditspi.EventAdminClientSecretRotated
 	EventAdminClientUpdated                  = auditspi.EventAdminClientUpdated
 	EventAdminConnectionDeleted              = auditspi.EventAdminConnectionDeleted

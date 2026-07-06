@@ -68,11 +68,24 @@ related capability exists but the proposed feature does not).
   self-service + a small representative admin sample — NOT the full
   ~150-route grpc-gateway-generated admin CRUD surface, nor SCIM/CAEP/
   federation (see `docs/sdks/*/README.md` for the exact allowlist and
-  simplifications). The developer app portal + review workflow remains
-  undone — a separate, large feature (an application UI + backend
-  approval/review workflow) deliberately out of scope for the pass that
-  added the above. _Sources: health-and-dx-2026-07-01,
-  expansion-analysis-20260701, expansion-directions-2026-07-01-v3._
+  simplifications). The backend approval/review workflow half is now done:
+  `client_registration.default_active: false` registers a new DCR client
+  pending (`Active=false`); `ClientAdminService.Approve`/`Reject`
+  (`POST /api/v1/admin/clients/{id}/{approve,reject}`) let an admin activate
+  or delete it, each emitting a distinct `admin_client_approved`/
+  `admin_client_rejected` audit event (not the generic `admin_client_updated`/
+  `admin_client_deleted`). Closed a real gap found while wiring this: the
+  `private_key_jwt` client-assertion path (`verifyJWTClientAssertion`) never
+  checked `Client.Active` at all — unlike the `client_secret` path
+  (`ClientStore.ValidateSecret`), so a pending/deactivated client could have
+  authenticated via a signed JWT assertion regardless of its review status;
+  fixed with the same collapsed `invalid_client` wire shape as every other
+  rejection on that path. The developer-facing PORTAL UI (an application
+  browsing/submission page) remains undone — a frontend project, not a
+  bounded backend increment; an admin reviews pending registrations today
+  via the existing `GET /api/v1/admin/clients?filter=active:false` list. _Sources:
+  health-and-dx-2026-07-01, expansion-analysis-20260701,
+  expansion-directions-2026-07-01-v3._
 
 ## Security headers, crypto & versioning
 

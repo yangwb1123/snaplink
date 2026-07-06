@@ -15,6 +15,15 @@ import (
 // actor's userID + clientID via sso.AdminActorFromContext; we read it back
 // here. Safe to call with a nil recorder — checking saves work.
 func recordAdmin(ctx context.Context, recorder *audit.Recorder, t audit.EventType, target string) {
+	recordAdminMeta(ctx, recorder, t, target, nil)
+}
+
+// recordAdminMeta is recordAdmin's metadata-carrying variant — same
+// actor/target/context derivation, plus caller-supplied SetMeta entries for
+// events needing more than the generic "target=<resource>" Reason (e.g. the
+// client-registration review workflow's rejection reason and the rejected
+// client's name, captured here since the record is gone after Delete).
+func recordAdminMeta(ctx context.Context, recorder *audit.Recorder, t audit.EventType, target string, meta map[string]string) {
 	if recorder == nil {
 		return
 	}
@@ -35,6 +44,9 @@ func recordAdmin(ctx context.Context, recorder *audit.Recorder, t audit.EventTyp
 		if ua := md.Get("user-agent"); len(ua) > 0 {
 			evt.UserAgent = ua[0]
 		}
+	}
+	for k, v := range meta {
+		audit.SetMeta(evt, k, v)
 	}
 	recorder.Record(ctx, evt)
 }

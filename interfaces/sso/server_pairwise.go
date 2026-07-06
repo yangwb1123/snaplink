@@ -145,6 +145,29 @@ const DefaultClientAssertionMaxLifetime = 5 * time.Minute
 // Errors collapse to one wire shape on the caller side
 // (invalid_client) so attacker probing can't distinguish "wrong
 // signature" from "missing client" from "wrong audience".
+// resolveAssertionClient looks up the self-asserted `sub` and validates it's
+// usable for private_key_jwt authentication — extracted from
+// verifyJWTClientAssertion to stay under the function-length budget. Every
+// failure here collapses to the same wire shape as the caller's other
+// rejections (invalid_client), so the specific message text is never
+// distinguishable on the wire.
+func resolveAssertionClient(ctx context.Context, clientStore ClientStore, sub string) (*Client, error) {
+	client, err := clientStore.Get(ctx, sub)
+	if err != nil || client == nil {
+		return nil, errors.New("jwt_client_assertion: client not found")
+	}
+	if !client.Active {
+		// A pending (not-yet-approved) or deactivated client MUST NOT
+		// authenticate via private_key_jwt just because ValidateSecret's
+		// Active gate (the OTHER client-auth path) doesn't run this path.
+		return nil, errors.New("jwt_client_assertion: client inactive")
+	}
+	if len(client.JWKS) == 0 {
+		return nil, errors.New("jwt_client_assertion: client has no registered JWKS")
+	}
+	return client, nil
+}
+
 func verifyJWTClientAssertion(ctx context.Context, assertion, formClientID string, clientStore ClientStore, asIssuer string, replay security.JTIReplayStore, replayFailClosed bool) (string, error) {
 	if clientStore == nil {
 		return "", errors.New("jwt_client_assertion: client store required")
@@ -168,12 +191,9 @@ func verifyJWTClientAssertion(ctx context.Context, assertion, formClientID strin
 	// client FIRST, then verify the signature against THAT client's JWKS.
 	// This ordering is the auth core and MUST NOT be reordered — an
 	// attacker who lies about `sub` simply fails the signature check below.
-	client, err := clientStore.Get(ctx, p.Sub)
-	if err != nil || client == nil {
-		return "", errors.New("jwt_client_assertion: client not found")
-	}
-	if len(client.JWKS) == 0 {
-		return "", errors.New("jwt_client_assertion: client has no registered JWKS")
+	client, err := resolveAssertionClient(ctx, clientStore, p.Sub)
+	if err != nil {
+		return "", err
 	}
 	// Signature verification through the shared, alg-confusion-safe
 	// verifier: asymmetric-allowlist gate BEFORE verify (no alg=none, no

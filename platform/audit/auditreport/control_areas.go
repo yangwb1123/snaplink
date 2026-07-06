@@ -81,6 +81,8 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventAdminClientUpdated,
 			audit.EventAdminClientDeleted,
 			audit.EventAdminClientSecretRotated,
+			audit.EventAdminClientApproved,
+			audit.EventAdminClientRejected,
 			audit.EventAdminUserCreated,
 			audit.EventAdminUserUpdated,
 			audit.EventAdminUserDeleted,

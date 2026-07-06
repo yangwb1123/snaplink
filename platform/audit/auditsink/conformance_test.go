@@ -20,8 +20,10 @@ import (
 var allKnownEventTypes = []auditspi.EventType{
 	auditspi.EventAccountLocked,
 	auditspi.EventAdminAccountUnlocked,
+	auditspi.EventAdminClientApproved,
 	auditspi.EventAdminClientCreated,
 	auditspi.EventAdminClientDeleted,
+	auditspi.EventAdminClientRejected,
 	auditspi.EventAdminClientSecretRotated,
 	auditspi.EventAdminClientUpdated,
 	auditspi.EventAdminConnectionDeleted,

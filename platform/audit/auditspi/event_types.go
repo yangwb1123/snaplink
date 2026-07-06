@@ -262,7 +262,8 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventNativeSSOExchange: {}, EventNativeSSOExchangeFailure: {},
 	// admin control-plane (event_types_admin.go)
 	EventAdminClientCreated: {}, EventAdminClientUpdated: {}, EventAdminClientDeleted: {},
-	EventAdminClientSecretRotated: {}, EventAdminUserCreated: {}, EventAdminUserUpdated: {},
+	EventAdminClientSecretRotated: {}, EventAdminClientApproved: {}, EventAdminClientRejected: {},
+	EventAdminUserCreated: {}, EventAdminUserUpdated: {},
 	EventAdminUserDeleted: {}, EventAdminTokenRevoked: {}, EventAdminTempTokenIssued: {},
 	EventAdminConsentRevoked: {}, EventAdminMFAFactorRemoved: {}, EventAdminPasswordReset: {},
 	EventAdminDeviceSecretsRevoked: {}, EventAdminPasswordResetTokensRevoked: {},

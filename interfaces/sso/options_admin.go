@@ -195,6 +195,8 @@ var configHistoryResourceByEventType = map[audit.EventType]string{
 	audit.EventAdminClientUpdated:       "client",
 	audit.EventAdminClientDeleted:       "client",
 	audit.EventAdminClientSecretRotated: "client",
+	audit.EventAdminClientApproved:      "client",
+	audit.EventAdminClientRejected:      "client",
 	audit.EventAdminTenantCreated:       "tenant",
 	audit.EventAdminTenantUpdated:       "tenant",
 	audit.EventAdminTenantDeleted:       "tenant",

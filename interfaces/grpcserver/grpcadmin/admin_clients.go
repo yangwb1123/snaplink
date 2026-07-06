@@ -292,6 +292,68 @@ func (s *ClientAdminService) RotateSecret(ctx context.Context, in *adminv1.Rotat
 	return &adminv1.RotateSecretResponse{Secret: secret}, nil
 }
 
+// Approve implements the developer-app registration review workflow's
+// approval half: flips Active to true on an existing (typically
+// pending, i.e. registered with active=false) client. Idempotent —
+// approving an already-active client is a no-op beyond re-recording the
+// audit event, since a registration review action should always leave a
+// trail even if the state didn't change.
+func (s *ClientAdminService) Approve(ctx context.Context, in *adminv1.ApproveClientRequest) (*adminv1.ApproveClientResponse, error) {
+	if s.store == nil {
+		return nil, status.Error(codes.FailedPrecondition, "client store not configured")
+	}
+	if in == nil || in.Id == "" {
+		return nil, status.Error(codes.InvalidArgument, "id required")
+	}
+	c, err := s.store.Get(ctx, in.Id)
+	if errors.Is(err, sso.ErrNoSuchClient) {
+		return nil, status.Error(codes.NotFound, "client not found")
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "get: %v", err)
+	}
+	c.Active = true
+	if err := s.store.Update(ctx, c); err != nil {
+		return nil, status.Errorf(codes.Internal, "approve: %v", err)
+	}
+	recordAdmin(ctx, s.recorder, audit.EventAdminClientApproved, c.ID)
+	s.onDiscoveryChange()
+	s.onClientChange(c.ID)
+	return &adminv1.ApproveClientResponse{Client: clientToProto(c, false)}, nil
+}
+
+// Reject implements the review workflow's rejection half: DELETES the
+// never-activated client outright rather than leaving it permanently
+// inactive — a rejected registration is done, not parked. The audit
+// event captures the client's name (and the operator-supplied reason,
+// if any) BEFORE deletion, since the record is gone afterward.
+func (s *ClientAdminService) Reject(ctx context.Context, in *adminv1.RejectClientRequest) (*adminv1.RejectClientResponse, error) {
+	if s.store == nil {
+		return nil, status.Error(codes.FailedPrecondition, "client store not configured")
+	}
+	if in == nil || in.Id == "" {
+		return nil, status.Error(codes.InvalidArgument, "id required")
+	}
+	c, err := s.store.Get(ctx, in.Id)
+	if errors.Is(err, sso.ErrNoSuchClient) {
+		return nil, status.Error(codes.NotFound, "client not found")
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "get: %v", err)
+	}
+	if err := s.store.Delete(ctx, in.Id); err != nil {
+		return nil, status.Errorf(codes.Internal, "reject: %v", err)
+	}
+	meta := map[string]string{"client_name": c.Name}
+	if in.Reason != "" {
+		meta["reason"] = in.Reason
+	}
+	recordAdminMeta(ctx, s.recorder, audit.EventAdminClientRejected, in.Id, meta)
+	s.onDiscoveryChange()
+	s.onClientChange(in.Id)
+	return &adminv1.RejectClientResponse{}, nil
+}
+
 func clientToProto(c *sso.Client, includeSecret bool) *adminv1.Client {
 	if c == nil {
 		return nil

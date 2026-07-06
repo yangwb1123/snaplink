@@ -41,6 +41,24 @@ service ClientAdminService {
       body: "*"
     };
   }
+  // Approve and Reject are the developer-app registration review workflow:
+  // a client registered with active=false (e.g. via DCR with
+  // default_active=false) sits pending until an admin reviews it. Approve
+  // flips active to true; Reject deletes the never-activated client
+  // outright. Both emit a distinct audit event from the generic Update/
+  // Delete so the review action is separately attributable.
+  rpc Approve(ApproveClientRequest) returns (ApproveClientResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/clients/{id}/approve"
+      body: "*"
+    };
+  }
+  rpc Reject(RejectClientRequest) returns (RejectClientResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/admin/clients/{id}/reject"
+      body: "*"
+    };
+  }
 }
 
 // Client mirrors sso.Client. Secret is write-only — the server never echoes
@@ -92,3 +110,14 @@ message DeleteClientResponse {}
 
 message RotateSecretRequest  { string id = 1; }
 message RotateSecretResponse { string secret = 1; }
+
+message ApproveClientRequest  { string id = 1; }
+message ApproveClientResponse { Client client = 1; }
+
+message RejectClientRequest  {
+  string id     = 1;
+  // Optional operator-supplied reason, carried into the audit event's
+  // metadata (e.g. "redirect_uri not owned by the requester").
+  string reason = 2;
+}
+message RejectClientResponse {}

@@ -16,6 +16,7 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 | `dpop.{proof_max_age,max_clock_skew}` | DPoP iat-window (default 60s each); 0 = SDK default (byte-identical) |
 | `security.jti_replay.fail_closed` | Store error → reject (treat-as-replay) instead of fail-open |
 | `identity.client_cache.{enabled,ttl}` | Per-login ClientStore.Get TTL cache (default 30s); `KindClientChange` bus-invalidated on every mutation |
+| `client_registration.default_active` | `true` (default) activates a new DCR registration immediately; `false` opts into the developer-app registration review workflow — the client registers pending (`Active=false`, unable to authenticate on ANY grant) until an admin calls `POST /api/v1/admin/clients/{id}/approve` or `/reject` (`ClientAdminService`) |
 
 ## OIDC
 

@@ -147,6 +147,8 @@ var ocsfEventActivities = map[auditspi.EventType]ocsfActivity{
 	auditspi.EventAdminClientUpdated:              {ocsfClassAccountChange, ocsfCategoryIAM, 99, "Update"},
 	auditspi.EventAdminClientDeleted:              {ocsfClassAccountChange, ocsfCategoryIAM, 6, "Delete"},
 	auditspi.EventAdminClientSecretRotated:        {ocsfClassAccountChange, ocsfCategoryIAM, 99, "Client Secret Rotated"},
+	auditspi.EventAdminClientApproved:             {ocsfClassAccountChange, ocsfCategoryIAM, 99, "Client Approved"},
+	auditspi.EventAdminClientRejected:             {ocsfClassAccountChange, ocsfCategoryIAM, 6, "Client Rejected"},
 	auditspi.EventAdminUserCreated:                {ocsfClassAccountChange, ocsfCategoryIAM, 1, "Create"},
 	auditspi.EventAdminUserUpdated:                {ocsfClassAccountChange, ocsfCategoryIAM, 99, "Update"},
 	auditspi.EventAdminUserDeleted:                {ocsfClassAccountChange, ocsfCategoryIAM, 6, "Delete"},

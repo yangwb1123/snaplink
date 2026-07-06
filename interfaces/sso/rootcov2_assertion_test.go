@@ -144,5 +144,38 @@ func TestRcov2A_PrivateKeyJWT(t *testing.T) {
 	}
 }
 
+// TestRcov2A_PrivateKeyJWT_InactiveClientRejected proves the private_key_jwt
+// path honors Client.Active exactly like the client_secret path's
+// ValidateSecret gate does — a pending (never-approved) or deactivated
+// client MUST NOT authenticate merely because this assertion-based path
+// doesn't route through ValidateSecret at all. Same collapsed
+// invalid_client wire shape as every other rejection in this file.
+func TestRcov2A_PrivateKeyJWT_InactiveClientRejected(t *testing.T) {
+	t.Parallel()
+	key := rcov2NewDPoPKey(t)
+	const kid = "assert-key-inactive"
+	s := rcov2AssertionServer(t, key, kid)
+	if err := s.clients.Update(context.Background(), &sso.Client{
+		ID: rcovClient, Name: "Assertion Client", TokenStrategy: "jwt", Active: false, SkipConsent: true,
+		JWKS: []sso.JWK{{Kty: "OKP", Crv: "Ed25519", Kid: kid, X: base64.RawURLEncoding.EncodeToString(key.pub)}},
+	}); err != nil {
+		t.Fatalf("deactivate client: %v", err)
+	}
+
+	assertion := rcov2SignAssertion(t, key, kid, rcovClient, rcov2AssertIssuer, time.Minute)
+	status, out := rcovPostJSON(t, s.http.URL+"/token", "", map[string]any{
+		"grant_type":            "client_credentials",
+		"client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+		"client_assertion":      assertion,
+		"scope":                 "read",
+	})
+	if status != http.StatusUnauthorized {
+		t.Errorf("inactive client assertion status = %d, want 401", status)
+	}
+	if out["error"] != "invalid_client" {
+		t.Errorf("inactive client assertion error = %v, want invalid_client", out["error"])
+	}
+}
+
 // rcov2KeepContext keeps the context import referenced for future helpers.
 var _ = context.Background

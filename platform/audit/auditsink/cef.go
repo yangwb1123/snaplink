@@ -99,6 +99,8 @@ var cefEventNames = map[auditspi.EventType]string{
 	auditspi.EventAdminClientUpdated:              "Admin: Client Updated",
 	auditspi.EventAdminClientDeleted:              "Admin: Client Deleted",
 	auditspi.EventAdminClientSecretRotated:        "Admin: Client Secret Rotated",
+	auditspi.EventAdminClientApproved:             "Admin: Client Approved",
+	auditspi.EventAdminClientRejected:             "Admin: Client Rejected",
 	auditspi.EventAdminUserCreated:                "Admin: User Created",
 	auditspi.EventAdminUserUpdated:                "Admin: User Updated",
 	auditspi.EventAdminUserDeleted:                "Admin: User Deleted",

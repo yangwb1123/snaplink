@@ -2,6 +2,7 @@ package grpcadmin
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
@@ -33,6 +34,10 @@ func TestClientAdminService_NilStorePreconditionFails(t *testing.T) {
 	requireCode(t, err, codes.FailedPrecondition)
 	_, err = svc.RotateSecret(ctx, &adminv1.RotateSecretRequest{Id: "x"})
 	requireCode(t, err, codes.FailedPrecondition)
+	_, err = svc.Approve(ctx, &adminv1.ApproveClientRequest{Id: "x"})
+	requireCode(t, err, codes.FailedPrecondition)
+	_, err = svc.Reject(ctx, &adminv1.RejectClientRequest{Id: "x"})
+	requireCode(t, err, codes.FailedPrecondition)
 }
 
 // TestClientAdminService_InvalidArgument covers the missing/blank-id guard
@@ -52,6 +57,10 @@ func TestClientAdminService_InvalidArgument(t *testing.T) {
 	_, err = svc.Delete(ctx, &adminv1.DeleteClientRequest{})
 	requireCode(t, err, codes.InvalidArgument)
 	_, err = svc.RotateSecret(ctx, &adminv1.RotateSecretRequest{})
+	requireCode(t, err, codes.InvalidArgument)
+	_, err = svc.Approve(ctx, &adminv1.ApproveClientRequest{})
+	requireCode(t, err, codes.InvalidArgument)
+	_, err = svc.Reject(ctx, &adminv1.RejectClientRequest{})
 	requireCode(t, err, codes.InvalidArgument)
 }
 
@@ -137,6 +146,106 @@ func TestClientAdminService_CRUDAndCallbacks(t *testing.T) {
 	if len(events) == 0 {
 		t.Error("expected mutations to record audit events")
 	}
+}
+
+// TestClientAdminService_ApproveActivatesPendingClient covers the
+// developer-app registration review workflow's approval half: a client
+// registered with active=false (the DCR default_active=false posture)
+// starts unable to authenticate, and Approve flips it to active and
+// records a distinct EventAdminClientApproved (not the generic Updated).
+func TestClientAdminService_ApproveActivatesPendingClient(t *testing.T) {
+	t.Parallel()
+	store := defaultimpl.NewMemoryClientStore()
+	sink := audit.NewMemorySink(20)
+	rec := audit.New(sink)
+	var lastChangedClient string
+	svc := NewClientAdminService(store, rec, nil, func(id string) { lastChangedClient = id })
+	ctx := context.Background()
+
+	if err := store.Add(ctx, &sso.Client{ID: "pending-app", Name: "Pending App", Active: false}); err != nil {
+		t.Fatalf("seed pending client: %v", err)
+	}
+
+	resp, err := svc.Approve(ctx, &adminv1.ApproveClientRequest{Id: "pending-app"})
+	requireOK(t, err, "Approve")
+	if !resp.Client.Active {
+		t.Error("Approve response client should be active")
+	}
+	if lastChangedClient != "pending-app" {
+		t.Errorf("expected onClientChange to fire for pending-app, got %q", lastChangedClient)
+	}
+	got, err := store.Get(ctx, "pending-app")
+	requireOK(t, err, "Get after Approve")
+	if !got.Active {
+		t.Error("stored client should be active after Approve")
+	}
+
+	events, err := sink.Query(ctx, audit.Query{})
+	requireOK(t, err, "sink.Query")
+	found := false
+	for _, e := range events {
+		if e.Type == audit.EventAdminClientApproved {
+			found = true
+		}
+		if e.Type == audit.EventAdminClientUpdated {
+			t.Error("Approve must not also emit the generic EventAdminClientUpdated")
+		}
+	}
+	if !found {
+		t.Error("expected an EventAdminClientApproved audit event")
+	}
+
+	_, err = svc.Approve(ctx, &adminv1.ApproveClientRequest{Id: "missing"})
+	requireCode(t, err, codes.NotFound)
+}
+
+// TestClientAdminService_RejectDeletesClientAndRecordsReason covers the
+// review workflow's rejection half: the never-activated client is
+// deleted outright (not left permanently inactive), and the audit event
+// carries the client's name plus the operator-supplied reason, captured
+// before the record is gone.
+func TestClientAdminService_RejectDeletesClientAndRecordsReason(t *testing.T) {
+	t.Parallel()
+	store := defaultimpl.NewMemoryClientStore()
+	sink := audit.NewMemorySink(20)
+	rec := audit.New(sink)
+	var lastChangedClient string
+	svc := NewClientAdminService(store, rec, nil, func(id string) { lastChangedClient = id })
+	ctx := context.Background()
+
+	if err := store.Add(ctx, &sso.Client{ID: "spammy-app", Name: "Spammy App", Active: false}); err != nil {
+		t.Fatalf("seed pending client: %v", err)
+	}
+
+	_, err := svc.Reject(ctx, &adminv1.RejectClientRequest{Id: "spammy-app", Reason: "redirect_uri not owned by requester"})
+	requireOK(t, err, "Reject")
+	if lastChangedClient != "spammy-app" {
+		t.Errorf("expected onClientChange to fire for spammy-app, got %q", lastChangedClient)
+	}
+	if _, err := store.Get(ctx, "spammy-app"); !errors.Is(err, sso.ErrNoSuchClient) {
+		t.Errorf("expected the rejected client to be deleted, Get err = %v", err)
+	}
+
+	events, err := sink.Query(ctx, audit.Query{})
+	requireOK(t, err, "sink.Query")
+	var rejectEvent *audit.Event
+	for _, e := range events {
+		if e.Type == audit.EventAdminClientRejected {
+			rejectEvent = e
+		}
+	}
+	if rejectEvent == nil {
+		t.Fatal("expected an EventAdminClientRejected audit event")
+	}
+	if rejectEvent.Metadata["client_name"] != "Spammy App" {
+		t.Errorf("reject event client_name = %q, want %q", rejectEvent.Metadata["client_name"], "Spammy App")
+	}
+	if rejectEvent.Metadata["reason"] != "redirect_uri not owned by requester" {
+		t.Errorf("reject event reason = %q", rejectEvent.Metadata["reason"])
+	}
+
+	_, err = svc.Reject(ctx, &adminv1.RejectClientRequest{Id: "missing"})
+	requireCode(t, err, codes.NotFound)
 }
 
 // TestClientAdminService_UpdatePreservesSecretAndAttributes proves the
