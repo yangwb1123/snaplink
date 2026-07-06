@@ -21,15 +21,16 @@ related capability exists but the proposed feature does not).
   shared `securityverify` `WorkloadIdentityValidator` core); `/token` client
   authentication via `WithWorkloadIdentityProviders`. _Source:
   expansion-2026-07-01._
-- **Edge MQTT + WASM** — mostly done. WASM authz engine
+- **Edge MQTT + WASM** — done. WASM authz engine
   (`platform/lifecycle/wasmauthz`, opt-in `sso.WithWASMAuthzEngine`, one
   admin debug endpoint `POST /api/v1/admin/wasmauthz/check`), WASM
   authenticator (`domains/authenticators/wasmauth`, a `core.Authenticator`
-  wired via the existing `sso.WithAuthenticator`), and an MQTT
-  `cluster.Bus` backend (`infrastructure/mqtt`, wired via the existing
-  `sso.WithInvalidationBus`) are all implemented; see `docs/wasmauthz.md`.
-  Still open: an MQTT CAEP/SSF channel (pushing Shared Signals over MQTT
-  instead of HTTP). _Source: analysis-round11._
+  wired via the existing `sso.WithAuthenticator`), an MQTT `cluster.Bus`
+  backend (`infrastructure/mqtt`, wired via the existing
+  `sso.WithInvalidationBus`), and an MQTT CAEP/SSF delivery channel
+  (`protocols/caep`'s `WithMQTTPublisher` + `AttrReceiverMQTTTopic`,
+  satisfied by `infrastructure/mqtt`'s `TopicPublisher`) are all
+  implemented; see `docs/wasmauthz.md`. _Source: analysis-round11._
 
 ## Enterprise governance & compliance
 

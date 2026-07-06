@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/snaplink/sso/shared/core"
 )
 
 // Delivery-retry defaults. Retry is OPT-IN (default attempts = 1, i.e.
@@ -85,14 +87,76 @@ func retryableDeliveryError(err error) bool {
 // context: the per-attempt timeout is layered on top of it rather than
 // context.Background() so the mint/POST still carries the originating
 // request's trace value and the caep.transmitter.deliver span.
-func (t *Transmitter) attemptDelivery(ctx context.Context, endpoint, auth string, req buildSETRequest) error {
+//
+// Channel selection: MQTT wins when the receiver registered
+// AttrReceiverMQTTTopic AND a Publisher is wired (WithMQTTPublisher);
+// otherwise this falls back to the HTTPS POST path unchanged — a
+// Transmitter with no MQTTPublisher configured behaves byte-identically
+// to before this channel existed.
+func (t *Transmitter) attemptDelivery(ctx context.Context, endpoint, mqttTopic, auth string, req buildSETRequest) error {
 	ctx, cancel := context.WithTimeout(ctx, t.timeout)
 	defer cancel()
 	set, err := mintSET(ctx, t.signer, req, t.setTTL)
 	if err != nil {
 		return &mintError{err}
 	}
+	if mqttTopic != "" && t.mqttPublisher != nil {
+		if err := t.mqttPublisher.Publish(ctx, mqttTopic, []byte(set)); err != nil {
+			return err
+		}
+		return nil
+	}
 	return t.post(ctx, endpoint, auth, set)
+}
+
+// AttrReceiverMQTTTopic is the client-metadata key an RP registers to opt
+// into MQTT-delivered Shared Signals INSTEAD of (or alongside) the HTTPS
+// webhook: the topic this transmitter publishes the RP's SETs to. Only
+// consulted when a Publisher is wired via WithMQTTPublisher — otherwise
+// it is read but never acted on, so setting it with no publisher wired
+// silently leaves that receiver undelivered (same fail-open posture as
+// an unset AttrReceiverEndpoint on the HTTPS path).
+const AttrReceiverMQTTTopic = "caep_receiver_mqtt_topic"
+
+// MQTTPublisher is the minimal MQTT publish capability an operator wires
+// to push SETs over MQTT. Kept as a LOCAL interface (mirroring Logger's
+// own doc: "kept local so caep depends only on core + audit") so this
+// package imports no MQTT client library directly — an operator
+// satisfies it with, e.g., github.com/snaplink/sso/mqtt's
+// TopicPublisher.Publish (that nested module's own doc.go covers why it
+// lives outside the core module's go.mod).
+type MQTTPublisher interface {
+	Publish(ctx context.Context, topic string, payload []byte) error
+}
+
+// WithMQTTPublisher wires the MQTT delivery channel. Without it (the
+// default), AttrReceiverMQTTTopic is read but never acted on and every
+// receiver delivers over HTTPS only — byte-identical to a build without
+// this option.
+func WithMQTTPublisher(p MQTTPublisher) Option {
+	return func(t *Transmitter) { t.mqttPublisher = p }
+}
+
+// receiverMQTTTopic reads the receiver's registered MQTT topic from
+// client metadata. Returns "" when unset — mirrors receiverEndpoint's
+// shape for the HTTPS channel (broadcaster.go).
+func receiverMQTTTopic(c *core.Client) string {
+	if c == nil || c.Attributes == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Attributes[AttrReceiverMQTTTopic])
+}
+
+// deliveryTarget returns the human-readable delivery destination for
+// tracing/audit — whichever channel attemptDelivery will actually use
+// (MQTT wins when both a topic AND a publisher are configured, matching
+// attemptDelivery's own selection rule exactly). Split out of deliver
+// (broadcaster.go) to stay within the function-length budget.
+func (t *Transmitter) deliveryTarget(endpoint, mqttTopic string) string {
+	if mqttTopic != "" && t.mqttPublisher != nil {
+		return "mqtt:" + mqttTopic
+	}
+	return endpoint
 }
 
 // waitBackoff sleeps before retry N (0-indexed): initial<<N, +-25%

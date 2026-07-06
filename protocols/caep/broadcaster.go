@@ -110,6 +110,12 @@ type Transmitter struct {
 	logger       Logger
 	setTTL       time.Duration
 
+	// mqttPublisher is optional; nil ⇒ every receiver delivers over HTTPS
+	// only. See broadcaster_retry.go's WithMQTTPublisher for the full
+	// rationale — a receiver opts into the MQTT channel by registering
+	// AttrReceiverMQTTTopic instead of (or alongside) AttrReceiverEndpoint.
+	mqttPublisher MQTTPublisher
+
 	// wg tracks in-flight async sends so Close can drain them on shutdown
 	// rather than abandoning goroutines mid-POST.
 	wg sync.WaitGroup
@@ -258,8 +264,9 @@ func (t *Transmitter) Record(ctx context.Context, e *audit.Event) error {
 	deliveryCtx := context.WithoutCancel(ctx)
 	for _, c := range clients {
 		endpoint := receiverEndpoint(c)
-		if endpoint == "" {
-			continue // RP not opted into Shared Signals.
+		mqttTopic := receiverMQTTTopic(c)
+		if endpoint == "" && mqttTopic == "" {
+			continue // RP not opted into Shared Signals via either channel.
 		}
 		auth := ""
 		if c.Attributes != nil {
@@ -272,7 +279,7 @@ func (t *Transmitter) Record(ctx context.Context, e *audit.Event) error {
 			Events:   mapped.events,
 		}
 		t.wg.Add(1)
-		go t.deliver(deliveryCtx, c.ID, endpoint, auth, req)
+		go t.deliver(deliveryCtx, c.ID, endpoint, mqttTopic, auth, req)
 	}
 	return nil
 }
@@ -323,12 +330,13 @@ func (t *Transmitter) resolveClients(ctx context.Context, m mappedEvent) []*core
 // The whole retry chain (see attemptDelivery / waitBackoff) is ONE span:
 // each re-attempt is a span event, not a child span, so a flaky receiver
 // doesn't fan out an unbounded number of spans per SET.
-func (t *Transmitter) deliver(ctx context.Context, clientID, endpoint, auth string, req buildSETRequest) {
+func (t *Transmitter) deliver(ctx context.Context, clientID, endpoint, mqttTopic, auth string, req buildSETRequest) {
 	defer t.wg.Done()
 
+	target := t.deliveryTarget(endpoint, mqttTopic)
 	ctx, span := tracing.StartSpan(ctx, "caep.transmitter.deliver")
 	defer span.End()
-	span.SetAttributes(attribute.String("caep.client_id", clientID))
+	span.SetAttributes(attribute.String("caep.client_id", clientID), attribute.String("caep.target", target))
 
 	// recover() so a panic (e.g. in a custom http.Client transport) is
 	// contained as a delivery failure instead of taking down the goroutine.
@@ -336,7 +344,7 @@ func (t *Transmitter) deliver(ctx context.Context, clientID, endpoint, auth stri
 		if r := recover(); r != nil {
 			reason := fmt.Sprintf("panic: %v", r)
 			tracing.SetError(span, errors.New(reason))
-			t.fail(ctx, clientID, endpoint, reason)
+			t.fail(ctx, clientID, target, reason)
 		}
 	}()
 	var lastErr error
@@ -350,7 +358,7 @@ func (t *Transmitter) deliver(ctx context.Context, clientID, endpoint, auth stri
 			}
 			span.AddEvent("retry", oteltrace.WithAttributes(attribute.Int("caep.attempt", attempt+1)))
 		}
-		err := t.attemptDelivery(ctx, endpoint, auth, req)
+		err := t.attemptDelivery(ctx, endpoint, mqttTopic, auth, req)
 		if err == nil {
 			if t.metric != nil {
 				t.metric(OutcomeSuccess)
@@ -365,7 +373,7 @@ func (t *Transmitter) deliver(ctx context.Context, clientID, endpoint, auth stri
 	}
 	span.SetAttributes(attribute.String("outcome", OutcomeFailed))
 	tracing.SetError(span, lastErr)
-	t.fail(ctx, clientID, endpoint, lastErr.Error())
+	t.fail(ctx, clientID, target, lastErr.Error())
 }
 
 // contentTypeSecEvent is the SSF push-delivery Content-Type for the SET body:

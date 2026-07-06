@@ -45,8 +45,14 @@ entry. The other pieces:
   backend selection yet, since `cluster.Bus` has no factory-registration
   extension point the way `infrastructure/kafka`'s audit sink does; see
   that package's doc.go).
-- An MQTT CAEP/SSF channel (pushing Shared Signals over MQTT instead of
-  HTTP) — still open.
+- An MQTT CAEP/SSF channel — done. `protocols/caep`'s `Transmitter`
+  gained a local `MQTTPublisher` interface + `WithMQTTPublisher` option
+  (mirroring `Logger`'s "kept local so caep depends only on core + audit"
+  pattern — caep imports no MQTT client library). A receiver opts in by
+  registering `AttrReceiverMQTTTopic` instead of (or alongside)
+  `AttrReceiverEndpoint`; `infrastructure/mqtt`'s `TopicPublisher`
+  satisfies the seam. Without `WithMQTTPublisher` wired, behavior is
+  byte-identical to before this channel existed.
 
 ## Quickstart
 
