@@ -367,3 +367,150 @@ func TestAWSWorkloadIdentityValidator_NonServiceAccountSubjectRejected(t *testin
 		t.Fatalf("non-service-account sub: err = %v, want ErrWorkloadIdentityInvalid", err)
 	}
 }
+
+// --- azureClaimsMapper ---
+
+func TestAzureClaimsMapper_ObjectIDIsSubject(t *testing.T) {
+	t.Parallel()
+	id, err := azureClaimsMapper(map[string]any{
+		"oid":   "11111111-2222-3333-4444-555555555555",
+		"tid":   "66666666-7777-8888-9999-aaaaaaaaaaaa",
+		"appid": "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+	})
+	if err != nil {
+		t.Fatalf("map: %v", err)
+	}
+	if id.Subject != "11111111-2222-3333-4444-555555555555" {
+		t.Errorf("subject = %q, want the oid claim", id.Subject)
+	}
+	if id.AccountID != "66666666-7777-8888-9999-aaaaaaaaaaaa" {
+		t.Errorf("AccountID = %q, want the tid claim", id.AccountID)
+	}
+	if id.Attributes[AttrAzureTenantID] != "66666666-7777-8888-9999-aaaaaaaaaaaa" {
+		t.Errorf("azure_tenant_id attribute missing/wrong: %v", id.Attributes)
+	}
+	if id.Attributes[AttrAzureAppID] != "bbbbbbbb-cccc-dddd-eeee-ffffffffffff" {
+		t.Errorf("azure_app_id attribute missing/wrong: %v", id.Attributes)
+	}
+}
+
+func TestAzureClaimsMapper_MissingOIDRejected(t *testing.T) {
+	t.Parallel()
+	if _, err := azureClaimsMapper(map[string]any{"tid": "t", "appid": "a"}); err == nil {
+		t.Fatal("expected error for a token with no oid claim")
+	}
+}
+
+func TestAzureClaimsMapper_TenantAndAppIDOptional(t *testing.T) {
+	t.Parallel()
+	// Absence of tid/appid is not a failure — oid alone identifies the
+	// workload; the tenant is already pinned via the validator's issuer.
+	id, err := azureClaimsMapper(map[string]any{"oid": "obj-1"})
+	if err != nil {
+		t.Fatalf("map: %v", err)
+	}
+	if len(id.Attributes) != 0 {
+		t.Errorf("Attributes = %v, want empty without tid/appid", id.Attributes)
+	}
+}
+
+// --- NewAzureWorkloadIdentityValidator construction ---
+
+func TestNewAzureWorkloadIdentityValidator_RequiresTenantID(t *testing.T) {
+	t.Parallel()
+	if _, err := NewAzureWorkloadIdentityValidator("", NewHTTPJWKSSource("https://example.test/jwks")); err == nil {
+		t.Fatal("expected error for an empty tenant id")
+	}
+}
+
+func TestNewAzureWorkloadIdentityValidator_DerivesIssuerAndJWKSURLFromTenant(t *testing.T) {
+	t.Parallel()
+	const tenant = "66666666-7777-8888-9999-aaaaaaaaaaaa"
+	v, err := NewAzureWorkloadIdentityValidator(tenant, nil)
+	if err != nil {
+		t.Fatalf("new azure validator: %v", err)
+	}
+	wantIssuer := "https://login.microsoftonline.com/" + tenant + "/v2.0"
+	if v.issuer != wantIssuer {
+		t.Errorf("issuer = %q, want %q", v.issuer, wantIssuer)
+	}
+	src, ok := v.source.(*HTTPJWKSSource)
+	if !ok {
+		t.Fatalf("source = %T, want *HTTPJWKSSource", v.source)
+	}
+	wantJWKS := "https://login.microsoftonline.com/" + tenant + "/discovery/v2.0/keys"
+	if src.url != wantJWKS {
+		t.Errorf("derived jwks url = %q, want %q", src.url, wantJWKS)
+	}
+}
+
+// --- NewAzureWorkloadIdentityValidator end-to-end ---
+
+func azureTestClaims(iss, oid, tid, aud string, exp time.Duration) map[string]any {
+	now := time.Now()
+	return map[string]any{
+		"iss": iss,
+		"oid": oid,
+		"tid": tid,
+		"aud": aud,
+		"iat": now.Unix(),
+		"exp": now.Add(exp).Unix(),
+	}
+}
+
+func TestAzureWorkloadIdentityValidator_HappyPath(t *testing.T) {
+	t.Parallel()
+	priv, jwk := genWITestKey(t, "azure-1")
+	srv := jwksTestServer(t, jwk)
+	const tenant = "66666666-7777-8888-9999-aaaaaaaaaaaa"
+	v, err := NewAzureWorkloadIdentityValidator(tenant, NewHTTPJWKSSource(srv.URL))
+	if err != nil {
+		t.Fatalf("new azure validator: %v", err)
+	}
+	if v.Name() != string(CloudProviderAzure) {
+		t.Fatalf("Name() = %q, want %q", v.Name(), CloudProviderAzure)
+	}
+
+	const aud = "https://sso.example.test"
+	issuer := "https://login.microsoftonline.com/" + tenant + "/v2.0"
+	claims := azureTestClaims(issuer, "obj-1", tenant, aud, time.Hour)
+	tok := signWITestToken(t, priv, "azure-1", claims)
+
+	id, err := v.Validate(context.Background(), tok, aud)
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if id.Subject != "obj-1" {
+		t.Errorf("subject = %q", id.Subject)
+	}
+	if id.Provider != CloudProviderAzure {
+		t.Errorf("provider = %q, want azure", id.Provider)
+	}
+	if id.Attributes[AttrAzureTenantID] != tenant {
+		t.Errorf("azure_tenant_id attribute missing: %v", id.Attributes)
+	}
+}
+
+func TestAzureWorkloadIdentityValidator_WrongTenantIssuerRejected(t *testing.T) {
+	t.Parallel()
+	priv, jwk := genWITestKey(t, "azure-2")
+	srv := jwksTestServer(t, jwk)
+	const tenant = "66666666-7777-8888-9999-aaaaaaaaaaaa"
+	v, err := NewAzureWorkloadIdentityValidator(tenant, NewHTTPJWKSSource(srv.URL))
+	if err != nil {
+		t.Fatalf("new azure validator: %v", err)
+	}
+
+	const aud = "https://sso.example.test"
+	// Signed for a DIFFERENT tenant's issuer — must not be accepted by a
+	// validator pinned to `tenant`, proving tenant binding actually gates
+	// acceptance (a multi-tenant app registration could otherwise let a
+	// token from an unrelated tenant authenticate here).
+	otherIssuer := "https://login.microsoftonline.com/ffffffff-ffff-ffff-ffff-ffffffffffff/v2.0"
+	claims := azureTestClaims(otherIssuer, "obj-1", "ffffffff-ffff-ffff-ffff-ffffffffffff", aud, time.Hour)
+	tok := signWITestToken(t, priv, "azure-2", claims)
+
+	if _, err := v.Validate(context.Background(), tok, aud); !errors.Is(err, ErrWorkloadIdentityInvalid) {
+		t.Fatalf("wrong tenant issuer: err = %v, want ErrWorkloadIdentityInvalid", err)
+	}
+}

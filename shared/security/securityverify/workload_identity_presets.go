@@ -2,16 +2,18 @@ package securityverify
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 )
 
 // Cloud workload-identity presets: GCP (metadata-server-issued OIDC ID
-// tokens) and AWS (operator-configured OIDC issuer — typically a per-EKS-
-// cluster issuer, see below). Both share this ONE file (rather than one
-// file per cloud) because shared/security/securityverify sits at its
-// 10-non-test-file directory-fanout ceiling (directory_fanout_test.go); a
-// future third cloud preset (Azure) should follow the SAME pattern — extend
-// this file rather than opening an 11th one.
+// tokens), AWS (operator-configured OIDC issuer — typically a per-EKS-
+// cluster issuer, see below), and Azure (Azure AD Workload Identity
+// Federation, tenant-scoped issuer/JWKS). All three share this ONE file
+// (rather than one file per cloud) because shared/security/securityverify
+// sits at its 10-non-test-file directory-fanout ceiling
+// (directory_fanout_test.go); a future fourth cloud preset should follow the
+// SAME pattern — extend this file rather than opening an 11th one.
 //
 // --- GCP ---
 //
@@ -45,6 +47,22 @@ import (
 // the JWKS URL from it via the standard OIDC discovery convention every EKS
 // (and generic Kubernetes OIDC-federated) issuer publishes at:
 // `<issuer>/.well-known/jwks.json`.
+//
+// --- Azure ---
+//
+// Azure AD Workload Identity Federation lets a workload (typically a
+// Kubernetes pod using AKS Workload Identity, or any client presenting a
+// federated-credential-exchanged token) authenticate as an Azure AD app
+// registration / managed identity WITHOUT a client secret. The resulting
+// token is an ordinary Azure AD v2.0-issued JWT: PER-TENANT issuer
+// (`https://login.microsoftonline.com/<tenant>/v2.0`), with signing keys
+// published at Azure AD's stable, tenant-scoped discovery convention
+// (`https://login.microsoftonline.com/<tenant>/discovery/v2.0/keys` — no
+// separate discovery-DOCUMENT fetch needed, unlike a fully generic OIDC
+// issuer; this is closer to GCP's fixed-URL simplicity than to AWS's
+// per-cluster derivation). Because the issuer AND the JWKS URL are both
+// templated on the SAME operator-supplied tenant id,
+// NewAzureWorkloadIdentityValidator only needs that one input.
 
 // GCPIssuer is Google's fixed OIDC issuer for metadata-server ID tokens.
 // Every token this preset accepts MUST carry this exact `iss`.
@@ -224,4 +242,72 @@ func awsKubernetesAttributes(claims map[string]any, id *WorkloadIdentity) {
 	if v, ok := sa["uid"].(string); ok && v != "" {
 		id.Attributes[AttrAWSServiceAccountUID] = v
 	}
+}
+
+// azureIssuerTemplate is the Azure AD v2.0 issuer shape; %s is the tenant id
+// (a GUID, or a verified domain like "contoso.onmicrosoft.com").
+const azureIssuerTemplate = "https://login.microsoftonline.com/%s/v2.0"
+
+// azureJWKSURLTemplate is Azure AD's stable, tenant-scoped JWKS discovery
+// endpoint convention for v2.0 tokens — a fixed URL shape, not something
+// that needs a separate discovery-document fetch the way a fully generic
+// OIDC issuer would.
+const azureJWKSURLTemplate = "https://login.microsoftonline.com/%s/discovery/v2.0/keys"
+
+// Azure-specific attribute keys, projected onto WorkloadIdentity.Attributes
+// for audit/logging visibility. Not used in the /token security decision —
+// only WorkloadIdentity.Subject is (see workload_identity.go).
+const (
+	AttrAzureTenantID = "azure_tenant_id"
+	AttrAzureAppID    = "azure_app_id"
+)
+
+// NewAzureWorkloadIdentityValidator builds a WorkloadIdentityValidator preset
+// for Azure AD Workload Identity Federation tokens. tenantID is the Azure AD
+// tenant (a GUID, or a verified domain) the token MUST be issued from — it
+// fixes BOTH the required `iss` and the JWKS fetch URL, since Azure AD v2.0
+// publishes tenant-scoped signing keys at a stable, well-known URL (see the
+// package doc above).
+//
+// source supplies the verification JWKS; pass nil to derive it from tenantID
+// via azureJWKSURLTemplate (NewHTTPJWKSSource(...)) — tests substitute an
+// httptest-backed source pointed at a fake JWKS document instead of reaching
+// the network.
+func NewAzureWorkloadIdentityValidator(tenantID string, source JWKSSource, opts ...WorkloadIdentityValidatorOption) (*WorkloadIdentityValidator, error) {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return nil, errors.New("workload_identity: azure tenant id required")
+	}
+	issuer := fmt.Sprintf(azureIssuerTemplate, tenantID)
+	if source == nil {
+		source = NewHTTPJWKSSource(fmt.Sprintf(azureJWKSURLTemplate, tenantID))
+	}
+	return NewWorkloadIdentityValidator(string(CloudProviderAzure), issuer, source, azureClaimsMapper, opts...)
+}
+
+// azureClaimsMapper projects a verified Azure AD v2.0 token's claims onto a
+// WorkloadIdentity. `oid` (the object id of the underlying service principal
+// / managed identity) is the Subject an operator registers in
+// Client.Attributes[AttrWorkloadIdentitySubject] — it is STABLE across
+// app-registration renames, unlike `appid`/`azp` (the client id, which an
+// operator could reassign to a different app) or `sub` (pairwise under Azure
+// AD v2.0's default configuration, so it can differ per resource for the
+// same identity).
+func azureClaimsMapper(claims map[string]any) (*WorkloadIdentity, error) {
+	oid, _ := claims["oid"].(string)
+	if oid == "" {
+		return nil, errors.New("workload_identity: azure token missing oid")
+	}
+	id := &WorkloadIdentity{
+		Subject:    oid,
+		Attributes: map[string]string{},
+	}
+	if tid, ok := claims["tid"].(string); ok && tid != "" {
+		id.AccountID = tid
+		id.Attributes[AttrAzureTenantID] = tid
+	}
+	if appid, ok := claims["appid"].(string); ok && appid != "" {
+		id.Attributes[AttrAzureAppID] = appid
+	}
+	return id, nil
 }

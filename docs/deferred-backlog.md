@@ -14,11 +14,13 @@ related capability exists but the proposed feature does not).
 
 ## Novel / future protocols
 
-- **Cloud workload-identity connectors** — partial. GCP and AWS implemented
-  (`security.NewGCPWorkloadIdentityValidator`, AWS preset, `/token` client
-  authentication via `WithWorkloadIdentityProviders`); Azure AD Workload
-  Identity Federation (likely reuses the shared `securityverify` core via a
-  tenant-scoped JWKS URL) remains. _Source: expansion-2026-07-01._
+- **Cloud workload-identity connectors** — done. GCP, AWS, and Azure all
+  implemented (`security.NewGCPWorkloadIdentityValidator`, AWS preset, Azure
+  preset via `security.NewAzureWorkloadIdentityValidator` — tenant-scoped
+  issuer + JWKS URL derived from an operator-supplied tenant id, reusing the
+  shared `securityverify` `WorkloadIdentityValidator` core); `/token` client
+  authentication via `WithWorkloadIdentityProviders`. _Source:
+  expansion-2026-07-01._
 - **Edge MQTT + WASM** — partial. WASM authz engine implemented
   (`platform/lifecycle/wasmauthz`, opt-in `sso.WithWASMAuthzEngine`, one
   admin debug endpoint `POST /api/v1/admin/wasmauthz/check`; see

@@ -29,21 +29,13 @@ import (
 // token shape onto the common WorkloadIdentity result — so adding a cloud
 // never means re-deriving signature verification.
 //
-// Status: GCP and AWS are fully implemented (workload_identity_presets.go —
-// GCP: metadata-server-issued OIDC ID tokens verified against Google's
+// Status: GCP, AWS, and Azure are all implemented (workload_identity_presets.go
+// — GCP: metadata-server-issued OIDC ID tokens verified against Google's
 // stable public JWKS; AWS: an operator-configured OIDC issuer, typically a
 // per-cluster EKS OIDC provider URL, with the JWKS URL derived from it via
-// the `<issuer>/.well-known/jwks.json` convention). Azure is a DELIBERATE
-// FOLLOW-UP, not started:
-//
-//   - Azure AD Workload Identity Federation tokens ARE OIDC-shaped
-//     (issuer `https://login.microsoftonline.com/{tenant}/v2.0`, discovery
-//     at the tenant's `/.well-known/openid-configuration`), so it likely
-//     CAN reuse WorkloadIdentityValidator directly via
-//     NewHTTPJWKSSource(tenantJWKSURL) plus an azureClaimsMapper (oid + tid
-//     + appid claims) once a tenant-scoped constructor is added — smaller
-//     lift than AWS was, still deferred to keep each change reviewable one
-//     cloud at a time.
+// the `<issuer>/.well-known/jwks.json` convention; Azure: Azure AD Workload
+// Identity Federation tokens, tenant-scoped issuer + JWKS URL derived from
+// an operator-supplied tenant id).
 //
 // Wiring: interfaces/sso.WithWorkloadIdentityProviders registers one or more
 // WorkloadIdentityProvider values; a Client opts in by setting
@@ -60,7 +52,7 @@ type CloudProvider string
 const (
 	CloudProviderGCP   CloudProvider = "gcp"
 	CloudProviderAWS   CloudProvider = "aws"
-	CloudProviderAzure CloudProvider = "azure" // reserved: see package doc follow-up
+	CloudProviderAzure CloudProvider = "azure"
 )
 
 // AttrWorkloadIdentityProvider / AttrWorkloadIdentitySubject are the
