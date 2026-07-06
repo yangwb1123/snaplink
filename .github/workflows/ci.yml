@@ -107,16 +107,17 @@ jobs:
       fail-fast: false
       matrix:
         module:
-          - kms/awskms
-          - kms/gcpkms
-          - kms/azurekeyvault
-          - kms/pkcs11
-          - saml
-          - ldap
-          - kerberos
-          - radius
-          - extauthz
+          - infrastructure/kms/awskms
+          - infrastructure/kms/gcpkms
+          - infrastructure/kms/azurekeyvault
+          - infrastructure/kms/pkcs11
+          - infrastructure/saml
+          - infrastructure/ldap
+          - infrastructure/kerberos
+          - infrastructure/radius
+          - infrastructure/extauthz
           - infrastructure/kafka
+          - infrastructure/mqtt
           - cmd/sso-mcp
     steps:
       - uses: actions/checkout@v4
@@ -127,7 +128,7 @@ jobs:
       # it only for that matrix entry. Every other module is pure-Go and
       # builds with the default CGO_ENABLED.
       - name: install pkcs11 C toolchain
-        if: matrix.module == 'kms/pkcs11'
+        if: matrix.module == 'infrastructure/kms/pkcs11'
         run: |
           sudo apt-get update
           sudo apt-get install -y libltdl-dev
@@ -146,7 +147,7 @@ jobs:
         # unaffected by exporting it (they have no C imports).
         working-directory: ${{ matrix.module }}
         env:
-          CGO_ENABLED: ${{ matrix.module == 'kms/pkcs11' && '1' || '' }}
+          CGO_ENABLED: ${{ matrix.module == 'infrastructure/kms/pkcs11' && '1' || '' }}
         run: |
           go build ./...
           go test -race -count=1 ./...
@@ -177,6 +178,7 @@ jobs:
           - infrastructure/radius
           - infrastructure/extauthz
           - infrastructure/kafka
+          - infrastructure/mqtt
           - cmd/sso-mcp
     steps:
       - uses: actions/checkout@v4
@@ -228,6 +230,7 @@ jobs:
           - infrastructure/radius
           - infrastructure/extauthz
           - infrastructure/kafka
+          - infrastructure/mqtt
           - cmd/sso-mcp
     permissions:
       security-events: write
@@ -273,6 +276,7 @@ jobs:
           - infrastructure/radius
           - infrastructure/extauthz
           - infrastructure/kafka
+          - infrastructure/mqtt
           - cmd/sso-mcp
     steps:
       - uses: actions/checkout@v4
