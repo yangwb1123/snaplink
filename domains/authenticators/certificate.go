@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 // IdentityFromCert extracts an SSO subject identity from a verified client certificate.
@@ -52,6 +53,8 @@ type CertificateAuthenticator struct {
 	intermediates *x509.CertPool
 	keyUsages     []x509.ExtKeyUsage
 	identity      IdentityFromCert
+	revocation    spi.CertRevocationChecker
+	logger        spi.Logger
 }
 
 type CertOption func(*CertificateAuthenticator)
@@ -68,6 +71,23 @@ func WithCertIdentity(fn IdentityFromCert) CertOption {
 	return func(c *CertificateAuthenticator) { c.identity = fn }
 }
 
+// WithCertRevocationChecker checks a certificate's revocation status (CRL,
+// OCSP, or any operator-chosen source) after chain/expiry verification
+// succeeds. See [spi.CertRevocationChecker]'s doc for the fail-open contract
+// on checker errors. Without this option, revocation is never checked — a
+// certificate authenticates until it expires, matching this authenticator's
+// historical (chain+expiry-only) behavior.
+func WithCertRevocationChecker(rc spi.CertRevocationChecker) CertOption {
+	return func(c *CertificateAuthenticator) { c.revocation = rc }
+}
+
+// WithCertLogger records fail-open revocation-check errors (see
+// [WithCertRevocationChecker]). Without a logger, checker errors are
+// silently swallowed (still fail-open, just unobserved).
+func WithCertLogger(l spi.Logger) CertOption {
+	return func(c *CertificateAuthenticator) { c.logger = l }
+}
+
 func NewCertificateAuthenticator(roots *x509.CertPool, opts ...CertOption) *CertificateAuthenticator {
 	c := &CertificateAuthenticator{
 		roots:     roots,
@@ -82,7 +102,7 @@ func NewCertificateAuthenticator(roots *x509.CertPool, opts ...CertOption) *Cert
 
 func (c *CertificateAuthenticator) Name() string { return MethodCertificate }
 
-func (c *CertificateAuthenticator) Authenticate(_ context.Context, req *sso.AuthRequest) (*sso.AuthResult, error) {
+func (c *CertificateAuthenticator) Authenticate(ctx context.Context, req *sso.AuthRequest) (*sso.AuthResult, error) {
 	pemBytes := []byte(req.Credential["certificate"])
 	if len(pemBytes) == 0 {
 		return nil, errors.New("certificate: pem-encoded certificate required")
@@ -105,6 +125,9 @@ func (c *CertificateAuthenticator) Authenticate(_ context.Context, req *sso.Auth
 	}); err != nil {
 		return nil, fmt.Errorf("certificate: verify: %w", err)
 	}
+	if c.certRevoked(ctx, cert) {
+		return nil, errors.New("certificate: verify: certificate revoked")
+	}
 
 	subject := c.identity(cert)
 	return &sso.AuthResult{
@@ -114,6 +137,24 @@ func (c *CertificateAuthenticator) Authenticate(_ context.Context, req *sso.Auth
 		Attributes:  subject.Claims,
 		AuthMethods: []string{AuthMethodX509},
 	}, nil
+}
+
+// certRevoked reports whether cert is revoked per the configured
+// [spi.CertRevocationChecker], fail-open on checker error (see that type's
+// doc for why). Kept separate from Authenticate to stay within the
+// function-length budget.
+func (c *CertificateAuthenticator) certRevoked(ctx context.Context, cert *x509.Certificate) bool {
+	if c.revocation == nil {
+		return false
+	}
+	revoked, err := c.revocation.IsRevoked(ctx, cert)
+	if err != nil {
+		if c.logger != nil {
+			c.logger.Error("certificate: revocation check failed, allowing (fail-open)", "error", err.Error())
+		}
+		return false
+	}
+	return revoked
 }
 
 func (c *CertificateAuthenticator) Callback(_ context.Context, _ *sso.CallbackState) (*sso.AuthResult, error) {

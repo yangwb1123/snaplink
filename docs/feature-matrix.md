@@ -31,6 +31,7 @@ OAuth 2.0 / OIDC / SSO feature compliance matrix. Extracted from AGENTS.md.
 | RFC 9207 AS Issuer Id | every `/auth/login` | always | `handlers.go` |
 | RFC 9068 JWT Access Token | JWT access tokens | always; alg gate `WithSupportedSigningAlgs` | `defaultimpl/{ed25519,ecdsa,rsa}_jwt_issuer.go` |
 | RFC 8705 mTLS-bound + aliases | `/token` + `/userinfo` | `WithClientCertExtractor` | `server_extensions.go` |
+| mTLS / X.509 certificate revocation check | `/token` (tls_client_auth, self_signed_tls) + `certificate` authenticator | `WithMTLSRevocationChecker` (client auth) / `authenticators.WithCertRevocationChecker` (end-user X.509 login); default OFF, fail-open on checker error | `server_token_clientauth.go` + `domains/authenticators/certificate.go` + `spi/cert_revocation.go` |
 | RFC 9470 Step-Up | resource-server helper | always | `security/step_up_auth.go` |
 | RFC 9449 DPoP | `/token` + `/userinfo` | header-triggered; replay: `WithJTIReplayStore`; nonce: `WithDPoPNonceProvider` | `server_extensions.go` |
 | RFC 8414 §2.1 signed_metadata | discovery | `WithMetadataSigner` | `handlers.go` |

@@ -2,6 +2,7 @@ package spi
 
 import (
 	"context"
+	"crypto/x509"
 	"time"
 
 	"github.com/snaplink/sso/shared/core"
@@ -111,3 +112,26 @@ const (
 	// failure event with reason="risk_denied".
 	DecisionDeny Decision = "deny"
 )
+
+// CertRevocationChecker reports whether an already chain-validated X.509
+// certificate has been revoked (CRL, OCSP, or any operator-chosen revocation
+// source). It is checked AFTER chain/expiry verification succeeds —
+// revocation status is a separate signal from cryptographic validity, and
+// neither crypto/x509.Verify nor crypto/tls does any revocation checking of
+// its own. Without a checker wired, a compromised or revoked client
+// certificate authenticates successfully via mTLS until it expires.
+//
+// Pluggable along the same SPI pattern as [RiskScorer]: ship no checker in
+// dev (revocation checking off), a CRL-fetching implementation backed by
+// the cert's CRL Distribution Points, or an OCSP-responder client, in
+// production.
+//
+// Fail-open contract: when IsRevoked returns a non-nil error, the caller
+// logs and PROCEEDS (treats the certificate as not revoked) — matching
+// [RiskScorer]'s availability convention. Failing closed on a misbehaving
+// or unreachable revocation source would lock out every mTLS client on an
+// outage. IsRevoked returning (true, nil) is the only outcome that rejects
+// the certificate.
+type CertRevocationChecker interface {
+	IsRevoked(ctx context.Context, cert *x509.Certificate) (bool, error)
+}

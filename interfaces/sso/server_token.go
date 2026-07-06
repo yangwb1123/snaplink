@@ -391,8 +391,16 @@ func (s *Server) checkGrantRateLimit(ctx HandlerContext, grantType string) bool 
 // denyPublicClientCredentials gates client_credentials to confidential
 // clients only (RFC 6749 §4.4). Returns true when the request should
 // be denied and a response has been written.
+//
+// By the time this runs, authenticateTokenClient has ALREADY succeeded (a
+// failed auth returns earlier) — so a client registered for tls_client_auth
+// or self_signed_tls reaching here proves it authenticated via mTLS (RFC
+// 8705 §2), which needs no client_secret at all by design. Checking only
+// Secret/ClientAssertion would misclassify that client as public and reject
+// every mTLS-only client_credentials request.
 func (s *Server) denyPublicClientCredentials(ctx HandlerContext, client *Client, req oauth.TokenRequest) bool {
-	if client.Secret == "" && req.ClientAssertion == "" {
+	usingMTLS := client.TokenEndpointAuthMethod == ClientAuthTLS || client.TokenEndpointAuthMethod == ClientAuthSelfSignedTLS
+	if client.Secret == "" && req.ClientAssertion == "" && !usingMTLS {
 		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidClient))
 		return true
 	}

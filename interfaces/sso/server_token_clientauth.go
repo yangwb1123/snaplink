@@ -1,6 +1,8 @@
 package sso
 
 import (
+	"context"
+	"crypto/x509"
 	"errors"
 	"net/http"
 
@@ -233,41 +235,81 @@ func (s *Server) authenticateMTLSClient(ctx HandlerContext, client *Client) bool
 	if !ok || cert == nil {
 		return false
 	}
+	reqCtx := ctx.Request().Context()
 	switch authMethod {
 	case ClientAuthTLS:
-		if err := security.VerifyTLSClientAuth(cert,
-			client.TLSClientAuthSubjectDN,
-			client.TLSClientAuthSANDNS,
-			client.TLSClientAuthSANEmail,
-			client.TLSClientAuthSANURI,
-		); err != nil {
-			s.logger.Error("tls_client_auth failed",
-				"client_id", client.ID,
-				"error", err.Error(),
-				"subject", cert.Subject.String())
-			return false
-		}
-		return true
+		return s.verifyTLSClientAuthCert(reqCtx, client, cert)
 	case ClientAuthSelfSignedTLS:
-		if len(client.JWKS) == 0 {
-			s.logger.Error("self_signed_tls failed: client has no JWKS",
-				"client_id", client.ID)
-			return false
-		}
-		// Check if any JWK matches the cert's public key.
-		for _, jwk := range client.JWKS {
-			match, err := security.CertPublicKeyMatchesJWK(cert,
-				jwk.Kty, jwk.Crv, jwk.X, jwk.Y, jwk.N, jwk.E)
-			if err != nil {
-				continue
-			}
-			if match {
-				return true
-			}
-		}
-		s.logger.Error("self_signed_tls failed: no matching JWK",
+		return s.verifySelfSignedTLSCert(reqCtx, client, cert)
+	}
+	return false
+}
+
+// verifyTLSClientAuthCert verifies cert's DN/SAN binding against client's
+// registered tls_client_auth attributes and, if bound, checks revocation.
+// Split out of authenticateMTLSClient to stay within the function-length
+// budget.
+func (s *Server) verifyTLSClientAuthCert(ctx context.Context, client *Client, cert *x509.Certificate) bool {
+	if err := security.VerifyTLSClientAuth(cert,
+		client.TLSClientAuthSubjectDN,
+		client.TLSClientAuthSANDNS,
+		client.TLSClientAuthSANEmail,
+		client.TLSClientAuthSANURI,
+	); err != nil {
+		s.logger.Error("tls_client_auth failed",
+			"client_id", client.ID,
+			"error", err.Error(),
+			"subject", cert.Subject.String())
+		return false
+	}
+	if s.mtlsCertRevoked(ctx, client, cert) {
+		s.logger.Error("tls_client_auth failed: certificate revoked", "client_id", client.ID)
+		return false
+	}
+	return true
+}
+
+// verifySelfSignedTLSCert verifies cert's public key matches one of
+// client's registered JWKs and, if matched, checks revocation. Split out of
+// authenticateMTLSClient to stay within the function-length budget.
+func (s *Server) verifySelfSignedTLSCert(ctx context.Context, client *Client, cert *x509.Certificate) bool {
+	if len(client.JWKS) == 0 {
+		s.logger.Error("self_signed_tls failed: client has no JWKS",
 			"client_id", client.ID)
 		return false
 	}
+	// Check if any JWK matches the cert's public key.
+	for _, jwk := range client.JWKS {
+		match, err := security.CertPublicKeyMatchesJWK(cert,
+			jwk.Kty, jwk.Crv, jwk.X, jwk.Y, jwk.N, jwk.E)
+		if err != nil || !match {
+			continue
+		}
+		if s.mtlsCertRevoked(ctx, client, cert) {
+			s.logger.Error("self_signed_tls failed: certificate revoked", "client_id", client.ID)
+			return false
+		}
+		return true
+	}
+	s.logger.Error("self_signed_tls failed: no matching JWK",
+		"client_id", client.ID)
 	return false
+}
+
+// mtlsCertRevoked reports whether cert is revoked per the configured
+// [spi.CertRevocationChecker] (WithMTLSRevocationChecker), fail-open on
+// checker error — matching RiskScorer's availability convention (see
+// shared/spi/risk.go). No checker wired ⇒ never revoked (historical,
+// chain+DN/SAN/JWK-only behavior).
+func (s *Server) mtlsCertRevoked(ctx context.Context, client *Client, cert *x509.Certificate) bool {
+	if s.mtlsRevocationChecker == nil {
+		return false
+	}
+	revoked, err := s.mtlsRevocationChecker.IsRevoked(ctx, cert)
+	if err != nil {
+		s.logger.Error("mtls revocation check failed, allowing (fail-open)",
+			"client_id", client.ID, "error", err.Error())
+		return false
+	}
+	return revoked
 }

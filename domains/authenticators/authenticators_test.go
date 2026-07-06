@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 // ---------- helpers ----------
@@ -841,6 +842,68 @@ func TestCertificateAuthenticator_DefaultIdentity_FallsBackToEmail(t *testing.T)
 		t.Errorf("UserID = %q, want fallback to email", res.UserID)
 	}
 }
+
+// stubRevocationChecker is a test-only spi.CertRevocationChecker returning
+// canned (revoked, err) values, recording the cert it was called with.
+type stubRevocationChecker struct {
+	revoked bool
+	err     error
+	called  bool
+}
+
+func (s *stubRevocationChecker) IsRevoked(_ context.Context, cert *x509.Certificate) (bool, error) {
+	s.called = true
+	return s.revoked, s.err
+}
+
+func TestCertificateAuthenticator_RevokedCert_Rejected(t *testing.T) {
+	t.Parallel()
+	leafPEM, roots := issueCertChain(t, "client-revoked")
+	checker := &stubRevocationChecker{revoked: true}
+	a := NewCertificateAuthenticator(roots, WithCertRevocationChecker(checker))
+
+	if _, err := a.Authenticate(context.Background(), req(map[string]string{
+		"certificate": string(leafPEM),
+	})); err == nil {
+		t.Fatal("expected rejection for a revoked certificate")
+	}
+	if !checker.called {
+		t.Error("revocation checker was never called")
+	}
+}
+
+func TestCertificateAuthenticator_RevocationCheckError_FailsOpen(t *testing.T) {
+	t.Parallel()
+	leafPEM, roots := issueCertChain(t, "client-checker-down")
+	checker := &stubRevocationChecker{err: errors.New("crl fetch: dial tcp: timeout")}
+	a := NewCertificateAuthenticator(roots, WithCertRevocationChecker(checker))
+
+	res, err := a.Authenticate(context.Background(), req(map[string]string{
+		"certificate": string(leafPEM),
+	}))
+	if err != nil {
+		t.Fatalf("Authenticate should fail-open on checker error: %v", err)
+	}
+	if res.UserID != subjectPrefixCert+"client-checker-down" {
+		t.Errorf("UserID = %q", res.UserID)
+	}
+	if !checker.called {
+		t.Error("revocation checker was never called")
+	}
+}
+
+func TestCertificateAuthenticator_NoRevocationChecker_NotRevoked(t *testing.T) {
+	t.Parallel()
+	leafPEM, roots := issueCertChain(t, "client-no-checker")
+	a := NewCertificateAuthenticator(roots) // no WithCertRevocationChecker
+	if _, err := a.Authenticate(context.Background(), req(map[string]string{
+		"certificate": string(leafPEM),
+	})); err != nil {
+		t.Fatalf("Authenticate without a revocation checker should succeed: %v", err)
+	}
+}
+
+var _ spi.CertRevocationChecker = (*stubRevocationChecker)(nil)
 
 func TestCertificateAuthenticator_CallbackUnsupported(t *testing.T) {
 	t.Parallel()

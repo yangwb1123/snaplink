@@ -9,6 +9,7 @@ import (
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/security"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 func WithJTIReplayStore(store security.JTIReplayStore) Option {
@@ -229,6 +230,17 @@ func WithJWEResponseEncrypter(e security.JWEEncrypter) Option {
 // separation as DPoP.
 func WithClientCertExtractor(ex ClientCertExtractor) Option {
 	return func(s *Server) { s.clientCertExtractor = ex }
+}
+
+// WithMTLSRevocationChecker checks a client's mTLS certificate (RFC 8705
+// tls_client_auth / self_signed_tls) for revocation after DN/SAN or JWK
+// binding succeeds. See [spi.CertRevocationChecker]'s doc for the fail-open
+// contract on checker errors — an unreachable CRL/OCSP source logs and
+// allows rather than locking out every mTLS client. Without this option,
+// revocation is never checked: a client authenticates via mTLS until its
+// certificate expires, matching this server's historical behavior.
+func WithMTLSRevocationChecker(rc spi.CertRevocationChecker) Option {
+	return func(s *Server) { s.mtlsRevocationChecker = rc }
 }
 
 // WithSupportedACRValues declares the OIDC ACR values this server's

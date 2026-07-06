@@ -165,6 +165,7 @@ type protocolState struct {
 	jarDecrypter                   security.JWEDecrypter
 	jweResponseEncrypter           security.JWEEncrypter
 	clientCertExtractor            ClientCertExtractor
+	mtlsRevocationChecker          spi.CertRevocationChecker
 	dpopNonceProvider              DPoPNonceProvider
 	dpopProofMaxAge                time.Duration
 	dpopProofClockSkew             time.Duration
