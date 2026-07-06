@@ -26,14 +26,27 @@ consult each other.
 ## What this is NOT (see `docs/deferred-backlog.md`)
 
 This is the authorization-**engine** half of the "Edge MQTT + WASM" backlog
-entry only. Explicitly NOT implemented here, and still open:
+entry. The other pieces:
 
-- A **WASM authenticator** — a distinct feature (verifying a credential,
-  e.g. a custom MFA factor or passwordless scheme, hosted in WASM) from
-  authorizing an already-authenticated request. Not attempted.
-- An MQTT `cluster.Bus` backend (cross-replica event bus over MQTT).
+- A **WASM authenticator** — done. `domains/authenticators/wasmauth`
+  verifies a credential (a custom MFA factor, a passwordless scheme, a
+  legacy on-prem auth system being bridged in) hosted in WASM, mirroring
+  this package's own alloc/call/dealloc interop pattern and fail-closed
+  doctrine but with an authentication-shaped ABI (`authenticate` instead
+  of `authorize`) and result (`{authenticated, subject_id, claims,
+  reason}` instead of `{allowed, reason}`). It implements
+  `core.Authenticator` directly, so it wires through the existing generic
+  `sso.WithAuthenticator(a)` — no new SDK option was needed. See that
+  package's doc.go for the full ABI contract.
+- An MQTT `cluster.Bus` backend — done. `infrastructure/mqtt`
+  (`github.com/snaplink/sso/mqtt`), a nested module built on
+  `github.com/eclipse/paho.golang`. Wires through the existing
+  `sso.WithInvalidationBus(bus)` (fork-only — no config.yaml-driven
+  backend selection yet, since `cluster.Bus` has no factory-registration
+  extension point the way `infrastructure/kafka`'s audit sink does; see
+  that package's doc.go).
 - An MQTT CAEP/SSF channel (pushing Shared Signals over MQTT instead of
-  HTTP).
+  HTTP) — still open.
 
 ## Quickstart
 
