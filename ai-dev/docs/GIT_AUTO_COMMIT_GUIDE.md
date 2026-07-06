@@ -16,13 +16,13 @@
 
 ```bash
 # 方法 1: 自动生成提交信息
-./git-auto-commit.sh
+./ai-dev/git-auto-commit.sh
 
 # 方法 2: 自定义提交信息
-./git-auto-commit.sh "feat: 添加用户认证功能"
-./git-auto-commit.sh "fix: 修复登录问题"
-./git-auto-commit.sh "docs: 更新文档"
-./git-auto-commit.sh "refactor: 重构代码结构"
+./ai-dev/git-auto-commit.sh "feat: 添加用户认证功能"
+./ai-dev/git-auto-commit.sh "fix: 修复登录问题"
+./ai-dev/git-auto-commit.sh "docs: 更新文档"
+./ai-dev/git-auto-commit.sh "refactor: 重构代码结构"
 ```
 
 **示例输出**:
@@ -131,23 +131,23 @@ Closes #123
 
 ```bash
 # 每完成一个小功能就提交
-./git-auto-commit.sh "feat: 完成用户注册"
-./git-auto-commit.sh "feat: 完成邮箱验证"
-./git-auto-commit.sh "feat: 完成密码重置"
+./ai-dev/git-auto-commit.sh "feat: 完成用户注册"
+./ai-dev/git-auto-commit.sh "feat: 完成邮箱验证"
+./ai-dev/git-auto-commit.sh "feat: 完成密码重置"
 ```
 
 ### 2. 有意义的提交信息
 
 ```bash
 # ❌ 不好的提交信息
-./git-auto-commit.sh "更新"
-./git-auto-commit.sh "修复"
-./git-auto-commit.sh "wip"
+./ai-dev/git-auto-commit.sh "更新"
+./ai-dev/git-auto-commit.sh "修复"
+./ai-dev/git-auto-commit.sh "wip"
 
 # ✅ 好的提交信息
-./git-auto-commit.sh "feat: 添加 JWT 令牌刷新机制"
-./git-auto-commit.sh "fix: 修复并发登录时的竞态条件"
-./git-auto-commit.sh "perf: 优化数据库连接池配置"
+./ai-dev/git-auto-commit.sh "feat: 添加 JWT 令牌刷新机制"
+./ai-dev/git-auto-commit.sh "fix: 修复并发登录时的竞态条件"
+./ai-dev/git-auto-commit.sh "perf: 优化数据库连接池配置"
 ```
 
 ### 3. 原子提交
@@ -156,11 +156,11 @@ Closes #123
 
 ```bash
 # ❌ 不推荐：混合多种类型的更改
-./git-auto-commit.sh "feat: 添加登录和修复登录问题"
+./ai-dev/git-auto-commit.sh "feat: 添加登录和修复登录问题"
 
 # ✅ 推荐：分开提交
-./git-auto-commit.sh "feat: 添加登录功能"
-./git-auto-commit.sh "fix: 修复登录验证逻辑"
+./ai-dev/git-auto-commit.sh "feat: 添加登录功能"
+./ai-dev/git-auto-commit.sh "fix: 修复登录验证逻辑"
 ```
 
 ### 4. 提交前检查
@@ -173,7 +173,7 @@ git status
 git diff
 
 # 确认无误后再提交
-./git-auto-commit.sh "docs: 更新 README"
+./ai-dev/git-auto-commit.sh "docs: 更新 README"
 ```
 
 ---
@@ -230,7 +230,7 @@ git checkout -b feature/new-feature
 
 # 2. 编码...
 # 3. 完成后提交
-./git-auto-commit.sh "feat: 完成新功能"
+./ai-dev/git-auto-commit.sh "feat: 完成新功能"
 
 # 4. 推送到远程
 git push -u origin feature/new-feature
@@ -246,7 +246,7 @@ git checkout -b fix/issue-123
 
 # 2. 修复问题...
 # 3. 提交
-./git-auto-commit.sh "fix: 修复 #123 问题"
+./ai-dev/git-auto-commit.sh "fix: 修复 #123 问题"
 
 # 4. 推送并创建 PR
 git push -u origin fix/issue-123
@@ -257,7 +257,7 @@ git push -u origin fix/issue-123
 ```bash
 # 1. 更新文档...
 # 2. 提交
-./git-auto-commit.sh "docs: 更新 API 文档"
+./ai-dev/git-auto-commit.sh "docs: 更新 API 文档"
 
 # 3. 推送
 git push
@@ -332,7 +332,7 @@ git blame config/config.go | grep "关键代码"
 
 ## 💡 提示
 
-- 使用 `./git-auto-commit.sh --help` 查看帮助
+- 使用 `./ai-dev/git-auto-commit.sh --help` 查看帮助
 - 可以修改脚本自定义提交信息格式
 - 建议设置 Git 别名简化常用命令
 - 定期清理未跟踪的文件

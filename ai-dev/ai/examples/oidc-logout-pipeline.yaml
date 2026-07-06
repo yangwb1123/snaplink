@@ -2,8 +2,8 @@
 # on the OIDC RP-Initiated Logout subsystem.
 #
 # Usage:
-#   python pi-batch.py --pipeline .ai/examples/oidc-logout-pipeline.yaml
-#   python pi-batch.py --pipeline .ai/examples/oidc-logout-pipeline.yaml --reuse
+#   python ai-dev/pi-batch.py --pipeline ai-dev/ai/examples/oidc-logout-pipeline.yaml
+#   python ai-dev/pi-batch.py --pipeline ai-dev/ai/examples/oidc-logout-pipeline.yaml --reuse
 #
 # This pipeline uses the two-stage pi-batch pipeline feature:
 #   Stage A: generates filled prompts from context + templates
@@ -14,7 +14,7 @@
 
 stages:
   - name: security-rfc-review
-    from_dir: .ai/reviews/oidc-logout/prompts
+    from_dir: ai-dev/ai/reviews/oidc-logout/prompts
     suffix: .md
     output_suffix: .out.md
     mode: serial
@@ -22,7 +22,6 @@ stages:
   - name: distributed-review
     from_outputs: security-rfc-review
     tasks:
-      - prompt_template: .ai/prompts/03-distributed-review.md
-        output: .ai/reviews/oidc-logout/stage-03-distributed.out.md
-        cwd: /home/dwp/snaplink
+      - prompt_template: ai-dev/ai/prompts/03-distributed-review.md
+        output: ai-dev/ai/reviews/oidc-logout/stage-03-distributed.out.md
         timeout: 600

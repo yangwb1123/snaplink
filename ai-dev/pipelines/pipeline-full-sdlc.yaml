@@ -1,7 +1,7 @@
 # 完整 SDLC Pipeline - 10 阶段审查流程
 # 
 # 使用方法：
-#   python3 pi-batch.py --pipeline pipeline-full-sdlc.yaml --mode parallel -w 4
+#   python3 ai-dev/pi-batch.py --pipeline ai-dev/pipelines/pipeline-full-sdlc.yaml --mode parallel -w 4
 #
 # 说明：
 #   这个 pipeline 实现了完整的 AI-SDLC 流程，包含 10 个阶段
@@ -28,12 +28,12 @@ stages:
     from_outputs: stage-0-discovery
     tasks:
       - role: architect
-        prompt_template: prompts/architect.md
+        prompt_template: ai-dev/prompts/architect.md
         output: docs/results/{input_stem}.arch.md
         model: claude-sonnet
       
       - role: cto
-        prompt_template: prompts/cto.md
+        prompt_template: ai-dev/prompts/cto.md
         output: docs/results/{input_stem}.cto.md
         model: claude-opus
     
@@ -49,12 +49,12 @@ stages:
     from_outputs: stage-1-architecture
     tasks:
       - role: security
-        prompt_template: prompts/security_engineer.md
+        prompt_template: ai-dev/prompts/security_engineer.md
         output: docs/results/{input_stem}.security.md
         model: claude-sonnet
       
       - role: protocol
-        prompt_template: prompts/protocol_expert.md
+        prompt_template: ai-dev/prompts/protocol_expert.md
         output: docs/results/{input_stem}.protocol.md
         model: claude-sonnet
     
@@ -70,12 +70,12 @@ stages:
     from_outputs: stage-2-security
     tasks:
       - role: distributed
-        prompt_template: prompts/distributed_engineer.md
+        prompt_template: ai-dev/prompts/distributed_engineer.md
         output: docs/results/{input_stem}.distributed.md
         model: claude-sonnet
       
       - role: database
-        prompt_template: prompts/database_architect.md
+        prompt_template: ai-dev/prompts/database_architect.md
         output: docs/results/{input_stem}.database.md
         model: claude-sonnet
     
@@ -91,12 +91,12 @@ stages:
     from_outputs: stage-3-distributed
     tasks:
       - role: staff
-        prompt_template: prompts/staff_engineer.md
+        prompt_template: ai-dev/prompts/staff_engineer.md
         output: docs/results/{input_stem}.staff.md
         model: claude-sonnet
       
       - role: tech-lead
-        prompt_template: prompts/tech_lead.md
+        prompt_template: ai-dev/prompts/tech_lead.md
         output: docs/results/{input_stem}.techlead.md
         model: claude-sonnet
     
@@ -112,7 +112,7 @@ stages:
     from_outputs: stage-4-implementation
     tasks:
       - role: performance
-        prompt_template: prompts/performance_engineer.md
+        prompt_template: ai-dev/prompts/performance_engineer.md
         output: docs/results/{input_stem}.performance.md
         model: claude-sonnet
     
@@ -127,22 +127,22 @@ stages:
     from_outputs: stage-5-performance
     tasks:
       - role: sre
-        prompt_template: prompts/sre_engineer.md
+        prompt_template: ai-dev/prompts/sre_engineer.md
         output: docs/results/{input_stem}.sre.md
         model: claude-sonnet
       
       - role: devops
-        prompt_template: prompts/devops_engineer.md
+        prompt_template: ai-dev/prompts/devops_engineer.md
         output: docs/results/{input_stem}.devops.md
         model: claude-sonnet
       
       - role: qa
-        prompt_template: prompts/qa_lead.md
+        prompt_template: ai-dev/prompts/qa_lead.md
         output: docs/results/{input_stem}.qa.md
         model: claude-sonnet
       
       - role: compliance
-        prompt_template: prompts/compliance_officer.md
+        prompt_template: ai-dev/prompts/compliance_officer.md
         output: docs/results/{input_stem}.compliance.md
         model: claude-sonnet
     
@@ -158,17 +158,17 @@ stages:
     from_outputs: stage-6-production-ready
     tasks:
       - role: pm
-        prompt_template: prompts/pm.md
+        prompt_template: ai-dev/prompts/pm.md
         output: docs/results/{input_stem}.pm.md
         model: claude-sonnet
       
       - role: architect
-        prompt_template: prompts/architect.md
+        prompt_template: ai-dev/prompts/architect.md
         output: docs/results/{input_stem}.arch-plan.md
         model: claude-sonnet
       
       - role: tech-lead
-        prompt_template: prompts/tech_lead.md
+        prompt_template: ai-dev/prompts/tech_lead.md
         output: docs/results/{input_stem}.techlead-plan.md
         model: claude-sonnet
     
@@ -184,17 +184,17 @@ stages:
     from_outputs: stage-7-sprint-planning
     tasks:
       - role: staff
-        prompt_template: prompts/staff_engineer.md
+        prompt_template: ai-dev/prompts/staff_engineer.md
         output: docs/results/{input_stem}.staff-review.md
         model: claude-sonnet
       
       - role: qa
-        prompt_template: prompts/qa_lead.md
+        prompt_template: ai-dev/prompts/qa_lead.md
         output: docs/results/{input_stem}.qa-review.md
         model: claude-sonnet
       
       - role: sre
-        prompt_template: prompts/sre_engineer.md
+        prompt_template: ai-dev/prompts/sre_engineer.md
         output: docs/results/{input_stem}.sre-review.md
         model: claude-sonnet
     
@@ -210,12 +210,12 @@ stages:
     from_outputs: stage-8-sprint-review
     tasks:
       - role: cto
-        prompt_template: prompts/cto.md
+        prompt_template: ai-dev/prompts/cto.md
         output: docs/results/{input_stem}.cto-decision.md
         model: claude-opus
       
       - role: principal
-        prompt_template: prompts/principal_reviewer.md
+        prompt_template: ai-dev/prompts/principal_reviewer.md
         output: docs/results/{input_stem}.principal-decision.md
         model: claude-opus
     

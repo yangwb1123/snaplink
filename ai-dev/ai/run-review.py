@@ -3,7 +3,7 @@
 
 Usage:
   # Run a specific stage with inline context
-  python .ai/run-review.py --stage 02 \\
+  python ai-dev/ai/run-review.py --stage 02 \\
     --project "Snaplink SSO" \\
     --subsystem "OIDC RP-Initiated Logout" \\
     --files "interfaces/sso/server_logout.go,protocols/oidc/" \\
@@ -11,13 +11,13 @@ Usage:
     --model claude-sonnet
 
   # Run from a context YAML file (recommended for multi-stage runs)
-  python .ai/run-review.py --stage 01 --context .ai/reviews/oidc-logout/context.yaml
+  python ai-dev/ai/run-review.py --stage 01 --context ai-dev/ai/reviews/oidc-logout/context.yaml
 
   # Dry-run: print the filled prompt without invoking pi
-  python .ai/run-review.py --stage 02 --context .ai/reviews/oidc-logout/context.yaml --dry-run
+  python ai-dev/ai/run-review.py --stage 02 --context ai-dev/ai/reviews/oidc-logout/context.yaml --dry-run
 
   # Run all stages sequentially
-  python .ai/run-review.py --all --context .ai/reviews/oidc-logout/context.yaml
+  python ai-dev/ai/run-review.py --all --context ai-dev/ai/reviews/oidc-logout/context.yaml
 
 Context YAML format:
   project: "Snaplink SSO"
@@ -51,8 +51,10 @@ try:
 except ImportError:
     yaml = None
 
-
-STAGES = {
+# Fallback stage/variable schema, used if sdlc.yaml is missing (so this
+# script still runs standalone with zero config). When present, sdlc.yaml
+# fully replaces both dicts below -- see _load_stage_schema().
+_DEFAULT_STAGES = {
     "00": "00-product-discovery.md",
     "01": "01-architecture-review.md",
     "02": "02-security-rfc-review.md",
@@ -65,7 +67,7 @@ STAGES = {
     "09": "09-cto-review.md",
 }
 
-STAGE_VARS = {
+_DEFAULT_STAGE_VARS = {
     "00": {
         "PROJECT_NAME": "",
         "SUBSYSTEM": "",
@@ -160,6 +162,38 @@ STAGE_VARS = {
 }
 
 
+def _load_stage_schema() -> tuple[dict, dict]:
+    """Load stages/vars from sdlc.yaml next to this script; fall back to
+    the built-in defaults above if the file is absent or unparsable."""
+    sdlc_path = Path(__file__).parent / "sdlc.yaml"
+    if not yaml or not sdlc_path.exists():
+        return dict(_DEFAULT_STAGES), {k: dict(v) for k, v in _DEFAULT_STAGE_VARS.items()}
+    data = yaml.safe_load(sdlc_path.read_text(encoding="utf-8")) or {}
+    stages_cfg = data.get("stages")
+    if not isinstance(stages_cfg, dict) or not stages_cfg:
+        return dict(_DEFAULT_STAGES), {k: dict(v) for k, v in _DEFAULT_STAGE_VARS.items()}
+    stages = {sid: s.get("template", "") for sid, s in stages_cfg.items()}
+    stage_vars = {sid: dict(s.get("vars", {})) for sid, s in stages_cfg.items()}
+    return stages, stage_vars
+
+
+def _load_agent_bin() -> str:
+    """Read agent.bin from ai-dev/pi-batch.yaml (shared with pi-batch.py,
+    which lives alongside this script's parent dir); default to 'pi' if
+    absent."""
+    if not yaml:
+        return "pi"
+    path = Path(__file__).parent.parent / "pi-batch.yaml"
+    if not path.exists():
+        return "pi"
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return (data.get("agent") or {}).get("bin", "pi")
+
+
+STAGES, STAGE_VARS = _load_stage_schema()
+AGENT_BIN = _load_agent_bin()
+
+
 def load_context(path: str) -> dict:
     if not yaml:
         print("ERROR: PyYAML not installed. Run: pip install pyyaml", file=sys.stderr)
@@ -219,11 +253,11 @@ def fill_template(template_path: Path, variables: dict) -> str:
 
 
 def run_stage(stage: str, prompt: str, args) -> int:
-    out_dir = Path(args.output_dir) if args.output_dir else Path(".ai/reviews") / args.context_name
+    out_dir = Path(args.output_dir) if args.output_dir else Path(__file__).parent / "reviews" / args.context_name
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / f"stage-{stage}.out.md"
 
-    cmd = ["pi", "-p", prompt]
+    cmd = [AGENT_BIN, "-p", prompt]
     if args.model:
         cmd.extend(["--model", args.model])
 
@@ -239,7 +273,7 @@ def run_stage(stage: str, prompt: str, args) -> int:
             print(f"\nWROTE: {out_file}", flush=True)
         return result.returncode
     except FileNotFoundError:
-        print("ERROR: 'pi' not found in PATH.", file=sys.stderr)
+        print(f"ERROR: '{AGENT_BIN}' not found in PATH.", file=sys.stderr)
         return 1
 
 

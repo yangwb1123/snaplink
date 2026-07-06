@@ -3,7 +3,7 @@
 # 使用场景：快速实现代码任务
 # 
 # 使用方法：
-#   python3 pi-batch.py --pipeline pipeline-code-impl.yaml --mode parallel -w 3
+#   python3 ai-dev/pi-batch.py --pipeline ai-dev/pipelines/pipeline-code-impl.yaml --mode parallel -w 3
 
 stages:
   # ═══════════════════════════════════════════════════════════
@@ -25,13 +25,13 @@ stages:
     from_outputs: requirement-analysis
     tasks:
       - role: architect
-        prompt_template: prompts/architect.md
+        prompt_template: ai-dev/prompts/architect.md
         output: docs/results/{input_stem}.arch.md
         model: claude-sonnet
         timeout: 600
       
       - role: tech-lead
-        prompt_template: prompts/tech_lead.md
+        prompt_template: ai-dev/prompts/tech_lead.md
         output: docs/results/{input_stem}.impl-plan.md
         model: claude-sonnet
         timeout: 600
@@ -50,7 +50,7 @@ stages:
     from_outputs: technical-design
     tasks:
       - role: implementer
-        prompt_template: prompts/code-implementer.md
+        prompt_template: ai-dev/prompts/code-implementer.md
         output: docs/results/{input_stem}.code.md
         model: claude-sonnet
         timeout: 1200  # 代码实现需要更长时间
@@ -68,13 +68,13 @@ stages:
     from_outputs: code-implementation
     tasks:
       - role: reviewer
-        prompt_template: prompts/staff_engineer.md
+        prompt_template: ai-dev/prompts/staff_engineer.md
         output: docs/results/{input_stem}.review.md
         model: claude-sonnet
         timeout: 600
       
       - role: security-reviewer
-        prompt_template: prompts/security_engineer.md
+        prompt_template: ai-dev/prompts/security_engineer.md
         output: docs/results/{input_stem}.security-review.md
         model: claude-sonnet
         timeout: 600
@@ -93,7 +93,7 @@ stages:
     from_outputs: code-review
     tasks:
       - role: qa-engineer
-        prompt_template: prompts/qa_lead.md
+        prompt_template: ai-dev/prompts/qa_lead.md
         output: docs/results/{input_stem}.tests.md
         model: claude-sonnet
         timeout: 600
@@ -111,7 +111,7 @@ stages:
     from_outputs: test-writing
     tasks:
       - role: tech-lead
-        prompt_template: prompts/tech_lead.md
+        prompt_template: ai-dev/prompts/tech_lead.md
         output: docs/results/{input_stem}.final.md
         model: claude-sonnet
         timeout: 600

@@ -8,7 +8,7 @@
 - **GIT_AUTO_COMMIT_GUIDE.md** - 详细使用说明
 
 ### 2. AI-SDLC 审查系统
-- **16 个专家角色模板** (prompts/)
+- **16 个专家角色模板** (ai-dev/prompts/)
 - **3 个 Pipeline 配置**
 - **完整使用文档**
 

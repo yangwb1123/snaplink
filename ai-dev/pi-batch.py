@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""pi-batch -- serial/parallel batch executor for pi agent.
+"""pi-batch -- serial/parallel batch executor for a CLI coding agent.
+
+The agent binary (default: `pi`) and other defaults are declared in
+pi-batch.yaml, not hardcoded -- copy pi-batch.py + pi-batch.yaml into another
+project and edit `agent.bin` to point at a different agent CLI (claude,
+codex, gemini, opencode, ...); see pi-batch.yaml's header comment.
 
 Usage:
   # From YAML task file
@@ -34,10 +39,13 @@ Example tasks.yaml:
       cwd: /home/dwp/snaplink
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -52,6 +60,28 @@ except ImportError:
     yaml = None
 
 
+# -- declarative config (pi-batch.yaml) ----------------------------------
+def _load_batch_config(path: str = "pi-batch.yaml") -> dict:
+    """Optional defaults for pi-batch.py. Missing file -> {} (built-in
+    defaults below apply), so the script still runs standalone with zero
+    config -- copy pi-batch.yaml alongside pi-batch.py to point it at a
+    different agent CLI."""
+    p = Path(path)
+    if not yaml or not p.exists():
+        return {}
+    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    return data if isinstance(data, dict) else {}
+
+
+_BATCH_CFG = _load_batch_config()
+_AGENT_CFG = _BATCH_CFG.get("agent", {})
+AGENT_BIN = _AGENT_CFG.get("bin", "pi")
+AGENT_DEFAULT_MODEL = _AGENT_CFG.get("default_model", "")
+AGENT_DEFAULT_TIMEOUT = _AGENT_CFG.get("default_timeout", 300)
+AGENT_DEFAULT_WORKERS = _AGENT_CFG.get("default_workers", 4)
+COMMIT_PREFIX_DEFAULT = _BATCH_CFG.get("commit", {}).get("prefix", "[pi-batch]")
+
+
 # -- Pipeline data structures -------------------------------------------
 @dataclass
 class Stage:
@@ -62,7 +92,7 @@ class Stage:
     suffix: str = ".md"
     output_suffix: str = ".out.md"
     mode: str = "serial"
-    workers: int = 4
+    workers: int = AGENT_DEFAULT_WORKERS
     tasks: list = field(default_factory=list)
     commands: list = field(default_factory=list)
     commands_parallel: bool = False  # if True, run commands concurrently
@@ -127,7 +157,7 @@ def load_pipeline(path: str) -> Pipeline:
             suffix=s.get("suffix", ".md"),
             output_suffix=s.get("output_suffix", ".out.md"),
             mode=s.get("mode", "serial"),
-            workers=s.get("workers", 4),
+            workers=s.get("workers", AGENT_DEFAULT_WORKERS),
             tasks=s.get("tasks", []),
             commands=s.get("commands", []),
             commands_parallel=s.get("commands_parallel", False),
@@ -410,17 +440,17 @@ class Task:
 
     prompt: str
     output: str = ""
-    model: str = ""
+    model: str = AGENT_DEFAULT_MODEL
     provider: str = ""
     thinking: str = ""
     tools: str = ""
     exclude_tools: str = ""
     cwd: str = ""
-    timeout: int = 300
+    timeout: int = AGENT_DEFAULT_TIMEOUT
     env: dict = field(default_factory=dict)
 
     def to_cmd(self) -> list[str]:
-        cmd = ["pi", "-p", self.prompt]
+        cmd = [AGENT_BIN, "-p", self.prompt]
         if self.model:
             cmd.extend(["--model", self.model])
         if self.provider:
@@ -449,27 +479,16 @@ class Task:
 
         Returns the resolved prompt string.
         """
-        text = self.prompt
-        if not text.startswith("@"):
-            return text
+        def replace(match: re.Match) -> str:
+            fpath = Path(match.group(1))
+            if not fpath.is_absolute():
+                fpath = Path(base_dir) / fpath
+            if fpath.exists():
+                return fpath.read_text(encoding="utf-8")
+            log.warning("referenced file not found: %s", fpath)
+            return match.group(0)
 
-        # Collect all @ references
-        parts = text.split()
-        resolved_parts = []
-        for part in parts:
-            if part.startswith("@"):
-                fpath = Path(part[1:])
-                if not fpath.is_absolute():
-                    fpath = Path(base_dir) / fpath
-                if fpath.exists():
-                    resolved_parts.append(fpath.read_text(encoding="utf-8"))
-                else:
-                    log.warning("referenced file not found: %s", fpath)
-                    resolved_parts.append(part)
-            else:
-                resolved_parts.append(part)
-
-        return "\n\n".join(resolved_parts)
+        return re.sub(r"@(\S+)", replace, self.prompt)
 
 
 # -- task loading -----------------------------------------------------
@@ -645,8 +664,8 @@ def run_task(task: Task, task_index: int = 0, total: int = 0, parallel: bool = F
         )
 
     except FileNotFoundError:
-        log.error("'pi' not found in PATH. Is pi installed?")
-        return TaskResult(task=task, success=False, stderr="pi not found in PATH")
+        log.error("'%s' not found in PATH. Is it installed? (configure agent.bin in pi-batch.yaml)", AGENT_BIN)
+        return TaskResult(task=task, success=False, stderr=f"{AGENT_BIN} not found in PATH")
 
     except Exception as e:
         elapsed = time.monotonic() - start
@@ -690,7 +709,7 @@ def run_serial(tasks: list[Task]) -> list[TaskResult]:
     return results
 
 
-def run_parallel(tasks: list[Task], workers: int = 4) -> list[TaskResult]:
+def run_parallel(tasks: list[Task], workers: int = AGENT_DEFAULT_WORKERS) -> list[TaskResult]:
     """Execute tasks concurrently with a thread pool and real-time output."""
     total = len(tasks)
     log.info("PARALLEL x%d  (%d tasks)", workers, total)
@@ -748,8 +767,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-o", "--output", help="output file path (single task only)")
     p.add_argument("--mode", choices=["serial", "parallel"], default="serial",
                    help="execution mode (default: serial)")
-    p.add_argument("-w", "--workers", type=int, default=4,
-                   help="parallel worker count (default: 4)")
+    p.add_argument("-w", "--workers", type=int, default=AGENT_DEFAULT_WORKERS,
+                   help=f"parallel worker count (default: {AGENT_DEFAULT_WORKERS})")
+    p.add_argument("--agent-bin", default=AGENT_BIN,
+                   help=f"agent CLI binary to invoke per task (default: {AGENT_BIN}; "
+                        "set agent.bin in pi-batch.yaml to change the default)")
     p.add_argument("--model", default="",
                    help="default model override for all tasks")
     p.add_argument("--timeout", type=int, default=0,
@@ -768,15 +790,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="auto git commit after each stage (overrides pipeline setting)")
     p.add_argument("--no-git-commit", action="store_true",
                    help="disable git commit (overrides pipeline setting)")
-    p.add_argument("--commit-prefix", default="[pi-batch]",
-                   help="prefix for auto-generated commit messages (default: [pi-batch])")
+    p.add_argument("--commit-prefix", default=COMMIT_PREFIX_DEFAULT,
+                   help=f"prefix for auto-generated commit messages (default: {COMMIT_PREFIX_DEFAULT})")
     p.add_argument("--dry-run", action="store_true",
                    help="print task list without executing")
     return p
 
 
 def main() -> None:
+    global AGENT_BIN
     args = build_parser().parse_args()
+    AGENT_BIN = args.agent_bin
 
     # -- pipeline mode --
     if args.pipeline:

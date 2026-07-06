@@ -1,9 +1,8 @@
 # Context file for OIDC RP-Initiated Logout review
-# Use with: python .ai/run-review.py --stage 02 --context .ai/examples/oidc-logout-context.yaml
+# Use with: python ai-dev/ai/run-review.py --stage 02 --context ai-dev/ai/examples/oidc-logout-context.yaml
 
 project: "Snaplink SSO"
 subsystem: "OIDC RP-Initiated Logout"
-repo: "/home/dwp/snaplink"
 
 files:
   - interfaces/sso/server_logout.go

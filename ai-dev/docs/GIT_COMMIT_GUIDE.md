@@ -19,14 +19,14 @@
 
 ```bash
 # 使用自定义提交信息
-./git-auto-commit.sh "feat: 添加新功能"
+./ai-dev/git-auto-commit.sh "feat: 添加新功能"
 
 # 使用自动生成的提交信息
-./git-auto-commit.sh
+./ai-dev/git-auto-commit.sh
 
 # 指定类型前缀
-./git-auto-commit.sh "docs: 更新文档"
-./git-auto-commit.sh "fix: 修复问题"
+./ai-dev/git-auto-commit.sh "docs: 更新文档"
+./ai-dev/git-auto-commit.sh "fix: 修复问题"
 ```
 
 ### 功能特性
@@ -44,19 +44,19 @@
 
 ```bash
 # 编写代码后
-./git-auto-commit.sh "feat: 实现用户认证模块"
+./ai-dev/git-auto-commit.sh "feat: 实现用户认证模块"
 
 # 更新文档后
-./git-auto-commit.sh "docs: 更新 API 文档"
+./ai-dev/git-auto-commit.sh "docs: 更新 API 文档"
 
 # 修复问题后
-./git-auto-commit.sh "fix: 修复内存泄漏问题"
+./ai-dev/git-auto-commit.sh "fix: 修复内存泄漏问题"
 ```
 
 #### 2. 快速提交（使用默认信息）
 
 ```bash
-./git-auto-commit.sh
+./ai-dev/git-auto-commit.sh
 ```
 
 脚本会自动生成类似以下的提交信息：
@@ -81,20 +81,20 @@ cat > docs/requirements/feature.md << 'EOF'
 EOF
 
 # 执行 Pipeline
-./pi-batch.py --pipeline pipeline-code-impl.yaml --mode parallel -w 3
+./ai-dev/pi-batch.py --pipeline ai-dev/pipelines/pipeline-code-impl.yaml --mode parallel -w 3
 
 # 提交结果
-./git-auto-commit.sh "feat: 完成功能实现"
+./ai-dev/git-auto-commit.sh "feat: 完成功能实现"
 ```
 
 ### 完整 SDLC Pipeline（10 阶段）
 
 ```bash
 # 执行完整审查
-./pi-batch.py --pipeline pipeline-full-sdlc.yaml --mode parallel -w 4
+./ai-dev/pi-batch.py --pipeline ai-dev/pipelines/pipeline-full-sdlc.yaml --mode parallel -w 4
 
 # 提交审查结果
-./git-auto-commit.sh "docs: 完成完整 SDLC 审查"
+./ai-dev/git-auto-commit.sh "docs: 完成完整 SDLC 审查"
 ```
 
 ## 🎯 推荐工作流程
@@ -107,13 +107,13 @@ vim path/to/file.go
 go test ./...
 
 # 3. 提交修改
-./git-auto-commit.sh "feat: 实现 XXX 功能"
+./ai-dev/git-auto-commit.sh "feat: 实现 XXX 功能"
 
 # 4. 或使用 Pipeline 进行多角色审查
-./pi-batch.py --pipeline pipeline-code-impl.yaml
+./ai-dev/pi-batch.py --pipeline ai-dev/pipelines/pipeline-code-impl.yaml
 
 # 5. 提交审查结果
-./git-auto-commit.sh "docs: 完成代码审查"
+./ai-dev/git-auto-commit.sh "docs: 完成代码审查"
 
 # 6. 重复上述流程
 ```
@@ -148,10 +148,10 @@ git log --follow -p -- path/to/file.go
 
 ```bash
 # 提交所有分析文档
-./git-auto-commit.sh "docs: 添加多轮分析报告"
+./ai-dev/git-auto-commit.sh "docs: 添加多轮分析报告"
 
 # 提交所有角色模板
-./git-auto-commit.sh "feat: 添加 16 个专家角色模板"
+./ai-dev/git-auto-commit.sh "feat: 添加 16 个专家角色模板"
 ```
 
 ### 查看未提交的更改
@@ -182,9 +182,6 @@ git reset --soft HEAD~1
 
 ## 📚 相关文档
 
-- `PIPELINE_SUMMARY.md` - Pipeline 使用总结
-- `CODE_IMPL_GUIDE.md` - 代码实现指南
-- `AI_SDLC_COMPLETE_GUIDE.md` - 完整 SDLC 指南
 - `ROLES_SUMMARY.md` - 角色清单
 
 ## 🎉 总结
@@ -202,10 +199,10 @@ git reset --soft HEAD~1
 echo "# 新功能" > docs/requirements/my-feature.md
 
 # 2. 执行 Pipeline
-./pi-batch.py --pipeline pipeline-code-impl.yaml
+./ai-dev/pi-batch.py --pipeline ai-dev/pipelines/pipeline-code-impl.yaml
 
 # 3. 提交结果
-./git-auto-commit.sh "feat: 完成新功能实现"
+./ai-dev/git-auto-commit.sh "feat: 完成新功能实现"
 ```
 
 Happy Coding! 🚀

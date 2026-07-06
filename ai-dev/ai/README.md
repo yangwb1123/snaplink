@@ -30,7 +30,7 @@ Not a security scanner. Not a linter. A structured engineering review process th
 
 ```bash
 # Fill context and run Stage 02 (Security & RFC Review)
-python .ai/run-review.py \
+python ai-dev/ai/run-review.py \
   --stage 02 \
   --project "Snaplink SSO" \
   --subsystem "OIDC RP-Initiated Logout" \
@@ -43,25 +43,25 @@ python .ai/run-review.py \
 
 ```bash
 # Copy the example and fill in your subsystem details
-cp .ai/examples/oidc-logout-context.yaml .ai/reviews/my-subsystem/context.yaml
+cp ai-dev/ai/examples/oidc-logout-context.yaml ai-dev/ai/reviews/my-subsystem/context.yaml
 # Edit the context file
-vi .ai/reviews/my-subsystem/context.yaml
+vi ai-dev/ai/reviews/my-subsystem/context.yaml
 
 # Run a specific stage
-python .ai/run-review.py --stage 01 --context .ai/reviews/my-subsystem/context.yaml
+python ai-dev/ai/run-review.py --stage 01 --context ai-dev/ai/reviews/my-subsystem/context.yaml
 
 # Dry-run to inspect the filled prompt before invoking pi
-python .ai/run-review.py --stage 02 --context .ai/reviews/my-subsystem/context.yaml --dry-run
+python ai-dev/ai/run-review.py --stage 02 --context ai-dev/ai/reviews/my-subsystem/context.yaml --dry-run
 
 # Run all stages sequentially
-python .ai/run-review.py --all --context .ai/reviews/my-subsystem/context.yaml
+python ai-dev/ai/run-review.py --all --context ai-dev/ai/reviews/my-subsystem/context.yaml
 ```
 
 ### Directly with pi (no run-review.py)
 
 ```bash
 # Manually fill {{VARIABLES}} in a template copy and pipe to pi
-cat .ai/prompts/02-security-rfc-review.md | pi -p "$(cat -)"
+cat ai-dev/ai/prompts/02-security-rfc-review.md | pi -p "$(cat -)"
 
 # Or pass the filled file directly
 pi -p "$(cat my-filled-stage02.md)"
@@ -71,10 +71,10 @@ pi -p "$(cat my-filled-stage02.md)"
 
 ```bash
 # Create a task YAML for reviewing multiple subsystems in parallel
-python pi-batch.py tasks.yaml --mode parallel --workers 4
+python ai-dev/pi-batch.py tasks.yaml --mode parallel --workers 4
 
 # Use a pipeline for chained stages
-python pi-batch.py --pipeline .ai/examples/oidc-logout-pipeline.yaml
+python ai-dev/pi-batch.py --pipeline ai-dev/ai/examples/oidc-logout-pipeline.yaml
 ```
 
 ---
@@ -144,10 +144,10 @@ stage_09:
 
 ## Output Structure
 
-Review outputs land in `.ai/reviews/<subsystem>/`:
+Review outputs land in `ai-dev/ai/reviews/<subsystem>/`:
 
 ```
-.ai/reviews/oidc-logout/
+ai-dev/ai/reviews/oidc-logout/
 ├── context.yaml          # your context file
 ├── stage-00.out.md       # Product Discovery output
 ├── stage-01.out.md       # Architecture Review output
@@ -166,9 +166,10 @@ Review outputs land in `.ai/reviews/<subsystem>/`:
 ## Framework Files
 
 ```
-.ai/
+ai-dev/ai/
 ├── README.md                          # this file
-├── run-review.py                      # template runner + pi invoker
+├── run-review.py                      # template runner + agent invoker
+├── sdlc.yaml                          # declarative stage/variable schema (edit this to add/remove/rename stages)
 ├── prompts/
 │   ├── 00-product-discovery.md
 │   ├── 01-architecture-review.md
@@ -203,21 +204,21 @@ Review outputs land in `.ai/reviews/<subsystem>/`:
 
 1. Create a context file:
    ```bash
-   cp .ai/examples/oidc-logout-context.yaml .ai/reviews/my-subsystem/context.yaml
+   cp ai-dev/ai/examples/oidc-logout-context.yaml ai-dev/ai/reviews/my-subsystem/context.yaml
    ```
 
 2. Fill in the fields relevant to your subsystem.
 
 3. Dry-run the stage you need to verify the filled prompt looks correct:
    ```bash
-   python .ai/run-review.py --stage 02 --context .ai/reviews/my-subsystem/context.yaml --dry-run
+   python ai-dev/ai/run-review.py --stage 02 --context ai-dev/ai/reviews/my-subsystem/context.yaml --dry-run
    ```
 
 4. Run the review:
    ```bash
-   python .ai/run-review.py --stage 02 --context .ai/reviews/my-subsystem/context.yaml --model claude-sonnet
+   python ai-dev/ai/run-review.py --stage 02 --context ai-dev/ai/reviews/my-subsystem/context.yaml --model claude-sonnet
    ```
 
-5. Review the output in `.ai/reviews/my-subsystem/stage-02.out.md`.
+5. Review the output in `ai-dev/ai/reviews/my-subsystem/stage-02.out.md`.
 
 6. Feed output into the next stage by adding it to your context YAML under `stage_03.ARCHITECTURE_OUTPUT`.

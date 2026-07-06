@@ -1,0 +1,16 @@
+# Declarative defaults for pi-batch.py. Optional — pi-batch.py runs fine
+# without this file, falling back to the values below. Copy pi-batch.py +
+# this file into another project and edit `agent.bin` to point at whatever
+# CLI agent you use (pi, claude, codex, gemini, opencode, ...); no code
+# changes needed.
+
+agent:
+  # The CLI binary invoked for every task. Must accept:
+  #   <bin> -p PROMPT [--model M] [--provider P] [--thinking T] [--tools T] [--exclude-tools T]
+  bin: pi
+  default_model: ""     # empty = the agent's own default
+  default_timeout: 300  # seconds, per task
+  default_workers: 4    # parallel mode default worker count
+
+commit:
+  prefix: "[pi-batch]"

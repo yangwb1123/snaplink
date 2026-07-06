@@ -1,0 +1,112 @@
+# Declarative stage + variable-schema definitions for the AI-SDLC review
+# framework (ai-dev/ai/run-review.py). Optional -- run-review.py falls back
+# to its built-in 10-stage default if this file is absent. Edit this file to
+# add/remove/rename review stages for a different project; no Python
+# changes needed. Each stage's `vars` keys must match the {{VARIABLE}}
+# placeholders used in its prompts/<template> file.
+#
+# The agent CLI binary itself (default: pi) is read from ai-dev/pi-batch.yaml,
+# shared with ai-dev/pi-batch.py -- see that file's header comment.
+
+stages:
+  "00":
+    template: 00-product-discovery.md
+    vars:
+      PROJECT_NAME: ""
+      SUBSYSTEM: ""
+      FEATURE_DESCRIPTION: "(describe the proposed feature)"
+      BUSINESS_JUSTIFICATION: "(state the business reason)"
+      TARGET_USERS: "(list target personas)"
+      PAIN_POINT_EVIDENCE: "(cite observable evidence)"
+      COMPARABLE_IMPLEMENTATIONS: "(optional: comparable systems)"
+  "01":
+    template: 01-architecture-review.md
+    vars:
+      PROJECT_NAME: ""
+      SUBSYSTEM: ""
+      REPO_PATH: ""
+      PRIMARY_FILES: ""
+      ARCHITECTURE_SUMMARY: "(describe the proposed architecture)"
+      PRODUCT_DISCOVERY_OUTPUT: "(paste Stage 00 output, or 'N/A')"
+  "02":
+    template: 02-security-rfc-review.md
+    vars:
+      PROJECT_NAME: ""
+      SUBSYSTEM: ""
+      REPO_PATH: ""
+      PRIMARY_FILES: ""
+      RFC_REFERENCES: ""
+      ARCHITECTURE_OUTPUT: "(paste Stage 01 ADR, or 'N/A')"
+  "03":
+    template: 03-distributed-review.md
+    vars:
+      PROJECT_NAME: ""
+      SUBSYSTEM: ""
+      REPO_PATH: ""
+      PRIMARY_FILES: ""
+      STORAGE_SUMMARY: ""
+      ARCHITECTURE_OUTPUT: "(paste Stage 01 ADR, or 'N/A')"
+  "04":
+    template: 04-implementation-review.md
+    vars:
+      PROJECT_NAME: ""
+      SUBSYSTEM: ""
+      REPO_PATH: ""
+      PRIMARY_FILES: ""
+      PRIOR_FINDINGS: "(paste Critical/High findings from Stages 01-03, or 'N/A')"
+  "05":
+    template: 05-performance-review.md
+    vars:
+      PROJECT_NAME: ""
+      SUBSYSTEM: ""
+      REPO_PATH: ""
+      PRIMARY_FILES: ""
+      LOAD_PROFILE: ""
+      INFRA_SUMMARY: ""
+  "06":
+    template: 06-production-readiness.md
+    vars:
+      PROJECT_NAME: ""
+      SUBSYSTEM: ""
+      REPO_PATH: ""
+      PRIMARY_FILES: ""
+      DEPLOYMENT_TARGET: ""
+      SLO_TARGETS: ""
+      PRIOR_FINDINGS: "(paste Critical/High findings from Stages 02-05, or 'N/A')"
+  "07":
+    template: 07-sprint-planning.md
+    vars:
+      PROJECT_NAME: ""
+      SUBSYSTEM: ""
+      SPRINT_GOAL: ""
+      TEAM_SIZE: "3"
+      SPRINT_DURATION: "2 weeks"
+      CRITICAL_HIGH_FINDINGS: "(paste Critical/High findings from all prior stages)"
+      ARCHITECTURE_OUTPUT: "(paste Stage 01 ADR)"
+      VELOCITY: "(last sprint velocity, or 'unknown')"
+  "08":
+    template: 08-post-sprint-review.md
+    vars:
+      PROJECT_NAME: ""
+      SUBSYSTEM: ""
+      SPRINT_GOAL: ""
+      COMMITTED_STORIES: "(list stories from Stage 07)"
+      REPO_PATH: ""
+      SHIPPED_CHANGES: "(git log or PR list)"
+  "09":
+    template: 09-cto-review.md
+    vars:
+      PROJECT_NAME: ""
+      SUBSYSTEM: ""
+      ALL_PRIOR_FINDINGS_SUMMARY: "(1-paragraph summary of all findings)"
+      CRITICAL_COUNT: "0"
+      HIGH_COUNT: "0"
+      GRADE_00: "N/A"
+      GRADE_01: "N/A"
+      GRADE_02: "N/A"
+      GRADE_03: "N/A"
+      GRADE_04: "N/A"
+      GRADE_05: "N/A"
+      GRADE_06: "N/A"
+      TEAM_SIZE: "3"
+      AGE: "(unknown)"
