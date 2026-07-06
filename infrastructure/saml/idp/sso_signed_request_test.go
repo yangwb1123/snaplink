@@ -89,6 +89,61 @@ func (hh *harness) postSSO(samlRequest string) *httptest.ResponseRecorder {
 	return rec
 }
 
+// buildSignedAuthnRedirectQuery builds a raw-DEFLATEd, UNSIGNED-XML
+// AuthnRequest for the HTTP-Redirect binding and, when signer != nil, appends
+// the SAML-standard DETACHED §3.4.4.1 SigAlg+Signature query-param signature
+// over the raw query string (exactly what a real SP sends over redirect —
+// there is no embedded <Signature> element in this binding). Returns the FULL
+// raw query string.
+func buildSignedAuthnRedirectQuery(t *testing.T, issuer, acsURL, requestID string, signer *spKeypair) string {
+	t.Helper()
+	req := &saml.AuthnRequest{
+		ID:                          requestID,
+		Version:                     "2.0",
+		IssueInstant:                fixedNow,
+		Destination:                 testIssuer + "/saml/sso",
+		AssertionConsumerServiceURL: acsURL,
+		ProtocolBinding:             saml.HTTPPostBinding,
+		Issuer:                      &saml.Issuer{Value: issuer},
+	}
+	doc := etree.NewDocument()
+	doc.SetRoot(req.Element())
+	raw, err := doc.WriteToBytes()
+	if err != nil {
+		t.Fatalf("serialize authn request: %v", err)
+	}
+	samlReq := base64.StdEncoding.EncodeToString(deflate(t, raw))
+
+	query := "SAMLRequest=" + url.QueryEscape(samlReq)
+	if signer == nil {
+		return query
+	}
+	query += "&SigAlg=" + url.QueryEscape(rsaSHA256)
+	ctx, err := dsig.NewSigningContext(signer.key, [][]byte{signer.cert.Raw})
+	if err != nil {
+		t.Fatalf("new signing context: %v", err)
+	}
+	if err := ctx.SetSignatureMethod(rsaSHA256); err != nil {
+		t.Fatalf("set signature method: %v", err)
+	}
+	sig, err := ctx.SignString(query)
+	if err != nil {
+		t.Fatalf("sign detached: %v", err)
+	}
+	query += "&Signature=" + url.QueryEscape(base64.StdEncoding.EncodeToString(sig))
+	return query
+}
+
+// getSSO drives GET /saml/sso over the HTTP-Redirect binding using a FULL raw
+// query string (so the detached §3.4.4.1 signature is preserved byte-for-byte
+// — re-encoding via url.Values would break it).
+func (hh *harness) getSSORawQuery(rawQuery string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "/saml/sso?"+rawQuery, nil)
+	rec := httptest.NewRecorder()
+	hh.h.SSO(rec, req)
+	return rec
+}
+
 // rsaSHA256 is the XML-DSig SignatureMethod URI used throughout the suite.
 const rsaSHA256 = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"
 
@@ -230,6 +285,73 @@ func TestSSO_SignedRequest_NoPinnedCert_Rejected(t *testing.T) {
 	rec := hh.postSSO(b64)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (no pinned cert)", rec.Code)
+	}
+	assertErrorCode(t, rec, sso.ErrSAMLRequestInvalid)
+}
+
+// TestSSO_SignedRequest_Redirect_Valid_RedirectsToLogin is the redirect-binding
+// counterpart of TestSSO_SignedRequest_Valid_RedirectsToLogin: a require-signed
+// SP sending its AuthnRequest over HTTP-Redirect with a valid DETACHED
+// §3.4.4.1 SigAlg+Signature (verified via verifyRedirectSignature, never the
+// enveloped-XML-DSig path — a redirect-bound request has no <Signature>
+// element to find) passes and redirects to login. Before the fix this branch
+// didn't exist and every signed redirect request was misrouted into the
+// enveloped verifier, which finds no signature and rejects — this proves the
+// binding-aware dispatch in SSO actually matters.
+func TestSSO_SignedRequest_Redirect_Valid_RedirectsToLogin(t *testing.T) {
+	t.Parallel()
+	clients := newClientStore(t)
+	spKey := newSPKeypair(t)
+	registerSPRequireSigned(t, clients, spKey)
+	hh := newHarnessWithClients(t, clients)
+
+	query := buildSignedAuthnRedirectQuery(t, spEntityID, spACSURL, "id-req-redirect-signed", spKey)
+	rec := hh.getSSORawQuery(query)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302; body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/auth/login?") {
+		t.Fatalf("Location = %q, want /auth/login?...", loc)
+	}
+}
+
+// TestSSO_SignedRequest_Redirect_Unsigned_Rejected: a require-signed SP that
+// sends a redirect-binding AuthnRequest with NO SigAlg/Signature query params
+// is rejected — oracle-safe saml_request_invalid, no pending stored.
+func TestSSO_SignedRequest_Redirect_Unsigned_Rejected(t *testing.T) {
+	t.Parallel()
+	clients := newClientStore(t)
+	spKey := newSPKeypair(t)
+	registerSPRequireSigned(t, clients, spKey)
+	hh := newHarnessWithClients(t, clients)
+
+	query := buildSignedAuthnRedirectQuery(t, spEntityID, spACSURL, "id-req-redirect-unsigned", nil)
+	rec := hh.getSSORawQuery(query)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for unsigned redirect request", rec.Code)
+	}
+	assertErrorCode(t, rec, sso.ErrSAMLRequestInvalid)
+	if n := hh.h.pending.len(); n != 0 {
+		t.Errorf("a pending request was stored for an unsigned redirect request: %d", n)
+	}
+}
+
+// TestSSO_SignedRequest_Redirect_AttackerKey_Rejected: a redirect-binding
+// detached signature by a key OTHER than the SP's pinned cert fails
+// verifyRedirectSignature and is rejected — the redirect-binding analogue of
+// TestSSO_SignedRequest_AttackerKey_Rejected.
+func TestSSO_SignedRequest_Redirect_AttackerKey_Rejected(t *testing.T) {
+	t.Parallel()
+	clients := newClientStore(t)
+	spKey := newSPKeypair(t)
+	registerSPRequireSigned(t, clients, spKey)
+	hh := newHarnessWithClients(t, clients)
+
+	attacker := newSPKeypair(t) // the IdP pinned spKey, not this
+	query := buildSignedAuthnRedirectQuery(t, spEntityID, spACSURL, "id-req-redirect-attacker", attacker)
+	rec := hh.getSSORawQuery(query)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for attacker-key redirect signature", rec.Code)
 	}
 	assertErrorCode(t, rec, sso.ErrSAMLRequestInvalid)
 }

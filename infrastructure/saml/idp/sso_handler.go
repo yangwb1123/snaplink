@@ -73,9 +73,23 @@ func (h *Handlers) SSO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Optional signed-AuthnRequest enforcement.
+	// Optional signed-AuthnRequest enforcement. Binding-specific, same as the
+	// SLO handler's (4): the HTTP-Redirect binding (GET) carries the
+	// SAML-standard DETACHED §3.4.4.1 SigAlg+Signature query-param signature —
+	// there is no embedded <Signature> element to verify enveloped-style — the
+	// HTTP-POST binding carries an enveloped XML-DSig over the body.
 	if spClient.Attributes[AttrSPRequireSignedRequest] == "true" {
-		if err := verifyAuthnRequestSignature(rawXML, spClient.Attributes[AttrSPSigningCert]); err != nil {
+		if redirectBinding {
+			cert, err := parseSPSigningCert(spClient.Attributes[AttrSPSigningCert])
+			if err != nil {
+				writeError(w, http.StatusBadRequest, sso.ErrSAMLRequestInvalid)
+				return
+			}
+			if err := verifyRedirectSignature(cert, r.URL.RawQuery, "SAMLRequest"); err != nil {
+				writeError(w, http.StatusBadRequest, sso.ErrSAMLRequestInvalid)
+				return
+			}
+		} else if err := verifyAuthnRequestSignature(rawXML, spClient.Attributes[AttrSPSigningCert]); err != nil {
 			writeError(w, http.StatusBadRequest, sso.ErrSAMLRequestInvalid)
 			return
 		}
@@ -131,8 +145,12 @@ func (h *Handlers) SSO(w http.ResponseWriter, r *http.Request) {
 // ValidationContext (the same engine the SP side validates assertions with).
 // The cert MUST be the one the SP registered (saml_sp_signing_cert) — the
 // signature is verified against THAT pinned cert, never one embedded in the
-// request. Any failure (no cert, parse error, bad/missing signature) returns a
-// non-nil error the caller collapses to saml_request_invalid.
+// request. Any failure (no cert, parse error, bad/missing signature, or a
+// SHA-1 SignatureMethod/DigestMethod — goxmldsig's ValidationContext has no
+// algorithm allowlist of its own and will happily verify a cryptographically
+// valid SHA-1 signature; rejectWeakSignatureAlgorithms is the deny-list this
+// enveloped path is missing) returns a non-nil error the caller collapses to
+// saml_request_invalid.
 func verifyAuthnRequestSignature(rawXML []byte, certPEM string) error {
 	if certPEM == "" {
 		return errRequestInvalid
@@ -152,6 +170,10 @@ func verifyAuthnRequestSignature(rawXML []byte, certPEM string) error {
 	}
 	root := doc.Root()
 	if root == nil {
+		return errRequestInvalid
+	}
+
+	if err := rejectWeakSignatureAlgorithms(root); err != nil {
 		return errRequestInvalid
 	}
 

@@ -361,6 +361,10 @@ func verifyLogoutRequestSignature(rawXML []byte, certPEM string) error {
 		return errRequestInvalid
 	}
 
+	if err := rejectWeakSignatureAlgorithms(root); err != nil {
+		return errRequestInvalid
+	}
+
 	store := &dsig.MemoryX509CertificateStore{Roots: []*x509.Certificate{cert}}
 	ctx := dsig.NewDefaultValidationContext(store)
 	// goxmldsig verifies the enveloped signature on the element by its DSig
