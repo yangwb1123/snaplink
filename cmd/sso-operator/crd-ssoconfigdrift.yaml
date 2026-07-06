@@ -1,0 +1,131 @@
+# Hand-written CRD manifest — no controller-gen available in this
+# environment (see ../apiv1alpha1/ssoconfigdrift_types.go's package doc).
+# The schema below is kept in lockstep with that file's Go struct tags by
+# hand; if you add/rename a JSON field there, mirror it here in the same
+# commit.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: ssoconfigdrifts.sso.snaplink.io
+spec:
+  group: sso.snaplink.io
+  names:
+    kind: SSOConfigDrift
+    listKind: SSOConfigDriftList
+    plural: ssoconfigdrifts
+    singular: ssoconfigdrift
+    shortNames:
+      - ssocd
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Drift
+          type: boolean
+          jsonPath: .status.driftDetected
+        - name: Ops
+          type: integer
+          jsonPath: .status.patchOpCount
+        - name: LastChecked
+          type: date
+          jsonPath: .status.lastCheckedAt
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: >-
+            SSOConfigDrift declares a read-only comparison of two SSO
+            clusters' running config. Reconciling it NEVER writes to either
+            cluster — see the operator's doc.go for the full scope.
+            SECURITY: bearerSecretRef resolves to a Secret in THIS
+            namespace with no further access check — RBAC granting write
+            access to this resource MUST be no broader than RBAC granting
+            read access to Secrets in the same namespace. See doc.go's
+            "Trust model" section before deploying.
+          properties:
+            spec:
+              type: object
+              required:
+                - clusterA
+                - clusterB
+              properties:
+                clusterA:
+                  type: object
+                  description: >-
+                    Source cluster: its running config is fetched via
+                    GET /api/v1/admin/config/running.
+                  required:
+                    - baseURL
+                    - bearerSecretRef
+                  properties:
+                    baseURL:
+                      type: string
+                      pattern: '^https://.+'
+                      description: >-
+                        Scheme+host, e.g. "https://sso-a.internal:8443".
+                        MUST be https:// — the controller rejects any
+                        other scheme at reconcile time too, but the schema
+                        pattern catches a bad CR at admission time already.
+                    bearerSecretRef:
+                      type: object
+                      description: >-
+                        Reference to the Secret key (in the CR's own
+                        namespace) holding the admin:read bearer token.
+                      required:
+                        - name
+                        - key
+                      properties:
+                        name:
+                          type: string
+                        key:
+                          type: string
+                        optional:
+                          type: boolean
+                clusterB:
+                  type: object
+                  description: >-
+                    Reference cluster: clusterA's snapshot is POSTed to its
+                    /api/v1/admin/config/cluster-diff; the reported patch is
+                    "what would change on B to match A".
+                  required:
+                    - baseURL
+                    - bearerSecretRef
+                  properties:
+                    baseURL:
+                      type: string
+                      pattern: '^https://.+'
+                    bearerSecretRef:
+                      type: object
+                      required:
+                        - name
+                        - key
+                      properties:
+                        name:
+                          type: string
+                        key:
+                          type: string
+                        optional:
+                          type: boolean
+                pollInterval:
+                  type: string
+                  description: >-
+                    Go duration string (e.g. "5m", "30s"). Empty or
+                    unparseable falls back to a 5m default.
+            status:
+              type: object
+              properties:
+                lastCheckedAt:
+                  type: string
+                  format: date-time
+                driftDetected:
+                  type: boolean
+                patchOpCount:
+                  type: integer
+                message:
+                  type: string
+                observedGeneration:
+                  type: integer
+                  format: int64

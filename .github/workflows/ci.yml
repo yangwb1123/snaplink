@@ -119,6 +119,7 @@ jobs:
           - infrastructure/kafka
           - infrastructure/mqtt
           - cmd/sso-mcp
+          - cmd/sso-operator
     steps:
       - uses: actions/checkout@v4
 
@@ -180,6 +181,7 @@ jobs:
           - infrastructure/kafka
           - infrastructure/mqtt
           - cmd/sso-mcp
+          - cmd/sso-operator
     steps:
       - uses: actions/checkout@v4
 
@@ -232,6 +234,7 @@ jobs:
           - infrastructure/kafka
           - infrastructure/mqtt
           - cmd/sso-mcp
+          - cmd/sso-operator
     permissions:
       security-events: write
       contents: read
@@ -278,6 +281,7 @@ jobs:
           - infrastructure/kafka
           - infrastructure/mqtt
           - cmd/sso-mcp
+          - cmd/sso-operator
     steps:
       - uses: actions/checkout@v4
 

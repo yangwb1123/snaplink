@@ -64,6 +64,28 @@ related capability exists but the proposed feature does not).
   are read from Secrets and used only in the outbound `Authorization`
   header — never logged or written to Status.
 
+  An adversarial review pass on this operator (before it was considered
+  done) found and fixed three real issues: (1) the reconciler's own
+  `Status().Update()` re-triggered itself via controller-runtime's default
+  Update handler, defeating `PollInterval` entirely — fixed with
+  `builder.WithPredicates(predicate.GenerationChangedPredicate{})`, which a
+  status-subresource-only write doesn't satisfy; (2) `http.DefaultClient`
+  has no timeout, so an unreachable/slow-loris `BaseURL` could hang the
+  single-worker reconcile loop indefinitely — fixed with an explicit
+  `defaultHTTPClient{Timeout: 15s}`; (3) a confused-deputy/SSRF risk —
+  `BaseURL`/`BearerSecretRef` are CR-author-controlled with no in-code
+  relationship check, so whoever can write a `SSOConfigDrift` can make the
+  controller's own ServiceAccount read ANY same-namespace Secret and POST
+  it to an ATTACKER-CHOSEN host. Mitigated (not eliminated — this is an
+  inherent property of any K8s resource referencing a same-namespace
+  Secret by name, e.g. a Pod's `envFrom.secretKeyRef`) by requiring
+  `https://` on `BaseURL` (enforced both by the CRD schema's `pattern` and
+  by the reconciler itself, so a token is never placed on the wire in
+  plaintext) and by documenting the RBAC precondition explicitly in
+  `cmd/sso-operator/doc.go`'s "Trust model" section: write access to
+  `SSOConfigDrift` MUST be scoped no more broadly than read access to
+  Secrets in the same namespace.
+
   Explicitly still OUT OF SCOPE (unchanged from before): config APPLY (the
   operator never issues a write request against either cluster — the
   cluster-diff endpoint it calls is diff-only, not apply), canary rollout,
