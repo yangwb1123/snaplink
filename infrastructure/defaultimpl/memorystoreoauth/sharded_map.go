@@ -89,3 +89,35 @@ func (s *shardedMap[V]) LoadAndDelete(key string) (V, bool) {
 	sh.mu.Unlock()
 	return v, ok
 }
+
+// Len returns the total entry count across every shard. Each shard is
+// locked only for its own count, not the whole map atomically — good
+// enough for the approximate MaxEntries capacity check this backs, which
+// doesn't need a perfectly consistent snapshot under concurrent writers.
+func (s *shardedMap[V]) Len() int {
+	n := 0
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.mu.Lock()
+		n += len(sh.entries)
+		sh.mu.Unlock()
+	}
+	return n
+}
+
+// DeleteExpired removes every entry for which isExpired reports true,
+// one shard at a time under that shard's own lock — so a concurrent
+// Store/LoadAndDelete on a different shard is never blocked by the
+// sweep, matching the isolation every other shardedMap operation gives.
+func (s *shardedMap[V]) DeleteExpired(isExpired func(V) bool) {
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.mu.Lock()
+		for k, v := range sh.entries {
+			if isExpired(v) {
+				delete(sh.entries, k)
+			}
+		}
+		sh.mu.Unlock()
+	}
+}

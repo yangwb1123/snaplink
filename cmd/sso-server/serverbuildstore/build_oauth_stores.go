@@ -56,6 +56,10 @@ func BuildRefreshTokenStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.
 		s := defaultimpl.NewMemoryRefreshTokenStore()
 		s.MaxRotationsPerWindow = cfg.RefreshToken.MaxRotationsPerWindow
 		s.RotationWindow = cfg.RefreshToken.RotationWindow
+		s.MaxEntries = cfg.RefreshToken.MaxEntries
+		if cfg.RefreshToken.ReapInterval > 0 {
+			s.StartReaper(cfg.RefreshToken.ReapInterval)
+		}
 		return s, nil
 	case "sqlite":
 		if cfg.SQLite.DSN == "" {
@@ -85,7 +89,12 @@ func BuildRefreshTokenStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.
 func BuildDeviceCodeStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.DeviceCodeStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
-		return defaultimpl.NewMemoryDeviceCodeStore(), nil
+		s := defaultimpl.NewMemoryDeviceCodeStore()
+		s.MaxEntries = cfg.DeviceCode.MaxEntries
+		if cfg.DeviceCode.ReapInterval > 0 {
+			s.StartReaper(cfg.DeviceCode.ReapInterval)
+		}
+		return s, nil
 	case "sqlite":
 		if cfg.SQLite.DSN == "" {
 			return nil, errors.New("oauth.sqlite.dsn required when backend=sqlite")
@@ -104,7 +113,12 @@ func BuildDeviceCodeStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.De
 func BuildPARStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.PARStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
-		return defaultimpl.NewMemoryPARStore(), nil
+		s := defaultimpl.NewMemoryPARStore()
+		s.MaxEntries = cfg.PAR.MaxEntries
+		if cfg.PAR.ReapInterval > 0 {
+			s.StartReaper(cfg.PAR.ReapInterval)
+		}
+		return s, nil
 	case "sqlite":
 		if cfg.SQLite.DSN == "" {
 			return nil, errors.New("oauth.sqlite.dsn required when backend=sqlite")

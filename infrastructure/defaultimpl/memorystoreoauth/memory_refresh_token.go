@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"io"
 	"sync"
 	"time"
 
+	"github.com/snaplink/sso/infrastructure/defaultimpl/memreaper"
 	"github.com/snaplink/sso/protocols/oauth"
 )
 
@@ -41,6 +43,22 @@ type MemoryRefreshTokenStore struct {
 	MaxRotationsPerWindow int
 	RotationWindow        time.Duration
 
+	// MaxEntries (0 = unbounded, the default) caps the live `entries` map
+	// size, checked at Issue time. StartReaper launches a background
+	// sweep that removes an entry once its TTL elapses even when no
+	// caller ever Consumes/Inspects that exact token again (the existing
+	// lazy GC on those two paths only reaches a key someone looks up).
+	// Neither changes behavior unless explicitly configured.
+	//
+	// The reaper deletes ONLY from `entries`, mirroring Inspect's own
+	// lazy-GC scope exactly (see Inspect) — it never touches `families`,
+	// so reuse detection for an already-rotated-away token is unaffected.
+	// This is a pre-existing property of the store, not something the
+	// reaper changes: presenting a token whose `entries` row is gone (by
+	// either path) but whose `families` row is still present already
+	// reads as a replay via Consume, reaper or not.
+	MaxEntries int
+
 	mu       sync.Mutex
 	entries  map[string]*oauth.RefreshToken
 	families map[string]string // token → familyID, KEPT after Consume for reuse detection
@@ -50,6 +68,7 @@ type MemoryRefreshTokenStore struct {
 	// unbounded without a sweeper goroutine — the MemoryAccountLockout
 	// discipline.
 	rotations map[string]*rotationWindow
+	reaper    *memreaper.Reaper
 }
 
 // rotationWindow is one family's fixed-window rotation counter:
@@ -70,12 +89,40 @@ func NewMemoryRefreshTokenStore() *MemoryRefreshTokenStore {
 	}
 }
 
+// StartReaper launches a background sweep of expired refresh tokens
+// every interval. A non-positive interval is a no-op. Idempotent —
+// calling it again stops the previous reaper first.
+func (m *MemoryRefreshTokenStore) StartReaper(interval time.Duration) {
+	_ = m.reaper.Close()
+	m.reaper = memreaper.Start(interval, m.sweepExpired)
+}
+
+// Close stops the background reaper started via StartReaper, if any.
+func (m *MemoryRefreshTokenStore) Close() error {
+	return m.reaper.Close()
+}
+
+func (m *MemoryRefreshTokenStore) sweepExpired(time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for tok, entry := range m.entries {
+		if entry.IsExpired() {
+			delete(m.entries, tok)
+		}
+	}
+}
+
 func (m *MemoryRefreshTokenStore) Issue(_ context.Context, token string, info *oauth.RefreshToken) error {
 	if token == "" || info == nil {
 		return oauth.ErrRefreshTokenNotFound
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.MaxEntries > 0 {
+		if _, exists := m.entries[token]; !exists && len(m.entries) >= m.MaxEntries {
+			return ErrStoreAtCapacity
+		}
+	}
 	// Copy slice to avoid aliasing caller's underlying array — a future
 	// mutation of info.Scopes by the caller must not be visible at
 	// Consume time.
@@ -349,4 +396,5 @@ var (
 	_ oauth.RefreshTokenFamilyTracker   = (*MemoryRefreshTokenStore)(nil)
 	_ oauth.RefreshTokenClientPurger    = (*MemoryRefreshTokenStore)(nil)
 	_ oauth.RefreshTokenRotationLimiter = (*MemoryRefreshTokenStore)(nil)
+	_ io.Closer                         = (*MemoryRefreshTokenStore)(nil)
 )

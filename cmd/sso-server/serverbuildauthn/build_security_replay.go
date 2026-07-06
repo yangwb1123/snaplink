@@ -11,6 +11,7 @@ import (
 	"github.com/snaplink/sso/config"
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystorecredential"
 
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
@@ -147,7 +148,7 @@ func BuildSubjectClientIndex(cfg config.BCLIndexConfig, rdb goredis.Cmdable) (se
 func BuildJTIReplayStore(cfg config.JTIReplayConfig, rdb goredis.Cmdable) (security.JTIReplayStore, string, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
 	case "", "memory":
-		return defaultimpl.NewMemoryJTIReplayStore(), "memory (single-replica only)", nil
+		return newBoundedMemoryJTIStore(cfg), "memory (single-replica only)", nil
 	case "sqlite":
 		if cfg.SQLite.DSN == "" {
 			return nil, "", errors.New("security.jti_replay.sqlite.dsn required when backend=sqlite")
@@ -184,5 +185,18 @@ func buildAuthenticatorReplayStore(cfg config.JTIReplayConfig, rdb goredis.Cmdab
 	if cfg.Enabled {
 		return BuildJTIReplayStore(cfg, rdb)
 	}
-	return defaultimpl.NewMemoryJTIReplayStore(), "memory (default; enable security.jti_replay for cluster-shared)", nil
+	return newBoundedMemoryJTIStore(cfg), "memory (default; enable security.jti_replay for cluster-shared)", nil
+}
+
+// newBoundedMemoryJTIStore constructs the in-process JTI store and applies
+// cfg's MaxEntries/ReapInterval — shared by BuildJTIReplayStore's memory
+// case and buildAuthenticatorReplayStore's fallback so both call sites
+// honor the same config fields identically.
+func newBoundedMemoryJTIStore(cfg config.JTIReplayConfig) *memorystorecredential.MemoryJTIReplayStore {
+	s := defaultimpl.NewMemoryJTIReplayStore()
+	s.MaxEntries = cfg.MaxEntries
+	if cfg.ReapInterval > 0 {
+		s.StartReaper(cfg.ReapInterval)
+	}
+	return s
 }

@@ -113,3 +113,34 @@ func TestApplyReload_ErrorDoesNotPanic(t *testing.T) {
 	// edit can never crash a running server via SIGHUP.
 	applyReload(spi.NopLogger{}, reloader)
 }
+
+func TestCloseMemoryStoreReapers_NilServerIsNoOp(t *testing.T) {
+	// buildApp always sets a.server, but closeMemoryStoreReapers must not
+	// assume that — a nil server (e.g. mid-construction failure) must not
+	// panic.
+	closeMemoryStoreReapers(&app{})
+}
+
+func TestCloseMemoryStoreReapers_ClosesRunningReapersWithoutPanicking(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{}
+	cfg.OAuth.RefreshToken.ReapInterval = 5 * time.Millisecond
+	cfg.OAuth.DeviceCode.ReapInterval = 5 * time.Millisecond
+	cfg.OAuth.PAR.ReapInterval = 5 * time.Millisecond
+	cfg.Security.JTIReplay.ReapInterval = 5 * time.Millisecond
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer func() { _ = a.registry.Close() }()
+
+	// Give each reaper goroutine a moment to actually start ticking, then
+	// close — this must stop every one cleanly (no goroutine leak, no
+	// panic) even though the stores were never used for real traffic.
+	time.Sleep(10 * time.Millisecond)
+	closeMemoryStoreReapers(a)
+	// Idempotent: a second close (mirroring a caller that shuts down
+	// twice, e.g. a test harness plus a real signal) must not panic.
+	closeMemoryStoreReapers(a)
+}

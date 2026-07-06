@@ -78,18 +78,29 @@ related capability exists but the proposed feature does not).
 
 ## Observability, performance & tests
 
-- **Hot-path performance** — partial. `sync.Pool` buffer pooling for JWT
-  issuance, sharded locks for the auth-code/PAR memory OAuth stores, and
-  injectable `Clock` (Ed25519/ECDSA/RSA issuers) are done. Bounded memory
-  stores (MaxEntries/reaper) for JTI/refresh/device-code/PAR remain — deferred
-  because `infrastructure/defaultimpl`, `interfaces/sso`, `config/`, and
-  `shared/security` are all already at their frozen file-count ceilings, so
-  wiring a reaper lifecycle across 5 store types needs its own focused pass
-  with file-count budget planned in. Sharding the refresh-token and
-  device-code stores was deliberately NOT done — both have cross-key
-  invariants (family-keyed `DeleteFamily`, dual device/user-code indices) that
-  sharding would turn into real races, not just missed optimizations.
-  _Sources: runtime-performance…, edgecases-and-perf-2026-07-01._
+- **Hot-path performance** — done. `sync.Pool` buffer pooling for JWT
+  issuance, sharded locks for the auth-code/PAR memory OAuth stores,
+  injectable `Clock` (Ed25519/ECDSA/RSA issuers), and bounded memory
+  stores (`MaxEntries` + an opt-in background reaper) for the JTI-replay,
+  refresh-token, device-code, and PAR memory stores are all done. The
+  reaper lifecycle avoided the file-count-ceiling problem that deferred
+  it earlier: `infrastructure/defaultimpl/memreaper` is a small new
+  subdirectory (a fresh, separately-budgeted package, mirroring the
+  `webauthn`/`wasmauth` sibling-subdirectory pattern), and each store's
+  `Close()` is reached at shutdown through the EXISTING
+  `Server.RefreshTokenStore()`/`DeviceCodeStore()`/`PARStore()`/
+  `JTIReplayStore()` accessors + an `io.Closer` type assertion — the same
+  idiom `cmd/sso-server`'s shutdown path already used for the CAEP
+  transmitter and the Kafka audit sink — so no new fields were needed on
+  `interfaces/sso.Server` or `cmd/sso-server`'s `app` struct. All four
+  knobs (`max_entries` / `reap_interval`) default to 0 (disabled/
+  unbounded), byte-identical to pre-feature behavior, and only apply to
+  the memory backend (sqlite/redis bound growth their own way). Sharding
+  the refresh-token and device-code stores was deliberately NOT done —
+  both have cross-key invariants (family-keyed `DeleteFamily`, dual
+  device/user-code indices) that sharding would turn into real races, not
+  just missed optimizations. _Sources: runtime-performance…,
+  edgecases-and-perf-2026-07-01._
 
 ---
 

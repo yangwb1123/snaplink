@@ -2,11 +2,22 @@ package memorystorecredential
 
 import (
 	"context"
+	"errors"
+	"io"
 	"sync"
 	"time"
 
+	"github.com/snaplink/sso/infrastructure/defaultimpl/memreaper"
 	"github.com/snaplink/sso/shared/security"
 )
+
+// ErrJTIStoreAtCapacity is returned by MarkSeen when MaxEntries is set
+// and the store is full of still-live (unexpired) entries — see
+// MemoryJTIReplayStore.MaxEntries. Every MarkSeen caller in this codebase
+// already treats a non-nil error via the existing fail-open (default) /
+// fail-closed (opt-in) contract (AGENTS.md "Fail Modes"), so this needs
+// no new caller-side handling.
+var ErrJTIStoreAtCapacity = errors.New("memorystorecredential: jti replay store at capacity")
 
 // MemoryJTIReplayStore is an in-process [security.JTIReplayStore]. Pure
 // map + mutex; lazily evicts expired entries on every MarkSeen so the
@@ -14,16 +25,55 @@ import (
 // goroutine, no eviction lag past the first MarkSeen call after the
 // expiry has passed).
 //
+// MaxEntries (0 = unbounded, the default) and StartReaper are optional,
+// defense-in-depth additions on top of that lazy sweep: MaxEntries caps
+// growth from a pure-flood attack that outpaces the window's natural
+// expiry, and StartReaper closes the one gap lazy-only GC can't reach —
+// an idle store (no MarkSeen calls at all) never sweeps on its own.
+// Neither changes behavior unless explicitly configured. Set MaxEntries
+// and call StartReaper BEFORE the store sees traffic, matching
+// MemoryRefreshTokenStore's "configure before traffic" discipline.
+//
 // Multi-replica deployments need a shared backend (Redis, Memcached,
 // etc.) — a jti seen by replica A is unknown to replica B with this
 // implementation, defeating the defense.
 type MemoryJTIReplayStore struct {
+	MaxEntries int
+
 	mu      sync.Mutex
 	entries map[string]time.Time
+	reaper  *memreaper.Reaper
 }
 
 func NewMemoryJTIReplayStore() *MemoryJTIReplayStore {
 	return &MemoryJTIReplayStore{entries: make(map[string]time.Time)}
+}
+
+// StartReaper launches a background sweep of expired entries every
+// interval, on top of MarkSeen's existing per-call lazy sweep — covers a
+// store that has gone idle (no MarkSeen calls to trigger the lazy path).
+// A non-positive interval is a no-op. Idempotent: calling it again stops
+// the previous reaper first, so a caller can't leak a goroutine by
+// calling it twice.
+func (m *MemoryJTIReplayStore) StartReaper(interval time.Duration) {
+	_ = m.reaper.Close()
+	m.reaper = memreaper.Start(interval, m.sweepExpired)
+}
+
+// Close stops the background reaper started via StartReaper, if any. A
+// store that never called StartReaper has nothing to stop.
+func (m *MemoryJTIReplayStore) Close() error {
+	return m.reaper.Close()
+}
+
+func (m *MemoryJTIReplayStore) sweepExpired(now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k, exp := range m.entries {
+		if !exp.After(now) {
+			delete(m.entries, k)
+		}
+	}
 }
 
 func (m *MemoryJTIReplayStore) MarkSeen(_ context.Context, jti string, expiresAt time.Time) (bool, error) {
@@ -46,6 +96,12 @@ func (m *MemoryJTIReplayStore) MarkSeen(_ context.Context, jti string, expiresAt
 		if existing.After(now) {
 			return false, nil
 		}
+	} else if m.MaxEntries > 0 && len(m.entries) >= m.MaxEntries {
+		// Capacity guard only applies to a brand-new key — the sweep
+		// above already dropped anything expired, so remaining entries
+		// are all genuinely live. Re-marking an existing key never grows
+		// the map, so it's exempt from the cap.
+		return false, ErrJTIStoreAtCapacity
 	}
 	if expiresAt.Before(now) {
 		// Expiry already past — caller's clock is off OR the JWT
@@ -76,4 +132,5 @@ func (m *MemoryJTIReplayStore) Forget(_ context.Context, jti string) error {
 var (
 	_ security.JTIReplayStore     = (*MemoryJTIReplayStore)(nil)
 	_ security.JTIReplayForgetter = (*MemoryJTIReplayStore)(nil)
+	_ io.Closer                   = (*MemoryJTIReplayStore)(nil)
 )

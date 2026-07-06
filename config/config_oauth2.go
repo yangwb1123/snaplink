@@ -15,7 +15,7 @@ type OAuthConfig struct {
 	AuthCode      OAuthStoreConfig         `yaml:"auth_code"`
 	RefreshToken  OAuthRefreshTokenConfig  `yaml:"refresh_token"`
 	DeviceCode    OAuthDeviceCodeConfig    `yaml:"device_code"`
-	PAR           OAuthStoreConfig         `yaml:"par"`
+	PAR           OAuthPARConfig           `yaml:"par"`
 	JAR           OAuthJARConfig           `yaml:"jar"`
 	JARM          OAuthJARMConfig          `yaml:"jarm"`
 	Compliance    OAuthComplianceConfig    `yaml:"compliance"`
@@ -133,6 +133,17 @@ type OAuthRefreshTokenConfig struct {
 	// (the default) disables the cap: a family may rotate forever, exactly
 	// as before this field existed.
 	AbsoluteMaxLifetime time.Duration `yaml:"absolute_max_lifetime"`
+
+	// MaxEntries caps the in-process memory backend's live token count
+	// (0 = unbounded, the default); ignored by sqlite/redis backends,
+	// which bound growth via their own storage. ReapInterval, when
+	// positive, starts a background sweep removing expired tokens that
+	// no Consume/Inspect call ever revisits again — otherwise those rely
+	// solely on the store's existing per-call lazy GC. Both only take
+	// effect when oauth.backend is "" or "memory"; see
+	// infrastructure/defaultimpl/memorystoreoauth.MemoryRefreshTokenStore.
+	MaxEntries   int           `yaml:"max_entries"`
+	ReapInterval time.Duration `yaml:"reap_interval"`
 }
 
 // OAuthStoreConfig is the shared shape for the simple TTL-only stores.
@@ -169,6 +180,27 @@ type OAuthDeviceCodeConfig struct {
 	TTL                 time.Duration `yaml:"ttl"`
 	PollInterval        time.Duration `yaml:"poll_interval"`
 	VerificationBaseURL string        `yaml:"verification_base_url"`
+
+	// MaxEntries / ReapInterval mirror OAuthRefreshTokenConfig's fields
+	// of the same name, applied to the device-code memory backend
+	// instead (see infrastructure/defaultimpl/memorystoreoauth.
+	// MemoryDeviceCodeStore). Both default to 0 (disabled/unbounded).
+	MaxEntries   int           `yaml:"max_entries"`
+	ReapInterval time.Duration `yaml:"reap_interval"`
+}
+
+// OAuthPARConfig extends OAuthStoreConfig with the same MaxEntries/
+// ReapInterval memory-backend knobs as OAuthRefreshTokenConfig and
+// OAuthDeviceCodeConfig (see infrastructure/defaultimpl/
+// memorystoreoauth.MemoryPARStore). Kept as its own type — rather than
+// adding these fields directly to the shared OAuthStoreConfig — so
+// auth_code (which also embeds OAuthStoreConfig but has no bounded-store
+// support) doesn't gain YAML fields that silently do nothing.
+type OAuthPARConfig struct {
+	OAuthStoreConfig `yaml:",inline"`
+
+	MaxEntries   int           `yaml:"max_entries"`
+	ReapInterval time.Duration `yaml:"reap_interval"`
 }
 
 // MetricsConfig toggles Prometheus instrumentation. When Enabled,

@@ -22,7 +22,7 @@ func TestBuildApp_AllOAuthStoresEnabled_BuildsCleanly(t *testing.T) {
 		PollInterval:        5 * time.Second,
 		VerificationBaseURL: "https://example.com/device",
 	}
-	cfg.OAuth.PAR = config.OAuthStoreConfig{Enabled: true, TTL: 90 * time.Second}
+	cfg.OAuth.PAR = config.OAuthPARConfig{OAuthStoreConfig: config.OAuthStoreConfig{Enabled: true, TTL: 90 * time.Second}}
 
 	a, err := buildApp(cfg, quietLogger())
 	if err != nil {
@@ -37,7 +37,7 @@ func TestBuildApp_AllOAuthStoresEnabled_BuildsCleanly(t *testing.T) {
 func TestBuildApp_PARStoreEnabledAdvertisesEndpoint(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{}
-	cfg.OAuth.PAR = config.OAuthStoreConfig{Enabled: true}
+	cfg.OAuth.PAR = config.OAuthPARConfig{OAuthStoreConfig: config.OAuthStoreConfig{Enabled: true}}
 
 	a, err := buildApp(cfg, quietLogger())
 	if err != nil {

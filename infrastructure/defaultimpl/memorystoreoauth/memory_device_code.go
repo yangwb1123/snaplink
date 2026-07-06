@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"io"
 	"math/big"
 	"sync"
 	"time"
 
+	"github.com/snaplink/sso/infrastructure/defaultimpl/memreaper"
 	"github.com/snaplink/sso/protocols/oauth"
 )
 
@@ -21,10 +23,20 @@ const userCodeAlphabet = "BCDFGHJKMNPQRSTVWXYZ23456789"
 // single-replica deployments. Multi-replica fleets need a shared
 // backend (Redis / SQL) so a code issued on replica A is approvable
 // on replica B and pollable on replica C.
+//
+// MaxEntries (0 = unbounded, the default) and StartReaper are optional:
+// an expired code is only ever detected + deleted when a caller happens
+// to look up its exact device_code/user_code again (GetBy*/Approve/
+// Deny/ConsumeIfApproved); a code the end user never finishes polling or
+// approving has no such caller and would otherwise sit in both maps
+// forever. Neither changes behavior unless explicitly configured.
 type MemoryDeviceCodeStore struct {
+	MaxEntries int
+
 	mu           sync.Mutex
 	byDeviceCode map[string]*oauth.DeviceCode
 	byUserCode   map[string]*oauth.DeviceCode
+	reaper       *memreaper.Reaper
 }
 
 func NewMemoryDeviceCodeStore() *MemoryDeviceCodeStore {
@@ -34,12 +46,41 @@ func NewMemoryDeviceCodeStore() *MemoryDeviceCodeStore {
 	}
 }
 
+// StartReaper launches a background sweep of expired, never-completed
+// device codes every interval. A non-positive interval is a no-op.
+// Idempotent — calling it again stops the previous reaper first.
+func (m *MemoryDeviceCodeStore) StartReaper(interval time.Duration) {
+	_ = m.reaper.Close()
+	m.reaper = memreaper.Start(interval, m.sweepExpired)
+}
+
+// Close stops the background reaper started via StartReaper, if any.
+func (m *MemoryDeviceCodeStore) Close() error {
+	return m.reaper.Close()
+}
+
+func (m *MemoryDeviceCodeStore) sweepExpired(time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for code, entry := range m.byDeviceCode {
+		if entry.IsExpired() {
+			delete(m.byDeviceCode, code)
+			delete(m.byUserCode, entry.UserCode)
+		}
+	}
+}
+
 func (m *MemoryDeviceCodeStore) Issue(_ context.Context, dc *oauth.DeviceCode) error {
 	if dc == nil || dc.DeviceCode == "" || dc.UserCode == "" {
 		return oauth.ErrDeviceCodeNotFound
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.MaxEntries > 0 {
+		if _, exists := m.byDeviceCode[dc.DeviceCode]; !exists && len(m.byDeviceCode) >= m.MaxEntries {
+			return ErrStoreAtCapacity
+		}
+	}
 	scopes := append([]string(nil), dc.Scopes...)
 	attrs := copyMap(dc.Attributes)
 	entry := &oauth.DeviceCode{
@@ -197,5 +238,8 @@ func GenerateUserCode() (string, error) {
 	return string(out[:4]) + "-" + string(out[4:]), nil
 }
 
-// Compile-time check.
-var _ oauth.DeviceCodeStore = (*MemoryDeviceCodeStore)(nil)
+// Compile-time checks.
+var (
+	_ oauth.DeviceCodeStore = (*MemoryDeviceCodeStore)(nil)
+	_ io.Closer             = (*MemoryDeviceCodeStore)(nil)
+)

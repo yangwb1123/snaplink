@@ -172,6 +172,19 @@ type JTIReplayConfig struct {
 	// deployments — it trades availability during a store outage for a
 	// closed replay window. Maps to sso.WithJTIReplayFailClosed.
 	FailClosed bool `yaml:"fail_closed"`
+
+	// MaxEntries caps the in-process memory backend's live jti count (0
+	// = unbounded, the default); ignored by sqlite/redis backends. A
+	// capacity-exceeded MarkSeen result is a store error, so it already
+	// flows through the existing fail-open (default) / FailClosed
+	// (above) contract like any other store error. ReapInterval, when
+	// positive, starts a background sweep on top of MarkSeen's existing
+	// per-call lazy GC, reclaiming an entry even when its jti is never
+	// presented again. Both only take effect when backend is "" or
+	// "memory"; see infrastructure/defaultimpl/memorystorecredential.
+	// MemoryJTIReplayStore.
+	MaxEntries   int           `yaml:"max_entries"`
+	ReapInterval time.Duration `yaml:"reap_interval"`
 }
 
 // JTIReplaySQLiteCfg configures the SQLite-backed jti replay store.

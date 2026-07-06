@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"io"
+	"time"
 
+	"github.com/snaplink/sso/infrastructure/defaultimpl/memreaper"
 	"github.com/snaplink/sso/protocols/oauth"
 )
 
@@ -24,17 +27,45 @@ const parURIBytes = 24
 // MemoryAuthCodeStore: single-key Issue/Consume, no cross-request_uri
 // scan, so splitting the lock across independent shards is safe and
 // cuts contention on the PAR issue+consume round trip.
+//
+// MaxEntries (0 = unbounded, the default) and StartReaper are optional:
+// Consume already lazily drops an expired entry on the specific
+// request_uri a caller presents, but a request_uri nobody ever redeems
+// (e.g. an abandoned authorization flow) has no such caller, so it would
+// otherwise sit in a shard forever. Neither changes behavior unless
+// explicitly configured.
 type MemoryPARStore struct {
+	MaxEntries int
+
 	entries *shardedMap[*oauth.PARRequest]
+	reaper  *memreaper.Reaper
 }
 
 func NewMemoryPARStore() *MemoryPARStore {
 	return &MemoryPARStore{entries: newShardedMap[*oauth.PARRequest]()}
 }
 
+// StartReaper launches a background sweep of expired, never-redeemed
+// request_uris every interval. A non-positive interval is a no-op.
+// Idempotent — calling it again stops the previous reaper first.
+func (m *MemoryPARStore) StartReaper(interval time.Duration) {
+	_ = m.reaper.Close()
+	m.reaper = memreaper.Start(interval, func(time.Time) {
+		m.entries.DeleteExpired(func(v *oauth.PARRequest) bool { return v.IsExpired() })
+	})
+}
+
+// Close stops the background reaper started via StartReaper, if any.
+func (m *MemoryPARStore) Close() error {
+	return m.reaper.Close()
+}
+
 func (m *MemoryPARStore) Issue(_ context.Context, req *oauth.PARRequest) (string, error) {
 	if req == nil {
 		return "", oauth.ErrPARNotFound
+	}
+	if m.MaxEntries > 0 && m.entries.Len() >= m.MaxEntries {
+		return "", ErrStoreAtCapacity
 	}
 	tok, err := GeneratePARToken()
 	if err != nil {
@@ -87,4 +118,7 @@ func GeneratePARToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-var _ oauth.PARStore = (*MemoryPARStore)(nil)
+var (
+	_ oauth.PARStore = (*MemoryPARStore)(nil)
+	_ io.Closer      = (*MemoryPARStore)(nil)
+)

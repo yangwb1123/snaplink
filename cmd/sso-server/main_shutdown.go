@@ -189,6 +189,31 @@ func shutdownSubsystems(ctx context.Context, a *app, logger spi.Logger) {
 			}
 		}
 	}
+	closeMemoryStoreReapers(a)
+}
+
+// closeMemoryStoreReapers stops any background reaper goroutines the
+// bounded in-process refresh-token/device-code/PAR/JTI-replay stores may
+// have started (StartReaper, opt-in via *.reap_interval config). Reached
+// through the existing store accessors + an io.Closer type assertion —
+// same idiom as shutdownAuditKafka below — since the concrete memory
+// store type is private to interfaces/sso; a sqlite/redis/custom backend
+// simply doesn't implement io.Closer here and this is a silent no-op.
+func closeMemoryStoreReapers(a *app) {
+	if a.server == nil {
+		return
+	}
+	closeIfCloser(a.server.RefreshTokenStore())
+	closeIfCloser(a.server.DeviceCodeStore())
+	closeIfCloser(a.server.PARStore())
+	closeIfCloser(a.server.JTIReplayStore())
+}
+
+// closeIfCloser closes v when it implements io.Closer, else no-ops.
+func closeIfCloser(v any) {
+	if c, ok := v.(io.Closer); ok {
+		_ = c.Close()
+	}
 }
 
 // shutdownAuditKafka closes the Kafka producer AFTER the AsyncSink drain
