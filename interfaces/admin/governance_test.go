@@ -264,3 +264,31 @@ func TestHandleAdminChangeRoutes_404WithoutStore(t *testing.T) {
 		t.Fatalf("code = %d; want 404 when no ApprovalStore is wired", rec.Code)
 	}
 }
+
+// TestMethodScopeForPath_SegmentBoundary guards against a bare-HasPrefix
+// regression: a registered override for "/api/v1/admin/wasmauthz/check"
+// must NOT match an unrelated future sibling route like
+// "/api/v1/admin/wasmauthz/checkpoint" — only an exact path or a match
+// followed by "/" counts.
+func TestMethodScopeForPath_SegmentBoundary(t *testing.T) {
+	mw := newTestMiddleware("admin-1")
+	mw.SetMethodScope("/api/v1/admin/wasmauthz/check", ScopeRead)
+
+	cases := []struct {
+		path      string
+		wantScope string
+		wantOK    bool
+	}{
+		{"/api/v1/admin/wasmauthz/check", ScopeRead, true},
+		{"/api/v1/admin/wasmauthz/check/", ScopeRead, true},
+		{"/api/v1/admin/wasmauthz/check/extra", ScopeRead, true},
+		{"/api/v1/admin/wasmauthz/checkpoint", "", false},
+		{"/api/v1/admin/wasmauthz/check-and-apply", "", false},
+	}
+	for _, tc := range cases {
+		scope, ok := mw.methodScopeForPath(tc.path)
+		if ok != tc.wantOK || scope != tc.wantScope {
+			t.Errorf("methodScopeForPath(%q) = (%q, %v); want (%q, %v)", tc.path, scope, ok, tc.wantScope, tc.wantOK)
+		}
+	}
+}

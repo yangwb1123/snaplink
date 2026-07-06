@@ -124,6 +124,14 @@ func buildAdminRESTMux(a *app, base http.Handler, cfg *config.Config, logger spi
 	if a.provider != nil {
 		mux.Handle(sso.PathAuthzPolicyBundle, base)
 	}
+	// Same shadowing problem as PathAuthzPolicyBundle above: the wasmauthz
+	// debug route also lives on `base`'s own router (mountWASMAuthzAdminAPI),
+	// not the gRPC-gateway, so it needs its own exact-path carve-out or the
+	// /api/v1/admin/ subtree above silently swallows it into the gateway's
+	// own 404.
+	if a.server.WASMAuthzEngine() != nil {
+		mux.Handle(sso.PathAPIPrefix+sso.PathAdminWASMAuthzCheck, base)
+	}
 	mux.Handle("/", base)
 	return mux, nil
 }

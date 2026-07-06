@@ -187,3 +187,16 @@ reasons this is safer than a shared instance, not just simpler:
 Measured overhead for a minimal module is tens of microseconds per call —
 acceptable for an operator-debugging/authorization-decision primitive that,
 by design, is never wired into the hot `/auth/login` path.
+
+## Memory limit
+
+Each guest instance's linear memory is capped at `wasmauthz.DefaultMemoryLimitPages`
+(256 wazero pages, 16 MiB). Without this, a module whose memory section omits
+an explicit max — the ordinary output of a plain `wasm-ld`/TinyGo build, not a
+contrived case — would be allowed by wazero to grow to its own 4 GiB default
+ceiling. Since a fresh instance is created per `Authorize` call and the guest
+is untrusted, operator-supplied code (see "Fail-closed" above), an unbounded
+ceiling would let one malicious or buggy module exhaust host memory well
+within `DefaultCallTimeout`. 16 MiB is far beyond what a JSON authorization
+request/response needs; a module that legitimately needs more must be split
+or redesigned, not accommodated by raising this ceiling process-wide.

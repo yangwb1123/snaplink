@@ -41,6 +41,18 @@ const (
 	exportMemory = "memory"
 )
 
+// DefaultMemoryLimitPages caps each guest instance's linear memory at 256
+// wazero pages (16 MiB — a wazero page is 64 KiB). Without an explicit
+// ceiling, wazero defaults to allowing a module whose memory section omits
+// a max (the ordinary shape of a plain wasm-ld/TinyGo build, exactly what
+// this package's own testdata fixtures are) to grow to 4 GiB; since a fresh
+// instance is created per Authorize call (see the package doc's
+// "Concurrency" section) and the guest is documented as untrusted,
+// operator-supplied code, an unbounded ceiling lets one malicious or buggy
+// module exhaust host memory well within DefaultCallTimeout. 16 MiB is far
+// beyond what a JSON authorization request/response needs.
+const DefaultMemoryLimitPages = 256
+
 // ErrInvalidModule is returned by [New] when the supplied WASM module does
 // not export the required alloc/authorize/dealloc functions (with the
 // required arity) or the required "memory" export — an ABI mismatch caught
@@ -85,7 +97,12 @@ func New(ctx context.Context, wasmModule []byte) (*Engine, error) {
 	// WithCloseOnContextDone lets a per-call context deadline actually
 	// interrupt a looping/blocked guest (see Authorize) instead of merely
 	// giving up on the Go side while the guest keeps burning CPU forever.
-	rc := wazero.NewRuntimeConfig().WithCloseOnContextDone(true)
+	// WithMemoryLimitPages bounds each instance's linear memory (see
+	// DefaultMemoryLimitPages) so an unbounded-growth guest can't OOM the
+	// host process.
+	rc := wazero.NewRuntimeConfig().
+		WithCloseOnContextDone(true).
+		WithMemoryLimitPages(DefaultMemoryLimitPages)
 	runtime := wazero.NewRuntimeWithConfig(ctx, rc)
 
 	compiled, err := runtime.CompileModule(ctx, wasmModule)

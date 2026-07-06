@@ -370,12 +370,22 @@ func checkWriteQuota(w http.ResponseWriter, r *http.Request, q *adminQuotaConfig
 // transport-level checks in this file. Longest-prefix-wins mirrors this
 // SDK's other prefix-keyed overrides (see WithBodyLimitForPath,
 // WithRouteDeprecation in interfaces/sso).
+//
+// A match requires a path-segment boundary right after prefix (path equals
+// prefix, or the next byte is "/") — a bare strings.HasPrefix would let an
+// unrelated future sibling route (e.g. registering ".../check" and later
+// adding ".../checkpoint") silently inherit this override's scope instead
+// of its own correct default.
 func (a *Middleware) methodScopeForPath(path string) (string, bool) {
 	bestPrefix, bestScope := "", ""
 	for prefix, scope := range a.methodScopes {
-		if len(prefix) > len(bestPrefix) && strings.HasPrefix(path, prefix) {
-			bestPrefix, bestScope = prefix, scope
+		if len(prefix) <= len(bestPrefix) || !strings.HasPrefix(path, prefix) {
+			continue
 		}
+		if len(path) != len(prefix) && path[len(prefix)] != '/' {
+			continue
+		}
+		bestPrefix, bestScope = prefix, scope
 	}
 	return bestScope, bestPrefix != ""
 }
