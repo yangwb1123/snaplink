@@ -75,6 +75,7 @@ type (
 	MemoryRecentLoginStore        = memorystorecredential.MemoryRecentLoginStore
 	MemoryRecentLoginStoreOption  = memorystorecredential.MemoryRecentLoginStoreOption
 	MemoryRecoveryCodeStore       = memorystorecredential.MemoryRecoveryCodeStore
+	MemoryTrustedDeviceStore      = memorystorecredential.MemoryTrustedDeviceStore
 )
 
 var (
@@ -88,5 +89,6 @@ var (
 	NewMemoryPasswordResetStore      = memorystorecredential.NewMemoryPasswordResetStore
 	NewMemoryRecentLoginStore        = memorystorecredential.NewMemoryRecentLoginStore
 	NewMemoryRecoveryCodeStore       = memorystorecredential.NewMemoryRecoveryCodeStore
+	NewMemoryTrustedDeviceStore      = memorystorecredential.NewMemoryTrustedDeviceStore
 	WithRecentLoginPerSubjectCap     = memorystorecredential.WithRecentLoginPerSubjectCap
 )

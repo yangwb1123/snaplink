@@ -106,7 +106,15 @@ func run(o options) (int, error) {
 	if err != nil {
 		// Fail-closed: write NOTHING to --out on a broken/unverified
 		// bundle, matching audit-export's own "never leave a broken
-		// evidence file that looks valid" convention.
+		// evidence file that looks valid" convention. That alone isn't
+		// enough on a RE-run, though: a prior successful run may have
+		// already left a valid-looking report sitting at --out, and if
+		// the bundle has since been tampered with, leaving that stale
+		// file in place would let an operator mistake yesterday's
+		// evidence for a clean verification of today's (tampered)
+		// bundle. Remove it too, so a refusal always means "no report at
+		// --out", not just "no NEW report at --out".
+		removeStaleOut(o.out)
 		return 1, fmt.Errorf("bundle FAILED verification, refusing to report: %w", err)
 	}
 	if err := writeReport(o.out, report); err != nil {
@@ -114,6 +122,21 @@ func run(o options) (int, error) {
 	}
 	printSummary(report, o.out)
 	return 0, nil
+}
+
+// removeStaleOut best-effort deletes any pre-existing file at out. Called
+// ONLY on verification refusal (see run's fail-closed branch) — a missing
+// file is the common case (first run, or --out unset) and is not an error;
+// any other removal failure (e.g. permissions) doesn't change the fact
+// that verification already failed and run() exits non-zero either way, so
+// it is logged rather than escalated into a second, unrelated error.
+func removeStaleOut(out string) {
+	if out == "" {
+		return
+	}
+	if err := os.Remove(out); err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "%s: warning: could not remove stale --out file %s: %v\n", progName, out, err)
+	}
 }
 
 // writeReport emits report as indented JSON to out, or stdout when out

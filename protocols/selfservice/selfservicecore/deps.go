@@ -129,6 +129,12 @@ type Deps interface {
 	// MFA recovery codes (POST/GET /me/mfa/recovery-codes). Nil when unwired.
 	RecoveryCodeStore() core.RecoveryCodeStore
 
+	// Trusted-device MFA-skip self-service (GET/POST/DELETE /me/devices*).
+	// Nil TrustedDeviceStore ⇒ those routes are not mounted. TrustedDeviceTTL
+	// is consulted by the Trust handler when minting a fresh grant.
+	TrustedDeviceStore() core.TrustedDeviceStore
+	TrustedDeviceTTL() time.Duration
+
 	// GDPR self-service
 	DataExporter() *compliance.Exporter
 	AccountEraser() *compliance.Eraser

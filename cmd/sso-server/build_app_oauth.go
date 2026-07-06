@@ -110,6 +110,9 @@ func (b *appBuilder) wireConnectionsAndCache() error {
 			return fmt.Errorf("schema check connections: %w", err)
 		}
 		b.opts = append(b.opts, sso.WithConnectionStore(connectionStore))
+		if cfg.Connections.Probe.Timeout > 0 {
+			b.opts = append(b.opts, sso.WithConnectionProbeTimeout(cfg.Connections.Probe.Timeout))
+		}
 		// SQLite-backed connections store implements Ping → /readyz; memory
 		// silently no-ops (serverbuildsign.AppendReadyCheck only registers satisfying types).
 		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-connections", connectionStore)
@@ -190,7 +193,10 @@ func (b *appBuilder) wireOAuthGrantStores() error {
 	if err := b.wireJARM(); err != nil {
 		return err
 	}
-	return b.wireIntrospection()
+	if err := b.wireIntrospection(); err != nil {
+		return err
+	}
+	return b.wireIntrospectionSigning()
 }
 
 // wireAccountErasure wires GDPR Art. 17 self-service account erasure
@@ -392,7 +398,8 @@ func (b *appBuilder) wireJARM() error {
 }
 
 // wireIntrospection wires the /token/introspect response-caching, signed-JWT
-// response, and batch tuning knobs (all opt-in, oauth.OAuthIntrospectionConfig).
+// response (reusing the primary signing issuer), and batch tuning knobs
+// (all opt-in, oauth.OAuthIntrospectionConfig).
 func (b *appBuilder) wireIntrospection() error {
 	cfg := b.cfg.OAuth.Introspection
 	if cfg.CacheTTL > 0 {
@@ -411,5 +418,31 @@ func (b *appBuilder) wireIntrospection() error {
 		b.opts = append(b.opts, sso.WithIntrospectionBatch(cfg.MaxBatchSize))
 		b.logger.Info("introspection: batch requests enabled", "max_batch_size", cfg.MaxBatchSize)
 	}
+	return nil
+}
+
+// wireIntrospectionSigning wires RFC 9701 JWT-formatted /token/introspect
+// responses. Unlike wireIntrospection's SignedResponseEnabled path (which
+// reuses b.jwtIssuer, the primary signing issuer), this builds a SEPARATE
+// issuer from keys.introspection_signing — a distinct key with its own kid +
+// rotation lifecycle — for deployments that want the introspection signer
+// fully isolated from the access/ID-token issuer. If BOTH are enabled, this
+// wires AFTER wireIntrospection, so the dedicated key wins.
+func (b *appBuilder) wireIntrospectionSigning() error {
+	cfg := b.cfg.Keys.IntrospectionSigning
+	if !cfg.Enabled {
+		return nil
+	}
+	issuer, alg, extSigner, err := serverbuildsign.BuildSigningIssuer(cfg.SigningConfig, b.cfg.Server, b.metricsRegistry, b.logger)
+	if err != nil {
+		return fmt.Errorf("keys.introspection_signing: %w", err)
+	}
+	signer, ok := any(issuer).(oauth.IntrospectionSigner)
+	if !ok {
+		return fmt.Errorf("keys.introspection_signing.alg %q does not implement introspection-response signing", alg)
+	}
+	b.opts = append(b.opts, sso.WithIntrospectionSigning(signer))
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "introspection-external-signer", extSigner)
+	b.logger.Info("introspection signing: enabled (RFC 9701 JWT introspection responses)", "signing_alg", alg)
 	return nil
 }

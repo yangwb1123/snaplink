@@ -401,6 +401,45 @@ func (s *Server) wrapAPIVersioning(inner http.Handler) http.Handler {
 	return inner
 }
 
+// ConfigAuditStore returns the wired runtime-configuration-audit store
+// (WithConfigAuditStore), or nil when unwired. Relocated from accessors.go
+// (which was at the line budget) — beside the rest of the config-audit
+// wiring in this file.
+func (s *Server) ConfigAuditStore() configaudit.Store { return s.configAuditStore }
+
+// AppliedConfigSnapshot implements configaudit.HandlerDeps: the redacted
+// effective-config snapshot captured once at startup (WithConfigSnapshots).
+// Returns configaudit.ErrSnapshotUnavailable when no snapshot was ever
+// wired, so the HTTP handler can answer 501 rather than a bare 500.
+// Relocated from accessors.go (which was at the line budget).
+func (s *Server) AppliedConfigSnapshot() (map[string]any, error) {
+	if s.configAppliedSnapshot == nil {
+		return nil, configaudit.ErrSnapshotUnavailable
+	}
+	return s.configAppliedSnapshot, nil
+}
+
+// RunningConfigSnapshot implements configaudit.HandlerDeps: the CURRENT
+// effective-config snapshot. Falls back to AppliedConfigSnapshot when no
+// live snapshot function was wired (WithConfigSnapshots without a
+// runningFn) — correct, since with no live source there is nothing to
+// drift FROM.
+func (s *Server) RunningConfigSnapshot(ctx context.Context) (map[string]any, error) {
+	if s.configRunningSnapshotFn != nil {
+		return s.configRunningSnapshotFn(ctx)
+	}
+	return s.AppliedConfigSnapshot()
+}
+
+// ClientStore exposes the wired client store for the admin tenant-export
+// handler (admin.Deps). Distinct from ClientStoreAccessor (accessors.go)
+// only in name — that older accessor predates this Deps interface and
+// callers elsewhere already depend on its name, so it stays rather than
+// churn every call site; a method may share its name with the
+// package-level ClientStore type alias (different namespace — see
+// aliases.go) without conflict.
+func (s *Server) ClientStore() core.ClientStore { return s.clientStore }
+
 // applyConfigAuditWiring wires the config-audit change-capture hook (AGENTS.md
 // "narrowest existing seam") post-options, in NewServer. Only when BOTH an
 // auditor and a configaudit.Store are present, so a build without

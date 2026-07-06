@@ -413,6 +413,19 @@ type Metrics struct {
 	// (§5), never request input. Zero traffic unless an issuer's WithXMetrics
 	// option wires this Metrics in.
 	SigningUsageTotal *prometheus.CounterVec // labels: alg, kid
+
+	// ConnectionHealthProbesTotal counts admin-triggered B2B enterprise-
+	// connection reachability probes (POST .../connections/:id/probe), by
+	// type ∈ {oidc, saml} (bounded, Connection.Type) and outcome ∈ {healthy,
+	// degraded, unreachable} (bounded — HealthUnknown is the pre-probe
+	// default, never an actual probe OUTCOME). No connection_id label: a B2B
+	// deployment's connection count is admin-controlled but grows unbounded
+	// over the deployment's lifetime, so the alert signal is a RISING
+	// unreachable rate (SSOConnectionUnreachable in ops/deploy/grafana/
+	// alerts.yaml) — GET /admin/connections/:id/health for which connection.
+	// Zero traffic until an admin runs at least one probe (no background
+	// poller in this slice).
+	ConnectionHealthProbesTotal *prometheus.CounterVec // labels: type, outcome
 }
 
 // SetFeatureGateEnabled records the boot-time state of one FeatureGates

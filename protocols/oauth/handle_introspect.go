@@ -50,10 +50,10 @@ type IntrospectDeps interface {
 	// token-policy store returns false, so introspection is byte-identical
 	// without a wired policy.
 	IntrospectionRenewExceeded(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) bool
-	// IntrospectionSigner returns the optional signer for RFC 9701-style
-	// signed JWT introspection responses (WithIntrospectionSigner). Nil (the
-	// default) means every response stays plain JSON regardless of the
-	// client's Accept header.
+	// IntrospectionSigner returns the optional RFC 9701 dedicated signer
+	// for JWT-formatted introspection responses (WithIntrospectionSigner /
+	// WithIntrospectionSigning). Nil (the default) means every response
+	// stays plain JSON regardless of the client's Accept header.
 	IntrospectionSigner() IntrospectionSigner
 	// IntrospectionBatchMaxSize returns the configured cap on how many
 	// tokens one batch /token/introspect request may include, or 0 when the
@@ -142,15 +142,44 @@ func HandleIntrospect(d IntrospectDeps, ctx core.HandlerContext) {
 	serveIntrospectWithCache(d, ctx, req.Token, req.TokenTypeHint, req.ClientID)
 }
 
-// serveIntrospectWithCache performs the resolution + optional-cache step of
-// HandleIntrospect, then the optional RFC 9701 signed-response step. aud is
-// the introspecting client's id, stamped into a signed response's `aud`.
-func serveIntrospectWithCache(d IntrospectDeps, ctx core.HandlerContext, token, hint, aud string) {
+// HandleIntrospect, then the optional RFC 9701 signed-response step. Cache
+// is keyed by SHA-256(token) so raw tokens are never stored in plaintext;
+// both active and inactive results are cached (see introspectOne). clientID
+// is the ALREADY-AUTHENTICATED introspecting client (RFC 9701 §5.1 `aud`
+// when the JWT response format is in play).
+func serveIntrospectWithCache(d IntrospectDeps, ctx core.HandlerContext, token, hint, clientID string) {
 	body := introspectOne(d, ctx, token, hint)
-	if writeSignedIntrospection(d, ctx, aud, body) {
+	writeIntrospectionResponse(d, ctx, body, clientID)
+}
+
+// writeIntrospectionResponse serves body as plain RFC 7662 JSON, unless the
+// introspecting client's Accept header requests the RFC 9701 §5 JWT format
+// AND a dedicated IntrospectionSigner is wired — in which case it signs and
+// serves application/token-introspection+jwt instead. A client that sends
+// the Accept header against a server that hasn't enabled the feature
+// silently gets the same plain JSON it always got: content negotiation
+// degrades gracefully rather than erroring, so a speculative Accept header
+// can never break an existing integration (default-off requirement).
+//
+// A wired signer that FAILS to sign responds 500 rather than silently
+// downgrading to JSON — the caller explicitly asked for an authenticated
+// response and a silent format downgrade would defeat that ask exactly
+// when the server is unable to honor it.
+func writeIntrospectionResponse(d IntrospectDeps, ctx core.HandlerContext, body map[string]any, clientID string) {
+	signer := d.IntrospectionSigner()
+	if signer == nil || !WantsIntrospectionJWT(ctx.Request().Header.Get("Accept")) {
+		ctx.JSON(http.StatusOK, body)
 		return
 	}
-	ctx.JSON(http.StatusOK, body)
+	jwt, err := SignIntrospectionResponse(ctx.Request().Context(), signer, d.ResolveIssuer(ctx), clientID, body)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	w := ctx.ResponseWriter()
+	w.Header().Set(core.HeaderContentType, core.ContentTypeTokenIntrospectionJWT)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(jwt))
 }
 
 // authenticateIntrospectClient runs the hint-independent client-auth gate
@@ -424,3 +453,9 @@ func dpopTokenTypeOr(defaultType, jkt string) string {
 	}
 	return defaultType
 }
+
+// The RFC 9701 (JWT Response for OAuth Token Introspection) machinery
+// (IntrospectionSigner, JWKUseIntrospection, IntrospectionKeySet,
+// WantsIntrospectionJWT, SignIntrospectionResponse) lives in
+// introspect_cache.go (which had room) to keep this file within the
+// per-file line budget.

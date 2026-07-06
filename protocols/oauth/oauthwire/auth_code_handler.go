@@ -136,6 +136,10 @@ type IssueAuthCodeParams struct {
 	Resources            []string
 	AuthorizationDetails json.RawMessage
 	SID                  string
+	// ConfirmationJKT binds the issued code to the DPoP key the client
+	// presented at /auth/login (RFC 9449 §10). Empty = unbound — the
+	// exchange skips the jkt gate entirely.
+	ConfirmationJKT string
 }
 
 // IssueAuthCode generates and stores an authorization code.
@@ -165,6 +169,7 @@ func IssueAuthCode(ctx context.Context, p IssueAuthCodeParams) (string, error) {
 		Resources:            append([]string(nil), p.Resources...),
 		AuthorizationDetails: oauthvalidate.CloneRawJSON(p.AuthorizationDetails),
 		SID:                  p.SID,
+		ConfirmationJKT:      p.ConfirmationJKT,
 		ExpiresAt:            time.Now().Add(ttl),
 	}
 	if err := p.AuthCodeStore.Issue(ctx, code, entry); err != nil {

@@ -120,6 +120,126 @@ func TestAdminConnections_NotMountedWithoutStore(t *testing.T) {
 	if code != http.StatusNotFound {
 		t.Errorf("unmounted list status=%d, want 404", code)
 	}
+	if code, _ := doReq(t, hs, http.MethodGet, "/api/v1/admin/connections/acme/health", ""); code != http.StatusNotFound {
+		t.Errorf("unmounted health status=%d, want 404", code)
+	}
+	if code, _ := doReq(t, hs, http.MethodPost, "/api/v1/admin/connections/acme/probe", ""); code != http.StatusNotFound {
+		t.Errorf("unmounted probe status=%d, want 404", code)
+	}
+}
+
+// fakeProber is a deterministic connections.Prober test double — no real
+// network — so the admin endpoint tests exercise the store-orchestration +
+// HTTP-wiring layer without depending on httpProber's real GET behavior
+// (that's covered directly in domains/connections/probe_test.go).
+type fakeProber struct {
+	mu     sync.Mutex
+	result connections.ProbeResult
+	calls  int
+}
+
+func (f *fakeProber) Probe(_ context.Context, _ *connections.Connection) connections.ProbeResult {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	return f.result
+}
+
+func (f *fakeProber) setResult(r connections.ProbeResult) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.result = r
+}
+
+func newAdminConnectionHealthHarness(t *testing.T) (*httptest.Server, *fakeProber) {
+	t.Helper()
+	store := connections.NewMemoryStore()
+	prober := &fakeProber{result: connections.ProbeResult{Status: connections.HealthHealthy}}
+	srv := sso.NewServer(
+		sso.WithIssuer("https://sso.example"),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+		sso.WithConnectionStore(store),
+		sso.WithConnectionProber(prober),
+	)
+	hs := httptest.NewServer(srv.Handler())
+	t.Cleanup(hs.Close)
+	return hs, prober
+}
+
+func TestAdminConnections_Health_UnprobedReadsUnknown(t *testing.T) {
+	srv, _ := newAdminConnectionHealthHarness(t)
+	if code, body := postJSON(t, srv, "/api/v1/admin/connections", map[string]any{
+		"id": "acme", "tenant_id": "t1", "type": "oidc",
+	}); code != http.StatusOK {
+		t.Fatalf("upsert = %d body=%v", code, body)
+	}
+
+	code, body := doReq(t, srv, http.MethodGet, "/api/v1/admin/connections/acme/health", "")
+	if code != http.StatusOK {
+		t.Fatalf("get health = %d body=%v", code, body)
+	}
+	if body["status"] != "unknown" || body["last_checked_at"] != nil {
+		t.Errorf("unprobed health = %v, want status=unknown with no last_checked_at", body)
+	}
+}
+
+func TestAdminConnections_Health_UnknownConnectionIs404(t *testing.T) {
+	srv, _ := newAdminConnectionHealthHarness(t)
+	if code, _ := doReq(t, srv, http.MethodGet, "/api/v1/admin/connections/nope/health", ""); code != http.StatusNotFound {
+		t.Errorf("get health for missing connection = %d, want 404", code)
+	}
+	if code, _ := doReq(t, srv, http.MethodPost, "/api/v1/admin/connections/nope/probe", ""); code != http.StatusNotFound {
+		t.Errorf("probe missing connection = %d, want 404", code)
+	}
+}
+
+func TestAdminConnections_Probe_HealthyPersistsAndReadsBack(t *testing.T) {
+	srv, prober := newAdminConnectionHealthHarness(t)
+	if code, _ := postJSON(t, srv, "/api/v1/admin/connections", map[string]any{
+		"id": "acme", "tenant_id": "t1", "type": "oidc",
+	}); code != http.StatusOK {
+		t.Fatal("upsert failed")
+	}
+	prober.setResult(connections.ProbeResult{Status: connections.HealthHealthy})
+
+	code, body := doReq(t, srv, http.MethodPost, "/api/v1/admin/connections/acme/probe", "")
+	if code != http.StatusOK {
+		t.Fatalf("probe = %d body=%v", code, body)
+	}
+	if body["status"] != "healthy" || body["last_checked_at"] == nil || body["last_success_at"] == nil {
+		t.Fatalf("probe response = %v, want healthy with timestamps", body)
+	}
+	if prober.calls != 1 {
+		t.Errorf("prober called %d times, want 1", prober.calls)
+	}
+
+	// GET .../health reflects the just-persisted probe outcome.
+	code, body = doReq(t, srv, http.MethodGet, "/api/v1/admin/connections/acme/health", "")
+	if code != http.StatusOK || body["status"] != "healthy" {
+		t.Fatalf("get health after probe = %d body=%v", code, body)
+	}
+}
+
+func TestAdminConnections_Probe_UnreachableReturns200WithError(t *testing.T) {
+	srv, prober := newAdminConnectionHealthHarness(t)
+	if code, _ := postJSON(t, srv, "/api/v1/admin/connections", map[string]any{
+		"id": "acme", "tenant_id": "t1", "type": "oidc",
+	}); code != http.StatusOK {
+		t.Fatal("upsert failed")
+	}
+	prober.setResult(connections.ProbeResult{Status: connections.HealthUnreachable, Err: "dial tcp: connection refused"})
+
+	// A bad outcome is still a 200 — the CHECK succeeded, the result is bad news.
+	code, body := doReq(t, srv, http.MethodPost, "/api/v1/admin/connections/acme/probe", "")
+	if code != http.StatusOK {
+		t.Fatalf("probe = %d body=%v", code, body)
+	}
+	if body["status"] != "unreachable" || body["last_error"] == "" || body["last_error"] == nil {
+		t.Fatalf("probe response = %v, want unreachable with a last_error", body)
+	}
+	if body["last_success_at"] != nil {
+		t.Errorf("last_success_at = %v, want omitted (never succeeded)", body["last_success_at"])
+	}
 }
 
 // fakeDomainResolver is the hermetic (no real network) DNS double used to drive

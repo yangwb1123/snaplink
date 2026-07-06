@@ -35,6 +35,7 @@ const (
 	EventAdminClientUpdated                  = auditspi.EventAdminClientUpdated
 	EventAdminConnectionDeleted              = auditspi.EventAdminConnectionDeleted
 	EventAdminConnectionDomainVerified       = auditspi.EventAdminConnectionDomainVerified
+	EventAdminConnectionProbed               = auditspi.EventAdminConnectionProbed
 	EventAdminConnectionUpserted             = auditspi.EventAdminConnectionUpserted
 	EventAdminConsentRevoked                 = auditspi.EventAdminConsentRevoked
 	EventAdminCredentialCompromised          = auditspi.EventAdminCredentialCompromised
@@ -69,6 +70,7 @@ const (
 	EventAdminTempTokenIssued                = auditspi.EventAdminTempTokenIssued
 	EventAdminTenantCreated                  = auditspi.EventAdminTenantCreated
 	EventAdminTenantDeleted                  = auditspi.EventAdminTenantDeleted
+	EventAdminTenantExported                 = auditspi.EventAdminTenantExported
 	EventAdminTenantMemberAdded              = auditspi.EventAdminTenantMemberAdded
 	EventAdminTenantMemberRemoved            = auditspi.EventAdminTenantMemberRemoved
 	EventAdminTenantStatusChanged            = auditspi.EventAdminTenantStatusChanged
@@ -110,6 +112,8 @@ const (
 	EventDeviceCodeApproved                  = auditspi.EventDeviceCodeApproved
 	EventDeviceCodeDenied                    = auditspi.EventDeviceCodeDenied
 	EventDeviceCodeIssued                    = auditspi.EventDeviceCodeIssued
+	EventDeviceTrusted                       = auditspi.EventDeviceTrusted
+	EventDeviceTrustRevoked                  = auditspi.EventDeviceTrustRevoked
 	EventEmailChangeRequested                = auditspi.EventEmailChangeRequested
 	EventEmailChanged                        = auditspi.EventEmailChanged
 	EventFAPIComplianceViolation             = auditspi.EventFAPIComplianceViolation
@@ -130,6 +134,7 @@ const (
 	EventLogoutNotified                      = auditspi.EventLogoutNotified
 	EventMFAFailure                          = auditspi.EventMFAFailure
 	EventMFARequired                         = auditspi.EventMFARequired
+	EventMFASkippedTrustedDevice             = auditspi.EventMFASkippedTrustedDevice
 	EventMFASuccess                          = auditspi.EventMFASuccess
 	EventNativeSSOExchange                   = auditspi.EventNativeSSOExchange
 	EventNativeSSOExchangeFailure            = auditspi.EventNativeSSOExchangeFailure

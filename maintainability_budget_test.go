@@ -45,7 +45,7 @@ var skipDirs = map[string]bool{
 	"dist": true, "bin": true, ".superpowers": true, ".ai": true, ".devcontainer": true,
 	// nested modules (own go.mod)
 	"kms": true, "redis": true, "postgres": true, "saml": true, "ldap": true,
-	"extauthz": true, "kerberos": true, "radius": true,
+	"extauthz": true, "kerberos": true, "radius": true, "kafka": true,
 }
 
 func TestMaintainability_FileSizeBudget(t *testing.T) {

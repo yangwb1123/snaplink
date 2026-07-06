@@ -227,6 +227,20 @@ paths:
           access token + session id. The token's strategy
           (`jwt` / `session`) is determined by the client's
           `token_strategy` field in config.
+
+        **DPoP authorization-code binding** (RFC 9449 §10) — when
+        `response_type=code`, an optional `DPoP: <proof>` header on
+        THIS request binds the issued authorization code to that
+        proof's JWK thumbprint. The `/token` `authorization_code`
+        exchange must then present a DPoP proof under the SAME key
+        or the exchange fails `400 invalid_grant` — identical to
+        every other unknown/expired/consumed/mismatched code failure
+        (oracle-leak hardening), never a distinguishable error. A
+        malformed/invalid proof on THIS request fails the login
+        itself with `400 invalid_dpop_proof` (or `use_dpop_nonce`
+        + `DPoP-Nonce` header when §8 nonce enforcement is wired),
+        mirroring `/token`'s DPoP gate. Omitting the header keeps the
+        code unbound — fully backwards compatible.
       operationId: postLogin
       requestBody:
         required: true
@@ -710,9 +724,12 @@ paths:
         the response cross-user.
 
         **Oracle-leak hardening** — unknown / expired / consumed /
-        client-mismatch code or refresh-token failures all collapse
-        to a single `400 invalid_grant` response so an attacker
-        polling can't distinguish failure modes.
+        client-mismatch code or refresh-token failures, PKCE
+        verifier mismatches, and RFC 9449 §10 DPoP-bound-code jkt
+        mismatches (missing proof or a proof under a different key
+        than the one presented at `/auth/login`) all collapse to a
+        single `400 invalid_grant` response so an attacker polling
+        can't distinguish failure modes.
       operationId: postToken
       requestBody:
         required: true
@@ -835,18 +852,32 @@ paths:
         just possibly served from a short-lived cache keyed by
         `SHA-256(token)`.
 
-        Optional RFC 9701-style signed responses: when the server has
-        `WithIntrospectionSigner` wired AND this request sets
-        `Accept: application/token-introspection+jwt`, the body is a
-        compact JWT (`Content-Type: application/token-introspection+jwt`)
-        nesting the `IntrospectResponse` under a `token_introspection`
-        claim (substitution-attack defense) instead of plain JSON.
-        Wired-but-unrequested (or requested-but-unwired) both fall back
-        to plain JSON.
+        RFC 9701 signed responses (opt-in, default OFF): send
+        `Accept: application/token-introspection+jwt` to receive the
+        response as a signed JWT instead of plain JSON — ONLY honored
+        when the deployment has wired an introspection signer, either
+        the existing signing issuer (`sso.WithIntrospectionSigner`) or a
+        DEDICATED, independently-rotated key (`sso.WithIntrospectionSigning`;
+        see `introspection_signing_alg_values_supported` in discovery).
+        Without a signer wired, the Accept header is silently ignored
+        and the response stays plain JSON — existing integrations are
+        unaffected. The JWT nests the full RFC 7662 body under a
+        `token_introspection` claim (top-level `iss` / `aud` / `iat`
+        only — never `sub`/`exp`, per §8's substitution-attack defense)
+        and carries `typ: token-introspection+jwt` in its header.
 
         Optional batch mode: see `IntrospectRequest.tokens` /
         `IntrospectBatchResponse`.
       operationId: postIntrospect
+      parameters:
+        - name: Accept
+          in: header
+          required: false
+          schema: { type: string }
+          description: |
+            `application/token-introspection+jwt` opts into the RFC
+            9701 signed-JWT response format (see above). Any other
+            value, or omission, gets plain JSON.
       requestBody:
         required: true
         content:
@@ -877,7 +908,10 @@ paths:
             application/token-introspection+jwt:
               schema:
                 type: string
-                description: Compact JWT (see description above).
+                description: |
+                  RFC 9701 §5.1 signed introspection response (compact
+                  JWS, not JSON) — see the endpoint description for
+                  the opt-in trigger and claim shape.
         "400":
           description: |
             Batch request over `max_batch_size`, or (signed-response
@@ -955,6 +989,13 @@ paths:
         is `501 refresh_token_not_configured` — operators relying on
         this endpoint must wire a store that supports bulk lookup
         (SQLite + memory both do; custom backends opt in).
+
+        Also cascades to every trusted-device ("remember this device")
+        MFA-skip grant for the bearer's subject, across ALL clients —
+        the same account-compromise-adjacent signal that a self-service
+        password change or "sign out everywhere" already revokes on.
+        Best-effort/fail-open and a no-op (0) when no
+        `TrustedDeviceStore` is wired.
       operationId: postRevokeAll
       security:
         - bearerAuth: []
@@ -976,6 +1017,12 @@ paths:
                     type: integer
                     description: Number of refresh tokens deleted.
                     example: 3
+                  trusted_devices_revoked:
+                    type: integer
+                    description: |
+                      Number of trusted-device MFA-skip grants revoked
+                      (0 when no TrustedDeviceStore is wired).
+                    example: 1
         "401":
           description: |
             Missing or invalid bearer. WWW-Authenticate carries the
@@ -1638,6 +1685,11 @@ paths:
         authenticated as their own account, so a wrong current password
         returns `invalid_password` (not an enumeration leak). Mounted only when
         a password credential store is wired. `Cache-Control: no-store`.
+
+        Account-compromise signal: when a `TrustedDeviceStore` is wired, a
+        successful change also revokes every one of the caller's "remember
+        this device" MFA-skip grants (`GET/POST/DELETE /me/devices*`), so a
+        grant minted under the old password cannot outlive it.
       operationId: changeMyPassword
       security:
         - bearerAuth: []
@@ -1961,6 +2013,135 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /me/devices:
+    get:
+      tags: [self-service]
+      summary: List the authenticated user's trusted (MFA-skip) devices.
+      description: |
+        Returns non-sensitive metadata (id, client_id, label, timestamps) for
+        each live "remember this device" grant — never the device token or
+        its hash, which the store retains only as a one-way hash and never
+        returns again once `POST /me/devices/trust` has minted it. Mounted
+        only when a `TrustedDeviceStore` is wired. `Cache-Control: no-store`.
+      operationId: listMyTrustedDevices
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The user's live trusted-device grants.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TrustedDevice"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No `TrustedDeviceStore` wired on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /me/devices/trust:
+    post:
+      tags: [self-service]
+      summary: Mark the current device trusted, skipping MFA on future logins.
+      description: |
+        Mints a fresh "remember this device" grant for (caller, the bearer
+        token's client) and returns the plaintext device token EXACTLY
+        ONCE — the store persists only its SHA-256 hash from here on, the
+        same discipline as recovery codes and refresh tokens. A later
+        `POST /auth/login` to the SAME client presenting `device_token` skips
+        a risk-scorer-demanded MFA challenge until the grant expires (bounded
+        TTL, default 30 days — never permanent; no renew-on-use).
+
+        Gated on the caller's OWN bearer token having completed MFA THIS
+        session (`amr` contains `mfa`): a token minted from a plain password
+        login — even a valid, unexpired one — cannot mint a skip grant. This
+        is the load-bearing control against "steal a live session, silently
+        upgrade to a standing MFA bypass". Failing that check returns RFC
+        9470 `insufficient_user_authentication` — oracle-safe to name
+        explicitly here, since this is a legitimate step-up demand on the
+        caller's own account, not a credential-guessing surface. Mounted only
+        when a `TrustedDeviceStore` is wired. `Cache-Control: no-store`.
+      operationId: trustMyDevice
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                  description: Optional cosmetic display hint (e.g. "Chrome on macOS"). Never used in any security decision.
+      responses:
+        "201":
+          description: Grant minted; device_token shown exactly once.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  device_id: { type: string }
+                  device_token:
+                    type: string
+                    description: Bearer-equivalent MFA-skip credential. Capture now — never retrievable again.
+                  label: { type: string }
+                  expires_at: { type: string, format: date-time }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            `insufficient_user_authentication` — the caller's bearer token did
+            not complete an MFA step-up this session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No `TrustedDeviceStore` wired on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /me/devices/{id}:
+    delete:
+      tags: [self-service]
+      summary: Revoke one of the authenticated user's trusted-device grants.
+      description: |
+        Revokes the grant by id, immediately ending its ability to skip MFA.
+        A grant belonging to another user (or a missing id) returns the same
+        404 — ownership is enforced via the user-scoped list, so a cross-user
+        delete can never remove someone else's grant. `Cache-Control: no-store`.
+      operationId: revokeMyTrustedDevice
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Grant revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such grant for this user, or no `TrustedDeviceStore` wired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /.well-known/oauth-protected-resource:
     get:
       tags: [discovery]
@@ -2029,6 +2210,12 @@ paths:
         carries no `sid`, every session is revoked. Scope mirrors single-
         session revoke (sessions only — bulk refresh-token revocation remains
         `/token/revoke-all`). Requires a SessionManager; `Cache-Control: no-store`.
+
+        Also cascades to every trusted-device ("remember this device")
+        MFA-skip grant for the caller, even the ones preserved by the
+        default keep-current-session behavior — a compromise remediation
+        must not spare a standing MFA-skip grant. Best-effort/fail-open;
+        a no-op when no `TrustedDeviceStore` is wired.
       operationId: revokeMySessions
       security:
         - bearerAuth: []
@@ -7489,6 +7676,76 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
 
+  /api/v1/admin/connections/{id}/health:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [admin]
+      summary: Read a connection's last recorded reachability probe outcome.
+      description: |
+        Returns the LAST recorded probe result for this connection — it never
+        triggers a fresh check itself (see the sibling `/probe` endpoint for
+        that). admin:read. A connection that has never been probed reads back
+        `status: unknown` with no timestamps. 404 if the connection does not
+        exist. Mounted only when a connection store is wired.
+      operationId: adminGetConnectionHealth
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The connection's last recorded health.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConnectionHealth" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such connection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/admin/connections/{id}/probe:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Synchronously test a connection's upstream reachability.
+      description: |
+        Performs a lightweight reachability/handshake check against the
+        connection's configured upstream — an OIDC discovery fetch
+        (`{oidc_issuer}/.well-known/openid-configuration`) for `type: oidc`,
+        or a metadata fetch (`saml_metadata_url`) for `type: saml` — and
+        persists the outcome, superseding any prior recorded health.
+        admin:write. Always returns 200 with the recorded result, even when
+        the outcome is `degraded` or `unreachable` (the CHECK itself
+        succeeded; the result may be bad news — mirrors the domain-verify
+        endpoint's "not yet verified is a state, not an error" contract).
+        404 only when the connection does not exist. Emits
+        `admin_connection_probed` and increments
+        `sso_connection_health_probes_total{type,outcome}`. Mounted only when
+        a connection store is wired.
+      operationId: adminProbeConnection
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The freshly-recorded probe outcome.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConnectionHealth" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such connection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
   /api/v1/admin/tenants/{id}/members:
     parameters:
       - name: id
@@ -7565,6 +7822,73 @@ paths:
       responses:
         "204": { description: Membership removed. }
         "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/tenants/{id}/export:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Export a whole tenant's data (offboarding / environment migration).
+      description: |
+        Assembles a coherent, redacted bundle of everything the server holds
+        for one tenant — clients, org roster + user profiles, pending
+        invitations, B2B enterprise connections, per-client roles +
+        assignments, and a sessions + audit SUMMARY (aggregated counts, never
+        raw session or audit records) — suitable for customer offboarding or
+        migrating a tenant to a new environment. Each resource section
+        reuses the corresponding store's tenant-scoped list method and is
+        independently skipped (never erroring the whole export) when its
+        backing store isn't wired.
+
+        `admin:write` — deliberately above the GET-default `admin:read` used
+        by the roster/connection GETs on this same path prefix, since
+        assembling this bundle is a heavier, more sensitive read (see
+        `POST /api/v1/admin/backup` for the same reasoning). Client secrets,
+        RFC 7592 registration tokens, invitation tokens, and connection
+        config keys that look credential-bearing are never included in
+        plaintext.
+
+        In a multi-tenant deployment where the request resolved a
+        host-bound tenant (`domains/tenant` middleware) that disagrees with
+        `id`, the request is rejected with `403 tenant_mismatch` before any
+        data is assembled. Best-effort: a partial store failure still
+        returns the sections that DID succeed (`207`), never nothing.
+        The response carries `Content-Disposition: attachment` so a browser
+        or admin UI downloads it as a file. Mounted only when a
+        TenantUserStore is wired (the roster is this export's anchor
+        dependency). Emits `admin_tenant_exported`.
+      operationId: adminExportTenant
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Export bundle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantExport"
+        "207":
+          description: Partial export bundle — at least one section's store failed; see the audit log for detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantExport"
+        "400":
+          description: Missing tenant id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: tenant_mismatch — the request's resolved (host-bound) tenant disagrees with `id`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /me/organizations:
     get:
@@ -9314,6 +9638,14 @@ components:
         state:
           type: string
           description: Opaque value echoed back to redirect-based flows.
+        device_token:
+          type: string
+          description: |
+            Opaque "remember this device" grant minted by a prior
+            `POST /me/devices/trust`. When the configured RiskScorer would
+            otherwise demand step-up MFA, a live grant for the SAME
+            (user, client) skips the challenge. Omit on an untrusted or
+            first-time device — the ordinary MFA gate applies unchanged.
 
     LoginResponse:
       type: object
@@ -9494,6 +9826,36 @@ components:
           example:
             session: "sess-echoed-from-mfa_method_data"
             assertion: '{"id":"...","rawId":"...","type":"public-key","response":{"clientDataJSON":"...","authenticatorData":"...","signature":"...","userHandle":"..."}}'
+
+    TrustedDevice:
+      type: object
+      description: |
+        Metadata for one "remember this device" MFA-skip grant, as returned
+        by `GET /me/devices`. Never carries the device token or its hash —
+        the token is shown exactly once, at `POST /me/devices/trust` time.
+      properties:
+        id:
+          type: string
+          description: Opaque grant id, used by `DELETE /me/devices/{id}`.
+        user_id:
+          type: string
+        client_id:
+          type: string
+          description: The OAuth client this grant applies to; a login skips MFA only for THIS client.
+        label:
+          type: string
+          description: Cosmetic display hint (e.g. "Chrome on macOS"). Never used in any security decision.
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: Bounded TTL (default 30 days). Never extended on use — a forgotten device decays on its own.
+        last_used_at:
+          type: string
+          format: date-time
+          description: Zero/absent until the grant's first successful MFA-skip login.
 
     SendCodeRequest:
       type: object
@@ -11353,6 +11715,39 @@ components:
         created_at: { type: string, format: date-time }
         verified_at: { type: string, format: date-time }
 
+    ConnectionHealth:
+      type: object
+      description: |
+        The last recorded outcome of an admin-triggered reachability probe
+        against a connection's configured upstream IdP.
+      required: [connection_id, status]
+      properties:
+        connection_id: { type: string }
+        status:
+          type: string
+          enum: [unknown, healthy, degraded, unreachable]
+          description: |
+            unknown: never probed. healthy: the upstream returned a
+            well-formed discovery/metadata document. degraded: the upstream
+            responded, but with an error status or malformed document.
+            unreachable: the probe could not complete the handshake at all
+            (DNS failure, connection refused, TLS error, timeout), or the
+            connection has no probeable upstream configured.
+        last_checked_at:
+          type: string
+          format: date-time
+          description: When the last probe ran, regardless of outcome.
+        last_success_at:
+          type: string
+          format: date-time
+          description: When the connection was last observed healthy. Omitted if never healthy.
+        last_error:
+          type: string
+          description: |
+            Bounded-length, secret-free detail from the last probe (transport
+            or status-code text only — never upstream response body).
+            Omitted when status is healthy.
+
     ErasureReport:
       type: object
       properties:
@@ -11375,6 +11770,96 @@ components:
           type: array
           items: { type: string }
           description: Per-step failures; present on a 207 partial erasure.
+
+    TenantExport:
+      type: object
+      description: |
+        Offboarding/environment-migration bundle for one tenant (see
+        `POST /api/v1/admin/tenants/{id}/export` and
+        protocols/compliance.TenantExporter). Every resource array is
+        OMITTED (not present-but-empty) when its backing store wasn't
+        wired, so a recipient can tell "no data" apart from "not exported".
+      required: [format_version, tenant_id, generated_at, sessions_summary, manifest]
+      properties:
+        format_version:
+          type: integer
+          example: 1
+        tenant_id:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+        clients:
+          type: array
+          items: { $ref: "#/components/schemas/ClientMetadata" }
+          description: Secrets and RFC 7592 registration tokens are never included.
+        members:
+          type: array
+          items: { $ref: "#/components/schemas/TenantMembership" }
+        users:
+          type: array
+          items: { $ref: "#/components/schemas/User" }
+          description: One profile per roster member. Credential attributes (password_hash, seeded_password, ...) are stripped.
+        invitations:
+          type: array
+          items:
+            type: object
+            properties:
+              tenant_id: { type: string }
+              email: { type: string }
+              role: { type: string, enum: [member, admin, guest] }
+              expires_at: { type: string, format: date-time }
+          description: The live token value is never included.
+        connections:
+          type: array
+          items: { $ref: "#/components/schemas/Connection" }
+          description: Config keys that look credential-bearing (secret/password/private/token) are stripped.
+        roles:
+          type: array
+          items:
+            type: object
+            properties:
+              client_id: { type: string }
+              roles:
+                type: array
+                items: { $ref: "#/components/schemas/Role" }
+        assignments:
+          type: array
+          items:
+            type: object
+            properties:
+              client_id: { type: string }
+              assignments:
+                type: array
+                items: { $ref: "#/components/schemas/Assignment" }
+        sessions_summary:
+          type: object
+          description: Aggregated counts, never raw session records — sessions are ephemeral, environment-local state.
+          properties:
+            supported: { type: boolean, description: False when the wired SessionManager can't list by tenant. }
+            total: { type: integer }
+            active: { type: integer }
+            revoked: { type: integer }
+        audit_summary:
+          type: object
+          description: Aggregated event counts by type/outcome/client/provider (audit.Facets), never raw events. Absent when unavailable (distinct from zero events).
+          properties:
+            total: { type: integer }
+            outcomes: { type: object, additionalProperties: { type: integer } }
+            types: { type: object, additionalProperties: { type: integer } }
+            clients: { type: object, additionalProperties: { type: integer } }
+            providers: { type: object, additionalProperties: { type: integer } }
+        manifest:
+          type: object
+          required: [sections, checksum]
+          properties:
+            sections:
+              type: object
+              additionalProperties: { type: integer }
+              description: Per-section item count (e.g. clients, members, users, sessions, audit_events).
+            checksum:
+              type: string
+              description: sha256 hex digest over the bundle's data payload — lets a recipient confirm a downloaded bundle matches what was generated.
 
     AuthzPolicyBundle:
       type: object
@@ -11912,6 +12397,16 @@ components:
           type: array
           items:
             type: string
+        introspection_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+          description: |
+            RFC 9701 §7. Present ONLY when a dedicated introspection
+            signer is wired (WithIntrospectionSigning) — its presence
+            is how a resource server discovers the JWT-formatted
+            /token/introspect response is available before ever
+            sending the opt-in Accept header.
         id_token_encryption_alg_values_supported:
           type: array
           description: Present only when a JWE response encrypter is wired (WithJWEResponseEncrypter).

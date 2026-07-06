@@ -2,6 +2,7 @@ package sso
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/snaplink/sso/domains/identitylink"
 	"github.com/snaplink/sso/domains/tenant"
@@ -158,6 +159,33 @@ func (s *Server) handleChangeMyPassword(ctx HandlerContext) {
 	selfservice.HandleChangeMyPassword(s, ctx)
 }
 
+// handleMyTrustedDevices delegates to selfservice.HandleMyTrustedDevices.
+func (s *Server) handleMyTrustedDevices(ctx HandlerContext) {
+	selfservice.HandleMyTrustedDevices(s, ctx)
+}
+
+// handleTrustMyDevice delegates to selfservice.HandleTrustMyDevice.
+func (s *Server) handleTrustMyDevice(ctx HandlerContext) { selfservice.HandleTrustMyDevice(s, ctx) }
+
+// handleRevokeMyTrustedDevice delegates to selfservice.HandleRevokeMyTrustedDevice.
+func (s *Server) handleRevokeMyTrustedDevice(ctx HandlerContext) {
+	selfservice.HandleRevokeMyTrustedDevice(s, ctx)
+}
+
+// mountTrustedDeviceRoutes registers the self-service "remember this device"
+// MFA-skip surface (GET/POST/DELETE /me/devices*). Called from
+// mountSelfServiceCredentials (server_routes.go); kept here — rather than
+// grown inline there — to keep that orchestrator within the per-function
+// line budget. Byte-identical without a store wired.
+func (s *Server) mountTrustedDeviceRoutes() {
+	if s.trustedDeviceStore == nil {
+		return
+	}
+	s.router.GET(PathMyDevices, s.handleMyTrustedDevices)
+	s.router.POST(PathMyDevicesTrust, s.handleTrustMyDevice)
+	s.router.DELETE(PathMyDeviceByID, s.handleRevokeMyTrustedDevice)
+}
+
 // handleMyWebAuthnRegisterBegin delegates to selfservice.HandleWebAuthnRegisterBegin.
 func (s *Server) handleMyWebAuthnRegisterBegin(ctx HandlerContext) {
 	selfservice.HandleWebAuthnRegisterBegin(s, ctx)
@@ -306,6 +334,7 @@ func (s *Server) mountSelfServiceCredentials() {
 		s.router.POST(PathMyMFARecoveryCodes, s.handleGenerateRecoveryCodes)
 		s.router.GET(PathMyMFARecoveryCodes, s.handleGetRecoveryCodesCount)
 	}
+	s.mountTrustedDeviceRoutes()
 	// Self-service passkey registration (authenticated, bearer-bound). Mounts
 	// independently of the enrollment store: the registered credential lands in
 	// the WebAuthn store the Registrar wraps and surfaces in /me/mfa via the
@@ -337,5 +366,30 @@ func (s *Server) mountSelfServiceCredentials() {
 func (s *Server) mountBrandingEndpoint() {
 	if s.tenantStore != nil && s.webSPAGateOn() {
 		s.router.GET(PathBranding, s.handleBranding)
+	}
+}
+
+// WithTrustedDeviceStore wires the "remember this device" MFA-skip store. It
+// mounts the self-service surface GET /me/devices (list), POST
+// /me/devices/trust (mark the CURRENT device trusted — gated on the
+// caller's bearer token having completed MFA THIS session, i.e. its amr
+// contains "mfa"), and DELETE /me/devices/:id (revoke one) — and it arms the
+// /auth/login step-up-skip check: when the configured RiskScorer demands
+// DecisionRequireMFA, a request presenting a live grant
+// (login.Request.DeviceToken) for the SAME (user, client) pair skips the
+// challenge.
+//
+// ttl bounds how long a single grant stays valid; pass 0 to inherit
+// [core.DefaultTrustedDeviceTTL] (30 days). There is no renew-on-use, so a
+// forgotten device decays on its own rather than staying trusted forever.
+// When nil (the default), neither the self-service routes nor the
+// login-time skip are active — byte-identical to a build without this
+// feature. Relocated from options_passwd.go (which was at the line budget).
+func WithTrustedDeviceStore(store TrustedDeviceStore, ttl time.Duration) Option {
+	return func(srv *Server) {
+		srv.trustedDeviceStore = store
+		if ttl > 0 {
+			srv.trustedDeviceTTL = ttl
+		}
 	}
 }

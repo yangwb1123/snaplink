@@ -5,9 +5,11 @@ import (
 
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/userlifecycle"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
+	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
@@ -23,11 +25,27 @@ type Deps interface {
 	// ConditionalAccessStore backs the read-only zero-trust CAP governance
 	// view; may be nil when WithConditionalAccess isn't wired.
 	ConditionalAccessStore() conditionalaccess.Store
+	// ClientStore / SessionManager / Permissions back the tenant-export
+	// handler's compliance.TenantExporter (see tenant_export.go). Each is
+	// independently nil-tolerant downstream — the exporter skips a section
+	// rather than erroring when its store isn't wired.
+	ClientStore() core.ClientStore
+	SessionManager() core.SessionManager
+	Permissions() permissions.Provider
 	// DomainResolver is the DNS-TXT resolver the connection domain-verify
 	// handler uses to read a challenge record. Injectable (first-class DI) so
 	// tests run network-free with a fake and operators can supply a
 	// DNS-over-HTTPS resolver; the production default is stdlib-backed.
 	DomainResolver() connections.DNSResolver
+	// ConnectionProber performs the admin-triggered reachability check
+	// (POST .../connections/:id/probe) against a connection's configured
+	// upstream. Injectable (first-class DI) so tests run network-free with a
+	// fake; the production default issues the real OIDC discovery / SAML
+	// metadata fetch.
+	ConnectionProber() connections.Prober
+	// Metrics returns the wired Prometheus collectors, or nil when
+	// sso.WithMetrics was never configured — every call site nil-checks.
+	Metrics() *metrics.Metrics
 	TenantUserStore() core.TenantUserStore
 	InvitationStore() core.InvitationStore
 	InvitationSender() spi.InvitationSender

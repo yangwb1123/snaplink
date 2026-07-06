@@ -12,11 +12,13 @@ import (
 
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/userlifecycle"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/defaulttoken"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
+	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
@@ -55,6 +57,11 @@ type bgTestDeps struct {
 }
 
 func (d *bgTestDeps) SessionMgr() core.SessionManager                       { return d.sessions }
+func (d *bgTestDeps) ClientStore() core.ClientStore                         { return nil }
+func (d *bgTestDeps) SessionManager() core.SessionManager                   { return d.sessions }
+func (d *bgTestDeps) Permissions() permissions.Provider                     { return nil }
+func (d *bgTestDeps) ConnectionProber() connections.Prober                  { return nil }
+func (d *bgTestDeps) Metrics() *metrics.Metrics                             { return nil }
 func (d *bgTestDeps) BreakGlassStore() core.BreakGlassStore                 { return d.breakGlass }
 func (d *bgTestDeps) Auditor() *audit.Recorder                              { return d.auditor }
 func (d *bgTestDeps) Logger() spi.Logger                                    { return bgTestLogger{} }

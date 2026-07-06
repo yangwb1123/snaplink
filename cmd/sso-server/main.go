@@ -289,6 +289,14 @@ type app struct {
 	// configured sink; Close drains the buffer during shutdown.
 	auditAsyncSink *audit.AsyncSink
 
+	// auditKafkaSink is non-nil when audit.kafka.enabled wired a Kafka
+	// producer sink; shutdownSubsystems Close's it (flush + disconnect) if
+	// it implements interface{ Close(context.Context) error } — the
+	// concrete type lives in the infrastructure/kafka nested module, which
+	// this (the core) module never imports, so the field is the audit.Sink
+	// interface and the Close capability is checked via type assertion.
+	auditKafkaSink audit.Sink
+
 	// auditRetentionCancel + auditRetentionDone coordinate the
 	// background prune loop's shutdown when audit.retention.enabled
 	// wires it. Cancel signals; Done closes when the goroutine

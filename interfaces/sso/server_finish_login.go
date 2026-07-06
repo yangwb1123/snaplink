@@ -426,7 +426,15 @@ func (s *Server) finishLoginCodeFlow(ctx HandlerContext, result *AuthResult, req
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, code, state))
 		return
 	}
-	code, err := s.issueAuthCode(ctx.Request().Context(), result, req, client)
+	// RFC 9449 §10: an optional DPoP proof presented at THIS request binds
+	// the issued code to that key; a malformed/invalid proof fails the
+	// login outright rather than silently issuing an unbound code (mirrors
+	// the /token DPoP gate's fail-closed shape).
+	dpopJKT, handled := s.captureAuthCodeDPoPBinding(ctx, state)
+	if handled {
+		return
+	}
+	code, err := s.issueAuthCode(ctx.Request().Context(), result, req, client, dpopJKT)
 	if err != nil {
 		s.logger.Error("failed to issue auth code", "error", err)
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))

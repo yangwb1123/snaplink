@@ -15,8 +15,10 @@ import (
 	"github.com/snaplink/sso/protocols/oauth"
 )
 
-// issueAuthCode delegates to oauth.IssueAuthCode.
-func (s *Server) issueAuthCode(ctx context.Context, result *AuthResult, req *login.Request, client *Client) (string, error) {
+// issueAuthCode delegates to oauth.IssueAuthCode. confirmationJKT is the RFC
+// 9449 §10 DPoP key thumbprint captured off the /auth/login request (empty =
+// unbound); see captureAuthCodeDPoPBinding.
+func (s *Server) issueAuthCode(ctx context.Context, result *AuthResult, req *login.Request, client *Client, confirmationJKT string) (string, error) {
 	return oauth.IssueAuthCode(ctx, oauth.IssueAuthCodeParams{
 		AuthCodeTTL:          s.authCodeTTL,
 		AuthCodeStore:        s.authCodeStore,
@@ -33,7 +35,52 @@ func (s *Server) issueAuthCode(ctx context.Context, result *AuthResult, req *log
 		CodeChallengeMethod:  req.CodeChallengeMethod,
 		Resources:            req.Resource,
 		AuthorizationDetails: req.AuthorizationDetails,
+		ConfirmationJKT:      confirmationJKT,
 	})
+}
+
+// captureAuthCodeDPoPBinding validates an optional DPoP proof presented AT
+// AUTHORIZATION TIME (/auth/login) and returns its JWK thumbprint so the
+// issued authorization code can be bound to it (RFC 9449 §10) — closing the
+// code-injection gap where an attacker who intercepts a code minted for one
+// client's DPoP key redeems it under a key of their own. This is DISTINCT
+// from captureSenderConstraint (server_token.go), which binds the eventual
+// access/refresh token to whatever proof arrives separately at the /token
+// EXCHANGE — the two proofs may even be presented by different requests, so
+// they are captured and validated independently.
+//
+// Absence of the header is NOT an error: DPoP code-binding is opt-in,
+// exactly like the token-binding path. handled==true means an error
+// response has ALREADY been written (the authz error envelope + RFC 6749
+// §4.1.2.1 state echo, per AGENTS.md "New authz handlers MUST use
+// s.authzErrorBodyWithState") and the caller MUST return.
+func (s *Server) captureAuthCodeDPoPBinding(ctx HandlerContext, state string) (dpopJKT string, handled bool) {
+	proof := ctx.Request().Header.Get(HeaderDPoP)
+	if proof == "" {
+		return "", false
+	}
+	binding, err := verifyDPoPProof(
+		ctx.Request().Context(),
+		proof,
+		ctx.Request().Method,
+		requestURLForDPoP(ctx.Request()),
+		s.jtiReplayStore,
+		s.jtiReplayFailClosed,
+		s.dpopNonceProvider,
+		s.resolvedDPoPProofMaxAge(),
+		s.resolvedDPoPProofClockSkew(), "", // issuance: no access token yet, no ath
+	)
+	if err != nil {
+		if errors.Is(err, ErrDPoPNonceRequired) {
+			s.stampDPoPNonce(ctx)
+			ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrUseDPoPNonce, state))
+			return "", true
+		}
+		s.logger.Error("dpop proof failed at authorization endpoint", "error", err)
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidDPoPProof, state))
+		return "", true
+	}
+	return binding.JKT, false
 }
 
 // isSecureRedirectURI delegates to oauth.IsSecureRedirectURI.
@@ -224,35 +271,8 @@ func (s *Server) sessionPolicyCapExceeded(ctx HandlerContext, userID, clientID s
 	return true
 }
 
-// IntrospectionRenewExceeded reports whether an access token being introspected
-// has passed its wired require_renew fraction of TTL and should be reported
-// INACTIVE (governance force-refresh). Default-OFF: a nil token-policy store
-// returns false, so introspection is byte-identical without a wired policy.
-// FAIL-OPEN on a store error (false) — a governance-store outage must never
-// flip a cryptographically valid token to inactive. Bumps the renew-required
-// metric on a positive result (the only place that governance signal surfaces).
-func (s *Server) IntrospectionRenewExceeded(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) bool {
-	if s.tokenPolicyStore == nil {
-		return false
-	}
-	policies, err := s.tokenPolicyStore.Policies(ctx)
-	if err != nil {
-		s.logger.Error("token policy load failed — reporting token active (fail-open)", "error", err)
-		return false
-	}
-	dec := tokenpolicy.Evaluate(tokenpolicy.PolicyInput{
-		ClientID: clientID,
-		Scopes:   scopes,
-		Kind:     tokenpolicy.KindAccess,
-	}, policies)
-	if !tokenpolicy.RenewExceeded(dec.RenewAfter, issuedAt, expiresAt, time.Now()) {
-		return false
-	}
-	s.metrics.ObserveTokenPolicyRenewRequired()
-	s.logger.Info("token past require_renew threshold — reported inactive at introspection",
-		"client", clientID)
-	return true
-}
+// IntrospectionRenewExceeded moved to sso_protocol.go (which had room) to
+// keep this file within the per-file line budget.
 
 // finalizeCallbackSession upserts the user (when a UserProvider is configured)
 // and creates a session, writing the success or 500 error response.

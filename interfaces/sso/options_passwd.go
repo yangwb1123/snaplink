@@ -181,6 +181,9 @@ func WithRecoveryCodeStore(store RecoveryCodeStore) Option {
 	return func(srv *Server) { srv.recoveryCodeStore = store }
 }
 
+// WithTrustedDeviceStore moved to server_me.go (which had room), beside
+// mountTrustedDeviceRoutes and the trusted-device handlers it feeds.
+
 // WithTOTPEnroller wires the seam the self-service TOTP enrollment endpoints
 // (POST /me/mfa/totp/begin + /confirm) use to mint/encode/decode secrets, build
 // the otpauth provisioning URI, and verify the confirm code. Use

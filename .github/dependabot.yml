@@ -1,4 +1,4 @@
-# Dependabot auto-update config — covers all 11 go.mod files across the monorepo.
+# Dependabot auto-update config — covers all 12 go.mod files across the monorepo.
 # Each module gets weekly PRs that bump out-of-date deps; the `gomod` ecosystem
 # handles Go module updates via `go get` + `go mod tidy`.
 #
@@ -54,6 +54,22 @@ updates:
 
   - package-ecosystem: gomod
     directory: /infrastructure/ldap
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Hong_Kong
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: gomod
+    directory: /infrastructure/kafka
     schedule:
       interval: weekly
       day: monday

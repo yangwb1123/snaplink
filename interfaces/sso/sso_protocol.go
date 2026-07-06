@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"context"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -429,4 +430,35 @@ type cacheState struct {
 	// a single request's `scope` parameter (WithMaxScopeCount); <= 0
 	// (default) = unbounded. Applied at both /auth/login and /par.
 	maxScopeCount int
+}
+
+// IntrospectionRenewExceeded reports whether an access token being introspected
+// has passed its wired require_renew fraction of TTL and should be reported
+// INACTIVE (governance force-refresh). Default-OFF: a nil token-policy store
+// returns false, so introspection is byte-identical without a wired policy.
+// FAIL-OPEN on a store error (false) — a governance-store outage must never
+// flip a cryptographically valid token to inactive. Bumps the renew-required
+// metric on a positive result (the only place that governance signal surfaces).
+// Relocated from server_oauth.go (which was at the line budget).
+func (s *Server) IntrospectionRenewExceeded(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) bool {
+	if s.tokenPolicyStore == nil {
+		return false
+	}
+	policies, err := s.tokenPolicyStore.Policies(ctx)
+	if err != nil {
+		s.logger.Error("token policy load failed — reporting token active (fail-open)", "error", err)
+		return false
+	}
+	dec := tokenpolicy.Evaluate(tokenpolicy.PolicyInput{
+		ClientID: clientID,
+		Scopes:   scopes,
+		Kind:     tokenpolicy.KindAccess,
+	}, policies)
+	if !tokenpolicy.RenewExceeded(dec.RenewAfter, issuedAt, expiresAt, time.Now()) {
+		return false
+	}
+	s.metrics.ObserveTokenPolicyRenewRequired()
+	s.logger.Info("token past require_renew threshold — reported inactive at introspection",
+		"client", clientID)
+	return true
 }

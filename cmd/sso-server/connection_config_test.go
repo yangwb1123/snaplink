@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/config"
@@ -126,5 +128,72 @@ func TestBuildApp_ConnectionsMountsHomeRealm(t *testing.T) {
 	_ = json.Unmarshal(b2, &out2)
 	if found, _ := out2["found"].(bool); found {
 		t.Errorf("unknown domain must not resolve: %s", b2)
+	}
+}
+
+// TestBuildApp_ConnectionsProbeTimeoutWired proves connections.probe.timeout
+// actually reaches the wired sso.Server (via sso.WithConnectionProbeTimeout in
+// wireConnectionsAndCache), not just parsed and dropped. A listener that
+// accepts but never responds would hang for the connections.DefaultProbeTimeout
+// (10s) default; with a 100ms configured timeout the admin probe endpoint must
+// come back well under that, marking the connection unreachable.
+func TestBuildApp_ConnectionsProbeTimeoutWired(t *testing.T) {
+	t.Parallel()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// Accept and hold the connection open without ever writing a
+			// response — simulates a hung upstream so the probe can only
+			// return via ITS OWN timeout, not a fast connection-refused.
+			go func() { <-make(chan struct{}); _ = c.Close() }()
+		}
+	}()
+
+	cfg := &config.Config{}
+	cfg.Connections = config.ConnectionsConfig{
+		Enabled: true, Backend: "memory",
+		Probe: config.ConnectionsProbeConfig{Timeout: 100 * time.Millisecond},
+		Connections: []config.ConnectionSeedConfig{{
+			ID: "hung", TenantID: "t1", Type: "oidc", Enabled: true,
+			Config: map[string]string{"oidc_issuer": "http://" + ln.Addr().String()},
+		}},
+	}
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer func() { _ = a.registry.Close() }()
+
+	srv := httptest.NewServer(a.server.Handler())
+	defer srv.Close()
+
+	start := time.Now()
+	resp, err := http.Post(srv.URL+"/api/v1/admin/connections/hung/probe", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST probe: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	elapsed := time.Since(start)
+	// Generous upper bound: well past 100ms, well short of the 10s default —
+	// proves the CONFIGURED timeout governed the round-trip, not the default.
+	if elapsed > 5*time.Second {
+		t.Errorf("probe took %v, want well under the 10s default (timeout not wired?)", elapsed)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("probe status=%d, want 200", resp.StatusCode)
+	}
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if out["status"] != "unreachable" {
+		t.Errorf("probe result = %v, want status=unreachable", out)
 	}
 }

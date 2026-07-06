@@ -250,6 +250,22 @@ audit:
     #   - name: security-alerts
     #     url: "https://alerts.internal/hook"
     #     event_types: ["refresh_token_reuse_detected", "account_locked", "anomaly_detected"]
+  # Publishes every event to a Kafka topic — the network-transport sibling
+  # of the audit.cef/audit.ocsf/audit.syslog file sinks (see
+  # docs/config-reference.md), reusing those exact formatters. Requires a
+  # FORKED cmd binary: the segmentio/kafka-go dependency lives only in
+  # infrastructure/kafka's own go.mod (never this binary's), so enabling
+  # this also requires importing that module and
+  # calling serverbuildauthn.RegisterAuditKafkaSinkFactory(kafkaaudit.Factory)
+  # once at init — see that module's package doc. enabled:true with no
+  # factory registered fails boot closed with a clear error.
+  # kafka:
+  #   enabled: false
+  #   brokers: ["kafka-1.internal:9092", "kafka-2.internal:9092"]
+  #   topic: "sso-audit-events"
+  #   format: json           # json (default, schema_version-tagged) | cef | ocsf | syslog
+  #   required_acks: all     # none | one | all (default all — full ISR ack)
+  #   client_id: sso-server
   # Background pruning of old audit events. Active only when
   # backend=sqlite (the memory ring buffer self-prunes by capacity).
   # When enabled, cmd launches a goroutine that wakes every interval

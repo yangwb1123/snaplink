@@ -220,6 +220,9 @@ func (b *appBuilder) wireAudit() error {
 	if sink, err = b.wireAuditSIEM(sink); err != nil {
 		return err
 	}
+	if sink, err = b.wireAuditKafka(sink); err != nil {
+		return err
+	}
 	// Async wrap when configured. The buffered hot path keeps slow
 	// (e.g. webhook) sinks from blocking request latency. Memory
 	// sink benefits little — the wrap is opt-in per operator.
@@ -259,8 +262,8 @@ func (b *appBuilder) checkAuditSchema(primary audit.Sink) error {
 // wireAuditSIEM fans sink out to every enabled CEF/OCSF/syslog formatter —
 // three independent config blocks, so any subset may be active
 // simultaneously. Formatter sinks are local/stdout/file targets (no
-// RetryingSink): network SIEM delivery is a later roadmap item that reuses
-// these exact byte-formatters over a different transport.
+// RetryingSink): network delivery of these same formatters is
+// wireAuditKafka below.
 func (b *appBuilder) wireAuditSIEM(sink audit.Sink) (audit.Sink, error) {
 	siemSinks, err := serverbuildauthn.BuildAuditSIEMSinks(b.cfg.Audit, b.logger)
 	if err != nil {
@@ -270,6 +273,25 @@ func (b *appBuilder) wireAuditSIEM(sink audit.Sink) (audit.Sink, error) {
 		return sink, nil
 	}
 	return audit.NewMultiSink(append([]audit.Sink{sink}, siemSinks...)...), nil
+}
+
+// wireAuditKafka fans sink out to the configured Kafka topic when
+// audit.kafka.enabled. Unlike the CEF/OCSF/syslog formatter sinks (a
+// local/stdout/file target), this is a network delivery — wrapped in
+// RetryingSink to mask transient broker hiccups, the same posture as
+// wireAuditWebhook. The RAW (unwrapped) sink is retained on b.auditKafkaSink
+// so shutdownSubsystems can Close it (flush + disconnect the producer) at
+// graceful shutdown; RetryingSink does not forward Close.
+func (b *appBuilder) wireAuditKafka(sink audit.Sink) (audit.Sink, error) {
+	kafkaSink, err := serverbuildauthn.BuildAuditKafkaSink(b.cfg.Audit.Kafka, b.logger)
+	if err != nil {
+		return nil, fmt.Errorf("audit: build kafka sink: %w", err)
+	}
+	if kafkaSink == nil {
+		return sink, nil
+	}
+	b.auditKafkaSink = kafkaSink
+	return audit.NewMultiSink(sink, audit.NewRetryingSink(kafkaSink)), nil
 }
 
 // startAuditRetention boots the retention prune loop against the SQLite primary
@@ -443,4 +465,23 @@ func (b *appBuilder) wireNetwork() error {
 		b.opts = append(b.opts, sso.WithReadyCheck("netpolicy-classifier", func(context.Context) error { return cls.Ready() }))
 	}
 	return nil
+}
+
+// assembleExtras sets the *app fields left out of assemble()'s (build_app.go)
+// composite literal to keep that function within the function-length
+// budget — pure field mapping, no behavior.
+func (b *appBuilder) assembleExtras(a *app, rt serverRuntime) {
+	a.auditKafkaSink, a.consentStore, a.mfaEnrollStore = b.auditKafkaSink, b.consentStore, b.mfaEnrollStore
+	a.pushPruneCancel, a.pushPruneDone = b.pushPruneCancel, b.pushPruneDone
+	a.cibaPruneCancel, a.cibaPruneDone = b.cibaPruneCancel, b.cibaPruneDone
+	a.netStop, a.netCancel = b.netStop, b.netCancel
+	a.drReadiness, a.drReplicationCancel, a.drReplicationDone = drFields(rt.dr)
+	a.configAuditStore = b.configAuditStore
+	a.credentialSchedCancel, a.credentialSchedDone = b.credentialSchedCancel, b.credentialSchedDone
+	a.configDriftCancel, a.configDriftDone = b.configDriftCancel, b.configDriftDone
+	a.breakGlassCancel, a.breakGlassDone = b.breakGlassCancel, b.breakGlassDone
+	a.continuousVerifyCancel, a.continuousVerifyDone = b.continuousVerifyCancel, b.continuousVerifyDone
+	a.tokenUsageRecorder = b.tokenUsageRecorder
+	a.tokenAnomalySweepCancel, a.tokenAnomalySweepDone = b.tokenAnomalySweepCancel, b.tokenAnomalySweepDone
+	a.degradationMgr = b.degradationMgr
 }

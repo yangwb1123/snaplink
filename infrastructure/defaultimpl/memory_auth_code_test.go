@@ -17,14 +17,15 @@ func TestMemoryAuthCodeStore_RoundTrip(t *testing.T) {
 	t.Parallel()
 	s := defaultimpl.NewMemoryAuthCodeStore()
 	in := &oauth.AuthCode{
-		UserID:      "u-1",
-		ClientID:    "web",
-		RedirectURI: "https://app/cb",
-		Scopes:      []string{"openid", "profile"},
-		Nonce:       "n1",
-		Provider:    "password",
-		Attributes:  map[string]string{"role": "admin"},
-		ExpiresAt:   time.Now().Add(time.Minute),
+		UserID:          "u-1",
+		ClientID:        "web",
+		RedirectURI:     "https://app/cb",
+		Scopes:          []string{"openid", "profile"},
+		Nonce:           "n1",
+		Provider:        "password",
+		Attributes:      map[string]string{"role": "admin"},
+		ConfirmationJKT: "jkt-abc123",
+		ExpiresAt:       time.Now().Add(time.Minute),
 	}
 	if err := s.Issue(context.Background(), "code-1", in); err != nil {
 		t.Fatalf("Issue: %v", err)
@@ -41,6 +42,9 @@ func TestMemoryAuthCodeStore_RoundTrip(t *testing.T) {
 	}
 	if out.Nonce != "n1" || out.Provider != "password" {
 		t.Errorf("string fields lost: %+v", out)
+	}
+	if out.ConfirmationJKT != "jkt-abc123" {
+		t.Errorf("ConfirmationJKT (RFC 9449 §10 DPoP code binding) lost: got %q", out.ConfirmationJKT)
 	}
 }
 

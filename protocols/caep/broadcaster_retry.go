@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -79,12 +81,12 @@ func retryableDeliveryError(err error) bool {
 // would be rejected as a replay. A new jti + iat per attempt is safe —
 // the events payload is identical and idempotent on the receiver.
 //
-// parent is deliver's (already cancellation-detached) context: the
-// per-attempt timeout is layered on top of it rather than context.Background()
-// so the mint/POST still carries the originating request's trace value —
-// WithTimeout's own deadline is unaffected since parent carries none.
-func (t *Transmitter) attemptDelivery(parent context.Context, endpoint, auth string, req buildSETRequest) error {
-	ctx, cancel := context.WithTimeout(parent, t.timeout)
+// ctx is deliver's (already cancellation-detached, span-bearing) delivery
+// context: the per-attempt timeout is layered on top of it rather than
+// context.Background() so the mint/POST still carries the originating
+// request's trace value and the caep.transmitter.deliver span.
+func (t *Transmitter) attemptDelivery(ctx context.Context, endpoint, auth string, req buildSETRequest) error {
+	ctx, cancel := context.WithTimeout(ctx, t.timeout)
 	defer cancel()
 	set, err := mintSET(ctx, t.signer, req, t.setTTL)
 	if err != nil {
@@ -111,4 +113,25 @@ func (t *Transmitter) waitBackoff(attempt int) bool {
 	case <-t.stop:
 		return false
 	}
+}
+
+// ErrInvalidReceiverEndpoint is returned by ValidateReceiverEndpoint for
+// a missing-scheme, non-https, or unparseable receiver URL.
+var ErrInvalidReceiverEndpoint = errors.New("caep: receiver endpoint must be a valid https URL")
+
+// ValidateReceiverEndpoint enforces the registration-time invariant: a
+// CAEP receiver endpoint MUST be an absolute https URL with a host. Used
+// at client create/update so a receiver address can never be a non-https
+// (plaintext SET exfil) or relative/garbage target. Exported so the admin
+// + DCR paths validate with one canonical rule. Relocated from
+// broadcaster.go (which was at the line budget).
+func ValidateReceiverEndpoint(raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ErrInvalidReceiverEndpoint
+	}
+	if u.Scheme != "https" || u.Host == "" {
+		return ErrInvalidReceiverEndpoint
+	}
+	return nil
 }

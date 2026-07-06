@@ -8,7 +8,9 @@ import (
 	"encoding/base64"
 
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // SignUserInfo implements oidc.UserinfoSigner — same ES256 key as access
@@ -40,8 +42,24 @@ func (j *ECDSAJWTIssuer) SignMetadata(ctx context.Context, claims map[string]any
 	return j.signClaims(ctx, sgn, kid, jwtTyp, claims)
 }
 
+// SignIntrospectionJWT implements [oauth.IntrospectionSigner] — RFC 9701
+// JWT-formatted /token/introspect responses. Deployments MUST point this
+// at a DEDICATED ECDSAJWTIssuer instance (its own key), never the
+// access/ID-token issuer — see oauth.IntrospectionSigner. The typ header
+// is core.JWTTypIntrospection, distinct from the generic "JWT" typ
+// SignUserInfo/SignMetadata use, per the RFC's substitution-attack
+// defense (§8): an RS checking typ can never mistake this JWT for a
+// bearer access token.
+func (j *ECDSAJWTIssuer) SignIntrospectionJWT(ctx context.Context, claims map[string]any) (string, error) {
+	if claims == nil {
+		return "", nil
+	}
+	sgn, kid := j.currentKey()
+	return j.signClaims(ctx, sgn, kid, core.JWTTypIntrospection, claims)
+}
+
 // signClaims is the shared JWS assembler for the free-form claim-map
-// signers (userinfo, metadata).
+// signers (userinfo, metadata, introspection).
 func (j *ECDSAJWTIssuer) signClaims(ctx context.Context, sgn ECDSASigner, kid, typ string, claims map[string]any) (string, error) {
 	header := ecdsaHeader{Alg: jwtAlgES256, Typ: typ, Kid: kid}
 	return signCompactJWS(ctx, sgn, header, claims, "ecdsa: sign claims")
@@ -141,11 +159,12 @@ func ecdsaFingerprintKid(pub *ecdsa.PublicKey) string {
 // defaultimpl package never imports the peripheral caep subsystem. SignJWT
 // satisfies caep.JWTSigner structurally regardless.
 var (
-	_ sso.TokenIssuer       = (*ECDSAJWTIssuer)(nil)
-	_ oidc.IDTokenIssuer    = (*ECDSAJWTIssuer)(nil)
-	_ oidc.UserinfoSigner   = (*ECDSAJWTIssuer)(nil)
-	_ oidc.MetadataSigner   = (*ECDSAJWTIssuer)(nil)
-	_ sso.LogoutTokenIssuer = (*ECDSAJWTIssuer)(nil)
-	_ sso.TokenFormatHinter = (*ECDSAJWTIssuer)(nil)
-	_ sso.JWKSProvider      = (*ECDSAJWTIssuer)(nil)
+	_ sso.TokenIssuer           = (*ECDSAJWTIssuer)(nil)
+	_ oidc.IDTokenIssuer        = (*ECDSAJWTIssuer)(nil)
+	_ oidc.UserinfoSigner       = (*ECDSAJWTIssuer)(nil)
+	_ oidc.MetadataSigner       = (*ECDSAJWTIssuer)(nil)
+	_ sso.LogoutTokenIssuer     = (*ECDSAJWTIssuer)(nil)
+	_ sso.TokenFormatHinter     = (*ECDSAJWTIssuer)(nil)
+	_ sso.JWKSProvider          = (*ECDSAJWTIssuer)(nil)
+	_ oauth.IntrospectionSigner = (*ECDSAJWTIssuer)(nil)
 )

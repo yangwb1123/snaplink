@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
 	"github.com/snaplink/sso/shared/core"
 )
 
@@ -56,6 +57,12 @@ func HandleChangeMyPassword(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
 		return
 	}
+	// A changed password is the strongest account-compromise-adjacent signal
+	// this handler sees: a trusted-device grant minted under the OLD password
+	// must not silently outlive it. Shared with the "sign out everywhere" /
+	// "revoke all sessions" self-service call sites (sessions.go) and
+	// /token/revoke-all — see selfservicecore.RevokeTrustedDevicesOnCompromiseSignal.
+	selfservicecore.RevokeTrustedDevicesOnCompromiseSignal(d, ctx, userID, "password_change")
 	ctx.JSON(http.StatusNoContent, nil)
 }
 

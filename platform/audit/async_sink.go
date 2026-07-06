@@ -7,7 +7,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/snaplink/sso/platform/tracing"
 	"github.com/snaplink/sso/shared/core"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // DefaultAsyncBufferSize is the queue capacity when WithAsyncBuffer is
@@ -194,7 +196,12 @@ func (a *AsyncSink) deliver(e *Event) {
 		ctx, cancel = context.WithTimeout(ctx, a.timeout)
 		defer cancel()
 	}
+	ctx, span := deliverSpanCtx(ctx, "audit.sink.deliver", e)
+	defer span.End()
+	span.SetAttributes(sinkTypeAttr(a.inner), attribute.String("audit.event_type", string(e.Type)))
+
 	if err := a.inner.Record(ctx, e); err != nil {
+		tracing.SetError(span, err)
 		a.dropsInnerError.Add(1)
 		if a.onDrop != nil {
 			a.onDrop(e, err)
@@ -260,7 +267,16 @@ func (a *AsyncSink) deliverBatch(batch []*Event) {
 		ctx, cancel = context.WithTimeout(ctx, a.timeout)
 		defer cancel()
 	}
+	// A batch can carry events from several unrelated requests; parenting
+	// on the first event's trace is a best-effort heuristic (still correct
+	// when the batch is single-trace, which dominates at low-to-moderate
+	// QPS) rather than an attempt to model a genuine multi-parent span.
+	ctx, span := deliverSpanCtx(ctx, "audit.sink.deliver_batch", batch[0])
+	defer span.End()
+	span.SetAttributes(sinkTypeAttr(a.inner), attribute.Int("audit.batch_size", len(batch)))
+
 	if err := bs.RecordBatch(ctx, batch); err != nil {
+		tracing.SetError(span, err)
 		a.dropsInnerError.Add(int64(len(batch)))
 		if a.onDrop != nil {
 			for _, e := range batch {

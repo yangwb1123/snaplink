@@ -121,6 +121,7 @@ func (s *Server) buildOIDCConfiguration(ctx HandlerContext, base string) oidc.Pr
 	s.applyStaticClaimsAndSecurity(&cfg, clientSnap)
 	s.applyEndpointAuthSigningAlgs(&cfg)
 	s.applyResponseModesAndProfiles(&cfg, ctx)
+	s.applyIntrospectionSigningMetadata(&cfg, ctx.Request().Context())
 	// RFC 8414 §2.1 signed_metadata MUST be produced AFTER every
 	// other field is finalized so the signed claims match what RPs
 	// see in the plaintext fields. The signing itself excludes the

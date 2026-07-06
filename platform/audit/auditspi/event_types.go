@@ -102,6 +102,17 @@ const (
 	EventRecoveryCodesRegenerated EventType = "mfa_recovery_codes_regenerated"
 )
 
+// Trusted-device (remember-this-device) MFA-skip events (self-service +
+// login-time). Trusted and revoked are user-initiated mutations of the
+// grant itself; skipped fires on every LOGIN that used a live grant to
+// bypass a risk-scorer step-up demand, so operators can distinguish
+// "verified factor" from "trusted device" in the mfa_success-adjacent trail.
+const (
+	EventDeviceTrusted           EventType = "device_trusted"
+	EventDeviceTrustRevoked      EventType = "device_trust_revoked"
+	EventMFASkippedTrustedDevice EventType = "mfa_skipped_trusted_device"
+)
+
 // Consent lifecycle events (user-initiated).
 const (
 	EventConsentGranted EventType = "consent_granted"
@@ -227,6 +238,10 @@ var KnownEventTypes = map[EventType]struct{}{
 	// password reset + TOTP enroll
 	EventPasswordResetRequested: {}, EventPasswordResetCompleted: {}, EventPasswordResetFailed: {},
 	EventTOTPEnrolled: {}, EventTOTPEnrollFailed: {},
+	// MFA recovery-code regeneration (self-service)
+	EventRecoveryCodesRegenerated: {},
+	// trusted-device MFA-skip (self-service + login-time)
+	EventDeviceTrusted: {}, EventDeviceTrustRevoked: {}, EventMFASkippedTrustedDevice: {},
 	// consent
 	EventConsentGranted: {}, EventConsentRevoked: {}, EventConsentDenied: {},
 	// self-service + email change
@@ -253,12 +268,26 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventAdminDeviceSecretsRevoked: {}, EventAdminPasswordResetTokensRevoked: {},
 	EventAdminEmailChangeTokensRevoked: {}, EventAdminUserEmailChanged: {},
 	EventAdminAccountUnlocked: {}, EventAdminConnectionUpserted: {}, EventAdminConnectionDeleted: {},
-	EventAdminTenantMemberAdded: {}, EventAdminTenantMemberRemoved: {}, EventAdminRoleAdded: {},
+	EventAdminConnectionDomainVerified: {}, EventAdminConnectionProbed: {}, EventAdminRecoveryCodesReset: {},
+	EventAdminRefreshTokensRevoked: {},
+	EventAdminTenantMemberAdded:    {}, EventAdminTenantMemberRemoved: {}, EventAdminRoleAdded: {},
 	EventAdminRoleUpdated: {}, EventAdminRoleRemoved: {}, EventAdminRoleAssigned: {},
 	EventAdminRoleUnassigned: {}, EventAdminMenusUpdated: {}, EventAdminTenantCreated: {},
 	EventAdminTenantUpdated: {}, EventAdminTenantDeleted: {}, EventAdminTenantStatusChanged: {},
 	EventAdminDomainCreated: {}, EventAdminDomainUpdated: {}, EventAdminDomainDeleted: {},
 	EventAdminSubjectExported: {}, EventAdminSubjectErased: {}, EventAdminGRPCCalled: {},
+	EventAdminTenantExported:       {},
+	EventAdminSigningKeyRotated:    {},
+	EventAdminUserLifecycleChanged: {},
+	EventAdminBreakGlassCreated:    {}, EventAdminBreakGlassApproved: {},
+	EventAdminBreakGlassRevoked: {}, EventAdminBreakGlassExpired: {},
+	EventAdminBreakGlassImpersonationStarted: {},
+	EventAdminCredentialCompromised:          {},
+	EventAdminCryptoKeyCompromised:           {},
+	EventAdminWebhookSubscriptionCreated:     {}, EventAdminWebhookSubscriptionDeleted: {},
+	EventAdminChangeProposed: {}, EventAdminChangeApproved: {}, EventAdminChangeRejected: {},
+	EventAdminChangeApplied: {}, EventAdminChangeApplyFailed: {},
+	EventAdminWriteQuotaExceeded: {}, EventAdminIPDenied: {},
 	// system / platform (event_types_system.go)
 	EventBootstrapStepApplied: {}, EventBootstrapStepSkipped: {}, EventBootstrapStepFailed: {},
 	EventBootstrapLockAcquired: {}, EventBootstrapLockReleased: {}, EventBootstrapLockLost: {},
@@ -269,4 +298,10 @@ var KnownEventTypes = map[EventType]struct{}{
 	EventSigningKeyRotationCoordinated: {}, EventSigningKeyAdoptionErrorsTotal: {},
 	EventCAEPSetSent: {}, EventSSFSetReceived: {},
 	EventInvalidationBusDegraded: {}, EventInvalidationBusReconnected: {},
+	EventFeatureGatesDisabled: {}, EventSessionTrustStepUp: {},
+	// agent delegation + identity linking + cross-tenant exchange + DR
+	EventAgentDelegationTokenIssued: {}, EventAgentSessionRevoked: {},
+	EventIdentityUnlinked: {}, EventIdentityMerged: {}, EventIdentityMergeRejected: {},
+	EventCrossTenantTokenExchange: {},
+	EventDegradationModeChanged:   {},
 }

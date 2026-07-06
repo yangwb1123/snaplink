@@ -21,15 +21,17 @@ import (
 // collapse is exercised by the server-level tests; here we want the marshal
 // path itself).
 type jwksDeps struct {
-	issuers   map[string]core.TokenIssuer
-	decrypter security.JWEDecrypter
-	maxAge    time.Duration
+	issuers      map[string]core.TokenIssuer
+	decrypter    security.JWEDecrypter
+	introspectKS core.JWKSProvider
+	maxAge       time.Duration
 }
 
-func (d *jwksDeps) TokenIssuers() map[string]core.TokenIssuer { return d.issuers }
-func (d *jwksDeps) JARDecrypter() security.JWEDecrypter       { return d.decrypter }
-func (d *jwksDeps) SrvLogger() spi.Logger                     { return spi.NopLogger{} }
-func (d *jwksDeps) JWKSCacheMaxAge() time.Duration            { return d.maxAge }
+func (d *jwksDeps) TokenIssuers() map[string]core.TokenIssuer   { return d.issuers }
+func (d *jwksDeps) JARDecrypter() security.JWEDecrypter         { return d.decrypter }
+func (d *jwksDeps) IntrospectionSigningKeys() core.JWKSProvider { return d.introspectKS }
+func (d *jwksDeps) SrvLogger() spi.Logger                       { return spi.NopLogger{} }
+func (d *jwksDeps) JWKSCacheMaxAge() time.Duration              { return d.maxAge }
 func (d *jwksDeps) ComputeJWKSDocument(compute func() ([]byte, error)) ([]byte, error) {
 	return compute()
 }
@@ -155,6 +157,73 @@ func TestHandleJWKS_DecrypterWithoutJWKSProviderIgnored(t *testing.T) {
 
 	if got := len(decodeJWKS(t, rec.Body.Bytes())); got != 1 {
 		t.Errorf("got %d keys, want 1", got)
+	}
+}
+
+// introspectKeys is a real, minimal core.JWKSProvider stand-in for the
+// wired RFC 9701 dedicated introspection signer (oauth.IntrospectionKeySet
+// already covers the "use" rewriting in its own package tests; here we
+// only need HandleJWKS to aggregate whatever it returns).
+type introspectKeys struct {
+	keys []core.JWK
+	err  error
+}
+
+func (k introspectKeys) JWKS(context.Context) ([]core.JWK, error) { return k.keys, k.err }
+
+func TestHandleJWKS_IntrospectionKeyPublished(t *testing.T) {
+	t.Parallel()
+	ed := defaultimpl.NewEd25519JWTIssuer()
+	ik := introspectKeys{keys: []core.JWK{{Kty: "OKP", Crv: "Ed25519", Kid: "intro-1", X: "xyz", Use: "introspection", Alg: "EdDSA"}}}
+	d := &jwksDeps{issuers: map[string]core.TokenIssuer{"jwt": ed}, introspectKS: ik}
+
+	ctx, rec := newCtx(http.MethodGet, "/.well-known/jwks.json")
+	oidc.HandleJWKS(d, ctx)
+
+	keys := decodeJWKS(t, rec.Body.Bytes())
+	if len(keys) != 2 {
+		t.Fatalf("got %d keys, want 2 (sig + introspection)", len(keys))
+	}
+	var sawIntrospection bool
+	for _, k := range keys {
+		if k["use"] == "introspection" {
+			sawIntrospection = true
+			if k["kid"] != "intro-1" {
+				t.Errorf("kid = %v, want intro-1", k["kid"])
+			}
+		}
+	}
+	if !sawIntrospection {
+		t.Error("introspection signer key not published in JWKS")
+	}
+}
+
+func TestHandleJWKS_IntrospectionKeyErrorIsSkipped(t *testing.T) {
+	t.Parallel()
+	ed := defaultimpl.NewEd25519JWTIssuer()
+	d := &jwksDeps{issuers: map[string]core.TokenIssuer{"jwt": ed}, introspectKS: introspectKeys{err: errors.New("boom")}}
+
+	ctx, rec := newCtx(http.MethodGet, "/.well-known/jwks.json")
+	oidc.HandleJWKS(d, ctx)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (a bad introspection provider must not 500)", rec.Code)
+	}
+	if got := len(decodeJWKS(t, rec.Body.Bytes())); got != 1 {
+		t.Errorf("got %d keys, want 1 (introspection key skipped on error)", got)
+	}
+}
+
+func TestHandleJWKS_NilIntrospectionSignerIgnored(t *testing.T) {
+	t.Parallel()
+	ed := defaultimpl.NewEd25519JWTIssuer()
+	d := &jwksDeps{issuers: map[string]core.TokenIssuer{"jwt": ed}}
+
+	ctx, rec := newCtx(http.MethodGet, "/.well-known/jwks.json")
+	oidc.HandleJWKS(d, ctx)
+
+	if got := len(decodeJWKS(t, rec.Body.Bytes())); got != 1 {
+		t.Errorf("got %d keys, want 1 (no introspection signer wired)", got)
 	}
 }
 

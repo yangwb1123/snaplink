@@ -87,6 +87,13 @@ type appBuilder struct {
 	asyncSink            *audit.AsyncSink
 	auditRetentionCancel context.CancelFunc
 	auditRetentionDone   <-chan struct{}
+	// auditKafkaSink is the RAW (pre-RetryingSink) Kafka audit sink, non-nil
+	// only when audit.kafka.enabled — retained so shutdownSubsystems can
+	// Close it (flush + disconnect the producer). audit.Sink (an interface)
+	// rather than a concrete type: the concrete implementation lives in the
+	// infrastructure/kafka nested module, which this (the core) module never
+	// imports.
+	auditKafkaSink audit.Sink
 
 	// Permissions.
 	provider permissions.Provider
@@ -396,24 +403,8 @@ func (b *appBuilder) assemble(rt serverRuntime) *app {
 	return a
 }
 
-// assembleExtras sets the *app fields left out of the assemble() composite
-// literal to keep assemble within the function-length budget — pure field
-// mapping, no behavior.
-func (b *appBuilder) assembleExtras(a *app, rt serverRuntime) {
-	a.consentStore, a.mfaEnrollStore = b.consentStore, b.mfaEnrollStore
-	a.pushPruneCancel, a.pushPruneDone = b.pushPruneCancel, b.pushPruneDone
-	a.cibaPruneCancel, a.cibaPruneDone = b.cibaPruneCancel, b.cibaPruneDone
-	a.netStop, a.netCancel = b.netStop, b.netCancel
-	a.drReadiness, a.drReplicationCancel, a.drReplicationDone = drFields(rt.dr)
-	a.configAuditStore = b.configAuditStore
-	a.credentialSchedCancel, a.credentialSchedDone = b.credentialSchedCancel, b.credentialSchedDone
-	a.configDriftCancel, a.configDriftDone = b.configDriftCancel, b.configDriftDone
-	a.breakGlassCancel, a.breakGlassDone = b.breakGlassCancel, b.breakGlassDone
-	a.continuousVerifyCancel, a.continuousVerifyDone = b.continuousVerifyCancel, b.continuousVerifyDone
-	a.tokenUsageRecorder = b.tokenUsageRecorder
-	a.tokenAnomalySweepCancel, a.tokenAnomalySweepDone = b.tokenAnomalySweepCancel, b.tokenAnomalySweepDone
-	a.degradationMgr = b.degradationMgr
-}
+// assembleExtras lives in build_app_core.go (relocated to keep this file
+// under the 500-line maintainability budget).
 
 // drFields extracts the DR handles from dw; a nil dw (dr.enabled=false)
 // returns all-zero values, matching the "nil means off" convention every

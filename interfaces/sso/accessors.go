@@ -19,7 +19,6 @@ import (
 	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/cluster"
-	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/platform/geo"
 	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/platform/netpolicy"
@@ -97,7 +96,6 @@ func (s *Server) EncryptIDTokenForClient(ctx context.Context, client *Client, si
 }
 
 func (s *Server) Auditor() *audit.Recorder              { return s.auditor }
-func (s *Server) ConfigAuditStore() configaudit.Store   { return s.configAuditStore }
 func (s *Server) Permissions() permissions.Provider     { return s.permissions }
 func (s *Server) EmbedPermissions() bool                { return s.embedPermissions }
 func (s *Server) NetStore() netpolicy.Store             { return s.netStore }
@@ -108,28 +106,9 @@ func (s *Server) Issuer() string                        { return s.issuer }
 func (s *Server) SessionMgr() core.SessionManager       { return s.sessionMgr }
 func (s *Server) ClientStoreAccessor() core.ClientStore { return s.clientStore }
 
-// AppliedConfigSnapshot implements configaudit.HandlerDeps: the redacted
-// effective-config snapshot captured once at startup (WithConfigSnapshots).
-// Returns configaudit.ErrSnapshotUnavailable when no snapshot was ever
-// wired, so the HTTP handler can answer 501 rather than a bare 500.
-func (s *Server) AppliedConfigSnapshot() (map[string]any, error) {
-	if s.configAppliedSnapshot == nil {
-		return nil, configaudit.ErrSnapshotUnavailable
-	}
-	return s.configAppliedSnapshot, nil
-}
-
-// RunningConfigSnapshot implements configaudit.HandlerDeps: the CURRENT
-// effective-config snapshot. Falls back to AppliedConfigSnapshot when no
-// live snapshot function was wired (WithConfigSnapshots without a
-// runningFn) — correct, since with no live source there is nothing to
-// drift FROM.
-func (s *Server) RunningConfigSnapshot(ctx context.Context) (map[string]any, error) {
-	if s.configRunningSnapshotFn != nil {
-		return s.configRunningSnapshotFn(ctx)
-	}
-	return s.AppliedConfigSnapshot()
-}
+// AppliedConfigSnapshot, RunningConfigSnapshot, and ClientStore moved to
+// sso_wiring.go (which was closer to having room) to keep this file within
+// the per-file line budget.
 
 // DestroySession implements oidc.EndSessionDeps: destroys the server-side SSO
 // session so the session cookie cannot be reused after /end_session logout.
@@ -157,8 +136,23 @@ func (s *Server) SubjectRefreshRevoker() oidc.SubjectRefreshRevoker {
 	return nil
 }
 
-func (s *Server) MetadataSigner() oidc.MetadataSigner      { return s.metadataSigner }
-func (s *Server) JARMSigner() oidc.JARMSigner              { return s.jarmSigner }
+func (s *Server) MetadataSigner() oidc.MetadataSigner { return s.metadataSigner }
+func (s *Server) JARMSigner() oidc.JARMSigner         { return s.jarmSigner }
+
+// IntrospectionSigningKeys returns the wired introspection signer's public
+// key set with "use": "introspection" (RFC 9701) for JWKS aggregation, or
+// nil when no signer is wired or the signer doesn't publish keys (e.g. a
+// custom KMS-backed IntrospectionSigner that opts out of JWKS discovery).
+// Wraps on every call rather than caching a decorated field — JWKS
+// aggregation itself runs behind ComputeJWKSDocument's single-flight, so
+// the extra allocation here is on the cache-miss path only.
+func (s *Server) IntrospectionSigningKeys() core.JWKSProvider {
+	jp, ok := s.introspectionSigner.(core.JWKSProvider)
+	if !ok {
+		return nil
+	}
+	return oauth.NewIntrospectionKeySet(jp)
+}
 func (s *Server) MFAProvider() spi.MFAProvider             { return s.mfaProvider }
 func (s *Server) MFAChallengeStore() spi.MFAChallengeStore { return s.mfaChallengeStore }
 func (s *Server) MFAChallengeTTL() time.Duration           { return s.mfaChallengeTTL }
@@ -213,6 +207,8 @@ func (s *Server) ConnectionStore() connections.Store { return s.connectionStore 
 // DomainResolver accessors moved to options_httpstack.go (beside the
 // WithWebhookEngine/WithRebacEngine/WithSCIMProvisioner options that wire
 // their backing fields) to keep this file within the per-file line budget.
+// ConnectionProber moved to server_federation.go, beside the
+// connectionProber field it reads.
 
 // ConsentStore exposes the wired consent store (may be nil).
 func (s *Server) ConsentStore() ConsentStore                { return s.consentStore }

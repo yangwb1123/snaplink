@@ -35,19 +35,44 @@ type StoreRevoker struct {
 	// Clients enumerates registered clients for the per-client refresh
 	// revocation. nil ⇒ the refresh leg is skipped.
 	Clients core.ClientStore
+
+	// TrustedDevices revokes every "remember this device" MFA-skip grant
+	// for the subject (WithTrustedDeviceRevocation). nil ⇒ the leg is
+	// skipped — byte-identical to a StoreRevoker built before this field
+	// existed. Wired so an upstream session-revoked/account-disabled SET
+	// can't leave a standing local MFA-skip grant that outlives the
+	// compromise signal it was supposed to answer.
+	TrustedDevices core.TrustedDeviceStore
+}
+
+// StoreRevokerOption configures an optional StoreRevoker leg beyond the
+// three NewStoreRevoker requires directly. Additive: existing 3-arg call
+// sites are unaffected.
+type StoreRevokerOption func(*StoreRevoker)
+
+// WithTrustedDeviceRevocation adds the trusted-device leg to a StoreRevoker
+// — see StoreRevoker.TrustedDevices.
+func WithTrustedDeviceRevocation(store core.TrustedDeviceStore) StoreRevokerOption {
+	return func(r *StoreRevoker) { r.TrustedDevices = store }
 }
 
 // NewStoreRevoker builds a StoreRevoker. At least one revocation leg must
 // be wireable: either a SessionManager, or BOTH a RefreshTokenSubjectIndex
-// and a ClientStore. A revoker that can do NOTHING is a misconfiguration
-// (it would silently no-op every validated SET), so it errors.
-func NewStoreRevoker(sessions core.SessionManager, refresh oauth.RefreshTokenSubjectIndex, clients core.ClientStore) (*StoreRevoker, error) {
-	canSession := sessions != nil
-	canRefresh := refresh != nil && clients != nil
-	if !canSession && !canRefresh {
-		return nil, errors.New("caep: StoreRevoker needs a SessionManager and/or (RefreshTokenSubjectIndex + ClientStore)")
+// and a ClientStore, or (via opts) a TrustedDeviceStore. A revoker that can
+// do NOTHING is a misconfiguration (it would silently no-op every
+// validated SET), so it errors.
+func NewStoreRevoker(sessions core.SessionManager, refresh oauth.RefreshTokenSubjectIndex, clients core.ClientStore, opts ...StoreRevokerOption) (*StoreRevoker, error) {
+	r := &StoreRevoker{Sessions: sessions, Refresh: refresh, Clients: clients}
+	for _, opt := range opts {
+		opt(r)
 	}
-	return &StoreRevoker{Sessions: sessions, Refresh: refresh, Clients: clients}, nil
+	canSession := r.Sessions != nil
+	canRefresh := r.Refresh != nil && r.Clients != nil
+	canTrustedDevices := r.TrustedDevices != nil
+	if !canSession && !canRefresh && !canTrustedDevices {
+		return nil, errors.New("caep: StoreRevoker needs a SessionManager and/or (RefreshTokenSubjectIndex + ClientStore) and/or (via WithTrustedDeviceRevocation) a TrustedDeviceStore")
+	}
+	return r, nil
 }
 
 // RevokeAllForSubject revokes the subject's refresh tokens (across every
@@ -64,41 +89,73 @@ func (r *StoreRevoker) RevokeAllForSubject(ctx context.Context, localUserID stri
 	var res RevocationResult
 	var errs []error
 
-	// 1. Refresh tokens — per (subject, client), so enumerate clients (the
-	// same loop the Eraser uses; the SPI is per-client by design).
-	if r.Refresh != nil && r.Clients != nil {
-		clients, err := r.Clients.List(ctx)
-		if err != nil {
-			errs = append(errs, err)
-		} else {
-			for _, c := range clients {
-				n, derr := r.Refresh.DeleteAllForSubject(ctx, localUserID, c.ID)
-				if derr != nil {
-					errs = append(errs, derr)
-					continue
-				}
-				res.RefreshTokensRevoked += n
-			}
-		}
-	}
-
-	// 2. Sessions.
-	if r.Sessions != nil {
-		sessions, err := r.Sessions.ListByUser(ctx, localUserID)
-		if err != nil {
-			errs = append(errs, err)
-		} else {
-			for _, s := range sessions {
-				if derr := r.Sessions.Destroy(ctx, s.ID); derr != nil {
-					errs = append(errs, derr)
-					continue
-				}
-				res.SessionsDestroyed++
-			}
-		}
-	}
+	r.revokeRefreshLeg(ctx, localUserID, &res, &errs)
+	r.revokeSessionLeg(ctx, localUserID, &res, &errs)
+	// Trusted-device MFA-skip grants — last, since it's the least impactful
+	// leg (it only affects a FUTURE login's step-up decision, not any
+	// currently-live credential) but still required: a compromise signal
+	// that revoked every session and refresh token yet left a
+	// trusted-device grant standing would let the attacker back in via a
+	// plain password plus that old grant, skipping MFA entirely.
+	r.revokeTrustedDeviceLeg(ctx, localUserID, &res, &errs)
 
 	return res, errors.Join(errs...)
+}
+
+// revokeRefreshLeg deletes localUserID's refresh tokens per client (the
+// same per-client loop the Eraser uses; the SPI is per-client by design).
+// No-op when the leg isn't wired.
+func (r *StoreRevoker) revokeRefreshLeg(ctx context.Context, localUserID string, res *RevocationResult, errs *[]error) {
+	if r.Refresh == nil || r.Clients == nil {
+		return
+	}
+	clients, err := r.Clients.List(ctx)
+	if err != nil {
+		*errs = append(*errs, err)
+		return
+	}
+	for _, c := range clients {
+		n, derr := r.Refresh.DeleteAllForSubject(ctx, localUserID, c.ID)
+		if derr != nil {
+			*errs = append(*errs, derr)
+			continue
+		}
+		res.RefreshTokensRevoked += n
+	}
+}
+
+// revokeSessionLeg destroys every active server-side session for
+// localUserID. No-op when the leg isn't wired.
+func (r *StoreRevoker) revokeSessionLeg(ctx context.Context, localUserID string, res *RevocationResult, errs *[]error) {
+	if r.Sessions == nil {
+		return
+	}
+	sessions, err := r.Sessions.ListByUser(ctx, localUserID)
+	if err != nil {
+		*errs = append(*errs, err)
+		return
+	}
+	for _, s := range sessions {
+		if derr := r.Sessions.Destroy(ctx, s.ID); derr != nil {
+			*errs = append(*errs, derr)
+			continue
+		}
+		res.SessionsDestroyed++
+	}
+}
+
+// revokeTrustedDeviceLeg revokes every trusted-device MFA-skip grant for
+// localUserID. No-op when the leg isn't wired (WithTrustedDeviceRevocation).
+func (r *StoreRevoker) revokeTrustedDeviceLeg(ctx context.Context, localUserID string, res *RevocationResult, errs *[]error) {
+	if r.TrustedDevices == nil {
+		return
+	}
+	n, err := r.TrustedDevices.RevokeAll(ctx, localUserID)
+	if err != nil {
+		*errs = append(*errs, err)
+		return
+	}
+	res.TrustedDevicesRevoked = n
 }
 
 // userProviderResolver is the default SubjectResolver: it maps a SET

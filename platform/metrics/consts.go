@@ -80,6 +80,10 @@ const (
 	NamePasswordResetRequestedTotal = "sso_password_reset_requested_total"
 	NamePasswordResetCompletedTotal = "sso_password_reset_completed_total"
 
+	// NameConnectionHealthProbesTotal counts admin-triggered B2B enterprise-
+	// connection reachability probes. See platform/metrics.go's field doc.
+	NameConnectionHealthProbesTotal = "sso_connection_health_probes_total"
+
 	// NameFeatureGateEnabled is a startup snapshot: 1 while a protocol
 	// surface's routes are mounted, 0 while an operator explicitly turned
 	// it off via feature_gates. Set once at boot (gates are not runtime-
@@ -141,6 +145,10 @@ const (
 	// handful of kids are ever "active or recently demoted" per alg at once,
 	// changing only on a RotateKey call, never on request input (§5).
 	LabelKid = "kid"
+
+	// LabelConnectionType is the B2B enterprise-connection protocol —
+	// domains/connections.ConnectionType's wire values, bounded to oidc | saml.
+	LabelConnectionType = "type"
 )
 
 // TenantLabelUnknown is the sso_rate_limit_hits_total fallback bucket used

@@ -303,6 +303,25 @@
         { "expr": "sum by (reason) (rate(sso_signing_key_adoption_errors_total{instance=~\"$instance\"}[5m]))", "legendFormat": "adoption errors {{reason}}" }
       ],
       "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+
+    {
+      "id": 50,
+      "type": "row",
+      "title": "B2B connection health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 41 }
+    },
+    {
+      "id": 51,
+      "type": "timeseries",
+      "title": "Connection probes / sec by type + outcome",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 42 },
+      "description": "Admin-triggered reachability probes (POST .../connections/:id/probe). A rising unreachable series means an org's upstream IdP has gone dark (SSOConnectionUnreachable alert); check GET .../connections/:id/health for which connection.",
+      "targets": [
+        { "expr": "sum by (type, outcome) (rate(sso_connection_health_probes_total{instance=~\"$instance\"}[15m]))", "legendFormat": "{{type}} {{outcome}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } }
     }
   ]
 }

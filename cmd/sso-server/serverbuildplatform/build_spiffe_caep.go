@@ -114,6 +114,17 @@ func CaepSubjectMode(raw string) (caep.SubjectMapMode, error) {
 // the RefreshTokenSubjectIndex (when the refresh store supports it) + the
 // SessionManager. A receiver that could revoke NOTHING (no session manager
 // AND no subject-index refresh store) is rejected.
+//
+// NOT wired here: caep.WithTrustedDeviceRevocation. The library-level
+// StoreRevoker.TrustedDevices leg exists and is unit-tested (see
+// protocols/caep/revoker.go), but cmd/sso-server never constructs a
+// core.TrustedDeviceStore in the first place — sso.WithTrustedDeviceStore is
+// not called anywhere under cmd/, the same gap RecoveryCodeStore already has
+// (no config.SelfService.TrustedDevices surface, no
+// serverbuildstore.BuildTrustedDeviceStore). Wiring it for real needs a YAML
+// config surface + store construction before this function could even
+// receive a non-nil store to pass to WithTrustedDeviceRevocation, so it is
+// intentionally left as follow-up scope rather than done here.
 func BuildCAEPReceiverOption(cfg config.CAEPReceiverConfig, sessionMgr sso.SessionManager, refreshStore oauth.RefreshTokenStore, clientStore sso.ClientStore, userProvider sso.UserProvider, recorder *audit.Recorder, metricsReg *metrics.Metrics, rdb goredis.Cmdable, logger spi.Logger) (sso.Option, error) {
 	if cfg.Audience == "" {
 		return nil, errors.New("caep.receiver.audience required when caep.receiver.enabled")
@@ -129,7 +140,9 @@ func BuildCAEPReceiverOption(cfg config.CAEPReceiverConfig, sessionMgr sso.Sessi
 
 	// Revocation seam: the RefreshTokenSubjectIndex (bulk subject revoke,
 	// when the refresh store supports it) + the SessionManager. Identical to
-	// the seams /token/revoke-all + the compliance Eraser use.
+	// the seams /token/revoke-all + the compliance Eraser use. No
+	// caep.WithTrustedDeviceRevocation(...) leg — see the func doc above for
+	// why (no TrustedDeviceStore is ever constructed under cmd/ today).
 	var subjectIndex oauth.RefreshTokenSubjectIndex
 	if idx, ok := refreshStore.(oauth.RefreshTokenSubjectIndex); ok {
 		subjectIndex = idx

@@ -94,6 +94,12 @@ func (s *Server) handleAdminDeleteConnection(ctx HandlerContext) {
 // handleAdminListConnectionDomains / handleAdminVerifyConnectionDomain moved
 // to server_federation.go (which already handles connectionStore-backed
 // home-realm discovery) — this file was at the line budget.
+func (s *Server) handleAdminGetConnectionHealth(ctx HandlerContext) {
+	admin.HandleAdminGetConnectionHealth(s, ctx)
+}
+func (s *Server) handleAdminProbeConnection(ctx HandlerContext) {
+	admin.HandleAdminProbeConnection(s, ctx)
+}
 
 // Tenant membership (admin).
 func (s *Server) handleAdminListTenantMembers(ctx HandlerContext) {
@@ -105,6 +111,7 @@ func (s *Server) handleAdminPutTenantMember(ctx HandlerContext) {
 func (s *Server) handleAdminRemoveTenantMember(ctx HandlerContext) {
 	admin.HandleAdminRemoveTenantMember(s, ctx)
 }
+func (s *Server) handleAdminExportTenant(ctx HandlerContext) { admin.HandleAdminExportTenant(s, ctx) }
 
 // Invitations (admin).
 func (s *Server) handleAdminSendInvitation(ctx HandlerContext) {

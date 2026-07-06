@@ -64,6 +64,7 @@ func (m *MemoryAuthCodeStore) Issue(_ context.Context, code string, info *oauth.
 		Resources:            resources,
 		AuthorizationDetails: authDetails,
 		SID:                  info.SID,
+		ConfirmationJKT:      info.ConfirmationJKT,
 		ExpiresAt:            info.ExpiresAt,
 	})
 	return nil

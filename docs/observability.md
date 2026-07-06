@@ -40,6 +40,7 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_signing_key_pruned_total` | Counter | — (peer-adopted verify-only keys removed by `Server.PruneVerifyKeys`'s retention-window safety net; distinct from the real-time per-announcement reconciliation) |
 | `sso_signing_verify_key_set_size` | Gauge | — (current size of the peer-adopted verify-only key set; the memory footprint `PruneVerifyKeys` manages) |
 | `sso_signing_key_usage_total` | Counter | alg, kid (in-process JWT signing operations; wire via `WithEd25519Metrics`/`WithECDSAMetrics`/`WithRSAMetrics`) |
+| `sso_connection_health_probes_total` | Counter | type (oidc\|saml), outcome (healthy\|degraded\|unreachable) |
 
 ## Audit
 
@@ -84,3 +85,22 @@ as the `X-Trace-Id` response header. Error responses written through
 helpers also surface it as `trace_id` in the JSON body (see
 `docs/error-codes.md`) so a client can correlate a failed request to
 audit/trace records without inspecting response headers.
+
+### Async-path spans
+
+`platform/tracing` exposes `StartSpan`/`DetachedContext`/`ParentFromIDs`/`SetError`
+so background code doesn't hand-roll `otel.Tracer(...)` lookups. Four
+background paths that run after their triggering request has already
+returned are instrumented with this seam:
+
+| Span | Package | Parenting |
+|---|---|---|
+| `audit.sink.deliver` / `audit.sink.deliver_batch` | `platform/audit` (`AsyncSink`) | `Event.TraceID`/`SpanID` (ctx itself is `context.Background()` by design — see `AsyncSink.Record`) via `tracing.ParentFromIDs` |
+| `audit.webhook.deliver` | `platform/audit/auditsink` (`WebhookSink`) | whatever span the caller's ctx carries (nests under `audit.sink.deliver` when composed via `AsyncSink`) |
+| `audit.sink.retry` | `platform/audit/auditsink` (`RetryingSink`) | same as above; one span per `Record` call, attempts as an attribute, NOT one span per retry |
+| `caep.transmitter.deliver` | `protocols/caep` (`Transmitter`) | `Record`'s live span via `context.WithoutCancel` (cancellation is dropped, the span AND every other context value — e.g. break-glass actor metadata — survive); re-attempts are span events, not child spans |
+| `cluster.bus.publish` / `cluster.bus.subscribe` | `platform/cluster/{memory,etcd}` | `ctx` directly — these run synchronously on the caller's goroutine |
+| `migrate.run` | `platform/migrate` | `ctx` directly; every shipped caller passes `context.Background()` at backend construction, so this is always a fresh root span in practice |
+
+A rootless span here (no parent) is expected, not a bug: it means the
+triggering request already returned before the background work ran.

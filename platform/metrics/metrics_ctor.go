@@ -55,6 +55,7 @@ func NewWithRegistry(reg *prometheus.Registry) *Metrics {
 	registerDegradationMetrics(factory, m)
 	registerRateLimitMetrics(factory, m)
 	registerSigningKeyHygieneMetrics(factory, m)
+	registerConnectionHealthMetrics(factory, m)
 
 	return m
 }

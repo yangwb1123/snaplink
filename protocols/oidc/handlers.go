@@ -28,6 +28,10 @@ func HandleCheckSessionIframe(ctx core.HandlerContext) {
 type JWKSDeps interface {
 	TokenIssuers() map[string]core.TokenIssuer
 	JARDecrypter() security.JWEDecrypter // returns the wired JWE decrypter (or nil)
+	// IntrospectionSigningKeys returns the optional RFC 9701 dedicated
+	// introspection signer's public key set (already tagged
+	// "use": "introspection"), or nil when unset.
+	IntrospectionSigningKeys() core.JWKSProvider
 	SrvLogger() spi.Logger
 	JWKSCacheMaxAge() time.Duration
 	// ComputeJWKSDocument runs the marshaling closure behind a
@@ -91,6 +95,18 @@ func marshalJWKSDocument(d JWKSDeps, ctx core.HandlerContext) ([]byte, error) {
 			} else {
 				keys = append(keys, ks...)
 			}
+		}
+	}
+	// RFC 9701 dedicated introspection signer, tagged "use": "introspection"
+	// (IntrospectionSigningKeys already wraps it — see
+	// oauth.IntrospectionKeySet) so a resource server can pick the right
+	// key without an out-of-band channel. nil = feature unwired.
+	if ik := d.IntrospectionSigningKeys(); ik != nil {
+		ks, err := ik.JWKS(ctx.Request().Context())
+		if err != nil {
+			d.SrvLogger().Error("jwks introspection signer failed", "error", err)
+		} else {
+			keys = append(keys, ks...)
 		}
 	}
 	return json.Marshal(map[string]any{"keys": keys})

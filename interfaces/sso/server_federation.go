@@ -346,6 +346,16 @@ type federationMeshState struct {
 	// Nil ⇒ the stdlib-backed production resolver (see DomainResolver accessor).
 	domainVerificationResolver connections.DNSResolver
 
+	// connectionProber is the reachability check the admin
+	// POST .../connections/:id/probe handler uses (WithConnectionProber).
+	// Nil ⇒ the stdlib-backed production HTTP prober, bounded by
+	// connectionProbeTimeout (see ConnectionProber accessor).
+	connectionProber connections.Prober
+	// connectionProbeTimeout bounds the production HTTP prober's per-probe
+	// round-trip (WithConnectionProbeTimeout). Zero ⇒
+	// connections.DefaultProbeTimeout. No effect when connectionProber is set.
+	connectionProbeTimeout time.Duration
+
 	// Opt-in Envoy/Istio ext_authz HTTP-mode authorization endpoint
 	// (cluster C1 mesh data-plane, the HTTP variant — the gRPC variant
 	// needs the go-control-plane proto dep and lives in a separate
@@ -420,4 +430,42 @@ func (s *Server) handleAdminVerifyConnectionDomain(ctx HandlerContext) {
 // from server_admin_handlers.go (which was at the line budget).
 func (s *Server) handleAdminListAccessPolicies(ctx HandlerContext) {
 	admin.HandleAdminListAccessPolicies(s, ctx)
+}
+
+// ConnectionProber returns the wired reachability prober for the admin
+// connection-test endpoint, defaulting to the stdlib-backed production HTTP
+// prober (bounded by connectionProbeTimeout) when no custom one was injected.
+// Relocated from accessors.go (which was at the line budget) — beside the
+// connectionProber field it reads.
+func (s *Server) ConnectionProber() connections.Prober {
+	if s.connectionProber != nil {
+		return s.connectionProber
+	}
+	return connections.NewHTTPProber(s.connectionProbeTimeout)
+}
+
+// WithConnectionProber injects the reachability check the admin
+// POST /api/v1/admin/connections/:id/probe endpoint uses to test a
+// connection's configured upstream (first-class DI so tests run
+// network-free with a fake). Nil/unset uses the stdlib-backed production
+// HTTP prober (OIDC discovery / SAML metadata fetch), bounded by
+// WithConnectionProbeTimeout. Relocated from options_admin.go (which was
+// at the line budget).
+func WithConnectionProber(p connections.Prober) Option {
+	return func(s *Server) {
+		if p != nil {
+			s.connectionProber = p
+		}
+	}
+}
+
+// WithConnectionProbeTimeout bounds the production HTTP prober's per-probe
+// round-trip (connections.DefaultProbeTimeout, 10s, when unset). No effect
+// when WithConnectionProber supplies a custom Prober.
+func WithConnectionProbeTimeout(d time.Duration) Option {
+	return func(s *Server) {
+		if d > 0 {
+			s.connectionProbeTimeout = d
+		}
+	}
 }

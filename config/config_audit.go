@@ -28,11 +28,17 @@ type AuditConfig struct {
 	// composes into the same sink stack as Webhook, after PII redaction
 	// (see cmd/sso-server/serverbuildauthn.BuildAuditSIEMSinks). Formatters
 	// only — no network transport; Output is stdout/stderr/a local file
-	// path, never a network address. Network SIEM delivery (Kafka/NATS) is
-	// a later roadmap item that reuses these exact byte-formatters.
+	// path, never a network address. Network SIEM delivery over Kafka is
+	// AuditKafkaConfig below, which reuses these exact byte-formatters.
 	CEF    AuditCEFConfig    `yaml:"cef"`
 	OCSF   AuditOCSFConfig   `yaml:"ocsf"`
 	Syslog AuditSyslogConfig `yaml:"syslog"`
+	// Kafka publishes every recorded event to a Kafka topic — the network
+	// transport CEF/OCSF/Syslog's doc comments defer to. Requires the
+	// operator's forked cmd binary to import infrastructure/kafka and
+	// register its factory (see that module's package doc); enabling this
+	// with no factory registered fails boot closed with a clear error.
+	Kafka AuditKafkaConfig `yaml:"kafka"`
 }
 
 // AuditCEFConfig enables an ArcSight CEF (Common Event Format) sink.
@@ -71,6 +77,55 @@ type AuditSyslogConfig struct {
 	Facility int    `yaml:"facility"`
 	Hostname string `yaml:"hostname"`
 	AppName  string `yaml:"app_name"`
+}
+
+// AuditKafkaConfig enables publishing every recorded audit event to a Kafka
+// topic — the network-transport counterpart to the CEF/OCSF/Syslog
+// FILE/stdout formatters above, reusing those exact byte-formatters over
+// this transport (see infrastructure/kafka's package doc).
+//
+// The github.com/segmentio/kafka-go dependency lives ONLY in the
+// infrastructure/kafka nested module's own go.mod — this core module never
+// imports it — so Enabled:true requires the operator's forked cmd binary to
+// import that module and call serverbuildauthn.RegisterAuditKafkaSinkFactory
+// once at init (mirrors keys.signing.external /
+// serverbuildsign.RegisterExternalSigner for KMS/HSM signers). Enabled with
+// no factory registered fails boot CLOSED with an error naming the missing
+// registration call, not a silently-dropped audit stream.
+type AuditKafkaConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// Brokers lists the bootstrap broker addresses (host:port); required
+	// when Enabled.
+	Brokers []string `yaml:"brokers"`
+	// Topic is the destination topic for every published event; required
+	// when Enabled. No per-tenant/per-event-type topic routing in v1.
+	Topic string `yaml:"topic"`
+	// ClientID identifies this producer in Kafka broker-side logs/metrics.
+	// Empty defaults to "sso-server".
+	ClientID string `yaml:"client_id"`
+	// RequiredAcks selects the durability/latency trade-off: "none" | "one"
+	// | "all". Empty defaults to "all" (full ISR ack) — audit events are a
+	// compliance record this sink does not want silently dropped on a
+	// leader failover.
+	RequiredAcks string `yaml:"required_acks"`
+	// Format selects the wire encoding of each published message: "json"
+	// (default; explicit schema_version field, see infrastructure/kafka's
+	// FormatJSON) or one of the existing SIEM formatters "cef" | "ocsf" |
+	// "syslog" — the SAME formatters audit.cef/audit.ocsf/audit.syslog use,
+	// reused unchanged over this transport.
+	Format string `yaml:"format"`
+	// BatchTimeout bounds how long the producer buffers a partial batch
+	// before flushing. Zero falls back to the underlying Kafka client's
+	// library default (1s).
+	BatchTimeout time.Duration `yaml:"batch_timeout"`
+	// Async publishes fire-and-forget (the produce call returns without
+	// waiting for the broker ack, and any resulting error is swallowed)
+	// when true. Defaults to false — synchronous, so a publish failure
+	// surfaces to the audit Recorder's fail-open policy / ErrorHandler
+	// instead of being silently dropped. Pair false with audit.async
+	// (AuditAsyncConfig) to move the wait off the request hot path instead
+	// of setting this true.
+	Async bool `yaml:"async"`
 }
 
 // AuditRetentionConfig opts into background pruning of old audit

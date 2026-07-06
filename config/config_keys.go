@@ -3,9 +3,32 @@ package config
 import "time"
 
 type KeysConfig struct {
-	Signing            SigningConfig            `yaml:"signing"`
-	Rotation           KeyRotationConfig        `yaml:"rotation"`
-	SigningKeyRegistry SigningKeyRegistryConfig `yaml:"signing_key_registry"`
+	Signing              SigningConfig              `yaml:"signing"`
+	Rotation             KeyRotationConfig          `yaml:"rotation"`
+	SigningKeyRegistry   SigningKeyRegistryConfig   `yaml:"signing_key_registry"`
+	IntrospectionSigning IntrospectionSigningConfig `yaml:"introspection_signing"`
+}
+
+// IntrospectionSigningConfig opts into RFC 9701 JWT-formatted
+// /token/introspect responses (docs/config-reference.md "Signing Keys").
+// Enabled=false (default) is byte-identical to a build without this
+// feature — every introspection response stays plain RFC 7662 JSON no
+// matter what the caller's Accept header requests.
+//
+// The embedded SigningConfig is REUSED so this role gets the exact same
+// alg / external-KMS / revocation-backend machinery as the primary
+// signing key (BuildSigningIssuer) — but constructs a SEPARATE issuer
+// instance with its own key, because the whole point of AGENTS.md's
+// "dedicated key" requirement is that compromising one signer can't be
+// used to forge the other's output. This key's rotation is therefore
+// already independent of keys.rotation (which only ever targets the
+// primary issuer): call RotateKey/RotateNow directly on the constructed
+// issuer, or extend KeyAdminService to a named-role RPC as a follow-on —
+// out of scope here (mirrors the deferred multi-key scope noted on the
+// on-demand KeyAdminService rotation feature).
+type IntrospectionSigningConfig struct {
+	Enabled       bool `yaml:"enabled"`
+	SigningConfig `yaml:",inline"`
 }
 
 // SigningKeyRegistryConfig opts into leaderless multi-replica signing-key

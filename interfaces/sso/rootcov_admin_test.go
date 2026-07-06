@@ -147,6 +147,15 @@ func TestRcovAdmin_Gate(t *testing.T) {
 	if status != http.StatusUnauthorized {
 		t.Errorf("no-bearer domain verify = %d, want 401", status)
 	}
+	// The connection health/probe routes are gated identically.
+	status, _ = rcovDo(t, http.MethodGet, env.url+"/api/v1/admin/connections/conn-1/health", "", nil)
+	if status != http.StatusUnauthorized {
+		t.Errorf("no-bearer health = %d, want 401", status)
+	}
+	status, _ = rcovDo(t, http.MethodPost, env.url+"/api/v1/admin/connections/conn-1/probe", "", nil)
+	if status != http.StatusUnauthorized {
+		t.Errorf("no-bearer probe = %d, want 401", status)
+	}
 }
 
 // TestRcovAdmin_Connections covers the enterprise-connection CRUD handlers.
@@ -192,6 +201,22 @@ func TestRcovAdmin_Connections(t *testing.T) {
 	status, _ = rcovDo(t, http.MethodGet, env.url+"/api/v1/admin/connections/nope", env.token, nil)
 	if status != http.StatusNotFound {
 		t.Errorf("get missing connection = %d, want 404", status)
+	}
+
+	// Health before any probe: unknown. No network call is made below — the
+	// seeded connection carries no oidc_issuer, so the production prober
+	// short-circuits on the missing-config check before dialing anything.
+	status, out = rcovDo(t, http.MethodGet, env.url+"/api/v1/admin/connections/conn-1/health", env.token, nil)
+	if status != http.StatusOK || out["status"] != "unknown" {
+		t.Errorf("get connection health = %d body=%v, want 200 status=unknown", status, out)
+	}
+	status, out = rcovDo(t, http.MethodPost, env.url+"/api/v1/admin/connections/conn-1/probe", env.token, nil)
+	if status != http.StatusOK || out["status"] != "unreachable" {
+		t.Errorf("probe connection = %d body=%v, want 200 status=unreachable", status, out)
+	}
+	status, _ = rcovDo(t, http.MethodPost, env.url+"/api/v1/admin/connections/nope/probe", env.token, nil)
+	if status != http.StatusNotFound {
+		t.Errorf("probe missing connection = %d, want 404", status)
 	}
 
 	// Delete it => 204 (idempotent).

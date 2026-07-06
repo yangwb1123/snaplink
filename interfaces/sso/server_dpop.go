@@ -327,6 +327,13 @@ func dpopTokenTypeOr(defaultType, jkt string) string {
 	return defaultType
 }
 
+// DPoPTokenTypeOr returns "DPoP" when a JKT binding is present, else
+// defaultType. Relocated from accessors_handlers.go (which was at the line
+// budget) — beside dpopTokenTypeOr, which it delegates to.
+func (s *Server) DPoPTokenTypeOr(defaultType, jkt string) string {
+	return dpopTokenTypeOr(defaultType, jkt)
+}
+
 // requestURLForDPoP rebuilds the absolute URL the AS exposes on
 // the wire, suitable for htu comparison. Uses the same X-Forwarded-*
 // chain as requestBaseURL so deployments behind a trusted edge

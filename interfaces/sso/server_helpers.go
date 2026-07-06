@@ -236,6 +236,10 @@ func (s *Server) jarmSignerForClient(c *Client) (oidc.JARMSigner, bool) {
 	return js, true
 }
 
+// applyIntrospectionSigningMetadata and introspectionSigningAlgValues moved
+// to sso.go (which had room) to keep this file within the per-file line
+// budget.
+
 // ValidateToken is the public face of validateAnyToken — returns just the
 // claims for callers (e.g. the admin middleware) that don't care which
 // issuer accepted the token.

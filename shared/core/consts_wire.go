@@ -12,7 +12,12 @@ const (
 	// HeaderAccept is the request header a client sets to content-negotiate
 	// an alternate response representation — e.g. RFC 9701-style signed JWT
 	// introspection responses (Accept: application/token-introspection+jwt).
-	HeaderAccept               = "Accept"
+	HeaderAccept = "Accept"
+	// HeaderContentDisposition marks the tenant-export response as a
+	// downloadable attachment (see interfaces/admin's tenant export
+	// handler) so a browser/admin UI saves it as a file rather than
+	// rendering the JSON inline.
+	HeaderContentDisposition   = "Content-Disposition"
 	HeaderRequestID            = "X-Request-Id"
 	HeaderTraceID              = "X-Trace-Id"
 	HeaderTraceparent          = "Traceparent"
@@ -52,6 +57,19 @@ const (
 	BearerPrefix    = "Bearer "
 	TokenTypeBearer = "Bearer"
 	ContentTypeJSON = "application/json"
+
+	// ContentTypeTokenIntrospectionJWT is both the RFC 9701 §5 `Accept`
+	// request header value an introspecting client sends to opt into a
+	// JWT-formatted /token/introspect response, and the `Content-Type`
+	// the response carries when the server honors it.
+	ContentTypeTokenIntrospectionJWT = "application/token-introspection+jwt"
+	// JWTTypIntrospection is the RFC 9701 §5.1 JOSE `typ` header value
+	// stamped on a signed introspection-response JWT. Deliberately
+	// DISTINCT from the generic "JWT" typ used for ID/metadata/userinfo
+	// JWTs — §8 relies on it so a resource server (or an on-path
+	// attacker) can never mistake this response for a bearer access
+	// token by typ alone.
+	JWTTypIntrospection = "token-introspection+jwt"
 
 	CORSAllowedMethods = "GET, POST, OPTIONS"
 	CORSAllowedHeaders = "Content-Type, Authorization"
@@ -158,6 +176,13 @@ const (
 	KeyCnf        = "cnf"
 	KeyCnfX5TS256 = "x5t#S256"
 	KeyCnfJKT     = "jkt"
+
+	// KeyTokenIntrospection is the RFC 9701 §5.1 claim that nests the full
+	// RFC 7662 introspection response inside the signed JWT wrapper. The
+	// nesting (rather than flattening `active`/`sub`/`exp`/etc. onto the
+	// JWT's own top-level claims) is the RFC's defense against a naive
+	// verifier mistaking the introspection JWT for a bearer access token.
+	KeyTokenIntrospection = "token_introspection"
 
 	// OIDC response key for the ID Token (OIDC Core §3.1.3.3).
 	KeyIDToken = "id_token"
@@ -386,12 +411,30 @@ const (
 	PathAdminConnectionDomains      = "/admin/connections/:id/domains"
 	PathAdminConnectionDomainVerify = "/admin/connections/:id/domains/:domain/verify"
 
+	// PathAdminConnectionHealth returns a connection's last recorded probe
+	// outcome — status/last-success/last-error (admin:read). Never triggers a
+	// fresh probe itself. PathAdminConnectionProbe synchronously triggers ONE
+	// (OIDC discovery fetch or SAML metadata fetch, per Connection.Type) and
+	// persists the result (admin:write). Mounted only when a connection store
+	// is wired.
+	PathAdminConnectionHealth = "/admin/connections/:id/health"
+	PathAdminConnectionProbe  = "/admin/connections/:id/probe"
+
 	// PathAdminTenantMembers / PathAdminTenantMemberByID manage a tenant's org
 	// roster (B2B membership, distinct from SCIM app roles). GET lists the roster
 	// (admin:read); PUT upserts a member's role + DELETE removes (admin:write).
 	// Mounted only when a TenantUserStore is wired.
 	PathAdminTenantMembers    = "/admin/tenants/:id/members"
 	PathAdminTenantMemberByID = "/admin/tenants/:id/members/:user_id"
+
+	// PathAdminTenantExport triggers + downloads a coherent offboarding/
+	// migration bundle for one tenant (clients, roster, connections,
+	// permissions, session + audit summaries — see
+	// protocols/compliance.TenantExporter). POST, admin:write — deliberately
+	// above the GET-default admin:read like PathBackup, since assembling this
+	// bundle is a heavier, more sensitive operation than the roster/connection
+	// GETs. Mounted only when a TenantUserStore is wired (see mountAdminB2B).
+	PathAdminTenantExport = "/admin/tenants/:id/export"
 
 	// PathMyOrganizations / PathMyOrganizationByID are the self-service org views:
 	// GET lists the orgs the bearer subject belongs to; DELETE leaves one. Mounted

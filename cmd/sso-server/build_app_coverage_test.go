@@ -169,6 +169,10 @@ func fullFeatureConfig(t *testing.T) *config.Config {
 	cfg.Keys.Rotation.Interval = 24 * time.Hour
 	cfg.Keys.Rotation.GracePeriod = time.Hour
 
+	// RFC 9701 JWT introspection responses — a SEPARATE dedicated Ed25519
+	// key from the primary signing issuer above (wireIntrospectionSigning).
+	cfg.Keys.IntrospectionSigning.Enabled = true
+
 	cfg.Releases.Enabled = true
 	cfg.Releases.Store.Backend = "memory"
 	cfg.Releases.Pinner.Backend = "noop"

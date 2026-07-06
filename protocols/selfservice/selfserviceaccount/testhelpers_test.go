@@ -189,6 +189,8 @@ func (d *testDeps) WebAuthnRegistrar() core.WebAuthnRegistrar   { return d.webau
 func (d *testDeps) MFAEnrollmentStore() core.MFAEnrollmentStore { return d.mfaStore }
 func (d *testDeps) TOTPEnroller() core.TOTPEnroller             { return d.totp }
 func (d *testDeps) RecoveryCodeStore() core.RecoveryCodeStore   { return nil }
+func (d *testDeps) TrustedDeviceStore() core.TrustedDeviceStore { return nil }
+func (d *testDeps) TrustedDeviceTTL() time.Duration             { return 0 }
 
 func (d *testDeps) NewMFAFactorID() (string, error) {
 	d.factorSeq++

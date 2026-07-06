@@ -49,6 +49,10 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 | `keys.signing_key_registry.{backend,replica_id,lease_ttl}` | Opt-in leaderless aggregation (`memory`\|`etcd`). `WithSigningKeyReplicaID` REQUIRED when wired. Degraded → `/readyz` 503 + `signing_key_aggregation_degraded` audit |
 | `keys.signing.fips_mode` | Off by default. When `true`, `BuildSigningIssuer` requires the binary's Go Cryptographic Module to actually be active (`GOFIPS140`/`GODEBUG=fips140`) and validates `keys.signing.alg` against a FIPS 186-5-approved allowlist (default: all four supported algs — see [docs/fips.md](fips.md) for why Ed25519 is included) before constructing the issuer |
 | `keys.signing.fips_allowed_algs` | Optional narrower allowlist consulted only when `fips_mode` is `true`; empty (default) = the package's full approved set |
+| `keys.introspection_signing.enabled` | RFC 9701 JWT-formatted `/token/introspect` responses (`sso.WithIntrospectionSigning`). Default `false` = byte-identical to a build without the feature. Builds a SEPARATE issuer from `keys.signing` — its own key, never the access/ID-token signer — so a compromise of one can't forge the other's output |
+| `keys.introspection_signing.{alg,external,revocation_backend,revocation_dsn}` | Same shape + semantics as the matching `keys.signing.*` fields, reused for the dedicated introspection key (its own `BuildSigningIssuer` call). Rotation is independent of `keys.rotation` (which targets only the primary key) — call `RotateKey`/`RotateNow` directly on the constructed issuer; a named-role admin-rotation RPC is a deferred follow-on |
+| `GET /.well-known/jwks.json` `use: introspection` entry | Published only when `keys.introspection_signing.enabled`; distinguishes the dedicated key from the `sig` (access/ID token) and `enc` (JAR/response JWE) entries |
+| `introspection_signing_alg_values_supported` (discovery) | Advertised only when `keys.introspection_signing.enabled`; a resource server sends `Accept: application/token-introspection+jwt` on `/token/introspect` to opt into the signed response per request — callers that don't send it keep getting plain RFC 7662 JSON |
 
 ## Storage Backend Toggles
 
@@ -108,6 +112,22 @@ auto-verified regardless of the flag — the operator authoring the YAML is an
 equivalent trust level to a direct DB write. The verify endpoint uses the
 stdlib DNS resolver by default; an SDK embedder can inject a custom one via
 `sso.WithDomainVerificationResolver` (e.g. DNS-over-HTTPS).
+
+### B2B connection health probing
+
+| Key | Effect |
+|---|---|
+| `connections.probe.timeout` | Bounds a single admin-triggered reachability probe's (`POST /api/v1/admin/connections/:id/probe`) HTTP round-trip. `<=0` (default) uses the SDK default, `connections.DefaultProbeTimeout` (10s). |
+
+The probe fetches OIDC discovery (`{oidc_issuer}/.well-known/openid-configuration`)
+for `type: oidc` connections or the SAML metadata document (`saml_metadata_url`)
+for `type: saml`, and persists the outcome (`unknown` \| `healthy` \| `degraded`
+\| `unreachable`) plus `last_checked_at` / `last_success_at` / a bounded-length
+`last_error`, readable via `GET /api/v1/admin/connections/:id/health`. An SDK
+embedder can inject a custom prober (e.g. for a protocol this SDK doesn't
+natively probe) via `sso.WithConnectionProber`. Each probe increments
+`sso_connection_health_probes_total{type,outcome}` — see
+[observability.md](observability.md).
 
 ## Self-Service
 
@@ -243,11 +263,16 @@ feature existed (no extra signal handler is even registered).
 
 | Key / Command | Effect |
 |---|---|
-| `audit.cef.*` / `audit.ocsf.*` / `audit.syslog.*` | Three INDEPENDENT SIEM export formatters (`platform/audit/auditsink/{cef,ocsf,syslog}.go`) — any subset may be enabled simultaneously (e.g. CEF to one collector AND OCSF to another). Each composes a `WriterSink` into the same `MultiSink` fan-out as `audit.webhook`, wired AFTER PII redaction (inside the `Recorder`), so operators get the same redacted view every other sink sees. Formatters only: `output` is `stdout`, `stderr`, or a local file path (opened append-only, created `0600`) — no network transport (deferred to a future Kafka/NATS export item, which reuses these exact byte-formatters) |
+| `audit.cef.*` / `audit.ocsf.*` / `audit.syslog.*` | Three INDEPENDENT SIEM export formatters (`platform/audit/auditsink/{cef,ocsf,syslog}.go`) — any subset may be enabled simultaneously (e.g. CEF to one collector AND OCSF to another). Each composes a `WriterSink` into the same `MultiSink` fan-out as `audit.webhook`, wired AFTER PII redaction (inside the `Recorder`), so operators get the same redacted view every other sink sees. Formatters only: `output` is `stdout`, `stderr`, or a local file path (opened append-only, created `0600`) — no network transport (the network delivery of these same formatters is `audit.kafka` below) |
 | `audit.cef.{enabled,output}` | Enables an ArcSight CEF sink. `vendor`/`product`/`version` fill the CEF header's Device Vendor/Product/Version fields; empty falls back to `Snaplink`/`SSO`/the running binary's build version |
 | `audit.ocsf.{enabled,output}` | Enables an OCSF (Open Cybersecurity Schema Framework) NDJSON sink — one OCSF Authentication/Account Change/Authorize Session/API Activity-class JSON object per line, with `product.name`/`product.vendor_name` fixed to `SSO`/`Snaplink` |
 | `audit.syslog.{enabled,output,facility,hostname,app_name}` | Enables an RFC 5424 syslog sink (structured-data carries `Event.Metadata`; RFC 3164 legacy BSD framing is NOT supported). `facility` follows RFC 5424 Table 1 (0-23); `0` (the Go zero value) falls back to `10` (authpriv), since facility 0 (kernel) is never a realistic choice for an application audit trail. `hostname` empty resolves `os.Hostname()` at wiring time; `app_name` empty defaults to `sso-server` |
 | SIEM severity | All three formatters project ONE shared internal severity scale (`Outcome` + a small per-`EventType` override table in `auditsink`) into their own range: CEF `0-10`, OCSF `severity_id` `1-6`, syslog `0-7` — an event escalated once is escalated identically across every export format |
+| `audit.kafka.enabled` | Publishes every recorded event as one Kafka message on `audit.kafka.topic`. The `github.com/segmentio/kafka-go` dependency lives ONLY in the `infrastructure/kafka` nested Go module (own `go.mod`) — this core module never imports it — so `enabled: true` additionally requires the operator's forked `cmd` binary to import that module and call `serverbuildauthn.RegisterAuditKafkaSinkFactory(kafkaaudit.Factory)` once at init (mirrors `keys.signing.external` / `RegisterExternalSigner` for KMS/HSM signers; see the module's package doc). `enabled: true` with no factory registered fails boot CLOSED with an error naming the missing registration call |
+| `audit.kafka.{brokers,topic}` | REQUIRED when enabled. `brokers` lists bootstrap broker addresses (host:port), tried in order; `topic` is the single destination topic for every event (no per-tenant/per-event-type routing — pair with a downstream Kafka Streams/Connect job for that) |
+| `audit.kafka.format` | Wire encoding per message: `json` (default) — an explicit `schema_version` field wrapping the `auditspi.Event` JSON, since a Kafka consumer (unlike an HTTP webhook receiver) has no per-message content negotiation — or `cef` \| `ocsf` \| `syslog`, reusing the SAME `auditsink` formatters `audit.cef`/`audit.ocsf`/`audit.syslog` use, unchanged, over this transport |
+| `audit.kafka.{client_id,required_acks,batch_timeout,async}` | `client_id` (default `sso-server`) identifies the producer in broker-side logs. `required_acks` is `none`\|`one`\|`all` (default `all` — full ISR ack; audit events are a compliance record this sink does not want silently dropped on a leader failover, the opposite of the underlying Kafka client's own library default). `batch_timeout` bounds partial-batch buffering (library default 1s when zero). `async` (default `false`) publishes fire-and-forget when `true`, swallowing the produce error — leave `false` and pair with `audit.async` to move the broker round-trip off the request hot path instead, so `Record`'s error return stays a real signal for the audit Recorder's fail-open policy |
+| `audit.kafka` sink lifecycle | Composed into the primary `MultiSink` behind a `RetryingSink` (masks transient broker hiccups, same posture as `audit.webhook`). Graceful shutdown calls `Close(ctx)` on the underlying producer (flush + disconnect) before the process exits |
 
 ## Cluster
 

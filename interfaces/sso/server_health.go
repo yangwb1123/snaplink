@@ -12,6 +12,7 @@ import (
 	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/lifecycle/degradation"
+	"github.com/snaplink/sso/platform/sse"
 	"github.com/snaplink/sso/shared/core"
 )
 
@@ -339,4 +340,36 @@ func (s *Server) handleSetDRMode(ctx HandlerContext) {
 		return
 	}
 	ctx.JSON(http.StatusOK, map[string]any{"mode": req.Mode, "changed": changed})
+}
+
+// WithSSEBroker mounts GET /api/v1/admin/events/stream — the realtime
+// admin event source (Server-Sent Events). When an audit recorder is ALSO
+// wired, NewServer taps its pipeline (the same AddSink/MultiSink seam
+// WithCAEPTransmitter uses) so every recorded event is projected to a
+// redacted Summary and published to b; without a recorder the route still
+// mounts but never emits (the broker has no source).
+//
+// The caller owns b's lifecycle: construct it with sse.NewBroker and Close
+// it during shutdown, BEFORE the HTTP graceful drain, so idle EventSource
+// connections don't pin Shutdown to its full deadline (Server.SSEBroker
+// exposes it back for exactly that). Default-off: a nil (unset) broker is
+// byte-identical to a build without the feature. Relocated from
+// options_admin.go (which was at the line budget).
+func WithSSEBroker(b *sse.Broker) Option {
+	return func(s *Server) { s.sseBroker = b }
+}
+
+// SSEBroker returns the wired broker (nil when unset), so cmd can Close it
+// during shutdown without retaining its own reference.
+func (s *Server) SSEBroker() *sse.Broker { return s.sseBroker }
+
+// WithSSEHeartbeat overrides the admin event stream's keep-alive comment
+// interval. <= 0 (the default) leaves the SDK default (sse.DefaultHeartbeat)
+// in effect. Has no effect without WithSSEBroker.
+func WithSSEHeartbeat(d time.Duration) Option {
+	return func(s *Server) {
+		if d > 0 {
+			s.sseHeartbeat = d
+		}
+	}
 }

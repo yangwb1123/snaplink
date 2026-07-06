@@ -343,6 +343,128 @@ func TestHandleIntrospect(t *testing.T) {
 	})
 }
 
+// fakeIntrospectionSigner is a real, non-cryptographic IntrospectionSigner
+// stand-in — it never touches key material, only records/replays claims, so
+// tests exercise the HandleIntrospect wiring without pulling in defaultimpl
+// (which imports oauth; a reverse import would cycle).
+type fakeIntrospectionSigner struct {
+	err        error
+	lastClaims map[string]any
+}
+
+func (f *fakeIntrospectionSigner) SignIntrospectionJWT(_ context.Context, claims map[string]any) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	f.lastClaims = claims
+	return "fake.jwt.token", nil
+}
+
+var _ IntrospectionSigner = (*fakeIntrospectionSigner)(nil)
+
+// TestHandleIntrospect_RFC9701JWTResponse covers the opt-in JWT-response
+// content-negotiation surface: default-off, per-request Accept-header
+// opt-in, graceful degrade when unwired, and fail-closed on a signing error.
+func TestHandleIntrospect_RFC9701JWTResponse(t *testing.T) {
+	t.Parallel()
+
+	newActiveDeps := func(signer IntrospectionSigner) *introspectDeps {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		d := newIntrospectDeps(cs, newMemRefreshStore())
+		d.signer = signer
+		d.validate = func(context.Context, string) (*core.TokenClaims, string, error) {
+			return &core.TokenClaims{Subject: "u", ClientID: "rp"}, "jwt", nil
+		}
+		return d
+	}
+
+	t.Run("no signer wired: Accept header ignored, stays JSON", func(t *testing.T) {
+		d := newActiveDeps(nil)
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=valid&client_id=rp&client_secret=s")
+		ctx.Request().Header.Set("Accept", core.ContentTypeTokenIntrospectionJWT)
+		HandleIntrospect(d, ctx)
+		if ct := rec.Header().Get(core.HeaderContentType); ct != core.ContentTypeJSON {
+			t.Fatalf("Content-Type = %q, want %q (feature off by default)", ct, core.ContentTypeJSON)
+		}
+	})
+
+	t.Run("signer wired but no Accept header: stays JSON", func(t *testing.T) {
+		signer := &fakeIntrospectionSigner{}
+		d := newActiveDeps(signer)
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=valid&client_id=rp&client_secret=s")
+		HandleIntrospect(d, ctx)
+		if ct := rec.Header().Get(core.HeaderContentType); ct != core.ContentTypeJSON {
+			t.Fatalf("Content-Type = %q, want %q (no opt-in signal)", ct, core.ContentTypeJSON)
+		}
+		if signer.lastClaims != nil {
+			t.Error("signer must not be invoked without the Accept opt-in")
+		}
+	})
+
+	t.Run("signer wired + Accept header: signed JWT response", func(t *testing.T) {
+		signer := &fakeIntrospectionSigner{}
+		d := newActiveDeps(signer)
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=valid&client_id=rp&client_secret=s")
+		ctx.Request().Header.Set("Accept", core.ContentTypeTokenIntrospectionJWT)
+		HandleIntrospect(d, ctx)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		if ct := rec.Header().Get(core.HeaderContentType); ct != core.ContentTypeTokenIntrospectionJWT {
+			t.Fatalf("Content-Type = %q, want %q", ct, core.ContentTypeTokenIntrospectionJWT)
+		}
+		if got := rec.Body.String(); got != "fake.jwt.token" {
+			t.Fatalf("body = %q, want the raw signed JWT (not JSON-wrapped)", got)
+		}
+		nested, ok := signer.lastClaims[core.KeyTokenIntrospection].(map[string]any)
+		if !ok {
+			t.Fatalf("no nested %s claim: %v", core.KeyTokenIntrospection, signer.lastClaims)
+		}
+		if nested[core.KeyActive] != true {
+			t.Errorf("nested active = %v, want true", nested[core.KeyActive])
+		}
+		if _, present := signer.lastClaims[core.KeySub]; present {
+			t.Error("top-level sub MUST NOT be set (RFC 9701 §8 substitution-attack defense)")
+		}
+		if _, present := signer.lastClaims[core.KeyExp]; present {
+			t.Error("top-level exp MUST NOT be set (RFC 9701 §8 substitution-attack defense)")
+		}
+		if signer.lastClaims[core.KeyAud] != "rp" {
+			t.Errorf("aud = %v, want the introspecting client id", signer.lastClaims[core.KeyAud])
+		}
+	})
+
+	t.Run("signing failure fails closed with 500", func(t *testing.T) {
+		signer := &fakeIntrospectionSigner{err: errors.New("kms unreachable")}
+		d := newActiveDeps(signer)
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=valid&client_id=rp&client_secret=s")
+		ctx.Request().Header.Set("Accept", core.ContentTypeTokenIntrospectionJWT)
+		HandleIntrospect(d, ctx)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500 (never silently downgrade to JSON on signing failure)", rec.Code)
+		}
+	})
+
+	t.Run("inactive token is also wrapped when requested", func(t *testing.T) {
+		signer := &fakeIntrospectionSigner{}
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		d := newIntrospectDeps(cs, newMemRefreshStore())
+		d.signer = signer
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=nope&client_id=rp&client_secret=s")
+		ctx.Request().Header.Set("Accept", core.ContentTypeTokenIntrospectionJWT)
+		HandleIntrospect(d, ctx)
+		if ct := rec.Header().Get(core.HeaderContentType); ct != core.ContentTypeTokenIntrospectionJWT {
+			t.Fatalf("Content-Type = %q, want %q even for an inactive token", ct, core.ContentTypeTokenIntrospectionJWT)
+		}
+		nested := signer.lastClaims[core.KeyTokenIntrospection].(map[string]any)
+		if nested[core.KeyActive] != false {
+			t.Errorf("nested active = %v, want false", nested[core.KeyActive])
+		}
+	})
+}
+
 // TestIntrospectionEmitsCnf is the RFC 7662 §2.2 regression guard: introspection
 // MUST echo the sender-constraint confirmation so a resource server can enforce
 // RFC 8705 §3.3 (mTLS) / RFC 9449 §7 (DPoP) binding. Previously omitted entirely.

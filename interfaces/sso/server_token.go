@@ -453,3 +453,16 @@ func buildTxnTokenRequest(req oauth.TokenRequest) txntoken.Request {
 // dependency interface via ValidateAnyToken (accessors_handlers.go),
 // RecordTokenIssued (accessors_handlers.go), and SrvLogger (accessors.go).
 var _ txntoken.Deps = (*Server)(nil)
+
+// JWTBearerAssertionValidator returns the RFC 7523 JWT Bearer assertion
+// validator, or nil when the grant is not enabled. Relocated from
+// accessors_handlers.go (which was at the line budget).
+func (s *Server) JWTBearerAssertionValidator() tokengrant.JWTAssertionValidator {
+	return s.jwtBearerValidator
+}
+
+// SAML2AssertionValidator returns the RFC 7522 SAML 2.0 Bearer assertion
+// validator, or nil when the grant is not enabled.
+func (s *Server) SAML2AssertionValidator() tokengrant.SAMLAssertionValidator {
+	return s.saml2BearerValidator
+}

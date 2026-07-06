@@ -7,13 +7,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/tracing"
 	"github.com/snaplink/sso/shared/core"
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 // Client metadata keys (anti-exfil: the receiver address is read ONLY
@@ -247,10 +249,12 @@ func (t *Transmitter) Record(ctx context.Context, e *audit.Event) error {
 	// request typically returns (and its ctx is cancelled by net/http) well
 	// before delivery completes, and inheriting that cancellation would abort
 	// every SET POST almost immediately. context.WithoutCancel keeps the
-	// VALUES ctx carries — the OTel span context otelhttp attached, and any
-	// shared/core trace ID the tracing middleware stamped — so a span or log
-	// line downstream in deliver still joins the originating request's trace
-	// instead of rooting a disconnected one.
+	// VALUES ctx carries — the OTel span context otelhttp attached, any
+	// shared/core trace ID the tracing middleware stamped, and the
+	// break-glass actor context (so a delivery failure during an
+	// impersonation session still stamps evidence-chain metadata) — so a
+	// span or log line downstream in deliver still joins the originating
+	// request's trace instead of rooting a disconnected one.
 	deliveryCtx := context.WithoutCancel(ctx)
 	for _, c := range clients {
 		endpoint := receiverEndpoint(c)
@@ -315,13 +319,24 @@ func (t *Transmitter) resolveClients(ctx context.Context, m mappedEvent) []*core
 // through to attemptDelivery/fail so a span or trace-correlated log emitted
 // during mint/POST/failure-audit joins the ORIGINATING request's trace
 // rather than rooting a new one.
+//
+// The whole retry chain (see attemptDelivery / waitBackoff) is ONE span:
+// each re-attempt is a span event, not a child span, so a flaky receiver
+// doesn't fan out an unbounded number of spans per SET.
 func (t *Transmitter) deliver(ctx context.Context, clientID, endpoint, auth string, req buildSETRequest) {
 	defer t.wg.Done()
+
+	ctx, span := tracing.StartSpan(ctx, "caep.transmitter.deliver")
+	defer span.End()
+	span.SetAttributes(attribute.String("caep.client_id", clientID))
+
 	// recover() so a panic (e.g. in a custom http.Client transport) is
 	// contained as a delivery failure instead of taking down the goroutine.
 	defer func() {
 		if r := recover(); r != nil {
-			t.fail(ctx, clientID, endpoint, fmt.Sprintf("panic: %v", r))
+			reason := fmt.Sprintf("panic: %v", r)
+			tracing.SetError(span, errors.New(reason))
+			t.fail(ctx, clientID, endpoint, reason)
 		}
 	}()
 	var lastErr error
@@ -333,12 +348,14 @@ func (t *Transmitter) deliver(ctx context.Context, clientID, endpoint, auth stri
 			if t.metric != nil {
 				t.metric(OutcomeRetried)
 			}
+			span.AddEvent("retry", oteltrace.WithAttributes(attribute.Int("caep.attempt", attempt+1)))
 		}
 		err := t.attemptDelivery(ctx, endpoint, auth, req)
 		if err == nil {
 			if t.metric != nil {
 				t.metric(OutcomeSuccess)
 			}
+			span.SetAttributes(attribute.String("outcome", OutcomeSuccess), attribute.Int("caep.attempts", attempt+1))
 			return
 		}
 		lastErr = err
@@ -346,6 +363,8 @@ func (t *Transmitter) deliver(ctx context.Context, clientID, endpoint, auth stri
 			break
 		}
 	}
+	span.SetAttributes(attribute.String("outcome", OutcomeFailed))
+	tracing.SetError(span, lastErr)
 	t.fail(ctx, clientID, endpoint, lastErr.Error())
 }
 
@@ -458,25 +477,9 @@ func receiverEndpoint(c *core.Client) string {
 	return raw
 }
 
-// ErrInvalidReceiverEndpoint is returned by ValidateReceiverEndpoint for
-// a missing-scheme, non-https, or unparseable receiver URL.
-var ErrInvalidReceiverEndpoint = errors.New("caep: receiver endpoint must be a valid https URL")
-
-// ValidateReceiverEndpoint enforces the registration-time invariant: a
-// CAEP receiver endpoint MUST be an absolute https URL with a host. Used
-// at client create/update so a receiver address can never be a non-https
-// (plaintext SET exfil) or relative/garbage target. Exported so the admin
-// + DCR paths validate with one canonical rule.
-func ValidateReceiverEndpoint(raw string) error {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return ErrInvalidReceiverEndpoint
-	}
-	if u.Scheme != "https" || u.Host == "" {
-		return ErrInvalidReceiverEndpoint
-	}
-	return nil
-}
+// ErrInvalidReceiverEndpoint and ValidateReceiverEndpoint moved to
+// broadcaster_retry.go (which had room) to keep this file within the
+// per-file line budget.
 
 // compile-time guard: a Transmitter is an audit.Sink.
 var _ audit.Sink = (*Transmitter)(nil)

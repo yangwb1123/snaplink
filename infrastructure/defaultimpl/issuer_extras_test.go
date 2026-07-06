@@ -16,6 +16,7 @@ import (
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // jwtSigner is the subset of issuer behavior the cross-issuer extras tests
@@ -23,6 +24,7 @@ import (
 type jwtSigner interface {
 	SignMetadata(ctx context.Context, claims map[string]any) (string, error)
 	SignUserInfo(ctx context.Context, audience string, claims map[string]any) (string, error)
+	SignIntrospectionJWT(ctx context.Context, claims map[string]any) (string, error)
 	IssueLogoutToken(ctx context.Context, req *sso.LogoutTokenRequest) (string, error)
 	SignJWT(ctx context.Context, typ string, claims any) (string, error)
 	AcceptsTokenFormat(token string) bool
@@ -58,6 +60,64 @@ func TestIssuers_SignMetadata(t *testing.T) {
 			}
 			if empty != "" {
 				t.Errorf("SignMetadata(nil) = %q, want empty", empty)
+			}
+		})
+	}
+}
+
+// TestIssuers_SignIntrospectionJWT is the RFC 9701 §5.1 / §8 regression
+// guard across all three shipped issuers: the typ header MUST be
+// core.JWTTypIntrospection (never the generic "JWT" typ SignMetadata /
+// SignUserInfo use), and the two claims signing MUST NOT accidentally
+// leak at the top level (a naive verifier that checks typ can never
+// mistake this JWT for a bearer access/ID token — see §8).
+func TestIssuers_SignIntrospectionJWT(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for name, iss := range issuerSigners(t) {
+		t.Run(name, func(t *testing.T) {
+			claims := map[string]any{
+				"iss": "https://issuer.test",
+				"aud": "rp",
+				"iat": 1,
+				core.KeyTokenIntrospection: map[string]any{
+					"active": true, "sub": "user-1",
+				},
+			}
+			jws, err := iss.SignIntrospectionJWT(ctx, claims)
+			if err != nil {
+				t.Fatalf("SignIntrospectionJWT: %v", err)
+			}
+			if !threeSegments(jws) {
+				t.Fatalf("introspection JWS not 3-segment: %q", jws)
+			}
+
+			hb, _ := base64.RawURLEncoding.DecodeString(strings.Split(jws, ".")[0])
+			var hdr struct{ Typ string }
+			_ = json.Unmarshal(hb, &hdr)
+			if hdr.Typ != core.JWTTypIntrospection {
+				t.Errorf("typ = %q, want %q", hdr.Typ, core.JWTTypIntrospection)
+			}
+
+			pb, _ := base64.RawURLEncoding.DecodeString(strings.Split(jws, ".")[1])
+			var pl map[string]any
+			_ = json.Unmarshal(pb, &pl)
+			nested, ok := pl[core.KeyTokenIntrospection].(map[string]any)
+			if !ok {
+				t.Fatalf("no nested %s claim: %v", core.KeyTokenIntrospection, pl)
+			}
+			if nested["sub"] != "user-1" {
+				t.Errorf("nested sub = %v, want user-1", nested["sub"])
+			}
+
+			// nil claims → empty string, no error (defensive shape,
+			// matching SignMetadata's nil handling).
+			empty, err := iss.SignIntrospectionJWT(ctx, nil)
+			if err != nil {
+				t.Fatalf("SignIntrospectionJWT(nil): %v", err)
+			}
+			if empty != "" {
+				t.Errorf("SignIntrospectionJWT(nil) = %q, want empty", empty)
 			}
 		})
 	}

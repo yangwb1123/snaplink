@@ -25,6 +25,18 @@ type controlAreaDef struct {
 // types are filed under "Privacy" rather than "CC6.3" (even the
 // EventAdmin* ones) to avoid double counting a subject-export/erase
 // action under both the admin-actions and privacy buckets.
+//
+// auditspi/event_types_admin.go currently declares 60 EventAdmin* consts:
+// most land in CC6.3 below, EventAdminSigningKeyRotated/
+// EventAdminCredentialCompromised/EventAdminCryptoKeyCompromised land in
+// CC6.6 (cryptographic/credential key management, not a generic privileged
+// action), and EventAdminSubjectExported/EventAdminSubjectErased/
+// EventAdminTenantExported land in Privacy. This count is a manual
+// cross-check for a human reading this file — the
+// enforced source of truth is drift_test.go's
+// TestEveryKnownEventTypeIsClaimedOrExplicitlyUncategorized, which fails
+// CI (not just a stale comment) the moment a new EventAdmin* const is
+// added here without a bucket decision.
 var controlAreaDefs = []controlAreaDef{
 	{
 		code: "CC6.1",
@@ -35,6 +47,12 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventLogout,
 			audit.EventClientAccess,
 			audit.EventPermissionQuery,
+			audit.EventIdentityMerged,
+			audit.EventIdentityMergeRejected,
+			audit.EventIdentityUnlinked,
+			audit.EventCrossTenantTokenExchange,
+			audit.EventAgentDelegationTokenIssued,
+			audit.EventAgentSessionRevoked,
 		},
 	},
 	{
@@ -49,6 +67,10 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventWebAuthnRegistered,
 			audit.EventWebAuthnAttestationDenied,
 			audit.EventRecoveryCodesRegenerated,
+			audit.EventDeviceTrusted,
+			audit.EventDeviceTrustRevoked,
+			audit.EventMFASkippedTrustedDevice,
+			audit.EventSessionTrustStepUp,
 		},
 	},
 	{
@@ -75,6 +97,8 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventAdminAccountUnlocked,
 			audit.EventAdminConnectionUpserted,
 			audit.EventAdminConnectionDeleted,
+			audit.EventAdminConnectionDomainVerified,
+			audit.EventAdminConnectionProbed,
 			audit.EventAdminTenantMemberAdded,
 			audit.EventAdminTenantMemberRemoved,
 			audit.EventAdminRoleAdded,
@@ -91,6 +115,22 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventAdminDomainUpdated,
 			audit.EventAdminDomainDeleted,
 			audit.EventAdminGRPCCalled,
+			audit.EventAdminRefreshTokensRevoked,
+			audit.EventAdminUserLifecycleChanged,
+			audit.EventAdminBreakGlassCreated,
+			audit.EventAdminBreakGlassApproved,
+			audit.EventAdminBreakGlassRevoked,
+			audit.EventAdminBreakGlassExpired,
+			audit.EventAdminBreakGlassImpersonationStarted,
+			audit.EventAdminWebhookSubscriptionCreated,
+			audit.EventAdminWebhookSubscriptionDeleted,
+			audit.EventAdminChangeProposed,
+			audit.EventAdminChangeApproved,
+			audit.EventAdminChangeRejected,
+			audit.EventAdminChangeApplied,
+			audit.EventAdminChangeApplyFailed,
+			audit.EventAdminWriteQuotaExceeded,
+			audit.EventAdminIPDenied,
 		},
 	},
 	{
@@ -98,10 +138,13 @@ var controlAreaDefs = []controlAreaDef{
 		name: "Cryptographic key management",
 		eventTypes: []audit.EventType{
 			audit.EventSigningKeyRotated,
+			audit.EventAdminSigningKeyRotated,
 			audit.EventSigningKeyRotationCoordinated,
 			audit.EventSigningKeyAggregationDegraded,
 			audit.EventSigningKeyAggregationRecovered,
 			audit.EventSigningKeyAdoptionErrorsTotal,
+			audit.EventAdminCredentialCompromised,
+			audit.EventAdminCryptoKeyCompromised,
 		},
 	},
 	{
@@ -121,6 +164,7 @@ var controlAreaDefs = []controlAreaDef{
 		eventTypes: []audit.EventType{
 			audit.EventAdminSubjectExported,
 			audit.EventAdminSubjectErased,
+			audit.EventAdminTenantExported,
 			audit.EventSubjectDataExported,
 			audit.EventSubjectSelfErased,
 		},

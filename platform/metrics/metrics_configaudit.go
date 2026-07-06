@@ -16,3 +16,17 @@ func registerConfigAuditMetrics(factory promauto.Factory, m *Metrics) {
 		},
 	)
 }
+
+// registerConnectionHealthMetrics wires the B2B enterprise-connection probe
+// counter. Folded into this file (rather than metrics_ctor.go, which is at
+// its file-size budget) — relocated from its own connection_health.go to
+// stay within platform/metrics' file-count budget.
+func registerConnectionHealthMetrics(factory promauto.Factory, m *Metrics) {
+	m.ConnectionHealthProbesTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: NameConnectionHealthProbesTotal,
+			Help: "Admin-triggered B2B enterprise-connection reachability probes, by type (oidc/saml) and outcome (healthy/degraded/unreachable). A rising unreachable rate means an org's upstream IdP has gone dark. Zero traffic until an admin runs a probe.",
+		},
+		[]string{LabelConnectionType, LabelOutcome},
+	)
+}

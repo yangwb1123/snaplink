@@ -12,6 +12,8 @@ import (
 	"sync"
 
 	"github.com/snaplink/sso/platform/cluster"
+	"github.com/snaplink/sso/platform/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // ErrClosed is returned by Publish/Subscribe after the Bus is closed.
@@ -36,7 +38,19 @@ func New() *Bus {
 // Publish broadcasts evt to every current subscriber, best-effort:
 // a subscriber whose buffer is full is skipped (it will fall back to its
 // cache TTL), never blocked on.
-func (b *Bus) Publish(_ context.Context, evt cluster.Event) error {
+//
+// The publish call runs synchronously on the caller's goroutine (often the
+// admin-mutation request path, sometimes a background self-heal loop), so
+// the span it starts is parented on ctx directly — no detach needed, unlike
+// the genuinely async worker paths (audit delivery, CAEP SET push).
+func (b *Bus) Publish(ctx context.Context, evt cluster.Event) error {
+	_, span := tracing.StartSpan(ctx, "cluster.bus.publish")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("cluster.bus.backend", "memory"),
+		attribute.String("cluster.bus.kind", string(evt.Kind)),
+	)
+
 	// Hold the read lock across BOTH the closed-check AND the sends. Close and
 	// removeSub close subscriber channels only under the write lock, so the
 	// read lock here makes "send on ch" mutually exclusive with "close(ch)" —
@@ -45,6 +59,7 @@ func (b *Bus) Publish(_ context.Context, evt cluster.Event) error {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	if b.closed {
+		tracing.SetError(span, ErrClosed)
 		return ErrClosed
 	}
 	for _, ch := range b.subs {
@@ -61,9 +76,14 @@ func (b *Bus) Publish(_ context.Context, evt cluster.Event) error {
 // Subscribe registers a new stream, removed automatically when ctx is
 // cancelled or the Bus closes.
 func (b *Bus) Subscribe(ctx context.Context) (<-chan cluster.Event, error) {
+	_, span := tracing.StartSpan(ctx, "cluster.bus.subscribe")
+	defer span.End()
+	span.SetAttributes(attribute.String("cluster.bus.backend", "memory"))
+
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
+		tracing.SetError(span, ErrClosed)
 		return nil, ErrClosed
 	}
 	ch := make(chan cluster.Event, 16)

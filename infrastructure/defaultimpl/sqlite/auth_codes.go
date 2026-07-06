@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/snaplink/sso/platform/migrate"
 )
 
 // authCodeSchema covers the OAuth 2.0 authorization_code grant data
@@ -28,12 +30,64 @@ CREATE TABLE IF NOT EXISTS auth_codes (
     attributes            TEXT    NOT NULL DEFAULT '{}',
     code_challenge        TEXT    NOT NULL DEFAULT '',
     code_challenge_method TEXT    NOT NULL DEFAULT '',
+    confirmation_jkt      TEXT    NOT NULL DEFAULT '',
     expires_at            INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_auth_codes_expires_at
     ON auth_codes(expires_at);
 `
+
+// authCodeMigrations is the schema history. v1 is the original baseline
+// (equivalent to the single-migration contract ensureSchema used to apply
+// implicitly). v2 backfills the RFC 9449 §10 DPoP authorization-code-
+// binding column onto a pre-existing database — SQLite has no ADD COLUMN
+// IF NOT EXISTS, so the Func checks first; a fresh database already has
+// the column from the v1 baseline DDL above and skips the add. Mirrors
+// refresh_tokens_schema.go's addRefreshTokenDPoPBinding (v4) exactly.
+var authCodeMigrations = []migrate.Migration{
+	{Version: 1, Name: "baseline", SQL: authCodeSchema},
+	{Version: 2, Name: "auth_code_dpop_binding", Func: addAuthCodeDPoPBinding},
+}
+
+func addAuthCodeDPoPBinding(ctx context.Context, x migrate.Execer) error {
+	has, err := authCodeColumnExists(ctx, x, "confirmation_jkt")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	_, err = x.ExecContext(ctx,
+		`ALTER TABLE auth_codes ADD COLUMN confirmation_jkt TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+// authCodeColumnExists reports whether auth_codes already has the named
+// column, via PRAGMA table_info (the table name is a constant, not user
+// input).
+func authCodeColumnExists(ctx context.Context, x migrate.Execer, column string) (bool, error) {
+	rows, err := x.QueryContext(ctx, `PRAGMA table_info(auth_codes)`)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			cid         int
+			name, ctype string
+			notnull, pk int
+			dflt        sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
 
 // oauth.AuthCodeStore is the SQLite-backed implementation of
 // [oauth.AuthCodeStore]. Suitable for multi-replica deployments since
@@ -55,7 +109,7 @@ func NewAuthCodeStore(dsn string) (*AuthCodeStore, error) {
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
 	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
-	if err := ensureSchema(db, "auth_codes", authCodeSchema); err != nil {
+	if err := migrate.Run(context.Background(), db, "auth_codes", authCodeMigrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate auth_codes: %w", err)
 	}
@@ -112,11 +166,12 @@ func (s *AuthCodeStore) Issue(ctx context.Context, code string, info *oauth.Auth
         INSERT INTO auth_codes (
             code, user_id, client_id, redirect_uri, scopes, nonce,
             provider, attributes, code_challenge, code_challenge_method,
-            expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            confirmation_jkt, expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		code, info.UserID, info.ClientID, info.RedirectURI,
 		string(scopes), info.Nonce, info.Provider, string(attrs),
-		info.CodeChallenge, info.CodeChallengeMethod, info.ExpiresAt.UnixNano(),
+		info.CodeChallenge, info.CodeChallengeMethod, info.ConfirmationJKT,
+		info.ExpiresAt.UnixNano(),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite: insert auth_code: %w", err)
@@ -134,7 +189,7 @@ func (s *AuthCodeStore) Consume(ctx context.Context, code string) (*oauth.AuthCo
         DELETE FROM auth_codes WHERE code = ?
         RETURNING user_id, client_id, redirect_uri, scopes, nonce,
                   provider, attributes, code_challenge, code_challenge_method,
-                  expires_at`, code)
+                  confirmation_jkt, expires_at`, code)
 	out, err := scanAuthCode(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, oauth.ErrAuthCodeNotFound
@@ -155,12 +210,13 @@ func scanAuthCode(s scanner) (*oauth.AuthCode, error) {
 	var (
 		out                                                                                     oauth.AuthCode
 		redirectURI, nonce, provider, codeChallenge, codeChallengeMethod, scopesJSON, attrsJSON string
+		confirmationJKT                                                                         string
 		expiresAtUnixNs                                                                         int64
 	)
 	if err := s.Scan(
 		&out.UserID, &out.ClientID, &redirectURI, &scopesJSON, &nonce,
 		&provider, &attrsJSON, &codeChallenge, &codeChallengeMethod,
-		&expiresAtUnixNs,
+		&confirmationJKT, &expiresAtUnixNs,
 	); err != nil {
 		return nil, err
 	}
@@ -169,6 +225,7 @@ func scanAuthCode(s scanner) (*oauth.AuthCode, error) {
 	out.Provider = provider
 	out.CodeChallenge = codeChallenge
 	out.CodeChallengeMethod = codeChallengeMethod
+	out.ConfirmationJKT = confirmationJKT
 	out.ExpiresAt = time.Unix(0, expiresAtUnixNs).UTC()
 	if scopesJSON != "" && scopesJSON != "[]" {
 		if err := json.Unmarshal([]byte(scopesJSON), &out.Scopes); err != nil {

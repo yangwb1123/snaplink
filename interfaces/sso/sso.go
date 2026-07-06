@@ -16,6 +16,7 @@ import (
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
 	"github.com/snaplink/sso/platform/sse"
+	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/spi"
 )
 
@@ -386,4 +387,51 @@ func (s *Server) RunTokenAnomalyDetection(ctx context.Context, interval time.Dur
 			}
 		}
 	}
+}
+
+// applyIntrospectionSigningMetadata advertises RFC 9701 §7
+// introspection_signing_alg_values_supported — ONLY when a dedicated
+// introspection signer is wired (WithIntrospectionSigning); omitted
+// entirely otherwise, so an unmodified deployment's discovery doc is
+// byte-identical to a build without this feature. Relocated from
+// server_helpers.go (which was at the line budget).
+func (s *Server) applyIntrospectionSigningMetadata(cfg *oidc.ProviderMetadata, ctx context.Context) {
+	if s.introspectionSigner == nil {
+		return
+	}
+	cfg.IntrospectionSigningAlgValuesSupported = s.introspectionSigningAlgValues(ctx)
+}
+
+// introspectionSigningAlgValues derives the alg(s) the wired introspection
+// signer actually produces. Prefers the published JWKS (authoritative —
+// covers a signer mid-rotation with two live algs, though the shipped
+// issuers never mix algs on one instance) and falls back to the signer's
+// own Alg() method (the same fallback shape userinfoSignerProducesAlg
+// uses) for a signer that opts out of JWKS discovery entirely (e.g. a
+// KMS-backed IntrospectionSigner with no local public key to publish).
+func (s *Server) introspectionSigningAlgValues(ctx context.Context) []string {
+	if jp := s.IntrospectionSigningKeys(); jp != nil {
+		if keys, err := jp.JWKS(ctx); err == nil {
+			seen := map[string]struct{}{}
+			for _, k := range keys {
+				if k.Alg != "" {
+					seen[k.Alg] = struct{}{}
+				}
+			}
+			if len(seen) > 0 {
+				out := make([]string, 0, len(seen))
+				for a := range seen {
+					out = append(out, a)
+				}
+				sort.Strings(out)
+				return out
+			}
+		}
+	}
+	if ar, ok := s.introspectionSigner.(interface{ Alg() string }); ok {
+		if alg := ar.Alg(); alg != "" {
+			return []string{alg}
+		}
+	}
+	return nil
 }

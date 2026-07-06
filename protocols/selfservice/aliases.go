@@ -47,4 +47,9 @@ var (
 	HandleUnlinkMyIdentity         = selfserviceaccount.HandleUnlinkMyIdentity
 	HandleGenerateRecoveryCodes    = selfserviceaccount.HandleGenerateRecoveryCodes
 	HandleGetRecoveryCodesCount    = selfserviceaccount.HandleGetRecoveryCodesCount
+
+	// Trusted-device MFA-skip self-service (w2.15): /me/devices*.
+	HandleMyTrustedDevices      = selfserviceaccount.HandleMyTrustedDevices
+	HandleTrustMyDevice         = selfserviceaccount.HandleTrustMyDevice
+	HandleRevokeMyTrustedDevice = selfserviceaccount.HandleRevokeMyTrustedDevice
 )

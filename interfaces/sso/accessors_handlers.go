@@ -259,6 +259,20 @@ func (s *Server) MFAEnrollmentStore() core.MFAEnrollmentStore { return s.mfaEnro
 // accessor satisfies both selfservicecore.Deps and admin.Deps.
 func (s *Server) RecoveryCodeStore() core.RecoveryCodeStore { return s.recoveryCodeStore }
 
+// TrustedDeviceStore returns the trusted-device MFA-skip store (nil when
+// unwired). Satisfies selfservicecore.Deps.
+func (s *Server) TrustedDeviceStore() core.TrustedDeviceStore { return s.trustedDeviceStore }
+
+// TrustedDeviceTTL returns the configured "remember this device" grant TTL,
+// falling back to core.DefaultTrustedDeviceTTL when WithTrustedDeviceStore
+// was called with ttl <= 0 (or not called at all).
+func (s *Server) TrustedDeviceTTL() time.Duration {
+	if s.trustedDeviceTTL > 0 {
+		return s.trustedDeviceTTL
+	}
+	return core.DefaultTrustedDeviceTTL
+}
+
 // TOTPEnroller returns the TOTP enroller (nil when unwired).
 func (s *Server) TOTPEnroller() core.TOTPEnroller { return s.totpEnroller }
 
@@ -456,10 +470,7 @@ func (s *Server) MaybeEncryptIDToken(ctx context.Context, client *Client, signed
 	return s.maybeEncryptIDToken(ctx, client, signed)
 }
 
-// DPoPTokenTypeOr returns "DPoP" when a JKT binding is present, else defaultType.
-func (s *Server) DPoPTokenTypeOr(defaultType, jkt string) string {
-	return dpopTokenTypeOr(defaultType, jkt)
-}
+// DPoPTokenTypeOr moved to server_dpop.go, beside dpopTokenTypeOr.
 
 // RecordTokenIssued emits the access-token-issued audit event + metric.
 func (s *Server) RecordTokenIssued(ctx HandlerContext, clientID, strategy, subjectID string) {
@@ -482,14 +493,6 @@ func (s *Server) RecordIDTokenIssued(ctx HandlerContext, clientID, subjectID str
 	s.recordIDTokenIssued(ctx, clientID, subjectID)
 }
 
-// JWTBearerAssertionValidator returns the RFC 7523 JWT Bearer assertion
-// validator, or nil when the grant is not enabled.
-func (s *Server) JWTBearerAssertionValidator() tokengrant.JWTAssertionValidator {
-	return s.jwtBearerValidator
-}
-
-// SAML2AssertionValidator returns the RFC 7522 SAML 2.0 Bearer assertion
-// validator, or nil when the grant is not enabled.
-func (s *Server) SAML2AssertionValidator() tokengrant.SAMLAssertionValidator {
-	return s.saml2BearerValidator
-}
+// JWTBearerAssertionValidator / SAML2AssertionValidator moved to
+// server_token.go (which had room), beside the tokengrant.Handle*Grant
+// call sites that consume them.

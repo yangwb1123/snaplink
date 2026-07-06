@@ -6,8 +6,8 @@ Prometheus alert ruleset covering the most common SLO violations.
 
 ```
 deploy/grafana/
-├── sso-overview.json   # Grafana 10+ dashboard (15 panels across 5 rows)
-├── alerts.yaml         # Prometheus alerting rules (10 rules)
+├── sso-overview.json   # Grafana 10+ dashboard (16 panels across 6 rows)
+├── alerts.yaml         # Prometheus alerting rules (11 rules)
 └── README.md           # you are here
 ```
 
@@ -42,11 +42,12 @@ keep the default "All".
 | Audit pipeline & signing health | Audit async drops / sec by cause      | `sso_audit_async_drops_{queue_full,closed,inner_error}_total`   |
 | Audit pipeline & signing health | Audit queue fill ratio                | `sso_audit_async_queue_depth` / `sso_audit_async_queue_capacity`|
 | Audit pipeline & signing health | Signing health (KMS backend + key aggregation) | `sso_signing_backend_up`, `sso_signing_key_aggregation_up`, `sso_signing_key_adoption_errors_total` |
+| B2B connection health | Connection probes / sec by type + outcome | `sso_connection_health_probes_total` |
 
 ## Wire the alerts
 
 `alerts.yaml` is shaped for direct use as Prometheus's alerting
-configuration — ten rules with `for:` debounce windows tuned to be
+configuration — eleven rules with `for:` debounce windows tuned to be
 quiet under normal load:
 
 | Rule                               | Severity | Condition                                              |
@@ -61,6 +62,7 @@ quiet under normal load:
 | `SSOAuditQueueSaturated`           | warning  | audit queue depth / capacity > 80% for 5m               |
 | `SSOSigningBackendDown`            | critical | `sso_signing_backend_up == 0` for 2m (per alg)          |
 | `SSOSigningKeyAggregationDegraded` | warning  | `sso_signing_key_aggregation_up == 0` for 5m            |
+| `SSOConnectionUnreachable`         | warning  | any B2B connection probe returned unreachable over 15m |
 
 ### kube-prometheus-stack
 

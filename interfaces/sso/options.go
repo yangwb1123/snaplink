@@ -234,6 +234,9 @@ func WithJARM(signer oidc.JARMSigner) Option {
 	return func(s *Server) { s.jarmSigner = signer }
 }
 
+// WithIntrospectionSigning moved to options_grants.go, beside
+// WithIntrospectionSigner (the other way to wire the same field).
+
 // WithDefaultTokenStrategy names the strategy used when a Client does not
 // specify its own.
 func WithDefaultTokenStrategy(name string) Option {

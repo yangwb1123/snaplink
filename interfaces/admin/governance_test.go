@@ -11,9 +11,11 @@ import (
 
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/userlifecycle"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
+	"github.com/snaplink/sso/platform/metrics"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
@@ -34,6 +36,11 @@ func (d *gcTestDeps) ApprovalStore() admingovernance.ApprovalStore             {
 func (d *gcTestDeps) ChangeRegistry() *admingovernance.Registry                { return d.registry }
 func (d *gcTestDeps) ApprovalActionTypes() admingovernance.RequiredActionTypes { return d.actionTypes }
 func (d *gcTestDeps) ConnectionStore() connections.Store                       { return nil }
+func (d *gcTestDeps) ClientStore() core.ClientStore                            { return nil }
+func (d *gcTestDeps) SessionManager() core.SessionManager                      { return nil }
+func (d *gcTestDeps) Permissions() permissions.Provider                        { return nil }
+func (d *gcTestDeps) ConnectionProber() connections.Prober                     { return nil }
+func (d *gcTestDeps) Metrics() *metrics.Metrics                                { return nil }
 func (d *gcTestDeps) ConditionalAccessStore() conditionalaccess.Store          { return nil }
 func (d *gcTestDeps) DomainResolver() connections.DNSResolver                  { return nil }
 func (d *gcTestDeps) RecoveryCodeStore() core.RecoveryCodeStore                { return nil }

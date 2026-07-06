@@ -14,13 +14,14 @@ import (
 	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
 	"github.com/snaplink/sso/platform/lifecycle/cryptoinventory"
 	"github.com/snaplink/sso/platform/lifecycle/rotation"
-	"github.com/snaplink/sso/platform/sse"
 	"github.com/snaplink/sso/shared/core"
 )
 
 // WithDomainVerificationResolver moved to options_httpstack.go, beside the
 // DomainResolver() accessor it feeds, to keep this file within the per-file
-// line budget.
+// line budget. WithConnectionProber / WithConnectionProbeTimeout moved to
+// server_federation.go, beside the ConnectionProber() accessor and
+// connectionProber field they feed.
 
 // WithAdminSessionTTL sets an idle timeout for admin bearer tokens. When
 // a token has not been used for longer than the TTL, the admin middleware
@@ -120,36 +121,8 @@ func WithCryptoInventory(inv cryptoinventory.Inventory) Option {
 	return func(s *Server) { s.cryptoInventory = inv }
 }
 
-// WithSSEBroker mounts GET /api/v1/admin/events/stream — the realtime
-// admin event source (Server-Sent Events). When an audit recorder is ALSO
-// wired, NewServer taps its pipeline (the same AddSink/MultiSink seam
-// WithCAEPTransmitter uses) so every recorded event is projected to a
-// redacted Summary and published to b; without a recorder the route still
-// mounts but never emits (the broker has no source).
-//
-// The caller owns b's lifecycle: construct it with sse.NewBroker and Close
-// it during shutdown, BEFORE the HTTP graceful drain, so idle EventSource
-// connections don't pin Shutdown to its full deadline (Server.SSEBroker
-// exposes it back for exactly that). Default-off: a nil (unset) broker is
-// byte-identical to a build without the feature.
-func WithSSEBroker(b *sse.Broker) Option {
-	return func(s *Server) { s.sseBroker = b }
-}
-
-// SSEBroker returns the wired broker (nil when unset), so cmd can Close it
-// during shutdown without retaining its own reference.
-func (s *Server) SSEBroker() *sse.Broker { return s.sseBroker }
-
-// WithSSEHeartbeat overrides the admin event stream's keep-alive comment
-// interval. <= 0 (the default) leaves the SDK default (sse.DefaultHeartbeat)
-// in effect. Has no effect without WithSSEBroker.
-func WithSSEHeartbeat(d time.Duration) Option {
-	return func(s *Server) {
-		if d > 0 {
-			s.sseHeartbeat = d
-		}
-	}
-}
+// WithSSEBroker, SSEBroker(), and WithSSEHeartbeat moved to server_health.go
+// (which had room) to keep this file within the per-file line budget.
 
 // WithConfigAuditStore wires a platform/configaudit.Store so admin
 // mutations (client/tenant/policy changes — see

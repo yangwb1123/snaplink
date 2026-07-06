@@ -174,6 +174,13 @@ func (s *Server) evaluateLoginRisk(ctx HandlerContext, result *AuthResult, req *
 			return true
 		}
 		if assessment.Decision == spi.DecisionRequireMFA && s.mfaProvider != nil && s.mfaChallengeStore != nil {
+			// "Remember this device" escape hatch: a live grant for THIS
+			// (user, client) lets a genuinely returning device skip the
+			// challenge entirely — checked BEFORE issuing one so a hit never
+			// even mints a throwaway challenge.
+			if s.trustedDeviceAllowsSkip(ctx, result.UserID, req.ClientID, req.DeviceToken) {
+				return false
+			}
 			// Step-up gate engaged: persist the in-flight state and return
 			// mfa_required so the client follows up at /auth/mfa. issueMFAChallenge
 			// writes the response; resume happens in handleMFAComplete.
@@ -343,4 +350,55 @@ func (s *Server) lookupDevicePosture(ctx HandlerContext, signals trust.TrustSign
 		return conditionalaccess.PostureUnknown
 	}
 	return posture
+}
+
+// trustedDeviceAllowsSkip reports whether req's device_token is a live
+// "remember this device" grant for (userID, clientID) — when true, the
+// risk-scorer's step-up demand is skipped for this login. A missing store,
+// an empty token, or a Verify miss (unknown, expired, wrong user, wrong
+// client — all indistinguishable to the caller by design, see
+// core.TrustedDeviceStore.Verify) all return false and the ordinary
+// challenge is issued.
+//
+// A Verify ERROR also returns false — the opposite of the risk-scorer's own
+// fail-OPEN contract just above. Misreading a store outage as "trusted"
+// would silently defeat a security control the operator explicitly
+// configured; failing closed here only costs the legitimate user one extra
+// MFA prompt, which is the safe direction to err in.
+func (s *Server) trustedDeviceAllowsSkip(ctx HandlerContext, userID, clientID, token string) bool {
+	if s.trustedDeviceStore == nil || token == "" {
+		return false
+	}
+	ok, err := s.trustedDeviceStore.Verify(ctx.Request().Context(), userID, clientID, token)
+	if err != nil {
+		s.logger.Error("trusted device verify failed", "error", err, "user", userID, "client", clientID)
+		return false
+	}
+	if !ok {
+		return false
+	}
+	s.recordMFASkippedTrustedDevice(ctx, userID, clientID)
+	return true
+}
+
+// recordMFASkippedTrustedDevice emits the mfa_skipped_trusted_device audit
+// event — the durable, operator-visible record that a login bypassed the
+// risk-scorer's step-up demand via a trusted-device grant instead of a
+// freshly-verified factor. Outcome success: this is the feature working as
+// designed, not a failure — but a SOC2/SIEM reviewer needs a trail of every
+// login that minted tokens off a single verified factor despite
+// DecisionRequireMFA, so it rides its own event type rather than folding
+// into mfa_success (which would misrepresent that a factor was checked).
+func (s *Server) recordMFASkippedTrustedDevice(ctx HandlerContext, userID, clientID string) {
+	if s.auditor == nil {
+		return
+	}
+	evt := &audit.Event{
+		Type:     audit.EventMFASkippedTrustedDevice,
+		Outcome:  audit.OutcomeSuccess,
+		ActorID:  userID,
+		ClientID: clientID,
+		ActorIP:  audit.ClientIP(ctx.Request()),
+	}
+	s.auditor.Record(ctx.Request().Context(), evt)
 }
