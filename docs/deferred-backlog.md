@@ -85,8 +85,21 @@ related capability exists but the proposed feature does not).
   `externalId`, `homeRegion`, `allowedRegions`, `enforceWrites`, ...) was
   confirmed empirically the same way as the Clients fix, against the real
   `UserAdminService`/`TenantAdminService` behind a real grpc-gateway mux,
-  not assumed from the .proto alone. Domains (hostname→tenant mapping)
-  CRUD and the dogfood OAuth/PKCE login remain undone.
+  not assumed from the .proto alone. The dogfood OAuth/PKCE login is also
+  now done: the login screen offers "Sign in with SSO" (RFC 6749 §4.1 +
+  RFC 7636 S256 PKCE, hand-rolled with `crypto.subtle` — no library),
+  redirecting to the hosted login page (`/login/`, `WithHostedLoginFS`)
+  as the already-seeded public client `sso-admin-console`
+  (`platform/bootstrap/builtin`'s `stepSeedAdminConsoleClient`,
+  `RequirePKCE: true`, no secret) and exchanging the returned code at
+  `/token` with `code_verifier` alone. Falls back to (and keeps) the
+  manual bearer-token field, and hides the SSO button entirely outside a
+  secure context (`crypto.subtle` requires HTTPS or localhost) rather
+  than offering a control that would always fail. Requires the operator
+  to register this page's own URL as a `redirect_uri` on
+  `sso-admin-console` and to wire `WithHostedLoginFS` — documented inline
+  on the login screen. Domains (hostname→tenant mapping) CRUD is the only
+  piece of this backlog entry still undone.
   _Sources: expansion-architecture-gaps-2026-07-01, analysis-five-directions-toctou…._
 - **Multi-language SDK generation + developer portal** — partial. Embedded
   read-only API-docs viewer at `/api/v1/admin/docs` (+ a `/openapi.json`

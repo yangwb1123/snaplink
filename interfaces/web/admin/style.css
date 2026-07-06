@@ -131,6 +131,49 @@ body {
 
 .btn-primary:hover:not(:disabled) { background: #3a5ce4; }
 
+.btn-secondary {
+  background: transparent;
+  color: #a0aec0;
+  width: 100%;
+  border: 1px solid #2d3148;
+}
+
+.btn-secondary:hover:not(:disabled) { background: #1a1d2e; color: #e2e8f0; }
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  margin: 18px 0;
+  color: #4a5568;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.login-divider::before, .login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #2d3148;
+}
+
+.login-divider span { padding: 0 10px; }
+
+.sso-login-hint {
+  color: #4a5568;
+  font-size: 11px;
+  margin: 10px 0 0;
+  line-height: 1.5;
+}
+
+.sso-login-hint code {
+  background: #0f1117;
+  border: 1px solid #2d3148;
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 11px;
+}
+
 .btn-danger {
   background: #e53e3e;
   color: #fff;

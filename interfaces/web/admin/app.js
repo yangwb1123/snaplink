@@ -34,6 +34,14 @@ var tenantFormMode = 'create';
 var tenantFormOriginalId = '';
 var tenantsCache = {};
 
+// SSO_ADMIN_CLIENT_ID is the public, PKCE-required OAuth client this
+// console dogfoods against its own server as — seeded server-side by
+// platform/bootstrap/builtin's stepSeedAdminConsoleClient (id, scopes,
+// and RequirePKCE=true fixed there; RedirectURIs left for the operator to
+// set to wherever this page is actually served from).
+var SSO_ADMIN_CLIENT_ID = 'sso-admin-console';
+var SSO_ADMIN_SCOPE = 'openid profile admin:read admin:write';
+
 // ---- Auth ----
 function doLogin() {
   var t = document.getElementById('token-input').value.trim();
@@ -54,6 +62,137 @@ function doLogout() {
   document.getElementById('app').style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
   document.getElementById('token-input').value = '';
+}
+
+// ---- Auth: dogfood OAuth 2.0 Authorization Code + PKCE ----
+// base64url encodes an ArrayBuffer/Uint8Array without padding — the form
+// RFC 7636 requires for code_verifier/code_challenge.
+function base64url(buf) {
+  var bytes = new Uint8Array(buf);
+  var bin = '';
+  for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// generateCodeVerifier mints a 64-byte random verifier (86 base64url
+// chars) — comfortably inside the server's accepted [43,128] window
+// (shared/core/consts_oauth.go PKCEVerifierMinLen/MaxLen) with margin,
+// unlike a minimal 32-byte verifier which lands exactly at the 43-char
+// floor.
+function generateCodeVerifier() {
+  var arr = new Uint8Array(64);
+  crypto.getRandomValues(arr);
+  return base64url(arr);
+}
+
+function generateState() {
+  var arr = new Uint8Array(16);
+  crypto.getRandomValues(arr);
+  return base64url(arr);
+}
+
+// sha256CodeChallenge computes RFC 7636 S256: BASE64URL(SHA256(verifier)).
+// The server accepts "plain" too, but the seeded sso-admin-console client
+// has RequirePKCE=true, which forces S256-only (protocols/oauth/
+// handle_register_helpers.go's registration-time rule) — so this console
+// must always use S256, never plain.
+function sha256CodeChallenge(verifier) {
+  var bytes = new TextEncoder().encode(verifier);
+  return crypto.subtle.digest('SHA-256', bytes).then(base64url);
+}
+
+function ssoLoginRedirectURI() {
+  return window.location.origin + window.location.pathname;
+}
+
+// startSSOLogin redirects the browser to the hosted login page
+// (/login/, mounted only when the operator wires WithHostedLoginFS) with
+// a standard RFC 6749 §4.1 + RFC 7636 authorization request. The
+// code_verifier/state are stashed in sessionStorage — they must survive
+// the full-page navigation away and back.
+function startSSOLogin() {
+  var verifier = generateCodeVerifier();
+  var state = generateState();
+  var redirectURI = ssoLoginRedirectURI();
+  sha256CodeChallenge(verifier).then(function(challenge) {
+    sessionStorage.setItem('sso_admin_oauth_verifier', verifier);
+    sessionStorage.setItem('sso_admin_oauth_state', state);
+    sessionStorage.setItem('sso_admin_oauth_redirect_uri', redirectURI);
+    var params = new URLSearchParams();
+    params.set('response_type', 'code');
+    params.set('client_id', SSO_ADMIN_CLIENT_ID);
+    params.set('redirect_uri', redirectURI);
+    params.set('scope', SSO_ADMIN_SCOPE);
+    params.set('code_challenge', challenge);
+    params.set('code_challenge_method', 'S256');
+    params.set('state', state);
+    window.location.href = '/login/?' + params.toString();
+  }).catch(function(e) {
+    showLoginError('Could not start SSO login: ' + e.message);
+  });
+}
+
+// handleOAuthCallback checks for a ?code=&state= (or ?error=) query string
+// left by the hosted login page's redirect back to this same URL. Returns
+// true when this load IS such a callback (whether it succeeds or fails) —
+// the boot sequence must not also fall through to the plain
+// "resume a saved token" path in that case. Always strips the query
+// string via replaceState so a page refresh never replays the exchange.
+function handleOAuthCallback() {
+  var params = new URLSearchParams(window.location.search);
+  var code = params.get('code');
+  var oauthError = params.get('error');
+  if (!code && !oauthError) return false;
+
+  var savedState = sessionStorage.getItem('sso_admin_oauth_state');
+  var verifier = sessionStorage.getItem('sso_admin_oauth_verifier');
+  var redirectURI = sessionStorage.getItem('sso_admin_oauth_redirect_uri');
+  sessionStorage.removeItem('sso_admin_oauth_state');
+  sessionStorage.removeItem('sso_admin_oauth_verifier');
+  sessionStorage.removeItem('sso_admin_oauth_redirect_uri');
+  window.history.replaceState({}, '', window.location.pathname);
+
+  if (oauthError) {
+    showLoginError('SSO login failed: ' + (params.get('error_description') || oauthError));
+    return true;
+  }
+  var state = params.get('state');
+  if (!state || state !== savedState || !verifier) {
+    showLoginError('SSO login failed: invalid or expired login attempt — please try again.');
+    return true;
+  }
+  exchangeCodeForToken(code, verifier, redirectURI);
+  return true;
+}
+
+// exchangeCodeForToken performs the RFC 6749 §4.1.3 + RFC 7636 §4.5
+// token exchange. A public (secret-less) client authenticates with
+// PKCE's code_verifier alone — no client_secret is sent or needed.
+function exchangeCodeForToken(code, verifier, redirectURI) {
+  var body = new URLSearchParams();
+  body.set('grant_type', 'authorization_code');
+  body.set('code', code);
+  body.set('redirect_uri', redirectURI);
+  body.set('client_id', SSO_ADMIN_CLIENT_ID);
+  body.set('code_verifier', verifier);
+
+  fetch('/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString()
+  }).then(function(r) {
+    return r.json().then(function(d) { return { ok: r.ok, body: d }; });
+  }).then(function(res) {
+    if (!res.ok || !res.body.access_token) {
+      throw new Error(res.body.error_description || res.body.error || 'token exchange failed');
+    }
+    sessionStorage.setItem('sso_admin_token', res.body.access_token);
+    token = res.body.access_token;
+    hideLoginError();
+    showApp();
+  }).catch(function(e) {
+    showLoginError('SSO login failed: ' + e.message);
+  });
 }
 
 function showLoginError(msg) {
@@ -959,6 +1098,17 @@ document.getElementById('token-input').addEventListener('keydown', function(e) {
 function wireStaticEventHandlers() {
   document.getElementById('login-btn').addEventListener('click', doLogin);
   document.getElementById('logout-btn').addEventListener('click', doLogout);
+  var ssoBtn = document.getElementById('sso-login-btn');
+  if (window.crypto && window.crypto.subtle) {
+    ssoBtn.addEventListener('click', startSSOLogin);
+  } else {
+    // crypto.subtle needs a secure context (HTTPS, or localhost) — hide
+    // the button rather than offer a control that will always fail with
+    // a confusing error on a plain-HTTP deployment.
+    ssoBtn.style.display = 'none';
+    document.querySelector('.sso-login-hint').style.display = 'none';
+    document.querySelector('.login-divider').style.display = 'none';
+  }
   document.querySelectorAll('.nav-item').forEach(function(el) {
     el.addEventListener('click', function() { navigate(el.dataset.page); });
   });
@@ -1048,6 +1198,10 @@ wireStaticEventHandlers();
 
 // ---- Boot ----
 (function() {
+  // A returning OAuth redirect (?code=&state= or ?error=) takes priority
+  // over resuming a saved token — it's this tab's current, in-progress
+  // login attempt.
+  if (handleOAuthCallback()) return;
   var saved = sessionStorage.getItem('sso_admin_token');
   if (saved) {
     token = saved;

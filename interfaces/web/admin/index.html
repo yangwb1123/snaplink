@@ -12,12 +12,19 @@
 <div id="login-screen">
   <div class="login-card">
     <h1>SSO Admin Console</h1>
-    <p>Enter your admin Bearer token to continue.</p>
+    <p>Sign in with your admin account, or paste a Bearer token directly.</p>
+    <button class="btn btn-primary" id="sso-login-btn">Sign in with SSO</button>
+    <p class="sso-login-hint">
+      Requires the <code>sso-admin-console</code> client's redirect_uris to
+      include this page's URL, and a hosted login page mounted at
+      <code>/login/</code> (<code>WithHostedLoginFS</code>).
+    </p>
+    <div class="login-divider"><span>or</span></div>
     <div class="form-group">
       <label for="token-input">Bearer Token</label>
       <input type="password" id="token-input" placeholder="Paste admin token here" autocomplete="off">
     </div>
-    <button class="btn btn-primary" id="login-btn">Sign In</button>
+    <button class="btn btn-secondary" id="login-btn">Sign In With Token</button>
     <div id="login-error" class="error-msg" style="display:none"></div>
   </div>
 </div>
