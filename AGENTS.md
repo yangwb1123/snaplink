@@ -1,8 +1,8 @@
 # AGENTS.md
 
-Operational guide for AI agents. Follows [agents.md](https://agents.md). User instructions override conflicts. **§4 invariants are gates — violations are regressions.**
+Operational guide for AI agents. Follows [agents.md](https://agents.md). User instructions override conflicts. **§3 invariants are gates — violations are regressions.**
 
-**Agent OS:** [BOOTSTRAP.md](docs/agent-os/BOOTSTRAP.md) (project context) → [HARNESS.md](docs/agent-os/HARNESS.md) (auto-checks) → [EVALUATION.md](docs/agent-os/EVALUATION.md) (quality gates) → [Skills](docs/skills/) (refactor patterns)
+**Agent OS:** [BOOTSTRAP.md](docs/agent-os/BOOTSTRAP.md) (context) → [ARCHITECTURE.md](docs/agent-os/ARCHITECTURE.md) (package map) → [HARNESS.md](docs/agent-os/HARNESS.md) (gate spec) → [EVALUATION.md](docs/agent-os/EVALUATION.md) (acceptance criteria) → [CHECKS_REGISTRY.md](docs/agent-os/CHECKS_REGISTRY.md) (all checks) → [Skills](docs/skills/) (refactor patterns)
 
 **Reference:** [Config](docs/config-reference.md) | [Features](docs/feature-matrix.md) | [Observability](docs/observability.md) | [Errors](docs/error-codes.md) | [OpenAPI](docs/openapi.yaml) | [ADRs](docs/adr/) | [Arch rules](.arch/rules.yaml) | [Prompts](.prompts/)
 
@@ -68,15 +68,18 @@ Root only allows server composition files. No `*_handler.go`, `*_service.go`, `*
 
 ### 0.6 Adding New Feature Code (every new package/file MUST satisfy these)
 
-The repo is a **physically layered tree** ([DIRECTORY_MAP](docs/architecture/DIRECTORY_MAP.md)). New code follows the SAME conventions as every existing layer — they are GATES, not guidelines (committed in `package archgate`: `architecture_layer_test`, `architecture_gate`, `maxdepth_test`, `maintainability_*`).
+Same layer/budget/import rules as existing code apply — GATES, not guidelines
+(committed in `package archgate`: `architecture_layer_test`, `architecture_gate`,
+`maxdepth_test`, `maintainability_*`). This is the pre-flight checklist; the
+rules themselves are §0.1/§0.2, not restated here.
 
-1. **Place by responsibility, under its layer dir:** `shared/` (core/spi/security — kernel, no impls, `core` import-free) · `domains/` (business: tenant, federation, authenticators…) · `protocols/` (oauth, oidc, scim, fapi, caep, selfservice, compliance) · `platform/` (cross-cutting: cluster, metrics, audit-mechanism, geo…) · `interfaces/` (delivery edge + `interfaces/sso` public Server API — no business logic) · `infrastructure/` (defaultimpl + vendor/nested modules).
-2. **Imports point DOWN only** (toward `shared/core`). No upward import; do not add a new `layerExemptions` entry.
-3. **Directory depth ≤ 3** — flatten a new backend/variant into the parent name (`webauthnsqlite`, `encryptionaesgcm`), don't nest a 4th level.
-4. **File ≤ 500 lines, function ≤ 50 lines & cyclomatic ≤ 15** — if your edit would breach, SPLIT FIRST (refactoring outranks features). The near-budget files (e.g. `protocols/oauth/handle_register.go` at 500) must be split before adding to them.
-5. **NEVER add a new maintainability exemption** to grandfather your own new violation — the exemption lists are count-capped (`maxCycloExemptions`/`maxFuncLenExemptions`/`maxFileSizeExemptions`) and only shrink; adding one fails the build.
-6. **Classify any new top-level (or `internal/`) package** in `layerName()` (`architecture_layer_test.go`) — an unclassified package fails the gate by design.
-7. **Before done:** `go build ./... && go vet ./...` then `go test -run 'TestMaintainability_|TestArchitecture_' .` — all pass with no new exemptions.
+1. Place by responsibility under its layer dir (§0.2, ARCHITECTURE.md) — extend an existing package, don't proliferate a new one for a one-off.
+2. Imports point DOWN only, toward `shared/core` — never add a `layerExemptions` entry.
+3. Directory depth ≤ 3 (§0.1) — flatten a new backend/variant into the parent name (`webauthnsqlite`, `encryptionaesgcm`), don't nest a 4th level.
+4. File ≤ 500 / function ≤ 50 / cyclo ≤ 15 (§0.1) — SPLIT FIRST if your edit would breach; the near-budget files (e.g. `protocols/oauth/handle_register.go` at 500) must be split before adding to them.
+5. NEVER add a new maintainability exemption to grandfather your own violation — `maxCycloExemptions`/`maxFuncLenExemptions`/`maxFileSizeExemptions` are count-capped and shrink-only; adding one fails the build.
+6. Classify any new top-level (or `internal/`) package in `layerName()` (`architecture_layer_test.go`) — unclassified fails the gate by design.
+7. Before done: `go build ./... && go vet ./...` then `go test -run 'TestMaintainability_|TestArchitecture_' .` — all pass with no new exemptions.
 
 ---
 
@@ -101,51 +104,42 @@ tracing → ratelimit → bodyLimit → metrics → CORS → router
 
 ## 2. Module Map
 
-> Packages are physically grouped under layer dirs: `shared/{core,spi,security}`,
-> `domains/*`, `protocols/{oauth,oidc,scim,fapi,caep,selfservice,compliance}`,
-> `platform/*`, `interfaces/*` (incl. `interfaces/sso` — the public Server API),
-> `infrastructure/{defaultimpl,ldap,kerberos,radius,saml,redis,extauthz,kms/*}`.
-> The names below are the package leaf; prefix with its layer for the import path.
+Full, current package list — including the newer `domains/` additions
+(`conditionalaccess`, `connections`, `identitylink`, `metering`,
+`tokenanomaly`, `tokenexchange`, `tokenpolicy`, `tokenusage`,
+`userlifecycle`), `protocols/` additions (`lifecyclereactions`,
+`scimprovision`), `shared/` additions (`i18n`, `trust`), and infra additions
+(`kafka`, `mqtt`, `postgres`) — lives in
+[ARCHITECTURE.md](docs/agent-os/ARCHITECTURE.md) (agent-lookup) /
+[DIRECTORY_MAP](docs/architecture/DIRECTORY_MAP.md) (canonical; wins on
+conflict). Don't duplicate that list here — it drifts. This section only
+keeps package-level invariants that aren't already stated in full in §3 or §4.
 
-| Package | Purpose | Key Invariants |
-|---|---|---|
-| `core/` | SPIs: User/Client/Session/Token/Subject/AuthRequest/AuthResult + Authenticator/UserProvider/ClientStore/SessionManager/TokenIssuer/JWK | Wire consts + sentinels |
-| `oauth/` | AuthCode/Device/Refresh/PAR stores, DCR/RAR validators, hexagonal grant handlers | Oracle-leak collapse; single-use `DELETE RETURNING`; refresh family rotation |
-| `oidc/` | IDTokenIssuer/UserinfoSigner/JWKS/EndSession/SilentRenewal/FormPost/JARM | MUST NOT import `oauth/`; `at_hash` when access_token in response; discovery derived |
-| `security/` | Lockout, JTI-replay, JAR-fetch, JWE, step-up, mTLS, pairwise, SPIFFE | `AsymmetricJWSAlgs`: EdDSA/ES256-512/RS256/PS256; no `alg=none`; checked BEFORE sig verify |
-| `spi/` | Logger, CodeSender, RiskScorer, MFAProvider | — |
-| `fapi/` | FAPI 2.0 Validator (Inspection\|Enforce) | — |
-| `anomaly/` | Async behavioral-detection SPIs | OFF request path; NEVER feeds auth decision |
-| `cluster/` | Cross-replica Bus (Publish/Subscribe); memory + etcd | `KindTokenRevoked`, `KindSigningKeyRotation`, `KindClientChange`, `KindAuthzPolicyChange` |
-| `middleware/` | Auth, CORS, Logger, Tracing, RequestID, no-store, base-URL | — |
-| `admin/` | HTTP middleware + gRPC interceptor + scope rules | `admin:read`/`admin:write`; 401 `Bearer realm="admin"` |
-| `tenant/` `geo/` | Tenant resolution + Geo enrichment | Mismatch → 403; geo is UX-only, fail-open |
-| `region/` | Multi-region data-residency SPI + resolvers | Write-gate on login; read-gate on access; governance codes (NOT oracles) |
-| `authenticators/` | 9 pluggable + `webauthn/` (AAGUID + FIDO MDS) | Unknown password → cost-matched dummy bcrypt |
-| `scim/` | SCIM 2.0 provisioning (RFC 7643/7644) | — |
-| `caep/` | OpenID SSF v1 SET transmitter + receiver | Push ONLY to affected client; receiver FAIL-CLOSED |
-| `federation/` | OpenID Federation 1.0 (entity config + trust-chain + auto-register + §8 fetch) | Trust-chain FAIL-CLOSED; pre-registered client WINS |
-| `defaultimpl/` | Ed25519/ECDSA/RSA issuers + Memory* stores + JWE + KMS bridge + `/sqlite` + `/vaulttransit` | Each issuer accepts ONLY its own alg |
-| `audit/` | Recorder + Sinks + hash chain | `SetMeta` only; W3C TraceID/SpanID; bounded cardinality |
-| `permissions/` | Roles + menus + wildcard matcher + policy-bundle export | `user:*` ⊇ `user:read`; MUST pass `permissionstest.ConformanceSuite` |
-| `compliance/` | GDPR/CCPA/PIPL erasure + export | — |
-| `selfservice/` | Signup, email change, password reset, data export, account erase | Hexagonal `Handle*(d Deps, ctx)` pattern |
-| `internal/auth/consent/` | Consent utilities + challenge store | `ScopesMatch`, `ScopesSubsumed`, `HasPromptValue`, `ChallengeStore` |
-| `internal/auth/login/` | Login request types | `Request` struct |
-| `internal/handler/` | Shared handler utilities | AMR, health, logging, validation, DPoP nonce, cross-replica |
-| `netpolicy/` `registry/` | Network classification + service discovery | memory\|etcd; hostname-beats-CIDR |
-| `bootstrap/` `snapshot/` `releases/` | First-run init, state export/restore, release pinning | Versioned; lock loss → cancel; `HealthProbe` gates forward |
-| `signingkeys/` | Leaderless JWKS key aggregation | Alg-matched BEFORE install; degraded → 503 |
-| `adapters/{echo,gin}/` | Router adapters | — |
-| `config/` | YAML + env + etcd + flag loader | — |
-| `proto/` `gen/proto/` `grpcserver/` | Protobuf + generated Go + gRPC + REST gateway | protoc-gen-go: `ID→Id`, `URL→Url` |
-| `ssoclient/` | Consumer-facing clients (local/remote/dev/bootstrap) | — |
-| `migrate/` | Pure-Go SQLite migration runner | Forward-only; `BEGIN IMMEDIATE` |
-| `cmd/` | Binary + offline CLIs | `cmd/ ← any` prohibited |
-| `deploy/` | Operator artifacts (openresty/k8s/compose/grafana) | — |
-| `test/` | Server-level integration suite (`package ssotest`) | — |
+| Package | Invariant not covered elsewhere |
+|---|---|
+| `core/` | SPIs: User/Client/Session/Token/Subject/AuthRequest/AuthResult + Authenticator/UserProvider/ClientStore/SessionManager/TokenIssuer/JWK; wire consts + sentinels |
+| `oauth/` | AuthCode/Device/Refresh/PAR stores, hexagonal grant handlers; single-use `DELETE RETURNING` (no read-then-delete race); refresh family rotation |
+| `oidc/` | `at_hash` required when access_token is in the response; discovery derived from server state |
+| `security/` | `AsymmetricJWSAlgs`: EdDSA/ES256-512/RS256/PS256 ONLY; `alg=none` banned; algorithm checked BEFORE signature verify |
+| `anomaly/` | Async behavioral detection, OFF the request path; NEVER feeds an auth decision |
+| `cluster/` | Cross-replica Bus kinds: `KindTokenRevoked`, `KindSigningKeyRotation`, `KindClientChange`, `KindAuthzPolicyChange` |
+| `admin/` | Scoped `admin:read`/`admin:write`; 401 sets `Bearer realm="admin"` |
+| `permissions/` | `user:*` ⊇ `user:read` wildcard semantics; new backend MUST pass `permissionstest.ConformanceSuite` |
+| `defaultimpl/` | Each issuer (Ed25519/ECDSA/RSA) accepts ONLY its own alg |
+| `signingkeys/` | Leaderless peer-key adoption alg-matched BEFORE install; degraded → 503 |
+| `audit/` | `SetMeta` only, never `e.Metadata = map{...}` (also §0.5); W3C TraceID/SpanID; bounded cardinality |
 
-**Nested modules** (no `go.work`; `make ci` → `ci-modules`): `kms/{awskms,gcpkms,azurekeyvault,pkcs11}/`, `saml/`, `ldap/`, `kerberos/`, `radius/`, `extauthz/`, `redis/`.
+Packages with a full dedicated invariant section already in §3 (not repeated
+here): `tenant/` + `geo/` and `region/` → Tenant & Residency · `caep/` → CAEP/SSF
+· `federation/` → Federation · `authenticators/` → Anti-Enumeration.
+
+Everything else (`spi/`, `fapi/`, `scim/`, `compliance/`, `selfservice/`,
+`middleware/`, `adapters/`, `config/`, `proto/`+`gen/proto/`+`grpcserver/`,
+`ssoclient/`, `migrate/`, `netpolicy/`+`registry/`, `bootstrap/`+`snapshot/`+
+`releases/`, `internal/*`, `cmd/`, `deploy/`, `test/`, and every `domains/`
+package listed above) is pure package-map, not a gate — see ARCHITECTURE.md.
+
+**Nested modules** (no `go.work`; `make ci` → `ci-modules`): `kms/{awskms,gcpkms,azurekeyvault,pkcs11}/`, `saml/`, `ldap/`, `kerberos/`, `radius/`, `extauthz/`, `redis/`, `kafka/`, `mqtt/`.
 
 ---
 

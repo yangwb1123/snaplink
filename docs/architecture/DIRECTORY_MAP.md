@@ -10,12 +10,12 @@ segment IS the layer. The dependency direction is **enforced** by
 ## Top-level layout (≤15 dirs)
 
 ```
-shared/          dependency-free kernel        core · spi · security
-domains/         business capabilities         tenant · region · permissions · federation · connections · metering · anomaly · authenticators
-protocols/       identity-protocol use-cases   oauth · oidc · scim · fapi · caep · selfservice · compliance
-platform/        cross-cutting capabilities    cluster · signingkeys · registry · netpolicy · metrics · tracing · bootstrap · releases · migrate · geo · audit · sse · configaudit · lifecycle (dr · rotation)
-interfaces/      inbound delivery + Server API grpcserver · adapters · admin · middleware · cors · ratelimit · web · ssoclient · snapshot · sso(the public Server)
-infrastructure/  concrete SPI impls            defaultimpl · ldap · kerberos · radius · saml · redis · extauthz · kms/*
+shared/          dependency-free kernel        core · spi · security · i18n · trust
+domains/         business capabilities         tenant · region · permissions · federation · connections · metering · anomaly · authenticators · conditionalaccess · identitylink · tokenanomaly · tokenexchange · tokenpolicy · tokenusage · userlifecycle
+protocols/       identity-protocol use-cases   oauth · oidc · scim · fapi · caep · selfservice · compliance · lifecyclereactions · scimprovision
+platform/        cross-cutting capabilities    cluster · signingkeys · registry · netpolicy · metrics · tracing · bootstrap · buildinfo · releases · migrate · geo · audit · sse · configaudit · lifecycle (dr · rotation)
+interfaces/      inbound delivery + Server API grpcserver · adapters · admin · apidocs · middleware · cors · ratelimit · web · ssoclient · snapshot · sso(the public Server)
+infrastructure/  concrete SPI impls            defaultimpl · ldap · kerberos · radius · saml · redis · extauthz · kafka · mqtt · postgres · kms/*
 internal/        unexported helpers            internal/auth/* (domains) · internal/handler (interfaces)
 cmd/ · config/ · docs/ · gen/ · proto/ · test/ · ops/ · checks/
 ```
