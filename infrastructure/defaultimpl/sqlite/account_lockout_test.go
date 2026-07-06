@@ -2,7 +2,9 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -237,4 +239,72 @@ func TestAccountLockout_CrossInstanceSharing(t *testing.T) {
 	if !locked {
 		t.Fatal("B did not see A's failures — cross-replica defense broken")
 	}
+}
+
+// TestAccountLockout_ConcurrentCrossReplicaNoLostUpdates regression-tests
+// RegisterFailure's read-modify-write against a GENUINE lost-update race: two
+// separate *AccountLockout instances (simulating two replicas sharing one
+// SQLite file — the exact "cluster-shared deployment" this backend exists
+// for) both increment the SAME key concurrently. Each process's own
+// connection pool serializes ITS OWN calls (SetMaxOpenConns(1)), but that
+// does nothing for a concurrent writer in a DIFFERENT process — only a real
+// BEGIN IMMEDIATE (see beginImmediateRMW) takes SQLite's file-level RESERVED
+// lock immediately, forcing the other replica's transaction to wait
+// (busy_timeout) rather than both reading the same stale counter and one
+// overwriting the other's increment. If RegisterFailure ever regresses to
+// db.BeginTx's isolation-level hint (a no-op under modernc.org/sqlite), this
+// test will flake by observing a final count below want.
+func TestAccountLockout_ConcurrentCrossReplicaNoLostUpdates(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	dsn := "file:" + filepath.Join(dir, "concurrent.db") + "?_journal=WAL&_pragma=busy_timeout(5000)"
+
+	const perReplica = 15
+	const replicas = 2
+	want := perReplica * replicas
+
+	instances := make([]*AccountLockout, replicas)
+	for i := range instances {
+		l, err := NewAccountLockout(dsn)
+		if err != nil {
+			t.Fatalf("replica %d: %v", i, err)
+		}
+		defer func() { _ = l.Close() }()
+		l.MaxFailures = want + 1 // never actually lock — isolate the counter race
+		instances[i] = l
+	}
+
+	var wg sync.WaitGroup
+	for _, l := range instances {
+		for i := 0; i < perReplica; i++ {
+			wg.Add(1)
+			go func(l *AccountLockout) {
+				defer wg.Done()
+				if _, _, err := l.RegisterFailure(context.Background(), "bob"); err != nil {
+					t.Errorf("RegisterFailure: %v", err)
+				}
+			}(l)
+		}
+	}
+	wg.Wait()
+
+	failures, _, _, err := lockoutRowFor(context.Background(), mustConn(t, instances[0].db), "bob")
+	if err != nil {
+		t.Fatalf("lockoutRowFor: %v", err)
+	}
+	if failures != want {
+		t.Fatalf("failures = %d, want %d — a concurrent RegisterFailure lost an update", failures, want)
+	}
+}
+
+// mustConn pins a connection from db for a single read, matching the shape
+// RegisterFailure itself uses (lockoutRowFor takes a *sql.Conn).
+func mustConn(t *testing.T, db *sql.DB) *sql.Conn {
+	t.Helper()
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("conn: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
 }

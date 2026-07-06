@@ -102,7 +102,14 @@ func NewClientStore(dsn string) (*ClientStore, error) {
 	return &ClientStore{db: db}, nil
 }
 
+// NewClientStoreWithDB wraps an already-open shared *sql.DB (the
+// cluster-shared-DB path — see refresh_tokens.go's NewRefreshTokenStoreWithDB
+// for the same pattern). Best-effort on this path (mirrors the historical
+// contract — this constructor never returned an error): a fresh shared DB
+// still needs its clients table created before any Get/Add call, so this
+// runs the same migration NewClientStore's own-DB path does.
 func NewClientStoreWithDB(db *sql.DB) *ClientStore {
+	_ = migrate.Run(context.Background(), db, "clients", clientMigrations)
 	return &ClientStore{db: db}
 }
 

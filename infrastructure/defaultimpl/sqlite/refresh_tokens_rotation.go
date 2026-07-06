@@ -18,16 +18,31 @@ func (s *RefreshTokenStore) RecordRotation(ctx context.Context, familyID string)
 	if familyID == "" {
 		return 0, false, nil
 	}
-	// BEGIN IMMEDIATE serializes the RMW against concurrent writers.
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	// A real BEGIN IMMEDIATE (not db.BeginTx's isolation-level hint, which
+	// modernc.org/sqlite ignores — see beginImmediateRMW's doc) serializes
+	// the RMW against concurrent writers.
+	conn, err := beginImmediateRMW(ctx, s.db)
 	if err != nil {
 		return 0, false, fmt.Errorf("sqlite: rotation begin: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		}
+		_ = conn.Close()
+	}()
+	return s.bumpRotationWindow(ctx, conn, familyID, &committed)
+}
 
+// bumpRotationWindow loads + rolls over + upserts familyID's fixed-window
+// counter against conn's already-open BEGIN IMMEDIATE transaction, and sets
+// *committed true on success. Kept separate from RecordRotation to stay
+// within the function-length budget.
+func (s *RefreshTokenStore) bumpRotationWindow(ctx context.Context, conn *sql.Conn, familyID string, committed *bool) (int, bool, error) {
 	var count int64
 	var windowStartNs int64
-	err = tx.QueryRowContext(ctx,
+	err := conn.QueryRowContext(ctx,
 		`SELECT count, window_start FROM refresh_rotation_windows WHERE family_id = ?`, familyID,
 	).Scan(&count, &windowStartNs)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -46,7 +61,7 @@ func (s *RefreshTokenStore) RecordRotation(ctx context.Context, familyID string)
 		windowStartNs = nowNs
 	}
 
-	_, err = tx.ExecContext(ctx, `
+	_, err = conn.ExecContext(ctx, `
         INSERT INTO refresh_rotation_windows (family_id, count, window_start)
         VALUES (?, ?, ?)
         ON CONFLICT(family_id) DO UPDATE SET count=excluded.count, window_start=excluded.window_start`,
@@ -54,9 +69,10 @@ func (s *RefreshTokenStore) RecordRotation(ctx context.Context, familyID string)
 	if err != nil {
 		return 0, false, fmt.Errorf("sqlite: rotation upsert: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return 0, false, fmt.Errorf("sqlite: rotation commit: %w", err)
 	}
+	*committed = true
 
 	exceeded := s.MaxRotationsPerWindow > 0 && s.RotationWindow > 0 &&
 		count > int64(s.MaxRotationsPerWindow)

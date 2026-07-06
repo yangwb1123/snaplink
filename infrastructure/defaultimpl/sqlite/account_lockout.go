@@ -155,13 +155,26 @@ func (a *AccountLockout) RegisterFailure(ctx context.Context, key string) (bool,
 	if key == "" {
 		return false, time.Time{}, nil
 	}
-	tx, err := a.db.BeginTx(ctx, nil)
+	conn, err := beginImmediateRMW(ctx, a.db)
 	if err != nil {
 		return false, time.Time{}, fmt.Errorf("sqlite: lockout begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		}
+		_ = conn.Close()
+	}()
+	return a.applyFailure(ctx, conn, key, &committed)
+}
 
-	failures, firstFailureAt, lockedUntil, err := lockoutRowFor(ctx, tx, key)
+// applyFailure runs the sliding-window + threshold logic against conn's
+// already-open BEGIN IMMEDIATE transaction and sets *committed true once the
+// transaction is committed (including the already-locked no-op path). Kept
+// separate from RegisterFailure to stay within the function-length budget.
+func (a *AccountLockout) applyFailure(ctx context.Context, conn *sql.Conn, key string, committed *bool) (bool, time.Time, error) {
+	failures, firstFailureAt, lockedUntil, err := lockoutRowFor(ctx, conn, key)
 	if err != nil {
 		return false, time.Time{}, err
 	}
@@ -177,8 +190,8 @@ func (a *AccountLockout) RegisterFailure(ctx context.Context, key string) (bool,
 	// Already-locked path: leave counter untouched, return (true, until).
 	if !lockedUntil.IsZero() && now.Before(lockedUntil) {
 		// Commit the no-op so any in-flight reset stays observable.
-		if err := tx.Commit(); err != nil {
-			return true, lockedUntil, nil
+		if _, err := conn.ExecContext(ctx, "COMMIT"); err == nil {
+			*committed = true
 		}
 		return true, lockedUntil, nil
 	}
@@ -192,20 +205,21 @@ func (a *AccountLockout) RegisterFailure(ctx context.Context, key string) (bool,
 		lockedUntil = now.Add(a.LockoutDuration)
 	}
 
-	if err := persistLockout(ctx, tx, key, failures, firstFailureAt, lockedUntil); err != nil {
+	if err := persistLockout(ctx, conn, key, failures, firstFailureAt, lockedUntil); err != nil {
 		return false, time.Time{}, err
 	}
+	*committed = true
 	if threshold {
 		return true, lockedUntil, nil
 	}
 	return false, time.Time{}, nil
 }
 
-// persistLockout upserts the incremented counter + timestamps and
-// commits tx. Kept separate so RegisterFailure stays within the
-// function-length budget; the SQL and commit semantics are unchanged.
-func persistLockout(ctx context.Context, tx *sql.Tx, key string, failures int, firstFailureAt, lockedUntil time.Time) error {
-	if _, err := tx.ExecContext(ctx, `
+// persistLockout upserts the incremented counter + timestamps and commits
+// the BEGIN IMMEDIATE transaction conn is holding. Kept separate so
+// RegisterFailure stays within the function-length budget.
+func persistLockout(ctx context.Context, conn *sql.Conn, key string, failures int, firstFailureAt, lockedUntil time.Time) error {
+	if _, err := conn.ExecContext(ctx, `
         INSERT INTO account_lockouts (key, failures, first_failure_at, locked_until)
         VALUES (?, ?, ?, ?)
         ON CONFLICT (key) DO UPDATE SET
@@ -216,7 +230,7 @@ func persistLockout(ctx context.Context, tx *sql.Tx, key string, failures int, f
 	); err != nil {
 		return fmt.Errorf("sqlite: lockout upsert: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return fmt.Errorf("sqlite: lockout commit: %w", err)
 	}
 	return nil
@@ -235,16 +249,17 @@ func (a *AccountLockout) RegisterSuccess(ctx context.Context, key string) error 
 	return nil
 }
 
-// lockoutRowFor loads the current counter + timestamps for key inside
-// tx. A missing row (first-ever failure) is NOT an error: it yields the
-// zero counter / zero times, matching the original inline behavior.
-func lockoutRowFor(ctx context.Context, tx *sql.Tx, key string) (int, time.Time, time.Time, error) {
+// lockoutRowFor loads the current counter + timestamps for key inside the
+// BEGIN IMMEDIATE transaction conn is holding. A missing row (first-ever
+// failure) is NOT an error: it yields the zero counter / zero times,
+// matching the original inline behavior.
+func lockoutRowFor(ctx context.Context, conn *sql.Conn, key string) (int, time.Time, time.Time, error) {
 	var (
 		failures         int
 		firstFailureAtNs int64
 		lockedUntilNs    int64
 	)
-	row := tx.QueryRowContext(ctx, `
+	row := conn.QueryRowContext(ctx, `
         SELECT failures, first_failure_at, locked_until
           FROM account_lockouts WHERE key = ?`, key)
 	if err := row.Scan(&failures, &firstFailureAtNs, &lockedUntilNs); err != nil {

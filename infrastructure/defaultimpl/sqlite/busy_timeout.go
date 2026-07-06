@@ -16,6 +16,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -47,4 +48,30 @@ func init() {
 		)
 		return err
 	})
+}
+
+// beginImmediateRMW pins a connection from db's pool and issues a REAL
+// BEGIN IMMEDIATE — the write lock is acquired up front, not lazily on the
+// first write. db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+// does NOT achieve this under modernc.org/sqlite: the driver has no SQL
+// isolation-level concept and silently starts a plain DEFERRED transaction
+// regardless of the requested level, leaving a lost-update race window
+// between a read-modify-write's SELECT and its later INSERT/UPDATE (see
+// account_lockout.go's RegisterFailure and refresh_tokens_rotation.go's
+// RecordRotation, both concurrent-safety-critical). busy_timeout is already
+// applied process-wide by this file's connection hook, so callers don't need
+// to re-issue the PRAGMA.
+//
+// Caller MUST issue "COMMIT" via the returned conn on success and defer both
+// a "ROLLBACK" (a no-op once already committed) and conn.Close().
+func beginImmediateRMW(ctx context.Context, db *sql.DB) (*sql.Conn, error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
 }
