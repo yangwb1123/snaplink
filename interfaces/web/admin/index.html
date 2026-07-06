@@ -88,6 +88,9 @@
       <div id="page-clients" class="page">
         <h1 class="page-title">Clients</h1>
         <div id="clients-list">
+          <div class="list-toolbar">
+            <button class="btn btn-primary" id="client-new-btn">+ New Client</button>
+          </div>
           <div id="clients-content"></div>
         </div>
         <div id="client-detail" class="detail-panel">
@@ -95,6 +98,48 @@
           <div class="card">
             <div class="card-title">Client Details</div>
             <table id="client-detail-table" class="kv-table"></table>
+            <div class="form-actions" id="client-detail-actions"></div>
+          </div>
+        </div>
+        <div id="client-form-panel" class="detail-panel">
+          <button class="detail-back" id="client-form-back">&#8592; Back to list</button>
+          <div class="card">
+            <div class="card-title" id="client-form-title">New Client</div>
+            <div class="form-group">
+              <label for="cf-id">Client ID</label>
+              <input type="text" id="cf-id" placeholder="my-app">
+            </div>
+            <div class="form-group">
+              <label for="cf-name">Name</label>
+              <input type="text" id="cf-name" placeholder="My App">
+            </div>
+            <div class="form-group">
+              <label for="cf-redirect-uris">Redirect URIs (one per line)</label>
+              <textarea id="cf-redirect-uris" rows="3" placeholder="https://app.example.com/callback"></textarea>
+            </div>
+            <div class="form-group">
+              <label for="cf-scopes">Allowed Scopes (space-separated)</label>
+              <input type="text" id="cf-scopes" placeholder="openid profile email">
+            </div>
+            <div class="form-group">
+              <label for="cf-authenticators">Allowed Authenticators (space-separated)</label>
+              <input type="text" id="cf-authenticators" placeholder="password">
+            </div>
+            <div class="form-group">
+              <label for="cf-strategy">Token Strategy</label>
+              <select id="cf-strategy">
+                <option value="jwt">jwt</option>
+                <option value="session">session</option>
+              </select>
+            </div>
+            <div class="checkbox-row">
+              <input type="checkbox" id="cf-active">
+              <label for="cf-active">Active</label>
+            </div>
+            <div id="client-form-error" class="error-msg" style="display:none"></div>
+            <div class="form-actions">
+              <button class="btn btn-primary" id="client-form-save">Save</button>
+            </div>
           </div>
         </div>
       </div>

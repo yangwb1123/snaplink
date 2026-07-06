@@ -13,6 +13,17 @@ var auditPageSize = 50;
 // listeners attached via addEventListener run).
 var clientsCache = {};
 var usersCache = {};
+// currentClientDetail holds the full record behind the open client-detail
+// panel, so the Edit/Delete/Approve/Reject/Rotate-secret actions (which
+// only have the panel's DOM, not a fresh fetch) know which client they
+// apply to.
+var currentClientDetail = null;
+// clientFormMode / clientFormOriginalId track whether the client form panel
+// is creating a new client or editing an existing one (whose id the PUT
+// URL needs — the id INPUT is disabled but still present during edit, so
+// this is belt-and-suspenders against a stale/empty value).
+var clientFormMode = 'create';
+var clientFormOriginalId = '';
 
 // ---- Auth ----
 function doLogin() {
@@ -213,6 +224,14 @@ function renderOIDCInfo(d) {
 }
 
 // ---- Clients ----
+// Field names below (tokenStrategy, allowedScopes, redirectUris,
+// allowedAuthenticators) are lowerCamelCase because these responses come
+// from the grpc-gateway JSON marshaler (protojson), which emits the
+// camelCase JSON name for each proto field by default — NOT the
+// snake_case proto field name itself. Unlike the audit-log and session
+// endpoints (hand-rolled JSON with explicit snake_case struct tags), the
+// Clients/Users pages are the only ones backed by the proto-based admin
+// gRPC-gateway, so they're the only ones that need this casing.
 function loadClients() {
   closeDetail('client');
   setContent('clients-content', '<div class="loading">Loading...</div>');
@@ -234,9 +253,9 @@ function loadClients() {
       html += '<tr>';
       html += '<td><code>' + esc(c.id) + '</code></td>';
       html += '<td>' + esc(c.name) + '</td>';
-      html += '<td>' + badge(c.active, 'Active', 'badge-green', 'Inactive', 'badge-red') + '</td>';
-      html += '<td><span class="badge badge-blue">' + esc(c.token_strategy || 'jwt') + '</span></td>';
-      html += '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc((c.allowed_scopes || []).join(' ')) + '</td>';
+      html += '<td>' + badge(c.active, 'Active', 'badge-green', 'Pending / Inactive', 'badge-red') + '</td>';
+      html += '<td><span class="badge badge-blue">' + esc(c.tokenStrategy || 'jwt') + '</span></td>';
+      html += '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc((c.allowedScopes || []).join(' ')) + '</td>';
       html += '<td><button class="btn btn-sm" data-action="view-client" data-id="' + esc(c.id) + '">View</button></td>';
       html += '</tr>';
     });
@@ -249,29 +268,194 @@ function loadClients() {
 
 function showClientDetail(c) {
   if (!c) return;
+  currentClientDetail = c;
   document.getElementById('clients-list').style.display = 'none';
+  document.getElementById('client-form-panel').classList.remove('open');
   document.getElementById('client-detail').classList.add('open');
 
   var rows = [
     ['ID', '<code>' + esc(c.id) + '</code>'],
     ['Name', esc(c.name)],
-    ['Active', badge(c.active, 'Active', 'badge-green', 'Inactive', 'badge-red')],
-    ['Token Strategy', '<span class="badge badge-blue">' + esc(c.token_strategy || 'jwt') + '</span>'],
-    ['Allowed Scopes', esc((c.allowed_scopes || []).join(', '))],
-    ['Redirect URIs', esc((c.redirect_uris || []).join('\n') || '—')],
-    ['Allowed Authenticators', esc((c.allowed_authenticators || []).join(', ') || '—')],
-    ['Require PKCE', badge(c.require_pkce, 'Yes', 'badge-green', 'No', 'badge-gray')],
+    ['Active', badge(c.active, 'Active', 'badge-green', 'Pending / Inactive', 'badge-red')],
+    ['Token Strategy', '<span class="badge badge-blue">' + esc(c.tokenStrategy || 'jwt') + '</span>'],
+    ['Allowed Scopes', esc((c.allowedScopes || []).join(', ') || '—')],
+    ['Redirect URIs', esc((c.redirectUris || []).join('\n') || '—')],
+    ['Allowed Authenticators', esc((c.allowedAuthenticators || []).join(', ') || '—')],
   ];
   var html = rows.map(function(r) {
     return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>';
   }).join('');
   document.getElementById('client-detail-table').innerHTML = html;
+  renderClientDetailActions(c);
+}
+
+// renderClientDetailActions builds the action button row for the open
+// client-detail panel. Approve/Reject only appear for a pending
+// (active=false) client — an already-active client has nothing to
+// approve, and the plain Edit form already covers "reactivate a
+// deliberately deactivated client" without the destructive Reject-deletes
+// semantics.
+function renderClientDetailActions(c) {
+  var html = '<button class="btn btn-sm" data-action="edit-client">Edit</button>';
+  html += '<button class="btn btn-sm" data-action="rotate-secret">Rotate Secret</button>';
+  if (!c.active) {
+    html += '<button class="btn btn-success" data-action="approve-client">Approve</button>';
+    html += '<button class="btn btn-danger" data-action="reject-client">Reject &amp; Delete</button>';
+  }
+  html += '<button class="btn btn-danger" data-action="delete-client">Delete</button>';
+  document.getElementById('client-detail-actions').innerHTML = html;
+}
+
+// ---- Clients: create / edit form ----
+function showClientForm(mode, c) {
+  clientFormMode = mode;
+  clientFormOriginalId = c ? c.id : '';
+  document.getElementById('clients-list').style.display = 'none';
+  document.getElementById('client-detail').classList.remove('open');
+  document.getElementById('client-form-panel').classList.add('open');
+  hideClientFormError();
+  document.getElementById('client-form-title').textContent = mode === 'edit' ? 'Edit Client' : 'New Client';
+  document.getElementById('cf-id').disabled = mode === 'edit';
+  document.getElementById('cf-id').value = c ? (c.id || '') : '';
+  document.getElementById('cf-name').value = c ? (c.name || '') : '';
+  document.getElementById('cf-redirect-uris').value = c ? (c.redirectUris || []).join('\n') : '';
+  document.getElementById('cf-scopes').value = c ? (c.allowedScopes || []).join(' ') : '';
+  document.getElementById('cf-authenticators').value = c ? (c.allowedAuthenticators || []).join(' ') : '';
+  document.getElementById('cf-strategy').value = c ? (c.tokenStrategy || 'jwt') : 'jwt';
+  document.getElementById('cf-active').checked = c ? !!c.active : true;
+}
+
+function hideClientForm() {
+  document.getElementById('client-form-panel').classList.remove('open');
+  document.getElementById('clients-list').style.display = '';
+}
+
+function showClientFormError(msg) {
+  var el = document.getElementById('client-form-error');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+function hideClientFormError() {
+  document.getElementById('client-form-error').style.display = 'none';
+}
+
+// readClientForm reads the form into a Client-shaped object using the
+// SAME camelCase field names the gateway expects on the wire (see the
+// casing note above loadClients) — Create/Update's JSON body maps
+// directly onto the proto Client message (google.api.http body:"client"),
+// not a {"client":{...}} wrapper.
+function readClientForm() {
+  var splitLines = function(s) { return s.split('\n').map(function(x) { return x.trim(); }).filter(Boolean); };
+  var splitSpace = function(s) { return s.trim().split(/\s+/).filter(Boolean); };
+  return {
+    id: document.getElementById('cf-id').value.trim(),
+    name: document.getElementById('cf-name').value.trim(),
+    redirectUris: splitLines(document.getElementById('cf-redirect-uris').value),
+    allowedScopes: splitSpace(document.getElementById('cf-scopes').value),
+    allowedAuthenticators: splitSpace(document.getElementById('cf-authenticators').value),
+    tokenStrategy: document.getElementById('cf-strategy').value,
+    active: document.getElementById('cf-active').checked
+  };
+}
+
+// gatewayErrorMessage extracts the message from a grpc-gateway error body
+// ({"code":<int>,"message":"...","details":[...]}) — a different shape
+// from this SDK's own OAuth-style {"error":...} bodies, since the admin
+// REST surface is auto-generated by protoc-gen-grpc-gateway rather than
+// hand-rolled.
+function gatewayErrorMessage(r) {
+  return r.json().then(function(d) {
+    throw new Error(d.message || ('HTTP ' + r.status));
+  }).catch(function(e) {
+    throw new Error(e.message || ('HTTP ' + r.status));
+  });
+}
+
+function submitClientForm() {
+  var body = readClientForm();
+  if (!body.id) {
+    showClientFormError('Client ID is required.');
+    return;
+  }
+  var isEdit = clientFormMode === 'edit';
+  var url = '/api/v1/admin/clients' + (isEdit ? '/' + encodeURIComponent(clientFormOriginalId) : '');
+  apiFetch(url, {
+    method: isEdit ? 'PUT' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function(r) {
+    if (!r.ok) return gatewayErrorMessage(r);
+    hideClientForm();
+    loadClients();
+  }).catch(function(e) {
+    showClientFormError(e.message);
+  });
+}
+
+// ---- Clients: detail-panel actions ----
+function editCurrentClient() {
+  if (!currentClientDetail) return;
+  showClientForm('edit', currentClientDetail);
+}
+
+function deleteCurrentClient() {
+  if (!currentClientDetail) return;
+  if (!confirm('Delete client "' + currentClientDetail.name + '" (' + currentClientDetail.id + ')? This cannot be undone.')) return;
+  apiFetch('/api/v1/admin/clients/' + encodeURIComponent(currentClientDetail.id), { method: 'DELETE' })
+    .then(function(r) {
+      if (!r.ok) return gatewayErrorMessage(r);
+      closeDetail('client');
+      loadClients();
+    }).catch(function(e) { alert('Delete failed: ' + e.message); });
+}
+
+function approveCurrentClient() {
+  if (!currentClientDetail) return;
+  apiFetch('/api/v1/admin/clients/' + encodeURIComponent(currentClientDetail.id) + '/approve', { method: 'POST' })
+    .then(function(r) {
+      if (!r.ok) return gatewayErrorMessage(r);
+      return r.json();
+    }).then(function(d) {
+      showClientDetail(d.client);
+      loadClients();
+    }).catch(function(e) { alert('Approve failed: ' + e.message); });
+}
+
+function rejectCurrentClient() {
+  if (!currentClientDetail) return;
+  var reason = prompt('Reason for rejecting "' + currentClientDetail.name + '" (optional):', '');
+  if (reason === null) return; // cancelled
+  if (!confirm('Reject and DELETE client "' + currentClientDetail.name + '"? This cannot be undone.')) return;
+  apiFetch('/api/v1/admin/clients/' + encodeURIComponent(currentClientDetail.id) + '/reject', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason: reason })
+  }).then(function(r) {
+    if (!r.ok) return gatewayErrorMessage(r);
+    closeDetail('client');
+    loadClients();
+  }).catch(function(e) { alert('Reject failed: ' + e.message); });
+}
+
+function rotateCurrentClientSecret() {
+  if (!currentClientDetail) return;
+  if (!confirm('Rotate the client_secret for "' + currentClientDetail.name + '"? The old secret stops working immediately.')) return;
+  apiFetch('/api/v1/admin/clients/' + encodeURIComponent(currentClientDetail.id) + '/rotate-secret', { method: 'POST' })
+    .then(function(r) {
+      if (!r.ok) return gatewayErrorMessage(r);
+      return r.json();
+    }).then(function(d) {
+      alert('New client_secret (displayed once — copy it now):\n\n' + d.secret);
+    }).catch(function(e) { alert('Rotate failed: ' + e.message); });
 }
 
 function closeDetail(type) {
   if (type === 'client') {
     document.getElementById('clients-list').style.display = '';
     document.getElementById('client-detail').classList.remove('open');
+    document.getElementById('client-form-panel').classList.remove('open');
+    currentClientDetail = null;
   } else if (type === 'user') {
     document.getElementById('users-list').style.display = '';
     document.getElementById('user-detail').classList.remove('open');
@@ -299,7 +483,7 @@ function loadUsers() {
       usersCache[u.id] = u;
       html += '<tr>';
       html += '<td><code>' + esc(u.id) + '</code></td>';
-      html += '<td>' + esc(u.external_id || '—') + '</td>';
+      html += '<td>' + esc(u.externalId || '—') + '</td>';
       html += '<td><span class="badge badge-blue">' + esc(u.provider || '—') + '</span></td>';
       html += '<td><button class="btn btn-sm" data-action="view-user" data-id="' + esc(u.id) + '">View</button></td>';
       html += '</tr>';
@@ -318,7 +502,7 @@ function showUserDetail(u) {
 
   var rows = [
     ['ID', '<code>' + esc(u.id) + '</code>'],
-    ['External ID', esc(u.external_id || '—')],
+    ['External ID', esc(u.externalId || '—')],
     ['Provider', '<span class="badge badge-blue">' + esc(u.provider || '—') + '</span>'],
   ];
 
@@ -479,6 +663,24 @@ function wireStaticEventHandlers() {
   });
   document.getElementById('user-detail-back').addEventListener('click', function() {
     closeDetail('user');
+  });
+  document.getElementById('client-new-btn').addEventListener('click', function() {
+    showClientForm('create', null);
+  });
+  document.getElementById('client-form-back').addEventListener('click', hideClientForm);
+  document.getElementById('client-form-save').addEventListener('click', submitClientForm);
+  document.getElementById('client-detail-actions').addEventListener('click', function(e) {
+    var btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    var actions = {
+      'edit-client': editCurrentClient,
+      'delete-client': deleteCurrentClient,
+      'approve-client': approveCurrentClient,
+      'reject-client': rejectCurrentClient,
+      'rotate-secret': rotateCurrentClientSecret
+    };
+    var fn = actions[btn.dataset.action];
+    if (fn) fn();
   });
   document.getElementById('audit-search').addEventListener('input', debouncedAuditLoad);
   document.getElementById('audit-outcome').addEventListener('change', function() { loadAudit(1); });

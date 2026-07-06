@@ -54,8 +54,26 @@ related capability exists but the proposed feature does not).
 
 ## Productization & DX
 
-- **Admin Console write-CRUD SPA** — partial. Productized UI for clients/users/
-  tenants + dogfood OAuth/PKCE login (currently a stub console + raw bearer).
+- **Admin Console write-CRUD SPA** — partial. Clients CRUD is now done in
+  `interfaces/web/admin` (hand-rolled HTML/JS/CSS, no build step, no CDN —
+  matches the login/portal SPAs' existing convention): create, edit, delete,
+  rotate-secret, and approve/reject (wired to `ClientAdminService.Approve`/
+  `Reject`) all reachable from the Clients page's detail panel. Fixed a
+  real pre-existing bug found while wiring this: the console's Clients AND
+  Users pages read `token_strategy`/`allowed_scopes`/`redirect_uris`/
+  `allowed_authenticators`/`external_id` (snake_case) from the admin
+  gRPC-gateway's JSON responses, but the gateway's default protojson
+  marshaler emits lowerCamelCase (`tokenStrategy`, `allowedScopes`, ...) —
+  confirmed empirically (a real `protojson.Marshal` call, not a doc
+  assumption). Every one of those fields was silently reading `undefined`
+  since the page shipped: the client list's Strategy column always showed
+  the "jwt" fallback regardless of actual strategy, Scopes/Redirect URIs/
+  Allowed Authenticators always rendered empty, and a "Require PKCE" row
+  referenced a field that doesn't exist on the proto message at all
+  (removed). Fixed by reading the correct camelCase names client-side
+  (NOT by changing the wire format — that would be a breaking change for
+  any other REST consumer of this already-shipped API). Users/Tenants
+  full CRUD and the dogfood OAuth/PKCE login remain undone.
   _Sources: expansion-architecture-gaps-2026-07-01, analysis-five-directions-toctou…._
 - **Multi-language SDK generation + developer portal** — partial. Embedded
   read-only API-docs viewer at `/api/v1/admin/docs` (+ a `/openapi.json`

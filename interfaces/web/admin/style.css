@@ -69,6 +69,48 @@ body {
   border-color: #4f6ef7;
 }
 
+.form-group textarea {
+  width: 100%;
+  padding: 10px 14px;
+  background: #0f1117;
+  border: 1px solid #2d3148;
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-size: 13px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  outline: none;
+  resize: vertical;
+}
+
+.form-group textarea:focus { border-color: #4f6ef7; }
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+  font-size: 13px;
+  color: #c5cfe0;
+}
+
+.checkbox-row input { width: auto; }
+
+.form-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.form-actions .btn { width: auto; }
+
+.list-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 14px;
+}
+
+.list-toolbar .btn { width: auto; }
+
 .btn {
   padding: 10px 18px;
   border-radius: 6px;
@@ -107,6 +149,15 @@ body {
 }
 
 .btn-sm:hover:not(:disabled) { background: #3d4468; color: #e2e8f0; }
+
+.btn-success {
+  background: #38a169;
+  color: #fff;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.btn-success:hover:not(:disabled) { background: #2f855a; }
 
 .error-msg {
   background: #2d1515;
