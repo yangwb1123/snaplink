@@ -54,7 +54,7 @@ related capability exists but the proposed feature does not).
 
 ## Productization & DX
 
-- **Admin Console write-CRUD SPA** — partial. Clients CRUD is now done in
+- **Admin Console write-CRUD SPA** — done. Clients CRUD is done in
   `interfaces/web/admin` (hand-rolled HTML/JS/CSS, no build step, no CDN —
   matches the login/portal SPAs' existing convention): create, edit, delete,
   rotate-secret, and approve/reject (wired to `ClientAdminService.Approve`/
@@ -98,8 +98,12 @@ related capability exists but the proposed feature does not).
   than offering a control that would always fail. Requires the operator
   to register this page's own URL as a `redirect_uri` on
   `sso-admin-console` and to wire `WithHostedLoginFS` — documented inline
-  on the login screen. Domains (hostname→tenant mapping) CRUD is the only
-  piece of this backlog entry still undone.
+  on the login screen. Domains (hostname→tenant mapping) CRUD is now done
+  too — same page/panel pattern, a new nav page with create/edit/delete
+  against `TenantAdminService`'s `*Domain` RPCs (`hostname` as the primary
+  key instead of a separate `id`, branding as a `key=value`-per-line
+  textarea like the other map fields). **Every functional item under this
+  backlog entry is now done.**
   _Sources: expansion-architecture-gaps-2026-07-01, analysis-five-directions-toctou…._
 - **Multi-language SDK generation + developer portal** — partial. Embedded
   read-only API-docs viewer at `/api/v1/admin/docs` (+ a `/openapi.json`

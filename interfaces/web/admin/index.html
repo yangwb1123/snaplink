@@ -51,6 +51,9 @@
         <div class="nav-item" data-page="tenants">
           <span class="nav-icon">&#9633;</span> Tenants
         </div>
+        <div class="nav-item" data-page="domains">
+          <span class="nav-icon">&#8982;</span> Domains
+        </div>
         <div class="nav-item" data-page="sessions">
           <span class="nav-icon">&#9711;</span> Sessions <span id="sessions-count" class="badge badge-gray" style="margin-left:auto"></span>
         </div>
@@ -251,6 +254,55 @@
             <div id="tenant-form-error" class="error-msg" style="display:none"></div>
             <div class="form-actions">
               <button class="btn btn-primary" id="tenant-form-save">Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Domains -->
+      <div id="page-domains" class="page">
+        <h1 class="page-title">Domains</h1>
+        <div id="domains-list">
+          <div class="list-toolbar">
+            <button class="btn btn-primary" id="domain-new-btn">+ New Domain</button>
+          </div>
+          <div id="domains-content"></div>
+        </div>
+        <div id="domain-detail" class="detail-panel">
+          <button class="detail-back" id="domain-detail-back">&#8592; Back to list</button>
+          <div class="card">
+            <div class="card-title">Domain Details</div>
+            <table id="domain-detail-table" class="kv-table"></table>
+            <div class="form-actions" id="domain-detail-actions"></div>
+          </div>
+        </div>
+        <div id="domain-form-panel" class="detail-panel">
+          <button class="detail-back" id="domain-form-back">&#8592; Back to list</button>
+          <div class="card">
+            <div class="card-title" id="domain-form-title">New Domain</div>
+            <div class="form-group">
+              <label for="df-hostname">Hostname</label>
+              <input type="text" id="df-hostname" placeholder="acme.example.com">
+            </div>
+            <div class="form-group">
+              <label for="df-tenant-id">Tenant ID</label>
+              <input type="text" id="df-tenant-id" placeholder="acme">
+            </div>
+            <div class="form-group">
+              <label for="df-default-client-id">Default Client ID</label>
+              <input type="text" id="df-default-client-id" placeholder="web-app">
+            </div>
+            <div class="checkbox-row">
+              <input type="checkbox" id="df-is-apex">
+              <label for="df-is-apex">Apex domain (bare, no subdomain)</label>
+            </div>
+            <div class="form-group">
+              <label for="df-branding">Branding (one key=value per line)</label>
+              <textarea id="df-branding" rows="3" placeholder="logo_url=https://acme.example.com/logo.png"></textarea>
+            </div>
+            <div id="domain-form-error" class="error-msg" style="display:none"></div>
+            <div class="form-actions">
+              <button class="btn btn-primary" id="domain-form-save">Save</button>
             </div>
           </div>
         </div>

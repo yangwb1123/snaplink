@@ -33,6 +33,10 @@ var currentTenantDetail = null;
 var tenantFormMode = 'create';
 var tenantFormOriginalId = '';
 var tenantsCache = {};
+var currentDomainDetail = null;
+var domainFormMode = 'create';
+var domainFormOriginalHostname = '';
+var domainsCache = {};
 
 // SSO_ADMIN_CLIENT_ID is the public, PKCE-required OAuth client this
 // console dogfoods against its own server as — seeded server-side by
@@ -92,10 +96,12 @@ function generateState() {
 }
 
 // sha256CodeChallenge computes RFC 7636 S256: BASE64URL(SHA256(verifier)).
-// The server accepts "plain" too, but the seeded sso-admin-console client
-// has RequirePKCE=true, which forces S256-only (protocols/oauth/
-// handle_register_helpers.go's registration-time rule) — so this console
-// must always use S256, never plain.
+// The seeded sso-admin-console client sets RequirePKCE=true but never sets
+// AllowedPKCEMethods, so the server would also accept "plain"
+// (oauthwire.IsPKCEMethodAllowedForClient treats an empty allowlist as
+// "any method") — S256 is used unconditionally anyway because it's the
+// only PKCE method that doesn't expose the verifier if the challenge
+// itself is ever observed (RFC 7636 §4.2, mandatory under OAuth 2.1).
 function sha256CodeChallenge(verifier) {
   var bytes = new TextEncoder().encode(verifier);
   return crypto.subtle.digest('SHA-256', bytes).then(base64url);
@@ -225,6 +231,7 @@ function navigate(page) {
   else if (page === 'clients') loadClients();
   else if (page === 'users') loadUsers();
   else if (page === 'tenants') loadTenants();
+  else if (page === 'domains') loadDomains();
   else if (page === 'sessions') loadSessions();
   else if (page === 'audit') loadAudit(1);
 }
@@ -639,6 +646,11 @@ function closeDetail(type) {
     document.getElementById('tenant-detail').classList.remove('open');
     document.getElementById('tenant-form-panel').classList.remove('open');
     currentTenantDetail = null;
+  } else if (type === 'domain') {
+    document.getElementById('domains-list').style.display = '';
+    document.getElementById('domain-detail').classList.remove('open');
+    document.getElementById('domain-form-panel').classList.remove('open');
+    currentDomainDetail = null;
   }
 }
 
@@ -968,6 +980,150 @@ function setCurrentTenantStatus(status) {
   }).catch(function(e) { alert('Status change failed: ' + e.message); });
 }
 
+// ---- Domains ----
+// Same TenantAdminService gRPC-gateway (same camelCase-from-protojson
+// note as Clients/Users/Tenants above) — Domain{hostname, tenantId,
+// defaultClientId, isApex, branding}. hostname is the primary key (no
+// separate id field), so it's what the edit/delete/URL paths key off.
+function loadDomains() {
+  closeDetail('domain');
+  setContent('domains-content', '<div class="loading">Loading...</div>');
+  apiFetch('/api/v1/admin/domains').then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(d) {
+    var domains = d.domains || [];
+    domainsCache = {};
+    if (!domains.length) {
+      setContent('domains-content', '<div class="empty">No domains found.</div>');
+      return;
+    }
+    var html = '<table><thead><tr>';
+    html += '<th>Hostname</th><th>Tenant ID</th><th>Default Client</th><th>Apex</th><th></th>';
+    html += '</tr></thead><tbody>';
+    domains.forEach(function(d) {
+      domainsCache[d.hostname] = d;
+      html += '<tr>';
+      html += '<td><code>' + esc(d.hostname) + '</code></td>';
+      html += '<td>' + esc(d.tenantId || '—') + '</td>';
+      html += '<td>' + esc(d.defaultClientId || '—') + '</td>';
+      html += '<td>' + badge(d.isApex, 'Yes', 'badge-blue', 'No', 'badge-gray') + '</td>';
+      html += '<td><button class="btn btn-sm" data-action="view-domain" data-id="' + esc(d.hostname) + '">View</button></td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    setContent('domains-content', html);
+  }).catch(function(e) {
+    setContent('domains-content', '<div class="error-msg">' + esc(e.message) + '</div>');
+  });
+}
+
+function showDomainDetail(d) {
+  if (!d) return;
+  currentDomainDetail = d;
+  document.getElementById('domains-list').style.display = 'none';
+  document.getElementById('domain-form-panel').classList.remove('open');
+  document.getElementById('domain-detail').classList.add('open');
+
+  var rows = [
+    ['Hostname', '<code>' + esc(d.hostname) + '</code>'],
+    ['Tenant ID', esc(d.tenantId || '—')],
+    ['Default Client ID', esc(d.defaultClientId || '—')],
+    ['Apex Domain', badge(d.isApex, 'Yes', 'badge-blue', 'No', 'badge-gray')],
+  ];
+  if (d.branding && typeof d.branding === 'object') {
+    for (var k in d.branding) {
+      rows.push(['Branding: ' + esc(k), esc(d.branding[k])]);
+    }
+  }
+  var html = rows.map(function(r) {
+    return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>';
+  }).join('');
+  document.getElementById('domain-detail-table').innerHTML = html;
+  document.getElementById('domain-detail-actions').innerHTML =
+    '<button class="btn btn-sm" data-action="edit-domain">Edit</button>' +
+    '<button class="btn btn-danger" data-action="delete-domain">Delete</button>';
+}
+
+// ---- Domains: create / edit form ----
+function showDomainForm(mode, d) {
+  domainFormMode = mode;
+  domainFormOriginalHostname = d ? d.hostname : '';
+  document.getElementById('domains-list').style.display = 'none';
+  document.getElementById('domain-detail').classList.remove('open');
+  document.getElementById('domain-form-panel').classList.add('open');
+  hideDomainFormError();
+  document.getElementById('domain-form-title').textContent = mode === 'edit' ? 'Edit Domain' : 'New Domain';
+  document.getElementById('df-hostname').disabled = mode === 'edit';
+  document.getElementById('df-hostname').value = d ? (d.hostname || '') : '';
+  document.getElementById('df-tenant-id').value = d ? (d.tenantId || '') : '';
+  document.getElementById('df-default-client-id').value = d ? (d.defaultClientId || '') : '';
+  document.getElementById('df-is-apex').checked = d ? !!d.isApex : false;
+  document.getElementById('df-branding').value = d ? formatKeyValueLines(d.branding) : '';
+}
+
+function hideDomainForm() {
+  document.getElementById('domain-form-panel').classList.remove('open');
+  document.getElementById('domains-list').style.display = '';
+}
+
+function showDomainFormError(msg) {
+  var el = document.getElementById('domain-form-error');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+function hideDomainFormError() {
+  document.getElementById('domain-form-error').style.display = 'none';
+}
+
+function readDomainForm() {
+  return {
+    hostname: document.getElementById('df-hostname').value.trim(),
+    tenantId: document.getElementById('df-tenant-id').value.trim(),
+    defaultClientId: document.getElementById('df-default-client-id').value.trim(),
+    isApex: document.getElementById('df-is-apex').checked,
+    branding: parseKeyValueLines(document.getElementById('df-branding').value)
+  };
+}
+
+function submitDomainForm() {
+  var body = readDomainForm();
+  if (!body.hostname) {
+    showDomainFormError('Hostname is required.');
+    return;
+  }
+  var isEdit = domainFormMode === 'edit';
+  var url = '/api/v1/admin/domains' + (isEdit ? '/' + encodeURIComponent(domainFormOriginalHostname) : '');
+  apiFetch(url, {
+    method: isEdit ? 'PUT' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function(r) {
+    if (!r.ok) return gatewayErrorMessage(r);
+    hideDomainForm();
+    loadDomains();
+  }).catch(function(e) {
+    showDomainFormError(e.message);
+  });
+}
+
+function editCurrentDomain() {
+  if (!currentDomainDetail) return;
+  showDomainForm('edit', currentDomainDetail);
+}
+
+function deleteCurrentDomain() {
+  if (!currentDomainDetail) return;
+  if (!confirm('Delete domain "' + currentDomainDetail.hostname + '"? This cannot be undone.')) return;
+  apiFetch('/api/v1/admin/domains/' + encodeURIComponent(currentDomainDetail.hostname), { method: 'DELETE' })
+    .then(function(r) {
+      if (!r.ok) return gatewayErrorMessage(r);
+      closeDetail('domain');
+      loadDomains();
+    }).catch(function(e) { alert('Delete failed: ' + e.message); });
+}
+
 // ---- Sessions ----
 function loadSessions() {
   setContent('sessions-content', '<div class="loading">Loading...</div>');
@@ -1121,6 +1277,9 @@ function wireStaticEventHandlers() {
   document.getElementById('tenant-detail-back').addEventListener('click', function() {
     closeDetail('tenant');
   });
+  document.getElementById('domain-detail-back').addEventListener('click', function() {
+    closeDetail('domain');
+  });
   document.getElementById('client-new-btn').addEventListener('click', function() {
     showClientForm('create', null);
   });
@@ -1168,6 +1327,18 @@ function wireStaticEventHandlers() {
     var fn = actions[btn.dataset.action];
     if (fn) fn();
   });
+  document.getElementById('domain-new-btn').addEventListener('click', function() {
+    showDomainForm('create', null);
+  });
+  document.getElementById('domain-form-back').addEventListener('click', hideDomainForm);
+  document.getElementById('domain-form-save').addEventListener('click', submitDomainForm);
+  document.getElementById('domain-detail-actions').addEventListener('click', function(e) {
+    var btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    var actions = { 'edit-domain': editCurrentDomain, 'delete-domain': deleteCurrentDomain };
+    var fn = actions[btn.dataset.action];
+    if (fn) fn();
+  });
   document.getElementById('audit-search').addEventListener('input', debouncedAuditLoad);
   document.getElementById('audit-outcome').addEventListener('change', function() { loadAudit(1); });
   document.getElementById('audit-prev').addEventListener('click', function() { auditPage(-1); });
@@ -1188,6 +1359,10 @@ function wireStaticEventHandlers() {
   document.getElementById('tenants-content').addEventListener('click', function(e) {
     var btn = e.target.closest('[data-action="view-tenant"]');
     if (btn) showTenantDetail(tenantsCache[btn.dataset.id]);
+  });
+  document.getElementById('domains-content').addEventListener('click', function(e) {
+    var btn = e.target.closest('[data-action="view-domain"]');
+    if (btn) showDomainDetail(domainsCache[btn.dataset.id]);
   });
   document.getElementById('sessions-content').addEventListener('click', function(e) {
     var btn = e.target.closest('[data-action="revoke-session"]');
