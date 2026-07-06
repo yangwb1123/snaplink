@@ -427,15 +427,17 @@ func WithDeveloperPortalFS(developerFS fs.FS) Option {
 	return func(s *Server) { s.developerPortalFS = developerFS }
 }
 
-// mountDeveloperPortalSPA registers the developer-portal SPA's static
-// file server onto mux when wired, exactly mirroring the adminConsoleFS/
+// mountDeveloperPortalSPA registers the developer-portal SPA's static file
+// server onto mux when wired, exactly mirroring the adminConsoleFS/
 // hostedLoginFS/portalFS mounts in server_routes.go's buildProbeMux (which
 // calls this — that file is at its line budget, so the conditional itself
 // lives here). No-op (byte-identical to a build without the feature) when
-// developerPortalFS is nil or the WebSPA gate is off.
+// developerPortalFS is nil; reachability of an actually-mounted entry is
+// gated LIVE by the WebSPA flag (core.GateHTTPHandler), matching the other
+// three SPA mounts, so it hot-toggles without a re-Mount.
 func (s *Server) mountDeveloperPortalSPA(mux *http.ServeMux) {
-	if s.developerPortalFS == nil || !s.webSPAGateOn() {
+	if s.developerPortalFS == nil {
 		return
 	}
-	mux.Handle(pathDeveloperPortalPrefix, s.wrapSecurityHeaders(http.StripPrefix(pathDeveloperPortalPrefix, http.FileServerFS(s.developerPortalFS))))
+	mux.Handle(pathDeveloperPortalPrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(http.StripPrefix(pathDeveloperPortalPrefix, http.FileServerFS(s.developerPortalFS)))))
 }

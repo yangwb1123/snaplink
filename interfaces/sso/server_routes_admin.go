@@ -34,16 +34,20 @@ const (
 // byte-identical to the previous inline assembly.
 
 // mountAdminSurface registers the entire /api/v1/admin/* REST surface (plus
-// the un-prefixed /api/v1/clients/:id lookup that shares its group), gated
-// on AdminAPI. Off ⇒ Mount() never creates the group at all, so a probe
-// against any admin path gets the router's native 404 — indistinguishable
-// from a path that was never defined, rather than an admin bearer-auth
-// challenge telling a scanner the surface exists.
+// the un-prefixed /api/v1/clients/:id lookup that shares its group). The
+// group is ALWAYS created — unlike every other FeatureGates-gated surface,
+// AdminAPI is hot-reloadable (config/reload's SetAdminAPIGateHook ->
+// Server.SetAdminAPIGateEnabled), so Mount() can no longer decide "gate off
+// ⇒ don't register" once, at boot: the group is wrapped in a
+// core.GatedRouter keyed on adminAPIGateOn (itself backed by the LIVE
+// adminAPILive flag, sso_wiring.go) instead. Gate off ⇒ every route in the
+// group answers http.NotFound — byte-identical to the router-native 404 a
+// truly-unregistered path gets, still indistinguishable from a path that
+// was never defined to an outside probe, but now flippable without a
+// restart. See GatedRouter's doc (shared/core/router.go) for why this has
+// to wrap the HANDLER rather than ride along as a Group middleware.
 func (s *Server) mountAdminSurface() {
-	if !s.adminAPIGateOn() {
-		return
-	}
-	api := s.router.Group(PathAPIPrefix)
+	api := core.NewGatedRouter(s.router.Group(PathAPIPrefix), s.adminAPIGateOn)
 	s.mountAdminAPIObservability(api)
 	s.mountAdminUserState(api)
 	s.mountAdminB2B(api)

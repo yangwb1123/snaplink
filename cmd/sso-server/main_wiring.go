@@ -150,6 +150,22 @@ func wireRateLimitReload(reloader *configreload.Reloader, srv *sso.Server, redis
 	})
 }
 
+// wireFeatureGateReload wires reloader's SetAdminAPIGateHook/
+// SetWebSPAGateHook so a SIGHUP config reload flips feature_gates.admin_api /
+// feature_gates.web_spa on the already-built srv, live, without a restart.
+// Unlike wireRateLimitReload, neither hook here needs to rebuild anything —
+// srv.Mount() always registers the /api/v1/admin/* group and the SPA static
+// bundles behind a request-time gate check now (see interfaces/sso's
+// mountAdminSurface / buildProbeMux docs), so the two Set*GateEnabled
+// methods just flip an already-installed atomic flag. See those methods'
+// docs (interfaces/sso/accessors.go) for the one asymmetry that still
+// surfaces as Result.Ignored: SetWebSPAGateEnabled reports no effect when no
+// SPA filesystem was ever wired via a With*FS option at NewServer time.
+func wireFeatureGateReload(reloader *configreload.Reloader, srv *sso.Server) {
+	reloader.SetAdminAPIGateHook(srv.SetAdminAPIGateEnabled)
+	reloader.SetWebSPAGateHook(srv.SetWebSPAGateEnabled)
+}
+
 // initTracing wires OTLP tracing and returns its shutdown func. The call is
 // a no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset, so it is safe to leave
 // unconditional; shutdown flushes pending spans on process exit. On init

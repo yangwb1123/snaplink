@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"sync/atomic"
 	"time"
 
 	"github.com/snaplink/sso/domains/permissions"
@@ -198,6 +199,16 @@ type wiringState struct {
 	// registers routes for (attack-surface reduction). Zero value = every
 	// gate unset ⇒ byte-identical to a pre-gate build (see FeatureGates).
 	featureGates FeatureGates
+	// adminAPILive / webSPALive hold the LIVE, hot-reloadable admin_api /
+	// web_spa gate values read by adminAPIGateOn/webSPAGateOn
+	// (server_routes.go) — seeded from featureGates once in NewServer
+	// (sso.go), then flipped in place by SetAdminAPIGateEnabled/
+	// SetWebSPAGateEnabled (accessors.go), which config/reload's
+	// SetAdminAPIGateHook/SetWebSPAGateHook wire a SIGHUP reload to. Read
+	// from the request-handling goroutine, written from the reload
+	// goroutine — must be atomic.
+	adminAPILive atomic.Bool
+	webSPALive   atomic.Bool
 	// configAuditStore persists runtime-configuration change history
 	// (platform/configaudit). Nil = the change-capture hook + the
 	// GET .../config/history admin endpoint are both off.

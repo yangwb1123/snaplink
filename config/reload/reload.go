@@ -15,6 +15,7 @@
 //   - logging.level — swaps the *slog.LevelVar the caller's setLogLevel
 //     callback controls. Nothing else in the request/response path reads
 //     Logging.Level after boot, so this is a pure, side-effect-free change.
+//
 //   - security.rate_limit.* — rebuilds the whole ratelimit.Policy (via the
 //     caller's setRateLimitPolicy hook, wired with SetRateLimitHook) and
 //     swaps it into the already-installed ratelimit.PolicyStore
@@ -30,13 +31,33 @@
 //     on every rebuild anyway (in-memory bucket state resets — a safe,
 //     side-effect-free change, not a correctness concern).
 //
-// Deliberately NOT wired yet, despite looking "safe" on paper (a toggle,
+//   - feature_gates.admin_api / feature_gates.web_spa — interfaces/sso now
+//     mounts BOTH surfaces UNCONDITIONALLY at Mount() time and wraps each
+//     registered route in a request-time gate check
+//     (shared/core.GatedRouter / GateHTTPHandler) instead of deciding
+//     "mount or don't" once, at boot. Reload flips that live check via
+//     SetAdminAPIGateHook / SetWebSPAGateHook — wired to
+//     Server.SetAdminAPIGateEnabled / SetWebSPAGateEnabled — with NO restart
+//     and no re-Mount. One asymmetry survives, and it is reported as
+//     Ignored rather than silently claimed Applied: SetWebSPAGateEnabled
+//     returns false when NONE of the SPA filesystems (admin console /
+//     hosted login / portal / developer portal) were ever wired via a
+//     With*FS option at NewServer time — a gate can only suppress/reveal an
+//     ALREADY-mounted route, it can never conjure a filesystem that was
+//     never constructed. admin_api has no such gap: mountAdminSurface's
+//     group (at minimum the client lookup + the endpoint inventory) is
+//     unconditional, so SetAdminAPIGateEnabled is always effective.
+//
+// Still deliberately NOT wired, despite looking "safe" on paper (a toggle,
 // no store/connection to re-provision):
 //
-//   - feature_gates.* — interfaces/sso decides which route groups Mount()
-//     registers ONCE, at server-construction time. Toggling a gate after
-//     boot cannot add or remove already-registered/unregistered mux routes
-//     without a full re-Mount, which this SDK does not support at runtime.
+//   - every OTHER feature_gates.* field (oidc/ciba/caep/federation/
+//     self_service) — interfaces/sso still decides those route groups ONCE,
+//     at server-construction time, with no live re-check inside the
+//     registered handler (unlike admin_api/web_spa above). Toggling one of
+//     these after boot cannot add or remove already-registered/unregistered
+//     mux routes without a full re-Mount, which this SDK does not support
+//     at runtime.
 //   - storage backends, listen addresses, TLS material, cluster/etcd
 //     endpoints, DSNs — all require closing and re-opening a connection or
 //     listener; applying them in place risks leaking the old
@@ -67,7 +88,9 @@ import (
 // to a live server, exactly (one leaf field, one apply case). See the
 // package doc for what's deliberately excluded and why.
 var safeReloadPaths = map[string]bool{
-	"/logging/level": true,
+	"/logging/level":           true,
+	"/feature_gates/admin_api": true,
+	"/feature_gates/web_spa":   true,
 }
 
 // safeReloadPrefixes lists JSON-Pointer path PREFIXES treated as safe when
@@ -130,6 +153,17 @@ type Reloader struct {
 	// constructor param, to avoid breaking existing callers' positional
 	// argument lists).
 	setRateLimitPolicy func(config.RateLimitConfig) error
+
+	// setAdminAPIGate / setWebSPAGate apply a reloaded feature_gates.admin_api
+	// / feature_gates.web_spa value live — typically
+	// Server.SetAdminAPIGateEnabled / Server.SetWebSPAGateEnabled. Each
+	// returns false when the change had nowhere to land (see those methods'
+	// docs for when that happens), in which case Reload reports the change
+	// as Ignored rather than Applied, mirroring setRateLimitPolicy's error
+	// contract. nil (the default) means no hook was wired at all — also
+	// Ignored. Set via SetAdminAPIGateHook / SetWebSPAGateHook.
+	setAdminAPIGate func(enabled bool) bool
+	setWebSPAGate   func(enabled bool) bool
 }
 
 // SetRateLimitHook wires the callback Reload uses to apply a live
@@ -143,6 +177,28 @@ func (r *Reloader) SetRateLimitHook(fn func(config.RateLimitConfig) error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.setRateLimitPolicy = fn
+}
+
+// SetAdminAPIGateHook wires the callback Reload uses to apply a live
+// feature_gates.admin_api change — typically Server.SetAdminAPIGateEnabled.
+// nil (the default) makes a detected admin_api change appear in
+// Result.Ignored instead of Result.Applied, mirroring every other unwired-
+// hook contract in this file.
+func (r *Reloader) SetAdminAPIGateHook(fn func(enabled bool) bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.setAdminAPIGate = fn
+}
+
+// SetWebSPAGateHook is feature_gates.web_spa's analog of
+// SetAdminAPIGateHook — typically Server.SetWebSPAGateEnabled. See the
+// package doc for the one asymmetry that survives even with a hook wired:
+// the hook itself can still report false (no SPA filesystem was ever
+// wired), which Reload also surfaces as Ignored, not Applied.
+func (r *Reloader) SetWebSPAGateHook(fn func(enabled bool) bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.setWebSPAGate = fn
 }
 
 // New builds a Reloader seeded with the config the process booted with.
@@ -261,11 +317,72 @@ func (r *Reloader) applySafe(path string, newCfg *config.Config) []string {
 	switch path {
 	case "/logging/level":
 		return r.applyLogLevel(newCfg)
+	case "/feature_gates/admin_api":
+		return stringOrNil(r.applyAdminAPIGate(newCfg))
+	case "/feature_gates/web_spa":
+		return stringOrNil(r.applyWebSPAGate(newCfg))
 	default:
 		// A path was added to safeReloadPaths without a matching apply
 		// case here — treat as not-yet-wired rather than silently no-op.
 		return nil
 	}
+}
+
+// stringOrNil adapts one of applyAdminAPIGate/applyWebSPAGate's "" == not
+// applied contract (matching applyRateLimit's existing string-return
+// convention) onto applySafe's []string contract (matching applyLogLevel's,
+// which can in principle report more than one line).
+func stringOrNil(applied string) []string {
+	if applied == "" {
+		return nil
+	}
+	return []string{applied}
+}
+
+// resolveGate mirrors interfaces/sso's unexported gateOn: nil (the operator
+// never mentioned the field) or an explicit true both mean the surface is
+// ON — only an explicit false turns it off. Duplicated here rather than
+// imported (interfaces/sso does not export it) — this package intentionally
+// stays decoupled from interfaces/sso, talking to it only through the
+// setAdminAPIGate/setWebSPAGate func hooks a caller wires in.
+func resolveGate(explicit *bool) bool {
+	return explicit == nil || *explicit
+}
+
+// applyAdminAPIGate applies a reloaded feature_gates.admin_api change live
+// via the wired setAdminAPIGate hook. Reported as Applied only when a hook
+// is wired AND it reports success — see SetAdminAPIGateHook's doc for why
+// this hook, unlike setRateLimitPolicy, has no "not enabled at boot" failure
+// mode in practice (mountAdminSurface's group is unconditional).
+func (r *Reloader) applyAdminAPIGate(newCfg *config.Config) string {
+	if r.setAdminAPIGate == nil {
+		return ""
+	}
+	old := resolveGate(r.current.FeatureGates.AdminAPI)
+	resolved := resolveGate(newCfg.FeatureGates.AdminAPI)
+	if !r.setAdminAPIGate(resolved) {
+		return ""
+	}
+	r.current.FeatureGates.AdminAPI = newCfg.FeatureGates.AdminAPI
+	return fmt.Sprintf("feature_gates.admin_api: %v -> %v", old, resolved)
+}
+
+// applyWebSPAGate is feature_gates.web_spa's analog of applyAdminAPIGate.
+// Unlike admin_api, the wired hook (Server.SetWebSPAGateEnabled) CAN report
+// false here — when no SPA filesystem was ever wired at NewServer time there
+// is no already-mounted route for this gate to affect, so the change is
+// reported as Ignored (by the "" return) rather than falsely Applied.
+func (r *Reloader) applyWebSPAGate(newCfg *config.Config) string {
+	if r.setWebSPAGate == nil {
+		return ""
+	}
+	old := resolveGate(r.current.FeatureGates.WebSPA)
+	resolved := resolveGate(newCfg.FeatureGates.WebSPA)
+	if !r.setWebSPAGate(resolved) {
+		return ""
+	}
+	r.current.FeatureGates.WebSPA = newCfg.FeatureGates.WebSPA
+	return fmt.Sprintf("feature_gates.web_spa: %v -> %v", old, resolved)
 }
 
 // applyLogLevel is the single currently-wired safe-reload case. Reports the

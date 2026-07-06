@@ -201,16 +201,70 @@ related capability exists but the proposed feature does not).
 
 - **Config JSON-Schema + hot reload** — partial. Schema generation
   (`config/schema`, `sso-ctl config validate-schema`) + validator chain +
-  `SIGHUP` hot reload done for `logging.level` AND `security.rate_limit.*`
+  `SIGHUP` hot reload done for `logging.level`, `security.rate_limit.*`
   (`ratelimit.DynamicMiddleware` + `ratelimit.PolicyStore` +
   `Server.SetRateLimitPolicy`, wired via `config/reload`'s
   `SetRateLimitHook` — the whole Policy rebuilds as one atomic unit per
-  reload, in-memory bucket state resets); feature-gate hot-reload remains
-  deferred — toggling a gate after boot cannot add/remove already-registered
-  mux routes without a full re-Mount, which this SDK does not support at
-  runtime (a fundamentally harder problem than rate-limit's numeric-knob
-  swap). _Sources: architecture-analysis, ops-api-productization-2026-07-01,
-  senior-architect-expansion-2026-07-01, architectural-debt-and-risks-2026-07-01._
+  reload, in-memory bucket state resets), AND now `feature_gates.admin_api` /
+  `feature_gates.web_spa`: `interfaces/sso` mounts both surfaces
+  UNCONDITIONALLY at `Mount()` time and wraps every registered route in a
+  request-time check (`shared/core.GatedRouter` for the `/api/v1/admin/*`
+  group, `shared/core.GateHTTPHandler` for the SPA static-asset mounts)
+  instead of deciding "mount or don't" once, at boot — gate-off answers
+  `http.NotFound` byte-identically to a path that was never registered at
+  all. `config/reload`'s `SetAdminAPIGateHook` / `SetWebSPAGateHook` (wired
+  to `Server.SetAdminAPIGateEnabled` / `SetWebSPAGateEnabled` in
+  `cmd/sso-server`'s `wireFeatureGateReload`, alongside
+  `wireRateLimitReload`) flip those live checks on a SIGHUP reload with no
+  restart and no re-Mount, in BOTH directions (on->off and off->on) —
+  unlike rate-limit's hook, which can only ever retune an
+  already-`WithRateLimit`-enabled policy's numbers.
+  One asymmetry survives, and it is reported as `Result.Ignored` rather than
+  a false `Result.Applied`: `SetWebSPAGateEnabled` returns `false` when NONE
+  of the SPA filesystems (admin console / hosted login / portal / developer
+  portal) were ever wired via a `With*FS` option at `NewServer` time — a
+  live gate can only suppress/reveal an ALREADY-mounted route, it can never
+  conjure a filesystem that was never constructed. `admin_api` has no such
+  gap: `mountAdminSurface`'s group (at minimum the client lookup + the
+  `/api/v1/admin/endpoints` inventory) is unconditional, so
+  `SetAdminAPIGateEnabled` is always effective.
+
+  An adversarial review pass (before this was considered done) found and
+  fixed a real oracle leak: `shared/core.GateHandler`'s original design
+  only wrapped the HANDLER, so a global `Use()`-registered middleware
+  (Tracing, added before `mountAdminSurface`/`mountBrandingEndpoint` ran)
+  still executed and stamped `X-Request-Id`/`Traceparent`/`X-Trace-Id` on
+  a gated-off response — a real, `httptest`-reproduced difference from a
+  genuinely-never-mounted path's 404 (confirmed both for the
+  `/api/v1/admin/*` group and, separately, for `mountBrandingEndpoint`,
+  which used the same handler-only pattern). Fixed by moving the gate
+  check into the ROUTER's own route-matching loop
+  (`StdRoute.live`/`StdRouter.registerGated`, checked in `ServeHTTP`
+  BEFORE a matched route's middlewares run — a gated-off route is now
+  treated as NOT MATCHED at all, exactly like a route never registered,
+  rather than matched-then-answered-404 by the handler): `GatedRouter`
+  now prefers this route-matching-level gate when the underlying `Router`
+  is (or derives via `Group` from) the default `*StdRouter`, falling back
+  to the old handler-wrap for a custom `Router` (`WithRouter`, e.g. an
+  echo/gin adapter), which is documented as strictly-no-worse-than-before
+  rather than a silent claim of the same guarantee. The web_spa SPA
+  filesystem mounts (`GateHTTPHandler` on a raw `http.ServeMux` entry,
+  outside the router's middleware system entirely) were checked and
+  confirmed NOT affected by this — they never carried Tracing to begin
+  with. Also found and fixed: `SetWebSPAGateEnabled`'s "was anything
+  wired" check omitted `tenantStore` (`mountBrandingEndpoint`'s own
+  independent condition), so toggling the gate with ONLY a tenant store
+  wired (no SPA filesystem) would misreport `Result.Ignored` for a toggle
+  that did, in fact, change the branding endpoint's reachability.
+
+  Every OTHER `feature_gates.*` field (`oidc`/`ciba`/`caep`/`federation`/
+  `self_service`) remains deferred — `interfaces/sso` still decides those
+  route groups ONCE, at boot, with no live re-check inside the registered
+  handler; toggling one of those after boot still cannot add/remove
+  already-registered/unregistered mux routes without a full re-Mount, which
+  this SDK does not support at runtime. _Sources: architecture-analysis,
+  ops-api-productization-2026-07-01, senior-architect-expansion-2026-07-01,
+  architectural-debt-and-risks-2026-07-01._
 
 ## Observability, performance & tests
 

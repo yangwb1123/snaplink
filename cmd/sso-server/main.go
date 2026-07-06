@@ -347,6 +347,7 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 	}
 	defer closeAppStores(a)
 	wireRateLimitReload(reloader, a.server, a.redisClient)
+	wireFeatureGateReload(reloader, a.server)
 
 	// Phase C: bootstrap runner — applies pending init steps (seed admin
 	// role, admin user, default netpolicy, admin client). Must complete

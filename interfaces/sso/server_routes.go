@@ -195,17 +195,18 @@ func gateOn(explicit *bool) bool {
 }
 
 // The seven gate-check methods below are the single source of truth Mount()
-// and the endpoint inventory (server_routes_admin.go) both consult — keeping
-// them as named methods (rather than inlining gateOn(s.featureGates.X) at
-// each call site) means the inventory can never drift from what Mount()
-// actually decided.
+// and the endpoint inventory (server_routes_admin.go) both consult. Two of
+// them — adminAPIGateOn/webSPAGateOn — read a LIVE flag (sso_wiring.go's
+// adminAPILive/webSPALive) instead of s.featureGates: those are the
+// hot-reloadable gates (accessors.go's SetAdminAPIGateEnabled/
+// SetWebSPAGateEnabled); the rest stay boot-time-only.
 func (s *Server) oidcGateOn() bool        { return gateOn(s.featureGates.OIDC) }
 func (s *Server) cibaGateOn() bool        { return gateOn(s.featureGates.CIBA) }
 func (s *Server) caepGateOn() bool        { return gateOn(s.featureGates.CAEP) }
 func (s *Server) federationGateOn() bool  { return gateOn(s.featureGates.Federation) }
 func (s *Server) selfServiceGateOn() bool { return gateOn(s.featureGates.SelfService) }
-func (s *Server) adminAPIGateOn() bool    { return gateOn(s.featureGates.AdminAPI) }
-func (s *Server) webSPAGateOn() bool      { return gateOn(s.featureGates.WebSPA) }
+func (s *Server) adminAPIGateOn() bool    { return s.adminAPILive.Load() }
+func (s *Server) webSPAGateOn() bool      { return s.webSPALive.Load() }
 
 // mountOIDCUserEndpoints registers the OIDC-specific /userinfo,
 // /end_session, and (session-management-gated) /check_session_iframe
@@ -467,28 +468,26 @@ func (s *Server) buildProbeMux(inner http.Handler) http.Handler {
 		mux.Handle(PathMetrics, promhttp.HandlerFor(s.metrics.Registry, promhttp.HandlerOpts{}))
 	}
 	// Admin console SPA (opt-in). Served from /admin/ so the browser client
-	// has a stable origin to call back to /api/v1/admin/* from. The
-	// http.FileServerFS + StripPrefix pattern means /admin/index.html is
-	// reachable as /admin/ and the browser can navigate without path leakage
-	// into the SSO routing layer. Not wired by default — byte-identical to a
-	// build without the console when adminConsoleFS is nil (or WebSPA is off).
-	if s.adminConsoleFS != nil && s.webSPAGateOn() {
-		mux.Handle(pathAdminConsolePrefix, s.wrapSecurityHeaders(http.StripPrefix(pathAdminConsolePrefix, http.FileServerFS(s.adminConsoleFS))))
+	// has a stable origin to call back to /api/v1/admin/* from. Mounted
+	// whenever adminConsoleFS is wired, REGARDLESS of the WebSPA gate's
+	// current value — core.GateHTTPHandler gates reachability LIVE, per
+	// request, instead of at this boot-time mount decision, so
+	// SetWebSPAGateEnabled can hot-toggle it without a re-Mount. Nil FS
+	// (never wired via WithAdminConsoleFS) still means no mux entry at all.
+	if s.adminConsoleFS != nil {
+		mux.Handle(pathAdminConsolePrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(http.StripPrefix(pathAdminConsolePrefix, http.FileServerFS(s.adminConsoleFS)))))
 	}
 	// Hosted login SPA (opt-in). Served from /login/ so the browser can
 	// reach the SPA while the JSON /auth/login endpoint remains at its
-	// existing path (no overlap). Zero protocol changes — the SPA calls
-	// /auth/login over JSON like any other client. Not wired by default —
-	// byte-identical to a build without the UI when hostedLoginFS is nil (or
-	// WebSPA is off).
-	if s.hostedLoginFS != nil && s.webSPAGateOn() {
-		mux.Handle(pathHostedLoginPrefix, s.wrapSecurityHeaders(http.StripPrefix(pathHostedLoginPrefix, http.FileServerFS(s.hostedLoginFS))))
+	// existing path. Same live-gate treatment as the admin console above.
+	if s.hostedLoginFS != nil {
+		mux.Handle(pathHostedLoginPrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(http.StripPrefix(pathHostedLoginPrefix, http.FileServerFS(s.hostedLoginFS)))))
 	}
-	// End-user self-service portal SPA (opt-in). Served from /portal/; it calls
-	// the /me* endpoints over JSON with the user's own bearer. Not wired by
-	// default — byte-identical when portalFS is nil (or WebSPA is off).
-	if s.portalFS != nil && s.webSPAGateOn() {
-		mux.Handle(pathPortalPrefix, s.wrapSecurityHeaders(http.StripPrefix(pathPortalPrefix, http.FileServerFS(s.portalFS))))
+	// End-user self-service portal SPA (opt-in). Served from /portal/; it
+	// calls /me* over JSON with the user's own bearer. Same live-gate
+	// treatment as the admin console above.
+	if s.portalFS != nil {
+		mux.Handle(pathPortalPrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(http.StripPrefix(pathPortalPrefix, http.FileServerFS(s.portalFS)))))
 	}
 	s.mountDeveloperPortalSPA(mux)
 	mux.Handle("/", inner)

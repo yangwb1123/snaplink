@@ -42,6 +42,33 @@ import (
 func (s *Server) InvitationStore() core.InvitationStore  { return s.invitationStore }
 func (s *Server) InvitationSender() spi.InvitationSender { return s.invitationSender }
 
+// SetAdminAPIGateEnabled flips the LIVE feature_gates.admin_api value read
+// by adminAPIGateOn (server_routes.go) — the config/reload SIGHUP hook
+// (SetAdminAPIGateHook) calls this. Always returns true: mountAdminSurface
+// always registers the /api/v1/admin/* group behind a core.GatedRouter now
+// (server_routes_admin.go), so there is always an already-mounted route for
+// this flag to affect — unlike SetWebSPAGateEnabled below, there is no
+// "nothing to flip" case here.
+func (s *Server) SetAdminAPIGateEnabled(enabled bool) bool {
+	s.adminAPILive.Store(enabled)
+	return true
+}
+
+// SetWebSPAGateEnabled flips the LIVE feature_gates.web_spa value read by
+// webSPAGateOn. Returns false when NONE of the SPA filesystems (admin
+// console / hosted login / portal / developer portal) were ever wired via
+// their With*FS option at NewServer time: with no mounted mux entry for any
+// of them, flipping this flag has no observable effect, so the caller
+// (config/reload) should report the change as Ignored rather than Applied —
+// mirroring SetRateLimitPolicy's "nothing to swap into" contract.
+func (s *Server) SetWebSPAGateEnabled(enabled bool) bool {
+	s.webSPALive.Store(enabled)
+	// tenantStore also gates mountBrandingEndpoint (server_me.go); omitting
+	// it here would misreport Ignored for a toggle that did affect it.
+	return s.adminConsoleFS != nil || s.hostedLoginFS != nil ||
+		s.portalFS != nil || s.developerPortalFS != nil || s.tenantStore != nil
+}
+
 func (s *Server) AuthCodeStore() oauth.AuthCodeStore         { return s.authCodeStore }
 func (s *Server) AuthCodeTTL() time.Duration                 { return s.authCodeTTL }
 func (s *Server) RefreshTokenStore() oauth.RefreshTokenStore { return s.refreshTokenStore }
