@@ -8,7 +8,7 @@ Review code organization, interface quality, error handling, and maintainability
 Verify compliance with the committed budget gates.
 Produce a refactoring plan with specific file/function targets.
 
-Read `.ai/prompts/shared/engineering-principles.md` before starting.
+Read `ai-dev/ai/prompts-shared/engineering-principles.md` before starting.
 
 ---
 
@@ -107,7 +107,7 @@ The cleaned-up interface signatures after applying refactoring recommendations.
 |------|----------|--------|-------------|
 | | | | |
 
-Produce findings using `.ai/prompts/shared/output-format.md`.
+Produce findings using `ai-dev/ai/prompts-shared/output-format.md`.
 Sort: Critical → High → Medium → Low → Info.
 
 Conclude with the Stage Summary Block.

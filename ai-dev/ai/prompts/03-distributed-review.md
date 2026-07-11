@@ -116,7 +116,7 @@ For each failure scenario, describe the actual behavior:
 ### State Machine (if stateful)
 Draw the state transitions including failure transitions and recovery paths.
 
-Produce findings using `.ai/prompts/shared/output-format.md`.
+Produce findings using `ai-dev/ai/prompts-shared/output-format.md`.
 Sort: Critical → High → Medium → Low → Info.
 
 Conclude with the Stage Summary Block.

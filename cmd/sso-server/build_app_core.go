@@ -210,24 +210,9 @@ func (b *appBuilder) wireAudit() error {
 	if err := b.startAuditRetention(primary, primaryName); err != nil {
 		return err
 	}
-	sink := primary
-	if w := cfg.Audit.Webhook; w.Enabled {
-		sink, err = b.wireAuditWebhook(primary, w)
-		if err != nil {
-			return err
-		}
-	}
-	if sink, err = b.wireAuditSIEM(sink); err != nil {
+	sink, err := b.composeAuditSinks(primary)
+	if err != nil {
 		return err
-	}
-	if sink, err = b.wireAuditKafka(sink); err != nil {
-		return err
-	}
-	// Async wrap when configured. The buffered hot path keeps slow
-	// (e.g. webhook) sinks from blocking request latency. Memory
-	// sink benefits little — the wrap is opt-in per operator.
-	if cfg.Audit.Async.Enabled {
-		sink = b.wireAuditAsync(sink)
 	}
 	recorder, err := b.buildRecorder(sink)
 	if err != nil {
@@ -244,6 +229,35 @@ func (b *appBuilder) wireAudit() error {
 	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "audit-"+primaryName, primary)
 	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "audit-"+primaryName, primary)
 	return nil
+}
+
+// composeAuditSinks layers the optional fan-outs and the async wrap around
+// the primary sink, in the fixed order webhook -> SIEM -> kafka -> async so
+// the buffered hot path always sits outermost.
+func (b *appBuilder) composeAuditSinks(primary audit.Sink) (audit.Sink, error) {
+	cfg := b.cfg
+	sink := primary
+	var err error
+	if w := cfg.Audit.Webhook; w.Enabled {
+		if sink, err = b.wireAuditWebhook(primary, w); err != nil {
+			return nil, err
+		}
+	}
+	if sink, err = b.wireAuditSIEM(sink); err != nil {
+		return nil, err
+	}
+	if sink, err = b.wireAuditKafka(sink); err != nil {
+		return nil, err
+	}
+	// Async wrap when configured. The buffered hot path keeps slow
+	// (e.g. webhook) sinks from blocking request latency. Memory
+	// sink benefits little — the wrap is opt-in per operator.
+	if cfg.Audit.Async.Enabled {
+		if sink, err = b.wireAuditAsync(sink); err != nil {
+			return nil, err
+		}
+	}
+	return sink, nil
 }
 
 // checkAuditSchema refuses to start when the SQLite audit sink's live
@@ -340,25 +354,16 @@ func (b *appBuilder) wireAuditWebhook(primary audit.Sink, w config.AuditWebhookC
 }
 
 // wireAuditAsync wraps the sink in a buffered AsyncSink and starts it.
-func (b *appBuilder) wireAuditAsync(sink audit.Sink) audit.Sink {
-	logger := b.logger
-	asyncOpts := []audit.AsyncOption{
-		audit.WithAsyncDropHandler(func(_ *audit.Event, err error) {
-			logger.Error("audit async drop", "error", err)
-		}),
+// batch_size selects per-event vs batch draining; the builder validates the
+// knob against the composed sink, so a dead combination fails boot here.
+func (b *appBuilder) wireAuditAsync(sink audit.Sink) (audit.Sink, error) {
+	async, err := serverbuildauthn.BuildAuditAsyncSink(b.cfg.Audit.Async, sink, b.logger)
+	if err != nil {
+		return nil, err
 	}
-	if n := b.cfg.Audit.Async.BufferSize; n > 0 {
-		asyncOpts = append(asyncOpts, audit.WithAsyncBuffer(n))
-	}
-	if n := b.cfg.Audit.Async.Workers; n > 0 {
-		asyncOpts = append(asyncOpts, audit.WithAsyncWorkers(n))
-	}
-	if ms := b.cfg.Audit.Async.RecordTimeoutMs; ms > 0 {
-		asyncOpts = append(asyncOpts, audit.WithAsyncRecordTimeout(time.Duration(ms)*time.Millisecond))
-	}
-	b.asyncSink = audit.NewAsyncSink(sink, asyncOpts...)
-	b.asyncSink.Start()
-	return b.asyncSink
+	b.asyncSink = async
+	async.Start()
+	return async, nil
 }
 
 // buildRecorder assembles the audit Recorder with PII redaction + hash chain

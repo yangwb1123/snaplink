@@ -1,7 +1,7 @@
 // Package metering provides an SPI and implementations for per-tenant
 // usage aggregation. It queries the audit log to compute login counts,
-// token issuances, active-user cardinality, and MFA challenge volume —
-// the metrics a billing or quota system needs.
+// token issuances, active-user and active-client cardinality, and MFA
+// challenge volume — the metrics a billing or quota system needs.
 //
 // Wire the SQLite aggregator when the audit/sqlite.Sink is in use:
 //
@@ -40,6 +40,14 @@ type TenantUsage struct {
 	TokensIssued  int64 // token_issued events
 	ActiveUsers   int64 // distinct ActorIDs that logged in successfully
 	MFAChallenges int64 // mfa_required events
+	// ActiveClients is the distinct ClientID count for the tenant in the
+	// period, computed from the audit log like ActiveUsers — NOT from the
+	// tokenusage store. tokenusage buckets are deployment-wide token
+	// telemetry keyed by (minute, client, kind, endpoint) and drop the
+	// tenant dimension by design; the audit log already carries tenant +
+	// client on every event and is metering's single source of truth for
+	// the per-tenant billing view.
+	ActiveClients int64
 }
 
 // Aggregator computes per-tenant usage from the audit log.

@@ -103,6 +103,44 @@ func TestUsage_month_period(t *testing.T) {
 	}
 }
 
+// TestUsage_activeClients verifies ActiveClients rides through the
+// record-and-copy path per tenant like every other counter: two distinct
+// clients recorded for tenant A, one for tenant B (the memory aggregator
+// stores pre-computed usage — the distinct-client dedup happens in the
+// audit-log-backed aggregator).
+func TestUsage_activeClients(t *testing.T) {
+	t.Parallel()
+	a := New()
+	start := dayOf(2026, time.August, 15)
+	a.Record(&metering.TenantUsage{
+		TenantID:      "tenant-a",
+		Period:        metering.PeriodDay,
+		PeriodStart:   start,
+		ActiveClients: 2,
+	})
+	a.Record(&metering.TenantUsage{
+		TenantID:      "tenant-b",
+		Period:        metering.PeriodDay,
+		PeriodStart:   start,
+		ActiveClients: 1,
+	})
+
+	ua, err := a.Usage(ctx, "tenant-a", metering.PeriodDay, start)
+	if err != nil {
+		t.Fatalf("Usage(tenant-a): %v", err)
+	}
+	if ua.ActiveClients != 2 {
+		t.Errorf("tenant-a ActiveClients = %d, want 2", ua.ActiveClients)
+	}
+	ub, err := a.Usage(ctx, "tenant-b", metering.PeriodDay, start)
+	if err != nil {
+		t.Fatalf("Usage(tenant-b): %v", err)
+	}
+	if ub.ActiveClients != 1 {
+		t.Errorf("tenant-b ActiveClients = %d, want 1", ub.ActiveClients)
+	}
+}
+
 func TestTopTenants_ordering(t *testing.T) {
 	t.Parallel()
 	a := New()

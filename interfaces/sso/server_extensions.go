@@ -3,6 +3,7 @@ package sso
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -253,6 +254,15 @@ func (c *suspensionCache) invalidate(tenantID string) {
 	delete(c.entries, tenantID)
 }
 
+// flush drops every entry. Used by the invalidation-bus recovery re-seed: a
+// KindTenantSuspension event lost during a bus outage names a tenant we can
+// no longer identify, so every cached suspension state must re-fetch.
+func (c *suspensionCache) flush() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = make(map[string]suspensionCacheEntry)
+}
+
 // WithTenantSuspensionCheck enables a post-validation gate: every
 // token whose owning client is bound to a tenant
 // (Client.TenantID != "") has the tenant's Status looked up; tokens
@@ -402,4 +412,80 @@ func (s *Server) applyTokenRevocation(ctx context.Context, evt cluster.Event) {
 // jwtExpUnsafe extracts the exp claim from a JWT without validation.
 func jwtExpUnsafe(token string) int64 {
 	return handler.JWTExpUnsafe(token)
+}
+
+// revocationSeeder is the same seam boot uses to seed the issuers'
+// in-process revocation deny-sets from the durable RevocationStore
+// (cmd/sso-server/serverbuildsign.seedRevocations). Re-used on
+// invalidation-bus recovery so a KindTokenRevoked event lost during the
+// outage is re-applied from the store instead of being lost forever.
+type revocationSeeder interface {
+	SeedRevocations(context.Context) error
+}
+
+// resubscribeAndReseed opens a fresh bus subscription and then converges the
+// state this replica may have missed while degraded. Ordering is load-bearing:
+// subscribe FIRST (re-seeding before the new stream exists would open a fresh
+// loss window between re-seed and subscribe), re-seed SECOND, and only then
+// does the caller clear degraded — readiness must not go green while local
+// state is still stale. Events buffered on the new stream during the re-seed
+// are applied right after; invalidations are idempotent so the overlap is safe.
+//
+// The subscription rides its own child context so an abandoned stream (re-seed
+// failed, the backoff loop will open another) releases its bus registration /
+// watch instead of accumulating one per retry for the life of the process.
+func (s *Server) resubscribeAndReseed(ctx context.Context, attempt int) (<-chan cluster.Event, context.CancelFunc, bool) {
+	subCtx, cancel := context.WithCancel(ctx)
+	next, err := s.invalidationBus.Subscribe(subCtx)
+	if err != nil {
+		cancel()
+		if ctx.Err() == nil {
+			s.logger.Error("invalidation bus resubscribe failed, will retry", "attempt", attempt, "error", err)
+		}
+		return nil, nil, false
+	}
+	if err := s.reseedInvalidationState(ctx); err != nil {
+		// Fail-safe: a partial re-seed must NOT clear degraded — /readyz stays
+		// red and the loop retries the whole subscribe+re-seed cycle after
+		// backoff. Audited per attempt (rate-bounded by the backoff cadence)
+		// because "bus is back but the durable re-read failed" is a distinct,
+		// actionable fault the one-per-transition degraded event can't convey.
+		cancel()
+		s.logger.Error("invalidation bus resubscribed but re-seed failed; staying degraded", "attempt", attempt, "error", err)
+		s.recordInvalidationBusEvent(eventInvalidationBusDegraded, audit.OutcomeFailure, invalidationBusReseedFailedReason)
+		return nil, nil, false
+	}
+	return next, cancel, true
+}
+
+// reseedInvalidationState re-applies everything a lost invalidation Event
+// could have carried. TTL-backed caches are flushed (their next read
+// re-fetches from the authoritative store), and the revocation deny-sets are
+// re-seeded from the durable store — the one target with NO TTL safety net: a
+// missed KindTokenRevoked would otherwise honor a revoked token until its own
+// exp. KindSigningKeyRotation is deliberately absent — peer-key convergence is
+// owned by the signing-key aggregation loop's own subscribeAndSeed self-heal.
+func (s *Server) reseedInvalidationState(ctx context.Context) error {
+	s.flushInvalidationCaches()
+	return s.reseedRevocationDenySets(ctx)
+}
+
+// reseedRevocationDenySets re-runs the boot-time SeedRevocations pass on every
+// registered issuer that exposes the seam. Seeding is additive + idempotent
+// (revocation_set.go), so re-running it over a live issuer is safe; a nil
+// RevocationStore inside the issuer is a no-op exactly as at boot. Every
+// issuer is attempted even after a failure so one broken store doesn't stop
+// the others from converging; any error keeps the replica degraded.
+func (s *Server) reseedRevocationDenySets(ctx context.Context) error {
+	var errs []error
+	for name, ti := range s.tokenIssuers {
+		seeder, ok := ti.(revocationSeeder)
+		if !ok {
+			continue
+		}
+		if err := seeder.SeedRevocations(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("issuer %s: %w", name, err))
+		}
+	}
+	return errors.Join(errs...)
 }

@@ -81,7 +81,7 @@ type SPIFFEConfig struct {
 // directory_fanout_test.go's dirFileCountExemptions.
 //
 // Disabled (the default) ⇒ byte-identical to a build without the feature.
-// Mirrors TrustConfig's wiring model: the reference sso-server binary does
+// The reference sso-server binary does
 // NOT auto-wire this section (an Issuer/Validator pair is signing-key
 // infrastructure — reusing the server's own signing issuer, whose
 // SignJWT/JWKS methods already satisfy txntoken.Signer / core.JWKSProvider
@@ -122,10 +122,16 @@ type TxnTokenConfig struct {
 // verification (Phase 2+, not implemented). Default (Enabled=false) means
 // nothing is computed — byte-identical to a build without the feature.
 //
-// This section describes the shape an embedder's cmd wiring translates into
-// shared/trust constructors (WeightedComposite + the reference scorers) —
-// the reference sso-server binary does not auto-wire it; operators wanting
-// trust scoring today construct the scorers directly via the SDK.
+// The reference sso-server binary wires this section into
+// sso.WithTrustScorer (serverbuildplatform.BuildTrustScorer builds the
+// WeightedComposite over the reference scorers, each enabled by its
+// Weights key). When anomaly.enabled, the ip_reputation and behavior
+// scorers read the SAME anomaly stores the detectors populate, through
+// composition-root adapters that reuse the anomaly.ip_salt hash space;
+// with anomaly off they degrade to their documented no-signal scores.
+// The Serialization sub-block is the one part still NOT consumed by the
+// reference binary — no SDK option surfaces a computed score into session
+// metadata or a token claim yet (see TrustSerializationConfig).
 type TrustConfig struct {
 	Enabled bool `yaml:"enabled"`
 
@@ -176,6 +182,9 @@ type TrustDevicePostureConfig struct {
 // TrustSerializationConfig mirrors trust.SerializationConfig — see there for
 // the default-off wire-safety contract (both flags false ⇒ no session
 // metadata, no token claim, byte-identical to scoring never having run).
+// RESERVED: the reference sso-server binary does not consume this block yet
+// (no sso option calls trust.SessionMetadata/TokenClaim); embedders using
+// the SDK helpers directly are its only consumers today.
 type TrustSerializationConfig struct {
 	StampSessionMetadata bool   `yaml:"stamp_session_metadata"`
 	IncludeTokenClaim    bool   `yaml:"include_token_claim"`

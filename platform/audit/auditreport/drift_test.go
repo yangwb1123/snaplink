@@ -48,6 +48,7 @@ var wantUncategorizedEventTypes = []audit.EventType{
 	audit.EventCAEPSetSent, audit.EventSSFSetReceived,
 	audit.EventInvalidationBusDegraded, audit.EventInvalidationBusReconnected,
 	audit.EventDegradationModeChanged, audit.EventFeatureGatesDisabled,
+	audit.EventConnectionAuthenticatorBuildFailed,
 }
 
 // namedAreaEventTypes returns the union of every controlAreaDefs entry's

@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS auth_codes (
     code_challenge        TEXT    NOT NULL DEFAULT '',
     code_challenge_method TEXT    NOT NULL DEFAULT '',
     confirmation_jkt      TEXT    NOT NULL DEFAULT '',
+    requested_claims      TEXT    NOT NULL DEFAULT '',
     expires_at            INTEGER NOT NULL
 );
 
@@ -48,6 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_auth_codes_expires_at
 var authCodeMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline", SQL: authCodeSchema},
 	{Version: 2, Name: "auth_code_dpop_binding", Func: addAuthCodeDPoPBinding},
+	{Version: 3, Name: "auth_code_requested_claims", Func: addAuthCodeRequestedClaims},
 }
 
 func addAuthCodeDPoPBinding(ctx context.Context, x migrate.Execer) error {
@@ -60,6 +62,25 @@ func addAuthCodeDPoPBinding(ctx context.Context, x migrate.Execer) error {
 	}
 	_, err = x.ExecContext(ctx,
 		`ALTER TABLE auth_codes ADD COLUMN confirmation_jkt TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+// addAuthCodeRequestedClaims (v3) backfills the OIDC Core §5.5 claims-
+// parameter column (raw JSON; empty string = none) onto a pre-existing database so
+// the /token exchange can honor the RP's claims request — same
+// check-then-add shape as the v2 DPoP column since SQLite has no ADD
+// COLUMN IF NOT EXISTS; a fresh database already has it from the v1
+// baseline DDL and skips the add.
+func addAuthCodeRequestedClaims(ctx context.Context, x migrate.Execer) error {
+	has, err := authCodeColumnExists(ctx, x, "requested_claims")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	_, err = x.ExecContext(ctx,
+		`ALTER TABLE auth_codes ADD COLUMN requested_claims TEXT NOT NULL DEFAULT ''`)
 	return err
 }
 
@@ -166,11 +187,12 @@ func (s *AuthCodeStore) Issue(ctx context.Context, code string, info *oauth.Auth
         INSERT INTO auth_codes (
             code, user_id, client_id, redirect_uri, scopes, nonce,
             provider, attributes, code_challenge, code_challenge_method,
-            confirmation_jkt, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            confirmation_jkt, requested_claims, expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		code, info.UserID, info.ClientID, info.RedirectURI,
 		string(scopes), info.Nonce, info.Provider, string(attrs),
 		info.CodeChallenge, info.CodeChallengeMethod, info.ConfirmationJKT,
+		string(info.RequestedClaims), // raw §5.5 claims JSON; '' = none
 		info.ExpiresAt.UnixNano(),
 	)
 	if err != nil {
@@ -189,7 +211,7 @@ func (s *AuthCodeStore) Consume(ctx context.Context, code string) (*oauth.AuthCo
         DELETE FROM auth_codes WHERE code = ?
         RETURNING user_id, client_id, redirect_uri, scopes, nonce,
                   provider, attributes, code_challenge, code_challenge_method,
-                  confirmation_jkt, expires_at`, code)
+                  confirmation_jkt, requested_claims, expires_at`, code)
 	out, err := scanAuthCode(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, oauth.ErrAuthCodeNotFound
@@ -210,13 +232,13 @@ func scanAuthCode(s scanner) (*oauth.AuthCode, error) {
 	var (
 		out                                                                                     oauth.AuthCode
 		redirectURI, nonce, provider, codeChallenge, codeChallengeMethod, scopesJSON, attrsJSON string
-		confirmationJKT                                                                         string
+		confirmationJKT, requestedClaims                                                        string
 		expiresAtUnixNs                                                                         int64
 	)
 	if err := s.Scan(
 		&out.UserID, &out.ClientID, &redirectURI, &scopesJSON, &nonce,
 		&provider, &attrsJSON, &codeChallenge, &codeChallengeMethod,
-		&confirmationJKT, &expiresAtUnixNs,
+		&confirmationJKT, &requestedClaims, &expiresAtUnixNs,
 	); err != nil {
 		return nil, err
 	}
@@ -226,6 +248,9 @@ func scanAuthCode(s scanner) (*oauth.AuthCode, error) {
 	out.CodeChallenge = codeChallenge
 	out.CodeChallengeMethod = codeChallengeMethod
 	out.ConfirmationJKT = confirmationJKT
+	if requestedClaims != "" {
+		out.RequestedClaims = json.RawMessage(requestedClaims)
+	}
 	out.ExpiresAt = time.Unix(0, expiresAtUnixNs).UTC()
 	if scopesJSON != "" && scopesJSON != "[]" {
 		if err := json.Unmarshal([]byte(scopesJSON), &out.Scopes); err != nil {

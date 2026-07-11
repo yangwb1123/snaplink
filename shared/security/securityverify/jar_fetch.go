@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"slices"
 	"strings"
@@ -32,6 +33,14 @@ import (
 //     endpoints.
 //   - Redirect following is disabled (a 302 from an allowlisted host
 //     to an internal IP would otherwise defeat the allowlist).
+//   - Dial-time resolved-IP re-validation ([SSRFGuardedDialer]) —
+//     the allowlist pins WHICH URLs may be fetched, but the
+//     allowlisted host's DNS stays attacker-influenceable: whoever
+//     controls the registered domain's zone can repoint the
+//     public-looking hostname at 169.254.169.254 or an RFC 1918
+//     address AFTER registration (DNS rebinding). The guard checks
+//     the IPs actually resolved at connect time, in the same call
+//     that dials, so there is no TOCTOU window.
 //   - Body size cap + request timeout — small JWTs are fine; an
 //     adversary feeding gigabytes through the AS isn't.
 //
@@ -69,18 +78,139 @@ type HTTPJARFetcher struct {
 }
 
 // NewHTTPJARFetcher returns a hardened fetcher: HTTPS-only, no
-// redirects, 5s timeout, 16KB body cap. Override by setting the
-// fields on the returned struct.
+// redirects, 5s timeout, 16KB body cap, dial-time SSRF guard.
+// Override by setting the fields on the returned struct.
 func NewHTTPJARFetcher() *HTTPJARFetcher {
+	// The per-client AllowedRequestURIs allowlist pins WHICH URLs may be
+	// fetched, but the allowlisted host's DNS is still attacker-influenceable:
+	// the RP (or whoever controls the registered domain's zone) can point the
+	// public-looking hostname at 169.254.169.254 or another internal address
+	// AFTER the allowlist entry was vetted. The SSRF-guarded dialer
+	// re-validates the RESOLVED IPs at connect time, closing that
+	// DNS-rebinding window — same guard the federation trust-chain fetcher
+	// uses.
+	dialer := &SSRFGuardedDialer{ErrPrefix: "jar_fetch", Timeout: DefaultJARFetchTimeout}
 	return &HTTPJARFetcher{
 		Client: &http.Client{
 			Timeout: DefaultJARFetchTimeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
+			Transport: dialer.Transport(),
 		},
 		MaxBytes: DefaultJARFetchMaxBytes,
 	}
+}
+
+// SSRFGuardedDialer produces a DialContext that re-resolves the target
+// hostname and refuses the dial if ANY resolved IP is internal (see
+// [IsInternalIP]). It is the shared dial-time SSRF gate for every outbound
+// fetcher whose target URL — or the DNS record behind it — is
+// attacker-influenceable: the JAR request_uri fetcher in this file and the
+// OpenID Federation trust-chain fetcher (domains/federation) both consume it,
+// so the IP-classification policy has exactly one copy.
+//
+// URL-parse-time host checks cannot stop DNS rebinding: a public-looking
+// hostname can resolve to an internal address at the moment of the dial.
+// Because this check and the connection happen in the same call, the IP that
+// is checked is the IP that is dialed — no TOCTOU window. FULL SSRF
+// containment STILL REQUIRES the operator's egress network policy as the
+// final layer; this in-process gate raises the bar substantially.
+type SSRFGuardedDialer struct {
+	// ErrPrefix namespaces the returned errors per consumer (e.g.
+	// "federation", "jar_fetch") so each fetcher's error surface is
+	// indistinguishable from its pre-extraction form.
+	ErrPrefix string
+	// Timeout bounds the underlying TCP connect.
+	Timeout time.Duration
+	// LookupHost is the resolver seam; nil uses net.DefaultResolver. Tests
+	// inject a fake here to simulate a rebinding record deterministically,
+	// and split-horizon deployments can pin a specific resolver.
+	LookupHost func(ctx context.Context, host string) ([]string, error)
+}
+
+// Transport returns an *http.Transport wired to this guarded dialer, carrying
+// http.DefaultTransport's connection-hygiene fields — HTTP/2 negotiation
+// (ForceAttemptHTTP2 is REQUIRED because a custom DialContext otherwise
+// conservatively disables h2), idle-connection pooling, and handshake timeouts
+// — that a bare http.Transport{DialContext: ...} silently drops. It
+// DELIBERATELY omits Proxy: routing through an egress proxy would move DNS
+// resolution and the TCP connect into the proxy, defeating the resolved-IP
+// guard this dialer exists to enforce. A deployment that requires proxied
+// egress must inject its own client (WithJARFetcher / the federation fetcher's
+// option) and rely on the proxy's own egress policy for SSRF containment.
+func (d *SSRFGuardedDialer) Transport() *http.Transport {
+	return &http.Transport{
+		DialContext:           d.DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+	}
+}
+
+// DialContext resolves addr's host, rejects the dial if any resolved IP is
+// internal, and connects only to an address validated in this same call.
+func (d *SSRFGuardedDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("%s: invalid dial address %q: %w", d.ErrPrefix, addr, err)
+	}
+	// If addr is already a numeric IP (e.g. from a literal-IP URL that slipped
+	// through) check it directly and skip the DNS round-trip.
+	if ip := net.ParseIP(host); ip != nil {
+		if IsInternalIP(ip) {
+			return nil, fmt.Errorf("%s: dial address %q is internal (SSRF guard)", d.ErrPrefix, host)
+		}
+		dialer := &net.Dialer{Timeout: d.Timeout}
+		return dialer.DialContext(ctx, network, addr)
+	}
+	addrs, err := d.lookupHost(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("%s: DNS resolution failed for %q: %w", d.ErrPrefix, host, err)
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("%s: DNS returned no addresses for %q", d.ErrPrefix, host)
+	}
+	for _, a := range addrs {
+		ip := net.ParseIP(a)
+		if ip == nil {
+			// Resolver returned something unparseable; treat conservatively.
+			return nil, fmt.Errorf("%s: DNS returned unparseable address %q for host %q", d.ErrPrefix, a, host)
+		}
+		if IsInternalIP(ip) {
+			return nil, fmt.Errorf("%s: resolved address %q for host %q is internal (SSRF guard)", d.ErrPrefix, a, host)
+		}
+	}
+	// Connect to the first resolved address. Every address was validated above.
+	dialer := &net.Dialer{Timeout: d.Timeout}
+	return dialer.DialContext(ctx, network, net.JoinHostPort(addrs[0], port))
+}
+
+// lookupHost applies the resolver seam's default.
+func (d *SSRFGuardedDialer) lookupHost(ctx context.Context, host string) ([]string, error) {
+	if d.LookupHost != nil {
+		return d.LookupHost(ctx, host)
+	}
+	return net.DefaultResolver.LookupHost(ctx, host)
+}
+
+// IsInternalIP reports whether ip is one an SSRF probe would target: loopback,
+// link-local (incl. the cloud metadata 169.254.169.254 range), private
+// (RFC 1918 / ULA), or unspecified. The CIDR set mirrors the conventional
+// SSRF blocklist; net.IP.IsPrivate covers RFC 1918 + RFC 4193.
+func IsInternalIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() || ip.IsPrivate() {
+		return true
+	}
+	// IPv4-mapped IPv6 (::ffff:a.b.c.d) — re-check the embedded v4 so a mapped
+	// private address is not waved through.
+	if v4 := ip.To4(); v4 != nil && !v4.Equal(ip) {
+		return IsInternalIP(v4)
+	}
+	return false
 }
 
 // Fetch implements JARFetcher.

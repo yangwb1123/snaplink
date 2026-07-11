@@ -226,6 +226,17 @@ func (b *appBuilder) wireSigningKeyRegistryOpts(signingKeyRegistry signingkeys.R
 			return (*srv).SigningKeyAggregationReady()
 		}),
 	)
+	// Distinct from the aggregation check above: only the etcd backend exposes
+	// ReadyzCheck, tripping when THIS replica's publish-lease KeepAlive is
+	// degraded — its keys are absent from peers' JWKS, so tokens it signs fail
+	// verification fleet-wide and the LB must pull it while the lease
+	// re-grants. The memory registry is process-local with no such failure
+	// mode; the type-assertion gate silently no-ops for it, mirroring
+	// serverbuildsign.AppendReadyCheck's memory-backend cadence.
+	if rc, ok := signingKeyRegistry.(interface{ ReadyzCheck() error }); ok {
+		b.opts = append(b.opts, sso.WithReadyCheck("etcd-signing-key-registry",
+			func(context.Context) error { return rc.ReadyzCheck() }))
+	}
 	logger.Info("signing key aggregation enabled", "replica_id", replicaID)
 }
 

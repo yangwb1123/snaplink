@@ -77,7 +77,7 @@ exact emission site.
 | `passwordless_required`              | 400  | Client's `allow_passwordless_only` is true and `provider=password` was requested — every OTHER provider (`webauthn`, `totp`, phone/email, ...) stays available | Use `provider=webauthn` (passkey) instead |
 | `risk_denied`                         | 403  | `RiskScorer` returned `DecisionDeny`                               | Step up auth, or wait + retry              |
 | `conditional_access_denied`           | 403  | Zero-trust conditional-access (CAP) engine wired with `enforce: true` and a matched policy's verdict is deny | Step up auth, or wait + retry |
-| `unsupported_provider`                | 400  | `provider` field is not a registered authenticator name            | Use a valid provider name                  |
+| `unsupported_provider`                | 400  | `provider` is neither a registered authenticator name nor a dispatchable enterprise-connection id — unknown, disabled, other-tenant, and misconfigured connections ALL collapse to this one code (anti-enumeration — no branch reveals which) | Use a valid provider name                  |
 | `unknown_provider`                    | 400  | OAuth/OIDC callback received an unknown provider in `state`        | Restart the auth flow                      |
 | `unsupported_grant_type`              | 400  | `/token` received an unrecognized `grant_type`                     | Use a supported grant type                 |
 | `unauthorized_client`                 | 400  | Client's DCR-registered `grant_types` list excludes the requested `grant_type` (RFC 6749 §5.2 / RFC 8693 §4.5); empty `grant_types` = unrestricted | Register the client with the needed grant type or remove the restriction |

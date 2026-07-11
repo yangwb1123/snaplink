@@ -105,6 +105,15 @@ func (c *residencyCache) invalidate(tenantID string) {
 	delete(c.entries, tenantID)
 }
 
+// flush drops every entry. Used by the invalidation-bus recovery re-seed: a
+// KindTenantResidency event lost during a bus outage names a tenant we can no
+// longer identify, so every cached residency policy must re-fetch.
+func (c *residencyCache) flush() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = make(map[string]*residencyCacheEntry)
+}
+
 // WithTenantResidencyCheck enables the data-residency enforcement engine:
 // a tenant's ResidencyPolicy (derived from its HomeRegion / AllowedRegions
 // / EnforceWrites fields) is consulted via [Server.checkTenantResidency] to

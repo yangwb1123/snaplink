@@ -3538,6 +3538,10 @@ paths:
         - name: client_id
           in: query
           schema: { type: string }
+        - name: tenant_id
+          in: query
+          schema: { type: string }
+          description: Narrow to one tenant's events (per-tenant billing / incident triage).
         - name: provider
           in: query
           schema: { type: string }
@@ -3633,6 +3637,10 @@ paths:
         - name: client_id
           in: query
           schema: { type: string }
+        - name: tenant_id
+          in: query
+          schema: { type: string }
+          description: Narrow to one tenant's events (per-tenant billing / incident triage).
         - name: provider
           in: query
           schema: { type: string }
@@ -5804,9 +5812,12 @@ paths:
       summary: Per-tenant usage/metering report.
       description: |
         Returns aggregated usage for the tenant over a period (logins, tokens
-        issued, active users, MFA challenges), computed from the audit_events
-        table. Admin-gated (admin:read) via the /api/v1/admin/ prefix. Mounted
-        only when a usage aggregator is wired (tenant.usage_metering).
+        issued, active users, active clients, MFA challenges), computed from
+        the audit_events table. Active users = distinct actor ids with a
+        successful login; active clients = distinct client ids across the
+        tenant's events. Admin-gated (admin:read) via the /api/v1/admin/
+        prefix. Mounted only when a usage aggregator is wired
+        (tenant.usage_metering).
       operationId: getTenantUsage
       security:
         - bearerAuth: []
@@ -5847,10 +5858,10 @@ paths:
       description: |
         Returns the N tenants with the most successful logins over a period,
         with the same aggregated counters as the per-tenant usage report
-        (logins, tokens issued, active users, MFA challenges), computed from
-        the audit_events table. Admin-gated (admin:read) via the
-        /api/v1/admin/ prefix. Mounted only when a usage aggregator is wired
-        (tenant.usage_metering).
+        (logins, tokens issued, active users, active clients, MFA
+        challenges), computed from the audit_events table. Admin-gated
+        (admin:read) via the /api/v1/admin/ prefix. Mounted only when a
+        usage aggregator is wired (tenant.usage_metering).
       operationId: getAdminTopTenants
       security:
         - bearerAuth: []

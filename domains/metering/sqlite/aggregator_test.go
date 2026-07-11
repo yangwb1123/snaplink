@@ -66,6 +66,68 @@ func TestAggregator_basic(t *testing.T) {
 	}
 }
 
+// TestAggregator_activeClients verifies ActiveClients counts distinct
+// client_ids per tenant within the period: two clients under tenant A
+// (deduped across repeat events) and one under tenant B, isolated from
+// each other.
+func TestAggregator_activeClients(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dsn := "file::memory:?cache=shared&mode=rwc"
+
+	sink, err := auditsqlite.New(dsn)
+	if err != nil {
+		t.Fatalf("audit Sink: %v", err)
+	}
+	defer func() { _ = sink.Close() }()
+
+	// Unique day + tenant ids: the package tests share one in-memory DB
+	// (cache=shared), so the window must not overlap other tests' seeds.
+	day := time.Date(2026, time.August, 15, 0, 0, 0, 0, time.UTC)
+
+	events := []*audit.Event{
+		{Type: audit.EventLogin, Outcome: audit.OutcomeSuccess, Timestamp: day, TenantID: "tenant-a", ActorID: "alice", ClientID: "web-app"},
+		{Type: audit.EventTokenIssued, Outcome: audit.OutcomeSuccess, Timestamp: day, TenantID: "tenant-a", ClientID: "batch-job"},
+		{Type: audit.EventTokenIssued, Outcome: audit.OutcomeSuccess, Timestamp: day, TenantID: "tenant-a", ClientID: "batch-job"}, // duplicate client
+		{Type: audit.EventLogin, Outcome: audit.OutcomeSuccess, Timestamp: day, TenantID: "tenant-b", ActorID: "carol", ClientID: "mobile"},
+	}
+	for _, e := range events {
+		if err := sink.Record(ctx, e); err != nil {
+			t.Fatalf("Record: %v", err)
+		}
+	}
+
+	agg := NewWithDB(sink.DB())
+	ua, err := agg.Usage(ctx, "tenant-a", metering.PeriodDay, day)
+	if err != nil {
+		t.Fatalf("Usage(tenant-a): %v", err)
+	}
+	if ua.ActiveClients != 2 {
+		t.Errorf("tenant-a ActiveClients = %d, want 2 (batch-job deduped)", ua.ActiveClients)
+	}
+	ub, err := agg.Usage(ctx, "tenant-b", metering.PeriodDay, day)
+	if err != nil {
+		t.Fatalf("Usage(tenant-b): %v", err)
+	}
+	if ub.ActiveClients != 1 {
+		t.Errorf("tenant-b ActiveClients = %d, want 1", ub.ActiveClients)
+	}
+
+	// TopTenants shares fillTenantMetrics — the leaderboard rows must carry
+	// the same distinct-client counts.
+	tops, err := agg.TopTenants(ctx, metering.PeriodDay, day, 10)
+	if err != nil {
+		t.Fatalf("TopTenants: %v", err)
+	}
+	got := map[string]int64{}
+	for _, u := range tops {
+		got[u.TenantID] = u.ActiveClients
+	}
+	if got["tenant-a"] != 2 || got["tenant-b"] != 1 {
+		t.Errorf("TopTenants ActiveClients = %v, want tenant-a:2 tenant-b:1", got)
+	}
+}
+
 // TestAggregator_topTenants verifies TopTenants returns tenants sorted by
 // login count and respects the limit.
 func TestAggregator_topTenants(t *testing.T) {

@@ -36,6 +36,9 @@ func (s *Server) issueAuthCode(ctx context.Context, result *AuthResult, req *log
 		Resources:            req.Resource,
 		AuthorizationDetails: req.AuthorizationDetails,
 		ConfirmationJKT:      confirmationJKT,
+		// OIDC Core §5.5: persist the claims parameter on the code so the
+		// /token exchange projects it exactly like the direct-mint flow.
+		RequestedClaims: req.Claims,
 	})
 }
 
@@ -184,7 +187,7 @@ func (s *Server) handleCallback(ctx HandlerContext) {
 		return
 	}
 
-	auth, ok := s.resolveCallbackAuthenticator(provider, code, state)
+	auth, ok := s.resolveCallbackAuthenticator(ctx, provider, code, state)
 	if !ok {
 		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrUnknownProvider))
 		return
@@ -207,9 +210,20 @@ func (s *Server) handleCallback(ctx HandlerContext) {
 // NOTE: this probe deliberately CALLS a.Callback to resolve the owner — the
 // parent then calls auth.Callback AGAIN. The double-call is intentional (it
 // preserves the original per-attempt side effects) and must not be collapsed.
-func (s *Server) resolveCallbackAuthenticator(provider, code, state string) (Authenticator, bool) {
+func (s *Server) resolveCallbackAuthenticator(ctx HandlerContext, provider, code, state string) (Authenticator, bool) {
 	if provider != "" {
 		auth, _ := s.getAuthenticator(provider)
+		if auth == nil {
+			// Enterprise-connection round-trip: the upstream IdP redirected back
+			// from a flow /auth/login dispatched via provider=<connection id>, so
+			// the callback owner is factory-built, not statically registered.
+			// Routed through the SAME cross-tenant guard as the login leg
+			// (connectionLoginAuthenticator): a callback served under one tenant's
+			// hostname must not resolve another org's connection, and every miss
+			// collapses to the identical unknown_provider response — no 400-vs-401
+			// or outbound-fetch timing oracle over cross-tenant connection ids.
+			auth, _ = s.connectionLoginAuthenticator(ctx, provider)
+		}
 		return auth, auth != nil
 	}
 	for _, a := range s.authenticators {

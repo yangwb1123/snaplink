@@ -100,7 +100,7 @@ func TestLoad_AuditAsyncWiring(t *testing.T) {
 	t.Parallel()
 	// Lock the wire shape so cmd/sso-server's read of
 	// cfg.Audit.Async.* keeps working as the config layer evolves.
-	body := "server:\n  listen: :9090\naudit:\n  enabled: true\n  async:\n    enabled: true\n    buffer_size: 2048\n    workers: 4\n    record_timeout_ms: 1500\n"
+	body := "server:\n  listen: :9090\naudit:\n  enabled: true\n  async:\n    enabled: true\n    buffer_size: 2048\n    workers: 4\n    record_timeout_ms: 1500\n    batch_size: 32\n"
 	p := writeTemp(t, "async.yaml", body)
 	cfg, err := Load(p)
 	if err != nil {
@@ -117,6 +117,9 @@ func TestLoad_AuditAsyncWiring(t *testing.T) {
 	}
 	if cfg.Audit.Async.RecordTimeoutMs != 1500 {
 		t.Errorf("RecordTimeoutMs = %d want 1500", cfg.Audit.Async.RecordTimeoutMs)
+	}
+	if cfg.Audit.Async.BatchSize != 32 {
+		t.Errorf("BatchSize = %d want 32", cfg.Audit.Async.BatchSize)
 	}
 }
 

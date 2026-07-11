@@ -72,30 +72,9 @@ func (a *Aggregator) Usage(ctx context.Context, tenantID string, period metering
 		return nil, fmt.Errorf("metering/sqlite: logins: %w", err)
 	}
 
-	// TokensIssued: token_issued events for this tenant.
-	if err := a.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM audit_events WHERE tenant_id=? AND type='token_issued' AND ts_unix_ns>=? AND ts_unix_ns<?`,
-		tenantID, since.UnixNano(), until.UnixNano(),
-	).Scan(&u.TokensIssued); err != nil {
-		return nil, fmt.Errorf("metering/sqlite: tokens_issued: %w", err)
+	if err := a.fillTenantMetrics(ctx, u, since, until); err != nil {
+		return nil, err
 	}
-
-	// ActiveUsers: distinct actor_ids that logged in successfully.
-	if err := a.db.QueryRowContext(ctx,
-		`SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE tenant_id=? AND type='login' AND outcome='success' AND actor_id!='' AND ts_unix_ns>=? AND ts_unix_ns<?`,
-		tenantID, since.UnixNano(), until.UnixNano(),
-	).Scan(&u.ActiveUsers); err != nil {
-		return nil, fmt.Errorf("metering/sqlite: active_users: %w", err)
-	}
-
-	// MFAChallenges: mfa_required events for this tenant.
-	if err := a.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM audit_events WHERE tenant_id=? AND type='mfa_required' AND ts_unix_ns>=? AND ts_unix_ns<?`,
-		tenantID, since.UnixNano(), until.UnixNano(),
-	).Scan(&u.MFAChallenges); err != nil {
-		return nil, fmt.Errorf("metering/sqlite: mfa_challenges: %w", err)
-	}
-
 	return u, nil
 }
 
@@ -150,27 +129,37 @@ func (a *Aggregator) topTenantsByLogins(ctx context.Context, period metering.Usa
 }
 
 // fillTenantMetrics fetches the non-login metrics for one tenant over the
-// [since, until) window. We accept N round-trips (one per tenant) because
-// TopTenants is an operator dashboard call, not a hot-path per-request
-// operation, and the limit keeps N small.
+// [since, until) window, shared by Usage and TopTenants. We accept N
+// round-trips (one per tenant) because TopTenants is an operator dashboard
+// call, not a hot-path per-request operation, and the limit keeps N small.
 func (a *Aggregator) fillTenantMetrics(ctx context.Context, u *metering.TenantUsage, since, until time.Time) error {
 	if err := a.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM audit_events WHERE tenant_id=? AND type='token_issued' AND ts_unix_ns>=? AND ts_unix_ns<?`,
 		u.TenantID, since.UnixNano(), until.UnixNano(),
 	).Scan(&u.TokensIssued); err != nil {
-		return fmt.Errorf("metering/sqlite: top_tenants tokens: %w", err)
+		return fmt.Errorf("metering/sqlite: tokens_issued: %w", err)
 	}
+	// ActiveUsers: distinct actor_ids that logged in successfully.
 	if err := a.db.QueryRowContext(ctx,
 		`SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE tenant_id=? AND type='login' AND outcome='success' AND actor_id!='' AND ts_unix_ns>=? AND ts_unix_ns<?`,
 		u.TenantID, since.UnixNano(), until.UnixNano(),
 	).Scan(&u.ActiveUsers); err != nil {
-		return fmt.Errorf("metering/sqlite: top_tenants users: %w", err)
+		return fmt.Errorf("metering/sqlite: active_users: %w", err)
+	}
+	// ActiveClients: distinct client_ids across ALL event types (a client
+	// is "active" whether it drove a login or a machine-to-machine token
+	// grant), mirroring the ActiveUsers distinct-cardinality approach.
+	if err := a.db.QueryRowContext(ctx,
+		`SELECT COUNT(DISTINCT client_id) FROM audit_events WHERE tenant_id=? AND client_id!='' AND ts_unix_ns>=? AND ts_unix_ns<?`,
+		u.TenantID, since.UnixNano(), until.UnixNano(),
+	).Scan(&u.ActiveClients); err != nil {
+		return fmt.Errorf("metering/sqlite: active_clients: %w", err)
 	}
 	if err := a.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM audit_events WHERE tenant_id=? AND type='mfa_required' AND ts_unix_ns>=? AND ts_unix_ns<?`,
 		u.TenantID, since.UnixNano(), until.UnixNano(),
 	).Scan(&u.MFAChallenges); err != nil {
-		return fmt.Errorf("metering/sqlite: top_tenants mfa: %w", err)
+		return fmt.Errorf("metering/sqlite: mfa_challenges: %w", err)
 	}
 	return nil
 }

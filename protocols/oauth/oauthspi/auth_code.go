@@ -83,6 +83,16 @@ type AuthCode struct {
 	// it must never surface as a distinguishable error.
 	ConfirmationJKT string
 
+	// RequestedClaims preserves the RP's OIDC Core §5.5 `claims`
+	// parameter (raw JSON, same representation as
+	// AuthRequest.RequestedClaims) across the code round trip. Without
+	// it the parameter is honored only on the direct-mint login flow:
+	// the /token exchange couldn't project the requested claims into
+	// the id_token or stamp them into the access token for /userinfo.
+	// Empty = no claims parameter — the exchange stays byte-identical
+	// to the pre-§5.5 behavior.
+	RequestedClaims json.RawMessage
+
 	ExpiresAt time.Time
 }
 

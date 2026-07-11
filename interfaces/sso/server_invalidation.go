@@ -52,6 +52,17 @@ const (
 	// invalidationBusDegradedReason is the SetMeta reason on the one-per-
 	// transition degraded audit event.
 	invalidationBusDegradedReason = "subscribe_channel_closed"
+
+	// invalidationBusReseedFailedReason is the SetMeta reason on the degraded
+	// audit event emitted when a post-resubscribe re-seed fails (the bus is
+	// back but converging the state missed during the outage did not succeed,
+	// so the replica deliberately stays degraded).
+	invalidationBusReseedFailedReason = "reseed_failed"
+
+	// invalidationBusMetaReseeded is the SetMeta key marking the recovered
+	// audit event as having converged missed state (cache flush + revocation
+	// deny-set re-seed) BEFORE readiness went green.
+	invalidationBusMetaReseeded = "re_seeded"
 )
 
 // Custom audit event types for the invalidation-bus self-heal transitions.
@@ -113,10 +124,15 @@ func (s *Server) StartInvalidationBus(ctx context.Context) (<-chan struct{}, err
 func (s *Server) runInvalidationBus(ctx context.Context, done chan struct{}, events <-chan cluster.Event) {
 	defer close(done)
 	attempt := 0
+	// cancelSub releases the child context of the CURRENT resubscribed stream
+	// once it is dead (see resubscribeAndReseed). The initial subscription from
+	// StartInvalidationBus rides ctx directly, hence the no-op seed value.
+	cancelSub := context.CancelFunc(func() {})
 	for {
 		for evt := range events {
 			s.applyInvalidation(ctx, evt)
 		}
+		cancelSub()
 		// The channel closed. If ctx is done this is a clean shutdown — the
 		// memory + etcd bus peers both close the stream BECAUSE ctx was
 		// cancelled. Exit without marking degraded so a graceful drain never
@@ -135,21 +151,22 @@ func (s *Server) runInvalidationBus(ctx context.Context, done chan struct{}, eve
 			return // ctx cancelled during backoff — clean exit.
 		}
 
-		next, err := s.invalidationBus.Subscribe(ctx)
-		if err != nil {
-			// Resubscribe failed (bus still down). Stay degraded and retry
-			// after a longer backoff. A permanent-close error at shutdown is
-			// benign — the next ctx check or backoff observes the cancel.
+		// Resubscribe, then converge the state missed while degraded (cache
+		// flush + revocation deny-set re-seed) BEFORE clearing degraded. Either
+		// half failing keeps the replica degraded and retries after a longer
+		// backoff (a shutdown-time failure is benign — the ctx check observes
+		// the cancel).
+		next, cancel, ok := s.resubscribeAndReseed(ctx, attempt)
+		if !ok {
 			if ctx.Err() != nil {
 				return
 			}
-			s.logger.Error("invalidation bus resubscribe failed, will retry", "attempt", attempt, "error", err)
 			continue
 		}
 		// Recovered: clear degraded (gauge → 1, flag → false, recovered audit +
 		// counter) and resume draining the fresh stream with a reset backoff.
 		s.setInvalidationBusHealthy()
-		events = next
+		events, cancelSub = next, cancel
 		attempt = 0
 	}
 }
@@ -187,7 +204,10 @@ func (s *Server) setInvalidationBusHealthy() {
 		if s.metrics != nil {
 			s.metrics.InvalidationBusReconnectsTotal.WithLabelValues(metrics.InvalidationBusReasonReconnected).Inc()
 		}
-		s.recordInvalidationBusEvent(eventInvalidationBusRecovered, audit.OutcomeSuccess, "")
+		// re_seeded=true is truthful by construction: recovery is only ever
+		// reached through resubscribeAndReseed, whose re-seed succeeded.
+		s.recordInvalidationBusEvent(eventInvalidationBusRecovered, audit.OutcomeSuccess, "",
+			invalidationBusMetaReseeded, "true")
 	}
 }
 
@@ -195,15 +215,18 @@ func (s *Server) setInvalidationBusHealthy() {
 // request path (the bus subscriber goroutine, no HandlerContext), building the
 // Event directly over context.Background() — the same shape
 // audit.RecordSigningKeyAggregationDegraded uses. nil-recorder-safe; reason,
-// when non-empty, lands in Metadata via SetMeta (secret-free, fixed
-// cardinality).
-func (s *Server) recordInvalidationBusEvent(t audit.EventType, outcome audit.Outcome, reason string) {
+// when non-empty, lands in Metadata via SetMeta, as do any trailing key/value
+// pairs (secret-free, fixed cardinality).
+func (s *Server) recordInvalidationBusEvent(t audit.EventType, outcome audit.Outcome, reason string, metaKV ...string) {
 	if s.auditor == nil {
 		return
 	}
 	e := &audit.Event{Type: t, Outcome: outcome}
 	if reason != "" {
 		audit.SetMeta(e, "reason", reason)
+	}
+	for i := 0; i+1 < len(metaKV); i += 2 {
+		audit.SetMeta(e, metaKV[i], metaKV[i+1])
 	}
 	s.auditor.Record(context.Background(), e)
 }

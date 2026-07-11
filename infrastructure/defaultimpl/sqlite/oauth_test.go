@@ -64,6 +64,49 @@ func TestSQLiteAuthCode_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestSQLiteAuthCode_RequestedClaimsRoundTrip proves the OIDC Core §5.5
+// claims parameter survives the SQLite round trip byte-for-byte (v3
+// requested_claims column) and that a code issued WITHOUT one comes back
+// nil — the exchange treats empty as "no projection", so a stray value
+// from the column default would silently shrink every id_token.
+func TestSQLiteAuthCode_RequestedClaimsRoundTrip(t *testing.T) {
+	t.Parallel()
+	st, err := sqlite.NewAuthCodeStore(freshSharedDSN(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	claims := `{"id_token":{"email":null},"userinfo":{"name":{"essential":true}}}`
+	if err := st.Issue(context.Background(), "code-claims", &oauth.AuthCode{
+		UserID: "u", ClientID: "c",
+		RequestedClaims: []byte(claims),
+		ExpiresAt:       time.Now().Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	out, err := st.Consume(context.Background(), "code-claims")
+	if err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	if string(out.RequestedClaims) != claims {
+		t.Errorf("RequestedClaims = %q, want %q", out.RequestedClaims, claims)
+	}
+
+	if err := st.Issue(context.Background(), "code-no-claims", &oauth.AuthCode{
+		UserID: "u", ClientID: "c", ExpiresAt: time.Now().Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("Issue (no claims): %v", err)
+	}
+	out, err = st.Consume(context.Background(), "code-no-claims")
+	if err != nil {
+		t.Fatalf("Consume (no claims): %v", err)
+	}
+	if out.RequestedClaims != nil {
+		t.Errorf("RequestedClaims = %q, want nil (no claims parameter)", out.RequestedClaims)
+	}
+}
+
 // TestSQLiteAuthCode_ConfirmationJKTDefaultsEmpty proves a code issued
 // without a DPoP proof at /auth/login round-trips ConfirmationJKT as "" —
 // the exchange-side gate (authCodeValidate) only fires when this is

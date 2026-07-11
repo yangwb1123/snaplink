@@ -409,6 +409,13 @@ func (a *AsyncSink) Pending() int { return len(a.queue) }
 // Capacity returns the configured buffer size.
 func (a *AsyncSink) Capacity() int { return cap(a.queue) }
 
+// BatchSize reports the drain mode this sink was constructed with: 0 for
+// per-event delivery ([NewAsyncSink]), > 1 for batch draining
+// ([NewBatchAsyncSink]). Exposed so wiring code and its tests can verify
+// which mode a config knob actually selected — the two constructors
+// return the same concrete type, so nothing else distinguishes them.
+func (a *AsyncSink) BatchSize() int { return a.batchSize }
+
 // DropsQueueFull is the monotonic count of events dropped because
 // the buffer was full when Record was called. A growing counter
 // means the inner sink can't keep up — increase buffer / workers,

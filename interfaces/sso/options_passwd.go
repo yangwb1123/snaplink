@@ -218,24 +218,24 @@ func WithTenantUsageAggregator(a metering.Aggregator) Option {
 	return func(s *Server) { s.usageAggregator = a }
 }
 
-// WithTrustedProxies configures a trusted-proxy CIDR allowlist for
-// X-Forwarded-For validation. When set, all X-Forwarded-For consumers
-// (rate-limiter IP key via ratelimit.KeyByClientIP) use the validated real
-// client IP derived by middleware.RealClientIP — which walks the XFF chain
-// from right to left and stops at the first hop that is NOT in a trusted
-// CIDR — rather than reading the raw header unconditionally.
+// WithTrustedProxies configures a trusted-proxy CIDR allowlist gating every
+// forwarded-header consumer on the DIRECT peer (RemoteAddr). When set: the
+// rate-limiter IP key (ratelimit.KeyByClientIP via middleware.RealClientIP)
+// walks the XFF chain right-to-left only for a trusted peer (untrusted ⇒
+// RemoteAddr); base-URL derivation (issuer/discovery/registration URIs/DPoP
+// htu) honors X-Forwarded-Proto/Host only from a trusted peer (untrusted ⇒
+// direct Host/TLS); the mesh ext_authz endpoint derives identity only for a
+// trusted peer (untrusted ⇒ the same 401 invalid_token as an invalid bearer).
 //
-// cidrs is a list of CIDR strings (e.g. ["10.0.0.0/8", "172.16.0.0/12"])
-// identifying the IP ranges belonging to trusted proxy tiers. hops=0 means
-// "trust at most len(cidrs) proxy hops" — the safe default for most
-// deployments. Returns an error if any CIDR fails to parse so
+// cidrs lists the trusted proxy tiers (e.g. ["10.0.0.0/8"]); hops=0 means
+// "trust at most len(cidrs) proxy hops". Errors on any unparseable CIDR so
 // misconfigured deployments fail loudly at startup.
 //
-// Without WithTrustedProxies, every XFF consumer trusts the raw header
-// unconditionally — safe only behind an edge that strips and re-adds XFF.
-// An internet-facing deployment without such an edge MUST use this option
-// to prevent an attacker from forging X-Forwarded-For: <trusted-IP> to
-// bypass IP-based rate limiting.
+// Without WithTrustedProxies, every forwarded-header consumer trusts the raw
+// header unconditionally — safe ONLY behind an edge that strips and re-adds
+// those headers. An internet-facing deployment without such an edge MUST use
+// this option, or an attacker forges X-Forwarded-For: <trusted-IP> to bypass
+// IP rate limiting (or X-Forwarded-Host to steer the derived issuer).
 func WithTrustedProxies(cidrs []string, hops int) (Option, error) {
 	tp, err := middleware.NewTrustedProxies(cidrs, hops)
 	if err != nil {

@@ -7,7 +7,7 @@ SRE · DevOps Engineer · QA Lead · Security Engineer
 Determine whether this subsystem can be operated safely in production.
 Not "does it work?" — but "can we run it, observe it, troubleshoot it, and roll it back?"
 
-Read `.ai/prompts/shared/review-checklists.md` (Production Readiness section) before starting.
+Read `ai-dev/ai/prompts-shared/review-checklists.md` (Production Readiness section) before starting.
 
 ---
 
@@ -123,7 +123,7 @@ For each:
 ### Rollback Plan
 Step-by-step procedure. Time estimate per step. Who executes.
 
-Produce findings using `.ai/prompts/shared/output-format.md`.
+Produce findings using `ai-dev/ai/prompts-shared/output-format.md`.
 Sort: Critical → High → Medium → Low → Info.
 
 Conclude with the Stage Summary Block.

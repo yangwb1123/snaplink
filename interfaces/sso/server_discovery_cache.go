@@ -239,6 +239,37 @@ func (s *Server) invalidateDiscoveryCaches() {
 	})
 }
 
+// flushInvalidationCaches drops every local TTL cache a lost invalidation
+// Event could have targeted, so the next read of each re-fetches from its
+// authoritative store. Called on invalidation-bus recovery
+// (resubscribeAndReseed): the lost events' keys are unknowable, so the only
+// safe convergence is a full flush of every kind applyInvalidation serves —
+// tenant suspension, tenant residency, client metadata, discovery snapshot +
+// rendered docs + JWKS body, and authz-policy bundles. Local-only; never
+// publishes. All flushes are infallible; the fallible half of recovery
+// re-seeding (revocation deny-sets) is separate so its error can keep the
+// replica degraded.
+func (s *Server) flushInvalidationCaches() {
+	if s.tenantSuspensionCache != nil {
+		s.tenantSuspensionCache.flush()
+	}
+	if s.tenantResidencyCache != nil {
+		s.tenantResidencyCache.flush()
+	}
+	if s.clientStoreCacheRef != nil {
+		s.clientStoreCacheRef.EvictAll()
+	}
+	s.invalidateDiscoveryCaches()
+	s.InvalidateJWKSBodyCache()
+	// Whole-cache sweep (vs. the per-client prefix sweep of
+	// invalidateAuthzPolicyBundleCacheLocal) — the lost event's clientID is
+	// unknown.
+	s.authzPolicyBundleCache.Range(func(k, _ any) bool {
+		s.authzPolicyBundleCache.Delete(k)
+		return true
+	})
+}
+
 // InvalidateDiscoveryCache clears this replica's discovery snapshot +
 // rendered-document caches and, when an invalidation bus is wired,
 // publishes a reload so every other replica does the same. Wire this

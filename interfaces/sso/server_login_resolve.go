@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -224,10 +225,64 @@ func (s *Server) resolveHomeRealm(ctx HandlerContext, loginHint string) (*connec
 // mounts the home-realm-discovery endpoint (PathHomeRealm). Nil/unset = the
 // endpoint is NOT mounted (byte-identical). The store maps email domains to a
 // tenant's upstream IdP connection; a login UI calls this to route a user to
-// their org's IdP. (Wiring a resolved connection into the actual upstream login
-// flow is a separate step.)
+// their org's IdP. Pair with WithConnectionAuthenticatorFactory to also
+// dispatch the actual upstream login through the resolved connection.
 func WithConnectionStore(store connections.Store) Option {
 	return func(s *Server) { s.connectionStore = store }
+}
+
+// WithConnectionAuthenticatorFactory wires the RUNTIME half of enterprise
+// connections: after home-realm discovery routes a login to a connection (the
+// connection_required directive), the UI re-posts /auth/login with
+// provider=<connection id>, and the factory turns the stored connection
+// config into a live upstream authenticator dispatched exactly like a
+// statically-registered provider. Inert without WithConnectionStore (there is
+// nothing to resolve ids against); nil/unset = connection ids never resolve
+// as providers — byte-identical to the HRD-directive-only build.
+func WithConnectionAuthenticatorFactory(f connections.AuthenticatorFactory) Option {
+	return func(s *Server) { s.connectionAuthFactory = f }
+}
+
+// resolveEnabledConnection resolves an enterprise-connection id for runtime
+// dispatch: store lookup + enabled gate. Every miss collapses to an error the
+// CALLER must render as the SAME wire response as an unknown provider
+// (anti-enumeration: a probe must not distinguish "no such connection" /
+// "disabled" / "misconfigured" from "no such provider").
+func (s *Server) resolveEnabledConnection(ctx context.Context, id string) (*connections.Connection, error) {
+	if s.connectionStore == nil || s.connectionAuthFactory == nil || id == "" {
+		return nil, connections.ErrNoConnection
+	}
+	conn, err := s.connectionStore.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !conn.Enabled {
+		return nil, connections.ErrNoConnection
+	}
+	return conn, nil
+}
+
+// connectionLoginAuthenticator resolves an enterprise-connection id to its live
+// upstream authenticator via the wired factory, applying the same cross-tenant
+// guard as resolveHomeRealm: a request served under one tenant's hostname must
+// not dispatch through another org's connection (rendered as unknown-provider,
+// never tenant_mismatch — the connection's existence is not disclosed). Both
+// legs of the federated flow route through here — /auth/login dispatch AND the
+// /auth/callback round-trip — so the guard and the anti-enumeration collapse
+// hold identically on entry and return. The factory owns surfacing build
+// failures to the operator (audit + log); this stays response-path-silent so
+// the caller renders the generic unknown-provider error.
+func (s *Server) connectionLoginAuthenticator(ctx HandlerContext, id string) (Authenticator, error) {
+	rctx := ctx.Request().Context()
+	conn, err := s.resolveEnabledConnection(rctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if r, ok := tenant.FromHandlerContext(ctx); ok && r != nil && r.Tenant != nil &&
+		r.Tenant.ID != "" && conn.TenantID != "" && conn.TenantID != r.Tenant.ID {
+		return nil, connections.ErrNoConnection
+	}
+	return s.connectionAuthFactory.AuthenticatorFor(rctx, conn)
 }
 
 // handleHomeRealm resolves a login identifier (email/domain) to the enterprise

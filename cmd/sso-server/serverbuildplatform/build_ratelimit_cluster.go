@@ -205,9 +205,11 @@ func BuildInvalidationBus(cfg *config.ClusterBusConfig, logger spi.Logger) (clus
 // shared — each replica announces its public keys under a lease and peers
 // Watch + adopt, so a token signed on one replica verifies on every replica.
 // The etcd path is constructed here so the transitive dep stays out of the
-// signingkeys SPI, mirroring BuildInvalidationBus. The registry is fail-open
-// (a dropped announcement only narrows a verify-set back toward local keys),
-// so it intentionally gets no /readyz check.
+// signingkeys SPI, mirroring BuildInvalidationBus. Peer-key adoption is
+// fail-open (a dropped announcement only narrows a verify-set back toward
+// local keys), but the etcd backend's publish lease is not: while its
+// KeepAlive is degraded this replica's keys are missing from peers' JWKS, so
+// wireSigningKeyRegistryOpts registers the backend's ReadyzCheck with /readyz.
 func BuildSigningKeyRegistry(cfg *config.SigningKeyRegistryConfig, logger spi.Logger) (signingkeys.Registry, string, error) {
 	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
 	switch backend {

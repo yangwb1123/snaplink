@@ -10,82 +10,96 @@ Operational guide for AI agents. Follows [agents.md](https://agents.md). User in
 
 ## 0. Engineering Principles (HARD GATES)
 
+Every threshold is declared in `engineering.yaml` (single source — don't
+restate values elsewhere) and enforced by the committed root gate tests
+(`package archgate`), which run inside `make ci` independent of the generative
+`make harness`. `python cli.py <command>` runs any check singly;
+[CHECKS_REGISTRY.md](docs/agent-os/CHECKS_REGISTRY.md) catalogs them all.
+
 ### 0.1 Code Budgets
 
 | Metric | Limit | Violation Action |
 |---|---|---|
-| File lines (`.go`) | ≤ 500 | STOP feature. Run `skills/split-large-file.md` |
+| File lines (`.go`) | ≤ 500 | STOP feature. Split first ([skill](docs/skills/split-large-file/)) |
 | Function lines | ≤ 50 | Extract sub-functions |
-| Cyclomatic complexity | ≤ 15 | Run `skills/refactor-high-complexity.md` |
+| Cyclomatic complexity | ≤ 15 | [refactor-high-complexity](docs/skills/refactor-high-complexity.md) |
 | If-nesting depth | ≤ 3 | Guard clauses / early return |
 | Directory depth | ≤ 3 | Flatten (merge leaf dir into parent name); `gen/`, `ops/deploy/`, `testdata` exempt |
-| Go files per dir | ≤ 10 | Split flat package into cohesive sub-packages (`package main` dirs first; library splits change import paths) |
+| Non-test Go files per dir | ≤ 10 | Split flat package into cohesive sub-packages |
 | Subdirs per dir | ≤ 15 | Regroup leaf packages; see `directory_fanout_test.go` |
 
-All budgets are committed gates (`maintainability_*_test.go`, `directory_fanout_test.go`, `maxdepth_test.go`); the per-file and per-function backlogs are now **zero** (extract/split, never re-exempt).
+Exemption maps are count-capped and SHRINK-ONLY — adding one fails the build.
+The per-file and per-function backlogs are **zero**. Fan-out ceilings are
+frozen per directory: `interfaces/sso` is AT its 57 non-test-file ceiling —
+extend an existing file or extract to a domain package (`_test.go` files never
+count against a ceiling).
 
-**Cardinal rule:** If your edit pushes a file OVER 500 lines, you MUST split first, then continue. Refactoring always outranks feature work (480+ line file you'll exceed → refactor pre-existing violation first).
+**Cardinal rule:** if your edit would breach a budget, SPLIT FIRST, then
+continue. Refactoring always outranks feature work (480+ line file you'll
+exceed → refactor the pre-existing violation first).
 
 ### 0.2 Dependency Direction
 
-Packages live under their architectural layer directory (the first path segment
-IS the layer); imports point one-way toward the shared kernel — see
-[DIRECTORY_MAP](docs/architecture/DIRECTORY_MAP.md), enforced by
-`architecture_layer_test.go`.
+The first path segment IS the architectural layer; imports point one-way
+toward the shared kernel — see [DIRECTORY_MAP](docs/architecture/DIRECTORY_MAP.md)
+(canonical), enforced by `architecture_layer_test.go`:
 
 ```
-interfaces/sso → protocols/oauth → shared/security → shared/core
-interfaces/sso → protocols/oidc  → shared/security → shared/core
+interfaces/* → protocols/* → domains/* → platform/* | infrastructure/* → shared/*
 ```
 
-**Prohibits:** `protocols/oauth → protocols/oidc`, `protocols/oidc → protocols/oauth`, `cmd/ ← any`, and any upward (toward-interfaces) layer import.
+**Prohibits:** `protocols/oauth ↔ protocols/oidc` (either direction — route
+via `interfaces/sso/handlers.go`), `cmd/ ← any`, and any upward
+(toward-interfaces) layer import. Never add a `layerExemptions` entry. A new
+top-level (or `internal/`) package MUST be classified in `layerName()`
+(`architecture_layer_test.go`) — unclassified fails the gate by design.
 
 ### 0.3 Post-Edit Verification
 
-After every `.go` change: `go build ./...` + `go vet ./...`, then the committed maintainability gates `go test -run 'TestMaintainability_|TestArchitecture_ImportBoundaries' ./...` — file ≤ 500 lines (`maintainability_budget_test.go`), function cyclomatic ≤ 15 and length ≤ 50 (`maintainability_complexity_test.go`), and dependency direction (`TestArchitecture_ImportBoundaries`). These run inside `make ci` (the `race` target), independent of the generative `make harness`. Fail-fast: fix before next task.
+After every `.go` change, fail-fast — fix before the next task:
+
+```bash
+go build ./... && go vet ./...
+go test -run 'TestMaintainability_|TestArchitecture_' .
+```
 
 ### 0.4 Root Directory Policy
 
-Root only allows server composition files. No `*_handler.go`, `*_service.go`, `*_store.go`, `*_grant.go` in root.
-
-**Allowed:** `sso.go`, `handler.go`, `handlers.go`, `server_*.go`, `mesh_authz.go`, `signing_key_aggregation.go`, `storage_health.go`, `accessors.go`, `aliases.go`, `options*.go`.
-
-**Migration pattern:** Extract logic to pure functions in domain package → keep thin wrapper `(s *Server)` methods in root → update `Deps` interface if needed → `python cli.py check-root` passes.
-
-**Target packages:** `oauth/`, `oidc/`, `security/`, `cluster/`, `tenant/`, `selfservice/`, `internal/auth/consent/`, `internal/auth/login/`, `internal/handler/`.
+The repo root carries NO production Go — only the archgate gate tests plus the
+composition/config files whitelisted in `engineering.yaml` `root_policy:`
+(enforced by `python cli.py check-root`; banned patterns include
+`*_handler.go`, `*_service.go`, `*_store.go`, `*_grant.go`). The SDK's
+composition root is `interfaces/sso/`; business logic extracts OUT of it into
+domain packages via the hexagonal pattern (§4 Common Tasks).
 
 ### 0.5 Prohibited Patterns
 
 | Pattern | Do instead |
 |---|---|
 | `TODO: refactor later` | Refactor immediately |
-| Appending to 490+ line file | Run `skills/refactor-large-file.md` first |
-| `oidc/` importing `oauth/` | Route via `handlers.go` |
-| `e.Metadata = map{...}` | Use `SetMeta(e, k, v)` only |
-| Root file count > 15 non-exempt | Run `skills/hexagonal-extraction.md` |
-| Business code in root | Run `skills/hexagonal-extraction.md` |
-| Mocks where Memory* exists | Use real `MemoryProvider`/`MemorySink`/`memory.Registry` |
+| Appending to a 490+ line file | Split first ([refactor-large-file](docs/skills/refactor-large-file.md)) |
+| `protocols/oidc` ↔ `protocols/oauth` import | Route via `interfaces/sso/handlers.go` |
+| `e.Metadata = map{...}` | `audit.SetMeta(e, k, v)` only |
+| Mocks where a Memory* impl exists | Real `MemoryProvider`/`MemorySink`/`memory.Registry`/… |
+| Growing any exemption map | Split / flatten / extract (§0.1) |
 
-### 0.6 Adding New Feature Code (every new package/file MUST satisfy these)
+### 0.6 Adding New Feature Code (pre-flight checklist — the rules are §0.1/§0.2)
 
-Same layer/budget/import rules as existing code apply — GATES, not guidelines
-(committed in `package archgate`: `architecture_layer_test`, `architecture_gate`,
-`maxdepth_test`, `maintainability_*`). This is the pre-flight checklist; the
-rules themselves are §0.1/§0.2, not restated here.
-
-1. Place by responsibility under its layer dir (§0.2, ARCHITECTURE.md) — extend an existing package, don't proliferate a new one for a one-off.
-2. Imports point DOWN only, toward `shared/core` — never add a `layerExemptions` entry.
-3. Directory depth ≤ 3 (§0.1) — flatten a new backend/variant into the parent name (`webauthnsqlite`, `encryptionaesgcm`), don't nest a 4th level.
-4. File ≤ 500 / function ≤ 50 / cyclo ≤ 15 (§0.1) — SPLIT FIRST if your edit would breach; the near-budget files (e.g. `protocols/oauth/handle_register.go` at 500) must be split before adding to them.
-5. NEVER add a new maintainability exemption to grandfather your own violation — `maxCycloExemptions`/`maxFuncLenExemptions`/`maxFileSizeExemptions` are count-capped and shrink-only; adding one fails the build.
-6. Classify any new top-level (or `internal/`) package in `layerName()` (`architecture_layer_test.go`) — unclassified fails the gate by design.
-7. Before done: `go build ./... && go vet ./...` then `go test -run 'TestMaintainability_|TestArchitecture_' .` — all pass with no new exemptions.
+1. Place by responsibility under its layer dir (ARCHITECTURE.md) — extend an existing package, don't proliferate a new one for a one-off.
+2. Imports point DOWN only, toward `shared/` (§0.2).
+3. Directory depth ≤ 3 (§0.1) — flatten a new backend/variant into the parent name (`webauthnsqlite`), don't nest a 4th level.
+4. Budgets (§0.1) — SPLIT FIRST if your edit would breach.
+5. NEVER add a maintainability exemption to grandfather your own violation (§0.1).
+6. Classify any new top-level (or `internal/`) package in `layerName()` (`architecture_layer_test.go`).
+7. Before done: §0.3 verification passes with no new exemptions.
 
 ---
 
 ## 1. System Overview
 
-OAuth 2.0 + OIDC SSO server SDK + runnable binary. All concerns are interfaces; defaults in `defaultimpl/` (memory) + `defaultimpl/sqlite/` (pure-Go, no CGO). No external SaaS deps.
+OAuth 2.0 + OIDC SSO server SDK + runnable binary. All concerns are
+interfaces; defaults in `infrastructure/defaultimpl/` (memory) +
+`infrastructure/defaultimpl/sqlite/` (pure-Go, no CGO). No external SaaS deps.
 
 ```bash
 go build ./...
@@ -104,42 +118,38 @@ tracing → ratelimit → bodyLimit → metrics → CORS → router
 
 ## 2. Module Map
 
-Full, current package list — including the newer `domains/` additions
-(`conditionalaccess`, `connections`, `identitylink`, `metering`,
-`tokenanomaly`, `tokenexchange`, `tokenpolicy`, `tokenusage`,
-`userlifecycle`), `protocols/` additions (`lifecyclereactions`,
-`scimprovision`), `shared/` additions (`i18n`, `trust`), and infra additions
-(`kafka`, `mqtt`, `postgres`) — lives in
-[ARCHITECTURE.md](docs/agent-os/ARCHITECTURE.md) (agent-lookup) /
-[DIRECTORY_MAP](docs/architecture/DIRECTORY_MAP.md) (canonical; wins on
-conflict). Don't duplicate that list here — it drifts. This section only
-keeps package-level invariants that aren't already stated in full in §3 or §4.
+The full package list lives in [ARCHITECTURE.md](docs/agent-os/ARCHITECTURE.md)
+(agent lookup) / [DIRECTORY_MAP](docs/architecture/DIRECTORY_MAP.md)
+(canonical; wins on conflict) — don't duplicate it here, it drifts. This table
+keeps only package-level invariants not already stated in full in §3:
 
 | Package | Invariant not covered elsewhere |
 |---|---|
-| `core/` | SPIs: User/Client/Session/Token/Subject/AuthRequest/AuthResult + Authenticator/UserProvider/ClientStore/SessionManager/TokenIssuer/JWK; wire consts + sentinels |
-| `oauth/` | AuthCode/Device/Refresh/PAR stores, hexagonal grant handlers; single-use `DELETE RETURNING` (no read-then-delete race); refresh family rotation |
-| `oidc/` | `at_hash` required when access_token is in the response; discovery derived from server state |
-| `security/` | `AsymmetricJWSAlgs`: EdDSA/ES256-512/RS256/PS256 ONLY; `alg=none` banned; algorithm checked BEFORE signature verify |
-| `anomaly/` | Async behavioral detection, OFF the request path; NEVER feeds an auth decision |
-| `cluster/` | Cross-replica Bus kinds: `KindTokenRevoked`, `KindSigningKeyRotation`, `KindClientChange`, `KindAuthzPolicyChange` |
-| `admin/` | Scoped `admin:read`/`admin:write`; 401 sets `Bearer realm="admin"` |
-| `permissions/` | `user:*` ⊇ `user:read` wildcard semantics; new backend MUST pass `permissionstest.ConformanceSuite` |
-| `defaultimpl/` | Each issuer (Ed25519/ECDSA/RSA) accepts ONLY its own alg |
-| `signingkeys/` | Leaderless peer-key adoption alg-matched BEFORE install; degraded → 503 |
-| `audit/` | `SetMeta` only, never `e.Metadata = map{...}` (also §0.5); W3C TraceID/SpanID; bounded cardinality |
+| `shared/core` | SPIs: User/Client/Session/Token/Subject/AuthRequest/AuthResult + Authenticator/UserProvider/ClientStore/SessionManager/TokenIssuer/JWK; wire consts + sentinels; imports NO internal package |
+| `protocols/oauth` | AuthCode/Device/Refresh/PAR stores, hexagonal grant handlers; single-use `DELETE RETURNING` (no read-then-delete race); refresh family rotation |
+| `protocols/oidc` | `at_hash` required when access_token is in the response; discovery derived from server state; `claims` parameter rides `AuthCode.RequestedClaims` through every store into the ID-token/access-token projection |
+| `shared/security` | `AsymmetricJWSAlgs`: EdDSA/ES256-512/RS256/PS256 ONLY; `alg=none` banned; algorithm checked BEFORE signature verify; outbound metadata/JAR fetches ride `securityverify.SSRFGuardedDialer` (dial-time DNS-rebind block, oracle-stable errors) |
+| `shared/trust` | Trust scoring is FAIL-OPEN advisory input to conditional access — a trust signal must NEVER become a lockout lever; live at request time only when `access_policies.enforce` wires the CAP engine |
+| `domains/anomaly` | Async behavioral detection, OFF the request path; NEVER feeds an auth decision |
+| `domains/connections` | `/auth/login` `provider=<connection id>` dispatches via `AuthenticatorFactory` (production impl in `cmd/sso-server/serverbuildauthn`); a statically-registered provider name WINS; cross-tenant guard (tenant-A host never dispatches tenant-B's connection); unknown/disabled/cross-tenant/build-failure ALL collapse to the same `unsupported_provider` — failure detail ONLY in the `connection_authenticator_build_failed` audit event |
+| `platform/cluster` | Cross-replica Bus kinds: `KindTokenRevoked`, `KindSigningKeyRotation`, `KindClientChange`, `KindAuthzPolicyChange`, `KindTenantSuspension` |
+| `interfaces/admin` | Scoped `admin:read`/`admin:write`; 401 sets `Bearer realm="admin"` |
+| `domains/permissions` | `user:*` ⊇ `user:read` wildcard semantics; new backend MUST pass `permissionstest.ConformanceSuite` |
+| `infrastructure/defaultimpl` | Each issuer (Ed25519/ECDSA/RSA) accepts ONLY its own alg |
+| `platform/signingkeys` | Leaderless peer-key adoption alg-matched BEFORE install; degraded → 503 (the aggregation loop AND the etcd registry's publish-lease check are both in `/readyz`) |
+| `platform/audit` | `SetMeta` only, never `e.Metadata = map{...}` (also §0.5); W3C TraceID/SpanID; bounded cardinality; a new EventType must be filed in `auditreport` (control area or the uncategorized allowlist — the drift test names strays) |
 
 Packages with a full dedicated invariant section already in §3 (not repeated
-here): `tenant/` + `geo/` and `region/` → Tenant & Residency · `caep/` → CAEP/SSF
-· `federation/` → Federation · `authenticators/` → Anti-Enumeration.
+here): `domains/tenant` + `platform/geo`/`domains/region` → Tenant & Residency
+· `protocols/caep` → CAEP/SSF · `domains/federation` → Federation ·
+`domains/authenticators` → Anti-Enumeration. Everything else is pure
+package-map, not a gate — see ARCHITECTURE.md.
 
-Everything else (`spi/`, `fapi/`, `scim/`, `compliance/`, `selfservice/`,
-`middleware/`, `adapters/`, `config/`, `proto/`+`gen/proto/`+`grpcserver/`,
-`ssoclient/`, `migrate/`, `netpolicy/`+`registry/`, `bootstrap/`+`snapshot/`+
-`releases/`, `internal/*`, `cmd/`, `deploy/`, `test/`, and every `domains/`
-package listed above) is pure package-map, not a gate — see ARCHITECTURE.md.
-
-**Nested modules** (no `go.work`; `make ci` → `ci-modules`): `kms/{awskms,gcpkms,azurekeyvault,pkcs11}/`, `saml/`, `ldap/`, `kerberos/`, `radius/`, `extauthz/`, `redis/`, `kafka/`, `mqtt/`.
+**Nested modules** (own `go.mod`; no `go.work`; `make ci` → `ci-modules`):
+`infrastructure/{kms/{awskms,gcpkms,azurekeyvault,pkcs11},saml,ldap,kerberos,radius,extauthz,kafka,mqtt}`,
+`cmd/sso-mcp`, `cmd/sso-operator`. `infrastructure/redis` and
+`infrastructure/postgres` are ROOT-module packages (their deps are tracked
+under `/`).
 
 ---
 
@@ -161,19 +171,20 @@ package listed above) is pure package-map, not a gate — see ARCHITECTURE.md.
 | `/register/:client_id` | Missing/wrong/unknown bearer → identical 401 `invalid_token` |
 | `/token/revoke` | 200 on valid client creds regardless of token existence |
 | `/token/introspect` inactive | `{"active":false}` |
+| `/auth/login` provider dispatch | Unknown provider / unknown / disabled / cross-tenant / misconfigured connection → byte-identical 400 `unsupported_provider` |
 | bcrypt (unknown user) | Cost-matched dummy hash |
 | WebAuthn (unknown user/session) | `404 session_invalid` |
 | MFA `/auth/mfa` | All failures → `400 mfa_invalid`; detail ONLY in `mfa_failure` audit |
 
 ### Fail Modes
 
-- **Fail-Open** (log + continue): refresh issuance, ID Token issuance, geo, risk-scorer, audit Sink error, tenant-suspension outage, JTI-replay store error (default), anomaly runner.
-- **Fail-Closed**: refresh rotation grant (500), signature/validation failure, scope expansion, family reuse → `DeleteFamily` → `invalid_grant`, trust-chain validation, CAEP receiver.
+- **Fail-Open** (log + continue): refresh issuance, ID Token issuance, geo, risk-scorer, trust-scorer, audit Sink error, tenant-suspension outage, JTI-replay store error (default), anomaly runner.
+- **Fail-Closed**: refresh rotation grant (500), signature/validation failure, scope expansion, family reuse → `DeleteFamily` → `invalid_grant`, trust-chain validation, CAEP receiver, invalidation-bus recovery (resubscribe FIRST, then flush caches + re-seed revocation deny-sets, ONLY THEN clear degraded — a failed re-seed keeps the replica degraded and `/readyz` red).
 
 ### Wire Contracts
 
 - **SPI + Storage:** Every concern = interface + `memory` impl ± `sqlite`/`etcd`/`file`. No mocks in tests.
-- **Form + JSON:** All endpoints via `bindOAuthParams` (`oauth/bind.go`). HTTP Basic > body creds on `/token`, `/introspect`, `/revoke`, `/par`.
+- **Form + JSON:** All endpoints via `oauth.BindParams` (`bindOAuthParams` wrapper in `interfaces/sso`). HTTP Basic > body creds on `/token`, `/introspect`, `/revoke`, `/par`.
 - **PKCE:** Captured at `/auth/login`; verified at `/token` `grant=authorization_code` only. Refresh carries no verifier.
 - **Refresh family:** `FamilyID` through every rotation; reuse → `DeleteFamily` → `invalid_grant`. Grace window: concurrent double-submit idempotent; post-window replay still kills family.
 - **Session refresh:** Refuses expired/revoked BEFORE extending. Forward/monotonic wall clock — ops MUST slew, never step.
@@ -195,9 +206,18 @@ package listed above) is pure package-map, not a gate — see ARCHITECTURE.md.
 - Token-exchange: propagates `AuthTime`+`ACR`+`AMR`+`SID` from inbound; multi-hop `act` chain prepended.
 - `client_credentials`: `ClientID` only.
 
-### X-Forwarded-* Trust
+### Proxy-Supplied Input Trust
 
-`requestBaseURL` + geo + host honor first-hop XFF — ONLY safe behind a trusted edge that strips + re-sets them. Same model governs `security.mtls.backend: header`, ratelimit IP keying, and mesh `X-Auth-*` headers.
+`security.trusted_proxies` (CIDR list → `shared/security/peertrust.Checker`,
+compiled once at boot) gates EVERY proxy-supplied input: the XFF chain walk
+(ratelimit IP keying, geo/risk client IP), `X-Forwarded-Proto/Host` (base
+URL/issuer, DPoP `htu`, discovery URIs), `security.mtls.backend: header` cert
+extraction, region `HeaderResolver`, and mesh `X-Auth-*` (ext_authz denies an
+untrusted direct peer with the standard `invalid_token` challenge — not
+probeable). UNSET = legacy first-hop trust, ONLY safe behind a trusted edge
+that strips + re-sets these headers. Known still-ungated readers (don't grow
+the list): audit IP enrichment, `domains/tenant/middleware.go` XFH tenant
+resolution, `interfaces/ssoclient/rs`, push-callback client IP.
 
 ### Tenant & Residency
 
@@ -218,7 +238,7 @@ package listed above) is pure package-map, not a gate — see ARCHITECTURE.md.
 
 ### Federation
 
-- Trust-chain FAIL-CLOSED; all failures → `ErrTrustChainInvalid` (oracle-safe); anchor keys NEVER fetched.
+- Trust-chain FAIL-CLOSED; all failures → `ErrTrustChainInvalid` (oracle-safe); anchor keys NEVER fetched; metadata fetches ride the shared SSRF-guarded dialer.
 - Auto-registration: pre-registered client WINS; chain failure → byte-identical `invalid_client`; `Secret=""` NEVER.
 
 ---
@@ -231,9 +251,7 @@ package listed above) is pure package-map, not a gate — see ARCHITECTURE.md.
 - **Interface guards** in implementation packages, never in interface package (cycle).
 - **Tests:** Unit tests beside code. Cross-server integration → `test/` (`package ssotest`). Race fixes prove with `-count=10+`.
 - **Hexagonal extraction:** `HandleX(deps Deps, ctx)` free functions in domain packages. `*sso.Server` satisfies `Deps` via `accessors.go`.
-- **Error codes:** New `Err*` → update `docs/error-codes.md` in same commit.
-- **API specs:** Documented endpoint change → update `docs/openapi.yaml` in same commit.
-- **Maintainability gates:** Committed tests enforce 500-line budget + import boundaries (ratcheting). When one fails, SPLIT/fix — do NOT grow exemption list.
+- **Docs in the same commit:** new `Err*` → `docs/error-codes.md`; documented endpoint change → `docs/openapi.yaml`; new config knob → `docs/config-reference.md`.
 
 ### Don'ts
 
@@ -246,13 +264,13 @@ package listed above) is pure package-map, not a gate — see ARCHITECTURE.md.
 
 | Task | Pattern |
 |---|---|
-| New authenticator | `authenticators/<name>.go` → YAML in `config/config.go` → wire in `buildAuthenticators` |
+| New authenticator | `domains/authenticators/<name>.go` → YAML in `config/` → wire in `cmd/sso-server/serverbuildauthn` |
 | New audit Sink | Implement `audit.Sink` (+ `audit.Closer`); wire via `audit.New(...)` / `MultiSink` |
-| New permissions backend | `permissions.Provider` in `permissions/<name>/`; run `permissionstest.ConformanceSuite` |
-| New gRPC service | `proto/<name>/v1/<name>.proto` → regen → `grpcserver/<name>.go` → `bufconn` test |
-| New OAuth/OIDC grant | `bindOAuthParams`; HTTP Basic > body creds; oracle-leak; `DELETE RETURNING`; wire in `sso.go`; discovery |
+| New permissions backend | `permissions.Provider` in `domains/permissions/<name>/`; run `permissionstest.ConformanceSuite` |
+| New gRPC service | `proto/<name>/v1/<name>.proto` → regen → `interfaces/grpcserver/<name>.go` → `bufconn` test |
+| New OAuth/OIDC grant | `oauth.BindParams`; HTTP Basic > body creds; oracle-leak; `DELETE RETURNING`; wire in `interfaces/sso/sso.go`; discovery |
 | New credential endpoint | `tokenNoStoreHeaders(ctx)` at entry; `setBearerChallenge(ctx, ...)` on 401 |
-| Extract to domain pkg | Pure functions in `internal/<module>/` → thin `(s *Server)` wrapper → update `Deps` iface → `check-root` |
+| Extract to domain pkg | Pure functions in `internal/<module>/` → thin `(s *Server)` wrapper → update `Deps` iface → `python cli.py check-root` |
 
 ### Commits
 

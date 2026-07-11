@@ -17,10 +17,12 @@ func parseInput(format string, r io.Reader) ([]importedUser, error) {
 		return parseAuth0(r)
 	case "keycloak":
 		return parseKeycloak(r)
+	case "okta":
+		return parseOkta(r)
 	case "csv":
 		return parseCSV(r)
 	default:
-		return nil, fmt.Errorf("unknown format %q (want auth0, keycloak, or csv)", format)
+		return nil, fmt.Errorf("unknown format %q (want auth0, keycloak, okta, or csv)", format)
 	}
 }
 

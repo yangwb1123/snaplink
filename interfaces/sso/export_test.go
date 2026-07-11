@@ -99,3 +99,67 @@ func BuildSigningKeyRotationEventForTest(oldKID, newKID, retireDeadline, newJWKJ
 	}
 	return cluster.Event{Kind: cluster.KindSigningKeyRotation, Payload: payload}
 }
+
+// --- Invalidation-bus self-heal test seams (invalidation_bus_selfheal_test.go) ---
+//
+// Mirror the signing-key aggregation seams above: the self-heal tests live in
+// package sso_test so they can wire the REAL defaultimpl issuers + stores
+// (defaultimpl imports this package, so a package-sso test importing it would
+// be an import cycle), and reach the unexported knobs through here.
+
+// SetInvalidationBusBackoffBaseForTest shrinks the resubscribe backoff so a
+// test can exercise the self-healing loop without waiting real seconds.
+// Production leaves it 0 (the const). MUST be called before
+// StartInvalidationBus.
+func (s *Server) SetInvalidationBusBackoffBaseForTest(d time.Duration) {
+	s.invalidationBusBackoffBase = d
+}
+
+// InvalidationBusDegradedForTest reads the degraded flag directly so a test
+// can assert the state-machine transitions without depending on /readyz wiring.
+func (s *Server) InvalidationBusDegradedForTest() bool {
+	return s.invalidationBusDegraded.Load()
+}
+
+// PutTenantSuspensionForTest primes the tenant-suspension cache (requires
+// WithTenantSuspensionCheck) so a test can observe applyInvalidation / the
+// recovery flush evicting the entry.
+func (s *Server) PutTenantSuspensionForTest(tenantID string, suspended bool) {
+	s.tenantSuspensionCache.put(tenantID, suspended)
+}
+
+// TenantSuspensionFreshForTest reports whether the suspension cache still
+// holds a fresh entry for tenantID (false once invalidated/flushed/expired).
+func (s *Server) TenantSuspensionFreshForTest(tenantID string) bool {
+	_, fresh := s.tenantSuspensionCache.get(tenantID)
+	return fresh
+}
+
+// JWTExpUnsafeForTest exposes jwtExpUnsafe so a test can stamp a durable
+// RevocationStore write with the token's real exp, as production revocation
+// does.
+func JWTExpUnsafeForTest(token string) int64 { return jwtExpUnsafe(token) }
+
+// Exported aliases for the invalidation-bus audit vocabulary the self-heal
+// tests assert on.
+const (
+	EventInvalidationBusDegradedForTest      = eventInvalidationBusDegraded
+	EventInvalidationBusRecoveredForTest     = eventInvalidationBusRecovered
+	InvalidationBusMetaReseededForTest       = invalidationBusMetaReseeded
+	InvalidationBusReseedFailedReasonForTest = invalidationBusReseedFailedReason
+)
+
+// FlakyBusForTest re-exports the flaky in-memory bus fixture (defined in
+// invalidation_bus_selfheal_test.go) to package sso_test, where the re-seed
+// tests wire it alongside the REAL defaultimpl issuer + revocation store.
+type FlakyBusForTest = flakyBus
+
+// NewFlakyBusForTest constructs the fixture for package sso_test.
+func NewFlakyBusForTest() *FlakyBusForTest { return newFlakyBus() }
+
+// ForceCloseForTest closes the channel currently handed to the subscriber
+// loop, simulating a watch death.
+func (f *flakyBus) ForceCloseForTest() { f.forceClose() }
+
+// SubscribeCountForTest reports how many times Subscribe has been called.
+func (f *flakyBus) SubscribeCountForTest() int { return f.subscribeCount() }

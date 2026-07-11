@@ -12,13 +12,15 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/security/securityverify"
 )
 
 // OpenID Federation 1.0 §9 — Trust Chain resolution FETCHES documents from
 // URLs DERIVED FROM the leaf's authority_hints (and recursively each
 // superior's). Those URLs are ATTACKER-INFLUENCEABLE (a malicious leaf names
 // its own superiors), so this fetcher is the SSRF perimeter of the resolver.
-// It mirrors the JAR request_uri fetcher (security/jar_fetch.go) and the SAML
+// It shares the dial-time SSRF guard with the JAR request_uri fetcher
+// (securityverify.SSRFGuardedDialer) and mirrors the SAML
 // SLO fan-out gate (saml/idp/fanout.go isHTTPSURL + the af42850 hardening) and
 // the CAEP receiver-endpoint https policy:
 //
@@ -98,18 +100,29 @@ func newHTTPFetcher() *httpFetcher {
 				// federation well-known + fetch endpoints are exact URLs).
 				return errors.New("federation: redirect not followed")
 			},
-			// dialWithSSRFCheck on the transport's DialContext is the
+			// The guarded dialer on the transport's DialContext is the
 			// defense-in-depth layer against DNS rebinding: it resolves the
-			// hostname at dial time and rejects any IP that isInternalIP
+			// hostname at dial time and rejects any IP that IsInternalIP
 			// returns true for — including cases where a public-looking
 			// hostname resolves to 169.254.169.254 or another IMDS/internal
 			// address AFTER validateFederationURL's literal-IP check passes.
-			Transport: &http.Transport{
-				DialContext: dialWithSSRFCheck,
-			},
+			// Transport() carries DefaultTransport's HTTP/2 + idle-conn hygiene
+			// while deliberately omitting Proxy (a proxy would bypass the
+			// resolved-IP guard); dialWithSSRFCheck stays the test seam over the
+			// same federationSSRFDialer.DialContext.
+			Transport: federationSSRFDialer.Transport(),
 		},
 		maxBytes: DefaultFederationFetchMaxBytes,
 	}
+}
+
+// federationSSRFDialer is the shared dial-time SSRF gate
+// (securityverify.SSRFGuardedDialer — one copy for this fetcher and the JAR
+// request_uri fetcher), namespaced with this package's error prefix so the
+// error surface is byte-identical to the pre-extraction implementation.
+var federationSSRFDialer = &securityverify.SSRFGuardedDialer{
+	ErrPrefix: "federation",
+	Timeout:   DefaultFederationFetchTimeout,
 }
 
 // dialWithSSRFCheck is a DialContext function that resolves the target hostname
@@ -120,41 +133,10 @@ func newHTTPFetcher() *httpFetcher {
 // to an internal address at the moment the dial happens.
 //
 // The check runs at dial time (not URL-parse time) so there is no TOCTOU
-// window: the IP we check is the same IP we connect to.
+// window: the IP we check is the same IP we connect to. The mechanics live in
+// securityverify.SSRFGuardedDialer.
 func dialWithSSRFCheck(ctx context.Context, network, addr string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, fmt.Errorf("federation: invalid dial address %q: %w", addr, err)
-	}
-	// If addr is already a numeric IP (e.g. from a literal-IP URL that slipped
-	// through) check it directly and skip the DNS round-trip.
-	if ip := net.ParseIP(host); ip != nil {
-		if isInternalIP(ip) {
-			return nil, fmt.Errorf("federation: dial address %q is internal (SSRF guard)", host)
-		}
-		d := &net.Dialer{Timeout: DefaultFederationFetchTimeout}
-		return d.DialContext(ctx, network, addr)
-	}
-	addrs, err := net.DefaultResolver.LookupHost(ctx, host)
-	if err != nil {
-		return nil, fmt.Errorf("federation: DNS resolution failed for %q: %w", host, err)
-	}
-	if len(addrs) == 0 {
-		return nil, fmt.Errorf("federation: DNS returned no addresses for %q", host)
-	}
-	for _, a := range addrs {
-		ip := net.ParseIP(a)
-		if ip == nil {
-			// Resolver returned something unparseable; treat conservatively.
-			return nil, fmt.Errorf("federation: DNS returned unparseable address %q for host %q", a, host)
-		}
-		if isInternalIP(ip) {
-			return nil, fmt.Errorf("federation: resolved address %q for host %q is internal (SSRF guard)", a, host)
-		}
-	}
-	// Connect to the first resolved address. Every address was validated above.
-	d := &net.Dialer{Timeout: DefaultFederationFetchTimeout}
-	return d.DialContext(ctx, network, net.JoinHostPort(addrs[0], port))
+	return federationSSRFDialer.DialContext(ctx, network, addr)
 }
 
 // FetchEntityConfiguration implements EntityStatementFetcher.
@@ -256,26 +238,10 @@ func validateFederationURL(raw string) error {
 		return errors.New("federation: URL has no host")
 	}
 	// Fast-reject a literal internal IP. A hostname that resolves to an internal
-	// IP at dial time is caught by dialWithSSRFCheck instead.
-	if ip := net.ParseIP(host); ip != nil && isInternalIP(ip) {
+	// IP at dial time is caught by dialWithSSRFCheck instead. The IP
+	// classification is shared with the dial-time guard (single policy copy).
+	if ip := net.ParseIP(host); ip != nil && securityverify.IsInternalIP(ip) {
 		return fmt.Errorf("federation: URL host %q is an internal address", host)
 	}
 	return nil
-}
-
-// isInternalIP reports whether ip is one an SSRF probe would target: loopback,
-// link-local (incl. the cloud metadata 169.254.169.254 range), private
-// (RFC 1918 / ULA), or unspecified. The CIDR set mirrors the conventional
-// SSRF blocklist; net.IP.IsPrivate covers RFC 1918 + RFC 4193.
-func isInternalIP(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified() || ip.IsPrivate() {
-		return true
-	}
-	// IPv4-mapped IPv6 (::ffff:a.b.c.d) — re-check the embedded v4 so a mapped
-	// private address is not waved through.
-	if v4 := ip.To4(); v4 != nil && !v4.Equal(ip) {
-		return isInternalIP(v4)
-	}
-	return false
 }

@@ -58,7 +58,7 @@ func TestMaxVersions_AllReturnPositive(t *testing.T) {
 	if got := sqlite.RefreshTokensMaxVersion(); got != 6 {
 		t.Errorf("RefreshTokensMaxVersion() = %d, want 6 (v6 adds family_created_at for the absolute-max-lifetime cap)", got)
 	}
-	if got := sqlite.AuthCodesMaxVersion(); got != 2 {
-		t.Errorf("AuthCodesMaxVersion() = %d, want 2 (v2 adds confirmation_jkt DPoP code binding)", got)
+	if got := sqlite.AuthCodesMaxVersion(); got != 3 {
+		t.Errorf("AuthCodesMaxVersion() = %d, want 3 (v3 adds requested_claims for the OIDC §5.5 claims parameter)", got)
 	}
 }

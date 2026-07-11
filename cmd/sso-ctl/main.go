@@ -5,7 +5,7 @@
 //	sso-ctl audit-verify ...   # verify the audit-log hash chain
 //	sso-ctl audit-export ...   # export or offline-verify a tamper-evident bulk audit bundle
 //	sso-ctl soc2-report ...    # build a SOC2-flavored evidence pack over a verified audit-export bundle
-//	sso-ctl import ...         # bulk-import users (auth0 / keycloak / csv)
+//	sso-ctl import ...         # bulk-import users (auth0 / keycloak / okta / csv)
 //	sso-ctl migrate ...        # offline schema-migration status
 //	sso-ctl snapshot ...       # inspect / verify sealed state snapshots
 //
@@ -84,7 +84,7 @@ Commands:
   audit-export   Export or offline-verify a tamper-evident bulk audit bundle (compliance evidence).
   soc2-report    Build a SOC2-flavored evidence pack over a verified audit-export bundle.
   clients        List OAuth clients or inspect a specific client.
-  import         Bulk-import users from auth0 / keycloak / csv into a user store.
+  import         Bulk-import users from auth0 / keycloak / okta / csv into a user store.
   migrate        Offline schema-migration status for a SQLite store.
   sessions       List active sessions or revoke a specific session.
   snapshot       Inspect and verify sealed state snapshots.

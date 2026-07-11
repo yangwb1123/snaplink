@@ -361,6 +361,14 @@ type federationMeshState struct {
 	// connections.DefaultProbeTimeout. No effect when connectionProber is set.
 	connectionProbeTimeout time.Duration
 
+	// connectionAuthFactory builds the live upstream authenticator for a
+	// resolved enterprise connection at /auth/login dispatch time
+	// (WithConnectionAuthenticatorFactory) — the runtime half of B2B
+	// connections; connectionStore is the routing half. Nil ⇒ a connection id
+	// never resolves as a provider — byte-identical to the HRD-directive-only
+	// build.
+	connectionAuthFactory connections.AuthenticatorFactory
+
 	// Opt-in Envoy/Istio ext_authz HTTP-mode authorization endpoint
 	// (cluster C1 mesh data-plane, the HTTP variant — the gRPC variant
 	// needs the go-control-plane proto dep and lives in a separate

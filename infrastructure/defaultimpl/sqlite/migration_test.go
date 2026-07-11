@@ -118,12 +118,16 @@ func TestMigration_AuthCodesBackfillsDPoPBindingColumn(t *testing.T) {
 	if _, err := st.DB().Exec(`SELECT confirmation_jkt FROM auth_codes`); err != nil {
 		t.Errorf("confirmation_jkt not backfilled: %v", err)
 	}
+	// v3 backfills the OIDC §5.5 claims-parameter column on the same boot.
+	if _, err := st.DB().Exec(`SELECT requested_claims FROM auth_codes`); err != nil {
+		t.Errorf("requested_claims not backfilled: %v", err)
+	}
 	var code string
 	if err := st.DB().QueryRow(`SELECT code FROM auth_codes WHERE code='old'`).Scan(&code); err != nil {
 		t.Errorf("legacy row lost: %v", err)
 	}
-	if v, _ := migrate.CurrentVersion(ctx, st.DB(), "auth_codes"); v != 2 {
-		t.Errorf("version = %d, want 2", v)
+	if v, _ := migrate.CurrentVersion(ctx, st.DB(), "auth_codes"); v != 3 {
+		t.Errorf("version = %d, want 3", v)
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/shared/trust"
 )
 
 // wireSelfServicePassword builds the self-service password store and the
@@ -221,7 +222,7 @@ func trustedProxyIPExtractor(r *http.Request) net.IP {
 // resolver's allowlist, and the residency engine enforces the tenant's policy.
 func (b *appBuilder) wireRegion() {
 	cfg := b.cfg
-	regionResolver := serverbuildstore.BuildRegionResolver(cfg)
+	regionResolver := serverbuildstore.BuildRegionResolver(cfg, b.peerTrust)
 	b.regionResolver = regionResolver
 	if regionResolver == nil {
 		return
@@ -420,4 +421,55 @@ func (b *appBuilder) wireAnomaly() error {
 		"ip_failure_backend", cfg.Anomaly.IPFailure.Backend,
 	)
 	return nil
+}
+
+// wireTrustScoring wires the composite trust scorer (trust.enabled) that
+// feeds the conditional-access engine's trust signal at /auth/login
+// (sso.WithTrustScorer). Runs after wireAnomaly so the ip_reputation and
+// behavior scorers can read the SAME stores the anomaly detectors populate;
+// with anomaly disabled the lookups stay nil and those scorers degrade to
+// their documented no-signal cold-start scores (fail-open, never a penalty).
+// A disabled section appends no Option — byte-identical build.
+func (b *appBuilder) wireTrustScoring() error {
+	cfg := b.cfg.Trust
+	if !cfg.Enabled {
+		return nil
+	}
+	ipLookup, history, err := b.trustAnomalyLookups()
+	if err != nil {
+		return fmt.Errorf("trust: %w", err)
+	}
+	scorer, err := serverbuildplatform.BuildTrustScorer(cfg, ipLookup, history, b.metricsRegistry)
+	if err != nil {
+		return fmt.Errorf("trust: %w", err)
+	}
+	b.opts = append(b.opts, sso.WithTrustScorer(scorer))
+	b.logger.Info("trust: composite trust scorer enabled",
+		"scorers", len(cfg.Weights),
+		"anomaly_backed", b.anomalyRT != nil)
+	return nil
+}
+
+// trustAnomalyLookups adapts the anomaly stores (when wired) into the trust
+// scorers' narrow lookup seams. The IP adapter re-derives the SAME deployment
+// ipSalt buildAnomaly decoded, so trust reads land in the hash space the
+// brute-force-shadow detector writes — a diverging salt would silently score
+// every IP clean.
+func (b *appBuilder) trustAnomalyLookups() (trust.IPFailureLookup, trust.LoginHistoryLookup, error) {
+	if b.anomalyRT == nil {
+		return nil, nil, nil
+	}
+	var ipLookup trust.IPFailureLookup
+	var history trust.LoginHistoryLookup
+	if b.anomalyRT.ipFailCounter != nil {
+		ipSalt, err := decodeAnomalySalt(b.cfg.Anomaly.IPSalt)
+		if err != nil {
+			return nil, nil, fmt.Errorf("anomaly.ip_salt: %w", err)
+		}
+		ipLookup = serverbuildplatform.NewAnomalyIPFailureLookup(b.anomalyRT.ipFailCounter, ipSalt)
+	}
+	if b.anomalyRT.recentStore != nil {
+		history = serverbuildplatform.NewAnomalyLoginHistory(b.anomalyRT.recentStore)
+	}
+	return ipLookup, history, nil
 }

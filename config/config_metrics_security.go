@@ -66,11 +66,25 @@ type SecurityHeadersConfig struct {
 	PermissionsPolicy string `yaml:"permissions_policy"`
 }
 
-// TrustedProxiesConfig opts into XFF-aware real-IP extraction.
-// When CIDRs is non-empty, the middleware.TrustedProxies middleware is
-// installed: XFF is walked right-to-left, CIDRs up to Hops trusted
-// hops are skipped, and the first non-trusted address is the real client
-// IP used for rate-limiting and geo enrichment.
+// TrustedProxiesConfig opts into the trusted-proxies gate on EVERY
+// proxy-supplied request input. When CIDRs is non-empty:
+//
+//   - middleware.TrustedProxies is installed: when the DIRECT peer
+//     (RemoteAddr) is inside a trusted CIDR, XFF is walked right-to-left,
+//     up to Hops trusted hops are skipped, and the first non-trusted
+//     address is the real client IP used for rate-limiting and geo/risk
+//     enrichment; an untrusted direct peer's XFF is ignored (RemoteAddr
+//     is the client).
+//   - Base-URL derivation (issuer, discovery, registration URIs, DPoP
+//     htu) honors X-Forwarded-Proto/Host only from a trusted direct peer.
+//   - The mesh ext_authz endpoint serves identity only to a trusted
+//     direct peer (include the sidecar's CIDR when mesh.ext_authz is on).
+//   - The region serving-header resolver and the security.mtls.backend:
+//     header client-cert extractor honor their headers only from a
+//     trusted direct peer (untrusted ⇒ header treated as absent).
+//
+// Unset (empty CIDRs) keeps the legacy first-hop-trust behavior on all of
+// the above, byte-identically.
 // Hops 0 = walk the full XFF chain until a non-trusted address.
 // SECURITY: list ONLY the CIDRs of your actual load balancers / CDN
 // egress IPs; a spoofed X-Forwarded-For header injected BEFORE the

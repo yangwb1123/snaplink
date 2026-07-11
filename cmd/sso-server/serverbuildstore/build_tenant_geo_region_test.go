@@ -2,9 +2,12 @@ package serverbuildstore
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/shared/security/peertrust"
 )
 
 func TestBuildTenantUsageAggregator_DisabledMemorySqliteUnknown(t *testing.T) {
@@ -139,7 +142,7 @@ func TestBuildGeoProvider_BadCIDRErrors(t *testing.T) {
 
 func TestBuildRegionResolver_NilWhenUnconfigured(t *testing.T) {
 	t.Parallel()
-	if r := BuildRegionResolver(&config.Config{}); r != nil {
+	if r := BuildRegionResolver(&config.Config{}, nil); r != nil {
 		t.Fatalf("got %v, want nil (neither serving_region nor header_name set)", r)
 	}
 }
@@ -153,7 +156,7 @@ func TestBuildRegionResolver_HeaderWinsOverPinnedDefault(t *testing.T) {
 	cfg.Region.ServingRegion = "eu-west-1"
 	cfg.Region.HeaderName = "X-Serving-Region"
 	cfg.Region.AllowedRegions = []string{"us-east-1"}
-	r := BuildRegionResolver(cfg)
+	r := BuildRegionResolver(cfg, nil)
 	if r == nil {
 		t.Fatal("nil resolver with serving_region + header_name set")
 	}
@@ -167,4 +170,36 @@ func TestBootstrapLogger_DelegatesToInner(t *testing.T) {
 	// pair onto bootstrap.Logger's identical shape).
 	bl.Info("boot", "k", "v")
 	bl.Error("boot", "k", "v")
+}
+
+// TestBuildRegionResolver_ThreadsPeerTrust proves the compiled
+// security.trusted_proxies checker gates the region header path: an
+// untrusted direct peer's header resolves to the pinned default.
+func TestBuildRegionResolver_ThreadsPeerTrust(t *testing.T) {
+	t.Parallel()
+	checker, err := peertrust.NewChecker([]string{"10.0.0.0/8"})
+	if err != nil {
+		t.Fatalf("NewChecker: %v", err)
+	}
+	cfg := &config.Config{}
+	cfg.Region.ServingRegion = "eu-west-1"
+	cfg.Region.HeaderName = "X-Serving-Region"
+	r := BuildRegionResolver(cfg, checker)
+	if r == nil {
+		t.Fatal("nil resolver")
+	}
+
+	trusted := httptest.NewRequest(http.MethodGet, "/", nil)
+	trusted.RemoteAddr = "10.0.0.7:443"
+	trusted.Header.Set("X-Serving-Region", "us-east-1")
+	if got, _ := r.Resolve(trusted); string(got) != "us-east-1" {
+		t.Errorf("trusted peer resolved %q, want us-east-1 (header honored)", got)
+	}
+
+	untrusted := httptest.NewRequest(http.MethodGet, "/", nil)
+	untrusted.RemoteAddr = "203.0.113.9:443"
+	untrusted.Header.Set("X-Serving-Region", "us-east-1")
+	if got, _ := r.Resolve(untrusted); string(got) != "eu-west-1" {
+		t.Errorf("untrusted peer resolved %q, want eu-west-1 (pinned default)", got)
+	}
 }

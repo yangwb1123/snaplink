@@ -5,11 +5,12 @@
 // Okta, BigCo's via BigCo's ADFS", routed by the user's email domain, with no
 // per-tenant code.
 //
-// Scope: this package is the dependency-free MODEL + STORE SPI + RESOLVER.
-// Wiring a resolved connection into the /auth/login upstream-authenticator
-// selection (the global oidc_federation authenticator / the saml module) is a
-// separate slice; the protocol-specific settings ride in Connection.Config as
-// opaque key-values so this model pulls in no OIDC/SAML dependency.
+// Scope: this package is the MODEL + STORE SPI + RESOLVER, plus the
+// AuthenticatorFactory seam (authenticator_factory.go) the /auth/login flow
+// uses to turn a resolved connection into a live upstream authenticator. The
+// protocol-specific settings ride in Connection.Config as opaque key-values so
+// this model pulls in no OIDC/SAML dependency — factory implementations (the
+// composition root) interpret the keys.
 package connections
 
 import (

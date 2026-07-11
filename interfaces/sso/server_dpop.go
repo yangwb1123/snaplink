@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/shared/security"
 )
 
@@ -338,18 +339,23 @@ func (s *Server) DPoPTokenTypeOr(defaultType, jkt string) string {
 // the wire, suitable for htu comparison. Uses the same X-Forwarded-*
 // chain as requestBaseURL so deployments behind a trusted edge
 // proxy compute the public URL even when the local socket
-// terminates HTTP without TLS.
+// terminates HTTP without TLS — and the same peer-trust gate: when
+// trusted proxies are configured and the direct peer is outside them,
+// the forwarded headers are peer-forged, so the direct Host/TLS values
+// are the URL the client really used (middleware.ForwardedHeadersTrusted).
 func requestURLForDPoP(r *http.Request) string {
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	if h := r.Header.Get("X-Forwarded-Proto"); h != "" {
-		scheme = h
-	}
 	host := r.Host
-	if h := r.Header.Get("X-Forwarded-Host"); h != "" {
-		host = h
+	if middleware.ForwardedHeadersTrusted(r) {
+		if h := r.Header.Get("X-Forwarded-Proto"); h != "" {
+			scheme = h
+		}
+		if h := r.Header.Get("X-Forwarded-Host"); h != "" {
+			host = h
+		}
 	}
 	path := r.URL.Path
 	return scheme + "://" + host + path

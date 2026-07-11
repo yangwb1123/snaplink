@@ -150,15 +150,12 @@ func (j *RSAJWTIssuer) Revoke(ctx context.Context, token string) error {
 }
 
 // SeedRevocations re-seeds the in-process deny-set from the wired
-// RevocationStore at boot so a pre-restart revocation is honored again.
-// nil store = no-op. See RevocationStore.
+// RevocationStore at boot (and on live invalidation-bus recovery) so a
+// pre-restart / missed revocation is honored again. nil store = no-op; the
+// store Load runs unlocked so a live replica's Validate is never stalled behind
+// store I/O. See RevocationStore / seedRevokedFromStore.
 func (j *RSAJWTIssuer) SeedRevocations(ctx context.Context) error {
-	if j.revocationStore == nil {
-		return nil
-	}
-	j.revokedMu.Lock()
-	defer j.revokedMu.Unlock()
-	return seedRevokedFromStore(ctx, j.revoked, j.revocationStore)
+	return seedRevokedFromStore(ctx, &j.revokedMu, j.revoked, j.revocationStore)
 }
 
 // WithRSARevocationStore wires a durable RevocationStore (restart-survival;

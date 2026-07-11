@@ -13,6 +13,7 @@ import (
 
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // ExternalUserStore returns the wired cross-tenant guest-record store
@@ -369,4 +370,34 @@ func (s *Server) recordTenantTokenIssued(ctx HandlerContext, clientID, strategy 
 		return
 	}
 	s.metrics.TokensIssuedByTenantTotal.WithLabelValues(s.tenantLabel(ctx, clientID), strategy).Inc()
+}
+
+// checkQuotaBeforeCreate checks if the tenant has capacity to create a
+// resource. Returns handled=true when the response is already written
+// (quota exceeded or store error).
+func (s *Server) checkQuotaBeforeCreate(ctx HandlerContext, tenantID string, resource core.ResourceType) bool {
+	if s.tenantQuotaStore == nil || tenantID == "" {
+		return false
+	}
+	if err := s.tenantQuotaStore.IncrementUsage(ctx.Request().Context(), tenantID, resource, 1); err != nil {
+		if err == core.ErrQuotaExceeded {
+			s.logger.Error("tenant quota exceeded", "tenant_id", tenantID, "resource", resource)
+			ctx.JSON(http.StatusForbidden, errorBody(ctx, core.ErrQuotaExceededCode))
+			return true
+		}
+		s.logger.Error("quota check failed", "tenant_id", tenantID, "resource", resource, "error", err)
+		// Fail-open on store errors — don't block resource creation.
+		return false
+	}
+	return false
+}
+
+// CheckClientCreateQuota is the oauth.RegisterDeps seam that makes the tenant
+// client-create quota LIVE on the DCR /register path. It charges one unit of
+// core.ResourceClients against the tenant; returns true when a 403
+// quota_exceeded was already written (the caller must stop). Skips (false) when
+// no quota store is wired or the client is tenant-less, and fails OPEN on a
+// non-quota store error — matching the createSession session-quota precedent.
+func (s *Server) CheckClientCreateQuota(ctx HandlerContext, tenantID string) bool {
+	return s.checkQuotaBeforeCreate(ctx, tenantID, core.ResourceClients)
 }

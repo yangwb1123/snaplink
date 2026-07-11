@@ -231,6 +231,16 @@ func (c *ClientStoreCache) Evict(clientID string) {
 	delete(c.entries, clientID)
 }
 
+// EvictAll drops every cached entry so the next Get per client re-reads the
+// authoritative store. Exists for the invalidation-bus recovery re-seed: a
+// KindClientChange event lost during a bus outage names a client we can no
+// longer identify, so the only safe convergence is to flush the whole cache.
+func (c *ClientStoreCache) EvictAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = make(map[string]clientCacheEntry)
+}
+
 func (c *ClientStoreCache) report(outcome string) {
 	if c.onOutcome != nil {
 		c.onOutcome(outcome)

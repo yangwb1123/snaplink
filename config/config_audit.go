@@ -249,11 +249,26 @@ type AuditPIIRedactionConfig struct {
 // BufferSize and Workers fall back to library defaults when <= 0.
 // RecordTimeoutMs caps a single inner Record call so a hung
 // downstream doesn't pin a worker indefinitely (0 = no timeout).
+//
+// BatchSize > 1 switches the worker to batch draining
+// (audit.NewBatchAsyncSink): up to BatchSize queued events collapse
+// into ONE RecordBatch call — a single SQLite/Postgres transaction
+// instead of N single-row INSERTs. Requires the composed sink to
+// support batch writes: the memory/sqlite/postgres primaries do, but
+// the webhook/cef/ocsf/syslog/kafka MultiSink fan-out does not, and
+// that combination fails boot loud rather than silently ignoring the
+// knob. 0 (default) and 1 both mean per-event delivery — byte-identical
+// to the pre-batching behavior; negative values fail boot. Unlike
+// BufferSize/Workers, an out-of-range value here is rejected instead of
+// silently defaulted because the library constructor's own <= 1
+// fallback is DefaultBatchSize (64), NOT per-event — accepting "1" or
+// "-64" would surprise-enable batching.
 type AuditAsyncConfig struct {
 	Enabled         bool `yaml:"enabled"`
 	BufferSize      int  `yaml:"buffer_size"`
 	Workers         int  `yaml:"workers"`
 	RecordTimeoutMs int  `yaml:"record_timeout_ms"`
+	BatchSize       int  `yaml:"batch_size"`
 }
 
 // EventsConfig opts into the realtime admin event stream — GET

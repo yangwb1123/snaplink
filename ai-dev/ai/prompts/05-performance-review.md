@@ -114,7 +114,7 @@ Given the expected load, what are the resource limits?
 - Redis memory usage at peak session count
 - Database IOPS at peak write rate
 
-Produce findings using `.ai/prompts/shared/output-format.md`.
+Produce findings using `ai-dev/ai/prompts-shared/output-format.md`.
 Sort: Critical → High → Medium → Low → Info.
 
 Conclude with the Stage Summary Block.

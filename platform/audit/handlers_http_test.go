@@ -106,6 +106,36 @@ func TestHandleEvents_FilterByClientID(t *testing.T) {
 	}
 }
 
+// TestHandleEvents_FilterByTenantID guards the tenant_id query-param
+// binding: Query.TenantID has always been a first-class sink filter, but
+// the HTTP handler must actually map the parameter onto it.
+func TestHandleEvents_FilterByTenantID(t *testing.T) {
+	t.Parallel()
+	sink := audit.NewMemorySink(16)
+	rec := audit.New(sink)
+	rec.Record(context.Background(), &audit.Event{Type: audit.EventLogin, Outcome: audit.OutcomeSuccess, TenantID: "tenant-a", ClientID: "c1"})
+	rec.Record(context.Background(), &audit.Event{Type: audit.EventLogin, Outcome: audit.OutcomeSuccess, TenantID: "tenant-a", ClientID: "c2"})
+	rec.Record(context.Background(), &audit.Event{Type: audit.EventLogin, Outcome: audit.OutcomeSuccess, TenantID: "tenant-b", ClientID: "c3"})
+	d := handlerDeps{rec: rec}
+
+	ctx, w := httpCtx(t, "tenant_id=tenant-a", "")
+	audit.HandleEvents(d, ctx)
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+	m := decodeBody(t, w)
+	if n, _ := m["count"].(float64); int(n) != 2 {
+		t.Fatalf("tenant-a count = %v, want 2", m["count"])
+	}
+
+	ctx2, w2 := httpCtx(t, "tenant_id=tenant-b", "")
+	audit.HandleEvents(d, ctx2)
+	m2 := decodeBody(t, w2)
+	if n, _ := m2["count"].(float64); int(n) != 1 {
+		t.Fatalf("tenant-b count = %v, want 1", m2["count"])
+	}
+}
+
 func TestHandleEvents_NilRecorder500(t *testing.T) {
 	t.Parallel()
 	d := handlerDeps{rec: nil}

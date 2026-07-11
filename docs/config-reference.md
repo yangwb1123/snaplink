@@ -30,7 +30,7 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 | Key | Effect |
 |---|---|
 | `security.mtls.backend` | `tls`\|`header`; `header` for reverse-proxy edges (`X-SSL-Client-Cert`); edge MUST strip from untrusted traffic |
-| `security.trusted_proxies.{cidrs,hops}` | CIDR allowlist for XFF-aware real-IP extraction; gates rate-limit IP keying AND geo/risk-scorer IP resolution (`WithGeoMiddlewareOptions.IPExtractor` — falls back to `X-Forwarded-For`'s raw leftmost hop when unset) |
+| `security.trusted_proxies.{cidrs,hops}` | CIDR allowlist compiled once (`peertrust.Checker`) gating EVERY proxy-supplied input on the direct peer (`RemoteAddr`): the XFF chain walk (rate-limit IP keying + geo/risk-scorer IP; untrusted peer ⇒ RemoteAddr), base-URL derivation from `X-Forwarded-Proto/Host` (issuer/discovery/registration URIs/DPoP `htu`; untrusted peer ⇒ direct Host/TLS), the mesh ext_authz endpoint (untrusted peer ⇒ 401 `invalid_token`, no `X-Auth-*` — include the sidecar's CIDR when `mesh.ext_authz.enabled`), the `region.header_name` resolver (untrusted peer ⇒ pinned default), and the `security.mtls.backend: header` cert extractor (untrusted peer ⇒ no cert ⇒ unbound token / normal `invalid_token` path). Unset = legacy first-hop trust on all of the above, byte-identical |
 | `security.security_headers.{enabled,csp_directives,permissions_policy}` | Off by default. Adds CSP (with a per-request `script-src` nonce) + Permissions-Policy to every response, INCLUDING the admin console / hosted login / portal SPA bundles; also adds `Clear-Site-Data` on `POST /logout` and a non-dry-run `POST /me/account/erase`. `csp_directives`/`permissions_policy` override the SDK's conservative default (`handler.DefaultSecurityHeadersPolicy`) — leave unset to use it |
 | `spiffe.{enabled,trust_domain,audience,jwks_file,max_clock_skew}` | Enabled requires ALL of `trust_domain`+`audience`+`jwks_file`; cmd fails loud on missing |
 | `security.rar_limits.{max_bytes,max_elements,max_depth}` | Bounds an RFC 9396 `authorization_details` payload's SHAPE (serialized size / top-level array element count / max nesting depth) BEFORE it is fully unmarshaled, on `/auth/login` and `/par`. Each sub-field `<= 0` (default) = unbounded — composes with, does not replace, `security.body_limit`. Rejects with the existing `invalid_authorization_details` code. Maps to `sso.WithAuthorizationDetailsLimits` |
@@ -215,6 +215,8 @@ is ASYNC fire-and-forget (a background goroutine bounded by `smtp.timeout`) so
 | Key | Effect |
 |---|---|
 | `audit.retention.*` | `audit/sqlite.Sink.Prune` |
+| `audit.async.{enabled,buffer_size,workers,record_timeout_ms}` | Wraps the composed audit sink in `audit.AsyncSink` so `Record` returns on a buffered hot path instead of waiting for the inner sink — critical when the sink is network-bound (webhook/kafka), pointless overhead for a bare `MemorySink`. `buffer_size`/`workers` fall back to library defaults when `<= 0`; `record_timeout_ms` caps a single inner `Record` call so a hung downstream can't pin a worker (`0` = no timeout). Drops (queue full / closed / inner error) are logged and scraped via the `sso_audit_async_*` collectors when `metrics.enabled` |
+| `audit.async.batch_size` | `> 1` switches the async worker to batch draining (`audit.NewBatchAsyncSink`): up to `batch_size` queued events collapse into ONE `RecordBatch` call — a single SQLite/Postgres transaction instead of N single-row INSERTs. Requires the composed sink to support batch writes: the `memory`/`sqlite`/`postgres` primary alone does, but any webhook/cef/ocsf/syslog/kafka fan-out (`MultiSink`) does not — that combination **fails boot loud** rather than leaving the knob silently inert. `0` (default) and `1` both mean per-event delivery, byte-identical to the pre-batching behavior; negative values fail boot (unlike `buffer_size`/`workers` there is no "default please" reading — the library's own `<= 1` fallback is `DefaultBatchSize` 64, which a config typo must never surprise-enable) |
 | `snapshot.retention.*` | `snapshot.PruneOldest` |
 | `mfa.provider.push.prune_interval` | `sqlite.PushApprovalStore.PruneExpired` |
 | `metrics.tenant_label_allowlist` | `WithTenantMetricsAllowlist` — bounded per-tenant login/issue metrics + `"other"` bucket; empty = off |
@@ -385,7 +387,7 @@ Zero-trust conditional-access (CAP) engine (`domains/conditionalaccess`, `sso.Wi
 
 A matched `deny` verdict returns `403 conditional_access_denied`; a matched `require_step_up` verdict routes through the SAME MFA orchestration `mfa.*` configures (`WithMFAProvider` + `WithMFAChallengeStore`) — without both wired it decays to allow, never inventing a step-up path the deployment hasn't configured. A trust-scorer or policy-store outage always FAILS OPEN on `/auth/login` (logs and proceeds), regardless of `default_deny` — a risk signal must never become an account-lockout oracle.
 
-Pair with `sso.WithTrustScorer` (a `shared/trust.TrustScorer`, typically a `trust.WeightedComposite`) and `sso.WithDeviceFingerprint` (a `conditionalaccess.DeviceFingerprint`, e.g. `conditionalaccess.NewMemoryDeviceFingerprint()`) to feed the engine real trust-score and device-posture signals; both are Go-level SDK options with no YAML surface (no reference implementation to declare declaratively), so operators wire them directly like a custom `RiskScorer`.
+Pair with the `trust.*` section (see [Trust Scoring](#trust-scoring) — wires `sso.WithTrustScorer` declaratively) and `sso.WithDeviceFingerprint` (a `conditionalaccess.DeviceFingerprint`, e.g. `conditionalaccess.NewMemoryDeviceFingerprint()`) to feed the engine real trust-score and device-posture signals; the device-fingerprint seam remains a Go-level SDK option with no YAML surface (no reference device inventory to declare declaratively), so operators wire it directly like a custom `RiskScorer`.
 
 | Key | Effect |
 |---|---|
@@ -394,6 +396,23 @@ Pair with `sso.WithTrustScorer` (a `shared/trust.TrustScorer`, typically a `trus
 | `access_policies.degraded_trust` | Conservative trust value substituted when a signal is missing; `<=0` or `>1` normalizes to the engine default (`0.3`) |
 | `access_policies.default_deny` | Flips the no-policy-matched verdict from allow to deny (a zero-trust posture) and governs the fallback when the store is unavailable |
 | `access_policies.enforce` | Activates the live `/auth/login` PEP. `false` (default) keeps the engine advisory-only even with policies configured — stage policies (`dry_run` entries, `enforce: false`) and check the admin governance view before flipping this on |
+
+## Trust Scoring
+
+Zero Trust Framework Phase 1 composite trust scoring (`shared/trust`, `sso.WithTrustScorer`). Builds a `trust.WeightedComposite` over the four reference scorers and feeds it to the conditional-access engine as its trust signal at `/auth/login` — it is ADVISORY-only scoring, only consulted when [Conditional Access](#conditional-access) is also wired with `enforce: true`, and a scorer error always FAILS OPEN to that scorer's floor (never blocks a login). **Disabled by default**: an absent section (`enabled=false`) appends no option — byte-identical to a build without the feature.
+
+When `anomaly.enabled`, the `ip_reputation` and `behavior` scorers read the SAME stores the anomaly detectors populate (`anomaly.ip_failure` / `anomaly.recent_login`), through composition-root adapters that reuse the `anomaly.ip_salt` hash space — so the brute-force spray signal the `brute_force_shadow` detector records is also visible as a trust signal. With anomaly disabled those scorers degrade to their documented neutral no-signal scores. When `metrics.enabled`, the `sso_trust_score` histogram (per scorer + `scorer="composite"`) and `sso_trust_scorer_errors_total` counter register on the shared registry.
+
+| Key | Effect |
+|---|---|
+| `trust.enabled` | Builds the composite and wires `sso.WithTrustScorer`. Requires at least one `trust.weights` entry (fails loud at boot otherwise) |
+| `trust.weights` | Map of scorer name → relative weight. Keys are the scorers' stable names: `geo_risk`, `ip_reputation`, `behavior`, `device_posture`; a missing key excludes that scorer; an unknown key or a weight `<= 0` fails loud at boot (a typo must not silently drop a signal). Weights are relative — the composite normalizes by the sum |
+| `trust.geo.{trusted_countries,denied_countries}` | ISO 3166-1 alpha-2 lists for the `geo_risk` scorer (deny wins over trust; unknown country is neutral, never a penalty) |
+| `trust.ip_reputation.{window,failure_threshold,distinct_subject_threshold}` | The `ip_reputation` scorer's look-back window and suspicious-bucket gates (total failures OR distinct subjects sprayed from one IP). Zero values keep the package defaults (`1h` / `10` / `5`) |
+| `trust.ip_reputation.floor_on_error` / `trust.behavior.floor_on_error` | The score substituted when that scorer's store errors (fail-open floor, e.g. `0.3`–`0.5`) |
+| `trust.behavior.history_limit` | How many recent logins the `behavior` scorer's hour-of-day baseline consults (`0` = default `20`) |
+| `trust.device_posture.default_score` | The stub `device_posture` scorer's constant score (clamped to `[0,1]`); keep it conservative (e.g. `0.3`) — "no MDM integration" and "no posture report" are indistinguishable |
+| `trust.serialization.*` | RESERVED — not consumed by the reference binary yet: no SDK option surfaces a computed score into session metadata or a token claim. Both flags default off (wire-safe) |
 
 ## Session Trust Decay (continuous verification)
 

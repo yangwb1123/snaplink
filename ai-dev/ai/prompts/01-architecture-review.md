@@ -8,7 +8,7 @@ Determine whether the proposed architecture has the right boundaries, the right 
 Challenge over-engineering and premature abstraction.
 Produce an Architecture Decision Record (ADR) as output.
 
-Read `.ai/prompts/shared/engineering-principles.md` before starting.
+Read `ai-dev/ai/prompts-shared/engineering-principles.md` before starting.
 
 ---
 

@@ -27,6 +27,7 @@ import (
 	meteringsqlite "github.com/snaplink/sso/domains/metering/sqlite"
 
 	"github.com/snaplink/sso/domains/region"
+	"github.com/snaplink/sso/shared/security/peertrust"
 
 	"github.com/snaplink/sso/domains/tenant"
 )
@@ -192,7 +193,11 @@ func BuildGeoProvider(cfg *config.Config, logger spi.Logger) (geo.Provider, erro
 // allowlisted by AllowedRegions), then falls back to the pinned ServingRegion.
 // The HeaderResolver's Default is the pinned region too, so a single-region
 // deployment that sets only ServingRegion still resolves every request to it.
-func BuildRegionResolver(cfg *config.Config) region.Resolver {
+//
+// peerTrust (the compiled security.trusted_proxies checker; nil when the
+// knob is unset) gates the header path: a direct peer outside the trusted
+// CIDRs supplied the region header itself, so it resolves as if absent.
+func BuildRegionResolver(cfg *config.Config, peerTrust *peertrust.Checker) region.Resolver {
 	servingRegion := region.ID(cfg.Region.ServingRegion)
 	if servingRegion == "" && cfg.Region.HeaderName == "" {
 		return nil
@@ -206,9 +211,10 @@ func BuildRegionResolver(cfg *config.Config) region.Resolver {
 	}
 	return region.ChainResolver{Resolvers: []region.Resolver{
 		region.HeaderResolver{
-			Header:  cfg.Region.HeaderName,
-			Allowed: allowed,
-			Default: servingRegion,
+			Header:    cfg.Region.HeaderName,
+			Allowed:   allowed,
+			Default:   servingRegion,
+			PeerTrust: peerTrust,
 		},
 		region.ConfigPinnedResolver{Region: servingRegion},
 	}}

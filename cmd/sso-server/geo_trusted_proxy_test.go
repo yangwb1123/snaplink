@@ -40,7 +40,12 @@ func TestWireGeoRegionRisk_TrustedProxiesGatesGeoIPExtraction(t *testing.T) {
 		{CIDR: "9.9.9.9/32", CountryCode: "XX"}, // attacker-forged leftmost hop
 		{CIDR: "5.6.7.8/32", CountryCode: "US"}, // real client, as observed by the trusted proxy
 	}
-	cfg.Security.TrustedProxies.CIDRs = []string{"10.0.0.0/8"}
+	// 127.0.0.0/8 covers the httptest server's direct peer: the XFF chain
+	// walk only runs when the DIRECT peer is itself a trusted proxy (the
+	// peer-gate added with the forwarded-header trust checker), so the
+	// loopback hop the test harness connects from must be allowlisted for
+	// the 10/8 tier peel below to engage at all.
+	cfg.Security.TrustedProxies.CIDRs = []string{"10.0.0.0/8", "127.0.0.0/8"}
 	cfg.Security.TrustedProxies.Hops = 1
 
 	a, err := buildApp(cfg, quietLogger())

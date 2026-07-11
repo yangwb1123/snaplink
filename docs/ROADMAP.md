@@ -1,8 +1,9 @@
 # ROADMAP
 
-> **当前生效：v5.0（2026-06-11）。** 基于对 `github.com/snaplink/sso`
-> 的多轮全局复扫，从资深架构师 / PM 视角列出下一阶段投入产出比最高的
-> 5 个扩展方向。v4.0 及更早为 superseded 历史，保留备查。
+> **当前生效：v6.0（2026-07-11）。** 基于对 `github.com/snaplink/sso`
+> 的又一轮多智能体全局复扫（六路视角 + 逐项对抗核验），从资深架构师 / PM
+> 视角列出下一阶段投入产出比最高的 5 个扩展方向。v5.0 的 37 项已全部收口
+> （见下节"自 v5.0 以来已落地"），v5.0 及更早为 superseded 历史，保留备查。
 >
 > 每项包含 **Why now**（这件事为什么比别的事更值得做）、**Scope**
 > （拆到可独立 PR 的颗粒度）、**Edge cases / 当前实现具体短板**、
@@ -13,7 +14,339 @@
 
 ---
 
-## v5.0（2026-06-11）—— 后端协议面收口后的下一阶段【取代 v4.0，以下为 superseded 历史】
+## v6.0（2026-07-11）—— 协议后端已"极完整"之后：认证合规化、产品化、韧性诚实化【取代 v5.0，以下 v5.0 为 superseded 历史】
+
+> 2026-07-11 对全代码库的又一次多智能体并行复扫：六路视角（协议规范符合性 /
+> 产品企业可售性 / 多副本一致性与 DR / 安全威胁模型 / 性能规模 / 研发质量与
+> 采购合规）各自独立成结论，再对**每一条**候选做对抗式核验（默认"它大概率已
+> 实现或已被 v5.0 波次落地"，逐项读码证伪）。**15 项候选全部通过核验为真缺口
+> 或部分缺口，0 项被驳回**——其中多项由代码库自己的 package doc 显式标注为
+> "out of scope (v2)"或计划性延期，佐证并非扫描遗漏。
+>
+> reframe：v5.0 把"后端协议面收口"作为主题；本轮确认**协议后端确已极完整**，
+> 但恰好停在**可认证 / 可售 / 可信 HA** 的最后一公里前。v6.0 的五方向不再是
+> "补更多协议原语"，而是：把深协议栈做到**能拿认证 listing**、把已建能力**包
+> 装成自助可售的产品面**、开一条 **VC 新赛道**、把 HA/DR 的宣称做到**与代码一
+> 致（诚实化）**、补上**采购安全问卷必答的纵深与供应链**。
+
+### 自 v5.0 以来已落地（grep / 代码核验，v5.0 五方向全部收口）
+
+v5.0 列为缺口或部分的 37 项，本轮在代码中确认**已全部交付**（其中 12 项在
+2026-07-11 的多智能体实现波次中落地，均通过预算 / 架构 / oracle-leak 门禁 +
+`-race`）：
+
+- **方向① 产品/consent**：`ConsentStore` SPI（memory + sqlite）+ `prompt=consent`
+  / 新 scope 重提示、"已授权应用"枚举/撤销；Hosted Login / Admin Console /
+  终端自助门户 SPA（`interfaces/web/{login,admin,portal}`）落地首批 panel。
+- **方向② B2B 企业化**：企业连接**运行时派发**——`/auth/login`
+  `provider=<connection id>` 经 `domains/connections.AuthenticatorFactory`
+  （静态 provider 名优先、跨租户守卫、未知/停用/跨租户/构建失败全部塌缩为同一
+  `unsupported_provider` 反枚举，失败详情仅入 `connection_authenticator_build_failed`
+  审计）；HRD；Okta JSON/NDJSON 迁移导入（bcrypt/PBKDF2 重组，不支持算法
+  fail-loud）；计量 `TenantUsage.ActiveClients` + 审计 `tenant_id` 过滤。
+- **方向③ OIDC/协议**：`claims` 参数端到端（`AuthCode.RequestedClaims` 贯穿全
+  store → ID token / access token 投影，PAR 透传，discovery 广告）等一组
+  conformance 单点。
+- **方向④ 多副本一致性**：失效总线 **re-seed-on-recovery**（先 resubscribe，
+  再 flush 缓存 + 对每个暴露 `SeedRevocations` seam 的 issuer 重播撤销 deny-set，
+  才清 degraded；re-seed 失败保持 degraded、`/readyz` 红、逐次 `reseed_failed`
+  审计）；etcd 签名密钥 registry `ReadyzCheck` 接入 `/readyz`；etcd LeaseID
+  fencing 语义注释纠正（ADVISORY，非跨 holder 单调）。
+- **方向⑤ 安全 / 性能 / 研发**：所有 X-Forwarded-* 消费点的
+  `security.trusted_proxies` CIDR **peer-trust 门**（`shared/security/peertrust`：
+  BaseURL / DPoP htu / mesh ext_authz / region resolver / mtls header / ratelimit
+  keying）；JAR + federation 抓取的 **dial 时 SSRF 防护**（`SSRFGuardedDialer`
+  阻断 DNS-rebind，错误串 oracle 稳定）；trust 评分器接线（`cfg.Trust` →
+  `WithTrustScorer` + anomaly→trust 适配器）；审计异步 `batch_size` →
+  `NewBatchAsyncSink`；dependabot 覆盖全部 14 个 go.mod。
+
+### 本轮 15 项 → 五方向归类
+
+协议规范 4、产品 4、多副本/DR 3、安全 3、性能 1（性能项并入文末清单）。下文
+五方向按"如果只能挑一件先做"的优先级排序；每条缺口锚定具体 `file:line`，均经
+对抗核验（0 项被驳回为"已实现"）。
+
+---
+
+**① 认证合规化：把已建的深协议栈做到"能拿 OIDF/开放银行认证 listing"**
+—— *P0。SSF/Federation/FAPI 的核心逻辑都已实现，缺的只是规范定义的最后一公里
+端点/策略 + CI 里的无头一致性套件。ROI 最高：小颗粒 M/L，直接解锁采购清单上的
+认证勾选项。*
+
+- **Why now**：本仓库的协议**后端**已极深（CAEP SET 签名/事件映射/重试/接收方
+  撤销、Federation 信任链校验/metadata policy/constraints、FAPI 骨架 + DPoP +
+  PAR + JARM + CIBA poll/ping 全在），但三处都**恰好停在可认证的控制面之前**，
+  而 OIDF 的 Shared Signals / Federation / FAPI 2.0 认证、以及英/巴西/沙特/澳
+  的开放银行 RFP，测的正是这层控制面与 alg 策略一致性。"OpenID Certified"是采
+  购的字面勾选框，且任何一个已声明 profile 的回归今天只能靠人肉重跑浏览器 UI
+  才能发现。
+- **Scope**：
+  - (a) **Shared Signals Framework 1.0 控制面**（L）：补
+    `/.well-known/ssf-configuration` transmitter 元数据 + Stream Management
+    API（创建/读/改/删 stream、加/减 subject）+ RFC 8936 poll 投递 +
+    verification events；今天 `shared/core/consts.go:406` 仅有 `PathSSFReceive`，
+    `protocols/caep/broadcaster.go:236-284` 是 push-only、endpoint 硬编码在
+    `Client.Attributes[caep_receiver_endpoint]`——`protocols/caep/doc.go:55-60`
+    自己把它列为 "Out of scope (v2)"。
+  - (b) **OpenID Federation 1.0 补齐到 intermediate/trust-anchor 级**（M）：
+    `mountFederationEndpoints`（`interfaces/sso/server_federation.go:294-317`）
+    今天只挂 entity-config + fetch；补 §8.2 `/list`、§8.3 `/resolve`、§8.4
+    `/trust_mark_status`、§8.5 historical keys——全是**在已实现的信任链/policy
+    逻辑上加端点**，解锁"自建联邦 / 做 trust anchor"部署故事（SPID/CIE、EUDI、
+    教育/医疗联邦替换 SAML metadata aggregate）。
+  - (c) **FAPI 2.0 + CIBA 认证缺口闭合**（M）：`protocols/fapi/` 今天无 alg 禁
+    用规则（`profile.go:54-84` 只有 par/pkce/sender-constrained 等），enforce
+    模式仍**广告**并接受 RS256（`securityverify.AsymmetricJWSAlgs` 含 RS256，
+    discovery override 不收窄 alg 列表 + auth-method 列表——见边界 E2/E3）；补
+    FAPI2 SP crypto 策略 + enforce 模式 discovery/runtime 一致性 + CIBA
+    push/user_code。
+  - (d) **无头一致性套件进 CI + 归档认证 artifact**（M，与研发质量交叉）：把
+    OIDC/FAPI/SSF conformance 做成 nightly 无头跑，回归即红——今天 11 个已声明
+    profile 的回归无自动门。
+- **Edge cases**：SSF stream 的 subject 增删必须租户隔离（E20）；Federation
+  `/resolve` 输出不得泄露未授权 metadata；FAPI enforce 收窄 alg 后要同步
+  discovery 的 `*_signing_alg_values_supported` 与 `token_endpoint_auth_methods_supported`，
+  否则 RP 元数据校验被误导（E3）。
+- **Sequencing**：(b) Federation 端点最独立（纯加端点，L→M）；(a) SSF 控制面复
+  用现成 SET/重试/撤销机具（L）；(c)(d) 咬合——先补 alg 策略与 discovery 一致
+  性，再让无头套件把它钉死。
+- **价值·工作量**：value **high**（认证 listing = 采购门票）· effort **M**
+  （多为"在已实现逻辑上加端点/策略"，非绿地）。
+
+---
+
+**② 产品化：把已落地的后端"包装成自助可售的 identity 平台"**
+—— *P0 收入面。v5.0 落地了企业连接**运行时**与首批 SPA，但每个企业上线仍需平
+台运维用 `admin:write` 代劳；FGA 有引擎无产品 API；SDK 只有 Go。这是"auth 库 →
+可被非 Go 团队采购的平台"的临门一脚。*
+
+- **Why now**：运行时刚落地（连接派发、HRD、跨租户守卫），但**自助**这一半仍
+  空：`protocols/selfservice/selfserviceaccount/orgadmin.go` 的委派面只到
+  members + invitations，无"客户 IT admin 自建 Okta/ADFS 连接 + 域名验证 + 品牌
+  化"（WorkOS Admin Portal / Auth0 self-service-SSO 的旗舰动作）；FGA 有
+  Zanzibar 引擎却只暴露一个 `admin:read` debug 端点
+  （`platform/lifecycle/rebac/handlers.go:15-27`，`docs/openapi.yaml:5188` 明说
+  "not a tuple-management CRUD surface"），唯一 tuple store 是 MemoryStore；管
+  理台只有 7 个 panel（`interfaces/web/admin/index.html:42-61`）覆盖 ~102 条
+  admin API 里的一小部分，break-glass / usage / connections / webhooks / keys /
+  governance 全是 grpcurl-only；SDK 生成器 `cmd/gensdk` 的 `coreSurface` 只白名
+  单了 239 个 operationId 里的 32 个。
+- **Scope**：
+  - (a) **自助企业 SSO 上线**（L）：委派给租户 admin 的 connection CRUD + 域名
+    所有权验证 + 品牌化，复用已有的 `requireTenantAdmin` 门与连接 Store，零平台
+    运维介入。
+  - (b) **FGA 产品化**（L）：`/api/v1/authz/check` + `/authz/tuples`（client-
+    credentials 门）+ 按仓库自身 SPI 教条补 sqlite `RelationTupleStore` peer +
+    list-objects + 变更 feed，达到 OpenFGA/SpiceDB 平价。
+  - (c) **管理台扩面**（XL）：按 demo 价值把 7-panel 扩向 break-glass（双人审
+    批）/ DR modes / hash-chain 审计验证 / per-tenant usage / webhook 死信重放 /
+    key rotation / RBAC 编辑器——骨架（auth/nav/CRUD/分页）已在 `app.js` 证明，
+    扩面是 panel 复制。
+  - (d) **GA 采纳计划**（M，与研发质量交叉）：拓宽 `coreSurface` 到全 admin/
+    SCIM/webhook 面 + 发布 TS/Python SDK 到 npm/PyPI + Go 公共 API 稳定性门
+    （镜像现成 buf-breaking 门的 apidiff）+ v1.0 里程碑 + Entra/Cognito 全量
+    （clients/groups/orgs/MFA enrollments）导入器。
+- **Edge cases**：委派面前端用短时 JWT 非长效 admin token（E12）；secret 永不
+  回显；最后一个 admin 的 TOCTOU（E7）；邀请 email 规范化 + per-org 邀请配额/限
+  流，否则平台 SMTP 变外发 spam relay（E8/E9）；FGA check 必须 fail-closed。
+- **Sequencing**：(a) 复用刚落地的连接运行时，最独立（L）；(b) FGA 引擎已在、
+  只加产品端点（L）；(c) 管理台 XL 但零后端起步、吃现成 REST；(d) SDK 拓面机
+  械、可持续推进。
+- **价值·工作量**：value **high** · effort **L→XL**（(a)(b) 两个 L 是最高 ROI，
+  建议先做）。
+
+---
+
+**③ 可验证凭证（VC）新赛道：OID4VCI 发行者 + SD-JWT VC + Token Status List（后续 OID4VP）**
+—— *P1 新 SKU。把 SSO 服务器变成凭证发行者，是现有加密机具上的一条新产品线，
+由 eIDAS 2.0 / EUDI 钱包合规驱动。*
+
+- **Why now**：全树对 `oid4vci|oid4vp|sd-jwt|credential_endpoint|wallet|status_list`
+  零命中——这个规范族**完全缺席**；`protocols/oidc/metadata.go` 的
+  `ProviderMetadata` 无 `credential_endpoint` / `credential_issuer` /
+  `credential_configurations_supported`。而 eIDAS 2.0 强制欧盟 RP 在 2026-2027
+  截止日接受 EUDI 钱包凭证，OIDF 跑 OID4VCI/VP 认证，竞品（Entra Verified ID /
+  Ping / Keycloak OID4VC 扩展）都在发行。要件都已具备——JWE
+  （`shared/security/jwe.go`）、pairwise subject（`shared/security/pairwise.go`）、
+  DPoP + PAR + 密钥轮换——缺的只是 credential 端点、jwt proof-of-possession、
+  `pre-authorized_code` grant、status-list 发布。（`docs/superpowers/plans/...
+  :71` 已把它标为计划性延期"re-evaluate in 2 quarters"——本轮到点重估。）
+- **Scope**：(a) OID4VCI 发行者最小闭环（credential 端点 + `pre-authorized_code`
+  grant + jwt proof）；(b) SD-JWT VC 选择性披露编码；(c) Token Status List 发布
+  + 撤销；(d) 后续 OID4VP 验证者（钱包出示）。
+- **Edge cases**：credential 绑定的 holder key 校验；status-list 的
+  cardinality/隐私（不可成为跨 RP 关联信道）；pre-authorized code 单用 + 防重放
+  复用现成 `DELETE RETURNING` 教条。
+- **Sequencing**：(a)→(b)→(c) 为发行侧一条链；(d) OID4VP 是独立后续。整体 XL，
+  故列 P1——是新产品线而非现有面的补齐。
+- **价值·工作量**：value **high**（新 SKU + 合规刚需）· effort **XL**。
+
+---
+
+**④ 多副本韧性"诚实化"：让 HA / DR 的宣称与代码一致**
+—— *P0/P1 韧性。今天多处"启用了但静默降级为 per-pod"，DR restore 静默丢失半个
+控制面。这不是加功能，是把已宣称的能力做到可信。*
+
+- **Why now**：三处"静默黑洞"：
+  - **DR snapshot 只覆盖 6 类**（clients/users/roles/assignments/menus/netpolicy，
+    `interfaces/snapshot/snapshot.go:36` `SchemaVersion="1"`）——**区域故障切换
+    restore 静默丢失租户组织 + residency/suspension 策略、每一条企业 IdP 连接、
+    以及所有 pairwise sub 映射**（最后一项是永久身份断裂：每个 RP 看到全新 sub、
+    账号链接不可恢复地断开）。
+  - **签名密钥不跨重启/故障切换续存**：pod 驱逐或滚动重启使该副本签发的所有未
+    过期 access token 失效（`WithEd25519Key` 持久化 seam 已在
+    `infrastructure/defaultimpl/ed25519_jwt_issuer.go:190-198`，但 cmd 从不
+    config 接线）；崩溃副本的 lease 过期**瞬间**全队撤下其 adopted verify key，
+    违反 widen-only 教条（E13）。
+  - **backend 奇偶不全 + operator 不拦静默降级**：多副本今天需 redis+postgres+
+    etcd 同时在场，任一缺腿即静默把某功能降级为 per-pod（**包括本周旗舰的企业连
+    接**）；`cluster.bus.backend=memory` 却能满足 coordinated-cutover /
+    cross-replica-revocation 的 fail-closed 启动门（`build_app_cluster.go:182-190`
+    只查 `bus!=nil`，E14）；redis 无 pub/sub `cluster.Bus`，mqtt bus 未 config
+    暴露（`infrastructure/mqtt/doc.go:15-31` 自己说明）。
+- **Scope**：(a) **snapshot schema v2**（L）：覆盖 tenants / connections /
+  pairwise subjects / MFA enrollments，经现成 `ErrUnsupportedRestore` seam 做
+  per-category 能力协商，密封机具已在；(b) **签名密钥续存**（M）：可选密封软件
+  密钥持久化（复用 snapshot sealer）+ EventKeysRemoved 的 widen-only 延迟 drop
+  （镜像 coordinated-rotation 的 deadline 延期）+ DR 公钥托管；(c) **HA backend
+  奇偶 + operator v2**（XL）：redis pub/sub `cluster.Bus` + 暴露 mqtt bus +
+  postgres/redis 连接 store + postgres refresh/metering backend，配 sso-operator
+  v2 拦截静默 per-pod 降级并调度 snapshot/DR 演练。
+- **Edge cases**：snapshot restore 必须发 `KindClientChange`/`KindDiscoveryReload`/
+  `KindAuthzPolicyChange` 总线失效，否则 peer 服务陈旧缓存到 TTL（E16）；
+  `KindTokenRevoked` 今天把**完整活 bearer** 写进 etcd keyspace，会进 DR 备份，
+  应改传 digest（E17）；redis 异步复制会在 Sentinel/Cluster 故障切换时复活已消费
+  的 auth code / 丢失 refresh-family kill（E18）。
+- **Sequencing**：(a) snapshot v2 最独立、身份断裂最痛，**先做**（L）；(b) 密钥
+  续存次之（M，seam 已在）；(c) backend 奇偶 + operator 是 XL 长跑。
+- **价值·工作量**：value **high**（"HA/DR"宣称的可信度）· effort **L→XL**
+  （snapshot v2 的 L 是最高 ROI 起点）。
+
+---
+
+**⑤ 安全纵深与供应链：采购安全问卷/红队复审的下一批必答**
+—— *P1 采购门。DB 泄露即全量 token 明文、检测不联动响应、供应链无 provenance
+——三条都是安全评审/政府采购的字面问项。*
+
+- **Why now**：
+  - **DB 泄露无遏制**：refresh token / auth code / device code 在每个持久 store
+    **逐字明文**作为查找键存储（`infrastructure/defaultimpl/sqlite/
+    refresh_tokens_schema.go:28` 裸 `token TEXT PRIMARY KEY` + 明文 INSERT；auth
+    code 同）——偷到 SQLite 文件/Redis 快照/DB 备份即拿到每个活 token，无需破解，
+    且 refresh-family 轮换检测被绕过（偷到的 token 就是存的值）。Okta/Auth0/
+    Keycloak 都 hash-at-rest。
+  - **检测不联动响应**：一个 critical `tokenanomaly` Finding（impossible travel，
+    `detect.go:55`）终止于 `FindingStore.Add` + 一个 metric hook，唯一消费者是只
+    读的 `GET /api/v1/admin/tokens/suspicious`——**看见了却不自动做任何事**，是红
+    队报告的头号 finding。
+  - **供应链无 provenance**：`slsa|provenance|attest` 全树零命中；`.goreleaser.yaml`
+    生成 SBOM 并签名却从不 attest，扫描器全非强制（critical CVE 照发）。EO
+    14028 / SSDF 要求 SLSA Build L3 provenance + 签名 SBOM attestation。
+- **Scope**：(a) **token 机密静态化**（XL）：查找键 HMAC-SHA256（部署级 pepper）
+  + 行 blob 可选信封加密，覆盖 refresh/authcode/device 及次级 secret（nonce /
+  requested_claims / amr / acr / sid 明文列，E22）；(b) **异常→遏制闭环**（L）：
+  opt-in 异步响应器（critical finding → CAEP session-revoked SET + refresh-family
+  `DeleteFamily` + 下次使用强制 step-up），**严格 OFF 同步 auth 路径**以保异常检
+  测不喂 auth 决策的不变式；(c) **供应链到 SLSA-provenance 级**（M）：build
+  provenance + SBOM attestation + 强制 vuln 门 + SHA-pin actions + 全 artifact
+  覆盖。
+- **Edge cases**：token hashing 要保持 oracle-leak 不变式（未知/已消费仍塌缩为
+  `invalid_grant`）；异常响应的 CAEP 撤销必须先解析租户再推，否则跨租户共享 sub
+  泄露撤销信号（E20）；redis 限流 fail-open 会被针对性 Redis DoS 关掉全部限流
+  （E21）。
+- **Sequencing**：(b) 异常→遏制闭环最独立、红队价值最高（L，复用 CAEP 发射器 +
+  撤销机具）；(c) 供应链多为流水线补齐（M）；(a) token 静态化 XL、跨切但采购可
+  售"defense-in-depth"。
+- **价值·工作量**：value **high** · effort **L→XL**（(b) 的 L 是最高 ROI 起点）。
+
+---
+
+### 边界情况 & 性能优化（持续清单，sprint-filler）
+
+> 颗粒度不足独立方向；每条锚定具体代码位置。本轮 36 边界 + 27 性能，摘其要。
+
+**性能 / 热路径**（本轮新发现，含 v5.0 性能方向未落地的三个 headline）
+
+- **验证过的 client-secret 摘要缓存**（高，M）：`client_credentials` M2M 是生产
+  最高 QPS grant，每请求跑 bcrypt（`server_token_clientauth.go:206` +
+  `shared/security/client_secret.go:19`）烧的是服务交互式登录的 CPU；补 opt-in
+  正向验证摘要缓存（SHA-256(client_id,secret) 命中即跳过 bcrypt），负结果永不缓
+  存以保 fail-closed，evict on rotate/update/`KindClientChange`——约 1000× 降本。
+- **SQLite 读池拆分**（高，M）：热 store 池 `SetMaxOpenConns(1)`
+  （`shareddb.go:44`）；WAL 原生支持 N reader + 1 writer，加第二个只读
+  `*sql.DB`（MaxOpenConns=NumCPU）供 Get/List/Inspect，写仍单连接，读吞吐倍增、
+  零语义变化。
+- **全流程 benchmark 套件 + per-backend 容量模型**（中，M）：今天大量热路径无
+  benchmark，无法回答"这个 backend 每秒扛多少"。
+- **`ClientStoreCache` 命中即 alloc-free**（中，M）：每次缓存命中深拷整个 client
+  （8 slice + JWKS + Attributes map，`servercache/server_client_cache.go:200-284`）
+  于 >1k QPS 路径；改为发不可变共享快照（copy-on-write）。
+- **`AsymmetricJWSAlgs()` 每次验证 alloc 新 map**（中，S）：
+  `jwks_verify.go:413` 每次返回新 6-entry map，DPoP/JAR/private_key_jwt 每请求都
+  调；换成冻结只读 lookup。
+- **CAEP 广播每 client-event 一个无界 goroutine + per-event `ListByTenant`**
+  （中，M）：`broadcaster.go:265-282` 租户级撤销对上千 client 生成上千并发签名+
+  HTTP goroutine；补 worker pool + 缓存 per-tenant receiver（`KindClientChange`
+  失效）。
+- **metering `Usage()` 每次 5 条串行 COUNT + `TopTenants` 无缓存 GROUP BY**
+  （中，M）：`domains/metering/sqlite/aggregator.go:69-159` 打的
+  `audit_events` 只有单列索引；补 `(tenant_id,type,ts_unix_ns)` 复合索引 + 每日
+  rollup / 短 TTL body 缓存。
+- **失效总线恢复"flush-the-world"**（中，M）：etcd bus Subscribe 总从当前 revision
+  起 watch（`platform/cluster/etcd/etcd.go:147` 无 WithRev），每次抖动触发全队冷
+  缓存 herd（`server_extensions.go:461-491`）；持久化 last-seen revision、只重放
+  漏掉的事件。
+- **SQLite 限流器每请求 BEGIN IMMEDIATE 写事务**（高，M）：
+  `interfaces/ratelimit/sqlite_limiter.go:49` 全局写锁串行化所有流量；批量/合并
+  或热桶移到 Redis 限流。
+- **SPA 资源在中间件栈外用 `http.FileServerFS`**（中，S）：`server_routes.go:462`
+  绕过 `WithCompression`，embed.FS 零 ModTime 压掉 Last-Modified——每次访问未压
+  缩重下全量；mount 时预算 gzip + 强 ETag。
+- 其余（redis pipeline `Issue`/`Consume` 折 RTT、refresh_tokens 无后台 GC、SCIM
+  list 全表扫、批量 introspect 串行验签、metrics 标签随 kid/tenant 单调增长等）
+  见完整清单。
+
+**安全 / 正确性边界**
+
+- **X-Forwarded-Host 租户解析仍无条件信首跳**（中，M）：
+  `domains/tenant/middleware.go:188` 未接 v5.0 落地的 `peertrust` CIDR 门，直连
+  origin 可伪造租户路由（E23）。
+- **审计 IP 富化信首跳 XFF**（中，M）：`platform/audit/handler_helpers.go:123`
+  取第一跳 XFF 写进 hash-chain 审计，攻击者可选源 IP 毒化取证归因（E24）；接
+  `peertrust` 记 `RealClientIP`。
+- **`/token` Idempotency-Key 在客户端认证前按裸 header 命中重放**（高，M）：
+  `interfaces/sso/server_token.go:49` 在 `authenticateTokenClient` 前跑、键为裸
+  header 值——任何调用者拿别的 client 的 key 就能领到那个 client 的 token 响应；
+  键绑定到已认证 `client_id`、仅认证后重放（E26）。
+- **device-verify `user_code` 无暴力节流**（中，M）：`server_device.go:253` 对攻
+  击者输入 `GetByUserCode` 无 per-bearer/IP 上限，user code 又短，敌意但已认证用
+  户可枚举劫持他人待授权（E19）。
+- **最后一个 admin 的 TOCTOU**（中，M）：`orgadmin.go:123-140` 先 `ListByTenant`
+  读、后 `Remove`，两个并发 DELETE 都看到对方仍在、都成功，组织永久无 admin
+  （E7）；需原子守卫或 per-tenant 串行化。
+- **discovery doc 缓存按攻击者变化的 Host 无界增长**（中，M）：
+  `server_discovery_config.go:68` 每 `requestBaseURL` 一条，`sync.Map` 仅同键再查
+  才淘汰——唯一 Host 洪泛涨到 OOM（E25）；加 max-entries/LRU 或 Host 白名单。
+- 其余（RFC 8628 device endpoint 未进 discovery、RAR 不进 introspection、
+  `prompt=create` 未识别、导入器静默导入不可登录用户、billing 过计数、CI
+  workflow 语法/CGO/skipDirs 门洞 E31-E33、九个 fuzz 靶无调度跑等）见完整清单。
+
+### 一句话优先级
+
+**①(认证合规化：SSF 控制面 + Federation resolve/list + FAPI2 alg 策略，一组
+M/L 直接换认证 listing) 与 ②(产品化：自助企业 SSO 上线 + FGA 产品 API 两个 L
+先行，管理台/SDK 长跑) 并行驱动"可售"面 → ④(韧性诚实化：snapshot schema v2 的
+L 最先，闭合区域故障切换的身份断裂黑洞；签名密钥续存次之) → ⑤(安全纵深：异常→
+遏制闭环 L 红队价值最高，供应链 provenance M，token 静态化 XL) → ③(VC 新赛道
+XL，新 SKU 但可延后到 eIDAS 截止日临近)。** 性能清单中**验证过的 client-secret
+摘要缓存**、**SQLite 读池拆分**、**SQLite 限流器每请求写事务**三项是高优先
+sprint-filler。**横切诚实说明**：本轮 0 项被驳回，多项由代码库 package doc 自己
+标注"out of scope (v2)"或计划延期——即协议后端确已极完整，v6.0 是"把已建能力做
+到可认证 / 可售 / 可信"的收口，而非补更多协议原语。
+
+---
+
+## v5.0（2026-06-11）—— 后端协议面收口后的下一阶段【已被 v6.0 取代；取代 v4.0，以下为 superseded 历史】
 
 > 2026-06-11 对全代码库的一次多智能体并行复扫：六路视角（协议 / 规模
 > 性能 / 多副本集群一致性 / 安全威胁模型 / 企业产品 / 研发体验与质量

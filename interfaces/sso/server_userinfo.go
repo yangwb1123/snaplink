@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"slices"
 
+	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/internal/auth/login"
 	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/core"
@@ -117,6 +118,25 @@ func (s *Server) handleMeshExtAuthz(ctx HandlerContext) {
 	tokenNoStoreHeaders(ctx)
 	if err := s.requireDeps(DepTokenIssuer); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrServerMisconfigured))
+		return
+	}
+
+	// Peer-trust gate: with trusted proxies configured, identity derivation
+	// is served ONLY to a direct peer inside the trusted CIDRs (the mesh
+	// sidecar / edge tier) — an untrusted caller must not be able to use
+	// this endpoint as a token-to-identity oracle. The DENY mirrors the
+	// EXACT challenge the ungated MeshAuthorize deny would emit (missing
+	// token → bare RFC 6750 §3.1 challenge, no error=; present-but-anything
+	// → invalid_token), so the gate's existence is not probeable by a header
+	// diff. Unset knob ⇒ no verdict in the context ⇒ legacy behavior,
+	// byte-identical.
+	if !middleware.ForwardedHeadersTrusted(ctx.Request()) {
+		if bearerToken(ctx.Request()) == "" {
+			setBearerChallenge(ctx, s.resolveIssuer(ctx), "", "")
+		} else {
+			setBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "The access token is invalid or expired")
+		}
+		ctx.ResponseWriter().WriteHeader(http.StatusUnauthorized)
 		return
 	}
 

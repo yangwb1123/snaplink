@@ -17,6 +17,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
+	"github.com/snaplink/sso/shared/security/peertrust"
 )
 
 // buildApp is pure server-assembly wiring: it reads config and constructs the
@@ -28,6 +29,12 @@ import (
 // conditional, error-wrap, defer/cleanup, and background-worker handoff.
 func buildApp(cfg *config.Config, logger spi.Logger) (builtApp *app, retErr error) {
 	b := &appBuilder{cfg: cfg, logger: logger}
+	// The peer-trust checker must exist before any wireXxx phase runs: the
+	// region resolver (wireDomains) and the mTLS header extractor (wireEdge)
+	// both take it as their trusted-proxies gate.
+	if err := b.wirePeerTrust(); err != nil {
+		return nil, err
+	}
 	// The shared Redis client + Postgres pool must exist before any store
 	// builder runs, since stores may select backend:redis (hot) or
 	// backend:postgres (durable).
@@ -117,6 +124,21 @@ func (b *appBuilder) warnHACoherence() {
 		"per_pod_stores", stuck)
 }
 
+// wirePeerTrust compiles security.trusted_proxies.cidrs ONCE into the
+// peertrust.Checker every proxy-header consumer shares. Unset knob leaves
+// b.peerTrust nil — every consumer then keeps its legacy first-hop-trust
+// behavior byte-identically. A bad CIDR fails boot loudly (same contract
+// as sso.WithTrustedProxies, which parses the SAME list later in
+// wireMTLSLockoutProxiesCORS).
+func (b *appBuilder) wirePeerTrust() error {
+	checker, err := peertrust.NewChecker(b.cfg.Security.TrustedProxies.CIDRs)
+	if err != nil {
+		return fmt.Errorf("trusted proxies: %w", err)
+	}
+	b.peerTrust = checker
+	return nil
+}
+
 // wireFoundation runs the kernel sub-builders (identity/signing, audit,
 // permissions, network) that the later phases depend on. wireNetwork populates
 // b.netCancel, so buildApp registers the on-failure cancel defer immediately
@@ -147,6 +169,11 @@ func (b *appBuilder) wireDomains() error {
 		return err
 	}
 	if err := b.wireAnomaly(); err != nil {
+		return err
+	}
+	// After wireAnomaly by construction: the trust scorers read the anomaly
+	// stores through composition-root adapters.
+	if err := b.wireTrustScoring(); err != nil {
 		return err
 	}
 	if err := b.wireTenant(); err != nil {

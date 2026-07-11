@@ -150,17 +150,15 @@ func (j *Ed25519JWTIssuer) Revoke(ctx context.Context, token string) error {
 }
 
 // SeedRevocations re-seeds the in-process revocation deny-set from the wired
-// RevocationStore (if any). Call it once at boot AFTER construction so a
-// revocation issued before a restart is honored again. nil store = no-op,
-// idempotent, safe alongside Validate (takes the write lock); already-expired
-// entries are skipped (prune-not-early).
+// RevocationStore (if any). Called at boot AFTER construction so a revocation
+// issued before a restart is honored again, AND on a live replica during
+// invalidation-bus recovery. nil store = no-op, idempotent, safe alongside
+// Validate; already-expired entries are skipped (prune-not-early). The write
+// lock is taken only around the in-memory merge — the store Load runs unlocked
+// so a live replica's Validate is never stalled behind store I/O
+// (seedRevokedFromStore).
 func (j *Ed25519JWTIssuer) SeedRevocations(ctx context.Context) error {
-	if j.revocationStore == nil {
-		return nil
-	}
-	j.revokedMu.Lock()
-	defer j.revokedMu.Unlock()
-	return seedRevokedFromStore(ctx, j.revoked, j.revocationStore)
+	return seedRevokedFromStore(ctx, &j.revokedMu, j.revoked, j.revocationStore)
 }
 
 // WithEd25519RevocationStore wires a durable RevocationStore so access-token

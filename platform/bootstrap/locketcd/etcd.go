@@ -164,7 +164,11 @@ func (h *handle) Release(ctx context.Context) error {
 	return nil
 }
 
-// FencingToken returns the etcd LeaseID, which is monotonic per cluster.
+// FencingToken returns the etcd LeaseID. It is ADVISORY (correlation in
+// logs/audit only): LeaseIDs embed the member id in their high bits and are
+// re-seeded across restarts, so they are NOT monotonic across holders — do
+// not build a <-comparison fence on this value (see the package doc and
+// lock.Lock's contract).
 func (h *handle) FencingToken() uint64 { return uint64(h.leaseID) }
 
 // Compile-time interface assertions.
