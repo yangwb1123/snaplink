@@ -216,4 +216,11 @@ func (b *appBuilder) wireWebSPAs() {
 		b.opts = append(b.opts, sso.WithDeveloperPortalFS(serverassets.DeveloperSubFS()))
 		logger.Info("developer portal UI enabled", "path", "/developer/")
 	}
+
+	// Serve the first-run setup wizard at /setup/ when opted in via config.
+	// The paired public setup endpoints self-gate on this too.
+	if cfg.SetupWizard.Enabled {
+		b.opts = append(b.opts, sso.WithSetupWizardFS(serverassets.SetupSubFS()))
+		logger.Info("setup wizard UI enabled", "path", "/setup/")
+	}
 }

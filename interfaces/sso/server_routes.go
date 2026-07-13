@@ -138,6 +138,8 @@ func (s *Server) mountMiddleware() {
 func (s *Server) mountCoreOAuthOIDC() {
 	s.router.GET(PathHealth, s.handleHealth)
 	s.router.GET(PathStatus, s.handleStatus)
+	s.router.GET(PathSetupStatus, s.handleSetupStatus)
+	s.router.POST(PathSetup, s.handleSetup)
 	s.router.GET(PathJWKS, s.handleJWKS)
 	s.mountDiscovery()
 	s.router.POST(PathLogin, s.handleLogin)
@@ -459,21 +461,22 @@ func (s *Server) buildProbeMux(inner http.Handler) http.Handler {
 	// SetWebSPAGateEnabled can hot-toggle it without a re-Mount. Nil FS
 	// (never wired via WithAdminConsoleFS) still means no mux entry at all.
 	if s.adminConsoleFS != nil {
-		mux.Handle(pathAdminConsolePrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(http.StripPrefix(pathAdminConsolePrefix, http.FileServerFS(s.adminConsoleFS)))))
+		mux.Handle(pathAdminConsolePrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(spaNoCache(http.StripPrefix(pathAdminConsolePrefix, http.FileServerFS(s.adminConsoleFS))))))
 	}
 	// Hosted login SPA (opt-in). Served from /login/ so the browser can
 	// reach the SPA while the JSON /auth/login endpoint remains at its
 	// existing path. Same live-gate treatment as the admin console above.
 	if s.hostedLoginFS != nil {
-		mux.Handle(pathHostedLoginPrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(http.StripPrefix(pathHostedLoginPrefix, http.FileServerFS(s.hostedLoginFS)))))
+		mux.Handle(pathHostedLoginPrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(spaNoCache(http.StripPrefix(pathHostedLoginPrefix, http.FileServerFS(s.hostedLoginFS))))))
 	}
 	// End-user self-service portal SPA (opt-in). Served from /portal/; it
 	// calls /me* over JSON with the user's own bearer. Same live-gate
 	// treatment as the admin console above.
 	if s.portalFS != nil {
-		mux.Handle(pathPortalPrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(http.StripPrefix(pathPortalPrefix, http.FileServerFS(s.portalFS)))))
+		mux.Handle(pathPortalPrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(spaNoCache(http.StripPrefix(pathPortalPrefix, http.FileServerFS(s.portalFS))))))
 	}
 	s.mountDeveloperPortalSPA(mux)
+	s.mountSetupWizardSPA(mux)
 	mux.Handle("/", inner)
 	return mux
 }

@@ -1,3 +1,15 @@
+// First-run gate: if the system has no administrator yet, bounce to the setup
+// wizard before showing the console login. No-op when the wizard is disabled
+// (GET /api/v1/setup/status then 404s) or already initialized. Runs before the
+// rest of the console boots so an operator opening /admin/ on a fresh install
+// lands on /setup/ automatically.
+(function () {
+  fetch('/api/v1/setup/status', { headers: { 'Accept': 'application/json' } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) { if (d && d.setup_required) { location.replace('/setup/'); } })
+    .catch(function () {});
+})();
+
 // ---- State ----
 var token = '';
 var currentPage = 'dashboard';

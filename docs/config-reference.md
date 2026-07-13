@@ -136,6 +136,12 @@ natively probe) via `sso.WithConnectionProber`. Each probe increments
 |---|---|
 | `self_service.consent.max_ttl` | Hard server-wide ceiling on consent grant lifetime (`WithConsentTTL`): every recorded grant gets `ExpiresAt = GrantedAt + max_ttl`, after which `GetConsent` treats it as absent and `/auth/login` re-prompts. `0` (default) = no server-enforced expiry — permanent until revoked. Independent of, and can only be tightened by, a client's own `consent_refresh_interval`. Requires `self_service.consent.backend` to be set. |
 
+## Setup Wizard (first-run onboarding)
+
+| Key | Effect |
+|---|---|
+| `setup_wizard.enabled` | `false` (default) — no `/setup/` surface exists (the endpoints 404). `true` serves the first-run wizard SPA at `/setup/` and enables the public `GET /api/v1/setup/status` + `POST /api/v1/setup`. While the system is uninitialized (no admin exists), the admin console (`/admin/`) redirects to `/setup/`, which provisions the first admin (username + password → `sso-admin` role) and an optional first application, then LOCKS (`POST /api/v1/setup` → `409 already_initialized`). Once any admin exists — whether created by the wizard OR seeded from config/bootstrap — the wizard reports `initialized` and `/admin/` loads normally, so "config has an admin → straight in; empty → wizard" falls out automatically. Requires the identity, permissions and `self_service.password` stores to be wired (the wizard writes to all three). |
+
 ## Redis (shared hot-store backend)
 
 One client (single/sentinel/cluster) fanned out to every `backend: redis` store.

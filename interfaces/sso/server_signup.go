@@ -2,9 +2,12 @@ package sso
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"slices"
 	"time"
 
+	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/protocols/selfservice"
@@ -226,4 +229,186 @@ func (s *Server) handleMyDataExport(ctx HandlerContext) {
 // handleMyAccountErase delegates to selfservice.HandleMyAccountErase.
 func (s *Server) handleMyAccountErase(ctx HandlerContext) {
 	selfservice.HandleMyAccountErase(s, ctx)
+}
+
+// --- First-run setup wizard (public, single-use) ---
+
+// PathSetupStatus / PathSetup are the public first-run setup-wizard endpoints.
+// Both self-gate on setupWizardFS: when the wizard is not wired
+// (setup_wizard.enabled=false) they 404, so a deployment that never opts in
+// exposes no setup surface at all.
+const (
+	PathSetupStatus = "/api/v1/setup/status" // GET, public
+	PathSetup       = "/api/v1/setup"        // POST, public, single-use
+)
+
+// setupAdminRoleCode / setupAdminClientID mirror the built-in bootstrap
+// defaults (platform/bootstrap/builtin) so a wizard-created admin is
+// indistinguishable from a config-seeded one: the sso-admin role carries
+// admin:* and is assigned under the empty client id that empty-aud admin
+// tokens present. setupMinPasswordLen is the floor the wizard also enforces
+// client-side.
+const (
+	setupAdminRoleCode  = "sso-admin"
+	setupAdminClientID  = ""
+	setupMinPasswordLen = 8
+	// errSetupAlreadyInitialized locks the wizard once an admin exists so it
+	// can never be replayed to plant a second/rogue admin. errSetupDisabled is
+	// the 404 body when the wizard was never enabled.
+	errSetupAlreadyInitialized = "already_initialized"
+	errSetupDisabled           = "not_found"
+)
+
+// setupWizardOn reports whether the first-run wizard is wired
+// (setup_wizard.enabled). The setup endpoints self-gate on it.
+func (s *Server) setupWizardOn() bool { return s.setupWizardFS != nil }
+
+// setupInitialized reports whether first-run setup is complete — i.e. an admin
+// already exists. It prefers the sso-admin role assignment (few rows) and
+// falls back to any-user-exists when no permissions provider is wired. Also
+// true when config/bootstrap seeded an admin, so "config has data -> straight
+// into the system, no wizard" falls out for free.
+func (s *Server) setupInitialized(ctx context.Context) bool {
+	if s.permissions != nil {
+		if as, err := s.permissions.ListAssignments(ctx, setupAdminClientID); err == nil {
+			for _, a := range as {
+				if slices.Contains(a.Roles, setupAdminRoleCode) {
+					return true
+				}
+			}
+		}
+	}
+	if s.userProvider != nil {
+		if us, err := s.userProvider.List(ctx); err == nil && len(us) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// handleSetupStatus serves GET /api/v1/setup/status — a public boolean probe
+// the admin console loads to decide whether to bounce to /setup/. Returns only
+// {initialized, setup_required} (no detail — anti-enumeration). 404s when the
+// wizard is disabled, so the console's redirect check is a no-op there.
+func (s *Server) handleSetupStatus(ctx HandlerContext) {
+	if !s.setupWizardOn() {
+		ctx.JSON(http.StatusNotFound, map[string]string{core.KeyError: errSetupDisabled})
+		return
+	}
+	done := s.setupInitialized(ctx.Request().Context())
+	ctx.JSON(http.StatusOK, map[string]any{"initialized": done, "setup_required": !done})
+}
+
+// setupRequest is the first-run wizard payload: the required first admin plus
+// an optional first application. Branding/issuer are server-config concerns
+// (server.issuer, tenant branding) and are intentionally not runtime-settable
+// here.
+type setupRequest struct {
+	Admin struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	} `json:"admin"`
+	Application *struct {
+		Name         string   `json:"name"`
+		RedirectURIs []string `json:"redirect_uris"`
+	} `json:"application"`
+}
+
+// handleSetup serves POST /api/v1/setup — the first-run provisioning call.
+// Public but SINGLE-USE: it creates the first admin (and an optional first
+// application), then locks — any later call 409s once an admin exists, so it
+// can never be replayed to plant a second admin. 404s when the wizard is off.
+func (s *Server) handleSetup(ctx HandlerContext) {
+	tokenNoStoreHeaders(ctx)
+	if !s.setupWizardOn() {
+		ctx.JSON(http.StatusNotFound, map[string]string{core.KeyError: errSetupDisabled})
+		return
+	}
+	reqCtx := ctx.Request().Context()
+	if s.setupInitialized(reqCtx) {
+		ctx.JSON(http.StatusConflict, map[string]string{core.KeyError: errSetupAlreadyInitialized})
+		return
+	}
+	var req setupRequest
+	if err := ctx.Bind(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidRequest))
+		return
+	}
+	if req.Admin.Username == "" || len(req.Admin.Password) < setupMinPasswordLen {
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidRequest))
+		return
+	}
+	if err := s.provisionFirstAdmin(reqCtx, req.Admin.Username, req.Admin.Password); err != nil {
+		s.logger.Error("setup: provision first admin failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
+		return
+	}
+	created := map[string]any{"admin": req.Admin.Username}
+	if req.Application != nil && req.Application.Name != "" {
+		if id, secret, err := s.provisionFirstClient(reqCtx, req.Application.Name, req.Application.RedirectURIs); err != nil {
+			// The admin is already provisioned; a failed optional app must not
+			// fail the whole setup — log and report the admin as created.
+			s.logger.Error("setup: provision first application failed", "error", err)
+		} else {
+			created["application"] = map[string]string{"client_id": id, "client_secret": secret}
+		}
+	}
+	s.logger.Info("first-run setup completed", "admin", req.Admin.Username)
+	ctx.JSON(http.StatusOK, map[string]any{"ok": true, "created": created})
+}
+
+// provisionFirstAdmin creates the first admin: the sso-admin role (idempotent),
+// the user, its password credential, and the role assignment — the same
+// sequence platform/bootstrap/builtin seeds, but with an operator-chosen
+// password instead of a generated one.
+func (s *Server) provisionFirstAdmin(ctx context.Context, username, password string) error {
+	if s.permissions == nil || s.userProvider == nil || s.passwordCredentialStore == nil {
+		return errors.New("setup: user, permissions and password stores must all be wired")
+	}
+	if err := s.permissions.AddRole(ctx, setupAdminClientID, permissions.Role{
+		Code:        setupAdminRoleCode,
+		Name:        "SSO Administrator",
+		Description: "Full admin:* scope across the control plane.",
+		Permissions: []string{AdminScope},
+	}); err != nil && !errors.Is(err, permissions.ErrRoleExists) {
+		return err
+	}
+	if err := s.userProvider.CreateOrUpdate(ctx, &core.User{ID: username, ExternalID: username, Provider: "password"}); err != nil {
+		return err
+	}
+	if err := s.passwordCredentialStore.SetPassword(ctx, username, password); err != nil {
+		return err
+	}
+	return s.permissions.AssignRoles(ctx, username, setupAdminClientID, []string{setupAdminRoleCode})
+}
+
+// provisionFirstClient registers the optional first application from the
+// wizard: a confidential client with a generated id + secret returned once so
+// the wizard can display them. Reuses the crypto-random auth-code helper.
+func (s *Server) provisionFirstClient(ctx context.Context, name string, redirectURIs []string) (string, string, error) {
+	if s.clientStore == nil {
+		return "", "", errors.New("setup: client store not wired")
+	}
+	id, err := generateAuthCodeBytes()
+	if err != nil {
+		return "", "", err
+	}
+	secret, err := generateAuthCodeBytes()
+	if err != nil {
+		return "", "", err
+	}
+	c := &core.Client{
+		ID:                    id,
+		Secret:                secret,
+		Name:                  name,
+		RedirectURIs:          redirectURIs,
+		AllowedScopes:         []string{"openid", "profile", "email"},
+		AllowedAuthenticators: []string{"password"},
+		TokenStrategy:         TokenStrategyJWT,
+		Active:                true,
+	}
+	if err := s.clientStore.Add(ctx, c); err != nil {
+		return "", "", err
+	}
+	return id, secret, nil
 }

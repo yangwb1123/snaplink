@@ -288,6 +288,8 @@ func coreEndpointCandidates() []endpointCandidate {
 	}{
 		{http.MethodGet, PathHealth},
 		{http.MethodGet, PathStatus},
+		{http.MethodGet, PathSetupStatus},
+		{http.MethodPost, PathSetup},
 		{http.MethodGet, PathJWKS},
 		{http.MethodGet, PathOIDCDiscovery},
 		{http.MethodGet, PathOAuthAuthorizationServerMetadata},

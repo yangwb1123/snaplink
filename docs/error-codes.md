@@ -57,6 +57,19 @@ exact emission site.
 
 ---
 
+## First-run setup (`/api/v1/setup*`, opt-in via `setup_wizard.enabled`)
+
+| Code                    | HTTP | Emitted when                                                                 | Client should                                   |
+|-------------------------|------|------------------------------------------------------------------------------|-------------------------------------------------|
+| `not_found`             | 404  | `GET /api/v1/setup/status` or `POST /api/v1/setup` while `setup_wizard.enabled=false` (no setup surface exists) | Not applicable — the wizard is disabled |
+| `already_initialized`   | 409  | `POST /api/v1/setup` after an admin already exists — the wizard is single-use and locks so it can't be replayed to plant a second admin | Stop; use `/admin/` to sign in and manage users |
+| `invalid_request`       | 400  | `POST /api/v1/setup` body fails to parse, or `admin.username`/`admin.password` (min 8 chars) missing | Fix the payload |
+| `internal_error`        | 500  | Provisioning the first admin failed (a store write errored)                  | Retry; check server logs                        |
+
+`GET /api/v1/setup/status` returns `{"initialized":bool,"setup_required":bool}` and is intentionally detail-free (anti-enumeration).
+
+---
+
 ## Authentication (`/auth/*`, `/userinfo`, `/logout`)
 
 | Code                                  | HTTP | Emitted when                                                       | Client should                              |

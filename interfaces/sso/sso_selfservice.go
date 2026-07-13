@@ -279,6 +279,14 @@ type selfServiceState struct {
 	// leaves /developer/ unmounted — byte-identical to a build without it.
 	developerPortalFS fs.FS
 
+	// setupWizardFS, when non-nil, serves the first-run setup-wizard SPA at
+	// /setup/. Wired by cmd only when setup_wizard.enabled. The paired public
+	// endpoints POST /api/v1/setup and GET /api/v1/setup/status self-gate on
+	// this field (they 404 when it is nil), so a deployment that never opts in
+	// exposes no setup surface. Nil (the default) leaves /setup/ unmounted —
+	// byte-identical to a build without it.
+	setupWizardFS fs.FS
+
 	// apiDocsUIHandler and apiDocsSpecHandler, when non-nil, serve the
 	// opt-in embedded API-documentation viewer (WithAPIDocsUI) at GET
 	// .../admin/docs (self-contained HTML) and GET .../admin/docs/openapi.json
@@ -439,5 +447,44 @@ func (s *Server) mountDeveloperPortalSPA(mux *http.ServeMux) {
 	if s.developerPortalFS == nil {
 		return
 	}
-	mux.Handle(pathDeveloperPortalPrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(http.StripPrefix(pathDeveloperPortalPrefix, http.FileServerFS(s.developerPortalFS)))))
+	mux.Handle(pathDeveloperPortalPrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(spaNoCache(http.StripPrefix(pathDeveloperPortalPrefix, http.FileServerFS(s.developerPortalFS))))))
+}
+
+// pathSetupWizardPrefix is the setup-wizard SPA's mount prefix (mirroring
+// pathDeveloperPortalPrefix so mountSetupWizardSPA's mux.Handle and StripPrefix
+// cannot drift apart).
+const pathSetupWizardPrefix = "/setup/"
+
+// WithSetupWizardFS serves the first-run setup-wizard SPA at /setup/ from the
+// provided filesystem (placed here rather than options_passwd.go, which is at
+// its line budget). It pairs with the public POST /api/v1/setup endpoint that
+// provisions the first admin — see handleSetup. Nil (the default) leaves
+// /setup/ unmounted AND makes the setup endpoints 404 — byte-identical to a
+// build without the wizard.
+func WithSetupWizardFS(setupFS fs.FS) Option {
+	return func(s *Server) { s.setupWizardFS = setupFS }
+}
+
+// mountSetupWizardSPA registers the setup-wizard SPA onto mux when wired,
+// exactly mirroring mountDeveloperPortalSPA. No-op when setupWizardFS is nil;
+// reachability of a mounted entry is gated LIVE by the WebSPA flag.
+func (s *Server) mountSetupWizardSPA(mux *http.ServeMux) {
+	if s.setupWizardFS == nil {
+		return
+	}
+	mux.Handle(pathSetupWizardPrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(spaNoCache(http.StripPrefix(pathSetupWizardPrefix, http.FileServerFS(s.setupWizardFS))))))
+}
+
+// spaNoCache wraps an embedded-SPA file handler so every response carries
+// Cache-Control: no-cache — the browser revalidates on each load instead of
+// serving a stale index.html/app.js from a prior deploy. Embedded assets carry
+// no Last-Modified/ETag (zero modtime), so without this a redeployed SPA can
+// keep running the old script until a manual hard refresh. Applied to every SPA
+// mount (admin/login/portal/developer/setup). http.FileServerFS never sets
+// Cache-Control itself, so the header set here survives to the response.
+func spaNoCache(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		h.ServeHTTP(w, r)
+	})
 }

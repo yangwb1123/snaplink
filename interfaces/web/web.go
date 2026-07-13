@@ -41,3 +41,13 @@ var PortalFS embed.FS
 //
 //go:embed developer
 var DeveloperFS embed.FS
+
+// SetupFS embeds the first-run setup-wizard SPA assets. Pass the
+// sub-filesystem (fs.Sub(SetupFS, "setup")) to sso.WithSetupWizardFS so the
+// SPA is served at /setup/. The wizard is a standalone browser client that
+// calls GET /api/v1/setup/status and POST /api/v1/setup to provision the first
+// administrator before any credential exists. Nil when not embedded — the
+// operator's cmd binary controls whether to wire it.
+//
+//go:embed setup
+var SetupFS embed.FS
