@@ -44,9 +44,13 @@ func tsBanner(title, version string) string {
 const tsRuntime = `export interface SSOClientOptions {
   /** Base URL of the snaplink/sso deployment, e.g. "https://sso.example.com". */
   baseUrl: string;
+  /** This application's registered client_id. Set it here so login(user, pass)
+   *  needs only credentials. */
+  clientId?: string;
   /** Injectable fetch (tests, non-global runtimes). Defaults to globalThis.fetch. */
   fetch?: typeof fetch;
-  /** Returns the bearer token for auth-required calls (getMe, revokeMySessions, ...). */
+  /** Returns the bearer token for auth-required calls (getMe, revokeMySessions, ...).
+   *  Omit it: after login() the SDK holds the access token and auto-attaches it. */
   getAccessToken?: () => string | undefined | Promise<string | undefined>;
 }
 
@@ -74,13 +78,67 @@ interface requestOptions {
 // GenerateTS closes it with the final "}\n".
 const tsClientHeader = `export class SSOClient {
   private readonly baseUrl: string;
+  private readonly clientId?: string;
   private readonly fetchImpl: typeof fetch;
   private readonly getAccessToken?: () => string | undefined | Promise<string | undefined>;
+  /** Access token captured by login(); auto-attached to auth-required calls. */
+  private token?: string;
 
   constructor(opts: SSOClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
+    this.clientId = opts.clientId;
     this.fetchImpl = opts.fetch ?? fetch;
-    this.getAccessToken = opts.getAccessToken;
+    // Default token source is the token login() captured, so getUserInfo() etc.
+    // work right after login without wiring anything.
+    this.getAccessToken = opts.getAccessToken ?? (() => this.token);
+  }
+
+  /** True once login() succeeded and a token is held. */
+  get isLoggedIn(): boolean {
+    return !!this.token;
+  }
+
+  /** The access token captured by login() (undefined before login/after logout). */
+  get accessToken(): string | undefined {
+    return this.token;
+  }
+
+  /**
+   * Password login: fills in the configured client_id and returns the auth
+   * info (access_token / id_token / refresh_token / ...) directly — no redirect.
+   * The token is captured internally so subsequent getUserInfo()/getMe() calls
+   * auto-attach it. This is the simplest integration:
+   *
+   *   const sso = new SSOClient({ baseUrl, clientId: "my-app" });
+   *   const auth = await sso.login(username, password);
+   *   const me = await sso.getUserInfo();
+   */
+  async login(
+    username: string,
+    password: string,
+    opts?: { clientId?: string; scope?: string[]; extraCredential?: Record<string, string> },
+  ): Promise<LoginResponse> {
+    const clientId = opts?.clientId ?? this.clientId;
+    if (!clientId) {
+      throw new SSOError(0, "invalid_request", "clientId is required (set it in the constructor or pass it to login)");
+    }
+    const resp = (await this.postLogin({
+      provider: "password",
+      client_id: clientId,
+      scope: opts?.scope ?? ["openid", "profile", "email"],
+      credential: { username, password, ...(opts?.extraCredential ?? {}) },
+    })) as LoginResponse;
+    if (resp && resp.access_token) this.token = resp.access_token;
+    return resp;
+  }
+
+  /** Clear the held token and best-effort revoke the server session. */
+  async logout(): Promise<void> {
+    try {
+      if (this.token) await this.postLogout({});
+    } finally {
+      this.token = undefined;
+    }
   }
 
   private async request<T>(method: string, path: string, opts: requestOptions = {}): Promise<T> {
