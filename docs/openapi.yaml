@@ -6261,6 +6261,65 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/sessions/linked/{subject}:
+    get:
+      tags: [admin]
+      summary: Cross-protocol session-hub query (every session, every protocol, for one subject).
+      description: |
+        Returns every session ANY protocol fanned out into for subject (core
+        + SAML today; more protocols later), grouped by global_sid, in ONE
+        call. Backed by platform/lifecycle/sessionhub: a global_sid ties
+        together the several protocol-specific artifacts a single login can
+        fan out into, so a logout on one protocol propagates to the other.
+        An unknown/never-linked subject is NOT an error — it returns an
+        empty linked_sessions array (governance read, never an existence
+        oracle). Admin-gated (admin:read). Always mounted (the session hub
+        is constructed unconditionally regardless of which optional
+        protocols end up wired).
+      operationId: getAdminLinkedSessions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: subject
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Cross-protocol sessions grouped by global_sid.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  subject: { type: string }
+                  total: { type: integer }
+                  linked_sessions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        global_sid: { type: string }
+                        legs:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              GlobalSID: { type: string }
+                              Protocol: { type: string, enum: [core, saml] }
+                              ExternalRef: { type: string }
+                              Subject: { type: string }
+                              CreatedAt: { type: string, format: date-time }
+        "400":
+          description: Missing subject.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/v1/admin/tokens/suspicious:
     get:
       tags: [admin]

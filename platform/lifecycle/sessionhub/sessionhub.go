@@ -97,6 +97,16 @@ var ErrEmptyGlobalSID = errors.New("sessionhub: empty global_sid")
 // know whether it terminated something real.
 var ErrUnknownGlobalSID = errors.New("sessionhub: unknown global_sid")
 
+// ErrLogoutInProgress is returned by Coordinator.Logout when gsid's
+// propagation is ALREADY in flight on this Coordinator — i.e. this call is a
+// bounced-back re-trigger (see Coordinator's inflight guard in
+// coordinator.go), not a fresh request. It is not a caller error: the
+// original, still-running call owns completing the propagation exactly
+// once; this is a safe, idempotent no-op signal so a future receiver wired
+// to call Logout again upon observing one of the OIDC/SAML fan-outs it
+// triggers cannot recurse into itself forever.
+var ErrLogoutInProgress = errors.New("sessionhub: logout already in progress for this global_sid")
+
 // globalSIDBytes matches the codebase's existing session-id entropy budget
 // (infrastructure/defaultimpl/memorystoreidentity uses 32 random bytes hex-
 // encoded for core.Session.ID); a global_sid is exactly as sensitive as a

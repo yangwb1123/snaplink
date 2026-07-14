@@ -13,3 +13,11 @@ type BackupSource interface {
 	// The caller manages file lifecycle (creation, cleanup, streaming).
 	BackupTo(ctx context.Context, destPath string) error
 }
+
+// PathAdminSessionsLinked is the cross-protocol session-hub admin query
+// (Cross-protocol Session Hub backlog item): every session (every protocol
+// a login fanned out into), grouped by global_sid, for one subject. GET,
+// admin:read — mirrors PathAdminTokenSubject's per-subject-view scope.
+// Relocated here (not consts_wire.go) because that file is at its per-file
+// line budget.
+const PathAdminSessionsLinked = "/admin/sessions/linked/:subject"

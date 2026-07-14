@@ -12,6 +12,7 @@ import (
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreoauth"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 )
@@ -218,6 +219,118 @@ func TestSubjectTokens_MissingSubject(t *testing.T) {
 	w := httptest.NewRecorder()
 	ctx := tpParamCtx{Context: core.NewContext(w, r), subject: ""}
 	HandleSubjectTokens(s, testLogger{}, ctx)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+// TestLinkedSessions_GroupsByGlobalSID exercises HandleLinkedSessions against
+// a REAL sessionhub.Coordinator over a REAL MemoryLinkStore (no mocks, per
+// AGENTS.md §0.5): a subject with TWO logins — one core-only, one that also
+// fanned out into SAML — must come back as two groups, each carrying exactly
+// its own legs, proving the flat ListBySubject rows are grouped by
+// global_sid rather than flattened into one bucket.
+func TestLinkedSessions_GroupsByGlobalSID(t *testing.T) {
+	c := sessionhub.NewCoordinator(nil, nil, nil, nil)
+	ctx := context.Background()
+
+	gsid1 := sessionhub.NewGlobalSID()
+	if err := c.Link(ctx, gsid1, sessionhub.ProtocolCore, "sess-1", "u1"); err != nil {
+		t.Fatalf("Link: %v", err)
+	}
+	gsid2 := sessionhub.NewGlobalSID()
+	if err := c.Link(ctx, gsid2, sessionhub.ProtocolCore, "sess-2", "u1"); err != nil {
+		t.Fatalf("Link: %v", err)
+	}
+	if err := c.Link(ctx, gsid2, sessionhub.ProtocolSAML, "sess-2", "u1"); err != nil {
+		t.Fatalf("Link: %v", err)
+	}
+	// A different subject's login must never appear in u1's result.
+	gsidOther := sessionhub.NewGlobalSID()
+	_ = c.Link(ctx, gsidOther, sessionhub.ProtocolCore, "sess-9", "someone-else")
+
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/admin/sessions/linked/u1", nil)
+	w := httptest.NewRecorder()
+	hctx := tpParamCtx{Context: core.NewContext(w, r), subject: "u1"}
+	HandleLinkedSessions(c, testLogger{}, hctx)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode %q: %v", w.Body.String(), err)
+	}
+	if out["subject"] != "u1" {
+		t.Fatalf("subject = %v, want u1", out["subject"])
+	}
+	if out["total"] != float64(2) {
+		t.Fatalf("total = %v, want 2 (two distinct global_sids)", out["total"])
+	}
+	groups, ok := out["linked_sessions"].([]any)
+	if !ok || len(groups) != 2 {
+		t.Fatalf("linked_sessions = %v, want 2 groups", out["linked_sessions"])
+	}
+	// Find the two-leg group (gsid2, core+SAML) and the one-leg group
+	// (gsid1, core-only); every leg's Subject/ExternalRef must be u1's own
+	// (LinkRecord carries no json tags, so field names serialize verbatim).
+	var sawTwoLegGroup, sawOneLegGroup bool
+	for _, g := range groups {
+		group, _ := g.(map[string]any)
+		legs, _ := group["legs"].([]any)
+		for _, l := range legs {
+			leg, _ := l.(map[string]any)
+			if leg["Subject"] != "u1" {
+				t.Fatalf("leaked a foreign leg into u1's groups: %+v", leg)
+			}
+		}
+		switch len(legs) {
+		case 2:
+			sawTwoLegGroup = true
+		case 1:
+			sawOneLegGroup = true
+		}
+	}
+	if !sawTwoLegGroup || !sawOneLegGroup {
+		t.Fatalf("want one 1-leg group (gsid1) and one 2-leg group (gsid2), got: %+v", groups)
+	}
+}
+
+// TestLinkedSessions_UnknownSubjectIsEmptyNotError: a subject with no
+// recorded legs is NOT an error — governance reads never leak
+// existence via a 404 (mirrors LinkStore.ListBySubject's own contract and
+// HandleSubjectTokens' counted=false fallback).
+func TestLinkedSessions_UnknownSubjectIsEmptyNotError(t *testing.T) {
+	c := sessionhub.NewCoordinator(nil, nil, nil, nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/admin/sessions/linked/ghost", nil)
+	w := httptest.NewRecorder()
+	hctx := tpParamCtx{Context: core.NewContext(w, r), subject: "ghost"}
+	HandleLinkedSessions(c, testLogger{}, hctx)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (unknown subject is not an error): %s", w.Code, w.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode %q: %v", w.Body.String(), err)
+	}
+	if out["total"] != float64(0) {
+		t.Fatalf("total = %v, want 0", out["total"])
+	}
+	groups, ok := out["linked_sessions"].([]any)
+	if !ok || len(groups) != 0 {
+		t.Fatalf("linked_sessions = %v, want an empty array (not null)", out["linked_sessions"])
+	}
+}
+
+// TestLinkedSessions_MissingSubject: an empty :subject is a 400, mirroring
+// HandleSubjectTokens' own validation.
+func TestLinkedSessions_MissingSubject(t *testing.T) {
+	c := sessionhub.NewCoordinator(nil, nil, nil, nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/admin/sessions/linked/", nil)
+	w := httptest.NewRecorder()
+	hctx := tpParamCtx{Context: core.NewContext(w, r), subject: ""}
+	HandleLinkedSessions(c, testLogger{}, hctx)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", w.Code)
 	}

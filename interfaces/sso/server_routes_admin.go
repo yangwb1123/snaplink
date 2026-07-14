@@ -162,11 +162,22 @@ func (s *Server) mountAdminAPILifecycle(api Router) {
 	if s.sessionMgr != nil {
 		api.GET(PathAdminSessions, s.handleAdminListSessions)
 	}
+	// Cross-protocol session-hub query: every session/protocol for one
+	// subject, grouped by global_sid. s.sessionHub is always non-nil
+	// (constructed unconditionally in NewServer), so always mounted.
+	api.GET(PathAdminSessionsLinked, s.handleAdminLinkedSessions)
 	// Credential-rotation governance inventory (opt-in WithCredentialRotation).
 	// Not mounted without a registry — byte-identical to a build without it.
 	if s.credentialRegistry != nil {
 		api.GET(PathAdminCredentials, s.handleAdminListCredentials)
 	}
+	s.mountAdminAPILifecycleExtra(api)
+}
+
+// mountAdminAPILifecycleExtra registers the rest of the lifecycle surface —
+// credential compromise-response, the event stream, CAP, and DR mode — split
+// out of mountAdminAPILifecycle to stay under the function-length budget.
+func (s *Server) mountAdminAPILifecycleExtra(api Router) {
 	// Emergency credential compromise-response (opt-in WithCredentialCompromise).
 	// admin:write via the default AdminMiddleware method-scope rule.
 	if s.credentialScheduler != nil {
@@ -431,6 +442,7 @@ func adminAPIEndpointCandidates() []endpointCandidate {
 		{endpointInfo{http.MethodPost, prefix + PathBackup, "admin_api"}, on(func(s *Server) bool { return len(s.backupSources) > 0 })},
 		{endpointInfo{http.MethodGet, prefix + PathAdminTokens, "admin_api"}, on(func(s *Server) bool { return s.adminTokenStore != nil })},
 		{endpointInfo{http.MethodGet, prefix + PathAdminSessions, "admin_api"}, on(func(s *Server) bool { return s.sessionMgr != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminSessionsLinked, "admin_api"}, func(s *Server) bool { return s.adminAPIGateOn() }},
 		{endpointInfo{http.MethodGet, prefix + PathAdminUserConsents, "admin_api"}, on(func(s *Server) bool { return s.consentStore != nil })},
 		{endpointInfo{http.MethodGet, prefix + PathAdminUserMFA, "admin_api"}, on(func(s *Server) bool { return s.mfaEnrollmentStore != nil })},
 		{endpointInfo{http.MethodGet, prefix + PathAdminUserLifecycle, "admin_api"}, on(func(s *Server) bool { return s.userLifecycleStore != nil && s.userProvider != nil })},

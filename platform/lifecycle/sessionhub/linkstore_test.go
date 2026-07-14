@@ -84,6 +84,50 @@ func TestMemoryLinkStore_EvictsOldestPastCapacity(t *testing.T) {
 	}
 }
 
+func TestMemoryLinkStore_ListBySubject(t *testing.T) {
+	t.Parallel()
+	store := NewMemoryLinkStore(0)
+	ctx := context.Background()
+
+	// user-1 fanned into two global_sids (e.g. two separate logins); user-2
+	// into one. ListBySubject must return every leg across ALL of user-1's
+	// global_sids, and must not leak user-2's rows.
+	_ = store.Link(ctx, LinkRecord{GlobalSID: "g1", Protocol: ProtocolCore, ExternalRef: "sess-1", Subject: "user-1"})
+	_ = store.Link(ctx, LinkRecord{GlobalSID: "g1", Protocol: ProtocolSAML, ExternalRef: "sess-1", Subject: "user-1"})
+	_ = store.Link(ctx, LinkRecord{GlobalSID: "g2", Protocol: ProtocolCore, ExternalRef: "sess-2", Subject: "user-1"})
+	_ = store.Link(ctx, LinkRecord{GlobalSID: "g3", Protocol: ProtocolCore, ExternalRef: "sess-3", Subject: "user-2"})
+
+	got, err := store.ListBySubject(ctx, "user-1")
+	if err != nil {
+		t.Fatalf("ListBySubject: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("ListBySubject(user-1) len = %d, want 3: %+v", len(got), got)
+	}
+	for _, rec := range got {
+		if rec.Subject != "user-1" {
+			t.Fatalf("ListBySubject(user-1) leaked a foreign row: %+v", rec)
+		}
+	}
+
+	got2, err := store.ListBySubject(ctx, "user-2")
+	if err != nil {
+		t.Fatalf("ListBySubject: %v", err)
+	}
+	if len(got2) != 1 || got2[0].GlobalSID != "g3" {
+		t.Fatalf("ListBySubject(user-2) = %+v, want exactly the g3 row", got2)
+	}
+}
+
+func TestMemoryLinkStore_ListBySubjectUnknownIsEmptyNotError(t *testing.T) {
+	t.Parallel()
+	store := NewMemoryLinkStore(0)
+	got, err := store.ListBySubject(context.Background(), "nobody")
+	if err != nil || got != nil {
+		t.Fatalf("ListBySubject unknown = (%v, %v), want (nil, nil)", got, err)
+	}
+}
+
 func TestNewGlobalSID_Unique(t *testing.T) {
 	t.Parallel()
 	a := NewGlobalSID()

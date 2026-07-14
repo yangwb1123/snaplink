@@ -183,6 +183,15 @@ func (s *Server) handleAdminListSessions(ctx HandlerContext) {
 	})
 }
 
+// handleAdminLinkedSessions serves GET /api/v1/admin/sessions/linked/:subject
+// (Cross-protocol Session Hub backlog item): every session, every protocol
+// (core + SAML today), grouped by global_sid, for one subject. s.sessionHub
+// is never nil (constructed unconditionally in NewServer — see sso.go), so
+// unlike handleAdminListSessions above this needs no nil-store guard.
+func (s *Server) handleAdminLinkedSessions(ctx HandlerContext) {
+	admin.HandleLinkedSessions(s.SessionHub(), s.logger, ctx)
+}
+
 // handleAdminListTokens returns the active admin bearer tokens.
 func (s *Server) handleAdminListTokens(ctx HandlerContext) {
 	if s.adminTokenStore == nil {

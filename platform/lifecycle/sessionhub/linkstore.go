@@ -35,6 +35,18 @@ type LinkStore interface {
 	// not an error, mirroring SAMLSessionIndex.ListBySubject.
 	List(ctx context.Context, gsid GlobalSID) ([]LinkRecord, error)
 
+	// ListBySubject returns every LinkRecord (across EVERY global_sid, every
+	// protocol leg) whose denormalized Subject equals subject — a flat,
+	// creation-ordered slice mirroring List's shape (grouping by GlobalSID,
+	// if wanted, is left to the caller; see interfaces/admin's
+	// HandleLinkedSessions). Backs the admin-facing cross-protocol session
+	// query: "every session, every protocol, for this user" has no other
+	// entry point today short of walking every known global_sid. A subject
+	// with no recorded legs returns (nil, nil) — not an error, mirroring
+	// List and SAMLSessionIndex.ListBySubject (the aspiration this
+	// interface originally only gestured at in this doc comment).
+	ListBySubject(ctx context.Context, subject string) ([]LinkRecord, error)
+
 	// DeleteAll drops every LinkRecord for gsid (the login is now logged out
 	// everywhere). A no-op when the global_sid is unknown.
 	DeleteAll(ctx context.Context, gsid GlobalSID) error
@@ -118,6 +130,30 @@ func (m *MemoryLinkStore) List(_ context.Context, gsid GlobalSID) ([]LinkRecord,
 	se := el.Value.(*sidEntry)
 	out := make([]LinkRecord, len(se.links))
 	copy(out, se.links)
+	return out, nil
+}
+
+// ListBySubject scans every tracked global_sid's legs for subject, returning
+// a flat, creation-ordered COPY (never the store's internal slices). Does
+// NOT touch LRU recency for the same reason List doesn't: an admin-facing
+// read shouldn't keep every scanned global_sid pinned in the store. O(total
+// legs) rather than O(1): unlike Link/List (keyed by the LRU index),
+// subject isn't indexed — this is an admin-query path, never the hot
+// Link/Logout path, so a full scan over DefaultLinkStoreCapacity's worth of
+// small per-gsid leg slices is an acceptable cost.
+func (m *MemoryLinkStore) ListBySubject(_ context.Context, subject string) ([]LinkRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var out []LinkRecord
+	for el := m.ll.Front(); el != nil; el = el.Next() {
+		se := el.Value.(*sidEntry)
+		for _, rec := range se.links {
+			if rec.Subject == subject {
+				out = append(out, rec)
+			}
+		}
+	}
 	return out, nil
 }
 

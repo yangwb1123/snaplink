@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
@@ -77,6 +78,71 @@ func HandleSubjectTokens(refresh oauth.RefreshTokenStore, log spi.Logger, ctx co
 	body["active_refresh_tokens"] = n
 	body["counted"] = true
 	ctx.JSON(http.StatusOK, body)
+}
+
+// linkedSessionGroup is one global_sid's fanned-out legs — the response
+// shape HandleLinkedSessions groups sessionhub.Coordinator.ListBySubject's
+// flat rows into. Grouping is presentation-layer only: LinkStore/Coordinator
+// stay flat (mirroring List's existing shape); this is the one place that
+// needs "one row per login, not per leg".
+type linkedSessionGroup struct {
+	GlobalSID string                  `json:"global_sid"`
+	Legs      []sessionhub.LinkRecord `json:"legs"`
+}
+
+// HandleLinkedSessions serves GET /api/v1/admin/sessions/linked/:subject —
+// the cross-protocol session-hub admin query (Cross-protocol Session Hub
+// backlog item): every session ANY protocol fanned out into for subject
+// (core + SAML today; more protocols later), grouped by global_sid, in ONE
+// call. Before this there was no single query for "every session, OIDC AND
+// SAML both, for user X" — only the per-protocol views (handleAdminListSessions
+// for core sessions unfiltered by subject, HandleSubjectTokens for refresh-
+// token counts). admin:read (GET, mirroring HandleSubjectTokens' scope).
+//
+// An unknown/never-linked subject is NOT an error — it returns an empty
+// linked_sessions array, exactly like HandleSubjectTokens' counted=false
+// fallback and LinkStore.ListBySubject's own "no legs ⇒ (nil, nil)"
+// contract: this is a governance read, not an existence oracle.
+func HandleLinkedSessions(hub *sessionhub.Coordinator, log spi.Logger, ctx core.HandlerContext) {
+	subject := strings.TrimSpace(ctx.Param("subject"))
+	if subject == "" {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+	records, err := hub.ListBySubject(ctx.Request().Context(), subject)
+	if err != nil {
+		log.Error("admin linked sessions lookup failed", "error", err, "subject", subject)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	grouped := groupLinkRecordsByGSID(records)
+	ctx.JSON(http.StatusOK, map[string]any{
+		core.KeyStatus:    core.StatusOK,
+		"subject":         subject,
+		"linked_sessions": grouped,
+		"total":           len(grouped),
+	})
+}
+
+// groupLinkRecordsByGSID groups a flat ListBySubject result by GlobalSID,
+// preserving first-seen order. Always returns a non-nil (possibly empty)
+// slice so an unknown subject serializes as "linked_sessions":[] rather than
+// null — the same "empty, not missing" shape HandleSubjectTokens'
+// counted=false path uses for an unsupported backend.
+func groupLinkRecordsByGSID(records []sessionhub.LinkRecord) []linkedSessionGroup {
+	order := make([]sessionhub.GlobalSID, 0, len(records))
+	byGSID := make(map[sessionhub.GlobalSID][]sessionhub.LinkRecord, len(records))
+	for _, rec := range records {
+		if _, ok := byGSID[rec.GlobalSID]; !ok {
+			order = append(order, rec.GlobalSID)
+		}
+		byGSID[rec.GlobalSID] = append(byGSID[rec.GlobalSID], rec)
+	}
+	out := make([]linkedSessionGroup, 0, len(order))
+	for _, gsid := range order {
+		out = append(out, linkedSessionGroup{GlobalSID: string(gsid), Legs: byGSID[gsid]})
+	}
+	return out
 }
 
 // defaultTokenExpiringHorizon is the ?before= default when the query param is

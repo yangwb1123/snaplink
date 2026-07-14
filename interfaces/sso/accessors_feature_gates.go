@@ -1,5 +1,20 @@
 package sso
 
+import (
+	"github.com/snaplink/sso/protocols/oauth/oauthspi"
+	"github.com/snaplink/sso/shared/core"
+)
+
+// CIBAPushNotifier exposes the optional CIBA push delivery notifier. Folded
+// into this file (rather than its own accessors_push.go) to keep
+// interfaces/sso at its frozen directory_fanout_test.go file-count ceiling.
+func (s *Server) CIBAPushNotifier() oauthspi.CIBAPushNotifier { return s.cibaPushNotifier }
+
+// PathAdminSessionsLinked re-exports core.PathAdminSessionsLinked (cross-
+// protocol session-hub admin query), folded in here for the same file-
+// budget reason as CIBAPushNotifier above.
+const PathAdminSessionsLinked = core.PathAdminSessionsLinked
+
 // seedFeatureGateLiveFlags seeds every *Live atomic.Bool (sso_wiring.go) from
 // the resolved s.featureGates BEFORE Mount() reads them via the matching
 // *GateOn method — split out of NewServer (sso.go) to keep that function

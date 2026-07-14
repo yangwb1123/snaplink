@@ -57,6 +57,24 @@ type Coordinator struct {
 	// goroutine than the one handling the first request.
 	mu   sync.RWMutex
 	saml SAMLLogoutTrigger
+
+	// inflightMu + inflight are the RE-ENTRANCY GUARD for Logout: the set of
+	// global_sids currently mid-propagation. Logout composes the OIDC BCL
+	// fan-out and the SAML SLO fan-out, each of which notifies EXTERNAL
+	// parties (relying parties / service providers) today — but this
+	// Coordinator is an intentionally general, reusable entry point (see
+	// package doc), and a future receiver on either protocol side (e.g. an
+	// operator wiring the SAML SP-side SLO receiver, or an OIDC back-channel
+	// logout receiver, to ALSO call Coordinator.Logout for the same
+	// global_sid instead of just destroying its own local session) would
+	// close a cycle back into THIS Coordinator. Without a guard, that bounce
+	// would re-run the full fan-out again — which itself fires the bounce a
+	// second time — recursing without bound. The guard is keyed on gsid (not
+	// global) so an unrelated concurrent Logout for a DIFFERENT global_sid is
+	// never blocked; only a re-entrant call for the SAME global_sid,
+	// already-in-flight, is turned into a safe no-op. See enterPropagation.
+	inflightMu sync.Mutex
+	inflight   map[GlobalSID]struct{}
 }
 
 // NewCoordinator builds a Coordinator. A nil links falls back to a fresh
@@ -70,7 +88,7 @@ func NewCoordinator(links LinkStore, core CoreSessionTerminator, oidc OIDCLogout
 	if logger == nil {
 		logger = spi.NopLogger{}
 	}
-	return &Coordinator{links: links, core: core, oidc: oidc, logger: logger}
+	return &Coordinator{links: links, core: core, oidc: oidc, logger: logger, inflight: make(map[GlobalSID]struct{})}
 }
 
 // SetSAMLTrigger wires (or clears, with nil) the SAML SLO fan-out mechanism.
@@ -114,6 +132,37 @@ func (c *Coordinator) Link(ctx context.Context, gsid GlobalSID, protocol Protoco
 	})
 }
 
+// ListBySubject returns every LinkRecord (both protocol legs, across every
+// login) recorded for subject — the read side of the admin-facing
+// cross-protocol session query (interfaces/admin's HandleLinkedSessions).
+// Delegates straight to the wired LinkStore; Coordinator adds no grouping of
+// its own, keeping this method's contract identical to
+// LinkStore.ListBySubject's flat, creation-ordered shape.
+func (c *Coordinator) ListBySubject(ctx context.Context, subject string) ([]LinkRecord, error) {
+	return c.links.ListBySubject(ctx, subject)
+}
+
+// enterPropagation marks gsid as currently being propagated by Logout,
+// returning false when it already is in flight (a bounced-back re-trigger —
+// see the inflight field's doc comment). Cleared by exitPropagation once the
+// owning Logout call's body completes, success or failure.
+func (c *Coordinator) enterPropagation(gsid GlobalSID) bool {
+	c.inflightMu.Lock()
+	defer c.inflightMu.Unlock()
+	if _, ok := c.inflight[gsid]; ok {
+		return false
+	}
+	c.inflight[gsid] = struct{}{}
+	return true
+}
+
+// exitPropagation clears gsid's in-flight marker (see enterPropagation).
+func (c *Coordinator) exitPropagation(gsid GlobalSID) {
+	c.inflightMu.Lock()
+	delete(c.inflight, gsid)
+	c.inflightMu.Unlock()
+}
+
 // Logout terminates every protocol leg linked to gsid:
 //  1. destroys the core Session leg(s) via CoreSessionTerminator.Destroy;
 //  2. triggers the OIDC Back-Channel Logout fan-out for the login's subject
@@ -135,6 +184,17 @@ func (c *Coordinator) Logout(ctx context.Context, gsid GlobalSID) error {
 	if gsid == "" {
 		return ErrEmptyGlobalSID
 	}
+	if !c.enterPropagation(gsid) {
+		// gsid's fan-out is already in flight on THIS Coordinator — a
+		// bounced-back re-trigger (see the inflight field's doc comment).
+		// Safe no-op: the in-flight call owns completing the propagation;
+		// recursing into the same fan-out again would either repeat it or,
+		// if the bounce is synchronous, recurse without bound.
+		c.logger.Info("sessionhub: Logout re-entered for an in-flight global_sid, ignoring", "global_sid", string(gsid))
+		return ErrLogoutInProgress
+	}
+	defer c.exitPropagation(gsid)
+
 	links, err := c.links.List(ctx, gsid)
 	if err != nil {
 		return err
