@@ -366,6 +366,13 @@ type Client struct {
 	// scheduled rotation would mass-rotate every pre-existing client the
 	// instant the feature is turned on.
 	SecretRotatedAt time.Time `json:"-" yaml:"-"`
+
+	// ClientTrustScore + ClientTrustSetAt bind the activity-derived client
+	// trust score (platform/lifecycle/clienttrust) to this record —
+	// additive, byte-identical until first scored. Zero SetAt means "never
+	// scored", not "distrusted"; cold start gets a neutral score, not this.
+	ClientTrustScore float64   `json:"client_trust_score,omitempty"`
+	ClientTrustSetAt time.Time `json:"client_trust_set_at,omitempty"`
 }
 
 // IsRedirectURIValid checks if the given redirect URI is registered.

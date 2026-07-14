@@ -61,6 +61,7 @@ func clientWriteArgs(c *sso.Client, secret, rat string) ([]any, error) {
 		c.BackchannelLogoutURI, c.SubjectType, c.SectorIdentifierURI,
 		c.FrontchannelLogoutURI, boolToInt(c.Federation), string(attrs),
 		unixNanoOrZero(c.SecretRotatedAt),
+		c.ClientTrustScore, unixNanoOrZero(c.ClientTrustSetAt),
 	}, nil
 }
 
@@ -96,6 +97,7 @@ type clientScanRow struct {
 	idtEncAlg, idtEncEnc, uiEncAlg, uiEncEnc               string
 	bclURI, subjectType, sectorURI, fclURI                 string
 	secretRotatedAtUnixNs                                  int64
+	clientTrustSetAtUnixNs                                 int64
 }
 
 // scanInto reads every column of the SELECT projection into the raw
@@ -114,6 +116,7 @@ func (r *clientScanRow) scanInto(s scanner) error {
 		&r.idtEncAlg, &r.idtEncEnc, &r.uiEncAlg, &r.uiEncEnc,
 		&r.bclURI, &r.subjectType, &r.sectorURI, &r.fclURI,
 		&r.federationInt, &r.attrsBlob, &r.secretRotatedAtUnixNs,
+		&r.c.ClientTrustScore, &r.clientTrustSetAtUnixNs,
 	)
 }
 
@@ -149,6 +152,12 @@ func (r *clientScanRow) scalars() {
 	// the 1970 epoch, which is NOT the same "unknown" sentinel.
 	if r.secretRotatedAtUnixNs != 0 {
 		c.SecretRotatedAt = time.Unix(0, r.secretRotatedAtUnixNs).UTC()
+	}
+	// 0 stays the zero time.Time ("never scored") — see
+	// core.Client.ClientTrustSetAt; time.Unix(0, 0) would otherwise decode
+	// to the 1970 epoch, which is NOT the same "unscored" sentinel.
+	if r.clientTrustSetAtUnixNs != 0 {
+		c.ClientTrustSetAt = time.Unix(0, r.clientTrustSetAtUnixNs).UTC()
 	}
 }
 

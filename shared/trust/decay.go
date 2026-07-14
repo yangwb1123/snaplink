@@ -70,11 +70,26 @@ func (c DecayConfig) Enabled() bool {
 // with no trust signal (TrustScore 0, TrustSetAt zero) yields 0, which the gate
 // reads as "no signal → allow", never "deny".
 func DecayedScore(sess core.Session, now time.Time, cfg DecayConfig) float64 {
-	base := ClampScore(sess.TrustScore)
-	if !cfg.Enabled() || sess.TrustSetAt.IsZero() {
+	return DecayValue(sess.TrustScore, sess.TrustSetAt, now, cfg)
+}
+
+// DecayValue is the primitive exponential-decay curve DecayedScore applies to
+// a core.Session's bound TrustScore/TrustSetAt pair, factored out so any OTHER
+// trust-scored entity with the same "score bound at an instant" shape (e.g.
+// platform/lifecycle/clienttrust's OAuth-client trust score) can reuse the
+// EXACT same math instead of re-deriving it — a client trust score just isn't
+// a core.Session, so it cannot call DecayedScore directly.
+//
+// score is the raw bound value, setAt the instant it was bound, now the
+// evaluation instant, and cfg the decay curve. Fail-open identically to
+// DecayedScore: an unconfigured cfg, a zero setAt, or now preceding setAt
+// (clock slew) all return score UNCHANGED (clamped to [0,1]).
+func DecayValue(score float64, setAt, now time.Time, cfg DecayConfig) float64 {
+	base := ClampScore(score)
+	if !cfg.Enabled() || setAt.IsZero() {
 		return base
 	}
-	elapsed := now.Sub(sess.TrustSetAt)
+	elapsed := now.Sub(setAt)
 	if elapsed <= 0 {
 		return base
 	}

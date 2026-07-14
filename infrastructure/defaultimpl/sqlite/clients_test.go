@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -573,5 +574,45 @@ func TestSQLiteClients_ValidateSecretRejectsInactive(t *testing.T) {
 	// matching the memory ordering).
 	if err := st.ValidateSecret(ctx, "deact", "nope"); err == nil {
 		t.Error("wrong secret on inactive client unexpectedly validated")
+	}
+}
+
+// TestSQLiteClients_ClientTrustFieldsRoundTrip locks the additive-migration
+// invariant for ClientTrustScore/ClientTrustSetAt (v3): a legacy client added
+// with neither field set reads back as "never scored" (zero score, zero
+// time — NOT a fabricated distrust signal), and a subsequent Update
+// persists a real score/timestamp pair losslessly, including sub-second
+// precision surviving the unix-nanos column encoding.
+func TestSQLiteClients_ClientTrustFieldsRoundTrip(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := newClientStore(t)
+
+	if err := st.Add(ctx, &sso.Client{ID: "trust1", Secret: "s", Active: true}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	fresh, err := st.Get(ctx, "trust1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if fresh.ClientTrustScore != 0 || !fresh.ClientTrustSetAt.IsZero() {
+		t.Errorf("newly added client must read as never-scored: %+v", fresh)
+	}
+
+	setAt := time.Date(2026, 1, 2, 3, 4, 5, 123456000, time.UTC)
+	fresh.ClientTrustScore = 0.37
+	fresh.ClientTrustSetAt = setAt
+	if err := st.Update(ctx, fresh); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	scored, err := st.Get(ctx, "trust1")
+	if err != nil {
+		t.Fatalf("Get after Update: %v", err)
+	}
+	if scored.ClientTrustScore != 0.37 {
+		t.Errorf("ClientTrustScore = %v, want 0.37", scored.ClientTrustScore)
+	}
+	if !scored.ClientTrustSetAt.Equal(setAt) {
+		t.Errorf("ClientTrustSetAt = %v, want %v", scored.ClientTrustSetAt, setAt)
 	}
 }

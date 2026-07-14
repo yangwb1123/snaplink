@@ -88,6 +88,17 @@ ALTER TABLE clients ADD COLUMN attributes                      TEXT    NOT NULL 
 		Version: 3,
 		SQL:     `ALTER TABLE clients ADD COLUMN secret_rotated_at INTEGER NOT NULL DEFAULT 0;`,
 	},
+	{
+		// v4: client_trust_score / client_trust_set_at back the rule-based
+		// client trust scorer (platform/lifecycle/clienttrust). Default 0
+		// on existing rows means every pre-migration client reads as
+		// "never scored" (client_trust_set_at == 0), never as an actively
+		// distrusted score of 0.0 — see core.Client.ClientTrustSetAt.
+		Version: 4,
+		SQL: `
+ALTER TABLE clients ADD COLUMN client_trust_score   REAL    NOT NULL DEFAULT 0;
+ALTER TABLE clients ADD COLUMN client_trust_set_at  INTEGER NOT NULL DEFAULT 0;`,
+	},
 }
 
 // ClientStore is the SQLite-backed [sso.ClientStore], including the
@@ -262,7 +273,8 @@ const clientInsertSQL = `
             idtoken_encrypted_response_alg, idtoken_encrypted_response_enc,
             userinfo_encrypted_response_alg, userinfo_encrypted_response_enc,
             backchannel_logout_uri, subject_type, sector_identifier_uri,
-            frontchannel_logout_uri, federation, attributes, secret_rotated_at
+            frontchannel_logout_uri, federation, attributes, secret_rotated_at,
+            client_trust_score, client_trust_set_at
         ) VALUES (
             ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?,
@@ -275,7 +287,8 @@ const clientInsertSQL = `
             ?, ?,
             ?, ?,
             ?, ?, ?,
-            ?, ?, ?, ?
+            ?, ?, ?, ?,
+            ?, ?
         )`
 
 func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
@@ -337,7 +350,8 @@ const clientUpdateSQL = `
             idtoken_encrypted_response_alg = ?, idtoken_encrypted_response_enc = ?,
             userinfo_encrypted_response_alg = ?, userinfo_encrypted_response_enc = ?,
             backchannel_logout_uri = ?, subject_type = ?, sector_identifier_uri = ?,
-            frontchannel_logout_uri = ?, federation = ?, attributes = ?, secret_rotated_at = ?
+            frontchannel_logout_uri = ?, federation = ?, attributes = ?, secret_rotated_at = ?,
+            client_trust_score = ?, client_trust_set_at = ?
         WHERE id = ?`
 
 func (s *ClientStore) Update(ctx context.Context, c *sso.Client) error {
@@ -432,7 +446,8 @@ func clientSelectAll() string {
         idtoken_encrypted_response_alg, idtoken_encrypted_response_enc,
         userinfo_encrypted_response_alg, userinfo_encrypted_response_enc,
         backchannel_logout_uri, subject_type, sector_identifier_uri,
-        frontchannel_logout_uri, federation, attributes, secret_rotated_at
+        frontchannel_logout_uri, federation, attributes, secret_rotated_at,
+        client_trust_score, client_trust_set_at
         FROM clients`
 }
 

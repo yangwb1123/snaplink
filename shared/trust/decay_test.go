@@ -154,3 +154,26 @@ func TestStepUpRequiredForTrust(t *testing.T) {
 		t.Fatalf("disabled cfg must fail-open (no challenge)")
 	}
 }
+
+// TestDecayValue_MatchesDecayedScore proves the DecayedScore/DecayValue
+// extraction is behavior-preserving: DecayedScore is now a thin wrapper
+// around the primitive DecayValue any OTHER "score bound at an instant"
+// entity (e.g. platform/lifecycle/clienttrust's client trust score) can
+// reuse without re-deriving the exponential curve.
+func TestDecayValue_MatchesDecayedScore(t *testing.T) {
+	t.Parallel()
+	cfg := trust.DecayConfig{Interval: 5 * time.Minute, Factor: 0.9}
+	sess := sessAt(0.8, decayBase)
+	now := decayBase.Add(17 * time.Minute)
+
+	fromSession := trust.DecayedScore(sess, now, cfg)
+	fromPrimitive := trust.DecayValue(sess.TrustScore, sess.TrustSetAt, now, cfg)
+	if fromSession != fromPrimitive {
+		t.Fatalf("DecayedScore = %v, DecayValue = %v — must match exactly", fromSession, fromPrimitive)
+	}
+
+	// Fail-open on a zero setAt (no caller needs a core.Session for this).
+	if got := trust.DecayValue(0.3, time.Time{}, now, cfg); got != trust.ClampScore(0.3) {
+		t.Errorf("DecayValue with zero setAt = %v, want raw score %v unchanged", got, trust.ClampScore(0.3))
+	}
+}
