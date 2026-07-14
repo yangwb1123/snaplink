@@ -195,6 +195,7 @@ func scanDocTableByHeader(file, headerLabel string) (map[string]bool, error) {
 // headed tables document (each self-describes as "SDK Go errors, not HTTP
 // wire codes" — a caller branches on them with errors.Is, so the doc lists
 // the Go IDENTIFIER itself, not a derived wire string):
+// domains/threataction (Active ITDR threat-policy store),
 // interfaces/ssoclient/rs (resource-server token validation),
 // shared/security/securityverify (outbound webhook signature verification),
 // and platform/audit/auditexport (bulk audit-export bundle build/verify).
@@ -202,7 +203,7 @@ func scanDocTableByHeader(file, headerLabel string) (map[string]bool, error) {
 // per-table (the tables don't share any identifier names in practice, so
 // this is simpler than threading a table->dir association through
 // scanDocTableByHeader for no extra safety).
-var sentinelTableDirs = []string{"interfaces/ssoclient/rs", "shared/security/securityverify", "platform/audit/auditexport"}
+var sentinelTableDirs = []string{"domains/threataction", "interfaces/ssoclient/rs", "shared/security/securityverify", "platform/audit/auditexport"}
 
 // TestSentinelErrorsDocumented is a secondary, smaller check alongside
 // TestErrorCodesDocumented: docs/error-codes.md's two "Sentinel"-headed
