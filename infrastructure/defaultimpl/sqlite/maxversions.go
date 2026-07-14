@@ -104,3 +104,12 @@ func ConsentMaxVersion() int { return migrate.MaxVersion(consentMigrations) }
 // RevocationsMaxVersion returns the highest migration version declared for
 // the revocations store (access-token revocation deny-set).
 func RevocationsMaxVersion() int { return migrate.MaxVersion(revocationMigrations) }
+
+// TrustedDeviceMaxVersion returns the highest migration version declared
+// for the trusted_devices store ("remember this device" MFA-skip grants).
+func TrustedDeviceMaxVersion() int { return 1 }
+
+// CIBAPushDeadLettersMaxVersion returns the highest migration version
+// declared for the ciba_push_deadletters store (CIBA Core §10.3 push
+// delivery failure replay queue).
+func CIBAPushDeadLettersMaxVersion() int { return 1 }
