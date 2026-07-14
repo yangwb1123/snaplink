@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/snaplink/sso/domains/threataction"
 	"github.com/snaplink/sso/domains/tokenusage"
 )
 
@@ -81,6 +82,11 @@ type Detector struct {
 	onFinding func(findingType, severity string)
 	// clock is overridable for deterministic tests. Defaults to time.Now.
 	clock func() time.Time
+
+	// threatExec is the optional Active ITDR executor that translates
+	// token-anomaly findings into security actions. Nil (default) = no-op,
+	// byte-identical to current behavior.
+	threatExec threataction.ThreatExecutor
 }
 
 // The Detector decorates a tokenusage.Store (forwarding Record/Query) and, when
@@ -154,6 +160,14 @@ func WithClock(c func() time.Time) Option {
 			d.clock = c
 		}
 	}
+}
+
+// WithThreatExecutor sets the optional threat executor that translates
+// token-anomaly findings into security actions (session suspension,
+// token family revocation, MFA step-up). Off-path, fail-open — a nil
+// executor (default) is byte-identical to current behavior.
+func WithThreatExecutor(exec threataction.ThreatExecutor) Option {
+	return func(d *Detector) { d.threatExec = exec }
 }
 
 // NewDetector builds a Detector wrapping next and emitting to findings.
@@ -328,6 +342,24 @@ func (d *Detector) Analyze(ctx context.Context) ([]Finding, error) {
 		}
 		if hook != nil {
 			hook(f.Type, string(f.Severity))
+		}
+
+		// Threat executor: convert Finding → Threat and dispatch
+		// off-path. Fail-open: errors are logged but never propagate.
+		if d.threatExec != nil {
+			threat := threataction.Threat{
+				Type:      f.Type,
+				Severity:  string(f.Severity),
+				SubjectID: f.SubjectID,
+				ClientID:  f.ClientID,
+				Evidence: map[string]string{
+					"token_thumbprint": f.Thumbprint,
+					"detail":           f.Detail,
+				},
+			}
+			// Execute fail-open: errors are silently dropped per the
+			// Active ITDR contract (never block detection sweep).
+			d.threatExec.Execute(ctx, threat, threataction.ThreatPolicy{})
 		}
 	}
 	return findings, firstErr
