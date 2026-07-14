@@ -10176,6 +10176,23 @@ components:
             credential `POST /me/devices/trust` returns — shown exactly
             once; capture it now. Never present on a plain (non-MFA, or
             trust_device unset) login response.
+        passkey_enrollment_recommended:
+          type: boolean
+          description: |
+            Advisory UX nudge — present (`true`) only when
+            `webauthn.passkey_policy.require_passkey` is enabled AND the
+            authenticated user has no registered WebAuthn credential.
+            NEVER blocks or degrades the login; absent entirely on a build
+            without the policy wired, or once the user has enrolled a
+            passkey. See `docs/config-reference.md`'s WebAuthn section.
+        passkey_recovery_allowed:
+          type: boolean
+          description: |
+            Advisory metadata accompanying `passkey_enrollment_recommended`
+            (present only alongside it) reporting whether
+            `webauthn.passkey_policy.passkey_recovery_allowed` is set, so
+            client UI knows whether to also offer a "lost your passkey?"
+            affordance.
 
     LoginDiscoveryResponse:
       type: object

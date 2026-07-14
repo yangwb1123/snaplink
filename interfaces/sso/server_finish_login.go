@@ -188,6 +188,7 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 	}
 	s.augmentDirectMintResponse(ctx, result, req, client, session, issuedSub, token, resp)
 	s.applyLoginResponseExtras(ctx, result, client.ID, resp)
+	s.applyPasskeyPolicySignal(ctx, result, client, resp)
 	ctx.JSON(http.StatusOK, resp)
 }
 

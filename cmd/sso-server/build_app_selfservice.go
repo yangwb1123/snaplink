@@ -280,6 +280,9 @@ func (b *appBuilder) wireWebAuthnMFA() error {
 	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-webauthn-sessions", webauthnSessions)
 
 	b.wireMFAEnrollment()
+	if err := b.wirePasskeyPolicy(); err != nil {
+		return err
+	}
 	// Authenticated self-service passkey registration over the SAME ceremony
 	// Helper, so a passkey added at /me/mfa/webauthn surfaces in /me/mfa and
 	// works at login. Bearer-bound (registers only to the caller's own account).

@@ -81,6 +81,53 @@ type WebAuthnConfig struct {
 	// RequestLargeBlobSupport opts into requesting largeBlob support
 	// DETECTION (not use) at registration. Default false — byte-identical.
 	RequestLargeBlobSupport bool `yaml:"request_large_blob_support"`
+
+	// PasskeyPolicy opts into the require-passkey enrollment-nudge policy: a
+	// non-blocking, advisory signal added to a successful /auth/login
+	// response when the authenticated user has not yet registered a passkey.
+	// See PasskeyPolicyConfig; the zero value (RequirePasskey false) is
+	// byte-identical to a build without this feature.
+	PasskeyPolicy PasskeyPolicyConfig `yaml:"passkey_policy"`
+}
+
+// PasskeyPolicyConfig configures the require-passkey enrollment-nudge policy
+// (domains/authenticators/passkeypolicy, sso.WithPasskeyPolicy). It NEVER
+// blocks or degrades login — a login that would qualify for the nudge still
+// mints tokens normally; the nudge is an EXTRA advisory field the client UI
+// may act on. Disabled by default (RequirePasskey false): an absent /
+// zero-value section wires nothing, byte-identical to a build without this
+// feature.
+type PasskeyPolicyConfig struct {
+	// RequirePasskey is the master switch. Requires webauthn.enabled=true
+	// (cmd fails loud at boot otherwise — nothing could ever register a
+	// passkey for the nudge to eventually satisfy).
+	RequirePasskey bool `yaml:"require_passkey"`
+
+	// PromptFrequency tunes the nudge cadence once RequirePasskey is on:
+	// "never" (suppress the nudge outright — stage the policy before turning
+	// on the UX prompt), "once" (default: nudge every login while the user
+	// has no passkey), or "periodic" (additionally consult the wired
+	// trust.TrustScorer, sso.WithTrustScorer — a low-risk login is throttled,
+	// a high-risk login always nudges; no scorer wired, or a scoring error,
+	// degrades to "once" behavior — fail-open toward MORE nudging, never
+	// toward blocking the login). An empty value defaults to "once"; any
+	// OTHER unrecognized value fails loud at boot (a typo must not silently
+	// misbehave). See domains/authenticators/passkeypolicy's package doc for
+	// the PRECISION NOTE on how "has a passkey" is currently determined
+	// (this build has no credProps/discoverable-credential capture, so the
+	// check is coarser than the field name implies: any registered WebAuthn
+	// credential counts, not only a discoverable/resident-key one).
+	PromptFrequency string `yaml:"passkey_prompt_frequency"`
+
+	// RecoveryAllowed is advisory metadata echoed alongside the nudge signal
+	// so client UI knows whether to also offer a "lost your passkey?"
+	// affordance. This config enforces no recovery flow itself — the
+	// recommended recovery path is the EXISTING self-service recovery-code
+	// (surfaced at login as the MFA "recovery" method) followed by WebAuthn
+	// re-registration (POST /me/mfa/webauthn/{begin,finish}); see
+	// domains/authenticators/passkeypolicy's package doc for the
+	// passwordless-only gap that reuse does NOT close.
+	RecoveryAllowed bool `yaml:"passkey_recovery_allowed"`
 }
 
 // WebAuthnAttestationConfig configures authenticator attestation for

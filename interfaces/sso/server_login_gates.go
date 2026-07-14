@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/snaplink/sso/domains/authenticators/passkeypolicy"
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/internal/auth/login"
 	"github.com/snaplink/sso/platform/audit"
@@ -396,6 +397,88 @@ func (s *Server) checkLoginDeadline(ctx HandlerContext, state string) bool {
 	if err := ctx.Request().Context().Err(); err != nil {
 		ctx.JSON(http.StatusGatewayTimeout, s.authzErrorBodyWithState(ctx, core.ErrInteractionRequired, state))
 		return true
+	}
+	return false
+}
+
+// keyPasskeyEnrollmentRecommended / keyPasskeyRecoveryAllowed key the
+// advisory require-passkey nudge fields on a successful /auth/login
+// response (see applyPasskeyPolicySignal). Package-local rather than routed
+// through shared/core's wire-key consts (that file is near its own line
+// budget) — mirrors this file's keyHRConnectionRequired precedent.
+const (
+	keyPasskeyEnrollmentRecommended = "passkey_enrollment_recommended"
+	keyPasskeyRecoveryAllowed       = "passkey_recovery_allowed"
+)
+
+// WithPasskeyPolicy wires the require-passkey enrollment-nudge policy
+// (domains/authenticators/passkeypolicy): when Policy.RequirePasskey is
+// true, a successful /auth/login response for a user with no enrolled
+// passkey carries an advisory passkey_enrollment_recommended field (see
+// applyPasskeyPolicySignal) — a pure UX nudge that NEVER blocks or degrades
+// the login that already succeeded. The zero value (RequirePasskey false,
+// the default) is byte-identical to a build without this feature. Requires
+// an MFAEnrollmentStore (WithMFAEnrollmentStore) to read the user's
+// registered factors; without one the nudge never fires (no factor data to
+// check — fail-open, same as every other missing-signal case in this file).
+func WithPasskeyPolicy(policy passkeypolicy.Policy) Option {
+	return func(s *Server) { s.passkeyPolicy = policy }
+}
+
+// applyPasskeyPolicySignal adds the advisory require-passkey nudge to a
+// successful direct-mint login response. Complete no-op — zero factor
+// lookups, zero risk-scorer calls — unless RequirePasskey is on AND an
+// MFAEnrollmentStore is wired, so a build without WithPasskeyPolicy pays no
+// cost and stays byte-identical. Called from finishLoginDirectMint; the
+// authorization_code branch returns only {code, iss} (no token yet, the RP
+// exchanges the code later at /token) so it carries no nudge field — a
+// client on that flow can still poll the existing GET /me/mfa view.
+func (s *Server) applyPasskeyPolicySignal(ctx HandlerContext, result *AuthResult, client *Client, resp map[string]any) {
+	if !s.passkeyPolicy.RequirePasskey || s.mfaEnrollmentStore == nil {
+		return
+	}
+	signals := passkeypolicy.Signals{
+		HasDiscoverableCredential: s.hasEnrolledPasskey(ctx.Request().Context(), result.UserID),
+	}
+	if s.passkeyPolicy.PromptFrequency == passkeypolicy.PromptPeriodic {
+		signals.RiskScore, signals.RiskKnown = s.passkeyLoginRisk(ctx, result, client)
+	}
+	if !passkeypolicy.Decide(s.passkeyPolicy, signals) {
+		return
+	}
+	resp[keyPasskeyEnrollmentRecommended] = true
+	if s.passkeyPolicy.RecoveryAllowed {
+		resp[keyPasskeyRecoveryAllowed] = true
+	}
+}
+
+// passkeyMFAMethod is domains/authenticators/webauthn.MethodWebAuthn's wire
+// value ("webauthn"), duplicated here rather than imported: that package
+// already imports interfaces/sso (the root Server type + With* options god-
+// package fan-in — see architecture_layer_test.go's layerExemptions), so
+// importing it back would cycle. Mirrors this file's passwordProviderName
+// precedent (server_login_client.go) for the identical reason.
+const passkeyMFAMethod = "webauthn"
+
+// hasEnrolledPasskey reports whether userID already has a registered
+// WebAuthn factor. See domains/authenticators/passkeypolicy's package-doc
+// PRECISION NOTE: without credProps/discoverable-credential capture wired,
+// this is the best available proxy for "has a passkey" — ANY registered
+// WebAuthn credential counts, including one enrolled purely as a second
+// factor. A store error is treated as false (no known credential) rather
+// than suppressing the nudge: the cost of a spurious nudge is a UX
+// annoyance, never a security or availability regression, so this
+// deliberately does NOT fail toward silence on an outage.
+func (s *Server) hasEnrolledPasskey(ctx context.Context, userID string) bool {
+	factors, err := s.mfaEnrollmentStore.ListFactors(ctx, userID)
+	if err != nil {
+		s.logger.Error("passkey policy: list mfa factors failed; nudging conservatively", "error", err, "user", userID)
+		return false
+	}
+	for _, f := range factors {
+		if f.Method == passkeyMFAMethod {
+			return true
+		}
 	}
 	return false
 }

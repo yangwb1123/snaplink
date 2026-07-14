@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"strings"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -13,6 +14,7 @@ import (
 	"github.com/snaplink/sso/config"
 	configetcd "github.com/snaplink/sso/config/etcd"
 	configreload "github.com/snaplink/sso/config/reload"
+	"github.com/snaplink/sso/domains/authenticators/passkeypolicy"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/tracing"
 	"github.com/snaplink/sso/shared/spi"
@@ -216,4 +218,33 @@ func (b *appBuilder) wireWebSPAs() {
 		b.opts = append(b.opts, sso.WithDeveloperPortalFS(serverassets.DeveloperSubFS()))
 		logger.Info("developer portal UI enabled", "path", "/developer/")
 	}
+}
+
+// wirePasskeyPolicy translates cfg.WebAuthn.PasskeyPolicy into
+// sso.WithPasskeyPolicy. Called from wireWebAuthnMFA (build_app_selfservice.go,
+// at its own line budget) — placed here for the free line budget, not
+// topical grouping. An invalid passkey_prompt_frequency fails loud at boot (a
+// typo in an enum knob must not silently misbehave) rather than silently
+// degrading to "once" — only a WHOLLY ABSENT value degrades, not a
+// misspelled one. Off (RequirePasskey=false, the default) wires nothing —
+// byte-identical to a build without the feature.
+func (b *appBuilder) wirePasskeyPolicy() error {
+	pp := b.cfg.WebAuthn.PasskeyPolicy
+	if !pp.RequirePasskey {
+		return nil
+	}
+	if !b.cfg.WebAuthn.Enabled {
+		return errors.New("webauthn.passkey_policy.require_passkey is set but webauthn.enabled is false — nothing could ever register a passkey")
+	}
+	freq := passkeypolicy.PromptFrequency(strings.ToLower(strings.TrimSpace(pp.PromptFrequency)))
+	if freq != "" && !freq.Valid() {
+		return fmt.Errorf("webauthn.passkey_policy.passkey_prompt_frequency %q invalid (want never|once|periodic)", pp.PromptFrequency)
+	}
+	b.opts = append(b.opts, sso.WithPasskeyPolicy(passkeypolicy.Policy{
+		RequirePasskey:  true,
+		PromptFrequency: freq,
+		RecoveryAllowed: pp.RecoveryAllowed,
+	}))
+	b.logger.Info("passkey enrollment policy enabled", "prompt_frequency", string(freq), "recovery_allowed", pp.RecoveryAllowed)
+	return nil
 }

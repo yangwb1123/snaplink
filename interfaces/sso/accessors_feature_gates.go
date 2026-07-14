@@ -183,3 +183,25 @@ func (s *Server) deliverCIBAPush(authReqID string) {
 		s.logger.Error("ciba push delivery failed", "auth_req_id", authReqID, "client_id", client.ID, "error", err)
 	}
 }
+
+// passkeyLoginRisk resolves the derived risk (1 - trust score) for this
+// login when a trust.TrustScorer is wired (WithTrustScorer), reusing the
+// SAME buildTrustSignals the conditional-access gate builds — one signal
+// source, two independent consumers. known=false when no scorer is wired or
+// it errored; the caller (applyPasskeyPolicySignal, server_login_gates.go —
+// relocated here to stay under that file's maintainability line budget) via
+// passkeypolicy.Decide degrades PromptPeriodic to PromptOnce behavior in
+// that case (fail-open: absence of a risk signal means keep nudging, never
+// stop).
+func (s *Server) passkeyLoginRisk(ctx HandlerContext, result *AuthResult, client *Client) (risk float64, known bool) {
+	if s.trustScorer == nil {
+		return 0, false
+	}
+	signals := s.buildTrustSignals(ctx, result, client)
+	score, err := s.trustScorer.Score(ctx.Request().Context(), signals)
+	if err != nil {
+		s.logger.Error("passkey policy: trust scorer failed; degrading to once behavior", "error", err, "user", result.UserID)
+		return 0, false
+	}
+	return 1 - score.Value, true
+}

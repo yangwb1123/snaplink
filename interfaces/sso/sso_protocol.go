@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/anomaly"
+	"github.com/snaplink/sso/domains/authenticators/passkeypolicy"
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/domains/tokenanomaly"
@@ -89,6 +90,13 @@ type protocolState struct {
 	// conditionalaccess.PostureUnknown — the engine's existing conservative
 	// default for a device that never reports.
 	deviceFingerprint conditionalaccess.DeviceFingerprint
+
+	// passkeyPolicy is the optional require-passkey enrollment-nudge policy
+	// (WithPasskeyPolicy, domains/authenticators/passkeypolicy). Zero value
+	// (RequirePasskey false) is a complete no-op: applyPasskeyPolicySignal
+	// short-circuits and the login response carries no extra field —
+	// byte-identical to a build without this feature.
+	passkeyPolicy passkeypolicy.Policy
 
 	// sessionTrust holds the zero-trust session-trust-decay wiring
 	// (WithSessionTrustDecay, Direction 3 Phase 3). Its zero value (decay
