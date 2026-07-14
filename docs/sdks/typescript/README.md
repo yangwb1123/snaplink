@@ -42,10 +42,13 @@ as `coreSurface` in `cmd/gensdk/operations.go`:
   pass to keep the generator (and this README's promise about what it
   covers) honest and reviewable in one sitting.
 
-Every method name is the operation's `operationId` **verbatim** (e.g.
-`client.postToken(...)`, `client.getUserInfo()`) — no derived/shortened
+Every generated method name is the operation's `operationId` **verbatim**
+(e.g. `client.postToken(...)`, `client.getUserInfo()`) — no derived/shortened
 aliasing — so a call site is grep-able straight back to its
-`docs/openapi.yaml` operation.
+`docs/openapi.yaml` operation. The one exception is `login()`/`logout()`
+(plus the `isLoggedIn`/`accessToken` getters): hand-written convenience
+wrappers around `postLogin`/`postLogout`, not generated from an operationId —
+see Usage below.
 
 ## Known simplifications in the generator
 
@@ -68,6 +71,29 @@ aliasing — so a call site is grep-able straight back to its
   with an identical schema, and the client always sends JSON.
 
 ## Usage
+
+### Simplest integration: direct password login, no redirect
+
+For a frontend that owns its own login form and just wants tokens back —
+set `clientId` once, call `login(username, password)`:
+
+```ts
+import { SSOClient } from "./client";
+
+const client = new SSOClient({ baseUrl: "https://sso.example.com", clientId: "my-app" });
+
+const auth = await client.login(username, password);
+if (!client.isLoggedIn) {
+  // auth is a MFARequiredResponse (auth.error === "mfa_required") — no token
+  // yet; complete the second leg via postMFAComplete(...) before proceeding.
+} else {
+  const me = await client.getUserInfo(); // access token auto-attached
+}
+
+await client.logout();
+```
+
+### Authorization-code exchange + manual token storage
 
 ```ts
 import { SSOClient, SSOError } from "./client";
@@ -97,4 +123,5 @@ try {
 `SSOClientOptions.fetch` lets you inject a non-global `fetch`
 implementation (tests, older Node). Any method whose operation requires a
 bearer (`security: [bearerAuth]` in the spec) calls `getAccessToken()`
-first and sends `Authorization: Bearer <token>` when it returns one.
+first and sends `Authorization: Bearer <token>` when it returns one — the
+`login()` path above supplies this automatically without any wiring.
