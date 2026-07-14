@@ -191,6 +191,83 @@ func (f CIBAPingNotifierFunc) Notify(ctx context.Context, clientID, authReqID, c
 	return f(ctx, clientID, authReqID, clientNotificationToken)
 }
 
+// CIBAPushNotifier is the CIBA Core §10.3 push-delivery seam: when a
+// backchannel request resolves, the AS directly POSTs the TOKEN to the
+// client's registered backchannel_token_delivery_uri (vs. ping mode which
+// only alerts the client to come collect via /token). The push carries
+// the full token payload, so the client receives it without an extra
+// round-trip.
+//
+// Best-effort by contract: a failed push degrades to poll (the client
+// can still poll /token via grant_type=ciba), never blocks resolution.
+// A deadletter mechanism (CIBAPushDeadLetterStore) captures persistent
+// delivery failures for operator replay.
+//
+// The push payload follows CIBA Core §10.3.1:
+//
+//	POST /backchannel_token_delivery_uri HTTP/1.1
+//	Authorization: Bearer <client_notification_token>
+//	Content-Type: application/json
+//
+//	{
+//	  "auth_req_id": "...",
+//	  "access_token": "...",
+//	  "token_type": "Bearer",
+//	  "expires_in": 3600,
+//	  "refresh_token": "...",  // optional
+//	  "id_token": "..."         // optional
+//	}
+type CIBAPushNotifier interface {
+	// NotifyPush delivers the token payload directly to the client's
+	// registered push endpoint. Unlike Notify (ping), this carries the
+	// actual token so the client does not need to poll /token.
+	// Returns nil on successful delivery. On failure the caller should
+	// record the failed delivery via CIBAPushDeadLetterStore and let
+	// the client fall back to polling.
+	NotifyPush(ctx context.Context, clientID, authReqID, clientNotificationToken string, tokens PushPayload) error
+}
+
+// PushPayload is the token payload delivered via CIBAPushNotifier.
+// See CIBA Core §10.3.1 Token Delivery.
+type PushPayload struct {
+	AuthReqID   string `json:"auth_req_id"`
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+	ExpiresIn   int64  `json:"expires_in"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	IDToken      string `json:"id_token,omitempty"`
+}
+
+// CIBAPushNotifierFunc adapts a function to CIBAPushNotifier.
+type CIBAPushNotifierFunc func(ctx context.Context, clientID, authReqID, clientNotificationToken string, tokens PushPayload) error
+
+// NotifyPush calls f.
+func (f CIBAPushNotifierFunc) NotifyPush(ctx context.Context, clientID, authReqID, clientNotificationToken string, tokens PushPayload) error {
+	return f(ctx, clientID, authReqID, clientNotificationToken, tokens)
+}
+
+// CIBAPushDeadLetterStore records delivery failures for operator replay.
+// Implementations MUST be safe for concurrent access.
+type CIBAPushDeadLetterStore interface {
+	// Record persists a failed push delivery attempt.
+	Record(ctx context.Context, deliveryID string, payload PushPayload, err error) error
+
+	// ListUnacknowledged returns delivery IDs that have not been
+	// acknowledged (replayed or resolved).
+	ListUnacknowledged(ctx context.Context) ([]string, error)
+
+	// Replay re-attempts delivery of the failed push identified by
+	// deliveryID. Returns the push payload so the caller can retry.
+	Replay(ctx context.Context, deliveryID string) (*PushPayload, error)
+
+	// Acknowledge marks a delivery as resolved (successfully replayed
+	// or operator-dismissed).
+	Acknowledge(ctx context.Context, deliveryID string) error
+}
+
+// CIBAPushDeadLetterStoreFunc is a function adapter for CIBAPushDeadLetterStore.
+type CIBAPushDeadLetterStoreFunc func(ctx context.Context, deliveryID string, payload PushPayload, err error) error 
+
 // CIBATransportFunc is a function adapter for CIBATransport. An
 // operator wraps a defaultimpl.PushTransport via
 // CIBATransportFunc(pt.Send).
