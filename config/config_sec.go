@@ -85,6 +85,7 @@ type CIBAConfig struct {
 	Webhook       MFAPushWebhookConfig `yaml:"webhook"`        // used when transport=webhook
 	PruneInterval time.Duration        `yaml:"prune_interval"` // background PruneExpired cadence (sqlite-only); 0 disables
 	Ping          CIBAPingConfig       `yaml:"ping"`           // ping delivery mode (poll stays available)
+	Push          CIBAPushConfig       `yaml:"push"`           // push delivery mode (CIBA Core §10.3; poll/ping stay available)
 }
 
 // CIBAPingConfig opts into CIBA ping delivery (CIBA Core §10.2). When
@@ -97,6 +98,29 @@ type CIBAPingConfig struct {
 	Enabled   bool              `yaml:"enabled"`
 	Endpoints map[string]string `yaml:"endpoints"` // client_id → notification endpoint URL
 	Timeout   time.Duration     `yaml:"timeout"`   // per-ping HTTP timeout; 0 → default
+}
+
+// CIBAPushConfig opts into CIBA push delivery (CIBA Core §10.3). When
+// enabled, discovery advertises "push" and — the moment an approved
+// backchannel request resolves — the server mints the token set itself
+// and POSTs it directly to the client's registered delivery endpoint, so
+// a push-registered client never needs to poll /token at all (poll stays
+// available as a live fallback). Endpoints maps client_id ->
+// backchannel_token_delivery_uri (https only, enforced by the notifier); a
+// client absent from the map (or an empty URL) silently degrades to
+// poll/ping. The endpoint lives in cmd config rather than the SDK Client
+// model, mirroring CIBAPingConfig, to keep core.Client minimal.
+//
+// Deliveries that still fail after Timeout + retries are captured by a
+// dead-letter store for operator replay rather than silently dropped; that
+// store reuses this CIBAConfig's Backend/SQLiteDSN (memory when unset) — a
+// push failure is a sub-concern of the same CIBA storage backend, not a
+// separate knob.
+type CIBAPushConfig struct {
+	Enabled    bool              `yaml:"enabled"`
+	Endpoints  map[string]string `yaml:"endpoints"`   // client_id -> backchannel_token_delivery_uri
+	Timeout    time.Duration     `yaml:"timeout"`     // per-push HTTP timeout; 0 → SDK default (5s)
+	MaxRetries int               `yaml:"max_retries"` // delivery retries before dead-letter; 0 → SDK default (3)
 }
 
 // OIDCConfig holds OIDC-specific server toggles that don't belong to

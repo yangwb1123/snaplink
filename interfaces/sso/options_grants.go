@@ -476,3 +476,18 @@ func (h *agentDelegationHandler) SrvLogger() spi.Logger { return h.server.SrvLog
 // var _ agentidentity.Deps = (*agentDelegationHandler)(nil) proves the
 // wrapper satisfies HandleGrant's dependency interface.
 var _ agentidentity.Deps = (*agentDelegationHandler)(nil)
+
+// WithCIBAPushNotifier upgrades CIBA from poll/ping to push delivery (CIBA
+// Core §10.3). Requires WithCIBA. When wired, discovery advertises "push"
+// alongside "poll"/"ping" in backchannel_token_delivery_modes_supported,
+// and an APPROVED resolution whose request carries a
+// client_notification_token mints the token set autonomously and POSTs it
+// to the client's registered endpoint (see interfaces/sso's
+// dispatchCIBANotification/deliverCIBAPush, accessors_feature_gates.go) —
+// takes precedence over ping for that resolution, since push is a strict
+// upgrade (the client never needs to poll). The notifier is best-effort: a
+// failed push degrades to poll, never blocks or reverses the resolution.
+// nil (the default) keeps poll/ping-only mode.
+func WithCIBAPushNotifier(notifier oauth.CIBAPushNotifier) Option {
+	return func(s *Server) { s.cibaPushNotifier = notifier }
+}

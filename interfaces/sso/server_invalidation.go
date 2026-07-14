@@ -267,17 +267,19 @@ var ErrCIBANotEnabled = errors.New("sso: CIBA is not enabled")
 const cibaPingDeliveryTimeout = 10 * time.Second
 
 // ResolveBackchannelAuthRequest transitions a pending CIBA request to
-// approved or denied and, in ping delivery mode, notifies the client.
-// Operators call this from their device-confirmation callback instead of
-// poking CIBAStore.SetStatus directly, so the ping fires automatically on
-// resolution.
+// approved or denied and, in ping or push delivery mode, notifies the
+// client. Operators call this from their device-confirmation callback
+// instead of poking CIBAStore.SetStatus directly, so delivery fires
+// automatically on resolution.
 //
-// The status transition is authoritative (the client's /token poll mints
-// or refuses tokens off it). The ping is best-effort: when a
-// CIBAPingNotifier is wired (WithCIBAPingNotifier) and the request
-// carries a client_notification_token (ping mode), it fires asynchronously
-// — a failed ping is logged, not returned, since the client can still
-// poll. Poll-only requests (no notifier or no token) just transition.
+// The status transition is authoritative (a /token poll — still available
+// as a fallback even in push mode — mints or refuses tokens off it).
+// Delivery is best-effort and fire-and-forget: dispatchCIBANotification
+// (accessors_feature_gates.go) picks push over ping when both are wired
+// and the resolution is an approval (push is a strict upgrade — it mints
+// and delivers the actual token, see deliverCIBAPush); a denied resolution
+// has no token to push, so ping (if wired) still fires for it. A failed
+// delivery is logged, never returned, since the client can still poll.
 //
 // Returns ErrCIBANotEnabled if CIBA isn't wired, or the store's error for
 // an unknown/expired (oauth.ErrCIBARequestNotFound) or already-resolved
@@ -299,15 +301,8 @@ func (s *Server) ResolveBackchannelAuthRequest(ctx context.Context, authReqID st
 	if err := s.cibaStore.SetStatus(ctx, authReqID, status); err != nil {
 		return err
 	}
-	if s.cibaPingNotifier != nil && req.ClientNotificationToken != "" {
-		clientID, token := req.ClientID, req.ClientNotificationToken
-		// Fire-and-forget so the operator's resolution callback (and the
-		// /token poll it races) never waits on the ping — the status
-		// transition above is already authoritative. deliverCIBAPing supervises
-		// the call (bounded timeout + recover + metric/audit on failure) so a
-		// hanging webhook can't leak this goroutine and a panicking custom
-		// notifier can't die silently.
-		go s.deliverCIBAPing(clientID, authReqID, token)
+	if req.ClientNotificationToken != "" {
+		s.dispatchCIBANotification(authReqID, req.ClientID, req.ClientNotificationToken, approved)
 	}
 	return nil
 }

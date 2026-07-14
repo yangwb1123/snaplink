@@ -68,10 +68,28 @@ func HandleCIBAGrant(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Clie
 // are set from the approval event per RFC 9068. The store entry was already
 // deleted by the ConsumeIfApproved claim, so no Delete fires here.
 func cibaMintAndRespond(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Client, r *oauth.CIBARequest, now time.Time, dpopJKT, mtlsX5T string) {
+	resp, ok := buildCIBATokenResponse(d, ctx, client, r, now, dpopJKT, mtlsX5T)
+	if !ok {
+		return
+	}
+	ctx.JSON(http.StatusOK, resp)
+}
+
+// buildCIBATokenResponse mints the access/refresh/id token set for an
+// already-claimed (ConsumeIfApproved) approved CIBA request and returns the
+// response body WITHOUT writing it, so both the /token poll
+// (cibaMintAndRespond) and the push-delivery path (MintCIBATokensForPush,
+// invoked from interfaces/sso when a CIBAPushNotifier is wired and the
+// request resolves) share exactly one mint — issuance is not idempotent, so
+// minting twice for one approval would hand out two independent token sets.
+// ok=false means an error response was already written to ctx (a no-op when
+// ctx is a background-adapted HandlerContext, since the push path has no
+// live HTTP response in flight).
+func buildCIBATokenResponse(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Client, r *oauth.CIBARequest, now time.Time, dpopJKT, mtlsX5T string) (map[string]any, bool) {
 	strategy, ti, err := d.IssuerForClient(client)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrNoTokenStrategy))
-		return
+		return nil, false
 	}
 	provider := r.Provider
 	if provider == "" {
@@ -93,7 +111,7 @@ func cibaMintAndRespond(d CIBAGrantDeps, ctx core.HandlerContext, client *core.C
 	if err != nil {
 		d.SrvLogger().Error("ciba token issuance failed", "strategy", strategy, "error", err)
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
-		return
+		return nil, false
 	}
 	resp := map[string]any{
 		core.KeyAccessToken:   token.AccessToken,
@@ -107,7 +125,58 @@ func cibaMintAndRespond(d CIBAGrantDeps, ctx core.HandlerContext, client *core.C
 	d.RecordTokenIssued(ctx, client.ID, strategy, r.SubjectID)
 	d.RecordSubjectClientAccess(ctx.Request().Context(), r.SubjectID, client.ID)
 	d.RecordCIBADecision(ctx, client.ID, r.SubjectID, true)
-	ctx.JSON(http.StatusOK, resp)
+	return resp, true
+}
+
+// MintCIBATokensForPush mints the access/refresh/id token set for an
+// already-claimed (ConsumeIfApproved) approved CIBA request and shapes it as
+// a CIBA Core §10.3 push payload, for the push-delivery path
+// (interfaces/sso's deliverCIBAPush): a push-registered client never polls
+// /token, so the server mints autonomously the moment the request resolves
+// rather than waiting for a poll. dpopJKT/mtlsX5T are empty — there is no
+// live request that could have presented a sender-constraining proof, so a
+// pushed token is always a plain bearer token (an inherent limitation of
+// server-initiated delivery, not an oversight).
+//
+// ctx should be a background-adapted core.HandlerContext (the caller has no
+// live HTTP request — this runs off a detached goroutine); ok distinguishes
+// success from an issuance failure already logged by buildCIBATokenResponse.
+func MintCIBATokensForPush(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Client, r *oauth.CIBARequest, now time.Time) (oauth.PushPayload, bool) {
+	resp, ok := buildCIBATokenResponse(d, ctx, client, r, now, "", "")
+	if !ok {
+		return oauth.PushPayload{}, false
+	}
+	return oauth.PushPayload{
+		AuthReqID:    r.AuthReqID,
+		AccessToken:  cibaRespStr(resp, core.KeyAccessToken),
+		TokenType:    cibaRespStr(resp, core.KeyTokenType),
+		ExpiresIn:    cibaRespInt64(resp, core.KeyExpiresIn),
+		RefreshToken: cibaRespStr(resp, core.KeyRefreshToken),
+		IDToken:      cibaRespStr(resp, core.KeyIDToken),
+	}, true
+}
+
+// cibaRespStr extracts a string value from a CIBA token response map,
+// returning "" if missing or not a string — used by MintCIBATokensForPush to
+// project the generic JSON-shaped resp into a typed PushPayload.
+func cibaRespStr(m map[string]any, key string) string {
+	s, _ := m[key].(string)
+	return s
+}
+
+// cibaRespInt64 extracts an int64 value from a CIBA token response map,
+// returning 0 if missing or not a recognized numeric type.
+func cibaRespInt64(m map[string]any, key string) int64 {
+	switch n := m[key].(type) {
+	case int64:
+		return n
+	case float64:
+		return int64(n)
+	case int:
+		return int64(n)
+	default:
+		return 0
+	}
 }
 
 // cibaPollGate runs the pre-issuance gauntlet: store configured, auth_req_id

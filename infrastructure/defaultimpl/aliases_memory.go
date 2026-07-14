@@ -17,27 +17,29 @@ import (
 
 // --- memorystoreoauth ---
 type (
-	MemoryAuthCodeStore     = memorystoreoauth.MemoryAuthCodeStore
-	MemoryCIBAStore         = memorystoreoauth.MemoryCIBAStore
-	MemoryDeviceCodeStore   = memorystoreoauth.MemoryDeviceCodeStore
-	MemoryDeviceSecretStore = memorystoreoauth.MemoryDeviceSecretStore
-	MemoryPARStore          = memorystoreoauth.MemoryPARStore
-	MemoryRefreshTokenStore = memorystoreoauth.MemoryRefreshTokenStore
+	MemoryAuthCodeStore           = memorystoreoauth.MemoryAuthCodeStore
+	MemoryCIBAStore               = memorystoreoauth.MemoryCIBAStore
+	MemoryCIBAPushDeadLetterStore = memorystoreoauth.MemoryCIBAPushDeadLetterStore
+	MemoryDeviceCodeStore         = memorystoreoauth.MemoryDeviceCodeStore
+	MemoryDeviceSecretStore       = memorystoreoauth.MemoryDeviceSecretStore
+	MemoryPARStore                = memorystoreoauth.MemoryPARStore
+	MemoryRefreshTokenStore       = memorystoreoauth.MemoryRefreshTokenStore
 )
 
 var (
-	GenerateAuthCode           = memorystoreoauth.GenerateAuthCode
-	GenerateCIBAAuthReqID      = memorystoreoauth.GenerateCIBAAuthReqID
-	GenerateDeviceCode         = memorystoreoauth.GenerateDeviceCode
-	GeneratePARToken           = memorystoreoauth.GeneratePARToken
-	GenerateRefreshToken       = memorystoreoauth.GenerateRefreshToken
-	GenerateUserCode           = memorystoreoauth.GenerateUserCode
-	NewMemoryAuthCodeStore     = memorystoreoauth.NewMemoryAuthCodeStore
-	NewMemoryCIBAStore         = memorystoreoauth.NewMemoryCIBAStore
-	NewMemoryDeviceCodeStore   = memorystoreoauth.NewMemoryDeviceCodeStore
-	NewMemoryDeviceSecretStore = memorystoreoauth.NewMemoryDeviceSecretStore
-	NewMemoryPARStore          = memorystoreoauth.NewMemoryPARStore
-	NewMemoryRefreshTokenStore = memorystoreoauth.NewMemoryRefreshTokenStore
+	GenerateAuthCode                 = memorystoreoauth.GenerateAuthCode
+	GenerateCIBAAuthReqID            = memorystoreoauth.GenerateCIBAAuthReqID
+	GenerateDeviceCode               = memorystoreoauth.GenerateDeviceCode
+	GeneratePARToken                 = memorystoreoauth.GeneratePARToken
+	GenerateRefreshToken             = memorystoreoauth.GenerateRefreshToken
+	GenerateUserCode                 = memorystoreoauth.GenerateUserCode
+	NewMemoryAuthCodeStore           = memorystoreoauth.NewMemoryAuthCodeStore
+	NewMemoryCIBAStore               = memorystoreoauth.NewMemoryCIBAStore
+	NewMemoryCIBAPushDeadLetterStore = memorystoreoauth.NewMemoryCIBAPushDeadLetterStore
+	NewMemoryDeviceCodeStore         = memorystoreoauth.NewMemoryDeviceCodeStore
+	NewMemoryDeviceSecretStore       = memorystoreoauth.NewMemoryDeviceSecretStore
+	NewMemoryPARStore                = memorystoreoauth.NewMemoryPARStore
+	NewMemoryRefreshTokenStore       = memorystoreoauth.NewMemoryRefreshTokenStore
 )
 
 // --- memorystoreidentity ---

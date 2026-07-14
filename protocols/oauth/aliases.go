@@ -38,6 +38,10 @@ type (
 	CIBATransport               = oauthspi.CIBATransport
 	CIBAPingNotifier            = oauthspi.CIBAPingNotifier
 	CIBAPingNotifierFunc        = oauthspi.CIBAPingNotifierFunc
+	CIBAPushNotifier            = oauthspi.CIBAPushNotifier
+	CIBAPushNotifierFunc        = oauthspi.CIBAPushNotifierFunc
+	CIBAPushDeadLetterStore     = oauthspi.CIBAPushDeadLetterStore
+	PushPayload                 = oauthspi.PushPayload
 	CIBATransportFunc           = oauthspi.CIBATransportFunc
 	IssueAuthCodeParams         = oauthwire.IssueAuthCodeParams
 	IssueRefreshTokenParams     = oauthwire.IssueRefreshTokenParams

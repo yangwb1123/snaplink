@@ -49,9 +49,8 @@ func (s *Server) signDiscoveryMetadata(ctx context.Context, cfg *oidc.ProviderMe
 
 // Both `require_signed_request_object` (RFC 9101 §10.5) and
 // `require_pushed_authorization_requests` (RFC 9126 §5) derive from
-// scanning the client store. They share the cached
-// clientDiscoverySnapshot so a single iteration powers every
-// derivation across one discovery doc request.
+// scanning the client store. They share a cached clientDiscoverySnapshot
+// so a single iteration powers every derivation across one request.
 
 // handleOIDCDiscovery serves the OpenID Connect Discovery 1.0 +
 // RFC 8414 metadata document. Always wired by Mount (no opt-in
@@ -300,29 +299,27 @@ func (s *Server) applyMFAIssuerSigning(cfg *oidc.ProviderMetadata, ctx HandlerCo
 	}
 }
 
-// applyGrantEndpoints advertises the CIBA, PAR, and dynamic-registration
-// endpoints (each opt-in) plus the client-derived scopes_supported and
-// authorization_details_types_supported unions.
 // applyCIBABackchannel advertises the OIDC CIBA Core 1.0 §4 backchannel
 // endpoint + delivery modes only when CIBA is wired (opt-in). Poll is always
-// available; ping is added when a CIBAPingNotifier is wired
-// (WithCIBAPingNotifier). Push delivery is not implemented. Poll mode resolves
-// the user from login_hint/id_token_hint rather than a user_code, so the
-// user_code parameter is unsupported.
+// available; ping/push are added when their respective notifier is wired
+// (WithCIBAPingNotifier / WithCIBAPushNotifier — modes built by
+// cibaDeliveryModes, accessors_feature_gates.go, to stay under this file's
+// maintainability line budget). Poll mode resolves the user from
+// login_hint/id_token_hint rather than a user_code, so the user_code
+// parameter is unsupported.
 func (s *Server) applyCIBABackchannel(cfg *oidc.ProviderMetadata, base string) {
 	if s.cibaStore == nil || !s.cibaGateOn() {
 		return
 	}
 	cfg.BackchannelAuthenticationEndpoint = base + PathBackchannelAuth
-	modes := []string{"poll"}
-	if s.cibaPingNotifier != nil {
-		modes = append(modes, "ping")
-	}
-	cfg.BackchannelTokenDeliveryModesSupported = modes
+	cfg.BackchannelTokenDeliveryModesSupported = s.cibaDeliveryModes()
 	cfg.BackchannelUserCodeParameterSupported = false
 	cfg.GrantTypesSupported = append(cfg.GrantTypesSupported, GrantCIBA)
 }
 
+// applyGrantEndpoints advertises the CIBA (see applyCIBABackchannel), PAR,
+// and dynamic-registration endpoints (each opt-in) plus the client-derived
+// scopes_supported and authorization_details_types_supported unions.
 func (s *Server) applyGrantEndpoints(cfg *oidc.ProviderMetadata, base string, clientSnap *clientDiscoverySnapshot) {
 	if s.deviceCodeStore != nil {
 		// RFC 8414 §2 + RFC 8628: advertise the device grant only when a
@@ -495,6 +492,5 @@ func (s *Server) applyResponseModesAndProfiles(cfg *oidc.ProviderMetadata, ctx H
 // (an RFC 8414 field of the discovery doc) is deliberately NOT carried: the
 // Entity Statement is itself a signed JWS, so the discovery-doc signature is
 // redundant inside it.
-
 // BuildOPMetadata, handleFederationEntityConfig, handleFederationFetch,
 // and requestBaseURL were extracted to federation_handler.go.

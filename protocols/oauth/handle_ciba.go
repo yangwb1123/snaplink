@@ -1,13 +1,19 @@
 package oauth
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/interfaces/middleware"
+	"github.com/snaplink/sso/protocols/oauth/oauthspi"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
 )
@@ -320,4 +326,130 @@ func persistCIBARequest(d CIBADeps, ctx core.HandlerContext, client *core.Client
 		return "", false
 	}
 	return authReqID, true
+}
+
+// --- CIBA Push Delivery (CIBA Core §10.3) ---
+
+// DefaultCIBAPushTimeout is the max time to wait for a push delivery HTTP response.
+const DefaultCIBAPushTimeout = 5 * time.Second
+
+// DefaultCIBAPushMaxRetries is the number of push delivery retries before deadletter.
+const DefaultCIBAPushMaxRetries = 3
+
+// CIBAPushNotifierOption configures a cibaPushNotifier.
+type CIBAPushNotifierOption func(*cibaPushNotifier)
+
+// WithCIBAPushHTTPClient sets the HTTP client for push delivery.
+func WithCIBAPushHTTPClient(client *http.Client) CIBAPushNotifierOption {
+	return func(pn *cibaPushNotifier) { pn.client = client }
+}
+
+// WithCIBAPushDeadLetterStore wires a deadletter store for failed deliveries.
+func WithCIBAPushDeadLetterStore(dl oauthspi.CIBAPushDeadLetterStore) CIBAPushNotifierOption {
+	return func(pn *cibaPushNotifier) { pn.deadLetter = dl }
+}
+
+// WithCIBAPushMaxRetries sets the number of push delivery retries.
+func WithCIBAPushMaxRetries(n int) CIBAPushNotifierOption {
+	return func(pn *cibaPushNotifier) { pn.maxRetries = n }
+}
+
+// WithCIBAPushLogger sets the logger for push delivery events.
+func WithCIBAPushLogger(logger spi.Logger) CIBAPushNotifierOption {
+	return func(pn *cibaPushNotifier) { pn.logger = logger }
+}
+
+// NewCIBAPushNotifier creates a CIBA Core §10.3 push delivery notifier that POSTs
+// the token payload to the client's registered backchannel_token_delivery_uri.
+// getDeliveryURI resolves a clientID to its registered push endpoint.
+func NewCIBAPushNotifier(
+	getDeliveryURI func(ctx context.Context, clientID string) (string, error),
+	opts ...CIBAPushNotifierOption,
+) oauthspi.CIBAPushNotifier {
+	n := &cibaPushNotifier{
+		client:         &http.Client{Timeout: DefaultCIBAPushTimeout},
+		getDeliveryURI: getDeliveryURI,
+		maxRetries:     DefaultCIBAPushMaxRetries,
+		logger:         spi.NopLogger{},
+	}
+	for _, opt := range opts {
+		opt(n)
+	}
+	return n
+}
+
+type cibaPushNotifier struct {
+	client         *http.Client
+	getDeliveryURI func(ctx context.Context, clientID string) (string, error)
+	deadLetter     oauthspi.CIBAPushDeadLetterStore
+	maxRetries     int
+	logger         spi.Logger
+}
+
+func (n *cibaPushNotifier) NotifyPush(ctx context.Context, clientID, authReqID, clientNotificationToken string, tokens oauthspi.PushPayload) error {
+	uri, err := n.getDeliveryURI(ctx, clientID)
+	if err != nil || uri == "" {
+		return err
+	}
+	if err := validatePushURI(uri); err != nil {
+		return fmt.Errorf("ciba push: invalid delivery URI: %w", err)
+	}
+	body, err := json.Marshal(tokens)
+	if err != nil {
+		return fmt.Errorf("ciba push: marshal payload: %w", err)
+	}
+	var lastErr error
+	for attempt := 0; attempt <= n.maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(1<<(attempt-1)) * time.Second
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		if err := n.doPush(ctx, uri, clientNotificationToken, body); err != nil {
+			lastErr = err
+			n.logger.Error("ciba push failed", "error", err, "attempt", attempt+1, "client_id", clientID, "auth_req_id", authReqID)
+			continue
+		}
+		return nil
+	}
+	if n.deadLetter != nil {
+		_ = n.deadLetter.Record(ctx, authReqID, tokens, lastErr)
+	}
+	return fmt.Errorf("ciba push: delivery failed after %d retries: %w", n.maxRetries, lastErr)
+}
+
+func (n *cibaPushNotifier) doPush(ctx context.Context, uri, token string, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uri, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set(core.HeaderContentType, core.ContentTypeJSON)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("http post: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("http %d (expected 2xx)", resp.StatusCode)
+	}
+	return nil
+}
+
+func validatePushURI(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("scheme must be https, got %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("empty host")
+	}
+	return nil
 }

@@ -79,6 +79,32 @@ func BuildCIBA(cfg config.CIBAConfig, logger spi.Logger, rdb goredis.Cmdable) (o
 	return store, oauth.CIBATransportFunc(pt.Send), sqliteStore, nil
 }
 
+// BuildCIBAPushDeadLetter wires the CIBA Core §10.3 push dead-letter store
+// that records failed push deliveries for operator replay. It reuses the
+// PARENT CIBAConfig's Backend/SQLiteDSN (memory | sqlite) rather than a
+// separate config knob — a push failure is a sub-concern of the same CIBA
+// storage backend, not something an operator tunes independently. Returns
+// the typed sqlite handle (or nil) for schema-check + readiness wiring,
+// mirroring BuildCIBA's contract. redis has no dedicated dead-letter
+// backend yet, so it falls back to memory (deliveries are retried by the
+// notifier itself before ever reaching the dead letter — the store's only
+// job is operator visibility into rare persistent failures).
+func BuildCIBAPushDeadLetter(cfg config.CIBAConfig) (oauth.CIBAPushDeadLetterStore, *sqlitestores.CIBAPushDeadLetterStore, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
+	case "sqlite":
+		if cfg.SQLiteDSN == "" {
+			return nil, nil, errors.New("ciba.sqlite_dsn required when backend=sqlite")
+		}
+		s, err := sqlitestores.NewCIBAPushDeadLetterStore(cfg.SQLiteDSN)
+		if err != nil {
+			return nil, nil, fmt.Errorf("ciba.push deadletter sqlite: %w", err)
+		}
+		return s, s, nil
+	default:
+		return defaultimpl.NewMemoryCIBAPushDeadLetterStore(0), nil, nil
+	}
+}
+
 // RunCIBAPrune wakes every interval and calls CIBAStore.PruneExpired
 // to bound the request table. Same shutdown contract as the audit /
 // snapshot / push retention loops: close done on exit, errors logged

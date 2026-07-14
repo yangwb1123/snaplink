@@ -375,6 +375,11 @@ func (b *appBuilder) wireCIBA() error {
 		b.opts = append(b.opts, sso.WithCIBAPingNotifier(newHTTPCIBAPingNotifier(cfg.CIBA.Ping, logger)))
 		mode = "poll+ping"
 	}
+	pushSuffix, err := b.wireCIBAPushDelivery(cfg.CIBA, logger)
+	if err != nil {
+		return err
+	}
+	mode += pushSuffix
 	logger.Info("ciba: enabled",
 		"mode", mode,
 		"backend", strings.ToLower(strings.TrimSpace(cfg.CIBA.Backend)),
