@@ -584,23 +584,29 @@ export class SSOClient {
    *   const sso = new SSOClient({ baseUrl, clientId: "my-app" });
    *   const auth = await sso.login(username, password);
    *   const me = await sso.getUserInfo();
+   *
+   * CHECK isLoggedIn (or "access_token" in auth) before assuming success: when
+   * the account/client has MFA enabled, this resolves to a MFARequiredResponse
+   * instead — no token is issued until POST /auth/mfa completes the second leg.
    */
   async login(
     username: string,
     password: string,
     opts?: { clientId?: string; scope?: string[]; extraCredential?: Record<string, string> },
-  ): Promise<LoginResponse> {
+  ): Promise<LoginResponse | MFARequiredResponse> {
     const clientId = opts?.clientId ?? this.clientId;
     if (!clientId) {
       throw new SSOError(0, "invalid_request", "clientId is required (set it in the constructor or pass it to login)");
     }
+    // provider is always set below, so postLogin's LoginDiscoveryResponse (the
+    // no-provider home-realm-discovery arm) can never apply to this call.
     const resp = (await this.postLogin({
       provider: "password",
       client_id: clientId,
       scope: opts?.scope ?? ["openid", "profile", "email"],
       credential: { username, password, ...(opts?.extraCredential ?? {}) },
-    })) as LoginResponse;
-    if (resp && resp.access_token) this.token = resp.access_token;
+    })) as LoginResponse | MFARequiredResponse;
+    if ("access_token" in resp) this.token = resp.access_token;
     return resp;
   }
 
