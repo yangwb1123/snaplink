@@ -325,6 +325,110 @@ func TestOIDCFederation_SubjectFieldOverride(t *testing.T) {
 	}
 }
 
+// fakeLinker is a real (non-mock) test double satisfying the UserLinker
+// shape directly — small enough that a hand-written implementation, not a
+// generated mock, is the natural choice (AGENTS.md: no mocks where a real
+// implementation is simple).
+type fakeLinker struct {
+	gotProvider, gotSubject string
+	userID                  string
+	err                     error
+}
+
+func (f *fakeLinker) ResolveUserID(_ context.Context, provider, subject string) (string, error) {
+	f.gotProvider, f.gotSubject = provider, subject
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.userID, nil
+}
+
+func TestOIDCFederation_NilLinkerIsByteIdenticalToNoLinker(t *testing.T) {
+	t.Parallel()
+	idp := newFakeIdP(t)
+	// No WithUserLinker option passed at all — must behave exactly like
+	// today, i.e. UserID defaults to the raw external subject.
+	auth := newOIDCFedForTest(t, idp)
+
+	result, err := auth.Callback(context.Background(), &sso.CallbackState{
+		Code:  idp.expectedCode,
+		State: "s",
+	})
+	if err != nil {
+		t.Fatalf("Callback: %v", err)
+	}
+	if result.UserID != "alice@example.com" || result.ExternalID != "alice@example.com" {
+		t.Fatalf("nil linker must default UserID to the raw subject: %#v", result)
+	}
+}
+
+func TestOIDCFederation_WiredLinkerResolvesUserID(t *testing.T) {
+	t.Parallel()
+	idp := newFakeIdP(t)
+	linker := &fakeLinker{userID: "local-account-42"}
+	auth, err := NewOIDCFederationAuthenticator(OIDCFederationConfig{
+		Name:                  "test-idp",
+		AuthorizationEndpoint: idp.srv.URL + "/authorize",
+		TokenEndpoint:         idp.srv.URL + "/token",
+		UserinfoEndpoint:      idp.srv.URL + "/userinfo",
+		ClientID:              idp.expectedClient,
+		ClientSecret:          idp.expectedSecret,
+		RedirectURI:           "https://as.example/callback",
+	}, WithUserLinker(linker))
+	if err != nil {
+		t.Fatalf("NewOIDCFederationAuthenticator: %v", err)
+	}
+
+	result, err := auth.Callback(context.Background(), &sso.CallbackState{
+		Code:  idp.expectedCode,
+		State: "s",
+	})
+	if err != nil {
+		t.Fatalf("Callback: %v", err)
+	}
+	if result.UserID != "local-account-42" {
+		t.Fatalf("UserID = %q, want linker-resolved %q", result.UserID, "local-account-42")
+	}
+	// ExternalID is ALWAYS the raw external subject — never rewritten by the
+	// linker, regardless of what UserID resolves to.
+	if result.ExternalID != "alice@example.com" {
+		t.Fatalf("ExternalID = %q, want raw subject %q (must never be rewritten)", result.ExternalID, "alice@example.com")
+	}
+	if linker.gotProvider != "test-idp" || linker.gotSubject != "alice@example.com" {
+		t.Fatalf("linker called with (%q, %q), want (%q, %q)", linker.gotProvider, linker.gotSubject, "test-idp", "alice@example.com")
+	}
+}
+
+func TestOIDCFederation_WiredLinkerErrorFailsCallback(t *testing.T) {
+	t.Parallel()
+	idp := newFakeIdP(t)
+	sentinel := errors.New("account conflict")
+	linker := &fakeLinker{err: sentinel}
+	auth, err := NewOIDCFederationAuthenticator(OIDCFederationConfig{
+		Name:                  "test-idp",
+		AuthorizationEndpoint: idp.srv.URL + "/authorize",
+		TokenEndpoint:         idp.srv.URL + "/token",
+		UserinfoEndpoint:      idp.srv.URL + "/userinfo",
+		ClientID:              idp.expectedClient,
+		ClientSecret:          idp.expectedSecret,
+		RedirectURI:           "https://as.example/callback",
+	}, WithUserLinker(linker))
+	if err != nil {
+		t.Fatalf("NewOIDCFederationAuthenticator: %v", err)
+	}
+
+	result, err := auth.Callback(context.Background(), &sso.CallbackState{
+		Code:  idp.expectedCode,
+		State: "s",
+	})
+	if result != nil {
+		t.Fatalf("expected nil result on linker error, got %#v", result)
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Callback error = %v, want the linker's own error unwrapped (oracle-leak hardening: no shape change)", err)
+	}
+}
+
 func TestOIDCFederation_ConstructorRejectsMissingFields(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

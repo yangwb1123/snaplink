@@ -13,6 +13,7 @@ import (
 const (
 	PathAdminTokenPortfolio  = core.PathAdminTokenPortfolio
 	PathAdminTokenSubject    = core.PathAdminTokenSubject
+	PathAdminTokenExpiring   = core.PathAdminTokenExpiring
 	PathAdminTokenSuspicious = core.PathAdminTokenSuspicious
 	PathAdminTokenRevoke     = core.PathAdminTokenRevoke
 	// PathCheckSessionIframe re-exports core.PathCheckSessionIframe (OpenID
@@ -95,20 +96,23 @@ func (s *Server) mountAdminAPIObservability(api Router) {
 
 // mountAdminTokenGovernance registers the token-governance read/action surface:
 // the usage telemetry read API, the Phase-3 Token Portfolio suite (overview +
-// per-subject view + bulk-revoke), the token-policy governance view, and the
-// suspicious-token anomaly list. Each block is gated on its own opt-in backing
-// so the registered route set is byte-identical to a build without the feature.
+// per-subject view + expiry calendar + bulk-revoke), the token-policy
+// governance view, and the suspicious-token anomaly list. Each block is gated
+// on its own opt-in backing so the registered route set is byte-identical to
+// a build without the feature.
 func (s *Server) mountAdminTokenGovernance(api Router) {
 	// Token-usage telemetry + the Token Portfolio panel APIs (opt-in
 	// WithTokenUsageRecorder). The whole panel surface — overview, per-subject
-	// active-token view, and the bulk-revoke workflow — is gated on the usage
-	// recorder that backs the panel; the subject/revoke handlers degrade
-	// gracefully when no refresh store is wired. Admin-gated (GET admin:read,
-	// POST admin:write) via the /api/v1/admin/ prefix.
+	// active-token view, expiry calendar, and the bulk-revoke workflow — is
+	// gated on the usage recorder that backs the panel; the subject/expiring/
+	// revoke handlers degrade gracefully when no refresh store is wired (or
+	// the wired store doesn't implement the optional extension). Admin-gated
+	// (GET admin:read, POST admin:write) via the /api/v1/admin/ prefix.
 	if s.tokenUsageRecorder != nil {
 		api.GET(PathAdminTokenUsage, s.handleAdminTokenUsage)
 		api.GET(PathAdminTokenPortfolio, s.handleAdminTokenPortfolio)
 		api.GET(PathAdminTokenSubject, s.handleAdminTokenSubject)
+		api.GET(PathAdminTokenExpiring, s.handleAdminTokenExpiring)
 		api.POST(PathAdminTokenRevoke, s.handleAdminBulkRevoke)
 	}
 	// Token-policy governance read API (opt-in WithTokenPolicy). Admin-gated
@@ -121,6 +125,17 @@ func (s *Server) mountAdminTokenGovernance(api Router) {
 	// without it.
 	if s.tokenAnomalyDetector != nil {
 		api.GET(PathAdminTokenSuspicious, s.handleAdminTokenSuspicious)
+	}
+
+	// Threat-policy CRUD (Active ITDR, opt-in WithThreatPolicyStore).
+	// Admin-gated (GET admin:read, PUT/DELETE admin:write) via the
+	// /api/v1/admin/ prefix. Not mounted without a store — byte-identical
+	// to a build without the feature.
+	if s.threatPolicyStore != nil {
+		api.GET(PathAdminThreatPolicies, s.handleAdminListThreatPolicies)
+		api.GET(PathAdminThreatPolicyByID, s.handleAdminGetThreatPolicy)
+		api.PUT(PathAdminThreatPolicyByID, s.handleAdminPutThreatPolicy)
+		api.DELETE(PathAdminThreatPolicyByID, s.handleAdminDeleteThreatPolicy)
 	}
 }
 
@@ -196,6 +211,12 @@ func (s *Server) mountAdminUserState(api Router) {
 	}
 	if s.userProvider != nil {
 		api.POST(PathAdminUserEmail, s.handleAdminSetUserEmail)
+		// User entity CRUD — lifecycle gated on userProvider alone.
+		api.POST(PathAdminUsers, s.handleAdminCreateUser)
+		api.GET(PathAdminUsers, s.handleAdminListUsers)
+		api.GET(PathAdminUserByID, s.handleAdminGetUser)
+		api.PUT(PathAdminUserByID, s.handleAdminUpdateUser)
+		api.DELETE(PathAdminUserByID, s.handleAdminDeleteUser)
 	}
 	if s.deviceSecretStore != nil {
 		api.DELETE(PathAdminUserDeviceSecrets, s.handleAdminRevokeUserDeviceSecrets)
@@ -431,6 +452,11 @@ func adminAPIEndpointCandidates() []endpointCandidate {
 		{endpointInfo{http.MethodGet, prefix + PathAdminComplianceSOC2Evidence, "admin_api"}, on(func(s *Server) bool { return s.auditor != nil })},
 		{endpointInfo{http.MethodGet, prefix + PathAdminComplianceConsents, "admin_api"}, on(func(s *Server) bool { return s.consentStore != nil && s.userProvider != nil })},
 		{endpointInfo{http.MethodPost, prefix + PathAdminComplianceRetentionSweep, "admin_api"}, on(func(s *Server) bool { return s.dataRetention.Enabled })},
+		// Active ITDR threat-policy CRUD (opt-in WithThreatPolicyStore).
+		{endpointInfo{http.MethodGet, prefix + PathAdminThreatPolicies, "admin_api"}, on(func(s *Server) bool { return s.threatPolicyStore != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminThreatPolicyByID, "admin_api"}, on(func(s *Server) bool { return s.threatPolicyStore != nil })},
+		{endpointInfo{http.MethodPut, prefix + PathAdminThreatPolicyByID, "admin_api"}, on(func(s *Server) bool { return s.threatPolicyStore != nil })},
+		{endpointInfo{http.MethodDelete, prefix + PathAdminThreatPolicyByID, "admin_api"}, on(func(s *Server) bool { return s.threatPolicyStore != nil })},
 	}
 }
 
@@ -451,29 +477,12 @@ func endpointCandidates() []endpointCandidate {
 // configaudit for the drift-digest helpers — to hold this file under the
 // 500-line maintainability budget).
 
-// mountAdminBreakGlass registers the break-glass (emergency support) admin
-// session lifecycle: create (bounded, audited on-behalf-of grant, reason
-// mandatory), list pending+active, revoke (cascades derived-session
-// destruction), approve (two-person rule — the approver must differ from the
-// creator), and impersonate (mint a live target-user bearer for an
-// active+approved impersonate/escalate grant, bounded by the grant TTL).
-// Mounted only when a BreakGlassStore is wired — byte-identical without it.
-// GET is admin:read; POST/DELETE are admin:write via the default
-// AdminMiddleware method-scope rule.
-func (s *Server) mountAdminBreakGlass(api Router) {
-	if s.breakGlassStore == nil {
-		return
-	}
-	api.POST(PathAdminBreakGlass, s.handleAdminCreateBreakGlass)
-	api.GET(PathAdminBreakGlass, s.handleAdminListBreakGlass)
-	api.DELETE(PathAdminBreakGlassByID, s.handleAdminRevokeBreakGlass)
-	api.POST(PathAdminBreakGlassApprove, s.handleAdminApproveBreakGlass)
-	api.POST(PathAdminBreakGlassImpersonate, s.handleAdminImpersonateBreakGlass)
-}
+// mountAdminBreakGlass moved to server_admin_handlers.go (beside the
+// break-glass handlers it wires; this file was at its line budget adding the
+// token-expiry-calendar route below).
 
-// mountCryptoInventoryAPI moved to signing_key_aggregation.go (another
-// admin-facing crypto-material surface, and this file was at the line
-// budget).
+// mountCryptoInventoryAPI moved to signing_key_aggregation.go (admin-facing
+// crypto-material surface; this file was at the line budget).
 
 // mountOrgAdminSelfService moved to sso_selfservice.go (a better thematic
 // home, and this file was at the line budget).

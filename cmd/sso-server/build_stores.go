@@ -135,7 +135,9 @@ func (b *appBuilder) wireFoundation() error {
 }
 
 // wireDomains runs the business-domain sub-builders, in the same order the
-// original monolith applied their Options.
+// original monolith applied their Options. wireAnomaly is NOT here — it moved
+// to finalize() (after wireCluster) so it can share the Active ITDR threat
+// executor with tokenanomaly.Detector; see wireThreatAction's doc comment.
 func (b *appBuilder) wireDomains() error {
 	if err := b.wireSelfServicePassword(); err != nil {
 		return err
@@ -144,9 +146,6 @@ func (b *appBuilder) wireDomains() error {
 		return err
 	}
 	if err := b.wireWebAuthnMFA(); err != nil {
-		return err
-	}
-	if err := b.wireAnomaly(); err != nil {
 		return err
 	}
 	if err := b.wireTenant(); err != nil {

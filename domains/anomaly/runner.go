@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/snaplink/sso/domains/threataction"
 	"github.com/snaplink/sso/shared/spi"
 )
 
@@ -69,6 +70,11 @@ type Runner struct {
 	// "block" applies backpressure (use only when the login path
 	// can tolerate it — typically never).
 	dropPolicy DropPolicy
+
+	// threatExec is the optional Active ITDR executor that translates
+	// anomaly signals into security actions. Nil (default) = no-op,
+	// byte-identical to current behavior.
+	threatExec threataction.ThreatExecutor
 }
 
 // Start launches the worker pool. Safe to call exactly once;
@@ -185,6 +191,25 @@ func (r *Runner) inspect(event *LoginEvent) {
 				}
 			}
 			r.recordDetected(a.Type, string(a.Severity))
+
+			// Threat executor: convert Signal → Threat and dispatch
+			// off-path. Fail-open: errors are logged but never
+			// propagate to the login response.
+			if r.threatExec != nil {
+				threat := threataction.Threat{
+					Type:      a.Type,
+					Severity:  string(a.Severity),
+					SubjectID: a.SubjectID,
+					ClientID:  event.ClientID,
+					Evidence:  a.Evidence,
+					TraceID:   event.TraceID,
+				}
+				if _, err := r.threatExec.Execute(ctx, threat, threataction.ThreatPolicy{}); err != nil {
+					r.logger.Error("threat executor failed",
+						"executor", r.threatExec.Name(),
+						"type", a.Type, "subject", a.SubjectID, "error", err)
+				}
+			}
 		}
 	}
 }

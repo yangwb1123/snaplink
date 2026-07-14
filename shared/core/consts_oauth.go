@@ -46,6 +46,16 @@ const (
 // grant — the user confirmed out of band on a separate authentication device.
 const CIBAAMR = "ciba"
 
+// AMRPassword is the AMR (RFC 8176) value recorded for a password-based login
+// (domains/authenticators.PasswordAuthenticator sets AuthResult.AuthMethods to
+// this via domains/authenticators.AuthMethodPwd). Duplicated here rather than
+// imported — domains/authenticators imports interfaces/sso, which imports
+// shared/core, so shared/core importing back up to domains/authenticators
+// would cycle. Used by the login-time password-max-age gate (interfaces/sso
+// rejectExpiredPassword) to confirm THIS login actually used a password
+// before consulting PasswordCredentialStore's age signal.
+const AMRPassword = "pwd"
+
 // RFC 8693 token type URIs used by the token-exchange grant.
 //
 // SPIFFE JWT-SVIDs are exchanged as the STANDARD TokenTypeJWT

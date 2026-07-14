@@ -19,6 +19,21 @@
   // --- DOM helpers ---
   function $(id) { return document.getElementById(id); }
 
+  // --- i18n bootstrap ---
+  // Kicks off the locale bundle fetch immediately, in parallel with the
+  // branding/provider probes below; applyDOM re-paints every data-i18n-
+  // tagged element once the bundle lands. A slow/failed fetch just leaves
+  // the English fallback markup already baked into index.html on screen —
+  // never a blank page (see i18n.js's fetchBundle/t doc comments).
+  i18n.init({
+    basePath: "locales/",
+    supported: ["en", "es"],
+    defaultLocale: "en"
+  }).then(function () {
+    i18n.applyDOM(document);
+    document.documentElement.lang = i18n.locale;
+  });
+
   function showView(name) {
     ["login","mfa","consent","success"].forEach(function(v) {
       var el = $("view-" + v);
@@ -67,6 +82,75 @@
   var consentClientName     = ""; // server-provided app display name (consent_required)
   var consentScopeDescriptions = {}; // server-provided scope -> description (consent_required)
 
+  // --- Magic-link auto-submit ---
+  // A clicked magic-link email lands here with ?token=<opaque>#email=<addr>
+  // (see domains/authenticators/email.go's MagicLinkAuthenticator.SendCode
+  // doc comment for why the email rides in the URL FRAGMENT rather than a
+  // second "&"-joined query param: it keeps the emailed link free of any
+  // character the SMTP sender's html/template-based renderer would mangle).
+  // Reuses the SAME /auth/login POST every other provider uses — no new
+  // endpoint, no new request shape — with credential.email/code exactly like
+  // the email-OTP provider expects.
+  //
+  // Caveat: because the link may be opened in a different browser/device
+  // than the one that started the OAuth flow (or no flow at all — the user
+  // may have arrived here directly from their inbox), this page has no way
+  // to recover the original client_id/redirect_uri/state/nonce — SendCode
+  // only ever receives an email address (shared CodeSender contract with
+  // every other code-based authenticator), so it cannot embed them in the
+  // link either. A deployment that needs the click to resume a SPECIFIC
+  // client's authorization request must pin magiclink to one default client
+  // or extend the /auth/send-code caller to persist that context
+  // out-of-band; that is not solved here.
+  (function magicLinkAutoSubmit() {
+    var token = q.get("token");
+    if (!token) return;
+    var hashParams = new URLSearchParams(location.hash.replace(/^#/, ""));
+    var email = hashParams.get("email");
+    if (!email) return;
+
+    showView("login");
+    setError("login-error", "");
+    var btn = $("login-btn");
+    setLoading(btn, true);
+
+    var payload = {
+      provider:              "magiclink",
+      client_id:             oauthParams.client_id,
+      scope:                 oauthParams.scope,
+      state:                 oauthParams.state,
+      response_type:         oauthParams.response_type,
+      redirect_uri:          oauthParams.redirect_uri,
+      nonce:                 oauthParams.nonce,
+      code_challenge:        oauthParams.code_challenge,
+      code_challenge_method: oauthParams.code_challenge_method,
+      credential:            { email: email, code: token },
+    };
+    savedLoginPayload = payload;
+
+    fetch(loginURL, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(payload)
+    })
+    .then(function(r) { return r.json().then(function(d){ return {status:r.status,data:d}; }); })
+    .then(function(res) {
+      setLoading(btn, false);
+      if (res.status === 200 && !res.data.error) {
+        handleSuccess(res.data);
+        return;
+      }
+      // Falls through to the normal, still-usable login form on any error
+      // (expired/already-used link, missing client_id, ...) — the user can
+      // retry via password/OTP without reloading.
+      handleLoginError(res.data, "login-error", btn);
+    })
+    .catch(function() {
+      setLoading(btn, false);
+      setError("login-error", i18n.t("login.networkError"));
+    });
+  })();
+
   // --- Populate provider selector if >1 option ---
   var providerSel = $("provider");
   // The SPA starts with only "password"; real provider list comes from a
@@ -106,7 +190,7 @@
           img.alt = b.brand_name || "";
         }
         if (b.brand_name) {
-          document.title = "Sign in · " + b.brand_name;
+          document.title = i18n.t("app.title") + " · " + b.brand_name;
         }
       })
       .catch(function() { /* keep default theme */ });
@@ -242,17 +326,17 @@
   // hand-off is server-side (the resolved connection drives the federated flow);
   // here we only present the routing decision using the connection's metadata.
   function showHomeRealm(data) {
-    var org = data.display_name || "your organization";
+    var org = data.display_name || i18n.t("hr.defaultOrg");
     var notice = $("hr-notice");
     notice.innerHTML = "";
     var p = document.createElement("p");
     p.style.marginBottom = "10px";
-    p.textContent = "Continue with " + org + "'s identity provider.";
+    p.textContent = i18n.t("hr.continueWithOrgNotice", {org: org});
     notice.appendChild(p);
     var btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn btn-primary";
-    btn.textContent = "Continue with " + org;
+    btn.textContent = i18n.t("hr.continueWithOrgButton", {org: org});
     btn.addEventListener("click", function() {
       // Resolved-connection hand-off is performed by the server when the login
       // payload carries the connection. Re-submitting the normal login form
@@ -356,7 +440,7 @@
       return;
     }
 
-    var msg = code || "Authentication failed. Please try again.";
+    var msg = code || i18n.t("login.genericError");
     setError(errBoxId, msg);
   }
 
@@ -386,7 +470,7 @@
     })
     .catch(function(err) {
       setLoading(btn, false);
-      setError("login-error", "Network error. Please check your connection.");
+      setError("login-error", i18n.t("login.networkError"));
     });
   });
 
@@ -417,17 +501,19 @@
     if (methods.length === 1) {
       container.firstChild.click();
     }
+    // Show trust-device checkbox for all MFA methods.
+    $("mfa-trust-field").style.display = "";
     $("mfa-totp-field").style.display = "none";
     $("mfa-btn").style.display = methods.length === 1 ? "" : "none";
   }
 
   function methodLabel(m) {
     var labels = {
-      totp:     "Authenticator app (TOTP)",
-      otp:      "One-time code",
-      webauthn: "Security key / passkey",
-      push:     "Push notification",
-      sms:      "SMS code",
+      totp:     i18n.t("mfa.method.totp"),
+      otp:      i18n.t("mfa.method.otp"),
+      webauthn: i18n.t("mfa.method.webauthn"),
+      push:     i18n.t("mfa.method.push"),
+      sms:      i18n.t("mfa.method.sms"),
     };
     return labels[m] || m.charAt(0).toUpperCase() + m.slice(1).replace(/_/g," ");
   }
@@ -436,19 +522,21 @@
     var btn = $("mfa-btn");
     setError("mfa-error", "");
     if (!selectedMFAMethod) {
-      setError("mfa-error", "Select a verification method.");
+      setError("mfa-error", i18n.t("mfa.selectMethod"));
       return;
     }
     var code = $("mfa-code").value.trim();
     if ((selectedMFAMethod === "totp" || selectedMFAMethod === "otp") && !code) {
-      setError("mfa-error", "Enter your verification code.");
+      setError("mfa-error", i18n.t("mfa.enterCode"));
       return;
     }
     setLoading(btn, true);
+    var trustDevice = $("mfa-trust-device") && $("mfa-trust-device").checked;
     var body = {
       mfa_challenge_id: currentMFAChallengeID,
       method:           selectedMFAMethod,
-      credential:       { code: code }
+      credential:       { code: code },
+      trust_device:     trustDevice || false
     };
     fetch(mfaURL, {
       method: "POST",
@@ -462,23 +550,24 @@
         handleSuccess(res.data);
         return;
       }
-      setError("mfa-error", res.data.error || "Verification failed.");
+      setError("mfa-error", res.data.error || i18n.t("mfa.verifyFailed"));
     })
     .catch(function() {
       setLoading(btn, false);
-      setError("mfa-error", "Network error. Please try again.");
+      setError("mfa-error", i18n.t("mfa.networkError"));
     });
   });
 
   $("mfa-back").addEventListener("click", function() {
     setError("mfa-error", "");
     $("mfa-code").value = "";
+    $("mfa-trust-device").checked = false;
     showView("login");
   });
 
   // --- Consent view ---
   function renderConsentView() {
-    $("consent-client").textContent = consentClientName || oauthParams.client_id || "This application";
+    $("consent-client").textContent = consentClientName || oauthParams.client_id || i18n.t("consent.defaultClientName");
     var list = $("consent-scopes");
     list.innerHTML = "";
     var scopes = oauthParams.scope.filter(function(s){ return s && s !== "openid"; });
@@ -495,10 +584,10 @@
     // back to the built-in label for well-known scopes, then the raw name.
     if (consentScopeDescriptions[s]) return consentScopeDescriptions[s];
     var labels = {
-      openid:  "Verify your identity",
-      profile: "View your profile information",
-      email:   "View your email address",
-      offline_access: "Stay signed in (refresh token)",
+      openid:  i18n.t("consent.scope.openid"),
+      profile: i18n.t("consent.scope.profile"),
+      email:   i18n.t("consent.scope.email"),
+      offline_access: i18n.t("consent.scope.offline_access"),
     };
     return labels[s] || s;
   }
@@ -525,7 +614,7 @@
     })
     .catch(function() {
       setLoading(btn, false);
-      setError("consent-error", "Network error. Please try again.");
+      setError("consent-error", i18n.t("consent.networkError"));
     });
   });
 
@@ -596,7 +685,7 @@
     setSuccess("forgot-success", "");
     var identifier = $("forgot-identifier").value.trim();
     if (!identifier) {
-      setError("forgot-error", "Enter your username or email.");
+      setError("forgot-error", i18n.t("forgot.emptyIdentifier"));
       return;
     }
     setLoading(btn, true);
@@ -609,18 +698,18 @@
       setLoading(btn, false);
       if (r.status === 404) {
         $("forgot-form").style.display = "none";
-        setError("forgot-error", "Password reset is not enabled.");
+        setError("forgot-error", i18n.t("forgot.notEnabled"));
         return;
       }
       if (r.status >= 200 && r.status < 300) {
-        setSuccess("forgot-success", "If that account exists, a reset link has been sent.");
+        setSuccess("forgot-success", i18n.t("forgot.successMessage"));
         return;
       }
-      setError("forgot-error", "Could not request a reset. Please try again.");
+      setError("forgot-error", i18n.t("forgot.genericError"));
     })
     .catch(function() {
       setLoading(btn, false);
-      setError("forgot-error", "Network error. Please try again.");
+      setError("forgot-error", i18n.t("forgot.networkError"));
     });
   });
 
@@ -635,7 +724,7 @@
     var password = $("signup-password").value;
     var email    = $("signup-email").value.trim();
     if (!username || !password) {
-      setError("signup-error", "Enter a username and password.");
+      setError("signup-error", i18n.t("signup.emptyFields"));
       return;
     }
     var body = {username: username, password: password};
@@ -650,11 +739,11 @@
       setLoading(btn, false);
       if (r.status === 404) {
         $("signup-form").style.display = "none";
-        setError("signup-error", "Self-service signup is not enabled.");
+        setError("signup-error", i18n.t("signup.notEnabled"));
         return;
       }
       if (r.status === 409) {
-        setError("signup-error", "That account already exists.");
+        setError("signup-error", i18n.t("signup.conflict"));
         return;
       }
       if (r.status >= 200 && r.status < 300) {
@@ -668,11 +757,11 @@
         showSignupConfirmation();
         return;
       }
-      setError("signup-error", "Could not create the account. Please try again.");
+      setError("signup-error", i18n.t("signup.genericError"));
     })
     .catch(function() {
       setLoading(btn, false);
-      setError("signup-error", "Network error. Please try again.");
+      setError("signup-error", i18n.t("signup.networkError"));
     });
   });
 
@@ -688,7 +777,7 @@
       var anchor = $("login-error");
       anchor.parentNode.insertBefore(note, anchor.nextSibling);
     }
-    note.textContent = "Account created — you can now sign in.";
+    note.textContent = i18n.t("signup.confirmation");
     note.classList.add("visible");
   }
 })();

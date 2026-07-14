@@ -11,6 +11,8 @@ import (
 
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/conditionalaccess"
+	"github.com/snaplink/sso/domains/threataction"
+	threatactionmemory "github.com/snaplink/sso/domains/threataction/memory"
 	"github.com/snaplink/sso/domains/tokenanomaly"
 	tokenanomalymemory "github.com/snaplink/sso/domains/tokenanomaly/memory"
 	"github.com/snaplink/sso/domains/tokenpolicy"
@@ -18,42 +20,94 @@ import (
 	"github.com/snaplink/sso/domains/tokenusage"
 	tokenusagememory "github.com/snaplink/sso/domains/tokenusage/memory"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/platform/configaudit"
 	configauditsqlite "github.com/snaplink/sso/platform/configaudit/sqlite"
 	"github.com/snaplink/sso/platform/lifecycle/rotation"
 	"github.com/snaplink/sso/platform/metrics"
+	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/security/clientrotation"
 	"github.com/snaplink/sso/shared/security/securityverify"
 	"github.com/snaplink/sso/shared/spi"
 )
 
 // BuildCredentialRotation assembles the unified credential-rotation Registry +
-// Scheduler when rotation.enabled. It registers the wave-1 webhook-HMAC secret
-// rotator (securityverify.WebhookSecretRotator) — the only CredentialRotator
-// the SDK currently ships — seeded from initialSecret (empty ⇒ a fresh random
-// secret). The Registry backs the read-only GET /api/v1/admin/credentials
-// inventory (sso.WithCredentialRotation); the Scheduler drives the background
-// rotations and is Start/Stopped by the caller under the process lifecycle.
+// Scheduler when EITHER rotation.enabled (webhook-HMAC secret) or
+// client_secret_rotation.enabled (OAuth client secrets) is set. Both
+// rotators — securityverify.WebhookSecretRotator and
+// clientrotation.ClientSecretRotator — register onto the SAME Registry and
+// share ONE Scheduler: rotation.Registry.Register takes an interval PER
+// rotator, so one Scheduler already supports multiple cadences, and a single
+// background loop is simpler to run/Start/Stop than two. webhookSecret seeds
+// the webhook rotator (empty ⇒ a fresh random secret); clientStore is the
+// OAuth ClientStore the client-secret rotator sweeps (required, and must
+// implement clientrotation.ClientRotationLister, when clientCfg.Enabled). The
+// Registry backs the read-only GET /api/v1/admin/credentials inventory
+// (sso.WithCredentialRotation); the Scheduler drives the background rotations
+// and is Start/Stopped by the caller under the process lifecycle.
 //
-// Returns (nil, nil, nil) when disabled — byte-identical to a build without it.
-func BuildCredentialRotation(cfg config.RotationConfig, initialSecret []byte, logger spi.Logger, m *metrics.Metrics) (*rotation.Registry, *rotation.Scheduler, error) {
-	if !cfg.Enabled {
+// Returns (nil, nil, nil) when both are disabled — byte-identical to a build
+// without either feature.
+func BuildCredentialRotation(cfg config.RotationConfig, clientCfg config.ClientSecretRotationConfig, webhookSecret []byte, clientStore core.ClientStore, logger spi.Logger, m *metrics.Metrics) (*rotation.Registry, *rotation.Scheduler, error) {
+	if !cfg.Enabled && !clientCfg.Enabled {
 		return nil, nil, nil
 	}
-	if cfg.Interval <= 0 {
-		return nil, nil, errors.New("rotation.interval must be > 0 when rotation.enabled")
-	}
-	secret, err := securityverify.NewRotatingWebhookSecret(initialSecret)
-	if err != nil {
-		return nil, nil, fmt.Errorf("rotation: webhook secret: %w", err)
-	}
 	reg := rotation.NewRegistry()
-	if err := reg.Register(securityverify.NewWebhookSecretRotator(secret, cfg.Overlap), cfg.Interval); err != nil {
-		return nil, nil, fmt.Errorf("rotation: register webhook rotator: %w", err)
+	if cfg.Enabled {
+		if err := registerWebhookRotator(reg, cfg, webhookSecret); err != nil {
+			return nil, nil, err
+		}
 	}
+	if clientCfg.Enabled {
+		if err := registerClientSecretRotator(reg, clientCfg, clientStore, logger); err != nil {
+			return nil, nil, err
+		}
+	}
+	// Scheduler tick/backoff are configured ONCE under `rotation:` regardless
+	// of which rotators are registered onto this shared Registry.
 	sched := rotation.NewScheduler(reg, credentialSchedulerOptions(cfg, logger, m)...)
 	logger.Info("credential rotation scheduler enabled",
-		"interval", cfg.Interval, "overlap", cfg.Overlap)
+		"webhook_enabled", cfg.Enabled, "client_secret_enabled", clientCfg.Enabled)
 	return reg, sched, nil
+}
+
+// registerWebhookRotator seeds + registers the webhook-HMAC secret rotator.
+func registerWebhookRotator(reg *rotation.Registry, cfg config.RotationConfig, webhookSecret []byte) error {
+	if cfg.Interval <= 0 {
+		return errors.New("rotation.interval must be > 0 when rotation.enabled")
+	}
+	secret, err := securityverify.NewRotatingWebhookSecret(webhookSecret)
+	if err != nil {
+		return fmt.Errorf("rotation: webhook secret: %w", err)
+	}
+	if err := reg.Register(securityverify.NewWebhookSecretRotator(secret, cfg.Overlap), cfg.Interval); err != nil {
+		return fmt.Errorf("rotation: register webhook rotator: %w", err)
+	}
+	return nil
+}
+
+// registerClientSecretRotator validates + registers the OAuth client-secret
+// rotator. Fails loud (rather than silently never rotating anything) when
+// the configured store can't support scheduled due-listing — an operator who
+// explicitly enabled this feature deserves a boot-time error, not a
+// permanently-silent no-op.
+func registerClientSecretRotator(reg *rotation.Registry, clientCfg config.ClientSecretRotationConfig, clientStore core.ClientStore, logger spi.Logger) error {
+	if clientCfg.Interval <= 0 {
+		return errors.New("client_secret_rotation.interval must be > 0 when client_secret_rotation.enabled")
+	}
+	if clientStore == nil {
+		return errors.New("client_secret_rotation.enabled requires a configured client store")
+	}
+	if _, ok := clientStore.(clientrotation.ClientRotationLister); !ok {
+		return fmt.Errorf("client_secret_rotation.enabled requires a ClientStore implementing "+
+			"clientrotation.ClientRotationLister (the memory + sqlite defaultimpl backends do); got %T", clientStore)
+	}
+	rotator := clientrotation.NewClientSecretRotator(clientStore, clientCfg.Interval, logger)
+	if err := reg.Register(rotator, clientCfg.Interval); err != nil {
+		return fmt.Errorf("rotation: register client secret rotator: %w", err)
+	}
+	return nil
 }
 
 // credentialSchedulerOptions maps the config knobs to rotation.SchedulerOptions,
@@ -208,6 +262,53 @@ func BuildDegradationManager(cfg config.DegradationConfig) (*sso.DegradationMana
 	return sso.NewDegradationManager(mode), nil
 }
 
+// BuildThreatAction assembles the Active ITDR composite executor
+// (domains/threataction) when threat_action.enabled: a ThreatExecutors that
+// maps policy-selected actions to concrete handlers (suspend_session,
+// revoke_family, step_up_mfa, challenge, notify) plus the in-memory ThreatPolicyStore
+// seeded from cfg.Policies. sessionMgr/trustMgr/familyRevoker/bus are each
+// independently optional (nil-safe) — the caller resolves familyRevoker and
+// trustMgr via a type assertion against its refresh-token store / session
+// manager (both OPTIONAL extensions), so a build missing either still gets a
+// working executor for the actions it CAN support.
+//
+// Returns (nil, nil, nil) when disabled — byte-identical to a build without
+// the feature. The returned executor is the SAME instance the caller should
+// hand to both sso.WithThreatExecutor and anomaly.WithThreatExecutor /
+// tokenanomaly.WithThreatExecutor, so the two detection sources share one
+// rate-limiter + policy view.
+func BuildThreatAction(
+	cfg config.ThreatActionConfig,
+	sessionMgr core.SessionManager,
+	trustMgr core.SessionTrustManager,
+	familyRevoker threataction.FamilyRevoker,
+	bus cluster.Bus,
+	recorder *audit.Recorder,
+	logger spi.Logger,
+) (*threataction.ThreatExecutors, threataction.ThreatPolicyStore, error) {
+	if !cfg.Enabled {
+		return nil, nil, nil
+	}
+	store := threatactionmemory.NewThreatPolicyStore()
+	for _, p := range cfg.Policies {
+		if err := store.Put(context.Background(), p); err != nil {
+			return nil, nil, fmt.Errorf("threat_action.policies: %w", err)
+		}
+	}
+	handlers := map[threataction.Action]threataction.ThreatExecutor{
+		threataction.ActionSuspend:   threataction.NewSuspendSessionExecutor(sessionMgr, bus),
+		threataction.ActionRevoke:    threataction.NewRevokeFamilyExecutor(familyRevoker, bus),
+		threataction.ActionStepUpMFA: threataction.NewStepUpMFAExecutor(trustMgr, sessionMgr),
+		threataction.ActionChallenge: threataction.NewChallengeExecutor(trustMgr, sessionMgr),
+		threataction.ActionNotify:    threataction.NewNotifyExecutor(),
+	}
+	opts := []threataction.ThreatExecutorsOption{threataction.WithLogger(logger)}
+	if cfg.DefaultAction != "" {
+		opts = append(opts, threataction.WithDefaultAction(threataction.Action(cfg.DefaultAction)))
+	}
+	return threataction.NewThreatExecutors(store, handlers, recorder, opts...), store, nil
+}
+
 // BuildTokenAnomaly assembles the wave-4 token-behavior anomaly subsystem when
 // token_anomaly.enabled: a bounded token-usage aggregation store, the
 // tokenanomaly.Detector that DECORATES it (capturing per-thumbprint geo/velocity
@@ -220,7 +321,11 @@ func BuildDegradationManager(cfg config.DegradationConfig) (*sso.DegradationMana
 // Returns (nil, nil, nil) when disabled — byte-identical to a build without it.
 // The detector only observes what the recorder drains, so the two are co-wired:
 // the token-usage recorder is not a separately-configurable feature this wave.
-func BuildTokenAnomaly(cfg config.TokenAnomalyConfig, logger spi.Logger) (*tokenusage.Recorder, *tokenanomaly.Detector, error) {
+//
+// threatExec is the optional Active ITDR executor (BuildThreatAction); nil
+// leaves the detector's Analyze sweep audit/metric-only, exactly as before
+// this option existed.
+func BuildTokenAnomaly(cfg config.TokenAnomalyConfig, logger spi.Logger, threatExec threataction.ThreatExecutor) (*tokenusage.Recorder, *tokenanomaly.Detector, error) {
 	if !cfg.Enabled {
 		return nil, nil, nil
 	}
@@ -232,7 +337,7 @@ func BuildTokenAnomaly(cfg config.TokenAnomalyConfig, logger spi.Logger) (*token
 	// aggregates into a bucket AND feeds the anomaly observation table.
 	store := tokenusagememory.New(usageStoreOptions(cfg)...)
 	findings := tokenanomalymemory.NewFindingStore(findingStoreOptions(cfg)...)
-	detector := tokenanomaly.NewDetector(store, findings, detectorOptions(cfg)...)
+	detector := tokenanomaly.NewDetector(store, findings, detectorOptions(cfg, threatExec)...)
 	rec := tokenusage.NewRecorder(detector, recorderOptions(cfg, logger)...)
 	return rec, detector, nil
 }
@@ -267,8 +372,11 @@ func recorderOptions(cfg config.TokenAnomalyConfig, logger spi.Logger) []tokenus
 // detectorOptions maps the optional detector-tuning knobs; each zero value is
 // left to the detector's adaptive package default (WithXxx ignores non-positive
 // inputs, so passing zeros is safe, but skipping them keeps intent explicit).
-func detectorOptions(cfg config.TokenAnomalyConfig) []tokenanomaly.Option {
+func detectorOptions(cfg config.TokenAnomalyConfig, threatExec threataction.ThreatExecutor) []tokenanomaly.Option {
 	var opts []tokenanomaly.Option
+	if threatExec != nil {
+		opts = append(opts, tokenanomaly.WithThreatExecutor(threatExec))
+	}
 	if cfg.MaxThumbprints > 0 {
 		opts = append(opts, tokenanomaly.WithMaxThumbprints(cfg.MaxThumbprints))
 	}

@@ -14,11 +14,19 @@ import (
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	"github.com/snaplink/sso/interfaces/sso"
 	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
+	"github.com/snaplink/sso/infrastructure/sms"
+	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/shared/security"
 	"github.com/snaplink/sso/shared/spi"
 	"golang.org/x/crypto/bcrypt"
+)
+
+// SMS provider discriminators (config.SMSConfig.Provider) — no literal
+// leaks (AGENTS.md §4).
+const (
+	smsProviderLog  = "log"
+	smsProviderHTTP = "http"
 )
 
 // authReplayStoreFn lazily resolves the shared keypair/TOTP replay-defense
@@ -117,19 +125,57 @@ func appendPasswordAuthenticator(auths []sso.Authenticator, a *config.PasswordCo
 	return auths, nil
 }
 
-func appendPhoneAuthenticator(auths []sso.Authenticator, a *config.CodeAuthConfig, codeStore authenticators.CodeStore, logger spi.Logger) []sso.Authenticator {
+func appendPhoneAuthenticator(auths []sso.Authenticator, a *config.PhoneConfig, codeStore authenticators.CodeStore, logger spi.Logger) ([]sso.Authenticator, error) {
 	if a == nil || !a.Enabled {
-		return auths
+		return auths, nil
+	}
+	sender, err := buildPhoneSMSSender(a.SMS, logger)
+	if err != nil {
+		return nil, fmt.Errorf("phone sms sender: %w", err)
 	}
 	return append(auths, authenticators.NewPhoneAuthenticator(
 		codeStore,
-		authenticators.SMSSenderFunc(func(_ context.Context, phone, code string) error {
-			logger.Info("sms stub", "phone", phone, "code", code)
-			return nil
-		}),
+		sender,
 		authenticators.WithPhoneCodeLength(a.CodeLength),
 		authenticators.WithPhoneCodeTTL(a.CodeTTL),
-	))
+	)), nil
+}
+
+// buildPhoneSMSSender resolves the SMS transport the phone authenticator
+// dials, keyed on cfg.Provider: "" / "log" (default — logs the code instead
+// of sending it, byte-identical to the stub that shipped before SMSConfig
+// existed) or "http" (the built-in Twilio-Messages-API-compatible REST
+// sender in infrastructure/sms). A misconfigured "http" provider (missing
+// required field, or an unrecognized Provider value) fails loud here rather
+// than silently falling back to the log stub — the same fail-fast contract
+// buildTOTPEnrollmentStore applies to an unknown authenticators.totp.backend.
+func buildPhoneSMSSender(cfg *config.SMSConfig, logger spi.Logger) (authenticators.SMSSender, error) {
+	provider := smsProviderLog
+	if cfg != nil && strings.TrimSpace(cfg.Provider) != "" {
+		provider = strings.ToLower(strings.TrimSpace(cfg.Provider))
+	}
+	switch provider {
+	case smsProviderLog:
+		return authenticators.SMSSenderFunc(func(_ context.Context, phone, code string) error {
+			logger.Info("sms stub", "phone", phone, "code", code)
+			return nil
+		}), nil
+	case smsProviderHTTP:
+		sender, err := sms.New(sms.Config{
+			AccountSID:      cfg.AccountSID,
+			AuthToken:       cfg.AuthToken,
+			FromNumber:      cfg.FromNumber,
+			MessageTemplate: cfg.MessageTemplate,
+			HTTPTimeout:     cfg.HTTPTimeout,
+			BaseURL:         cfg.BaseURL,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("authenticators.phone.sms: %w", err)
+		}
+		return authenticators.SMSSenderFunc(sender.Send), nil
+	default:
+		return nil, fmt.Errorf("unknown authenticators.phone.sms.provider %q (supported: log, http)", cfg.Provider)
+	}
 }
 
 func appendEmailAuthenticator(auths []sso.Authenticator, a *config.CodeAuthConfig, codeStore authenticators.CodeStore, smtpCfg config.SMTPConfig, logger spi.Logger) ([]sso.Authenticator, error) {
@@ -166,6 +212,38 @@ func buildEmailOTPSender(smtpCfg config.SMTPConfig, logger spi.Logger) (authenti
 		}), nil
 	}
 	return authenticators.EmailSenderFunc(sender.Send), nil
+}
+
+// appendMagicLinkAuthenticator wires the magic-link (passwordless emailed
+// link) authenticator. Reuses the SAME email-OTP SMTP sender as
+// appendEmailAuthenticator (buildEmailOTPSender): EmailSender is "deliver
+// this string to this address" regardless of whether the string is a short
+// numeric code or a magic-link URL (see MagicLinkAuthenticator.SendCode's own
+// doc comment for why the interface needed no changes). base_url is REQUIRED
+// when enabled: a magic-link authenticator with no landing page can never be
+// completed, so this fails the boot loudly rather than silently shipping a
+// dead feature — mirrors buildPhoneSMSSender's fail-fast contract for a
+// misconfigured "http" SMS provider.
+func appendMagicLinkAuthenticator(auths []sso.Authenticator, a *config.MagicLinkConfig, codeStore authenticators.CodeStore, smtpCfg config.SMTPConfig, logger spi.Logger) ([]sso.Authenticator, error) {
+	if a == nil || !a.Enabled {
+		return auths, nil
+	}
+	if strings.TrimSpace(a.BaseURL) == "" {
+		return nil, errors.New("authenticators.magic_link.base_url is required when enabled")
+	}
+	sender, err := buildEmailOTPSender(smtpCfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("magic link smtp sender: %w", err)
+	}
+	auths = append(auths, authenticators.NewMagicLinkAuthenticator(
+		codeStore,
+		sender,
+		a.BaseURL,
+		authenticators.WithMagicLinkTokenLength(a.TokenLength),
+		authenticators.WithMagicLinkTTL(a.TTL),
+	))
+	logger.Info("magic link authenticator enabled", "base_url", a.BaseURL)
+	return auths, nil
 }
 
 func appendKeyPairAuthenticator(auths []sso.Authenticator, a *config.KeyPairConfig, replay authReplayStoreFn, logger spi.Logger) ([]sso.Authenticator, error) {
@@ -338,7 +416,13 @@ func buildTOTPEnrollmentStore(a *config.TOTPConfig, pg *sql.DB, dialect postgres
 	}
 }
 
-func appendOIDCFederationAuthenticators(auths []sso.Authenticator, feds []*config.OIDCFederationAuthConfig, logger spi.Logger) []sso.Authenticator {
+// appendOIDCFederationAuthenticators wires each configured federation entry.
+// linker, when non-nil, is passed to EVERY entry via
+// authenticators.WithUserLinker — see the call site in BuildAuthenticatorsDurable
+// for why this binary always passes nil today (no identitylink.Store is
+// built here yet). A nil linker is a no-op (authenticators.WithUserLinker's
+// doc): behavior is byte-identical to before UserLinker existed.
+func appendOIDCFederationAuthenticators(auths []sso.Authenticator, feds []*config.OIDCFederationAuthConfig, logger spi.Logger, linker authenticators.UserLinker) []sso.Authenticator {
 	for _, fed := range feds {
 		if fed == nil {
 			continue
@@ -354,7 +438,7 @@ func appendOIDCFederationAuthenticators(auths []sso.Authenticator, feds []*confi
 			Scopes:                fed.Scopes,
 			SubjectFieldOverride:  fed.SubjectFieldOverride,
 			Timeout:               fed.Timeout,
-		})
+		}, authenticators.WithUserLinker(linker))
 		if err != nil {
 			logger.Error("oidc_federation skipped (bad config)", "name", fed.Name, "error", err)
 			continue

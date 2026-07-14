@@ -17,15 +17,16 @@ import (
 // (accessors.go) — unreachable here (cycle), so this replicates the same
 // delegation with real stores + seam hooks for the crypto-backed methods.
 type revokeDeps struct {
-	clients      core.ClientStore
-	refresh      RefreshTokenStore
-	issuers      map[string]core.TokenIssuer
-	validate     func(ctx context.Context, token string) (*core.TokenClaims, string, error)
-	verifyCA     func(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
-	resolveLocal func(ctx context.Context, sub string) (string, error)
-	revokeAcross func(ctx context.Context, token string) (revoked, failed []string)
-	authCreds    func(ctx core.HandlerContext, id, secret string) error
-	trustedDevs  core.TrustedDeviceStore
+	clients         core.ClientStore
+	refresh         RefreshTokenStore
+	issuers         map[string]core.TokenIssuer
+	validate        func(ctx context.Context, token string) (*core.TokenClaims, string, error)
+	verifyCA        func(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
+	resolveLocal    func(ctx context.Context, sub string) (string, error)
+	revokeAcross    func(ctx context.Context, token string) (revoked, failed []string)
+	authCreds       func(ctx core.HandlerContext, id, secret string) error
+	trustedDevs     core.TrustedDeviceStore
+	introspectCache IntrospectionCache
 }
 
 func (d *revokeDeps) ClientStoreAccessor() core.ClientStore     { return d.clients }
@@ -52,6 +53,7 @@ func (d *revokeDeps) AuditPartialRevokeFailure(core.HandlerContext, []string, []
 func (d *revokeDeps) SetBearerChallenge(core.HandlerContext, string, string, string)    {}
 func (d *revokeDeps) SrvLogger() spi.Logger                                             { return spi.NopLogger{} }
 func (d *revokeDeps) TrustedDeviceStore() core.TrustedDeviceStore                       { return d.trustedDevs }
+func (d *revokeDeps) IntrospectionCache() IntrospectionCache                            { return d.introspectCache }
 
 var _ RevokeDeps = (*revokeDeps)(nil)
 

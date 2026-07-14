@@ -196,7 +196,7 @@ func (s *Server) handleMFAComplete(ctx HandlerContext) {
 
 	// Factor verified — decode the frozen state, re-validate the client, and
 	// resume the standard post-risk login flow.
-	s.resumeLoginAfterMFA(ctx, challenge, req.Method, req.ChallengeID)
+	s.resumeLoginAfterMFA(ctx, challenge, req.Method, req.ChallengeID, req.TrustDevice)
 }
 
 // mfaCompleteRequest is the POST /auth/mfa payload. Method + ChallengeID are
@@ -211,6 +211,17 @@ type mfaCompleteRequest struct {
 	// collect the per-method known fields from these.
 	Code      string `json:"code"`      // totp
 	Assertion string `json:"assertion"` // webauthn
+	// TrustDevice mirrors the login UI's "Trust this device" checkbox
+	// (interfaces/web/login/index.html #mfa-trust-device). When true AND a
+	// TrustedDeviceStore is wired, a SUCCESSFUL MFA completion mints a fresh
+	// trust grant (see finishLoginWithDeviceTrust) so a later /auth/login
+	// for the same (user, client) can skip this challenge. Never consulted
+	// on a failed/invalid MFA attempt — verifyMFAFactor returns before this
+	// field is ever read, so it changes nothing about the mfa_invalid
+	// failure shape. bindOAuthParams handles bool for both JSON (native
+	// bool) and form bodies (literal "true"/"1") with no extra tag needed,
+	// same as server_device.go's Approve bool field.
+	TrustDevice bool `json:"trust_device"`
 }
 
 // parseMFACompleteRequest binds + validates the /auth/mfa payload. Any bind
@@ -300,7 +311,7 @@ func mfaLockoutKey(subjectID string) string {
 // finishLogin (which writes the response — indistinguishable from a non-gated
 // login bar the round trip). CredentialHealth is re-attached out-of-band because
 // it is json:"-" and doesn't survive the embedded Result round trip.
-func (s *Server) resumeLoginAfterMFA(ctx HandlerContext, challenge *spi.MFAChallenge, method, challengeID string) {
+func (s *Server) resumeLoginAfterMFA(ctx HandlerContext, challenge *spi.MFAChallenge, method, challengeID string, trustDevice bool) {
 	state := &mfaResumeState{}
 	if err := json.Unmarshal(challenge.RequestState, state); err != nil {
 		s.logger.Error("mfa: failed to decode resume state", "error", err, "challenge", challengeID)
@@ -338,16 +349,38 @@ func (s *Server) resumeLoginAfterMFA(ctx HandlerContext, challenge *spi.MFAChall
 		return
 	}
 	s.recordMFASuccessEvent(ctx, challenge.SubjectID, client.ID, state.Result.Provider, method, challengeID)
+	if s.resumeLoginResidualGates(ctx, state, client) {
+		return
+	}
+	s.finishLoginWithDeviceTrust(ctx, state.Result, state.Request, client, challenge.SubjectID, trustDevice)
+}
+
+// resumeLoginResidualGates runs the SECOND-leg gates that must be
+// re-evaluated after MFA success but have no bearing on whether the MFA
+// factor itself was accepted — extracted from resumeLoginAfterMFA to keep it
+// within the per-function line budget. Order mirrors the pre-MFA-challenge
+// sequence: residency -> email-verification -> password-expiry. Returns true
+// (response already written) the instant one of them halts.
+func (s *Server) resumeLoginResidualGates(ctx HandlerContext, state *mfaResumeState, client *Client) bool {
 	// Data-residency write-gate on the SECOND leg: the token is minted NOW from
 	// THIS request's serving region (same middleware as /auth/login). No resolver
 	// wired -> never fires (byte-identical).
 	if s.residencyGateLogin(ctx, client.ID, state.Result.Provider, client.TenantID) {
-		return
+		return true
 	}
 	if s.rejectUnverifiedEmail(ctx, &state.Request, state.Result) {
-		return
+		return true
 	}
-	s.finishLogin(ctx, state.Result, state.Request, client)
+	// Password-expiry re-check on the SECOND leg, same reasoning as the SCIM
+	// re-check above (in resumeLoginAfterMFA): the MFA challenge TTL can be
+	// minutes, during which the operator-configured MaxAgeDays window could
+	// newly elapse. Reuses the SAME password_expired response the first-leg
+	// gate uses (rejectExpiredPassword), so this isn't a new distinguishable
+	// error shape.
+	if s.rejectExpiredPassword(ctx, &state.Request, state.Result) {
+		return true
+	}
+	return false
 }
 
 // recordMFASuccessEvent emits the mfa_success audit event (no-op without auditor).

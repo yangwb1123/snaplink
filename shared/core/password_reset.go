@@ -64,3 +64,32 @@ type PasswordResetLister interface {
 // expired, or already consumed. Callers MUST collapse all three to a single
 // reset_invalid wire response (anti-enumeration / oracle-safe).
 var ErrResetTokenNotFound = errors.New("sso: password reset token not found or expired")
+
+// -----------------------------------------------------------------------------
+// PasswordCredentialStore extensions. Co-located here (not in spi.go, which
+// declares PasswordCredentialStore itself) purely to stay under spi.go's
+// 500-line budget (AGENTS.md §0.1) — thematically this is still
+// password-credential SPI, same family as PasswordResetStore above.
+
+// PasswordAgeReader is an OPTIONAL extension a PasswordCredentialStore MAY
+// satisfy to report when userID's CURRENT password credential was last set
+// (via SetPassword or SetPasswordHash). It backs the login-time
+// PasswordPolicyConfig.MaxAgeDays enforcement (interfaces/sso
+// rejectExpiredPassword); a store that does not implement it — or that
+// errors — makes that policy dimension a silent no-op (fail-open) for its
+// users, mirroring every other policy gate whose backing signal is
+// unavailable (AGENTS.md §3 Fail Modes). Callers type-assert. NOT folded into
+// the base PasswordCredentialStore interface: not every deployment tracks
+// credential age, and this keeps the core SPI narrow (mirrors
+// PasswordHashImporter above).
+//
+// Never called on the anti-enumeration path: by the time a caller invokes
+// this, the password has ALREADY verified via VerifyPassword, so there is no
+// timing/oracle concern here the way there is for an unknown-user lookup.
+type PasswordAgeReader interface {
+	// PasswordChangedAt returns the time userID's current credential was set.
+	// Returns a non-nil error when unknown/unavailable — the caller MUST
+	// treat that as "can't determine, don't enforce" rather than treating a
+	// zero time as "always expired".
+	PasswordChangedAt(ctx context.Context, userID string) (time.Time, error)
+}

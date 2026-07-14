@@ -435,6 +435,22 @@ func (s *Server) revokeAcrossIssuers(ctx context.Context, token string) (revoked
 			failed = append(failed, name)
 		}
 	}
+	// Best-effort: evict any cached /token/introspect result for this exact
+	// token immediately rather than waiting out the cache TTL (AGENTS.md §3
+	// Oracle-Leak Hardening — a revoked token must not keep reporting
+	// active:true to a caller who introspects it right after this call).
+	// This unexported method is the SINGLE choke point every revocation path
+	// in this codebase funnels through: the exported RevokeAcrossIssuers
+	// wraps it (used by /token/revoke, /logout, /token/revoke-all's
+	// presented bearer, and the admin gRPC revoke), and the cross-replica
+	// ApplyTokenRevocation adoption arm calls this method directly — so
+	// instrumenting here covers all of them from one place. Fires
+	// regardless of whether any issuer actually owned the token, matching
+	// RFC 7009 §2.2's anti-enumeration contract (a caller can't tell
+	// found-and-revoked from unknown, so this can't leak that either).
+	// No-op when caching is unwired or the backend doesn't support
+	// point-eviction — see oauth.InvalidateIntrospectionCache.
+	oauth.InvalidateIntrospectionCache(s.introspectionCache, token)
 	return revoked, failed
 }
 

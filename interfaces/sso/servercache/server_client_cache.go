@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/security/clientrotation"
 )
 
 // DefaultClientStoreCacheTTL bounds how long a successfully-read client
@@ -193,6 +194,17 @@ func (c *ClientStoreCache) Stats(ctx context.Context) (int, string, error) {
 		return st.Stats(ctx)
 	}
 	return 0, "", core.ErrUnsupportedOperation
+}
+
+// ListDueForRotation forwards to the inner store's
+// clientrotation.ClientRotationLister extension when present, preserving
+// that optional capability through the decorator (uncached — a scheduled
+// sweep, not the per-request hot path).
+func (c *ClientStoreCache) ListDueForRotation(ctx context.Context, olderThan time.Time) ([]string, error) {
+	if l, ok := c.inner.(clientrotation.ClientRotationLister); ok {
+		return l.ListDueForRotation(ctx, olderThan)
+	}
+	return nil, core.ErrUnsupportedOperation
 }
 
 // getFresh returns a CLONE of the cached client when a non-expired entry

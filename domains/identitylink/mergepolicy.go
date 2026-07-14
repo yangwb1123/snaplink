@@ -146,31 +146,45 @@ var _ MergePolicy = (*LinkOnlyMergePolicy)(nil)
 // doc — never a silent no-op). A store lookup error fails CLOSED (returns
 // ErrAccountConflict) rather than risk silently proceeding past an
 // unreadable conflict signal.
+//
+// Callers that also need to audit the verdict (via [RecordMergeDecision])
+// without duplicating this logic should call [resolveWithDecision] instead —
+// Resolve is a thin wrapper that discards the extra detail.
 func Resolve(ctx context.Context, store Store, policy MergePolicy, provider, subject, incomingUserID string) (string, error) {
+	userID, _, _, err := resolveWithDecision(ctx, store, policy, provider, subject, incomingUserID)
+	return userID, err
+}
+
+// resolveWithDecision is Resolve's core logic, additionally returning the
+// detected Conflict (nil when none was found — the no-op paths) and the
+// MergePolicy's Decision, so a caller that must audit the verdict (e.g.
+// AuthenticatorLinker) can do so with the exact Conflict/Decision pair
+// RecordMergeDecision expects, instead of re-deriving them.
+func resolveWithDecision(ctx context.Context, store Store, policy MergePolicy, provider, subject, incomingUserID string) (userID string, conflict *Conflict, decision Decision, err error) {
 	if store == nil {
-		return incomingUserID, nil
+		return incomingUserID, nil, Decision{}, nil
 	}
 	existing, found, err := store.FindByProviderSubject(ctx, provider, subject)
 	if err != nil {
-		return "", ErrAccountConflict
+		return "", nil, Decision{}, ErrAccountConflict
 	}
 	if !found || existing.UserID == incomingUserID {
-		return incomingUserID, nil
+		return incomingUserID, nil, Decision{}, nil
 	}
 	if policy == nil {
 		policy = RejectPolicy{}
 	}
-	conflict := Conflict{
+	c := Conflict{
 		Provider:       provider,
 		Subject:        subject,
 		ExistingUserID: existing.UserID,
 		IncomingUserID: incomingUserID,
 	}
-	decision, err := policy.Resolve(ctx, conflict)
-	if err != nil || !decision.Allow {
-		return "", ErrAccountConflict
+	d, rErr := policy.Resolve(ctx, c)
+	if rErr != nil || !d.Allow {
+		return "", &c, d, ErrAccountConflict
 	}
-	return decision.FinalUserID, nil
+	return d.FinalUserID, &c, d, nil
 }
 
 // RecordMergeDecision emits the audit event for a MergePolicy verdict on

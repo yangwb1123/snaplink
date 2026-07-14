@@ -6,9 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/snaplink/sso/domains/tokenexchange"
 	"github.com/snaplink/sso/domains/userlifecycle"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 // User-lifecycle state-machine admin handlers. GET returns a user's current
@@ -124,4 +126,59 @@ func writeLifecycleValidationError(ctx core.HandlerContext, err error) {
 	default:
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrIllegalLifecycleTransition))
 	}
+}
+
+// --- RFC 8693 token-exchange delegation-chain admin surface ---
+//
+// Unrelated to user-lifecycle above; appended to this file rather than its
+// own (interfaces/admin is at its 10-file directory-fanout ceiling —
+// directory_fanout_test.go — so a new file here would be a new violation)
+// rather than touching token_portfolio.go, which has concurrent
+// expiry-calendar work landing in parallel. A single read-only endpoint over
+// the OPTIONAL tokenexchange.ChainStore (WithTokenExchangeChainStore); pure
+// observability/governance, mirrors the read-only shape of
+// token_portfolio.go's HandleSubjectTokens (individual params, not the
+// broader admin.Deps interface, since this needs exactly one dependency).
+
+// HandleTokenExchangeChain serves GET
+// /api/v1/admin/tokenexchange/chains/:jti — the durable, recorded RFC 8693
+// delegation-chain history for one minted access token's jti: every hop
+// (actor, subject, client, chain depth, timestamp) a token-exchange grant
+// recorded on its way to producing that token, oldest (root) first. Pure
+// observability for audit / incident response — never consulted by any
+// authorization decision, and does not affect token-exchange behavior.
+// admin:read (default GET scope via AdminMiddleware's /api/v1/admin/ prefix
+// — see token_portfolio.go's HandleSubjectTokens for the same convention).
+//
+// A nil store (should never reach this handler in production — the route is
+// only mounted when one is wired, see interfaces/sso's
+// mountAdminTokenExchangeChainRoutes) and an unrecorded/unknown jti both
+// collapse to the SAME 404: from an operator's standpoint both mean
+// "nothing recorded here", and there is no oracle concern gating an
+// already-authenticated admin-only endpoint.
+func HandleTokenExchangeChain(store tokenexchange.ChainStore, log spi.Logger, ctx core.HandlerContext) {
+	jti := strings.TrimSpace(ctx.Param("jti"))
+	if jti == "" {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, core.ErrorBody(core.ErrNotFound))
+		return
+	}
+	chain, err := store.GetChain(ctx.Request().Context(), jti)
+	if err != nil {
+		log.Error("admin token-exchange chain lookup failed", "error", err, "jti", jti)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	if len(chain) == 0 {
+		ctx.JSON(http.StatusNotFound, core.ErrorBody(core.ErrNotFound))
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{
+		core.KeyStatus: core.StatusOK,
+		"jti":          jti,
+		"chain":        chain,
+	})
 }

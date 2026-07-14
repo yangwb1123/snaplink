@@ -51,7 +51,7 @@ func (s *Server) ResolveLocalSubject(ctx context.Context, sub string) (string, e
 func (s *Server) RevokeAcrossIssuers(ctx context.Context, token string) (revoked, failed []string) {
 	revoked, failed = s.revokeAcrossIssuers(ctx, token)
 	if len(revoked) > 0 {
-		s.publishTokenRevocation(ctx, token, jwtExpUnsafe(token))
+		s.notifyTokenRevoked(ctx, token, revoked)
 	}
 	return revoked, failed
 }
@@ -493,6 +493,8 @@ func (s *Server) RecordIDTokenIssued(ctx HandlerContext, clientID, subjectID str
 	s.recordIDTokenIssued(ctx, clientID, subjectID)
 }
 
-// JWTBearerAssertionValidator / SAML2AssertionValidator moved to
-// server_token.go (which had room), beside the tokengrant.Handle*Grant
-// call sites that consume them.
+// ActorFromContext satisfies adminuser.Deps.
+func (s *Server) ActorFromContext(ctx context.Context) (string, string, bool) {
+	return admin.ActorFromContext(ctx)
+}
+// JWTBearerAssertionValidator / SAML2AssertionValidator moved to server_token.go beside the tokengrant.Handle*Grant call sites that consume them.

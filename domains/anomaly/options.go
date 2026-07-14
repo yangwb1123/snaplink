@@ -3,6 +3,7 @@ package anomaly
 import (
 	"time"
 
+	"github.com/snaplink/sso/domains/threataction"
 	"github.com/snaplink/sso/shared/spi"
 )
 
@@ -65,6 +66,16 @@ func WithDropPolicy(p DropPolicy) Option {
 		if p != "" {
 			r.dropPolicy = p
 		}
+	}
+}
+
+// WithThreatExecutor sets the optional threat executor that translates
+// anomaly signals into security actions (session suspension, token family
+// revocation, MFA step-up). Off-path, fail-open — a nil executor (default)
+// is byte-identical to the current behavior.
+func WithThreatExecutor(exec threataction.ThreatExecutor) Option {
+	return func(r *Runner) {
+		r.threatExec = exec
 	}
 }
 

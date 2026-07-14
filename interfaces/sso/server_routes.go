@@ -98,6 +98,7 @@ func (s *Server) Mount() {
 	s.mountClusterEndpoints()
 	s.mountFederationEndpoints()
 	s.mountAdminSurface()
+	s.mountAdminTokenExchangeChainRoutes()
 	s.mountAPIVersionPreview()
 }
 

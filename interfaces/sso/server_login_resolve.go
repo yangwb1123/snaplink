@@ -202,6 +202,20 @@ const (
 // domain. Returns false when no store is wired, the hint is empty, no
 // connection matches, or the resolved connection belongs to a different tenant
 // than the request (cross-tenant HRD isolation).
+//
+// Domain-ownership enforcement is intentionally NOT reimplemented here: it is
+// delegated entirely to connections.Resolve -> Store.ByDomain, which only
+// matches a domain once its claim has been promoted to routing owner — either
+// because the store was built with connections.WithDomainVerificationRequired
+// (config connections.domain_verification.enabled) and the specific domain
+// passed its DNS-TXT challenge, or because the store is running in the
+// default (opt-out) mode, where every declared domain auto-promotes at Upsert
+// for byte-identical legacy routing. A connection whose domain was never
+// declared, or whose claim is still DomainPending under the opted-in mode,
+// therefore never reaches this function as a match — see
+// domains/connections/domain_verification.go and
+// memory_domain_verification.go (reconcileClaimsLocked/promoteDomainLocked)
+// for the enforcement itself.
 func (s *Server) resolveHomeRealm(ctx HandlerContext, loginHint string) (*connections.Connection, bool) {
 	if s.connectionStore == nil || strings.TrimSpace(loginHint) == "" {
 		return nil, false
@@ -225,7 +239,11 @@ func (s *Server) resolveHomeRealm(ctx HandlerContext, loginHint string) (*connec
 // endpoint is NOT mounted (byte-identical). The store maps email domains to a
 // tenant's upstream IdP connection; a login UI calls this to route a user to
 // their org's IdP. (Wiring a resolved connection into the actual upstream login
-// flow is a separate step.)
+// flow is a separate step.) Whether a domain match requires proven DNS
+// ownership before it is trusted for routing is the STORE's own config, not
+// this option's: construct store with connections.WithDomainVerificationRequired
+// (config connections.domain_verification.enabled) to require it, or leave it
+// unset for the historical opt-out behavior — see resolveHomeRealm's doc.
 func WithConnectionStore(store connections.Store) Option {
 	return func(s *Server) { s.connectionStore = store }
 }

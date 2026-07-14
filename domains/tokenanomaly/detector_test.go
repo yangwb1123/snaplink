@@ -2,9 +2,11 @@ package tokenanomaly_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/domains/threataction"
 	"github.com/snaplink/sso/domains/tokenanomaly"
 	tokenanomalymem "github.com/snaplink/sso/domains/tokenanomaly/memory"
 	"github.com/snaplink/sso/domains/tokenusage"
@@ -83,6 +85,64 @@ func TestDetector_MultiGeo(t *testing.T) {
 	}
 	if list, _ := fs.List(context.Background(), tokenanomaly.FindingQuery{}); len(list) != 1 {
 		t.Fatalf("dedup failed: store has %d findings, want 1", len(list))
+	}
+}
+
+// recordingThreatExecutor captures every Threat it's asked to Execute — used
+// to prove a wired executor actually gets consulted (the P0 wiring gap this
+// guards against), not just that Analyze still emits Findings.
+type recordingThreatExecutor struct {
+	mu   sync.Mutex
+	seen []threataction.Threat
+}
+
+func (r *recordingThreatExecutor) Name() string { return "recording" }
+func (r *recordingThreatExecutor) Execute(_ context.Context, t threataction.Threat, _ threataction.ThreatPolicy) (threataction.ActionResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.seen = append(r.seen, t)
+	return threataction.ActionResult{Action: threataction.ActionNoop, OK: true}, nil
+}
+
+// TestDetector_ThreatExecutorReceivesFindings proves a wired ThreatExecutor
+// gets an Execute call for every finding Analyze emits, carrying the
+// finding's Type/Severity/SubjectID/ClientID/Thumbprint through to the
+// Threat — this is the P0 wiring the detector's own doc comment promises but
+// that (pre-fix) had no automated coverage anywhere in the repo.
+func TestDetector_ThreatExecutorReceivesFindings(t *testing.T) {
+	exec := &recordingThreatExecutor{}
+	d, _, _ := newDetector(t, tokenanomaly.WithVelocityGap(5*time.Minute), tokenanomaly.WithThreatExecutor(exec))
+	presentAt(t, d, "tpv", "c1", "US", base.Add(-3*time.Minute))
+	presentAt(t, d, "tpv", "c1", "AU", base.Add(-2*time.Minute)) // impossible travel
+
+	found, err := d.Analyze(context.Background())
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if len(found) == 0 {
+		t.Fatal("expected at least one finding")
+	}
+	if len(exec.seen) != len(found) {
+		t.Fatalf("executor saw %d Execute calls, want %d (one per finding)", len(exec.seen), len(found))
+	}
+	got := exec.seen[0]
+	want := found[0]
+	if got.Type != want.Type || got.Severity != string(want.Severity) || got.ClientID != want.ClientID {
+		t.Errorf("threat = %+v, want to mirror finding %+v", got, want)
+	}
+	if got.Evidence["token_thumbprint"] != want.Thumbprint {
+		t.Errorf("threat evidence thumbprint = %q, want %q", got.Evidence["token_thumbprint"], want.Thumbprint)
+	}
+}
+
+// TestDetector_NilThreatExecutorIsNoop proves the byte-identical-when-unset
+// invariant: Analyze must not panic when no executor is wired (the default).
+func TestDetector_NilThreatExecutorIsNoop(t *testing.T) {
+	d, _, _ := newDetector(t, tokenanomaly.WithVelocityGap(5*time.Minute))
+	presentAt(t, d, "tpv", "c1", "US", base.Add(-3*time.Minute))
+	presentAt(t, d, "tpv", "c1", "AU", base.Add(-2*time.Minute))
+	if _, err := d.Analyze(context.Background()); err != nil {
+		t.Fatalf("Analyze: %v", err)
 	}
 }
 

@@ -57,6 +57,18 @@ func (m *MemoryIntrospectionCache) Set(key string, result *oauth.CachedResult, t
 	})
 }
 
+// Invalidate evicts the cached entry for key immediately, if present — a
+// miss is a no-op (sync.Map.Delete tolerates a missing key). Implements
+// oauth.IntrospectionCacheInvalidator so a revocation path can close the
+// TTL-bounded eventual-consistency window instead of waiting it out.
+func (m *MemoryIntrospectionCache) Invalidate(key string) {
+	m.entries.Delete(key)
+}
+
+// Compile-time guard: MemoryIntrospectionCache also satisfies the OPTIONAL
+// invalidation extension, not just the base IntrospectionCache contract.
+var _ oauth.IntrospectionCacheInvalidator = (*MemoryIntrospectionCache)(nil)
+
 // timeNow is a package-level var for test injection. Deprecated: use
 // time.Now() directly; monotonic comparison is now handled by time.Since
 // in Get() which does not depend on this var.

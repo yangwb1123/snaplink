@@ -199,7 +199,32 @@ func (s *PasswordCredentialStore) VerifyPassword(ctx context.Context, userID, pl
 	return nil
 }
 
+// PasswordChangedAt implements sso.PasswordAgeReader: returns the time
+// userID's current credential was set, read from the SAME updated_at column
+// SetPassword/SetPasswordHash already stamp (Unix nanoseconds) — no schema
+// change needed, no migration/MaxVersion bump. Returns an error for an
+// unknown user or a NULL updated_at (a row written before this column existed
+// in some hand-rolled deployment) so the login-time expiry gate
+// (interfaces/sso rejectExpiredPassword) fails open rather than misreading a
+// missing timestamp as "always expired".
+func (s *PasswordCredentialStore) PasswordChangedAt(ctx context.Context, userID string) (time.Time, error) {
+	var ns sql.NullInt64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT updated_at FROM password_credentials WHERE user_id = ?`, userID).Scan(&ns)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, fmt.Errorf("sqlite: no password_credential for user")
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("sqlite: get password_credential updated_at: %w", err)
+	}
+	if !ns.Valid {
+		return time.Time{}, fmt.Errorf("sqlite: password_credential has no updated_at for user")
+	}
+	return time.Unix(0, ns.Int64), nil
+}
+
 var (
 	_ sso.PasswordCredentialStore = (*PasswordCredentialStore)(nil)
 	_ sso.PasswordHashImporter    = (*PasswordCredentialStore)(nil)
+	_ sso.PasswordAgeReader       = (*PasswordCredentialStore)(nil)
 )

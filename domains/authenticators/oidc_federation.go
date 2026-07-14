@@ -30,7 +30,8 @@ import (
 // The returned AuthResult carries:
 //   - ExternalID  — the upstream `sub` claim. Stable per-user identifier.
 //   - UserID      — by default same as ExternalID; operators can plug
-//     a UserLinker to map upstream sub onto an internal account id.
+//     a [UserLinker] (see [WithUserLinker]) to map upstream sub onto an
+//     internal account id.
 //   - Attributes  — every other claim returned by userinfo (email,
 //     name, picture, etc.) projected as string values.
 //
@@ -48,8 +49,76 @@ import (
 //     (essential `acr`, `amr`, etc.) should add a follow-up signer
 //     verification.
 type OIDCFederationAuthenticator struct {
-	cfg    OIDCFederationConfig
-	client *http.Client
+	cfg       OIDCFederationConfig
+	client    *http.Client
+	linker    UserLinker
+	acrMapper ACRMapper
+}
+
+// UserLinker maps an external (provider, subject) pair — provider is the
+// authenticator's configured Name, subject is the resolved external `sub` (or
+// SubjectFieldOverride claim) — onto the local account a federated login
+// should resolve to. Optional: a nil UserLinker (the default, and the
+// zero-value OIDCFederationAuthenticator's behavior) leaves AuthResult.UserID
+// as the raw external subject, BYTE-IDENTICAL to this authenticator's
+// original behavior before UserLinker existed.
+//
+// This is the hook the package doc above has long promised ("operators can
+// plug a UserLinker") without it existing as code. domains/identitylink's
+// NewAuthenticatorLinker is the ready-made implementation, backed by an
+// identitylink.Store + identitylink.MergePolicy — see that package's doc
+// comment for the full account-linking/merge design this seam plugs into.
+//
+// An error from ResolveUserID fails Callback outright: the caller MUST NOT
+// let the failure's shape differ from any other Callback error (oracle-leak
+// hardening, AGENTS.md §3 — e.g. identitylink.Resolve's ErrAccountConflict
+// must not be distinguishable from a network error talking to the upstream
+// IdP). Callback returns it unwrapped, exactly like every other Callback
+// error path.
+type UserLinker interface {
+	ResolveUserID(ctx context.Context, provider, subject string) (userID string, err error)
+}
+
+// ACRMapper normalizes a federated identity provider's authentication-context
+// signal — an OIDC upstream `acr` claim today; a SAML AuthnContextClassRef URI
+// once infrastructure/saml exposes one from an incoming assertion — onto this
+// SDK's OWN acr vocabulary: the free-form string AuthResult.AchievedACR
+// carries, which the AS stamps as the id_token `acr` claim and checks against
+// acr_values (and which a conditional-access policy can gate on, the same way
+// it already gates on Conditions.RiskScore). Without a mapper, a federated
+// login's upstream ACR is either dropped or passed through raw and unusable by
+// policy — see [WithACRMapper]. domains/authenticators/acrmap.PatternACRMapper
+// is the reference implementation (exact -> regex -> prefix -> default
+// cascade, config-loadable).
+//
+// MapACR MUST be pure (no I/O) and MUST NEVER return an error: an empty
+// upstreamACR (no claim reported by the upstream IdP) or an upstream value
+// matching no configured rule both resolve to "" — "no claim", i.e.
+// AuthResult.AchievedACR stays unset, exactly as if no mapper were wired. A
+// federated login's success MUST NOT depend on the upstream IdP's ACR
+// reporting.
+type ACRMapper interface {
+	MapACR(upstreamACR string) string
+}
+
+// OIDCFederationOption configures an OIDCFederationAuthenticator at
+// construction. Additive: existing NewOIDCFederationAuthenticator(cfg) call
+// sites (no opts) are unaffected by a new option being introduced.
+type OIDCFederationOption func(*OIDCFederationAuthenticator)
+
+// WithUserLinker wires an optional UserLinker (see its doc). Passing a nil
+// linker — or simply not passing this option — keeps Callback's original
+// behavior: AuthResult.UserID defaults to the raw external subject.
+func WithUserLinker(l UserLinker) OIDCFederationOption {
+	return func(o *OIDCFederationAuthenticator) { o.linker = l }
+}
+
+// WithACRMapper wires an optional ACRMapper (see its doc). Passing a nil
+// mapper — or simply not passing this option — keeps Callback's original
+// behavior: AuthResult.AchievedACR is never set from federation, BYTE-
+// IDENTICAL to this authenticator's behavior before ACRMapper existed.
+func WithACRMapper(m ACRMapper) OIDCFederationOption {
+	return func(o *OIDCFederationAuthenticator) { o.acrMapper = m }
 }
 
 // OIDCFederationConfig is the operator-supplied IdP description.
@@ -109,7 +178,7 @@ type OIDCFederationConfig struct {
 //   - TokenEndpoint
 //   - ClientID + ClientSecret
 //   - RedirectURI
-func NewOIDCFederationAuthenticator(cfg OIDCFederationConfig) (*OIDCFederationAuthenticator, error) {
+func NewOIDCFederationAuthenticator(cfg OIDCFederationConfig, opts ...OIDCFederationOption) (*OIDCFederationAuthenticator, error) {
 	if cfg.Name == "" {
 		return nil, errors.New("oidc-federation: name required")
 	}
@@ -125,10 +194,14 @@ func NewOIDCFederationAuthenticator(cfg OIDCFederationConfig) (*OIDCFederationAu
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 10 * time.Second
 	}
-	return &OIDCFederationAuthenticator{
+	o := &OIDCFederationAuthenticator{
 		cfg:    cfg,
 		client: &http.Client{Timeout: cfg.Timeout},
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(o)
+	}
+	return o, nil
 }
 
 func (o *OIDCFederationAuthenticator) Name() string { return o.cfg.Name }
@@ -188,23 +261,69 @@ func (o *OIDCFederationAuthenticator) Callback(ctx context.Context, state *sso.C
 	if sub == "" {
 		return nil, fmt.Errorf("oidc-federation: userinfo missing %q claim", subField)
 	}
+	userID, err := o.resolveUserID(ctx, sub)
+	if err != nil {
+		return nil, err
+	}
+	return &sso.AuthResult{
+		// UserID is the (possibly linker-resolved) local account; ExternalID
+		// is ALWAYS the raw external subject, never rewritten — see
+		// resolveUserID.
+		UserID:     userID,
+		ExternalID: sub,
+		Provider:   o.cfg.Name,
+		Attributes: stringClaims(claims),
+		// Upstream IdP doesn't tell us which AMR was used. RFC 8176
+		// reserves `fed` for "federated authentication," but it's
+		// not in common use; emit it alongside the generic `pwd`
+		// fallback so RPs branching on AMR get a federation signal.
+		AuthMethods: []string{AuthMethodFed},
+		AchievedACR: o.achievedACR(claims),
+	}, nil
+}
+
+// achievedACR resolves AuthResult.AchievedACR from the upstream userinfo
+// claims: "" when no ACRMapper is wired (byte-identical to pre-ACRMapper
+// behavior) or when userinfo carried no string `acr` entry. ID-token claims
+// are OUT OF SCOPE for this authenticator today (see the package doc) — the
+// userinfo response is the only claims source available, so an upstream that
+// emits `acr` only in the ID token (the OIDC-typical placement) isn't seen
+// here yet. MapACR itself never errors, so this can't fail Callback.
+func (o *OIDCFederationAuthenticator) achievedACR(claims map[string]any) string {
+	if o.acrMapper == nil {
+		return ""
+	}
+	upstreamACR, _ := claims["acr"].(string)
+	return o.acrMapper.MapACR(upstreamACR)
+}
+
+// stringClaims projects the string-valued entries of a userinfo response
+// onto AuthResult.Attributes (non-string claims, e.g. nested objects or
+// booleans, are dropped — Attributes is a flat string map).
+func stringClaims(claims map[string]any) map[string]string {
 	attrs := map[string]string{}
 	for k, v := range claims {
 		if s, ok := v.(string); ok {
 			attrs[k] = s
 		}
 	}
-	return &sso.AuthResult{
-		UserID:     sub,
-		ExternalID: sub,
-		Provider:   o.cfg.Name,
-		Attributes: attrs,
-		// Upstream IdP doesn't tell us which AMR was used. RFC 8176
-		// reserves `fed` for "federated authentication," but it's
-		// not in common use; emit it alongside the generic `pwd`
-		// fallback so RPs branching on AMR get a federation signal.
-		AuthMethods: []string{AuthMethodFed},
-	}, nil
+	return attrs
+}
+
+// resolveUserID maps the raw external subject onto the local account
+// AuthResult.UserID should carry. With no linker wired (the default) it is
+// the identity function — BYTE-IDENTICAL to this authenticator's behavior
+// before UserLinker existed. ExternalID (set by the caller, always sub) is
+// deliberately never influenced by this — only UserID is.
+func (o *OIDCFederationAuthenticator) resolveUserID(ctx context.Context, sub string) (string, error) {
+	if o.linker == nil {
+		return sub, nil
+	}
+	// Fail closed, unwrapped — a wired linker's rejection (e.g.
+	// identitylink.ErrAccountConflict) MUST be indistinguishable from any
+	// other Callback failure to the caller (oracle-leak hardening, AGENTS.md
+	// §3).
+	return o.linker.ResolveUserID(ctx, o.cfg.Name, sub)
 }
 
 type oidcTokenResponse struct {

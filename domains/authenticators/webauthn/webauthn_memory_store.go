@@ -3,6 +3,7 @@ package webauthn
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"sync"
@@ -119,6 +120,27 @@ func (m *MemoryUserStore) RemoveCredential(_ context.Context, name string, crede
 	u.Credentials = out
 	return nil
 }
+
+// SetCredentialExtensions implements the optional [credentialExtensionSetter]
+// capability: persists SDK-captured WebAuthn extension results (credProps /
+// largeBlob-support) alongside the identified credential, keyed by
+// base64url(credentialID) — the same encoding [MFAEnrollmentAdapter] uses
+// for its factor IDs, so a listing lookup by that same key finds it.
+func (m *MemoryUserStore) SetCredentialExtensions(_ context.Context, name string, credentialID []byte, ext CredentialExtensions) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.byName[name]
+	if !ok {
+		return ErrUserUnknown
+	}
+	if u.CredentialExtensions == nil {
+		u.CredentialExtensions = make(map[string]CredentialExtensions)
+	}
+	u.CredentialExtensions[base64.RawURLEncoding.EncodeToString(credentialID)] = ext
+	return nil
+}
+
+var _ credentialExtensionSetter = (*MemoryUserStore)(nil)
 
 // MemorySessionStore is an in-process [SessionStore]. Production
 // multi-replica setups MUST plug a shared store — a session minted

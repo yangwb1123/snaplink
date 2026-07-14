@@ -105,6 +105,9 @@ func layerName(rel string) string {
 	if strings.HasPrefix(rel, "internal/handler") {
 		return "interfaces"
 	}
+	if strings.HasPrefix(rel, "internal/adminuser") {
+		return "interfaces"
+	}
 	return "" // unclassified
 }
 

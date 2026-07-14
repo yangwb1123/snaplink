@@ -69,6 +69,56 @@ type ClientConfig struct {
 	Attributes map[string]string `yaml:"attributes,omitempty"`
 }
 
+// ClientSecretRotationConfig opts into scheduled OAuth client-secret rotation
+// via the same unified credential-rotation framework the webhook-HMAC secret
+// uses (RotationConfig / platform/lifecycle/rotation): a background sweep
+// periodically calls the EXISTING admin-triggered core.ClientStore.RotateSecret
+// for every client whose secret has aged past Interval, instead of relying on
+// an operator's own cron hitting the admin RotateSecret RPC. Disabled by
+// default: a zero-value section wires nothing, byte-identical to a build
+// without the feature.
+//
+// The YAML key is client_secret_rotation (NOT nested under the existing
+// `clients:` key) because `clients:` already names the seed-client LIST
+// ([]ClientConfig) — reusing it as an object with a nested secret_rotation
+// key would collide with that array.
+//
+// Shape deliberately mirrors RotationConfig's Enabled/Interval/Overlap for
+// operator-facing consistency between the two rotation features.
+// Tick/RetryBase/RetryMax are NOT duplicated here: both rotators register
+// onto ONE shared rotation.Scheduler (cmd wires them together), so the
+// polling tick + failure-retry backoff is configured ONCE under `rotation:`
+// — only the per-rotator knobs (whether it runs, how often, how much
+// overlap) belong to each rotator's own section.
+//
+// Requires a ClientStore that implements
+// shared/security/clientrotation.ClientRotationLister (the memory + sqlite
+// defaultimpl backends do); cmd fails loud at boot otherwise rather than
+// silently never rotating anything.
+//
+// Lives here (rather than beside RotationConfig in config_snapshot.go)
+// because config/ is at its frozen per-directory file-count ceiling
+// (directory_fanout_test.go) and config_snapshot.go itself has almost no
+// line budget left — this file (the client seed/config schema) is the
+// closest topical fit with room to spare.
+type ClientSecretRotationConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// Interval is BOTH the sweep cadence and the per-client staleness bar: a
+	// client is due once its secret is >= Interval old. Required (> 0) when
+	// Enabled.
+	Interval time.Duration `yaml:"interval"`
+
+	// Overlap is accepted for schema parity with RotationConfig.Overlap but
+	// is NOT YET ENFORCED — see
+	// shared/security/clientrotation.ClientSecretRotator.OverlapWindow for
+	// the documented reason (no previous-secret fallback in
+	// ClientStore.ValidateSecret yet). Setting it is forward-compatible —
+	// today it has NO EFFECT: a rotated client's old secret stops working
+	// immediately (no grace window).
+	Overlap time.Duration `yaml:"overlap"`
+}
+
 // ClientJWK mirrors sso.JWK in YAML-friendly form. Used to register
 // the client's verification keys for RFC 9101 JAR / RFC 7521+7523
 // private_key_jwt. The set of supported parameters matches sso.JWK

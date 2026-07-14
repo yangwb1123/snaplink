@@ -25,6 +25,7 @@ import (
 	"github.com/snaplink/sso/platform/signingkeys"
 	"github.com/snaplink/sso/protocols/fapi"
 	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/protocols/oauth/oauthspi"
 	"github.com/snaplink/sso/protocols/oauth/txntoken"
 	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/security"
@@ -133,24 +134,34 @@ type protocolState struct {
 	// refreshAbsoluteMaxLifetime is the optional hard ceiling on a refresh-
 	// token family's total age since original issuance (WithRefreshAbsoluteMaxLifetime).
 	// 0 (the default) disables the cap — byte-identical to pre-feature behavior.
-	refreshAbsoluteMaxLifetime     time.Duration
-	refreshGrace                   tokengrant.RefreshGraceStore
-	idTokenIssuer                  oidc.IDTokenIssuer
-	deviceCodeStore                oauth.DeviceCodeStore
-	deviceCodeTTL                  time.Duration
-	deviceCodeInterval             time.Duration
-	deviceVerifyBaseURL            string
-	parStore                       oauth.PARStore
-	parTTL                         time.Duration
-	deviceSecretStore              DeviceSecretStore
-	deviceSecretTTL                time.Duration
-	protectedResourceMetadata      *ProtectedResourceMetadata
-	cibaStore                      oauth.CIBAStore
-	cibaTransport                  oauth.CIBATransport
-	cibaPingNotifier               oauth.CIBAPingNotifier
-	cibaRequestTTL                 time.Duration
-	cibaPollInterval               time.Duration
-	dcrPolicy                      *oauth.DCRPolicy
+	refreshAbsoluteMaxLifetime time.Duration
+	refreshGrace               tokengrant.RefreshGraceStore
+	idTokenIssuer              oidc.IDTokenIssuer
+	deviceCodeStore            oauth.DeviceCodeStore
+	deviceCodeTTL              time.Duration
+	deviceCodeInterval         time.Duration
+	deviceVerifyBaseURL        string
+	parStore                   oauth.PARStore
+	parTTL                     time.Duration
+	deviceSecretStore          DeviceSecretStore
+	deviceSecretTTL            time.Duration
+	protectedResourceMetadata  *ProtectedResourceMetadata
+	cibaStore                  oauth.CIBAStore
+	cibaTransport              oauth.CIBATransport
+	cibaPingNotifier           oauth.CIBAPingNotifier
+	cibaPushNotifier           oauthspi.CIBAPushNotifier
+	cibaRequestTTL             time.Duration
+	cibaPollInterval           time.Duration
+	dcrPolicy                  *oauth.DCRPolicy
+	// clientRegistrationRateLimiter is the narrow, IP-keyed rate limiter
+	// guarding POST /register (RFC 7591 DCR) — see
+	// checkClientRegistrationRateLimit's doc (quota.go) for why this
+	// unauthenticated endpoint needs its own always-on-by-default throttle,
+	// independent of rateLimitPolicy above (which defaults OFF entirely).
+	// NewServer seeds a conservative built-in MemoryLimiter;
+	// WithClientRegistrationRateLimit overrides the rate/burst, or disables
+	// it entirely by passing nil.
+	clientRegistrationRateLimiter  ratelimit.Limiter
 	oauth21Strict                  bool
 	fapiValidator                  *fapi.Validator
 	logoutTokenIssuer              LogoutTokenIssuer

@@ -7,6 +7,7 @@ const (
 	MethodPassword    = "password"
 	MethodPhone       = "phone"
 	MethodEmail       = "email"
+	MethodMagicLink   = "magiclink"
 	MethodTempToken   = "temp_token"
 	MethodKeyPair     = "keypair"
 	MethodAPIKey      = "apikey"
@@ -34,6 +35,12 @@ const (
 const (
 	keyPrefixPhone = "phone:"
 	keyPrefixEmail = "email:"
+	// keyPrefixMagicLink is deliberately distinct from keyPrefixEmail: a magic
+	// link and an email-OTP code can be requested for the same address around
+	// the same time (both share the same CodeStore/email), and each flow must
+	// verify only its OWN pending value — sharing a namespace would let one
+	// flow silently invalidate or satisfy the other.
+	keyPrefixMagicLink = "magiclink:"
 )
 
 // Replay-store key prefixes — namespace the optional JTIReplayStore seams so a
@@ -60,6 +67,17 @@ const (
 	DefaultTempTokenTTL     = 15 * time.Minute
 	DefaultTempTokenBytes   = 32
 	DefaultKeyPairClockSkew = 5 * time.Minute
+	// DefaultMagicLinkTokenBytes is the crypto/rand BYTE length of the opaque
+	// magic-link token before base64url encoding (matches DefaultTempTokenBytes
+	// — the same construction TempTokenAuthenticator already uses for
+	// single-use bearer tokens): 256 bits, well above the entropy a short
+	// human-typed OTP needs, appropriate for a value that travels unattended
+	// inside a URL rather than being read aloud/typed by a person.
+	DefaultMagicLinkTokenBytes = 32
+	// DefaultMagicLinkTTL is longer than DefaultEmailCodeTTL: a link is
+	// checked/clicked (mail delivery + the user finding and opening the
+	// message) rather than typed back immediately, so it needs more slack.
+	DefaultMagicLinkTTL = 15 * time.Minute
 )
 
 // keyPairMessageSeparator joins the canonical fields signed by a keypair client.

@@ -72,3 +72,68 @@ type TenantUserStore interface {
 // membership edge. Callers MUST NOT distinguish "no such tenant" from "no such
 // user" from "user not in tenant" — all collapse to this single response.
 var ErrNoMembership = errors.New("sso: no such tenant membership")
+
+// ---- Admin user CRUD path constants ----
+
+const (
+	// PathAdminUsers is the admin user list + create endpoint. GET = list
+	// (paginated, admin:read), POST = create (admin:write). Group-relative;
+	// mounted on the /api/v1 router group under mountAdminUserState.
+	PathAdminUsers = "/admin/users"
+
+	// PathAdminUserByID is the per-user read/update/delete endpoint.
+	// GET = read (admin:read), PUT = update (admin:write), DELETE = delete
+	// (admin:write). Group-relative.
+	PathAdminUserByID = "/admin/users/:id"
+)
+
+// ---- UserProvider OPTIONAL extension interfaces ----
+
+// UserByUsernameProvider is an OPTIONAL extension a UserProvider MAY implement
+// to support efficient username-based user lookup. Callers type-assert before
+// using; a UserProvider that does not implement it returns nil for the
+// assertion, and the caller must fall back to listing + filtering.
+//
+// GetByUsername returns the user with the EXACT (case-insensitive) match on
+// username. Returns ErrNoSuchUser when not found. Implementations MUST treat
+// "" as "not found" (not a wildcard or default).
+type UserByUsernameProvider interface {
+	GetByUsername(ctx context.Context, username string) (*User, error)
+}
+
+// UserByEmailProvider is an OPTIONAL extension a UserProvider MAY implement
+// to support efficient email-based user lookup. Same contract as
+// UserByUsernameProvider: exact (case-insensitive per RFC 5321 §2.4) match
+// on email. Returns ErrNoSuchUser when not found.
+type UserByEmailProvider interface {
+	GetByEmail(ctx context.Context, email string) (*User, error)
+}
+
+// UserPaginationProvider is an OPTIONAL extension a UserProvider MAY implement
+// to support paginated listing. Existing List() returns all users (the caller
+// paginates client-side); backends with large user sets SHOULD implement this
+// to enable server-side offset/limit pagination.
+//
+// ListPaginated returns a slice of users for the given offset and limit, and
+// the TOTAL count of users (not just the page) so the caller can compute page
+// metadata. offset=0, limit=0 returns an empty slice with the total count.
+// Implementations SHOULD clamp limit to a sane maximum (e.g. 100).
+type UserPaginationProvider interface {
+	ListPaginated(ctx context.Context, offset, limit int) ([]*User, int, error)
+}
+
+// UsernameCheckProvider is an OPTIONAL extension a UserProvider MAY implement
+// to support efficient username-existence checks. The admin CRUD handler uses
+// this for optimistic pre-flight conflict detection.
+//
+// UsernameExists returns true when a user with the exact username exists.
+type UsernameCheckProvider interface {
+	UsernameExists(ctx context.Context, username string) (bool, error)
+}
+
+// EmailCheckProvider is an OPTIONAL extension a UserProvider MAY implement
+// for efficient email-existence checks. Same contract as
+// UsernameCheckProvider, with case-insensitive matching per RFC 5321 §2.4.
+type EmailCheckProvider interface {
+	EmailExists(ctx context.Context, email string) (bool, error)
+}

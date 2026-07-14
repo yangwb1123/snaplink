@@ -10,6 +10,7 @@ import (
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/domains/tokenexchange"
 	"github.com/snaplink/sso/domains/tokenexchange/agentidentity"
+	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/internal/handler/tokengrant"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -131,6 +132,18 @@ func WithGrantTypeRateLimit(grantType string, tokensPerSec float64, burst int) O
 		}
 		s.grantRateLimiters[grantType] = &rateLimiterEntry{limiter: lim}
 	}
+}
+
+// WithClientRegistrationRateLimit overrides the per-IP rate limiter guarding
+// POST /register (RFC 7591 DCR). NewServer already seeds a conservative
+// built-in limiter (see checkClientRegistrationRateLimit's doc, quota.go) —
+// unlike most With* rate-limit options in this file, calling this is NOT
+// required to get a default throttle. Pass a custom [ratelimit.Limiter] to
+// change the rate/burst, or nil to disable the guard entirely (e.g. the
+// deployment already throttles registration at an edge/WAF, or explicitly
+// wants open-registration behavior to match a pre-feature build).
+func WithClientRegistrationRateLimit(limiter ratelimit.Limiter) Option {
+	return func(s *Server) { s.clientRegistrationRateLimiter = limiter }
 }
 
 // WithRefreshAbsoluteMaxLifetime opts into a hard ceiling on a refresh-token

@@ -394,6 +394,29 @@ func (s *Server) publishTokenRevocation(ctx context.Context, token string, exp i
 	handler.PublishTokenRevocation(s.BuildHandlerDeps(), ctx, token, exp)
 }
 
+// notifyTokenRevoked fans a successful cross-issuer revoke out to BOTH
+// out-of-band channels this single choke point (RevokeAcrossIssuers) feeds:
+// the cross-replica cluster Bus (publishTokenRevocation, so peer replicas
+// drop the token from their in-process deny-set) and the audit pipeline's
+// token_revoked event (recordTokenRevoked, so any operator-registered
+// platform/lifecycle/webhook subscription — or CEF/OCSF export, or the SOC2
+// control-area report — actually observes the revocation; see
+// audit.RecordTokenRevoked's doc for why that second leg was previously a
+// dead letter). Both legs are best-effort/fail-open: the revocation itself
+// already succeeded locally before either fires.
+func (s *Server) notifyTokenRevoked(ctx context.Context, token string, revokedIssuers []string) {
+	s.publishTokenRevocation(ctx, token, jwtExpUnsafe(token))
+	s.recordTokenRevoked(ctx, token, revokedIssuers)
+}
+
+// recordTokenRevoked emits the token_revoked audit event. clientID/subject
+// are best-effort, UNVERIFIED claims (handler.JWTClaimsUnsafe) — annotation
+// only, mirroring jwtExpUnsafe's existing advisory contract.
+func (s *Server) recordTokenRevoked(ctx context.Context, token string, revokedIssuers []string) {
+	clientID, subject := handler.JWTClaimsUnsafe(token)
+	audit.RecordTokenRevoked(s.auditor, ctx, clientID, subject, revokedIssuers)
+}
+
 // applyTokenRevocation applies a token revocation received from another replica.
 func (s *Server) applyTokenRevocation(ctx context.Context, evt cluster.Event) {
 	handler.ApplyTokenRevocation(s.BuildHandlerDeps(), ctx, evt)

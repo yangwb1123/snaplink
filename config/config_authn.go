@@ -6,8 +6,9 @@ import "time"
 // All sub-sections are nullable — omit a section to disable that method.
 type AuthenticatorsConfig struct {
 	Password       *PasswordConfig             `yaml:"password,omitempty"`
-	Phone          *CodeAuthConfig             `yaml:"phone,omitempty"`
+	Phone          *PhoneConfig                `yaml:"phone,omitempty"`
 	Email          *CodeAuthConfig             `yaml:"email,omitempty"`
+	MagicLink      *MagicLinkConfig            `yaml:"magic_link,omitempty"`
 	TempToken      *TempTokenConfig            `yaml:"temp_token,omitempty"`
 	KeyPair        *KeyPairConfig              `yaml:"keypair,omitempty"`
 	APIKey         *APIKeyConfig               `yaml:"apikey,omitempty"`
@@ -33,6 +34,43 @@ type OIDCFederationAuthConfig struct {
 	Scopes                []string      `yaml:"scopes"`
 	SubjectFieldOverride  string        `yaml:"subject_field"`
 	Timeout               time.Duration `yaml:"timeout"`
+
+	// ACRMapping normalizes this provider's upstream `acr` claim onto the
+	// SDK's own acr vocabulary (see authenticators.ACRMapper /
+	// domains/authenticators/acrmap.PatternACRMapper — the reference
+	// exact -> regex -> prefix -> default cascade this config translates
+	// into). nil (the default) ⇒ no mapping is wired: AuthResult.AchievedACR
+	// is never set from this provider, byte-identical to a build without
+	// ACRMapper.
+	ACRMapping *ACRMapConfig `yaml:"acr_mapping,omitempty"`
+}
+
+// ACRMapConfig is the YAML projection of acrmap.Config: the operator-declared
+// rule set + default fallback a federation entry's upstream `acr` claim is
+// normalized through. Mirrors acrmap.Config's shape as an independent DTO
+// (matching OIDCFederationAuthConfig's own relationship to
+// authenticators.OIDCFederationConfig) rather than importing the domain
+// package directly, so the wire/YAML schema can evolve independently of the
+// runtime mapper's Go API.
+type ACRMapConfig struct {
+	// Rules are evaluated in PRIORITY order — every exact rule, then every
+	// regex rule, then every prefix rule — REGARDLESS of the order they
+	// appear in this list. See acrmap.Config.Rules.
+	Rules []ACRMapRuleConfig `yaml:"rules,omitempty"`
+	// Default is the mapped ACR returned when no rule matches (or Rules is
+	// empty). "" (the default) means "no claim" — AchievedACR stays unset.
+	Default string `yaml:"default,omitempty"`
+}
+
+// ACRMapRuleConfig is one {match_type, pattern, mapped_acr} rule. MatchType
+// MUST be "exact" | "regex" | "prefix"; an unknown value — or, for "regex", an
+// unparseable Pattern — fails LOUDLY wherever this config is translated into a
+// live acrmap.PatternACRMapper (acrmap.New), never a panic discovered later at
+// request time.
+type ACRMapRuleConfig struct {
+	MatchType string `yaml:"match_type"`
+	Pattern   string `yaml:"pattern"`
+	MappedACR string `yaml:"mapped_acr"`
 }
 
 // PasswordConfig configures the password authenticator + the seed
@@ -138,6 +176,76 @@ type CodeAuthConfig struct {
 	Enabled    bool          `yaml:"enabled"`
 	CodeLength int           `yaml:"code_length"`
 	CodeTTL    time.Duration `yaml:"code_ttl"`
+}
+
+// PhoneConfig configures the phone (SMS one-time-code) authenticator.
+// Embeds CodeAuthConfig inline (code length/TTL, the same shape shared with
+// the email-OTP authenticator) and adds the SMS-specific transport
+// sub-section, which email has no use for.
+type PhoneConfig struct {
+	CodeAuthConfig `yaml:",inline"`
+	// SMS selects and configures the transport that actually delivers the
+	// code. Unset (nil) preserves the pre-SMSConfig behavior byte-for-byte:
+	// the code is logged, never sent (see SMSConfig.Provider). Only set
+	// this to switch to a real SMS gateway.
+	SMS *SMSConfig `yaml:"sms,omitempty"`
+}
+
+// SMSConfig configures the SMS transport the phone authenticator dials.
+// Provider is a discriminator:
+//
+//   - "" or "log" (the default): logs the code instead of sending it —
+//     byte-identical to the stub that shipped before this config section
+//     existed. Every field below is ignored.
+//   - "http": dispatches over the generic Twilio-Messages-API-compatible
+//     REST sender in infrastructure/sms. AccountSID, AuthToken, and
+//     FromNumber are then required; a misconfigured "http" provider fails
+//     the boot loudly rather than silently falling back to the log stub.
+//
+// An unrecognized Provider value is also a loud boot failure (fail fast on
+// operator typos, matching authenticators.totp.backend's convention).
+type SMSConfig struct {
+	Provider   string `yaml:"provider,omitempty"`
+	AccountSID string `yaml:"account_sid,omitempty"`
+	// AuthToken supports secret:// resolution (config/secrets.go) and an
+	// SSO_AUTHENTICATORS__PHONE__SMS__AUTH_TOKEN env override — never
+	// commit a plaintext token (mirrors SMTPConfig.Password).
+	AuthToken  string `yaml:"auth_token,omitempty"`
+	FromNumber string `yaml:"from_number,omitempty"`
+	// MessageTemplate must contain the literal substring "{code}", replaced
+	// with the generated verification code. Empty uses the SDK default
+	// ("Your verification code is: {code}").
+	MessageTemplate string `yaml:"message_template,omitempty"`
+	// HTTPTimeout bounds a single outbound request; 0 uses the SDK default
+	// (10s).
+	HTTPTimeout time.Duration `yaml:"http_timeout,omitempty"`
+	// BaseURL overrides the REST API origin — set only to point at a
+	// Twilio-compatible gateway (or a test double); empty uses the real
+	// Twilio API origin.
+	BaseURL string `yaml:"base_url,omitempty"`
+}
+
+// MagicLinkConfig configures the magic-link (passwordless emailed-link)
+// authenticator. A variant of CodeAuthConfig's shape rather than an embed of
+// it: TokenLength is a crypto/rand BYTE count (base64url-encoded), not a
+// digit count, and BaseURL has no equivalent in the numeric-code flows at
+// all — the emailed value here is a clickable URL, not something the user
+// types back in.
+type MagicLinkConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// BaseURL is the login-UI landing page the emailed link points at (e.g.
+	// "https://sso.example.com/login/"). REQUIRED when Enabled: an enabled
+	// magic-link authenticator with no landing page can never be completed,
+	// so cmd fails the boot loudly rather than silently shipping a dead
+	// feature (see appendMagicLinkAuthenticator).
+	BaseURL string `yaml:"base_url"`
+	// TokenLength is the crypto/rand BYTE length of the opaque token before
+	// base64url encoding; 0 uses authenticators.DefaultMagicLinkTokenBytes
+	// (32 = 256 bits of entropy).
+	TokenLength int `yaml:"token_length,omitempty"`
+	// TTL bounds how long the emailed link remains valid; 0 uses
+	// authenticators.DefaultMagicLinkTTL.
+	TTL time.Duration `yaml:"ttl,omitempty"`
 }
 
 // TempTokenConfig configures the temporary-token authenticator.

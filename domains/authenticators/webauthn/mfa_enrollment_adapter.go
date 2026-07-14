@@ -55,11 +55,21 @@ func (a *MFAEnrollmentAdapter) ListFactors(ctx context.Context, userID string) (
 	}
 	out := make([]sso.MFAEnrolledFactor, 0, len(u.Credentials))
 	for _, c := range u.Credentials {
-		out = append(out, sso.MFAEnrolledFactor{
-			ID:     base64.RawURLEncoding.EncodeToString(c.ID),
+		idStr := base64.RawURLEncoding.EncodeToString(c.ID)
+		factor := sso.MFAEnrolledFactor{
+			ID:     idStr,
 			Method: MethodWebAuthn,
 			Label:  mfaFactorLabel,
-		})
+		}
+		// Surface credProps' captured "discoverable" status when this store
+		// persisted it (see [credentialExtensionSetter]) — nil when the
+		// extension was never requested/captured, so a plain UserStore
+		// (no extension support) stays byte-identical to before this field
+		// existed.
+		if ext, ok := u.CredentialExtensions[idStr]; ok {
+			factor.Discoverable = ext.Discoverable
+		}
+		out = append(out, factor)
 	}
 	return out, nil
 }

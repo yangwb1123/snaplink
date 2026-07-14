@@ -25,6 +25,13 @@ type CredentialType string
 // secret (securityverify.SignWebhookPayload / RotatingWebhookSecret).
 const CredentialTypeWebhookHMAC CredentialType = "webhook_hmac"
 
+// CredentialTypeOAuthClientSecret is the scheduled OAuth client-secret
+// rotation sweep (shared/security/clientrotation.ClientSecretRotator). Unlike
+// every other registered class, this one credential TYPE fans out to an open
+// SET of independent per-client secrets — see that package's doc for why its
+// CredentialMeta describes a sweep event, not any one client's secret.
+const CredentialTypeOAuthClientSecret CredentialType = "oauth_client_secret"
+
 // CredentialStatus is the lifecycle state of ONE credential version.
 type CredentialStatus string
 

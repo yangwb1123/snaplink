@@ -84,16 +84,34 @@ func (c *Config) applyDefaults() {
 		c.Logging.Level = "info"
 	}
 	if c.Authenticators.Phone != nil {
-		applyCodeDefaults(c.Authenticators.Phone, authenticators.DefaultPhoneCodeTTL)
+		applyCodeDefaults(&c.Authenticators.Phone.CodeAuthConfig, authenticators.DefaultPhoneCodeTTL)
 	}
 	if c.Authenticators.Email != nil {
 		applyCodeDefaults(c.Authenticators.Email, authenticators.DefaultEmailCodeTTL)
 	}
+	applyMagicLinkDefaults(c.Authenticators.MagicLink)
 	if c.Authenticators.TempToken != nil && c.Authenticators.TempToken.TTL == 0 {
 		c.Authenticators.TempToken.TTL = authenticators.DefaultTempTokenTTL
 	}
 	if c.Authenticators.KeyPair != nil && c.Authenticators.KeyPair.MaxClockSkew == 0 {
 		c.Authenticators.KeyPair.MaxClockSkew = authenticators.DefaultKeyPairClockSkew
+	}
+}
+
+// applyMagicLinkDefaults is its own function (rather than an inline nil-check
+// block in applyDefaults, like TempToken/KeyPair's single-field checks) to
+// keep applyDefaults under the cyclomatic-complexity budget — MagicLinkConfig
+// has two independently-defaulted fields, the same reason applyCodeDefaults
+// exists for Phone/Email. A nil ml is a no-op (disabled/omitted section).
+func applyMagicLinkDefaults(ml *MagicLinkConfig) {
+	if ml == nil {
+		return
+	}
+	if ml.TokenLength == 0 {
+		ml.TokenLength = authenticators.DefaultMagicLinkTokenBytes
+	}
+	if ml.TTL == 0 {
+		ml.TTL = authenticators.DefaultMagicLinkTTL
 	}
 }
 
@@ -162,6 +180,15 @@ func (c *Config) ServerOptions() []sso.Option {
 	if c.Security.RateLimit.Enabled {
 		opts = append(opts, sso.WithRateLimit(c.Security.RateLimit.toPolicy()))
 	}
+	// Unlike the block above, ClientRegistrationRateLimit has NO "enabled"
+	// gate: omitting the section (or leaving PerSec/Burst at 0) is not
+	// "disabled" — sso.NewServer already seeds a conservative built-in
+	// limiter, so there is nothing to wire here in that case. Only an
+	// EXPLICIT override (Disabled, or a custom PerSec+Burst) needs an
+	// Option call.
+	if opt, ok := c.Security.ClientRegistrationRateLimit.serverOption(); ok {
+		opts = append(opts, opt)
+	}
 	if c.Security.CORS.Enabled && len(c.Security.CORS.AllowedOrigins) > 0 {
 		opts = append(opts, sso.WithCORS(c.Security.CORS.toPolicy()))
 	}
@@ -199,6 +226,21 @@ func (r *RateLimitConfig) toPolicy() ratelimit.Policy {
 		})
 	}
 	return policy
+}
+
+// serverOption returns the sso.Option implied by a
+// security.client_registration_rate_limit block, and ok=false when the
+// section carries no EXPLICIT override — leaving sso.NewServer's built-in
+// default limiter in place untouched (see the type's doc for why the zero
+// value here is not "disabled", unlike every other security.* block).
+func (r *ClientRegistrationRateLimitConfig) serverOption() (opt sso.Option, ok bool) {
+	if r.Disabled {
+		return sso.WithClientRegistrationRateLimit(nil), true
+	}
+	if r.PerSec > 0 && r.Burst > 0 {
+		return sso.WithClientRegistrationRateLimit(ratelimit.NewMemoryLimiter(r.PerSec, r.Burst)), true
+	}
+	return nil, false
 }
 
 // toPolicy builds the cors.Policy implied by the YAML block. Empty

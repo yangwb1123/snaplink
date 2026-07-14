@@ -88,8 +88,9 @@ type realSession struct {
 // New requires cgo + a C toolchain (miekg/pkcs11 is a cgo binding) and a
 // reachable token. Call [Signer.PublicKey] once after New to fail loud if the
 // public key cannot be read. Call [Signer.Close] on shutdown to C_Logout +
-// C_CloseSession + C_Finalize.
-func New(cfg Config) (*Signer, error) {
+// C_CloseSession + C_Finalize. opts configures the returned Signer (e.g.
+// WithKeyOrigin, origin.go) exactly as NewSigner does.
+func New(cfg Config, opts ...Option) (*Signer, error) {
 	if cfg.ModulePath == "" {
 		return nil, errors.New("pkcs11: empty ModulePath")
 	}
@@ -167,7 +168,7 @@ func New(cfg Config) (*Signer, error) {
 		rs.pubHandle = pubHandle
 	}
 
-	signer, err := NewSigner(rs, uint(privHandle), cfg.PublicKey)
+	signer, err := NewSigner(rs, uint(privHandle), cfg.PublicKey, opts...)
 	if err != nil {
 		return nil, err
 	}

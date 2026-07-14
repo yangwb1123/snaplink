@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
@@ -141,5 +142,71 @@ func TestSQLitePasswordStore_ParityWithMemory(t *testing.T) {
 		if err := st.VerifyPassword(ctx, "ghost", "bad"); !errors.Is(err, core.ErrPasswordMismatch) {
 			t.Fatalf("%s unknown user: got %v, want ErrPasswordMismatch", name, err)
 		}
+	}
+}
+
+// TestSQLitePasswordStore_PasswordChangedAt_UnknownUser confirms an unstamped
+// user returns an error (not a zero time treated as "always expired") — the
+// login-time expiry gate (interfaces/sso rejectExpiredPassword) relies on
+// this to fail open when it can't determine an age.
+func TestSQLitePasswordStore_PasswordChangedAt_UnknownUser(t *testing.T) {
+	t.Parallel()
+	ps := newTestPasswordStore(t)
+	if _, err := ps.PasswordChangedAt(context.Background(), "nobody"); err == nil {
+		t.Fatalf("PasswordChangedAt: want error for unknown user, got nil")
+	}
+}
+
+// TestSQLitePasswordStore_PasswordChangedAt_StampedOnSet confirms SetPassword
+// stamps updated_at (read back via PasswordChangedAt) within a tight
+// tolerance of "now" — no schema migration needed, the column already
+// existed; this is a read-accessor-only addition.
+func TestSQLitePasswordStore_PasswordChangedAt_StampedOnSet(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ps := newTestPasswordStore(t)
+
+	before := time.Now()
+	if err := ps.SetPassword(ctx, "alice", "first-password"); err != nil {
+		t.Fatalf("SetPassword: %v", err)
+	}
+	after := time.Now()
+
+	got, err := ps.PasswordChangedAt(ctx, "alice")
+	if err != nil {
+		t.Fatalf("PasswordChangedAt: %v", err)
+	}
+	if got.Before(before) || got.After(after) {
+		t.Fatalf("PasswordChangedAt = %v; want between %v and %v", got, before, after)
+	}
+}
+
+// TestSQLitePasswordStore_PasswordChangedAt_UpdatedOnChange confirms a
+// SUBSEQUENT SetPassword call (self-service change / admin reset) re-stamps
+// updated_at to the new time, resetting the age clock.
+func TestSQLitePasswordStore_PasswordChangedAt_UpdatedOnChange(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ps := newTestPasswordStore(t)
+
+	if err := ps.SetPassword(ctx, "alice", "first-password"); err != nil {
+		t.Fatalf("SetPassword (first): %v", err)
+	}
+	first, err := ps.PasswordChangedAt(ctx, "alice")
+	if err != nil {
+		t.Fatalf("PasswordChangedAt (first): %v", err)
+	}
+
+	time.Sleep(2 * time.Millisecond)
+
+	if err := ps.SetPassword(ctx, "alice", "second-password"); err != nil {
+		t.Fatalf("SetPassword (second): %v", err)
+	}
+	second, err := ps.PasswordChangedAt(ctx, "alice")
+	if err != nil {
+		t.Fatalf("PasswordChangedAt (second): %v", err)
+	}
+	if !second.After(first) {
+		t.Fatalf("PasswordChangedAt did not advance on change: first=%v second=%v", first, second)
 	}
 }

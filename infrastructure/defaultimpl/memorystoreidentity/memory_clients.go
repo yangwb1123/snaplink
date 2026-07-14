@@ -6,8 +6,10 @@ import (
 	"encoding/base64"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/security/clientrotation"
 )
 
 // MemoryClientStore stores client applications in memory. Implements the full
@@ -134,6 +136,14 @@ func (m *MemoryClientStore) Add(_ context.Context, c *core.Client) error {
 		}
 		c.RegistrationAccessToken = h
 	}
+	// SecretRotatedAt baselines at creation time so a freshly-added
+	// confidential client is immediately eligible for scheduled rotation
+	// once it ages past the configured interval — see ListDueForRotation.
+	// A secretless client (federation-derived / public) has nothing to
+	// rotate, so its timestamp stays zero (never due).
+	if c.Secret != "" {
+		c.SecretRotatedAt = time.Now()
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.clients[c.ID]; exists {
@@ -194,14 +204,31 @@ func (m *MemoryClientStore) RotateSecret(_ context.Context, clientID string) (st
 	}
 	// Store the hash; return the plaintext (one-time reveal).
 	c.Secret = hashed
+	c.SecretRotatedAt = time.Now()
 	return plaintext, nil
+}
+
+// ListDueForRotation implements clientrotation.ClientRotationLister: every
+// active, secret-bearing client last rotated at or before olderThan. A zero
+// SecretRotatedAt (never tracked) is excluded — see core.Client.SecretRotatedAt.
+func (m *MemoryClientStore) ListDueForRotation(_ context.Context, olderThan time.Time) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []string
+	for _, c := range m.clients {
+		if c.Active && c.Secret != "" && !c.SecretRotatedAt.IsZero() && !c.SecretRotatedAt.After(olderThan) {
+			out = append(out, c.ID)
+		}
+	}
+	return out, nil
 }
 
 // Compile-time interface checks.
 var (
-	_ core.ClientStore             = (*MemoryClientStore)(nil)
-	_ core.TenantScopedClientStore = (*MemoryClientStore)(nil)
-	_ core.ClientStoreStats        = (*MemoryClientStore)(nil)
+	_ core.ClientStore                    = (*MemoryClientStore)(nil)
+	_ core.TenantScopedClientStore        = (*MemoryClientStore)(nil)
+	_ core.ClientStoreStats               = (*MemoryClientStore)(nil)
+	_ clientrotation.ClientRotationLister = (*MemoryClientStore)(nil)
 )
 
 // generateSecret returns a base64url-encoded random string. 32 bytes ≈ 256

@@ -96,6 +96,12 @@ type TokenExchangeDeps interface {
 	// an unwired ClientStore — treated as "no home tenant to police" by the
 	// cross-tenant gate, exactly like an empty exchanging-client TenantID.
 	HomeTenantForClient(ctx context.Context, clientID string) string
+	// TokenExchangeChainStore returns the OPTIONAL RFC 8693 delegation-chain
+	// persistence + read-visibility store (WithTokenExchangeChainStore,
+	// domains/tokenexchange). Nil (the default) = tokExRecordChainHop is a
+	// no-op — byte-identical to a build without this feature. Pure
+	// observability; never consulted by any authorization decision.
+	TokenExchangeChainStore() tokenexchange.ChainStore
 }
 
 // HandleTokenExchangeGrant processes the RFC 8693 token-exchange grant. Behavior
@@ -138,6 +144,7 @@ func HandleTokenExchangeGrant(d TokenExchangeDeps, ctx core.HandlerContext, clie
 	if tokExResolveSubjectAndIssue(d, ctx, client, st) {
 		return
 	}
+	tokExRecordChainHop(d, ctx, client, st)
 	tokExAuditSPIFFE(d, ctx, client, st)
 
 	st.resp = map[string]any{
@@ -205,6 +212,21 @@ func tokExRefuseNonDelegable(ctx core.HandlerContext, st *tokExState) bool {
 		return true
 	}
 	return false
+}
+
+// tokExRecordChainHop is the ONE call site bridging the act-chain
+// construction above (tokExResolveActor) to durable, queryable chain
+// history via the OPTIONAL tokenexchange.ChainStore
+// (WithTokenExchangeChainStore). PURE OBSERVABILITY: fail-open
+// (tokenexchange.RecordExchangeHopFailOpen — a store error or
+// unavailability NEVER fails an already-successful grant), and a nil store
+// (the default) is a no-op. Scoped deliberately to persistence + read
+// visibility only — no cascade-revocation, no new cycle-detection beyond
+// tokExActorChainHasCycle above.
+func tokExRecordChainHop(d TokenExchangeDeps, ctx core.HandlerContext, client *core.Client, st *tokExState) {
+	tokenexchange.RecordExchangeHopFailOpen(ctx.Request().Context(), d.TokenExchangeChainStore(),
+		st.token.AccessToken, st.claims.JTI, st.claims.Subject, st.actor, client.ID,
+		actChainDepth(st.actor), d.SrvLogger().Error)
 }
 
 // tokExIssueIDToken mints an id_token when requested_token_type is id_token.

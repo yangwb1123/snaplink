@@ -9,10 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/migrate"
 	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/security/clientrotation"
 
 	_ "modernc.org/sqlite"
 )
@@ -75,6 +77,16 @@ ALTER TABLE clients ADD COLUMN sector_identifier_uri           TEXT    NOT NULL 
 ALTER TABLE clients ADD COLUMN frontchannel_logout_uri         TEXT    NOT NULL DEFAULT '';
 ALTER TABLE clients ADD COLUMN federation                      INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE clients ADD COLUMN attributes                      TEXT    NOT NULL DEFAULT '{}';`,
+	},
+	{
+		// v3: secret_rotated_at backs the scheduled client-secret rotation
+		// sweep (clientrotation.ClientSecretRotator.ListDueForRotation).
+		// Default 0 (unix-nanos "unknown") on existing rows means every
+		// pre-migration client is NEVER due until its secret is next
+		// rotated (Add/RotateSecret stamp it then) — see
+		// core.Client.SecretRotatedAt for why zero must not mean "overdue".
+		Version: 3,
+		SQL:     `ALTER TABLE clients ADD COLUMN secret_rotated_at INTEGER NOT NULL DEFAULT 0;`,
 	},
 }
 
@@ -250,7 +262,7 @@ const clientInsertSQL = `
             idtoken_encrypted_response_alg, idtoken_encrypted_response_enc,
             userinfo_encrypted_response_alg, userinfo_encrypted_response_enc,
             backchannel_logout_uri, subject_type, sector_identifier_uri,
-            frontchannel_logout_uri, federation, attributes
+            frontchannel_logout_uri, federation, attributes, secret_rotated_at
         ) VALUES (
             ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?,
@@ -263,12 +275,21 @@ const clientInsertSQL = `
             ?, ?,
             ?, ?,
             ?, ?, ?,
-            ?, ?, ?
+            ?, ?, ?, ?
         )`
 
 func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
 	if c == nil || c.ID == "" {
 		return errors.New("sqlite: client.ID required")
+	}
+	// SecretRotatedAt baselines at creation time (parity with
+	// MemoryClientStore.Add) so a freshly-added confidential client is
+	// immediately eligible for scheduled rotation once it ages past the
+	// configured interval — see ListDueForRotation. A secretless client
+	// (federation-derived / public) has nothing to rotate, so its
+	// timestamp stays zero (never due).
+	if c.Secret != "" {
+		c.SecretRotatedAt = time.Now()
 	}
 	args, err := clientWritePrep(c)
 	if err != nil {
@@ -316,7 +337,7 @@ const clientUpdateSQL = `
             idtoken_encrypted_response_alg = ?, idtoken_encrypted_response_enc = ?,
             userinfo_encrypted_response_alg = ?, userinfo_encrypted_response_enc = ?,
             backchannel_logout_uri = ?, subject_type = ?, sector_identifier_uri = ?,
-            frontchannel_logout_uri = ?, federation = ?, attributes = ?
+            frontchannel_logout_uri = ?, federation = ?, attributes = ?, secret_rotated_at = ?
         WHERE id = ?`
 
 func (s *ClientStore) Update(ctx context.Context, c *sso.Client) error {
@@ -361,7 +382,8 @@ func (s *ClientStore) RotateSecret(ctx context.Context, clientID string) (string
 		return "", fmt.Errorf("sqlite: hash rotated secret: %w", err)
 	}
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE clients SET secret = ? WHERE id = ?`, hashed, clientID)
+		`UPDATE clients SET secret = ?, secret_rotated_at = ? WHERE id = ?`,
+		hashed, unixNanoOrZero(time.Now()), clientID)
 	if err != nil {
 		return "", fmt.Errorf("sqlite: rotate secret: %w", err)
 	}
@@ -369,6 +391,31 @@ func (s *ClientStore) RotateSecret(ctx context.Context, clientID string) (string
 		return "", sso.ErrNoSuchClient
 	}
 	return plain, nil
+}
+
+// ListDueForRotation implements clientrotation.ClientRotationLister: every
+// active, secret-bearing client last rotated at or before olderThan. A zero
+// secret_rotated_at (never tracked) is excluded by the `> 0` guard — see
+// core.Client.SecretRotatedAt for why zero must not mean "overdue".
+func (s *ClientStore) ListDueForRotation(ctx context.Context, olderThan time.Time) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM clients
+		 WHERE active = 1 AND secret <> '' AND secret_rotated_at > 0 AND secret_rotated_at <= ?
+		 ORDER BY id ASC`,
+		unixNanoOrZero(olderThan))
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: list clients due for rotation: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("sqlite: scan client id: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // clientSelectAll keeps the column list in one place so Add / Update /
@@ -385,7 +432,7 @@ func clientSelectAll() string {
         idtoken_encrypted_response_alg, idtoken_encrypted_response_enc,
         userinfo_encrypted_response_alg, userinfo_encrypted_response_enc,
         backchannel_logout_uri, subject_type, sector_identifier_uri,
-        frontchannel_logout_uri, federation, attributes
+        frontchannel_logout_uri, federation, attributes, secret_rotated_at
         FROM clients`
 }
 
@@ -430,7 +477,8 @@ func isUniqueViolation(err error) bool {
 }
 
 var (
-	_ sso.ClientStore             = (*ClientStore)(nil)
-	_ sso.TenantScopedClientStore = (*ClientStore)(nil)
-	_ core.ClientStoreStats       = (*ClientStore)(nil)
+	_ sso.ClientStore                     = (*ClientStore)(nil)
+	_ sso.TenantScopedClientStore         = (*ClientStore)(nil)
+	_ core.ClientStoreStats               = (*ClientStore)(nil)
+	_ clientrotation.ClientRotationLister = (*ClientStore)(nil)
 )

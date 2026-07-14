@@ -262,7 +262,7 @@ func buildPasswordAuth() sso.Authenticator {
 	)
 }
 
-func buildPhoneAuth(codeStore authenticators.CodeStore, a *config.CodeAuthConfig) sso.Authenticator {
+func buildPhoneAuth(codeStore authenticators.CodeStore, a *config.PhoneConfig) sso.Authenticator {
 	return authenticators.NewPhoneAuthenticator(
 		codeStore,
 		authenticators.SMSSenderFunc(func(_ context.Context, phone, code string) error {

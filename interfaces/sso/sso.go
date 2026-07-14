@@ -7,10 +7,12 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/federation"
+	"github.com/snaplink/sso/domains/threataction"
 	"github.com/snaplink/sso/domains/tokenanomaly"
 	"github.com/snaplink/sso/domains/tokenpolicy"
 	"github.com/snaplink/sso/domains/tokenusage"
 	"github.com/snaplink/sso/interfaces/admin"
+	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/interfaces/sso/servercache"
 	"github.com/snaplink/sso/internal/auth/consent"
 	"github.com/snaplink/sso/platform/audit"
@@ -33,6 +35,8 @@ type Server struct {
 	protocolState
 	cacheState
 	selfServiceState
+	threatState
+	tokenExchangeChainState
 }
 
 // Option configures the Server.
@@ -64,6 +68,12 @@ func NewServer(opts ...Option) *Server {
 	s.jwksCacheTTL = defaultJWKSCacheTTL
 	s.consentChallenges = consent.NewChallengeStore()
 	s.panicRecovery = true
+	// Conservative built-in default — see clientRegistrationRateLimiter's doc
+	// (sso_protocol.go) for why this one is seeded here rather than left nil
+	// like every other rate limiter, which options only ever tighten or
+	// disable (WithClientRegistrationRateLimit(nil)), never turn on cold.
+	s.clientRegistrationRateLimiter = ratelimit.NewMemoryLimiter(
+		defaultClientRegistrationRatePerSec, defaultClientRegistrationRateBurst)
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -342,6 +352,14 @@ func (s *Server) handleAdminTokenSubject(ctx HandlerContext) {
 	admin.HandleSubjectTokens(s.refreshTokenStore, s.logger, ctx)
 }
 
+// handleAdminTokenExpiring serves GET /api/v1/admin/tokens/expiring — the
+// refresh-token expiry calendar (capacity planning / pre-expiry notification),
+// read through the existing RefreshTokenExpiryLister. Governance data only
+// (a thumbprint, never a token value). Admin-gated (admin:read).
+func (s *Server) handleAdminTokenExpiring(ctx HandlerContext) {
+	admin.HandleTokenExpiring(s.refreshTokenStore, s.logger, ctx)
+}
+
 // handleAdminTokenSuspicious serves GET /api/v1/admin/tokens/suspicious — the
 // off-path-detected token-behavior anomalies (governance/reporting only; a
 // finding never feeds an auth decision). Admin-gated (admin:read); only mounted
@@ -435,4 +453,29 @@ func (s *Server) introspectionSigningAlgValues(ctx context.Context) []string {
 		}
 	}
 	return nil
+}
+
+// handleAdminListThreatPolicies serves GET /api/v1/admin/threat-policies —
+// lists every configured Active ITDR threat policy. Admin-gated (admin:read);
+// only mounted when s.threatPolicyStore is non-nil.
+func (s *Server) handleAdminListThreatPolicies(ctx HandlerContext) {
+	threataction.HandleAdminListPolicies(s.threatPolicyStore, s.logger, ctx)
+}
+
+// handleAdminGetThreatPolicy serves GET /api/v1/admin/threat-policies/:name —
+// returns a single Active ITDR threat policy by name. Admin-gated (admin:read).
+func (s *Server) handleAdminGetThreatPolicy(ctx HandlerContext) {
+	threataction.HandleAdminGetPolicy(s.threatPolicyStore, s.logger, ctx)
+}
+
+// handleAdminPutThreatPolicy serves PUT /api/v1/admin/threat-policies/:name —
+// creates or updates an Active ITDR threat policy. Admin-gated (admin:write).
+func (s *Server) handleAdminPutThreatPolicy(ctx HandlerContext) {
+	threataction.HandleAdminPutPolicy(s.threatPolicyStore, s.logger, ctx)
+}
+
+// handleAdminDeleteThreatPolicy serves DELETE /api/v1/admin/threat-policies/:name —
+// deletes an Active ITDR threat policy. Admin-gated (admin:write).
+func (s *Server) handleAdminDeleteThreatPolicy(ctx HandlerContext) {
+	threataction.HandleAdminDeletePolicy(s.threatPolicyStore, s.logger, ctx)
 }

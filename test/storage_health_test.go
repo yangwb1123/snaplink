@@ -138,12 +138,12 @@ func TestStorageHealth_ReportsReachableWithSchema(t *testing.T) {
 		t.Errorf("clients reachable = %v, want true", clients["reachable"])
 	}
 	sv, _ := clients["schema_versions"].(map[string]any)
-	// clients sits at v2 since the ClientStore gained a migration that
-	// persists the security-load-bearing fields (JWKS / AllowedResources /
-	// AllowedRequestURIs / RegistrationAccessToken / JWE alg-enc / Federation
-	// / PostLogoutRedirectURIs).
-	if v, _ := sv["clients"].(float64); int(v) != 2 {
-		t.Errorf("clients schema_versions[clients] = %v, want 2", sv)
+	// clients sits at v3: v2 added the security-load-bearing fields (JWKS /
+	// AllowedResources / AllowedRequestURIs / RegistrationAccessToken / JWE
+	// alg-enc / Federation / PostLogoutRedirectURIs); v3 added
+	// secret_rotated_at backing scheduled client-secret rotation.
+	if v, _ := sv["clients"].(float64); int(v) != 3 {
+		t.Errorf("clients schema_versions[clients] = %v, want 3", sv)
 	}
 	if _, ok := clients["ping_latency_ms"]; !ok {
 		t.Errorf("clients missing ping_latency_ms: %v", clients)

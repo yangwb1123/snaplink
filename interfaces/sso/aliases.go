@@ -163,6 +163,7 @@ type BreakGlassStore = core.BreakGlassStore
 type IdempotentCache = core.IdempotentCache
 type PasswordCredentialStore = core.PasswordCredentialStore
 type PasswordHashImporter = core.PasswordHashImporter
+type PasswordAgeReader = core.PasswordAgeReader
 type MFAEnrollmentStore = core.MFAEnrollmentStore
 type MFAEnrolledFactor = core.MFAEnrolledFactor
 type TOTPEnrollmentWriter = core.TOTPEnrollmentWriter
@@ -318,6 +319,8 @@ const PathAdminUserDeviceSecrets = core.PathAdminUserDeviceSecrets
 const PathAdminUserRefreshTokens = core.PathAdminUserRefreshTokens
 const PathAdminUserPasswordResetTokens = core.PathAdminUserPasswordResetTokens
 const PathAdminUserEmailChangeTokens = core.PathAdminUserEmailChangeTokens
+const PathAdminUserByID = core.PathAdminUserByID
+const PathAdminUsers = core.PathAdminUsers
 const PathBackup = core.PathBackup
 const PathAdminUserEmail = core.PathAdminUserEmail
 const PathAdminAccountLockoutClear = core.PathAdminAccountLockoutClear
@@ -478,3 +481,7 @@ type HMACNonceProvider = handler.HMACNonceProvider
 
 // StorageHealthSource re-exported from internal/handler.
 type StorageHealthSource = handler.StorageHealthSource
+
+// Active ITDR threat-policy admin route-path re-exports.
+const PathAdminThreatPolicies = core.PathAdminThreatPolicies
+const PathAdminThreatPolicyByID = core.PathAdminThreatPolicyByID

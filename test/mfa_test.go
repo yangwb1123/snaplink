@@ -30,6 +30,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -184,6 +185,31 @@ func completeMFA(t *testing.T, srv *httptest.Server, challengeID, method, code s
 	return resp.StatusCode, out
 }
 
+// completeMFATrust POSTs to /auth/mfa exactly like completeMFA but also sets
+// trust_device on the wire, mirroring the login UI's #mfa-trust-device
+// checkbox (interfaces/web/login/app.js: `trust_device: trustDevice ||
+// false`).
+func completeMFATrust(t *testing.T, srv *httptest.Server, challengeID, method, code string, trustDevice bool) (int, map[string]any) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"mfa_challenge_id": challengeID,
+		"mfa_method":       method,
+		"code":             code,
+		"trust_device":     trustDevice,
+	})
+	resp, err := http.Post(srv.URL+"/auth/mfa", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /auth/mfa: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(resp.Body)
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode body: %v (raw=%s)", err, raw)
+	}
+	return resp.StatusCode, out
+}
+
 // TestMFA_HappyPath — spi.RiskScorer says RequireMFA → /auth/login returns
 // mfa_required + challenge id; /auth/mfa with a valid TOTP code resumes
 // the flow and mints tokens with the standard direct-mint response.
@@ -310,6 +336,170 @@ func TestMFA_UnsupportedMethod(t *testing.T) {
 	}
 	if mfaBody["error"] != sso.ErrMFAInvalid {
 		t.Errorf("error = %v, want mfa_invalid", mfaBody["error"])
+	}
+}
+
+// TestMFA_TrustDevice_MintsGrantAndReturnsToken — trust_device=true with a
+// wired core.TrustedDeviceStore, on a SUCCESSFUL MFA completion, mints a
+// grant for the RIGHT (userID, clientID) pair and returns the token under
+// "device_token" — the SAME field name POST /me/devices/trust already
+// returns (protocols/selfservice/selfserviceaccount/trusted_devices.go), so
+// client code has one field to look for across both endpoints. It also
+// proves the minted token is the real thing: a follow-up /auth/login
+// presenting it as device_token skips the MFA challenge entirely, exactly
+// like a token minted via the self-service endpoint (server_login_client.go
+// trustedDeviceAllowsSkip).
+func TestMFA_TrustDevice_MintsGrantAndReturnsToken(t *testing.T) {
+	tds := defaultimpl.NewMemoryTrustedDeviceStore()
+	srv, _, secret := buildMFAHarness(t, sso.WithTrustedDeviceStore(tds, 30*24*time.Hour))
+
+	_, body := loginMFA(t, srv)
+	chal := body["mfa_challenge_id"].(string)
+	code := validTOTPCode(t, secret)
+
+	status, mfaBody := completeMFATrust(t, srv, chal, authenticators.MethodTOTP, code, true)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%v", status, mfaBody)
+	}
+	token, ok := mfaBody["device_token"].(string)
+	if !ok || token == "" {
+		t.Fatalf("device_token missing/empty from successful trust_device response; body=%v", mfaBody)
+	}
+
+	devices, err := tds.ListByUser(context.Background(), "alice")
+	if err != nil {
+		t.Fatalf("ListByUser: %v", err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("len(devices) = %d, want 1", len(devices))
+	}
+	if devices[0].UserID != "alice" {
+		t.Errorf("UserID = %q, want alice", devices[0].UserID)
+	}
+	if devices[0].ClientID != "mfa-app" {
+		t.Errorf("ClientID = %q, want mfa-app", devices[0].ClientID)
+	}
+
+	// The minted token must actually skip a later MFA challenge for the SAME
+	// (user, client) — proves it rides the identical store.Verify path
+	// trustedDeviceAllowsSkip consumes on /auth/login, not a look-alike.
+	loginReq, _ := json.Marshal(map[string]any{
+		"provider":     "password",
+		"client_id":    "mfa-app",
+		"credential":   map[string]string{"username": "alice", "password": "s3cret"},
+		"device_token": token,
+	})
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(loginReq))
+	if err != nil {
+		t.Fatalf("POST /auth/login: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(resp.Body)
+	var out map[string]any
+	_ = json.Unmarshal(raw, &out)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login with freshly-trusted device_token status=%d body=%v, want 200", resp.StatusCode, out)
+	}
+	if _, hasAccess := out["access_token"]; !hasAccess {
+		t.Errorf("login with freshly-trusted device_token didn't skip MFA: %v", out)
+	}
+}
+
+// TestMFA_TrustDevice_FalseDoesNotCallStore — trust_device omitted from the
+// request entirely (the zero value / historical wire shape, matching every
+// pre-existing caller) must never invoke the store, even when one is wired.
+func TestMFA_TrustDevice_FalseDoesNotCallStore(t *testing.T) {
+	tds := defaultimpl.NewMemoryTrustedDeviceStore()
+	srv, _, secret := buildMFAHarness(t, sso.WithTrustedDeviceStore(tds, 30*24*time.Hour))
+
+	_, body := loginMFA(t, srv)
+	chal := body["mfa_challenge_id"].(string)
+	code := validTOTPCode(t, secret)
+
+	// completeMFA never sets trust_device at all — the pre-existing wire
+	// shape every caller before this feature used.
+	status, mfaBody := completeMFA(t, srv, chal, authenticators.MethodTOTP, code)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%v", status, mfaBody)
+	}
+	if _, leaked := mfaBody["device_token"]; leaked {
+		t.Errorf("device_token present despite trust_device omitted: %v", mfaBody)
+	}
+	devices, err := tds.ListByUser(context.Background(), "alice")
+	if err != nil {
+		t.Fatalf("ListByUser: %v", err)
+	}
+	if len(devices) != 0 {
+		t.Errorf("len(devices) = %d, want 0 — trust_device omitted must never call Trust", len(devices))
+	}
+}
+
+// TestMFA_TrustDevice_NoStoreWiredIsSafeNoOp — trust_device=true with NO
+// core.TrustedDeviceStore wired must be a silent, safe no-op: no panic,
+// the MFA completion still succeeds exactly like the pre-feature response
+// (no device_token key at all), same as every other optional-store pattern
+// in this repo (nil store = feature not wired).
+func TestMFA_TrustDevice_NoStoreWiredIsSafeNoOp(t *testing.T) {
+	srv, _, secret := buildMFAHarness(t) // no WithTrustedDeviceStore
+	_, body := loginMFA(t, srv)
+	chal := body["mfa_challenge_id"].(string)
+	code := validTOTPCode(t, secret)
+
+	status, mfaBody := completeMFATrust(t, srv, chal, authenticators.MethodTOTP, code, true)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (trust_device with no store wired must be a safe no-op); body=%v", status, mfaBody)
+	}
+	if _, ok := mfaBody["access_token"]; !ok {
+		t.Errorf("access_token missing; trust_device with no store wired must not block the login: %v", mfaBody)
+	}
+	if _, leaked := mfaBody["device_token"]; leaked {
+		t.Errorf("device_token present despite no TrustedDeviceStore wired: %v", mfaBody)
+	}
+}
+
+// TestMFA_TrustDevice_FailedAttemptNeverTouchesStoreOrChangesResponse is the
+// critical anti-regression check: a FAILED MFA attempt (wrong code) with
+// trust_device=true must (1) NEVER call the store, and (2) produce the
+// EXACT SAME 400 mfa_invalid response — status AND body — as an otherwise
+// identical failed attempt that never mentions trust_device at all. The
+// field is only ever consulted deep inside resumeLoginAfterMFA, strictly
+// after verifyMFAFactor has already returned ok=true; a failed verify
+// returns before trust_device is read at all, so this proves the
+// Anti-Enumeration invariant ("MFA /auth/mfa: all failures → 400
+// mfa_invalid") is unchanged byte-for-byte by this feature.
+func TestMFA_TrustDevice_FailedAttemptNeverTouchesStoreOrChangesResponse(t *testing.T) {
+	tds := defaultimpl.NewMemoryTrustedDeviceStore()
+	srv, _, _ := buildMFAHarness(t, sso.WithTrustedDeviceStore(tds, 30*24*time.Hour))
+
+	// Each failed attempt consumes its own single-use challenge (verifyMFAFactor
+	// calls Consume before checking the code), so each needs a fresh challenge.
+	_, body1 := loginMFA(t, srv)
+	chal1 := body1["mfa_challenge_id"].(string)
+	statusPlain, bodyPlain := completeMFA(t, srv, chal1, authenticators.MethodTOTP, "000000")
+
+	_, body2 := loginMFA(t, srv)
+	chal2 := body2["mfa_challenge_id"].(string)
+	statusTrust, bodyTrust := completeMFATrust(t, srv, chal2, authenticators.MethodTOTP, "000000", true)
+
+	if statusPlain != http.StatusBadRequest {
+		t.Fatalf("plain status = %d, want 400", statusPlain)
+	}
+	if statusTrust != statusPlain {
+		t.Fatalf("trust_device=true changed the failure status: plain=%d trust=%d", statusPlain, statusTrust)
+	}
+	if !reflect.DeepEqual(bodyPlain, bodyTrust) {
+		t.Errorf("trust_device=true altered the mfa_invalid failure response body:\n  plain=%v\n  trust=%v", bodyPlain, bodyTrust)
+	}
+	if bodyTrust["error"] != sso.ErrMFAInvalid {
+		t.Errorf("error = %v, want mfa_invalid", bodyTrust["error"])
+	}
+
+	devices, err := tds.ListByUser(context.Background(), "alice")
+	if err != nil {
+		t.Fatalf("ListByUser: %v", err)
+	}
+	if len(devices) != 0 {
+		t.Errorf("len(devices) = %d, want 0 — a FAILED MFA attempt must never call Trust", len(devices))
 	}
 }
 

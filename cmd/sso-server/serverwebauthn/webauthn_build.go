@@ -77,6 +77,8 @@ func BuildWebAuthnHelperDurable(cfg config.WebAuthnConfig, logger spi.Logger, pg
 		AttestationConveyance:   cfg.Attestation.Conveyance,
 		AttestationPolicy:       policy,
 		MDS:                     mds,
+		RequestCredProps:        cfg.RequestCredProps,
+		RequestLargeBlobSupport: cfg.RequestLargeBlobSupport,
 	}, users, sessions)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("webauthn helper: %w", err)
@@ -274,12 +276,12 @@ func buildWebAuthnSessionStore(cfg config.WebAuthnBackendConfig, rdb goredis.Cmd
 // WebAuthn ceremony endpoint paths. Public so embedders writing
 // docs / client code can reference them.
 const (
-	PathWebAuthnRegistrationBegin         = "/webauthn/registration/begin"
-	PathWebAuthnRegistrationFinish        = "/webauthn/registration/finish"
-	PathWebAuthnLoginBegin                = "/webauthn/login/begin"
-	PathWebAuthnLoginFinish               = "/webauthn/login/finish"
-	PathWebAuthnLoginConditionalBegin     = "/webauthn/login/conditional/begin"
-	PathWebAuthnLoginConditionalFinish    = "/webauthn/login/conditional/finish"
+	PathWebAuthnRegistrationBegin      = "/webauthn/registration/begin"
+	PathWebAuthnRegistrationFinish     = "/webauthn/registration/finish"
+	PathWebAuthnLoginBegin             = "/webauthn/login/begin"
+	PathWebAuthnLoginFinish            = "/webauthn/login/finish"
+	PathWebAuthnLoginConditionalBegin  = "/webauthn/login/conditional/begin"
+	PathWebAuthnLoginConditionalFinish = "/webauthn/login/conditional/finish"
 )
 
 // WebAuthnDeps bundles everything the ceremony handlers need.

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"io"
+	"sort"
 	"sync"
 	"time"
 
@@ -377,6 +378,41 @@ func (m *MemoryRefreshTokenStore) CountForSubject(_ context.Context, userID, cli
 	return n, nil
 }
 
+// ListExpiring implements [oauth.RefreshTokenExpiryLister] — the expiry-
+// calendar read backing the admin capacity-planning / pre-expiry-notification
+// endpoint. Returns governance metadata ONLY (oauth.RefreshTokenThumbprint,
+// never the raw token) for entries that are still ACTIVE (mirrors
+// RefreshToken.IsExpired's boundary) and expire at or before `before`,
+// soonest-first. limit <= 0 returns every matching entry — the admin handler
+// is responsible for passing a bounded limit.
+func (m *MemoryRefreshTokenStore) ListExpiring(_ context.Context, before time.Time, limit int) ([]oauth.RefreshTokenExpiry, error) {
+	m.mu.Lock()
+	out := make([]oauth.RefreshTokenExpiry, 0, len(m.entries))
+	for tok, entry := range m.entries {
+		if entry.IsExpired() || entry.ExpiresAt.After(before) {
+			continue
+		}
+		out = append(out, oauth.RefreshTokenExpiry{
+			Thumbprint: oauth.RefreshTokenThumbprint(tok),
+			UserID:     entry.UserID,
+			ClientID:   entry.ClientID,
+			ExpiresAt:  entry.ExpiresAt,
+		})
+	}
+	m.mu.Unlock()
+
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].ExpiresAt.Equal(out[j].ExpiresAt) {
+			return out[i].ExpiresAt.Before(out[j].ExpiresAt)
+		}
+		return out[i].Thumbprint < out[j].Thumbprint
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // GenerateRefreshToken mints a cryptographically random base64url-encoded
 // token suitable for the OAuth 2.0 refresh_token grant. Exposed so
 // custom oauth.RefreshTokenStore implementations can reuse it.
@@ -396,5 +432,6 @@ var (
 	_ oauth.RefreshTokenFamilyTracker   = (*MemoryRefreshTokenStore)(nil)
 	_ oauth.RefreshTokenClientPurger    = (*MemoryRefreshTokenStore)(nil)
 	_ oauth.RefreshTokenRotationLimiter = (*MemoryRefreshTokenStore)(nil)
+	_ oauth.RefreshTokenExpiryLister    = (*MemoryRefreshTokenStore)(nil)
 	_ io.Closer                         = (*MemoryRefreshTokenStore)(nil)
 )

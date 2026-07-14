@@ -220,10 +220,14 @@ func (b *appBuilder) finalize() (*app, error) {
 	if err != nil {
 		return nil, err
 	}
+	threatExec, err := b.wireDetectionResponse(cw.invalidationBus)
+	if err != nil {
+		return nil, err
+	}
 	if err := b.wireFinalOptions(); err != nil {
 		return nil, err
 	}
-	if err := b.wireGovernance(); err != nil {
+	if err := b.wireGovernance(threatExec); err != nil {
 		return nil, err
 	}
 	// Late-bind the self-service eraser + exporter's consent + MFA stores: they

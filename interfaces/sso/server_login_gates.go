@@ -246,7 +246,8 @@ func (s *Server) runPostMergeAuthzValidation(ctx HandlerContext, req *login.Requ
 // runPostCredentialGates runs the gates that apply once credentials are
 // validated. It returns true the instant an inner guard wrote a response,
 // preserving the exact status+code and short-circuit ORDER of the original
-// inline sequence (ACR -> max_age -> risk -> conditional-access -> email-verification):
+// inline sequence (ACR -> max_age -> risk -> conditional-access ->
+// email-verification -> password-expiry):
 //
 //   - OIDC §3.1.2.6 / §5.5.1.1 ACR enforcement (acr_values OR claims
 //     id_token.acr), checked immediately after credential validation so it
@@ -264,6 +265,11 @@ func (s *Server) runPostMergeAuthzValidation(ctx HandlerContext, req *login.Requ
 //   - Email-verification gate — only active when WithSignupRequireVerification is
 //     set. Runs AFTER credential validation (oracle-safe: attacker who knows the
 //     password cannot distinguish "no such user" from "unverified").
+//   - Password-expiry gate (rejectExpiredPassword) — only active when
+//     WithPasswordPolicy's MaxAgeDays > 0 AND this login used the password
+//     factor. Runs LAST: it is a policy-state disclosure conditioned on a
+//     credential that has ALREADY verified, so its ordering relative to the
+//     other gates has no oracle-safety implication either way.
 func (s *Server) runPostCredentialGates(ctx HandlerContext, req *login.Request, result *AuthResult, client *Client) bool {
 	if s.enforceLoginACR(ctx, req, result) {
 		return true
@@ -278,6 +284,9 @@ func (s *Server) runPostCredentialGates(ctx HandlerContext, req *login.Request, 
 		return true
 	}
 	if s.rejectUnverifiedEmail(ctx, req, result) {
+		return true
+	}
+	if s.rejectExpiredPassword(ctx, req, result) {
 		return true
 	}
 	return false

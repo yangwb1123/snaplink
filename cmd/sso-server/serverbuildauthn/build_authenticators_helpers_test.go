@@ -95,15 +95,83 @@ func TestAppendPasswordAuthenticator_HealthCheckerErrorPropagates(t *testing.T) 
 func TestAppendPhoneAuthenticator_NilDisabledAndEnabled(t *testing.T) {
 	t.Parallel()
 	codeStore := authenticators.NewMemoryCodeStore()
-	if got := appendPhoneAuthenticator(nil, nil, codeStore, testLogger()); len(got) != 0 {
-		t.Fatalf("nil config: got=%v", got)
+	if got, err := appendPhoneAuthenticator(nil, nil, codeStore, testLogger()); err != nil || len(got) != 0 {
+		t.Fatalf("nil config: got=%v, err=%v", got, err)
 	}
-	if got := appendPhoneAuthenticator(nil, &config.CodeAuthConfig{Enabled: false}, codeStore, testLogger()); len(got) != 0 {
-		t.Fatalf("disabled config: got=%v", got)
+	if got, err := appendPhoneAuthenticator(nil, &config.PhoneConfig{CodeAuthConfig: config.CodeAuthConfig{Enabled: false}}, codeStore, testLogger()); err != nil || len(got) != 0 {
+		t.Fatalf("disabled config: got=%v, err=%v", got, err)
 	}
-	got := appendPhoneAuthenticator(nil, &config.CodeAuthConfig{Enabled: true, CodeLength: 6}, codeStore, testLogger())
-	if len(got) != 1 || got[0].Name() != authenticators.MethodPhone {
-		t.Fatalf("got=%v, want one %q authenticator", got, authenticators.MethodPhone)
+	got, err := appendPhoneAuthenticator(nil, &config.PhoneConfig{CodeAuthConfig: config.CodeAuthConfig{Enabled: true, CodeLength: 6}}, codeStore, testLogger())
+	if err != nil || len(got) != 1 || got[0].Name() != authenticators.MethodPhone {
+		t.Fatalf("got=%v, err=%v, want one %q authenticator", got, err, authenticators.MethodPhone)
+	}
+}
+
+// TestAppendPhoneAuthenticator_SMSProviderUnsetOrLogIsByteIdenticalStub
+// proves an unset (nil) SMS block and an explicit provider: "log" both
+// resolve through buildPhoneSMSSender's log branch — the critical
+// backward-compat invariant: existing deployments must be unaffected by the
+// SMSConfig addition.
+func TestAppendPhoneAuthenticator_SMSProviderUnsetOrLogIsByteIdenticalStub(t *testing.T) {
+	t.Parallel()
+	codeStore := authenticators.NewMemoryCodeStore()
+	for _, sms := range []*config.SMSConfig{nil, {}, {Provider: "log"}, {Provider: "LOG"}} {
+		a := &config.PhoneConfig{CodeAuthConfig: config.CodeAuthConfig{Enabled: true}, SMS: sms}
+		got, err := appendPhoneAuthenticator(nil, a, codeStore, testLogger())
+		if err != nil || len(got) != 1 || got[0].Name() != authenticators.MethodPhone {
+			t.Fatalf("sms=%+v: got=%v, err=%v, want one %q authenticator", sms, got, err, authenticators.MethodPhone)
+		}
+	}
+}
+
+// TestAppendPhoneAuthenticator_SMSProviderHTTPRequiresFields proves
+// provider: "http" with missing required fields fails the boot loudly
+// instead of silently falling back to the log stub.
+func TestAppendPhoneAuthenticator_SMSProviderHTTPRequiresFields(t *testing.T) {
+	t.Parallel()
+	codeStore := authenticators.NewMemoryCodeStore()
+	a := &config.PhoneConfig{
+		CodeAuthConfig: config.CodeAuthConfig{Enabled: true},
+		SMS:            &config.SMSConfig{Provider: "http"},
+	}
+	if _, err := appendPhoneAuthenticator(nil, a, codeStore, testLogger()); err == nil {
+		t.Fatal("expected an error: provider=http missing account_sid/auth_token/from_number")
+	}
+}
+
+// TestAppendPhoneAuthenticator_SMSProviderHTTPBuildsRealSender proves a
+// fully-configured provider: "http" block builds and wires the real
+// infrastructure/sms.Sender rather than the log stub.
+func TestAppendPhoneAuthenticator_SMSProviderHTTPBuildsRealSender(t *testing.T) {
+	t.Parallel()
+	codeStore := authenticators.NewMemoryCodeStore()
+	a := &config.PhoneConfig{
+		CodeAuthConfig: config.CodeAuthConfig{Enabled: true},
+		SMS: &config.SMSConfig{
+			Provider:   "http",
+			AccountSID: "AC1",
+			AuthToken:  "tok",
+			FromNumber: "+15005550006",
+		},
+	}
+	got, err := appendPhoneAuthenticator(nil, a, codeStore, testLogger())
+	if err != nil || len(got) != 1 || got[0].Name() != authenticators.MethodPhone {
+		t.Fatalf("got=%v, err=%v, want one %q authenticator", got, err, authenticators.MethodPhone)
+	}
+}
+
+// TestAppendPhoneAuthenticator_UnknownSMSProviderErrors proves an
+// unrecognized provider value is a loud boot failure, not a silent
+// fallback.
+func TestAppendPhoneAuthenticator_UnknownSMSProviderErrors(t *testing.T) {
+	t.Parallel()
+	codeStore := authenticators.NewMemoryCodeStore()
+	a := &config.PhoneConfig{
+		CodeAuthConfig: config.CodeAuthConfig{Enabled: true},
+		SMS:            &config.SMSConfig{Provider: "carrier-pigeon"},
+	}
+	if _, err := appendPhoneAuthenticator(nil, a, codeStore, testLogger()); err == nil {
+		t.Fatal("expected an error: unknown sms provider")
 	}
 }
 

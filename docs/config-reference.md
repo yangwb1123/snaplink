@@ -18,6 +18,12 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 | `identity.client_cache.{enabled,ttl}` | Per-login ClientStore.Get TTL cache (default 30s); `KindClientChange` bus-invalidated on every mutation |
 | `client_registration.default_active` | `true` (default) activates a new DCR registration immediately; `false` opts into the developer-app registration review workflow — the client registers pending (`Active=false`, unable to authenticate on ANY grant) until an admin calls `POST /api/v1/admin/clients/{id}/approve` or `/reject` (`ClientAdminService`) |
 
+## Server
+
+| Key | Effect |
+|---|---|
+| `server.http2.enabled` | Controls HTTP/2 server-side support. `false` (default) disables HTTP/2 via `GODEBUG=http2server=0` (safe behind a reverse proxy). `true` enables HTTP/2 — required for gRPC or direct-client deployments. If the `GODEBUG` env var is already explicitly set, this field is ignored (explicit env override takes precedence). See `config.HTTP2Config`. |
+
 ## OIDC
 
 | Key | Effect |
@@ -36,6 +42,7 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 | `security.rar_limits.{max_bytes,max_elements,max_depth}` | Bounds an RFC 9396 `authorization_details` payload's SHAPE (serialized size / top-level array element count / max nesting depth) BEFORE it is fully unmarshaled, on `/auth/login` and `/par`. Each sub-field `<= 0` (default) = unbounded — composes with, does not replace, `security.body_limit`. Rejects with the existing `invalid_authorization_details` code. Maps to `sso.WithAuthorizationDetailsLimits` |
 | `security.scope_limit.max_count` | Caps the number of space/array-separated scopes accepted in a single `/auth/login` or `/par` request. `<= 0` (default) = unbounded. Distinct from the SDK's internal `oauth.MaxScopeLen` byte cap — this is a token-COUNT cap. Rejects with `invalid_scope`. Maps to `sso.WithMaxScopeCount` |
 | `security.max_token_bytes` | Caps the byte length of an inbound bearer token `validateAnyToken` will attempt to parse/verify; over-cap tokens are rejected with the standard `invalid_token`/`{"active":false}` response BEFORE any base64/JSON decode or issuer `Validate` call. `<= 0` (default) = unbounded. Maps to `sso.WithMaxTokenBytes` |
+| `security.client_registration_rate_limit.{disabled,per_sec,burst}` | Narrow, IP-keyed rate limit on `POST /register` (RFC 7591 DCR) — UNLIKE every other `security.*` block above, the section being absent/zero is NOT "disabled": `sso.NewServer` always seeds a conservative built-in limiter (5 req/min/IP, burst 5) so an unauthenticated registration endpoint is never left completely unthrottled just because an operator didn't configure it. Set `disabled: true` to turn it off entirely (e.g. already throttled at an edge/WAF); set `per_sec`+`burst` (both `> 0`) to override the built-in rate without disabling it. Independent of `security.rate_limit` (which already supports a `/register` prefix rule via `security.rate_limit.prefixes`, but only takes effect when `security.rate_limit.enabled` is also true) — this guard needs no such opt-in. Rejects with the standard `rate_limited` 429 + `Retry-After` (see Rate limiting + payload in [error-codes.md](error-codes.md)). Maps to `sso.WithClientRegistrationRateLimit`; not part of the `security.rate_limit.*` SIGHUP hot-reload rebuild (see Hot Reload below) — a change here needs a restart |
 
 ## Signing Keys
 
@@ -201,6 +208,76 @@ is ASYNC fire-and-forget (a background goroutine bounded by `smtp.timeout`) so
 | `smtp.timeout` | Per-send bound for the background dispatch goroutine; 0 = 10s default |
 | `smtp.templates_dir` | Filesystem overlay for the five go:embed default templates (`password_reset`/`email_verification`/`email_change`/`invitation`/`otp`); empty = embedded defaults only |
 | `smtp.link_base_url` | Prefixed to reset/verify/invite links — required because the sender only ever sees the token/target its `spi.*Sender` method receives, never `server.issuer` |
+
+## SMS
+
+The phone one-time-code authenticator (`authenticators.phone`) dials an
+`authenticators.SMSSender`; `authenticators.phone.sms` selects the transport.
+`provider` unset or `"log"` (the default) logs the code instead of sending
+it — byte-identical to the stub that shipped before this config section
+existed. `provider: "http"` dispatches over the built-in
+`infrastructure/sms` sender, a generic HTTP REST transport compatible with
+Twilio's Messages API contract (no vendor SDK dependency; any
+Twilio-compatible gateway works via `base_url`). A misconfigured `"http"`
+provider (missing required field, or an unrecognized `provider` value)
+fails the boot loudly rather than silently falling back to the log stub.
+
+| Key | Effect |
+|---|---|
+| `authenticators.phone.sms.provider` | `""` / `"log"` (default; log-only stub) \| `"http"` (real SMS via `infrastructure/sms`) |
+| `authenticators.phone.sms.account_sid` | Twilio (or compatible) Account SID — HTTP Basic Auth username AND the Messages-resource path segment; required when `provider: "http"` |
+| `authenticators.phone.sms.auth_token` | HTTP Basic Auth password — supports `secret://` resolution (`config/secrets.go`) and the `SSO_AUTHENTICATORS__PHONE__SMS__AUTH_TOKEN` env override; never commit a plaintext value; required when `provider: "http"` |
+| `authenticators.phone.sms.from_number` | Sending number / alphanumeric sender ID; required when `provider: "http"` |
+| `authenticators.phone.sms.message_template` | Outbound body template; the literal substring `{code}` is replaced with the generated code. Empty uses the SDK default (`"Your verification code is: {code}"`) |
+| `authenticators.phone.sms.http_timeout` | Per-request bound; 0 = 10s default |
+| `authenticators.phone.sms.base_url` | Overrides the REST API origin — set only to point at a Twilio-compatible gateway; empty uses the real Twilio API origin |
+
+## Magic Link
+
+The passwordless emailed-link authenticator (`authenticators.magic_link`,
+provider name `magiclink`). Functionally the email-OTP authenticator with two
+differences: `SendCode` mints a long, high-entropy opaque token
+(`authenticators.GenerateOpaqueToken`, base64url — same construction the
+temp-token authenticator uses for single-use bearer tokens) instead of a
+short digit code, and it emails a full clickable URL rather than a bare code.
+`Authenticate` is otherwise identical to email-OTP: it reads the SAME
+`credential.email` / `credential.code` keys and consumes the SAME `CodeStore`
+`Verify` call (single-use — a replayed click, e.g. an email-security-scanner
+prefetch racing the real click, fails the second attempt), just keyed under a
+namespace distinct from email-OTP's so requesting both for one address never
+collides. `magiclink` reuses `email:` (the CodeAuthConfig SMTP sender) — no
+separate transport to configure.
+
+The emailed link is shaped `base_url?token=<opaque>#email=<address>` —
+deliberately NOT a second `&`-joined query parameter: the built-in SMTP
+sender renders the OTP body through `html/template` for XSS-hardening, which
+HTML-entity-escapes a literal `&` in an interpolated value to `&amp;` and
+would corrupt a two-`&`-joined-param link. Splitting the email into a `#`
+fragment keeps the whole link free of any HTML-special character, so it
+survives that renderer unmodified — zero changes to `infrastructure/
+defaultimpl/emailsmtp` were needed. `base_url` should point at this SDK's
+hosted login SPA (`/login/`, `WithHostedLoginFS`) or an equivalent static
+page whose script parses `?token=` + `#email=` from the URL and POSTs
+`{provider: "magiclink", credential: {email, code: token}}` to `/auth/login`
+— the SAME request shape every other credential authenticator already uses,
+so no new HTTP endpoint or request-binding change was needed either.
+
+Caveat: because the link is opened out-of-band (a different browser/device
+than the one that started the OAuth flow may open it), the emailed link
+cannot carry the original `client_id` / `redirect_uri` / `state` — `SendCode`
+intentionally has no such parameter (it shares the plain `CodeSender`
+interface every code-based authenticator implements). A deployment that
+needs the click to resume a SPECIFIC client's authorization request must
+either restrict `magiclink` to a single default client, or extend the
+`/auth/send-code` caller to persist that context out-of-band — this SDK
+does not do so today.
+
+| Key | Effect |
+|---|---|
+| `authenticators.magic_link.enabled` | Master switch; `false`/omitted = byte-identical to a build without the feature |
+| `authenticators.magic_link.base_url` | Login-UI landing page the emailed link points at. REQUIRED when enabled — an enabled authenticator with no landing page fails the boot loudly rather than shipping a dead feature |
+| `authenticators.magic_link.token_length` | Opaque-token `crypto/rand` byte length before base64url encoding; 0 = 32 (256 bits) |
+| `authenticators.magic_link.ttl` | How long the emailed link remains valid; 0 = 15m |
 
 ## Tenant & Region
 
@@ -385,7 +462,7 @@ Zero-trust conditional-access (CAP) engine (`domains/conditionalaccess`, `sso.Wi
 
 A matched `deny` verdict returns `403 conditional_access_denied`; a matched `require_step_up` verdict routes through the SAME MFA orchestration `mfa.*` configures (`WithMFAProvider` + `WithMFAChallengeStore`) — without both wired it decays to allow, never inventing a step-up path the deployment hasn't configured. A trust-scorer or policy-store outage always FAILS OPEN on `/auth/login` (logs and proceeds), regardless of `default_deny` — a risk signal must never become an account-lockout oracle.
 
-Pair with `sso.WithTrustScorer` (a `shared/trust.TrustScorer`, typically a `trust.WeightedComposite`) and `sso.WithDeviceFingerprint` (a `conditionalaccess.DeviceFingerprint`, e.g. `conditionalaccess.NewMemoryDeviceFingerprint()`) to feed the engine real trust-score and device-posture signals; both are Go-level SDK options with no YAML surface (no reference implementation to declare declaratively), so operators wire them directly like a custom `RiskScorer`.
+Pair with `sso.WithTrustScorer` (a `shared/trust.TrustScorer`, typically a `trust.WeightedComposite` — see "Trust Scoring" below for the reference-implementation cmd wiring) and `sso.WithDeviceFingerprint` (a `conditionalaccess.DeviceFingerprint`, e.g. `conditionalaccess.NewMemoryDeviceFingerprint()`) to feed the engine real trust-score and device-posture signals; `WithDeviceFingerprint` remains a Go-level SDK option with no YAML surface (no reference implementation to declare declaratively), so operators wire a custom device-posture source directly like a custom `RiskScorer`.
 
 | Key | Effect |
 |---|---|
@@ -394,6 +471,28 @@ Pair with `sso.WithTrustScorer` (a `shared/trust.TrustScorer`, typically a `trus
 | `access_policies.degraded_trust` | Conservative trust value substituted when a signal is missing; `<=0` or `>1` normalizes to the engine default (`0.3`) |
 | `access_policies.default_deny` | Flips the no-policy-matched verdict from allow to deny (a zero-trust posture) and governs the fallback when the store is unavailable |
 | `access_policies.enforce` | Activates the live `/auth/login` PEP. `false` (default) keeps the engine advisory-only even with policies configured — stage policies (`dry_run` entries, `enforce: false`) and check the admin governance view before flipping this on |
+
+## Trust Scoring
+
+Zero Trust Framework Phase 1 composite trust score (`shared/trust`, `sso.WithTrustScorer`). Disabled by default: an absent/`false` section wires nothing — byte-identical to a build without the feature. The reference sso-server binary auto-wires `trust.enabled` (`cmd/sso-server/serverbuildplatform.BuildTrustScorer`) into a `trust.WeightedComposite` over whichever reference scorers `trust.weights` names, each configured from its own section below, and hands it to `sso.WithTrustScorer`. The score itself is a pure SCORING foundation — it is ADVISORY-only, never an allow/deny decision by itself: it only affects a live `/auth/login` outcome once paired with the Conditional Access engine ABOVE running with `access_policies.enforce: true` (see that section's fail-open contract). Wiring `trust.enabled` alone, with no conditional-access policy consulting it, changes no request behavior.
+
+`trust.weights` keys select which reference scorers join the composite (a missing key excludes that scorer): `geo_risk` (country allow/deny lists, never errors), `ip_reputation` and `behavior` (need a login-history data source — see below), and `device_posture` (an explicit stub reserved for a future MDM integration; always returns `device_posture.default_score`, never errors). Every scorer degrades to its own `floor_on_error` (or, for the two that never error, is simply always available) rather than failing the whole composite — a flaky scorer never blocks `/auth/login`.
+
+When `anomaly.enabled`, the `ip_reputation` and `behavior` scorers read the SAME `domains/anomaly` stores (`IPFailureCounter` / `RecentLoginStore`) the anomaly detectors already populate — composition-root adapters in `BuildTrustScorer` hash the caller's IP with the exact same salted scheme (`sha256(anomaly.ip_salt || ip)`, truncated to 16 hex chars) the anomaly detectors use, so `ip_reputation` reads the exact rows a brute-force-shadow detector already wrote rather than a second, disconnected hash space. With `anomaly.enabled: false` (or the relevant sub-store unopened), both scorers simply cold-start to their "no_signal" value — never an error.
+
+| Key | Effect |
+|---|---|
+| `trust.enabled` | Builds the composite scorer and wires `sso.WithTrustScorer`. Requires at least one `trust.weights` entry — an unknown scorer name or a weight `<=0` fails loud at boot |
+| `trust.weights` | Map of scorer name (`geo_risk`, `ip_reputation`, `behavior`, `device_posture`) to its relative composite weight (`>0`); a missing key excludes that scorer |
+| `trust.geo.trusted_countries` / `trust.geo.denied_countries` | ISO 3166-1 alpha-2 lists the `geo_risk` scorer compares (case-insensitively) against the request's enriched country |
+| `trust.ip_reputation.window` / `.failure_threshold` / `.distinct_subject_threshold` | Tuning for the shared brute-force-shadow signal, read as an advisory score instead of a hard block; zero values fall back to the scorer's package defaults |
+| `trust.ip_reputation.floor_on_error` | Score substituted when the backing store errors (fail-open) |
+| `trust.behavior.history_limit` | How many past logins the time-of-day baseline consults; zero uses the package default |
+| `trust.behavior.floor_on_error` | Score substituted when the backing store errors (fail-open) |
+| `trust.device_posture.default_score` | The stub's unconditional return value (clamped to `[0,1]`) until an MDM integration replaces it |
+| `trust.serialization.stamp_session_metadata` / `.include_token_claim` / `.claim_name` | Both default `false` — surfacing the computed score into session metadata or a token claim is opt-in and changes nothing on the wire until enabled |
+
+When `metrics.enabled` is also set, the composite registers `sso_trust_score` (a histogram of every scorer's returned value, labeled by scorer name, including the composite's own aggregate under `scorer="composite"`) and `sso_trust_scorer_errors_total` (a counter of degrade-to-floor events, labeled by scorer name) on the shared metrics registry.
 
 ## Session Trust Decay (continuous verification)
 
@@ -424,6 +523,18 @@ Because the detector is a `tokenusage.Store` decorator, enabling it **also co-wi
 | `token_anomaly.queue_size` | Bound on the recorder's drop-on-full ingest queue (`<=0` = default). Lower sheds telemetry load sooner; a full queue drops events (fail-open — telemetry loss never adds `/token` latency) |
 | `token_anomaly.max_buckets` | Bound on the token-usage aggregation store the detector decorates (`<=0` = default) |
 | `token_anomaly.max_thumbprints` / `window` / `velocity_gap` / `spike_factor` / `spike_min_count` | Optional detector tuning (each zero value keeps the adaptive package default): observation-table cap, analysis look-back, impossible-travel interval, and the per-client rate-spike multiple + absolute floor |
+
+## Active ITDR (Threat-Action Executor)
+
+The detection-to-response bridge (`domains/threataction`, `sso.WithThreatExecutor` + `sso.WithThreatPolicyStore`): a composite executor that turns `anomaly.Runner` and `tokenanomaly.Detector` findings into response actions — session suspension, refresh-token family revocation, MFA step-up, admin notification — off the request path. Without this section, anomaly/token-anomaly detection is audit-only ("smoke alarm, no fire department"); enabling it wires the SAME executor instance into both detectors plus the Server, so they share one rate-limiter and one policy view. **Disabled by default**: an absent/`false` section wires neither the executor nor the policy store — byte-identical to a build without the feature. Enabling it with an empty `policies` list mounts the admin CRUD API (`GET`/`PUT`/`DELETE /api/v1/admin/threat-policies`) but every threat still resolves to `default_action` (or the package's `noop`) until a policy is added there or in config.
+
+`suspend`/`revoke`/`step_up_mfa`/`challenge` handlers each fail-open when their backing store isn't wired (no session manager, no refresh-token family tracker) — the executor still builds and the `notify` action (audit-only) always works. `challenge` and `step_up_mfa` currently share the same underlying mechanism (`core.SessionTrustManager.MarkStepUp` — the only "require something extra on the next auth" primitive the SPI exposes today) but are distinct policy-facing action names, so both are available to policy authors independently.
+
+| Key | Effect |
+|---|---|
+| `threat_action.enabled` | Builds the composite `ThreatExecutors` + in-memory `ThreatPolicyStore` and wires `sso.WithThreatExecutor` / `sso.WithThreatPolicyStore`, plus `anomaly.WithThreatExecutor` / `tokenanomaly.WithThreatExecutor` on whichever of those two detectors is also enabled |
+| `threat_action.default_action` | Action applied when no policy matches a threat: `noop` (default, audit-only) \| `suspend` \| `revoke` \| `step_up_mfa` \| `challenge` \| `notify` |
+| `threat_action.policies` | Inline policy list seeding the `ThreatPolicyStore` at boot (`name`, `enabled`, `type`, `severity`, `action`, `rate_limit: {per_window, max}`, `conditions`). Further policies can be added/edited at runtime via the admin CRUD API. `type` supports wildcard matching in addition to an exact string: a trailing `*` (`"impossible_travel/*"`) is a prefix match, a leading `*` (`"*_burst"`) is a suffix match, and a bare `"*"` matches any type (same result as leaving `type` empty). Any other placement of `*` (mid-string, or more than one) is treated as a literal character, not expanded — see `ThreatPolicy.Type` / `matchType` in `domains/threataction/policy.go` |
 
 ## Degraded-Service Modes
 

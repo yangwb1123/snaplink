@@ -10,8 +10,10 @@ import (
 
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/conditionalaccess"
+	"github.com/snaplink/sso/domains/threataction"
 	"github.com/snaplink/sso/domains/tokenanomaly"
 	"github.com/snaplink/sso/domains/tokenpolicy"
+	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/shared/core/corecredential"
@@ -22,7 +24,7 @@ func govLogger() spi.Logger { return spi.NopLogger{} }
 
 func TestBuildCredentialRotation_DisabledReturnsNil(t *testing.T) {
 	t.Parallel()
-	reg, sched, err := BuildCredentialRotation(config.RotationConfig{}, nil, govLogger(), nil)
+	reg, sched, err := BuildCredentialRotation(config.RotationConfig{}, config.ClientSecretRotationConfig{}, nil, nil, govLogger(), nil)
 	if err != nil {
 		t.Fatalf("BuildCredentialRotation: %v", err)
 	}
@@ -34,7 +36,7 @@ func TestBuildCredentialRotation_DisabledReturnsNil(t *testing.T) {
 func TestBuildCredentialRotation_EnabledRegistersWebhookRotator(t *testing.T) {
 	t.Parallel()
 	cfg := config.RotationConfig{Enabled: true, Interval: time.Hour, Overlap: time.Minute}
-	reg, sched, err := BuildCredentialRotation(cfg, []byte("seed-secret"), govLogger(), nil)
+	reg, sched, err := BuildCredentialRotation(cfg, config.ClientSecretRotationConfig{}, []byte("seed-secret"), nil, govLogger(), nil)
 	if err != nil {
 		t.Fatalf("BuildCredentialRotation: %v", err)
 	}
@@ -53,10 +55,90 @@ func TestBuildCredentialRotation_EnabledRegistersWebhookRotator(t *testing.T) {
 func TestBuildCredentialRotation_RequiresIntervalWhenEnabled(t *testing.T) {
 	t.Parallel()
 	cfg := config.RotationConfig{Enabled: true} // Interval left 0
-	if _, _, err := BuildCredentialRotation(cfg, nil, govLogger(), nil); err == nil {
+	if _, _, err := BuildCredentialRotation(cfg, config.ClientSecretRotationConfig{}, nil, nil, govLogger(), nil); err == nil {
 		t.Fatal("expected error: rotation.interval required when enabled")
 	}
 }
+
+// TestBuildCredentialRotation_ClientSecretRotationEnabledRegistersRotator
+// proves the client-secret rotator registers onto the SAME registry the
+// webhook rotator uses (one shared Scheduler running both, at potentially
+// different cadences), independent of whether the webhook feature is on.
+func TestBuildCredentialRotation_ClientSecretRotationEnabledRegistersRotator(t *testing.T) {
+	t.Parallel()
+	clientCfg := config.ClientSecretRotationConfig{Enabled: true, Interval: 24 * time.Hour}
+	store := defaultimpl.NewMemoryClientStore()
+	reg, sched, err := BuildCredentialRotation(config.RotationConfig{}, clientCfg, nil, store, govLogger(), nil)
+	if err != nil {
+		t.Fatalf("BuildCredentialRotation: %v", err)
+	}
+	if reg == nil || sched == nil {
+		t.Fatal("enabled client_secret_rotation must return a registry + scheduler")
+	}
+	inv := reg.Inventory()
+	if len(inv) != 1 {
+		t.Fatalf("inventory = %d entries; want 1 (the client-secret rotator)", len(inv))
+	}
+	if inv[0].Type != corecredential.CredentialTypeOAuthClientSecret {
+		t.Errorf("inventory type = %q; want %q", inv[0].Type, corecredential.CredentialTypeOAuthClientSecret)
+	}
+}
+
+// TestBuildCredentialRotation_BothEnabledShareOneRegistry proves BOTH
+// rotators land on the same Registry (two inventory entries) when both
+// features are enabled together, at independent cadences.
+func TestBuildCredentialRotation_BothEnabledShareOneRegistry(t *testing.T) {
+	t.Parallel()
+	cfg := config.RotationConfig{Enabled: true, Interval: time.Hour}
+	clientCfg := config.ClientSecretRotationConfig{Enabled: true, Interval: 24 * time.Hour}
+	store := defaultimpl.NewMemoryClientStore()
+	reg, sched, err := BuildCredentialRotation(cfg, clientCfg, nil, store, govLogger(), nil)
+	if err != nil {
+		t.Fatalf("BuildCredentialRotation: %v", err)
+	}
+	if reg == nil || sched == nil {
+		t.Fatal("expected a registry + scheduler")
+	}
+	inv := reg.Inventory()
+	if len(inv) != 2 {
+		t.Fatalf("inventory = %d entries; want 2 (webhook + client-secret rotators)", len(inv))
+	}
+}
+
+func TestBuildCredentialRotation_ClientSecretRotationRequiresInterval(t *testing.T) {
+	t.Parallel()
+	clientCfg := config.ClientSecretRotationConfig{Enabled: true} // Interval left 0
+	store := defaultimpl.NewMemoryClientStore()
+	if _, _, err := BuildCredentialRotation(config.RotationConfig{}, clientCfg, nil, store, govLogger(), nil); err == nil {
+		t.Fatal("expected error: client_secret_rotation.interval required when enabled")
+	}
+}
+
+func TestBuildCredentialRotation_ClientSecretRotationRequiresClientStore(t *testing.T) {
+	t.Parallel()
+	clientCfg := config.ClientSecretRotationConfig{Enabled: true, Interval: time.Hour}
+	if _, _, err := BuildCredentialRotation(config.RotationConfig{}, clientCfg, nil, nil, govLogger(), nil); err == nil {
+		t.Fatal("expected error: client_secret_rotation.enabled requires a configured client store")
+	}
+}
+
+// TestBuildCredentialRotation_ClientSecretRotationRequiresLister proves a
+// ClientStore that doesn't implement clientrotation.ClientRotationLister
+// (e.g. a hand-rolled or third-party backend) fails loud at boot rather than
+// silently never rotating anything.
+func TestBuildCredentialRotation_ClientSecretRotationRequiresLister(t *testing.T) {
+	t.Parallel()
+	clientCfg := config.ClientSecretRotationConfig{Enabled: true, Interval: time.Hour}
+	if _, _, err := BuildCredentialRotation(config.RotationConfig{}, clientCfg, nil, listerlessClientStore{}, govLogger(), nil); err == nil {
+		t.Fatal("expected error: store without ClientRotationLister must be rejected")
+	}
+}
+
+// listerlessClientStore is a minimal sso.ClientStore that deliberately does
+// NOT implement clientrotation.ClientRotationLister, proving the build-time
+// validation rejects it rather than silently registering a rotator that
+// would never find anything due.
+type listerlessClientStore struct{ sso.ClientStore }
 
 func TestBuildConfigAuditStore_MemoryDefault(t *testing.T) {
 	t.Parallel()
@@ -315,7 +397,7 @@ func TestBuildDegradationManager_InvalidMode(t *testing.T) {
 
 func TestBuildTokenAnomaly_DisabledReturnsNil(t *testing.T) {
 	t.Parallel()
-	rec, det, err := BuildTokenAnomaly(config.TokenAnomalyConfig{}, govLogger())
+	rec, det, err := BuildTokenAnomaly(config.TokenAnomalyConfig{}, govLogger(), nil)
 	if err != nil {
 		t.Fatalf("BuildTokenAnomaly: %v", err)
 	}
@@ -327,7 +409,7 @@ func TestBuildTokenAnomaly_DisabledReturnsNil(t *testing.T) {
 func TestBuildTokenAnomaly_RequiresSweepIntervalWhenEnabled(t *testing.T) {
 	t.Parallel()
 	// Enabled with SweepInterval left 0 — a sweep with no cadence never emits.
-	if _, _, err := BuildTokenAnomaly(config.TokenAnomalyConfig{Enabled: true}, govLogger()); err == nil {
+	if _, _, err := BuildTokenAnomaly(config.TokenAnomalyConfig{Enabled: true}, govLogger(), nil); err == nil {
 		t.Fatal("expected error: sweep_interval required when token_anomaly.enabled")
 	}
 }
@@ -338,7 +420,7 @@ func TestBuildTokenAnomaly_RequiresSweepIntervalWhenEnabled(t *testing.T) {
 func TestBuildTokenAnomaly_EnabledCoWiresRecorderAndDetector(t *testing.T) {
 	t.Parallel()
 	cfg := config.TokenAnomalyConfig{Enabled: true, SweepInterval: time.Hour, MaxFindings: 8}
-	rec, det, err := BuildTokenAnomaly(cfg, govLogger())
+	rec, det, err := BuildTokenAnomaly(cfg, govLogger(), nil)
 	if err != nil {
 		t.Fatalf("BuildTokenAnomaly: %v", err)
 	}
@@ -352,5 +434,106 @@ func TestBuildTokenAnomaly_EnabledCoWiresRecorderAndDetector(t *testing.T) {
 	}
 	if det.Findings() == nil {
 		t.Error("detector must expose its finding store for the admin read API")
+	}
+}
+
+// --- Active ITDR wiring: threat-action executor -------------------------------
+
+func TestBuildThreatAction_DisabledReturnsNil(t *testing.T) {
+	t.Parallel()
+	exec, store, err := BuildThreatAction(config.ThreatActionConfig{}, nil, nil, nil, nil, nil, govLogger())
+	if err != nil {
+		t.Fatalf("BuildThreatAction: %v", err)
+	}
+	if exec != nil || store != nil {
+		t.Fatalf("disabled threat_action must return (nil, nil); got exec=%v store=%v", exec, store)
+	}
+}
+
+// TestBuildThreatAction_EnabledSeedsPoliciesAndDispatches proves the P0 wiring
+// end to end at the cmd composition layer: an enabled threat_action section
+// seeds the policy store from cfg.Policies AND the returned executor actually
+// dispatches a matching threat to the right handler — not just that it
+// constructs without error.
+func TestBuildThreatAction_EnabledSeedsPoliciesAndDispatches(t *testing.T) {
+	t.Parallel()
+	cfg := config.ThreatActionConfig{
+		Enabled: true,
+		Policies: []threataction.ThreatPolicy{
+			{Name: "critical-travel", Enabled: true, Type: "impossible_travel", Severity: "critical", Action: threataction.ActionNotify},
+		},
+	}
+	exec, store, err := BuildThreatAction(cfg, nil, nil, nil, nil, nil, govLogger())
+	if err != nil {
+		t.Fatalf("BuildThreatAction: %v", err)
+	}
+	if exec == nil || store == nil {
+		t.Fatal("enabled threat_action must return an executor + policy store")
+	}
+	policies, err := store.List(context.Background())
+	if err != nil || len(policies) != 1 || policies[0].Name != "critical-travel" {
+		t.Fatalf("policy store not seeded from cfg.Policies: %+v, err=%v", policies, err)
+	}
+	result, err := exec.Execute(context.Background(), threataction.Threat{
+		Type: "impossible_travel", Severity: "critical", SubjectID: "alice",
+	}, threataction.ThreatPolicy{})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Action != threataction.ActionNotify || !result.OK {
+		t.Errorf("Execute result = %+v, want a successful notify (policy matched)", result)
+	}
+}
+
+// TestBuildThreatAction_ChallengeActionHasHandler proves a policy targeting
+// action: challenge dispatches successfully — regression coverage for the
+// gap where ActionChallenge had no registered handler and every "challenge"
+// policy silently failed with "no handler registered" (audited, never
+// crashed, but the action never actually happened).
+func TestBuildThreatAction_ChallengeActionHasHandler(t *testing.T) {
+	t.Parallel()
+	cfg := config.ThreatActionConfig{
+		Enabled: true,
+		Policies: []threataction.ThreatPolicy{
+			{Name: "new-device-challenge", Enabled: true, Type: "new_device", Action: threataction.ActionChallenge},
+		},
+	}
+	exec, _, err := BuildThreatAction(cfg, nil, nil, nil, nil, nil, govLogger())
+	if err != nil {
+		t.Fatalf("BuildThreatAction: %v", err)
+	}
+	result, err := exec.Execute(context.Background(), threataction.Threat{
+		Type: "new_device", SubjectID: "carol",
+	}, threataction.ThreatPolicy{})
+	if err != nil {
+		t.Fatalf("Execute: %v (action: challenge must have a registered handler)", err)
+	}
+	if result.Action != threataction.ActionChallenge {
+		t.Errorf("Execute result action = %q, want %q", result.Action, threataction.ActionChallenge)
+	}
+}
+
+// TestBuildThreatAction_NilDependenciesStillBuildAndFailOpen proves the
+// executor is safe to construct even when sessionMgr/familyRevoker/bus are
+// all nil (a minimal deployment with no session store or refresh-token family
+// tracking wired yet) — suspend/revoke handlers must fail-open, not panic.
+func TestBuildThreatAction_NilDependenciesStillBuildAndFailOpen(t *testing.T) {
+	t.Parallel()
+	cfg := config.ThreatActionConfig{
+		Enabled: true,
+		Policies: []threataction.ThreatPolicy{
+			{Name: "p", Enabled: true, Type: "velocity_burst", Action: threataction.ActionSuspend},
+		},
+	}
+	exec, _, err := BuildThreatAction(cfg, nil, nil, nil, nil, nil, govLogger())
+	if err != nil {
+		t.Fatalf("BuildThreatAction: %v", err)
+	}
+	result, err := exec.Execute(context.Background(), threataction.Threat{Type: "velocity_burst", SubjectID: "bob"}, threataction.ThreatPolicy{})
+	if err != nil {
+		t.Fatalf("Execute should fail-open (no error) on a nil session manager: %v", err)
+	}
+	if result.OK {
+		t.Errorf("suspend with no session manager should report !OK, got %+v", result)
 	}
 }

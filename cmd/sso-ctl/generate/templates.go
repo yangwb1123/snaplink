@@ -52,12 +52,14 @@ func (a *{{.Name}}Authenticator) Authenticate(ctx context.Context, req *core.Aut
 		return nil, fmt.Errorf("auth request is nil")
 	}
 
-	// TODO: Implement {{.Description}} authentication logic.
+	// TODO: Replace with your {{.Description}} authentication logic.
 	// Example pattern:
 	// 1. Extract credentials from req.Credentials map
 	// 2. Validate against your authentication backend
 	// 3. Return AuthResult with user info on success
 	// 4. Return error on failure (triggers next authenticator in chain)
+	//
+	// After filling in your logic, remove this marker.
 
 	// username := req.Credentials["username"]
 	// password := req.Credentials["password"]
@@ -67,7 +69,7 @@ func (a *{{.Name}}Authenticator) Authenticate(ctx context.Context, req *core.Aut
 	// 	return nil, fmt.Errorf("{{.LowerName}} auth failed: %w", err)
 	// }
 
-	return nil, fmt.Errorf("{{.LowerName}} authenticator not implemented")
+	return nil, core.ErrNoSuchUser
 }
 
 // Callback handles the return from an external identity provider.
@@ -78,11 +80,13 @@ func (a *{{.Name}}Authenticator) Callback(ctx context.Context, state *core.Callb
 		return nil, fmt.Errorf("callback state is nil")
 	}
 
-	// TODO: Implement {{.Description}} callback logic if applicable.
+	// TODO: Replace with your {{.Description}} callback logic if applicable.
 	// For OIDC/SAML: exchange code/assertion for user info.
 	// For direct auth: return nil, nil (no callback needed).
+	//
+	// After filling in your logic, remove this marker.
 
-	return nil, fmt.Errorf("{{.LowerName}} callback not implemented")
+	return nil, core.ErrNoSuchUser
 }
 
 // LoginURL returns the URL to redirect the user to for login.
@@ -109,47 +113,50 @@ func (a *{{.Name}}Authenticator) LockoutIdentity(credential map[string]string) s
 
 // storeTemplate generates a new storage backend implementation.
 // Stores implement storage interfaces from shared/core/spi.go for persisting
-// users, clients, tokens, sessions, etc.
+// users, clients, tokens, sessions, etc. The generated store ships a WORKING
+// in-memory map (compiles + behaves correctly out of the box) rather than
+// stub methods that return "not implemented" errors — swap the map for a
+// real backend (SQL, Redis, etc.) and adapt the method set to whichever core
+// storage interface you're implementing (see the TODO block at the bottom).
 const storeTemplate = `package {{.Package}}
 
 import (
 	"context"
 	"fmt"
 	"sync"
-
-	"github.com/snaplink/sso/shared/core"
 )
 
 // {{.Name}}Store implements {{.Description}} storage.
-// This is a skeleton implementation. Replace the TODO sections with
-// your storage backend logic (database, cache, external service, etc.).
+// Ships with a working in-memory map as a starting point. Replace the map
+// with your real backend (database, cache, external service, etc.) and
+// adapt the method set below to whichever core storage interface you're
+// implementing — see the reference list at the bottom of this file.
 type {{.Name}}Store struct {
 	// mu protects concurrent access to the store.
 	// Remove if your backend handles concurrency internally.
 	mu sync.RWMutex
 
-	// TODO: Add backend-specific fields.
-	// Examples:
-	// db     *sql.DB           // for SQL backends
-	// client *redis.Client     // for Redis backends
-	// conn   *mongo.Database   // for MongoDB backends
+	// entries is the working default backing store. Replace with your real
+	// backend fields (e.g. db *sql.DB, client *redis.Client) and change the
+	// value type from any to your concrete domain type (*core.User,
+	// *core.Client, etc.) once you know which core interface this implements.
+	entries map[string]any
 }
 
 // New{{.Name}}Store creates a new {{.Name}} store.
 func New{{.Name}}Store() (*{{.Name}}Store, error) {
-	// TODO: Initialize your storage backend connection.
+	// TODO: Initialize your real storage backend connection instead of the
+	// in-memory map below.
 	// Example:
 	// db, err := sql.Open("postgres", dsn)
 	// if err != nil {
 	// 	return nil, fmt.Errorf("connect to database: %w", err)
 	// }
-	// 
-	// // Run migrations if needed
 	// if err := db.Ping(); err != nil {
 	// 	return nil, fmt.Errorf("ping database: %w", err)
 	// }
 
-	return &{{.Name}}Store{}, nil
+	return &{{.Name}}Store{entries: make(map[string]any)}, nil
 }
 
 // Close releases resources held by the store.
@@ -161,96 +168,104 @@ func (s *{{.Name}}Store) Close() error {
 	return nil
 }
 
-// TODO: Implement storage interface methods based on what this store manages.
-// Common patterns:
-//
-// For UserStore (core.UserProvider):
-//   - Get(ctx context.Context, id string) (*core.User, error)
-//   - GetByUsername(ctx context.Context, username string) (*core.User, error)
-//   - Create(ctx context.Context, user *core.User) error
-//   - Update(ctx context.Context, user *core.User) error
-//   - Delete(ctx context.Context, id string) error
-//   - List(ctx context.Context, offset, limit int) ([]*core.User, error)
-//
-// For ClientStore (core.ClientStore):
-//   - Get(ctx context.Context, clientID string) (*core.Client, error)
-//   - Create(ctx context.Context, client *core.Client) error
-//   - Update(ctx context.Context, client *core.Client) error
-//   - Delete(ctx context.Context, clientID string) error
-//   - ListByRedirectURI(ctx context.Context, uri string) ([]*core.Client, error)
-//
-// For SessionManager (core.SessionManager):
-//   - Create(ctx context.Context, session *core.Session) error
-//   - Get(ctx context.Context, sessionID string) (*core.Session, error)
-//   - Delete(ctx context.Context, sessionID string) error
-//   - ListByUser(ctx context.Context, userID string) ([]*core.Session, error)
-//   - RevokeByUser(ctx context.Context, userID string) error
-//
-// For TokenIssuer (core.TokenIssuer):
-//   - Issue(ctx context.Context, claims *core.TokenClaims) (string, error)
-//   - Validate(ctx context.Context, token string) (*core.TokenClaims, error)
-//   - Revoke(ctx context.Context, jti string) error
+// Get retrieves an entity by ID. Replace the any return type with your
+// concrete domain type (*core.User, *core.Client, ...) once you know which
+// core storage interface this implements.
+func (s *{{.Name}}Store) Get(_ context.Context, id string) (any, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-// Example method signatures (uncomment and implement as needed):
+	// TODO: Replace with your backend query logic once this is more than an
+	// in-memory map. Example (SQL):
+	// var entity core.Entity
+	// err := s.db.QueryRowContext(ctx,
+	// 	"SELECT id, name, created_at FROM entities WHERE id = $1", id).
+	// 	Scan(&entity.ID, &entity.Name, &entity.CreatedAt)
+	// if err == sql.ErrNoRows {
+	// 	return nil, core.ErrNoSuchUser // or the ErrNoSuch* sentinel you implement
+	// }
 
-// Get retrieves an entity by ID.
-// func (s *{{.Name}}Store) Get(ctx context.Context, id string) (*core.Entity, error) {
-// 	s.mu.RLock()
-// 	defer s.mu.RUnlock()
-// 
-// 	// TODO: Query your backend.
-// 	// Example (SQL):
-// 	// var entity core.Entity
-// 	// err := s.db.QueryRowContext(ctx, 
-// 	// 	"SELECT id, name, created_at FROM entities WHERE id = $1", id).
-// 	// 	Scan(&entity.ID, &entity.Name, &entity.CreatedAt)
-// 	// if err == sql.ErrNoRows {
-// 	// 	return nil, core.ErrNotFound
-// 	// }
-// 	// if err != nil {
-// 	// 	return nil, fmt.Errorf("query entity: %w", err)
-// 	// }
-// 	// return &entity, nil
-// 
-// 	return nil, fmt.Errorf("{{.LowerName}} store Get not implemented")
-// }
+	v, ok := s.entries[id]
+	if !ok {
+		return nil, fmt.Errorf("{{.LowerName}} store: %q not found", id)
+	}
+	return v, nil
+}
 
-// Create stores a new entity.
-// func (s *{{.Name}}Store) Create(ctx context.Context, entity *core.Entity) error {
-// 	s.mu.Lock()
-// 	defer s.mu.Unlock()
-// 
-// 	// TODO: Insert into your backend.
-// 	// Example (SQL):
-// 	// _, err := s.db.ExecContext(ctx,
-// 	// 	"INSERT INTO entities (id, name, created_at) VALUES ($1, $2, $3)",
-// 	// 	entity.ID, entity.Name, entity.CreatedAt)
-// 	// if err != nil {
-// 	// 	return fmt.Errorf("insert entity: %w", err)
-// 	// }
-// 	// return nil
-// 
-// 	return fmt.Errorf("{{.LowerName}} store Create not implemented")
-// }
+// Create stores a new entity under id.
+func (s *{{.Name}}Store) Create(_ context.Context, id string, entity any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-// Delete removes an entity by ID.
-// func (s *{{.Name}}Store) Delete(ctx context.Context, id string) error {
-// 	s.mu.Lock()
-// 	defer s.mu.Unlock()
-// 
-// 	// TODO: Delete from your backend.
-// 	// Example (SQL):
-// 	// result, err := s.db.ExecContext(ctx,
-// 	// 	"DELETE FROM entities WHERE id = $1", id)
-// 	// if err != nil {
-// 	// 	return fmt.Errorf("delete entity: %w", err)
-// 	// }
-// 	// rows, _ := result.RowsAffected()
-// 	// if rows == 0 {
-// 	// 	return core.ErrNotFound
-// 	// }
-// 	// return nil
-// 
-// 	return fmt.Errorf("{{.LowerName}} store Delete not implemented")
-// }
+	// TODO: Replace with your backend insert logic. Example (SQL):
+	// _, err := s.db.ExecContext(ctx,
+	// 	"INSERT INTO entities (id, name, created_at) VALUES ($1, $2, $3)",
+	// 	entity.ID, entity.Name, entity.CreatedAt)
+
+	if _, exists := s.entries[id]; exists {
+		return fmt.Errorf("{{.LowerName}} store: %q already exists", id)
+	}
+	s.entries[id] = entity
+	return nil
+}
+
+// Update replaces an existing entity. Returns an error if id is unknown —
+// callers that want upsert semantics should check first or add their own
+// CreateOrUpdate wrapper.
+func (s *{{.Name}}Store) Update(_ context.Context, id string, entity any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.entries[id]; !exists {
+		return fmt.Errorf("{{.LowerName}} store: %q not found", id)
+	}
+	s.entries[id] = entity
+	return nil
+}
+
+// Delete removes an entity by ID. Deleting a missing ID is a no-op success
+// (idempotent), matching the convention most core storage interfaces use.
+func (s *{{.Name}}Store) Delete(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// TODO: Replace with your backend delete logic. Example (SQL):
+	// result, err := s.db.ExecContext(ctx, "DELETE FROM entities WHERE id = $1", id)
+
+	delete(s.entries, id)
+	return nil
+}
+
+// List returns every stored entity. Replace with a paginated/filtered query
+// once this is backed by a real database — an unbounded List is fine for a
+// scaffold default, not for production scale.
+func (s *{{.Name}}Store) List(_ context.Context) ([]any, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make([]any, 0, len(s.entries))
+	for _, v := range s.entries {
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+// TODO: Adapt the method set above to whichever core storage interface you're
+// implementing (rename methods, change the any value type to a concrete
+// domain type). Reference shapes:
+//
+// For UserProvider (core.UserProvider): GetByID/GetByExternalID/
+//   CreateOrUpdate/List/Delete returning *core.User — see
+//   infrastructure/defaultimpl/memorystoreidentity for a real reference.
+//
+// For ClientStore (core.ClientStore): Get/Add/Update/Delete/List returning
+//   *core.Client — see
+//   infrastructure/defaultimpl/memorystoreidentity/memory_clients.go.
+//
+// For SessionManager (core.SessionManager): Create/Get/Delete/ListByUser/
+//   RevokeByUser returning *core.Session.
+//
+// For TokenIssuer (core.TokenIssuer): Issue/Validate/Revoke — see
+//   infrastructure/defaultimpl's Ed25519/ECDSA/RSA issuers for a real
+//   reference implementation.
 `

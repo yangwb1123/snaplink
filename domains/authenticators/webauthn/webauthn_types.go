@@ -16,6 +16,14 @@ type User struct {
 	Name        string
 	DisplayName string
 	Credentials []gw.Credential
+
+	// CredentialExtensions holds SDK-captured WebAuthn extension results
+	// (credProps / largeBlob-support — see [CredentialExtensions]), keyed by
+	// base64url(credential ID), the same encoding [MFAEnrollmentAdapter] uses
+	// for its factor IDs. Nil / missing entry = not requested, or the
+	// authenticator's response omitted it (unknown) — never conflated with
+	// an explicit false.
+	CredentialExtensions map[string]CredentialExtensions
 }
 
 // WebAuthnID returns the user handle the authenticator binds
@@ -64,4 +72,83 @@ type UserStore interface {
 type SessionStore interface {
 	Put(ctx context.Context, sessionID string, data *gw.SessionData, ttl time.Duration) error
 	Take(ctx context.Context, sessionID string) (*gw.SessionData, error)
+}
+
+// CredentialExtensions holds SDK-captured WebAuthn client-extension results
+// that go-webauthn's own [gw.Credential] does not persist (its constructor,
+// [gw.NewCredential], copies verified attestation/authenticator data only —
+// never the raw clientExtensionResults map). Populated at FinishRegistration
+// when the matching Config.Request* flag asked for the extension AND the
+// client echoed a result.
+//
+// Every field is nil when the extension was not requested, or the
+// authenticator/client omitted it from the response — "unknown", never
+// conflated with an explicit false. Mirrors this package's KeyOrigin
+// (OriginUnknown) unknown-vs-false convention.
+type CredentialExtensions struct {
+	// Discoverable reports the credProps extension's "rk" output (WebAuthn
+	// Level 2): whether this credential is a client-side discoverable
+	// (resident) credential, usable for passwordless / conditional-mediation
+	// login (see [Helper.BeginLoginConditional]).
+	Discoverable *bool
+
+	// LargeBlobSupported reports the largeBlob extension's registration-time
+	// "supported" output (WebAuthn Level 3, §10.7). Detection only — this
+	// package does not read/write a largeBlob at registration; see
+	// [Helper.BeginLoginLargeBlob] / [Helper.FinishLoginLargeBlob] for the
+	// authentication-time read/write capability seam.
+	LargeBlobSupported *bool
+}
+
+// extensionCredProps / extensionLargeBlob are the WebAuthn extension
+// identifier strings (§9, §10.7). go-webauthn has no typed constants for
+// these — only protocol.ExtensionAppID / ExtensionAppIDExclude exist as of
+// v0.17.x — so they are defined once here rather than left as repeated
+// literals (AGENTS.md §4 no-literal-leaks).
+const (
+	extensionCredProps = "credProps"
+	extensionLargeBlob = "largeBlob"
+)
+
+// credentialExtensionSetter is an OPTIONAL UserStore capability — same
+// pattern as [handleResolver] — for persisting SDK-captured extension
+// metadata alongside a credential. [MemoryUserStore] implements it; a store
+// that doesn't is a silent no-op at [Helper.persistCredentialExtensions]:
+// Discoverable/LargeBlobSupported simply stay nil ("unknown") for that
+// backend, the same safe default as never having requested the extension.
+type credentialExtensionSetter interface {
+	SetCredentialExtensions(ctx context.Context, name string, credentialID []byte, ext CredentialExtensions) error
+}
+
+// LargeBlobRequest configures the WebAuthn Level 3 largeBlob extension
+// (§10.7) for one login ceremony via [Helper.BeginLoginLargeBlob]. Exactly
+// one of Read / Write should be set — the extension is read XOR write per
+// ceremony; setting both is a validation error at BeginLoginLargeBlob. The
+// zero value requests neither, behaving exactly like [Helper.BeginLogin].
+type LargeBlobRequest struct {
+	// Read requests the authenticator return its stored largeBlob for the
+	// asserted credential (surfaced in [Helper.FinishLoginLargeBlob]'s
+	// returned [LargeBlobResult].Read).
+	Read bool
+
+	// Write, when non-nil, requests the authenticator store these bytes as
+	// the asserted credential's largeBlob. Confirmation comes back as
+	// [LargeBlobResult].Written.
+	Write []byte
+}
+
+// LargeBlobResult carries the largeBlob extension's client output from
+// [Helper.FinishLoginLargeBlob]. This is a documented CAPABILITY SEAM (cf.
+// the identitylink package's "extension point, not built in" convention):
+// nothing in this repo currently consumes a largeBlob — a future
+// recovery-key / key-escrow feature can read/write through this seam
+// without any further ceremony change.
+type LargeBlobResult struct {
+	// Read is the bytes retrieved from the authenticator, non-nil only when
+	// a Read was requested and the client returned a "blob" output.
+	Read []byte
+
+	// Written reports whether a requested Write was honored; nil when no
+	// Write was requested.
+	Written *bool
 }

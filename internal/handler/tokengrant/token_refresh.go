@@ -43,6 +43,13 @@ type RefreshGrantDeps interface {
 	// refresh-token family's total age since original issuance (0 = disabled,
 	// the default-off contract — see refreshEnforceAbsoluteMaxLifetime).
 	RefreshAbsoluteMaxLifetime() time.Duration
+	// IntrospectionCache returns the optional token introspection cache so a
+	// refresh-family kill (reuse detection / rotation-velocity breach) can
+	// evict the just-presented token's cached result immediately instead of
+	// leaving a stale active:true reachable until TTL (best-effort — see
+	// oauth.InvalidateIntrospectionCache). Nil disables both the cache and
+	// this eviction, byte-identical to a build without caching.
+	IntrospectionCache() oauth.IntrospectionCache
 }
 
 // HandleRefreshGrant processes the RFC 6749 §6 refresh_token grant. Behavior is
@@ -105,7 +112,7 @@ func HandleRefreshGrant(d RefreshGrantDeps, ctx core.HandlerContext, client *cor
 	if d.EnforceRefreshDepthPolicy(ctx, client.ID, info.UserID, grantScopes, info.Generation) {
 		return
 	}
-	if refreshVelocityGate(d, ctx, client, store, info.FamilyID) {
+	if refreshVelocityGate(d, ctx, client, store, info.FamilyID, refreshToken) {
 		return
 	}
 	refreshIssueAndRotate(d, ctx, client, info, refreshToken, grantScopes, dpopJKT, mtlsX5T)
@@ -275,6 +282,11 @@ func refreshHandleConsumeError(d RefreshGrantDeps, ctx core.HandlerContext, clie
 	// descendant) before returning the wire error — an attacker who already
 	// rotated after stealing the leaf loses access to the active descendant.
 	if errors.Is(err, oauth.ErrRefreshTokenReused) && info != nil && info.FamilyID != "" {
+		// Best-effort: the presented (reused) leaf may be cached from an
+		// earlier /token/introspect call — evict it immediately rather than
+		// leaving it to report active:true for the rest of the TTL window
+		// while the attacker's sibling tokens are being killed below.
+		oauth.InvalidateIntrospectionCache(d.IntrospectionCache(), refreshToken)
 		killed := 0
 		if tracker, ok := store.(oauth.RefreshTokenFamilyTracker); ok {
 			n, derr := tracker.DeleteFamily(ctx.Request().Context(), info.FamilyID)
@@ -318,8 +330,10 @@ func refreshResolveScopes(ctx core.HandlerContext, info *oauth.RefreshToken, sco
 // invalid_grant wire shape (detail lives only in the audit event + metric) and
 // return true (FAIL-CLOSED). FAIL-OPEN on a limiter store error: log + proceed
 // (the cap is a defense layer, not a correctness gate). familyID == "" (tracking
-// opted out) → no-op, returns false.
-func refreshVelocityGate(d RefreshGrantDeps, ctx core.HandlerContext, client *core.Client, store oauth.RefreshTokenStore, familyID string) bool {
+// opted out) → no-op, returns false. refreshToken is the just-consumed leaf,
+// threaded through so a windowExceeded kill can also evict its cached
+// introspection result (see the invalidation call below).
+func refreshVelocityGate(d RefreshGrantDeps, ctx core.HandlerContext, client *core.Client, store oauth.RefreshTokenStore, familyID, refreshToken string) bool {
 	limiter, ok := store.(oauth.RefreshTokenRotationLimiter)
 	if !ok || familyID == "" {
 		return false
@@ -335,6 +349,10 @@ func refreshVelocityGate(d RefreshGrantDeps, ctx core.HandlerContext, client *co
 	if !exceeded {
 		return false
 	}
+	// Best-effort: same eviction as the reuse-detection path (see
+	// refreshHandleConsumeError) — the just-consumed leaf may be cached from
+	// an earlier /token/introspect call.
+	oauth.InvalidateIntrospectionCache(d.IntrospectionCache(), refreshToken)
 	killed := 0
 	if tracker, ok := store.(oauth.RefreshTokenFamilyTracker); ok {
 		n, derr := tracker.DeleteFamily(ctx.Request().Context(), familyID)

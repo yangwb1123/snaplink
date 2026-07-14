@@ -54,18 +54,23 @@
 // # Live login-flow wiring is an extension point, not built in
 //
 // The stock /auth/login handler this SDK ships does NOT call [Resolve]
-// automatically. The built-in federated authenticators (see
-// domains/authenticators, e.g. OIDCFederationAuthenticator) set
-// AuthResult.UserID directly from the external subject, so a genuine
-// same-identity-different-account conflict can only arise once an operator
-// (or a custom "connect an additional identity" flow they build on top of
-// [Store.Link]) has deliberately created a link record for one account while
-// a different account authenticates with the same (provider, subject) pair.
-// [Resolve] is the pure seam such an integration calls — retrieve it via
-// sso.Server.IdentityLinkStore / sso.Server.IdentityMergePolicy from within a
-// custom Authenticator's Callback, override the returned AuthResult.UserID
-// with the resolved id, and treat a returned [ErrAccountConflict] as a login
-// failure.
+// automatically — it has no concept of "external identity" for
+// password/TOTP/WebAuthn logins; there is nothing to resolve there. The
+// built-in federated authenticator, OIDCFederationAuthenticator (see
+// domains/authenticators), sets AuthResult.UserID directly from the external
+// subject BY DEFAULT, but it now also accepts an optional
+// authenticators.UserLinker (wired via authenticators.WithUserLinker) that
+// CAN call into this exact path: [NewAuthenticatorLinker] is the ready-made
+// adapter, a thin wrapper around [Resolve] backed by a [Store] +
+// [MergePolicy]. A genuine same-identity-different-account conflict still
+// only arises once an operator (or a custom "connect an additional identity"
+// flow they build on top of [Store.Link]) has deliberately created a link
+// record for one account while a different account authenticates with the
+// same (provider, subject) pair. For any OTHER custom Authenticator, [Resolve]
+// remains the pure seam to call directly — retrieve the store/policy via
+// sso.Server.IdentityLinkStore / sso.Server.IdentityMergePolicy from within
+// its Callback, override the returned AuthResult.UserID with the resolved
+// id, and treat a returned [ErrAccountConflict] as a login failure.
 package identitylink
 
 import (

@@ -357,6 +357,15 @@ type Client struct {
 	// Deliberately NOT projected into any token or id_token claim — unlike
 	// User.Attributes, these are transmitter wiring, not subject claims.
 	Attributes map[string]string `json:"attributes,omitempty" yaml:"attributes,omitempty"`
+
+	// SecretRotatedAt is when Secret was last SET — by Add (initial
+	// creation) or RotateSecret (admin-triggered or scheduled). Zero for
+	// legacy pre-migration records. A ClientStore's OPTIONAL due-listing
+	// extension (shared/security/clientrotation.ClientRotationLister) MUST
+	// treat zero as "not due", never "infinitely overdue" — else enabling
+	// scheduled rotation would mass-rotate every pre-existing client the
+	// instant the feature is turned on.
+	SecretRotatedAt time.Time `json:"-" yaml:"-"`
 }
 
 // IsRedirectURIValid checks if the given redirect URI is registered.

@@ -215,12 +215,27 @@ type CallbackState struct {
 }
 
 // User represents an authenticated user.
+//
+// Username is the platform-unique user-chosen handle (latin-only
+// [a-zA-Z0-9_], 3-50 chars) — the identity the user types at login.
+// Unlike ExternalID (which is an upstream IDP's opaque identifier),
+// Username is a first-class platform identity that IS queryable and
+// displayable. It is required for admin-created users; existing users
+// migrated from a schema without it carry Username="" (which the
+// caller interprets as "not yet set"). JSON omitempty so old consumers
+// that never send it stay byte-compatible.
+//
+// DisplayName is the optional user-facing full name (typically
+// "First Last") distinct from Name (which may be a SAML-displayed
+// name or a SCIM attribute). Empty when not set.
 type User struct {
 	ID         string            `json:"id"`
 	ExternalID string            `json:"external_id,omitempty"`
 	Provider   string            `json:"provider,omitempty"`
 	Email      string            `json:"email,omitempty"`
+	Username   string            `json:"username,omitempty"`
 	Name       string            `json:"name,omitempty"`
+	DisplayName string           `json:"display_name,omitempty"`
 	Attributes map[string]string `json:"attributes,omitempty"`
 	CreatedAt  time.Time         `json:"created_at"`
 	UpdatedAt  time.Time         `json:"updated_at"`

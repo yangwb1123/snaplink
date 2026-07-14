@@ -16,18 +16,22 @@ type MetricsConfig struct {
 // into the Server's middleware stack (body limit + rate limit + CORS).
 // Each sub-block is opt-in — leaving the block out (or setting
 // Enabled=false) skips the corresponding middleware with zero
-// overhead. See AGENTS.md §8d / §8f / §8g for the runtime behavior
-// of each.
+// overhead — EXCEPT ClientRegistrationRateLimit, which defaults ON (see
+// its doc, config_admin.go). See AGENTS.md §8d / §8f / §8g for the
+// runtime behavior of each.
 type SecurityConfig struct {
-	BodyLimit       BodyLimitConfig       `yaml:"body_limit"`
-	RateLimit       RateLimitConfig       `yaml:"rate_limit"`
-	CORS            CORSConfig            `yaml:"cors"`
-	DPoPNonce       DPoPNonceConfig       `yaml:"dpop_nonce"`
-	JTIReplay       JTIReplayConfig       `yaml:"jti_replay"`
-	AccountLockout  AccountLockoutConfig  `yaml:"account_lockout"`
-	MTLS            MTLSConfig            `yaml:"mtls"`
-	TrustedProxies  TrustedProxiesConfig  `yaml:"trusted_proxies"`
-	SecurityHeaders SecurityHeadersConfig `yaml:"security_headers"`
+	BodyLimit BodyLimitConfig `yaml:"body_limit"`
+	RateLimit RateLimitConfig `yaml:"rate_limit"`
+	// ClientRegistrationRateLimit is NOT opt-in like the blocks around it —
+	// see ClientRegistrationRateLimitConfig's doc (config_admin.go).
+	ClientRegistrationRateLimit ClientRegistrationRateLimitConfig `yaml:"client_registration_rate_limit"`
+	CORS                        CORSConfig                        `yaml:"cors"`
+	DPoPNonce                   DPoPNonceConfig                   `yaml:"dpop_nonce"`
+	JTIReplay                   JTIReplayConfig                   `yaml:"jti_replay"`
+	AccountLockout              AccountLockoutConfig              `yaml:"account_lockout"`
+	MTLS                        MTLSConfig                        `yaml:"mtls"`
+	TrustedProxies              TrustedProxiesConfig              `yaml:"trusted_proxies"`
+	SecurityHeaders             SecurityHeadersConfig             `yaml:"security_headers"`
 	// RARLimits, ScopeLimit, and MaxTokenBytes are the input-limit-hardening
 	// knobs: RFC 9396 authorization_details shape caps, a scope-count cap,
 	// and a bearer-token byte-length cap respectively. All default to

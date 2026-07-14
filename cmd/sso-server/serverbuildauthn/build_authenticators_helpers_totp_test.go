@@ -1,13 +1,17 @@
 package serverbuildauthn
 
 import (
+	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/authenticators"
 	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
+	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/shared/security"
 )
 
@@ -153,7 +157,7 @@ func TestBuildTOTPEnrollmentStore_InfersSqliteFromDSNThenMemoryThenPostgres(t *t
 
 func TestAppendOIDCFederationAuthenticators_NilAndInvalidEntriesSkipped(t *testing.T) {
 	t.Parallel()
-	if got := appendOIDCFederationAuthenticators(nil, nil, testLogger()); len(got) != 0 {
+	if got := appendOIDCFederationAuthenticators(nil, nil, testLogger(), nil); len(got) != 0 {
 		t.Fatalf("nil feds: got=%v", got)
 	}
 	feds := []*config.OIDCFederationAuthConfig{
@@ -166,9 +170,67 @@ func TestAppendOIDCFederationAuthenticators_NilAndInvalidEntriesSkipped(t *testi
 			RedirectURI: "https://sso.example.com/callback",
 		},
 	}
-	got := appendOIDCFederationAuthenticators(nil, feds, testLogger())
+	got := appendOIDCFederationAuthenticators(nil, feds, testLogger(), nil)
 	if len(got) != 1 || got[0].Name() != "okta" {
 		t.Fatalf("got=%v, want exactly the one valid 'okta' entry", got)
+	}
+}
+
+// fedLinkerStub is a real (non-mock) stand-in for authenticators.UserLinker —
+// small enough that hand-writing it is simpler than a generated mock.
+type fedLinkerStub struct{ userID string }
+
+func (f fedLinkerStub) ResolveUserID(_ context.Context, _, _ string) (string, error) {
+	return f.userID, nil
+}
+
+// TestAppendOIDCFederationAuthenticators_LinkerThreadsThrough proves the
+// linker parameter actually reaches the constructed authenticator's Callback
+// (not just accepted and dropped) — the plumbing this cmd/sso-server call
+// site now supports, ready for a composition that builds a real
+// domains/identitylink.Store to pass in instead of nil (see the comment at
+// the BuildAuthenticatorsDurable call site).
+func TestAppendOIDCFederationAuthenticators_LinkerThreadsThrough(t *testing.T) {
+	t.Parallel()
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"tok","token_type":"Bearer"}`))
+		case "/userinfo":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"sub":"raw-external-sub"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(idp.Close)
+
+	feds := []*config.OIDCFederationAuthConfig{{
+		Name: "okta", AuthorizationEndpoint: idp.URL + "/authorize",
+		TokenEndpoint: idp.URL + "/token", UserinfoEndpoint: idp.URL + "/userinfo",
+		ClientID: "cid", ClientSecret: "csecret",
+		RedirectURI: "https://sso.example.com/callback",
+	}}
+	got := appendOIDCFederationAuthenticators(nil, feds, testLogger(), fedLinkerStub{userID: "linked-account"})
+	if len(got) != 1 {
+		t.Fatalf("got %d authenticators, want 1", len(got))
+	}
+	cb, ok := got[0].(interface {
+		Callback(ctx context.Context, state *sso.CallbackState) (*sso.AuthResult, error)
+	})
+	if !ok {
+		t.Fatalf("authenticator does not expose Callback: %T", got[0])
+	}
+	result, err := cb.Callback(context.Background(), &sso.CallbackState{Code: "any-code", State: "s"})
+	if err != nil {
+		t.Fatalf("Callback: %v", err)
+	}
+	if result.UserID != "linked-account" {
+		t.Fatalf("UserID = %q, want linker-resolved %q — linker parameter did not reach the authenticator", result.UserID, "linked-account")
+	}
+	if result.ExternalID != "raw-external-sub" {
+		t.Fatalf("ExternalID = %q, want raw subject %q", result.ExternalID, "raw-external-sub")
 	}
 }
 

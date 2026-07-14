@@ -26,6 +26,8 @@ type (
 	RefreshTokenClientPurger    = oauthspi.RefreshTokenClientPurger
 	RefreshTokenFamilyTracker   = oauthspi.RefreshTokenFamilyTracker
 	RefreshTokenRotationLimiter = oauthspi.RefreshTokenRotationLimiter
+	RefreshTokenExpiry          = oauthspi.RefreshTokenExpiry
+	RefreshTokenExpiryLister    = oauthspi.RefreshTokenExpiryLister
 	DeviceCode                  = oauthspi.DeviceCode
 	DeviceCodeStore             = oauthspi.DeviceCodeStore
 	PARRequest                  = oauthspi.PARRequest
@@ -75,6 +77,7 @@ var (
 	ErrAuthCodeNotFound          = oauthspi.ErrAuthCodeNotFound
 	ErrRefreshTokenNotFound      = oauthspi.ErrRefreshTokenNotFound
 	ErrRefreshTokenReused        = oauthspi.ErrRefreshTokenReused
+	RefreshTokenThumbprint       = oauthspi.RefreshTokenThumbprint
 	ErrDeviceCodeNotFound        = oauthspi.ErrDeviceCodeNotFound
 	GenerateDeviceCode           = oauthspi.GenerateDeviceCode
 	GenerateUserCode             = oauthspi.GenerateUserCode

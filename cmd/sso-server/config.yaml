@@ -550,11 +550,35 @@ authenticators:
     enabled: true
     code_length: 6
     code_ttl: 5m
+    # sms configures the transport that delivers the code. Unset (or
+    # provider: log) logs the code instead of sending it — byte-identical
+    # to the built-in stub. Set provider: http to dispatch over the
+    # built-in Twilio-Messages-API-compatible REST sender.
+    # sms:
+    #   provider: http
+    #   account_sid: ""       # required when provider: http
+    #   auth_token: ""        # required; supports secret:// resolution
+    #   from_number: ""       # required when provider: http
+    #   message_template: "Your verification code is: {code}"
+    #   http_timeout: 10s
+    #   base_url: ""          # override only for a Twilio-compatible gateway
 
   email:
     enabled: true
     code_length: 6
     code_ttl: 10m
+
+  # Passwordless emailed-link authenticator (provider: magiclink). Reuses
+  # the email block's SMTP sender — no separate transport. base_url is
+  # REQUIRED when enabled (the login-UI landing page the emailed link
+  # points at); a misconfigured/missing base_url fails the boot loudly
+  # rather than shipping a dead feature. Disabled by default (byte-identical
+  # to a build without the feature).
+  magic_link:
+    enabled: false
+    # base_url: "https://sso.example.com/login/"
+    token_length: 32   # crypto/rand bytes before base64url encoding (256 bits)
+    ttl: 15m
 
   temp_token:
     enabled: true

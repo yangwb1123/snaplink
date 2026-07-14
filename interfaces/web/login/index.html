@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sign In</title>
+<title data-i18n="app.title">Sign in</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -18,29 +18,29 @@
 
   <!-- Login view -->
   <div id="view-login" class="view active">
-    <h1>Sign in</h1>
+    <h1 data-i18n="login.heading">Sign in</h1>
     <div id="login-error" class="error-box"></div>
     <!-- Home-realm discovery (B2B): shown when the provider probe resolves the
          org's enterprise connection. Routes to the org IdP instead of password. -->
     <div id="hr-notice" class="hr-notice"></div>
     <form id="login-form" autocomplete="on">
       <div class="field" id="field-provider" style="display:none">
-        <label for="provider">Authentication method</label>
+        <label for="provider" data-i18n="login.providerLabel">Authentication method</label>
         <select id="provider" name="provider">
-          <option value="password">Password</option>
+          <option value="password" data-i18n="login.providerPasswordOption">Password</option>
         </select>
       </div>
       <div class="field" id="field-username">
-        <label for="username">Username or email</label>
-        <input type="text" id="username" name="username" autocomplete="username webauthn" required placeholder="you@example.com">
+        <label for="username" data-i18n="login.usernameLabel">Username or email</label>
+        <input type="text" id="username" name="username" autocomplete="username webauthn" required placeholder="you@example.com" data-i18n-placeholder="login.usernamePlaceholder">
       </div>
       <div class="field" id="field-password">
-        <label for="password">Password</label>
+        <label for="password" data-i18n="login.passwordLabel">Password</label>
         <input type="password" id="password" name="password" autocomplete="current-password" required>
       </div>
       <div class="btn-row">
         <button type="submit" class="btn btn-primary" id="login-btn">
-          <span class="btn-label">Sign in</span>
+          <span class="btn-label" data-i18n="login.signInButton">Sign in</span>
           <span class="spinner"></span>
         </button>
       </div>
@@ -49,102 +49,109 @@
     <!-- Self-service entry points. Both endpoints are optional on the backend;
          the submit handlers detect 404 and disclose "not enabled" gracefully. -->
     <div class="self-service">
-      <span class="self-service-link" id="forgot-link">Forgot password?</span>
+      <span class="self-service-link" id="forgot-link" data-i18n="login.forgotLink">Forgot password?</span>
       &nbsp;·&nbsp;
-      <span class="self-service-link" id="signup-link">Create an account</span>
+      <span class="self-service-link" id="signup-link" data-i18n="login.signupLink">Create an account</span>
     </div>
 
     <!-- Forgot-password panel (POST /auth/forgot-password). -->
     <div id="forgot-panel" class="panel">
-      <h2>Reset your password</h2>
+      <h2 data-i18n="forgot.heading">Reset your password</h2>
       <div id="forgot-error" class="error-box"></div>
       <div id="forgot-success" class="success-box"></div>
       <form id="forgot-form" autocomplete="on">
         <div class="field">
-          <label for="forgot-identifier">Username or email</label>
-          <input type="text" id="forgot-identifier" name="identifier" autocomplete="username" required placeholder="you@example.com">
+          <label for="forgot-identifier" data-i18n="forgot.identifierLabel">Username or email</label>
+          <input type="text" id="forgot-identifier" name="identifier" autocomplete="username" required placeholder="you@example.com" data-i18n-placeholder="forgot.identifierPlaceholder">
         </div>
         <div class="btn-row">
           <button type="submit" class="btn btn-primary" id="forgot-btn">
-            <span class="btn-label">Send reset link</span>
+            <span class="btn-label" data-i18n="forgot.submitButton">Send reset link</span>
             <span class="spinner"></span>
           </button>
         </div>
       </form>
-      <a class="back-link" id="forgot-back">Back to sign in</a>
+      <a class="back-link" id="forgot-back" data-i18n="forgot.backLink">Back to sign in</a>
     </div>
 
     <!-- Signup panel (POST /auth/register). -->
     <div id="signup-panel" class="panel">
-      <h2>Create an account</h2>
+      <h2 data-i18n="signup.heading">Create an account</h2>
       <div id="signup-error" class="error-box"></div>
       <form id="signup-form" autocomplete="on">
         <div class="field">
-          <label for="signup-username">Username</label>
+          <label for="signup-username" data-i18n="signup.usernameLabel">Username</label>
           <input type="text" id="signup-username" name="username" autocomplete="username" required>
         </div>
         <div class="field">
-          <label for="signup-email">Email <span style="color:#9ca3af;font-weight:400">(optional)</span></label>
-          <input type="email" id="signup-email" name="email" autocomplete="email" placeholder="you@example.com">
+          <label for="signup-email"><span data-i18n="signup.emailLabel">Email</span> <span style="color:#9ca3af;font-weight:400" data-i18n="signup.emailOptional">(optional)</span></label>
+          <input type="email" id="signup-email" name="email" autocomplete="email" placeholder="you@example.com" data-i18n-placeholder="signup.emailPlaceholder">
         </div>
         <div class="field">
-          <label for="signup-password">Password</label>
+          <label for="signup-password" data-i18n="signup.passwordLabel">Password</label>
           <input type="password" id="signup-password" name="password" autocomplete="new-password" required>
         </div>
         <div class="btn-row">
           <button type="submit" class="btn btn-primary" id="signup-btn">
-            <span class="btn-label">Create account</span>
+            <span class="btn-label" data-i18n="signup.submitButton">Create account</span>
             <span class="spinner"></span>
           </button>
         </div>
       </form>
-      <a class="back-link" id="signup-back">Back to sign in</a>
+      <a class="back-link" id="signup-back" data-i18n="signup.backLink">Back to sign in</a>
     </div>
   </div>
 
   <!-- MFA view -->
   <div id="view-mfa" class="view">
-    <h1>Two-factor verification</h1>
+    <h1 data-i18n="mfa.heading">Two-factor verification</h1>
     <div id="mfa-error" class="error-box"></div>
     <div id="mfa-methods" class="mfa-methods"></div>
     <div id="mfa-totp-field" class="field" style="display:none">
-      <label for="mfa-code">Verification code</label>
+      <label for="mfa-code" data-i18n="mfa.codeLabel">Verification code</label>
       <input type="text" id="mfa-code" inputmode="numeric" autocomplete="one-time-code"
              maxlength="8" placeholder="000000">
     </div>
+    <div class="field" id="mfa-trust-field" style="display:none">
+      <label class="checkbox-label">
+        <input type="checkbox" id="mfa-trust-device">
+        <span data-i18n="mfa.trustDevice">Trust this device for 30 days</span>
+      </label>
+    </div>
     <div class="btn-row">
       <button type="button" class="btn btn-primary" id="mfa-btn" style="display:none">
-        <span class="btn-label">Verify</span>
+        <span class="btn-label" data-i18n="mfa.verifyButton">Verify</span>
         <span class="spinner"></span>
       </button>
     </div>
-    <a class="back-link" id="mfa-back">Back to sign in</a>
+    <a class="back-link" id="mfa-back" data-i18n="mfa.backLink">Back to sign in</a>
   </div>
 
   <!-- Consent view -->
   <div id="view-consent" class="view">
-    <h1>Authorize access</h1>
+    <h1 data-i18n="consent.heading">Authorize access</h1>
     <div id="consent-error" class="error-box"></div>
     <p style="font-size:.9rem;color:#374151;margin-bottom:8px">
-      <span class="client-name" id="consent-client"></span> is requesting access to:
+      <span class="client-name" id="consent-client"></span> <span data-i18n="consent.requestingAccessSuffix">is requesting access to:</span>
     </p>
     <ul class="scope-list" id="consent-scopes"></ul>
     <div class="btn-row">
       <button type="button" class="btn btn-primary" id="consent-allow-btn">
-        <span class="btn-label">Allow access</span>
+        <span class="btn-label" data-i18n="consent.allowButton">Allow access</span>
         <span class="spinner"></span>
       </button>
-      <button type="button" class="btn btn-secondary" id="consent-deny-btn">Deny</button>
+      <button type="button" class="btn btn-secondary" id="consent-deny-btn" data-i18n="consent.denyButton">Deny</button>
     </div>
   </div>
 
   <!-- Success view -->
   <div id="view-success" class="view">
-    <h1>Signed in</h1>
-    <div class="success-box visible">Authentication successful.</div>
+    <h1 data-i18n="success.heading">Signed in</h1>
+    <div class="success-box visible" data-i18n="success.message">Authentication successful.</div>
   </div>
 </div>
 
+<script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -70,6 +70,17 @@ type WebAuthnConfig struct {
 	// without this flag. Requires Enabled=true (the WebAuthn subsystem must
 	// be on) — ignored otherwise.
 	PrimaryAuthEnabled bool `yaml:"primary_auth_enabled"`
+
+	// RequestCredProps opts into requesting the credProps extension at
+	// registration, so the self-service passkey listing can report whether
+	// each credential is discoverable (see core.MFAEnrolledFactor.Discoverable).
+	// Pure metadata — no security decision changes. Default false —
+	// byte-identical (no extensions key sent).
+	RequestCredProps bool `yaml:"request_cred_props"`
+
+	// RequestLargeBlobSupport opts into requesting largeBlob support
+	// DETECTION (not use) at registration. Default false — byte-identical.
+	RequestLargeBlobSupport bool `yaml:"request_large_blob_support"`
 }
 
 // WebAuthnAttestationConfig configures authenticator attestation for

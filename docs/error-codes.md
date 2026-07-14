@@ -89,6 +89,7 @@ exact emission site.
 | `account_selection_required`          | 400  | (reserved) `prompt=none` set when account-picker UI is required                                                     | Fall back to the visible chooser           |
 | `unmet_authentication_requirements`   | 400  | The RP supplied `acr_values` but the authenticator's `AchievedACR` is absent or not in that set (OIDC Core §3.1.2.6 / §5.5.1.1) | Route user through a stronger authentication method or re-prompt |
 | `email_not_verified`                  | 403  | Login succeeded but the account's email has not completed self-service verification, and the deployment requires it before minting a session | Complete the email verification flow, then retry login |
+| `password_expired`                    | 403  | Login succeeded (password matched) but `PasswordPolicyConfig.MaxAgeDays` is set and the credential has aged past that window. Not a credential oracle — the password already verified; this is a policy-state signal | Route the user through a forced change-password flow, then retry login |
 
 ### Code delivery (`/auth/send-code`)
 
@@ -574,6 +575,22 @@ a credential oracle — the caller is an authenticated admin (admin:write).
 | `bulk_revoke_confirmation_required`  | 409  | The batch is large enough (over the soft cap) — or is a client-wide revoke that can't be pre-counted — to demand an explicit `confirm: true` |
 | `bulk_revoke_batch_too_large`        | 409  | The batch exceeds the hard cap and must be narrowed (a subject/client revoke that would wipe more than the storm ceiling), even with `confirm` |
 
+## Admin user CRUD (`POST /api/v1/admin/users`, `POST/GET/PUT/DELETE /api/v1/admin/users/:id`)
+
+Operations to create, read, update, and delete user accounts. Routes are mounted
+only when a `UserProvider` IS wired AND the `UserProvider` implements the optional
+`UserPaginationProvider`/`UserByUsernameProvider`/`UserByEmailProvider`
+extensions (for user creation, the store must also implement
+`PasswordCredentialStore` and optionally `MFAEnrollmentStore`). None of these
+codes are credential oracles — the caller is an authenticated admin (admin:write).
+
+| Code                | HTTP | Emitted when                                                                                     |
+|---------------------|------|---------------------------------------------------------------------------------------------------|
+| `user_conflict`     | 409  | Create or update would produce a collision on a uniqueness constraint (username, email) — the caller should re-read and retry with different values |
+| `not_found`         | 404  | The `UserProvider` has no user with that `:id`                                                    |
+| `invalid_request`   | 400  | The `:id` path segment or required body fields are missing/blank                                  |
+| `internal_error`    | 500  | The `UserProvider` returned an unexpected error                                                    |
+
 ## User lifecycle state machine (`/api/v1/admin/users/:id/lifecycle`)
 
 The user-lifecycle state machine (`WithUserLifecycle`). GET (`admin:read`)
@@ -819,7 +836,7 @@ never gets a `scim+json` body.
 
 | Code                | HTTP | Emitted when                                          | Headers                  |
 |---------------------|------|-------------------------------------------------------|--------------------------|
-| `rate_limited`      | 429  | `ratelimit.Middleware` blocked the request            | `Retry-After: <seconds>` |
+| `rate_limited`      | 429  | `ratelimit.Middleware`/`DynamicMiddleware` blocked the request (`security.rate_limit.*`), OR the narrow `POST /register` client-registration limiter did (`security.client_registration_rate_limit.*`, on by default — see config-reference.md) | `Retry-After: <seconds>` |
 | `payload_too_large` | 413  | `sso.WithBodyLimit(N)` exceeded by Content-Length or stream |                          |
 
 ---
@@ -889,6 +906,19 @@ never become a token-validation oracle.
 | `ErrDPoPReplayed`        | The proof `jti` was already seen inside its acceptance window                  |
 | `ErrInsufficientScope`   | `CheckScope`/`CheckAnyScope` found a required scope absent                     |
 | `ErrSubjectMissing`      | `RequireSubject` found no `sub` claim (e.g. a `client_credentials` token reaching a user-only endpoint) |
+| `ErrPolicyNotFound`      | `ThreatPolicyStore.Get`/`Delete` called with a name that does not exist in the store |
+
+---
+
+## Active ITDR threat policy (`domains/threataction`)
+
+Sentinel errors returned by the threat-policy store and used internally by
+`ThreatExecutors` — these are **not** HTTP wire codes. The admin CRUD handlers
+at `/api/v1/admin/threat-policies/*` translate them to HTTP 404 on the wire.
+
+| Sentinel               | Returned when                                                                |
+|------------------------|------------------------------------------------------------------------------|
+| `ErrPolicyNotFound`    | `ThreatPolicyStore.Get`/`Delete` called with a name that does not exist      |
 
 ---
 

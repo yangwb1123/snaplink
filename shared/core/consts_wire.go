@@ -169,6 +169,7 @@ const (
 	KeyAuthTime = "auth_time"
 	KeyACR      = "acr"
 	KeyAMR      = "amr"
+	KeySID      = "sid"
 
 	// RFC 7662 §2.2 / RFC 8705 §3.3 / RFC 9449 §7 confirmation member —
 	// introspection echoes the token's `cnf` so a resource server can enforce
@@ -279,9 +280,15 @@ const (
 const (
 	PathAdminTokenPortfolio  = "/admin/tokens/portfolio"
 	PathAdminTokenSubject    = "/admin/tokens/subjects/:subject"
+	PathAdminTokenExpiring   = "/admin/tokens/expiring"
 	PathAdminTokenSuspicious = "/admin/tokens/suspicious"
 	PathAdminTokenRevoke     = "/admin/tokens/revoke"
 )
+
+// PathAdminTokenExchangeChain is the RFC 8693 token-exchange delegation-chain
+// read endpoint (pure observability; WithTokenExchangeChainStore). Group-
+// relative on the /api/v1 router group; admin-gated (GET admin:read).
+const PathAdminTokenExchangeChain = "/admin/tokenexchange/chains/:jti"
 
 // PathAdminFederationHealth is the read-only admin listing of federation
 // peer metadata health: last fetch success/failure, consecutive failures,
@@ -478,4 +485,13 @@ const (
 	// PathOrgAdminInvitationByEmail revokes (DELETE) every pending invitation for a
 	// recipient email in the admin's own org.
 	PathOrgAdminInvitationByEmail = "/me/organizations/:tenant_id/invitations/:email"
+)
+
+// Threat-policy admin path constants (Active ITDR detection-to-response bridge).
+// Group-relative on the /api/v1 router group; GET is admin:read, PUT/DELETE are
+// admin:write via the default AdminMiddleware method-scope rule. Mounted only when
+// a ThreatPolicyStore is wired — byte-identical to a build without the feature.
+const (
+	PathAdminThreatPolicies   = "/admin/threat-policies"
+	PathAdminThreatPolicyByID = "/admin/threat-policies/:name"
 )

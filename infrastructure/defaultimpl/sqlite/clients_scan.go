@@ -27,6 +27,13 @@ func hashClientSecretField(value, label string) (string, error) {
 // INSERT OR REPLACE, and UPDATE statements. Keeping the projection in
 // one place stops the three write paths from drifting against the
 // column list in clientSelectAll.
+//
+// secret_rotated_at is taken VERBATIM from c.SecretRotatedAt (never
+// stamped here): Add is the only write path that baselines it to "now"
+// (before calling clientWritePrep), matching the existing round-trip
+// discipline every Update caller already needs for c.Secret itself — an
+// Update that doesn't want to disturb the rotation clock must read the
+// current record first, exactly as it must to avoid clobbering Secret.
 func clientWriteArgs(c *sso.Client, secret, rat string) ([]any, error) {
 	redirects, _ := json.Marshal(c.RedirectURIs)
 	scopes, _ := json.Marshal(c.AllowedScopes)
@@ -53,6 +60,7 @@ func clientWriteArgs(c *sso.Client, secret, rat string) ([]any, error) {
 		c.UserinfoEncryptedResponseAlg, c.UserinfoEncryptedResponseEnc,
 		c.BackchannelLogoutURI, c.SubjectType, c.SectorIdentifierURI,
 		c.FrontchannelLogoutURI, boolToInt(c.Federation), string(attrs),
+		unixNanoOrZero(c.SecretRotatedAt),
 	}, nil
 }
 
@@ -87,6 +95,7 @@ type clientScanRow struct {
 	userinfoSigAlg                                         string
 	idtEncAlg, idtEncEnc, uiEncAlg, uiEncEnc               string
 	bclURI, subjectType, sectorURI, fclURI                 string
+	secretRotatedAtUnixNs                                  int64
 }
 
 // scanInto reads every column of the SELECT projection into the raw
@@ -104,7 +113,7 @@ func (r *clientScanRow) scanInto(s scanner) error {
 		&r.userinfoSigAlg,
 		&r.idtEncAlg, &r.idtEncEnc, &r.uiEncAlg, &r.uiEncEnc,
 		&r.bclURI, &r.subjectType, &r.sectorURI, &r.fclURI,
-		&r.federationInt, &r.attrsBlob,
+		&r.federationInt, &r.attrsBlob, &r.secretRotatedAtUnixNs,
 	)
 }
 
@@ -135,6 +144,12 @@ func (r *clientScanRow) scalars() {
 	c.SubjectType = r.subjectType
 	c.SectorIdentifierURI = r.sectorURI
 	c.FrontchannelLogoutURI = r.fclURI
+	// 0 stays the zero time.Time (never tracked) — see
+	// core.Client.SecretRotatedAt; time.Unix(0, 0) would otherwise decode to
+	// the 1970 epoch, which is NOT the same "unknown" sentinel.
+	if r.secretRotatedAtUnixNs != 0 {
+		c.SecretRotatedAt = time.Unix(0, r.secretRotatedAtUnixNs).UTC()
+	}
 }
 
 // unmarshalClientJSON treats empty / "[]" / "{}" / "null" blobs as the

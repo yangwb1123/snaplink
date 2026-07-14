@@ -1,141 +1,107 @@
 package generate
 
-// handlerTemplate generates a new HTTP handler following the hexagonal pattern.
-// Handlers process HTTP requests and delegate business logic to domain services.
+// handlerTemplate generates a new HTTP handler following the hexagonal
+// pattern actually used throughout this codebase (AGENTS.md §4: "Hexagonal
+// extraction: HandleX(deps Deps, ctx) free functions in domain packages.
+// *sso.Server satisfies Deps via accessors.go") — see e.g.
+// domains/permissions/handlers.go or domains/federation/health/handler.go
+// for real examples this template mirrors. It is deliberately NOT a plain
+// net/http.Handler: that shape is reserved in this repo for infra probe
+// endpoints (/livez, /readyz, /metrics), never business endpoints.
 const handlerTemplate = `package {{.Package}}
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/snaplink/sso/shared/core"
 )
 
-// {{.Name}}Handler handles {{.Description}} requests.
-// Follows the hexagonal architecture pattern: handlers are thin HTTP adapters
-// that delegate business logic to domain services via the Deps interface.
-type {{.Name}}Handler struct {
-	deps {{.Name}}Deps
-}
-
-// {{.Name}}Deps defines the dependencies this handler needs.
-// The Server struct satisfies this interface via accessors.go.
+// {{.Name}}Deps defines the dependencies Handle{{.Name}} needs. A composition
+// root's *sso.Server satisfies this via one-line accessor methods (see
+// accessors.go / server_*.go for the pattern) — add an accessor there for
+// each dependency you list here.
 type {{.Name}}Deps interface {
-	// TODO: Add required dependencies.
-	// Examples:
+	// TODO: Add required dependencies, e.g.:
 	// core.UserProvider
-	// core.ClientStore
-	// core.SessionManager
-	// core.TokenIssuer
-	// spi.Logger
+	// SrvLogger() spi.Logger
 }
 
-// New{{.Name}}Handler creates a new {{.Name}} handler.
-func New{{.Name}}Handler(deps {{.Name}}Deps) *{{.Name}}Handler {
-	return &{{.Name}}Handler{deps: deps}
-}
-
-// ServeHTTP implements http.Handler.
-// Routes requests to the appropriate handler method based on HTTP method.
-func (h *{{.Name}}Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
+// Handle{{.Name}} handles {{.Description}} requests. Wire it into a
+// core.Router with router.GET("/path", func(ctx core.HandlerContext) {
+// Handle{{.Name}}(deps, ctx) }), or delegate to it from a thin one-line
+// (*sso.Server) method the same way domains/federation/health/handler.go's
+// HandleListPeerHealth is wired from server_federation.go.
+func Handle{{.Name}}(deps {{.Name}}Deps, ctx core.HandlerContext) {
+	switch ctx.Request().Method {
 	case http.MethodGet:
-		h.handleGet(w, r)
+		handle{{.Name}}Get(deps, ctx)
 	case http.MethodPost:
-		h.handlePost(w, r)
+		handle{{.Name}}Post(deps, ctx)
 	case http.MethodPut:
-		h.handlePut(w, r)
+		handle{{.Name}}Put(deps, ctx)
 	case http.MethodDelete:
-		h.handleDelete(w, r)
+		handle{{.Name}}Delete(deps, ctx)
 	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		ctx.JSON(http.StatusMethodNotAllowed, core.ErrorBody("method_not_allowed"))
 	}
 }
 
-// handleGet processes GET requests.
-// TODO: Implement read operations (list, get by ID, search).
-func (h *{{.Name}}Handler) handleGet(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement GET logic.
-	// Example pattern:
-	// 1. Parse query parameters
-	// 2. Call domain service via h.deps
-	// 3. Encode response as JSON
-	// 
-	// id := r.URL.Query().Get("id")
-	// entity, err := h.deps.Get(r.Context(), id)
+// handle{{.Name}}Get processes GET requests.
+// TODO: Replace with your read operations (list, get by ID, search).
+func handle{{.Name}}Get(deps {{.Name}}Deps, ctx core.HandlerContext) {
+	// TODO: Replace with your GET logic, e.g.:
+	//
+	// id := ctx.Param("id")
+	// entity, err := deps.Get(ctx.Request().Context(), id)
 	// if err != nil {
-	// 	writeError(w, http.StatusNotFound, "not found")
+	// 	ctx.JSON(http.StatusNotFound, core.ErrorBody("not_found"))
 	// 	return
 	// }
-	// writeJSON(w, http.StatusOK, entity)
+	// ctx.JSON(http.StatusOK, entity)
+	//
+	// After filling in your logic, remove this marker.
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "{{.LowerName}} GET not implemented",
-	})
+	ctx.JSON(http.StatusNotImplemented, core.ErrorBody("not_implemented"))
 }
 
-// handlePost processes POST requests.
-// TODO: Implement create operations.
-func (h *{{.Name}}Handler) handlePost(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement POST logic.
-	// Example pattern:
-	// 1. Decode request body
-	// 2. Validate input
-	// 3. Call domain service via h.deps
-	// 4. Return created resource with 201 status
-	// 
+// handle{{.Name}}Post processes POST requests.
+// TODO: Replace with your create operations.
+func handle{{.Name}}Post(deps {{.Name}}Deps, ctx core.HandlerContext) {
+	// TODO: Replace with your POST logic, e.g.:
+	//
 	// var req CreateRequest
-	// if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-	// 	writeError(w, http.StatusBadRequest, "invalid request body")
+	// if err := ctx.Bind(&req); err != nil {
+	// 	ctx.JSON(http.StatusBadRequest, core.ErrorBody("invalid_request"))
 	// 	return
 	// }
-	// 
-	// entity, err := h.deps.Create(r.Context(), req)
+	// entity, err := deps.Create(ctx.Request().Context(), req)
 	// if err != nil {
-	// 	writeError(w, http.StatusInternalServerError, "create failed")
+	// 	ctx.JSON(http.StatusInternalServerError, core.ErrorBody("create_failed"))
 	// 	return
 	// }
-	// 
-	// writeJSON(w, http.StatusCreated, entity)
+	// ctx.JSON(http.StatusCreated, entity)
+	//
+	// After filling in your logic, remove this marker.
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "{{.LowerName}} POST not implemented",
-	})
+	ctx.JSON(http.StatusNotImplemented, core.ErrorBody("not_implemented"))
 }
 
-// handlePut processes PUT requests.
-// TODO: Implement update operations.
-func (h *{{.Name}}Handler) handlePut(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement PUT logic.
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "{{.LowerName}} PUT not implemented",
-	})
+// handle{{.Name}}Put processes PUT requests.
+// TODO: Replace with your update operations.
+func handle{{.Name}}Put(deps {{.Name}}Deps, ctx core.HandlerContext) {
+	// TODO: Replace with your PUT logic.
+	// After filling in your logic, remove this marker.
+
+	ctx.JSON(http.StatusNotImplemented, core.ErrorBody("not_implemented"))
 }
 
-// handleDelete processes DELETE requests.
-// TODO: Implement delete operations.
-func (h *{{.Name}}Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement DELETE logic.
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "{{.LowerName}} DELETE not implemented",
-	})
-}
+// handle{{.Name}}Delete processes DELETE requests.
+// TODO: Replace with your delete operations.
+func handle{{.Name}}Delete(deps {{.Name}}Deps, ctx core.HandlerContext) {
+	// TODO: Replace with your DELETE logic.
+	// After filling in your logic, remove this marker.
 
-// writeJSON encodes data as JSON and writes it to the response.
-func writeJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		// Response already started; log the error but can't change status.
-		http.Error(w, "encode response failed", http.StatusInternalServerError)
-	}
-}
-
-// writeError writes a JSON error response.
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{
-		"error": message,
-	})
+	ctx.JSON(http.StatusNotImplemented, core.ErrorBody("not_implemented"))
 }
 
 // Example request/response types (uncomment and customize as needed):
@@ -159,176 +125,90 @@ func writeError(w http.ResponseWriter, status int, message string) {
 // }
 `
 
-// grantTemplate generates a new OAuth grant handler.
-// Grants implement OAuth 2.0 flows (authorization_code, client_credentials, etc.)
+// grantTemplate generates a new custom OAuth 2.0 grant type handler,
+// implementing the REAL extension point this codebase provides:
+// oauth.GrantHandler (protocols/oauth/grant_handler.go) — GrantType() string
+// + Handle(ctx core.HandlerContext, client *core.Client, req
+// oauth.TokenRequest, dpopJKT, mtlsX5T string), registered via
+// sso.WithCustomGrant. See interfaces/sso/options_saml2_bearer.go's
+// saml2BearerHandler for the simplest real (production) example this
+// template mirrors. This is deliberately NOT the built-in grant switch
+// (authorization_code/client_credentials/refresh_token are special-cased in
+// the server, not extension points) — GrantHandler is for NEW grant types
+// only.
 const grantTemplate = `package {{.Package}}
 
 import (
-	"context"
-	"fmt"
 	"net/http"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 )
 
-// {{.Name}}GrantHandler handles the {{.Description}} OAuth grant type.
-// Implements the hexagonal pattern: pure functions in Handle*(deps, ctx) that
-// the Server delegates to.
+// {{.Name}}GrantHandler implements oauth.GrantHandler for the
+// {{.Description}} grant type. Register it once at boot:
+//
+//	sso.WithCustomGrant(&{{.Package}}.{{.Name}}GrantHandler{ /* deps */ })
 type {{.Name}}GrantHandler struct {
-	deps {{.Name}}GrantDeps
+	// TODO: Add whatever dependencies this grant needs, e.g. a
+	// func(client *core.Client) (string, core.TokenIssuer, error) accessor to
+	// mint tokens, a core.ClientStore, or a domain-specific validator.
 }
 
-// {{.Name}}GrantDeps defines dependencies for the {{.Name}} grant.
-// The Server struct satisfies this via accessors.go.
-type {{.Name}}GrantDeps interface {
-	// TODO: Add required dependencies for your grant type.
-	// Common patterns:
-	// core.ClientStore        // validate client_id
-	// core.TokenIssuer        // issue access/refresh tokens
-	// core.SessionManager     // create/manage sessions
-	// core.UserProvider       // validate resource owner (for ROPC)
-	// spi.Logger              // audit logging
+// GrantType returns the grant_type value clients send at /token.
+// TODO: Return the URN/string clients will send, e.g.
+// "urn:ietf:params:oauth:grant-type:{{.LowerName}}" for a URN-style custom
+// grant (the RFC 8693 / OIDC CIBA convention), or a bare string
+// ("{{.LowerName}}") for a simple custom type.
+func (h *{{.Name}}GrantHandler) GrantType() string {
+	return "{{.LowerName}}"
 }
 
-// New{{.Name}}GrantHandler creates a new {{.Name}} grant handler.
-func New{{.Name}}GrantHandler(deps {{.Name}}GrantDeps) *{{.Name}}GrantHandler {
-	return &{{.Name}}GrantHandler{deps: deps}
+// Handle processes /token requests for this grant type. The caller
+// (server_token.go's dispatchCustomGrant) has already authenticated the
+// client and checked its GrantTypes allowlist; Handle MUST write a response
+// — success or error — via ctx on every code path. Per this codebase's
+// oracle-leak hardening (AGENTS.md §3): unknown/expired/consumed/mismatched
+// grant state maps to a plain 400 invalid_grant, never a distinguishing
+// detail.
+func (h *{{.Name}}GrantHandler) Handle(ctx core.HandlerContext, client *core.Client, req oauth.TokenRequest, dpopJKT, mtlsX5T string) {
+	// TODO: Replace with your {{.Description}} grant validation and token
+	// issuance. Standard pattern:
+	//
+	// 1. Validate grant-specific parameters (e.g. req.Assertion for a
+	//    JWT/SAML-bearer-style grant, req.Scope/req.Resource otherwise):
+	//
+	//    if req.Assertion == "" {
+	//    	ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+	//    	return
+	//    }
+	//
+	// 2. Mint a token via the same path every built-in grant uses:
+	//
+	//    strategy, issuer, err := h.issuerForClient(client)
+	//    if err != nil {
+	//    	ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrNoTokenStrategy))
+	//    	return
+	//    }
+	//    token, err := issuer.Issue(ctx.Request().Context(), &core.Subject{
+	//    	ID:       resourceOwnerID, // if applicable
+	//    	ClientID: client.ID,
+	//    }, scopes)
+	//    if err != nil {
+	//    	ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+	//    	return
+	//    }
+	//    ctx.JSON(http.StatusOK, map[string]any{
+	//    	core.KeyAccessToken: token.AccessToken,
+	//    	core.KeyTokenType:   token.TokenType,
+	//    	core.KeyExpiresIn:   token.ExpiresIn,
+	//    	core.KeyScope:       token.Scope,
+	//    })
+	//
+	// After filling in your logic, remove this marker. Until then, this
+	// safely fails closed with the same invalid_grant every unimplemented/
+	// unrecognized grant state returns elsewhere in this codebase.
+
+	ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
 }
-
-// HandleToken processes /token requests for grant_type={{.LowerName}}.
-// This is the main entry point called by the Server's token endpoint.
-func (h *{{.Name}}GrantHandler) HandleToken(ctx context.Context, req *core.TokenRequest) (*core.TokenResponse, error) {
-	if req == nil {
-		return nil, fmt.Errorf("token request is nil")
-	}
-
-	// TODO: Implement {{.Description}} grant logic.
-	// 
-	// Standard pattern:
-	// 1. Validate grant-specific parameters from req
-	// 2. Authenticate the client (req.ClientID + req.ClientSecret)
-	// 3. Validate grant-specific requirements
-	// 4. Issue tokens via deps.TokenIssuer
-	// 5. Return TokenResponse with access_token, refresh_token (if applicable)
-	// 
-	// Example for a custom grant:
-	// 
-	// // Validate grant-specific parameters
-	// customParam := req.Parameters["custom_param"]
-	// if customParam == "" {
-	// 	return nil, &core.OAuthError{
-	// 		Code:        "invalid_request",
-	// 		Description: "missing custom_param",
-	// 	}
-	// }
-	// 
-	// // Authenticate client
-	// client, err := h.deps.GetClient(ctx, req.ClientID)
-	// if err != nil {
-	// 	return nil, &core.OAuthError{
-	// 		Code:        "invalid_client",
-	// 		Description: "client authentication failed",
-	// 	}
-	// }
-	// 
-	// // Validate client is allowed to use this grant
-	// if !client.IsGrantAllowed("{{.LowerName}}") {
-	// 	return nil, &core.OAuthError{
-	// 		Code:        "unauthorized_client",
-	// 		Description: "client not authorized for {{.LowerName}} grant",
-	// 	}
-	// }
-	// 
-	// // Issue tokens
-	// accessToken, err := h.deps.IssueAccessToken(ctx, &core.TokenClaims{
-	// 	ClientID: client.ID,
-	// 	Subject:  resourceOwnerID, // if applicable
-	// 	Scope:    req.Scope,
-	// })
-	// if err != nil {
-	// 	return nil, fmt.Errorf("issue access token: %w", err)
-	// }
-	// 
-	// return &core.TokenResponse{
-	// 	AccessToken: accessToken,
-	// 	TokenType:   "Bearer",
-	// 	ExpiresIn:   3600,
-	// 	Scope:       req.Scope,
-	// }, nil
-
-	return nil, fmt.Errorf("{{.LowerName}} grant not implemented")
-}
-
-// ValidateRequest performs grant-specific request validation.
-// Called before HandleToken to reject malformed requests early.
-func (h *{{.Name}}GrantHandler) ValidateRequest(req *core.TokenRequest) error {
-	if req == nil {
-		return fmt.Errorf("request is nil")
-	}
-
-	// TODO: Add grant-specific validation.
-	// Example:
-	// if req.Parameters["custom_param"] == "" {
-	// 	return &core.OAuthError{
-	// 		Code:        "invalid_request",
-	// 		Description: "custom_param is required",
-	// 	}
-	// }
-
-	return nil
-}
-
-// HandleRevoke processes token revocation for tokens issued by this grant.
-// Optional: implement if your grant needs custom revocation logic.
-func (h *{{.Name}}GrantHandler) HandleRevoke(ctx context.Context, token string) error {
-	// TODO: Implement revocation if needed.
-	// Example:
-	// return h.deps.RevokeToken(ctx, token)
-	return nil
-}
-
-// HandleIntrospect processes token introspection for tokens issued by this grant.
-// Optional: implement if your grant needs custom introspection logic.
-func (h *{{.Name}}GrantHandler) HandleIntrospect(ctx context.Context, token string) (*core.IntrospectionResponse, error) {
-	// TODO: Implement introspection if needed.
-	// Example:
-	// claims, err := h.deps.ValidateToken(ctx, token)
-	// if err != nil {
-	// 	return &core.IntrospectionResponse{Active: false}, nil
-	// }
-	// return &core.IntrospectionResponse{
-	// 	Active:    true,
-	// 	ClientID:  claims.ClientID,
-	// 	Scope:     claims.Scope,
-	// 	ExpiresAt: claims.ExpiresAt,
-	// }, nil
-	return nil, fmt.Errorf("{{.LowerName}} introspection not implemented")
-}
-
-// ServeHTTP implements http.Handler for direct HTTP handling.
-// Optional: use if you need custom HTTP endpoints beyond /token.
-func (h *{{.Name}}GrantHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement custom HTTP endpoints if needed.
-	// Example:
-	// switch r.URL.Path {
-	// case "/{{.LowerName}}/authorize":
-	// 	h.handleAuthorize(w, r)
-	// case "/{{.LowerName}}/callback":
-	// 	h.handleCallback(w, r)
-	// default:
-	// 	http.NotFound(w, r)
-	// }
-	http.NotFound(w, r)
-}
-
-// Example request types (uncomment and customize as needed):
-
-// {{.Name}}Request represents the grant-specific parameters.
-// type {{.Name}}Request struct {
-// 	// TODO: Add grant-specific fields.
-// 	// Example:
-// 	// CustomParam string ` + "`" + `json:"custom_param" form:"custom_param"` + "`" + `
-// 	// ResourceID  string ` + "`" + `json:"resource_id" form:"resource_id"` + "`" + `
-// }
 `

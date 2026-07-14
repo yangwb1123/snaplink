@@ -56,15 +56,7 @@ func (s *Scaffold) generateAuthenticator(outputDir string) error {
 	if err := s.ensureDir(outputDir); err != nil {
 		return err
 	}
-
-	data := map[string]interface{}{
-		"Name":        s.camelize(s.Name),
-		"LowerName":   strings.ToLower(s.Name),
-		"Description": s.Description,
-		"Package":     s.Package,
-	}
-
-	return s.writeTemplate(filename, authenticatorTemplate, data)
+	return s.writeTemplate(filename, authenticatorTemplate, s.templateData())
 }
 
 // generateStore creates a new storage backend implementation.
@@ -73,15 +65,7 @@ func (s *Scaffold) generateStore(outputDir string) error {
 	if err := s.ensureDir(outputDir); err != nil {
 		return err
 	}
-
-	data := map[string]interface{}{
-		"Name":        s.camelize(s.Name),
-		"LowerName":   strings.ToLower(s.Name),
-		"Description": s.Description,
-		"Package":     s.Package,
-	}
-
-	return s.writeTemplate(filename, storeTemplate, data)
+	return s.writeTemplate(filename, storeTemplate, s.templateData())
 }
 
 // generateHandler creates a new HTTP handler following the hexagonal pattern.
@@ -90,15 +74,7 @@ func (s *Scaffold) generateHandler(outputDir string) error {
 	if err := s.ensureDir(outputDir); err != nil {
 		return err
 	}
-
-	data := map[string]interface{}{
-		"Name":        s.camelize(s.Name),
-		"LowerName":   strings.ToLower(s.Name),
-		"Description": s.Description,
-		"Package":     s.Package,
-	}
-
-	return s.writeTemplate(filename, handlerTemplate, data)
+	return s.writeTemplate(filename, handlerTemplate, s.templateData())
 }
 
 // generateGrant creates a new OAuth grant handler.
@@ -107,15 +83,36 @@ func (s *Scaffold) generateGrant(outputDir string) error {
 	if err := s.ensureDir(outputDir); err != nil {
 		return err
 	}
+	return s.writeTemplate(filename, grantTemplate, s.templateData())
+}
 
-	data := map[string]interface{}{
+// templateData builds the common template substitution set shared by every
+// component kind. Package is deliberately NOT s.Package verbatim: --package
+// is documented (and commonly passed) as a directory-shaped target like
+// "infrastructure/redis" or "internal/handler", but a Go `package` clause
+// must be a single bare identifier — passing the raw path through produced
+// a syntactically invalid "package infrastructure/redis" (confirmed by
+// actually compiling generated output). packageName reduces it to the final
+// path segment, matching the real package name at that directory.
+func (s *Scaffold) templateData() map[string]interface{} {
+	return map[string]interface{}{
 		"Name":        s.camelize(s.Name),
 		"LowerName":   strings.ToLower(s.Name),
 		"Description": s.Description,
-		"Package":     s.Package,
+		"Package":     packageName(s.Package),
 	}
+}
 
-	return s.writeTemplate(filename, grantTemplate, data)
+// packageName derives the Go package identifier from a (possibly nested)
+// target package path such as "infrastructure/redis" or "internal/handler" —
+// the last path segment ("redis", "handler"), since only that is a valid Go
+// package-clause identifier.
+func packageName(pkg string) string {
+	pkg = strings.TrimSuffix(pkg, "/")
+	if i := strings.LastIndex(pkg, "/"); i >= 0 {
+		return pkg[i+1:]
+	}
+	return pkg
 }
 
 // ensureDir creates the output directory if it doesn't exist.

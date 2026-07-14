@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/snaplink/sso/domains/threataction"
 )
 
 // recordingDetector captures every event it sees + optionally returns
@@ -251,6 +253,69 @@ func TestAsyncAnomalyRunner_MultipleAnomaliesPerEvent(t *testing.T) {
 
 	r.Dispatch(context.Background(), &LoginEvent{SubjectID: "alice"})
 	waitFor(t, time.Second, func() bool { return sink.count() == 2 })
+}
+
+// recordingThreatExecutor captures every Threat it's asked to Execute — the
+// test's view into "did the runner actually hand off to Active ITDR."
+type recordingThreatExecutor struct {
+	mu   sync.Mutex
+	seen []threataction.Threat
+}
+
+func (r *recordingThreatExecutor) Name() string { return "recording" }
+func (r *recordingThreatExecutor) Execute(_ context.Context, t threataction.Threat, _ threataction.ThreatPolicy) (threataction.ActionResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.seen = append(r.seen, t)
+	return threataction.ActionResult{Action: threataction.ActionNoop, OK: true}, nil
+}
+func (r *recordingThreatExecutor) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.seen)
+}
+
+// TestAsyncAnomalyRunner_ThreatExecutorReceivesDetectedSignal proves the P0
+// wiring gap (WithThreatExecutor configured but never consulted) stays fixed:
+// a detected Signal MUST reach the wired ThreatExecutor.Execute, carrying the
+// event/signal fields the composite executor's policy matching depends on.
+func TestAsyncAnomalyRunner_ThreatExecutorReceivesDetectedSignal(t *testing.T) {
+	t.Parallel()
+	d := &recordingDetector{name: "d", cannedAnoms: []Signal{
+		{Type: "impossible_travel", Severity: SeverityCritical, SubjectID: "alice", Evidence: map[string]string{"distance_km": "9001"}},
+	}}
+	exec := &recordingThreatExecutor{}
+	r := NewRunner([]Detector{d}, nil, WithThreatExecutor(exec))
+	r.Start()
+	defer func() { _ = r.Close(context.Background()) }()
+
+	r.Dispatch(context.Background(), &LoginEvent{SubjectID: "alice", ClientID: "c1", TraceID: "trace-1"})
+
+	waitFor(t, time.Second, func() bool { return exec.count() == 1 })
+	got := exec.seen[0]
+	if got.Type != "impossible_travel" || got.Severity != "critical" || got.SubjectID != "alice" {
+		t.Errorf("threat fields mismatch: %+v", got)
+	}
+	if got.ClientID != "c1" || got.TraceID != "trace-1" {
+		t.Errorf("threat should carry the event's ClientID/TraceID: %+v", got)
+	}
+	if got.Evidence["distance_km"] != "9001" {
+		t.Errorf("threat should carry the signal's Evidence: %+v", got)
+	}
+}
+
+func TestAsyncAnomalyRunner_NilThreatExecutorIsNoop(t *testing.T) {
+	t.Parallel()
+	// Unset (default) threat executor — the byte-identical-when-unset
+	// invariant. A detected signal must not panic or block on a nil executor.
+	d := &recordingDetector{name: "d", cannedAnoms: []Signal{{Type: "velocity_burst", Severity: SeverityWarn}}}
+	sink := &captureSink{}
+	r := NewRunner([]Detector{d}, sink)
+	r.Start()
+	defer func() { _ = r.Close(context.Background()) }()
+
+	r.Dispatch(context.Background(), &LoginEvent{SubjectID: "bob"})
+	waitFor(t, time.Second, func() bool { return sink.count() == 1 })
 }
 
 // blockingDetector blocks in Inspect until either its release channel

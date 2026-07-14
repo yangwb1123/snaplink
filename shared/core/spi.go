@@ -381,6 +381,12 @@ type MFAEnrolledFactor struct {
 	Label string `json:"label,omitempty"`
 	// AddedAt is when the factor was registered.
 	AddedAt time.Time `json:"added_at,omitzero"`
+	// Discoverable reports whether this factor is a WebAuthn discoverable
+	// (resident) credential usable for passwordless/conditional-mediation
+	// login (captured from the credProps extension). Nil for non-WebAuthn
+	// factors, or when the issuing store never captured it — "unknown",
+	// never an explicit false.
+	Discoverable *bool `json:"discoverable,omitempty"`
 }
 
 // MFAEnrollmentStore lists and removes a user's registered second factors for

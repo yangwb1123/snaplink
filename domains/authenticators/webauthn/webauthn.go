@@ -104,6 +104,10 @@ type Helper struct {
 	// always forces this on (a second factor MUST verify the user); the
 	// primary-login ceremony opts in via [Config.RequireUserVerification].
 	requireUserVerification bool
+
+	// requestCredProps / requestLargeBlobSupport mirror Config's same-named fields.
+	requestCredProps        bool
+	requestLargeBlobSupport bool
 }
 
 // Config is the operator-supplied configuration. RPID is the
@@ -175,6 +179,18 @@ type Config struct {
 	// AttestationPolicy but does not require one (MDS alone makes go-webauthn
 	// reject untrusted authenticators).
 	MDS metadata.Provider
+
+	// RequestCredProps, when true, requests credProps at BeginRegistration —
+	// see [CredentialExtensions.Discoverable]. Pure metadata; no security
+	// decision changes. Default false — byte-identical (no extensions key).
+	RequestCredProps bool
+
+	// RequestLargeBlobSupport, when true, requests largeBlob support
+	// DETECTION (not use) at BeginRegistration — see
+	// [CredentialExtensions.LargeBlobSupported]. Read/write happens at
+	// authentication via [Helper.BeginLoginLargeBlob] /
+	// [Helper.FinishLoginLargeBlob]. Default false — byte-identical.
+	RequestLargeBlobSupport bool
 }
 
 // NewHelper validates cfg + returns the helper. RPID + at least
@@ -210,6 +226,8 @@ func NewHelper(cfg Config, users UserStore, sessions SessionStore) (*Helper, err
 		conveyance:              conveyance,
 		attestationPolicy:       cfg.AttestationPolicy,
 		requireUserVerification: cfg.RequireUserVerification,
+		requestCredProps:        cfg.RequestCredProps,
+		requestLargeBlobSupport: cfg.RequestLargeBlobSupport,
 	}, nil
 }
 
@@ -321,6 +339,12 @@ func (h *Helper) BeginRegistration(ctx context.Context, name, displayName string
 			cco.Timeout = timeoutMs
 		})
 	}
+	if ext := registrationExtensions(h); len(ext) > 0 {
+		// credProps / largeBlob-support detection — see
+		// [registrationExtensions]. Nil (both Config flags false, the
+		// default) adds no option: byte-identical wire.
+		opts = append(opts, gw.WithExtensions(ext))
+	}
 	creation, session, err := h.core.BeginRegistration(user, opts...)
 	if err != nil {
 		return nil, "", fmt.Errorf("webauthn: begin registration: %w", err)
@@ -352,7 +376,17 @@ func (h *Helper) FinishRegistration(ctx context.Context, sessionID, expectedUser
 	if expectedUserID != "" && user.Name != expectedUserID {
 		return nil, fmt.Errorf("webauthn: session user mismatch")
 	}
-	cred, err := h.core.FinishRegistration(user, *session, r)
+	// Parsed via go-webauthn's own documented alternate entry point (see
+	// [gw.WebAuthn.FinishRegistration]'s doc comment) instead of the
+	// convenience wrapper, so clientExtensionResults survive past
+	// CreateCredential for [registrationExtensions] capture — verification
+	// is IDENTICAL, since FinishRegistration is exactly this parse followed
+	// by CreateCredential.
+	parsed, err := protocol.ParseCredentialCreationResponse(r)
+	if err != nil {
+		return nil, fmt.Errorf("webauthn: finish registration: %w", err)
+	}
+	cred, err := h.core.CreateCredential(user, *session, parsed)
 	if err != nil {
 		return nil, fmt.Errorf("webauthn: finish registration: %w", err)
 	}
@@ -368,6 +402,7 @@ func (h *Helper) FinishRegistration(ctx context.Context, sessionID, expectedUser
 	if err := h.users.AddCredential(ctx, user.Name, cred); err != nil {
 		return nil, fmt.Errorf("webauthn: persist credential: %w", err)
 	}
+	h.persistCredentialExtensions(ctx, user.Name, cred.ID, extensionsFromCreation(parsed.ClientExtensionResults))
 	return cred, nil
 }
 
@@ -379,13 +414,16 @@ func (h *Helper) BeginLogin(ctx context.Context, name string) (*protocol.Credent
 	return h.beginLogin(ctx, name, h.requireUserVerification)
 }
 
-// beginLogin is the shared entry point behind [Helper.BeginLogin] and the
-// MFA provider's forced-UV ceremony. requireUV pins the assertion's
-// user-verification requirement to "required" so go-webauthn's validateLogin
-// enforces the UV bit; false leaves the library default. The MFA factor
-// passes requireUV=true unconditionally — a second factor MUST verify the
-// user, independent of the primary-login RequireUserVerification setting.
-func (h *Helper) beginLogin(ctx context.Context, name string, requireUV bool) (*protocol.CredentialAssertion, string, error) {
+// beginLogin is the shared entry point behind [Helper.BeginLogin],
+// [Helper.BeginLoginLargeBlob], and the MFA provider's forced-UV ceremony.
+// requireUV pins the assertion's user-verification requirement to
+// "required" so go-webauthn's validateLogin enforces the UV bit; false
+// leaves the library default. The MFA factor passes requireUV=true
+// unconditionally — a second factor MUST verify the user, independent of
+// the primary-login RequireUserVerification setting. extraOpts is appended
+// last (e.g. a largeBlob extension request); empty for every existing
+// caller, so their wire output is byte-identical.
+func (h *Helper) beginLogin(ctx context.Context, name string, requireUV bool, extraOpts ...gw.LoginOption) (*protocol.CredentialAssertion, string, error) {
 	user, err := h.users.GetByName(ctx, name)
 	if err != nil {
 		return nil, "", err
@@ -404,6 +442,7 @@ func (h *Helper) beginLogin(ctx context.Context, name string, requireUV bool) (*
 			cco.Timeout = timeoutMs
 		})
 	}
+	opts = append(opts, extraOpts...)
 	assertion, session, err := h.core.BeginLogin(user, opts...)
 	if err != nil {
 		return nil, "", fmt.Errorf("webauthn: begin login: %w", err)
@@ -454,4 +493,3 @@ func (h *Helper) FinishLogin(ctx context.Context, sessionID string, r *http.Requ
 	}
 	return user, cred, nil
 }
-

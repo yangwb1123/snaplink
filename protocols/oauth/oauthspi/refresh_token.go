@@ -2,6 +2,8 @@ package oauthspi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"time"
@@ -319,4 +321,57 @@ type RefreshTokenRotationLimiter interface {
 	// no-op: (0, false, nil) — a family-untracked store can't velocity-
 	// limit, mirroring DeleteFamily's empty-id contract.
 	RecordRotation(ctx context.Context, familyID string) (count int, windowExceeded bool, err error)
+}
+
+// RefreshTokenExpiry is one entry in the "expiry calendar" returned by
+// RefreshTokenExpiryLister.ListExpiring: governance metadata for capacity
+// planning / pre-expiry user notification (e.g. "how many refresh tokens
+// expire in the next 24h/7d/30d"). Deliberately carries NO secret material —
+// Thumbprint is a one-way hash of the token value, never the token itself,
+// matching the oracle-safety discipline every other admin governance surface
+// in this package already follows (RefreshTokenSubjectCounter /
+// RefreshTokenClientPurger return counts, never token values).
+type RefreshTokenExpiry struct {
+	// Thumbprint is RefreshTokenThumbprint(token) — a hex-encoded SHA-256
+	// digest, stable across repeated queries but computationally infeasible
+	// to invert back to the bearer credential. Lets an operator correlate
+	// the same token across two calendar snapshots without ever seeing (or
+	// being able to redeem) the token itself.
+	Thumbprint string    `json:"token_thumbprint"`
+	UserID     string    `json:"subject"`
+	ClientID   string    `json:"client_id"`
+	ExpiresAt  time.Time `json:"expires_at"`
+}
+
+// RefreshTokenExpiryLister is an OPTIONAL extension for backends that can
+// enumerate SOON-TO-EXPIRE tokens efficiently (the store already indexes or
+// scans by ExpiresAt for its own TTL housekeeping). It powers the admin
+// "expiry calendar" endpoint: an operator asking "how many refresh tokens
+// expire in the next 24h" for capacity planning, or wiring a pre-expiry
+// notification job.
+//
+// Backends that can't enumerate by expiry cheaply should NOT implement this
+// — the admin endpoint degrades to a clear "not supported" response, the
+// same fallback RefreshTokenSubjectIndex / RefreshTokenClientPurger use when
+// absent.
+type RefreshTokenExpiryLister interface {
+	// ListExpiring returns metadata for ACTIVE tokens (not yet expired as of
+	// now — the same boundary as RefreshToken.IsExpired) whose ExpiresAt is
+	// at or before `before`, ordered soonest-first so a caller can safely
+	// truncate at `limit` and still see the most time-sensitive entries.
+	// limit <= 0 means no cap (callers that want a bounded response, like
+	// the admin handler, are responsible for passing a sane positive
+	// limit). Never returns the raw token value — see RefreshTokenExpiry.
+	ListExpiring(ctx context.Context, before time.Time, limit int) ([]RefreshTokenExpiry, error)
+}
+
+// RefreshTokenThumbprint returns the oracle-safe, one-way identifier for a
+// raw refresh token value: hex-encoded SHA-256. RefreshTokenExpiryLister
+// implementations MUST use this (never the raw token) when populating
+// RefreshTokenExpiry.Thumbprint — the same "hash, never the secret"
+// discipline as the SQLite refresh-grace cache's consumed-token ledger
+// (consumed_token_hash).
+func RefreshTokenThumbprint(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }

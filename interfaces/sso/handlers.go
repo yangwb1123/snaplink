@@ -172,8 +172,8 @@ func (s *Server) handleRevokeAll(ctx HandlerContext) { oauth.HandleRevokeAll(s, 
 // allowlist semantics.
 func (s *Server) handleEndSession(ctx HandlerContext) { oidc.HandleEndSession(s, ctx) }
 
-// handleRegister delegates to oauth.HandleRegister (RFC 7591 DCR).
-func (s *Server) handleRegister(ctx HandlerContext) { oauth.HandleRegister(s, ctx) }
+// handleRegister (RFC 7591 DCR, rate-limit-gated) moved to quota.go — see
+// checkClientRegistrationRateLimit's doc for why.
 
 // handleRegistrationGet delegates to oauth.HandleRegistrationGet (RFC 7592 §2.1).
 func (s *Server) handleRegistrationGet(ctx HandlerContext) { oauth.HandleRegistrationGet(s, ctx) }

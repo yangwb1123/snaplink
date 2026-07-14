@@ -27,7 +27,7 @@ func TestBuildAuthenticators_ComposesEveryEnabledMethod(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Authenticators.Password = &config.PasswordConfig{Enabled: true}
-	cfg.Authenticators.Phone = &config.CodeAuthConfig{Enabled: true}
+	cfg.Authenticators.Phone = &config.PhoneConfig{CodeAuthConfig: config.CodeAuthConfig{Enabled: true}}
 	cfg.Authenticators.Email = &config.CodeAuthConfig{Enabled: true}
 	cfg.Authenticators.TempToken = &config.TempTokenConfig{Enabled: true}
 	cfg.Authenticators.APIKey = &config.APIKeyConfig{Enabled: true}

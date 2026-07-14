@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"math/big"
@@ -99,4 +100,22 @@ func GenerateNumericCode(n int) (string, error) {
 		out[i] = numericDigits[idx.Int64()]
 	}
 	return string(out), nil
+}
+
+// GenerateOpaqueToken returns a cryptographically random, URL-safe opaque
+// token with nBytes of raw entropy (crypto/rand, base64.RawURLEncoding —
+// no padding, alphabet safe unescaped in a URL path or query value). This is
+// the SAME construction TempTokenAuthenticator.Issue already uses for
+// single-use bearer tokens (magic links / password-reset confirmations /
+// device-transfer codes per its doc comment); MagicLinkAuthenticator.SendCode
+// calls this rather than re-deriving its own byte-generation scheme.
+func GenerateOpaqueToken(nBytes int) (string, error) {
+	if nBytes <= 0 {
+		return "", fmt.Errorf("authenticators: token byte length must be positive")
+	}
+	buf := make([]byte, nBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }

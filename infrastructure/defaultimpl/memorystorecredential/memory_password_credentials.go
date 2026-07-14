@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/snaplink/sso/domains/identitylink"
 	"github.com/snaplink/sso/shared/core"
@@ -16,9 +17,10 @@ import (
 // multi-replica. Passwords are bcrypt-hashed at rest.
 type MemoryPasswordCredentialStore struct {
 	mu        sync.RWMutex
-	hashes    map[string]string // userID -> bcrypt hash
-	dummy     []byte            // cost-matched dummy for unknown-user timing parity
-	dummyCost int               // bcrypt cost the current dummy was minted at
+	hashes    map[string]string    // userID -> bcrypt hash
+	changedAt map[string]time.Time // userID -> time the current hash was set (core.PasswordAgeReader)
+	dummy     []byte               // cost-matched dummy for unknown-user timing parity
+	dummyCost int                  // bcrypt cost the current dummy was minted at
 }
 
 // NewMemoryPasswordCredentialStore returns an empty store. The dummy hash is
@@ -31,7 +33,12 @@ type MemoryPasswordCredentialStore struct {
 // imported hash and leak "this username is unknown" as a timing oracle.
 func NewMemoryPasswordCredentialStore() *MemoryPasswordCredentialStore {
 	dummy, _ := bcrypt.GenerateFromPassword([]byte("dummy-for-timing-equalization-only"), bcrypt.DefaultCost)
-	return &MemoryPasswordCredentialStore{hashes: make(map[string]string), dummy: dummy, dummyCost: bcrypt.DefaultCost}
+	return &MemoryPasswordCredentialStore{
+		hashes:    make(map[string]string),
+		changedAt: make(map[string]time.Time),
+		dummy:     dummy,
+		dummyCost: bcrypt.DefaultCost,
+	}
 }
 
 // raiseDummyCost re-mints the timing-equalization dummy at cost when cost
@@ -58,6 +65,7 @@ func (m *MemoryPasswordCredentialStore) SetPassword(_ context.Context, userID, n
 	}
 	m.mu.Lock()
 	m.hashes[userID] = string(h)
+	m.changedAt[userID] = time.Now()
 	m.mu.Unlock()
 	return nil
 }
@@ -74,6 +82,7 @@ func (m *MemoryPasswordCredentialStore) SetPasswordHash(_ context.Context, userI
 	}
 	m.mu.Lock()
 	m.hashes[userID] = bcryptHash
+	m.changedAt[userID] = time.Now()
 	// Keep the miss-path dummy as slow as the slowest imported hash so an
 	// unknown-username login isn't measurably faster (enumeration timing
 	// oracle). A malformed hash yields cost 0 from bcrypt.Cost, which is a
@@ -116,8 +125,24 @@ func (m *MemoryPasswordCredentialStore) HasPassword(_ context.Context, userID st
 	return ok, nil
 }
 
+// PasswordChangedAt implements core.PasswordAgeReader: returns the time
+// userID's current credential was set (via SetPassword or SetPasswordHash).
+// Returns an error for an unknown user so the login-time expiry gate
+// (interfaces/sso rejectExpiredPassword) fails open rather than treating a
+// zero time as "always expired".
+func (m *MemoryPasswordCredentialStore) PasswordChangedAt(_ context.Context, userID string) (time.Time, error) {
+	m.mu.RLock()
+	t, ok := m.changedAt[userID]
+	m.mu.RUnlock()
+	if !ok {
+		return time.Time{}, errors.New("defaultimpl: no password credential for user")
+	}
+	return t, nil
+}
+
 var (
 	_ core.PasswordCredentialStore         = (*MemoryPasswordCredentialStore)(nil)
 	_ core.PasswordHashImporter            = (*MemoryPasswordCredentialStore)(nil)
+	_ core.PasswordAgeReader               = (*MemoryPasswordCredentialStore)(nil)
 	_ identitylink.PasswordPresenceChecker = (*MemoryPasswordCredentialStore)(nil)
 )

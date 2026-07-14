@@ -115,6 +115,25 @@ const (
 	// like every kind.
 	KindTokenRevoked EventKind = "token_revoked"
 
+	// KindSessionSuspended signals that the publishing replica suspended
+	// (destroyed) one or more of a subject's sessions in response to a
+	// detected threat (Active ITDR's suspend_session action — the session
+	// counterpart of KindTokenRevoked's refresh-family revoke). Subscribers
+	// should drop/invalidate any locally cached session entry for Event.Key
+	// (the subject ID) — e.g. a per-replica session-lookup cache — so a
+	// request landing on a peer replica does not keep honoring a session
+	// this replica just tore down. The detail rides Event.Payload
+	// (threat_action/threat_type/subject_id, the same shape as
+	// KindTokenRevoked's sibling action), matching keys on the existing
+	// Event.Payload map rather than new struct fields, so a mixed-version
+	// peer that doesn't know the kind drops the whole Event at its default
+	// arm. Best-effort like every kind: a dropped Event only means a peer's
+	// session-related cache (if any) converges on its own TTL/next-read
+	// instead of immediately — the authoritative session store (already
+	// mutated by Destroy) is the source of truth, so a lost Event never
+	// resurrects a suspended session, only delays a cache's awareness of it.
+	KindSessionSuspended EventKind = "session_suspended"
+
 	// KindConfigDigest carries this replica's current effective-config
 	// digest (platform/configaudit.Digest output) so peers can compare it to
 	// their own and flag configuration drift. UNLIKE every other kind,

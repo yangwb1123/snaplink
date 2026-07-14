@@ -40,6 +40,34 @@ func JWTExpUnsafe(token string) int64 {
 	return claims.Exp
 }
 
+// JWTClaimsUnsafe extracts client_id + sub from a compact JWT WITHOUT
+// verifying the signature — mirrors JWTExpUnsafe's existing "advisory only,
+// never a security decision" contract, extended to the two identifiers the
+// token_revoked audit event (see audit.RecordTokenRevoked) annotates itself
+// with. The token was already revoked via the verified per-issuer Revoke
+// path before either unsafe extractor runs, so a malformed/foreign token (or
+// one issued by a strategy that doesn't stamp these claims) just yields empty
+// strings rather than an error — a decode failure must never block the
+// revocation or its audit record.
+func JWTClaimsUnsafe(token string) (clientID, subject string) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return "", ""
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", ""
+	}
+	var claims struct {
+		ClientID string `json:"client_id"`
+		Subject  string `json:"sub"`
+	}
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return "", ""
+	}
+	return claims.ClientID, claims.Subject
+}
+
 // PublishTokenRevocation broadcasts a token revocation to peer replicas so each
 // armed replica can add the token to its own in-process deny-set. The detail
 // rides Event.Payload (MetaRevokedToken + advisory MetaRevokedExp) per the

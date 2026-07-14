@@ -15,6 +15,8 @@ import (
 	"io"
 	"math/big"
 	"sync"
+
+	"github.com/snaplink/sso/shared/core"
 )
 
 // ErrUnsupportedKey is returned when the token key (or the requested signing
@@ -88,6 +90,14 @@ type Session interface {
 	// Returning SPKI (rather than raw attributes) lets Signer reuse
 	// x509.ParsePKIXPublicKey, exactly as awskms parses KMS's GetPublicKey.
 	PublicKeyDER() ([]byte, error)
+
+	// KeyOriginAttrs reads the CKA_LOCAL / CKA_NEVER_EXTRACTABLE attributes
+	// off the private-key object at keyHandle -- the standard PKCS#11
+	// signal [keyOriginFromAttrs] (origin.go) classifies into a
+	// core.KeyOrigin. Any error (token doesn't support the attribute,
+	// C_GetAttributeValue failure) is surfaced so the caller can fail open
+	// to core.OriginUnknown rather than guess.
+	KeyOriginAttrs(keyHandle uint) (KeyOriginAttrs, error)
 }
 
 // Signer is a [crypto.Signer] backed by a PKCS#11 token key. The private key
@@ -147,7 +157,26 @@ type Signer struct {
 	// certificate), so Public() never touches the token. Still served through
 	// the mu-guarded cache for a uniform code path.
 	suppliedPub crypto.PublicKey
+
+	// keyOrigin/originLoaded/originOverride implement core.KeyOriginProvider
+	// (see KeyOrigin, origin.go). originMu is deliberately separate from mu
+	// (the public-key cache lock above): a KeyOrigin call must never block
+	// behind an in-flight Public()/Sign() token round-trip, and vice versa.
+	originMu sync.Mutex
+	// keyOrigin is valid once originLoaded is true: either the WithKeyOrigin
+	// override (set at construction) or the auto-detected value cached by
+	// the first KeyOrigin call.
+	keyOrigin    core.KeyOrigin
+	originLoaded bool
+	// originOverride records that WithKeyOrigin supplied keyOrigin
+	// explicitly, so KeyOrigin must never overwrite it with an
+	// auto-detected value.
+	originOverride bool
 }
+
+// Option configures a Signer at construction (see WithKeyOrigin in
+// origin.go). Mirrors the awskms/gcpkms/azurekeyvault Option shape.
+type Option func(*Signer)
 
 // NewSigner builds a Signer over an already-opened [Session] and the located
 // private-key object handle. It does NOT touch the token — the first Public()
@@ -155,11 +184,15 @@ type Signer struct {
 // constructor (session.go) wires a real miekg/pkcs11 session; tests inject a
 // fake. suppliedPub MAY be nil (read the public key from the token) or the
 // known public half (skip the read).
-func NewSigner(sess Session, keyHandle uint, suppliedPub crypto.PublicKey) (*Signer, error) {
+func NewSigner(sess Session, keyHandle uint, suppliedPub crypto.PublicKey, opts ...Option) (*Signer, error) {
 	if sess == nil {
 		return nil, errors.New("pkcs11: nil session")
 	}
-	return &Signer{sess: sess, keyHandle: keyHandle, suppliedPub: suppliedPub}, nil
+	s := &Signer{sess: sess, keyHandle: keyHandle, suppliedPub: suppliedPub}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s, nil
 }
 
 // loadPublic reads + parses the public key once, caching success for the

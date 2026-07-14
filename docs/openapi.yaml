@@ -393,9 +393,10 @@ paths:
       summary: Send a one-time code for the named authenticator.
       description: |
         Triggers code delivery for authenticators that implement
-        `CodeSender` (phone, email). The follow-up call to
+        `CodeSender` (phone, email, magiclink). The follow-up call to
         `/auth/login` carries the delivered code as
-        `credential.code`.
+        `credential.code` — for `magiclink` this is the opaque token
+        embedded in the emailed link, not something the user types.
       operationId: postSendCode
       requestBody:
         required: true
@@ -408,6 +409,8 @@ paths:
                 value: { provider: phone, target: "+15551234567" }
               emailCode:
                 value: { provider: email, target: "user@example.com" }
+              magicLinkCode:
+                value: { provider: magiclink, target: "user@example.com" }
       responses:
         "200":
           description: Code sent. Body is empty / minimal.
@@ -1722,9 +1725,12 @@ paths:
       tags: [self-service]
       summary: List the authenticated user's registered second factors.
       description: |
-        Returns non-sensitive metadata (id, method, label, added_at) for each
-        factor — never the TOTP secret or WebAuthn key material. Mounted only
-        when an MFA enrollment store is wired. `Cache-Control: no-store`.
+        Returns non-sensitive metadata (id, method, label, added_at,
+        discoverable) for each factor — never the TOTP secret or WebAuthn key
+        material. `discoverable` is set only for a WebAuthn factor whose
+        store captured the credProps extension at registration (nil/omitted
+        otherwise — unknown, not false). Mounted only when an MFA enrollment
+        store is wired. `Cache-Control: no-store`.
       operationId: listMyMFAFactors
       security:
         - bearerAuth: []
@@ -1745,6 +1751,7 @@ paths:
                         method: { type: string }
                         label: { type: string }
                         added_at: { type: string, format: date-time }
+                        discoverable: { type: boolean }
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -6125,6 +6132,135 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/admin/tokens/expiring:
+    get:
+      tags: [admin]
+      summary: Refresh-token expiry calendar.
+      description: |
+        Returns metadata for refresh tokens expiring within a caller-supplied
+        horizon, for capacity planning (e.g. "how many refresh tokens expire
+        in the next 24h/7d/30d") or driving a pre-expiry notification job.
+        Read through the optional RefreshTokenExpiryLister extension.
+        Governance data only — each entry carries a one-way token_thumbprint
+        (SHA-256 of the token, hex-encoded), never the raw token value.
+        Entries are ordered soonest-first. When the wired refresh store does
+        not implement RefreshTokenExpiryLister, responds 501 with
+        refresh_token_not_configured (the same shape the bulk-revoke
+        unsupported-backend path uses). Admin-gated (admin:read). Mounted
+        with WithTokenUsageRecorder.
+      operationId: getAdminTokenExpiring
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: before
+          in: query
+          required: false
+          description: |
+            Either a Go duration (e.g. "24h", relative to now) or an RFC3339
+            timestamp (an absolute cutoff). Defaults to 24h when absent.
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          description: Max rows, soonest-first. Absent/invalid/non-positive
+            falls back to the default; capped at the server-side maximum.
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Refresh tokens expiring at or before the horizon.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  before: { type: string, format: date-time }
+                  count: { type: integer }
+                  tokens:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        token_thumbprint: { type: string }
+                        subject: { type: string }
+                        client_id: { type: string }
+                        expires_at: { type: string, format: date-time }
+        "400":
+          description: Malformed before.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "501":
+          description: Wired refresh store does not support the expiry-calendar extension.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/tokenexchange/chains/{jti}:
+    get:
+      tags: [admin]
+      summary: RFC 8693 token-exchange delegation-chain lookup.
+      description: |
+        Returns the recorded delegation-chain history for one minted access
+        token's jti: every hop (actor, subject, client, chain depth,
+        timestamp) durably recorded by the OPTIONAL ChainStore
+        (WithTokenExchangeChainStore) as token-exchange grants produced it,
+        ordered oldest (root) to newest (jti itself). PURE OBSERVABILITY for
+        audit / incident response — recording a hop never affects exchange
+        authorization, which remains governed entirely by the in-request
+        MaxActChainDepth cap, the act-chain cycle check, and the optional
+        tokenexchange.Policy hop-authorization gate. Admin-gated (admin:read).
+        Mounted only when a ChainStore is wired (WithTokenExchangeChainStore);
+        404 when jti was never recorded (or no ChainStore is wired).
+      operationId: getAdminTokenExchangeChain
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: jti
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The recorded delegation chain for jti, oldest (root) first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  jti: { type: string }
+                  chain:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        jti: { type: string }
+                        parent_jti: { type: string }
+                        subject_id: { type: string }
+                        actor_subject: { type: string }
+                        client_id: { type: string }
+                        chain_depth: { type: integer }
+                        recorded_at: { type: string, format: date-time }
+        "400":
+          description: Missing jti.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: jti was never recorded (or no ChainStore is wired).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/tokens/suspicious:
     get:
       tags: [admin]
@@ -6183,6 +6319,134 @@ paths:
                   total: { type: integer }
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/threat-policies:
+    get:
+      tags: [admin]
+      summary: Active ITDR threat-policy list.
+      description: |
+        Returns every Active ITDR threat policy. Each policy maps one threat
+        class (type + severity + optional evidence conditions) to a security
+        action (session suspension, refresh token family revocation, MFA
+        step-up challenge, admin notification). Policies are evaluated in
+        name order (first-match wins) when the off-path ThreatExecutors
+        composite dispatches a detection signal. Admin-gated (admin:read).
+        Mounted only when a ThreatPolicyStore is wired (WithThreatPolicyStore).
+      operationId: getAdminThreatPolicies
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current threat-policy rule set.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  policies:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ThreatPolicy"
+                  total: { type: integer }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/threat-policies/{name}:
+    get:
+      tags: [admin]
+      summary: Get a threat policy by name.
+      description: |
+        Returns a single Active ITDR threat policy by its unique name.
+        Admin-gated (admin:read). 404 when the policy does not exist.
+      operationId: getAdminThreatPolicy
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The requested threat policy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  policy:
+                    $ref: "#/components/schemas/ThreatPolicy"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    put:
+      tags: [admin]
+      summary: Create or update a threat policy.
+      description: |
+        Creates a new or replaces an existing threat policy by name.
+        Admin-gated (admin:write). The name in the path overrides any
+        name in the request body. Admin-gated (admin:write).
+      operationId: putAdminThreatPolicy
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThreatPolicy"
+      responses:
+        "200":
+          description: The saved threat policy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  policy:
+                    $ref: "#/components/schemas/ThreatPolicy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    delete:
+      tags: [admin]
+      summary: Delete a threat policy by name.
+      description: |
+        Removes a threat policy by its unique name. Admin-gated
+        (admin:write). 404 when the policy does not exist.
+      operationId: deleteAdminThreatPolicy
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Policy deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/admin/tokens/revoke:
     post:
@@ -6952,6 +7216,7 @@ paths:
                         method: { type: string }
                         label: { type: string }
                         added_at: { type: string, format: date-time }
+                        discoverable: { type: boolean }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/v1/admin/users/{id}/mfa/{factor_id}:
@@ -9730,8 +9995,10 @@ components:
             type: string
           description: |
             Provider-specific credential map. Standard keys:
-            `username` + `password` (password), `target` + `code`
-            (phone / email), `assertion` (keypair).
+            `username` + `password` (password), `phone` + `code`
+            (phone), `email` + `code` (email / magiclink — magiclink's
+            `code` is the opaque token embedded in the emailed link, not a
+            typed digit code), `assertion` (keypair).
             `provider=webauthn` (opt-in passwordless passkey PRIMARY login,
             `webauthn.primary_auth_enabled`): `session_id` (from the
             unauthenticated `POST /webauthn/login/conditional/begin`
@@ -9840,6 +10107,16 @@ components:
           description: "Present when `permissions.embed_in_login: true`."
           allOf:
             - $ref: "#/components/schemas/MenuTree"
+        device_token:
+          type: string
+          description: |
+            Present only on a `POST /auth/mfa` completion where the
+            request set `trust_device: true` (see MFACompleteRequest)
+            AND a `TrustedDeviceStore` is wired AND the store minted a
+            grant successfully. Same bearer-equivalent MFA-skip
+            credential `POST /me/devices/trust` returns — shown exactly
+            once; capture it now. Never present on a plain (non-MFA, or
+            trust_device unset) login response.
 
     LoginDiscoveryResponse:
       type: object
@@ -9957,6 +10234,25 @@ components:
           example:
             session: "sess-echoed-from-mfa_method_data"
             assertion: '{"id":"...","rawId":"...","type":"public-key","response":{"clientDataJSON":"...","authenticatorData":"...","signature":"...","userHandle":"..."}}'
+        trust_device:
+          type: boolean
+          default: false
+          description: |
+            When true AND a `TrustedDeviceStore` is wired, a SUCCESSFUL
+            factor verification mints a fresh "remember this device"
+            grant for (the challenge's user, client) — the same grant
+            `POST /me/devices/trust` mints — and returns it in the 200
+            response as `device_token` (see LoginResponse). A later
+            `POST /auth/login` for the same (user, client) presenting
+            that value as `device_token` skips a risk-scorer-demanded
+            MFA challenge until the grant expires.
+
+            Ignored entirely on a FAILED MFA attempt (wrong code,
+            unknown/expired/consumed challenge, unsupported method):
+            those collapse to the same `400 mfa_invalid` response as
+            before this field existed, and the store is never called.
+            Also a no-op (no error, no field in the response) when no
+            `TrustedDeviceStore` is wired.
 
     TrustedDevice:
       type: object
@@ -9994,10 +10290,15 @@ components:
       properties:
         provider:
           type: string
-          enum: [phone, email]
+          enum: [phone, email, magiclink]
         target:
           type: string
-          description: Phone number (E.164) or email address.
+          description: |
+            Phone number (E.164) or email address. `magiclink` also takes an
+            email address — it emails a clickable link (a high-entropy
+            opaque token embedded in a URL) instead of a short digit code;
+            the follow-up `/auth/login` call still carries the token as
+            `credential.code`, exactly like `email`.
 
     LogoutRequest:
       type: object
@@ -12850,6 +13151,71 @@ components:
             $ref: "#/components/schemas/ScimGroupMember"
         meta:
           $ref: "#/components/schemas/ScimMeta"
+
+    ThreatPolicy:
+      type: object
+      description: |
+        An Active ITDR threat-to-action mapping rule. Evaluated by
+        ThreatExecutors (first-match in name order) when an anomaly or
+        token-anomaly detection signal arrives off-path. The policy
+        determines which security action (if any) the executor takes.
+      required: [name, enabled, action]
+      properties:
+        name:
+          type: string
+          description: Unique policy name; used as the path parameter for CRUD.
+          example: critical-impossible-travel
+        enabled:
+          type: boolean
+          description: When false, this policy is skipped during evaluation.
+          example: true
+        type:
+          type: string
+          description: |
+            Threat type to match (empty = match all). Standard values:
+            impossible_travel, velocity_burst, new_country, rate_spike,
+            multi_geo, velocity, brute_force_spray, new_device.
+          example: impossible_travel
+        severity:
+          type: string
+          description: |
+            Severity filter (empty = match all, "warn+critical" matches
+            both). Values: info, warn, critical.
+          example: critical
+        action:
+          type: string
+          enum: [noop, suspend, revoke, step_up_mfa, notify, challenge]
+          description: The action to take when this policy matches.
+          example: suspend
+        rate_limit:
+          type: object
+          description: Optional rate limit to prevent action storms.
+          properties:
+            per_window:
+              type: string
+              description: Duration string (e.g. "1m", "5m", "1h").
+              example: 5m
+            max:
+              type: integer
+              description: Max actions per window per (subject, type).
+              example: 3
+        conditions:
+          type: object
+          description: Optional evidence-based condition for matching.
+          properties:
+            key:
+              type: string
+              description: Evidence map key to evaluate.
+              example: distance_km
+            operator:
+              type: string
+              enum: [eq, gt, lt, exists]
+              description: Comparison operator.
+              example: gt
+            value:
+              type: string
+              description: Comparison value (used with eq, gt, lt).
+              example: "5000"
 
     ScimGroupMember:
       type: object

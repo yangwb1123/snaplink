@@ -58,12 +58,7 @@ func BuildAuthenticatorsDurable(cfg *config.Config, logger spi.Logger, passwordS
 	// memory store so the shipped binary is replay-safe out of the box.
 	authReplayStore := newAuthReplayStore(cfg.Security.JTIReplay, rdb)
 
-	auths, err := appendPasswordAuthenticator(auths, cfg.Authenticators.Password, passwordStore, userProvider, logger)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	auths = appendPhoneAuthenticator(auths, cfg.Authenticators.Phone, codeStore, logger)
-	auths, err = appendEmailAuthenticator(auths, cfg.Authenticators.Email, codeStore, cfg.SMTP, logger)
+	auths, err := appendCodeBasedAuthenticators(auths, cfg, codeStore, passwordStore, userProvider, logger)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -85,8 +80,34 @@ func BuildAuthenticatorsDurable(cfg *config.Config, logger spi.Logger, passwordS
 		return nil, nil, nil, nil, err
 	}
 
-	auths = appendOIDCFederationAuthenticators(auths, cfg.Authenticators.OIDCFederation, logger)
+	// linker nil: no identitylink.Store is built in this binary yet (see
+	// appendOIDCFederationAuthenticators's doc for the wiring seam this leaves).
+	auths = appendOIDCFederationAuthenticators(auths, cfg.Authenticators.OIDCFederation, logger, nil)
 	return auths, tempStore, totpAuth, totpEnrollStore, nil
+}
+
+// appendCodeBasedAuthenticators wires password, phone, email, and magic-link
+// — grouped into one helper (rather than inline call+error-check blocks in
+// BuildAuthenticatorsDurable) so that function stays under the
+// maintainability function-length budget as each grows its own config
+// surface (e.g. phone's SMS provider discriminator, magic-link's base_url).
+func appendCodeBasedAuthenticators(auths []sso.Authenticator, cfg *config.Config, codeStore authenticators.CodeStore, passwordStore sso.PasswordCredentialStore, userProvider sso.UserProvider, logger spi.Logger) ([]sso.Authenticator, error) {
+	auths, err := appendPasswordAuthenticator(auths, cfg.Authenticators.Password, passwordStore, userProvider, logger)
+	if err != nil {
+		return nil, err
+	}
+	auths, err = appendPhoneAuthenticator(auths, cfg.Authenticators.Phone, codeStore, logger)
+	if err != nil {
+		return nil, err
+	}
+	auths, err = appendEmailAuthenticator(auths, cfg.Authenticators.Email, codeStore, cfg.SMTP, logger)
+	if err != nil {
+		return nil, err
+	}
+	// Magic-link shares the SAME CodeStore + SMTP sender as email-OTP — the
+	// two flows use disjoint key namespaces (keyPrefixEmail vs
+	// keyPrefixMagicLink) so requesting both for one address never collides.
+	return appendMagicLinkAuthenticator(auths, cfg.Authenticators.MagicLink, codeStore, cfg.SMTP, logger)
 }
 
 // buildCodeStore selects the passwordless email/phone OTP code store. Send and

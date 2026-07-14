@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -76,6 +77,105 @@ func HandleSubjectTokens(refresh oauth.RefreshTokenStore, log spi.Logger, ctx co
 	body["active_refresh_tokens"] = n
 	body["counted"] = true
 	ctx.JSON(http.StatusOK, body)
+}
+
+// defaultTokenExpiringHorizon is the ?before= default when the query param is
+// absent: "what expires in the next 24h", the most common capacity-planning
+// question. defaultTokenExpiringLimit / maxTokenExpiringLimit bound the
+// ?limit= query param the same way maxPortfolioClients bounds the portfolio
+// per-client breakdown — the store contract itself allows limit<=0 to mean
+// "no cap", but this admin handler never forwards an unbounded query.
+const (
+	defaultTokenExpiringHorizon = 24 * time.Hour
+	defaultTokenExpiringLimit   = 100
+	maxTokenExpiringLimit       = 1000
+)
+
+// HandleTokenExpiring serves GET /api/v1/admin/tokens/expiring — the
+// refresh-token "expiry calendar": which tokens will lapse within a caller-
+// supplied horizon, for capacity planning or driving a pre-expiry
+// notification job. Read through the existing RefreshTokenExpiryLister —
+// governance metadata only, never a token value (RefreshTokenExpiry carries
+// a one-way Thumbprint). admin:read.
+//
+// ?before= accepts either a Go duration (e.g. "24h", relative to now) or an
+// RFC3339 timestamp (an absolute cutoff); default defaultTokenExpiringHorizon
+// when absent. ?limit= caps the returned rows (default/max above; invalid or
+// absent falls back to the default rather than erroring).
+//
+// When the wired refresh store doesn't implement RefreshTokenExpiryLister,
+// this answers 501 with the SAME error code HandleBulkRevoke's unsupported-
+// backend path uses (core.ErrRefreshTokenNotConfigured) — one "this
+// governance feature isn't available on this backend" shape across the
+// token-portfolio surface.
+func HandleTokenExpiring(refresh oauth.RefreshTokenStore, log spi.Logger, ctx core.HandlerContext) {
+	if refresh == nil {
+		ctx.JSON(http.StatusNotImplemented, core.ErrorBody(core.ErrRefreshTokenNotConfigured))
+		return
+	}
+	lister, ok := refresh.(oauth.RefreshTokenExpiryLister)
+	if !ok {
+		ctx.JSON(http.StatusNotImplemented, core.ErrorBody(core.ErrRefreshTokenNotConfigured))
+		return
+	}
+	before, ok := parseExpiringBefore(ctx)
+	if !ok {
+		return
+	}
+	limit := parseExpiringLimit(ctx)
+	entries, err := lister.ListExpiring(ctx.Request().Context(), before, limit)
+	if err != nil {
+		log.Error("admin token expiry calendar failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{
+		core.KeyStatus: core.StatusOK,
+		"before":       before.UTC().Format(time.RFC3339),
+		"count":        len(entries),
+		"tokens":       entries,
+	})
+}
+
+// parseExpiringBefore resolves the ?before= query param to an absolute cutoff
+// time: a Go duration is treated as relative to now, otherwise it must parse
+// as RFC3339. Writes the 400 and returns ok=false on a malformed value.
+func parseExpiringBefore(ctx core.HandlerContext) (time.Time, bool) {
+	raw := strings.TrimSpace(ctx.Query("before"))
+	if raw == "" {
+		return time.Now().Add(defaultTokenExpiringHorizon), true
+	}
+	if d, err := time.ParseDuration(raw); err == nil {
+		if d <= 0 {
+			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+			return time.Time{}, false
+		}
+		return time.Now().Add(d), true
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t, true
+	}
+	ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+	return time.Time{}, false
+}
+
+// parseExpiringLimit resolves the ?limit= query param, clamping an absent,
+// invalid, non-positive, or over-max value to the sane defaults rather than
+// erroring — a read-only calendar view degrades gracefully instead of
+// rejecting the request over a cosmetic parameter.
+func parseExpiringLimit(ctx core.HandlerContext) int {
+	raw := strings.TrimSpace(ctx.Query("limit"))
+	if raw == "" {
+		return defaultTokenExpiringLimit
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return defaultTokenExpiringLimit
+	}
+	if n > maxTokenExpiringLimit {
+		return maxTokenExpiringLimit
+	}
+	return n
 }
 
 // bulkRevokeRequest is the POST /api/v1/admin/tokens/revoke body. At least one

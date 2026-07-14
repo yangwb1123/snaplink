@@ -30,7 +30,10 @@ type CachedResult struct {
 //   - A revoked token might be served from cache for up to TTL seconds.
 //     This is INTENTIONAL eventual-consistency: without the cache, every
 //     introspection on a high-traffic mesh pays full JWT signature
-//     verification cost.
+//     verification cost. Revocation call sites SHOULD narrow this window via
+//     the OPTIONAL IntrospectionCacheInvalidator extension below (best-effort
+//     — the TTL bound above still holds when a wired cache doesn't implement
+//     it, or a caller doesn't invoke it).
 type IntrospectionCache interface {
 	// Get returns a cached introspection result. The bool is false on
 	// a miss or an expired entry.
@@ -41,6 +44,62 @@ type IntrospectionCache interface {
 	// using a configured default — callers pass the operator-configured
 	// value directly.
 	Set(key string, result *CachedResult, ttl time.Duration)
+}
+
+// IntrospectionCacheInvalidator is an OPTIONAL extension to IntrospectionCache
+// — mirroring the oauthspi.RefreshTokenInspector / RefreshTokenFamilyTracker
+// pattern of a separate, type-asserted capability interface — that lets a
+// revocation path evict ONE cached result immediately, instead of waiting out
+// the TTL. Implement it on the concrete cache type when the backend supports
+// point deletes (MemoryIntrospectionCache does); a cache that can't (e.g. a
+// write-through-only remote cache with no delete primitive) simply doesn't
+// implement it, and every revocation path degrades to today's TTL-bounded
+// eventual consistency — the SAME best-effort contract IntrospectionCache
+// itself already carries, so this is purely additive and never a breaking
+// change to the base SPI.
+//
+// Key MUST be the SAME derivation Get/Set use — SHA-256(token) hex, per
+// tokenHash — never the raw token, preserving IntrospectionCache's
+// never-store-plaintext contract. Callers should go through
+// InvalidateIntrospectionCache below rather than computing the hash
+// themselves, so every revocation call site agrees on the key derivation.
+//
+// FAIL-SAFE: Invalidate is a pure best-effort optimization, never a
+// correctness gate for the revocation itself. A missed invalidation only
+// widens the existing TTL window — it can never re-activate a token that was
+// actually revoked at the source of truth (the issuer deny-set / refresh
+// store delete), so implementations and callers MUST NOT let this block,
+// retry, or fail the calling revocation path.
+type IntrospectionCacheInvalidator interface {
+	// Invalidate evicts the cached result for key (SHA-256(token) hex), if
+	// present. A miss is a silent no-op — callers never know or care whether
+	// anything was cached under key.
+	Invalidate(key string)
+}
+
+// InvalidateIntrospectionCache evicts token's cached introspection result (if
+// any) from cache, so a just-revoked token stops reporting a stale
+// active:true immediately instead of waiting out the configured TTL
+// (DefaultIntrospectionCacheTTL and friends). Every revocation call site
+// (token/revoke, logout, revoke-all, admin revoke, cross-replica adopted
+// revocation, refresh-family-reuse/velocity kill) SHOULD call this right
+// after the actual revocation succeeds, passing the SAME raw token string
+// that was revoked/consumed — this derives the identical SHA-256 key
+// introspectOne used to populate the cache, so the RIGHT entry is evicted.
+//
+// No-op, byte-identical to calling nothing, when: cache is nil (caching
+// disabled), token is empty, or the wired cache does not implement
+// IntrospectionCacheInvalidator. Never returns an error and never blocks —
+// see IntrospectionCacheInvalidator's FAIL-SAFE contract.
+func InvalidateIntrospectionCache(cache IntrospectionCache, token string) {
+	if cache == nil || token == "" {
+		return
+	}
+	inv, ok := cache.(IntrospectionCacheInvalidator)
+	if !ok {
+		return
+	}
+	inv.Invalidate(tokenHash(token))
 }
 
 // introspectOne resolves ONE token's introspection body, consulting +

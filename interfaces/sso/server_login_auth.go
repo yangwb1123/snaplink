@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"time"
 
 	"github.com/snaplink/sso/internal/auth/login"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -178,4 +179,40 @@ func (s *Server) rejectUnverifiedEmail(ctx HandlerContext, req *login.Request, r
 		return true
 	}
 	return false
+}
+
+// rejectExpiredPassword returns true when the operator has configured
+// PasswordPolicyConfig.MaxAgeDays > 0 (via WithPasswordPolicy) AND this login
+// used the password factor AND the credential has aged past that window.
+// Runs AFTER credential verification, alongside rejectUnverifiedEmail (same
+// call site, same shape): the user has ALREADY proved they hold the CURRENT
+// password, so "expired" here is a POLICY-STATE signal the client must react
+// to (route the user through a forced change-password flow before retrying),
+// NOT a credential-validity oracle — an attacker without the correct password
+// never reaches this check, so a distinct code leaks nothing about whether a
+// guessed password was ever valid (AGENTS.md §3 Anti-Enumeration).
+//
+// Fails OPEN (returns false = proceed) at every point the signal is
+// unavailable: no policy wired, MaxAgeDays<=0, this login didn't use the
+// password factor (result.AuthMethods lacks core.AMRPassword — e.g. WebAuthn/
+// federated logins are unaffected), no PasswordCredentialStore wired, the
+// wired store doesn't implement core.PasswordAgeReader, or the age lookup
+// errors. A deployment that hasn't opted in (or hits any of those gaps) is
+// byte-identical to before this feature.
+func (s *Server) rejectExpiredPassword(ctx HandlerContext, req *login.Request, result *AuthResult) bool {
+	maxAgeDays := s.passwordMaxAgeDays()
+	if maxAgeDays <= 0 || !slices.Contains(result.AuthMethods, core.AMRPassword) {
+		return false
+	}
+	reader, ok := s.passwordCredentialStore.(core.PasswordAgeReader)
+	if !ok {
+		return false
+	}
+	changedAt, err := reader.PasswordChangedAt(ctx.Request().Context(), result.UserID)
+	if err != nil || time.Since(changedAt) < time.Duration(maxAgeDays)*24*time.Hour {
+		return false
+	}
+	s.recordLoginFailure(ctx, req.ClientID, req.Provider, core.ErrPasswordExpired)
+	ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, core.ErrPasswordExpired, req.State))
+	return true
 }

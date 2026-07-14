@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/conditionalaccess"
+	"github.com/snaplink/sso/domains/threataction"
 	"github.com/snaplink/sso/domains/tokenpolicy"
 )
 
@@ -448,4 +449,29 @@ type TokenAnomalyConfig struct {
 	VelocityGap    time.Duration `yaml:"velocity_gap"`
 	SpikeFactor    float64       `yaml:"spike_factor"`
 	SpikeMinCount  int64         `yaml:"spike_min_count"`
+}
+
+// ThreatActionConfig opts into the Active ITDR threat-executor bridge
+// (domains/threataction, sso.WithThreatExecutor + sso.WithThreatPolicyStore):
+// translates domains/anomaly + domains/tokenanomaly detection signals into
+// response actions (session suspension, refresh-token family revocation, MFA
+// step-up, admin notification) off the request path — the "smoke alarm" the
+// anomaly subsystems raise finally gets a "call the fire department" step.
+//
+// Disabled by default: an absent/false section wires neither the composite
+// executor nor the policy store into anomaly.Runner / tokenanomaly.Detector /
+// the Server — byte-identical to a build without the feature. Even enabled
+// with an empty Policies list, every threat resolves to DefaultAction (or the
+// package's Noop default) until policies are added here or via the admin CRUD
+// API (GET/PUT/DELETE /api/v1/admin/threat-policies, mounted once enabled).
+type ThreatActionConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// DefaultAction applies when no policy matches a threat. Empty = "noop"
+	// (audit-only, no live response) — the package default.
+	DefaultAction string `yaml:"default_action"`
+
+	// Policies seeds the in-memory ThreatPolicyStore at boot; further policies
+	// can be added/edited at runtime via the admin CRUD API.
+	Policies []threataction.ThreatPolicy `yaml:"policies"`
 }

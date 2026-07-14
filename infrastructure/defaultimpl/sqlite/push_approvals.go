@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/protocols/oauth/oauthspi"
 )
 
 // pushApprovalsSchema persists push MFA approvals across the
@@ -228,3 +229,196 @@ func (s *PushApprovalStore) PruneExpired(ctx context.Context) (int64, error) {
 }
 
 var _ defaultimpl.PushApprovalStore = (*PushApprovalStore)(nil)
+
+// --- CIBA Push-Delivery Dead Letter ---
+//
+// Co-located in this file (not a new one) because
+// infrastructure/defaultimpl/sqlite is at its frozen file-fanout
+// ceiling (36 non-test .go files — see dirFileCountExemptions in
+// directory_fanout_test.go); this is a distinct store for a distinct
+// interface (oauthspi.CIBAPushDeadLetterStore, see
+// protocols/oauth/oauthspi/ciba.go), unrelated to PushApprovalStore
+// above beyond both being out-of-band push-delivery state.
+
+// cibaDeadLetterSchema persists CIBA Core §10.3 push-delivery failures for
+// operator replay. Without a durable peer, a restart silently drops the
+// operator's only visibility into which clients never actually got their
+// tokens (NotifyPush degrades to poll on failure, so the client recovers,
+// but the operator loses the audit trail of who needed the fallback).
+const cibaDeadLetterSchema = `
+CREATE TABLE IF NOT EXISTS ciba_push_deadletters (
+    delivery_id   TEXT    PRIMARY KEY,
+    auth_req_id   TEXT    NOT NULL,
+    access_token  TEXT    NOT NULL,
+    token_type    TEXT    NOT NULL,
+    expires_in    INTEGER NOT NULL,
+    refresh_token TEXT    NOT NULL,
+    id_token      TEXT    NOT NULL,
+    err_message   TEXT    NOT NULL,
+    acked         INTEGER NOT NULL DEFAULT 0,
+    created_at    INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ciba_deadletters_acked
+    ON ciba_push_deadletters(acked, created_at);
+`
+
+// CIBAPushDeadLetterStore is the SQLite-backed
+// [oauthspi.CIBAPushDeadLetterStore]. Suitable for multi-replica
+// deployments — a push failure recorded by whichever replica attempted
+// NotifyPush is visible to an operator's replay tooling regardless of
+// which replica serves the request.
+type CIBAPushDeadLetterStore struct {
+	db *sql.DB
+}
+
+// NewCIBAPushDeadLetterStore opens dsn, migrates the schema, and returns
+// the store. Caller owns Close().
+func NewCIBAPushDeadLetterStore(dsn string) (*CIBAPushDeadLetterStore, error) {
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: open: %w", err)
+	}
+	if err := db.PingContext(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlite: ping: %w", err)
+	}
+	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
+	if err := ensureSchema(db, "ciba_push_deadletters", cibaDeadLetterSchema); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlite: migrate ciba_push_deadletters: %w", err)
+	}
+	return &CIBAPushDeadLetterStore{db: db}, nil
+}
+
+// NewCIBAPushDeadLetterStoreWithDB wraps an existing *sql.DB. Caller owns
+// the connection lifecycle.
+func NewCIBAPushDeadLetterStoreWithDB(db *sql.DB) (*CIBAPushDeadLetterStore, error) {
+	if err := ensureSchema(db, "ciba_push_deadletters", cibaDeadLetterSchema); err != nil {
+		return nil, fmt.Errorf("sqlite: migrate ciba_push_deadletters: %w", err)
+	}
+	return &CIBAPushDeadLetterStore{db: db}, nil
+}
+
+// Close releases the SQLite connection. Idempotent.
+func (s *CIBAPushDeadLetterStore) Close() error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	err := s.db.Close()
+	s.db = nil
+	return err
+}
+
+// DB exposes the underlying *sql.DB for an operator-facing schema
+// reporter (sso.WithStorageHealth via migrate.Status). Nil after Close;
+// callers MUST NOT close it.
+func (s *CIBAPushDeadLetterStore) DB() *sql.DB { return s.db }
+
+// Ping reports SQLite connection health for [sso.WithReadyCheck] wiring.
+func (s *CIBAPushDeadLetterStore) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("sqlite: ciba push deadletter store closed")
+	}
+	return s.db.PingContext(ctx)
+}
+
+// Record persists a failed push delivery attempt. Empty deliveryID mints
+// an opaque id (defensive fallback; NotifyPush always supplies the
+// auth_req_id in practice). INSERT OR REPLACE mirrors the in-memory
+// peer's unconditional map overwrite — a re-recorded id resets Acked,
+// since a fresh failure means a fresh replay is owed.
+func (s *CIBAPushDeadLetterStore) Record(ctx context.Context, deliveryID string, payload oauthspi.PushPayload, failErr error) error {
+	id := deliveryID
+	if id == "" {
+		tok, err := defaultimpl.GeneratePARToken()
+		if err != nil {
+			return fmt.Errorf("sqlite: generate deadletter id: %w", err)
+		}
+		id = tok
+	}
+	msg := ""
+	if failErr != nil {
+		msg = failErr.Error()
+	}
+	_, err := s.db.ExecContext(ctx, `
+        INSERT OR REPLACE INTO ciba_push_deadletters (
+            delivery_id, auth_req_id, access_token, token_type,
+            expires_in, refresh_token, id_token, err_message,
+            acked, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+		id, payload.AuthReqID, payload.AccessToken, payload.TokenType,
+		payload.ExpiresIn, payload.RefreshToken, payload.IDToken, msg,
+		time.Now().UnixNano(),
+	)
+	if err != nil {
+		return fmt.Errorf("sqlite: insert ciba_push_deadletter: %w", err)
+	}
+	return nil
+}
+
+// ListUnacknowledged returns delivery IDs that have not been
+// acknowledged, oldest failure first so an operator's replay loop
+// drains in the order clients have been waiting.
+func (s *CIBAPushDeadLetterStore) ListUnacknowledged(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+        SELECT delivery_id FROM ciba_push_deadletters
+        WHERE acked = 0 ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: list ciba_push_deadletters: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("sqlite: scan ciba_push_deadletter: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: iterate ciba_push_deadletters: %w", err)
+	}
+	return ids, nil
+}
+
+// Replay re-attempts delivery of the failed push identified by
+// deliveryID, returning the payload so the caller can retry. Does not
+// itself mark the entry acknowledged — the caller calls Acknowledge
+// once the retry actually succeeds.
+func (s *CIBAPushDeadLetterStore) Replay(ctx context.Context, deliveryID string) (*oauthspi.PushPayload, error) {
+	row := s.db.QueryRowContext(ctx, `
+        SELECT auth_req_id, access_token, token_type, expires_in,
+               refresh_token, id_token
+        FROM ciba_push_deadletters WHERE delivery_id = ?`, deliveryID)
+	var p oauthspi.PushPayload
+	if err := row.Scan(&p.AuthReqID, &p.AccessToken, &p.TokenType,
+		&p.ExpiresIn, &p.RefreshToken, &p.IDToken); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("sqlite: ciba_push_deadletter %q not found", deliveryID)
+		}
+		return nil, fmt.Errorf("sqlite: replay ciba_push_deadletter: %w", err)
+	}
+	return &p, nil
+}
+
+// Acknowledge marks a delivery as resolved (successfully replayed or
+// operator-dismissed). Missing deliveryID surfaces as an error so a
+// caller can distinguish a no-op from an actual acknowledgment.
+func (s *CIBAPushDeadLetterStore) Acknowledge(ctx context.Context, deliveryID string) error {
+	res, err := s.db.ExecContext(ctx, `
+        UPDATE ciba_push_deadletters SET acked = 1 WHERE delivery_id = ?`, deliveryID)
+	if err != nil {
+		return fmt.Errorf("sqlite: acknowledge ciba_push_deadletter: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite: acknowledge ciba_push_deadletter rowsaffected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("sqlite: ciba_push_deadletter %q not found", deliveryID)
+	}
+	return nil
+}
+
+var _ oauthspi.CIBAPushDeadLetterStore = (*CIBAPushDeadLetterStore)(nil)

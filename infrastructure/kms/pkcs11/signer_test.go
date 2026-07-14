@@ -1,3 +1,5 @@
+//go:build !no_pkcs11
+
 package pkcs11
 
 import (
@@ -20,6 +22,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/cryptosigner"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // fakeSession is an in-process stand-in for a PKCS#11 token. It holds a
@@ -46,6 +49,27 @@ type fakeSession struct {
 	// lastMech records the mechanism the last Sign was asked for, so a test
 	// can assert opts -> mechanism mapping.
 	lastMech atomic.Int32
+
+	// originAttrs / originErr drive KeyOriginAttrs: originErr, when set,
+	// models a token that cannot answer the CKA_LOCAL/CKA_NEVER_EXTRACTABLE
+	// query (fail-open test); otherwise originAttrs is returned verbatim.
+	originAttrs KeyOriginAttrs
+	originErr   error
+	// originCalls counts KeyOriginAttrs invocations, so a test can assert
+	// the result is cached (queried once) rather than re-fetched.
+	originCalls atomic.Int32
+}
+
+// KeyOriginAttrs implements [Session] for tests: it returns the configured
+// synthetic attributes (or originErr), never touching a real token —
+// exactly the seam that lets keyOriginFromAttrs be exercised without SoftHSM
+// or a physical HSM.
+func (f *fakeSession) KeyOriginAttrs(_ uint) (KeyOriginAttrs, error) {
+	f.originCalls.Add(1)
+	if f.originErr != nil {
+		return KeyOriginAttrs{}, f.originErr
+	}
+	return f.originAttrs, nil
 }
 
 func newFakeEC(t *testing.T, curve elliptic.Curve) *fakeSession {
@@ -157,9 +181,9 @@ func digestFromInfo(di []byte) ([]byte, error) {
 	return di[len(sha256DigestInfoPrefix):], nil
 }
 
-func mustSigner(t *testing.T, f *fakeSession, pub crypto.PublicKey) *Signer {
+func mustSigner(t *testing.T, f *fakeSession, pub crypto.PublicKey, opts ...Option) *Signer {
 	t.Helper()
-	s, err := NewSigner(f, 42, pub)
+	s, err := NewSigner(f, 42, pub, opts...)
 	if err != nil {
 		t.Fatalf("NewSigner: %v", err)
 	}
@@ -634,5 +658,138 @@ func TestEndToEndEd25519Issuer(t *testing.T) {
 	}
 	if claims.Subject != "user-3" {
 		t.Fatalf("subject = %q, want user-3", claims.Subject)
+	}
+}
+
+// TestKeyOriginFromAttrs is the pure, no-token-required unit test for the
+// CKA_LOCAL/CKA_NEVER_EXTRACTABLE -> core.KeyOrigin interpretation
+// (keyOriginFromAttrs, origin.go). This is the ONLY part of the origin
+// classification exercised against synthetic inputs rather than a live
+// token: this environment has neither a real HSM nor SoftHSM2 installed
+// (confirmed: no pkcs11-tool/softhsm2-util binary and no libsofthsm2.so on
+// this machine), so the actual C_GetAttributeValue round-trip
+// (session_origin.go's realSession.KeyOriginAttrs) cannot be integration-
+// tested here. Splitting the byte-interpretation into this pure function is
+// what makes it testable anyway.
+func TestKeyOriginFromAttrs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   KeyOriginAttrs
+		want core.KeyOrigin
+	}{
+		{
+			name: "not local -> imported (key material arrived from outside the token)",
+			in:   KeyOriginAttrs{Local: false, NeverExtractable: true},
+			want: core.OriginImported,
+		},
+		{
+			name: "local and never-extractable -> HSM generated (strongest attestation)",
+			in:   KeyOriginAttrs{Local: true, NeverExtractable: true},
+			want: core.OriginHSMGenerated,
+		},
+		{
+			name: "local but extractable at some point -> unknown (cannot overclaim HSM)",
+			in:   KeyOriginAttrs{Local: true, NeverExtractable: false},
+			want: core.OriginUnknown,
+		},
+		{
+			name: "zero value (neither attribute readable) -> imported, not a silent HSM claim",
+			in:   KeyOriginAttrs{},
+			want: core.OriginImported,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := keyOriginFromAttrs(tc.in); got != tc.want {
+				t.Errorf("keyOriginFromAttrs(%+v) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestKeyOriginAutoDetectsAndCaches proves the no-WithKeyOrigin path queries
+// the token's attributes through the Session (fakeSession here, standing in
+// for realSession.KeyOriginAttrs) exactly once and caches the classification
+// for the process lifetime, mirroring the awskms/gcpkms/azurekeyvault
+// "resolve once at first use, cache forever" pattern.
+func TestKeyOriginAutoDetectsAndCaches(t *testing.T) {
+	t.Parallel()
+	f := newFakeEC(t, elliptic.P256())
+	f.originAttrs = KeyOriginAttrs{Local: true, NeverExtractable: true}
+	s := mustSigner(t, f, nil)
+
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		origin, err := s.KeyOrigin(ctx, "")
+		if err != nil {
+			t.Fatalf("KeyOrigin call %d: %v", i, err)
+		}
+		if origin != core.OriginHSMGenerated {
+			t.Fatalf("KeyOrigin call %d = %v, want OriginHSMGenerated", i, origin)
+		}
+	}
+	if calls := f.originCalls.Load(); calls != 1 {
+		t.Fatalf("KeyOriginAttrs called %d times, want 1 (result must be cached)", calls)
+	}
+}
+
+// TestKeyOriginQueryErrorFailsOpenAndRetries proves a token attribute-read
+// failure fails OPEN to core.OriginUnknown (never an error surfaced to the
+// caller — this is an audit-attestation gap, not a signing-path failure)
+// and is NOT permanently cached, so a transient outage clears on the next
+// call instead of poisoning the origin to Unknown forever (same retry
+// discipline as loadPublic's public-key cache).
+func TestKeyOriginQueryErrorFailsOpenAndRetries(t *testing.T) {
+	t.Parallel()
+	f := newFakeEC(t, elliptic.P256())
+	f.originErr = errors.New("token: CKR_ATTRIBUTE_TYPE_INVALID")
+	s := mustSigner(t, f, nil)
+	ctx := context.Background()
+
+	origin, err := s.KeyOrigin(ctx, "")
+	if err != nil {
+		t.Fatalf("KeyOrigin (query error) returned an error, want fail-open nil: %v", err)
+	}
+	if origin != core.OriginUnknown {
+		t.Fatalf("KeyOrigin (query error) = %v, want OriginUnknown", origin)
+	}
+
+	// The outage clears; the NEXT call must retry (not stay poisoned).
+	f.originErr = nil
+	f.originAttrs = KeyOriginAttrs{Local: true, NeverExtractable: true}
+	origin, err = s.KeyOrigin(ctx, "")
+	if err != nil {
+		t.Fatalf("KeyOrigin (post-outage): %v", err)
+	}
+	if origin != core.OriginHSMGenerated {
+		t.Fatalf("KeyOrigin (post-outage) = %v, want OriginHSMGenerated (retry, not poisoned)", origin)
+	}
+	if calls := f.originCalls.Load(); calls != 2 {
+		t.Fatalf("KeyOriginAttrs called %d times, want 2 (one failed attempt, one retry)", calls)
+	}
+}
+
+// TestWithKeyOriginOverridesAutoDetection proves the explicit WithKeyOrigin
+// Option wins unconditionally over auto-detection: the fake token is
+// configured to auto-detect as OriginImported, but the caller's explicit
+// override must be returned instead, AND the token must never even be
+// queried (no wasted round-trip once the operator has already answered the
+// question out-of-band).
+func TestWithKeyOriginOverridesAutoDetection(t *testing.T) {
+	t.Parallel()
+	f := newFakeEC(t, elliptic.P256())
+	f.originAttrs = KeyOriginAttrs{Local: false} // would auto-detect as Imported
+	s := mustSigner(t, f, nil, WithKeyOrigin(core.OriginHSMGenerated))
+
+	origin, err := s.KeyOrigin(context.Background(), "")
+	if err != nil {
+		t.Fatalf("KeyOrigin: %v", err)
+	}
+	if origin != core.OriginHSMGenerated {
+		t.Fatalf("KeyOrigin = %v, want the WithKeyOrigin override (OriginHSMGenerated), auto-detection must not win", origin)
+	}
+	if calls := f.originCalls.Load(); calls != 0 {
+		t.Fatalf("KeyOriginAttrs called %d times, want 0 -- an explicit override must skip the token round-trip entirely", calls)
 	}
 }

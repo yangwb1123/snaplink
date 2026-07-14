@@ -64,6 +64,28 @@ type RateLimitPrefixConfig struct {
 	Burst  int     `yaml:"burst"`
 }
 
+// ClientRegistrationRateLimitConfig configures the narrow, IP-keyed rate
+// limit on POST /register (RFC 7591 Dynamic Client Registration). Every
+// other security.* block in this file is opt-in / off-by-default for
+// backward compat; this one is the deliberate exception — DCR is an
+// unauthenticated (or IAT-shared, effectively-public) endpoint, so a zero
+// value here does NOT mean "disabled" the way it does for RateLimitConfig
+// above. sso.NewServer already seeds a conservative built-in MemoryLimiter
+// (see checkClientRegistrationRateLimit's doc in interfaces/sso/quota.go)
+// so registration spam is bounded even when an operator never touches this
+// section. Set Disabled: true to turn it off (e.g. it's already throttled
+// at an edge/WAF); set PerSec/Burst (both > 0) to override the built-in
+// rate without disabling it. This is intentionally SEPARATE from
+// RateLimitConfig.Prefixes above (which already supports a "/register"
+// prefix rule) because that whole mechanism is opt-in via
+// RateLimitConfig.Enabled — an operator would have to remember to turn on
+// the GLOBAL limiter just to protect this one endpoint.
+type ClientRegistrationRateLimitConfig struct {
+	Disabled bool    `yaml:"disabled"`
+	PerSec   float64 `yaml:"per_sec"`
+	Burst    int     `yaml:"burst"`
+}
+
 // CORSConfig configures the CORS middleware. AllowedOrigins is the
 // only required field; leaving it empty disables CORS even when
 // Enabled=true (the middleware reduces to identity).

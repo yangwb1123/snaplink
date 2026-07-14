@@ -122,19 +122,30 @@ const (
 	ErrServiceDegraded = "service_degraded"
 	// ErrInvalidMode is returned (400) by POST /api/v1/admin/dr/mode when the
 	// requested degraded-service mode is not one of the defined values.
-	ErrInvalidMode                = "invalid_mode"
-	ErrSAMLAssertionInvalid       = "saml_assertion_invalid"
-	ErrSAMLRequestInvalid         = "saml_request_invalid"
-	ErrSAMLNotConfigured          = "saml_not_configured"
-	ErrSAMLAssertionFailed        = "saml_assertion_failed"
-	ErrMFARequired                = "mfa_required"
-	ErrMFAInvalid                 = "mfa_invalid"
-	ErrResetInvalid               = "reset_invalid"
-	ErrConfirmationRequired       = "confirmation_required"
-	ErrEmailChangeInvalid         = "email_change_invalid"
-	ErrAccountExists              = "account_exists"
-	ErrVerificationInvalid        = "verification_invalid"
-	ErrEmailNotVerified           = "email_not_verified"
+	ErrInvalidMode          = "invalid_mode"
+	ErrSAMLAssertionInvalid = "saml_assertion_invalid"
+	ErrSAMLRequestInvalid   = "saml_request_invalid"
+	ErrSAMLNotConfigured    = "saml_not_configured"
+	ErrSAMLAssertionFailed  = "saml_assertion_failed"
+	ErrMFARequired          = "mfa_required"
+	ErrMFAInvalid           = "mfa_invalid"
+	ErrResetInvalid         = "reset_invalid"
+	ErrConfirmationRequired = "confirmation_required"
+	ErrEmailChangeInvalid   = "email_change_invalid"
+	ErrAccountExists        = "account_exists"
+	ErrVerificationInvalid  = "verification_invalid"
+	ErrEmailNotVerified     = "email_not_verified"
+	// ErrPasswordExpired is returned (403) when PasswordPolicyConfig.MaxAgeDays
+	// is set and the authenticated user's password credential has aged past
+	// that window. Distinct from ErrInvalidCredentials/invalid_grant on
+	// purpose: by the time this fires the password has ALREADY verified
+	// correctly (same ordering as ErrEmailNotVerified/ErrAccountLocked) — this
+	// discloses a POLICY STATE the client must react to (route the user
+	// through a forced change-password flow), not a credential-validity
+	// oracle. An attacker without the correct password never reaches this
+	// check, so a distinct code here leaks nothing about whether a guessed
+	// password was ever valid. See AGENTS.md §3 Anti-Enumeration.
+	ErrPasswordExpired            = "password_expired"
 	ErrInvitationInvalid          = "invitation_invalid"
 	ErrTOTPInvalidCode            = "totp_invalid_code"
 	ErrTOTPEnrollmentNotSupported = "totp_enrollment_not_supported"
@@ -243,6 +254,13 @@ const (
 	// route is only mounted when one is). Not a credential oracle: the
 	// caller is an authenticated admin.
 	ErrWASMAuthzNotConfigured = "wasmauthz_not_configured"
+	// ErrUserConflict is returned (409) when an admin CRUD operation would create or
+	// update a user whose username or email collides with an existing user. It is a
+	// governance code (the caller is an authenticated admin), not a credential oracle.
+	// Distinct from ErrUserExists (which is the SPI-level sentinel for an existing user
+	// at the storage layer) — this is the wire-format error code in the HTTP response.
+	ErrUserConflict = "user_conflict"
+
 	// ErrSessionInvalid is the 404 wire code for a stateful authentication-
 	// ceremony session that is unknown, expired, or whose resolved identity
 	// vanished mid-ceremony (see ErrCeremonySessionInvalid above). Mirrors the

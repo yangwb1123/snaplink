@@ -8,11 +8,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/domains/anomaly"
+	"github.com/snaplink/sso/domains/threataction"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/detectors"
+	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
+	"github.com/snaplink/sso/platform/cluster"
+	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
 
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
@@ -33,12 +38,65 @@ type anomalyRuntime struct {
 	ipFailureAge   time.Duration
 }
 
+// wireThreatAction builds the Active ITDR composite executor + policy store
+// (threat_action.enabled) and wires sso.WithThreatExecutor / WithThreatPolicyStore.
+// Called from finalize() right after wireCluster — the earliest point at
+// which sessionMgr, refreshTokenStore (as a threataction.FamilyRevoker), and
+// the cluster Bus are ALL simultaneously available — so the returned executor
+// can also be handed to anomaly.Runner (wireAnomaly, called right after) and
+// tokenanomaly.Detector (wireGovernance -> wireTokenAnomaly): one shared
+// instance, one rate-limiter, one policy view for both detection sources.
+//
+// Returns (nil, nil) when disabled — byte-identical to a build without the
+// feature.
+func (b *appBuilder) wireThreatAction(bus cluster.Bus) (threataction.ThreatExecutor, error) {
+	var familyRevoker threataction.FamilyRevoker
+	if fr, ok := b.refreshTokenStore.(threataction.FamilyRevoker); ok {
+		familyRevoker = fr
+	}
+	var trustMgr core.SessionTrustManager
+	if tm, ok := b.sessionMgr.(core.SessionTrustManager); ok {
+		trustMgr = tm
+	}
+	exec, store, err := serverbuildplatform.BuildThreatAction(
+		b.cfg.ThreatAction, b.sessionMgr, trustMgr, familyRevoker, bus, b.recorder, b.logger)
+	if err != nil {
+		return nil, fmt.Errorf("threat action: %w", err)
+	}
+	if exec == nil {
+		return nil, nil
+	}
+	b.opts = append(b.opts, sso.WithThreatExecutor(exec), sso.WithThreatPolicyStore(store))
+	b.logger.Info("threat action executor enabled — Active ITDR anomaly/token-anomaly response bridge wired")
+	return exec, nil
+}
+
+// wireDetectionResponse wires the Active ITDR executor and the anomaly.Runner
+// that consumes it in one step. Called from finalize() right after
+// wireCluster — the earliest point sessionMgr, refreshTokenStore, and the
+// cluster Bus are ALL available (see wireThreatAction). Split out of
+// finalize to stay within the function-length budget; the returned executor
+// is also handed to wireGovernance for tokenanomaly.Detector.
+func (b *appBuilder) wireDetectionResponse(bus cluster.Bus) (threataction.ThreatExecutor, error) {
+	threatExec, err := b.wireThreatAction(bus)
+	if err != nil {
+		return nil, err
+	}
+	if err := b.wireAnomaly(threatExec); err != nil {
+		return nil, err
+	}
+	return threatExec, nil
+}
+
 // buildAnomaly wires the anomaly detection subsystem. Returns
 // (nil, nil) when anomaly.enabled=false. Fails loud on:
 //   - empty IPSalt (privacy invariant violation)
 //   - no detectors enabled (runner would be no-op)
 //   - sqlite backend selected without dsn
-func buildAnomaly(cfg config.AnomalyConfig, recorder *audit.Recorder, m *metrics.Metrics, logger spi.Logger) (*anomalyRuntime, error) {
+//
+// threatExec is the optional Active ITDR executor (wireThreatAction); nil
+// leaves the runner audit/metric-only, exactly as before this option existed.
+func buildAnomaly(cfg config.AnomalyConfig, recorder *audit.Recorder, m *metrics.Metrics, logger spi.Logger, threatExec threataction.ThreatExecutor) (*anomalyRuntime, error) {
 	if !cfg.Enabled {
 		return nil, nil
 	}
@@ -70,7 +128,7 @@ func buildAnomaly(cfg config.AnomalyConfig, recorder *audit.Recorder, m *metrics
 	if recorder != nil {
 		sink = anomaly.NewRecorderSink(recorder)
 	}
-	rt.runner = anomaly.NewRunner(built, sink, anomalyRunnerOptions(cfg.Runner, m, logger)...)
+	rt.runner = anomaly.NewRunner(built, sink, anomalyRunnerOptions(cfg.Runner, m, logger, threatExec)...)
 	if rt.runner == nil {
 		// NewAsyncAnomalyRunner returns nil when the detector list
 		// is empty — we already guarded above, but defense-in-depth.
@@ -108,9 +166,12 @@ func openAnomalyStores(rt *anomalyRuntime, cfg config.AnomalyConfig) (anomaly.Re
 
 // anomalyRunnerOptions assembles the AsyncAnomalyRunner options from the runner
 // config + optional metrics callbacks. Unset knobs leave the SDK defaults.
-func anomalyRunnerOptions(cfg config.AnomalyRunnerConfig, m *metrics.Metrics, logger spi.Logger) []anomaly.Option {
+func anomalyRunnerOptions(cfg config.AnomalyRunnerConfig, m *metrics.Metrics, logger spi.Logger, threatExec threataction.ThreatExecutor) []anomaly.Option {
 	opts := []anomaly.Option{
 		anomaly.WithLogger(logger),
+	}
+	if threatExec != nil {
+		opts = append(opts, anomaly.WithThreatExecutor(threatExec))
 	}
 	if cfg.QueueSize > 0 {
 		opts = append(opts, anomaly.WithQueueSize(cfg.QueueSize))

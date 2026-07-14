@@ -208,6 +208,20 @@ func (s *Server) PasswordPolicyValidator() spi.PasswordPolicyValidator {
 	return s.passwordPolicyValidator
 }
 
+// passwordMaxAgeDays returns the operator-configured
+// PasswordPolicyConfig.MaxAgeDays (via WithPasswordPolicy), or 0 when no
+// policy validator is wired, or the wired one doesn't expose it
+// (spi.PasswordMaxAgeProvider is an OPTIONAL extension — see
+// shared/spi/reg_gate.go). 0 is universally "not enforced" for this
+// dimension, matching every other zero-value-means-off policy knob on this
+// server (e.g. maxSessionsPerUser).
+func (s *Server) passwordMaxAgeDays() int {
+	if p, ok := s.passwordPolicyValidator.(spi.PasswordMaxAgeProvider); ok {
+		return p.PasswordMaxAgeDays()
+	}
+	return 0
+}
+
 // handleForgotPassword delegates to selfservice.HandleForgotPassword.
 func (s *Server) handleForgotPassword(ctx HandlerContext) {
 	selfservice.HandleForgotPassword(s, ctx)

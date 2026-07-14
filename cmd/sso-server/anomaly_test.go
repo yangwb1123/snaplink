@@ -13,7 +13,7 @@ import (
 
 func TestBuildAnomaly_DisabledReturnsNil(t *testing.T) {
 	t.Parallel()
-	rt, err := buildAnomaly(config.AnomalyConfig{Enabled: false}, nil, nil, quietLogger())
+	rt, err := buildAnomaly(config.AnomalyConfig{Enabled: false}, nil, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("buildAnomaly: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestBuildAnomaly_NoDetectorsEnabledReturnsNil(t *testing.T) {
 		IPSalt:      hex.EncodeToString([]byte("0123456789abcdef")),
 		RecentLogin: config.AnomalyStoreConfig{Backend: "memory"},
 		IPFailure:   config.AnomalyStoreConfig{Backend: "memory"},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("buildAnomaly: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestBuildAnomaly_HappyPathMemory(t *testing.T) {
 			ImpossibleTravel: config.ImpossibleTravelDetectorConfig{Enabled: true},
 			Velocity:         config.VelocityDetectorConfig{Enabled: true, HourlyLimit: 25},
 		},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("buildAnomaly: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestBuildAnomaly_SQLiteBackendOpenedAndClosed(t *testing.T) {
 		Detectors: config.AnomalyDetectorsConfig{
 			ImpossibleTravel: config.ImpossibleTravelDetectorConfig{Enabled: true},
 		},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("buildAnomaly: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestBuildAnomaly_SQLiteRequiresDSN(t *testing.T) {
 		IPSalt:      hex.EncodeToString([]byte("0123456789abcdef")),
 		RecentLogin: config.AnomalyStoreConfig{Backend: "sqlite"},
 		Detectors:   config.AnomalyDetectorsConfig{ImpossibleTravel: config.ImpossibleTravelDetectorConfig{Enabled: true}},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err == nil {
 		t.Fatal("sqlite without DSN should error")
 	}
@@ -119,7 +119,7 @@ func TestBuildAnomaly_RejectsUnknownBackend(t *testing.T) {
 		IPSalt:      hex.EncodeToString([]byte("0123456789abcdef")),
 		RecentLogin: config.AnomalyStoreConfig{Backend: "redis"}, // not yet supported
 		Detectors:   config.AnomalyDetectorsConfig{ImpossibleTravel: config.ImpossibleTravelDetectorConfig{Enabled: true}},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err == nil {
 		t.Fatal("unknown backend should error")
 	}
@@ -139,7 +139,7 @@ func TestBuildAnomaly_AllDetectorsEnable(t *testing.T) {
 			NewCountry:       config.BaselineDetectorConfig{Enabled: true},
 			BruteForceShadow: config.BruteForceShadowDetectorConfig{Enabled: true, FailureLimit: 50, DistinctSubjectLimit: 10},
 		},
-	}, nil, nil, quietLogger())
+	}, nil, nil, quietLogger(), nil)
 	if err != nil {
 		t.Fatalf("buildAnomaly: %v", err)
 	}

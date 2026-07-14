@@ -214,6 +214,43 @@ func RecordFAPIViolation(rec *Recorder, ctx core.HandlerContext, clientID, ruleI
 	rec.Record(ctx.Request().Context(), e)
 }
 
+// RecordTokenRevoked emits a token_revoked event whenever
+// *sso.Server.RevokeAcrossIssuers — the single per-replica choke point every
+// /token/revoke, /token/revoke-all, the admin TokenAdminService.Revoke RPC,
+// and the break-glass revoke-on-expiry sweep all funnel through, and the SAME
+// site that already publishes the cluster.KindTokenRevoked cross-replica
+// Event — actually revokes the token from at least one TokenIssuer. Before
+// this existed, EventTokenRevoked was a declared, CEF/OCSF-mapped,
+// SOC2-control-area event type that NOTHING ever recorded, so no consumer of
+// the generic platform/lifecycle/webhook.Engine (already wired with admin
+// CRUD, retry, and dead-letter — see that package's doc.go) could ever
+// observe an ordinary revocation; this is the missing emission that lets it.
+//
+// Some callers (the admin RPC, the break-glass sweep) have only a plain
+// context.Context, not a core.HandlerContext, so — like
+// RecordSigningKeyAggregationDegraded — this builds the Event directly
+// rather than via EventFromRequest.
+//
+// clientID/subjectID are best-effort, UNVERIFIED claims read from the
+// token's own payload (see handler.JWTClaimsUnsafe): annotation only, never a
+// security decision — the token was already revoked via the verified
+// per-issuer Revoke path before this fires.
+func RecordTokenRevoked(rec *Recorder, ctx context.Context, clientID, subjectID string, issuers []string) {
+	if rec == nil {
+		return
+	}
+	e := &Event{
+		Type:     EventTokenRevoked,
+		Outcome:  OutcomeSuccess,
+		ClientID: clientID,
+		ActorID:  subjectID,
+	}
+	if len(issuers) > 0 {
+		SetMeta(e, "issuers", joinComma(issuers))
+	}
+	rec.Record(ctx, e)
+}
+
 // RecordSigningKeyAggregationDegraded emits a signing_key_aggregation_degraded
 // event when the leaderless aggregation subscriber loses its registry
 // subscription (Subscribe channel closed while the run context is still live).

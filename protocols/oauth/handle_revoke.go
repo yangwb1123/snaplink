@@ -33,6 +33,13 @@ type RevokeDeps interface {
 	// everywhere" into every standing trusted-device grant for the caller —
 	// see revokeTrustedDevicesOnRevokeAll.
 	TrustedDeviceStore() core.TrustedDeviceStore
+
+	// IntrospectionCache returns the optional token introspection cache so
+	// HandleRevoke can evict the just-revoked token's cached result
+	// immediately (best-effort — see InvalidateIntrospectionCache). Nil
+	// disables both the cache and this eviction, byte-identical to a build
+	// without caching.
+	IntrospectionCache() IntrospectionCache
 }
 
 // revokeRequest is the parsed body/form for HandleRevoke (RFC 7009),
@@ -92,6 +99,14 @@ func HandleRevoke(d RevokeDeps, ctx core.HandlerContext) {
 		revokeAccess(d, ctx, req.Token)
 		revokeRefresh(d, ctx, req.Token)
 	}
+
+	// Best-effort: evict any cached /token/introspect result for this exact
+	// presented token — whichever tier it turned out to be (access or
+	// refresh; the cache is keyed by the raw token regardless of type) — so
+	// a subsequent introspect doesn't serve a stale active:true out of the
+	// TTL window. No-op when caching is unwired or the backend doesn't
+	// support point-eviction. See InvalidateIntrospectionCache.
+	InvalidateIntrospectionCache(d.IntrospectionCache(), req.Token)
 
 	ctx.JSON(http.StatusOK, map[string]any{})
 }

@@ -122,10 +122,18 @@ type TxnTokenConfig struct {
 // verification (Phase 2+, not implemented). Default (Enabled=false) means
 // nothing is computed — byte-identical to a build without the feature.
 //
-// This section describes the shape an embedder's cmd wiring translates into
-// shared/trust constructors (WeightedComposite + the reference scorers) —
-// the reference sso-server binary does not auto-wire it; operators wanting
-// trust scoring today construct the scorers directly via the SDK.
+// The reference sso-server binary DOES auto-wire this section
+// (cmd/sso-server/serverbuildplatform.BuildTrustScorer, called from
+// wireTrustScoring): each cfg.Weights entry names a reference scorer built
+// from its own cfg.<Scorer> section into a trust.WeightedComposite, passed to
+// sso.WithTrustScorer. When anomaly.enabled, the ip_reputation and behavior
+// scorers read the SAME domains/anomaly stores (IPFailureCounter /
+// RecentLoginStore) the anomaly detectors already populate, through
+// composition-root adapters that reuse the anomaly.ip_salt hash space (one
+// shared IP-hash space, not a second one) — see BuildTrustScorer's doc for the
+// exact adapter shape. Embedders wanting a custom scorer instead of (or in
+// addition to) the reference set still construct it directly via the SDK and
+// call sso.WithTrustScorer themselves.
 type TrustConfig struct {
 	Enabled bool `yaml:"enabled"`
 

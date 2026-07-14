@@ -40,6 +40,22 @@ type PasswordPolicyValidator interface {
 	ValidatePassword(ctx context.Context, password string) error
 }
 
+// PasswordMaxAgeProvider is an OPTIONAL extension a PasswordPolicyValidator MAY
+// satisfy to expose its configured MaxAgeDays to the login-time password-expiry
+// gate (interfaces/sso rejectExpiredPassword). Kept separate from
+// ValidatePassword (a NEW-password strength/history check run at signup /
+// change-password time) because MaxAgeDays instead judges an EXISTING
+// credential's age at LOGIN time — a different call shape entirely, and one
+// that belongs at the composition/server layer (mirroring how
+// max_active_sessions is enforced in interfaces/sso, not baked into an
+// authenticator). Callers type-assert; a validator that doesn't implement it
+// makes the dimension a no-op, same as MaxAgeDays<=0.
+type PasswordMaxAgeProvider interface {
+	// PasswordMaxAgeDays returns the configured maximum password age in days,
+	// or 0 when the dimension is not enforced.
+	PasswordMaxAgeDays() int
+}
+
 // PasswordPolicyConfig carries the operator-configured password policy rules.
 // Zero values mean the corresponding rule is not enforced (backward compatible).
 type PasswordPolicyConfig struct {
@@ -49,7 +65,10 @@ type PasswordPolicyConfig struct {
 	RequireDigit   bool // require at least one digit
 	RequireSpecial bool // require at least one special character
 	MaxHistory     int  // number of previous passwords to check (0 = no history)
-	MaxAgeDays     int  // password maximum age in days (0 = no expiry)
+	// MaxAgeDays is the password maximum age in days (0 = no expiry).
+	// Enforced at LOGIN time, not here in ValidatePassword — see
+	// PasswordMaxAgeProvider and interfaces/sso's rejectExpiredPassword.
+	MaxAgeDays int
 }
 
 type passwordPolicyValidator struct {
@@ -60,6 +79,10 @@ type passwordPolicyValidator struct {
 func NewPasswordPolicyValidator(cfg PasswordPolicyConfig) PasswordPolicyValidator {
 	return &passwordPolicyValidator{cfg: cfg}
 }
+
+// PasswordMaxAgeDays implements PasswordMaxAgeProvider, exposing the
+// configured MaxAgeDays to the login-time password-expiry gate.
+func (v *passwordPolicyValidator) PasswordMaxAgeDays() int { return v.cfg.MaxAgeDays }
 
 func (v *passwordPolicyValidator) ValidatePassword(_ context.Context, password string) error {
 	if v.cfg.MinLength > 0 && len(password) < v.cfg.MinLength {

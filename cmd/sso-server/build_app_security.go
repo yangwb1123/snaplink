@@ -10,6 +10,7 @@ import (
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
+	"github.com/snaplink/sso/domains/threataction"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/cors"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -211,8 +212,10 @@ func (b *appBuilder) wireSecurityHeaders() {
 // wireGovernance appends the credential-rotation, config-audit, and break-glass
 // Options and builds their backing registry/store, leaving the loops for
 // startGovernanceWorkers. Each sub-wire is a no-op (byte-identical build) when
-// its config section is disabled.
-func (b *appBuilder) wireGovernance() error {
+// its config section is disabled. threatExec is the Active ITDR executor from
+// wireThreatAction (nil when threat_action is disabled), threaded through to
+// wireTokenAnomaly so tokenanomaly.Detector shares it with anomaly.Runner.
+func (b *appBuilder) wireGovernance(threatExec threataction.ThreatExecutor) error {
 	if err := b.wireCredentialRotation(); err != nil {
 		return err
 	}
@@ -227,8 +230,11 @@ func (b *appBuilder) wireGovernance() error {
 	if err := b.wireConditionalAccess(); err != nil {
 		return err
 	}
+	if err := b.wireTrustScoring(); err != nil {
+		return err
+	}
 	b.wireSessionTrustDecay()
-	if err := b.wireTokenAnomaly(); err != nil {
+	if err := b.wireTokenAnomaly(threatExec); err != nil {
 		return err
 	}
 	return b.wireDegradation()
@@ -243,8 +249,8 @@ func (b *appBuilder) wireGovernance() error {
 // recorder is Started here (pre-NewServer) so its drainer is alive before the
 // first event; it is Closed at shutdown. No-op (byte-identical build) when the
 // section is disabled.
-func (b *appBuilder) wireTokenAnomaly() error {
-	rec, detector, err := serverbuildplatform.BuildTokenAnomaly(b.cfg.TokenAnomaly, b.logger)
+func (b *appBuilder) wireTokenAnomaly(threatExec threataction.ThreatExecutor) error {
+	rec, detector, err := serverbuildplatform.BuildTokenAnomaly(b.cfg.TokenAnomaly, b.logger, threatExec)
 	if err != nil {
 		return fmt.Errorf("token anomaly: %w", err)
 	}
@@ -354,11 +360,13 @@ func (b *appBuilder) wireDegradation() error {
 }
 
 // wireCredentialRotation builds the rotation Registry + Scheduler (seeding the
-// webhook-HMAC rotator from the audit webhook signing secret) and wires the
-// Server's read access to the governance inventory.
+// webhook-HMAC rotator from the audit webhook signing secret, plus the OAuth
+// client-secret rotator when enabled) and wires the Server's read access to
+// the governance inventory.
 func (b *appBuilder) wireCredentialRotation() error {
 	reg, sched, err := serverbuildplatform.BuildCredentialRotation(
-		b.cfg.Rotation, []byte(b.cfg.Audit.Webhook.SigningSecret), b.logger, b.metricsRegistry)
+		b.cfg.Rotation, b.cfg.ClientSecretRotation, []byte(b.cfg.Audit.Webhook.SigningSecret),
+		b.clientStore, b.logger, b.metricsRegistry)
 	if err != nil {
 		return fmt.Errorf("credential rotation: %w", err)
 	}

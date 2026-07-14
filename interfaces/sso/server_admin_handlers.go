@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/interfaces/admin"
+	"github.com/snaplink/sso/internal/adminuser"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/lifecycle/rotation"
 	"github.com/snaplink/sso/platform/sse"
@@ -61,6 +62,25 @@ func (s *Server) handleAdminListUserPasswordResetTokens(ctx HandlerContext) {
 }
 func (s *Server) handleAdminListUserEmailChangeTokens(ctx HandlerContext) {
 	admin.HandleAdminListUserEmailChangeTokens(s, ctx)
+}
+
+// Admin user CRUD — thin wrappers delegating to internal/adminuser/handlers.go.
+// The business logic + HTTP handlers live there (not in interfaces/admin/) to
+// keep the admin directory within its per-directory go-file fanout budget.
+func (s *Server) handleAdminCreateUser(ctx HandlerContext) {
+	adminuser.HandleAdminCreateUser(s, ctx)
+}
+func (s *Server) handleAdminGetUser(ctx HandlerContext) {
+	adminuser.HandleAdminGetUser(s, ctx)
+}
+func (s *Server) handleAdminUpdateUser(ctx HandlerContext) {
+	adminuser.HandleAdminUpdateUser(s, ctx)
+}
+func (s *Server) handleAdminDeleteUser(ctx HandlerContext) {
+	adminuser.HandleAdminDeleteUser(s, ctx)
+}
+func (s *Server) handleAdminListUsers(ctx HandlerContext) {
+	adminuser.HandleAdminListUsers(s, ctx)
 }
 
 // User-lifecycle state machine (admin) — thin wrappers; the state-machine +
@@ -355,6 +375,27 @@ func (s *Server) handleAdminApproveBreakGlass(ctx HandlerContext) {
 }
 func (s *Server) handleAdminImpersonateBreakGlass(ctx HandlerContext) {
 	admin.HandleImpersonateBreakGlass(s, ctx)
+}
+
+// mountAdminBreakGlass registers the break-glass (emergency support) admin
+// session lifecycle: create (bounded, audited on-behalf-of grant, reason
+// mandatory), list pending+active, revoke (cascades derived-session
+// destruction), approve (two-person rule — the approver must differ from the
+// creator), and impersonate (mint a live target-user bearer for an
+// active+approved impersonate/escalate grant, bounded by the grant TTL).
+// Mounted only when a BreakGlassStore is wired — byte-identical without it.
+// GET is admin:read; POST/DELETE are admin:write via the default
+// AdminMiddleware method-scope rule. Relocated from server_routes_admin.go
+// (which was at its line budget) to sit beside the handlers it wires.
+func (s *Server) mountAdminBreakGlass(api Router) {
+	if s.breakGlassStore == nil {
+		return
+	}
+	api.POST(PathAdminBreakGlass, s.handleAdminCreateBreakGlass)
+	api.GET(PathAdminBreakGlass, s.handleAdminListBreakGlass)
+	api.DELETE(PathAdminBreakGlassByID, s.handleAdminRevokeBreakGlass)
+	api.POST(PathAdminBreakGlassApprove, s.handleAdminApproveBreakGlass)
+	api.POST(PathAdminBreakGlassImpersonate, s.handleAdminImpersonateBreakGlass)
 }
 
 // handleAdminLogout revokes the admin bearer token used in the current

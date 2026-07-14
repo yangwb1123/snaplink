@@ -13,10 +13,12 @@ import (
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	"github.com/snaplink/sso/cmd/sso-server/serverwebauthn"
+	"github.com/snaplink/sso/domains/anomaly"
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/domains/authenticators/webauthn"
 	webauthnsqlite "github.com/snaplink/sso/domains/authenticators/webauthnsqlite"
 	"github.com/snaplink/sso/domains/region"
+	"github.com/snaplink/sso/domains/threataction"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/middleware"
@@ -389,10 +391,11 @@ func (b *appBuilder) wireMFAProvider() error {
 }
 
 // wireAnomaly wires the async behavioral-detection pipeline (off the request
-// hot path) plus its SQLite readiness checks.
-func (b *appBuilder) wireAnomaly() error {
+// hot path) plus its SQLite readiness checks. threatExec is the Active ITDR
+// executor from wireThreatAction (nil when threat_action is disabled).
+func (b *appBuilder) wireAnomaly(threatExec threataction.ThreatExecutor) error {
 	cfg, logger := b.cfg, b.logger
-	anomalyRT, err := buildAnomaly(cfg.Anomaly, b.recorder, b.metricsRegistry, logger)
+	anomalyRT, err := buildAnomaly(cfg.Anomaly, b.recorder, b.metricsRegistry, logger, threatExec)
 	if err != nil {
 		return fmt.Errorf("anomaly: %w", err)
 	}
@@ -419,5 +422,40 @@ func (b *appBuilder) wireAnomaly() error {
 		"recent_login_backend", cfg.Anomaly.RecentLogin.Backend,
 		"ip_failure_backend", cfg.Anomaly.IPFailure.Backend,
 	)
+	return nil
+}
+
+// wireTrustScoring builds the Zero Trust Framework Phase 1 composite trust
+// scorer (trust.enabled) and wires sso.WithTrustScorer. Called from
+// wireGovernance, AFTER wireAnomaly has already populated b.anomalyRT (nil
+// when anomaly.enabled=false), so the ip_reputation/behavior scorers can read
+// the SAME anomaly stores the anomaly detectors populate — through the
+// composition-root adapters in serverbuildplatform.BuildTrustScorer — rather
+// than a second, disconnected data source. The score is ADVISORY-only: it is
+// only consulted at /auth/login once access_policies.enforce is ALSO true
+// (see docs/config-reference.md's "Trust Scoring" section). No-op
+// (byte-identical build) when trust.enabled is false.
+func (b *appBuilder) wireTrustScoring() error {
+	cfg := b.cfg
+	ipSalt, err := decodeAnomalySalt(cfg.Anomaly.IPSalt)
+	if err != nil {
+		return fmt.Errorf("trust: anomaly.ip_salt: %w", err)
+	}
+	var ipFailCounter anomaly.IPFailureCounter
+	var recentStore anomaly.RecentLoginStore
+	if b.anomalyRT != nil {
+		ipFailCounter = b.anomalyRT.ipFailCounter
+		recentStore = b.anomalyRT.recentStore
+	}
+	scorer, err := serverbuildplatform.BuildTrustScorer(cfg.Trust, ipFailCounter, recentStore, ipSalt, b.metricsRegistry)
+	if err != nil {
+		return fmt.Errorf("trust scoring: %w", err)
+	}
+	if scorer == nil {
+		return nil
+	}
+	b.opts = append(b.opts, sso.WithTrustScorer(scorer))
+	b.logger.Info("trust scoring enabled — composite advisory score computed at /auth/login",
+		"scorers", len(cfg.Trust.Weights))
 	return nil
 }

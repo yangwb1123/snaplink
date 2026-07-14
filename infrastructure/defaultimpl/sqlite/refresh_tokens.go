@@ -331,6 +331,46 @@ func (s *RefreshTokenStore) DeleteFamily(ctx context.Context, familyID string) (
 	return int(n), nil
 }
 
+// ListExpiring implements [oauth.RefreshTokenExpiryLister] — see the
+// oauthspi doc for the oracle-safety contract (thumbprint only, never the
+// raw token). Filters to ACTIVE rows (expires_at >= now, mirroring
+// RefreshToken.IsExpired's "now > ExpiresAt" boundary) whose expiry falls at
+// or before `before`, soonest-first via the existing
+// idx_refresh_tokens_expires_at index. limit <= 0 returns every matching row.
+func (s *RefreshTokenStore) ListExpiring(ctx context.Context, before time.Time, limit int) ([]oauth.RefreshTokenExpiry, error) {
+	query := `
+        SELECT token, user_id, client_id, expires_at
+        FROM refresh_tokens
+        WHERE expires_at >= ? AND expires_at <= ?
+        ORDER BY expires_at ASC`
+	args := []any{time.Now().UnixNano(), before.UnixNano()}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: list expiring refresh tokens: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []oauth.RefreshTokenExpiry
+	for rows.Next() {
+		var token, userID, clientID string
+		var expiresAtUnixNs int64
+		if err := rows.Scan(&token, &userID, &clientID, &expiresAtUnixNs); err != nil {
+			return nil, fmt.Errorf("sqlite: scan expiring refresh token: %w", err)
+		}
+		out = append(out, oauth.RefreshTokenExpiry{
+			Thumbprint: oauth.RefreshTokenThumbprint(token),
+			UserID:     userID,
+			ClientID:   clientID,
+			ExpiresAt:  time.Unix(0, expiresAtUnixNs).UTC(),
+		})
+	}
+	return out, rows.Err()
+}
+
 func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 	var (
 		out                                        oauth.RefreshToken
@@ -415,4 +455,5 @@ var (
 	_ oauth.RefreshTokenFamilyTracker   = (*RefreshTokenStore)(nil)
 	_ oauth.RefreshTokenClientPurger    = (*RefreshTokenStore)(nil)
 	_ oauth.RefreshTokenRotationLimiter = (*RefreshTokenStore)(nil)
+	_ oauth.RefreshTokenExpiryLister    = (*RefreshTokenStore)(nil)
 )
