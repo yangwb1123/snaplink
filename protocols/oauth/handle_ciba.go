@@ -367,7 +367,16 @@ func NewCIBAPushNotifier(
 	opts ...CIBAPushNotifierOption,
 ) oauthspi.CIBAPushNotifier {
 	n := &cibaPushNotifier{
-		client:         &http.Client{Timeout: DefaultCIBAPushTimeout},
+		// Redirect-follow is disabled: a registered delivery URI that 302s to
+		// an internal/non-https target would otherwise bypass validatePushURI's
+		// https-only gate (same redirect-to-internal SSRF class as CAEP/SAML/
+		// backchannel-logout). Treat the resolved URI as authoritative and
+		// never follow redirects — a 3xx response fails doPush's 2xx check
+		// like any other non-2xx status, feeding the existing retry/dead-letter path.
+		client: &http.Client{
+			Timeout:       DefaultCIBAPushTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 		getDeliveryURI: getDeliveryURI,
 		maxRetries:     DefaultCIBAPushMaxRetries,
 		logger:         spi.NopLogger{},

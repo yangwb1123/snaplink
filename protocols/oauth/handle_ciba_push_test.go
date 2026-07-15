@@ -149,6 +149,77 @@ func TestCIBAPushNotifier_Timeout(t *testing.T) {
 	}
 }
 
+// TestCIBAPushNotifier_DefaultClientBlocksRedirects proves NewCIBAPushNotifier's
+// own default client (no WithCIBAPushHTTPClient override) carries a
+// CheckRedirect that treats any 3xx as terminal. Without this, a compromised
+// or malicious registered delivery URI could pass validatePushURI's
+// https-only gate and then 302 to an internal or non-https target, and Go's
+// default http.Client would silently follow it (SSRF via redirect).
+func TestCIBAPushNotifier_DefaultClientBlocksRedirects(t *testing.T) {
+	t.Parallel()
+	n := NewCIBAPushNotifier(func(context.Context, string) (string, error) { return "https://example.test", nil })
+	pn, ok := n.(*cibaPushNotifier)
+	if !ok {
+		t.Fatalf("NewCIBAPushNotifier returned %T, want *cibaPushNotifier", n)
+	}
+	if pn.client.CheckRedirect == nil {
+		t.Fatal("default client has no CheckRedirect: a 3xx delivery response would be silently followed")
+	}
+	if err := pn.client.CheckRedirect(nil, nil); err != http.ErrUseLastResponse {
+		t.Fatalf("CheckRedirect(...) = %v, want http.ErrUseLastResponse", err)
+	}
+}
+
+// TestCIBAPushNotifier_DoesNotFollowRedirect proves the no-redirect policy
+// holds end to end on NewCIBAPushNotifier's OWN default client (no
+// WithCIBAPushHTTPClient override) — not a manually reconstructed one — so
+// this actually pins the production code path: an https delivery endpoint
+// that 302s to a second server must never have that second server
+// contacted, and the push attempt must be treated as a failure exactly like
+// any other non-2xx response (mirrors TestCIBAPushNotifier_FailureRecordsDeadLetter,
+// swapping the redirect in for the 500). The redirect target is a plain
+// HTTP server (not TLS) so that "never contacted" is unambiguous — it can't
+// be confused with an unrelated TLS-trust failure from dialing a second
+// self-signed server.
+func TestCIBAPushNotifier_DoesNotFollowRedirect(t *testing.T) {
+	t.Parallel()
+	var redirectTargetHit bool
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirectTargetHit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer redirectTarget.Close()
+
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirectTarget.URL, http.StatusFound)
+	}))
+	defer ts.Close()
+
+	dl := &memPushDeadLetterStore{}
+	n := NewCIBAPushNotifier(
+		func(context.Context, string) (string, error) { return ts.URL, nil },
+		WithCIBAPushDeadLetterStore(dl),
+		WithCIBAPushMaxRetries(0), // single attempt: fast test, no backoff
+	)
+	// Borrow ONLY ts.Client()'s Transport (the self-signed cert trust) so the
+	// request can reach ts at all; leave CheckRedirect exactly as
+	// NewCIBAPushNotifier constructed it — that field is the actual thing
+	// under test here.
+	pn := n.(*cibaPushNotifier)
+	pn.client.Transport = ts.Client().Transport
+	payload := oauthspi.PushPayload{AuthReqID: "areq-7", AccessToken: "AT7"}
+	err := n.NotifyPush(context.Background(), "rp", "areq-7", "tok", payload)
+	if err == nil {
+		t.Fatal("expected delivery error: a 3xx response must not be treated as success")
+	}
+	if redirectTargetHit {
+		t.Fatal("redirect target received a request: CheckRedirect failed to block the follow")
+	}
+	if dl.count() != 1 {
+		t.Fatalf("dead-letter records = %d, want 1", dl.count())
+	}
+}
+
 // TestCIBAPushNotifier_NoEndpointIsNoOp proves a client with no registered
 // delivery endpoint degrades silently (nil, no dead-letter) — mirroring
 // CIBAPingNotifier's "client uses poll instead" contract.
