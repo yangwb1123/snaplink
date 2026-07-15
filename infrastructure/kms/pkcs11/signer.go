@@ -158,6 +158,13 @@ type Signer struct {
 	// the mu-guarded cache for a uniform code path.
 	suppliedPub crypto.PublicKey
 
+	// keyID is this signer's own kid (see WithKeyID, origin.go), set once at
+	// construction and never mutated afterward -- like keyHandle, safe to
+	// read without a lock. Empty means "not configured": KeyOrigin then has
+	// nothing to compare a caller's kid against and answers for any kid
+	// (the pre-WithKeyID behavior), rather than false-rejecting every call.
+	keyID string
+
 	// keyOrigin/originLoaded/originOverride implement core.KeyOriginProvider
 	// (see KeyOrigin, origin.go). originMu is deliberately separate from mu
 	// (the public-key cache lock above): a KeyOrigin call must never block

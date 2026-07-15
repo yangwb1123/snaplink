@@ -793,3 +793,58 @@ func TestWithKeyOriginOverridesAutoDetection(t *testing.T) {
 		t.Fatalf("KeyOriginAttrs called %d times, want 0 -- an explicit override must skip the token round-trip entirely", calls)
 	}
 }
+
+// TestKeyOrigin_UnknownKidReturnsUnknown proves a kid that doesn't match
+// this signer's own configured kid (WithKeyID) reports OriginUnknown
+// without touching the token -- mirroring the awskms/gcpkms/azurekeyvault
+// peers, all of which reject a foreign kid the same way. Backend-drift
+// regression: this signer previously ignored kid entirely and would
+// misattribute a query about a DIFFERENT key to its own token's origin.
+func TestKeyOrigin_UnknownKidReturnsUnknown(t *testing.T) {
+	t.Parallel()
+	f := newFakeEC(t, elliptic.P256())
+	f.originAttrs = KeyOriginAttrs{Local: true, NeverExtractable: true}
+	s := mustSigner(t, f, nil, WithKeyID("my-key"))
+
+	got, err := s.KeyOrigin(context.Background(), "some-other-key")
+	if err != nil {
+		t.Fatalf("KeyOrigin: %v", err)
+	}
+	if got != core.OriginUnknown {
+		t.Fatalf("KeyOrigin(mismatched kid) = %v, want OriginUnknown", got)
+	}
+	if calls := f.originCalls.Load(); calls != 0 {
+		t.Fatalf("KeyOriginAttrs called %d times, want 0 -- a mismatched kid must not touch the token", calls)
+	}
+
+	// The signer's own kid still resolves normally.
+	got, err = s.KeyOrigin(context.Background(), "my-key")
+	if err != nil {
+		t.Fatalf("KeyOrigin (own kid): %v", err)
+	}
+	if got != core.OriginHSMGenerated {
+		t.Fatalf("KeyOrigin(own kid) = %v, want OriginHSMGenerated", got)
+	}
+}
+
+// TestKeyOrigin_NoKeyIDConfiguredAnswersAnyKid proves that when no WithKeyID
+// was supplied (the pre-existing NewSigner call shape, and any construction
+// where only CKA_ID bytes -- not a KeyLabel string -- located the key), kid
+// validation stays permissive: there is nothing to compare a caller's kid
+// against, so KeyOrigin answers for any kid rather than false-rejecting
+// every call. Backward-compatibility guard alongside the kid-mismatch test
+// above.
+func TestKeyOrigin_NoKeyIDConfiguredAnswersAnyKid(t *testing.T) {
+	t.Parallel()
+	f := newFakeEC(t, elliptic.P256())
+	f.originAttrs = KeyOriginAttrs{Local: true, NeverExtractable: true}
+	s := mustSigner(t, f, nil) // no WithKeyID
+
+	got, err := s.KeyOrigin(context.Background(), "whatever-kid-a-caller-passes")
+	if err != nil {
+		t.Fatalf("KeyOrigin: %v", err)
+	}
+	if got != core.OriginHSMGenerated {
+		t.Fatalf("KeyOrigin (no keyID configured) = %v, want OriginHSMGenerated (unconfigured kid must not reject)", got)
+	}
+}

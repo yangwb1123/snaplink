@@ -47,15 +47,34 @@ func WithKeyOrigin(origin core.KeyOrigin) Option {
 	}
 }
 
-// KeyOrigin implements core.KeyOriginProvider. An explicit WithKeyOrigin
-// value wins unconditionally and is never overwritten; otherwise the
-// token's private-key CKA_LOCAL / CKA_NEVER_EXTRACTABLE attributes are
-// queried once (via the Session) and the result is cached for the process
-// lifetime -- mirroring how awskms caches DescribeKey's Origin, gcpkms
-// caches ProtectionLevel, and azurekeyvault caches HsmPlatform, all
-// resolved lazily on first use rather than at construction (construction
-// must not touch the token). kid is unvalidated: like Public()/Sign(),
-// this is a per-signer, single-key implementation.
+// WithKeyID records the kid this signer's key is published under (e.g.
+// cfg.KeyLabel, the same string wiring code passes as the kid to
+// WithECDSAExternalSigner et al. -- see the package doc). KeyOrigin uses it
+// to reject a mismatched kid the way awskms/gcpkms/azurekeyvault reject a
+// kid that isn't their own keyID/keyName. Applied once at construction,
+// like every other Option. Leaving it unset (the zero value) preserves the
+// previous permissive behavior for callers that never told this signer its
+// own kid -- there is nothing to compare against, so KeyOrigin cannot tell
+// a foreign kid from its own and answers for any kid, exactly as Public()/
+// Sign() also do not take a kid.
+func WithKeyID(kid string) Option {
+	return func(s *Signer) { s.keyID = kid }
+}
+
+// KeyOrigin implements core.KeyOriginProvider. A kid that mismatches this
+// signer's own configured keyID (see WithKeyID) reports OriginUnknown
+// without touching the token or the origin cache -- core.KeyOriginProvider
+// is documented to answer per-kid (two keys, same issuer, different
+// origins), and the three cloud-KMS peers (awskms/gcpkms/azurekeyvault)
+// all reject a foreign kid the same way; this signer must not misattribute
+// a query about a DIFFERENT key to its own token's origin. An explicit
+// WithKeyOrigin value wins unconditionally and is never overwritten;
+// otherwise the token's private-key CKA_LOCAL / CKA_NEVER_EXTRACTABLE
+// attributes are queried once (via the Session) and the result is cached
+// for the process lifetime -- mirroring how awskms caches DescribeKey's
+// Origin, gcpkms caches ProtectionLevel, and azurekeyvault caches
+// HsmPlatform, all resolved lazily on first use rather than at
+// construction (construction must not touch the token).
 //
 // originMu is deliberately its own lock, separate from the public-key
 // cache's mu: a KeyOrigin call must never block behind an in-flight
@@ -63,7 +82,10 @@ func WithKeyOrigin(origin core.KeyOrigin) Option {
 // mutex rather than sync.Once so a transient attribute-read error is
 // retried on the next call instead of permanently poisoning the result to
 // OriginUnknown (see loadPublic's identical reasoning in signer.go).
-func (s *Signer) KeyOrigin(_ context.Context, _ string) (core.KeyOrigin, error) {
+func (s *Signer) KeyOrigin(_ context.Context, kid string) (core.KeyOrigin, error) {
+	if s.keyID != "" && kid != "" && kid != s.keyID {
+		return core.OriginUnknown, nil
+	}
 	s.originMu.Lock()
 	defer s.originMu.Unlock()
 	if s.originLoaded {

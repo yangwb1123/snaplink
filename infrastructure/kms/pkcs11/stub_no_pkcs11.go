@@ -33,6 +33,12 @@ func WithKeyOrigin(_ core.KeyOrigin) Option {
 	return func(*Signer) {}
 }
 
+// WithKeyID is a no-op placeholder mirroring the real Option's shape; a
+// no_pkcs11 build has no token to attest, so there is nothing to compare.
+func WithKeyID(_ string) Option {
+	return func(*Signer) {}
+}
+
 // Mechanism is a placeholder that mirrors the real type.
 type Mechanism int
 

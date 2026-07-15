@@ -168,7 +168,12 @@ func New(cfg Config, opts ...Option) (*Signer, error) {
 		rs.pubHandle = pubHandle
 	}
 
-	signer, err := NewSigner(rs, uint(privHandle), cfg.PublicKey, opts...)
+	// WithKeyID(cfg.KeyLabel) first so an explicit opts entry (unlikely, but
+	// consistent with how a later Option in the slice wins) can still
+	// override it. KeyLabel is empty when the key was located by KeyID bytes
+	// alone; KeyOrigin's kid check then stays unconfigured (see WithKeyID's
+	// doc), exactly the pre-existing permissive behavior for that setup.
+	signer, err := NewSigner(rs, uint(privHandle), cfg.PublicKey, append([]Option{WithKeyID(cfg.KeyLabel)}, opts...)...)
 	if err != nil {
 		return nil, err
 	}
