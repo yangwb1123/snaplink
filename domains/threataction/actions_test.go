@@ -264,3 +264,185 @@ func TestSuspendSessionExecutor_NoSessionManagerSkipsPublish(t *testing.T) {
 		// Expected: no event.
 	}
 }
+
+// fakeFamilyRevoker is a minimal in-package FamilyRevoker test double. No
+// Memory* implementation of this SPI lives at this layer (it's an
+// oauthspi.RefreshTokenFamilyTracker extension one layer up), mirroring
+// fakeSessionManager's rationale above.
+type fakeFamilyRevoker struct {
+	calls []string // familyIDs passed to DeleteFamily, in call order
+	count int
+	err   error
+}
+
+func (f *fakeFamilyRevoker) DeleteFamily(_ context.Context, familyID string) (int, error) {
+	f.calls = append(f.calls, familyID)
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.count, nil
+}
+
+// fakeSubjectRevoker is a minimal in-package SubjectRevoker test double,
+// mirroring fakeFamilyRevoker's rationale (the real
+// oauthspi.RefreshTokenSubjectIndex implementation lives one layer up, in
+// infrastructure/defaultimpl).
+type fakeSubjectRevoker struct {
+	subjectIDs []string
+	clientIDs  []string
+	count      int
+	err        error
+}
+
+func (f *fakeSubjectRevoker) DeleteAllForSubject(_ context.Context, subjectID, clientID string) (int, error) {
+	f.subjectIDs = append(f.subjectIDs, subjectID)
+	f.clientIDs = append(f.clientIDs, clientID)
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.count, nil
+}
+
+// TestRevokeFamilyExecutor_FamilyIDPresent_UsesFamilyPath proves a threat
+// carrying a FamilyID takes the original family-scoped path unchanged — even
+// when a SubjectRevoker is ALSO wired, the family path wins whenever both a
+// family tracker and a FamilyID are present, so the fallback never
+// shadows the existing behavior.
+func TestRevokeFamilyExecutor_FamilyIDPresent_UsesFamilyPath(t *testing.T) {
+	families := &fakeFamilyRevoker{count: 3}
+	subjects := &fakeSubjectRevoker{count: 99}
+	bus := clustermemory.New()
+	defer bus.Close()
+	sub, err := bus.Subscribe(context.Background())
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	exec := NewRevokeFamilyExecutor(families, subjects, bus)
+	threat := Threat{Type: "impossible_travel", SubjectID: "user1", ClientID: "client1", FamilyID: "fam1"}
+
+	result, err := exec.Execute(context.Background(), threat, ThreatPolicy{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("expected OK result, got %+v", result)
+	}
+	if len(families.calls) != 1 || families.calls[0] != "fam1" {
+		t.Fatalf("expected DeleteFamily(fam1) exactly once, got %v", families.calls)
+	}
+	if len(subjects.subjectIDs) != 0 {
+		t.Fatalf("subject fallback must not fire when FamilyID present + family tracker wired, got %v", subjects.subjectIDs)
+	}
+
+	select {
+	case evt := <-sub:
+		if evt.Kind != cluster.KindTokenRevoked {
+			t.Errorf("published kind = %q, want %q", evt.Kind, cluster.KindTokenRevoked)
+		}
+		if evt.Key != "fam1" {
+			t.Errorf("published key = %q, want %q", evt.Key, "fam1")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no cluster event published for revoke_family (family path)")
+	}
+}
+
+// TestRevokeFamilyExecutor_SubjectFallback_WhenFamilyIDEmpty proves the fix
+// for the P0 bug this executor shipped with: neither production caller
+// (anomaly.Runner, tokenanomaly.Detector) ever populates Threat.FamilyID, so
+// without this fallback revoke_family was a byte-identical permanent no-op.
+// A threat with an empty FamilyID now falls back to DeleteAllForSubject,
+// keyed on the threat's SubjectID + ClientID.
+func TestRevokeFamilyExecutor_SubjectFallback_WhenFamilyIDEmpty(t *testing.T) {
+	subjects := &fakeSubjectRevoker{count: 2}
+	bus := clustermemory.New()
+	defer bus.Close()
+	sub, err := bus.Subscribe(context.Background())
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	exec := NewRevokeFamilyExecutor(nil, subjects, bus)
+	threat := Threat{Type: "velocity_burst", SubjectID: "user2", ClientID: "client2"}
+
+	result, err := exec.Execute(context.Background(), threat, ThreatPolicy{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("expected OK result, got %+v", result)
+	}
+	if len(subjects.subjectIDs) != 1 || subjects.subjectIDs[0] != "user2" {
+		t.Fatalf("expected DeleteAllForSubject called with subject user2, got %v", subjects.subjectIDs)
+	}
+	if len(subjects.clientIDs) != 1 || subjects.clientIDs[0] != "client2" {
+		t.Fatalf("expected DeleteAllForSubject called with client client2, got %v", subjects.clientIDs)
+	}
+
+	select {
+	case evt := <-sub:
+		if evt.Kind != cluster.KindTokenRevoked {
+			t.Errorf("published kind = %q, want %q", evt.Kind, cluster.KindTokenRevoked)
+		}
+		if evt.Key != "user2" {
+			t.Errorf("published key = %q, want %q", evt.Key, "user2")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no cluster event published for revoke_family (subject fallback)")
+	}
+}
+
+// TestRevokeFamilyExecutor_NoCapabilityWired_NoOp proves today's exact no-op
+// result + detail message still holds — byte-identical to before the
+// SubjectRevoker fallback existed — when neither a family tracker nor a
+// subject revoker is wired. No bus event either.
+func TestRevokeFamilyExecutor_NoCapabilityWired_NoOp(t *testing.T) {
+	bus := clustermemory.New()
+	defer bus.Close()
+	sub, err := bus.Subscribe(context.Background())
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	exec := NewRevokeFamilyExecutor(nil, nil, bus)
+	result, err := exec.Execute(context.Background(), Threat{SubjectID: "user3", FamilyID: "fam3"}, ThreatPolicy{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.OK {
+		t.Fatalf("expected not-OK result, got %+v", result)
+	}
+	if result.Detail != "no family tracker or empty family ID" {
+		t.Errorf("Detail = %q, want unchanged no-op message", result.Detail)
+	}
+
+	select {
+	case evt := <-sub:
+		t.Fatalf("unexpected event published: %+v", evt)
+	case <-time.After(50 * time.Millisecond):
+		// Expected: no event.
+	}
+}
+
+// TestNotifyExecutor_Execute proves NotifyExecutor.Execute always succeeds
+// and reports the threat's type + subject in Detail. This executor had ZERO
+// test coverage in this file before this change.
+func TestNotifyExecutor_Execute(t *testing.T) {
+	exec := NewNotifyExecutor()
+	if got := exec.Name(); got != "notify" {
+		t.Fatalf("Name() = %q, want %q", got, "notify")
+	}
+	threat := Threat{Type: "new_device", SubjectID: "user4"}
+	result, err := exec.Execute(context.Background(), threat, ThreatPolicy{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.OK || result.Action != ActionNotify {
+		t.Fatalf("expected OK notify result, got %+v", result)
+	}
+	want := "notification recorded for threat new_device on subject user4"
+	if result.Detail != want {
+		t.Errorf("Detail = %q, want %q", result.Detail, want)
+	}
+}

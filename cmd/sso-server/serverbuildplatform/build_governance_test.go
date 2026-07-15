@@ -441,7 +441,7 @@ func TestBuildTokenAnomaly_EnabledCoWiresRecorderAndDetector(t *testing.T) {
 
 func TestBuildThreatAction_DisabledReturnsNil(t *testing.T) {
 	t.Parallel()
-	exec, store, err := BuildThreatAction(config.ThreatActionConfig{}, nil, nil, nil, nil, nil, govLogger())
+	exec, store, err := BuildThreatAction(config.ThreatActionConfig{}, nil, nil, nil, nil, nil, nil, govLogger())
 	if err != nil {
 		t.Fatalf("BuildThreatAction: %v", err)
 	}
@@ -463,7 +463,7 @@ func TestBuildThreatAction_EnabledSeedsPoliciesAndDispatches(t *testing.T) {
 			{Name: "critical-travel", Enabled: true, Type: "impossible_travel", Severity: "critical", Action: threataction.ActionNotify},
 		},
 	}
-	exec, store, err := BuildThreatAction(cfg, nil, nil, nil, nil, nil, govLogger())
+	exec, store, err := BuildThreatAction(cfg, nil, nil, nil, nil, nil, nil, govLogger())
 	if err != nil {
 		t.Fatalf("BuildThreatAction: %v", err)
 	}
@@ -498,7 +498,7 @@ func TestBuildThreatAction_ChallengeActionHasHandler(t *testing.T) {
 			{Name: "new-device-challenge", Enabled: true, Type: "new_device", Action: threataction.ActionChallenge},
 		},
 	}
-	exec, _, err := BuildThreatAction(cfg, nil, nil, nil, nil, nil, govLogger())
+	exec, _, err := BuildThreatAction(cfg, nil, nil, nil, nil, nil, nil, govLogger())
 	if err != nil {
 		t.Fatalf("BuildThreatAction: %v", err)
 	}
@@ -525,7 +525,7 @@ func TestBuildThreatAction_NilDependenciesStillBuildAndFailOpen(t *testing.T) {
 			{Name: "p", Enabled: true, Type: "velocity_burst", Action: threataction.ActionSuspend},
 		},
 	}
-	exec, _, err := BuildThreatAction(cfg, nil, nil, nil, nil, nil, govLogger())
+	exec, _, err := BuildThreatAction(cfg, nil, nil, nil, nil, nil, nil, govLogger())
 	if err != nil {
 		t.Fatalf("BuildThreatAction: %v", err)
 	}

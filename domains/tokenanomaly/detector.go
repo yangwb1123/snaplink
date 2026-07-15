@@ -7,6 +7,7 @@ import (
 
 	"github.com/snaplink/sso/domains/threataction"
 	"github.com/snaplink/sso/domains/tokenusage"
+	"github.com/snaplink/sso/shared/spi"
 )
 
 // Default tuning. All are relative/adaptive rather than absolute-rate
@@ -87,6 +88,12 @@ type Detector struct {
 	// token-anomaly findings into security actions. Nil (default) = no-op,
 	// byte-identical to current behavior.
 	threatExec threataction.ThreatExecutor
+
+	// logger records threatExec.Execute failures — see Analyze. Defaults to
+	// spi.NopLogger{} (never nil), mirroring anomaly.Runner's logger field so
+	// a threat-executor error is surfaced the same way on both detection
+	// sources instead of being silently dropped.
+	logger spi.Logger
 }
 
 // The Detector decorates a tokenusage.Store (forwarding Record/Query) and, when
@@ -170,6 +177,17 @@ func WithThreatExecutor(exec threataction.ThreatExecutor) Option {
 	return func(d *Detector) { d.threatExec = exec }
 }
 
+// WithLogger overrides the detector's logger (used to record threatExec
+// failures during Analyze). Nil is ignored, so the spi.NopLogger{} default
+// stands — mirrors anomaly.WithLogger.
+func WithLogger(l spi.Logger) Option {
+	return func(d *Detector) {
+		if l != nil {
+			d.logger = l
+		}
+	}
+}
+
 // NewDetector builds a Detector wrapping next and emitting to findings.
 // Returns nil when next is nil — every method on a nil *Detector is a safe
 // no-op, so callers can wire it unconditionally (mirrors
@@ -189,6 +207,7 @@ func NewDetector(next tokenusage.Store, findings FindingStore, opts ...Option) *
 		spikeFactor:   defaultSpikeFactor,
 		spikeMinCount: defaultSpikeMinCount,
 		clock:         time.Now,
+		logger:        spi.NopLogger{},
 	}
 	for _, opt := range opts {
 		opt(d)
@@ -357,9 +376,15 @@ func (d *Detector) Analyze(ctx context.Context) ([]Finding, error) {
 					"detail":           f.Detail,
 				},
 			}
-			// Execute fail-open: errors are silently dropped per the
-			// Active ITDR contract (never block detection sweep).
-			d.threatExec.Execute(ctx, threat, threataction.ThreatPolicy{})
+			// Execute fail-open: an error never blocks the detection sweep,
+			// but (mirroring anomaly.Runner.inspect) it IS logged — a silently
+			// discarded error here would leave an operator with no signal that
+			// their configured threat_action never actually fired.
+			if _, err := d.threatExec.Execute(ctx, threat, threataction.ThreatPolicy{}); err != nil {
+				d.logger.Error("threat executor failed",
+					"executor", d.threatExec.Name(),
+					"type", f.Type, "subject", f.SubjectID, "error", err)
+			}
 		}
 	}
 	return findings, firstErr

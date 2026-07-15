@@ -2,6 +2,7 @@ package tokenanomaly_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -141,6 +142,76 @@ func TestDetector_NilThreatExecutorIsNoop(t *testing.T) {
 	d, _, _ := newDetector(t, tokenanomaly.WithVelocityGap(5*time.Minute))
 	presentAt(t, d, "tpv", "c1", "US", base.Add(-3*time.Minute))
 	presentAt(t, d, "tpv", "c1", "AU", base.Add(-2*time.Minute))
+	if _, err := d.Analyze(context.Background()); err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+}
+
+// failingThreatExecutor always returns an error — used to prove Analyze
+// logs (rather than silently drops) a threatExec.Execute failure.
+type failingThreatExecutor struct {
+	err error
+}
+
+func (f *failingThreatExecutor) Name() string { return "failing" }
+func (f *failingThreatExecutor) Execute(_ context.Context, _ threataction.Threat, _ threataction.ThreatPolicy) (threataction.ActionResult, error) {
+	return threataction.ActionResult{}, f.err
+}
+
+// countingLogger is a real spi.Logger that tallies Error calls — mirrors
+// domains/anomaly's countingLogger test double (a plain in-package
+// recorder, no mock framework, per repo convention).
+type countingLogger struct {
+	mu      sync.Mutex
+	errMsgs []string
+}
+
+func (l *countingLogger) Info(_ string, _ ...any)  {}
+func (l *countingLogger) Debug(_ string, _ ...any) {}
+func (l *countingLogger) Error(msg string, _ ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.errMsgs = append(l.errMsgs, msg)
+}
+func (l *countingLogger) errorCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.errMsgs)
+}
+
+// TestDetector_ThreatExecutorErrorIsLogged proves Analyze routes a
+// threatExec.Execute failure through the detector's logger — mirroring
+// anomaly.Runner.inspect's equivalent behavior (domains/anomaly/runner.go) —
+// instead of silently discarding it, which left an operator with no signal
+// that a configured threat_action never actually fired.
+func TestDetector_ThreatExecutorErrorIsLogged(t *testing.T) {
+	lg := &countingLogger{}
+	exec := &failingThreatExecutor{err: errors.New("boom")}
+	d, _, _ := newDetector(t, tokenanomaly.WithThreatExecutor(exec), tokenanomaly.WithLogger(lg))
+	presentAt(t, d, "tp1", "c1", "US", base.Add(-6*time.Minute))
+	presentAt(t, d, "tp1", "c1", "DE", base.Add(-1*time.Minute))
+
+	found, err := d.Analyze(context.Background())
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if len(found) == 0 {
+		t.Fatal("expected at least one finding")
+	}
+	if lg.errorCount() != len(found) {
+		t.Fatalf("logger recorded %d errors, want %d (one per finding)", lg.errorCount(), len(found))
+	}
+}
+
+// TestDetector_ThreatExecutorErrorWithoutLoggerIsSafe proves Analyze never
+// panics on a threatExec.Execute failure when no WithLogger option was set —
+// the NopLogger default swallows it silently, preserving the fail-open
+// contract for a build that hasn't wired a custom logger.
+func TestDetector_ThreatExecutorErrorWithoutLoggerIsSafe(t *testing.T) {
+	exec := &failingThreatExecutor{err: errors.New("boom")}
+	d, _, _ := newDetector(t, tokenanomaly.WithThreatExecutor(exec))
+	presentAt(t, d, "tp2", "c1", "US", base.Add(-6*time.Minute))
+	presentAt(t, d, "tp2", "c1", "DE", base.Add(-1*time.Minute))
 	if _, err := d.Analyze(context.Background()); err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}

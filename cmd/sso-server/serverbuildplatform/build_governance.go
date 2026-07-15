@@ -266,11 +266,14 @@ func BuildDegradationManager(cfg config.DegradationConfig) (*sso.DegradationMana
 // (domains/threataction) when threat_action.enabled: a ThreatExecutors that
 // maps policy-selected actions to concrete handlers (suspend_session,
 // revoke_family, step_up_mfa, challenge, notify) plus the in-memory ThreatPolicyStore
-// seeded from cfg.Policies. sessionMgr/trustMgr/familyRevoker/bus are each
-// independently optional (nil-safe) — the caller resolves familyRevoker and
-// trustMgr via a type assertion against its refresh-token store / session
-// manager (both OPTIONAL extensions), so a build missing either still gets a
-// working executor for the actions it CAN support.
+// seeded from cfg.Policies. sessionMgr/trustMgr/familyRevoker/subjectRevoker/bus
+// are each independently optional (nil-safe) — the caller resolves
+// familyRevoker, subjectRevoker, and trustMgr via a type assertion against
+// its refresh-token store / session manager (all OPTIONAL extensions), so a
+// build missing any of them still gets a working executor for the actions it
+// CAN support. subjectRevoker is revoke_family's fallback for a threat with
+// no FamilyID — see threataction.SubjectRevoker's doc for why that's the
+// common case in production.
 //
 // Returns (nil, nil, nil) when disabled — byte-identical to a build without
 // the feature. The returned executor is the SAME instance the caller should
@@ -282,6 +285,7 @@ func BuildThreatAction(
 	sessionMgr core.SessionManager,
 	trustMgr core.SessionTrustManager,
 	familyRevoker threataction.FamilyRevoker,
+	subjectRevoker threataction.SubjectRevoker,
 	bus cluster.Bus,
 	recorder *audit.Recorder,
 	logger spi.Logger,
@@ -297,7 +301,7 @@ func BuildThreatAction(
 	}
 	handlers := map[threataction.Action]threataction.ThreatExecutor{
 		threataction.ActionSuspend:   threataction.NewSuspendSessionExecutor(sessionMgr, bus),
-		threataction.ActionRevoke:    threataction.NewRevokeFamilyExecutor(familyRevoker, bus),
+		threataction.ActionRevoke:    threataction.NewRevokeFamilyExecutor(familyRevoker, subjectRevoker, bus),
 		threataction.ActionStepUpMFA: threataction.NewStepUpMFAExecutor(trustMgr, sessionMgr),
 		threataction.ActionChallenge: threataction.NewChallengeExecutor(trustMgr, sessionMgr),
 		threataction.ActionNotify:    threataction.NewNotifyExecutor(),
@@ -337,7 +341,7 @@ func BuildTokenAnomaly(cfg config.TokenAnomalyConfig, logger spi.Logger, threatE
 	// aggregates into a bucket AND feeds the anomaly observation table.
 	store := tokenusagememory.New(usageStoreOptions(cfg)...)
 	findings := tokenanomalymemory.NewFindingStore(findingStoreOptions(cfg)...)
-	detector := tokenanomaly.NewDetector(store, findings, detectorOptions(cfg, threatExec)...)
+	detector := tokenanomaly.NewDetector(store, findings, detectorOptions(cfg, logger, threatExec)...)
 	rec := tokenusage.NewRecorder(detector, recorderOptions(cfg, logger)...)
 	return rec, detector, nil
 }
@@ -372,8 +376,11 @@ func recorderOptions(cfg config.TokenAnomalyConfig, logger spi.Logger) []tokenus
 // detectorOptions maps the optional detector-tuning knobs; each zero value is
 // left to the detector's adaptive package default (WithXxx ignores non-positive
 // inputs, so passing zeros is safe, but skipping them keeps intent explicit).
-func detectorOptions(cfg config.TokenAnomalyConfig, threatExec threataction.ThreatExecutor) []tokenanomaly.Option {
-	var opts []tokenanomaly.Option
+// The logger is always set so a threatExec.Execute failure surfaces on the
+// operator's configured logger rather than the NopLogger default, mirroring
+// recorderOptions' equivalent always-set logger.
+func detectorOptions(cfg config.TokenAnomalyConfig, logger spi.Logger, threatExec threataction.ThreatExecutor) []tokenanomaly.Option {
+	opts := []tokenanomaly.Option{tokenanomaly.WithLogger(logger)}
 	if threatExec != nil {
 		opts = append(opts, tokenanomaly.WithThreatExecutor(threatExec))
 	}

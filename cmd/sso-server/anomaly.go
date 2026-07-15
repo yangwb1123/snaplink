@@ -41,11 +41,13 @@ type anomalyRuntime struct {
 // wireThreatAction builds the Active ITDR composite executor + policy store
 // (threat_action.enabled) and wires sso.WithThreatExecutor / WithThreatPolicyStore.
 // Called from finalize() right after wireCluster — the earliest point at
-// which sessionMgr, refreshTokenStore (as a threataction.FamilyRevoker), and
-// the cluster Bus are ALL simultaneously available — so the returned executor
-// can also be handed to anomaly.Runner (wireAnomaly, called right after) and
-// tokenanomaly.Detector (wireGovernance -> wireTokenAnomaly): one shared
-// instance, one rate-limiter, one policy view for both detection sources.
+// which sessionMgr, refreshTokenStore (as a threataction.FamilyRevoker AND,
+// optionally, a threataction.SubjectRevoker — the fallback revoke_family
+// path used when a threat carries no FamilyID), and the cluster Bus are ALL
+// simultaneously available — so the returned executor can also be handed to
+// anomaly.Runner (wireAnomaly, called right after) and tokenanomaly.Detector
+// (wireGovernance -> wireTokenAnomaly): one shared instance, one
+// rate-limiter, one policy view for both detection sources.
 //
 // Returns (nil, nil) when disabled — byte-identical to a build without the
 // feature.
@@ -54,12 +56,16 @@ func (b *appBuilder) wireThreatAction(bus cluster.Bus) (threataction.ThreatExecu
 	if fr, ok := b.refreshTokenStore.(threataction.FamilyRevoker); ok {
 		familyRevoker = fr
 	}
+	var subjectRevoker threataction.SubjectRevoker
+	if sr, ok := b.refreshTokenStore.(threataction.SubjectRevoker); ok {
+		subjectRevoker = sr
+	}
 	var trustMgr core.SessionTrustManager
 	if tm, ok := b.sessionMgr.(core.SessionTrustManager); ok {
 		trustMgr = tm
 	}
 	exec, store, err := serverbuildplatform.BuildThreatAction(
-		b.cfg.ThreatAction, b.sessionMgr, trustMgr, familyRevoker, bus, b.recorder, b.logger)
+		b.cfg.ThreatAction, b.sessionMgr, trustMgr, familyRevoker, subjectRevoker, bus, b.recorder, b.logger)
 	if err != nil {
 		return nil, fmt.Errorf("threat action: %w", err)
 	}

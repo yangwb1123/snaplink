@@ -18,6 +18,25 @@ type FamilyRevoker interface {
 	DeleteFamily(ctx context.Context, familyID string) (int, error)
 }
 
+// SubjectRevoker is the minimal interface for subject-scoped refresh token
+// revocation — the fallback RevokeFamilyExecutor uses when a threat carries
+// no FamilyID. Neither anomaly.Runner (built from an anomaly.Signal, which
+// precedes token issuance) nor tokenanomaly.Detector (built from a
+// tokenanomaly.Finding, which has no family concept) ever populate
+// Threat.FamilyID today, so without this fallback revoke_family is a
+// permanent no-op in production. Defined locally (not importing
+// protocols/oauth/oauthspi) to keep the domain layer free of upward imports
+// toward protocols, exactly like FamilyRevoker above. Matches
+// oauthspi.RefreshTokenSubjectIndex's method signature exactly, so the same
+// production RefreshTokenStore instance that implements FamilyRevoker also
+// satisfies this without any adapter.
+type SubjectRevoker interface {
+	// DeleteAllForSubject removes every refresh token bound to
+	// (subjectID, clientID). Returns the count of deleted entries.
+	// Idempotent.
+	DeleteAllForSubject(ctx context.Context, subjectID, clientID string) (int, error)
+}
+
 // SuspendSessionExecutor suspends a user's sessions. It wraps a
 // core.SessionManager and best-effort suspends every active session
 // for the threat's SubjectID.
@@ -93,47 +112,92 @@ func (e *SuspendSessionExecutor) Execute(ctx context.Context, threat Threat, _ T
 // oauthspi.RefreshTokenFamilyTracker and deletes the entire family
 // identified by the threat's FamilyID.
 //
+// Neither production caller (anomaly.Runner, tokenanomaly.Detector) ever
+// populates Threat.FamilyID — a login event precedes token issuance, and a
+// token Finding has no family concept — so the family-scoped path alone
+// makes this executor a permanent no-op. subjects is the fallback: when
+// FamilyID is empty, Execute revokes every refresh token for the threat's
+// SubjectID instead, mirroring SuspendSessionExecutor's subject-scoped
+// design (broader than one family, but the only granularity available from
+// either detection source).
+//
 // FAIL-OPEN: a store error is returned but never blocks sibling actions.
 type RevokeFamilyExecutor struct {
 	families FamilyRevoker
+	subjects SubjectRevoker
 	bus      cluster.Bus
 }
 
 // NewRevokeFamilyExecutor builds a RevokeFamilyExecutor.
-// families may be nil; Execute is then a safe no-op (for builds
-// without refresh token tracking).
-func NewRevokeFamilyExecutor(families FamilyRevoker, bus cluster.Bus) *RevokeFamilyExecutor {
-	return &RevokeFamilyExecutor{families: families, bus: bus}
+// families and subjects may each independently be nil; Execute degrades to
+// whichever path(s) are wired, and is a safe no-op when neither is (for
+// builds without refresh token tracking).
+func NewRevokeFamilyExecutor(families FamilyRevoker, subjects SubjectRevoker, bus cluster.Bus) *RevokeFamilyExecutor {
+	return &RevokeFamilyExecutor{families: families, subjects: subjects, bus: bus}
 }
 
 // Name returns the executor identifier.
 func (e *RevokeFamilyExecutor) Name() string { return "revoke_family" }
 
-// Execute revokes the refresh token family identified by FamilyID.
-// Also publishes a KindTokenRevoked cluster bus event for cross-replica
-// propagation.
+// Execute revokes the refresh token family identified by FamilyID when one
+// is present and a family tracker is wired. Otherwise it falls back to
+// revoking every refresh token for the threat's SubjectID via the optional
+// SubjectRevoker extension — see the type doc for why this fallback exists.
+// Either path publishes a KindTokenRevoked cluster bus event for
+// cross-replica propagation.
 func (e *RevokeFamilyExecutor) Execute(ctx context.Context, threat Threat, _ ThreatPolicy) (ActionResult, error) {
-	if e.families == nil || threat.FamilyID == "" {
-		return ActionResult{Action: ActionRevoke, OK: false, Detail: "no family tracker or empty family ID"}, nil
+	if e.families != nil && threat.FamilyID != "" {
+		return e.revokeFamily(ctx, threat)
 	}
+	if e.subjects != nil && threat.SubjectID != "" {
+		return e.revokeSubject(ctx, threat)
+	}
+	return ActionResult{Action: ActionRevoke, OK: false, Detail: "no family tracker or empty family ID"}, nil
+}
+
+// revokeFamily is the original family-scoped path: unchanged behavior from
+// before the SubjectRevoker fallback existed.
+func (e *RevokeFamilyExecutor) revokeFamily(ctx context.Context, threat Threat) (ActionResult, error) {
 	count, err := e.families.DeleteFamily(ctx, threat.FamilyID)
 	if err != nil {
 		return ActionResult{Action: ActionRevoke, OK: false, Detail: err.Error()}, err
 	}
 	detail := fmt.Sprintf("revoked %d token(s) in family %s", count, threat.FamilyID)
-	// Best-effort cluster bus broadcast.
-	if e.bus != nil {
-		_ = e.bus.Publish(ctx, cluster.Event{
-			Kind: cluster.KindTokenRevoked,
-			Key:  threat.FamilyID,
-			Payload: map[string]string{
-				"threat_action": string(ActionRevoke),
-				"threat_type":   threat.Type,
-				"subject_id":    threat.SubjectID,
-			},
-		})
-	}
+	e.publishRevoked(ctx, threat, threat.FamilyID)
 	return ActionResult{Action: ActionRevoke, OK: true, Detail: detail}, nil
+}
+
+// revokeSubject is the fallback path for a threat with no FamilyID (or no
+// family tracker wired): it kills every refresh token the subject holds for
+// the threat's ClientID — empty ClientID mirrors DeleteAllForSubject's own
+// "every client" semantics.
+func (e *RevokeFamilyExecutor) revokeSubject(ctx context.Context, threat Threat) (ActionResult, error) {
+	count, err := e.subjects.DeleteAllForSubject(ctx, threat.SubjectID, threat.ClientID)
+	if err != nil {
+		return ActionResult{Action: ActionRevoke, OK: false, Detail: err.Error()}, err
+	}
+	detail := fmt.Sprintf("revoked %d refresh token(s) for subject %s", count, threat.SubjectID)
+	e.publishRevoked(ctx, threat, threat.SubjectID)
+	return ActionResult{Action: ActionRevoke, OK: true, Detail: detail}, nil
+}
+
+// publishRevoked best-effort broadcasts a KindTokenRevoked cluster event
+// keyed by key (the FamilyID on the family path, the SubjectID on the
+// subject-scoped fallback) so a peer replica's cache learns of the
+// revocation. Nil bus (no cluster coordination wired) is a safe no-op.
+func (e *RevokeFamilyExecutor) publishRevoked(ctx context.Context, threat Threat, key string) {
+	if e.bus == nil {
+		return
+	}
+	_ = e.bus.Publish(ctx, cluster.Event{
+		Kind: cluster.KindTokenRevoked,
+		Key:  key,
+		Payload: map[string]string{
+			"threat_action": string(ActionRevoke),
+			"threat_type":   threat.Type,
+			"subject_id":    threat.SubjectID,
+		},
+	})
 }
 
 // StepUpMFAExecutor tags a user's sessions for MFA step-up on the
