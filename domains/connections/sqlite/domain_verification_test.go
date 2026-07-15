@@ -129,6 +129,48 @@ func TestSQLite_VerifyDomainOwnership_FailClosedOnStoreError(t *testing.T) {
 	}
 }
 
+// TestSQLite_Delete_PurgesDomainClaims proves Delete removes a connection's
+// domain-ownership claims (not just its routing + health rows), matching
+// MemoryStore.Delete's map cleanup. Without this, a stale VERIFIED claim
+// survives the delete and is silently inherited — without re-proving DNS
+// control — by a later connection reusing the same id, defeating
+// DomainVerificationRequired's anti-hijack guarantee for that case.
+func TestSQLite_Delete_PurgesDomainClaims(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newVerifiedStore(t)
+
+	if err := s.Upsert(ctx, &connections.Connection{ID: "acme", Domains: []string{"acme.com"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.VerifyDomain(ctx, "acme", "acme.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(ctx, "acme"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DomainClaim(ctx, "acme", "acme.com"); !errors.Is(err, connections.ErrNoDomainClaim) {
+		t.Fatalf("DomainClaim after delete = %v, want ErrNoDomainClaim (claim must not survive delete)", err)
+	}
+
+	// Recreate a connection under the SAME id + domain: the hardened mode must
+	// require FRESH DNS proof, not inherit the deleted connection's verified
+	// status via a leftover claims row.
+	if err := s.Upsert(ctx, &connections.Connection{ID: "acme", Domains: []string{"acme.com"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := s.DomainClaim(ctx, "acme", "acme.com")
+	if err != nil {
+		t.Fatalf("recreated connection should have a fresh claim: %v", err)
+	}
+	if claim.Status != connections.DomainPending {
+		t.Fatalf("recreated connection's claim = %q, want pending (must re-prove DNS control, not inherit stale verified state)", claim.Status)
+	}
+	if c, _ := connections.Resolve(ctx, s, "x@acme.com"); c != nil {
+		t.Fatalf("recreated connection must not auto-route on an unproven claim, got %+v", c)
+	}
+}
+
 // TestSQLite_DomainVerificationNotRequired_Unaffected confirms the default store
 // is byte-identical last-write-wins with auto-verified claims.
 func TestSQLite_DomainVerificationNotRequired_Unaffected(t *testing.T) {

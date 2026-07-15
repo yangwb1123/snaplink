@@ -199,6 +199,19 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM connection_domains WHERE connection_id = ?`, id); err != nil {
 		return fmt.Errorf("sqlite: delete domains: %w", err)
 	}
+	// Without this, a deleted connection's domain-ownership claims (including
+	// any VERIFIED one) survive in connection_domain_claims. Recreating a
+	// connection with the SAME id later (a plausible admin "reset connection"
+	// action) then hits ensureClaimTx's idempotent no-op branch — which finds
+	// the stale row and leaves it untouched — so the new connection silently
+	// inherits the old VERIFIED status without ever re-proving DNS control.
+	// That defeats DomainVerificationRequired's anti-hijack guarantee for the
+	// delete-then-recreate case. MemoryStore.Delete already purges the
+	// equivalent claims map on delete; this brings the sqlite backend to the
+	// same by-value, no-stale-state contract.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM connection_domain_claims WHERE connection_id = ?`, id); err != nil {
+		return fmt.Errorf("sqlite: delete domain claims: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM connection_health WHERE connection_id = ?`, id); err != nil {
 		return fmt.Errorf("sqlite: delete health: %w", err)
 	}
