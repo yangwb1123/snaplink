@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 
 	"layeh.com/radius"
@@ -322,17 +323,17 @@ func (e *radiusExchanger) radSecExchange(ctx context.Context, packet *radius.Pac
 	return resp, nil
 }
 
-// readFull reads exactly len(buf) bytes or returns an error. (net.Conn has no
-// io.ReadFull convenience; this keeps the RadSec framing self-contained without
-// pulling io into the hot signature.)
+// readFull reads exactly len(buf) bytes or returns an error. It delegates to
+// io.ReadFull rather than a hand-rolled "return as soon as Read yields any
+// err" loop: the io.Reader contract explicitly permits a Read to return its
+// FINAL chunk of data together with a non-nil error (e.g. io.EOF) in the SAME
+// call — a pattern a TLS stream can exercise when the peer's closing alert
+// arrives coalesced with the last application-data record. A naive loop that
+// returns the error immediately would discard a complete, authentic RADIUS
+// record and spuriously fail the login (or trip an unwarranted failover)
+// even though every byte of the reply was actually received. io.ReadFull
+// (via io.ReadAtLeast) handles this correctly: it only surfaces an error when
+// FEWER than len(buf) bytes were actually read.
 func readFull(c net.Conn, buf []byte) (int, error) {
-	got := 0
-	for got < len(buf) {
-		n, err := c.Read(buf[got:])
-		got += n
-		if err != nil {
-			return got, err
-		}
-	}
-	return got, nil
+	return io.ReadFull(c, buf)
 }

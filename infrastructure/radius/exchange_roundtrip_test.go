@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"encoding/pem"
 	"errors"
+	"io"
 	"math/big"
 	"net"
 	"sync"
@@ -584,6 +585,71 @@ func TestRoundTrip_RadSec_UndersizeLength_Rejected(t *testing.T) {
 
 	if accepted, _, err := ex.Exchange(context.Background(), "alice", "s3cret"); accepted || err == nil {
 		t.Fatalf("undersize RadSec length not rejected: accepted=%v err=%v", accepted, err)
+	}
+}
+
+// --- readFull: a final Read returning data + error together must NOT be lost -
+
+// chunkConn is a minimal net.Conn fake whose Read replays canned chunks. The
+// LAST chunk is returned together with a non-nil error in the SAME call — a
+// pattern the io.Reader contract explicitly permits (a Reader "may return the
+// (non-nil) error from the same call" that returns its final bytes), and one a
+// TLS stream can exercise when the peer's closing alert arrives coalesced with
+// the last application-data record. This proves readFull (exchange.go) does
+// NOT discard a fully-received RADIUS record just because the Read call that
+// completed it also carried an error.
+type chunkConn struct {
+	net.Conn // nil embed: only Read is exercised; any other call panics loudly
+	chunks   [][]byte
+	i        int
+	finalErr error
+}
+
+func (c *chunkConn) Read(p []byte) (int, error) {
+	if c.i >= len(c.chunks) {
+		return 0, io.EOF
+	}
+	chunk := c.chunks[c.i]
+	c.i++
+	n := copy(p, chunk)
+	if c.i == len(c.chunks) {
+		return n, c.finalErr
+	}
+	return n, nil
+}
+
+func TestReadFull_FinalReadCarriesDataAndError_NotLost(t *testing.T) {
+	t.Parallel()
+	want := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	conn := &chunkConn{
+		chunks:   [][]byte{want[:5], want[5:]},
+		finalErr: io.EOF, // the final chunk completes the read AND signals EOF
+	}
+
+	buf := make([]byte, len(want))
+	n, err := readFull(conn, buf)
+	if err != nil {
+		t.Fatalf("readFull err = %v, want nil (all %d bytes were fully received; io.EOF arriving alongside the final chunk must not be surfaced as a failure)", err, len(want))
+	}
+	if n != len(want) {
+		t.Fatalf("readFull n = %d, want %d", n, len(want))
+	}
+	if string(buf) != string(want) {
+		t.Fatalf("readFull buf = %v, want %v", buf, want)
+	}
+}
+
+// A genuinely short read (fewer than len(buf) bytes, ever) must still error —
+// the fix must not paper over a real truncation.
+func TestReadFull_GenuinelyShort_StillErrors(t *testing.T) {
+	t.Parallel()
+	conn := &chunkConn{
+		chunks:   [][]byte{{1, 2, 3}},
+		finalErr: io.EOF,
+	}
+	buf := make([]byte, 10)
+	if _, err := readFull(conn, buf); err == nil {
+		t.Fatal("readFull returned nil err on a genuinely truncated read (only 3 of 10 bytes ever arrived)")
 	}
 }
 
