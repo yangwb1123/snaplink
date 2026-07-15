@@ -53,12 +53,13 @@ Subcommands:
 
 Flags:
   --user   User ID to issue the temp token for (required for issue-temp).
-  --ttl    Token TTL (default: 5m).
+  --ttl    Requested token TTL (e.g. 5m, 1h). NOT currently enforced by the
+           server — the actual TTL is fixed by server config. Passing this
+           prints a warning rather than silently doing nothing.
 
 Examples:
   `+progName+` revoke tok_jti_abc123
   `+progName+` issue-temp --user=user123
-  `+progName+` issue-temp --user=user123 --ttl=15m
 `)
 }
 
@@ -91,10 +92,32 @@ func runRevoke(args []string) int {
 	return 0
 }
 
+// checkTTLFlag validates a raw --ttl value and warns that it has no
+// server-side effect. Returns 0 to continue, or a nonzero exit code the
+// caller should return immediately (invalid duration ⇒ 2).
+func checkTTLFlag(ttl string) int {
+	if ttl == "" {
+		return 0
+	}
+	if _, err := time.ParseDuration(ttl); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: invalid --ttl %q: %v\n", progName, ttl, err)
+		return 2
+	}
+	fmt.Fprintf(os.Stderr, "%s: warning: --ttl is not enforced by the server; the issued token's actual TTL is fixed by server config (see expiresAtUnix in the response below)\n", progName)
+	return 0
+}
+
 func runIssueTemp(args []string) int {
 	fs := flag.NewFlagSet("issue-temp", flag.ContinueOnError)
 	userID := fs.String("user", "", "user ID (required)")
-	ttl := fs.String("ttl", "5m", "token TTL (e.g. 5m, 1h)")
+	// NOTE: adminv1.IssueTempTokenRequest (proto/admin/v1/tokens.proto) has
+	// no ttl field, and the gRPC-gateway's protojson unmarshaler discards
+	// unknown JSON fields — so a "ttl" sent in the request body is silently
+	// ignored server-side; the server always applies its own configured
+	// TempTokenTTL (authenticators.temp_token.ttl, default 15m). --ttl is
+	// validated (so scripts get a clear error on garbage input) and then
+	// surfaced as a warning rather than silently pretending it took effect.
+	ttl := fs.String("ttl", "", "requested token TTL (e.g. 5m, 1h) — NOT currently enforced by the server; see the warning this prints")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -103,16 +126,13 @@ func runIssueTemp(args []string) int {
 		usage()
 		return 2
 	}
-	ttlDur, err := time.ParseDuration(*ttl)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: invalid --ttl %q: %v\n", progName, *ttl, err)
-		return 2
+	if code := checkTTLFlag(*ttl); code != 0 {
+		return code
 	}
 
 	client := apiclient.New()
 	resp, err := client.Post("/api/v1/admin/tokens/temp", map[string]any{
 		"user_id": *userID,
-		"ttl":     ttlDur.String(),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: issue-temp failed: %v\n", progName, err)

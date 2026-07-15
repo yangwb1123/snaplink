@@ -11,6 +11,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/snaplink/sso/cmd/sso-ctl/apiclient"
 )
@@ -60,6 +62,24 @@ Examples:
 `)
 }
 
+// clientListItem mirrors one entry of the admin gRPC-gateway's
+// ListClientsResponse.clients. Field names/types here MUST match the
+// gateway's actual wire shape, not the .proto's snake_case field names: the
+// gateway marshals with protojson defaults (camelCase, no UseProtoNames —
+// see grpc-gateway's defaultMarshaler), so "redirect_uris" never matches and
+// silently stays empty. There is also no tenant_id/grant_types field on the
+// Client message at all (see proto/admin/v1/clients.proto) — the closest
+// equivalent the server exposes is token_strategy.
+type clientListItem struct {
+	ID            string   `json:"id"`
+	Name          string   `json:"name,omitempty"`
+	Secret        string   `json:"secret,omitempty"`
+	TokenStrategy string   `json:"tokenStrategy,omitempty"`
+	RedirectURIs  []string `json:"redirectUris,omitempty"`
+	AllowedScopes []string `json:"allowedScopes,omitempty"`
+	Active        bool     `json:"active"`
+}
+
 func runList(args []string) int {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	format := fs.String("format", "json", "output format: json or table")
@@ -73,32 +93,32 @@ func runList(args []string) int {
 	}
 
 	var result struct {
-		Clients []struct {
-			ID          string `json:"id"`
-			Name        string `json:"name,omitempty"`
-			Secret      string `json:"secret,omitempty"`
-			TenantID    string `json:"tenant_id,omitempty"`
-			GrantTypes  string `json:"grant_types,omitempty"`
-			RedirectURI string `json:"redirect_uris,omitempty"`
-		} `json:"clients"`
+		Clients []clientListItem `json:"clients"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: parse response: %v\n", progName, err)
 		return 1
 	}
-
-	switch *format {
-	case "table":
-		header := []string{"ID", "Name", "TenantID", "GrantTypes"}
-		rows := make([][]string, 0, len(result.Clients))
-		for _, c := range result.Clients {
-			rows = append(rows, []string{c.ID, c.Name, c.TenantID, c.GrantTypes})
-		}
-		apiclient.WriteTable(header, rows)
-	default:
-		apiclient.WriteJSON(result.Clients)
-	}
+	printClients(*format, result.Clients)
 	return 0
+}
+
+// printClients renders the decoded client list in the requested format.
+func printClients(format string, clients []clientListItem) {
+	if format != "table" {
+		apiclient.WriteJSON(clients)
+		return
+	}
+	header := []string{"ID", "Name", "TokenStrategy", "RedirectURIs", "Active"}
+	rows := make([][]string, 0, len(clients))
+	for _, c := range clients {
+		rows = append(rows, []string{
+			c.ID, c.Name, c.TokenStrategy,
+			strings.Join(c.RedirectURIs, ","),
+			strconv.FormatBool(c.Active),
+		})
+	}
+	apiclient.WriteTable(header, rows)
 }
 
 // fetchList GETs an admin list endpoint and returns the response body.

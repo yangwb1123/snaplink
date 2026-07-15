@@ -63,6 +63,21 @@ Examples:
 `)
 }
 
+// sessionListItem mirrors one entry of the admin gRPC-gateway's
+// ListSessionsResponse.sessions. Field names/types here MUST match the
+// gateway's actual wire shape, not the .proto's snake_case field names: the
+// gateway marshals with protojson defaults (camelCase, no UseProtoNames), so
+// "user_id"/"created_at_unix"/"expires_at_unix" never match and silently
+// stay zero — every session used to print a blank UserID and "never"
+// expiry. protojson also renders int64 as a JSON string (to dodge JS
+// precision loss), hence the ",string" tag.
+type sessionListItem struct {
+	ID            string `json:"id"`
+	UserID        string `json:"userId"`
+	CreatedAtUnix int64  `json:"createdAtUnix,string"`
+	ExpiresAtUnix int64  `json:"expiresAtUnix,string"`
+}
+
 func runList(args []string) int {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	userID := fs.String("user", "", "filter by user ID")
@@ -81,35 +96,33 @@ func runList(args []string) int {
 	}
 
 	var result struct {
-		Sessions []struct {
-			ID            string `json:"id"`
-			UserID        string `json:"user_id"`
-			CreatedAtUnix int64  `json:"created_at_unix"`
-			ExpiresAtUnix int64  `json:"expires_at_unix"`
-		} `json:"sessions"`
+		Sessions []sessionListItem `json:"sessions"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: parse response: %v\n", progName, err)
 		return 1
 	}
-
-	switch *format {
-	case "table":
-		header := []string{"ID", "UserID", "Created", "Expires"}
-		rows := make([][]string, 0, len(result.Sessions))
-		for _, s := range result.Sessions {
-			rows = append(rows, []string{
-				s.ID,
-				s.UserID,
-				unixOrNever(s.CreatedAtUnix),
-				unixOrNever(s.ExpiresAtUnix),
-			})
-		}
-		apiclient.WriteTable(header, rows)
-	default:
-		apiclient.WriteJSON(result.Sessions)
-	}
+	printSessions(*format, result.Sessions)
 	return 0
+}
+
+// printSessions renders the decoded session list in the requested format.
+func printSessions(format string, sessions []sessionListItem) {
+	if format != "table" {
+		apiclient.WriteJSON(sessions)
+		return
+	}
+	header := []string{"ID", "UserID", "Created", "Expires"}
+	rows := make([][]string, 0, len(sessions))
+	for _, s := range sessions {
+		rows = append(rows, []string{
+			s.ID,
+			s.UserID,
+			unixOrNever(s.CreatedAtUnix),
+			unixOrNever(s.ExpiresAtUnix),
+		})
+	}
+	apiclient.WriteTable(header, rows)
 }
 
 // fetchList GETs an admin list endpoint and returns the response body.
