@@ -395,17 +395,17 @@ func (s *Server) applyInvalidation(ctx context.Context, evt cluster.Event) {
 		// replica's cached bundle so the sidecar's next pull re-renders.
 		s.invalidateAuthzPolicyBundleCacheLocal(evt.Key)
 	case cluster.KindSigningKeyRotation:
-		// A peer rotated its signing key: adopt the new kid verify-only now and
-		// DEFER the demoted kid's retirement to the carried deadline (only ever
-		// widening this replica's verify window — see coordinated_key_rotation.go).
+		// A peer rotated its signing key: adopt the new kid verify-only now,
+		// deferring the demoted kid's retirement (see coordinated_key_rotation.go).
 		// No-op unless WithCoordinatedKeyRotation armed this replica.
 		s.applyCoordinatedKeyRotation(ctx, evt)
 		s.InvalidateJWKSBodyCache()
 	case cluster.KindConnectionChange:
-		// evt.Key is the connID whose config changed. No per-replica connection
-		// cache exists yet; when one is added, evict evt.Key here. The arm must
-		// be present so a mixed-version cluster doesn't hit the default (unknown
-		// kind) branch during the rollout window.
+		// evt.Key is the connID whose config changed. No per-replica cache
+		// exists yet to evict; arm kept explicit vs. the default (unknown
+		// kind) branch for a mixed-version rollout.
+	case cluster.KindSessionSuspended:
+		s.applySessionSuspension(evt)
 	case cluster.KindTokenRevoked:
 		// A peer revoked an access token: ADD it to this replica's per-issuer
 		// in-process deny-set via the LOCAL-only revoke path (which never
@@ -420,6 +420,18 @@ func (s *Server) applyInvalidation(ctx context.Context, evt cluster.Event) {
 		// mixed-version cluster degrades gracefully during a rollout.
 	}
 }
+
+// applySessionSuspension handles KindSessionSuspended: evt.Key is the
+// subjectID whose session(s) SuspendSessionExecutor just destroyed. Per
+// KindSessionSuspended's doc (platform/cluster/bus.go), subscribers should
+// evict any locally cached session entry -- but no per-replica session
+// cache exists yet (every session check reads the authoritative
+// SessionManager store directly, e.g. mesh_authz.go's meshCheckSession and
+// introspectSessionActive), so there is nothing to invalidate today. This
+// arm exists so a mixed-version cluster doesn't fall through to
+// applyInvalidation's default (unknown kind) branch during a rollout; when
+// a per-replica session cache is added, evict evt.Key here.
+func (s *Server) applySessionSuspension(_ cluster.Event) {}
 
 // StartConfigDriftDetection begins the opt-in cross-replica config-digest
 // broadcast+compare loop (WithConfigDriftDetection). No-op (an
