@@ -119,6 +119,62 @@ func TestTokenExchange_HappyPath(t *testing.T) {
 	}
 }
 
+// TestTokenExchange_PropagatesSIDToAccessToken locks AGENTS.md §3 (RFC 9068
+// Claims): token-exchange propagates AuthTime+ACR+AMR+SID from the inbound
+// subject_token. The sibling refresh token (tokExIssueRefresh) and id_token
+// (tokExMintIDToken) outputs already carried the inbound sid; the primary
+// access token — always returned per RFC 8693 §2.2.1 — must carry the SAME
+// sid so a resource server correlating tokens by session sees one consistent
+// identifier across everything minted from this subject_token.
+func TestTokenExchange_PropagatesSIDToAccessToken(t *testing.T) {
+	srv := newTokenExchangeHarness(t, []string{txAPI})
+
+	loginBody, _ := json.Marshal(map[string]any{
+		"provider":   "password",
+		"client_id":  txClientID,
+		"credential": map[string]string{"username": "x", "password": "y"},
+		"scope":      []string{"read"},
+	})
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", strings.NewReader(string(loginBody)))
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	var lo map[string]any
+	_ = json.Unmarshal(raw, &lo)
+	subject, _ := lo["access_token"].(string)
+	if subject == "" {
+		t.Fatalf("no subject token: %s", raw)
+	}
+	sessionID, _ := lo["session_id"].(string)
+	if sessionID == "" {
+		t.Fatalf("no session_id in login response (precondition): %s", raw)
+	}
+	if sid, _ := decodeAccessTokenPayload(t, subject)["sid"].(string); sid != sessionID {
+		t.Fatalf("precondition failed: subject token sid=%q want %q", sid, sessionID)
+	}
+
+	status, body := postExchange(t, srv, url.Values{
+		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"client_id":          {txClientID},
+		"client_secret":      {txSecret},
+		"subject_token":      {subject},
+		"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
+		"resource":           {txAPI},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%v", status, body)
+	}
+	exchanged, _ := body["access_token"].(string)
+	if exchanged == "" {
+		t.Fatalf("no access_token in exchange response: %v", body)
+	}
+	if sid, _ := decodeAccessTokenPayload(t, exchanged)["sid"].(string); sid != sessionID {
+		t.Errorf("exchanged access token sid = %q, want %q (propagated from subject_token)", sid, sessionID)
+	}
+}
+
 func TestTokenExchange_ScopeNarrowing(t *testing.T) {
 	srv := newTokenExchangeHarness(t, nil)
 	subject := txLogin(t, srv, []string{"read", "write", "admin"})

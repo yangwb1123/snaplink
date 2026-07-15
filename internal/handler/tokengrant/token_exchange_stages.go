@@ -398,6 +398,14 @@ func tokExSubject(client *core.Client, st *tokExState) *core.Subject {
 		AuthTime: st.claims.AuthTime,
 		ACR:      st.claims.ACR,
 		AMR:      append([]string(nil), st.claims.AMR...),
+		// SID propagates from the original subject_token so the exchanged
+		// access token stays correlated with the SAME session as the
+		// subject_token it was minted from (AGENTS.md §3: token-exchange
+		// propagates AuthTime+ACR+AMR+SID). Without this the sibling
+		// refresh token (tokExIssueRefresh) and id_token (tokExMintIDToken)
+		// both carry the inbound sid while the primary access token —
+		// always returned, per RFC 8693 §2.2.1 — silently didn't.
+		SID: st.claims.SID,
 		// RFC 8693 §4.1 — when an actor_token is presented, the new token carries
 		// `act: {sub: <actor.sub>}`. Nil when no actor_token was supplied.
 		Actor: st.actor,
