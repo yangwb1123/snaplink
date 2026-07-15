@@ -45,7 +45,7 @@ func NewTopicPublisher(cfg Config) (*TopicPublisher, error) {
 // and by a raw payload instead of a marshaled cluster.Event.
 func (p *TopicPublisher) Publish(ctx context.Context, topic string, payload []byte) error {
 	clientID := p.cfg.ClientID + "-pub-" + randomSuffix()
-	client, err := dialConnect(ctx, p.cfg, clientID, true)
+	client, _, err := dialConnect(ctx, p.cfg, clientID, true, nil)
 	if err != nil {
 		return err
 	}

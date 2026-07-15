@@ -38,7 +38,7 @@ func (b *Bus) Publish(ctx context.Context, evt cluster.Event) error {
 	}
 
 	clientID := b.cfg.ClientID + "-pub-" + randomSuffix()
-	client, err := dialConnect(ctx, b.cfg, clientID, true)
+	client, _, err := dialConnect(ctx, b.cfg, clientID, true, nil)
 	if err != nil {
 		tracing.SetError(span, err)
 		return err

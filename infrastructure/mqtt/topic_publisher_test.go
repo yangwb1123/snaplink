@@ -39,7 +39,7 @@ func TestTopicPublisher_PublishToArbitraryTopic(t *testing.T) {
 	sub := newTestBus(t, addr, "topic-publisher-subscriber")
 	// Subscribe directly to the arbitrary per-receiver topic via a raw
 	// connection (Bus.Subscribe only listens on Config.Prefix).
-	client, err := dialConnect(context.Background(), sub.cfg, sub.cfg.ClientID, false)
+	client, _, err := dialConnect(context.Background(), sub.cfg, sub.cfg.ClientID, false, nil)
 	if err != nil {
 		t.Fatalf("dialConnect: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestTopicPublisher_DifferentTopicsDoNotCrossDeliver(t *testing.T) {
 	pub := newTestTopicPublisher(t, addr, "topic-publisher-2")
 	sub := newTestBus(t, addr, "topic-publisher-subscriber-2")
 
-	client, err := dialConnect(context.Background(), sub.cfg, sub.cfg.ClientID, false)
+	client, _, err := dialConnect(context.Background(), sub.cfg, sub.cfg.ClientID, false, nil)
 	if err != nil {
 		t.Fatalf("dialConnect: %v", err)
 	}

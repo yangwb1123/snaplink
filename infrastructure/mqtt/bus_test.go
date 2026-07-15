@@ -165,7 +165,7 @@ func TestBus_PublishGarbageTopicPayloadIsSkippedNotCrashed(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Publish garbage directly via a raw connection to the same topic.
-	client, connErr := dialConnect(context.Background(), rawPub.cfg, rawPub.cfg.ClientID+"-pub-raw", true)
+	client, _, connErr := dialConnect(context.Background(), rawPub.cfg, rawPub.cfg.ClientID+"-pub-raw", true, nil)
 	if connErr != nil {
 		t.Fatalf("dialConnect: %v", connErr)
 	}

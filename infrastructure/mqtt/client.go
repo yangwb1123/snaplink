@@ -20,23 +20,51 @@ import (
 // cleanStart=false) must never collide with a one-shot Publish
 // connection (a derived, per-call-unique ID, cleanStart=true).
 //
+// onPublishReceived, when non-nil, is registered via paho.ClientConfig
+// AT CONSTRUCTION — i.e. before Connect() starts the incoming/
+// routePublishPackets goroutines — rather than via the client's
+// AddOnPublishReceived method after Connect returns. This ordering
+// matters for a resumed persistent session (cleanStart=false): the
+// broker may flush QoS-1 messages queued during the disconnect gap the
+// instant CONNACK completes, and paho's routePublishPackets auto-acks
+// every message REGARDLESS of how many handlers are currently bound —
+// zero handlers means the message is silently dropped AND acknowledged
+// as delivered, so it is never redelivered. Passing the handler through
+// ClientConfig closes that registration-order race entirely. nil is
+// used for the one-shot Publish path, which has nothing to receive.
+//
 // The returned client has NO auto-reconnect and no OnClientError/
 // OnServerDisconnect retry logic of its own — connection loss is
 // reported solely via the returned Client's Done() channel, per
 // doc.go's "Reconnection" section. Callers own calling Disconnect.
-func dialConnect(ctx context.Context, cfg Config, clientID string, cleanStart bool) (*paho.Client, error) {
+//
+// The returned bool is the CONNACK's Session Present flag (MQTT v5
+// §3.2.2.1.1): true means the broker already had a live, non-expired
+// session for clientID (a resumed persistent session, cleanStart=false
+// only) — its subscriptions, if any, are ALREADY known to the broker.
+// Subscribe.go uses this to skip a redundant re-SUBSCRIBE on a resumed
+// session: besides being unnecessary, re-subscribing right as the broker
+// is flushing that session's queued QoS-1 backlog has been observed to
+// collide with at least one real broker's (mochi-mqtt) own PacketID
+// bookkeeping for the in-flight redelivery, spuriously failing the whole
+// reconnect and discarding an already-in-flight message.
+func dialConnect(ctx context.Context, cfg Config, clientID string, cleanStart bool, onPublishReceived func(paho.PublishReceived) (bool, error)) (*paho.Client, bool, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, cfg.ConnectTimeout)
 	defer cancel()
 
 	conn, err := dialConn(dialCtx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("mqttbus: dial %s: %w", cfg.BrokerAddr, err)
+		return nil, false, fmt.Errorf("mqttbus: dial %s: %w", cfg.BrokerAddr, err)
 	}
 
-	client := paho.NewClient(paho.ClientConfig{
+	clientCfg := paho.ClientConfig{
 		ClientID: clientID,
 		Conn:     conn,
-	})
+	}
+	if onPublishReceived != nil {
+		clientCfg.OnPublishReceived = []func(paho.PublishReceived) (bool, error){onPublishReceived}
+	}
+	client := paho.NewClient(clientCfg)
 
 	connectPacket := &paho.Connect{
 		ClientID:   clientID,
@@ -59,13 +87,13 @@ func dialConnect(ctx context.Context, cfg Config, clientID string, cleanStart bo
 	ca, err := client.Connect(dialCtx, connectPacket)
 	if err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("mqttbus: connect: %w", err)
+		return nil, false, fmt.Errorf("mqttbus: connect: %w", err)
 	}
 	if ca.ReasonCode != 0 {
 		_ = conn.Close()
-		return nil, fmt.Errorf("mqttbus: connect refused: reason code %d", ca.ReasonCode)
+		return nil, false, fmt.Errorf("mqttbus: connect refused: reason code %d", ca.ReasonCode)
 	}
-	return client, nil
+	return client, ca.SessionPresent, nil
 }
 
 // dialConn opens the raw transport (TLS when cfg.TLSConfig is set, plain

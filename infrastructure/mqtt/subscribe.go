@@ -53,15 +53,28 @@ func (b *Bus) Subscribe(ctx context.Context) (<-chan cluster.Event, error) {
 	return out, nil
 }
 
-// subscribeClient dials the persistent-session connection, wires the
-// inbound-message handler, and issues the MQTT SUBSCRIBE. Split out of
-// Subscribe for the function-length budget.
+// subscribeClient dials the persistent-session connection, wiring the
+// inbound-message handler IN THE CONNECT CALL (via dialConnect's
+// onPublishReceived parameter) rather than registering it afterward, then
+// issues the MQTT SUBSCRIBE — but ONLY when the broker did not already
+// report an existing session (Session Present). Split out of Subscribe for
+// the function-length budget.
+//
+// The handler must be bound before dialConnect returns — see dialConnect's
+// doc for why registering it after Connect (e.g. via a post-hoc
+// client.AddOnPublishReceived call) would race a resumed session's
+// immediately-flushed, queued QoS-1 messages and silently, permanently
+// lose them (auto-acked with zero handlers bound).
+//
+// Skipping the re-SUBSCRIBE on a resumed session (see dialConnect's doc on
+// its returned bool) is not just an optimization: reissuing it right as the
+// broker is flushing that same session's queued backlog has been observed,
+// against a real broker, to fail the SUBSCRIBE outright (a PacketID
+// collision with the broker's own in-flight redelivery bookkeeping) —
+// which would disconnect and discard the connection, losing the very
+// message this persistent session exists to redeliver.
 func (b *Bus) subscribeClient(ctx context.Context, out chan<- cluster.Event) (*paho.Client, error) {
-	client, err := dialConnect(ctx, b.cfg, b.cfg.ClientID, false)
-	if err != nil {
-		return nil, err
-	}
-	client.AddOnPublishReceived(func(pr paho.PublishReceived) (bool, error) {
+	onPublish := func(pr paho.PublishReceived) (bool, error) {
 		evt, ok := decodeEvent(pr.Packet.Payload)
 		if !ok {
 			return true, nil
@@ -75,7 +88,14 @@ func (b *Bus) subscribeClient(ctx context.Context, out chan<- cluster.Event) (*p
 			// peer's own documented drop behavior (platform/cluster/memory/bus.go).
 		}
 		return true, nil
-	})
+	}
+	client, sessionPresent, err := dialConnect(ctx, b.cfg, b.cfg.ClientID, false, onPublish)
+	if err != nil {
+		return nil, err
+	}
+	if sessionPresent {
+		return client, nil
+	}
 
 	if _, err := client.Subscribe(ctx, &paho.Subscribe{
 		Subscriptions: []paho.SubscribeOptions{{Topic: b.cfg.Prefix, QoS: *b.cfg.QoS}},
