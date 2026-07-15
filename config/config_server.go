@@ -90,6 +90,13 @@ type ServerConfig struct {
 	// mechanism — a deployment that never sets api_versioning: behaves
 	// byte-identically to today for every route.
 	APIVersioning APIVersioningConfig `yaml:"api_versioning"`
+
+	// HTTP2 controls HTTP/2 server-side support.
+	// nil = disabled (current default behavior via GODEBUG=http2server=0).
+	// When set to &HTTP2Config{Enabled: true}, HTTP/2 is enabled.
+	// Note: if the GODEBUG env var is already set explicitly, this field
+	// does not override it (explicit env var takes precedence).
+	HTTP2 *HTTP2Config `yaml:"http2,omitempty"`
 }
 
 // APIVersioningConfig is the YAML shape of ADR-0008's API versioning
@@ -154,6 +161,15 @@ type OperatorMetadataConfig struct {
 	PolicyURI            string `yaml:"policy_uri"`
 	TosURI               string `yaml:"tos_uri"`
 	ServiceDocumentation string `yaml:"service_documentation"`
+}
+
+// HTTP2Config controls HTTP/2 server-side support.
+// The zero value (Enabled=false) disables HTTP/2, matching the
+// current default behavior (GODEBUG=http2server=0). When Enabled
+// is true, HTTP/2 is active unless the GODEBUG env var is already
+// explicitly set (explicit env override takes precedence).
+type HTTP2Config struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // LoggingConfig controls the embedded logger.

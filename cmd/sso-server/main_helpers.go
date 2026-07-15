@@ -9,6 +9,8 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+
+	"github.com/snaplink/sso/config"
 )
 
 // progName prefixes every diagnostic so multi-binary deployments can
@@ -85,7 +87,12 @@ func writeAdminPasswordFile(path, password string) error {
 // running inside a container and no explicit env override is set. This
 // prevents CPU throttling jitter (GOMAXPROCS defaulting to host cores) and
 // OOM kills (GC seeing all host memory as available).
-func applyRuntimeTuning() {
+//
+// http2Cfg controls HTTP/2 server-side support. nil or {Enabled: false}
+// disables HTTP/2 via GODEBUG (current default). When Enabled is true,
+// HTTP/2 remains active unless GODEBUG is already explicitly set by the
+// operator (explicit env override takes precedence).
+func applyRuntimeTuning(http2Cfg *config.HTTP2Config) {
 	// GC target: 200% instead of the default 100% — fewer GC cycles
 	// under spiky token-issuance load. Respects explicit env override.
 	if os.Getenv("GOGC") == "" {
@@ -112,14 +119,20 @@ func applyRuntimeTuning() {
 		}
 	}
 
-	// Disable HTTP/2 server-side when running behind a reverse proxy.
-	// Envoy, NGINX, and OpenResty all speak HTTP/1.1 or HTTP/2
-	// frontend — the server-to-proxy hop gains nothing from h2 and the
-	// extra complexity (HPACK, stream priority, goroutine-per-stream)
-	// is pure overhead.
-	if os.Getenv("GODEBUG") == "" {
-		os.Setenv("GODEBUG", "http2server=0")
+	// HTTP/2 server-side control.
+	// When running behind a reverse proxy (Envoy, NGINX, OpenResty),
+	// the server-to-proxy hop gains nothing from h2 — disable it.
+	// When the operator explicitly enables HTTP/2 via config, leave
+	// it active unless GODEBUG was already set by the operator
+	// (explicit env override takes precedence).
+	if http2Cfg == nil || !http2Cfg.Enabled {
+		if os.Getenv("GODEBUG") == "" {
+			os.Setenv("GODEBUG", "http2server=0")
+		}
 	}
+	// If Enabled, do nothing — HTTP/2 stays on by default in Go's
+	// net/http unless GODEBUG=http2server=0 is set. The operator's
+	// explicit GODEBUG env var (set outside config) still wins.
 }
 
 // detectCgroupCPUQuota reads the cgroup CPU quota and returns the number of

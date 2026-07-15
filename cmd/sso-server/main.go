@@ -93,7 +93,7 @@ func main() {
 	}
 
 	// Go runtime tuning for consistent latency under load.
-	applyRuntimeTuning()
+	applyRuntimeTuning(cfg.Server.HTTP2)
 
 	tracingShutdown := initTracing(cfg, logger)
 	defer func() {
