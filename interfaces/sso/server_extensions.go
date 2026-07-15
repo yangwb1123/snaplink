@@ -83,6 +83,19 @@ func setBearerChallenge(ctx HandlerContext, realm, errorCode, errorDescription s
 // would be noise. Safe to call with a nil Recorder; uses audit.SetMeta so
 // geo + tenant middleware enrichment isn't clobbered.
 func (s *Server) auditPartialRevokeFailure(ctx HandlerContext, revoked, failed []string) {
+	s.auditPartialRevokeFailureCtx(ctx.Request().Context(), revoked, failed)
+}
+
+// auditPartialRevokeFailureCtx is auditPartialRevokeFailure's context.Context
+// variant, for callers with no HandlerContext to hang off — namely RevokeToken
+// (accessors_feature_gates.go), the admin.Deps method the break-glass impersonation
+// cascade uses to deny a bearer across every issuer. Without this, an issuer
+// that owns the bearer but fails to revoke it would silently leave the
+// partial-revoke-failure promise unaudited for THAT ONE call site, even though
+// every other revocation path (/token/revoke, /token/revoke-all, /logout, OIDC
+// end_session) already surfaces it. Same no-op-when-clean contract as the
+// HandlerContext variant.
+func (s *Server) auditPartialRevokeFailureCtx(ctx context.Context, revoked, failed []string) {
 	if s.auditor == nil || len(failed) == 0 {
 		return
 	}
@@ -93,7 +106,7 @@ func (s *Server) auditPartialRevokeFailure(ctx HandlerContext, revoked, failed [
 	}
 	audit.SetMeta(e, "revoked", strings.Join(revoked, ","))
 	audit.SetMeta(e, "failed", strings.Join(failed, ","))
-	s.auditor.Record(ctx.Request().Context(), e)
+	s.auditor.Record(ctx, e)
 }
 
 // maxSETBodyBytes bounds how much of an inbound SET body the receiver
