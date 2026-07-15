@@ -51,7 +51,7 @@ func TestMultiAlg_RSAIssuer_EndToEnd(t *testing.T) {
 				sso.WithUserProvider(users),
 				sso.WithClientStore(clients),
 				sso.WithAuthenticator(pwAuth),
-				sso.WithSessionManager(defaultimpl.NewMemorySessionManager(0)),
+				sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
 				sso.WithTokenIssuer("jwt", rsaIss),
 				sso.WithIDTokenIssuer(rsaIss),
 				sso.WithDefaultTokenStrategy("jwt"),

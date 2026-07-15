@@ -33,24 +33,15 @@ import (
 //     behavior is byte-identical to the pre-refactor inline handler.
 //   - the future Phase-B go-control-plane gRPC Authorization service — a
 //     SEPARATE nested module that builds a MeshAuthorizeRequest from the
-//     CheckRequest and reuses this EXACT validation + identity derivation,
-//     so go-control-plane never enters the core go.mod and the auth logic
-//     is never duplicated (a duplicated mesh-authz path is an auth-bypass
-//     risk — this seam is the single source of truth).
+//     CheckRequest and reuses this EXACT validation + identity derivation.
 //
-// SECURITY (AGENTS.md §2):
-//   - Sender-constraint preserved: a DPoP- or mTLS-bound token (cnf.jkt /
-//     cnf.x5t#S256) presented WITHOUT a matching proof / client cert is
-//     DENIED — a stolen sender-constrained token cannot replay as a plain
-//     bearer through the mesh.
-//   - Oracle-safe DENY: every validation failure collapses to one wire
-//     code (invalid_token); the missing-credentials case carries no
-//     error= (a bare challenge) exactly as /userinfo. No per-cause detail
-//     leaks; no X-Auth-* is derived on a denied request.
-//   - Edge-strip identity: every X-Auth-* is DERIVED here from the
-//     validated token; an inbound X-Auth-* is never trusted. The mesh MUST
-//     strip client-supplied X-Auth-* at ingress (same model as
-//     X-Forwarded-* / mtls.backend: header).
+// SECURITY:
+//   - Sender-constraint preserved: a DPoP- or mTLS-bound token presented
+//     WITHOUT a matching proof / client cert is DENIED.
+//   - Oracle-safe DENY: every validation failure collapses to invalid_token;
+//     the missing-credentials case carries a bare challenge (no error=).
+//   - Edge-strip identity: every X-Auth-* is DERIVED from the validated token;
+//     an inbound X-Auth-* is never trusted.
 
 // MeshAuthorizeRequest is the stdlib-typed, dependency-free request
 // abstraction MeshAuthorize operates on. It carries exactly enough request
@@ -118,22 +109,12 @@ type MeshAuthorizeResult struct {
 	DenyCode string
 
 	// DPoPNonce carries the fresh server-issued DPoP nonce (RFC 9449 §8/§9)
-	// on the ONE deny cause that is a protocol handshake rather than an
-	// authorization failure: a DPoP-bound token whose proof is missing/has a
-	// stale nonce while a nonce provider is wired. It is NON-empty ONLY in
-	// that nonce-required case, and it IS the signal for it (DPoPNonce != ""
-	// ⇒ the use_dpop_nonce handshake).
-	//
-	// This is deliberately NOT an oracle leak: the nonce + use_dpop_nonce is
-	// the standard DPoP nonce handshake the client MUST receive to reissue a
-	// nonce-bound proof — exactly what /userinfo and /token already emit in
-	// HTTP mode. Every OTHER deny cause still collapses to DenyCode alone
-	// (""|invalid_token) with no DPoPNonce, so binding/validity/residency
-	// remain non-probeable. The HTTP path does NOT consume this field (it
-	// replays challengeHeader verbatim, where stampDPoPNonce already wrote
-	// the same value), so HTTP-mode output stays byte-identical; only the
-	// gRPC transport reads DPoPNonce to surface the handshake header it
-	// cannot otherwise see (challengeHeader is unexported).
+	// on the ONE deny cause that is a protocol handshake (DPoP-bound token
+	// whose proof is missing a nonce while a nonce provider is wired). The
+	// HTTP path does NOT consume this field (it replays challengeHeader
+	// verbatim); only the gRPC transport reads it. Every other deny cause
+	// collapses to DenyCode alone — binding/validity/residency are
+	// non-probeable.
 	DPoPNonce string
 
 	// challengeHeader holds the response headers the existing
@@ -205,17 +186,7 @@ func (s *Server) MeshAuthorize(ctx context.Context, req MeshAuthorizeRequest) Me
 	// Sender-constraint: a bound token without a matching proof/cert collapses
 	// to the same invalid_token DENY — binding is not probeable.
 	if derr := s.verifyDPoPBearer(hctx, claims); derr != nil {
-		if errors.Is(derr, ErrDPoPNonceRequired) {
-			// RFC 9449 §8 handshake. Stamp + read back the nonce for the gRPC
-			// transport; the HTTP path replays challengeHeader (byte-identical).
-			s.stampDPoPNonce(hctx)
-			setBearerChallenge(hctx, s.resolveIssuer(hctx), ErrUseDPoPNonce, "Fresh DPoP nonce required")
-			res.DenyCode = ErrInvalidToken
-			res.DPoPNonce = rec.header.Get(HeaderDPoPNonce)
-			return res
-		}
-		s.logger.Error("mesh authorize dpop bearer verification failed", "error", derr, "subject", claims.Subject)
-		return s.meshDenyInvalidToken(hctx, res, "DPoP proof missing or thumbprint mismatch")
+		return s.meshHandleDPoPDeny(hctx, res, rec, derr, claims)
 	}
 	if merr := s.verifyMTLSBearer(hctx, claims); merr != nil {
 		s.logger.Error("mesh authorize mtls bearer verification failed", "error", merr, "subject", claims.Subject)
@@ -225,9 +196,50 @@ func (s *Server) MeshAuthorize(ctx context.Context, req MeshAuthorizeRequest) Me
 	if _, denied := s.residencyDeniedForAccess(hctx, claims); denied {
 		return s.meshDenyInvalidToken(hctx, res, "Access denied")
 	}
+	// Session-liveness check: when a token carries an sid claim AND a
+	// SessionManager is wired, verify the session is still active (oracle-safe
+	// invalid_token on failure). OPTIONAL — nil s.sessionMgr is the default.
+	if denied := s.meshCheckSession(hctx, ctx, claims, &res); denied {
+		return res
+	}
 	res.Allowed = true // ALLOW — derive identity from the validated token only
 	s.deriveMeshIdentity(ctx, claims, &res)
 	return res
+}
+
+// meshHandleDPoPDeny handles a DPoP verification failure. It distinguishes the
+// DPoP nonce handshake case (RFC 9449 §8, returns the updated res with the fresh
+// nonce) from other failures (returns the oracle-safe invalid_token DENY).
+func (s *Server) meshHandleDPoPDeny(hctx HandlerContext, res MeshAuthorizeResult, rec *meshHeaderRecorder, derr error, claims *TokenClaims) MeshAuthorizeResult {
+	if errors.Is(derr, ErrDPoPNonceRequired) {
+		s.stampDPoPNonce(hctx)
+		setBearerChallenge(hctx, s.resolveIssuer(hctx), ErrUseDPoPNonce, "Fresh DPoP nonce required")
+		res.DenyCode = ErrInvalidToken
+		res.DPoPNonce = rec.header.Get(HeaderDPoPNonce)
+		return res
+	}
+	s.logger.Error("mesh authorize dpop bearer verification failed", "error", derr, "subject", claims.Subject)
+	return s.meshDenyInvalidToken(hctx, res, "DPoP proof missing or thumbprint mismatch")
+}
+
+// meshCheckSession checks whether the session identified by claims.SID is still
+// active, collapsing every failure (storage error, not found, expired) to the
+// same oracle-safe invalid_token. Returns true when the request should be denied
+// (res is already populated with the DENY state); false when the session is
+// active or no session check applies (continue to ALLOW).
+func (s *Server) meshCheckSession(hctx HandlerContext, ctx context.Context, claims *TokenClaims, res *MeshAuthorizeResult) bool {
+	if claims.SID == "" || s.sessionMgr == nil {
+		return false
+	}
+	sess, err := s.sessionMgr.Get(ctx, claims.SID)
+	if err != nil || sess == nil || sess.IsExpired() {
+		if err != nil {
+			s.logger.Error("mesh authorize session check failed", "error", err, "sid", claims.SID, "subject", claims.Subject)
+		}
+		*res = s.meshDenyInvalidToken(hctx, *res, "Session no longer active")
+		return true
+	}
+	return false
 }
 
 // meshDenyInvalidToken emits the oracle-collapsed invalid_token DENY shared by

@@ -763,3 +763,100 @@ func mintDPoPBoundTokenWithNonce(t *testing.T, srv *httptest.Server, priv ed2551
 	}
 	return access
 }
+
+// TestMeshAuthorize_RevokedSession_DeniesInvalidToken is a regression test
+// for the session-liveness gate added to MeshAuthorize: a bearer token that
+// is otherwise perfectly valid (unexpired, correct signature) must still be
+// denied once the session it was minted under has been destroyed. Without
+// this check, revoking a session at /logout or via admin ListBySubject would
+// not actually cut off a mesh-side bearer until its JWT naturally expired.
+func TestMeshAuthorize_RevokedSession_DeniesInvalidToken(t *testing.T) {
+	sessMgr := defaultimpl.NewMemorySessionManager()
+	srv, _, login := newMeshAuthorizeServer(t, sso.WithSessionManager(sessMgr), sso.WithMeshExtAuthz(""))
+	bearer := login([]string{"openid"})
+
+	// Sanity: the fresh session allows.
+	res := srv.MeshAuthorize(context.Background(), sso.MeshAuthorizeRequest{
+		Method: http.MethodGet,
+		URL:    "https://sso.test" + sso.PathMeshExtAuthz,
+		Header: bearerHeader(bearer),
+	})
+	if !res.Allowed {
+		t.Fatalf("Allowed = false want true before revocation (deny=%q)", res.DenyCode)
+	}
+
+	sessions, err := sessMgr.ListByUser(context.Background(), meshUser)
+	if err != nil {
+		t.Fatalf("ListByUser: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("sessions for %q = %d, want 1", meshUser, len(sessions))
+	}
+	if err := sessMgr.Destroy(context.Background(), sessions[0].ID); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+
+	res = srv.MeshAuthorize(context.Background(), sso.MeshAuthorizeRequest{
+		Method: http.MethodGet,
+		URL:    "https://sso.test" + sso.PathMeshExtAuthz,
+		Header: bearerHeader(bearer),
+	})
+	if res.Allowed {
+		t.Fatalf("Allowed = true want false (session destroyed)")
+	}
+	if res.DenyCode != sso.ErrInvalidToken {
+		t.Errorf("DenyCode = %q want %q", res.DenyCode, sso.ErrInvalidToken)
+	}
+	if res.Subject != "" {
+		t.Errorf("Subject leaked on session-revoked deny: %q", res.Subject)
+	}
+}
+
+// TestMeshAuthorize_NoSIDClaim_SkipsSessionCheck covers a token whose claims
+// carry no sid (e.g. client_credentials, which has no session): the
+// liveness gate must be a no-op, not a spurious deny.
+func TestMeshAuthorize_NoSIDClaim_SkipsSessionCheck(t *testing.T) {
+	users := defaultimpl.NewMemoryUserProvider()
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{
+		ID: meshClient, Secret: meshSecret, Active: true,
+		GrantTypes:    []string{"client_credentials"},
+		TokenStrategy: "jwt",
+	})
+	srv := sso.NewServer(
+		sso.WithIssuer("https://sso.test"),
+		sso.WithUserProvider(users),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithClientStore(clients),
+		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer(
+			defaultimpl.WithEd25519Issuer("https://sso.test"),
+			defaultimpl.WithEd25519TokenTTL(time.Minute))),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithMeshExtAuthz(""),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	form := "grant_type=client_credentials&client_id=" + meshClient + "&client_secret=" + meshSecret
+	resp, err := http.Post(httpSrv.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form))
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	rb, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	var out map[string]any
+	_ = json.Unmarshal(rb, &out)
+	bearer, _ := out["access_token"].(string)
+	if bearer == "" {
+		t.Fatalf("no access_token: %s", rb)
+	}
+
+	res := srv.MeshAuthorize(context.Background(), sso.MeshAuthorizeRequest{
+		Method: http.MethodGet,
+		URL:    "https://sso.test" + sso.PathMeshExtAuthz,
+		Header: bearerHeader(bearer),
+	})
+	if !res.Allowed {
+		t.Fatalf("Allowed = false want true (no sid claim, session check must be a no-op; deny=%q)", res.DenyCode)
+	}
+}

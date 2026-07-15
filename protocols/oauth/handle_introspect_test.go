@@ -41,6 +41,10 @@ type introspectDeps struct {
 	// byte-identical behavior every other test in this file relies on.
 	signer       IntrospectionSigner
 	batchMaxSize int
+	// sessionMgr stands in for the session-liveness gate. Nil (the zero
+	// value every other test in this file relies on) reproduces the
+	// default-off, byte-identical behavior of an unwired SessionManager.
+	sessionMgr core.SessionManager
 }
 
 func (d *introspectDeps) ClientStoreAccessor() core.ClientStore     { return d.clients }
@@ -67,6 +71,7 @@ func (d *introspectDeps) IntrospectionRenewExceeded(ctx context.Context, clientI
 
 func (d *introspectDeps) IntrospectionSigner() IntrospectionSigner { return d.signer }
 func (d *introspectDeps) IntrospectionBatchMaxSize() int           { return d.batchMaxSize }
+func (d *introspectDeps) SessionManager() core.SessionManager      { return d.sessionMgr }
 
 var _ IntrospectDeps = (*introspectDeps)(nil)
 
@@ -361,6 +366,120 @@ func (f *fakeIntrospectionSigner) SignIntrospectionJWT(_ context.Context, claims
 }
 
 var _ IntrospectionSigner = (*fakeIntrospectionSigner)(nil)
+
+// TestHandleIntrospect_SessionLiveness covers introspectSessionActive: a
+// token whose claims carry a sid must reflect the underlying session's
+// liveness (active/expired/revoked), a store error must fail CLOSED
+// (oracle-safe, matching MeshAuthorize's meshCheckSession), and a nil sid or
+// an unwired SessionManager must skip the check entirely (byte-identical to
+// before this gate existed).
+func TestHandleIntrospect_SessionLiveness(t *testing.T) {
+	t.Parallel()
+
+	validatingClaims := func(sid string) func(context.Context, string) (*core.TokenClaims, string, error) {
+		return func(context.Context, string) (*core.TokenClaims, string, error) {
+			return &core.TokenClaims{
+				Subject:   "user-1",
+				ClientID:  "rp",
+				SID:       sid,
+				ExpiresAt: time.Now().Add(time.Hour),
+			}, "jwt", nil
+		}
+	}
+
+	t.Run("live session reports active", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		sm := newMemSessionManager()
+		sess, err := sm.Create(context.Background(), "user-1")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		d := newIntrospectDeps(cs, newMemRefreshStore())
+		d.sessionMgr = sm
+		d.validate = validatingClaims(sess.ID)
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=valid&client_id=rp&client_secret=s")
+		HandleIntrospect(d, ctx)
+		if got := decodeBody(t, rec)["active"]; got != true {
+			t.Fatalf("active = %v, want true (live session)", got)
+		}
+	})
+
+	t.Run("destroyed session reports inactive", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		sm := newMemSessionManager()
+		sess, _ := sm.Create(context.Background(), "user-1")
+		_ = sm.Destroy(context.Background(), sess.ID)
+		d := newIntrospectDeps(cs, newMemRefreshStore())
+		d.sessionMgr = sm
+		d.validate = validatingClaims(sess.ID)
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=valid&client_id=rp&client_secret=s")
+		HandleIntrospect(d, ctx)
+		if got := decodeBody(t, rec)["active"]; got != false {
+			t.Fatalf("active = %v, want false (destroyed session)", got)
+		}
+	})
+
+	t.Run("revoked session reports inactive", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		sm := newMemSessionManager()
+		sess, _ := sm.Create(context.Background(), "user-1")
+		sm.revoke(sess.ID)
+		d := newIntrospectDeps(cs, newMemRefreshStore())
+		d.sessionMgr = sm
+		d.validate = validatingClaims(sess.ID)
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=valid&client_id=rp&client_secret=s")
+		HandleIntrospect(d, ctx)
+		if got := decodeBody(t, rec)["active"]; got != false {
+			t.Fatalf("active = %v, want false (revoked session)", got)
+		}
+	})
+
+	t.Run("session store error fails closed", func(t *testing.T) {
+		// Oracle-safe collapse, matching MeshAuthorize's meshCheckSession:
+		// a store error is indistinguishable from "session gone" here
+		// because every built-in Get() already collapses not-found/
+		// revoked/expired into the same error, so there is no reliable way
+		// to tell a genuine outage apart from a legitimately dead session.
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		d := newIntrospectDeps(cs, newMemRefreshStore())
+		d.sessionMgr = &erroringSessionManager{}
+		d.validate = validatingClaims("some-sid")
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=valid&client_id=rp&client_secret=s")
+		HandleIntrospect(d, ctx)
+		if got := decodeBody(t, rec)["active"]; got != false {
+			t.Fatalf("active = %v, want false (store error collapses to inactive)", got)
+		}
+	})
+
+	t.Run("no sid claim skips the check even when wired", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		sm := newMemSessionManager()
+		d := newIntrospectDeps(cs, newMemRefreshStore())
+		d.sessionMgr = sm
+		d.validate = validatingClaims("") // no sid
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=valid&client_id=rp&client_secret=s")
+		HandleIntrospect(d, ctx)
+		if got := decodeBody(t, rec)["active"]; got != true {
+			t.Fatalf("active = %v, want true (no sid, nothing to check)", got)
+		}
+	})
+}
+
+// erroringSessionManager.Get always errors, to prove introspectSessionActive
+// fails open (treats a transient store outage as "still active" rather than
+// silently revoking every live token).
+type erroringSessionManager struct{ memSessionManager }
+
+func (e *erroringSessionManager) Get(context.Context, string) (*core.Session, error) {
+	return nil, errors.New("oauth_test: session store unavailable")
+}
+
+var _ core.SessionManager = (*erroringSessionManager)(nil)
 
 // TestHandleIntrospect_RFC9701JWTResponse covers the opt-in JWT-response
 // content-negotiation surface: default-off, per-request Accept-header

@@ -376,7 +376,6 @@ type memJTIStore struct {
 	seen map[string]struct{}
 }
 
-
 func (s *memJTIStore) MarkSeen(_ context.Context, jti string, _ time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -388,6 +387,93 @@ func (s *memJTIStore) MarkSeen(_ context.Context, jti string, _ time.Time) (bool
 }
 
 var _ security.JTIReplayStore = (*memJTIStore)(nil)
+
+// --- in-memory SessionManager -----------------------------------------------
+
+// memSessionManager implements core.SessionManager for the introspection
+// session-liveness tests. A real (not mocked) in-memory implementation --
+// defaultimpl.MemorySessionManager can't be imported here without an
+// upward layer violation (protocols/oauth -> infrastructure), so this
+// package keeps its own, same as memRefreshStore/memPARStore above.
+type memSessionManager struct {
+	mu       sync.Mutex
+	sessions map[string]*core.Session
+}
+
+func newMemSessionManager() *memSessionManager {
+	return &memSessionManager{sessions: map[string]*core.Session{}}
+}
+
+func (m *memSessionManager) Create(_ context.Context, userID string) (*core.Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := "sess-" + itoa(len(m.sessions)+1)
+	sess := &core.Session{ID: id, UserID: userID, ExpiresAt: time.Now().Add(time.Hour)}
+	m.sessions[id] = sess
+	return sess, nil
+}
+
+func (m *memSessionManager) Get(_ context.Context, sessionID string) (*core.Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[sessionID]
+	if !ok {
+		return nil, core.ErrSessionNotFound
+	}
+	return sess, nil
+}
+
+func (m *memSessionManager) Destroy(_ context.Context, sessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.sessions, sessionID)
+	return nil
+}
+
+func (m *memSessionManager) Refresh(_ context.Context, sessionID string) (*core.Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[sessionID]
+	if !ok {
+		return nil, core.ErrSessionNotFound
+	}
+	sess.ExpiresAt = time.Now().Add(time.Hour)
+	return sess, nil
+}
+
+func (m *memSessionManager) ListByUser(_ context.Context, userID string) ([]*core.Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*core.Session
+	for _, sess := range m.sessions {
+		if sess.UserID == userID {
+			out = append(out, sess)
+		}
+	}
+	return out, nil
+}
+
+func (m *memSessionManager) ListAll(_ context.Context) ([]*core.Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*core.Session, 0, len(m.sessions))
+	for _, sess := range m.sessions {
+		out = append(out, sess)
+	}
+	return out, nil
+}
+
+// revoke marks a session revoked in place (distinct from Destroy, which
+// removes it entirely) so tests can exercise the "found but revoked" path.
+func (m *memSessionManager) revoke(sessionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if sess, ok := m.sessions[sessionID]; ok {
+		sess.Revoked = true
+	}
+}
+
+var _ core.SessionManager = (*memSessionManager)(nil)
 
 func itoa(n int) string {
 	if n == 0 {

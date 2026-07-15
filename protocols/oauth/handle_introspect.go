@@ -43,6 +43,11 @@ type IntrospectDeps interface {
 	// recorder. A nil recorder (telemetry disabled) makes every Offer a
 	// no-op — introspection behavior is unaffected either way.
 	TokenUsageRecorder() *tokenusage.Recorder
+	// SessionManager returns the optional session manager for session-aware
+	// introspection. When nil, the introspection layer cannot verify session
+	// liveness and returns only token-level information (existing behavior).
+	SessionManager() core.SessionManager
+
 	// IntrospectionRenewExceeded reports whether the wired token-policy engine's
 	// require_renew dimension marks this access token as needing refresh (used
 	// past its require_renew fraction of TTL). When true the handler reports the
@@ -270,6 +275,17 @@ func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (
 		claims.Scopes, claims.IssuedAt, claims.ExpiresAt) {
 		return nil, false
 	}
+
+	// Session-aware introspection (opt-in): when the token carries an sid claim
+	// AND a SessionManager is wired, verify the session is still active. A nil
+	// SessionManager skips the check. Oracle-safe: all failures collapse to
+	// {active:false}. Fail-open on store errors (logged, treated as active).
+	if claims.SID != "" && d.SessionManager() != nil {
+		if !introspectSessionActive(d, ctx, claims) {
+			return nil, false
+		}
+	}
+
 	body := map[string]any{
 		core.KeyActive:    true,
 		core.KeyTokenType: dpopTokenTypeOr(core.TokenTypeBearer, claims.ConfirmationJKT),
@@ -317,6 +333,24 @@ func recordIntrospectionUsage(d IntrospectDeps, claims *core.TokenClaims) {
 	})
 }
 
+// populateIntrospectionSID stamps the sid (session id) claim onto the
+// introspection body when the token carries a session binding.
+func populateIntrospectionSID(body map[string]any, claims *core.TokenClaims) {
+	if claims.SID != "" {
+		body[core.KeySID] = claims.SID
+	}
+}
+
+// populateIntrospectionConfirmation stamps the RFC 7662 §2.2 sender-constraint
+// confirmation onto the introspection body (mTLS X.509 SHA-256 or DPoP JKT).
+func populateIntrospectionConfirmation(body map[string]any, claims *core.TokenClaims) {
+	if claims.ConfirmationX5TS256 != "" {
+		body[core.KeyCnf] = map[string]any{core.KeyCnfX5TS256: claims.ConfirmationX5TS256}
+	} else if claims.ConfirmationJKT != "" {
+		body[core.KeyCnf] = map[string]any{core.KeyCnfJKT: claims.ConfirmationJKT}
+	}
+}
+
 // populateAccessIntrospectionBody copies the optional RFC 7662 / RFC 9068
 // claims onto an already-active access-token body. Purely additive: it
 // carries NO early-return / auth-gate semantics — the ValidateAnyToken auth
@@ -348,8 +382,8 @@ func populateAccessIntrospectionBody(body map[string]any, claims *core.TokenClai
 	}
 	// RFC 9068 §2.2 jti — useful for replay tracking on the
 	// introspecting resource server. Same goes for auth_time / acr
-	// / amr which let downstream policy reason about how the user
-	// authenticated.
+	// / amr / sid which let downstream policy reason about how the
+	// user authenticated and which session they hold.
 	if claims.JTI != "" {
 		body[core.KeyJTI] = claims.JTI
 	}
@@ -362,14 +396,11 @@ func populateAccessIntrospectionBody(body map[string]any, claims *core.TokenClai
 	if len(claims.AMR) > 0 {
 		body[core.KeyAMR] = claims.AMR
 	}
-	// RFC 7662 §2.2: echo the sender-constraint confirmation so an
-	// introspection-based resource server can enforce RFC 8705 §3.3 (mTLS) /
-	// RFC 9449 §7 (DPoP) binding. A token carries at most one PoP mechanism.
-	if claims.ConfirmationX5TS256 != "" {
-		body[core.KeyCnf] = map[string]any{core.KeyCnfX5TS256: claims.ConfirmationX5TS256}
-	} else if claims.ConfirmationJKT != "" {
-		body[core.KeyCnf] = map[string]any{core.KeyCnfJKT: claims.ConfirmationJKT}
-	}
+	// SID (session id) lets the introspection consumer correlate this
+	// token with the SSO session that authenticated it.
+	populateIntrospectionSID(body, claims)
+	// RFC 7662 §2.2: echo the sender-constraint confirmation.
+	populateIntrospectionConfirmation(body, claims)
 }
 
 // introspectRefresh queries the optional RefreshTokenInspector.
