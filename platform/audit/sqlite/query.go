@@ -193,7 +193,7 @@ const selectColumns = `SELECT
     actor_id, actor_ip, user_agent,
     client_id, tenant_id, provider, token_strategy,
     session_id, token_id, reason,
-    metadata_json, prev_hash, hash`
+    metadata_json, prev_hash, hash, server_version`
 
 // rowScanner abstracts both *sql.Row and *sql.Rows so Get + Query
 // share scanEvent.
@@ -201,48 +201,63 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
+// scannedRow holds the nullable-string columns of one row before they're
+// copied onto an audit.Event — split out of scanEvent (rather than local
+// variables there) purely to keep that function under the per-function
+// line budget; applyTo is the copy step.
+type scannedRow struct {
+	reqID, traceID, spanID, parentSpanID sql.NullString
+	actorID, actorIP, ua                 sql.NullString
+	clientID, tenantID, prov, strat      sql.NullString
+	sessID, tokID, reason                sql.NullString
+	prev, hash, serverVersion            sql.NullString
+}
+
+// applyTo copies row's scanned columns onto e. Every audit.Event field
+// added to selectColumns/insertEvent needs a line here too — see
+// scanEvent's doc for what happens when one is missed.
+func (row scannedRow) applyTo(e *audit.Event) {
+	e.RequestID = row.reqID.String
+	e.TraceID = row.traceID.String
+	e.SpanID = row.spanID.String
+	e.ParentSpanID = row.parentSpanID.String
+	e.ActorID = row.actorID.String
+	e.ActorIP = row.actorIP.String
+	e.UserAgent = row.ua.String
+	e.ClientID = row.clientID.String
+	e.TenantID = row.tenantID.String
+	e.Provider = row.prov.String
+	e.TokenStrategy = row.strat.String
+	e.SessionID = row.sessID.String
+	e.TokenID = row.tokID.String
+	e.Reason = row.reason.String
+	e.PrevHash = row.prev.String
+	e.Hash = row.hash.String
+	e.ServerVersion = row.serverVersion.String
+}
+
 func scanEvent(r rowScanner) (*audit.Event, error) {
 	var (
-		typ, outcome                    string
-		tsNS                            int64
-		metaJSON                        sql.NullString
-		e                               = &audit.Event{}
-		reqID, traceID, spanID          sql.NullString
-		parentSpanID                    sql.NullString
-		actorID, actorIP, ua            sql.NullString
-		clientID, tenantID, prov, strat sql.NullString
-		sessID, tokID, reason           sql.NullString
-		prev, hash                      sql.NullString
+		typ, outcome string
+		tsNS         int64
+		metaJSON     sql.NullString
+		e            = &audit.Event{}
+		row          scannedRow
 	)
 	if err := r.Scan(
 		&e.ID, &typ, &outcome, &tsNS,
-		&reqID, &traceID, &spanID, &parentSpanID,
-		&actorID, &actorIP, &ua,
-		&clientID, &tenantID, &prov, &strat,
-		&sessID, &tokID, &reason,
-		&metaJSON, &prev, &hash,
+		&row.reqID, &row.traceID, &row.spanID, &row.parentSpanID,
+		&row.actorID, &row.actorIP, &row.ua,
+		&row.clientID, &row.tenantID, &row.prov, &row.strat,
+		&row.sessID, &row.tokID, &row.reason,
+		&metaJSON, &row.prev, &row.hash, &row.serverVersion,
 	); err != nil {
 		return nil, err
 	}
 	e.Type = audit.EventType(typ)
 	e.Outcome = audit.Outcome(outcome)
 	e.Timestamp = time.Unix(0, tsNS).UTC()
-	e.RequestID = reqID.String
-	e.TraceID = traceID.String
-	e.SpanID = spanID.String
-	e.ParentSpanID = parentSpanID.String
-	e.ActorID = actorID.String
-	e.ActorIP = actorIP.String
-	e.UserAgent = ua.String
-	e.ClientID = clientID.String
-	e.TenantID = tenantID.String
-	e.Provider = prov.String
-	e.TokenStrategy = strat.String
-	e.SessionID = sessID.String
-	e.TokenID = tokID.String
-	e.Reason = reason.String
-	e.PrevHash = prev.String
-	e.Hash = hash.String
+	row.applyTo(e)
 	if metaJSON.String != "" {
 		e.Metadata = map[string]string{}
 		if err := json.Unmarshal([]byte(metaJSON.String), &e.Metadata); err != nil {

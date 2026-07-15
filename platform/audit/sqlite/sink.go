@@ -11,8 +11,14 @@
 // (type, outcome, ts, actor_id, client_id, provider, request_id,
 // trace_id) pulled out as columns + indexes so [audit.Query]
 // translates into a simple WHERE/ORDER/LIMIT — no per-event scan.
-// Metadata, prev_hash, hash, and any future Event fields live in a
-// JSON blob the sink unmarshals on Get/Query.
+// Only Metadata lives in a JSON blob; every OTHER audit.Event field —
+// including prev_hash/hash and server_version — is its own column,
+// explicitly listed in selectColumns/insertEvent/scanEvent. A new
+// audit.Event field is NOT automatically round-tripped by this sink: it
+// needs its own migration + column + wiring in those three places, or it
+// is silently dropped on every SQLite-backed record (see migrationV3 /
+// TestSink_RecordThenGet, which pins the full column projection against
+// exactly that regression).
 //
 // Composes the same way MemorySink does — drop into MultiSink with
 // a WebhookSink for fan-out, wrap in AsyncSink to keep the SQLite
@@ -42,6 +48,7 @@ import (
 var migrations = []migrate.Migration{
 	{Version: 1, Name: "baseline_audit_events", SQL: schema},
 	{Version: 2, Name: "add_tenant_id", SQL: migrationV2},
+	{Version: 3, Name: "add_server_version", SQL: migrationV3},
 }
 
 // migrationV2 promotes tenant_id to a first-class indexed column so
@@ -51,6 +58,17 @@ var migrations = []migrate.Migration{
 const migrationV2 = `
 ALTER TABLE audit_events ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_audit_events_tenant ON audit_events(tenant_id);
+`
+
+// migrationV3 adds the column backing audit.Event.ServerVersion (stamped by
+// audit.WithServerVersion). Without this column selectColumns/insertEvent
+// silently dropped the field on every SQLite-backed record — a durable
+// audit trail spanning a rolling deployment could never actually answer
+// "which binary version produced this event" even though the Recorder/
+// MemorySink/exporters all already carry it end to end. Not indexed: it's
+// read back for display/export, never filtered/grouped on.
+const migrationV3 = `
+ALTER TABLE audit_events ADD COLUMN server_version TEXT NOT NULL DEFAULT '';
 `
 
 // migrationNamespace is the per-backend key migrate.Run uses for this
@@ -85,6 +103,8 @@ CREATE TABLE IF NOT EXISTS audit_events (
     prev_hash       TEXT,
     hash            TEXT
 );
+-- server_version (audit.Event.ServerVersion) is added by migrationV3,
+-- not the baseline, so existing databases pick it up via ALTER TABLE.
 
 CREATE INDEX IF NOT EXISTS idx_audit_events_ts        ON audit_events(ts_unix_ns);
 CREATE INDEX IF NOT EXISTS idx_audit_events_type      ON audit_events(type);
@@ -245,14 +265,14 @@ func insertEvent(ctx context.Context, db execerContext, e *audit.Event) error {
             actor_id, actor_ip, user_agent,
             client_id, tenant_id, provider, token_strategy,
             session_id, token_id, reason,
-            metadata_json, prev_hash, hash
-        ) VALUES (?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?,  ?, ?, ?)`,
+            metadata_json, prev_hash, hash, server_version
+        ) VALUES (?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?,  ?, ?, ?, ?)`,
 		e.ID, string(e.Type), string(e.Outcome), e.Timestamp.UnixNano(),
 		e.RequestID, e.TraceID, e.SpanID, e.ParentSpanID,
 		e.ActorID, e.ActorIP, e.UserAgent,
 		e.ClientID, e.TenantID, e.Provider, e.TokenStrategy,
 		e.SessionID, e.TokenID, e.Reason,
-		metaJSON, e.PrevHash, e.Hash,
+		metaJSON, e.PrevHash, e.Hash, e.ServerVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("audit/sqlite: insert: %w", err)

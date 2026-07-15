@@ -37,6 +37,7 @@ func TestSink_RecordThenGet(t *testing.T) {
 		ActorIP:       "10.0.0.5",
 		UserAgent:     "Go/Test",
 		ClientID:      "client-1",
+		TenantID:      "tenant-1",
 		Provider:      "password",
 		TokenStrategy: "jwt",
 		SessionID:     "sess-1",
@@ -45,6 +46,7 @@ func TestSink_RecordThenGet(t *testing.T) {
 		Metadata:      map[string]string{"tenant.id": "t-1", "geo.country_code": "US"},
 		PrevHash:      "p",
 		Hash:          "h",
+		ServerVersion: "v1.2.3",
 	}
 	if err := s.Record(context.Background(), want); err != nil {
 		t.Fatalf("record: %v", err)
@@ -68,6 +70,12 @@ func TestSink_RecordThenGet(t *testing.T) {
 	}
 	if got.ClientID != want.ClientID || got.Provider != want.Provider {
 		t.Errorf("client/provider fields lost: got=%+v", got)
+	}
+	if got.TenantID != want.TenantID {
+		t.Errorf("tenant_id lost: got=%q want=%q", got.TenantID, want.TenantID)
+	}
+	if got.ServerVersion != want.ServerVersion {
+		t.Errorf("server_version lost: got=%q want=%q", got.ServerVersion, want.ServerVersion)
 	}
 	if got.SessionID != want.SessionID || got.TokenID != want.TokenID {
 		t.Errorf("session/token fields lost: got=%+v", got)
