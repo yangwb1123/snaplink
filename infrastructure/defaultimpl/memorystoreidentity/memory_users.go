@@ -65,9 +65,11 @@ func (p *MemoryUserProvider) GetByUsername(_ context.Context, username string) (
 	}
 	u, ok := p.users[id]
 	if !ok {
-		// Stale index entry — the user was deleted without updating byUsername.
-		// This should not happen in normal operation; rebuild the index.
-		delete(p.byUsername, strings.ToLower(username))
+		// Stale index entry — should not happen in normal operation (every
+		// mutator keeps byUsername in sync under the write lock). Report
+		// not-found WITHOUT self-healing here: a delete() would be a map
+		// write racing every other concurrent RLock holder. The next
+		// CreateOrUpdate/Delete for this id repairs the index anyway.
 		return nil, core.ErrNoSuchUser
 	}
 	return u, nil
@@ -84,7 +86,7 @@ func (p *MemoryUserProvider) GetByEmail(_ context.Context, email string) (*core.
 	}
 	u, ok := p.users[id]
 	if !ok {
-		delete(p.byEmail, strings.ToLower(email))
+		// See GetByUsername: no self-heal under RLock, same reasoning.
 		return nil, core.ErrNoSuchUser
 	}
 	return u, nil
