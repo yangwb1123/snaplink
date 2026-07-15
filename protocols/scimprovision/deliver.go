@@ -2,6 +2,7 @@ package scimprovision
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/lifecycle/webhook"
 	"github.com/snaplink/sso/protocols/scim"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // Known audit-metadata/Reason conventions carrying an event's subject id.
@@ -125,14 +127,25 @@ func (s *Sink) deliverOnce(ctx context.Context, ev *audit.Event) error {
 // pushes it via ReplaceUser (which itself self-heals to CreateUser downstream
 // — see SCIMProvisioner.ReplaceUser). A subject that no longer exists (raced
 // with a later delete) is a silent no-op, not an error: there is nothing left
-// to push.
+// to push. A transient GetByID failure (store unavailable) is NOT the same
+// thing and must propagate so the caller's RetryingSink retries and, on
+// exhaustion, dead-letters it — collapsing the two into one no-op would
+// silently drop the push instead — mirrors protocols/caep/revoker.go's
+// resolveResult distinguishing "definitively absent" from "store
+// unavailable" via the same core.ErrNoSuchUser sentinel.
 func (s *Sink) deliverUserUpsert(ctx context.Context, ev audit.Event) error {
 	id := subjectID(ev)
 	if id == "" || s.users == nil {
 		return nil
 	}
 	u, err := s.users.GetByID(ctx, id)
-	if err != nil || u == nil {
+	if err != nil {
+		if errors.Is(err, core.ErrNoSuchUser) {
+			return nil
+		}
+		return err
+	}
+	if u == nil {
 		return nil
 	}
 	res := scim.UserToResource(u, "")
@@ -170,7 +183,10 @@ func (s *Sink) deliverUserDelete(ctx context.Context, ev audit.Event) error {
 // (never leak another app's role fleet downstream), then pushes the role's
 // CURRENT full membership (see doc.go's "full-state reconciliation" note).
 func (s *Sink) deliverGroupUpsert(ctx context.Context, ev audit.Event) error {
-	role, ok := s.resolveGroupSubject(ctx, ev)
+	role, ok, err := s.resolveGroupSubject(ctx, ev)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return nil
 	}
@@ -202,25 +218,33 @@ func (s *Sink) deliverGroupDelete(ctx context.Context, ev audit.Event) error {
 }
 
 // resolveGroupSubject applies the clientID-scope check and looks up the
-// CURRENT role definition, returning ok=false to signal "skip" for an
-// out-of-scope event or a role that no longer exists (raced with a later
-// removal).
-func (s *Sink) resolveGroupSubject(ctx context.Context, ev audit.Event) (role permissions.Role, ok bool) {
+// CURRENT role definition. ok=false with a nil err signals a legitimate
+// "skip": an out-of-scope event, an unmatched event convention, or a role
+// that no longer exists (raced with a later removal). A non-nil err is a
+// genuine backend failure resolving the role (e.g. the permissions.Provider
+// is unavailable) and must propagate rather than be folded into "skip" —
+// otherwise deliverGroupUpsert would silently drop the push instead of
+// letting its RetryingSink retry/dead-letter it, the same distinction
+// protocols/caep/revoker.go's resolveResult draws for its own lookup.
+func (s *Sink) resolveGroupSubject(ctx context.Context, ev audit.Event) (role permissions.Role, ok bool, err error) {
 	if s.perms == nil {
-		return permissions.Role{}, false
+		return permissions.Role{}, false, nil
 	}
 	clientID, roleCode, found := groupSubject(ev)
 	if !found || roleCode == "" {
-		return permissions.Role{}, false
+		return permissions.Role{}, false, nil
 	}
 	if clientID != "" && clientID != s.groupClientID {
-		return permissions.Role{}, false
+		return permissions.Role{}, false, nil
 	}
 	role, exists, err := scim.FindRoleByCode(ctx, s.perms, s.groupClientID, roleCode)
-	if err != nil || !exists {
-		return permissions.Role{}, false
+	if err != nil {
+		return permissions.Role{}, false, err
 	}
-	return role, true
+	if !exists {
+		return permissions.Role{}, false, nil
+	}
+	return role, true, nil
 }
 
 // fail records a delivery's exhausted-retry outcome: metric, log, an

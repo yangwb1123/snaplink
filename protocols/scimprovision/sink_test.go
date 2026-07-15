@@ -2,6 +2,7 @@ package scimprovision
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -238,6 +239,110 @@ func TestSink_DeadLettersExhaustedDelivery(t *testing.T) {
 	}
 	if entries[0].Event.Type != audit.EventAdminUserCreated {
 		t.Fatalf("dead-lettered event type = %q, want %q", entries[0].Event.Type, audit.EventAdminUserCreated)
+	}
+}
+
+// erroringUserProvider wraps a real core.UserProvider, injecting a
+// caller-chosen GetByID failure for one id — used to prove deliverUserUpsert
+// distinguishes a genuine store failure (must retry/dead-letter, never a
+// silent no-op) from core.ErrNoSuchUser's "definitively absent" (a
+// legitimate no-op), the same distinction protocols/caep/revoker.go's
+// resolveResult draws for the identical GetByID contract.
+type erroringUserProvider struct {
+	core.UserProvider
+	failID string
+	err    error
+}
+
+func (p erroringUserProvider) GetByID(ctx context.Context, id string) (*core.User, error) {
+	if id == p.failID {
+		return nil, p.err
+	}
+	return p.UserProvider.GetByID(ctx, id)
+}
+
+func TestSink_UserLookupTransientErrorDeadLetters(t *testing.T) {
+	downstream, _, _ := newTestSCIMServer(t, "")
+	provisioner := newTestProvisioner(t, downstream, "")
+	_, sourceUsers, _ := newTestSCIMServer(t, "")
+	newTestUser(t, sourceUsers, "u1", "Alice")
+
+	// NOT core.ErrNoSuchUser — a transient failure (e.g. the UserProvider's
+	// backing store is unreachable), which must propagate rather than be
+	// treated identically to "the user doesn't exist."
+	boom := errors.New("boom: store unavailable")
+	users := erroringUserProvider{UserProvider: sourceUsers, failID: "u1", err: boom}
+
+	dlq := webhook.NewMemoryDeadLetterStore(0)
+	sink := NewSink(users, nil, "", provisioner,
+		WithDeadLetterStore(dlq),
+		WithDeliveryRetry(1, time.Millisecond, time.Millisecond),
+	)
+
+	ev := &audit.Event{Type: audit.EventAdminUserCreated}
+	audit.SetMeta(ev, "subject", "u1")
+	if err := sink.Record(context.Background(), ev); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	waitForSink(t, sink)
+
+	entries, err := dlq.List(context.Background(), webhook.DeadLetterFilter{})
+	if err != nil {
+		t.Fatalf("dlq.List: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("dead-letter entries = %d, want 1: a transient UserProvider.GetByID error must not be silently swallowed as a no-op", len(entries))
+	}
+}
+
+// erroringPermissionsProvider wraps a real permissions.Provider, injecting a
+// caller-chosen ListAllRoles failure for one clientID — the group-path
+// analogue of erroringUserProvider above (resolveGroupSubject's
+// scim.FindRoleByCode call bottoms out in ListAllRoles).
+type erroringPermissionsProvider struct {
+	permissions.Provider
+	failClientID string
+	err          error
+}
+
+func (p erroringPermissionsProvider) ListAllRoles(ctx context.Context, clientID string) ([]permissions.Role, error) {
+	if clientID == p.failClientID {
+		return nil, p.err
+	}
+	return p.Provider.ListAllRoles(ctx, clientID)
+}
+
+func TestSink_GroupLookupTransientErrorDeadLetters(t *testing.T) {
+	downstream := newFakeGroupSCIMServer(t)
+	provisioner := newTestProvisioner(t, downstream, "")
+
+	// NOT "role not found" — a transient failure resolving the role
+	// (e.g. the permissions.Provider's backing store is unreachable), which
+	// must propagate rather than be folded into resolveGroupSubject's
+	// legitimate "skip" cases.
+	boom := errors.New("boom: permissions store unavailable")
+	perms := erroringPermissionsProvider{Provider: permissions.NewMemoryProvider(), failClientID: testGroupClientID, err: boom}
+
+	_, sourceUsers, _ := newTestSCIMServer(t, "")
+	dlq := webhook.NewMemoryDeadLetterStore(0)
+	sink := NewSink(sourceUsers, perms, testGroupClientID, provisioner,
+		WithDeadLetterStore(dlq),
+		WithDeliveryRetry(1, time.Millisecond, time.Millisecond),
+	)
+
+	ev := &audit.Event{Type: audit.EventAdminRoleAdded}
+	audit.SetMeta(ev, "subject", "eng")
+	if err := sink.Record(context.Background(), ev); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	waitForSink(t, sink)
+
+	entries, err := dlq.List(context.Background(), webhook.DeadLetterFilter{})
+	if err != nil {
+		t.Fatalf("dlq.List: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("dead-letter entries = %d, want 1: a transient permissions.Provider error must not be silently swallowed as a no-op", len(entries))
 	}
 }
 
