@@ -91,6 +91,17 @@ func TestTenantAdminService_CRUD(t *testing.T) {
 	_, err = svc.CreateTenant(ctx, &adminv1.CreateTenantRequest{Tenant: &adminv1.Tenant{Id: "no-slug"}})
 	requireCode(t, err, codes.InvalidArgument)
 
+	// A garbage status must be rejected here exactly like SetTenantStatus
+	// rejects one (see TestTenantAdminService_SetTenantStatus) — Create is
+	// the other path that can set Status, so it needs the same allowlist.
+	_, err = svc.CreateTenant(ctx, &adminv1.CreateTenantRequest{
+		Tenant: &adminv1.Tenant{Id: "bogus-status", Slug: "bogus-status", Status: "bogus"},
+	})
+	requireCode(t, err, codes.InvalidArgument)
+	if _, getErr := svc.GetTenant(ctx, &adminv1.GetTenantRequest{Id: "bogus-status"}); getErr == nil {
+		t.Error("CreateTenant with an invalid status must not persist the tenant")
+	}
+
 	got, err := svc.GetTenant(ctx, &adminv1.GetTenantRequest{Id: "acme"})
 	requireOK(t, err, "GetTenant")
 	if got.Tenant.Name != "Acme Inc" {

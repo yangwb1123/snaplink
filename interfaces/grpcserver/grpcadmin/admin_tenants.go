@@ -104,6 +104,17 @@ func (s *TenantAdminService) CreateTenant(ctx context.Context, in *adminv1.Creat
 	if in == nil || in.Tenant == nil || in.Tenant.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant.id required")
 	}
+	// tenant.Tenant.Validate() (called inside store.PutTenant) only defaults
+	// an EMPTY status to Active — it does not reject a garbage non-empty
+	// value, so without this gate a caller could persist e.g. Status:"banana"
+	// straight through Create. SetTenantStatus already rejects unknown values
+	// (see the identical check below); Create must match so "known value or
+	// omitted" is enforced on every path that can set Status, not just the
+	// dedicated one.
+	if !validCreateStatus(in.Tenant.Status) {
+		return nil, status.Errorf(codes.InvalidArgument, "status must be empty, %q, or %q",
+			tenant.StatusActive, tenant.StatusSuspended)
+	}
 	// Check-then-put: PutTenant is upsert in every shipped Store, so
 	// Create vs Update has to be disambiguated here.
 	if _, err := s.store.GetTenant(ctx, in.Tenant.Id); err == nil {
@@ -367,6 +378,19 @@ func (s *TenantAdminService) DeleteDomain(ctx context.Context, in *adminv1.Delet
 // for the common (no-residency) create.
 func hasResidency(t *tenant.Tenant) bool {
 	return t != nil && (t.HomeRegion != "" || len(t.AllowedRegions) > 0 || t.EnforceWrites)
+}
+
+// validCreateStatus mirrors SetTenantStatus's allowlist: a CreateTenant body
+// may omit status (tenant.Tenant.Validate defaults empty to Active) or set
+// it to one of the two known values. Any other literal (a typo, or a status
+// name from an unrelated system) is rejected here rather than silently
+// persisted — domains/tenant's middleware treats anything other than
+// StatusActive as "deny access" (fail-safe), so a garbage value wouldn't
+// open a security hole, but it WOULD silently lock the tenant out with no
+// indication why, and it would violate the documented contract that Status
+// is only ever mutated through Create (known value) or SetTenantStatus.
+func validCreateStatus(s string) bool {
+	return s == "" || tenant.Status(s) == tenant.StatusActive || tenant.Status(s) == tenant.StatusSuspended
 }
 
 // ---------- proto <-> SDK conversion ----------
