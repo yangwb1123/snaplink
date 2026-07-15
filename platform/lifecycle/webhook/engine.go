@@ -129,9 +129,20 @@ func WithFailureRecorder(r *audit.Recorder) Option { return func(e *Engine) { e.
 func NewEngine(subs SubscriptionStore, dlq DeadLetterStore, opts ...Option) *Engine {
 	ctx, cancel := context.WithCancel(context.Background())
 	e := &Engine{
-		subs:                subs,
-		dlq:                 dlq,
-		client:              &http.Client{Timeout: DefaultDeliveryTimeout},
+		subs: subs,
+		dlq:  dlq,
+		// Redirect-follow disabled: an admin-registered subscription URL
+		// that later 302s (compromised, or malicious after passing
+		// validateHTTPSURL's shape check) would otherwise bypass the
+		// https-only gate — the same SSRF-via-redirect class already closed
+		// for CAEP (protocols/caep/broadcaster.go) and CIBA push
+		// (protocols/oauth/handle_ciba.go). Treat the stored URL as
+		// authoritative; a 3xx response fails delivery like any other
+		// non-2xx status and feeds the existing retry/dead-letter path.
+		client: &http.Client{
+			Timeout:       DefaultDeliveryTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 		timeout:             DefaultDeliveryTimeout,
 		retryMaxAttempts:    audit.DefaultRetryMaxAttempts,
 		retryInitialBackoff: audit.DefaultRetryInitialBackoff,

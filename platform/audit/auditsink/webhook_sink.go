@@ -78,8 +78,17 @@ func WithWebhookRotatingSecret(s *securityverify.RotatingWebhookSecret) WebhookO
 
 func NewWebhookSink(url string, opts ...WebhookOption) *WebhookSink {
 	w := &WebhookSink{
-		url:     url,
-		client:  &http.Client{Timeout: DefaultWebhookTimeout},
+		url: url,
+		// Redirect-follow disabled: the configured url is treated as
+		// authoritative, so a later 302 (compromised or misconfigured
+		// receiver) can't silently redirect delivery off-host — same
+		// SSRF-via-redirect class closed for CAEP/CIBA push/the generic
+		// webhook Engine (platform/lifecycle/webhook/engine.go). A 3xx
+		// response is surfaced as any other non-2xx status.
+		client: &http.Client{
+			Timeout:       DefaultWebhookTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 		headers: make(map[string]string),
 	}
 	for _, opt := range opts {

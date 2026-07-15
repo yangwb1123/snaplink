@@ -177,3 +177,32 @@ func TestWebhookSink_WithHTTPClient_Nil_IsNoOp(t *testing.T) {
 		t.Fatal("WithWebhookHTTPClient(nil) must not clear the default client")
 	}
 }
+
+// TestWebhookSink_DoesNotFollowRedirect proves NewWebhookSink's own default
+// client (no WithWebhookHTTPClient override) never follows a redirect: a
+// configured url that later 302s (compromised or misconfigured receiver)
+// must not have the request silently forwarded to the redirect target --
+// the same SSRF-via-redirect class already closed for CAEP/CIBA push/the
+// generic webhook Engine. Since http.Client follows redirects synchronously
+// within a single Do() call, redirectTargetHit is race-free to read right
+// after Record returns.
+func TestWebhookSink_DoesNotFollowRedirect(t *testing.T) {
+	t.Parallel()
+	var redirectTargetHit bool
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirectTargetHit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(redirectTarget.Close)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirectTarget.URL, http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	w := NewWebhookSink(srv.URL)
+	_ = w.Record(t.Context(), &auditspi.Event{})
+	if redirectTargetHit {
+		t.Fatal("redirect target received a request: CheckRedirect failed to block the follow")
+	}
+}
