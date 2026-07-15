@@ -920,6 +920,13 @@ at `/api/v1/admin/threat-policies/*` translate them to HTTP 404 on the wire.
 |------------------------|------------------------------------------------------------------------------|
 | `ErrPolicyNotFound`    | `ThreatPolicyStore.Get`/`Delete` called with a name that does not exist      |
 
+`PUT /api/v1/admin/threat-policies/:name` also returns these HTTP wire codes:
+
+| Code              | HTTP | Returned when                                                                | Remediation |
+|-------------------|------|-------------------------------------------------------------------------------|-------------|
+| `invalid_request` | 400  | Request body is not valid JSON                                              | Fix the request payload |
+| `invalid_policy`  | 400  | Body decoded fine but is semantically invalid: `action` outside the known `Action` consts (`noop`/`suspend`/`revoke`/`step_up_mfa`/`notify`/`challenge`, or empty), `rate_limit.max` or `rate_limit.per_window` negative, or `conditions.operator` outside `""`/`eq`/`gt`/`lt`/`exists` when `conditions.key` is set. `error_description` names the specific violated field | Fix the named field and retry |
+
 ---
 
 ## Conventions

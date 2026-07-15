@@ -304,4 +304,14 @@ const (
 	// admin of an org (including self-removal / self-demotion) — doing so would
 	// orphan the org with no one able to administer it.
 	ErrLastOrgAdmin = "last_org_admin"
+	// ErrInvalidPolicy is returned (400) by PUT /api/v1/admin/threat-policies/:name
+	// (domains/threataction.HandleAdminPutPolicy) when the request body decodes
+	// fine but is semantically invalid: an unknown Action, a negative
+	// RateLimit.Max/PerWindow, or a Conditions.Operator outside "", "eq", "gt",
+	// "lt", "exists". Distinct from ErrInvalidRequest (which covers the
+	// malformed-JSON case) the same way ErrInvalidMode is distinct from
+	// ErrInvalidRequest for POST /api/v1/admin/dr/mode — a generic decode
+	// failure vs. a well-formed-but-invalid value. Always paired with an
+	// error_description naming the specific violated field.
+	ErrInvalidPolicy = "invalid_policy"
 )

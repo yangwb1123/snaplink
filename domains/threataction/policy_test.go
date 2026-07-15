@@ -452,6 +452,63 @@ func TestThreatConditions_Match(t *testing.T) {
 			t.Error("unknown operator should not match missing key")
 		}
 	})
+
+	// Regression coverage for the removed lexicographic-comparison fallback:
+	// "gt"/"lt" used to fall back to a plain Go string comparison whenever
+	// either side failed to parse as a float, which is a wrong-shaped
+	// answer for a numeric operator (e.g. "9abc" > "100" was true
+	// lexicographically -- comparing the leading '9' byte to '1' -- even
+	// though "9abc" isn't a number greater than 100 at all). These cases
+	// prove the fix: non-numeric input on EITHER side now returns false
+	// instead of an unpredictable byte-ordering result.
+	t.Run("gt: non-numeric evidence value no longer lexicographically compares", func(t *testing.T) {
+		tc := ThreatConditions{Key: "k", Operator: "gt", Value: "100"}
+		// Old code: strconv.ParseFloat("9abc", 64) fails -> fallback to
+		// "9abc" > "100" (string compare) -> true (WRONG: "9abc" is not a
+		// number, let alone one greater than 100).
+		if tc.Match(Threat{Evidence: map[string]string{"k": "9abc"}}) {
+			t.Error("non-numeric evidence value must not match \"gt\" via string fallback")
+		}
+	})
+
+	t.Run("gt: non-numeric Value no longer lexicographically compares", func(t *testing.T) {
+		tc := ThreatConditions{Key: "k", Operator: "gt", Value: "100abc"}
+		// Old code: strconv.ParseFloat("100abc", 64) fails -> fallback to
+		// "9" > "100abc" (string compare) -> true (WRONG: '9' > '1' as
+		// bytes, but "100abc" isn't a valid threshold to compare against
+		// at all, and 9 is certainly not "greater than" a non-number).
+		if tc.Match(Threat{Evidence: map[string]string{"k": "9"}}) {
+			t.Error("non-numeric Value must not match \"gt\" via string fallback")
+		}
+	})
+
+	t.Run("lt: non-numeric Value no longer lexicographically compares", func(t *testing.T) {
+		tc := ThreatConditions{Key: "k", Operator: "lt", Value: "abc"}
+		// Old code: strconv.ParseFloat("abc", 64) fails -> fallback to
+		// "5" < "abc" (string compare) -> true (WRONG: "abc" is not a
+		// numeric threshold, so "less than abc" is meaningless — yet the
+		// old code confidently answered true).
+		if tc.Match(Threat{Evidence: map[string]string{"k": "5"}}) {
+			t.Error("non-numeric Value must not match \"lt\" via string fallback")
+		}
+	})
+
+	t.Run("gt/lt still compare numerically when both sides parse", func(t *testing.T) {
+		gt := ThreatConditions{Key: "k", Operator: "gt", Value: "100"}
+		if !gt.Match(Threat{Evidence: map[string]string{"k": "101"}}) {
+			t.Error("101 should be > 100")
+		}
+		if gt.Match(Threat{Evidence: map[string]string{"k": "9"}}) {
+			t.Error("9 should NOT be > 100 (numerically) -- must not regress to a true positive")
+		}
+		lt := ThreatConditions{Key: "k", Operator: "lt", Value: "100"}
+		if !lt.Match(Threat{Evidence: map[string]string{"k": "9"}}) {
+			t.Error("9 should be < 100")
+		}
+		if lt.Match(Threat{Evidence: map[string]string{"k": "101"}}) {
+			t.Error("101 should NOT be < 100")
+		}
+	})
 }
 
 // TestMatchType exercises the matchType helper directly (bypassing the

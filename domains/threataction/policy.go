@@ -92,12 +92,27 @@ func (d *Duration) UnmarshalYAML(b []byte) error {
 type ThreatConditions struct {
 	// KeySelector is an Evidence key; operator means "value must match".
 	// Empty = unconditional.
-	Key      string `yaml:"key,omitempty" json:"key,omitempty"`
-	Operator string `yaml:"operator,omitempty" json:"operator,omitempty"` // "eq", "gt", "lt", "exists"
+	Key string `yaml:"key,omitempty" json:"key,omitempty"`
+	// Operator is "eq", "gt", "lt", "exists", or empty. "gt"/"lt" are
+	// strictly numeric: both the evidence value and Value are parsed as
+	// float64, and if EITHER side fails to parse, Match returns false
+	// rather than falling back to a lexicographic (string) comparison --
+	// see Match's doc comment for why a silent string fallback here was a
+	// correctness footgun.
+	Operator string `yaml:"operator,omitempty" json:"operator,omitempty"`
 	Value    string `yaml:"value,omitempty" json:"value,omitempty"`
 }
 
 // Match evaluates whether the conditions hold for the given threat.
+//
+// "gt"/"lt" never fall back to a Go string comparison when a value fails to
+// parse as a float: e.g. "9" > "100" is true lexicographically (comparing
+// the leading '9' byte to '1') but false numerically, and a numeric operator
+// whose entire purpose is numeric comparison must not silently produce a
+// wrong-shaped answer for non-numeric input. Returning false instead --
+// "does not match" -- is the oracle-safe, fail-toward-no-action default:
+// a threat that can't be evaluated numerically triggers no policy action,
+// rather than an unpredictable one driven by byte ordering.
 func (tc ThreatConditions) Match(threat Threat) bool {
 	if tc.Key == "" {
 		return true // unconditional
@@ -112,25 +127,30 @@ func (tc ThreatConditions) Match(threat Threat) bool {
 		if !exists {
 			return false
 		}
-		v1, err1 := strconv.ParseFloat(val, 64)
-		v2, err2 := strconv.ParseFloat(tc.Value, 64)
-		if err1 != nil || err2 != nil {
-			return val > tc.Value // fallback to string comparison
-		}
-		return v1 > v2
+		v1, v2, ok := parseNumericPair(val, tc.Value)
+		return ok && v1 > v2
 	case "lt":
 		if !exists {
 			return false
 		}
-		v1, err1 := strconv.ParseFloat(val, 64)
-		v2, err2 := strconv.ParseFloat(tc.Value, 64)
-		if err1 != nil || err2 != nil {
-			return val < tc.Value // fallback to string comparison
-		}
-		return v1 < v2
+		v1, v2, ok := parseNumericPair(val, tc.Value)
+		return ok && v1 < v2
 	default:
 		return exists // unknown operator → existence check only
 	}
+}
+
+// parseNumericPair parses both sides of a "gt"/"lt" comparison as float64.
+// ok is false when either side fails to parse, telling the caller to treat
+// the comparison as non-matching rather than falling back to a
+// lexicographic string comparison (see Match's doc comment).
+func parseNumericPair(a, b string) (v1, v2 float64, ok bool) {
+	v1, err1 := strconv.ParseFloat(a, 64)
+	v2, err2 := strconv.ParseFloat(b, 64)
+	if err1 != nil || err2 != nil {
+		return 0, 0, false
+	}
+	return v1, v2, true
 }
 
 // MatchesSeverity reports whether the policy's severity filter matches
