@@ -96,6 +96,15 @@ func (a *softwareAuthenticator) credential(t *testing.T, startCounter uint32) *g
 // in the response — required for discoverable/conditional login tests.
 func (a *softwareAuthenticator) assertJSON(t *testing.T, rpID, origin, challenge string, signCount uint32, userVerified bool, userHandle []byte) string {
 	t.Helper()
+	return a.assertJSONWithExtensions(t, rpID, origin, challenge, signCount, userVerified, userHandle, nil)
+}
+
+// assertJSONWithExtensions is [softwareAuthenticator.assertJSON] plus an
+// optional clientExtensionResults object (e.g. a largeBlob read/write
+// output) — used by the largeBlob plumbing tests. A nil ext produces a
+// response byte-identical to assertJSON (no "clientExtensionResults" key).
+func (a *softwareAuthenticator) assertJSONWithExtensions(t *testing.T, rpID, origin, challenge string, signCount uint32, userVerified bool, userHandle []byte, ext map[string]any) string {
+	t.Helper()
 
 	clientData := map[string]string{
 		"type":      string(protocol.AssertCeremony),
@@ -129,6 +138,9 @@ func (a *softwareAuthenticator) assertJSON(t *testing.T, rpID, origin, challenge
 	}
 	if len(userHandle) > 0 {
 		resp["response"].(map[string]string)["userHandle"] = base64.RawURLEncoding.EncodeToString(userHandle)
+	}
+	if ext != nil {
+		resp["clientExtensionResults"] = ext
 	}
 	b, err := json.Marshal(resp)
 	if err != nil {
@@ -401,6 +413,227 @@ func TestMFAProvider_AcceptsUserVerifiedAssertion(t *testing.T) {
 		"assertion": good,
 	}); err != nil {
 		t.Fatalf("MFA Verify rejected a valid UV assertion: %v", err)
+	}
+}
+
+// ----- largeBlob login-ceremony plumbing (WebAuthn Level 3, §10.7) -----
+
+// TestBeginLoginLargeBlob_SetsReadExtension proves a Read request sets
+// extensions: {largeBlob: {read: true}} on the assertion options — the
+// exact shape a browser's navigator.credentials.get() expects.
+func TestBeginLoginLargeBlob_SetsReadExtension(t *testing.T) {
+	t.Parallel()
+	h := newUVHelper(t, false)
+	auth := newSoftwareAuthenticator(t)
+	enrollAuthenticator(t, h, testUserUV, auth, 0)
+
+	assertion, _, err := h.BeginLoginLargeBlob(context.Background(), testUserUV, LargeBlobRequest{Read: true})
+	if err != nil {
+		t.Fatalf("BeginLoginLargeBlob: %v", err)
+	}
+	lb, ok := assertion.Response.Extensions[extensionLargeBlob].(map[string]any)
+	if !ok || lb["read"] != true {
+		t.Fatalf("Extensions[largeBlob] = %#v, want {read: true}", assertion.Response.Extensions[extensionLargeBlob])
+	}
+}
+
+// TestBeginLoginLargeBlob_SetsWriteExtension proves a Write request encodes
+// the blob as base64url in extensions: {largeBlob: {write: <b64url>}}.
+func TestBeginLoginLargeBlob_SetsWriteExtension(t *testing.T) {
+	t.Parallel()
+	h := newUVHelper(t, false)
+	auth := newSoftwareAuthenticator(t)
+	enrollAuthenticator(t, h, testUserUV, auth, 0)
+
+	blob := []byte("recovery-key-material")
+	assertion, _, err := h.BeginLoginLargeBlob(context.Background(), testUserUV, LargeBlobRequest{Write: blob})
+	if err != nil {
+		t.Fatalf("BeginLoginLargeBlob: %v", err)
+	}
+	lb, ok := assertion.Response.Extensions[extensionLargeBlob].(map[string]any)
+	if !ok {
+		t.Fatalf("Extensions[largeBlob] missing: %#v", assertion.Response.Extensions)
+	}
+	got, ok := lb["write"].(protocol.URLEncodedBase64)
+	if !ok || string(got) != string(blob) {
+		t.Fatalf("Extensions[largeBlob][write] = %#v, want %q", lb["write"], blob)
+	}
+}
+
+// TestBeginLoginLargeBlob_RejectsBothReadAndWrite proves the mutually
+// exclusive validation: the WebAuthn spec's largeBlob extension is read XOR
+// write per ceremony.
+func TestBeginLoginLargeBlob_RejectsBothReadAndWrite(t *testing.T) {
+	t.Parallel()
+	h := newUVHelper(t, false)
+	auth := newSoftwareAuthenticator(t)
+	enrollAuthenticator(t, h, testUserUV, auth, 0)
+
+	_, _, err := h.BeginLoginLargeBlob(context.Background(), testUserUV, LargeBlobRequest{Read: true, Write: []byte("x")})
+	if err == nil {
+		t.Fatal("expected error for read+write both set, got nil")
+	}
+}
+
+// TestBeginLoginLargeBlob_ZeroValueMatchesBeginLogin proves the capability
+// seam is byte-identical to BeginLogin when neither Read nor Write is set —
+// no "largeBlob" (or any) extensions key is added.
+func TestBeginLoginLargeBlob_ZeroValueMatchesBeginLogin(t *testing.T) {
+	t.Parallel()
+	h := newUVHelper(t, false)
+	auth := newSoftwareAuthenticator(t)
+	enrollAuthenticator(t, h, testUserUV, auth, 0)
+
+	assertion, _, err := h.BeginLoginLargeBlob(context.Background(), testUserUV, LargeBlobRequest{})
+	if err != nil {
+		t.Fatalf("BeginLoginLargeBlob: %v", err)
+	}
+	if len(assertion.Response.Extensions) != 0 {
+		t.Fatalf("Extensions = %#v, want empty (byte-identical to BeginLogin)", assertion.Response.Extensions)
+	}
+}
+
+// TestFinishLoginLargeBlob_CapturesReadResult drives a full, real, signed
+// assertion (via the softwareAuthenticator harness) whose
+// clientExtensionResults carries a largeBlob "blob" output, proving
+// FinishLoginLargeBlob decodes it into LargeBlobResult.Read — while
+// verification (CloneWarning, counter update) behaves exactly like
+// FinishLogin.
+func TestFinishLoginLargeBlob_CapturesReadResult(t *testing.T) {
+	t.Parallel()
+	h := newUVHelper(t, false)
+	auth := newSoftwareAuthenticator(t)
+	enrollAuthenticator(t, h, testUserUV, auth, 5)
+	ctx := context.Background()
+
+	_, sessionID, err := h.BeginLoginLargeBlob(ctx, testUserUV, LargeBlobRequest{Read: true})
+	if err != nil {
+		t.Fatalf("BeginLoginLargeBlob: %v", err)
+	}
+	session := mustPeekSession(t, h, ctx, testUserUV)
+
+	blob := []byte("stored-large-blob-bytes")
+	body := auth.assertJSONWithExtensions(t, testRPID, testOrigin, session.Challenge, 6, true, nil,
+		map[string]any{"largeBlob": map[string]any{"blob": base64.RawURLEncoding.EncodeToString(blob)}})
+	req := httptest.NewRequest("POST", "/webauthn/login/finish", strings.NewReader(body))
+
+	user, cred, result, err := h.FinishLoginLargeBlob(ctx, sessionID, req)
+	if err != nil {
+		t.Fatalf("FinishLoginLargeBlob: %v", err)
+	}
+	if user.Name != testUserUV {
+		t.Fatalf("user = %q, want %q", user.Name, testUserUV)
+	}
+	if cred.Authenticator.SignCount != 6 {
+		t.Fatalf("SignCount = %d, want 6 (verification unaffected)", cred.Authenticator.SignCount)
+	}
+	if result == nil || string(result.Read) != string(blob) {
+		t.Fatalf("LargeBlobResult = %#v, want Read=%q", result, blob)
+	}
+	if result.Written != nil {
+		t.Fatalf("Written = %v, want nil (no write requested)", *result.Written)
+	}
+}
+
+// TestFinishLoginLargeBlob_CapturesWrittenConfirmation mirrors the read test
+// for a write-confirmation ("written": true) output.
+func TestFinishLoginLargeBlob_CapturesWrittenConfirmation(t *testing.T) {
+	t.Parallel()
+	h := newUVHelper(t, false)
+	auth := newSoftwareAuthenticator(t)
+	enrollAuthenticator(t, h, testUserUV, auth, 5)
+	ctx := context.Background()
+
+	_, sessionID, err := h.BeginLoginLargeBlob(ctx, testUserUV, LargeBlobRequest{Write: []byte("x")})
+	if err != nil {
+		t.Fatalf("BeginLoginLargeBlob: %v", err)
+	}
+	session := mustPeekSession(t, h, ctx, testUserUV)
+
+	body := auth.assertJSONWithExtensions(t, testRPID, testOrigin, session.Challenge, 6, true, nil,
+		map[string]any{"largeBlob": map[string]any{"written": true}})
+	req := httptest.NewRequest("POST", "/webauthn/login/finish", strings.NewReader(body))
+
+	_, _, result, err := h.FinishLoginLargeBlob(ctx, sessionID, req)
+	if err != nil {
+		t.Fatalf("FinishLoginLargeBlob: %v", err)
+	}
+	if result == nil || result.Written == nil || !*result.Written {
+		t.Fatalf("LargeBlobResult = %#v, want Written=true", result)
+	}
+	if result.Read != nil {
+		t.Fatalf("Read = %q, want nil (no read requested)", result.Read)
+	}
+}
+
+// TestFinishLoginLargeBlob_NoExtensionResultIsNil proves that when the
+// client's response carries no largeBlob entry at all (the ordinary
+// FinishLogin path, replayed through FinishLoginLargeBlob), the returned
+// *LargeBlobResult is nil — not a zero-value struct — so callers can tell
+// "not honored" apart from "honored but empty".
+func TestFinishLoginLargeBlob_NoExtensionResultIsNil(t *testing.T) {
+	t.Parallel()
+	h := newUVHelper(t, true)
+	auth := newSoftwareAuthenticator(t)
+	enrollAuthenticator(t, h, testUserUV, auth, 5)
+	ctx := context.Background()
+
+	_, sessionID, err := h.BeginLogin(ctx, testUserUV)
+	if err != nil {
+		t.Fatalf("BeginLogin: %v", err)
+	}
+	session := mustPeekSession(t, h, ctx, testUserUV)
+
+	body := auth.assertJSON(t, testRPID, testOrigin, session.Challenge, 6, true, nil)
+	req := httptest.NewRequest("POST", "/webauthn/login/finish", strings.NewReader(body))
+
+	_, _, result, err := h.FinishLoginLargeBlob(ctx, sessionID, req)
+	if err != nil {
+		t.Fatalf("FinishLoginLargeBlob: %v", err)
+	}
+	if result != nil {
+		t.Fatalf("LargeBlobResult = %#v, want nil", result)
+	}
+}
+
+// TestFinishLoginLargeBlob_CounterRegressionStillRejected proves
+// FinishLoginLargeBlob enforces the SAME ErrClonedAuthenticator gate as
+// FinishLogin — the largeBlob plumbing must not weaken verification.
+func TestFinishLoginLargeBlob_CounterRegressionStillRejected(t *testing.T) {
+	t.Parallel()
+	h := newUVHelper(t, false)
+	auth := newSoftwareAuthenticator(t)
+	enrollAuthenticator(t, h, testUserUV, auth, 10)
+	ctx := context.Background()
+
+	_, sessionID, err := h.BeginLoginLargeBlob(ctx, testUserUV, LargeBlobRequest{Read: true})
+	if err != nil {
+		t.Fatalf("BeginLoginLargeBlob: %v", err)
+	}
+	session := mustPeekSession(t, h, ctx, testUserUV)
+
+	body := auth.assertJSON(t, testRPID, testOrigin, session.Challenge, 10, true, nil)
+	req := httptest.NewRequest("POST", "/webauthn/login/finish", strings.NewReader(body))
+	_, _, _, err = h.FinishLoginLargeBlob(ctx, sessionID, req)
+	if !errors.Is(err, ErrClonedAuthenticator) {
+		t.Fatalf("got %v, want ErrClonedAuthenticator", err)
+	}
+}
+
+// TestExtractLargeBlobResult_PureParsing unit-tests the raw
+// clientExtensionResults -> *LargeBlobResult mapping directly, independent
+// of any ceremony — covering shapes a real authenticator could plausibly
+// send that the round-trip tests above don't already cover (malformed blob,
+// entirely absent key).
+func TestExtractLargeBlobResult_PureParsing(t *testing.T) {
+	t.Parallel()
+	if got := extractLargeBlobResult(protocol.AuthenticationExtensionsClientOutputs{}); got != nil {
+		t.Fatalf("absent largeBlob = %#v, want nil", got)
+	}
+	if got := extractLargeBlobResult(protocol.AuthenticationExtensionsClientOutputs{
+		extensionLargeBlob: map[string]any{"blob": "not-valid-base64url!!!"},
+	}); got == nil || got.Read != nil {
+		t.Fatalf("malformed blob = %#v, want non-nil result with nil Read", got)
 	}
 }
 

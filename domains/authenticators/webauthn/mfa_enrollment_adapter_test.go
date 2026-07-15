@@ -70,3 +70,44 @@ func TestMFAEnrollmentAdapter_ListAndRemove(t *testing.T) {
 		t.Errorf("unknown user remove = %v, want nil", err)
 	}
 }
+
+// TestMFAEnrollmentAdapter_SurfacesDiscoverable proves that a credProps
+// "rk" result captured via SetCredentialExtensions flows through to the
+// self-service /me/mfa listing on the matching factor ID ONLY — a sibling
+// credential with no captured extension keeps Discoverable nil (unknown),
+// never false.
+func TestMFAEnrollmentAdapter_SurfacesDiscoverable(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	us := seedPasskeys(t, "u-bob", "credX", "credY")
+
+	rk := true
+	if err := us.SetCredentialExtensions(ctx, "u-bob", []byte("credX"), webauthn.CredentialExtensions{Discoverable: &rk}); err != nil {
+		t.Fatalf("SetCredentialExtensions: %v", err)
+	}
+
+	a := webauthn.NewMFAEnrollmentAdapter(us)
+	factors, err := a.ListFactors(ctx, "u-bob")
+	if err != nil {
+		t.Fatalf("ListFactors: %v", err)
+	}
+	if len(factors) != 2 {
+		t.Fatalf("want 2 factors, got %+v", factors)
+	}
+	idX := base64.RawURLEncoding.EncodeToString([]byte("credX"))
+	idY := base64.RawURLEncoding.EncodeToString([]byte("credY"))
+	for _, f := range factors {
+		switch f.ID {
+		case idX:
+			if f.Discoverable == nil || !*f.Discoverable {
+				t.Errorf("credX Discoverable = %v, want true", f.Discoverable)
+			}
+		case idY:
+			if f.Discoverable != nil {
+				t.Errorf("credY Discoverable = %v, want nil (never captured)", *f.Discoverable)
+			}
+		default:
+			t.Errorf("unexpected factor id %q", f.ID)
+		}
+	}
+}

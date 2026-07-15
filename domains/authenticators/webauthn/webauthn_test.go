@@ -3,6 +3,7 @@ package webauthn
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http/httptest"
 	"strings"
@@ -404,17 +405,27 @@ type nonHandleResolverStore struct {
 	inner *MemoryUserStore
 }
 
-func (s *nonHandleResolverStore) GetByName(ctx context.Context, name string) (*User, error)  { return s.inner.GetByName(ctx, name) }
-func (s *nonHandleResolverStore) CreateUser(ctx context.Context, name, displayName string) (*User, error) { return s.inner.CreateUser(ctx, name, displayName) }
-func (s *nonHandleResolverStore) AddCredential(ctx context.Context, name string, cred *gw.Credential) error { return s.inner.AddCredential(ctx, name, cred) }
-func (s *nonHandleResolverStore) UpdateCredential(ctx context.Context, name string, cred *gw.Credential) error { return s.inner.UpdateCredential(ctx, name, cred) }
-func (s *nonHandleResolverStore) RemoveCredential(ctx context.Context, name string, credentialID []byte) error { return s.inner.RemoveCredential(ctx, name, credentialID) }
+func (s *nonHandleResolverStore) GetByName(ctx context.Context, name string) (*User, error) {
+	return s.inner.GetByName(ctx, name)
+}
+func (s *nonHandleResolverStore) CreateUser(ctx context.Context, name, displayName string) (*User, error) {
+	return s.inner.CreateUser(ctx, name, displayName)
+}
+func (s *nonHandleResolverStore) AddCredential(ctx context.Context, name string, cred *gw.Credential) error {
+	return s.inner.AddCredential(ctx, name, cred)
+}
+func (s *nonHandleResolverStore) UpdateCredential(ctx context.Context, name string, cred *gw.Credential) error {
+	return s.inner.UpdateCredential(ctx, name, cred)
+}
+func (s *nonHandleResolverStore) RemoveCredential(ctx context.Context, name string, credentialID []byte) error {
+	return s.inner.RemoveCredential(ctx, name, credentialID)
+}
 
 func TestFinishLoginConditional_RequiresHandleResolver(t *testing.T) {
 	t.Parallel()
 	h, err := NewHelper(Config{
-		RPID:      "example.com",
-		RPOrigins: []string{"https://sso.example.com"},
+		RPID:       "example.com",
+		RPOrigins:  []string{"https://sso.example.com"},
 		SessionTTL: time.Minute,
 	}, &nonHandleResolverStore{inner: NewMemoryUserStore()}, NewMemorySessionStore())
 	if err != nil {
@@ -441,6 +452,195 @@ func TestFinishLoginConditional_RequiresHandleResolver(t *testing.T) {
 // TestFinishLoginConditional_HappyPath validates a full conditional-mediation
 // round trip: begin (discoverable, no username), sign the challenge with a
 // software authenticator including the user's handle, and finish successfully.
+// ----- credProps / largeBlob-support registration extensions -----
+
+// TestBeginRegistration_NoExtensionsByDefault proves the byte-identical
+// default: with neither Config.RequestCredProps nor
+// Config.RequestLargeBlobSupport set, BeginRegistration sends no
+// "extensions" key at all — the same wire shape as a pre-extension build.
+func TestBeginRegistration_NoExtensionsByDefault(t *testing.T) {
+	t.Parallel()
+	h := newHelperForTest(t)
+	creation, _, err := h.BeginRegistration(context.Background(), "alice@example.com", "Alice")
+	if err != nil {
+		t.Fatalf("BeginRegistration: %v", err)
+	}
+	if len(creation.Response.Extensions) != 0 {
+		t.Fatalf("Extensions = %#v, want empty (byte-identical default)", creation.Response.Extensions)
+	}
+}
+
+// TestBeginRegistration_RequestsCredPropsAndLargeBlobSupport proves both
+// opt-in flags are threaded onto the creation options simultaneously —
+// exercising that registrationExtensions builds ONE merged map (a second
+// gw.WithExtensions call would silently overwrite the first, per
+// go-webauthn's WithExtensions implementation).
+func TestBeginRegistration_RequestsCredPropsAndLargeBlobSupport(t *testing.T) {
+	t.Parallel()
+	h, err := NewHelper(Config{
+		RPID:                    "example.com",
+		RPDisplayName:           "Example AS",
+		RPOrigins:               []string{"https://sso.example.com"},
+		RequestCredProps:        true,
+		RequestLargeBlobSupport: true,
+	}, NewMemoryUserStore(), NewMemorySessionStore())
+	if err != nil {
+		t.Fatalf("NewHelper: %v", err)
+	}
+	creation, _, err := h.BeginRegistration(context.Background(), "alice@example.com", "Alice")
+	if err != nil {
+		t.Fatalf("BeginRegistration: %v", err)
+	}
+	if got, ok := creation.Response.Extensions[extensionCredProps].(bool); !ok || !got {
+		t.Fatalf("Extensions[credProps] = %#v, want true", creation.Response.Extensions[extensionCredProps])
+	}
+	lb, ok := creation.Response.Extensions[extensionLargeBlob].(map[string]any)
+	if !ok || lb["support"] != "preferred" {
+		t.Fatalf("Extensions[largeBlob] = %#v, want {support: preferred}", creation.Response.Extensions[extensionLargeBlob])
+	}
+}
+
+// TestExtensionsFromCreation_CredPropsRK proves the pure parsing logic maps
+// a credProps "rk" output to Discoverable, distinguishing true, false, and
+// absent (nil, not false) — go-webauthn has no typed credProps support (as
+// of v0.17.x it's a bare map[string]any), so this is the only place that
+// shape is interpreted.
+func TestExtensionsFromCreation_CredPropsRK(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		results protocol.AuthenticationExtensionsClientOutputs
+		want    *bool
+	}{
+		{"rk true", protocol.AuthenticationExtensionsClientOutputs{extensionCredProps: map[string]any{"rk": true}}, boolPtr(true)},
+		{"rk false", protocol.AuthenticationExtensionsClientOutputs{extensionCredProps: map[string]any{"rk": false}}, boolPtr(false)},
+		{"credProps absent", protocol.AuthenticationExtensionsClientOutputs{}, nil},
+		{"credProps malformed (not a map)", protocol.AuthenticationExtensionsClientOutputs{extensionCredProps: "oops"}, nil},
+		{"rk missing from credProps", protocol.AuthenticationExtensionsClientOutputs{extensionCredProps: map[string]any{}}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extensionsFromCreation(tc.results).Discoverable
+			assertBoolPtrEqual(t, got, tc.want)
+		})
+	}
+}
+
+// TestExtensionsFromCreation_LargeBlobSupported mirrors the credProps test
+// for the largeBlob registration-time "supported" detection output.
+func TestExtensionsFromCreation_LargeBlobSupported(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		results protocol.AuthenticationExtensionsClientOutputs
+		want    *bool
+	}{
+		{"supported true", protocol.AuthenticationExtensionsClientOutputs{extensionLargeBlob: map[string]any{"supported": true}}, boolPtr(true)},
+		{"supported false", protocol.AuthenticationExtensionsClientOutputs{extensionLargeBlob: map[string]any{"supported": false}}, boolPtr(false)},
+		{"largeBlob absent", protocol.AuthenticationExtensionsClientOutputs{}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extensionsFromCreation(tc.results).LargeBlobSupported
+			assertBoolPtrEqual(t, got, tc.want)
+		})
+	}
+}
+
+// TestPersistCredentialExtensions_NoopWhenNothingCaptured proves that when
+// ext is the zero value (neither flag requested / nothing echoed),
+// persistCredentialExtensions never calls into the store — verified via a
+// store whose SetCredentialExtensions would fail the test if invoked.
+func TestPersistCredentialExtensions_NoopWhenNothingCaptured(t *testing.T) {
+	t.Parallel()
+	h := newHelperForTest(t)
+	store := &failIfCalledExtensionStore{MemoryUserStore: NewMemoryUserStore(), t: t}
+	h.users = store
+	ctx := context.Background()
+	if _, err := store.CreateUser(ctx, "alice", "Alice"); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	h.persistCredentialExtensions(ctx, "alice", []byte("cred-1"), CredentialExtensions{})
+}
+
+// TestPersistCredentialExtensions_StoreWithoutCapabilityIsNoop proves a
+// UserStore that does NOT implement credentialExtensionSetter is silently
+// skipped — Discoverable/LargeBlobSupported simply never persist for that
+// backend, matching the same-safe-as-unrequested convention.
+func TestPersistCredentialExtensions_StoreWithoutCapabilityIsNoop(t *testing.T) {
+	t.Parallel()
+	h := newHelperForTest(t)
+	store := &nonHandleResolverStore{inner: NewMemoryUserStore()}
+	h.users = store
+	ctx := context.Background()
+	if _, err := store.CreateUser(ctx, "alice", "Alice"); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	rk := true
+	// Must not panic — nonHandleResolverStore has no SetCredentialExtensions.
+	h.persistCredentialExtensions(ctx, "alice", []byte("cred-1"), CredentialExtensions{Discoverable: &rk})
+}
+
+// TestPersistCredentialExtensions_PersistsToMemoryStore is the positive
+// case: MemoryUserStore implements credentialExtensionSetter, and the
+// captured extension flows into User.CredentialExtensions keyed by
+// base64url(credentialID) — the same key MFAEnrollmentAdapter reads.
+func TestPersistCredentialExtensions_PersistsToMemoryStore(t *testing.T) {
+	t.Parallel()
+	h := newHelperForTest(t)
+	ctx := context.Background()
+	if _, err := h.users.CreateUser(ctx, "alice", "Alice"); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	rk := true
+	h.persistCredentialExtensions(ctx, "alice", []byte("cred-1"), CredentialExtensions{Discoverable: &rk})
+
+	user, err := h.users.GetByName(ctx, "alice")
+	if err != nil {
+		t.Fatalf("GetByName: %v", err)
+	}
+	key := base64.RawURLEncoding.EncodeToString([]byte("cred-1"))
+	got, ok := user.CredentialExtensions[key]
+	if !ok || got.Discoverable == nil || !*got.Discoverable {
+		t.Fatalf("CredentialExtensions[%q] = %#v, want Discoverable=true", key, got)
+	}
+}
+
+// FinishRegistration_CapturesCredProps cannot be exercised via a full
+// ceremony round trip: this package's test harness (softwareAuthenticator)
+// deliberately avoids building a real CBOR attestation object — see
+// TestFinishRegistrationGate's doc comment — so the credProps/largeBlob
+// capture at FinishRegistration is proven at the [extensionsFromCreation]
+// unit-test level above instead (the only seam between the parsed response
+// and this package's stored fields).
+
+// failIfCalledExtensionStore wraps MemoryUserStore but fails the test if
+// SetCredentialExtensions is ever invoked — used to prove
+// persistCredentialExtensions's early return on a zero-value ext.
+type failIfCalledExtensionStore struct {
+	*MemoryUserStore
+	t *testing.T
+}
+
+func (s *failIfCalledExtensionStore) SetCredentialExtensions(ctx context.Context, name string, credentialID []byte, ext CredentialExtensions) error {
+	s.t.Fatal("SetCredentialExtensions called for a zero-value ext — persistCredentialExtensions must no-op")
+	return nil
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+func assertBoolPtrEqual(t *testing.T, got, want *bool) {
+	t.Helper()
+	switch {
+	case want == nil && got != nil:
+		t.Fatalf("got %v, want nil", *got)
+	case want != nil && got == nil:
+		t.Fatalf("got nil, want %v", *want)
+	case want != nil && got != nil && *want != *got:
+		t.Fatalf("got %v, want %v", *got, *want)
+	}
+}
+
 func TestFinishLoginConditional_HappyPath(t *testing.T) {
 	t.Parallel()
 	h := newHelperForTest(t)
