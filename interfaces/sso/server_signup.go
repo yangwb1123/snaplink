@@ -261,7 +261,7 @@ const (
 
 // setupWizardOn reports whether the first-run wizard is wired
 // (setup_wizard.enabled). The setup endpoints self-gate on it.
-func (s *Server) setupWizardOn() bool { return s.setupWizardFS != nil }
+func (s *Server) setupWizardOn() bool { return s.setupWizardEnabled }
 
 // setupInitialized reports whether first-run setup is complete — i.e. an admin
 // already exists. It prefers the sso-admin role assignment (few rows) and

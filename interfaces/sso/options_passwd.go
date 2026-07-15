@@ -6,7 +6,6 @@ import (
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
-	"io/fs"
 	"time"
 
 	"github.com/snaplink/sso/protocols/compliance"
@@ -242,46 +241,6 @@ func WithTrustedProxies(cidrs []string, hops int) (Option, error) {
 		return nil, err
 	}
 	return func(s *Server) { s.trustedProxies = tp }, nil
-}
-
-// WithAdminConsoleFS serves the admin console SPA at /admin/ from the
-// provided filesystem. The SPA is a standalone browser client that
-// communicates with the server via the existing /api/v1/admin/* REST
-// endpoints using a Bearer token with admin:read or admin:write scope.
-//
-// Typically wired by embedding the web/admin directory with go:embed in
-// the operator's cmd binary and passing the sub-filesystem here. Index
-// file (index.html) is served for the /admin/ root; all sub-paths fall
-// through to the filesystem.
-//
-// Nil (the default) leaves /admin/ unmounted — byte-identical to a build
-// without the console.
-func WithAdminConsoleFS(adminFS fs.FS) Option {
-	return func(s *Server) { s.adminConsoleFS = adminFS }
-}
-
-// WithHostedLoginFS serves the hosted-login SPA at /login/ from the provided
-// filesystem. The SPA calls /auth/login over JSON — no protocol changes to
-// the OAuth/OIDC surface. Typically wired by embedding web/login with an
-// embed directive in the operator's cmd binary.
-//
-// Nil (the default) leaves /login/ unmounted — byte-identical to a build
-// without the hosted login UI.
-func WithHostedLoginFS(loginFS fs.FS) Option {
-	return func(s *Server) { s.hostedLoginFS = loginFS }
-}
-
-// WithSelfServicePortalFS serves the end-user self-service portal SPA at
-// /portal/ from the provided filesystem. The portal is a standalone browser
-// client that calls the existing /me, /sessions/me, /consents/me, /me/password
-// and /me/mfa endpoints with the end-user's own Bearer token — no protocol
-// changes. Typically wired by embedding web/portal with an embed directive in
-// the operator's cmd binary.
-//
-// Nil (the default) leaves /portal/ unmounted — byte-identical to a build
-// without the portal UI.
-func WithSelfServicePortalFS(portalFS fs.FS) Option {
-	return func(s *Server) { s.portalFS = portalFS }
 }
 
 // WithSelfEditableProfileAttributes allowlists the User.Attributes keys an

@@ -435,17 +435,13 @@ func (s *Server) wrapInnerMiddlewares(inner http.Handler) http.Handler {
 	return inner
 }
 
-// SPA mount prefixes served by buildProbeMux outside the SSO router. Held as
-// consts so each prefix's mux.Handle and StripPrefix uses cannot drift apart.
-const (
-	pathAdminConsolePrefix = "/admin/"
-	pathHostedLoginPrefix  = "/login/"
-	pathPortalPrefix       = "/portal/"
-)
-
 // buildProbeMux serves the operational probe endpoints (/livez, /readyz,
-// /metrics) and the opt-in SPA bundles OUTSIDE the middleware stack, routing
-// everything else to inner. See Handler's doc for why probes bypass middleware.
+// /metrics) OUTSIDE the middleware stack, routing everything else to inner.
+// See Handler's doc for why probes bypass middleware. The SDK no longer
+// serves any static frontend — sso-server is a pure API backend; every
+// hosted UI (admin console, login, self-service portal, developer portal,
+// setup wizard) is a separate frontend project served by a reverse proxy
+// that also proxies API calls to this server (see ops/deploy/openresty).
 func (s *Server) buildProbeMux(inner http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(PathLivez, s.handleLivez)
@@ -453,30 +449,6 @@ func (s *Server) buildProbeMux(inner http.Handler) http.Handler {
 	if s.metrics != nil {
 		mux.Handle(PathMetrics, promhttp.HandlerFor(s.metrics.Registry, promhttp.HandlerOpts{}))
 	}
-	// Admin console SPA (opt-in). Served from /admin/ so the browser client
-	// has a stable origin to call back to /api/v1/admin/* from. Mounted
-	// whenever adminConsoleFS is wired, REGARDLESS of the WebSPA gate's
-	// current value — core.GateHTTPHandler gates reachability LIVE, per
-	// request, instead of at this boot-time mount decision, so
-	// SetWebSPAGateEnabled can hot-toggle it without a re-Mount. Nil FS
-	// (never wired via WithAdminConsoleFS) still means no mux entry at all.
-	if s.adminConsoleFS != nil {
-		mux.Handle(pathAdminConsolePrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(spaNoCache(http.StripPrefix(pathAdminConsolePrefix, http.FileServerFS(s.adminConsoleFS))))))
-	}
-	// Hosted login SPA (opt-in). Served from /login/ so the browser can
-	// reach the SPA while the JSON /auth/login endpoint remains at its
-	// existing path. Same live-gate treatment as the admin console above.
-	if s.hostedLoginFS != nil {
-		mux.Handle(pathHostedLoginPrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(spaNoCache(http.StripPrefix(pathHostedLoginPrefix, http.FileServerFS(s.hostedLoginFS))))))
-	}
-	// End-user self-service portal SPA (opt-in). Served from /portal/; it
-	// calls /me* over JSON with the user's own bearer. Same live-gate
-	// treatment as the admin console above.
-	if s.portalFS != nil {
-		mux.Handle(pathPortalPrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(spaNoCache(http.StripPrefix(pathPortalPrefix, http.FileServerFS(s.portalFS))))))
-	}
-	s.mountDeveloperPortalSPA(mux)
-	s.mountSetupWizardSPA(mux)
 	mux.Handle("/", inner)
 	return mux
 }

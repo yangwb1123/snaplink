@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"testing/fstest"
 
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -14,8 +13,7 @@ import (
 )
 
 // shNewServer builds the minimal Server the security-headers tests need:
-// enough wiring for Handler() to route /health, POST /logout, and (when the
-// caller adds WithAdminConsoleFS) the /admin/ SPA — nothing else.
+// enough wiring for Handler() to route /health and POST /logout — nothing else.
 func shNewServer(extra ...sso.Option) *sso.Server {
 	opts := []sso.Option{
 		sso.WithIssuer("sso-server"),
@@ -68,35 +66,6 @@ func TestSecurityHeaders_ProbeEndpointsStayHeaderFree(t *testing.T) {
 	}
 }
 
-func TestSecurityHeaders_WrapsAdminConsoleSPA(t *testing.T) {
-	t.Parallel()
-	spa := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}}
-	h := shNewServer(sso.WithSecurityHeaders(), sso.WithAdminConsoleFS(spa)).Handler()
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/admin/", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /admin/ status = %d", rec.Code)
-	}
-	if csp := rec.Header().Get("Content-Security-Policy"); csp == "" {
-		t.Error("admin console SPA response missing Content-Security-Policy — it is served outside the SSO router and must be wrapped explicitly")
-	}
-}
-
-func TestSecurityHeaders_SPAUnaffectedWhenFeatureOff(t *testing.T) {
-	t.Parallel()
-	spa := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}}
-	h := shNewServer(sso.WithAdminConsoleFS(spa)).Handler()
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/admin/", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /admin/ status = %d", rec.Code)
-	}
-	if csp := rec.Header().Get("Content-Security-Policy"); csp != "" {
-		t.Errorf("Content-Security-Policy = %q, want unset when WithSecurityHeaders was never called", csp)
-	}
-}
 
 func TestSecurityHeadersPolicy_OverridesCSPDirectives(t *testing.T) {
 	t.Parallel()

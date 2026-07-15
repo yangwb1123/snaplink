@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"testing/fstest"
 
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/tenant/memory"
@@ -111,52 +110,23 @@ func TestSetAdminAPIGateEnabled_LiveToggleIsByteIdenticalTo404(t *testing.T) {
 	}
 }
 
-// TestSetWebSPAGateEnabled_LiveToggleIsByteIdenticalTo404 proves the same
-// property for web_spa, exercised against the admin-console SPA filesystem
-// mount (server_routes.go's buildProbeMux) — the FS is wired at boot via
-// WithAdminConsoleFS, so both directions of the toggle are available.
-func TestSetWebSPAGateEnabled_LiveToggleIsByteIdenticalTo404(t *testing.T) {
-	fsys := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>admin console</html>")}}
+// TestSetWebSPAGateEnabled_NoTenantStore_ReturnsFalseGracefully proves the
+// one real asymmetry: sso-server serves no static frontend of its own (see
+// buildProbeMux) — mountBrandingEndpoint (server_me.go) is the ONLY route
+// left gated by web_spa, and it requires a tenant store. With none wired,
+// there is nothing mounted for the gate to affect, so SetWebSPAGateEnabled
+// must report that (false), not silently no-op while looking like it
+// succeeded — that distinction is what lets config/reload surface it as
+// Result.Ignored instead of a false Result.Applied.
+func TestSetWebSPAGateEnabled_NoTenantStore_ReturnsFalseGracefully(t *testing.T) {
 	srv := sso.NewServer(
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
-		sso.WithAdminConsoleFS(fsys),
-	)
-	h := srv.Handler()
-
-	if resp := fghrGet(h, "/admin/"); resp.status != http.StatusOK {
-		t.Fatalf("GET /admin/ with web_spa on = %d, want 200", resp.status)
-	}
-	baseline := fghrGet(h, fghrNeverMountedBaseline)
-
-	if !srv.SetWebSPAGateEnabled(false) {
-		t.Fatal("SetWebSPAGateEnabled(false) = false, want true (admin console FS is wired)")
-	}
-	fghrAssertIdentical(t, fghrGet(h, "/admin/"), baseline, "web_spa live-disabled")
-
-	if !srv.SetWebSPAGateEnabled(true) {
-		t.Fatal("SetWebSPAGateEnabled(true) = false, want true")
-	}
-	if resp := fghrGet(h, "/admin/"); resp.status != http.StatusOK {
-		t.Fatalf("GET /admin/ after live re-enable = %d, want 200", resp.status)
-	}
-}
-
-// TestSetWebSPAGateEnabled_NoFilesystemWired_ReturnsFalseGracefully proves
-// scenario (c), the one real asymmetry: with NO SPA filesystem ever wired
-// via a With*FS option at NewServer time, there is no already-mounted route
-// for the gate to affect. SetWebSPAGateEnabled must report that (false),
-// not silently no-op while looking like it succeeded — that distinction is
-// what lets config/reload surface it as Result.Ignored instead of a false
-// Result.Applied.
-func TestSetWebSPAGateEnabled_NoFilesystemWired_ReturnsFalseGracefully(t *testing.T) {
-	srv := sso.NewServer(
-		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
-		// No With*FS option at all — mirrors an API-only deployment.
+		// No tenant store at all — mirrors a deployment without multi-tenancy.
 	)
 	_ = srv.Handler()
 
 	if srv.SetWebSPAGateEnabled(false) {
-		t.Fatal("SetWebSPAGateEnabled(false) = true, want false (no SPA filesystem was ever wired)")
+		t.Fatal("SetWebSPAGateEnabled(false) = true, want false (no tenant store was ever wired)")
 	}
 	if srv.SetWebSPAGateEnabled(true) {
 		t.Fatal("SetWebSPAGateEnabled(true) = true, want false (still nothing wired to affect)")
@@ -217,12 +187,11 @@ func TestSetAdminAPIGateEnabled_ByteIdenticalWithGlobalTracingMiddleware(t *test
 }
 
 // TestSetWebSPAGateEnabled_BrandingEndpoint_ByteIdenticalTo404 covers the
-// mountBrandingEndpoint code path specifically (server_me.go) — a
-// DIFFERENT call site from the admin-console SPA filesystem mount
-// TestSetWebSPAGateEnabled_LiveToggleIsByteIdenticalTo404 already covers,
-// registered on s.router (not a raw http.ServeMux entry) and so subject
-// to the exact same global-middleware-leak risk admin_api had. This one
-// also wires WithTracingMiddleware to reproduce that scenario precisely.
+// mountBrandingEndpoint code path (server_me.go) — the ONLY route web_spa
+// still gates now that sso-server serves no static frontend of its own.
+// Registered on s.router (not a raw http.ServeMux entry) and so subject to
+// the exact same global-middleware-leak risk admin_api had — this test also
+// wires WithTracingMiddleware to reproduce that scenario precisely.
 func TestSetWebSPAGateEnabled_BrandingEndpoint_ByteIdenticalTo404(t *testing.T) {
 	srv := sso.NewServer(
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),

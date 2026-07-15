@@ -8,7 +8,6 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverassets"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/config"
 	configetcd "github.com/snaplink/sso/config/etcd"
@@ -188,39 +187,3 @@ func initTracing(cfg *config.Config, logger spi.Logger) func(context.Context) er
 	return tracingShutdown
 }
 
-// wireWebSPAs mounts the SDK's hand-rolled static SPA bundles (admin
-// console, hosted login, self-service portal, developer portal). Split out
-// of wireFinalOptions (build_app_cluster.go, at its line budget) to stay
-// within it.
-func (b *appBuilder) wireWebSPAs() {
-	cfg, logger := b.cfg, b.logger
-
-	// Serve the hosted admin console SPA at /admin/. The filesystem is
-	// embedded in the binary at compile time via go:embed in admin_assets.go.
-	b.opts = append(b.opts, sso.WithAdminConsoleFS(serverassets.AdminSubFS()))
-
-	// Serve the hosted-login SPA at /login/ when opted in via config.
-	if cfg.HostedLogin.Enabled {
-		b.opts = append(b.opts, sso.WithHostedLoginFS(serverassets.LoginSubFS()))
-		logger.Info("hosted login UI enabled", "path", "/login/")
-		// The end-user self-service portal SPA pairs with the hosted login UI:
-		// once a user signs in they manage sessions/consents/password/MFA at
-		// /portal/ against the same /me* endpoints. Gated by the same flag.
-		b.opts = append(b.opts, sso.WithSelfServicePortalFS(serverassets.PortalSubFS()))
-		logger.Info("self-service portal UI enabled", "path", "/portal/")
-	}
-
-	// Serve the developer-portal SPA at /developer/ when DCR is enabled —
-	// no point offering a self-registration UI when /register itself 501s.
-	if cfg.ClientRegistration.Enabled {
-		b.opts = append(b.opts, sso.WithDeveloperPortalFS(serverassets.DeveloperSubFS()))
-		logger.Info("developer portal UI enabled", "path", "/developer/")
-	}
-
-	// Serve the first-run setup wizard at /setup/ when opted in via config.
-	// The paired public setup endpoints self-gate on this too.
-	if cfg.SetupWizard.Enabled {
-		b.opts = append(b.opts, sso.WithSetupWizardFS(serverassets.SetupSubFS()))
-		logger.Info("setup wizard UI enabled", "path", "/setup/")
-	}
-}

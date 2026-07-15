@@ -7,7 +7,6 @@ package sso_test
 import (
 	"context"
 	"errors"
-	"io/fs"
 	"net/http"
 	"time"
 
@@ -90,35 +89,6 @@ func Example_productionWiring() {
 		sso.WithMaxSessionsPerUser(5),
 	)
 
-	_ = srv
-}
-
-// ExampleServer_withHostedLogin demonstrates mounting the hosted login
-// UI from an embedded filesystem. The login SPA is served at /auth/login
-// and handles the full authentication flow including MFA, consent, and
-// home-realm discovery.
-func ExampleServer_withHostedLogin() {
-	// In production, embed the SPA assets at package level:
-	//
-	//	//go:embed static/login
-	//	var loginFS embed.FS
-	//	loginSubFS, _ := fs.Sub(loginFS, "static/login")
-	var loginSubFS fs.FS // nil leaves /login/ unmounted
-
-	srv := sso.NewServer(
-		sso.WithIssuer("sso-server"),
-		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
-		sso.WithDefaultTokenStrategy("jwt"),
-		sso.WithUserProvider(defaultimpl.NewMemoryUserProvider()),
-		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
-		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
-
-		// Mount the hosted login UI. The SPA is served at /auth/login
-		// and handles the full OAuth 2.0 / OIDC authentication flow.
-		sso.WithHostedLoginFS(loginSubFS),
-	)
-
-	// srv.Handler() now serves the login UI at /auth/login
 	_ = srv
 }
 

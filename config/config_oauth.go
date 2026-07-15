@@ -83,11 +83,3 @@ type SAMLSPProviderConfig struct {
 	AllowIDPInitiated bool `yaml:"allow_idp_initiated"`
 }
 
-// HostedLoginConfig opts into the built-in login UI served at /login/.
-// When Enabled is true the operator's cmd binary must also call
-// sso.WithHostedLoginFS (typically via go:embed of the web/login directory)
-// so the SPA assets are available. The SPA calls /auth/login over JSON —
-// zero protocol changes to the OAuth/OIDC surface.
-//
-// Disabled (the default) ⇒ /login/ is NOT mounted — byte-identical to a
-// build without the hosted UI.
