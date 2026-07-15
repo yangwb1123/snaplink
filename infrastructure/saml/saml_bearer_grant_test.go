@@ -252,3 +252,119 @@ func TestNewBearerAssertionValidator_RequiresAudience(t *testing.T) {
 		t.Fatal("expected error when Audience is unset")
 	}
 }
+
+// TestBearerAssertionValidator_RejectsReplayedAssertion is the direct
+// regression test for the missing replay-dedup gap: a genuinely IdP-signed,
+// correctly-audienced assertion is accepted on its FIRST redemption but must
+// be rejected on a SECOND presentation of the exact same bytes, within its
+// still-valid window. Before the fix, checkBearerReplay did not exist and
+// every check in the pipeline (signature, subject, conditions, audience,
+// issuer) passed identically on replay, so the same signed assertion could
+// mint an unbounded number of access tokens.
+func TestBearerAssertionValidator_RejectsReplayedAssertion(t *testing.T) {
+	signer := newIDPKey(t)
+	v := newTrustedValidator(t, signer)
+
+	a := buildBearerAssertion("alice@example.com", "https://idp.example.com", bearerAudience)
+	assertionB64 := toB64(signedBearerAssertionBytes(t, a, signer))
+
+	subject, err := v.ValidateAssertion(newBearerHandlerContext(), assertionB64)
+	if err != nil {
+		t.Fatalf("first redemption: unexpected error: %v", err)
+	}
+	if subject != "alice@example.com" {
+		t.Fatalf("first redemption: subject = %q, want alice@example.com", subject)
+	}
+
+	_, err = v.ValidateAssertion(newBearerHandlerContext(), assertionB64)
+	if err == nil {
+		t.Fatal("SECURITY: the SAME assertion was redeemed for a second access token (replay not rejected)")
+	}
+}
+
+// TestBearerAssertionValidator_DistinctAssertionsBothAccepted proves the
+// replay dedup is keyed by assertion ID, not e.g. by subject or a global
+// once-only gate: two DIFFERENT assertions for the same subject must both be
+// accepted.
+func TestBearerAssertionValidator_DistinctAssertionsBothAccepted(t *testing.T) {
+	signer := newIDPKey(t)
+	v := newTrustedValidator(t, signer)
+
+	a1 := buildBearerAssertion("alice@example.com", "https://idp.example.com", bearerAudience)
+	a2 := buildBearerAssertion("alice@example.com", "https://idp.example.com", bearerAudience)
+
+	if _, err := v.ValidateAssertion(newBearerHandlerContext(), toB64(signedBearerAssertionBytes(t, a1, signer))); err != nil {
+		t.Fatalf("first assertion: unexpected error: %v", err)
+	}
+	if _, err := v.ValidateAssertion(newBearerHandlerContext(), toB64(signedBearerAssertionBytes(t, a2, signer))); err != nil {
+		t.Fatalf("second (distinct) assertion: unexpected error: %v", err)
+	}
+}
+
+// TestBearerAssertionValidator_RejectsExpiredBearerConfirmationDespiteValidConditions
+// is the regression test for the missing SubjectConfirmationData expiry
+// check: SAML's bearer profile uses the Bearer SubjectConfirmationData's OWN
+// NotOnOrAfter to bound how long a captured assertion may be PRESENTED --
+// independent of, and typically tighter than, the assertion's overall
+// <Conditions> window. Before the fix, hasBearerSubjectConfirmation checked
+// only the Method attribute and never consulted NotBefore/NotOnOrAfter, so an
+// assertion whose broader Conditions window was still comfortably valid, but
+// whose SPECIFIC bearer confirmation had already lapsed, was accepted anyway
+// -- silently widening the bearer presentation window to the (often much
+// longer) Conditions window.
+func TestBearerAssertionValidator_RejectsExpiredBearerConfirmationDespiteValidConditions(t *testing.T) {
+	signer := newIDPKey(t)
+	v := newTrustedValidator(t, signer)
+
+	a := buildBearerAssertion("alice@example.com", "https://idp.example.com", bearerAudience)
+	// The overall Conditions window is comfortably valid...
+	a.Conditions.NotOnOrAfter = time.Now().Add(time.Hour)
+	// ...but the bearer confirmation's OWN presentation window already lapsed.
+	a.Subject.SubjectConfirmations[0].SubjectConfirmationData.NotOnOrAfter = time.Now().Add(-time.Minute)
+
+	assertionB64 := toB64(signedBearerAssertionBytes(t, a, signer))
+	subject, err := v.ValidateAssertion(newBearerHandlerContext(), assertionB64)
+	if err == nil {
+		t.Fatalf("SECURITY: assertion accepted despite an EXPIRED bearer SubjectConfirmationData window (subject=%q)", subject)
+	}
+}
+
+// TestBearerAssertionValidator_RejectsNotYetValidBearerConfirmation proves the
+// NotBefore half of the same gate: a bearer confirmation window that has not
+// STARTED yet must also be rejected, not just one that has ended.
+func TestBearerAssertionValidator_RejectsNotYetValidBearerConfirmation(t *testing.T) {
+	signer := newIDPKey(t)
+	v := newTrustedValidator(t, signer)
+
+	a := buildBearerAssertion("alice@example.com", "https://idp.example.com", bearerAudience)
+	a.Subject.SubjectConfirmations[0].SubjectConfirmationData.NotBefore = time.Now().Add(time.Hour)
+
+	assertionB64 := toB64(signedBearerAssertionBytes(t, a, signer))
+	subject, err := v.ValidateAssertion(newBearerHandlerContext(), assertionB64)
+	if err == nil {
+		t.Fatalf("SECURITY: assertion accepted before its bearer SubjectConfirmationData NotBefore (subject=%q)", subject)
+	}
+}
+
+// TestBearerAssertionValidator_AcceptsLiveBearerConfirmationWindow is the
+// accept-path counterpart: a bearer confirmation window that is currently
+// live (NotBefore in the past, NotOnOrAfter in the future) must still
+// succeed -- proving the fix does not reject a normal, unexpired assertion.
+func TestBearerAssertionValidator_AcceptsLiveBearerConfirmationWindow(t *testing.T) {
+	signer := newIDPKey(t)
+	v := newTrustedValidator(t, signer)
+
+	a := buildBearerAssertion("alice@example.com", "https://idp.example.com", bearerAudience)
+	scd := a.Subject.SubjectConfirmations[0].SubjectConfirmationData
+	scd.NotBefore = time.Now().Add(-time.Minute)
+	scd.NotOnOrAfter = time.Now().Add(time.Minute)
+
+	assertionB64 := toB64(signedBearerAssertionBytes(t, a, signer))
+	subject, err := v.ValidateAssertion(newBearerHandlerContext(), assertionB64)
+	if err != nil {
+		t.Fatalf("ValidateAssertion: unexpected error: %v", err)
+	}
+	if subject != "alice@example.com" {
+		t.Fatalf("subject = %q, want alice@example.com", subject)
+	}
+}

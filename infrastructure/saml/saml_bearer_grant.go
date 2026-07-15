@@ -52,7 +52,19 @@ type BearerAssertionValidatorConfig struct {
 
 	// MaxAssertionAge is the maximum allowed wall-clock age of the
 	// SAML assertion's Conditions.NotOnOrAfter. 0 = default 5 minutes.
+	// Also used as the replay-dedup fallback window (see bearerReplayExpiry)
+	// for the rare assertion whose Conditions/SubjectConfirmationData carry
+	// no NotOnOrAfter at all.
 	MaxAssertionAge time.Duration
+
+	// ReplayStoreSize bounds the in-memory AssertionID replay-dedup cache
+	// (see bearerReplayStore). Zero ⇒ DefaultBearerReplayStoreSize. Without
+	// this dedup a single captured, validly-signed assertion could be
+	// redeemed for an UNBOUNDED number of access tokens within its validity
+	// window -- RFC 7522 assertions are bearer credentials, and every other
+	// SAML entry point in this module (saml/idp, saml/sp) already dedups its
+	// own replay token; the bearer grant needs the same treatment.
+	ReplayStoreSize int
 }
 
 // BearerAssertionValidator validates RFC 7522 SAML 2.0 bearer
@@ -67,6 +79,11 @@ type BearerAssertionValidatorConfig struct {
 type BearerAssertionValidator struct {
 	cfg          BearerAssertionValidatorConfig
 	trustedCerts []*x509.Certificate
+
+	// replay dedups assertion IDs so the SAME signed assertion cannot be
+	// redeemed for more than one access token within its validity window
+	// (see bearerReplayStore / checkBearerReplay).
+	replay *bearerReplayStore
 }
 
 // NewBearerAssertionValidator constructs a new SAML 2.0 Bearer
@@ -95,7 +112,11 @@ func NewBearerAssertionValidator(cfg BearerAssertionValidatorConfig) (*BearerAss
 	if err != nil {
 		return nil, fmt.Errorf("saml: BearerAssertionValidator: %w", err)
 	}
-	return &BearerAssertionValidator{cfg: cfg, trustedCerts: certs}, nil
+	return &BearerAssertionValidator{
+		cfg:          cfg,
+		trustedCerts: certs,
+		replay:       newBearerReplayStore(cfg.ReplayStoreSize),
+	}, nil
 }
 
 // parseTrustedCertificates decodes each PEM-encoded certificate in pemCerts.
@@ -128,7 +149,7 @@ func (v *BearerAssertionValidator) ValidateAssertion(ctx core.HandlerContext, as
 		return "", fmt.Errorf("base64 decode: %w", err)
 	}
 
-	assertion, err := parseAndValidateRaw(ctx.Request().Context(), raw, &v.cfg, v.trustedCerts)
+	assertion, err := parseAndValidateRaw(ctx.Request().Context(), raw, &v.cfg, v.trustedCerts, v.replay)
 	if err != nil {
 		return "", err // already wrapped
 	}
@@ -144,8 +165,15 @@ func (v *BearerAssertionValidator) ValidateAssertion(ctx core.HandlerContext, as
 // against the rules in cfg. Nothing below the signature check is allowed to
 // influence the result until the signature has been confirmed against
 // trustedCerts -- an unsigned or forged assertion never reaches the
-// structural checks.
-func parseAndValidateRaw(ctx context.Context, raw []byte, cfg *BearerAssertionValidatorConfig, trustedCerts []*x509.Certificate) (*saml.Assertion, error) {
+// structural checks. replay is consulted LAST (after every other check
+// passed) -- see checkBearerReplay's doc: a captured, validly-signed
+// assertion must be usable for at most ONE access token, not replayed
+// indefinitely within its validity window.
+//
+// now is read once here and threaded through every time-bound check so they
+// all share one consistent timestamp (mirrors saml/sp's ProcessAssertion /
+// saml/idp's checkLogoutFreshnessAndReplay).
+func parseAndValidateRaw(ctx context.Context, raw []byte, cfg *BearerAssertionValidatorConfig, trustedCerts []*x509.Certificate, replay *bearerReplayStore) (*saml.Assertion, error) {
 	verifiedXML, err := verifyAssertionSignature(raw, trustedCerts)
 	if err != nil {
 		return nil, fmt.Errorf("signature verification: %w", err)
@@ -159,19 +187,24 @@ func parseAndValidateRaw(ctx context.Context, raw []byte, cfg *BearerAssertionVa
 		return nil, fmt.Errorf("unmarshal: %w", err)
 	}
 
+	now := time.Now()
+
 	if assertion.Subject == nil || assertion.Subject.NameID == nil || assertion.Subject.NameID.Value == "" {
 		return nil, errors.New("missing subject nameid")
 	}
-	if !hasBearerSubjectConfirmation(assertion) {
-		return nil, errors.New("subject confirmation must be bearer")
+	if !hasBearerSubjectConfirmation(assertion, now) {
+		return nil, errors.New("subject confirmation must be bearer and unexpired")
 	}
-	if err := checkConditions(assertion, cfg); err != nil {
+	if err := checkConditions(assertion, cfg, now); err != nil {
 		return nil, err
 	}
 	if !audienceMatches(assertion, cfg.Audience) {
 		return nil, errors.New("assertion audience mismatch")
 	}
 	if err := checkIssuerAllowed(assertion, cfg); err != nil {
+		return nil, err
+	}
+	if err := checkBearerReplay(assertion, cfg, replay, now); err != nil {
 		return nil, err
 	}
 
@@ -222,14 +255,16 @@ func verifyAssertionSignature(raw []byte, trustedCerts []*x509.Certificate) ([]b
 }
 
 // checkConditions validates NotBefore, NotOnOrAfter, and the max-age bound.
-// A nil Conditions is not rejected here -- see hasBearerSubjectConfirmation's
-// sibling NotOnOrAfter check for the SubjectConfirmationData expiry, which is
-// enforced independent of Conditions.
-func checkConditions(assertion *saml.Assertion, cfg *BearerAssertionValidatorConfig) error {
+// A nil Conditions is not rejected here -- hasBearerSubjectConfirmation
+// independently checks the mandatory Bearer SubjectConfirmationData's own
+// NotBefore/NotOnOrAfter, so an assertion with no Conditions element still
+// gets a real time-bound check via its required Bearer confirmation (an
+// assertion with NEITHER carrying a NotOnOrAfter has no possible expiry check
+// at all, which is why hasBearerSubjectConfirmation is not optional).
+func checkConditions(assertion *saml.Assertion, cfg *BearerAssertionValidatorConfig, now time.Time) error {
 	if assertion.Conditions == nil {
 		return nil
 	}
-	now := time.Now()
 	c := assertion.Conditions
 	if !c.NotBefore.IsZero() && now.Before(c.NotBefore) {
 		return errors.New("assertion not yet valid (NotBefore)")
@@ -238,7 +273,7 @@ func checkConditions(assertion *saml.Assertion, cfg *BearerAssertionValidatorCon
 		return errors.New("assertion expired (NotOnOrAfter)")
 	}
 	if !c.NotOnOrAfter.IsZero() && cfg.MaxAssertionAge > 0 {
-		if age := time.Since(c.NotOnOrAfter); age > cfg.MaxAssertionAge {
+		if age := now.Sub(c.NotOnOrAfter); age > cfg.MaxAssertionAge {
 			return fmt.Errorf("assertion age %v exceeds max %v", age, cfg.MaxAssertionAge)
 		}
 	}
@@ -274,18 +309,100 @@ func checkIssuerAllowed(assertion *saml.Assertion, cfg *BearerAssertionValidator
 	return fmt.Errorf("issuer %q not in allowed list", assertion.Issuer.Value)
 }
 
-// hasBearerSubjectConfirmation checks that the assertion has at least
-// one SubjectConfirmation with Method=Bearer.
-func hasBearerSubjectConfirmation(a *saml.Assertion) bool {
+// hasBearerSubjectConfirmation checks that the assertion has at least one
+// SubjectConfirmation with Method=Bearer AND, when that confirmation carries
+// a SubjectConfirmationData, that now falls inside its NotBefore/NotOnOrAfter
+// window. Mirrors saml/sp/validator.go's expired() bearer-confirmation loop:
+// every bearer confirmation present is checked (not just the first), and one
+// outside its window is disqualifying -- fail-closed, not merely skipped.
+//
+// THIS is the check checkConditions's doc references for a nil-Conditions
+// assertion: SubjectConfirmationData is where RFC 7522 bearer assertions
+// conventionally carry their validity window when the assertion has no (or
+// an incomplete) <Conditions> element, so this is not optional
+// defense-in-depth -- for such an assertion it is the ONLY expiry gate in the
+// whole pipeline. (An assertion with a bearer confirmation carrying no
+// SubjectConfirmationData at all, and no Conditions either, has no time bound
+// this validator can enforce and is accepted on that axis alone; the
+// replay-dedup check below still bounds its usable lifetime to
+// cfg.MaxAssertionAge.)
+func hasBearerSubjectConfirmation(a *saml.Assertion, now time.Time) bool {
 	if a.Subject == nil {
 		return false
 	}
+	found := false
 	for _, sc := range a.Subject.SubjectConfirmations {
-		if sc.Method == "urn:oasis:names:tc:SAML:2.0:cm:bearer" {
-			return true
+		if sc.Method != "urn:oasis:names:tc:SAML:2.0:cm:bearer" {
+			continue
+		}
+		found = true
+		if sc.SubjectConfirmationData == nil {
+			continue
+		}
+		scd := sc.SubjectConfirmationData
+		if !scd.NotBefore.IsZero() && now.Before(scd.NotBefore) {
+			return false
+		}
+		if !scd.NotOnOrAfter.IsZero() && !now.Before(scd.NotOnOrAfter) {
+			return false
 		}
 	}
-	return false
+	return found
+}
+
+// checkBearerReplay enforces single-use redemption of a bearer assertion:
+// every earlier check in this pipeline (signature, subject, conditions,
+// audience, issuer) passes again identically if the EXACT SAME assertion
+// bytes are replayed, because none of them consult any prior-sighting state
+// -- unlike saml/idp's LogoutReplayStore / saml/sp's ReplayStore, which dedup
+// their own protocol's replay token by ID. Without this, a captured,
+// validly-signed RFC 7522 assertion could be redeemed for an UNBOUNDED number
+// of access tokens within its validity window. An assertion with no ID
+// cannot be keyed on and is rejected outright (SAML core requires Assertion
+// ID; goxmldsig's enveloped-signature Reference is normally over "#<ID>", so
+// a conformant signed assertion always carries one).
+func checkBearerReplay(assertion *saml.Assertion, cfg *BearerAssertionValidatorConfig, replay *bearerReplayStore, now time.Time) error {
+	if assertion.ID == "" {
+		return errors.New("assertion missing ID")
+	}
+	if fresh := replay.CheckAndRemember(assertion.ID, bearerReplayExpiry(assertion, cfg, now), now); !fresh {
+		return errors.New("assertion replayed")
+	}
+	return nil
+}
+
+// bearerReplayExpiry picks the time after which the assertion can no longer
+// possibly be valid -- the earliest of its Conditions NotOnOrAfter and every
+// bearer SubjectConfirmationData NotOnOrAfter -- so the replay store prunes
+// the assertion ID at that point (mirrors saml/sp/validator.go's
+// replayExpiry). Neither is guaranteed present (see hasBearerSubjectConfirmation's
+// doc); when both are absent, cfg.MaxAssertionAge bounds the dedup entry's
+// life instead, reusing the SAME window that already bounds such an
+// assertion's overall acceptance.
+func bearerReplayExpiry(assertion *saml.Assertion, cfg *BearerAssertionValidatorConfig, now time.Time) time.Time {
+	var exp time.Time
+	consider := func(t time.Time) {
+		if t.IsZero() {
+			return
+		}
+		if exp.IsZero() || t.Before(exp) {
+			exp = t
+		}
+	}
+	if assertion.Conditions != nil {
+		consider(assertion.Conditions.NotOnOrAfter)
+	}
+	if assertion.Subject != nil {
+		for _, sc := range assertion.Subject.SubjectConfirmations {
+			if sc.SubjectConfirmationData != nil {
+				consider(sc.SubjectConfirmationData.NotOnOrAfter)
+			}
+		}
+	}
+	if exp.IsZero() {
+		exp = now.Add(cfg.MaxAssertionAge)
+	}
+	return exp
 }
 
 // Compile-time interface check.
