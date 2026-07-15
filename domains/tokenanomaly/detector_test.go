@@ -217,6 +217,78 @@ func TestDetector_ThreatExecutorErrorWithoutLoggerIsSafe(t *testing.T) {
 	}
 }
 
+// panickingThreatExecutor always panics — used to prove a panic inside a
+// pluggable, operator-supplied ThreatExecutor is recovered rather than
+// escaping Analyze, which runs from a permanent background goroutine
+// (Server.RunTokenAnomalyDetection's documented `go srv.RunTokenAnomalyDetection(...)`
+// deployment pattern) that would otherwise crash the whole process.
+type panickingThreatExecutor struct{}
+
+func (panickingThreatExecutor) Name() string { return "panicking" }
+func (panickingThreatExecutor) Execute(context.Context, threataction.Threat, threataction.ThreatPolicy) (threataction.ActionResult, error) {
+	panic("boom: threat executor panic")
+}
+
+// TestDetector_ThreatExecutorPanicIsRecovered proves Analyze survives a panic
+// raised by a wired ThreatExecutor.Execute: the panic is recovered and
+// logged, the sweep still returns normally, and the finding that triggered
+// the panicking dispatch was already persisted (Add runs BEFORE dispatch).
+func TestDetector_ThreatExecutorPanicIsRecovered(t *testing.T) {
+	lg := &countingLogger{}
+	d, fs, _ := newDetector(t, tokenanomaly.WithThreatExecutor(panickingThreatExecutor{}), tokenanomaly.WithLogger(lg))
+	presentAt(t, d, "tp1", "c1", "US", base.Add(-6*time.Minute))
+	presentAt(t, d, "tp1", "c1", "DE", base.Add(-1*time.Minute))
+
+	found, err := d.Analyze(context.Background())
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if len(found) == 0 {
+		t.Fatal("expected at least one finding")
+	}
+	if lg.errorCount() == 0 {
+		t.Error("expected the recovered panic to be logged")
+	}
+	list, _ := fs.List(context.Background(), tokenanomaly.FindingQuery{})
+	if len(list) != len(found) {
+		t.Errorf("store has %d findings, want %d (a later panic must not undo an earlier persist)", len(list), len(found))
+	}
+}
+
+// panickingFindingStore always panics on Add — used to prove a panic from a
+// pluggable FindingStore backend is likewise recovered rather than escaping
+// Analyze.
+type panickingFindingStore struct{}
+
+func (panickingFindingStore) Add(context.Context, tokenanomaly.Finding) error {
+	panic("boom: finding store panic")
+}
+func (panickingFindingStore) List(context.Context, tokenanomaly.FindingQuery) ([]tokenanomaly.Finding, error) {
+	return nil, nil
+}
+
+// TestDetector_FindingStorePanicIsRecovered proves Analyze survives a panic
+// raised by a wired FindingStore.Add, processing every finding independently
+// (one finding's panic must not stop the rest of the sweep).
+func TestDetector_FindingStorePanicIsRecovered(t *testing.T) {
+	lg := &countingLogger{}
+	next := tokenusagemem.New()
+	d := tokenanomaly.NewDetector(next, panickingFindingStore{}, tokenanomaly.WithClock(fixedClock()), tokenanomaly.WithLogger(lg))
+	presentAt(t, d, "tp1", "c1", "US", base.Add(-6*time.Minute))
+	presentAt(t, d, "tp1", "c1", "DE", base.Add(-1*time.Minute))
+
+	found, err := d.Analyze(context.Background())
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if len(found) == 0 {
+		t.Fatal("expected at least one finding")
+	}
+	if lg.errorCount() != len(found) {
+		t.Fatalf("logger recorded %d recovered panics, want %d (one per finding)", lg.errorCount(), len(found))
+	}
+}
+
 // TestDetector_Velocity: two distinct-geo sightings closer than the velocity
 // gap are impossible travel — a critical velocity finding, not multi_geo.
 func TestDetector_Velocity(t *testing.T) {

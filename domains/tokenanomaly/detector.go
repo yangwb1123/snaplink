@@ -343,6 +343,11 @@ func (d *Detector) evictOldestLocked() {
 // store, fires the metric hook, and returns the findings (for tests/callers).
 // A finding-store write error is collected but never aborts the sweep — the
 // remaining findings still emit. NEVER feeds an auth decision.
+//
+// Callers run this from a permanent background goroutine (see
+// Server.RunTokenAnomalyDetection's documented `go srv.RunTokenAnomalyDetection(...)`
+// deployment pattern) on a fixed interval indefinitely, so processFindingSafe
+// guards each finding with recover().
 func (d *Detector) Analyze(ctx context.Context) ([]Finding, error) {
 	if d == nil {
 		return nil, nil
@@ -354,38 +359,66 @@ func (d *Detector) Analyze(ctx context.Context) ([]Finding, error) {
 	hook := d.findingHook()
 	var firstErr error
 	for _, f := range findings {
-		if d.findings != nil {
-			if err := d.findings.Add(ctx, f); err != nil && firstErr == nil {
-				firstErr = err
-			}
-		}
-		if hook != nil {
-			hook(f.Type, string(f.Severity))
-		}
-
-		// Threat executor: convert Finding → Threat and dispatch
-		// off-path. Fail-open: errors are logged but never propagate.
-		if d.threatExec != nil {
-			threat := threataction.Threat{
-				Type:      f.Type,
-				Severity:  string(f.Severity),
-				SubjectID: f.SubjectID,
-				ClientID:  f.ClientID,
-				Evidence: map[string]string{
-					"token_thumbprint": f.Thumbprint,
-					"detail":           f.Detail,
-				},
-			}
-			// Execute fail-open: an error never blocks the detection sweep,
-			// but (mirroring anomaly.Runner.inspect) it IS logged — a silently
-			// discarded error here would leave an operator with no signal that
-			// their configured threat_action never actually fired.
-			if _, err := d.threatExec.Execute(ctx, threat, threataction.ThreatPolicy{}); err != nil {
-				d.logger.Error("threat executor failed",
-					"executor", d.threatExec.Name(),
-					"type", f.Type, "subject", f.SubjectID, "error", err)
-			}
+		if err := d.processFindingSafe(ctx, f, hook); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
 	return findings, firstErr
+}
+
+// processFindingSafe wraps processFinding in recover(): FindingStore and
+// ThreatExecutor are pluggable, operator-supplied implementations (mirrors
+// tokenusage.Recorder.recordSafe's rationale) — a panic in either must fail
+// only THIS finding, not escape the sweep and crash the permanent background
+// goroutine an operator is documented to run Analyze from.
+func (d *Detector) processFindingSafe(ctx context.Context, f Finding, hook func(findingType, severity string)) (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			d.logger.Error("token anomaly finding processing panic recovered",
+				"panic", rec, "type", f.Type)
+		}
+	}()
+	return d.processFinding(ctx, f, hook)
+}
+
+// processFinding persists f, fires the metric hook, and dispatches it to the
+// threat executor. The finding-store error (if any) is returned for Analyze
+// to collect; a threat-executor failure is only ever logged (fail-open, see
+// dispatchThreat) and never returned.
+func (d *Detector) processFinding(ctx context.Context, f Finding, hook func(findingType, severity string)) error {
+	var err error
+	if d.findings != nil {
+		err = d.findings.Add(ctx, f)
+	}
+	if hook != nil {
+		hook(f.Type, string(f.Severity))
+	}
+	d.dispatchThreat(ctx, f)
+	return err
+}
+
+// dispatchThreat converts f into a threataction.Threat and hands it to the
+// optional threat executor. Fail-open: an error never blocks the detection
+// sweep, but (mirroring anomaly.Runner.inspect) it IS logged — a silently
+// discarded error here would leave an operator with no signal that their
+// configured threat_action never actually fired.
+func (d *Detector) dispatchThreat(ctx context.Context, f Finding) {
+	if d.threatExec == nil {
+		return
+	}
+	threat := threataction.Threat{
+		Type:      f.Type,
+		Severity:  string(f.Severity),
+		SubjectID: f.SubjectID,
+		ClientID:  f.ClientID,
+		Evidence: map[string]string{
+			"token_thumbprint": f.Thumbprint,
+			"detail":           f.Detail,
+		},
+	}
+	if _, err := d.threatExec.Execute(ctx, threat, threataction.ThreatPolicy{}); err != nil {
+		d.logger.Error("threat executor failed",
+			"executor", d.threatExec.Name(),
+			"type", f.Type, "subject", f.SubjectID, "error", err)
+	}
 }
