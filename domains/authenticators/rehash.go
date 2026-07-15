@@ -67,6 +67,14 @@ func (r *LazyRehashVerifier) Verify(ctx context.Context, username, password stri
 	pass := password
 	user := username
 	go func() {
+		// Updater is operator-supplied (arbitrary persistence code); a panic in
+		// it (or in HashPassword) must not escape this detached goroutine and
+		// crash the whole process over a best-effort hash upgrade.
+		defer func() {
+			if rec := recover(); rec != nil && r.Logger != nil {
+				r.Logger.Error("lazy rehash: panic recovered", "username", user, "panic", rec)
+			}
+		}()
 		newHash, genErr := HashPassword(pass)
 		if genErr != nil {
 			if r.Logger != nil {

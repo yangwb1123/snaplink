@@ -48,6 +48,92 @@ func (c *countingStore) snapshot() (int, Event) {
 	return c.count, c.last
 }
 
+// countingLogger is a real spi.Logger that tallies Error calls so a test can
+// prove the recorder routed a recovered panic through its logger — mirrors
+// the identically-named helper in domains/anomaly/runner_extra_test.go.
+type countingLogger struct {
+	mu      sync.Mutex
+	errMsgs []string
+}
+
+func (l *countingLogger) Info(string, ...any)  {}
+func (l *countingLogger) Debug(string, ...any) {}
+func (l *countingLogger) Error(msg string, _ ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.errMsgs = append(l.errMsgs, msg)
+}
+func (l *countingLogger) errorCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.errMsgs)
+}
+
+// panickyStore panics on its first Record call and behaves normally
+// afterward — used to prove recordSafe's recover() keeps drain()'s
+// `for ev := range r.queue` loop alive across a pluggable Store panic,
+// rather than letting it escape (which, unrecovered, would be fatal to the
+// entire process, not just this drainer goroutine).
+type panickyStore struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (p *panickyStore) Record(context.Context, Event) error {
+	p.mu.Lock()
+	p.calls++
+	n := p.calls
+	p.mu.Unlock()
+	if n == 1 {
+		panic("simulated store panic")
+	}
+	return nil
+}
+func (p *panickyStore) Query(context.Context, Query) ([]Bucket, error) { return nil, nil }
+func (p *panickyStore) callCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls
+}
+
+// waitFor polls fn at 5ms intervals until it returns true or budget elapses.
+func waitFor(t *testing.T, budget time.Duration, fn func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(budget)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("waitFor: condition not met within %v", budget)
+}
+
+// TestRecorder_StorePanicIsRecovered proves the single drain() goroutine
+// recovers a panic from the pluggable Store instead of letting it escape
+// and crash the whole process (an unrecovered panic in any goroutine is
+// always process-fatal in Go — there is no "just this worker dies"
+// alternative outcome).
+func TestRecorder_StorePanicIsRecovered(t *testing.T) {
+	store := &panickyStore{}
+	logger := &countingLogger{}
+	r := NewRecorder(store, WithRecorderLogger(logger))
+	r.Start()
+	defer func() { _ = r.Close(context.Background()) }()
+
+	r.Offer(Event{ClientID: "c1", Kind: KindAccess, Endpoint: EndpointToken})
+	waitFor(t, time.Second, func() bool { return store.callCount() >= 1 })
+
+	// This second event can only be processed if the same drain() goroutine
+	// survived the first Record's panic and its range loop kept running.
+	r.Offer(Event{ClientID: "c2", Kind: KindAccess, Endpoint: EndpointToken})
+	waitFor(t, time.Second, func() bool { return store.callCount() >= 2 })
+
+	if logger.errorCount() == 0 {
+		t.Error("expected the recovered store panic to be logged via Logger.Error")
+	}
+}
+
 // TestRecorder_NilIsSafeNoOp mirrors the anomaly.Runner nil-safety contract:
 // every method on a nil *Recorder must be a callable no-op so options can
 // wire it unconditionally without a nil check at every call site.

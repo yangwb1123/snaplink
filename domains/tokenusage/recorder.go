@@ -204,8 +204,22 @@ func (r *Recorder) Close(ctx context.Context) error {
 func (r *Recorder) drain() {
 	defer r.wg.Done()
 	for ev := range r.queue {
-		r.record(ev)
+		r.recordSafe(ev)
 	}
+}
+
+// recordSafe wraps record in recover(). Store and Hooks are pluggable,
+// operator-supplied implementations; a panic in one must drop only the
+// current event, not escape drain()'s range loop — an unrecovered panic here
+// would both permanently shrink this worker's slot out of the pool and crash
+// the whole process over best-effort telemetry.
+func (r *Recorder) recordSafe(ev Event) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			r.logger.Error("token usage record panic recovered", "panic", rec)
+		}
+	}()
+	r.record(ev)
 }
 
 // record writes one event. A store error is logged and swallowed

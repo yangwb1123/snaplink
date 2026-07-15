@@ -162,8 +162,26 @@ func (r *Runner) Close(ctx context.Context) error {
 func (r *Runner) work() {
 	defer r.wg.Done()
 	for event := range r.queue {
-		r.inspect(event)
+		r.inspectSafe(event)
 	}
+}
+
+// inspectSafe wraps inspect in recover(). Detector/Sink/ThreatExecutor are all
+// pluggable, operator-supplied implementations; a panic in one must drop only
+// the current event, not escape work()'s range loop — an unrecovered panic
+// here would both permanently shrink this worker's slot out of the pool (the
+// range loop never resumes) and crash the whole process, defeating the "one
+// broken detector shouldn't blind the others" fault-isolation this package
+// promises. Mirrors the per-item recover in infrastructure/saml/idp/fanout.go
+// and protocols/caep.Transmitter.deliver.
+func (r *Runner) inspectSafe(event *LoginEvent) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			r.logger.Error("anomaly inspect panic recovered",
+				"subject", event.SubjectID, "panic", rec)
+		}
+	}()
+	r.inspect(event)
 }
 
 // inspect runs every detector against one event. Per-detector

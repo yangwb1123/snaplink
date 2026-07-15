@@ -201,6 +201,62 @@ func TestLazyRehashVerifier_NeedsRehashErrorIsFailOpen(t *testing.T) {
 	}
 }
 
+// ---- TestLazyRehashVerifier_UpdaterPanicIsRecovered ----
+
+// TestLazyRehashVerifier_UpdaterPanicIsRecovered proves the fire-and-forget
+// rehash goroutine recovers a panic from the operator-supplied Updater
+// instead of letting it escape the bare `go func()` and crash the whole
+// process. Updater is arbitrary persistence code (per the LazyRehashVerifier
+// doc comment) — a nil map write, a bad type assertion, anything — and this
+// goroutine has no caller to observe or recover a panic on its behalf.
+func TestLazyRehashVerifier_UpdaterPanicIsRecovered(t *testing.T) {
+	t.Parallel()
+	logErrCh := make(chan string, 1)
+	panicked := make(chan struct{})
+
+	v := &LazyRehashVerifier{
+		Underlying: fixedVerifier("user-6"),
+		NeedsRehash: func(_ context.Context, _ string) (bool, error) {
+			return true, nil
+		},
+		Updater: func(_ context.Context, _, _ string) error {
+			defer close(panicked)
+			panic("simulated updater panic")
+		},
+		Logger: &captureLogger{onError: func(msg string, args ...any) {
+			select {
+			case logErrCh <- msg:
+			default:
+			}
+		}},
+	}
+
+	// Verify itself must return normally (the panic happens in the detached
+	// goroutine, after Verify has already returned).
+	result, err := v.Verify(context.Background(), "frank", "pw")
+	if err != nil {
+		t.Fatalf("Verify must succeed even though Updater will panic, got: %v", err)
+	}
+	if result.UserID != "user-6" {
+		t.Errorf("UserID = %q, want user-6", result.UserID)
+	}
+
+	<-panicked
+
+	// Reaching this point at all proves the panic did not escape the
+	// goroutine: an unrecovered panic in ANY goroutine is process-fatal in
+	// Go, so this whole test binary would have crashed (not failed a single
+	// assertion) before ever reaching this select.
+	select {
+	case msg := <-logErrCh:
+		if msg == "" {
+			t.Error("Logger.Error called with empty message on Updater panic")
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("expected Logger.Error to be called after Updater panic is recovered")
+	}
+}
+
 // captureLogger captures Logger.Error calls for test assertions.
 type captureLogger struct {
 	onError func(string, ...any)

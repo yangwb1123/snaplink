@@ -135,6 +135,58 @@ func TestAsyncAnomalyRunner_DetectorErrorsDontStopSiblings(t *testing.T) {
 	}
 }
 
+// panickyDetector panics on its first Inspect call and behaves normally
+// afterward — used to prove inspectSafe's recover() keeps the permanent
+// worker-pool goroutine's `for event := range r.queue` loop alive across a
+// pluggable Detector panic, rather than letting it escape work() (which,
+// unrecovered, would be fatal to the entire process, not just this worker).
+type panickyDetector struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (p *panickyDetector) Name() string { return "panicky" }
+func (p *panickyDetector) Inspect(_ context.Context, _ *LoginEvent) ([]Signal, error) {
+	p.mu.Lock()
+	p.calls++
+	n := p.calls
+	p.mu.Unlock()
+	if n == 1 {
+		panic("simulated detector panic")
+	}
+	return nil, nil
+}
+func (p *panickyDetector) callCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls
+}
+
+func TestAsyncAnomalyRunner_DetectorPanicIsRecovered(t *testing.T) {
+	t.Parallel()
+	d := &panickyDetector{}
+	logger := &countingLogger{}
+	r := NewRunner([]Detector{d}, &captureSink{}, WithWorkers(1), WithLogger(logger))
+	r.Start()
+	defer func() { _ = r.Close(context.Background()) }()
+
+	r.Dispatch(context.Background(), &LoginEvent{SubjectID: "alice"})
+	waitFor(t, time.Second, func() bool { return d.callCount() >= 1 })
+
+	// With exactly one worker, this second event can ONLY be processed if
+	// the SAME goroutine's range loop survived the first Inspect's panic.
+	// An unrecovered panic anywhere is process-fatal in Go, so reaching a
+	// passing assertion below already proves the recover worked — there is
+	// no partial-failure state where the process survives but this worker
+	// silently stops.
+	r.Dispatch(context.Background(), &LoginEvent{SubjectID: "bob"})
+	waitFor(t, time.Second, func() bool { return d.callCount() >= 2 })
+
+	if logger.errorCount() == 0 {
+		t.Error("expected the recovered detector panic to be logged via Logger.Error")
+	}
+}
+
 func TestAsyncAnomalyRunner_SinkErrorIsLoggedNotRequeued(t *testing.T) {
 	t.Parallel()
 	// Sink failures shouldn't backpressure or re-queue — the

@@ -30,6 +30,7 @@ import (
 	tenantpkg "github.com/snaplink/sso/domains/tenant"
 	tenantmem "github.com/snaplink/sso/domains/tenant/memory"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/cluster"
 	clustermem "github.com/snaplink/sso/platform/cluster/memory"
@@ -321,6 +322,123 @@ func TestRcov2Cl_BackchannelLogout(t *testing.T) {
 	mu.Unlock()
 	if !got {
 		t.Errorf("backchannel logout receiver was never POSTed a logout_token")
+	}
+}
+
+// panicOnceNotifier panics when asked to notify panicURI and otherwise
+// delegates to a real HTTP POST — used to prove dispatchBackchannelOne's
+// recover() isolates one panicking RP's delivery from its siblings in the
+// bounded fan-out worker pool (server_backchannel_logout.go).
+type panicOnceNotifier struct {
+	panicURI string
+	real     sso.LogoutNotifier
+}
+
+func (n *panicOnceNotifier) Notify(ctx context.Context, uri string, logoutToken string) error {
+	if uri == n.panicURI {
+		panic("simulated backchannel logout notifier panic")
+	}
+	return n.real.Notify(ctx, uri, logoutToken)
+}
+
+// TestRcov2Cl_BackchannelLogoutFanOutSurvivesNotifierPanic proves the
+// dispatchBackchannelFanOut worker pool recovers a panic raised by a
+// pluggable LogoutNotifier instead of letting it escape the bare `go func()`
+// worker (which has no recover of its own) and crash the whole process.
+// Two RPs are wired via WithSubjectClientIndex multi-RP fan-out; the notifier
+// panics for one RP's URI and delivers normally to the other. An unrecovered
+// panic in ANY goroutine is always process-fatal in Go — before the fix in
+// dispatchBackchannelOne, this test would abort the entire `go test` binary
+// (not fail one assertion) the instant /end_session's fan-out reached the
+// panicking RP; the healthy RP's delivery would never happen either, because
+// the whole process would already be gone.
+func TestRcov2Cl_BackchannelLogoutFanOutSurvivesNotifierPanic(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	var (
+		mu       sync.Mutex
+		received bool
+	)
+	okReceiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.FormValue("logout_token") != "" {
+			mu.Lock()
+			received = true
+			mu.Unlock()
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(okReceiver.Close)
+
+	const panicURI = "http://panic.invalid/bcl"
+	const secondClient = "rcov-client-bcl-panic"
+
+	users := defaultimpl.NewMemoryUserProvider()
+	_ = users.CreateOrUpdate(ctx, &sso.User{ID: rcovUser})
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{
+		ID: rcovClient, Secret: rcovSecret, AllowedAuthenticators: []string{"password"},
+		TokenStrategy: "jwt", Active: true, SkipConsent: true,
+		BackchannelLogoutURI: okReceiver.URL,
+	})
+	clients.AddSeed(&sso.Client{
+		ID: secondClient, Secret: rcovSecret, AllowedAuthenticators: []string{"password"},
+		TokenStrategy: "jwt", Active: true, SkipConsent: true,
+		BackchannelLogoutURI: panicURI,
+	})
+	iss := defaultimpl.NewEd25519JWTIssuer()
+	notifier := &panicOnceNotifier{panicURI: panicURI, real: sso.NewHTTPLogoutNotifier()}
+	srv := sso.NewServer(
+		sso.WithUserProvider(users),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithClientStore(clients),
+		sso.WithAuthenticator(rcov2PasswordAuth()),
+		sso.WithTokenIssuer("jwt", iss),
+		sso.WithIDTokenIssuer(iss),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithBackchannelLogout(iss, notifier),
+		sso.WithSubjectClientIndex(memorystoreidentity.NewMemorySubjectClientIndex()),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	login := func(clientID string) string {
+		status, out := rcovPostJSON(t, httpSrv.URL+"/auth/login", "", map[string]any{
+			"provider":   "password",
+			"client_id":  clientID,
+			"credential": map[string]string{"username": rcovUsername, "password": rcovPassword},
+			"scope":      []string{"openid"},
+		})
+		if status != http.StatusOK {
+			t.Fatalf("login client=%s = %d body=%v", clientID, status, out)
+		}
+		idToken, _ := out["id_token"].(string)
+		if idToken == "" {
+			t.Fatalf("login client=%s produced no id_token: %v", clientID, out)
+		}
+		return idToken
+	}
+
+	// Log the same subject into BOTH clients so the SubjectClientIndex
+	// fan-out set includes the panicking RP alongside the healthy one.
+	login(rcovClient)
+	idToken := login(secondClient)
+
+	resp, err := http.Get(httpSrv.URL + "/end_session?id_token_hint=" + idToken)
+	if err != nil {
+		t.Fatalf("end_session: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		t.Fatalf("end_session = %d, want < 500", resp.StatusCode)
+	}
+
+	mu.Lock()
+	got := received
+	mu.Unlock()
+	if !got {
+		t.Errorf("healthy RP never received its logout_token — the panicking RP's worker must have taken the whole fan-out down instead of recovering in isolation")
 	}
 }
 
