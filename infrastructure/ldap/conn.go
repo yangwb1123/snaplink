@@ -79,9 +79,41 @@ func (d *ldapDialer) Dial(rawURL string, timeout time.Duration, tlsCfg *tls.Conf
 	if err != nil {
 		return nil, err
 	}
-	// Per-request deadline for every subsequent bind/search on this conn.
+	// Per-request deadline for every subsequent bind/search on this conn. NOTE:
+	// this does NOT bound a later StartTLS's raw TLS handshake — see
+	// startTLSWithTimeout, which the authenticator wraps StartTLS in for
+	// exactly that reason.
 	if d.requestTimeout > 0 {
 		c.SetTimeout(d.requestTimeout)
 	}
 	return &ldapConn{Conn: c}, nil
+}
+
+// startTLSWithTimeout bounds c.StartTLS to timeout. go-ldap's Conn.SetTimeout
+// (applied above in ldapDialer.Dial) only arms a timer around the StartTLS
+// extended-request/response wait: the raw tls.Conn.Handshake() call StartTLS
+// makes immediately AFTER that response arrives has NO timeout of its own —
+// go-ldap never calls SetDeadline on the underlying net.Conn, and that field
+// (Conn.conn) is unexported, so a caller outside the ldap package cannot set
+// one either. Left unbounded, a directory that accepts the StartTLS extended
+// op but then stalls the handshake bytes (a black hole, or a deliberately
+// slow peer) would hang this dial attempt — and the login request driving it
+// — forever, silently breaking the "worst-case total connect time is
+// len(URLs) * DialTimeout" invariant DefaultDialTimeout documents. We race
+// StartTLS against timeout and close c on expiry: closing the shared
+// net.Conn unblocks whatever Read the abandoned Handshake() goroutine is
+// stuck in, so it cannot outlive this call by more than an instant.
+func startTLSWithTimeout(c conn, tlsCfg *tls.Config, timeout time.Duration) error {
+	if timeout <= 0 {
+		return c.StartTLS(tlsCfg)
+	}
+	done := make(chan error, 1) // buffered: a late result from the abandoned goroutine must not leak it
+	go func() { done <- c.StartTLS(tlsCfg) }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		_ = c.Close()
+		return fmt.Errorf("StartTLS timed out after %s", timeout)
+	}
 }

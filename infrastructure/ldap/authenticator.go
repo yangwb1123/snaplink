@@ -310,9 +310,13 @@ func (a *Authenticator) dial(ctx context.Context) (conn, error) {
 
 		// ldap:// + StartTLS: upgrade BEFORE any bind so no credential ever
 		// crosses the wire in plaintext. A StartTLS failure aborts THIS URL (we
-		// must never fall through to a plaintext bind).
+		// must never fall through to a plaintext bind). Bounded by the SAME
+		// dial timeout as the connect itself: go-ldap's own per-operation
+		// SetTimeout does not cover the raw TLS handshake StartTLS performs
+		// (see startTLSWithTimeout), so without this an unresponsive peer past
+		// the StartTLS extended-op response could hang the login indefinitely.
 		if a.cfg.StartTLS {
-			if err := c.StartTLS(tlsCfg); err != nil {
+			if err := startTLSWithTimeout(c, tlsCfg, timeout); err != nil {
 				_ = c.Close()
 				lastErr = fmt.Errorf("StartTLS: %w", err)
 				continue

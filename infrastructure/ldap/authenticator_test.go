@@ -701,6 +701,54 @@ func TestAuthenticate_SearchTimeout_Bounded(t *testing.T) {
 	}
 }
 
+// TestAuthenticate_StartTLSTimeout_Bounded proves a StartTLS call that never
+// returns (a directory that accepts the extended op but then stalls the raw
+// TLS handshake bytes) does not hang Authenticate past DialTimeout. Without
+// startTLSWithTimeout (conn.go), c.StartTLS(tlsCfg) in dial() was called
+// directly and unbounded — go-ldap's Conn.SetTimeout only arms a timer around
+// the extended-request/response wait, never the Handshake() call that follows
+// a successful response, so nothing bounded this path. Mirrors
+// TestAuthenticate_SearchTimeout_Bounded's shape/assertions for the search
+// leg.
+func TestAuthenticate_StartTLSTimeout_Bounded(t *testing.T) {
+	t.Parallel()
+	dir := newFakeDirectory()
+	standardUser(dir)
+	dir.startTLSHang = 2 * time.Second // the handshake would hang far longer than DialTimeout
+	cfg := Config{
+		URLs:        []string{"ldap://dir.example.com:389"},
+		StartTLS:    true,
+		UserFilter:  "(uid=%s)",
+		IDAttribute: "uid",
+		DialTimeout: 50 * time.Millisecond, // the per-URL bound fires first
+	}
+	a, _ := newTestAuth(t, dir, cfg)
+
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		_, err := a.Authenticate(context.Background(), authReq("alice", "s3cret"))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected a bounded StartTLS timeout error, got nil")
+		}
+		// A stalled StartTLS is an operational condition (the directory never
+		// finished the TLS upgrade) — surfaces as ErrDirectoryUnavailable, not
+		// a credential verdict.
+		if !errors.Is(err, ErrDirectoryUnavailable) {
+			t.Errorf("timeout err = %v, want ErrDirectoryUnavailable", err)
+		}
+		if elapsed := time.Since(start); elapsed > 1*time.Second {
+			t.Errorf("Authenticate took %v — DialTimeout bound did not fire promptly", elapsed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Authenticate HUNG past DialTimeout — StartTLS handshake not bounded")
+	}
+}
+
 func TestAuthenticate_ContextCancelled_BetweenFailover(t *testing.T) {
 	t.Parallel()
 	dir := newFakeDirectory()

@@ -62,6 +62,16 @@ type fakeDirectory struct {
 	// the conn's per-op timeout, modeled by opTimeout, fires first.
 	searchHang time.Duration
 	opTimeout  time.Duration // set from the dialer's requestTimeout
+
+	// startTLSHang, when > 0, makes StartTLS block this long — modeling a
+	// directory that accepts the extended op but stalls the TLS handshake
+	// bytes. Unlike searchHang, this fake does NOT truncate the sleep itself:
+	// the bound here is enforced entirely by the PRODUCTION code under test
+	// (startTLSWithTimeout in conn.go), since — unlike Conn.SetTimeout, which
+	// is go-ldap library-internal behavior the fake must reproduce — that
+	// wrapper lives in this package and applies identically whether it wraps
+	// a real *ldap.Conn or this fake.
+	startTLSHang time.Duration
 }
 
 type bindRecord struct {
@@ -105,6 +115,16 @@ type fakeConn struct {
 }
 
 func (c *fakeConn) StartTLS(_ *tls.Config) error {
+	c.dir.mu.Lock()
+	hang := c.dir.startTLSHang
+	c.dir.mu.Unlock()
+	if hang > 0 {
+		// Model a stalled TLS handshake. No lock is held across the sleep so
+		// a concurrent Close() (from the production timeout wrapper racing
+		// this same call) is never blocked behind it.
+		time.Sleep(hang)
+	}
+
 	c.dir.mu.Lock()
 	defer c.dir.mu.Unlock()
 	if c.dir.startTLSErr != nil {
