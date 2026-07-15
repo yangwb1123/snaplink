@@ -117,8 +117,80 @@ func applyUserPathOp(res *Resource, verb string, pp patchPath, raw json.RawMessa
 			return applyUserEmailsFiltered(res, verb, pp, raw)
 		}
 		return applyUserEmails(res, verb, raw)
+
+	case pp.isAttr(pathAttrEmployeeNumber), pp.isAttr(pathAttrCostCenter),
+		pp.isAttr(pathAttrOrganization), pp.isAttr(pathAttrDivision), pp.isAttr(pathAttrDepartment):
+		return applyEnterpriseStringAttr(res, verb, pp.attr, raw)
+
+	case pp.isAttr(pathAttrManager):
+		return applyEnterpriseManager(res, verb, raw)
 	}
 	return newError(http.StatusBadRequest, scimTypeInvalidPath, "unsupported PATCH path"), false
+}
+
+// applyEnterpriseStringAttr sets/clears one simple enterprise-extension
+// string attribute (RFC 7643 §4.1, Enterprise), allocating
+// EnterpriseExtension lazily and dropping it back to nil once every field
+// in it is left empty by the update.
+func applyEnterpriseStringAttr(res *Resource, verb, attr string, raw json.RawMessage) (ErrorResponse, bool) {
+	if res.EnterpriseExtension == nil {
+		res.EnterpriseExtension = &EnterpriseExtension{}
+	}
+	dst := enterpriseStringField(res.EnterpriseExtension, attr)
+	if verb == patchOpRemove {
+		*dst = ""
+	} else if err := json.Unmarshal(raw, dst); err != nil {
+		return newError(http.StatusBadRequest, scimTypeInvalidValue, attr+" must be a string"), false
+	}
+	if res.EnterpriseExtension.empty() {
+		res.EnterpriseExtension = nil
+	}
+	return ErrorResponse{}, true
+}
+
+// enterpriseStringField returns a pointer to the EnterpriseExtension field
+// addressed by attr (already validated against a matching isAttr case, so
+// the switch is exhaustive here).
+func enterpriseStringField(e *EnterpriseExtension, attr string) *string {
+	switch {
+	case strings.EqualFold(attr, pathAttrEmployeeNumber):
+		return &e.EmployeeNumber
+	case strings.EqualFold(attr, pathAttrCostCenter):
+		return &e.CostCenter
+	case strings.EqualFold(attr, pathAttrOrganization):
+		return &e.Organization
+	case strings.EqualFold(attr, pathAttrDivision):
+		return &e.Division
+	default:
+		return &e.Department
+	}
+}
+
+// applyEnterpriseManager handles the "manager" complex attribute (RFC 7643
+// §4.1, Enterprise): remove clears the reference; add/replace assign the
+// whole {value, displayName, $ref} object. This only shapes the value onto
+// the resource -- the manager-cycle check runs later, over the fully
+// assembled Resource, in validateManagerRef.
+func applyEnterpriseManager(res *Resource, verb string, raw json.RawMessage) (ErrorResponse, bool) {
+	if res.EnterpriseExtension == nil {
+		res.EnterpriseExtension = &EnterpriseExtension{}
+	}
+	if verb == patchOpRemove {
+		res.EnterpriseExtension.Manager = nil
+	} else {
+		var m ManagerRef
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return newError(http.StatusBadRequest, scimTypeInvalidValue, "manager must be an object"), false
+		}
+		if m.Value == "" {
+			return newError(http.StatusBadRequest, scimTypeInvalidValue, "manager.value is required"), false
+		}
+		res.EnterpriseExtension.Manager = &m
+	}
+	if res.EnterpriseExtension.empty() {
+		res.EnterpriseExtension = nil
+	}
+	return ErrorResponse{}, true
 }
 
 // applyUserActive sets/clears the "active" deprovision flag. remove restores

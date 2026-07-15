@@ -1,6 +1,8 @@
 package scim
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -126,8 +128,9 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request, id string)
 
 // validateReplaceUser enforces the PUT body invariants: userName is required,
 // id is read-only (a differing body id is a mutability violation, RFC 7643
-// §3.1/§7), and userName must stay unique against OTHER users. It writes the
-// SCIM error and returns false on the first violation.
+// §3.1/§7), userName must stay unique against OTHER users, and manager
+// references must not form a cycle. It writes the SCIM error and returns
+// false on the first violation.
 func (h *Handler) validateReplaceUser(w http.ResponseWriter, r *http.Request, res Resource, id string) bool {
 	if strings.TrimSpace(res.UserName) == "" {
 		h.writeError(w, newError(http.StatusBadRequest, scimTypeInvalidValue, "userName is required"))
@@ -142,6 +145,48 @@ func (h *Handler) validateReplaceUser(w http.ResponseWriter, r *http.Request, re
 		return false
 	} else if dup {
 		h.writeError(w, newError(http.StatusConflict, scimTypeUniqueness, "userName already exists"))
+		return false
+	}
+	// Manager cycle check: ensure setting this manager doesn't create a cycle.
+	if !h.validateManagerRef(w, r, res, id) {
+		return false
+	}
+	return true
+}
+
+// validateManagerRef checks whether the enterprise manager reference in res
+// would create a cycle (userID -> manager -> ... -> userID). Returns true
+// when the manager reference is valid or absent; writes the SCIM error and
+// returns false when a cycle is detected.
+func (h *Handler) validateManagerRef(w http.ResponseWriter, r *http.Request, res Resource, id string) bool {
+	ext := res.EnterpriseExtension
+	if ext == nil || ext.Manager == nil || ext.Manager.Value == "" {
+		return true // no manager reference to validate
+	}
+	managerID := ext.Manager.Value
+	getManager := func(ctx context.Context, uid string) (string, error) {
+		u, err := h.users.GetByID(ctx, uid)
+		if err != nil {
+			return "", err
+		}
+		// Extract the manager ID from stored Attributes (same namespace
+		// the enterprise extension round-trips through).
+		raw := u.Attributes[attrManager]
+		if raw == "" {
+			return "", nil
+		}
+		var mgr ManagerRef
+		if err := json.Unmarshal([]byte(raw), &mgr); err != nil {
+			return "", nil // best-effort: treat unparseable as no manager
+		}
+		return mgr.Value, nil
+	}
+	if err := DetectManagerCycle(r.Context(), id, managerID, getManager); err != nil {
+		if errors.Is(err, ErrManagerCycle) {
+			h.writeError(w, newError(http.StatusConflict, scimTypeMutability, "manager reference creates a cycle"))
+			return false
+		}
+		h.writeError(w, h.storageError(err))
 		return false
 	}
 	return true
@@ -183,15 +228,21 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request, id string) {
 	}
 }
 
-// patchUserCommit validates userName, checks uniqueness, persists the patched
-// user, and emits the audit event. Returns true when it has written an error
-// and the caller must stop.
+// patchUserCommit validates userName, checks uniqueness, validates the manager
+// reference (cycle detection), persists the patched user, and emits the audit
+// event. Returns true when it has written an error and the caller must stop.
 func (h *Handler) patchUserCommit(w http.ResponseWriter, r *http.Request, res Resource, id string, existing *core.User) bool {
 	normalized, ok := h.normalizeAndCheckUserName(w, r, res.UserName, id)
 	if !ok {
 		return true
 	}
 	res.UserName = normalized
+	// Manager cycle check: ensure the patched manager reference doesn't
+	// create a cycle (applies whether the PATCH added, changed, or left
+	// the manager unchanged).
+	if !h.validateManagerRef(w, r, res, id) {
+		return true
+	}
 	// PATCH is a partial update (RFC 7644 §3.5.2); toUserPreserving keeps non-SCIM state.
 	u := res.toUserPreserving(id, existing)
 	u.CreatedAt = existing.CreatedAt

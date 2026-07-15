@@ -22,6 +22,11 @@ const (
 	// SchemaSchema is the schema-of-schemas URN used by GET /Schemas
 	// (RFC 7643 §7).
 	SchemaSchema = "urn:ietf:params:scim:schemas:core:2.0:Schema"
+	// SchemaEnterpriseUser is the enterprise User extension schema URN
+	// (RFC 7643 §4.1, Enterprise User Extension). Used by enterprise SCIM
+	// provisioning connectors (Okta, Azure AD, OneLogin) to send/receive
+	// enterprise attributes (employeeNumber, costCenter, department, manager).
+	SchemaEnterpriseUser = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
 )
 
 // resourceTypeUser is the "meta.resourceType" value stamped on every
@@ -73,6 +78,18 @@ const (
 	pathAttrEmails      = "emails"
 	pathAttrName        = "name"
 	pathAttrMembers     = "members"
+
+	// Enterprise User Extension attribute names (RFC 7643 §4.1, Enterprise)
+	// addressable by their BARE (schema-URN-unqualified) form, matching
+	// how Okta/Azure AD commonly send PATCH ops for these attributes in
+	// practice; a URN-qualified path is rejected like every other
+	// attribute (parsePatchPath rejects any path containing ":").
+	pathAttrEmployeeNumber = "employeeNumber"
+	pathAttrCostCenter     = "costCenter"
+	pathAttrOrganization   = "organization"
+	pathAttrDivision       = "division"
+	pathAttrDepartment     = "department"
+	pathAttrManager        = "manager"
 )
 
 // SCIM "name" sub-attribute names addressable by a "name.<sub>" PATCH
@@ -147,6 +164,20 @@ const (
 	// multi-valued emails array survives the round-trip through a
 	// core.User that has a single Email field.
 	attrEmailsExtra = "scim:emails.extra"
+
+	// Enterprise User Extension attributes (RFC 7643 §4.1, Enterprise)
+	// stored in core.User.Attributes under the "scim:" namespace, same as
+	// the core SCIM attributes above.
+	attrEmployeeNumber = "scim:employeeNumber"
+	attrCostCenter     = "scim:costCenter"
+	attrOrganization   = "scim:organization"
+	attrDivision       = "scim:division"
+	attrDepartment     = "scim:department"
+	// attrManager stores the enterprise manager reference as a JSON-encoded
+	// object with "value" (the manager's user ID) and optional "displayName"
+	// (RFC 7643 §4.1, Enterprise). Stored as a single JSON string so a
+	// round-trip through core.User preserves both sub-attributes.
+	attrManager = "scim:manager"
 )
 
 // Active-flag string values stored in attrActive (core.User.Attributes

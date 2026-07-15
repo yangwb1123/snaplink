@@ -1,7 +1,9 @@
 package scim
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -27,6 +29,51 @@ type Resource struct {
 	// describes active as a deprovisioning flag; absence means active).
 	Active bool  `json:"active"`
 	Meta   *Meta `json:"meta,omitempty"`
+
+	// EnterpriseExtension carries RFC 7643 §4.1 enterprise User attributes
+	// (employeeNumber, costCenter, department, manager, etc.) on INBOUND
+	// SCIM JSON. The field's JSON key matches the enterprise schema URN so
+	// off-the-shelf provisioning connectors (Okta, Azure AD, OneLogin) that
+	// send the enterprise extension in the schemas array auto-populate it.
+	// On OUTBOUND (UserToResource) this field is reconstructed from
+	// core.User.Attributes under the "scim:" namespace, and the schema URN
+	// is appended to Schemas only when at least one enterprise attribute is
+	// present.
+	EnterpriseExtension *EnterpriseExtension `json:"urn:ietf:params:scim:schemas:extension:enterprise:2.0:User,omitempty"`
+}
+
+// EnterpriseExtension holds the enterprise User attributes defined in
+// RFC 7643 §4.1 (Enterprise User Extension). These are the attributes that
+// enterprise SCIM provisioning connectors send for HR/org data.
+type EnterpriseExtension struct {
+	EmployeeNumber string      `json:"employeeNumber,omitempty"`
+	CostCenter     string      `json:"costCenter,omitempty"`
+	Organization   string      `json:"organization,omitempty"`
+	Division       string      `json:"division,omitempty"`
+	Department     string      `json:"department,omitempty"`
+	Manager        *ManagerRef `json:"manager,omitempty"`
+}
+
+// ManagerRef is the enterprise manager reference (RFC 7643 §4.1,
+// Enterprise). Value is the manager's user ID (required); displayName is
+// a human-readable label (optional, best-effort round-tripped).
+type ManagerRef struct {
+	Value       string `json:"value"`
+	DisplayName string `json:"displayName,omitempty"`
+	// Ref is an optional URI reference to the manager's SCIM resource
+	// (RFC 7643 §3.1). Best-effort round-tripped when present.
+	Ref string `json:"$ref,omitempty"`
+}
+
+// empty reports whether no enterprise attribute is set, so PATCH can drop
+// an all-empty EnterpriseExtension back to nil instead of rendering an
+// empty extension block.
+func (e *EnterpriseExtension) empty() bool {
+	if e == nil {
+		return true
+	}
+	return e.EmployeeNumber == "" && e.CostCenter == "" && e.Organization == "" &&
+		e.Division == "" && e.Department == "" && e.Manager == nil
 }
 
 // Name is the SCIM complex "name" attribute (RFC 7643 §4.1.1).
@@ -136,6 +183,9 @@ func (r *Resource) toUser(id string) *core.User {
 			u.Attributes[attrEmailsExtra] = string(b)
 		}
 	}
+	// Enterprise extension attributes (RFC 7643 §4.1). Stored in Attributes
+	// under the "scim:" namespace, same pattern as core SCIM fields.
+	applyEnterpriseAttrs(u.Attributes, r.EnterpriseExtension)
 	if len(u.Attributes) == 0 {
 		u.Attributes = nil
 	}
@@ -221,6 +271,15 @@ func UserToResource(u *core.User, location string) Resource {
 
 	r.Emails = emailsFromUser(u)
 
+	// Enterprise extension attributes: reconstruct from Attributes
+	// when any enterprise field is present. Add the enterprise schema URN
+	// to Schemas so enterprise SCIM connectors (Okta, Azure AD, OneLogin)
+	// recognize the resource as supporting the enterprise extension.
+	if ext := enterpriseFromUser(u); ext != nil {
+		r.EnterpriseExtension = ext
+		r.Schemas = append(r.Schemas, SchemaEnterpriseUser)
+	}
+
 	r.Meta = &Meta{
 		ResourceType: resourceTypeUser,
 		Location:     location,
@@ -250,9 +309,105 @@ func emailsFromUser(u *core.User) []Email {
 	return emails
 }
 
+// applyEnterpriseAttrs writes enterprise extension attributes into attrs.
+// Helper extracted to keep toUser under the 50-line budget.
+func applyEnterpriseAttrs(attrs map[string]string, ext *EnterpriseExtension) {
+	if ext == nil {
+		return
+	}
+	setAttr(attrs, attrEmployeeNumber, ext.EmployeeNumber)
+	setAttr(attrs, attrCostCenter, ext.CostCenter)
+	setAttr(attrs, attrOrganization, ext.Organization)
+	setAttr(attrs, attrDivision, ext.Division)
+	setAttr(attrs, attrDepartment, ext.Department)
+	if ext.Manager != nil && ext.Manager.Value != "" {
+		// Marshal the full ManagerRef so value + displayName + $ref survive
+		// the round-trip through core.User.Attributes.
+		if b, err := json.Marshal(ext.Manager); err == nil {
+			attrs[attrManager] = string(b)
+		}
+	}
+}
+
+// enterpriseFromUser reconstructs the enterprise extension from stored
+// core.User.Attributes. Returns nil when no enterprise attribute is present,
+// so the SCIM output is clean (no empty enterprise block).
+func enterpriseFromUser(u *core.User) *EnterpriseExtension {
+	attrs := u.Attributes
+	if attrs == nil {
+		return nil
+	}
+	if attrs[attrEmployeeNumber] == "" &&
+		attrs[attrCostCenter] == "" &&
+		attrs[attrOrganization] == "" &&
+		attrs[attrDivision] == "" &&
+		attrs[attrDepartment] == "" &&
+		attrs[attrManager] == "" {
+		return nil
+	}
+	ext := &EnterpriseExtension{
+		EmployeeNumber: attrs[attrEmployeeNumber],
+		CostCenter:     attrs[attrCostCenter],
+		Organization:   attrs[attrOrganization],
+		Division:       attrs[attrDivision],
+		Department:     attrs[attrDepartment],
+	}
+	if raw := attrs[attrManager]; raw != "" {
+		var mgr ManagerRef
+		if err := json.Unmarshal([]byte(raw), &mgr); err == nil {
+			ext.Manager = &mgr
+		}
+	}
+	return ext
+}
+
 // setAttr writes k=v only when v is non-empty, keeping Attributes lean.
 func setAttr(m map[string]string, k, v string) {
 	if strings.TrimSpace(v) != "" {
 		m[k] = v
 	}
+}
+
+// ErrManagerCycle is returned by DetectManagerCycle when a manager
+// reference would create a cycle (A → B → A).
+var ErrManagerCycle = errors.New("scim: manager cycle detected")
+
+// maxManagerCycleDepth is the maximum number of manager hops DetectManagerCycle
+// traverses before giving up.
+const maxManagerCycleDepth = 10
+
+// DetectManagerCycle checks whether setting managerID as the manager of
+// userID would create a cycle (userID → managerID → ... → userID). It
+// walks the manager chain from managerID up to maxManagerCycleDepth hops,
+// using getManager to resolve each node's manager. Returns ErrManagerCycle
+// when a cycle is detected, nil otherwise.
+//
+// getManager retrieves the manager ID for a given userID, called at most
+// maxManagerCycleDepth times. Errors from getManager are propagated as-is.
+func DetectManagerCycle(ctx context.Context, userID, managerID string,
+	getManager func(ctx context.Context, userID string) (string, error),
+) error {
+	if managerID == "" || userID == "" {
+		return nil
+	}
+	if userID == managerID {
+		return ErrManagerCycle
+	}
+	visited := map[string]bool{userID: true}
+	current := managerID
+	for depth := 0; depth < maxManagerCycleDepth; depth++ {
+		if visited[current] {
+			return ErrManagerCycle
+		}
+		visited[current] = true
+		next, err := getManager(ctx, current)
+		if err != nil {
+			return err
+		}
+		if next == "" {
+			return nil
+		}
+		current = next
+	}
+	return nil
 }

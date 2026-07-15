@@ -13174,6 +13174,48 @@ components:
           default: true
         meta:
           $ref: "#/components/schemas/ScimMeta"
+        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User":
+          $ref: "#/components/schemas/ScimEnterpriseUser"
+
+    ScimEnterpriseUser:
+      type: object
+      description: |
+        RFC 7643 §4.1 Enterprise User extension. Present on request bodies
+        from enterprise provisioning connectors (Okta, Azure AD, OneLogin)
+        and echoed on responses only when at least one enterprise attribute
+        is set; the enterprise schema URN is added to `schemas` in that
+        case. Backed by `core.User.Attributes` under the `scim:` namespace,
+        same pattern as the core SCIM fields.
+      properties:
+        employeeNumber:
+          type: string
+        costCenter:
+          type: string
+        organization:
+          type: string
+        division:
+          type: string
+        department:
+          type: string
+        manager:
+          $ref: "#/components/schemas/ScimManagerRef"
+
+    ScimManagerRef:
+      type: object
+      description: |
+        Enterprise manager reference (RFC 7643 §4.1). `value` must resolve
+        to an existing user; setting it to a value that would create a
+        manager cycle (A → B → A) is rejected with 409 `mutability`.
+      required: [value]
+      properties:
+        value:
+          type: string
+          description: The manager's SCIM user id.
+        displayName:
+          type: string
+        "$ref":
+          type: string
+          description: Optional URI reference to the manager's SCIM resource.
 
     ScimName:
       type: object
