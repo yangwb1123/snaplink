@@ -796,3 +796,85 @@ func TestAuthenticate_AnonymousSearchBind(t *testing.T) {
 		t.Errorf("ExternalID = %q, want dave", res.ExternalID)
 	}
 }
+
+// --- Operational-failure logging (observability, not oracle) ---------------
+//
+// dial() and the service-account bind already log their operational failures
+// (a.logError). A genuine search TRANSPORT failure is the same class of
+// operational problem — independent of whether the user exists — and must be
+// surfaced identically, or a degraded/failing search path would vanish
+// silently from the operator's error log while dial/bind failures against the
+// SAME directory remain visible.
+
+// fakeLogger is a minimal recording logger fake (no mocking framework),
+// mirroring the "real impl, no mocks" discipline the rest of this file applies
+// to the directory itself (fakeDirectory/fakeConn/fakeDialer).
+type fakeLogger struct {
+	msgs []string
+}
+
+func (l *fakeLogger) Error(msg string, _ ...any) {
+	l.msgs = append(l.msgs, msg)
+}
+
+func (l *fakeLogger) has(msg string) bool {
+	for _, m := range l.msgs {
+		if m == msg {
+			return true
+		}
+	}
+	return false
+}
+
+func TestAuthenticate_SearchTransportFailure_Logged(t *testing.T) {
+	t.Parallel()
+	dir := newFakeDirectory()
+	dir.searchErr = errors.New("ldap: connection reset by peer")
+	log := &fakeLogger{}
+	cfg := Config{
+		Name: "test-ldap", URLs: []string{"ldaps://dir.example.com:636"},
+		BaseDN: "dc=example,dc=com", BindDN: dir.serviceDN, BindPassword: dir.servicePassword,
+		UserFilter: "(uid=%s)", IDAttribute: "uid",
+	}
+	d := &fakeDialer{dir: dir, requestTO: cfg.requestTimeout()}
+	a, err := New(cfg, withDialer(d), WithLogger(log))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = a.Authenticate(context.Background(), authReq("alice", "s3cret"))
+	if !errors.Is(err, ErrDirectoryUnavailable) {
+		t.Fatalf("search-transport-failure err = %v, want ErrDirectoryUnavailable", err)
+	}
+	if !log.has("ldap search failed") {
+		t.Errorf("search transport failure was not logged for observability; logged = %v", log.msgs)
+	}
+}
+
+func TestAuthenticate_UnknownUser_NotLoggedAsError(t *testing.T) {
+	t.Parallel()
+	dir := newFakeDirectory()
+	log := &fakeLogger{}
+	cfg := Config{
+		Name: "test-ldap", URLs: []string{"ldaps://dir.example.com:636"},
+		BaseDN: "dc=example,dc=com", BindDN: dir.serviceDN, BindPassword: dir.servicePassword,
+		UserFilter: "(uid=%s)", IDAttribute: "uid",
+	}
+	d := &fakeDialer{dir: dir, requestTO: cfg.requestTimeout()}
+	a, err := New(cfg, withDialer(d), WithLogger(log))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = a.Authenticate(context.Background(), authReq("no-such-user", "whatever"))
+	if !errors.Is(err, ErrAuthFailed) {
+		t.Fatalf("unknown-user err = %v, want ErrAuthFailed", err)
+	}
+	// An ordinary unknown-user / wrong-password outcome is NOT an operational
+	// failure — logging it as an error would flood the operator's log on
+	// every normal failed-login attempt (unlike the genuine transport failure
+	// above, which the operator DOES need visibility into).
+	if len(log.msgs) != 0 {
+		t.Errorf("unknown-user outcome was logged as an error: %v", log.msgs)
+	}
+}

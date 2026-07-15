@@ -224,8 +224,19 @@ func (a *Authenticator) Authenticate(ctx context.Context, req *sso.AuthRequest) 
 		// match" that searchUser collapses to ErrAuthFailed. On the
 		// ErrAuthFailed path we ALSO run a dummy bind so the timing matches a
 		// real failed user bind — closing the enumeration timing side-channel.
+		// We deliberately do NOT log on this path: it is the ordinary
+		// per-request outcome of an unknown user or ambiguous match, and
+		// logging it would just flood the operator's error log on every
+		// wrong-password/unknown-user attempt.
 		if errors.Is(err, ErrAuthFailed) {
 			a.dummyBind(c, password)
+		} else {
+			// A genuine operational failure (search transport error/timeout),
+			// independent of whether the user exists. Log it for observability
+			// — mirroring the dial + service-account-bind logging above —
+			// so a degraded/failing search path doesn't vanish silently while
+			// dial/bind failures against the same directory are visible.
+			a.logError("ldap search failed", err)
 		}
 		return nil, err
 	}
