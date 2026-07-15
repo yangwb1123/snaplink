@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/migrate"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
+	"github.com/snaplink/sso/shared/security/clientrotation"
 )
 
 // clientSchema is the Postgres baseline for the clients table. Unlike the
@@ -61,8 +63,27 @@ CREATE TABLE IF NOT EXISTS clients (
 CREATE INDEX IF NOT EXISTS idx_clients_tenant ON clients(tenant_id) WHERE tenant_id <> '';
 `
 
+// clientSchemaV2 backs two features the SQLite peer already tracks (v3/v4
+// there) that this backend's baseline never picked up: scheduled client-secret
+// rotation (shared/security/clientrotation.ClientRotationLister needs
+// secret_rotated_at to know which clients are due) and the rule-based client
+// trust scorer (platform/lifecycle/clienttrust needs client_trust_score /
+// client_trust_set_at to persist scores across restarts/replicas). Without
+// this column set, both features silently no-op against a Postgres-backed
+// ClientStore: rotation never lists anything due (Postgres never implemented
+// ClientRotationLister at all) and a trust score set by UpdateAndAlert is lost
+// the moment it's re-read. DEFAULT 0 on existing rows reads as "never tracked"
+// / "never scored" — see core.Client.SecretRotatedAt / ClientTrustSetAt for why
+// zero must not be treated as "overdue" / "distrusted".
+const clientSchemaV2 = `
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS secret_rotated_at BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS client_trust_score DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS client_trust_set_at BIGINT NOT NULL DEFAULT 0;
+`
+
 var clientMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline", SQL: clientSchema},
+	{Version: 2, Name: "secret_rotation_and_trust_score", SQL: clientSchemaV2},
 }
 
 // Statements derived once from clientColumns so the INSERT / upsert / UPDATE /
@@ -237,6 +258,14 @@ func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
 	if c == nil || c.ID == "" {
 		return errors.New("postgres: client.ID required")
 	}
+	// SecretRotatedAt baselines at creation time (parity with the sqlite/memory
+	// peers) so a freshly-added confidential client is immediately eligible for
+	// scheduled rotation once it ages past the configured interval — see
+	// ListDueForRotation. A secretless client (federation-derived/public) has
+	// nothing to rotate, so its timestamp stays zero (never due).
+	if c.Secret != "" {
+		c.SecretRotatedAt = time.Now()
+	}
 	args, err := clientWritePrep(c)
 	if err != nil {
 		return err
@@ -304,7 +333,9 @@ func (s *ClientStore) RotateSecret(ctx context.Context, clientID string) (string
 	if err != nil {
 		return "", fmt.Errorf("postgres: hash rotated secret: %w", err)
 	}
-	res, err := s.db.ExecContext(ctx, `UPDATE clients SET secret = $1 WHERE id = $2`, hashed, clientID)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE clients SET secret = $1, secret_rotated_at = $2 WHERE id = $3`,
+		hashed, time.Now().UnixNano(), clientID)
 	if err != nil {
 		return "", fmt.Errorf("postgres: rotate secret: %w", err)
 	}
@@ -312,6 +343,31 @@ func (s *ClientStore) RotateSecret(ctx context.Context, clientID string) (string
 		return "", sso.ErrNoSuchClient
 	}
 	return plain, nil
+}
+
+// ListDueForRotation implements clientrotation.ClientRotationLister: every
+// active, secret-bearing client last rotated at or before olderThan. A zero
+// secret_rotated_at (never tracked) is excluded by the `> 0` guard — see
+// core.Client.SecretRotatedAt for why zero must not mean "overdue".
+func (s *ClientStore) ListDueForRotation(ctx context.Context, olderThan time.Time) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM clients
+		 WHERE active = 1 AND secret <> '' AND secret_rotated_at > 0 AND secret_rotated_at <= $1
+		 ORDER BY id ASC`,
+		olderThan.UnixNano())
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list clients due for rotation: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("postgres: scan client id: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // isUniqueViolation reports a Postgres/CRDB unique_violation (SQLSTATE 23505),
@@ -322,7 +378,8 @@ func isUniqueViolation(err error) bool {
 }
 
 var (
-	_ sso.ClientStore             = (*ClientStore)(nil)
-	_ sso.TenantScopedClientStore = (*ClientStore)(nil)
-	_ core.ClientStoreStats       = (*ClientStore)(nil)
+	_ sso.ClientStore                     = (*ClientStore)(nil)
+	_ sso.TenantScopedClientStore         = (*ClientStore)(nil)
+	_ core.ClientStoreStats               = (*ClientStore)(nil)
+	_ clientrotation.ClientRotationLister = (*ClientStore)(nil)
 )

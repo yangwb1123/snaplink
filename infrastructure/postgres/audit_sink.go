@@ -58,8 +58,22 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_trace   ON audit_events(trace_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_tenant  ON audit_events(tenant_id);
 `
 
+// auditSchemaV2 adds the column backing audit.Event.ServerVersion (stamped by
+// audit.WithServerVersion on every recorded event). Without this column,
+// insertAuditEvent/scanAuditEvent silently dropped the field on every
+// Postgres-backed record — the same "declared field silently dropped by a
+// SQL store" shape already fixed for the sqlite peer (platform/audit/sqlite's
+// migrationV3): a deployment using WithServerVersion with the durable
+// Postgres audit backend could never actually answer "which binary version
+// produced this event". Not indexed: it's read back for display/export,
+// never filtered/grouped on.
+const auditSchemaV2 = `
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS server_version TEXT NOT NULL DEFAULT '';
+`
+
 var auditMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline", SQL: auditSchema},
+	{Version: 2, Name: "add_server_version", SQL: auditSchemaV2},
 }
 
 // rebind rewrites the SQLite-style '?' placeholders to Postgres '$1','$2',…
@@ -145,8 +159,8 @@ const auditInsert = `
         actor_id, actor_ip, user_agent,
         client_id, tenant_id, provider, token_strategy,
         session_id, token_id, reason,
-        metadata_json, prev_hash, hash
-    ) VALUES (?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?,  ?, ?, ?)`
+        metadata_json, prev_hash, hash, server_version
+    ) VALUES (?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?,  ?, ?, ?, ?)`
 
 func insertAuditEvent(ctx context.Context, db execContext, e *audit.Event) error {
 	metaJSON := ""
@@ -163,7 +177,7 @@ func insertAuditEvent(ctx context.Context, db execContext, e *audit.Event) error
 		e.ActorID, e.ActorIP, e.UserAgent,
 		e.ClientID, e.TenantID, e.Provider, e.TokenStrategy,
 		e.SessionID, e.TokenID, e.Reason,
-		metaJSON, e.PrevHash, e.Hash,
+		metaJSON, e.PrevHash, e.Hash, e.ServerVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres: audit insert: %w", err)

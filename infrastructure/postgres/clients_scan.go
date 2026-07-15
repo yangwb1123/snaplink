@@ -25,6 +25,7 @@ var clientColumns = []string{
 	"userinfo_encrypted_response_alg", "userinfo_encrypted_response_enc",
 	"backchannel_logout_uri", "subject_type", "sector_identifier_uri",
 	"frontchannel_logout_uri", "federation", "attributes",
+	"secret_rotated_at", "client_trust_score", "client_trust_set_at",
 }
 
 // clientWriteArgs is the ordered argument bundle shared by INSERT, upsert, and
@@ -56,7 +57,20 @@ func clientWriteArgs(c *sso.Client, secret, rat string) []any {
 		c.UserinfoEncryptedResponseAlg, c.UserinfoEncryptedResponseEnc,
 		c.BackchannelLogoutURI, c.SubjectType, c.SectorIdentifierURI,
 		c.FrontchannelLogoutURI, boolToInt(c.Federation), string(attrs),
+		unixNanoOrZero(c.SecretRotatedAt),
+		c.ClientTrustScore, unixNanoOrZero(c.ClientTrustSetAt),
 	}
+}
+
+// unixNanoOrZero renders a timestamp for storage: a zero time maps to the
+// sentinel 0 (never tracked/scored), never a huge negative UnixNano, so
+// scanClient can round-trip the "unset" sentinel faithfully — see
+// core.Client.SecretRotatedAt / ClientTrustSetAt.
+func unixNanoOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UnixNano()
 }
 
 // clientWritePrep hashes the secret + registration access token and builds the
@@ -89,6 +103,8 @@ type clientScanRow struct {
 	userinfoSigAlg                                         string
 	idtEncAlg, idtEncEnc, uiEncAlg, uiEncEnc               string
 	bclURI, subjectType, sectorURI, fclURI                 string
+	secretRotatedAtUnixNs                                  int64
+	clientTrustSetAtUnixNs                                 int64
 }
 
 // scanInto reads every column of clientColumns into the raw row holder in
@@ -106,7 +122,8 @@ func (r *clientScanRow) scanInto(s scanner) error {
 		&r.userinfoSigAlg,
 		&r.idtEncAlg, &r.idtEncEnc, &r.uiEncAlg, &r.uiEncEnc,
 		&r.bclURI, &r.subjectType, &r.sectorURI, &r.fclURI,
-		&r.federationInt, &r.attrsBlob,
+		&r.federationInt, &r.attrsBlob, &r.secretRotatedAtUnixNs,
+		&r.c.ClientTrustScore, &r.clientTrustSetAtUnixNs,
 	)
 }
 
@@ -137,6 +154,18 @@ func (r *clientScanRow) scalars() {
 	c.SubjectType = r.subjectType
 	c.SectorIdentifierURI = r.sectorURI
 	c.FrontchannelLogoutURI = r.fclURI
+	// 0 stays the zero time.Time (never tracked) — see
+	// core.Client.SecretRotatedAt; time.Unix(0, 0) would otherwise decode to
+	// the 1970 epoch, which is NOT the same "unknown" sentinel.
+	if r.secretRotatedAtUnixNs != 0 {
+		c.SecretRotatedAt = time.Unix(0, r.secretRotatedAtUnixNs).UTC()
+	}
+	// 0 stays the zero time.Time ("never scored") — see
+	// core.Client.ClientTrustSetAt; time.Unix(0, 0) would otherwise decode
+	// to the 1970 epoch, which is NOT the same "unscored" sentinel.
+	if r.clientTrustSetAtUnixNs != 0 {
+		c.ClientTrustSetAt = time.Unix(0, r.clientTrustSetAtUnixNs).UTC()
+	}
 }
 
 // unmarshalClientJSON treats empty / "[]" / "{}" / "null" blobs as the zero

@@ -21,7 +21,7 @@ const selectAuditColumns = `SELECT
     actor_id, actor_ip, user_agent,
     client_id, tenant_id, provider, token_strategy,
     session_id, token_id, reason,
-    metadata_json, prev_hash, hash`
+    metadata_json, prev_hash, hash, server_version`
 
 // Get returns the event with id, or [audit.ErrEventNotFound].
 func (s *AuditSink) Get(ctx context.Context, id string) (*audit.Event, error) {
@@ -181,7 +181,7 @@ func scanAuditEvent(r scanner) (*audit.Event, error) {
 		actorID, actorIP, ua            sql.NullString
 		clientID, tenantID, prov, strat sql.NullString
 		sessID, tokID, reason           sql.NullString
-		prev, hash                      sql.NullString
+		prev, hash, serverVersion       sql.NullString
 	)
 	if err := r.Scan(
 		&e.ID, &typ, &outcome, &tsNS,
@@ -189,7 +189,7 @@ func scanAuditEvent(r scanner) (*audit.Event, error) {
 		&actorID, &actorIP, &ua,
 		&clientID, &tenantID, &prov, &strat,
 		&sessID, &tokID, &reason,
-		&metaJSON, &prev, &hash,
+		&metaJSON, &prev, &hash, &serverVersion,
 	); err != nil {
 		return nil, err
 	}
@@ -212,6 +212,7 @@ func scanAuditEvent(r scanner) (*audit.Event, error) {
 	e.Reason = reason.String
 	e.PrevHash = prev.String
 	e.Hash = hash.String
+	e.ServerVersion = serverVersion.String
 	if metaJSON.String != "" {
 		e.Metadata = map[string]string{}
 		if err := json.Unmarshal([]byte(metaJSON.String), &e.Metadata); err != nil {

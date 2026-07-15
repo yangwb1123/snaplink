@@ -31,6 +31,7 @@ func TestAudit_RecordGetQuery(t *testing.T) {
 		Type: "login", Outcome: "success", Timestamp: base,
 		ActorID: "alice", ClientID: "c1", TenantID: "t1", RequestID: "req-1",
 		Metadata: map[string]string{"ip": "1.2.3.4"}, PrevHash: "g", Hash: "h1",
+		ServerVersion: "v1.2.3",
 	}
 	if err := s.Record(ctx, ev); err != nil {
 		t.Fatalf("Record: %v", err)
@@ -44,6 +45,13 @@ func TestAudit_RecordGetQuery(t *testing.T) {
 	}
 	if got.ActorID != "alice" || got.Metadata["ip"] != "1.2.3.4" || got.Hash != "h1" {
 		t.Fatalf("round-trip mismatch: %+v", got)
+	}
+	// Regression guard: ServerVersion (audit.WithServerVersion) must survive
+	// the round trip — it was previously dropped entirely by this backend's
+	// schema/insert/scan (no column at all), the same shape already fixed for
+	// the sqlite peer's migrationV3.
+	if got.ServerVersion != "v1.2.3" {
+		t.Fatalf("ServerVersion round-trip lost: got %q, want %q", got.ServerVersion, "v1.2.3")
 	}
 	if got.Timestamp.UnixNano() != base.UnixNano() {
 		t.Fatalf("nanosecond round-trip lost: got %d want %d", got.Timestamp.UnixNano(), base.UnixNano())
