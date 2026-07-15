@@ -14,6 +14,7 @@ import (
 
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/metrics"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // RSA JWT constants.
@@ -108,6 +109,11 @@ type RSAJWTIssuer struct {
 	// signer performs the raw RSA signing. Defaults to the in-process
 	// software signer; WithRSAExternalSigner swaps in a KMS/HSM signer.
 	signer RSASigner
+
+	// keyOrigin is the HSM/software attestation for this issuer's signing
+	// key. Defaults to OriginUnattested (software). Set via
+	// WithRSAKeyOrigin when the key is backed by an HSM/KMS.
+	keyOrigin core.KeyOrigin
 
 	// clock is nil by default (nowFrom falls back to time.Now()) — see
 	// WithRSAClock.
@@ -210,6 +216,25 @@ func WithRSAExternalSigner(signer RSASigner, pub *rsa.PublicKey, kid string) RSA
 			j.keyID = kid
 		}
 	}
+}
+
+// WithRSAKeyOrigin sets the key origin attestation for this issuer's
+// signing key. Defaults to OriginUnattested (software). Callers that wire
+// a KMS/HSM-backed external signer SHOULD set this to the appropriate
+// value so the JWKS endpoint publishes the origin for compliance audits.
+func WithRSAKeyOrigin(origin core.KeyOrigin) RSAOption {
+	return func(j *RSAJWTIssuer) { j.keyOrigin = origin }
+}
+
+// KeyOrigin returns the key origin attestation for this issuer's signing
+// key. Implements core.KeyOriginProvider.
+func (j *RSAJWTIssuer) KeyOrigin(_ context.Context, kid string) (core.KeyOrigin, error) {
+	j.keyMu.RLock()
+	defer j.keyMu.RUnlock()
+	if kid != "" && kid != j.keyID {
+		return core.OriginUnknown, nil
+	}
+	return j.keyOrigin, nil
 }
 
 // NewRSAJWTIssuer builds an RS256/PS256 issuer. With no key option it

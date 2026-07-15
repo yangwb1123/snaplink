@@ -14,6 +14,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // ErrUnsupportedKey is returned when the Key Vault key (or the requested
@@ -125,6 +126,11 @@ type Signer struct {
 	mu      sync.Mutex
 	cached  crypto.PublicKey
 	fetched bool
+
+	// hsmPlatform caches the key's HSM protection flag from GetKey,
+	// set alongside fetched at loadPublic time. Used by KeyOrigin to
+	// attest whether the key is HSM-protected.
+	hsmPlatform bool
 }
 
 // Option configures the Signer.
@@ -243,6 +249,13 @@ func (s *Signer) loadPublic(ctx context.Context) (crypto.PublicKey, error) {
 	}
 	s.cached = pub
 	s.fetched = true
+	// Capture the HSM platform flag for KeyOrigin attestation.
+	// KeyAttributes.HSMPlatform is a string that is set to a value like
+	// "true" when the key is stored in an HSM (Premium vault with
+	// HSM-backed keys); empty/false for software-protected keys.
+	if resp.Attributes != nil && resp.Attributes.HSMPlatform != nil {
+		s.hsmPlatform = *resp.Attributes.HSMPlatform != ""
+	}
 	return s.cached, nil
 }
 
@@ -342,6 +355,30 @@ func (s *Signer) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byt
 	return sig, nil
 }
 
+// KeyOrigin returns the HSM/software attestation for this signer's key.
+// The origin is cached from the Azure GetKey response at loadPublic time,
+// derived from the HsmPlatform attribute. An unknown kid returns
+// OriginUnknown, nil. Calls loadPublic UNLOCKED (loadPublic acquires s.mu
+// itself — Go's sync.Mutex is not reentrant, so holding it across a
+// loadPublic call would self-deadlock) and only re-takes s.mu afterward,
+// briefly, to read the s.hsmPlatform field loadPublic populated.
+func (s *Signer) KeyOrigin(_ context.Context, kid string) (core.KeyOrigin, error) {
+	if kid != "" && kid != s.keyName {
+		return core.OriginUnknown, nil
+	}
+	ctx, cancel := s.callCtx()
+	defer cancel()
+	if _, err := s.loadPublic(ctx); err != nil {
+		return core.OriginUnknown, nil // fail-open: can't attest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.hsmPlatform {
+		return core.OriginHSMGenerated, nil
+	}
+	return core.OriginUnattested, nil
+}
+
 // Interface guards:
 //   - Signer is a stdlib crypto.Signer, the exact seam the cryptosigner
 //     bridge (and any other crypto.Signer consumer) accepts.
@@ -349,6 +386,7 @@ func (s *Signer) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byt
 //     seam, so NewSigner accepts it directly (and the fake in tests is a
 //     faithful stand-in, not a divergent shape).
 var (
-	_ crypto.Signer = (*Signer)(nil)
-	_ keyVaultAPI   = (*azkeys.Client)(nil)
+	_ crypto.Signer          = (*Signer)(nil)
+	_ keyVaultAPI            = (*azkeys.Client)(nil)
+	_ core.KeyOriginProvider = (*Signer)(nil)
 )

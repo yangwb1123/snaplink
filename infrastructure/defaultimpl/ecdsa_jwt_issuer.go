@@ -14,6 +14,7 @@ import (
 
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/metrics"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // metricsAlgES256 is this family's bounded sso_signing_key_usage_total alg
@@ -137,6 +138,11 @@ type ECDSAJWTIssuer struct {
 	// software signer; WithECDSAExternalSigner swaps in a KMS/HSM signer.
 	signer ECDSASigner
 
+	// keyOrigin is the HSM/software attestation for this issuer's signing
+	// key. Defaults to OriginUnattested (software). Set via
+	// WithECDSAKeyOrigin when the key is backed by an HSM/KMS.
+	keyOrigin core.KeyOrigin
+
 	// clock is nil by default (nowFrom falls back to time.Now()) — see
 	// WithECDSAClock.
 	clock Clock
@@ -231,6 +237,25 @@ func WithECDSAExternalSigner(signer ECDSASigner, pub *ecdsa.PublicKey, kid strin
 			j.keyID = kid
 		}
 	}
+}
+
+// WithECDSAKeyOrigin sets the key origin attestation for this issuer's
+// signing key. Defaults to OriginUnattested (software). Callers that wire
+// a KMS/HSM-backed external signer SHOULD set this to the appropriate
+// value so the JWKS endpoint publishes the origin for compliance audits.
+func WithECDSAKeyOrigin(origin core.KeyOrigin) ECDSAOption {
+	return func(j *ECDSAJWTIssuer) { j.keyOrigin = origin }
+}
+
+// KeyOrigin returns the key origin attestation for this issuer's signing
+// key. Implements core.KeyOriginProvider.
+func (j *ECDSAJWTIssuer) KeyOrigin(_ context.Context, kid string) (core.KeyOrigin, error) {
+	j.keyMu.RLock()
+	defer j.keyMu.RUnlock()
+	if kid != "" && kid != j.keyID {
+		return core.OriginUnknown, nil
+	}
+	return j.keyOrigin, nil
 }
 
 // NewECDSAJWTIssuer builds an ES256 issuer. With no key option it

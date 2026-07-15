@@ -16,6 +16,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // ErrUnsupportedKey is returned when the KMS key (or the requested signing
@@ -29,10 +30,11 @@ var ErrUnsupportedKey = errors.New("awskms: unsupported key spec or signing sche
 // Declaring our own interface (rather than depending on *kms.Client
 // directly) keeps the seam test-injectable: the real *kms.Client from
 // aws-sdk-go-v2 satisfies it structurally, and signer_test.go injects a
-// local-key fake. Only the two operations actually used appear here.
+// local-key fake. Only the operations actually used appear here.
 type KMSAPI interface {
 	Sign(ctx context.Context, in *kms.SignInput, optFns ...func(*kms.Options)) (*kms.SignOutput, error)
 	GetPublicKey(ctx context.Context, in *kms.GetPublicKeyInput, optFns ...func(*kms.Options)) (*kms.GetPublicKeyOutput, error)
+	DescribeKey(ctx context.Context, in *kms.DescribeKeyInput, optFns ...func(*kms.Options)) (*kms.DescribeKeyOutput, error)
 }
 
 // Signer is a [crypto.Signer] backed by an AWS KMS asymmetric key. The
@@ -102,13 +104,16 @@ type Signer struct {
 }
 
 // publicKey bundles the parsed key with the JWS alg its KMS key spec
-// implies, so Sign can pick the right SigningAlgorithmSpec without a
-// second round-trip.
+// implies, and the key origin, so Sign can pick the right
+// SigningAlgorithmSpec without a second round-trip.
 type publicKey struct {
 	key crypto.PublicKey
 	// kmsSign* are the KMS SigningAlgorithmSpec values valid for this key
 	// spec, indexed by the crypto.Hash the issuer requests.
 	keySpec kmstypes.KeySpec
+	// origin is the HSM/software attestation from the KMS DescribeKey
+	// response, cached at loadPublic time so KeyOrigin is a field read.
+	origin core.KeyOrigin
 }
 
 // Option configures the Signer.
@@ -204,7 +209,11 @@ func (s *Signer) loadPublic(ctx context.Context) (*publicKey, error) {
 	default:
 		return nil, fmt.Errorf("awskms: %w: public key type %T", ErrUnsupportedKey, pub)
 	}
-	s.cached = &publicKey{key: pub, keySpec: out.KeySpec}
+	origin, originErr := s.resolveOrigin(ctx)
+	if originErr != nil {
+		origin = core.OriginUnknown
+	}
+	s.cached = &publicKey{key: pub, keySpec: out.KeySpec, origin: origin}
 	s.fetched = true
 	return s.cached, nil
 }
@@ -346,6 +355,51 @@ func signingAlgorithm(spec kmstypes.KeySpec, pub crypto.PublicKey, hash crypto.H
 	}
 }
 
+// KeyOrigin returns the HSM/software attestation for this signer's key.
+// The origin is cached from the KMS GetPublicKey response at loadPublic
+// time. An unknown kid returns OriginUnknown, nil (the kid is always the
+// keyID for this per-key signer). Delegates entirely to loadPublic's own
+// locking/caching (loadPublic acquires s.mu itself) rather than taking s.mu
+// here too — Go's sync.Mutex is not reentrant, so holding it across a
+// loadPublic call would self-deadlock.
+func (s *Signer) KeyOrigin(_ context.Context, kid string) (core.KeyOrigin, error) {
+	if kid != "" && kid != s.keyID {
+		return core.OriginUnknown, nil
+	}
+	ctx, cancel := s.callCtx()
+	defer cancel()
+	pk, err := s.loadPublic(ctx)
+	if err != nil {
+		return core.OriginUnknown, nil // fail-open: can't attest
+	}
+	return pk.origin, nil
+}
+
+// resolveOrigin calls DescribeKey to determine the key's origin. Errors are
+// fail-open: the signer returns OriginUnknown when DescribeKey is unavailable.
+func (s *Signer) resolveOrigin(ctx context.Context) (core.KeyOrigin, error) {
+	out, err := s.client.DescribeKey(ctx, &kms.DescribeKeyInput{KeyId: &s.keyID})
+	if err != nil {
+		return core.OriginUnknown, fmt.Errorf("awskms: describe key: %w", err)
+	}
+	if out.KeyMetadata == nil {
+		return core.OriginUnknown, nil
+	}
+	switch out.KeyMetadata.Origin {
+	case kmstypes.OriginTypeAwsKms:
+		return core.OriginHSMGenerated, nil
+	case kmstypes.OriginTypeExternal:
+		return core.OriginImported, nil
+	case kmstypes.OriginTypeAwsCloudhsm:
+		return core.OriginHSMGenerated, nil
+	default:
+		return core.OriginUnknown, nil
+	}
+}
+
 // Interface guard: Signer is a stdlib crypto.Signer, the exact seam the
 // cryptosigner bridge (and any other crypto.Signer consumer) accepts.
 var _ crypto.Signer = (*Signer)(nil)
+
+// Compile-time guard: *Signer implements core.KeyOriginProvider.
+var _ core.KeyOriginProvider = (*Signer)(nil)

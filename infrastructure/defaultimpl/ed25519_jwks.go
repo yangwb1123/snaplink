@@ -135,19 +135,37 @@ func (j *Ed25519JWTIssuer) JWKS(_ context.Context) ([]sso.JWK, error) {
 	for _, kid := range peerKids {
 		out = append(out, ed25519PublicJWK(kid, peer[kid]))
 	}
+	stampKeyOrigin(out, j.keyOrigin)
 	return out, nil
 }
 
 // ed25519PublicJWK builds the RFC 8037 §2 OKP JWK for an Ed25519 public
 // key: kty "OKP", crv "Ed25519", x = base64url(raw 32-byte public key).
-func ed25519PublicJWK(kid string, pub ed25519.PublicKey) sso.JWK {
-	return sso.JWK{
+// origin, when non-zero, is added to the JWK as an extension attribute.
+func ed25519PublicJWK(kid string, pub ed25519.PublicKey, origins ...core.KeyOrigin) sso.JWK {
+	jwk := sso.JWK{
 		Kty: jwkKtyOKP,
 		Crv: jwkCrvEd25519,
 		Kid: kid,
 		X:   base64.RawURLEncoding.EncodeToString(pub),
 		Use: jwkUseSig,
 		Alg: jwtAlgEdDSA,
+	}
+	if len(origins) > 0 && origins[0] != core.OriginUnattested {
+		jwk.Origin = origins[0]
+	}
+	return jwk
+}
+
+// stampKeyOrigin sets the Origin field on every JWK entry when the
+// issuer's keyOrigin differs from OriginUnattested. Safe to call with
+// any KeyOrigin value (including zero).
+func stampKeyOrigin(entries []sso.JWK, origin core.KeyOrigin) {
+	if origin == core.OriginUnattested {
+		return
+	}
+	for i := range entries {
+		entries[i].Origin = origin
 	}
 }
 
@@ -181,3 +199,6 @@ var _ sso.LogoutTokenIssuer = (*Ed25519JWTIssuer)(nil)
 // Compile-time check: an Ed25519JWTIssuer instance (a DEDICATED one, per
 // oauth.IntrospectionSigner's doc) can sign RFC 9701 introspection JWTs.
 var _ oauth.IntrospectionSigner = (*Ed25519JWTIssuer)(nil)
+
+// Compile-time guard: *Ed25519JWTIssuer implements core.KeyOriginProvider.
+var _ core.KeyOriginProvider = (*Ed25519JWTIssuer)(nil)

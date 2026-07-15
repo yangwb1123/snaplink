@@ -18,6 +18,7 @@ import (
 
 	kmspb "cloud.google.com/go/kms/apiv1/kmspb"
 	gax "github.com/googleapis/gax-go/v2"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // ErrUnsupportedKey is returned when the GCP Cloud KMS key version (or the
@@ -121,12 +122,16 @@ type Signer struct {
 	fetched bool
 }
 
-// publicKey bundles the parsed key with the KMS key-version algorithm it
-// implies, so Sign can shape the AsymmetricSignRequest (Digest oneof vs
-// Data) and validate the requested scheme without a second round-trip.
+// publicKey bundles the parsed key with the KMS key-version algorithm and
+// protection level it implies, so Sign can shape the AsymmetricSignRequest
+// (Digest oneof vs Data) and validate the requested scheme without a second
+// round-trip.
 type publicKey struct {
 	key crypto.PublicKey
 	alg kmspb.CryptoKeyVersion_CryptoKeyVersionAlgorithm
+	// protectionLevel is the HSM/software attestation from the KMS
+	// GetPublicKey response, cached at loadPublic time.
+	protectionLevel kmspb.ProtectionLevel
 }
 
 // Option configures the Signer.
@@ -230,7 +235,11 @@ func (s *Signer) loadPublic(ctx context.Context) (*publicKey, error) {
 	default:
 		return nil, fmt.Errorf("gcpkms: %w: public key type %T", ErrUnsupportedKey, pub)
 	}
-	s.cached = &publicKey{key: pub, alg: out.GetAlgorithm()}
+	s.cached = &publicKey{
+		key:             pub,
+		alg:             out.GetAlgorithm(),
+		protectionLevel: out.GetProtectionLevel(),
+	}
 	s.fetched = true
 	return s.cached, nil
 }
@@ -396,6 +405,43 @@ func (s *Signer) signRequest(pk *publicKey, digest []byte, hash crypto.Hash, pss
 	}
 }
 
+// KeyOrigin returns the HSM/software attestation for this signer's key.
+// The origin is cached from the KMS GetPublicKey response at loadPublic
+// time, derived from the ProtectionLevel field. An unknown kid returns
+// OriginUnknown, nil. Delegates entirely to loadPublic's own
+// locking/caching (loadPublic acquires s.mu itself) rather than taking
+// s.mu here too — Go's sync.Mutex is not reentrant, so holding it across a
+// loadPublic call would self-deadlock.
+func (s *Signer) KeyOrigin(_ context.Context, kid string) (core.KeyOrigin, error) {
+	if kid != "" && kid != s.keyName {
+		return core.OriginUnknown, nil
+	}
+	ctx, cancel := s.callCtx()
+	defer cancel()
+	pk, err := s.loadPublic(ctx)
+	if err != nil {
+		return core.OriginUnknown, nil // fail-open: can't attest
+	}
+	return protectionLevelToOrigin(pk.protectionLevel), nil
+}
+
+// protectionLevelToOrigin maps a GCP KMS ProtectionLevel to a KeyOrigin.
+func protectionLevelToOrigin(pl kmspb.ProtectionLevel) core.KeyOrigin {
+	switch pl {
+	case kmspb.ProtectionLevel_HSM:
+		return core.OriginHSMGenerated
+	case kmspb.ProtectionLevel_SOFTWARE:
+		return core.OriginUnattested
+	case kmspb.ProtectionLevel_EXTERNAL, kmspb.ProtectionLevel_EXTERNAL_VPC:
+		return core.OriginImported
+	default:
+		return core.OriginUnknown
+	}
+}
+
 // Interface guard: Signer is a stdlib crypto.Signer, the exact seam the
 // cryptosigner bridge (and any other crypto.Signer consumer) accepts.
 var _ crypto.Signer = (*Signer)(nil)
+
+// Compile-time guard: *Signer implements core.KeyOriginProvider.
+var _ core.KeyOriginProvider = (*Signer)(nil)

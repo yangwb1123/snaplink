@@ -123,6 +123,7 @@ func (j *RSAJWTIssuer) JWKS(_ context.Context) ([]sso.JWK, error) {
 	for _, kid := range peerKids {
 		out = append(out, rsaPublicJWK(kid, peer[kid], alg))
 	}
+	stampKeyOrigin(out, j.keyOrigin)
 	return out, nil
 }
 
@@ -173,4 +174,5 @@ var (
 	_ sso.TokenFormatHinter     = (*RSAJWTIssuer)(nil)
 	_ sso.JWKSProvider          = (*RSAJWTIssuer)(nil)
 	_ oauth.IntrospectionSigner = (*RSAJWTIssuer)(nil)
+	_ core.KeyOriginProvider    = (*RSAJWTIssuer)(nil)
 )

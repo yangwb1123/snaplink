@@ -21,6 +21,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/cryptosigner"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // fakeKMS is an in-process stand-in for the AWS KMS client. It holds a
@@ -34,6 +35,13 @@ type fakeKMS struct {
 	ecKey   *ecdsa.PrivateKey
 	rsaKey  *rsa.PrivateKey
 	keySpec kmstypes.KeySpec
+
+	// describeOrigin is the KeyMetadata.Origin DescribeKey reports. The zero
+	// value ("") is treated the same as an unrecognized origin by
+	// resolveOrigin (falls through to OriginUnknown) — tests that care about
+	// a specific origin set this explicitly.
+	describeOrigin kmstypes.OriginType
+	describeErr    error // when set, DescribeKey returns this
 
 	getPubCalls atomic.Int32
 	signErr     error // when set, Sign returns this (fail-closed test)
@@ -97,6 +105,17 @@ func (f *fakeKMS) GetPublicKey(ctx context.Context, _ *kms.GetPublicKeyInput, _ 
 		return nil, err
 	}
 	return &kms.GetPublicKeyOutput{PublicKey: der, KeySpec: f.keySpec}, nil
+}
+
+// DescribeKey answers the key-origin auto-detection Signer.resolveOrigin
+// calls at loadPublic time, mirroring GetPublicKey's real-response-shape
+// discipline: tests set describeOrigin/describeErr to drive each origin
+// (or failure) case rather than mocking resolveOrigin directly.
+func (f *fakeKMS) DescribeKey(_ context.Context, _ *kms.DescribeKeyInput, _ ...func(*kms.Options)) (*kms.DescribeKeyOutput, error) {
+	if f.describeErr != nil {
+		return nil, f.describeErr
+	}
+	return &kms.DescribeKeyOutput{KeyMetadata: &kmstypes.KeyMetadata{Origin: f.describeOrigin}}, nil
 }
 
 func (f *fakeKMS) Sign(ctx context.Context, in *kms.SignInput, _ ...func(*kms.Options)) (*kms.SignOutput, error) {
@@ -477,5 +496,60 @@ func TestSignCallTimeout(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Sign hung past the configured call timeout (FIX 2 regression)")
+	}
+}
+
+// TestKeyOrigin_MapsDescribeKeyResponse proves KeyOrigin translates each
+// KMS Origin value to the correct core.KeyOrigin, and that a DescribeKey
+// failure fails OPEN to OriginUnknown rather than propagating the error
+// (attestation is best-effort metadata, never load-bearing for signing).
+func TestKeyOrigin_MapsDescribeKeyResponse(t *testing.T) {
+	cases := []struct {
+		name    string
+		origin  kmstypes.OriginType
+		descErr error
+		want    core.KeyOrigin
+	}{
+		{"aws kms generated", kmstypes.OriginTypeAwsKms, nil, core.OriginHSMGenerated},
+		{"externally imported", kmstypes.OriginTypeExternal, nil, core.OriginImported},
+		{"describe key error fails open", kmstypes.OriginTypeAwsKms, errors.New("kms: access denied"), core.OriginUnknown},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFakeECKMS(t)
+			f.describeOrigin = c.origin
+			f.describeErr = c.descErr
+			s, err := New(f, "test-key")
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			got, err := s.KeyOrigin(context.Background(), "test-key")
+			if err != nil {
+				t.Fatalf("KeyOrigin: %v", err)
+			}
+			if got != c.want {
+				t.Errorf("KeyOrigin = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestKeyOrigin_UnknownKidReturnsUnknown proves a kid that doesn't match
+// this per-key signer's own keyID reports OriginUnknown rather than this
+// signer's own key's origin — KeyOrigin must not answer for a kid it
+// doesn't own.
+func TestKeyOrigin_UnknownKidReturnsUnknown(t *testing.T) {
+	f := newFakeECKMS(t)
+	f.describeOrigin = kmstypes.OriginTypeAwsKms
+	s, err := New(f, "test-key")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	got, err := s.KeyOrigin(context.Background(), "some-other-key")
+	if err != nil {
+		t.Fatalf("KeyOrigin: %v", err)
+	}
+	if got != core.OriginUnknown {
+		t.Errorf("KeyOrigin(mismatched kid) = %v, want OriginUnknown", got)
 	}
 }

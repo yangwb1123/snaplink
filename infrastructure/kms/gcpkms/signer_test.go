@@ -24,6 +24,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/cryptosigner"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // fakeKMS is an in-process stand-in for the GCP Cloud KMS
@@ -42,6 +43,11 @@ type fakeKMS struct {
 	edPub  ed25519.PublicKey
 	edPriv ed25519.PrivateKey
 	alg    kmspb.CryptoKeyVersion_CryptoKeyVersionAlgorithm
+
+	// protectionLevel is echoed on the GetPublicKey response, driving
+	// KeyOrigin's protectionLevelToOrigin mapping. The zero value
+	// (PROTECTION_LEVEL_UNSPECIFIED) maps to core.OriginUnknown.
+	protectionLevel kmspb.ProtectionLevel
 
 	getPubCalls atomic.Int32
 	signErr     error // when set, AsymmetricSign returns this (fail-closed test)
@@ -128,7 +134,7 @@ func (f *fakeKMS) GetPublicKey(ctx context.Context, _ *kmspb.GetPublicKeyRequest
 		return nil, err
 	}
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
-	return &kmspb.PublicKey{Pem: string(pemBytes), Algorithm: f.alg}, nil
+	return &kmspb.PublicKey{Pem: string(pemBytes), Algorithm: f.alg, ProtectionLevel: f.protectionLevel}, nil
 }
 
 func (f *fakeKMS) AsymmetricSign(ctx context.Context, in *kmspb.AsymmetricSignRequest, _ ...gax.CallOption) (*kmspb.AsymmetricSignResponse, error) {
@@ -630,5 +636,56 @@ func TestSignCallTimeout(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Sign hung past the configured call timeout")
+	}
+}
+
+// TestKeyOrigin_MapsProtectionLevel proves KeyOrigin translates each GCP
+// KMS ProtectionLevel to the correct core.KeyOrigin. Regression guard for a
+// self-deadlock: KeyOrigin must call loadPublic WITHOUT holding s.mu itself
+// (loadPublic acquires it), since Go's sync.Mutex is not reentrant.
+func TestKeyOrigin_MapsProtectionLevel(t *testing.T) {
+	cases := []struct {
+		name  string
+		level kmspb.ProtectionLevel
+		want  core.KeyOrigin
+	}{
+		{"hsm", kmspb.ProtectionLevel_HSM, core.OriginHSMGenerated},
+		{"software", kmspb.ProtectionLevel_SOFTWARE, core.OriginUnattested},
+		{"external", kmspb.ProtectionLevel_EXTERNAL, core.OriginImported},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFakeECKMS(t)
+			f.protectionLevel = c.level
+			s, err := New(f, testKeyName)
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			got, err := s.KeyOrigin(context.Background(), testKeyName)
+			if err != nil {
+				t.Fatalf("KeyOrigin: %v", err)
+			}
+			if got != c.want {
+				t.Errorf("KeyOrigin = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestKeyOrigin_UnknownKidReturnsUnknown proves a kid that doesn't match
+// this per-key signer's own keyName reports OriginUnknown.
+func TestKeyOrigin_UnknownKidReturnsUnknown(t *testing.T) {
+	f := newFakeECKMS(t)
+	f.protectionLevel = kmspb.ProtectionLevel_HSM
+	s, err := New(f, testKeyName)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	got, err := s.KeyOrigin(context.Background(), "some-other-key")
+	if err != nil {
+		t.Fatalf("KeyOrigin: %v", err)
+	}
+	if got != core.OriginUnknown {
+		t.Errorf("KeyOrigin(mismatched kid) = %v, want OriginUnknown", got)
 	}
 }

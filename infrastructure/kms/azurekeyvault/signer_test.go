@@ -24,6 +24,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/cryptosigner"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // fakeVault is an in-process stand-in for the azkeys.Client. It holds a
@@ -39,6 +40,12 @@ type fakeVault struct {
 	ecKey  *ecdsa.PrivateKey
 	rsaKey *rsa.PrivateKey
 	edPub  ed25519.PublicKey // for the "vault somehow returns an OKP key" guard
+
+	// hsmPlatform is echoed as KeyAttributes.HSMPlatform on the GetKey
+	// response, driving KeyOrigin's HSM/software attestation. nil (the
+	// zero value) means the response carries no Attributes at all, mirroring
+	// a vault that doesn't report the field.
+	hsmPlatform *string
 
 	getKeyCalls atomic.Int32
 	signErr     error // when set, Sign returns this (fail-closed test)
@@ -158,7 +165,11 @@ func (f *fakeVault) GetKey(ctx context.Context, _ string, _ string, _ *azkeys.Ge
 			return azkeys.GetKeyResponse{}, ctx.Err()
 		}
 	}
-	return azkeys.GetKeyResponse{KeyBundle: azkeys.KeyBundle{Key: f.jwk()}}, nil
+	bundle := azkeys.KeyBundle{Key: f.jwk()}
+	if f.hsmPlatform != nil {
+		bundle.Attributes = &azkeys.KeyAttributes{HSMPlatform: f.hsmPlatform}
+	}
+	return azkeys.GetKeyResponse{KeyBundle: bundle}, nil
 }
 
 func (f *fakeVault) Sign(ctx context.Context, _ string, _ string, params azkeys.SignParameters, _ *azkeys.SignOptions) (azkeys.SignResponse, error) {
@@ -877,5 +888,57 @@ func TestSignCallTimeout(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Sign hung past the configured call timeout")
+	}
+}
+
+// TestKeyOrigin_MapsHSMPlatform proves KeyOrigin translates Azure's
+// HSMPlatform key attribute correctly, including its absence. Regression
+// guard for a self-deadlock: KeyOrigin must call loadPublic WITHOUT
+// holding s.mu itself (loadPublic acquires it), since Go's sync.Mutex is
+// not reentrant.
+func TestKeyOrigin_MapsHSMPlatform(t *testing.T) {
+	cases := []struct {
+		name        string
+		hsmPlatform *string
+		want        core.KeyOrigin
+	}{
+		{"hsm-backed", to.Ptr("Microsoft.HardwareSecurityModule"), core.OriginHSMGenerated},
+		{"software (empty string)", to.Ptr(""), core.OriginUnattested},
+		{"no attributes reported", nil, core.OriginUnattested},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFakeEC(t, elliptic.P256())
+			f.hsmPlatform = c.hsmPlatform
+			s, err := NewSigner(f, testKeyName, testKeyVersion)
+			if err != nil {
+				t.Fatalf("NewSigner: %v", err)
+			}
+			got, err := s.KeyOrigin(context.Background(), testKeyName)
+			if err != nil {
+				t.Fatalf("KeyOrigin: %v", err)
+			}
+			if got != c.want {
+				t.Errorf("KeyOrigin = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestKeyOrigin_UnknownKidReturnsUnknown proves a kid that doesn't match
+// this per-key signer's own keyName reports OriginUnknown.
+func TestKeyOrigin_UnknownKidReturnsUnknown(t *testing.T) {
+	f := newFakeEC(t, elliptic.P256())
+	f.hsmPlatform = to.Ptr("Microsoft.HardwareSecurityModule")
+	s, err := NewSigner(f, testKeyName, testKeyVersion)
+	if err != nil {
+		t.Fatalf("NewSigner: %v", err)
+	}
+	got, err := s.KeyOrigin(context.Background(), "some-other-key")
+	if err != nil {
+		t.Fatalf("KeyOrigin: %v", err)
+	}
+	if got != core.OriginUnknown {
+		t.Errorf("KeyOrigin(mismatched kid) = %v, want OriginUnknown", got)
 	}
 }

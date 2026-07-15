@@ -120,6 +120,7 @@ func (j *ECDSAJWTIssuer) JWKS(_ context.Context) ([]sso.JWK, error) {
 	for _, kid := range peerKids {
 		out = append(out, ecPublicJWK(kid, peer[kid]))
 	}
+	stampKeyOrigin(out, j.keyOrigin)
 	return out, nil
 }
 
@@ -167,4 +168,5 @@ var (
 	_ sso.TokenFormatHinter     = (*ECDSAJWTIssuer)(nil)
 	_ sso.JWKSProvider          = (*ECDSAJWTIssuer)(nil)
 	_ oauth.IntrospectionSigner = (*ECDSAJWTIssuer)(nil)
+	_ core.KeyOriginProvider    = (*ECDSAJWTIssuer)(nil)
 )

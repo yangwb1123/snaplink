@@ -11,6 +11,7 @@ import (
 
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/metrics"
+	"github.com/snaplink/sso/shared/core"
 )
 
 // metricsAlgEdDSA is this family's bounded sso_signing_key_usage_total alg
@@ -125,6 +126,11 @@ type Ed25519JWTIssuer struct {
 	// signer holding privateKey; WithEd25519ExternalSigner swaps in a
 	// KMS/HSM-backed signer (private key never enters this process).
 	signer Ed25519Signer
+
+	// keyOrigin is the HSM/software attestation for this issuer's signing
+	// key. Defaults to OriginUnattested (software). Set via
+	// WithEd25519KeyOrigin when the key is backed by an HSM/KMS.
+	keyOrigin core.KeyOrigin
 
 	// clock is nil by default (nowFrom falls back to time.Now()) — see
 	// WithEd25519Clock.
@@ -357,6 +363,25 @@ func WithEd25519ExternalSigner(signer Ed25519Signer, pub ed25519.PublicKey, kid 
 			j.keyID = kid
 		}
 	}
+}
+
+// WithEd25519KeyOrigin sets the key origin attestation for this issuer's
+// signing key. Defaults to OriginUnattested (software). Callers that wire
+// a KMS/HSM-backed external signer SHOULD set this to the appropriate
+// value so the JWKS endpoint publishes the origin for compliance audits.
+func WithEd25519KeyOrigin(origin core.KeyOrigin) Ed25519Option {
+	return func(j *Ed25519JWTIssuer) { j.keyOrigin = origin }
+}
+
+// KeyOrigin returns the key origin attestation for this issuer's signing
+// key. Implements core.KeyOriginProvider.
+func (j *Ed25519JWTIssuer) KeyOrigin(_ context.Context, kid string) (core.KeyOrigin, error) {
+	j.keyMu.RLock()
+	defer j.keyMu.RUnlock()
+	if kid != "" && kid != j.keyID {
+		return core.OriginUnknown, nil
+	}
+	return j.keyOrigin, nil
 }
 
 // PublicKey returns the verification key so callers can pre-populate
