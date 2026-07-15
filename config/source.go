@@ -2,9 +2,11 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
+	"time"
 
 	"github.com/goccy/go-yaml"
 	"github.com/snaplink/sso/config/schema"
@@ -128,9 +130,9 @@ func (l *Loader) Load(ctx context.Context) (*Config, error) {
 
 	checkSchema(merged)
 
-	raw, err := yaml.Marshal(merged)
+	raw, err := marshalMergedBounded(merged)
 	if err != nil {
-		return nil, fmt.Errorf("config: marshal merged: %w", err)
+		return nil, err
 	}
 
 	c, err := decodeStrictWithFallback(raw)
@@ -159,6 +161,69 @@ func checkSchema(merged map[string]any) {
 		logSchemaViolations(violations)
 	}
 }
+
+// maxConfigMarshalDuration bounds how long the merged-config YAML re-encode
+// (marshalMergedBounded) may run.
+//
+// A config source built from nested YAML anchors/aliases (e.g.
+// `b: &b [*a,*a,...,*a]` repeated across several levels) decodes into a DAG
+// of shared slice/map pointers — Unmarshal is cheap because aliased
+// branches aren't copied — but yaml.Marshal must flatten every alias into
+// literal text, so a handful of nested anchors can amplify into a
+// multi-second (or much worse) re-encode: a billion-laughs-style DoS
+// reachable from any config file or SIGHUP-reloaded source that contains
+// anchors.
+//
+// An earlier attempt fixed this with goccy/go-yaml's WithSmartAnchor
+// (re-detect the shared pointers at encode time and re-emit them as
+// anchors instead of expanding). That had to be reverted: its
+// pointer-identity sharing detection produces FALSE POSITIVES on ordinary
+// zero-value fields — Go's runtime returns the same address for unrelated
+// empty-slice allocations — which corrupted legitimate configs with
+// spurious, wrong anchors, reproduced against this repo's own shipped
+// cmd/sso-server/config.yaml (zero real anchors, yet failed to re-parse
+// after the "fix").
+//
+// A bounded timeout instead turns an unbounded hang into a clear, fast
+// failure without changing yaml.Marshal's behavior at all for the happy
+// path (the overwhelming majority of loads: no anchors, or a handful that
+// never amplify). 3s is generous for any real config (kilobytes of YAML)
+// while comfortably catching a multi-second amplification bomb well before
+// it would otherwise complete.
+const maxConfigMarshalDuration = 3 * time.Second
+
+// marshalMergedBounded runs yaml.Marshal(merged) with the timeout described
+// above. On timeout the marshal goroutine is abandoned (not killed — Go has
+// no way to preempt it) and continues running to completion in the
+// background; it is never a permanent leak, since yaml.Marshal always
+// terminates eventually (the amplification is exponential slowdown, not an
+// infinite loop), just later than this function is willing to wait.
+func marshalMergedBounded(merged map[string]any) ([]byte, error) {
+	type result struct {
+		raw []byte
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		raw, err := yaml.Marshal(merged)
+		done <- result{raw, err}
+	}()
+	select {
+	case r := <-done:
+		if r.err != nil {
+			return nil, fmt.Errorf("config: marshal merged: %w", r.err)
+		}
+		return r.raw, nil
+	case <-time.After(maxConfigMarshalDuration):
+		return nil, fmt.Errorf("config: marshal merged: exceeded %s — possible YAML anchor/alias amplification in a config source: %w",
+			maxConfigMarshalDuration, errConfigMarshalTimeout)
+	}
+}
+
+// errConfigMarshalTimeout is the sentinel wrapped by marshalMergedBounded's
+// timeout error, so callers can errors.Is-match it independent of the
+// formatted message.
+var errConfigMarshalTimeout = errors.New("config: marshal timeout")
 
 // configSchema is generated once at package init — Config's shape is
 // static (reflection only inspects the TYPE, never a value), so there is

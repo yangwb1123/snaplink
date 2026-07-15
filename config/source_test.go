@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -141,6 +143,90 @@ func TestLoader_DefaultsApplied(t *testing.T) {
 	}
 	if cfg.Server.Issuer == "" {
 		t.Errorf("default issuer not applied")
+	}
+}
+
+// TestLoader_YAMLAnchorAmplification_FailsFastNotHangs is a regression test
+// for a billion-laughs-style YAML anchor/alias amplification DoS:
+// goccy/go-yaml decodes anchors/aliases into a DAG of shared slice pointers
+// rather than copying them, so Unmarshal-ing the fixture below is cheap
+// (microseconds), but Loader.Load re-marshals the merged map before
+// decoding it into *Config (see Load's doc) — and a plain yaml.Marshal of
+// that DAG has to flatten every alias into literal text. Re-marshaling this
+// 7-level/9-way fixture (9^7 ~ 4.8M leaf elements) takes several seconds and
+// produces an ~85MB intermediate []byte from a ~250-byte config file.
+//
+// Load must not hang or exhaust memory during boot on a malformed/malicious
+// config file: marshalMergedBounded's timeout (maxConfigMarshalDuration,
+// well under this fixture's real marshal time) turns that into a fast,
+// clear failure instead. This asserts Load returns an error well within a
+// generous outer bound, wrapping errConfigMarshalTimeout.
+func TestLoader_YAMLAnchorAmplification_FailsFastNotHangs(t *testing.T) {
+	// Deliberately NOT t.Parallel(): Load's schema-violation warning path
+	// (checkSchema/logSchemaViolations) writes through the package-global
+	// slog.Default(), which TestLoader_UnknownKey_Warns temporarily swaps
+	// for a capture buffer for the duration of ITS test body. Running
+	// serially guarantees this test's Load call (and its background
+	// goroutine, awaited below) completes before any parallel test group
+	// is released, so it can never race with that logger swap.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "evil.yaml")
+	evil := `
+logging:
+  level: info
+a: &a ["x","x","x","x","x","x","x","x","x"]
+b: &b [*a,*a,*a,*a,*a,*a,*a,*a,*a]
+c: &c [*b,*b,*b,*b,*b,*b,*b,*b,*b]
+d: &d [*c,*c,*c,*c,*c,*c,*c,*c,*c]
+e: &e [*d,*d,*d,*d,*d,*d,*d,*d,*d]
+f: &f [*e,*e,*e,*e,*e,*e,*e,*e,*e]
+g: &g [*f,*f,*f,*f,*f,*f,*f,*f,*f]
+`
+	if err := os.WriteFile(path, []byte(evil), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := Load(path)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, errConfigMarshalTimeout) {
+			t.Fatalf("Load error = %v, want wrapping errConfigMarshalTimeout", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Load did not return within 5s — YAML anchor/alias amplification DoS regression (bounded timeout itself failed to fire)")
+	}
+}
+
+// TestLoader_ReferenceConfigHasNoSpuriousAnchors guards against the exact
+// failure mode an earlier fix attempt (goccy/go-yaml's WithSmartAnchor)
+// introduced: its pointer-identity sharing detection produced FALSE
+// POSITIVES on ordinary zero-value fields (Go's runtime returns the same
+// address for unrelated empty-slice allocations), fabricating spurious
+// anchors that corrupted a config with ZERO real YAML anchors in it. Any
+// config with no anchors/aliases at all — the overwhelming common case —
+// must always load cleanly.
+func TestLoader_ReferenceConfigHasNoSpuriousAnchors(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "plain.yaml")
+	plain := `
+logging:
+  level: info
+server:
+  issuer: https://issuer.example.com
+identity:
+  backend: memory
+`
+	if err := os.WriteFile(path, []byte(plain), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("Load of an anchor-free config failed: %v", err)
 	}
 }
 
