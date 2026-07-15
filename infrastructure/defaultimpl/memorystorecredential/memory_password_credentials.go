@@ -140,9 +140,23 @@ func (m *MemoryPasswordCredentialStore) PasswordChangedAt(_ context.Context, use
 	return t, nil
 }
 
+// DeletePassword implements core.PasswordCredentialDeleter: removes userID's
+// stored hash (if any), used by the admin user-CRUD delete path so a deleted
+// user's credential doesn't linger as an orphaned, unreachable hash. Idempotent
+// — an unknown userID is a no-op, matching SetPassword's create-or-replace
+// shape rather than erroring on "nothing to delete".
+func (m *MemoryPasswordCredentialStore) DeletePassword(_ context.Context, userID string) error {
+	m.mu.Lock()
+	delete(m.hashes, userID)
+	delete(m.changedAt, userID)
+	m.mu.Unlock()
+	return nil
+}
+
 var (
 	_ core.PasswordCredentialStore         = (*MemoryPasswordCredentialStore)(nil)
 	_ core.PasswordHashImporter            = (*MemoryPasswordCredentialStore)(nil)
 	_ core.PasswordAgeReader               = (*MemoryPasswordCredentialStore)(nil)
+	_ core.PasswordCredentialDeleter       = (*MemoryPasswordCredentialStore)(nil)
 	_ identitylink.PasswordPresenceChecker = (*MemoryPasswordCredentialStore)(nil)
 )

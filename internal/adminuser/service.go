@@ -267,7 +267,29 @@ func DeleteUser(ctx context.Context, deps Deps, userID string) error {
 		deps.Logger().Error("adminuser: delete user failed", "user_id", userID, "error", err)
 		return err
 	}
+	deleteUserPasswordCredential(ctx, deps, userID)
 	return nil
+}
+
+// deleteUserPasswordCredential best-effort removes userID's password
+// credential when the wired PasswordCredentialStore supports it (the
+// OPTIONAL core.PasswordCredentialDeleter extension). The user row is
+// already gone by the time this runs, so a missing extension or a store
+// error here must never fail the delete request — it only means the
+// credential hash is left behind, orphaned and unreachable (the userID it
+// was keyed on no longer resolves to a user).
+func deleteUserPasswordCredential(ctx context.Context, deps Deps, userID string) {
+	store := deps.PasswordCredentialStore()
+	if store == nil {
+		return
+	}
+	deleter, ok := store.(core.PasswordCredentialDeleter)
+	if !ok {
+		return
+	}
+	if err := deleter.DeletePassword(ctx, userID); err != nil {
+		deps.Logger().Error("adminuser: delete password credential failed", "user_id", userID, "error", err)
+	}
 }
 
 // fetchPaginatedUsers uses the pagination provider when available, else falls

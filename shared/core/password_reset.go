@@ -93,3 +93,19 @@ type PasswordAgeReader interface {
 	// zero time as "always expired".
 	PasswordChangedAt(ctx context.Context, userID string) (time.Time, error)
 }
+
+// PasswordCredentialDeleter is an OPTIONAL extension a PasswordCredentialStore
+// MAY satisfy to actually remove a stored credential rather than merely
+// overwrite it. The admin user-CRUD delete path (DELETE
+// /api/v1/admin/users/:id) type-asserts for this and calls it BEST-EFFORT
+// after the user row itself is gone — the same "unsupported ⇒ silently skip"
+// shape the optional UserProvider uniqueness-check extensions use. A store
+// that doesn't implement it simply leaves an orphaned, unreachable hash
+// behind (unreachable because the userID it was keyed on no longer resolves
+// to a user) rather than failing the delete.
+type PasswordCredentialDeleter interface {
+	// DeletePassword removes userID's stored credential, if any. A missing
+	// credential is NOT an error (idempotent, matching SetPassword's
+	// create-or-replace shape).
+	DeletePassword(ctx context.Context, userID string) error
+}

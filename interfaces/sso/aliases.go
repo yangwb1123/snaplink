@@ -163,6 +163,7 @@ type BreakGlassStore = core.BreakGlassStore
 type IdempotentCache = core.IdempotentCache
 type PasswordCredentialStore = core.PasswordCredentialStore
 type PasswordHashImporter = core.PasswordHashImporter
+type PasswordCredentialDeleter = core.PasswordCredentialDeleter
 type PasswordAgeReader = core.PasswordAgeReader
 type MFAEnrollmentStore = core.MFAEnrollmentStore
 type MFAEnrolledFactor = core.MFAEnrolledFactor

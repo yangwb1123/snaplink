@@ -223,8 +223,20 @@ func (s *PasswordCredentialStore) PasswordChangedAt(ctx context.Context, userID 
 	return time.Unix(0, ns.Int64), nil
 }
 
+// DeletePassword implements sso.PasswordCredentialDeleter: removes userID's
+// stored credential row, if any — used by the admin user-CRUD delete path so
+// a deleted user's credential doesn't linger as an orphaned, unreachable hash.
+// Idempotent: deleting a non-existent row is not an error.
+func (s *PasswordCredentialStore) DeletePassword(ctx context.Context, userID string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM password_credentials WHERE user_id = ?`, userID); err != nil {
+		return fmt.Errorf("sqlite: delete password_credential: %w", err)
+	}
+	return nil
+}
+
 var (
-	_ sso.PasswordCredentialStore = (*PasswordCredentialStore)(nil)
-	_ sso.PasswordHashImporter    = (*PasswordCredentialStore)(nil)
-	_ sso.PasswordAgeReader       = (*PasswordCredentialStore)(nil)
+	_ sso.PasswordCredentialStore   = (*PasswordCredentialStore)(nil)
+	_ sso.PasswordHashImporter      = (*PasswordCredentialStore)(nil)
+	_ sso.PasswordAgeReader         = (*PasswordCredentialStore)(nil)
+	_ sso.PasswordCredentialDeleter = (*PasswordCredentialStore)(nil)
 )

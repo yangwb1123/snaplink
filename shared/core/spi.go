@@ -369,6 +369,11 @@ type PasswordHashImporter interface {
 	SetPasswordHash(ctx context.Context, userID, bcryptHash string) error
 }
 
+// PasswordCredentialDeleter is another OPTIONAL PasswordCredentialStore
+// extension; declared in password_reset.go (not here) to stay under this
+// file's 500-line budget — see the "PasswordCredentialStore extensions"
+// section there for why, alongside PasswordAgeReader.
+
 // MFAEnrolledFactor describes one registered second factor for the
 // self-service management view (GET/DELETE /me/mfa). It carries only
 // non-sensitive metadata — never the TOTP secret or WebAuthn private material.
