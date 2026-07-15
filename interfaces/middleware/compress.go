@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"bytes"
 	"compress/gzip"
 	"io"
 	"net/http"
@@ -27,11 +28,21 @@ func Compress(next http.Handler) http.Handler {
 	})
 }
 
-// gzipResponseWriter wraps http.ResponseWriter to compress the body.
+// gzipResponseWriter wraps http.ResponseWriter to conditionally compress the
+// body. Bodies under minCompressLen buffer instead of writing straight
+// through: the compression decision determines which headers are honest
+// (Content-Encoding: gzip vs none), and that decision can only be made once
+// enough bytes are seen (or the handler finishes writing). Flushing a
+// partial decision — as a naive per-Write bypass would — can announce gzip
+// on the first WriteHeader call and then serve plaintext bytes for a short
+// single-Write body, which any strict client fails to gunzip-decode.
 type gzipResponseWriter struct {
 	http.ResponseWriter
-	gz         *gzip.Writer
-	wroteHeader bool
+	gz          *gzip.Writer
+	buf         bytes.Buffer
+	statusCode  int
+	wroteHeader bool // handler called WriteHeader (or implicitly via first Write)
+	decided     bool // compression decided + real header flushed downstream
 }
 
 func (g *gzipResponseWriter) WriteHeader(code int) {
@@ -39,27 +50,68 @@ func (g *gzipResponseWriter) WriteHeader(code int) {
 		return
 	}
 	g.wroteHeader = true
-	g.ResponseWriter.Header().Del("Content-Length")
-	g.ResponseWriter.Header().Set("Content-Encoding", "gzip")
-	g.ResponseWriter.Header().Del("ETag") // ETags change with compression
-	g.ResponseWriter.WriteHeader(code)
+	g.statusCode = code
+	// Deliberately does not touch the underlying ResponseWriter yet — see
+	// flush, which is the only place that decides (and sends) the real
+	// header once compression is known one way or the other.
 }
 
 func (g *gzipResponseWriter) Write(b []byte) (int, error) {
 	if !g.wroteHeader {
 		g.WriteHeader(http.StatusOK)
 	}
-	if len(b) < minCompressLen && g.gz == nil {
-		// Small body: bypass compression.
+	if g.decided {
+		if g.gz != nil {
+			return g.gz.Write(b)
+		}
 		return g.ResponseWriter.Write(b)
 	}
-	if g.gz == nil {
-		g.gz = gzip.NewWriter(g.ResponseWriter)
+	g.buf.Write(b) // bytes.Buffer.Write never errors
+	if g.buf.Len() >= minCompressLen {
+		if err := g.flush(true); err != nil {
+			return 0, err
+		}
 	}
-	return g.gz.Write(b)
+	return len(b), nil
+}
+
+// flush makes the compress/don't-compress decision exactly once, sends the
+// real status + headers consistent with that decision, and drains the
+// buffered bytes accordingly. Called either from Write (body grew past the
+// threshold — compress) or Close (body finished under the threshold —
+// don't).
+func (g *gzipResponseWriter) flush(compress bool) error {
+	if g.decided {
+		return nil
+	}
+	g.decided = true
+	if compress {
+		g.ResponseWriter.Header().Del("Content-Length")
+		g.ResponseWriter.Header().Set("Content-Encoding", "gzip")
+		g.ResponseWriter.Header().Del("ETag") // ETags change with compression
+	}
+	if g.statusCode == 0 {
+		g.statusCode = http.StatusOK
+	}
+	g.ResponseWriter.WriteHeader(g.statusCode)
+	buffered := g.buf.Bytes()
+	if !compress {
+		_, err := g.ResponseWriter.Write(buffered)
+		return err
+	}
+	g.gz = gzip.NewWriter(g.ResponseWriter)
+	_, err := g.gz.Write(buffered)
+	return err
 }
 
 func (g *gzipResponseWriter) Close() error {
+	if !g.decided {
+		// Handler finished (or never wrote a byte) without crossing the
+		// threshold: the honest header is "no compression".
+		if err := g.flush(false); err != nil {
+			return err
+		}
+	}
 	if g.gz != nil {
 		return g.gz.Close()
 	}
