@@ -22,6 +22,7 @@ import (
 	"github.com/snaplink/sso/cmd/sso-ctl/auditverify"
 	"github.com/snaplink/sso/cmd/sso-ctl/clientscmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/configcmd"
+	"github.com/snaplink/sso/cmd/sso-ctl/entitiescmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/hashcmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/importcmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/migratecmd"
@@ -29,6 +30,7 @@ import (
 	"github.com/snaplink/sso/cmd/sso-ctl/snapshotcmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/soc2report"
 	"github.com/snaplink/sso/cmd/sso-ctl/tokenscmd"
+	"github.com/snaplink/sso/cmd/sso-ctl/tui"
 )
 
 const progName = "sso-ctl"
@@ -50,6 +52,9 @@ var subcommands = map[string]func([]string) int{
 	"config":       configcmd.Run,
 	"hash":         hashcmd.Run,
 	"tokens":       tokenscmd.Run,
+	"tenants":      entitiescmd.RunTenants,
+	"users":        entitiescmd.RunUsers,
+	"tui":          tui.Run,
 }
 
 func main() {
@@ -91,6 +96,9 @@ Commands:
   config         Validate a server config file offline (deploy pre-check).
   hash           Produce a server-compatible password hash (admin seeding).
   tokens         Revoke an access token or issue a temporary token.
+  tenants        Manage tenants (list/get/create/update/delete/set-status).
+  users          Manage admin users (list/get/create/update/delete).
+  tui            Launch the interactive terminal UI (clients/users/tenants).
   version        Print the toolbelt version and build revision.
 
 Run "%s <command> -h" for command-specific flags.
