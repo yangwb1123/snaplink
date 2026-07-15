@@ -206,6 +206,17 @@ func (c *SPConfig) Validate() error {
 		return errors.New("saml/sp: ACSURL required")
 	}
 
+	// IDPMetadataURL is fetched over the network at construction (see
+	// loadIDPMetadata). A non-https value (or a redirect the fetch follows) would
+	// turn this boot-time fetch into a server-side request to an arbitrary
+	// scheme/host (SSRF), so it gets the SAME https-only gate as
+	// IDPSLOResponseURL below; the fetch itself additionally refuses to follow
+	// any redirect (belt-and-suspenders — a compromised/misconfigured metadata
+	// host can't 30x the fetch elsewhere).
+	if c.IDPMetadataURL != "" && !isHTTPSURL(c.IDPMetadataURL) {
+		return fmt.Errorf("saml/sp: IDPMetadataURL must be an absolute https URL with a host, got %q", c.IDPMetadataURL)
+	}
+
 	sources := 0
 	if c.IDPMetadataURL != "" {
 		sources++

@@ -304,6 +304,24 @@ func requestIDValidator(allowIDPInitiated bool) func(response saml.Response, pos
 	}
 }
 
+// metadataFetchClient returns the bounded HTTP client the boot-time
+// IDPMetadataURL fetch uses. Validate already rejects a non-https
+// IDPMetadataURL, but a compromised/misconfigured metadata host could still
+// 30x the fetch to an arbitrary (e.g. internal/IMDS) target — CheckRedirect
+// refuses to follow ANY redirect (mirrors the fan-out client in
+// saml/idp/fanout.go and the CAEP/backchannel-logout outbound clients
+// elsewhere in this repo), so the fetch only ever reaches the exact pinned
+// URL. A redirect response then fails ParseMetadata (its body isn't SAML XML)
+// rather than silently being followed.
+func metadataFetchClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
 // loadIDPMetadata resolves the pinned IdP trust anchor into a crewjam
 // EntityDescriptor, by whichever of the three mutually-exclusive forms cfg set
 // (Validate already enforced exactly one). The returned descriptor's
@@ -322,7 +340,7 @@ func loadIDPMetadata(cfg SPConfig) (*saml.EntityDescriptor, error) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
-		meta, err := samlsp.FetchMetadata(ctx, &http.Client{Timeout: timeout}, *metaURL)
+		meta, err := samlsp.FetchMetadata(ctx, metadataFetchClient(timeout), *metaURL)
 		if err != nil {
 			return nil, fmt.Errorf("saml/sp: fetch IdP metadata: %w", err)
 		}

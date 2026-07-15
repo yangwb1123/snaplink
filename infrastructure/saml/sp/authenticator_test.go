@@ -3,8 +3,11 @@ package sp
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/snaplink/sso/interfaces/sso"
 )
@@ -134,6 +137,48 @@ func TestNewSPAuthenticator_BadCertFails(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("NewSPAuthenticator accepted a malformed IDPCert")
+	}
+}
+
+// TestLoadIDPMetadata_RefusesRedirect proves the IDPMetadataURL fetch does NOT
+// follow a redirect: an SSRF defense mirroring every other outbound fetcher in
+// this repo (saml/idp/fanout.go's fanoutHTTPClient, domains/federation's
+// httpFetcher, the CAEP/backchannel-logout clients). Without this, a
+// compromised/misconfigured metadata host could 30x the boot-time fetch to an
+// arbitrary internal target. The redirect TARGET server proves it was never
+// hit; the entry server's 3xx response fails to parse as SAML metadata, so
+// construction errors out rather than silently trusting whatever the redirect
+// pointed to.
+func TestLoadIDPMetadata_RefusesRedirect(t *testing.T) {
+	t.Parallel()
+	idp := newIDPKeypair(t)
+	metaXML := idpMetadataXML(t, idp, tIDPEntity, "https://idp.example.com/sso")
+
+	targetHit := false
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHit = true
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write(metaXML)
+	}))
+	defer target.Close()
+
+	entry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer entry.Close()
+
+	// loadIDPMetadata is called directly (bypassing SPConfig.Validate's
+	// https-only gate, unexercisable against a plain httptest.NewServer) to
+	// isolate the fetch's redirect behavior.
+	_, err := loadIDPMetadata(SPConfig{
+		IDPMetadataURL: entry.URL,
+		Timeout:        2 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("loadIDPMetadata followed a redirect and parsed the target's metadata as if it were the pinned URL's own response")
+	}
+	if targetHit {
+		t.Fatal("SECURITY: the redirect target received a request — the metadata fetch followed the 302 instead of refusing it")
 	}
 }
 

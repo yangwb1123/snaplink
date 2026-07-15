@@ -30,6 +30,14 @@ func TestSPConfig_Validate(t *testing.T) {
 			c.IDPCert, c.IDPEntityID = nil, ""
 			c.IDPMetadataURL = "https://idp/meta"
 		}, ""},
+		// IDPMetadataURL is fetched over the network at construction, so a
+		// non-https value would let a misconfigured operator turn the boot-time
+		// fetch into a plaintext (or file://) request — reject it up front,
+		// mirroring IDPSLOResponseURL below.
+		{"metadata_url_http_rejected", func(c *SPConfig) {
+			c.IDPCert, c.IDPEntityID = nil, ""
+			c.IDPMetadataURL = "http://idp/meta"
+		}, "absolute https URL"},
 		{"missing_name", func(c *SPConfig) { c.Name = "" }, "Name required"},
 		{"missing_entityid", func(c *SPConfig) { c.EntityID = "" }, "EntityID required"},
 		{"missing_acsurl", func(c *SPConfig) { c.ACSURL = "" }, "ACSURL required"},
