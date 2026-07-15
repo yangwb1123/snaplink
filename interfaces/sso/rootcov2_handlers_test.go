@@ -20,6 +20,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -423,5 +424,74 @@ func TestRcov2H_ClassifyRequest(t *testing.T) {
 	// A nil request never classifies.
 	if p := srv.ClassifyRequest(nil); p != nil {
 		t.Errorf("ClassifyRequest(nil) = %v, want nil", p)
+	}
+}
+
+// rcov2FederatedAuth is a fake federated authenticator: LoginURL always
+// redirects, so /auth/login must never reach Authenticate for it.
+type rcov2FederatedAuth struct{ target string }
+
+func (a rcov2FederatedAuth) Name() string                 { return "rcov2fed" }
+func (a rcov2FederatedAuth) LoginURL(state string) string { return a.target + "?state=" + state }
+func (rcov2FederatedAuth) Authenticate(context.Context, *sso.AuthRequest) (*sso.AuthResult, error) {
+	return nil, errors.New("must not be called for a federated provider")
+}
+func (rcov2FederatedAuth) Callback(context.Context, *sso.CallbackState) (*sso.AuthResult, error) {
+	return nil, errors.New("not used")
+}
+
+// TestRcov2H_GetLoginFederatedRedirect covers bindLoginRequestFromQuery: a
+// real top-level GET navigation (the only way a browser can follow a
+// cross-origin redirect to a federated provider's authorize endpoint — a
+// fetch()/XHR POST can't) must reach the SAME federated-redirect branch a
+// POST does, with the query-bound provider/client_id/state.
+func TestRcov2H_GetLoginFederatedRedirect(t *testing.T) {
+	t.Parallel()
+	s := rcovNewServer(t, sso.WithAuthenticator(rcov2FederatedAuth{target: "https://idp.example/authorize"}))
+	// rcovClient's AllowedAuthenticators is ["password"] only; a distinct
+	// client with an unrestricted (empty) allowlist is needed to reach the
+	// federated dispatch instead of authenticator_not_allowed_for_client.
+	const fedClient = "rcov2fed-client"
+	s.clients.AddSeed(&sso.Client{
+		ID:            fedClient,
+		Name:          "Federated Client",
+		RedirectURIs:  []string{rcovRedirect},
+		TokenStrategy: "jwt",
+		Active:        true,
+		SkipConsent:   true,
+	})
+
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Get(s.http.URL + "/auth/login?provider=rcov2fed&client_id=" + fedClient + "&state=xyz")
+	if err != nil {
+		t.Fatalf("GET /auth/login: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusFound {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want %d, body=%s", resp.StatusCode, http.StatusFound, raw)
+	}
+	if loc := resp.Header.Get("Location"); loc != "https://idp.example/authorize?state=xyz" {
+		t.Errorf("Location = %q", loc)
+	}
+}
+
+// TestRcov2H_GetLoginNoProvider covers the GET-navigation prologue when no
+// provider is selected yet — must return the SAME provider-list JSON as the
+// POST path (bindLoginRequestFromQuery still lets preAuthLoginGates run).
+func TestRcov2H_GetLoginNoProvider(t *testing.T) {
+	t.Parallel()
+	s := rcovNewServer(t)
+
+	resp, err := http.Get(s.http.URL + "/auth/login?client_id=" + rcovClient)
+	if err != nil {
+		t.Fatalf("GET /auth/login: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 }

@@ -143,6 +143,12 @@ func (s *Server) mountCoreOAuthOIDC() {
 	s.router.GET(PathJWKS, s.handleJWKS)
 	s.mountDiscovery()
 	s.router.POST(PathLogin, s.handleLogin)
+	// GET is for a real top-level browser navigation ONLY — the "Sign in with
+	// <federated provider>" case, where the browser must follow a
+	// cross-origin 3xx redirect out of this handler (see
+	// bindLoginRequestFromQuery's doc comment). Everything else behaves
+	// identically to POST via the same handleLogin dispatch.
+	s.router.GET(PathLogin, s.handleLogin)
 	s.router.POST(PathMFAComplete, s.handleMFAComplete)
 	s.router.POST(PathSendCode, s.handleSendCode)
 	s.router.GET(PathCallback, s.handleCallback)

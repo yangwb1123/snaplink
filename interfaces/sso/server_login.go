@@ -171,7 +171,13 @@ func (s *Server) credentialLoginStage(ctx HandlerContext, req *login.Request, cl
 //   - RFC 6749 §5.1: stamps Cache-Control: no-store + Pragma: no-cache, because
 //     /auth/login bodies carry access_token + refresh_token (and PKCE-flow code
 //     values) an intermediary cache must not retain.
-//   - Binds the request body; a bind error writes 400 invalid_request.
+//   - Binds the request: GET reads query params (see bindLoginRequestFromQuery
+//     — a real top-level browser navigation is the only way to deliver a
+//     cross-origin 3xx redirect to a federated connection's authorize
+//     endpoint; a fetch()/XHR POST can't do it, the browser won't follow a
+//     cross-origin redirect out of a same-origin fetch), everything else
+//     binds the JSON/form body exactly as before. A bind error writes 400
+//     invalid_request.
 //   - RFC 9126 §4: when request_uri is present, fetches the pushed authorization
 //     parameters and merges them in (PAR holds AUTHORIZATION-SHAPED params —
 //     response_type, redirect_uri, scope; credentials still arrive on THIS
@@ -183,7 +189,9 @@ func (s *Server) bootstrapLoginRequest(ctx HandlerContext) (login.Request, bool)
 	ctx.Set(ctxKeyLoginStart, time.Now())
 	tokenNoStoreHeaders(ctx)
 	var req login.Request
-	if err := ctx.Bind(&req); err != nil {
+	if ctx.Request().Method == http.MethodGet {
+		req = bindLoginRequestFromQuery(ctx.Request())
+	} else if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
 		return req, false
 	}
@@ -191,4 +199,39 @@ func (s *Server) bootstrapLoginRequest(ctx HandlerContext) (login.Request, bool)
 		return req, false
 	}
 	return req, true
+}
+
+// bindLoginRequestFromQuery populates the authorization-request-shaped subset
+// of login.Request from URL query parameters, for the ONLY case a bodyless
+// GET reaches /auth/login: a "Sign in with <federated provider>" button
+// doing a real page navigation. Credential/consent/PAR/JAR fields are
+// deliberately NOT bound here — a GET can't carry a credential (it would
+// leak into browser history / server access logs), so credentialLoginStage
+// either dispatches to auth.LoginURL's redirect (the intended path) or, for
+// a non-federated provider, fails closed the same way an empty credential
+// always has.
+func bindLoginRequestFromQuery(r *http.Request) login.Request {
+	q := r.URL.Query()
+	req := login.Request{
+		Provider:            q.Get("provider"),
+		ClientID:            q.Get("client_id"),
+		State:               q.Get("state"),
+		ResponseType:        q.Get("response_type"),
+		RedirectURI:         q.Get("redirect_uri"),
+		Nonce:               q.Get("nonce"),
+		CodeChallenge:       q.Get("code_challenge"),
+		CodeChallengeMethod: q.Get("code_challenge_method"),
+		Prompt:              q.Get("prompt"),
+		LoginHint:           q.Get("login_hint"),
+		ResponseMode:        q.Get("response_mode"),
+		ACRValues:           q.Get("acr_values"),
+		UILocales:           q.Get("ui_locales"),
+	}
+	if scope := q.Get("scope"); scope != "" {
+		req.Scope = strings.Fields(scope)
+	}
+	if resource := q.Get("resource"); resource != "" {
+		req.Resource = strings.Fields(resource)
+	}
+	return req
 }
