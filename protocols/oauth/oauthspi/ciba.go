@@ -230,10 +230,10 @@ type CIBAPushNotifier interface {
 // PushPayload is the token payload delivered via CIBAPushNotifier.
 // See CIBA Core §10.3.1 Token Delivery.
 type PushPayload struct {
-	AuthReqID   string `json:"auth_req_id"`
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int64  `json:"expires_in"`
+	AuthReqID    string `json:"auth_req_id"`
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int64  `json:"expires_in"`
 	RefreshToken string `json:"refresh_token,omitempty"`
 	IDToken      string `json:"id_token,omitempty"`
 }
@@ -266,7 +266,7 @@ type CIBAPushDeadLetterStore interface {
 }
 
 // CIBAPushDeadLetterStoreFunc is a function adapter for CIBAPushDeadLetterStore.
-type CIBAPushDeadLetterStoreFunc func(ctx context.Context, deliveryID string, payload PushPayload, err error) error 
+type CIBAPushDeadLetterStoreFunc func(ctx context.Context, deliveryID string, payload PushPayload, err error) error
 
 // CIBATransportFunc is a function adapter for CIBATransport. An
 // operator wraps a defaultimpl.PushTransport via

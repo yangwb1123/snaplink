@@ -43,6 +43,7 @@ var fileSizeExemptions = map[string]bool{}
 var skipDirs = map[string]bool{
 	"gen": true, ".claude": true, ".git": true, "web": true, "node_modules": true,
 	"dist": true, "bin": true, ".superpowers": true, ".ai": true, ".devcontainer": true,
+	"ai-dev": true,
 	// nested modules (own go.mod)
 	"kms": true, "redis": true, "postgres": true, "saml": true, "ldap": true,
 	"extauthz": true, "kerberos": true, "radius": true, "kafka": true,

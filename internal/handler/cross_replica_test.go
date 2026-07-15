@@ -57,6 +57,56 @@ func TestJWTExpUnsafe(t *testing.T) {
 	}
 }
 
+// makeClaimsJWT builds a compact JWT whose payload carries client_id + sub —
+// the two claims JWTClaimsUnsafe extracts for the token_revoked audit event
+// (see audit.RecordTokenRevoked). Signature segment is a placeholder;
+// JWTClaimsUnsafe never verifies it (advisory-only, mirrors JWTExpUnsafe).
+func makeClaimsJWT(t *testing.T, clientID, sub string) string {
+	t.Helper()
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	payload, err := json.Marshal(struct {
+		ClientID string `json:"client_id"`
+		Sub      string `json:"sub"`
+	}{ClientID: clientID, Sub: sub})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	body := base64.RawURLEncoding.EncodeToString(payload)
+	return header + "." + body + ".sig"
+}
+
+// TestJWTClaimsUnsafe locks the unverified client_id/sub extraction: a
+// well-formed JWT yields both claims, and any malformed shape yields two
+// empty strings rather than an error — a decode failure must never block the
+// token_revoked audit record that consumes this.
+func TestJWTClaimsUnsafe(t *testing.T) {
+	t.Parallel()
+	good := makeClaimsJWT(t, "client-1", "user-1")
+	cases := []struct {
+		name        string
+		token       string
+		wantClient  string
+		wantSubject string
+	}{
+		{"valid jwt", good, "client-1", "user-1"},
+		{"opaque token", "opaque", "", ""},
+		{"two segments", "aaa.bbb", "", ""},
+		{"four segments", "a.b.c.d", "", ""},
+		{"bad base64 payload", "aaa.!!!.ccc", "", ""},
+		{"non-json payload", "aaa." + base64.RawURLEncoding.EncodeToString([]byte("not json")) + ".ccc", "", ""},
+		{"empty", "", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotClient, gotSubject := JWTClaimsUnsafe(c.token)
+			if gotClient != c.wantClient || gotSubject != c.wantSubject {
+				t.Fatalf("JWTClaimsUnsafe(%q) = (%q, %q), want (%q, %q)",
+					c.token, gotClient, gotSubject, c.wantClient, c.wantSubject)
+			}
+		})
+	}
+}
+
 // TestPublishTokenRevocation_WireFormat is the centerpiece wire-contract guard.
 // A real in-memory cluster.Bus subscriber must receive a KindTokenRevoked Event
 // whose Payload carries the FULL token under MetaRevokedToken and the advisory
