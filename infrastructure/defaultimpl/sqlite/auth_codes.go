@@ -45,9 +45,21 @@ CREATE INDEX IF NOT EXISTS idx_auth_codes_expires_at
 // IF NOT EXISTS, so the Func checks first; a fresh database already has
 // the column from the v1 baseline DDL above and skips the add. Mirrors
 // refresh_tokens_schema.go's addRefreshTokenDPoPBinding (v4) exactly.
+//
+// v3 backfills the RFC 9068 authentication-context columns (auth_time, amr,
+// acr, resources, authorization_details, sid) that issueAuthCode
+// (interfaces/sso/server_oauth.go) already populates on the in-memory
+// oauth.AuthCode struct but that this store previously silently dropped —
+// a SQLite deployment falls back to token-exchange time for auth_time and
+// loses acr/amr/resources/authorization_details entirely without this.
+// SID is included for schema parity with refresh_tokens even though the
+// authorization_code flow never actually stamps it at issue time (a
+// separate, already-tracked design gap, not a storage bug); it round-trips
+// whatever the caller supplies, same as every other column here.
 var authCodeMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline", SQL: authCodeSchema},
 	{Version: 2, Name: "auth_code_dpop_binding", Func: addAuthCodeDPoPBinding},
+	{Version: 3, Name: "auth_code_context", Func: addAuthCodeAuthContext},
 }
 
 func addAuthCodeDPoPBinding(ctx context.Context, x migrate.Execer) error {
@@ -61,6 +73,34 @@ func addAuthCodeDPoPBinding(ctx context.Context, x migrate.Execer) error {
 	_, err = x.ExecContext(ctx,
 		`ALTER TABLE auth_codes ADD COLUMN confirmation_jkt TEXT NOT NULL DEFAULT ''`)
 	return err
+}
+
+// addAuthCodeAuthContext adds auth_time/amr/acr/resources/authorization_details/sid
+// (RFC 9068 §2.2 authentication-context propagation — mirrors
+// refresh_tokens_schema.go's addRefreshTokenAuthContext) to a pre-existing
+// auth_codes table, each only when missing.
+func addAuthCodeAuthContext(ctx context.Context, x migrate.Execer) error {
+	addColumns := []struct{ name, ddl string }{
+		{"auth_time", `ALTER TABLE auth_codes ADD COLUMN auth_time INTEGER NOT NULL DEFAULT 0`},
+		{"amr", `ALTER TABLE auth_codes ADD COLUMN amr TEXT NOT NULL DEFAULT '[]'`},
+		{"acr", `ALTER TABLE auth_codes ADD COLUMN acr TEXT NOT NULL DEFAULT ''`},
+		{"resources", `ALTER TABLE auth_codes ADD COLUMN resources TEXT NOT NULL DEFAULT '[]'`},
+		{"authorization_details", `ALTER TABLE auth_codes ADD COLUMN authorization_details TEXT NOT NULL DEFAULT ''`},
+		{"sid", `ALTER TABLE auth_codes ADD COLUMN sid TEXT NOT NULL DEFAULT ''`},
+	}
+	for _, c := range addColumns {
+		has, err := authCodeColumnExists(ctx, x, c.name)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := x.ExecContext(ctx, c.ddl); err != nil {
+			return fmt.Errorf("add column %s: %w", c.name, err)
+		}
+	}
+	return nil
 }
 
 // authCodeColumnExists reports whether auth_codes already has the named
@@ -162,15 +202,29 @@ func (s *AuthCodeStore) Issue(ctx context.Context, code string, info *oauth.Auth
 	if err != nil {
 		return fmt.Errorf("sqlite: marshal attributes: %w", err)
 	}
+	resources, err := json.Marshal(info.Resources)
+	if err != nil {
+		return fmt.Errorf("sqlite: marshal resources: %w", err)
+	}
+	amr, err := json.Marshal(info.AuthMethods)
+	if err != nil {
+		return fmt.Errorf("sqlite: marshal amr: %w", err)
+	}
+	// Zero-sentinel discipline (matches refresh_tokens.go): a zero AuthTime
+	// stores 0 so the /token exchange falls back to now rather than emitting
+	// the Unix epoch — see the AuthCode.AuthTime doc comment.
 	_, err = s.db.ExecContext(ctx, `
         INSERT INTO auth_codes (
             code, user_id, client_id, redirect_uri, scopes, nonce,
             provider, attributes, code_challenge, code_challenge_method,
-            confirmation_jkt, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            confirmation_jkt, auth_time, amr, acr, resources,
+            authorization_details, sid, expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		code, info.UserID, info.ClientID, info.RedirectURI,
 		string(scopes), info.Nonce, info.Provider, string(attrs),
 		info.CodeChallenge, info.CodeChallengeMethod, info.ConfirmationJKT,
+		unixNanoOrZero(info.AuthTime), string(amr), info.ACR, string(resources),
+		string(info.AuthorizationDetails), info.SID,
 		info.ExpiresAt.UnixNano(),
 	)
 	if err != nil {
@@ -189,7 +243,8 @@ func (s *AuthCodeStore) Consume(ctx context.Context, code string) (*oauth.AuthCo
         DELETE FROM auth_codes WHERE code = ?
         RETURNING user_id, client_id, redirect_uri, scopes, nonce,
                   provider, attributes, code_challenge, code_challenge_method,
-                  confirmation_jkt, expires_at`, code)
+                  confirmation_jkt, auth_time, amr, acr, resources,
+                  authorization_details, sid, expires_at`, code)
 	out, err := scanAuthCode(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, oauth.ErrAuthCodeNotFound
@@ -211,12 +266,14 @@ func scanAuthCode(s scanner) (*oauth.AuthCode, error) {
 		out                                                                                     oauth.AuthCode
 		redirectURI, nonce, provider, codeChallenge, codeChallengeMethod, scopesJSON, attrsJSON string
 		confirmationJKT                                                                         string
-		expiresAtUnixNs                                                                         int64
+		amrJSON, acr, resourcesJSON, authDetails, sid                                           string
+		authTimeUnixNs, expiresAtUnixNs                                                         int64
 	)
 	if err := s.Scan(
 		&out.UserID, &out.ClientID, &redirectURI, &scopesJSON, &nonce,
 		&provider, &attrsJSON, &codeChallenge, &codeChallengeMethod,
-		&confirmationJKT, &expiresAtUnixNs,
+		&confirmationJKT, &authTimeUnixNs, &amrJSON, &acr, &resourcesJSON,
+		&authDetails, &sid, &expiresAtUnixNs,
 	); err != nil {
 		return nil, err
 	}
@@ -226,18 +283,51 @@ func scanAuthCode(s scanner) (*oauth.AuthCode, error) {
 	out.CodeChallenge = codeChallenge
 	out.CodeChallengeMethod = codeChallengeMethod
 	out.ConfirmationJKT = confirmationJKT
+	out.ACR = acr
+	out.SID = sid
+	if authDetails != "" {
+		out.AuthorizationDetails = json.RawMessage(authDetails)
+	}
+	// 0 sentinel = no auth_time captured (pre-v3 row, or a caller that never
+	// threaded it); leave the zero time so the /token exchange falls back to
+	// now rather than emitting the Unix epoch — mirrors refresh_tokens.go.
+	if authTimeUnixNs != 0 {
+		out.AuthTime = time.Unix(0, authTimeUnixNs).UTC()
+	}
 	out.ExpiresAt = time.Unix(0, expiresAtUnixNs).UTC()
+	if err := decodeAuthCodeJSONCols(&out, scopesJSON, attrsJSON, resourcesJSON, amrJSON); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// decodeAuthCodeJSONCols unmarshals the JSON-encoded columns onto out.
+// Extracted from scanAuthCode for the function-length/cyclo budget — mirrors
+// refresh_tokens.go's decodeRefreshJSONCols. The empty / empty-collection
+// sentinels ("", "[]", "{}") are left as the zero value rather than
+// allocating an empty slice/map.
+func decodeAuthCodeJSONCols(out *oauth.AuthCode, scopesJSON, attrsJSON, resourcesJSON, amrJSON string) error {
 	if scopesJSON != "" && scopesJSON != "[]" {
 		if err := json.Unmarshal([]byte(scopesJSON), &out.Scopes); err != nil {
-			return nil, fmt.Errorf("sqlite: unmarshal scopes: %w", err)
+			return fmt.Errorf("sqlite: unmarshal scopes: %w", err)
 		}
 	}
 	if attrsJSON != "" && attrsJSON != "{}" {
 		if err := json.Unmarshal([]byte(attrsJSON), &out.Attributes); err != nil {
-			return nil, fmt.Errorf("sqlite: unmarshal attributes: %w", err)
+			return fmt.Errorf("sqlite: unmarshal attributes: %w", err)
 		}
 	}
-	return &out, nil
+	if resourcesJSON != "" && resourcesJSON != "[]" {
+		if err := json.Unmarshal([]byte(resourcesJSON), &out.Resources); err != nil {
+			return fmt.Errorf("sqlite: unmarshal resources: %w", err)
+		}
+	}
+	if amrJSON != "" && amrJSON != "[]" {
+		if err := json.Unmarshal([]byte(amrJSON), &out.AuthMethods); err != nil {
+			return fmt.Errorf("sqlite: unmarshal amr: %w", err)
+		}
+	}
+	return nil
 }
 
 var _ oauth.AuthCodeStore = (*AuthCodeStore)(nil)

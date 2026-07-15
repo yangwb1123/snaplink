@@ -122,8 +122,11 @@ func TestMigration_AuthCodesBackfillsDPoPBindingColumn(t *testing.T) {
 	if err := st.DB().QueryRow(`SELECT code FROM auth_codes WHERE code='old'`).Scan(&code); err != nil {
 		t.Errorf("legacy row lost: %v", err)
 	}
-	if v, _ := migrate.CurrentVersion(ctx, st.DB(), "auth_codes"); v != 2 {
-		t.Errorf("version = %d, want 2", v)
+	// The store's real migration set doesn't stop at v2 — a pre-v2 database
+	// booting today also picks up the v3 RFC 9068 auth-context backfill
+	// (auth_codes_test.go covers v3 in isolation) in the same upgrade pass.
+	if v, _ := migrate.CurrentVersion(ctx, st.DB(), "auth_codes"); v != 3 {
+		t.Errorf("version = %d, want 3", v)
 	}
 }
 
