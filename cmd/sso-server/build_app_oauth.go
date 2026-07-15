@@ -9,6 +9,7 @@ import (
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	connectionssqlite "github.com/snaplink/sso/domains/connections/sqlite"
+	"github.com/snaplink/sso/domains/tenant"
 	tenantsqlite "github.com/snaplink/sso/domains/tenant/sqlite"
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	redisbackend "github.com/snaplink/sso/infrastructure/redis"
@@ -40,21 +41,7 @@ func (b *appBuilder) wireTenant() error {
 			return fmt.Errorf("schema check tenant: %w", err)
 		}
 	}
-	b.opts = append(b.opts, sso.WithTenantStore(tenantStore))
-	// SQLite-backed tenant store implements Ping → /readyz. Memory-backed
-	// silently no-ops (Ping isn't on the interface; serverbuildsign.AppendReadyCheck only
-	// registers when the concrete type satisfies it).
-	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-tenant", tenantStore)
-	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-tenant", tenantStore)
-	if cfg.Tenant.LookupTimeout > 0 || cfg.Tenant.IncludeSuspended {
-		b.opts = append(b.opts, sso.WithTenantMiddlewareOptions(sso.TenantMiddlewareOptions{
-			Timeout:          cfg.Tenant.LookupTimeout,
-			IncludeSuspended: cfg.Tenant.IncludeSuspended,
-		}))
-	}
-	if cfg.Tenant.SuspensionCheck.Enabled {
-		b.opts = append(b.opts, sso.WithTenantSuspensionCheck(cfg.Tenant.SuspensionCheck.CacheTTL))
-	}
+	b.wireTenantStoreOptions(tenantStore)
 	if err := b.wireTenantTokenStrategies(); err != nil {
 		return err
 	}
@@ -69,6 +56,36 @@ func (b *appBuilder) wireTenant() error {
 		logger.Info("tenant usage metering enabled", "backend", cfg.Tenant.UsageMetering.Backend)
 	}
 	return nil
+}
+
+// wireTenantStoreOptions wires the tenant store's readiness check, storage
+// health source, resolution middleware options, and suspension check. Split
+// out of wireTenant to stay under the function-length budget.
+func (b *appBuilder) wireTenantStoreOptions(tenantStore tenant.Store) {
+	cfg, logger := b.cfg, b.logger
+	b.opts = append(b.opts, sso.WithTenantStore(tenantStore))
+	// SQLite-backed tenant store implements Ping → /readyz. Memory-backed
+	// silently no-ops (Ping isn't on the interface; serverbuildsign.AppendReadyCheck only
+	// registers when the concrete type satisfies it).
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-tenant", tenantStore)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-tenant", tenantStore)
+	// Always wired (not gated on LookupTimeout/IncludeSuspended being set) so
+	// OnError reaches the operator's logger regardless of those other
+	// knobs — a tenant-store outage during resolution is fail-open by
+	// design (the request still continues with no tenant set), but should
+	// never be silent to the operator. Timeout/IncludeSuspended keep their
+	// exact prior zero-value defaults when the corresponding config field
+	// is unset.
+	b.opts = append(b.opts, sso.WithTenantMiddlewareOptions(sso.TenantMiddlewareOptions{
+		Timeout:          cfg.Tenant.LookupTimeout,
+		IncludeSuspended: cfg.Tenant.IncludeSuspended,
+		OnError: func(err error) {
+			logger.Error("tenant resolution failed", "error", err)
+		},
+	}))
+	if cfg.Tenant.SuspensionCheck.Enabled {
+		b.opts = append(b.opts, sso.WithTenantSuspensionCheck(cfg.Tenant.SuspensionCheck.CacheTTL))
+	}
 }
 
 // wireTenantTokenStrategies binds per-tenant token strategies. A seed tenant may
