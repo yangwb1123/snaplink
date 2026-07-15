@@ -117,6 +117,33 @@ func TestSQLitePasswordStore_PingWorks(t *testing.T) {
 	}
 }
 
+// TestSQLitePasswordStore_HasPassword pins the
+// identitylink.PasswordPresenceChecker implementation this backend now
+// satisfies: before it existed, a deployment using SQLite (the default,
+// pure-Go, no-CGO backend) for password credentials always read as
+// PasswordPresenceChecker-unimplemented, so the self-service identity-unlink
+// "don't lock yourself out" guard fell CLOSED (assumed no password) even for
+// a user who genuinely had one.
+func TestSQLitePasswordStore_HasPassword(t *testing.T) {
+	t.Parallel()
+	ps := newTestPasswordStore(t)
+	ctx := context.Background()
+
+	if has, err := ps.HasPassword(ctx, "alice"); err != nil || has {
+		t.Fatalf("HasPassword before SetPassword = (%v, %v), want (false, nil)", has, err)
+	}
+	if err := ps.SetPassword(ctx, "alice", "correct horse battery staple"); err != nil {
+		t.Fatalf("SetPassword: %v", err)
+	}
+	if has, err := ps.HasPassword(ctx, "alice"); err != nil || !has {
+		t.Fatalf("HasPassword after SetPassword = (%v, %v), want (true, nil)", has, err)
+	}
+	// A different, never-set user still reads as false.
+	if has, err := ps.HasPassword(ctx, "bob"); err != nil || has {
+		t.Fatalf("HasPassword for unrelated user = (%v, %v), want (false, nil)", has, err)
+	}
+}
+
 // TestSQLitePasswordStore_ParityWithMemory asserts the SQLite peer is
 // behaviorally indistinguishable from the in-memory peer for the contract
 // surface that matters: set/verify match, wrong-password mismatch, and

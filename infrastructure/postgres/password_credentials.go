@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/snaplink/sso/domains/identitylink"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/migrate"
 	"github.com/snaplink/sso/shared/core"
@@ -208,7 +209,32 @@ func (s *PasswordCredentialStore) VerifyPassword(ctx context.Context, userID, pl
 	return nil
 }
 
+// HasPassword implements identitylink.PasswordPresenceChecker: reports
+// whether userID has a stored credential row, WITHOUT the timing-
+// equalization VerifyPassword performs. Safe to expose directly — this is a
+// governance/guard query (the self-service identity-unlink "don't lock
+// yourself out" check) on the CALLER's OWN authenticated subject, not a login
+// path, so there is no anti-enumeration concern to preserve. Mirrors the
+// SQLite peer's implementation — before this method existed, a deployment
+// using this backend for password credentials always read as
+// PasswordPresenceChecker-unimplemented, so the self-service unlink guard
+// fell CLOSED (assumed no password) even for a user who had one,
+// over-conservatively blocking their last identity-unlink.
+func (s *PasswordCredentialStore) HasPassword(ctx context.Context, userID string) (bool, error) {
+	var exists int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM password_credentials WHERE user_id = $1`, userID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("postgres: has password_credential: %w", err)
+	}
+	return true, nil
+}
+
 var (
-	_ sso.PasswordCredentialStore = (*PasswordCredentialStore)(nil)
-	_ sso.PasswordHashImporter    = (*PasswordCredentialStore)(nil)
+	_ sso.PasswordCredentialStore          = (*PasswordCredentialStore)(nil)
+	_ sso.PasswordHashImporter             = (*PasswordCredentialStore)(nil)
+	_ identitylink.PasswordPresenceChecker = (*PasswordCredentialStore)(nil)
 )

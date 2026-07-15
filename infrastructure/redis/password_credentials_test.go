@@ -108,3 +108,26 @@ func TestRedisPasswordCredentialStore_EmptyUserID(t *testing.T) {
 		t.Errorf("SetPasswordHash empty id = %v, want ErrPasswordMismatch", err)
 	}
 }
+
+// TestRedisPasswordCredentialStore_HasPassword pins the
+// identitylink.PasswordPresenceChecker implementation this backend now
+// satisfies: before it existed, a deployment using Redis for password
+// credentials always read as PasswordPresenceChecker-unimplemented, so the
+// self-service identity-unlink "don't lock yourself out" guard fell CLOSED
+// (assumed no password) even for a user who genuinely had one.
+func TestRedisPasswordCredentialStore_HasPassword(t *testing.T) {
+	t.Parallel()
+	_, rdb := newTestClient(t)
+	s := NewPasswordCredentialStore(rdb)
+	ctx := context.Background()
+
+	if has, err := s.HasPassword(ctx, "u1"); err != nil || has {
+		t.Errorf("HasPassword before SetPassword = (%v, %v), want (false, nil)", has, err)
+	}
+	if err := s.SetPassword(ctx, "u1", "correct horse battery staple"); err != nil {
+		t.Fatalf("SetPassword: %v", err)
+	}
+	if has, err := s.HasPassword(ctx, "u1"); err != nil || !has {
+		t.Errorf("HasPassword after SetPassword = (%v, %v), want (true, nil)", has, err)
+	}
+}

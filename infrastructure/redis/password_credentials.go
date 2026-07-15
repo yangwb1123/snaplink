@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	goredis "github.com/redis/go-redis/v9"
+	"github.com/snaplink/sso/domains/identitylink"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/shared/core"
 	"golang.org/x/crypto/bcrypt"
@@ -103,7 +104,27 @@ func (s *PasswordCredentialStore) VerifyPassword(ctx context.Context, userID, pl
 	return nil
 }
 
+// HasPassword implements identitylink.PasswordPresenceChecker: reports
+// whether userID has a stored credential key, WITHOUT the timing-
+// equalization VerifyPassword performs. Safe to expose directly — this is a
+// governance/guard query (the self-service identity-unlink "don't lock
+// yourself out" check) on the CALLER's OWN authenticated subject, not a login
+// path, so there is no anti-enumeration concern to preserve. Mirrors the
+// memory/SQLite/Postgres peers' implementation — before this method existed,
+// a deployment using this backend for password credentials always read as
+// PasswordPresenceChecker-unimplemented, so the self-service unlink guard
+// fell CLOSED (assumed no password) even for a user who had one,
+// over-conservatively blocking their last identity-unlink.
+func (s *PasswordCredentialStore) HasPassword(ctx context.Context, userID string) (bool, error) {
+	n, err := s.rdb.Exists(ctx, pwcredKey(userID)).Result()
+	if err != nil {
+		return false, fmt.Errorf("redis: has password_credential: %w", err)
+	}
+	return n > 0, nil
+}
+
 var (
-	_ sso.PasswordCredentialStore = (*PasswordCredentialStore)(nil)
-	_ sso.PasswordHashImporter    = (*PasswordCredentialStore)(nil)
+	_ sso.PasswordCredentialStore          = (*PasswordCredentialStore)(nil)
+	_ sso.PasswordHashImporter             = (*PasswordCredentialStore)(nil)
+	_ identitylink.PasswordPresenceChecker = (*PasswordCredentialStore)(nil)
 )

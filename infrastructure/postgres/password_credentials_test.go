@@ -143,6 +143,28 @@ func TestPasswordCredentials_UpdatedAtNanoRoundTrip(t *testing.T) {
 	}
 }
 
+// TestPasswordCredentials_HasPassword pins the
+// identitylink.PasswordPresenceChecker implementation this backend now
+// satisfies: before it existed, a deployment using Postgres for password
+// credentials always read as PasswordPresenceChecker-unimplemented, so the
+// self-service identity-unlink "don't lock yourself out" guard fell CLOSED
+// (assumed no password) even for a user who genuinely had one.
+func TestPasswordCredentials_HasPassword(t *testing.T) {
+	t.Parallel()
+	s := freshPasswordCredentialStore(t)
+	ctx := context.Background()
+
+	if has, err := s.HasPassword(ctx, "u1"); err != nil || has {
+		t.Fatalf("HasPassword before SetPassword = (%v, %v), want (false, nil)", has, err)
+	}
+	if err := s.SetPassword(ctx, "u1", "hunter2"); err != nil {
+		t.Fatalf("SetPassword: %v", err)
+	}
+	if has, err := s.HasPassword(ctx, "u1"); err != nil || !has {
+		t.Fatalf("HasPassword after SetPassword = (%v, %v), want (true, nil)", has, err)
+	}
+}
+
 func TestPasswordCredentials_PingAndDB(t *testing.T) {
 	t.Parallel()
 	s := freshPasswordCredentialStore(t)
