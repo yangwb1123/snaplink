@@ -201,6 +201,48 @@ func TestNew_BuildsRealSinkWithoutDialing(t *testing.T) {
 	}
 }
 
+// TestNew_WiresClientIDIntoTransport is a regression guard: Config.ClientID
+// was documented ("defaults to sso-server") and threaded from
+// config.AuditKafkaConfig through Factory, but New never actually applied it
+// to the underlying *kafka.Writer — kafka.Writer has no ClientID field of its
+// own; it must ride on Writer.Transport (a *kafka.Transport). Without this,
+// every kafka-audit deployment's broker-side logs/metrics showed kafka-go's
+// own default client id, never the operator's configured (or documented
+// "sso-server" fallback) value.
+func TestNew_WiresClientIDIntoTransport(t *testing.T) {
+	t.Parallel()
+	s, err := New(Config{Brokers: []string{"127.0.0.1:9"}, Topic: "t", ClientID: "my-producer"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	w, ok := s.producer.(*kafkago.Writer)
+	if !ok {
+		t.Fatalf("producer = %T, want *kafka.Writer", s.producer)
+	}
+	tr, ok := w.Transport.(*kafkago.Transport)
+	if !ok || tr == nil {
+		t.Fatalf("Transport = %#v, want a *kafka.Transport carrying ClientID", w.Transport)
+	}
+	if tr.ClientID != "my-producer" {
+		t.Fatalf("Transport.ClientID = %q, want %q", tr.ClientID, "my-producer")
+	}
+}
+
+// TestNew_DefaultsClientIDWhenEmpty proves the documented empty-defaults-to
+// "sso-server" contract (config.AuditKafkaConfig.ClientID's doc comment).
+func TestNew_DefaultsClientIDWhenEmpty(t *testing.T) {
+	t.Parallel()
+	s, err := New(Config{Brokers: []string{"127.0.0.1:9"}, Topic: "t"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	w := s.producer.(*kafkago.Writer)
+	tr := w.Transport.(*kafkago.Transport)
+	if tr.ClientID != defaultClientID {
+		t.Fatalf("Transport.ClientID = %q, want default %q", tr.ClientID, defaultClientID)
+	}
+}
+
 func TestParseRequiredAcks(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

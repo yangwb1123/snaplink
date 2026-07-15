@@ -67,6 +67,11 @@ func (p *producerWriter) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
+// defaultClientID is the kafka-go client identifier used when cfg.ClientID is
+// empty — matches config.AuditKafkaConfig.ClientID's documented default
+// ("sso-server") and docs/config-reference.md's audit.kafka.client_id entry.
+const defaultClientID = "sso-server"
+
 // New builds a Kafka-backed audit.Sink. cfg.Brokers and cfg.Topic are
 // required; WithFormat overrides the default JSON-with-schema_version
 // envelope (see FormatJSON) with one of the SDK's SIEM formatters.
@@ -81,6 +86,10 @@ func New(cfg Config, opts ...Option) (*Sink, error) {
 	if err != nil {
 		return nil, err
 	}
+	clientID := cfg.ClientID
+	if clientID == "" {
+		clientID = defaultClientID
+	}
 	w := &kafkago.Writer{
 		Addr:         kafkago.TCP(cfg.Brokers...),
 		Topic:        cfg.Topic,
@@ -88,6 +97,12 @@ func New(cfg Config, opts ...Option) (*Sink, error) {
 		RequiredAcks: acks,
 		Async:        cfg.Async,
 		BatchTimeout: cfg.BatchTimeout,
+		// Transport carries ClientID to the broker (Writer itself has no
+		// ClientID field) — a zero-value Transport otherwise behaves
+		// identically to kafka-go's DefaultTransport (nil Dial/DialTimeout/
+		// IdleTimeout/MetadataTTL all fall back to the same library
+		// defaults internally), so this only changes the client ID.
+		Transport: &kafkago.Transport{ClientID: clientID},
 	}
 	return newWithProducer(w, cfg.Topic, opts...), nil
 }
