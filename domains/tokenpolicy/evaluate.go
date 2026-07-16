@@ -60,6 +60,25 @@ func RenewExceeded(renewAfter float64, issuedAt, expiresAt, now time.Time) bool 
 	return now.Sub(issuedAt) >= threshold
 }
 
+// RenewAt returns the absolute time RenewExceeded starts returning true for
+// the same (renewAfter, issuedAt, expiresAt) — i.e. issuedAt plus the
+// renewAfter fraction of the token's TTL — so a caller (introspection) can
+// surface an early-warning timestamp to a resource server BEFORE the hard
+// cutover, instead of the RS only ever seeing an abrupt {active:false}.
+// Zero time under the same fail-safe conditions RenewExceeded treats as
+// "unmeasurable": no fraction configured, unset timestamps, or a
+// non-positive TTL.
+func RenewAt(renewAfter float64, issuedAt, expiresAt time.Time) time.Time {
+	if renewAfter <= 0 || issuedAt.IsZero() || expiresAt.IsZero() {
+		return time.Time{}
+	}
+	ttl := expiresAt.Sub(issuedAt)
+	if ttl <= 0 {
+		return time.Time{}
+	}
+	return issuedAt.Add(time.Duration(renewAfter * float64(ttl)))
+}
+
 // matches reports whether policy p's selector applies to the request: its
 // ClientID (empty = any) equals the request's, AND every selector scope is
 // present in the request's granted scopes.

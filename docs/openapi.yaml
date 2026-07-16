@@ -10781,6 +10781,14 @@ components:
           description: |
             RFC 7800 confirmation method. Present when the token was
             DPoP- or mTLS-bound; carries `jkt` or `x5t#S256`.
+        renew_after:
+          type: integer
+          description: |
+            Unix time this still-active token needs renewal, an early
+            warning ahead of the AS eventually reporting it inactive.
+            Present ONLY when a token-policy governance store is wired
+            (`WithTokenPolicy`) with a matching `require_renew_after`
+            fraction configured for this client/scope combination.
 
     IntrospectBatchResponse:
       type: object

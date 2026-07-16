@@ -45,17 +45,18 @@ func ValidateTokenWithIntrospect(ctx context.Context, token string, cfg Config) 
 		return nil, ErrTokenInactive
 	}
 	claims := &Claims{
-		Issuer:    w.Iss,
-		Subject:   w.Sub,
-		Audience:  audienceValues(w.Aud),
-		ClientID:  w.ClientID,
-		Scope:     w.Scope,
-		JTI:       w.JTI,
-		ExpiresAt: w.Exp,
-		NotBefore: w.Nbf,
-		IssuedAt:  w.Iat,
-		CnfJKT:    w.Cnf.JKT,
-		Raw:       w.raw,
+		Issuer:     w.Iss,
+		Subject:    w.Sub,
+		Audience:   audienceValues(w.Aud),
+		ClientID:   w.ClientID,
+		Scope:      w.Scope,
+		JTI:        w.JTI,
+		ExpiresAt:  w.Exp,
+		NotBefore:  w.Nbf,
+		IssuedAt:   w.Iat,
+		RenewAfter: w.RenewAfter,
+		CnfJKT:     w.Cnf.JKT,
+		Raw:        w.raw,
 	}
 	if err := validateIntrospectedClaims(claims, cfg); err != nil {
 		return nil, err
@@ -63,9 +64,12 @@ func ValidateTokenWithIntrospect(ctx context.Context, token string, cfg Config) 
 	return claims, nil
 }
 
-// wireIntrospection is wireClaims plus the RFC 7662 active flag.
+// wireIntrospection is wireClaims plus the RFC 7662 active flag and the
+// opt-in token-policy renew_after early warning (introspection-only, never
+// present on a raw JWT — kept off wireClaims for that reason).
 type wireIntrospection struct {
-	Active bool `json:"active"`
+	Active     bool  `json:"active"`
+	RenewAfter int64 `json:"renew_after"`
 	wireClaims
 	raw map[string]any
 }

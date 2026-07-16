@@ -258,3 +258,46 @@ func TestRenewExceeded(t *testing.T) {
 		})
 	}
 }
+
+// TestRenewAt_MatchesRenewExceededThreshold proves RenewAt returns exactly
+// the boundary RenewExceeded starts firing at, for the same inputs, and
+// fails safe (zero time) under the identical unmeasurable conditions.
+func TestRenewAt_MatchesRenewExceededThreshold(t *testing.T) {
+	t.Parallel()
+	issued := time.Unix(1_700_000_000, 0)
+	expires := issued.Add(60 * time.Second)
+
+	cases := []struct {
+		name       string
+		renewAfter float64
+		issued     time.Time
+		expires    time.Time
+		want       time.Time
+	}{
+		{"unset fraction fails safe", 0, issued, expires, time.Time{}},
+		{"0.5 fraction of 60s TTL", 0.5, issued, expires, issued.Add(30 * time.Second)},
+		{"0.8 fraction of 60s TTL", 0.8, issued, expires, issued.Add(48 * time.Second)},
+		{"zero issued time fails safe", 0.5, time.Time{}, expires, time.Time{}},
+		{"zero expiry time fails safe", 0.5, issued, time.Time{}, time.Time{}},
+		{"non-positive TTL fails safe", 0.5, issued, issued.Add(-time.Second), time.Time{}},
+		{"negative fraction fails safe", -0.1, issued, expires, time.Time{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := RenewAt(tc.renewAfter, tc.issued, tc.expires)
+			if !got.Equal(tc.want) {
+				t.Fatalf("RenewAt(%v) = %v, want %v", tc.renewAfter, got, tc.want)
+			}
+			// Cross-check against RenewExceeded: just before the returned
+			// time it must not be exceeded; at or after it, it must be.
+			if !tc.want.IsZero() {
+				if RenewExceeded(tc.renewAfter, tc.issued, tc.expires, got.Add(-time.Second)) {
+					t.Error("RenewExceeded fired before RenewAt's returned threshold")
+				}
+				if !RenewExceeded(tc.renewAfter, tc.issued, tc.expires, got) {
+					t.Error("RenewExceeded did not fire AT RenewAt's returned threshold")
+				}
+			}
+		})
+	}
+}

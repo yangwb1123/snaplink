@@ -155,6 +155,9 @@ const (
 	KeyExp       = "exp"
 	KeyIat       = "iat"
 	KeyNbf       = "nbf"
+	// KeyRenewAfter (opt-in, WithTokenPolicy's RequireRenewAfter) is the unix
+	// time an ACTIVE token needs renewal, ahead of the {active:false} cutover.
+	KeyRenewAfter = "renew_after"
 	KeyClientID  = "client_id"
 	KeyTenantID  = "tenant_id"
 	KeyStrategy  = "token_strategy_used"

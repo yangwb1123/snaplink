@@ -167,18 +167,30 @@ func TestRcov_TokenPolicy_RequireRenewSeam(t *testing.T) {
 	wired := sso.NewServer(sso.WithTokenPolicy(
 		memory.New(tokenpolicy.Policy{Name: "renew", RequireRenewAfter: 0.5}),
 	))
-	if !wired.IntrospectionRenewExceeded(ctx, rcovClient, []string{"read"}, past, pastExp) {
+	exceeded, renewAt := wired.IntrospectionRenewExceeded(ctx, rcovClient, []string{"read"}, past, pastExp)
+	if !exceeded {
 		t.Fatalf("past-threshold token: want exceeded=true")
 	}
+	if renewAt.IsZero() || renewAt.After(now) {
+		t.Fatalf("past-threshold renewAt = %v, want a non-zero time at or before now (%v)", renewAt, now)
+	}
 	// A fresh token (elapsed ~0) is NOT past the threshold — governance is not a
-	// blanket deny.
-	if wired.IntrospectionRenewExceeded(ctx, rcovClient, []string{"read"}, now, now.Add(60*time.Second)) {
+	// blanket deny. renewAt should still be reported (30s from now: 0.5 * 60s TTL).
+	freshExceeded, freshRenewAt := wired.IntrospectionRenewExceeded(ctx, rcovClient, []string{"read"}, now, now.Add(60*time.Second))
+	if freshExceeded {
 		t.Fatalf("fresh token: want exceeded=false")
 	}
+	if wantRenewAt := now.Add(30 * time.Second); !freshRenewAt.Equal(wantRenewAt) {
+		t.Fatalf("fresh token renewAt = %v, want %v", freshRenewAt, wantRenewAt)
+	}
 
-	// Default-off: no policy wired -> never exceeded (byte-identical).
+	// Default-off: no policy wired -> never exceeded, zero renewAt (byte-identical).
 	off := sso.NewServer()
-	if off.IntrospectionRenewExceeded(ctx, rcovClient, []string{"read"}, past, pastExp) {
+	offExceeded, offRenewAt := off.IntrospectionRenewExceeded(ctx, rcovClient, []string{"read"}, past, pastExp)
+	if offExceeded {
 		t.Fatalf("unwired: want exceeded=false (byte-identical)")
+	}
+	if !offRenewAt.IsZero() {
+		t.Fatalf("unwired: want zero renewAt (byte-identical), got %v", offRenewAt)
 	}
 }

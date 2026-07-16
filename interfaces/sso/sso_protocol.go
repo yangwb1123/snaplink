@@ -455,31 +455,35 @@ type cacheState struct {
 
 // IntrospectionRenewExceeded reports whether an access token being introspected
 // has passed its wired require_renew fraction of TTL and should be reported
-// INACTIVE (governance force-refresh). Default-OFF: a nil token-policy store
-// returns false, so introspection is byte-identical without a wired policy.
-// FAIL-OPEN on a store error (false) — a governance-store outage must never
-// flip a cryptographically valid token to inactive. Bumps the renew-required
-// metric on a positive result (the only place that governance signal surfaces).
-// Relocated from server_oauth.go (which was at the line budget).
-func (s *Server) IntrospectionRenewExceeded(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) bool {
+// INACTIVE (governance force-refresh), plus (when not yet exceeded) the
+// absolute renewAt time the caller can surface as an early warning instead
+// of the RS only ever seeing an abrupt {active:false}. Default-OFF: a nil
+// token-policy store returns (false, zero), so introspection is byte-
+// identical without a wired policy. FAIL-OPEN on a store error — a
+// governance-store outage must never flip a cryptographically valid token
+// to inactive. Bumps the renew-required metric only on exceeded=true (the
+// only place that governance signal surfaces). Relocated from
+// server_oauth.go (which was at the line budget).
+func (s *Server) IntrospectionRenewExceeded(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) (exceeded bool, renewAt time.Time) {
 	if s.tokenPolicyStore == nil {
-		return false
+		return false, time.Time{}
 	}
 	policies, err := s.tokenPolicyStore.Policies(ctx)
 	if err != nil {
 		s.logger.Error("token policy load failed — reporting token active (fail-open)", "error", err)
-		return false
+		return false, time.Time{}
 	}
 	dec := tokenpolicy.Evaluate(tokenpolicy.PolicyInput{
 		ClientID: clientID,
 		Scopes:   scopes,
 		Kind:     tokenpolicy.KindAccess,
 	}, policies)
+	renewAt = tokenpolicy.RenewAt(dec.RenewAfter, issuedAt, expiresAt)
 	if !tokenpolicy.RenewExceeded(dec.RenewAfter, issuedAt, expiresAt, time.Now()) {
-		return false
+		return false, renewAt
 	}
 	s.metrics.ObserveTokenPolicyRenewRequired()
 	s.logger.Info("token past require_renew threshold — reported inactive at introspection",
 		"client", clientID)
-	return true
+	return true, renewAt
 }

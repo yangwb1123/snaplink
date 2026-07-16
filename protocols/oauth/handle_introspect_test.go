@@ -33,9 +33,9 @@ type introspectDeps struct {
 	verifyCA      func(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
 	usageRecorder *tokenusage.Recorder
 	// renewExceeded stands in for the token-policy require_renew seam. Nil =
-	// default-off (never exceeded), so an unset hook keeps introspection
-	// byte-identical to a build without a wired policy.
-	renewExceeded func(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) bool
+	// default-off (never exceeded, zero renewAt), so an unset hook keeps
+	// introspection byte-identical to a build without a wired policy.
+	renewExceeded func(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) (bool, time.Time)
 	// signer / batchMaxSize stand in for WithIntrospectionSigner /
 	// WithIntrospectionBatch. Zero values (nil / 0) reproduce the default-off
 	// byte-identical behavior every other test in this file relies on.
@@ -62,9 +62,9 @@ func (d *introspectDeps) VerifyJWTClientAssertion(ctx context.Context, a, f, i s
 func (d *introspectDeps) IntrospectionCache() IntrospectionCache   { return nil }
 func (d *introspectDeps) IntrospectionCacheTTL() time.Duration     { return 0 }
 func (d *introspectDeps) TokenUsageRecorder() *tokenusage.Recorder { return d.usageRecorder }
-func (d *introspectDeps) IntrospectionRenewExceeded(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) bool {
+func (d *introspectDeps) IntrospectionRenewExceeded(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) (bool, time.Time) {
 	if d.renewExceeded == nil {
-		return false
+		return false, time.Time{}
 	}
 	return d.renewExceeded(ctx, clientID, scopes, issuedAt, expiresAt)
 }
@@ -622,9 +622,9 @@ func TestHandleIntrospect_RequireRenew(t *testing.T) {
 	t.Run("past renew threshold reports inactive", func(t *testing.T) {
 		d := newDeps()
 		var sawClient string
-		d.renewExceeded = func(_ context.Context, clientID string, _ []string, _, _ time.Time) bool {
+		d.renewExceeded = func(_ context.Context, clientID string, _ []string, _, _ time.Time) (bool, time.Time) {
 			sawClient = clientID
-			return true
+			return true, time.Time{}
 		}
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=valid&client_id=rp&client_secret=s")
 		HandleIntrospect(d, ctx)
@@ -643,11 +643,38 @@ func TestHandleIntrospect_RequireRenew(t *testing.T) {
 
 	t.Run("within renew threshold stays active", func(t *testing.T) {
 		d := newDeps()
-		d.renewExceeded = func(context.Context, string, []string, time.Time, time.Time) bool { return false }
+		d.renewExceeded = func(context.Context, string, []string, time.Time, time.Time) (bool, time.Time) {
+			return false, time.Time{}
+		}
 		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=valid&client_id=rp&client_secret=s")
 		HandleIntrospect(d, ctx)
-		if got := decodeBody(t, rec)["active"]; got != true {
+		body := decodeBody(t, rec)
+		if got := body["active"]; got != true {
 			t.Fatalf("active = %v, want true (within threshold)", got)
+		}
+		if _, ok := body["renew_after"]; ok {
+			t.Errorf("renew_after present with a zero renewAt: %v", body)
+		}
+	})
+
+	t.Run("within renew threshold surfaces renew_after early warning", func(t *testing.T) {
+		d := newDeps()
+		renewAt := now.Add(30 * time.Minute)
+		d.renewExceeded = func(context.Context, string, []string, time.Time, time.Time) (bool, time.Time) {
+			return false, renewAt
+		}
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded, "token=valid&client_id=rp&client_secret=s")
+		HandleIntrospect(d, ctx)
+		body := decodeBody(t, rec)
+		if body["active"] != true {
+			t.Fatalf("active = %v, want true", body["active"])
+		}
+		got, ok := body["renew_after"].(float64)
+		if !ok {
+			t.Fatalf("renew_after missing or wrong type: %v", body["renew_after"])
+		}
+		if int64(got) != renewAt.Unix() {
+			t.Fatalf("renew_after = %v, want %v", int64(got), renewAt.Unix())
 		}
 	})
 }

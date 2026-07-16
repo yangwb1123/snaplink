@@ -21,6 +21,14 @@ type Claims struct {
 	NotBefore int64
 	IssuedAt  int64
 
+	// RenewAfter is the unix time an introspected token needs renewal, per
+	// the AS's opt-in token-policy governance (WithTokenPolicy's
+	// RequireRenewAfter) — an early warning ahead of the AS eventually
+	// reporting the token inactive. Zero when introspection didn't include
+	// it (no policy configured, or ValidateTokenWithJWT was used instead —
+	// this field is introspection-only, never present on a raw JWT).
+	RenewAfter int64
+
 	// CnfJKT is the RFC 9449 §6.1 confirmation thumbprint. Non-empty means
 	// the token is sender-constrained: it MUST be accompanied by a DPoP
 	// proof whose key hashes to this value.
