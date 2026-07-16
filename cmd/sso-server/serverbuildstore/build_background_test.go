@@ -3,6 +3,7 @@ package serverbuildstore
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -93,6 +94,98 @@ func TestRunAuditRetention_ExitsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go RunAuditRetention(ctx, done, sink, time.Hour, 30*24*time.Hour, testLogger(), nil)
+	cancel()
+	waitClosed(t, done, 2*time.Second)
+}
+
+// countingLogger is a real spi.Logger that tallies Error calls so a test can
+// prove a recovered panic was routed through the logger — mirrors the
+// identically-named helper in domains/tokenusage/recorder_test.go.
+type countingLogger struct {
+	mu      sync.Mutex
+	errMsgs []string
+}
+
+func (l *countingLogger) Info(string, ...any)  {}
+func (l *countingLogger) Debug(string, ...any) {}
+func (l *countingLogger) Error(msg string, _ ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.errMsgs = append(l.errMsgs, msg)
+}
+func (l *countingLogger) errorCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.errMsgs)
+}
+
+// panickySnapshotStorage panics on its first List call and behaves like an
+// empty inline store afterward — used to prove pruneSnapshotSafe's recover()
+// keeps RunSnapshotRetention's ticker loop (and the whole process) alive
+// across a panicking Storage implementation, rather than letting the panic
+// escape an unrecovered permanent background goroutine (fatal to the entire
+// process, not just this retention tick).
+type panickySnapshotStorage struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (p *panickySnapshotStorage) Put(context.Context, string, []byte) error { return nil }
+func (p *panickySnapshotStorage) Get(context.Context, string) ([]byte, error) {
+	return nil, snapshot.ErrSnapshotNotFound
+}
+func (p *panickySnapshotStorage) Delete(context.Context, string) error { return nil }
+func (p *panickySnapshotStorage) List(context.Context) ([]string, error) {
+	p.mu.Lock()
+	p.calls++
+	n := p.calls
+	p.mu.Unlock()
+	if n == 1 {
+		panic("simulated storage panic")
+	}
+	return nil, nil
+}
+func (p *panickySnapshotStorage) callCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls
+}
+
+// waitFor polls fn at 5ms intervals until it returns true or budget elapses.
+func waitFor(t *testing.T, budget time.Duration, fn func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(budget)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("condition not met within %s", budget)
+}
+
+// TestRunSnapshotRetention_RecoversStoragePanic proves pruneSnapshotSafe's
+// recover() keeps the permanent RunSnapshotRetention goroutine (and thus the
+// whole process) alive when the operator-selected snapshot.Storage panics on
+// one tick. Pre-fix (no recover around the storage.List/Delete calls) this
+// panic would propagate out of an unrecovered goroutine and crash the entire
+// test binary — not just fail this assertion.
+func TestRunSnapshotRetention_RecoversStoragePanic(t *testing.T) {
+	t.Parallel()
+	storage := &panickySnapshotStorage{}
+	logger := &countingLogger{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	// Short interval so both the panicking first tick and a healthy
+	// second tick fire within the test budget.
+	go RunSnapshotRetention(ctx, done, storage, 20*time.Millisecond, 5, logger, nil)
+
+	waitFor(t, 2*time.Second, func() bool { return storage.callCount() >= 2 })
+	if logger.errorCount() == 0 {
+		t.Fatal("expected the recovered panic to be logged via logger.Error")
+	}
+
 	cancel()
 	waitClosed(t, done, 2*time.Second)
 }

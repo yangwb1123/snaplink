@@ -148,20 +148,34 @@ func RunPushApprovalPrune(ctx context.Context, done chan<- struct{}, store *sqli
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			deleted, err := store.PruneExpired(ctx)
-			if err != nil {
-				logger.Error("push approvals prune failed", "error", err)
-				if m != nil {
-					m.RetentionPruneErrorTotal.WithLabelValues("push_approvals").Inc()
-				}
-				continue
-			}
-			if deleted > 0 {
-				logger.Info("push approvals pruned", "deleted", deleted)
-				if m != nil {
-					m.RetentionPrunedTotal.WithLabelValues("push_approvals").Add(float64(deleted))
-				}
-			}
+			prunePushApprovalSafe(ctx, store, logger, m)
+		}
+	}
+}
+
+// prunePushApprovalSafe wraps one PushApprovalStore.PruneExpired call in
+// recover(), invoked from a PERMANENT background goroutine — an unrecovered
+// panic here would crash the whole process, not just this prune tick. Same
+// rationale as serverbuildstore.pruneCIBASafe (identical shape, sibling
+// package — see that doc comment).
+func prunePushApprovalSafe(ctx context.Context, store *sqlitestores.PushApprovalStore, logger spi.Logger, m *metrics.Metrics) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			logger.Error("push approvals prune panic recovered", "panic", rec)
+		}
+	}()
+	deleted, err := store.PruneExpired(ctx)
+	if err != nil {
+		logger.Error("push approvals prune failed", "error", err)
+		if m != nil {
+			m.RetentionPruneErrorTotal.WithLabelValues("push_approvals").Inc()
+		}
+		return
+	}
+	if deleted > 0 {
+		logger.Info("push approvals pruned", "deleted", deleted)
+		if m != nil {
+			m.RetentionPrunedTotal.WithLabelValues("push_approvals").Add(float64(deleted))
 		}
 	}
 }

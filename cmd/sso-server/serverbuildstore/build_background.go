@@ -118,20 +118,36 @@ func RunCIBAPrune(ctx context.Context, done chan<- struct{}, store *sqlitestores
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			deleted, err := store.PruneExpired(ctx)
-			if err != nil {
-				logger.Error("ciba requests prune failed", "error", err)
-				if m != nil {
-					m.RetentionPruneErrorTotal.WithLabelValues("ciba").Inc()
-				}
-				continue
-			}
-			if deleted > 0 {
-				logger.Info("ciba requests pruned", "deleted", deleted)
-				if m != nil {
-					m.RetentionPrunedTotal.WithLabelValues("ciba").Add(float64(deleted))
-				}
-			}
+			pruneCIBASafe(ctx, store, logger, m)
+		}
+	}
+}
+
+// pruneCIBASafe wraps one CIBAStore.PruneExpired call in recover(). The store
+// is a config-selected Store implementation (§SPI + Storage, AGENTS.md §3)
+// invoked from a PERMANENT background goroutine with no per-request caller to
+// isolate a fault — an unrecovered panic here would not just skip one prune
+// tick, it would crash the whole process and take every other in-flight
+// request down with it. Mirrors tokenanomaly.Detector.processFindingSafe /
+// tokenusage.Recorder.recordSafe's rationale for the identical shape.
+func pruneCIBASafe(ctx context.Context, store *sqlitestores.CIBAStore, logger spi.Logger, m *metrics.Metrics) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			logger.Error("ciba requests prune panic recovered", "panic", rec)
+		}
+	}()
+	deleted, err := store.PruneExpired(ctx)
+	if err != nil {
+		logger.Error("ciba requests prune failed", "error", err)
+		if m != nil {
+			m.RetentionPruneErrorTotal.WithLabelValues("ciba").Inc()
+		}
+		return
+	}
+	if deleted > 0 {
+		logger.Info("ciba requests pruned", "deleted", deleted)
+		if m != nil {
+			m.RetentionPrunedTotal.WithLabelValues("ciba").Add(float64(deleted))
 		}
 	}
 }
@@ -153,21 +169,36 @@ func RunSnapshotRetention(ctx context.Context, done chan<- struct{}, storage sna
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			deleted, err := snapshot.PruneOldest(ctx, storage, keep)
-			if err != nil {
-				logger.Error("snapshot retention prune failed", "error", err, "keep", keep)
-				if m != nil {
-					m.RetentionPruneErrorTotal.WithLabelValues("snapshot").Inc()
-				}
-				continue
-			}
-			if len(deleted) > 0 {
-				logger.Info("snapshot retention pruned envelopes",
-					"deleted_count", len(deleted), "keep", keep)
-				if m != nil {
-					m.RetentionPrunedTotal.WithLabelValues("snapshot").Add(float64(len(deleted)))
-				}
-			}
+			pruneSnapshotSafe(ctx, storage, keep, logger, m)
+		}
+	}
+}
+
+// pruneSnapshotSafe wraps one snapshot.PruneOldest call in recover(). storage
+// is the operator-selected snapshot.Storage implementation (an SPI a forked
+// binary can supply its own backend for — file/inline are only the built-in
+// choices) invoked from a PERMANENT background goroutine — an unrecovered
+// panic here would crash the whole process, not just this retention tick.
+// Same rationale as pruneCIBASafe above.
+func pruneSnapshotSafe(ctx context.Context, storage snapshot.Storage, keep int, logger spi.Logger, m *metrics.Metrics) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			logger.Error("snapshot retention prune panic recovered", "panic", rec, "keep", keep)
+		}
+	}()
+	deleted, err := snapshot.PruneOldest(ctx, storage, keep)
+	if err != nil {
+		logger.Error("snapshot retention prune failed", "error", err, "keep", keep)
+		if m != nil {
+			m.RetentionPruneErrorTotal.WithLabelValues("snapshot").Inc()
+		}
+		return
+	}
+	if len(deleted) > 0 {
+		logger.Info("snapshot retention pruned envelopes",
+			"deleted_count", len(deleted), "keep", keep)
+		if m != nil {
+			m.RetentionPrunedTotal.WithLabelValues("snapshot").Add(float64(len(deleted)))
 		}
 	}
 }
@@ -192,22 +223,35 @@ func RunAuditRetention(ctx context.Context, done chan<- struct{}, sink *auditsql
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			cutoff := time.Now().Add(-maxAge)
-			deleted, err := sink.Prune(ctx, cutoff)
-			if err != nil {
-				logger.Error("audit retention prune failed", "error", err, "cutoff", cutoff)
-				if m != nil {
-					m.RetentionPruneErrorTotal.WithLabelValues("audit").Inc()
-				}
-				continue
-			}
-			if deleted > 0 {
-				logger.Info("audit retention pruned events",
-					"deleted", deleted, "cutoff", cutoff)
-				if m != nil {
-					m.RetentionPrunedTotal.WithLabelValues("audit").Add(float64(deleted))
-				}
-			}
+			pruneAuditSafe(ctx, sink, maxAge, logger, m)
+		}
+	}
+}
+
+// pruneAuditSafe wraps one auditsqlite.Sink.Prune call in recover(), invoked
+// from a PERMANENT background goroutine — an unrecovered panic here would
+// crash the whole process, not just this retention tick. Same rationale as
+// pruneCIBASafe above.
+func pruneAuditSafe(ctx context.Context, sink *auditsqlite.Sink, maxAge time.Duration, logger spi.Logger, m *metrics.Metrics) {
+	cutoff := time.Now().Add(-maxAge)
+	defer func() {
+		if rec := recover(); rec != nil {
+			logger.Error("audit retention prune panic recovered", "panic", rec, "cutoff", cutoff)
+		}
+	}()
+	deleted, err := sink.Prune(ctx, cutoff)
+	if err != nil {
+		logger.Error("audit retention prune failed", "error", err, "cutoff", cutoff)
+		if m != nil {
+			m.RetentionPruneErrorTotal.WithLabelValues("audit").Inc()
+		}
+		return
+	}
+	if deleted > 0 {
+		logger.Info("audit retention pruned events",
+			"deleted", deleted, "cutoff", cutoff)
+		if m != nil {
+			m.RetentionPrunedTotal.WithLabelValues("audit").Add(float64(deleted))
 		}
 	}
 }
