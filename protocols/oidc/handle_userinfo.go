@@ -2,6 +2,7 @@ package oidc
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 
@@ -58,18 +59,8 @@ func HandleUserInfo(d UserInfoDeps, ctx core.HandlerContext) {
 		return
 	}
 
-	// OIDC §8 pairwise: resolve the per-sector sub to the local UserProvider key
-	// for the lookup, but keep claims.Subject untouched for the response.
-	lookupSub, perr := d.ResolveLocalSubject(ctx.Request().Context(), claims.Subject)
-	if perr != nil {
-		d.SrvLogger().Error("pairwise resolve failed at /userinfo", "error", perr, "subject", claims.Subject)
-		d.SetResourceBearerChallenge(ctx, d.ResolveIssuer(ctx), core.ErrInvalidToken, "Subject mapping unavailable")
-		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidToken))
-		return
-	}
-	user, err := d.UserProvider().GetByID(ctx.Request().Context(), lookupSub)
-	if err != nil {
-		ctx.JSON(http.StatusNotFound, core.ErrorBody(core.ErrUserNotFound))
+	user, ok := resolveUserInfoSubject(d, ctx, claims)
+	if !ok {
 		return
 	}
 
@@ -135,6 +126,43 @@ func authenticateUserInfoBearer(d UserInfoDeps, ctx core.HandlerContext) (*core.
 		return nil, false
 	}
 	return claims, true
+}
+
+// resolveUserInfoSubject resolves the token's (possibly pairwise) subject to
+// the local UserProvider key and fetches the user record. On any failure it
+// writes the terminal wire response and returns ok=false; the caller MUST
+// return immediately.
+func resolveUserInfoSubject(d UserInfoDeps, ctx core.HandlerContext, claims *core.TokenClaims) (*core.User, bool) {
+	// OIDC §8 pairwise: resolve the per-sector sub to the local UserProvider key
+	// for the lookup, but keep claims.Subject untouched for the response.
+	lookupSub, perr := d.ResolveLocalSubject(ctx.Request().Context(), claims.Subject)
+	if perr != nil {
+		d.SrvLogger().Error("pairwise resolve failed at /userinfo", "error", perr, "subject", claims.Subject)
+		d.SetResourceBearerChallenge(ctx, d.ResolveIssuer(ctx), core.ErrInvalidToken, "Subject mapping unavailable")
+		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidToken))
+		return nil, false
+	}
+	user, err := d.UserProvider().GetByID(ctx.Request().Context(), lookupSub)
+	if err != nil {
+		// The bearer token was JUST cryptographically validated, so the
+		// subject unquestionably exists — a lookup error here is either the
+		// canonical "gone since token issuance" sentinel (user_not_found is
+		// correct) or a transient backend failure (DB timeout, connection
+		// reset) that must NOT be reported as if the account no longer
+		// existed. Conflating the two would tell the RP to treat a live
+		// user as deleted during a mere storage hiccup. Mirrors the
+		// core.ErrNoSuchUser convention used at every other UserProvider
+		// call site that must distinguish "definitively absent" from
+		// "store unavailable" (e.g. protocols/caep/revoker.go's resolveResult).
+		if errors.Is(err, core.ErrNoSuchUser) {
+			ctx.JSON(http.StatusNotFound, core.ErrorBody(core.ErrUserNotFound))
+			return nil, false
+		}
+		d.SrvLogger().Error("userinfo user lookup failed", "error", err, "subject", lookupSub)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return nil, false
+	}
+	return user, true
 }
 
 // buildOIDCUserInfoBody projects the OIDC-standard claim shape (§5.4) and
