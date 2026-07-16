@@ -115,7 +115,7 @@ func (s *Server) runInvalidationBus(ctx context.Context, done chan struct{}, eve
 	attempt := 0
 	for {
 		for evt := range events {
-			s.applyInvalidation(ctx, evt)
+			s.applyInvalidationSafe(ctx, evt)
 		}
 		// The channel closed. If ctx is done this is a clean shutdown — the
 		// memory + etcd bus peers both close the stream BECAUSE ctx was
@@ -362,6 +362,24 @@ func (s *Server) recordCIBAPingFailure(clientID, authReqID, reason string) {
 		s.metrics.CIBAPingTotal.WithLabelValues("error").Inc()
 	}
 	audit.RecordCIBAPingFailed(s.auditor, context.Background(), clientID, authReqID, reason)
+}
+
+// applyInvalidationSafe wraps applyInvalidation with a recover so a panic
+// anywhere in the dispatch tree — a pluggable core.TokenIssuer's Revoke or
+// AdoptVerifyKey, or any other injected store it reaches into — is contained
+// to this ONE event instead of escaping runInvalidationBus's bare `for evt
+// := range events` loop, which has no recover of its own. An unrecovered
+// panic in ANY goroutine is process-fatal in Go: without this, one bad Bus
+// event landing on a buggy custom TokenIssuer would crash the whole server.
+// Mirrors dispatchBackchannelOne / applySigningKeyEventSafe's recover.
+func (s *Server) applyInvalidationSafe(ctx context.Context, evt cluster.Event) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.Error("invalidation bus: applying event panicked, event dropped",
+				"kind", string(evt.Kind), "key", evt.Key, "panic", r)
+		}
+	}()
+	s.applyInvalidation(ctx, evt)
 }
 
 // applyInvalidation clears the local cache a received Event targets. It

@@ -65,7 +65,7 @@ func (s *Server) runSigningKeyAggregation(ctx context.Context, done chan struct{
 	attempt := 0
 	for {
 		for evt := range events {
-			s.applySigningKeyEvent(evt)
+			s.applySigningKeyEventSafe(evt)
 		}
 		if ctx.Err() != nil {
 			return
@@ -203,6 +203,28 @@ func (s *Server) ensureIssuerAlgs() {
 		}
 		s.issuerAlgs = algs
 	})
+}
+
+// applySigningKeyEventSafe wraps applySigningKeyEvent with a recover so a
+// panic anywhere in the adoption path — most notably a pluggable, operator-
+// supplied core.TokenIssuer's AdoptVerifyKey/DropVerifyKey/JWKS — is
+// contained to this ONE event instead of escaping runSigningKeyAggregation's
+// bare `for evt := range events` loop. That loop has no recover of its own,
+// and an unrecovered panic in ANY goroutine is always process-fatal in Go:
+// without this wrapper, one bad peer-key announcement landing on a buggy
+// custom issuer would silently crash the entire server, aborting every other
+// in-flight request. Mirrors the per-item recover convention already used by
+// dispatchBackchannelOne (server_backchannel_logout.go) and
+// launchRetireWatcher (server_key_rotation.go).
+func (s *Server) applySigningKeyEventSafe(evt signingkeys.Event) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.Error("signingkeys: applying registry event panicked, event dropped",
+				"replica_id", evt.Announcement.ReplicaID, "panic", r)
+			s.recordAdoptionError(metrics.AdoptionReasonPanic)
+		}
+	}()
+	s.applySigningKeyEvent(evt)
 }
 
 // applySigningKeyEvent reconciles a registry event into the local issuers' peer verify-sets.

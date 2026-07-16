@@ -184,13 +184,16 @@ const (
 // SupportedMethods() before they reach the registry (§5).
 const TenantLabelOther = "other"
 
-// Signing-key adoption-error reasons, bounded to the two failure modes the
+// Signing-key adoption-error reasons, bounded to the three failure modes the
 // aggregation adoption path can hit for a peer JWK: it failed to decode
-// (malformed/off-curve/weak material) or it decoded but the issuer rejected
-// AdoptVerifyKey (e.g. a local kid collision). Bounded cardinality by design.
+// (malformed/off-curve/weak material), it decoded but the issuer rejected
+// AdoptVerifyKey (e.g. a local kid collision), or applying the registry event
+// panicked (a bug in a pluggable, operator-supplied core.TokenIssuer — see
+// applySigningKeyEventSafe). Bounded cardinality by design.
 const (
 	AdoptionReasonDecode = "decode"
 	AdoptionReasonAdopt  = "adopt"
+	AdoptionReasonPanic  = "panic"
 )
 
 // Coordinated signing-key cutover outcomes (sso_signing_key_cutover_total),
