@@ -234,8 +234,19 @@ identity:
 // warning log instead of silently defaulting. The config itself still
 // loads successfully — this is the graceful-fallback contract.
 func TestLoader_UnknownKey_Warns(t *testing.T) {
-	t.Parallel()
-	// Capture slog output.
+	// Deliberately NOT t.Parallel(): this test redirects the PROCESS-GLOBAL
+	// slog default logger to a local buffer for the duration of its body.
+	// slog.SetDefault has no per-goroutine scoping, so running this
+	// concurrently with any other test that logs via the package-level
+	// slog.Warn/slog.Error (e.g. ValidateVersion, which every other Load()-
+	// calling test in this package triggers) is a genuine data race on the
+	// shared buffer — confirmed via `go test -race`, which caught a real
+	// WARNING: DATA RACE between this test's buf.String() read and a
+	// concurrent slog write from a sibling t.Parallel() test. Running
+	// sequentially (the default for a non-parallel top-level test — every
+	// t.Parallel() test in the package is deferred until all sequential
+	// tests finish) guarantees no other test's goroutine can log through
+	// the redirected default while it's active.
 	var buf bytes.Buffer
 	h := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
 	oldLogger := slog.Default()
