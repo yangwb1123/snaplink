@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"context"
 	"math"
 	"net/http"
 	"strconv"
@@ -14,33 +15,91 @@ import (
 )
 
 // checkQuotaBeforeCreate checks if the tenant has capacity to create a
-// resource. Returns handled=true when the response is already written
-// (quota exceeded or store error).
-func (s *Server) checkQuotaBeforeCreate(ctx HandlerContext, tenantID string, resource core.ResourceType) bool {
+// resource. denied=true means a 403 was already written and the caller must
+// stop; charged=true means the caller MUST compensate with
+// releaseResourceQuota if the resource creation subsequently fails, so a
+// transient store error never permanently over-counts usage.
+func (s *Server) checkQuotaBeforeCreate(ctx HandlerContext, tenantID string, resource core.ResourceType) (charged, denied bool) {
 	if s.tenantQuotaStore == nil || tenantID == "" {
-		return false
+		return false, false
 	}
-	if err := s.tenantQuotaStore.IncrementUsage(ctx.Request().Context(), tenantID, resource, 1); err != nil {
-		if err == core.ErrQuotaExceeded {
-			s.logger.Error("tenant quota exceeded", "tenant_id", tenantID, "resource", resource)
-			ctx.JSON(http.StatusForbidden, errorBody(ctx, core.ErrQuotaExceededCode))
-			return true
-		}
+	err := s.tenantQuotaStore.IncrementUsage(ctx.Request().Context(), tenantID, resource, 1)
+	switch {
+	case err == nil:
+		return true, false
+	case err == core.ErrQuotaExceeded:
+		s.logger.Error("tenant quota exceeded", "tenant_id", tenantID, "resource", resource)
+		ctx.JSON(http.StatusForbidden, errorBody(ctx, core.ErrQuotaExceededCode))
+		return false, true
+	default:
 		s.logger.Error("quota check failed", "tenant_id", tenantID, "resource", resource, "error", err)
 		// Fail-open on store errors — don't block resource creation.
-		return false
+		return false, false
 	}
-	return false
+}
+
+// releaseResourceQuota compensates a checkQuotaBeforeCreate charge when the
+// resource creation it guarded fails afterward. Fail-open: a decrement error
+// is logged, never surfacing over the original creation error.
+func (s *Server) releaseResourceQuota(ctx context.Context, tenantID string, resource core.ResourceType) {
+	if err := s.tenantQuotaStore.DecrementUsage(ctx, tenantID, resource, 1); err != nil {
+		s.logger.Error("tenant quota release failed", "tenant_id", tenantID, "resource", resource, "error", err)
+	}
+}
+
+// chargeSessionQuota increments the tenant's session-quota counter before a
+// new session is created (createSession, server_logout.go). denied=true
+// means a 403 quota_exceeded was already written and the caller must stop
+// without creating anything; charged=true means the caller MUST compensate
+// with releaseSessionQuota if session creation subsequently fails, so a
+// transient session-store error never permanently over-counts usage.
+// Fail-open on a non-quota store error (charged=false, denied=false): a
+// store outage must not block login.
+func (s *Server) chargeSessionQuota(ctx HandlerContext, tenantID, userID string) (charged, denied bool) {
+	if s.tenantQuotaStore == nil || tenantID == "" {
+		return false, false
+	}
+	rctx := ctx.Request().Context()
+	err := s.tenantQuotaStore.IncrementUsage(rctx, tenantID, core.ResourceSessions, 1)
+	switch {
+	case err == nil:
+		return true, false
+	case err == core.ErrQuotaExceeded:
+		s.logger.Error("tenant session quota exceeded", "tenant_id", tenantID, "user", userID)
+		ctx.JSON(http.StatusForbidden, errorBody(ctx, core.ErrQuotaExceededCode))
+		return false, true
+	default:
+		s.logger.Error("tenant quota check failed", "tenant_id", tenantID, "error", err)
+		return false, false
+	}
+}
+
+// releaseSessionQuota compensates a chargeSessionQuota charge when the
+// session creation it guarded fails afterward. Fail-open: a decrement error
+// is logged, never surfacing over the original session-creation error.
+func (s *Server) releaseSessionQuota(rctx context.Context, tenantID string) {
+	if err := s.tenantQuotaStore.DecrementUsage(rctx, tenantID, core.ResourceSessions, 1); err != nil {
+		s.logger.Error("tenant session quota release failed", "tenant_id", tenantID, "error", err)
+	}
 }
 
 // CheckClientCreateQuota is the oauth.RegisterDeps seam that makes the tenant
 // client-create quota LIVE on the DCR /register path. It charges one unit of
-// core.ResourceClients against the tenant; returns true when a 403
-// quota_exceeded was already written (the caller must stop). Skips (false) when
-// no quota store is wired or the client is tenant-less, and fails OPEN on a
-// non-quota store error — matching the createSession session-quota precedent.
-func (s *Server) CheckClientCreateQuota(ctx HandlerContext, tenantID string) bool {
+// core.ResourceClients against the tenant; denied=true means a 403
+// quota_exceeded was already written (the caller must stop). charged=true
+// means the caller MUST call ReleaseClientCreateQuota if the client-store
+// write subsequently fails. Skips (false, false) when no quota store is
+// wired or the client is tenant-less, and fails OPEN on a non-quota store
+// error — matching the createSession session-quota precedent.
+func (s *Server) CheckClientCreateQuota(ctx HandlerContext, tenantID string) (charged, denied bool) {
 	return s.checkQuotaBeforeCreate(ctx, tenantID, core.ResourceClients)
+}
+
+// ReleaseClientCreateQuota compensates a CheckClientCreateQuota charge when
+// the DCR client-store write fails afterward — without it, a transient
+// store error permanently over-counts the tenant's client usage.
+func (s *Server) ReleaseClientCreateQuota(ctx context.Context, tenantID string) {
+	s.releaseResourceQuota(ctx, tenantID, core.ResourceClients)
 }
 
 // rateLimiterEntry pairs a token bucket limiter with the grant type it

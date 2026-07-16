@@ -54,9 +54,10 @@ func decodeBody(t interface{ Fatalf(string, ...any) }, rec *httptest.ResponseRec
 // --- in-memory ClientStore -------------------------------------------------
 
 type memClientStore struct {
-	mu      sync.Mutex
-	clients map[string]*core.Client
-	secrets map[string]string
+	mu          sync.Mutex
+	clients     map[string]*core.Client
+	secrets     map[string]string
+	forceAddErr error // when non-nil, Add always fails with this error
 }
 
 func newMemClientStore() *memClientStore {
@@ -110,6 +111,9 @@ func (s *memClientStore) List(_ context.Context) ([]*core.Client, error) {
 func (s *memClientStore) Add(_ context.Context, c *core.Client) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.forceAddErr != nil {
+		return s.forceAddErr
+	}
 	if _, ok := s.clients[c.ID]; ok {
 		return core.ErrClientExists
 	}

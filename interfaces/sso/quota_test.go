@@ -118,3 +118,91 @@ type faultyQuotaStore struct {
 func (faultyQuotaStore) IncrementUsage(context.Context, string, core.ResourceType, int64) error {
 	return errors.New("quota store unavailable")
 }
+
+// addFailingClientStore wraps a real ClientStore but forces Add to fail, so
+// tests can prove a client-create quota charge is released when persistence
+// fails AFTER the charge — a fault injector, not a behavior mock.
+type addFailingClientStore struct {
+	core.ClientStore
+}
+
+func (addFailingClientStore) Add(context.Context, *core.Client) error {
+	return errors.New("client store unavailable")
+}
+
+// TestDCRRegister_QuotaReleasedOnPersistFailure proves the client-create
+// quota charge is released when the client-store write fails afterward —
+// closing the leak where a transient persist failure permanently
+// over-counted the tenant's usage (no compensating decrement previously
+// existed at all).
+func TestDCRRegister_QuotaReleasedOnPersistFailure(t *testing.T) {
+	t.Parallel()
+	qs := memorystoreidentity.NewMemoryTenantQuotaStore()
+	s := rcovNewServer(t,
+		sso.WithDynamicClientRegistration(oauth.DCRPolicy{InitialAccessToken: "iat", DefaultActive: true}),
+		sso.WithTenantQuotaStore(qs),
+		sso.WithClientStore(addFailingClientStore{ClientStore: memorystoreidentity.NewMemoryClientStore()}),
+	)
+
+	status, _ := rcovPostJSON(t, s.http.URL+"/register", "iat", dcrRegisterBody("t-acme"))
+	if status != http.StatusInternalServerError {
+		t.Fatalf("register with forced persist failure = %d, want 500", status)
+	}
+
+	u, err := qs.GetUsage(context.Background(), "t-acme")
+	if err != nil {
+		t.Fatalf("get usage: %v", err)
+	}
+	if u.Clients != 0 {
+		t.Fatalf("tenant client quota not released after persist failure: clients = %d, want 0", u.Clients)
+	}
+}
+
+// createFailingSessionManager wraps a real SessionManager but forces Create
+// to fail. Deliberately does NOT implement SessionMetaCreator (only the base
+// core.SessionManager is embedded) so createSession's type-assertion falls
+// back to the plain Create path this wrapper intercepts.
+type createFailingSessionManager struct {
+	core.SessionManager
+}
+
+func (createFailingSessionManager) Create(context.Context, string) (*core.Session, error) {
+	return nil, errors.New("session store unavailable")
+}
+
+// TestLogin_SessionQuotaReleasedOnCreateFailure proves the tenant session
+// quota charge is released when session-store Create fails afterward —
+// closing the leak where a transient session-store failure permanently
+// over-counted the tenant's session usage (no compensating decrement
+// previously existed at all).
+func TestLogin_SessionQuotaReleasedOnCreateFailure(t *testing.T) {
+	t.Parallel()
+	qs := memorystoreidentity.NewMemoryTenantQuotaStore()
+	s := rcovNewServer(t,
+		sso.WithTenantQuotaStore(qs),
+		sso.WithSessionManager(createFailingSessionManager{SessionManager: memorystoreidentity.NewMemorySessionManager()}),
+	)
+	s.clients.AddSeed(&sso.Client{
+		ID: "tenant-client", Secret: rcovSecret, Name: "Tenant Client",
+		RedirectURIs: []string{rcovRedirect}, AllowedAuthenticators: []string{"password"},
+		TokenStrategy: "jwt", Active: true, SkipConsent: true, TenantID: "t-acme",
+	})
+
+	status, _ := rcovPostJSON(t, s.http.URL+"/auth/login", "", map[string]any{
+		"provider":   "password",
+		"client_id":  "tenant-client",
+		"credential": map[string]string{"username": rcovUsername, "password": rcovPassword},
+		"scope":      []string{"openid"},
+	})
+	if status != http.StatusInternalServerError {
+		t.Fatalf("login with forced session-create failure = %d, want 500", status)
+	}
+
+	u, err := qs.GetUsage(context.Background(), "t-acme")
+	if err != nil {
+		t.Fatalf("get usage: %v", err)
+	}
+	if u.Sessions != 0 {
+		t.Fatalf("tenant session quota not released after create failure: sessions = %d, want 0", u.Sessions)
+	}
+}

@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/snaplink/sso/interfaces/middleware"
@@ -22,12 +23,18 @@ type RegisterDeps interface {
 	RequireClientStore() error
 
 	// CheckClientCreateQuota charges one client against the tenant's
-	// resource quota before persistence. It returns true when a 403
+	// resource quota before persistence. denied=true means a 403
 	// quota_exceeded response was already written (the caller MUST stop);
-	// false when the create may proceed. It is nil-safe on tenant-less
-	// clients (open registration) and fails OPEN on a store outage — the
-	// same governance posture as the session-creation quota gate.
-	CheckClientCreateQuota(ctx core.HandlerContext, tenantID string) bool
+	// charged=true means the caller MUST call ReleaseClientCreateQuota if
+	// persistence subsequently fails. It is nil-safe on tenant-less clients
+	// (open registration) and fails OPEN on a store outage — the same
+	// governance posture as the session-creation quota gate.
+	CheckClientCreateQuota(ctx core.HandlerContext, tenantID string) (charged, denied bool)
+
+	// ReleaseClientCreateQuota compensates a CheckClientCreateQuota charge
+	// when the client-store write fails afterward, so a transient store
+	// error never permanently over-counts the tenant's client usage.
+	ReleaseClientCreateQuota(ctx context.Context, tenantID string)
 
 	// Auditor returns the audit Recorder so the self-service DCR
 	// create/update/delete paths can record a credential-lifecycle event
@@ -174,20 +181,34 @@ func HandleRegister(d RegisterDeps, ctx core.HandlerContext) {
 		return
 	}
 	client := buildRegisteredClient(&req, policy, id, secret, regToken, public)
-	// Tenant client-create quota gate; a 403 quota_exceeded was already written
-	// when this returns true (open-registration clients are tenant-less → no-op).
-	if d.CheckClientCreateQuota(ctx, client.TenantID) {
-		return
-	}
-	if err := d.ClientStoreAccessor().Add(ctx.Request().Context(), client); err != nil {
-		d.SrvLogger().Error("dcr persist failed", "error", err)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+	if !persistRegisteredClient(d, ctx, client) {
 		return
 	}
 	d.InvalidateClientCache(client.ID) // evict local + publish KindClientChange to peers
 	// Forensic trail — recorded ONLY now that the store write succeeded.
 	recordRegistrationCreated(d, ctx, policy, client.ID)
 	ctx.JSON(http.StatusCreated, buildDCRResponse(&req, client, ctx, secret, regToken))
+}
+
+// persistRegisteredClient runs the quota-gated client-store write: charges
+// the tenant's client quota, writes the record, and — if the write fails
+// after a successful charge — releases the quota so a transient store error
+// never permanently over-counts usage. Returns false when the response was
+// already written (quota denied or persist failure).
+func persistRegisteredClient(d RegisterDeps, ctx core.HandlerContext, client *core.Client) bool {
+	charged, denied := d.CheckClientCreateQuota(ctx, client.TenantID)
+	if denied {
+		return false
+	}
+	if err := d.ClientStoreAccessor().Add(ctx.Request().Context(), client); err != nil {
+		if charged {
+			d.ReleaseClientCreateQuota(ctx.Request().Context(), client.TenantID)
+		}
+		d.SrvLogger().Error("dcr persist failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return false
+	}
+	return true
 }
 
 // HandleRegistrationGet implements RFC 7592 §2.1 — the client

@@ -137,3 +137,71 @@ type UsernameCheckProvider interface {
 type EmailCheckProvider interface {
 	EmailExists(ctx context.Context, email string) (bool, error)
 }
+
+// ---- Tenant resource quotas ----
+// Co-located here (not spi.go, which declares most other tenant SPI) purely
+// to stay under spi.go's 500-line budget (AGENTS.md §0.1) — thematically
+// still tenant SPI, same family as TenantUserStore above.
+
+// ResourceType identifies a quota-bounded resource dimension.
+type ResourceType string
+
+const (
+	ResourceClients   ResourceType = "clients"
+	ResourceUsers     ResourceType = "users"
+	ResourceSessions  ResourceType = "sessions"
+	ResourceTokenRate ResourceType = "token_rate"
+)
+
+// TenantQuota defines the resource limits for a single tenant.
+// Zero values mean "unlimited" (backward compatible with deployments
+// that don't wire a quota store).
+type TenantQuota struct {
+	MaxClients  int `json:"max_clients,omitempty"`
+	MaxUsers    int `json:"max_users,omitempty"`
+	MaxSessions int `json:"max_sessions,omitempty"`
+	// MaxTokenRate is the maximum tokens per second this tenant may
+	// issue across all clients. 0 = unlimited.
+	MaxTokenRate int `json:"max_token_rate,omitempty"`
+}
+
+// TenantUsage records a tenant's current resource consumption.
+type TenantUsage struct {
+	Clients  int `json:"clients"`
+	Users    int `json:"users"`
+	Sessions int `json:"sessions"`
+	// TokenRate is the current 1-minute rolling average of token
+	// issuance requests per second.
+	TokenRate float64 `json:"token_rate,omitempty"`
+}
+
+// TenantQuotaStore persists and evaluates per-tenant resource quotas.
+// When nil (not wired), every Create/Register/Login operation proceeds
+// without quota checks — byte-identical to a pre-quota build.
+type TenantQuotaStore interface {
+	// GetQuota returns the configured quota for tenantID.
+	// Returns default (unlimited) quota when none is set.
+	GetQuota(ctx context.Context, tenantID string) (*TenantQuota, error)
+
+	// GetUsage returns the current resource consumption for tenantID.
+	GetUsage(ctx context.Context, tenantID string) (*TenantUsage, error)
+
+	// IncrementUsage atomically increments the counter for resource.
+	// Returns ErrQuotaExceeded when the increment would exceed the limit.
+	IncrementUsage(ctx context.Context, tenantID string, resource ResourceType, delta int64) error
+
+	// DecrementUsage atomically decrements the counter for resource, floored
+	// at 0 (never negative). Callers use this to compensate a successful
+	// IncrementUsage when the resource creation it guarded fails AFTER the
+	// charge (e.g. session-store Create errors, DCR client-store Add
+	// errors) — without it, a transient downstream failure permanently
+	// over-counts usage and can eventually reject legitimate requests under
+	// a tenant that is really still under quota.
+	DecrementUsage(ctx context.Context, tenantID string, resource ResourceType, delta int64) error
+
+	// SetQuota updates the quota configuration for tenantID.
+	SetQuota(ctx context.Context, tenantID string, quota *TenantQuota) error
+
+	// ResetUsage resets usage counters (e.g. after billing period rollover).
+	ResetUsage(ctx context.Context, tenantID string) error
+}

@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,13 @@ type registerDeps struct {
 	clients     core.ClientStore
 	reqErr      error    // forced RequireClientStore error
 	invalidated []string // client IDs passed to InvalidateClientCache
+
+	// quotaCharged, when true, makes CheckClientCreateQuota report a charge
+	// (as if a real quota store were wired) so tests can exercise the
+	// release-on-failure path. releasedQuota records ReleaseClientCreateQuota
+	// calls (tenant IDs) for assertions.
+	quotaCharged  bool
+	releasedQuota []string
 }
 
 func (d *registerDeps) DCRPolicy() *DCRPolicy                                          { return d.policy }
@@ -31,7 +39,12 @@ func (d *registerDeps) SetBearerChallenge(core.HandlerContext, string, string, s
 func (d *registerDeps) RequireClientStore() error                                      { return d.reqErr }
 func (d *registerDeps) Auditor() *audit.Recorder                                       { return nil }
 func (d *registerDeps) InvalidateClientCache(id string)                                { d.invalidated = append(d.invalidated, id) }
-func (d *registerDeps) CheckClientCreateQuota(core.HandlerContext, string) bool        { return false }
+func (d *registerDeps) CheckClientCreateQuota(core.HandlerContext, string) (bool, bool) {
+	return d.quotaCharged, false
+}
+func (d *registerDeps) ReleaseClientCreateQuota(_ context.Context, tenantID string) {
+	d.releasedQuota = append(d.releasedQuota, tenantID)
+}
 
 var _ RegisterDeps = (*registerDeps)(nil)
 

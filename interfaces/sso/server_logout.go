@@ -397,40 +397,46 @@ func (s *Server) createSession(ctx HandlerContext, userID, clientID, tenantID st
 		return nil, errMaxActiveSessions
 	}
 
-	// Tenant-level session quota check. When the tenant has reached its
-	// session limit, the creation is blocked with a 403. Fail-open: a
-	// store error logs but does not block login.
-	if s.tenantQuotaStore != nil && tenantID != "" {
-		if err := s.tenantQuotaStore.IncrementUsage(rctx, tenantID, core.ResourceSessions, 1); err != nil {
-			if err == core.ErrQuotaExceeded {
-				s.logger.Error("tenant session quota exceeded", "tenant_id", tenantID, "user", userID)
-				ctx.JSON(http.StatusForbidden, errorBody(ctx, core.ErrQuotaExceededCode))
-				return nil, core.ErrQuotaExceeded
-			}
-			s.logger.Error("tenant quota check failed", "tenant_id", tenantID, "error", err)
-		}
+	// Tenant-level session quota check (quota.go's chargeSessionQuota). When
+	// the tenant has reached its session limit, the creation is blocked with
+	// a 403. A charge here is compensated below if creation fails afterward.
+	charged, denied := s.chargeSessionQuota(ctx, tenantID, userID)
+	if denied {
+		return nil, core.ErrQuotaExceeded
 	}
 
 	if s.maxSessionsPerUser > 0 {
 		s.evictOldestSession(rctx, userID, tenantID, s.maxSessionsPerUser)
 	}
 
-	if mc, ok := s.sessionMgr.(SessionMetaCreator); ok {
-		meta := SessionMeta{
-			IP:        audit.ClientIP(ctx.Request()),
-			UserAgent: ctx.Request().UserAgent(),
-			TenantID:  tenantID,
-		}
-		// Zero-trust: bind the initial trust score + decay baseline at login when
-		// WithSessionTrustDecay is wired. Off by default ⇒ zero values ⇒ the decay
-		// curve / min-trust gate fail-open (byte-identical).
-		if s.sessionTrust.enabled() {
-			meta.TrustScore = s.sessionTrust.initialScore
-			meta.TrustSetAt = time.Now()
-		}
-		return mc.CreateWithMeta(rctx, userID, meta)
+	sess, err := s.createSessionRecord(ctx, rctx, userID, tenantID)
+	if err != nil && charged {
+		s.releaseSessionQuota(rctx, tenantID)
 	}
-	return s.sessionMgr.Create(rctx, userID)
+	return sess, err
+}
+
+// createSessionRecord does the actual session-store write for createSession,
+// via CreateWithMeta when the wired SessionManager supports it (IP/UA/tenant
+// + zero-trust initial score) or the plain Create otherwise.
+func (s *Server) createSessionRecord(ctx HandlerContext, rctx context.Context, userID, tenantID string) (*Session, error) {
+	mc, ok := s.sessionMgr.(SessionMetaCreator)
+	if !ok {
+		return s.sessionMgr.Create(rctx, userID)
+	}
+	meta := SessionMeta{
+		IP:        audit.ClientIP(ctx.Request()),
+		UserAgent: ctx.Request().UserAgent(),
+		TenantID:  tenantID,
+	}
+	// Zero-trust: bind the initial trust score + decay baseline at login when
+	// WithSessionTrustDecay is wired. Off by default ⇒ zero values ⇒ the decay
+	// curve / min-trust gate fail-open (byte-identical).
+	if s.sessionTrust.enabled() {
+		meta.TrustScore = s.sessionTrust.initialScore
+		meta.TrustSetAt = time.Now()
+	}
+	return mc.CreateWithMeta(rctx, userID, meta)
 }
 
 // evictOldestSession lists the user's sessions for the given tenant and, when

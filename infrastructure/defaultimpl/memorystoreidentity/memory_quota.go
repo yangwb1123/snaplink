@@ -81,6 +81,28 @@ func (s *MemoryTenantQuotaStore) IncrementUsage(_ context.Context, tenantID stri
 	return nil
 }
 
+// DecrementUsage implements core.TenantQuotaStore. Floors at 0 — a caller
+// compensating an IncrementUsage it never actually charged (e.g. a double
+// rollback) must not push the counter negative.
+func (s *MemoryTenantQuotaStore) DecrementUsage(_ context.Context, tenantID string, resource core.ResourceType, delta int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	u, ok := s.usage[tenantID]
+	if !ok {
+		return nil
+	}
+	switch resource {
+	case core.ResourceClients:
+		u.Clients = max(0, u.Clients-int(delta))
+	case core.ResourceUsers:
+		u.Users = max(0, u.Users-int(delta))
+	case core.ResourceSessions:
+		u.Sessions = max(0, u.Sessions-int(delta))
+	}
+	return nil
+}
+
 // SetQuota implements core.TenantQuotaStore.
 func (s *MemoryTenantQuotaStore) SetQuota(_ context.Context, tenantID string, quota *core.TenantQuota) error {
 	s.mu.Lock()
