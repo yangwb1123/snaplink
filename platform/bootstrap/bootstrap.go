@@ -309,7 +309,7 @@ func (r *Runner) heartbeat(ctx context.Context, h lock.Handle, interval time.Dur
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if err := h.Renew(ctx); err != nil {
+			if err := r.safeRenew(ctx, h); err != nil {
 				select {
 				case exit <- err:
 				default:
@@ -319,6 +319,26 @@ func (r *Runner) heartbeat(ctx context.Context, h lock.Handle, interval time.Dur
 			}
 		}
 	}
+}
+
+// safeRenew calls h.Renew guarded by a recover. Lock is a pluggable SPI —
+// third-party backends (redis, postgres advisory, a custom etcd variant)
+// are expected — and this heartbeat goroutine has no caller to propagate
+// a panic to: an unrecovered panic in ANY goroutine is process-fatal in
+// Go, so a bug in one operator-supplied Renew implementation would take
+// down the entire server mid-boot. A panic means we no longer know
+// whether the lease is actually held, so — mirroring an ordinary Renew
+// failure — it is folded into ErrLockLost: fail closed and cancel the
+// in-flight step rather than silently carrying on under an uncertain lock.
+func (r *Runner) safeRenew(ctx context.Context, h lock.Handle) (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			r.logger.Error("bootstrap lock heartbeat panicked, treating lease as lost",
+				"namespace", r.namespace, "key", r.lockKey, "panic", rec)
+			err = fmt.Errorf("%w: heartbeat panic: %v", ErrLockLost, rec)
+		}
+	}()
+	return h.Renew(ctx)
 }
 
 // EventLock* are the audit event-type names the Runner emits for lock

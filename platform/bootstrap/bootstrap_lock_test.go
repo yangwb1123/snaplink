@@ -57,16 +57,23 @@ func (f *fakeLock) freeLocked() {
 }
 
 type fakeHandle struct {
-	parent     *fakeLock
-	key        string
-	token      uint64
-	renewFails atomic.Int32 // how many Renew calls remain before returning lock.ErrLockLost
-	released   atomic.Bool
+	parent      *fakeLock
+	key         string
+	token       uint64
+	renewFails  atomic.Int32 // how many Renew calls remain before returning lock.ErrLockLost
+	renewPanics atomic.Bool  // Renew panics once instead of returning an error
+	released    atomic.Bool
 }
 
 func (h *fakeHandle) Renew(context.Context) error {
 	if h.released.Load() {
 		return lock.ErrLockLost
+	}
+	if h.renewPanics.CompareAndSwap(true, false) {
+		// Simulates a bug in a third-party Lock.Handle implementation
+		// (redis, postgres advisory, a hand-rolled backend) — the Runner
+		// must not let this crash the whole process.
+		panic("simulated Renew panic from a buggy Lock.Handle implementation")
 	}
 	if h.renewFails.Load() > 0 {
 		if h.renewFails.Add(-1) == 0 {
@@ -219,6 +226,52 @@ func TestRunner_LockLost_DuringStep_AbortsAndSurfacesErrLockLost(t *testing.T) {
 	v, _ := tr.AppliedVersion(context.Background(), "ns")
 	if v != 0 {
 		t.Errorf("version = %d, want 0 (step must not be marked applied after lock loss)", v)
+	}
+}
+
+// TestRunner_HeartbeatPanic_DoesNotCrashProcess proves a panic inside a
+// pluggable Lock.Handle.Renew (a bug in a third-party backend, not one of
+// the in-tree ones) is contained by the heartbeat goroutine instead of
+// taking down the whole process. Before the fix, heartbeat called
+// h.Renew(ctx) with no recover; since an unrecovered panic in ANY
+// goroutine is process-fatal in Go, this test process itself would abort
+// before ever reaching the assertions below. The fix folds the panic into
+// ErrLockLost, matching the fail-closed semantics an ordinary Renew
+// failure already has.
+func TestRunner_HeartbeatPanic_DoesNotCrashProcess(t *testing.T) {
+	t.Parallel()
+	fl := newFakeLock()
+	tr := memory.New()
+	r := bootstrap.NewRunner("ns", tr,
+		bootstrap.WithLock(fl, "/k"),
+		bootstrap.WithLockTTL(120*time.Millisecond), // heartbeat = ~40ms
+	)
+	go func() {
+		// Let the Runner enter the step + start the heartbeat before
+		// arming the panic on the live handle.
+		time.Sleep(50 * time.Millisecond)
+		fl.mu.Lock()
+		if fl.heldBy != nil {
+			fl.heldBy.renewPanics.Store(true)
+		}
+		fl.mu.Unlock()
+	}()
+	r.Register(step("slow", 1, func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+			return nil
+		}
+	}))
+
+	err := r.Run(context.Background())
+	if !errors.Is(err, bootstrap.ErrLockLost) {
+		t.Fatalf("err = %v, want ErrLockLost", err)
+	}
+	v, _ := tr.AppliedVersion(context.Background(), "ns")
+	if v != 0 {
+		t.Errorf("version = %d, want 0 (step must not be marked applied after a heartbeat panic)", v)
 	}
 }
 
