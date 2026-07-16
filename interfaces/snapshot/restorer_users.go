@@ -2,6 +2,7 @@ package snapshot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/snaplink/sso/interfaces/sso"
@@ -61,7 +62,11 @@ func (r *Restorer) pruneUsers(ctx context.Context, snap *Snapshot, dryRun bool, 
 
 // mergeUser inserts u only when absent (ModeMerge).
 func (r *Restorer) mergeUser(ctx context.Context, u *sso.User, dryRun bool, c *CategoryCounts) error {
-	if _, err := r.Users.GetByID(ctx, u.ID); err == nil {
+	present, err := r.userPresent(ctx, u.ID)
+	if err != nil {
+		return err
+	}
+	if present {
 		c.Skipped++
 		return nil
 	}
@@ -76,9 +81,9 @@ func (r *Restorer) mergeUser(ctx context.Context, u *sso.User, dryRun bool, c *C
 
 // upsertUser inserts or updates u (ModeOverwrite / ModeReplace).
 func (r *Restorer) upsertUser(ctx context.Context, u *sso.User, dryRun bool, c *CategoryCounts) error {
-	present := false
-	if _, err := r.Users.GetByID(ctx, u.ID); err == nil {
-		present = true
+	present, err := r.userPresent(ctx, u.ID)
+	if err != nil {
+		return err
 	}
 	if !dryRun {
 		if err := r.Users.CreateOrUpdate(ctx, u); err != nil {
@@ -91,4 +96,21 @@ func (r *Restorer) upsertUser(ctx context.Context, u *sso.User, dryRun bool, c *
 		c.Inserted++
 	}
 	return nil
+}
+
+// userPresent reports whether a user with id exists in the destination.
+// ErrNoSuchUser maps to absent; any other error (a transient backend
+// failure — connection reset, timeout) propagates instead of being
+// silently treated as "doesn't exist." Without this distinction a
+// transient GetByID failure during ModeMerge would fall through to
+// CreateOrUpdate and clobber a live user's data with the snapshot's
+// stale copy — exactly the destructive behavior ModeMerge promises not
+// to do ("leave existing untouched").
+func (r *Restorer) userPresent(ctx context.Context, id string) (bool, error) {
+	if _, err := r.Users.GetByID(ctx, id); err == nil {
+		return true, nil
+	} else if !errors.Is(err, sso.ErrNoSuchUser) {
+		return false, fmt.Errorf("get %q: %w", id, err)
+	}
+	return false, nil
 }
