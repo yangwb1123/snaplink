@@ -40,7 +40,7 @@ func (p tpParamCtx) Param(name string) string {
 // revokeCtx builds a POST bulk-revoke HandlerContext with a form body, stamped
 // with actorID as the admin middleware would.
 func revokeCtx(actorID, form string) (core.HandlerContext, *httptest.ResponseRecorder) {
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/admin/tokens/revoke", strings.NewReader(form))
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/admin/tokens/bulk-revoke", strings.NewReader(form))
 	r.Header.Set(core.HeaderContentType, "application/x-www-form-urlencoded")
 	r = r.WithContext(withActor(r.Context(), actorID, ""))
 	w := httptest.NewRecorder()

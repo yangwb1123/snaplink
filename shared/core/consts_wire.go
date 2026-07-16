@@ -285,7 +285,7 @@ const (
 	PathAdminTokenSubject    = "/admin/tokens/subjects/:subject"
 	PathAdminTokenExpiring   = "/admin/tokens/expiring"
 	PathAdminTokenSuspicious = "/admin/tokens/suspicious"
-	PathAdminTokenRevoke     = "/admin/tokens/revoke"
+	PathAdminTokenBulkRevoke = "/admin/tokens/bulk-revoke" // distinct from the gateway's single-revoke path; see mountAdminTokenGovernance
 )
 
 // PathAdminTokenExchangeChain is the RFC 8693 token-exchange delegation-chain

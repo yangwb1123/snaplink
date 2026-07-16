@@ -15,7 +15,7 @@ const (
 	PathAdminTokenSubject    = core.PathAdminTokenSubject
 	PathAdminTokenExpiring   = core.PathAdminTokenExpiring
 	PathAdminTokenSuspicious = core.PathAdminTokenSuspicious
-	PathAdminTokenRevoke     = core.PathAdminTokenRevoke
+	PathAdminTokenBulkRevoke = core.PathAdminTokenBulkRevoke
 	// PathCheckSessionIframe re-exports core.PathCheckSessionIframe (OpenID
 	// Connect Session Management 1.0 §2) here — rather than in aliases.go,
 	// which sits at the file-line budget — for the endpoint-inventory entry
@@ -113,7 +113,7 @@ func (s *Server) mountAdminTokenGovernance(api Router) {
 		api.GET(PathAdminTokenPortfolio, s.handleAdminTokenPortfolio)
 		api.GET(PathAdminTokenSubject, s.handleAdminTokenSubject)
 		api.GET(PathAdminTokenExpiring, s.handleAdminTokenExpiring)
-		api.POST(PathAdminTokenRevoke, s.handleAdminBulkRevoke)
+		api.POST(PathAdminTokenBulkRevoke, s.handleAdminBulkRevoke)
 	}
 	// Token-policy governance read API (opt-in WithTokenPolicy). Admin-gated
 	// (admin:read); not mounted without a store — byte-identical without it.

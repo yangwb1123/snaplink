@@ -83,9 +83,10 @@ var httpMethodConstName = map[string]string{
 // order). This is deliberately a flat, whole-module namespace rather than a
 // scoped one: the repo's own "No literal leaks — paths/headers/error codes in
 // consts.go" convention (AGENTS.md §4) means route-path and error-code
-// constants are named uniquely enough (PathAdminTokenRevoke, ErrInvalidGrant,
-// ...) that cross-package name collisions are not a real risk in practice,
-// and a flat map is far simpler than reproducing Go's full scoping rules for
+// constants are named uniquely enough (PathAdminTokenBulkRevoke,
+// ErrInvalidGrant, ...) that cross-package name collisions are not a real
+// risk in practice, and a flat map is far simpler than reproducing Go's full
+// scoping rules for
 // a CI checker.
 func collectStringConsts(root string) map[string]string {
 	consts := map[string]string{}

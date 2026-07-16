@@ -565,7 +565,7 @@ wired. Emits `admin_crypto_key_compromised` with the compliance evidence chain
 | `not_found`                   | 404  | Unknown key `{id}` (no registered Source currently reports it), or no inventory wired              |
 | `internal_error`              | 500  | The inventory's Source(s) could not be read                                                        |
 
-### Token portfolio bulk-revoke (`POST /api/v1/admin/tokens/revoke`)
+### Token portfolio bulk-revoke (`POST /api/v1/admin/tokens/bulk-revoke`)
 
 Revocation-storm protection for the admin bulk-revoke workflow. Neither code is
 a credential oracle — the caller is an authenticated admin (admin:write).

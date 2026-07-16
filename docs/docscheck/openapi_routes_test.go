@@ -367,11 +367,14 @@ type openAPIRoute struct{ path, method string }
 // parseOpenAPIRoutes reads docs/openapi.yaml's `paths` mapping and returns
 // every path+method pair. Uses yaml.MapSlice (an ORDERED map that tolerates
 // repeated keys) plus AllowDuplicateMapKey rather than decoding into a plain
-// map[string]any: the file currently has a duplicate `/api/v1/admin/tokens/revoke`
-// path key (see the task report), which goccy/go-yaml's default map decoding
-// hard-errors on — a plain map decode would make this whole test unable to
-// run at all, which is a worse outcome than tolerating the duplicate and
-// reporting both operations under it.
+// map[string]any: the file previously had a duplicate `/api/v1/admin/tokens/revoke`
+// path key (since fixed by giving the bulk-revoke operation its own
+// /api/v1/admin/tokens/bulk-revoke path — the collision meant the gRPC-gateway's
+// catch-all mount over /api/v1/admin/ silently shadowed the bulk-revoke REST
+// handler in the running server). Kept defensively: goccy/go-yaml's default
+// map decoding hard-errors on any repeated key, which would make this whole
+// test unable to run at all on a future accidental duplicate — worse than
+// tolerating it and reporting both operations under it.
 func parseOpenAPIRoutes(file string) ([]openAPIRoute, error) {
 	data, err := os.ReadFile(file)
 	if err != nil {

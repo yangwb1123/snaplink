@@ -76,10 +76,12 @@ func TestNew_MalformedSpecFailsSafe(t *testing.T) {
 }
 
 // TestNew_ToleratesDuplicateTopLevelKey guards against a real regression:
-// docs/openapi.yaml has one known duplicate top-level path key (two
-// unrelated sections both happen to document
-// /api/v1/admin/tokens/revoke). Without yaml.AllowDuplicateMapKey, New
-// would fail to parse the real embedded spec at all.
+// docs/openapi.yaml previously had one duplicate top-level path key (two
+// unrelated sections both documented /api/v1/admin/tokens/revoke, since fixed
+// by giving the bulk-revoke operation its own /api/v1/admin/tokens/bulk-revoke
+// path). Without yaml.AllowDuplicateMapKey, New would fail to parse a spec
+// with a repeated key at all — kept defensively so a future accidental
+// duplicate degrades to "both operations visible" rather than a parse error.
 func TestNew_ToleratesDuplicateTopLevelKey(t *testing.T) {
 	const dup = `
 openapi: 3.0.3

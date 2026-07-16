@@ -368,8 +368,8 @@ func (s *Server) handleAdminTokenSuspicious(ctx HandlerContext) {
 	tokenanomaly.HandleAdminSuspicious(s.tokenAnomalyDetector.Findings(), s.logger, ctx)
 }
 
-// handleAdminBulkRevoke serves POST /api/v1/admin/tokens/revoke — the admin
-// bulk-revoke workflow (admin:write). Reuses the existing refresh-token
+// handleAdminBulkRevoke serves POST /api/v1/admin/tokens/bulk-revoke — the
+// admin bulk-revoke workflow (admin:write). Reuses the existing refresh-token
 // revocation SPIs with revocation-storm caps. no-store headers because it
 // mutates token state.
 func (s *Server) handleAdminBulkRevoke(ctx HandlerContext) {

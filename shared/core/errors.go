@@ -207,7 +207,7 @@ const (
 	// Credential compromise-response (POST /api/v1/admin/credentials/{type}/compromise).
 	ErrCompromiseReasonRequired        = "compromise_reason_required"
 	ErrCredentialCompromiseUnsupported = "credential_compromise_unsupported"
-	// Bulk-revoke workflow (POST /api/v1/admin/tokens/revoke) revocation-storm
+	// Bulk-revoke workflow (POST /api/v1/admin/tokens/bulk-revoke) revocation-storm
 	// protection. ConfirmationRequired: the batch is large enough to demand an
 	// explicit confirm=true. BatchTooLarge: the batch exceeds the hard cap and
 	// must be narrowed (a client- or subject-scoped revoke that would wipe more

@@ -5,12 +5,17 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/domains/tokenusage"
+	tokenusagememory "github.com/snaplink/sso/domains/tokenusage/memory"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreoauth"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 )
 
@@ -145,4 +150,68 @@ func toJSONString(t *testing.T, v any) string {
 	t.Helper()
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// TestAdminBulkTokenRevoke_ReachableAtItsOwnPath is a regression test for a
+// route-shadowing bug: the Token Portfolio bulk-revoke handler and the admin
+// gRPC-gateway's single token/session revoke RPC both used to be wired at
+// the identical wire path (/api/v1/admin/tokens/revoke). cmd/sso-server
+// mounts the gRPC-gateway as a catch-all subtree over /api/v1/admin/ with no
+// carve-out for that path, so the bulk-revoke REST handler was permanently
+// unreachable in the reference binary despite being fully implemented and
+// unit-tested — the collision was invisible to unit tests because they call
+// HandleBulkRevoke directly, bypassing the real router. Giving bulk-revoke
+// its own /api/v1/admin/tokens/bulk-revoke path fixes this; this test proves
+// the SDK-level route reaches the real handler end-to-end (not the shadowing
+// itself, which only exists in cmd/sso-server's composition).
+func TestAdminBulkTokenRevoke_ReachableAtItsOwnPath(t *testing.T) {
+	ctx := context.Background()
+	refresh := memorystoreoauth.NewMemoryRefreshTokenStore()
+	exp := time.Now().Add(time.Hour)
+	for _, tok := range []string{"rt-1", "rt-2", "rt-3"} {
+		if err := refresh.Issue(ctx, tok, &oauth.RefreshToken{
+			UserID: "u-alice", ClientID: "c1", ExpiresAt: exp,
+		}); err != nil {
+			t.Fatalf("seed refresh token %s: %v", tok, err)
+		}
+	}
+	rec := tokenusage.NewRecorder(tokenusagememory.New())
+	rec.Start()
+
+	srv := sso.NewServer(
+		sso.WithIssuer("https://sso.example"),
+		sso.WithClientStore(defaultimpl.NewMemoryClientStore()),
+		sso.WithRefreshTokenStore(refresh, time.Hour),
+		sso.WithTokenUsageRecorder(rec),
+	)
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+
+	form := url.Values{"subject": {"u-alice"}, "confirm": {"true"}}
+	resp, err := http.PostForm(hs.URL+"/api/v1/admin/tokens/bulk-revoke", form)
+	if err != nil {
+		t.Fatalf("POST /api/v1/admin/tokens/bulk-revoke: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %v (bulk-revoke route not reaching the real handler)", resp.StatusCode, body)
+	}
+	if got := body["revoked_count"]; got != float64(3) {
+		t.Fatalf("revoked_count = %v, want 3", got)
+	}
+	if n, _ := refresh.CountForSubject(ctx, "u-alice", ""); n != 0 {
+		t.Errorf("u-alice still has %d refresh tokens after bulk-revoke", n)
+	}
+
+	// The old, colliding path must NOT accidentally serve bulk-revoke
+	// semantics — it isn't registered at all at the SDK level (the
+	// gRPC-gateway single-revoke lives only in cmd/sso-server), so it 404s.
+	code, _ := doReq(t, hs, http.MethodPost, "/api/v1/admin/tokens/revoke", "")
+	if code != http.StatusNotFound {
+		t.Errorf("/api/v1/admin/tokens/revoke status = %d, want 404 (not an SDK-level route)", code)
+	}
 }

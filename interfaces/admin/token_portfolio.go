@@ -244,16 +244,16 @@ func parseExpiringLimit(ctx core.HandlerContext) int {
 	return n
 }
 
-// bulkRevokeRequest is the POST /api/v1/admin/tokens/revoke body. At least one
-// of Subject / ClientID MUST be set (both empty is rejected — never a
-// wildcard-all). Confirm gates a large / un-previewable batch.
+// bulkRevokeRequest is the POST /api/v1/admin/tokens/bulk-revoke body. At
+// least one of Subject / ClientID MUST be set (both empty is rejected — never
+// a wildcard-all). Confirm gates a large / un-previewable batch.
 type bulkRevokeRequest struct {
 	Subject  string `json:"subject"`
 	ClientID string `json:"client_id"`
 	Confirm  bool   `json:"confirm"`
 }
 
-// HandleBulkRevoke serves POST /api/v1/admin/tokens/revoke — the admin
+// HandleBulkRevoke serves POST /api/v1/admin/tokens/bulk-revoke — the admin
 // bulk-revoke workflow. It revokes a BOUNDED set of refresh tokens (all for a
 // subject and/or a client) through the EXISTING RefreshTokenSubjectIndex /
 // RefreshTokenClientPurger machinery — the same paths /token/revoke-all and
