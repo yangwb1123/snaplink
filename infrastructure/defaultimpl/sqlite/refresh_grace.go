@@ -34,9 +34,12 @@ const refreshGraceDefaultCleanupInterval = 5 * time.Minute
 // set) WITHOUT importing the handler layer, so the dependency direction stays
 // downward, matching the Redis peer in infrastructure/redis/refresh_grace.go.
 //
-// SQLite in WAL mode with BEGIN IMMEDIATE semantics (via DELETE ... RETURNING)
-// ensures cross-replica safety: only one replica can claim a consumed token's
-// successor, and a miss falls through to family-reuse detection (BCP §4.13).
+// Lookup is a non-destructive SELECT: every presentation of a just-rotated-
+// away token within the grace window replays the SAME cached successor
+// (idempotent), mirroring the memory and Redis peers — see Lookup's doc for
+// why a single-use DELETE-on-read would defeat the feature. A miss (expired,
+// never remembered, or a genuine post-window replay) falls through to
+// family-reuse detection (BCP §4.13).
 //
 // Background cleanup runs at the configured interval (default 5 min) and is
 // stoppable via context cancellation (Close).
@@ -221,15 +224,18 @@ func (s *RefreshGraceStore) Remember(token string, resp map[string]any, now time
 
 // Lookup returns the cached successor for token if it was rotated within the
 // grace window, or (nil, false) on ANY uncertainty — miss, expiry, backend
-// error, or decode failure. The row is atomically deleted on fetch (single-use
-// semantics via DELETE ... RETURNING) so a post-window replay falls through to
-// family-reuse detection (BCP §4.13 preserved: fail-closed on miss/expiry/
-// error).
-//
-// The atomic DELETE ... RETURNING replaces what would be a SELECT+DELETE
-// transaction. In SQLite WAL mode this serialises writers, so a cross-replica
-// race yields exactly one winner; the second caller gets sql.ErrNoRows and
-// correctly falls through.
+// error, or decode failure. The row is NOT deleted on fetch: Lookup MUST be
+// idempotently replayable for every presentation within the window, mirroring
+// the memory (RefreshGraceCache) and Redis (GET, not GETDEL) peers — a
+// multi-tab SPA or a mobile client's flaky-network retry storm can present the
+// SAME just-rotated-away token MORE than twice inside one grace window, and
+// every one of those presentations must replay the identical cached successor.
+// A single-use DELETE-on-read here would let only the FIRST such presentation
+// hit the cache; every subsequent one would miss and fall through to
+// family-reuse detection, killing the very family the grace window exists to
+// protect — a self-inflicted logout storm, exactly the false positive this
+// feature is meant to prevent. Expired/never-remembered rows are pruned by the
+// background cleanupLoop and Remember's own lazy GC, not by Lookup.
 func (s *RefreshGraceStore) Lookup(token string, now time.Time) (map[string]any, bool) {
 	if s == nil || s.db == nil || token == "" {
 		return nil, false
@@ -239,7 +245,7 @@ func (s *RefreshGraceStore) Lookup(token string, now time.Time) (map[string]any,
 	var blob []byte
 	var expiresAt int64
 	err := s.db.QueryRowContext(context.Background(),
-		`DELETE FROM refresh_grace_cache WHERE consumed_token_hash = ? RETURNING successor_response, expires_at`,
+		`SELECT successor_response, expires_at FROM refresh_grace_cache WHERE consumed_token_hash = ?`,
 		hash).Scan(&blob, &expiresAt)
 	if err != nil {
 		// sql.ErrNoRows or any other error — all fall through to reuse detection
