@@ -107,17 +107,35 @@ type Config struct {
 
 	// MaxClockSkew OPTIONALLY overrides the maximum acceptable clock skew the
 	// validator allows between this service's clock and a Kerberos ticket's
-	// issue time. It governs the SAME window gokrb5 applies to: the ticket
-	// validity check, the authenticator timestamp acceptance, AND the
-	// process-wide replay cache retention. ZERO (the default) leaves gokrb5's
-	// built-in 5-minute default UNCHANGED — byte-identical to wiring no skew
-	// option at all — so existing deployments are unaffected. Set it to TIGHTEN
-	// the window for a tightly-synchronized fleet, or (cautiously) to widen it
-	// for a drifty one; this mirrors DPoP's WithDPoPMaxClockSkew knob (AGENTS.md
-	// §3). The AGENTS.md §2 "ops MUST slew, never step, the clock (chrony)"
-	// guidance applies: a backward clock step can transiently let a slightly
-	// stale ticket pass, and widening the window enlarges the replay-cache
-	// exposure correspondingly.
+	// issue time. It ALWAYS governs the ticket validity check and the
+	// authenticator timestamp acceptance (gokrb5 reads Settings.MaxClockSkew()
+	// live on every AcceptSecContext call — messages/APReq.go, messages/
+	// Ticket.go). ZERO (the default) leaves gokrb5's built-in 5-minute default
+	// UNCHANGED — byte-identical to wiring no skew option at all — so existing
+	// deployments are unaffected. Set it to TIGHTEN the window for a
+	// tightly-synchronized fleet, or (cautiously) to widen it for a drifty one;
+	// this mirrors DPoP's WithDPoPMaxClockSkew knob (AGENTS.md §3). The
+	// AGENTS.md §2 "ops MUST slew, never step, the clock (chrony)" guidance
+	// applies: a backward clock step can transiently let a slightly stale
+	// ticket pass, and widening the window enlarges the replay-cache exposure
+	// correspondingly.
+	//
+	// CAVEAT (proven against gokrb5 v8.4.4's service/cache.go, not just its
+	// godoc): the process-wide replay cache retention window is NOT re-read
+	// per call the way the two checks above are. service.GetReplayCache is a
+	// sync.Once singleton — only the FIRST call's duration argument in this
+	// process ever takes effect; every later call (even with a different
+	// duration) gets back that same first cache untouched. In THIS single-
+	// surface build that's moot (one process, one Config, one gokrb5Validator,
+	// so the first call is this Config's value). It only bites an operator's
+	// fork that builds MULTIPLE Kerberos surfaces with DIFFERENT MaxClockSkew
+	// values in ONE process: only the first-constructed validator's value
+	// governs the shared replay-cache retention; a later surface's differing
+	// value still fully governs that surface's OWN ticket-validity/skew checks,
+	// just not the (already process-global) replay-cache window. See
+	// validator.go's svc field comment + validator_test.go's
+	// TestGokrb5ReplayCache_IsFirstCallerSingleton, which pins this against the
+	// real library.
 	MaxClockSkew time.Duration
 }
 

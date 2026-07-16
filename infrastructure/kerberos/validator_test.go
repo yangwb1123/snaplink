@@ -175,6 +175,25 @@ func TestMaxClockSkew_Plumbing(t *testing.T) {
 	}
 }
 
+// TestGokrb5ReplayCache_IsFirstCallerSingleton pins, against the REAL gokrb5
+// library (not its godoc), the exact claim the Config.MaxClockSkew and
+// gokrb5Validator.svc comments make: service.GetReplayCache is a sync.Once
+// package-level singleton — the FIRST call's duration argument wins for the
+// lifetime of the PROCESS; a later call with a DIFFERENT duration returns the
+// identical cache, not a new one sized to the new duration. This is why this
+// module's Config.MaxClockSkew only reliably governs replay-cache retention
+// for the first Kerberos surface built in a process; a naive reading of the
+// gokrb5 godoc alone would suggest each call's duration takes effect, which is
+// false. A pointer-identity check is the simplest proof that no new Cache was
+// constructed for the second, differently-configured call.
+func TestGokrb5ReplayCache_IsFirstCallerSingleton(t *testing.T) {
+	first := service.GetReplayCache(5 * time.Minute)
+	second := service.GetReplayCache(10 * time.Second)
+	if first != second {
+		t.Fatalf("service.GetReplayCache returned distinct instances (%p vs %p) for two different durations — expected the SAME sync.Once-guarded singleton regardless of the argument, proving retention is fixed by the FIRST caller in the process", first, second)
+	}
+}
+
 // TestExtractGroups_HappyPath (FIX #1) is a focused proof that the dead JSON
 // fallback removal did not change happy-path group extraction: a credentials
 // value carrying AD group SIDs still yields them, and one with none yields nil.

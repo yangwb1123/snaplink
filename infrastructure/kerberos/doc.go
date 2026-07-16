@@ -177,8 +177,11 @@
 // # Multi-replica deployment caveat (replay protection is PER-PROCESS)
 //
 // IMPORTANT operational requirement, not a code bug: gokrb5's AP-REQ replay
-// cache is a PROCESS singleton (jcmturner/rpc; in-memory, per-process). It does
-// NOT span replicas or survive a restart. In a horizontally-scaled,
+// cache is a PROCESS singleton (service.GetReplayCache, gokrb5's OWN service
+// package — a sync.Once-guarded package-level var, NOT jcmturner/rpc, which
+// gokrb5 uses only for AD PAC/NDR decoding; confirmed against gokrb5 v8.4.4's
+// service/cache.go). It is in-memory, per-process, and does NOT span
+// replicas or survive a restart. In a horizontally-scaled,
 // multi-replica SSO deployment a captured AP-REQ replayed against a DIFFERENT
 // replica than the one that first saw it is therefore NOT detected: replica B's
 // cache has never seen the ticket replica A consumed. The replay window is

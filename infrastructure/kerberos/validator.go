@@ -54,11 +54,27 @@ type SPNEGOValidator interface {
 // the raw bytes and never logs them.
 type gokrb5Validator struct {
 	// svc carries the keytab + KeytabPrincipal(serviceName) + PAC + skew
-	// settings. SPNEGOService is cheap and stateless-per-call for verification
-	// (AcceptSecContext builds the per-request context), so one shared instance
-	// is reused across goroutines — gokrb5's replay cache (jcmturner/rpc) is
-	// process-global and concurrency-safe, so sharing the service is correct
-	// and actually NECESSARY for the replay cache to see every request.
+	// settings. SPNEGOToken.Verify only READS svc's settings (AcceptSecContext
+	// builds a fresh per-request context/token; nothing mutates the shared
+	// *service.Settings after construction — confirmed against gokrb5 v8.4.4's
+	// spnego/negotiationToken.go), so one shared instance is safe to reuse
+	// across goroutines with no lock needed here.
+	//
+	// CORRECTION: an earlier version of this comment claimed sharing svc was
+	// "necessary" for gokrb5's replay cache to see every request, and
+	// attributed that cache to jcmturner/rpc. Neither is right. Tracing
+	// gokrb5 v8.4.4 itself: the replay cache is service.GetReplayCache
+	// (service/cache.go) — gokrb5's OWN package, a `var replayCache Cache` +
+	// `sync.Once` process-level singleton guarded by an internal
+	// sync.RWMutex. jcmturner/rpc is unrelated: gokrb5 only uses it (via
+	// rpc/v2/mstypes+ndr) for AD PAC decoding. The singleton is looked up
+	// fresh on every VerifyAPREQ call (service/APExchange.go) regardless of
+	// which *spnego.SPNEGO instance is calling, so it would be shared
+	// process-wide even if a NEW SPNEGO/Settings were built per request;
+	// reusing svc is purely an efficiency choice (skip re-parsing
+	// KeytabPrincipal/options every call), not a replay-cache correctness
+	// requirement. See Config.MaxClockSkew for the one real replay-cache
+	// caveat this sync.Once singleton DOES create.
 	svc *spnego.SPNEGO
 }
 
