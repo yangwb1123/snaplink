@@ -33,19 +33,27 @@ func (j *RSAJWTIssuer) StartRotation(ctx context.Context, cfg RotationConfig) <-
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				oldKID := j.KeyID()
-				newKID, err := j.RotateKey(nil)
-				if err != nil {
-					continue
-				}
-				if cfg.OnRotate != nil {
-					cfg.OnRotate(oldKID, newKID)
-				}
-				j.scheduleRetire(ctx, oldKID, cfg.GracePeriod)
+				j.rotateTick(ctx, cfg)
 			}
 		}
 	}()
 	return done
+}
+
+// rotateTick runs one rotation tick, recovering from a panic in RotateKey or
+// the operator-supplied OnRotate hook — see [Ed25519JWTIssuer.rotateTick]'s
+// doc for why (this loop runs unattended for the server's lifetime).
+func (j *RSAJWTIssuer) rotateTick(ctx context.Context, cfg RotationConfig) {
+	defer func() { _ = recover() }()
+	oldKID := j.KeyID()
+	newKID, err := j.RotateKey(nil)
+	if err != nil {
+		return
+	}
+	if cfg.OnRotate != nil {
+		cfg.OnRotate(oldKID, newKID)
+	}
+	j.scheduleRetire(ctx, oldKID, cfg.GracePeriod)
 }
 
 // scheduleRetire retires kid after grace unless ctx is cancelled first.
@@ -55,6 +63,7 @@ func (j *RSAJWTIssuer) scheduleRetire(ctx context.Context, kid string, grace tim
 		return
 	}
 	go func() {
+		defer func() { _ = recover() }()
 		t := time.NewTimer(grace)
 		defer t.Stop()
 		select {

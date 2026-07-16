@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -190,6 +191,21 @@ func (a *AsyncSink) worker() {
 }
 
 func (a *AsyncSink) deliver(e *Event) {
+	// The inner Sink is operator/third-party-pluggable code running on a
+	// detached background goroutine — an unrecovered panic here would
+	// otherwise crash the ENTIRE process (Go does not confine a goroutine
+	// panic to that goroutine), taking down every in-flight request just
+	// because one delivery misbehaved. Reported through the SAME
+	// best-effort channel a normal delivery error uses (counter + onDrop)
+	// so a panicking sink degrades exactly like a failing one.
+	defer func() {
+		if r := recover(); r != nil {
+			a.dropsInnerError.Add(1)
+			if a.onDrop != nil {
+				a.onDrop(e, fmt.Errorf("audit: sink panicked: %v", r))
+			}
+		}
+	}()
 	ctx := traceContext(e)
 	if a.timeout > 0 {
 		var cancel context.CancelFunc
@@ -243,7 +259,30 @@ func (a *AsyncSink) batchWorker() {
 	}
 }
 
+// recoverBatchPanic returns a deferred func recovering a panic from the
+// RecordBatch call in deliverBatch, reporting it through the same
+// best-effort channel a normal delivery error uses (counter + onDrop) —
+// factored out so deliverBatch itself stays under the function-length
+// budget.
+func (a *AsyncSink) recoverBatchPanic(batch []*Event) func() {
+	return func() {
+		if r := recover(); r != nil {
+			a.dropsInnerError.Add(int64(len(batch)))
+			if a.onDrop != nil {
+				panicErr := fmt.Errorf("audit: sink panicked: %v", r)
+				for _, e := range batch {
+					a.onDrop(e, panicErr)
+				}
+			}
+		}
+	}
+}
+
 func (a *AsyncSink) deliverBatch(batch []*Event) {
+	// See deliver's identical recover doc: RecordBatch is the same
+	// operator-pluggable call, just batched — a panic here must degrade
+	// the same way a delivery error does, not crash the process.
+	defer a.recoverBatchPanic(batch)()
 	bs, ok := a.inner.(BatchSink)
 	if !ok || len(batch) == 1 {
 		// Per-event fallback: each event still gets ITS OWN trace ID via

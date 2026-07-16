@@ -2,6 +2,7 @@ package defaultimpl_test
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -99,5 +100,53 @@ func TestStartRotation_MultiAlg_DisabledWhenIntervalZero(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Errorf("%s: zero-interval StartRotation must return a closed channel", name)
 		}
+	}
+}
+
+// TestStartRotation_MultiAlg_PanicInOnRotateRecovered proves a panic in the
+// operator-supplied OnRotate hook does not crash the rotation loop for any
+// of the three issuers: the goroutine survives and keeps ticking (a second
+// rotation fires at the next interval) instead of taking down the whole
+// process — this loop runs unattended for the server's lifetime.
+func TestStartRotation_MultiAlg_PanicInOnRotateRecovered(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		issuer   rotatingIssuer
+		interval time.Duration
+	}{
+		{"Ed25519", defaultimpl.NewEd25519JWTIssuer(), 15 * time.Millisecond},
+		{"ES256", defaultimpl.NewECDSAJWTIssuer(), 15 * time.Millisecond},
+		{"RS256", defaultimpl.NewRSAJWTIssuer(defaultimpl.WithRSAAlg("RS256")), 60 * time.Millisecond},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int64
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			done := tc.issuer.StartRotation(ctx, defaultimpl.RotationConfig{
+				Interval: tc.interval,
+				OnRotate: func(_, _ string) {
+					calls.Add(1)
+					panic("boom: OnRotate panicked")
+				},
+			})
+
+			deadline := time.Now().Add(5 * time.Second)
+			for calls.Load() < 3 {
+				if time.Now().After(deadline) {
+					t.Fatalf("only %d rotations observed before timeout, want >= 3 (loop must survive each OnRotate panic)", calls.Load())
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("rotation loop did not stop on ctx cancel")
+			}
+		})
 	}
 }

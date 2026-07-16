@@ -54,22 +54,33 @@ func (j *Ed25519JWTIssuer) StartRotation(ctx context.Context, cfg RotationConfig
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				oldKID := j.KeyID()
-				newKID, err := j.RotateKey(nil)
-				if err != nil {
-					// crypto/rand failure is the only path here; skip this
-					// tick and try again next interval rather than tearing
-					// down the loop.
-					continue
-				}
-				if cfg.OnRotate != nil {
-					cfg.OnRotate(oldKID, newKID)
-				}
-				j.scheduleRetire(ctx, oldKID, cfg.GracePeriod)
+				j.rotateTick(ctx, cfg)
 			}
 		}
 	}()
 	return done
+}
+
+// rotateTick runs one rotation tick, recovering from a panic in RotateKey or
+// the operator-supplied OnRotate hook. This loop runs unattended for the
+// server's lifetime (often months between ticks) — a misbehaving hook must
+// degrade to a skipped tick, never crash the whole process. No logging here
+// mirrors this loop's existing convention: a RotateKey error already skips
+// the tick silently (see below), and this scheduler has no logger to call.
+func (j *Ed25519JWTIssuer) rotateTick(ctx context.Context, cfg RotationConfig) {
+	defer func() { _ = recover() }()
+	oldKID := j.KeyID()
+	newKID, err := j.RotateKey(nil)
+	if err != nil {
+		// crypto/rand failure is the only path here; skip this
+		// tick and try again next interval rather than tearing
+		// down the loop.
+		return
+	}
+	if cfg.OnRotate != nil {
+		cfg.OnRotate(oldKID, newKID)
+	}
+	j.scheduleRetire(ctx, oldKID, cfg.GracePeriod)
 }
 
 // scheduleRetire retires kid after grace, unless ctx is cancelled
@@ -80,6 +91,7 @@ func (j *Ed25519JWTIssuer) scheduleRetire(ctx context.Context, kid string, grace
 		return
 	}
 	go func() {
+		defer func() { _ = recover() }()
 		t := time.NewTimer(grace)
 		defer t.Stop()
 		select {

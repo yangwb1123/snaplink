@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"sync"
 	"testing"
 )
 
@@ -62,6 +63,51 @@ func (f sinkFunc) Get(_ context.Context, _ string) (*Event, error) {
 }
 func (f sinkFunc) Query(_ context.Context, _ Query) ([]*Event, error) {
 	return nil, nil
+}
+
+// panickingBatchSink always panics from RecordBatch, simulating a
+// misbehaving third-party BatchSink implementation.
+type panickingBatchSink struct{}
+
+func (panickingBatchSink) Record(context.Context, *Event) error { panic("boom: single record") }
+func (panickingBatchSink) RecordBatch(context.Context, []*Event) error {
+	panic("boom: batch record")
+}
+func (panickingBatchSink) Get(context.Context, string) (*Event, error) {
+	return nil, ErrEventNotFound
+}
+func (panickingBatchSink) Query(context.Context, Query) ([]*Event, error) { return nil, nil }
+
+// TestBatchAsyncSink_PanicInRecordBatchRecovered proves a panic inside the
+// inner BatchSink's RecordBatch does not crash the worker goroutine: it is
+// reported through the same drop-handler channel a normal batch delivery
+// error uses, for every event in the panicking batch.
+func TestBatchAsyncSink_PanicInRecordBatchRecovered(t *testing.T) {
+	t.Parallel()
+	var drops int
+	var mu sync.Mutex
+	a := NewBatchAsyncSink(panickingBatchSink{}, 4, 64,
+		WithAsyncDropHandler(func(_ *Event, _ error) {
+			mu.Lock()
+			drops++
+			mu.Unlock()
+		}),
+	)
+	a.Start()
+
+	for i := 0; i < 5; i++ {
+		_ = a.Record(context.Background(), &Event{Type: "test"})
+	}
+	_ = a.Close(context.Background())
+
+	mu.Lock()
+	defer mu.Unlock()
+	if drops != 5 {
+		t.Fatalf("drops = %d, want 5 (worker must survive the panic and report every event)", drops)
+	}
+	if got := a.DropsInnerError(); got != 5 {
+		t.Fatalf("DropsInnerError = %d, want 5", got)
+	}
 }
 
 func TestDefaultBatchSize(t *testing.T) {

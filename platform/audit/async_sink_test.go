@@ -160,6 +160,54 @@ func TestAsyncSink_DropHandlerSurfacesInnerError(t *testing.T) {
 	}
 }
 
+// panickingSink always panics from Record, simulating a misbehaving
+// third-party Sink implementation.
+type panickingSink struct{}
+
+func (panickingSink) Record(context.Context, *audit.Event) error {
+	panic("boom: sink panicked")
+}
+func (panickingSink) Get(context.Context, string) (*audit.Event, error) {
+	return nil, audit.ErrEventNotFound
+}
+func (panickingSink) Query(context.Context, audit.Query) ([]*audit.Event, error) {
+	return nil, nil
+}
+
+// TestAsyncSink_PanicInSinkRecovered proves a panic inside the inner Sink's
+// Record does not crash the worker goroutine (and so not the whole
+// process): the panic is reported through the same drop-handler channel a
+// normal delivery error uses, and the worker keeps processing subsequent
+// events afterward.
+func TestAsyncSink_PanicInSinkRecovered(t *testing.T) {
+	t.Parallel()
+	var drops int
+	var mu sync.Mutex
+	a := audit.NewAsyncSink(panickingSink{},
+		audit.WithAsyncDropHandler(func(_ *audit.Event, _ error) {
+			mu.Lock()
+			drops++
+			mu.Unlock()
+		}),
+	)
+	a.Start()
+
+	_ = a.Record(context.Background(), &audit.Event{Type: audit.EventLogin})
+	_ = a.Record(context.Background(), &audit.Event{Type: audit.EventLogin})
+
+	if err := a.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if drops != 2 {
+		t.Fatalf("drops = %d, want 2 (worker must survive the panic and process both events)", drops)
+	}
+	if got := a.DropsInnerError(); got != 2 {
+		t.Fatalf("DropsInnerError = %d, want 2", got)
+	}
+}
+
 func TestAsyncSink_RecordAfterCloseIsDropped(t *testing.T) {
 	t.Parallel()
 	inner := &countingSink{}
