@@ -60,6 +60,31 @@ func TestMemoryLimiter_RetryAfterIsBounded(t *testing.T) {
 	}
 }
 
+func TestMemoryLimiter_DenyAllRateZero_RetryAfterIsZero(t *testing.T) {
+	t.Parallel()
+	// perSecond=0 + burst exhausted must deny with retryAfter=0 — the same
+	// "no useful retry-after" contract SQLiteLimiter's consumeToken
+	// documents for its denyAll branch (sqlite_limiter.go). Before the
+	// fix, MemoryLimiter derived retryAfter from the underlying
+	// rate.Reservation, whose Delay() reports a ~292-year InfDuration
+	// sentinel for a zero rate instead of 0 — a backend-drift bug that
+	// would surface as a multi-billion-second Retry-After header.
+	lim := ratelimit.NewMemoryLimiter(0, 3)
+	for i := range 3 {
+		ok, _ := lim.Allow("k")
+		if !ok {
+			t.Fatalf("call %d denied within burst", i)
+		}
+	}
+	ok, retry := lim.Allow("k")
+	if ok {
+		t.Fatal("4th call should be denied — burst exhausted, rate=0 never refills")
+	}
+	if retry != 0 {
+		t.Fatalf("retry-after = %v, want 0 (denyAll, matching SQLiteLimiter peer)", retry)
+	}
+}
+
 func TestMiddleware_NilPolicyIsIdentity(t *testing.T) {
 	t.Parallel()
 	// Empty Policy (no Default, no Prefixes) lets everything through.

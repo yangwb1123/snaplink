@@ -154,21 +154,40 @@ func (m *MemoryLimiter) Allow(key string) (bool, time.Duration) {
 	}
 	b.lastSeen = now
 
+	return m.reserve(b)
+}
+
+// reserve consumes one token from b's underlying rate.Limiter and reports
+// the Allow decision. Split out of Allow to keep it under the function-length
+// budget; b.lastSeen and the shard lock are the caller's responsibility.
+func (m *MemoryLimiter) reserve(b *bucketEntry) (bool, time.Duration) {
 	reservation := b.lim.Reserve()
 	if !reservation.OK() {
-		// Reservation impossible (burst is 0 or rate is 0); deny without
-		// a useful retry-after.
+		// Reservation impossible (n exceeds burst); deny without a
+		// useful retry-after. In practice unreachable since burst is
+		// clamped to >=1 and n is always 1, but Reserve's contract
+		// requires the check.
 		return false, 0
 	}
 	wait := reservation.Delay()
-	if wait > 0 {
-		// Don't actually wait — return Retry-After to the caller so the
-		// client can back off. Cancel the reservation so the bucket
-		// isn't charged for the rejected request.
-		reservation.Cancel()
-		return false, wait
+	if wait == 0 {
+		return true, 0
 	}
-	return true, 0
+	// Don't actually wait — return Retry-After to the caller so the
+	// client can back off. Cancel the reservation so the bucket isn't
+	// charged for the rejected request.
+	reservation.Cancel()
+	if m.perSecond <= 0 {
+		// A zero (or negative) rate never refills the bucket, so
+		// golang.org/x/time/rate.Reservation.Delay reports its ~292-year
+		// InfDuration sentinel rather than a real wait. Left unguarded,
+		// writeTooManyRequests would round that to a multi-billion-second
+		// Retry-After header. Collapse to 0, matching the SQLiteLimiter
+		// peer's denyAll contract (sqlite_limiter.go consumeToken) — deny
+		// with no useful retry-after instead of a nonsensical one.
+		return false, 0
+	}
+	return false, wait
 }
 
 // Buckets returns the total number of tracked keys across all shards.
