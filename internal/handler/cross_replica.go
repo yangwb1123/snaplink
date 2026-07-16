@@ -9,17 +9,7 @@ import (
 
 	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/shared/spi"
 )
-
-// CrossReplicaDeps is the interface for cross-replica revocation.
-type CrossReplicaDeps interface {
-	SrvLogger() spi.Logger
-	Metrics() *metrics.Metrics
-	CrossReplicaRevocationEnabled() bool
-	InvalidationBus() cluster.Bus
-	RevokeAcrossIssuers(ctx context.Context, token string) ([]string, []string)
-}
 
 // JWTExpUnsafe extracts the exp claim from a compact JWT without verifying the signature.
 func JWTExpUnsafe(token string) int64 {
