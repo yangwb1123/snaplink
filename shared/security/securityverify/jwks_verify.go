@@ -152,10 +152,10 @@ func splitCompactJWS(compact string) (payloadSeg, sigSeg string, signingInput []
 	return payloadSeg, sigSeg, signingInput, headerSeg, nil
 }
 
-// parseJWSHeaderAlgKid base64url-decodes the header, unmarshals {alg,kid},
-// and applies the allowlist gate BEFORE any signature verification (RFC 9068
-// §4 discipline). `alg: none` lands here and is rejected because "none" is
-// never in the asymmetric allowlist.
+// parseJWSHeaderAlgKid base64url-decodes the header, unmarshals
+// {alg,kid,crit}, and applies the alg-allowlist + crit gates BEFORE any
+// signature verification (RFC 9068 §4 discipline). `alg: none` lands here
+// and is rejected because "none" is never in the asymmetric allowlist.
 func parseJWSHeaderAlgKid(headerSeg string, allowedAlgs map[string]struct{}) (alg, kid string, err error) {
 	headerBytes, err := base64.RawURLEncoding.DecodeString(headerSeg)
 	if err != nil {
@@ -164,9 +164,18 @@ func parseJWSHeaderAlgKid(headerSeg string, allowedAlgs map[string]struct{}) (al
 	var h struct {
 		Alg string `json:"alg"`
 		Kid string `json:"kid"`
+		// Crit is RFC 7515 §4.1.11's list of extension header parameters the
+		// producer marked MUST-understand. This verifier implements none of
+		// them, so ANY non-empty crit fails closed per the spec's own
+		// discipline — silently ignoring it would let a producer smuggle an
+		// extension past verification undetected.
+		Crit []string `json:"crit"`
 	}
 	if err := json.Unmarshal(headerBytes, &h); err != nil {
 		return "", "", fmt.Errorf("jws: header parse: %w", err)
+	}
+	if len(h.Crit) > 0 {
+		return "", "", fmt.Errorf("jws: crit header names %d extension(s) this verifier does not understand", len(h.Crit))
 	}
 	// alg gate BEFORE any signature verification (RFC 9068 §4 discipline).
 	// `alg: none` lands here and is rejected because "none" is never in

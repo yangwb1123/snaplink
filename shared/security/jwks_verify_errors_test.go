@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
+	"encoding/json"
 	"math/big"
 	"strings"
 	"testing"
@@ -80,6 +81,49 @@ func TestVerifyCompactJWS_MalformedInputs(t *testing.T) {
 		token := header + "." + payload + ".!!!notb64"
 		if _, err := security.VerifyCompactJWS(token, []core.JWK{jwk}, allow); err == nil {
 			t.Fatal("undecodable signature accepted")
+		}
+	})
+}
+
+// TestVerifyCompactJWS_RejectsCritHeader proves RFC 7515 §4.1.11 discipline:
+// a JWS naming ANY "crit" extension is rejected — even one that is otherwise
+// well-formed and correctly signed — because this verifier implements zero
+// named extensions. A crit-free (or explicitly empty-crit) token with the
+// SAME key/signature still verifies, proving the gate doesn't reject
+// legitimate tokens.
+func TestVerifyCompactJWS_RejectsCritHeader(t *testing.T) {
+	t.Parallel()
+	jwk, sign := es256JWK(t)
+	allow := map[string]struct{}{"ES256": {}}
+
+	build := func(header map[string]any) string {
+		hb, _ := json.Marshal(header)
+		pb := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"x"}`))
+		input := base64.RawURLEncoding.EncodeToString(hb) + "." + pb
+		return input + "." + base64.RawURLEncoding.EncodeToString(sign([]byte(input)))
+	}
+
+	t.Run("non-empty crit rejected even when well-formed and correctly signed", func(t *testing.T) {
+		t.Parallel()
+		token := build(map[string]any{"alg": "ES256", "kid": "k1", "crit": []string{"exp"}})
+		if _, err := security.VerifyCompactJWS(token, []core.JWK{jwk}, allow); err == nil {
+			t.Fatal("crit-bearing JWS accepted")
+		}
+	})
+
+	t.Run("absent crit still verifies", func(t *testing.T) {
+		t.Parallel()
+		token := build(map[string]any{"alg": "ES256", "kid": "k1"})
+		if _, err := security.VerifyCompactJWS(token, []core.JWK{jwk}, allow); err != nil {
+			t.Fatalf("crit-free JWS rejected: %v", err)
+		}
+	})
+
+	t.Run("empty crit array still verifies", func(t *testing.T) {
+		t.Parallel()
+		token := build(map[string]any{"alg": "ES256", "kid": "k1", "crit": []string{}})
+		if _, err := security.VerifyCompactJWS(token, []core.JWK{jwk}, allow); err != nil {
+			t.Fatalf("empty-crit JWS rejected: %v", err)
 		}
 	})
 }
