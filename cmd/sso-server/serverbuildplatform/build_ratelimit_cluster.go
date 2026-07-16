@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	goredis "github.com/redis/go-redis/v9"
 
@@ -66,15 +67,26 @@ func BuildRateLimitPolicy(cfg config.RateLimitConfig, rdb goredis.Cmdable) (rate
 func memoryRateLimitPolicy(cfg config.RateLimitConfig) ratelimit.Policy {
 	p := ratelimit.Policy{Key: ratelimit.KeyByClientIP}
 	if cfg.DefaultPerSec > 0 {
-		p.Default = ratelimit.NewMemoryLimiter(cfg.DefaultPerSec, cfg.DefaultBurst)
+		p.Default = newMemoryLimiterPruned(cfg.DefaultPerSec, cfg.DefaultBurst, cfg.PruneInterval)
 	}
 	for _, r := range cfg.Prefixes {
 		p.Prefixes = append(p.Prefixes, ratelimit.PrefixRule{
 			Prefix:  r.Prefix,
-			Limiter: ratelimit.NewMemoryLimiter(r.PerSec, r.Burst),
+			Limiter: newMemoryLimiterPruned(r.PerSec, r.Burst, cfg.PruneInterval),
 		})
 	}
 	return p
+}
+
+// newMemoryLimiterPruned builds a MemoryLimiter and, when interval is
+// positive, starts its background pruner (see RateLimitConfig.PruneInterval)
+// instead of leaving it on the default sampled inline prune.
+func newMemoryLimiterPruned(perSec float64, burst int, interval time.Duration) *ratelimit.MemoryLimiter {
+	lim := ratelimit.NewMemoryLimiter(perSec, burst)
+	if interval > 0 {
+		lim.StartPruner(interval)
+	}
+	return lim
 }
 
 // redisRateLimitPolicy builds shared cluster-wide buckets. Each bucket is a

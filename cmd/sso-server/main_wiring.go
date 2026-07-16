@@ -15,6 +15,7 @@ import (
 	configetcd "github.com/snaplink/sso/config/etcd"
 	configreload "github.com/snaplink/sso/config/reload"
 	"github.com/snaplink/sso/domains/authenticators/passkeypolicy"
+	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/tracing"
 	"github.com/snaplink/sso/shared/spi"
@@ -140,6 +141,7 @@ func newConfigReloader(cfg *config.Config, sources []config.Source, logger *slog
 // shared client rate_limit.backend=redis rebuilds against; nil when no
 // redis block is configured (matches wireBodyAndRateLimit's boot-time call).
 func wireRateLimitReload(reloader *configreload.Reloader, srv *sso.Server, redis goredis.UniversalClient) {
+	var prev ratelimit.Policy
 	reloader.SetRateLimitHook(func(rl config.RateLimitConfig) error {
 		policy, err := serverbuildplatform.BuildRateLimitPolicy(rl, redis)
 		if err != nil {
@@ -148,8 +150,26 @@ func wireRateLimitReload(reloader *configreload.Reloader, srv *sso.Server, redis
 		if !srv.SetRateLimitPolicy(policy) {
 			return errors.New("rate limit hot-reload: not enabled at boot (no WithRateLimit)")
 		}
+		// The just-replaced policy's limiters are no longer reachable by any
+		// request, but a MemoryLimiter with prune_interval set (StartPruner)
+		// has a background goroutine that outlives the swap unless closed
+		// here — every SIGHUP reload would otherwise leak one more.
+		closePolicyLimiters(prev)
+		prev = policy
 		return nil
 	})
+}
+
+// closePolicyLimiters closes every io.Closer-implementing Limiter in p
+// (Default + each prefix rule) — currently only ratelimit.MemoryLimiter with
+// a background pruner started. A Limiter that doesn't implement io.Closer
+// (SQLiteLimiter, a redis Limiter, or a MemoryLimiter with no pruner
+// started) is a silent no-op, matching closeIfCloser's existing contract.
+func closePolicyLimiters(p ratelimit.Policy) {
+	closeIfCloser(p.Default)
+	for _, r := range p.Prefixes {
+		closeIfCloser(r.Limiter)
+	}
 }
 
 // wireFeatureGateReload wires reloader's Set*GateHook for all seven

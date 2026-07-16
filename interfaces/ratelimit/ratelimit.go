@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
+
+	"github.com/snaplink/sso/infrastructure/defaultimpl/memreaper"
 )
 
 // Limiter is the SPI implementations satisfy. Allow consults the
@@ -74,6 +76,12 @@ type MemoryLimiter struct {
 	// Prune fires on the shard servicing the 64th call (and every
 	// subsequent multiple of 64), matching the SQLite peer's ratio.
 	calls atomic.Uint64
+
+	// pruning is true while a background StartPruner sweep is active, so
+	// Allow's own sampled inline prune stops running its O(N) shard scan —
+	// see StartPruner's doc for why.
+	pruning atomic.Bool
+	reaper  *memreaper.Reaper
 }
 
 type bucketEntry struct {
@@ -138,7 +146,14 @@ func (m *MemoryLimiter) Allow(key string) (bool, time.Duration) {
 	// the map-scan cost. The counter is global and atomic — cheap,
 	// allocation-free, and correct under any concurrency. Matches the
 	// SQLite peer (sqlite_limiter.go, same 1/64 ratio).
-	prune := m.calls.Add(1)%64 == 0
+	//
+	// Skipped entirely once a background StartPruner is active: the O(N)
+	// shard scan below runs INSIDE this shard's lock, so a high-cardinality
+	// attack repeatedly hashing to the same shard would otherwise make
+	// pruneLocked increasingly expensive while holding that shard's lock,
+	// blocking every other request hashed to it — the rate limiter
+	// amplifying, rather than absorbing, the very attack it exists to stop.
+	prune := !m.pruning.Load() && m.calls.Add(1)%64 == 0
 
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
@@ -188,6 +203,38 @@ func (m *MemoryLimiter) reserve(b *bucketEntry) (bool, time.Duration) {
 		return false, 0
 	}
 	return false, wait
+}
+
+// StartPruner launches a background goroutine sweeping every shard for
+// stale entries on a fixed interval, each shard's own brief Lock/Unlock —
+// never blocking Allow for longer than one shard's worth of work. Once
+// active, Allow's sampled inline prune stops running its own O(N) scan (see
+// Allow's doc for why that matters under a high-cardinality attack hashing
+// repeatedly to one shard). A non-positive interval is a no-op and disables
+// pruning-on-Allow too, matching StartReaper's sibling stores' contract. Not
+// started by default: without it, Allow's existing sampled inline prune
+// keeps running exactly as before this method existed (byte-identical).
+// Idempotent — calling it again stops the previous pruner first.
+func (m *MemoryLimiter) StartPruner(interval time.Duration) {
+	_ = m.reaper.Close()
+	m.pruning.Store(interval > 0)
+	if interval <= 0 {
+		return
+	}
+	m.reaper = memreaper.Start(interval, func(now time.Time) {
+		for i := range m.shards {
+			sh := &m.shards[i]
+			sh.mu.Lock()
+			m.pruneLocked(sh, now)
+			sh.mu.Unlock()
+		}
+	})
+}
+
+// Close stops the background pruner started via StartPruner, if any.
+func (m *MemoryLimiter) Close() error {
+	m.pruning.Store(false)
+	return m.reaper.Close()
 }
 
 // Buckets returns the total number of tracked keys across all shards.

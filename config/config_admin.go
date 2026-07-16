@@ -50,6 +50,17 @@ type RateLimitConfig struct {
 	DefaultPerSec float64                 `yaml:"default_per_sec"`
 	DefaultBurst  int                     `yaml:"default_burst"`
 	Prefixes      []RateLimitPrefixConfig `yaml:"prefixes"`
+
+	// PruneInterval, when positive and backend is "" or "memory", starts a
+	// background sweep (ratelimit.MemoryLimiter.StartPruner) on every
+	// configured limiter instead of the default sampled inline prune. The
+	// inline prune runs its O(N) shard scan WHILE holding that shard's
+	// lock, so a high-cardinality attack repeatedly hashing to one shard
+	// makes it increasingly expensive and blocks every other request
+	// hashed there — the rate limiter amplifying, rather than absorbing,
+	// the attack it exists to stop. 0 (the default) keeps the existing
+	// sampled inline behavior, byte-identical to before this field existed.
+	PruneInterval time.Duration `yaml:"prune_interval"`
 }
 
 type RateLimitSQLiteConfig struct {

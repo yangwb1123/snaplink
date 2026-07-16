@@ -297,6 +297,55 @@ func TestMemoryLimiter_PrunesSampled(t *testing.T) {
 	}
 }
 
+// TestMemoryLimiter_StartPrunerSweepsAllShards proves the background pruner
+// cleans up stale entries across EVERY shard on its own — unlike the sampled
+// inline prune (which only ever scans the ONE shard the sampled Allow call
+// hashed to), a high-cardinality attack spread across many shards can't
+// outrun it. No further Allow calls are made after seeding, so any cleanup
+// observed must come from the background sweep, not the inline path.
+func TestMemoryLimiter_StartPrunerSweepsAllShards(t *testing.T) {
+	t.Parallel()
+	lim := ratelimit.NewMemoryLimiterWithStalePrune(1e9, 1<<30, 1*time.Millisecond)
+
+	// Seed one bucket per shard-ish key so entries spread across shards.
+	for i := range 32 {
+		lim.Allow("seed-" + strconv.Itoa(i))
+	}
+	if got := lim.Buckets(); got != 32 {
+		t.Fatalf("Buckets() after seeding = %d, want 32", got)
+	}
+
+	time.Sleep(10 * time.Millisecond) // past the 1ms stale horizon
+
+	lim.StartPruner(5 * time.Millisecond)
+	defer func() { _ = lim.Close() }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for lim.Buckets() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("background pruner never cleared all shards, Buckets() = %d", lim.Buckets())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestMemoryLimiter_StartPrunerThenClose proves Close stops the background
+// pruner cleanly and is safe to call even when StartPruner was never called.
+func TestMemoryLimiter_StartPrunerThenClose(t *testing.T) {
+	t.Parallel()
+	lim := ratelimit.NewMemoryLimiter(1e9, 1<<30)
+	lim.StartPruner(5 * time.Millisecond)
+	if err := lim.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// A limiter that never started a pruner must also Close cleanly.
+	lim2 := ratelimit.NewMemoryLimiter(1e9, 1<<30)
+	if err := lim2.Close(); err != nil {
+		t.Fatalf("Close (no pruner started): %v", err)
+	}
+}
+
 func TestKeyBySubject_UsesAuthenticatedSubject(t *testing.T) {
 	t.Parallel()
 	r := httptest.NewRequest(http.MethodGet, "/userinfo", nil)
