@@ -28,6 +28,11 @@ type endSessionDeps struct {
 	logoutRec bool
 	revoked   []string
 	failed    []string
+
+	// sessionHubCalled + sessionHubArgs record TriggerSessionHubLogout
+	// invocations (subject, sid pairs) for assertions.
+	sessionHubCalled bool
+	sessionHubArgs   [2]string
 }
 
 func (d *endSessionDeps) ClientStoreAccessor() core.ClientStore { return d.clients }
@@ -56,6 +61,10 @@ func (d *endSessionDeps) GatherFrontchannelLogoutIframes(core.HandlerContext, st
 }
 func (d *endSessionDeps) FanOutBackchannelLogout(core.HandlerContext, *core.Client, string, string) {
 	d.bclCalled = true
+}
+func (d *endSessionDeps) TriggerSessionHubLogout(_ context.Context, subject, sid string) {
+	d.sessionHubCalled = true
+	d.sessionHubArgs = [2]string{subject, sid}
 }
 func (d *endSessionDeps) RenderFrontchannelLogout(ctx core.HandlerContext, iframeURIs []string, redirectURI string) {
 	w := ctx.ResponseWriter()

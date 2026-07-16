@@ -34,6 +34,7 @@ func (s *Server) handleLogout(ctx HandlerContext) {
 	revoked := s.revokeLogoutCredentials(ctx, req.SessionID, bearer)
 
 	s.maybeFanOutBackchannel(ctx, bcSubject, bcClientID, bcSID)
+	s.TriggerSessionHubLogout(ctx.Request().Context(), bcSubject, bcSID)
 
 	s.recordLogout(ctx, req.SessionID, revoked)
 

@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
 )
 
 // OIDC Back-Channel Logout 1.0.
@@ -337,6 +339,37 @@ func (s *Server) dispatchBackchannelOne(ctx HandlerContext, c *Client, subject, 
 	// exactly the desired soft-degradation.
 	s.sendBackchannelLogout(ctx, c, subject, sid)
 	_ = s.subjectClientIndex.Forget(ctx.Request().Context(), subject, c.ID)
+}
+
+// TriggerSessionHubLogout resolves the global_sid the Cross-protocol Session
+// Hub (platform/lifecycle/sessionhub) linked at login for (subject, sid) and,
+// if found, runs Coordinator.Logout. That redundantly re-destroys the
+// already-destroyed core session leg (idempotent) and redundantly re-fans
+// the OIDC backchannel logout (a safe no-op: fanOutBackchannelLogout's
+// subjectClientIndex.Forget bookkeeping means every client this request
+// already notified above won't be re-listed, and without an index wired the
+// Coordinator's nil-originClient path never sends anything at all) — but
+// CRITICALLY it also fires the SAML SLO fan-out when this login had a SAML
+// leg ("where applicable"), which was otherwise unreachable from either real
+// logout path: a user logging out of OIDC/session kept an active SAML SP
+// session alive indefinitely. Best-effort: any resolution miss (no bearer,
+// unlinked login, sessionHub outage) is a silent no-op — every revocation
+// and fan-out already performed above is unaffected either way. Exported so
+// it also satisfies protocols/oidc's EndSessionDeps for /end_session.
+func (s *Server) TriggerSessionHubLogout(rctx context.Context, subject, sid string) {
+	if s.sessionHub == nil || subject == "" || sid == "" {
+		return
+	}
+	records, err := s.sessionHub.ListBySubject(rctx, subject)
+	if err != nil {
+		return
+	}
+	for _, r := range records {
+		if r.Protocol == sessionhub.ProtocolCore && r.ExternalRef == sid {
+			_ = s.sessionHub.Logout(rctx, r.GlobalSID)
+			return
+		}
+	}
 }
 
 // Small Server-coupled response helpers grouped here for navigability.

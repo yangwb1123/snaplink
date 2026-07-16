@@ -28,6 +28,13 @@ type EndSessionDeps interface {
 	AuditPartialRevokeFailure(ctx core.HandlerContext, revoked, failed []string)
 	GatherFrontchannelLogoutIframes(ctx core.HandlerContext, subject string, primary *core.Client, sid string) []string
 	FanOutBackchannelLogout(ctx core.HandlerContext, originClient *core.Client, subject, sid string)
+	// TriggerSessionHubLogout fires the Cross-protocol Session Hub's
+	// Coordinator.Logout for this login's global_sid (platform/lifecycle/
+	// sessionhub), when one was linked — the only path that reaches the SAML
+	// SLO fan-out for a login that went through SAML federation. Safe to call
+	// unconditionally alongside FanOutBackchannelLogout: see that method's
+	// *sso.Server doc for why it never double-notifies an RP.
+	TriggerSessionHubLogout(ctx context.Context, subject, sid string)
 	RenderFrontchannelLogout(ctx core.HandlerContext, iframeURIs []string, redirectURI string)
 	RecordLogout(ctx core.HandlerContext, sessionID string, revoked []string)
 	// DestroySession kills the server-side SSO session by its `sid` claim so
@@ -178,6 +185,9 @@ func endSessionNotifyPeers(d EndSessionDeps, ctx core.HandlerContext, userID str
 	}
 	if userID != "" && client != nil {
 		d.FanOutBackchannelLogout(ctx, client, userID, sid)
+	}
+	if userID != "" && sid != "" {
+		d.TriggerSessionHubLogout(ctx.Request().Context(), userID, sid)
 	}
 	if userID != "" {
 		d.RecordLogout(ctx, "", []string{"id_token_hint"})

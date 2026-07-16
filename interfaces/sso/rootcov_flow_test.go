@@ -42,6 +42,7 @@ const (
 // test may want to inspect or seed.
 type rcovServer struct {
 	http     *httptest.Server
+	srv      *sso.Server
 	users    *defaultimpl.MemoryUserProvider
 	clients  *defaultimpl.MemoryClientStore
 	sessions *defaultimpl.MemorySessionManager
@@ -140,7 +141,7 @@ func rcovNewServer(t *testing.T, extra ...sso.Option) *rcovServer {
 	t.Cleanup(httpSrv.Close)
 
 	return &rcovServer{
-		http: httpSrv, users: users, clients: clients, sessions: sessions,
+		http: httpSrv, srv: srv, users: users, clients: clients, sessions: sessions,
 		consents: consents, passwd: passwd, mfaEnr: mfaEnr, refresh: refresh,
 		authcode: authcode, sink: sink,
 	}
