@@ -28,6 +28,18 @@ const minForcedFetchInterval = 10 * time.Second
 // noisy reloads under load.
 const DefaultJWKSRefreshInterval = 60 * time.Second
 
+// defaultRefreshFetchTimeout bounds a background refresh tick when the
+// configured *http.Client carries no Timeout of its own. net/http documents
+// http.Client.Timeout == 0 as "no [client-side] timeout" — a legitimate,
+// commonly-recommended configuration for a caller that instead bounds each
+// call via its context. refreshLoop must NOT reuse that 0 verbatim as a
+// context.WithTimeout duration: unlike http.Client.Timeout, a zero (or
+// negative) context.WithTimeout duration means the deadline is already in
+// the past, so the derived context is canceled before fetch ever runs —
+// silently and permanently breaking every background refresh tick for the
+// lifetime of the cache (see WithJWKSHTTPClient).
+const defaultRefreshFetchTimeout = 10 * time.Second
+
 // JWKSCache fetches and caches an SSO server's JWKS document. Thread-safe.
 // Background refresh runs until Close is called or the supplied context is
 // canceled. First Get triggers a synchronous fetch so callers don't see a
@@ -207,11 +219,24 @@ func (j *JWKSCache) refreshLoop() {
 			t.Stop()
 			return
 		case <-t.C:
-			ctx, cancel := context.WithTimeout(context.Background(), j.client.Timeout)
+			ctx, cancel := context.WithTimeout(context.Background(), j.refreshFetchTimeout())
 			_ = j.fetch(ctx)
 			cancel()
 		}
 	}
+}
+
+// refreshFetchTimeout bounds one background refresh tick. It defers to the
+// configured client's own Timeout when the caller set one (matching the
+// historical behavior for the common case), and falls back to
+// defaultRefreshFetchTimeout when the client declares no timeout of its own
+// (Timeout <= 0) — see WithJWKSHTTPClient and defaultRefreshFetchTimeout for
+// why 0 cannot be passed straight through to context.WithTimeout.
+func (j *JWKSCache) refreshFetchTimeout() time.Duration {
+	if j.client.Timeout > 0 {
+		return j.client.Timeout
+	}
+	return defaultRefreshFetchTimeout
 }
 
 // jitteredInterval spreads each refresh across +/-10% of the base interval so
