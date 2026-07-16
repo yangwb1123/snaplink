@@ -7,8 +7,22 @@ import (
 	"testing"
 	"time"
 
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/snaplink/sso/interfaces/sso"
 )
+
+// failingExpireClient wraps a real goredis.Cmdable and forces every Expire
+// call to fail, so tests can drive the "HSet succeeded, Expire failed"
+// partial-write path deterministically without a real Redis outage.
+type failingExpireClient struct {
+	goredis.Cmdable
+}
+
+func (f *failingExpireClient) Expire(ctx context.Context, key string, expiration time.Duration) *goredis.BoolCmd {
+	cmd := goredis.NewBoolCmd(ctx, "expire", key, expiration)
+	cmd.SetErr(errors.New("injected: expire unavailable"))
+	return cmd
+}
 
 func TestSessionCreateGetDestroy(t *testing.T) {
 	t.Parallel()
@@ -37,6 +51,36 @@ func TestSessionCreateGetDestroy(t *testing.T) {
 	}
 	if _, err := sm.Get(ctx, sess.ID); !errors.Is(err, sso.ErrSessionNotFound) {
 		t.Fatalf("get after destroy: want ErrSessionNotFound, got %v", err)
+	}
+}
+
+// TestSessionCreateRollsBackOnExpireFailure covers the partial-write path: an
+// HSet that succeeds followed by an Expire that fails must not strand a
+// hash with no TTL in Redis. Pre-fix, Create returned the Expire error but
+// left the just-written key installed forever (Redis never evicts a key
+// with no TTL); a real deployment would accumulate one such orphan per
+// transient Expire failure for its entire lifetime. Post-fix, Create rolls
+// the half-written key back so a failed Create leaves no trace.
+func TestSessionCreateRollsBackOnExpireFailure(t *testing.T) {
+	t.Parallel()
+	_, rdb := newTestClient(t)
+	wrapped := &failingExpireClient{Cmdable: rdb}
+	sm := NewSessionManager(wrapped, WithSessionTTL(time.Hour))
+	ctx := context.Background()
+
+	if _, err := sm.Create(ctx, "victim"); err == nil {
+		t.Fatal("create: want error when Expire fails, got nil")
+	}
+
+	// Scan the real (unwrapped) client for ANY session hash. None should
+	// survive a failed Create — a leaked key here means Redis will never
+	// reclaim it (no TTL was ever set on it).
+	keys, err := rdb.Keys(ctx, sessionKeyPrefix+"*").Result()
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("create rollback: want no orphaned session keys after a failed Expire, got %v", keys)
 	}
 }
 

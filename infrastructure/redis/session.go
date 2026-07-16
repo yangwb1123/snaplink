@@ -101,6 +101,16 @@ func (s *SessionManager) Create(ctx context.Context, userID string) (*sso.Sessio
 		return nil, fmt.Errorf("redis: create session: %w", err)
 	}
 	if err := s.rdb.Expire(ctx, sessionKey(id), s.ttl).Err(); err != nil {
+		// Roll back the just-written hash. Without this, a transient Expire
+		// failure right after a successful HSet leaves the key installed with
+		// NO TTL: Get/Refresh still treat it as expired via the explicit
+		// expires_at field (so it can never be resurrected), but Redis would
+		// never evict the hash itself — an unbounded, permanent leak that
+		// accumulates one dead key per failed Create for the life of the
+		// deployment. Best-effort; the caller already sees the error either
+		// way. Mirrors the device_code store's Issue rollback for the same
+		// half-written-record failure mode.
+		_ = s.rdb.Del(ctx, sessionKey(id)).Err()
 		return nil, fmt.Errorf("redis: session expire: %w", err)
 	}
 	// Index for ListByUser / ListAll. The index entries are pruned
