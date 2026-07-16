@@ -364,7 +364,21 @@ func (s *Server) handleAdminRevokeToken(ctx HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return
 	}
+	s.recordAdminTokenRevoked(ctx, tokenID)
 	ctx.JSON(http.StatusOK, map[string]string{KeyStatus: StatusOK})
+}
+
+// recordAdminTokenRevoked emits admin_token_revoked — previously never fired
+// on this path, leaving zero forensic trail. No-op when no Auditor is wired.
+func (s *Server) recordAdminTokenRevoked(ctx HandlerContext, tokenID string) {
+	if s.auditor == nil {
+		return
+	}
+	actor, _, _ := admin.ActorFromContext(ctx.Request().Context())
+	s.auditor.Record(ctx.Request().Context(), &audit.Event{
+		Type: audit.EventAdminTokenRevoked, Outcome: audit.OutcomeSuccess,
+		ActorID: actor, ActorIP: audit.ClientIP(ctx.Request()), TokenID: tokenID,
+	})
 }
 
 // Break-glass (emergency support) admin sessions — thin wrappers. The
@@ -435,6 +449,7 @@ func (s *Server) handleAdminLogout(ctx HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, core.ErrInternal))
 		return
 	}
+	s.recordAdminTokenRevoked(ctx, claims.JTI)
 	ctx.JSON(http.StatusOK, map[string]string{KeyStatus: "logged_out"})
 }
 
