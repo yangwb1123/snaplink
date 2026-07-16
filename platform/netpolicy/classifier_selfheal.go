@@ -48,7 +48,7 @@ func (c *Classifier) run(ctx context.Context, s Store, done chan struct{}, ch <-
 	attempt := 0
 	for {
 		for evt := range ch {
-			c.apply(evt)
+			c.applySafe(evt)
 		}
 		// The channel closed. If ctx is done this is a clean shutdown — the
 		// memory + etcd Store peers both close the stream BECAUSE ctx was
@@ -81,6 +81,32 @@ func (c *Classifier) run(ctx context.Context, s Store, done chan struct{}, ch <-
 		ch = next
 		attempt = 0
 	}
+}
+
+// applySafe wraps apply with a recover so a panic processing ONE Watch event —
+// e.g. a custom/operator-supplied Store implementation emitting a malformed
+// Event{Type: EventAdded or EventUpdated, Policy: nil} on its Watch channel
+// (compile/upsertLocked dereference evt.Policy unconditionally on those two
+// event types) — is contained to this ONE event instead of escaping run's bare
+// `for evt := range ch` loop, which otherwise has no recover of its own. run is
+// spawned once via `go c.run(...)` and lives for the process's lifetime; an
+// unrecovered panic in ANY goroutine is always process-fatal in Go, so without
+// this wrapper one bad event from a buggy custom Store would silently crash
+// the entire server, aborting every other in-flight request on every other
+// connection. Mirrors the identical per-event recover convention the two
+// sibling self-heal loops this package's doc explicitly mirrors already use:
+// applySigningKeyEventSafe (signing_key_aggregation_loop.go) and
+// applyInvalidationSafe (server_invalidation.go), both in interfaces/sso.
+func (c *Classifier) applySafe(evt Event) {
+	defer func() {
+		if r := recover(); r != nil {
+			if c.logger != nil {
+				c.logger.Error("netpolicy classifier: applying watch event panicked, event dropped",
+					"event_type", string(evt.Type), "panic", r)
+			}
+		}
+	}()
+	c.apply(evt)
 }
 
 // selfHealAction is the outcome of a single resubscribe-and-reload attempt,

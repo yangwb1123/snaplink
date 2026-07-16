@@ -136,6 +136,57 @@ func TestApplyAddUpdateRemove(t *testing.T) {
 	}
 }
 
+// TestApplyPanicsOnNilPolicy documents the underlying hazard applySafe exists
+// to contain: a custom Store implementation is free to emit a malformed
+// Event{Type: EventAdded/EventUpdated, Policy: nil} on its Watch channel (the
+// shipped memory + etcd backends never do, but the Store interface doesn't
+// forbid it), and apply's dereference of evt.Policy is unconditional. This
+// pins that raw apply (used directly by Reload's seed path via replace, and
+// historically by run's drain loop) is NOT nil-safe, so the recover in
+// applySafe (see TestApplySafeRecoversFromNilPolicyPanic) is load-bearing, not
+// redundant.
+func TestApplyPanicsOnNilPolicy(t *testing.T) {
+	t.Parallel()
+
+	c := NewClassifier()
+	defer func() {
+		if recover() == nil {
+			t.Fatal("apply(EventAdded, Policy: nil) did not panic — the recover in applySafe would be dead code")
+		}
+	}()
+	c.apply(Event{Type: EventAdded, Policy: nil})
+}
+
+// TestApplySafeRecoversFromNilPolicyPanic proves the fix: the SAME malformed
+// event that panics raw apply (see TestApplyPanicsOnNilPolicy) is contained by
+// applySafe — the call returns normally instead of taking down the calling
+// goroutine (which, on the real run loop, is the detached, permanent-for-the-
+// process Watch consumer spawned by Start; an unrecovered panic there crashes
+// the entire server, not just this one policy update). The Classifier must
+// also stay fully usable afterward: an existing entry keeps classifying and a
+// subsequent well-formed event still applies.
+func TestApplySafeRecoversFromNilPolicyPanic(t *testing.T) {
+	t.Parallel()
+
+	c := NewClassifier()
+	c.apply(Event{Type: EventAdded, Policy: &Policy{Name: "intranet", CIDRs: []string{"10.0.0.0/8"}}})
+
+	// Must not panic — a panic here would fail this test AND (per the
+	// documented contract) crash the whole process on the real run loop.
+	c.applySafe(Event{Type: EventAdded, Policy: nil})
+	c.applySafe(Event{Type: EventUpdated, Policy: nil})
+
+	// The classifier survives the malformed events with its prior state intact...
+	if got := c.Classify("10.0.0.1", ""); got == nil || got.Name != "intranet" {
+		t.Fatalf("classifier state corrupted by recovered panic: %v", got)
+	}
+	// ...and keeps applying subsequent well-formed events normally.
+	c.applySafe(Event{Type: EventAdded, Policy: &Policy{Name: "dmz", CIDRs: []string{"172.16.0.0/12"}}})
+	if got := c.Classify("172.16.0.1", ""); got == nil || got.Name != "dmz" {
+		t.Fatalf("applySafe did not apply a well-formed event after recovering a panic: %v", got)
+	}
+}
+
 func TestRemoveLockedUnknownNameNoOp(t *testing.T) {
 	t.Parallel()
 
