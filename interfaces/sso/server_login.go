@@ -12,6 +12,13 @@ import (
 )
 
 func (s *Server) handleLogin(ctx HandlerContext) {
+	// RFC 6749 §5.1: every /auth/login response — success AND error, including
+	// the pre-bind CSRF/origin gates below — MUST carry Cache-Control: no-store
+	// + Pragma: no-cache. Stamped here, before ANY response can be written, so
+	// the 415/403 gates below aren't a cacheable exception to the credential-
+	// endpoint rule (bootstrapLoginRequest also stamps this for the post-bind
+	// path; both calls are idempotent header Sets).
+	tokenNoStoreHeaders(ctx)
 	if s.rejectNonJSONLogin(ctx) {
 		return
 	}
@@ -57,9 +64,14 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 // application/json, so form-encoded submissions that a cross-origin <form>
 // could forge are rejected with 415. Returns true when the response was
 // written and the caller MUST return.
+//
+// Uses authzErrorBody (not the plain errorBody) so this response — like every
+// other /auth/login response — carries `iss` per RFC 9207 §2: a client
+// comparing it against discovery's issuer must be able to detect a mix-up
+// even on this earliest pre-bind gate.
 func (s *Server) rejectNonJSONLogin(ctx HandlerContext) bool {
 	if ct := ctx.Request().Header.Get(core.HeaderContentType); ct != "" && !strings.HasPrefix(ct, "application/json") {
-		ctx.JSON(http.StatusUnsupportedMediaType, errorBody(ctx, core.ErrInvalidRequest))
+		ctx.JSON(http.StatusUnsupportedMediaType, s.authzErrorBody(ctx, core.ErrInvalidRequest))
 		return true
 	}
 	return false
@@ -70,6 +82,10 @@ func (s *Server) rejectNonJSONLogin(ctx HandlerContext) bool {
 // attacker can set Content-Type: application/json (e.g., via fetch API with
 // CORS disabled). Returns true when the 403 was written and the caller MUST
 // return.
+//
+// Uses authzErrorBody (not the plain errorBody) so this response carries
+// `iss` per RFC 9207 §2, same as every other /auth/login response — see
+// rejectNonJSONLogin.
 func (s *Server) rejectDisallowedLoginOrigin(ctx HandlerContext) bool {
 	origin := ctx.Request().Header.Get("Origin")
 	if origin == "" || s.corsPolicy == nil {
@@ -85,7 +101,7 @@ func (s *Server) rejectDisallowedLoginOrigin(ctx HandlerContext) bool {
 		"client_ip", ctx.Request().RemoteAddr,
 		"user_agent", ctx.Request().UserAgent(),
 	)
-	ctx.JSON(http.StatusForbidden, errorBody(ctx, core.ErrInvalidRequest))
+	ctx.JSON(http.StatusForbidden, s.authzErrorBody(ctx, core.ErrInvalidRequest))
 	return true
 }
 
