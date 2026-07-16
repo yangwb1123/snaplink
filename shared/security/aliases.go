@@ -63,6 +63,11 @@ const (
 	CloudProviderGCP                    = securityverify.CloudProviderGCP
 	CloudProviderAWS                    = securityverify.CloudProviderAWS
 	CloudProviderAzure                  = securityverify.CloudProviderAzure
+	AttrAWSNamespace                    = securityverify.AttrAWSNamespace
+	AttrAWSServiceAccountName           = securityverify.AttrAWSServiceAccountName
+	AttrAWSServiceAccountUID            = securityverify.AttrAWSServiceAccountUID
+	AttrAzureTenantID                   = securityverify.AttrAzureTenantID
+	AttrAzureAppID                      = securityverify.AttrAzureAppID
 )
 
 var (
@@ -95,13 +100,15 @@ var (
 	NewRotatingWebhookSecret = securityverify.NewRotatingWebhookSecret
 	NewWebhookSecretRotator  = securityverify.NewWebhookSecretRotator
 
-	ErrWorkloadIdentityInvalid       = securityverify.ErrWorkloadIdentityInvalid
-	NewWorkloadIdentityValidator     = securityverify.NewWorkloadIdentityValidator
-	NewGCPWorkloadIdentityValidator  = securityverify.NewGCPWorkloadIdentityValidator
-	NewHTTPJWKSSource                = securityverify.NewHTTPJWKSSource
-	WithWorkloadIdentityMaxClockSkew = securityverify.WithWorkloadIdentityMaxClockSkew
-	WithWorkloadIdentityAllowedAlgs  = securityverify.WithWorkloadIdentityAllowedAlgs
-	WithJWKSCacheTTL                 = securityverify.WithJWKSCacheTTL
-	WithJWKSMaxStaleAge              = securityverify.WithJWKSMaxStaleAge
-	WithJWKSHTTPClient               = securityverify.WithJWKSHTTPClient
+	ErrWorkloadIdentityInvalid        = securityverify.ErrWorkloadIdentityInvalid
+	NewWorkloadIdentityValidator      = securityverify.NewWorkloadIdentityValidator
+	NewGCPWorkloadIdentityValidator   = securityverify.NewGCPWorkloadIdentityValidator
+	NewAWSWorkloadIdentityValidator   = securityverify.NewAWSWorkloadIdentityValidator
+	NewAzureWorkloadIdentityValidator = securityverify.NewAzureWorkloadIdentityValidator
+	NewHTTPJWKSSource                 = securityverify.NewHTTPJWKSSource
+	WithWorkloadIdentityMaxClockSkew  = securityverify.WithWorkloadIdentityMaxClockSkew
+	WithWorkloadIdentityAllowedAlgs   = securityverify.WithWorkloadIdentityAllowedAlgs
+	WithJWKSCacheTTL                  = securityverify.WithJWKSCacheTTL
+	WithJWKSMaxStaleAge               = securityverify.WithJWKSMaxStaleAge
+	WithJWKSHTTPClient                = securityverify.WithJWKSHTTPClient
 )
