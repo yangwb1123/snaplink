@@ -1,9 +1,12 @@
 package selfserviceaccount
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"testing"
 
+	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystorecredential"
 	"github.com/snaplink/sso/shared/core"
 )
 
@@ -74,6 +77,64 @@ func TestHandleChangeMyPassword_PolicyViolation(t *testing.T) {
 	if got := decodeBody(t, rec)["error"]; got != core.ErrPasswordPolicyViolation {
 		t.Fatalf("error = %v, want %s", got, core.ErrPasswordPolicyViolation)
 	}
+}
+
+// TestHandleChangeMyPassword_HistoryRejectsReuse proves a wired
+// PasswordHistoryStore rejects changing to a password matching the user's
+// current one, and that a genuinely fresh password is accepted and itself
+// recorded for the NEXT change to catch.
+func TestHandleChangeMyPassword_HistoryRejectsReuse(t *testing.T) {
+	t.Parallel()
+	d := newTestDeps()
+	_ = d.passwords.SetPassword(t.Context(), "user-1", "old-password")
+	d.passwordHistory = memorystorecredential.NewMemoryPasswordHistoryStore(3)
+	_ = d.passwordHistory.Record(t.Context(), "user-1", "old-password")
+
+	ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, `{"current_password":"old-password","new_password":"old-password"}`)
+	HandleChangeMyPassword(d, ctx)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("reusing the current password: status = %d, want 400", rec.Code)
+	}
+	if got := decodeBody(t, rec)["error"]; got != core.ErrPasswordPolicyViolation {
+		t.Fatalf("error = %v, want %s", got, core.ErrPasswordPolicyViolation)
+	}
+
+	ctx2, rec2 := newCtx(http.MethodPost, core.ContentTypeJSON, `{"current_password":"old-password","new_password":"brand-new-password"}`)
+	HandleChangeMyPassword(d, ctx2)
+	if rec2.Code != http.StatusNoContent {
+		t.Fatalf("fresh password: status = %d, want 204, body=%s", rec2.Code, rec2.Body.String())
+	}
+	reused, err := d.passwordHistory.CheckHistory(t.Context(), "user-1", "brand-new-password")
+	if err != nil || !reused {
+		t.Errorf("the just-set password should now be in history, got (%v, %v)", reused, err)
+	}
+}
+
+// TestHandleChangeMyPassword_HistoryStoreErrorFailsOpen proves a CheckHistory
+// error does not block an otherwise-legitimate change (fail-open).
+func TestHandleChangeMyPassword_HistoryStoreErrorFailsOpen(t *testing.T) {
+	t.Parallel()
+	d := newTestDeps()
+	_ = d.passwords.SetPassword(t.Context(), "user-1", "old-password")
+	d.passwordHistory = failingHistoryStore{}
+
+	ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, `{"current_password":"old-password","new_password":"new-password-123"}`)
+	HandleChangeMyPassword(d, ctx)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (history-store error must fail open), body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// failingHistoryStore is a core.PasswordHistoryStore whose every call errors,
+// used to prove the fail-open behavior on a history-store outage.
+type failingHistoryStore struct{}
+
+func (failingHistoryStore) Record(context.Context, string, string) error {
+	return errors.New("history store down")
+}
+
+func (failingHistoryStore) CheckHistory(context.Context, string, string) (bool, error) {
+	return false, errors.New("history store down")
 }
 
 func TestHandleChangeMyPassword_ResidencyGateDenies(t *testing.T) {

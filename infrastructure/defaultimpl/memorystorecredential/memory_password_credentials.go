@@ -160,3 +160,61 @@ var (
 	_ core.PasswordCredentialDeleter       = (*MemoryPasswordCredentialStore)(nil)
 	_ identitylink.PasswordPresenceChecker = (*MemoryPasswordCredentialStore)(nil)
 )
+
+// MemoryPasswordHistoryStore is an in-memory core.PasswordHistoryStore,
+// retaining at most `max` bcrypt-hashed passwords per user (oldest evicted
+// first). Co-located here (not a separate file) to stay under this
+// directory's 10-go-file fan-out budget (AGENTS.md §0.1) — thematically still
+// password-credential storage, same family as MemoryPasswordCredentialStore
+// above. Not durable across restarts; a persisted (sqlite/redis/postgres)
+// peer is a natural follow-up, wired the same way via
+// interfaces/sso.WithPasswordHistoryStore — the interface has no other
+// backend today.
+type MemoryPasswordHistoryStore struct {
+	historyMu sync.Mutex
+	rings     map[string][]string // userID -> ring of bcrypt hashes, oldest first
+	maxHist   int
+}
+
+// NewMemoryPasswordHistoryStore creates a store retaining at most max
+// password hashes per user. max <= 0 makes every call a no-op, matching
+// PasswordPolicyConfig.MaxHistory <= 0 (history not enforced).
+func NewMemoryPasswordHistoryStore(max int) *MemoryPasswordHistoryStore {
+	return &MemoryPasswordHistoryStore{rings: make(map[string][]string), maxHist: max}
+}
+
+var _ core.PasswordHistoryStore = (*MemoryPasswordHistoryStore)(nil)
+
+// Record adds newPassword (plaintext, hashed here) to userID's ring.
+func (m *MemoryPasswordHistoryStore) Record(_ context.Context, userID, newPassword string) error {
+	if m.maxHist <= 0 {
+		return nil
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	m.historyMu.Lock()
+	defer m.historyMu.Unlock()
+	ring := m.rings[userID]
+	if len(ring) >= m.maxHist {
+		ring = ring[1:] // drop oldest
+	}
+	m.rings[userID] = append(ring, string(hash))
+	return nil
+}
+
+// CheckHistory reports whether newPassword matches any hash in userID's ring.
+func (m *MemoryPasswordHistoryStore) CheckHistory(_ context.Context, userID, newPassword string) (bool, error) {
+	if m.maxHist <= 0 {
+		return false, nil
+	}
+	m.historyMu.Lock()
+	defer m.historyMu.Unlock()
+	for _, hash := range m.rings[userID] {
+		if bcrypt.CompareHashAndPassword([]byte(hash), []byte(newPassword)) == nil {
+			return true, nil
+		}
+	}
+	return false, nil
+}

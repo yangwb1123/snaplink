@@ -141,6 +141,9 @@ type Deps interface {
 
 	// Password policy
 	PasswordPolicyValidator() spi.PasswordPolicyValidator
+	// PasswordHistoryStore returns the wired password-history store, or nil
+	// when history enforcement is not configured (WithPasswordHistoryStore).
+	PasswordHistoryStore() core.PasswordHistoryStore
 }
 
 // RecordSelfErase emits a subject_self_erased audit event for GDPR Art. 17

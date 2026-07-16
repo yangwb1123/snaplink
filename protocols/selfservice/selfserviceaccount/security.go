@@ -45,18 +45,15 @@ func HandleChangeMyPassword(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrInvalidPassword))
 		return
 	}
-	// Validate the new password against the policy before setting it.
-	if v := d.PasswordPolicyValidator(); v != nil {
-		if err := v.ValidatePassword(ctx.Request().Context(), req.NewPassword); err != nil {
-			ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrPasswordPolicyViolation))
-			return
-		}
+	if !validateNewPassword(d, ctx, userID, req.NewPassword) {
+		return
 	}
 	if err := d.PasswordCredentialStore().SetPassword(ctx.Request().Context(), userID, req.NewPassword); err != nil {
 		d.Logger().Error("set password failed", "user_id", userID, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
 		return
 	}
+	recordPasswordHistory(d, ctx, userID, req.NewPassword)
 	// A changed password is the strongest account-compromise-adjacent signal
 	// this handler sees: a trusted-device grant minted under the OLD password
 	// must not silently outlive it. Shared with the "sign out everywhere" /
@@ -64,6 +61,53 @@ func HandleChangeMyPassword(d Deps, ctx core.HandlerContext) {
 	// /token/revoke-all — see selfservicecore.RevokeTrustedDevicesOnCompromiseSignal.
 	selfservicecore.RevokeTrustedDevicesOnCompromiseSignal(d, ctx, userID, "password_change")
 	ctx.JSON(http.StatusNoContent, nil)
+}
+
+// validateNewPassword runs the wired complexity-policy check followed by the
+// wired history check (cheap static check first, store round-trip second).
+// Returns true when the password is acceptable or neither is configured;
+// writes the 400 response on rejection either way.
+func validateNewPassword(d Deps, ctx core.HandlerContext, userID, password string) bool {
+	if v := d.PasswordPolicyValidator(); v != nil {
+		if err := v.ValidatePassword(ctx.Request().Context(), password); err != nil {
+			ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrPasswordPolicyViolation))
+			return false
+		}
+	}
+	return checkPasswordHistory(d, ctx, userID, password)
+}
+
+// checkPasswordHistory rejects a new password that matches userID's recent
+// password history, when a history store is wired. Fails OPEN on a store
+// error (logged) — an outage must not block an otherwise-legitimate change.
+func checkPasswordHistory(d Deps, ctx core.HandlerContext, userID, password string) bool {
+	store := d.PasswordHistoryStore()
+	if store == nil {
+		return true
+	}
+	reused, err := store.CheckHistory(ctx.Request().Context(), userID, password)
+	if err != nil {
+		d.Logger().Error("password history check failed", "user_id", userID, "error", err)
+		return true
+	}
+	if reused {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrPasswordPolicyViolation))
+		return false
+	}
+	return true
+}
+
+// recordPasswordHistory best-effort records the just-set password so a
+// future change can detect reuse. Non-fatal: the password change already
+// succeeded, so a history-store write failure is logged, not surfaced.
+func recordPasswordHistory(d Deps, ctx core.HandlerContext, userID, password string) {
+	store := d.PasswordHistoryStore()
+	if store == nil {
+		return
+	}
+	if err := store.Record(ctx.Request().Context(), userID, password); err != nil {
+		d.Logger().Error("password history record failed", "user_id", userID, "error", err)
+	}
 }
 
 // HandleWebAuthnRegisterBegin serves POST /me/mfa/webauthn/begin — starts an

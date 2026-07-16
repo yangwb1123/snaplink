@@ -318,3 +318,39 @@ func checkPasswordPolicy(d Deps, rctx context.Context, ctx core.HandlerContext, 
 	return true
 }
 
+// checkPasswordHistory rejects a new password that matches one of userID's
+// recent password-history entries, when a history store is wired. Returns
+// true when the password is acceptable or no store is configured. Fails OPEN
+// on a store error (logged) — an outage must not block an otherwise-
+// legitimate password change. Not called at signup: a brand new account has
+// no prior password to check against.
+func checkPasswordHistory(d Deps, rctx context.Context, ctx core.HandlerContext, userID, password string) bool {
+	store := d.PasswordHistoryStore()
+	if store == nil {
+		return true
+	}
+	reused, err := store.CheckHistory(rctx, userID, password)
+	if err != nil {
+		d.Logger().Error("password history check failed", "user_id", userID, "error", err)
+		return true
+	}
+	if reused {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrPasswordPolicyViolation))
+		return false
+	}
+	return true
+}
+
+// recordPasswordHistory best-effort records the just-set password so a
+// future change can detect reuse. Non-fatal: the password change already
+// succeeded, so a history-store write failure is logged, not surfaced.
+func recordPasswordHistory(d Deps, rctx context.Context, userID, password string) {
+	store := d.PasswordHistoryStore()
+	if store == nil {
+		return
+	}
+	if err := store.Record(rctx, userID, password); err != nil {
+		d.Logger().Error("password history record failed", "user_id", userID, "error", err)
+	}
+}
+

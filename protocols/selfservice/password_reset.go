@@ -111,6 +111,9 @@ func HandleResetPassword(d Deps, ctx core.HandlerContext) {
 	if !checkPasswordPolicy(d, rctx, ctx, req.NewPassword) {
 		return
 	}
+	if !checkPasswordHistory(d, rctx, ctx, rt.UserID, req.NewPassword) {
+		return
+	}
 	if err := d.PasswordCredentialStore().SetPassword(rctx, rt.UserID, req.NewPassword); err != nil {
 		// Token already consumed; the user must request another reset. We return
 		// the SAME reset_invalid (not 500) so an attacker can't distinguish a
@@ -120,6 +123,7 @@ func HandleResetPassword(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrResetInvalid))
 		return
 	}
+	recordPasswordHistory(d, rctx, rt.UserID, req.NewPassword)
 	revoked := revokeUserSessionsBestEffort(d, ctx, rt.UserID)
 	recordPasswordResetCompleted(d, ctx, rt.UserID, revoked)
 	ctx.JSON(http.StatusOK, map[string]any{"status": "ok"})

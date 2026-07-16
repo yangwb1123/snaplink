@@ -208,6 +208,45 @@ func (s *Server) PasswordPolicyValidator() spi.PasswordPolicyValidator {
 	return s.passwordPolicyValidator
 }
 
+// WithPasswordPolicy wires a password policy validator that checks proposed
+// passwords against operator-configured complexity rules. When nil (the
+// default), no policy is enforced — behaviour is byte-identical to a build
+// without the feature. The validator is applied in every code path that sets
+// a password: self-service signup, POST /me/password, and POST
+// /auth/reset-password. All validation failures return the same generic
+// error to prevent enumeration of policy internals.
+//
+// Password HISTORY (PasswordPolicyConfig.MaxHistory) is a separate mechanism
+// — see WithPasswordHistoryStore below — since checking reuse needs a
+// per-user store keyed by userID, not just the candidate string
+// ValidatePassword receives.
+func WithPasswordPolicy(v spi.PasswordPolicyValidator) Option {
+	return func(srv *Server) { srv.passwordPolicyValidator = v }
+}
+
+// PasswordHistoryStore returns the wired password-history store, or nil if
+// history is not enforced (WithPasswordHistoryStore).
+func (s *Server) PasswordHistoryStore() core.PasswordHistoryStore {
+	return s.passwordHistoryStore
+}
+
+// WithPasswordHistoryStore wires a store that remembers a user's recent
+// passwords so PasswordPolicyConfig.MaxHistory > 0 can reject reuse. Applied
+// at both self-service paths that already run PasswordPolicyValidator: POST
+// /me/password and POST /auth/reset-password. NOT applied at signup (a brand
+// new account has no prior password to check against) or at admin-initiated
+// password resets (interfaces/admin, internal/adminuser — a separate,
+// non-SPI validation path).
+//
+// Nil (the default) means no history is enforced — byte-identical to a build
+// without this feature. A CheckHistory error fails OPEN (logged, the change
+// proceeds): a history-store outage must never lock a user out of changing
+// their own password. A Record error after a successful change is likewise
+// logged and non-fatal — the change already succeeded.
+func WithPasswordHistoryStore(store core.PasswordHistoryStore) Option {
+	return func(s *Server) { s.passwordHistoryStore = store }
+}
+
 // passwordMaxAgeDays returns the operator-configured
 // PasswordPolicyConfig.MaxAgeDays (via WithPasswordPolicy), or 0 when no
 // policy validator is wired, or the wired one doesn't expose it

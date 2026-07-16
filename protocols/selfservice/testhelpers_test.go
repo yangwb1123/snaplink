@@ -63,6 +63,7 @@ type testDeps struct {
 	registrationGates     []spi.RegistrationGate
 	rateLimiter           selfservicecore.RateLimiter
 	passwordPolicy        spi.PasswordPolicyValidator
+	passwordHistory       core.PasswordHistoryStore
 
 	auditor *audit.Recorder
 
@@ -232,6 +233,7 @@ func (d *testDeps) DataExporter() *compliance.Exporter { return d.dataExporter }
 func (d *testDeps) AccountEraser() *compliance.Eraser  { return d.accountEraser }
 
 func (d *testDeps) PasswordPolicyValidator() spi.PasswordPolicyValidator { return d.passwordPolicy }
+func (d *testDeps) PasswordHistoryStore() core.PasswordHistoryStore      { return d.passwordHistory }
 
 var _ Deps = (*testDeps)(nil)
 

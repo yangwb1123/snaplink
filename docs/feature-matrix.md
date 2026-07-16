@@ -45,6 +45,7 @@ OAuth 2.0 / OIDC / SSO feature compliance matrix. Extracted from AGENTS.md.
 | OIDC CIBA (poll+ping) | `/backchannel-authentication`, `/token` | `WithCIBA`; ping: `WithCIBAPingNotifier` | `oauth/ciba.go` + `oauth/handle_ciba.go` |
 | MFA orchestration | `/auth/login` + `/auth/mfa` | `WithMFAProvider` + `WithMFAChallengeStore` | `handlers.go` + `spi/mfa.go` |
 | Per-account lockout | `/auth/login` | `WithAccountLockout` | `security/account_lockout.go` |
+| Password history / reuse prevention | `POST /me/password`, `POST /auth/reset-password` | `WithPasswordHistoryStore` (+ `PasswordPolicyConfig.MaxHistory` for the record capacity) | `interfaces/sso/server_signup.go` + `defaultimpl/memorystorecredential/memory_password_credentials.go` |
 | SPIFFE JWT-SVID token-exchange | `/token` | `WithSPIFFEJWTSVID(trustDomain, audience, JWKSSource)` | `security/spiffe_svid.go` |
 | RFC 9321 Transaction Tokens | `/token` (grant=token-exchange, `requested_token_type=...:txn-token`) | `WithTransactionTokens(Issuer, Validator)` | `oauth/txntoken/` |
 | Cloud workload-identity client auth (GCP, AWS, Azure) | `/token` client authentication | `WithWorkloadIdentityProviders(security.NewGCPWorkloadIdentityValidator(...), security.NewAWSWorkloadIdentityValidator(issuer, ...), security.NewAzureWorkloadIdentityValidator(tenantID, ...))` + `Client.TokenEndpointAuthMethod=workload_identity` | `security/securityverify/workload_identity.go` + `securityverify/workload_identity_presets.go` |

@@ -511,7 +511,11 @@ paths:
         race/failure can't replay it), sets the new password, and best-effort
         revokes the user's existing sessions. Oracle-safe: unknown / expired /
         consumed token, user gone, and set-password errors ALL collapse to one
-        `reset_invalid` (400, never 500). `Cache-Control: no-store`.
+        `reset_invalid` (400, never 500). When a password policy validator
+        and/or history store is wired, a non-compliant or recently-reused new
+        password instead returns `password_policy_violation` (the token is
+        still consumed either way — a policy-rejected reset burns the token,
+        so the caller must request a new one). `Cache-Control: no-store`.
       operationId: resetPassword
       requestBody:
         required: true
@@ -533,7 +537,10 @@ paths:
                 properties:
                   status: { type: string, example: ok }
         "400":
-          description: reset_invalid (any failure — oracle-safe).
+          description: |
+            `reset_invalid` (unknown/expired/consumed token, oracle-safe) or
+            `password_policy_violation` (new password fails the configured
+            complexity or history policy).
           content:
             application/json:
               schema:
@@ -1711,8 +1718,10 @@ paths:
           description: Password changed.
         "400":
           description: |
-            `invalid_password` (current password wrong) or `invalid_request`
-            (missing/empty new password).
+            `invalid_password` (current password wrong), `invalid_request`
+            (missing/empty new password), or `password_policy_violation` (new
+            password fails the configured complexity or history policy — see
+            `WithPasswordPolicy` / `WithPasswordHistoryStore`).
           content:
             application/json:
               schema:

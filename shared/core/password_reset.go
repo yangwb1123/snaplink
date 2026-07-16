@@ -109,3 +109,25 @@ type PasswordCredentialDeleter interface {
 	// create-or-replace shape).
 	DeletePassword(ctx context.Context, userID string) error
 }
+
+// PasswordHistoryStore persists a bounded ring of a user's recent passwords
+// so a PasswordPolicyConfig.MaxHistory > 0 policy can reject reuse at
+// password-change time (POST /me/password, POST /auth/reset-password — see
+// interfaces/sso.WithPasswordHistoryStore). Both methods take the PLAINTEXT
+// candidate: hashing/comparison is entirely the store's own concern,
+// deliberately decoupled from PasswordCredentialStore's own hash-at-rest, so
+// a history store can be backed by a different scheme or swapped
+// independently. Optional: when nil (not wired), no history is enforced —
+// byte-identical to a build without the feature.
+type PasswordHistoryStore interface {
+	// Record adds newPassword to userID's history ring, evicting the oldest
+	// entry once at capacity. Called AFTER a password change already
+	// succeeded; implementations should treat this as best-effort bookkeeping,
+	// not a step that can roll back the change.
+	Record(ctx context.Context, userID, newPassword string) error
+
+	// CheckHistory reports whether newPassword matches any password
+	// currently retained in userID's history ring. Called BEFORE accepting
+	// a password change.
+	CheckHistory(ctx context.Context, userID, newPassword string) (bool, error)
+}

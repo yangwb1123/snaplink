@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystorecredential"
 	"github.com/snaplink/sso/shared/core"
 )
 
@@ -184,4 +185,69 @@ func TestHandleResetPassword_PolicyViolationConsumesToken(t *testing.T) {
 	if rec2.Code != http.StatusBadRequest {
 		t.Fatalf("retry after policy failure: status = %d, want 400 (token burned)", rec2.Code)
 	}
+}
+
+// TestHandleResetPassword_HistoryRejectsReuse proves a wired PasswordHistoryStore
+// rejects resetting to a password matching the user's current one, and that a
+// genuinely fresh password is accepted and recorded for the NEXT reset to catch.
+func TestHandleResetPassword_HistoryRejectsReuse(t *testing.T) {
+	t.Parallel()
+	d := newTestDeps()
+	d.passwordHistory = memorystorecredential.NewMemoryPasswordHistoryStore(3)
+	_ = d.users.CreateOrUpdate(t.Context(), &core.User{ID: "alice"})
+	_ = d.passwords.SetPassword(t.Context(), "alice", "original-password")
+	_ = d.passwordHistory.Record(t.Context(), "alice", "original-password")
+
+	seedResetToken(t, d, "reset-tok-1", "alice")
+	ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, `{"token":"reset-tok-1","new_password":"original-password"}`)
+	HandleResetPassword(d, ctx)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("reusing the current password: status = %d, want 400", rec.Code)
+	}
+	if got := decodeBody(t, rec)["error"]; got != core.ErrPasswordPolicyViolation {
+		t.Fatalf("error = %v, want %s", got, core.ErrPasswordPolicyViolation)
+	}
+	if err := d.passwords.VerifyPassword(t.Context(), "alice", "original-password"); err != nil {
+		t.Error("password must be unchanged after a rejected reuse")
+	}
+
+	// A genuinely fresh password succeeds and is itself recorded.
+	seedResetToken(t, d, "reset-tok-2", "alice")
+	ctx2, rec2 := newCtx(http.MethodPost, core.ContentTypeJSON, `{"token":"reset-tok-2","new_password":"brand-new-password"}`)
+	HandleResetPassword(d, ctx2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("fresh password: status = %d, want 200, body=%s", rec2.Code, rec2.Body.String())
+	}
+	reused, err := d.passwordHistory.CheckHistory(t.Context(), "alice", "brand-new-password")
+	if err != nil || !reused {
+		t.Errorf("the just-set password should now be in history, got (%v, %v)", reused, err)
+	}
+}
+
+// TestHandleResetPassword_HistoryStoreErrorFailsOpen proves a CheckHistory
+// error does not block an otherwise-legitimate reset (fail-open, matching
+// the doc comment on WithPasswordHistoryStore).
+func TestHandleResetPassword_HistoryStoreErrorFailsOpen(t *testing.T) {
+	t.Parallel()
+	d := newTestDeps()
+	d.passwordHistory = failingHistoryStore{}
+	seedResetToken(t, d, "reset-tok", "alice")
+
+	ctx, rec := newCtx(http.MethodPost, core.ContentTypeJSON, `{"token":"reset-tok","new_password":"newpass123"}`)
+	HandleResetPassword(d, ctx)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (history-store error must fail open), body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// failingHistoryStore is a core.PasswordHistoryStore whose every call errors,
+// used to prove the fail-open behavior on a history-store outage.
+type failingHistoryStore struct{}
+
+func (failingHistoryStore) Record(context.Context, string, string) error {
+	return errors.New("history store down")
+}
+
+func (failingHistoryStore) CheckHistory(context.Context, string, string) (bool, error) {
+	return false, errors.New("history store down")
 }

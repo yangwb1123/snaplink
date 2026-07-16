@@ -293,10 +293,16 @@ type selfServiceState struct {
 	apiDocsSpecHandler HandlerFunc
 
 	// passwordPolicyValidator checks proposed passwords against operator-
-	// configured complexity rules and password history (WithPasswordPolicy).
-	// Nil (the default) means no password policy is enforced — behavior is
-	// byte-identical to a build without the feature.
+	// configured complexity rules (WithPasswordPolicy). Nil (the default)
+	// means no password policy is enforced — behavior is byte-identical to a
+	// build without the feature.
 	passwordPolicyValidator spi.PasswordPolicyValidator
+
+	// passwordHistoryStore rejects password reuse at change time, when
+	// PasswordPolicyConfig.MaxHistory > 0 (WithPasswordHistoryStore). A
+	// SEPARATE mechanism from passwordPolicyValidator above — see that
+	// option's doc for why. Nil (the default) means no history is enforced.
+	passwordHistoryStore core.PasswordHistoryStore
 
 	// adminRateLimitRate and adminRateLimitBurst configure admin-wide rate
 	// limiting (WithAdminRateLimit). When wired, the admin middleware limits

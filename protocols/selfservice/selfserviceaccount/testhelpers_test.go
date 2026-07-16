@@ -60,8 +60,9 @@ type testDeps struct {
 	totp     core.TOTPEnroller
 	webauthn core.WebAuthnRegistrar
 
-	passwordPolicy spi.PasswordPolicyValidator
-	auditor        *audit.Recorder
+	passwordPolicy  spi.PasswordPolicyValidator
+	passwordHistory core.PasswordHistoryStore
+	auditor         *audit.Recorder
 
 	authSubject string
 	authClaims  *core.TokenClaims
@@ -201,6 +202,7 @@ func (d *testDeps) DataExporter() *compliance.Exporter { return d.dataExporter }
 func (d *testDeps) AccountEraser() *compliance.Eraser  { return d.accountEraser }
 
 func (d *testDeps) PasswordPolicyValidator() spi.PasswordPolicyValidator { return d.passwordPolicy }
+func (d *testDeps) PasswordHistoryStore() core.PasswordHistoryStore      { return d.passwordHistory }
 
 var _ Deps = (*testDeps)(nil)
 
