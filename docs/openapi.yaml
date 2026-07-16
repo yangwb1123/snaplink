@@ -6270,6 +6270,158 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/admin/sessions:
+    get:
+      tags: [admin]
+      summary: List every active session.
+      description: |
+        Returns every session known to the wired SessionManager
+        (SessionManager.ListAll). Admin-gated (admin:read). Mounted only
+        when a SessionManager is wired (WithSessionManager) — absent
+        without it, not a 501.
+      operationId: getAdminSessions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: All active sessions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  total: { type: integer }
+                  sessions:
+                    type: array
+                    items: { type: object }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No SessionManager wired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/tokens:
+    get:
+      tags: [admin]
+      summary: List active admin bearer tokens.
+      description: |
+        Returns the admin bearer tokens known to the wired AdminTokenStore,
+        never the token values themselves (opaque IDs only). Optional
+        `admin_id` query param filters to tokens issued to one admin.
+        Admin-gated (admin:read). Mounted only when WithAdminTokenStore is
+        wired.
+      operationId: getAdminTokens
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: admin_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Active admin bearer tokens.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  tokens:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        label: { type: string }
+                        admin_id: { type: string }
+                        scopes: { type: array, items: { type: string } }
+                        created_at: { type: string, format: date-time }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No AdminTokenStore wired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/tokens/{id}:
+    delete:
+      tags: [admin]
+      summary: Revoke a single admin bearer token by ID.
+      description: |
+        Revokes the admin bearer token identified by id (its opaque
+        AdminToken.ID, not the bearer value). Emits an admin_token_revoked
+        audit event when an Auditor is wired. Admin-gated (admin:write).
+        Mounted only when WithAdminTokenStore is wired.
+      operationId: deleteAdminToken
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Token revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+        "400":
+          description: Missing id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No AdminTokenStore wired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/logout:
+    post:
+      tags: [admin]
+      summary: Revoke the admin bearer token used on this request.
+      description: |
+        Validates the caller's own bearer token and revokes it by its jti
+        (matching AdminToken.ID) — a self-service "log out this session"
+        for admin tooling. The caller should discard the token after a
+        successful response. Admin-gated (the bearer must itself be a
+        valid admin token). Mounted only when WithAdminTokenStore is wired.
+      operationId: postAdminLogout
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Token revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No AdminTokenStore wired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/admin/sessions/linked/{subject}:
     get:
       tags: [admin]
