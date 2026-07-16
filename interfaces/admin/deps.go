@@ -53,6 +53,9 @@ type Deps interface {
 	MFAEnrollmentStore() core.MFAEnrollmentStore
 	RecoveryCodeStore() core.RecoveryCodeStore
 	PasswordCredentialStore() core.PasswordCredentialStore
+	// PasswordHistoryStore backs HandleAdminResetUserPassword's reuse check —
+	// nil when history enforcement is not configured (WithPasswordHistoryStore).
+	PasswordHistoryStore() core.PasswordHistoryStore
 	UserProvider() core.UserProvider
 	// LifecycleStore backs the user-lifecycle state-machine admin endpoints
 	// (GET/POST /admin/users/:id/lifecycle); may be nil when WithUserLifecycle

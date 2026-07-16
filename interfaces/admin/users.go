@@ -166,7 +166,10 @@ func recordAdminUserAction(d Deps, ctx core.HandlerContext, evtType audit.EventT
 // a helpdesk/admin sets a user's password on their behalf. admin:write. Body:
 // {new_password}. Emits admin_password_reset (never the password). The new
 // password takes effect on the user's next login (the same credential the
-// self-service /me/password change writes).
+// self-service /me/password change writes). When a PasswordHistoryStore is
+// wired, this path is checked/recorded exactly like the self-service reset —
+// the highest-privilege path to change a credential must not be a back door
+// around history enforcement (protocols/selfservice/password_reset.go).
 func HandleAdminResetUserPassword(d Deps, ctx core.HandlerContext) {
 	userID := ctx.Param("id")
 	if userID == "" {
@@ -180,13 +183,52 @@ func HandleAdminResetUserPassword(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return
 	}
+	if !checkAdminPasswordHistory(d, ctx, userID, req.NewPassword) {
+		return
+	}
 	if err := d.PasswordCredentialStore().SetPassword(ctx.Request().Context(), userID, req.NewPassword); err != nil {
 		d.Logger().Error("admin set password failed", "user_id", userID, "error", err)
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
+	recordAdminPasswordHistory(d, ctx, userID, req.NewPassword)
 	recordAdminUserAction(d, ctx, audit.EventAdminPasswordReset, userID, "", "")
 	ctx.JSON(http.StatusNoContent, nil)
+}
+
+// checkAdminPasswordHistory rejects a new password that matches userID's
+// recent password history, when a history store is wired. Fails OPEN on a
+// store error (logged) — an outage must not block an otherwise-legitimate
+// admin reset. Mirrors protocols/selfservice's checkPasswordHistory.
+func checkAdminPasswordHistory(d Deps, ctx core.HandlerContext, userID, password string) bool {
+	store := d.PasswordHistoryStore()
+	if store == nil {
+		return true
+	}
+	reused, err := store.CheckHistory(ctx.Request().Context(), userID, password)
+	if err != nil {
+		d.Logger().Error("admin password history check failed", "user_id", userID, "error", err)
+		return true
+	}
+	if reused {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrPasswordPolicyViolation))
+		return false
+	}
+	return true
+}
+
+// recordAdminPasswordHistory best-effort records the just-set password so a
+// future change (admin or self-service) can detect reuse. Non-fatal: the
+// password change already succeeded, so a history-store write failure is
+// logged, not surfaced.
+func recordAdminPasswordHistory(d Deps, ctx core.HandlerContext, userID, password string) {
+	store := d.PasswordHistoryStore()
+	if store == nil {
+		return
+	}
+	if err := store.Record(ctx.Request().Context(), userID, password); err != nil {
+		d.Logger().Error("admin password history record failed", "user_id", userID, "error", err)
+	}
 }
 
 // HandleAdminSetUserEmail serves POST /api/v1/admin/users/:id/email — a

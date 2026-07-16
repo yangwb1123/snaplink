@@ -50,6 +50,7 @@ func (d *gcTestDeps) InvitationSender() spi.InvitationSender                   {
 func (d *gcTestDeps) ConsentStore() core.ConsentStore                          { return nil }
 func (d *gcTestDeps) MFAEnrollmentStore() core.MFAEnrollmentStore              { return nil }
 func (d *gcTestDeps) PasswordCredentialStore() core.PasswordCredentialStore    { return nil }
+func (d *gcTestDeps) PasswordHistoryStore() core.PasswordHistoryStore          { return nil }
 func (d *gcTestDeps) UserProvider() core.UserProvider                          { return nil }
 func (d *gcTestDeps) LifecycleStore() userlifecycle.Store                      { return nil }
 func (d *gcTestDeps) AccountLockout() security.AccountLockout                  { return nil }

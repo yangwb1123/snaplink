@@ -75,6 +75,7 @@ func (d *bgTestDeps) RecoveryCodeStore() core.RecoveryCodeStore             { re
 func (d *bgTestDeps) ConsentStore() core.ConsentStore                       { return nil }
 func (d *bgTestDeps) MFAEnrollmentStore() core.MFAEnrollmentStore           { return nil }
 func (d *bgTestDeps) PasswordCredentialStore() core.PasswordCredentialStore { return nil }
+func (d *bgTestDeps) PasswordHistoryStore() core.PasswordHistoryStore       { return nil }
 func (d *bgTestDeps) UserProvider() core.UserProvider                       { return nil }
 func (d *bgTestDeps) LifecycleStore() userlifecycle.Store                   { return nil }
 func (d *bgTestDeps) AccountLockout() security.AccountLockout               { return nil }
