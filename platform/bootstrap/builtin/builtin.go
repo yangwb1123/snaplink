@@ -172,13 +172,11 @@ func stepSeedAdminUser(seed *AdminSeed) bootstrap.Step {
 		if seed.Users == nil {
 			return fmt.Errorf("seed_admin_user: user provider required")
 		}
-		// Idempotent across replicas and restarts: if the admin user already
-		// exists (a prior boot or a peer replica created it, or this pod's
-		// ephemeral bootstrap tracker reset to 0 and re-ran the step), do NOT
-		// regenerate the password or CreateOrUpdate over the row — that would
-		// silently revert operator-set profile fields/attributes and spam a new
-		// password banner on every rollout. Mirrors stepSeedAdminClient's guard.
-		if _, err := seed.Users.GetByID(ctx, seed.AdminUserID); err == nil {
+		present, err := adminUserAlreadySeeded(ctx, seed)
+		if err != nil {
+			return err
+		}
+		if present {
 			return nil
 		}
 		password, err := generatePassword(24)
@@ -204,6 +202,34 @@ func stepSeedAdminUser(seed *AdminSeed) bootstrap.Step {
 		seed.PasswordPrinter(password)
 		return nil
 	})
+}
+
+// adminUserAlreadySeeded reports whether the admin user already exists.
+// Idempotent across replicas and restarts: if the admin user already
+// exists (a prior boot or a peer replica created it, or this pod's
+// ephemeral bootstrap tracker reset to 0 and re-ran the step), the
+// caller must NOT regenerate the password or CreateOrUpdate over the
+// row — that would silently revert operator-set profile
+// fields/attributes and spam a new password banner on every rollout.
+// Mirrors stepSeedAdminClient's guard.
+//
+// The check MUST distinguish ErrNoSuchUser from any other error: a
+// transient lookup failure (backend timeout, connection reset) is not
+// proof the admin user is absent. Treating it as absent would let the
+// caller fall through to CreateOrUpdate, which (per every UserProvider
+// backend) is a full-record replace, not a merge — silently wiping the
+// live admin's Email/Username/Attributes (including any password hash
+// set since seeding) and stamping in a brand-new, unrelated random
+// password.
+func adminUserAlreadySeeded(ctx context.Context, seed *AdminSeed) (bool, error) {
+	_, err := seed.Users.GetByID(ctx, seed.AdminUserID)
+	if err == nil {
+		return true, nil
+	}
+	if !errors.Is(err, sso.ErrNoSuchUser) {
+		return false, fmt.Errorf("seed_admin_user: check existing: %w", err)
+	}
+	return false, nil
 }
 
 // stepClearSeededPassword is version 6: remove the plaintext seeded_password
