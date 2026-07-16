@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
 	"github.com/snaplink/sso/shared/core"
 )
@@ -218,5 +219,99 @@ func TestHTTPMiddleware_IPAllowlistAllowsMatchingCIDR(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET from an allowlisted IP = %d; want 200", resp.StatusCode)
+	}
+}
+
+// --- Admin-wide rate limit (SetRateLimit / SetRateLimitPolicyStore) ---
+
+func TestHTTPMiddleware_RateLimitBlocksAfterBurst(t *testing.T) {
+	mw := newTestMiddleware("admin-1")
+	mw.SetRateLimit(1, 1) // burst 1: first request OK, second immediately blocked
+	ts := httptest.NewServer(mw.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})))
+	defer ts.Close()
+
+	get := func() (int, string) {
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/admin/connections", nil)
+		req.Header.Set("Authorization", "Bearer t")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode, resp.Header.Get("Retry-After")
+	}
+	if code, _ := get(); code != http.StatusOK {
+		t.Fatalf("first request = %d, want 200 (within burst)", code)
+	}
+	code, retryAfter := get()
+	if code != http.StatusTooManyRequests {
+		t.Fatalf("second request = %d, want 429 (burst exhausted)", code)
+	}
+	if retryAfter == "" {
+		t.Error("expected a non-empty Retry-After header on 429")
+	}
+}
+
+// TestHTTPMiddleware_RateLimitPolicyStoreHotSwap proves SetRateLimitPolicyStore
+// wires a SHARED store: swapping its Policy (as a SIGHUP config reload would)
+// takes effect on the admin gate immediately, without reconstructing the
+// Middleware.
+func TestHTTPMiddleware_RateLimitPolicyStoreHotSwap(t *testing.T) {
+	mw := newTestMiddleware("admin-1")
+	store := ratelimit.NewPolicyStore(ratelimit.Policy{Default: ratelimit.NewMemoryLimiter(1, 1)})
+	mw.SetRateLimitPolicyStore(store)
+	ts := httptest.NewServer(mw.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})))
+	defer ts.Close()
+
+	get := func() int {
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/admin/connections", nil)
+		req.Header.Set("Authorization", "Bearer t")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode
+	}
+	if code := get(); code != http.StatusOK {
+		t.Fatalf("first request = %d, want 200 (within burst=1)", code)
+	}
+	if code := get(); code != http.StatusTooManyRequests {
+		t.Fatalf("second request = %d, want 429 (burst=1 exhausted)", code)
+	}
+
+	// Hot-swap to a much larger burst — simulating a SIGHUP config reload —
+	// without touching mw at all.
+	store.Set(ratelimit.Policy{Default: ratelimit.NewMemoryLimiter(1000, 1000)})
+	if code := get(); code != http.StatusOK {
+		t.Fatalf("request after hot-swap = %d, want 200 (new policy has ample burst)", code)
+	}
+}
+
+// TestHTTPMiddleware_RateLimitUnwiredIsUnlimited proves neither SetRateLimit
+// nor SetRateLimitPolicyStore ever being called is byte-identical to a build
+// without the feature.
+func TestHTTPMiddleware_RateLimitUnwiredIsUnlimited(t *testing.T) {
+	mw := newTestMiddleware("admin-1")
+	ts := httptest.NewServer(mw.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})))
+	defer ts.Close()
+
+	for i := 0; i < 20; i++ {
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/admin/connections", nil)
+		req.Header.Set("Authorization", "Bearer t")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET %d: %v", i, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %d = %d, want 200 (unlimited when unwired)", i, resp.StatusCode)
+		}
 	}
 }

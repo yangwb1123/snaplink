@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/geo"
 	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
@@ -239,6 +240,7 @@ const (
 	errAdminWriteQuotaExceeded    = "admin_write_quota_exceeded"
 	errAdminIPDenied              = "admin_ip_denied"
 	errDestructiveConfirmRequired = "destructive_confirmation_required"
+	errAdminRateLimitExceeded     = "rate_limit_exceeded"
 )
 
 // HeaderConfirm is the explicit confirmation parameter a caller must send
@@ -267,6 +269,63 @@ type adminQuotaConfig struct {
 type adminIPPolicy struct {
 	cfg admingovernance.IPAllowlistConfig
 	geo geo.Provider
+}
+
+// adminRateLimitKey is the constant bucket key checkRateLimit uses, so every
+// admin request shares ONE bucket — preserving the "admin-wide" (not
+// per-IP/per-admin) semantic the previous golang.org/x/time/rate.Limiter's
+// single global bucket had, now that SetRateLimit is built on the shared,
+// per-key ratelimit.Limiter abstraction.
+const adminRateLimitKey = "admin"
+
+// SetRateLimit sets a STATIC admin-wide rate limit (tokens/sec + burst),
+// wrapped in a fresh, unshared PolicyStore. A convenience for callers that
+// don't need SIGHUP hot-reload — see SetRateLimitPolicyStore for a store
+// that can be swapped live.
+func (a *Middleware) SetRateLimit(tokensPerSec float64, burst int) {
+	a.rateLimitStore = ratelimit.NewPolicyStore(ratelimit.Policy{
+		Default: ratelimit.NewMemoryLimiter(tokensPerSec, burst),
+	})
+}
+
+// SetRateLimitPolicyStore wires a SHARED, hot-reloadable PolicyStore — the
+// SAME abstraction interfaces/ratelimit's main request-chain middleware
+// uses for security.rate_limit.* — so a config reload that rebuilds the
+// wired limiter takes effect on the admin API too, without a restart.
+// Previously the admin gate held its own standalone rate.Limiter with no
+// connection to that hot-reload path at all. Only Policy.Default is
+// consulted: the admin surface is gated as one bucket, not per-path.
+func (a *Middleware) SetRateLimitPolicyStore(store *ratelimit.PolicyStore) {
+	a.rateLimitStore = store
+}
+
+// checkRateLimit enforces the optional admin-wide rate limit set via
+// SetRateLimit/SetRateLimitPolicyStore. nil store (neither ever called) is
+// unlimited — byte-identical to a build without the feature.
+func checkRateLimit(w http.ResponseWriter, store *ratelimit.PolicyStore) bool {
+	if store == nil {
+		return true
+	}
+	lim := store.Get().Default
+	if lim == nil {
+		return true
+	}
+	ok, retryAfter := lim.Allow(adminRateLimitKey)
+	if ok {
+		return true
+	}
+	// Ceiling division: RFC 7231 interprets Retry-After: 0 as "retry
+	// immediately", so sub-second durations round up to 1.
+	secs := int(retryAfter / time.Second)
+	if retryAfter%time.Second > 0 {
+		secs++
+	}
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	http.Error(w, `{"error":"`+errAdminRateLimitExceeded+`"}`, http.StatusTooManyRequests)
+	return false
 }
 
 // SetWriteQuota opts this Middleware into the per-tenant/admin write-quota

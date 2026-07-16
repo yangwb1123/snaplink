@@ -11,9 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/time/rate"
-
 	"github.com/snaplink/sso/domains/permissions"
+	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
 	"github.com/snaplink/sso/shared/core"
@@ -76,7 +75,10 @@ type Middleware struct {
 	validator    TokenValidator
 	authorizer   Authorizer
 	methodScopes map[string]string // optional override
-	rateLimiter  *rate.Limiter     // admin-wide rate limit; nil = unlimited
+	// rateLimitStore, when set (SetRateLimit / SetRateLimitPolicyStore),
+	// gates the admin surface as one shared bucket (adminRateLimitKey);
+	// nil = unlimited. See governance.go for both setters + checkRateLimit.
+	rateLimitStore *ratelimit.PolicyStore
 	recorder     *audit.Recorder   // when set, every gRPC admin RPC is audited
 
 	// adminTokenStore tracks token metadata for idle-timeout enforcement.
@@ -88,7 +90,7 @@ type Middleware struct {
 
 	// quota / ipPolicy / destructive are the admin governance framework's
 	// transport-level checks (see governance.go): a per-tenant/admin write
-	// QUOTA (distinct from rateLimiter's token-bucket rate), an optional
+	// QUOTA (distinct from rateLimitStore's token-bucket rate), an optional
 	// IP-allowlist/geo-lock, and a destructive-action confirmation guard.
 	// All nil/empty by default — byte-identical to a build without them.
 	quota       *adminQuotaConfig
@@ -113,12 +115,6 @@ func (a *Middleware) SetMethodScope(methodOrPath, scope string) {
 		a.methodScopes = map[string]string{}
 	}
 	a.methodScopes[methodOrPath] = scope
-}
-
-// SetRateLimit sets an admin-wide rate limit. rate is tokens per second;
-// burst is the maximum accumulated tokens.
-func (a *Middleware) SetRateLimit(tokensPerSec float64, burst int) {
-	a.rateLimiter = rate.NewLimiter(rate.Limit(tokensPerSec), burst)
 }
 
 // SetAdminTokenStore wires a store for admin bearer token metadata.
@@ -327,9 +323,7 @@ func (a *Middleware) HTTPMiddleware(next http.Handler) http.Handler {
 		if !checkIPPolicy(w, r, a.ipPolicy) {
 			return
 		}
-		if a.rateLimiter != nil && !a.rateLimiter.Allow() {
-			w.Header().Set("Retry-After", "1")
-			http.Error(w, `{"error":"rate_limit_exceeded"}`, http.StatusTooManyRequests)
+		if !checkRateLimit(w, a.rateLimitStore) {
 			return
 		}
 		if !checkDestructiveConfirm(w, r, a.destructive) {
