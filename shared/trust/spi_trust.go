@@ -1,10 +1,13 @@
 // Package trust defines the trust-scoring SPI (Zero Trust Framework Phase 1,
 // "Direction 3" of the token-governance/credential-rotation/ZT/DR analysis)
 // plus the reference scorers and a weighted composite
-// aggregator. It covers ONLY the scoring foundation: NO conditional-access
-// policy engine and NO continuous/session-decay verification (those are
-// Phase 2+, tracked separately in the source analysis doc) — Score returns
-// an advisory signal, never an allow/deny decision.
+// aggregator. It covers ONLY the scoring foundation — Score returns an
+// advisory signal, never an allow/deny decision. The two later phases are
+// separate, independently-wired packages that consume this signal: the
+// conditional-access policy engine lives in domains/conditionalaccess
+// (opt-in via sso.WithConditionalAccess), and continuous/session-decay
+// verification is this package's own decay.go curve plus
+// platform/lifecycle/continuousverify (opt-in via sso.WithSessionTrustDecay).
 //
 // Layering note: this SPI is core-shaped and would naturally sit in
 // shared/core, mirroring the existing SPI + reference-scorer pattern already
@@ -76,7 +79,8 @@ type TrustSignals struct {
 // TrustScore is the output of a TrustScorer: a normalized confidence signal
 // plus a short, audit-readable trail of what drove it. It is ADVISORY, not
 // an access-control decision — turning a score into allow/deny/step-up is
-// the conditional-access policy engine (Phase 2, not implemented here).
+// the conditional-access policy engine (domains/conditionalaccess), which
+// consumes this score via AccessContext.TrustScore.
 type TrustScore struct {
 	// Value is in [0.0, 1.0]: 0 = no trust signal / maximally suspicious, 1
 	// = fully trusted.

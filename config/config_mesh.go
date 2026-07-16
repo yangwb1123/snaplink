@@ -117,10 +117,15 @@ type TxnTokenConfig struct {
 // enforcement points a later phase would gate on this score, hence its home
 // here rather than a new config_trust.go (the config/ directory is at its
 // frozen file-count ceiling — see directory_fanout_test.go's
-// dirFileCountExemptions). It is a pure SCORING foundation: no
-// conditional-access policy engine and no continuous/session-decay
-// verification (Phase 2+, not implemented). Default (Enabled=false) means
-// nothing is computed — byte-identical to a build without the feature.
+// dirFileCountExemptions). It is a pure SCORING foundation, wired
+// independently of its own gates: the conditional-access policy engine
+// (domains/conditionalaccess, opt-in via sso.WithConditionalAccess) and
+// continuous/session-decay verification (shared/trust's decay curve +
+// platform/lifecycle/continuousverify, opt-in via sso.WithSessionTrustDecay)
+// both consume the score this section produces, but are configured and
+// enabled through their own sections/options, not this one. Default
+// (Enabled=false) means nothing is computed — byte-identical to a build
+// without the feature.
 //
 // The reference sso-server binary DOES auto-wire this section
 // (cmd/sso-server/serverbuildplatform.BuildTrustScorer, called from

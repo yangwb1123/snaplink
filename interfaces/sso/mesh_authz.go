@@ -31,8 +31,9 @@ import (
 //     HTTP-mode endpoint, a thin wrapper that renders this result to HTTP
 //     (200 + X-Auth-* on ALLOW; 401 invalid_token on DENY); its wire
 //     behavior is byte-identical to the pre-refactor inline handler.
-//   - the future Phase-B go-control-plane gRPC Authorization service — a
-//     SEPARATE nested module that builds a MeshAuthorizeRequest from the
+//   - the Phase-B go-control-plane gRPC Authorization service
+//     (infrastructure/extauthz, a SEPARATE nested module) — its
+//     AuthorizationServer.Check builds a MeshAuthorizeRequest from the
 //     CheckRequest and reuses this EXACT validation + identity derivation.
 //
 // SECURITY:

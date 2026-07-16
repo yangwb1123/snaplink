@@ -122,9 +122,10 @@ func (s *Server) handleMeshExtAuthz(ctx HandlerContext) {
 
 	// Thin HTTP wrapper over the dep-free MeshAuthorize seam (mesh_authz.go).
 	// The decision (bearer validation + DPoP/mTLS sender-constraint +
-	// residency + identity derivation) lives in MeshAuthorize so a future
-	// Phase-B go-control-plane gRPC Authorization service reuses the EXACT
-	// same logic without duplicating it.
+	// residency + identity derivation) lives in MeshAuthorize so the
+	// Phase-B go-control-plane gRPC Authorization service
+	// (infrastructure/extauthz) reuses the EXACT same logic without
+	// duplicating it.
 	r := ctx.Request()
 	res := s.MeshAuthorize(r.Context(), MeshAuthorizeRequest{
 		Method: r.Method,
