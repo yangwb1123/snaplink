@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/snaplink/sso/domains/authenticators"
@@ -14,7 +15,11 @@ func TestBuildPermissionProvider_DisabledReturnsNil(t *testing.T) {
 	t.Parallel()
 	c := &Config{}
 	c.Permissions.Enabled = false
-	if got := c.BuildPermissionProvider(); got != nil {
+	got, err := c.BuildPermissionProvider()
+	if err != nil {
+		t.Fatalf("BuildPermissionProvider on disabled config returned error: %v", err)
+	}
+	if got != nil {
 		t.Errorf("BuildPermissionProvider on disabled config = %v, want nil", got)
 	}
 }
@@ -40,7 +45,10 @@ func TestBuildPermissionProvider_AppsRolesMenusUserRoles(t *testing.T) {
 		{UserID: "bob", ClientID: "web-app", Roles: []string{"viewer"}},
 	}
 
-	prov := c.BuildPermissionProvider()
+	prov, err := c.BuildPermissionProvider()
+	if err != nil {
+		t.Fatalf("BuildPermissionProvider: %v", err)
+	}
 	if prov == nil {
 		t.Fatal("BuildPermissionProvider returned nil with Enabled=true")
 	}
@@ -73,7 +81,10 @@ func TestBuildPermissionProvider_EmptyAppsStillReturnsProvider(t *testing.T) {
 	// Enabled=true with no apps must still return a usable empty Provider.
 	c := &Config{}
 	c.Permissions.Enabled = true
-	prov := c.BuildPermissionProvider()
+	prov, err := c.BuildPermissionProvider()
+	if err != nil {
+		t.Fatalf("BuildPermissionProvider: %v", err)
+	}
 	if prov == nil {
 		t.Fatal("expected non-nil provider")
 	}
@@ -84,6 +95,36 @@ func TestBuildPermissionProvider_EmptyAppsStillReturnsProvider(t *testing.T) {
 	}
 	if len(roles) != 0 {
 		t.Errorf("got %d roles, want 0", len(roles))
+	}
+}
+
+// TestBuildPermissionProvider_DuplicateRoleCodeReturnsError proves a
+// copy-paste duplicate role code within one app's roles list aborts the
+// build with an error identifying the offending app/role, instead of the
+// pre-fix behavior of silently dropping the duplicate (AddRole's
+// ErrRoleExists was discarded) with no boot-time warning.
+func TestBuildPermissionProvider_DuplicateRoleCodeReturnsError(t *testing.T) {
+	t.Parallel()
+	c := &Config{}
+	c.Permissions.Enabled = true
+	c.Permissions.Apps = []AppPermissionsConfig{
+		{
+			ClientID: "web-app",
+			Roles: []permissions.Role{
+				{Code: "admin", Name: "Admin", Permissions: []string{"user:*"}},
+				{Code: "admin", Name: "Admin Duplicate", Permissions: []string{"user:read"}},
+			},
+		},
+	}
+	prov, err := c.BuildPermissionProvider()
+	if err == nil {
+		t.Fatal("BuildPermissionProvider with a duplicate role code = nil error, want an error naming the conflict")
+	}
+	if !errors.Is(err, permissions.ErrRoleExists) {
+		t.Errorf("error = %v, want it to wrap permissions.ErrRoleExists", err)
+	}
+	if prov != nil {
+		t.Errorf("provider = %v, want nil on error", prov)
 	}
 }
 

@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/snaplink/sso/domains/permissions"
 )
@@ -36,23 +37,36 @@ type UserRoleAssignment struct {
 }
 
 // BuildPermissionProvider materializes a permissions.MemoryProvider from the
-// static config. Returns nil when permissions are disabled.
-func (c *Config) BuildPermissionProvider() *permissions.MemoryProvider {
+// static config. Returns (nil, nil) when permissions are disabled.
+//
+// A duplicate role code within one app's roles list (AddRole's ErrRoleExists)
+// or a user_roles entry that violates a declared SSoD set (AssignRoles'
+// *ConflictError) aborts the build with an error identifying the offending
+// app/user, instead of silently dropping the role/assignment — a copy-paste
+// duplicate in the YAML previously vanished with zero boot-time warning, only
+// surfacing as a missing permission in production.
+func (c *Config) BuildPermissionProvider() (*permissions.MemoryProvider, error) {
 	if !c.Permissions.Enabled {
-		return nil
+		return nil, nil
 	}
 	ctx := context.Background()
 	p := permissions.NewMemoryProvider()
 	for _, app := range c.Permissions.Apps {
 		for _, role := range app.Roles {
-			_ = p.AddRole(ctx, app.ClientID, role)
+			if err := p.AddRole(ctx, app.ClientID, role); err != nil {
+				return nil, fmt.Errorf("permissions.apps[client_id=%q].roles[code=%q]: %w", app.ClientID, role.Code, err)
+			}
 		}
 		if app.Menus != nil {
-			_ = p.SetMenus(ctx, app.ClientID, app.Menus)
+			if err := p.SetMenus(ctx, app.ClientID, app.Menus); err != nil {
+				return nil, fmt.Errorf("permissions.apps[client_id=%q].menus: %w", app.ClientID, err)
+			}
 		}
 	}
 	for _, a := range c.Permissions.UserRoles {
-		_ = p.AssignRoles(ctx, a.UserID, a.ClientID, a.Roles)
+		if err := p.AssignRoles(ctx, a.UserID, a.ClientID, a.Roles); err != nil {
+			return nil, fmt.Errorf("permissions.user_roles[user_id=%q, client_id=%q]: %w", a.UserID, a.ClientID, err)
+		}
 	}
-	return p
+	return p, nil
 }

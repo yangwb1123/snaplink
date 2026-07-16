@@ -58,7 +58,10 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	opts := buildServerOptions(cfg)
+	opts, err := buildServerOptions(cfg)
+	if err != nil {
+		log.Fatalf("build server options: %v", err)
+	}
 	server := sso.NewServer(opts...)
 	handler := server.Handler()
 
@@ -71,7 +74,7 @@ func main() {
 
 // buildServerOptions assembles the full option set from config: core wiring
 // plus the opt-in audit, permission, authenticator, and MFA-demo blocks.
-func buildServerOptions(cfg *config.Config) []sso.Option {
+func buildServerOptions(cfg *config.Config) ([]sso.Option, error) {
 	opts := append(cfg.ServerOptions(),
 		sso.WithRouter(sso.NewStdRouter()),
 		sso.WithTracingMiddleware(),
@@ -90,9 +93,12 @@ func buildServerOptions(cfg *config.Config) []sso.Option {
 	)
 
 	opts = appendAuditOptions(opts, cfg)
-	opts = appendPermissionOptions(opts, cfg)
+	opts, err := appendPermissionOptions(opts, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("permissions: %w", err)
+	}
 	opts = appendAuthenticatorOptions(opts, cfg)
-	return opts
+	return opts, nil
 }
 
 // buildClientStore seeds an in-memory client store from the config clients.
@@ -132,16 +138,19 @@ func appendAuditOptions(opts []sso.Option, cfg *config.Config) []sso.Option {
 
 // appendPermissionOptions wires the permission provider (and optional
 // login-embedding) when a provider is configured.
-func appendPermissionOptions(opts []sso.Option, cfg *config.Config) []sso.Option {
-	provider := cfg.BuildPermissionProvider()
+func appendPermissionOptions(opts []sso.Option, cfg *config.Config) ([]sso.Option, error) {
+	provider, err := cfg.BuildPermissionProvider()
+	if err != nil {
+		return nil, err
+	}
 	if provider == nil {
-		return opts
+		return opts, nil
 	}
 	opts = append(opts, sso.WithPermissionProvider(provider))
 	if cfg.Permissions.EmbedInLogin {
 		opts = append(opts, sso.WithEmbedPermissionsInLogin())
 	}
-	return opts
+	return opts, nil
 }
 
 // appendAuthenticatorOptions wires the config-enabled authenticators plus the
