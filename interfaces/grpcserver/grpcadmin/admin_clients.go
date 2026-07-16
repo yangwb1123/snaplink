@@ -222,23 +222,19 @@ func (s *ClientAdminService) Update(ctx context.Context, in *adminv1.UpdateClien
 	if in == nil || in.Client == nil || in.Client.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "client.id required")
 	}
-	c := protoToClient(in.Client)
-	// Preserve the existing secret unless the caller explicitly set one —
-	// the Update RPC shouldn't be a backdoor to overwrite secrets silently.
-	// Likewise carry forward the existing Attributes: the admin proto has no
-	// Attributes field, so an Update would otherwise silently WIPE a client's
-	// registered CAEP receiver config (and any other server-side attribute).
-	if c.Secret == "" || c.Attributes == nil {
-		existing, err := s.store.Get(ctx, c.ID)
-		if err == nil && existing != nil {
-			if c.Secret == "" {
-				c.Secret = existing.Secret
-			}
-			if c.Attributes == nil {
-				c.Attributes = existing.Attributes
-			}
-		}
+	// Start from the STORED client, not a fresh protoToClient() — the admin
+	// Client proto exposes only 8 of the 30+ sso.Client fields (no
+	// RequirePKCE, TenantID, AllowedResources, JWKS, ...). Overlaying just
+	// the proto-exposed fields onto the existing record, rather than
+	// building a mostly-zero-valued struct and patching a couple of fields
+	// back in, means every field the proto CAN'T express survives an Update
+	// automatically — including ones added to sso.Client after this RPC was
+	// written.
+	existing, err := s.store.Get(ctx, in.Client.Id)
+	if err != nil || existing == nil {
+		return nil, status.Error(codes.NotFound, "client not found")
 	}
+	c := applyProtoClientFields(existing, in.Client)
 	if err := validateClientCAEP(c); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
@@ -387,4 +383,23 @@ func protoToClient(in *adminv1.Client) *sso.Client {
 		TokenStrategy:         in.TokenStrategy,
 		Active:                in.Active,
 	}
+}
+
+// applyProtoClientFields overlays the 8 admin-proto-exposed fields from in
+// onto a copy of existing, leaving every other sso.Client field (RequirePKCE,
+// TenantID, AllowedResources, JWKS, ...) untouched. Secret is preserved
+// unless the caller explicitly sent a non-empty one — the Update RPC
+// shouldn't be a backdoor to silently overwrite (or, worse, blank) a secret.
+func applyProtoClientFields(existing *sso.Client, in *adminv1.Client) *sso.Client {
+	c := *existing
+	c.Name = in.Name
+	c.RedirectURIs = append([]string(nil), in.RedirectUris...)
+	c.AllowedScopes = append([]string(nil), in.AllowedScopes...)
+	c.AllowedAuthenticators = append([]string(nil), in.AllowedAuthenticators...)
+	c.TokenStrategy = in.TokenStrategy
+	c.Active = in.Active
+	if in.Secret != "" {
+		c.Secret = in.Secret
+	}
+	return &c
 }

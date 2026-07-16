@@ -289,6 +289,49 @@ func TestClientAdminService_UpdatePreservesSecretAndAttributes(t *testing.T) {
 	}
 }
 
+// TestClientAdminService_UpdatePreservesUnexposedSecurityFields proves the
+// admin Update RPC can't silently downgrade a client's security posture: the
+// proto has no RequirePKCE/TenantID/AllowedResources fields at all, so an
+// Update built from a fresh protoToClient() would zero them on every call —
+// e.g. dropping PKCE enforcement from a public client. Regression test for
+// that bug: applyProtoClientFields must overlay only the proto-exposed
+// fields onto the EXISTING record.
+func TestClientAdminService_UpdatePreservesUnexposedSecurityFields(t *testing.T) {
+	t.Parallel()
+	store := defaultimpl.NewMemoryClientStore()
+	requireOK(t, store.Add(context.Background(), &sso.Client{
+		ID:               "spa-1",
+		Name:             "SPA",
+		Active:           true,
+		RequirePKCE:      true,
+		TenantID:         "acme",
+		AllowedResources: []string{"https://api.example/"},
+	}), "seed Add")
+
+	svc := NewClientAdminService(store, nil, nil, nil)
+	ctx := context.Background()
+
+	_, err := svc.Update(ctx, &adminv1.UpdateClientRequest{
+		Client: &adminv1.Client{Id: "spa-1", Name: "SPA Renamed", Active: true},
+	})
+	requireOK(t, err, "Update")
+
+	stored, err := store.Get(ctx, "spa-1")
+	requireOK(t, err, "Get after Update")
+	if !stored.RequirePKCE {
+		t.Error("Update dropped RequirePKCE — public client now has no PKCE enforcement")
+	}
+	if stored.TenantID != "acme" {
+		t.Errorf("Update wiped TenantID, got %q", stored.TenantID)
+	}
+	if len(stored.AllowedResources) != 1 || stored.AllowedResources[0] != "https://api.example/" {
+		t.Errorf("Update wiped AllowedResources, got %+v", stored.AllowedResources)
+	}
+	if stored.Name != "SPA Renamed" {
+		t.Errorf("Update did not apply the new Name, got %q", stored.Name)
+	}
+}
+
 // TestValidateClientCAEP is a direct unit test of the standalone validator
 // (not reachable with a rejecting value through Create/Update, since the
 // admin proto Client has no Attributes field to submit one — see the
