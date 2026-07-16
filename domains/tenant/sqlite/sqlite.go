@@ -293,25 +293,107 @@ func (s *Store) ListDomainsByTenant(ctx context.Context, tenantID string) ([]*te
 	return scanDomainRows(rows)
 }
 
+// domainClaimBusyTimeoutMS bounds how long PutDomain's pinned connection
+// waits for the write lock when a concurrent PutDomain already holds it,
+// rather than failing SQLITE_BUSY immediately — modernc.org/sqlite's
+// per-connection busy_timeout default is 0 (see
+// infrastructure/defaultimpl/sqlite/busy_timeout.go for the identical
+// rationale). Long enough to ride out a brief concurrent hostname-claim
+// convoy, short enough that a genuinely stuck lock still errors instead of
+// hanging the admin request.
+const domainClaimBusyTimeoutMS = 5000
+
+// rowQuerier is the *sql.DB / *sql.Conn subset verifyTenantExists +
+// checkDomainConflict need, so both can run over PutDomain's pinned,
+// BEGIN IMMEDIATE-protected connection.
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// PutDomain validates the referenced tenant + hostname-ownership invariant
+// and then upserts the domain row. The verify-then-check-then-write sequence
+// is a classic read-modify-write: run as three independent auto-commit
+// statements (the pre-fix shape), two concurrent PutDomain calls claiming the
+// SAME fresh hostname for DIFFERENT tenants could both read "unclaimed" from
+// checkDomainConflict before either's INSERT ... ON CONFLICT DO UPDATE
+// landed — the second silently overwrote the first tenant's tenant_id with
+// NO error to either caller, defeating the exact hostname-ownership check
+// this function exists to enforce (a cross-tenant domain hijack; mirrors the
+// fix required in the Postgres peer's PutDomain). A REAL BEGIN IMMEDIATE on a
+// pinned connection acquires the write lock BEFORE either SELECT runs, so a
+// second concurrent claim blocks (up to domainClaimBusyTimeoutMS) until the
+// first commits, then re-reads the now-committed row and correctly loses via
+// ErrDomainExists instead of silently clobbering it. Plain db.BeginTx does
+// NOT achieve this under modernc.org/sqlite — the driver has no SQL
+// isolation-level concept and silently starts a plain DEFERRED transaction
+// regardless of the requested level, leaving the same lost-update race
+// window open (see infrastructure/defaultimpl/sqlite/busy_timeout.go).
 func (s *Store) PutDomain(ctx context.Context, d *tenant.Domain) error {
 	if err := d.Validate(); err != nil {
 		return err
 	}
-	if err := s.verifyTenantExists(ctx, d.TenantID); err != nil {
-		return err
-	}
-
 	host := normalizeHost(d.Hostname)
-	if err := s.checkDomainConflict(ctx, host, d.TenantID); err != nil {
-		return err
-	}
-
 	now := time.Now().UTC().UnixNano()
 	cols, err := encodeDomainColumns(d, now)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `
+
+	conn, err := beginImmediateConn(ctx, s.db)
+	if err != nil {
+		return fmt.Errorf("tenant/sqlite: put domain: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
+
+	if err := putDomainTx(ctx, conn, d, host, cols, now); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("tenant/sqlite: put domain: commit: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+// beginImmediateConn pins a connection from db's pool, bounds its busy wait
+// with domainClaimBusyTimeoutMS, and issues a REAL BEGIN IMMEDIATE — the
+// write lock is acquired up front, not lazily on the first write statement.
+// The caller owns the returned *sql.Conn (MUST Close it) and the open
+// transaction (MUST COMMIT or ROLLBACK before Close).
+func beginImmediateConn(ctx context.Context, db *sql.DB) (*sql.Conn, error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire conn: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout=%d", domainClaimBusyTimeoutMS)); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("busy_timeout: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("begin: %w", err)
+	}
+	return conn, nil
+}
+
+// putDomainTx runs the verify-tenant + conflict-check + upsert sequence over
+// conn — already inside the caller's BEGIN IMMEDIATE transaction, so the
+// whole read-modify-write is atomic against a concurrent PutDomain racing
+// the same hostname.
+func putDomainTx(ctx context.Context, conn *sql.Conn, d *tenant.Domain, host string, cols domainColumns, now int64) error {
+	if err := verifyTenantExists(ctx, conn, d.TenantID); err != nil {
+		return err
+	}
+	if err := checkDomainConflict(ctx, conn, host, d.TenantID); err != nil {
+		return err
+	}
+	_, err := conn.ExecContext(ctx, `
         INSERT INTO tenant_domains (
             hostname, tenant_id, default_client_id, is_apex,
             branding_json, created_at, updated_at
@@ -333,10 +415,11 @@ func (s *Store) PutDomain(ctx context.Context, d *tenant.Domain) error {
 
 // verifyTenantExists confirms the referenced tenant row is present. Same
 // semantics as the memory peer + matches what admin RPCs expect
-// (ErrTenantNotFound, not a generic FK violation).
-func (s *Store) verifyTenantExists(ctx context.Context, tenantID string) error {
+// (ErrTenantNotFound, not a generic FK violation). Takes an explicit querier
+// so PutDomain can run it over its pinned BEGIN IMMEDIATE connection.
+func verifyTenantExists(ctx context.Context, q rowQuerier, tenantID string) error {
 	var exists int
-	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM tenants WHERE id = ?`, tenantID).Scan(&exists); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT 1 FROM tenants WHERE id = ?`, tenantID).Scan(&exists); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return tenant.ErrTenantNotFound
 		}
@@ -347,9 +430,10 @@ func (s *Store) verifyTenantExists(ctx context.Context, tenantID string) error {
 
 // checkDomainConflict rejects a hostname already owned by a different tenant
 // with ErrDomainExists. A hostname owned by the same tenant (or unclaimed)
-// falls through to the upsert path.
-func (s *Store) checkDomainConflict(ctx context.Context, host, tenantID string) error {
-	row := s.db.QueryRowContext(ctx, `SELECT tenant_id FROM tenant_domains WHERE hostname = ?`, host)
+// falls through to the upsert path. Takes an explicit querier so PutDomain
+// can run it over its pinned BEGIN IMMEDIATE connection.
+func checkDomainConflict(ctx context.Context, q rowQuerier, host, tenantID string) error {
+	row := q.QueryRowContext(ctx, `SELECT tenant_id FROM tenant_domains WHERE hostname = ?`, host)
 	var existingTenantID string
 	switch err := row.Scan(&existingTenantID); {
 	case errors.Is(err, sql.ErrNoRows):
