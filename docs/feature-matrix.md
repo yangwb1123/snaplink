@@ -54,6 +54,8 @@ OAuth 2.0 / OIDC / SSO feature compliance matrix. Extracted from AGENTS.md.
 | Envoy ext_authz HTTP | `/mesh/ext-authz` | `WithMeshExtAuthz(path)` | `handler.go` + `mesh_authz.go` |
 | Envoy ext_authz gRPC | `envoy.service.auth.v3.Authorization` | `extauthz` nested module | `extauthz/authz.go` |
 | SAML 2.0 SP+IdP | `/auth/saml/*`, `/saml/*` | `saml` nested module | `saml/saml.go` |
+| Cross-protocol coordinated logout (SAML SLO reached from OIDC/session logout) | `POST /logout`, `GET /end_session` | always (Session Hub is always-on bookkeeping); SAML leg fires only when `saml`'s `Deps.SessionHub` was wired | `platform/lifecycle/sessionhub/coordinator.go` + `interfaces/sso/server_backchannel_logout.go`'s `TriggerSessionHubLogout` |
+| RFC 7662 introspection `renew_after` early warning | `/token/introspect` | automatic once `WithTokenPolicy`'s `RequireRenewAfter` is configured | `domains/tokenpolicy/evaluate.go`'s `RenewAt` + `protocols/oauth/handle_introspect.go` |
 | Kerberos/SPNEGO | `/auth/kerberos` | `kerberos` nested module | `kerberos/handler.go` |
 | RADIUS authenticator | via `WithAuthenticator` | `radius` nested module | `radius/authenticator.go` |
 | WebAuthn attestation policy | `/webauthn/registration/finish` | `webauthn.Config.{AttestationConveyance,AttestationPolicy,MDS}` | `authenticators/webauthn/` |
