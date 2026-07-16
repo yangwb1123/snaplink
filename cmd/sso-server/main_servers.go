@@ -103,7 +103,7 @@ func startGRPCServer(a *app, grpcListen string, logger spi.Logger, tlsCert, tlsK
 	if grpcListen == "" {
 		return nil, nil
 	}
-	grpcSrv, err := newGRPCServer(a, tlsCert, tlsKey)
+	grpcSrv, err := newGRPCServer(a, tlsCert, tlsKey, logger)
 	if err != nil {
 		return nil, fmt.Errorf("grpc server: %w", err)
 	}
@@ -125,8 +125,8 @@ func startGRPCServer(a *app, grpcListen string, logger spi.Logger, tlsCert, tlsK
 // newGRPCServer registers every available service on a fresh grpc.Server
 // with production-safe defaults: keepalive, max message size, connection
 // timeout, and optional TLS when tlsCert + tlsKey are both non-empty.
-func newGRPCServer(a *app, tlsCert, tlsKey string) (*grpc.Server, error) {
-	opts, err := grpcServerOptions(a, tlsCert, tlsKey)
+func newGRPCServer(a *app, tlsCert, tlsKey string, logger spi.Logger) (*grpc.Server, error) {
+	opts, err := grpcServerOptions(a, tlsCert, tlsKey, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +142,7 @@ func newGRPCServer(a *app, tlsCert, tlsKey string) (*grpc.Server, error) {
 // grpcServerOptions assembles the production-safe server options — keepalive,
 // max message size, connection timeout, admin interceptors, and optional TLS
 // when tlsCert + tlsKey are both non-empty.
-func grpcServerOptions(a *app, tlsCert, tlsKey string) ([]grpc.ServerOption, error) {
+func grpcServerOptions(a *app, tlsCert, tlsKey string, logger spi.Logger) ([]grpc.ServerOption, error) {
 	var opts []grpc.ServerOption
 
 	opts = append(opts,
@@ -166,12 +166,7 @@ func grpcServerOptions(a *app, tlsCert, tlsKey string) ([]grpc.ServerOption, err
 		grpc.InitialConnWindowSize(512*1024), // 512 KB — connection window
 	)
 
-	if a.adminMW != nil {
-		opts = append(opts,
-			grpc.UnaryInterceptor(a.adminMW.UnaryServerInterceptor()),
-			grpc.StreamInterceptor(a.adminMW.StreamServerInterceptor()),
-		)
-	}
+	opts = append(opts, grpcInterceptorOptions(a, logger)...)
 
 	// Optional TLS for gRPC (same cert as HTTP, or a dedicated gRPC pair).
 	if tlsCert != "" && tlsKey != "" {
@@ -186,6 +181,28 @@ func grpcServerOptions(a *app, tlsCert, tlsKey string) ([]grpc.ServerOption, err
 		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsCfg)))
 	}
 	return opts, nil
+}
+
+// grpcInterceptorOptions builds the unary + stream interceptor chain.
+// Recovery goes first (outermost) so it also protects the admin middleware
+// itself, not just the service handlers underneath it: grpc-go installs no
+// panic recovery of its own, so ANY unrecovered panic on this server — in a
+// handler in interfaces/grpcserver, in a.adminMW's authorization/audit
+// logic, or in an operator-injected store either one delegates to — crashes
+// the whole process and takes every other in-flight RPC down with it. This
+// applies whether or not the admin plane is configured (authz/discovery are
+// always registered, with or without a.adminMW).
+func grpcInterceptorOptions(a *app, logger spi.Logger) []grpc.ServerOption {
+	unaryInts := []grpc.UnaryServerInterceptor{grpcserver.RecoveryUnaryServerInterceptor(logger)}
+	streamInts := []grpc.StreamServerInterceptor{grpcserver.RecoveryStreamServerInterceptor(logger)}
+	if a.adminMW != nil {
+		unaryInts = append(unaryInts, a.adminMW.UnaryServerInterceptor())
+		streamInts = append(streamInts, a.adminMW.StreamServerInterceptor())
+	}
+	return []grpc.ServerOption{
+		grpc.ChainUnaryInterceptor(unaryInts...),
+		grpc.ChainStreamInterceptor(streamInts...),
+	}
 }
 
 // registerAdminGRPCServices registers the admin-plane services — reached only
