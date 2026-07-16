@@ -11,6 +11,7 @@ import (
 	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/protocols/oidc"
+	"github.com/snaplink/sso/shared/trust"
 )
 
 // matter whether MFA gated the request or not.
@@ -166,13 +167,11 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 		return
 	}
 	s.linkGlobalSession(ctx.Request().Context(), session, result.UserID)
-	strategy, token, issuedSub, err := s.mintAccessToken(ctx, result, req, client, session)
+	strategy, token, issuedSub, err := s.mintAndRecordDirectLogin(ctx, result, req, client, session)
 	if err != nil {
-		// mintAccessToken has already written the exact 500 body.
+		// mintAndRecordDirectLogin has already written the exact 500 body.
 		return
 	}
-
-	s.recordLoginSuccess(ctx, client.ID, req.Provider, strategy, result.UserID, session.ID)
 	s.recordSubjectClientAccess(ctx.Request().Context(), result.UserID, client.ID)
 	fillGeoFromContext(ctx, result)
 
@@ -197,8 +196,10 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 // returns the issued subject so the caller threads the SAME value into the
 // id_token (it MUST NOT be recomputed). On any failure it has ALREADY written
 // the exact 500 body (no_token_strategy / internal) and returns a non-nil error;
-// the caller returns immediately.
-func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client, session *Session) (string, *Token, string, error) {
+// the caller returns immediately. trustScore/trustKnown (from
+// resolveLoginTrustScore) opt the token into the WithTrustScoreSerialization
+// claim; trustKnown=false leaves Claims byte-identical to before this feature.
+func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client, session *Session, trustScore trust.TrustScore, trustKnown bool) (string, *Token, string, error) {
 	state := req.State
 	strategy, ti, err := s.issuerForClient(client)
 	if err != nil {
@@ -207,10 +208,16 @@ func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *lo
 		return "", nil, "", err
 	}
 	issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, result.UserID)
+	claims := result.Attributes
+	if trustKnown {
+		if name, value, ok := trust.TokenClaim(s.trustSerialization, trustScore); ok {
+			claims = cloneClaimsWithTrust(result.Attributes, name, value)
+		}
+	}
 	token, err := ti.Issue(ctx.Request().Context(), &Subject{
 		ID:                   issuedSub,
 		Provider:             result.Provider,
-		Claims:               result.Attributes,
+		Claims:               claims,
 		Resources:            append([]string(nil), req.Resource...),
 		ClientID:             client.ID,
 		AuthTime:             time.Now(),
@@ -441,7 +448,12 @@ func (s *Server) finishLoginCodeFlow(ctx HandlerContext, result *AuthResult, req
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
 		return
 	}
-	s.recordLoginSuccess(ctx, client.ID, req.Provider, "code", result.UserID, "")
+	// WithTrustScoreSerialization is NOT wired here (meta=nil): this branch
+	// persists a code and mints no token until a LATER, separate /token
+	// exchange (possibly a different replica) — there is no synchronous
+	// login-success session/token pair to attach a trust score to. Only the
+	// direct-mint branch (finishLoginDirectMint) serializes a trust score.
+	s.recordLoginSuccess(ctx, client.ID, req.Provider, "code", result.UserID, "", nil)
 	s.renderAuthCodeResponse(ctx, req, client, code)
 }
 

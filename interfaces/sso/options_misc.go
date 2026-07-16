@@ -461,6 +461,23 @@ func WithTrustScorer(scorer trust.TrustScorer) Option {
 	return func(s *Server) { s.trustScorer = scorer }
 }
 
+// WithTrustScoreSerialization opts into surfacing the trust score computed
+// at direct-mint login (response_type empty/"token" — the one case where a
+// token is minted synchronously at /auth/login) into session metadata
+// and/or a token claim (see shared/trust.SessionMetadata / TokenClaim). It
+// is independent of [WithConditionalAccess]/[WithTrustScorer]'s pairing —
+// this only reads cfg's own two flags, so it takes effect whether or not
+// the CAP engine is wired, mirroring trust.serialization's place as a
+// sibling of trust.weights in config, not a CAP sub-option. Both flags
+// false (the zero value) is a byte-identical no-op: resolveLoginTrustScore
+// short-circuits before ever calling the scorer. The authorization_code
+// response branch (finishLoginCodeFlow) is NOT covered — it persists a
+// code and mints no token until a LATER, separate /token exchange, which
+// this option does not reach.
+func WithTrustScoreSerialization(cfg trust.SerializationConfig) Option {
+	return func(s *Server) { s.trustSerialization = cfg }
+}
+
 // WithDeviceFingerprint wires a [conditionalaccess.DeviceFingerprint] as the
 // conditional-access engine's device-posture signal source at /auth/login:
 // the Server looks up the caller-supplied device fingerprint (the

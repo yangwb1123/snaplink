@@ -495,7 +495,7 @@ When `anomaly.enabled`, the `ip_reputation` and `behavior` scorers read the SAME
 | `trust.behavior.history_limit` | How many past logins the time-of-day baseline consults; zero uses the package default |
 | `trust.behavior.floor_on_error` | Score substituted when the backing store errors (fail-open) |
 | `trust.device_posture.default_score` | The stub's unconditional return value (clamped to `[0,1]`) until an MDM integration replaces it |
-| `trust.serialization.stamp_session_metadata` / `.include_token_claim` / `.claim_name` | Both default `false` — surfacing the computed score into session metadata or a token claim is opt-in and changes nothing on the wire until enabled |
+| `trust.serialization.stamp_session_metadata` / `.include_token_claim` / `.claim_name` | Both default `false` — surfacing the computed score into the login audit event's metadata and/or a token claim is opt-in and changes nothing on the wire until enabled. Applies ONLY to the direct-mint `/auth/login` response (`response_type` empty/`token`, where a token is minted synchronously) — the `authorization_code` response branch persists a code and mints no token until a LATER, separate `/token` exchange that this section does not reach |
 
 When `metrics.enabled` is also set, the composite registers `sso_trust_score` (a histogram of every scorer's returned value, labeled by scorer name, including the composite's own aggregate under `scorer="composite"`) and `sso_trust_scorer_errors_total` (a counter of degrade-to-floor events, labeled by scorer name) on the shared metrics registry.
 

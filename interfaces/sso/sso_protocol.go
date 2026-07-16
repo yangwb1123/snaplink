@@ -84,6 +84,14 @@ type protocolState struct {
 	// engine degrades to its own conservative floor (fail-open on a missing
 	// signal) — same contract as trust.TrustScorer callers everywhere else.
 	trustScorer trust.TrustScorer
+	// trustSerialization gates surfacing the trust score computed at direct-
+	// mint login (WithTrustScoreSerialization) into session metadata / a
+	// token claim (shared/trust.SessionMetadata / TokenClaim). Zero value
+	// (both flags false) is a no-op — resolveLoginTrustScore never even
+	// calls the scorer — independent of whether capEngine is wired: this is
+	// a sibling of trust.weights in config, not nested under conditional
+	// access.
+	trustSerialization trust.SerializationConfig
 	// deviceFingerprint is the optional device-posture signal source
 	// (WithDeviceFingerprint) consulted by enforceConditionalAccessLogin to
 	// populate AccessContext.DevicePosture. Nil ⇒ posture stays

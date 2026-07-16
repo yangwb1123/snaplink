@@ -318,6 +318,76 @@ const (
 	trustHintDeviceID  = "device_id"
 )
 
+// resolveLoginTrustScore computes the Zero Trust trust score for
+// WithTrustScoreSerialization's session-metadata/token-claim wiring
+// (finishLoginDirectMint) — a SEPARATE call from buildAccessContext's, which
+// only ever runs when s.capEngine is wired. Serialization must work
+// independently of conditional access (trust.serialization is a sibling of
+// trust.weights in config, not nested under it), hence its own Score call
+// here rather than reusing buildAccessContext's result.
+//
+// known=false — and the caller must add NOTHING — when no scorer is wired,
+// both serialization flags are off (skips the Score call entirely so a
+// disabled config never even touches the scorer), or the scorer errors.
+// A scorer error is logged and swallowed: this is an advisory signal, never
+// a login gate, so it FAILS OPEN exactly like buildAccessContext's own
+// degrade-on-error path.
+func (s *Server) resolveLoginTrustScore(ctx HandlerContext, result *AuthResult, client *Client) (trust.TrustScore, bool) {
+	if s.trustScorer == nil {
+		return trust.TrustScore{}, false
+	}
+	if !s.trustSerialization.StampSessionMetadata && !s.trustSerialization.IncludeTokenClaim {
+		return trust.TrustScore{}, false
+	}
+	signals := s.buildTrustSignals(ctx, result, client)
+	score, err := s.trustScorer.Score(ctx.Request().Context(), signals)
+	if err != nil {
+		s.logger.Error("trust scorer failed; skipping trust-score serialization", "error", err, "user", result.UserID)
+		return trust.TrustScore{}, false
+	}
+	return score, true
+}
+
+// mintAndRecordDirectLogin resolves the WithTrustScoreSerialization signal,
+// mints the access token, and records the login-success audit event/metrics
+// — split out of finishLoginDirectMint (server_finish_login.go) to keep that
+// orchestrator within the maintainability line budget, and placed here
+// (rather than growing that already near-budget file) alongside this
+// feature's other trust-score helpers. The trust score is computed ONCE
+// (resolveLoginTrustScore) and threaded into both the token claim and the
+// audit metadata so a non-deterministic scorer can never disagree with
+// itself across the two sinks; trustKnown=false is a complete no-op in both
+// places. On mintAccessToken failure it has ALREADY written the exact 500
+// body and returns a non-nil error; the caller must return immediately.
+func (s *Server) mintAndRecordDirectLogin(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client, session *Session) (string, *Token, string, error) {
+	trustScore, trustKnown := s.resolveLoginTrustScore(ctx, result, client)
+	strategy, token, issuedSub, err := s.mintAccessToken(ctx, result, req, client, session, trustScore, trustKnown)
+	if err != nil {
+		return "", nil, "", err
+	}
+	var trustMeta map[string]string
+	if trustKnown {
+		trustMeta = trust.SessionMetadata(s.trustSerialization, trustScore)
+	}
+	s.recordLoginSuccess(ctx, client.ID, req.Provider, strategy, result.UserID, session.ID, trustMeta)
+	return strategy, token, issuedSub, nil
+}
+
+// cloneClaimsWithTrust returns a shallow copy of base with name=value added,
+// so serializing the trust-score claim (WithTrustScoreSerialization) never
+// mutates the shared AuthResult.Attributes map — the SAME map instance is
+// also read downstream for the id_token claims projection
+// (emitLoginIDToken) and was already persisted as User.Attributes
+// (upsertLoginUser) earlier in the request.
+func cloneClaimsWithTrust(base map[string]string, name, value string) map[string]string {
+	out := make(map[string]string, len(base)+1)
+	for k, v := range base {
+		out[k] = v
+	}
+	out[name] = value
+	return out
+}
+
 // deviceFingerprintFromRequest reads the caller-supplied opaque device
 // fingerprint. Never derived from the User-Agent alone — that header is
 // shared by every user on the same browser/OS build, so using it as a

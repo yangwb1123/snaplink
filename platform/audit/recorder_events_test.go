@@ -336,6 +336,60 @@ func TestRecordLoginSuccessAndFailure(t *testing.T) {
 	}
 }
 
+// TestRecordLoginSuccessWithMeta_MergesOntoSameEvent proves the caller-
+// supplied meta (e.g. interfaces/sso.WithTrustScoreSerialization's stamped
+// trust score) lands on the SAME login event via SetMeta — never a second
+// event — alongside the ordinary login fields.
+func TestRecordLoginSuccessWithMeta_MergesOntoSameEvent(t *testing.T) {
+	t.Parallel()
+	rec, ctx, sink := recCtx(t)
+	audit.RecordLoginSuccessWithMeta(rec, ctx, "c", "password", "jwt", "u", "sess",
+		map[string]string{"trust_score": "0.87", "trust_reasons": "geo_risk:known_country"})
+	e := only(t, sink)
+	if e.Type != audit.EventLogin || e.Outcome != audit.OutcomeSuccess {
+		t.Fatalf("event shape: %+v", e)
+	}
+	if e.Provider != "password" || e.TokenStrategy != "jwt" || e.ActorID != "u" || e.SessionID != "sess" {
+		t.Fatalf("fields: %+v", e)
+	}
+	if e.Metadata["trust_score"] != "0.87" || e.Metadata["trust_reasons"] != "geo_risk:known_country" {
+		t.Fatalf("meta not merged: %+v", e.Metadata)
+	}
+}
+
+// TestRecordLoginSuccessWithMeta_NilOrEmptyMetaByteIdenticalToPlain proves a
+// nil (or empty) meta produces an event indistinguishable from
+// RecordLoginSuccess — the pre-existing call sites that keep passing nil see
+// no behavior change.
+func TestRecordLoginSuccessWithMeta_NilOrEmptyMetaByteIdenticalToPlain(t *testing.T) {
+	t.Parallel()
+	rec1, ctx1, s1 := recCtx(t)
+	audit.RecordLoginSuccessWithMeta(rec1, ctx1, "c", "password", "jwt", "u", "sess", nil)
+	plain := only(t, s1)
+
+	rec2, ctx2, s2 := recCtx(t)
+	audit.RecordLoginSuccess(rec2, ctx2, "c", "password", "jwt", "u", "sess")
+	withNilHelper := only(t, s2)
+
+	if len(plain.Metadata) != 0 {
+		t.Fatalf("nil meta must add no metadata key, got %+v", plain.Metadata)
+	}
+	if plain.Type != withNilHelper.Type || plain.Outcome != withNilHelper.Outcome ||
+		plain.Provider != withNilHelper.Provider || plain.TokenStrategy != withNilHelper.TokenStrategy ||
+		plain.ActorID != withNilHelper.ActorID || plain.SessionID != withNilHelper.SessionID {
+		t.Fatalf("RecordLoginSuccessWithMeta(nil) diverged from RecordLoginSuccess: %+v vs %+v", plain, withNilHelper)
+	}
+}
+
+// TestRecordLoginSuccessWithMeta_NilRecorderNoop mirrors every other
+// RecordXxx helper's nil-recorder contract (see TestNilRecorderNoop-style
+// coverage elsewhere in this file): a nil *Recorder must not panic.
+func TestRecordLoginSuccessWithMeta_NilRecorderNoop(t *testing.T) {
+	t.Parallel()
+	ctx := newHandlerCtx(t)
+	audit.RecordLoginSuccessWithMeta(nil, ctx, "", "", "", "", "", map[string]string{"trust_score": "0.5"})
+}
+
 func TestRecordCodeSent_MasksTarget(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

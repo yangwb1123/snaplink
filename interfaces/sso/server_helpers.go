@@ -323,8 +323,11 @@ func (s *Server) dispatchLoginAnomaly(ctx HandlerContext, subjectID, clientID, p
 
 // recordLoginSuccess emits a login event after a fully successful login flow
 // AND bumps the success counter + tokens_issued counter on the metrics
-// registry (nil-safe).
-func (s *Server) recordLoginSuccess(ctx HandlerContext, clientID, provider, strategy, userID, sessionID string) {
+// registry (nil-safe). meta is merged onto the SAME login event via
+// audit.SetMeta (e.g. WithTrustScoreSerialization's stamped trust score from
+// finishLoginDirectMint); nil is byte-identical to before that feature
+// existed — every OTHER call site passes nil.
+func (s *Server) recordLoginSuccess(ctx HandlerContext, clientID, provider, strategy, userID, sessionID string, meta map[string]string) {
 	if s.metrics != nil {
 		s.metrics.LoginAttemptsTotal.WithLabelValues(s.boundLoginProvider(provider), "success").Inc()
 		s.metrics.TokensIssuedTotal.WithLabelValues(strategy).Inc()
@@ -336,7 +339,7 @@ func (s *Server) recordLoginSuccess(ctx HandlerContext, clientID, provider, stra
 	if s.auditor == nil {
 		return
 	}
-	audit.RecordLoginSuccess(s.auditor, ctx, clientID, provider, strategy, userID, sessionID)
+	audit.RecordLoginSuccessWithMeta(s.auditor, ctx, clientID, provider, strategy, userID, sessionID, meta)
 }
 
 // recordCredentialHealth emits a non-blocking credential-health signal

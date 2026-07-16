@@ -99,9 +99,13 @@ func (s *Server) JARMSignerForClient(c *Client) (oidc.JARMSigner, bool) {
 	return s.jarmSignerForClient(c)
 }
 
-// RecordLoginSuccess emits a login audit event.
+// RecordLoginSuccess emits a login audit event. meta is always nil here —
+// this exported Deps entry point (silent renewal, CIBA/device grants) predates
+// WithTrustScoreSerialization, which only stamps the direct-mint /auth/login
+// path (finishLoginDirectMint) that calls the unexported recordLoginSuccess
+// directly with its own computed meta.
 func (s *Server) RecordLoginSuccess(ctx core.HandlerContext, clientID, provider, strategy, userID, sessionID string) {
-	s.recordLoginSuccess(ctx, clientID, provider, strategy, userID, sessionID)
+	s.recordLoginSuccess(ctx, clientID, provider, strategy, userID, sessionID, nil)
 }
 
 // AddReadyCheck registers a named /readyz dependency AFTER construction.
@@ -249,7 +253,13 @@ func (s *Server) populateHandlerDepsCallbacks(d *handler.ServerDeps) {
 	d.AuthzErrorBodyDesc = s.authzErrorBodyDesc
 	d.ResolveIssuer = s.resolveIssuer
 	d.RecordLoginFailure = s.recordLoginFailure
-	d.RecordLoginSuccess = s.recordLoginSuccess
+	// WithTrustScoreSerialization only threads a meta map through
+	// finishLoginDirectMint's own direct call to s.recordLoginSuccess; this
+	// Deps callback (token-grant handlers, none of which are /auth/login
+	// direct-mint) always passes nil, matching its pre-existing behavior.
+	d.RecordLoginSuccess = func(ctx handler.HandlerContext, clientID, provider, strategy, userID, sessionID string) {
+		s.recordLoginSuccess(ctx, clientID, provider, strategy, userID, sessionID, nil)
+	}
 	d.RecordTokenIssued = s.recordTokenIssued
 	d.RecordLogout = s.recordLogout
 	d.RecordIDTokenIssued = s.recordIDTokenIssued

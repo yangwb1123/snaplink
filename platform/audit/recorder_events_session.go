@@ -103,6 +103,15 @@ func RecordAccountLocked(rec *Recorder, ctx core.HandlerContext, clientID, provi
 // RecordLoginSuccess emits a login event (Outcome=success) with the
 // authenticated subject + the issuance strategy.
 func RecordLoginSuccess(rec *Recorder, ctx core.HandlerContext, clientID, provider, strategy, userID, sessionID string) {
+	RecordLoginSuccessWithMeta(rec, ctx, clientID, provider, strategy, userID, sessionID, nil)
+}
+
+// RecordLoginSuccessWithMeta is RecordLoginSuccess plus caller-supplied
+// metadata (e.g. a stamped Zero Trust trust score — see
+// interfaces/sso.WithTrustScoreSerialization / shared/trust.SessionMetadata)
+// merged onto the SAME login event via SetMeta — never a second event. A
+// nil/empty meta is byte-identical to RecordLoginSuccess.
+func RecordLoginSuccessWithMeta(rec *Recorder, ctx core.HandlerContext, clientID, provider, strategy, userID, sessionID string, meta map[string]string) {
 	if rec == nil {
 		return
 	}
@@ -114,6 +123,9 @@ func RecordLoginSuccess(rec *Recorder, ctx core.HandlerContext, clientID, provid
 	e.TokenStrategy = strategy
 	e.ActorID = userID
 	e.SessionID = sessionID
+	for k, v := range meta {
+		SetMeta(e, k, v)
+	}
 	rec.Record(ctx.Request().Context(), e)
 }
 

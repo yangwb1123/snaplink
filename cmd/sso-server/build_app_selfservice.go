@@ -23,6 +23,7 @@ import (
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/shared/trust"
 )
 
 // wireSelfServicePassword builds the self-service password store and the
@@ -476,7 +477,19 @@ func (b *appBuilder) wireTrustScoring() error {
 		return nil
 	}
 	b.opts = append(b.opts, sso.WithTrustScorer(scorer))
+	// trust.serialization is a sibling of trust.weights, not nested under
+	// this scorer's own Enabled gate — but with neither sub-flag set there is
+	// nothing to wire, so skip the Option entirely (byte-identical to a build
+	// predating WithTrustScoreSerialization). config.TrustSerializationConfig
+	// mirrors trust.SerializationConfig field-for-field (see its doc comment)
+	// so the conversion is a direct type conversion, not a hand-copied literal
+	// that could silently drop a field on the next addition.
+	if cfg.Trust.Serialization.StampSessionMetadata || cfg.Trust.Serialization.IncludeTokenClaim {
+		b.opts = append(b.opts, sso.WithTrustScoreSerialization(trust.SerializationConfig(cfg.Trust.Serialization)))
+	}
 	b.logger.Info("trust scoring enabled — composite advisory score computed at /auth/login",
-		"scorers", len(cfg.Trust.Weights))
+		"scorers", len(cfg.Trust.Weights),
+		"serialization_session_metadata", cfg.Trust.Serialization.StampSessionMetadata,
+		"serialization_token_claim", cfg.Trust.Serialization.IncludeTokenClaim)
 	return nil
 }
