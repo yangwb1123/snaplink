@@ -379,16 +379,19 @@ func (s *Server) validateAnyToken(ctx context.Context, token string) (*TokenClai
 			if tsErr := s.checkTenantNotSuspended(ctx, claims); tsErr != nil {
 				return nil, "", tsErr
 			}
-			// TODO(region): read-side residency on validate needs serving-region
-			// plumbing. validateAnyToken takes a bare context.Context (no
-			// HandlerContext), and the serving region is stashed on the
-			// HandlerContext by region.Middleware — it is NOT in scope here.
-			// Threading it would change validateAnyToken + ValidateToken +
-			// every call site (userinfo / mesh ext_authz / introspect / admin /
-			// token-exchange) — too invasive for this commit. The login
-			// (write/mint) gate in handler.go is the primary residency control;
-			// the read-side check (isWrite=false, only region_not_allowed can
-			// fire) lands once the serving region is plumbed onto validate.
+			// NOTE(region): this bare-context validate has no serving region
+			// (stashed on HandlerContext, out of scope here) — but the read
+			// gate isn't missing: residencyDeniedForAccess
+			// (server_tenant_residency.go) is a SEPARATE post-validation gate
+			// each HandlerContext-having caller invokes directly, covering
+			// /userinfo, mesh ext_authz, and GET /me[/data-export]
+			// (ResidencyGateAccess). /token/introspect is deliberately
+			// excluded (see WithTenantResidencyCheck's doc). The admin plane
+			// and token-exchange's inbound subject_token read do NOT call
+			// this gate yet — a product/security decision for a follow-up,
+			// not a mechanical fix (admin already has its own admin:read/
+			// admin:write boundary). The login (write/mint) gate in
+			// handler.go remains the primary residency control regardless.
 			return claims, name, nil
 		}
 		lastErr = err
