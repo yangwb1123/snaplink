@@ -268,7 +268,12 @@ func BuildSessionManager(cfg config.IdentityConfig, ttl time.Duration, rdb gored
 	}
 	switch backend {
 	case "", "memory":
-		return defaultimpl.NewMemorySessionManager(ttl), nil
+		s := defaultimpl.NewMemorySessionManager(ttl)
+		s.MaxEntries = cfg.SessionMaxEntries
+		if cfg.SessionReapInterval > 0 {
+			s.StartReaper(cfg.SessionReapInterval)
+		}
+		return s, nil
 	case "sqlite":
 		if cfg.SQLite.DSN == "" {
 			return nil, errors.New("identity.sqlite.dsn required when sessions use backend=sqlite")

@@ -4,20 +4,37 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
+	"io"
 	"sync"
 	"time"
 
+	"github.com/snaplink/sso/infrastructure/defaultimpl/memreaper"
 	"github.com/snaplink/sso/shared/core"
 )
 
 const sessionIDBytes = 32
 
+// ErrStoreAtCapacity is returned by CreateWithMeta when MaxEntries is set
+// and the store already holds that many sessions.
+var ErrStoreAtCapacity = errors.New("memorystoreidentity: store at capacity")
+
 // MemorySessionManager stores sessions in memory. Implements the full
 // core.SessionManager including the admin extensions (ListByUser/ListAll).
+//
+// MaxEntries (0 = unbounded, the default) and StartReaper are optional: Get/
+// ListByUser/ListByTenant already lazily skip an expired session on read,
+// but a session nobody ever reads again after it expires (a captured login
+// that's simply abandoned) has no such reader, so it would otherwise sit in
+// the map forever. Neither changes behavior unless explicitly configured.
 type MemorySessionManager struct {
 	mu       sync.RWMutex
 	sessions map[string]*core.Session
 	ttl      time.Duration
+
+	MaxEntries int
+
+	reaper *memreaper.Reaper
 }
 
 func NewMemorySessionManager(ttl ...time.Duration) *MemorySessionManager {
@@ -26,6 +43,27 @@ func NewMemorySessionManager(ttl ...time.Duration) *MemorySessionManager {
 		d = ttl[0]
 	}
 	return &MemorySessionManager{ttl: d, sessions: make(map[string]*core.Session)}
+}
+
+// StartReaper launches a background sweep of expired sessions every
+// interval. A non-positive interval is a no-op. Idempotent — calling it
+// again stops the previous reaper first.
+func (m *MemorySessionManager) StartReaper(interval time.Duration) {
+	_ = m.reaper.Close()
+	m.reaper = memreaper.Start(interval, func(time.Time) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		for id, s := range m.sessions {
+			if s.IsExpired() {
+				delete(m.sessions, id)
+			}
+		}
+	})
+}
+
+// Close stops the background reaper started via StartReaper, if any.
+func (m *MemorySessionManager) Close() error {
+	return m.reaper.Close()
 }
 
 func (m *MemorySessionManager) Create(ctx context.Context, userID string) (*core.Session, error) {
@@ -51,8 +89,11 @@ func (m *MemorySessionManager) CreateWithMeta(_ context.Context, userID string, 
 		TrustSetAt: meta.TrustSetAt,
 	}
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.MaxEntries > 0 && len(m.sessions) >= m.MaxEntries {
+		return nil, ErrStoreAtCapacity
+	}
 	m.sessions[id] = session
-	m.mu.Unlock()
 	return session, nil
 }
 
@@ -199,4 +240,5 @@ var (
 	_ core.SessionTenantIndex  = (*MemorySessionManager)(nil)
 	_ core.SessionTenantLister = (*MemorySessionManager)(nil)
 	_ core.SessionTrustManager = (*MemorySessionManager)(nil)
+	_ io.Closer                = (*MemorySessionManager)(nil)
 )

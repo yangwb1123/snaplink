@@ -34,7 +34,12 @@ func errRedisNotConfigured(domain string) error {
 func BuildAuthCodeStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.AuthCodeStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
-		return defaultimpl.NewMemoryAuthCodeStore(), nil
+		s := defaultimpl.NewMemoryAuthCodeStore()
+		s.MaxEntries = cfg.AuthCode.MaxEntries
+		if cfg.AuthCode.ReapInterval > 0 {
+			s.StartReaper(cfg.AuthCode.ReapInterval)
+		}
+		return s, nil
 	case "sqlite":
 		if cfg.SQLite.DSN == "" {
 			return nil, errors.New("oauth.sqlite.dsn required when backend=sqlite")

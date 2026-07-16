@@ -12,6 +12,17 @@ type IdentityConfig struct {
 	SessionBackend string               `yaml:"session_backend"`
 	SQLite         IdentitySQLiteConfig `yaml:"sqlite"`
 	ClientCache    ClientCacheConfig    `yaml:"client_cache"`
+
+	// SessionMaxEntries caps the in-process memory session backend's live
+	// session count (0 = unbounded, the default); ignored by sqlite/redis/
+	// postgres backends, which bound growth their own way. SessionReapInterval,
+	// when positive, starts a background sweep removing expired sessions
+	// that no Get/ListByUser call ever revisits again. Both only take effect
+	// when the resolved session backend (SessionBackend, falling back to
+	// Backend) is "" or "memory"; see infrastructure/defaultimpl/
+	// memorystoreidentity.MemorySessionManager.
+	SessionMaxEntries   int           `yaml:"session_max_entries"`
+	SessionReapInterval time.Duration `yaml:"session_reap_interval"`
 }
 
 // ClientCacheConfig opts into the per-login ClientStore metadata cache

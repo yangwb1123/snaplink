@@ -12,7 +12,7 @@ type OAuthConfig struct {
 	// override is set.
 	Backend       string                   `yaml:"backend"`
 	SQLite        OAuthSQLiteConfig        `yaml:"sqlite"`
-	AuthCode      OAuthStoreConfig         `yaml:"auth_code"`
+	AuthCode      OAuthAuthCodeConfig      `yaml:"auth_code"`
 	RefreshToken  OAuthRefreshTokenConfig  `yaml:"refresh_token"`
 	DeviceCode    OAuthDeviceCodeConfig    `yaml:"device_code"`
 	PAR           OAuthPARConfig           `yaml:"par"`
@@ -169,6 +169,20 @@ type OAuthStoreConfig struct {
 	// when a double-submit lands on a different replica than the rotation — use
 	// "redis" so the grace decision is shared. Ignored when grace_window = 0.
 	RotationGraceBackend string `yaml:"rotation_grace_backend"`
+}
+
+// OAuthAuthCodeConfig extends OAuthStoreConfig with the same MaxEntries/
+// ReapInterval memory-backend knobs as OAuthRefreshTokenConfig/
+// OAuthDeviceCodeConfig/OAuthPARConfig (see infrastructure/defaultimpl/
+// memorystoreoauth.MemoryAuthCodeStore). Kept as its own type for the same
+// reason OAuthPARConfig is: adding these directly to the shared
+// OAuthStoreConfig would collide with the sibling configs that already
+// embed it and redeclare the same field names at their own level.
+type OAuthAuthCodeConfig struct {
+	OAuthStoreConfig `yaml:",inline"`
+
+	MaxEntries   int           `yaml:"max_entries"`
+	ReapInterval time.Duration `yaml:"reap_interval"`
 }
 
 // OAuthDeviceCodeConfig adds device-code-specific tunables on top of

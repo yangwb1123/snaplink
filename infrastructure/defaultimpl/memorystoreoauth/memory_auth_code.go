@@ -5,8 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"maps"
+	"time"
 
+	"github.com/snaplink/sso/infrastructure/defaultimpl/memreaper"
 	"github.com/snaplink/sso/protocols/oauth"
 )
 
@@ -24,8 +27,17 @@ const authCodeBytes = 32
 // mapShardCount independent mutexes is safe and cuts contention on the
 // hottest OAuth path (issued + consumed on every authorization_code
 // login) without changing Issue/Consume's behavior at all.
+// MaxEntries (0 = unbounded, the default) and StartReaper are optional —
+// see MemoryPARStore's identical doc: Consume already lazily drops an
+// expired code on the specific one a caller presents, but a code nobody
+// ever redeems (an abandoned authorization_code flow) has no such caller,
+// so it would otherwise sit in a shard forever. Neither changes behavior
+// unless explicitly configured.
 type MemoryAuthCodeStore struct {
+	MaxEntries int
+
 	entries *shardedMap[*oauth.AuthCode]
+	reaper  *memreaper.Reaper
 }
 
 // NewMemoryAuthCodeStore returns a ready-to-use store with no TTL of its
@@ -34,9 +46,27 @@ func NewMemoryAuthCodeStore() *MemoryAuthCodeStore {
 	return &MemoryAuthCodeStore{entries: newShardedMap[*oauth.AuthCode]()}
 }
 
+// StartReaper launches a background sweep of expired, never-consumed auth
+// codes every interval. A non-positive interval is a no-op. Idempotent —
+// calling it again stops the previous reaper first.
+func (m *MemoryAuthCodeStore) StartReaper(interval time.Duration) {
+	_ = m.reaper.Close()
+	m.reaper = memreaper.Start(interval, func(time.Time) {
+		m.entries.DeleteExpired(func(v *oauth.AuthCode) bool { return v.IsExpired() })
+	})
+}
+
+// Close stops the background reaper started via StartReaper, if any.
+func (m *MemoryAuthCodeStore) Close() error {
+	return m.reaper.Close()
+}
+
 func (m *MemoryAuthCodeStore) Issue(_ context.Context, code string, info *oauth.AuthCode) error {
 	if code == "" || info == nil {
 		return oauth.ErrAuthCodeNotFound
+	}
+	if m.MaxEntries > 0 && m.entries.Len() >= m.MaxEntries {
+		return ErrStoreAtCapacity
 	}
 	// Copy slice to avoid aliasing caller's underlying array — a future
 	// mutation of info.Scopes by the caller must not be visible at
@@ -122,4 +152,7 @@ func cloneRawBytes(b []byte) []byte {
 }
 
 // Compile-time interface check.
-var _ oauth.AuthCodeStore = (*MemoryAuthCodeStore)(nil)
+var (
+	_ oauth.AuthCodeStore = (*MemoryAuthCodeStore)(nil)
+	_ io.Closer           = (*MemoryAuthCodeStore)(nil)
+)

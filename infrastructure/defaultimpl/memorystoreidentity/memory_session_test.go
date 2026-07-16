@@ -286,3 +286,80 @@ func TestMemorySessionManager_TrustRoundTrip(t *testing.T) {
 		t.Errorf("SetTrust missing = %v, want nil", err)
 	}
 }
+
+// TestMemorySessionManager_MaxEntriesRejectsAtCapacity proves the opt-in
+// MaxEntries cap rejects a new session once the store is full, and that
+// destroying a session frees up room again.
+func TestMemorySessionManager_MaxEntriesRejectsAtCapacity(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := NewMemorySessionManager(time.Hour)
+	m.MaxEntries = 2
+
+	s1, err := m.Create(ctx, "u-1")
+	if err != nil {
+		t.Fatalf("Create 1: %v", err)
+	}
+	if _, err := m.Create(ctx, "u-2"); err != nil {
+		t.Fatalf("Create 2: %v", err)
+	}
+	if _, err := m.Create(ctx, "u-3"); !errors.Is(err, ErrStoreAtCapacity) {
+		t.Fatalf("Create 3 (over capacity) = %v, want ErrStoreAtCapacity", err)
+	}
+
+	if err := m.Destroy(ctx, s1.ID); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if _, err := m.Create(ctx, "u-4"); err != nil {
+		t.Fatalf("Create after freeing a slot: %v", err)
+	}
+}
+
+// TestMemorySessionManager_MaxEntriesZeroIsUnbounded proves the default
+// (MaxEntries unset) never rejects a Create.
+func TestMemorySessionManager_MaxEntriesZeroIsUnbounded(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := NewMemorySessionManager(time.Hour)
+	for i := 0; i < 50; i++ {
+		if _, err := m.Create(ctx, "u"); err != nil {
+			t.Fatalf("Create %d: %v", i, err)
+		}
+	}
+}
+
+// TestMemorySessionManager_ReaperSweepsExpiredSessions proves StartReaper
+// removes an expired session that no Get/ListByUser call ever revisits, and
+// that Close stops the sweep loop cleanly.
+func TestMemorySessionManager_ReaperSweepsExpiredSessions(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	m := NewMemorySessionManager(time.Millisecond) // sessions expire almost immediately
+	defer func() { _ = m.Close() }()
+
+	s, err := m.Create(ctx, "u-alice")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	time.Sleep(5 * time.Millisecond) // let it expire
+
+	m.StartReaper(5 * time.Millisecond)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		m.mu.RLock()
+		_, present := m.sessions[s.ID]
+		m.mu.RUnlock()
+		if !present {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("expired session never swept from the map")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if err := m.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
