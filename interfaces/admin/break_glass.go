@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -274,21 +275,61 @@ func writeApproveError(ctx core.HandlerContext, d Deps, id string, err error) {
 // window's close, independent of whether any admin ever reads the list
 // again. Safe to call on an interval (see sso.Server.RunBreakGlassSweeper)
 // or once from a test. No-op when no BreakGlassStore is wired.
+//
+// RunBreakGlassSweeper drives this from a PERMANENT background goroutine with
+// no recover of its own (by design — see that method's doc comment), so every
+// call here into a pluggable, operator-supplied implementation
+// (BreakGlassStore, SessionManager, the token issuers RevokeToken fans out
+// to, the Auditor Sink) is wrapped in recover(): an unrecovered panic in any
+// one of them would otherwise crash the ENTIRE process — taking every
+// in-flight request on every other endpoint down with it, not just break-glass
+// handling. Mirrors tokenanomaly.Detector.processFindingSafe and
+// domains/anomaly.Runner.inspectSafe, the same pattern for the other permanent
+// sweeper loops in this codebase.
 func SweepBreakGlassOnce(d Deps, ctx context.Context) (int, error) {
 	store := d.BreakGlassStore()
 	if store == nil {
 		return 0, nil
 	}
-	expired, err := store.DeleteExpired(ctx)
+	expired, err := deleteExpiredSafe(ctx, store)
 	if err != nil {
 		return 0, err
 	}
 	for _, a := range expired {
-		cascadeRevokeSessions(d, ctx, a.SessionIDs)
-		cascadeRevokeImpersonationTokens(d, ctx, a.ImpersonationTokens)
-		recordBreakGlassEvent(d, ctx, "", audit.EventAdminBreakGlassExpired, a)
+		sweepExpiredGrantSafe(d, ctx, a)
 	}
 	return len(expired), nil
+}
+
+// deleteExpiredSafe wraps store.DeleteExpired in recover(). BreakGlassStore is
+// a pluggable, operator-supplied implementation (core.BreakGlassStore) invoked
+// from the permanent sweeper goroutine — a panic here surfaces as a sweep
+// error (logged by the caller, retried next tick) instead of crashing the
+// process.
+func deleteExpiredSafe(ctx context.Context, store core.BreakGlassStore) (expired []core.AdminSession, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("break-glass DeleteExpired panic recovered: %v", r)
+		}
+	}()
+	return store.DeleteExpired(ctx)
+}
+
+// sweepExpiredGrantSafe wraps one expired grant's revoke cascade in
+// recover(): the SessionManager, the token issuers RevokeToken fans out to,
+// and the Auditor Sink are all pluggable, operator-supplied implementations —
+// a panic in any of them must drop only THIS grant's cascade, not escape the
+// sweep loop and crash the permanent background goroutine an operator is
+// documented to run RunBreakGlassSweeper from.
+func sweepExpiredGrantSafe(d Deps, ctx context.Context, a core.AdminSession) {
+	defer func() {
+		if r := recover(); r != nil {
+			d.Logger().Error("break-glass sweep cascade panic recovered", "panic", r, "id", a.ID)
+		}
+	}()
+	cascadeRevokeSessions(d, ctx, a.SessionIDs)
+	cascadeRevokeImpersonationTokens(d, ctx, a.ImpersonationTokens)
+	recordBreakGlassEvent(d, ctx, "", audit.EventAdminBreakGlassExpired, a)
 }
 
 // normalizeBreakGlassScope validates the requested scope, defaulting an

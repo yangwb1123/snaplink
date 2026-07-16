@@ -368,6 +368,88 @@ func TestSweepBreakGlassOnce_ExpiresAndCascades(t *testing.T) {
 	}
 }
 
+// panicSessionManagerBG wraps a real SessionManager but panics on Destroy for
+// one specific sessionID, simulating a buggy operator-supplied SessionManager
+// implementation invoked from the break-glass sweep's revoke cascade.
+type panicSessionManagerBG struct {
+	core.SessionManager
+	panicOn string
+}
+
+func (p *panicSessionManagerBG) Destroy(ctx context.Context, sessionID string) error {
+	if sessionID == p.panicOn {
+		panic("boom: simulated SessionManager bug")
+	}
+	return p.SessionManager.Destroy(ctx, sessionID)
+}
+
+// TestSweepBreakGlassOnce_PanicInCascadeRecovered locks the panic-containment
+// this sweep must provide: SweepBreakGlassOnce is driven by
+// sso.Server.RunBreakGlassSweeper's PERMANENT background goroutine (no
+// recover of its own, by design), so a panic anywhere in the pluggable
+// SessionManager/TokenIssuer/Auditor calls it fans out to must be contained
+// per-grant, not escape and crash the whole process. Without the recover()
+// in sweepExpiredGrantSafe, this test itself would panic and crash the test
+// binary — the same blast radius the real sweeper goroutine would have.
+func TestSweepBreakGlassOnce_PanicInCascadeRecovered(t *testing.T) {
+	d := newBGTestDeps()
+	rctx := context.Background()
+
+	sess1, err := d.sessions.Create(rctx, "user-1")
+	if err != nil {
+		t.Fatalf("seed session 1: %v", err)
+	}
+	sess2, err := d.sessions.Create(rctx, "user-2")
+	if err != nil {
+		t.Fatalf("seed session 2: %v", err)
+	}
+	// A buggy SessionManager that panics destroying sess1's session only.
+	d.sessions = &panicSessionManagerBG{SessionManager: d.sessions, panicOn: sess1.ID}
+
+	past := time.Now().Add(-time.Minute)
+	bad := core.AdminSession{
+		ID: "bg_bad", AdminUserID: "admin-a", TargetUserID: "user-1",
+		Reason: "ticket-1", Scope: core.AdminScopeImpersonate, Status: core.AdminSessionActive,
+		CreatedAt: past.Add(-time.Hour), ExpiresAt: past, ApprovedBy: "admin-b", SessionIDs: []string{sess1.ID},
+	}
+	good := core.AdminSession{
+		ID: "bg_good", AdminUserID: "admin-a", TargetUserID: "user-2",
+		Reason: "ticket-2", Scope: core.AdminScopeImpersonate, Status: core.AdminSessionActive,
+		CreatedAt: past.Add(-time.Hour), ExpiresAt: past, ApprovedBy: "admin-b", SessionIDs: []string{sess2.ID},
+	}
+	if err := d.breakGlass.Create(rctx, bad); err != nil {
+		t.Fatalf("seed bad: %v", err)
+	}
+	if err := d.breakGlass.Create(rctx, good); err != nil {
+		t.Fatalf("seed good: %v", err)
+	}
+
+	// The call itself must not panic (and thus must not crash the process).
+	n, err := SweepBreakGlassOnce(d, rctx)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("swept = %d, want 2", n)
+	}
+
+	// Fault isolation: the SECOND (unrelated) grant's cascade must still have
+	// run despite the first one panicking.
+	if _, err := d.sessions.Get(rctx, sess2.ID); err == nil {
+		t.Fatalf("good grant's session must still be destroyed by the sweep")
+	}
+	evts, _ := d.sink.Query(rctx, audit.Query{})
+	var sawGood bool
+	for _, e := range evts {
+		if e.Type == audit.EventAdminBreakGlassExpired && e.Metadata[metaKeyAdminSessionID] == "bg_good" {
+			sawGood = true
+		}
+	}
+	if !sawGood {
+		t.Fatalf("expiry audit event for the good grant must still be recorded")
+	}
+}
+
 // bgCreateActiveImpersonate creates an immediately-active impersonate grant
 // (require_approval omitted) and returns its id.
 func bgCreateActiveImpersonate(t *testing.T, d *bgTestDeps, admin, target string) string {
