@@ -52,25 +52,40 @@ func (s *TenantStore) ListDomainsByTenant(ctx context.Context, tenantID string) 
 	return scanDomainRows(rows)
 }
 
+// PutDomain validates the referenced tenant + hostname-ownership invariant and
+// then upserts the domain row. The verify-then-check-then-write sequence is a
+// classic read-modify-write: run at plain READ COMMITTED (the default), two
+// concurrent PutDomain calls claiming the SAME fresh hostname for DIFFERENT
+// tenants would both read "unclaimed" from checkDomainConflict, then both
+// commit their own single-statement INSERT ... ON CONFLICT DO UPDATE — the
+// second silently overwrites the first's tenant_id with no error to either
+// caller, breaking the exact hostname-ownership check this function exists to
+// enforce (a cross-tenant domain hijack). Running the whole sequence inside one
+// SERIALIZABLE transaction (runTx) closes the race: Postgres's SSI detects the
+// read/write dependency between the two transactions' overlapping
+// checkDomainConflict-read + insert-write and aborts one with 40001, which
+// runTx retries — the retry re-runs checkDomainConflict against the winner's
+// now-committed row and correctly returns ErrDomainExists instead of silently
+// losing the update. See permissions_assignments.go for the identical pattern
+// already applied to the RBAC read-modify-writes.
 func (s *TenantStore) PutDomain(ctx context.Context, d *tenant.Domain) error {
 	if err := d.Validate(); err != nil {
 		return err
 	}
-	if err := s.verifyTenantExists(ctx, d.TenantID); err != nil {
-		return err
-	}
-
 	host := normalizeHost(d.Hostname)
-	if err := s.checkDomainConflict(ctx, host, d.TenantID); err != nil {
-		return err
-	}
-
-	now := time.Now().UTC().UnixNano()
-	cols, err := encodeDomainColumns(d, now)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.ExecContext(ctx, `
+	return runTx(ctx, s.db, serializable, func(tx *sql.Tx) error {
+		if err := verifyTenantExists(ctx, tx, d.TenantID); err != nil {
+			return err
+		}
+		if err := checkDomainConflict(ctx, tx, host, d.TenantID); err != nil {
+			return err
+		}
+		now := time.Now().UTC().UnixNano()
+		cols, err := encodeDomainColumns(d, now)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `
         INSERT INTO tenant_domains (
             hostname, tenant_id, default_client_id, is_apex,
             branding_json, created_at, updated_at
@@ -81,21 +96,28 @@ func (s *TenantStore) PutDomain(ctx context.Context, d *tenant.Domain) error {
             is_apex = EXCLUDED.is_apex,
             branding_json = EXCLUDED.branding_json,
             updated_at = EXCLUDED.updated_at`,
-		host, d.TenantID, d.DefaultClientID, cols.isApex,
-		cols.brandingJSON, cols.createdAt, now,
-	)
-	if err != nil {
-		return fmt.Errorf("postgres: put domain: %w", err)
-	}
-	return nil
+			host, d.TenantID, d.DefaultClientID, cols.isApex,
+			cols.brandingJSON, cols.createdAt, now,
+		)
+		if err != nil {
+			return fmt.Errorf("postgres: put domain: %w", err)
+		}
+		return nil
+	})
+}
+
+// rowQuerier is the *sql.DB / *sql.Tx subset verifyTenantExists +
+// checkDomainConflict need, so both can run inside PutDomain's transaction.
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 // verifyTenantExists confirms the referenced tenant row is present. Same
 // semantics as the memory peer + matches what admin RPCs expect
 // (ErrTenantNotFound, not a generic FK violation).
-func (s *TenantStore) verifyTenantExists(ctx context.Context, tenantID string) error {
+func verifyTenantExists(ctx context.Context, q rowQuerier, tenantID string) error {
 	var exists int
-	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM tenants WHERE id = $1`, tenantID).Scan(&exists); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT 1 FROM tenants WHERE id = $1`, tenantID).Scan(&exists); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return tenant.ErrTenantNotFound
 		}
@@ -107,8 +129,8 @@ func (s *TenantStore) verifyTenantExists(ctx context.Context, tenantID string) e
 // checkDomainConflict rejects a hostname already owned by a different tenant
 // with ErrDomainExists. A hostname owned by the same tenant (or unclaimed)
 // falls through to the upsert path.
-func (s *TenantStore) checkDomainConflict(ctx context.Context, host, tenantID string) error {
-	row := s.db.QueryRowContext(ctx, `SELECT tenant_id FROM tenant_domains WHERE hostname = $1`, host)
+func checkDomainConflict(ctx context.Context, q rowQuerier, host, tenantID string) error {
+	row := q.QueryRowContext(ctx, `SELECT tenant_id FROM tenant_domains WHERE hostname = $1`, host)
 	var existingTenantID string
 	switch err := row.Scan(&existingTenantID); {
 	case errors.Is(err, sql.ErrNoRows):
