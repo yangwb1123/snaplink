@@ -2,14 +2,12 @@ package extauthz
 
 import (
 	"context"
-	"crypto/x509"
-	"encoding/pem"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/shared/spi"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
@@ -60,6 +58,25 @@ type AuthorizationServer struct {
 	authv3.UnimplementedAuthorizationServer
 
 	authorizer MeshAuthorizer
+	// logger is OPTIONAL (nil by default, see NewAuthorizationServer): it
+	// exists solely so a panic recovered from the MeshAuthorizer seam (see
+	// safeMeshAuthorize) is observable to an operator instead of silently
+	// swallowed. It is never on the hot ALLOW/DENY path otherwise.
+	logger spi.Logger
+}
+
+// Option configures an AuthorizationServer at construction. The variadic
+// signature on NewAuthorizationServer keeps every existing single-argument
+// call site (including doc.go's wiring example and this package's tests)
+// source-compatible.
+type Option func(*AuthorizationServer)
+
+// WithLogger wires an optional logger so a panic recovered from the
+// MeshAuthorizer seam is logged rather than silently swallowed. Without it,
+// a recovered panic still degrades safely to DENY (see safeMeshAuthorize)
+// but leaves no trace an operator can act on.
+func WithLogger(l spi.Logger) Option {
+	return func(a *AuthorizationServer) { a.logger = l }
 }
 
 // authStripHeaders is the set of identity headers Envoy must remove from
@@ -84,8 +101,12 @@ var authStripHeaders = []string{
 // MeshAuthorizer (in production the operator's *sso.Server). The returned
 // value is registered with authv3.RegisterAuthorizationServer on the
 // operator's grpc.Server (see doc.go).
-func NewAuthorizationServer(authorizer MeshAuthorizer) *AuthorizationServer {
-	return &AuthorizationServer{authorizer: authorizer}
+func NewAuthorizationServer(authorizer MeshAuthorizer, opts ...Option) *AuthorizationServer {
+	a := &AuthorizationServer{authorizer: authorizer}
+	for _, opt := range opts {
+		opt(a)
+	}
+	return a
 }
 
 // Check is the single RPC of the Envoy Authorization service. It runs the
@@ -121,12 +142,41 @@ func NewAuthorizationServer(authorizer MeshAuthorizer) *AuthorizationServer {
 // failure-mode configuration.
 func (a *AuthorizationServer) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.CheckResponse, error) {
 	mreq := buildMeshRequest(req)
-	res := a.authorizer.MeshAuthorize(ctx, mreq)
+	res := a.safeMeshAuthorize(ctx, mreq)
 
 	if res.Allowed {
 		return allowResponse(res), nil
 	}
 	return denyResponse(res), nil
+}
+
+// safeMeshAuthorize calls the MeshAuthorizer seam with a recover(), so a
+// panic inside it degrades to an oracle-safe DENY instead of escaping this
+// method. MeshAuthorize is an interface call into operator-injected code
+// (in production, *sso.Server's non-trivial bearer/DPoP/mTLS/residency/
+// session validation, per AGENTS.md; in a fork, whatever the operator
+// wired) — unlike net/http's ServeMux, grpc-go's default Handler dispatch
+// installs NO panic recovery of its own, so an unrecovered panic here
+// crashes the whole process, taking down every OTHER in-flight Check call
+// with it, not just this one. A recovered panic is exactly as unexplained
+// as any other internal validation failure, so it collapses to the SAME
+// invalid_token DENY as every other failure rung in MeshAuthorize
+// (AGENTS.md §3 Fail-Closed) — never ALLOW.
+//
+// This is defense in depth, not a substitute for the operator also wiring a
+// grpc.Server-level recovery interceptor (see doc.go): that layer is the
+// only thing that can protect RPCs this package doesn't own (e.g. a panic
+// during request/response marshaling).
+func (a *AuthorizationServer) safeMeshAuthorize(ctx context.Context, mreq sso.MeshAuthorizeRequest) (res sso.MeshAuthorizeResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			if a.logger != nil {
+				a.logger.Error("mesh authorize panic recovered", "panic", r)
+			}
+			res = sso.MeshAuthorizeResult{Allowed: false, DenyCode: sso.ErrInvalidToken}
+		}
+	}()
+	return a.authorizer.MeshAuthorize(ctx, mreq)
 }
 
 // buildMeshRequest reconstructs a sso.MeshAuthorizeRequest from the Envoy
@@ -140,7 +190,7 @@ func buildMeshRequest(req *authv3.CheckRequest) sso.MeshAuthorizeRequest {
 	mreq := sso.MeshAuthorizeRequest{
 		Method: httpAttrs.GetMethod(),
 		URL:    reconstructURL(httpAttrs),
-		Header: headersToHTTP(httpAttrs.GetHeaders()),
+		Header: requestHeaders(httpAttrs),
 	}
 
 	// Client cert for the mTLS sender-constraint. Envoy puts the peer cert
@@ -205,73 +255,6 @@ func reconstructURL(h *authv3.AttributeContext_HttpRequest) string {
 	u := url.URL{Scheme: scheme, Host: host, Path: path, RawQuery: rawQuery}
 	// Path may already include a leading '/'; url.URL.String handles that.
 	return u.String()
-}
-
-// headersToHTTP converts Envoy's lower-cased header map into a canonical
-// http.Header via Set, so the stdlib-based readers in the seam find their
-// values. Envoy guarantees the inbound keys are lower-cased (HTTP header
-// keys are case-insensitive), and http.Header.Set canonicalizes each key
-// through textproto.CanonicalMIMEHeaderKey, so "authorization" lands under
-// "Authorization" where bearerToken reads it, and the X-Forwarded-* chain
-// lands under its canonical keys.
-//
-// DPoP is correct WITHOUT special-casing: the canonical proof header is
-// "DPoP", and CanonicalMIMEHeaderKey maps both "dpop" (on Set here) and
-// "DPoP" (on the seam's Get) to the SAME interned key "Dpop", so the proof
-// stored here is exactly what the seam's Get("DPoP") retrieves.
-func headersToHTTP(in map[string]string) http.Header {
-	out := make(http.Header, len(in))
-	for k, v := range in {
-		out.Set(k, v)
-	}
-	return out
-}
-
-// parsePeerCertificate decodes Envoy's URL-encoded PEM peer certificate
-// (AttributeContext.Source.Certificate, documented as "encoded in URL and
-// PEM format") into an *x509.Certificate. Returns nil on any failure
-// (empty, non-cert PEM, parse error) — a nil cert means "no verified client
-// cert", which the seam treats as the absence of mTLS material. Fail-safe:
-// a malformed cert can only FAIL an mTLS sender-constraint (DENY), never
-// satisfy one.
-//
-// We try the URL-unescaped form FIRST (the documented encoding), then the
-// raw string as a fallback. The raw fallback matters because url.Query
-// unescaping is LOSSY on un-escaped PEM: a '+' in the base64 body decodes
-// to a space, corrupting the block. So we never trust a single transform —
-// we PEM-decode each candidate and use the first that yields a CERTIFICATE.
-func parsePeerCertificate(s string) *x509.Certificate {
-	if s == "" {
-		return nil
-	}
-	candidates := make([]string, 0, 2)
-	if decoded, err := url.QueryUnescape(s); err == nil && decoded != s {
-		// Only add the unescaped form when it actually changed something;
-		// when s has no escapes, decoded == s and the raw candidate covers it.
-		candidates = append(candidates, decoded)
-	}
-	candidates = append(candidates, s)
-
-	for _, c := range candidates {
-		if cert := certFromPEM(c); cert != nil {
-			return cert
-		}
-	}
-	return nil
-}
-
-// certFromPEM decodes a single PEM CERTIFICATE block to an *x509.Certificate,
-// or nil if c is not a parseable CERTIFICATE PEM.
-func certFromPEM(c string) *x509.Certificate {
-	block, _ := pem.Decode([]byte(c))
-	if block == nil || block.Type != "CERTIFICATE" {
-		return nil
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil
-	}
-	return cert
 }
 
 // allowResponse builds the OK CheckResponse: status OK + an OkHttpResponse

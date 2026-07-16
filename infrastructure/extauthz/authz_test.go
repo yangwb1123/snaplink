@@ -627,6 +627,204 @@ func TestCheck_SenderConstraint_DPoPBoundAsPlainBearer_Denies(t *testing.T) {
 	}
 }
 
+// TestCheck_HeaderMapFallback_EncodeRawHeaders proves the encode_raw_headers:
+// true wire shape (item 3): Envoy's own proto docs say the default Headers
+// map "will not be set" in that mode and HeaderMap is populated instead. If
+// Check only ever read Headers, this would silently produce an EMPTY
+// http.Header on the seam — no Authorization, no DPoP, no X-Forwarded-* —
+// denying every request with the bare missing-credentials challenge (a
+// total, silent outage indistinguishable from "everyone's credentials are
+// missing"). Assert the bearer/DPoP/XFF all still reach the seam from
+// HeaderMap alone (Headers left nil, as Envoy leaves it in this mode).
+func TestCheck_HeaderMapFallback_EncodeRawHeaders(t *testing.T) {
+	t.Parallel()
+	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{Allowed: true, Subject: "s"}}
+	srv := NewAuthorizationServer(fake)
+
+	req := checkRequest("GET", "https", "sso.test", "/mesh/ext-authz", nil) // Headers nil, as encode_raw_headers leaves it
+	req.GetAttributes().GetRequest().GetHttp().HeaderMap = &corev3.HeaderMap{
+		Headers: []*corev3.HeaderValue{
+			{Key: "authorization", RawValue: []byte("Bearer the-token")},
+			{Key: "dpop", RawValue: []byte("the-dpop-proof")},
+			{Key: "x-forwarded-proto", RawValue: []byte("https")},
+		},
+	}
+
+	if _, err := srv.Check(context.Background(), req); err != nil {
+		t.Fatalf("Check error: %v", err)
+	}
+	got, calls := fake.lastRequest()
+	if calls != 1 {
+		t.Fatalf("MeshAuthorize called %d times want 1", calls)
+	}
+	if got.Header.Get("Authorization") != "Bearer the-token" {
+		t.Errorf("seam Authorization (from HeaderMap) = %q want %q", got.Header.Get("Authorization"), "Bearer the-token")
+	}
+	if got.Header.Get("DPoP") != "the-dpop-proof" {
+		t.Errorf("seam DPoP (from HeaderMap) = %q want %q", got.Header.Get("DPoP"), "the-dpop-proof")
+	}
+	if got.Header.Get("X-Forwarded-Proto") != "https" {
+		t.Errorf("seam X-Forwarded-Proto (from HeaderMap) = %q want %q", got.Header.Get("X-Forwarded-Proto"), "https")
+	}
+}
+
+// TestCheck_HeaderMapFallback_CombinesDuplicateKeys proves the HeaderMap
+// fallback reproduces the default Headers map's HTTP-spec merge (RFC 7230
+// §3.2.2) for a repeated key, rather than silently truncating to the first
+// value via Header.Get on the raw (unmerged) HeaderMap shape — a real
+// multi-hop X-Forwarded-For should read the same way regardless of whether
+// Envoy is in encode_raw_headers mode.
+func TestCheck_HeaderMapFallback_CombinesDuplicateKeys(t *testing.T) {
+	t.Parallel()
+	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{Allowed: true, Subject: "s"}}
+	srv := NewAuthorizationServer(fake)
+
+	req := checkRequest("GET", "https", "sso.test", "/x", nil)
+	req.GetAttributes().GetRequest().GetHttp().HeaderMap = &corev3.HeaderMap{
+		Headers: []*corev3.HeaderValue{
+			{Key: "x-forwarded-for", RawValue: []byte("203.0.113.1")},
+			{Key: "x-forwarded-for", RawValue: []byte("198.51.100.7")},
+		},
+	}
+	if _, err := srv.Check(context.Background(), req); err != nil {
+		t.Fatalf("Check error: %v", err)
+	}
+	got, _ := fake.lastRequest()
+	want := "203.0.113.1,198.51.100.7"
+	if got.Header.Get("X-Forwarded-For") != want {
+		t.Errorf("seam X-Forwarded-For = %q want %q (comma-merged, matching the default Headers-map shape)", got.Header.Get("X-Forwarded-For"), want)
+	}
+}
+
+// TestCheck_HeadersMapPreferredOverHeaderMap proves the default (and
+// documented-typical) case is unaffected by the fallback: when Envoy
+// populates the default Headers map (encode_raw_headers left false/default),
+// Check uses it and ignores any (also-populated, hypothetically) HeaderMap.
+func TestCheck_HeadersMapPreferredOverHeaderMap(t *testing.T) {
+	t.Parallel()
+	fake := &fakeAuthorizer{result: sso.MeshAuthorizeResult{Allowed: true, Subject: "s"}}
+	srv := NewAuthorizationServer(fake)
+
+	req := checkRequest("GET", "https", "sso.test", "/x", map[string]string{
+		"authorization": "Bearer from-headers-map",
+	})
+	req.GetAttributes().GetRequest().GetHttp().HeaderMap = &corev3.HeaderMap{
+		Headers: []*corev3.HeaderValue{
+			{Key: "authorization", RawValue: []byte("Bearer from-headermap-should-be-ignored")},
+		},
+	}
+	if _, err := srv.Check(context.Background(), req); err != nil {
+		t.Fatalf("Check error: %v", err)
+	}
+	got, _ := fake.lastRequest()
+	if got.Header.Get("Authorization") != "Bearer from-headers-map" {
+		t.Errorf("seam Authorization = %q want the default Headers-map value (%q), HeaderMap must not override it", got.Header.Get("Authorization"), "Bearer from-headers-map")
+	}
+}
+
+// panicAuthorizer is a MeshAuthorizer test double that always panics —
+// modeling a bug in the operator-injected implementation (e.g. a nil-pointer
+// dereference deep in a custom SessionManager/PermissionsProvider).
+type panicAuthorizer struct{}
+
+func (panicAuthorizer) MeshAuthorize(context.Context, sso.MeshAuthorizeRequest) sso.MeshAuthorizeResult {
+	panic("boom: simulated MeshAuthorizer bug")
+}
+
+// recordingLogger is a minimal spi.Logger test double recording Error calls,
+// so a test can assert a recovered panic was actually logged (not silently
+// swallowed) when a logger is wired via WithLogger.
+type recordingLogger struct {
+	mu      sync.Mutex
+	errMsgs []string
+}
+
+func (l *recordingLogger) Info(string, ...any)  {}
+func (l *recordingLogger) Debug(string, ...any) {}
+func (l *recordingLogger) Error(msg string, _ ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.errMsgs = append(l.errMsgs, msg)
+}
+
+// TestCheck_PanicInAuthorizer_RecoversToOracleSafeDeny proves item 4: a panic
+// inside the injected MeshAuthorizer (operator-supplied, potentially-complex
+// validation logic per AGENTS.md) does NOT escape Check. Without a recover()
+// here, grpc-go's default Handler dispatch installs no panic recovery of its
+// own (unlike net/http's ServeMux), so an unrecovered panic on this goroutine
+// crashes the ENTIRE process — taking every OTHER in-flight Check call down
+// with it. The recovered panic must degrade to DENY (fail-closed, never
+// ALLOW — AGENTS.md §3), oracle-safe (invalid_token, no body), and the Go
+// error returned must still be nil (so Envoy can't fail open on a transport
+// error either).
+func TestCheck_PanicInAuthorizer_RecoversToOracleSafeDeny(t *testing.T) {
+	t.Parallel()
+	srv := NewAuthorizationServer(panicAuthorizer{})
+
+	resp, err := srv.Check(context.Background(), checkRequest("GET", "https", "sso.test", "/x", map[string]string{
+		"authorization": "Bearer t",
+	}))
+	if err != nil {
+		t.Fatalf("Check returned a Go error on a recovered panic (must stay nil so DENY can't fail-open): %v", err)
+	}
+	if got := resp.GetStatus().GetCode(); got != int32(codes.PermissionDenied) {
+		t.Fatalf("status = %d want PERMISSION_DENIED (a panic must fail CLOSED, never ALLOW)", got)
+	}
+	if resp.GetOkResponse() != nil {
+		t.Fatalf("a recovered panic produced an OkHttpResponse — must never ALLOW")
+	}
+	denied := resp.GetDeniedResponse()
+	if denied == nil {
+		t.Fatalf("no DeniedHttpResponse on a recovered panic")
+	}
+	if denied.GetBody() != "" {
+		t.Errorf("denied body = %q want empty (oracle-safe — no panic detail leaked)", denied.GetBody())
+	}
+	wantChallenge := `Bearer realm="sso", error="invalid_token"`
+	if v, present := headerOptValue(t, denied.GetHeaders(), "WWW-Authenticate"); !present || v != wantChallenge {
+		t.Errorf("WWW-Authenticate = %q present=%v want %q (collapsed to the same oracle-safe code as every other failure)", v, present, wantChallenge)
+	}
+}
+
+// TestCheck_PanicInAuthorizer_LogsWhenLoggerWired proves the recovered panic
+// is OBSERVABLE when the operator wires WithLogger: an ops team debugging
+// "why is everything 401ing" needs a trace, since safeMeshAuthorize's DENY
+// is otherwise indistinguishable on the wire from an ordinary invalid_token.
+func TestCheck_PanicInAuthorizer_LogsWhenLoggerWired(t *testing.T) {
+	t.Parallel()
+	logger := &recordingLogger{}
+	srv := NewAuthorizationServer(panicAuthorizer{}, WithLogger(logger))
+
+	if _, err := srv.Check(context.Background(), checkRequest("GET", "https", "sso.test", "/x", map[string]string{
+		"authorization": "Bearer t",
+	})); err != nil {
+		t.Fatalf("Check error: %v", err)
+	}
+
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+	if len(logger.errMsgs) != 1 {
+		t.Fatalf("logger.Error called %d times want 1: %v", len(logger.errMsgs), logger.errMsgs)
+	}
+}
+
+// TestCheck_NoLoggerWired_PanicStillRecovers is the contrapositive of the
+// logging test: WithLogger is OPTIONAL (nil logger is the zero value default,
+// matching every existing single-argument NewAuthorizationServer call site
+// including this package's own tests above) — safeMeshAuthorize must not
+// nil-dereference when no logger was wired.
+func TestCheck_NoLoggerWired_PanicStillRecovers(t *testing.T) {
+	t.Parallel()
+	srv := NewAuthorizationServer(panicAuthorizer{}) // no WithLogger option
+	resp, err := srv.Check(context.Background(), checkRequest("GET", "https", "sso.test", "/x", nil))
+	if err != nil {
+		t.Fatalf("Check error: %v", err)
+	}
+	if resp.GetStatus().GetCode() != int32(codes.PermissionDenied) {
+		t.Errorf("status = %d want PERMISSION_DENIED", resp.GetStatus().GetCode())
+	}
+}
+
 // makeTestCert builds a throwaway self-signed ECDSA certificate and returns
 // the parsed *x509.Certificate plus its PEM encoding (the form Envoy
 // URL-encodes into Source.Certificate).

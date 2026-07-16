@@ -96,4 +96,20 @@
 // Then configure Envoy/Istio's ext_authz HTTP filter in gRPC mode with a
 // cluster pointing at addr (grpc_service.envoy_grpc.cluster_name), so each
 // upstream request is authorized by this service before it is proxied.
+//
+// # Panic containment
+//
+// Check recovers a panic from the injected MeshAuthorizer itself and
+// collapses it to the same oracle-safe invalid_token DENY as any other
+// validation failure (fail-CLOSED, never ALLOW) — see safeMeshAuthorize.
+// Pass extauthz.WithLogger(l) to NewAuthorizationServer to make a recovered
+// panic observable; it is otherwise silent (a plain DENY on the wire, same
+// as a bad token). This is defense in depth ONLY for the MeshAuthorize call
+// itself: grpc-go's default Handler dispatch, unlike net/http's ServeMux,
+// installs no panic recovery of its own, so operators should ALSO register a
+// grpc.UnaryInterceptor with panic recovery (e.g.
+// github.com/grpc-ecosystem/go-grpc-middleware/v2's recovery interceptor) on
+// grpcServer above — that layer is what protects everything this package
+// doesn't own (request/response marshaling, other services on the same
+// grpc.Server).
 package extauthz
