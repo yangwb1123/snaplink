@@ -2,6 +2,7 @@ package scim
 
 import (
 	"context"
+	"errors"
 	"sort"
 
 	"github.com/snaplink/sso/domains/permissions"
@@ -177,13 +178,19 @@ func (gr groupRole) removeMember(ctx context.Context, userID, roleCode string) e
 
 // userRoleCodes returns the role codes currently assigned to userID under
 // clientID, treating "no assignment" as an empty set (not an error) so
-// the add-member fallback can append to a fresh user.
+// the add-member fallback can append to a fresh user. Only the sentinel
+// ErrUserNotFound is treated this way — any OTHER error (a transient
+// backend hiccup, a timeout) is propagated so the addMember fallback
+// aborts instead of calling AssignRoles with a truncated role list, which
+// would SET (not merge) the user's assignment and silently wipe every
+// other role they hold under clientID.
 func (gr groupRole) userRoleCodes(ctx context.Context, userID string) ([]string, error) {
 	roles, err := gr.perms.Roles(ctx, userID, gr.clientID)
 	if err != nil {
-		// ErrUserNotFound means the user holds no roles yet — a valid
-		// starting point for the first add, not a failure.
-		return nil, nil
+		if errors.Is(err, permissions.ErrUserNotFound) {
+			return nil, nil
+		}
+		return nil, err
 	}
 	out := make([]string, 0, len(roles))
 	for _, r := range roles {

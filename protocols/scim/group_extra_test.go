@@ -2,6 +2,7 @@ package scim
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -491,5 +492,66 @@ func TestGroupAddMember_AlreadyMemberFallback(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("role assigned %d times, want exactly 1 (idempotent)", count)
+	}
+}
+
+// errRolesProvider wraps a real baseOnlyProvider but forces Roles() to
+// return a transient (non-ErrUserNotFound) error, simulating a backend
+// hiccup rather than a genuine "user has no roles yet" state.
+type errRolesProvider struct {
+	baseOnlyProvider
+	rolesErr error
+}
+
+func (p errRolesProvider) Roles(ctx context.Context, u, c string) ([]permissions.Role, error) {
+	return nil, p.rolesErr
+}
+
+// TestGroupAddMember_TransientRolesErrorNotSwallowed guards against
+// conflating a transient Roles() lookup failure with "user has no roles
+// yet". Pre-fix, userRoleCodes swallowed ANY error from Roles() (not just
+// ErrUserNotFound) and returned an empty set, so the addMember fallback
+// went on to call AssignRoles with ONLY the new role code — AssignRoles
+// SETS the whole assignment list, so this silently wiped every role the
+// user already held under clientID and reported success to the caller
+// (a SCIM group PATCH that appeared to succeed while destroying the
+// user's other role grants). The fix propagates any non-ErrUserNotFound
+// error so addMember aborts instead of overwriting.
+func TestGroupAddMember_TransientRolesErrorNotSwallowed(t *testing.T) {
+	t.Parallel()
+	inner := permissions.NewMemoryProvider()
+	ctx := context.Background()
+	if err := inner.AddRole(ctx, groupClientID, permissions.Role{Code: "r1", Name: "R1"}); err != nil {
+		t.Fatalf("seed role r1: %v", err)
+	}
+	if err := inner.AddRole(ctx, groupClientID, permissions.Role{Code: "r2", Name: "R2"}); err != nil {
+		t.Fatalf("seed role r2: %v", err)
+	}
+	if err := inner.AssignRoles(ctx, "u", groupClientID, []string{"r1"}); err != nil {
+		t.Fatalf("seed assignment: %v", err)
+	}
+
+	transientErr := errors.New("backend timeout")
+	prov := errRolesProvider{baseOnlyProvider: baseOnlyProvider{inner: inner}, rolesErr: transientErr}
+	gr := groupRole{perms: prov, clientID: groupClientID}
+
+	if err := gr.addMember(ctx, "u", "r2"); err == nil {
+		t.Fatal("addMember must propagate a transient Roles() lookup error, not treat it as 'no roles yet'")
+	}
+
+	// The pre-existing assignment must survive untouched: a transient
+	// lookup error must never drive an AssignRoles overwrite.
+	roles, err := inner.Roles(ctx, "u", groupClientID)
+	if err != nil {
+		t.Fatalf("roles: %v", err)
+	}
+	found := false
+	for _, r := range roles {
+		if r.Code == "r1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("existing role r1 was wiped by a transient-error-triggered AssignRoles overwrite; roles=%v", roles)
 	}
 }
