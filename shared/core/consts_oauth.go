@@ -155,7 +155,28 @@ const (
 	MaxBreakGlassTTL = time.Hour
 )
 
-// SupportedGrants is the canonical list returned for unsupported_grant_type errors.
+// SupportedGrants is the canonical list of every grant type the /token
+// built-in dispatcher switch (interfaces/sso's dispatchTokenGrant) recognizes
+// as a literal case — independent of whether that grant's backing
+// store/wiring is actually configured on this deployment. The same
+// convention already documented for GrantDeviceCode in
+// interfaces/sso/server_discovery_config.go's applyGrantEndpoints ("
+// SupportedGrants still lists it for unsupported_grant_type") even though
+// discovery's grant_types_supported only advertises device_code/CIBA once
+// their store is wired. Two consumers depend on this list being complete:
+// the /token unsupported_grant_type error body's supported_grants field, and
+// DCR (RFC 7591) registration validation
+// (oauthvalidate.ValidateDCRMetadata), which REJECTS any client-requested
+// grant_type absent from this list — so a missing entry here doesn't just
+// mis-report an error body, it silently blocks DCR clients from ever
+// registering for a grant type the server actually dispatches (GrantCIBA had
+// a literal `case GrantCIBA:` in dispatchTokenGrant, same as GrantDeviceCode/
+// GrantTokenExchange/GrantJWTBearer above it, but was missing here).
+// Deliberately excludes grant types registered only via the DYNAMIC
+// WithCustomGrant mechanism (e.g. GrantTypeSAML2Bearer,
+// GrantTypeAgentDelegation) — those aren't literal switch cases in
+// dispatchTokenGrant, so whether they're DCR-registrable is a separate,
+// per-deployment decision.
 var SupportedGrants = []string{
 	GrantAuthorizationCode,
 	GrantRefreshToken,
@@ -163,4 +184,5 @@ var SupportedGrants = []string{
 	GrantDeviceCode,
 	GrantTokenExchange,
 	GrantJWTBearer,
+	GrantCIBA,
 }
