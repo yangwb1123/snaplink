@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -211,7 +212,42 @@ func (c *Config) ServerOptions() []sso.Option {
 // toPolicy builds the ratelimit.Policy implied by the YAML block.
 // Default rate / burst applies to unmatched paths; Prefixes layer
 // per-endpoint overrides.
+//
+// Backend selects the limiter implementation, mirroring
+// cmd/sso-server/serverbuildplatform.BuildRateLimitPolicy's semantics (the
+// wiring every full sso-server deployment actually uses): "" / "memory"
+// (default) builds in-process MemoryLimiters; "sqlite" builds
+// cluster-shared SQLiteLimiters against SQLite.DSN. A "redis" backend needs
+// a live *redis.Client this package cannot construct (config stays free of
+// the redis transitive dep, mirroring Config.BuildNetworkStore's etcd
+// carve-out), and an unrecognized backend is an operator typo — both cases
+// log an error and fall back to an in-process limiter rather than silently
+// pretending the configured backend was honored: an embedder calling
+// ServerOptions() directly (unlike cmd/sso-server, which layers its own
+// backend-aware BuildRateLimitPolicy call on top and so never actually hit
+// this gap in production) would otherwise get a per-replica-only limiter
+// with ZERO indication that "sqlite"/"redis" cluster-shared enforcement
+// was silently downgraded.
 func (r *RateLimitConfig) toPolicy() ratelimit.Policy {
+	backend := strings.ToLower(strings.TrimSpace(r.Backend))
+	switch backend {
+	case "", "memory":
+		// fall through to the memory build below.
+	case "sqlite":
+		if policy, err := r.sqliteRateLimitPolicy(); err != nil {
+			slog.Error("config: security.rate_limit.backend=sqlite misconfigured — falling back to an in-process limiter that is NOT cluster-shared", "error", err)
+		} else {
+			return policy
+		}
+	default:
+		slog.Error("config: unsupported security.rate_limit.backend for config.ServerOptions — falling back to an in-process limiter that is NOT cluster-shared; wire this backend via cmd/sso-server or sso.WithRateLimit directly", "backend", r.Backend)
+	}
+	return r.memoryRateLimitPolicy()
+}
+
+// memoryRateLimitPolicy builds per-replica MemoryLimiters — the default,
+// and the fallback used when a configured Backend can't be honored here.
+func (r *RateLimitConfig) memoryRateLimitPolicy() ratelimit.Policy {
 	policy := ratelimit.Policy{}
 	if r.DefaultPerSec > 0 && r.DefaultBurst > 0 {
 		policy.Default = ratelimit.NewMemoryLimiter(r.DefaultPerSec, r.DefaultBurst)
@@ -241,6 +277,35 @@ func (r *ClientRegistrationRateLimitConfig) serverOption() (opt sso.Option, ok b
 		return sso.WithClientRegistrationRateLimit(ratelimit.NewMemoryLimiter(r.PerSec, r.Burst)), true
 	}
 	return nil, false
+}
+
+// sqliteRateLimitPolicy builds cluster-shared SQLiteLimiters; each prefix
+// gets a distinct bucket_name so multiple rules can share one DSN file
+// without colliding — mirrors
+// serverbuildplatform.sqliteRateLimitPolicy's shape exactly.
+func (r *RateLimitConfig) sqliteRateLimitPolicy() (ratelimit.Policy, error) {
+	if r.SQLite.DSN == "" {
+		return ratelimit.Policy{}, errors.New("security.rate_limit.sqlite.dsn required when backend=sqlite")
+	}
+	policy := ratelimit.Policy{}
+	if r.DefaultPerSec > 0 && r.DefaultBurst > 0 {
+		lim, err := ratelimit.NewSQLiteLimiter(r.SQLite.DSN, r.DefaultPerSec, r.DefaultBurst, "default")
+		if err != nil {
+			return ratelimit.Policy{}, fmt.Errorf("rate_limit default sqlite: %w", err)
+		}
+		policy.Default = lim
+	}
+	for _, p := range r.Prefixes {
+		if p.Prefix == "" || p.PerSec <= 0 || p.Burst <= 0 {
+			continue
+		}
+		lim, err := ratelimit.NewSQLiteLimiter(r.SQLite.DSN, p.PerSec, p.Burst, p.Prefix)
+		if err != nil {
+			return ratelimit.Policy{}, fmt.Errorf("rate_limit prefix %q sqlite: %w", p.Prefix, err)
+		}
+		policy.Prefixes = append(policy.Prefixes, ratelimit.PrefixRule{Prefix: p.Prefix, Limiter: lim})
+	}
+	return policy, nil
 }
 
 // toPolicy builds the cors.Policy implied by the YAML block. Empty
