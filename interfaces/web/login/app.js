@@ -534,8 +534,8 @@
     var trustDevice = $("mfa-trust-device") && $("mfa-trust-device").checked;
     var body = {
       mfa_challenge_id: currentMFAChallengeID,
-      method:           selectedMFAMethod,
-      credential:       { code: code },
+      mfa_method:       selectedMFAMethod,
+      code:             code,
       trust_device:     trustDevice || false
     };
     fetch(mfaURL, {
