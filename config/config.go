@@ -80,6 +80,7 @@ type Config struct {
 	ConfigAudit          ConfigAuditConfig               `yaml:"config_audit"`
 	Rotation             RotationConfig                  `yaml:"rotation"`
 	BreakGlass           BreakGlassConfig                `yaml:"break_glass"`
+	UserLifecycle        UserLifecycleConfig             `yaml:"user_lifecycle"`
 	TokenPolicies        TokenPolicyConfig               `yaml:"token_policies"`
 	AccessPolicies       AccessPolicyConfig              `yaml:"access_policies"`
 	Degradation          DegradationConfig               `yaml:"degradation"`

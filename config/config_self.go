@@ -46,6 +46,46 @@ type SelfServiceConfig struct {
 	// email/SMS infra and is wired via the SDK — without it the endpoint stays
 	// anti-enumeration-safe but delivers nothing (a startup warning is logged).
 	PasswordReset PasswordResetConfig `yaml:"password_reset"`
+	// IdentityLink backs the self-service identity-linking surface
+	// (GET/DELETE /me/identities, domains/identitylink). Enabling it wires
+	// an in-memory identitylink.Store; MergePolicy selects the (unrelated,
+	// login-flow) conflict-resolution strategy an operator's OWN
+	// authenticator integration may consult — see IdentityLinkConfig's doc.
+	IdentityLink IdentityLinkConfig `yaml:"identity_link"`
+}
+
+// IdentityLinkConfig opts into the self-service identity-linking surface
+// (domains/identitylink, sso.WithIdentityLinkStore): GET/DELETE
+// /me/identities let the authenticated user list and unlink their own
+// linked external identities. Disabled by default: Enabled=false wires
+// nothing — byte-identical to a build without the feature. Only a memory
+// backend exists today (domains/identitylink/memory).
+//
+// MergePolicy selects the conflict-resolution strategy for the SEPARATE,
+// extension-point concern of "a login flow discovers this external identity
+// is already linked to a DIFFERENT account" (domains/identitylink.MergePolicy)
+// — the stock /auth/login handler never consults it; a custom authenticator
+// integration retrieves it via Server.IdentityLinkStore /
+// Server.IdentityMergePolicy (see the package doc's "Live login-flow
+// wiring" section). Values:
+//
+//   - "" / "reject" (DEFAULT, SAFE): wires no MergePolicy Option at all — a
+//     nil MergePolicy is already treated as identitylink.RejectPolicy{} by
+//     [identitylink.Resolve], so leaving this unset is byte-identical to an
+//     explicit reject. This is the package's own documented conservative
+//     baseline: an operator who has not deliberately decided how to merge
+//     two accounts should never have that decision made for them silently.
+//   - "link_only": wires identitylink.NewLinkOnlyMergePolicy, which
+//     auto-merges a losing account's identity links onto the winner. A
+//     deliberate, security-relevant opt-in — see the package doc for
+//     exactly what it does (and does NOT) merge (sessions/consents/tokens
+//     are untouched).
+//
+// Any other value fails loud at boot rather than silently falling back to
+// the safe default.
+type IdentityLinkConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	MergePolicy string `yaml:"merge_policy"`
 }
 
 // PasswordResetConfig wires the forgot-password reset-token store. Mirrors

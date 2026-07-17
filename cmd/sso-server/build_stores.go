@@ -13,7 +13,9 @@ import (
 	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
 	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/config"
+	"github.com/snaplink/sso/domains/userlifecycle"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
@@ -140,6 +142,9 @@ func (b *appBuilder) wireFoundation() error {
 // executor with tokenanomaly.Detector; see wireThreatAction's doc comment.
 func (b *appBuilder) wireDomains() error {
 	if err := b.wireSelfServicePassword(); err != nil {
+		return err
+	}
+	if err := b.wireIdentityLink(); err != nil {
 		return err
 	}
 	if err := b.wireGeoRegionRisk(); err != nil {
@@ -384,6 +389,82 @@ func (b *appBuilder) wireChangeApproval() {
 	}
 	store := admingovernance.NewMemoryApprovalStore()
 	b.opts = append(b.opts, sso.WithChangeApprovalStore(store, nil, b.cfg.AdminChangeApproval.ActionTypes))
+}
+
+// wireUserLifecycle builds the domains/userlifecycle admin state-machine
+// surface (user_lifecycle.enabled: GET/POST
+// /api/v1/admin/users/:id/lifecycle) and, as a SEPARATE opt-in
+// (auto_deprovision.enabled), the background dormancy sweep. Activity is
+// derived from the wired SessionManager (userlifecycle.SessionLastActive —
+// no other activity backend exists). The sweep's interval is stashed on the
+// builder for startUserAutoDeprovisionSweep (build_app_security.go) to start
+// post-NewServer, mirroring startBreakGlassSweeper/startTokenAnomalySweep.
+// No-op (byte-identical build) when user_lifecycle.enabled is false.
+func (b *appBuilder) wireUserLifecycle() error {
+	cfg := b.cfg.UserLifecycle
+	// Resolve auto_deprovision BEFORE the store-nil early return: an operator
+	// who enables auto_deprovision without user_lifecycle.enabled must see the
+	// loud boot error BuildUserAutoDeprovision raises, not a silent no-op.
+	deprovision, err := serverbuildplatform.BuildUserAutoDeprovision(cfg.AutoDeprovision, cfg.Enabled)
+	if err != nil {
+		return fmt.Errorf("user_lifecycle: %w", err)
+	}
+	store := serverbuildplatform.BuildUserLifecycle(cfg)
+	if store == nil {
+		return nil
+	}
+	b.opts = append(b.opts, sso.WithUserLifecycle(store))
+	b.logger.Info("user lifecycle: admin state-machine enabled (/api/v1/admin/users/:id/lifecycle)")
+	if !deprovision.Enabled() {
+		return nil
+	}
+	activity := userlifecycle.SessionLastActive{Sessions: b.sessionMgr}
+	b.opts = append(b.opts, sso.WithUserAutoDeprovision(deprovision, activity))
+	b.userAutoDeprovisionInterval = cfg.AutoDeprovision.SweepInterval
+	b.logger.Info("user lifecycle: auto-deprovision sweep enabled",
+		"dormant_after", deprovision.DormantAfter, "archive_after", deprovision.ArchiveAfter,
+		"sweep_interval", b.userAutoDeprovisionInterval)
+	return nil
+}
+
+// startUserAutoDeprovisionSweep runs Server.RunUserAutoDeprovision in a
+// goroutine under the standard cancel+done pair (mirrors
+// startBreakGlassSweeper/startTokenAnomalySweep, build_app_security.go).
+// No-op when wireUserLifecycle never armed the sweep (userAutoDeprovisionInterval
+// stays 0 unless auto_deprovision was fully enabled).
+func (b *appBuilder) startUserAutoDeprovisionSweep(srv *sso.Server) {
+	interval := b.userAutoDeprovisionInterval
+	if interval <= 0 {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	b.userAutoDeprovisionCancel, b.userAutoDeprovisionDone = cancel, done
+	go func() { defer close(done); srv.RunUserAutoDeprovision(ctx, interval) }()
+	b.logger.Info("user lifecycle: auto-deprovision sweep loop started", "interval", interval)
+}
+
+// wireIdentityLink builds the domains/identitylink self-service surface
+// (self_service.identity_link.enabled: GET/DELETE /me/identities) and its
+// optional MergePolicy. No-op (byte-identical build) when disabled; see
+// config.IdentityLinkConfig's doc for the merge_policy default-safety
+// rationale (unset/"reject" wires NO extra Option — a nil MergePolicy is
+// already the package's own safe default).
+func (b *appBuilder) wireIdentityLink() error {
+	cfg := b.cfg.SelfService.IdentityLink
+	store, policy, err := serverbuildplatform.BuildIdentityLink(cfg)
+	if err != nil {
+		return fmt.Errorf("self_service.identity_link: %w", err)
+	}
+	if store == nil {
+		return nil
+	}
+	b.opts = append(b.opts, sso.WithIdentityLinkStore(store))
+	if policy != nil {
+		b.opts = append(b.opts, sso.WithIdentityMergePolicy(policy))
+	}
+	b.logger.Info("self-service identity linking enabled (/me/identities)", "merge_policy", cfg.MergePolicy)
+	return nil
 }
 
 // --- helpers ---

@@ -237,6 +237,9 @@ func (b *appBuilder) wireGovernance(threatExec threataction.ThreatExecutor) erro
 	if err := b.wireTokenAnomaly(threatExec); err != nil {
 		return err
 	}
+	if err := b.wireUserLifecycle(); err != nil {
+		return err
+	}
 	return b.wireDegradation()
 }
 
@@ -440,6 +443,7 @@ func (b *appBuilder) startGovernanceWorkers(srv *sso.Server) error {
 	}
 	b.startTokenAnomalySweep(srv)
 	b.startBreakGlassSweeper(srv)
+	b.startUserAutoDeprovisionSweep(srv)
 	return nil
 }
 

@@ -242,6 +242,63 @@ type BreakGlassConfig struct {
 	SweeperInterval time.Duration `yaml:"sweeper_interval"`
 }
 
+// UserLifecycleConfig opts into the domains/userlifecycle admin
+// state-machine surface (sso.WithUserLifecycle): mounts GET/POST
+// /api/v1/admin/users/:id/lifecycle so operators can inspect and drive an
+// account through INVITED -> ACTIVE -> {SUSPENDED, INACTIVE} -> ARCHIVED ->
+// PURGED. GOVERNANCE metadata only — it NEVER gates authentication
+// (core.User.IsActive still owns the login decision; see the package doc).
+// Disabled by default: Enabled=false wires nothing — byte-identical to a
+// build without the feature.
+//
+// AutoDeprovision is a SEPARATE, independently-gated opt-in (mirrors
+// sso.WithUserAutoDeprovision itself requiring sso.WithUserLifecycle — the
+// sweep persists through the SAME store): Enabled here alone only mounts
+// the admin read/write surface; the background dormancy sweep additionally
+// needs AutoDeprovision.Enabled (plus DormantAfter/SweepInterval > 0).
+//
+// Lives beside AdminConfig/BreakGlassConfig because config/ is at its
+// frozen per-directory file-count ceiling (directory_fanout_test.go) — new
+// sections fold into a topically-related file rather than a new
+// config_*.go.
+type UserLifecycleConfig struct {
+	Enabled         bool                      `yaml:"enabled"`
+	AutoDeprovision UserAutoDeprovisionConfig `yaml:"auto_deprovision"`
+}
+
+// UserAutoDeprovisionConfig opts into the background dormancy sweep
+// (userlifecycle.SweepOnce, driven by Server.RunUserAutoDeprovision) that
+// advances a stale ACTIVE account to INACTIVE past DormantAfter, and — when
+// ArchiveAfter > 0 — an INACTIVE account to ARCHIVED past
+// DormantAfter+ArchiveAfter. Activity is derived from the wired
+// core.SessionManager (userlifecycle.SessionLastActive — no other activity
+// backend exists); a user with no live session reads as "unknown" and is
+// never touched (the package's own fail-safe default).
+//
+// Requires UserLifecycleConfig.Enabled; DormantAfter and SweepInterval must
+// both be > 0 or the sweep stays off — matching
+// userlifecycle.DeprovisionConfig.Enabled()'s own zero-value-is-off
+// contract. Enabled with UserLifecycleConfig.Enabled=false fails loud at
+// boot rather than silently building a sweep with nowhere to persist its
+// transitions.
+type UserAutoDeprovisionConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// DormantAfter is how long an ACTIVE account may be idle (no activity
+	// per the LastActiveSource) before the sweep moves it to INACTIVE.
+	// <=0 disables the sweep entirely.
+	DormantAfter time.Duration `yaml:"dormant_after"`
+	// ArchiveAfter is the ADDITIONAL idle time beyond DormantAfter before an
+	// INACTIVE account is advanced to ARCHIVED (measured from last
+	// activity). <=0 leaves INACTIVE accounts untouched indefinitely.
+	ArchiveAfter time.Duration `yaml:"archive_after"`
+	// MaxPerSweep caps the number of transitions a single sweep applies (a
+	// deprovisioning-storm guard). 0 = unlimited.
+	MaxPerSweep int `yaml:"max_per_sweep"`
+	// SweepInterval is the Server.RunUserAutoDeprovision background-loop
+	// cadence. <=0 disables the loop even when DormantAfter is set.
+	SweepInterval time.Duration `yaml:"sweep_interval"`
+}
+
 // BootstrapConfig configures the first-run init Runner. StatePath is the
 // JSON file the file-backed Tracker writes to (defaults to "bootstrap.json"
 // when empty). Set Disabled=true to skip the runner entirely (useful in

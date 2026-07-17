@@ -142,6 +142,8 @@ natively probe) via `sso.WithConnectionProber`. Each probe increments
 | Key | Effect |
 |---|---|
 | `self_service.consent.max_ttl` | Hard server-wide ceiling on consent grant lifetime (`WithConsentTTL`): every recorded grant gets `ExpiresAt = GrantedAt + max_ttl`, after which `GetConsent` treats it as absent and `/auth/login` re-prompts. `0` (default) = no server-enforced expiry — permanent until revoked. Independent of, and can only be tightened by, a client's own `consent_refresh_interval`. Requires `self_service.consent.backend` to be set. |
+| `self_service.identity_link.enabled` | Builds an in-memory `identitylink.Store` and wires `sso.WithIdentityLinkStore`, mounting `GET`/`DELETE /me/identities` — list and unlink the caller's own linked external identities. Disabled by default: byte-identical to a build without the feature |
+| `self_service.identity_link.merge_policy` | `""` / `"reject"` (**default, safe**): wires NO `MergePolicy` Option — a nil policy is already treated as `identitylink.RejectPolicy{}` by `identitylink.Resolve`, the package's own conservative baseline for "an operator who hasn't decided how to merge two accounts should never have that decided for them silently". `"link_only"` wires `identitylink.NewLinkOnlyMergePolicy`, which auto-merges a losing account's identity links onto the winner (sessions/consents/tokens are NOT touched — see the package doc). Any other value fails loud at boot. This only affects the `MergePolicy` EXTENSION POINT (`Server.IdentityLinkStore`/`Server.IdentityMergePolicy`, consulted by a custom login integration) — the stock `/auth/login` handler never calls it |
 
 ## Redis (shared hot-store backend)
 
@@ -559,6 +561,23 @@ Emergency ("break-glass") admin sessions. Disabled by default; without it no bre
 |---|---|
 | `break_glass.enabled` | Builds the in-memory `core.BreakGlassStore` and wires `sso.WithBreakGlassStore`, mounting the `POST`/`GET`/`DELETE`/`approve` `/api/v1/admin/break-glass` lifecycle endpoints |
 | `break_glass.sweeper_interval` | Cadence of the active expiry sweeper (`Server.RunBreakGlassSweeper`) that destroys a grant's derived sessions at expiry; `<=0` = 1m. The grant TTL default/cap (`core.DefaultBreakGlassTTL`/`MaxBreakGlassTTL`) and per-request `require_approval` are SDK-side, not config |
+
+## User Lifecycle
+
+User-lifecycle state-machine admin surface (`domains/userlifecycle`, `sso.WithUserLifecycle`), mounting `GET`/`POST /api/v1/admin/users/:id/lifecycle`. GOVERNANCE metadata only — it NEVER gates authentication (`core.User.IsActive` still owns the login decision). Disabled by default: an absent/`false` section wires nothing, byte-identical to a build without the feature. Only a memory backend exists today (`domains/userlifecycle/memory`).
+
+`user_lifecycle.auto_deprovision` is a SEPARATE, independently-gated opt-in — mirrors `sso.WithUserAutoDeprovision` itself requiring `sso.WithUserLifecycle` at the SDK layer, since the sweep persists through the SAME store. Enabling it with `user_lifecycle.enabled: false` fails loud at boot rather than silently building a sweep with nowhere to persist its transitions. When armed, `Server.RunUserAutoDeprovision` runs in a background goroutine (standard cancel/done shutdown lifecycle) advancing dormant accounts: `ACTIVE` → `INACTIVE` past `dormant_after`, and — when `archive_after > 0` — `INACTIVE` → `ARCHIVED` past `dormant_after + archive_after`. Activity is derived from the wired `SessionManager` (`userlifecycle.SessionLastActive`) — a user with no live session reads as "unknown" and is never touched (fail-safe by design; no other activity backend exists in this wiring today).
+
+| Key | Effect |
+|---|---|
+| `user_lifecycle.enabled` | Builds the `userlifecycle.Store` and wires `sso.WithUserLifecycle`, mounting the admin state-machine endpoints |
+| `user_lifecycle.auto_deprovision.enabled` | Arms the background dormancy sweep. Requires `user_lifecycle.enabled: true`, plus `dormant_after` and `sweep_interval` both `> 0` (fails loud at boot otherwise) |
+| `user_lifecycle.auto_deprovision.dormant_after` | How long an `ACTIVE` account may be idle before the sweep moves it to `INACTIVE`. `<=0` disables the sweep |
+| `user_lifecycle.auto_deprovision.archive_after` | ADDITIONAL idle time beyond `dormant_after` before an `INACTIVE` account advances to `ARCHIVED` (measured from last activity). `<=0` leaves `INACTIVE` accounts untouched indefinitely |
+| `user_lifecycle.auto_deprovision.max_per_sweep` | Caps transitions applied per sweep (a deprovisioning-storm guard); `0` = unlimited |
+| `user_lifecycle.auto_deprovision.sweep_interval` | `Server.RunUserAutoDeprovision` background-loop cadence; `<=0` disables the loop even when `dormant_after` is set |
+
+Every applied transition (admin- or sweep-driven) emits `admin_user_lifecycle_changed` (see `docs/error-codes.md`'s "User lifecycle state machine" section for the full state table and wire error codes).
 
 ## Admin Governance Framework
 

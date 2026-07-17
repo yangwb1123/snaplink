@@ -207,6 +207,12 @@ type appBuilder struct {
 	// so it carries no cancel/done pair; retained only so the *app can expose the
 	// current posture (and a future health loop can call SetMode). Nil when off.
 	degradationMgr *sso.DegradationManager
+
+	// userAutoDeprovisionInterval: set by wireUserLifecycle when enabled; 0 =
+	// off. See startUserAutoDeprovisionSweep (build_stores.go).
+	userAutoDeprovisionInterval time.Duration
+	userAutoDeprovisionCancel   context.CancelFunc
+	userAutoDeprovisionDone     <-chan struct{}
 }
 
 // finalize wires the cluster subsystems + the last Options, constructs the

@@ -293,6 +293,8 @@ func shutdownSchedulers(ctx context.Context, a *app, logger spi.Logger) {
 		"continuous-verification agent did not exit cleanly")
 	stopScheduler(ctx, logger, a.tokenAnomalySweepCancel, a.tokenAnomalySweepDone,
 		"token anomaly sweep did not exit cleanly")
+	stopScheduler(ctx, logger, a.userAutoDeprovisionCancel, a.userAutoDeprovisionDone,
+		"user auto-deprovision sweep did not exit cleanly")
 }
 
 // stopScheduler cancels a background scheduler and waits for its done channel

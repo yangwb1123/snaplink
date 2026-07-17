@@ -329,6 +329,12 @@ type app struct {
 	// is inspectable and an external health loop can drive SetMode.
 	degradationMgr *sso.DegradationManager
 
+	// userAutoDeprovisionCancel/Done stop the domains/userlifecycle
+	// dormancy-sweep loop (user_lifecycle.auto_deprovision.enabled); nil/zero
+	// when off.
+	userAutoDeprovisionCancel context.CancelFunc
+	userAutoDeprovisionDone   <-chan struct{}
+
 	// redisClient is the one shared Redis client fanned out to every
 	// redis-backed store; nil when no redis block is configured. Closed once at
 	// shutdown to release its connection pool.
