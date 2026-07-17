@@ -40,30 +40,58 @@ func (r *Restorer) restoreRoles(ctx context.Context, snap *Snapshot, opts Restor
 	return c, nil
 }
 
-// pruneRoles wipes per-client roles before re-seeding. Replace applies
-// *only* to clients that appear in the snapshot — role definitions for
-// clients absent from the snapshot are left intact.
+// pruneRoles wipes per-client roles before re-seeding. Replace reconciles
+// EVERY client in snap.Resources.Clients — the full roster the snapshot
+// covers — not just clients that happen to have a non-empty ClientRoles
+// entry. A client legitimately reduced to zero roles at export time still
+// needs its destination roles wiped down to nothing; keying the prune off
+// snap.Resources.Roles alone would silently leave stale grants in place.
+// (exportRoles only ever emits an entry for a client ID drawn from the
+// exporter's client enumeration, so every ClientRoles.ClientID is already
+// a member of snap.Resources.Clients — indexing by the roster can't miss
+// an entry the exporter produced.)
 func (r *Restorer) pruneRoles(ctx context.Context, snap *Snapshot, dryRun bool, c *CategoryCounts) error {
-	for _, cr := range snap.Resources.Roles {
-		cur, err := r.Permissions.ListAllRoles(ctx, cr.ClientID)
-		if err != nil {
-			return fmt.Errorf("list roles[%s]: %w", cr.ClientID, err)
+	rolesByClient := indexRolesByClient(snap.Resources.Roles)
+	for _, cl := range snap.Resources.Clients {
+		if err := r.pruneClientRoles(ctx, cl.ID, rolesByClient[cl.ID], dryRun, c); err != nil {
+			return err
 		}
-		keep := make(map[string]bool, len(cr.Roles))
-		for _, x := range cr.Roles {
-			keep[x.Code] = true
+	}
+	return nil
+}
+
+// indexRolesByClient builds an O(1)-lookup map from the snapshot's flat
+// ClientRoles slice, so pruneRoles doesn't linear-scan it once per client.
+func indexRolesByClient(roles []ClientRoles) map[string][]permissions.Role {
+	idx := make(map[string][]permissions.Role, len(roles))
+	for _, cr := range roles {
+		idx[cr.ClientID] = cr.Roles
+	}
+	return idx
+}
+
+// pruneClientRoles deletes any role currently defined under clientID that
+// isn't in want (the snapshot's desired set — nil/empty means "prune
+// everything").
+func (r *Restorer) pruneClientRoles(ctx context.Context, clientID string, want []permissions.Role, dryRun bool, c *CategoryCounts) error {
+	cur, err := r.Permissions.ListAllRoles(ctx, clientID)
+	if err != nil {
+		return fmt.Errorf("list roles[%s]: %w", clientID, err)
+	}
+	keep := make(map[string]bool, len(want))
+	for _, x := range want {
+		keep[x.Code] = true
+	}
+	for _, x := range cur {
+		if keep[x.Code] {
+			continue
 		}
-		for _, x := range cur {
-			if keep[x.Code] {
-				continue
+		if !dryRun {
+			if err := r.Permissions.RemoveRole(ctx, clientID, x.Code); err != nil {
+				return fmt.Errorf("remove role[%s/%s]: %w", clientID, x.Code, err)
 			}
-			if !dryRun {
-				if err := r.Permissions.RemoveRole(ctx, cr.ClientID, x.Code); err != nil {
-					return fmt.Errorf("remove role[%s/%s]: %w", cr.ClientID, x.Code, err)
-				}
-			}
-			c.Deleted++
 		}
+		c.Deleted++
 	}
 	return nil
 }

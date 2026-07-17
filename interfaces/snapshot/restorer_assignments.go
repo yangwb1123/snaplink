@@ -41,28 +41,57 @@ func (r *Restorer) restoreAssignments(ctx context.Context, snap *Snapshot, opts 
 }
 
 // pruneAssignments drops assignments for any (client, user) pair currently
-// present but absent from the snapshot (ModeReplace only).
+// present but absent from the snapshot. Replace reconciles EVERY client in
+// snap.Resources.Clients — not just clients with a non-empty
+// ClientAssignments entry — for the same reason pruneRoles does: a client
+// legitimately reduced to zero assignments at export time must still have
+// its destination assignments wiped, not left untouched. (exportAssignments
+// only ever emits an entry for a client ID drawn from the exporter's client
+// enumeration, so every ClientAssignments.ClientID is already a member of
+// snap.Resources.Clients.)
 func (r *Restorer) pruneAssignments(ctx context.Context, snap *Snapshot, dryRun bool, c *CategoryCounts) error {
-	for _, ca := range snap.Resources.Assignments {
-		existing, err := r.Permissions.ListAssignments(ctx, ca.ClientID)
-		if err != nil {
-			return fmt.Errorf("list assignments[%s]: %w", ca.ClientID, err)
+	assignmentsByClient := indexAssignmentsByClient(snap.Resources.Assignments)
+	for _, cl := range snap.Resources.Clients {
+		if err := r.pruneClientAssignments(ctx, cl.ID, assignmentsByClient[cl.ID], dryRun, c); err != nil {
+			return err
 		}
-		keep := make(map[string]bool, len(ca.Assignments))
-		for _, a := range ca.Assignments {
-			keep[a.UserID] = true
+	}
+	return nil
+}
+
+// indexAssignmentsByClient builds an O(1)-lookup map from the snapshot's
+// flat ClientAssignments slice, so pruneAssignments doesn't linear-scan it
+// once per client.
+func indexAssignmentsByClient(as []ClientAssignments) map[string][]permissions.Assignment {
+	idx := make(map[string][]permissions.Assignment, len(as))
+	for _, ca := range as {
+		idx[ca.ClientID] = ca.Assignments
+	}
+	return idx
+}
+
+// pruneClientAssignments unassigns any (user, roles) currently held under
+// clientID that isn't in want (the snapshot's desired set — nil/empty
+// means "prune everything").
+func (r *Restorer) pruneClientAssignments(ctx context.Context, clientID string, want []permissions.Assignment, dryRun bool, c *CategoryCounts) error {
+	existing, err := r.Permissions.ListAssignments(ctx, clientID)
+	if err != nil {
+		return fmt.Errorf("list assignments[%s]: %w", clientID, err)
+	}
+	keep := make(map[string]bool, len(want))
+	for _, a := range want {
+		keep[a.UserID] = true
+	}
+	for _, e := range existing {
+		if keep[e.UserID] {
+			continue
 		}
-		for _, e := range existing {
-			if keep[e.UserID] {
-				continue
+		if !dryRun {
+			if err := r.Permissions.UnassignRoles(ctx, e.UserID, clientID, e.Roles); err != nil {
+				return fmt.Errorf("unassign[%s/%s]: %w", clientID, e.UserID, err)
 			}
-			if !dryRun {
-				if err := r.Permissions.UnassignRoles(ctx, e.UserID, ca.ClientID, e.Roles); err != nil {
-					return fmt.Errorf("unassign[%s/%s]: %w", ca.ClientID, e.UserID, err)
-				}
-			}
-			c.Deleted++
 		}
+		c.Deleted++
 	}
 	return nil
 }

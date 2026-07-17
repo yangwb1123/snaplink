@@ -430,3 +430,230 @@ func TestRestore_DefaultMode_IsMerge(t *testing.T) {
 		t.Errorf("default-merge did not insert clients: %+v", rep.Items[snapshot.CategoryClients])
 	}
 }
+
+// snapshotter builds a Snapshotter wired to f's stores, mirroring
+// fixture.snapshotter() — lets fixtureBlank double as an export source when
+// a test needs full control over what's populated (e.g. a client with
+// intentionally zero roles/assignments/menus, to exercise the exporter's
+// "skip empty" convention deliberately).
+func (f *fixtureBlank) snapshotter() *snapshot.Snapshotter {
+	return &snapshot.Snapshotter{
+		Clients:     f.clients,
+		Users:       f.users,
+		Permissions: f.perms,
+		NetPolicy:   f.netpol,
+		Tracker:     f.tracker,
+		Namespace:   "sso-server",
+	}
+}
+
+// TestRestore_Replace_WipesRolesForZeroEntryClient proves the ModeReplace
+// prune fix: client "gamma" has ZERO roles at export time, so the exporter's
+// size optimization gives it no ClientRoles entry — but it DOES appear in
+// snap.Resources.Clients. A destination where gamma currently holds a role
+// must have that role wiped by ModeReplace, not left untouched.
+func TestRestore_Replace_WipesRolesForZeroEntryClient(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	src := newBlank()
+	if err := src.clients.Add(ctx, &sso.Client{ID: "gamma", Name: "Gamma"}); err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+	snap, err := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(snap.Resources.Roles) != 0 {
+		t.Fatalf("fixture precondition failed: want zero role bundles, got %+v", snap.Resources.Roles)
+	}
+
+	dst := newBlank()
+	if err := dst.clients.Add(ctx, &sso.Client{ID: "gamma", Name: "Gamma"}); err != nil {
+		t.Fatalf("preseed client: %v", err)
+	}
+	if err := dst.perms.AddRole(ctx, "gamma", permissions.Role{Code: "stale-admin", Permissions: []string{"g:*"}}); err != nil {
+		t.Fatalf("preseed role: %v", err)
+	}
+
+	rep, err := dst.restorer().Restore(ctx, snap, snapshot.RestoreOptions{Mode: snapshot.ModeReplace, Confirm: snap.SnapshotID})
+	if err != nil {
+		t.Fatalf("restore: %v\nreport=%+v", err, rep)
+	}
+	roles, err := dst.perms.ListAllRoles(ctx, "gamma")
+	if err != nil {
+		t.Fatalf("list roles: %v", err)
+	}
+	if len(roles) != 0 {
+		t.Errorf("gamma roles not wiped by ModeReplace: %+v", roles)
+	}
+	if got := rep.Items[snapshot.CategoryRoles].Deleted; got != 1 {
+		t.Errorf("roles deleted=%d want 1 (%+v)", got, rep.Items[snapshot.CategoryRoles])
+	}
+}
+
+// TestRestore_Replace_WipesAssignmentsForZeroEntryClient is the assignments
+// analog of TestRestore_Replace_WipesRolesForZeroEntryClient: gamma has zero
+// assignments at export time (no ClientAssignments entry), but a stale
+// assignment in the destination must still be wiped by ModeReplace.
+func TestRestore_Replace_WipesAssignmentsForZeroEntryClient(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	src := newBlank()
+	if err := src.clients.Add(ctx, &sso.Client{ID: "gamma", Name: "Gamma"}); err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+	snap, err := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(snap.Resources.Assignments) != 0 {
+		t.Fatalf("fixture precondition failed: want zero assignment bundles, got %+v", snap.Resources.Assignments)
+	}
+
+	dst := newBlank()
+	if err := dst.clients.Add(ctx, &sso.Client{ID: "gamma", Name: "Gamma"}); err != nil {
+		t.Fatalf("preseed client: %v", err)
+	}
+	// MemoryProvider.AssignRoles doesn't validate the role code exists, so
+	// no AddRole is needed to set up a stale assignment.
+	if err := dst.perms.AssignRoles(ctx, "stale-user", "gamma", []string{"stale-admin"}); err != nil {
+		t.Fatalf("preseed assignment: %v", err)
+	}
+
+	rep, err := dst.restorer().Restore(ctx, snap, snapshot.RestoreOptions{Mode: snapshot.ModeReplace, Confirm: snap.SnapshotID})
+	if err != nil {
+		t.Fatalf("restore: %v\nreport=%+v", err, rep)
+	}
+	assignments, err := dst.perms.ListAssignments(ctx, "gamma")
+	if err != nil {
+		t.Fatalf("list assignments: %v", err)
+	}
+	if len(assignments) != 0 {
+		t.Errorf("gamma assignments not wiped by ModeReplace: %+v", assignments)
+	}
+	if got := rep.Items[snapshot.CategoryAssignments].Deleted; got != 1 {
+		t.Errorf("assignments deleted=%d want 1 (%+v)", got, rep.Items[snapshot.CategoryAssignments])
+	}
+}
+
+// TestRestore_Replace_WipesMenusForZeroEntryClient is the menus analog: it
+// also exercises the specific bug where restoreMenus short-circuited on
+// len(snap.Resources.Menus) == 0 (true here, since gamma is the only client
+// and has zero menus) before ever reaching the client roster, so ModeReplace
+// never touched menus at all. A stale menu tree in the destination must
+// still be wiped.
+func TestRestore_Replace_WipesMenusForZeroEntryClient(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	src := newBlank()
+	if err := src.clients.Add(ctx, &sso.Client{ID: "gamma", Name: "Gamma"}); err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+	snap, err := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(snap.Resources.Menus) != 0 {
+		t.Fatalf("fixture precondition failed: want zero menu bundles, got %+v", snap.Resources.Menus)
+	}
+
+	dst := newBlank()
+	if err := dst.clients.Add(ctx, &sso.Client{ID: "gamma", Name: "Gamma"}); err != nil {
+		t.Fatalf("preseed client: %v", err)
+	}
+	if err := dst.perms.SetMenus(ctx, "gamma", permissions.MenuTree{{ID: "stale-menu", Name: "Stale", Path: "/stale"}}); err != nil {
+		t.Fatalf("preseed menu: %v", err)
+	}
+
+	rep, err := dst.restorer().Restore(ctx, snap, snapshot.RestoreOptions{Mode: snapshot.ModeReplace, Confirm: snap.SnapshotID})
+	if err != nil {
+		t.Fatalf("restore: %v\nreport=%+v", err, rep)
+	}
+	menus, err := dst.perms.GetMenus(ctx, "gamma")
+	if err != nil {
+		t.Fatalf("get menus: %v", err)
+	}
+	if len(menus) != 0 {
+		t.Errorf("gamma menus not wiped by ModeReplace: %+v", menus)
+	}
+	// SetMenus is a replace primitive, not a delete one — the wipe shows up
+	// as Updated (existing tree present, replaced with empty), not Deleted.
+	if got := rep.Items[snapshot.CategoryMenus].Updated; got != 1 {
+		t.Errorf("menus updated=%d want 1 (%+v)", got, rep.Items[snapshot.CategoryMenus])
+	}
+}
+
+// TestRestore_MergeOverwrite_LeavesZeroEntryClientPermissionsUntouched is the
+// regression guard for the three ModeReplace fixes above: Merge and
+// Overwrite must keep behaving exactly as before — touching only clients
+// that actually have a roles/assignments/menus entry in the snapshot, never
+// wiping based on snap.Resources.Clients membership alone.
+func TestRestore_MergeOverwrite_LeavesZeroEntryClientPermissionsUntouched(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	src := newBlank()
+	if err := src.clients.Add(ctx, &sso.Client{ID: "gamma", Name: "Gamma"}); err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+	snap, err := src.snapshotter().Export(ctx, snapshot.ExportOptions{})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	for _, mode := range []snapshot.RestoreMode{snapshot.ModeMerge, snapshot.ModeOverwrite} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			dst := newBlank()
+			if err := dst.clients.Add(ctx, &sso.Client{ID: "gamma", Name: "Gamma"}); err != nil {
+				t.Fatalf("preseed client: %v", err)
+			}
+			if err := dst.perms.AddRole(ctx, "gamma", permissions.Role{Code: "keep-admin", Permissions: []string{"g:*"}}); err != nil {
+				t.Fatalf("preseed role: %v", err)
+			}
+			if err := dst.perms.AssignRoles(ctx, "keep-user", "gamma", []string{"keep-admin"}); err != nil {
+				t.Fatalf("preseed assignment: %v", err)
+			}
+			if err := dst.perms.SetMenus(ctx, "gamma", permissions.MenuTree{{ID: "keep-menu", Name: "Keep", Path: "/keep"}}); err != nil {
+				t.Fatalf("preseed menu: %v", err)
+			}
+
+			rep, err := dst.restorer().Restore(ctx, snap, snapshot.RestoreOptions{Mode: mode})
+			if err != nil {
+				t.Fatalf("restore: %v\nreport=%+v", err, rep)
+			}
+
+			roles, err := dst.perms.ListAllRoles(ctx, "gamma")
+			if err != nil {
+				t.Fatalf("list roles: %v", err)
+			}
+			if len(roles) != 1 || roles[0].Code != "keep-admin" {
+				t.Errorf("%s wrongly touched gamma roles: %+v", mode, roles)
+			}
+			assignments, err := dst.perms.ListAssignments(ctx, "gamma")
+			if err != nil {
+				t.Fatalf("list assignments: %v", err)
+			}
+			if len(assignments) != 1 {
+				t.Errorf("%s wrongly touched gamma assignments: %+v", mode, assignments)
+			}
+			menus, err := dst.perms.GetMenus(ctx, "gamma")
+			if err != nil {
+				t.Fatalf("get menus: %v", err)
+			}
+			if len(menus) != 1 {
+				t.Errorf("%s wrongly touched gamma menus: %+v", mode, menus)
+			}
+			if got := rep.Items[snapshot.CategoryRoles].Deleted; got != 0 {
+				t.Errorf("%s roles deleted=%d want 0", mode, got)
+			}
+			if got := rep.Items[snapshot.CategoryAssignments].Deleted; got != 0 {
+				t.Errorf("%s assignments deleted=%d want 0", mode, got)
+			}
+		})
+	}
+}
