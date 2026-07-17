@@ -3,9 +3,11 @@ package grpcadmin
 import (
 	"context"
 	"testing"
+	"time"
 
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/audit"
 	"google.golang.org/grpc/codes"
 )
@@ -107,6 +109,57 @@ func TestUserAdminService_CRUD(t *testing.T) {
 	requireOK(t, err, "sink.Query")
 	if len(events) != 3 { // Create + Update + Delete succeeded; the duplicate Create and missing Update never reach recordAdmin
 		t.Errorf("expected 3 audit events (create/update/delete), got %d", len(events))
+	}
+}
+
+// TestUserAdminService_UpdatePreservesFieldsNotInAdminProto is the
+// regression test for a real data-loss bug: Update used to build the
+// updated user from protoToUser's blank User (only the 4 fields the
+// admin.v1.User message carries: id/external_id/provider/attributes),
+// zeroing every other core.User field — Email, Username, Name, DisplayName,
+// CreatedAt. Seeds a user directly via the store (bypassing the admin
+// proto, which has no room for these fields) to simulate one provisioned by
+// another path (e.g. SCIM), then proves an Update that only touches
+// ExternalId leaves them all intact.
+func TestUserAdminService_UpdatePreservesFieldsNotInAdminProto(t *testing.T) {
+	t.Parallel()
+	users := defaultimpl.NewMemoryUserProvider()
+	created := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	requireOK(t, users.CreateOrUpdate(context.Background(), &sso.User{
+		ID:          "bob",
+		Email:       "bob@example.com",
+		Username:    "bob",
+		Name:        "Bob Full",
+		DisplayName: "Bobby",
+		CreatedAt:   created,
+	}), "seed CreateOrUpdate")
+
+	svc := NewUserAdminService(users, nil, nil)
+	ctx := context.Background()
+	_, err := svc.Update(ctx, &adminv1.UpdateUserRequest{
+		User: &adminv1.User{Id: "bob", ExternalId: "ext-9"},
+	})
+	requireOK(t, err, "Update")
+
+	stored, err := users.GetByID(ctx, "bob")
+	requireOK(t, err, "GetByID after Update")
+	if stored.Email != "bob@example.com" {
+		t.Errorf("Update wiped Email, got %q", stored.Email)
+	}
+	if stored.Username != "bob" {
+		t.Errorf("Update wiped Username, got %q", stored.Username)
+	}
+	if stored.Name != "Bob Full" {
+		t.Errorf("Update wiped Name, got %q", stored.Name)
+	}
+	if stored.DisplayName != "Bobby" {
+		t.Errorf("Update wiped DisplayName, got %q", stored.DisplayName)
+	}
+	if !stored.CreatedAt.Equal(created) {
+		t.Errorf("Update wiped CreatedAt, got %v want %v", stored.CreatedAt, created)
+	}
+	if stored.ExternalID != "ext-9" {
+		t.Errorf("Update did not apply the new ExternalId, got %q", stored.ExternalID)
 	}
 }
 

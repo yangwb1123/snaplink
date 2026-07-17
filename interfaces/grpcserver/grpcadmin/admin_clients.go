@@ -222,23 +222,11 @@ func (s *ClientAdminService) Update(ctx context.Context, in *adminv1.UpdateClien
 	if in == nil || in.Client == nil || in.Client.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "client.id required")
 	}
-	c := protoToClient(in.Client)
-	// Preserve the existing secret unless the caller explicitly set one —
-	// the Update RPC shouldn't be a backdoor to overwrite secrets silently.
-	// Likewise carry forward the existing Attributes: the admin proto has no
-	// Attributes field, so an Update would otherwise silently WIPE a client's
-	// registered CAEP receiver config (and any other server-side attribute).
-	if c.Secret == "" || c.Attributes == nil {
-		existing, err := s.store.Get(ctx, c.ID)
-		if err == nil && existing != nil {
-			if c.Secret == "" {
-				c.Secret = existing.Secret
-			}
-			if c.Attributes == nil {
-				c.Attributes = existing.Attributes
-			}
-		}
+	existing, err := s.store.Get(ctx, in.Client.Id)
+	if err != nil || existing == nil {
+		return nil, status.Error(codes.NotFound, "client not found")
 	}
+	c := applyProtoToExistingClient(existing, in.Client)
 	if err := validateClientCAEP(c); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
@@ -387,4 +375,29 @@ func protoToClient(in *adminv1.Client) *sso.Client {
 		TokenStrategy:         in.TokenStrategy,
 		Active:                in.Active,
 	}
+}
+
+// applyProtoToExistingClient overlays the admin proto's wire-representable
+// fields onto a COPY of the existing client, so every core.Client field NOT
+// in the admin.v1.Client message (TenantID, RequirePKCE, AllowedResources,
+// JWKS, token TTLs, encrypted-response algs, ...) survives an Update
+// untouched. Building forward from the existing record — rather than
+// protoToClient's blank Client plus an ad-hoc list of fields to patch back —
+// means a future core.Client field addition can never be silently wiped by
+// this RPC again the way TenantID and ~15 other fields previously were.
+// Secret is preserved unless the caller explicitly set one (Update
+// shouldn't be a backdoor to overwrite it silently).
+func applyProtoToExistingClient(existing *sso.Client, in *adminv1.Client) *sso.Client {
+	c := *existing
+	c.ID = in.Id
+	if in.Secret != "" {
+		c.Secret = in.Secret
+	}
+	c.Name = in.Name
+	c.RedirectURIs = append([]string(nil), in.RedirectUris...)
+	c.AllowedScopes = append([]string(nil), in.AllowedScopes...)
+	c.AllowedAuthenticators = append([]string(nil), in.AllowedAuthenticators...)
+	c.TokenStrategy = in.TokenStrategy
+	c.Active = in.Active
+	return &c
 }

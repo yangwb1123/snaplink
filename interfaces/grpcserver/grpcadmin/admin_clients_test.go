@@ -11,6 +11,7 @@ import (
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/caep"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // TestClientAdminService_NilStorePreconditionFails proves every RPC returns
@@ -286,6 +287,64 @@ func TestClientAdminService_UpdatePreservesSecretAndAttributes(t *testing.T) {
 	}
 	if stored.Name != "App Renamed" {
 		t.Errorf("Update did not apply the new Name, got %q", stored.Name)
+	}
+}
+
+// TestClientAdminService_UpdatePreservesFieldsNotInAdminProto is the
+// regression test for a real data-loss bug: Update used to build the
+// updated client from protoToClient's blank Client (only the ~8 fields the
+// admin.v1.Client message carries), zeroing every other core.Client field —
+// most notably TenantID, which governs tenant-affinity login enforcement.
+// Proves TenantID, RequirePKCE, and AllowedResources (three representative
+// fields absent from the admin wire contract) all survive an Update that
+// only touches Name.
+func TestClientAdminService_UpdatePreservesFieldsNotInAdminProto(t *testing.T) {
+	t.Parallel()
+	store := defaultimpl.NewMemoryClientStore()
+	requireOK(t, store.Add(context.Background(), &sso.Client{
+		ID:               "app-2",
+		Name:             "App",
+		Active:           true,
+		TenantID:         "tenant-acme",
+		RequirePKCE:      true,
+		AllowedResources: []string{"https://api.example/"},
+	}), "seed Add")
+
+	svc := NewClientAdminService(store, nil, nil, nil)
+	ctx := context.Background()
+	_, err := svc.Update(ctx, &adminv1.UpdateClientRequest{
+		Client: &adminv1.Client{Id: "app-2", Name: "App Renamed", Active: true},
+	})
+	requireOK(t, err, "Update")
+
+	stored, err := store.Get(ctx, "app-2")
+	requireOK(t, err, "Get after Update")
+	if stored.TenantID != "tenant-acme" {
+		t.Errorf("Update wiped TenantID, got %q", stored.TenantID)
+	}
+	if !stored.RequirePKCE {
+		t.Error("Update wiped RequirePKCE")
+	}
+	if len(stored.AllowedResources) != 1 || stored.AllowedResources[0] != "https://api.example/" {
+		t.Errorf("Update wiped AllowedResources, got %+v", stored.AllowedResources)
+	}
+	if stored.Name != "App Renamed" {
+		t.Errorf("Update did not apply the new Name, got %q", stored.Name)
+	}
+}
+
+// TestClientAdminService_UpdateUnknownClientReturnsNotFound proves Update
+// fails fast with NotFound (checked up front via Get) rather than
+// constructing a client from a nonexistent record.
+func TestClientAdminService_UpdateUnknownClientReturnsNotFound(t *testing.T) {
+	t.Parallel()
+	store := defaultimpl.NewMemoryClientStore()
+	svc := NewClientAdminService(store, nil, nil, nil)
+	_, err := svc.Update(context.Background(), &adminv1.UpdateClientRequest{
+		Client: &adminv1.Client{Id: "ghost", Name: "X"},
+	})
+	if status.Code(err) != codes.NotFound {
+		t.Errorf("Update unknown client: got %v, want NotFound", err)
 	}
 }
 

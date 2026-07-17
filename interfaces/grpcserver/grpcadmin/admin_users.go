@@ -178,13 +178,14 @@ func (s *UserAdminService) Update(ctx context.Context, in *adminv1.UpdateUserReq
 	if in == nil || in.User == nil || in.User.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "user.id required")
 	}
-	if _, err := s.users.GetByID(ctx, in.User.Id); err != nil {
+	existing, err := s.users.GetByID(ctx, in.User.Id)
+	if err != nil {
 		if errors.Is(err, sso.ErrNoSuchUser) {
 			return nil, status.Error(codes.NotFound, "user not found")
 		}
 		return nil, status.Errorf(codes.Internal, "lookup: %v", err)
 	}
-	u := protoToUser(in.User)
+	u := applyProtoToExistingUser(existing, in.User)
 	if err := s.users.CreateOrUpdate(ctx, u); err != nil {
 		return nil, status.Errorf(codes.Internal, "update: %v", err)
 	}
@@ -272,6 +273,23 @@ func protoToUser(in *adminv1.User) *sso.User {
 		Provider:   in.Provider,
 		Attributes: in.Attributes,
 	}
+}
+
+// applyProtoToExistingUser overlays the admin proto's wire-representable
+// fields onto a COPY of the existing user, so every core.User field NOT in
+// the admin.v1.User message (Email, Username, Name, DisplayName, CreatedAt)
+// survives an Update untouched — the same fix as
+// applyProtoToExistingClient (admin_clients.go) for the identical bug
+// class: Update previously built the new record from protoToUser's blank
+// User, silently zeroing every field the wire contract doesn't carry.
+// UpdatedAt is left to the store's own CreateOrUpdate to stamp.
+func applyProtoToExistingUser(existing *sso.User, in *adminv1.User) *sso.User {
+	u := *existing
+	u.ID = in.Id
+	u.ExternalID = in.ExternalId
+	u.Provider = in.Provider
+	u.Attributes = in.Attributes
+	return &u
 }
 
 func sessionToProto(s *sso.Session) *adminv1.Session {
