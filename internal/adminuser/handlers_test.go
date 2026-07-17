@@ -17,7 +17,7 @@ import (
 )
 
 // Package adminuser previously shipped with ZERO tests despite backing the
-// mutating /api/v1/admin/users* admin CRUD surface (docs/error-codes.md
+// mutating /api/v1/admin/local-users* admin CRUD surface (docs/error-codes.md
 // "Admin user CRUD"). These tests exercise the handlers end-to-end through
 // real in-memory implementations (no mocks, per repo convention) rather than
 // unit-testing the service functions in isolation, so a wiring regression in
@@ -108,7 +108,7 @@ func decodeBody(t *testing.T, rec *httptest.ResponseRecorder, v any) {
 
 func TestHandleAdminCreateUser_Success(t *testing.T) {
 	d := newTestDeps()
-	ctx, rec := newCtx(http.MethodPost, "/api/v1/admin/users", "",
+	ctx, rec := newCtx(http.MethodPost, "/api/v1/admin/local-users", "",
 		`{"username":"alice","email":"alice@example.com","password":"correcthorse1"}`)
 	HandleAdminCreateUser(d, ctx)
 	if rec.Code != http.StatusCreated {
@@ -142,7 +142,7 @@ func TestHandleAdminCreateUser_ValidationErrors(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			d := newTestDeps()
-			ctx, rec := newCtx(http.MethodPost, "/api/v1/admin/users", "", tc.body)
+			ctx, rec := newCtx(http.MethodPost, "/api/v1/admin/local-users", "", tc.body)
 			HandleAdminCreateUser(d, ctx)
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("code = %d; want 400, body=%s", rec.Code, rec.Body.String())
@@ -154,12 +154,12 @@ func TestHandleAdminCreateUser_ValidationErrors(t *testing.T) {
 func TestHandleAdminCreateUser_UsernameConflict(t *testing.T) {
 	d := newTestDeps()
 	body := `{"username":"alice","email":"alice@example.com","password":"correcthorse1"}`
-	ctx1, rec1 := newCtx(http.MethodPost, "/api/v1/admin/users", "", body)
+	ctx1, rec1 := newCtx(http.MethodPost, "/api/v1/admin/local-users", "", body)
 	HandleAdminCreateUser(d, ctx1)
 	if rec1.Code != http.StatusCreated {
 		t.Fatalf("first create code = %d; want 201, body=%s", rec1.Code, rec1.Body.String())
 	}
-	ctx2, rec2 := newCtx(http.MethodPost, "/api/v1/admin/users", "",
+	ctx2, rec2 := newCtx(http.MethodPost, "/api/v1/admin/local-users", "",
 		`{"username":"alice","email":"someone-else@example.com","password":"correcthorse1"}`)
 	HandleAdminCreateUser(d, ctx2)
 	if rec2.Code != http.StatusConflict {
@@ -174,7 +174,7 @@ func TestHandleAdminCreateUser_UsernameConflict(t *testing.T) {
 
 func createTestUser(t *testing.T, d *testDeps, username, email string) string {
 	t.Helper()
-	ctx, rec := newCtx(http.MethodPost, "/api/v1/admin/users", "",
+	ctx, rec := newCtx(http.MethodPost, "/api/v1/admin/local-users", "",
 		`{"username":"`+username+`","email":"`+email+`","password":"correcthorse1"}`)
 	HandleAdminCreateUser(d, ctx)
 	if rec.Code != http.StatusCreated {
@@ -189,19 +189,19 @@ func TestHandleAdminGetUser(t *testing.T) {
 	d := newTestDeps()
 	id := createTestUser(t, d, "bob", "bob@example.com")
 
-	ctx, rec := newCtx(http.MethodGet, "/api/v1/admin/users/"+id, id, "")
+	ctx, rec := newCtx(http.MethodGet, "/api/v1/admin/local-users/"+id, id, "")
 	HandleAdminGetUser(d, ctx)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d; want 200, body=%s", rec.Code, rec.Body.String())
 	}
 
-	missingCtx, missingRec := newCtx(http.MethodGet, "/api/v1/admin/users/nope", "nope", "")
+	missingCtx, missingRec := newCtx(http.MethodGet, "/api/v1/admin/local-users/nope", "nope", "")
 	HandleAdminGetUser(d, missingCtx)
 	if missingRec.Code != http.StatusNotFound {
 		t.Fatalf("unknown user code = %d; want 404, body=%s", missingRec.Code, missingRec.Body.String())
 	}
 
-	blankCtx, blankRec := newCtx(http.MethodGet, "/api/v1/admin/users/", "", "")
+	blankCtx, blankRec := newCtx(http.MethodGet, "/api/v1/admin/local-users/", "", "")
 	HandleAdminGetUser(d, blankCtx)
 	if blankRec.Code != http.StatusBadRequest {
 		t.Fatalf("blank id code = %d; want 400, body=%s", blankRec.Code, blankRec.Body.String())
@@ -214,14 +214,14 @@ func TestHandleAdminUpdateUser(t *testing.T) {
 	id2 := createTestUser(t, d, "dave", "dave@example.com")
 
 	// Not found.
-	nfCtx, nfRec := newCtx(http.MethodPut, "/api/v1/admin/users/nope", "nope", `{"display_name":"X"}`)
+	nfCtx, nfRec := newCtx(http.MethodPut, "/api/v1/admin/local-users/nope", "nope", `{"display_name":"X"}`)
 	HandleAdminUpdateUser(d, nfCtx)
 	if nfRec.Code != http.StatusNotFound {
 		t.Fatalf("code = %d; want 404, body=%s", nfRec.Code, nfRec.Body.String())
 	}
 
 	// Email conflict: id2 tries to take id1's email.
-	conflictCtx, conflictRec := newCtx(http.MethodPut, "/api/v1/admin/users/"+id2, id2,
+	conflictCtx, conflictRec := newCtx(http.MethodPut, "/api/v1/admin/local-users/"+id2, id2,
 		`{"email":"carol@example.com"}`)
 	HandleAdminUpdateUser(d, conflictCtx)
 	if conflictRec.Code != http.StatusConflict {
@@ -229,14 +229,14 @@ func TestHandleAdminUpdateUser(t *testing.T) {
 	}
 
 	// Invalid email format.
-	badCtx, badRec := newCtx(http.MethodPut, "/api/v1/admin/users/"+id1, id1, `{"email":"not-an-email"}`)
+	badCtx, badRec := newCtx(http.MethodPut, "/api/v1/admin/local-users/"+id1, id1, `{"email":"not-an-email"}`)
 	HandleAdminUpdateUser(d, badCtx)
 	if badRec.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d; want 400, body=%s", badRec.Code, badRec.Body.String())
 	}
 
 	// Successful update.
-	okCtx, okRec := newCtx(http.MethodPut, "/api/v1/admin/users/"+id1, id1,
+	okCtx, okRec := newCtx(http.MethodPut, "/api/v1/admin/local-users/"+id1, id1,
 		`{"display_name":"Carol Danvers"}`)
 	HandleAdminUpdateUser(d, okCtx)
 	if okRec.Code != http.StatusOK {
@@ -265,7 +265,7 @@ func TestHandleAdminDeleteUser_RemovesPasswordCredential(t *testing.T) {
 		t.Fatalf("precondition: HasPassword = (%v, %v); want (true, nil)", has, err)
 	}
 
-	ctx, rec := newCtx(http.MethodDelete, "/api/v1/admin/users/"+id, id, "")
+	ctx, rec := newCtx(http.MethodDelete, "/api/v1/admin/local-users/"+id, id, "")
 	HandleAdminDeleteUser(d, ctx)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("code = %d; want 204, body=%s", rec.Code, rec.Body.String())
@@ -295,7 +295,7 @@ func TestHandleAdminDeleteUser_NoCredentialStoreWired(t *testing.T) {
 	id := createTestUser(t, d, "frank", "frank@example.com")
 	d.noCreds = true
 
-	ctx, rec := newCtx(http.MethodDelete, "/api/v1/admin/users/"+id, id, "")
+	ctx, rec := newCtx(http.MethodDelete, "/api/v1/admin/local-users/"+id, id, "")
 	HandleAdminDeleteUser(d, ctx)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("code = %d; want 204, body=%s", rec.Code, rec.Body.String())
@@ -306,19 +306,19 @@ func TestHandleAdminDeleteUser_IdempotentAndValidation(t *testing.T) {
 	d := newTestDeps()
 	id := createTestUser(t, d, "grace", "grace@example.com")
 
-	ctx1, rec1 := newCtx(http.MethodDelete, "/api/v1/admin/users/"+id, id, "")
+	ctx1, rec1 := newCtx(http.MethodDelete, "/api/v1/admin/local-users/"+id, id, "")
 	HandleAdminDeleteUser(d, ctx1)
 	if rec1.Code != http.StatusNoContent {
 		t.Fatalf("first delete code = %d; want 204", rec1.Code)
 	}
 	// Deleting again (or an unknown id) is idempotent — still 204.
-	ctx2, rec2 := newCtx(http.MethodDelete, "/api/v1/admin/users/"+id, id, "")
+	ctx2, rec2 := newCtx(http.MethodDelete, "/api/v1/admin/local-users/"+id, id, "")
 	HandleAdminDeleteUser(d, ctx2)
 	if rec2.Code != http.StatusNoContent {
 		t.Fatalf("second delete code = %d; want 204 (idempotent)", rec2.Code)
 	}
 
-	blankCtx, blankRec := newCtx(http.MethodDelete, "/api/v1/admin/users/", "", "")
+	blankCtx, blankRec := newCtx(http.MethodDelete, "/api/v1/admin/local-users/", "", "")
 	HandleAdminDeleteUser(d, blankCtx)
 	if blankRec.Code != http.StatusBadRequest {
 		t.Fatalf("blank id code = %d; want 400", blankRec.Code)
@@ -331,7 +331,7 @@ func TestHandleAdminListUsers(t *testing.T) {
 	createTestUser(t, d, "user2", "user2@example.com")
 	createTestUser(t, d, "user3", "user3@example.com")
 
-	ctx, rec := newCtx(http.MethodGet, "/api/v1/admin/users?page=1&limit=2", "", "")
+	ctx, rec := newCtx(http.MethodGet, "/api/v1/admin/local-users?page=1&limit=2", "", "")
 	HandleAdminListUsers(d, ctx)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d; want 200, body=%s", rec.Code, rec.Body.String())
@@ -352,7 +352,7 @@ func TestHandleAdminListUsers_InvalidPagination(t *testing.T) {
 	for _, q := range cases {
 		t.Run(q, func(t *testing.T) {
 			d := newTestDeps()
-			ctx, rec := newCtx(http.MethodGet, "/api/v1/admin/users"+q, "", "")
+			ctx, rec := newCtx(http.MethodGet, "/api/v1/admin/local-users"+q, "", "")
 			HandleAdminListUsers(d, ctx)
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("code = %d; want 400, body=%s", rec.Code, rec.Body.String())

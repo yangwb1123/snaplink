@@ -17,11 +17,11 @@ import (
 // interfaces/admin/ to keep that directory within the per-directory go-file
 // fanout budget.
 //
-// All handlers are registered under /api/v1/admin/users* and gated by
+// All handlers are registered under /api/v1/admin/local-users* and gated by
 // AdminMiddleware (admin:read for GET, admin:write for POST/PUT/DELETE).
 // Thin wrappers in interfaces/sso/server_admin_handlers.go delegate here.
 
-// HandleAdminCreateUser serves POST /api/v1/admin/users.
+// HandleAdminCreateUser serves POST /api/v1/admin/local-users.
 // admin:write. Creates a new user with username, email, display_name, and
 // password. Returns 201 with the created user (password NEVER included).
 // Returns 409 on username/email conflict, 400 on validation failure.
@@ -53,7 +53,7 @@ func HandleAdminCreateUser(d Deps, ctx core.HandlerContext) {
 	ctx.JSON(http.StatusCreated, userToCRUDResponse(user))
 }
 
-// HandleAdminGetUser serves GET /api/v1/admin/users/:id.
+// HandleAdminGetUser serves GET /api/v1/admin/local-users/:id.
 // admin:read. Returns the user (password NEVER included). Returns 404 when
 // the user is not found.
 func HandleAdminGetUser(d Deps, ctx core.HandlerContext) {
@@ -79,7 +79,7 @@ func HandleAdminGetUser(d Deps, ctx core.HandlerContext) {
 	ctx.JSON(http.StatusOK, resp)
 }
 
-// HandleAdminUpdateUser serves PUT /api/v1/admin/users/:id.
+// HandleAdminUpdateUser serves PUT /api/v1/admin/local-users/:id.
 // admin:write. Updates mutable user fields (email, display_name). Username
 // and password are NOT modifiable through this path. Returns 404 when the
 // user is not found, 409 on email conflict, 400 on validation failure.
@@ -121,7 +121,7 @@ func HandleAdminUpdateUser(d Deps, ctx core.HandlerContext) {
 	ctx.JSON(http.StatusOK, resp)
 }
 
-// HandleAdminDeleteUser serves DELETE /api/v1/admin/users/:id.
+// HandleAdminDeleteUser serves DELETE /api/v1/admin/local-users/:id.
 // admin:write. Deletes the user (and best-effort their password credential).
 // Returns 204 No Content regardless of whether the user existed (idempotent).
 func HandleAdminDeleteUser(d Deps, ctx core.HandlerContext) {
@@ -143,7 +143,7 @@ func HandleAdminDeleteUser(d Deps, ctx core.HandlerContext) {
 	ctx.JSON(http.StatusNoContent, nil)
 }
 
-// HandleAdminListUsers serves GET /api/v1/admin/users.
+// HandleAdminListUsers serves GET /api/v1/admin/local-users.
 // admin:read. Returns a paginated list of users. Query params: page (default
 // 1), limit (default 10, max 100). Returns 400 on invalid pagination params.
 func HandleAdminListUsers(d Deps, ctx core.HandlerContext) {

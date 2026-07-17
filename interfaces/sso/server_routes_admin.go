@@ -222,12 +222,11 @@ func (s *Server) mountAdminUserState(api Router) {
 	}
 	if s.userProvider != nil {
 		api.POST(PathAdminUserEmail, s.handleAdminSetUserEmail)
-		// User entity CRUD — lifecycle gated on userProvider alone.
-		api.POST(PathAdminUsers, s.handleAdminCreateUser)
-		api.GET(PathAdminUsers, s.handleAdminListUsers)
-		api.GET(PathAdminUserByID, s.handleAdminGetUser)
-		api.PUT(PathAdminUserByID, s.handleAdminUpdateUser)
-		api.DELETE(PathAdminUserByID, s.handleAdminDeleteUser)
+		// Local user entity CRUD — see mountAdminLocalUserCRUD's doc
+		// (signing_key_aggregation.go — relocated there purely for the
+		// free space, no thematic relationship) for why it's a separate
+		// function and a separate path from the gateway's /admin/users.
+		s.mountAdminLocalUserCRUD(api)
 	}
 	if s.deviceSecretStore != nil {
 		api.DELETE(PathAdminUserDeviceSecrets, s.handleAdminRevokeUserDeviceSecrets)

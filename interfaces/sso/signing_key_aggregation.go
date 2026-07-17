@@ -217,3 +217,25 @@ func (s *Server) mountCryptoInventoryAPI(api Router) {
 	api.GET(PathAdminCryptoKeys, s.handleAdminListCryptoKeys)
 	api.POST(PathAdminCryptoKeyCompromise, s.handleAdminReportKeyCompromise)
 }
+
+// mountAdminLocalUserCRUD registers the LOCAL (password-authenticated) user
+// entity CRUD surface. Relocated from server_routes_admin.go's
+// mountAdminUserState (which was at the line budget, and interfaces/sso's
+// go-file count is itself frozen — see directory_fanout_test.go — so a new
+// file isn't an option) to sit here purely for the free space; no thematic
+// relationship to this file's crypto-material content otherwise.
+//
+// Lives at /admin/local-users, NOT /admin/users, because cmd/sso-server's
+// admin gRPC-gateway claims the literal /api/v1/admin/users shape for its OWN
+// (federated/external-identity) UserAdminService — see PathAdminLocalUsers'
+// doc in shared/core/tenant_user.go for the full collision history (the same
+// class of bug the bulk-revoke fix, commit fdebea60, closed for
+// /api/v1/admin/tokens/revoke). Gated on userProvider alone, mirroring the
+// caller's own gate in mountAdminUserState.
+func (s *Server) mountAdminLocalUserCRUD(api Router) {
+	api.POST(PathAdminLocalUsers, s.handleAdminCreateUser)
+	api.GET(PathAdminLocalUsers, s.handleAdminListUsers)
+	api.GET(PathAdminLocalUserByID, s.handleAdminGetUser)
+	api.PUT(PathAdminLocalUserByID, s.handleAdminUpdateUser)
+	api.DELETE(PathAdminLocalUserByID, s.handleAdminDeleteUser)
+}

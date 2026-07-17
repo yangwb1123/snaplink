@@ -76,15 +76,28 @@ var ErrNoMembership = errors.New("sso: no such tenant membership")
 // ---- Admin user CRUD path constants ----
 
 const (
-	// PathAdminUsers is the admin user list + create endpoint. GET = list
-	// (paginated, admin:read), POST = create (admin:write). Group-relative;
-	// mounted on the /api/v1 router group under mountAdminUserState.
-	PathAdminUsers = "/admin/users"
+	// PathAdminLocalUsers is the admin LOCAL (password-authenticated) user
+	// list + create endpoint. GET = list (paginated, admin:read), POST =
+	// create (admin:write). Group-relative; mounted on the /api/v1 router
+	// group under mountAdminUserState.
+	//
+	// Named "local-users" (not "users") because the admin gRPC-gateway's
+	// UserAdminService ALSO claims the literal /api/v1/admin/users shape
+	// (proto/admin/v1/users.proto — federated/external-identity records:
+	// id/external_id/provider/attributes, no password) and
+	// cmd/sso-server's outer mux registers the gateway at that exact
+	// pattern (see adminGatewayExactPaths in cmd/sso-server/build_http.go).
+	// The two are NOT redundant — this endpoint validates username/email/
+	// password and writes to a PasswordCredentialStore, a capability the
+	// gateway's wire contract cannot express — so it needs its OWN,
+	// non-colliding path rather than being shadowed.
+	PathAdminLocalUsers = "/admin/local-users"
 
-	// PathAdminUserByID is the per-user read/update/delete endpoint.
-	// GET = read (admin:read), PUT = update (admin:write), DELETE = delete
-	// (admin:write). Group-relative.
-	PathAdminUserByID = "/admin/users/:id"
+	// PathAdminLocalUserByID is the per-local-user read/update/delete
+	// endpoint. GET = read (admin:read), PUT = update (admin:write),
+	// DELETE = delete (admin:write). Group-relative. See PathAdminLocalUsers
+	// for why this is a distinct path from the gateway's /users/{id}.
+	PathAdminLocalUserByID = "/admin/local-users/:id"
 )
 
 // ---- UserProvider OPTIONAL extension interfaces ----

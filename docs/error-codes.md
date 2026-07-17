@@ -575,10 +575,19 @@ a credential oracle — the caller is an authenticated admin (admin:write).
 | `bulk_revoke_confirmation_required`  | 409  | The batch is large enough (over the soft cap) — or is a client-wide revoke that can't be pre-counted — to demand an explicit `confirm: true` |
 | `bulk_revoke_batch_too_large`        | 409  | The batch exceeds the hard cap and must be narrowed (a subject/client revoke that would wipe more than the storm ceiling), even with `confirm` |
 
-## Admin user CRUD (`POST /api/v1/admin/users`, `POST/GET/PUT/DELETE /api/v1/admin/users/:id`)
+## Admin LOCAL user CRUD (`POST /api/v1/admin/local-users`, `POST/GET/PUT/DELETE /api/v1/admin/local-users/:id`)
 
-Operations to create, read, update, and delete user accounts. Routes are mounted
-only when a `UserProvider` IS wired AND the `UserProvider` implements the optional
+Operations to create, read, update, and delete LOCAL (password-authenticated)
+user accounts. Named `local-users` (not `users`) because `cmd/sso-server`'s
+admin gRPC-gateway claims the literal `/api/v1/admin/users` shape for its own
+federated/external-identity `UserAdminService` (see
+`docs/openapi.yaml`'s `/api/v1/admin/users` entry) — the outer mux would
+otherwise route every request at that path to the gateway, permanently
+shadowing this handler (the class of bug fixed by giving this surface its own
+path; see the bulk-revoke fix, commit `fdebea60`, for the identical pattern).
+
+Routes are mounted only when a `UserProvider` IS wired AND the `UserProvider`
+implements the optional
 `UserPaginationProvider`/`UserByUsernameProvider`/`UserByEmailProvider`
 extensions (for user creation, the store must also implement
 `PasswordCredentialStore` and optionally `MFAEnrollmentStore`). None of these
