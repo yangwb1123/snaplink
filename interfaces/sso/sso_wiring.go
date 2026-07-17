@@ -51,7 +51,8 @@ type wiringState struct {
 	requestIDMW           bool
 	panicRecovery         bool
 	compressionEnabled    bool
-	debugRequestLogging   bool // when set, logs request/response bodies at DEBUG level
+	debugRequestLogging   bool // when set, logs requests/responses at DEBUG level
+	debugRequestLogBodies bool // when also set, includes bodies in that log output
 
 	// apiVersionSupported lists the version tokens (e.g. "v1", "v2alpha")
 	// this deployment accepts via Accept-Version request-header negotiation

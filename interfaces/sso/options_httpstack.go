@@ -242,6 +242,7 @@ func WithCompression() Option {
 func WithRequestLogging(logBodies bool) Option {
 	return func(s *Server) {
 		s.debugRequestLogging = true
+		s.debugRequestLogBodies = logBodies
 	}
 }
 

@@ -412,7 +412,7 @@ func (s *Server) SetRateLimitPolicy(p ratelimit.Policy) bool {
 // any other request — defensive against preflight floods.
 func (s *Server) wrapInnerMiddlewares(inner http.Handler) http.Handler {
 	if s.debugRequestLogging {
-		inner = middleware.RequestLogger(s.logger, false)(inner)
+		inner = middleware.RequestLogger(s.logger, s.debugRequestLogBodies)(inner)
 	}
 	if s.securityHeadersEnabled {
 		inner = handler.SecurityHeaders(s.resolvedSecurityHeadersPolicy())(inner)
