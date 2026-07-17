@@ -2,6 +2,7 @@ package grpcadmin
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
@@ -156,5 +157,44 @@ func TestSnapshotAdminService_RestoreValidation(t *testing.T) {
 	_, err = fx.svc.Get(ctx, &adminv1.GetSnapshotRequest{})
 	requireCode(t, err, codes.InvalidArgument)
 	_, err = fx.svc.Delete(ctx, &adminv1.DeleteSnapshotRequest{})
+	requireCode(t, err, codes.InvalidArgument)
+}
+
+// TestSnapshotAdminService_ListPagination proves List bounds its response by
+// page_size (fixed name-ascending sort, since Storage.List documents
+// "arbitrary order" and this proto has no order_by field), that
+// next_page_token round-trips to the remaining page, and that a garbage
+// page_token is rejected. Regression coverage for a List RPC that used to
+// ignore page_token/page_size entirely and return every snapshot unbounded.
+func TestSnapshotAdminService_ListPagination(t *testing.T) {
+	t.Parallel()
+	fx := newSnapshotFixture(audit.NewMemorySink(50))
+	ctx := context.Background()
+
+	ids := make([]string, 0, 3)
+	for _, cid := range []string{"client-a", "client-b", "client-c"} {
+		fx.src.AddSeed(&sso.Client{ID: cid, Active: true})
+		exp, err := fx.svc.Export(ctx, &adminv1.ExportSnapshotRequest{SourceNodeId: "node"})
+		requireOK(t, err, "Export")
+		ids = append(ids, exp.Meta.SnapshotId)
+	}
+	sort.Strings(ids) // List imposes name-ascending order, independent of export order
+
+	page1, err := fx.svc.List(ctx, &adminv1.ListSnapshotsRequest{PageSize: 2})
+	requireOK(t, err, "List page1")
+	if len(page1.Items) != 2 || page1.TotalSize != 3 || page1.NextPageToken == "" {
+		t.Fatalf("page1 = len=%d total=%d next=%q", len(page1.Items), page1.TotalSize, page1.NextPageToken)
+	}
+	if page1.Items[0].SnapshotId != ids[0] || page1.Items[1].SnapshotId != ids[1] {
+		t.Errorf("page1 ids = [%s, %s], want [%s, %s]", page1.Items[0].SnapshotId, page1.Items[1].SnapshotId, ids[0], ids[1])
+	}
+
+	page2, err := fx.svc.List(ctx, &adminv1.ListSnapshotsRequest{PageSize: 2, PageToken: page1.NextPageToken})
+	requireOK(t, err, "List page2")
+	if len(page2.Items) != 1 || page2.Items[0].SnapshotId != ids[2] || page2.NextPageToken != "" {
+		t.Errorf("page2 = %+v, want [%s] with no further token", page2.Items, ids[2])
+	}
+
+	_, err = fx.svc.List(ctx, &adminv1.ListSnapshotsRequest{PageToken: "!!!not-valid-base64!!!"})
 	requireCode(t, err, codes.InvalidArgument)
 }

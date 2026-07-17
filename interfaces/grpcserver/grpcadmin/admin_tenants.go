@@ -3,6 +3,7 @@ package grpcadmin
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 
 	"github.com/snaplink/sso/domains/tenant"
@@ -65,7 +66,11 @@ func NewTenantAdminService(store tenant.Store, recorder *audit.Recorder, invalid
 
 // ---------- Tenant CRUD ----------
 
-func (s *TenantAdminService) ListTenants(ctx context.Context, _ *adminv1.ListTenantsRequest) (*adminv1.ListTenantsResponse, error) {
+// ListTenants applies filter -> sort -> offset pagination over a full
+// s.store.ListTenants(ctx) scan. See admin_paginate.go for why this bounds
+// the RESPONSE but not the server-side materialization; mirrors
+// ClientAdminService.List / UserAdminService.List exactly.
+func (s *TenantAdminService) ListTenants(ctx context.Context, in *adminv1.ListTenantsRequest) (*adminv1.ListTenantsResponse, error) {
 	if s.store == nil {
 		return nil, status.Error(codes.FailedPrecondition, "tenant store not configured")
 	}
@@ -73,11 +78,96 @@ func (s *TenantAdminService) ListTenants(ctx context.Context, _ *adminv1.ListTen
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list tenants: %v", err)
 	}
-	out := &adminv1.ListTenantsResponse{Tenants: make([]*adminv1.Tenant, 0, len(all))}
-	for _, t := range all {
+	all, err = filterTenants(all, in.GetFilter())
+	if err != nil {
+		return nil, err
+	}
+	if err = sortTenants(all, in.GetOrderBy()); err != nil {
+		return nil, err
+	}
+	offset, err := decodeOffset(in.GetPageToken())
+	if err != nil {
+		return nil, err
+	}
+	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(all))
+	out := &adminv1.ListTenantsResponse{
+		Tenants:       make([]*adminv1.Tenant, 0, hi-lo),
+		TotalSize:     int32(len(all)),
+		NextPageToken: encodeOffset(hi, len(all)),
+	}
+	for _, t := range all[lo:hi] {
 		out.Tenants = append(out.Tenants, tenantToProto(t))
 	}
 	return out, nil
+}
+
+// filterTenants narrows all to rows matching expr, or returns all unchanged
+// when expr is empty. Field set: id/slug/status (exact) + name (substring) —
+// the fields a Tenant carries that make sense as filter keys.
+func filterTenants(all []*tenant.Tenant, expr string) ([]*tenant.Tenant, error) {
+	field, value, ok := parseAdminFilter(expr)
+	if !ok {
+		return all, nil
+	}
+	out := make([]*tenant.Tenant, 0, len(all))
+	for _, t := range all {
+		match, err := tenantMatches(t, field, value)
+		if err != nil {
+			return nil, err
+		}
+		if match {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+// tenantMatches evaluates one filter field against a tenant.
+func tenantMatches(t *tenant.Tenant, field, value string) (bool, error) {
+	switch strings.ToLower(field) {
+	case "id":
+		return t.ID == value, nil
+	case "slug":
+		return t.Slug == value, nil
+	case "name":
+		return strings.Contains(strings.ToLower(t.Name), strings.ToLower(value)), nil
+	case "status":
+		return string(t.Status) == value, nil
+	default:
+		return false, status.Errorf(codes.InvalidArgument, "unsupported filter field %q", field)
+	}
+}
+
+// sortTenants orders all in place by order_by (default: id ascending, the
+// MANDATORY stable sort that makes offset paging deterministic regardless of
+// the backing store's own return order).
+func sortTenants(all []*tenant.Tenant, orderBy string) error {
+	field, desc := parseOrderBy(orderBy)
+	less, err := tenantLess(field)
+	if err != nil {
+		return err
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		if desc {
+			return less(all[j], all[i])
+		}
+		return less(all[i], all[j])
+	})
+	return nil
+}
+
+// tenantLess returns the comparator for one order_by field.
+func tenantLess(field string) (func(a, b *tenant.Tenant) bool, error) {
+	switch strings.ToLower(field) {
+	case "", "id":
+		return func(a, b *tenant.Tenant) bool { return a.ID < b.ID }, nil
+	case "slug":
+		return func(a, b *tenant.Tenant) bool { return a.Slug < b.Slug }, nil
+	case "name":
+		return func(a, b *tenant.Tenant) bool { return a.Name < b.Name }, nil
+	default:
+		return nil, status.Errorf(codes.InvalidArgument, "unsupported order_by field %q", field)
+	}
 }
 
 func (s *TenantAdminService) GetTenant(ctx context.Context, in *adminv1.GetTenantRequest) (*adminv1.GetTenantResponse, error) {
@@ -259,119 +349,10 @@ func (s *TenantAdminService) SetTenantStatus(ctx context.Context, in *adminv1.Se
 	return &adminv1.SetTenantStatusResponse{Tenant: tenantToProto(fresh)}, nil
 }
 
-// ---------- Domain CRUD ----------
-
-func (s *TenantAdminService) ListDomains(ctx context.Context, in *adminv1.ListDomainsRequest) (*adminv1.ListDomainsResponse, error) {
-	if s.store == nil {
-		return nil, status.Error(codes.FailedPrecondition, "tenant store not configured")
-	}
-	var (
-		all []*tenant.Domain
-		err error
-	)
-	if in != nil && in.TenantId != "" {
-		all, err = s.store.ListDomainsByTenant(ctx, in.TenantId)
-	} else {
-		all, err = s.store.ListDomains(ctx)
-	}
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list domains: %v", err)
-	}
-	out := &adminv1.ListDomainsResponse{Domains: make([]*adminv1.Domain, 0, len(all))}
-	for _, d := range all {
-		out.Domains = append(out.Domains, domainToProto(d))
-	}
-	return out, nil
-}
-
-func (s *TenantAdminService) GetDomain(ctx context.Context, in *adminv1.GetDomainRequest) (*adminv1.GetDomainResponse, error) {
-	if s.store == nil {
-		return nil, status.Error(codes.FailedPrecondition, "tenant store not configured")
-	}
-	if in == nil || in.Hostname == "" {
-		return nil, status.Error(codes.InvalidArgument, "hostname required")
-	}
-	d, err := s.store.GetDomain(ctx, in.Hostname)
-	if errors.Is(err, tenant.ErrDomainNotFound) {
-		return nil, status.Error(codes.NotFound, "domain not found")
-	}
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "get domain: %v", err)
-	}
-	return &adminv1.GetDomainResponse{Domain: domainToProto(d)}, nil
-}
-
-func (s *TenantAdminService) CreateDomain(ctx context.Context, in *adminv1.CreateDomainRequest) (*adminv1.CreateDomainResponse, error) {
-	if s.store == nil {
-		return nil, status.Error(codes.FailedPrecondition, "tenant store not configured")
-	}
-	if in == nil || in.Domain == nil || in.Domain.Hostname == "" {
-		return nil, status.Error(codes.InvalidArgument, "domain.hostname required")
-	}
-	if _, err := s.store.GetDomain(ctx, in.Domain.Hostname); err == nil {
-		return nil, status.Error(codes.AlreadyExists, "domain already exists")
-	} else if !errors.Is(err, tenant.ErrDomainNotFound) {
-		return nil, status.Errorf(codes.Internal, "preflight: %v", err)
-	}
-	d := protoToDomain(in.Domain)
-	if err := s.store.PutDomain(ctx, d); err != nil {
-		if errors.Is(err, tenant.ErrInvalidDomain) {
-			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
-		}
-		if errors.Is(err, tenant.ErrDomainExists) {
-			return nil, status.Error(codes.AlreadyExists, "domain already exists")
-		}
-		return nil, status.Errorf(codes.Internal, "create domain: %v", err)
-	}
-	recordAdmin(ctx, s.recorder, audit.EventAdminDomainCreated, d.Hostname)
-	fresh, _ := s.store.GetDomain(ctx, d.Hostname)
-	if fresh == nil {
-		fresh = d
-	}
-	return &adminv1.CreateDomainResponse{Domain: domainToProto(fresh)}, nil
-}
-
-func (s *TenantAdminService) UpdateDomain(ctx context.Context, in *adminv1.UpdateDomainRequest) (*adminv1.UpdateDomainResponse, error) {
-	if s.store == nil {
-		return nil, status.Error(codes.FailedPrecondition, "tenant store not configured")
-	}
-	if in == nil || in.Domain == nil || in.Domain.Hostname == "" {
-		return nil, status.Error(codes.InvalidArgument, "domain.hostname required")
-	}
-	if _, err := s.store.GetDomain(ctx, in.Domain.Hostname); err != nil {
-		if errors.Is(err, tenant.ErrDomainNotFound) {
-			return nil, status.Error(codes.NotFound, "domain not found")
-		}
-		return nil, status.Errorf(codes.Internal, "preflight: %v", err)
-	}
-	d := protoToDomain(in.Domain)
-	if err := s.store.PutDomain(ctx, d); err != nil {
-		if errors.Is(err, tenant.ErrInvalidDomain) {
-			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
-		}
-		return nil, status.Errorf(codes.Internal, "update domain: %v", err)
-	}
-	recordAdmin(ctx, s.recorder, audit.EventAdminDomainUpdated, d.Hostname)
-	fresh, _ := s.store.GetDomain(ctx, d.Hostname)
-	if fresh == nil {
-		fresh = d
-	}
-	return &adminv1.UpdateDomainResponse{Domain: domainToProto(fresh)}, nil
-}
-
-func (s *TenantAdminService) DeleteDomain(ctx context.Context, in *adminv1.DeleteDomainRequest) (*adminv1.DeleteDomainResponse, error) {
-	if s.store == nil {
-		return nil, status.Error(codes.FailedPrecondition, "tenant store not configured")
-	}
-	if in == nil || in.Hostname == "" {
-		return nil, status.Error(codes.InvalidArgument, "hostname required")
-	}
-	if err := s.store.DeleteDomain(ctx, in.Hostname); err != nil {
-		return nil, status.Errorf(codes.Internal, "delete domain: %v", err)
-	}
-	recordAdmin(ctx, s.recorder, audit.EventAdminDomainDeleted, in.Hostname)
-	return &adminv1.DeleteDomainResponse{}, nil
-}
+// Domain CRUD (ListDomains/GetDomain/CreateDomain/UpdateDomain/DeleteDomain)
+// lives in admin_domains.go — split out to keep this file under the 500-line
+// maintainability budget once ListTenants grew filter/sort support; same
+// receiver (*TenantAdminService), same package.
 
 // hasResidency reports whether a tenant carries any non-zero data-residency
 // policy field. Used to keep CreateTenant's residency-cache eviction a no-op
@@ -449,28 +430,5 @@ func trimRegions(in []string) []string {
 	return out
 }
 
-func domainToProto(d *tenant.Domain) *adminv1.Domain {
-	if d == nil {
-		return nil
-	}
-	return &adminv1.Domain{
-		Hostname:        d.Hostname,
-		TenantId:        d.TenantID,
-		DefaultClientId: d.DefaultClientID,
-		IsApex:          d.IsApex,
-		Branding:        d.Branding,
-	}
-}
-
-func protoToDomain(p *adminv1.Domain) *tenant.Domain {
-	if p == nil {
-		return nil
-	}
-	return &tenant.Domain{
-		Hostname:        p.Hostname,
-		TenantID:        p.TenantId,
-		DefaultClientID: p.DefaultClientId,
-		IsApex:          p.IsApex,
-		Branding:        p.Branding,
-	}
-}
+// domainToProto / protoToDomain live in admin_domains.go alongside the
+// Domain CRUD methods that use them.

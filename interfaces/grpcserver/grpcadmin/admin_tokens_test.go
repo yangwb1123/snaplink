@@ -2,6 +2,7 @@ package grpcadmin
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	"github.com/snaplink/sso/domains/authenticators"
@@ -183,4 +184,43 @@ func TestTokenAdminService_IssueTempToken(t *testing.T) {
 	if len(events) != 1 {
 		t.Errorf("expected 1 temp-token-issued audit event, got %d", len(events))
 	}
+}
+
+// TestTokenAdminService_ListSessionsPagination proves ListSessions bounds
+// its response by page_size (fixed id-ascending sort, since session IDs are
+// random hex and this proto has no order_by field), that next_page_token
+// round-trips to the remaining page, and that a garbage page_token is
+// rejected. Regression coverage for a List RPC that used to ignore
+// page_token/page_size entirely and return every session unbounded.
+func TestTokenAdminService_ListSessionsPagination(t *testing.T) {
+	t.Parallel()
+	sessions := defaultimpl.NewMemorySessionManager()
+	svc := NewTokenAdminService(TokenAdminConfig{Sessions: sessions})
+	ctx := context.Background()
+
+	ids := make([]string, 0, 3)
+	for _, user := range []string{"alice", "bob", "carol"} {
+		s, err := sessions.Create(ctx, user)
+		requireOK(t, err, "sessions.Create "+user)
+		ids = append(ids, s.ID)
+	}
+	sort.Strings(ids) // ListSessions imposes id-ascending order, independent of creation order
+
+	page1, err := svc.ListSessions(ctx, &adminv1.ListSessionsRequest{PageSize: 2})
+	requireOK(t, err, "ListSessions page1")
+	if len(page1.Sessions) != 2 || page1.TotalSize != 3 || page1.NextPageToken == "" {
+		t.Fatalf("page1 = len=%d total=%d next=%q", len(page1.Sessions), page1.TotalSize, page1.NextPageToken)
+	}
+	if page1.Sessions[0].Id != ids[0] || page1.Sessions[1].Id != ids[1] {
+		t.Errorf("page1 ids = [%s, %s], want [%s, %s]", page1.Sessions[0].Id, page1.Sessions[1].Id, ids[0], ids[1])
+	}
+
+	page2, err := svc.ListSessions(ctx, &adminv1.ListSessionsRequest{PageSize: 2, PageToken: page1.NextPageToken})
+	requireOK(t, err, "ListSessions page2")
+	if len(page2.Sessions) != 1 || page2.Sessions[0].Id != ids[2] || page2.NextPageToken != "" {
+		t.Errorf("page2 = %+v, want [%s] with no further token", page2.Sessions, ids[2])
+	}
+
+	_, err = svc.ListSessions(ctx, &adminv1.ListSessionsRequest{PageToken: "!!!not-valid-base64!!!"})
+	requireCode(t, err, codes.InvalidArgument)
 }

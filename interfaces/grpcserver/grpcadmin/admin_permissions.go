@@ -3,6 +3,7 @@ package grpcadmin
 import (
 	"context"
 	"errors"
+	"sort"
 
 	"github.com/snaplink/sso/domains/permissions"
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
@@ -40,6 +41,13 @@ func NewPermissionAdminService(prov permissions.Provider, recorder *audit.Record
 	return &PermissionAdminService{prov: prov, recorder: recorder, invalidateAuthzPolicy: invalidateAuthzPolicy}
 }
 
+// ListRoles applies offset pagination over a full ListAllRoles(ctx) scan.
+// This proto has no order_by/filter fields (unlike ListClients/ListUsers),
+// so the only thing to wire is a fixed deterministic sort (code ascending)
+// before slicing — MemoryProvider stores roles in a map, so without this the
+// per-page slice would be nondeterministic across calls, breaking the
+// two-page round trip. See admin_paginate.go for why this bounds the
+// RESPONSE but not the server-side materialization.
 func (s *PermissionAdminService) ListRoles(ctx context.Context, in *adminv1.ListRolesRequest) (*adminv1.ListRolesResponse, error) {
 	if s.prov == nil {
 		return nil, status.Error(codes.FailedPrecondition, "permission provider not configured")
@@ -51,8 +59,18 @@ func (s *PermissionAdminService) ListRoles(ctx context.Context, in *adminv1.List
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list: %v", err)
 	}
-	out := &adminv1.ListRolesResponse{Roles: make([]*adminv1.Role, 0, len(roles))}
-	for _, r := range roles {
+	sort.Slice(roles, func(i, j int) bool { return roles[i].Code < roles[j].Code })
+	offset, err := decodeOffset(in.GetPageToken())
+	if err != nil {
+		return nil, err
+	}
+	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(roles))
+	out := &adminv1.ListRolesResponse{
+		Roles:         make([]*adminv1.Role, 0, hi-lo),
+		TotalSize:     int32(len(roles)),
+		NextPageToken: encodeOffset(hi, len(roles)),
+	}
+	for _, r := range roles[lo:hi] {
 		out.Roles = append(out.Roles, roleToProto(r))
 	}
 	return out, nil
@@ -114,6 +132,10 @@ func (s *PermissionAdminService) RemoveRole(ctx context.Context, in *adminv1.Rem
 	return &adminv1.RemoveRoleResponse{}, nil
 }
 
+// ListAssignments applies offset pagination over a full ListAssignments(ctx)
+// scan. Same rationale as ListRoles: no order_by/filter on this proto, but a
+// fixed sort (user_id ascending) is still required for deterministic paging
+// since MemoryProvider's assignment map has no natural iteration order.
 func (s *PermissionAdminService) ListAssignments(ctx context.Context, in *adminv1.ListAssignmentsRequest) (*adminv1.ListAssignmentsResponse, error) {
 	if s.prov == nil {
 		return nil, status.Error(codes.FailedPrecondition, "permission provider not configured")
@@ -125,8 +147,18 @@ func (s *PermissionAdminService) ListAssignments(ctx context.Context, in *adminv
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list assignments: %v", err)
 	}
-	out := &adminv1.ListAssignmentsResponse{Assignments: make([]*adminv1.Assignment, 0, len(as))}
-	for _, a := range as {
+	sort.Slice(as, func(i, j int) bool { return as[i].UserID < as[j].UserID })
+	offset, err := decodeOffset(in.GetPageToken())
+	if err != nil {
+		return nil, err
+	}
+	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(as))
+	out := &adminv1.ListAssignmentsResponse{
+		Assignments:   make([]*adminv1.Assignment, 0, hi-lo),
+		TotalSize:     int32(len(as)),
+		NextPageToken: encodeOffset(hi, len(as)),
+	}
+	for _, a := range as[lo:hi] {
 		out.Assignments = append(out.Assignments, &adminv1.Assignment{UserId: a.UserID, Roles: a.Roles})
 	}
 	return out, nil

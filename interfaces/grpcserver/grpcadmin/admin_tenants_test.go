@@ -274,3 +274,73 @@ func TestTenantAdminService_DomainCRUD(t *testing.T) {
 	_, err = svc.GetDomain(ctx, &adminv1.GetDomainRequest{Hostname: "app.example.com"})
 	requireCode(t, err, codes.NotFound)
 }
+
+// TestTenantAdminService_ListTenantsPagination proves ListTenants actually
+// bounds its response by page_size (default sort is id ascending), that the
+// returned next_page_token round-trips to the remaining page, and that a
+// garbage page_token is rejected — the regression coverage for a List RPC
+// that used to ignore page_token/page_size/order_by/filter entirely and
+// return every row unbounded.
+func TestTenantAdminService_ListTenantsPagination(t *testing.T) {
+	t.Parallel()
+	store := tenantmemory.New()
+	svc, _ := newTenantAdminServiceForTest(store, nil)
+	ctx := context.Background()
+	for _, id := range []string{"a", "b", "c"} {
+		_, err := svc.CreateTenant(ctx, &adminv1.CreateTenantRequest{Tenant: &adminv1.Tenant{Id: id, Slug: id}})
+		requireOK(t, err, "CreateTenant "+id)
+	}
+
+	page1, err := svc.ListTenants(ctx, &adminv1.ListTenantsRequest{PageSize: 2})
+	requireOK(t, err, "ListTenants page1")
+	if len(page1.Tenants) != 2 || page1.TotalSize != 3 || page1.NextPageToken == "" {
+		t.Fatalf("page1 = len=%d total=%d next=%q", len(page1.Tenants), page1.TotalSize, page1.NextPageToken)
+	}
+	if page1.Tenants[0].Id != "a" || page1.Tenants[1].Id != "b" {
+		t.Errorf("page1 ids = [%s, %s], want [a, b]", page1.Tenants[0].Id, page1.Tenants[1].Id)
+	}
+
+	page2, err := svc.ListTenants(ctx, &adminv1.ListTenantsRequest{PageSize: 2, PageToken: page1.NextPageToken})
+	requireOK(t, err, "ListTenants page2")
+	if len(page2.Tenants) != 1 || page2.Tenants[0].Id != "c" || page2.NextPageToken != "" {
+		t.Errorf("page2 = %+v, want [c] with no further token", page2.Tenants)
+	}
+
+	_, err = svc.ListTenants(ctx, &adminv1.ListTenantsRequest{PageToken: "!!!not-valid-base64!!!"})
+	requireCode(t, err, codes.InvalidArgument)
+}
+
+// TestTenantAdminService_ListDomainsPagination is the same regression
+// coverage as ListTenantsPagination, for ListDomains — a proto with no
+// order_by/filter fields, so the fixed hostname-ascending sort is what makes
+// the two-page round trip deterministic.
+func TestTenantAdminService_ListDomainsPagination(t *testing.T) {
+	t.Parallel()
+	store := tenantmemory.New()
+	svc, _ := newTenantAdminServiceForTest(store, nil)
+	ctx := context.Background()
+	_, err := svc.CreateTenant(ctx, &adminv1.CreateTenantRequest{Tenant: &adminv1.Tenant{Id: "t1", Slug: "t1"}})
+	requireOK(t, err, "CreateTenant")
+	for _, host := range []string{"a.example.com", "b.example.com", "c.example.com"} {
+		_, err := svc.CreateDomain(ctx, &adminv1.CreateDomainRequest{Domain: &adminv1.Domain{Hostname: host, TenantId: "t1"}})
+		requireOK(t, err, "CreateDomain "+host)
+	}
+
+	page1, err := svc.ListDomains(ctx, &adminv1.ListDomainsRequest{PageSize: 2})
+	requireOK(t, err, "ListDomains page1")
+	if len(page1.Domains) != 2 || page1.TotalSize != 3 || page1.NextPageToken == "" {
+		t.Fatalf("page1 = len=%d total=%d next=%q", len(page1.Domains), page1.TotalSize, page1.NextPageToken)
+	}
+	if page1.Domains[0].Hostname != "a.example.com" || page1.Domains[1].Hostname != "b.example.com" {
+		t.Errorf("page1 hostnames = [%s, %s]", page1.Domains[0].Hostname, page1.Domains[1].Hostname)
+	}
+
+	page2, err := svc.ListDomains(ctx, &adminv1.ListDomainsRequest{PageSize: 2, PageToken: page1.NextPageToken})
+	requireOK(t, err, "ListDomains page2")
+	if len(page2.Domains) != 1 || page2.Domains[0].Hostname != "c.example.com" || page2.NextPageToken != "" {
+		t.Errorf("page2 = %+v, want [c.example.com] with no further token", page2.Domains)
+	}
+
+	_, err = svc.ListDomains(ctx, &adminv1.ListDomainsRequest{PageToken: "!!!not-valid-base64!!!"})
+	requireCode(t, err, codes.InvalidArgument)
+}

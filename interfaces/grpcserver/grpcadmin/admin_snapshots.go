@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
 	"github.com/snaplink/sso/interfaces/snapshot"
@@ -70,7 +71,13 @@ func (s *SnapshotAdminService) Export(ctx context.Context, in *adminv1.ExportSna
 	}, nil
 }
 
-func (s *SnapshotAdminService) List(ctx context.Context, _ *adminv1.ListSnapshotsRequest) (*adminv1.ListSnapshotsResponse, error) {
+// List applies offset pagination over a full storage.List(ctx) name scan.
+// This proto has no order_by/filter fields, so the only thing to wire beyond
+// pagination is a fixed deterministic sort (name ascending) — Storage.List
+// documents "arbitrary order". The (potentially expensive) per-item
+// Get+PeekEnvelope only runs for the PAGE window, not every name, mirroring
+// how ListClients/ListUsers only proto-convert the sliced window.
+func (s *SnapshotAdminService) List(ctx context.Context, in *adminv1.ListSnapshotsRequest) (*adminv1.ListSnapshotsResponse, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
@@ -78,8 +85,18 @@ func (s *SnapshotAdminService) List(ctx context.Context, _ *adminv1.ListSnapshot
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list: %v", err)
 	}
-	out := &adminv1.ListSnapshotsResponse{Items: make([]*adminv1.SnapshotMeta, 0, len(names))}
-	for _, name := range names {
+	sort.Strings(names)
+	offset, err := decodeOffset(in.GetPageToken())
+	if err != nil {
+		return nil, err
+	}
+	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(names))
+	out := &adminv1.ListSnapshotsResponse{
+		Items:         make([]*adminv1.SnapshotMeta, 0, hi-lo),
+		TotalSize:     int32(len(names)),
+		NextPageToken: encodeOffset(hi, len(names)),
+	}
+	for _, name := range names[lo:hi] {
 		raw, err := s.storage.Get(ctx, name)
 		if err != nil {
 			return nil, mapSnapshotError(err, "get "+name)

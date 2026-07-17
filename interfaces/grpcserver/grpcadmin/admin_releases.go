@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
@@ -56,7 +57,14 @@ func (s *ReleaseAdminService) Register(ctx context.Context, in *adminv1.Register
 	return &adminv1.RegisterReleaseResponse{Release: releaseToProto(r)}, nil
 }
 
-func (s *ReleaseAdminService) List(ctx context.Context, _ *adminv1.ListReleasesRequest) (*adminv1.ListReleasesResponse, error) {
+// List applies offset pagination over a full store.List(ctx) scan. This
+// proto has no order_by/filter fields, so the only thing to wire beyond
+// pagination is a fixed deterministic sort (id ascending) — imposed here
+// rather than assumed from the backing store (ReleaseStore.List's contract
+// only says implementations SHOULD return a stable order, not MUST). See
+// admin_paginate.go for why this bounds the RESPONSE but not the server-side
+// materialization.
+func (s *ReleaseAdminService) List(ctx context.Context, in *adminv1.ListReleasesRequest) (*adminv1.ListReleasesResponse, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
@@ -64,8 +72,18 @@ func (s *ReleaseAdminService) List(ctx context.Context, _ *adminv1.ListReleasesR
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list: %v", err)
 	}
-	out := &adminv1.ListReleasesResponse{Items: make([]*adminv1.Release, 0, len(all))}
-	for _, r := range all {
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	offset, err := decodeOffset(in.GetPageToken())
+	if err != nil {
+		return nil, err
+	}
+	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(all))
+	out := &adminv1.ListReleasesResponse{
+		Items:         make([]*adminv1.Release, 0, hi-lo),
+		TotalSize:     int32(len(all)),
+		NextPageToken: encodeOffset(hi, len(all)),
+	}
+	for _, r := range all[lo:hi] {
 		out.Items = append(out.Items, releaseToProto(r))
 	}
 	return out, nil

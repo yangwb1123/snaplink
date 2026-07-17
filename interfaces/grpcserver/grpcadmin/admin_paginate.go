@@ -1,22 +1,30 @@
 package grpcadmin
 
 import (
+	"context"
 	"encoding/base64"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/platform/audit"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
-// defaultAdminPageSize/maxAdminPageSize bound the ClientAdmin/UserAdmin List
-// RPCs. This shim paginates AFTER a full store.List(ctx) — it bounds the
-// gRPC RESPONSE, not the store-side materialization, so a >10K-row store
-// still pays a full in-memory scan per page. The correct fix for that is an
-// OPTIONAL store extension type-asserted at this layer (mirroring the
-// existing core.TenantScopedClientStore precedent: try an efficient path,
-// fall back to List()) — e.g. a future core.PaginatedClientStore /
-// core.PaginatedUserProvider. Deferred; out of scope here.
+// defaultAdminPageSize/maxAdminPageSize bound every List RPC in this package
+// (ClientAdmin, UserAdmin, TenantAdmin, PermissionAdmin, TokenAdmin,
+// SnapshotAdmin, ReleaseAdmin). This shim paginates AFTER a full
+// store.List(ctx) — it bounds the gRPC RESPONSE, not the store-side
+// materialization, so a >10K-row store still pays a full in-memory scan per
+// page. The correct fix for that is an OPTIONAL store extension type-asserted
+// at this layer (mirroring the existing core.TenantScopedClientStore
+// precedent: try an efficient path, fall back to List()) — e.g. a future
+// core.PaginatedClientStore / core.PaginatedUserProvider. Deferred; out of
+// scope here.
 const (
 	defaultAdminPageSize = 100
 	maxAdminPageSize     = 1000
@@ -107,4 +115,54 @@ func parseOrderBy(s string) (field string, desc bool) {
 		return strings.TrimSpace(s[1:]), true
 	}
 	return s, false
+}
+
+// recordAdmin / recordAdminMeta below were formerly admin_shared.go, folded
+// in here (rather than kept as an 11th file) to stay at the directory's
+// 10-file maintainability cap (directory_fanout_test.go) once ListTenants'
+// filter/sort support and the split-out admin_domains.go needed a slot.
+// Both this file and the audit helpers below are cross-cutting infra used by
+// every *AdminService in the package, unlike the other files here which each
+// own one service's CRUD — that shared-infra nature is what makes the pairing
+// cohesive rather than arbitrary.
+
+// recordAdmin writes one audit event with the ActorID + IP + UA derived from
+// the gRPC context. The admin interceptor in the sso package stashes the
+// actor's userID + clientID via sso.AdminActorFromContext; we read it back
+// here. Safe to call with a nil recorder — checking saves work.
+func recordAdmin(ctx context.Context, recorder *audit.Recorder, t audit.EventType, target string) {
+	recordAdminMeta(ctx, recorder, t, target, nil)
+}
+
+// recordAdminMeta is recordAdmin's metadata-carrying variant — same
+// actor/target/context derivation, plus caller-supplied SetMeta entries for
+// events needing more than the generic "target=<resource>" Reason (e.g. the
+// client-registration review workflow's rejection reason and the rejected
+// client's name, captured here since the record is gone after Delete).
+func recordAdminMeta(ctx context.Context, recorder *audit.Recorder, t audit.EventType, target string, meta map[string]string) {
+	if recorder == nil {
+		return
+	}
+	evt := &audit.Event{
+		Type:      t,
+		Outcome:   audit.OutcomeSuccess,
+		Timestamp: time.Now().UTC(),
+		Reason:    "target=" + target,
+	}
+	if userID, clientID, ok := sso.AdminActorFromContext(ctx); ok {
+		evt.ActorID = userID
+		evt.ClientID = clientID
+	}
+	if p, ok := peer.FromContext(ctx); ok && p != nil {
+		evt.ActorIP = p.Addr.String()
+	}
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if ua := md.Get("user-agent"); len(ua) > 0 {
+			evt.UserAgent = ua[0]
+		}
+	}
+	for k, v := range meta {
+		audit.SetMeta(evt, k, v)
+	}
+	recorder.Record(ctx, evt)
 }

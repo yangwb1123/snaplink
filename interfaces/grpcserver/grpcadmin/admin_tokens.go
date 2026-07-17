@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -67,6 +68,12 @@ func NewTokenAdminService(cfg TokenAdminConfig) *TokenAdminService {
 	}
 }
 
+// ListSessions applies offset pagination over a full ListAll/ListByUser(ctx)
+// scan. This proto has no order_by/filter fields, so the only thing to wire
+// beyond pagination is a fixed deterministic sort (id ascending) — required
+// because SessionManager backends are not contractually ordered. See
+// admin_paginate.go for why this bounds the RESPONSE but not the server-side
+// materialization.
 func (s *TokenAdminService) ListSessions(ctx context.Context, in *adminv1.ListSessionsRequest) (*adminv1.ListSessionsResponse, error) {
 	if s.sessions == nil {
 		return nil, status.Error(codes.Unimplemented, "session manager not configured")
@@ -84,8 +91,18 @@ func (s *TokenAdminService) ListSessions(ctx context.Context, in *adminv1.ListSe
 		}
 		return nil, status.Errorf(codes.Internal, "list sessions: %v", err)
 	}
-	out := &adminv1.ListSessionsResponse{Sessions: make([]*adminv1.SessionToken, 0, len(all))}
-	for _, sn := range all {
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	offset, err := decodeOffset(in.GetPageToken())
+	if err != nil {
+		return nil, err
+	}
+	lo, hi := pageBounds(offset, clampPageSize(in.GetPageSize()), len(all))
+	out := &adminv1.ListSessionsResponse{
+		Sessions:      make([]*adminv1.SessionToken, 0, hi-lo),
+		TotalSize:     int32(len(all)),
+		NextPageToken: encodeOffset(hi, len(all)),
+	}
+	for _, sn := range all[lo:hi] {
 		out.Sessions = append(out.Sessions, &adminv1.SessionToken{
 			Id:            sn.ID,
 			UserId:        sn.UserID,

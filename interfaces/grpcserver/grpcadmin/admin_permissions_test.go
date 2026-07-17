@@ -138,3 +138,69 @@ func TestPermissionAdminService_AssignmentsAndMenus(t *testing.T) {
 	_, err = svc.UnassignRoles(ctx, &adminv1.UnassignRolesRequest{})
 	requireCode(t, err, codes.InvalidArgument)
 }
+
+// TestPermissionAdminService_ListRolesPagination proves ListRoles bounds its
+// response by page_size (fixed code-ascending sort, since this proto has no
+// order_by field), that next_page_token round-trips to the remaining page,
+// and that a garbage page_token is rejected. Regression coverage for a List
+// RPC that used to ignore page_token/page_size entirely.
+func TestPermissionAdminService_ListRolesPagination(t *testing.T) {
+	t.Parallel()
+	prov := permissions.NewMemoryProvider()
+	svc := NewPermissionAdminService(prov, nil, nil)
+	ctx := context.Background()
+	for _, code := range []string{"alpha", "beta", "gamma"} {
+		_, err := svc.AddRole(ctx, &adminv1.AddRoleRequest{ClientId: "web", Role: &adminv1.Role{Code: code}})
+		requireOK(t, err, "AddRole "+code)
+	}
+
+	page1, err := svc.ListRoles(ctx, &adminv1.ListRolesRequest{ClientId: "web", PageSize: 2})
+	requireOK(t, err, "ListRoles page1")
+	if len(page1.Roles) != 2 || page1.TotalSize != 3 || page1.NextPageToken == "" {
+		t.Fatalf("page1 = len=%d total=%d next=%q", len(page1.Roles), page1.TotalSize, page1.NextPageToken)
+	}
+	if page1.Roles[0].Code != "alpha" || page1.Roles[1].Code != "beta" {
+		t.Errorf("page1 codes = [%s, %s], want [alpha, beta]", page1.Roles[0].Code, page1.Roles[1].Code)
+	}
+
+	page2, err := svc.ListRoles(ctx, &adminv1.ListRolesRequest{ClientId: "web", PageSize: 2, PageToken: page1.NextPageToken})
+	requireOK(t, err, "ListRoles page2")
+	if len(page2.Roles) != 1 || page2.Roles[0].Code != "gamma" || page2.NextPageToken != "" {
+		t.Errorf("page2 = %+v, want [gamma] with no further token", page2.Roles)
+	}
+
+	_, err = svc.ListRoles(ctx, &adminv1.ListRolesRequest{ClientId: "web", PageToken: "!!!not-valid-base64!!!"})
+	requireCode(t, err, codes.InvalidArgument)
+}
+
+// TestPermissionAdminService_ListAssignmentsPagination is the same
+// regression coverage as ListRolesPagination, for ListAssignments (fixed
+// user_id-ascending sort).
+func TestPermissionAdminService_ListAssignmentsPagination(t *testing.T) {
+	t.Parallel()
+	prov := permissions.NewMemoryProvider()
+	svc := NewPermissionAdminService(prov, nil, nil)
+	ctx := context.Background()
+	for _, user := range []string{"alice", "bob", "carol"} {
+		_, err := svc.AssignRoles(ctx, &adminv1.AssignRolesRequest{ClientId: "web", UserId: user, Roles: []string{"editor"}})
+		requireOK(t, err, "AssignRoles "+user)
+	}
+
+	page1, err := svc.ListAssignments(ctx, &adminv1.ListAssignmentsRequest{ClientId: "web", PageSize: 2})
+	requireOK(t, err, "ListAssignments page1")
+	if len(page1.Assignments) != 2 || page1.TotalSize != 3 || page1.NextPageToken == "" {
+		t.Fatalf("page1 = len=%d total=%d next=%q", len(page1.Assignments), page1.TotalSize, page1.NextPageToken)
+	}
+	if page1.Assignments[0].UserId != "alice" || page1.Assignments[1].UserId != "bob" {
+		t.Errorf("page1 user_ids = [%s, %s], want [alice, bob]", page1.Assignments[0].UserId, page1.Assignments[1].UserId)
+	}
+
+	page2, err := svc.ListAssignments(ctx, &adminv1.ListAssignmentsRequest{ClientId: "web", PageSize: 2, PageToken: page1.NextPageToken})
+	requireOK(t, err, "ListAssignments page2")
+	if len(page2.Assignments) != 1 || page2.Assignments[0].UserId != "carol" || page2.NextPageToken != "" {
+		t.Errorf("page2 = %+v, want [carol] with no further token", page2.Assignments)
+	}
+
+	_, err = svc.ListAssignments(ctx, &adminv1.ListAssignmentsRequest{ClientId: "web", PageToken: "!!!not-valid-base64!!!"})
+	requireCode(t, err, codes.InvalidArgument)
+}

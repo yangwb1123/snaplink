@@ -185,3 +185,37 @@ func TestReleaseAdminService_GetCurrentNoneNoOp(t *testing.T) {
 		t.Errorf("expected nil Release on empty store, got %+v", resp.Release)
 	}
 }
+
+// TestReleaseAdminService_ListPagination proves List bounds its response by
+// page_size (fixed id-ascending sort, since this proto has no order_by
+// field), that next_page_token round-trips to the remaining page, and that a
+// garbage page_token is rejected. Regression coverage for a List RPC that
+// used to ignore page_token/page_size entirely and return every release
+// unbounded.
+func TestReleaseAdminService_ListPagination(t *testing.T) {
+	t.Parallel()
+	store := memory.New()
+	svc := NewReleaseAdminService(nil, store, nil)
+	ctx := context.Background()
+	for _, id := range []string{"rel-1", "rel-2", "rel-3"} {
+		requireOK(t, register(ctx, svc, id, 1), "Register "+id)
+	}
+
+	page1, err := svc.List(ctx, &adminv1.ListReleasesRequest{PageSize: 2})
+	requireOK(t, err, "List page1")
+	if len(page1.Items) != 2 || page1.TotalSize != 3 || page1.NextPageToken == "" {
+		t.Fatalf("page1 = len=%d total=%d next=%q", len(page1.Items), page1.TotalSize, page1.NextPageToken)
+	}
+	if page1.Items[0].Id != "rel-1" || page1.Items[1].Id != "rel-2" {
+		t.Errorf("page1 ids = [%s, %s], want [rel-1, rel-2]", page1.Items[0].Id, page1.Items[1].Id)
+	}
+
+	page2, err := svc.List(ctx, &adminv1.ListReleasesRequest{PageSize: 2, PageToken: page1.NextPageToken})
+	requireOK(t, err, "List page2")
+	if len(page2.Items) != 1 || page2.Items[0].Id != "rel-3" || page2.NextPageToken != "" {
+		t.Errorf("page2 = %+v, want [rel-3] with no further token", page2.Items)
+	}
+
+	_, err = svc.List(ctx, &adminv1.ListReleasesRequest{PageToken: "!!!not-valid-base64!!!"})
+	requireCode(t, err, codes.InvalidArgument)
+}
