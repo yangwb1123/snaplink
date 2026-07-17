@@ -245,6 +245,83 @@ func TestWebAuthnHTTP_BeginLoginUnknownUserReturns404(t *testing.T) {
 	}
 }
 
+// TestWebAuthnHTTP_ConditionalBeginReturnsOptionsAndSession is the
+// regression test for a real HTTP-level coverage gap: /webauthn/login/
+// conditional/begin and /finish had zero test coverage at the routing
+// layer — only the underlying Helper.BeginLoginConditional /
+// FinishLoginConditional Go methods were tested directly, bypassing
+// webauthnBeginLoginConditionalHandler / webauthnFinishLoginConditionalHandler
+// (query-param extraction, error-status mapping, response encoding)
+// entirely. This proves the begin endpoint's thin HTTP wiring is correct:
+// no username needed (conditional/discoverable-credential mediation), a
+// session_id is returned, and the response options carry no per-user
+// allowCredentials (the autofill dropdown resolves the credential, not a
+// server-supplied username).
+func TestWebAuthnHTTP_ConditionalBeginReturnsOptionsAndSession(t *testing.T) {
+	t.Parallel()
+	ts, _ := newWebAuthnTestServer(t)
+	resp, err := http.Post(ts.URL+PathWebAuthnLoginConditionalBegin, "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d want 200", resp.StatusCode)
+	}
+	var got webauthnBeginLoginResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.SessionID == "" {
+		t.Fatal("expected a non-empty session_id")
+	}
+	if len(got.Options) == 0 {
+		t.Fatal("expected non-empty options")
+	}
+}
+
+// TestWebAuthnHTTP_ConditionalFinishRequiresSessionID closes the same
+// coverage gap for the finish endpoint's session_id validation — the one
+// branch reachable without simulating a full WebAuthn assertion ceremony.
+func TestWebAuthnHTTP_ConditionalFinishRequiresSessionID(t *testing.T) {
+	t.Parallel()
+	ts, _ := newWebAuthnTestServer(t)
+	resp, err := http.Post(ts.URL+PathWebAuthnLoginConditionalFinish, "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status %d want 400", resp.StatusCode)
+	}
+	var got map[string]string
+	_ = json.NewDecoder(resp.Body).Decode(&got)
+	if got["error"] != "invalid_request" {
+		t.Fatalf("error: got %q want invalid_request", got["error"])
+	}
+}
+
+// TestWebAuthnHTTP_ConditionalFinishUnknownSessionReturns404 mirrors the
+// registration/login finish handlers' oracle-safe unknown-session envelope
+// for the conditional-mediation finish endpoint.
+func TestWebAuthnHTTP_ConditionalFinishUnknownSessionReturns404(t *testing.T) {
+	t.Parallel()
+	ts, _ := newWebAuthnTestServer(t)
+	resp, err := http.Post(ts.URL+PathWebAuthnLoginConditionalFinish+"?session_id=ghost", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status %d want 404 (oracle-leak resistance)", resp.StatusCode)
+	}
+	var got map[string]string
+	_ = json.NewDecoder(resp.Body).Decode(&got)
+	if got["error"] != "session_invalid" {
+		t.Fatalf("error: got %q want session_invalid", got["error"])
+	}
+}
+
 func TestWebAuthnHTTP_AllRoutesCacheControlNoStore(t *testing.T) {
 	t.Parallel()
 	ts, _ := newWebAuthnTestServer(t)
