@@ -47,8 +47,10 @@ type Resolver interface {
 // region the tenant's data primarily lives in; AllowedRegions is the set a
 // request may be served from without violating residency (HomeRegion is
 // implicitly allowed). EnforceWrites flips this from an advisory signal
-// into a hard gate at the enforcement layer (a later commit) — when false
-// the policy is observed but never blocks.
+// into a hard gate at the enforcement layer (interfaces/sso's
+// WithTenantResidencyCheck, wired by cmd/sso-server via
+// config.Region.ResidencyCheckCacheTTL) — when false the policy is
+// observed but never blocks.
 //
 // The zero value (empty HomeRegion, nil AllowedRegions, EnforceWrites
 // false) is unconstrained: every region is acceptable. This keeps tenants
@@ -70,11 +72,11 @@ type PolicyStore interface {
 }
 
 // Governance error sentinels. Callers branch on these via errors.Is. They
-// are residency-violation signals surfaced at the enforcement layer (a
-// later commit), distinct from the credential-oracle errors in core/ —
-// they reveal a tenant's data-residency binding the same way the existing
-// tenant_mismatch reveals tenant binding, so they carry no
-// anti-enumeration concern.
+// are residency-violation signals surfaced at the enforcement layer
+// (interfaces/sso/server_tenant_residency.go), distinct from the
+// credential-oracle errors in core/ — they reveal a tenant's
+// data-residency binding the same way the existing tenant_mismatch
+// reveals tenant binding, so they carry no anti-enumeration concern.
 var (
 	ErrResidencyViolation = errors.New("region: residency violation")
 	ErrRegionNotAllowed   = errors.New("region: serving region not allowed for tenant")

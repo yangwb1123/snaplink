@@ -8,6 +8,7 @@
 //	sso-ctl import ...         # bulk-import users (auth0 / keycloak / csv)
 //	sso-ctl migrate ...        # offline schema-migration status
 //	sso-ctl snapshot ...       # inspect / verify sealed state snapshots
+//	sso-ctl generate ...       # scaffold a new authenticator / store / handler / grant
 //
 // Each subcommand's process exit code is whatever its Run returns (or a direct
 // os.Exit from a flag/usage error), byte-identical to the former standalone
@@ -22,6 +23,7 @@ import (
 	"github.com/snaplink/sso/cmd/sso-ctl/auditverify"
 	"github.com/snaplink/sso/cmd/sso-ctl/clientscmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/configcmd"
+	"github.com/snaplink/sso/cmd/sso-ctl/generate"
 	"github.com/snaplink/sso/cmd/sso-ctl/hashcmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/importcmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/migratecmd"
@@ -50,6 +52,7 @@ var subcommands = map[string]func([]string) int{
 	"config":       configcmd.Run,
 	"hash":         hashcmd.Run,
 	"tokens":       tokenscmd.Run,
+	"generate":     generate.Run,
 }
 
 func main() {
@@ -91,6 +94,7 @@ Commands:
   config         Validate a server config file offline (deploy pre-check).
   hash           Produce a server-compatible password hash (admin seeding).
   tokens         Revoke an access token or issue a temporary token.
+  generate       Scaffold boilerplate for a new authenticator, store, handler, or grant.
   version        Print the toolbelt version and build revision.
 
 Run "%s <command> -h" for command-specific flags.
