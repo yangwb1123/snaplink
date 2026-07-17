@@ -147,7 +147,12 @@ func userSchema() SchemaResource {
 				},
 			},
 			{Name: "active", Type: "boolean", Mutability: "readWrite", Returned: "default"},
-			{Name: "externalId", Type: "string", Mutability: "readWrite", Returned: "default", CaseExact: true},
+			// CaseExact omitted (defaults false): filter.go's compareOne
+			// case-folds externalId along with every other string attribute
+			// this schema models — advertising CaseExact: true here would
+			// tell a provisioning connector this server enforces a matching
+			// discipline it doesn't actually implement.
+			{Name: "externalId", Type: "string", Mutability: "readWrite", Returned: "default"},
 		},
 		Meta: &Meta{ResourceType: "Schema"},
 	}
