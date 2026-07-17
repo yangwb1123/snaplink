@@ -124,6 +124,12 @@ type appBuilder struct {
 	// inheritable state a re-registered account would otherwise pick up.
 	consentStore   sso.ConsentStore
 	mfaEnrollStore sso.MFAEnrollmentStore
+	// passwordResetRevoker revokes pending forgot-password tokens on erasure
+	// (nil when wirePasswordReset never built a store, or the store doesn't
+	// implement the optional core.PasswordResetRevoker extension) — a
+	// pending reset token embeds the subject's email, so erasure must clear
+	// it the same way it already clears consent/MFA state.
+	passwordResetRevoker core.PasswordResetRevoker
 	// accountEraser is the self-service /me/account/erase eraser, retained so
 	// finalize can late-bind Consent + MFAEnrollments AFTER their stores wire
 	// (it's constructed in wireDomains, before those stores exist).
@@ -331,24 +337,6 @@ func (b *appBuilder) wireAdminGovernanceMW(mw *sso.AdminMiddleware, srv *sso.Ser
 		}
 		mw.SetIPAllowlist(allow, srv.GeoProvider())
 		b.logger.Info("admin governance: ip allowlist/geo-lock enabled", "cidrs", len(ip.CIDRs), "countries", len(ip.Countries))
-	}
-}
-
-// lateBindComplianceStores sets Consent + MFAEnrollments on the self-service
-// eraser and exporter AFTER wireFinalOptions has wired those stores. Both
-// compliance.Eraser/Exporter pointers are constructed early in wireDomains
-// (before consentStore/mfaEnrollStore exist), so a one-shot assignment at
-// construction time would silently capture nil — the SDK holds each by
-// pointer and reads these fields at request time, so setting them here (once,
-// right before NewServer) makes self-erasure AND self-export agree with the
-// admin compliance routes on what "the subject's consent + MFA data" is.
-func (b *appBuilder) lateBindComplianceStores() {
-	if b.accountEraser != nil {
-		b.accountEraser.Consent = b.consentStore
-		b.accountEraser.MFAEnrollments = b.mfaEnrollStore
-	}
-	if b.dataExporter != nil {
-		b.dataExporter.Extra = compliance.SubjectExporters(b.consentStore, b.mfaEnrollStore)
 	}
 }
 

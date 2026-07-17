@@ -472,6 +472,7 @@ func (b *appBuilder) wireNetwork() error {
 // budget — pure field mapping, no behavior.
 func (b *appBuilder) assembleExtras(a *app, rt serverRuntime) {
 	a.auditKafkaSink, a.consentStore, a.mfaEnrollStore = b.auditKafkaSink, b.consentStore, b.mfaEnrollStore
+	a.passwordResetRevoker = b.passwordResetRevoker
 	a.pushPruneCancel, a.pushPruneDone = b.pushPruneCancel, b.pushPruneDone
 	a.cibaPruneCancel, a.cibaPruneDone = b.cibaPruneCancel, b.cibaPruneDone
 	a.netStop, a.netCancel = b.netStop, b.netCancel

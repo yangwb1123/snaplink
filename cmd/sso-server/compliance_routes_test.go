@@ -143,6 +143,45 @@ func TestComplianceEraseHandler_DryRun(t *testing.T) {
 	}
 }
 
+// TestComplianceEraseHandler_RevokesPasswordResetTokens is the regression
+// test for a real erasure-completeness bug: a pending forgot-password token
+// (which embeds the subject's email) survived "account erasure" untouched,
+// because complianceDeps never carried a PasswordReset store into the
+// Eraser despite compliance.Eraser.PasswordReset existing exactly for this.
+// Also proves the erase response now reports reset_tokens_revoked (part of
+// the same fix — Report already computed it, the JSON view didn't surface
+// it).
+func TestComplianceEraseHandler_RevokesPasswordResetTokens(t *testing.T) {
+	t.Parallel()
+	deps, _ := complianceTestDeps(t)
+	resetStore := defaultimpl.NewMemoryPasswordResetStore()
+	deps.PasswordReset = resetStore
+	ctx := context.Background()
+	if err := resetStore.Issue(ctx, &core.PasswordResetToken{
+		Token: "rt-1", UserID: "u1", ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("seed reset token: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/compliance/users/u1/erase", nil)
+	complianceEraseHandler(deps)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp eraseResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.ResetTokensRevoked != 1 {
+		t.Errorf("reset_tokens_revoked = %d, want 1", resp.ResetTokensRevoked)
+	}
+	if _, err := resetStore.Consume(ctx, "rt-1"); err == nil {
+		t.Error("pending password-reset token still consumable after erasure")
+	}
+}
+
 func TestComplianceHandler_InvalidPath(t *testing.T) {
 	t.Parallel()
 	deps, _ := complianceTestDeps(t)

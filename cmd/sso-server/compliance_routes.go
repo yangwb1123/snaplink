@@ -55,6 +55,7 @@ type complianceDeps struct {
 	Clients        core.ClientStore
 	Consent        core.ConsentStore
 	MFAEnrollments core.MFAEnrollmentStore
+	PasswordReset  core.PasswordResetRevoker
 	Recorder       *audit.Recorder
 }
 
@@ -118,6 +119,9 @@ type eraseResponse struct {
 	DryRun               bool     `json:"dry_run"`
 	RefreshTokensDeleted int      `json:"refresh_tokens_deleted"`
 	SessionsDestroyed    int      `json:"sessions_destroyed"`
+	ConsentRevoked       int      `json:"consent_revoked"`
+	MFAFactorsRemoved    int      `json:"mfa_factors_removed"`
+	ResetTokensRevoked   int      `json:"reset_tokens_revoked"`
 	UserDeleted          bool     `json:"user_deleted"`
 	Skipped              []string `json:"skipped,omitempty"`
 	Errors               []string `json:"errors,omitempty"`
@@ -142,6 +146,7 @@ func complianceEraseHandler(deps *complianceDeps) http.HandlerFunc {
 			Clients:        deps.Clients,
 			Consent:        deps.Consent,
 			MFAEnrollments: deps.MFAEnrollments,
+			PasswordReset:  deps.PasswordReset,
 		}
 		rep, opErr := eraser.EraseSubject(r.Context(), id, compliance.EraseOptions{DryRun: req.DryRun})
 		recordCompliance(deps.Recorder, audit.EventAdminSubjectErased, id, r, opErr)
@@ -151,6 +156,9 @@ func complianceEraseHandler(deps *complianceDeps) http.HandlerFunc {
 			DryRun:               rep.DryRun,
 			RefreshTokensDeleted: rep.RefreshTokensDeleted,
 			SessionsDestroyed:    rep.SessionsDestroyed,
+			ConsentRevoked:       rep.ConsentRevoked,
+			MFAFactorsRemoved:    rep.MFAFactorsRemoved,
+			ResetTokensRevoked:   rep.ResetTokensRevoked,
 			UserDeleted:          rep.UserDeleted,
 			Skipped:              rep.Skipped,
 		}
@@ -198,4 +206,27 @@ func writeComplianceJSON(w http.ResponseWriter, code int, v any) {
 
 func writeComplianceError(w http.ResponseWriter, code int, reason string) {
 	writeComplianceJSON(w, code, map[string]string{"error": reason})
+}
+
+// lateBindComplianceStores sets Consent + MFAEnrollments + PasswordReset on
+// the self-service eraser (Consent + MFAEnrollments on the exporter too)
+// AFTER wireFinalOptions has wired those stores. Both compliance.Eraser/
+// Exporter pointers are constructed early in wireDomains (before
+// consentStore/mfaEnrollStore/passwordResetRevoker exist), so a one-shot
+// assignment at construction time would silently capture nil — the SDK
+// holds each by pointer and reads these fields at request time, so setting
+// them here (once, right before NewServer) makes self-erasure AND
+// self-export agree with the admin compliance routes on what "the
+// subject's consent + MFA + pending reset-token data" is. Relocated from
+// build_app.go (which was at the line budget) to sit beside the rest of
+// this file's compliance-route wiring.
+func (b *appBuilder) lateBindComplianceStores() {
+	if b.accountEraser != nil {
+		b.accountEraser.Consent = b.consentStore
+		b.accountEraser.MFAEnrollments = b.mfaEnrollStore
+		b.accountEraser.PasswordReset = b.passwordResetRevoker
+	}
+	if b.dataExporter != nil {
+		b.dataExporter.Extra = compliance.SubjectExporters(b.consentStore, b.mfaEnrollStore)
+	}
 }

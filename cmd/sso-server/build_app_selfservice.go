@@ -23,6 +23,7 @@ import (
 	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/trust"
 )
 
@@ -104,6 +105,10 @@ func (b *appBuilder) wirePasswordReset() error {
 	}
 	if passwordResetStore == nil || b.passwordStore == nil {
 		return nil
+	}
+	// Retained for the GDPR eraser (lateBindComplianceStores, compliance_routes.go).
+	if revoker, ok := passwordResetStore.(core.PasswordResetRevoker); ok {
+		b.passwordResetRevoker = revoker
 	}
 	up := b.userProvider
 	b.opts = append(b.opts,

@@ -101,12 +101,22 @@ func HandleMyAccountErase(d Deps, ctx core.HandlerContext) {
 		// the definitive session end Clear-Site-Data is for.
 		d.ClearSiteData(ctx)
 	}
-	ctx.JSON(http.StatusOK, map[string]any{
+	ctx.JSON(http.StatusOK, eraseReportResponse(report))
+}
+
+// eraseReportResponse is the JSON view of a compliance.Report for the
+// self-service erase response. Split out of HandleMyAccountErase to stay
+// under the function-length budget.
+func eraseReportResponse(report *compliance.Report) map[string]any {
+	return map[string]any{
 		"user_id":                report.UserID,
 		"dry_run":                report.DryRun,
 		"refresh_tokens_deleted": report.RefreshTokensDeleted,
 		"sessions_destroyed":     report.SessionsDestroyed,
+		"consent_revoked":        report.ConsentRevoked,
+		"mfa_factors_removed":    report.MFAFactorsRemoved,
+		"reset_tokens_revoked":   report.ResetTokensRevoked,
 		"user_deleted":           report.UserDeleted,
 		"skipped":                report.Skipped,
-	})
+	}
 }

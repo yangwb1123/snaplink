@@ -337,6 +337,7 @@ func mountComplianceAndSCIM(cfg *config.Config, a *app, logger spi.Logger) error
 		Clients:        a.clientStore,
 		Consent:        a.consentStore,
 		MFAEnrollments: a.mfaEnrollStore,
+		PasswordReset:  a.passwordResetRevoker,
 		Recorder:       a.recorder,
 	}); err != nil {
 		return fmt.Errorf("mount compliance: %w", err)
