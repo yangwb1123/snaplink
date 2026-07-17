@@ -10,6 +10,44 @@ cleanup); this file is the single living index of what remains open.
 Status legend for each theme: **none** (nothing built) / **partial** (a
 related capability exists but the proposed feature does not).
 
+## Functional-requirements baseline
+
+This file, together with [`docs/feature-matrix.md`](feature-matrix.md) (the
+OAuth 2.0/OIDC/SSO spec-compliance matrix, extracted from AGENTS.md), is this
+project's explicit, bounded functional-requirements baseline — the two
+committed, git-tracked documents an audit of "are all functional requirements
+met" should check against, rather than the ad-hoc historical analysis docs
+under `docs/requirements/`/`docs/results/` (a large, unverified brainstorming
+corpus that predates this baseline and is superseded by it).
+
+Current status (re-verified against current code, not assumed from either
+file's own prior text):
+
+- `docs/feature-matrix.md`: every listed spec/endpoint has a live file
+  reference; no unimplemented rows.
+- `docs/deferred-backlog.md` (this file): 6 of 7 themes are **done**. The
+  7th, "Declarative multi-cluster config governance," is **partial by an
+  explicit, documented design decision, not an oversight** — the diff-only
+  primitive (HTTP endpoint + K8s operator, including an adversarial review
+  that found and fixed three real bugs) is done; config APPLY, canary
+  rollout, auto-remediation, and a GitOps reconciler are explicitly scoped
+  OUT as "a materially larger, separate undertaking" needing its own opt-in
+  design (see that entry below) — expanding it is a deliberate future
+  decision, not pending work this baseline is missing.
+
+Beyond this baseline, an independent, exhaustive sweep of the codebase itself
+(every exported interface checked for a real implementer, every
+"unimplemented"/"Phase N" doc claim checked against current code, every
+admin route cross-referenced against `cmd/sso-server`'s actual HTTP
+composition, every documented config key checked for a real consumer) found
+and fixed 6 further gaps not tracked in either document above: three stale
+doc comments wrongly claiming built features were unimplemented, one
+orphaned interface, one silently-unreachable admin endpoint (and, on a
+deeper follow-up sweep of the same routing layer, a whole shadowed admin
+resource plus the routing architecture bug causing it), one undocumented set
+of implemented admin routes, and one parsed-but-never-wired config feature.
+All landed as separate, verified, tested commits.
+
 ---
 
 ## Novel / future protocols
