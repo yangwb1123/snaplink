@@ -135,7 +135,7 @@ function reloadProfile() {
   });
 }
 
-function loadAll() { loadSessions(); loadConsents(); loadMFA(); loadAuthz(); loadOrganizations(); }
+function loadAll() { loadSessions(); loadDevices(); loadConsents(); loadMFA(); loadAuthz(); loadOrganizations(); }
 
 // --- B2B org membership (list + leave + accept invite). The card hides itself
 // when /me/organizations is not mounted (TenantUserStore not wired). ---
@@ -217,6 +217,34 @@ function loadSessions() {
     api("/sessions/me", { method: "DELETE" }).then(function () { loadSessions(); });
   };
 })();
+
+// --- Trusted devices ---
+function loadDevices() {
+  api("/me/devices").then(function (r) {
+    if (r.status !== 200) { $("devices-card").style.display = "none"; return null; }
+    return r.json();
+  }).then(function (d) {
+    if (d == null) return;
+    $("devices-card").style.display = "block";
+    var list = (d && d.devices) || [];
+    if (!list.length) { $("devices").innerHTML = '<div class="empty">No trusted devices.</div>'; return; }
+    $("devices").innerHTML = list.map(function (dev) {
+      var meta = dev.created_at ? "trusted since " + esc(String(dev.created_at).slice(0, 10)) : "";
+      if (dev.expires_at) meta += (meta ? " \u00b7 " : "") + "expires " + esc(String(dev.expires_at).slice(0, 10));
+      var devName = dev.name || deviceHint(dev.user_agent || "");
+      var devLine = dev.ip ? '<div class="meta">' + esc(dev.ip) + "</div>" : "";
+      return '<div class="row"><div><div class="name">' + esc(devName) + '</div>' +
+        '<div class="meta">' + meta + "</div>" + devLine + "</div>" +
+        '<button class="btn btn-danger btn-sm" data-did="' + esc(dev.id) + '">Revoke</button></div>';
+    }).join("");
+    Array.prototype.forEach.call($("devices").querySelectorAll("button[data-did]"), function (b) {
+      b.onclick = function () {
+        api("/me/devices/" + encodeURIComponent(b.getAttribute("data-did")), { method: "DELETE" })
+          .then(function () { loadDevices(); });
+      };
+    });
+  }).catch(function () { $("devices-card").style.display = "none"; });
+}
 
 // --- Consents ---
 function loadConsents() {

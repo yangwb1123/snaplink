@@ -71,6 +71,23 @@ input:focus, select:focus {
 
 .field { margin-bottom: 16px; }
 
+/* Checkbox label for "Trust this device" in MFA view */
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: .875rem;
+  font-weight: 400;
+  color: #374151;
+}
+.checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand-primary);
+  cursor: pointer;
+}
+
 .btn {
   width: 100%;
   padding: 11px;
