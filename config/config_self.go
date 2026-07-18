@@ -6,6 +6,19 @@ type HostedLoginConfig struct {
 	Enabled bool `yaml:"enabled"`
 }
 
+// SetupWizardConfig opts into the first-run setup wizard's public API: GET
+// /api/v1/setup/status (reports whether an admin exists yet) and POST
+// /api/v1/setup (creates the first admin, and an optional first
+// application). sso-server serves no wizard frontend itself — a separate
+// project drives the flow through these two endpoints, reverse-proxied
+// alongside this server. Once an admin exists the wizard locks (POST ->
+// 409 already_initialized). Default off — a build/deployment that never
+// opts in exposes no /setup surface at all (the endpoints 404). Mirrors the
+// operator story of Grafana/Nextcloud-style first-run onboarding.
+type SetupWizardConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
 // SelfServiceConfig wires the end-user self-service stores the hosted login +
 // portal SPAs depend on. Each store is opt-in: an empty backend leaves its
 // routes unmounted and behavior byte-identical to a build without it. The

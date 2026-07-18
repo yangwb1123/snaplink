@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
 	connectionssqlite "github.com/snaplink/sso/domains/connections/sqlite"
@@ -110,31 +111,10 @@ func (b *appBuilder) wireTenantTokenStrategies() error {
 // wireConnectionsAndCache wires B2B connections + home-realm discovery and the
 // opt-in client-store / discovery / JWKS caches.
 func (b *appBuilder) wireConnectionsAndCache() error {
+	if err := b.wireConnectionStore(); err != nil {
+		return err
+	}
 	cfg := b.cfg
-	// B2B enterprise connections + home-realm discovery (sso.WithConnectionStore
-	// → /auth/home-realm). Seeded from config; nil when disabled so the endpoint
-	// is not mounted (byte-identical).
-	connectionStore, err := serverbuildstore.BuildConnectionStore(cfg, b.logger)
-	if err != nil {
-		return fmt.Errorf("connection store: %w", err)
-	}
-	b.connectionStore = connectionStore
-	if connectionStore != nil {
-		// Schema-version boot gate: refuse to start when the SQLite
-		// connection store's live schema is ahead of what this binary
-		// knows. Memory backend silently no-ops (no DB() method).
-		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, connectionStore, "connections", connectionssqlite.ConnectionsMaxVersion()); err != nil {
-			return fmt.Errorf("schema check connections: %w", err)
-		}
-		b.opts = append(b.opts, sso.WithConnectionStore(connectionStore))
-		if cfg.Connections.Probe.Timeout > 0 {
-			b.opts = append(b.opts, sso.WithConnectionProbeTimeout(cfg.Connections.Probe.Timeout))
-		}
-		// SQLite-backed connections store implements Ping → /readyz; memory
-		// silently no-ops (serverbuildsign.AppendReadyCheck only registers satisfying types).
-		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-connections", connectionStore)
-		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-connections", connectionStore)
-	}
 	// Opt-in per-login ClientStore metadata cache (identity.client_cache).
 	// TTL 0 falls back to sso.DefaultClientStoreCacheTTL inside the SDK.
 	// ValidateSecret bypasses it (§2); admin/DCR mutations evict via the
@@ -154,6 +134,43 @@ func (b *appBuilder) wireConnectionsAndCache() error {
 	if cfg.Server.JWKSCacheTTL != 0 {
 		b.opts = append(b.opts, sso.WithJWKSCacheTTL(cfg.Server.JWKSCacheTTL))
 	}
+	return nil
+}
+
+// wireConnectionStore wires B2B enterprise connections + home-realm discovery
+// (sso.WithConnectionStore → /auth/home-realm) and the runtime
+// connection→authenticator factory. Seeded from config; nil store when
+// disabled so the endpoint is not mounted (byte-identical).
+func (b *appBuilder) wireConnectionStore() error {
+	cfg := b.cfg
+	connectionStore, err := serverbuildstore.BuildConnectionStore(cfg, b.logger)
+	if err != nil {
+		return fmt.Errorf("connection store: %w", err)
+	}
+	b.connectionStore = connectionStore
+	if connectionStore == nil {
+		return nil
+	}
+	// Schema-version boot gate: refuse to start when the SQLite
+	// connection store's live schema is ahead of what this binary
+	// knows. Memory backend silently no-ops (no DB() method).
+	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, connectionStore, "connections", connectionssqlite.ConnectionsMaxVersion()); err != nil {
+		return fmt.Errorf("schema check connections: %w", err)
+	}
+	b.opts = append(b.opts, sso.WithConnectionStore(connectionStore))
+	// Runtime half of enterprise connections: /auth/login dispatched with
+	// provider=<connection id> builds the upstream authenticator from the
+	// connection's stored config (build failures land in the audit trail —
+	// b.recorder is populated by wireFoundation before wireDomains runs).
+	b.opts = append(b.opts, sso.WithConnectionAuthenticatorFactory(
+		serverbuildauthn.NewConnectionAuthenticatorFactory(b.recorder, b.logger, 0)))
+	if cfg.Connections.Probe.Timeout > 0 {
+		b.opts = append(b.opts, sso.WithConnectionProbeTimeout(cfg.Connections.Probe.Timeout))
+	}
+	// SQLite-backed connections store implements Ping → /readyz; memory
+	// silently no-ops (serverbuildsign.AppendReadyCheck only registers satisfying types).
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-connections", connectionStore)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-connections", connectionStore)
 	return nil
 }
 

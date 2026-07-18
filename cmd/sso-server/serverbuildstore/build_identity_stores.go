@@ -23,6 +23,7 @@ import (
 	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 
 	"github.com/snaplink/sso/shared/security"
+	"github.com/snaplink/sso/shared/security/peertrust"
 )
 
 // errPostgresNotConfigured is the shared boot error for a backend:postgres
@@ -55,7 +56,14 @@ func ConvertClientJWKs(in []config.ClientJWK) []sso.JWK {
 // The second return value is a human-readable mode label suitable
 // for the boot log so operators can confirm the wiring matches the
 // surrounding network topology.
-func BuildClientCertExtractor(cfg config.MTLSConfig) (sso.ClientCertExtractor, string, error) {
+//
+// peerTrust (the compiled security.trusted_proxies checker; nil when the
+// knob is unset) gates the header backend: the forwarded-cert header is
+// honored only from a direct peer inside the trusted CIDRs, so a request
+// that bypassed the TLS-terminating edge cannot mint mTLS-bound tokens for
+// an arbitrary certificate. The tls backend reads the in-process handshake
+// and needs no gate.
+func BuildClientCertExtractor(cfg config.MTLSConfig, peerTrust *peertrust.Checker) (sso.ClientCertExtractor, string, error) {
 	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
 	switch backend {
 	case "", "tls", "peer":
@@ -68,7 +76,8 @@ func BuildClientCertExtractor(cfg config.MTLSConfig) (sso.ClientCertExtractor, s
 		if err != nil {
 			return nil, "", err
 		}
-		return &security.HeaderClientCertExtractor{HeaderName: cfg.Header.Name, Encoding: enc}, fmt.Sprintf("HeaderClientCertExtractor (header=%q encoding=%q — TRUST EDGE MUST STRIP HEADER)", cfg.Header.Name, cfg.Header.Encoding), nil
+		extractor := &security.HeaderClientCertExtractor{HeaderName: cfg.Header.Name, Encoding: enc, PeerTrust: peerTrust}
+		return extractor, fmt.Sprintf("HeaderClientCertExtractor (header=%q encoding=%q — TRUST EDGE MUST STRIP HEADER)", cfg.Header.Name, cfg.Header.Encoding), nil
 	default:
 		return nil, "", fmt.Errorf("security.mtls.backend %q (want tls|header)", cfg.Backend)
 	}

@@ -5,15 +5,19 @@ import "github.com/snaplink/sso/protocols/oauth"
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
 )
@@ -257,6 +261,211 @@ func TestClaimsParam_PARPushSurvives(t *testing.T) {
 	_ = json.Unmarshal(got, &parsed)
 	if _, ok := parsed["userinfo"].(map[string]any); !ok {
 		t.Errorf("PAR-pushed userinfo branch lost: %v", parsed)
+	}
+}
+
+// newClaimsCodeFlowServer wires the authorization_code round trip with an
+// id_token issuer and an authenticator that returns multiple attributes, so
+// tests can prove the OIDC Core §5.5 claims parameter survives the code
+// round trip (login → code → /token) instead of only the direct-mint path.
+func newClaimsCodeFlowServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	users := defaultimpl.NewMemoryUserProvider()
+	_ = users.CreateOrUpdate(context.Background(), &sso.User{ID: cpUserID})
+	clients := defaultimpl.NewMemoryClientStore()
+	clients.AddSeed(&sso.Client{
+		ID: cpClientID, Secret: cpSecret, Active: true,
+		AllowedAuthenticators: []string{"password"},
+		TokenStrategy:         "jwt",
+		RedirectURIs:          []string{cpRedirect},
+	})
+	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
+		func(_ context.Context, u, p string) (*sso.AuthResult, error) {
+			if u == cpUserID && p == cpPassword {
+				return &sso.AuthResult{
+					UserID: cpUserID,
+					Attributes: map[string]string{
+						"email": "alice@example.com",
+						"name":  "Alice",
+						"role":  "admin",
+					},
+				}, nil
+			}
+			return nil, errors.New("bad credentials")
+		},
+	))
+	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute))
+	srv := sso.NewServer(
+		sso.WithUserProvider(users),
+		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
+		sso.WithClientStore(clients),
+		sso.WithAuthenticator(pw),
+		sso.WithTokenIssuer("jwt", issuer),
+		sso.WithDefaultTokenStrategy("jwt"),
+		sso.WithIDTokenIssuer(issuer),
+		sso.WithAuthCodeStore(defaultimpl.NewMemoryAuthCodeStore(), 5*time.Minute),
+	)
+	httpSrv := httptest.NewServer(srv.Handler())
+	t.Cleanup(httpSrv.Close)
+	return httpSrv
+}
+
+// claimsCodeFlow drives /auth/login (response_type=code, scope=openid, the
+// supplied claims parameter) then exchanges the code at /token, returning the
+// exchange response body.
+func claimsCodeFlow(t *testing.T, srv *httptest.Server, claims json.RawMessage) map[string]any {
+	t.Helper()
+	login := map[string]any{
+		"provider":      "password",
+		"client_id":     cpClientID,
+		"credential":    map[string]string{"username": cpUserID, "password": cpPassword},
+		"response_type": "code",
+		"redirect_uri":  cpRedirect,
+		"scope":         []string{"openid"},
+	}
+	if len(claims) > 0 {
+		login["claims"] = claims
+	}
+	body, _ := json.Marshal(login)
+	resp, err := http.Post(srv.URL+"/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", resp.StatusCode, raw)
+	}
+	var loginOut map[string]any
+	_ = json.Unmarshal(raw, &loginOut)
+	code, _ := loginOut["code"].(string)
+	if code == "" {
+		t.Fatalf("no code in login response: %s", raw)
+	}
+	body, _ = json.Marshal(map[string]any{
+		"grant_type":    "authorization_code",
+		"code":          code,
+		"client_id":     cpClientID,
+		"client_secret": cpSecret,
+		"redirect_uri":  cpRedirect,
+	})
+	resp, err = http.Post(srv.URL+"/token", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ = io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("exchange status=%d body=%s", resp.StatusCode, raw)
+	}
+	var out map[string]any
+	_ = json.Unmarshal(raw, &out)
+	return out
+}
+
+// jwtPayloadClaims decodes a compact JWT's payload segment without verifying
+// the signature (tests only inspect claim presence).
+func jwtPayloadClaims(t *testing.T, jwt string) map[string]any {
+	t.Helper()
+	parts := strings.Split(jwt, ".")
+	if len(parts) != 3 {
+		t.Fatalf("malformed JWT: %d segments", len(parts))
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	return m
+}
+
+// TestClaimsParam_AuthCodeRoundTripProjectsIDToken closes the §5.5 gap on the
+// authorization_code path: the claims parameter captured at /auth/login must
+// survive the code round trip so the /token-minted id_token carries ONLY the
+// requested claims (email — not name/role), exactly like the direct-mint flow.
+func TestClaimsParam_AuthCodeRoundTripProjectsIDToken(t *testing.T) {
+	srv := newClaimsCodeFlowServer(t)
+	claims := json.RawMessage(`{"id_token":{"email":null},"userinfo":{"email":null}}`)
+	out := claimsCodeFlow(t, srv, claims)
+
+	idToken, _ := out["id_token"].(string)
+	if idToken == "" {
+		t.Fatalf("no id_token in exchange response: %v", out)
+	}
+	ext := idTokenExtraClaims(t, idToken)
+	if got, _ := ext["email"].(string); got != "alice@example.com" {
+		t.Errorf("id_token email = %v, want alice@example.com (requested claim dropped)", ext["email"])
+	}
+	if _, ok := ext["name"]; ok {
+		t.Errorf("id_token carries unrequested claim name: %v", ext["name"])
+	}
+	if _, ok := ext["role"]; ok {
+		t.Errorf("id_token carries unrequested claim role: %v", ext["role"])
+	}
+}
+
+// idTokenExtraClaims returns the Ed25519 issuer's `ext` claim object — where
+// attribute-sourced claims (email, name, ...) ride on its id_tokens.
+func idTokenExtraClaims(t *testing.T, idToken string) map[string]any {
+	t.Helper()
+	ext, _ := jwtPayloadClaims(t, idToken)["ext"].(map[string]any)
+	return ext
+}
+
+// TestClaimsParam_AuthCodeRoundTripStampsAccessToken proves the exchange-
+// minted access token carries the claims parameter (the `_claims_` claim the
+// Ed25519 issuer round-trips into TokenClaims.RequestedClaims) so /userinfo
+// can project the RP-requested claims after a code flow.
+func TestClaimsParam_AuthCodeRoundTripStampsAccessToken(t *testing.T) {
+	srv := newClaimsCodeFlowServer(t)
+	claims := json.RawMessage(`{"userinfo":{"email":null,"name":{"essential":true}}}`)
+	out := claimsCodeFlow(t, srv, claims)
+
+	access, _ := out["access_token"].(string)
+	if access == "" {
+		t.Fatalf("no access_token in exchange response: %v", out)
+	}
+	atClaims := jwtPayloadClaims(t, access)
+	carried, ok := atClaims["_claims_"]
+	if !ok {
+		t.Fatalf("access token missing _claims_ (RequestedClaims not threaded through the code): %v", atClaims)
+	}
+	var want, got any
+	_ = json.Unmarshal(claims, &want)
+	blob, _ := json.Marshal(carried)
+	_ = json.Unmarshal(blob, &got)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("access token _claims_ = %v, want %v", carried, want)
+	}
+}
+
+// TestClaimsParam_AuthCodeNoClaimsUnchanged is the regression guard: a code
+// flow WITHOUT a claims parameter must behave exactly as before the carry —
+// no _claims_ claim on the access token and an UNPROJECTED id_token carrying
+// every attribute.
+func TestClaimsParam_AuthCodeNoClaimsUnchanged(t *testing.T) {
+	srv := newClaimsCodeFlowServer(t)
+	out := claimsCodeFlow(t, srv, nil)
+
+	access, _ := out["access_token"].(string)
+	if access == "" {
+		t.Fatalf("no access_token in exchange response: %v", out)
+	}
+	if _, ok := jwtPayloadClaims(t, access)["_claims_"]; ok {
+		t.Errorf("access token carries _claims_ without a claims parameter")
+	}
+	idToken, _ := out["id_token"].(string)
+	if idToken == "" {
+		t.Fatalf("no id_token in exchange response: %v", out)
+	}
+	ext := idTokenExtraClaims(t, idToken)
+	for _, name := range []string{"email", "name", "role"} {
+		if _, ok := ext[name]; !ok {
+			t.Errorf("id_token lost attribute %q on the no-claims path (projection fired without a request)", name)
+		}
 	}
 }
 

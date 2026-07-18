@@ -486,7 +486,7 @@ func TestBuildSigningKeyRegistry_UnknownBackendErrors(t *testing.T) {
 
 func TestBuildRegionResolver_UnconfiguredReturnsNil(t *testing.T) {
 	t.Parallel()
-	if r := serverbuildstore.BuildRegionResolver(&config.Config{}); r != nil {
+	if r := serverbuildstore.BuildRegionResolver(&config.Config{}, nil); r != nil {
 		t.Errorf("unconfigured region returned %v; want nil", r)
 	}
 }
@@ -497,7 +497,7 @@ func TestBuildRegionResolver_ServingRegionPins(t *testing.T) {
 	cfg.Region.ServingRegion = "eu-west-1"
 	cfg.Region.AllowedRegions = []string{"eu-west-1", "us-east-1"}
 	cfg.Region.HeaderName = "X-Region"
-	r := serverbuildstore.BuildRegionResolver(cfg)
+	r := serverbuildstore.BuildRegionResolver(cfg, nil)
 	if r == nil {
 		t.Fatal("resolver nil despite serving_region set")
 	}
@@ -516,7 +516,7 @@ func TestBuildRegionResolver_HeaderOnlyInstalls(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{}
 	cfg.Region.HeaderName = "X-Region" // serving region empty but header set
-	if r := serverbuildstore.BuildRegionResolver(cfg); r == nil {
+	if r := serverbuildstore.BuildRegionResolver(cfg, nil); r == nil {
 		t.Error("resolver nil despite header_name set")
 	}
 }

@@ -341,7 +341,7 @@ func TestBuildApp_MTLSEnabledFlipsDiscovery(t *testing.T) {
 
 func TestBuildClientCertExtractor_DefaultTLS(t *testing.T) {
 	t.Parallel()
-	ex, mode, err := serverbuildstore.BuildClientCertExtractor(config.MTLSConfig{Enabled: true})
+	ex, mode, err := serverbuildstore.BuildClientCertExtractor(config.MTLSConfig{Enabled: true}, nil)
 	if err != nil {
 		t.Fatalf("default backend: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestBuildClientCertExtractor_DefaultTLS(t *testing.T) {
 
 func TestBuildClientCertExtractor_HeaderRequiresName(t *testing.T) {
 	t.Parallel()
-	_, _, err := serverbuildstore.BuildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: "header"})
+	_, _, err := serverbuildstore.BuildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: "header"}, nil)
 	if err == nil {
 		t.Fatal("expected error when header backend has empty name")
 	}
@@ -367,7 +367,7 @@ func TestBuildClientCertExtractor_HeaderURLPEM(t *testing.T) {
 		Enabled: true,
 		Backend: "header",
 		Header:  config.MTLSHeaderConfig{Name: "X-SSL-Client-Cert", Encoding: "url-pem"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("header build: %v", err)
 	}
@@ -412,7 +412,7 @@ func TestBuildClientCertExtractor_HeaderEncodings(t *testing.T) {
 
 func TestBuildClientCertExtractor_UnknownBackend(t *testing.T) {
 	t.Parallel()
-	_, _, err := serverbuildstore.BuildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: "spiffe"})
+	_, _, err := serverbuildstore.BuildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: "spiffe"}, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
@@ -424,7 +424,7 @@ func TestBuildClientCertExtractor_UnknownEncoding(t *testing.T) {
 		Enabled: true,
 		Backend: "header",
 		Header:  config.MTLSHeaderConfig{Name: "X-Client-Cert", Encoding: "asn1"},
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("expected error for unknown encoding")
 	}

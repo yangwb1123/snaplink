@@ -370,3 +370,7 @@ func (s *Server) recordTenantTokenIssued(ctx HandlerContext, clientID, strategy 
 	}
 	s.metrics.TokensIssuedByTenantTotal.WithLabelValues(s.tenantLabel(ctx, clientID), strategy).Inc()
 }
+
+// checkQuotaBeforeCreate / CheckClientCreateQuota live in quota.go, alongside
+// the compensating-release (charged/denied) variants and the DCR rate-limit
+// guard — kept together since they're all DCR-adjacent throttling concerns.

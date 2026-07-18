@@ -72,6 +72,7 @@ type Config struct {
 	Federation           FederationConfig                `yaml:"federation"`
 	SAML                 SAMLConfig                      `yaml:"saml"`
 	HostedLogin          HostedLoginConfig               `yaml:"hosted_login"`
+	SetupWizard          SetupWizardConfig               `yaml:"setup_wizard"`
 	SelfService          SelfServiceConfig               `yaml:"self_service"`
 	NativeSSO            NativeSSOConfig                 `yaml:"native_sso"`
 	ProtectedResource    ProtectedResourceMetadataConfig `yaml:"protected_resource_metadata"`

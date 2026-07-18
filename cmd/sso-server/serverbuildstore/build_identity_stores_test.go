@@ -9,6 +9,7 @@ import (
 	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/shared/security"
+	"github.com/snaplink/sso/shared/security/peertrust"
 	"github.com/snaplink/sso/shared/spi"
 )
 
@@ -46,7 +47,7 @@ func TestConvertClientJWKs_CopiesEveryField(t *testing.T) {
 func TestBuildClientCertExtractor_DefaultIsTLSPeer(t *testing.T) {
 	t.Parallel()
 	for _, backend := range []string{"", "tls", "peer"} {
-		ex, mode, err := BuildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: backend})
+		ex, mode, err := BuildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: backend}, nil)
 		if err != nil {
 			t.Fatalf("backend=%q: %v", backend, err)
 		}
@@ -61,7 +62,7 @@ func TestBuildClientCertExtractor_DefaultIsTLSPeer(t *testing.T) {
 
 func TestBuildClientCertExtractor_HeaderRequiresName(t *testing.T) {
 	t.Parallel()
-	_, _, err := BuildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: "header"})
+	_, _, err := BuildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: "header"}, nil)
 	if err == nil {
 		t.Fatal("expected error: header backend without header.name")
 	}
@@ -73,7 +74,7 @@ func TestBuildClientCertExtractor_HeaderOK(t *testing.T) {
 		Enabled: true,
 		Backend: "proxy", // alias for "header"
 		Header:  config.MTLSHeaderConfig{Name: "X-SSL-Client-Cert", Encoding: "pem"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("BuildClientCertExtractor: %v", err)
 	}
@@ -90,7 +91,7 @@ func TestBuildClientCertExtractor_HeaderOK(t *testing.T) {
 
 func TestBuildClientCertExtractor_UnknownBackend(t *testing.T) {
 	t.Parallel()
-	if _, _, err := BuildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: "bogus"}); err == nil {
+	if _, _, err := BuildClientCertExtractor(config.MTLSConfig{Enabled: true, Backend: "bogus"}, nil); err == nil {
 		t.Fatal("expected error: unknown backend")
 	}
 }
@@ -254,5 +255,32 @@ func TestBuildSessionManager_MemoryAndSessionBackendOverride(t *testing.T) {
 	}
 	if _, err := BuildSessionManager(config.IdentityConfig{SessionBackend: "carrier-pigeon"}, 0, nil, nil, postgresbackend.Dialect("")); err == nil {
 		t.Fatal("expected error: unknown session backend")
+	}
+}
+
+// TestBuildClientCertExtractor_ThreadsPeerTrust proves the compiled
+// security.trusted_proxies checker reaches the header extractor — the seam
+// that gates a peer-forged cert header (unset checker = legacy behavior,
+// covered by the nil-arg tests above).
+func TestBuildClientCertExtractor_ThreadsPeerTrust(t *testing.T) {
+	t.Parallel()
+	checker, err := peertrust.NewChecker([]string{"10.0.0.0/8"})
+	if err != nil {
+		t.Fatalf("NewChecker: %v", err)
+	}
+	ex, _, err := BuildClientCertExtractor(config.MTLSConfig{
+		Enabled: true,
+		Backend: "header",
+		Header:  config.MTLSHeaderConfig{Name: "X-SSL-Client-Cert"},
+	}, checker)
+	if err != nil {
+		t.Fatalf("BuildClientCertExtractor: %v", err)
+	}
+	h, ok := ex.(*security.HeaderClientCertExtractor)
+	if !ok {
+		t.Fatalf("extractor type = %T", ex)
+	}
+	if h.PeerTrust != checker {
+		t.Errorf("PeerTrust not threaded: got %v, want the compiled checker", h.PeerTrust)
 	}
 }

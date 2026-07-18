@@ -3,10 +3,10 @@ package sso
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/snaplink/sso/interfaces/middleware"
@@ -198,126 +198,6 @@ func writeSSFError(ctx HandlerContext, code string) {
 	})
 }
 
-// DefaultTenantSuspensionCacheTTL bounds how long a tenant's
-// suspension state may be cached between lookups. Short enough that
-// a Suspended → Active or Active → Suspended flip propagates
-// promptly across the fleet; long enough that hot-path token
-// validation doesn't hammer the tenant store on every request.
-const DefaultTenantSuspensionCacheTTL = 30 * time.Second
-
-// ErrTenantSuspended is returned by Validate when the token's
-// owning client belongs to a tenant whose Status is Suspended.
-// Resource paths map this to invalid_token; introspect maps it to
-// inactive — same shape every other validation failure produces, so
-// an attacker can't probe "is this tenant suspended?" by inspecting
-// the error.
-var ErrTenantSuspended = errors.New("sso: tenant suspended")
-
-// suspensionCacheEntry pairs a tenant's suspended state with its
-// freshness deadline. Caching the boolean lets the hot path skip the
-// tenant.Store round-trip on every token validation.
-type suspensionCacheEntry struct {
-	suspended bool
-	expiresAt time.Time
-}
-
-// suspensionCache is a tiny TTL map indexed by tenant ID. Sized for
-// the typical tens-to-low-thousands of tenants; if you need more,
-// swap to an LRU. Reads take RLock so they don't contend on the hot
-// validate path.
-type suspensionCache struct {
-	mu      sync.RWMutex
-	entries map[string]suspensionCacheEntry
-	ttl     time.Duration
-}
-
-func newSuspensionCache(ttl time.Duration) *suspensionCache {
-	return &suspensionCache{
-		entries: make(map[string]suspensionCacheEntry),
-		ttl:     ttl,
-	}
-}
-
-func (c *suspensionCache) get(tenantID string) (suspended bool, fresh bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	e, ok := c.entries[tenantID]
-	if !ok {
-		return false, false
-	}
-	if time.Since(e.expiresAt) > 0 {
-		return false, false
-	}
-	return e.suspended, true
-}
-
-func (c *suspensionCache) put(tenantID string, suspended bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries[tenantID] = suspensionCacheEntry{
-		suspended: suspended,
-		expiresAt: time.Now().Add(c.ttl),
-	}
-}
-
-func (c *suspensionCache) invalidate(tenantID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.entries, tenantID)
-}
-
-// WithTenantSuspensionCheck enables a post-validation gate: every
-// token whose owning client is bound to a tenant
-// (Client.TenantID != "") has the tenant's Status looked up; tokens
-// whose tenant is Suspended fail validation. Combined with the
-// existing tenant_mismatch gate at issuance, this closes the gap
-// where a token issued while the tenant was Active continues to
-// work after suspension.
-//
-// Lookups are cached per tenant ID for ttl (default
-// DefaultTenantSuspensionCacheTTL when ttl <= 0). A tenant store
-// outage is treated as fail-open — the request proceeds with the
-// cached value (or no check, if the cache hasn't seen this tenant
-// yet) — because we'd rather serve stale-Active than 401 every
-// request during a tenant store partition.
-//
-// No-op when no tenant store has been wired via [WithTenantStore].
-func WithTenantSuspensionCheck(ttl time.Duration) Option {
-	return func(s *Server) {
-		if ttl <= 0 {
-			ttl = DefaultTenantSuspensionCacheTTL
-		}
-		s.tenantSuspensionEnabled = true
-		s.tenantSuspensionCache = newSuspensionCache(ttl)
-	}
-}
-
-// InvalidateTenantSuspensionCache clears the cached suspension state
-// for tenantID. Wire this into admin SetStatus handlers so that an
-// operator flipping Suspended → Active or Active → Suspended takes
-// effect on the next validate, not after the TTL expires.
-//
-// When an invalidation bus is wired ([WithInvalidationBus]), this also
-// publishes the change so every other replica clears its local cache
-// too — closing the cross-replica window where a just-suspended tenant
-// is still honored elsewhere until that node's TTL elapses. Publish
-// failures are logged, not propagated: the local invalidation already
-// succeeded and peers fall back to their TTL, matching the suspension
-// check's fail-open design.
-//
-// Safe to call when no cache is configured (no-op).
-func (s *Server) InvalidateTenantSuspensionCache(tenantID string) {
-	if s.tenantSuspensionCache != nil {
-		s.tenantSuspensionCache.invalidate(tenantID)
-	}
-	if s.invalidationBus != nil {
-		evt := cluster.Event{Kind: cluster.KindTenantSuspension, Key: tenantID}
-		if err := s.invalidationBus.Publish(context.Background(), evt); err != nil {
-			s.logger.Error("invalidation bus publish failed", "kind", string(evt.Kind), "key", tenantID, "error", err)
-		}
-	}
-}
-
 // InvalidateClientCache evicts the cached client entity for clientID from
 // the opt-in per-login ClientStore cache (WithClientStoreCache). Wire this
 // into every client-mutation path — admin ClientAdminService
@@ -438,4 +318,80 @@ func (s *Server) applyTokenRevocation(ctx context.Context, evt cluster.Event) {
 // jwtExpUnsafe extracts the exp claim from a JWT without validation.
 func jwtExpUnsafe(token string) int64 {
 	return handler.JWTExpUnsafe(token)
+}
+
+// revocationSeeder is the same seam boot uses to seed the issuers'
+// in-process revocation deny-sets from the durable RevocationStore
+// (cmd/sso-server/serverbuildsign.seedRevocations). Re-used on
+// invalidation-bus recovery so a KindTokenRevoked event lost during the
+// outage is re-applied from the store instead of being lost forever.
+type revocationSeeder interface {
+	SeedRevocations(context.Context) error
+}
+
+// resubscribeAndReseed opens a fresh bus subscription and then converges the
+// state this replica may have missed while degraded. Ordering is load-bearing:
+// subscribe FIRST (re-seeding before the new stream exists would open a fresh
+// loss window between re-seed and subscribe), re-seed SECOND, and only then
+// does the caller clear degraded — readiness must not go green while local
+// state is still stale. Events buffered on the new stream during the re-seed
+// are applied right after; invalidations are idempotent so the overlap is safe.
+//
+// The subscription rides its own child context so an abandoned stream (re-seed
+// failed, the backoff loop will open another) releases its bus registration /
+// watch instead of accumulating one per retry for the life of the process.
+func (s *Server) resubscribeAndReseed(ctx context.Context, attempt int) (<-chan cluster.Event, context.CancelFunc, bool) {
+	subCtx, cancel := context.WithCancel(ctx)
+	next, err := s.invalidationBus.Subscribe(subCtx)
+	if err != nil {
+		cancel()
+		if ctx.Err() == nil {
+			s.logger.Error("invalidation bus resubscribe failed, will retry", "attempt", attempt, "error", err)
+		}
+		return nil, nil, false
+	}
+	if err := s.reseedInvalidationState(ctx); err != nil {
+		// Fail-safe: a partial re-seed must NOT clear degraded — /readyz stays
+		// red and the loop retries the whole subscribe+re-seed cycle after
+		// backoff. Audited per attempt (rate-bounded by the backoff cadence)
+		// because "bus is back but the durable re-read failed" is a distinct,
+		// actionable fault the one-per-transition degraded event can't convey.
+		cancel()
+		s.logger.Error("invalidation bus resubscribed but re-seed failed; staying degraded", "attempt", attempt, "error", err)
+		s.recordInvalidationBusEvent(eventInvalidationBusDegraded, audit.OutcomeFailure, invalidationBusReseedFailedReason)
+		return nil, nil, false
+	}
+	return next, cancel, true
+}
+
+// reseedInvalidationState re-applies everything a lost invalidation Event
+// could have carried. TTL-backed caches are flushed (their next read
+// re-fetches from the authoritative store), and the revocation deny-sets are
+// re-seeded from the durable store — the one target with NO TTL safety net: a
+// missed KindTokenRevoked would otherwise honor a revoked token until its own
+// exp. KindSigningKeyRotation is deliberately absent — peer-key convergence is
+// owned by the signing-key aggregation loop's own subscribeAndSeed self-heal.
+func (s *Server) reseedInvalidationState(ctx context.Context) error {
+	s.flushInvalidationCaches()
+	return s.reseedRevocationDenySets(ctx)
+}
+
+// reseedRevocationDenySets re-runs the boot-time SeedRevocations pass on every
+// registered issuer that exposes the seam. Seeding is additive + idempotent
+// (revocation_set.go), so re-running it over a live issuer is safe; a nil
+// RevocationStore inside the issuer is a no-op exactly as at boot. Every
+// issuer is attempted even after a failure so one broken store doesn't stop
+// the others from converging; any error keeps the replica degraded.
+func (s *Server) reseedRevocationDenySets(ctx context.Context) error {
+	var errs []error
+	for name, ti := range s.tokenIssuers {
+		seeder, ok := ti.(revocationSeeder)
+		if !ok {
+			continue
+		}
+		if err := seeder.SeedRevocations(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("issuer %s: %w", name, err))
+		}
+	}
+	return errors.Join(errs...)
 }

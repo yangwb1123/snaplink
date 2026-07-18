@@ -106,6 +106,7 @@ const (
 	EventClientRegistered                    = auditspi.EventClientRegistered
 	EventClientUpdated                       = auditspi.EventClientUpdated
 	EventCodeSent                            = auditspi.EventCodeSent
+	EventConnectionAuthenticatorBuildFailed  = auditspi.EventConnectionAuthenticatorBuildFailed
 	EventConsentDenied                       = auditspi.EventConsentDenied
 	EventConsentGranted                      = auditspi.EventConsentGranted
 	EventConsentRevoked                      = auditspi.EventConsentRevoked

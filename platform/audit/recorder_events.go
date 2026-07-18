@@ -328,3 +328,26 @@ func RecordSigningKeyRotationCoordinated(rec *Recorder, ctx context.Context, out
 	SetMeta(e, "outcome", outcome)
 	rec.Record(ctx, e)
 }
+
+// RecordConnectionAuthenticatorBuildFailed emits a
+// connection_authenticator_build_failed event when a resolved B2B connection's
+// upstream authenticator cannot be built from its stored Config. This is the
+// OPERATOR's misconfiguration signal: the wire response collapses to the same
+// unsupported_provider shape as an unknown provider (anti-enumeration), so
+// this event + the server log are the only places the detail may appear.
+// reason is the build error text — Connection.Config is admin:write-only
+// trusted input and the validation errors name missing KEYS, never secret
+// VALUES, so it is safe to record.
+func RecordConnectionAuthenticatorBuildFailed(rec *Recorder, ctx context.Context, connectionID, tenantID, reason string) {
+	if rec == nil {
+		return
+	}
+	e := &Event{
+		Type:     EventConnectionAuthenticatorBuildFailed,
+		Outcome:  OutcomeFailure,
+		TenantID: tenantID,
+	}
+	SetMeta(e, "connection_id", connectionID)
+	SetMeta(e, "reason", reason)
+	rec.Record(ctx, e)
+}

@@ -133,7 +133,7 @@ func (b *appBuilder) wireCAEPReceiverMesh() error {
 func (b *appBuilder) wireMTLSLockoutProxiesCORS() error {
 	cfg, logger := b.cfg, b.logger
 	if cfg.Security.MTLS.Enabled {
-		extractor, mode, err := serverbuildstore.BuildClientCertExtractor(cfg.Security.MTLS)
+		extractor, mode, err := serverbuildstore.BuildClientCertExtractor(cfg.Security.MTLS, b.peerTrust)
 		if err != nil {
 			return fmt.Errorf("mtls extractor: %w", err)
 		}

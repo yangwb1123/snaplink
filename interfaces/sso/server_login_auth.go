@@ -23,6 +23,14 @@ import (
 func (s *Server) authenticateUser(ctx HandlerContext, req *login.Request, client *Client) (*AuthResult, bool) {
 	auth, err := s.getAuthenticator(req.Provider)
 	if err != nil {
+		// Enterprise-connection dispatch: an HRD connection_required directive
+		// makes the UI re-post with provider=<connection id>; a statically-
+		// registered name always WINS (checked first). Any connection
+		// miss/failure falls through to the SAME unsupported_provider response
+		// as an unknown provider (anti-enumeration).
+		auth, err = s.connectionLoginAuthenticator(ctx, req.Provider)
+	}
+	if err != nil {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, core.ErrUnsupportedProvider, req.State))
 		return nil, true
 	}

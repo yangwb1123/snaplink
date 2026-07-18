@@ -7,7 +7,7 @@ Principal Security Engineer · Protocol Expert
 Verify RFC compliance and identify exploitable security flaws.
 Do not approve a merge with a Critical or High severity unresolved.
 
-Read `.ai/prompts/shared/engineering-principles.md` and `.ai/prompts/shared/review-checklists.md` before starting.
+Read `ai-dev/ai/prompts-shared/engineering-principles.md` and `ai-dev/ai/prompts-shared/review-checklists.md` before starting.
 
 ---
 
@@ -113,7 +113,7 @@ For each STRIDE category, list the most significant threat and its mitigation:
 
 ## Required Output
 
-Produce findings using the format in `.ai/prompts/shared/output-format.md`.
+Produce findings using the format in `ai-dev/ai/prompts-shared/output-format.md`.
 
 Sort findings: Critical → High → Medium → Low → Info.
 

@@ -1,7 +1,7 @@
 // Package importcmd is the bulk user-import subcommand for the sso-ctl
 // multi-command binary. It bulk-imports users from external identity providers
-// (Auth0, Keycloak, generic CSV) into the SSO server's user store — sqlite or
-// postgres, selected with --backend. It writes directly to the database
+// (Auth0, Keycloak, Okta, generic CSV) into the SSO server's user store —
+// sqlite or postgres, selected with --backend. It writes directly to the database
 // without requiring a running server instance, making it safe to use as a
 // migration pre-step before the first deploy or as part of a scripted
 // cutover.
@@ -10,6 +10,7 @@
 //
 //	auth0     Auth0 Users Export JSON (array of user objects)
 //	keycloak  Keycloak realm export JSON (the "users" array from a full realm export)
+//	okta      Okta users export: JSON array (GET /api/v1/users) or NDJSON stream
 //	csv       Generic CSV: username,email,name,password_hash,hash_format
 //
 // Usage:
@@ -56,7 +57,7 @@ type importedUser struct {
 	// ExternalID is the source-system's opaque identifier, preserved for
 	// de-duplication and cross-reference.
 	ExternalID string
-	// Provider is the source format tag ("auth0", "keycloak", "csv").
+	// Provider is the source format tag ("auth0", "keycloak", "okta", "csv").
 	Provider string
 	Email    string
 	Name     string
@@ -122,7 +123,7 @@ func parseFlags(args []string) importFlags {
 	dsn := fs.String("dsn", "", "user store DSN (required unless --dry-run); sqlite file DSN or postgres connection string, per --backend")
 	backend := fs.String("backend", backendSQLite, "user store backend: sqlite | postgres")
 	dialect := fs.String("dialect", "", "postgres dialect: postgres | cockroach (only with --backend postgres)")
-	format := fs.String("format", "", "input format: auth0 | keycloak | csv (required)")
+	format := fs.String("format", "", "input format: auth0 | keycloak | okta | csv (required)")
 	file := fs.String("file", "-", "path to the import file, or - for stdin")
 	dryRun := fs.Bool("dry-run", false, "print what would be imported without writing")
 	batchSize := fs.Int("batch-size", 100, "rows per batch (ignored for dry-run)")
@@ -155,7 +156,7 @@ func parseFlags(args []string) importFlags {
 // usageFunc returns the flag-set usage printer for the CLI.
 func usageFunc(fs *flag.FlagSet) func() {
 	return func() {
-		fmt.Fprintf(os.Stderr, `%s — bulk user import from Auth0 / Keycloak / CSV into the SSO user store.
+		fmt.Fprintf(os.Stderr, `%s — bulk user import from Auth0 / Keycloak / Okta / CSV into the SSO user store.
 
 Usage:
   %s --dsn <dsn> --format <fmt> [--backend sqlite|postgres] [--file <path>] [--dry-run]
@@ -167,6 +168,7 @@ Flags:
 Formats:
   auth0     Auth0 Users Export JSON  (array of objects with email, password_hash, etc.)
   keycloak  Keycloak realm export JSON (the "users" array from a full realm dump)
+  okta      Okta users export: JSON array (GET /api/v1/users) or NDJSON stream
   csv       Header row: username,email,name,password_hash,hash_format
 
 Examples:

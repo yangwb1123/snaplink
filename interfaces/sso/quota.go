@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"golang.org/x/time/rate"
-
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -100,12 +98,6 @@ func (s *Server) CheckClientCreateQuota(ctx HandlerContext, tenantID string) (ch
 // store error permanently over-counts the tenant's client usage.
 func (s *Server) ReleaseClientCreateQuota(ctx context.Context, tenantID string) {
 	s.releaseResourceQuota(ctx, tenantID, core.ResourceClients)
-}
-
-// rateLimiterEntry pairs a token bucket limiter with the grant type it
-// gates. Stored in grantRateLimiters by grant type URN.
-type rateLimiterEntry struct {
-	limiter *rate.Limiter
 }
 
 // defaultClientRegistrationRatePerSec / defaultClientRegistrationRateBurst

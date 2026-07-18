@@ -222,6 +222,14 @@ func (s *ClientAdminService) Update(ctx context.Context, in *adminv1.UpdateClien
 	if in == nil || in.Client == nil || in.Client.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "client.id required")
 	}
+	// Start from the STORED client, not a fresh protoToClient() — the admin
+	// Client proto exposes only 8 of the 30+ sso.Client fields (no
+	// RequirePKCE, TenantID, AllowedResources, JWKS, ...). Overlaying just
+	// the proto-exposed fields onto the existing record, rather than
+	// building a mostly-zero-valued struct and patching a couple of fields
+	// back in, means every field the proto CAN'T express survives an Update
+	// automatically — including ones added to sso.Client after this RPC was
+	// written.
 	existing, err := s.store.Get(ctx, in.Client.Id)
 	if err != nil || existing == nil {
 		return nil, status.Error(codes.NotFound, "client not found")

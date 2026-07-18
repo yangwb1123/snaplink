@@ -37,6 +37,7 @@ import (
 	"github.com/snaplink/sso/protocols/compliance"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/shared/security/peertrust"
 	"github.com/snaplink/sso/shared/spi"
 )
 
@@ -66,6 +67,11 @@ type appBuilder struct {
 	pgDialect postgresbackend.Dialect
 
 	metricsRegistry *metrics.Metrics
+
+	// peerTrust is the ONE compiled security.trusted_proxies checker fanned
+	// out to every proxy-header consumer (region header resolver, mTLS
+	// header-cert extractor); nil when the knob is unset (legacy behavior).
+	peerTrust *peertrust.Checker
 
 	opts                 []sso.Option
 	storageHealthSources []sso.StorageHealthSource

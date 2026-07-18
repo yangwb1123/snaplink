@@ -55,18 +55,15 @@ func (s *Server) SetAdminAPIGateEnabled(enabled bool) bool {
 }
 
 // SetWebSPAGateEnabled flips the LIVE feature_gates.web_spa value read by
-// webSPAGateOn. Returns false when NONE of the SPA filesystems (admin
-// console / hosted login / portal / developer portal) were ever wired via
-// their With*FS option at NewServer time: with no mounted mux entry for any
-// of them, flipping this flag has no observable effect, so the caller
-// (config/reload) should report the change as Ignored rather than Applied —
-// mirroring SetRateLimitPolicy's "nothing to swap into" contract.
+// webSPAGateOn. sso-server no longer serves any static frontend itself (see
+// buildProbeMux) — the only remaining consumer of this gate is
+// mountBrandingEndpoint (server_me.go), which the per-host branding lookup
+// still uses. Returns false (report the change as Ignored, mirroring
+// SetRateLimitPolicy's "nothing to swap into" contract) when no tenant store
+// is wired, since branding has nothing to key off without one.
 func (s *Server) SetWebSPAGateEnabled(enabled bool) bool {
 	s.webSPALive.Store(enabled)
-	// tenantStore also gates mountBrandingEndpoint (server_me.go); omitting
-	// it here would misreport Ignored for a toggle that did affect it.
-	return s.adminConsoleFS != nil || s.hostedLoginFS != nil ||
-		s.portalFS != nil || s.developerPortalFS != nil || s.tenantStore != nil
+	return s.tenantStore != nil
 }
 
 func (s *Server) AuthCodeStore() oauth.AuthCodeStore         { return s.authCodeStore }

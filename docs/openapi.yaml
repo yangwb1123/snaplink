@@ -193,6 +193,106 @@ paths:
                       type: string
                     example: ["v1"]
 
+  /api/v1/setup/status:
+    get:
+      tags: [discovery]
+      summary: First-run setup status (opt-in, public).
+      description: |
+        Boolean probe the admin console loads to decide whether to
+        redirect a fresh install to the `/setup/` wizard. Detail-free by
+        design (anti-enumeration). Only active when `setup_wizard.enabled`;
+        404 `not_found` otherwise. `initialized` is true once any admin
+        exists (created by the wizard OR seeded from config/bootstrap).
+      operationId: getSetupStatus
+      responses:
+        "200":
+          description: Setup status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  initialized: { type: boolean }
+                  setup_required: { type: boolean }
+        "404":
+          description: "`not_found` — the setup wizard is not enabled."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/setup:
+    post:
+      tags: [discovery]
+      summary: First-run provisioning (opt-in, public, single-use).
+      description: |
+        Creates the FIRST administrator (username + password, granted the
+        `sso-admin` role carrying `admin:*`) and an optional first
+        application, then LOCKS: any later call returns `409
+        already_initialized` once an admin exists, so it cannot be replayed
+        to plant a second admin. Only active when `setup_wizard.enabled`
+        (else 404). Requires the identity, permissions and
+        `self_service.password` stores to be wired.
+      operationId: postSetup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [admin]
+              properties:
+                admin:
+                  type: object
+                  required: [username, password]
+                  properties:
+                    username: { type: string }
+                    password: { type: string, minLength: 8 }
+                application:
+                  type: object
+                  description: Optional first OAuth/OIDC client.
+                  properties:
+                    name: { type: string }
+                    redirect_uris:
+                      type: array
+                      items: { type: string }
+      responses:
+        "200":
+          description: First admin (and optional application) created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  created:
+                    type: object
+                    properties:
+                      admin: { type: string }
+                      application:
+                        type: object
+                        properties:
+                          client_id: { type: string }
+                          client_secret: { type: string }
+        "400":
+          description: "`invalid_request` — malformed body or missing/short admin credentials."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "`already_initialized` — an admin already exists; the wizard is locked."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: "`not_found` — the setup wizard is not enabled."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /.well-known/jwks.json:
     get:
       tags: [discovery]
@@ -3554,6 +3654,10 @@ paths:
         - name: client_id
           in: query
           schema: { type: string }
+        - name: tenant_id
+          in: query
+          schema: { type: string }
+          description: Narrow to one tenant's events (per-tenant billing / incident triage).
         - name: provider
           in: query
           schema: { type: string }
@@ -3649,6 +3753,10 @@ paths:
         - name: client_id
           in: query
           schema: { type: string }
+        - name: tenant_id
+          in: query
+          schema: { type: string }
+          description: Narrow to one tenant's events (per-tenant billing / incident triage).
         - name: provider
           in: query
           schema: { type: string }
@@ -5820,9 +5928,12 @@ paths:
       summary: Per-tenant usage/metering report.
       description: |
         Returns aggregated usage for the tenant over a period (logins, tokens
-        issued, active users, MFA challenges), computed from the audit_events
-        table. Admin-gated (admin:read) via the /api/v1/admin/ prefix. Mounted
-        only when a usage aggregator is wired (tenant.usage_metering).
+        issued, active users, active clients, MFA challenges), computed from
+        the audit_events table. Active users = distinct actor ids with a
+        successful login; active clients = distinct client ids across the
+        tenant's events. Admin-gated (admin:read) via the /api/v1/admin/
+        prefix. Mounted only when a usage aggregator is wired
+        (tenant.usage_metering).
       operationId: getTenantUsage
       security:
         - bearerAuth: []
@@ -5863,10 +5974,10 @@ paths:
       description: |
         Returns the N tenants with the most successful logins over a period,
         with the same aggregated counters as the per-tenant usage report
-        (logins, tokens issued, active users, MFA challenges), computed from
-        the audit_events table. Admin-gated (admin:read) via the
-        /api/v1/admin/ prefix. Mounted only when a usage aggregator is wired
-        (tenant.usage_metering).
+        (logins, tokens issued, active users, active clients, MFA
+        challenges), computed from the audit_events table. Admin-gated
+        (admin:read) via the /api/v1/admin/ prefix. Mounted only when a
+        usage aggregator is wired (tenant.usage_metering).
       operationId: getAdminTopTenants
       security:
         - bearerAuth: []

@@ -66,6 +66,7 @@ func buildPasswordAuthVerifier(a *config.PasswordConfig, passwordStore sso.Passw
 	} else {
 		verifier, seeded = BuildBcryptPasswordVerifier(a.Users, logger)
 	}
+	verifier = chainRuntimeStoreVerifier(verifier, passwordStore, userProvider)
 	// Imported-user login: chain an attribute-backed multi-format verifier
 	// after the primary so users migrated via cmd/sso-import (whose hash
 	// lives on User.Attributes in bcrypt/argon2id/PBKDF2) can authenticate.
@@ -99,6 +100,30 @@ func buildPasswordAuthVerifier(a *config.PasswordConfig, passwordStore sso.Passw
 		logger.Info("imported-hash login enabled (sso-import users can authenticate)", "dummy_bcrypt_cost", a.ImportedHashDummyCost)
 	}
 	return verifier, seeded, nil
+}
+
+// chainRuntimeStoreVerifier chains a UserProvider-resolving store verifier onto
+// base so runtime-created users — self-service signup, admin user-create/reset,
+// and the first-run setup wizard, all of which write a credential to the store
+// keyed by userID (== the login username) — can authenticate. The YAML verifier
+// (base) only knows usernames seeded from authenticators.password.users at boot,
+// so without this those users could never log in. NewStoredPasswordVerifier
+// resolves username -> userID via GetByID and spends a cost-matched dummy
+// compare on an unknown user (no enumeration oracle); ChainPasswordVerifier runs
+// every verifier on a failed login regardless, so base stays byte-identical and
+// first. No-op when either dependency is absent.
+func chainRuntimeStoreVerifier(base authenticators.PasswordVerifier, passwordStore sso.PasswordCredentialStore, userProvider sso.UserProvider) authenticators.PasswordVerifier {
+	if passwordStore == nil || userProvider == nil {
+		return base
+	}
+	resolve := func(ctx context.Context, username string) (string, error) {
+		u, err := userProvider.GetByID(ctx, username)
+		if err != nil || u == nil {
+			return "", err // -> the verifier's timing-parity dummy-compare miss path
+		}
+		return u.ID, nil
+	}
+	return authenticators.NewChainPasswordVerifier(base, authenticators.NewStoredPasswordVerifier(passwordStore, resolve))
 }
 
 func appendPasswordAuthenticator(auths []sso.Authenticator, a *config.PasswordConfig, passwordStore sso.PasswordCredentialStore, userProvider sso.UserProvider, logger spi.Logger) ([]sso.Authenticator, error) {

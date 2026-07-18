@@ -81,7 +81,7 @@ type SPIFFEConfig struct {
 // directory_fanout_test.go's dirFileCountExemptions.
 //
 // Disabled (the default) ⇒ byte-identical to a build without the feature.
-// Mirrors TrustConfig's wiring model: the reference sso-server binary does
+// The reference sso-server binary does
 // NOT auto-wire this section (an Issuer/Validator pair is signing-key
 // infrastructure — reusing the server's own signing issuer, whose
 // SignJWT/JWKS methods already satisfy txntoken.Signer / core.JWKSProvider
@@ -189,6 +189,8 @@ type TrustDevicePostureConfig struct {
 // TrustSerializationConfig mirrors trust.SerializationConfig — see there for
 // the default-off wire-safety contract (both flags false ⇒ no session
 // metadata, no token claim, byte-identical to scoring never having run).
+// Consumed by wireTrustScoring via sso.WithTrustScoreSerialization when
+// either flag is set.
 type TrustSerializationConfig struct {
 	StampSessionMetadata bool   `yaml:"stamp_session_metadata"`
 	IncludeTokenClaim    bool   `yaml:"include_token_claim"`

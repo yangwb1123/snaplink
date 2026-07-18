@@ -127,11 +127,19 @@ func (s *MemoryRevocationStore) Prune(_ context.Context, nowUnix int64) error {
 	return nil
 }
 
-// seedRevokedFromStore bulk-loads still-valid revocations from store into the
-// in-process map m (the caller MUST hold m's write lock). Already-expired
-// entries are skipped — the prune-not-early gate: only an entry whose exp is
-// still >= now must keep being honored. A nil store is a no-op.
-func seedRevokedFromStore(ctx context.Context, m map[string]int64, store RevocationStore) error {
+// seedRevokedFromStore bulk-loads still-valid revocations from store and merges
+// them into the in-process map m. The store Load — durable I/O (sqlite query /
+// redis round-trip) — runs WITHOUT mu held: it touches only its own returned
+// map, not m, so keeping the write lock across it would needlessly stall every
+// concurrent Validate (RLock) behind store latency. This matters because
+// re-seed runs on a LIVE replica during invalidation-bus recovery, not only at
+// boot before traffic. mu is taken ONLY around the in-memory merge. Seeding is
+// additive + idempotent, so a Validate racing between the Load and the merge is
+// safe (it observes either the pre-seed set or the seeded one, never a torn
+// entry). Already-expired entries are skipped — the prune-not-early gate: only
+// an entry whose exp is still >= now must keep being honored. A nil store is a
+// no-op; mu may be nil ONLY when store is nil.
+func seedRevokedFromStore(ctx context.Context, mu *sync.RWMutex, m map[string]int64, store RevocationStore) error {
 	if store == nil {
 		return nil
 	}
@@ -140,6 +148,8 @@ func seedRevokedFromStore(ctx context.Context, m map[string]int64, store Revocat
 		return err
 	}
 	now := time.Now().Unix()
+	mu.Lock()
+	defer mu.Unlock()
 	for tok, exp := range loaded {
 		if exp >= now {
 			m[tok] = exp

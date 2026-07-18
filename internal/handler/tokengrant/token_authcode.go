@@ -122,6 +122,8 @@ func authCodeIssueAccessToken(d AuthCodeGrantDeps, ctx core.HandlerContext, clie
 		TTL:                  client.AccessTokenTTL,
 		ConfirmationJKT:      dpopJKT,
 		ConfirmationX5TS256:  mtlsX5T,
+		// OIDC §5.5: login-time claims param rides the token for /userinfo.
+		RequestedClaims: oauth.CloneRawJSON(info.RequestedClaims),
 	}, scopes)
 	if err != nil {
 		d.LogErrorCtx(ctx, "token issuance failed", "strategy", strategy, "error", err)
@@ -224,16 +226,25 @@ func authCodeIssueIDToken(d AuthCodeGrantDeps, ctx core.HandlerContext, client *
 	if !emit {
 		return
 	}
+	// OIDC Core §5.5: project the RP-requested claims captured at /auth/login
+	// so the exchange-minted id_token matches the direct-mint flow
+	// (emitLoginIDToken) — no claims parameter means all attributes pass
+	// through unchanged (backward compatible).
+	claims := info.Attributes
+	if len(info.RequestedClaims) > 0 {
+		claims = oidc.ProjectIDTokenClaims(claims, info.RequestedClaims)
+	}
 	idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-		Subject:      issuedSub,
-		Audience:     client.ID,
-		Nonce:        info.Nonce,
-		AuthTime:     authTime,
-		AMR:          handler.AmrOrProvider(info.AuthMethods, info.Provider),
-		ACR:          info.ACR,
-		Claims:       info.Attributes,
-		AccessToken:  accessToken,
-		DeviceSecret: deviceSecretValue,
+		Subject:         issuedSub,
+		Audience:        client.ID,
+		Nonce:           info.Nonce,
+		AuthTime:        authTime,
+		AMR:             handler.AmrOrProvider(info.AuthMethods, info.Provider),
+		ACR:             info.ACR,
+		Claims:          claims,
+		AccessToken:     accessToken,
+		DeviceSecret:    deviceSecretValue,
+		RequestedClaims: info.RequestedClaims,
 	})
 	if err != nil {
 		d.SrvLogger().Error("id token issue failed", "error", err, "client", client.ID, "user", info.UserID)

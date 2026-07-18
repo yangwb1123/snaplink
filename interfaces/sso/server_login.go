@@ -2,11 +2,14 @@ package sso
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/snaplink/sso/internal/auth/login"
+	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/core"
 )
@@ -187,7 +190,13 @@ func (s *Server) credentialLoginStage(ctx HandlerContext, req *login.Request, cl
 //   - RFC 6749 §5.1: stamps Cache-Control: no-store + Pragma: no-cache, because
 //     /auth/login bodies carry access_token + refresh_token (and PKCE-flow code
 //     values) an intermediary cache must not retain.
-//   - Binds the request body; a bind error writes 400 invalid_request.
+//   - Binds the request: GET reads query params (see bindLoginRequestFromQuery
+//     — a real top-level browser navigation is the only way to deliver a
+//     cross-origin 3xx redirect to a federated connection's authorize
+//     endpoint; a fetch()/XHR POST can't do it, the browser won't follow a
+//     cross-origin redirect out of a same-origin fetch), everything else
+//     binds the JSON/form body exactly as before. A bind error writes 400
+//     invalid_request.
 //   - RFC 9126 §4: when request_uri is present, fetches the pushed authorization
 //     parameters and merges them in (PAR holds AUTHORIZATION-SHAPED params —
 //     response_type, redirect_uri, scope; credentials still arrive on THIS
@@ -199,7 +208,9 @@ func (s *Server) bootstrapLoginRequest(ctx HandlerContext) (login.Request, bool)
 	ctx.Set(ctxKeyLoginStart, time.Now())
 	tokenNoStoreHeaders(ctx)
 	var req login.Request
-	if err := ctx.Bind(&req); err != nil {
+	if ctx.Request().Method == http.MethodGet {
+		req = bindLoginRequestFromQuery(ctx.Request())
+	} else if err := ctx.Bind(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
 		return req, false
 	}
@@ -207,4 +218,175 @@ func (s *Server) bootstrapLoginRequest(ctx HandlerContext) (login.Request, bool)
 		return req, false
 	}
 	return req, true
+}
+
+// bindLoginRequestFromQuery populates the authorization-request-shaped subset
+// of login.Request from URL query parameters, for the ONLY case a bodyless
+// GET reaches /auth/login: a "Sign in with <federated provider>" button
+// doing a real page navigation. Credential/consent/PAR/JAR fields are
+// deliberately NOT bound here — a GET can't carry a credential (it would
+// leak into browser history / server access logs), so credentialLoginStage
+// either dispatches to auth.LoginURL's redirect (the intended path) or, for
+// a non-federated provider, fails closed the same way an empty credential
+// always has.
+func bindLoginRequestFromQuery(r *http.Request) login.Request {
+	q := r.URL.Query()
+	req := login.Request{
+		Provider:            q.Get("provider"),
+		ClientID:            q.Get("client_id"),
+		State:               q.Get("state"),
+		ResponseType:        q.Get("response_type"),
+		RedirectURI:         q.Get("redirect_uri"),
+		Nonce:               q.Get("nonce"),
+		CodeChallenge:       q.Get("code_challenge"),
+		CodeChallengeMethod: q.Get("code_challenge_method"),
+		Prompt:              q.Get("prompt"),
+		LoginHint:           q.Get("login_hint"),
+		ResponseMode:        q.Get("response_mode"),
+		ACRValues:           q.Get("acr_values"),
+		UILocales:           q.Get("ui_locales"),
+	}
+	if scope := q.Get("scope"); scope != "" {
+		req.Scope = strings.Fields(scope)
+	}
+	if resource := q.Get("resource"); resource != "" {
+		req.Resource = strings.Fields(resource)
+	}
+	return req
+}
+
+// --- Tenant suspension cache -----------------------------------------------
+//
+// Lives here (not a dedicated file) because interfaces/sso is at its frozen
+// file-count ceiling (directory_fanout_test.go) — this is otherwise
+// unrelated to the /auth/login pipeline above; it backs the tenant-status
+// gate consulted during token validation.
+
+// DefaultTenantSuspensionCacheTTL bounds how long a tenant's
+// suspension state may be cached between lookups. Short enough that
+// a Suspended → Active or Active → Suspended flip propagates
+// promptly across the fleet; long enough that hot-path token
+// validation doesn't hammer the tenant store on every request.
+const DefaultTenantSuspensionCacheTTL = 30 * time.Second
+
+// ErrTenantSuspended is returned by Validate when the token's
+// owning client belongs to a tenant whose Status is Suspended.
+// Resource paths map this to invalid_token; introspect maps it to
+// inactive — same shape every other validation failure produces, so
+// an attacker can't probe "is this tenant suspended?" by inspecting
+// the error.
+var ErrTenantSuspended = errors.New("sso: tenant suspended")
+
+// suspensionCacheEntry pairs a tenant's suspended state with its
+// freshness deadline. Caching the boolean lets the hot path skip the
+// tenant.Store round-trip on every token validation.
+type suspensionCacheEntry struct {
+	suspended bool
+	expiresAt time.Time
+}
+
+// suspensionCache is a tiny TTL map indexed by tenant ID. Sized for
+// the typical tens-to-low-thousands of tenants; if you need more,
+// swap to an LRU. Reads take RLock so they don't contend on the hot
+// validate path.
+type suspensionCache struct {
+	mu      sync.RWMutex
+	entries map[string]suspensionCacheEntry
+	ttl     time.Duration
+}
+
+func newSuspensionCache(ttl time.Duration) *suspensionCache {
+	return &suspensionCache{
+		entries: make(map[string]suspensionCacheEntry),
+		ttl:     ttl,
+	}
+}
+
+func (c *suspensionCache) get(tenantID string) (suspended bool, fresh bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	e, ok := c.entries[tenantID]
+	if !ok {
+		return false, false
+	}
+	if time.Since(e.expiresAt) > 0 {
+		return false, false
+	}
+	return e.suspended, true
+}
+
+func (c *suspensionCache) put(tenantID string, suspended bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[tenantID] = suspensionCacheEntry{
+		suspended: suspended,
+		expiresAt: time.Now().Add(c.ttl),
+	}
+}
+
+func (c *suspensionCache) invalidate(tenantID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, tenantID)
+}
+
+// flush drops every entry. Used by the invalidation-bus recovery re-seed: a
+// KindTenantSuspension event lost during a bus outage names a tenant we can
+// no longer identify, so every cached suspension state must re-fetch.
+func (c *suspensionCache) flush() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = make(map[string]suspensionCacheEntry)
+}
+
+// WithTenantSuspensionCheck enables a post-validation gate: every
+// token whose owning client is bound to a tenant
+// (Client.TenantID != "") has the tenant's Status looked up; tokens
+// whose tenant is Suspended fail validation. Combined with the
+// existing tenant_mismatch gate at issuance, this closes the gap
+// where a token issued while the tenant was Active continues to
+// work after suspension.
+//
+// Lookups are cached per tenant ID for ttl (default
+// DefaultTenantSuspensionCacheTTL when ttl <= 0). A tenant store
+// outage is treated as fail-open — the request proceeds with the
+// cached value (or no check, if the cache hasn't seen this tenant
+// yet) — because we'd rather serve stale-Active than 401 every
+// request during a tenant store partition.
+//
+// No-op when no tenant store has been wired via [WithTenantStore].
+func WithTenantSuspensionCheck(ttl time.Duration) Option {
+	return func(s *Server) {
+		if ttl <= 0 {
+			ttl = DefaultTenantSuspensionCacheTTL
+		}
+		s.tenantSuspensionEnabled = true
+		s.tenantSuspensionCache = newSuspensionCache(ttl)
+	}
+}
+
+// InvalidateTenantSuspensionCache clears the cached suspension state
+// for tenantID. Wire this into admin SetStatus handlers so that an
+// operator flipping Suspended → Active or Active → Suspended takes
+// effect on the next validate, not after the TTL expires.
+//
+// When an invalidation bus is wired ([WithInvalidationBus]), this also
+// publishes the change so every other replica clears its local cache
+// too — closing the cross-replica window where a just-suspended tenant
+// is still honored elsewhere until that node's TTL elapses. Publish
+// failures are logged, not propagated: the local invalidation already
+// succeeded and peers fall back to their TTL, matching the suspension
+// check's fail-open design.
+//
+// Safe to call when no cache is configured (no-op).
+func (s *Server) InvalidateTenantSuspensionCache(tenantID string) {
+	if s.tenantSuspensionCache != nil {
+		s.tenantSuspensionCache.invalidate(tenantID)
+	}
+	if s.invalidationBus != nil {
+		evt := cluster.Event{Kind: cluster.KindTenantSuspension, Key: tenantID}
+		if err := s.invalidationBus.Publish(context.Background(), evt); err != nil {
+			s.logger.Error("invalidation bus publish failed", "kind", string(evt.Kind), "key", tenantID, "error", err)
+		}
+	}
 }

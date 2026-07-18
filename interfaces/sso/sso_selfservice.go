@@ -2,8 +2,6 @@ package sso
 
 import (
 	"encoding/json"
-	"io/fs"
-	"net/http"
 	"time"
 
 	"github.com/snaplink/sso/domains/identitylink"
@@ -247,37 +245,14 @@ type selfServiceState struct {
 	// feature.
 	cryptoInventory cryptoinventory.Inventory
 
-	// adminConsoleFS, when non-nil, serves the hosted admin console SPA from
-	// an embedded or OS filesystem at /admin/. The console is a standalone
-	// single-page app — it communicates with the server only via the standard
-	// /api/v1/admin/* REST endpoints, which require a Bearer token with
-	// admin:read or admin:write scope. Nil (the default) leaves /admin/
-	// unmounted — byte-identical to a build without the console.
-	adminConsoleFS fs.FS
-
-	// hostedLoginFS, when non-nil, serves the hosted-login SPA from an
-	// embedded or OS filesystem at /login/. The SPA calls /auth/login over
-	// JSON — zero protocol changes to the OAuth/OIDC surface. Nil (the
-	// default) leaves /login/ unmounted — byte-identical to a build without
-	// it. Typically wired by the operator's cmd binary via go:embed.
-	hostedLoginFS fs.FS
-
-	// portalFS, when non-nil, serves the end-user self-service portal SPA from
-	// an embedded or OS filesystem at /portal/. The portal is a standalone
-	// browser client that calls /me, /sessions/me, /consents/me, /me/password
-	// and /me/mfa with the end-user's own Bearer token. Nil (the default)
-	// leaves /portal/ unmounted — byte-identical to a build without it.
-	portalFS fs.FS
-
-	// developerPortalFS, when non-nil, serves the developer-portal SPA from
-	// an embedded or OS filesystem at /developer/. Unlike adminConsoleFS/
-	// portalFS above, this SPA authenticates an ANONYMOUS third-party
-	// developer, not an admin or logged-in end user: it calls POST
-	// /register (RFC 7591 DCR) to self-register a client, then GET/PUT/
-	// DELETE /register/:client_id (RFC 7592), authenticated by the
-	// registration_access_token issued at registration. Nil (the default)
-	// leaves /developer/ unmounted — byte-identical to a build without it.
-	developerPortalFS fs.FS
+	// setupWizardEnabled gates the first-run setup-wizard's public API
+	// endpoints (POST /api/v1/setup, GET /api/v1/setup/status) — see
+	// setupWizardOn in server_signup.go. Wired by cmd only when
+	// setup_wizard.enabled. sso-server no longer serves the wizard's
+	// frontend itself (a separate project does, via a reverse proxy) — this
+	// flag is the sole remaining gate. false (the default) 404s both
+	// endpoints — byte-identical to a build without the feature.
+	setupWizardEnabled bool
 
 	// apiDocsUIHandler and apiDocsSpecHandler, when non-nil, serve the
 	// opt-in embedded API-documentation viewer (WithAPIDocsUI) at GET
@@ -410,40 +385,12 @@ func (s *Server) handleOrgAdminRevokeInvitation(ctx HandlerContext) {
 	selfservice.HandleOrgAdminRevokeInvitation(s, ctx)
 }
 
-// pathDeveloperPortalPrefix is the developer-portal SPA's mount prefix.
-// Held as a const (mirroring pathAdminConsolePrefix/pathHostedLoginPrefix/
-// pathPortalPrefix in server_routes.go, which is at its line budget — this
-// one lives here instead) so mountDeveloperPortalSPA's mux.Handle and
-// StripPrefix uses cannot drift apart.
-const pathDeveloperPortalPrefix = "/developer/"
-
-// WithDeveloperPortalFS serves the developer-portal SPA at /developer/ from
-// the provided filesystem (placed here rather than options_passwd.go,
-// which is at its line budget). Unlike WithAdminConsoleFS/
-// WithSelfServicePortalFS, this SPA authenticates an ANONYMOUS third-party
-// developer: it calls POST /register (RFC 7591 DCR) to self-register a
-// client, then GET/PUT/DELETE /register/:client_id (RFC 7592) with the
-// registration_access_token issued at registration — no admin bearer, no
-// end-user login. Typically wired by embedding web/developer with a
-// go:embed directive in the operator's cmd binary.
-//
-// Nil (the default) leaves /developer/ unmounted — byte-identical to a
-// build without the portal.
-func WithDeveloperPortalFS(developerFS fs.FS) Option {
-	return func(s *Server) { s.developerPortalFS = developerFS }
-}
-
-// mountDeveloperPortalSPA registers the developer-portal SPA's static file
-// server onto mux when wired, exactly mirroring the adminConsoleFS/
-// hostedLoginFS/portalFS mounts in server_routes.go's buildProbeMux (which
-// calls this — that file is at its line budget, so the conditional itself
-// lives here). No-op (byte-identical to a build without the feature) when
-// developerPortalFS is nil; reachability of an actually-mounted entry is
-// gated LIVE by the WebSPA flag (core.GateHTTPHandler), matching the other
-// three SPA mounts, so it hot-toggles without a re-Mount.
-func (s *Server) mountDeveloperPortalSPA(mux *http.ServeMux) {
-	if s.developerPortalFS == nil {
-		return
-	}
-	mux.Handle(pathDeveloperPortalPrefix, core.GateHTTPHandler(s.webSPAGateOn, s.wrapSecurityHeaders(http.StripPrefix(pathDeveloperPortalPrefix, http.FileServerFS(s.developerPortalFS)))))
+// WithSetupWizardEnabled gates the first-run setup wizard's public API
+// (POST /api/v1/setup, GET /api/v1/setup/status — see handleSetup /
+// handleSetupStatus in server_signup.go). sso-server no longer serves the
+// wizard's frontend itself; a separate project does, reverse-proxied
+// alongside this server under the same origin. false (the default) leaves
+// both endpoints 404 — byte-identical to a build without the feature.
+func WithSetupWizardEnabled(enabled bool) Option {
+	return func(s *Server) { s.setupWizardEnabled = enabled }
 }

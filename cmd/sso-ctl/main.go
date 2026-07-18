@@ -5,7 +5,7 @@
 //	sso-ctl audit-verify ...   # verify the audit-log hash chain
 //	sso-ctl audit-export ...   # export or offline-verify a tamper-evident bulk audit bundle
 //	sso-ctl soc2-report ...    # build a SOC2-flavored evidence pack over a verified audit-export bundle
-//	sso-ctl import ...         # bulk-import users (auth0 / keycloak / csv)
+//	sso-ctl import ...         # bulk-import users (auth0 / keycloak / okta / csv)
 //	sso-ctl migrate ...        # offline schema-migration status
 //	sso-ctl snapshot ...       # inspect / verify sealed state snapshots
 //	sso-ctl generate ...       # scaffold a new authenticator / store / handler / grant
@@ -23,6 +23,7 @@ import (
 	"github.com/snaplink/sso/cmd/sso-ctl/auditverify"
 	"github.com/snaplink/sso/cmd/sso-ctl/clientscmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/configcmd"
+	"github.com/snaplink/sso/cmd/sso-ctl/entitiescmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/generate"
 	"github.com/snaplink/sso/cmd/sso-ctl/hashcmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/importcmd"
@@ -31,6 +32,7 @@ import (
 	"github.com/snaplink/sso/cmd/sso-ctl/snapshotcmd"
 	"github.com/snaplink/sso/cmd/sso-ctl/soc2report"
 	"github.com/snaplink/sso/cmd/sso-ctl/tokenscmd"
+	"github.com/snaplink/sso/cmd/sso-ctl/tui"
 )
 
 const progName = "sso-ctl"
@@ -53,6 +55,9 @@ var subcommands = map[string]func([]string) int{
 	"hash":         hashcmd.Run,
 	"tokens":       tokenscmd.Run,
 	"generate":     generate.Run,
+	"tenants":      entitiescmd.RunTenants,
+	"users":        entitiescmd.RunUsers,
+	"tui":          tui.Run,
 }
 
 func main() {
@@ -87,7 +92,7 @@ Commands:
   audit-export   Export or offline-verify a tamper-evident bulk audit bundle (compliance evidence).
   soc2-report    Build a SOC2-flavored evidence pack over a verified audit-export bundle.
   clients        List OAuth clients or inspect a specific client.
-  import         Bulk-import users from auth0 / keycloak / csv into a user store.
+  import         Bulk-import users from auth0 / keycloak / okta / csv into a user store.
   migrate        Offline schema-migration status for a SQLite store.
   sessions       List active sessions or revoke a specific session.
   snapshot       Inspect and verify sealed state snapshots.
@@ -95,6 +100,9 @@ Commands:
   hash           Produce a server-compatible password hash (admin seeding).
   tokens         Revoke an access token or issue a temporary token.
   generate       Scaffold boilerplate for a new authenticator, store, handler, or grant.
+  tenants        Manage tenants (list/get/create/update/delete/set-status).
+  users          Manage admin users (list/get/create/update/delete).
+  tui            Launch the interactive terminal UI (clients/users/tenants).
   version        Print the toolbelt version and build revision.
 
 Run "%s <command> -h" for command-specific flags.

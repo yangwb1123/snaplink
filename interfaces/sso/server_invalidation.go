@@ -3,14 +3,12 @@ package sso
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/platform/cluster"
 	"github.com/snaplink/sso/platform/configaudit"
 	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/protocols/oauth"
 )
 
 // InvalidateConnectionCache publishes a KindConnectionChange event to the
@@ -52,6 +50,17 @@ const (
 	// invalidationBusDegradedReason is the SetMeta reason on the one-per-
 	// transition degraded audit event.
 	invalidationBusDegradedReason = "subscribe_channel_closed"
+
+	// invalidationBusReseedFailedReason is the SetMeta reason on the degraded
+	// audit event emitted when a post-resubscribe re-seed fails (the bus is
+	// back but converging the state missed during the outage did not succeed,
+	// so the replica deliberately stays degraded).
+	invalidationBusReseedFailedReason = "reseed_failed"
+
+	// invalidationBusMetaReseeded is the SetMeta key marking the recovered
+	// audit event as having converged missed state (cache flush + revocation
+	// deny-set re-seed) BEFORE readiness went green.
+	invalidationBusMetaReseeded = "re_seeded"
 )
 
 // Custom audit event types for the invalidation-bus self-heal transitions.
@@ -113,10 +122,15 @@ func (s *Server) StartInvalidationBus(ctx context.Context) (<-chan struct{}, err
 func (s *Server) runInvalidationBus(ctx context.Context, done chan struct{}, events <-chan cluster.Event) {
 	defer close(done)
 	attempt := 0
+	// cancelSub releases the child context of the CURRENT resubscribed stream
+	// once it is dead (see resubscribeAndReseed). The initial subscription from
+	// StartInvalidationBus rides ctx directly, hence the no-op seed value.
+	cancelSub := context.CancelFunc(func() {})
 	for {
 		for evt := range events {
 			s.applyInvalidationSafe(ctx, evt)
 		}
+		cancelSub()
 		// The channel closed. If ctx is done this is a clean shutdown — the
 		// memory + etcd bus peers both close the stream BECAUSE ctx was
 		// cancelled. Exit without marking degraded so a graceful drain never
@@ -135,21 +149,22 @@ func (s *Server) runInvalidationBus(ctx context.Context, done chan struct{}, eve
 			return // ctx cancelled during backoff — clean exit.
 		}
 
-		next, err := s.invalidationBus.Subscribe(ctx)
-		if err != nil {
-			// Resubscribe failed (bus still down). Stay degraded and retry
-			// after a longer backoff. A permanent-close error at shutdown is
-			// benign — the next ctx check or backoff observes the cancel.
+		// Resubscribe, then converge the state missed while degraded (cache
+		// flush + revocation deny-set re-seed) BEFORE clearing degraded. Either
+		// half failing keeps the replica degraded and retries after a longer
+		// backoff (a shutdown-time failure is benign — the ctx check observes
+		// the cancel).
+		next, cancel, ok := s.resubscribeAndReseed(ctx, attempt)
+		if !ok {
 			if ctx.Err() != nil {
 				return
 			}
-			s.logger.Error("invalidation bus resubscribe failed, will retry", "attempt", attempt, "error", err)
 			continue
 		}
 		// Recovered: clear degraded (gauge → 1, flag → false, recovered audit +
 		// counter) and resume draining the fresh stream with a reset backoff.
 		s.setInvalidationBusHealthy()
-		events = next
+		events, cancelSub = next, cancel
 		attempt = 0
 	}
 }
@@ -187,7 +202,10 @@ func (s *Server) setInvalidationBusHealthy() {
 		if s.metrics != nil {
 			s.metrics.InvalidationBusReconnectsTotal.WithLabelValues(metrics.InvalidationBusReasonReconnected).Inc()
 		}
-		s.recordInvalidationBusEvent(eventInvalidationBusRecovered, audit.OutcomeSuccess, "")
+		// re_seeded=true is truthful by construction: recovery is only ever
+		// reached through resubscribeAndReseed, whose re-seed succeeded.
+		s.recordInvalidationBusEvent(eventInvalidationBusRecovered, audit.OutcomeSuccess, "",
+			invalidationBusMetaReseeded, "true")
 	}
 }
 
@@ -195,15 +213,18 @@ func (s *Server) setInvalidationBusHealthy() {
 // request path (the bus subscriber goroutine, no HandlerContext), building the
 // Event directly over context.Background() — the same shape
 // audit.RecordSigningKeyAggregationDegraded uses. nil-recorder-safe; reason,
-// when non-empty, lands in Metadata via SetMeta (secret-free, fixed
-// cardinality).
-func (s *Server) recordInvalidationBusEvent(t audit.EventType, outcome audit.Outcome, reason string) {
+// when non-empty, lands in Metadata via SetMeta, as do any trailing key/value
+// pairs (secret-free, fixed cardinality).
+func (s *Server) recordInvalidationBusEvent(t audit.EventType, outcome audit.Outcome, reason string, metaKV ...string) {
 	if s.auditor == nil {
 		return
 	}
 	e := &audit.Event{Type: t, Outcome: outcome}
 	if reason != "" {
 		audit.SetMeta(e, "reason", reason)
+	}
+	for i := 0; i+1 < len(metaKV); i += 2 {
+		audit.SetMeta(e, metaKV[i], metaKV[i+1])
 	}
 	s.auditor.Record(context.Background(), e)
 }
@@ -249,119 +270,6 @@ func (s *Server) invalidationBusBackoff(attempt int) time.Duration {
 	}
 	jitter := (d / 4) * time.Duration(attempt%5) / 5
 	return d + jitter
-}
-
-// ErrCIBANotEnabled is returned by ResolveBackchannelAuthRequest when no
-// CIBA store is wired (WithCIBA not configured). It is an SDK-level
-// sentinel, not a wire error code.
-var ErrCIBANotEnabled = errors.New("sso: CIBA is not enabled")
-
-// cibaPingDeliveryTimeout bounds the detached ping goroutine spawned on
-// resolution. The request that triggered the approval has already returned,
-// so the goroutine runs on context.Background() with NO inherited deadline —
-// without this bound a hanging/never-returning custom notifier would leak the
-// goroutine forever. Deliberately set LONGER than the reference
-// httpCIBAPingNotifier's own 5s HTTP client timeout so the transport's timeout
-// fires first on the common path (yielding a clean error, not a context
-// cancellation), while a custom notifier that ignores ctx still gets bounded.
-const cibaPingDeliveryTimeout = 10 * time.Second
-
-// ResolveBackchannelAuthRequest transitions a pending CIBA request to
-// approved or denied and, in ping or push delivery mode, notifies the
-// client. Operators call this from their device-confirmation callback
-// instead of poking CIBAStore.SetStatus directly, so delivery fires
-// automatically on resolution.
-//
-// The status transition is authoritative (a /token poll — still available
-// as a fallback even in push mode — mints or refuses tokens off it).
-// Delivery is best-effort and fire-and-forget: dispatchCIBANotification
-// (accessors_feature_gates.go) picks push over ping when both are wired
-// and the resolution is an approval (push is a strict upgrade — it mints
-// and delivers the actual token, see deliverCIBAPush); a denied resolution
-// has no token to push, so ping (if wired) still fires for it. A failed
-// delivery is logged, never returned, since the client can still poll.
-//
-// Returns ErrCIBANotEnabled if CIBA isn't wired, or the store's error for
-// an unknown/expired (oauth.ErrCIBARequestNotFound) or already-resolved
-// (oauth.ErrCIBARequestResolved) request.
-func (s *Server) ResolveBackchannelAuthRequest(ctx context.Context, authReqID string, approved bool) error {
-	if s.cibaStore == nil {
-		return ErrCIBANotEnabled
-	}
-	// Read before transition so a racing /token poll that consumes +
-	// deletes the entry can't strip the notification token from under us.
-	req, err := s.cibaStore.Get(ctx, authReqID)
-	if err != nil {
-		return err
-	}
-	status := oauth.CIBADenied
-	if approved {
-		status = oauth.CIBAApproved
-	}
-	if err := s.cibaStore.SetStatus(ctx, authReqID, status); err != nil {
-		return err
-	}
-	if req.ClientNotificationToken != "" {
-		s.dispatchCIBANotification(authReqID, req.ClientID, req.ClientNotificationToken, approved)
-	}
-	return nil
-}
-
-// deliverCIBAPing supervises a single detached CIBA ping delivery. It is the
-// body of the goroutine spawned by ResolveBackchannelAuthRequest, extracted so
-// the timeout + recover + metric/audit wrapper is unit-testable in isolation.
-//
-// Hardening over the original bare `go n.Notify(context.Background(), ...)`:
-//   - Bounded context: a hanging/never-returning notifier can no longer leak
-//     this goroutine indefinitely (cibaPingDeliveryTimeout).
-//   - recover(): a panicking custom notifier is contained here — it logs +
-//     audits + counts an error instead of taking down the goroutine (and
-//     potentially the process) with no trace.
-//   - Observability: every outcome increments sso_ciba_ping_total{outcome};
-//     failures (error return OR recovered panic) also emit a ciba_ping_failed
-//     audit event so operators can see WHICH client's ping failed.
-//
-// The ping is best-effort by contract (the client can still poll), so a failure
-// is logged + recorded, never surfaced — there is no caller to return to.
-func (s *Server) deliverCIBAPing(clientID, authReqID, token string) {
-	// recover() so a panic in a third-party notifier can't crash the goroutine
-	// silently (or escalate to a process-wide crash on an unrecovered panic in
-	// a bare goroutine). On recovery, treat it as a delivery failure.
-	defer func() {
-		if r := recover(); r != nil {
-			reason := fmt.Sprintf("panic: %v", r)
-			s.logger.Error("ciba ping notification panicked", "auth_req_id", authReqID, "client_id", clientID, "panic", r)
-			s.recordCIBAPingFailure(clientID, authReqID, reason)
-		}
-	}()
-
-	// context.Background() is the correct PARENT here (the request that
-	// triggered the approval has returned, so there is no live request ctx to
-	// inherit — inheriting one would cancel the ping immediately). We ADD a
-	// deadline so a notifier that blocks past the bound is unblocked and the
-	// goroutine returns.
-	ctx, cancel := context.WithTimeout(context.Background(), cibaPingDeliveryTimeout)
-	defer cancel()
-
-	if err := s.cibaPingNotifier.Notify(ctx, clientID, authReqID, token); err != nil {
-		s.logger.Error("ciba ping notification failed", "auth_req_id", authReqID, "client_id", clientID, "error", err)
-		s.recordCIBAPingFailure(clientID, authReqID, err.Error())
-		return
-	}
-	if s.metrics != nil {
-		s.metrics.CIBAPingTotal.WithLabelValues("success").Inc()
-	}
-}
-
-// recordCIBAPingFailure is the shared error tail for deliverCIBAPing: bump the
-// error metric + emit the ciba_ping_failed audit event. Detached goroutine, so
-// it audits over context.Background() via the background-context recorder helper
-// (mirrors the signing-key aggregation degraded/recovered events).
-func (s *Server) recordCIBAPingFailure(clientID, authReqID, reason string) {
-	if s.metrics != nil {
-		s.metrics.CIBAPingTotal.WithLabelValues("error").Inc()
-	}
-	audit.RecordCIBAPingFailed(s.auditor, context.Background(), clientID, authReqID, reason)
 }
 
 // applyInvalidationSafe wraps applyInvalidation with a recover so a panic

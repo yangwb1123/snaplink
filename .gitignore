@@ -49,6 +49,10 @@ coverage.out
 /docs/agent-os/EVALUATION.md
 /docs/agent-os/TODO.md
 __pycache__/
+.pytest_cache/
+# Trend snapshots emitted by ops/scripts/trend.py — local tooling output,
+# regenerated per run (also skipped by the maintainability fan-out gates).
+.trends/
 
 # Compiled binaries (root-anchored: the build output dir /bin/ is ignored
 # above; these leading-slash patterns catch a stray `go build` at the repo

@@ -12,9 +12,13 @@
 export interface SSOClientOptions {
   /** Base URL of the snaplink/sso deployment, e.g. "https://sso.example.com". */
   baseUrl: string;
+  /** This application's registered client_id. Set it here so login(user, pass)
+   *  needs only credentials. */
+  clientId?: string;
   /** Injectable fetch (tests, non-global runtimes). Defaults to globalThis.fetch. */
   fetch?: typeof fetch;
-  /** Returns the bearer token for auth-required calls (getMe, revokeMySessions, ...). */
+  /** Returns the bearer token for auth-required calls (getMe, revokeMySessions, ...).
+   *  Omit it: after login() the SDK holds the access token and auto-attaches it. */
   getAccessToken?: () => string | undefined | Promise<string | undefined>;
 }
 
@@ -257,6 +261,8 @@ export interface LoginRequest {
   client_id: string;
   /** Provider-specific credential map. Standard keys: */
   credential?: Record<string, string>;
+  /** Opaque "remember this device" grant minted by a prior */
+  device_token?: string;
   /** Authenticator name; omit for discovery. */
   provider?: string;
   /** RFC 8707 resource indicators. Each value MUST be in the */
@@ -363,6 +369,8 @@ export interface OpenIDConfiguration {
   id_token_encryption_enc_values_supported?: string[];
   id_token_signing_alg_values_supported: string[];
   introspection_endpoint?: string;
+  /** RFC 9701 §7. Present ONLY when a dedicated introspection */
+  introspection_signing_alg_values_supported?: string[];
   /** Identifier the AS uses for itself. MUST equal the */
   issuer: string;
   jwks_uri: string;
@@ -542,13 +550,73 @@ export interface User {
 
 export class SSOClient {
   private readonly baseUrl: string;
+  private readonly clientId?: string;
   private readonly fetchImpl: typeof fetch;
   private readonly getAccessToken?: () => string | undefined | Promise<string | undefined>;
+  /** Access token captured by login(); auto-attached to auth-required calls. */
+  private token?: string;
 
   constructor(opts: SSOClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
+    this.clientId = opts.clientId;
     this.fetchImpl = opts.fetch ?? fetch;
-    this.getAccessToken = opts.getAccessToken;
+    // Default token source is the token login() captured, so getUserInfo() etc.
+    // work right after login without wiring anything.
+    this.getAccessToken = opts.getAccessToken ?? (() => this.token);
+  }
+
+  /** True once login() succeeded and a token is held. */
+  get isLoggedIn(): boolean {
+    return !!this.token;
+  }
+
+  /** The access token captured by login() (undefined before login/after logout). */
+  get accessToken(): string | undefined {
+    return this.token;
+  }
+
+  /**
+   * Password login: fills in the configured client_id and returns the auth
+   * info (access_token / id_token / refresh_token / ...) directly — no redirect.
+   * The token is captured internally so subsequent getUserInfo()/getMe() calls
+   * auto-attach it. This is the simplest integration:
+   *
+   *   const sso = new SSOClient({ baseUrl, clientId: "my-app" });
+   *   const auth = await sso.login(username, password);
+   *   const me = await sso.getUserInfo();
+   *
+   * CHECK isLoggedIn (or "access_token" in auth) before assuming success: when
+   * the account/client has MFA enabled, this resolves to a MFARequiredResponse
+   * instead — no token is issued until POST /auth/mfa completes the second leg.
+   */
+  async login(
+    username: string,
+    password: string,
+    opts?: { clientId?: string; scope?: string[]; extraCredential?: Record<string, string> },
+  ): Promise<LoginResponse | MFARequiredResponse> {
+    const clientId = opts?.clientId ?? this.clientId;
+    if (!clientId) {
+      throw new SSOError(0, "invalid_request", "clientId is required (set it in the constructor or pass it to login)");
+    }
+    // provider is always set below, so postLogin's LoginDiscoveryResponse (the
+    // no-provider home-realm-discovery arm) can never apply to this call.
+    const resp = (await this.postLogin({
+      provider: "password",
+      client_id: clientId,
+      scope: opts?.scope ?? ["openid", "profile", "email"],
+      credential: { username, password, ...(opts?.extraCredential ?? {}) },
+    })) as LoginResponse | MFARequiredResponse;
+    if ("access_token" in resp) this.token = resp.access_token;
+    return resp;
+  }
+
+  /** Clear the held token and best-effort revoke the server session. */
+  async logout(): Promise<void> {
+    try {
+      if (this.token) await this.postLogout({});
+    } finally {
+      this.token = undefined;
+    }
   }
 
   private async request<T>(method: string, path: string, opts: requestOptions = {}): Promise<T> {
@@ -597,7 +665,7 @@ export class SSOClient {
   }
 
   /** Query audit events. */
-  async queryAuditEvents(query?: { type?: string; actorId?: string; clientId?: string; provider?: string; outcome?: "success" | "failure"; requestId?: string; traceId?: string; since?: string; until?: string; limit?: number; offset?: number }): Promise<AuditEventList> {
+  async queryAuditEvents(query?: { type?: string; actorId?: string; clientId?: string; tenantId?: string; provider?: string; outcome?: "success" | "failure"; requestId?: string; traceId?: string; since?: string; until?: string; limit?: number; offset?: number }): Promise<AuditEventList> {
     return this.request<AuditEventList>("GET", `/api/v1/audit/events`, { query, auth: true });
   }
 
@@ -679,8 +747,8 @@ export class SSOClient {
   }
 
   /** Bulk revoke every refresh token bound to the bearer's subject. */
-  async postRevokeAll(): Promise<{ refresh_tokens_revoked?: number; status?: string }> {
-    return this.request<{ refresh_tokens_revoked?: number; status?: string }>("POST", `/token/revoke-all`, { auth: true });
+  async postRevokeAll(): Promise<{ refresh_tokens_revoked?: number; status?: string; trusted_devices_revoked?: number }> {
+    return this.request<{ refresh_tokens_revoked?: number; status?: string; trusted_devices_revoked?: number }>("POST", `/token/revoke-all`, { auth: true });
   }
 
   // ---- discovery ----

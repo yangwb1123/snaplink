@@ -128,7 +128,7 @@ CREATE TABLE auth_codes (
     expires_at            INTEGER NOT NULL
 );`
 
-// TestSQLiteAuthCode_AuthContextAdditiveMigration proves the v3 migration
+// TestSQLiteAuthCode_AuthContextAdditiveMigration proves the v4 migration
 // upgrades a v2-schema pre-existing database (missing auth_time/amr/acr/
 // resources/authorization_details/sid) without losing the pre-existing row
 // or its other columns, and that a NEW code issued after the upgrade
@@ -176,8 +176,8 @@ func TestSQLiteAuthCode_AuthContextAdditiveMigration(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	if v, _ := migrate.CurrentVersion(ctx, st.DB(), "auth_codes"); v != 3 {
-		t.Errorf("version = %d, want 3", v)
+	if v, _ := migrate.CurrentVersion(ctx, st.DB(), "auth_codes"); v != 4 {
+		t.Errorf("version = %d, want 4", v)
 	}
 
 	// The legacy row survives, its pre-existing columns intact, and the six

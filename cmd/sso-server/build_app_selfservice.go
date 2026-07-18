@@ -244,7 +244,7 @@ func trustedProxyIPExtractor(r *http.Request) net.IP {
 // resolver's allowlist, and the residency engine enforces the tenant's policy.
 func (b *appBuilder) wireRegion() {
 	cfg := b.cfg
-	regionResolver := serverbuildstore.BuildRegionResolver(cfg)
+	regionResolver := serverbuildstore.BuildRegionResolver(cfg, b.peerTrust)
 	b.regionResolver = regionResolver
 	if regionResolver == nil {
 		return

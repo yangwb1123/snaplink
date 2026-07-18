@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/snaplink/sso/shared/security/peertrust"
 )
 
 // HeaderCertEncoding describes how a TLS-terminating reverse proxy
@@ -42,8 +44,9 @@ const (
 //
 // For XFF-keyed consumers (rate limiter, region header), install
 // middleware.TrustedProxies (sso.WithTrustedProxies) to validate the
-// XFF chain. The cert header itself must be stripped at the network
-// edge (ingress rule / proxy config), not by Go middleware.
+// XFF chain. The cert header must still be stripped at the network
+// edge (ingress rule / proxy config); PeerTrust below is the
+// in-process backstop for requests that never transited that edge.
 //
 // Common deployments:
 //   - nginx (X-SSL-Client-Cert, $ssl_client_escaped_cert): URLPEM
@@ -58,6 +61,16 @@ const (
 type HeaderClientCertExtractor struct {
 	HeaderName string
 	Encoding   HeaderCertEncoding
+
+	// PeerTrust, when non-nil, is the in-process backstop for the edge-strip
+	// requirement above: the cert header is honored ONLY when the DIRECT
+	// peer (r.RemoteAddr) is inside the trusted-proxy CIDRs. An untrusted
+	// peer yields (nil, false) — the exact wire outcome of presenting no
+	// cert, so issuance falls back to an unbound token and a bound token at
+	// a resource collapses to the normal invalid_token failure (no new
+	// oracle). Nil (the default) keeps the legacy trust-the-header behavior
+	// byte-identical.
+	PeerTrust *peertrust.Checker
 }
 
 // NewHeaderClientCertExtractor returns an extractor configured for
@@ -76,6 +89,9 @@ func NewHeaderClientCertExtractor(headerName string) *HeaderClientCertExtractor 
 // outcome as a client that simply did not present a cert.
 func (h *HeaderClientCertExtractor) ExtractClientCert(r *http.Request) (*x509.Certificate, bool) {
 	if h == nil || r == nil || h.HeaderName == "" {
+		return nil, false
+	}
+	if h.PeerTrust != nil && !h.PeerTrust.TrustsRemoteAddr(r.RemoteAddr) {
 		return nil, false
 	}
 	raw := r.Header.Get(h.HeaderName)

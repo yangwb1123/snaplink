@@ -4,14 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
-	"time"
 
 	"github.com/snaplink/sso/shared/spi"
-
-	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
-	redisbackend "github.com/snaplink/sso/infrastructure/redis"
 
 	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
 	"github.com/snaplink/sso/config"
@@ -19,6 +14,7 @@ import (
 	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
 	"github.com/snaplink/sso/interfaces/sso"
 	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
+	"github.com/snaplink/sso/shared/security/peertrust"
 )
 
 // buildApp is pure server-assembly wiring: it reads config and constructs the
@@ -30,6 +26,12 @@ import (
 // conditional, error-wrap, defer/cleanup, and background-worker handoff.
 func buildApp(cfg *config.Config, logger spi.Logger) (builtApp *app, retErr error) {
 	b := &appBuilder{cfg: cfg, logger: logger}
+	// The peer-trust checker must exist before any wireXxx phase runs: the
+	// region resolver (wireDomains) and the mTLS header extractor (wireEdge)
+	// both take it as their trusted-proxies gate.
+	if err := b.wirePeerTrust(); err != nil {
+		return nil, err
+	}
 	// The shared Redis client + Postgres pool must exist before any store
 	// builder runs, since stores may select backend:redis (hot) or
 	// backend:postgres (durable).
@@ -117,6 +119,21 @@ func (b *appBuilder) warnHACoherence() {
 	// too quiet. Boot continues — single-replica/hybrid are valid.
 	b.logger.Error("HA INCOHERENCE: a redis/postgres cluster is configured but core stores still default to per-pod memory — behind a multi-replica load balancer this breaks correctness; select the per-store backends (see ops/deploy/k8s-prod/config.yaml)",
 		"per_pod_stores", stuck)
+}
+
+// wirePeerTrust compiles security.trusted_proxies.cidrs ONCE into the
+// peertrust.Checker every proxy-header consumer shares. Unset knob leaves
+// b.peerTrust nil — every consumer then keeps its legacy first-hop-trust
+// behavior byte-identically. A bad CIDR fails boot loudly (same contract
+// as sso.WithTrustedProxies, which parses the SAME list later in
+// wireMTLSLockoutProxiesCORS).
+func (b *appBuilder) wirePeerTrust() error {
+	checker, err := peertrust.NewChecker(b.cfg.Security.TrustedProxies.CIDRs)
+	if err != nil {
+		return fmt.Errorf("trusted proxies: %w", err)
+	}
+	b.peerTrust = checker
+	return nil
 }
 
 // wireFoundation runs the kernel sub-builders (identity/signing, audit,
@@ -231,135 +248,6 @@ func (b *appBuilder) wireInputLimits() {
 		b.opts = append(b.opts, sso.WithMaxTokenBytes(n))
 		logger.Info("security: max token bytes enabled", "max_bytes", n)
 	}
-}
-
-// wireRedis builds the ONE shared Redis client when a redis block is declared,
-// stashing it on the builder so every store with backend:redis fans out from it
-// (one connection pool per replica, not one per store). Called first in buildApp
-// so all later wireXxx can consume it. No redis block => b.redis stays nil and
-// the memory/sqlite paths are byte-identical.
-func (b *appBuilder) wireRedis() error {
-	rc := b.cfg.Redis
-	if !rc.Configured() {
-		return nil
-	}
-	opts, err := redisOptionsFromConfig(rc)
-	if err != nil {
-		return err
-	}
-	client, err := redisbackend.NewUniversalClient(opts)
-	if err != nil {
-		return fmt.Errorf("redis: %w", err)
-	}
-	b.redis = client
-	// Drain the replica from the LB when its Redis is unreachable, but bound the
-	// ping so a brief failover blip doesn't hang /readyz (the cluster client
-	// re-resolves MOVED/ASK). /livez stays always-200 so kubelet does not
-	// kill-restart the fleet during a shared-store blip.
-	rdb := client
-	b.opts = append(b.opts, sso.WithReadyCheck("redis", func(ctx context.Context) error {
-		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
-		return rdb.Ping(ctx).Err()
-	}))
-	mode := rc.Mode
-	if mode == "" {
-		mode = "auto"
-	}
-	b.logger.Info("redis: shared client configured (HA hot-path backend)",
-		"mode", mode, "addr_count", len(rc.Addrs))
-	return nil
-}
-
-// redisOptionsFromConfig maps the config block onto the redis module's Options,
-// resolving password_file. Kept separate so wireRedis stays within the function
-// budget.
-func redisOptionsFromConfig(rc config.RedisConfig) (redisbackend.Options, error) {
-	password := rc.Password
-	if password == "" && rc.PasswordFile != "" {
-		raw, err := os.ReadFile(rc.PasswordFile)
-		if err != nil {
-			return redisbackend.Options{}, fmt.Errorf("redis: read password_file: %w", err)
-		}
-		password = strings.TrimRight(string(raw), "\r\n")
-	}
-	return redisbackend.Options{
-		Mode:            rc.Mode,
-		Addrs:           rc.Addrs,
-		Username:        rc.Username,
-		Password:        password,
-		DB:              rc.DB,
-		MasterName:      rc.MasterName,
-		PoolSize:        rc.PoolSize,
-		MinIdleConns:    rc.MinIdleConns,
-		MaxRetries:      rc.MaxRetries,
-		DialTimeout:     rc.DialTimeout,
-		ReadTimeout:     rc.ReadTimeout,
-		WriteTimeout:    rc.WriteTimeout,
-		PoolTimeout:     rc.PoolTimeout,
-		ConnMaxIdleTime: rc.ConnMaxIdleTime,
-		ConnMaxLifetime: rc.ConnMaxLifetime,
-		RouteByLatency:  rc.RouteByLatency,
-		RouteRandomly:   rc.RouteRandomly,
-		ReadOnly:        rc.ReadOnly,
-		TLS:             redisTLSOptions(rc.TLS),
-	}, nil
-}
-
-// redisTLSOptions maps the config TLS block onto the redis module's options,
-// returning nil (plaintext) when TLS is off.
-func redisTLSOptions(t config.RedisTLSConfig) *redisbackend.TLSOptions {
-	if !t.Enabled {
-		return nil
-	}
-	return &redisbackend.TLSOptions{
-		Enabled:            true,
-		CAFile:             t.CAFile,
-		CertFile:           t.CertFile,
-		KeyFile:            t.KeyFile,
-		ServerName:         t.ServerName,
-		InsecureSkipVerify: t.InsecureSkipVerify,
-	}
-}
-
-// wirePostgres builds the ONE shared Postgres-wire *sql.DB pool when a postgres
-// block is declared, so every DURABLE store with backend:postgres fans out from
-// it (one pool per replica, not one per store). No postgres block => b.pgDB
-// stays nil and the memory/sqlite paths are byte-identical.
-func (b *appBuilder) wirePostgres() error {
-	pc := b.cfg.Postgres
-	if !pc.Configured() {
-		return nil
-	}
-	dialect := postgresbackend.Dialect(pc.Dialect)
-	db, err := postgresbackend.Open(postgresbackend.Config{
-		DSN:             pc.DSN,
-		Dialect:         dialect,
-		MaxOpenConns:    pc.MaxOpenConns,
-		MaxIdleConns:    pc.MaxIdleConns,
-		ConnMaxLifetime: pc.ConnMaxLifetime,
-		ConnMaxIdleTime: pc.ConnMaxIdleTime,
-	})
-	if err != nil {
-		return fmt.Errorf("postgres: %w", err)
-	}
-	b.pgDB = db
-	b.pgDialect = dialect
-	// Drain the replica from the LB when the durable store is unreachable, with
-	// a bounded ping so a brief blip doesn't hang /readyz. /livez stays
-	// always-200 so kubelet doesn't kill-restart the fleet during a DB blip.
-	pg := db
-	b.opts = append(b.opts, sso.WithReadyCheck("postgres", func(ctx context.Context) error {
-		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
-		return pg.PingContext(ctx)
-	}))
-	d := pc.Dialect
-	if d == "" {
-		d = "postgres"
-	}
-	b.logger.Info("postgres: shared durable pool configured (HA db-cluster backend)", "dialect", d)
-	return nil
 }
 
 // wireBreakGlass wires the in-memory break-glass store enabling the

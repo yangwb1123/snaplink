@@ -104,6 +104,12 @@ func WithJWTBearerGrant(validator tokengrant.JWTAssertionValidator) Option {
 	}
 }
 
+// rateLimiterEntry pairs a token bucket limiter with the grant type it
+// gates. Stored in grantRateLimiters by grant type URN.
+type rateLimiterEntry struct {
+	limiter *rate.Limiter
+}
+
 // WithGrantTypeRateLimit configures a per-grant-type token bucket that
 // limits how many /token requests of the given grant_type pass through
 // per second, with the given burst size. This is distinct from the

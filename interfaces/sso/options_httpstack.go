@@ -307,9 +307,10 @@ type FeatureGates struct {
 	// admin-scoped). Off ⇒ operators who run admin tooling out-of-band
 	// (or not at all) don't expose the admin bearer-auth challenge surface.
 	AdminAPI *bool
-	// WebSPA gates the opt-in static SPA bundles (admin console, hosted
-	// login, self-service portal) served outside the SSO router, plus the
-	// per-host branding lookup those SPAs consume.
+	// WebSPA gates the per-host branding lookup (GET /branding) — the only
+	// route left under this flag now that sso-server serves no static
+	// frontend of its own (every hosted UI is a separate project, reverse
+	// proxied alongside this server).
 	WebSPA *bool
 }
 

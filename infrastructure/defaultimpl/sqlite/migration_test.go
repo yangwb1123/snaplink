@@ -118,15 +118,23 @@ func TestMigration_AuthCodesBackfillsDPoPBindingColumn(t *testing.T) {
 	if _, err := st.DB().Exec(`SELECT confirmation_jkt FROM auth_codes`); err != nil {
 		t.Errorf("confirmation_jkt not backfilled: %v", err)
 	}
+	// v3 backfills the OIDC §5.5 claims-parameter column on the same boot.
+	if _, err := st.DB().Exec(`SELECT requested_claims FROM auth_codes`); err != nil {
+		t.Errorf("requested_claims not backfilled: %v", err)
+	}
 	var code string
 	if err := st.DB().QueryRow(`SELECT code FROM auth_codes WHERE code='old'`).Scan(&code); err != nil {
 		t.Errorf("legacy row lost: %v", err)
 	}
+	if _, err := st.DB().Exec(`SELECT auth_time, amr, acr, resources, authorization_details, sid FROM auth_codes`); err != nil {
+		t.Errorf("v4 auth-context columns not backfilled: %v", err)
+	}
 	// The store's real migration set doesn't stop at v2 — a pre-v2 database
-	// booting today also picks up the v3 RFC 9068 auth-context backfill
-	// (auth_codes_test.go covers v3 in isolation) in the same upgrade pass.
-	if v, _ := migrate.CurrentVersion(ctx, st.DB(), "auth_codes"); v != 3 {
-		t.Errorf("version = %d, want 3", v)
+	// booting today also picks up the v3 requested_claims backfill and the v4
+	// RFC 9068 auth-context backfill (auth_codes_test.go covers each in
+	// isolation) in the same upgrade pass.
+	if v, _ := migrate.CurrentVersion(ctx, st.DB(), "auth_codes"); v != 4 {
+		t.Errorf("version = %d, want 4", v)
 	}
 }
 

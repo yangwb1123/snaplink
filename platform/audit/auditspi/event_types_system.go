@@ -70,3 +70,12 @@ const (
 const (
 	EventSessionTrustStepUp EventType = "session_trust_stepup"
 )
+
+// Enterprise-connection runtime events. Emitted when a resolved B2B
+// connection's upstream authenticator cannot be built from its stored Config —
+// an operator-visible misconfiguration signal. The failure detail lands ONLY
+// here (and in the server log): the login response collapses to the same
+// unsupported_provider shape as an unknown provider (anti-enumeration).
+const (
+	EventConnectionAuthenticatorBuildFailed EventType = "connection_authenticator_build_failed"
+)

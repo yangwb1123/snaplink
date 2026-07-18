@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"io"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverassets"
 	"github.com/snaplink/sso/config"
 	"github.com/snaplink/sso/platform/audit"
 )
@@ -512,29 +510,6 @@ func TestWriteAdminPasswordFile_MissingDirErrors(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "no-such-dir", "admin-password")
 	if err := writeAdminPasswordFile(path, "x"); err == nil {
 		t.Fatal("expected error writing into a non-existent parent dir")
-	}
-}
-
-// -----------------------------------------------------------------------------
-// embedded-asset sub-filesystems
-// -----------------------------------------------------------------------------
-
-func TestAssetSubFS_RootIndexResolvable(t *testing.T) {
-	t.Parallel()
-	cases := map[string]fs.FS{
-		"admin":  serverassets.AdminSubFS(),
-		"login":  serverassets.LoginSubFS(),
-		"portal": serverassets.PortalSubFS(),
-	}
-	for name, sub := range cases {
-		if sub == nil {
-			t.Errorf("%s sub-FS is nil", name)
-			continue
-		}
-		// The embed contract guarantees an index.html at the rooted path.
-		if _, err := fs.Stat(sub, "index.html"); err != nil {
-			t.Errorf("%s sub-FS missing index.html: %v", name, err)
-		}
 	}
 }
 

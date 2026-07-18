@@ -15,6 +15,7 @@ const (
 	QueryType      = "type"
 	QueryActorID   = "actor_id"
 	QueryClientID  = "client_id"
+	QueryTenantID  = "tenant_id"
 	QueryProvider  = "provider"
 	QueryOutcome   = "outcome"
 	QueryRequestID = "request_id"
@@ -48,8 +49,8 @@ type HandlerDeps interface {
 }
 
 // HandleEvents implements GET /api/v1/audit/events with optional
-// query-string filters (type, actor_id, client_id, outcome, since,
-// until, limit, offset). Requires admin scope.
+// query-string filters (type, actor_id, client_id, tenant_id, outcome,
+// since, until, limit, offset). Requires admin scope.
 func HandleEvents(d HandlerDeps, ctx core.HandlerContext) {
 	rec := d.Auditor()
 	if rec == nil {
@@ -146,6 +147,7 @@ func parseQuery(ctx core.HandlerContext) (Query, error) {
 		Type:      EventType(ctx.Query(QueryType)),
 		ActorID:   ctx.Query(QueryActorID),
 		ClientID:  ctx.Query(QueryClientID),
+		TenantID:  ctx.Query(QueryTenantID),
 		Provider:  ctx.Query(QueryProvider),
 		Outcome:   Outcome(ctx.Query(QueryOutcome)),
 		RequestID: ctx.Query(QueryRequestID),

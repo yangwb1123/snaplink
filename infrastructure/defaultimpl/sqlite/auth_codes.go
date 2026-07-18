@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS auth_codes (
     code_challenge        TEXT    NOT NULL DEFAULT '',
     code_challenge_method TEXT    NOT NULL DEFAULT '',
     confirmation_jkt      TEXT    NOT NULL DEFAULT '',
+    requested_claims      TEXT    NOT NULL DEFAULT '',
     expires_at            INTEGER NOT NULL
 );
 
@@ -59,7 +60,8 @@ CREATE INDEX IF NOT EXISTS idx_auth_codes_expires_at
 var authCodeMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline", SQL: authCodeSchema},
 	{Version: 2, Name: "auth_code_dpop_binding", Func: addAuthCodeDPoPBinding},
-	{Version: 3, Name: "auth_code_context", Func: addAuthCodeAuthContext},
+	{Version: 3, Name: "auth_code_requested_claims", Func: addAuthCodeRequestedClaims},
+	{Version: 4, Name: "auth_code_context", Func: addAuthCodeAuthContext},
 }
 
 func addAuthCodeDPoPBinding(ctx context.Context, x migrate.Execer) error {
@@ -75,7 +77,26 @@ func addAuthCodeDPoPBinding(ctx context.Context, x migrate.Execer) error {
 	return err
 }
 
-// addAuthCodeAuthContext adds auth_time/amr/acr/resources/authorization_details/sid
+// addAuthCodeRequestedClaims (v3) backfills the OIDC Core §5.5 claims-
+// parameter column (raw JSON; empty string = none) onto a pre-existing database so
+// the /token exchange can honor the RP's claims request — same
+// check-then-add shape as the v2 DPoP column since SQLite has no ADD
+// COLUMN IF NOT EXISTS; a fresh database already has it from the v1
+// baseline DDL and skips the add.
+func addAuthCodeRequestedClaims(ctx context.Context, x migrate.Execer) error {
+	has, err := authCodeColumnExists(ctx, x, "requested_claims")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	_, err = x.ExecContext(ctx,
+		`ALTER TABLE auth_codes ADD COLUMN requested_claims TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+// addAuthCodeAuthContext (v4) adds auth_time/amr/acr/resources/authorization_details/sid
 // (RFC 9068 §2.2 authentication-context propagation — mirrors
 // refresh_tokens_schema.go's addRefreshTokenAuthContext) to a pre-existing
 // auth_codes table, each only when missing.
@@ -218,13 +239,14 @@ func (s *AuthCodeStore) Issue(ctx context.Context, code string, info *oauth.Auth
             code, user_id, client_id, redirect_uri, scopes, nonce,
             provider, attributes, code_challenge, code_challenge_method,
             confirmation_jkt, auth_time, amr, acr, resources,
-            authorization_details, sid, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            authorization_details, sid, requested_claims, expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		code, info.UserID, info.ClientID, info.RedirectURI,
 		string(scopes), info.Nonce, info.Provider, string(attrs),
 		info.CodeChallenge, info.CodeChallengeMethod, info.ConfirmationJKT,
 		unixNanoOrZero(info.AuthTime), string(amr), info.ACR, string(resources),
 		string(info.AuthorizationDetails), info.SID,
+		string(info.RequestedClaims), // raw §5.5 claims JSON; '' = none
 		info.ExpiresAt.UnixNano(),
 	)
 	if err != nil {
@@ -244,7 +266,7 @@ func (s *AuthCodeStore) Consume(ctx context.Context, code string) (*oauth.AuthCo
         RETURNING user_id, client_id, redirect_uri, scopes, nonce,
                   provider, attributes, code_challenge, code_challenge_method,
                   confirmation_jkt, auth_time, amr, acr, resources,
-                  authorization_details, sid, expires_at`, code)
+                  authorization_details, sid, requested_claims, expires_at`, code)
 	out, err := scanAuthCode(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, oauth.ErrAuthCodeNotFound
@@ -266,14 +288,14 @@ func scanAuthCode(s scanner) (*oauth.AuthCode, error) {
 		out                                                                                     oauth.AuthCode
 		redirectURI, nonce, provider, codeChallenge, codeChallengeMethod, scopesJSON, attrsJSON string
 		confirmationJKT                                                                         string
-		amrJSON, acr, resourcesJSON, authDetails, sid                                           string
+		amrJSON, acr, resourcesJSON, authDetails, sid, requestedClaims                          string
 		authTimeUnixNs, expiresAtUnixNs                                                         int64
 	)
 	if err := s.Scan(
 		&out.UserID, &out.ClientID, &redirectURI, &scopesJSON, &nonce,
 		&provider, &attrsJSON, &codeChallenge, &codeChallengeMethod,
 		&confirmationJKT, &authTimeUnixNs, &amrJSON, &acr, &resourcesJSON,
-		&authDetails, &sid, &expiresAtUnixNs,
+		&authDetails, &sid, &requestedClaims, &expiresAtUnixNs,
 	); err != nil {
 		return nil, err
 	}
@@ -288,7 +310,10 @@ func scanAuthCode(s scanner) (*oauth.AuthCode, error) {
 	if authDetails != "" {
 		out.AuthorizationDetails = json.RawMessage(authDetails)
 	}
-	// 0 sentinel = no auth_time captured (pre-v3 row, or a caller that never
+	if requestedClaims != "" {
+		out.RequestedClaims = json.RawMessage(requestedClaims)
+	}
+	// 0 sentinel = no auth_time captured (pre-v3/v4 row, or a caller that never
 	// threaded it); leave the zero time so the /token exchange falls back to
 	// now rather than emitting the Unix epoch — mirrors refresh_tokens.go.
 	if authTimeUnixNs != 0 {

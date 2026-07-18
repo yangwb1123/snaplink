@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"net/http"
 
+	"github.com/snaplink/sso/internal/handler"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/security"
 )
@@ -313,3 +315,159 @@ func (s *Server) mtlsCertRevoked(ctx context.Context, client *Client, cert *x509
 	}
 	return revoked
 }
+
+// --- Token validation -------------------------------------------------
+//
+// Lives here (not a dedicated file) because interfaces/sso is at its frozen
+// file-count ceiling (directory_fanout_test.go). Thematically adjacent to
+// the client-auth concerns above (both are token-endpoint-side gates).
+
+func (s *Server) ValidateToken(ctx context.Context, token string) (*TokenClaims, error) {
+	claims, _, err := s.validateAnyToken(ctx, token)
+	return claims, err
+}
+
+// validateTokenPreChecks runs the two Server-level defense-in-depth gates
+// BEFORE any issuer sees the token: a byte-length ceiling (WithMaxTokenBytes)
+// and the JWS `alg` allowlist (WithSupportedSigningAlgs). Split out of
+// validateAnyToken to keep it within the function-length budget; both
+// checks are unbounded/no-op (nil error) unless the operator configured
+// them, so this is byte-identical to today when neither option is wired.
+func (s *Server) validateTokenPreChecks(token string) error {
+	// Byte-length gate: a caller handing the server a deliberately huge
+	// "token" string shouldn't get to spend CPU on base64 + JSON parsing
+	// before the eventual (inevitable) verification failure. The generic
+	// error below is intentional: every caller of validateAnyToken already
+	// collapses ANY non-nil error to the standard oracle-safe
+	// invalid_token/inactive response, never inspecting content.
+	if s.maxTokenBytes > 0 && len(token) > s.maxTokenBytes {
+		return fmt.Errorf("token exceeds max_token_bytes (%d)", s.maxTokenBytes)
+	}
+	// alg allowlist gate: reject any compact-JWS bearer whose header `alg`
+	// isn't allowed BEFORE any issuer runs — so the verification algorithm
+	// is fixed by the operator, never picked by the RP. Opaque (non-JWT)
+	// tokens carry no JOSE header and pass through untouched to the
+	// session/opaque issuers.
+	if len(s.supportedSigningAlgs) > 0 {
+		if alg, ok := jwsHeaderAlg(token); ok && !algAllowed(alg, s.supportedSigningAlgs) {
+			return fmt.Errorf("token alg %q not in supported_signing_algs", alg)
+		}
+	}
+	return nil
+}
+
+// validateAnyToken tries each registered issuer until one accepts the token.
+// Returned issuerName lets callers correlate revocations or audit logs.
+func (s *Server) validateAnyToken(ctx context.Context, token string) (*TokenClaims, string, error) {
+	if err := s.validateTokenPreChecks(token); err != nil {
+		return nil, "", err
+	}
+	var lastErr error
+	for name, ti := range s.tokenIssuers {
+		// Skip issuers that explicitly opt out of this token's shape.
+		// Saves an expensive base64 + signature attempt when a session
+		// token reaches the JWT issuer or vice versa. Issuers without
+		// a TokenFormatHinter are always tried (legacy behavior).
+		if h, ok := ti.(TokenFormatHinter); ok && !h.AcceptsTokenFormat(token) {
+			continue
+		}
+		claims, err := ti.Validate(ctx, token)
+		if err == nil {
+			// Post-validation tenant suspension gate.
+			// No-op when WithTenantSuspensionCheck wasn't passed; otherwise
+			// hard-fails tokens whose owning client belongs to a now-
+			// suspended tenant so an admin's Suspended flip cuts off
+			// already-issued bearers, not just future issuance.
+			if tsErr := s.checkTenantNotSuspended(ctx, claims); tsErr != nil {
+				return nil, "", tsErr
+			}
+			// NOTE(region): this bare-context validate has no serving region
+			// (stashed on HandlerContext, out of scope here) — but the read
+			// gate isn't missing: residencyDeniedForAccess
+			// (server_tenant_residency.go) is a SEPARATE post-validation gate
+			// each HandlerContext-having caller invokes directly, covering
+			// /userinfo, mesh ext_authz, and GET /me[/data-export]
+			// (ResidencyGateAccess). /token/introspect is deliberately
+			// excluded (see WithTenantResidencyCheck's doc). The admin plane
+			// and token-exchange's inbound subject_token read do NOT call
+			// this gate yet — a product/security decision for a follow-up,
+			// not a mechanical fix (admin already has its own admin:read/
+			// admin:write boundary). The login (write/mint) gate in
+			// handler.go remains the primary residency control regardless.
+			return claims, name, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no token issuers registered")
+	}
+	return nil, "", lastErr
+}
+
+// revokeAcrossIssuers asks every registered issuer to revoke the token.
+// Revoke is expected to be tolerant of unknown tokens (the issuer that
+// doesn't own the token returns ErrNoSuchToken or similar — that's a
+// no-op, not a failure). Returns:
+//
+//   - revoked: names of issuers whose Revoke returned nil.
+//   - failed: names of issuers whose Revoke returned a non-nil, non-
+//     "unknown token" error — these are the ones where the bearer
+//     may still work and the caller should audit
+//     `partial_revoke_failure`.
+//
+// The split lets the caller distinguish "no issuer owned this token"
+// (revoked empty, failed empty — benign) from "an issuer that DOES
+// own this token failed to revoke" (revoked empty, failed non-empty
+// — bug or infra issue that violates the logout-everywhere promise).
+func (s *Server) revokeAcrossIssuers(ctx context.Context, token string) (revoked, failed []string) {
+	for name, ti := range s.tokenIssuers {
+		// Honor the same shape-skip the validate path uses. An
+		// issuer whose TokenFormatHinter rejects the inbound token
+		// can't possibly own it, so asking it to Revoke would either
+		// (a) return a not-found error we ignore anyway, or (b)
+		// return an infra error we'd misclassify as a partial
+		// revoke failure. Skip cleanly.
+		if h, ok := ti.(TokenFormatHinter); ok && !h.AcceptsTokenFormat(token) {
+			continue
+		}
+		switch err := ti.Revoke(ctx, token); {
+		case err == nil:
+			revoked = append(revoked, name)
+		case isUnknownTokenErr(err):
+			// Issuer didn't own this token — expected when callers
+			// sweep across N issuers. Not a failure.
+		default:
+			failed = append(failed, name)
+		}
+	}
+	// Best-effort: evict any cached /token/introspect result for this exact
+	// token immediately rather than waiting out the cache TTL (AGENTS.md §3
+	// Oracle-Leak Hardening — a revoked token must not keep reporting
+	// active:true to a caller who introspects it right after this call).
+	// This unexported method is the SINGLE choke point every revocation path
+	// in this codebase funnels through: the exported RevokeAcrossIssuers
+	// wraps it (used by /token/revoke, /logout, /token/revoke-all's
+	// presented bearer, and the admin gRPC revoke), and the cross-replica
+	// ApplyTokenRevocation adoption arm calls this method directly — so
+	// instrumenting here covers all of them from one place. Fires
+	// regardless of whether any issuer actually owned the token, matching
+	// RFC 7009 §2.2's anti-enumeration contract (a caller can't tell
+	// found-and-revoked from unknown, so this can't leak that either).
+	// No-op when caching is unwired or the backend doesn't support
+	// point-eviction — see oauth.InvalidateIntrospectionCache.
+	oauth.InvalidateIntrospectionCache(s.introspectionCache, token)
+	return revoked, failed
+}
+
+// isUnknownTokenErr heuristically classifies an issuer's Revoke
+// error. The error surface across issuers is loose (each impl
+// returns its own sentinel — Ed25519 issuer returns nil for
+// stateless tokens; SessionTokenIssuer returns "session_issuer:
+// token not found"). Treat the standard "not found" / "unknown"
+// shapes as no-op; everything else is infra failure worth auditing.
+// When an issuer adopts a typed sentinel (e.g. ErrUnknownToken), add
+// it here.
+
+func isUnknownTokenErr(err error) bool           { return handler.IsUnknownTokenErr(err) }
+func jwsHeaderAlg(token string) (string, bool)   { return handler.JWSHeaderAlg(token) }
+func algAllowed(alg string, allow []string) bool { return handler.AlgAllowed(alg, allow) }

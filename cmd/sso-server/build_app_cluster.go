@@ -226,11 +226,22 @@ func (b *appBuilder) wireSigningKeyRegistryOpts(signingKeyRegistry signingkeys.R
 			return (*srv).SigningKeyAggregationReady()
 		}),
 	)
+	// Distinct from the aggregation check above: only the etcd backend exposes
+	// ReadyzCheck, tripping when THIS replica's publish-lease KeepAlive is
+	// degraded — its keys are absent from peers' JWKS, so tokens it signs fail
+	// verification fleet-wide and the LB must pull it while the lease
+	// re-grants. The memory registry is process-local with no such failure
+	// mode; the type-assertion gate silently no-ops for it, mirroring
+	// serverbuildsign.AppendReadyCheck's memory-backend cadence.
+	if rc, ok := signingKeyRegistry.(interface{ ReadyzCheck() error }); ok {
+		b.opts = append(b.opts, sso.WithReadyCheck("etcd-signing-key-registry",
+			func(context.Context) error { return rc.ReadyzCheck() }))
+	}
 	logger.Info("signing key aggregation enabled", "replica_id", replicaID)
 }
 
-// wireFinalOptions mounts storage-health, the admin console SPA, hosted login +
-// portal SPAs, the consent store, the native-SSO device-secret store, and the
+// wireFinalOptions mounts storage-health, the setup-wizard API gate, the
+// consent store, the native-SSO device-secret store, and the
 // protected-resource metadata — the last Options before NewServer.
 func (b *appBuilder) wireFinalOptions() error {
 	cfg, logger := b.cfg, b.logger
@@ -247,10 +258,15 @@ func (b *appBuilder) wireFinalOptions() error {
 		logger.Info("storage-health report disabled: admin must be enabled to serve authenticated store diagnostics")
 	}
 
-	// Hosted SPA bundles (admin console, hosted login, self-service portal,
-	// developer portal) — split into wireWebSPAs (main_wiring.go) to stay
-	// within this file's line budget.
-	b.wireWebSPAs()
+	// sso-server serves no frontend of its own (admin console, hosted login,
+	// self-service portal, developer portal, setup wizard all live in a
+	// separate project, reverse-proxied alongside this server). The setup
+	// wizard's public API pair (POST /api/v1/setup, GET /api/v1/setup/status)
+	// still needs its own enable gate, independent of any UI.
+	if cfg.SetupWizard.Enabled {
+		b.opts = append(b.opts, sso.WithSetupWizardEnabled(true))
+		logger.Info("setup wizard API enabled", "paths", "/api/v1/setup, /api/v1/setup/status")
+	}
 
 	return b.wireConsentNativeSSOPRM()
 }

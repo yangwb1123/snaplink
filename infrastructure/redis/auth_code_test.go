@@ -16,13 +16,14 @@ func TestAuthCodeIssueConsume(t *testing.T) {
 	ctx := context.Background()
 
 	info := &oauth.AuthCode{
-		UserID:        "alice",
-		ClientID:      "app",
-		RedirectURI:   "https://app/cb",
-		Scopes:        []string{"openid", "profile"},
-		Nonce:         "n0nce",
-		CodeChallenge: "challenge",
-		ExpiresAt:     time.Now().Add(10 * time.Minute),
+		UserID:          "alice",
+		ClientID:        "app",
+		RedirectURI:     "https://app/cb",
+		Scopes:          []string{"openid", "profile"},
+		Nonce:           "n0nce",
+		CodeChallenge:   "challenge",
+		RequestedClaims: []byte(`{"id_token":{"email":null}}`),
+		ExpiresAt:       time.Now().Add(10 * time.Minute),
 	}
 	if err := s.Issue(ctx, "code1", info); err != nil {
 		t.Fatalf("issue: %v", err)
@@ -36,6 +37,11 @@ func TestAuthCodeIssueConsume(t *testing.T) {
 	}
 	if len(got.Scopes) != 2 {
 		t.Fatalf("scopes lost: %+v", got.Scopes)
+	}
+	// The whole struct is one JSON blob, so the §5.5 claims parameter must
+	// come back byte-identical — the exchange projects the id_token from it.
+	if string(got.RequestedClaims) != `{"id_token":{"email":null}}` {
+		t.Fatalf("requested claims lost: %q", got.RequestedClaims)
 	}
 }
 

@@ -2,6 +2,8 @@ package region
 
 import (
 	"net/http"
+
+	"github.com/snaplink/sso/shared/security/peertrust"
 )
 
 // DefaultServingRegionHeader is the request header HeaderResolver reads
@@ -46,11 +48,22 @@ type HeaderResolver struct {
 	// Default is returned when the header is missing or its value is
 	// rejected by Allowed. Empty Default means "" (unconstrained).
 	Default ID
+
+	// PeerTrust, when non-nil, gates the header on the DIRECT peer: the
+	// serving-region header is edge/mesh-supplied, so a request whose
+	// r.RemoteAddr is outside the trusted-proxy CIDRs forged it itself —
+	// treat it as absent (Default), same as an allowlist rejection. Nil
+	// (the default) keeps the legacy trust-the-header behavior
+	// byte-identical.
+	PeerTrust *peertrust.Checker
 }
 
 // Resolve reads + validates the header value, falling back to Default.
 func (h HeaderResolver) Resolve(r *http.Request) (ID, error) {
 	if r == nil {
+		return h.Default, nil
+	}
+	if h.PeerTrust != nil && !h.PeerTrust.TrustsRemoteAddr(r.RemoteAddr) {
 		return h.Default, nil
 	}
 	name := h.Header

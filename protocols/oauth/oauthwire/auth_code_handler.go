@@ -140,6 +140,10 @@ type IssueAuthCodeParams struct {
 	// presented at /auth/login (RFC 9449 §10). Empty = unbound — the
 	// exchange skips the jkt gate entirely.
 	ConfirmationJKT string
+	// RequestedClaims is the OIDC Core §5.5 `claims` parameter (raw
+	// JSON) persisted on the code so the /token exchange honors it —
+	// see oauthspi.AuthCode.RequestedClaims. Empty = no-op.
+	RequestedClaims json.RawMessage
 }
 
 // IssueAuthCode generates and stores an authorization code.
@@ -170,6 +174,7 @@ func IssueAuthCode(ctx context.Context, p IssueAuthCodeParams) (string, error) {
 		AuthorizationDetails: oauthvalidate.CloneRawJSON(p.AuthorizationDetails),
 		SID:                  p.SID,
 		ConfirmationJKT:      p.ConfirmationJKT,
+		RequestedClaims:      oauthvalidate.CloneRawJSON(p.RequestedClaims),
 		ExpiresAt:            time.Now().Add(ttl),
 	}
 	if err := p.AuthCodeStore.Issue(ctx, code, entry); err != nil {

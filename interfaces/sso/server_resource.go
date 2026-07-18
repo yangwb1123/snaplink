@@ -4,8 +4,10 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
-	"github.com/snaplink/sso/shared/security"
 	"net/http"
+
+	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/snaplink/sso/shared/security"
 )
 
 func (f ClientCertExtractorFunc) ExtractClientCert(r *http.Request) (*x509.Certificate, bool) {
@@ -182,4 +184,207 @@ func (s *Server) handleProtectedResourceMetadata(ctx HandlerContext) {
 	doc.DPoPSigningAlgValuesSupported = security.AsymmetricJWSAlgValues()
 
 	ctx.JSON(http.StatusOK, doc)
+}
+
+// --- Endpoint-inventory candidates --------------------------------------
+//
+// Lives here (not a dedicated file) because interfaces/sso is at its frozen
+// file-count ceiling (directory_fanout_test.go) — otherwise unrelated to
+// the resource/PRM handling above; backs GET /api/v1/admin/endpoints.
+
+// endpointInfo is one entry the runtime inventory (GET
+// /api/v1/admin/endpoints) reports: the HTTP method, full wire path, and the
+// FeatureGates surface (or "core" for an always-on route) it belongs to.
+type endpointInfo struct {
+	Method  string `json:"method"`
+	Path    string `json:"path"`
+	Feature string `json:"feature"`
+}
+
+// endpointCandidate pairs an endpointInfo with the predicate deciding
+// whether THIS server instance actually registered it. This table is
+// presentation-only — Mount() (server_routes.go / server_routes_admin.go /
+// server_federation.go) is the single source of truth for what gets wired;
+// keep a candidate's `on` in sync with its route's real mount condition
+// whenever that condition changes, or the inventory drifts from reality.
+type endpointCandidate struct {
+	endpointInfo
+	on func(s *Server) bool
+}
+
+func alwaysOn(*Server) bool { return true }
+
+// coreEndpointCandidates lists the routes mounted unconditionally by
+// mountCoreOAuthOIDC — every deployment shape exposes these regardless of
+// FeatureGates.
+func coreEndpointCandidates() []endpointCandidate {
+	core := []struct {
+		method, path string
+	}{
+		{http.MethodGet, PathHealth},
+		{http.MethodGet, PathStatus},
+		{http.MethodGet, PathSetupStatus},
+		{http.MethodPost, PathSetup},
+		{http.MethodGet, PathJWKS},
+		{http.MethodGet, PathOIDCDiscovery},
+		{http.MethodGet, PathOAuthAuthorizationServerMetadata},
+		{http.MethodPost, PathLogin},
+		{http.MethodPost, PathMFAComplete},
+		{http.MethodPost, PathSendCode},
+		{http.MethodGet, PathCallback},
+		{http.MethodPost, PathToken},
+		{http.MethodPost, PathIntrospect},
+		{http.MethodPost, PathRevoke},
+		{http.MethodPost, PathRevokeAll},
+		{http.MethodPost, PathDeviceCode},
+		{http.MethodGet, PathDeviceVerify},
+		{http.MethodPost, PathDeviceVerify},
+		{http.MethodPost, PathPAR},
+		{http.MethodPost, oauth.PathRegister},
+		{http.MethodGet, oauth.PathRegisterByID},
+		{http.MethodPut, oauth.PathRegisterByID},
+		{http.MethodDelete, oauth.PathRegisterByID},
+		{http.MethodPost, PathLogout},
+	}
+	out := make([]endpointCandidate, 0, len(core))
+	for _, r := range core {
+		out = append(out, endpointCandidate{endpointInfo{r.method, r.path, "core"}, alwaysOn})
+	}
+	return out
+}
+
+// gatedProtocolEndpointCandidates lists the routes each of OIDC/CIBA/CAEP/
+// Federation directly control — see FeatureGates for what each surface covers.
+func gatedProtocolEndpointCandidates() []endpointCandidate {
+	return []endpointCandidate{
+		{endpointInfo{http.MethodGet, PathUserInfo, "oidc"}, func(s *Server) bool { return s.oidcGateOn() }},
+		{endpointInfo{http.MethodGet, PathEndSession, "oidc"}, func(s *Server) bool { return s.oidcGateOn() }},
+		{endpointInfo{http.MethodGet, PathCheckSessionIframe, "oidc"}, func(s *Server) bool {
+			return s.oidcGateOn() && s.sessionManagementEnabled
+		}},
+		{endpointInfo{http.MethodPost, PathBackchannelAuth, "ciba"}, func(s *Server) bool { return s.cibaGateOn() }},
+		{endpointInfo{http.MethodPost, PathSSFReceive, "caep"}, func(s *Server) bool {
+			return s.caepGateOn() && s.caepReceiver != nil
+		}},
+		{endpointInfo{http.MethodGet, PathProtectedResourceMetadata, "federation"}, func(s *Server) bool {
+			return s.federationGateOn() && s.protectedResourceMetadata != nil
+		}},
+		{endpointInfo{http.MethodGet, PathFederationEntityConfig, "federation"}, func(s *Server) bool {
+			return s.federationGateOn() && s.federationEntity != nil
+		}},
+		{endpointInfo{http.MethodGet, PathFederationFetch, "federation"}, func(s *Server) bool {
+			return s.federationGateOn() && s.federationEntity != nil && s.federationEntity.HasSubordinates()
+		}},
+		{endpointInfo{http.MethodGet, PathHomeRealm, "federation"}, func(s *Server) bool {
+			return s.federationGateOn() && s.connectionStore != nil
+		}},
+		{endpointInfo{http.MethodPost, PathHomeRealm, "federation"}, func(s *Server) bool {
+			return s.federationGateOn() && s.connectionStore != nil
+		}},
+	}
+}
+
+// selfServiceEndpointCandidates approximates mountCoreOAuthOIDC's
+// unauthenticated password-reset/signup block plus mountSelfServiceProfile +
+// mountSelfServiceCredentials. Some deeply-nested sub-conditions (e.g. the
+// TOTPEnrollmentWriter type assertion, signup's verification-mode branch)
+// are simplified to their outer store check — the inventory can show a
+// self-service sub-route as live in a narrow misconfiguration where the real
+// route is not (never the reverse: SelfService off always hides all of
+// these). Good enough for "what surface is exposed", not a byte-exact mirror.
+func selfServiceEndpointCandidates() []endpointCandidate {
+	on := func(cond func(s *Server) bool) func(s *Server) bool {
+		return func(s *Server) bool { return s.selfServiceGateOn() && cond(s) }
+	}
+	hasBoth := func(a, b func(s *Server) bool) func(s *Server) bool {
+		return func(s *Server) bool { return a(s) && b(s) }
+	}
+	return []endpointCandidate{
+		{endpointInfo{http.MethodPost, PathForgotPassword, "self_service"}, on(func(s *Server) bool {
+			return s.passwordResetStore != nil && s.passwordCredentialStore != nil
+		})},
+		{endpointInfo{http.MethodPost, PathResetPassword, "self_service"}, on(func(s *Server) bool {
+			return s.passwordResetStore != nil && s.passwordCredentialStore != nil
+		})},
+		{endpointInfo{http.MethodPost, PathSignup, "self_service"}, on(func(s *Server) bool {
+			return s.signupEnabled && s.userProvider != nil && s.passwordCredentialStore != nil
+		})},
+		{endpointInfo{http.MethodPost, PathVerifyEmail, "self_service"}, on(func(s *Server) bool {
+			return s.signupEnabled && s.emailVerificationStore != nil
+		})},
+		{endpointInfo{http.MethodGet, PathMyPermissions, "self_service"}, func(s *Server) bool { return s.selfServiceGateOn() }},
+		{endpointInfo{http.MethodGet, PathMySessions, "self_service"}, on(func(s *Server) bool { return s.sessionMgr != nil })},
+		{endpointInfo{http.MethodGet, PathMyConsents, "self_service"}, on(func(s *Server) bool { return s.consentStore != nil })},
+		{endpointInfo{http.MethodGet, PathMyOrganizations, "self_service"}, on(func(s *Server) bool { return s.tenantUserStore != nil })},
+		{endpointInfo{http.MethodGet, PathMe, "self_service"}, on(func(s *Server) bool { return s.userProvider != nil })},
+		{endpointInfo{http.MethodPost, PathMyPassword, "self_service"}, on(func(s *Server) bool { return s.passwordCredentialStore != nil })},
+		{endpointInfo{http.MethodGet, PathMyMFA, "self_service"}, on(func(s *Server) bool { return s.mfaEnrollmentStore != nil })},
+		{endpointInfo{http.MethodPost, PathMyWebAuthnRegisterBegin, "self_service"}, on(func(s *Server) bool { return s.webauthnRegistrar != nil })},
+		{endpointInfo{http.MethodGet, PathMyDataExport, "self_service"}, on(func(s *Server) bool { return s.dataExporter != nil })},
+		{endpointInfo{http.MethodPost, PathMyAccountErase, "self_service"}, on(func(s *Server) bool { return s.accountEraser != nil })},
+		{endpointInfo{http.MethodPost, PathMyEmailChange, "self_service"}, on(hasBoth(
+			func(s *Server) bool { return s.emailChangeStore != nil && s.emailChangeSender != nil },
+			func(s *Server) bool { return s.userProvider != nil },
+		))},
+	}
+}
+
+// adminAPIEndpointCandidates lists the /api/v1/admin/* (+ the co-mounted
+// /api/v1/clients/:id) routes, each gated on AdminAPI AND its own store —
+// mirrors mountAdminSurface's group-level gate ANDed with the per-block
+// conditions above / in server_federation.go.
+func adminAPIEndpointCandidates() []endpointCandidate {
+	prefix := PathAPIPrefix
+	on := func(cond func(s *Server) bool) func(s *Server) bool {
+		return func(s *Server) bool { return s.adminAPIGateOn() && cond(s) }
+	}
+	return []endpointCandidate{
+		{endpointInfo{http.MethodGet, prefix + PathClientByID, "admin_api"}, func(s *Server) bool { return s.adminAPIGateOn() }},
+		{endpointInfo{http.MethodGet, prefix + PathAdminEndpoints, "admin_api"}, func(s *Server) bool { return s.adminAPIGateOn() }},
+		{endpointInfo{http.MethodGet, prefix + PathAuditEvents, "admin_api"}, on(func(s *Server) bool { return s.auditAPI && s.auditor != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathNetPolicies, "admin_api"}, on(func(s *Server) bool { return s.netAPI && s.netStore != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathTenantUsage, "admin_api"}, on(func(s *Server) bool { return s.usageAggregator != nil })},
+		{endpointInfo{http.MethodPost, prefix + PathBackup, "admin_api"}, on(func(s *Server) bool { return len(s.backupSources) > 0 })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminTokens, "admin_api"}, on(func(s *Server) bool { return s.adminTokenStore != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminSessions, "admin_api"}, on(func(s *Server) bool { return s.sessionMgr != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminSessionsLinked, "admin_api"}, func(s *Server) bool { return s.adminAPIGateOn() }},
+		{endpointInfo{http.MethodGet, prefix + PathAdminUserConsents, "admin_api"}, on(func(s *Server) bool { return s.consentStore != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminUserMFA, "admin_api"}, on(func(s *Server) bool { return s.mfaEnrollmentStore != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminUserLifecycle, "admin_api"}, on(func(s *Server) bool { return s.userLifecycleStore != nil && s.userProvider != nil })},
+		{endpointInfo{http.MethodPost, prefix + PathAdminUserPassword, "admin_api"}, on(func(s *Server) bool { return s.passwordCredentialStore != nil })},
+		{endpointInfo{http.MethodPost, prefix + PathAdminUserEmail, "admin_api"}, on(func(s *Server) bool { return s.userProvider != nil })},
+		{endpointInfo{http.MethodDelete, prefix + PathAdminUserDeviceSecrets, "admin_api"}, on(func(s *Server) bool { return s.deviceSecretStore != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminUserPasswordResetTokens, "admin_api"}, on(func(s *Server) bool { return s.passwordResetStore != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminUserEmailChangeTokens, "admin_api"}, on(func(s *Server) bool { return s.emailChangeStore != nil })},
+		{endpointInfo{http.MethodPost, prefix + PathAdminAccountLockoutClear, "admin_api"}, on(func(s *Server) bool { return s.accountLockout != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminConnections, "admin_api"}, on(func(s *Server) bool { return s.connectionStore != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminTenantMembers, "admin_api"}, on(func(s *Server) bool { return s.tenantUserStore != nil })},
+		{endpointInfo{http.MethodPost, prefix + PathAdminTenantInvitations, "admin_api"}, on(func(s *Server) bool { return s.invitationStore != nil })},
+		{endpointInfo{http.MethodGet, PathAuthzPolicyBundle, "admin_api"}, on(func(s *Server) bool { return s.permissions != nil })},
+		{endpointInfo{http.MethodGet, PathStorageHealth, "admin_api"}, on(func(s *Server) bool { return len(s.storageHealthSources) > 0 })},
+		{endpointInfo{http.MethodGet, PathAdminFederationHealth, "admin_api"}, on(func(s *Server) bool { return s.federationHealth != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminWebhookSubscriptions, "admin_api"}, on(func(s *Server) bool { return s.webhookEngine != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminWebhookDeadLetters, "admin_api"}, on(func(s *Server) bool { return s.webhookEngine != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminComplianceDataMap, "admin_api"}, func(s *Server) bool { return s.adminAPIGateOn() }},
+		{endpointInfo{http.MethodGet, prefix + PathAdminComplianceSOC2Evidence, "admin_api"}, on(func(s *Server) bool { return s.auditor != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminComplianceConsents, "admin_api"}, on(func(s *Server) bool { return s.consentStore != nil && s.userProvider != nil })},
+		{endpointInfo{http.MethodPost, prefix + PathAdminComplianceRetentionSweep, "admin_api"}, on(func(s *Server) bool { return s.dataRetention.Enabled })},
+		// Active ITDR threat-policy CRUD (opt-in WithThreatPolicyStore).
+		{endpointInfo{http.MethodGet, prefix + PathAdminThreatPolicies, "admin_api"}, on(func(s *Server) bool { return s.threatPolicyStore != nil })},
+		{endpointInfo{http.MethodGet, prefix + PathAdminThreatPolicyByID, "admin_api"}, on(func(s *Server) bool { return s.threatPolicyStore != nil })},
+		{endpointInfo{http.MethodPut, prefix + PathAdminThreatPolicyByID, "admin_api"}, on(func(s *Server) bool { return s.threatPolicyStore != nil })},
+		{endpointInfo{http.MethodDelete, prefix + PathAdminThreatPolicyByID, "admin_api"}, on(func(s *Server) bool { return s.threatPolicyStore != nil })},
+	}
+}
+
+// endpointCandidates is the full table the inventory endpoint filters.
+// Rebuilt per call (cheap — a few dozen struct literals) rather than a
+// package-level var so it never risks aliasing mutable predicate state.
+func endpointCandidates() []endpointCandidate {
+	var all []endpointCandidate
+	all = append(all, coreEndpointCandidates()...)
+	all = append(all, gatedProtocolEndpointCandidates()...)
+	all = append(all, selfServiceEndpointCandidates()...)
+	all = append(all, adminAPIEndpointCandidates()...)
+	return all
 }
