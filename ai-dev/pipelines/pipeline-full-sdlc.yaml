@@ -1,5 +1,5 @@
 # 完整 SDLC Pipeline - 10 阶段审查流程
-# 
+#
 # 使用方法：
 #   python3 ai-dev/pi-batch.py --pipeline ai-dev/pipelines/pipeline-full-sdlc.yaml --mode parallel -w 4
 #
@@ -8,7 +8,7 @@
 #   每个阶段使用适当的角色组合进行审查
 #   支持并行执行以提高效率
 
-git_commit: true  # 全局设置，所有阶段默认自动 git commit
+git_commit: true # 全局设置，所有阶段默认自动 git commit
 
 stages:
   # ═══════════════════════════════════════════════════════════
@@ -18,7 +18,7 @@ stages:
   - name: stage-0-discovery
     from_dir: docs/requirements
     mode: serial
-  
+
   # ═══════════════════════════════════════════════════════════
   # 阶段 1：架构审查
   # 目标：整体架构设计和技术战略
@@ -30,16 +30,16 @@ stages:
       - role: architect
         prompt_template: ai-dev/prompts/architect.md
         output: docs/results/{input_stem}.arch.md
-        model: claude-sonnet
-      
+        model:
+
       - role: cto
         prompt_template: ai-dev/prompts/cto.md
         output: docs/results/{input_stem}.cto.md
-        model: claude-opus
-    
+        model:
+
     mode: parallel
     workers: 2
-  
+
   # ═══════════════════════════════════════════════════════════
   # 阶段 2：安全与协议审查
   # 目标：安全威胁建模和协议合规
@@ -51,16 +51,16 @@ stages:
       - role: security
         prompt_template: ai-dev/prompts/security_engineer.md
         output: docs/results/{input_stem}.security.md
-        model: claude-sonnet
-      
+        model:
+
       - role: protocol
         prompt_template: ai-dev/prompts/protocol_expert.md
         output: docs/results/{input_stem}.protocol.md
-        model: claude-sonnet
-    
+        model:
+
     mode: parallel
     workers: 2
-  
+
   # ═══════════════════════════════════════════════════════════
   # 阶段 3：分布式系统审查
   # 目标：一致性、并发、数据层设计
@@ -72,16 +72,16 @@ stages:
       - role: distributed
         prompt_template: ai-dev/prompts/distributed_engineer.md
         output: docs/results/{input_stem}.distributed.md
-        model: claude-sonnet
-      
+        model:
+
       - role: database
         prompt_template: ai-dev/prompts/database_architect.md
         output: docs/results/{input_stem}.database.md
-        model: claude-sonnet
-    
+        model:
+
     mode: parallel
     workers: 2
-  
+
   # ═══════════════════════════════════════════════════════════
   # 阶段 4：实现审查
   # 目标：代码质量和任务拆解
@@ -93,16 +93,16 @@ stages:
       - role: staff
         prompt_template: ai-dev/prompts/staff_engineer.md
         output: docs/results/{input_stem}.staff.md
-        model: claude-sonnet
-      
+        model:
+
       - role: tech-lead
         prompt_template: ai-dev/prompts/tech_lead.md
         output: docs/results/{input_stem}.techlead.md
-        model: claude-sonnet
-    
+        model:
+
     mode: parallel
     workers: 2
-  
+
   # ═══════════════════════════════════════════════════════════
   # 阶段 5：性能审查
   # 目标：性能优化和容量规划
@@ -114,10 +114,10 @@ stages:
       - role: performance
         prompt_template: ai-dev/prompts/performance_engineer.md
         output: docs/results/{input_stem}.performance.md
-        model: claude-sonnet
-    
+        model:
+
     mode: serial
-  
+
   # ═══════════════════════════════════════════════════════════
   # 阶段 6：生产就绪审查
   # 目标：可观测性、部署、测试、合规
@@ -129,26 +129,26 @@ stages:
       - role: sre
         prompt_template: ai-dev/prompts/sre_engineer.md
         output: docs/results/{input_stem}.sre.md
-        model: claude-sonnet
-      
+        model:
+
       - role: devops
         prompt_template: ai-dev/prompts/devops_engineer.md
         output: docs/results/{input_stem}.devops.md
-        model: claude-sonnet
-      
+        model:
+
       - role: qa
         prompt_template: ai-dev/prompts/qa_lead.md
         output: docs/results/{input_stem}.qa.md
-        model: claude-sonnet
-      
+        model:
+
       - role: compliance
         prompt_template: ai-dev/prompts/compliance_officer.md
         output: docs/results/{input_stem}.compliance.md
-        model: claude-sonnet
-    
+        model:
+
     mode: parallel
     workers: 4
-  
+
   # ═══════════════════════════════════════════════════════════
   # 阶段 7：Sprint 规划
   # 目标：任务拆解和优先级排序
@@ -160,21 +160,21 @@ stages:
       - role: pm
         prompt_template: ai-dev/prompts/pm.md
         output: docs/results/{input_stem}.pm.md
-        model: claude-sonnet
-      
+        model:
+
       - role: architect
         prompt_template: ai-dev/prompts/architect.md
         output: docs/results/{input_stem}.arch-plan.md
-        model: claude-sonnet
-      
+        model:
+
       - role: tech-lead
         prompt_template: ai-dev/prompts/tech_lead.md
         output: docs/results/{input_stem}.techlead-plan.md
-        model: claude-sonnet
-    
+        model:
+
     mode: parallel
     workers: 3
-  
+
   # ═══════════════════════════════════════════════════════════
   # 阶段 8：Sprint 后审查
   # 目标：代码回顾、测试回顾、运营回顾
@@ -186,21 +186,21 @@ stages:
       - role: staff
         prompt_template: ai-dev/prompts/staff_engineer.md
         output: docs/results/{input_stem}.staff-review.md
-        model: claude-sonnet
-      
+        model:
+
       - role: qa
         prompt_template: ai-dev/prompts/qa_lead.md
         output: docs/results/{input_stem}.qa-review.md
-        model: claude-sonnet
-      
+        model:
+
       - role: sre
         prompt_template: ai-dev/prompts/sre_engineer.md
         output: docs/results/{input_stem}.sre-review.md
-        model: claude-sonnet
-    
+        model:
+
     mode: parallel
     workers: 3
-  
+
   # ═══════════════════════════════════════════════════════════
   # 阶段 9：CTO 执行审查
   # 目标：最终 Go/No-Go 决策
@@ -212,12 +212,12 @@ stages:
       - role: cto
         prompt_template: ai-dev/prompts/cto.md
         output: docs/results/{input_stem}.cto-decision.md
-        model: claude-opus
-      
+        model:
+
       - role: principal
         prompt_template: ai-dev/prompts/principal_reviewer.md
         output: docs/results/{input_stem}.principal-decision.md
-        model: claude-opus
-    
+        model:
+
     mode: parallel
     workers: 2

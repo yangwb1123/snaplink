@@ -1,7 +1,7 @@
 # 代码实现 Pipeline - 简化版
-# 
+#
 # 使用场景：快速实现代码任务
-# 
+#
 # 使用方法：
 #   python3 ai-dev/pi-batch.py --pipeline ai-dev/pipelines/pipeline-code-impl.yaml --mode parallel -w 3
 
@@ -15,7 +15,7 @@ stages:
     from_dir: docs/requirements
     mode: serial
     git_commit: true
-  
+
   # ═══════════════════════════════════════════════════════════
   # 阶段 1：技术方案设计
   # 角色：Architect（架构设计）+ Tech Lead（实现计划）
@@ -27,19 +27,19 @@ stages:
       - role: architect
         prompt_template: ai-dev/prompts/architect.md
         output: docs/results/{input_stem}.arch.md
-        model: claude-sonnet
+        model:
         timeout: 600
-      
+
       - role: tech-lead
         prompt_template: ai-dev/prompts/tech_lead.md
         output: docs/results/{input_stem}.impl-plan.md
-        model: claude-sonnet
+        model:
         timeout: 600
-    
+
     mode: parallel
     workers: 2
     git_commit: true
-  
+
   # ═══════════════════════════════════════════════════════════
   # 阶段 2：代码实现
   # 角色：Staff Engineer（代码编写）
@@ -52,12 +52,12 @@ stages:
       - role: implementer
         prompt_template: ai-dev/prompts/code-implementer.md
         output: docs/results/{input_stem}.code.md
-        model: claude-sonnet
-        timeout: 1200  # 代码实现需要更长时间
-    
+        model:
+        timeout: 1200 # 代码实现需要更长时间
+
     mode: serial
     git_commit: true
-  
+
   # ═══════════════════════════════════════════════════════════
   # 阶段 3：代码审查
   # 角色：Staff Engineer（代码质量）+ Security Engineer（安全检查）
@@ -70,19 +70,19 @@ stages:
       - role: reviewer
         prompt_template: ai-dev/prompts/staff_engineer.md
         output: docs/results/{input_stem}.review.md
-        model: claude-sonnet
+        model:
         timeout: 600
-      
+
       - role: security-reviewer
         prompt_template: ai-dev/prompts/security_engineer.md
         output: docs/results/{input_stem}.security-review.md
-        model: claude-sonnet
+        model:
         timeout: 600
-    
+
     mode: parallel
     workers: 2
     git_commit: true
-  
+
   # ═══════════════════════════════════════════════════════════
   # 阶段 4：测试编写
   # 角色：QA Lead（测试策略 + 测试代码）
@@ -95,12 +95,12 @@ stages:
       - role: qa-engineer
         prompt_template: ai-dev/prompts/qa_lead.md
         output: docs/results/{input_stem}.tests.md
-        model: claude-sonnet
+        model:
         timeout: 600
-    
+
     mode: serial
     git_commit: true
-  
+
   # ═══════════════════════════════════════════════════════════
   # 阶段 5：最终审查
   # 角色：Tech Lead（最终确认）
@@ -113,8 +113,8 @@ stages:
       - role: tech-lead
         prompt_template: ai-dev/prompts/tech_lead.md
         output: docs/results/{input_stem}.final.md
-        model: claude-sonnet
+        model:
         timeout: 600
-    
+
     mode: serial
     git_commit: true

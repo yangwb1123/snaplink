@@ -1,5 +1,5 @@
 # Pipeline 完整工作闭环
-# 
+#
 # 这个 pipeline 实现了一个完整的开发工作单元：
 # 需求分析 → 技术设计 → 代码实现 → 测试验证 → 最终确认 + git commit
 #
@@ -8,10 +8,9 @@
 #   python3 ai-dev/pi-batch.py --pipeline ai-dev/pipelines/pipeline.example.yaml --reuse   # 复用已有输出
 #   python3 ai-dev/pi-batch.py --pipeline ai-dev/pipelines/pipeline.example.yaml --dry-run # 预览
 
-git_commit: true  # 全局启用自动 git commit
+git_commit: true # 全局启用自动 git commit
 
 stages:
-
   # ═══════════════════════════════════════════════════════════════
   # 阶段 1：需求分析
   # 输入：需求文档（.md）
@@ -34,14 +33,14 @@ stages:
       - role: architect
         prompt_template: ai-dev/prompts/architect.md
         output: docs/results/{input_stem}.arch.md
-        model: claude-sonnet
+        model:
         timeout: 600
 
       # Tech Lead：任务拆解、实施计划
       - role: tech-lead
         prompt_template: ai-dev/prompts/tech_lead.md
         output: docs/results/{input_stem}.plan.md
-        model: claude-sonnet
+        model:
         timeout: 600
 
     mode: parallel
@@ -59,8 +58,8 @@ stages:
       - role: implementer
         prompt_template: ai-dev/prompts/code-implementer.md
         output: docs/results/{input_stem}.code.md
-        model: claude-sonnet
-        timeout: 1800  # 代码实现较长时间
+        model:
+        timeout: 1800 # 代码实现较长时间
 
     mode: serial
 
@@ -76,7 +75,7 @@ stages:
       - role: qa-engineer
         prompt_template: ai-dev/prompts/qa_lead.md
         output: docs/results/{input_stem}.tests.md
-        model: claude-sonnet
+        model:
         timeout: 600
 
     commands:
@@ -84,7 +83,7 @@ stages:
       - "echo '=== TESTS ===' && go test ./... 2>&1"
       - "echo '=== HARNESS ===' && python3 cli.py harness 2>&1 || echo 'harness completed (non-fatal)'"
       - "echo '=== FMT/VET ===' && go vet ./... 2>&1"
-    commands_parallel: true  # 4 个命令同时跑
+    commands_parallel: true # 4 个命令同时跑
 
     mode: serial
 
@@ -100,13 +99,13 @@ stages:
       - role: security
         prompt_template: ai-dev/prompts/security_engineer.md
         output: docs/results/{input_stem}.security-review.md
-        model: claude-sonnet
+        model:
         timeout: 600
 
       - role: tech-lead
         prompt_template: ai-dev/prompts/tech_lead.md
         output: docs/results/{input_stem}.final-ok.md
-        model: claude-sonnet
+        model:
         timeout: 600
 
     commands:
