@@ -9,7 +9,7 @@ IMAGE_TAG ?= dev
 
 CLI = python cli.py
 
-.PHONY: help test race bench vet fmt build docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-serve release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
+.PHONY: help test race bench vet fmt build docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
 
 # ── Go Dev (via $GO directly for speed) ──────────────────────────────
 
@@ -132,6 +132,31 @@ proto-breaking: ## Check proto wire-breaking vs main.
 
 docs-validate: ## Validate openapi.yaml.
 	@$(GO) run github.com/getkin/kin-openapi/cmd/validate@latest docs/openapi.yaml
+
+docs-check: ## Validate documentation quality (cross-references, required files).
+	@echo "=== Documentation Quality Check ==="
+	@err=0; \
+	for f in docs/error-codes.md docs/openapi.yaml docs/SECURITY.md .github/SECURITY.md; do \
+		if [ ! -f "$$f" ]; then \
+			echo "  [-] MISSING: $$f"; \
+			err=1; \
+		else \
+			echo "  [+] $$f"; \
+		fi; \
+	done; \
+	if grep -q 'docs/SECURITY.md' .github/SECURITY.md 2>/dev/null; then \
+		echo "  [+] .github/SECURITY.md references docs/SECURITY.md"; \
+	else \
+		echo "  [-] .github/SECURITY.md missing cross-reference to docs/SECURITY.md"; \
+		err=1; \
+	fi; \
+	if grep -q '.github/SECURITY.md' docs/SECURITY.md 2>/dev/null; then \
+		echo "  [+] docs/SECURITY.md references .github/SECURITY.md"; \
+	else \
+		echo "  [-] docs/SECURITY.md missing cross-reference to .github/SECURITY.md"; \
+		err=1; \
+	fi; \
+	exit "$$err"
 
 release-check: ## Lint .goreleaser.yaml.
 	$(GO) run github.com/goreleaser/goreleaser/v2@latest check

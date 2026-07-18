@@ -1,5 +1,10 @@
 # Security Policy
 
+> **Security architecture reference:** [`docs/SECURITY.md`](docs/SECURITY.md) — hardened
+> areas, fail-open/closed decision matrix, developer checklist, and operator
+> hardening guide. This file is the policy entry point; the architecture
+> reference lives alongside the code it documents.
+
 ## Supported Versions
 
 `snaplink/sso` is pre-1.0 — security fixes land on `main` and the most
@@ -63,37 +68,3 @@ Out of scope:
   startup banner)
 - Demo / example apps under `examples/` that explicitly carry seed
   credentials
-
-## Security Hardening Checklist (Operator-Side)
-
-When deploying `snaplink/sso`:
-
-- [ ] Disable `ssoclient/dev` usage outside of dev environments.
-- [ ] Set `--config` to a file that is **not** world-readable; the
-      file holds client secrets and (potentially) bootstrap admin
-      credentials.
-- [ ] Use the `passphrase` snapshot encryption backend in production;
-      `none` is for tests only.
-- [ ] Front the HTTP listener with TLS (either via OpenResty / Envoy
-      or `--tls-cert` + `--tls-key`).
-- [ ] Set `bootstrap.lock` to `file` or `etcd` (never `noop`) when
-      running multiple replicas.
-- [ ] Rotate the JWT signing key (Ed25519) at the cadence your
-      compliance posture requires; the JWKS cache supports multiple
-      active `kid`s for rolling rotation.
-- [ ] Audit log shipping — wire the `audit.WebhookSink` or a custom
-      `audit.Sink` to a tamper-evident store rather than relying on
-      the in-process `MemorySink`.
-- [ ] CAEP/SSF receiver endpoints (`caep_receiver_endpoint` in a
-      client's `Attributes`) are admin/registration-gated and validated
-      https-only, but they are **not** SSRF-filtered — the transmitter
-      will POST a signed SET to whatever https host is registered. Do
-      **not** delegate writes to client `Attributes` to untrusted tenant
-      admins, or a malicious receiver URL could turn the IdP into an
-      SSRF egress point against internal services.
-- [ ] Keep the wall clock forward/monotonic — slew, never step, it on
-      running nodes (use chrony, not periodic `ntpdate`/`hwclock` steps).
-      Session + refresh-token expiry compare `expires_at > now` exactly
-      (no skew slack, by design); a backward clock step (NTP step, VM
-      snapshot rollback) can transiently resurrect a just-expired session
-      or token. DPoP/JWT iat-window skew is configurable instead.
