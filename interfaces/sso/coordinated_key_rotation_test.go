@@ -185,6 +185,35 @@ func TestCoordinatedRotation_FailSafe_GarbageDeadlineDoesNotRetireEarly(t *testi
 	}
 }
 
+// TestCoordinatedRotation_ProductionCeilingCoversDocumentedGracePeriod is the
+// regression test for a real bug: coordinatedRetireMaxDeferral was previously
+// 24h, but config.KeyRotationConfig's own documented example GracePeriod is
+// 168h (7d) — an honest deadline built from that grace was silently clamped
+// DOWN to 24h, meaning a token signed 24-168h after rotation would hit
+// "unknown kid" on any replica relying on the coordinated path, well within
+// its still-valid, configured grace window. That's exactly the early-retire
+// 401 this whole mechanism exists to prevent (AGENTS.md: "deferred retire
+// only widens verify window, never retires early"). Proves, against the
+// REAL production ceiling (no test override), that a 168h-grace deadline —
+// and a deliberately longer 20-day one — both pass through UNCLAMPED.
+func TestCoordinatedRotation_ProductionCeilingCoversDocumentedGracePeriod(t *testing.T) {
+	t.Parallel()
+	srvB, _ := newCoordServer(t, clustermemory.New(), true)
+	now := time.Now()
+
+	for _, grace := range []time.Duration{168 * time.Hour, 20 * 24 * time.Hour} {
+		deadline := strconv.FormatInt(now.Add(grace).UnixNano(), 10)
+		got := srvB.ClampRetireDeferralForTest(now, deadline)
+		// Allow a small tolerance for time elapsed between building `now` and
+		// the clamp call; anything within a second of the honest grace proves
+		// it passed through unclamped rather than being capped to the old,
+		// buggy 24h ceiling.
+		if diff := grace - got; diff < -time.Second || diff > time.Second {
+			t.Errorf("grace=%s: clamped deferral = %s, want ~%s (unclamped, not capped to 24h)", grace, got, grace)
+		}
+	}
+}
+
 // TestCoordinatedRotation_FailSafe_NotArmedIgnoresEvent proves a replica that
 // did NOT opt into coordinated rotation ignores the Event entirely — it never
 // retires a key off a received rotation Event (byte-identical to a build without

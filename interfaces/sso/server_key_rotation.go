@@ -60,9 +60,19 @@ const (
 	// clamped DOWN to (relative to local now). It bounds a malicious or buggy
 	// far-future deadline so a peer can't pin a demoted key in every replica's
 	// verify-set indefinitely (a resource leak, not a 401 — over-widening is the
-	// SAFE direction, this just caps it). Generous: 24h dwarfs any sane grace,
-	// so an honest deadline is never clamped down.
-	coordinatedRetireMaxDeferral = 24 * time.Hour
+	// SAFE direction, this just caps it).
+	//
+	// MUST exceed the largest GracePeriod any deployment configures
+	// (config.KeyRotationConfig's own doc example is 168h/7d) — clamping DOWN
+	// an HONEST deadline is exactly the "retires early" 401 this whole
+	// mechanism exists to prevent (a previous value of 24h did precisely
+	// that against the documented 168h example: a token signed 24-168h after
+	// rotation would hit "unknown kid" on any replica relying on the
+	// coordinated path, well within its configured, still-valid grace
+	// window). 30 days gives wide headroom above any sane GracePeriod while
+	// staying well under KeyRotationConfig.Interval's own 2160h/90d example,
+	// so a demoted key still can't approach a full rotation cycle's lifetime.
+	coordinatedRetireMaxDeferral = 30 * 24 * time.Hour
 )
 
 // PublishSigningKeyRotation broadcasts a coordinated-rotation Event after a

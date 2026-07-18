@@ -74,6 +74,17 @@ func (s *Server) SetCoordinatedRetireBoundsForTest(floor, ceiling time.Duration)
 	s.coordinatedRetireMaxDeferralOverride = ceiling
 }
 
+// ClampRetireDeferralForTest exposes clampRetireDeferral so a test can assert
+// on the computed deferral DURATION directly — without either shrinking the
+// production bounds (which would defeat the point of testing them) or
+// actually waiting out a real multi-day deferral. Used to prove an honest,
+// realistic deadline (e.g. matching config.KeyRotationConfig's own
+// documented 168h/7d GracePeriod example) is never clamped down below what
+// the publisher actually carried, against the REAL production ceiling.
+func (s *Server) ClampRetireDeferralForTest(now time.Time, deadlineRaw string) time.Duration {
+	return s.clampRetireDeferral(now, deadlineRaw)
+}
+
 // PendingSigningRetireCountForTest reports how many deferred retires are
 // currently armed, so a test can assert a clean shutdown / cancel drained them
 // (no leaked timers).
