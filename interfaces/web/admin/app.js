@@ -234,6 +234,7 @@ function navigate(page) {
   else if (page === 'domains') loadDomains();
   else if (page === 'sessions') loadSessions();
   else if (page === 'audit') loadAudit(1);
+  else if (page === 'security-events') loadSecurityEvents();
 }
 
 // ---- API helpers ----
@@ -1344,6 +1345,17 @@ function wireStaticEventHandlers() {
   document.getElementById('audit-prev').addEventListener('click', function() { auditPage(-1); });
   document.getElementById('audit-next').addEventListener('click', function() { auditPage(1); });
 
+  // Security Events
+  document.getElementById('sec-events-type-filter').addEventListener('change', function() {
+    securityEventsActive = false;
+    SSEStream.disconnect();
+    document.getElementById('sec-events-content').innerHTML = '<div class="empty">Filter changed — reconnect to see matching events.</div>';
+  });
+  document.getElementById('sec-events-clear').addEventListener('click', function() {
+    securityEvents = [];
+    document.getElementById('sec-events-content').innerHTML = '<div class="empty">Waiting for security events...</div>';
+  });
+
   // Delegated listeners for rows rendered after the initial page load
   // (client/user "View", session "Revoke") — the parent container node is
   // stable across setContent() re-renders, so one listener attached here
@@ -1369,6 +1381,174 @@ function wireStaticEventHandlers() {
     if (btn) revokeSession(btn.dataset.id);
   });
 }
+// ---- Security Events (SSE) ----
+var securityEvents = [];
+var securityEventsMax = 500; // ring buffer limit
+var securityEventsActive = false;
+
+function loadSecurityEvents() {
+  if (securityEventsActive) return;
+  securityEventsActive = true;
+
+  SSEStream.connect(onSecurityEvent, onSecurityStreamStatus);
+}
+
+function onSecurityEvent(type, data, id) {
+  if (type === 'message') return; // untyped events are ignored
+
+  // Apply current type filter
+  var filterEl = document.getElementById('sec-events-type-filter');
+  if (filterEl && filterEl.value !== '' && type !== filterEl.value) {
+    // Still track the event, just don't display it
+    appendSecurityEvent(type, data, id, true);
+    return;
+  }
+  appendSecurityEvent(type, data, id, false);
+}
+
+function appendSecurityEvent(type, data, id, filtered) {
+  securityEvents.push({ type: type, data: data, id: id, filtered: filtered, ts: Date.now() });
+  if (securityEvents.length > securityEventsMax) {
+    securityEvents.shift();
+  }
+  renderSecurityEvent(type, data, id, filtered);
+}
+
+function renderSecurityEvent(type, data, id, filtered) {
+  if (filtered) return;
+
+  var container = document.getElementById('sec-events-content');
+  if (!container) return;
+
+  // Remove empty state
+  var emptyEl = container.querySelector('.empty');
+  if (emptyEl) container.innerHTML = '';
+
+  var el = document.createElement('div');
+  el.className = 'sec-event ' + typeClass(type);
+
+  var summary = data;
+  var desc = eventDescription(type, summary);
+  var timeStr = '';
+  if (summary.timestamp) {
+    timeStr = formatTimestamp(summary.timestamp);
+  }
+
+  el.innerHTML = '' +
+    '<div class="sec-event-icon">' + eventIcon(type) + '</div>' +
+    '<div class="sec-event-body">' +
+      '<div class="sec-event-header">' +
+        '<span class="sec-event-type-label">' + typeLabel(type) + '</span>' +
+        '<span class="sec-event-time">' + timeStr + '</span>' +
+      '</div>' +
+      '<div class="sec-event-desc">' + esc(desc) + '</div>' +
+      '<div class="sec-event-meta">' +
+        metaHTML(type, summary) +
+      '</div>' +
+    '</div>';
+
+  container.insertBefore(el, container.firstChild);
+
+  // Limit DOM nodes (keep last 300 in DOM)
+  while (container.children.length > 300) {
+    container.removeChild(container.lastChild);
+  }
+}
+
+function onSecurityStreamStatus(connected) {
+  var indicator = document.getElementById('sec-events-indicator');
+  var text = document.getElementById('sec-events-status-text');
+  if (!indicator || !text) return;
+
+  if (connected) {
+    indicator.className = 'status-indicator connected';
+    text.textContent = 'Connected';
+  } else {
+    indicator.className = 'status-indicator disconnected';
+    text.textContent = 'Reconnecting...';
+  }
+}
+
+function typeClass(type) {
+  switch (type) {
+    case 'login': return 'sec-event-login';
+    case 'token': return 'sec-event-token';
+    case 'consent': return 'sec-event-consent';
+    case 'admin': return 'sec-event-admin';
+    case 'anomaly': return 'sec-event-anomaly';
+    default: return '';
+  }
+}
+
+function eventIcon(type) {
+  switch (type) {
+    case 'login': return '\u25B6'; // ▶
+    case 'token': return '\u2622'; // ☢
+    case 'consent': return '\u2713'; // ✓
+    case 'admin': return '\u2699'; // ⚙
+    case 'anomaly': return '\u26A0'; // ⚠
+    default: return '\u25CF'; // ●
+  }
+}
+
+function typeLabel(type) {
+  switch (type) {
+    case 'login': return 'Login';
+    case 'token': return 'Token';
+    case 'consent': return 'Consent';
+    case 'admin': return 'Admin';
+    case 'anomaly': return 'Anomaly';
+    default: return type;
+  }
+}
+
+function eventDescription(type, data) {
+  switch (type) {
+    case 'login':
+      return (data.outcome === 'success' ? 'Successful login' : 'Failed login') +
+        (data.client_id ? ' for client ' + data.client_id : '') +
+        (data.actor_id ? ' by user ' + data.actor_id : '');
+    case 'token':
+      return 'Token operation' +
+        (data.client_id ? ' for ' + data.client_id : '') +
+        (data.outcome ? ' (' + data.outcome + ')' : '');
+    case 'consent':
+      return 'Consent ' + (data.outcome || 'granted') +
+        (data.client_id ? ' for ' + data.client_id : '');
+    case 'admin':
+      return 'Admin action' +
+        (data.resource ? ': ' + data.resource : '') +
+        (data.actor_id ? ' by ' + data.actor_id : '');
+    case 'anomaly':
+      return 'Anomaly detected' +
+        (data.resource ? ': ' + data.resource : '') +
+        (data.actor_id ? ' for ' + data.actor_id : '');
+    default:
+      return data.type || data.resource || '';
+  }
+}
+
+function metaHTML(type, data) {
+  var parts = [];
+  if (data.actor_id) parts.push('<span class="sec-event-tag">' + esc(data.actor_id) + '</span>');
+  if (data.client_id) parts.push('<span class="sec-event-tag">' + esc(data.client_id) + '</span>');
+  if (data.tenant_id) parts.push('<span class="sec-event-tag">' + esc(data.tenant_id) + '</span>');
+  if (data.outcome) {
+    var cls = data.outcome === 'success' ? 'sec-event-outcome-success' : 'sec-event-outcome-failure';
+    parts.push('<span class="sec-event-tag ' + cls + '">' + esc(data.outcome) + '</span>');
+  }
+  return parts.join('');
+}
+
+function formatTimestamp(ts) {
+  try {
+    var d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch (e) {
+    return '';
+  }
+}
+
 wireStaticEventHandlers();
 
 // ---- Boot ----

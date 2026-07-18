@@ -60,6 +60,9 @@
         <div class="nav-item" data-page="audit">
           <span class="nav-icon">&#9881;</span> Audit Log
         </div>
+        <div class="nav-item" data-page="security-events">
+          <span class="nav-icon">&#9888;</span> Security Events
+        </div>
       </div>
       <div class="sidebar-footer">
         <button id="logout-btn">Sign out</button>
@@ -333,10 +336,36 @@
         </div>
       </div>
 
+      <!-- Security Events -->
+      <div id="page-security-events" class="page">
+        <h1 class="page-title">Security Events</h1>
+        <div class="sec-events-toolbar">
+          <div class="sec-events-status" id="sec-events-status">
+            <span class="status-indicator" id="sec-events-indicator"></span>
+            <span id="sec-events-status-text">Connecting...</span>
+          </div>
+          <div class="sec-events-filter">
+            <select id="sec-events-type-filter">
+              <option value="">All event types</option>
+              <option value="login">Login</option>
+              <option value="token">Token</option>
+              <option value="consent">Consent</option>
+              <option value="admin">Admin</option>
+              <option value="anomaly">Anomaly</option>
+            </select>
+          </div>
+          <button class="btn btn-sm" id="sec-events-clear">Clear</button>
+        </div>
+        <div id="sec-events-content" class="sec-events-list">
+          <div class="empty">Waiting for security events...</div>
+        </div>
+      </div>
+
     </main>
   </div>
 </div>
 
+<script src="event-stream.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
