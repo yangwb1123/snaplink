@@ -5,6 +5,7 @@ import (
 
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/domains/connections/provider"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/userlifecycle"
 	"github.com/snaplink/sso/platform/audit"
@@ -22,6 +23,11 @@ import (
 // handlers run only after that gate, so they assume admin authorization.
 type Deps interface {
 	ConnectionStore() connections.Store
+
+	// ProviderStore returns the wired third-party login provider store, or nil
+	// when provider management is not configured (routes unmounted).
+	ProviderStore() provider.Store
+
 	// ConditionalAccessStore backs the read-only zero-trust CAP governance
 	// view; may be nil when WithConditionalAccess isn't wired.
 	ConditionalAccessStore() conditionalaccess.Store

@@ -3,36 +3,28 @@ package admin
 import (
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/snaplink/sso/domains/connections/provider"
 	"github.com/snaplink/sso/domains/tokenexchange"
 	"github.com/snaplink/sso/domains/userlifecycle"
+	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/spi"
 )
 
-// User-lifecycle state-machine admin handlers. GET returns a user's current
-// lifecycle state, the transitions legal from it, and the full transition
-// history; POST requests a transition, validated against the legal-transition
-// table (userlifecycle.ValidateTransition) and applied with optimistic
-// concurrency. Every applied transition is audited (EventAdminUserLifecycleChanged)
-// with the acting admin as ActorID. Both are gated UPSTREAM by AdminMiddleware
-// (GET admin:read, POST admin:write) via the /api/v1/admin/ prefix.
+// ============================================================================
+// User-lifecycle state-machine admin handlers
+// ============================================================================
 
-// lifecycleTransitionRequest is the POST body: the target state plus an optional
-// operator justification recorded in the transition history + audit event.
 type lifecycleTransitionRequest struct {
 	State  string `json:"state"`
 	Reason string `json:"reason,omitempty"`
 }
 
-// HandleAdminGetUserLifecycle serves GET /api/v1/admin/users/:id/lifecycle —
-// the user's current lifecycle state, the states reachable from it in one legal
-// move, and the append-only transition history. admin:read. A user unknown to
-// the UserProvider is a 404; a user with no lifecycle record yet reports the
-// implicit default (active) with empty history.
 func HandleAdminGetUserLifecycle(d Deps, ctx core.HandlerContext) {
 	userID := ctx.Param("id")
 	if userID == "" {
@@ -53,19 +45,12 @@ func HandleAdminGetUserLifecycle(d Deps, ctx core.HandlerContext) {
 		rec.History = []userlifecycle.Transition{}
 	}
 	ctx.JSON(http.StatusOK, map[string]any{
-		"user_id":             userID,
-		"state":               rec.State,
+		"user_id": userID, "state": rec.State,
 		"allowed_transitions": userlifecycle.AllowedTransitions(rec.State),
 		"history":             rec.History,
 	})
 }
 
-// HandleAdminTransitionUserLifecycle serves POST /api/v1/admin/users/:id/lifecycle
-// — request a lifecycle transition. admin:write. Body: {state, reason?}. An
-// illegal transition is a 400 illegal_lifecycle_transition; an unrecognized
-// target state is 400 unknown_lifecycle_state; a concurrent state change is 409
-// lifecycle_state_conflict. On success emits admin_user_lifecycle_changed and
-// returns the new state + the transitions now legal from it.
 func HandleAdminTransitionUserLifecycle(d Deps, ctx core.HandlerContext) {
 	userID := ctx.Param("id")
 	var req lifecycleTransitionRequest
@@ -91,9 +76,6 @@ func HandleAdminTransitionUserLifecycle(d Deps, ctx core.HandlerContext) {
 	applyLifecycleTransition(d, ctx, userID, rec.State, to, req.Reason)
 }
 
-// applyLifecycleTransition persists the validated transition and audits it,
-// mapping a concurrency conflict to 409 and any other store error to 500. On
-// success it responds 200 with the new state and the moves now legal from it.
 func applyLifecycleTransition(d Deps, ctx core.HandlerContext, userID string, from, to userlifecycle.State, reason string) {
 	actor, _, _ := ActorFromContext(ctx.Request().Context())
 	t := userlifecycle.NewTransition(from, to, strings.TrimSpace(reason), actor, time.Now().UTC())
@@ -108,17 +90,11 @@ func applyLifecycleTransition(d Deps, ctx core.HandlerContext, userID string, fr
 	}
 	userlifecycle.RecordTransition(ctx.Request().Context(), d.Auditor(), userID, t)
 	ctx.JSON(http.StatusOK, map[string]any{
-		"user_id":             userID,
-		"state":               to,
-		"previous_state":      from,
+		"user_id": userID, "state": to, "previous_state": from,
 		"allowed_transitions": userlifecycle.AllowedTransitions(to),
 	})
 }
 
-// writeLifecycleValidationError maps a ValidateTransition failure to its wire
-// code: an unrecognized endpoint -> unknown_lifecycle_state, an illegal edge ->
-// illegal_lifecycle_transition. Both are 400 (the caller is an authenticated
-// admin, so neither is an enumeration oracle).
 func writeLifecycleValidationError(ctx core.HandlerContext, err error) {
 	switch {
 	case errors.Is(err, userlifecycle.ErrUnknownState):
@@ -128,34 +104,10 @@ func writeLifecycleValidationError(ctx core.HandlerContext, err error) {
 	}
 }
 
-// --- RFC 8693 token-exchange delegation-chain admin surface ---
-//
-// Unrelated to user-lifecycle above; appended to this file rather than its
-// own (interfaces/admin is at its 10-file directory-fanout ceiling —
-// directory_fanout_test.go — so a new file here would be a new violation)
-// rather than touching token_portfolio.go, which has concurrent
-// expiry-calendar work landing in parallel. A single read-only endpoint over
-// the OPTIONAL tokenexchange.ChainStore (WithTokenExchangeChainStore); pure
-// observability/governance, mirrors the read-only shape of
-// token_portfolio.go's HandleSubjectTokens (individual params, not the
-// broader admin.Deps interface, since this needs exactly one dependency).
+// ============================================================================
+// RFC 8693 token-exchange delegation-chain admin surface
+// ============================================================================
 
-// HandleTokenExchangeChain serves GET
-// /api/v1/admin/tokenexchange/chains/:jti — the durable, recorded RFC 8693
-// delegation-chain history for one minted access token's jti: every hop
-// (actor, subject, client, chain depth, timestamp) a token-exchange grant
-// recorded on its way to producing that token, oldest (root) first. Pure
-// observability for audit / incident response — never consulted by any
-// authorization decision, and does not affect token-exchange behavior.
-// admin:read (default GET scope via AdminMiddleware's /api/v1/admin/ prefix
-// — see token_portfolio.go's HandleSubjectTokens for the same convention).
-//
-// A nil store (should never reach this handler in production — the route is
-// only mounted when one is wired, see interfaces/sso's
-// mountAdminTokenExchangeChainRoutes) and an unrecorded/unknown jti both
-// collapse to the SAME 404: from an operator's standpoint both mean
-// "nothing recorded here", and there is no oracle concern gating an
-// already-authenticated admin-only endpoint.
 func HandleTokenExchangeChain(store tokenexchange.ChainStore, log spi.Logger, ctx core.HandlerContext) {
 	jti := strings.TrimSpace(ctx.Param("jti"))
 	if jti == "" {
@@ -176,9 +128,196 @@ func HandleTokenExchangeChain(store tokenexchange.ChainStore, log spi.Logger, ct
 		ctx.JSON(http.StatusNotFound, core.ErrorBody(core.ErrNotFound))
 		return
 	}
-	ctx.JSON(http.StatusOK, map[string]any{
-		core.KeyStatus: core.StatusOK,
-		"jti":          jti,
-		"chain":        chain,
-	})
+	ctx.JSON(http.StatusOK, map[string]any{core.KeyStatus: core.StatusOK, "jti": jti, "chain": chain})
+}
+
+// ============================================================================
+// Third-party login provider admin CRUD
+// ============================================================================
+
+type providerJSON struct {
+	ID          string            `json:"id"`
+	TenantID    string            `json:"tenant_id,omitempty"`
+	Type        string            `json:"type"`
+	DisplayName string            `json:"display_name"`
+	IconURL     string            `json:"icon_url,omitempty"`
+	ButtonLabel string            `json:"button_label,omitempty"`
+	ButtonColor string            `json:"button_color,omitempty"`
+	Enabled     bool              `json:"enabled"`
+	Config      map[string]string `json:"config,omitempty"`
+	CreatedAt   time.Time         `json:"created_at,omitempty"`
+	UpdatedAt   time.Time         `json:"updated_at,omitempty"`
+}
+
+func providerToJSON(p *provider.Provider) providerJSON {
+	return providerJSON{
+		ID: p.ID, TenantID: p.TenantID, Type: string(p.Type),
+		DisplayName: p.DisplayName, IconURL: p.IconURL,
+		ButtonLabel: p.ButtonLabel, ButtonColor: p.ButtonColor,
+		Enabled: p.Enabled, Config: p.Config,
+		CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
+	}
+}
+
+func providerFromJSON(j providerJSON) *provider.Provider {
+	return &provider.Provider{
+		ID: j.ID, TenantID: j.TenantID, Type: provider.ProviderType(j.Type),
+		DisplayName: j.DisplayName, IconURL: j.IconURL,
+		ButtonLabel: j.ButtonLabel, ButtonColor: j.ButtonColor,
+		Enabled: j.Enabled, Config: j.Config,
+	}
+}
+
+func recordAdminProviderAction(d Deps, ctx core.HandlerContext, evtType audit.EventType, providerID, tenantID string) {
+	aud := d.Auditor()
+	if aud == nil {
+		return
+	}
+	actor, _, _ := ActorFromContext(ctx.Request().Context())
+	evt := &audit.Event{Type: evtType, Outcome: audit.OutcomeSuccess, ActorID: actor, ActorIP: audit.ClientIP(ctx.Request())}
+	audit.SetMeta(evt, "provider_id", providerID)
+	audit.SetMeta(evt, core.KeyTenantID, tenantID)
+	aud.Record(ctx.Request().Context(), evt)
+}
+
+func HandleAdminListProviders(d Deps, ctx core.HandlerContext) {
+	store := d.ProviderStore()
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, core.ErrorBody(core.ErrNotFound))
+		return
+	}
+	tenantID := ctx.Request().URL.Query().Get(core.KeyTenantID)
+	if tenantID == "" {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+	list, err := store.ListByTenant(ctx.Request().Context(), tenantID)
+	if err != nil {
+		d.Logger().Error("admin: list providers", "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].DisplayName < list[j].DisplayName })
+	out := make([]providerJSON, len(list))
+	for i, p := range list {
+		out[i] = providerToJSON(p)
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"providers": out})
+}
+
+func HandleAdminGetProvider(d Deps, ctx core.HandlerContext) {
+	store := d.ProviderStore()
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, core.ErrorBody(core.ErrNotFound))
+		return
+	}
+	id := ctx.Param("id")
+	if id == "" {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+	p, err := store.Get(ctx.Request().Context(), id)
+	if err != nil {
+		if errors.Is(err, provider.ErrNoSuchProvider) {
+			ctx.JSON(http.StatusNotFound, core.ErrorBody(core.ErrNotFound))
+			return
+		}
+		d.Logger().Error("admin: get provider", "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusOK, providerToJSON(p))
+}
+
+func HandleAdminCreateProvider(d Deps, ctx core.HandlerContext) {
+	store := d.ProviderStore()
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, core.ErrorBody(core.ErrNotFound))
+		return
+	}
+	var j providerJSON
+	if err := ctx.Bind(&j); err != nil {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBodyDesc(core.ErrInvalidRequest, err.Error()))
+		return
+	}
+	if j.ID == "" || j.Type == "" {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+	if j.Config == nil {
+		j.Config = make(map[string]string)
+	}
+	p := providerFromJSON(j)
+	if err := store.Create(ctx.Request().Context(), p); err != nil {
+		if errors.Is(err, provider.ErrProviderExists) {
+			ctx.JSON(http.StatusConflict, core.ErrorBody("provider_already_exists"))
+			return
+		}
+		d.Logger().Error("admin: create provider", "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	recordAdminProviderAction(d, ctx, audit.EventType("provider_created"), p.ID, p.TenantID)
+	ctx.JSON(http.StatusCreated, providerToJSON(p))
+}
+
+func HandleAdminUpdateProvider(d Deps, ctx core.HandlerContext) {
+	store := d.ProviderStore()
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, core.ErrorBody(core.ErrNotFound))
+		return
+	}
+	id := ctx.Param("id")
+	if id == "" {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+	var j providerJSON
+	if err := ctx.Bind(&j); err != nil {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBodyDesc(core.ErrInvalidRequest, err.Error()))
+		return
+	}
+	j.ID = id
+	p := providerFromJSON(j)
+	if err := store.Update(ctx.Request().Context(), p); err != nil {
+		if errors.Is(err, provider.ErrNoSuchProvider) {
+			ctx.JSON(http.StatusNotFound, core.ErrorBody(core.ErrNotFound))
+			return
+		}
+		d.Logger().Error("admin: update provider", "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	recordAdminProviderAction(d, ctx, audit.EventType("provider_updated"), p.ID, p.TenantID)
+	ctx.JSON(http.StatusOK, providerToJSON(p))
+}
+
+func HandleAdminDeleteProvider(d Deps, ctx core.HandlerContext) {
+	store := d.ProviderStore()
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, core.ErrorBody(core.ErrNotFound))
+		return
+	}
+	id := ctx.Param("id")
+	if id == "" {
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+	p, err := store.Get(ctx.Request().Context(), id)
+	if err != nil && !errors.Is(err, provider.ErrNoSuchProvider) {
+		d.Logger().Error("admin: get provider before delete", "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	tenantID := ""
+	if p != nil {
+		tenantID = p.TenantID
+	}
+	if err := store.Delete(ctx.Request().Context(), id); err != nil {
+		d.Logger().Error("admin: delete provider", "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	recordAdminProviderAction(d, ctx, audit.EventType("provider_deleted"), id, tenantID)
+	ctx.JSON(http.StatusOK, map[string]any{core.KeyStatus: core.StatusOK})
 }

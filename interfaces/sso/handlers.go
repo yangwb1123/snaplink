@@ -280,10 +280,13 @@ func (s *Server) mountWebhookAdminAPI(api Router) {
 	api.POST(PathAdminWebhookDeadLetterReplay, s.handleWebhookReplayDeadLetter)
 }
 
-// ReBAC relationship-tuple engine (platform/lifecycle/rebac) admin debug
-// route: a single GET, so unlike the webhook/netpolicy blocks above there is
-// no mutation handler to delegate.
+// ReBAC admin debug route.
 func (s *Server) handleRebacCheck(ctx HandlerContext) { rebac.HandleCheck(s, ctx) }
+func (s *Server) handleAdminListProviders(ctx HandlerContext)  { admin.HandleAdminListProviders(s, ctx) }
+func (s *Server) handleAdminGetProvider(ctx HandlerContext)    { admin.HandleAdminGetProvider(s, ctx) }
+func (s *Server) handleAdminCreateProvider(ctx HandlerContext) { admin.HandleAdminCreateProvider(s, ctx) }
+func (s *Server) handleAdminUpdateProvider(ctx HandlerContext) { admin.HandleAdminUpdateProvider(s, ctx) }
+func (s *Server) handleAdminDeleteProvider(ctx HandlerContext) { admin.HandleAdminDeleteProvider(s, ctx) }
 
 // PathAdminRebacCheck route-path re-export — aliases.go is at its line
 // budget, same reason as the Token Portfolio / crypto-inventory consts.

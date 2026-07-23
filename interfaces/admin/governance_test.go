@@ -11,6 +11,7 @@ import (
 
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/domains/connections/provider"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/userlifecycle"
 	"github.com/snaplink/sso/platform/audit"
@@ -35,7 +36,8 @@ type gcTestDeps struct {
 func (d *gcTestDeps) ApprovalStore() admingovernance.ApprovalStore             { return d.store }
 func (d *gcTestDeps) ChangeRegistry() *admingovernance.Registry                { return d.registry }
 func (d *gcTestDeps) ApprovalActionTypes() admingovernance.RequiredActionTypes { return d.actionTypes }
-func (d *gcTestDeps) ConnectionStore() connections.Store                       { return nil }
+func (d *gcTestDeps) ProviderStore() provider.Store    { return nil }
+func (d *gcTestDeps) ConnectionStore() connections.Store { return nil }
 func (d *gcTestDeps) ClientStore() core.ClientStore                            { return nil }
 func (d *gcTestDeps) SessionManager() core.SessionManager                      { return nil }
 func (d *gcTestDeps) Permissions() permissions.Provider                        { return nil }

@@ -206,3 +206,246 @@ func TestModeString(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckSigningAlg_EnforceMode_RejectsRSA(t *testing.T) {
+	t.Parallel()
+	v := fapi.New(fapi.ModeEnforce)
+
+	tests := []struct {
+		name string
+		alg  string
+		want int // expected violation count
+	}{
+		{"ES256 is allowed", "ES256", 0},
+		{"ES384 is allowed", "ES384", 0},
+		{"ES512 is allowed", "ES512", 0},
+		{"EdDSA is allowed", "EdDSA", 0},
+		{"RS256 is rejected", "RS256", 1},
+		{"RS384 is rejected", "RS384", 1},
+		{"RS512 is rejected", "RS512", 1},
+		{"PS256 is rejected", "PS256", 1},
+		{"PS384 is rejected", "PS384", 1},
+		{"PS512 is rejected", "PS512", 1},
+		{"HS256 is rejected", "HS256", 1},
+		{"empty alg (no signing) skipped", "", 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			vs := v.CheckSigningAlg(fapi.SigningAlgContext{
+				ClientID:         "test-client",
+				RequestObjectAlg: tc.alg,
+			})
+			if len(vs) != tc.want {
+				t.Errorf("CheckSigningAlg(%q) = %d violations, want %d: %+v", tc.alg, len(vs), tc.want, vs)
+			}
+			if tc.want > 0 && len(vs) > 0 {
+				if vs[0].RuleID != fapi.RuleSigningAlg {
+					t.Errorf("violation RuleID = %q, want %q", vs[0].RuleID, fapi.RuleSigningAlg)
+				}
+				if vs[0].ClientID != "test-client" {
+					t.Errorf("violation ClientID = %q, want %q", vs[0].ClientID, "test-client")
+				}
+			}
+		})
+	}
+}
+
+func TestCheckSigningAlg_InspectionMode_Reports(t *testing.T) {
+	t.Parallel()
+	v := fapi.New(fapi.ModeInspection)
+	vs := v.CheckSigningAlg(fapi.SigningAlgContext{
+		ClientID:         "test-client",
+		RequestObjectAlg: "RS256",
+	})
+	if len(vs) != 1 {
+		t.Errorf("inspection mode must report RS256 violation, got %d violations", len(vs))
+	}
+}
+
+func TestCheckSigningAlg_OffMode_Skips(t *testing.T) {
+	t.Parallel()
+	v := fapi.New(fapi.ModeOff)
+	vs := v.CheckSigningAlg(fapi.SigningAlgContext{
+		ClientID:         "test-client",
+		RequestObjectAlg: "RS256",
+	})
+	if len(vs) != 0 {
+		t.Errorf("off mode must skip alg checking, got %d violations", len(vs))
+	}
+}
+
+func TestCheckSigningAlg_NilValidator_Skips(t *testing.T) {
+	t.Parallel()
+	var v *fapi.Validator
+	vs := v.CheckSigningAlg(fapi.SigningAlgContext{
+		ClientID:         "test-client",
+		RequestObjectAlg: "RS256",
+	})
+	if len(vs) != 0 {
+		t.Errorf("nil validator must skip alg checking, got %d violations", len(vs))
+	}
+}
+
+func TestCheckSigningAlg_MultipleAlgs(t *testing.T) {
+	t.Parallel()
+	v := fapi.New(fapi.ModeEnforce)
+	// When multiple alg fields are non-compliant, each should be reported.
+	vs := v.CheckSigningAlg(fapi.SigningAlgContext{
+		ClientID:           "multi-alg-client",
+		RequestObjectAlg:   "RS256",
+		IDTokenAlg:         "PS256",
+		ClientAssertionAlg: "RS384",
+	})
+	if len(vs) != 3 {
+		t.Errorf("expected 3 violations for 3 non-compliant algs, got %d: %+v", len(vs), vs)
+	}
+	// All violations should have the correct RuleID.
+	for _, v := range vs {
+		if v.RuleID != fapi.RuleSigningAlg {
+			t.Errorf("violation RuleID = %q, want %q", v.RuleID, fapi.RuleSigningAlg)
+		}
+	}
+}
+
+func TestCheckCIBA_EnforceMode_RejectsNonPush(t *testing.T) {
+	t.Parallel()
+	v := fapi.New(fapi.ModeEnforce)
+
+	tests := []struct {
+		name   string
+		mode   string
+		wantVs int
+	}{
+		{"push mode is allowed", "push", 0},
+		{"poll mode is rejected", "poll", 1},
+		{"ping mode is rejected", "ping", 1},
+		{"empty mode skipped", "", 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			vs := v.CheckCIBA(fapi.CIBAContext{
+				ClientID:     "ciba-client",
+				DeliveryMode: tc.mode,
+			})
+			if len(vs) != tc.wantVs {
+				t.Errorf("CheckCIBA(mode=%q) = %d violations, want %d", tc.mode, len(vs), tc.wantVs)
+			}
+		})
+	}
+}
+
+func TestFAPIAllowedAlgValues(t *testing.T) {
+	t.Parallel()
+	// Verify the FAPI allowlist excludes RSA-based algorithms.
+	for _, alg := range fapi.FAPIAllowedAlgValues {
+		if !fapi.IsFAPIAllowedAlg(alg) {
+			t.Errorf("FAPIAllowedAlgValues contains %q but IsFAPIAllowedAlg(%q) = false", alg, alg)
+		}
+	}
+	if fapi.IsFAPIAllowedAlg("RS256") {
+		t.Error("RS256 must NOT be allowed in FAPI mode")
+	}
+	if fapi.IsFAPIAllowedAlg("PS256") {
+		t.Error("PS256 must NOT be allowed in FAPI mode")
+	}
+	if fapi.IsFAPIAllowedAlg("HS256") {
+		t.Error("HS256 must NOT be allowed in FAPI mode")
+	}
+}
+
+func TestAllowedAlgValues_Filter(t *testing.T) {
+	t.Parallel()
+	v := fapi.New(fapi.ModeEnforce)
+	all := []string{"ES256", "ES384", "RS256", "EdDSA", "PS256", "RS384", "ES512", "PS384", "PS512"}
+	filtered := v.AllowedAlgValues(all)
+	for _, a := range filtered {
+		if !fapi.IsFAPIAllowedAlg(a) {
+			t.Errorf("AllowedAlgValues returned non-compliant alg %q", a)
+		}
+	}
+	if len(filtered) != 4 {
+		t.Errorf("AllowedAlgValues = %v (len=%d), want exactly 4 FAPI-compliant algs", filtered, len(filtered))
+	}
+}
+
+func TestAllowedAlgValues_Inspection_Passthrough(t *testing.T) {
+	t.Parallel()
+	v := fapi.New(fapi.ModeInspection)
+	all := []string{"ES256", "RS256", "EdDSA"}
+	got := v.AllowedAlgValues(all)
+	if len(got) != len(all) {
+		t.Errorf("inspection mode must pass through all algs unchanged; got %v", got)
+	}
+}
+
+func TestAllowedClientAuthMethods_Enforce_Narrows(t *testing.T) {
+	t.Parallel()
+	v := fapi.New(fapi.ModeEnforce)
+	all := []string{"client_secret_basic", "client_secret_post", "private_key_jwt", "tls_client_auth", "none"}
+	filtered := v.AllowedClientAuthMethods(all)
+	want := []string{"private_key_jwt", "tls_client_auth"}
+	if len(filtered) != len(want) {
+		t.Errorf("AllowedClientAuthMethods = %v, want %v", filtered, want)
+	}
+	for i := range want {
+		if filtered[i] != want[i] {
+			t.Errorf("AllowedClientAuthMethods[%d] = %q, want %q", i, filtered[i], want[i])
+		}
+	}
+}
+
+func TestAllowedClientAuthMethods_Inspection_Passthrough(t *testing.T) {
+	t.Parallel()
+	v := fapi.New(fapi.ModeInspection)
+	all := []string{"client_secret_basic", "private_key_jwt"}
+	got := v.AllowedClientAuthMethods(all)
+	if len(got) != len(all) {
+		t.Errorf("inspection mode must pass through all methods unchanged; got %v", got)
+	}
+}
+
+func TestExtractJWTAlg(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		compact  string
+		wantAlg string
+	}{
+		{"ES256 JWT", "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature", "ES256"},
+		{"RS256 JWT", "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature", "RS256"},
+		{"EdDSA JWT", "eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature", "EdDSA"},
+		{"empty string", "", ""},
+		{"not a JWS", "not-a-jws", ""},
+		{"starts with dot", ".header.payload.sig", ""},
+		{"no alg header", "eyJ0eXAiOiJKV1QifQ.payload.sig", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := fapi.ExtractJWTAlg(tc.compact)
+			if got != tc.wantAlg {
+				t.Errorf("ExtractJWTAlg(%q) = %q, want %q", tc.compact, got, tc.wantAlg)
+			}
+		})
+	}
+}
+
+func TestExtractJWTAlg_PS384(t *testing.T) {
+	t.Parallel()
+	// PS384: base64url of {"alg":"PS384","typ":"JWT"}
+	compact := "eyJhbGciOiJQUzM4NCIsInR5cCI6IkpXVCJ9.payload.sig"
+	if got := fapi.ExtractJWTAlg(compact); got != "PS384" {
+		t.Errorf("ExtractJWTAlg(PS384) = %q, want PS384", got)
+	}
+}
+
+func TestExtractJWTAlg_HS256Ignored(t *testing.T) {
+	t.Parallel()
+	// HS256: should still extract correctly even though it's not FAPI-compliant.
+	compact := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig"
+	if got := fapi.ExtractJWTAlg(compact); got != "HS256" {
+		t.Errorf("ExtractJWTAlg(HS256) = %q, want HS256", got)
+	}
+}

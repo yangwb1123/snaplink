@@ -10,6 +10,7 @@ import (
 	"github.com/snaplink/sso/interfaces/ratelimit"
 	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
 	"github.com/snaplink/sso/shared/core"
+	"google.golang.org/grpc/metadata"
 )
 
 // TestIsGatedGRPCMethod_DiscoveryMutations verifies that the discovery write
@@ -169,6 +170,50 @@ func TestHTTPMiddleware_DestructiveActionRequiresConfirm(t *testing.T) {
 	_ = resp3.Body.Close()
 	if resp3.StatusCode != http.StatusOK {
 		t.Fatalf("DELETE on a non-classified path = %d; want 200 (unaffected)", resp3.StatusCode)
+	}
+}
+
+// clientIDAuthorizer grants one client scope and retains the ID it observed,
+// exercising the claim selection performed by both admin transports.
+type clientIDAuthorizer struct{ clientID string }
+
+func (a *clientIDAuthorizer) HasAdminScope(_ context.Context, _, clientID, _ string) (bool, error) {
+	a.clientID = clientID
+	return clientID == "sso-admin-console", nil
+}
+
+func TestAdminAuthorizationUsesClientIDWithoutAudience(t *testing.T) {
+	claims := &core.TokenClaims{Subject: "admin", ClientID: "sso-admin-console"}
+	authorizer := &clientIDAuthorizer{}
+	mw := &Middleware{
+		validator:    fakeValidator{claims: claims},
+		authorizer:   authorizer,
+		methodScopes: defaultMethodScopes(),
+	}
+
+	ts := httptest.NewServer(mw.HTTPMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})))
+	defer ts.Close()
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/admin/endpoints", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("HTTP request: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK || authorizer.clientID != claims.ClientID {
+		t.Fatalf("HTTP admin scope used client %q with status %d", authorizer.clientID, resp.StatusCode)
+	}
+
+	grpcCtx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer token"))
+	actorCtx, err := mw.authorizeGRPC(grpcCtx, "/snaplink.admin.v1.UserAdminService/List")
+	if err != nil {
+		t.Fatalf("gRPC authorization: %v", err)
+	}
+	_, clientID, ok := ActorFromContext(actorCtx)
+	if !ok || clientID != claims.ClientID || authorizer.clientID != claims.ClientID {
+		t.Fatalf("gRPC admin scope used actor client %q and authorizer client %q", clientID, authorizer.clientID)
 	}
 }
 

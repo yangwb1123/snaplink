@@ -257,6 +257,13 @@ func (s *Server) mountAdminUserState(api Router) {
 // tenant membership, and invitations. Mounted only when the backing store is
 // wired — byte-identical without them.
 func (s *Server) mountAdminB2B(api Router) {
+	if s.providerStore != nil {
+		api.GET(PathAdminProviders, s.handleAdminListProviders)
+		api.POST(PathAdminProviders, s.handleAdminCreateProvider)
+		api.GET(PathAdminProviderByID, s.handleAdminGetProvider)
+		api.PUT(PathAdminProviderByID, s.handleAdminUpdateProvider)
+		api.DELETE(PathAdminProviderByID, s.handleAdminDeleteProvider)
+	}
 	if s.connectionStore != nil {
 		api.GET(PathAdminConnections, s.handleAdminListConnections)
 		api.POST(PathAdminConnections, s.handleAdminUpsertConnection)

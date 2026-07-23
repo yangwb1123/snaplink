@@ -136,3 +136,116 @@ func (v *Validator) checkClientAuth(clientID, method string) []Violation {
 	}
 	return []Violation{{RuleClientAuth, clientID, "client must authenticate via private_key_jwt or mTLS; shared-secret client authentication is prohibited"}}
 }
+
+// SigningAlgContext carries the signals for a signing-algorithm check.
+type SigningAlgContext struct {
+	ClientID        string
+	RequestObjectAlg string // alg of the signed request object (JAR), empty if unsigned
+	IDTokenAlg       string // alg of the ID token about to be issued, empty if not an OIDC flow
+	ClientAssertionAlg string // alg of the client assertion (private_key_jwt), empty if none
+}
+
+// CheckSigningAlg returns violations for any signing algorithm that is NOT
+// in the FAPI 2.0 Security Profile approved list. RSA-based algorithms
+// (RS256, RS384, RS512, PS256, PS384, PS512) are prohibited; only ECDSA
+// and EdDSA are permitted. An empty alg is silently skipped (not checked)
+// so callers with no signing context can pass through without noise.
+func (v *Validator) CheckSigningAlg(sc SigningAlgContext) []Violation {
+	if !v.Active() {
+		return nil
+	}
+	var vs []Violation
+	// Check the request object signing alg (JAR).
+	if sc.RequestObjectAlg != "" && !IsFAPIAllowedAlg(sc.RequestObjectAlg) {
+		vs = append(vs, Violation{
+			RuleID:   RuleSigningAlg,
+			ClientID: sc.ClientID,
+			Detail:   "request object signing algorithm " + sc.RequestObjectAlg + " is not FAPI 2.0 compliant; use ES256, ES384, ES512, or EdDSA",
+		})
+	}
+	// Check the ID token signing alg.
+	if sc.IDTokenAlg != "" && !IsFAPIAllowedAlg(sc.IDTokenAlg) {
+		vs = append(vs, Violation{
+			RuleID:   RuleSigningAlg,
+			ClientID: sc.ClientID,
+			Detail:   "ID token signing algorithm " + sc.IDTokenAlg + " is not FAPI 2.0 compliant; use ES256, ES384, ES512, or EdDSA",
+		})
+	}
+	// Check the client assertion signing alg (private_key_jwt).
+	if sc.ClientAssertionAlg != "" && !IsFAPIAllowedAlg(sc.ClientAssertionAlg) {
+		vs = append(vs, Violation{
+			RuleID:   RuleSigningAlg,
+			ClientID: sc.ClientID,
+			Detail:   "client assertion signing algorithm " + sc.ClientAssertionAlg + " is not FAPI 2.0 compliant; use ES256, ES384, ES512, or EdDSA",
+		})
+	}
+	return vs
+}
+
+// CIBAContext carries CIBA-specific signals for FAPI compliance checking.
+type CIBAContext struct {
+	ClientID            string
+	DeliveryMode        string // poll, ping, or push
+	UserCodeRequired    bool
+}
+
+// CheckCIBA returns violations when the CIBA backchannel delivery mode is
+// not push in FAPI 2.0 enforce mode. Only push mode (where the IdP pushes
+// the authorization result to the RP's registered notification endpoint)
+// satisfies the FAPI 2.0 requirement for direct, authenticated notification.
+func (v *Validator) CheckCIBA(cc CIBAContext) []Violation {
+	if !v.Active() {
+		return nil
+	}
+	var vs []Violation
+	if cc.DeliveryMode != "" && cc.DeliveryMode != "push" {
+		vs = append(vs, Violation{
+			RuleID:   RuleCIBAPushMode,
+			ClientID: cc.ClientID,
+			Detail:   "CIBA backchannel delivery mode must be 'push'; got '" + cc.DeliveryMode + "' which is not FAPI 2.0 compliant",
+		})
+	}
+	return vs
+}
+
+// AllowedAlgValues returns the signing algorithm values that are compliant
+// with the current FAPI mode. In enforce mode, only FAPI-approved algs
+// (ES256, ES384, ES512, EdDSA) are returned. In inspection or off mode,
+// all algs are returned (the caller's full set) — inspection audits
+// violations but does not narrow the discovery doc.
+// This is a HELPER for discovery doc construction, not a validation method.
+func (v *Validator) AllowedAlgValues(all []string) []string {
+	if !v.Enforcing() {
+		return all
+	}
+	set := FAPIAllowedAlgSet()
+	filtered := make([]string, 0, len(all))
+	for _, a := range all {
+		if _, ok := set[a]; ok {
+			filtered = append(filtered, a)
+		}
+	}
+	return filtered
+}
+
+// AllowedClientAuthMethods returns the client-authentication methods that
+// are compliant with the current FAPI mode. In enforce mode, only
+// asymmetric methods (private_key_jwt, tls_client_auth) are permitted.
+// In inspection or off mode, all methods are returned unchanged.
+func (v *Validator) AllowedClientAuthMethods(all []string) []string {
+	if !v.Enforcing() {
+		return all
+	}
+	// In enforce mode, narrow to asymmetric methods only.
+	set := make(map[string]struct{}, len(FAPIAllowedClientAuthMethods))
+	for _, m := range FAPIAllowedClientAuthMethods {
+		set[m] = struct{}{}
+	}
+	filtered := make([]string, 0, len(all))
+	for _, m := range all {
+		if _, ok := set[m]; ok {
+			filtered = append(filtered, m)
+		}
+	}
+	return filtered
+}

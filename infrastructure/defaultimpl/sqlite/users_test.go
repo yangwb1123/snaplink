@@ -3,6 +3,7 @@ package sqlite_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -15,10 +16,9 @@ import (
 // its own database. The provider closes when the test cleans up.
 func newTestProvider(t *testing.T) *sqlite.UserProvider {
 	t.Helper()
-	// file::memory:?cache=shared so all connections in the pool see
-	// the same in-memory DB (default :memory: opens a fresh DB per
-	// connection, which makes table lookups race their own creation).
-	p, err := sqlite.NewUserProvider("file::memory:?cache=shared")
+	// Use a per-test named in-memory DB so parallel tests don't share state.
+	dsn := fmt.Sprintf("file:users_%s?mode=memory&cache=shared&_pragma=busy_timeout(5000)", t.Name())
+	p, err := sqlite.NewUserProvider(dsn)
 	if err != nil {
 		t.Fatalf("NewUserProvider: %v", err)
 	}

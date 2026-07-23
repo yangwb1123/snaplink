@@ -119,6 +119,12 @@ const (
 	KeyVCSRevision     = "vcs_revision"
 	KeyVCSTime         = "vcs_time"
 	KeyProviders       = "providers"
+	KeyClientContext   = "client_context"
+	KeyProviderType    = "type"
+	KeyProviderIcon    = "icon_url"
+	KeyProviderBuiltin = "builtin"
+	KeyProviderLabel   = "button_label"
+	KeyProviderID      = "id"
 	KeySupportedGrants = "supported_grants"
 	KeySessionID       = "session_id"
 	KeyAccessToken     = "access_token"
@@ -410,23 +416,22 @@ const (
 	// new org's upstream IdP without a redeploy (config seeding only runs at
 	// boot). GET ?tenant_id= lists a tenant's connections; admin:read for GET,
 	// admin:write for POST/DELETE. Mounted only when a connection store is wired.
+	PathAdminProviders    = "/admin/providers"
+	PathAdminProviderByID = "/admin/providers/:id"
+
 	PathAdminConnections    = "/admin/connections"
 	PathAdminConnectionByID = "/admin/connections/:id"
 
 	// PathAdminConnectionDomains lists a connection's email-domain ownership
-	// claims (admin:read) — each with its DNS-TXT challenge record + status.
-	// PathAdminConnectionDomainVerify triggers a synchronous DNS-TXT check for
-	// one claimed domain (admin:write): a verified claim by ANOTHER connection
-	// blocks routing takeover, so a new claimant must prove DNS control here.
+	// claims (admin:read); PathAdminConnectionDomainVerify triggers a
+	// synchronous DNS-TXT check (admin:write). A verified claim blocks routing
+	// takeover — a new claimant must prove DNS control here.
 	PathAdminConnectionDomains      = "/admin/connections/:id/domains"
 	PathAdminConnectionDomainVerify = "/admin/connections/:id/domains/:domain/verify"
 
-	// PathAdminConnectionHealth returns a connection's last recorded probe
-	// outcome — status/last-success/last-error (admin:read). Never triggers a
-	// fresh probe itself. PathAdminConnectionProbe synchronously triggers ONE
-	// (OIDC discovery fetch or SAML metadata fetch, per Connection.Type) and
-	// persists the result (admin:write). Mounted only when a connection store
-	// is wired.
+	// PathAdminConnectionHealth returns a connection's last probe outcome
+	// (admin:read). PathAdminConnectionProbe triggers one synchronously
+	// (admin:write). Mounted only when a connection store is wired.
 	PathAdminConnectionHealth = "/admin/connections/:id/health"
 	PathAdminConnectionProbe  = "/admin/connections/:id/probe"
 

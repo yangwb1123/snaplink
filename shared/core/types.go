@@ -26,6 +26,7 @@ type Client struct {
 	RedirectURIs          []string `json:"redirect_uris"`
 	AllowedScopes         []string `json:"allowed_scopes"`
 	AllowedAuthenticators []string `json:"allowed_authenticators,omitempty"`
+	AllowedProviderIDs    []string `json:"allowed_provider_ids,omitempty"`
 	TokenStrategy         string   `json:"token_strategy,omitempty"`
 	Active                bool     `json:"active"`
 

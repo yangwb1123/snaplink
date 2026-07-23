@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/domains/connections/provider"
 	"github.com/snaplink/sso/domains/federation"
 	federationhealth "github.com/snaplink/sso/domains/federation/health"
 	"github.com/snaplink/sso/interfaces/admin"
@@ -37,20 +38,24 @@ func (s *Server) BuildOPMetadata(ctx HandlerContext, base string) federation.OPF
 	}
 }
 
-// handleFederationEntityConfig delegates to the hexagonal federation handler
-// (*Server satisfies federation.Deps via accessors.go). Only mounted when
-// WithFederationEntity is wired.
+// handleFederationEntityConfig delegates to the Hex federation handler.
 func (s *Server) handleFederationEntityConfig(ctx HandlerContext) {
 	federation.HandleEntityConfiguration(s, ctx)
 }
 
-// handleFederationFetch delegates to the hexagonal OpenID Federation 1.0 §8
-// Federation Fetch handler (*Server satisfies federation.FetchDeps via
-// accessors.go). Only mounted when WithFederationEntity is wired AND
-// subordinates are configured (this server acts as a federation SUPERIOR) —
-// byte-identical off otherwise.
+// handleFederationFetch delegates to the §8 Federation Fetch handler.
 func (s *Server) handleFederationFetch(ctx HandlerContext) {
 	federation.HandleFederationFetch(s, ctx)
+}
+
+// handleFederationResolve delegates to the §8.3 Federation Resolve handler.
+func (s *Server) handleFederationResolve(ctx HandlerContext) {
+	federation.HandleFederationResolve(s, ctx)
+}
+
+// handleFederationList delegates to the §8.2 Federation Listing handler.
+func (s *Server) handleFederationList(ctx HandlerContext) {
+	federation.HandleFederationList(s, ctx)
 }
 
 // requestBaseURL delegates to middleware.BaseURL — see that function
@@ -284,13 +289,10 @@ func (s *Server) mountClusterEndpoints() {
 	}
 }
 
-// mountFederationEndpoints registers the RFC 9728 protected-resource metadata,
-// the OpenID Federation 1.0 entity configuration (+ §8 fetch when this server
-// is a superior), and the B2B home-realm discovery routes -- each opt-in on
-// its own backing wiring (a boot-time nil-check, unchanged), all mounted
-// UNCONDITIONALLY and gated LIVE as one group via core.GatedRouter instead of
-// the previous single boot-time early-return -- so feature_gates.federation is
-// hot-reloadable (SetFederationGateEnabled) with no re-Mount.
+// mountFederationEndpoints registers the Federation 1.0 entity config (§8
+// fetch/list when superior, §8.3 resolve when trust anchor), RFC 9728
+// protected-resource metadata, and B2B home-realm discovery routes -- each
+// opt-in, all gated via core.GatedRouter so federation is hot-reloadable.
 func (s *Server) mountFederationEndpoints() {
 	gr := core.NewGatedRouter(s.router, s.federationGateOn)
 	// RFC 9728 Protected Resource Metadata (opt-in). Public discovery doc;
@@ -312,6 +314,19 @@ func (s *Server) mountFederationEndpoints() {
 		// federation_fetch_endpoint — byte-identical to the slice-1 leaf OP.
 		if s.federationEntity.HasSubordinates() {
 			gr.GET(PathFederationFetch, s.handleFederationFetch)
+			// OpenID Federation 1.0 §8.2 Listing endpoint — mounted alongside
+			// the fetch endpoint when this server is a SUPERIOR. Returns the
+			// configured subordinate list.
+			gr.GET(PathFederationList, s.handleFederationList)
+		}
+		// OpenID Federation 1.0 §8.3 Federation Resolve endpoint — mounted ONLY
+		// when this server is configured as a Trust Anchor (the resolver is live
+		// with ≥1 trust anchor). It resolves a trust chain for a requested entity
+		// identifier up to a configured anchor. Without trust anchors the route
+		// is NOT mounted AND the entity config advertises no
+		// federation_resolve_endpoint — byte-identical to the slice-1 leaf OP.
+		if s.federationEntity.Resolver().Enabled() {
+			gr.GET(PathFederationResolve, s.handleFederationResolve)
 		}
 	}
 
@@ -340,11 +355,12 @@ type federationMeshState struct {
 	// wrongful revocation). Nil ⇒ the route is NOT mounted — byte-identical
 	// to a build without it.
 	caepReceiver *caep.Receiver
-
-	// connectionStore holds per-organization enterprise connections for B2B
-	// home-realm discovery (connections.Store). Nil ⇒ the /auth/home-realm
-	// route is NOT mounted — byte-identical to a build without it.
+	// connectionStore holds per-organization enterprise connections (B2B HRD).
+	// Nil ⇒ /auth/home-realm route unmounted.
 	connectionStore connections.Store
+
+	// providerStore holds third-party login provider configs. Nil ⇒ routes unmounted.
+	providerStore provider.Store
 
 	// domainVerificationResolver is the DNS-TXT resolver the admin
 	// connection-domain-verify handler uses (WithDomainVerificationResolver).

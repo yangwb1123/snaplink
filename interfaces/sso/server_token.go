@@ -331,6 +331,8 @@ func (s *Server) enforceFAPITokenRules(ctx HandlerContext, req oauth.TokenReques
 		SenderConstrained: dpopJKT != "" || mtlsX5T != "",
 		ClientAuthMethod:  clientAuthMethod,
 	})
+	// FAPI §5.3.3: check client assertion signing alg against the allowlist.
+	vs = append(vs, s.fapiFAPIClientAssertionAlgCheck(req)...)
 	if len(vs) == 0 {
 		return false
 	}
@@ -346,6 +348,20 @@ func (s *Server) enforceFAPITokenRules(ctx HandlerContext, req oauth.TokenReques
 		return true
 	}
 	return false
+}
+
+// fapiFAPIClientAssertionAlgCheck extracts the alg from the client assertion
+// JWT (if present) and checks it against the FAPI allowlist. Extracted to keep
+// enforceFAPITokenRules under the function-length budget.
+func (s *Server) fapiFAPIClientAssertionAlgCheck(req oauth.TokenRequest) []fapi.Violation {
+	if req.ClientAssertion == "" {
+		return nil
+	}
+	clientAssertionAlg := fapi.ExtractJWTAlg(req.ClientAssertion)
+	return s.fapiValidator.CheckSigningAlg(fapi.SigningAlgContext{
+		ClientID:           req.ClientID,
+		ClientAssertionAlg: clientAssertionAlg,
+	})
 }
 
 // The per-grant handlers below are thin wrappers: *Server satisfies the

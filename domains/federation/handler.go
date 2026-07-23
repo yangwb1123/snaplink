@@ -173,8 +173,9 @@ func entityConfigurationClaims(iss string, keys []core.JWK, meta *EntityMetadata
 
 // federationEntityMeta builds the federation_entity metadata entry from
 // config, or nil when the operator configured neither org/contacts NOR any
-// subordinate (so the entry is omitted from the statement rather than emitted
-// empty — keeping the slice-1 leaf-OP entity config byte-identical).
+// subordinate NOR any trust anchor (so the entry is omitted from the statement
+// rather than emitted empty — keeping the slice-1 leaf-OP entity config
+// byte-identical).
 //
 // When subordinates ARE configured this server is a federation SUPERIOR, so the
 // entry additionally advertises the §8 federation_fetch_endpoint
@@ -182,12 +183,18 @@ func entityConfigurationClaims(iss string, keys []core.JWK, meta *EntityMetadata
 // climb THROUGH this server (superiorFetchEndpoint reads exactly this field).
 // The endpoint must therefore be present whenever subordinates are, even if
 // org/contacts are empty.
+//
+// When trust anchors ARE configured this server is a Trust Anchor, so the
+// entry additionally advertises the §8.3 federation_resolve_endpoint
+// (base + PathFederationResolve) so a resolver or relying party can use this
+// server to resolve a trust chain.
 func federationEntityMeta(cfg *Config, base string) *FederationEntityMeta {
 	if cfg == nil {
 		return nil
 	}
 	hasSubs := cfg.hasSubordinates()
-	if cfg.OrganizationName == "" && len(cfg.Contacts) == 0 && !hasSubs {
+	hasAnchors := len(cfg.TrustAnchors) > 0
+	if cfg.OrganizationName == "" && len(cfg.Contacts) == 0 && !hasSubs && !hasAnchors {
 		return nil
 	}
 	fe := &FederationEntityMeta{
@@ -196,6 +203,10 @@ func federationEntityMeta(cfg *Config, base string) *FederationEntityMeta {
 	}
 	if hasSubs {
 		fe.FederationFetchEndpoint = base + core.PathFederationFetch
+		fe.FederationListEndpoint = base + core.PathFederationList
+	}
+	if hasAnchors {
+		fe.FederationResolveEndpoint = base + core.PathFederationResolve
 	}
 	return fe
 }

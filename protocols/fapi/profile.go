@@ -13,6 +13,11 @@
 // sso package.
 package fapi
 
+import (
+	"encoding/base64"
+	"encoding/json"
+)
+
 // Mode selects how the Validator's callers treat rule violations.
 type Mode int
 
@@ -81,7 +86,96 @@ const (
 	// (client_secret_basic / client_secret_post) is prohibited (FAPI
 	// 2.0 §5.3.2).
 	RuleClientAuth = "fapi:client_auth"
+
+	// RuleSigningAlg — the signing algorithm used for ID tokens, JARM
+	// responses, request objects, and client authentication assertions
+	// MUST be a FAPI 2.0-approved algorithm. RSA-based algorithms
+	// (RS256, RS384, RS512, PS256, PS384, PS512) are prohibited;
+	// only ECDSA (ES256, ES384, ES512) and EdDSA are permitted
+	// (FAPI 2.0 SP §5.3.3 and FAPI 2.0 Message Signing).
+	RuleSigningAlg = "fapi:signing_alg"
+
+	// RuleCIBAPushMode — when CIBA is used in FAPI 2.0 enforce mode,
+	// the backchannel token delivery mode MUST be pushed (ping or
+	// poll modes are not compliant).
+	RuleCIBAPushMode = "fapi:ciba_push_mode"
 )
+
+// FAPIAllowedAlgValues returns the set of signing algorithms FAPI 2.0
+// Security Profile permits. RSA-based algs (RS256/RS384/RS512/PS256/
+// PS384/PS512) are prohibited; only ECDSA and EdDSA are permitted.
+// Used to filter discovery doc algorithm lists and validate at runtime.
+var FAPIAllowedAlgValues = []string{
+	"ES256", "ES384", "ES512",
+	"EdDSA",
+}
+
+// FAPIAllowedAlgSet returns FAPIAllowedAlgValues as a set for O(1) lookup.
+func FAPIAllowedAlgSet() map[string]struct{} {
+	s := make(map[string]struct{}, len(FAPIAllowedAlgValues))
+	for _, a := range FAPIAllowedAlgValues {
+		s[a] = struct{}{}
+	}
+	return s
+}
+
+// IsFAPIAllowedAlg reports whether alg is in the FAPI 2.0 allowlist.
+func IsFAPIAllowedAlg(alg string) bool {
+	for _, a := range FAPIAllowedAlgValues {
+		if a == alg {
+			return true
+		}
+	}
+	return false
+}
+
+// FAPIAllowedClientAuthMethods returns the client-authentication methods
+// FAPI 2.0 Security Profile permits: only asymmetric methods (private_key_jwt
+// and tls_client_auth). Used to narrow discovery doc auth method lists.
+var FAPIAllowedClientAuthMethods = []string{
+	ClientAuthPrivateKeyJWT,
+	ClientAuthTLS,
+}
+
+// ExtractJWTAlg extracts the `alg` header from a compact JWS string without
+// verifying the signature. Returns empty string on any parse failure (not a
+// JWS, not JSON, missing alg, or base64 decode error).
+func ExtractJWTAlg(compact string) string {
+	if compact == "" {
+		return ""
+	}
+	// Compact JWS: header.payload.signature (three dot-separated segments).
+	var headerSeg string
+	for i, c := range compact {
+		if c == '.' {
+			if i == 0 {
+				return "" // starts with dot
+			}
+			headerSeg = compact[:i]
+			break
+		}
+	}
+	if headerSeg == "" {
+		return "" // no dot found — not a compact JWS
+	}
+	// Base64url decode the header (RFC 4648 §5, no padding).
+	decoded, err := base64.RawURLEncoding.DecodeString(headerSeg)
+	if err != nil {
+		// Try padded base64url as fallback.
+		decoded, err = base64.URLEncoding.DecodeString(headerSeg)
+		if err != nil {
+			return ""
+		}
+	}
+	// Parse the JSON header to extract "alg".
+	var hdr struct {
+		Alg string `json:"alg"`
+	}
+	if err := json.Unmarshal(decoded, &hdr); err != nil {
+		return ""
+	}
+	return hdr.Alg
+}
 
 // Client-authentication method identifiers (OAuth 2.0 token endpoint
 // auth methods, RFC 8414). The caller classifies the detected method

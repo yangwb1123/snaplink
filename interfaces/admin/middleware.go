@@ -7,6 +7,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -55,6 +56,9 @@ func (p providerAuthorizer) HasAdminScope(ctx context.Context, userID, clientID,
 	}
 	perms, err := p.Prov.Permissions(ctx, userID, clientID)
 	if err != nil {
+		if errors.Is(err, permissions.ErrUserNotFound) {
+			return false, nil
+		}
 		return false, err
 	}
 	return permissions.Matches(perms, requiredScope), nil
@@ -79,7 +83,7 @@ type Middleware struct {
 	// gates the admin surface as one shared bucket (adminRateLimitKey);
 	// nil = unlimited. See governance.go for both setters + checkRateLimit.
 	rateLimitStore *ratelimit.PolicyStore
-	recorder     *audit.Recorder   // when set, every gRPC admin RPC is audited
+	recorder       *audit.Recorder // when set, every gRPC admin RPC is audited
 
 	// adminTokenStore tracks token metadata for idle-timeout enforcement.
 	// When set, every protected HTTP request updates LastUsedAt (Touch).
@@ -225,7 +229,7 @@ func (a *Middleware) authorizeGRPC(ctx context.Context, fullMethod string) (cont
 	if err != nil {
 		return nil, status.Errorf(codes.Unauthenticated, "invalid token: %v", err)
 	}
-	clientID := ""
+	clientID := claims.ClientID
 	if len(claims.Audience) > 0 {
 		clientID = claims.Audience[0]
 	}
@@ -367,6 +371,7 @@ func (a *Middleware) authenticateHTTP(w http.ResponseWriter, r *http.Request) (c
 		http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
 		return nil, "", false
 	}
+	clientID = claims.ClientID
 	if len(claims.Audience) > 0 {
 		clientID = claims.Audience[0]
 	}

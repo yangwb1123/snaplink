@@ -216,6 +216,21 @@ type FederationEntityMeta struct {
 	Contacts                []string `json:"contacts,omitempty"`
 	FederationFetchEndpoint string   `json:"federation_fetch_endpoint,omitempty"`
 
+	// FederationListEndpoint is the §8.2 Federation Listing endpoint URL this
+	// server advertises when configured as a federation SUPERIOR (≥1 configured
+	// subordinate). Returns a JSON array listing the configured subordinate
+	// entities. omitempty keeps the leaf-OP entity config byte-identical.
+	FederationListEndpoint string `json:"federation_list_endpoint,omitempty"`
+
+	// FederationResolveEndpoint is the §8.3 Federation Resolve endpoint URL
+	// this server advertises when configured as a Trust Anchor (one or more
+	// trust anchors configured). A resolver calls this endpoint to resolve a
+	// trust chain for a given entity identifier up to the configured anchor,
+	// receiving a JSON response with the resolved chain of signed Entity
+	// Statements. omitempty keeps the slice-1 entity-publishing path (which
+	// never sets it — this OP is a leaf, not an anchor) byte-identical.
+	FederationResolveEndpoint string `json:"federation_resolve_endpoint,omitempty"`
+
 	// TrustMarkIssuers is the §7 (federation_entity) trust_mark_issuers claim a
 	// TRUST ANCHOR publishes to declare which issuer Entity IDs are authorized
 	// to mint Trust Marks of each type (OpenID Federation 1.0 §3.1.2): a JSON

@@ -95,6 +95,9 @@ var docCodeExceptions = map[string]bool{
 	// cmd/sso-server/serverwebauthn/webauthn.go returns this as a plain string
 	// literal from a ceremony-outcome mapping helper, same composition-layer reason.
 	"ceremony_failed": true,
+	// interfaces/sso/server_signup.go keeps this as a local literal because the
+	// setup wizard is a one-shot public flow, not a core reusable error code.
+	"already_initialized": true,
 }
 
 // wireConstRe matches an exported Err<Name> string-literal constant, in

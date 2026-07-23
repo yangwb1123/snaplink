@@ -188,6 +188,16 @@ func TestRcovSS2_PermissionsWithProvider(t *testing.T) {
 		if status != http.StatusOK {
 			t.Errorf("GET %s = %d body=%v, want 200", path, status, out)
 		}
+		if path != "/menus/me" {
+			key := "permissions"
+			if path == "/roles/me" {
+				key = "roles"
+			}
+			entries, ok := out[key].([]any)
+			if !ok || len(entries) == 0 {
+				t.Errorf("GET %s returned no assigned data: %v", path, out)
+			}
+		}
 	}
 
 	// Unauthenticated permission query => 401.

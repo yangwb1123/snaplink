@@ -16,6 +16,7 @@ import (
 
 	"github.com/snaplink/sso/domains/authenticators"
 	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/domains/federation"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
@@ -238,6 +239,41 @@ func TestFeatureGates_FederationOff_Hides404(t *testing.T) {
 	list := fgAdminEndpoints(t, env)
 	if fgInventoryHasPath(list, sso.PathProtectedResourceMetadata) {
 		t.Errorf("inventory lists %s with federation gate off", sso.PathProtectedResourceMetadata)
+	}
+}
+
+// TestFeatureGates_FederationResolveVisibleWhenAnchored proves the new
+// federation resolve endpoint is mounted only when the federation entity is
+// wired with configured trust anchors, and it disappears when the federation
+// gate is switched off.
+func TestFeatureGates_FederationResolveVisibleWhenAnchored(t *testing.T) {
+	t.Parallel()
+	env := fgNewAdminServer(t,
+		sso.WithFederationEntity(&federation.Config{
+			TrustAnchors: []federation.TrustAnchor{{EntityID: "https://ta.example.com", Keys: []sso.JWK{}}},
+		}, defaultimpl.NewEd25519JWTIssuer()),
+	)
+
+	status, _ := rcovDo(t, http.MethodGet, env.url+"/.well-known/openid-federation-resolve", "", nil)
+	if status != http.StatusBadRequest {
+		t.Errorf("GET resolve without sub = %d, want 400", status)
+	}
+	list := fgAdminEndpoints(t, env)
+	if !fgInventoryHasPath(list, sso.PathFederationResolve) {
+		t.Errorf("inventory missing %s when trust anchors are configured", sso.PathFederationResolve)
+	}
+
+	envOff := fgNewAdminServer(t,
+		sso.WithFederationEntity(&federation.Config{
+			TrustAnchors: []federation.TrustAnchor{{EntityID: "https://ta.example.com", Keys: []sso.JWK{}}},
+		}, defaultimpl.NewEd25519JWTIssuer()),
+		sso.WithFeatureGates(sso.FeatureGates{Federation: sso.Bool(false)}),
+	)
+	if status, _ := rcovDo(t, http.MethodGet, envOff.url+"/.well-known/openid-federation-resolve", "", nil); status != http.StatusNotFound {
+		t.Errorf("GET resolve with federation off = %d, want 404", status)
+	}
+	if fgInventoryHasPath(fgAdminEndpoints(t, envOff), sso.PathFederationResolve) {
+		t.Errorf("inventory lists %s with federation gate off", sso.PathFederationResolve)
 	}
 }
 

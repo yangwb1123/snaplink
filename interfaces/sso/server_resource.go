@@ -272,8 +272,17 @@ func gatedProtocolEndpointCandidates() []endpointCandidate {
 		{endpointInfo{http.MethodGet, PathFederationEntityConfig, "federation"}, func(s *Server) bool {
 			return s.federationGateOn() && s.federationEntity != nil
 		}},
+		{endpointInfo{http.MethodGet, PathFederationResolve, "federation"}, func(s *Server) bool {
+			return s.federationGateOn() && s.federationEntity != nil && s.federationEntity.Resolver().Enabled()
+		}},
 		{endpointInfo{http.MethodGet, PathFederationFetch, "federation"}, func(s *Server) bool {
 			return s.federationGateOn() && s.federationEntity != nil && s.federationEntity.HasSubordinates()
+		}},
+		{endpointInfo{http.MethodGet, PathFederationList, "federation"}, func(s *Server) bool {
+			return s.federationGateOn() && s.federationEntity != nil && s.federationEntity.HasSubordinates()
+		}},
+		{endpointInfo{http.MethodGet, PathFederationResolve, "federation"}, func(s *Server) bool {
+			return s.federationGateOn() && s.federationEntity != nil && s.federationEntity.Resolver().Enabled()
 		}},
 		{endpointInfo{http.MethodGet, PathHomeRealm, "federation"}, func(s *Server) bool {
 			return s.federationGateOn() && s.connectionStore != nil

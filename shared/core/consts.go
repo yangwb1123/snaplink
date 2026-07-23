@@ -437,40 +437,35 @@ const (
 	// max-age — NOT a credential endpoint).
 	PathFederationFetch = "/fetch"
 
+	// PathFederationResolve is the OpenID Federation 1.0 §8.3 resolve endpoint.
+	// Returns a JSON trust chain for a given entity identifier
+	// (GET ?sub=<entity_id>) — leaf configuration → subordinate statements →
+	// anchor configuration, leaf-first. Missing sub → 400; unresolvable → 404
+	// (oracle-safe). Only mounted with trust anchors configured; no-store cache.
+	PathFederationResolve = "/.well-known/openid-federation-resolve"
+
+	// PathFederationList is the OpenID Federation 1.0 §8.2 Federation Listing
+	// endpoint. When this server is configured as a federation SUPERIOR (one or
+	// more subordinates in federation.Config), it serves a JSON array listing
+	// the configured subordinate entities with their entity identifiers and
+	// metadata. Only mounted when subordinates are configured; public metadata
+	// (Cache-Control public, max-age).
+	PathFederationList = "/.well-known/openid-federation-list"
+
 	PathNetPolicies        = "/netpolicy/policies"
 	PathNetPolicyByName    = "/netpolicy/policies/:name"
 	PathNetPolicyClassify  = "/netpolicy/classify"
 	PathNetPolicyResolveMe = "/netpolicy/resolve-me"
 
-	// SAML 2.0 (cluster: external/forked SAML module). These name the
-	// canonical mount points an operator's SAML handler-set occupies when
-	// wired through the cmd samlHandlerRegistry. They are DEFAULTS exposed
-	// for docs / client code; the SAML module owns the actual handlers and
-	// may mount elsewhere. The core module ships NO SAML/XML dependency —
-	// these are plain path literals only (see AGENTS.md: zero-external-dep
-	// invariant). PathSAMLMetadata serves the IdP entity descriptor (SP
-	// metadata consumers fetch it); PathSAMLSSO is the IdP-side SSO
-	// receiver (AuthnRequest in); PathSAMLSSOCallback is the SP-side
-	// Assertion Consumer Service the IdP POSTs the assertion back to.
-	//
-	// Single Logout (SLO): PathSAMLSLO is the IdP-side SLO receiver — a
-	// downstream SP POSTs/redirects a (signed) LogoutRequest here and the
-	// IdP terminates the matching subject session, replying with a signed
-	// LogoutResponse to the SP's registered SLO URL. PathSAMLSPSLO is the
-	// SP-side SLO receiver — the UPSTREAM IdP redirects a (signed)
-	// LogoutRequest here and this server terminates its own local session,
-	// replying with a signed LogoutResponse to the IdP. Both are distinct
-	// from the SSO mounts so an operator can route them independently.
-	//
-	// PathSAMLSLOContinue is the IdP-side FRONT-channel SLO chain resume
-	// endpoint: in the browser-redirect SLO chain (SAML Bindings HTTP-Redirect)
-	// the IdP redirects the user-agent sequentially through each front-channel
-	// SP's SLO URL; each SP, after terminating its local session, redirects the
-	// browser BACK here with a signed LogoutResponse + the chain-state id as
-	// RelayState, and the IdP advances to the next SP (or returns to the
-	// initiator). It is the response-side counterpart to PathSAMLSLO (the
-	// request-side receiver) — a distinct path so the SP's LogoutResponse target
-	// is unambiguous (it is PathSAMLSLO + "/continue").
+	// SAML 2.0 canonical mount points for the external/forked SAML module.
+	// PathSAMLMetadata serves the IdP entity descriptor; PathSAMLSSO is the
+	// IdP-side SSO receiver (AuthnRequest in); PathSAMLSSOCallback is the
+	// SP-side ACS. PathSAMLSLO is the IdP-side SLO receiver (LogoutRequest
+	// from a downstream SP); PathSAMLSPSLO is the SP-side SLO receiver
+	// (LogoutRequest from the upstream IdP). PathSAMLSLOContinue is the
+	// IdP-side front-channel SLO chain resume endpoint — the browser returns
+	// here after each SP terminates its local session. The core module ships
+	// NO SAML/XML dependency — these are plain path literals only.
 	PathSAMLMetadata    = "/saml/metadata"
 	PathSAMLSSO         = "/saml/sso"
 	PathSAMLSSOCallback = "/auth/saml/callback"

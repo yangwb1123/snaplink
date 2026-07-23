@@ -293,34 +293,6 @@ func (s *Server) runPostCredentialGates(ctx HandlerContext, req *login.Request, 
 	return false
 }
 
-// respondLoginProviders handles the no-provider-selected case: home-realm
-// discovery (B2B, opt-in) when the login hint's email domain maps to an
-// enterprise connection, else the generic provider list. Returns true (response
-// written) when it handled the request; false when a provider IS selected and
-// the caller should proceed. A build without WithConnectionStore is
-// byte-identical (resolveHomeRealm returns ok=false).
-func (s *Server) respondLoginProviders(ctx HandlerContext, req *login.Request) bool {
-	if req.Provider != "" {
-		return false
-	}
-	if conn, ok := s.resolveHomeRealm(ctx, req.LoginHint); ok {
-		ctx.JSON(http.StatusOK, map[string]any{
-			keyHRConnectionRequired: true,
-			keyHRConnectionID:       conn.ID,
-			keyHRType:               string(conn.Type),
-			keyHRTenantID:           conn.TenantID,
-			keyHRDisplayName:        conn.DisplayName,
-			KeyIss:                  s.resolveIssuer(ctx),
-		})
-		return true
-	}
-	ctx.JSON(http.StatusOK, map[string]any{
-		KeyProviders: s.providersForClient(ctx, req.ClientID),
-		KeyIss:       s.resolveIssuer(ctx),
-	})
-	return true
-}
-
 // validateLoginAuthorizationParams enforces the request-parameter shapes:
 // parameter length limits (DoS prevention), RFC 8707 resource allowlist,
 // OIDC §5.5 claims-parameter (must be a JSON object), and RFC 9396

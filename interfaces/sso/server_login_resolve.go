@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/domains/connections/provider"
 	"github.com/snaplink/sso/domains/tenant"
 	"github.com/snaplink/sso/internal/auth/login"
 	"github.com/snaplink/sso/protocols/oauth"
@@ -248,6 +249,14 @@ func (s *Server) resolveHomeRealm(ctx HandlerContext, loginHint string) (*connec
 // for the historical opt-out behavior — see resolveHomeRealm's doc.
 func WithConnectionStore(store connections.Store) Option {
 	return func(s *Server) { s.connectionStore = store }
+}
+
+// WithProviderStore wires the third-party login provider store. When wired,
+// the /api/v1/admin/providers CRUD routes are mounted; without it the routes
+// are NOT mounted and the build is byte-identical to a build without the
+// feature.
+func WithProviderStore(store provider.Store) Option {
+	return func(s *Server) { s.providerStore = store }
 }
 
 // WithConnectionAuthenticatorFactory wires the RUNTIME half of enterprise

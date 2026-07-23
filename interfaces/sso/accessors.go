@@ -12,6 +12,7 @@ import (
 
 	"github.com/snaplink/sso/domains/anomaly"
 	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/domains/connections/provider"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/domains/tokenanomaly"
@@ -30,15 +31,12 @@ import (
 	"github.com/snaplink/sso/shared/spi"
 )
 
-// Server field accessors, consolidated. These expose Server internals to the
-// hexagonally-extracted handlers in internal/, oauth/, oidc/, selfservice/, etc.
-// (thin getters + a few thin record/encrypt wrappers). Grouped here to keep the
-// root file count down; the per-concern compile-guards live alongside their
-// interface consumers in accessors_handlers.go / accessors_discovery.go /
-// accessors_userinfo.go / accessors_token_grant.go.
+// Server field accessors consolidated. Thin getters exposing internals to
+// hexagonally-extracted handlers (internal/, oauth/, oidc/, selfservice/).
+// Per-concern compile-guards live alongside their interface consumers in
+// accessors_handlers.go / accessors_discovery.go / accessors_userinfo.go.
 
-// Accessors for the B2B org handlers extracted to admin/ (tenant-member +
-// invitation admin) and selfservice/ (the /me organization endpoints).
+// Accessors for the B2B org handlers extracted to admin/ and selfservice/.
 func (s *Server) InvitationStore() core.InvitationStore  { return s.invitationStore }
 func (s *Server) InvitationSender() spi.InvitationSender { return s.invitationSender }
 
@@ -72,13 +70,11 @@ func (s *Server) RefreshTokenStore() oauth.RefreshTokenStore { return s.refreshT
 func (s *Server) RefreshTokenTTL() time.Duration             { return s.refreshTokenTTL }
 
 // RefreshAbsoluteMaxLifetime returns the configured hard ceiling on a
-// refresh-token family's total age (WithRefreshAbsoluteMaxLifetime). 0 means
-// disabled — every family may rotate indefinitely, as before this feature.
+// refresh-token family's total age. 0 means disabled.
 func (s *Server) RefreshAbsoluteMaxLifetime() time.Duration { return s.refreshAbsoluteMaxLifetime }
 
 // MaxTokenExchangeChainLifetime returns the configured hard ceiling on an RFC
-// 8693 token-exchange delegation chain's total age (WithMaxTokenExchangeChainLifetime).
-// 0 means disabled.
+// 8693 delegation chain's total age. 0 means disabled.
 func (s *Server) MaxTokenExchangeChainLifetime() time.Duration {
 	return s.maxTokenExchangeChainLifetime
 }
@@ -225,14 +221,12 @@ func (s *Server) BreakGlassStore() core.BreakGlassStore {
 // than constructing another one.
 func (s *Server) GeoProvider() geo.Provider { return s.geoProvider }
 
-func (s *Server) ConnectionStore() connections.Store { return s.connectionStore }
+func (s *Server) ConnectionStore() connections.Store      { return s.connectionStore }
+func (s *Server) ProviderStore() provider.Store { return s.providerStore }
 
 // WebhookEngine, RebacEngine, SCIMProvisionSink, ConditionalAccessStore, and
-// DomainResolver accessors moved to options_httpstack.go (beside the
-// WithWebhookEngine/WithRebacEngine/WithSCIMProvisioner options that wire
-// their backing fields) to keep this file within the per-file line budget.
-// ConnectionProber moved to server_federation.go, beside the
-// connectionProber field it reads.
+// DomainResolver accessors moved to options_httpstack.go; ConnectionProber
+// moved to server_federation.go.
 
 // ConsentStore exposes the wired consent store (may be nil).
 func (s *Server) ConsentStore() ConsentStore                { return s.consentStore }
@@ -449,6 +443,13 @@ func (s *Server) FederationFetchCache() *federation.SubordinateStatementCache {
 }
 
 func (s *Server) FederationNow() time.Time { return time.Now() }
+
+func (s *Server) FederationResolver() *federation.TrustChainResolver {
+	if s.federationEntity == nil {
+		return nil
+	}
+	return s.federationEntity.Resolver()
+}
 
 // JWKS document cache methods.
 func (s *Server) ComputeJWKSDocument(compute func() ([]byte, error)) ([]byte, error) {

@@ -22,13 +22,8 @@ func subjectTypesFor(s *Server) []string {
 	return oidc.SubjectTypesFor(s.pairwiseStore != nil)
 }
 
-// signDiscoveryMetadata marshals cfg to JSON with SignedMetadata
-// cleared, re-parses as a claim map, and asks the wired
-// oidc.MetadataSigner to JWS it. The signed payload must equal the
-// plaintext fields per RFC 8414 §2.1; we enforce that by sourcing
-// the claims from the same struct, with one round-trip through
-// json (Marshal + Unmarshal) to get the map shape the signer
-// expects.
+// signDiscoveryMetadata marshals cfg, clears SignedMetadata, re-parses as a
+// claim map, and asks the oidc.MetadataSigner to JWS it (RFC 8414 §2.1).
 func (s *Server) signDiscoveryMetadata(ctx context.Context, cfg *oidc.ProviderMetadata) (string, error) {
 	if s.metadataSigner == nil {
 		return "", nil
@@ -456,31 +451,40 @@ func (s *Server) applyResponseModesAndProfiles(cfg *oidc.ProviderMetadata, ctx H
 		ResponseModeQuery, ResponseModeFragment, ResponseModeFormPost,
 	}
 
-	// JARM — advertise the jwt response modes + the signing alg only
-	// when a JARM signer is wired (WithJARM). EdDSA is the alg the
-	// default Ed25519 signer uses.
+	// JARM — advertise the jwt response modes + the signing alg when wired.
 	if s.jarmSigner != nil {
 		cfg.ResponseModesSupported = append(cfg.ResponseModesSupported,
 			oidc.ResponseModeJWT, oidc.ResponseModeQueryJWT,
 			oidc.ResponseModeFragmentJWT, oidc.ResponseModeFormPostJWT,
 		)
-		// JARM responses are signed with the server's signing key, so
-		// advertise the actual signing alg(s) (EdDSA / ES256 / RS256 /
-		// PS256), not a hardcoded EdDSA.
 		cfg.AuthorizationSigningAlgValuesSupported = s.SigningAlgValues(ctx.Request().Context())
 	}
 
-	// FAPI 2.0 enforce mode: the profile makes these constraints
-	// server-wide and unconditional, so the discovery doc MUST advertise
-	// them as required (RP metadata validation then reflects reality).
-	// Inspection mode deliberately leaves discovery unchanged — it only
-	// audits, so advertising hard requirements there would mislead RPs.
-	if s.fapiValidator.Enforcing() {
-		cfg.RequirePushedAuthReq = true
-		cfg.RequireSignedRequestObjectGlobal = true
-		cfg.ResponseTypesSupported = []string{"code"}
-		cfg.CodeChallengeMethodsSupported = []string{PKCEMethodS256}
+	// FAPI 2.0 enforce mode narrows discovery constraints server-wide.
+	s.applyFAPIEnforceDiscovery(cfg)
+}
+
+// applyFAPIEnforceDiscovery narrows the discovery doc when FAPI enforce mode
+// is active: only ECDSA/EdDSA signing algs, only private_key_jwt/tls_client_auth.
+func (s *Server) applyFAPIEnforceDiscovery(cfg *oidc.ProviderMetadata) {
+	if !s.fapiValidator.Enforcing() {
+		return
 	}
+	cfg.RequirePushedAuthReq = true
+	cfg.RequireSignedRequestObjectGlobal = true
+	cfg.ResponseTypesSupported = []string{"code"}
+	cfg.CodeChallengeMethodsSupported = []string{PKCEMethodS256}
+	cfg.IDTokenSigningAlgValuesSupported = s.fapiValidator.AllowedAlgValues(cfg.IDTokenSigningAlgValuesSupported)
+	cfg.UserinfoSigningAlgValuesSupported = s.fapiValidator.AllowedAlgValues(cfg.UserinfoSigningAlgValuesSupported)
+	cfg.RequestObjectSigningAlgValuesSupported = s.fapiValidator.AllowedAlgValues(cfg.RequestObjectSigningAlgValuesSupported)
+	cfg.AuthorizationSigningAlgValuesSupported = s.fapiValidator.AllowedAlgValues(cfg.AuthorizationSigningAlgValuesSupported)
+	cfg.TokenEndpointAuthSigningAlgValuesSupported = s.fapiValidator.AllowedAlgValues(cfg.TokenEndpointAuthSigningAlgValuesSupported)
+	cfg.IntrospectionEndpointAuthSigningAlgValuesSupported = s.fapiValidator.AllowedAlgValues(cfg.IntrospectionEndpointAuthSigningAlgValuesSupported)
+	cfg.RevocationEndpointAuthSigningAlgValuesSupported = s.fapiValidator.AllowedAlgValues(cfg.RevocationEndpointAuthSigningAlgValuesSupported)
+	if len(cfg.PushedAuthorizationRequestEndpointAuthSigningAlgValuesSupported) > 0 {
+		cfg.PushedAuthorizationRequestEndpointAuthSigningAlgValuesSupported = s.fapiValidator.AllowedAlgValues(cfg.PushedAuthorizationRequestEndpointAuthSigningAlgValuesSupported)
+	}
+	cfg.TokenEndpointAuthMethodsSupported = s.fapiValidator.AllowedClientAuthMethods(cfg.TokenEndpointAuthMethodsSupported)
 }
 
 // BuildOPMetadata projects the openid_provider metadata for the OpenID

@@ -145,32 +145,6 @@ func isScopeSubset(want, have []string) bool {
 	return oauth.IsScopeSubset(want, have)
 }
 
-// providersForClient returns the list of authenticator names this client may use.
-// This remains in root as it's a Server adapter method.
-func (s *Server) providersForClient(ctx HandlerContext, clientID string) []string {
-	all := make([]string, 0, len(s.authenticators))
-	for name := range s.authenticators {
-		all = append(all, name)
-	}
-	if clientID == "" || s.clientStore == nil {
-		return all
-	}
-	client, err := s.clientStore.Get(ctx.Request().Context(), clientID)
-	if err != nil {
-		return all
-	}
-	if len(client.AllowedAuthenticators) == 0 {
-		return all
-	}
-	out := make([]string, 0, len(all))
-	for _, name := range all {
-		if client.IsAuthenticatorAllowed(name) {
-			out = append(out, name)
-		}
-	}
-	return out
-}
-
 // handleCallback handles the OAuth callback. This remains in root as it's a Server HTTP handler.
 func (s *Server) handleCallback(ctx HandlerContext) {
 	// The callback success response returns a session_id credential; mark it
