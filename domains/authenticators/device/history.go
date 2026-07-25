@@ -1,8 +1,12 @@
 package device
 
 import (
+	"errors"
 	"time"
 )
+
+// ErrNoRecord is returned when a nil record is passed to Record.
+var ErrNoRecord = errors.New("device: no record provided")
 
 // LoginRecord represents one completed login event.
 type LoginRecord struct {

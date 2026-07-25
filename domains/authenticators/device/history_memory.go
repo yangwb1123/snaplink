@@ -19,6 +19,9 @@ func NewMemoryHistoryStore() *MemoryHistoryStore {
 }
 
 func (s *MemoryHistoryStore) Record(r *LoginRecord) error {
+	if r == nil {
+		return ErrNoRecord
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if r.ID == "" {
