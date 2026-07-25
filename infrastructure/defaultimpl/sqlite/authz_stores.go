@@ -2,7 +2,9 @@ package sqlite
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -306,7 +308,17 @@ func NewDeviceStore(dsn string) (*DeviceStore, error) {
 }
 func (s *DeviceStore) Get(_ context.Context, id string) (*device.Device, error) { return scanDev(s.db.QueryRow(devSelect+` WHERE id=?`, id)) }
 func (s *DeviceStore) GetByFingerprint(_ context.Context, u, f string) (*device.Device, error) { return scanDev(s.db.QueryRow(devSelect+` WHERE user_id=? AND fingerprint=?`, u, f)) }
-func (s *DeviceStore) Upsert(_ context.Context, d *device.Device) error { _, e := s.db.Exec(devInsert, d.ID, d.UserID, d.Fingerprint, string(d.Type), d.Platform, d.OSVersion, d.BrowserName, d.BrowserVersion, d.DeviceName, d.Notes, d.RawUserAgent, time.Now().Unix(), time.Now().Unix(), d.LastIP, d.LastLocation, 1, d.TrustScore, btoi(d.Suspicious)); return e }
+func (s *DeviceStore) Upsert(_ context.Context, d *device.Device) error {
+	if d.ID == "" {
+		b := make([]byte, 16)
+		if _, err := rand.Read(b); err != nil {
+			return err
+		}
+		d.ID = "dev_" + hex.EncodeToString(b)
+	}
+	_, e := s.db.Exec(devInsert, d.ID, d.UserID, d.Fingerprint, string(d.Type), d.Platform, d.OSVersion, d.BrowserName, d.BrowserVersion, d.DeviceName, d.Notes, d.RawUserAgent, time.Now().Unix(), time.Now().Unix(), d.LastIP, d.LastLocation, 1, d.TrustScore, btoi(d.Suspicious))
+	return e
+}
 func (s *DeviceStore) ListByUser(_ context.Context, uid string) ([]*device.Device, error) { r, e := s.db.Query(devSelect+` WHERE user_id=? ORDER BY last_seen_at DESC`, uid); if e != nil { return nil, e }; defer r.Close(); return scanDevs(r) }
 func (s *DeviceStore) ListAll(_ context.Context) ([]*device.Device, error) { r, e := s.db.Query(devSelect+` ORDER BY last_seen_at DESC`); if e != nil { return nil, e }; defer r.Close(); return scanDevs(r) }
 func (s *DeviceStore) Delete(_ context.Context, id string) error { _, e := s.db.Exec(`DELETE FROM devices WHERE id=?`, id); return e }
