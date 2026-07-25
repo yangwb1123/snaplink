@@ -207,8 +207,13 @@ func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *lo
 	}
 	// Add device trust info to token claims.
 	if dc := deviceCtxFrom(ctx); dc != nil && dc.SecurityCtx != nil {
-		if dc.SecurityCtx.DeviceIsNew { claims["device_is_new"] = "true" }
-		if dc.SecurityCtx.LocationIsNew { claims["location_is_new"] = "true" }
+		if dc.SecurityCtx.DeviceIsNew || dc.SecurityCtx.LocationIsNew {
+			if claims == nil {
+				claims = make(map[string]string)
+			}
+			if dc.SecurityCtx.DeviceIsNew { claims["device_is_new"] = "true" }
+			if dc.SecurityCtx.LocationIsNew { claims["location_is_new"] = "true" }
+		}
 	}
 	token, err := ti.Issue(ctx.Request().Context(), &Subject{
 		ID:                   issuedSub,

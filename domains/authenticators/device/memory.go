@@ -42,6 +42,8 @@ func (m *MemoryStore) Upsert(_ context.Context, d *Device) error {
 			// (the caller always sets LoginCount=1; we override with existing+1).
 			cp.LoginCount = existing.LoginCount + 1
 			m.byID[cp.ID] = cp
+			// Set ID on the input so the caller can read it after Upsert.
+			d.ID = existing.ID
 			return nil
 		}
 	}
