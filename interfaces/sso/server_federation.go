@@ -33,30 +33,6 @@ func (s *Server) BuildOPMetadata(ctx HandlerContext, base string) federation.OPF
 	}
 }
 // handleFederationEntityConfig delegates to the Hex federation handler.
-func (s *Server) handleFederationEntityConfig(ctx HandlerContext) {
-	federation.HandleEntityConfiguration(s, ctx)
-}
-// handleFederationFetch delegates to the §8 Federation Fetch handler.
-func (s *Server) handleFederationFetch(ctx HandlerContext) {
-	federation.HandleFederationFetch(s, ctx)
-}
-// handleFederationResolve delegates to the §8.3 Federation Resolve handler.
-func (s *Server) handleFederationResolve(ctx HandlerContext) {
-	federation.HandleFederationResolve(s, ctx)
-}
-func (s *Server) FederationFetcher() federation.EntityStatementFetcher { return nil }
-
-// handleFederationTrustMarkStatus delegates to the §8.4 Trust Mark Status handler.
-func (s *Server) handleFederationTrustMarkStatus(ctx HandlerContext) {
-	federation.HandleTrustMarkStatus(s, ctx)
-}
-
-// handleFederationList delegates to the §8.2 Federation Listing handler.
-func (s *Server) handleFederationList(ctx HandlerContext) {
-	federation.HandleFederationList(s, ctx)
-}
-
-// requestBaseURL delegates to middleware.BaseURL — see that function
 // for the X-Forwarded-Proto / X-Forwarded-Host edge trust contract.
 func requestBaseURL(r *http.Request) string { return middleware.BaseURL(r) }
 // WithJWKSCacheTTL overrides the Cache-Control max-age advertised
@@ -124,6 +100,15 @@ func WithFederationEntity(cfg *federation.Config, signer federation.JWTSigner, r
 		srv.federationEntity = federation.NewEntityHandler(cfg, signer, resolverOpts...)
 	}
 }
+// WithFederationHistoricalKeyStore wires the historical signing key store
+// for the OpenID Federation 1.0 8.5 historical_keys endpoint. When wired,
+// the server mounts PathFederationHistoricalKeys returning a JWKS of all
+// previously-published signing keys. Nil (default) => the route is NOT
+// mounted -- byte-identical to a build without it.
+func WithFederationHistoricalKeyStore(store federation.HistoricalKeyStore) Option {
+	return func(srv *Server) { srv.federationHistoricalKeyStore = store }
+}
+
 // WithFederationAutoRegistration opts into OpenID Federation 1.0 automatic
 // client registration (slice 3): when the authorization endpoint misses a
 // client_id in the ClientStore AND federation is wired with configured trust
@@ -332,6 +317,11 @@ func (s *Server) mountFederationEndpoints() {
 	}
 	// Trust Mark Status endpoint (gate-controlled).
 	gr.GET(PathFederationTrustMarkStatus, s.handleFederationTrustMarkStatus)
+	// Historical signing keys endpoint (8.5). Mounted when a key store
+	// is wired -- returns all previously-published signing keys as a JWKS.
+	if s.federationHistoricalKeyStore != nil {
+		gr.GET(PathFederationHistoricalKeys, s.handleFederationHistoricalKeys)
+	}
 }
 // federationMeshState holds OpenID Federation, CAEP receiver, B2B connections, Envoy/Istio mesh ext_authz, and storage-health fields.
 type federationMeshState struct {
@@ -395,6 +385,9 @@ type federationMeshState struct {
 	// slice only; trust-chain VALIDATION (the trust boundary) is a separate
 	// slice.
 	federationEntity *federation.EntityHandler
+	// federationHistoricalKeyStore persists retired signing keys for the
+	// 8.5 historical keys endpoint. Nil => the route is NOT mounted.
+	federationHistoricalKeyStore federation.HistoricalKeyStore
 	// federationAutoRegister opts into OpenID Federation 1.0 AUTOMATIC client
 	// registration (WithFederationAutoRegistration, slice 3): when true AND a
 	// ClientStore is wired AND federationEntity carries a resolver with

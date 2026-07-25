@@ -413,6 +413,10 @@ const (
 	// metadata. Only mounted when subordinates are configured; public metadata
 	// (Cache-Control public, max-age).
 	PathFederationList = "/.well-known/openid-federation-list"
+	// PathFederationHistoricalKeys is the OpenID Federation 1.0 §8.5
+	// historical keys endpoint. Returns a JWKS containing previously-published
+	// signing keys that may still be valid for verifying old statements.
+	PathFederationHistoricalKeys = "/.well-known/openid-federation-historical-keys"
 	PathNetPolicies        = "/netpolicy/policies"
 	PathNetPolicyByName    = "/netpolicy/policies/:name"
 	PathNetPolicyClassify  = "/netpolicy/classify"

@@ -357,6 +357,7 @@ const PathFederationFetch = core.PathFederationFetch
 const PathFederationResolve = core.PathFederationResolve
 const PathFederationTrustMarkStatus = core.PathFederationTrustMarkStatus
 const PathFederationList = core.PathFederationList
+const PathFederationHistoricalKeys = core.PathFederationHistoricalKeys
 const PathAuditEventByID = core.PathAuditEventByID
 const PathAuditEvents = core.PathAuditEvents
 const PathAuditFacets = core.PathAuditFacets
