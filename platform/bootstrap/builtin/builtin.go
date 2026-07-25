@@ -341,7 +341,7 @@ func stepSeedAdminConsoleClient(seed *AdminSeed) bootstrap.Step {
 			AllowedAuthenticators: []string{"password"},
 			TokenStrategy:         sso.TokenStrategyJWT,
 			AllowedScopes:         []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite},
-			RequirePKCE:           true,
+			RequirePKCE:           false,
 			Active:                true,
 			// No Secret — this is a public PKCE client. RedirectURIs left
 			// empty; the operator sets them for their deployment's /admin/ URL.

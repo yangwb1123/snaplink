@@ -8,6 +8,9 @@ type EventType string
 const (
 	EventLogin           EventType = "login"
 	EventLoginFailure    EventType = "login_failure"
+	EventNewDeviceLogin  EventType = "new_device_login"
+	EventNewLocation     EventType = "new_location_login"
+	EventTrustDecay      EventType = "trust_decay"
 	EventLogout          EventType = "logout"
 	EventTokenIssued     EventType = "token_issued"
 	EventTokenRevoked    EventType = "token_revoked"
@@ -220,7 +223,7 @@ const (
 // It is a filter/UX aid ONLY and is never consulted on the record path.
 var KnownEventTypes = map[EventType]struct{}{
 	// core auth + token lifecycle
-	EventLogin: {}, EventLoginFailure: {}, EventLogout: {}, EventTokenIssued: {},
+	EventLogin: {}, EventLoginFailure: {}, EventNewDeviceLogin: {}, EventNewLocation: {}, EventTrustDecay: {}, EventLogout: {}, EventTokenIssued: {},
 	EventTokenRevoked: {}, EventCodeSent: {}, EventCallbackFailure: {},
 	EventClientAccess: {}, EventPermissionQuery: {},
 	// DCR

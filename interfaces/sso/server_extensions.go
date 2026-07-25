@@ -140,6 +140,16 @@ const maxSETBodyBytes = 64 << 10
 //     real, so the transmitter should retry rather than the receiver
 //     silently dropping it.
 //
+// handleSSFConfig serves the SSF transmitter configuration endpoint.
+func (s *Server) handleSSFConfig(ctx HandlerContext) {
+	caep.HandleSSFConfiguration(s, ctx)
+}
+func (s *Server) handleCreateStream(ctx HandlerContext) { caep.HandleCreateStream(s, ctx) }
+func (s *Server) handleGetStream(ctx HandlerContext)    { caep.HandleGetStream(s, ctx) }
+func (s *Server) handleUpdateStream(ctx HandlerContext) { caep.HandleUpdateStream(s, ctx) }
+func (s *Server) handleListStreams(ctx HandlerContext)  { caep.HandleListStreams(s, ctx) }
+func (s *Server) handleDeleteStream(ctx HandlerContext) { caep.HandleDeleteStream(s, ctx) }
+
 // This is a credential-bearing endpoint (the SET is a signed bearer
 // artefact), so tokenNoStoreHeaders stamps no-store on every response.
 func (s *Server) handleSSFReceive(ctx HandlerContext) {

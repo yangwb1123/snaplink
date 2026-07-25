@@ -263,6 +263,9 @@ func gatedProtocolEndpointCandidates() []endpointCandidate {
 			return s.oidcGateOn() && s.sessionManagementEnabled
 		}},
 		{endpointInfo{http.MethodPost, PathBackchannelAuth, "ciba"}, func(s *Server) bool { return s.cibaGateOn() }},
+		{endpointInfo{http.MethodGet, PathSSFConfig, "caep"}, func(s *Server) bool {
+			return s.caepGateOn()
+		}},
 		{endpointInfo{http.MethodPost, PathSSFReceive, "caep"}, func(s *Server) bool {
 			return s.caepGateOn() && s.caepReceiver != nil
 		}},
@@ -280,6 +283,9 @@ func gatedProtocolEndpointCandidates() []endpointCandidate {
 		}},
 		{endpointInfo{http.MethodGet, PathFederationList, "federation"}, func(s *Server) bool {
 			return s.federationGateOn() && s.federationEntity != nil && s.federationEntity.HasSubordinates()
+		}},
+		{endpointInfo{http.MethodGet, PathFederationTrustMarkStatus, "federation"}, func(s *Server) bool {
+			return s.federationGateOn()
 		}},
 		{endpointInfo{http.MethodGet, PathFederationResolve, "federation"}, func(s *Server) bool {
 			return s.federationGateOn() && s.federationEntity != nil && s.federationEntity.Resolver().Enabled()

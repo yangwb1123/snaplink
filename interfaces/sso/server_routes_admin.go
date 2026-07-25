@@ -201,10 +201,7 @@ func (s *Server) mountAdminAPILifecycleExtra(api Router) {
 	}
 }
 
-// mountAdminUserState registers the admin/helpdesk management of a user's
-// self-service state. Each block reuses the SAME store the user's own /me
-// endpoints use, so an admin and the user see one consistent view. Mounted only
-// when the backing store is wired — byte-identical without them.
+// mountAdminUserState registers admin user-state management. Reuses /me stores.
 func (s *Server) mountAdminUserState(api Router) {
 	if s.consentStore != nil {
 		api.GET(PathAdminUserConsents, s.handleAdminListUserConsents)
@@ -235,6 +232,7 @@ func (s *Server) mountAdminUserState(api Router) {
 		api.GET(PathAdminUserPasswordResetTokens, s.handleAdminListUserPasswordResetTokens)
 		api.DELETE(PathAdminUserPasswordResetTokens, s.handleAdminRevokeUserPasswordResetTokens)
 	}
+	s.mountAdminDeviceUserRoutes(api)
 	if s.emailChangeStore != nil {
 		api.GET(PathAdminUserEmailChangeTokens, s.handleAdminListUserEmailChangeTokens)
 		api.DELETE(PathAdminUserEmailChangeTokens, s.handleAdminRevokeUserEmailChangeTokens)
@@ -242,15 +240,25 @@ func (s *Server) mountAdminUserState(api Router) {
 	if s.accountLockout != nil {
 		api.POST(PathAdminAccountLockoutClear, s.handleAdminClearAccountLockout)
 	}
-	// User-lifecycle state machine. Needs the roster (userProvider) for the
-	// existence check + the sweep, and the lifecycle store for state/history.
 	if s.userLifecycleStore != nil && s.userProvider != nil {
 		api.GET(PathAdminUserLifecycle, s.handleAdminGetUserLifecycle)
 		api.POST(PathAdminUserLifecycle, s.handleAdminTransitionUserLifecycle)
 	}
-	if s.recoveryCodeStore != nil {
-		api.POST(PathAdminUserRecoveryCodes, s.handleAdminResetUserRecoveryCodes)
-	}
+	if s.recoveryCodeStore != nil { api.POST(PathAdminUserRecoveryCodes, s.handleAdminResetUserRecoveryCodes) }
+	if s.loginHistory != nil { api.GET(PathAdminUserLoginHistory, s.handleAdminListUserLoginHistory) }
+}
+
+// mountAdminDeviceUserRoutes registers the device-related admin routes.
+func (s *Server) mountAdminDeviceUserRoutes(api Router) {
+	if s.deviceStore == nil { return }
+	api.GET(PathAdminUserDevices, s.handleAdminListUserDevices)
+	api.DELETE(PathAdminUserDeviceByID, s.handleAdminDeleteUserDevice)
+	api.GET(PathAdminDevices, s.handleAdminListAllDevices)
+	api.GET(PathAdminDeviceStats, s.handleAdminDeviceStats)
+	api.POST(PathAdminDevicesBulkRevoke, s.handleAdminBulkRevokeDevices)
+	api.GET(PathAdminDeviceActivity, s.handleAdminDeviceActivity)
+	api.POST(PathAdminDeviceTrustReset, s.handleAdminResetDeviceTrust)
+	api.GET(PathAdminSecurityActivity, s.handleAdminListSecurityActivity)
 }
 
 // mountAdminB2B registers the admin management of enterprise connections,

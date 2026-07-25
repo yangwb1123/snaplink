@@ -1,0 +1,1734 @@
+server:
+  # Operator-chosen issuer identifier. Used everywhere consistently:
+  # the JWT `iss` claim on every access / id / refresh / logout token,
+  # the OIDC discovery doc's `issuer` field, and the RFC 9207 `iss`
+  # parameter in every /auth/login response. Production deployments
+  # SHOULD set this to the canonical public URL the SSO server serves
+  # under (e.g. https://sso.example.com); the cmd default ("sso-server")
+  # is a non-sentinel value that keeps every code path agreeing on the
+  # same string when operators haven't picked a real URL yet.
+  #
+  # Do NOT set this to the SDK's internal sentinel "snaplink-sso" —
+  # that value triggers the resolveIssuer fall-back to requestBaseURL
+  # for the discovery doc + RFC 9207 path, while the JWT iss claim
+  # keeps the literal sentinel — a wire-contract divergence that
+  # breaks every RFC 9068 access-token validator. Config validation
+  # refuses it.
+  issuer: sso-server
+  # base_url is currently informational only — the SDK derives absolute
+  # URLs (callback redirects, JWKS) from incoming request headers and
+  # reverse-proxy hints, not from this constant. Keeping it for future
+  # use + visibility in the rendered config.
+  base_url: http://localhost:8080
+  listen: ":8080"
+  # Optional Go runtime profiling (net/http/pprof) on a SEPARATE listener.
+  # Disabled by default. pprof leaks memory contents and the CPU profile is a
+  # DoS vector, so it MUST bind to a trusted interface — keep listen on
+  # 127.0.0.1 and reach it via an SSH/port-forward. Never expose publicly.
+  pprof:
+    enabled: false
+    listen: "127.0.0.1:6060"
+  # session_ttl + token_ttl are read by cmd/sso-server when constructing
+  # the default SessionManager / TokenIssuer. They are NOT wired through
+  # sso.With{Session,Token}TTL (those options are deprecated no-ops);
+  # custom embedders should pass the TTL to their own provider
+  # constructors directly.
+  session_ttl: 24h
+  token_ttl: 1h
+  default_token_strategy: jwt
+  # RFC 7519 §4.1.4-5 exp/nbf leeway on inbound JWTs. Wider windows
+  # tolerate AS↔RS clock drift; narrower windows reduce replay window
+  # for compromised expired tokens. Production-typical: 30s-2m.
+  max_clock_skew: 30s
+
+  # Cache tuning for the high-traffic discovery + JWKS endpoints.
+  # discovery_doc_cache_ttl: marshaled-body cache keyed by base URL +
+  # serves ETag/If-None-Match. Set to a negative value to disable both
+  # the cache AND the response Cache-Control headers (useful when an
+  # upstream CDN owns caching).
+  # discovery_cache_ttl: in-process projection-snapshot cache (smaller
+  # cost than the doc body — re-iterates the client store on every miss).
+  # jwks_cache_ttl: how long RPs / resource servers cache the signing
+  # keys. Lower during planned key rotation, higher otherwise.
+  discovery_doc_cache_ttl: 5s
+  discovery_cache_ttl: 5s
+  jwks_cache_ttl: 5m
+
+  # draft-ietf-oauth-v2-1 strict mode. When true:
+  #   - response_type=token (implicit) rejected on /auth/login
+  #   - code_challenge_methods_supported limited to S256 only
+  #   - every /auth/login MUST present a code_challenge (per-client
+  #     require_pkce: false is ignored)
+  # Discovery doc adjusts to match.
+  oauth_21_strict_mode: false
+
+  # OIDC Core §8 pairwise subject identifiers. Clients with
+  # subject_type=pairwise get an opaque per-sector sub instead of
+  # the local user id, so colluding clients can't correlate users.
+  # backend: memory (single-replica) or sqlite (cluster-shared —
+  # reverse lookup at /userinfo works across every replica).
+  # Salt MUST be deployment-stable; prefer salt_file so it doesn't
+  # end up in YAML/git.
+  pairwise_subjects:
+    enabled: false
+    salt: ""
+    salt_file: ""
+    backend: memory       # memory | sqlite
+    sqlite:
+      dsn: ""             # e.g. file:/var/lib/sso/pairwise.db?_journal=WAL
+
+  # Discovery doc informational hints (OIDC Discovery §3). RPs surface
+  # these on consent screens / integrator docs. Each field is
+  # independently optional — leave blank to omit from the response.
+  operator_metadata:
+    policy_uri: ""
+    tos_uri: ""
+    service_documentation: ""
+
+  # Advertised acr_values_supported (OIDC Discovery + RFC 9470). Tells
+  # RPs which Authentication Context Class References they can demand
+  # via acr_values / claims.id_token.acr. Empty list omits the claim.
+  supported_acr_values: []
+
+logging:
+  level: info
+
+# Identity-domain persistence (User + Client + Session stores). memory
+# keeps the simple bootstrap story but loses DCR-registered clients +
+# password authenticator users + opaque session-strategy tokens on
+# restart. sqlite persists across restarts and lets multiple replicas
+# share session state for TokenStrategySession clients. DSN can be
+# shared with oauth.sqlite.dsn for a single-file install.
+identity:
+  backend: memory       # memory | sqlite
+  sqlite:
+    dsn: ""             # e.g. file:/var/lib/sso/sso.db?_journal=WAL
+
+# End-user self-service stores the hosted login + portal SPAs depend on.
+# Each is opt-in: an empty backend leaves its routes unmounted (byte-identical).
+self_service:
+  # Consent gate + records. Enabling this turns ON consent enforcement at
+  # /auth/login (the hosted-login consent screen) and mounts /consents/me.
+  # Use sqlite in production — GDPR consent records must survive restarts.
+  consent:
+    backend: ""         # "" (disabled) | memory | sqlite
+    sqlite:
+      dsn: ""           # e.g. file:/var/lib/sso/consent.db?_journal=WAL&_pragma=busy_timeout(5000)
+    max_ttl: 0s         # hard server-wide ceiling on grant lifetime; 0 = no server-enforced expiry
+  # Self-service password change (/me/password). When enabled, the YAML
+  # password users (authenticators.password.users) are imported into this store
+  # by their bcrypt hash at boot and login is served FROM it, so a password
+  # changed via /me/password takes effect on the next login. Use sqlite so
+  # changed passwords survive restarts (memory loses them).
+  password:
+    backend: ""         # "" (disabled) | memory | sqlite
+    sqlite:
+      dsn: ""           # e.g. file:/var/lib/sso/passwords.db?_journal=WAL&_pragma=busy_timeout(5000)
+
+  # Self-service signup email verification. When signup is enabled, this section
+  # controls whether email verification is required (Mode B) or optional (Mode A).
+  # require_verification: when true, POST /auth/register requires email and returns
+  #   201 {"status":"pending"} — the user is NOT created until they complete
+  #   verification via POST /auth/verify-email. When false (default), accounts are
+  #   created immediately and email_verified is set to "true" if email is provided.
+  # verification_token_ttl: how long a verification token remains valid. 0 = 15m.
+  registration:
+    require_verification: false
+    verification_token_ttl: 0
+
+# OpenID Connect Native SSO 1.0. When enabled, a /token request that includes
+# the device_sso scope gets a device_secret (+ ds_hash in the id_token); a
+# second native app on the same device exchanges that id_token + device_secret
+# (RFC 8693 token exchange, actor_token_type=urn:openid:params:token-type:
+# device-secret) for its own tokens without re-authenticating the user. Empty
+# backend disables it (byte-identical).
+native_sso:
+  backend: ""           # "" (disabled) | memory | sqlite
+  sqlite:
+    dsn: ""             # e.g. file:/var/lib/sso/device_secrets.db?_journal=WAL&_pragma=busy_timeout(5000)
+  ttl: 15m              # device_secret lifetime; 0 = SDK default (15m)
+
+# RFC 9728 OAuth 2.0 Protected Resource Metadata. Serves
+# /.well-known/oauth-protected-resource so clients (notably MCP / AI-agent
+# clients) discover which authorization server issues tokens for this resource,
+# plus the JWKS, supported scopes, and token-binding requirements. Fields beyond
+# enabled are optional overrides — defaults derive from server state
+# (resource = base URL, authorization_servers = [issuer]).
+protected_resource_metadata:
+  enabled: false
+  resource: ""                  # default: request base URL
+  authorization_servers: []     # default: [server issuer]
+  resource_name: ""
+  resource_documentation: ""
+
+# First-boot init. The Runner applies pending Steps (seed admin role +
+# user + client + default netpolicy) idempotently — already-applied
+# steps are skipped via the state_path tracker. Set Disabled=true when
+# an external orchestrator owns init (helm hooks, terraform, etc.).
+#
+# admin_password_file: in addition to the stdout banner, write the
+# generated password to this path at mode 0600. Critical for k8s pods
+# where stdout is async-shipped to a log sink that frequently drops the
+# boot banner.
+bootstrap:
+  disabled: false
+  state_path: "bootstrap.json"
+  admin_user_id: ""             # empty → SDK default
+  admin_client_id: ""
+  admin_role_code: ""
+  admin_client_app: ""
+  admin_password_file: ""
+  lock:
+    backend: "noop"              # noop | file | etcd
+    # key: "/sso/bootstrap/sso-server"
+    # ttl: 60s
+    # blocking: false
+    # file:
+    #   dir: /var/lib/sso/locks
+    # etcd:
+    #   endpoints: [localhost:2379]
+
+audit:
+  enabled: true
+  api_enabled: true       # mounts GET /api/v1/audit/events[/:id]
+  # Primary audit sink backend. memory = process-local ring buffer
+  # (loses every event on restart); sqlite = durable, cluster-shared
+  # storage when multiple replicas point at the same DSN. Both still
+  # feed the same webhook fan-out + async + redaction + hash-chain
+  # composition below.
+  backend: memory
+  # sqlite:
+  #   dsn: file:/var/lib/sso/audit.db?_journal=WAL&_pragma=busy_timeout(5000)
+  memory_capacity: 10000  # ring buffer size when backend=memory
+  # Tamper-evident chaining: every Event carries PrevHash + Hash so a
+  # detached audit.VerifyChain(events) call detects any single insert,
+  # delete, or mutation. In-process only — the last event isn't
+  # detectable without an external attestation.
+  hash_chain: false
+  # Conservative PII redaction (DefaultPIIRedactor: actor hashed,
+  # ip truncated, user-agent stripped) before the chain runs. Salt
+  # MUST be deployment-stable and secret — prefer salt_file (out-of-
+  # band loaded) over inline YAML so it doesn't end up in git.
+  pii_redaction:
+    enabled: false
+    salt: ""
+    salt_file: ""
+  # Webhook fan-out sibling to the memory sink. POSTs each event as
+  # JSON to the configured URL inside a RetryingSink so transient 5xx
+  # / connection failures don't drop events. Combine with async.enabled
+  # so the network roundtrip stays off the request hot path. Worst-
+  # case latency is bounded by retry.max_attempts * retry.max_backoff
+  # — keep async.record_timeout_ms tighter than that to bound a
+  # stalled worker.
+  webhook:
+    enabled: false
+    url: "https://collector.internal/audit"
+    timeout: 5s
+    headers:
+      Authorization: "Bearer <collector-token>"
+    retry:
+      max_attempts: 3
+      initial_backoff: 100ms
+      max_backoff: 5s
+    # Optional: fan out to multiple endpoints, each with its own
+    # event-type filter. The scalar url above (when set) is compiled as
+    # an implicit unfiltered subscription named "default". Each entry
+    # needs a unique name + url; event_types selects delivery — exact
+    # types or a trailing-* prefix wildcard (admin_* matches every
+    # admin_ event); empty event_types = firehose (all events). Unknown
+    # (custom) type strings are accepted with a boot log line.
+    # subscriptions:
+    #   - name: siem
+    #     url: "https://siem.internal/audit"
+    #     event_types: ["login", "login_failure", "admin_*"]
+    #     # signing_secret is a credential — use a secret:// ref, not a literal:
+    #     signing_secret: "secret://aws/audit/siem-whsec"
+    #     headers:
+    #       X-Api-Key: "secret://aws/audit/siem-apikey"
+    #     retry:
+    #       max_attempts: 5
+    #   - name: security-alerts
+    #     url: "https://alerts.internal/hook"
+    #     event_types: ["refresh_token_reuse_detected", "account_locked", "anomaly_detected"]
+  # Publishes every event to a Kafka topic — the network-transport sibling
+  # of the audit.cef/audit.ocsf/audit.syslog file sinks (see
+  # docs/config-reference.md), reusing those exact formatters. Requires a
+  # FORKED cmd binary: the segmentio/kafka-go dependency lives only in
+  # infrastructure/kafka's own go.mod (never this binary's), so enabling
+  # this also requires importing that module and
+  # calling serverbuildauthn.RegisterAuditKafkaSinkFactory(kafkaaudit.Factory)
+  # once at init — see that module's package doc. enabled:true with no
+  # factory registered fails boot closed with a clear error.
+  # kafka:
+  #   enabled: false
+  #   brokers: ["kafka-1.internal:9092", "kafka-2.internal:9092"]
+  #   topic: "sso-audit-events"
+  #   format: json           # json (default, schema_version-tagged) | cef | ocsf | syslog
+  #   required_acks: all     # none | one | all (default all — full ISR ack)
+  #   client_id: sso-server
+  # Background pruning of old audit events. Active only when
+  # backend=sqlite (the memory ring buffer self-prunes by capacity).
+  # When enabled, cmd launches a goroutine that wakes every interval
+  # and removes events with ts < now - max_age.
+  #
+  # Hash-chain caveat: when hash_chain=true, pruning leaves the
+  # first surviving event with a dangling PrevHash that VerifyChain
+  # reports as a break at the retention boundary. Most "retain N
+  # days" compliance regimes accept this; ops wanting a clean
+  # post-prune chain run their own re-chaining migration (out of
+  # scope for the scheduler).
+  retention:
+    enabled: false
+    max_age: 720h           # 30 days (operator-decision per compliance regime)
+    interval: 1h            # how often to wake + prune
+
+permissions:
+  enabled: true
+  # memory: single-replica only; sqlite: cluster-shared so admin
+  # AddRole/AssignRoles/SetMenus on one replica surface on every
+  # replica's next lookup. Seed steps (apps + user_roles below) run
+  # against the chosen backend at boot — duplicates across replicas
+  # pointed at the same DSN dedupe via the UPSERT the backend uses.
+  backend: "memory"       # memory | sqlite
+  sqlite:
+    # dsn: "file:/var/lib/sso/permissions.db?_journal=WAL&_pragma=busy_timeout(5000)"
+    dsn: ""
+  embed_in_login: true    # attach roles/permissions/menus to /auth/login response
+  apps:
+    - client_id: web-app
+      roles:
+        - code: admin
+          name: Administrator
+          permissions: [user:*, order:*, audit:read]
+        - code: viewer
+          name: Read-only viewer
+          permissions: [user:read, order:read]
+      menus:
+        - id: m-users
+          name: User Management
+          path: /users
+          icon: users
+          permission: user:read
+          buttons:
+            - { code: btn-user-create, name: New user, permission: user:create }
+            - { code: btn-user-delete, name: Delete user, permission: user:delete }
+        - id: m-orders
+          name: Orders
+          path: /orders
+          icon: shopping-cart
+          permission: order:read
+          children:
+            - id: m-orders-list
+              name: All orders
+              path: /orders/list
+              permission: order:read
+            - id: m-orders-refund
+              name: Refunds
+              path: /orders/refund
+              permission: order:refund
+        - id: m-audit
+          name: Audit log
+          path: /audit
+          icon: file-text
+          permission: audit:read
+
+    - client_id: mobile-app
+      roles:
+        - code: user
+          name: End user
+          permissions: [profile:read, profile:update, order:read]
+      menus:
+        - id: m-profile
+          name: My profile
+          path: /me
+          permission: profile:read
+        - id: m-my-orders
+          name: My orders
+          path: /me/orders
+          permission: order:read
+
+    # Demo bucket for the examples/remote-app smoke test. Tokens issued
+    # without an `aud` claim land under client_id="" in the appcore demo
+    # handler — this entry lets that path resolve "items:read".
+    - client_id: ""
+      roles:
+        - code: items-reader
+          name: Items reader (demo)
+          permissions: [items:read]
+
+  user_roles:
+    - { user_id: user-alice, client_id: web-app,    roles: [admin] }
+    - { user_id: user-bob,   client_id: web-app,    roles: [viewer] }
+    - { user_id: user-alice, client_id: mobile-app, roles: [user] }
+    - { user_id: user-alice, client_id: "",         roles: [items-reader] }
+
+# SCIM 2.0 provisioning (RFC 7643/7644). The /Users surface mounts
+# automatically when admin auth + a UserProvider are present (gated under
+# /api/v1/scim/ by AdminMiddleware). The /Groups surface is opt-in here
+# because a SCIM group maps onto a permissions role (its members become
+# role assignments under group_client_id), so it requires permissions to
+# be enabled. An IdP group push then drives the same RBAC model
+# /permissions/me + /roles/me + login-embed read.
+scim:
+  groups:
+    enabled: false          # mount /Groups (requires permissions.enabled)
+    # The app (client_id) whose roles an IdP group push provisions. ""
+    # is the valid demo/default bucket; production should name a concrete
+    # client so groups land under the intended app's role registry.
+    group_client_id: "web-app"
+
+# Network-classification control plane (Phase B microservice). Operators
+# declare named classes (intranet, public, dmz, ...) with CIDRs/hostnames
+# that identify them and the URLs the SSO server advertises back to clients
+# in that class. Policies can be updated live via the gRPC PolicyService or
+# the REST endpoints under /api/v1/netpolicy/...; seeds below are applied
+# at startup.
+#
+# Matching rules: hostnames beat CIDRs; ties broken by priority (higher wins).
+network:
+  enabled: true
+  api_enabled: true         # mount REST + gRPC PolicyService
+  store: memory             # "memory" (default) or "etcd"
+  # etcd_endpoints: [localhost:2379]
+  # etcd_prefix: /snaplink/netpolicy
+  policies:
+    - name: intranet
+      cidrs:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+      hostnames:
+        - sso.intranet.local
+      priority: 100
+      advertised_base_url:   http://sso.intranet.local:8080
+      advertised_jwks_url:   http://sso.intranet.local:8080/.well-known/jwks.json
+      advertised_logout_url: http://sso.intranet.local:8080/logout
+      metadata:
+        site: hq
+
+    - name: public
+      hostnames:
+        - sso.example.com
+      priority: 50
+      advertised_base_url:   https://sso.example.com
+      advertised_jwks_url:   https://sso.example.com/.well-known/jwks.json
+      advertised_logout_url: https://sso.example.com/logout
+      metadata:
+        exposed_via: frp
+
+# Each client = one APP. Per-app policy lives here:
+#   allowed_authenticators: which login methods this app accepts
+#   token_strategy:        which TokenIssuer mints this app's tokens
+#                          (must match a name registered in code via
+#                          sso.WithTokenIssuer(name, issuer))
+clients:
+  # web-app: traditional browser app — opaque session tokens, password + OTP only
+  - id: web-app
+    secret: web-secret
+    name: Web App
+    redirect_uris:
+      - http://localhost:3000/callback
+    allowed_scopes: [openid, profile, email]
+    allowed_authenticators: [password, phone, email]
+    token_strategy: session
+    active: true
+
+  # mobile-app: SPA / native — short-lived JWT, password + phone code
+  - id: mobile-app
+    secret: mobile-secret
+    name: Mobile App
+    redirect_uris:
+      - myapp://callback
+    allowed_scopes: [openid, profile]
+    allowed_authenticators: [password, phone]
+    token_strategy: jwt
+    active: true
+
+  # service-app: machine-to-machine — JWT, only key-based auth
+  - id: service-app
+    secret: service-secret
+    name: Backend Service
+    redirect_uris: []
+    allowed_scopes: [internal]
+    allowed_authenticators: [apikey, keypair, certificate]
+    token_strategy: jwt
+    active: true
+
+  # fapi-app: high-security RP — example showing the extended per-
+  # client fields. Every field below maps 1:1 to the sso.Client SPI;
+  # omit any block to fall back to server-wide defaults.
+  #
+  # Uncomment + tweak when an actual RP needs these features.
+  # - id: fapi-app
+  #   secret: ""                         # leave empty for public clients (PKCE-only)
+  #   name: High Security RP
+  #   redirect_uris:
+  #     - https://rp.example/cb
+  #   post_logout_redirect_uris:
+  #     - https://rp.example/logout
+  #   allowed_scopes: [openid, profile]
+  #   allowed_resources:                 # RFC 8707 — every `resource` MUST appear here
+  #     - https://api.example/v1
+  #   allowed_authorization_details_types: # RFC 9396 — every `type` MUST appear here
+  #     - payment_initiation
+  #   token_strategy: jwt
+  #   active: true
+  #   tenant_id: acme                    # multi-tenant: only serve from "acme"
+  #   require_pkce: true                 # public client tightening
+  #   allowed_pkce_methods: [S256]       # reject "plain"
+  #   require_signed_request_object: true # FAPI 2.0: every authorize wrapped in JAR
+  #   require_par: true                  # FAPI 2.0: every authorize pushed via /par
+  #   allowed_request_uris:              # JAR fetcher SSRF defense — exact-match URLs
+  #     - https://rp.example/jar
+  #   refresh_token_ttl: 24h             # override server-wide refresh TTL
+  #   access_token_ttl: 15m              # override TokenIssuer.tokenTTL
+  #   device_code_ttl: 30m               # RFC 8628 §3.2 expires_in
+  #   device_code_poll_interval: 5s      # RFC 8628 §3.2 interval
+  #   userinfo_signed_response_alg: EdDSA # OIDC Core §5.3.2 — signed /userinfo
+  #   backchannel_logout_uri: https://rp.example/bcl  # OIDC BCL 1.0
+  #   frontchannel_logout_uri: https://rp.example/fcl # OIDC FCL 1.0
+  #   subject_type: pairwise             # OIDC Core §8 — opaque per-sector sub
+  #   sector_identifier_uri: https://sector.example   # pairwise grouping host
+  #   jwks:                              # RFC 9101 JAR / RFC 7521+7523 verifier
+  #     - kty: OKP
+  #       crv: Ed25519
+  #       kid: rp-1
+  #       x: <base64url-public-key>
+
+authenticators:
+  # Username + password authentication. cmd's reference wiring uses a
+  # bcrypt verifier closed over the `users` seed list — each entry
+  # maps a username to a bcrypt hash on disk and the sso.Subject
+  # returned on success. Hashes stay out of YAML (matches
+  # apikey.keys.secret_file). Unknown-user and wrong-password both
+  # run one bcrypt compare so /auth/login response time doesn't leak
+  # which usernames are registered.
+  #
+  # Generate hashes with one of:
+  #   htpasswd -bnBC 12 "" 'mypassword' | tr -d ':\n'  # bcrypt cost 12
+  #   python -c 'import bcrypt; print(bcrypt.hashpw(b"mypassword", bcrypt.gensalt()).decode())'
+  #
+  # Production installs typically fork cmd to plug in a custom
+  # PasswordVerifier against their own user store.
+  password:
+    enabled: false
+    users: []
+    # - username: alice
+    #   bcrypt_hash_file: /etc/sso/users/alice.bcrypt
+    #   subject_id: user-alice
+    # Optional login-time credential-health signal. When enabled, a
+    # successful password login that the checker flags emits a
+    # `password_weak` / `password_compromised` audit event (Outcome=success
+    # — login is NEVER blocked) + the sso_credential_health_signals_total
+    # metric. This server has no register / change-password endpoint, so
+    # login is the only moment it sees plaintext; this is a fail-open
+    # advisory operators use to drive an out-of-band rotation nudge.
+    #
+    # kind selects the checker:
+    #   "dictionary" (default) — fully offline exact-match against the
+    #     built-in weak-password set, optionally extended by
+    #     weak_password_file (newline-delimited; blank lines + '#' comments
+    #     skipped; a missing file fails the boot loudly).
+    #   "hibp" — online Have I Been Pwned k-anonymity breach lookup. ONLY a
+    #     5-hex-char SHA-1 prefix of the password ever leaves the process
+    #     (with Add-Padding for extra privacy); the suffix match is local.
+    #     Fail-open: any HIBP outage/timeout/error yields no signal and
+    #     never blocks the login.
+    health:
+      enabled: false
+      kind: dictionary
+      weak_password_file: ""
+      # Only consulted when kind: hibp. All fields optional (zero = SDK
+      # defaults: public API, 5s timeout, flag any appearance).
+      hibp:
+        # base_url: "https://api.pwnedpasswords.com/range/"  # trailing slash required; point at a self-hosted mirror to keep prefixes in-network
+        # timeout: 5s        # caps a single range request (login is synchronous)
+        # min_count: 1       # only flag when breach count >= this
+        # user_agent: ""     # override the request User-Agent
+
+  phone:
+    enabled: true
+    code_length: 6
+    code_ttl: 5m
+    # sms configures the transport that delivers the code. Unset (or
+    # provider: log) logs the code instead of sending it — byte-identical
+    # to the built-in stub. Set provider: http to dispatch over the
+    # built-in Twilio-Messages-API-compatible REST sender.
+    # sms:
+    #   provider: http
+    #   account_sid: ""       # required when provider: http
+    #   auth_token: ""        # required; supports secret:// resolution
+    #   from_number: ""       # required when provider: http
+    #   message_template: "Your verification code is: {code}"
+    #   http_timeout: 10s
+    #   base_url: ""          # override only for a Twilio-compatible gateway
+
+  email:
+    enabled: true
+    code_length: 6
+    code_ttl: 10m
+
+  # Passwordless emailed-link authenticator (provider: magiclink). Reuses
+  # the email block's SMTP sender — no separate transport. base_url is
+  # REQUIRED when enabled (the login-UI landing page the emailed link
+  # points at); a misconfigured/missing base_url fails the boot loudly
+  # rather than shipping a dead feature. Disabled by default (byte-identical
+  # to a build without the feature).
+  magic_link:
+    enabled: false
+    # base_url: "https://sso.example.com/login/"
+    token_length: 32   # crypto/rand bytes before base64url encoding (256 bits)
+    ttl: 15m
+
+  temp_token:
+    enabled: true
+    ttl: 15m
+
+  # Ed25519 signature authentication for service-to-service callers.
+  # public_keys seeds the in-process PublicKeyStore at boot: each entry
+  # registers one (key_id -> ed25519 pubkey -> subject) tuple the
+  # authenticator resolves at /auth/login?provider=keypair time. Files
+  # MUST be PEM "PUBLIC KEY" blocks (openssl pkey -pubout). Operators
+  # rotate by re-emitting YAML + reloading; runtime rotation requires
+  # an admin RPC the SDK doesn't ship today.
+  keypair:
+    enabled: false
+    max_clock_skew: 5m
+    public_keys: []
+    # - key_id: svc-001
+    #   public_key_file: /etc/sso/keys/svc-001.pub.pem
+    #   subject_id: service-001
+
+  # API-key authentication. keys seeds the in-process
+  # MemoryAPIKeyStore at boot — each entry maps a key_id to the
+  # contents of a secret file on disk and the sso.Subject the
+  # authenticator returns on success. Secrets stay out of YAML
+  # (matches bootstrap.admin_password_file); operators rotate by
+  # re-emitting the file + reloading. Production rotation needs an
+  # admin RPC the SDK doesn't ship today.
+  apikey:
+    enabled: false
+    keys: []
+    # - key_id: ak_corp
+    #   secret_file: /etc/sso/keys/ak_corp.secret
+    #   subject_id: service-corp
+
+  # X.509 client-certificate authentication. The client posts a PEM-
+  # encoded cert as credential.certificate; the server verifies against
+  # trusted_ca_files (roots) + intermediate_files (chain). Both lists
+  # accept multi-cert PEM bundles (cat ca1.pem ca2.pem > bundle.pem).
+  # Bad / missing / empty PEM files fail loud at boot rather than
+  # silently shipping with an empty trust store. Disabled by default in
+  # production stances — set enabled: true once you've supplied at
+  # least one CA in trusted_ca_files.
+  certificate:
+    enabled: false
+    trusted_ca_files: []
+    # - /etc/sso/pki/corp-root-ca.pem
+    intermediate_files: []
+    # - /etc/sso/pki/corp-intermediate.pem
+
+  # RFC 6238 TOTP — the same primitive Google Authenticator / 1Password /
+  # Authy speak. cmd's wiring uses an in-process MemoryTOTPStore (demo /
+  # dev tier); operators with durable-secret needs fork cmd and supply
+  # their own TOTPStore implementation (secrets are MUST-encrypt
+  # material). skew_steps tolerates ±N 30-second windows of clock drift
+  # between the caller and the server; default 1 (≈±30s).
+  totp:
+    enabled: false
+    skew_steps: 1
+
+  # Upstream OAuth 2.0 / OIDC IdP federation — delegate authentication
+  # to Google, Microsoft, GitHub, Auth0, Keycloak, etc. Each entry
+  # wires one provider accessible at /auth/login?provider=<name>.
+  # Bootstrap from a provider's .well-known/openid-configuration to
+  # populate the endpoint fields. List omitted = no federation wired.
+  oidc_federation: []
+  #   - name: google
+  #     authorization_endpoint: https://accounts.google.com/o/oauth2/v2/auth
+  #     token_endpoint: https://oauth2.googleapis.com/token
+  #     userinfo_endpoint: https://openidconnect.googleapis.com/v1/userinfo
+  #     client_id: ${GOOGLE_OAUTH_CLIENT_ID}
+  #     client_secret: ${GOOGLE_OAUTH_CLIENT_SECRET}
+  #     redirect_uri: https://sso.example.com/callback
+  #     scopes: [openid, profile, email]
+  #     subject_field: sub   # default; "email" for GitHub-style
+  #     timeout: 10s
+
+# Security middleware tunables. Each sub-block is opt-in via its own
+# Enabled flag (or, for body_limit, max_bytes>0). Absent / disabled
+# blocks omit the corresponding sso.WithX call so the middleware is
+# not wired — zero overhead.
+security:
+  body_limit:
+    # Cap request body size. Generous for any auth-flow payload,
+    # blocks gigabyte-class DoS.
+    max_bytes: 1048576       # 1 MiB
+    # Per-prefix overrides (longest-match wins). 0 = unlimited for
+    # that prefix — escape hatch for endpoints that legitimately
+    # accept large bodies (PAR request objects, WebAuthn
+    # attestation blobs) while the global cap stays in effect.
+    overrides: []
+    # - prefix: "/par"
+    #   max_bytes: 4194304     # 4 MiB for PAR JAR objects
+    # - prefix: "/webauthn/registration/finish"
+    #   max_bytes: 65536       # 64 KiB for attestation responses
+
+  rate_limit:
+    enabled: true
+    # backend: memory (per-replica) or sqlite (cluster-shared bucket
+    # state — a request that drained the bucket on any replica is
+    # visible to the others). SQLite handles low-thousands writes/sec;
+    # Redis is the next step for SaaS-scale auth-heavy workloads.
+    backend: memory          # memory | sqlite
+    sqlite:
+      dsn: ""                # e.g. file:/var/lib/sso/ratelimit.db?_journal=WAL
+    # Default bucket applied to every path not matched by a prefix
+    # rule. 60 req/min sustained, burst 60 — generous for normal
+    # browsers.
+    default_per_sec: 1
+    default_burst: 60
+    # Tight buckets on the credential-stuffing-prone endpoints.
+    # First match wins; rules evaluated in declaration order.
+    prefixes:
+      - prefix: /auth/login
+        per_sec: 0.167       # 10/min
+        burst: 10
+      - prefix: /auth/send-code
+        per_sec: 0.167       # 10/min
+        burst: 10
+
+  # JTI-based replay protection on JAR request objects + DPoP proofs.
+  # backend: memory (single-replica only) or sqlite (cluster-shared
+  # file — a jti seen on any replica is rejected on all). Redis /
+  # Memcached backends still need to be wired via the SDK directly.
+  jti_replay:
+    enabled: false
+    backend: memory       # memory | sqlite
+    sqlite:
+      dsn: ""             # e.g. file:/var/lib/sso/jti.db?_journal=WAL
+    # fail_closed: when the store can't confirm a jti is unseen (transport
+    # error), reject the request instead of falling through. Default false
+    # (fail-open — keeps availability on a transient store blip). Opt in for
+    # replay-sensitive multi-replica deployments: a store outage then rejects
+    # the JAR/DPoP/client_assertion/actor_token rather than admitting a replay.
+    # fail_closed: false
+
+  # Per-account lockout. After max_failures bad login attempts within
+  # failure_window, the account is locked for lockout_duration —
+  # subsequent attempts return immediately without consulting the
+  # authenticator. Mitigates credential stuffing + bcrypt-CPU starvation
+  # attacks. backend: memory (single-replica) or sqlite (cluster-shared
+  # counter — attackers can't rotate across replicas to evade the
+  # threshold). Redis still needs the SDK route for high-write workloads.
+  account_lockout:
+    enabled: false
+    backend: memory       # memory | sqlite
+    sqlite:
+      dsn: ""             # e.g. file:/var/lib/sso/lockout.db?_journal=WAL
+    max_failures: 5
+    lockout_duration: 15m
+    failure_window: 1h
+
+  # RFC 8705 mTLS-bound access tokens. The built-in extractor reads
+  # backend:
+  #   tls (default)   r.TLS.PeerCertificates — TLS terminates in-process
+  #   header          parse cert from a header set by a TLS-terminating
+  #                   reverse proxy. SECURITY: the edge MUST strip the
+  #                   header from public traffic, otherwise an attacker
+  #                   can mint mTLS-bound tokens for any cert without
+  #                   holding the matching key (X-Forwarded-For class).
+  # header.encoding values: url-pem (nginx $ssl_client_escaped_cert,
+  # AWS ALB X-Amzn-Mtls-Clientcert), pem (Apache mod_ssl), base64-der.
+  mtls:
+    enabled: false
+    backend: tls             # tls | header
+    header:
+      name: ""               # e.g. X-SSL-Client-Cert, X-Amzn-Mtls-Clientcert
+      encoding: url-pem      # url-pem | pem | base64-der
+
+  cors:
+    enabled: false           # flip to true + list allowed_origins for SPAs
+    allowed_origins: []      # exact-match origins; "*" wildcards
+    allowed_methods: []      # default: GET, POST, PUT, DELETE, OPTIONS
+    allowed_headers: []      # default: Authorization, Content-Type
+    exposed_headers: []      # e.g. [X-Request-ID, Retry-After]
+    allow_credentials: false
+    max_age: 1h
+
+# Prometheus instrumentation. Enables HTTP request count + latency
+# histograms, login / token / risk-decision counters, and exposes the
+# scrape endpoint at /metrics. When audit.async.enabled is also true,
+# the async-sink drop counters + queue gauges land on the same
+# registry automatically (no extra config).
+metrics:
+  enabled: true
+
+# OAuth/OIDC grant stores. Each block opts into one grant; without
+# any of these flags the corresponding /token branch (or /par) returns
+# 501. backend: memory (default; in-process) or sqlite (persistent +
+# survives restart). All four single-use grant stores (auth_code,
+# refresh_token, device_code, par) honor the backend selector. Each
+# SQLite-backed store opens its own *sql.DB pool against the shared
+# file — SQLite's OS-level file lock coordinates.
+oauth:
+  backend: memory        # memory | sqlite
+  sqlite:
+    dsn: ""              # e.g. file:/var/lib/sso/sso.db?_journal=WAL&_pragma=busy_timeout(5000)
+  auth_code:
+    enabled: true       # grant_type=authorization_code (RFC 6749 §4.1)
+    ttl: 10m            # SDK default when <=0 (also 10m)
+  refresh_token:
+    enabled: true       # grant_type=refresh_token, single-use rotation
+    ttl: 720h           # 30d; SDK default when <=0
+    # Opt-in grace window: a concurrent double-submit of the just-rotated token
+    # is idempotent within the window (multi-tab SPA / mobile cold-start races)
+    # instead of tripping family-reuse detection. 0 = strict single-use.
+    rotation_grace_window: 0s
+  device_code:
+    enabled: false      # grant_type=urn:ietf:params:oauth:grant-type:device_code (RFC 8628)
+    ttl: 10m
+    poll_interval: 5s   # minimum allowed poll cadence; faster→slow_down
+    verification_base_url: ""   # empty: derive from request
+  par:
+    enabled: false      # POST /par + request_uri (RFC 9126)
+    ttl: 90s
+  # RFC 9101 §5.2.2 — JAR `request_uri` URL fetching. The inline
+  # `request=<jwt>` flow works without this; only the URL-fetched
+  # variant needs the HTTP fetcher. Each client also needs
+  # allowed_request_uris in its YAML entry.
+  jar:
+    enabled: false
+    timeout: 5s
+    max_bytes: 16384    # 16 KB ceiling for a signed JAR body
+  # JARM (JWT Secured Authorization Response Mode). When enabled,
+  # clients may request response_mode=jwt (+ query.jwt / fragment.jwt /
+  # form_post.jwt) and the authorization response is returned as a JWT
+  # signed with the server's existing signing key (no separate key).
+  jarm:
+    enabled: false
+  # FAPI 2.0 Security Profile. profile="fapi_2" enables the baseline
+  # rule checks (PAR-only, signed request object, S256 PKCE, code-only
+  # response type, DPoP/mTLS sender-constrained tokens) at /auth/login
+  # and /token. inspection_only=true audits violations
+  # (fapi_compliance_violation event + sso_fapi_violations_total metric)
+  # without rejecting — the ramp-up path; flip to false to enforce.
+  # The underlying capabilities (par/jar above, DPoP header or mTLS)
+  # must be wired/sent for a client to pass enforcement.
+  compliance:
+    profile: ""            # "" | fapi_2
+    inspection_only: false # true: audit-only ramp-up; false: enforce
+
+# RFC 9449 DPoP proof iat-window validation. Both knobs default to 60s
+# in the SDK (the conventional FAPI 2.0 / RFC 9449 value), so leaving
+# them at 0 (or omitting this block) is byte-identical to the previous
+# hardcoded behavior. Exposed for the same reason keys.signing.max_clock_skew
+# is: loosen proof_max_age for a fleet whose DPoP clients drift beyond
+# 60s, or tighten both for a strict deployment. proof_max_age bounds how
+# stale a proof may be (iat in the past); max_clock_skew bounds how far a
+# client clock may run ahead (iat in the future). Governs proof iat only —
+# the optional server-issued nonce (security.dpop_nonce) carries its own ttl.
+dpop:
+  proof_max_age: 0s      # 0s = SDK default (60s)
+  max_clock_skew: 0s     # 0s = SDK default (60s)
+
+# OIDC Back-Channel Logout 1.0. When enabled, /logout + /end_session
+# POST a signed logout_token to every affected RP's backchannel_logout_uri
+# so server-side sessions get torn down without depending on a browser
+# round-trip. SDK uses HTTPLogoutNotifier (5s timeout, no proxy).
+# index.backend: memory (single-replica) or sqlite (cluster-shared);
+# the sqlite index lets a logout reaching any replica fan out to every
+# client a subject has touched cluster-wide.
+backchannel_logout:
+  enabled: false
+  max_concurrent: 0     # 0 = SDK default (8)
+  index:
+    backend: memory     # memory | sqlite
+    sqlite:
+      dsn: ""           # e.g. file:/var/lib/sso/bcl.db?_journal=WAL
+
+# RFC 7591 Dynamic Client Registration + RFC 7592 management endpoints.
+# Without enabled, /register returns 501 and every RP must be operator-
+# registered via the YAML clients: block. Production deployments SHOULD
+# either keep this disabled OR set initial_access_token to a pre-shared
+# bearer distributed out-of-band — open registration without a token
+# is a known DoS vector.
+client_registration:
+  enabled: false
+  initial_access_token: ""
+  allow_open_registration: false
+  default_active: true
+  default_token_strategy: "jwt"
+  allowed_authenticators: []
+  # Mint a fresh registration_access_token on every PUT /register/:id
+  # (RFC 7592 §3.2), limiting a leaked token's lifetime. The new token is
+  # returned once in the PUT response; the old one stops working. Default
+  # false keeps the token stable — enable only if your managing clients
+  # capture the rotated token from each update response.
+  rotate_access_token: false
+
+# WebAuthn (CTAP/FIDO2) ceremony endpoints. Mounts four POST routes on
+# the SSO router when enabled:
+#   /webauthn/registration/begin   {"username", "display_name"}
+#   /webauthn/registration/finish  ?session_id=<sid> + attestation body
+#   /webauthn/login/begin          {"username"}
+#   /webauthn/login/finish         ?session_id=<sid> + assertion body
+#
+# RPID must match the registrable domain suffix of the origin the
+# browser will report; RPOrigins MUST be fully qualified including
+# the scheme. Multi-replica setups MUST flip both storage backends to
+# sqlite (independent DSNs) so a credential registered on replica A
+# is visible on replica B at login time and a ceremony Begin on A
+# can be consumed by a Finish on B.
+webauthn:
+  enabled: false
+  rp_id: "example.com"
+  rp_display_name: "Example AS"
+  rp_origins:
+    - "https://sso.example.com"
+  session_ttl: 5m
+  # Attestation policy — restrict WebAuthn registration to approved
+  # authenticator models by AAGUID. The default (conveyance none, policy
+  # mode off) accepts ANY authenticator, including software/virtual ones,
+  # byte-identically to a pre-policy build.
+  #
+  # ASSURANCE (do not over-claim):
+  #   - An ACTIVE policy REQUIRES conveyance "direct" (or "enterprise") —
+  #     boot FAILS otherwise, because under none/indirect an authenticator
+  #     may convey no attestation and report the all-zero AAGUID a denylist
+  #     can never match. With a verified statement go-webauthn VERIFIES THE
+  #     ATTESTATION SIGNATURE at finish time, and a credential that conveyed
+  #     NO attestation (format "none") is REJECTED by the gate (closing the
+  #     client-downgrade bypass).
+  #   - Configure the mds block below for full ADVERSARY-RESISTANCE: with a
+  #     FIDO Metadata Service source, go-webauthn validates the attestation
+  #     cert CHAIN to the FIDO root, so a crafted self-signed x5c asserting an
+  #     allowlisted AAGUID is REJECTED (its chain doesn't root in the MDS).
+  #   - WITHOUT an mds source (default), the AAGUID gate is NOT
+  #     adversary-resistant: a determined attacker can craft a self-signed x5c
+  #     (or self/none attestation) asserting an allowlisted AAGUID. So without
+  #     MDS this is an OPERATIONAL control — honest-client gating + audit
+  #     visibility of registered AAGUIDs + blocking non-attesting software
+  #     authenticators — NOT a defense against a hostile registrant.
+  attestation:
+    # ""/"none" (default) | "indirect" | "direct" | "enterprise".
+    # REQUIRED to be "direct" or "enterprise" when policy_mode gates (boot
+    # fails otherwise) — under "none"/"indirect" most authenticators report
+    # the zero AAGUID, which an allowlist rejects and a denylist can't match.
+    conveyance: ""
+    # ""/"off" (default — no gating) | "allowlist" | "denylist". An active
+    # mode requires conveyance direct|enterprise and rejects credentials that
+    # conveyed no attestation (format "none").
+    policy_mode: ""
+    # The allow/deny list of authenticator AAGUIDs (canonical UUID strings,
+    # any case; the bare 32-hex form is also accepted). Required when
+    # policy_mode gates. Under allowlist, include the all-zero AAGUID
+    # "00000000-0000-0000-0000-000000000000" to admit self-attestation /
+    # no-attestation authenticators — otherwise they are rejected.
+    aaguids: []
+    #   - "ee882879-721c-4913-9775-3dfcce97072a"   # example: a specific authenticator model
+    # FIDO Metadata Service (MDS) root validation — makes the AAGUID gate
+    # ADVERSARY-RESISTANT. With a source set, go-webauthn JWS-verifies the
+    # blob's signing chain to the FIDO root at boot (a tampered/wrong-root
+    # blob fails loud) and then validates each attestation's cert chain to the
+    # FIDO-validated metadata, so a crafted self-signed x5c asserting an
+    # allowlisted AAGUID is rejected. The loaded metadata is a STARTUP
+    # SNAPSHOT — the FIDO MDS rotates ~monthly (the blob carries a nextUpdate
+    # date); reload by restarting with a fresh blob downloaded from
+    # https://mds3.fido2.org/. Default (no source) leaves Config.MDS nil — the
+    # operational control above, byte-identical to a pre-MDS build.
+    mds:
+      # EXACTLY ONE of file / fetch_url supplies the blob. Both empty ⇒ MDS off.
+      file: ""            # path to a downloaded FIDO MDS blob (the JWS)
+      fetch_url: ""       # OR an https URL the blob is fetched from at boot
+      fetch_timeout: 30s  # bounds the boot-time fetch (fetch_url only)
+      # custom_root_file: path to the base64 DER (raw x5c body, not PEM) of a
+      # custom root to verify the blob INSTEAD of the built-in FIDO production
+      # root — ONLY for a non-production / test MDS (e.g. the conformance
+      # suite). Production leaves it empty.
+      custom_root_file: ""
+  storage:
+    users:
+      backend: "memory"  # memory | sqlite
+      sqlite:
+        dsn: "file:/var/lib/sso/webauthn_users.db?_journal=WAL&_pragma=busy_timeout(5000)"
+    sessions:
+      backend: "memory"  # memory | sqlite
+      sqlite:
+        dsn: "file:/var/lib/sso/webauthn_sessions.db?_journal=WAL&_pragma=busy_timeout(5000)"
+
+# Admin gRPC + REST gateway. Mounts the four admin services
+# (Client/User/Token/Permission) plus Snapshot/Release/Tenant admin
+# under /api/v1/admin/. api_rest_enabled defaults true when enabled
+# is true; set false to expose admin via gRPC only. Every mutation
+# emits an `admin_*` audit event; reads require admin:read scope,
+# mutations require admin:write (admin:* matches both).
+admin:
+  enabled: true
+  api_rest_enabled: true
+
+# Service registry — multi-replica discovery for the SSO cluster.
+# memory backend is per-process (single-replica); etcd lease-backed
+# registration with KeepAlive shares state across replicas. service_id
+# defaults to <issuer>-<short-hostname> when empty so two pods of the
+# same issuer don't collide on the same etcd key. service_ttl matters
+# only under etcd (lease lifetime); memory ignores it because process
+# lifetime IS the registration lifetime. Etcd Registry's Ping(ctx)
+# surfaces as `etcd-registry` on /readyz.
+registry:
+  backend: "memory"           # memory | etcd
+  service_id: ""              # default: <issuer>-<short-hostname>
+  service_address: ""         # default: derived from server.listen
+  service_tags: ["sso"]
+  service_ttl: 30s
+  etcd_endpoints: []
+  # etcd_prefix: "/snaplink/registry"
+  # etcd_dial_timeout: 5s
+  # etcd_username: ""
+  # etcd_password: ""
+
+# Cross-replica coordination bus. Propagates cache invalidations (today:
+# tenant suspension) so an admin action on one replica takes effect on
+# every replica immediately, instead of after each node's cache TTL.
+# Unset/memory = single-process (no cross-replica effect; the safe
+# default). etcd = cluster-shared. The bus is fail-open, so it is NOT a
+# /readyz dependency — an etcd outage degrades to TTL convergence, never
+# a 503. Start StartInvalidationBus is wired automatically by cmd.
+cluster:
+  bus:
+    backend: ""               # "" (off) | memory | etcd
+    etcd_endpoints: []
+    # etcd_prefix: "/snaplink/cluster/bus"
+    # etcd_dial_timeout: 5s
+    # etcd_event_ttl: 10s     # published-key lease; short by design
+    # etcd_username: ""
+    # etcd_password: ""
+
+# Signing-key lifecycle. Automatic rotation promotes a fresh Ed25519
+# signing key every `interval`, keeping the demoted key verify-only (in
+# JWKS) for `grace_period` so tokens signed just before the swap stay
+# valid. grace_period MUST be >= the longest access-token TTL. Each
+# rotation emits a signing_key_rotated audit event and busts the signed
+# discovery doc cache (JWKS is served live). Single-issuer: in a
+# multi-replica cluster enable this on ONE leader, or back the issuer
+# with a shared KMS signer — otherwise replicas advertise divergent kids.
+keys:
+  # JWT signing algorithm for the server's own tokens (access /
+  # id_token / userinfo / logout / signed metadata). eddsa (Ed25519,
+  # default) or es256 (ECDSA P-256, the common FAPI choice). Scheduled
+  # rotation below is eddsa-only today; with es256 + rotation enabled,
+  # the scheduled loop is skipped (manual RotateKey/RetireKey still work).
+  signing:
+    alg: eddsa             # eddsa | es256 | rs256 | ps256 (ps256 = FAPI-preferred)
+    # FIPS 140-3 build mode (opt-in, default false — see docs/fips.md).
+    # Requires building/running with GOFIPS140 or GODEBUG=fips140=on/only;
+    # otherwise the server refuses to start rather than silently run
+    # ordinary (non-FIPS) crypto while claiming to be FIPS-mode.
+    # fips_mode: false
+    # fips_allowed_algs: []  # optional narrower allowlist; default = eddsa/es256/rs256/ps256
+  rotation:
+    enabled: false
+    interval: 2160h           # 90d
+    grace_period: 168h        # 7d (>= max access-token TTL)
+  # Opt-in leaderless multi-replica JWKS public-key aggregation. When each
+  # replica holds its OWN per-process signing key (distinct kid, no shared
+  # KMS), a token signed by one replica fails verification on a peer (or on
+  # an RP that fetched JWKS from a peer). Enable this and every replica
+  # publishes its signing PUBLIC keys to a shared registry and adopts peers'
+  # keys verify-only, so JWKS + Validate serve the union (each replica still
+  # signs only with its own key). Disabled by default = zero behavior change.
+  signing_key_registry:
+    backend: ""              # "" (disabled) | memory (single-process) | etcd (cross-process)
+    replica_id: ""           # defaults to the service-registry id; MUST be unique per replica
+    lease_ttl: 0s            # publish lease; 0 -> 5m default. A live replica
+                             # keeps its lease alive; on crash the lease expires
+                             # and peers drop its keys after this long.
+    # etcd backend (cross-process aggregation). Each replica announces its
+    # public keys under <etcd_prefix>/<replica_id> with the lease above; peers
+    # Watch the prefix and adopt. Fail-open: an etcd outage degrades to each
+    # replica's own keys, never a 503. Mirrors the cluster.bus etcd surface.
+    etcd_endpoints: []
+    # etcd_prefix: "/snaplink/signingkeys"
+    # etcd_dial_timeout: 5s
+    # etcd_username: ""
+    # etcd_password: ""
+
+# OIDC CIBA (Client-Initiated Backchannel Authentication), poll mode.
+# Server issues an auth_req_id, delivers an out-of-band challenge via
+# the same transport primitives as push MFA (log | webhook), and the
+# client polls /token with
+# grant_type=urn:openid:params:grant-type:ciba until the user confirms
+# (authorization_pending / slow_down until then). Advertised in
+# discovery only when enabled.
+ciba:
+  enabled: false
+  backend: "memory"          # memory | sqlite (sqlite shares state across replicas)
+  sqlite_dsn: ""             # required when backend=sqlite
+  request_ttl: 0s            # auth_req_id lifetime; 0 -> SDK default
+  interval: 0s               # poll interval advertised to clients; 0 -> SDK default
+  transport: "log"           # log | webhook (webhook reuses the push webhook config shape)
+  webhook:
+    url: ""
+    bearer_token: ""
+    timeout: 0s
+  prune_interval: 0s         # sqlite-only background PruneExpired cadence; 0 disables
+  ping:                      # CIBA ping delivery (poll stays available); discovery advertises "ping" when enabled
+    enabled: false
+    timeout: 0s              # per-ping HTTP timeout; 0 -> 5s default
+    endpoints: {}            # client_id -> notification endpoint URL; a client absent here degrades to poll
+
+# OpenID Shared Signals Framework v1 (CAEP + RISC) transmitter:
+# real-time cross-RP revocation. When enabled, a revocation / tenant
+# suspension / refresh-token-family-reuse event makes the IdP mint a
+# SIGNED Security Event Token (RFC 8417) — using the SAME signing key
+# already in JWKS, so RPs validate with no new trust setup — and PUSH it
+# to the AFFECTED client's registered receiver only (scoped to the
+# event's client/tenant; never broadcast to all RPs). Async + best-effort:
+# a slow/dead receiver drops the SET (sso_caep_sets_total{outcome=failed}
+# + caep_broadcast_failed audit) and never blocks the revocation, which
+# already happened. The receiver endpoint lives in each client's
+# attributes (see clients[].attributes below), NOT here — there is no
+# documented HTTP endpoint in v1. Disabled = byte-identical to no
+# transmitter.
+caep:
+  enabled: false             # OUTBOUND transmitter: push SETs to affected RPs
+  receiver_timeout: 0s       # per-receiver SET POST timeout; 0 -> SDK default (10s)
+  set_ttl: 0s                # SET lifetime; 0 -> SDK default (2m)
+
+  # INBOUND half of OpenID Shared Signals: the CAEP/SSF push-delivery
+  # RECEIVER (RFC 8935). When enabled, mounts an endpoint (default
+  # /ssf/receive) that CONSUMES signed Security Event Tokens from
+  # CONFIGURED trusted upstream transmitters and, on a fully-validated
+  # session-revoked / account-disabled / token-claims-change event for a
+  # PRECISELY-mapped local subject, revokes that subject's local access
+  # (sessions + refresh tokens) via the same seams /token/revoke-all uses.
+  # Independent of the transmitter above (run either, both, or neither).
+  #
+  # SECURITY: only a SET signed by a configured transmitter (the `issuer`
+  # allowlist + a signature against that transmitter's trust-bundle JWKS,
+  # asymmetric-only / alg=none-blocked) and addressed to `audience` can
+  # revoke anything; a forged / untrusted-iss / wrong-aud / expired /
+  # no-freshness-claim (neither iat nor exp) / replayed SET, or one for an
+  # unknown local subject, does NOTHING (the unknown-subject case is acked
+  # but not acted on -- no wrongful revocation, which would be a targeted
+  # DoS). Disabled -> the route is NOT mounted, byte-identical to a build
+  # without it. When enabled, `audience` + at least one `transmitters[]`
+  # entry are REQUIRED (boot fails loud otherwise).
+  #
+  # SUBJECT MODE is the trust boundary -- choose per transmitter:
+  #   - opaque  (sub_id.id IS the local user id): grants this transmitter
+  #             authority to revoke ANY local user by id (full-namespace
+  #             "logout everywhere"). Use ONLY for a FULLY-trusted peer that
+  #             shares this server's subject namespace.
+  #   - iss_sub (resolve the federation link via the federation provider):
+  #             confines the transmitter to subjects under its operator-pinned
+  #             `provider` -- it can NEVER revoke users federated from another
+  #             upstream. Use for a PARTIALLY-trusted upstream IdP. `provider`
+  #             is REQUIRED here (boot fails loud on empty) and MUST be pinned
+  #             to this transmitter's trusted namespace -- it is NEVER taken
+  #             from the SET's attacker-controlled sub_id.iss.
+  receiver:
+    enabled: false
+    path: ""                 # mount point; "" -> SDK default /ssf/receive
+    audience: ""             # THIS server's id the inbound SET `aud` MUST contain (no lax aud)
+    max_clock_skew: 0s       # SET iat/exp freshness window; 0 -> SDK default (60s)
+    transmitters: []         # the trusted-transmitter allowlist; each:
+      # - issuer: "https://upstream-idp.example"   # exact SET `iss`
+      #   jwks_file: /etc/sso/ssf-upstream-jwks.json # that transmitter's published signing JWKS (trust bundle)
+      #   subject_mode: opaque                      # opaque (sub_id.id IS the local user id; FULL-trust peer only) | iss_sub (federation link; partially-trusted upstream)
+      #   provider: ""                              # REQUIRED for iss_sub: local federation provider name, operator-pinned to this transmitter's namespace (NOT the SET iss); ignored for opaque
+      #   allowed_events: []                        # restrict which SSF event URIs this transmitter may trigger; [] -> all known
+      #   allowed_algs: []                          # restrict asymmetric algs; [] -> ES256/RS256/PS256/EdDSA
+
+# SPIFFE JWT-SVID acceptance via RFC 8693 token-exchange (mesh-native
+# service-to-service identity). A mesh workload holding a SPIRE-issued
+# JWT-SVID (a JWT whose `sub` is a spiffe:// URI, signed by the SPIRE
+# server's JWT key) POSTs it to /token as
+#   grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+#   subject_token=<the JWT-SVID>
+#   subject_token_type=urn:ietf:params:oauth:token-type:jwt
+# and receives THIS server's access token for the mapped workload
+# identity -- exactly like upstream-IdP federation but via token-exchange
+# instead of /auth/login.
+#
+# The SVID is validated against the operator-supplied SPIRE trust-bundle
+# JWKS with a strict asymmetric alg-allowlist (no alg=none, no HS*),
+# STRICT aud-binding (the SVID `aud` MUST contain `audience` -- a lax aud
+# would let an SVID minted for another service be replayed here), and a
+# trust-domain check (the SVID `sub` trust-domain MUST equal
+# `trust_domain`). ALL failures collapse to one 400 invalid_grant (no
+# oracle). A normal locally-issued subject_token_type=jwt token is
+# unaffected: it validates against this server's own issuers first and
+# never reaches the SVID path.
+#
+# Disabled -> byte-identical to a build without the feature. When enabled,
+# trust_domain + audience + jwks_file are ALL required (the server fails
+# loud on boot otherwise). Scope: JWT-SVID only (x509-SVID / mTLS-SVID /
+# SPIRE Workload API are out).
+spiffe:
+  enabled: false
+  trust_domain: ""           # e.g. "example.org" -- the ONLY trust domain accepted
+  audience: ""               # THIS server's identifier the SVID `aud` MUST contain
+  jwks_file: ""              # path to the SPIRE trust-bundle JWKS ({"keys":[...]})
+  max_clock_skew: 0s         # widens exp/nbf; 0 -> SDK default (60s)
+
+# Service-mesh data-plane integrations (cluster C1). ext_authz is the
+# Envoy/Istio HTTP-mode external authorization endpoint: a mesh sidecar
+# (Envoy's ext_authz HTTP filter, or an Istio AuthorizationPolicy CUSTOM
+# action with an HTTP provider) calls it per request. A 200 = ALLOW and
+# the sidecar injects this endpoint's X-Auth-* identity response headers
+# (subject, client_id, scopes, expiry; roles when a permissions provider
+# is wired) into the upstream request; any other status = DENY. It reuses
+# the same alg-confusion-safe bearer validation /userinfo uses, including
+# the DPoP/mTLS sender-constraint checks, so a stolen sender-constrained
+# token can't be replayed as a plain bearer. The gRPC ext_authz variant
+# (needs go-control-plane) is a separate operator module.
+#
+# MESH-INTERNAL: only the trusted sidecar should reach this endpoint
+# (operator network policy), and the mesh MUST strip any client-supplied
+# X-Auth-* at ingress -- same "edge must strip untrusted headers" model as
+# X-Forwarded-* / security.mtls.backend: header. The endpoint DERIVES
+# every X-Auth-* from the validated token; it never trusts an inbound one.
+mesh:
+  ext_authz:
+    enabled: false
+    path: ""                 # mount point; empty -> SDK default ("/mesh/ext-authz")
+
+# OpenID Federation 1.0 entity configuration. When enabled, the server
+# publishes its SELF-SIGNED Entity Statement at /.well-known/openid-federation
+# so it is discoverable as a federation ENTITY (eduGAIN / research /
+# government multilateral-federation trust frameworks). The statement carries
+# iss == sub == issuer, the OP's published signing keys inline (jwks),
+# openid_provider metadata DERIVED from the discovery doc, and the
+# authority_hints below; it is signed by the SAME key already in JWKS (the
+# signing issuer's generic SignJWT seam, typ "entity-statement+jwt"), so a
+# federation consumer validates it with no new trust setup. It is PUBLIC
+# metadata (Cache-Control public, max-age -- not a credential).
+#
+# Enabling federation wires BOTH the entity-PUBLISHING surface (above) and the
+# trust-chain RESOLUTION surface: trust_anchors below are now LIVE -- each
+# anchor's jwks_file is loaded at boot as the ROOT OF TRUST. The resolver
+# fetches a remote entity's Entity Configuration, walks its authority_hints up
+# to a configured trust anchor over SSRF-safe (https-only, no-redirect,
+# bounded) fetches, and validates the chain FAIL-CLOSED: every hop's signature
+# is verified against the keys established higher in the chain (the anchor's
+# config against the CONFIGURED jwks_file keys, NEVER the fetched keys), exp/iat
+# per hop, path-length + cycle bounded, then the metadata_policy is applied. A
+# chain not rooting in a configured anchor, any bad signature/expiry, a cycle,
+# or an over-long path is rejected. A configured-but-unloadable anchor is a BOOT
+# error. No resolver ENDPOINT is mounted yet (a later slice wires it into
+# registration). With trust_anchors empty the resolver is inert. Disabled (the
+# default) -> the federation route is NOT mounted, byte-identical.
+#
+# SSRF NOTE: the https-only + no-redirect + bounded fetch + best-effort
+# internal-IP-host block raise the bar but are NOT a complete SSRF control (a
+# hostname resolving to an internal IP still passes). FULL containment REQUIRES
+# the operator's egress network policy (deny-by-default egress firewall/proxy),
+# same as the JAR request_uri fetcher.
+federation:
+  enabled: false
+  authority_hints: []        # superiors' Entity Identifiers (HTTPS URLs) whose chains this OP joins
+  # - "https://federation.example.org"
+  trust_anchors: []          # LIVE: roots of trust for chain validation (jwks_file = root keys)
+  # - entity_id: "https://anchor.example.org"
+  #   jwks_file: "/etc/sso/anchor-jwks.json"
+  # OpenID Federation 1.0 §8 SUPERIOR/INTERMEDIATE role -- this server issues SIGNED Subordinate
+  # Statements about these entities at /fetch (?sub=<subordinate>), so a subordinate can list this
+  # server in its authority_hints and a resolver can climb THROUGH it. Each statement: iss=this server,
+  # sub=the subordinate, jwks=the subordinate's keys this server vouches for (jwks_file, loaded at boot;
+  # unloadable=boot error), + the optional metadata_policy/constraints this superior IMPOSES. The /fetch
+  # request supplies ONLY sub (looked up against entity_id; unknown -> 404 not_found); the vouched keys
+  # are OPERATOR CONFIG, never request input. Empty (default) -> this server is a LEAF only: /fetch is
+  # NOT mounted AND the entity config advertises NO federation_fetch_endpoint (byte-identical leaf OP).
+  subordinates: []
+  # - entity_id: "https://leaf-rp.example.org"
+  #   jwks_file: "/etc/sso/leaf-rp-jwks.json"   # the subordinate's keys this server vouches for
+  #   metadata_policy:                          # optional §10 policy this superior imposes (authored into the SS)
+  #     openid_relying_party:
+  #       token_endpoint_auth_method:
+  #         value: "private_key_jwt"
+  #   constraints:                              # optional §6.2 constraints this superior imposes
+  #     max_path_length: 0                      # 0 = the subordinate must be a leaf (no intermediates below)
+  #     naming_constraints_permitted: []        # permitted URI name subtrees for entities below
+  #     naming_constraints_excluded: []         # excluded subtrees (excluded beats permitted)
+  #     allowed_entity_types: null              # null=any; [] = only federation_entity; [..]=the listed types
+  organization_name: ""      # federation_entity metadata (optional)
+  contacts: []               # federation_entity contacts, e.g. ["mailto:admin@example.org"]
+  entity_statement_ttl: 0s   # exp - iat stamped into the statement; 0 -> SDK default (24h)
+  cache_ttl: 0s              # body cache + Cache-Control max-age; 0 -> SDK default (5m)
+  max_trust_chain_depth: 0   # authority-hint climb bound (cycle/DoS guard); 0 -> SDK default (5)
+  max_clock_skew: 0s         # per-hop exp/iat skew allowance in chain validation; 0 -> SDK default (60s)
+  auto_register: false       # slice 3: a VALIDATED federation RP becomes a usable OAuth client with
+                             # no manual registration -- on an authz client-store MISS for a valid
+                             # HTTPS entity ID, resolve its chain + derive the client from the
+                             # POLICY-CONSTRAINED RP metadata (chain-vouched JWKS, no secret).
+                             # REQUIRES trust_anchors (boot error otherwise). false -> authz/token
+                             # flow byte-identical. SECURITY-SENSITIVE: admits token-getting clients.
+                             #
+                             # The resolution trigger is UNAUTHENTICATED: a fake-but-HTTPS client_id
+                             # that misses the store fires a full outbound trust-chain resolution
+                             # (up to dozens of HTTPS fetches). When enabling auto_register you MUST
+                             # (1) front /auth/login with the server rate limiter (rate_limit below,
+                             # keyed by client IP) and (2) run a deny-by-default egress policy -- the
+                             # SSRF containment is the operator's egress policy (the in-code https-only
+                             # + internal-IP gate + the knobs below are defense-in-depth, NOT a full
+                             # SSRF wall; DNS-rebinding to internal IPs still passes the literal-IP gate).
+  # Abuse-resistance knobs (only consulted when auto_register is true; 0 -> SDK default):
+  resolution_negative_cache_ttl: 0s       # remember a FAILED resolution this long so a repeated fake id
+                                          # does not re-fetch; SHORT so a legit RP whose superior was
+                                          # transiently down retries soon. 0 -> SDK default (30s).
+  resolution_max_concurrency: 0           # cap CONCURRENT trust-chain resolutions across all distinct
+                                          # entity IDs (bounds distinct-id outbound fan-out); saturated ->
+                                          # fail-closed unknown-client (a legit RP retries). 0 -> default (16).
+  resolution_negative_cache_max_size: 0   # cap negative-cache entries so it can't itself become an
+                                          # unbounded-memory DoS (oldest evicted at the cap). 0 -> default (1024).
+  # OpenID Federation 1.0 §7 TRUST MARKS (slice 4b) -- an EXTRA admission gate ON TOP of auto_register.
+  # When required_trust_mark_types is non-empty, an auto-registering RP must carry a valid Trust Mark
+  # (a signed conformance assertion) of EACH listed type, signed by a CONFIGURED AUTHORIZED trust_mark_
+  # issuer (iss in the set + authorized for the type + signature verified against the issuer's keys),
+  # with sub == the RP entity ID (confused-deputy closed) and the SIGNED trust_mark_type authoritative,
+  # iat/exp fresh. Any missing/forged/unauthorized/expired/wrong-subject required mark -> the RP stays
+  # UNKNOWN (oracle-safe, no trust-mark-specific wire signal). Empty (default) -> NO requirement; the
+  # auto_register path is byte-identical. Non-empty REQUIRES an authorized-issuer source: at least one
+  # trust_mark_issuer OR allow_federation_resolved_trust_mark_issuers (boot error otherwise -- a required
+  # type with no authorized issuer would admit no RP). Only consulted when auto_register is true.
+  required_trust_mark_types: []   # Trust Mark Type URIs an auto-registering RP MUST each carry
+  # - "https://federation.example.org/trust-mark/certified-rp"
+  trust_mark_issuers: []          # the PRIMARY (operator-pinned) issuers whose signed marks satisfy a type
+  # - entity_id: "https://trust-mark-issuer.example.org"
+  #   jwks_file: "/etc/sso/trust-mark-issuer-jwks.json"   # root of trust the issuer's marks verify against
+  #   allowed_types: []           # types this issuer may issue (empty -> any required type)
+  # OpenID Federation 1.0 §3.1.2 FEDERATION-RESOLVED trust-mark issuers (slice 4c) -- OPT-IN, default false.
+  # A SECOND authorized-issuer source where the Trust Mark Issuer is itself a federation entity: when a
+  # required mark's iss is NOT in trust_mark_issuers above, the issuer is resolved via its trust chain to a
+  # CONFIGURED trust_anchor (fail-closed) and MUST be listed in that anchor's validated trust_mark_issuers
+  # for the required type; only then do the issuer's chain-validated keys verify the mark (same sub==RP /
+  # signed-type / freshness checks). The authorization ROOT is the configured anchor's trust_mark_issuers --
+  # NOT the issuer's self-assertion, NOT the mark. Requires trust_anchors. The configured path above always
+  # takes precedence. false (default) -> ONLY the configured path runs (byte-identical to the reviewed gate).
+  allow_federation_resolved_trust_mark_issuers: false
+
+# SAML 2.0 (provided by a SEPARATE/forked module -- the SAML/XML/DSig
+# dependency stays OUT of this binary's core go.mod, the firm
+# zero-external-dep invariant). Disabled by default: handler == "" mounts
+# NOTHING and is byte-identical to a build without SAML.
+#
+# To enable, an operator FORKS cmd, imports their SAML module, and calls
+# RegisterSAMLHandlers("<name>", factory) from main() (mirroring
+# RegisterExternalSigner for KMS signers). The factory builds the SAML
+# SP/IdP HTTP handlers + an optional SP-side authenticator; it borrows the
+# issuer's signing key as a stdlib crypto.Signer off the JWT issuer's
+# CryptoSigner() accessor (so SAML assertions are signed with the SAME key
+# published in JWKS -- SP metadata matches, and it works for both in-process
+# and external/KMS keys). Then set handler below to that registered name.
+saml:
+  handler: ""                # registered SAMLHandlerFactory name; "" disables SAML
+  sp_providers: []
+  # - name: "partner-idp"
+  #   entity_id: "https://idp.partner.example/metadata"
+  #   acs_url: "https://sso.example.com/auth/saml/callback"
+  #   idp_metadata_url: "https://idp.partner.example/metadata"
+  #   idp_metadata_xml: ""        # inline alternative to idp_metadata_url
+  #   name_id_format: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+  #   allow_idp_initiated: false
+
+# OIDC response encryption (JWE). When enabled, clients that register
+# id_token_encrypted_response_alg / userinfo_encrypted_response_alg
+# receive a JWE(JWS(...)) nested response; the recipient public key is
+# read from each client's registered JWKS (use:"enc"), so no server-
+# side key material is needed. Encryption failure for an opted-in
+# client fails closed (id_token omitted / userinfo server_error) with
+# no missing-key-vs-crypto-failure oracle.
+oidc:
+  response_encryption:
+    enabled: false
+    backend: "rsa"           # rsa (RSA-OAEP-256 + A256GCM)
+
+# Multi-tenant + multi-domain routing. Tenant sits above Client: one
+# tenant typically owns many clients (admin / customer / mobile)
+# sharing one audit pipeline. Domains map hostnames to tenants so a
+# single SSO instance serves t1.example.com and t2.example.com from
+# distinct tenant contexts. Client.TenantID then enforces issuance
+# only inside the right tenant (mismatches → 403 tenant_mismatch).
+# suspension_check enables the active post-validation gate that
+# rejects tokens whose tenant flipped to "suspended" since issuance;
+# without it, existing bearers keep working until natural expiry.
+tenant:
+  enabled: false
+  # memory: single-replica only; sqlite: cluster-shared so admin
+  # SetTenantStatus on one replica surfaces on every replica after
+  # the suspension-check cache TTL elapses + each replica's
+  # InvalidateTenantSuspensionCache fires (operators wire that as
+  # part of their admin-mutation handler).
+  backend: "memory"          # memory | sqlite
+  sqlite:
+    # dsn: "file:/var/lib/sso/tenant.db?_journal=WAL&_pragma=busy_timeout(5000)"
+    dsn: ""
+  lookup_timeout: 200ms
+  include_suspended: false
+  tenants: []
+  # - id: "acme"
+  #   slug: "acme"
+  #   name: "Acme Corp"
+  #   status: "active"        # active | suspended
+  #   settings:
+  #     billing_tier: gold
+  #   token_strategy: ""      # ""=server default | jwt | session (per-tenant token type)
+  domains: []
+  # - hostname: "sso.acme.example.com"
+  #   tenant_id: "acme"
+  #   default_client_id: "acme-web"
+  #   is_apex: false
+  #   branding:
+  #     logo_url: "https://cdn.acme.example.com/logo.svg"
+  suspension_check:
+    enabled: false
+    cache_ttl: 30s
+  # Per-tenant usage/metering report at GET /api/v1/admin/tenants/:id/usage
+  # (admin:read). The sqlite aggregator reads the audit_events table, so point
+  # its dsn at the audit DB (audit.sqlite.dsn). "" = endpoint not mounted.
+  usage_metering:
+    backend: ""              # "" (disabled) | memory | sqlite
+    dsn: ""                  # sqlite: the audit DB DSN
+
+# IP → geo enrichment. Best for UX hints (preferred language, country
+# code on login response); NOT a security boundary. static backend
+# is in-process CIDR longest-prefix match — fine for the small operator-
+# curated table of intranet ranges + regional offices. Real geo
+# coverage needs a future maxmind backend stacked behind static.
+# lookup_timeout caps a single Lookup in the request hot path (200ms
+# default).
+geo:
+  enabled: false
+  backend: "static"
+  lookup_timeout: 200ms
+  static:
+    entries: []
+    # - cidr: "10.0.0.0/8"
+    #   country_code: "US"
+    #   region: "CA"
+    #   city: "San Francisco"
+    #   time_zone: "America/Los_Angeles"
+    #   recommended_language: "en-US"
+
+# Serving-region resolution + data-residency enforcement. Disabled by
+# default: with neither serving_region nor header_name set, the region
+# middleware is NOT installed and the residency gate stays inert
+# (byte-identical to a build without it). When enabled, /auth/login
+# enforces the per-tenant ResidencyPolicy (tenant.home_region /
+# allowed_regions / enforce_writes): a serving region outside the
+# tenant's allowed set → region_not_allowed; a write outside the home
+# region under enforce_writes → residency_violation.
+#
+# serving_region: this deployment's pinned region (the fallback when no
+#   trusted header supplies one).
+# header_name: a regional edge/mesh sets this header to pin traffic
+#   (empty → X-Serving-Region). ONLY trust it behind an edge that strips
+#   any client-supplied copy (same threat model as X-Forwarded-*).
+# allowed_regions: anti-injection allowlist for the header value (a value
+#   outside it falls back to serving_region).
+# residency_check_cache_ttl: how long a tenant's policy is cached
+#   (0 → SDK default, 60s).
+region:
+  serving_region: ""
+  header_name: ""
+  allowed_regions: []
+  residency_check_cache_ttl: 0s
+
+# Admin-managed state export/restore. Snapshotter pulls every wired
+# backend's List(); Restorer applies in dependency order with three
+# modes (merge / overwrite / replace) and dry-run. Storage selects
+# where envelopes live (file or inline); encryption seals them
+# (none = plaintext, passphrase = argon2id + XChaCha20-Poly1305).
+# restore_from is a snapshot URI consumed by the bootstrap step on
+# first boot; --bootstrap-restore-from overrides it for one-off
+# operator restores. Admin RPCs mount at /api/v1/admin/snapshots.
+snapshot:
+  enabled: false
+  storage:
+    backend: "file"           # file | inline
+    file:
+      dir: "./snapshots"
+  encryption:
+    # none: plaintext JSON envelopes (dev / test).
+    # passphrase: argon2id-derived + XChaCha20-Poly1305; for
+    # human-typed secrets. Set passphrase (literal, fine for
+    # tests) OR passphrase_file (recommended).
+    # aes-gcm: direct 32-byte AES-256 key + AES-GCM. Aimed at
+    # operators with a KMS that hands them raw DEKs. Set
+    # key (inline, discouraged) OR key_file (recommended; raw 32
+    # bytes / hex / base64 all accepted).
+    backend: "none"           # none | passphrase | aes-gcm
+    passphrase: ""
+    passphrase_file: ""
+    # key: ""               # inline hex/base64 (discouraged)
+    # key_file: "/etc/sso/snapshot-dek"
+  restore_from: ""            # file:///abs/path or inline:<base64>
+  # Opt-in defense-in-depth for SAFE SHARING / inspection: strips
+  # client credentials (Secret + RFC 7592 RegistrationAccessToken)
+  # from EVERY export. A plaintext export is then safe to forward for
+  # review without leaking live secrets. NOT a restore path — a
+  # redacted snapshot's clients cannot authenticate after restore;
+  # use encryption (above) for restorable backups. Default false =
+  # byte-identical, backward-compatible export.
+  # redact_secrets: false
+  # Background pruning of old snapshot envelopes. Operators take
+  # snapshots on a schedule (admin SnapshotService or external
+  # cron); without retention the storage dir grows monotonically.
+  # The scheduler keeps the `keep` most-recent snapshots and
+  # deletes the rest at every interval. SnapshotID format
+  # (snap_<RFC3339>_<rand>) sorts lexicographically by time so
+  # "most recent" works without per-file mtime inspection.
+  retention:
+    enabled: false
+    keep: 30                   # how many most-recent snapshots to keep
+    interval: 6h               # how often to wake + prune
+
+# Reference rule-based RiskScorer (defaultimpl.RuleBasedRiskScorer).
+# Runs on /auth/login AFTER credential validation, BEFORE token
+# issuance — a Deny blocks the token, an Allow lets it through.
+# Operators with richer needs (impossible-travel, device
+# fingerprint, ML scoring) fork cmd and pass their own
+# sso.RiskScorer via WithRiskScorer. Eval order is deny-first:
+# IPDenyList → IPAllowList (default-deny if non-empty) →
+# CountryDenyList → CountryAllowList. country_allow_list rule
+# fires only when geo enrichment populated req.Geo.CountryCode;
+# deny_on_geo_missing flips that to "no geo = deny" for deployments
+# where geo is a hard requirement.
+risk:
+  enabled: false
+  ip_deny_list: []
+  # - "203.0.113.0/24"
+  # - "198.51.100.99"
+  ip_allow_list: []
+  # - "10.0.0.0/8"
+  country_deny_list: []
+  # - "KP"
+  country_allow_list: []
+  # - "US"
+  # - "DE"
+  deny_on_geo_missing: false
+
+# Step-up MFA orchestration. The Risk scorer above (or any custom
+# sso.RiskScorer the SDK is configured with) gates flagged logins
+# through a second factor by returning DecisionRequireMFA: the server
+# responds to /auth/login with mfa_required + a challenge id, the
+# client POSTs the second factor to /auth/mfa, and on success the
+# response replays the same token-mint shape the no-MFA path would
+# have minted (caller can't tell the two cases apart).
+#
+# Without both provider + challenge backend wired, RequireMFA decays
+# to Allow (back-compat preserved for callers that pre-date this
+# orchestration). Set enabled=false to bypass entirely.
+#
+# provider.kind=totp shares the same secret store + skew policy as
+# the primary authenticators.totp authenticator — one user enrollment
+# serves both primary auth and step-up. provider.kind=webauthn shares
+# the same UserStore + SessionStore + RP config as the primary
+# /webauthn/login/{begin,finish} ceremony (requires webauthn.enabled).
+# WebAuthn is the only two-call factor on the YAML surface: the
+# server pre-issues the assertion challenge during /auth/login's
+# mfa_required response (under mfa_method_data["webauthn"]), then
+# verifies the signed assertion at /auth/mfa. Push notification,
+# hardware OTP devices that pull a challenge, and upstream IdP
+# step-up implement sso.MFAProvider + sso.MFABeginner directly in
+# the SDK and bypass this YAML knob.
+#
+# challenge.backend=memory is single-replica only — a challenge issued
+# by one replica is unknown to other replicas, so /auth/mfa routed
+# through a load balancer without session affinity surfaces
+# mfa_invalid even on correct codes. Use sqlite for clusters.
+mfa:
+  enabled: false
+  provider:
+    kind: "totp"           # totp | webauthn | push | multi
+    # When kind=multi, list the inner leaf kinds users can pick from
+    # at /auth/mfa time. The composite implements MFABeginner so
+    # two-call factors (webauthn, push) coexist with single-call
+    # factors (totp). Nesting kind=multi inside the kinds list is
+    # rejected; duplicate entries are rejected. Empty / single-entry
+    # kinds list is rejected (use the leaf kind directly).
+    # kinds: ["totp", "webauthn"]
+    kinds: []
+    # When kind=push (or "push" appears in kinds), wires the
+    # reference PushMFAProvider. Backend selects the
+    # PushApprovalStore (memory: single-replica; sqlite: cluster-
+    # shared). Transport is "log" today — operators fork cmd to
+    # drop in FCM/APNs/webhook (the SDK's PushTransport interface
+    # is stable). poll_interval / max_wait tune the Verify polling;
+    # max_wait MUST be <= challenge.ttl above.
+    #
+    # User-device callbacks that resolve approvals (PENDING →
+    # APPROVED/DENIED) are intentionally not shipped from cmd —
+    # operators build the handler against
+    # defaultimpl.PushApprovalStore.SetStatus and route it through
+    # their own gateway.
+    push:
+      backend: "memory"    # memory | sqlite
+      # log: writes the approval id + subject to the structured log
+      # (dev / smoke-test). webhook: POSTs JSON to operator URL
+      # (see webhook: block below). Custom transports (FCM / APNs
+      # SDK) ship via cmd fork — the SDK's PushTransport interface
+      # is stable.
+      transport: "log"     # log | webhook
+      poll_interval: 1s
+      max_wait: 60s
+      # channel_notify opts into the built-in channel-based Verify
+      # wakeup. When true AND the reference callback below is mounted,
+      # an approve/deny wakes the blocked /auth/mfa Verify in ms
+      # instead of after a full poll_interval tick. Pure latency win —
+      # the approval store stays authoritative, so a missed signal
+      # only falls back to polling. Single-process hint: a callback
+      # handled on a different replica than the parked Verify still
+      # relies on the poll. false keeps the historical poll-only path.
+      channel_notify: false
+      # Background cron-like prune of expired push approvals
+      # (PushApprovalStore.PruneExpired). SQLite backend only —
+      # the memory store self-prunes on Get via expiry check.
+      # 0s disables; positive value enables a background goroutine.
+      prune_interval: 0s
+      sqlite:
+        # dsn: "file:/var/lib/sso/sso.db?_journal=WAL&_pragma=busy_timeout(5000)"
+        dsn: ""
+      # HTTP webhook delivery. The SSO server POSTs
+      # {approval_id, subject_id, metadata} as JSON to the URL;
+      # the operator's gateway translates to FCM/APNs/etc and
+      # calls /push/approval/:id/:decision (or SetStatus directly)
+      # to resolve. bearer_token sets Authorization; headers adds
+      # arbitrary extra headers; timeout bounds the per-attempt
+      # HTTP call; retry_* tunes exponential backoff.
+      webhook:
+        # url: "https://gateway.internal/push/notify"
+        url: ""
+        bearer_token: ""
+        headers: {}
+        # - X-Source: sso-server
+        timeout: 5s
+        retry_max_attempts: 3
+        retry_initial_backoff: 250ms
+        retry_max_backoff: 5s
+      # Reference HTTP callback the SSO server mounts at
+      # POST /push/approval/{id}/{decision} where decision is
+      # approve|deny. Operators with their own gateway leave
+      # enabled=false and call PushApprovalStore.SetStatus from
+      # their custom handler. Auth: bearer_token + allowed_cidrs;
+      # wire one or both, or accept ALL requests (only safe behind
+      # an edge enforcing auth).
+      callback:
+        enabled: false
+        bearer_token: ""
+        allowed_cidrs: []
+        # - "10.0.0.0/8"
+        # - "192.168.1.0/24"
+  challenge:
+    backend: "memory"      # memory | sqlite
+    ttl: 5m                # 0 = SDK default (5m)
+    sqlite:
+      # Same DSN cookbook as the rest of the SQLite substrate:
+      # dsn: "file:/var/lib/sso/sso.db?_journal=WAL&_pragma=busy_timeout(5000)"
+      dsn: ""
+
+# Frontend + backend app version pin / rollback. Pinner.PinForward +
+# PinRollback encode asymmetric ordering (backend-first forward,
+# frontend-first rollback). HealthProbe gates forward Pin; all-fail
+# triggers auto-rollback. SnapshotIntegration ties Rollback into the
+# snapshot subsystem so admin state can roll back alongside code.
+# Admin RPCs mount at /api/v1/admin/releases.
+releases:
+  enabled: false
+  store:
+    backend: "file"           # file | memory
+    file:
+      dir: "./releases"
+  pinner:
+    backend: "noop"           # noop | static | docker
+    static:
+      bundle_dir: "/srv/sso/frontend"
+    # docker:
+    #   bundle_dir: "/etc/sso/compose"
+  probe:
+    backend: "noop"           # noop | http
+    # http:
+    #   url: "http://localhost:8080/health"
+    #   timeout: 2s
+  snapshot_integration: false
+
+# Async behavioral anomaly detection.
+#
+# Runs OFF the request hot path on every login event (success +
+# failure). Surfaces anomalies via audit + metrics; never blocks
+# login by design. The synchronous RiskScorer above can't catch
+# windowed behavioral signals like impossible-travel or brute-force
+# spray; this subsystem closes that gap.
+#
+# When enabled=false the entire pipeline is short-circuited (zero
+# overhead). Enable per-detector below.
+anomaly:
+  enabled: false
+
+  # Deployment-stable hash salt for IP + UA fingerprint hashing.
+  # Hex-encoded (recommended, 64 chars = 32 bytes) or raw bytes.
+  # MUST be set for production deployments — PII privacy depends
+  # on it. Rotating breaks history continuity.
+  ip_salt: ""
+
+  recent_login:
+    backend: "memory"    # memory | sqlite
+    sqlite:
+      # dsn: "file:/var/lib/sso/sso.db?_journal=WAL&_pragma=busy_timeout(5000)"
+      dsn: ""
+
+  ip_failure:
+    backend: "memory"    # memory | sqlite
+    sqlite:
+      dsn: ""
+
+  detectors:
+    # Haversine distance + 800km/h speed ceiling between consecutive
+    # logins. Requires geo provider with Latitude/Longitude.
+    impossible_travel:
+      enabled: false
+      max_speed_kmh: 800       # 0 = SDK default 800
+      history_window: 24h      # 0 = SDK default
+
+    # Sliding-window login count per subject. hourly=warn, daily=critical.
+    velocity:
+      enabled: false
+      hourly_limit: 25         # 0 disables hourly check
+      daily_limit: 200         # 0 disables daily check
+
+    # UA fingerprint comparison vs baseline_window history.
+    new_device:
+      enabled: false
+      baseline_window: 720h           # 30 days; 0 = SDK default
+      bootstrap_grace_period: 168h    # 7 days; 0 disables grace
+
+    # Country code comparison vs baseline_window history.
+    new_country:
+      enabled: false
+      baseline_window: 2160h          # 90 days; 0 = SDK default
+      bootstrap_grace_period: 168h    # 7 days; 0 disables grace
+
+    # Cross-account same-IP failure counter. Catches AccountLockout
+    # blind spot (spray across N accounts staying below per-account
+    # threshold).
+    brute_force_shadow:
+      enabled: false
+      window: 1h                     # 0 = SDK default
+      failure_limit: 50              # 0 disables failure check
+      distinct_subject_limit: 10     # 0 disables distinct check
+
+  runner:
+    queue_size: 1024     # 0 = SDK default
+    workers: 4           # 0 = SDK default
+    drop_policy: "drop_newest"  # drop_newest | block
+
+  # Background prune loop. Mirrors audit / snapshot / push_approvals
+  # retention pattern. Each store has its own age threshold —
+  # recent_login is long-window (90d baseline data); ip_failure is
+  # short-window (counters are 1h relevant).
+  retention:
+    enabled: false
+    recent_login_age: 2160h   # 90 days
+    ip_failure_age: 2h        # 2 hours
+    interval: 1h

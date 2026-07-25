@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/snaplink/sso/domains/authenticators/device"
 	"github.com/snaplink/sso/domains/identitylink"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/protocols/compliance"
@@ -129,6 +130,10 @@ type Deps interface {
 	// MFA recovery codes (POST/GET /me/mfa/recovery-codes). Nil when unwired.
 	RecoveryCodeStore() core.RecoveryCodeStore
 
+	// DeviceStore returns the authenticated-device tracking store, or nil
+	// when device tracking is not configured.
+	DeviceStore() device.Store
+
 	// Trusted-device MFA-skip self-service (GET/POST/DELETE /me/devices*).
 	// Nil TrustedDeviceStore ⇒ those routes are not mounted. TrustedDeviceTTL
 	// is consulted by the Trust handler when minting a fresh grant.
@@ -141,6 +146,10 @@ type Deps interface {
 
 	// Password policy
 	PasswordPolicyValidator() spi.PasswordPolicyValidator
+	// LoginHistoryStore returns the wired login history store, or nil when
+	// login history recording is not configured.
+	LoginHistoryStore() device.HistoryStore
+
 	// PasswordHistoryStore returns the wired password-history store, or nil
 	// when history enforcement is not configured (WithPasswordHistoryStore).
 	PasswordHistoryStore() core.PasswordHistoryStore

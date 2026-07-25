@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/snaplink/sso/domains/authenticators/device"
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/connections/provider"
 	"github.com/snaplink/sso/domains/tenant"
@@ -257,6 +258,27 @@ func WithConnectionStore(store connections.Store) Option {
 // feature.
 func WithProviderStore(store provider.Store) Option {
 	return func(s *Server) { s.providerStore = store }
+}
+
+// WithDeviceStore wires the device tracking store. When wired, the server
+// automatically registers/updates devices on each login and surfaces device
+// info in the login response. Without it, device tracking is not performed.
+func WithDeviceStore(store device.Store) Option {
+	return func(s *Server) { s.deviceStore = store }
+}
+
+// WithDevicePolicy configures device policy rules (max devices, fingerprint
+// requirements, etc.). Zero values mean "no restriction". When combined with
+// WithDeviceStore, the policy is enforced at login time.
+func WithDevicePolicy(p device.Policy) Option {
+	return func(s *Server) { s.devicePolicy = p }
+}
+
+// WithLoginHistoryStore wires the login history store. When wired, each
+// successful login is recorded with device/IP/provider context for the
+// self-service login history view. No-op when nil.
+func WithLoginHistoryStore(h device.HistoryStore) Option {
+	return func(s *Server) { s.loginHistory = h }
 }
 
 // WithConnectionAuthenticatorFactory wires the RUNTIME half of enterprise

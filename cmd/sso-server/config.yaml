@@ -121,7 +121,7 @@ self_service:
   # changed via /me/password takes effect on the next login. Use sqlite so
   # changed passwords survive restarts (memory loses them).
   password:
-    backend: ""         # "" (disabled) | memory | sqlite
+    backend: "memory"       # "" (disabled) | memory | sqlite
     sqlite:
       dsn: ""           # e.g. file:/var/lib/sso/passwords.db?_journal=WAL&_pragma=busy_timeout(5000)
 
@@ -511,8 +511,11 @@ authenticators:
   # Production installs typically fork cmd to plug in a custom
   # PasswordVerifier against their own user store.
   password:
-    enabled: false
-    users: []
+    enabled: true
+    users:
+      - username: admin
+        bcrypt_hash_file: /tmp/admin.bcrypt
+        subject_id: admin
     # - username: alice
     #   bcrypt_hash_file: /etc/sso/users/alice.bcrypt
     #   subject_id: user-alice

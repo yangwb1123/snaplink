@@ -394,6 +394,10 @@ func refreshCheckSessionLiveness(d RefreshGrantDeps, ctx core.HandlerContext, in
 		d.LogErrorCtx(ctx, "session liveness check failed (fail-closed)",
 			"sid", info.SID, "error", sErr)
 	} else if sess != nil && !sess.IsExpired() && !sess.Revoked {
+		// Session is alive — track activity.
+		if tracker, ok := sm.(core.SessionActivityTracker); ok {
+			tracker.TrackActivity(ctx.Request().Context(), info.SID)
+		}
 		return false
 	}
 	d.LogErrorCtx(ctx, "session expired or revoked — refresh denied",

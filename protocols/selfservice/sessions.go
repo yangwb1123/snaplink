@@ -24,7 +24,13 @@ func HandleMySessions(d Deps, ctx core.HandlerContext) {
 	if sessions == nil {
 		sessions = []*core.Session{}
 	}
-	ctx.JSON(http.StatusOK, map[string]any{"sessions": sessions})
+	deviceCount := 0
+	if ds := d.DeviceStore(); ds != nil {
+		if devs, err := ds.ListByUser(ctx.Request().Context(), userID); err == nil {
+			deviceCount = len(devs)
+		}
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"sessions": sessions, "device_count": deviceCount})
 }
 
 // HandleDeleteMySession serves DELETE /sessions/me/:id — lets a user revoke

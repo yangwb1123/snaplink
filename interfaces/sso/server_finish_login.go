@@ -1,11 +1,9 @@
 package sso
-
 import (
 	"errors"
 	"net/http"
 	"slices"
 	"time"
-
 	"github.com/snaplink/sso/domains/region"
 	"github.com/snaplink/sso/internal/auth/login"
 	"github.com/snaplink/sso/internal/handler"
@@ -13,14 +11,12 @@ import (
 	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/trust"
 )
-
 // matter whether MFA gated the request or not.
 func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req login.Request, client *Client) {
 	state := req.State
 	if s.upsertLoginUser(ctx, result, state) {
 		return
 	}
-
 	// Non-blocking credential-health signal. Emitted once here so it covers
 	// every downstream branch (code flow + direct mint) and both the primary
 	// login and the MFA-resumed re-entry, which all funnel through finishLogin.
@@ -29,13 +25,11 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req login.R
 	// it; the MFA step-up path re-threads it via mfaResumeState.CredentialHealth
 	// so this audit still fires after resume. nil = no signal.
 	s.recordCredentialHealth(ctx, client.ID, result.UserID, result.CredentialHealth)
-
 	granted, halted := s.validateAndAuthorizeScope(ctx, &req, client)
 	if halted {
 		return
 	}
 	req.Scope = granted
-
 	// Consent gate (opt-in via WithConsentStore, nil = no-op). Runs AFTER scope
 	// authorization so req.Scope is the granted set that will appear in the
 	// issued token — the grant we check and record is authoritative for them.
@@ -44,16 +38,13 @@ func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req login.R
 			return
 		}
 	}
-
 	// JIT org-membership provisioning (opt-in): a user logging in through a
 	// tenant-bound client who isn't yet on that org's roster is auto-added as a
 	// member, so federated users appear in their org without manual invitation.
 	// Fail-open + best-effort — never blocks login.
 	s.ensureJITMembership(ctx, client, result.UserID)
-
 	s.finishLoginDispatch(ctx, result, &req, client, state)
 }
-
 // finishLoginDispatch routes the authenticated request to its response_type
 // branch. OAuth 2.0 authorization_code: instead of minting a token here,
 // persist a short-lived code bound to (user, client, redirect_uri) and return
@@ -69,10 +60,8 @@ func (s *Server) finishLoginDispatch(ctx HandlerContext, result *AuthResult, req
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrUnsupportedResponseType, state))
 		return
 	}
-
 	s.finishLoginDirectMint(ctx, result, req, client)
 }
-
 // upsertLoginUser provisions/refreshes the local user record from the
 // authentication result when a UserProvider is wired. On a store failure it has
 // ALREADY written the exact 500 internal body and returns halted=true; the
@@ -94,7 +83,6 @@ func (s *Server) upsertLoginUser(ctx HandlerContext, result *AuthResult, state s
 	}
 	return false
 }
-
 // validateAndAuthorizeScope runs the pre-side-effect gates shared by both login
 // branches and resolves the granted scope set. On any halt it has ALREADY written
 // the exact 400 body (unsupported_response_type / invalid_request / invalid_scope)
@@ -112,7 +100,6 @@ func (s *Server) validateAndAuthorizeScope(ctx HandlerContext, req *login.Reques
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrUnsupportedResponseType, req.State))
 		return nil, true
 	}
-
 	// OIDC Form Post Response Mode 1.0 — validate response_mode
 	// early so a bad value fails BEFORE any side-effects (auth code
 	// issue, session create). Empty is always valid and falls
@@ -121,7 +108,6 @@ func (s *Server) validateAndAuthorizeScope(ctx HandlerContext, req *login.Reques
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
 		return nil, true
 	}
-
 	// Scope authorization (RFC 6749 §3.3) — the access-control gate on
 	// what the issued token may carry. Run here, AFTER authentication and
 	// the tenant/residency gates, so it can never be a pre-auth probe and
@@ -142,23 +128,22 @@ func (s *Server) validateAndAuthorizeScope(ctx HandlerContext, req *login.Reques
 	}
 	return granted, false
 }
-
-// finishLoginDirectMint is the OAuth 2.0 direct-mint branch (response_type
-// empty / token): create a session, issue the access token (+ server-managed
-// refresh token, Native SSO device_secret, and OIDC id_token when in scope), and
-// return them. Extracted verbatim from finishLogin to keep that orchestrator
-// within the complexity budget; req.Scope is already the granted set.
+// finishLoginDirectMint issues session + tokens for direct-mint (response_type empty/token).
 func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client) {
 	state := req.State
+	deviceCtx := s.registerLoginDevice(ctx, result.UserID)
+	ctx.Set("device_ctx", deviceCtx)
 	if s.sessionMgr == nil {
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrSessionMgrNotConfigured, state))
 		return
 	}
-	session, err := s.createSession(ctx, result.UserID, client.ID, client.TenantID)
+	devID := ""
+	if deviceCtx != nil {
+		devID = deviceCtx.ID
+	}
+	session, err := s.createSession(ctx, result.UserID, client.ID, client.TenantID, devID)
 	if err != nil {
 		if errors.Is(err, errMaxActiveSessions) {
-			// Token-policy max_active_sessions cap: a clean login-time refusal.
-			// The specific dimension stays off the wire (metric + log only).
 			ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrAccessDenied, state))
 			return
 		}
@@ -167,14 +152,15 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 		return
 	}
 	s.linkGlobalSession(ctx.Request().Context(), session, result.UserID)
+	if s.devicePolicy.RequireMFAForNewDevice && deviceCtx != nil && deviceCtx.SecurityCtx != nil && deviceCtx.SecurityCtx.DeviceIsNew && s.mfaProvider != nil && s.mfaChallengeStore != nil {
+		s.issueMFAChallenge(ctx, result, *req, client); return
+	}
 	strategy, token, issuedSub, err := s.mintAndRecordDirectLogin(ctx, result, req, client, session)
 	if err != nil {
 		// mintAndRecordDirectLogin has already written the exact 500 body.
 		return
 	}
-	s.recordSubjectClientAccess(ctx.Request().Context(), result.UserID, client.ID)
-	fillGeoFromContext(ctx, result)
-
+	s.recordSubjectClientAccess(ctx.Request().Context(), result.UserID, client.ID); fillGeoFromContext(ctx, result)
 	resp := map[string]any{
 		KeySessionID:     session.ID,
 		KeyAccessToken:   token.AccessToken,
@@ -188,9 +174,10 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 	s.augmentDirectMintResponse(ctx, result, req, client, session, issuedSub, token, resp)
 	s.applyLoginResponseExtras(ctx, result, client.ID, resp)
 	s.applyPasskeyPolicySignal(ctx, result, client, resp)
+	s.recordLoginHistory(ctx, result, devID, deviceCtx); s.recordLoginSecurityEvents(ctx, result, client.ID, deviceCtx)
+	s.addDeviceContextToResponse(resp, deviceCtx)
 	ctx.JSON(http.StatusOK, resp)
 }
-
 // mintAccessToken resolves the per-client token strategy, applies the pairwise
 // subject pseudonym, and issues the access token for the direct-mint branch. It
 // returns the issued subject so the caller threads the SAME value into the
@@ -214,6 +201,15 @@ func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *lo
 			claims = cloneClaimsWithTrust(result.Attributes, name, value)
 		}
 	}
+	ttl := client.AccessTokenTTL
+	if dc := deviceCtxFrom(ctx); dc != nil {
+		ttl = deviceAwareTTL(ttl, dc, 0)
+	}
+	// Add device trust info to token claims.
+	if dc := deviceCtxFrom(ctx); dc != nil && dc.SecurityCtx != nil {
+		if dc.SecurityCtx.DeviceIsNew { claims["device_is_new"] = "true" }
+		if dc.SecurityCtx.LocationIsNew { claims["location_is_new"] = "true" }
+	}
 	token, err := ti.Issue(ctx.Request().Context(), &Subject{
 		ID:                   issuedSub,
 		Provider:             result.Provider,
@@ -225,7 +221,7 @@ func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *lo
 		ACR:                  result.AchievedACR,
 		AuthorizationDetails: oauth.CloneRawJSON(req.AuthorizationDetails),
 		SID:                  session.ID,
-		TTL:                  client.AccessTokenTTL,
+		TTL:                  ttl,
 		RequestedClaims:      oauth.CloneRawJSON(req.Claims),
 	}, req.Scope)
 	if err != nil {
@@ -235,7 +231,6 @@ func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *lo
 	}
 	return strategy, token, issuedSub, nil
 }
-
 // augmentDirectMintResponse layers the optional credentials onto the direct-mint
 // response in order: the server-managed refresh token (overriding the issuer's),
 // then the Native SSO device_secret, then the OIDC id_token. The device_secret is
@@ -288,7 +283,6 @@ func (s *Server) augmentDirectMintResponse(ctx HandlerContext, result *AuthResul
 		resp[KeyDeviceSecret] = deviceSecretValue
 	}
 }
-
 // fillGeoFromContext backfills the AuthResult's country/language from the geo
 // middleware's stash when the authenticator supplied no stronger signal (SIM
 // region, account default, explicit pref). One ctx.Get to avoid two round trips.
@@ -307,7 +301,6 @@ func fillGeoFromContext(ctx HandlerContext, result *AuthResult) {
 		result.RecommendedLanguage = info.RecommendedLanguage
 	}
 }
-
 // emitLoginIDToken issues the OIDC id_token for the direct-mint login and returns
 // the (optionally JWE-encrypted) token + ok=true to add it to the response.
 // Errors FAIL OPEN — a misconfigured/unresolvable id_token issuer must not block
@@ -352,7 +345,6 @@ func (s *Server) emitLoginIDToken(ctx HandlerContext, result *AuthResult, req *l
 	}
 	return s.maybeEncryptIDToken(ctx.Request().Context(), client, idToken)
 }
-
 // applyLoginResponseExtras adds the optional UX/governance fields to the login
 // response: geo country/language hints, the serving_region marker (UX, not a
 // security signal), and embedded roles/permissions/menus when enabled.
@@ -373,7 +365,6 @@ func (s *Server) applyLoginResponseExtras(ctx HandlerContext, result *AuthResult
 		resp[KeyMenus] = menus
 	}
 }
-
 // validatePKCEForCode applies the RFC 7636 §4.3 PKCE rules for the
 // authorization_code branch and returns the error code to reject with, or ""
 // when the request passes. Defaults an empty method to "plain" (mutating req).
@@ -410,7 +401,6 @@ func validatePKCEForCode(req *login.Request, client *Client, oauth21Strict bool)
 	}
 	return ""
 }
-
 // finishLoginCodeFlow handles the authorization_code response branch: validate
 // redirect_uri + PKCE, issue the code, and render it (form_post / JARM / JSON).
 // Extracted verbatim from finishLogin to keep that orchestrator within the
@@ -456,7 +446,6 @@ func (s *Server) finishLoginCodeFlow(ctx HandlerContext, result *AuthResult, req
 	s.recordLoginSuccess(ctx, client.ID, req.Provider, "code", result.UserID, "", nil)
 	s.renderAuthCodeResponse(ctx, req, client, code)
 }
-
 // renderAuthCodeResponse writes the authorization_code result in the negotiated
 // response mode: OIDC form_post (auto-POST HTML), JARM (signed JWT response), or
 // the default JSON body. The caller has already issued the code and recorded
@@ -482,4 +471,17 @@ func (s *Server) renderAuthCodeResponse(ctx HandlerContext, req *login.Request, 
 		resp[KeyState] = req.State
 	}
 	ctx.JSON(http.StatusOK, resp)
+}
+
+
+func (s *Server) addDeviceContextToResponse(resp map[string]any, deviceCtx *deviceContext) {
+	if deviceCtx == nil { return }
+	resp[KeyDevice] = deviceCtx
+	if p := deviceCtx.SecurityCtx; p != nil {
+		if p.PreviousLogin != nil { resp[KeyPreviousLogin] = p.PreviousLogin }
+		resp[KeyActiveDevices] = p.ActiveDevices
+		if s.devicePolicy.MaxDevicesPerUser > 0 && p.ActiveDevices >= s.devicePolicy.MaxDevicesPerUser-1 {
+			resp[KeyDeviceLimitWarn] = map[string]any{"current": p.ActiveDevices, "max": s.devicePolicy.MaxDevicesPerUser}
+		}
+	}
 }

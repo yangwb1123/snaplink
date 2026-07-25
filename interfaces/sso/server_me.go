@@ -202,6 +202,35 @@ func (s *Server) handleMySessions(ctx HandlerContext) { selfservice.HandleMySess
 // handleDeleteMySession delegates to selfservice.HandleDeleteMySession.
 func (s *Server) handleDeleteMySession(ctx HandlerContext) { selfservice.HandleDeleteMySession(s, ctx) }
 
+// handleMyLoginHistory delegates to selfservice.HandleMyLoginHistory.
+func (s *Server) handleMyLoginHistory(ctx HandlerContext) { selfservice.HandleMyLoginHistory(s, ctx) }
+
+// handleMySecurityActivity delegates to selfservice.HandleMySecurityActivity.
+func (s *Server) handleMySecurityActivity(ctx HandlerContext) { selfservice.HandleMySecurityActivity(s, ctx) }
+
+// handleMeSessionsEnriched delegates to the enriched session listing.
+func (s *Server) handleMeSessionsEnriched(ctx HandlerContext) { selfservice.HandleMySessionsEnriched(s, ctx) }
+
+// handleLoginUIMetadata serves the login UI metadata endpoint, enriched
+// with geo context and provider list from the server's configuration.
+func (s *Server) handleLoginUIMetadata(ctx HandlerContext) {
+	selfservice.HandleLoginUIMetadata(s, ctx)
+}
+
+// handleMyDevices delegates to selfservice.HandleMyDevices.
+func (s *Server) handleMyDevices(ctx HandlerContext) { selfservice.HandleMyDevices(s, ctx) }
+
+// handleMyDeviceByID delegates to selfservice.HandleMyDeviceByID.
+func (s *Server) handleMyDeviceByID(ctx HandlerContext) { selfservice.HandleMyDeviceByID(s, ctx) }
+
+// handleDeleteMyDevice delegates to selfservice.HandleDeleteMyDevice.
+func (s *Server) handleDeleteMyDevice(ctx HandlerContext) { selfservice.HandleDeleteMyDevice(s, ctx) }
+func (s *Server) handleUpdateMyDevice(ctx HandlerContext) { selfservice.HandleUpdateMyDevice(s, ctx) }
+func (s *Server) handleMyDeviceActivity(ctx HandlerContext)  { selfservice.HandleMyDeviceActivity(s, ctx) }
+func (s *Server) handleMyDeviceSessions(ctx HandlerContext)  { selfservice.HandleMyDeviceSessions(s, ctx) }
+func (s *Server) handleSetDeviceTrust(ctx HandlerContext)    { selfservice.HandleSetDeviceTrust(s, ctx) }
+func (s *Server) handleReportLostDevice(ctx HandlerContext) { selfservice.HandleReportLostDevice(s, ctx) }
+
 // handleRevokeMySessions delegates to selfservice.HandleRevokeMySessions.
 func (s *Server) handleRevokeMySessions(ctx HandlerContext) {
 	selfservice.HandleRevokeMySessions(s, ctx)
@@ -289,40 +318,39 @@ func (s *Server) mountUnauthenticatedSelfServiceRoutes() {
 	}
 }
 
-// mountSelfServiceProfile registers the authenticated /me* self-service
-// endpoints for permissions/menus/roles, sessions, consents, identities, org
-// membership, and profile — each gated on its backing store (a boot-time
-// nil-check, unchanged), all mounted UNCONDITIONALLY and gated LIVE as one
-// group via core.GatedRouter (SetSelfServiceGateEnabled) instead of the
-// previous single boot-time early-return, so a deployment can hot-toggle the
-// whole end-user-facing self-service surface with no re-Mount.
+// mountSelfServiceProfile registers authenticated /me* routes (sessions,
+// devices, consents, identities, org, profile). Each gated on its backing store.
 func (s *Server) mountSelfServiceProfile() {
 	gr := core.NewGatedRouter(s.router, s.selfServiceGateOn)
 	gr.GET(PathMyPermissions, s.handleMyPermissions)
 	gr.GET(PathMyMenus, s.handleMyMenus)
 	gr.GET(PathMyRoles, s.handleMyRoles)
 	if s.sessionMgr != nil {
-		gr.GET(PathMySessions, s.handleMySessions)
-		gr.DELETE(PathMySessions, s.handleRevokeMySessions)
+		gr.GET(PathMySessions, s.handleMySessions); gr.DELETE(PathMySessions, s.handleRevokeMySessions)
 		gr.DELETE(PathMySessionByID, s.handleDeleteMySession)
-		// /me/sessions* self-service endpoints follow the /me/* naming
-		// convention used by the rest of the self-service API surface.
-		gr.GET(PathMeSessions, s.handleMeSessions)
-		gr.DELETE(PathMeSessionByID, s.handleDeleteMeSession)
+		gr.GET(PathMeSessions, s.handleMeSessions); gr.DELETE(PathMeSessionByID, s.handleDeleteMeSession)
 		gr.POST(PathMeSessionsRevokeAll, s.handleMeSessionsRevokeAll)
+		if s.deviceStore != nil {
+			gr.GET(PathMeSessionsEnriched, s.handleMeSessionsEnriched)
+		}
+	}
+	if s.deviceStore != nil {
+		gr.GET(PathMyDevices, s.handleMyDevices)
+		gr.GET(PathMyDeviceByID, s.handleMyDeviceByID)
+		gr.PATCH(PathMyDeviceByID, s.handleUpdateMyDevice); gr.DELETE(PathMyDeviceByID, s.handleDeleteMyDevice); gr.GET(PathMyDeviceActivity, s.handleMyDeviceActivity); gr.GET(PathMyDeviceSessions, s.handleMyDeviceSessions); gr.POST(PathMyDeviceTrustByID, s.handleSetDeviceTrust); gr.POST(PathMyDeviceLost, s.handleReportLostDevice)
+	}
+	if s.loginHistory != nil { gr.GET(PathMyLoginHistory, s.handleMyLoginHistory) }
+	if s.deviceStore != nil || s.loginHistory != nil {
+		gr.GET(PathMySecurityActivity, s.handleMySecurityActivity)
 	}
 	if s.consentStore != nil {
 		gr.GET(PathMyConsents, s.handleMyConsents)
 		gr.DELETE(PathMyConsentByID, s.handleDeleteMyConsent)
 	}
-	// Self-service identity linking: list the caller's linked external
-	// identities + unlink one. Mounted only when a Store is wired
-	// (WithIdentityLinkStore) — byte-identical to a build without it.
 	if s.identityLinkStore != nil {
 		gr.GET(PathMyIdentities, s.handleMyIdentities)
 		gr.DELETE(PathMyIdentityByID, s.handleUnlinkMyIdentity)
 	}
-	// Self-service B2B org membership: list my orgs + leave one.
 	if s.tenantUserStore != nil {
 		gr.GET(PathMyOrganizations, s.handleMyOrganizations)
 		gr.DELETE(PathMyOrganizationByID, s.handleLeaveMyOrganization)
@@ -337,8 +365,6 @@ func (s *Server) mountSelfServiceProfile() {
 		gr.GET(PathMe, s.handleMe)
 		gr.PATCH(PathMe, s.handlePatchMe)
 	}
-	// Self-service password change. Mounted only with a password credential
-	// store; byte-identical without one.
 	if s.passwordCredentialStore != nil {
 		gr.POST(PathMyPassword, s.handleChangeMyPassword)
 	}

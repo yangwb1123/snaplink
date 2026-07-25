@@ -126,6 +126,16 @@ type Conditions struct {
 	// PostureManaged device; false matches a PostureUnmanaged OR PostureUnknown
 	// device (an unreported device is, conservatively, not managed).
 	DeviceManaged *bool `yaml:"device.managed,omitempty" json:"device_managed,omitempty"`
+	// DeviceType matches the device classification ("mobile", "desktop",
+	// "browser", "tablet", "bot", "unknown"). Empty = unconstrained.
+	DeviceType string `yaml:"device.type,omitempty" json:"device_type,omitempty"`
+	// DeviceTrustLevel matches when the device's trust score is >= this value.
+	// 0 = unconstrained. Range [0, 1].
+	DeviceTrustLevel float64 `yaml:"device.trust_level,omitempty" json:"device_trust_level,omitempty"`
+	// IsNewDevice matches when the device has never been seen before.
+	IsNewDevice bool `yaml:"device.is_new,omitempty" json:"device_is_new,omitempty"`
+	// IsNewLocation matches when the IP/geo differs from the device's last known.
+	IsNewLocation bool `yaml:"device.is_new_location,omitempty" json:"device_is_new_location,omitempty"`
 	// RiskScore is a comparison against the derived risk (1 - effective trust),
 	// e.g. "> 0.5", ">= 0.5", "< 0.3", "== 0", "!= 1". A malformed comparison
 	// makes the policy un-evaluable -> fail-closed deny.
@@ -153,6 +163,10 @@ func (c Conditions) specificity() int {
 	for _, set := range []bool{
 		len(c.UserMemberOf) > 0,
 		c.DeviceManaged != nil,
+		c.DeviceType != "",
+		c.DeviceTrustLevel > 0,
+		c.IsNewDevice,
+		c.IsNewLocation,
 		c.RiskScore != "",
 		len(c.GeoIn) > 0,
 		len(c.GeoNotIn) > 0,
@@ -241,6 +255,20 @@ type AccessContext struct {
 	// RequestedScopes are the scopes the request asked for (carried for the
 	// caller's restrict_scopes application; the engine does not gate on them).
 	RequestedScopes []string
+	// DeviceType is the device classification from UserAgent parsing
+	// ("mobile", "desktop", "browser", "tablet", "bot", "unknown").
+	DeviceType string
+
+	// DeviceTrustLevel is the device's computed trust score [0,1], or 0 when
+	// device tracking is not wired.
+	DeviceTrustLevel float64
+
+	// IsNewDevice is true when this is the first login from this device.
+	IsNewDevice bool
+
+	// IsNewLocation is true when the IP/geo differs from the device's last seen.
+	IsNewLocation bool
+
 	// Subject / ClientID are advisory context for the Decision trace; they do
 	// not affect the verdict.
 	Subject  string

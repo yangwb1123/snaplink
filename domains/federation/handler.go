@@ -208,6 +208,8 @@ func federationEntityMeta(cfg *Config, base string) *FederationEntityMeta {
 	if hasAnchors {
 		fe.FederationResolveEndpoint = base + core.PathFederationResolve
 	}
+	// Trust Mark Status endpoint — advertised when the path is configured.
+	fe.FederationTrustMarkStatusEndpoint = base + core.PathFederationTrustMarkStatus
 	return fe
 }
 

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/domains/authenticators/device"
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/connections/provider"
@@ -67,6 +68,8 @@ func (d *bgTestDeps) BreakGlassStore() core.BreakGlassStore                 { re
 func (d *bgTestDeps) Auditor() *audit.Recorder                              { return d.auditor }
 func (d *bgTestDeps) Logger() spi.Logger                                    { return bgTestLogger{} }
 func (d *bgTestDeps) ProviderStore() provider.Store   { return nil }
+func (d *bgTestDeps) DeviceStore() device.Store              { return nil }
+func (d *bgTestDeps) LoginHistoryStore() device.HistoryStore { return nil }
 func (d *bgTestDeps) ConnectionStore() connections.Store { return nil }
 func (d *bgTestDeps) ConditionalAccessStore() conditionalaccess.Store       { return nil }
 func (d *bgTestDeps) DomainResolver() connections.DNSResolver               { return nil }

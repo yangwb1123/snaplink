@@ -245,10 +245,17 @@ func (m *MemoryProvider) Roles(_ context.Context, userID, clientID string) ([]Ro
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	codes := m.assignmentsByUser[userID][clientID]
+	if len(codes) == 0 && clientID != "" {
+		// Fall back to the empty client ID (bootstrap default)
+		codes = m.assignmentsByUser[userID][""]
+	}
 	if len(codes) == 0 {
 		return nil, ErrUserNotFound
 	}
 	defs := m.rolesByClient[clientID]
+	if len(defs) == 0 {
+		defs = m.rolesByClient[""]
+	}
 	out := make([]Role, 0, len(codes))
 	for _, code := range codes {
 		if r, ok := defs[code]; ok {

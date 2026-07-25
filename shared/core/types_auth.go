@@ -15,6 +15,11 @@ type Session struct {
 	ExpiresAt time.Time `json:"expires_at"`
 	Revoked   bool      `json:"revoked"`
 
+	// LastActiveAt is updated on each API request that uses this session, if
+	// the SessionManager implements LastActiveUpdater. Best-effort, never
+	// security load-bearing. Zero value = not tracked.
+	LastActiveAt time.Time `json:"last_active_at,omitempty"`
+
 	// IP and UserAgent are the device/location context captured at session
 	// creation, surfaced in the self-service session list (/sessions/me) so a
 	// user can recognize and revoke unfamiliar sessions. Best-effort: populated
@@ -33,6 +38,10 @@ type Session struct {
 	// load-bearing on its own (the suspension check + roster-based revocation
 	// remain the enforcement floor).
 	TenantID string `json:"tenant_id,omitempty"`
+
+	// DeviceID links this session to an authenticated device record, set during
+	// login when a DeviceStore is wired. Best-effort, never security load-bearing.
+	DeviceID string `json:"device_id,omitempty"`
 
 	// Kind distinguishes special session classes from interactive logins.
 	// Currently the only value is SessionKindAdminImpersonation — a session

@@ -1,6 +1,5 @@
 // Code generated. Backward-compat re-exports of core package symbols.
 package sso
-
 import (
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/tenant"
@@ -12,7 +11,6 @@ import (
 	"github.com/snaplink/sso/protocols/fapi"
 	"github.com/snaplink/sso/shared/core"
 )
-
 // --- Disaster-recovery degraded-service re-exports (moved to
 // platform/lifecycle/degradation) so callers configure WithDegradationManager
 // without importing the platform package directly. ---
@@ -20,7 +18,6 @@ type (
 	DegradationManager = degradation.Manager
 	DegradationMode    = degradation.Mode
 )
-
 const (
 	DegradationModeNormal      = degradation.ModeNormal
 	DegradationModeReadOnly    = degradation.ModeReadOnly
@@ -28,19 +25,15 @@ const (
 	DegradationModeLocalOnly   = degradation.ModeLocalOnly
 	DegradationModeMaintenance = degradation.ModeMaintenance
 )
-
 var NewDegradationManager = degradation.NewManager
-
 // FAPIMode re-exports fapi.Mode so callers configure WithFAPIProfile
 // without importing the fapi package directly.
 type FAPIMode = fapi.Mode
-
 const (
 	FAPIModeOff        = fapi.ModeOff
 	FAPIModeInspection = fapi.ModeInspection
 	FAPIModeEnforce    = fapi.ModeEnforce
 )
-
 // Zero-trust Conditional Access Policy (CAP) re-exports so SDK callers
 // configure WithConditionalAccess and read EvaluateConditionalAccess results
 // without importing the domains/conditionalaccess package directly.
@@ -49,7 +42,6 @@ type ConditionalAccessPolicy = conditionalaccess.Policy
 type ConditionalAccessConfig = conditionalaccess.Config
 type AccessContext = conditionalaccess.AccessContext
 type ConditionalAccessDecision = conditionalaccess.Decision
-
 // Client-authentication method names per RFC 8705 §2 / RFC 7591 §2.
 // These are the canonical values stored on [core.Client.TokenEndpointAuthMethod]
 // and accepted by DCR validation (oauthvalidate/dcr_validate.go).
@@ -57,7 +49,6 @@ const (
 	ClientAuthTLS           = "tls_client_auth"
 	ClientAuthSelfSignedTLS = "self_signed_tls"
 )
-
 // --- General middleware re-exports (functions moved to middleware/) ---
 var AuthMiddleware = middleware.Auth
 var CORS = middleware.CORS
@@ -65,12 +56,9 @@ var LoggerMiddleware = middleware.Logger
 var TracingMiddleware = middleware.Tracing
 var RequestIDMiddleware = middleware.RequestID
 var RecoverMiddleware = middleware.Recover
-
 // --- BuildInfo re-export (moved to core/) ---
 type BuildInfo = core.BuildInfo
-
 var ReadBuildInfo = core.ReadBuildInfo
-
 // --- Permission/netpolicy constant re-exports (moved to core/) ---
 const KeyPermissions = core.KeyPermissions
 const KeyRoles = core.KeyRoles
@@ -78,42 +66,32 @@ const KeyMenus = core.KeyMenus
 const KeyClient = core.KeyClient
 const ErrPermissionProviderNotConfigured = core.ErrPermissionProviderNotConfigured
 const ErrPermissionLookupFailed = core.ErrPermissionLookupFailed
-
 // --- Admin middleware re-exports (functions moved to admin/) ---
 type AdminMiddleware = admin.Middleware
 type AdminTokenValidator = admin.TokenValidator
 type AdminAuthorizer = admin.Authorizer
-
 const AdminScope = admin.Scope
 const AdminScopeRead = admin.ScopeRead
 const AdminScopeWrite = admin.ScopeWrite
-
 var NewAdminMiddleware = admin.NewMiddleware
 var AdminActorFromContext = admin.ActorFromContext
-
 // --- Tenant middleware re-exports (functions moved to tenant/) ---
 type ResolvedTenant = tenant.Resolved
 type TenantMiddlewareOptions = tenant.MiddlewareOptions
 type HostExtractor = tenant.HostExtractor
-
 const TenantHandlerContextKey = tenant.HandlerContextKey
 const DefaultTenantLookupTimeout = tenant.DefaultLookupTimeout
-
 var TenantMiddleware = tenant.Middleware
 var TenantFromHandlerContext = tenant.FromHandlerContext
 var DefaultHostExtractor = tenant.DefaultHostExtractor
-
 // --- Geo middleware re-exports (functions moved to geo/) ---
 type GeoMiddlewareOptions = geo.MiddlewareOptions
 type GeoIPExtractor = geo.IPExtractor
-
 const GeoHandlerContextKey = geo.HandlerContextKey
 const DefaultGeoLookupTimeout = geo.DefaultLookupTimeout
-
 var GeoMiddleware = geo.Middleware
 var GeoFromHandlerContext = geo.FromHandlerContext
 var DefaultGeoIPExtractor = geo.DefaultIPExtractor
-
 // --- Types ---
 type ActorClaim = core.ActorClaim
 type Authenticator = core.Authenticator
@@ -183,7 +161,6 @@ type EmailChangeToken = core.EmailChangeToken
 type TokenMeta = core.TokenMeta
 type User = core.User
 type UserProvider = core.UserProvider
-
 // --- Consts ---
 const DefaultJWKSCacheMaxAge = core.DefaultJWKSCacheMaxAge
 const PathJWKS = core.PathJWKS
@@ -297,12 +274,13 @@ const HeaderContentType = core.HeaderContentType
 const HeaderParentSpanID = core.HeaderParentSpanID
 const HeaderRequestID = core.HeaderRequestID
 const HeaderTraceparent = core.HeaderTraceparent
-
 // The KeyAccessToken..KeyVersion block relocated to origin_validation.go to
 // keep this generated file within the per-file line budget (this file has no
 // natural internal grouping to split on otherwise).
 const PathAPIPrefix = core.PathAPIPrefix
 const PathAuthzPolicyBundle = core.PathAuthzPolicyBundle
+const PathAuthzTuples = core.PathAuthzTuples
+const PathAuthzCheck = core.PathAuthzCheck
 const PathStorageHealth = core.PathStorageHealth
 const PathTenantUsage = core.PathTenantUsage
 const PathAdminTopTenants = core.PathAdminTopTenants
@@ -333,18 +311,25 @@ const PathAdminSessions = core.PathAdminSessions
 const PathAdminCredentials = core.PathAdminCredentials
 const PathAdminCredentialCompromise = core.PathAdminCredentialCompromise
 const PathAdminEventsStream = core.PathAdminEventsStream
-
 // Crypto-material-inventory admin route-path re-exports, relocated here from
 // server_routes_admin.go (which ran out of room adding the wasmauthz mount).
 const PathAdminCryptoKeys = core.PathAdminCryptoKeys
 const PathAdminCryptoKeyCompromise = core.PathAdminCryptoKeyCompromise
-
 const PathAdminBreakGlass = core.PathAdminBreakGlass
 const PathAdminBreakGlassByID = core.PathAdminBreakGlassByID
 const PathAdminBreakGlassApprove = core.PathAdminBreakGlassApprove
 const PathAdminBreakGlassImpersonate = core.PathAdminBreakGlassImpersonate
 const PathAdminProviders = core.PathAdminProviders
 const PathAdminProviderByID = core.PathAdminProviderByID
+const PathAdminUserDevices = core.PathAdminUserDevices
+const PathAdminDevices = core.PathAdminDevices
+const PathAdminDevicesBulkRevoke = core.PathAdminDevicesBulkRevoke
+const PathAdminDeviceStats = core.PathAdminDeviceStats
+const PathAdminSecurityActivity = core.PathAdminSecurityActivity
+const PathAdminUserDeviceByID = core.PathAdminUserDeviceByID
+const PathAdminDeviceActivity = core.PathAdminDeviceActivity
+const PathAdminDeviceTrustReset = core.PathAdminDeviceTrustReset
+const PathAdminUserLoginHistory = core.PathAdminUserLoginHistory
 const PathAdminConnections = core.PathAdminConnections
 const PathAdminConnectionByID = core.PathAdminConnectionByID
 const PathAdminConnectionDomains = core.PathAdminConnectionDomains
@@ -364,9 +349,13 @@ const PathOrgAdminMemberByID = core.PathOrgAdminMemberByID
 const PathOrgAdminInvitations = core.PathOrgAdminInvitations
 const PathOrgAdminInvitationByEmail = core.PathOrgAdminInvitationByEmail
 const PathSSFReceive = core.PathSSFReceive
+const PathSSFConfig = core.PathSSFConfig
+const PathSSFStreams = core.PathSSFStreams
+const PathSSFStreamByID = core.PathSSFStreamByID
 const PathFederationEntityConfig = core.PathFederationEntityConfig
 const PathFederationFetch = core.PathFederationFetch
 const PathFederationResolve = core.PathFederationResolve
+const PathFederationTrustMarkStatus = core.PathFederationTrustMarkStatus
 const PathFederationList = core.PathFederationList
 const PathAuditEventByID = core.PathAuditEventByID
 const PathAuditEvents = core.PathAuditEvents
@@ -420,6 +409,14 @@ const PathMyWebAuthnRegisterFinish = core.PathMyWebAuthnRegisterFinish
 const PathMyDevices = core.PathMyDevices
 const PathMyDeviceByID = core.PathMyDeviceByID
 const PathMyDevicesTrust = core.PathMyDevicesTrust
+const PathMyDeviceTrustByID = core.PathMyDeviceTrustByID
+const PathMyDeviceActivity = core.PathMyDeviceActivity
+const PathMyDeviceLost = core.PathMyDeviceLost
+const PathMyDeviceSessions = core.PathMyDeviceSessions
+const PathMyLoginHistory = core.PathMyLoginHistory
+const PathMySecurityActivity = core.PathMySecurityActivity
+const PathMeSessionsEnriched = core.PathMeSessionsEnriched
+const PathLoginUIMetadata = core.PathLoginUIMetadata
 const PKCEMethodPlain = core.PKCEMethodPlain
 const PKCEMethodS256 = core.PKCEMethodS256
 const PKCEVerifierMaxLen = core.PKCEVerifierMaxLen
@@ -451,21 +448,18 @@ const TokenTypeNameBearer = core.TokenTypeNameBearer
 const TokenTypeNameDPoP = core.TokenTypeNameDPoP
 const TokenTypeRefreshToken = core.TokenTypeRefreshToken
 const TokenTypeSAML2 = core.TokenTypeSAML2
-
 // --- Vars ---
 var SupportedGrants = core.SupportedGrants
 var ErrClientExists = core.ErrClientExists
 var ErrNoConsentGrant = core.ErrNoConsentGrant
 var ErrNoMembership = core.ErrNoMembership
 var ErrInvitationNotFound = core.ErrInvitationNotFound
-
 // TenantRole values (B2B org membership standing).
 const (
 	TenantRoleMember = core.TenantRoleMember
 	TenantRoleAdmin  = core.TenantRoleAdmin
 	TenantRoleGuest  = core.TenantRoleGuest
 )
-
 var ErrPasswordMismatch = core.ErrPasswordMismatch
 var ErrNoSuchClient = core.ErrNoSuchClient
 var ErrNoSuchUser = core.ErrNoSuchUser
@@ -473,20 +467,15 @@ var ErrDeviceSecretNotFound = core.ErrDeviceSecretNotFound
 var ErrSessionNotFound = core.ErrSessionNotFound
 var ErrUnsupportedOperation = core.ErrUnsupportedOperation
 var ErrUserExists = core.ErrUserExists
-
 // --- Funcs ---
 var NewContext = core.NewContext
 var NewStdRouter = core.NewStdRouter
-
 // NewHMACNonceProvider re-exported from internal/handler.
 var NewHMACNonceProvider = handler.NewHMACNonceProvider
 var NewHMACNonceProviderWithKey = handler.NewHMACNonceProviderWithKey
-
 type HMACNonceProvider = handler.HMACNonceProvider
-
 // StorageHealthSource re-exported from internal/handler.
 type StorageHealthSource = handler.StorageHealthSource
-
 // Active ITDR threat-policy admin route-path re-exports.
 const PathAdminThreatPolicies = core.PathAdminThreatPolicies
 const PathAdminThreatPolicyByID = core.PathAdminThreatPolicyByID

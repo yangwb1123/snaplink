@@ -143,6 +143,19 @@ func (s *Server) mountCoreOAuthOIDC() {
 	s.router.POST(PathSetup, s.handleSetup)
 	s.router.GET(PathJWKS, s.handleJWKS)
 	s.mountDiscovery()
+	// Login UI metadata endpoint — public, cacheable, unauthenticated.
+	if s.clientStore != nil {
+		s.router.GET(PathLoginUIMetadata, s.handleLoginUIMetadata)
+	}
+	// FGA product API — tuple CRUD + Check, client-credentials gated.
+	if s.rebacStore != nil {
+		s.router.POST(PathAuthzTuples, s.handleAuthzWriteTuples)
+		s.router.GET(PathAuthzTuples, s.handleAuthzReadTuples)
+		s.router.DELETE(PathAuthzTuples, s.handleAuthzDeleteTuple)
+	}
+	if s.rebacEngine != nil {
+		s.router.GET(PathAuthzCheck, s.handleAuthzCheckAccess)
+	}
 	s.router.POST(PathLogin, s.handleLogin)
 	// GET is for a real top-level browser navigation ONLY — the "Sign in with
 	// <federated provider>" case, where the browser must follow a

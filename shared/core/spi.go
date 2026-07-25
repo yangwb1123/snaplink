@@ -144,6 +144,13 @@ type SessionManager interface {
 	ListAll(ctx context.Context) ([]*Session, error)
 }
 
+// SessionActivityTracker is an OPTIONAL SessionManager extension. When a
+// SessionManager implements it, the server calls TrackActivity on each
+// authenticated request to update the session's last-active timestamp.
+type SessionActivityTracker interface {
+	TrackActivity(ctx context.Context, sessionID string) error
+}
+
 // SessionMeta is the optional device/location context captured at session
 // creation for the self-service session list.
 type SessionMeta struct {
@@ -157,6 +164,10 @@ type SessionMeta struct {
 	// flow had no tenant in scope, and a manager that doesn't persist it stays
 	// byte-identical (tenant suspension then falls back to the roster path).
 	TenantID string
+
+	// DeviceID links this session to a device record, set during login when
+	// a DeviceStore is wired. Best-effort, never security load-bearing.
+	DeviceID string
 
 	// Kind, when set, marks the session class (see Session.Kind). The
 	// break-glass flow passes SessionKindAdminImpersonation here so the

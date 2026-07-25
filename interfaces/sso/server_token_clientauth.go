@@ -324,6 +324,9 @@ func (s *Server) mtlsCertRevoked(ctx context.Context, client *Client, cert *x509
 
 func (s *Server) ValidateToken(ctx context.Context, token string) (*TokenClaims, error) {
 	claims, _, err := s.validateAnyToken(ctx, token)
+	if err == nil && claims != nil && claims.SID != "" {
+		trackSessionActivity(ctx, s.sessionMgr, claims.SID)
+	}
 	return claims, err
 }
 

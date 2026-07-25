@@ -435,6 +435,11 @@ func WithCAEPTransmitter(t *caep.Transmitter) Option {
 // can drain its in-flight async sends on shutdown via Close.
 func (s *Server) CAEPTransmitter() *caep.Transmitter { return s.caepTransmitter }
 
+// WithCAEPStreamStore wires the SSF Stream Management store.
+func WithCAEPStreamStore(store caep.StreamStore) Option {
+	return func(s *Server) { s.caepStreamStore = store }
+}
+
 // WithCAEPReceiver mounts the OpenID Shared Signals (CAEP/SSF) RECEIVER —
 // the inbound half of Shared Signals, the inverse of WithCAEPTransmitter.
 // It registers a push-delivery endpoint (PathSSFReceive, default

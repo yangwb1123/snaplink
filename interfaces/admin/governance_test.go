@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/snaplink/sso/domains/authenticators/device"
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/connections/provider"
@@ -37,6 +38,8 @@ func (d *gcTestDeps) ApprovalStore() admingovernance.ApprovalStore             {
 func (d *gcTestDeps) ChangeRegistry() *admingovernance.Registry                { return d.registry }
 func (d *gcTestDeps) ApprovalActionTypes() admingovernance.RequiredActionTypes { return d.actionTypes }
 func (d *gcTestDeps) ProviderStore() provider.Store    { return nil }
+func (d *gcTestDeps) DeviceStore() device.Store              { return nil }
+func (d *gcTestDeps) LoginHistoryStore() device.HistoryStore { return nil }
 func (d *gcTestDeps) ConnectionStore() connections.Store { return nil }
 func (d *gcTestDeps) ClientStore() core.ClientStore                            { return nil }
 func (d *gcTestDeps) SessionManager() core.SessionManager                      { return nil }

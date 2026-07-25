@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/snaplink/sso/domains/authenticators/device"
 	"github.com/snaplink/sso/domains/identitylink"
 	identitylinkmemory "github.com/snaplink/sso/domains/identitylink/memory"
 	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystorecredential"
@@ -139,6 +140,8 @@ func (d *testDeps) RegistrationGates() []spi.RegistrationGate      { return d.re
 func (d *testDeps) SignupRateLimiter() selfservicecore.RateLimiter { return d.rateLimiter }
 
 func (d *testDeps) SessionManager() core.SessionManager          { return d.sessions }
+func (d *testDeps) DeviceStore() device.Store                       { return nil }
+func (d *testDeps) LoginHistoryStore() device.HistoryStore           { return nil }
 func (d *testDeps) TenantUserStore() core.TenantUserStore        { return d.tenantUsers }
 func (d *testDeps) InvitationStore() core.InvitationStore        { return d.invitations }
 func (d *testDeps) InvitationSender() spi.InvitationSender       { return nil }

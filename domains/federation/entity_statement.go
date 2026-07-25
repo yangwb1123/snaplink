@@ -231,6 +231,10 @@ type FederationEntityMeta struct {
 	// never sets it — this OP is a leaf, not an anchor) byte-identical.
 	FederationResolveEndpoint string `json:"federation_resolve_endpoint,omitempty"`
 
+	// FederationTrustMarkStatusEndpoint is the §8.4 Trust Mark Status endpoint
+	// URL for validating trust mark JWTs. Advertised when federation is enabled.
+	FederationTrustMarkStatusEndpoint string `json:"federation_trust_mark_status_endpoint,omitempty"`
+
 	// TrustMarkIssuers is the §7 (federation_entity) trust_mark_issuers claim a
 	// TRUST ANCHOR publishes to declare which issuer Entity IDs are authorized
 	// to mint Trust Marks of each type (OpenID Federation 1.0 §3.1.2): a JSON

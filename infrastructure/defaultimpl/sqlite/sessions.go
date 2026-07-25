@@ -266,6 +266,11 @@ func (s *SessionManager) ListAll(ctx context.Context) ([]*sso.Session, error) {
 	return scanSessionList(rows)
 }
 
+func (s *SessionManager) TrackActivity(ctx context.Context, sessionID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET last_active_at = ? WHERE id = ?`, time.Now().Unix(), sessionID)
+	return err
+}
+
 // ListByTenant implements sso.SessionTenantLister — returns every session
 // stamped with tenantID. Empty tenantID returns empty list (no wildcard).
 func (s *SessionManager) ListByTenant(ctx context.Context, tenantID string) ([]*sso.Session, error) {

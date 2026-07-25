@@ -45,6 +45,7 @@ type wiringState struct {
 	logger                spi.Logger
 	auditor               *audit.Recorder
 	caepTransmitter       *caep.Transmitter
+	caepStreamStore       caep.StreamStore
 	auditAPI              bool
 	sseBroker             *sse.Broker
 	sseHeartbeat          time.Duration
@@ -104,6 +105,10 @@ type wiringState struct {
 	// doc); the only Server-side use is the operational-debugging
 	// endpoint below.
 	rebacEngine *rebac.Engine
+
+	// rebacStore is the tuple store for the FGA product API. When wired,
+	// enables tuple CRUD via /authz/tuples (client-credentials gated).
+	rebacStore rebac.RelationTupleStore
 
 	// wasmAuthzEngine is the opt-in pluggable WASM authorization-decision
 	// engine (WithWASMAuthzEngine, platform/lifecycle/wasmauthz). Nil = no
@@ -272,7 +277,6 @@ type backgroundHandlerContext struct {
 	req *http.Request
 	kv  map[string]any
 }
-
 func (b *backgroundHandlerContext) Request() *http.Request { return b.req }
 func (b *backgroundHandlerContext) ResponseWriter() http.ResponseWriter {
 	return discardResponseWriter{}
@@ -295,7 +299,6 @@ func (b *backgroundHandlerContext) Get(key string) any { return b.kv[key] }
 // has a real response in flight, so nothing ever inspects the values written
 // here — it exists only so ResponseWriter() has a non-nil value to return.
 type discardResponseWriter struct{}
-
 func (discardResponseWriter) Header() http.Header         { return http.Header{} }
 func (discardResponseWriter) Write(p []byte) (int, error) { return len(p), nil }
 func (discardResponseWriter) WriteHeader(int)             {}
@@ -485,7 +488,6 @@ func (s *Server) mountConfigAuditAPI(api Router) {
 		api.GET(PathAdminConfigHistory, s.handleConfigHistory)
 	}
 }
-
 func (s *Server) handleConfigRunning(ctx HandlerContext)     { configaudit.HandleRunning(s, ctx) }
 func (s *Server) handleConfigApplied(ctx HandlerContext)     { configaudit.HandleApplied(s, ctx) }
 func (s *Server) handleConfigDiff(ctx HandlerContext)        { configaudit.HandleDiff(s, ctx) }

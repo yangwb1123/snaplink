@@ -133,6 +133,9 @@ const (
 	EventInvitationSent                      = auditspi.EventInvitationSent
 	EventLogin                               = auditspi.EventLogin
 	EventLoginFailure                        = auditspi.EventLoginFailure
+	EventNewDeviceLogin                       = auditspi.EventNewDeviceLogin
+	EventNewLocation                          = auditspi.EventNewLocation
+	EventTrustDecay                           = auditspi.EventTrustDecay
 	EventLogout                              = auditspi.EventLogout
 	EventLogoutNotified                      = auditspi.EventLogoutNotified
 	EventMFAFailure                          = auditspi.EventMFAFailure

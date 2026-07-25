@@ -210,6 +210,15 @@ func (m *MemorySessionManager) ListAll(_ context.Context) ([]*core.Session, erro
 	return out, nil
 }
 
+func (m *MemorySessionManager) TrackActivity(_ context.Context, sessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s, ok := m.sessions[sessionID]; ok {
+		s.LastActiveAt = time.Now()
+	}
+	return nil
+}
+
 // ListByTenant implements core.SessionTenantLister — returns every session
 // stamped with tenantID (active or not). Empty tenantID returns empty list.
 // A tenant-admin dashboard calls this to show sessions for their org.
@@ -241,4 +250,5 @@ var (
 	_ core.SessionTenantLister = (*MemorySessionManager)(nil)
 	_ core.SessionTrustManager = (*MemorySessionManager)(nil)
 	_ io.Closer                = (*MemorySessionManager)(nil)
+	_ core.SessionActivityTracker = (*MemorySessionManager)(nil)
 )

@@ -5,6 +5,7 @@ import (
 
 	"github.com/snaplink/sso/domains/conditionalaccess"
 	"github.com/snaplink/sso/domains/connections"
+	"github.com/snaplink/sso/domains/authenticators/device"
 	"github.com/snaplink/sso/domains/connections/provider"
 	"github.com/snaplink/sso/domains/permissions"
 	"github.com/snaplink/sso/domains/userlifecycle"
@@ -27,6 +28,14 @@ type Deps interface {
 	// ProviderStore returns the wired third-party login provider store, or nil
 	// when provider management is not configured (routes unmounted).
 	ProviderStore() provider.Store
+
+	// LoginHistoryStore returns the wired login history store, or nil when
+	// login history recording is not configured.
+	LoginHistoryStore() device.HistoryStore
+
+	// DeviceStore returns the wired device tracking store, or nil when device
+	// tracking is not configured (admin device routes unmounted).
+	DeviceStore() device.Store
 
 	// ConditionalAccessStore backs the read-only zero-trust CAP governance
 	// view; may be nil when WithConditionalAccess isn't wired.

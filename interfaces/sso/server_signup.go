@@ -149,6 +149,14 @@ func (s *Server) ErrorBody(errCode string) map[string]any {
 	return result
 }
 
+func (s *Server) ErrorBodyDesc(errCode, desc string) map[string]any {
+	result := make(map[string]any)
+	for k, v := range core.ErrorBodyDesc(errCode, desc) {
+		result[k] = v
+	}
+	return result
+}
+
 // handleMyEmailChange delegates to selfservice.HandleMyEmailChange.
 func (s *Server) handleMyEmailChange(ctx HandlerContext) {
 	userID, ok := s.meSubjectOrChallenge(ctx)

@@ -1,9 +1,8 @@
 package sso
-
 import (
 	"net/http"
 	"time"
-
+	"github.com/snaplink/sso/domains/authenticators/device"
 	"github.com/snaplink/sso/domains/connections"
 	"github.com/snaplink/sso/domains/connections/provider"
 	"github.com/snaplink/sso/domains/federation"
@@ -14,12 +13,8 @@ import (
 	"github.com/snaplink/sso/protocols/oidc"
 	"github.com/snaplink/sso/shared/core"
 )
-
-// PathAdminFederationHealth re-export (relocated here rather than aliases.go,
-// which is at the per-file line budget — mirrors the Token Portfolio paths'
-// relocation to server_routes_admin.go for the same reason).
+// PathAdminFederationHealth re-export.
 const PathAdminFederationHealth = core.PathAdminFederationHealth
-
 func (s *Server) BuildOPMetadata(ctx HandlerContext, base string) federation.OPFederationMetadata {
 	cfg := s.buildOIDCConfiguration(ctx, base)
 	return federation.OPFederationMetadata{
@@ -37,20 +32,23 @@ func (s *Server) BuildOPMetadata(ctx HandlerContext, base string) federation.OPF
 		CodeChallengeMethodsSupported:     cfg.CodeChallengeMethodsSupported,
 	}
 }
-
 // handleFederationEntityConfig delegates to the Hex federation handler.
 func (s *Server) handleFederationEntityConfig(ctx HandlerContext) {
 	federation.HandleEntityConfiguration(s, ctx)
 }
-
 // handleFederationFetch delegates to the §8 Federation Fetch handler.
 func (s *Server) handleFederationFetch(ctx HandlerContext) {
 	federation.HandleFederationFetch(s, ctx)
 }
-
 // handleFederationResolve delegates to the §8.3 Federation Resolve handler.
 func (s *Server) handleFederationResolve(ctx HandlerContext) {
 	federation.HandleFederationResolve(s, ctx)
+}
+func (s *Server) FederationFetcher() federation.EntityStatementFetcher { return nil }
+
+// handleFederationTrustMarkStatus delegates to the §8.4 Trust Mark Status handler.
+func (s *Server) handleFederationTrustMarkStatus(ctx HandlerContext) {
+	federation.HandleTrustMarkStatus(s, ctx)
 }
 
 // handleFederationList delegates to the §8.2 Federation Listing handler.
@@ -61,7 +59,6 @@ func (s *Server) handleFederationList(ctx HandlerContext) {
 // requestBaseURL delegates to middleware.BaseURL — see that function
 // for the X-Forwarded-Proto / X-Forwarded-Host edge trust contract.
 func requestBaseURL(r *http.Request) string { return middleware.BaseURL(r) }
-
 // WithJWKSCacheTTL overrides the Cache-Control max-age advertised
 // on /.well-known/jwks.json. Default is [DefaultJWKSCacheMaxAge]
 // (5 minutes). Lower this when key rotation must propagate faster;
@@ -75,7 +72,6 @@ func requestBaseURL(r *http.Request) string { return middleware.BaseURL(r) }
 func WithJWKSCacheTTL(ttl time.Duration) Option {
 	return func(s *Server) { s.jwksCacheTTL = ttl }
 }
-
 // WithMetadataSigner enables RFC 8414 §2.1 signed_metadata on the
 // discovery document. When wired, every /.well-known/openid-configuration
 // response carries a `signed_metadata` field whose value is a JWS over
@@ -91,7 +87,6 @@ func WithJWKSCacheTTL(ttl time.Duration) Option {
 func WithMetadataSigner(s oidc.MetadataSigner) Option {
 	return func(srv *Server) { srv.metadataSigner = s }
 }
-
 // WithFederationEntity mounts the OpenID Federation 1.0 entity-configuration
 // endpoint (PathFederationEntityConfig, "/.well-known/openid-federation"),
 // serving this server's SELF-SIGNED Entity Statement so the OP participates
@@ -129,7 +124,6 @@ func WithFederationEntity(cfg *federation.Config, signer federation.JWTSigner, r
 		srv.federationEntity = federation.NewEntityHandler(cfg, signer, resolverOpts...)
 	}
 }
-
 // WithFederationAutoRegistration opts into OpenID Federation 1.0 automatic
 // client registration (slice 3): when the authorization endpoint misses a
 // client_id in the ClientStore AND federation is wired with configured trust
@@ -157,11 +151,9 @@ func WithFederationEntity(cfg *federation.Config, signer federation.JWTSigner, r
 func WithFederationAutoRegistration() Option {
 	return func(s *Server) { s.federationAutoRegister = true }
 }
-
 // FederationEntity returns the wired federation entity handler (nil when
 // WithFederationEntity is not configured).
 func (s *Server) FederationEntity() *federation.EntityHandler { return s.federationEntity }
-
 // WithFederationConnectionHealth wires an OPTIONAL observability store
 // tracking each federation peer's fetch-path health (last success/failure,
 // consecutive-failure count, last-observed TLS certificate expiry) and mounts
@@ -191,31 +183,26 @@ func WithFederationConnectionHealth(store federationhealth.ConnectionHealth, cer
 		s.federationCertExpiryWarning = certExpiryWarning
 	}
 }
-
 // FederationConnectionHealth returns the wired health store (nil when
 // WithFederationConnectionHealth is not configured). Satisfies
 // federationhealth.Deps for HandleListPeerHealth.
 func (s *Server) FederationConnectionHealth() federationhealth.ConnectionHealth {
 	return s.federationHealth
 }
-
 // FederationCertExpiryWarning returns the configured "expiring soon"
 // threshold (<= 0 when unconfigured — HandleListPeerHealth applies its
 // default). Satisfies federationhealth.Deps.
 func (s *Server) FederationCertExpiryWarning() time.Duration { return s.federationCertExpiryWarning }
-
 // FederationHealthNow is the clock federationhealth.HandleListPeerHealth
 // computes the cert_expiring classification against. Satisfies
 // federationhealth.Deps.
 func (s *Server) FederationHealthNow() time.Time { return time.Now() }
-
 // handleFederationHealth delegates to the hexagonal federation peer-health
 // listing handler (*Server satisfies federationhealth.Deps via the accessors
 // above). Only mounted when WithFederationConnectionHealth is wired.
 func (s *Server) handleFederationHealth(ctx HandlerContext) {
 	federationhealth.HandleListPeerHealth(s, ctx)
 }
-
 // mountClusterObservabilityEndpoints registers the full-path admin
 // observability GET routes (authz policy bundle, storage health, federation
 // peer connection health) — split out of mountClusterEndpoints purely to
@@ -232,7 +219,6 @@ func (s *Server) mountClusterObservabilityEndpoints() {
 	if s.permissions != nil && s.adminAPIGateOn() {
 		s.router.GET(PathAuthzPolicyBundle, s.handleAuthzPolicyBundle)
 	}
-
 	// Per-store storage-health report (opt-in WithStorageHealth). Full-path
 	// admin endpoint gated by AdminMiddleware via the /api/v1/admin/ prefix.
 	// Only mounted when at least one source is wired AND AdminAPI is on —
@@ -240,7 +226,6 @@ func (s *Server) mountClusterObservabilityEndpoints() {
 	if len(s.storageHealthSources) > 0 && s.adminAPIGateOn() {
 		s.router.GET(PathStorageHealth, s.handleStorageHealth)
 	}
-
 	// Federation peer connection-health admin listing (opt-in
 	// WithFederationConnectionHealth). Full-path admin endpoint gated by
 	// AdminMiddleware via the /api/v1/admin/ prefix (mirrors
@@ -253,7 +238,6 @@ func (s *Server) mountClusterObservabilityEndpoints() {
 		s.router.GET(PathAdminFederationHealth, s.handleFederationHealth)
 	}
 }
-
 // mountClusterEndpoints registers the full-path admin/cluster endpoints
 // (authz policy bundle, storage health, mesh ext_authz, CAEP/SSF receiver),
 // each opt-in and gated on its wiring. Moved from server_routes.go (which
@@ -261,7 +245,6 @@ func (s *Server) mountClusterObservabilityEndpoints() {
 // gate on (federationMeshState).
 func (s *Server) mountClusterEndpoints() {
 	s.mountClusterObservabilityEndpoints()
-
 	// Mesh ext_authz HTTP endpoint (opt-in, cluster C1). The sidecar may
 	// call it with the original request method, so register both GET and
 	// POST at the configured path. Not mounted unless WithMeshExtAuthz is
@@ -273,6 +256,16 @@ func (s *Server) mountClusterEndpoints() {
 		}
 		s.router.GET(path, s.handleMeshExtAuthz)
 		s.router.POST(path, s.handleMeshExtAuthz)
+	}
+	// SSF configuration endpoint + Stream Management API — CAEP-gated.
+	ssf := core.NewGatedRouter(s.router, s.caepGateOn)
+	ssf.GET(PathSSFConfig, s.handleSSFConfig)
+	if s.caepStreamStore != nil {
+		ssf.POST(PathSSFStreams, s.handleCreateStream)
+		ssf.GET(PathSSFStreams, s.handleListStreams)
+		ssf.GET(PathSSFStreamByID, s.handleGetStream)
+		ssf.PUT(PathSSFStreamByID, s.handleUpdateStream)
+		ssf.DELETE(PathSSFStreamByID, s.handleDeleteStream)
 	}
 
 	// CAEP/SSF push-delivery RECEIVER (opt-in, the inbound half of OpenID
@@ -288,7 +281,6 @@ func (s *Server) mountClusterEndpoints() {
 		core.NewGatedRouter(s.router, s.caepGateOn).POST(PathSSFReceive, s.handleSSFReceive)
 	}
 }
-
 // mountFederationEndpoints registers the Federation 1.0 entity config (§8
 // fetch/list when superior, §8.3 resolve when trust anchor), RFC 9728
 // protected-resource metadata, and B2B home-realm discovery routes -- each
@@ -328,8 +320,8 @@ func (s *Server) mountFederationEndpoints() {
 		if s.federationEntity.Resolver().Enabled() {
 			gr.GET(PathFederationResolve, s.handleFederationResolve)
 		}
-	}
 
+	}
 	// Home-realm discovery (opt-in B2B). Given a login identifier (email) it
 	// returns the enterprise connection serving that domain so the login UI
 	// routes the user to the right upstream IdP. Not mounted unless
@@ -338,8 +330,9 @@ func (s *Server) mountFederationEndpoints() {
 		gr.GET(PathHomeRealm, s.handleHomeRealm)
 		gr.POST(PathHomeRealm, s.handleHomeRealm)
 	}
+	// Trust Mark Status endpoint (gate-controlled).
+	gr.GET(PathFederationTrustMarkStatus, s.handleFederationTrustMarkStatus)
 }
-
 // federationMeshState holds OpenID Federation, CAEP receiver, B2B connections, Envoy/Istio mesh ext_authz, and storage-health fields.
 type federationMeshState struct {
 	// CAEP/SSF RECEIVER (the inbound half of OpenID Shared Signals — the
@@ -355,28 +348,24 @@ type federationMeshState struct {
 	// wrongful revocation). Nil ⇒ the route is NOT mounted — byte-identical
 	// to a build without it.
 	caepReceiver *caep.Receiver
-	// connectionStore holds per-organization enterprise connections (B2B HRD).
-	// Nil ⇒ /auth/home-realm route unmounted.
+	// connectionStore for B2B HRD. Nil ⇒ unmounted.
 	connectionStore connections.Store
-
-	// providerStore holds third-party login provider configs. Nil ⇒ routes unmounted.
+	// providerStore for third-party login provider configs. Nil ⇒ unmounted.
 	providerStore provider.Store
-
-	// domainVerificationResolver is the DNS-TXT resolver the admin
-	// connection-domain-verify handler uses (WithDomainVerificationResolver).
-	// Nil ⇒ the stdlib-backed production resolver (see DomainResolver accessor).
+	// deviceStore for authenticated device tracking. Nil ⇒ no tracking.
+	deviceStore device.Store
+	// devicePolicy for device-related security rules.
+	devicePolicy device.Policy
+	// loginHistory records login events. Nil ⇒ no recording.
+	loginHistory device.HistoryStore
+	// domainVerificationResolver for admin domain-verify. Nil ⇒ stdlib-backed.
 	domainVerificationResolver connections.DNSResolver
-
-	// connectionProber is the reachability check the admin
-	// POST .../connections/:id/probe handler uses (WithConnectionProber).
-	// Nil ⇒ the stdlib-backed production HTTP prober, bounded by
-	// connectionProbeTimeout (see ConnectionProber accessor).
+	// connectionProber for admin POST .../connections/:id/probe (WithConnectionProber).
+	// Nil ⇒ stdlib-backed HTTP prober.
 	connectionProber connections.Prober
-	// connectionProbeTimeout bounds the production HTTP prober's per-probe
-	// round-trip (WithConnectionProbeTimeout). Zero ⇒
-	// connections.DefaultProbeTimeout. No effect when connectionProber is set.
+	// connectionProbeTimeout bounds per-probe round-trip (WithConnectionProbeTimeout).
+	// Zero ⇒ DefaultProbeTimeout. No effect when connectionProber is set.
 	connectionProbeTimeout time.Duration
-
 	// connectionAuthFactory builds the live upstream authenticator for a
 	// resolved enterprise connection at /auth/login dispatch time
 	// (WithConnectionAuthenticatorFactory) — the runtime half of B2B
@@ -384,7 +373,6 @@ type federationMeshState struct {
 	// never resolves as a provider — byte-identical to the HRD-directive-only
 	// build.
 	connectionAuthFactory connections.AuthenticatorFactory
-
 	// Opt-in Envoy/Istio ext_authz HTTP-mode authorization endpoint
 	// (cluster C1 mesh data-plane, the HTTP variant — the gRPC variant
 	// needs the go-control-plane proto dep and lives in a separate
@@ -397,7 +385,6 @@ type federationMeshState struct {
 	// PathMeshExtAuthz.
 	meshExtAuthz     bool
 	meshExtAuthzPath string
-
 	// Opt-in OpenID Federation 1.0 entity configuration. When
 	// federationEntity is wired (WithFederationEntity), the server mounts
 	// PathFederationEntityConfig serving the OP's self-signed Entity
@@ -408,7 +395,6 @@ type federationMeshState struct {
 	// slice only; trust-chain VALIDATION (the trust boundary) is a separate
 	// slice.
 	federationEntity *federation.EntityHandler
-
 	// federationAutoRegister opts into OpenID Federation 1.0 AUTOMATIC client
 	// registration (WithFederationAutoRegistration, slice 3): when true AND a
 	// ClientStore is wired AND federationEntity carries a resolver with
@@ -421,7 +407,6 @@ type federationMeshState struct {
 	// byte-identical to off — without all three preconditions. False ⇒ no
 	// decoration; the authz/token flow is unchanged.
 	federationAutoRegister bool
-
 	// Opt-in per-store storage-health admin report (WithStorageHealth).
 	// Each source describes one wired store: a Name, a Ping for
 	// reachability, and an optional schema-version getter (a cmd-supplied
@@ -431,7 +416,6 @@ type federationMeshState struct {
 	// *sql.DB — cmd collects these at the same point it gathers Ping-capable
 	// stores for /readyz.
 	storageHealthSources []StorageHealthSource
-
 	// Opt-in federation peer connection-health observability
 	// (WithFederationConnectionHealth). Nil ⇒ the
 	// PathAdminFederationHealth route is NOT mounted — byte-identical to a
@@ -444,7 +428,6 @@ type federationMeshState struct {
 	// federationhealth.DefaultCertExpiryWarning.
 	federationCertExpiryWarning time.Duration
 }
-
 // Enterprise connection email-domain verification (admin). Relocated from
 // server_admin_handlers.go (which was at the line budget) to sit beside
 // this file's other connectionStore-backed handlers.
@@ -454,13 +437,11 @@ func (s *Server) handleAdminListConnectionDomains(ctx HandlerContext) {
 func (s *Server) handleAdminVerifyConnectionDomain(ctx HandlerContext) {
 	admin.HandleAdminVerifyConnectionDomain(s, ctx)
 }
-
 // Zero-trust conditional-access (CAP) governance view (admin). Relocated
 // from server_admin_handlers.go (which was at the line budget).
 func (s *Server) handleAdminListAccessPolicies(ctx HandlerContext) {
 	admin.HandleAdminListAccessPolicies(s, ctx)
 }
-
 // ConnectionProber returns the wired reachability prober for the admin
 // connection-test endpoint, defaulting to the stdlib-backed production HTTP
 // prober (bounded by connectionProbeTimeout) when no custom one was injected.
@@ -472,7 +453,6 @@ func (s *Server) ConnectionProber() connections.Prober {
 	}
 	return connections.NewHTTPProber(s.connectionProbeTimeout)
 }
-
 // WithConnectionProber injects the reachability check the admin
 // POST /api/v1/admin/connections/:id/probe endpoint uses to test a
 // connection's configured upstream (first-class DI so tests run
@@ -487,7 +467,6 @@ func WithConnectionProber(p connections.Prober) Option {
 		}
 	}
 }
-
 // WithConnectionProbeTimeout bounds the production HTTP prober's per-probe
 // round-trip (connections.DefaultProbeTimeout, 10s, when unset). No effect
 // when WithConnectionProber supplies a custom Prober.
