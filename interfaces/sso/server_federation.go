@@ -32,14 +32,13 @@ func (s *Server) BuildOPMetadata(ctx HandlerContext, base string) federation.OPF
 		CodeChallengeMethodsSupported:     cfg.CodeChallengeMethodsSupported,
 	}
 }
-// handleFederationEntityConfig delegates to the Hex federation handler.
+
 // for the X-Forwarded-Proto / X-Forwarded-Host edge trust contract.
 func requestBaseURL(r *http.Request) string { return middleware.BaseURL(r) }
 // WithJWKSCacheTTL overrides the Cache-Control max-age advertised
 // on /.well-known/jwks.json. Default is [DefaultJWKSCacheMaxAge]
 // (5 minutes). Lower this when key rotation must propagate faster;
 // raise it when RP traffic strains the JWKS endpoint.
-//
 // Note: many RP libraries cache the JWKS in-process past the
 // max-age signal, so the practical lower bound depends on the RP
 // fleet's behavior. Validating-side ETag + 304 keeps the round
@@ -55,7 +54,6 @@ func WithJWKSCacheTTL(ttl time.Duration) Option {
 // signature against JWKS before trusting any endpoint. Defends
 // against a tampering proxy substituting endpoints — a security
 // improvement that's a one-line opt-in.
-//
 // Both the default Ed25519JWTIssuer and oidc.IDTokenIssuer satisfy
 // oidc.MetadataSigner — pass either, typically the same instance already
 // wired as TokenIssuer / oidc.IDTokenIssuer so JWKS continues to cover
@@ -74,13 +72,11 @@ func WithMetadataSigner(s oidc.MetadataSigner) Option {
 // the SAME key already in JWKS, so a federation consumer validates it with
 // no new trust setup. ETag + Cache-Control (public, max-age) cached — it is
 // public metadata, NOT a credential.
-//
 // signer is the OP signing issuer (typically the same instance wired as
 // WithTokenIssuer / WithIDTokenIssuer, so one key covers tokens, id_tokens,
 // SETs, and the entity statement). cfg carries authority_hints,
 // organization/contacts, the TTLs, and (present-but-inert in this slice) the
 // trust anchors.
-//
 // Opt-in / default-off: a nil cfg OR a nil signer leaves the Server's field
 // nil — the route is NOT mounted and behavior is byte-identical to a build
 // without it. This is the entity-PUBLISHING slice; trust-chain VALIDATION
@@ -116,7 +112,6 @@ func WithFederationHistoricalKeyStore(store federation.HistoricalKeyStore) Optio
 // the OP resolves that RP's trust chain on-the-fly (slice 2, fail-closed,
 // rooted in a configured anchor) and DERIVES a usable OAuth client from the
 // POLICY-CONSTRAINED openid_relying_party metadata — no manual registration.
-//
 // The derived client carries JWKS = the chain-validated entity keys (for
 // asymmetric private_key_jwt / signed-request-object auth) and NO secret; its
 // redirect_uris / response_types / scope are bounded by the trust anchor's
@@ -125,7 +120,6 @@ func WithFederationHistoricalKeyStore(store federation.HistoricalKeyStore) Optio
 // client_id UNKNOWN (the byte-identical unknown-client error — oracle-safe; no
 // federation-internal detail on the wire). Derived clients are cached per
 // entity ID, bounded by the chain's earliest exp, and re-resolved on expiry.
-//
 // Composition: it decorates whatever ClientStore is wired (WithClientStore)
 // with federation.RegistrationClientStore, applied AFTER all options run so
 // option order is irrelevant. A pre-registered client always wins (the wrapped
@@ -151,12 +145,10 @@ func (s *Server) FederationEntity() *federation.EntityHandler { return s.federat
 // store. The decorator never alters a fetch's result, so trust-chain
 // validation and its fail-closed semantics are completely unaffected (AGENTS.md:
 // health tracking wraps the fetch path, it is never a new gate).
-//
 // certExpiryWarning is the config-gated "expiring soon" threshold a tracked
 // peer's certificate must fall within to be flagged cert_expiring in the
 // listing (a queryable list, NOT an active alert/notification channel).
 // <= 0 ⇒ federationhealth.DefaultCertExpiryWarning (30 days).
-//
 // A nil store leaves the Server's field nil — the route is NOT mounted and
 // behavior is byte-identical to a build without it (default-off).
 func WithFederationConnectionHealth(store federationhealth.ConnectionHealth, certExpiryWarning time.Duration) Option {
@@ -182,7 +174,7 @@ func (s *Server) FederationCertExpiryWarning() time.Duration { return s.federati
 // computes the cert_expiring classification against. Satisfies
 // federationhealth.Deps.
 func (s *Server) FederationHealthNow() time.Time { return time.Now() }
-// handleFederationHealth delegates to the hexagonal federation peer-health
+
 // listing handler (*Server satisfies federationhealth.Deps via the accessors
 // above). Only mounted when WithFederationConnectionHealth is wired.
 func (s *Server) handleFederationHealth(ctx HandlerContext) {
@@ -266,59 +258,36 @@ func (s *Server) mountClusterEndpoints() {
 		core.NewGatedRouter(s.router, s.caepGateOn).POST(PathSSFReceive, s.handleSSFReceive)
 	}
 }
-// mountFederationEndpoints registers the Federation 1.0 entity config (§8
-// fetch/list when superior, §8.3 resolve when trust anchor), RFC 9728
-// protected-resource metadata, and B2B home-realm discovery routes -- each
-// opt-in, all gated via core.GatedRouter so federation is hot-reloadable.
+
 func (s *Server) mountFederationEndpoints() {
 	gr := core.NewGatedRouter(s.router, s.federationGateOn)
-	// RFC 9728 Protected Resource Metadata (opt-in). Public discovery doc;
-	// unmounted when not wired (byte-identical).
+
 	if s.protectedResourceMetadata != nil {
 		gr.GET(PathProtectedResourceMetadata, s.handleProtectedResourceMetadata)
 	}
-	// OpenID Federation 1.0 entity configuration (opt-in). Serves the OP's
-	// self-signed Entity Statement at the well-known endpoint so the OP is
-	// discoverable as a federation ENTITY. Not mounted unless
-	// WithFederationEntity is wired -- byte-identical to a build without it.
+
 	if s.federationEntity != nil {
 		gr.GET(PathFederationEntityConfig, s.handleFederationEntityConfig)
-		// OpenID Federation 1.0 §8 Federation Fetch endpoint — mounted ONLY when
-		// this server is configured as a SUPERIOR (≥1 subordinate). It issues
-		// SIGNED Subordinate Statements about configured subordinates so a
-		// resolver can climb THROUGH this server. With no subordinates the route
-		// is NOT mounted AND the entity config advertises no
-		// federation_fetch_endpoint — byte-identical to the slice-1 leaf OP.
+
 		if s.federationEntity.HasSubordinates() {
 			gr.GET(PathFederationFetch, s.handleFederationFetch)
-			// OpenID Federation 1.0 §8.2 Listing endpoint — mounted alongside
-			// the fetch endpoint when this server is a SUPERIOR. Returns the
-			// configured subordinate list.
+
 			gr.GET(PathFederationList, s.handleFederationList)
 		}
-		// OpenID Federation 1.0 §8.3 Federation Resolve endpoint — mounted ONLY
-		// when this server is configured as a Trust Anchor (the resolver is live
-		// with ≥1 trust anchor). It resolves a trust chain for a requested entity
-		// identifier up to a configured anchor. Without trust anchors the route
-		// is NOT mounted AND the entity config advertises no
-		// federation_resolve_endpoint — byte-identical to the slice-1 leaf OP.
+
 		if s.federationEntity.Resolver().Enabled() {
 			gr.GET(PathFederationResolve, s.handleFederationResolve)
 		}
 
 	}
-	// Home-realm discovery (opt-in B2B). Given a login identifier (email) it
-	// returns the enterprise connection serving that domain so the login UI
-	// routes the user to the right upstream IdP. Not mounted unless
-	// WithConnectionStore is wired — byte-identical to a build without it.
+
 	if s.connectionStore != nil {
 		gr.GET(PathHomeRealm, s.handleHomeRealm)
 		gr.POST(PathHomeRealm, s.handleHomeRealm)
 	}
-	// Trust Mark Status endpoint (gate-controlled).
+
 	gr.GET(PathFederationTrustMarkStatus, s.handleFederationTrustMarkStatus)
-	// Historical signing keys endpoint (8.5). Mounted when a key store
-	// is wired -- returns all previously-published signing keys as a JWKS.
+
 	if s.federationHistoricalKeyStore != nil {
 		gr.GET(PathFederationHistoricalKeys, s.handleFederationHistoricalKeys)
 	}
@@ -469,4 +438,60 @@ func WithConnectionProbeTimeout(d time.Duration) Option {
 			s.connectionProbeTimeout = d
 		}
 	}
+}
+
+func (s *Server) handleFederationEntityConfig(ctx HandlerContext) {
+	federation.HandleEntityConfiguration(s, ctx)
+}
+
+func (s *Server) handleFederationFetch(ctx HandlerContext) {
+	federation.HandleFederationFetch(s, ctx)
+}
+
+func (s *Server) handleFederationResolve(ctx HandlerContext) {
+	federation.HandleFederationResolve(s, ctx)
+}
+
+func (s *Server) FederationFetcher() federation.EntityStatementFetcher { return nil }
+
+func (s *Server) handleFederationTrustMarkStatus(ctx HandlerContext) {
+	federation.HandleTrustMarkStatus(s, ctx)
+}
+
+func (s *Server) handleFederationList(ctx HandlerContext) {
+	federation.HandleFederationList(s, ctx)
+}
+
+// (8.5). When a HistoricalKeyStore is wired, it returns a JSON JWKS
+// containing all previously-published keys.
+func (s *Server) handleFederationHistoricalKeys(ctx HandlerContext) {
+	if s.federationHistoricalKeyStore == nil {
+		tokenNoStoreHeaders(ctx)
+		ctx.JSON(http.StatusOK, map[string]any{"keys": []any{}})
+		return
+	}
+	keys, err := s.federationHistoricalKeyStore.HistoricalKeys(ctx.Request().Context())
+	if err != nil {
+		s.logger.Error("historical keys fetch failed", "error", err)
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
+		return
+	}
+	jwkKeys := make([]map[string]any, 0, len(keys))
+	for _, k := range keys {
+		if k.JWK != nil {
+			entry := make(map[string]any)
+			for kk, vv := range k.JWK {
+				entry[kk] = vv
+			}
+			if !k.ActiveUntil.IsZero() {
+				entry["active_until"] = k.ActiveUntil.Unix()
+			}
+			if !k.RetiredAt.IsZero() {
+				entry["retired_at"] = k.RetiredAt.Unix()
+			}
+			jwkKeys = append(jwkKeys, entry)
+		}
+	}
+	tokenNoStoreHeaders(ctx)
+	ctx.JSON(http.StatusOK, map[string]any{"keys": jwkKeys})
 }
