@@ -286,6 +286,7 @@ const PathAuthzCheck = core.PathAuthzCheck
 const PathStorageHealth = core.PathStorageHealth
 const PathTenantUsage = core.PathTenantUsage
 const PathAdminTopTenants = core.PathAdminTopTenants
+const PathAdminBranding = core.PathAdminBranding
 const PathAdminTokenUsage = core.PathAdminTokenUsage
 const PathAdminTokenPolicies = core.PathAdminTokenPolicies
 const PathAdminAccessPolicies = core.PathAdminAccessPolicies

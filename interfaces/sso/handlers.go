@@ -467,3 +467,6 @@ func (s *Server) handleAdminResetDeviceTrust(ctx HandlerContext)   { admin.Handl
 func (s *Server) handleAdminBulkRevokeDevices(ctx HandlerContext)  { admin.HandleAdminBulkRevokeDevices(s, ctx) }
 func (s *Server) handleAdminListSecurityActivity(ctx HandlerContext) { admin.HandleAdminListSecurityActivity(s, ctx) }
 func (s *Server) handleAdminListUserLoginHistory(ctx HandlerContext) { admin.HandleAdminListUserLoginHistory(s, ctx) }
+func (s *Server) handleAdminGetBranding(ctx HandlerContext)    { admin.HandleAdminGetBranding(s, ctx) }
+func (s *Server) handleAdminUpdateBranding(ctx HandlerContext) { admin.HandleAdminUpdateBranding(s, ctx) }
+func (s *Server) handleAdminDeleteBranding(ctx HandlerContext) { admin.HandleAdminDeleteBranding(s, ctx) }

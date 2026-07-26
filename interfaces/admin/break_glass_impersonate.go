@@ -8,6 +8,7 @@ import (
 	"github.com/snaplink/sso/interfaces/middleware"
 	"github.com/snaplink/sso/platform/audit"
 	"github.com/snaplink/sso/shared/core"
+	"github.com/snaplink/sso/domains/tenant"
 )
 
 // Break-glass LIVE impersonation: an active+approved impersonate/escalate grant
@@ -167,4 +168,96 @@ func cascadeRevokeImpersonationTokens(d Deps, ctx context.Context, tokens []stri
 	for _, tok := range tokens {
 		d.RevokeToken(ctx, tok)
 	}
+}
+// HandleAdminGetBranding returns tenant branding settings.
+func HandleAdminGetBranding(d BrandingDeps, ctx core.HandlerContext) {
+	tenantID := ctx.Query("tenant_id")
+	if tenantID == "" {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+	store := d.TenantStore()
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
+	t, err := store.GetTenant(ctx.Request().Context(), tenantID)
+	if err != nil || t == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
+	settings := t.Settings
+	if settings == nil {
+		settings = map[string]string{}
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"tenant_id": tenantID, "branding": settings})
+}
+
+// HandleAdminUpdateBranding updates tenant branding settings.
+func HandleAdminUpdateBranding(d BrandingDeps, ctx core.HandlerContext) {
+	tenantID := ctx.Query("tenant_id")
+	if tenantID == "" {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+	var req struct {
+		Branding map[string]string `json:"branding"`
+	}
+	if err := ctx.Bind(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBodyDesc(core.ErrInvalidRequest, "invalid JSON"))
+		return
+	}
+	if req.Branding == nil {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBodyDesc(core.ErrInvalidRequest, "branding object required"))
+		return
+	}
+	store := d.TenantStore()
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
+	t, err := store.GetTenant(ctx.Request().Context(), tenantID)
+	if err != nil || t == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
+	t.Settings = req.Branding
+	if err := store.PutTenant(ctx.Request().Context(), t); err != nil {
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"status": "ok", "tenant_id": tenantID, "branding": req.Branding})
+}
+
+// HandleAdminDeleteBranding clears tenant branding settings.
+func HandleAdminDeleteBranding(d BrandingDeps, ctx core.HandlerContext) {
+	tenantID := ctx.Query("tenant_id")
+	if tenantID == "" {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+	store := d.TenantStore()
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
+	t, err := store.GetTenant(ctx.Request().Context(), tenantID)
+	if err != nil || t == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
+	t.Settings = map[string]string{}
+	if err := store.PutTenant(ctx.Request().Context(), t); err != nil {
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
+		return
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"status": "ok", "tenant_id": tenantID})
+}
+
+
+// BrandingDeps is what the admin branding handlers need.
+type BrandingDeps interface {
+	TenantStore() tenant.Store
+	ErrorBody(code string) map[string]any
+	ErrorBodyDesc(code, desc string) map[string]any
 }

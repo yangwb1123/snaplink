@@ -192,6 +192,8 @@ const (
 	// PathTenantUsage comment for the double-prefix regression a full
 	// "/api/v1/..." value causes.
 	PathAdminTopTenants = "/admin/usage/top-tenants"
+	// PathAdminBranding is the admin tenant-branding CRUD endpoint.
+	PathAdminBranding = "/admin/branding"
 	// PathAdminTokenUsage is the read-only admin token-usage telemetry
 	// endpoint (GET /api/v1/admin/tokens/usage?client_id=&since=&until=).
 	// Returns per-minute aggregated (client, kind, endpoint) buckets from

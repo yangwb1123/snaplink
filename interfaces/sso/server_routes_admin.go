@@ -87,6 +87,12 @@ func (s *Server) mountAdminAPIObservability(api Router) {
 		api.GET(PathTenantUsage, s.handleTenantUsage)
 		api.GET(PathAdminTopTenants, s.handleAdminTopTenants)
 	}
+	// Tenant branding CRUD (opt-in: requires tenant store).
+	if s.tenantStore != nil {
+		api.GET(PathAdminBranding, s.handleAdminGetBranding)
+		api.PUT(PathAdminBranding, s.handleAdminUpdateBranding)
+		api.DELETE(PathAdminBranding, s.handleAdminDeleteBranding)
+	}
 	s.mountAdminTokenGovernance(api)
 	s.mountAdminAPILifecycle(api)
 }
