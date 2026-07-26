@@ -51,6 +51,16 @@ func TestBreakGlassActorFromContext(t *testing.T) {
 	})
 }
 
+func TestErrorBodyDesc(t *testing.T) {
+	body := ErrorBodyDesc("invalid_grant", "token is expired")
+	if body[KeyError] != "invalid_grant" {
+		t.Errorf("expected 'invalid_grant', got %q", body[KeyError])
+	}
+	if body[KeyErrorDescription] != "token is expired" {
+		t.Errorf("expected 'token is expired', got %q", body[KeyErrorDescription])
+	}
+}
+
 func TestErrorBodyWithLocalizedDesc(t *testing.T) {
 	t.Run("empty desc returns original", func(t *testing.T) {
 		original := map[string]string{KeyError: "invalid_request"}
