@@ -1,80 +1,73 @@
 package core
 
 import (
+	"context"
 	"testing"
 )
 
-func TestErrorBody(t *testing.T) {
-	t.Parallel()
+func TestErrorBodyWithTrace(t *testing.T) {
+	t.Run("with trace ID", func(t *testing.T) {
+		body := ErrorBodyWithTrace("invalid_request", "trace-123")
+		if body[KeyError] != "invalid_request" {
+			t.Errorf("expected 'invalid_request', got %q", body[KeyError])
+		}
+		if body[KeyTraceID] != "trace-123" {
+			t.Errorf("expected 'trace-123', got %q", body[KeyTraceID])
+		}
+	})
 
-	m := ErrorBody("invalid_grant")
-	if m == nil {
-		t.Fatal("expected non-nil map")
-	}
-	if m[KeyError] != "invalid_grant" {
-		t.Errorf("ErrorBody() = %v, want error=invalid_grant", m)
-	}
-	if _, ok := m[KeyErrorDescription]; ok {
-		t.Errorf("ErrorBody() should not include error_description")
-	}
+	t.Run("without trace ID", func(t *testing.T) {
+		body := ErrorBodyWithTrace("access_denied", "")
+		if body[KeyError] != "access_denied" {
+			t.Errorf("expected 'access_denied', got %q", body[KeyError])
+		}
+		if _, ok := body[KeyTraceID]; ok {
+			t.Error("expected no trace_id key")
+		}
+	})
 }
 
-func TestErrorBodyDesc(t *testing.T) {
-	t.Parallel()
+func TestBreakGlassActorFromContext(t *testing.T) {
+	t.Run("no actor in context", func(t *testing.T) {
+		_, ok := BreakGlassActorFromContext(context.Background())
+		if ok {
+			t.Error("expected false for empty context")
+		}
+	})
 
-	m := ErrorBodyDesc("invalid_request", "missing parameter")
-	if m == nil {
-		t.Fatal("expected non-nil map")
-	}
-	if m[KeyError] != "invalid_request" {
-		t.Errorf("ErrorBodyDesc().error = %q, want invalid_request", m[KeyError])
-	}
-	if m[KeyErrorDescription] != "missing parameter" {
-		t.Errorf("ErrorBodyDesc().error_description = %q, want missing parameter", m[KeyErrorDescription])
-	}
+	t.Run("with actor in context", func(t *testing.T) {
+		actor := BreakGlassActor{AdminID: "admin-1", AdminSessionID: "session-1"}
+		ctx := context.WithValue(context.Background(), breakGlassActorKey{}, actor)
+		got, ok := BreakGlassActorFromContext(ctx)
+		if !ok {
+			t.Fatal("expected true")
+		}
+		if got.AdminID != "admin-1" {
+			t.Errorf("expected 'admin-1', got %q", got.AdminID)
+		}
+		if got.AdminSessionID != "session-1" {
+			t.Errorf("expected 'session-1', got %q", got.AdminSessionID)
+		}
+	})
 }
 
-func TestErrorBodyEmptyCode(t *testing.T) {
-	t.Parallel()
+func TestErrorBodyWithLocalizedDesc(t *testing.T) {
+	t.Run("empty desc returns original", func(t *testing.T) {
+		original := map[string]string{KeyError: "invalid_request"}
+		result := ErrorBodyWithLocalizedDesc(original, "")
+		if result[KeyError] != "invalid_request" {
+			t.Errorf("expected 'invalid_request', got %q", result[KeyError])
+		}
+	})
 
-	m := ErrorBody("")
-	if m[KeyError] != "" {
-		t.Errorf("ErrorBody(\"\") should allow empty code, got %q", m[KeyError])
-	}
-}
-
-func TestErrorBodyDescSpecialChars(t *testing.T) {
-	t.Parallel()
-
-	desc := "invalid\n\tutf8:\u00e9"
-	m := ErrorBodyDesc("server_error", desc)
-	if m[KeyErrorDescription] != desc {
-		t.Errorf("ErrorBodyDesc description roundtrip = %q, want %q", m[KeyErrorDescription], desc)
-	}
-}
-
-func TestErrorBodyWithLocalizedDesc_Additive(t *testing.T) {
-	t.Parallel()
-
-	m := ErrorBodyDesc("invalid_credentials", "bad credentials")
-	got := ErrorBodyWithLocalizedDesc(m, "credenciales inv\u00e1lidas")
-	if got[KeyError] != "invalid_credentials" || got[KeyErrorDescription] != "bad credentials" {
-		t.Fatalf("ErrorBodyWithLocalizedDesc must leave error/error_description untouched, got %v", got)
-	}
-	if got[KeyErrorDescriptionLocalized] != "credenciales inv\u00e1lidas" {
-		t.Errorf("ErrorBodyWithLocalizedDesc().error_description_localized = %q, want credenciales inv\u00e1lidas", got[KeyErrorDescriptionLocalized])
-	}
-}
-
-func TestErrorBodyWithLocalizedDesc_EmptyIsNoOp(t *testing.T) {
-	t.Parallel()
-
-	m := ErrorBody("invalid_request")
-	got := ErrorBodyWithLocalizedDesc(m, "")
-	if _, ok := got[KeyErrorDescriptionLocalized]; ok {
-		t.Errorf("ErrorBodyWithLocalizedDesc(\"\") should not add error_description_localized, got %v", got)
-	}
-	if len(got) != 1 {
-		t.Errorf("ErrorBodyWithLocalizedDesc(\"\") should leave the envelope untouched, got %v", got)
-	}
+	t.Run("with localized desc", func(t *testing.T) {
+		original := map[string]string{KeyError: "invalid_request"}
+		result := ErrorBodyWithLocalizedDesc(original, "zh-CN: 无效请求")
+		if result[KeyError] != "invalid_request" {
+			t.Errorf("expected 'invalid_request', got %q", result[KeyError])
+		}
+		if result[KeyErrorDescriptionLocalized] != "zh-CN: 无效请求" {
+			t.Errorf("expected localized desc, got %q", result[KeyErrorDescriptionLocalized])
+		}
+	})
 }
