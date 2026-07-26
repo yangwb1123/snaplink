@@ -498,5 +498,3 @@ func receiverEndpoint(c *core.Client) string {
 // broadcaster_retry.go (which had room) to keep this file within the
 // per-file line budget.
 
-// compile-time guard: a Transmitter is an audit.Sink.
-var _ audit.Sink = (*Transmitter)(nil)
