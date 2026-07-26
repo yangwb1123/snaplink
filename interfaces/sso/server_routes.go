@@ -147,11 +147,13 @@ func (s *Server) mountCoreOAuthOIDC() {
 	if s.clientStore != nil {
 		s.router.GET(PathLoginUIMetadata, s.handleLoginUIMetadata)
 	}
-	// FGA product API — tuple CRUD + Check, client-credentials gated.
+	// FGA product API — tuple CRUD + Check + Batch + Graph, client-credentials gated.
 	if s.rebacStore != nil {
 		s.router.POST(PathAuthzTuples, s.handleAuthzWriteTuples)
 		s.router.GET(PathAuthzTuples, s.handleAuthzReadTuples)
 		s.router.DELETE(PathAuthzTuples, s.handleAuthzDeleteTuple)
+		s.router.POST(PathAuthzTuplesBatch, s.handleAuthzBatchWriteTuples)
+		s.router.GET(PathAuthzGraph, s.handleAuthzReverseExpand)
 	}
 	if s.rebacEngine != nil {
 		s.router.GET(PathAuthzCheck, s.handleAuthzCheckAccess)

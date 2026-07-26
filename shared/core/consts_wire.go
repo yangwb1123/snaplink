@@ -336,6 +336,8 @@ const (
 const (
 	PathAdminRebacCheck = "/admin/rebac/check"
 	PathAuthzTuples     = "/authz/tuples"
+	PathAuthzTuplesBatch = "/authz/tuples/batch"
+	PathAuthzGraph      = "/authz/graph"
 	PathAuthzCheck      = "/authz/check"
 )
 // Pluggable WASM authorization-decision engine (platform/lifecycle/wasmauthz,

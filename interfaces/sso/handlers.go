@@ -261,6 +261,8 @@ func (s *Server) handleAuthzWriteTuples(ctx HandlerContext)  { rebac.HandleWrite
 func (s *Server) handleAuthzDeleteTuple(ctx HandlerContext)  { rebac.HandleDeleteTuple(s, ctx) }
 func (s *Server) handleAuthzReadTuples(ctx HandlerContext)   { rebac.HandleReadTuples(s, ctx) }
 func (s *Server) handleAuthzCheckAccess(ctx HandlerContext)  { rebac.HandleCheckAccess(s, ctx) }
+func (s *Server) handleAuthzBatchWriteTuples(ctx HandlerContext) { rebac.HandleBatchWriteTuples(s, ctx) }
+func (s *Server) handleAuthzReverseExpand(ctx HandlerContext)    { rebac.HandleReverseExpand(s, ctx) }
 func (s *Server) handleAdminListProviders(ctx HandlerContext)  { admin.HandleAdminListProviders(s, ctx) }
 func (s *Server) handleAdminGetProvider(ctx HandlerContext)    { admin.HandleAdminGetProvider(s, ctx) }
 func (s *Server) handleAdminCreateProvider(ctx HandlerContext) { admin.HandleAdminCreateProvider(s, ctx) }

@@ -139,3 +139,75 @@ func HandleCheckAccess(d TupleDeps, ctx core.HandlerContext) {
 		"relation": relation, "subject": subject,
 	})
 }
+
+// batchTupleRequest is the request body for HandleBatchWriteTuples.
+type batchTupleRequest struct {
+	Writes  []Tuple `json:"writes,omitempty"`
+	Deletes []Tuple `json:"deletes,omitempty"`
+}
+
+// HandleBatchWriteTuples serves POST /authz/tuples/batch — executes a
+// batch of writes and deletes atomically (all-or-nothing via the store's
+// own semantics; the MemoryStore processes them sequentially without an
+// explicit transaction, while a future SQLite/Postgres backend would wrap
+// them in a BEGIN/COMMIT). Modeled after Zanzibar's WriteTuples RPC.
+func HandleBatchWriteTuples(d TupleDeps, ctx core.HandlerContext) {
+	store := d.RebacStore()
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
+	raw, err := io.ReadAll(ctx.Request().Body)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBodyDesc(core.ErrInvalidRequest, "cannot read body"))
+		return
+	}
+	var req batchTupleRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBodyDesc(core.ErrInvalidRequest, "invalid JSON"))
+		return
+	}
+	for _, t := range req.Writes {
+		if err := store.Write(ctx.Request().Context(), t); err != nil {
+			ctx.JSON(http.StatusBadRequest, d.ErrorBodyDesc(core.ErrInvalidRequest, err.Error()))
+			return
+		}
+	}
+	for _, t := range req.Deletes {
+		if err := store.Delete(ctx.Request().Context(), t); err != nil {
+			ctx.JSON(http.StatusBadRequest, d.ErrorBodyDesc(core.ErrInvalidRequest, err.Error()))
+			return
+		}
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"status": "ok", "written": len(req.Writes), "deleted": len(req.Deletes)})
+}
+
+// HandleReverseExpand serves GET /authz/graph — given a subject,
+// returns every (object, relation) pair the subject has been granted.
+// This is the "what can this user access?" reverse query.
+func HandleReverseExpand(d TupleDeps, ctx core.HandlerContext) {
+	store := d.RebacStore()
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
+	subject := ctx.Query("subject")
+	if subject == "" {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrInvalidRequest))
+		return
+	}
+	tuples, err := store.Read(ctx.Request().Context(), TupleFilter{Subject: subject})
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBodyDesc(core.ErrInternal, err.Error()))
+		return
+	}
+	type edge struct {
+		Object   string `json:"object"`
+		Relation string `json:"relation"`
+	}
+	edges := make([]edge, 0, len(tuples))
+	for _, t := range tuples {
+		edges = append(edges, edge{Object: t.Object, Relation: t.Relation})
+	}
+	ctx.JSON(http.StatusOK, map[string]any{"subject": subject, "edges": edges})
+}
