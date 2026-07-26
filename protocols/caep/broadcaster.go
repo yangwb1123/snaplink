@@ -440,18 +440,27 @@ func (t *Transmitter) fail(ctx context.Context, clientID, endpoint, reason strin
 }
 
 // Get implements audit.Sink — write-only.
-func (t *Transmitter) Get(context.Context, string) (*audit.Event, error) {
+func (t *Transmitter) Get(_ context.Context, _ string) (*audit.Event, error) {
+	if t == nil {
+		return nil, nil
+	}
 	return nil, audit.ErrSinkWriteOnly
 }
 
 // Query implements audit.Sink — write-only.
-func (t *Transmitter) Query(context.Context, audit.Query) ([]*audit.Event, error) {
+func (t *Transmitter) Query(_ context.Context, _ audit.Query) ([]*audit.Event, error) {
+	if t == nil {
+		return nil, nil
+	}
 	return nil, audit.ErrSinkWriteOnly
 }
 
 // Close drains in-flight async sends so a shutting-down server doesn't
 // abandon goroutines mid-POST. Bounded by each send's own timeout.
 func (t *Transmitter) Close(ctx context.Context) error {
+	if t == nil {
+		return nil
+	}
 	// Abort any pending retry backoff so drain is bounded by the in-flight
 	// POST, not the remaining retry chain. stopOnce guards the double-Close
 	// existing tests perform (closing an already-closed channel panics).
