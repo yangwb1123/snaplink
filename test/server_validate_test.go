@@ -95,12 +95,12 @@ func TestServer_RegisterAuthenticator_AddsAfterConstruction(t *testing.T) {
 	providers, _ := body["providers"].([]any)
 	found := false
 	for _, p := range providers {
-		if s, _ := p.(string); s == "password" {
+		if pm, _ := p.(map[string]any); pm != nil && pm["id"] == "password" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("password not in providers list: %s", raw)
+		t.Errorf("password not in providers list")
 	}
 }
 
@@ -235,8 +235,8 @@ func TestLogin_ProvidersListing_ScopedByClient(t *testing.T) {
 	if len(providers) != 1 {
 		t.Fatalf("providers = %v, want only [password] for restricted client", providers)
 	}
-	if s, _ := providers[0].(string); s != "password" {
-		t.Errorf("provider = %q, want password", s)
+		if pm, _ := providers[0].(map[string]any); pm == nil || pm["id"] != "password" {
+		t.Errorf("provider = %v, want password", pm)
 	}
 }
 
