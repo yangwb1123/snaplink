@@ -166,11 +166,11 @@ def test_tier_version_lines_and_ldflags_are_exact():
     )
     ldflags = module_builder._build_ldflags(plan, "sha256:test", version)
     assert (
-        "-X github.com/snaplink/sso/platform/buildinfo.Version=v1.1.1"
+        "-X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v1.1.1"
         in ldflags
     )
     assert (
-        "-X github.com/snaplink/sso/platform/buildinfo.BuildProfile=minimal"
+        "-X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=minimal"
         in ldflags
     )
 

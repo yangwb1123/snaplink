@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // TestProjectRequestedClaims_DefaultDeny is the credential-leak regression guard

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreidentity"
 )
 
 func TestIsDormant(t *testing.T) {

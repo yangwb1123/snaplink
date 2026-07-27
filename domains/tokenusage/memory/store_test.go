@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/tokenusage"
+	"github.com/yangwb1123/snaplink/domains/tokenusage"
 )
 
 // at builds a time.Time at the given UTC minute (seconds/sub-second vary to

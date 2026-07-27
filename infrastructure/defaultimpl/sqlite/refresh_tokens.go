@@ -1,6 +1,6 @@
 package sqlite
 
-import "github.com/snaplink/sso/protocols/oauth"
+import "github.com/yangwb1123/snaplink/protocols/oauth"
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
 // oauth.RefreshTokenStore is the SQLite-backed implementation. Implements

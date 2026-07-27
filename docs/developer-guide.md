@@ -12,7 +12,7 @@ are separate projects; do not add static UI assets to this repository.
 Use the Go version in `go.mod` and Python version in `pyproject.toml`.
 
 ```bash
-git clone https://github.com/snaplink/sso
+git clone https://github.com/yangwb1123/snaplink
 cd sso
 go build ./...
 go test ./...

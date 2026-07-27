@@ -7,8 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	configreload "github.com/snaplink/sso/config/reload"
-	"github.com/snaplink/sso/shared/spi"
+	configreload "github.com/yangwb1123/snaplink/config/reload"
+	"github.com/yangwb1123/snaplink/shared/spi"
 	"google.golang.org/grpc"
 
 	"net/http"

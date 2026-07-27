@@ -14,14 +14,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/domains/authenticators"
-	"github.com/snaplink/sso/domains/connections"
-	"github.com/snaplink/sso/domains/federation"
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/protocols/caep"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	"github.com/yangwb1123/snaplink/domains/connections"
+	"github.com/yangwb1123/snaplink/domains/federation"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/protocols/caep"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // fgAdminEnv bundles an AdminMiddleware-fronted httptest server plus a bearer

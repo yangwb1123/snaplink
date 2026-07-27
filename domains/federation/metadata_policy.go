@@ -1,6 +1,6 @@
 package federation
 
-import "github.com/snaplink/sso/domains/federation/metadatapolicy"
+import "github.com/yangwb1123/snaplink/domains/federation/metadatapolicy"
 
 // rpMetadataType is the metadata type whose policy the resolver applies. Slice
 // 2 resolves RPs, so only openid_relying_party is enforced; other types (e.g.

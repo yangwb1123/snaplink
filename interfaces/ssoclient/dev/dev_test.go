@@ -5,9 +5,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/interfaces/ssoclient"
-	"github.com/snaplink/sso/interfaces/ssoclient/dev"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/dev"
 )
 
 func TestAuthClient_DefaultSubject(t *testing.T) {

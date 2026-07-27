@@ -14,7 +14,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/snaplink/sso/cmd/sso-ctl/apiclient"
+	"github.com/yangwb1123/snaplink/cmd/sso-ctl/apiclient"
 )
 
 const tenantsProg = "sso-ctl tenants"

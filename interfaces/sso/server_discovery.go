@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/domains/metering"
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/cluster"
-	"github.com/snaplink/sso/protocols/oidc"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/metering"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 const PathOIDCDiscovery = "/.well-known/openid-configuration"

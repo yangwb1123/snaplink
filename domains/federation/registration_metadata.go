@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // MetadataToClient derives a core.Client from the POLICY-APPLIED

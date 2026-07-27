@@ -9,7 +9,7 @@
 // # Why a separate Go module
 //
 // This package lives in its own nested module
-// (github.com/snaplink/sso/kms/gcpkms) so the heavy, vendor-specific
+// (github.com/yangwb1123/snaplink/kms/gcpkms) so the heavy, vendor-specific
 // cloud.google.com/go/kms dependency NEVER enters the core sso module's
 // go.mod. The core module's zero-external-(non-stdlib-adjacent)-SDK
 // invariant is a firm property of the repo; operators who need Cloud KMS

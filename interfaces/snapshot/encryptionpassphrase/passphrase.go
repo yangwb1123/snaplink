@@ -21,7 +21,7 @@ import (
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
 
-	"github.com/snaplink/sso/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
 )
 
 const (

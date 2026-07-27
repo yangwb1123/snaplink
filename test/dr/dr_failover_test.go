@@ -7,8 +7,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/platform/lifecycle/dr"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/dr"
 )
 
 // Scenario (a): replicate -> corrupt the replica on the DR mount -> the

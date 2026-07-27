@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	samlidp "github.com/snaplink/sso/saml/idp"
+	samlidp "github.com/yangwb1123/snaplink/saml/idp"
 )
 
 // logoutReplaySchema dedups inbound SP-initiated LogoutRequest IDs on the IdP

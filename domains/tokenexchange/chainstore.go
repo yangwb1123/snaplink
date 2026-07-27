@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // ChainHop is one durable, queryable record of a single RFC 8693 §4.1

@@ -4,7 +4,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/snaplink/sso/protocols/fapi"
+	"github.com/yangwb1123/snaplink/protocols/fapi"
 )
 
 // compliantAuth is a fully FAPI-2.0-compliant authorization context;

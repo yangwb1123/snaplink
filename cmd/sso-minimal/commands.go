@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/snaplink/sso/platform/buildinfo"
+	"github.com/yangwb1123/snaplink/platform/buildinfo"
 )
 
 const (

@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/internal/auth/login"
-	"github.com/snaplink/sso/platform/cluster"
-	"github.com/snaplink/sso/protocols/oidc"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/internal/auth/login"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func (s *Server) handleLogin(ctx HandlerContext) {

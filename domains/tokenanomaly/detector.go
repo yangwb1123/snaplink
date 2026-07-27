@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/domains/threataction"
-	"github.com/snaplink/sso/domains/tokenusage"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/domains/threataction"
+	"github.com/yangwb1123/snaplink/domains/tokenusage"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // Default tuning. All are relative/adaptive rather than absolute-rate

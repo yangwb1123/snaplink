@@ -4,7 +4,7 @@ import (
 	"encoding/base64"
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func TestValidTenantRole(t *testing.T) {

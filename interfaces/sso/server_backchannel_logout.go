@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/sessionhub"
 )
 
 // OIDC Back-Channel Logout 1.0.

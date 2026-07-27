@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // TestHandleLivez locks the liveness probe: always 200 with the alive body and

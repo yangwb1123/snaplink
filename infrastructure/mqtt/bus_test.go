@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/eclipse/paho.golang/paho"
-	"github.com/snaplink/sso/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/cluster"
 )
 
 func newTestBus(t *testing.T, addr, clientID string) *Bus {

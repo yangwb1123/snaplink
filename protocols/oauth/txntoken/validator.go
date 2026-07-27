@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security/securityverify"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security/securityverify"
 )
 
 // Validator is the RECEIVING side: it validates a Txn-Token LOCALLY

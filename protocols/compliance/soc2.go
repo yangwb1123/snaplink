@@ -7,10 +7,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // DefaultSOC2Window is how far back the change-management / access-revocation

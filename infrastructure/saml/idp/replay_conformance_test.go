@@ -3,7 +3,7 @@ package idp
 import (
 	"testing"
 
-	"github.com/snaplink/sso/saml/samltest"
+	"github.com/yangwb1123/snaplink/saml/samltest"
 )
 
 // TestLogoutReplayConformance_Memory runs the shared replay-dedup conformance

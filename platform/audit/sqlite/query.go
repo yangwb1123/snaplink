@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // Get returns the event with the given id, or [audit.ErrEventNotFound].

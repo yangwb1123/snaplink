@@ -8,28 +8,28 @@ import (
 	"io"
 	"strings"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 
-	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
+	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/domains/connections"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/connections"
 
-	connectionssqlite "github.com/snaplink/sso/domains/connections/sqlite"
+	connectionssqlite "github.com/yangwb1123/snaplink/domains/connections/sqlite"
 
-	"github.com/snaplink/sso/platform/geo"
+	"github.com/yangwb1123/snaplink/platform/geo"
 
-	"github.com/snaplink/sso/domains/metering"
-	geostatic "github.com/snaplink/sso/platform/geo/static"
+	"github.com/yangwb1123/snaplink/domains/metering"
+	geostatic "github.com/yangwb1123/snaplink/platform/geo/static"
 
-	meteringmemory "github.com/snaplink/sso/domains/metering/memory"
+	meteringmemory "github.com/yangwb1123/snaplink/domains/metering/memory"
 
-	meteringsqlite "github.com/snaplink/sso/domains/metering/sqlite"
+	meteringsqlite "github.com/yangwb1123/snaplink/domains/metering/sqlite"
 
-	"github.com/snaplink/sso/domains/region"
-	"github.com/snaplink/sso/shared/security/peertrust"
+	"github.com/yangwb1123/snaplink/domains/region"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 
-	"github.com/snaplink/sso/domains/tenant"
+	"github.com/yangwb1123/snaplink/domains/tenant"
 )
 
 // BuildTenantStore materialises the tenant.Store from TenantConfig

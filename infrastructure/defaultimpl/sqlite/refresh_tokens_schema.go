@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
 // refreshTokenSchema mirrors the in-memory contract — same fields,

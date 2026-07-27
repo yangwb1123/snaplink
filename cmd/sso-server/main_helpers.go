@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 // progName prefixes every diagnostic so multi-binary deployments can

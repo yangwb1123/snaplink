@@ -3,7 +3,7 @@ package main
 import (
 	"io"
 
-	"github.com/snaplink/sso/platform/buildinfo"
+	"github.com/yangwb1123/snaplink/platform/buildinfo"
 )
 
 // version is overridable at build time via -ldflags "-X main.version=v1.2.3";

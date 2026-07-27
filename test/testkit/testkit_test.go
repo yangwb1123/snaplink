@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/interfaces/ssoclient/remote"
-	"github.com/snaplink/sso/test/testkit"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/remote"
+	"github.com/yangwb1123/snaplink/test/testkit"
 )
 
 // TestHarness_LoginAndValidateOverJWKS is the canonical consumer flow: mint a

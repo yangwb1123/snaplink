@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/permissions"
-	auditv1 "github.com/snaplink/sso/gen/proto/audit/v1"
-	authzv1 "github.com/snaplink/sso/gen/proto/authz/v1"
-	discoveryv1 "github.com/snaplink/sso/gen/proto/discovery/v1"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/registry"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	auditv1 "github.com/yangwb1123/snaplink/gen/proto/audit/v1"
+	authzv1 "github.com/yangwb1123/snaplink/gen/proto/authz/v1"
+	discoveryv1 "github.com/yangwb1123/snaplink/gen/proto/discovery/v1"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/registry"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

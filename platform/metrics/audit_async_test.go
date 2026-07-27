@@ -10,8 +10,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 )
 
 type errSink struct{}

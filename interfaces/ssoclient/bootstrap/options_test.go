@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	ssobootstrap "github.com/snaplink/sso/interfaces/ssoclient/bootstrap"
-	"github.com/snaplink/sso/platform/audit"
+	ssobootstrap "github.com/yangwb1123/snaplink/interfaces/ssoclient/bootstrap"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // captureLogger records every Info/Error call so tests can assert that

@@ -7,7 +7,7 @@ syntax = "proto3";
 
 package snaplink.authz.v1;
 
-option go_package = "github.com/snaplink/sso/gen/proto/authz/v1;authzv1";
+option go_package = "github.com/yangwb1123/snaplink/gen/proto/authz/v1;authzv1";
 
 // Authorizer answers "can this user do X?" queries. Backed by the
 // permissions.Provider interface; supports per-app (client_id) scoping.

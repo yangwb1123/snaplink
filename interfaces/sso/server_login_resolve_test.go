@@ -5,9 +5,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/domains/connections"
-	"github.com/snaplink/sso/domains/tenant"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/connections"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // server_login_resolve_test.go direct-call-tests resolveHomeRealm's

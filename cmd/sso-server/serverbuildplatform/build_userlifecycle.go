@@ -3,9 +3,9 @@ package serverbuildplatform
 import (
 	"errors"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/domains/userlifecycle"
-	userlifecyclememory "github.com/snaplink/sso/domains/userlifecycle/memory"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/userlifecycle"
+	userlifecyclememory "github.com/yangwb1123/snaplink/domains/userlifecycle/memory"
 )
 
 // BuildUserLifecycle builds the userlifecycle.Store backing

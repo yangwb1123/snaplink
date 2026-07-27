@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/lifecycle/clienttrust"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/clienttrust"
 )
 
 func TestMemoryClientActivityStore_RecordRequiresClientID(t *testing.T) {

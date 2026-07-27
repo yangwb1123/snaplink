@@ -4,7 +4,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 func TestBuildApp_DCREnabledAdvertisesRegistrationEndpoint(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/protocols/oidc"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
 )
 
 func (j *ECDSAJWTIssuer) Issue(ctx context.Context, subject *sso.Subject, scopes []string) (*sso.Token, error) {

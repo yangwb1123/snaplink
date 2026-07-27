@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // dpopProofMaxAgeDefault bounds how far in the past a proof iat may lie —

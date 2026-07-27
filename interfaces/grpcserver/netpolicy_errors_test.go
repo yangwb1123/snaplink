@@ -11,9 +11,9 @@ import (
 	"errors"
 	"testing"
 
-	netpolicyv1 "github.com/snaplink/sso/gen/proto/netpolicy/v1"
-	"github.com/snaplink/sso/platform/netpolicy"
-	"github.com/snaplink/sso/platform/netpolicy/memory"
+	netpolicyv1 "github.com/yangwb1123/snaplink/gen/proto/netpolicy/v1"
+	"github.com/yangwb1123/snaplink/platform/netpolicy"
+	"github.com/yangwb1123/snaplink/platform/netpolicy/memory"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

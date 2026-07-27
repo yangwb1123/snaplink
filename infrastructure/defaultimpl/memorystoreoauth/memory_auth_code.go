@@ -9,8 +9,8 @@ import (
 	"maps"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memreaper"
-	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memreaper"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 // authCodeBytes is the size in bytes of generated codes (32 → 43 base64url

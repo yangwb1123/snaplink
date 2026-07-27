@@ -12,9 +12,9 @@ import (
 	"net"
 	"testing"
 
-	"github.com/snaplink/sso/domains/permissions"
-	authzv1 "github.com/snaplink/sso/gen/proto/authz/v1"
-	"github.com/snaplink/sso/interfaces/grpcserver"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	authzv1 "github.com/yangwb1123/snaplink/gen/proto/authz/v1"
+	"github.com/yangwb1123/snaplink/interfaces/grpcserver"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"

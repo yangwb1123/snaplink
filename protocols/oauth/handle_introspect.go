@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/domains/tenant"
-	"github.com/snaplink/sso/domains/tokenusage"
-	"github.com/snaplink/sso/interfaces/middleware"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	"github.com/yangwb1123/snaplink/domains/tokenusage"
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // ClientAssertionTypeJWTBearer is the RFC 7521 §4.2 URN for

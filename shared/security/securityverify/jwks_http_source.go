@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // HTTP JWKS fetching, shared by every cloud workload-identity preset (GCP

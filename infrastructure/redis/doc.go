@@ -7,14 +7,14 @@
 // # Why a separate Go module
 //
 // This package lives in its own nested module
-// (github.com/snaplink/sso/infrastructure/redis) so the github.com/redis/go-redis
+// (github.com/yangwb1123/snaplink/infrastructure/redis) so the github.com/redis/go-redis
 // dependency NEVER enters the core sso module's go.mod. The core's
 // zero-external-SDK invariant is a firm property of the repo: operators
 // who need Redis opt in by importing this submodule from their own cmd
 // binary. This mirrors kms/awskms (which keeps aws-sdk-go-v2 out of the
 // core). There is deliberately no go.work — a workspace would merge the
 // build lists and surface go-redis in the core's `go list -m all`. The
-// submodule resolves the core via a `replace github.com/snaplink/sso =>
+// submodule resolves the core via a `replace github.com/yangwb1123/snaplink =>
 // ../` directive; CI builds + race-tests it via the Makefile `ci-modules`
 // target, against an in-process miniredis fake (no real Redis needed).
 //

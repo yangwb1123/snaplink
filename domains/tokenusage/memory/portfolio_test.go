@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/tokenusage"
-	"github.com/snaplink/sso/domains/tokenusage/memory"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/domains/tokenusage"
+	"github.com/yangwb1123/snaplink/domains/tokenusage/memory"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // HandleAdminPortfolio is exercised against a REAL memory usage store (no

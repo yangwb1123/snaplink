@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 func TestRedactor_ActorIDHashWithSalt(t *testing.T) {

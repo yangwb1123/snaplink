@@ -21,10 +21,10 @@ import (
 	kmspb "cloud.google.com/go/kms/apiv1/kmspb"
 	gax "github.com/googleapis/gax-go/v2"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/cryptosigner"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/cryptosigner"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // fakeKMS is an in-process stand-in for the GCP Cloud KMS

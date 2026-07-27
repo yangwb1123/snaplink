@@ -8,7 +8,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/snaplink/sso/domains/tokenexchange"
+	"github.com/yangwb1123/snaplink/domains/tokenexchange"
 )
 
 // Store is the in-memory implementation of [tokenexchange.Policy]. Safe for

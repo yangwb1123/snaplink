@@ -9,7 +9,7 @@ import (
 	"math/big"
 
 	"github.com/go-jose/go-jose/v4"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // RSAJWEDecrypter unwraps RFC 9101 JAR request objects encrypted to

@@ -12,8 +12,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/platform/lifecycle/wasmauthz"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/wasmauthz"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 type testDeps struct{ eng *wasmauthz.Engine }

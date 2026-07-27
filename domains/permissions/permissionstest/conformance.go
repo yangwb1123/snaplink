@@ -14,7 +14,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/permissions"
 )
 
 // ConformanceSuite exercises every Provider semantic both backends

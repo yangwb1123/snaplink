@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/platform/audit/auditspi"
+	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
 )
 
 func TestWriterSink_Record_AssignsIDAndWritesJSONLine(t *testing.T) {

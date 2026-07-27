@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/cluster"
-	"github.com/snaplink/sso/platform/signingkeys"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/signingkeys"
 )
 
 // AuditorSinkForTest exposes the recorder's current sink so a test can

@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/snaplink/sso/cmd/sso-ctl/apiclient"
+	"github.com/yangwb1123/snaplink/cmd/sso-ctl/apiclient"
 )
 
 const usersProg = "sso-ctl users"

@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/bootstrap"
-	"github.com/snaplink/sso/platform/bootstrap/lock"
-	"github.com/snaplink/sso/platform/bootstrap/lockfile"
-	"github.com/snaplink/sso/platform/bootstrap/locknoop"
-	"github.com/snaplink/sso/platform/bootstrap/memory"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/bootstrap"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/lock"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/lockfile"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/locknoop"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/memory"
 )
 
 // fakeLock is a minimal in-memory Lock that lets each test script the

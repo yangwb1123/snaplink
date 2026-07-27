@@ -6,10 +6,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/cluster"
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // Deadline-coordinated same-kid signing-key rotation cutover.

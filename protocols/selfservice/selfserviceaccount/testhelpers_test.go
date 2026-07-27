@@ -34,16 +34,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators/device"
-	"github.com/snaplink/sso/domains/identitylink"
-	identitylinkmemory "github.com/snaplink/sso/domains/identitylink/memory"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystorecredential"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/protocols/compliance"
-	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/domains/authenticators/device"
+	"github.com/yangwb1123/snaplink/domains/identitylink"
+	identitylinkmemory "github.com/yangwb1123/snaplink/domains/identitylink/memory"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystorecredential"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreidentity"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/compliance"
+	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicecore"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 type testDeps struct {

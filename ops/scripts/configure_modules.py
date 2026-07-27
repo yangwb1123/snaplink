@@ -38,8 +38,8 @@ OUTPUT_MARKER = ".snaplink-modules-output"
 OVERLAY_TARGET = (
     ROOT / "cmd" / "sso-server" / "servermodules" / "register_configured.go"
 )
-BUILDINFO_IMPORT = "github.com/snaplink/sso/platform/buildinfo"
-ROOT_MODULE_PATH = "github.com/snaplink/sso"
+BUILDINFO_IMPORT = "github.com/yangwb1123/snaplink/platform/buildinfo"
+ROOT_MODULE_PATH = "github.com/yangwb1123/snaplink"
 EDITION_PROFILES = frozenset({"prototype", "minimal", "production"})
 SEMVER_PRERELEASE_ID = (
     r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -98,7 +98,7 @@ CGO_ENV_KEYS = (
 REGISTRATION_HANDLERS = {
     "audit.kafka.factory.v1": {
         "host_alias": "serverbuildauthn",
-        "host_package": "github.com/snaplink/sso/cmd/sso-server/serverbuildauthn",
+        "host_package": "github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildauthn",
         "host_symbol": "RegisterAuditKafkaSinkFactory",
     }
 }
@@ -603,7 +603,7 @@ def _lock_payload(
         "catalog_digest": plan.catalog.digest,
         "profile_digest": plan.profile.digest,
         "core": {
-            "module_path": "github.com/snaplink/sso",
+            "module_path": "github.com/yangwb1123/snaplink",
             "revision": revision,
             "dirty": dirty,
             "source_digest": source_digests.get(ROOT_MODULE_PATH, ""),

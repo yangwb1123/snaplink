@@ -7,7 +7,7 @@ syntax = "proto3";
 
 package snaplink.audit.v1;
 
-option go_package = "github.com/snaplink/sso/gen/proto/audit/v1;auditv1";
+option go_package = "github.com/yangwb1123/snaplink/gen/proto/audit/v1;auditv1";
 
 // AuditWriter ingests events from gateways and other services. The streaming
 // RPC is the hot path — gRPC keeps a long-lived connection so per-event

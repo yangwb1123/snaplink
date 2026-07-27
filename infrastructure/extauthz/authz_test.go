@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"

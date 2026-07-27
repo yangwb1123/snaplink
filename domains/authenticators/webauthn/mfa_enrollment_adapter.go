@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // mfaFactorLabel is the human-facing label for a passkey in /me/mfa.

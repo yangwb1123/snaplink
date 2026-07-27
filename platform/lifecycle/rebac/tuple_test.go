@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/platform/lifecycle/rebac"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/rebac"
 )
 
 func TestSplitUserset(t *testing.T) {

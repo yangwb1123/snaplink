@@ -73,8 +73,8 @@
 //	import (
 //		"net"
 //
-//		"github.com/snaplink/sso/interfaces/sso"
-//		"github.com/snaplink/sso/extauthz"
+//		"github.com/yangwb1123/snaplink/interfaces/sso"
+//		"github.com/yangwb1123/snaplink/extauthz"
 //		authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
 //		"google.golang.org/grpc"
 //	)

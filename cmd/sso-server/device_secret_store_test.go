@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 func TestBuildDeviceSecretStore_DisabledByDefault(t *testing.T) {

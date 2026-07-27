@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
 const sessionIDBytes = 32

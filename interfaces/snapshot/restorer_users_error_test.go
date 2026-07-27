@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // errUserBackendDown simulates a transient backend failure (connection

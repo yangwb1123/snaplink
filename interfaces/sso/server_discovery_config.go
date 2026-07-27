@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/protocols/oidc"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 func codeChallengeMethodsFor(s *Server) []string {

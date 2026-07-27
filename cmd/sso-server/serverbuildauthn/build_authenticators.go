@@ -5,14 +5,14 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/spi"
 
-	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
 
-	"github.com/snaplink/sso/config"
-	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
-	redisbackend "github.com/snaplink/sso/infrastructure/redis"
+	"github.com/yangwb1123/snaplink/config"
+	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
+	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 )
 
 // BuildAuthenticators returns the configured authenticators, the temp

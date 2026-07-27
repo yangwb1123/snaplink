@@ -4,15 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/snaplink/sso/domains/region"
-	"github.com/snaplink/sso/domains/tenant"
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/domains/region"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 // ExternalUserStore returns the wired cross-tenant guest-record store

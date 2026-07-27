@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/labstack/echo/v4"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 func do(t *testing.T, r *EchoRouter, method, path, body string) *httptest.ResponseRecorder {

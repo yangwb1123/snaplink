@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/ratelimit"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/geo"
-	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/geo"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/admingovernance"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // Admin governance framework: the generic change-approval workflow (HTTP

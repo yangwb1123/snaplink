@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/snaplink/sso/interfaces/ssoclient"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient"
 )
 
 // introspector validates a bearer token locally (JWKS). Satisfied by *remote.AuthClient.

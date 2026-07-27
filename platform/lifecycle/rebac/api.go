@@ -5,7 +5,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // APIHandler holds the product-level FGA tuple management handlers.

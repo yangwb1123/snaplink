@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/tokenusage"
+	"github.com/yangwb1123/snaplink/domains/tokenusage"
 )
 
 // TestNewDetector verifies nil-safe behavior and constructor.

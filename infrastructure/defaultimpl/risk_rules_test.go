@@ -1,13 +1,13 @@
 package defaultimpl_test
 
-import "github.com/snaplink/sso/shared/spi"
+import "github.com/yangwb1123/snaplink/shared/spi"
 
 import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/platform/geo"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/platform/geo"
 )
 
 func TestRuleBasedRiskScorer_AllowsByDefault(t *testing.T) {

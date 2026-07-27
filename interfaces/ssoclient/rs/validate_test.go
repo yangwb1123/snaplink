@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/ssoclient/rs"
-	"github.com/snaplink/sso/interfaces/ssoclient/rstest"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/rs"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/rstest"
 )
 
 // newTestIssuer starts a fixture issuer + JWKS server and registers cleanup.

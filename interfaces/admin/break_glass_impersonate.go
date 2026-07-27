@@ -5,10 +5,10 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/snaplink/sso/interfaces/middleware"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/domains/tenant"
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/domains/tenant"
 )
 
 // Break-glass LIVE impersonation: an active+approved impersonate/escalate grant

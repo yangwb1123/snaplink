@@ -14,7 +14,7 @@
 //
 // The Kerberos dependency (github.com/jcmturner/gokrb5/v8 and its asn1/crypto
 // transitive deps) lives ONLY in this module's go.mod
-// (github.com/snaplink/sso/kerberos). The core sso module's go.mod stays
+// (github.com/yangwb1123/snaplink/kerberos). The core sso module's go.mod stays
 // byte-free of it — the firm zero-external-SDK-in-core invariant that also
 // isolates kms/awskms (aws-sdk-go-v2), redis (go-redis), saml (crewjam/saml),
 // ldap (go-ldap), and extauthz (envoy go-control-plane). Operators who need
@@ -59,8 +59,8 @@
 //		"log"
 //		"net/http"
 //
-//		"github.com/snaplink/sso/interfaces/sso"
-//		kerberosauth "github.com/snaplink/sso/kerberos"
+//		"github.com/yangwb1123/snaplink/interfaces/sso"
+//		kerberosauth "github.com/yangwb1123/snaplink/kerberos"
 //	)
 //
 //	func wireKerberos(srv *sso.Server) error {

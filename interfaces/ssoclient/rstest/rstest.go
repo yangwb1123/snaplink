@@ -15,8 +15,8 @@ import (
 	"net/http/httptest"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // accessTokenTyp is the RFC 9068 header typ the fixture stamps — the same

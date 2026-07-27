@@ -9,11 +9,11 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"fmt"
-	"github.com/snaplink/sso/platform/signingkeys"
+	"github.com/yangwb1123/snaplink/platform/signingkeys"
 	"math/big"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // JWK key-type discriminators (RFC 7517 §4.1).

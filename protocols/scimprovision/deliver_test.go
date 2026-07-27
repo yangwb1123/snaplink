@@ -3,7 +3,7 @@ package scimprovision
 import (
 	"testing"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 func TestSubjectID(t *testing.T) {

@@ -1,8 +1,8 @@
 package federation_test
 
 import (
-	"github.com/snaplink/sso/domains/federation"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/domains/federation"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
 // Compile-time guards that the three defaultimpl signing issuers satisfy

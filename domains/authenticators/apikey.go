@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // APIKeyResolver looks up the secret hash + identity bound to an API key ID.

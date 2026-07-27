@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 
 	_ "modernc.org/sqlite"
 )

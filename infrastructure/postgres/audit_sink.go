@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
 // auditSchema is the Postgres baseline for the audit_events table (the sqlite

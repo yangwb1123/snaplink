@@ -17,8 +17,8 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/snaplink/sso/platform/signingkeys"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/platform/signingkeys"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // ErrClosed is returned by operations after the Registry is closed.

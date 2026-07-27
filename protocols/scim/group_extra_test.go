@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // These tests cover the group handler + group PATCH branches the existing

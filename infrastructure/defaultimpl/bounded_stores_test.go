@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreoauth"
-	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreoauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 func TestMemoryRefreshTokenStore_MaxEntriesRejectsNewTokensAtCapacity(t *testing.T) {

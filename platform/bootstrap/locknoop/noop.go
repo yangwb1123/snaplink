@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/snaplink/sso/platform/bootstrap/lock"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/lock"
 )
 
 // Lock is the no-op Lock. Always succeeds; FencingToken is always 0.

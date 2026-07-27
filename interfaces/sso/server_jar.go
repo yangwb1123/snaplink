@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/internal/auth/login"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/internal/auth/login"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // RFC 9101 — JWT-Secured Authorization Request (JAR).

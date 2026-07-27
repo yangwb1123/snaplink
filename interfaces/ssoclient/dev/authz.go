@@ -3,8 +3,8 @@ package dev
 import (
 	"context"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/interfaces/ssoclient"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient"
 )
 
 // AuthzClient is a stub ssoclient.AuthzClient. By default every Check

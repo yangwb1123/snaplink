@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // HandlerDeps is what the webhook admin HTTP handlers need. *sso.Server

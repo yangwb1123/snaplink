@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/federation"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/domains/federation"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // This is the FULL-SERVER companion to federation/handler_test.go: that suite

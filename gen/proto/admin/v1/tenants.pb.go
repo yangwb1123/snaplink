@@ -1339,7 +1339,7 @@ const file_admin_v1_tenants_proto_rawDesc = "" +
 	"\tGetDomain\x12#.snaplink.admin.v1.GetDomainRequest\x1a$.snaplink.admin.v1.GetDomainResponse\"(\x82\xd3\xe4\x93\x02\"\x12 /api/v1/admin/domains/{hostname}\x12\x86\x01\n" +
 	"\fCreateDomain\x12&.snaplink.admin.v1.CreateDomainRequest\x1a'.snaplink.admin.v1.CreateDomainResponse\"%\x82\xd3\xe4\x93\x02\x1f:\x06domain\"\x15/api/v1/admin/domains\x12\x98\x01\n" +
 	"\fUpdateDomain\x12&.snaplink.admin.v1.UpdateDomainRequest\x1a'.snaplink.admin.v1.UpdateDomainResponse\"7\x82\xd3\xe4\x93\x021:\x06domain\x1a'/api/v1/admin/domains/{domain.hostname}\x12\x89\x01\n" +
-	"\fDeleteDomain\x12&.snaplink.admin.v1.DeleteDomainRequest\x1a'.snaplink.admin.v1.DeleteDomainResponse\"(\x82\xd3\xe4\x93\x02\"* /api/v1/admin/domains/{hostname}B4Z2github.com/snaplink/sso/gen/proto/admin/v1;adminv1b\x06proto3"
+	"\fDeleteDomain\x12&.snaplink.admin.v1.DeleteDomainRequest\x1a'.snaplink.admin.v1.DeleteDomainResponse\"(\x82\xd3\xe4\x93\x02\"* /api/v1/admin/domains/{hostname}B;Z9github.com/yangwb1123/snaplink/gen/proto/admin/v1;adminv1b\x06proto3"
 
 var (
 	file_admin_v1_tenants_proto_rawDescOnce sync.Once

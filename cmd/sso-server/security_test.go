@@ -8,12 +8,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/interfaces/ratelimit"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildauthn"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildplatform"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 func TestBuildRateLimitPolicy_DefaultAndPrefixes(t *testing.T) {

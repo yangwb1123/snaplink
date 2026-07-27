@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 func baseConfig() *config.Config {

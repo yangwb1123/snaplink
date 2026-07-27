@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/snaplink/sso/interfaces/admin"
+	"github.com/yangwb1123/snaplink/interfaces/admin"
 )
 
 // Default pagination bounds (RFC 7644 §3.4.2.4). A request that omits

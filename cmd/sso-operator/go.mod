@@ -1,4 +1,4 @@
-module github.com/snaplink/operator
+module github.com/yangwb1123/snaplink/cmd/sso-operator
 
 go 1.26.1
 

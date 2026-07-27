@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildauthn"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"golang.org/x/crypto/bcrypt"
 )
 

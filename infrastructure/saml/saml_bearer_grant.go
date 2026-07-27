@@ -14,9 +14,9 @@ import (
 	"github.com/crewjam/saml"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/snaplink/sso/internal/handler/tokengrant"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/internal/handler/tokengrant"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // GrantTypeSAML2Bearer is the URN for RFC 7522 SAML 2.0 Bearer

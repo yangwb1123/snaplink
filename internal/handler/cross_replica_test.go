@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/cluster"
-	clustermem "github.com/snaplink/sso/platform/cluster/memory"
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	clustermem "github.com/yangwb1123/snaplink/platform/cluster/memory"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // makeJWT builds a compact JWT whose payload carries the given exp. The

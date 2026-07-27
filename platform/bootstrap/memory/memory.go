@@ -5,7 +5,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/snaplink/sso/platform/bootstrap"
+	"github.com/yangwb1123/snaplink/platform/bootstrap"
 )
 
 // Tracker is an in-memory bootstrap.Tracker. State is lost on restart —

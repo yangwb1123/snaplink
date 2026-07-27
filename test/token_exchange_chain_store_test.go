@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/snaplink/sso/domains/tokenexchange"
-	"github.com/snaplink/sso/domains/tokenexchange/memory"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/domains/tokenexchange"
+	"github.com/yangwb1123/snaplink/domains/tokenexchange/memory"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // TestTokenExchange_ChainStoreRecordsHopOnSuccess proves the ONE wired call

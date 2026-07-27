@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/connections"
+	"github.com/yangwb1123/snaplink/domains/connections"
 )
 
 // fakeProber is a deterministic Prober test double — no real network — used

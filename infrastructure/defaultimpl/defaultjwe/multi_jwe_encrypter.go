@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // MultiJWEResponseEncrypter composes several [security.JWEEncrypter]s and

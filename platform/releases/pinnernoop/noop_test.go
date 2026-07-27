@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/platform/releases"
-	"github.com/snaplink/sso/platform/releases/pinnernoop"
+	"github.com/yangwb1123/snaplink/platform/releases"
+	"github.com/yangwb1123/snaplink/platform/releases/pinnernoop"
 )
 
 func TestPinForwardAndRollbackReturnNil(t *testing.T) {

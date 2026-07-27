@@ -9,7 +9,7 @@ package snaplink.admin.v1;
 
 import "google/api/annotations.proto";
 
-option go_package = "github.com/snaplink/sso/gen/proto/admin/v1;adminv1";
+option go_package = "github.com/yangwb1123/snaplink/gen/proto/admin/v1;adminv1";
 
 // ReleaseAdminService manages paired frontend+backend release
 // artifacts (Phase D-3). Pin marks one as current; Rollback flips to

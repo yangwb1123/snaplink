@@ -9,14 +9,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/middleware"
-	"github.com/snaplink/sso/internal/handler"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/cluster"
-	"github.com/snaplink/sso/protocols/caep"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/internal/handler"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/protocols/caep"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // temporarily fails.

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/registry"
-	"github.com/snaplink/sso/platform/registry/memory"
+	"github.com/yangwb1123/snaplink/platform/registry"
+	"github.com/yangwb1123/snaplink/platform/registry/memory"
 )
 
 // TestBroadcastCloseRace exercises broadcast (driven by Register/Deregister)

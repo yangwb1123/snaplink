@@ -3,7 +3,7 @@ package region
 import (
 	"net/http"
 
-	"github.com/snaplink/sso/shared/security/peertrust"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
 // DefaultServingRegionHeader is the request header HeaderResolver reads

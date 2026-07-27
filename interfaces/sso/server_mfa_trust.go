@@ -3,8 +3,8 @@ package sso
 import (
 	"sync"
 
-	"github.com/snaplink/sso/internal/auth/login"
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/internal/auth/login"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // respFieldDeviceToken is the /auth/mfa success-response field carrying a

@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // UserInfoDeps is what HandleUserInfo needs. *sso.Server satisfies it via

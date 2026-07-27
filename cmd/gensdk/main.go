@@ -22,7 +22,7 @@
 //	go run ./cmd/gensdk --lang=py
 //	go run ./cmd/gensdk --lang=all   # default
 //
-// The generator reads the SAME embedded spec (github.com/snaplink/sso/docs)
+// The generator reads the SAME embedded spec (github.com/yangwb1123/snaplink/docs)
 // the opt-in admin API-docs viewer (interfaces/apidocs, sso.WithAPIDocsUI)
 // serves, so both stay in lockstep with docs/openapi.yaml without a
 // separate copy. Pass --spec to point at a different file (e.g. while
@@ -38,7 +38,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 
-	"github.com/snaplink/sso/docs"
+	"github.com/yangwb1123/snaplink/docs"
 )
 
 func main() {

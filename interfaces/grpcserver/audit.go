@@ -12,8 +12,8 @@ import (
 	"io"
 	"time"
 
-	auditv1 "github.com/snaplink/sso/gen/proto/audit/v1"
-	"github.com/snaplink/sso/platform/audit"
+	auditv1 "github.com/yangwb1123/snaplink/gen/proto/audit/v1"
+	"github.com/yangwb1123/snaplink/platform/audit"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

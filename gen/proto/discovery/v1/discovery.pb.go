@@ -561,7 +561,7 @@ const file_discovery_v1_discovery_proto_rawDesc = "" +
 	"\n" +
 	"Deregister\x12(.snaplink.discovery.v1.DeregisterRequest\x1a).snaplink.discovery.v1.DeregisterResponse\x12[\n" +
 	"\bDiscover\x12&.snaplink.discovery.v1.DiscoverRequest\x1a'.snaplink.discovery.v1.DiscoverResponse\x12S\n" +
-	"\x05Watch\x12#.snaplink.discovery.v1.WatchRequest\x1a#.snaplink.discovery.v1.ServiceEvent0\x01B<Z:github.com/snaplink/sso/gen/proto/discovery/v1;discoveryv1b\x06proto3"
+	"\x05Watch\x12#.snaplink.discovery.v1.WatchRequest\x1a#.snaplink.discovery.v1.ServiceEvent0\x01BCZAgithub.com/yangwb1123/snaplink/gen/proto/discovery/v1;discoveryv1b\x06proto3"
 
 var (
 	file_discovery_v1_discovery_proto_rawDescOnce sync.Once

@@ -80,14 +80,14 @@ def run() -> int:
     print("\n--- 4. Architecture ---")
     violations = 0
     result = subprocess.run(
-        ["grep", "-rq", '"github.com/snaplink/sso/oidc"', "oauth/", "--include=*.go"],
+        ["grep", "-rq", '"github.com/yangwb1123/snaplink/oidc"', "oauth/", "--include=*.go"],
         capture_output=True, check=False, cwd=str(ROOT)
     )
     if result.returncode == 0:
         pc("oauth/ imports oidc/")
         violations = 1
     result = subprocess.run(
-        ["grep", "-rq", '"github.com/snaplink/sso/admin"', "oidc/", "--include=*.go"],
+        ["grep", "-rq", '"github.com/yangwb1123/snaplink/admin"', "oidc/", "--include=*.go"],
         capture_output=True, check=False, cwd=str(ROOT)
     )
     if result.returncode == 0:

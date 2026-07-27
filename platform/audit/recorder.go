@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // Recorder is the entry point used by handlers / SDKs. It buffers nothing,

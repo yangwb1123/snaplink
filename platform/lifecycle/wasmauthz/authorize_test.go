@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/lifecycle/wasmauthz"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/wasmauthz"
 )
 
 func newTestEngine(t *testing.T, fixture string) *wasmauthz.Engine {

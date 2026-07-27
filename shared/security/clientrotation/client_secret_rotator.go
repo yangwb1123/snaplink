@@ -18,9 +18,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/core/corecredential"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core/corecredential"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // ClientRotationLister is an OPTIONAL core.ClientStore extension for backends

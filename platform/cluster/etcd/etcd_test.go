@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/cluster"
 	mvccpb "go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )

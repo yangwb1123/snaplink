@@ -4,13 +4,13 @@
 // invariant). Operators opt into Windows Integrated Authentication / desktop
 // SSO by importing this submodule from their own forked cmd. Mirrors
 // kms/awskms + redis + saml + ldap + extauthz.
-module github.com/snaplink/sso/kerberos
+module github.com/yangwb1123/snaplink/kerberos
 
 go 1.26.1
 
 // Monorepo local resolution: the submodule depends on the core sso module at
 // the repo root, not a published version.
-require github.com/snaplink/sso v0.0.0
+require github.com/yangwb1123/snaplink v0.0.0
 
 require github.com/jcmturner/gokrb5/v8 v8.4.4
 
@@ -66,4 +66,4 @@ require (
 	modernc.org/sqlite v1.50.1 // indirect
 )
 
-replace github.com/snaplink/sso => ../../
+replace github.com/yangwb1123/snaplink => ../../

@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	auditv1 "github.com/snaplink/sso/gen/proto/audit/v1"
-	"github.com/snaplink/sso/interfaces/ssoclient"
+	auditv1 "github.com/yangwb1123/snaplink/gen/proto/audit/v1"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient"
 	"google.golang.org/grpc"
 )
 

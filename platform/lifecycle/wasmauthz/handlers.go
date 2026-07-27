@@ -3,7 +3,7 @@ package wasmauthz
 import (
 	"net/http"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // HandlerDeps is what the WASM authz admin HTTP handler needs. *sso.Server
@@ -18,7 +18,7 @@ type HandlerDeps interface {
 // rebac's GET+query-params check) because a [Request] has a richer, nested
 // shape (a Context map) that does not fit cleanly into query parameters.
 // admin:read via the /api/v1/admin/ prefix's AdminMiddleware method-scope
-// rule; mounted only when [github.com/snaplink/sso/interfaces/sso.WithWASMAuthzEngine]
+// rule; mounted only when [github.com/yangwb1123/snaplink/interfaces/sso.WithWASMAuthzEngine]
 // is wired (byte-identical to a build without the feature otherwise).
 func HandleCheck(d HandlerDeps, ctx core.HandlerContext) {
 	eng := d.WASMAuthzEngine()

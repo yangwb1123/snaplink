@@ -5,7 +5,7 @@ package pkcs11
 import (
 	"context"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // KeyOriginAttrs is the minimal PKCS#11 private-key-object attribute pair

@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/userlifecycle"
-	"github.com/snaplink/sso/domains/userlifecycle/memory"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/userlifecycle"
+	"github.com/yangwb1123/snaplink/domains/userlifecycle/memory"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreidentity"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 const day = 24 * time.Hour

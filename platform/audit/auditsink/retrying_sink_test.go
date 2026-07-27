@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit/auditspi"
+	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
 )
 
 // countingSink is a minimal real Sink fixture (not a mock — it has genuine

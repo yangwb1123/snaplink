@@ -7,10 +7,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // Admin/helpdesk management-plane handlers for a user's self-service state

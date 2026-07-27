@@ -9,8 +9,8 @@ package schema_test
 import (
 	"testing"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/config/schema"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/config/schema"
 )
 
 func TestGenerate_RealConfigDoesNotPanicAndHasKnownSections(t *testing.T) {

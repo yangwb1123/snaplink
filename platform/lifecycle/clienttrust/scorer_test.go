@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/lifecycle/clienttrust"
-	"github.com/snaplink/sso/shared/trust"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/clienttrust"
+	"github.com/yangwb1123/snaplink/shared/trust"
 )
 
 func approxEqual(a, b float64) bool { return math.Abs(a-b) < 1e-6 }

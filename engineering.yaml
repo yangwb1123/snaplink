@@ -13,7 +13,7 @@
 
 project:
   name: snaplink
-  module: github.com/snaplink/sso
+  module: github.com/yangwb1123/snaplink
   language: go
 
 filesize:

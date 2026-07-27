@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/domains/userlifecycle"
+	"github.com/yangwb1123/snaplink/domains/userlifecycle"
 )
 
 // Store holds per-user lifecycle records in a process-local map. Safe for

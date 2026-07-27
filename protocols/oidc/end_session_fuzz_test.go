@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // FuzzComposePostLogoutTarget throws arbitrary post_logout_redirect_uri

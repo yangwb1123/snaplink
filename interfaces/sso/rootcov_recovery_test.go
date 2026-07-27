@@ -11,11 +11,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // TestRcov_RecoveryCodes_SelfService covers generate (once), regenerate

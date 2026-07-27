@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/domains/userlifecycle"
-	"github.com/snaplink/sso/interfaces/admin"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/configaudit"
-	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
-	"github.com/snaplink/sso/platform/lifecycle/cryptoinventory"
-	"github.com/snaplink/sso/platform/lifecycle/rotation"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/userlifecycle"
+	"github.com/yangwb1123/snaplink/interfaces/admin"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/configaudit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/admingovernance"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/cryptoinventory"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/rotation"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // WithDomainVerificationResolver moved to options_httpstack.go, beside the

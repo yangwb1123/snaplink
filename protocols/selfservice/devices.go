@@ -5,8 +5,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators/device"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/authenticators/device"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // ---- Device listing & management ----

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
 )
 
 func TestJSONCodec_Marshal_NilSnapshot(t *testing.T) {

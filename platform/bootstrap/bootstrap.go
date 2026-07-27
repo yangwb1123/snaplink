@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/bootstrap/lock"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/lock"
 )
 
 // Re-export the lock sentinels so callers can errors.Is against them

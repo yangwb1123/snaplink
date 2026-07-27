@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit/auditsink"
-	"github.com/snaplink/sso/platform/audit/auditspi"
+	"github.com/yangwb1123/snaplink/platform/audit/auditsink"
+	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
 )
 
 // Summary is the redacted projection of an audit event pushed to SSE

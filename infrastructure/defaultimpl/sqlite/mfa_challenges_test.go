@@ -1,6 +1,6 @@
 package sqlite
 
-import "github.com/snaplink/sso/shared/spi"
+import "github.com/yangwb1123/snaplink/shared/spi"
 
 import (
 	"context"

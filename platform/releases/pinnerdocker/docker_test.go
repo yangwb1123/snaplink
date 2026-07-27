@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/platform/releases"
-	"github.com/snaplink/sso/platform/releases/pinnerdocker"
+	"github.com/yangwb1123/snaplink/platform/releases"
+	"github.com/yangwb1123/snaplink/platform/releases/pinnerdocker"
 )
 
 // recorder captures every Exec call so tests can assert the docker

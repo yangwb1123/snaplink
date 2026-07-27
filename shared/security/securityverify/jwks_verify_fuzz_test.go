@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // fuzzVerifyKeys is a fixed, small, asymmetric JWKS the fuzzer verifies the

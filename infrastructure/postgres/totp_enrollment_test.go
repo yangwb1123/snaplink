@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
 )
 
 func freshTOTPEnrollmentStore(t *testing.T) *TOTPEnrollmentStore {

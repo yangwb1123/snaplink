@@ -10,9 +10,9 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	gw "github.com/go-webauthn/webauthn/webauthn"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // BeginConditionalLogin starts an authentication ceremony with

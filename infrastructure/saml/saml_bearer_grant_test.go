@@ -23,8 +23,8 @@ import (
 	crewjam "github.com/crewjam/saml"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	samlmod "github.com/snaplink/sso/saml"
-	"github.com/snaplink/sso/shared/core"
+	samlmod "github.com/yangwb1123/snaplink/saml"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 const bearerAudience = "https://sso.example.com/token"

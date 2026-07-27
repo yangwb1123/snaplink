@@ -37,7 +37,7 @@ historical stock composition. See [`plugin-system.md`](../plugin-system.md).
 
 The repo root holds **no library `.go` files** — only the committed gate tests
 (`package archgate`: architecture + maintainability budgets). The public Server
-API is `github.com/snaplink/sso/interfaces/sso` (package `sso`).
+API is `github.com/yangwb1123/snaplink/interfaces/sso` (package `sso`).
 It serves APIs only; hosted UIs are separate frontend projects.
 
 ## Dependency direction (one-way, toward the shared kernel)

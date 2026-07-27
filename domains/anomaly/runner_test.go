@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/threataction"
+	"github.com/yangwb1123/snaplink/domains/threataction"
 )
 
 // recordingDetector captures every event it sees + optionally returns

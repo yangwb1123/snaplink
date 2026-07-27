@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 func TestWithQueueSize(t *testing.T) {

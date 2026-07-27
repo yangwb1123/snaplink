@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/interfaces/snapshot/encryptionaesgcm"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot/encryptionaesgcm"
 )
 
 func mkKey(t *testing.T) []byte {

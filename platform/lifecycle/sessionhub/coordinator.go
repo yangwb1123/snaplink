@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // CoreSessionTerminator is the narrow capability Coordinator needs from the

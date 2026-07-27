@@ -4,8 +4,8 @@ import (
 	"encoding/base64"
 	"net/http"
 
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // SAML2BearerGrantDeps is what HandleSAML2BearerGrant needs.

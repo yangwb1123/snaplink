@@ -7,10 +7,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/bootstrap"
-	"github.com/snaplink/sso/platform/netpolicy"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/bootstrap"
+	"github.com/yangwb1123/snaplink/platform/netpolicy"
 )
 
 // Snapshotter assembles a Snapshot by polling each configured backend's

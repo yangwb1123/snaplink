@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/domains/authenticators/device"
+	"github.com/yangwb1123/snaplink/domains/authenticators/device"
 )
 
 func deviceDSN(t *testing.T) string {

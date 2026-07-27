@@ -20,9 +20,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/ssoclient"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // AuthClient validates JWTs locally via JWKS and revokes via the SSO server's

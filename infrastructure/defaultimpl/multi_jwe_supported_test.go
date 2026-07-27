@@ -7,7 +7,7 @@ import (
 	"crypto/rsa"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
 func contains(s []string, want string) bool {

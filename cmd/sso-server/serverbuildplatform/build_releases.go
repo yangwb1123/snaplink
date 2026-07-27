@@ -5,21 +5,21 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/platform/releases"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/platform/releases"
+	"github.com/yangwb1123/snaplink/shared/spi"
 
-	releasedocker "github.com/snaplink/sso/platform/releases/pinnerdocker"
+	releasedocker "github.com/yangwb1123/snaplink/platform/releases/pinnerdocker"
 
-	releasenoop "github.com/snaplink/sso/platform/releases/pinnernoop"
+	releasenoop "github.com/yangwb1123/snaplink/platform/releases/pinnernoop"
 
-	releasestatic "github.com/snaplink/sso/platform/releases/pinnerstatic"
+	releasestatic "github.com/yangwb1123/snaplink/platform/releases/pinnerstatic"
 
-	releasehttpprobe "github.com/snaplink/sso/platform/releases/probehttp"
+	releasehttpprobe "github.com/yangwb1123/snaplink/platform/releases/probehttp"
 
-	releasefile "github.com/snaplink/sso/platform/releases/storefile"
+	releasefile "github.com/yangwb1123/snaplink/platform/releases/storefile"
 
-	releasememory "github.com/snaplink/sso/platform/releases/storememory"
+	releasememory "github.com/yangwb1123/snaplink/platform/releases/storememory"
 )
 
 func BuildReleaseSubsystem(cfg *config.Config, logger spi.Logger) (*releases.Registry, releases.ReleaseStore, error) {

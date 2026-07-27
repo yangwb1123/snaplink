@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // invitationSchema is the org-invitation store: a server-issued opaque token

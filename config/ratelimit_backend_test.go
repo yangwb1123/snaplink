@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/interfaces/ratelimit"
+	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
 )
 
 // TestRateLimitConfig_ToPolicy_SQLiteBackendHonored proves

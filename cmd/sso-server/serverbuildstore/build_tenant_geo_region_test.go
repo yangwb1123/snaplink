@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/shared/security/peertrust"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
 func TestBuildTenantUsageAggregator_DisabledMemorySqliteUnknown(t *testing.T) {

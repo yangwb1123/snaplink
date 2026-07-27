@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // pairwiseSubjectSchema covers the OIDC Core §8 per-sector subject

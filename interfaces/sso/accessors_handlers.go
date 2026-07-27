@@ -5,15 +5,15 @@ import (
 	"context"
 	"time"
 
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 
-	"github.com/snaplink/sso/domains/federation"
-	"github.com/snaplink/sso/interfaces/admin"
-	"github.com/snaplink/sso/internal/handler"
-	"github.com/snaplink/sso/internal/handler/tokengrant"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/protocols/oidc"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/federation"
+	"github.com/yangwb1123/snaplink/interfaces/admin"
+	"github.com/yangwb1123/snaplink/internal/handler"
+	"github.com/yangwb1123/snaplink/internal/handler/tokengrant"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // LogError logs a non-fatal error through the server logger.

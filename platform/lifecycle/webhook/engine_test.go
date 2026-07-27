@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/lifecycle/webhook"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/webhook"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // waitFor polls cond until it's true or the deadline elapses, failing the

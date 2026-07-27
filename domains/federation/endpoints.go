@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // ---- Federation §8.3 Resolve endpoint ----

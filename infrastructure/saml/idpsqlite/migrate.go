@@ -22,7 +22,7 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 
 	_ "modernc.org/sqlite" // register the pure-Go "sqlite" driver name (sql.Open).
 )

@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/snaplink/sso/cmd/sso-ctl/apiclient"
+	"github.com/yangwb1123/snaplink/cmd/sso-ctl/apiclient"
 )
 
 // listViewModel renders one entity type's records (fetched from the admin

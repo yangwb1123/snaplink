@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // errRejected is the SINGLE error every rejected-login cause collapses to

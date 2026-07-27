@@ -12,7 +12,7 @@
 // # Why a separate Go module
 //
 // This package lives in its own nested module
-// (github.com/snaplink/sso/kms/pkcs11) so the cgo PKCS#11 binding
+// (github.com/yangwb1123/snaplink/kms/pkcs11) so the cgo PKCS#11 binding
 // (github.com/miekg/pkcs11) NEVER enters the core sso module's go.mod. The
 // core module's zero-external-SDK invariant is a firm property of the repo;
 // operators who need a hardware token opt in by importing this submodule

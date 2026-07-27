@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // SPIFFE JWT-SVID acceptance (SPIFFE-ID + JWT-SVID specs).

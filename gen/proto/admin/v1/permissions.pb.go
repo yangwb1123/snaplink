@@ -1188,7 +1188,7 @@ const file_admin_v1_permissions_proto_rawDesc = "" +
 	"\x0fListAssignments\x12).snaplink.admin.v1.ListAssignmentsRequest\x1a*.snaplink.admin.v1.ListAssignmentsResponse\"9\x82\xd3\xe4\x93\x023\x121/api/v1/admin/permissions/{client_id}/assignments\x12\xa4\x01\n" +
 	"\vAssignRoles\x12%.snaplink.admin.v1.AssignRolesRequest\x1a&.snaplink.admin.v1.AssignRolesResponse\"F\x82\xd3\xe4\x93\x02@:\x01*\";/api/v1/admin/permissions/{client_id}/assignments/{user_id}\x12\xb3\x01\n" +
 	"\rUnassignRoles\x12'.snaplink.admin.v1.UnassignRolesRequest\x1a(.snaplink.admin.v1.UnassignRolesResponse\"O\x82\xd3\xe4\x93\x02I:\x01*\"D/api/v1/admin/permissions/{client_id}/assignments/{user_id}/unassign\x12\x8b\x01\n" +
-	"\bSetMenus\x12\".snaplink.admin.v1.SetMenusRequest\x1a#.snaplink.admin.v1.SetMenusResponse\"6\x82\xd3\xe4\x93\x020:\x01*\x1a+/api/v1/admin/permissions/{client_id}/menusB4Z2github.com/snaplink/sso/gen/proto/admin/v1;adminv1b\x06proto3"
+	"\bSetMenus\x12\".snaplink.admin.v1.SetMenusRequest\x1a#.snaplink.admin.v1.SetMenusResponse\"6\x82\xd3\xe4\x93\x020:\x01*\x1a+/api/v1/admin/permissions/{client_id}/menusB;Z9github.com/yangwb1123/snaplink/gen/proto/admin/v1;adminv1b\x06proto3"
 
 var (
 	file_admin_v1_permissions_proto_rawDescOnce sync.Once

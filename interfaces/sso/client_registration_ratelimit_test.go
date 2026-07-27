@@ -22,10 +22,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/ratelimit"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 // crlRegisterBody is the minimal RFC 7591 metadata an open-registration

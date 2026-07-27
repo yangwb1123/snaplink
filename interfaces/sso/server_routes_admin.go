@@ -1,7 +1,7 @@
 package sso
 
 import (
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // Token Portfolio admin route-path re-exports (relocated from aliases.go to

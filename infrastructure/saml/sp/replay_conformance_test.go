@@ -3,7 +3,7 @@ package sp
 import (
 	"testing"
 
-	"github.com/snaplink/sso/saml/samltest"
+	"github.com/yangwb1123/snaplink/saml/samltest"
 )
 
 // TestReplayConformance_Memory runs the shared replay-dedup conformance suite

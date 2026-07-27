@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/cryptosigner"
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/cryptosigner"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // resolveExternalSigner resolves the optional KMS/HSM signer named in

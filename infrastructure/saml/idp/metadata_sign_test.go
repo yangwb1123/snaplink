@@ -14,8 +14,8 @@ import (
 	"github.com/crewjam/saml"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // newSigningHarness builds a Handlers exactly like newHarness but with

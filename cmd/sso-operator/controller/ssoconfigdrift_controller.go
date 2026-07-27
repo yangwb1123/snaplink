@@ -21,7 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	drift "github.com/snaplink/operator/apiv1alpha1"
+	drift "github.com/yangwb1123/snaplink/cmd/sso-operator/apiv1alpha1"
 )
 
 // shortRequeueInterval governs the retry cadence after a failed attempt

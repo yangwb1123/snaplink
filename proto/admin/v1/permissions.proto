@@ -9,7 +9,7 @@ package snaplink.admin.v1;
 
 import "google/api/annotations.proto";
 
-option go_package = "github.com/snaplink/sso/gen/proto/admin/v1;adminv1";
+option go_package = "github.com/yangwb1123/snaplink/gen/proto/admin/v1;adminv1";
 
 // PermissionAdminService manages roles, role assignments, and the menu tree
 // for each client (APP). All operations are scoped to a client_id so

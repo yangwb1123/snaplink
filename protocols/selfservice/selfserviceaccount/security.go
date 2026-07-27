@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicecore"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // HandleChangeMyPassword serves POST /me/password — the authenticated user

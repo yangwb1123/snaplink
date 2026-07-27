@@ -25,16 +25,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators"
-	"github.com/snaplink/sso/domains/region"
-	tenantpkg "github.com/snaplink/sso/domains/tenant"
-	tenantmem "github.com/snaplink/sso/domains/tenant/memory"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/cluster"
-	clustermem "github.com/snaplink/sso/platform/cluster/memory"
-	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	"github.com/yangwb1123/snaplink/domains/region"
+	tenantpkg "github.com/yangwb1123/snaplink/domains/tenant"
+	tenantmem "github.com/yangwb1123/snaplink/domains/tenant/memory"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreidentity"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	clustermem "github.com/yangwb1123/snaplink/platform/cluster/memory"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 // rcov2PasswordAuth returns a password authenticator accepting the canonical

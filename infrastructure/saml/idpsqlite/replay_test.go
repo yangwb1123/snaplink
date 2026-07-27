@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/migrate"
-	"github.com/snaplink/sso/saml/samltest"
+	"github.com/yangwb1123/snaplink/platform/migrate"
+	"github.com/yangwb1123/snaplink/saml/samltest"
 )
 
 // TestLogoutReplayConformance_SQLite runs the shared replay-dedup conformance

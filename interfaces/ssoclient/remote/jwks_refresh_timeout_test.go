@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/ssoclient/remote"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/remote"
 )
 
 // rotatingJWKSServer serves whichever public key is currently stored in kp

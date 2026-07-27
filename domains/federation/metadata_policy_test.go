@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/snaplink/sso/domains/federation"
+	"github.com/yangwb1123/snaplink/domains/federation"
 )
 
 // Metadata-policy tests drive the §10 engine through the resolver: a valid

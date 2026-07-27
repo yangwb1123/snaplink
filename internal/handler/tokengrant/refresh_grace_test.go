@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // TestTokExSubject_SenderConstraint locks RFC 9449 / RFC 8705: the exchanged

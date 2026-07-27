@@ -6,8 +6,8 @@ import (
 	"net"
 	"testing"
 
-	"github.com/snaplink/sso/platform/geo"
-	"github.com/snaplink/sso/platform/geo/static"
+	"github.com/yangwb1123/snaplink/platform/geo"
+	"github.com/yangwb1123/snaplink/platform/geo/static"
 )
 
 func TestLookupString_HappyPath(t *testing.T) {

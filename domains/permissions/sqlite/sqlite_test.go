@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/domains/permissions"
-	permsqlite "github.com/snaplink/sso/domains/permissions/sqlite"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	permsqlite "github.com/yangwb1123/snaplink/domains/permissions/sqlite"
 )
 
 func newTestProvider(t *testing.T) *permsqlite.Provider {

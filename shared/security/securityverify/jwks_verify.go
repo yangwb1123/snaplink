@@ -15,7 +15,7 @@ import (
 	"math/big"
 	"sort"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // JWS asymmetric algorithm identifiers (RFC 7518 §3.1). `none` and every

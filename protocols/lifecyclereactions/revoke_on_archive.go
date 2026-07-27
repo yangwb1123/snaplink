@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/snaplink/sso/domains/userlifecycle"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/userlifecycle"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // RevokeAccessOnArchive returns a userlifecycle.ReactionFunc that revokes

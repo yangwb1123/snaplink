@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/shared/trust"
+	"github.com/yangwb1123/snaplink/shared/trust"
 )
 
 func TestDevicePostureScorer_AlwaysReturnsConfiguredDefault(t *testing.T) {

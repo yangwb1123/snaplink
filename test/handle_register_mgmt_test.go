@@ -1,6 +1,6 @@
 package ssotest
 
-import "github.com/snaplink/sso/protocols/oauth"
+import "github.com/yangwb1123/snaplink/protocols/oauth"
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // registerForMgmt creates a new client and returns

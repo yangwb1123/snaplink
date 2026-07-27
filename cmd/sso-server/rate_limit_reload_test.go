@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/config"
-	configreload "github.com/snaplink/sso/config/reload"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/ratelimit"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/config"
+	configreload "github.com/yangwb1123/snaplink/config/reload"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // closeCountingLimiter is a fake ratelimit.Limiter + io.Closer recording how

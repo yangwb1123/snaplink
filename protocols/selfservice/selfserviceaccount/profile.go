@@ -3,8 +3,8 @@ package selfserviceaccount
 import (
 	"net/http"
 
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // safeProfileAttrs is the OIDC Core §5.1 standard-claim set — the ONLY

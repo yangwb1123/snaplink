@@ -965,7 +965,7 @@ const file_admin_v1_releases_proto_rawDesc = "" +
 	"GetCurrent\x12+.snaplink.admin.v1.GetCurrentReleaseRequest\x1a,.snaplink.admin.v1.GetCurrentReleaseResponse\"&\x82\xd3\xe4\x93\x02 \x12\x1e/api/v1/admin/releases:current\x12~\n" +
 	"\x03Pin\x12$.snaplink.admin.v1.PinReleaseRequest\x1a%.snaplink.admin.v1.PinReleaseResponse\"*\x82\xd3\xe4\x93\x02$:\x01*\"\x1f/api/v1/admin/releases/{id}:pin\x12\x92\x01\n" +
 	"\bRollback\x12).snaplink.admin.v1.RollbackReleaseRequest\x1a*.snaplink.admin.v1.RollbackReleaseResponse\"/\x82\xd3\xe4\x93\x02):\x01*\"$/api/v1/admin/releases/{id}:rollback\x12\x80\x01\n" +
-	"\x06Delete\x12'.snaplink.admin.v1.DeleteReleaseRequest\x1a(.snaplink.admin.v1.DeleteReleaseResponse\"#\x82\xd3\xe4\x93\x02\x1d*\x1b/api/v1/admin/releases/{id}B4Z2github.com/snaplink/sso/gen/proto/admin/v1;adminv1b\x06proto3"
+	"\x06Delete\x12'.snaplink.admin.v1.DeleteReleaseRequest\x1a(.snaplink.admin.v1.DeleteReleaseResponse\"#\x82\xd3\xe4\x93\x02\x1d*\x1b/api/v1/admin/releases/{id}B;Z9github.com/yangwb1123/snaplink/gen/proto/admin/v1;adminv1b\x06proto3"
 
 var (
 	file_admin_v1_releases_proto_rawDescOnce sync.Once

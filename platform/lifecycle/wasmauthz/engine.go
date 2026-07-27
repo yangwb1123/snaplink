@@ -87,8 +87,8 @@ type Engine struct {
 // wasmModule is the raw bytes of an already-compiled .wasm binary supplied
 // by the caller; this package never fetches, reads from a path, or compiles
 // from source — matching the same "supplied by caller, not resolved by us"
-// pattern [github.com/snaplink/sso/interfaces/sso.WithSCIMProvisioner] and
-// [github.com/snaplink/sso/interfaces/sso.WithRebacEngine] already use for
+// pattern [github.com/yangwb1123/snaplink/interfaces/sso.WithSCIMProvisioner] and
+// [github.com/yangwb1123/snaplink/interfaces/sso.WithRebacEngine] already use for
 // their own plugins.
 func New(ctx context.Context, wasmModule []byte) (*Engine, error) {
 	if len(wasmModule) == 0 {

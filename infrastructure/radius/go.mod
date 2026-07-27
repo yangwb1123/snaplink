@@ -5,13 +5,13 @@
 // by importing this submodule from their own forked cmd and wiring it via
 // sso.WithAuthenticator / srv.RegisterAuthenticator. Mirrors kms/awskms +
 // redis + saml + ldap + extauthz + kerberos.
-module github.com/snaplink/sso/radius
+module github.com/yangwb1123/snaplink/radius
 
 go 1.26.1
 
 // Monorepo local resolution: the submodule depends on the core sso module at
 // the repo root, not a published version.
-require github.com/snaplink/sso v0.0.0
+require github.com/yangwb1123/snaplink v0.0.0
 
 require layeh.com/radius v0.0.0-20231213012653-1006025d24f8
 
@@ -60,4 +60,4 @@ require (
 	modernc.org/sqlite v1.50.1 // indirect
 )
 
-replace github.com/snaplink/sso => ../../
+replace github.com/yangwb1123/snaplink => ../../

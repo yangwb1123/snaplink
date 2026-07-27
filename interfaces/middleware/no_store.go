@@ -1,6 +1,6 @@
 package middleware
 
-import "github.com/snaplink/sso/shared/core"
+import "github.com/yangwb1123/snaplink/shared/core"
 
 // TokenNoStoreHeaders stamps RFC 6749 §5.1's "credentialed-response"
 // cache headers on the response:

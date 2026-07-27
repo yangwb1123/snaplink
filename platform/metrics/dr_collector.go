@@ -4,7 +4,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
-	"github.com/snaplink/sso/platform/lifecycle/dr"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/dr"
 )
 
 // registerDegradationMetrics registers the DR degraded-service posture vectors

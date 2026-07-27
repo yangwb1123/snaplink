@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 func newTestSession(t *testing.T, store AgentSessionStore, id, human string) {

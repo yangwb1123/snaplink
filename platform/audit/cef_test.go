@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 func cefRecord(t *testing.T, e *audit.Event) string {

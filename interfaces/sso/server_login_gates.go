@@ -6,15 +6,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators/passkeypolicy"
-	"github.com/snaplink/sso/domains/conditionalaccess"
-	"github.com/snaplink/sso/internal/auth/login"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/lifecycle/continuousverify"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
-	"github.com/snaplink/sso/shared/trust"
+	"github.com/yangwb1123/snaplink/domains/authenticators/passkeypolicy"
+	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
+	"github.com/yangwb1123/snaplink/internal/auth/login"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/continuousverify"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
+	"github.com/yangwb1123/snaplink/shared/trust"
 )
 
 // stepUpTrustDescription is the RFC 6750 error_description on the RFC 9470

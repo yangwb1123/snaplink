@@ -5,7 +5,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/snaplink/sso/shared/core/corecredential"
+	"github.com/yangwb1123/snaplink/shared/core/corecredential"
 )
 
 // MemoryCredentialStatusStore is an in-process

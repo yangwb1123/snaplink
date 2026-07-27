@@ -3,7 +3,7 @@ package oauthvalidate
 import (
 	"encoding/json"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // The OIDC Core §5.5 `claims` request-parameter parser was relocated to core

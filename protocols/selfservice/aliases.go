@@ -8,8 +8,8 @@ package selfservice
 // for the Server wiring and any SDK consumer that calls the handlers directly.
 
 import (
-	"github.com/snaplink/sso/protocols/selfservice/selfserviceaccount"
-	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
+	"github.com/yangwb1123/snaplink/protocols/selfservice/selfserviceaccount"
+	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicecore"
 )
 
 // Deps is the self-service capability surface (defined in selfservicecore).

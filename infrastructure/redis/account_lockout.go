@@ -8,7 +8,7 @@ import (
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // Two keys per subject, BOTH carrying a {key} hash tag so the failure

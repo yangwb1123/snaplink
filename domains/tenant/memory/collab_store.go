@@ -9,7 +9,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/snaplink/sso/domains/tenant"
+	"github.com/yangwb1123/snaplink/domains/tenant"
 )
 
 // guestKey builds the (guestTenantID, externalSubjectID) composite key.

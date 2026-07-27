@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/snaplink/sso/platform/cluster"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // FamilyRevoker is the minimal interface for refresh token family revocation.

@@ -6,9 +6,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/protocols/caep"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/caep"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // fakeMQTTPublisher is a real, hand-rolled test double (not a mock

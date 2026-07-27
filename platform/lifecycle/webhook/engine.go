@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // DefaultDeliveryTimeout bounds a single webhook POST.

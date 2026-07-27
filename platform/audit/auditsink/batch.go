@@ -3,7 +3,7 @@ package auditsink
 import (
 	"context"
 
-	"github.com/snaplink/sso/platform/audit/auditspi"
+	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
 )
 
 // BatchSink is an optional extension of [Sink] for sinks that can persist

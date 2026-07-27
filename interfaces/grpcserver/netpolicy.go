@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	netpolicyv1 "github.com/snaplink/sso/gen/proto/netpolicy/v1"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/netpolicy"
+	netpolicyv1 "github.com/yangwb1123/snaplink/gen/proto/netpolicy/v1"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/netpolicy"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"

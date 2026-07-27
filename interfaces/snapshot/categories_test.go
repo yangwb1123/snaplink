@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
 )
 
 func TestAllCategories_StableContents(t *testing.T) {

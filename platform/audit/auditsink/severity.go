@@ -1,6 +1,6 @@
 package auditsink
 
-import "github.com/snaplink/sso/platform/audit/auditspi"
+import "github.com/yangwb1123/snaplink/platform/audit/auditspi"
 
 // severityLevel is the SDK's ONE internal severity scale, derived from
 // Outcome plus a small per-EventType override table. Every wire format

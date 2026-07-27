@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // blockingSink lets tests gate Record completion via a release channel

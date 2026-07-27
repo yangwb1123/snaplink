@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/protocols/compliance"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/protocols/compliance"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // staticExporter is a SubjectExporter test double contributing a fixed

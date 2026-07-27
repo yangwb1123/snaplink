@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // recordN drives n events through a chain-enabled recorder + memory

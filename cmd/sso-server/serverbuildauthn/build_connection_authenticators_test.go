@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/domains/connections"
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/domains/connections"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // testOIDCConnection returns a TypeOIDC connection whose Config carries every

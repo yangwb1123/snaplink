@@ -12,8 +12,8 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // ECDH JWE algorithm names (RFC 7518 §4.6). ECDH-ES is direct key

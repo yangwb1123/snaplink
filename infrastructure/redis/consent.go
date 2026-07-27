@@ -8,7 +8,7 @@ import (
 	"sort"
 
 	goredis "github.com/redis/go-redis/v9"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // Key layout. The grant JSON lives at one key per (user, client) pair; a

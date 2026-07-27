@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/core/corecredential"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core/corecredential"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // DefaultJWEKeyBits is the RSA modulus size RotatingJWEDecrypter mints when no

@@ -11,11 +11,11 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/snaplink/sso/domains/tenant"
-	"github.com/snaplink/sso/interfaces/middleware"
-	"github.com/snaplink/sso/protocols/oauth/oauthspi"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/protocols/oauth/oauthspi"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // maxCIBADeliveryRetries is the number of times to retry CIBA challenge

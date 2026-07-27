@@ -5,8 +5,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // MethodRecovery is the wire method name for single-use MFA recovery

@@ -13,9 +13,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/lifecycle/cryptoinventory"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/cryptoinventory"
 )
 
 func cryptoKeysURL(base string) string { return base + "/api/v1/admin/crypto/keys" }

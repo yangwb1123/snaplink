@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // ValidateToken verifies an access token LOCALLY: JWS signature against the

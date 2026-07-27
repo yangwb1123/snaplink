@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // MultiMFAProvider composes several [spi.MFAProvider] impls into a

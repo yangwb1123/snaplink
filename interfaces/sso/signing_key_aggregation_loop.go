@@ -10,10 +10,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/platform/signingkeys"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/signingkeys"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // StartSigningKeyAggregation publishes this replica's signing public keys,

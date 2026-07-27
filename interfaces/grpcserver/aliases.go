@@ -8,7 +8,7 @@ package grpcserver
 // *grpcadmin.ClientAdminService), so the generated RegisterXxxServiceServer
 // helpers still accept them.
 
-import "github.com/snaplink/sso/interfaces/grpcserver/grpcadmin"
+import "github.com/yangwb1123/snaplink/interfaces/grpcserver/grpcadmin"
 
 type (
 	ClientAdminService     = grpcadmin.ClientAdminService

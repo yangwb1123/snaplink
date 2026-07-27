@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // Session trust decay (Zero Trust Framework Phase 3 — continuous verification &

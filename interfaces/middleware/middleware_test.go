@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 func TestRecover_PanickingHandler_Returns500(t *testing.T) {

@@ -11,13 +11,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	"github.com/snaplink/sso/protocols/caep"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildauthn"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildplatform"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	"github.com/yangwb1123/snaplink/protocols/caep"
 )
 
 // writeJWKSFile materializes a minimal valid single-key JWKS document (a real

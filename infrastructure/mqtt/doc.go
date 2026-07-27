@@ -6,7 +6,7 @@
 // # Why a separate module
 //
 // The github.com/eclipse/paho.golang dependency lives ONLY in this
-// module's go.mod (github.com/snaplink/sso/mqtt). The core sso module's
+// module's go.mod (github.com/yangwb1123/snaplink/mqtt). The core sso module's
 // go.mod stays byte-free of it — the same firm zero-external-SDK-in-core
 // invariant that isolates kms/awskms, ldap, saml, and kafka (see those
 // packages' own doc.go). paho.golang is pure Go (no cgo), so this module
@@ -32,8 +32,8 @@
 //	package main
 //
 //	import (
-//		"github.com/snaplink/sso/interfaces/sso"
-//		mqttbus "github.com/snaplink/sso/mqtt"
+//		"github.com/yangwb1123/snaplink/interfaces/sso"
+//		mqttbus "github.com/yangwb1123/snaplink/mqtt"
 //	)
 //
 //	func buildBus() (*mqttbus.Bus, error) {

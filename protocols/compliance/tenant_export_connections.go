@@ -3,8 +3,8 @@ package compliance
 import (
 	"strings"
 
-	"github.com/snaplink/sso/domains/connections"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/connections"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // tenantExportConnection is the wire (snake_case) projection of a

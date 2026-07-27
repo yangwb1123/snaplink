@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/snaplink/sso/platform/tracing"
+	"github.com/yangwb1123/snaplink/platform/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )

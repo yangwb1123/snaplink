@@ -7,20 +7,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/protocols/oidc"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/spi"
 
-	"github.com/snaplink/sso/protocols/caep"
+	"github.com/yangwb1123/snaplink/protocols/caep"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 
-	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
 
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/shared/security/fipspolicy"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/security/fipspolicy"
 )
 
 // buildApp wires every SDK component the config asks for and returns them

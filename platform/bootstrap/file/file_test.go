@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/platform/bootstrap"
+	"github.com/yangwb1123/snaplink/platform/bootstrap"
 )
 
 func tempState(t *testing.T) string {

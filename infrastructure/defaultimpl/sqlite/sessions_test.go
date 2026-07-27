@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
 func newSessionManagerForTest(t *testing.T) *SessionManager {

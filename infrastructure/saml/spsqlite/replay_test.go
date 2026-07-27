@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/migrate"
-	"github.com/snaplink/sso/saml/samltest"
+	"github.com/yangwb1123/snaplink/platform/migrate"
+	"github.com/yangwb1123/snaplink/saml/samltest"
 )
 
 // uniqDSN returns a process-unique shared-cache in-memory DSN so each store gets

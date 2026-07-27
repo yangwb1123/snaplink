@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/protocols/oauth/oauthspi"
+	"github.com/yangwb1123/snaplink/protocols/oauth/oauthspi"
 )
 
 // memPushDeadLetterStore is a small REAL in-memory oauthspi.CIBAPushDeadLetterStore

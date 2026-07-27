@@ -22,10 +22,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/protocols/fapi"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/protocols/fapi"
 )
 
 // TestRcov2L_RichLogin exercises a direct-mint login carrying RAR

@@ -9,8 +9,8 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/snaplink/sso/domains/authenticators"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 const tempTokenPrefix = "sso:temptoken:" // sso:temptoken:<token> -> JSON subject

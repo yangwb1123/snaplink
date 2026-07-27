@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // maxPortfolioClients caps the per-client breakdown returned by the portfolio

@@ -8,7 +8,7 @@
   "activation": "restart",
   "host_api": "v1alpha1",
   "version": "v0.0.0",
-  "module_path": "github.com/snaplink/sso/kafka",
+  "module_path": "github.com/yangwb1123/snaplink/kafka",
   "source": ".",
   "provides": [
     "audit.sink.kafka.v1"
@@ -19,7 +19,7 @@
   "conflicts": [],
   "registration": {
     "type": "audit.kafka.factory.v1",
-    "package": "github.com/snaplink/sso/kafka",
+    "package": "github.com/yangwb1123/snaplink/kafka",
     "symbol": "Factory"
   },
   "targets": {

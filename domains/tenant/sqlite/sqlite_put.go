@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/snaplink/sso/domains/tenant"
+	"github.com/yangwb1123/snaplink/domains/tenant"
 )
 
 // tenantColumns holds the SQLite-encoded scalar values for a tenant UPSERT,

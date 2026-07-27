@@ -5,7 +5,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/snaplink/sso/platform/geo"
+	"github.com/yangwb1123/snaplink/platform/geo"
 )
 
 // IPAllowlistConfig is the evaluated (pre-parsed) form of an operator's

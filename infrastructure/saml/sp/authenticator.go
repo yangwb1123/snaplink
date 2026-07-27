@@ -19,7 +19,7 @@ import (
 	"github.com/crewjam/saml/samlsp"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // SPAuthenticator authenticates a user by consuming an assertion from one

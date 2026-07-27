@@ -3,8 +3,8 @@ package selfservice
 import (
 	"net/http"
 
-	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicecore"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // HandleMySessions serves GET /sessions/me — lists the authenticated user's

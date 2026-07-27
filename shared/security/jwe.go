@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // JWEDecrypter unwraps the encrypted variant of an RFC 9101 JAR

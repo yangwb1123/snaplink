@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/audit/auditspi"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // fakeAuditSink is a minimal audit.Sink stand-in — no real Kafka broker, no

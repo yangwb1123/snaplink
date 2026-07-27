@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/tokenusage"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/domains/tokenusage"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // errTestInvalidToken stands in for a validation failure from the

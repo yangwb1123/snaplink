@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/platform/registry"
+	"github.com/yangwb1123/snaplink/platform/registry"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 

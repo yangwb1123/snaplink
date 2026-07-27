@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
 // ensureSchema runs a store's baseline schema through the migration

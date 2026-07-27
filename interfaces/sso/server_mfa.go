@@ -5,14 +5,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/snaplink/sso/internal/auth/login"
-	"github.com/snaplink/sso/internal/handler"
+	"github.com/yangwb1123/snaplink/internal/auth/login"
+	"github.com/yangwb1123/snaplink/internal/handler"
 	"net/http"
 	"slices"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 type mfaResumeState struct {

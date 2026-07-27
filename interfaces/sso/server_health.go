@@ -7,13 +7,13 @@ import (
 	"sort"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/admin"
-	"github.com/snaplink/sso/interfaces/middleware"
-	"github.com/snaplink/sso/internal/handler"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/lifecycle/degradation"
-	"github.com/snaplink/sso/platform/sse"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/interfaces/admin"
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/internal/handler"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/degradation"
+	"github.com/yangwb1123/snaplink/platform/sse"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func (s *Server) handleLivez(w http.ResponseWriter, r *http.Request) {

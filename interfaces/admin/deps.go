@@ -3,19 +3,19 @@ package admin
 import (
 	"context"
 
-	"github.com/snaplink/sso/domains/conditionalaccess"
-	"github.com/snaplink/sso/domains/connections"
-	"github.com/snaplink/sso/domains/authenticators/device"
-	"github.com/snaplink/sso/domains/connections/provider"
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/domains/userlifecycle"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
+	"github.com/yangwb1123/snaplink/domains/connections"
+	"github.com/yangwb1123/snaplink/domains/authenticators/device"
+	"github.com/yangwb1123/snaplink/domains/connections/provider"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/userlifecycle"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/admingovernance"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // Deps is what the admin management-plane handlers need. *sso.Server satisfies

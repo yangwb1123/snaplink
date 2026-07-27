@@ -3,7 +3,7 @@ package selfservice
 import (
 	"testing"
 
-	"github.com/snaplink/sso/domains/authenticators/device"
+	"github.com/yangwb1123/snaplink/domains/authenticators/device"
 )
 
 // ---- HandleMyDevices filter adversarial tests ----

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/cors"
+	"github.com/yangwb1123/snaplink/interfaces/cors"
 )
 
 // echo200 returns 200 with a trivial body — the test handler the

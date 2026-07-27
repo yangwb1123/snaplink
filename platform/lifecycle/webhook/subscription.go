@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // EventSubscription is an operator-registered webhook destination: a

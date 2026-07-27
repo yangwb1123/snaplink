@@ -8,8 +8,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/snaplink/sso/platform/lifecycle/dr"
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/dr"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 )
 
 func TestDRCollector_NilReadinessIsHarmless(t *testing.T) {

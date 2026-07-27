@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
 func decodeBulk(t *testing.T, body []byte) BulkResponse {

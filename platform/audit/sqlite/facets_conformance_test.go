@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // facetSeed is the shared event corpus for the conformance suite. The

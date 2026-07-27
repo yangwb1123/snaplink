@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 // pinRuntimeTuningEnv sets GOGC/GOMAXPROCS/GOMEMLIMIT to explicit non-empty

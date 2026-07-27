@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // deliver POSTs ev to sub's URL under the Engine's configured retry policy,

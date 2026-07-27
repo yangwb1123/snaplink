@@ -2,16 +2,16 @@ package sso
 import (
 	"net/http"
 	"time"
-	"github.com/snaplink/sso/domains/authenticators/device"
-	"github.com/snaplink/sso/domains/connections"
-	"github.com/snaplink/sso/domains/connections/provider"
-	"github.com/snaplink/sso/domains/federation"
-	federationhealth "github.com/snaplink/sso/domains/federation/health"
-	"github.com/snaplink/sso/interfaces/admin"
-	"github.com/snaplink/sso/interfaces/middleware"
-	"github.com/snaplink/sso/protocols/caep"
-	"github.com/snaplink/sso/protocols/oidc"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/authenticators/device"
+	"github.com/yangwb1123/snaplink/domains/connections"
+	"github.com/yangwb1123/snaplink/domains/connections/provider"
+	"github.com/yangwb1123/snaplink/domains/federation"
+	federationhealth "github.com/yangwb1123/snaplink/domains/federation/health"
+	"github.com/yangwb1123/snaplink/interfaces/admin"
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/protocols/caep"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 // PathAdminFederationHealth re-export.
 const PathAdminFederationHealth = core.PathAdminFederationHealth

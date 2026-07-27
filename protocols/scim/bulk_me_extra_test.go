@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // These tests cover the bulk + /Me + handler branches the existing suites do

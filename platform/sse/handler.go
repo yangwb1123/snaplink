@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // Query parameters for GET /api/v1/admin/events/stream.

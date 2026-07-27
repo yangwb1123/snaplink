@@ -3,14 +3,14 @@ package main
 import (
 	"net/http"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/interfaces/admin"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/lifecycle/webhook"
-	"github.com/snaplink/sso/protocols/scim"
-	"github.com/snaplink/sso/protocols/scimprovision"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/interfaces/admin"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/webhook"
+	"github.com/yangwb1123/snaplink/protocols/scim"
+	"github.com/yangwb1123/snaplink/protocols/scimprovision"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // SCIM 2.0 mount prefix. Mounted on the SSO router (so it shares the

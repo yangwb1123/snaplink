@@ -3,7 +3,7 @@ package federation
 import (
 	"context"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // EntityStatementTyp is the REQUIRED JOSE `typ` header for an Entity

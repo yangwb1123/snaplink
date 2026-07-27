@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/domains/authenticators"
-	"github.com/snaplink/sso/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	"github.com/yangwb1123/snaplink/domains/permissions"
 )
 
 // ---------- BuildPermissionProvider ----------

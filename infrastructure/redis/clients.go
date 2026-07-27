@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	goredis "github.com/redis/go-redis/v9"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/security"
 	"golang.org/x/crypto/bcrypt"
 )
 

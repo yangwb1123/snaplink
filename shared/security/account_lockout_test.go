@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // MemoryAccountLockout is the in-process AccountLockout. These tests

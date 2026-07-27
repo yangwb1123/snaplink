@@ -12,7 +12,7 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // RecordTokenIssued emits a token_issued event (any /token grant).

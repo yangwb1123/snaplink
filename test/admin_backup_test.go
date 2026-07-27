@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	"github.com/snaplink/sso/interfaces/sso"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // sqliteBackupSource adapts a real modernc SQLite store into a

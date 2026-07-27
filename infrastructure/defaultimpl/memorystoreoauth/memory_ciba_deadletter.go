@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/snaplink/sso/protocols/oauth/oauthspi"
+	"github.com/yangwb1123/snaplink/protocols/oauth/oauthspi"
 )
 
 // MemoryCIBAPushDeadLetterStore is an in-memory implementation of

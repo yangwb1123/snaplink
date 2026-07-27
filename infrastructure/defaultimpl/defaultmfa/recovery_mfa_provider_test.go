@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl/defaultmfa"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystorecredential"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/defaultmfa"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystorecredential"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // newProviderWithCode wires the recovery provider over a real

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/internal/handler"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/internal/handler"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // RefreshGrantDeps is what HandleRefreshGrant needs. *sso.Server satisfies it

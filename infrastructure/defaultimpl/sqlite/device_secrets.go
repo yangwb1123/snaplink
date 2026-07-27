@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // deviceSecretSchema is the OpenID Connect Native SSO 1.0 device-secret store:

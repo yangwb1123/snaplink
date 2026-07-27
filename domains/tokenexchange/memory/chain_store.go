@@ -6,7 +6,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/snaplink/sso/domains/tokenexchange"
+	"github.com/yangwb1123/snaplink/domains/tokenexchange"
 )
 
 // ErrMissingJTI is returned by ChainStore.RecordHop when hop.JTI is empty —

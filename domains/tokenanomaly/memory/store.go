@@ -11,7 +11,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/snaplink/sso/domains/tokenanomaly"
+	"github.com/yangwb1123/snaplink/domains/tokenanomaly"
 )
 
 // DefaultMaxFindings caps distinct findings when WithMaxFindings is not given.

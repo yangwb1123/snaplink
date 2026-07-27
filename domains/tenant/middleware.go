@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // HandlerContextKey is the value-bag key the Middleware stashes

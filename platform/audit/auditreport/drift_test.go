@@ -4,9 +4,9 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/audit/auditreport"
-	"github.com/snaplink/sso/platform/audit/auditspi"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit/auditreport"
+	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
 )
 
 // wantUncategorizedEventTypes is every audit.EventType constant that, at

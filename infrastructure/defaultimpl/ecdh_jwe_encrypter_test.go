@@ -10,8 +10,8 @@ import (
 
 	jose "github.com/go-jose/go-jose/v4"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // ecJWK builds a recipient JWK from an EC public key (use:"enc").

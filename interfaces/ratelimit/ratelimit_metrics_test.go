@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/interfaces/ratelimit"
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 )
 
 // rateLimitHitValue returns the sso_rate_limit_hits_total value for the given

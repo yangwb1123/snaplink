@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // UserinfoSignedAlgEdDSA is the EdDSA `userinfo_signed_response_alg`

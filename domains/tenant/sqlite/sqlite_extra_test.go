@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/domains/tenant"
+	"github.com/yangwb1123/snaplink/domains/tenant"
 
 	_ "modernc.org/sqlite"
 )

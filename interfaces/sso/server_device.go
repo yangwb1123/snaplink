@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/internal/handler/tokengrant"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/protocols/oidc"
+	"github.com/yangwb1123/snaplink/internal/handler/tokengrant"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
 )
 
 func generateDeviceCodeBytes() (string, error) { return oauth.GenerateDeviceCode() }

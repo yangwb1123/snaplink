@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators/device"
-	"github.com/snaplink/sso/domains/connections/provider"
-	"github.com/snaplink/sso/platform/lifecycle/rebac"
-	"github.com/snaplink/sso/protocols/caep"
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/domains/authenticators/device"
+	"github.com/yangwb1123/snaplink/domains/connections/provider"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/rebac"
+	"github.com/yangwb1123/snaplink/protocols/caep"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
 // ============================================================================

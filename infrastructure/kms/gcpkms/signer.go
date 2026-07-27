@@ -18,7 +18,7 @@ import (
 
 	kmspb "cloud.google.com/go/kms/apiv1/kmspb"
 	gax "github.com/googleapis/gax-go/v2"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // ErrUnsupportedKey is returned when the GCP Cloud KMS key version (or the

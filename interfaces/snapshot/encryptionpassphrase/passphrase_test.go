@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/interfaces/snapshot/encryptionpassphrase"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot/encryptionpassphrase"
 )
 
 func TestSealOpenRoundtrip(t *testing.T) {

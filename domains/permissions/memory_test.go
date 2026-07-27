@@ -7,7 +7,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/snaplink/sso/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/permissions"
 )
 
 // fixture builds a MemoryProvider with two apps and three role assignments,

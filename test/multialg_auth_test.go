@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // End-to-end interop tests for the widening of the RP-facing asymmetric

@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/middleware"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // HandleMyEmailChange serves POST /me/email/change — the first leg of a verified

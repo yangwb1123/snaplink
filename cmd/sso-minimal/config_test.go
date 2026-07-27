@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/platform/buildinfo"
+	"github.com/yangwb1123/snaplink/platform/buildinfo"
 )
 
 func TestRuntimeConfigUsesEnvironmentAndFlags(t *testing.T) {

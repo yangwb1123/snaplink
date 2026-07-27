@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // fakeJWKSIssuer is a minimal core.JWKSProvider + keyRetirer + keyDropper

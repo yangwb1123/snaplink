@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
 	"golang.org/x/crypto/bcrypt"
 )
 

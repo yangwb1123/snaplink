@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/middleware"
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 )
 
 // Policy maps an incoming request to the limiter that gates it. Prefix

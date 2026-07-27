@@ -9,29 +9,29 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 
-	redisbackend "github.com/snaplink/sso/infrastructure/redis"
+	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 
-	"github.com/snaplink/sso/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/cluster"
 
-	clusteretcd "github.com/snaplink/sso/platform/cluster/etcd"
+	clusteretcd "github.com/yangwb1123/snaplink/platform/cluster/etcd"
 
-	"github.com/snaplink/sso/config"
-	clustermemory "github.com/snaplink/sso/platform/cluster/memory"
+	"github.com/yangwb1123/snaplink/config"
+	clustermemory "github.com/yangwb1123/snaplink/platform/cluster/memory"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 
-	"github.com/snaplink/sso/interfaces/ratelimit"
-	"github.com/snaplink/sso/platform/registry"
+	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
+	"github.com/yangwb1123/snaplink/platform/registry"
 
-	registryetcd "github.com/snaplink/sso/platform/registry/etcd"
-	"github.com/snaplink/sso/platform/registry/memory"
-	"github.com/snaplink/sso/platform/signingkeys"
+	registryetcd "github.com/yangwb1123/snaplink/platform/registry/etcd"
+	"github.com/yangwb1123/snaplink/platform/registry/memory"
+	"github.com/yangwb1123/snaplink/platform/signingkeys"
 
-	signingkeysetcd "github.com/snaplink/sso/platform/signingkeys/etcd"
+	signingkeysetcd "github.com/yangwb1123/snaplink/platform/signingkeys/etcd"
 
-	signingkeysmemory "github.com/snaplink/sso/platform/signingkeys/memory"
+	signingkeysmemory "github.com/yangwb1123/snaplink/platform/signingkeys/memory"
 )
 
 // BuildRateLimitPolicy translates RateLimitConfig into a ratelimit.Policy.

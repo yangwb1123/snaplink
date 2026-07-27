@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // Classifier keeps a priority-sorted snapshot of every policy in a Store and

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/domains/identitylink"
-	identitylinkmemory "github.com/snaplink/sso/domains/identitylink/memory"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/identitylink"
+	identitylinkmemory "github.com/yangwb1123/snaplink/domains/identitylink/memory"
 )
 
 // BuildIdentityLink builds the identitylink.Store (+ optional MergePolicy)

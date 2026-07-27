@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreoauth"
-	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreoauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 // TestMemoryRefreshTokenStore_GenerationRoundTrip proves the rotation-generation

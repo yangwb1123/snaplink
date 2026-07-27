@@ -6,11 +6,11 @@ import (
 	"sort"
 	"time"
 
-	"github.com/snaplink/sso/domains/conditionalaccess"
-	"github.com/snaplink/sso/domains/connections"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
+	"github.com/yangwb1123/snaplink/domains/connections"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // B2B enterprise-connection admin CRUD, extracted from package sso (root) into

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
-	"github.com/snaplink/sso/interfaces/sso"
+	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

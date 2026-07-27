@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // ErrAccountConflict is returned by Resolve (and by RejectPolicy.Resolve) when

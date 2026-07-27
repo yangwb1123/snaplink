@@ -3,7 +3,7 @@ package authenticators
 import (
 	"context"
 
-	sso "github.com/snaplink/sso/interfaces/sso"
+	sso "github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // LazyRehashVerifier wraps an underlying PasswordVerifier. On a successful

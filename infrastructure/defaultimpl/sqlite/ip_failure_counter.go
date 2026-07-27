@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/domains/anomaly"
+	"github.com/yangwb1123/snaplink/domains/anomaly"
 )
 
 // ipFailureCounterSchema persists (ip_hash, subject_id, ts) for

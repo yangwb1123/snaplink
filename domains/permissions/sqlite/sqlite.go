@@ -28,8 +28,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 
 	_ "modernc.org/sqlite"
 )

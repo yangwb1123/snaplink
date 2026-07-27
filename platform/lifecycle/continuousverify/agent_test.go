@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
-	"github.com/snaplink/sso/platform/lifecycle/continuousverify"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/trust"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreidentity"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/continuousverify"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/trust"
 )
 
 // liveCfg decays a 1.0 score below the 0.6 floor after ~60 minutes.

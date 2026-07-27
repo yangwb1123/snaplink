@@ -7,7 +7,7 @@ syntax = "proto3";
 
 package snaplink.discovery.v1;
 
-option go_package = "github.com/snaplink/sso/gen/proto/discovery/v1;discoveryv1";
+option go_package = "github.com/yangwb1123/snaplink/gen/proto/discovery/v1;discoveryv1";
 
 // Discovery is a thin gRPC facade over registry.Registry. Use it from
 // services that don't want to embed the registry client directly (e.g. a

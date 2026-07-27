@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/metering"
-	meteringmemory "github.com/snaplink/sso/domains/metering/memory"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/domains/metering"
+	meteringmemory "github.com/yangwb1123/snaplink/domains/metering/memory"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // topTenantsServer builds a server whose memory aggregator is pre-seeded with

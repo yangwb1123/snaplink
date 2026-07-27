@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/domains/identitylink"
+	"github.com/yangwb1123/snaplink/domains/identitylink"
 )
 
 func TestStore_LinkListUnlink(t *testing.T) {

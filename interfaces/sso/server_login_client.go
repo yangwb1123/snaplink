@@ -4,14 +4,14 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/snaplink/sso/domains/conditionalaccess"
-	"github.com/snaplink/sso/internal/auth/login"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/geo"
-	"github.com/snaplink/sso/protocols/fapi"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
-	"github.com/snaplink/sso/shared/trust"
+	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
+	"github.com/yangwb1123/snaplink/internal/auth/login"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/geo"
+	"github.com/yangwb1123/snaplink/protocols/fapi"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/trust"
 )
 
 // resolveAndValidateLoginClient looks up the requesting client and runs the

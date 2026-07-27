@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/snaplink/sso/cmd/sso-ctl/apiclient"
+	"github.com/yangwb1123/snaplink/cmd/sso-ctl/apiclient"
 )
 
 // listFetchedMsg and opDoneMsg are the tea.Msg results of the async HTTP

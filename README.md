@@ -1,7 +1,7 @@
 # snaplink / sso
 
-[![ci](https://github.com/snaplink/sso/actions/workflows/ci.yml/badge.svg)](https://github.com/snaplink/sso/actions/workflows/ci.yml)
-[![engineering gates](https://github.com/snaplink/sso/actions/workflows/engineering.yml/badge.svg)](https://github.com/snaplink/sso/actions/workflows/engineering.yml)
+[![ci](https://github.com/yangwb1123/snaplink/actions/workflows/ci.yml/badge.svg)](https://github.com/yangwb1123/snaplink/actions/workflows/ci.yml)
+[![engineering gates](https://github.com/yangwb1123/snaplink/actions/workflows/engineering.yml/badge.svg)](https://github.com/yangwb1123/snaplink/actions/workflows/engineering.yml)
 
 An OAuth 2.0 + OpenID Connect **SSO server**, shipped two ways: as a **Go SDK** you
 embed as a library, and as a **runnable, API-only binary** you configure with
@@ -10,7 +10,7 @@ dependencies; in-memory and pure-Go SQLite default backends, with optional
 Redis, Postgres, and etcd-backed components for multi-replica deployments.
 
 ```
-import "github.com/snaplink/sso/interfaces/sso"     // the public SDK
+import "github.com/yangwb1123/snaplink/interfaces/sso"     // the public SDK
 go build ./cmd/sso-server                           // the runnable server
 go build ./cmd/sso-ctl                              // the offline operator CLI
 ```
@@ -96,8 +96,8 @@ any `net/http` listener. There is **one** constructor, `sso.NewServer`.
 ```go
 import (
     "net/http"
-    "github.com/snaplink/sso/infrastructure/defaultimpl"
-    "github.com/snaplink/sso/interfaces/sso"
+    "github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+    "github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 issuer := defaultimpl.NewEd25519JWTIssuer()
@@ -172,7 +172,7 @@ per capability at startup:
 ```go
 import (
     "google.golang.org/grpc"
-    "github.com/snaplink/sso/interfaces/ssoclient/remote"
+    "github.com/yangwb1123/snaplink/interfaces/ssoclient/remote"
 )
 
 // REMOTE mode — talk to a central SSO. Token verification is LOCAL (cached

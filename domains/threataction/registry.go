@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // ThreatExecutors is a composite executor that:

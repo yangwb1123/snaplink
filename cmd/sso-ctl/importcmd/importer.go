@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	"github.com/snaplink/sso/infrastructure/postgres"
-	sso "github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	"github.com/yangwb1123/snaplink/infrastructure/postgres"
+	sso "github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // Backend selector values — match the server's identity.backend vocabulary

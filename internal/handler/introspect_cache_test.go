@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 // TestMemoryIntrospectionCache_Invalidate proves the OPTIONAL

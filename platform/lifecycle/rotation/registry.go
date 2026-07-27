@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/shared/core/corecredential"
+	"github.com/yangwb1123/snaplink/shared/core/corecredential"
 )
 
 // ErrDuplicateRotator is returned by Registry.Register when a rotator for

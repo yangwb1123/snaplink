@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/anomaly"
+	"github.com/yangwb1123/snaplink/domains/anomaly"
 )
 
 func newRecentLoginStoreForTest(t *testing.T) *RecentLoginStore {

@@ -1,6 +1,6 @@
 package auditreport
 
-import "github.com/snaplink/sso/platform/audit"
+import "github.com/yangwb1123/snaplink/platform/audit"
 
 // controlAreaDef is the static definition of one evidence bucket: a
 // code, a human name, and the fixed vocabulary of audit.EventType

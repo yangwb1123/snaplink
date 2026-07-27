@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/snaplink/sso/platform/netpolicy"
+	"github.com/yangwb1123/snaplink/platform/netpolicy"
 )
 
 func (r *Restorer) restoreNetPolicy(ctx context.Context, snap *Snapshot, opts RestoreOptions) (CategoryCounts, error) {

@@ -1,11 +1,11 @@
-module github.com/snaplink/sso/mqtt
+module github.com/yangwb1123/snaplink/mqtt
 
 go 1.26.1
 
 require (
 	github.com/eclipse/paho.golang v0.23.0
 	github.com/mochi-mqtt/server/v2 v2.7.9
-	github.com/snaplink/sso v0.0.0
+	github.com/yangwb1123/snaplink v0.0.0
 	go.opentelemetry.io/otel v1.43.0
 )
 
@@ -37,4 +37,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/snaplink/sso => ../../
+replace github.com/yangwb1123/snaplink => ../../

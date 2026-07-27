@@ -464,7 +464,7 @@ const file_admin_v1_tokens_proto_rawDesc = "" +
 	"\x11TokenAdminService\x12\x86\x01\n" +
 	"\fListSessions\x12&.snaplink.admin.v1.ListSessionsRequest\x1a'.snaplink.admin.v1.ListSessionsResponse\"%\x82\xd3\xe4\x93\x02\x1f\x12\x1d/api/v1/admin/tokens/sessions\x12u\n" +
 	"\x06Revoke\x12 .snaplink.admin.v1.RevokeRequest\x1a!.snaplink.admin.v1.RevokeResponse\"&\x82\xd3\xe4\x93\x02 :\x01*\"\x1b/api/v1/admin/tokens/revoke\x12\x8b\x01\n" +
-	"\x0eIssueTempToken\x12(.snaplink.admin.v1.IssueTempTokenRequest\x1a).snaplink.admin.v1.IssueTempTokenResponse\"$\x82\xd3\xe4\x93\x02\x1e:\x01*\"\x19/api/v1/admin/tokens/tempB4Z2github.com/snaplink/sso/gen/proto/admin/v1;adminv1b\x06proto3"
+	"\x0eIssueTempToken\x12(.snaplink.admin.v1.IssueTempTokenRequest\x1a).snaplink.admin.v1.IssueTempTokenResponse\"$\x82\xd3\xe4\x93\x02\x1e:\x01*\"\x19/api/v1/admin/tokens/tempB;Z9github.com/yangwb1123/snaplink/gen/proto/admin/v1;adminv1b\x06proto3"
 
 var (
 	file_admin_v1_tokens_proto_rawDescOnce sync.Once

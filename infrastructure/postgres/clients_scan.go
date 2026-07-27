@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // clientColumns is the canonical ordered column list shared by the SELECT,

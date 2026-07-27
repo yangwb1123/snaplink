@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 // TestWireInvalidationBusOpts_FailsClosedWhenArmedWithoutBus pins the P2

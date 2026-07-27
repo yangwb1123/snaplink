@@ -4,7 +4,7 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // RevokeSession revokes one AgentSession by id and records the action in

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/permissions"
 )
 
 func newRes(id, tenantID, clientID string, t permissions.ResourceType, attrs map[string]string) *permissions.Resource {

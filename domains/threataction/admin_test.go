@@ -7,10 +7,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/domains/threataction"
-	"github.com/snaplink/sso/domains/threataction/memory"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/domains/threataction"
+	"github.com/yangwb1123/snaplink/domains/threataction/memory"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // HandleAdminPutPolicy/HandleAdminDeletePolicy are exercised against a REAL

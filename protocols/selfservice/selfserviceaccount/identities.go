@@ -4,8 +4,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/snaplink/sso/domains/identitylink"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/identitylink"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // HandleMyIdentities serves GET /me/identities — lists the authenticated

@@ -1,7 +1,7 @@
 package sso
 
 import (
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 
 	"crypto/ecdsa"
 	"crypto/elliptic"

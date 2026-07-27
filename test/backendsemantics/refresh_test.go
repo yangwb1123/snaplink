@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 func issueRefresh(t *testing.T, store oauth.RefreshTokenStore, token, familyID string, expiresAt time.Time) {

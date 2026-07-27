@@ -1,10 +1,10 @@
-module github.com/snaplink/sso/kafka
+module github.com/yangwb1123/snaplink/kafka
 
 go 1.26.1
 
 require (
 	github.com/segmentio/kafka-go v0.4.51
-	github.com/snaplink/sso v0.0.0
+	github.com/yangwb1123/snaplink v0.0.0
 )
 
 require (
@@ -54,4 +54,4 @@ require (
 	modernc.org/sqlite v1.50.1 // indirect
 )
 
-replace github.com/snaplink/sso => ../../
+replace github.com/yangwb1123/snaplink => ../../

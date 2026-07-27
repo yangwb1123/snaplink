@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/anomaly"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/domains/anomaly"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
 func TestMemoryRecentLoginStore_AppendAndRecentRoundtrip(t *testing.T) {

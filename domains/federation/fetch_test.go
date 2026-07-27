@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/federation"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/federation"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // These tests cover the OpenID Federation 1.0 §8 Federation Fetch endpoint:

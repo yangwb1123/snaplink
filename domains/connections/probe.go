@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // probe.go performs the admin-triggered lightweight reachability/handshake

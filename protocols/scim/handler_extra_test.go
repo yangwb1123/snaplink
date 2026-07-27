@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
 // These tests cover the User handler branches the main suite does not reach:

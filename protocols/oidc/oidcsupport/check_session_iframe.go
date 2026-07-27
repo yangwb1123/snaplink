@@ -3,7 +3,7 @@ package oidcsupport
 import (
 	"net/http"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // CheckSessionCookieName is the (deliberately narrow-scoped, non-HttpOnly)

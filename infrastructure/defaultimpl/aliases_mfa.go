@@ -7,7 +7,7 @@ package defaultimpl
 // directly (not the interfaces/sso facade), removing a latent upward import.
 // These aliases preserve the historical defaultimpl.* import surface unchanged.
 
-import "github.com/snaplink/sso/infrastructure/defaultimpl/defaultmfa"
+import "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/defaultmfa"
 
 type (
 	CompositeMFAEnrollmentStore = defaultmfa.CompositeMFAEnrollmentStore

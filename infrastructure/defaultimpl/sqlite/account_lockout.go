@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // accountLockoutSchema covers the per-key failure counter +

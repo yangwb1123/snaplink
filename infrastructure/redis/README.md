@@ -2,7 +2,7 @@
 
 > **Current status:** `infrastructure/redis` is a package in the root Go module,
 > not a nested module. Its import path is
-> `github.com/snaplink/sso/infrastructure/redis`, `go-redis` is present in the
+> `github.com/yangwb1123/snaplink/infrastructure/redis`, `go-redis` is present in the
 > root `go.mod`, and the stock `cmd/sso-server` wires single, Sentinel, and
 > Cluster clients from the shared `redis:` configuration block.
 
@@ -37,9 +37,9 @@ hand it to each store constructor, then pass the store to the matching
 ```go
 import (
     goredis "github.com/redis/go-redis/v9"
-    rstore "github.com/snaplink/sso/infrastructure/redis"
-    sso "github.com/snaplink/sso/interfaces/sso"
-    "github.com/snaplink/sso/protocols/oauth"
+    rstore "github.com/yangwb1123/snaplink/infrastructure/redis"
+    sso "github.com/yangwb1123/snaplink/interfaces/sso"
+    "github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 rdb := goredis.NewClient(&goredis.Options{Addr: "redis:6379"})

@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/cluster"
-	clustermemory "github.com/snaplink/sso/platform/cluster/memory"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	clustermemory "github.com/yangwb1123/snaplink/platform/cluster/memory"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // newCoordServer builds a minimal Server with one Ed25519 JWT issuer, the given

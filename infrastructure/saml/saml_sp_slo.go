@@ -6,9 +6,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/saml/sp"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/saml/sp"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // sloSPHandler is the SP-side Single Logout receiver: the UPSTREAM IdP

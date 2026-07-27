@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // newTestAuth builds an Authenticator wired to a fake Exchanger. cfg supplies

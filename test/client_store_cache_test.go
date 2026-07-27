@@ -1,6 +1,6 @@
 package ssotest
 
-import "github.com/snaplink/sso/protocols/oauth"
+import "github.com/yangwb1123/snaplink/protocols/oauth"
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // newCachedDCRHarness builds a server with the opt-in per-login ClientStore

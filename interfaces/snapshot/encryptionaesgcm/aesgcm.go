@@ -22,7 +22,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/snaplink/sso/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
 )
 
 // KeySize is the AES-256 key length in bytes. Sealers reject keys

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/permissions"
 )
 
 // TestResolveResource_TypeMismatchSkips registers a GRPC resource but

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators/device"
+	"github.com/yangwb1123/snaplink/domains/authenticators/device"
 )
 
 func TestDevicesAdversarial_ConcurrentUpsertAndList(t *testing.T) {

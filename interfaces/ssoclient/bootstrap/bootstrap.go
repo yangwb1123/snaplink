@@ -25,9 +25,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/bootstrap"
-	bootstrapfile "github.com/snaplink/sso/platform/bootstrap/file"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/bootstrap"
+	bootstrapfile "github.com/yangwb1123/snaplink/platform/bootstrap/file"
 )
 
 // reservedNamespace is the SDK-owned namespace; consumer apps may not use

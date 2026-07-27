@@ -1,7 +1,7 @@
 package oauth
 
 import (
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // EchoStateConditionally writes the state parameter into a JSON response

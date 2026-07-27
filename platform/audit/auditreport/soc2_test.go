@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/audit/auditexport"
-	"github.com/snaplink/sso/platform/audit/auditreport"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit/auditexport"
+	"github.com/yangwb1123/snaplink/platform/audit/auditreport"
 )
 
 // chainBase anchors the synthetic clock so recorded events get strictly

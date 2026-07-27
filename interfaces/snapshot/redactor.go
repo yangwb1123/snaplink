@@ -1,6 +1,6 @@
 package snapshot
 
-import "github.com/snaplink/sso/interfaces/sso"
+import "github.com/yangwb1123/snaplink/interfaces/sso"
 
 // Redactor strips or transforms secret-bearing fields on a Snapshot
 // BEFORE it is serialized + sealed. It mirrors the audit.Redactor idiom

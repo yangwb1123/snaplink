@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/shared/core/corecredential"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/core/corecredential"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // Scheduler defaults. The tick is the polling resolution (how late a due

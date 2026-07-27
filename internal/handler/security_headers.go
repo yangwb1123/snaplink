@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // SecurityHeadersPolicy is the operator-customizable part of the

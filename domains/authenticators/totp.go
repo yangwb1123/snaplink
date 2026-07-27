@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/shared/security"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/security"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // TOTP implements RFC 6238 "Time-based One-Time Password Algorithm".

@@ -19,10 +19,10 @@ import (
 	"testing"
 	"time"
 
-	tenantpkg "github.com/snaplink/sso/domains/tenant"
-	tenantmem "github.com/snaplink/sso/domains/tenant/memory"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
+	tenantpkg "github.com/yangwb1123/snaplink/domains/tenant"
+	tenantmem "github.com/yangwb1123/snaplink/domains/tenant/memory"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 const rcov2JARIssuer = "https://rcov2-jar.example.com"

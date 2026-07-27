@@ -8,7 +8,7 @@ import (
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 const (

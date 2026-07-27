@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func TestHandleMyMFAFactors_ListsOwnFactors(t *testing.T) {

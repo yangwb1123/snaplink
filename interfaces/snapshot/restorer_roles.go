@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/snaplink/sso/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/permissions"
 )
 
 func (r *Restorer) restoreRoles(ctx context.Context, snap *Snapshot, opts RestoreOptions) (CategoryCounts, error) {

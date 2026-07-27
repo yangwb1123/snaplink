@@ -1,16 +1,16 @@
 package sso
 
 import (
-	"github.com/snaplink/sso/domains/identitylink"
-	"github.com/snaplink/sso/domains/metering"
-	"github.com/snaplink/sso/interfaces/middleware"
-	"github.com/snaplink/sso/internal/handler"
-	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
+	"github.com/yangwb1123/snaplink/domains/identitylink"
+	"github.com/yangwb1123/snaplink/domains/metering"
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/internal/handler"
+	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicecore"
 	"time"
 
-	"github.com/snaplink/sso/protocols/compliance"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/protocols/compliance"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 func WithPasswordResetStore(store PasswordResetStore, ttl time.Duration) Option {

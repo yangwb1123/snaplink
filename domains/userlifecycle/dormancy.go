@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // LastActiveSource reports the most recent instant a user was active — the

@@ -6,13 +6,13 @@
 // kms/awskms + redis. The shipped, in-core mesh ext_authz is HTTP-mode
 // (handleMeshExtAuthz); this is its gRPC-mode companion, reusing the EXACT
 // same dep-free MeshAuthorize decision seam (mesh_authz.go).
-module github.com/snaplink/sso/extauthz
+module github.com/yangwb1123/snaplink/extauthz
 
 go 1.26.1
 
 // Monorepo local resolution: the submodule depends on the core sso module
 // at the repo root, not a published version.
-require github.com/snaplink/sso v0.0.0
+require github.com/yangwb1123/snaplink v0.0.0
 
 require (
 	github.com/envoyproxy/go-control-plane/envoy v1.36.0
@@ -66,4 +66,4 @@ require (
 	modernc.org/sqlite v1.50.1 // indirect
 )
 
-replace github.com/snaplink/sso => ../../
+replace github.com/yangwb1123/snaplink => ../../

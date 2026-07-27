@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/protocols/scim"
+	"github.com/yangwb1123/snaplink/protocols/scim"
 )
 
 // DefaultHTTPTimeout bounds a single outbound SCIM HTTP call when

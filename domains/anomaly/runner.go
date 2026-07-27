@@ -2,7 +2,7 @@
 // subsystem — detector SPI + async dispatcher + login event/signal
 // types + per-subject login history + per-IP failure counter SPIs.
 //
-// The synchronous [github.com/snaplink/spi.RiskScorer] makes
+// The synchronous [github.com/yangwb1123/snaplink/shared/spi.RiskScorer] makes
 // millisecond-budget allow/deny/require-MFA decisions on the request
 // path. This package handles signals that require WINDOWED state
 // (impossible travel, velocity, new device, brute-force shadow) and
@@ -10,7 +10,7 @@
 // (success + failure) after the response is built, surface anomalies
 // via audit + metrics + webhook, and NEVER block login.
 //
-// Reference detectors ship in `github.com/snaplink/sso/infrastructure/defaultimpl/anomaly`.
+// Reference detectors ship in `github.com/yangwb1123/snaplink/infrastructure/defaultimpl/anomaly`.
 package anomaly
 
 import (
@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/domains/threataction"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/domains/threataction"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // Runner is the worker pool that fans LoginEvents out

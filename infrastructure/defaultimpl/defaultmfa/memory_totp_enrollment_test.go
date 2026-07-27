@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
 )
 
 func TestMemoryTOTPEnrollmentStore_Lifecycle(t *testing.T) {

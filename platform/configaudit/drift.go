@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/cluster"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // EventConfigDriftDetected is the audit.EventType emitted when a peer's

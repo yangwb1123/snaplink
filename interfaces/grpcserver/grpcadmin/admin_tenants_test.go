@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/domains/tenant"
-	tenantmemory "github.com/snaplink/sso/domains/tenant/memory"
-	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	tenantmemory "github.com/yangwb1123/snaplink/domains/tenant/memory"
+	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
+	"github.com/yangwb1123/snaplink/platform/audit"
 	"google.golang.org/grpc/codes"
 )
 

@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators"
-	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/grpcserver"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/grpcserver"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

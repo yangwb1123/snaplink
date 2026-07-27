@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/domains/connections"
+	"github.com/yangwb1123/snaplink/domains/connections"
 )
 
 // connectionDomainClaimsSchema is migration v2: the per-(connection,domain)

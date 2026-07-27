@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // ExternalSignerFactory builds a KMS/HSM-backed crypto.Signer for the JWT

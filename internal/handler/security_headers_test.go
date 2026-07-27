@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // noopHandler writes a 200 with no headers of its own, so tests can observe

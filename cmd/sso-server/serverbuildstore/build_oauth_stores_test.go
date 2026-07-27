@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
 func TestBuildAuthCodeStore_MemoryRedisUnknown(t *testing.T) {

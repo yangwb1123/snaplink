@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/shared/security/peertrust"
-	"github.com/snaplink/sso/shared/security/securityverify"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
+	"github.com/yangwb1123/snaplink/shared/security/securityverify"
 )
 
 func genCertPEM(t *testing.T) string {

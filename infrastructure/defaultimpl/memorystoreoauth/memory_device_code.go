@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memreaper"
-	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memreaper"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 // userCodeAlphabet is base32 minus easily-confused glyphs (0/O, 1/I/L).

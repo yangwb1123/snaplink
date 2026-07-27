@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/goccy/go-yaml"
-	"github.com/snaplink/sso/config/schema"
-	"github.com/snaplink/sso/config/sources"
+	"github.com/yangwb1123/snaplink/config/schema"
+	"github.com/yangwb1123/snaplink/config/sources"
 )
 
 // Source is one contributor to the merged configuration document.
@@ -352,8 +352,8 @@ var (
 // Example wiring:
 //
 //	import (
-//	    "github.com/snaplink/sso/config"
-//	    "github.com/snaplink/sso/config/sources"
+//	    "github.com/yangwb1123/snaplink/config"
+//	    "github.com/yangwb1123/snaplink/config/sources"
 //	)
 //
 //	resolver := sources.NewExecSecretResolver("aws", myResolveFunc)

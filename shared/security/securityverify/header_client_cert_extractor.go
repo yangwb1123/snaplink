@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/snaplink/sso/shared/security/peertrust"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
 // HeaderCertEncoding describes how a TLS-terminating reverse proxy

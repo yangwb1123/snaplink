@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/protocols/oidc"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // endSessionDeps is a no-mock EndSessionDeps. ValidateAnyToken delegates to a

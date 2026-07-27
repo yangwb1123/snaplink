@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/interfaces/ssoclient/rs"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/rs"
 )
 
 // introspectServer builds a minimal RFC 7662 endpoint: requires the given

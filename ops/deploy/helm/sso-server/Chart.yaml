@@ -16,9 +16,9 @@ appVersion: "latest"
 # SPDX license identifier.
 license: Apache-2.0
 
-home: https://github.com/snaplink/sso
+home: https://github.com/yangwb1123/snaplink
 sources:
-  - https://github.com/snaplink/sso
+  - https://github.com/yangwb1123/snaplink
 maintainers:
   - name: Snaplink Team
     email: dev@snaplink.dev

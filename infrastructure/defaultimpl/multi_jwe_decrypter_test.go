@@ -8,7 +8,7 @@ import (
 	"crypto/rsa"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
 func TestMultiJWEDecrypter_RoutesByAlg(t *testing.T) {

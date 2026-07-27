@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // BindParams reads OAuth request parameters from either a JSON

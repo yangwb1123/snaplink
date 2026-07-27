@@ -3,7 +3,7 @@
 // SessionIndex so they're locked to identical observable behavior.
 //
 // It lives in its OWN package (not the sibling samltest replay suite) because it
-// imports github.com/snaplink/sso/saml/idp (for SAMLSPSession): a conformance
+// imports github.com/yangwb1123/snaplink/saml/idp (for SAMLSPSession): a conformance
 // suite that imported idp could not be used from an INTERNAL `package idp` test
 // (import cycle). The memory side runs it from an EXTERNAL `package idp_test`
 // (which may import idp), the sqlite side from saml/idp/sqlite — neither cycles.
@@ -13,7 +13,7 @@ import (
 	"context"
 	"testing"
 
-	samlidp "github.com/snaplink/sso/saml/idp"
+	samlidp "github.com/yangwb1123/snaplink/saml/idp"
 )
 
 // SessionIndexConformance exercises every idp.SAMLSessionIndex semantic both the

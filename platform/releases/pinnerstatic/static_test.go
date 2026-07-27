@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/platform/releases"
-	"github.com/snaplink/sso/platform/releases/pinnerstatic"
+	"github.com/yangwb1123/snaplink/platform/releases"
+	"github.com/yangwb1123/snaplink/platform/releases/pinnerstatic"
 )
 
 // stagedBundle materialises a fake bundle directory inside dir so the

@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	authzv1 "github.com/snaplink/sso/gen/proto/authz/v1"
-	"github.com/snaplink/sso/interfaces/ssoclient"
+	authzv1 "github.com/yangwb1123/snaplink/gen/proto/authz/v1"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient"
 	"google.golang.org/grpc"
 )
 

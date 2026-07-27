@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/platform/lifecycle/degradation"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/degradation"
 )
 
 func drTestPolicy() degradation.Policy {

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/ssoclient/remote"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/remote"
 )
 
 // jwksServer constructs a test JWKS endpoint that exposes the given keypair

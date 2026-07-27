@@ -794,7 +794,7 @@ const file_netpolicy_v1_netpolicy_proto_rawDesc = "" +
 	"\x05Apply\x12#.snaplink.netpolicy.v1.ApplyRequest\x1a$.snaplink.netpolicy.v1.ApplyResponse\x12U\n" +
 	"\x06Delete\x12$.snaplink.netpolicy.v1.DeleteRequest\x1a%.snaplink.netpolicy.v1.DeleteResponse\x12R\n" +
 	"\x05Watch\x12#.snaplink.netpolicy.v1.WatchRequest\x1a\".snaplink.netpolicy.v1.PolicyEvent0\x01\x12[\n" +
-	"\bClassify\x12&.snaplink.netpolicy.v1.ClassifyRequest\x1a'.snaplink.netpolicy.v1.ClassifyResponseB<Z:github.com/snaplink/sso/gen/proto/netpolicy/v1;netpolicyv1b\x06proto3"
+	"\bClassify\x12&.snaplink.netpolicy.v1.ClassifyRequest\x1a'.snaplink.netpolicy.v1.ClassifyResponseBCZAgithub.com/yangwb1123/snaplink/gen/proto/netpolicy/v1;netpolicyv1b\x06proto3"
 
 var (
 	file_netpolicy_v1_netpolicy_proto_rawDescOnce sync.Once

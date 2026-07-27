@@ -1,6 +1,6 @@
 package ssotest
 
-import "github.com/snaplink/sso/shared/spi"
+import "github.com/yangwb1123/snaplink/shared/spi"
 
 // spi.RiskScorer SPI integration — verifies the hook in handleLogin
 // respects scorer decisions (Allow / Deny / RequireMFA-treated-as-Allow)
@@ -22,11 +22,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators"
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // stubScorer is a controllable spi.RiskScorer for tests. spi.Decision and

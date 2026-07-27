@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/platform/netpolicy"
+	"github.com/yangwb1123/snaplink/platform/netpolicy"
 )
 
 // ErrClosed is returned by Apply/Get/Watch after Close.

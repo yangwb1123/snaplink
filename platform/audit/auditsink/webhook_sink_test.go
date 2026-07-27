@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit/auditspi"
-	"github.com/snaplink/sso/shared/security/securityverify"
+	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
+	"github.com/yangwb1123/snaplink/shared/security/securityverify"
 )
 
 // captured records the shape of one inbound POST the test HTTP server saw,

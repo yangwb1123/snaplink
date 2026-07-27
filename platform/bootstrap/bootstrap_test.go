@@ -7,10 +7,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/bootstrap"
-	"github.com/snaplink/sso/platform/bootstrap/file"
-	"github.com/snaplink/sso/platform/bootstrap/memory"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/bootstrap"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/file"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/memory"
 )
 
 type recorder struct {

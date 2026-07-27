@@ -1,6 +1,6 @@
 package ssotest
 
-import "github.com/snaplink/sso/shared/security"
+import "github.com/yangwb1123/snaplink/shared/security"
 
 import (
 	"bytes"
@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 func TestMemoryPairwiseSubjectStore_RoundTrip(t *testing.T) {

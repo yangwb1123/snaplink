@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // Federation-resolved trust-mark issuer helpers (OpenID Federation 1.0 §7 +

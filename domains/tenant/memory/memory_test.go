@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/domains/tenant"
-	"github.com/snaplink/sso/domains/tenant/memory"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	"github.com/yangwb1123/snaplink/domains/tenant/memory"
 )
 
 func mkTenant(id, slug string) *tenant.Tenant {

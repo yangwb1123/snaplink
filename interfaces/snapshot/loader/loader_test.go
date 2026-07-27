@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/interfaces/snapshot/loader"
-	"github.com/snaplink/sso/interfaces/snapshot/storageinline"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot/loader"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot/storageinline"
 )
 
 // minimalSnapshot returns a Snapshot with the bare minimum fields filled

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit/auditspi"
+	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
 )
 
 // syslogStructuredDataID is the SD-ID used for the one STRUCTURED-DATA

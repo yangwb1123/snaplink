@@ -3,7 +3,7 @@ package defaultimpl
 import (
 	"encoding/json"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 type ed25519Header struct {

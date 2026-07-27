@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // EmailSender delivers a verification code to an email address.

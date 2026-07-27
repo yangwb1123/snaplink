@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
 // TestMigration_IndependentNamespacesOnSharedDB proves the user and

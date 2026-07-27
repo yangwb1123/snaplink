@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // OpenID Federation 1.0 §12 (Automatic Registration) — where federation

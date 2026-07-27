@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/cmd/sso-ctl/auditexport"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/audit/auditreport"
-	auditsqlite "github.com/snaplink/sso/platform/audit/sqlite"
+	"github.com/yangwb1123/snaplink/cmd/sso-ctl/auditexport"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit/auditreport"
+	auditsqlite "github.com/yangwb1123/snaplink/platform/audit/sqlite"
 )
 
 // TestPipeline_AuditExportThenSOC2Report is the true end-to-end

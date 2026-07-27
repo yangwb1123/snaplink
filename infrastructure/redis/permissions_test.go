@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/domains/permissions/permissionstest"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/permissions/permissionstest"
 )
 
 // TestPermissionProvider_Conformance runs the shared Provider conformance

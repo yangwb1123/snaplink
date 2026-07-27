@@ -8,7 +8,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 )
 
 // The compose observability profile bind-mounts these artifacts straight

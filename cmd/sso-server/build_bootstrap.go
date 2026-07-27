@@ -7,23 +7,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
-	"github.com/snaplink/sso/platform/bootstrap"
-	"github.com/snaplink/sso/platform/bootstrap/builtin"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
+	"github.com/yangwb1123/snaplink/platform/bootstrap"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/builtin"
+	"github.com/yangwb1123/snaplink/shared/spi"
 
-	bootstrapfile "github.com/snaplink/sso/platform/bootstrap/file"
-	"github.com/snaplink/sso/platform/bootstrap/lock"
+	bootstrapfile "github.com/yangwb1123/snaplink/platform/bootstrap/file"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/lock"
 
-	lockEtcd "github.com/snaplink/sso/platform/bootstrap/locketcd"
+	lockEtcd "github.com/yangwb1123/snaplink/platform/bootstrap/locketcd"
 
-	lockFile "github.com/snaplink/sso/platform/bootstrap/lockfile"
+	lockFile "github.com/yangwb1123/snaplink/platform/bootstrap/lockfile"
 
-	"github.com/snaplink/sso/config"
-	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
-	redisbackend "github.com/snaplink/sso/infrastructure/redis"
-	"github.com/snaplink/sso/interfaces/sso"
-	lockNoop "github.com/snaplink/sso/platform/bootstrap/locknoop"
+	"github.com/yangwb1123/snaplink/config"
+	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
+	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	lockNoop "github.com/yangwb1123/snaplink/platform/bootstrap/locknoop"
 )
 
 func runBootstrap(cfg *config.Config, a *app, logger spi.Logger) error {

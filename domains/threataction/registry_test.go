@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // testPolicyStore is a simple in-memory policy store for testing.

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/tenant"
+	"github.com/yangwb1123/snaplink/domains/tenant"
 )
 
 // freshTenantStore builds a TenantStore against the integration DB and wipes

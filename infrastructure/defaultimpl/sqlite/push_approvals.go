@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/protocols/oauth/oauthspi"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/protocols/oauth/oauthspi"
 )
 
 // pushApprovalsSchema persists push MFA approvals across the

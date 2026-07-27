@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/domains/anomaly"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/domains/anomaly"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
 // Wire-stable detector type identifiers. Operators alert on these

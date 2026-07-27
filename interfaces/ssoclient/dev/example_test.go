@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/snaplink/sso/interfaces/ssoclient/dev"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/dev"
 )
 
 // Example demonstrates the "dev" backend (README "3. Consume from a

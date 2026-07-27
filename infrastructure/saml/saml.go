@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
-	"github.com/snaplink/sso/saml/idp"
-	"github.com/snaplink/sso/saml/sp"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/sessionhub"
+	"github.com/yangwb1123/snaplink/saml/idp"
+	"github.com/yangwb1123/snaplink/saml/sp"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // Deps is the ROOT-module-typed dependency bundle saml.Build needs. Every

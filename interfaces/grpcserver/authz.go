@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/snaplink/sso/domains/permissions"
-	authzv1 "github.com/snaplink/sso/gen/proto/authz/v1"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	authzv1 "github.com/yangwb1123/snaplink/gen/proto/authz/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

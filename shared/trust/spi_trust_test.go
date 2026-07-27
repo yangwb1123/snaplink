@@ -3,7 +3,7 @@ package trust_test
 import (
 	"testing"
 
-	"github.com/snaplink/sso/shared/trust"
+	"github.com/yangwb1123/snaplink/shared/trust"
 )
 
 func TestClampScore(t *testing.T) {

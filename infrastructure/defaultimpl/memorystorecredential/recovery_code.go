@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // MemoryRecoveryCodeStore is an in-process, non-persistent recovery

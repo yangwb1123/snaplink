@@ -7,14 +7,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/snaplink/sso/domains/authenticators/device"
-	"github.com/snaplink/sso/domains/connections"
-	"github.com/snaplink/sso/domains/connections/provider"
-	"github.com/snaplink/sso/domains/tenant"
-	"github.com/snaplink/sso/internal/auth/login"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/protocols/oidc"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/domains/authenticators/device"
+	"github.com/yangwb1123/snaplink/domains/connections"
+	"github.com/yangwb1123/snaplink/domains/connections/provider"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	"github.com/yangwb1123/snaplink/internal/auth/login"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // resolveLoginRequest handles JAR request_uri URL-fetch and PAR consume. Returns

@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"golang.org/x/crypto/bcrypt"
 )
 

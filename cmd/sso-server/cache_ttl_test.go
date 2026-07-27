@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 func fetchDoc(t *testing.T, url string) (map[string]any, http.Header) {

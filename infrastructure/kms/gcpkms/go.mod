@@ -2,13 +2,13 @@
 // sso module's go.mod (the firm zero-external-SDK invariant). Operators opt
 // into GCP Cloud KMS-backed signing by importing this submodule from their
 // own cmd. Mirrors kms/awskms (and the redis hot-path module).
-module github.com/snaplink/sso/kms/gcpkms
+module github.com/yangwb1123/snaplink/kms/gcpkms
 
 go 1.26.1
 
 // Monorepo local resolution: the submodule depends on the core sso module
 // at the repo root, not a published version.
-require github.com/snaplink/sso v0.0.0
+require github.com/yangwb1123/snaplink v0.0.0
 
 require (
 	cloud.google.com/go/kms v1.31.0
@@ -63,4 +63,4 @@ require (
 	modernc.org/sqlite v1.50.1 // indirect
 )
 
-replace github.com/snaplink/sso => ../../../
+replace github.com/yangwb1123/snaplink => ../../../

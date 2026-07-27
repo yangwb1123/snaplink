@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/threataction"
-	tsqlite "github.com/snaplink/sso/domains/threataction/sqlite"
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/domains/threataction"
+	tsqlite "github.com/yangwb1123/snaplink/domains/threataction/sqlite"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
 func newStore(t *testing.T) *tsqlite.ThreatPolicyStore {

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // Default HIBP range-API surface. Overridable for tests / self-hosted

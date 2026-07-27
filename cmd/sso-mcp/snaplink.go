@@ -3,7 +3,7 @@ package main
 import (
 	"time"
 
-	"github.com/snaplink/sso/interfaces/ssoclient/remote"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/remote"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

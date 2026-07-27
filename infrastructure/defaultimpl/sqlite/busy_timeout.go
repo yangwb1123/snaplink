@@ -14,8 +14,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/shared/security"
 	sqlited "modernc.org/sqlite"
 	"golang.org/x/crypto/bcrypt"
 )

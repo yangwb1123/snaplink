@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/protocols/compliance"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/protocols/compliance"
 )
 
 // TestBuildApp_SelfServiceDataExport_IncludesConsentAndMFA pins the build-

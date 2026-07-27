@@ -1,13 +1,13 @@
 // Separate nested module so aws-sdk-go-v2 NEVER enters the core sso
 // module's go.mod (the firm zero-external-SDK invariant). Operators opt
 // into KMS-backed signing by importing this submodule from their own cmd.
-module github.com/snaplink/sso/kms/awskms
+module github.com/yangwb1123/snaplink/kms/awskms
 
 go 1.26.1
 
 // Monorepo local resolution: the submodule depends on the core sso module
 // at the repo root, not a published version.
-require github.com/snaplink/sso v0.0.0
+require github.com/yangwb1123/snaplink v0.0.0
 
 require github.com/aws/aws-sdk-go-v2/service/kms v1.45.4
 
@@ -61,4 +61,4 @@ require (
 	modernc.org/sqlite v1.50.1 // indirect
 )
 
-replace github.com/snaplink/sso => ../../../
+replace github.com/yangwb1123/snaplink => ../../../

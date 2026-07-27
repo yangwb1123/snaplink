@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // SMSSender delivers a verification code to a phone number.

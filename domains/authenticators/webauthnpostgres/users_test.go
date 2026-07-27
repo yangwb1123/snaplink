@@ -8,7 +8,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/snaplink/sso/domains/authenticators/webauthn"
+	"github.com/yangwb1123/snaplink/domains/authenticators/webauthn"
 
 	gw "github.com/go-webauthn/webauthn/webauthn"
 

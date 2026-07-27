@@ -6,19 +6,19 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/snaplink/sso/domains/connections"
-	"github.com/snaplink/sso/domains/tenant"
-	"github.com/snaplink/sso/domains/tokenexchange"
-	"github.com/snaplink/sso/domains/tokenexchange/agentidentity"
-	"github.com/snaplink/sso/interfaces/ratelimit"
-	"github.com/snaplink/sso/internal/handler/tokengrant"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/protocols/oauth/txntoken"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/i18n"
-	"github.com/snaplink/sso/shared/security"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/domains/connections"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	"github.com/yangwb1123/snaplink/domains/tokenexchange"
+	"github.com/yangwb1123/snaplink/domains/tokenexchange/agentidentity"
+	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
+	"github.com/yangwb1123/snaplink/internal/handler/tokengrant"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth/txntoken"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/i18n"
+	"github.com/yangwb1123/snaplink/shared/security"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // WithDomainVerificationResolver injects the DNS-TXT resolver used by the admin

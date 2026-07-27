@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators"
-	"github.com/snaplink/sso/domains/tenant"
-	tenantmemory "github.com/snaplink/sso/domains/tenant/memory"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	tenantmemory "github.com/yangwb1123/snaplink/domains/tenant/memory"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 const (

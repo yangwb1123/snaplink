@@ -11,12 +11,12 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/snaplink/sso/docs/examples/appcore"
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/interfaces/ssoclient/local"
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/docs/examples/appcore"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/local"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 func main() {

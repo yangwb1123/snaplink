@@ -13,7 +13,7 @@ const handlerTemplate = `package {{.Package}}
 import (
 	"net/http"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // {{.Name}}Deps defines the dependencies Handle{{.Name}} needs. A composition
@@ -141,8 +141,8 @@ const grantTemplate = `package {{.Package}}
 import (
 	"net/http"
 
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // {{.Name}}GrantHandler implements oauth.GrantHandler for the

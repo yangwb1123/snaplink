@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // HTTPJARFetcher fetches a signed JAR JWT from an HTTPS request_uri.

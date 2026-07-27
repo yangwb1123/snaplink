@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso/servercache"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/interfaces/sso/servercache"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func TestClientStoreCache_ServerWiring(t *testing.T) {

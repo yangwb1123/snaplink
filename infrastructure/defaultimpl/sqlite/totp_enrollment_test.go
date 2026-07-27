@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/domains/authenticators"
-	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
 )
 
 func newTOTPEnrollStore(t *testing.T) *sqlitestores.TOTPEnrollmentStore {

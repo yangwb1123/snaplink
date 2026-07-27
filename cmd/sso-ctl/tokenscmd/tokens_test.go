@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/cmd/sso-ctl/apiclient"
+	"github.com/yangwb1123/snaplink/cmd/sso-ctl/apiclient"
 )
 
 // captureStderr redirects os.Stderr for the duration of fn and returns

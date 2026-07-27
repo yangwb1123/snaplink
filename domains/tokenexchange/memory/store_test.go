@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/domains/tokenexchange"
+	"github.com/yangwb1123/snaplink/domains/tokenexchange"
 )
 
 func TestStore_AllowDefaultAndRules(t *testing.T) {

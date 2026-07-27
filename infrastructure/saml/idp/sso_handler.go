@@ -9,7 +9,7 @@ import (
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // SSO handles GET/POST /saml/sso — the SP-initiated AuthnRequest receiver.

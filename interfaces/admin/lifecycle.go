@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators/device"
-	"github.com/snaplink/sso/domains/connections/provider"
-	"github.com/snaplink/sso/domains/tokenexchange"
-	"github.com/snaplink/sso/domains/userlifecycle"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/domains/authenticators/device"
+	"github.com/yangwb1123/snaplink/domains/connections/provider"
+	"github.com/yangwb1123/snaplink/domains/tokenexchange"
+	"github.com/yangwb1123/snaplink/domains/userlifecycle"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // ============================================================================

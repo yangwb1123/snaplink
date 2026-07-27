@@ -8,16 +8,16 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystorecredential"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystorecredential"
 
-	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
-	redisbackend "github.com/snaplink/sso/infrastructure/redis"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
+	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 func BuildPairwiseSubjectStore(cfg config.PairwiseSubjectsConfig, pg *sql.DB, dialect postgresbackend.Dialect) (security.PairwiseSubjectStore, string, error) {

@@ -7,23 +7,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/spi"
 
-	auditsqlite "github.com/snaplink/sso/platform/audit/sqlite"
+	auditsqlite "github.com/yangwb1123/snaplink/platform/audit/sqlite"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 
-	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	redisbackend "github.com/snaplink/sso/infrastructure/redis"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 
-	"github.com/snaplink/sso/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
 )
 
 // BuildCIBA wires the CIBA poll-mode subsystem: the request store

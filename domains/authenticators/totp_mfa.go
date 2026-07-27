@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // TOTPMFAProvider verifies TOTP codes as a SECOND factor — after the

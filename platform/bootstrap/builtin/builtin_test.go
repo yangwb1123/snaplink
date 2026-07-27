@@ -5,13 +5,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/snapshot"
-	storagefile "github.com/snaplink/sso/interfaces/snapshot/storagefile"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/bootstrap"
-	"github.com/snaplink/sso/platform/bootstrap/builtin"
-	"github.com/snaplink/sso/platform/bootstrap/memory"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
+	storagefile "github.com/yangwb1123/snaplink/interfaces/snapshot/storagefile"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/bootstrap"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/builtin"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/memory"
 )
 
 // stageSnapshot exports a Snapshot from src* into a tempdir-backed file

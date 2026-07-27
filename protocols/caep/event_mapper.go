@@ -3,7 +3,7 @@ package caep
 import (
 	"encoding/json"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // scopeKind tells the broadcaster HOW to resolve the affected

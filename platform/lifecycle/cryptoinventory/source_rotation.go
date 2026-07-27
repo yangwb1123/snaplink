@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/snaplink/sso/platform/lifecycle/rotation"
-	"github.com/snaplink/sso/shared/core/corecredential"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/rotation"
+	"github.com/yangwb1123/snaplink/shared/core/corecredential"
 )
 
 // RotationSourceName is the default Entry.Source / Name() for a

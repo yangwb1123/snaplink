@@ -3,7 +3,7 @@ package selfservice
 import (
 	"net/http"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // HandleLoginUIMetadata serves GET /api/v1/login-ui/metadata?client_id=...

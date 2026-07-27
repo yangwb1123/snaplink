@@ -3,7 +3,7 @@ package security
 import (
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func TestConstantTimeStringEq(t *testing.T) {

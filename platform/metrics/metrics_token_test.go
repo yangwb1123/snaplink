@@ -3,7 +3,7 @@ package metrics_test
 import (
 	"testing"
 
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 )
 
 // TestTokenUsageMetrics_DefaultOff proves the opt-in token-usage vectors are

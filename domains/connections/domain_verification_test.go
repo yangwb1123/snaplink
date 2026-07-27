@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/domains/connections"
+	"github.com/yangwb1123/snaplink/domains/connections"
 )
 
 // fakeDNSResolver is a deterministic in-memory connections.DNSResolver — the

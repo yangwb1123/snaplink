@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/snaplink/sso/platform/migrate"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/platform/migrate"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // pairwiseSubjectSchema is the baseline pairwise_subjects table (Postgres

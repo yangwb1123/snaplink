@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/domains/connections"
+	"github.com/yangwb1123/snaplink/domains/connections"
 )
 
 func TestDomainFromIdentifier(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/metering"
+	"github.com/yangwb1123/snaplink/domains/metering"
 )
 
 var ctx = context.Background()

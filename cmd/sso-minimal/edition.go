@@ -1,6 +1,6 @@
 package main
 
-import "github.com/snaplink/sso/platform/buildinfo"
+import "github.com/yangwb1123/snaplink/platform/buildinfo"
 
 type runtimeEdition string
 

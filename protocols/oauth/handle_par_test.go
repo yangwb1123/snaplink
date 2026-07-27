@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // parDeps is a thin test adapter wiring the real in-memory PARStore +

@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/domains/authenticators"
-	"github.com/snaplink/sso/domains/authenticators/webauthn"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	"github.com/yangwb1123/snaplink/domains/authenticators/webauthn"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // TestBuildMFA_DisabledReturnsZeroes proves cmd skips MFA wiring

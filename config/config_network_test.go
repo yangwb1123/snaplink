@@ -1,7 +1,7 @@
 package config
 
 import (
-	"github.com/snaplink/sso/platform/netpolicy"
+	"github.com/yangwb1123/snaplink/platform/netpolicy"
 	"context"
 	"testing"
 )

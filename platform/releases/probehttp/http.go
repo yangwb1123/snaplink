@@ -14,7 +14,7 @@ import (
 	nethttp "net/http"
 	"time"
 
-	"github.com/snaplink/sso/platform/releases"
+	"github.com/yangwb1123/snaplink/platform/releases"
 )
 
 const defaultTimeout = 5 * time.Second

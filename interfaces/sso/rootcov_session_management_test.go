@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 func TestRcovSessionMgmt_LoginStampsSessionStateAndCookie(t *testing.T) {

@@ -4,7 +4,7 @@
 // visible at the call site (e.g. in CLIs and config parsing).
 package none
 
-import "github.com/snaplink/sso/interfaces/snapshot"
+import "github.com/yangwb1123/snaplink/interfaces/snapshot"
 
 // Sealer leaves snapshots unencrypted. Body bytes are returned as-is.
 type Sealer struct{}

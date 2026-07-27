@@ -6,15 +6,15 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/domains/userlifecycle"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
-	"github.com/snaplink/sso/shared/security/peertrust"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildplatform"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/userlifecycle"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreidentity"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/admingovernance"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
 // buildApp is pure server-assembly wiring: it reads config and constructs the

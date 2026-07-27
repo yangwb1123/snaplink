@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/snaplink/sso/internal/handler/tokengrant"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/internal/handler/tokengrant"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // SAMLAssertionValidator validates an RFC 7522 SAML 2.0 bearer assertion.

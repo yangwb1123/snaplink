@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/snaplink/sso/domains/tokenusage"
+	"github.com/yangwb1123/snaplink/domains/tokenusage"
 )
 
 // detectGeoVelocity scans the per-thumbprint observations for tokens seen from

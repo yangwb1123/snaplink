@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/platform/netpolicy"
-	"github.com/snaplink/sso/platform/netpolicy/memory"
+	"github.com/yangwb1123/snaplink/platform/netpolicy"
+	"github.com/yangwb1123/snaplink/platform/netpolicy/memory"
 )
 
 // TestBroadcastWatchCancelRace exercises broadcast (driven by Apply/Delete)

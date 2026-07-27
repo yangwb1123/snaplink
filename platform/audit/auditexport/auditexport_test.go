@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/audit/auditexport"
-	auditsqlite "github.com/snaplink/sso/platform/audit/sqlite"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit/auditexport"
+	auditsqlite "github.com/yangwb1123/snaplink/platform/audit/sqlite"
 )
 
 // chainBase is a fixed clock origin; recordChain advances it one hour

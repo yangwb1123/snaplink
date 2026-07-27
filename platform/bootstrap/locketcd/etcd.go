@@ -24,7 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/snaplink/sso/platform/bootstrap/lock"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/lock"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 

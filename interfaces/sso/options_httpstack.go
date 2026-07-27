@@ -9,17 +9,17 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/snaplink/sso/domains/conditionalaccess"
-	"github.com/snaplink/sso/domains/connections"
-	"github.com/snaplink/sso/domains/tenant"
-	"github.com/snaplink/sso/interfaces/cors"
-	"github.com/snaplink/sso/interfaces/middleware"
-	"github.com/snaplink/sso/interfaces/ratelimit"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/lifecycle/rebac"
-	"github.com/snaplink/sso/platform/lifecycle/wasmauthz"
-	"github.com/snaplink/sso/platform/lifecycle/webhook"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
+	"github.com/yangwb1123/snaplink/domains/connections"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	"github.com/yangwb1123/snaplink/interfaces/cors"
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/rebac"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/wasmauthz"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/webhook"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // WithCORS installs a CORS middleware sitting between bodyLimit and

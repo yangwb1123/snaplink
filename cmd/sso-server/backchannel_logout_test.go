@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildauthn"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 func TestBuildApp_BackchannelLogoutFlipsDiscovery(t *testing.T) {

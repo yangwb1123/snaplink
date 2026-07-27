@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/domains/connections"
+	"github.com/yangwb1123/snaplink/domains/connections"
 )
 
 // connectionHealthSchema is migration v3: one row per connection holding the

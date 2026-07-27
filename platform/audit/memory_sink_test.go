@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 func TestMemorySink_AssignsIDWhenEmpty(t *testing.T) {

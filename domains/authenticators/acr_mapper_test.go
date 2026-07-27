@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/domains/authenticators/acrmap"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/domains/authenticators/acrmap"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // var _ compile-time-asserts that the reference acrmap.PatternACRMapper

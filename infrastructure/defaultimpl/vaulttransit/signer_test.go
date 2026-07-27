@@ -22,10 +22,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/cryptosigner"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/vaulttransit"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/cryptosigner"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/vaulttransit"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // fakeVault is an httptest-backed stand-in for a Vault transit engine. It is a

@@ -3,7 +3,7 @@ package admin
 import (
 	"testing"
 
-	"github.com/snaplink/sso/domains/authenticators/device"
+	"github.com/yangwb1123/snaplink/domains/authenticators/device"
 )
 
 func TestTrustLevelRange(t *testing.T) {

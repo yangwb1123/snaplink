@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/domains/conditionalaccess"
-	"github.com/snaplink/sso/domains/tokenpolicy"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
+	"github.com/yangwb1123/snaplink/domains/tokenpolicy"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // governance_wiring_test.go proves the wave-2 cmd wiring: the credential

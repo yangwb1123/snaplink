@@ -16,7 +16,7 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 
-	"github.com/snaplink/sso/platform/signingkeys"
+	"github.com/yangwb1123/snaplink/platform/signingkeys"
 )
 
 // TestSigningKeyLeaseBackoff verifies the growth + jitter + cap properties

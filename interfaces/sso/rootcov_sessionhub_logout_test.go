@@ -13,7 +13,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/sessionhub"
 )
 
 // recordingSAMLTrigger is a fake sessionhub.SAMLLogoutTrigger recording every

@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/domains/authenticators"
-	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // noopReplay is an authReplayStoreFn stand-in for tests that don't care

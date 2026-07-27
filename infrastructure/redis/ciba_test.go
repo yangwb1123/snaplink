@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 func newCIBARequest(ttl time.Duration) *oauth.CIBARequest {

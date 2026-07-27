@@ -7,7 +7,7 @@ syntax = "proto3";
 
 package snaplink.netpolicy.v1;
 
-option go_package = "github.com/snaplink/sso/gen/proto/netpolicy/v1;netpolicyv1";
+option go_package = "github.com/yangwb1123/snaplink/gen/proto/netpolicy/v1;netpolicyv1";
 
 // PolicyService is the control-plane gRPC for network policies. Operators
 // declare classes of network (intranet, public, dmz, ...), each with the

@@ -15,7 +15,7 @@ import (
 // registering the global TracerProvider; StartSpan is the matching seam for
 // acquiring spans off it, so callers never import go.opentelemetry.io/otel
 // directly just to get a Tracer.
-const TracerName = "github.com/snaplink/sso"
+const TracerName = "github.com/yangwb1123/snaplink"
 
 // StartSpan starts a span named name, parented to whatever span (if any)
 // ctx already carries — exactly like otel.Tracer(...).Start, just without

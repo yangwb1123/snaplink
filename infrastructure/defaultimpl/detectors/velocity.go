@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/domains/anomaly"
+	"github.com/yangwb1123/snaplink/domains/anomaly"
 )
 
 // DetectorTypeVelocity is the wire-stable [anomaly.Signal.Type]

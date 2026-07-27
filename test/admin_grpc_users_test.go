@@ -3,7 +3,7 @@ package ssotest
 import (
 	"testing"
 
-	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
+	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 )
 
 func TestAdminGRPC_UserCRUD(t *testing.T) {

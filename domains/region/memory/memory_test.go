@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/domains/region"
-	"github.com/snaplink/sso/domains/region/memory"
+	"github.com/yangwb1123/snaplink/domains/region"
+	"github.com/yangwb1123/snaplink/domains/region/memory"
 )
 
 func TestSetGetPolicy_Roundtrip(t *testing.T) {

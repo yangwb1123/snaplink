@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 func freshPairwiseStore(t *testing.T) *PairwiseSubjectStore {

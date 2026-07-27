@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 // cibaIDBytes is the random suffix size for auth_req_id tokens. 32

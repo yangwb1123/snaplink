@@ -1,5 +1,5 @@
 // Package apidocs renders the repo's OpenAPI specification
-// (docs/openapi.yaml, embedded at github.com/snaplink/sso/docs.OpenAPISpec)
+// (docs/openapi.yaml, embedded at github.com/yangwb1123/snaplink/docs.OpenAPISpec)
 // as a read-only, self-contained developer-documentation viewer — the
 // embedded-docs-UI half of the "multi-language SDK generation + developer
 // portal" backlog item (docs/deferred-backlog.md). Wired via
@@ -23,7 +23,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // New parses specYAML (docs/openapi.yaml's bytes) once and returns the two

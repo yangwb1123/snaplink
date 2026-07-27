@@ -7,7 +7,7 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
 func TestECDHJWEDecrypter_RoundTrip(t *testing.T) {

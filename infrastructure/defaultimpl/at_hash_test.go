@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/protocols/oidc"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
 )
 
 // The canonical OpenID Connect Core 1.0 at_hash example: hashing this

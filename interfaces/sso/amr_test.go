@@ -1,7 +1,7 @@
 package sso
 
 import (
-	"github.com/snaplink/sso/internal/handler"
+	"github.com/yangwb1123/snaplink/internal/handler"
 	"reflect"
 	"testing"
 )

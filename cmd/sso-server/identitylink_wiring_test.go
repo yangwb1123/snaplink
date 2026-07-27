@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/domains/authenticators"
-	"github.com/snaplink/sso/domains/identitylink"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildplatform"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	"github.com/yangwb1123/snaplink/domains/identitylink"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // identitylink_wiring_test.go proves the cmd/sso-server composition-root

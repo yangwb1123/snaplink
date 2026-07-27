@@ -4,9 +4,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/domains/permissions/permissionstest"
-	permsqlite "github.com/snaplink/sso/domains/permissions/sqlite"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/permissions/permissionstest"
+	permsqlite "github.com/yangwb1123/snaplink/domains/permissions/sqlite"
 )
 
 // TestSQLiteProvider_Conformance runs the shared Provider

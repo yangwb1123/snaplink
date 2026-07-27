@@ -10,19 +10,19 @@ import (
 	"net/http/pprof"
 	"time"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/shared/spi"
 
-	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
+	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 
-	auditv1 "github.com/snaplink/sso/gen/proto/audit/v1"
+	auditv1 "github.com/yangwb1123/snaplink/gen/proto/audit/v1"
 
-	authzv1 "github.com/snaplink/sso/gen/proto/authz/v1"
+	authzv1 "github.com/yangwb1123/snaplink/gen/proto/authz/v1"
 
-	discoveryv1 "github.com/snaplink/sso/gen/proto/discovery/v1"
+	discoveryv1 "github.com/yangwb1123/snaplink/gen/proto/discovery/v1"
 
-	netpolicyv1 "github.com/snaplink/sso/gen/proto/netpolicy/v1"
-	"github.com/snaplink/sso/interfaces/grpcserver"
+	netpolicyv1 "github.com/yangwb1123/snaplink/gen/proto/netpolicy/v1"
+	"github.com/yangwb1123/snaplink/interfaces/grpcserver"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"

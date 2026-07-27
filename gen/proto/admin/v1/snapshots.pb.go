@@ -971,7 +971,7 @@ const file_admin_v1_snapshots_proto_rawDesc = "" +
 	"\x04List\x12'.snaplink.admin.v1.ListSnapshotsRequest\x1a(.snaplink.admin.v1.ListSnapshotsResponse\"\x1f\x82\xd3\xe4\x93\x02\x19\x12\x17/api/v1/admin/snapshots\x12z\n" +
 	"\x03Get\x12%.snaplink.admin.v1.GetSnapshotRequest\x1a&.snaplink.admin.v1.GetSnapshotResponse\"$\x82\xd3\xe4\x93\x02\x1e\x12\x1c/api/v1/admin/snapshots/{id}\x12\x91\x01\n" +
 	"\aRestore\x12).snaplink.admin.v1.RestoreSnapshotRequest\x1a*.snaplink.admin.v1.RestoreSnapshotResponse\"/\x82\xd3\xe4\x93\x02):\x01*\"$/api/v1/admin/snapshots/{id}:restore\x12\x83\x01\n" +
-	"\x06Delete\x12(.snaplink.admin.v1.DeleteSnapshotRequest\x1a).snaplink.admin.v1.DeleteSnapshotResponse\"$\x82\xd3\xe4\x93\x02\x1e*\x1c/api/v1/admin/snapshots/{id}B4Z2github.com/snaplink/sso/gen/proto/admin/v1;adminv1b\x06proto3"
+	"\x06Delete\x12(.snaplink.admin.v1.DeleteSnapshotRequest\x1a).snaplink.admin.v1.DeleteSnapshotResponse\"$\x82\xd3\xe4\x93\x02\x1e*\x1c/api/v1/admin/snapshots/{id}B;Z9github.com/yangwb1123/snaplink/gen/proto/admin/v1;adminv1b\x06proto3"
 
 var (
 	file_admin_v1_snapshots_proto_rawDescOnce sync.Once

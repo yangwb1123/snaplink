@@ -7,10 +7,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/snaplink/sso/domains/connections"
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/connections"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // TenantExportFormatVersion is stamped into every TenantExport and checked by

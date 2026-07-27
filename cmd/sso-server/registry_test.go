@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildplatform"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 // TestBuildRegistry_MemoryDefault proves an unset / explicit

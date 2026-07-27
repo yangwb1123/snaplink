@@ -16,7 +16,7 @@ import (
 	"math/big"
 	"sync"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // ErrUnsupportedKey is returned when the token key (or the requested signing

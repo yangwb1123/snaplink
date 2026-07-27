@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/lifecycle/clienttrust"
-	"github.com/snaplink/sso/platform/lifecycle/webhook"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/clienttrust"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/webhook"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func newStoreWithClient(t *testing.T, clientID string) core.ClientStore {

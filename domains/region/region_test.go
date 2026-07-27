@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/domains/region"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/region"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func newReq(t *testing.T, headers map[string]string) *http.Request {

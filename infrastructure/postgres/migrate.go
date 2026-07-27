@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
 // The schema-migration runner for the Postgres-wire backend. It reuses

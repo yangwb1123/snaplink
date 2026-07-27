@@ -3,7 +3,7 @@ package federation
 import (
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // TrustAnchor names one configured federation trust anchor: its Entity

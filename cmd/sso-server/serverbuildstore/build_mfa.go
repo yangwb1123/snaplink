@@ -9,16 +9,16 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 
-	"github.com/snaplink/sso/domains/authenticators"
-	"github.com/snaplink/sso/domains/authenticators/webauthn"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	"github.com/yangwb1123/snaplink/domains/authenticators/webauthn"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 
-	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
 )
 
 // BuildMFA materializes the MFA orchestration triple: provider, store,

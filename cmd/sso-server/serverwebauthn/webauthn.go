@@ -12,10 +12,10 @@ import (
 	"slices"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators/webauthn"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/protocols/oidc"
+	"github.com/yangwb1123/snaplink/domains/authenticators/webauthn"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
 )
 
 // BuildWebAuthnHelper assembles the helper + stores from YAML.

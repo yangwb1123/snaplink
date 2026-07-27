@@ -5,7 +5,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // MemoryBreakGlassStore is an in-process, non-persistent break-glass admin

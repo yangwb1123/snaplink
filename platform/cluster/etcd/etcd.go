@@ -24,8 +24,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/platform/cluster"
-	"github.com/snaplink/sso/platform/tracing"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/tracing"
 	mvccpb "go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.opentelemetry.io/otel/attribute"

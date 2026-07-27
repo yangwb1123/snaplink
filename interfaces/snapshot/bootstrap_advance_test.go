@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/platform/bootstrap/memory"
-	netmemory "github.com/snaplink/sso/platform/netpolicy/memory"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/memory"
+	netmemory "github.com/yangwb1123/snaplink/platform/netpolicy/memory"
 )
 
 // TestAdvanceBootstrap_NoTracker proves AdvanceBootstrap is a graceful no-op

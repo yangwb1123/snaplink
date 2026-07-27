@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/migrate"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security/clientrotation"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/migrate"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security/clientrotation"
 
 	_ "modernc.org/sqlite"
 )

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // MemoryEmailVerificationStore is an in-memory core.EmailVerificationStore for

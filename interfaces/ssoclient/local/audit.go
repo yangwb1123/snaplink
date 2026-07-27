@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/snaplink/sso/interfaces/ssoclient"
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // AuditClient wraps an *audit.Recorder. Record is a direct passthrough; the

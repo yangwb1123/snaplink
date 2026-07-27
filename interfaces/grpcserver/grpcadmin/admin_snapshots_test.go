@@ -5,12 +5,12 @@ import (
 	"sort"
 	"testing"
 
-	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/snapshot"
-	inline "github.com/snaplink/sso/interfaces/snapshot/storageinline"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/audit"
+	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
+	inline "github.com/yangwb1123/snaplink/interfaces/snapshot/storageinline"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/audit"
 	"google.golang.org/grpc/codes"
 )
 

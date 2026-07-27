@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/shared/security/clientrotation"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/security/clientrotation"
 )
 
 // TestPostgresClients_AddBaselinesSecretRotatedAt proves a freshly-added

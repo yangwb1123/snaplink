@@ -1,6 +1,6 @@
 package defaultimpl_test
 
-import "github.com/snaplink/sso/protocols/oauth"
+import "github.com/yangwb1123/snaplink/protocols/oauth"
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
 func TestMemoryAuthCodeStore_RoundTrip(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/platform/registry"
+	"github.com/yangwb1123/snaplink/platform/registry"
 )
 
 // defaultJanitorInterval is how often TTL'd entries are scanned.

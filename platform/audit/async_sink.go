@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/snaplink/sso/platform/tracing"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/platform/tracing"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"go.opentelemetry.io/otel/attribute"
 )
 

@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // SCIM resource versioning + conditional requests (RFC 7644 §3.14). Every

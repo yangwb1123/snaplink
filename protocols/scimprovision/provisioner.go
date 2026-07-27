@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/snaplink/sso/protocols/scim"
+	"github.com/yangwb1123/snaplink/protocols/scim"
 )
 
 // SCIMProvisioner pushes user/group lifecycle changes to a downstream SCIM

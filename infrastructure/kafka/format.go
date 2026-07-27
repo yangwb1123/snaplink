@@ -3,7 +3,7 @@ package kafkaaudit
 import (
 	"encoding/json"
 
-	"github.com/snaplink/sso/platform/audit/auditspi"
+	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
 )
 
 // schemaVersion is the wire schema of the JSON envelope FormatJSON emits.

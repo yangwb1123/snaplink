@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 const testVerifier = "abcdefghijklmnopqrstuvwxyz0123456789-_ABCDEFGHIJK"

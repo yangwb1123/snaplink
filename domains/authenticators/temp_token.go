@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // TempTokenStore stores opaque, single-use tokens that map to a subject identity.

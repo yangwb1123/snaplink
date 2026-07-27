@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	ssobootstrap "github.com/snaplink/sso/interfaces/ssoclient/bootstrap"
+	ssobootstrap "github.com/yangwb1123/snaplink/interfaces/ssoclient/bootstrap"
 )
 
 func TestNew_RejectsReservedNamespace(t *testing.T) {

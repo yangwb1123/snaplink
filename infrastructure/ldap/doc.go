@@ -9,7 +9,7 @@
 // # Why a separate Go module
 //
 // The LDAP dependency (github.com/go-ldap/ldap/v3 and its asn1-ber transitive
-// dep) lives ONLY in this module's go.mod (github.com/snaplink/sso/ldap). The
+// dep) lives ONLY in this module's go.mod (github.com/yangwb1123/snaplink/ldap). The
 // core sso module's go.mod stays byte-free of it — the firm
 // zero-external-SDK-in-core invariant that also isolates kms/awskms
 // (aws-sdk-go-v2), redis (go-redis), and saml (crewjam/saml). Operators who
@@ -34,8 +34,8 @@
 //	import (
 //		"log"
 //
-//		"github.com/snaplink/sso/interfaces/sso"
-//		ldapauth "github.com/snaplink/sso/ldap"
+//		"github.com/yangwb1123/snaplink/interfaces/sso"
+//		ldapauth "github.com/yangwb1123/snaplink/ldap"
 //	)
 //
 //	func main() {

@@ -55,8 +55,8 @@ def run() -> int:
         imports = set()
         for f in src_files:
             for line in f.read_text().split("\n"):
-                if '"github.com/snaplink/sso/' in line:
-                    imp = line.split('"github.com/snaplink/sso/')[1].split('"')[0]
+                if '"github.com/yangwb1123/snaplink/' in line:
+                    imp = line.split('"github.com/yangwb1123/snaplink/')[1].split('"')[0]
                     imports.add(imp.split("/")[0])
         imp_str = " ".join(sorted(imports))
         print(f"  {pkg}/ ({len(src_files)} files) -> {imp_str}")

@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/platform/releases"
-	probehttp "github.com/snaplink/sso/platform/releases/probehttp"
+	"github.com/yangwb1123/snaplink/platform/releases"
+	probehttp "github.com/yangwb1123/snaplink/platform/releases/probehttp"
 )
 
 func TestProbe_2xxIsHealthy(t *testing.T) {

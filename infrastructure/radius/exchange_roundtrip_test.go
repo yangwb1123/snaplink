@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"layeh.com/radius"
 	"layeh.com/radius/rfc2865"
 )

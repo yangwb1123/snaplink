@@ -336,7 +336,7 @@ const file_audit_v1_audit_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id2\x99\x01\n" +
 	"\vAuditWriter\x12H\n" +
 	"\fStreamEvents\x12\x18.snaplink.audit.v1.Event\x1a\x1c.snaplink.audit.v1.StreamAck(\x01\x12@\n" +
-	"\x06Record\x12\x18.snaplink.audit.v1.Event\x1a\x1c.snaplink.audit.v1.RecordAckB4Z2github.com/snaplink/sso/gen/proto/audit/v1;auditv1b\x06proto3"
+	"\x06Record\x12\x18.snaplink.audit.v1.Event\x1a\x1c.snaplink.audit.v1.RecordAckB;Z9github.com/yangwb1123/snaplink/gen/proto/audit/v1;auditv1b\x06proto3"
 
 var (
 	file_audit_v1_audit_proto_rawDescOnce sync.Once

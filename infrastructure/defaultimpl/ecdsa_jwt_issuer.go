@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // metricsAlgES256 is this family's bounded sso_signing_key_usage_total alg

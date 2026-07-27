@@ -3,14 +3,14 @@
 // Operators opt into Azure Key Vault-backed signing by importing this
 // submodule from their own cmd. Mirrors kms/awskms + kms/gcpkms (and the
 // redis hot-path module).
-module github.com/snaplink/sso/kms/azurekeyvault
+module github.com/yangwb1123/snaplink/kms/azurekeyvault
 
 go 1.26.1
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.20.0
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys v1.4.0
-	github.com/snaplink/sso v0.0.0-00010101000000-000000000000
+	github.com/yangwb1123/snaplink v0.0.0-00010101000000-000000000000
 )
 
 require (
@@ -62,4 +62,4 @@ require (
 	modernc.org/sqlite v1.50.1 // indirect
 )
 
-replace github.com/snaplink/sso => ../../../
+replace github.com/yangwb1123/snaplink => ../../../

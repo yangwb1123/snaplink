@@ -8,7 +8,7 @@ import (
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // failingExpireClient wraps a real goredis.Cmdable and forces every Expire

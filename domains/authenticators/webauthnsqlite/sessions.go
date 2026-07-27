@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators/webauthn"
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/domains/authenticators/webauthn"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 
 	gw "github.com/go-webauthn/webauthn/webauthn"
 )

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/shared/trust"
+	"github.com/yangwb1123/snaplink/shared/trust"
 )
 
 func TestBehaviorScorer_NoSignalWhenUnwired(t *testing.T) {

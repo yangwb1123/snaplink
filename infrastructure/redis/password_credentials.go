@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	goredis "github.com/redis/go-redis/v9"
-	"github.com/snaplink/sso/domains/identitylink"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/identitylink"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"golang.org/x/crypto/bcrypt"
 )
 

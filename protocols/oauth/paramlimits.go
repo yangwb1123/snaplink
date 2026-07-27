@@ -1,6 +1,6 @@
 package oauth
 
-import "github.com/snaplink/sso/shared/core"
+import "github.com/yangwb1123/snaplink/shared/core"
 
 // Authorize request parameter length limits — hard caps that prevent
 // a single large parameter (state, scope, redirect_uri, nonce) from

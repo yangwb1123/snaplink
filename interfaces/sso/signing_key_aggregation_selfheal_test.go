@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/platform/signingkeys"
-	signingkeysmemory "github.com/snaplink/sso/platform/signingkeys/memory"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/signingkeys"
+	signingkeysmemory "github.com/yangwb1123/snaplink/platform/signingkeys/memory"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // gaugeValue reads a no-label gauge/counter's current value from the metrics

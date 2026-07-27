@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // claimsCtxKey is unexported so only NewContext can install claims — a

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystorecredential"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystorecredential"
 )
 
 func TestMemoryJTIReplayStore_FirstSeenThenReplay(t *testing.T) {

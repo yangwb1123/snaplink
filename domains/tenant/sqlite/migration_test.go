@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/domains/tenant"
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
 // TestMigration_StampsHeadAndKeepsCascade proves the tenant backend records

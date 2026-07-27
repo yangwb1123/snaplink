@@ -5,9 +5,9 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/snaplink/sso/domains/tenant"
-	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
+	"github.com/yangwb1123/snaplink/platform/audit"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

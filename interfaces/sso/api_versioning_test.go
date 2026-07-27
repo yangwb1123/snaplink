@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
 )
 
 func avDo(h http.Handler, method, path, acceptVersion string) *httptest.ResponseRecorder {

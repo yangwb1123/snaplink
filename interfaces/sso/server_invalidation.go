@@ -5,10 +5,10 @@ import (
 	"errors"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/cluster"
-	"github.com/snaplink/sso/platform/configaudit"
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/configaudit"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 )
 
 // InvalidateConnectionCache publishes a KindConnectionChange event to the

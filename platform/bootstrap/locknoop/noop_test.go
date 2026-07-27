@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/bootstrap/lock"
-	"github.com/snaplink/sso/platform/bootstrap/locknoop"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/lock"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/locknoop"
 )
 
 func TestNew_SatisfiesInterface(t *testing.T) {

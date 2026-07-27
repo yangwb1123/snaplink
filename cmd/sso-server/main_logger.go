@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 func newSlogLogger(level string) *slogLogger {

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func TestTempTokenStore_IssueConsumeSingleUse(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/snaplink/sso/platform/audit/auditspi"
+	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
 )
 
 // ErrSinkWriteOnly is returned by sinks that only stream events outward and

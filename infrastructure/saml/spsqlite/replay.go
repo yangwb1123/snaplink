@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	samlsp "github.com/snaplink/sso/saml/sp"
+	samlsp "github.com/yangwb1123/snaplink/saml/sp"
 )
 
 // assertionReplaySchema dedups SAML AssertionIDs across replicas. PRIMARY KEY

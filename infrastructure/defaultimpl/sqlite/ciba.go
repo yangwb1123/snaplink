@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/platform/migrate"
-	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/platform/migrate"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 // cibaSchema persists poll-mode CIBA backchannel auth requests across

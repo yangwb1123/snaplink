@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/trust"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/trust"
 )
 
 var decayBase = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

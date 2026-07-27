@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/geo"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/geo"
 )
 
 // countingLogger is a real spi.Logger that tallies Error calls so a test

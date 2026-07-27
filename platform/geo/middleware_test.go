@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/geo"
-	"github.com/snaplink/sso/platform/geo/static"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/platform/geo"
+	"github.com/yangwb1123/snaplink/platform/geo/static"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // blockingProvider stalls Lookup until ctx is cancelled, then surfaces the

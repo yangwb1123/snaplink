@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/tokenpolicy"
+	"github.com/yangwb1123/snaplink/domains/tokenpolicy"
 )
 
 // TestStore_SeedAndList proves New seeds the set and Policies returns it.

@@ -9,10 +9,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/domains/anomaly"
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/shared/trust"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/anomaly"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/trust"
 )
 
 // BuildTrustScorer assembles the Zero Trust Framework Phase 1 composite trust

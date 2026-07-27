@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // Shared test helpers for the workload-identity core + GCP preset tests

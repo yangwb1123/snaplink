@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/shared/core/corecredential"
+	"github.com/yangwb1123/snaplink/shared/core/corecredential"
 )
 
 // WebhookSecretBytes is the size of a generated webhook HMAC secret.

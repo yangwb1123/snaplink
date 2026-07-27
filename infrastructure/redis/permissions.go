@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	goredis "github.com/redis/go-redis/v9"
-	"github.com/snaplink/sso/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/permissions"
 )
 
 // Key layout. Every key is namespaced under sso:perm: so one Redis logical

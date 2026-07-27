@@ -7,7 +7,7 @@ package security
 // consumer (oauth/oidc validation, the Server, the signing backends). Type
 // aliases keep interface/struct identity so external implementations stay valid.
 
-import "github.com/snaplink/sso/shared/security/securityverify"
+import "github.com/yangwb1123/snaplink/shared/security/securityverify"
 
 type (
 	HeaderCertEncoding        = securityverify.HeaderCertEncoding

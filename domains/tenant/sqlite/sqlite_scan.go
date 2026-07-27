@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/domains/tenant"
+	"github.com/yangwb1123/snaplink/domains/tenant"
 )
 
 func scanTenant(id string, row interface{ Scan(...any) error }) (*tenant.Tenant, error) {

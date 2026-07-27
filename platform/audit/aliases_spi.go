@@ -9,7 +9,7 @@ package audit
 // for the Recorder, the in-package sinks, and all external consumers; type
 // aliases keep interface/struct identity intact.
 
-import "github.com/snaplink/sso/platform/audit/auditspi"
+import "github.com/yangwb1123/snaplink/platform/audit/auditspi"
 
 type (
 	ErrorHandler = auditspi.ErrorHandler

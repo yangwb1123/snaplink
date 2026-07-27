@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	auditsqlite "github.com/snaplink/sso/platform/audit/sqlite"
+	auditsqlite "github.com/yangwb1123/snaplink/platform/audit/sqlite"
 
-	"github.com/snaplink/sso/config"
-	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	"github.com/snaplink/sso/interfaces/snapshot"
-	storageinline "github.com/snaplink/sso/interfaces/snapshot/storageinline"
+	"github.com/yangwb1123/snaplink/config"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
+	storageinline "github.com/yangwb1123/snaplink/interfaces/snapshot/storageinline"
 )
 
 func TestBuildCIBA_MemorySqliteRedisUnknownBackendAndTransport(t *testing.T) {

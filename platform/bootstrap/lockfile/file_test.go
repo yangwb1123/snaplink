@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/bootstrap/lock"
-	"github.com/snaplink/sso/platform/bootstrap/lockfile"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/lock"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/lockfile"
 )
 
 func TestAcquireRelease_RoundTrip(t *testing.T) {

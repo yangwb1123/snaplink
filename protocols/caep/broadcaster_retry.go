@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // Delivery-retry defaults. Retry is OPT-IN (default attempts = 1, i.e.
@@ -122,7 +122,7 @@ const AttrReceiverMQTTTopic = "caep_receiver_mqtt_topic"
 // to push SETs over MQTT. Kept as a LOCAL interface (mirroring Logger's
 // own doc: "kept local so caep depends only on core + audit") so this
 // package imports no MQTT client library directly — an operator
-// satisfies it with, e.g., github.com/snaplink/sso/mqtt's
+// satisfies it with, e.g., github.com/yangwb1123/snaplink/mqtt's
 // TopicPublisher.Publish (that nested module's own doc.go covers why it
 // lives outside the core module's go.mod).
 type MQTTPublisher interface {

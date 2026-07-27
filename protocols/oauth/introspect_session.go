@@ -1,7 +1,7 @@
 package oauth
 
 import (
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // introspectSessionActive checks whether the session identified by claims.SID

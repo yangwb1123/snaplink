@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/ssoclient/rs"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/rs"
 )
 
 func TestHTTPMiddleware_NoCredentials401(t *testing.T) {

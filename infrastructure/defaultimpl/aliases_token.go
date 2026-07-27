@@ -11,8 +11,8 @@ package defaultimpl
 // identity intact.
 
 import (
-	"github.com/snaplink/sso/infrastructure/defaultimpl/defaultjwe"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/defaulttoken"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/defaultjwe"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/defaulttoken"
 )
 
 type (

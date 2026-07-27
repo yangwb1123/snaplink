@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // GeoInfo is an alias for [core.GeoInfo]. The type was relocated to core (the

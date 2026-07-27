@@ -10,31 +10,31 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
+	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 
-	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	redisbackend "github.com/snaplink/sso/infrastructure/redis"
-	"github.com/snaplink/sso/interfaces/snapshot"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
 
-	encryptionaes "github.com/snaplink/sso/interfaces/snapshot/encryptionaesgcm"
+	encryptionaes "github.com/yangwb1123/snaplink/interfaces/snapshot/encryptionaesgcm"
 
-	encryptionnone "github.com/snaplink/sso/interfaces/snapshot/encryptionnone"
+	encryptionnone "github.com/yangwb1123/snaplink/interfaces/snapshot/encryptionnone"
 
-	encryptionpass "github.com/snaplink/sso/interfaces/snapshot/encryptionpassphrase"
+	encryptionpass "github.com/yangwb1123/snaplink/interfaces/snapshot/encryptionpassphrase"
 
-	storagefile "github.com/snaplink/sso/interfaces/snapshot/storagefile"
+	storagefile "github.com/yangwb1123/snaplink/interfaces/snapshot/storagefile"
 
-	"github.com/snaplink/sso/domains/tenant"
-	storageinline "github.com/snaplink/sso/interfaces/snapshot/storageinline"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	storageinline "github.com/yangwb1123/snaplink/interfaces/snapshot/storageinline"
 
-	tenantmemory "github.com/snaplink/sso/domains/tenant/memory"
+	tenantmemory "github.com/yangwb1123/snaplink/domains/tenant/memory"
 
-	tenantsqlite "github.com/snaplink/sso/domains/tenant/sqlite"
+	tenantsqlite "github.com/yangwb1123/snaplink/domains/tenant/sqlite"
 )
 
 // buildMFAChallengeStore selects the MFA challenge store backend (memory for

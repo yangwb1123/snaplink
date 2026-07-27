@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // defaultMetadataTTL is the Cache-Control max-age on /saml/metadata when

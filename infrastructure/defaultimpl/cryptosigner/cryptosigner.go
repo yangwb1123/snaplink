@@ -46,7 +46,7 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
 // RSA alg names (canonical JWS values, RFC 7518 §3.3/§3.5). Declared here

@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/cluster"
-	clustermemory "github.com/snaplink/sso/platform/cluster/memory"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	clustermemory "github.com/yangwb1123/snaplink/platform/cluster/memory"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // fakeSessionManager is a minimal in-package core.SessionManager test double.

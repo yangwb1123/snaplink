@@ -9,7 +9,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/snaplink/sso/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
 )
 
 // Storage holds snapshots in a process-local map. Safe for concurrent use.

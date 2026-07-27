@@ -13,9 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func drDo(h http.Handler, method, path string, body string) *httptest.ResponseRecorder {

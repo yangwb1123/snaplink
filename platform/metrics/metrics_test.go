@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 )
 
 func TestNew_ConstructsAllVectors(t *testing.T) {

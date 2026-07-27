@@ -3,8 +3,8 @@ package ssotest
 import (
 	"testing"
 
-	"github.com/snaplink/sso/protocols/fapi"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/protocols/fapi"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // TestFAPICompliance verifies that FAPI 2.0 crypto policy is enforced:

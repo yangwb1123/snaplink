@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // Example demonstrates the default Ed25519 JWT issuer — the TokenIssuer

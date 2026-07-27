@@ -3,8 +3,8 @@ package serverbuildplatform
 import (
 	"testing"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 func TestBuildEmailSender_DisabledReturnsNil(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	permsqlite "github.com/snaplink/sso/domains/permissions/sqlite"
-	"github.com/snaplink/sso/platform/migrate"
+	permsqlite "github.com/yangwb1123/snaplink/domains/permissions/sqlite"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 
 	_ "modernc.org/sqlite"
 )

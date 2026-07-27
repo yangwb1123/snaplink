@@ -15,9 +15,9 @@ import (
 	"github.com/crewjam/saml"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/saml/sp"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/saml/sp"
 )
 
 // idpContinueURL is the IdP's front-channel chain RESUME endpoint a simulated SP

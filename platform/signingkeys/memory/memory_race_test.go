@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/platform/signingkeys"
-	"github.com/snaplink/sso/platform/signingkeys/memory"
+	"github.com/yangwb1123/snaplink/platform/signingkeys"
+	"github.com/yangwb1123/snaplink/platform/signingkeys/memory"
 )
 
 // TestPublishCloseRace exercises Publish racing Close. Before the fix, Publish

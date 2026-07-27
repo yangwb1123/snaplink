@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/snaplink/sso/internal/handler"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/internal/handler"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // ClientAuthWorkloadIdentity marks a registered Client as requiring a cloud

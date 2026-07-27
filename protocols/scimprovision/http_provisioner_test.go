@@ -10,10 +10,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
-	"github.com/snaplink/sso/protocols/scim"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreidentity"
+	"github.com/yangwb1123/snaplink/protocols/scim"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 const testBasePath = "/scim/v2"

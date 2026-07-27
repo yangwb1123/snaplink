@@ -8,7 +8,7 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 
-	"github.com/snaplink/sso/platform/signingkeys"
+	"github.com/yangwb1123/snaplink/platform/signingkeys"
 )
 
 // Publish writes ann under <prefix>/<ReplicaID> with a fresh lease and launches

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/domains/tenant"
+	"github.com/yangwb1123/snaplink/domains/tenant"
 )
 
 // Store holds Tenants + Domains in process-local maps. Safe for

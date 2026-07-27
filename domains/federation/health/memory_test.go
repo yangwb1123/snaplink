@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/federation/health"
+	"github.com/yangwb1123/snaplink/domains/federation/health"
 )
 
 func TestMemoryConnectionHealth_RecordSuccessThenFailure(t *testing.T) {

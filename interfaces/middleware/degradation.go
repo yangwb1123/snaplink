@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/snaplink/sso/platform/lifecycle/degradation"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/degradation"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // defaultDegradationRetryAfter is the Retry-After hint sent on a degraded 503

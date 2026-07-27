@@ -10,7 +10,7 @@ import (
 	"github.com/beevik/etree"
 	"github.com/crewjam/saml"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // SAML FRONT-CHANNEL Single Logout (the browser-redirect SLO chain).

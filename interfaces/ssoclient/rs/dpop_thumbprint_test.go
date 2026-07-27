@@ -3,7 +3,7 @@ package rs
 import (
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // TestJWKThumbprintRFC7638_RSAKnownAnswer pins jwkThumbprintRFC7638's RSA

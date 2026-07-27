@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/cluster"
 )
 
 // TestBus_SubscribeChannelClosesWhenBrokerDies is the differentiating test

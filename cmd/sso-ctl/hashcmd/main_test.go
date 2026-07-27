@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
 )
 
 func TestReadPassword_FlagWins(t *testing.T) {

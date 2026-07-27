@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/snaplink/sso/domains/connections"
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/domains/connections"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 
 	_ "modernc.org/sqlite" // register the "sqlite" driver name (pure-Go, no CGO).
 )

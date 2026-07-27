@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/platform/cluster"
-	"github.com/snaplink/sso/platform/cluster/memory"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/cluster/memory"
 )
 
 // TestPublishCloseRace exercises Publish racing Close. Before the fix, Publish

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/lifecycle/rotation"
-	"github.com/snaplink/sso/shared/core/corecredential"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/rotation"
+	"github.com/yangwb1123/snaplink/shared/core/corecredential"
 )
 
 const testCredType corecredential.CredentialType = "test_cred"

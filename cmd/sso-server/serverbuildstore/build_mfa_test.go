@@ -3,8 +3,8 @@ package serverbuildstore
 import (
 	"testing"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
 )
 
 // buildMFAProviderByKind / buildMultiMFAProvider / buildPushMFAProvider /

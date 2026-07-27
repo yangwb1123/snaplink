@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildauthn"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 // TestLoadCertPool_EmptyPathsReturnsEmptyPool proves the helper

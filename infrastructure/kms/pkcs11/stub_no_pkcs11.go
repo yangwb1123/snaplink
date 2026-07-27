@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // ErrExcluded is returned by every constructor when the pkcs11 package

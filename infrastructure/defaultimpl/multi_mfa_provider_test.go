@@ -1,13 +1,13 @@
 package defaultimpl_test
 
-import "github.com/snaplink/sso/shared/spi"
+import "github.com/yangwb1123/snaplink/shared/spi"
 
 import (
 	"context"
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
 // stubMFAProvider is a minimal MFAProvider for composite-dispatch

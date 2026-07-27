@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
-	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/releases"
-	"github.com/snaplink/sso/platform/releases/pinnernoop"
-	"github.com/snaplink/sso/platform/releases/storememory"
+	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/releases"
+	"github.com/yangwb1123/snaplink/platform/releases/pinnernoop"
+	"github.com/yangwb1123/snaplink/platform/releases/storememory"
 	"google.golang.org/grpc/codes"
 )
 

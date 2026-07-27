@@ -5,7 +5,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
 func TestMemorySubjectClientIndex_RecordListForget(t *testing.T) {

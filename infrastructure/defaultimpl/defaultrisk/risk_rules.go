@@ -7,7 +7,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // RuleBasedRiskScorer is the reference rule-based [spi.RiskScorer].

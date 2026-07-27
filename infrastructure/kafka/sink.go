@@ -9,7 +9,7 @@ import (
 
 	kafkago "github.com/segmentio/kafka-go"
 
-	"github.com/snaplink/sso/platform/audit/auditsink"
+	"github.com/yangwb1123/snaplink/platform/audit/auditsink"
 )
 
 // Producer is the subset of *kafka-go.Writer this Sink depends on — narrow

@@ -64,7 +64,7 @@ def run() -> int:
 
     print("--- 3. architecture gate ---")
     result = subprocess.run(
-        ["grep", "-r", '"github.com/snaplink/sso/protocols/oidc"', "protocols/oauth/", "--include=*.go"],
+        ["grep", "-r", '"github.com/yangwb1123/snaplink/protocols/oidc"', "protocols/oauth/", "--include=*.go"],
         capture_output=True, text=True, check=False, cwd=str(ROOT)
     )
     if not result.stdout.strip():
@@ -73,7 +73,7 @@ def run() -> int:
         f("oauth imports oidc")
 
     result = subprocess.run(
-        ["grep", "-r", '"github.com/snaplink/sso/interfaces/admin"', "protocols/oidc/", "--include=*.go"],
+        ["grep", "-r", '"github.com/yangwb1123/snaplink/interfaces/admin"', "protocols/oidc/", "--include=*.go"],
         capture_output=True, text=True, check=False, cwd=str(ROOT)
     )
     if not result.stdout.strip():

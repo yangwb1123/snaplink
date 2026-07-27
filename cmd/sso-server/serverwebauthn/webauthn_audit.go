@@ -6,8 +6,8 @@ import (
 
 	gw "github.com/go-webauthn/webauthn/webauthn"
 
-	"github.com/snaplink/sso/domains/authenticators/webauthn"
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/domains/authenticators/webauthn"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 func recordWebAuthnRegistered(deps *WebAuthnDeps, r *http.Request, cred *gw.Credential) {

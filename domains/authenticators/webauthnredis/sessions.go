@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators/webauthn"
+	"github.com/yangwb1123/snaplink/domains/authenticators/webauthn"
 
 	gw "github.com/go-webauthn/webauthn/webauthn"
 	goredis "github.com/redis/go-redis/v9"

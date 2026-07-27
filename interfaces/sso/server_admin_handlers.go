@@ -8,14 +8,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/admin"
-	"github.com/snaplink/sso/internal/adminuser"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/lifecycle/rotation"
-	"github.com/snaplink/sso/platform/sse"
-	"github.com/snaplink/sso/protocols/selfservice"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/core/corecredential"
+	"github.com/yangwb1123/snaplink/interfaces/admin"
+	"github.com/yangwb1123/snaplink/internal/adminuser"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/rotation"
+	"github.com/yangwb1123/snaplink/platform/sse"
+	"github.com/yangwb1123/snaplink/protocols/selfservice"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core/corecredential"
 )
 
 // Admin/helpdesk user-management handlers are thin wrappers delegating to the

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // MemoryMFAChallengeStore is the in-process [spi.MFAChallengeStore].

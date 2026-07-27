@@ -3,7 +3,7 @@ package defaultmfa
 import (
 	"context"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // CompositeMFAEnrollmentStore fans a single core.MFAEnrollmentStore view across

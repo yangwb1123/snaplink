@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/middleware"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 func verifyDPoPProof(

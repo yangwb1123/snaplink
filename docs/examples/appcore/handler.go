@@ -18,8 +18,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/snaplink/sso/interfaces/ssoclient"
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 const requiredPermission = "items:read"

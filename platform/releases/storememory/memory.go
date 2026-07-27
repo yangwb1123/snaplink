@@ -8,7 +8,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/snaplink/sso/platform/releases"
+	"github.com/yangwb1123/snaplink/platform/releases"
 )
 
 // Store holds Releases in a process-local map plus a "current" pointer.

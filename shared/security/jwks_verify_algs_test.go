@@ -13,8 +13,8 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // VerifyCompactJWS is the shared signature primitive behind

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/platform/configaudit"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/platform/configaudit"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // noopLogger satisfies spi.Logger without printing anything.

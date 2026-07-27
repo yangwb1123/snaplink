@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/interfaces/ssoclient"
-	"github.com/snaplink/sso/interfaces/ssoclient/remote"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/remote"
 )
 
 // Interface satisfaction guards.

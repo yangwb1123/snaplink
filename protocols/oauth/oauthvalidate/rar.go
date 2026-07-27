@@ -6,7 +6,7 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // RFC 9396 — Rich Authorization Requests.

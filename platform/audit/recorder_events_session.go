@@ -9,7 +9,7 @@ package audit
 import (
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // RecordCredentialHealth emits a non-blocking credential-health signal

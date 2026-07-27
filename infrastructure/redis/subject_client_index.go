@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	goredis "github.com/redis/go-redis/v9"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // sso:bcl:subject:<subject> -> SET of client ids the subject has had

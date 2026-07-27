@@ -9,7 +9,7 @@ import (
 	"github.com/beevik/etree"
 	"github.com/crewjam/saml"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // DefaultAssertionTTL is the validity window stamped onto a minted assertion

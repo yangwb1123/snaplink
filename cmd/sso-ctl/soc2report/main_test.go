@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	libexport "github.com/snaplink/sso/platform/audit/auditexport"
-	"github.com/snaplink/sso/platform/audit/auditreport"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	libexport "github.com/yangwb1123/snaplink/platform/audit/auditexport"
+	"github.com/yangwb1123/snaplink/platform/audit/auditreport"
 )
 
 // seedBundle records n hash-chained login events into a fresh

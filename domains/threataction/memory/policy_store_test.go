@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/domains/threataction"
+	"github.com/yangwb1123/snaplink/domains/threataction"
 )
 
 func TestThreatPolicyStore_CRUD(t *testing.T) {

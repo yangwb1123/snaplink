@@ -10,7 +10,7 @@ import (
 	mvccpb "go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
-	"github.com/snaplink/sso/platform/signingkeys"
+	"github.com/yangwb1123/snaplink/platform/signingkeys"
 )
 
 // List returns every currently live replica's announcement (the prefix

@@ -74,8 +74,8 @@ import (
 
 	"github.com/goccy/go-yaml"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/platform/configaudit"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/platform/configaudit"
 )
 
 // safeReloadPaths lists the RFC 6901 JSON-Pointer paths (matching

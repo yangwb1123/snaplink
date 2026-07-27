@@ -35,7 +35,7 @@ import (
 //
 // Ratchet: the upward edges that existed when this gate landed are grandfathered
 // in layerExemptions and may only SHRINK; no NEW upward edge may land.
-const layerModuleRoot = "github.com/snaplink/sso"
+const layerModuleRoot = "github.com/yangwb1123/snaplink"
 
 var layerRank = map[string]int{
 	"shared": 0, "platform": 1, "domains": 2, "protocols": 3,
@@ -62,7 +62,7 @@ func layerName(rel string) string {
 		return seg
 	case "redis", "postgres":
 		// Nested infrastructure modules: their module paths are
-		// github.com/snaplink/sso/{redis,postgres} (mapped via replace to
+		// github.com/yangwb1123/snaplink/{redis,postgres} (mapped via replace to
 		// ./infrastructure/{redis,postgres}), so a consumer's import strips to
 		// the bare segment. The modules' own dirs are skipped by the walk
 		// (skipDirs); this only classifies the import target so cmd's

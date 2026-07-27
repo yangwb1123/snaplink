@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/shared/security/peertrust"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
 func peerTrustChecker(t *testing.T, cidrs ...string) *peertrust.Checker {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/snaplink/sso/shared/trust"
+	"github.com/yangwb1123/snaplink/shared/trust"
 )
 
 // Reference tuning + scores for ClientTrustScorer. Exported where a caller

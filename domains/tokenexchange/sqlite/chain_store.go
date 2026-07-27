@@ -21,8 +21,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/snaplink/sso/domains/tokenexchange"
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/domains/tokenexchange"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 
 	_ "modernc.org/sqlite" // register the "sqlite" driver name (pure-Go, no CGO).
 )

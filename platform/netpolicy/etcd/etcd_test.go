@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/netpolicy"
+	"github.com/yangwb1123/snaplink/platform/netpolicy"
 	mvccpb "go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )

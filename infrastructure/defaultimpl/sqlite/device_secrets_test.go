@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	"github.com/snaplink/sso/shared/core"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func newDeviceSecretStore(t *testing.T) *sqlitestores.DeviceSecretStore {

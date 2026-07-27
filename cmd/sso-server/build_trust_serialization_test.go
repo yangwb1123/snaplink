@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 // wireTrustScoring (build_app_selfservice.go) is the reference sso-server's

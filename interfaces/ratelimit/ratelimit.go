@@ -27,7 +27,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memreaper"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memreaper"
 )
 
 // Limiter is the SPI implementations satisfy. Allow consults the

@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/domains/federation"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/federation"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 func BuildFederationConfig(cfg config.FederationConfig) (*federation.Config, error) {

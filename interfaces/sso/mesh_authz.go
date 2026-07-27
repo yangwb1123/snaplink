@@ -14,8 +14,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/snaplink/sso/domains/region"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/region"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // MeshAuthorize is the dep-free, reusable mesh authorization decision —

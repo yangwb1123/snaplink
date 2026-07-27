@@ -11,12 +11,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/protocols/oidc"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
 
-	kerberosauth "github.com/snaplink/sso/kerberos"
+	kerberosauth "github.com/yangwb1123/snaplink/kerberos"
 )
 
 // ---- fake SPNEGOValidator (no real KDC / keytab) --------------------------

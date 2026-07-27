@@ -4,7 +4,7 @@ import (
 	"context"
 	"maps"
 
-	"github.com/snaplink/sso/interfaces/ssoclient"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient"
 )
 
 // AuthClient is a stub ssoclient.AuthClient. ValidateToken returns

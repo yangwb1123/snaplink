@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/tokenexchange"
-	"github.com/snaplink/sso/domains/tokenexchange/memory"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/tokenexchange"
+	"github.com/yangwb1123/snaplink/domains/tokenexchange/memory"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // chainParamCtx layers a :jti route param onto a core.Context — StdRouter

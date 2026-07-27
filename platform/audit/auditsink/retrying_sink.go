@@ -6,8 +6,8 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit/auditspi"
-	"github.com/snaplink/sso/platform/tracing"
+	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
+	"github.com/yangwb1123/snaplink/platform/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
 

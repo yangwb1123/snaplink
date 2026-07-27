@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/domains/connections"
-	csqlite "github.com/snaplink/sso/domains/connections/sqlite"
+	"github.com/yangwb1123/snaplink/domains/connections"
+	csqlite "github.com/yangwb1123/snaplink/domains/connections/sqlite"
 )
 
 func newStore(t *testing.T) *csqlite.Store {

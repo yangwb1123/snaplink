@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // Issuer is the Transaction Token Service (TTS) minting side — it mints a

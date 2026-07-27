@@ -26,7 +26,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 const progName = "sso-ctl config"

@@ -9,7 +9,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/snaplink/sso/domains/region"
+	"github.com/yangwb1123/snaplink/domains/region"
 )
 
 // Store holds per-tenant ResidencyPolicy in a process-local map. Safe for

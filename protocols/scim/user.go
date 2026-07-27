@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // Resource is the SCIM 2.0 core User representation (RFC 7643 §4.1). Only

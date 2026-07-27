@@ -8,23 +8,23 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/spi"
 
-	"github.com/snaplink/sso/protocols/caep"
+	"github.com/yangwb1123/snaplink/protocols/caep"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	redisbackend "github.com/snaplink/sso/infrastructure/redis"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 
-	"github.com/snaplink/sso/domains/federation"
+	"github.com/yangwb1123/snaplink/domains/federation"
 
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // BuildSPIFFEOption assembles the WithSPIFFEJWTSVID option from config,

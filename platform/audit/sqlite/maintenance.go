@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // Prune deletes events with ts_unix_ns < olderThan and returns the

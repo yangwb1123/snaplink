@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 func syslogRecord(t *testing.T, facility int, hostname, appName string, inner audit.Formatter, e *audit.Event) string {

@@ -1,8 +1,8 @@
 package caep_test
 
 import (
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/protocols/caep"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/protocols/caep"
 )
 
 // Compile-time guards that the three defaultimpl signing issuers satisfy

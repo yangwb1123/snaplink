@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	sso "github.com/snaplink/sso/interfaces/sso"
+	sso "github.com/yangwb1123/snaplink/interfaces/sso"
 	"golang.org/x/crypto/bcrypt"
 )
 

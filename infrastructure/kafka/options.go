@@ -1,6 +1,6 @@
 package kafkaaudit
 
-import "github.com/snaplink/sso/platform/audit/auditsink"
+import "github.com/yangwb1123/snaplink/platform/audit/auditsink"
 
 // sinkOptions holds New's optional construction parameters.
 type sinkOptions struct {

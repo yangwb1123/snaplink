@@ -299,7 +299,7 @@ const file_admin_v1_keys_proto_rawDesc = "" +
 	"\x04keys\x18\x01 \x03(\v2!.snaplink.admin.v1.SigningKeyInfoR\x04keys2\xac\x02\n" +
 	"\x0fKeyAdminService\x12\x91\x01\n" +
 	"\x10RotateSigningKey\x12*.snaplink.admin.v1.RotateSigningKeyRequest\x1a+.snaplink.admin.v1.RotateSigningKeyResponse\"$\x82\xd3\xe4\x93\x02\x1e:\x01*\"\x19/api/v1/admin/keys/rotate\x12\x84\x01\n" +
-	"\x0fListSigningKeys\x12).snaplink.admin.v1.ListSigningKeysRequest\x1a*.snaplink.admin.v1.ListSigningKeysResponse\"\x1a\x82\xd3\xe4\x93\x02\x14\x12\x12/api/v1/admin/keysB4Z2github.com/snaplink/sso/gen/proto/admin/v1;adminv1b\x06proto3"
+	"\x0fListSigningKeys\x12).snaplink.admin.v1.ListSigningKeysRequest\x1a*.snaplink.admin.v1.ListSigningKeysResponse\"\x1a\x82\xd3\xe4\x93\x02\x14\x12\x12/api/v1/admin/keysB;Z9github.com/yangwb1123/snaplink/gen/proto/admin/v1;adminv1b\x06proto3"
 
 var (
 	file_admin_v1_keys_proto_rawDescOnce sync.Once

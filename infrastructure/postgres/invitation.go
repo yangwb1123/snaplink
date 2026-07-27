@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/platform/migrate"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/platform/migrate"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // invitationSchema is the org-invitation store (Postgres dialect): a

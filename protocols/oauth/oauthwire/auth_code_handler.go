@@ -11,8 +11,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/snaplink/sso/protocols/oauth/oauthspi"
-	"github.com/snaplink/sso/protocols/oauth/oauthvalidate"
+	"github.com/yangwb1123/snaplink/protocols/oauth/oauthspi"
+	"github.com/yangwb1123/snaplink/protocols/oauth/oauthvalidate"
 )
 
 // PKCEMethodPlain is the PKCE challenge method "plain" (RFC 7636 §4.3).

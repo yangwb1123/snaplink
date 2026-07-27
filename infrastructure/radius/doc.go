@@ -11,7 +11,7 @@
 // # Why a separate Go module
 //
 // The RADIUS dependency (layeh.com/radius, the standard pure-Go RADIUS library)
-// lives ONLY in this module's go.mod (github.com/snaplink/sso/radius). The core
+// lives ONLY in this module's go.mod (github.com/yangwb1123/snaplink/radius). The core
 // sso module's go.mod stays byte-free of it — the firm zero-external-SDK-in-core
 // invariant that also isolates kms/awskms (aws-sdk-go-v2), redis (go-redis),
 // saml (crewjam/saml), ldap (go-ldap/ldap/v3), and kerberos (gokrb5). Operators
@@ -37,8 +37,8 @@
 //		"log"
 //		"os"
 //
-//		"github.com/snaplink/sso/interfaces/sso"
-//		radiusauth "github.com/snaplink/sso/radius"
+//		"github.com/yangwb1123/snaplink/interfaces/sso"
+//		radiusauth "github.com/yangwb1123/snaplink/radius"
 //		"layeh.com/radius"
 //		"layeh.com/radius/rfc2865"
 //	)

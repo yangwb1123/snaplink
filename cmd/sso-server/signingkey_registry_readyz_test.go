@@ -6,10 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/interfaces/sso"
-	signingkeysetcd "github.com/snaplink/sso/platform/signingkeys/etcd"
-	signingkeysmemory "github.com/snaplink/sso/platform/signingkeys/memory"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	signingkeysetcd "github.com/yangwb1123/snaplink/platform/signingkeys/etcd"
+	signingkeysmemory "github.com/yangwb1123/snaplink/platform/signingkeys/memory"
 )
 
 // wireRegistryReadyz applies the builder's accumulated options to a real

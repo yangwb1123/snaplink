@@ -7,7 +7,7 @@ package noop
 import (
 	"context"
 
-	"github.com/snaplink/sso/platform/releases"
+	"github.com/yangwb1123/snaplink/platform/releases"
 )
 
 // Pinner is a no-op releases.Pinner. Logger (when set) gets one line

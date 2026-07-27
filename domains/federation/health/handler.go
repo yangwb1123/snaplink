@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // DefaultCertExpiryWarning is the "expiring soon" alert threshold applied

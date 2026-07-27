@@ -4,11 +4,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/domains/region"
-	"github.com/snaplink/sso/domains/tenant"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/geo"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/region"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/geo"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func TestSetMeta_LazyAllocAndSkipEmpty(t *testing.T) {

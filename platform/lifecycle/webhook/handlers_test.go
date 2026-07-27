@@ -18,9 +18,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/lifecycle/webhook"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/webhook"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 type testDeps struct {

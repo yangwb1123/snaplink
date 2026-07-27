@@ -3,7 +3,7 @@ package defaultrisk
 import (
 	"context"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // NoopRiskScorer always returns spi.DecisionAllow with score 0. The

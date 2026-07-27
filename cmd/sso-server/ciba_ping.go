@@ -9,13 +9,13 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
-	"github.com/snaplink/sso/config"
-	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildsign"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
+	"github.com/yangwb1123/snaplink/config"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // --- CIBA Push Delivery (CIBA Core §10.3) ---

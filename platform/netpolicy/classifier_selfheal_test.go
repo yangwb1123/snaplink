@@ -20,9 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/platform/netpolicy"
-	"github.com/snaplink/sso/platform/netpolicy/memory"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/netpolicy"
+	"github.com/yangwb1123/snaplink/platform/netpolicy/memory"
 )
 
 // flakyStore wraps the real in-process memory Store so a test can force the

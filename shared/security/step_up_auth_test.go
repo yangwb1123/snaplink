@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 func TestBuildStepUpChallenge_AllFields(t *testing.T) {

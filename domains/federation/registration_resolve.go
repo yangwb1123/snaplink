@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // On-the-fly federation resolution helpers for RegistrationClientStore, split

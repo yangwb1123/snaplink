@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/internal/handler/tokengrant"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/protocols/oidc"
+	"github.com/yangwb1123/snaplink/internal/handler/tokengrant"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
 )
 
 // issueDeviceSecret mints a fresh Native SSO device_secret, stores its binding,

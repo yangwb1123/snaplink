@@ -9,8 +9,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 func newACRValuesSupportedHarness(t *testing.T, values []string) *httptest.Server {

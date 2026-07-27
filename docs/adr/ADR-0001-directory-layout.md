@@ -15,7 +15,7 @@ business-logic package or a second public facade.
 The project originally kept public packages flat to avoid import-path changes.
 It later performed an in-place breaking reorganization without changing the
 root module major version. The current public Server import is
-`github.com/snaplink/sso/interfaces/sso`.
+`github.com/yangwb1123/snaplink/interfaces/sso`.
 
 ## Decision
 

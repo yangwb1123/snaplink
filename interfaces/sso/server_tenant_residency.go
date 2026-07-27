@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/domains/region"
-	"github.com/snaplink/sso/domains/tenant"
-	"github.com/snaplink/sso/platform/cluster"
+	"github.com/yangwb1123/snaplink/domains/region"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	"github.com/yangwb1123/snaplink/platform/cluster"
 )
 
 func (s *Server) checkTenantNotSuspended(ctx context.Context, claims *TokenClaims) error {

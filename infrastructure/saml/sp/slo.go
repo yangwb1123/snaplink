@@ -13,7 +13,7 @@ import (
 	xrv "github.com/mattermost/xml-roundtrip-validator"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // ErrLogoutInvalid is the SINGLE error every inbound-LogoutRequest validation

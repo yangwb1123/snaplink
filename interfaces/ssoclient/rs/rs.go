@@ -25,9 +25,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/ssoclient/remote"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/remote"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // Wire constants used by the RS-side validation surface.

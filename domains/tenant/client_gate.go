@@ -1,6 +1,6 @@
 package tenant
 
-import "github.com/snaplink/sso/shared/core"
+import "github.com/yangwb1123/snaplink/shared/core"
 
 // ClientOK reports whether the given client may be served from the
 // request's resolved tenant context. Returns true when:

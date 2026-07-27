@@ -3,7 +3,7 @@ package rebac
 import (
 	"net/http"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // HandlerDeps is what the ReBAC admin HTTP handler needs. *sso.Server

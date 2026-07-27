@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/tokenexchange"
-	tesqlite "github.com/snaplink/sso/domains/tokenexchange/sqlite"
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/domains/tokenexchange"
+	tesqlite "github.com/yangwb1123/snaplink/domains/tokenexchange/sqlite"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
 func newStore(t *testing.T) *tesqlite.ChainStore {

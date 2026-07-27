@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/cluster"
-	clustermemory "github.com/snaplink/sso/platform/cluster/memory"
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	clustermemory "github.com/yangwb1123/snaplink/platform/cluster/memory"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 )
 
 // flakyBus wraps the real in-process memory cluster.Bus so a test can force the

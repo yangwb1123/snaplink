@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/domains/anomaly"
+	"github.com/yangwb1123/snaplink/domains/anomaly"
 )
 
 // MemoryIPFailureCounter is the in-process [anomaly.IPFailureCounter].

@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
-	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	redisbackend "github.com/snaplink/sso/infrastructure/redis"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildsign"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
 	"strings"
 )
 

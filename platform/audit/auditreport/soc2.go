@@ -26,8 +26,8 @@ package auditreport
 import (
 	"time"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/audit/auditexport"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit/auditexport"
 )
 
 // SOC2FormatVersion is the envelope format of SOC2Report; bump on

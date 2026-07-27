@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // OpenID Federation 1.0 §8 — the Federation Fetch endpoint, the SUPERIOR /

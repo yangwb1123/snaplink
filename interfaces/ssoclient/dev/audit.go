@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/snaplink/sso/interfaces/ssoclient"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient"
 )
 
 // AuditClient is a stub ssoclient.AuditClient. By default Record is

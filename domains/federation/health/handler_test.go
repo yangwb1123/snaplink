@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/federation/health"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/federation/health"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // fakeHealthDeps is a hand-built health.Deps for the unit test — a real

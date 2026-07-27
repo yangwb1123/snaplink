@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // runStream starts HandleStream in a goroutine against a context that

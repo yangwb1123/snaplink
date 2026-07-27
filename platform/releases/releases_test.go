@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/platform/releases"
+	"github.com/yangwb1123/snaplink/platform/releases"
 )
 
 func validRelease(id string) *releases.Release {

@@ -18,11 +18,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/netpolicy"
-	"github.com/snaplink/sso/platform/netpolicy/memory"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/netpolicy"
+	"github.com/yangwb1123/snaplink/platform/netpolicy/memory"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 type testDeps struct {

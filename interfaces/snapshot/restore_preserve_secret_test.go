@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // TestRestore_Overwrite_PreservesLiveClientSecret proves an Overwrite

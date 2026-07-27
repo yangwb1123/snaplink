@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/cluster"
-	"github.com/snaplink/sso/platform/cluster/memory"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/cluster/memory"
 )
 
 func recv(t *testing.T, ch <-chan cluster.Event) cluster.Event {

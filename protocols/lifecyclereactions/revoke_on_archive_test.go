@@ -5,12 +5,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/userlifecycle"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/protocols/lifecyclereactions"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/userlifecycle"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/lifecyclereactions"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // fixture wires the three real memory stores RevokeAccessOnArchive

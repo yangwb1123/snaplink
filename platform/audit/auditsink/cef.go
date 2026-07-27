@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/snaplink/sso/platform/audit/auditspi"
+	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
 )
 
 // cefEventNames curates the CEF "Name" (human-readable event title) field

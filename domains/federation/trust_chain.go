@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // OpenID Federation 1.0 §9 (Trust Chain) + §10 (Metadata Policy) — THE TRUST

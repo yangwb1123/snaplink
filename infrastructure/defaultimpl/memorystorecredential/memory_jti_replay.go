@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memreaper"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memreaper"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // ErrJTIStoreAtCapacity is returned by MarkSeen when MaxEntries is set

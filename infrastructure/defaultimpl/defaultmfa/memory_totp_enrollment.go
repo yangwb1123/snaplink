@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/domains/authenticators"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // MemoryTOTPEnrollmentStore is an in-process store that plays THREE roles for

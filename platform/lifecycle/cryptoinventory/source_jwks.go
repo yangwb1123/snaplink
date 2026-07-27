@@ -3,7 +3,7 @@ package cryptoinventory
 import (
 	"context"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // JWKSSourceName is the default Entry.Source / Name() for a JWKSSource.

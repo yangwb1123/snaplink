@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/internal/handler/tokengrant"
+	"github.com/yangwb1123/snaplink/internal/handler/tokengrant"
 )
 
 // TestChaos_RefreshGrace_ForwardClockJumpExpiresWindow exercises the ONE

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // Defaults applied by NewSnapshotReplicator for zero/absent config values.

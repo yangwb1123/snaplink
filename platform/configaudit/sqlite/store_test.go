@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/configaudit"
+	"github.com/yangwb1123/snaplink/platform/configaudit"
 )
 
 func newTestStore(t *testing.T) *Store {

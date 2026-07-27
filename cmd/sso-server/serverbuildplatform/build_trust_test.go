@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/domains/anomaly"
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/shared/trust"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/anomaly"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/trust"
 )
 
 func TestBuildTrustScorer_DisabledReturnsNil(t *testing.T) {

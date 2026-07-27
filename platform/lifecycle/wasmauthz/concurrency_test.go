@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/platform/lifecycle/wasmauthz"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/wasmauthz"
 )
 
 func TestAuthorize_ConcurrentCalls(t *testing.T) {

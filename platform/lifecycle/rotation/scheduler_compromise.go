@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/shared/core/corecredential"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/core/corecredential"
 )
 
 // ErrUnknownCredentialType is returned by Compromise for a credential class

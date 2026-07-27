@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/domains/tokenusage"
+	"github.com/yangwb1123/snaplink/domains/tokenusage"
 )
 
 // DefaultMaxBuckets caps tracked buckets when WithMaxBuckets is not

@@ -32,7 +32,7 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 
-	"github.com/snaplink/sso/platform/signingkeys"
+	"github.com/yangwb1123/snaplink/platform/signingkeys"
 )
 
 // Defaults applied when a corresponding Config field (or the announcement's

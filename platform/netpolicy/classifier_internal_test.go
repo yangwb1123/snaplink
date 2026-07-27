@@ -16,7 +16,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 func TestWithClassifierLoggerWired(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	samlsp "github.com/snaplink/sso/saml/sp"
+	samlsp "github.com/yangwb1123/snaplink/saml/sp"
 )
 
 // spLogoutReplaySchema dedups inbound IdP-initiated LogoutRequest IDs on the SP

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/userlifecycle"
+	"github.com/yangwb1123/snaplink/domains/userlifecycle"
 )
 
 func TestGet_MissingRecordIsDefaultActive(t *testing.T) {

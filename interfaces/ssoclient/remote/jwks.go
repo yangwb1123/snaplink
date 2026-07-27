@@ -15,7 +15,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // minForcedFetchInterval is the minimum time between on-demand (cache-miss)

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	discoveryv1 "github.com/snaplink/sso/gen/proto/discovery/v1"
-	"github.com/snaplink/sso/platform/registry"
+	discoveryv1 "github.com/yangwb1123/snaplink/gen/proto/discovery/v1"
+	"github.com/yangwb1123/snaplink/platform/registry"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"

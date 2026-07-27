@@ -18,8 +18,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/snaplink/sso/domains/anomaly"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/domains/anomaly"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
 // DetectorTypeImpossibleTravel is the wire-stable [anomaly.Signal.Type]

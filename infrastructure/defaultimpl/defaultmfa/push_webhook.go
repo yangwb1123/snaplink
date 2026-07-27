@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/snaplink/sso/shared/security/securityverify"
+	"github.com/yangwb1123/snaplink/shared/security/securityverify"
 )
 
 // HTTPWebhookPushTransport delivers MFA push approvals to an

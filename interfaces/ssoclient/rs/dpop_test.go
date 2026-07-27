@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/ssoclient/rs"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/rs"
 )
 
 // dpopKey is an ephemeral EdDSA DPoP proof key for tests.

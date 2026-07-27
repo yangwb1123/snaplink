@@ -3,7 +3,7 @@ package sso
 import (
 	"testing"
 
-	"github.com/snaplink/sso/internal/auth/consent"
+	"github.com/yangwb1123/snaplink/internal/auth/consent"
 )
 
 func TestNormalizeUserCode(t *testing.T) {

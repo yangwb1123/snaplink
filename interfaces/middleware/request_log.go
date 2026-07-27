@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // requestLogResponseWriter captures the response body and status code

@@ -21,15 +21,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/snapshot"
-	inline "github.com/snaplink/sso/interfaces/snapshot/storageinline"
-	"github.com/snaplink/sso/interfaces/sso"
-	bootmem "github.com/snaplink/sso/platform/bootstrap/memory"
-	"github.com/snaplink/sso/platform/lifecycle/dr"
-	"github.com/snaplink/sso/platform/netpolicy"
-	netmemory "github.com/snaplink/sso/platform/netpolicy/memory"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
+	inline "github.com/yangwb1123/snaplink/interfaces/snapshot/storageinline"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	bootmem "github.com/yangwb1123/snaplink/platform/bootstrap/memory"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/dr"
+	"github.com/yangwb1123/snaplink/platform/netpolicy"
+	netmemory "github.com/yangwb1123/snaplink/platform/netpolicy/memory"
 )
 
 // stores is one control-plane backend set (clients/users/permissions/

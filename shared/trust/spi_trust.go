@@ -30,7 +30,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // TrustSignals carries the request-time context available to a TrustScorer

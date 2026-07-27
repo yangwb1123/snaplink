@@ -7,7 +7,7 @@ import (
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
-	"github.com/snaplink/sso/interfaces/ratelimit"
+	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
 )
 
 const rateLimitKeyPrefix = "sso:ratelimit:" // sso:ratelimit:<bucket>:<key> -> counter

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // hashClientSecretField re-hashes value only when it is a non-empty

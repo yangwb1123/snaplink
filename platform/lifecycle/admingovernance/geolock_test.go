@@ -4,7 +4,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/snaplink/sso/platform/geo"
+	"github.com/yangwb1123/snaplink/platform/geo"
 )
 
 func TestParseIPAllowlistConfig(t *testing.T) {

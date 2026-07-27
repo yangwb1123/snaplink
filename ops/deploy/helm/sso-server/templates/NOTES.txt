@@ -12,4 +12,4 @@ Then test:
   curl http://localhost:8080/.well-known/openid-configuration
 
 📖 For configuration reference, see:
-  https://github.com/snaplink/sso/blob/main/docs/deployment.md
+  https://github.com/yangwb1123/snaplink/blob/main/docs/deployment.md

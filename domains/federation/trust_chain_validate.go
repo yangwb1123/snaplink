@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // Trust-chain TOP-DOWN signature-validation helpers (OpenID Federation 1.0 §9),

@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/snaplink/sso/platform/audit/auditspi"
-	"github.com/snaplink/sso/platform/tracing"
-	"github.com/snaplink/sso/shared/security/securityverify"
+	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
+	"github.com/yangwb1123/snaplink/platform/tracing"
+	"github.com/yangwb1123/snaplink/shared/security/securityverify"
 	"go.opentelemetry.io/otel/attribute"
 )
 

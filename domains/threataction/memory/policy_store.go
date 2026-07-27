@@ -8,7 +8,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/snaplink/sso/domains/threataction"
+	"github.com/yangwb1123/snaplink/domains/threataction"
 )
 
 // ThreatPolicyStore is an in-memory, concurrency-safe ThreatPolicyStore.

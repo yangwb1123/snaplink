@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/snaplink/sso/domains/identitylink"
-	"github.com/snaplink/sso/domains/tenant"
-	"github.com/snaplink/sso/protocols/selfservice"
+	"github.com/yangwb1123/snaplink/domains/identitylink"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	"github.com/yangwb1123/snaplink/protocols/selfservice"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // IdentityLinkStore exposes the wired self-service identity-link store (may

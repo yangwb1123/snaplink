@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/interfaces/admin"
-	"github.com/snaplink/sso/internal/handler/tokengrant"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/protocols/oauth/oauthspi"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/interfaces/admin"
+	"github.com/yangwb1123/snaplink/internal/handler/tokengrant"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth/oauthspi"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // CIBAPushNotifier exposes the optional CIBA push delivery notifier. Folded

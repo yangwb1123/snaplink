@@ -3,7 +3,7 @@ package metrics_test
 import (
 	"testing"
 
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 )
 
 // gatherSeries returns the gathered samples for the named metric as a map

@@ -10,7 +10,7 @@
 //	sso-ctl generate grant --name device-code --package protocols/grants --desc "RFC 8628 device authorization grant"
 //
 // A grant scaffold's --package MUST NOT be protocols/oauth itself: the
-// generated file imports "github.com/snaplink/sso/protocols/oauth" for its
+// generated file imports "github.com/yangwb1123/snaplink/protocols/oauth" for its
 // oauth.TokenRequest parameter, and a package cannot import itself. Any
 // sibling package works (protocols/grants above is a suggestion, not a
 // requirement) — it just needs to live at or above the protocols layer

@@ -12,8 +12,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/snaplink/sso/domains/region"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/domains/region"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // TestRcov2Mesh_RegionAllowed exercises the mesh ext_authz ALLOW path with a

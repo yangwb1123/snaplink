@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/tokenanomaly"
-	"github.com/snaplink/sso/domains/tokenanomaly/memory"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/domains/tokenanomaly"
+	"github.com/yangwb1123/snaplink/domains/tokenanomaly/memory"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // HandleAdminSuspicious is exercised against a REAL memory finding store (no

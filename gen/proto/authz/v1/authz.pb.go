@@ -635,7 +635,7 @@ const file_authz_v1_authz_proto_rawDesc = "" +
 	"\x05Check\x12\x1f.snaplink.authz.v1.CheckRequest\x1a .snaplink.authz.v1.CheckResponse\x12W\n" +
 	"\x0fListPermissions\x12!.snaplink.authz.v1.SubjectRequest\x1a!.snaplink.authz.v1.PermissionList\x12K\n" +
 	"\tListRoles\x12!.snaplink.authz.v1.SubjectRequest\x1a\x1b.snaplink.authz.v1.RoleList\x12J\n" +
-	"\bGetMenus\x12!.snaplink.authz.v1.SubjectRequest\x1a\x1b.snaplink.authz.v1.MenuTreeB4Z2github.com/snaplink/sso/gen/proto/authz/v1;authzv1b\x06proto3"
+	"\bGetMenus\x12!.snaplink.authz.v1.SubjectRequest\x1a\x1b.snaplink.authz.v1.MenuTreeB;Z9github.com/yangwb1123/snaplink/gen/proto/authz/v1;authzv1b\x06proto3"
 
 var (
 	file_authz_v1_authz_proto_rawDescOnce sync.Once

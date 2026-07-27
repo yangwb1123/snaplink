@@ -3,7 +3,7 @@ package region
 import (
 	"net/http"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // MiddlewareOptions tune the region middleware. Zero value is fine — no

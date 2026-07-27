@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/snaplink/sso/shared/trust"
+	"github.com/yangwb1123/snaplink/shared/trust"
 )
 
 // fixedScorer is a hand-rolled TrustScorer stub (not a mocking framework) —

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // AuditKafkaSinkFactory builds a Kafka-backed audit.Sink from

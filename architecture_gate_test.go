@@ -31,17 +31,17 @@ type importRule struct {
 var importRules = []importRule{
 	{
 		fromDir:   "protocols/oauth/",
-		forbidden: "github.com/snaplink/sso/protocols/oidc",
+		forbidden: "github.com/yangwb1123/snaplink/protocols/oidc",
 		why:       "oauth MUST NOT import oidc — would create the oauth<->oidc cycle (AGENTS.md §Coding Conventions)",
 	},
 	{
 		fromDir:   "protocols/oidc/",
-		forbidden: "github.com/snaplink/sso/protocols/oauth",
+		forbidden: "github.com/yangwb1123/snaplink/protocols/oauth",
 		why:       "oidc MUST NOT import oauth (AGENTS.md §2 OIDC Layer). The two formerly-grandfathered files were decoupled (oidc.SubjectRefreshRevoker for refresh revocation; core.CloneRawJSON for RAR cloning), so this rule now has ZERO exemptions.",
 	},
 	{
 		fromDir:   "shared/core/",
-		forbidden: "github.com/snaplink/sso/",
+		forbidden: "github.com/yangwb1123/snaplink/",
 		why:       "core is the dependency-free SPI/types/sentinels leaf — it must import NO internal package (AGENTS.md §1 package layout)",
 	},
 }

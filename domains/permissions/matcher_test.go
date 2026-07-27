@@ -3,7 +3,7 @@ package permissions_test
 import (
 	"testing"
 
-	"github.com/snaplink/sso/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/permissions"
 )
 
 func TestMatches(t *testing.T) {

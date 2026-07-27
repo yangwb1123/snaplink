@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/platform/geo"
-	"github.com/snaplink/sso/platform/geo/static"
+	"github.com/yangwb1123/snaplink/platform/geo"
+	"github.com/yangwb1123/snaplink/platform/geo/static"
 )
 
 func TestAdd_LookupRoundtrip(t *testing.T) {

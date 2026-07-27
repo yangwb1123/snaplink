@@ -20,7 +20,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/snaplink/sso/platform/releases"
+	"github.com/yangwb1123/snaplink/platform/releases"
 )
 
 const (

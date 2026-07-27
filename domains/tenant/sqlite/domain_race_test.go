@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/domains/tenant"
+	"github.com/yangwb1123/snaplink/domains/tenant"
 )
 
 // TestStore_PutDomainConcurrentCrossTenantClaimIsSerialized races two

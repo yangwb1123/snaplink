@@ -22,10 +22,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
-	"github.com/snaplink/sso/shared/trust"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/trust"
 )
 
 // DefaultSweepInterval is the polling cadence when WithSweepInterval isn't set.

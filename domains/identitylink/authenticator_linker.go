@@ -3,7 +3,7 @@ package identitylink
 import (
 	"context"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // AuthenticatorLinker adapts a [Store] + [MergePolicy] pair into the

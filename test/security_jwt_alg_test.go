@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/security/securityverify"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security/securityverify"
 )
 
 // TestJWTAlgNoneRejection verifies that alg=none is rejected across all

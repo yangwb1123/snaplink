@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildplatform"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 // TestBuildRiskScorer_DisabledReturnsNil proves the helper is a

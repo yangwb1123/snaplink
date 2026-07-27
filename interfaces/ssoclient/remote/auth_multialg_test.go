@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/interfaces/ssoclient/remote"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/remote"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // jwtIssuer is the slice of the three default JWT issuers the multi-alg

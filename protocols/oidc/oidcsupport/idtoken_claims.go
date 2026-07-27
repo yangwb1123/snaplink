@@ -3,7 +3,7 @@ package oidcsupport
 import (
 	"encoding/json"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // ProjectIDTokenClaims filters the extra claims map to only include

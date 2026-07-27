@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memreaper"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memreaper"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 const sessionIDBytes = 32

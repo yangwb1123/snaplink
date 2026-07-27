@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // ErrStoredPasswordAuthFailed is returned when the username cannot be resolved

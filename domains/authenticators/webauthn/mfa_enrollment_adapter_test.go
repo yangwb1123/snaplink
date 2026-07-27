@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	gw "github.com/go-webauthn/webauthn/webauthn"
-	"github.com/snaplink/sso/domains/authenticators/webauthn"
+	"github.com/yangwb1123/snaplink/domains/authenticators/webauthn"
 )
 
 func seedPasskeys(t *testing.T, userID string, credIDs ...string) *webauthn.MemoryUserStore {

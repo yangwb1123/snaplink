@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/metering"
-	"github.com/snaplink/sso/platform/audit"
-	auditsqlite "github.com/snaplink/sso/platform/audit/sqlite"
+	"github.com/yangwb1123/snaplink/domains/metering"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	auditsqlite "github.com/yangwb1123/snaplink/platform/audit/sqlite"
 )
 
 // TestAggregator_basic seeds the audit DB via the real audit/sqlite.Sink

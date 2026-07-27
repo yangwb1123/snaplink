@@ -3,13 +3,13 @@
 // (the firm zero-external-SDK invariant). Operators opt into SP-side SAML
 // federation by importing this submodule from their own forked cmd. Mirrors
 // kms/awskms + redis.
-module github.com/snaplink/sso/saml
+module github.com/yangwb1123/snaplink/saml
 
 go 1.26.1
 
 // Monorepo local resolution: the submodule depends on the core sso module at
 // the repo root, not a published version.
-require github.com/snaplink/sso v0.0.0
+require github.com/yangwb1123/snaplink v0.0.0
 
 require (
 	github.com/beevik/etree v1.5.0
@@ -66,4 +66,4 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 )
 
-replace github.com/snaplink/sso => ../../
+replace github.com/yangwb1123/snaplink => ../../

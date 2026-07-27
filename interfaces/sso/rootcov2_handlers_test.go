@@ -25,12 +25,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/connections"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/netpolicy"
-	netmem "github.com/snaplink/sso/platform/netpolicy/memory"
-	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/yangwb1123/snaplink/domains/connections"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/netpolicy"
+	netmem "github.com/yangwb1123/snaplink/platform/netpolicy/memory"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 // TestRcov2H_PKCERoundTrip drives the authorization_code flow with a PKCE

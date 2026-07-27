@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/tokenpolicy"
-	"github.com/snaplink/sso/domains/tokenpolicy/memory"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/domains/tokenpolicy"
+	"github.com/yangwb1123/snaplink/domains/tokenpolicy/memory"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // TestRcovAdmin_TokenPoliciesNotMountedWithoutStore proves the byte-identical

@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/domains/identitylink"
-	"github.com/snaplink/sso/domains/identitylink/memory"
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/domains/identitylink"
+	"github.com/yangwb1123/snaplink/domains/identitylink/memory"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // TestAuthenticatorLinker_FirstLoginNoConflict covers the everyday case: a

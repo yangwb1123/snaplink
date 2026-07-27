@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // fakeTokenIssuer is a real in-package core.TokenIssuer test double used to

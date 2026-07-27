@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/protocols/oidc"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // fakeSigner is a deterministic JARMSigner that JSON-encodes the claims

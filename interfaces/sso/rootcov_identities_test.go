@@ -14,10 +14,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/domains/authenticators"
-	identitylinkmemory "github.com/snaplink/sso/domains/identitylink/memory"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
+	identitylinkmemory "github.com/yangwb1123/snaplink/domains/identitylink/memory"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // TestRcov_MyIdentities_ListAndUnlink covers the happy path against

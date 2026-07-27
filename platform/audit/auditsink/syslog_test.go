@@ -3,7 +3,7 @@ package auditsink
 import (
 	"testing"
 
-	"github.com/snaplink/sso/platform/audit/auditspi"
+	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
 )
 
 // TestSyslogStructuredData_EscapesReservedCharacters is the direct

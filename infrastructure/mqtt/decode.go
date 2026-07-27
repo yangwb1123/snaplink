@@ -3,7 +3,7 @@ package mqttbus
 import (
 	"encoding/json"
 
-	"github.com/snaplink/sso/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/cluster"
 )
 
 // decodeEvent translates a received MQTT publish payload into a

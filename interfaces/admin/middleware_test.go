@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/ratelimit"
-	"github.com/snaplink/sso/platform/lifecycle/admingovernance"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/admingovernance"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"google.golang.org/grpc/metadata"
 )
 

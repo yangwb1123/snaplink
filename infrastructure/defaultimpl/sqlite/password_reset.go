@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // passwordResetSchema is the forgot-password reset-token store: a server-issued

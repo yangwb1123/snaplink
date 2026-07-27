@@ -7,13 +7,13 @@ import (
 	"slices"
 	"time"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/interfaces/middleware"
-	"github.com/snaplink/sso/internal/handler"
-	"github.com/snaplink/sso/protocols/selfservice"
-	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/internal/handler"
+	"github.com/yangwb1123/snaplink/protocols/selfservice"
+	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicecore"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // handleSelfRegister delegates to selfservice.HandleSelfRegister.

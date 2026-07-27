@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // MemoryIdempotentCache is an in-process, non-persistent idempotency

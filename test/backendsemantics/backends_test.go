@@ -15,10 +15,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // sqliteDSN yields a per-test on-disk database under t.TempDir so every

@@ -15,7 +15,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	drift "github.com/snaplink/operator/apiv1alpha1"
+	drift "github.com/yangwb1123/snaplink/cmd/sso-operator/apiv1alpha1"
 )
 
 // testHTTPClient trusts ONLY self-signed httptest.NewTLSServer certs — a

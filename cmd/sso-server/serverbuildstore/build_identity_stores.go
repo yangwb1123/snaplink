@@ -11,19 +11,19 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/spi"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 
-	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
-	redisbackend "github.com/snaplink/sso/infrastructure/redis"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
+	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 
-	"github.com/snaplink/sso/shared/security"
-	"github.com/snaplink/sso/shared/security/peertrust"
+	"github.com/yangwb1123/snaplink/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
 // errPostgresNotConfigured is the shared boot error for a backend:postgres

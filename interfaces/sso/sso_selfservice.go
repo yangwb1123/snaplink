@@ -4,16 +4,16 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/snaplink/sso/domains/identitylink"
-	"github.com/snaplink/sso/domains/metering"
-	"github.com/snaplink/sso/domains/userlifecycle"
-	"github.com/snaplink/sso/platform/lifecycle/cryptoinventory"
-	"github.com/snaplink/sso/platform/lifecycle/rotation"
-	"github.com/snaplink/sso/protocols/compliance"
-	"github.com/snaplink/sso/protocols/selfservice"
-	"github.com/snaplink/sso/protocols/selfservice/selfservicecore"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/domains/identitylink"
+	"github.com/yangwb1123/snaplink/domains/metering"
+	"github.com/yangwb1123/snaplink/domains/userlifecycle"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/cryptoinventory"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/rotation"
+	"github.com/yangwb1123/snaplink/protocols/compliance"
+	"github.com/yangwb1123/snaplink/protocols/selfservice"
+	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicecore"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // ConsentChallengeStore is the pluggable backend for the consent-gate's

@@ -1,6 +1,6 @@
 package sqlite
 
-import "github.com/snaplink/sso/platform/migrate"
+import "github.com/yangwb1123/snaplink/platform/migrate"
 
 // ChainStoreMaxVersion returns the highest migration version declared for
 // the token-exchange chain store. cmd compares this against the live DB at

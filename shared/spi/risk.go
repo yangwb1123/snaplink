@@ -5,7 +5,7 @@ import (
 	"crypto/x509"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // RiskScorer evaluates an authentication attempt and returns a decision

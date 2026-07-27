@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/snaplink/sso/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/permissions"
 )
 
 // GroupResource is the SCIM 2.0 core Group representation (RFC 7643 §4.2).

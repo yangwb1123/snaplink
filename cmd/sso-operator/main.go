@@ -17,8 +17,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	driftv1alpha1 "github.com/snaplink/operator/apiv1alpha1"
-	"github.com/snaplink/operator/controller"
+	driftv1alpha1 "github.com/yangwb1123/snaplink/cmd/sso-operator/apiv1alpha1"
+	"github.com/yangwb1123/snaplink/cmd/sso-operator/controller"
 )
 
 // scheme is package-level per the standard kubebuilder scaffold: it must be

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // PasswordVerifier looks up a user record by username and checks the supplied

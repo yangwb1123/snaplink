@@ -9,9 +9,9 @@ package oauth
 // wires the handlers). Type aliases keep interface/struct identity intact.
 
 import (
-	"github.com/snaplink/sso/protocols/oauth/oauthspi"
-	"github.com/snaplink/sso/protocols/oauth/oauthvalidate"
-	"github.com/snaplink/sso/protocols/oauth/oauthwire"
+	"github.com/yangwb1123/snaplink/protocols/oauth/oauthspi"
+	"github.com/yangwb1123/snaplink/protocols/oauth/oauthvalidate"
+	"github.com/yangwb1123/snaplink/protocols/oauth/oauthwire"
 )
 
 type (

@@ -12,7 +12,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/snaplink/sso/platform/lifecycle/wasmauthz"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/wasmauthz"
 )
 
 // loadFixture reads a compiled .wasm test fixture from testdata/. t.Fatal on

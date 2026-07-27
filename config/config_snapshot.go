@@ -3,9 +3,9 @@ package config
 import (
 	"time"
 
-	"github.com/snaplink/sso/domains/conditionalaccess"
-	"github.com/snaplink/sso/domains/threataction"
-	"github.com/snaplink/sso/domains/tokenpolicy"
+	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
+	"github.com/yangwb1123/snaplink/domains/threataction"
+	"github.com/yangwb1123/snaplink/domains/tokenpolicy"
 )
 
 // TTL bounds how long the lease lives between heartbeats; the Runner

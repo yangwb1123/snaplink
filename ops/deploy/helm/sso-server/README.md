@@ -1,6 +1,6 @@
 # sso-server Helm Chart
 
-Deploy the [Snaplink SSO Server](https://github.com/snaplink/sso) on Kubernetes.
+Deploy the [Snaplink SSO Server](https://github.com/yangwb1123/snaplink) on Kubernetes.
 
 > **Runtime boundary:** the chart deploys the pure API backend only. Login,
 > self-service, setup, developer, and admin browser UIs are separate frontend

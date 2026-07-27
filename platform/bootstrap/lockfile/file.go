@@ -25,7 +25,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/snaplink/sso/platform/bootstrap/lock"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/lock"
 )
 
 // Lock is a flock-based Lock. One instance is per-key — each TryAcquire

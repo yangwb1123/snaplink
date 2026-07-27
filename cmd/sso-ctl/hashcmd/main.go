@@ -22,7 +22,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/yangwb1123/snaplink/domains/authenticators"
 )
 
 const progName = "sso-ctl hash"

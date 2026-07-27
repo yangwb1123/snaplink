@@ -23,8 +23,8 @@ import (
 	"github.com/crewjam/saml"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // spSLOURL is the SP's registered Single Logout Service URL the IdP returns the

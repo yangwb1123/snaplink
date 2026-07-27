@@ -3,7 +3,7 @@ package reload
 import (
 	"fmt"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 // This file holds the Set*GateHook setters and apply*Gate methods for every

@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/bootstrap/memory"
-	"github.com/snaplink/sso/platform/netpolicy"
-	netmemory "github.com/snaplink/sso/platform/netpolicy/memory"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/memory"
+	"github.com/yangwb1123/snaplink/platform/netpolicy"
+	netmemory "github.com/yangwb1123/snaplink/platform/netpolicy/memory"
 )
 
 // fixture builds a populated source environment: 2 clients, 2 users,

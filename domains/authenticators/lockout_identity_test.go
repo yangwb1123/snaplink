@@ -3,7 +3,7 @@ package authenticators
 import (
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // TestLockoutIdentity_ClosesFieldInjectionBypass proves the per-account lockout

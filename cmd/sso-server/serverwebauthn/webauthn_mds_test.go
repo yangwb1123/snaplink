@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/metadata"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 // exampleBlobPath reuses the webauthn package's example MDS blob fixture (a

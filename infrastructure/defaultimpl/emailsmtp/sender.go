@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // tmplData is the template execution context. Not every field is populated

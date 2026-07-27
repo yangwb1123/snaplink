@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/protocols/caep"
+	"github.com/yangwb1123/snaplink/protocols/caep"
 )
 
 func TestStreamStore_CreateGet(t *testing.T) {

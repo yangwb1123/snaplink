@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/interfaces/ssoclient/local"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/local"
 )
 
 // Example demonstrates the "embed the SDK in-process" consumer mode

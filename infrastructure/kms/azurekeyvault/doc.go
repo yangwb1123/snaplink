@@ -11,7 +11,7 @@
 // # Why a separate Go module
 //
 // This package lives in its own nested module
-// (github.com/snaplink/sso/kms/azurekeyvault) so the heavy, vendor-specific
+// (github.com/yangwb1123/snaplink/kms/azurekeyvault) so the heavy, vendor-specific
 // Azure SDK (github.com/Azure/azure-sdk-for-go) NEVER enters the core sso
 // module's go.mod. The core module's zero-external-(non-stdlib-adjacent)-SDK
 // invariant is a firm property of the repo; operators who need Key Vault opt

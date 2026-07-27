@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	kerberosauth "github.com/snaplink/sso/kerberos"
+	kerberosauth "github.com/yangwb1123/snaplink/kerberos"
 )
 
 func validConfig() kerberosauth.Config {

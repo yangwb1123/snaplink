@@ -13,8 +13,8 @@ import (
 	mvccpb "go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
-	"github.com/snaplink/sso/platform/signingkeys"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/platform/signingkeys"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // sampleKeys returns a realistic OKP (Ed25519) + EC (P-256) JWK pair — real

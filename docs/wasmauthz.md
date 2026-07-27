@@ -45,7 +45,7 @@ entry. The other pieces:
   `sso.WithAuthenticator(a)` — no new SDK option was needed. See that
   package's doc.go for the full ABI contract.
 - An MQTT `cluster.Bus` backend — implemented. `infrastructure/mqtt`
-  (`github.com/snaplink/sso/mqtt`), a nested module built on
+  (`github.com/yangwb1123/snaplink/mqtt`), a nested module built on
   `github.com/eclipse/paho.golang`. Wires through the existing
   `sso.WithInvalidationBus(bus)` in a custom composition binary. The stock YAML
   has no MQTT bus selector because `cluster.Bus` has no factory-registration

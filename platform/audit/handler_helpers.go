@@ -4,10 +4,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/snaplink/sso/domains/region"
-	"github.com/snaplink/sso/domains/tenant"
-	"github.com/snaplink/sso/platform/geo"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/region"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	"github.com/yangwb1123/snaplink/platform/geo"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // tracer is the package-level helper for parsing W3C traceparent headers

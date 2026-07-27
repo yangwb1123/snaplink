@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // reasonWeakDictionary is the operator-facing Reason stamped on a

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func TestMemoryRecoveryCodeStore_GenerateReturnsDistinctCodes(t *testing.T) {

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildsign"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
 )
 
 func TestRunPushApprovalPrune_RemovesExpiredAtInterval(t *testing.T) {

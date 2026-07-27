@@ -9,7 +9,7 @@ package snaplink.admin.v1;
 
 import "google/api/annotations.proto";
 
-option go_package = "github.com/snaplink/sso/gen/proto/admin/v1;adminv1";
+option go_package = "github.com/yangwb1123/snaplink/gen/proto/admin/v1;adminv1";
 
 // KeyAdminService is the admin surface for the server's signing keypair.
 // RotateSigningKey triggers an on-demand rotation of the PRIMARY JWT signing

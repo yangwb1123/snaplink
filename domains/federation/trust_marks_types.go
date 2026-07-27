@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // resolvedIssuerEntry is one cached federation-resolution OUTCOME for a Trust

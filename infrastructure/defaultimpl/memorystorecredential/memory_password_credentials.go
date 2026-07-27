@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/domains/identitylink"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/identitylink"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"golang.org/x/crypto/bcrypt"
 )
 

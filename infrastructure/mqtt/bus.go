@@ -4,7 +4,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/snaplink/sso/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/cluster"
 )
 
 // ErrClosed is returned by Publish/Subscribe once Close has been called.

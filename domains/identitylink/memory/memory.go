@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/domains/identitylink"
+	"github.com/yangwb1123/snaplink/domains/identitylink"
 )
 
 // Store is the in-memory implementation of [identitylink.Store]. Safe for

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/domains/connections/provider"
+	"github.com/yangwb1123/snaplink/domains/connections/provider"
 )
 
 func TestSQLiteProviderStore_CreateAndGet(t *testing.T) {

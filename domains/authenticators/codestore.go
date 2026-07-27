@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // ErrCodeInvalid is returned when a verification code does not match or has expired.

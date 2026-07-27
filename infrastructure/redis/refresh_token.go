@@ -9,7 +9,7 @@ import (
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
-	"github.com/snaplink/sso/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 // Key layout. The active token is a JSON string with a TTL. Three auxiliary

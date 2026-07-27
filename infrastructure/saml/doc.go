@@ -44,9 +44,9 @@
 //	import (
 //		"context"
 //
-//		"github.com/snaplink/sso/interfaces/sso"
-//		samlmod "github.com/snaplink/sso/saml"
-//		"github.com/snaplink/sso/saml/sp"
+//		"github.com/yangwb1123/snaplink/interfaces/sso"
+//		samlmod "github.com/yangwb1123/snaplink/saml"
+//		"github.com/yangwb1123/snaplink/saml/sp"
 //	)
 //
 //	func init() {

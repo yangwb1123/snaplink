@@ -3,8 +3,8 @@ package tokenpolicy
 import (
 	"net/http"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // HandleAdminPolicies serves GET /api/v1/admin/token-policies — the active

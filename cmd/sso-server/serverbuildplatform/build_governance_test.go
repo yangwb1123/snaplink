@@ -8,16 +8,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/domains/conditionalaccess"
-	"github.com/snaplink/sso/domains/threataction"
-	"github.com/snaplink/sso/domains/tokenanomaly"
-	"github.com/snaplink/sso/domains/tokenpolicy"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/configaudit"
-	"github.com/snaplink/sso/shared/core/corecredential"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
+	"github.com/yangwb1123/snaplink/domains/threataction"
+	"github.com/yangwb1123/snaplink/domains/tokenanomaly"
+	"github.com/yangwb1123/snaplink/domains/tokenpolicy"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/configaudit"
+	"github.com/yangwb1123/snaplink/shared/core/corecredential"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 func govLogger() spi.Logger { return spi.NopLogger{} }

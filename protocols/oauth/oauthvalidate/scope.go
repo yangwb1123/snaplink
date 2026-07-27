@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // ErrScopeNotAllowed is returned by GrantedScopes when a requested scope

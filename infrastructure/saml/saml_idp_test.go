@@ -17,12 +17,12 @@ import (
 	"github.com/beevik/etree"
 	crewjam "github.com/crewjam/saml"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
-	samlmod "github.com/snaplink/sso/saml"
-	"github.com/snaplink/sso/saml/idp"
-	"github.com/snaplink/sso/saml/sp"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/sessionhub"
+	samlmod "github.com/yangwb1123/snaplink/saml"
+	"github.com/yangwb1123/snaplink/saml/idp"
+	"github.com/yangwb1123/snaplink/saml/sp"
 )
 
 // deflateBytes raw-DEFLATEs b for the SAML HTTP-Redirect binding.

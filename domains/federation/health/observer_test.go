@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/federation"
-	"github.com/snaplink/sso/domains/federation/health"
+	"github.com/yangwb1123/snaplink/domains/federation"
+	"github.com/yangwb1123/snaplink/domains/federation/health"
 )
 
 // stubFetcher is a hand-written federation.EntityStatementFetcher test double

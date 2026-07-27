@@ -1,10 +1,10 @@
 package sso
 
 import (
-	"github.com/snaplink/sso/domains/threataction"
-	"github.com/snaplink/sso/domains/tokenexchange"
-	"github.com/snaplink/sso/interfaces/admin"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/threataction"
+	"github.com/yangwb1123/snaplink/domains/tokenexchange"
+	"github.com/yangwb1123/snaplink/interfaces/admin"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // threatState is the Active ITDR detection-to-response bridge wiring.

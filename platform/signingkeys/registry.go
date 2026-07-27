@@ -26,7 +26,7 @@ package signingkeys
 import (
 	"context"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // EventType discriminates what changed in a Registry announcement so a

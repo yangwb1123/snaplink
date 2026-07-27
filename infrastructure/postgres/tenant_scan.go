@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/domains/tenant"
+	"github.com/yangwb1123/snaplink/domains/tenant"
 )
 
 // scanTenant decodes a single tenant row (GetTenant projection: id supplied

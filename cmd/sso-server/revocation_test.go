@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildsign"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 func TestBuildRevocationStore(t *testing.T) {

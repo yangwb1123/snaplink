@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/snaplink/sso/config/internal/parse"
+	"github.com/yangwb1123/snaplink/config/internal/parse"
 )
 
 // Default conventions used by NewEnvSource. ENV vars matching

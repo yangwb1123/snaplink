@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // ReactionFunc is an in-process handler invoked when a user transitions INTO

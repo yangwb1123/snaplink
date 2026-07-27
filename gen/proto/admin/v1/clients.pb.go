@@ -937,7 +937,7 @@ const file_admin_v1_clients_proto_rawDesc = "" +
 	"\x06Delete\x12&.snaplink.admin.v1.DeleteClientRequest\x1a'.snaplink.admin.v1.DeleteClientResponse\"\"\x82\xd3\xe4\x93\x02\x1c*\x1a/api/v1/admin/clients/{id}\x12\x94\x01\n" +
 	"\fRotateSecret\x12&.snaplink.admin.v1.RotateSecretRequest\x1a'.snaplink.admin.v1.RotateSecretResponse\"3\x82\xd3\xe4\x93\x02-:\x01*\"(/api/v1/admin/clients/{id}/rotate-secret\x12\x8b\x01\n" +
 	"\aApprove\x12'.snaplink.admin.v1.ApproveClientRequest\x1a(.snaplink.admin.v1.ApproveClientResponse\"-\x82\xd3\xe4\x93\x02':\x01*\"\"/api/v1/admin/clients/{id}/approve\x12\x87\x01\n" +
-	"\x06Reject\x12&.snaplink.admin.v1.RejectClientRequest\x1a'.snaplink.admin.v1.RejectClientResponse\",\x82\xd3\xe4\x93\x02&:\x01*\"!/api/v1/admin/clients/{id}/rejectB4Z2github.com/snaplink/sso/gen/proto/admin/v1;adminv1b\x06proto3"
+	"\x06Reject\x12&.snaplink.admin.v1.RejectClientRequest\x1a'.snaplink.admin.v1.RejectClientResponse\",\x82\xd3\xe4\x93\x02&:\x01*\"!/api/v1/admin/clients/{id}/rejectB;Z9github.com/yangwb1123/snaplink/gen/proto/admin/v1;adminv1b\x06proto3"
 
 var (
 	file_admin_v1_clients_proto_rawDescOnce sync.Once

@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/migrate"
-	samlidp "github.com/snaplink/sso/saml/idp"
-	"github.com/snaplink/sso/saml/samltestsessionindextest"
+	"github.com/yangwb1123/snaplink/platform/migrate"
+	samlidp "github.com/yangwb1123/snaplink/saml/idp"
+	"github.com/yangwb1123/snaplink/saml/samltestsessionindextest"
 )
 
 const testSPCap = 8

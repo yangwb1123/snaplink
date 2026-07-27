@@ -10,9 +10,9 @@ package defaultimpl
 // unchanged; type aliases keep interface identity intact.
 
 import (
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystorecredential"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreidentity"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreoauth"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystorecredential"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreidentity"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreoauth"
 )
 
 // --- memorystoreoauth ---

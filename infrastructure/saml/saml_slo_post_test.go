@@ -15,7 +15,7 @@ import (
 	crewjam "github.com/crewjam/saml"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // mintLogoutPOST builds an IdP-initiated LogoutRequest for the HTTP-POST binding:

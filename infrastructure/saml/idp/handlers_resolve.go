@@ -10,7 +10,7 @@ import (
 
 	"github.com/crewjam/saml"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // resolveSPClient scans the ClientStore for the registered SP whose

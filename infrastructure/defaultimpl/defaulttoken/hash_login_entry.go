@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 
-	"github.com/snaplink/sso/domains/anomaly"
+	"github.com/yangwb1123/snaplink/domains/anomaly"
 )
 
 // HashLoginEntry builds a [anomaly.LoginEntry] from a [anomaly.LoginEvent]

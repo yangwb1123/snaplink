@@ -47,7 +47,7 @@ info:
     url: https://www.apache.org/licenses/LICENSE-2.0.html
   contact:
     name: snaplink/sso maintainers
-    url: https://github.com/snaplink/sso
+    url: https://github.com/yangwb1123/snaplink
 
 servers:
   - url: http://localhost:8080

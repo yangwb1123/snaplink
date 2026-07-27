@@ -3,7 +3,7 @@ package memorystoreidentity
 import (
 	"strings"
 
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 	"golang.org/x/crypto/bcrypt"
 )
 

@@ -731,7 +731,7 @@ independently opt-in and unmounted/off by default.
 ## SAML 2.0 (`/saml/*`, `/auth/saml/callback`)
 
 SAML 2.0 is supplied by the repository-maintained, opt-in nested module
-`infrastructure/saml` (module path `github.com/snaplink/sso/saml`), keeping the
+`infrastructure/saml` (module path `github.com/yangwb1123/snaplink/saml`), keeping the
 SAML/XML/DSig dependency out of the root module's `go.mod`. A custom
 composition binary imports the module and registers its handler factory. The
 codes below are the stable wire vocabulary that module SHOULD emit; the root

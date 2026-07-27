@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/trust"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/trust"
 )
 
 type mockSessionManager struct {

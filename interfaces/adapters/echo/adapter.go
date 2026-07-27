@@ -5,7 +5,7 @@ import (
 	"sync"
 
 	"github.com/labstack/echo/v4"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // EchoRouter adapts echo.Echo to sso.Router.

@@ -6,13 +6,13 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/snaplink/sso/domains/anomaly"
-	"github.com/snaplink/sso/domains/tokenpolicy"
-	"github.com/snaplink/sso/domains/tokenusage"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/platform/lifecycle/sessionhub"
-	"github.com/snaplink/sso/platform/metrics"
-	"github.com/snaplink/sso/protocols/oidc"
+	"github.com/yangwb1123/snaplink/domains/anomaly"
+	"github.com/yangwb1123/snaplink/domains/tokenpolicy"
+	"github.com/yangwb1123/snaplink/domains/tokenusage"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/sessionhub"
+	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
 )
 
 func (s *Server) getAuthenticator(name string) (Authenticator, error) {

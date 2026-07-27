@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/snaplink/sso/platform/cluster"
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 )
 
 // JWTExpUnsafe extracts the exp claim from a compact JWT without verifying the signature.

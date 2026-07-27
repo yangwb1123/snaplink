@@ -35,7 +35,7 @@
 // rebac.Engine — this package does not wire itself into /auth/login or any
 // built-in gate. The one exception is a single, explicitly opt-in, read-only
 // admin endpoint (POST /api/v1/admin/wasmauthz/check, mounted only when
-// [github.com/snaplink/sso/interfaces/sso.WithWASMAuthzEngine] is wired) for
+// [github.com/yangwb1123/snaplink/interfaces/sso.WithWASMAuthzEngine] is wired) for
 // operational debugging — "what would this policy module decide for this
 // request" — never a live authorization decision path.
 //

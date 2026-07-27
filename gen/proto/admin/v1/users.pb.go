@@ -827,7 +827,7 @@ const file_admin_v1_users_proto_rawDesc = "" +
 	"\x06Create\x12$.snaplink.admin.v1.CreateUserRequest\x1a%.snaplink.admin.v1.CreateUserResponse\"!\x82\xd3\xe4\x93\x02\x1b:\x04user\"\x13/api/v1/admin/users\x12\x82\x01\n" +
 	"\x06Update\x12$.snaplink.admin.v1.UpdateUserRequest\x1a%.snaplink.admin.v1.UpdateUserResponse\"+\x82\xd3\xe4\x93\x02%:\x04user\x1a\x1d/api/v1/admin/users/{user.id}\x12w\n" +
 	"\x06Delete\x12$.snaplink.admin.v1.DeleteUserRequest\x1a%.snaplink.admin.v1.DeleteUserResponse\" \x82\xd3\xe4\x93\x02\x1a*\x18/api/v1/admin/users/{id}\x12\x96\x01\n" +
-	"\x10ListUserSessions\x12*.snaplink.admin.v1.ListUserSessionsRequest\x1a+.snaplink.admin.v1.ListUserSessionsResponse\")\x82\xd3\xe4\x93\x02#\x12!/api/v1/admin/users/{id}/sessionsB4Z2github.com/snaplink/sso/gen/proto/admin/v1;adminv1b\x06proto3"
+	"\x10ListUserSessions\x12*.snaplink.admin.v1.ListUserSessionsRequest\x1a+.snaplink.admin.v1.ListUserSessionsResponse\")\x82\xd3\xe4\x93\x02#\x12!/api/v1/admin/users/{id}/sessionsB;Z9github.com/yangwb1123/snaplink/gen/proto/admin/v1;adminv1b\x06proto3"
 
 var (
 	file_admin_v1_users_proto_rawDescOnce sync.Once

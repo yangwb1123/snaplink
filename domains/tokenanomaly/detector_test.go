@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/threataction"
-	"github.com/snaplink/sso/domains/tokenanomaly"
-	tokenanomalymem "github.com/snaplink/sso/domains/tokenanomaly/memory"
-	"github.com/snaplink/sso/domains/tokenusage"
-	tokenusagemem "github.com/snaplink/sso/domains/tokenusage/memory"
+	"github.com/yangwb1123/snaplink/domains/threataction"
+	"github.com/yangwb1123/snaplink/domains/tokenanomaly"
+	tokenanomalymem "github.com/yangwb1123/snaplink/domains/tokenanomaly/memory"
+	"github.com/yangwb1123/snaplink/domains/tokenusage"
+	tokenusagemem "github.com/yangwb1123/snaplink/domains/tokenusage/memory"
 )
 
 // The detector is a tokenusage.Store decorator + off-path Analyze sweep. These

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/snaplink/sso/platform/bootstrap"
+	"github.com/yangwb1123/snaplink/platform/bootstrap"
 )
 
 func TestTracker_StartsAtZero(t *testing.T) {

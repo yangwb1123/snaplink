@@ -1,13 +1,13 @@
 package sso
 
 import (
-	"github.com/snaplink/sso/protocols/fapi"
+	"github.com/yangwb1123/snaplink/protocols/fapi"
 	"time"
 
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/protocols/oidc"
-	"github.com/snaplink/sso/shared/security"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/security"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // DefaultIntrospectionCacheTTL is the default lifetime of a cached

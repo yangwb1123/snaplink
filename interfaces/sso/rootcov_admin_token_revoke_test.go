@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl/memorystorecredential"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystorecredential"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func newAdminTokenFixture(t *testing.T) (*rcovAdminEnv, *audit.MemorySink, *memorystorecredential.MemoryAdminTokenStore) {

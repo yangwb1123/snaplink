@@ -12,7 +12,7 @@ import (
 	"github.com/beevik/etree"
 	"github.com/crewjam/saml"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // buildLogoutRequestRedirect builds a SIGNED HTTP-Redirect LogoutRequest URL

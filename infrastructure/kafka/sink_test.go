@@ -10,8 +10,8 @@ import (
 
 	kafkago "github.com/segmentio/kafka-go"
 
-	"github.com/snaplink/sso/platform/audit/auditsink"
-	"github.com/snaplink/sso/platform/audit/auditspi"
+	"github.com/yangwb1123/snaplink/platform/audit/auditsink"
+	"github.com/yangwb1123/snaplink/platform/audit/auditspi"
 )
 
 // fakeProducer is an in-process stand-in for *kafka.Writer — no real broker,

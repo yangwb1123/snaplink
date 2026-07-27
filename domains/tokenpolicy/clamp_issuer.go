@@ -3,7 +3,7 @@ package tokenpolicy
 import (
 	"context"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // ClampingIssuer decorates a [core.TokenIssuer] so every access token it

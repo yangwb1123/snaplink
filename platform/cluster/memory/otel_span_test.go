@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/platform/cluster"
-	"github.com/snaplink/sso/platform/cluster/memory"
-	"github.com/snaplink/sso/platform/tracing"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/cluster/memory"
+	"github.com/yangwb1123/snaplink/platform/tracing"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"

@@ -2,7 +2,7 @@
 
 > **Wiring boundary:** this is an opt-in nested module at
 > `infrastructure/kms/awskms/`, with published module path
-> `github.com/snaplink/sso/kms/awskms`. The stock `sso-server` contains the
+> `github.com/yangwb1123/snaplink/kms/awskms`. The stock `sso-server` contains the
 > generic external-signer registry but does not register an AWS client or read
 > AWS credentials. Use a custom composition binary that registers/builds this
 > signer before selecting it in signing configuration.
@@ -17,7 +17,7 @@ KMS round-trip.
 ## Why a separate module
 
 This is a **separate nested Go module** stored at
-`infrastructure/kms/awskms/` (`github.com/snaplink/sso/kms/awskms`) so the
+`infrastructure/kms/awskms/` (`github.com/yangwb1123/snaplink/kms/awskms`) so the
 heavy, vendor-specific
 `aws-sdk-go-v2` dependency **never enters the core `sso` module's
 `go.mod`** — the core's zero-external-SDK invariant stays intact. Operators
@@ -34,7 +34,7 @@ supplies the concrete AWS KMS `crypto.Signer` for that seam.
 
 ```bash
 # from your operator cmd module
-go get github.com/snaplink/sso/kms/awskms
+go get github.com/yangwb1123/snaplink/kms/awskms
 ```
 
 ## Wiring (ECDSA / ES256)
@@ -44,10 +44,10 @@ import (
     "github.com/aws/aws-sdk-go-v2/config"
     "github.com/aws/aws-sdk-go-v2/service/kms"
 
-    "github.com/snaplink/sso/infrastructure/defaultimpl"
-    "github.com/snaplink/sso/infrastructure/defaultimpl/cryptosigner"
-    sso "github.com/snaplink/sso/interfaces/sso"
-    "github.com/snaplink/sso/kms/awskms"
+    "github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+    "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/cryptosigner"
+    sso "github.com/yangwb1123/snaplink/interfaces/sso"
+    "github.com/yangwb1123/snaplink/kms/awskms"
 )
 
 cfg, err := config.LoadDefaultConfig(ctx)

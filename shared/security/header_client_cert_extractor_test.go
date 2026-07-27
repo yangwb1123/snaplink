@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // genSelfSignedCert mints a real (self-signed) leaf certificate so the

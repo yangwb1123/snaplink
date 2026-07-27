@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"sort"
 
-	adminv1 "github.com/snaplink/sso/gen/proto/admin/v1"
-	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/platform/audit"
+	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/platform/audit"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

@@ -15,10 +15,10 @@ import (
 	crewjam "github.com/crewjam/saml"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
-	samlmod "github.com/snaplink/sso/saml"
-	"github.com/snaplink/sso/saml/sp"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	samlmod "github.com/yangwb1123/snaplink/saml"
+	"github.com/yangwb1123/snaplink/saml/sp"
 )
 
 // spParams names a second SP's distinct entity id + ACS url so a multi-SP Build

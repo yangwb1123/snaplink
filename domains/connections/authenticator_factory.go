@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // authenticator_factory.go is the runtime seam between the connection MODEL

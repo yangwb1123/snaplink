@@ -25,10 +25,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/snapshot"
-	encryptionnone "github.com/snaplink/sso/interfaces/snapshot/encryptionnone"
-	encryptionpass "github.com/snaplink/sso/interfaces/snapshot/encryptionpassphrase"
-	storagefile "github.com/snaplink/sso/interfaces/snapshot/storagefile"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
+	encryptionnone "github.com/yangwb1123/snaplink/interfaces/snapshot/encryptionnone"
+	encryptionpass "github.com/yangwb1123/snaplink/interfaces/snapshot/encryptionpassphrase"
+	storagefile "github.com/yangwb1123/snaplink/interfaces/snapshot/storagefile"
 )
 
 const progName = "sso-ctl snapshot"

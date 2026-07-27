@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/federation"
+	"github.com/yangwb1123/snaplink/domains/federation"
 )
 
 // The httpFetcher is unexported, so these tests drive the SSRF gates through

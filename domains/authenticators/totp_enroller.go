@@ -4,7 +4,7 @@ import (
 	"encoding/base32"
 	"strings"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // TOTPEnroller adapts this package's TOTP primitives + a TOTPAuthenticator's

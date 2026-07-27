@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func loadFixture(t *testing.T, name string) []byte {

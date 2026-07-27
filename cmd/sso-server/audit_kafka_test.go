@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 // The standard-kafka cold profile compiles the explicit registration path and

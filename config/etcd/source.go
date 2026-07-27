@@ -49,7 +49,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/config/internal/parse"
+	"github.com/yangwb1123/snaplink/config/internal/parse"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 

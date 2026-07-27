@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"github.com/snaplink/sso/internal/auth/consent"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/internal/auth/consent"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 func (s *Server) handleLogout(ctx HandlerContext) {
 	var req struct {

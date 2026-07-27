@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/tokenanomaly"
+	"github.com/yangwb1123/snaplink/domains/tokenanomaly"
 )
 
 var t0 = time.Date(2026, time.July, 3, 9, 0, 0, 0, time.UTC)

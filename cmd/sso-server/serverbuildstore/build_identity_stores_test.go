@@ -5,12 +5,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/config"
-	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/shared/security"
-	"github.com/snaplink/sso/shared/security/peertrust"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/config"
+	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 func testLogger() spi.Logger { return spi.NopLogger{} }

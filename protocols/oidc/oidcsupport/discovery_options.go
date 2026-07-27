@@ -1,6 +1,6 @@
 package oidcsupport
 
-import "github.com/snaplink/sso/shared/core"
+import "github.com/yangwb1123/snaplink/shared/core"
 
 // CodeChallengeMethodsFor returns the PKCE methods to advertise in
 // the discovery doc. OAuth 2.1 §4.1.1 retires `plain` (S256-only);

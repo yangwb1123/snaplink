@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/shared/security"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 func TestBuildPairwiseSubjectStore_MemorySqlitePostgresUnknown(t *testing.T) {

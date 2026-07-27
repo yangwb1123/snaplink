@@ -3,8 +3,8 @@ package ssotest
 import (
 	"testing"
 
-	"github.com/snaplink/sso/interfaces/admin"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/admin"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // TestLinkedSessionsAdmin_PathIsAdminProtected proves the cross-protocol

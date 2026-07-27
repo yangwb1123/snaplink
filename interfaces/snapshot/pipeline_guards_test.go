@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/interfaces/snapshot/storageinline"
-	"github.com/snaplink/sso/platform/bootstrap/memory"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot/storageinline"
+	"github.com/yangwb1123/snaplink/platform/bootstrap/memory"
 )
 
 // TestPipeline_Save_NilGuards pins the two argument guards on Save.

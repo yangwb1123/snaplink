@@ -10,7 +10,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/snaplink/sso/domains/tokenpolicy"
+	"github.com/yangwb1123/snaplink/domains/tokenpolicy"
 )
 
 // Store is the in-memory implementation of [tokenpolicy.Store]. Safe for

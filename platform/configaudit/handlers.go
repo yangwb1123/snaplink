@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // Query parameter names for GET /api/v1/admin/config/history.

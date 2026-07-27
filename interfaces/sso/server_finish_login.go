@@ -4,12 +4,12 @@ import (
 	"net/http"
 	"slices"
 	"time"
-	"github.com/snaplink/sso/domains/region"
-	"github.com/snaplink/sso/internal/auth/login"
-	"github.com/snaplink/sso/internal/handler"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/protocols/oidc"
-	"github.com/snaplink/sso/shared/trust"
+	"github.com/yangwb1123/snaplink/domains/region"
+	"github.com/yangwb1123/snaplink/internal/auth/login"
+	"github.com/yangwb1123/snaplink/internal/handler"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/trust"
 )
 // matter whether MFA gated the request or not.
 func (s *Server) finishLogin(ctx HandlerContext, result *AuthResult, req login.Request, client *Client) {

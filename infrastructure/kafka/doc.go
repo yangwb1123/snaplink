@@ -9,7 +9,7 @@
 //
 // The github.com/segmentio/kafka-go dependency (and its transitive
 // compression codecs) lives ONLY in this module's go.mod
-// (github.com/snaplink/sso/kafka). The core sso module's go.mod stays
+// (github.com/yangwb1123/snaplink/kafka). The core sso module's go.mod stays
 // byte-free of it — the same firm zero-external-SDK-in-core invariant that
 // isolates kms/awskms (aws-sdk-go-v2), ldap (go-ldap), and saml
 // (crewjam/saml). segmentio/kafka-go is pure Go (no cgo, matching this

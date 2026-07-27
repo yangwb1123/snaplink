@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/snaplink/sso/protocols/compliance"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/protocols/compliance"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func TestHandleMyDataExport_HappyPath(t *testing.T) {

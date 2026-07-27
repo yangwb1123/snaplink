@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // HandleMyConsents serves GET /consents/me — lists the authenticated user's

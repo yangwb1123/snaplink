@@ -10,15 +10,15 @@ import (
 	"os"
 	"strings"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 
-	"github.com/snaplink/sso/platform/netpolicy"
+	"github.com/yangwb1123/snaplink/platform/netpolicy"
 
-	netpolicyetcd "github.com/snaplink/sso/platform/netpolicy/etcd"
+	netpolicyetcd "github.com/yangwb1123/snaplink/platform/netpolicy/etcd"
 
-	"github.com/snaplink/sso/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
 )
 
 // BuildNetworkStore materializes the netpolicy.Store for cmd.

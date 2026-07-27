@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/domains/metering"
+	"github.com/yangwb1123/snaplink/domains/metering"
 )
 
 // Aggregator is the in-memory implementation of [metering.Aggregator].

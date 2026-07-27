@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // DeprecationPolicy configures the opt-in Sunset (RFC 8594) + Deprecation

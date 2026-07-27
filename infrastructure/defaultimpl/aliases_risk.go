@@ -6,7 +6,7 @@ package defaultimpl
 // file-count budget. defaultrisk depends only on shared/core + shared/spi.
 // These aliases preserve the historical defaultimpl.* import surface unchanged.
 
-import "github.com/snaplink/sso/infrastructure/defaultimpl/defaultrisk"
+import "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/defaultrisk"
 
 type (
 	DictionaryPasswordHealthChecker = defaultrisk.DictionaryPasswordHealthChecker

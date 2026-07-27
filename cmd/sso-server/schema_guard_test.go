@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildsign"
-	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildsign"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
 // stampSchemaVersion forces the recorded version of a migrate namespace to an

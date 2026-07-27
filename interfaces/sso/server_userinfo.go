@@ -4,10 +4,10 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/snaplink/sso/interfaces/middleware"
-	"github.com/snaplink/sso/internal/auth/login"
-	"github.com/snaplink/sso/protocols/oidc"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/internal/auth/login"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // handleUserInfo delegates to oidc.HandleUserInfo (the OIDC §5.3 endpoint

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 )
 
 func TestBuildApp_MetricsEndpointServedWhenEnabled(t *testing.T) {

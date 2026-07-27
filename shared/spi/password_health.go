@@ -3,7 +3,7 @@ package spi
 import (
 	"context"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // PasswordHealthChecker evaluates a plaintext password AFTER successful

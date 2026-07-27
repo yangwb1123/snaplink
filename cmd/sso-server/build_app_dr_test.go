@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildstore"
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/interfaces/snapshot"
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 )
 
 // TestWireDR_DisabledReturnsNil — the byte-identical-when-off contract every

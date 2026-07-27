@@ -7,7 +7,7 @@ package oidc
 // surface unchanged for the Server wiring, the signing-backend implementations,
 // and any SDK consumer.
 
-import "github.com/snaplink/sso/protocols/oidc/oidcsupport"
+import "github.com/yangwb1123/snaplink/protocols/oidc/oidcsupport"
 
 type (
 	FormPostData         = oidcsupport.FormPostData

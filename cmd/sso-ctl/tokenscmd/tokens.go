@@ -13,7 +13,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/snaplink/sso/cmd/sso-ctl/apiclient"
+	"github.com/yangwb1123/snaplink/cmd/sso-ctl/apiclient"
 )
 
 const progName = "sso-ctl tokens"

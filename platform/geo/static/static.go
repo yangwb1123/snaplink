@@ -17,7 +17,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/snaplink/sso/platform/geo"
+	"github.com/yangwb1123/snaplink/platform/geo"
 )
 
 // Provider is a CIDR → GeoInfo lookup table. Safe for concurrent

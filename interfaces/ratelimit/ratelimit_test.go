@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/middleware"
-	"github.com/snaplink/sso/interfaces/ratelimit"
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
 )
 
 func TestMemoryLimiter_AllowsBurstThenRejects(t *testing.T) {

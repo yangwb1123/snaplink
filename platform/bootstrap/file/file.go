@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/platform/bootstrap"
+	"github.com/yangwb1123/snaplink/platform/bootstrap"
 )
 
 // Tracker is the file-backed bootstrap.Tracker.

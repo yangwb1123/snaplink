@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/region"
-	"github.com/snaplink/sso/domains/tenant"
-	tenantmemory "github.com/snaplink/sso/domains/tenant/memory"
-	"github.com/snaplink/sso/platform/cluster"
-	clustermemory "github.com/snaplink/sso/platform/cluster/memory"
+	"github.com/yangwb1123/snaplink/domains/region"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	tenantmemory "github.com/yangwb1123/snaplink/domains/tenant/memory"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	clustermemory "github.com/yangwb1123/snaplink/platform/cluster/memory"
 )
 
 // These are direct-call unit tests for the data-residency enforcement

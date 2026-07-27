@@ -7,7 +7,7 @@ package audit
 // surface unchanged for the in-package sinks (async/multi), the Recorder wiring,
 // and external consumers; type aliases keep interface identity intact.
 
-import "github.com/snaplink/sso/platform/audit/auditsink"
+import "github.com/yangwb1123/snaplink/platform/audit/auditsink"
 
 type (
 	BatchSink                = auditsink.BatchSink

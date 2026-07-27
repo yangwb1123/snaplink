@@ -6,8 +6,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/domains/connections"
-	csqlite "github.com/snaplink/sso/domains/connections/sqlite"
+	"github.com/yangwb1123/snaplink/domains/connections"
+	csqlite "github.com/yangwb1123/snaplink/domains/connections/sqlite"
 
 	_ "modernc.org/sqlite" // register the pure-Go "sqlite" driver for the manual sql.Open.
 )

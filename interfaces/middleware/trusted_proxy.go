@@ -7,7 +7,7 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/snaplink/sso/shared/security/peertrust"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
 // realClientIPKey is the unexported context key for the validated client IP.

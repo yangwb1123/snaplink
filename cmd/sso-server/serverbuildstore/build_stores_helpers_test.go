@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/domains/tenant"
-	tenantmemory "github.com/snaplink/sso/domains/tenant/memory"
-	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	tenantmemory "github.com/yangwb1123/snaplink/domains/tenant/memory"
+	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
 )
 
 // These unexported helpers back BuildMFA / BuildSnapshotSubsystem /

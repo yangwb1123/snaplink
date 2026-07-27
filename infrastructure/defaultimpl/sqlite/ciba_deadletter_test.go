@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/protocols/oauth/oauthspi"
+	"github.com/yangwb1123/snaplink/protocols/oauth/oauthspi"
 )
 
 func newCIBAPushDeadLetterStoreForTest(t *testing.T, dsn string) *CIBAPushDeadLetterStore {

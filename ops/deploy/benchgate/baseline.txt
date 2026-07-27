@@ -1,6 +1,6 @@
 goos: linux
 goarch: amd64
-pkg: github.com/snaplink/sso/infrastructure/defaultimpl
+pkg: github.com/yangwb1123/snaplink/infrastructure/defaultimpl
 cpu: AMD Ryzen 7 7840HS w/ Radeon 780M Graphics     
 BenchmarkEd25519Issue-16            	   55147	     21540 ns/op	    1692 B/op	      15 allocs/op
 BenchmarkEd25519Issue-16            	   54340	     21698 ns/op	    1691 B/op	      15 allocs/op
@@ -63,10 +63,10 @@ BenchmarkRSAJWKS-16                 	 1734759	       699.7 ns/op	    1108 B/op	 
 BenchmarkRSAJWKS-16                 	 1611999	       719.1 ns/op	    1108 B/op	       5 allocs/op
 BenchmarkRSAJWKS-16                 	 1771063	       681.5 ns/op	    1108 B/op	       5 allocs/op
 PASS
-ok  	github.com/snaplink/sso/infrastructure/defaultimpl	99.436s
+ok  	github.com/yangwb1123/snaplink/infrastructure/defaultimpl	99.436s
 goos: linux
 goarch: amd64
-pkg: github.com/snaplink/sso/shared/security
+pkg: github.com/yangwb1123/snaplink/shared/security
 cpu: AMD Ryzen 7 7840HS w/ Radeon 780M Graphics     
 BenchmarkVerifyCompactJWS_EdDSA-16    	   27145	     43790 ns/op	     976 B/op	      12 allocs/op
 BenchmarkVerifyCompactJWS_EdDSA-16    	   27129	     43934 ns/op	     976 B/op	      12 allocs/op
@@ -75,10 +75,10 @@ BenchmarkVerifyCompactJWS_EdDSA-16    	   27777	     43321 ns/op	     976 B/op	 
 BenchmarkVerifyCompactJWS_EdDSA-16    	   27504	     43492 ns/op	     976 B/op	      12 allocs/op
 BenchmarkVerifyCompactJWS_EdDSA-16    	   27639	     43352 ns/op	     976 B/op	      12 allocs/op
 PASS
-ok  	github.com/snaplink/sso/shared/security	9.829s
+ok  	github.com/yangwb1123/snaplink/shared/security	9.829s
 goos: linux
 goarch: amd64
-pkg: github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreoauth
+pkg: github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreoauth
 cpu: AMD Ryzen 7 7840HS w/ Radeon 780M Graphics     
 BenchmarkMemoryAuthCodeStore_ConcurrentIssueConsume-16    	 8758906	       142.9 ns/op	     464 B/op	       4 allocs/op
 BenchmarkMemoryAuthCodeStore_ConcurrentIssueConsume-16    	 8498270	       146.1 ns/op	     464 B/op	       4 allocs/op
@@ -93,10 +93,10 @@ BenchmarkMemoryPARStore_ConcurrentIssueConsume-16         	 7431768	       161.6
 BenchmarkMemoryPARStore_ConcurrentIssueConsume-16         	 7271380	       162.0 ns/op	     480 B/op	       4 allocs/op
 BenchmarkMemoryPARStore_ConcurrentIssueConsume-16         	 7332027	       162.5 ns/op	     480 B/op	       4 allocs/op
 PASS
-ok  	github.com/snaplink/sso/infrastructure/defaultimpl/memorystoreoauth	16.383s
+ok  	github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreoauth	16.383s
 goos: linux
 goarch: amd64
-pkg: github.com/snaplink/sso/protocols/oauth
+pkg: github.com/yangwb1123/snaplink/protocols/oauth
 cpu: AMD Ryzen 7 7840HS w/ Radeon 780M Graphics     
 BenchmarkBindParamsForm-16    	  193446	      6348 ns/op	    9895 B/op	      61 allocs/op
 BenchmarkBindParamsForm-16    	  190977	      6371 ns/op	    9895 B/op	      61 allocs/op
@@ -111,10 +111,10 @@ BenchmarkBindParamsJSON-16    	  223502	      5544 ns/op	    7333 B/op	      44 
 BenchmarkBindParamsJSON-16    	  219664	      5917 ns/op	    7333 B/op	      44 allocs/op
 BenchmarkBindParamsJSON-16    	  204093	      6011 ns/op	    7333 B/op	      44 allocs/op
 PASS
-ok  	github.com/snaplink/sso/protocols/oauth	15.149s
+ok  	github.com/yangwb1123/snaplink/protocols/oauth	15.149s
 goos: linux
 goarch: amd64
-pkg: github.com/snaplink/sso/interfaces/ratelimit
+pkg: github.com/yangwb1123/snaplink/interfaces/ratelimit
 cpu: AMD Ryzen 7 7840HS w/ Radeon 780M Graphics     
 BenchmarkMemoryLimiterAllowSingleKey-16    	 5640997	       213.7 ns/op	      64 B/op	       1 allocs/op
 BenchmarkMemoryLimiterAllowSingleKey-16    	 5374851	       214.7 ns/op	      64 B/op	       1 allocs/op
@@ -147,4 +147,4 @@ BenchmarkMemoryLimiterAllowParallel-16              	17494228	        62.17 ns/o
 BenchmarkMemoryLimiterAllowParallel-16              	18991438	        67.10 ns/op	      64 B/op	       1 allocs/op
 BenchmarkMemoryLimiterAllowParallel-16              	17368736	        70.84 ns/op	      64 B/op	       1 allocs/op
 PASS
-ok  	github.com/snaplink/sso/interfaces/ratelimit	43.622s
+ok  	github.com/yangwb1123/snaplink/interfaces/ratelimit	43.622s

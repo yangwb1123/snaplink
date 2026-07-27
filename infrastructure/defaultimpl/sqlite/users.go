@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 
 	_ "modernc.org/sqlite" // register the "sqlite" driver name.
 )

@@ -8,8 +8,8 @@ import (
 
 	"github.com/goccy/go-yaml"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/config/schema"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/config/schema"
 )
 
 // runSchema implements `sso-ctl config schema`: emits the reflection-

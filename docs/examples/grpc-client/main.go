@@ -13,9 +13,9 @@ import (
 	"log"
 	"time"
 
-	auditv1 "github.com/snaplink/sso/gen/proto/audit/v1"
-	authzv1 "github.com/snaplink/sso/gen/proto/authz/v1"
-	discoveryv1 "github.com/snaplink/sso/gen/proto/discovery/v1"
+	auditv1 "github.com/yangwb1123/snaplink/gen/proto/audit/v1"
+	authzv1 "github.com/yangwb1123/snaplink/gen/proto/authz/v1"
+	discoveryv1 "github.com/yangwb1123/snaplink/gen/proto/discovery/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

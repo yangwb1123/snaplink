@@ -3,8 +3,8 @@ package anomaly
 import (
 	"time"
 
-	"github.com/snaplink/sso/domains/threataction"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/domains/threataction"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // DropPolicy controls behavior when the worker queue is full.

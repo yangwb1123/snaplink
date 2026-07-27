@@ -9,11 +9,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/domains/permissions"
-	permsqlite "github.com/snaplink/sso/domains/permissions/sqlite"
-	sqlitestores "github.com/snaplink/sso/infrastructure/defaultimpl/sqlite"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/migrate"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	permsqlite "github.com/yangwb1123/snaplink/domains/permissions/sqlite"
+	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 )
 
 // memDSN returns a unique in-memory SQLite DSN. mode=memory + cache=shared

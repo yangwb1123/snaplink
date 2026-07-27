@@ -5,7 +5,7 @@ import (
 	"flag"
 	"strings"
 
-	"github.com/snaplink/sso/config/internal/parse"
+	"github.com/yangwb1123/snaplink/config/internal/parse"
 )
 
 // FlagSource lets CLI flags override config values. Operators don't

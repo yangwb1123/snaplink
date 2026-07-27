@@ -7,16 +7,16 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/spi"
 
-	"github.com/snaplink/sso/config"
+	"github.com/yangwb1123/snaplink/config"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 
-	"github.com/snaplink/sso/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/permissions"
 
-	permsqlite "github.com/snaplink/sso/domains/permissions/sqlite"
-	postgresbackend "github.com/snaplink/sso/infrastructure/postgres"
+	permsqlite "github.com/yangwb1123/snaplink/domains/permissions/sqlite"
+	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
 )
 
 // BuildPermissionsProvider returns the wired permissions.Provider

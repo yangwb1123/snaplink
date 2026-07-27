@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/snaplink/sso/domains/permissions"
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // Group handlers (RFC 7643 §4.2 + RFC 7644 CRUD/PATCH). A SCIM Group is a

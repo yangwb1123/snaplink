@@ -11,19 +11,19 @@ import (
 
 	"github.com/go-webauthn/webauthn/metadata"
 	goredis "github.com/redis/go-redis/v9"
-	"github.com/snaplink/sso/domains/authenticators/webauthn"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/audit"
-	"github.com/snaplink/sso/protocols/oauth"
-	"github.com/snaplink/sso/protocols/oidc"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/domains/authenticators/webauthn"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/spi"
 
-	"github.com/snaplink/sso/config"
-	webauthnpg "github.com/snaplink/sso/domains/authenticators/webauthnpostgres"
-	webauthnredis "github.com/snaplink/sso/domains/authenticators/webauthnredis"
-	webauthnsqlite "github.com/snaplink/sso/domains/authenticators/webauthnsqlite"
-	"github.com/snaplink/sso/domains/region"
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/config"
+	webauthnpg "github.com/yangwb1123/snaplink/domains/authenticators/webauthnpostgres"
+	webauthnredis "github.com/yangwb1123/snaplink/domains/authenticators/webauthnredis"
+	webauthnsqlite "github.com/yangwb1123/snaplink/domains/authenticators/webauthnsqlite"
+	"github.com/yangwb1123/snaplink/domains/region"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 )
 
 // BuildWebAuthnHelper is the no-cluster-backend entry point (memory/sqlite

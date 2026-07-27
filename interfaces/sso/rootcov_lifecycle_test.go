@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/snaplink/sso/domains/userlifecycle/memory"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/domains/userlifecycle/memory"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 func TestRcovAdmin_UserLifecycle(t *testing.T) {

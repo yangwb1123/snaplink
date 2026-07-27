@@ -11,8 +11,8 @@ import (
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // sloAutoPostForm is the HTTP-POST auto-submit form that delivers the signed

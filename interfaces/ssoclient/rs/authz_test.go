@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/snaplink/sso/interfaces/ssoclient/rs"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient/rs"
 )
 
 func TestCheckScope(t *testing.T) {

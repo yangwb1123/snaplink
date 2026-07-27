@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/snaplink/sso/platform/metrics"
+	"github.com/yangwb1123/snaplink/platform/metrics"
 )
 
 // Resubscribe backoff bounds. Identical shape to the signing-key aggregation +

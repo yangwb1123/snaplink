@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // BearerToken extracts the credential value from an Authorization:

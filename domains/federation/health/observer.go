@@ -6,7 +6,7 @@ import (
 	"net/http/httptrace"
 	"time"
 
-	"github.com/snaplink/sso/domains/federation"
+	"github.com/yangwb1123/snaplink/domains/federation"
 )
 
 // observingFetcher decorates a federation.EntityStatementFetcher, recording

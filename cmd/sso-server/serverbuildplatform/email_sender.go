@@ -1,9 +1,9 @@
 package serverbuildplatform
 
 import (
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/infrastructure/defaultimpl/emailsmtp"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/emailsmtp"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // BuildEmailSender resolves the built-in SMTP sender for the four

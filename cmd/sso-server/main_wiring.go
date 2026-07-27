@@ -9,15 +9,15 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/snaplink/sso/cmd/sso-server/serverbuildplatform"
-	"github.com/snaplink/sso/config"
-	configetcd "github.com/snaplink/sso/config/etcd"
-	configreload "github.com/snaplink/sso/config/reload"
-	"github.com/snaplink/sso/domains/authenticators/passkeypolicy"
-	"github.com/snaplink/sso/interfaces/ratelimit"
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/platform/tracing"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildplatform"
+	"github.com/yangwb1123/snaplink/config"
+	configetcd "github.com/yangwb1123/snaplink/config/etcd"
+	configreload "github.com/yangwb1123/snaplink/config/reload"
+	"github.com/yangwb1123/snaplink/domains/authenticators/passkeypolicy"
+	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/tracing"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // runtimeFlags holds the parsed CLI flag values main needs after Load.

@@ -1,15 +1,15 @@
 // Code generated. Backward-compat re-exports of core package symbols.
 package sso
 import (
-	"github.com/snaplink/sso/domains/conditionalaccess"
-	"github.com/snaplink/sso/domains/tenant"
-	"github.com/snaplink/sso/interfaces/admin"
-	"github.com/snaplink/sso/interfaces/middleware"
-	"github.com/snaplink/sso/internal/handler"
-	"github.com/snaplink/sso/platform/geo"
-	"github.com/snaplink/sso/platform/lifecycle/degradation"
-	"github.com/snaplink/sso/protocols/fapi"
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
+	"github.com/yangwb1123/snaplink/domains/tenant"
+	"github.com/yangwb1123/snaplink/interfaces/admin"
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
+	"github.com/yangwb1123/snaplink/internal/handler"
+	"github.com/yangwb1123/snaplink/platform/geo"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/degradation"
+	"github.com/yangwb1123/snaplink/protocols/fapi"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 // --- Disaster-recovery degraded-service re-exports (moved to
 // platform/lifecycle/degradation) so callers configure WithDegradationManager

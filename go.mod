@@ -1,4 +1,4 @@
-module github.com/snaplink/sso
+module github.com/yangwb1123/snaplink
 
 go 1.26.1
 

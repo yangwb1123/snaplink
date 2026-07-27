@@ -1,6 +1,6 @@
 package sqlite
 
-import "github.com/snaplink/sso/platform/migrate"
+import "github.com/yangwb1123/snaplink/platform/migrate"
 
 // UsersMaxVersion returns the highest migration version declared for the
 // webauthn_users store. cmd compares this against the live DB at boot via

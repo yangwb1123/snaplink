@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // jarmFormPostTemplate renders the JARM form_post.jwt auto-POST page.

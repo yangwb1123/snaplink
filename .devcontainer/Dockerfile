@@ -1,4 +1,4 @@
-# Dev environment for github.com/snaplink/sso. Bookworm (glibc), not the
+# Dev environment for github.com/yangwb1123/snaplink. Bookworm (glibc), not the
 # runtime Dockerfile's golang:1.26-alpine — VS Code's remote server and
 # tools like gopls/delve expect glibc, and this image is never shipped,
 # only used locally / in Codespaces. Go version matches go.mod (`go

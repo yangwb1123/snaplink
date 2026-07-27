@@ -1,8 +1,8 @@
 package txntoken_test
 
 import (
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/protocols/oauth/txntoken"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/protocols/oauth/txntoken"
 )
 
 // Compile-time guards that the three defaultimpl signing issuers satisfy

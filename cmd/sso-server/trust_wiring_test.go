@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/snaplink/sso/config"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
 // trust_wiring_test.go proves ROADMAP 6g: the previously dead trust config

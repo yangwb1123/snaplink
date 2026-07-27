@@ -6,8 +6,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/snaplink/sso/shared/core"
-	"github.com/snaplink/sso/shared/spi"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // Request is the subset of /token parameters HandleGrant needs. Pulled out

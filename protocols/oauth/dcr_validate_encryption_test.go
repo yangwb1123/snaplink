@@ -3,7 +3,7 @@ package oauth
 import (
 	"testing"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // validateEnc runs the full DCR validator over a code-flow-valid base

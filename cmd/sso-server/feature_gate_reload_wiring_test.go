@@ -13,10 +13,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/snaplink/sso/config"
-	configreload "github.com/snaplink/sso/config/reload"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/config"
+	configreload "github.com/yangwb1123/snaplink/config/reload"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 func TestWireFeatureGateReload_SIGHUPFlipsAdminAPILive(t *testing.T) {

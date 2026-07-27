@@ -3,7 +3,7 @@ package auditreport
 import (
 	"sort"
 
-	"github.com/snaplink/sso/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/audit"
 )
 
 // areaAccumulator collects per-bucket counts while BuildSOC2Report walks

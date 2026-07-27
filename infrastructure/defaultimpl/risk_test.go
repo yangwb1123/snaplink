@@ -1,12 +1,12 @@
 package defaultimpl_test
 
-import "github.com/snaplink/sso/shared/spi"
+import "github.com/yangwb1123/snaplink/shared/spi"
 
 import (
 	"context"
 	"testing"
 
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
 
 func TestNoopRiskScorer_AlwaysAllows(t *testing.T) {

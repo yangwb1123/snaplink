@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/cluster"
-	clustermemory "github.com/snaplink/sso/platform/cluster/memory"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	clustermemory "github.com/yangwb1123/snaplink/platform/cluster/memory"
 )
 
 // panicOnRevokeIssuer is a minimal fake core.TokenIssuer whose Revoke always

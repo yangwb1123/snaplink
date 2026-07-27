@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snaplink/sso/shared/core"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 var ErrTokenNotFound = errors.New("sso: admin token not found")

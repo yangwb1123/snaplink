@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/platform/netpolicy"
-	"github.com/snaplink/sso/platform/netpolicy/memory"
+	"github.com/yangwb1123/snaplink/platform/netpolicy"
+	"github.com/yangwb1123/snaplink/platform/netpolicy/memory"
 )
 
 // errStore wraps the real memory Store and can be told to fail any individual

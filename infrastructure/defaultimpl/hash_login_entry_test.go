@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/snaplink/sso/domains/anomaly"
-	"github.com/snaplink/sso/infrastructure/defaultimpl"
-	"github.com/snaplink/sso/platform/geo"
+	"github.com/yangwb1123/snaplink/domains/anomaly"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/platform/geo"
 )
 
 func TestHashLoginEntry_PopulatesAllFields(t *testing.T) {

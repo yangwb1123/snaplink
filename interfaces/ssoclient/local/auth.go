@@ -8,8 +8,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/snaplink/sso/interfaces/sso"
-	"github.com/snaplink/sso/interfaces/ssoclient"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/ssoclient"
 )
 
 // AuthClient wraps an sso.TokenIssuer (and optionally a SessionManager for

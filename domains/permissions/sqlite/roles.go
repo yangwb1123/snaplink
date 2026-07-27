@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/snaplink/sso/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/permissions"
 )
 
 // --- Role CRUD ---

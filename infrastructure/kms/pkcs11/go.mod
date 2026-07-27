@@ -3,7 +3,7 @@
 // invariant). Operators who run an on-prem HSM / smart-card / SoftHSM token
 // opt into PKCS#11-backed signing by importing this submodule from their own
 // cmd binary, exactly as kms/awskms keeps aws-sdk-go-v2 out of core.
-module github.com/snaplink/sso/kms/pkcs11
+module github.com/yangwb1123/snaplink/kms/pkcs11
 
 go 1.26.1
 
@@ -11,7 +11,7 @@ go 1.26.1
 // the repo root, not a published version. (No go.work on purpose — a
 // workspace would merge build lists and surface miekg/pkcs11 in the root
 // `go list -m all`, blurring the core's zero-external-SDK invariant.)
-require github.com/snaplink/sso v0.0.0
+require github.com/yangwb1123/snaplink v0.0.0
 
 require github.com/miekg/pkcs11 v1.1.1
 
@@ -61,4 +61,4 @@ require (
 	modernc.org/sqlite v1.50.1 // indirect
 )
 
-replace github.com/snaplink/sso => ../../../
+replace github.com/yangwb1123/snaplink => ../../../

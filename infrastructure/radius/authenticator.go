@@ -51,7 +51,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/snaplink/sso/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 // AuthMethodRADIUS is the AMR value stamped on AuthResult.AuthMethods for a user
