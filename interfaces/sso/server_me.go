@@ -328,67 +328,6 @@ func (s *Server) mountUnauthenticatedSelfServiceRoutes() {
 	}
 }
 
-// mountSelfServiceProfile registers authenticated /me* routes (sessions,
-// devices, consents, identities, org, profile). Each gated on its backing store.
-func (s *Server) mountSelfServiceProfile() {
-	gr := core.NewGatedRouter(s.router, s.selfServiceGateOn)
-	gr.GET(PathMyPermissions, s.handleMyPermissions)
-	gr.GET(PathMyMenus, s.handleMyMenus)
-	gr.GET(PathMyRoles, s.handleMyRoles)
-	if s.sessionMgr != nil {
-		gr.GET(PathMySessions, s.handleMySessions)
-		gr.DELETE(PathMySessions, s.handleRevokeMySessions)
-		gr.DELETE(PathMySessionByID, s.handleDeleteMySession)
-		gr.GET(PathMeSessions, s.handleMeSessions)
-		gr.DELETE(PathMeSessionByID, s.handleDeleteMeSession)
-		gr.POST(PathMeSessionsRevokeAll, s.handleMeSessionsRevokeAll)
-		if s.deviceStore != nil {
-			gr.GET(PathMeSessionsEnriched, s.handleMeSessionsEnriched)
-		}
-	}
-	if s.deviceStore != nil {
-		gr.GET(PathMyDevices, s.handleMyDevices)
-		gr.GET(PathMyDeviceByID, s.handleMyDeviceByID)
-		gr.PATCH(PathMyDeviceByID, s.handleUpdateMyDevice)
-		gr.DELETE(PathMyDeviceByID, s.handleDeleteMyDevice)
-		gr.GET(PathMyDeviceActivity, s.handleMyDeviceActivity)
-		gr.GET(PathMyDeviceSessions, s.handleMyDeviceSessions)
-		gr.POST(PathMyDeviceTrustByID, s.handleSetDeviceTrust)
-		gr.POST(PathMyDeviceLost, s.handleReportLostDevice)
-	}
-	if s.loginHistory != nil {
-		gr.GET(PathMyLoginHistory, s.handleMyLoginHistory)
-	}
-	if s.deviceStore != nil || s.loginHistory != nil {
-		gr.GET(PathMySecurityActivity, s.handleMySecurityActivity)
-	}
-	if s.consentStore != nil {
-		gr.GET(PathMyConsents, s.handleMyConsents)
-		gr.DELETE(PathMyConsentByID, s.handleDeleteMyConsent)
-	}
-	if s.identityLinkStore != nil {
-		gr.GET(PathMyIdentities, s.handleMyIdentities)
-		gr.DELETE(PathMyIdentityByID, s.handleUnlinkMyIdentity)
-	}
-	if s.tenantUserStore != nil {
-		gr.GET(PathMyOrganizations, s.handleMyOrganizations)
-		gr.DELETE(PathMyOrganizationByID, s.handleLeaveMyOrganization)
-		// Accept an invitation (joins an org) — needs both stores.
-		if s.invitationStore != nil {
-			gr.POST(PathMyInvitationAccept, s.handleAcceptInvitation)
-		}
-	}
-	// Self-service account overview. Mounted with a user directory (the
-	// profile is its core); byte-identical without one.
-	if s.userProvider != nil {
-		gr.GET(PathMe, s.handleMe)
-		gr.PATCH(PathMe, s.handlePatchMe)
-	}
-	if s.passwordCredentialStore != nil {
-		gr.POST(PathMyPassword, s.handleChangeMyPassword)
-	}
-}
-
 // mountSelfServiceCredentials registers the authenticated /me* credential +
 // privacy endpoints (MFA factors, passkey registration, GDPR export/erasure,
 // verified email change), each gated on its backing store (a boot-time

@@ -197,6 +197,9 @@ func matchDeviceConditions(c Conditions, ac AccessContext) bool {
 }
 
 func matchPolicy(c Conditions, ac AccessContext, risk float64) (bool, error) {
+	if len(c.UserMemberOf) > 0 && !anyInGroups(ac.Groups, c.UserMemberOf) {
+		return false, nil
+	}
 	if !matchDeviceConditions(c, ac) {
 		return false, nil
 	}

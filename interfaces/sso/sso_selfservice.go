@@ -336,6 +336,77 @@ type selfServiceState struct {
 	dataRetention compliance.RetentionConfig
 }
 
+// mountSelfServiceProfile registers authenticated /me* routes while preserving
+// the store-gated route order used by the self-service surface.
+func (s *Server) mountSelfServiceProfile() {
+	gr := core.NewGatedRouter(s.router, s.selfServiceGateOn)
+	gr.GET(PathMyPermissions, s.handleMyPermissions)
+	gr.GET(PathMyMenus, s.handleMyMenus)
+	gr.GET(PathMyRoles, s.handleMyRoles)
+	s.mountSelfServiceSessionRoutes(gr)
+	s.mountSelfServiceActivityRoutes(gr)
+	s.mountSelfServiceAccountRoutes(gr)
+}
+
+func (s *Server) mountSelfServiceSessionRoutes(gr Router) {
+	if s.sessionMgr == nil {
+		return
+	}
+	gr.GET(PathMySessions, s.handleMySessions)
+	gr.DELETE(PathMySessions, s.handleRevokeMySessions)
+	gr.DELETE(PathMySessionByID, s.handleDeleteMySession)
+	gr.GET(PathMeSessions, s.handleMeSessions)
+	gr.DELETE(PathMeSessionByID, s.handleDeleteMeSession)
+	gr.POST(PathMeSessionsRevokeAll, s.handleMeSessionsRevokeAll)
+	if s.deviceStore != nil {
+		gr.GET(PathMeSessionsEnriched, s.handleMeSessionsEnriched)
+	}
+}
+
+func (s *Server) mountSelfServiceActivityRoutes(gr Router) {
+	if s.deviceStore != nil {
+		gr.GET(PathMyDevices, s.handleMyDevices)
+		gr.GET(PathMyDeviceByID, s.handleMyDeviceByID)
+		gr.PATCH(PathMyDeviceByID, s.handleUpdateMyDevice)
+		gr.DELETE(PathMyDeviceByID, s.handleDeleteMyDevice)
+		gr.GET(PathMyDeviceActivity, s.handleMyDeviceActivity)
+		gr.GET(PathMyDeviceSessions, s.handleMyDeviceSessions)
+		gr.POST(PathMyDeviceTrustByID, s.handleSetDeviceTrust)
+		gr.POST(PathMyDeviceLost, s.handleReportLostDevice)
+	}
+	if s.loginHistory != nil {
+		gr.GET(PathMyLoginHistory, s.handleMyLoginHistory)
+	}
+	if s.deviceStore != nil || s.loginHistory != nil {
+		gr.GET(PathMySecurityActivity, s.handleMySecurityActivity)
+	}
+}
+
+func (s *Server) mountSelfServiceAccountRoutes(gr Router) {
+	if s.consentStore != nil {
+		gr.GET(PathMyConsents, s.handleMyConsents)
+		gr.DELETE(PathMyConsentByID, s.handleDeleteMyConsent)
+	}
+	if s.identityLinkStore != nil {
+		gr.GET(PathMyIdentities, s.handleMyIdentities)
+		gr.DELETE(PathMyIdentityByID, s.handleUnlinkMyIdentity)
+	}
+	if s.tenantUserStore != nil {
+		gr.GET(PathMyOrganizations, s.handleMyOrganizations)
+		gr.DELETE(PathMyOrganizationByID, s.handleLeaveMyOrganization)
+		if s.invitationStore != nil {
+			gr.POST(PathMyInvitationAccept, s.handleAcceptInvitation)
+		}
+	}
+	if s.userProvider != nil {
+		gr.GET(PathMe, s.handleMe)
+		gr.PATCH(PathMe, s.handlePatchMe)
+	}
+	if s.passwordCredentialStore != nil {
+		gr.POST(PathMyPassword, s.handleChangeMyPassword)
+	}
+}
+
 // mountOrgAdminSelfService registers the DELEGATED org-admin surface
 // (/me/organizations/:tenant_id/*). Despite living beside the admin-API
 // registrars in server_routes_admin.go historically, these routes hang off

@@ -148,35 +148,37 @@ func projectClientFields(clients []*core.Client, hasIDTokenIssuer bool) discover
 	adTypesSeen := map[string]struct{}{}
 	proj := discoveryClientProjection{requireSignedRequestObject: len(clients) > 0}
 	for _, c := range clients {
-		if c == nil {
-			proj.requireSignedRequestObject = false
-			continue
-		}
-		if c.RequirePAR {
-			proj.requirePAR = true
-		}
-		if !c.RequireSignedRequestObject {
-			proj.requireSignedRequestObject = false
-		}
-		if c.FrontchannelLogoutURI != "" {
-			proj.frontchannelLogout = true
-		}
-		for _, sc := range c.AllowedScopes {
-			if sc != "" {
-				scopesSeen[sc] = struct{}{}
-			}
-		}
-		for _, t := range c.AllowedAuthorizationDetailsTypes {
-			if t != "" {
-				adTypesSeen[t] = struct{}{}
-			}
-		}
+		projectClient(&proj, scopesSeen, adTypesSeen, c)
 	}
 	proj.scopes = sortedKeys(scopesSeen)
 	if len(adTypesSeen) > 0 {
 		proj.authorizationDetailTypes = sortedKeys(adTypesSeen)
 	}
 	return proj
+}
+
+func projectClient(
+	proj *discoveryClientProjection,
+	scopesSeen, adTypesSeen map[string]struct{},
+	client *core.Client,
+) {
+	if client == nil {
+		proj.requireSignedRequestObject = false
+		return
+	}
+	proj.requirePAR = proj.requirePAR || client.RequirePAR
+	proj.requireSignedRequestObject = proj.requireSignedRequestObject && client.RequireSignedRequestObject
+	proj.frontchannelLogout = proj.frontchannelLogout || client.FrontchannelLogoutURI != ""
+	addNonEmptyStrings(scopesSeen, client.AllowedScopes)
+	addNonEmptyStrings(adTypesSeen, client.AllowedAuthorizationDetailsTypes)
+}
+
+func addNonEmptyStrings(seen map[string]struct{}, values []string) {
+	for _, value := range values {
+		if value != "" {
+			seen[value] = struct{}{}
+		}
+	}
 }
 
 func sortedKeys(m map[string]struct{}) []string {

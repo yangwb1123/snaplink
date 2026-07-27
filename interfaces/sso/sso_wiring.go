@@ -423,36 +423,6 @@ func (s *Server) wrapAPIVersioning(inner http.Handler) http.Handler {
 	return inner
 }
 
-// ConfigAuditStore returns the wired runtime-configuration-audit store
-// (WithConfigAuditStore), or nil when unwired. Relocated from accessors.go
-// (which was at the line budget) — beside the rest of the config-audit
-// wiring in this file.
-func (s *Server) ConfigAuditStore() configaudit.Store { return s.configAuditStore }
-
-// AppliedConfigSnapshot implements configaudit.HandlerDeps: the redacted
-// effective-config snapshot captured once at startup (WithConfigSnapshots).
-// Returns configaudit.ErrSnapshotUnavailable when no snapshot was ever
-// wired, so the HTTP handler can answer 501 rather than a bare 500.
-// Relocated from accessors.go (which was at the line budget).
-func (s *Server) AppliedConfigSnapshot() (map[string]any, error) {
-	if s.configAppliedSnapshot == nil {
-		return nil, configaudit.ErrSnapshotUnavailable
-	}
-	return s.configAppliedSnapshot, nil
-}
-
-// RunningConfigSnapshot implements configaudit.HandlerDeps: the CURRENT
-// effective-config snapshot. Falls back to AppliedConfigSnapshot when no
-// live snapshot function was wired (WithConfigSnapshots without a
-// runningFn) — correct, since with no live source there is nothing to
-// drift FROM.
-func (s *Server) RunningConfigSnapshot(ctx context.Context) (map[string]any, error) {
-	if s.configRunningSnapshotFn != nil {
-		return s.configRunningSnapshotFn(ctx)
-	}
-	return s.AppliedConfigSnapshot()
-}
-
 // ClientStore exposes the wired client store for the admin tenant-export
 // handler (admin.Deps). Distinct from ClientStoreAccessor (accessors.go)
 // only in name — that older accessor predates this Deps interface and
@@ -461,40 +431,6 @@ func (s *Server) RunningConfigSnapshot(ctx context.Context) (map[string]any, err
 // package-level ClientStore type alias (different namespace — see
 // aliases.go) without conflict.
 func (s *Server) ClientStore() core.ClientStore { return s.clientStore }
-
-// applyConfigAuditWiring wires the config-audit change-capture hook (AGENTS.md
-// "narrowest existing seam") post-options, in NewServer. Only when BOTH an
-// auditor and a configaudit.Store are present, so a build without
-// WithConfigAuditStore pays zero cost (the hook is never set, and
-// Recorder.Record's nil-check short-circuits on every call).
-func (s *Server) applyConfigAuditWiring() {
-	if s.auditor != nil && s.configAuditStore != nil {
-		s.auditor.SetConfigChangeHook(s.recordConfigHistoryFromAudit)
-	}
-}
-
-// mountConfigAuditAPI registers the runtime-configuration-audit admin API
-// (GET .../config/{running,applied,diff,history}). The snapshot endpoints
-// mount only when a config-snapshot source is wired (WithConfigSnapshots);
-// history additionally requires WithConfigAuditStore, so a deployment using
-// only the change-capture hook (no snapshot wiring) still gets a history
-// endpoint without the snapshot/diff routes erroring on every request.
-func (s *Server) mountConfigAuditAPI(api Router) {
-	if s.configAppliedSnapshot != nil || s.configRunningSnapshotFn != nil {
-		api.GET(PathAdminConfigRunning, s.handleConfigRunning)
-		api.GET(PathAdminConfigApplied, s.handleConfigApplied)
-		api.GET(PathAdminConfigDiff, s.handleConfigDiff)
-		api.POST(PathAdminConfigClusterDiff, s.handleConfigClusterDiff)
-	}
-	if s.configAuditStore != nil {
-		api.GET(PathAdminConfigHistory, s.handleConfigHistory)
-	}
-}
-func (s *Server) handleConfigRunning(ctx HandlerContext)     { configaudit.HandleRunning(s, ctx) }
-func (s *Server) handleConfigApplied(ctx HandlerContext)     { configaudit.HandleApplied(s, ctx) }
-func (s *Server) handleConfigDiff(ctx HandlerContext)        { configaudit.HandleDiff(s, ctx) }
-func (s *Server) handleConfigClusterDiff(ctx HandlerContext) { configaudit.HandleClusterDiff(s, ctx) }
-func (s *Server) handleConfigHistory(ctx HandlerContext)     { configaudit.HandleHistory(s, ctx) }
 
 // The config-history change-capture helpers (configHistoryResourceByEventType,
 // recordConfigHistoryFromAudit, RecordConfigChange) live in options_admin.go —

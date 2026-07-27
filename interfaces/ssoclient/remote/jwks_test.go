@@ -208,43 +208,49 @@ func TestJWKSCache_ETagRevalidationSkipsBody(t *testing.T) {
 // safe (sync.Once, not a double-close panic).
 func TestJWKSCache_StartRefresherClosesOnContextCancel(t *testing.T) {
 	t.Parallel()
-	pub, _, _ := ed25519.GenerateKey(rand.Reader)
-	url, hits, stop := jwksServer(t, pub)
-	defer stop()
+	var hits atomic.Int64
+	var startedOnce, canceledOnce sync.Once
+	requestStarted := make(chan struct{})
+	requestCanceled := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		startedOnce.Do(func() { close(requestStarted) })
+		<-r.Context().Done()
+		canceledOnce.Do(func() { close(requestCanceled) })
+	}))
+	defer srv.Close()
 
-	cache := remote.NewJWKSCache(url, remote.WithJWKSRefreshInterval(5*time.Millisecond))
+	cache := remote.NewJWKSCache(srv.URL, remote.WithJWKSRefreshInterval(time.Millisecond))
 	ctx, cancel := context.WithCancel(context.Background())
 	cache.StartRefresher(ctx)
 
-	time.Sleep(20 * time.Millisecond) // let a couple of refresh ticks land
+	select {
+	case <-requestStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background JWKS refresh did not start")
+	}
 	cancel()
 
-	// After cancel the refresher must stop. Poll until the hit count stops
-	// advancing across a window comfortably wider than the refresh interval:
-	// that proves the loop returned, without depending on absolute scheduler
-	// timing (which starves under parallel -race load and made a fixed-sleep
-	// assertion flaky). A live 5ms-interval loop would tick ~8x per window, so
-	// two equal reads means it has genuinely stopped.
-	const quietWindow = 40 * time.Millisecond
-	deadline := time.Now().Add(2 * time.Second)
-	var stable int64
-	for {
-		before := hits.Load()
-		time.Sleep(quietWindow)
-		stable = hits.Load()
-		if stable == before {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("refresher did not stop after context cancel: hits still advancing (%d -> %d)", before, stable)
-		}
+	select {
+	case <-requestCanceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("context cancellation did not cancel the in-flight JWKS refresh")
 	}
-	// Belt-and-suspenders: a further quiet window yields no additional fetches.
-	time.Sleep(quietWindow)
-	if got := hits.Load(); got != stable {
-		t.Fatalf("refresh continued after refresher stopped: hits went from %d to %d", stable, got)
+
+	closed := make(chan struct{})
+	go func() {
+		cache.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not wait for the background refresher to stop")
 	}
-	cache.Close() // must not panic even though StartRefresher already closed it
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("background refresh count = %d, want 1", got)
+	}
+	cache.Close() // remains idempotent after the context-triggered close
 }
 
 // TestJWKSCache_ConcurrentGetIsRaceFree drives Get from many goroutines

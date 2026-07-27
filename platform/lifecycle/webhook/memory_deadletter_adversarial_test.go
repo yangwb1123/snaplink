@@ -113,7 +113,7 @@ func TestMemoryDeadLetterStore_Adversarial_RaceAddAndList(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := range 15 {
-			store.Delete(ctx, "sub-"+itoa(i))
+			_ = store.Delete(ctx, "sub-"+itoa(i))
 		}
 	}()
 

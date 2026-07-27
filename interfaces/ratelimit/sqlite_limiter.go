@@ -63,7 +63,8 @@ type SQLiteLimiter struct {
 
 	stalePruneAfter time.Duration
 
-	db *sql.DB
+	db  *sql.DB
+	now func() time.Time
 }
 
 // NewSQLiteLimiter opens dsn, migrates the schema, and returns the
@@ -93,6 +94,7 @@ func NewSQLiteLimiter(dsn string, perSecond float64, burst int, bucketName strin
 		bucketName:      bucketName,
 		stalePruneAfter: defaultStalePruneAfter,
 		db:              db,
+		now:             time.Now,
 	}, nil
 }
 
@@ -112,6 +114,7 @@ func NewSQLiteLimiterWithDB(db *sql.DB, perSecond float64, burst int, bucketName
 		bucketName:      bucketName,
 		stalePruneAfter: defaultStalePruneAfter,
 		db:              db,
+		now:             time.Now,
 	}, nil
 }
 
@@ -148,7 +151,7 @@ func (s *SQLiteLimiter) Allow(key string) (bool, time.Duration) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	nowNs := time.Now().UnixNano()
+	nowNs := s.now().UnixNano()
 
 	tokens, ok := s.loadBucketTokens(ctx, tx, key, nowNs)
 	if !ok {

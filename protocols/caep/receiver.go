@@ -8,7 +8,6 @@ import (
 	"errors"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/shared/core"
-	"github.com/yangwb1123/snaplink/shared/security"
 	"net/http"
 	"sync"
 	"time"
@@ -112,61 +111,6 @@ const (
 	// untrusted iss / wrong aud / expired / replayed / malformed).
 	ReceiverOutcomeRejected = "rejected"
 )
-
-// ReceiverMetricFunc records one inbound-SET outcome. Wired by cmd to the
-// sso_ssf_sets_received_total{outcome} counter; nil ⇒ no metric. Mirrors
-// the transmitter's MetricFunc seam (keeps caep free of a prometheus dep).
-type ReceiverMetricFunc func(outcome string)
-
-// TrustedTransmitter describes ONE upstream transmitter the receiver will
-// accept SETs from. The set of these IS the trust allowlist: a SET whose
-// `iss` matches none of them is rejected before any signature work.
-type TrustedTransmitter struct {
-	// Issuer is the exact `iss` value the upstream stamps into its SETs.
-	// Matched case-sensitively against the SET's `iss` — only an exact
-	// match selects this transmitter's JWKS for verification.
-	Issuer string
-	// JWKS supplies this transmitter's published signing public keys (its
-	// trust bundle). security.NewStaticJWKS from an operator-supplied JWKS
-	// file is the in-scope minimum; any security.JWKSSource works. The SET
-	// signature is verified against THESE keys, so a SET signed by anyone
-	// else is rejected.
-	JWKS security.JWKSSource
-	// SubjectMode selects how this transmitter's SET subjects map to local
-	// users (opaque vs iss_sub). Default (zero) is SubjectMapOpaque.
-	SubjectMode SubjectMapMode
-	// Provider is the local federation provider name used to resolve an
-	// iss_sub subject (UserProvider.GetByExternalID(Provider, sub)). Only
-	// consulted under SubjectMapIssSub, where it is REQUIRED: it MUST be
-	// operator-pinned to THIS transmitter's trusted federated namespace and is
-	// NEVER derived from the SET's sub_id.iss (which the transmitter controls,
-	// so trusting it would let a transmitter revoke users federated from ANY
-	// other provider — a cross-IdP subject hijack). NewReceiver rejects an
-	// empty Provider when SubjectMode is SubjectMapIssSub. Ignored under
-	// SubjectMapOpaque.
-	Provider string
-	// AllowedEvents, when non-empty, restricts which SSF event URIs from
-	// THIS transmitter are honored (e.g. accept only session-revoked from a
-	// given peer). Empty ⇒ every event the receiver knows how to act on is
-	// honored. An event not in this set is treated as unknown (ack + no-op),
-	// never an error — narrowing what a given transmitter may trigger.
-	AllowedEvents []string
-	// AllowedAlgs restricts the asymmetric JWS algs accepted from this
-	// transmitter's bundle. Empty ⇒ the receiver default (ES256, RS256,
-	// PS256, EdDSA). A symmetric alg here is rejected by VerifyCompactJWS.
-	AllowedAlgs []string
-}
-
-// trustedEntry is the normalized internal form of a TrustedTransmitter:
-// the alg allowlist materialized into a set and the allowed-events
-// materialized into a set for O(1) checks.
-type trustedEntry struct {
-	jwks          security.JWKSSource
-	subjectMode   SubjectMapMode
-	provider      string
-	allowedAlgs   map[string]struct{}
-	allowedEvents map[string]struct{} // nil ⇒ all known events honored
-}
 
 // SubjectRevoker performs the local "revoke ALL of this subject's access"
 // action once a SET is fully validated and its subject is mapped. It is a
@@ -275,30 +219,6 @@ const (
 	// failure of the SET; ALL trust failures collapse to it (oracle-safe).
 	ErrReceiverInvalidKey = "invalid_key"
 )
-
-// Receiver consumes inbound SETs from configured trusted transmitters and
-// revokes local access for the mapped subject.
-type Receiver struct {
-	// trusted maps an upstream `iss` → its normalized trust entry. The set
-	// of keys IS the allowlist.
-	trusted map[string]trustedEntry
-	// audience is THIS server's identifier the SET `aud` MUST contain.
-	audience     string
-	maxClockSkew time.Duration
-	// jtiReplay consumes the SET jti (MarkSeen) so a replayed SET can't
-	// re-trigger. REQUIRED — without a replay store the receiver cannot
-	// guarantee single-action delivery, so NewReceiver rejects a nil one.
-	jtiReplay security.JTIReplayStore
-	// revoker performs the local revocation once a SET is validated +
-	// mapped. REQUIRED.
-	revoker SubjectRevoker
-	// resolver maps a SET subject → local user id. REQUIRED.
-	resolver SubjectResolver
-	recorder *audit.Recorder    // audit sink; may be nil (no audit)
-	metric   ReceiverMetricFunc // may be nil
-	logger   Logger             // may be nil
-	now      func() time.Time   // injectable clock for tests; nil ⇒ time.Now
-}
 
 // SSFConfiguration describes this server's SSF transmitter capabilities.
 // Served at /.well-known/ssf-configuration per OpenID SSF §4.

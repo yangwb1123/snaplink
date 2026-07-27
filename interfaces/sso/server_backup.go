@@ -9,9 +9,61 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangwb1123/snaplink/platform/configaudit"
 	"github.com/yangwb1123/snaplink/protocols/compliance"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
+
+// ConfigAuditStore returns nil when runtime configuration history is unwired.
+func (s *Server) ConfigAuditStore() configaudit.Store { return s.configAuditStore }
+
+// AppliedConfigSnapshot returns the redacted effective configuration captured
+// at startup. The sentinel lets the HTTP layer distinguish unwired snapshots
+// from an internal failure and answer 501.
+func (s *Server) AppliedConfigSnapshot() (map[string]any, error) {
+	if s.configAppliedSnapshot == nil {
+		return nil, configaudit.ErrSnapshotUnavailable
+	}
+	return s.configAppliedSnapshot, nil
+}
+
+// RunningConfigSnapshot falls back to the applied snapshot when no live
+// source exists, because without a live source there is nothing to drift from.
+func (s *Server) RunningConfigSnapshot(ctx context.Context) (map[string]any, error) {
+	if s.configRunningSnapshotFn != nil {
+		return s.configRunningSnapshotFn(ctx)
+	}
+	return s.AppliedConfigSnapshot()
+}
+
+// applyConfigAuditWiring keeps builds without a config-audit store at zero
+// recording cost: the recorder's change hook remains unset.
+func (s *Server) applyConfigAuditWiring() {
+	if s.auditor != nil && s.configAuditStore != nil {
+		s.auditor.SetConfigChangeHook(s.recordConfigHistoryFromAudit)
+	}
+}
+
+// mountConfigAuditAPI exposes snapshot routes only when a snapshot source
+// exists. History is independent so deployments that capture changes without
+// snapshots do not mount routes that would fail on every request.
+func (s *Server) mountConfigAuditAPI(api Router) {
+	if s.configAppliedSnapshot != nil || s.configRunningSnapshotFn != nil {
+		api.GET(PathAdminConfigRunning, s.handleConfigRunning)
+		api.GET(PathAdminConfigApplied, s.handleConfigApplied)
+		api.GET(PathAdminConfigDiff, s.handleConfigDiff)
+		api.POST(PathAdminConfigClusterDiff, s.handleConfigClusterDiff)
+	}
+	if s.configAuditStore != nil {
+		api.GET(PathAdminConfigHistory, s.handleConfigHistory)
+	}
+}
+
+func (s *Server) handleConfigRunning(ctx HandlerContext)     { configaudit.HandleRunning(s, ctx) }
+func (s *Server) handleConfigApplied(ctx HandlerContext)     { configaudit.HandleApplied(s, ctx) }
+func (s *Server) handleConfigDiff(ctx HandlerContext)        { configaudit.HandleDiff(s, ctx) }
+func (s *Server) handleConfigClusterDiff(ctx HandlerContext) { configaudit.HandleClusterDiff(s, ctx) }
+func (s *Server) handleConfigHistory(ctx HandlerContext)     { configaudit.HandleHistory(s, ctx) }
 
 // backupStampLayout is fixed-width + zero-padded so lexicographic order
 // of filenames equals chronological order — the pruner relies on it.

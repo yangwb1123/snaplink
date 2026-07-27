@@ -16,6 +16,74 @@ import (
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
+// Disaster-recovery aliases keep the SDK option surface independent of the
+// lower-level lifecycle package.
+type (
+	DegradationManager = degradation.Manager
+	DegradationMode    = degradation.Mode
+)
+
+const (
+	DegradationModeNormal      = degradation.ModeNormal
+	DegradationModeReadOnly    = degradation.ModeReadOnly
+	DegradationModeAuthOnly    = degradation.ModeAuthOnly
+	DegradationModeLocalOnly   = degradation.ModeLocalOnly
+	DegradationModeMaintenance = degradation.ModeMaintenance
+)
+
+var NewDegradationManager = degradation.NewManager
+
+// mountClusterObservabilityEndpoints registers the full-path admin
+// observability routes. Each route is opt-in and AdminAPI-gated, so an
+// unwired build keeps the same surface and cost as a build without it.
+func (s *Server) mountClusterObservabilityEndpoints() {
+	// The policy bundle is the role-definition half of the permissions model.
+	if s.permissions != nil && s.adminAPIGateOn() {
+		s.router.GET(PathAuthzPolicyBundle, s.handleAuthzPolicyBundle)
+	}
+	// Storage health is useful only when at least one source can report.
+	if len(s.storageHealthSources) > 0 && s.adminAPIGateOn() {
+		s.router.GET(PathStorageHealth, s.handleStorageHealth)
+	}
+	// Federation health deliberately stays independent of the federation
+	// feature gate: operators must be able to inspect a pre-disable snapshot
+	// during rollback and disaster-recovery drills.
+	if s.federationHealth != nil && s.adminAPIGateOn() {
+		s.router.GET(PathAdminFederationHealth, s.handleFederationHealth)
+	}
+}
+
+// mountClusterEndpoints registers only explicitly wired cluster surfaces.
+func (s *Server) mountClusterEndpoints() {
+	s.mountClusterObservabilityEndpoints()
+	// A sidecar may forward either original method, so the mesh authorization
+	// endpoint accepts both GET and POST at its configured path.
+	if s.meshExtAuthz {
+		path := s.meshExtAuthzPath
+		if path == "" {
+			path = PathMeshExtAuthz
+		}
+		s.router.GET(path, s.handleMeshExtAuthz)
+		s.router.POST(path, s.handleMeshExtAuthz)
+	}
+
+	ssf := core.NewGatedRouter(s.router, s.caepGateOn)
+	ssf.GET(PathSSFConfig, s.handleSSFConfig)
+	if s.caepStreamStore != nil {
+		ssf.POST(PathSSFStreams, s.handleCreateStream)
+		ssf.GET(PathSSFStreams, s.handleListStreams)
+		ssf.GET(PathSSFStreamByID, s.handleGetStream)
+		ssf.PUT(PathSSFStreamByID, s.handleUpdateStream)
+		ssf.DELETE(PathSSFStreamByID, s.handleDeleteStream)
+	}
+	// Receiver wiring remains a boot-time decision, while the shared gated
+	// router checks feature_gates.caep live on every request. Hot reload can
+	// therefore change reachability but cannot conjure an unwired receiver.
+	if s.caepReceiver != nil {
+		ssf.POST(PathSSFReceive, s.handleSSFReceive)
+	}
+}
+
 func (s *Server) handleLivez(w http.ResponseWriter, r *http.Request) {
 	handler.HandleLivez(w, r)
 }

@@ -109,7 +109,9 @@ func TestStartRotation_MultiAlg_DisabledWhenIntervalZero(t *testing.T) {
 // rotation fires at the next interval) instead of taking down the whole
 // process — this loop runs unattended for the server's lifetime.
 func TestStartRotation_MultiAlg_PanicInOnRotateRecovered(t *testing.T) {
-	t.Parallel()
+	// RSA rotation performs CPU-heavy prime generation. Running this scheduler
+	// liveness proof beside the package's other key-heavy parallel tests measures
+	// machine contention rather than whether the loop recovered from the panic.
 	cases := []struct {
 		name     string
 		issuer   rotatingIssuer
@@ -122,26 +124,31 @@ func TestStartRotation_MultiAlg_PanicInOnRotateRecovered(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int64
+			rotated := make(chan struct{}, 2)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
 			done := tc.issuer.StartRotation(ctx, defaultimpl.RotationConfig{
 				Interval: tc.interval,
 				OnRotate: func(_, _ string) {
-					calls.Add(1)
+					if calls.Add(1) == 2 {
+						cancel()
+					}
+					rotated <- struct{}{}
 					panic("boom: OnRotate panicked")
 				},
 			})
 
-			deadline := time.Now().Add(5 * time.Second)
-			for calls.Load() < 3 {
-				if time.Now().After(deadline) {
-					t.Fatalf("only %d rotations observed before timeout, want >= 3 (loop must survive each OnRotate panic)", calls.Load())
+			timeout := time.NewTimer(5 * time.Second)
+			defer timeout.Stop()
+			for calls.Load() < 2 {
+				select {
+				case <-rotated:
+				case <-timeout.C:
+					t.Fatalf("only %d rotations observed before timeout, want >= 2 (second callback proves the loop survived the first OnRotate panic)", calls.Load())
 				}
-				time.Sleep(5 * time.Millisecond)
 			}
 
-			cancel()
 			select {
 			case <-done:
 			case <-time.After(time.Second):

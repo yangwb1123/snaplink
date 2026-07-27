@@ -334,7 +334,7 @@ func (s *DeviceStore) ListByUser(_ context.Context, uid string) ([]*device.Devic
 	if e != nil {
 		return nil, e
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	return scanDevs(r)
 }
 func (s *DeviceStore) ListAll(_ context.Context) ([]*device.Device, error) {
@@ -342,7 +342,7 @@ func (s *DeviceStore) ListAll(_ context.Context) ([]*device.Device, error) {
 	if e != nil {
 		return nil, e
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	return scanDevs(r)
 }
 func (s *DeviceStore) Delete(_ context.Context, id string) error {
@@ -434,14 +434,14 @@ func (s *StreamStore) List(ctx context.Context, sub string) ([]*caep.Stream, err
 		if e != nil {
 			return nil, e
 		}
-		defer r.Close()
+		defer func() { _ = r.Close() }()
 		return scanStrs(r)
 	}
 	r, e := s.db.QueryContext(ctx, q)
 	if e != nil {
 		return nil, e
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	return scanStrs(r)
 }
 func strDM(s *caep.Stream) string {
@@ -473,7 +473,9 @@ func scanStr(r interface{ Scan(...any) error }) (*caep.Stream, error) {
 	}
 	st := &caep.Stream{ID: i, Issuer: is, Subject: su, CreatedAt: time.Unix(cat, 0), UpdatedAt: time.Unix(uat, 0)}
 	if ej != "" && ej != "[]" {
-		json.Unmarshal([]byte(ej), &st.Events)
+		if err := json.Unmarshal([]byte(ej), &st.Events); err != nil {
+			return nil, err
+		}
 	}
 	if dm != "" {
 		st.Delivery = &caep.StreamDelivery{Method: dm, Endpoint: de, Authorization: da}

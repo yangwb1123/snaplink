@@ -55,6 +55,11 @@ func (j *Ed25519JWTIssuer) StartRotation(ctx context.Context, cfg RotationConfig
 				return
 			case <-ticker.C:
 				j.rotateTick(ctx, cfg)
+				// Cancellation can arrive during key generation or OnRotate.
+				// Do not consume a queued tick after that in-flight work returns.
+				if ctx.Err() != nil {
+					return
+				}
 			}
 		}
 	}()

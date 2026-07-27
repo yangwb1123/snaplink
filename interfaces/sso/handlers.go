@@ -8,7 +8,6 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/admin"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/rebac"
-	"github.com/yangwb1123/snaplink/platform/lifecycle/webhook"
 	"github.com/yangwb1123/snaplink/platform/netpolicy"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
@@ -231,51 +230,6 @@ func (s *Server) handleDeleteNetPolicy(ctx HandlerContext)    { netpolicy.Handle
 func (s *Server) handleClassifyNetPolicy(ctx HandlerContext)  { netpolicy.HandleClassify(s, ctx) }
 func (s *Server) handleResolveMeNetPolicy(ctx HandlerContext) { netpolicy.HandleResolveMe(s, ctx) }
 
-// Generic event/webhook egress engine endpoint handlers moved to
-// platform/lifecycle/webhook/handlers.go. Methods below stay as thin delegators so the
-// existing route binding via method values keeps working.
-func (s *Server) handleWebhookListSubscriptions(ctx HandlerContext) {
-	webhook.HandleListSubscriptions(s, ctx)
-}
-func (s *Server) handleWebhookCreateSubscription(ctx HandlerContext) {
-	webhook.HandleCreateSubscription(s, ctx)
-}
-func (s *Server) handleWebhookDeleteSubscription(ctx HandlerContext) {
-	webhook.HandleDeleteSubscription(s, ctx)
-}
-func (s *Server) handleWebhookListDeadLetters(ctx HandlerContext) {
-	webhook.HandleListDeadLetters(s, ctx)
-}
-func (s *Server) handleWebhookReplayDeadLetter(ctx HandlerContext) {
-	webhook.HandleReplayDeadLetter(s, ctx)
-}
-
-// Generic event/webhook egress engine admin route-path re-exports —
-// aliases.go and server_routes_admin.go are both at their line budget, same
-// reason as the Token Portfolio consts in server_routes_admin.go.
-const (
-	PathAdminWebhookSubscriptions    = core.PathAdminWebhookSubscriptions
-	PathAdminWebhookSubscriptionByID = core.PathAdminWebhookSubscriptionByID
-	PathAdminWebhookDeadLetters      = core.PathAdminWebhookDeadLetters
-	PathAdminWebhookDeadLetterReplay = core.PathAdminWebhookDeadLetterReplay
-)
-
-// mountWebhookAdminAPI registers the opt-in generic event/webhook egress
-// engine's admin surface (opt-in WithWebhookEngine): subscription
-// management + dead-letter-queue inspection/replay. Not mounted without an
-// engine — byte-identical to a build without the feature. Relocated from
-// server_routes_admin.go to keep that file within the per-file line budget;
-// belongs beside the handler delegators above.
-func (s *Server) mountWebhookAdminAPI(api Router) {
-	if s.webhookEngine == nil {
-		return
-	}
-	api.GET(PathAdminWebhookSubscriptions, s.handleWebhookListSubscriptions)
-	api.POST(PathAdminWebhookSubscriptions, s.handleWebhookCreateSubscription)
-	api.DELETE(PathAdminWebhookSubscriptionByID, s.handleWebhookDeleteSubscription)
-	api.GET(PathAdminWebhookDeadLetters, s.handleWebhookListDeadLetters)
-	api.POST(PathAdminWebhookDeadLetterReplay, s.handleWebhookReplayDeadLetter)
-}
 func (s *Server) handleRebacCheck(ctx HandlerContext)       { rebac.HandleCheck(s, ctx) }
 func (s *Server) handleAuthzWriteTuples(ctx HandlerContext) { rebac.HandleWriteTuple(s, ctx) }
 func (s *Server) handleAuthzDeleteTuple(ctx HandlerContext) { rebac.HandleDeleteTuple(s, ctx) }

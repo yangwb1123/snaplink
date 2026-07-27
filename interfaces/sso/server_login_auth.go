@@ -7,7 +7,9 @@ import (
 	"slices"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/authenticators/device"
 	"github.com/yangwb1123/snaplink/internal/auth/login"
+	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
@@ -253,4 +255,200 @@ func (s *Server) rejectExpiredPassword(ctx HandlerContext, req *login.Request, r
 	s.recordLoginFailure(ctx, req.ClientID, req.Provider, core.ErrPasswordExpired)
 	ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, core.ErrPasswordExpired, req.State))
 	return true
+}
+
+type deviceContext struct {
+	ID          string                       `json:"id,omitempty"`
+	Type        string                       `json:"type,omitempty"`
+	Platform    string                       `json:"platform,omitempty"`
+	OSVersion   string                       `json:"os_version,omitempty"`
+	BrowserName string                       `json:"browser_name,omitempty"`
+	DeviceName  string                       `json:"device_name,omitempty"`
+	IsNew       bool                         `json:"is_new,omitempty"`
+	Fingerprint string                       `json:"fingerprint,omitempty"`
+	SecurityCtx *device.LoginSecurityContext `json:"security,omitempty"`
+	TrustScore  float64                      `json:"trust_score,omitempty"`
+}
+
+func geoFromContext(ctx HandlerContext) *core.GeoInfo {
+	if g, ok := GeoFromHandlerContext(ctx); ok && g != nil {
+		return g
+	}
+	return nil
+}
+
+func uaSummary(ua string) string {
+	if ua == "" {
+		return ""
+	}
+	dp := device.ParseUserAgent(ua)
+	if n := dp.DeviceName; n != "" {
+		if p := dp.Platform; p != "" {
+			return p + " · " + n
+		}
+		return n
+	}
+	if b := dp.BrowserName; b != "" {
+		if p := dp.Platform; p != "" {
+			return p + " · " + b
+		}
+		return b
+	}
+	if p := dp.Platform; p != "" {
+		return p
+	}
+	return string(dp.Type)
+}
+
+func locationSummary(ctx HandlerContext) string {
+	g := geoFromContext(ctx)
+	if g == nil {
+		return ""
+	}
+	if g.City != "" && g.Region != "" {
+		return g.City + ", " + g.Region
+	}
+	if g.City != "" {
+		return g.City
+	}
+	if g.CountryCode != "" {
+		return g.CountryCode
+	}
+	return ""
+}
+
+func deviceCtxFrom(ctx HandlerContext) *deviceContext {
+	v := ctx.Get("device_ctx")
+	dc, _ := v.(*deviceContext)
+	return dc
+}
+
+func deviceTypeFromCtx(ctx HandlerContext) string {
+	dc := deviceCtxFrom(ctx)
+	if dc == nil {
+		return ""
+	}
+	return dc.Type
+}
+
+func computeDeviceTrustScore(secCtx *device.LoginSecurityContext, loginCount int, existing *device.Device) float64 {
+	var score float64
+	switch {
+	case secCtx != nil && secCtx.DeviceIsNew:
+		score = 0.3
+	case secCtx != nil && secCtx.LocationIsNew:
+		score = 0.4
+	case existing != nil:
+		score = existing.TrustScore
+	default:
+		score = 0.5
+	}
+	if loginCount > 1 {
+		score += float64(loginCount-1) * 0.02
+	}
+	if existing != nil && loginCount >= 10 {
+		score = 0.85
+	}
+	if score > 0.95 {
+		score = 0.95
+	}
+	if score < 0.1 {
+		score = 0.1
+	}
+	return score
+}
+
+func deviceAwareTTL(clientTTL time.Duration, dc *deviceContext, minTTL time.Duration) time.Duration {
+	if dc == nil || dc.SecurityCtx == nil || clientTTL <= 0 {
+		return clientTTL
+	}
+	if !dc.SecurityCtx.DeviceIsNew && !dc.SecurityCtx.LocationIsNew {
+		return clientTTL
+	}
+	r := time.Hour
+	if minTTL > 0 && r < minTTL {
+		r = minTTL
+	}
+	if r < clientTTL {
+		return r
+	}
+	return clientTTL
+}
+
+func appendTrustHistory(existing *device.Device, e device.TrustHistoryEntry) []device.TrustHistoryEntry {
+	if existing == nil || len(existing.TrustHistory) == 0 {
+		return []device.TrustHistoryEntry{e}
+	}
+	h := append(existing.TrustHistory, e)
+	if len(h) > 20 {
+		h = h[len(h)-20:]
+	}
+	return h
+}
+
+func (s *Server) countLoginSessions(ctx context.Context, userID string) (int, error) {
+	if s.sessionMgr == nil {
+		return 0, nil
+	}
+	sessions, err := s.sessionMgr.ListByUser(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	return len(sessions), nil
+}
+
+func (s *Server) existingLoginDevice(ctx context.Context, userID, fingerprint string) *device.Device {
+	existing, err := s.deviceStore.GetByFingerprint(ctx, userID, fingerprint)
+	if err != nil || existing == nil {
+		return nil
+	}
+	if days := int(time.Since(existing.LastSeenAt).Hours() / 24); days > 0 {
+		existing.TrustScore = device.DecayTrustScore(existing.TrustScore, days)
+	}
+	return existing
+}
+
+func (s *Server) registerLoginDevice(ctx HandlerContext, userID string) *deviceContext {
+	if s.deviceStore == nil {
+		return nil
+	}
+	ua := ctx.Request().UserAgent()
+	dp := device.ParseUserAgent(ua)
+	fp := device.NewFingerprint(ctx.Request().Header.Get(core.HeaderDeviceID), ua)
+	if fp == "" {
+		return nil
+	}
+	if dec := device.EvaluatePolicy(s.devicePolicy, s.deviceStore, userID, fp); !dec.Allowed {
+		s.logger.Info("device policy rejected login", "user", userID, "reason", dec.Reason)
+		return nil
+	}
+	requestCtx := ctx.Request().Context()
+	ip := audit.ClientIP(ctx.Request())
+	secCtx := device.BuildSecurityContext(s.deviceStore, func(uid string) (int, error) {
+		return s.countLoginSessions(requestCtx, uid)
+	}, userID, fp, ip)
+	if secCtx != nil && secCtx.PreviousLogin != nil {
+		secCtx.PreviousLogin.Location = locationSummary(ctx)
+	}
+	existingDevice := s.existingLoginDevice(requestCtx, userID, fp)
+	estimatedCount := 1
+	if existingDevice != nil {
+		estimatedCount = existingDevice.LoginCount + 1
+	}
+	trustScore := computeDeviceTrustScore(secCtx, estimatedCount, existingDevice)
+	d := &device.Device{
+		UserID: userID, Fingerprint: fp, Type: dp.Type, Platform: dp.Platform, OSVersion: dp.OSVersion,
+		BrowserName: dp.BrowserName, BrowserVersion: dp.BrowserVersion, DeviceName: dp.DeviceName,
+		RawUserAgent: ua, LastIP: ip, LastLocation: locationSummary(ctx),
+		LoginCount: 1, TrustScore: trustScore, TrustLabel: device.TrustLabelForScore(trustScore),
+		TrustHistory: appendTrustHistory(existingDevice, device.TrustHistoryEntry{Time: time.Now(), Score: trustScore, Label: device.TrustLabelForScore(trustScore), Reason: "login"}),
+	}
+	if err := s.deviceStore.Upsert(requestCtx, d); err != nil {
+		s.logger.Error("device: failed to register", "user", userID, "error", err)
+		return nil
+	}
+	return &deviceContext{ID: d.ID, Type: string(dp.Type), Platform: dp.Platform, OSVersion: dp.OSVersion,
+		BrowserName: dp.BrowserName, DeviceName: dp.DeviceName,
+		IsNew: secCtx != nil && secCtx.DeviceIsNew, Fingerprint: fp,
+		SecurityCtx: secCtx, TrustScore: trustScore}
 }

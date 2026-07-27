@@ -67,6 +67,9 @@ type JWKSCache struct {
 	refreshInterval time.Duration
 	closeOnce       sync.Once
 	done            chan struct{}
+	refreshCtx      context.Context
+	refreshCancel   context.CancelFunc
+	refreshWG       sync.WaitGroup
 
 	// sfg deduplicates concurrent on-demand fetches: N simultaneous requests
 	// for unknown kids collapse to one upstream call (singleflight).
@@ -100,16 +103,20 @@ func WithJWKSForcedFetchInterval(d time.Duration) JWKSOption {
 // NewJWKSCache constructs the cache and starts the background refresher.
 // url is typically "<sso-server>/.well-known/jwks.json".
 func NewJWKSCache(url string, opts ...JWKSOption) *JWKSCache {
+	refreshCtx, refreshCancel := context.WithCancel(context.Background())
 	j := &JWKSCache{
 		url:             url,
 		client:          &http.Client{Timeout: 5 * time.Second},
 		keys:            make(map[string]core.JWK),
 		refreshInterval: DefaultJWKSRefreshInterval,
 		done:            make(chan struct{}),
+		refreshCtx:      refreshCtx,
+		refreshCancel:   refreshCancel,
 	}
 	for _, opt := range opts {
 		opt(j)
 	}
+	j.refreshWG.Add(1)
 	go j.refreshLoop()
 	return j
 }
@@ -193,8 +200,15 @@ func (j *JWKSCache) getJWK(ctx context.Context, kid string) (core.JWK, error) {
 	return k, nil
 }
 
-// Close stops the background refresher. Safe to call more than once.
-func (j *JWKSCache) Close() { j.closeOnce.Do(func() { close(j.done) }) }
+// Close cancels any in-flight background fetch and waits for the refresher to
+// stop. It is safe to call more than once or concurrently.
+func (j *JWKSCache) Close() {
+	j.closeOnce.Do(func() {
+		close(j.done)
+		j.refreshCancel()
+	})
+	j.refreshWG.Wait()
+}
 
 // StartRefresher ties the cache lifetime to ctx: when ctx is canceled the
 // cache closes exactly as if Close had been called. The background refresher
@@ -212,6 +226,7 @@ func (j *JWKSCache) StartRefresher(ctx context.Context) {
 }
 
 func (j *JWKSCache) refreshLoop() {
+	defer j.refreshWG.Done()
 	for {
 		t := time.NewTimer(jitteredInterval(j.refreshInterval))
 		select {
@@ -219,7 +234,7 @@ func (j *JWKSCache) refreshLoop() {
 			t.Stop()
 			return
 		case <-t.C:
-			ctx, cancel := context.WithTimeout(context.Background(), j.refreshFetchTimeout())
+			ctx, cancel := context.WithTimeout(j.refreshCtx, j.refreshFetchTimeout())
 			_ = j.fetch(ctx)
 			cancel()
 		}

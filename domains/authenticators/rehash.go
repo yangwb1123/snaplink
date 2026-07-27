@@ -49,46 +49,54 @@ func (r *LazyRehashVerifier) Verify(ctx context.Context, username, password stri
 	if err != nil {
 		return nil, err
 	}
-	// Fast-exit when no rehash machinery is wired.
-	if r.Updater == nil || r.NeedsRehash == nil {
+	if !r.needsLazyRehash(ctx, username) {
 		return result, nil
 	}
-	needs, nhErr := r.NeedsRehash(ctx, username)
-	if nhErr != nil {
-		if r.Logger != nil {
-			r.Logger.Error("lazy rehash: NeedsRehash failed (skipping)", "username", username, "error", nhErr)
-		}
-		return result, nil
-	}
-	if !needs {
-		return result, nil
-	}
-	// Snapshot plaintext; goroutine captures it by value.
-	pass := password
-	user := username
-	go func() {
-		// Updater is operator-supplied (arbitrary persistence code); a panic in
-		// it (or in HashPassword) must not escape this detached goroutine and
-		// crash the whole process over a best-effort hash upgrade.
-		defer func() {
-			if rec := recover(); rec != nil && r.Logger != nil {
-				r.Logger.Error("lazy rehash: panic recovered", "username", user, "panic", rec)
-			}
-		}()
-		newHash, genErr := HashPassword(pass)
-		if genErr != nil {
-			if r.Logger != nil {
-				r.Logger.Error("lazy rehash: bcrypt generate failed", "username", user, "error", genErr)
-			}
-			return
-		}
-		if upErr := r.Updater(context.Background(), user, newHash.Hash); upErr != nil {
-			if r.Logger != nil {
-				r.Logger.Error("lazy rehash: updater failed", "username", user, "error", upErr)
-			}
-		}
-	}()
+	go r.rehashPassword(username, password)
 	return result, nil
+}
+
+func (r *LazyRehashVerifier) needsLazyRehash(ctx context.Context, username string) bool {
+	if r.Updater == nil || r.NeedsRehash == nil {
+		return false
+	}
+	needs, err := r.NeedsRehash(ctx, username)
+	if err != nil {
+		r.logLazyRehashFailure(
+			"lazy rehash: NeedsRehash failed (skipping)", username, "error", err,
+		)
+		return false
+	}
+	return needs
+}
+
+func (r *LazyRehashVerifier) rehashPassword(username, password string) {
+	// Operator-supplied persistence runs detached; contain its panic so a
+	// best-effort credential upgrade cannot crash the process.
+	defer r.recoverLazyRehashPanic(username)
+	newHash, err := HashPassword(password)
+	if err != nil {
+		r.logLazyRehashFailure(
+			"lazy rehash: bcrypt generate failed", username, "error", err,
+		)
+		return
+	}
+	if err := r.Updater(context.Background(), username, newHash.Hash); err != nil {
+		r.logLazyRehashFailure("lazy rehash: updater failed", username, "error", err)
+	}
+}
+
+func (r *LazyRehashVerifier) recoverLazyRehashPanic(username string) {
+	if rec := recover(); rec != nil {
+		r.logLazyRehashFailure("lazy rehash: panic recovered", username, "panic", rec)
+	}
+}
+
+func (r *LazyRehashVerifier) logLazyRehashFailure(message, username, key string, value any) {
+	if r.Logger == nil {
+		return
+	}
+	r.Logger.Error(message, "username", username, key, value)
 }
 
 // Compile-time assertion: LazyRehashVerifier satisfies PasswordVerifier.

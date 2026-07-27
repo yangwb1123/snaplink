@@ -3,24 +3,23 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import checks.filesize as filesize
 from checks.filesize import check_file, is_exempt, run, EXEMPTIONS, IGNORE_PATTERNS, MAX_LINES
 
 
 class TestIsExempt(unittest.TestCase):
     def test_exact_match(self):
         root = Path("/repo")
-        self.assertTrue(is_exempt(root / "interfaces/sso/accessors.go",
-                                   "interfaces/sso/accessors.go"))
+        rel = "interfaces/sso/accessors.go"
+        self.assertTrue(is_exempt(root / rel, rel, exemptions=[rel]))
 
     def test_wildcard_match(self):
         root = Path("/repo")
-        # "test/*.go" should match any test file
-        for exempt in EXEMPTIONS:
-            if exempt.endswith("/*"):
-                base = exempt[:-2]
-                rel = f"{base}/some_file.go"
-                self.assertTrue(is_exempt(root / rel, rel),
-                                f"Expected {exempt} to match {rel}")
+        exempt = "generated/*"
+        rel = "generated/some_file.go"
+        self.assertTrue(is_exempt(root / rel, rel, exemptions=[exempt]))
 
     def test_no_false_positive(self):
         root = Path("/repo")
@@ -30,7 +29,7 @@ class TestIsExempt(unittest.TestCase):
     def test_exempt_file_listed_via_suffix(self):
         root = Path("/repo")
         rel = "cmd/sso-server/main.go"
-        self.assertTrue(is_exempt(root / rel, rel))
+        self.assertTrue(is_exempt(root / rel, rel, exemptions=["main.go"]))
 
 
 class TestCheckFile(unittest.TestCase):
@@ -85,19 +84,12 @@ class TestCheckFile(unittest.TestCase):
                             f"Pattern {pat} should be ignored")
 
     def test_exempt_file_skipped(self):
-        for exempt_path in EXEMPTIONS:
-            if exempt_path.endswith("/*"):
-                base = exempt_path[:-2]
-                f = self.root / base / "test.go"
-            else:
-                f = self.root / exempt_path
-            f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_text("\n".join(f"line {i}" for i in range(MAX_LINES + 10)))
-            # Resolve relative path correctly
-            rel = str(f.relative_to(self.root))
-            if is_exempt(f, rel):
-                self.assertTrue(check_file(f, self.root),
-                                f"Exempt file {exempt_path} should pass")
+        rel = "legacy/oversized.go"
+        f = self.root / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("\n".join(f"line {i}" for i in range(MAX_LINES + 10)))
+        with patch.object(filesize, "EXEMPTIONS", [rel]):
+            self.assertTrue(check_file(f, self.root))
 
 
 class TestExemptionsList(unittest.TestCase):

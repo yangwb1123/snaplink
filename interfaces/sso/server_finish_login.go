@@ -7,7 +7,6 @@ import (
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
-	"github.com/yangwb1123/snaplink/shared/trust"
 	"net/http"
 	"slices"
 	"time"
@@ -134,30 +133,37 @@ func (s *Server) validateAndAuthorizeScope(ctx HandlerContext, req *login.Reques
 	return granted, false
 }
 
-// finishLoginDirectMint issues session + tokens for direct-mint (response_type empty/token).
-func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client) {
-	state := req.State
+func (s *Server) prepareDirectMintSession(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client) (*Session, *deviceContext, string, bool) {
 	deviceCtx := s.registerLoginDevice(ctx, result.UserID)
 	ctx.Set("device_ctx", deviceCtx)
 	if s.sessionMgr == nil {
-		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrSessionMgrNotConfigured, state))
-		return
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrSessionMgrNotConfigured, req.State))
+		return nil, nil, "", false
 	}
 	devID := ""
 	if deviceCtx != nil {
 		devID = deviceCtx.ID
 	}
 	session, err := s.createSession(ctx, result.UserID, client.ID, client.TenantID, devID)
-	if err != nil {
-		if errors.Is(err, errMaxActiveSessions) {
-			ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrAccessDenied, state))
-			return
-		}
-		s.logger.Error("failed to create session", "error", err)
-		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
+	if err == nil {
+		s.linkGlobalSession(ctx.Request().Context(), session, result.UserID)
+		return session, deviceCtx, devID, true
+	}
+	if errors.Is(err, errMaxActiveSessions) {
+		ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrAccessDenied, req.State))
+		return nil, nil, "", false
+	}
+	s.logger.Error("failed to create session", "error", err)
+	ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, req.State))
+	return nil, nil, "", false
+}
+
+// finishLoginDirectMint issues session + tokens for direct-mint (response_type empty/token).
+func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client) {
+	session, deviceCtx, devID, ok := s.prepareDirectMintSession(ctx, result, req, client)
+	if !ok {
 		return
 	}
-	s.linkGlobalSession(ctx.Request().Context(), session, result.UserID)
 	if s.devicePolicy.RequireMFAForNewDevice && deviceCtx != nil && deviceCtx.SecurityCtx != nil && deviceCtx.SecurityCtx.DeviceIsNew && s.mfaProvider != nil && s.mfaChallengeStore != nil {
 		s.issueMFAChallenge(ctx, result, *req, client)
 		return
@@ -186,69 +192,6 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 	s.recordLoginSecurityEvents(ctx, result, client.ID, deviceCtx)
 	s.addDeviceContextToResponse(resp, deviceCtx)
 	ctx.JSON(http.StatusOK, resp)
-}
-
-// mintAccessToken resolves the per-client token strategy, applies the pairwise
-// subject pseudonym, and issues the access token for the direct-mint branch. It
-// returns the issued subject so the caller threads the SAME value into the
-// id_token (it MUST NOT be recomputed). On any failure it has ALREADY written
-// the exact 500 body (no_token_strategy / internal) and returns a non-nil error;
-// the caller returns immediately. trustScore/trustKnown (from
-// resolveLoginTrustScore) opt the token into the WithTrustScoreSerialization
-// claim; trustKnown=false leaves Claims byte-identical to before this feature.
-func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client, session *Session, trustScore trust.TrustScore, trustKnown bool) (string, *Token, string, error) {
-	state := req.State
-	strategy, ti, err := s.issuerForClient(client)
-	if err != nil {
-		s.logger.Error("no token strategy for client", "client", client.ID, "error", err)
-		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrNoTokenStrategy, state))
-		return "", nil, "", err
-	}
-	issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, result.UserID)
-	claims := result.Attributes
-	if trustKnown {
-		if name, value, ok := trust.TokenClaim(s.trustSerialization, trustScore); ok {
-			claims = cloneClaimsWithTrust(result.Attributes, name, value)
-		}
-	}
-	ttl := client.AccessTokenTTL
-	if dc := deviceCtxFrom(ctx); dc != nil {
-		ttl = deviceAwareTTL(ttl, dc, 0)
-	}
-	// Add device trust info to token claims.
-	if dc := deviceCtxFrom(ctx); dc != nil && dc.SecurityCtx != nil {
-		if dc.SecurityCtx.DeviceIsNew || dc.SecurityCtx.LocationIsNew {
-			if claims == nil {
-				claims = make(map[string]string)
-			}
-			if dc.SecurityCtx.DeviceIsNew {
-				claims["device_is_new"] = "true"
-			}
-			if dc.SecurityCtx.LocationIsNew {
-				claims["location_is_new"] = "true"
-			}
-		}
-	}
-	token, err := ti.Issue(ctx.Request().Context(), &Subject{
-		ID:                   issuedSub,
-		Provider:             result.Provider,
-		Claims:               claims,
-		Resources:            append([]string(nil), req.Resource...),
-		ClientID:             client.ID,
-		AuthTime:             time.Now(),
-		AMR:                  handler.AmrForResult(result),
-		ACR:                  result.AchievedACR,
-		AuthorizationDetails: oauth.CloneRawJSON(req.AuthorizationDetails),
-		SID:                  session.ID,
-		TTL:                  ttl,
-		RequestedClaims:      oauth.CloneRawJSON(req.Claims),
-	}, req.Scope)
-	if err != nil {
-		s.logger.Error("failed to issue token", "strategy", strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
-		return "", nil, "", err
-	}
-	return strategy, token, issuedSub, nil
 }
 
 // augmentDirectMintResponse layers the optional credentials onto the direct-mint

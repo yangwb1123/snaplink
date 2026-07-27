@@ -77,4 +77,18 @@ func TestEchoStateRedirect(t *testing.T) {
 			t.Errorf("unexpected URL: %q", url)
 		}
 	})
+
+	t.Run("state is query escaped", func(t *testing.T) {
+		url := EchoStateRedirect("https://example.com/cb", "a b&c/+")
+		if url != "https://example.com/cb?state=a+b%26c%2F%2B" {
+			t.Errorf("unexpected URL: %q", url)
+		}
+	})
+
+	t.Run("existing state is replaced", func(t *testing.T) {
+		url := EchoStateRedirect("https://example.com/cb?code=abc&state=old#fragment", "new value")
+		if url != "https://example.com/cb?code=abc&state=new+value#fragment" {
+			t.Errorf("unexpected URL: %q", url)
+		}
+	})
 }

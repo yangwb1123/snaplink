@@ -153,6 +153,9 @@ var controlAreaDefs = []controlAreaDef{
 		code: "CC7.2",
 		name: "Anomaly and lockout monitoring",
 		eventTypes: []audit.EventType{
+			audit.EventNewDeviceLogin,
+			audit.EventNewLocation,
+			audit.EventTrustDecay,
 			audit.EventAccountLocked,
 			audit.EventAnomalyDetected,
 			audit.EventRefreshTokenReuse,

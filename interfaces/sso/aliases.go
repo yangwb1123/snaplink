@@ -8,28 +8,9 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/platform/geo"
-	"github.com/yangwb1123/snaplink/platform/lifecycle/degradation"
 	"github.com/yangwb1123/snaplink/protocols/fapi"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
-
-// --- Disaster-recovery degraded-service re-exports (moved to
-// platform/lifecycle/degradation) so callers configure WithDegradationManager
-// without importing the platform package directly. ---
-type (
-	DegradationManager = degradation.Manager
-	DegradationMode    = degradation.Mode
-)
-
-const (
-	DegradationModeNormal      = degradation.ModeNormal
-	DegradationModeReadOnly    = degradation.ModeReadOnly
-	DegradationModeAuthOnly    = degradation.ModeAuthOnly
-	DegradationModeLocalOnly   = degradation.ModeLocalOnly
-	DegradationModeMaintenance = degradation.ModeMaintenance
-)
-
-var NewDegradationManager = degradation.NewManager
 
 // FAPIMode re-exports fapi.Mode so callers configure WithFAPIProfile
 // without importing the fapi package directly.
@@ -512,7 +493,3 @@ type HMACNonceProvider = handler.HMACNonceProvider
 
 // StorageHealthSource re-exported from internal/handler.
 type StorageHealthSource = handler.StorageHealthSource
-
-// Active ITDR threat-policy admin route-path re-exports.
-const PathAdminThreatPolicies = core.PathAdminThreatPolicies
-const PathAdminThreatPolicyByID = core.PathAdminThreatPolicyByID

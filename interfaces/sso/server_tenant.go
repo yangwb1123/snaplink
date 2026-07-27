@@ -206,34 +206,48 @@ func (s *Server) revokeTenantSessions(ctx context.Context, tenantID string) {
 // returning the count destroyed. A per-user enumerate/destroy failure is
 // logged and skipped so one bad member can't strand the rest.
 func (s *Server) destroyMemberSessions(ctx context.Context, tenantID string, members []*TenantMembership) int {
-	var n int
-	for _, m := range members {
-		if m == nil || m.UserID == "" {
+	var total int
+	for _, member := range members {
+		if member == nil {
 			continue
 		}
-		sessions, err := s.sessionMgr.ListByUser(ctx, m.UserID)
-		if err != nil {
-			if s.logger != nil {
-				s.logger.Error("revoke tenant sessions: list by user failed",
-					"error", err, "tenant", tenantID, "user", m.UserID)
-			}
-			continue
-		}
-		for _, sess := range sessions {
-			if sess == nil {
-				continue
-			}
-			if err := s.sessionMgr.Destroy(ctx, sess.ID); err != nil {
-				if s.logger != nil {
-					s.logger.Error("revoke tenant sessions: destroy failed",
-						"error", err, "tenant", tenantID, "user", m.UserID)
-				}
-				continue
-			}
-			n++
-		}
+		total += s.destroyUserSessions(ctx, tenantID, member.UserID)
 	}
-	return n
+	return total
+}
+
+func (s *Server) destroyUserSessions(ctx context.Context, tenantID, userID string) int {
+	if userID == "" {
+		return 0
+	}
+	sessions, err := s.sessionMgr.ListByUser(ctx, userID)
+	if err != nil {
+		s.logTenantSessionRevocationError(
+			"revoke tenant sessions: list by user failed", err, tenantID, userID,
+		)
+		return 0
+	}
+	var destroyed int
+	for _, session := range sessions {
+		if session == nil {
+			continue
+		}
+		if err := s.sessionMgr.Destroy(ctx, session.ID); err != nil {
+			s.logTenantSessionRevocationError(
+				"revoke tenant sessions: destroy failed", err, tenantID, userID,
+			)
+			continue
+		}
+		destroyed++
+	}
+	return destroyed
+}
+
+func (s *Server) logTenantSessionRevocationError(message string, err error, tenantID, userID string) {
+	if s.logger == nil {
+		return
+	}
+	s.logger.Error(message, "error", err, "tenant", tenantID, "user", userID)
 }
 
 // auditTenantTokensRevoked records the active revocation a tenant suspension

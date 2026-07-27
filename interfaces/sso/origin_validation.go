@@ -6,10 +6,21 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/yangwb1123/snaplink/interfaces/cors"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
+
+// WithCORS installs a CORS middleware between bodyLimit and the router. That
+// ordering lets preflight requests short-circuit before routing while still
+// being traced, rate-limited, and counted by metrics. An empty AllowedOrigins
+// list disables CORS without adding request-path work. This policy supports
+// credentials, exposed headers, and preflight caching beyond the legacy
+// router-level CORS MiddlewareFunc.
+func WithCORS(policy cors.Policy) Option {
+	return func(s *Server) { s.corsPolicy = &policy }
+}
 
 // The Key* re-exports below moved here from aliases.go to keep that
 // generated file within the per-file line budget; this file otherwise has

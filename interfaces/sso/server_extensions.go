@@ -13,11 +13,58 @@ import (
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/webhook"
 	"github.com/yangwb1123/snaplink/protocols/caep"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
+
+// Generic event/webhook handlers delegate to the lifecycle package while
+// retaining method values used by the existing route bindings.
+func (s *Server) handleWebhookListSubscriptions(ctx HandlerContext) {
+	webhook.HandleListSubscriptions(s, ctx)
+}
+
+func (s *Server) handleWebhookCreateSubscription(ctx HandlerContext) {
+	webhook.HandleCreateSubscription(s, ctx)
+}
+
+func (s *Server) handleWebhookDeleteSubscription(ctx HandlerContext) {
+	webhook.HandleDeleteSubscription(s, ctx)
+}
+
+func (s *Server) handleWebhookListDeadLetters(ctx HandlerContext) {
+	webhook.HandleListDeadLetters(s, ctx)
+}
+
+func (s *Server) handleWebhookReplayDeadLetter(ctx HandlerContext) {
+	webhook.HandleReplayDeadLetter(s, ctx)
+}
+
+// Route re-exports keep the public SSO composition surface independent of the
+// shared wire-constant package.
+const (
+	PathAdminWebhookSubscriptions    = core.PathAdminWebhookSubscriptions
+	PathAdminWebhookSubscriptionByID = core.PathAdminWebhookSubscriptionByID
+	PathAdminWebhookDeadLetters      = core.PathAdminWebhookDeadLetters
+	PathAdminWebhookDeadLetterReplay = core.PathAdminWebhookDeadLetterReplay
+)
+
+// mountWebhookAdminAPI registers subscription management and dead-letter
+// inspection/replay only when WithWebhookEngine supplied an engine. Keeping
+// the routes absent when unwired makes that admin surface byte-identical to a
+// build without the optional lifecycle feature.
+func (s *Server) mountWebhookAdminAPI(api Router) {
+	if s.webhookEngine == nil {
+		return
+	}
+	api.GET(PathAdminWebhookSubscriptions, s.handleWebhookListSubscriptions)
+	api.POST(PathAdminWebhookSubscriptions, s.handleWebhookCreateSubscription)
+	api.DELETE(PathAdminWebhookSubscriptionByID, s.handleWebhookDeleteSubscription)
+	api.GET(PathAdminWebhookDeadLetters, s.handleWebhookListDeadLetters)
+	api.POST(PathAdminWebhookDeadLetterReplay, s.handleWebhookReplayDeadLetter)
+}
 
 // temporarily fails.
 // matching the JWT issuers' already-configurable skew.

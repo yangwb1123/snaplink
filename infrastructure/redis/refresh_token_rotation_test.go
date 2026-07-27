@@ -73,8 +73,8 @@ func TestRecordRotationNoCapNeverExceeds(t *testing.T) {
 func TestRecordRotationWindowRollsOver(t *testing.T) {
 	t.Parallel()
 	_, rdb := newTestClient(t)
-	// Tiny window so a short real sleep guarantees rollover.
-	s := NewRefreshTokenStore(rdb, WithRotationCap(2, 10*time.Millisecond))
+	window := time.Hour
+	s := NewRefreshTokenStore(rdb, WithRotationCap(2, window))
 	ctx := context.Background()
 
 	if c, _, err := s.RecordRotation(ctx, "fam"); err != nil || c != 1 {
@@ -84,7 +84,11 @@ func TestRecordRotationWindowRollsOver(t *testing.T) {
 		t.Fatalf("second: count=%d err=%v", c, err)
 	}
 
-	time.Sleep(20 * time.Millisecond) // past the window
+	// Age the stored window directly so scheduler delays cannot make either
+	// pre-rollover assertion cross a tiny real-time boundary.
+	if err := rdb.HSet(ctx, rtRotWinKey("fam"), "ws", time.Now().Add(-2*window).UnixMilli()).Err(); err != nil {
+		t.Fatalf("age rotation window: %v", err)
+	}
 
 	c, exceeded, err := s.RecordRotation(ctx, "fam")
 	if err != nil {

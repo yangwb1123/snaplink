@@ -1,6 +1,8 @@
 package oauth
 
 import (
+	"net/url"
+
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
@@ -12,9 +14,10 @@ import (
 // Call this right before ctx.JSON in every authorization-code, implicit,
 // hybrid, and JARM response handler so no response mode drops state.
 func EchoStateConditionally(resp map[string]any, state string) {
-	if state != "" {
-		resp[core.KeyState] = state
+	if resp == nil || state == "" {
+		return
 	}
+	resp[core.KeyState] = state
 }
 
 // EchoStateError returns an error JSON body with the state parameter echoed
@@ -37,20 +40,14 @@ func EchoStateRedirect(baseURL, state string) string {
 	if state == "" {
 		return baseURL
 	}
-	sep := "?"
-	if containsQuery(baseURL) {
-		sep = "&"
+	target, err := url.Parse(baseURL)
+	if err != nil {
+		return baseURL
 	}
-	return baseURL + sep + core.KeyState + "=" + state
-}
-
-func containsQuery(url string) bool {
-	for i := 0; i < len(url); i++ {
-		if url[i] == '?' {
-			return true
-		}
-	}
-	return false
+	query := target.Query()
+	query.Set(core.KeyState, state)
+	target.RawQuery = query.Encode()
+	return target.String()
 }
 
 // compile-time validation: these functions compile only when core.KeyState

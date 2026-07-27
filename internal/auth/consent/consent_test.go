@@ -191,4 +191,38 @@ func TestRawJSONEqual(t *testing.T) {
 			t.Error("JSON equality should be key-order independent")
 		}
 	})
+
+	t.Run("nested key order independence", func(t *testing.T) {
+		if !rawJSONEqual(
+			json.RawMessage(`{"outer":{"a":1,"b":[{"x":2,"y":3}]}}`),
+			json.RawMessage(`{"outer":{"b":[{"y":3,"x":2}],"a":1}}`),
+		) {
+			t.Error("nested JSON objects should be key-order independent")
+		}
+	})
+
+	t.Run("array order matters", func(t *testing.T) {
+		if rawJSONEqual(
+			json.RawMessage(`{"values":[1,2]}`),
+			json.RawMessage(`{"values":[2,1]}`),
+		) {
+			t.Error("JSON array order should remain significant")
+		}
+	})
+
+	t.Run("malformed JSON never matches", func(t *testing.T) {
+		malformed := json.RawMessage(`{"a":`)
+		if rawJSONEqual(malformed, malformed) {
+			t.Error("malformed JSON should not compare equal")
+		}
+	})
+
+	t.Run("large numbers retain precision", func(t *testing.T) {
+		if rawJSONEqual(
+			json.RawMessage(`{"n":9007199254740992}`),
+			json.RawMessage(`{"n":9007199254740993}`),
+		) {
+			t.Error("distinct large JSON numbers should not compare equal")
+		}
+	})
 }

@@ -36,9 +36,11 @@ func TestSQLiteLimiter_BurstAllowedThenDenied(t *testing.T) {
 
 func TestSQLiteLimiter_RefillAfterIdle(t *testing.T) {
 	t.Parallel()
-	// Burst=1, 10/sec — after draining, wait 110ms → bucket refills 1.1 tokens
-	// → next request succeeds.
+	// A controlled clock keeps DB or race-detector latency from becoming an
+	// accidental refill before the immediate second request.
 	lim := newSQLiteLimiterForTest(t, 10, 1)
+	now := time.Unix(1_700_000_000, 0)
+	lim.now = func() time.Time { return now }
 
 	ok, _ := lim.Allow("alice")
 	if !ok {
@@ -49,7 +51,7 @@ func TestSQLiteLimiter_RefillAfterIdle(t *testing.T) {
 	if ok {
 		t.Fatal("immediate second request allowed — refill should not have happened yet")
 	}
-	time.Sleep(110 * time.Millisecond)
+	now = now.Add(110 * time.Millisecond)
 	ok, _ = lim.Allow("alice")
 	if !ok {
 		t.Fatal("post-refill request denied — token did not refill")

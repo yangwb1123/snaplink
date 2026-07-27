@@ -3,32 +3,37 @@
 import unittest
 from pathlib import Path
 from checks.exemptions import run as exemptions_run
-from checks.filesize import EXEMPTIONS
+from checks.filesize import EXEMPTIONS, MAX_LINES, is_exempt
 
 
 class TestExemptionsList(unittest.TestCase):
     def test_exemptions_is_list(self):
         self.assertIsInstance(EXEMPTIONS, list)
 
-    def test_exemptions_non_empty(self):
-        self.assertGreater(len(EXEMPTIONS), 0)
+    def test_exemptions_stay_empty(self):
+        self.assertEqual(EXEMPTIONS, [])
 
     def test_all_exemptions_are_strings(self):
         for e in EXEMPTIONS:
             self.assertIsInstance(e, str)
 
-    def test_key_files_in_exemptions(self):
-        """Critical file exemptions must be present."""
+    def test_key_files_only_exempt_when_oversized(self):
+        """Critical files leave the exemption list once they fit the budget."""
+        root = Path(__file__).resolve().parents[1]
         key_files = [
             "interfaces/sso/sso.go",
             "interfaces/sso/accessors.go",
             "cmd/sso-server/main.go",
             "config/config.go",
         ]
-        exempt_str = " ".join(EXEMPTIONS)
-        for kf in key_files:
-            self.assertIn(kf, exempt_str,
-                          f"Key file {kf} should be in EXEMPTIONS")
+        for rel in key_files:
+            lines = len((root / rel).read_text().splitlines())
+            exempt = is_exempt(root / rel, rel)
+            self.assertEqual(
+                exempt,
+                lines > MAX_LINES,
+                f"{rel}: exemption={exempt}, lines={lines}, max={MAX_LINES}",
+            )
 
     def test_no_empty_exemptions(self):
         for e in EXEMPTIONS:

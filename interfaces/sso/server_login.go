@@ -9,9 +9,12 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/internal/auth/login"
+	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/trust"
 )
 
 func (s *Server) handleLogin(ctx HandlerContext) {
@@ -61,6 +64,72 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	}
 
 	s.finishLogin(ctx, result, req, client)
+}
+
+func (s *Server) directMintClaims(ctx HandlerContext, result *AuthResult, score trust.TrustScore, known bool) map[string]string {
+	claims := result.Attributes
+	if known {
+		if name, value, ok := trust.TokenClaim(s.trustSerialization, score); ok {
+			claims = cloneClaimsWithTrust(result.Attributes, name, value)
+		}
+	}
+	dc := deviceCtxFrom(ctx)
+	if dc == nil || dc.SecurityCtx == nil {
+		return claims
+	}
+	if !dc.SecurityCtx.DeviceIsNew && !dc.SecurityCtx.LocationIsNew {
+		return claims
+	}
+	if claims == nil {
+		claims = make(map[string]string)
+	}
+	if dc.SecurityCtx.DeviceIsNew {
+		claims["device_is_new"] = "true"
+	}
+	if dc.SecurityCtx.LocationIsNew {
+		claims["location_is_new"] = "true"
+	}
+	return claims
+}
+
+// mintAccessToken resolves the per-client token strategy, applies the pairwise
+// subject pseudonym, and issues the access token for the direct-mint branch. It
+// returns the issued subject so the caller threads the SAME value into the
+// id_token (it MUST NOT be recomputed). On any failure it has ALREADY written
+// the exact 500 body (no_token_strategy / internal) and returns a non-nil error.
+func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client, session *Session, trustScore trust.TrustScore, trustKnown bool) (string, *Token, string, error) {
+	state := req.State
+	strategy, ti, err := s.issuerForClient(client)
+	if err != nil {
+		s.logger.Error("no token strategy for client", "client", client.ID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrNoTokenStrategy, state))
+		return "", nil, "", err
+	}
+	issuedSub := s.applyPairwiseSubject(ctx.Request().Context(), client, result.UserID)
+	ttl := client.AccessTokenTTL
+	if dc := deviceCtxFrom(ctx); dc != nil {
+		ttl = deviceAwareTTL(ttl, dc, 0)
+	}
+	token, err := ti.Issue(ctx.Request().Context(), &Subject{
+		ID:                   issuedSub,
+		Provider:             result.Provider,
+		Claims:               s.directMintClaims(ctx, result, trustScore, trustKnown),
+		Resources:            append([]string(nil), req.Resource...),
+		ClientID:             client.ID,
+		AuthTime:             time.Now(),
+		AMR:                  handler.AmrForResult(result),
+		ACR:                  result.AchievedACR,
+		AuthorizationDetails: oauth.CloneRawJSON(req.AuthorizationDetails),
+		SID:                  session.ID,
+		TTL:                  ttl,
+		RequestedClaims:      oauth.CloneRawJSON(req.Claims),
+	}, req.Scope)
+	if err != nil {
+		s.logger.Error("failed to issue token", "strategy", strategy, "error", err)
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
+		return "", nil, "", err
+	}
+	return strategy, token, issuedSub, nil
 }
 
 // rejectNonJSONLogin is the /auth/login CSRF gate: the login SPA sends

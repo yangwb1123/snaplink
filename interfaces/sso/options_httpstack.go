@@ -12,7 +12,6 @@ import (
 	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
 	"github.com/yangwb1123/snaplink/domains/connections"
 	"github.com/yangwb1123/snaplink/domains/tenant"
-	"github.com/yangwb1123/snaplink/interfaces/cors"
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
 	"github.com/yangwb1123/snaplink/platform/audit"
@@ -21,20 +20,6 @@ import (
 	"github.com/yangwb1123/snaplink/platform/lifecycle/webhook"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
-
-// WithCORS installs a CORS middleware sitting between bodyLimit and
-// the router, so preflight 204s short-circuit before routing but
-// still get counted in metrics + traced + rate-limited. Composes
-// with [ratelimit.Middleware] / [metrics.Middleware] / [tracing] —
-// each handles its own concern.
-//
-// Empty AllowedOrigins disables CORS (zero overhead). Use the
-// modern [cors] package shape rather than the legacy router-level
-// [CORS] MiddlewareFunc when you want credentials / exposed headers
-// / preflight caching.
-func WithCORS(policy cors.Policy) Option {
-	return func(s *Server) { s.corsPolicy = &policy }
-}
 
 // WithTracing wraps every request in an OpenTelemetry HTTP span,
 // honoring incoming W3C traceparent headers as the parent. operation

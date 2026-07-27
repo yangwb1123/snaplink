@@ -142,27 +142,39 @@ func TestLazyRehash_UpgradesImportedHashOnLogin(t *testing.T) {
 	importUser(t, p, "alice", "alice-pw", authenticators.HashFormatArgon2id)
 
 	needs, update := authenticators.StoredHashRehashHooks(p)
+	rehashDone := make(chan error, 1)
 	v := &authenticators.LazyRehashVerifier{
 		Underlying:  authenticators.NewStoredHashVerifier(p),
 		NeedsRehash: needs,
-		Updater:     update,
+		Updater: func(ctx context.Context, username, hash string) error {
+			err := update(ctx, username, hash)
+			rehashDone <- err
+			return err
+		},
 	}
 
 	if _, err := v.Verify(ctx, "alice", "alice-pw"); err != nil {
 		t.Fatalf("login failed: %v", err)
 	}
-	// The rehash is fire-and-forget; poll until the stored format flips.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		u, _ := p.GetByID(ctx, "alice")
-		if u.Attributes[authenticators.AttrPasswordHashFormat] == authenticators.HashFormatBcrypt {
-			// And the migrated bcrypt hash still verifies the same password.
-			if _, err := v.Verify(ctx, "alice", "alice-pw"); err != nil {
-				t.Fatalf("login after rehash failed: %v", err)
-			}
-			return
+	// The production path remains detached; the wrapped updater gives this
+	// test an exact completion edge without scheduler-dependent polling.
+	select {
+	case err := <-rehashDone:
+		if err != nil {
+			t.Fatalf("rehash update failed: %v", err)
 		}
-		time.Sleep(10 * time.Millisecond)
+	case <-time.After(2 * time.Second):
+		t.Fatal("rehash updater did not complete")
 	}
-	t.Fatal("imported hash was not upgraded to bcrypt after login")
+	u, err := p.GetByID(ctx, "alice")
+	if err != nil {
+		t.Fatalf("get upgraded user: %v", err)
+	}
+	if u.Attributes[authenticators.AttrPasswordHashFormat] != authenticators.HashFormatBcrypt {
+		t.Fatalf("format after login = %q, want bcrypt", u.Attributes[authenticators.AttrPasswordHashFormat])
+	}
+	// The migrated bcrypt hash must still verify the same password.
+	if _, err := v.Verify(ctx, "alice", "alice-pw"); err != nil {
+		t.Fatalf("login after rehash failed: %v", err)
+	}
 }

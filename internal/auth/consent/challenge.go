@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -101,11 +102,29 @@ func (s *ChallengeStore) Consume(id, userID, clientID string, scopes []string, a
 	return true
 }
 
-// rawJSONEqual reports whether two raw JSON blobs are byte-identical,
-// treating nil and empty as equal (both represent "no value").
+// rawJSONEqual compares JSON structure while preserving numeric precision and
+// array order. Nil and empty both represent "no value".
 func rawJSONEqual(a, b json.RawMessage) bool {
-	if len(a) == 0 && len(b) == 0 {
-		return true
+	if len(a) == 0 || len(b) == 0 {
+		return len(a) == 0 && len(b) == 0
 	}
-	return bytes.Equal(a, b)
+	left, ok := decodeRawJSON(a)
+	if !ok {
+		return false
+	}
+	right, ok := decodeRawJSON(b)
+	return ok && reflect.DeepEqual(left, right)
+}
+
+func decodeRawJSON(raw json.RawMessage) (any, bool) {
+	if !json.Valid(raw) {
+		return nil, false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, false
+	}
+	return value, true
 }

@@ -169,15 +169,22 @@ func TestBcryptVerifier_UnknownUserRejected(t *testing.T) {
 // of magnitude (within 3x at min cost). A bare lookup-miss would
 // be 100x+ faster.
 func TestBcryptVerifier_UnknownUserTimingMatchesKnown(t *testing.T) {
-	t.Parallel()
 	hashPath := writeBcryptHashFile(t, "p")
 	users := []config.PasswordUserConfig{{
 		Username: "u", BcryptHashFile: hashPath, SubjectID: "s",
 	}}
 	verifier, _ := serverbuildauthn.BuildBcryptPasswordVerifier(users, quietLogger())
-	const iters = 3
-	known := timeVerify(t, verifier, "u", "wrong", iters)
-	unknown := timeVerify(t, verifier, "nobody", "anything", iters)
+	const iters = 30
+	var known, unknown time.Duration
+	for i := range iters {
+		if i%2 == 0 {
+			known += timeVerify(t, verifier, "u", "wrong", 1)
+			unknown += timeVerify(t, verifier, "nobody", "anything", 1)
+			continue
+		}
+		unknown += timeVerify(t, verifier, "nobody", "anything", 1)
+		known += timeVerify(t, verifier, "u", "wrong", 1)
+	}
 	ratio := float64(unknown) / float64(known)
 	if ratio < 1.0/3.0 || ratio > 3.0 {
 		t.Errorf("timing ratio unknown/known = %.2f; want roughly 1 (both should bcrypt)",

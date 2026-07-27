@@ -7,6 +7,10 @@ import (
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
+// Active ITDR threat-policy admin route-path re-exports.
+const PathAdminThreatPolicies = core.PathAdminThreatPolicies
+const PathAdminThreatPolicyByID = core.PathAdminThreatPolicyByID
+
 // threatState is the Active ITDR detection-to-response bridge wiring.
 // Embedded anonymously in [Server] via sso.go so its fields are promoted.
 type threatState struct {
