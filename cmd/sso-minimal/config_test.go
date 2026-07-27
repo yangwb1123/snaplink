@@ -44,11 +44,17 @@ func TestModulesJSON(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &inventory); err != nil {
 		t.Fatalf("decode inventory: %v", err)
 	}
-	if inventory.Program != inventoryProgram || inventory.Profile != prototypeProfile {
+	if inventory.Program != inventoryProgram ||
+		inventory.Profile != defaultCommandProfile {
 		t.Fatalf("inventory identity = %#v", inventory)
 	}
-	if !contains(inventory.Modules, "sso-prototype-runtime") {
-		t.Fatalf("inventory missing prototype runtime: %v", inventory.Modules)
+	for _, module := range []string{
+		"sso-prototype-runtime",
+		"sso-minimal-runtime",
+	} {
+		if !contains(inventory.Modules, module) {
+			t.Fatalf("inventory missing %s: %v", module, inventory.Modules)
+		}
 	}
 }
 

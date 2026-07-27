@@ -34,7 +34,7 @@ func Inventory(program string) ModuleInventory {
 		}
 	}
 	return ModuleInventory{
-		Program:    program,
+		Program:    ProgramName(program, BuildProfile),
 		Profile:    fallback(BuildProfile, "unknown"),
 		LockDigest: fallback(ModuleLockDigest, "unlocked"),
 		Modules:    modules,

@@ -1,0 +1,24 @@
+{
+  "$schema": "../profile.schema.json",
+  "schema_version": 1,
+  "id": "minimal",
+  "summary": "Common OAuth and OIDC SSO with structured logging and tracing.",
+  "maturity": "preview",
+  "extends": "prototype",
+  "modules": [
+    "sso-minimal-runtime"
+  ],
+  "build": {
+    "package": "./cmd/sso-minimal",
+    "binary": "snaplink",
+    "program": "snaplink",
+    "composition_module": "sso-minimal-runtime"
+  },
+  "policy": {
+    "allow_cgo": false,
+    "fips": "compatible",
+    "allowed_licenses": [
+      "Apache-2.0"
+    ]
+  }
+}

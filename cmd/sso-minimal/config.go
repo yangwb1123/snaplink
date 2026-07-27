@@ -21,15 +21,15 @@ const (
 	defaultSecondID     = "demo-app-b"
 	defaultSecondSecret = "demo-secret-b"
 	defaultSecondURI    = "http://127.0.0.1:3001/callback"
-	defaultScopes       = "openid,profile,email"
 )
 
 type runtimeConfig struct {
-	Listen string
-	Issuer string
-	User   userSeed
-	Client clientSeed
-	Second clientSeed
+	Listen  string
+	Issuer  string
+	Edition runtimeEdition
+	User    userSeed
+	Client  clientSeed
+	Second  clientSeed
 }
 
 type userSeed struct {
@@ -68,9 +68,12 @@ func parseRuntimeConfig(args []string, getenv func(string) string, stderr io.Wri
 }
 
 func defaultsFromEnv(getenv func(string) string) runtimeConfig {
+	edition := configuredRuntimeEdition()
+	defaultScopes := defaultScopesForEdition(edition)
 	return runtimeConfig{
-		Listen: envOr(getenv, "SSO_MINIMAL_LISTEN", defaultListen),
-		Issuer: getenv("SSO_MINIMAL_ISSUER"),
+		Listen:  envOr(getenv, "SSO_MINIMAL_LISTEN", defaultListen),
+		Issuer:  getenv("SSO_MINIMAL_ISSUER"),
+		Edition: edition,
 		User: userSeed{
 			ID:          envOr(getenv, "SSO_MINIMAL_USER_ID", defaultUserID),
 			Username:    envOr(getenv, "SSO_MINIMAL_USERNAME", defaultUsername),
@@ -134,10 +137,10 @@ func (cfg runtimeConfig) validate() error {
 	if cfg.User.ID == "" || cfg.User.Username == "" || cfg.User.Password == "" {
 		return errors.New("user-id, username, and user-password are required")
 	}
-	if err := validateClientSeed(cfg.Client, "primary"); err != nil {
+	if err := validateClientSeed(cfg.Client, "primary", cfg.Edition); err != nil {
 		return err
 	}
-	if err := validateClientSeed(cfg.Second, "second"); err != nil {
+	if err := validateClientSeed(cfg.Second, "second", cfg.Edition); err != nil {
 		return err
 	}
 	if cfg.Client.ID == cfg.Second.ID {
@@ -146,14 +149,18 @@ func (cfg runtimeConfig) validate() error {
 	return nil
 }
 
-func validateClientSeed(client clientSeed, label string) error {
+func validateClientSeed(
+	client clientSeed,
+	label string,
+	edition runtimeEdition,
+) error {
 	if client.ID == "" || client.Secret == "" {
 		return fmt.Errorf("%s client ID and secret are required", label)
 	}
 	if !validHTTPURL(client.RedirectURI) {
 		return fmt.Errorf("%s redirect URI must be an absolute http or https URL", label)
 	}
-	if !contains(client.Scopes, "openid") {
+	if edition.oidcEnabled() && !contains(client.Scopes, "openid") {
 		return fmt.Errorf("%s scopes must include openid", label)
 	}
 	return nil

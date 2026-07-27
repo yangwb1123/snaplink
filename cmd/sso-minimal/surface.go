@@ -33,24 +33,53 @@ var hiddenMetadataEndpoints = []string{
 	"token_endpoint_auth_signing_alg_values_supported",
 }
 
-type prototypeSurface struct {
-	next   http.Handler
-	scopes []string
+var prototypeOnlyHiddenMetadata = []string{
+	"acr_values_supported",
+	"backchannel_logout_session_supported",
+	"backchannel_logout_supported",
+	"check_session_iframe",
+	"claim_types_supported",
+	"claims_parameter_supported",
+	"claims_supported",
+	"display_values_supported",
+	"end_session_endpoint",
+	"frontchannel_logout_session_supported",
+	"frontchannel_logout_supported",
+	"id_token_encryption_alg_values_supported",
+	"id_token_encryption_enc_values_supported",
+	"id_token_signing_alg_values_supported",
+	"prompt_values_supported",
+	"subject_types_supported",
+	"userinfo_encryption_alg_values_supported",
+	"userinfo_encryption_enc_values_supported",
+	"userinfo_endpoint",
+	"userinfo_signing_alg_values_supported",
 }
 
-func newPrototypeSurface(next http.Handler, scopes []string) http.Handler {
+type prototypeSurface struct {
+	next    http.Handler
+	scopes  []string
+	edition runtimeEdition
+}
+
+func newPrototypeSurface(
+	next http.Handler,
+	scopes []string,
+	edition runtimeEdition,
+) http.Handler {
 	return &prototypeSurface{
-		next:   next,
-		scopes: append([]string(nil), scopes...),
+		next:    next,
+		scopes:  append([]string(nil), scopes...),
+		edition: edition,
 	}
 }
 
 func (h *prototypeSurface) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if isMetadataPath(r.URL.Path) {
+	if isMetadataPath(r.URL.Path, h.edition) {
 		h.serveMetadata(w, r)
 		return
 	}
-	if !prototypeRouteAllowed(r.Method, r.URL.Path) {
+	if !editionRouteAllowed(h.edition, r.Method, r.URL.Path) {
 		http.NotFound(w, r)
 		return
 	}
@@ -74,14 +103,18 @@ func (h *prototypeSurface) serveMetadata(w http.ResponseWriter, r *http.Request)
 		response.flushTo(w)
 		return
 	}
-	narrowMetadata(document, h.scopes)
+	narrowMetadata(document, h.scopes, h.edition)
 	response.body.Reset()
 	_ = json.NewEncoder(&response.body).Encode(document)
 	response.header.Del("Content-Length")
 	response.flushTo(w)
 }
 
-func narrowMetadata(document map[string]any, scopes []string) {
+func narrowMetadata(
+	document map[string]any,
+	scopes []string,
+	edition runtimeEdition,
+) {
 	document[keyGrantTypes] = []string{"authorization_code"}
 	document[keyResponseTypes] = []string{"code"}
 	document[keyChallengeMethods] = []string{sso.PKCEMethodS256}
@@ -94,6 +127,11 @@ func narrowMetadata(document map[string]any, scopes []string) {
 	document["request_uri_parameter_supported"] = false
 	for _, key := range hiddenMetadataEndpoints {
 		delete(document, key)
+	}
+	if edition == editionPrototype {
+		for _, key := range prototypeOnlyHiddenMetadata {
+			delete(document, key)
+		}
 	}
 }
 
@@ -112,9 +150,9 @@ func configuredScopes(clients []clientSeed) []string {
 	return scopes
 }
 
-func prototypeRouteAllowed(method, path string) bool {
+func editionRouteAllowed(edition runtimeEdition, method, path string) bool {
 	if method == http.MethodOptions {
-		return prototypePathAllowed(path)
+		return editionPathAllowed(edition, path)
 	}
 	switch path {
 	case sso.PathHealth, sso.PathLivez, sso.PathReadyz, sso.PathJWKS:
@@ -124,19 +162,21 @@ func prototypeRouteAllowed(method, path string) bool {
 	case sso.PathToken, sso.PathLogout:
 		return method == http.MethodPost
 	case sso.PathUserInfo, sso.PathEndSession:
-		return method == http.MethodGet
+		return edition.oidcEnabled() && method == http.MethodGet
 	default:
 		return false
 	}
 }
 
-func prototypePathAllowed(path string) bool {
-	return prototypeRouteAllowed(http.MethodGet, path) ||
-		prototypeRouteAllowed(http.MethodPost, path) ||
-		isMetadataPath(path)
+func editionPathAllowed(edition runtimeEdition, path string) bool {
+	return editionRouteAllowed(edition, http.MethodGet, path) ||
+		editionRouteAllowed(edition, http.MethodPost, path) ||
+		isMetadataPath(path, edition)
 }
 
-func isMetadataPath(path string) bool {
-	return path == sso.PathOIDCDiscovery ||
-		path == sso.PathOAuthAuthorizationServerMetadata
+func isMetadataPath(path string, edition runtimeEdition) bool {
+	if path == sso.PathOAuthAuthorizationServerMetadata {
+		return true
+	}
+	return edition.oidcEnabled() && path == sso.PathOIDCDiscovery
 }

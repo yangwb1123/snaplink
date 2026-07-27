@@ -43,7 +43,7 @@ func execute(
 }
 
 func writeUsage(w io.Writer, fs *flag.FlagSet) {
-	fmt.Fprintf(w, `%s — minimal in-memory Authorization Code + PKCE OIDC server.
+	fmt.Fprintf(w, `%s — prototype/minimal in-memory SSO server.
 
 Usage:
   %s [flags]

@@ -40,9 +40,7 @@
       "requires": [
         "core.runtime.v1"
       ],
-      "conflicts": [
-        "sso-prototype-runtime"
-      ],
+      "conflicts": [],
       "security": {
         "removable": true,
         "failure_policy": "fail-closed"
@@ -51,21 +49,22 @@
     {
       "schema_version": 1,
       "id": "sso-prototype-runtime",
-      "summary": "Runnable single-process SSO prototype composition; package-level dependency isolation remains incremental.",
+      "summary": "OAuth SSO prototype with structured logs and a stable default tenant seam.",
       "kind": "bundle",
       "state": "embedded",
       "activation": "restart",
       "host_api": "v1alpha1",
       "provides": [
+        "oauth.sso-prototype.v1",
+        "observability.logging.v1",
+        "tenant.default.v1",
         "server.sso-prototype.v1"
       ],
       "requires": [
         "core.runtime.v1",
         "security.policy.v1"
       ],
-      "conflicts": [
-        "stock-server"
-      ],
+      "conflicts": [],
       "security": {
         "removable": false,
         "failure_policy": "fail-closed"
@@ -484,27 +483,21 @@
     },
     {
       "schema_version": 1,
-      "id": "sso-production-edition",
-      "summary": "Production SSO edition aggregate: durable state, security controls, operations, and HA-capable providers.",
+      "id": "sso-minimal-runtime",
+      "summary": "Common SSO composition with OAuth, OIDC, structured logging, and tracing.",
       "kind": "bundle",
-      "state": "planned",
+      "state": "embedded",
       "activation": "restart",
       "host_api": "v1alpha1",
       "provides": [
-        "edition.sso-production.v1"
+        "observability.tracing.v1",
+        "oidc.common.v1",
+        "server.sso-minimal.v1"
       ],
       "requires": [
-        "admin.control-plane.v1",
-        "cluster.ha.v1",
-        "identity.self-service.v1",
-        "observability.host.v1",
-        "oauth.production.v1",
-        "oidc.sso-session.v1",
         "server.sso-prototype.v1"
       ],
-      "conflicts": [
-        "stock-server"
-      ],
+      "conflicts": [],
       "security": {
         "removable": false,
         "failure_policy": "fail-closed"
@@ -715,29 +708,21 @@
     },
     {
       "schema_version": 1,
-      "id": "sso-complete-edition",
-      "summary": "Complete portable product edition aggregate for advanced protocol, enterprise, tenant, authorization, threat, and governance scenarios.",
+      "id": "sso-production-runtime",
+      "summary": "Complete current server composition with the registered Kafka cold module.",
       "kind": "bundle",
-      "state": "planned",
+      "state": "embedded",
       "activation": "restart",
       "host_api": "v1alpha1",
       "provides": [
-        "edition.sso-complete.v1"
+        "server.sso-production.v1"
       ],
       "requires": [
-        "edition.sso-production.v1",
-        "identity.enterprise-auth.v1",
-        "identity.provisioning.v1",
-        "integrations.host.v1",
-        "oauth.advanced.v1",
-        "platform.authorization.v1",
-        "platform.governance.v1",
-        "platform.tenant.v1",
-        "platform.threat.v1"
+        "audit.sink.kafka.v1",
+        "server.sso-minimal.v1",
+        "server.stock.v1"
       ],
-      "conflicts": [
-        "stock-server"
-      ],
+      "conflicts": [],
       "security": {
         "removable": false,
         "failure_policy": "fail-closed"

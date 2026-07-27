@@ -1,0 +1,24 @@
+{
+  "$schema": "../profile.schema.json",
+  "schema_version": 1,
+  "id": "production",
+  "summary": "Complete current Snaplink server and registered production modules.",
+  "maturity": "supported",
+  "extends": "minimal",
+  "modules": [
+    "sso-production-runtime"
+  ],
+  "build": {
+    "package": "./cmd/sso-server",
+    "binary": "snaplink",
+    "program": "snaplink",
+    "composition_module": "sso-production-runtime"
+  },
+  "policy": {
+    "allow_cgo": false,
+    "fips": "any",
+    "allowed_licenses": [
+      "Apache-2.0"
+    ]
+  }
+}

@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -32,12 +33,24 @@ from module_catalog import (
 
 
 DEFAULT_OUT_ROOT = ROOT / "dist" / "modules"
+DEFAULT_BUILD_VERSION = "v0.0.0-dev"
 OUTPUT_MARKER = ".snaplink-modules-output"
 OVERLAY_TARGET = (
     ROOT / "cmd" / "sso-server" / "servermodules" / "register_configured.go"
 )
 BUILDINFO_IMPORT = "github.com/snaplink/sso/platform/buildinfo"
 ROOT_MODULE_PATH = "github.com/snaplink/sso"
+EDITION_PROFILES = frozenset({"prototype", "minimal", "production"})
+SEMVER_PRERELEASE_ID = (
+    r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+)
+BUILD_VERSION_RE = re.compile(
+    r"^v(?:0|[1-9][0-9]*)"
+    r"\.(?:0|[1-9][0-9]*)"
+    r"\.(?:0|[1-9][0-9]*)"
+    rf"(?:-{SEMVER_PRERELEASE_ID}(?:\.{SEMVER_PRERELEASE_ID})*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 SOURCE_FILE_FIELDS = (
     "GoFiles",
     "CgoFiles",
@@ -93,6 +106,14 @@ REGISTRATION_HANDLERS = {
 
 class BuildModulesError(RuntimeError):
     """A profile materialization or Go build failure."""
+
+
+def _build_version(value: str) -> str:
+    if not BUILD_VERSION_RE.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            "expected vMAJOR.MINOR.PATCH with optional SemVer pre-release/build metadata"
+        )
+    return value
 
 
 def _validate_output_dir(out_dir: Path) -> None:
@@ -572,6 +593,7 @@ def _lock_payload(
     build_input_digest: str,
     source_digests: dict[str, str],
     go_environment: dict[str, str],
+    build_version: str,
 ) -> dict:
     revision, dirty = _git_state()
     return {
@@ -592,6 +614,7 @@ def _lock_payload(
             "package": plan.profile.build_package,
             "binary": plan.profile.binary_name,
             "program": plan.profile.program_name,
+            "version": build_version,
         },
         "build_input_digest": build_input_digest,
         "modules": _lock_modules(plan, source_digests),
@@ -614,12 +637,13 @@ def _write_lock(payload: dict, out_dir: Path) -> tuple[Path, str]:
     return path, digest
 
 
-def _build_ldflags(plan: Plan, lock_digest: str) -> str:
+def _build_ldflags(plan: Plan, lock_digest: str, build_version: str) -> str:
     modules = ",".join(module.id for module in plan.modules)
     values = {
         "BuildProfile": plan.profile.id,
         "ModuleLockDigest": lock_digest,
         "CompiledModules": modules,
+        "Version": build_version,
     }
     return " ".join(
         f"-X {BUILDINFO_IMPORT}.{name}={value}" for name, value in values.items()
@@ -634,6 +658,7 @@ def _build_binary(
     lock_digest: str,
     build_input_digest: str,
     env: dict[str, str],
+    build_version: str,
 ) -> None:
     binary.parent.mkdir(parents=True, exist_ok=True)
     args = [
@@ -643,7 +668,7 @@ def _build_binary(
         "-buildvcs=true",
         *_go_flags(modfile, overlay, "readonly"),
         "-ldflags",
-        _build_ldflags(plan, lock_digest),
+        _build_ldflags(plan, lock_digest, build_version),
         "-o",
         str(binary),
         plan.profile.build_package,
@@ -679,6 +704,7 @@ def _build_binary(
         )
     if _is_native_target(env):
         _verify_binary_inventory(plan, binary, lock_digest, env)
+        _verify_binary_version(plan, binary, build_version, env)
 
 
 def _binary_module_paths(metadata: str) -> set[str]:
@@ -716,6 +742,27 @@ def _verify_binary_inventory(
     if inventory != expected:
         raise BuildModulesError(
             "built binary module inventory does not match the generated lock"
+        )
+
+
+def _expected_version_line(plan: Plan, build_version: str) -> str:
+    if plan.profile.id in EDITION_PROFILES:
+        return f"snaplink-{build_version}.{plan.profile.id}"
+    return f"{plan.profile.program_name} {build_version}"
+
+
+def _verify_binary_version(
+    plan: Plan,
+    binary: Path,
+    build_version: str,
+    env: dict[str, str],
+) -> None:
+    lines = _run([str(binary), "version"], env=env).splitlines()
+    expected = _expected_version_line(plan, build_version)
+    if not lines or lines[0] != expected:
+        actual = lines[0] if lines else "<empty>"
+        raise BuildModulesError(
+            f"built binary version mismatch: expected {expected!r}, got {actual!r}"
         )
 
 
@@ -762,6 +809,12 @@ def _configure_parser() -> argparse.ArgumentParser:
     parser.add_argument("--without-module", action="append", default=[])
     parser.add_argument("--add-module", action="append", default=[])
     parser.add_argument("--target", help="GOOS/GOARCH; defaults to go env")
+    parser.add_argument(
+        "--version",
+        default=DEFAULT_BUILD_VERSION,
+        type=_build_version,
+        help=f"release version to embed (default: {DEFAULT_BUILD_VERSION})",
+    )
     parser.add_argument("--out", type=Path)
     parser.add_argument("--build", action="store_true")
     parser.add_argument("--output-binary", type=Path)
@@ -827,6 +880,7 @@ def configure(argv: list[str]) -> int:
             build_input_digest,
             source_digests,
             _go_build_environment(env),
+            args.version,
         )
         _, lock_digest = _write_lock(payload, staging)
         if args.build:
@@ -838,6 +892,7 @@ def configure(argv: list[str]) -> int:
                 lock_digest,
                 build_input_digest,
                 env,
+                args.version,
             )
         _publish_output(staging, out_dir)
     except Exception:

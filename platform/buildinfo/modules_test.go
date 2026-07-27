@@ -16,7 +16,7 @@ func TestInventoryNormalizesModuleList(t *testing.T) {
 	CompiledModules = "core-runtime, oauth-client-credentials, "
 
 	got := Inventory("demo")
-	if got.Program != "demo" || got.Profile != "minimal" || got.LockDigest != "sha256:abc" {
+	if got.Program != "snaplink" || got.Profile != "minimal" || got.LockDigest != "sha256:abc" {
 		t.Fatalf("Inventory metadata = %+v", got)
 	}
 	if strings.Join(got.Modules, ",") != "core-runtime,oauth-client-credentials" {

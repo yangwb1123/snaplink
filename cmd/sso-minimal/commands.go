@@ -9,10 +9,10 @@ import (
 )
 
 const (
-	programName      = "sso-minimal"
-	inventoryProgram = "sso-server"
-	prototypeProfile = "sso-prototype"
-	prototypeLock    = "unlocked"
+	programName           = "snaplink"
+	inventoryProgram      = "snaplink"
+	defaultCommandProfile = "minimal"
+	unlockedDigest        = "unlocked"
 )
 
 var version = ""
@@ -26,7 +26,12 @@ func handleCommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		if len(args) != 1 {
 			return commandUsageError(stderr, "version accepts no arguments")
 		}
-		buildinfo.Write(stdout, programName, version)
+		buildinfo.WriteProfile(
+			stdout,
+			programName,
+			version,
+			moduleInventory().Profile,
+		)
 		return true, 0
 	case "modules":
 		return handleModulesCommand(args[1:], stdout, stderr)
@@ -72,9 +77,17 @@ func writeModules(w io.Writer, asJSON bool) error {
 
 func moduleInventory() buildinfo.ModuleInventory {
 	inventory := buildinfo.Inventory(inventoryProgram)
-	if inventory.Profile == "standard" && inventory.LockDigest == prototypeLock {
-		inventory.Profile = prototypeProfile
-		inventory.Modules = []string{"core-runtime", "sso-prototype-runtime"}
+	if inventory.Profile == "standard" && inventory.LockDigest == unlockedDigest {
+		inventory.Program = buildinfo.ProgramName(
+			inventory.Program,
+			defaultCommandProfile,
+		)
+		inventory.Profile = defaultCommandProfile
+		inventory.Modules = []string{
+			"core-runtime",
+			"sso-prototype-runtime",
+			"sso-minimal-runtime",
+		}
 	}
 	return inventory
 }

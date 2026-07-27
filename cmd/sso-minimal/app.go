@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/snaplink/sso/domains/authenticators"
+	"github.com/snaplink/sso/domains/tenant"
+	tenantmemory "github.com/snaplink/sso/domains/tenant/memory"
 	"github.com/snaplink/sso/infrastructure/defaultimpl"
 	"github.com/snaplink/sso/interfaces/sso"
 )
@@ -48,11 +51,19 @@ func buildHandlerWithSessions(
 		clientStore.AddSeed(seedClient(client))
 	}
 	issuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(tokenTTL))
-	opts := serverOptions(cfg, users, passwords, clientStore, issuer)
+	tenantStore, err := newDefaultTenantStore(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	opts := serverOptions(cfg, users, passwords, clientStore, issuer, tenantStore)
 	opts = append(opts, sso.WithAuthenticator(newOPSessionAuthenticator(sessions)))
 	server := sso.NewServer(opts...)
 	handler := newOPSessionHandler(server.Handler(), sessions, cfg.Issuer)
-	return newPrototypeSurface(handler, configuredScopes(clientSeeds)), nil
+	return newPrototypeSurface(
+		handler,
+		configuredScopes(clientSeeds),
+		cfg.Edition,
+	), nil
 }
 
 func serverOptions(
@@ -61,15 +72,15 @@ func serverOptions(
 	passwords *defaultimpl.MemoryPasswordCredentialStore,
 	clients *defaultimpl.MemoryClientStore,
 	issuer *defaultimpl.Ed25519JWTIssuer,
+	tenantStore tenant.Store,
 ) []sso.Option {
-	return []sso.Option{
+	opts := []sso.Option{
 		sso.WithIssuer(cfg.Issuer),
 		sso.WithUserProvider(users),
 		sso.WithClientStore(clients),
 		sso.WithSessionManager(defaultimpl.NewMemorySessionManager()),
 		sso.WithAuthenticator(buildPasswordAuthenticator(cfg.User, passwords)),
 		sso.WithTokenIssuer("jwt", issuer),
-		sso.WithIDTokenIssuer(issuer),
 		sso.WithDefaultTokenStrategy("jwt"),
 		sso.WithAuthCodeStore(defaultimpl.NewMemoryAuthCodeStore(), authCodeTTL),
 		sso.WithOAuth21StrictMode(true),
@@ -79,8 +90,17 @@ func serverOptions(
 		sso.WithMaxScopeCount(maxScopeCount),
 		sso.WithPanicRecovery(true),
 		sso.WithSecurityHeaders(),
-		sso.WithFeatureGates(minimalFeatureGates()),
+		sso.WithLogger(newJSONLogger(os.Stderr)),
+		sso.WithTenantStore(tenantStore),
+		sso.WithFeatureGates(featureGatesForEdition(cfg.Edition)),
 	}
+	if cfg.Edition.oidcEnabled() {
+		opts = append(opts, sso.WithIDTokenIssuer(issuer))
+	}
+	if cfg.Edition.tracingEnabled() {
+		opts = append(opts, sso.WithTracingMiddleware())
+	}
+	return opts
 }
 
 func seedUser(
@@ -110,6 +130,7 @@ func seedClient(seed clientSeed) *sso.Client {
 		AllowedScopes:         append([]string(nil), seed.Scopes...),
 		AllowedAuthenticators: []string{authenticators.MethodPassword, opSessionProvider},
 		TokenStrategy:         "jwt",
+		TenantID:              defaultTenantID,
 		Active:                true,
 		RequirePKCE:           true,
 		AllowedPKCEMethods:    []string{sso.PKCEMethodS256},
@@ -151,9 +172,9 @@ func userClaims(seed userSeed) map[string]string {
 	return claims
 }
 
-func minimalFeatureGates() sso.FeatureGates {
+func featureGatesForEdition(edition runtimeEdition) sso.FeatureGates {
 	return sso.FeatureGates{
-		OIDC:        sso.Bool(true),
+		OIDC:        sso.Bool(edition.oidcEnabled()),
 		CIBA:        sso.Bool(false),
 		CAEP:        sso.Bool(false),
 		Federation:  sso.Bool(false),
@@ -161,4 +182,18 @@ func minimalFeatureGates() sso.FeatureGates {
 		AdminAPI:    sso.Bool(false),
 		WebSPA:      sso.Bool(false),
 	}
+}
+
+func newDefaultTenantStore(ctx context.Context) (tenant.Store, error) {
+	store := tenantmemory.New()
+	err := store.PutTenant(ctx, &tenant.Tenant{
+		ID:     defaultTenantID,
+		Slug:   defaultTenantID,
+		Name:   "Default",
+		Status: tenant.StatusActive,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return store, nil
 }

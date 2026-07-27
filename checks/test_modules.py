@@ -1,3 +1,4 @@
+import argparse
 import json
 import stat
 import subprocess
@@ -34,9 +35,9 @@ from module_catalog import (
 def test_repository_catalog_and_profiles_validate():
     checked = validate_repository()
     assert checked[0] == "catalog (32 modules)"
-    assert any(item.startswith("profile sso-prototype") for item in checked)
-    assert any(item.startswith("profile sso-production") for item in checked)
-    assert any(item.startswith("profile sso-complete") for item in checked)
+    assert any(item.startswith("profile prototype") for item in checked)
+    assert any(item.startswith("profile minimal") for item in checked)
+    assert any(item.startswith("profile production") for item in checked)
     catalog_schema = json.loads(
         (ROOT / "ops" / "build" / "catalog.schema.json").read_text()
     )
@@ -48,14 +49,18 @@ def test_repository_catalog_and_profiles_validate():
 
 
 def test_smoke_matrix_includes_supported_and_buildable_preview_profiles():
-    assert supported_profile_ids() == ("standard", "standard-kafka")
+    assert supported_profile_ids() == ("production", "standard", "standard-kafka")
     assert buildable_profile_ids() == (
-        "sso-prototype",
+        "minimal",
+        "production",
+        "prototype",
         "standard",
         "standard-kafka",
     )
     assert module_builder._smoke_profile_ids() == (
-        "sso-prototype",
+        "minimal",
+        "production",
+        "prototype",
         "standard",
         "standard-kafka",
     )
@@ -89,36 +94,85 @@ def test_standard_kafka_dependency_order_is_stable():
     assert plan.buildable
 
 
-def test_sso_prototype_uses_its_own_build_target():
-    plan = resolve_plan("sso-prototype")
+def test_prototype_uses_its_own_build_target():
+    plan = resolve_plan("prototype")
     assert plan.buildable
     assert plan.profile.build_package == "./cmd/sso-minimal"
-    assert plan.profile.binary_name == "sso-server"
+    assert plan.profile.binary_name == "snaplink"
+    assert plan.profile.program_name == "snaplink"
     assert plan.profile.composition_module == "sso-prototype-runtime"
     assert "stock-server" not in {module.id for module in plan.modules}
 
 
-def test_product_editions_inherit_and_report_extraction_blockers():
-    production = resolve_plan("sso-production")
-    complete = resolve_plan("sso-complete")
-    assert "sso-prototype-runtime" in {module.id for module in production.modules}
-    assert "sso-production-edition" in {module.id for module in complete.modules}
-    assert production.profile.build_package == "./cmd/sso-production"
-    assert production.profile.composition_module == "sso-production-edition"
-    assert complete.profile.build_package == "./cmd/sso-complete"
-    assert complete.profile.composition_module == "sso-complete-edition"
-    assert not production.buildable
-    assert not complete.buildable
-    assert any(
-        "build package ./cmd/sso-production" in item
-        for item in production.blockers
+def test_product_tiers_are_buildable_and_inherit_capabilities():
+    prototype = resolve_plan("prototype")
+    minimal = resolve_plan("minimal")
+    production = resolve_plan("production")
+    prototype_modules = {module.id for module in prototype.modules}
+    minimal_modules = {module.id for module in minimal.modules}
+    production_modules = {module.id for module in production.modules}
+
+    assert prototype_modules < minimal_modules < production_modules
+    assert minimal.profile.build_package == "./cmd/sso-minimal"
+    assert minimal.profile.composition_module == "sso-minimal-runtime"
+    assert production.profile.build_package == "./cmd/sso-server"
+    assert production.profile.composition_module == "sso-production-runtime"
+    assert {"stock-server", "audit-kafka"} <= production_modules
+    assert production.dependencies["sso-production-runtime"] == (
+        "audit-kafka",
+        "sso-minimal-runtime",
+        "stock-server",
     )
-    assert any(
-        "build package ./cmd/sso-complete" in item
-        for item in complete.blockers
+    assert prototype.buildable
+    assert minimal.buildable
+    assert production.buildable
+
+
+@pytest.mark.parametrize(
+    "version",
+    (
+        "v0.0.0-dev",
+        "v1.1.1",
+        "v2.0.0-rc.1+build.7",
+    ),
+)
+def test_build_version_accepts_strict_semver(version):
+    assert module_builder._build_version(version) == version
+
+
+@pytest.mark.parametrize(
+    "version",
+    (
+        "1.1.1",
+        "v01.1.1",
+        "v1.01.1",
+        "v1.1.01",
+        "v1.1",
+        "v1.1.1-01",
+        "v1.1.1 ",
+    ),
+)
+def test_build_version_rejects_invalid_values(version):
+    with pytest.raises(argparse.ArgumentTypeError, match="vMAJOR.MINOR.PATCH"):
+        module_builder._build_version(version)
+
+
+def test_tier_version_lines_and_ldflags_are_exact():
+    plan = resolve_plan("minimal")
+    version = "v1.1.1"
+    assert (
+        module_builder._expected_version_line(plan, version)
+        == "snaplink-v1.1.1.minimal"
     )
-    assert any("op-session-sso" in item for item in production.blockers)
-    assert any("sso-complete-edition" in item for item in complete.blockers)
+    ldflags = module_builder._build_ldflags(plan, "sha256:test", version)
+    assert (
+        "-X github.com/snaplink/sso/platform/buildinfo.Version=v1.1.1"
+        in ldflags
+    )
+    assert (
+        "-X github.com/snaplink/sso/platform/buildinfo.BuildProfile=minimal"
+        in ldflags
+    )
 
 
 def test_profile_inheritance_cycle_is_rejected(tmp_path, monkeypatch):
@@ -229,6 +283,8 @@ def test_configure_supports_external_output_directory(tmp_path):
     assert str(output / "modules.lock.json") in result.stdout
     assert (output / "modules.lock.json").is_file()
     assert stat.S_IMODE(output.stat().st_mode) == 0o755
+    lock = json.loads((output / "modules.lock.json").read_text())
+    assert lock["target"]["version"] == "v0.0.0-dev"
     module_file = json.loads(
         subprocess.check_output(
             [
@@ -244,6 +300,42 @@ def test_configure_supports_external_output_directory(tmp_path):
     )
     replacement = module_file["Replace"][0]["New"]["Path"]
     assert not Path(replacement).is_absolute()
+
+
+def test_build_version_changes_the_lock_identity(tmp_path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    assert (
+        module_builder.configure(
+            [
+                "--profile",
+                "prototype",
+                "--version",
+                "v1.1.1",
+                "--out",
+                str(first),
+            ]
+        )
+        == 0
+    )
+    assert (
+        module_builder.configure(
+            [
+                "--profile",
+                "prototype",
+                "--version",
+                "v1.1.2",
+                "--out",
+                str(second),
+            ]
+        )
+        == 0
+    )
+    first_lock = json.loads((first / "modules.lock.json").read_text())
+    second_lock = json.loads((second / "modules.lock.json").read_text())
+    assert first_lock["target"]["version"] == "v1.1.1"
+    assert second_lock["target"]["version"] == "v1.1.2"
+    assert first_lock["lock_digest"] != second_lock["lock_digest"]
 
 
 def test_native_target_uses_host_not_environment_target(monkeypatch):
