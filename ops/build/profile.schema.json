@@ -34,12 +34,44 @@
         "planned"
       ]
     },
+    "extends": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
     "modules": {
       "type": "array",
       "uniqueItems": true,
       "items": {
         "type": "string",
         "pattern": "^[a-z][a-z0-9-]*$"
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "package",
+        "binary",
+        "program",
+        "composition_module"
+      ],
+      "properties": {
+        "package": {
+          "type": "string",
+          "pattern": "^\\./cmd/[A-Za-z0-9._/-]+$"
+        },
+        "binary": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "program": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "composition_module": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        }
       }
     },
     "policy": {

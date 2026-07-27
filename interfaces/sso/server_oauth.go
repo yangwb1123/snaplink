@@ -14,27 +14,6 @@ import (
 	"github.com/snaplink/sso/protocols/oauth"
 	"github.com/snaplink/sso/shared/core"
 )
-func (s *Server) issueAuthCode(ctx context.Context, result *AuthResult, req *login.Request, client *Client, confirmationJKT string) (string, error) {
-	return oauth.IssueAuthCode(ctx, oauth.IssueAuthCodeParams{
-		AuthCodeTTL:          s.authCodeTTL,
-		AuthCodeStore:        s.authCodeStore,
-		UserID:               result.UserID,
-		ClientID:             client.ID,
-		RedirectURI:          req.RedirectURI,
-		Scopes:               req.Scope,
-		Nonce:                req.Nonce,
-		Provider:             result.Provider,
-		AuthMethods:          result.AuthMethods,
-		ACR:                  result.AchievedACR,
-		Attributes:           result.Attributes,
-		CodeChallenge:        req.CodeChallenge,
-		CodeChallengeMethod:  req.CodeChallengeMethod,
-		Resources:            req.Resource,
-		AuthorizationDetails: req.AuthorizationDetails,
-		ConfirmationJKT:      confirmationJKT,
-		RequestedClaims: req.Claims,
-	})
-}
 func (s *Server) captureAuthCodeDPoPBinding(ctx HandlerContext, state string) (dpopJKT string, handled bool) {
 	proof := ctx.Request().Header.Get(HeaderDPoP)
 	if proof == "" {

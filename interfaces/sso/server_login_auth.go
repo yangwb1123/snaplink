@@ -1,6 +1,7 @@
 package sso
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"slices"
@@ -11,6 +12,35 @@ import (
 	"github.com/snaplink/sso/shared/core"
 	"github.com/snaplink/sso/shared/security"
 )
+
+func (s *Server) issueAuthCode(
+	ctx context.Context,
+	result *AuthResult,
+	req *login.Request,
+	client *Client,
+	confirmationJKT string,
+) (string, error) {
+	return oauth.IssueAuthCode(ctx, oauth.IssueAuthCodeParams{
+		AuthCodeTTL:          s.authCodeTTL,
+		AuthCodeStore:        s.authCodeStore,
+		UserID:               result.UserID,
+		ClientID:             client.ID,
+		RedirectURI:          req.RedirectURI,
+		Scopes:               req.Scope,
+		Nonce:                req.Nonce,
+		Provider:             result.Provider,
+		AuthMethods:          result.AuthMethods,
+		ACR:                  result.AchievedACR,
+		AuthTime:             result.AuthTime,
+		Attributes:           result.Attributes,
+		CodeChallenge:        req.CodeChallenge,
+		CodeChallengeMethod:  req.CodeChallengeMethod,
+		Resources:            req.Resource,
+		AuthorizationDetails: req.AuthorizationDetails,
+		ConfirmationJKT:      confirmationJKT,
+		RequestedClaims:      req.Claims,
+	})
+}
 
 // authenticateUser resolves the authenticator and validates credentials: a
 // federated authenticator with a LoginURL redirects (handled=true); otherwise

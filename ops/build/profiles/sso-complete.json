@@ -1,0 +1,24 @@
+{
+  "$schema": "../profile.schema.json",
+  "schema_version": 1,
+  "id": "sso-complete",
+  "summary": "Complete portable SSO product edition layered on the production mechanisms.",
+  "maturity": "planned",
+  "extends": "sso-production",
+  "modules": [
+    "sso-complete-edition"
+  ],
+  "build": {
+    "package": "./cmd/sso-complete",
+    "binary": "sso-server",
+    "program": "sso-server",
+    "composition_module": "sso-complete-edition"
+  },
+  "policy": {
+    "allow_cgo": false,
+    "fips": "any",
+    "allowed_licenses": [
+      "Apache-2.0"
+    ]
+  }
+}

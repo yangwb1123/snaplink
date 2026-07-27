@@ -56,8 +56,16 @@ PROFILE_FIELDS = {
     "id",
     "summary",
     "maturity",
+    "extends",
     "modules",
+    "build",
     "policy",
+}
+PROFILE_BUILD_FIELDS = {
+    "package",
+    "binary",
+    "program",
+    "composition_module",
 }
 SUPPORTED_REGISTRATIONS = {"audit.kafka.factory.v1"}
 REGISTRATION_CONTRACTS = {
@@ -124,6 +132,24 @@ class Profile:
     @property
     def modules(self) -> tuple[str, ...]:
         return tuple(self.data["modules"])
+
+    @property
+    def build_package(self) -> str:
+        return self.data.get("build", {}).get("package", "./cmd/sso-server")
+
+    @property
+    def binary_name(self) -> str:
+        return self.data.get("build", {}).get("binary", "sso-server")
+
+    @property
+    def program_name(self) -> str:
+        return self.data.get("build", {}).get("program", "sso-server")
+
+    @property
+    def composition_module(self) -> str:
+        return self.data.get("build", {}).get(
+            "composition_module", "stock-server"
+        )
 
     @property
     def digest(self) -> str:
@@ -520,13 +546,34 @@ def load_catalog(add_modules: Iterable[str | Path] = ()) -> Catalog:
     return Catalog(raw["host_api"], by_id, "sha256:" + _digest_json(raw))
 
 
-def load_profile(profile: str) -> Profile:
+def _validate_profile_build(data: dict, label: str) -> None:
+    if not isinstance(data, dict):
+        raise ModuleConfigError(f"{label}: expected object")
+    _reject_unknown(data, PROFILE_BUILD_FIELDS, label)
+    missing = sorted(PROFILE_BUILD_FIELDS - set(data))
+    if missing:
+        raise ModuleConfigError(f"{label}: missing fields: {', '.join(missing)}")
+    if any(not isinstance(data[key], str) or not data[key] for key in data):
+        raise ModuleConfigError(f"{label}: all fields must be non-empty strings")
+    package = data["package"]
+    if not package.startswith("./cmd/") or ".." in Path(package).parts:
+        raise ModuleConfigError(f"{label}.package: expected a ./cmd/ package")
+    for key in ("binary", "program", "composition_module"):
+        if not MODULE_ID_RE.fullmatch(data[key]):
+            raise ModuleConfigError(f"{label}.{key}: invalid identifier")
+
+
+def _profile_path(profile: str) -> Path:
     requested = Path(profile)
     path = (
-        requested if requested.suffix == ".json" else PROFILES_DIR / f"{profile}.json"
+        requested
+        if requested.suffix == ".json"
+        else PROFILES_DIR / f"{profile}.json"
     )
-    path = path.expanduser().resolve()
-    raw = _read_json(path)
+    return path.expanduser().resolve()
+
+
+def _validate_profile(raw: dict, path: Path) -> None:
     _reject_unknown(raw, PROFILE_FIELDS, str(path))
     required = {"schema_version", "id", "summary", "maturity", "modules", "policy"}
     missing = sorted(required - set(raw))
@@ -555,6 +602,13 @@ def load_profile(profile: str) -> Profile:
     modules = _string_list(raw, "modules", str(path))
     if any(not MODULE_ID_RE.fullmatch(value) for value in modules):
         raise ModuleConfigError(f"{path}.modules: invalid module id")
+    if "extends" in raw and (
+        not isinstance(raw["extends"], str)
+        or not MODULE_ID_RE.fullmatch(raw["extends"])
+    ):
+        raise ModuleConfigError(f"{path}.extends: invalid profile id")
+    if "build" in raw:
+        _validate_profile_build(raw["build"], f"{path}.build")
     policy = raw["policy"]
     if not isinstance(policy, dict):
         raise ModuleConfigError(f"{path}.policy: expected object")
@@ -578,7 +632,32 @@ def load_profile(profile: str) -> Profile:
         raise ModuleConfigError(
             f"{path}: custom profile cannot reuse built-in id {raw['id']!r}"
         )
+
+
+def _merge_profile(parent: Profile, raw: dict) -> dict:
+    merged = dict(raw)
+    merged["modules"] = list(dict.fromkeys((*parent.modules, *raw["modules"])))
+    if "build" not in merged and "build" in parent.data:
+        merged["build"] = dict(parent.data["build"])
+    return merged
+
+
+def _load_profile_path(path: Path, stack: tuple[Path, ...]) -> Profile:
+    if path in stack:
+        chain = " -> ".join(item.stem for item in (*stack, path))
+        raise ModuleConfigError(f"profile inheritance cycle: {chain}")
+    raw = _read_json(path)
+    _validate_profile(raw, path)
+    parent_id = raw.get("extends")
+    if parent_id:
+        parent_path = (PROFILES_DIR / f"{parent_id}.json").resolve()
+        parent = _load_profile_path(parent_path, (*stack, path))
+        raw = _merge_profile(parent, raw)
     return Profile(raw, path)
+
+
+def load_profile(profile: str) -> Profile:
+    return _load_profile_path(_profile_path(profile), ())
 
 
 def _provider_for(
@@ -673,13 +752,18 @@ def _policy_blockers(profile: Profile, modules: Iterable[Module]) -> list[str]:
     return blockers
 
 
-def _composition_blockers(selected: set[str]) -> list[str]:
-    if "stock-server" in selected:
-        return []
-    return [
-        "current composition still requires stock-server; complete the "
-        "minimal entry-point extraction before building this profile"
-    ]
+def _composition_blockers(profile: Profile, selected: set[str]) -> list[str]:
+    blockers: list[str] = []
+    required = profile.composition_module
+    if required not in selected:
+        blockers.append(
+            f"build target {profile.build_package} requires composition module "
+            f"{required}"
+        )
+    package_path = ROOT / profile.build_package.removeprefix("./")
+    if not package_path.is_dir():
+        blockers.append(f"build package {profile.build_package} does not exist")
+    return blockers
 
 
 def _validate_registration_slots(modules: Iterable[Module]) -> None:
@@ -729,7 +813,7 @@ def resolve_plan(
     _validate_registration_slots(ordered)
     frozen_deps = {mid: tuple(sorted(dependencies.get(mid, ()))) for mid in ordered_ids}
     blockers = tuple(
-        _composition_blockers(selected) + _policy_blockers(profile, ordered)
+        _composition_blockers(profile, selected) + _policy_blockers(profile, ordered)
     )
     return Plan(
         catalog,
@@ -744,6 +828,7 @@ def resolve_plan(
 def format_plan(plan: Plan) -> str:
     lines = [
         f"profile: {plan.profile.id} ({plan.profile.data['maturity']})",
+        f"build: {plan.profile.build_package} -> {plan.profile.binary_name}",
         f"host_api: {plan.catalog.host_api}",
         f"buildable: {'yes' if plan.buildable else 'no'}",
         "modules:",
@@ -846,7 +931,7 @@ def validate_repository() -> list[str]:
 
 
 def supported_profile_ids() -> tuple[str, ...]:
-    """Return every repository profile covered by the build smoke gate."""
+    """Return repository profiles with supported release maturity."""
     validate_repository()
     profiles = (load_profile(str(path)) for path in sorted(PROFILES_DIR.glob("*.json")))
     return tuple(
@@ -854,5 +939,17 @@ def supported_profile_ids() -> tuple[str, ...]:
             profile.id
             for profile in profiles
             if profile.data["maturity"] == "supported"
+        )
+    )
+
+
+def buildable_profile_ids() -> tuple[str, ...]:
+    """Return repository profiles whose resolved plans can be built now."""
+    validate_repository()
+    return tuple(
+        sorted(
+            plan.profile.id
+            for path in PROFILES_DIR.glob("*.json")
+            if (plan := resolve_plan(str(path))).buildable
         )
     )

@@ -4,8 +4,8 @@
   "id": "standard-kafka",
   "summary": "Stock server plus the statically linked Kafka audit sink.",
   "maturity": "supported",
+  "extends": "standard",
   "modules": [
-    "stock-server",
     "audit-kafka"
   ],
   "policy": {

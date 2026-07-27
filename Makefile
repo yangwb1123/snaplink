@@ -11,7 +11,7 @@ MODULE_ARGS ?=
 
 CLI = python cli.py
 
-.PHONY: help test race bench vet fmt build configure build-profile modules-list modules-plan modules-check modules-smoke docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
+.PHONY: help test race bench vet fmt build configure build-profile build-prototype build-small modules-list modules-plan modules-check modules-smoke docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
 
 # ── Go Dev (via $GO directly for speed) ──────────────────────────────
 
@@ -108,11 +108,13 @@ modules-plan: ## Show dependency closure and blockers for PROFILE.
 modules-check: ## Validate module schemas, catalog, manifests, and profiles.
 	$(CLI) modules check
 
-modules-smoke: ## Build and verify every supported cold-module profile.
+modules-smoke: ## Build supported profiles plus every currently buildable preview.
 	$(CLI) modules smoke
 
-build-small: ## Deprecated alias for the planned minimal profile; fails until real isolation is complete.
-	$(CLI) configure --profile minimal --build
+build-prototype: ## Build the loopback-only SSO prototype profile.
+	$(CLI) configure --profile sso-prototype --build
+
+build-small: build-prototype ## Compatibility alias for build-prototype.
 
 build-with-pkcs11: ## Deprecated placeholder; PKCS#11 is not yet registered by a supported profile.
 	@echo "PKCS#11 is a nested module but is not yet connected to the profile host API." >&2

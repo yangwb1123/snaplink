@@ -1,0 +1,24 @@
+{
+  "$schema": "../profile.schema.json",
+  "schema_version": 1,
+  "id": "sso-production",
+  "summary": "Production SSO edition layered on the prototype with durable state, controls, and operability.",
+  "maturity": "planned",
+  "extends": "sso-prototype",
+  "modules": [
+    "sso-production-edition"
+  ],
+  "build": {
+    "package": "./cmd/sso-production",
+    "binary": "sso-server",
+    "program": "sso-server",
+    "composition_module": "sso-production-edition"
+  },
+  "policy": {
+    "allow_cgo": false,
+    "fips": "compatible",
+    "allowed_licenses": [
+      "Apache-2.0"
+    ]
+  }
+}

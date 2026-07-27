@@ -130,6 +130,7 @@ type IssueAuthCodeParams struct {
 	Provider             string
 	AuthMethods          []string
 	ACR                  string
+	AuthTime             time.Time
 	Attributes           map[string]string
 	CodeChallenge        string
 	CodeChallengeMethod  string
@@ -157,6 +158,11 @@ func IssueAuthCode(ctx context.Context, p IssueAuthCodeParams) (string, error) {
 	if ttl <= 0 {
 		ttl = 10 * time.Minute // DefaultAuthCodeTTL fallback
 	}
+	now := time.Now()
+	authTime := p.AuthTime
+	if authTime.IsZero() {
+		authTime = now
+	}
 	entry := &oauthspi.AuthCode{
 		UserID:               p.UserID,
 		ClientID:             p.ClientID,
@@ -164,7 +170,7 @@ func IssueAuthCode(ctx context.Context, p IssueAuthCodeParams) (string, error) {
 		Scopes:               append([]string(nil), p.Scopes...),
 		Nonce:                p.Nonce,
 		Provider:             p.Provider,
-		AuthTime:             time.Now(),
+		AuthTime:             authTime,
 		AuthMethods:          p.AuthMethods,
 		ACR:                  p.ACR,
 		Attributes:           p.Attributes,
@@ -175,7 +181,7 @@ func IssueAuthCode(ctx context.Context, p IssueAuthCodeParams) (string, error) {
 		SID:                  p.SID,
 		ConfirmationJKT:      p.ConfirmationJKT,
 		RequestedClaims:      oauthvalidate.CloneRawJSON(p.RequestedClaims),
-		ExpiresAt:            time.Now().Add(ttl),
+		ExpiresAt:            now.Add(ttl),
 	}
 	if err := p.AuthCodeStore.Issue(ctx, code, entry); err != nil {
 		return "", fmt.Errorf("store auth code: %w", err)

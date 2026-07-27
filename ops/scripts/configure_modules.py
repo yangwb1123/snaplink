@@ -19,6 +19,7 @@ from module_catalog import (
     Module,
     ModuleConfigError,
     Plan,
+    buildable_profile_ids,
     format_catalog,
     format_plan,
     graph_lines,
@@ -302,6 +303,7 @@ def _resolve_go_graph(
     modfile: Path,
     overlay: Path,
     env: dict[str, str],
+    package: str,
 ) -> tuple[list[dict], list[dict]]:
     package_output = _run(
         [
@@ -310,7 +312,7 @@ def _resolve_go_graph(
             "-deps",
             "-json",
             *_go_flags(modfile, overlay, "mod"),
-            "./cmd/sso-server",
+            package,
         ],
         env=env,
     )
@@ -333,6 +335,7 @@ def _list_go_packages(
     modfile: Path,
     overlay: Path,
     env: dict[str, str],
+    package: str,
 ) -> list[dict]:
     output = _run(
         [
@@ -341,7 +344,7 @@ def _list_go_packages(
             "-deps",
             "-json",
             *_go_flags(modfile, overlay, "readonly"),
-            "./cmd/sso-server",
+            package,
         ],
         env=env,
     )
@@ -586,6 +589,9 @@ def _lock_payload(
         "target": {
             "go_env": go_environment,
             "tags": ["snaplink_configured"],
+            "package": plan.profile.build_package,
+            "binary": plan.profile.binary_name,
+            "program": plan.profile.program_name,
         },
         "build_input_digest": build_input_digest,
         "modules": _lock_modules(plan, source_digests),
@@ -640,10 +646,12 @@ def _build_binary(
         _build_ldflags(plan, lock_digest),
         "-o",
         str(binary),
-        "./cmd/sso-server",
+        plan.profile.build_package,
     ]
     _run(args, env=env, capture=False)
-    post_packages = _list_go_packages(modfile, overlay, env)
+    post_packages = _list_go_packages(
+        modfile, overlay, env, plan.profile.build_package
+    )
     post_digest, _ = _build_input_digests(post_packages, overlay)
     if post_digest != build_input_digest:
         raise BuildModulesError("build inputs changed during compilation")
@@ -700,7 +708,7 @@ def _verify_binary_inventory(
             "built binary returned invalid module inventory"
         ) from exc
     expected = {
-        "program": "sso-server",
+        "program": plan.profile.program_name,
         "profile": plan.profile.id,
         "lock_digest": lock_digest,
         "modules": [module.id for module in plan.modules],
@@ -709,6 +717,12 @@ def _verify_binary_inventory(
         raise BuildModulesError(
             "built binary module inventory does not match the generated lock"
         )
+
+
+def _smoke_profile_ids() -> tuple[str, ...]:
+    return tuple(
+        sorted(set(supported_profile_ids()) | set(buildable_profile_ids()))
+    )
 
 
 def _publish_output(staging: Path, out_dir: Path) -> None:
@@ -778,7 +792,7 @@ def configure(argv: list[str]) -> int:
     out_dir = (args.out or DEFAULT_OUT_ROOT / plan.profile.id).resolve()
     _validate_output_dir(out_dir)
     _validate_owned_output(out_dir)
-    binary_relative = Path("sso-server")
+    binary_relative = Path(plan.profile.binary_name)
     if args.output_binary:
         requested_binary = args.output_binary.resolve()
         try:
@@ -803,7 +817,9 @@ def configure(argv: list[str]) -> int:
         _, overlay = _write_overlay(plan, staging)
         modfile, _ = _copy_root_module(staging)
         _materialize_module_requirements(plan, modfile)
-        go_modules, packages = _resolve_go_graph(modfile, overlay, env)
+        go_modules, packages = _resolve_go_graph(
+            modfile, overlay, env, plan.profile.build_package
+        )
         build_input_digest, source_digests = _build_input_digests(packages, overlay)
         payload = _lock_payload(
             plan,
@@ -861,7 +877,7 @@ def modules(argv: list[str]) -> int:
             print(f"OK: {checked}")
         return 0
     if args.action == "smoke":
-        for profile in supported_profile_ids():
+        for profile in _smoke_profile_ids():
             configure(["--profile", profile, "--build"])
         return 0
     if args.action == "list":

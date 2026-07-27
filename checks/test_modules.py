@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "ops" / "scripts"))
 
 import configure_modules as module_builder
+import module_catalog
 from configure_modules import (
     BuildModulesError,
     _binary_module_paths,
@@ -22,6 +23,8 @@ from configure_modules import (
 )
 from module_catalog import (
     ModuleConfigError,
+    buildable_profile_ids,
+    load_profile,
     resolve_plan,
     supported_profile_ids,
     validate_repository,
@@ -30,8 +33,10 @@ from module_catalog import (
 
 def test_repository_catalog_and_profiles_validate():
     checked = validate_repository()
-    assert checked[0] == "catalog (15 modules)"
-    assert any(item.startswith("profile minimal") for item in checked)
+    assert checked[0] == "catalog (32 modules)"
+    assert any(item.startswith("profile sso-prototype") for item in checked)
+    assert any(item.startswith("profile sso-production") for item in checked)
+    assert any(item.startswith("profile sso-complete") for item in checked)
     catalog_schema = json.loads(
         (ROOT / "ops" / "build" / "catalog.schema.json").read_text()
     )
@@ -42,8 +47,35 @@ def test_repository_catalog_and_profiles_validate():
     assert module_ref == module_schema["$id"]
 
 
-def test_supported_profiles_are_all_part_of_the_smoke_matrix():
+def test_smoke_matrix_includes_supported_and_buildable_preview_profiles():
     assert supported_profile_ids() == ("standard", "standard-kafka")
+    assert buildable_profile_ids() == (
+        "sso-prototype",
+        "standard",
+        "standard-kafka",
+    )
+    assert module_builder._smoke_profile_ids() == (
+        "sso-prototype",
+        "standard",
+        "standard-kafka",
+    )
+
+
+def test_smoke_matrix_never_drops_an_unbuildable_supported_profile(monkeypatch):
+    monkeypatch.setattr(
+        module_builder,
+        "supported_profile_ids",
+        lambda: ("supported-regression",),
+    )
+    monkeypatch.setattr(
+        module_builder,
+        "buildable_profile_ids",
+        lambda: ("preview",),
+    )
+    assert module_builder._smoke_profile_ids() == (
+        "preview",
+        "supported-regression",
+    )
 
 
 def test_standard_kafka_dependency_order_is_stable():
@@ -57,12 +89,55 @@ def test_standard_kafka_dependency_order_is_stable():
     assert plan.buildable
 
 
-def test_minimal_profile_reports_real_isolation_blockers():
-    plan = resolve_plan("minimal")
-    assert not plan.buildable
-    assert any("profile minimal is planned" in item for item in plan.blockers)
-    assert any("oauth-client-credentials" in item for item in plan.blockers)
+def test_sso_prototype_uses_its_own_build_target():
+    plan = resolve_plan("sso-prototype")
+    assert plan.buildable
+    assert plan.profile.build_package == "./cmd/sso-minimal"
+    assert plan.profile.binary_name == "sso-server"
+    assert plan.profile.composition_module == "sso-prototype-runtime"
     assert "stock-server" not in {module.id for module in plan.modules}
+
+
+def test_product_editions_inherit_and_report_extraction_blockers():
+    production = resolve_plan("sso-production")
+    complete = resolve_plan("sso-complete")
+    assert "sso-prototype-runtime" in {module.id for module in production.modules}
+    assert "sso-production-edition" in {module.id for module in complete.modules}
+    assert production.profile.build_package == "./cmd/sso-production"
+    assert production.profile.composition_module == "sso-production-edition"
+    assert complete.profile.build_package == "./cmd/sso-complete"
+    assert complete.profile.composition_module == "sso-complete-edition"
+    assert not production.buildable
+    assert not complete.buildable
+    assert any(
+        "build package ./cmd/sso-production" in item
+        for item in production.blockers
+    )
+    assert any(
+        "build package ./cmd/sso-complete" in item
+        for item in complete.blockers
+    )
+    assert any("op-session-sso" in item for item in production.blockers)
+    assert any("sso-complete-edition" in item for item in complete.blockers)
+
+
+def test_profile_inheritance_cycle_is_rejected(tmp_path, monkeypatch):
+    base = {
+        "schema_version": 1,
+        "summary": "test",
+        "maturity": "planned",
+        "modules": [],
+        "policy": {"allow_cgo": False, "fips": "any"},
+    }
+    (tmp_path / "first.json").write_text(
+        json.dumps(dict(base, id="first", extends="second"))
+    )
+    (tmp_path / "second.json").write_text(
+        json.dumps(dict(base, id="second", extends="first"))
+    )
+    monkeypatch.setattr(module_catalog, "PROFILES_DIR", tmp_path)
+    with pytest.raises(ModuleConfigError, match="inheritance cycle"):
+        load_profile("first")
 
 
 def test_embedded_module_cannot_be_excluded():
@@ -336,7 +411,7 @@ def test_custom_profile_cannot_hide_stock_composition(tmp_path):
     path.write_text(json.dumps(profile))
     plan = resolve_plan(str(path))
     assert not plan.buildable
-    assert any("still requires stock-server" in item for item in plan.blockers)
+    assert any("requires composition module stock-server" in item for item in plan.blockers)
 
 
 def test_custom_profile_cannot_reuse_builtin_id(tmp_path):

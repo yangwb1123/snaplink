@@ -170,13 +170,17 @@ type AuthRequest struct {
 // own preference" — the response key is omitted entirely so
 // clients can rely on its absence.
 type AuthResult struct {
-	UserID              string
-	ExternalID          string
-	Provider            string
-	Attributes          map[string]string
-	AuthMethods         []string // how the user was authenticated
-	CountryCode         string   // ISO 3166-1 alpha-2, optional
-	RecommendedLanguage string   // BCP-47, optional
+	UserID      string
+	ExternalID  string
+	Provider    string
+	Attributes  map[string]string
+	AuthMethods []string // how the user was authenticated
+	// AuthTime preserves the original end-user authentication event when an
+	// authenticator resumes an existing OP session. Zero means the current
+	// request performed fresh authentication.
+	AuthTime            time.Time
+	CountryCode         string // ISO 3166-1 alpha-2, optional
+	RecommendedLanguage string // BCP-47, optional
 
 	// AchievedACR is the Authentication Context Class Reference the
 	// authenticator actually satisfied on this login (RFC 9068 §2.2 /
@@ -238,16 +242,16 @@ type CallbackState struct {
 // "First Last") distinct from Name (which may be a SAML-displayed
 // name or a SCIM attribute). Empty when not set.
 type User struct {
-	ID         string            `json:"id"`
-	ExternalID string            `json:"external_id,omitempty"`
-	Provider   string            `json:"provider,omitempty"`
-	Email      string            `json:"email,omitempty"`
-	Username   string            `json:"username,omitempty"`
-	Name       string            `json:"name,omitempty"`
-	DisplayName string           `json:"display_name,omitempty"`
-	Attributes map[string]string `json:"attributes,omitempty"`
-	CreatedAt  time.Time         `json:"created_at"`
-	UpdatedAt  time.Time         `json:"updated_at"`
+	ID          string            `json:"id"`
+	ExternalID  string            `json:"external_id,omitempty"`
+	Provider    string            `json:"provider,omitempty"`
+	Email       string            `json:"email,omitempty"`
+	Username    string            `json:"username,omitempty"`
+	Name        string            `json:"name,omitempty"`
+	DisplayName string            `json:"display_name,omitempty"`
+	Attributes  map[string]string `json:"attributes,omitempty"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
 }
 
 // UserAttrActive is the User.Attributes key SCIM writes the RFC 7643 `active`

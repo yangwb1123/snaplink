@@ -15,7 +15,8 @@
       "provides": [
         "config.host.v1",
         "core.runtime.v1",
-        "lifecycle.host.v1"
+        "lifecycle.host.v1",
+        "security.policy.v1"
       ],
       "requires": [],
       "conflicts": [],
@@ -39,9 +40,34 @@
       "requires": [
         "core.runtime.v1"
       ],
-      "conflicts": [],
+      "conflicts": [
+        "sso-prototype-runtime"
+      ],
       "security": {
         "removable": true,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "sso-prototype-runtime",
+      "summary": "Runnable single-process SSO prototype composition; package-level dependency isolation remains incremental.",
+      "kind": "bundle",
+      "state": "embedded",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "server.sso-prototype.v1"
+      ],
+      "requires": [
+        "core.runtime.v1",
+        "security.policy.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": false,
         "failure_policy": "fail-closed"
       }
     },
@@ -58,7 +84,8 @@
         "transport.http.v1"
       ],
       "requires": [
-        "core.runtime.v1"
+        "core.runtime.v1",
+        "security.policy.v1"
       ],
       "conflicts": [
         "stock-server"
@@ -71,13 +98,17 @@
     {
       "schema_version": 1,
       "id": "identity-memory",
-      "summary": "In-process client registry for the minimal single-replica profile.",
+      "summary": "In-process user, client, credential, session, and authorization-code stores.",
       "kind": "cold",
       "state": "planned",
       "activation": "restart",
       "host_api": "v1alpha1",
       "provides": [
-        "client.store.v1"
+        "authcode.store.v1",
+        "client.store.v1",
+        "credential.password.store.v1",
+        "session.store.v1",
+        "user.store.v1"
       ],
       "requires": [
         "core.runtime.v1"
@@ -93,17 +124,71 @@
     {
       "schema_version": 1,
       "id": "signing-ed25519",
-      "summary": "Ed25519 access-token signing, validation, and JWKS publication.",
+      "summary": "Ed25519 access-token and ID-token signing plus JWKS publication.",
       "kind": "cold",
       "state": "planned",
       "activation": "restart",
       "host_api": "v1alpha1",
       "provides": [
-        "jwks.http.v1",
-        "token.issuer.v1"
+        "access-token.issuer.v1",
+        "id-token.issuer.v1",
+        "jwks.provider.v1"
       ],
       "requires": [
-        "core.runtime.v1"
+        "core.runtime.v1",
+        "security.policy.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": false,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "authn-password",
+      "summary": "Password authentication with cost-matched unknown-user verification.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "authenticator.password.v1"
+      ],
+      "requires": [
+        "credential.password.store.v1",
+        "security.policy.v1",
+        "user.store.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": false,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "oauth-authorization-code-pkce",
+      "summary": "Authorization endpoint and token exchange restricted to Authorization Code with PKCE S256.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "oauth.authorization-code.v1",
+        "oauth.token-host.v1"
+      ],
+      "requires": [
+        "access-token.issuer.v1",
+        "authcode.store.v1",
+        "authenticator.password.v1",
+        "client.store.v1",
+        "security.policy.v1",
+        "transport.http.v1"
       ],
       "conflicts": [
         "stock-server"
@@ -116,32 +201,32 @@
     {
       "schema_version": 1,
       "id": "oauth-client-credentials",
-      "summary": "OAuth token endpoint with the client_credentials grant only.",
+      "summary": "Optional machine-to-machine client_credentials grant.",
       "kind": "cold",
       "state": "planned",
       "activation": "restart",
       "host_api": "v1alpha1",
       "provides": [
-        "grant.client-credentials.v1",
-        "oauth.token.v1"
+        "grant.client-credentials.v1"
       ],
       "requires": [
+        "access-token.issuer.v1",
         "client.store.v1",
-        "token.issuer.v1",
-        "transport.http.v1"
+        "oauth.token-host.v1",
+        "security.policy.v1"
       ],
       "conflicts": [
         "stock-server"
       ],
       "security": {
-        "removable": false,
+        "removable": true,
         "failure_policy": "fail-closed"
       }
     },
     {
       "schema_version": 1,
       "id": "oauth-metadata",
-      "summary": "OAuth authorization-server metadata and JWKS routes.",
+      "summary": "Capability-derived OAuth authorization-server metadata and JWKS routes.",
       "kind": "cold",
       "state": "planned",
       "activation": "restart",
@@ -150,7 +235,7 @@
         "oauth.metadata.v1"
       ],
       "requires": [
-        "jwks.http.v1",
+        "jwks.provider.v1",
         "transport.http.v1"
       ],
       "conflicts": [
@@ -163,54 +248,107 @@
     },
     {
       "schema_version": 1,
-      "id": "oauth-browser",
-      "summary": "Authorization code, PKCE, refresh, device, PAR, JAR, and browser login flows.",
+      "id": "oidc-core",
+      "summary": "OIDC discovery, ID tokens, UserInfo, and local logout on the code flow.",
       "kind": "cold",
       "state": "planned",
       "activation": "restart",
       "host_api": "v1alpha1",
       "provides": [
-        "oauth.browser.v1"
+        "oidc.login.v1"
       ],
       "requires": [
-        "oauth.token.v1",
-        "transport.http.v1"
+        "id-token.issuer.v1",
+        "jwks.provider.v1",
+        "oauth.authorization-code.v1",
+        "oauth.metadata.v1",
+        "session.store.v1",
+        "user.store.v1"
       ],
       "conflicts": [
         "stock-server"
       ],
       "security": {
-        "removable": true,
+        "removable": false,
         "failure_policy": "fail-closed"
       }
     },
     {
       "schema_version": 1,
-      "id": "oidc-core",
-      "summary": "OIDC ID tokens, userinfo, session, logout, and discovery extensions.",
+      "id": "op-session-sso",
+      "summary": "Reusable OP browser session, SID propagation, prompt/max_age handling, and local logout.",
       "kind": "cold",
       "state": "planned",
       "activation": "restart",
       "host_api": "v1alpha1",
       "provides": [
-        "oidc.core.v1"
+        "oidc.sso-session.v1"
       ],
       "requires": [
-        "oauth.browser.v1",
-        "token.issuer.v1"
+        "oidc.login.v1",
+        "security.policy.v1",
+        "session.store.v1"
       ],
       "conflicts": [
         "stock-server"
       ],
       "security": {
-        "removable": true,
+        "removable": false,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "oauth-production",
+      "summary": "Refresh rotation, revocation, introspection, client authentication, DPoP, and mTLS.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "oauth.production.v1"
+      ],
+      "requires": [
+        "oauth.authorization-code.v1",
+        "security.policy.v1",
+        "session.store.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": false,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "identity-security",
+      "summary": "Account lockout, MFA, passkeys, consent, and credential recovery.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "identity.security.v1"
+      ],
+      "requires": [
+        "security.policy.v1",
+        "session.store.v1",
+        "user.store.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": false,
         "failure_policy": "fail-closed"
       }
     },
     {
       "schema_version": 1,
       "id": "self-service",
-      "summary": "Signup, password recovery, profile, MFA, passkey, and privacy APIs.",
+      "summary": "Signup, password recovery, profile, MFA, passkey, consent, and privacy APIs.",
       "kind": "cold",
       "state": "planned",
       "activation": "restart",
@@ -219,7 +357,9 @@
         "identity.self-service.v1"
       ],
       "requires": [
-        "transport.http.v1"
+        "identity.security.v1",
+        "transport.http.v1",
+        "user.store.v1"
       ],
       "conflicts": [
         "stock-server"
@@ -253,30 +393,53 @@
     },
     {
       "schema_version": 1,
-      "id": "federation",
-      "summary": "OpenID Federation and enterprise connection surfaces.",
+      "id": "production-storage",
+      "summary": "Named SQLite, Redis, Postgres, and etcd providers selected by runtime configuration.",
       "kind": "cold",
       "state": "planned",
       "activation": "restart",
       "host_api": "v1alpha1",
       "provides": [
-        "federation.openid.v1"
+        "storage.production.v1"
       ],
       "requires": [
-        "oidc.core.v1"
+        "core.runtime.v1"
       ],
       "conflicts": [
         "stock-server"
       ],
       "security": {
-        "removable": true,
+        "removable": false,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "key-lifecycle",
+      "summary": "Signing-key rotation, overlap windows, peer adoption, and optional KMS slots.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "signing.lifecycle.v1"
+      ],
+      "requires": [
+        "access-token.issuer.v1",
+        "security.policy.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": false,
         "failure_policy": "fail-closed"
       }
     },
     {
       "schema_version": 1,
       "id": "cluster-ha",
-      "summary": "Shared invalidation bus, registry, and leaderless signing-key aggregation.",
+      "summary": "Shared invalidation bus, registry, readiness, and leaderless signing-key aggregation.",
       "kind": "cold",
       "state": "planned",
       "activation": "restart",
@@ -285,7 +448,8 @@
         "cluster.ha.v1"
       ],
       "requires": [
-        "core.runtime.v1"
+        "signing.lifecycle.v1",
+        "storage.production.v1"
       ],
       "conflicts": [
         "stock-server"
@@ -298,7 +462,7 @@
     {
       "schema_version": 1,
       "id": "observability",
-      "summary": "Metrics, tracing, audit host, and dynamic exporter slots.",
+      "summary": "Primary audit, metrics, tracing, structured logs, and dynamic exporter slots.",
       "kind": "cold",
       "state": "planned",
       "activation": "restart",
@@ -314,8 +478,269 @@
         "stock-server"
       ],
       "security": {
+        "removable": false,
+        "failure_policy": "fail-open"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "sso-production-edition",
+      "summary": "Production SSO edition aggregate: durable state, security controls, operations, and HA-capable providers.",
+      "kind": "bundle",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "edition.sso-production.v1"
+      ],
+      "requires": [
+        "admin.control-plane.v1",
+        "cluster.ha.v1",
+        "identity.self-service.v1",
+        "observability.host.v1",
+        "oauth.production.v1",
+        "oidc.sso-session.v1",
+        "server.sso-prototype.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": false,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "oauth-advanced",
+      "summary": "Device, CIBA, PAR, JAR/JARM, RAR, FAPI, token exchange, and JWE.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "oauth.advanced.v1"
+      ],
+      "requires": [
+        "oauth.production.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": true,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "federation",
+      "summary": "OIDC connections and OpenID Federation trust-chain processing.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "federation.openid.v1"
+      ],
+      "requires": [
+        "oidc.login.v1",
+        "security.policy.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": true,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "enterprise-auth",
+      "summary": "SAML, LDAP, Kerberos, RADIUS, and enterprise connection adapters.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "identity.enterprise-auth.v1"
+      ],
+      "requires": [
+        "federation.openid.v1",
+        "security.policy.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": true,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "provisioning",
+      "summary": "SCIM inbound/outbound, lifecycle orchestration, and identity linking.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "identity.provisioning.v1"
+      ],
+      "requires": [
+        "user.store.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": true,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "tenant-platform",
+      "summary": "Tenant, B2B, branding, region, residency, and usage-metering capabilities.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "platform.tenant.v1"
+      ],
+      "requires": [
+        "storage.production.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": true,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "authorization-platform",
+      "summary": "Permissions, FGA/ReBAC, ext-authz, token policy, and conditional access.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "platform.authorization.v1"
+      ],
+      "requires": [
+        "security.policy.v1",
+        "storage.production.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": true,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "threat-platform",
+      "summary": "Trust, risk, anomaly, continuous verification, and ITDR signals.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "platform.threat.v1"
+      ],
+      "requires": [
+        "observability.host.v1",
+        "session.store.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
         "removable": true,
         "failure_policy": "fail-open"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "governance-platform",
+      "summary": "Break-glass, dual control, config audit, snapshots, backup, DR, and release controls.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "platform.governance.v1"
+      ],
+      "requires": [
+        "admin.control-plane.v1",
+        "observability.host.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": true,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "integrations-host",
+      "summary": "Stable host slots for Kafka, MQTT, webhooks, SIEM, KMS, and HSM adapters.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "integrations.host.v1"
+      ],
+      "requires": [
+        "observability.host.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": true,
+        "failure_policy": "fail-open"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "sso-complete-edition",
+      "summary": "Complete portable product edition aggregate for advanced protocol, enterprise, tenant, authorization, threat, and governance scenarios.",
+      "kind": "bundle",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "edition.sso-complete.v1"
+      ],
+      "requires": [
+        "edition.sso-production.v1",
+        "identity.enterprise-auth.v1",
+        "identity.provisioning.v1",
+        "integrations.host.v1",
+        "oauth.advanced.v1",
+        "platform.authorization.v1",
+        "platform.governance.v1",
+        "platform.tenant.v1",
+        "platform.threat.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": false,
+        "failure_policy": "fail-closed"
       }
     },
     {

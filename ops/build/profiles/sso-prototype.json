@@ -1,0 +1,23 @@
+{
+  "$schema": "../profile.schema.json",
+  "schema_version": 1,
+  "id": "sso-prototype",
+  "summary": "Buildable single-process SSO prototype for local evaluation and integration.",
+  "maturity": "preview",
+  "modules": [
+    "sso-prototype-runtime"
+  ],
+  "build": {
+    "package": "./cmd/sso-minimal",
+    "binary": "sso-server",
+    "program": "sso-server",
+    "composition_module": "sso-prototype-runtime"
+  },
+  "policy": {
+    "allow_cgo": false,
+    "fips": "compatible",
+    "allowed_licenses": [
+      "Apache-2.0"
+    ]
+  }
+}
