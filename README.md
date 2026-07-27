@@ -231,15 +231,26 @@ are thin wrappers.
 
 ```bash
 python cli.py build          # -> ./bin/{sso-server, sso-ctl}
+python cli.py modules list   # module catalog and migration state
+python cli.py modules plan --profile minimal
+python cli.py configure --profile standard-kafka --build
 go build ./...               # compile everything
 go test ./...                # unit + integration (package ssotest under test/)
 go test ./test/ -race        # cross-wired HTTP + JWKS integration suite
 ```
 
+The profile builder is the first stage of the NGINX-style module architecture.
+`standard` preserves the historical stock composition; `standard-kafka`
+statically adds the Kafka audit module. The target `minimal` profile
+intentionally reports its remaining extraction blockers instead of producing
+a route-gated monolith. See [docs/plugin-system.md](docs/plugin-system.md).
+
 ## Further reading
 
 - `docs/openapi.yaml` — the published HTTP API reference; keep it synchronized
   with `interfaces/sso/server_routes*.go`.
+- `docs/plugin-system.md` — cold build profiles, module manifests, compiled
+  inventory, and the safe hot-plugin lifecycle boundary.
 - `docs/examples/` — runnable samples (quickstart, basic, embedded-app, remote-app, appcore, grpc-client, playground).
 - `interfaces/sso/example_test.go`, `interfaces/ssoclient/{local,dev}/example_test.go` — godoc SDK templates (render on pkg.go.dev).
 - `AGENTS.md` — architecture, layering, and the engineering conventions enforced by the committed gates.

@@ -57,14 +57,17 @@ feature, gate, configuration, or error tables into another guide.
   vulnerability-reporting policy and the technical security architecture.
 - [wasmauthz.md](wasmauthz.md) — the pluggable WASM authorization engine: ABI
   contract, how to author a compatible policy module, fail-closed guarantee.
+- [plugin-system.md](plugin-system.md) — NGINX-style cold build profiles,
+  compiled module inventory, and the generation/drain boundary for future hot
+  activation.
 
 ## Architecture
 
 - [architecture/DIRECTORY_MAP.md](architecture/DIRECTORY_MAP.md) — the layered
   tree (`composition → interfaces → infrastructure → protocols → domains → platform → shared`)
   and where each package lives.
-- [adr/](adr/) — Architecture Decision Records (ADR-0001 layout … ADR-0008
-  proto versioning); see [adr/README.md](adr/README.md).
+- [adr/](adr/) — Architecture Decision Records (ADR-0001 layout … ADR-0009
+  module builds and safe runtime activation); see [adr/README.md](adr/README.md).
 - [HISTORY.md](HISTORY.md) — retired migration records, implementation plans,
   feature records, and documentation audits.
 

@@ -33,7 +33,7 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_client_store_cache_total` | Counter | outcome (hit\|miss) |
 | `sso_audit_async_drops_{queue_full,closed,inner_error}_total` | Counter | — |
 | `sso_audit_async_queue_{depth,capacity}` | Gauge | — |
-| `sso_feature_gate_enabled` | Gauge | feature (oidc\|ciba\|caep\|federation\|self_service\|admin_api\|web_spa) — seeded at boot and updated on supported hot reloads; 1=reachable / 0=disabled |
+| `sso_feature_gate_enabled` | Gauge | feature (oidc\|ciba\|caep\|federation\|self_service\|admin_api\|web_spa) — startup configuration only; 1=initially reachable / 0=initially disabled |
 | `sso_dr_snapshot_replication_lag_seconds` | Gauge | — (absent until the first successful DR replication) |
 | `sso_dr_last_recovery_seconds` | Gauge | — (absent until a recovery is timed via `RecoveryTimeTracker`) |
 | `sso_dr_readiness` | Gauge | — (1 = verified replica within RPO target, 0 otherwise; see [dr-framework.md](dr-framework.md)) |
@@ -54,10 +54,12 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_config_drift_detected_total` | Counter | — |
 | `sso_dr_last_drill_success` | Gauge | — (absent before the first drill) |
 
-`sso_feature_gate_enabled` is seeded at boot and updated when a supported
-SIGHUP hot reload changes live gate state. The legacy `web_spa` label now
-represents only `/branding`; it does not indicate that a static frontend is
-served.
+`sso_feature_gate_enabled` is seeded once at boot. A supported SIGHUP reload
+changes live route state but does not currently update this gauge, so use it as
+startup configuration rather than current-state telemetry. ADR-0009's future
+module manager centralizes transition state and metrics. The legacy `web_spa`
+label represents only `/branding`; it does not indicate that a static frontend
+is served.
 
 ## Audit
 

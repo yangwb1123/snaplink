@@ -96,6 +96,25 @@ domain packages via the hexagonal pattern (§4 Common Tasks).
 6. Classify any new top-level (or `internal/`) package in `layerName()` (`architecture_layer_test.go`).
 7. Before done: §0.3 verification passes with no new exemptions.
 
+### 0.7 Module Builds and Runtime Plugins
+
+- Cold-module selection goes through `python cli.py configure`; its default
+  output stays under ignored `dist/modules/`. A custom `--out` inside the
+  repository MUST stay under `dist/`; root `go.mod`/`go.sum` are immutable.
+- Manifests are strict `snaplink.module.json` data. No shell/template fields,
+  arbitrary Go expressions, blank imports, or registration through `init`.
+- Kernel security invariants are non-removable. A route/config gate is not
+  evidence that code or dependencies were compiled out.
+- In-process hot activation is allowed only for precompiled modules behind a
+  generation lease + drain lifecycle. The current `FeatureGates`,
+  `Server.Handle`, `AddReadyCheck`, and `audit.Recorder.AddSink` are not
+  hot-plugin registries.
+- Installable third-party hot plugins run out of process through a typed,
+  authenticated protocol. Never use Go `plugin.Open` for server extensions.
+- Follow [ADR-0009](docs/adr/ADR-0009-static-and-runtime-modules.md) and
+  [plugin-system.md](docs/plugin-system.md); `python cli.py modules check` must
+  pass with every manifest/profile change.
+
 ---
 
 ## 1. System Overview
@@ -147,6 +166,7 @@ keeps only package-level invariants not already stated in full in §3:
 | `infrastructure/defaultimpl` | Each issuer (Ed25519/ECDSA/RSA) accepts ONLY its own alg |
 | `platform/signingkeys` | Leaderless peer-key adoption alg-matched BEFORE install; degraded → 503 (the aggregation loop AND the etcd registry's publish-lease check are both in `/readyz`) |
 | `platform/audit` | `SetMeta` only, never `e.Metadata = map{...}` (also §0.5); W3C TraceID/SpanID; bounded cardinality; a new EventType must be filed in `auditreport` (control area or the uncategorized allowlist — the drift test names strays) |
+| `cmd/sso-server/servermodules` | Explicit cold-module composition hook only; generated builds replace its configured file through the single allow-listed overlay path; no `init` or blank imports |
 
 Packages with a full dedicated invariant section already in §3 (not repeated
 here): `domains/tenant` + `platform/geo`/`domains/region` → Tenant & Residency
@@ -280,6 +300,8 @@ resolution, `interfaces/ssoclient/rs`, push-callback client IP.
 | New OAuth/OIDC grant | `oauth.BindParams`; HTTP Basic > body creds; oracle-leak; `DELETE RETURNING`; wire in `interfaces/sso/server_routes*.go`; discovery |
 | New credential endpoint | `tokenNoStoreHeaders(ctx)` at entry; `setBearerChallenge(ctx, ...)` on 401 |
 | Extract to domain pkg | Pure functions in `internal/<module>/` → thin `(s *Server)` wrapper → update `Deps` iface → `python cli.py check-root` |
+| New cold module/profile | Typed registration seam → strict `snaplink.module.json` → catalog/profile → `python cli.py modules check` → prove final `go version -m` inventory |
+| New hot module | Static surface + generation leases + readiness/drain/Stop; third-party installable code stays out of process; see ADR-0009 |
 
 ### Commits
 

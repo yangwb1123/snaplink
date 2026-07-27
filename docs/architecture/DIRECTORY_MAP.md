@@ -20,6 +20,11 @@ internal/        unexported helpers            internal/auth/* (domains) · inte
 cmd/ · config/ · docs/ · gen/ · proto/ · test/ · ops/ · checks/  composition/tooling
 ```
 
+`cmd/sso-server/servermodules` is the explicit cold-module registration hook.
+`ops/build/` owns strict manifests/profiles and `ops/scripts/` materializes an
+alternate module graph under ignored `dist/modules/`; see
+[`plugin-system.md`](../plugin-system.md).
+
 The repo root holds **no library `.go` files** — only the committed gate tests
 (`package archgate`: architecture + maintainability budgets). The public Server
 API is `github.com/snaplink/sso/interfaces/sso` (package `sso`).
@@ -54,6 +59,8 @@ not a DDD "audit domain" — hence platform.
   (`infrastructure/{ldap,kerberos,radius,saml,extauthz,kafka,mqtt,kms/*}` and
   `cmd/{sso-mcp,sso-operator}`) retain their own `go.mod`. Redis and Postgres
   are root-module packages.
+- Cold-module builds use positive profiles and a generated explicit registrar;
+  they do not add `go.work`, edit the root module graph, or use blank imports.
 - `gen/` (generated protobuf Go) and `proto/` (`.proto` sources) stay top-level —
   they are codegen-coupled (`buf`).
 

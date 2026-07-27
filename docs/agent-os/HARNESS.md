@@ -38,6 +38,7 @@ See [`CHECKS_REGISTRY.md`](CHECKS_REGISTRY.md) for the command catalog and
 | `python cli.py accept` | Supplementary U1–U9 report |
 | `python cli.py self-test` | Probes the Python harness |
 | `python cli.py generate` | Validates tracked Markdown and refreshes non-document scaffolding |
+| `python cli.py modules check` | Validates module schemas, manifests, catalog, dependency plans and profiles |
 
 Generation must not rewrite Agent OS, prompt, checklist, skill, or feature-spec
 Markdown.

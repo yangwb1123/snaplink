@@ -16,5 +16,10 @@ Never add a `layerExemptions` edge or an OAuth↔OIDC import. The repository roo
 contains gate tests only, while the public API-only Server lives in
 `interfaces/sso`.
 
+Cold build composition enters through `cmd/sso-server/servermodules`; manifests
+and profiles live under `ops/build/`. Runtime feature gates are not plugin
+lifecycle managers. Read `docs/plugin-system.md` and ADR-0009 before adding a
+module boundary.
+
 Use `AGENTS.md` §0.6 for the package preflight and `docs/HISTORY.md` for retired
 migration records.

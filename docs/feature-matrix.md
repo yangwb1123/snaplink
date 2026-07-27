@@ -10,7 +10,10 @@ availability on every deployment:
 - A `config.yaml` key is a **stock `sso-server`** capability.
 - A row naming a nested module (SAML, LDAP, Kerberos, RADIUS, ext-authz,
   Kafka, MQTT or selected KMS/HSM adapters) requires that module to be built or
-  registered by the composition root.
+  registered by the composition root. Kafka has a supported
+  `standard-kafka` cold-build profile; the others remain integration-required.
+- A build profile controls what is compiled; a runtime feature gate only
+  controls an already compiled/wired surface. See [plugin-system.md](plugin-system.md).
 - Optional endpoints only exist when their required store/option is wired and
   their feature gate is on.
 - The runtime is API-only. Frontend applications are external projects; the

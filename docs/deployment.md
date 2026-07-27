@@ -25,8 +25,10 @@ origin; `sso-server` does not serve their static assets.
 
 ```bash
 python cli.py build            # -> ./bin/{sso-server, sso-ctl}   (make/Taskfile delegate here)
+python cli.py configure --profile standard-kafka --build
 docker build -t snaplink/sso-server .      # the root Dockerfile
 sso-server version                          # build version / VCS revision
+sso-server modules                          # compiled profile/inventory; configured builds include a lock digest
 ```
 
 FIPS 140-3 build (opt-in, default off — see [docs/fips.md](fips.md)):
@@ -43,6 +45,13 @@ also includes the separately-moduled **`sso-mcp`** gateway; it is not part of
 `python cli.py build`'s two-binary gate. See
 [`cmd/sso-mcp/README.md`](../cmd/sso-mcp/README.md) for its tools, configuration,
 and security boundary.
+
+`configure` is the cold-module build path. It writes an alternate module graph,
+lock and binary under `dist/modules/<profile>/` without editing root
+`go.mod`/`go.sum`. `standard` preserves the stock server and
+`standard-kafka` adds the Kafka audit module. The target `minimal` profile is
+not deployable until its reported extraction blockers are closed; see
+[plugin-system.md](plugin-system.md).
 
 ## 2. Run a single instance
 
@@ -269,7 +278,7 @@ Reference distributed topology (Tier B):
 | Token verification (downstream) | `ssoclient/remote` + cached JWKS | ✅ (off hot path) |
 | **Hot-path stores** (codes/sessions/refresh/par/device/ciba/jti/mfa-challenge) + ratelimit | **Redis Cluster** (`infrastructure/redis`) | ✅ `backend: redis` |
 | **Durable stores** (clients/users/consent/permissions/tenants/audit/…) | **Postgres/CockroachDB** (`infrastructure/postgres`) | ✅ `backend: postgres` |
-| Signing offload | `infrastructure/kms/*` (AWS/GCP/Azure KMS, PKCS#11) | via config (separate modules) |
+| Signing offload | `infrastructure/kms/*` (AWS/GCP/Azure KMS, PKCS#11) | No — nested module plus custom composition; no supported profile yet |
 
 ## 8. Microservices decomposition
 
@@ -278,8 +287,9 @@ The natural and supported split is **token *issuance* vs token *consumption***:
 - **SSO server replicas** issue/login/admin — scale per §6 (Tier A or B).
 - **Downstream services verify locally** (`ssoclient/remote`, cached JWKS) — they
   never call the SSO server per request. This is the key microservices win.
-- **Independent deployables**: Redis, etcd, KMS/HSM, and the SAML-IdP / LDAP /
-  RADIUS / ext-authz nested modules.
+- **Independent services**: Redis, etcd and external KMS/HSM endpoints.
+  SAML-IdP, LDAP, RADIUS and ext-authz are nested library modules that still
+  require static custom composition; they are not standalone plugin processes.
 - The **gRPC control plane** *could* run on a separate exposure from the OAuth
   data plane (same binary), e.g. an internal-only admin Service.
 

@@ -32,7 +32,7 @@ Retired audits, plans, and migration records are summarized in
 | Hosted login, admin, self-service, developer and setup UIs | **External** | Separate frontend projects, normally reverse-proxied beside the server. No static SPA is served by this repository. |
 | Admin API-doc viewer | **Implemented** | `WithAPIDocsUI` serves an admin-gated, self-contained API reference. It is not an application UI. |
 | TypeScript/Python SDKs | **Partial** | Generated curated subset; not complete parity with admin/SCIM/SSF/Federation routes. |
-| Nested protocol/infrastructure modules | **Implemented / integration-required** | SAML, LDAP, Kerberos, RADIUS, ext-authz, Kafka, MQTT and selected KMS/HSM adapters have their own modules and may require a custom composition binary or factory registration. |
+| Nested protocol/infrastructure modules | **Partial** | Strict cold-build profiles and the Kafka static registrar are implemented. SAML, LDAP, Kerberos, RADIUS, ext-authz, MQTT and KMS/HSM still require custom composition or migration to the module host API. |
 
 ## Current implementation deviations
 
@@ -49,6 +49,18 @@ limits. The target contract remains the invariant in `AGENTS.md`.
   wire contract.
 
 ## Partial capabilities
+
+### Static build modules and runtime plugin lifecycle
+
+The catalog, dependency planner, alternate module graph, module lock, compiled
+inventory, `standard` profile and `standard-kafka` profile are implemented.
+The `minimal` profile is an executable extraction plan but deliberately fails
+to build while its modules remain inside the stock composition.
+
+Runtime `FeatureGates` hide already wired routes; they do not load, unload or
+drain code. Generation leases, route guards, hot readiness/drain, dynamic
+audit taps and the external-process supervisor are not implemented. See
+[plugin-system.md](plugin-system.md) and ADR-0009.
 
 ### Static HTTP contract and generated clients
 

@@ -94,6 +94,20 @@ Pick the section(s) matching your feature-spec's "Module Classification".
 | N4 | Failure modes classified per `AGENTS.md` §3 "Fail Modes" (does a provider outage fail open or closed?) |
 | N5 | AMR value contributed on success maps to a registered AMR string, consumed by RFC 9068 claim population |
 
+### If Cold Module / Build Profile / Hot Lifecycle — M1-M9
+
+| ID | Criterion |
+|---|---|
+| M1 | `snaplink.module.json`, catalog and profiles pass `python cli.py modules check`; manifests contain data only |
+| M2 | Build materialization leaves root `go.mod`/`go.sum` unchanged and the final compile succeeds with the generated alternate module graph in readonly mode |
+| M3 | Missing/ambiguous capabilities, conflicts, dependency cycles, unsupported targets and declared module CGO/FIPS/license metadata policy violations fail before compilation; transitive SBOM/license and FIPS evidence remain release checks |
+| M4 | Registration is an explicit allow-listed call; no blank import, arbitrary generated expression, or `init` registration |
+| M5 | Kernel security invariants and embedded modules cannot be excluded; route/config gating is not reported as binary isolation |
+| M6 | `go version -m`, compiled inventory and behavior prove a selected module is present; excluded isolated dependencies are absent |
+| M7 | `modules.lock.json` is canonical and contains no secrets, timestamps or absolute local paths; the binary reports its lock digest |
+| M8 | A purported hot in-process module uses generation leases, readiness, drain and reverse-order cleanup; otherwise it is classified cold |
+| M9 | Installable third-party hot code is out of process behind typed/authenticated RPC, bounded resources and host-owned OAuth-safe error mapping |
+
 ## Using this file
 
 1. Pick your module classification in `feature-spec.md`.

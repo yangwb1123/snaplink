@@ -17,9 +17,10 @@ document.
 
 Since Go 1.24, the Go toolchain ships a FIPS 140-3 validated Cryptographic
 Module **in the standard library** — no cgo, no BoringCrypto, no external C
-dependency. This repo is pure-Go (`CGO_ENABLED=0` in the `Dockerfile` and
-`make build-small`), so the native module is the only FIPS mechanism that
-fits its "no CGO" invariant, and it's the one this repo uses.
+dependency. The stock server and current supported cold profiles build with
+`CGO_ENABLED=0`. CGO integrations such as the nested PKCS#11 module are not
+yet available through a supported profile. The native module is therefore the
+FIPS mechanism used by current supported builds.
 
 There are two independent layers:
 

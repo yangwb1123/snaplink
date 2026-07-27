@@ -23,6 +23,7 @@ completion?
 - [ ] Audit/observability
 - [ ] Authorization/policy
 - [ ] Infrastructure/config/deployment
+- [ ] Cold module / build profile / hot lifecycle
 - [ ] Refactoring only
 
 Owning physical layer/package:

@@ -20,6 +20,11 @@ The normal `python cli.py build` engineering gate builds only `sso-server` and
 `sso-ctl`; `make release-snapshot` is the check for the complete GoReleaser
 matrix.
 
+Local `standard` and `standard-kafka` profile builds produce a module lock and
+embedded inventory, but GoReleaser does not yet publish per-profile artifacts
+or binary-level profile SBOMs. Do not describe local profile builds as an
+official release matrix; follow [plugin-system.md](plugin-system.md).
+
 The release pipeline does not currently produce a SLSA provenance statement.
 Do not describe signatures/SBOMs as provenance.
 

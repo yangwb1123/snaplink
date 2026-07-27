@@ -41,6 +41,7 @@ risk:
 | Snapshot/restore or DR | `make dr-drill` |
 | Gated hot path | `make bench-gate` |
 | Public contract | `make docs-validate && make docs-check` |
+| Cold module/profile | `python cli.py modules check`, profile build, and `go version -m` inventory |
 
 Finish with `make ci`. Chaos, DR, load, and benchmark suites are intentionally
 opt-in and must be reported when relevant.
@@ -54,6 +55,7 @@ opt-in and must be reported when relevant.
 | HTTP/config/error contract | [OpenAPI](openapi.yaml), [config](config-reference.md), [errors](error-codes.md) |
 | Gate behavior | [Harness](agent-os/HARNESS.md) and [checks registry](agent-os/CHECKS_REGISTRY.md) |
 | Review criteria | [Evaluation](agent-os/EVALUATION.md) and [review checklist](review-checklist.md) |
+| Cold/hot extension boundary | [Module guide](plugin-system.md) and [ADR-0009](adr/ADR-0009-static-and-runtime-modules.md) |
 | Refactor/handler workflow | [Skills](skills/) |
 
 ## Implement a change

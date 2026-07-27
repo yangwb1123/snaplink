@@ -22,6 +22,8 @@ Read in this order:
 5. `docs/agent-os/CHECKS_REGISTRY.md` — Python/Make command catalog.
 6. `docs/feature-matrix.md` and `docs/deferred-backlog.md` — bounded product
    baseline.
+7. `docs/plugin-system.md` — build profiles and hot/cold module boundaries when
+   changing composition.
 
 Default memory/SQLite compositions need no external SaaS. Multi-replica
 deployments require shared state according to `docs/deployment.md`.

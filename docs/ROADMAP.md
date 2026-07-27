@@ -80,9 +80,28 @@ Deliverables:
 - Publish the API contract an external frontend must use for login, consent,
   self-service, admin and first-run setup.
 
+### 5. Extract real build modules and publish a minimal profile
+
+The profile resolver, module lock, explicit registrar and Kafka proof build are
+implemented. The stock server still links the broad composition; feature gates
+alone do not reduce its dependencies.
+
+Deliverables:
+
+- Split core HTTP, identity store, Ed25519 signing, client-credentials token
+  handling and OAuth metadata out of the stock bundle.
+- Make `minimal` buildable only after excluded dependencies are absent from
+  `go version -m`, symbols and per-binary SBOM evidence.
+- Extract a stable typed host API outside `cmd/`, then migrate SAML,
+  LDAP/Kerberos/RADIUS, KMS/HSM and other nested modules.
+- Add generation leases, static route slots and drain before classifying any
+  in-process capability as hot; keep installable third-party code out of
+  process.
+- Publish profile locks, binary SBOMs, signatures and provenance.
+
 ## P1 — production completeness
 
-### 5. Expand snapshot/DR control-plane coverage
+### 6. Expand snapshot/DR control-plane coverage
 
 Snapshot schema v1 includes clients, users, roles, assignments, menus, network
 policy and bootstrap state. It intentionally excludes hot sessions/tokens, but
@@ -98,7 +117,7 @@ Deliverables:
   recovery behavior.
 - Emit the required cache/invalidation events after restore.
 
-### 6. Reach API-client parity
+### 7. Reach API-client parity
 
 The generated TypeScript and Python clients cover a curated subset.
 
@@ -110,7 +129,7 @@ Deliverables:
 - Add SemVer/API-diff checks and publish versioned packages only after the
   contract is stable.
 
-### 7. Define the external frontend release contract
+### 8. Define the external frontend release contract
 
 Frontend implementation is outside this repository. Backend work is limited to
 stable APIs and integration metadata.
@@ -122,7 +141,7 @@ Deliverables:
 - Add cross-project compatibility tests; do not re-introduce static SPA bundles
   into `sso-server`.
 
-### 8. Strengthen secrets at rest
+### 9. Strengthen secrets at rest
 
 Password/client credentials are hashed by their stores, but active OAuth bearer
 artifacts such as SQLite refresh tokens and authorization/device codes are
@@ -147,5 +166,6 @@ until promoted here.
 2. Conformance evidence and release-gate integrity.
 3. HA topology validation.
 4. Obsolete frontend-config migration.
-5. Snapshot schema v2 and API-client parity.
-6. New protocol families only after the production-completeness work above.
+5. Real minimal-module extraction and per-profile release evidence.
+6. Snapshot schema v2 and API-client parity.
+7. New protocol families only after the production-completeness work above.
