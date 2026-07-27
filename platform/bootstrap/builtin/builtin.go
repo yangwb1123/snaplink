@@ -20,6 +20,8 @@ import (
 	"github.com/yangwb1123/snaplink/platform/netpolicy"
 )
 
+const adminConsoleClientID = "sso-admin-console"
+
 // AdminSeed bundles the dependencies that need to be reachable when the
 // built-in steps run.
 type AdminSeed struct {
@@ -117,6 +119,7 @@ func Steps(seed *AdminSeed) []bootstrap.Step {
 		stepSeedAdminClient(seed),
 		stepSeedAdminConsoleClient(seed),
 		stepClearSeededPassword(seed),
+		stepEnforceAdminConsolePKCE(seed),
 	}
 }
 
@@ -332,16 +335,16 @@ func stepSeedAdminConsoleClient(seed *AdminSeed) bootstrap.Step {
 			return nil
 		}
 		// Skip if the operator already declared this client via YAML.
-		if _, err := seed.Clients.Get(ctx, "sso-admin-console"); err == nil {
+		if _, err := seed.Clients.Get(ctx, adminConsoleClientID); err == nil {
 			return nil
 		}
 		err := seed.Clients.Add(ctx, &sso.Client{
-			ID:                    "sso-admin-console",
+			ID:                    adminConsoleClientID,
 			Name:                  "SSO Admin Console",
 			AllowedAuthenticators: []string{"password"},
 			TokenStrategy:         sso.TokenStrategyJWT,
 			AllowedScopes:         []string{"openid", "profile", sso.AdminScopeRead, sso.AdminScopeWrite},
-			RequirePKCE:           false,
+			RequirePKCE:           true,
 			Active:                true,
 			// No Secret — this is a public PKCE client. RedirectURIs left
 			// empty; the operator sets them for their deployment's /admin/ URL.
@@ -350,6 +353,35 @@ func stepSeedAdminConsoleClient(seed *AdminSeed) bootstrap.Step {
 			return nil
 		}
 		return err
+	})
+}
+
+// stepEnforceAdminConsolePKCE is version 7: legacy versions seeded the public
+// admin-console client without PKCE. Existing deployments have already passed
+// version 5, so changing that seed alone cannot close the authorization-code
+// interception window. This migration changes only the PKCE bit and leaves a
+// confidential operator-managed client untouched.
+func stepEnforceAdminConsolePKCE(seed *AdminSeed) bootstrap.Step {
+	return bootstrap.StepFunc("enforce_admin_console_pkce", 7, func(ctx context.Context) error {
+		if seed.Clients == nil {
+			return nil
+		}
+		client, err := seed.Clients.Get(ctx, adminConsoleClientID)
+		if errors.Is(err, sso.ErrNoSuchClient) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("enforce_admin_console_pkce: get client: %w", err)
+		}
+		if client.RequirePKCE || client.Secret != "" {
+			return nil
+		}
+		updated := *client
+		updated.RequirePKCE = true
+		if err := seed.Clients.Update(ctx, &updated); err != nil {
+			return fmt.Errorf("enforce_admin_console_pkce: update client: %w", err)
+		}
+		return nil
 	})
 }
 

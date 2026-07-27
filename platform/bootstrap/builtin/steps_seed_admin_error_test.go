@@ -63,8 +63,8 @@ func TestSteps_SeedAdminUser_TransientLookupErrorAborts(t *testing.T) {
 		Users:       fake,
 	}
 	steps := builtin.Steps(seed)
-	if len(steps) != 6 {
-		t.Fatalf("Steps returned %d, want 6", len(steps))
+	if len(steps) != 7 {
+		t.Fatalf("Steps returned %d, want 7", len(steps))
 	}
 	adminUserStep := steps[1] // seed_admin_user, version 2
 	if adminUserStep.Name() != "seed_admin_user" {

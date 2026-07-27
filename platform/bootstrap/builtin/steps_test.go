@@ -50,8 +50,8 @@ func (c *capturePrinter) Print(p string) { c.calls = append(c.calls, p) }
 func runAllSteps(t *testing.T, seed *builtin.AdminSeed) {
 	t.Helper()
 	steps := builtin.Steps(seed)
-	if len(steps) != 6 {
-		t.Fatalf("Steps returned %d, want 6 (role, user, netpolicy, client, console-client, clear-seeded-pw)", len(steps))
+	if len(steps) != 7 {
+		t.Fatalf("Steps returned %d, want 7", len(steps))
 	}
 	runner := bootstrap.NewRunner("sso-server", memory.New())
 	runner.Register(steps...)
@@ -372,7 +372,8 @@ func TestSteps_SeedsAdminConsoleClient(t *testing.T) {
 
 func TestSteps_AdminConsoleClientSkippedWhenOperatorPredeclared(t *testing.T) {
 	t.Parallel()
-	// Operator already wired an sso-admin-console client — Step 5 must not overwrite.
+	// Step 5 must preserve operator-owned fields; version 7 only hardens a
+	// secretless client by requiring PKCE.
 	seed, _ := fullSeed(t)
 	original := &sso.Client{ID: "sso-admin-console", Name: "Operator Console"}
 	if err := seed.Clients.Add(context.Background(), original); err != nil {
@@ -383,6 +384,76 @@ func TestSteps_AdminConsoleClientSkippedWhenOperatorPredeclared(t *testing.T) {
 	c, _ := seed.Clients.Get(context.Background(), "sso-admin-console")
 	if c.Name != "Operator Console" {
 		t.Errorf("seeder overwrote operator console client; got %+v", c)
+	}
+	if !c.RequirePKCE {
+		t.Error("public operator console client was not hardened with PKCE")
+	}
+}
+
+func TestSteps_UpgradesLegacyAdminConsoleClient(t *testing.T) {
+	t.Parallel()
+	seed, _ := fullSeed(t)
+	legacy := &sso.Client{
+		ID:           "sso-admin-console",
+		Name:         "Customized Legacy Console",
+		RedirectURIs: []string{"https://admin.example/callback"},
+		Active:       true,
+	}
+	if err := seed.Clients.Add(context.Background(), legacy); err != nil {
+		t.Fatalf("Add legacy client: %v", err)
+	}
+
+	runStepsAfterVersion(t, seed, 6)
+
+	got, err := seed.Clients.Get(context.Background(), legacy.ID)
+	if err != nil {
+		t.Fatalf("Get legacy client: %v", err)
+	}
+	if !got.RequirePKCE {
+		t.Error("legacy public admin console client still allows code flow without PKCE")
+	}
+	if got.Name != legacy.Name || !slices.Equal(got.RedirectURIs, legacy.RedirectURIs) {
+		t.Errorf("migration changed operator fields: got %+v", got)
+	}
+}
+
+func TestSteps_PKCEUpgradePreservesConfidentialAdminConsole(t *testing.T) {
+	t.Parallel()
+	seed, _ := fullSeed(t)
+	operatorClient := &sso.Client{
+		ID:     "sso-admin-console",
+		Secret: "operator-managed-secret",
+		Name:   "Confidential Operator Console",
+		Active: true,
+	}
+	if err := seed.Clients.Add(context.Background(), operatorClient); err != nil {
+		t.Fatalf("Add operator client: %v", err)
+	}
+
+	runStepsAfterVersion(t, seed, 6)
+
+	got, err := seed.Clients.Get(context.Background(), operatorClient.ID)
+	if err != nil {
+		t.Fatalf("Get operator client: %v", err)
+	}
+	if got.RequirePKCE {
+		t.Error("migration changed PKCE policy for a confidential operator client")
+	}
+	if got.Name != operatorClient.Name {
+		t.Errorf("migration changed operator client: got %+v", got)
+	}
+}
+
+func runStepsAfterVersion(t *testing.T, seed *builtin.AdminSeed, version int) {
+	t.Helper()
+	tracker := memory.New()
+	if err := tracker.MarkApplied(context.Background(), "sso-server", version, "existing"); err != nil {
+		t.Fatalf("MarkApplied(%d): %v", version, err)
+	}
+	runner := bootstrap.NewRunner("sso-server", tracker)
+	runner.Register(builtin.Steps(seed)...)
+	if err := runner.Run(context.Background()); err != nil {
+		t.Fatalf("runner.Run after version %d: %v", version, err)
 	}
 }
 
