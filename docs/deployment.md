@@ -25,7 +25,8 @@ origin; `sso-server` does not serve their static assets.
 
 ```bash
 python cli.py build            # -> ./bin/{sso-server, sso-ctl}   (make/Taskfile delegate here)
-python cli.py configure --profile standard-kafka --build
+python cli.py configure --profile sso-prototype --build
+python cli.py configure --profile standard-kafka --build  # compatibility composition
 docker build -t snaplink/sso-server .      # the root Dockerfile
 sso-server version                          # build version / VCS revision
 sso-server modules                          # compiled profile/inventory; configured builds include a lock digest
@@ -49,9 +50,23 @@ and security boundary.
 `configure` is the cold-module build path. It writes an alternate module graph,
 lock and binary under `dist/modules/<profile>/` without editing root
 `go.mod`/`go.sum`. `standard` preserves the stock server and
-`standard-kafka` adds the Kafka audit module. The target `minimal` profile is
-not deployable until its reported extraction blockers are closed; see
-[plugin-system.md](plugin-system.md).
+`standard-kafka` adds the Kafka audit module; both are compatibility profiles,
+not the new edition hierarchy.
+
+| Edition profile | Build status | Boundary |
+|---|---|---|
+| `sso-prototype` | Preview; buildable | Loopback listener, memory state, one seeded user and two RP clients, Code + mandatory PKCE, OIDC discovery/JWKS/ID Token/UserInfo/logout, and opaque OP-session reuse. |
+| `sso-production` | Planned; extends `sso-prototype` | Adds durable/shared state, production security and operations, administration, observability, and HA providers. |
+| `sso-complete` | Planned; extends `sso-production` | Adds the advanced protocol, enterprise, provisioning, tenant, authorization, threat, governance, and integration sets. |
+
+The preview is not deployable production software and is not yet a physically
+minimal binary. Its dedicated composition root uses `interfaces/sso`, which
+still links much of the existing package/dependency graph. The planned profiles
+describe extraction order; they are not build artifacts. Unless a profile is
+named explicitly, the rest of this guide describes the compatibility
+`sso-server`. The two-client prototype test uses an HTTP cookie jar, not a
+browser. A browser flow needs the separate same-origin login frontend because
+the binary exposes a POST login API and bundles no UI.
 
 ## 2. Run a single instance
 
@@ -87,6 +102,18 @@ sso-server --listen :9090 ...                         # flag: one-shot override 
 Each pluggable concern picks a backend via its `backend:` key. **What the
 *binary* supports today:**
 
+Keep four independent states separate:
+
+| State | Question it answers |
+|---|---|
+| Compiled capability | Did the cold profile physically link the capability and dependencies? |
+| Runtime backend | Which compiled implementation does startup configuration select? |
+| Feature gate | Is an already compiled and wired route or behavior exposed? |
+| Hot lifecycle | Can a prepared capability be activated, drained, or stopped without rebuilding/restarting? |
+
+A backend key or feature gate does not prove code was compiled out. General hot
+load/unload is not available today.
+
 | Concern | `backend:` values the binary wires |
 |---|---|
 | Hot stores (auth-code, refresh, session, par, device, ciba, jti-replay, mfa-challenge) + `ratelimit` | `memory` (default) · `sqlite` (`<concern>.sqlite.dsn`) · **`redis`** (shared `redis:` block) |
@@ -116,7 +143,7 @@ Each pluggable concern picks a backend via its `backend:` key. **What the
 Frontend applications are ordinary HTTP clients of these APIs. They are not a
 fifth static-file surface in this repository.
 
-Minimal RP flow over the wire:
+Core RP flow over the wire:
 
 ```bash
 curl https://sso.example.com/.well-known/openid-configuration

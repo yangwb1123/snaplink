@@ -1,117 +1,152 @@
 # Module build and plugin lifecycle
 
-Snaplink is moving from a fixed stock composition to an NGINX-style module
-build. The first delivered slice is cold-module configuration; safe hot
-activation is an explicit later phase.
+Snaplink uses NGINX-style positive build profiles for cold modules. Safe hot
+activation remains a later lifecycle phase; a feature gate is not a hot
+plugin.
 
-The architectural decision and lifecycle rules are in
+The normative design is
 [ADR-0009](adr/ADR-0009-static-and-runtime-modules.md). This guide describes
-what can be run today.
+the commands and profiles available in the current tree.
 
 ## Current status
 
-| Capability | Available now |
+| Capability | Status |
 |---|---|
-| Strict module catalog and profiles | Yes |
-| Capability dependency/conflict/cycle validation | Yes |
-| Independent profile modfile/sum and local module replacement | Yes |
-| Canonical module lock and embedded digest | Yes |
-| Explicit static registration without `init` or blank imports | Yes |
-| `sso-server modules [--json]` inventory | Yes |
-| Kafka audit module profile | Yes |
-| Real minimal binary | No; the plan fails with named extraction blockers |
-| Runtime module load/unload | No |
-| External-process plugin supervisor | No |
+| Strict catalog, manifests and capability resolution | Implemented |
+| Profile inheritance and profile-specific build targets | Implemented |
+| Alternate `go.mod`/`go.sum`, canonical lock and embedded inventory | Implemented |
+| `standard` and `standard-kafka` compatibility builds | Supported |
+| `sso-prototype` functional SSO build | Preview, buildable |
+| `sso-production` and `sso-complete` editions | Planned |
+| Package-level dependency isolation for the prototype | Incomplete |
+| In-process hot lifecycle or external plugin supervisor | Not implemented |
 
-Feature gates remain useful attack-surface switches for already compiled and
-wired routes. They do not unload code or dependencies and are not listed as
-hot plugins.
+`sso-prototype` is functionally small, not yet physically small. Its dedicated
+`cmd/sso-minimal` entry point still reaches the broad dependency graph through
+`interfaces/sso`. Feature gates reduce the active HTTP surface but do not prove
+that excluded packages or transitive dependencies left the binary.
 
-## Inspect the catalog
+## Profile hierarchy
+
+| Profile | Maturity | Purpose |
+|---|---|---|
+| `sso-prototype` | preview | Loopback-only, in-memory Authorization Code + PKCE OIDC SSO for evaluation and integration |
+| `sso-production` | planned | Extends `sso-prototype` with durable state, production OAuth controls, operations and HA-capable providers |
+| `sso-complete` | planned | Extends `sso-production` with advanced protocols, enterprise identity, provisioning, tenant, authorization, threat and governance capabilities |
+| `standard` | supported | Compatibility profile for the historical stock `sso-server` composition |
+| `standard-kafka` | supported | Extends `standard` with the statically linked Kafka audit sink |
+
+Inheritance is additive: a child selects its parent's modules and adds its own
+edition bundle. It inherits the build target unless it explicitly overrides
+one. `sso-production` and `sso-complete` deliberately point at future,
+currently absent composition commands; the missing command remains a resolver
+blocker instead of letting a profile inventory describe the prototype binary.
+Planned profiles remain unbuildable while any selected module is still
+`planned`.
+
+`oauth-client-credentials` is an independent optional machine-to-machine
+module. It is not the core of any SSO edition.
+
+## Inspect, configure and build
+
+Validate and inspect the catalog:
 
 ```bash
 python cli.py modules check
 python cli.py modules list
-python cli.py modules plan --profile standard-kafka
-python cli.py modules graph --profile minimal
-python cli.py modules why audit-kafka --profile standard-kafka
+python cli.py modules plan --profile sso-prototype
+python cli.py modules graph --profile sso-production
+python cli.py modules why op-session-sso --profile sso-production
 ```
 
-Equivalent Make/Task wrappers:
+Build the preview prototype:
 
 ```bash
-make modules-check
-make modules-list
-make modules-plan PROFILE=minimal
-task modules args=list
+python cli.py configure --profile sso-prototype --build
+# or
+make build-prototype
+
+dist/modules/sso-prototype/sso-server
+# alice/s3cret
+# demo-app/demo-secret       -> http://127.0.0.1:3000/callback
+# demo-app-b/demo-secret-b   -> http://127.0.0.1:3001/callback
 ```
 
-`minimal` currently returns a valid plan with `buildable: no`. That is
-intentional: until the named modules no longer reach the stock composition,
-claiming a minimal binary would be misleading.
-
-## Configure and build
-
-Preserve the historical composition:
+Build compatibility profiles:
 
 ```bash
 python cli.py configure --profile standard --build
-```
-
-Build the stock server with the Kafka audit implementation linked:
-
-```bash
 python cli.py configure --profile standard-kafka --build
 ```
 
-By default, outputs live in `dist/modules/<profile>/`:
+Generated output defaults to `dist/modules/<profile>/`:
 
 ```text
-.snaplink-modules-output   # ownership marker for atomic replacement
+.snaplink-modules-output
 modules.mod
 modules.sum
 overlay.json
 register_configured.go
 modules.lock.json
-sso-server                 # when --build is present
+sso-server
 ```
 
-The repository root's `go.mod` and `go.sum` are not changed. The initial
-dependency resolution populates only the alternate files; the final build uses
-`-mod=readonly`. Inputs are built in a sibling staging directory and published
-as a unit only after graph, lock and compile verification succeed. Native
-builds also execute `modules --json` after registration and compare its
-profile, ordered module IDs and digest to the generated lock. A failed rebuild
-leaves the previous profile directory intact.
+The builder stages the full output and publishes it atomically only after
+resolution, compilation and inventory verification succeed. It does not edit
+the repository root's `go.mod` or `go.sum`; final compilation uses
+`-mod=readonly` and `-trimpath`.
 
-Inspect the result:
+Inspect a configured artifact:
 
 ```bash
-dist/modules/standard-kafka/sso-server modules
-dist/modules/standard-kafka/sso-server modules --json
-go version -m dist/modules/standard-kafka/sso-server
+dist/modules/sso-prototype/sso-server modules
+dist/modules/sso-prototype/sso-server modules --json
+go version -m dist/modules/sso-prototype/sso-server
 ```
 
-The profile and lock digest are embedded with linker values. The lock includes
-the selected capability graph, complete resolved Go module graph needed to
-reproduce Minimal Version Selection, selected local build-input digests and
-effective Go target/toolchain environment. It is not the binary's linked-package
-inventory or an SBOM; use `go version -m` and the release SBOM for those views.
-After compilation the tool re-hashes the selected inputs, verifies exact linked
-module paths, and, for a native build, executes `modules --json` before
-publishing the profile atomically.
+The inventory contains the profile ID, ordered module IDs and canonical lock
+digest. The lock records the resolved capability and Go module graphs plus
+build inputs; it is not a binary package inventory or an SBOM. Use
+`go version -m`, symbol inspection and the release SBOM to prove physical
+dependency removal.
 
-Make and Task wrappers accept extra arguments:
+## Prototype boundary
 
-```bash
-make configure PROFILE=standard-kafka
-make build-profile PROFILE=standard-kafka
-task build-profile profile=standard-kafka
-```
+`cmd/sso-minimal` provides a working single-process SSO slice:
 
-## Modify a profile
+- password authentication with cost-matched unknown-user handling;
+- Authorization Code only, with mandatory PKCE S256;
+- OIDC discovery, JWKS, access token, ID token and UserInfo;
+- in-memory users, clients, credentials and authorization codes;
+- an opaque HttpOnly OP cookie with `prompt`/`max_age` handling and local
+  logout;
+- a two-client HTTP integration test proving passwordless reuse of the OP
+  session and preservation of the original `auth_time`;
+- loopback-only listening and environment/flag seed configuration.
 
-The resolver supports positive additions and explicit exclusions:
+It is deliberately not a production deployment:
+
+- process memory is the only persistence and coordination boundary;
+- signing keys and sessions do not provide durable or multi-replica semantics;
+- the HTTP cookie-jar test is not browser end-to-end evidence; a browser flow
+  requires a same-origin external login frontend because this binary exposes a
+  POST login API and bundles no UI;
+- the OP session is currently a command-level adapter rather than the
+  canonical `SessionManager`/authorization-code lifecycle;
+- authorization-code issuance does not yet carry the real OP session SID
+  through the code, access token and ID token;
+- protocol route registrars and implementation packages are not yet isolated
+  from `interfaces/sso`.
+
+The extraction target preserves the prototype behavior while moving OP session
+creation, SID propagation, `prompt`/`max_age` and logout into standard typed
+registrars outside `cmd/`. Only after package, binary, SBOM and size evidence
+shows excluded dependencies are absent may the profile be described as a
+physically minimal binary.
+
+## Profile modification
+
+Positive additions and exclusions are available for compatible graphs:
 
 ```bash
 python cli.py modules plan \
@@ -124,21 +159,29 @@ python cli.py configure \
   --build
 ```
 
-Locked or still-embedded modules cannot be excluded. A missing/ambiguous
-capability provider, dependency cycle, conflict, unsupported target, planned
-module, unknown registration adapter, or violation of declared module
-CGO/FIPS/license metadata fails before compilation. This manifest policy does
-not scan transitive dependency licenses or certify FIPS compliance; release
-SBOM and compliance verification remain separate gates.
+Resolution fails before compilation for missing or ambiguous providers,
+conflicts, cycles, an excluded locked/embedded module, unsupported targets,
+planned modules, unknown registration adapters or declared policy violations.
+Manifest metadata does not certify transitive licenses or FIPS compliance;
+release SBOM and compliance checks remain separate gates.
 
-Use `--target GOOS/GOARCH` for cross-compilation. `--out PATH` may select an
-external directory or a path below repository `dist/`; other in-repository
-paths are rejected so generated Go files cannot affect source-tree gates.
+`--target GOOS/GOARCH` supports cross-compilation. `--out` may point outside the
+repository or below `dist/`; other in-repository output paths are rejected.
 
-## Add a local cold module
+## Maintained cold modules
 
-`--add-module` accepts a directory containing `snaplink.module.json`, or the
-manifest path itself:
+A maintained module must:
+
+1. define narrow provided/required capabilities and a failure policy;
+2. keep security wire invariants in the non-removable kernel;
+3. use a strict `snaplink.module.json` manifest;
+4. register only through a typed, allow-listed adapter;
+5. avoid `init`, blank imports, shell/template fields and arbitrary generated
+   expressions;
+6. prove dependency inclusion and exclusion with the lock, binary metadata,
+   SBOM and behavior tests.
+
+`--add-module` accepts a local module directory or manifest:
 
 ```bash
 python cli.py configure \
@@ -148,120 +191,38 @@ python cli.py configure \
   --build
 ```
 
-The v1alpha1 manifest is strict JSON:
+An isolated local module must keep `source` inside its manifest directory and
+provide a matching `go.mod`. Local replacements are a development mechanism;
+supported releases require publishable versions, checksums, signatures and
+provenance. Kafka remains the only implemented third-party registration
+adapter; a versioned registrar outside `cmd/` is required before other module
+families are supported.
 
-```json
-{
-  "$schema": "/path/to/snaplink/ops/build/module.schema.json",
-  "schema_version": 1,
-  "id": "corp-audit-kafka",
-  "summary": "Company Kafka audit transport",
-  "kind": "cold",
-  "state": "isolated",
-  "activation": "restart",
-  "host_api": "v1alpha1",
-  "version": "v0.0.0",
-  "module_path": "example.com/security/corp-audit-kafka",
-  "source": ".",
-  "provides": ["audit.sink.kafka.v1"],
-  "requires": ["audit.host.v1"],
-  "conflicts": ["audit-kafka"],
-  "registration": {
-    "type": "audit.kafka.factory.v1",
-    "package": "example.com/security/corp-audit-kafka",
-    "symbol": "Factory"
-  },
-  "targets": {
-    "goos": ["linux"],
-    "goarch": ["amd64", "arm64"],
-    "cgo": false,
-    "fips": "unknown"
-  },
-  "licenses": ["Apache-2.0"],
-  "security": {
-    "removable": true,
-    "failure_policy": "fail-open"
-  }
-}
-```
+## Cold and hot boundary
 
-For an isolated module, `source` must remain inside the manifest directory and
-contain a `go.mod` whose `module` directive exactly matches `module_path`.
-Registration symbols must be exported. The source and manifest are fingerprinted
-without recording an absolute local path.
-
-The only current registration adapter is the Kafka audit factory seam. This
-restriction is deliberate: manifests cannot inject code-generation snippets.
-A stable typed registrar outside `cmd/` is required before additional module
-families or remote versions become supported.
-
-Local replacements use repository-relative build metadata and content digests
-without absolute paths in the lock. They are suitable for development builds;
-supported releases must pin publishable module versions and checksums.
-
-## Profile meanings
-
-### `standard`
-
-The compatibility bundle. It still links the current large composition and is
-the default for `go build ./cmd/sso-server` and `python cli.py build`.
-
-### `standard-kafka`
-
-The compatibility bundle plus `github.com/snaplink/sso/kafka`, registered
-explicitly at process startup. Enabling `audit.kafka` without this compiled
-module still fails boot closed.
-
-### `minimal`
-
-The target client-credentials-only OAuth server selects these dependencies:
-
-```text
-core-runtime -> core-http, identity-memory, signing-ed25519
-core-http + identity-memory + signing-ed25519 -> oauth-client-credentials
-core-http + signing-ed25519 -> oauth-metadata
-```
-
-It is not yet buildable. `python cli.py modules plan --profile minimal` is the
-resolver-backed extraction backlog and must reach `buildable: yes` before a
-minimal artifact is published.
-
-## Cold versus hot capability boundary
-
-| Keep cold | Candidate for later hot activation |
+| Keep cold | Candidate for a future hot lifecycle |
 |---|---|
-| middleware order and trusted proxies | fail-open background detectors |
-| identity/OAuth stores and migrations | isolated notification/webhook exporters |
-| issuers, keys, JWKS, KMS/HSM | prevalidated WASM policy generations |
-| grant handlers and discovery shape | precompiled admin/debug route slots |
-| cluster/revocation/signing-key bus | external typed authenticator processes |
-| primary audit/redaction/hash chain | secondary audit taps after dynamic drain exists |
-| stateful login/MFA/device/CIBA/SAML flows | stateless adapters with no cross-request state |
+| Middleware order and trusted proxies | Fail-open background detectors |
+| Identity/OAuth stores and migrations | Isolated notification/webhook exporters |
+| Issuers, keys, JWKS and KMS/HSM | Prevalidated WASM policy generations |
+| Grants, OP sessions and discovery shape | Precompiled admin/debug route slots |
+| Cluster/revocation/key buses | External typed authenticator processes |
+| Primary audit/redaction/hash chain | Secondary audit taps |
 
-Runtime activation requires a static route/capability slot, generation leases,
-blue/green readiness, drain, reverse-order cleanup and transition audit. The
-current router, readiness slice and audit sink registry do not satisfy those
-requirements.
+A hot-precompiled module requires static route/capability slots, generation
+leases, blue/green readiness, drain, reverse-order cleanup and transition
+audit. The current router, readiness checks and audit sink registry do not meet
+that contract.
 
-Third-party installable hot plugins will be separate processes over a typed,
-authenticated protocol. Go `.so` plugins are not a supported extension
-mechanism.
+Installable third-party hot modules will run out of process over a typed,
+authenticated protocol. Go `.so` plugins are not supported.
 
-## Adding a maintained module
+## Verification
 
-1. Define the capability and failure policy; security invariants remain kernel.
-2. Put implementation code in its owning architectural layer or nested module.
-3. Add a strict manifest and catalog/profile entry.
-4. Add only a typed, allow-listed registration adapter; no `init`, blank import
-   or arbitrary generator expression.
-5. Prove dependency closure and absence from profiles that exclude it with
-   `go version -m`, binary symbols/SBOM and behavioral tests.
-6. Update the feature matrix, this guide and release profile documentation.
-7. Run:
-
-   ```bash
-   python cli.py modules check
-   python -m pytest checks/test_modules.py -q
-   go build ./... && go vet ./...
-   go test -run 'TestMaintainability_|TestArchitecture_' .
-   ```
+```bash
+python cli.py modules check
+python -m pytest checks/test_modules.py -q
+go test ./cmd/sso-minimal
+go build ./... && go vet ./...
+go test -run 'TestMaintainability_|TestArchitecture_' .
+```

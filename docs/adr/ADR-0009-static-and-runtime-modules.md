@@ -67,23 +67,26 @@ ops/build/profiles/*.json
 Operators use positive selection:
 
 ```bash
-python cli.py modules plan --profile standard-kafka
-python cli.py configure --profile standard-kafka --build
+python cli.py modules plan --profile sso-prototype
+python cli.py configure --profile sso-prototype --build
 ```
 
 `--with-module`, `--without-module`, and `--add-module` modify the selected
-profile. The resolver:
+profile. A profile may extend another profile and may select its own `./cmd/`
+build package, binary name and required composition module. The resolver:
 
 1. validates strict JSON data;
-2. computes the capability dependency closure;
-3. rejects missing or ambiguous providers, conflicts and cycles;
-4. applies target and declared module CGO/FIPS/license metadata policy;
-5. sorts modules in stable dependency order;
-6. materializes an alternate `go.mod/go.sum`;
-7. generates one explicit registration function;
-8. produces a canonical `modules.lock.json`;
-9. builds with `-mod=readonly`, `-trimpath` and a fixed positive build tag;
-10. verifies selected Go modules are present in the final binary metadata.
+2. resolves profile inheritance and the positive module set;
+3. computes the capability dependency closure;
+4. rejects missing or ambiguous providers, conflicts and cycles;
+5. applies target and declared module CGO/FIPS/license metadata policy;
+6. sorts modules in stable dependency order;
+7. materializes an alternate `go.mod/go.sum`;
+8. generates one explicit registration function;
+9. produces a canonical `modules.lock.json`;
+10. builds the selected package with `-mod=readonly`, `-trimpath` and a fixed
+    positive build tag;
+11. verifies selected Go modules and the embedded inventory.
 
 The builder never edits the repository's root `go.mod` or `go.sum`. By default,
 generated files live under ignored `dist/modules/<profile>/`; an external
@@ -92,14 +95,17 @@ maintainability and architecture scans, so the default profile build cannot
 invalidate those source-tree gates. A profile is staged and published as one
 owned directory only after validation and any requested build succeeds.
 
-Registration is explicit. Generated code calls named, allow-listed host
-adapters from `servermodules.Register()`. Module manifests cannot contain
-shell commands, templates, arbitrary Go expressions, blank imports or `init`
-hooks.
+Registration is explicit. A module that needs host registration uses a named,
+allow-listed adapter; manifests cannot contain shell commands, templates,
+arbitrary Go expressions, blank imports or `init` hooks. The current Kafka
+adapter still enters through `servermodules.Register()`; a standard versioned
+registrar outside `cmd/` remains an extraction target.
 
-The build uses a Go overlay only for the single hard-coded
+The generated Go overlay may replace only the single hard-coded
 `cmd/sso-server/servermodules/register_configured.go` path. It may not replace
-arbitrary repository files.
+arbitrary repository files. A profile-specific entry point such as
+`cmd/sso-minimal` is selected as profile data rather than injected through
+another overlay.
 
 ### 3. Keep compatibility honest during extraction
 
@@ -108,27 +114,45 @@ The current profiles are:
 | Profile | State | Meaning |
 |---|---|---|
 | `standard` | supported | Historical stock composition |
-| `standard-kafka` | supported | Stock composition plus statically linked Kafka audit sink |
-| `minimal` | planned | Target client-credentials-only OAuth authorization server |
+| `standard-kafka` | supported | Extends `standard` with the statically linked Kafka audit sink |
+| `sso-prototype` | preview | Buildable loopback/in-memory SSO prototype from `cmd/sso-minimal` |
+| `sso-production` | planned | Extends `sso-prototype` with durable state, controls, operations and HA-capable providers |
+| `sso-complete` | planned | Extends `sso-production` with advanced protocol and product capability bundles |
 
-`standard` remains the normal build during migration. `minimal` deliberately
-fails configuration while any selected module is marked `planned`; a route
-gate or unused config block is not accepted as proof of binary isolation.
+`standard` remains the compatibility default during migration.
+`sso-prototype` is a functional build, with Authorization Code + mandatory PKCE
+S256, OIDC discovery/JWKS/tokens/UserInfo, password authentication, local
+logout and an opaque HttpOnly OP cookie. Its two-client HTTP integration test
+proves that one password login can establish a reusable OP session for another
+registered client and preserves the original `auth_time`. This is not browser
+end-to-end evidence; browser SSO requires the separate same-origin login
+frontend because the server bundles no UI.
 
-The target `minimal` profile contains only:
+The prototype is not yet a physically minimal binary. Its entry point still
+uses `interfaces/sso`, so the broad package dependency graph remains linked
+even when feature gates hide routes. The OP session is also a command-level
+adapter: canonical authorization-code issuance does not yet create the real OP
+session and propagate its SID through the code and tokens.
 
-- process/config/lifecycle kernel;
-- HTTP transport plus liveness/readiness;
-- in-memory client registry;
-- Ed25519 token issuer/validator and JWKS;
-- `/token` with `client_credentials`;
-- OAuth authorization-server metadata.
+The extraction target is therefore:
 
-It intentionally has no users, sessions, browser login, authorization code,
-refresh, device, PAR/JAR, OIDC ID tokens/userinfo, self-service, admin API,
-federation, CAEP, SCIM, WebAuthn, cluster, Redis, Postgres, etcd, OTel or WASM.
-A future `minimal-sso` profile may add browser login, authorization code + PKCE,
-OIDC and the required identity/session modules.
+- move OP session creation, `prompt`/`max_age`, SID propagation and logout into
+  the canonical session and authorization-code lifecycle;
+- split protocol routes into standard typed registrars outside `cmd/`;
+- isolate HTTP, stores, authentication, signing and OIDC implementation
+  packages;
+- prove excluded dependencies are absent with package, binary-size, symbol and
+  SBOM evidence.
+
+`sso-production` and `sso-complete` resolve their inherited capability graphs
+but remain unbuildable while selected modules are `planned`. They also target
+the intentionally absent `cmd/sso-production` and `cmd/sso-complete`
+composition commands, so they cannot accidentally stamp a production or
+complete inventory onto the prototype binary. A route gate or unused config
+block is never accepted as binary-isolation proof.
+
+The `oauth-client-credentials` grant is an independent optional
+machine-to-machine module, not the definition or foundation of minimal SSO.
 
 Security wire invariants are kernel policy, not removable modules. A profile
 cannot disable signature validation, oracle collapse, credential-response
@@ -146,8 +170,8 @@ Every configured binary receives:
 It exposes them without loading runtime configuration:
 
 ```bash
-sso-server modules
-sso-server modules --json
+<configured-binary> modules
+<configured-binary> modules --json
 ```
 
 This is the `nginx -V` equivalent. It contains no secrets or runtime module
@@ -222,19 +246,23 @@ private keys or reusable bearer credentials by default.
 
 ## Migration
 
-1. **Build proof:** supported `standard`/`standard-kafka`, strict manifests,
-   dependency plans, alternate modfile, overlay, lock and binary inventory.
-2. **Stable host API:** extract executable orchestration from `package main`;
-   replace transitional factory adapters with a versioned registrar outside
-   `cmd/`.
-3. **Real cold isolation:** split the stock route and builder monolith into
-   explicit modules; prove dependency and binary-size removal for each.
-4. **Minimal release:** make the target profile buildable and test protocol,
-   dependency, SBOM and size deltas against `standard`.
-5. **Hot manager:** add generation leases, route guards, drain, readiness and
+1. **Build proof:** retain supported compatibility profiles, strict manifests,
+   inherited plans, alternate modfiles, lock and binary inventory.
+2. **Prototype proof:** keep `sso-prototype` buildable and test Authorization
+   Code + PKCE plus two-client HTTP OP-session reuse and original `auth_time`.
+3. **Canonical SSO lifecycle:** move the prototype adapter into the real
+   session/auth-code flow and propagate SID through codes and tokens.
+4. **Stable host API and cold isolation:** replace transitional `cmd/`
+   adapters with versioned registrars; split the route and builder monolith and
+   prove dependency removal.
+5. **Production edition:** make `sso-production` buildable with durable state,
+   OAuth controls, observability and supported topology evidence.
+6. **Complete edition:** make `sso-complete` buildable only after its inherited
+   production base and optional product bundles have release evidence.
+7. **Hot manager:** add generation leases, route guards, drain, readiness and
    transition audit; migrate one low-risk background module first.
-6. **External supervisor:** add signed artifact policy and typed RPC processes.
-7. **Release profiles:** publish per-profile binary SBOMs, locks, signatures and
+8. **External supervisor:** add signed artifact policy and typed RPC processes.
+9. **Release evidence:** publish per-profile SBOMs, locks, signatures and
    provenance.
 
 Nested module paths and versions must be made publishable before remote
@@ -246,7 +274,7 @@ development mechanism, not release provenance.
 Positive consequences:
 
 - operators can inspect and reproduce the exact compiled extension set;
-- optional dependencies can eventually leave minimal binaries entirely;
+- optional dependencies can eventually leave profile binaries entirely;
 - runtime activation gains explicit failure, drain and readiness semantics;
 - third-party crashes and dependency conflicts do not enter the identity
   process address space.

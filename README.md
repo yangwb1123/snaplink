@@ -31,6 +31,29 @@ The SDK and `sso-server` serve APIs only. Hosted login, admin, self-service,
 developer, and setup interfaces are separate frontend projects placed behind
 the same reverse proxy; this repository does not mount their static bundles.
 
+### Edition profiles
+
+| Profile | Status | Intended scope |
+|---|---|---|
+| `sso-prototype` | **Preview; buildable** | Loopback-only, single-process evaluation with memory stores, Authorization Code + mandatory PKCE, OIDC, and an opaque OP session exercised by an HTTP integration test across two registered clients. |
+| `sso-production` | **Planned; extends `sso-prototype`** | Durable state, security controls, observability, administration, and HA-capable providers. |
+| `sso-complete` | **Planned; extends `sso-production`** | Advanced protocols, enterprise identity, provisioning, tenant, authorization, threat, governance, and integration capabilities. |
+| `standard`, `standard-kafka` | **Compatibility only** | Preserve the historical stock composition while the edition modules are extracted. |
+
+Build the runnable preview:
+
+```bash
+python cli.py configure --profile sso-prototype --build
+```
+
+`sso-prototype` is functionally small, but not yet physically minimal: its
+composition root still imports `interfaces/sso` and therefore links a larger
+package/dependency graph than the profile inventory suggests. It is neither a
+production baseline nor evidence that omitted capabilities have been compiled
+out. The repository ships no login UI, so the two-client test is not a browser
+end-to-end proof; a browser deployment needs a same-origin login frontend in
+front of the POST login API.
+
 ---
 
 ## 30-second tour (actually runnable)
@@ -232,18 +255,21 @@ are thin wrappers.
 ```bash
 python cli.py build          # -> ./bin/{sso-server, sso-ctl}
 python cli.py modules list   # module catalog and migration state
-python cli.py modules plan --profile minimal
-python cli.py configure --profile standard-kafka --build
+python cli.py modules plan --profile sso-prototype
+python cli.py configure --profile sso-prototype --build
+python cli.py configure --profile standard-kafka --build  # compatibility build
 go build ./...               # compile everything
 go test ./...                # unit + integration (package ssotest under test/)
 go test ./test/ -race        # cross-wired HTTP + JWKS integration suite
 ```
 
-The profile builder is the first stage of the NGINX-style module architecture.
-`standard` preserves the historical stock composition; `standard-kafka`
-statically adds the Kafka audit module. The target `minimal` profile
-intentionally reports its remaining extraction blockers instead of producing
-a route-gated monolith. See [docs/plugin-system.md](docs/plugin-system.md).
+The profile builder is the cold, NGINX-style composition stage. Availability
+has four independent dimensions: the build profile decides whether a
+capability is compiled, runtime config selects a compiled backend, a feature
+gate controls an already wired surface, and a hot lifecycle decides whether it
+can be activated or drained without a rebuild/restart. The repository does not
+yet provide a general-purpose hot-plugin lifecycle. See
+[docs/plugin-system.md](docs/plugin-system.md).
 
 ## Further reading
 

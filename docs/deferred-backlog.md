@@ -29,10 +29,11 @@ Retired audits, plans, and migration records are summarized in
 |---|---|---|
 | Go SDK | **Implemented** | `interfaces/sso` exposes the broadest option surface. An SDK option is not automatically a stock-binary YAML feature. |
 | `sso-server` | **Implemented** | Pure API backend: OAuth/OIDC, self-service/admin HTTP APIs and gRPC control plane. |
+| `cmd/sso-minimal` / `sso-prototype` | **Partial** | Buildable preview with loopback, memory-backed Authorization Code + PKCE OIDC and a two-client HTTP OP-session test. It is not production-ready, browser-E2E-proven, or package-isolated. |
 | Hosted login, admin, self-service, developer and setup UIs | **External** | Separate frontend projects, normally reverse-proxied beside the server. No static SPA is served by this repository. |
 | Admin API-doc viewer | **Implemented** | `WithAPIDocsUI` serves an admin-gated, self-contained API reference. It is not an application UI. |
 | TypeScript/Python SDKs | **Partial** | Generated curated subset; not complete parity with admin/SCIM/SSF/Federation routes. |
-| Nested protocol/infrastructure modules | **Partial** | Strict cold-build profiles and the Kafka static registrar are implemented. SAML, LDAP, Kerberos, RADIUS, ext-authz, MQTT and KMS/HSM still require custom composition or migration to the module host API. |
+| Nested protocol/infrastructure modules | **Partial** | Strict cold-build profiles and the Kafka static adapter are implemented. A versioned registrar outside `cmd/` is still required before other module families can use the standard host API. |
 
 ## Current implementation deviations
 
@@ -52,10 +53,27 @@ limits. The target contract remains the invariant in `AGENTS.md`.
 
 ### Static build modules and runtime plugin lifecycle
 
-The catalog, dependency planner, alternate module graph, module lock, compiled
-inventory, `standard` profile and `standard-kafka` profile are implemented.
-The `minimal` profile is an executable extraction plan but deliberately fails
-to build while its modules remain inside the stock composition.
+The catalog, profile inheritance, dependency planner, alternate module graph,
+module lock and compiled inventory are implemented. The edition hierarchy is:
+
+| Profile | Status | Open boundary |
+|---|---|---|
+| `sso-prototype` | Preview, buildable | Functional SSO from `cmd/sso-minimal`; still links the broad `interfaces/sso` dependency graph |
+| `sso-production` | Planned | Inherits the prototype; durable state, controls, operations and HA-capable providers remain extraction targets |
+| `sso-complete` | Planned | Inherits production; advanced protocol and product modules remain extraction targets |
+| `standard`, `standard-kafka` | Supported | Compatibility builds, not edition-layer isolation evidence |
+
+The prototype uses an opaque HttpOnly cookie and has a two-client HTTP reuse
+test, but no bundled login UI or browser end-to-end proof. The adapter
+currently lives in `cmd/sso-minimal`. The canonical
+authorization-code flow still needs to create the real OP session, propagate
+its SID through code and tokens, and register the isolated routes through a
+standard typed host API. Until package, symbol, size and SBOM checks show
+otherwise, “buildable prototype” must not be presented as “physically minimal
+binary”.
+
+`oauth-client-credentials` is an independent optional machine-to-machine
+module, not an SSO edition baseline.
 
 Runtime `FeatureGates` hide already wired routes; they do not load, unload or
 drain code. Generation leases, route guards, hot readiness/drain, dynamic
@@ -115,6 +133,9 @@ implemented.
 ## External/operator responsibilities
 
 - Deploy and version frontend applications separately from `sso-server`.
+- Keep `sso-prototype` on loopback and use it only for evaluation or
+  integration; its memory state and command-level OP session are not a
+  production topology.
 - Use shared Redis hot stores, Postgres durable stores and an etcd event bus for
   multi-replica production; memory/per-pod SQLite state is single-replica.
 - Back up and restore backend-native data. The DR framework only replicates its

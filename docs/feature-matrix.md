@@ -10,15 +10,37 @@ availability on every deployment:
 - A `config.yaml` key is a **stock `sso-server`** capability.
 - A row naming a nested module (SAML, LDAP, Kerberos, RADIUS, ext-authz,
   Kafka, MQTT or selected KMS/HSM adapters) requires that module to be built or
-  registered by the composition root. Kafka has a supported
-  `standard-kafka` cold-build profile; the others remain integration-required.
-- A build profile controls what is compiled; a runtime feature gate only
-  controls an already compiled/wired surface. See [plugin-system.md](plugin-system.md).
+  registered by the composition root. `standard-kafka` carries Kafka only as a
+  historical compatibility composition; the others remain integration-required.
 - Optional endpoints only exist when their required store/option is wired and
   their feature gate is on.
 - The runtime is API-only. Frontend applications are external projects; the
   admin-gated API-doc viewer is the only self-contained HTML utility described
   here.
+
+Availability has four independent dimensions:
+
+| Dimension | Meaning |
+|---|---|
+| Compiled capability | A cold profile includes the code and dependency closure. |
+| Runtime backend | Startup configuration selects one of the compiled implementations. |
+| Feature gate | An already compiled and wired endpoint or behavior is exposed. |
+| Hot lifecycle | A prepared generation can activate, become ready, drain, and stop without rebuilding/restarting. |
+
+Do not infer one dimension from another. In particular, a disabled gate does
+not remove linked code, and the current server has no general hot-plugin
+lifecycle.
+
+| Profile | Maturity | Capability claim |
+|---|---|---|
+| `sso-prototype` | Preview; buildable | Loopback/memory Code + mandatory PKCE and OIDC with opaque OP-session reuse across two registered clients in an HTTP test. It still links the larger `interfaces/sso` graph and has no bundled login UI/browser-E2E proof, so it is neither physically minimal nor production-ready. |
+| `sso-production` | Planned; inherits `sso-prototype` | Durable/shared state, production controls, operations, administration, observability, and HA providers. |
+| `sso-complete` | Planned; inherits `sso-production` | Advanced protocols and the enterprise/product capability sets. |
+| `standard`, `standard-kafka` | Supported compatibility profiles | Historical stock composition only; not layers in the edition hierarchy. |
+
+Build the preview with
+`python cli.py configure --profile sso-prototype --build`. See
+[plugin-system.md](plugin-system.md) for lifecycle boundaries.
 
 “Implemented” does not mean OpenID Certified. Certification evidence is tracked
 in [sso/oidc-conformance.md](sso/oidc-conformance.md), and intentional limits

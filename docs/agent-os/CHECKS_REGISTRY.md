@@ -41,7 +41,7 @@ Run `python cli.py check-test` for check-module tests and
 | Diagnostics | `diagnose`, `trend`, `health-report`, `self-test` |
 | Test execution | `test`, `race`, `bench`, `check-test`, `skill-test` |
 | Review | `review [spec]` |
-| Module builds | `modules <action>`, `configure --profile <id> [--build]`; `modules smoke` builds every `supported` profile |
+| Module builds | `modules <action>`, `configure --profile <id> [--build]`; `modules smoke` builds every supported profile plus each currently buildable preview |
 
 `python cli.py --help` is the executable command index.
 

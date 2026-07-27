@@ -20,10 +20,24 @@ The normal `python cli.py build` engineering gate builds only `sso-server` and
 `sso-ctl`; `make release-snapshot` is the check for the complete GoReleaser
 matrix.
 
-Local `standard` and `standard-kafka` profile builds produce a module lock and
-embedded inventory, but GoReleaser does not yet publish per-profile artifacts
-or binary-level profile SBOMs. Do not describe local profile builds as an
-official release matrix; follow [plugin-system.md](plugin-system.md).
+Local profile builds produce a module lock and embedded inventory, but
+GoReleaser does not yet publish per-profile artifacts or binary-level profile
+SBOMs:
+
+- `sso-prototype` is a buildable **preview** for loopback/memory, two-client
+  HTTP SSO-mechanism evaluation:
+  `python cli.py configure --profile sso-prototype --build`. It is not a
+  bundled-browser end-to-end artifact.
+- `sso-production` inherits the prototype and `sso-complete` inherits
+  production; both are **planned** and produce no releasable artifact.
+- `standard` and `standard-kafka` exist only to preserve the historical stock
+  composition.
+
+The prototype still composes through `interfaces/sso` and links a larger
+dependency graph; do not call it physically minimal, production-ready, or an
+official release artifact. A module lock records cold capability selection,
+not runtime backend choice, feature-gate state, hot lifecycle support, or an
+SBOM. Follow [plugin-system.md](plugin-system.md).
 
 The release pipeline does not currently produce a SLSA provenance statement.
 Do not describe signatures/SBOMs as provenance.

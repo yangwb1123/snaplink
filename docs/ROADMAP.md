@@ -80,20 +80,38 @@ Deliverables:
 - Publish the API contract an external frontend must use for login, consent,
   self-service, admin and first-run setup.
 
-### 5. Extract real build modules and publish a minimal profile
+### 5. Isolate the SSO edition hierarchy
 
-The profile resolver, module lock, explicit registrar and Kafka proof build are
-implemented. The stock server still links the broad composition; feature gates
-alone do not reduce its dependencies.
+The resolver, inherited profiles, module lock, compatibility builds and
+profile-specific entry points are implemented. `sso-prototype` is a buildable
+preview from `cmd/sso-minimal`: it provides an in-memory, loopback-only
+Authorization Code + PKCE OIDC flow and exercises opaque HttpOnly OP-session
+reuse across two registered clients in an HTTP integration test. It preserves
+the original `auth_time`, but does not yet provide browser end-to-end evidence;
+that requires the separate same-origin login frontend.
+
+That behavior is usable for evaluation, but it is not physical isolation.
+`cmd/sso-minimal` still reaches the broad dependency graph through
+`interfaces/sso`, and its OP-session adapter does not yet place the canonical
+session SID into the authorization code and resulting tokens.
 
 Deliverables:
 
-- Split core HTTP, identity store, Ed25519 signing, client-credentials token
-  handling and OAuth metadata out of the stock bundle.
-- Make `minimal` buildable only after excluded dependencies are absent from
-  `go version -m`, symbols and per-binary SBOM evidence.
-- Extract a stable typed host API outside `cmd/`, then migrate SAML,
-  LDAP/Kerberos/RADIUS, KMS/HSM and other nested modules.
+- Move OP-session creation, `prompt`/`max_age`, logout and SID propagation into
+  the canonical session/authorization-code lifecycle.
+- Extract standard typed route and capability registrars outside `cmd/`.
+- Isolate core HTTP, identity/OAuth stores, password authentication, Ed25519
+  signing and OIDC packages without changing the prototype wire behavior.
+- Prove physical removal with `go list`, `go version -m`, symbols, binary-size
+  deltas and per-profile SBOMs.
+- Make the inherited `sso-production` profile buildable with durable state,
+  security controls, observability and supported topology evidence.
+- Make `sso-complete` buildable only after the production base and its advanced
+  protocol/product modules have independent release evidence.
+- Keep `oauth-client-credentials` as an independent optional machine-to-machine
+  module rather than an SSO profile foundation.
+- Migrate SAML, LDAP/Kerberos/RADIUS, KMS/HSM and other nested modules to the
+  standard host API after that boundary is stable.
 - Add generation leases, static route slots and drain before classifying any
   in-process capability as hot; keep installable third-party code out of
   process.
@@ -166,6 +184,6 @@ until promoted here.
 2. Conformance evidence and release-gate integrity.
 3. HA topology validation.
 4. Obsolete frontend-config migration.
-5. Real minimal-module extraction and per-profile release evidence.
+5. Canonical OP-session/SID integration and physical profile isolation.
 6. Snapshot schema v2 and API-client parity.
 7. New protocol families only after the production-completeness work above.
