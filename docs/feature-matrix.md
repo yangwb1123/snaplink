@@ -10,8 +10,9 @@ availability on every deployment:
 - A `config.yaml` key is a **stock `sso-server`** capability.
 - A row naming a nested module (SAML, LDAP, Kerberos, RADIUS, ext-authz,
   Kafka, MQTT or selected KMS/HSM adapters) requires that module to be built or
-  registered by the composition root. `standard-kafka` carries Kafka only as a
-  historical compatibility composition; the others remain integration-required.
+  registered by the composition root. `production` and the historical
+  `standard-kafka` compatibility profile carry Kafka; the others remain
+  integration-required.
 - Optional endpoints only exist when their required store/option is wired and
   their feature gate is on.
 - The runtime is API-only. Frontend applications are external projects; the
@@ -33,13 +34,15 @@ lifecycle.
 
 | Profile | Maturity | Capability claim |
 |---|---|---|
-| `sso-prototype` | Preview; buildable | Loopback/memory Code + mandatory PKCE and OIDC with opaque OP-session reuse across two registered clients in an HTTP test. It still links the larger `interfaces/sso` graph and has no bundled login UI/browser-E2E proof, so it is neither physically minimal nor production-ready. |
-| `sso-production` | Planned; inherits `sso-prototype` | Durable/shared state, production controls, operations, administration, observability, and HA providers. |
-| `sso-complete` | Planned; inherits `sso-production` | Advanced protocols and the enterprise/product capability sets. |
+| `prototype` | Preview; buildable | SSO + OAuth Authorization Code/PKCE, password and reusable OP-session login, basic JSON logs, memory defaults, and a stable `default` tenant seam. OIDC surfaces are excluded. |
+| `minimal` | Preview; buildable | Inherits `prototype`; adds OIDC discovery, ID Token, UserInfo and logout plus request tracing. |
+| `production` | Supported; buildable | Inherits `minimal`; selects the complete current stock `sso-server` composition and registered Kafka audit cold module. Other independently packaged integrations remain registration-dependent. |
 | `standard`, `standard-kafka` | Supported compatibility profiles | Historical stock composition only; not layers in the edition hierarchy. |
 
-Build the preview with
-`python cli.py configure --profile sso-prototype --build`. See
+Build an edition with, for example,
+`python cli.py configure --profile minimal --version v1.1.1 --build`.
+`prototype` and `minimal` currently share the `cmd/sso-minimal` physical
+dependency graph despite exposing different runtime surfaces. See
 [plugin-system.md](plugin-system.md) for lifecycle boundaries.
 
 “Implemented” does not mean OpenID Certified. Certification evidence is tracked

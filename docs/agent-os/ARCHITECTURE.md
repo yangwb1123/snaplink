@@ -17,13 +17,14 @@ contains gate tests only, while the public API-only Server lives in
 `interfaces/sso`.
 
 Cold compatibility composition enters through
-`cmd/sso-server/servermodules`. The buildable preview `sso-prototype` targets
-`cmd/sso-minimal`; it exercises loopback/memory two-client Code + PKCE/OIDC/OP
-session reuse at the HTTP layer, but still links the larger `interfaces/sso`
-graph and is neither browser-E2E-proven, physically minimal nor
-production-ready. `sso-production` extends it and
-`sso-complete` extends production; both are planned. `standard` and
-`standard-kafka` are compatibility profiles only.
+`cmd/sso-server/servermodules`. The public edition hierarchy is
+`prototype → minimal → production`: `prototype` provides SSO/OAuth, JSON logs,
+memory defaults and a stable `default` tenant seam; `minimal` adds OIDC and
+tracing; `production` selects the complete current `cmd/sso-server`
+composition plus the registered Kafka audit cold module. The first two target
+`cmd/sso-minimal` and still share its larger `interfaces/sso` dependency graph
+despite their distinct runtime surfaces. `standard` and `standard-kafka` are
+compatibility profiles only.
 
 Manifests and profiles live under `ops/build/`. Treat compiled capability,
 runtime backend, feature-gate exposure, and hot lifecycle as four independent

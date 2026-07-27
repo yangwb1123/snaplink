@@ -33,26 +33,32 @@ the same reverse proxy; this repository does not mount their static bundles.
 
 ### Edition profiles
 
-| Profile | Status | Intended scope |
-|---|---|---|
-| `sso-prototype` | **Preview; buildable** | Loopback-only, single-process evaluation with memory stores, Authorization Code + mandatory PKCE, OIDC, and an opaque OP session exercised by an HTTP integration test across two registered clients. |
-| `sso-production` | **Planned; extends `sso-prototype`** | Durable state, security controls, observability, administration, and HA-capable providers. |
-| `sso-complete` | **Planned; extends `sso-production`** | Advanced protocols, enterprise identity, provisioning, tenant, authorization, threat, governance, and integration capabilities. |
-| `standard`, `standard-kafka` | **Compatibility only** | Preserve the historical stock composition while the edition modules are extracted. |
+The public editions are additive: `prototype → minimal → production`.
 
-Build the runnable preview:
+| Profile | Intended scope |
+|---|---|
+| `prototype` | Smallest runnable SSO/OAuth slice: Authorization Code + mandatory PKCE, password login and reusable OP session, basic JSON logs, memory defaults, and one stable `default` tenant as a migration seam. OIDC surfaces are excluded. |
+| `minimal` | Adds the common OIDC surface (discovery, ID Token, UserInfo and logout) and request tracing while retaining the single-process defaults. |
+| `production` | Full current stock `sso-server` composition plus the registered Kafka audit cold module, subject to normal configuration and backend requirements. Independently packaged integrations still require their own maintained registration. |
+| `standard`, `standard-kafka` | Compatibility profiles for the historical stock composition; not public edition tiers. |
+
+Build all three editions from the same source version:
 
 ```bash
-python cli.py configure --profile sso-prototype --build
+python cli.py configure --profile prototype --version v1.1.1 --build
+python cli.py configure --profile minimal --version v1.1.1 --build
+python cli.py configure --profile production --version v1.1.1 --build
 ```
 
-`sso-prototype` is functionally small, but not yet physically minimal: its
-composition root still imports `interfaces/sso` and therefore links a larger
-package/dependency graph than the profile inventory suggests. It is neither a
-production baseline nor evidence that omitted capabilities have been compiled
-out. The repository ships no login UI, so the two-client test is not a browser
-end-to-end proof; a browser deployment needs a same-origin login frontend in
-front of the POST login API.
+Their `version` output is edition-qualified:
+`snaplink-v1.1.1.prototype`, `snaplink-v1.1.1.minimal`, and
+`snaplink-v1.1.1.production`.
+
+`prototype` and `minimal` have distinct runtime surfaces but currently share
+the `cmd/sso-minimal` physical package/dependency graph. A disabled route is
+not evidence that its code was compiled out; package-level isolation remains
+an extraction target. The repository ships no login UI, so browser deployment
+still requires a same-origin login frontend in front of the POST login API.
 
 ---
 
@@ -255,8 +261,10 @@ are thin wrappers.
 ```bash
 python cli.py build          # -> ./bin/{sso-server, sso-ctl}
 python cli.py modules list   # module catalog and migration state
-python cli.py modules plan --profile sso-prototype
-python cli.py configure --profile sso-prototype --build
+python cli.py modules plan --profile prototype
+python cli.py configure --profile prototype --version v1.1.1 --build
+python cli.py configure --profile minimal --version v1.1.1 --build
+python cli.py configure --profile production --version v1.1.1 --build
 python cli.py configure --profile standard-kafka --build  # compatibility build
 go build ./...               # compile everything
 go test ./...                # unit + integration (package ssotest under test/)

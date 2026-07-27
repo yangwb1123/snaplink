@@ -24,7 +24,7 @@ Catalog of the Python engineering helpers. Committed Go gates are specified in
 | `root_files.py` | Root file-count diagnostic | via `accept` |
 | `self_test.py` | Deliberately bad harness probes | `self-test` |
 | `ops/scripts/module_catalog.py` | Strict module/profile validation and capability planning | `modules check`, `modules list`, `modules plan`, `modules graph`, `modules why` |
-| `ops/scripts/configure_modules.py` | Atomic alternate modfile/overlay/lock materialization and profile builds | `configure --profile <id> [--build]` |
+| `ops/scripts/configure_modules.py` | Atomic alternate modfile/overlay/lock materialization and profile builds | `configure --profile <id> [--version vX.Y.Z] [--build]` |
 
 `config.py` loads `engineering.yaml`; `make_help.py` formats Make target help.
 Run `python cli.py check-test` for check-module tests and
@@ -41,7 +41,7 @@ Run `python cli.py check-test` for check-module tests and
 | Diagnostics | `diagnose`, `trend`, `health-report`, `self-test` |
 | Test execution | `test`, `race`, `bench`, `check-test`, `skill-test` |
 | Review | `review [spec]` |
-| Module builds | `modules <action>`, `configure --profile <id> [--build]`; `modules smoke` builds every supported profile plus each currently buildable preview |
+| Module builds | `modules <action>`, `configure --profile <id> [--version vX.Y.Z] [--build]`; `modules smoke` builds every supported profile plus each currently buildable preview |
 
 `python cli.py --help` is the executable command index.
 

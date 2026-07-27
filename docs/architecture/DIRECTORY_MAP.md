@@ -21,19 +21,19 @@ cmd/ · config/ · docs/ · gen/ · proto/ · test/ · ops/ · checks/  composit
 ```
 
 `cmd/sso-server/servermodules` is the explicit cold-module registration hook
-for the stock compatibility composition. The buildable preview profile
-`sso-prototype` instead targets the dedicated `cmd/sso-minimal` composition
-root. It provides loopback/memory Code + mandatory PKCE, OIDC, and an opaque OP
-session exercised across two registered clients by an HTTP test, but still
-imports `interfaces/sso`; its logical capability boundary is therefore smaller
-than its linked package/dependency graph. It has no bundled login UI or browser
-end-to-end proof and is not a production or physically minimal artifact.
+for the stock compatibility composition. `prototype` and `minimal` target the
+dedicated `cmd/sso-minimal` composition root. `prototype` exposes SSO/OAuth,
+basic JSON logs and the stable `default` tenant seam; `minimal` adds OIDC and
+tracing. Both still import `interfaces/sso`, so their distinct logical
+boundaries currently share a larger linked package/dependency graph. Neither
+bundles a login UI or represents a production topology.
 
 `ops/build/` owns strict manifests/profiles and `ops/scripts/` materializes an
-alternate module graph under ignored `dist/modules/`. `sso-production`
-inherits `sso-prototype`, and `sso-complete` inherits `sso-production`; both
-are planned extraction layers. `standard` and `standard-kafka` preserve only
-the historical stock composition. See [`plugin-system.md`](../plugin-system.md).
+alternate module graph under ignored `dist/modules/`. The public hierarchy is
+`prototype → minimal → production`; `production` overrides the smaller command
+target with the complete current `cmd/sso-server` composition and registered
+Kafka audit cold module. `standard` and `standard-kafka` preserve only the
+historical stock composition. See [`plugin-system.md`](../plugin-system.md).
 
 The repo root holds **no library `.go` files** — only the committed gate tests
 (`package archgate`: architecture + maintainability budgets). The public Server

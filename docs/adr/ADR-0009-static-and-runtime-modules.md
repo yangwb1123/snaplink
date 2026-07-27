@@ -67,8 +67,8 @@ ops/build/profiles/*.json
 Operators use positive selection:
 
 ```bash
-python cli.py modules plan --profile sso-prototype
-python cli.py configure --profile sso-prototype --build
+python cli.py modules plan --profile prototype
+python cli.py configure --profile prototype --version v1.1.1 --build
 ```
 
 `--with-module`, `--without-module`, and `--add-module` modify the selected
@@ -115,24 +115,18 @@ The current profiles are:
 |---|---|---|
 | `standard` | supported | Historical stock composition |
 | `standard-kafka` | supported | Extends `standard` with the statically linked Kafka audit sink |
-| `sso-prototype` | preview | Buildable loopback/in-memory SSO prototype from `cmd/sso-minimal` |
-| `sso-production` | planned | Extends `sso-prototype` with durable state, controls, operations and HA-capable providers |
-| `sso-complete` | planned | Extends `sso-production` with advanced protocol and product capability bundles |
+| `prototype` | preview | Smallest SSO/OAuth runtime: Authorization Code + mandatory PKCE, password/OP-session SSO, JSON logs, memory defaults and the stable `default` tenant seam |
+| `minimal` | preview | Extends `prototype` with OIDC discovery, ID Token, UserInfo and logout plus request tracing |
+| `production` | supported | Extends `minimal` with the complete current stock `sso-server` composition and registered Kafka audit cold module |
 
 `standard` remains the compatibility default during migration.
-`sso-prototype` is a functional build, with Authorization Code + mandatory PKCE
-S256, OIDC discovery/JWKS/tokens/UserInfo, password authentication, local
-logout and an opaque HttpOnly OP cookie. Its two-client HTTP integration test
-proves that one password login can establish a reusable OP session for another
-registered client and preserves the original `auth_time`. This is not browser
-end-to-end evidence; browser SSO requires the separate same-origin login
-frontend because the server bundles no UI.
-
-The prototype is not yet a physically minimal binary. Its entry point still
-uses `interfaces/sso`, so the broad package dependency graph remains linked
-even when feature gates hide routes. The OP session is also a command-level
-adapter: canonical authorization-code issuance does not yet create the real OP
-session and propagate its SID through the code and tokens.
+`prototype` and `minimal` are separate build profiles and expose different
+runtime surfaces, but both currently target `cmd/sso-minimal`. That command
+still uses `interfaces/sso`, so the broad package dependency graph remains
+linked even when a profile hides routes. Their opaque HttpOnly OP session is
+also a command-level adapter. The stable `default` tenant keeps the tenancy
+boundary available for later migration without exposing tenant management in
+the prototype.
 
 The extraction target is therefore:
 
@@ -144,12 +138,14 @@ The extraction target is therefore:
 - prove excluded dependencies are absent with package, binary-size, symbol and
   SBOM evidence.
 
-`sso-production` and `sso-complete` resolve their inherited capability graphs
-but remain unbuildable while selected modules are `planned`. They also target
-the intentionally absent `cmd/sso-production` and `cmd/sso-complete`
-composition commands, so they cannot accidentally stamp a production or
-complete inventory onto the prototype binary. A route gate or unused config
-block is never accepted as binary-isolation proof.
+`production` overrides the smaller command target with `cmd/sso-server`, so
+its inventory describes the full current server instead of stamping a larger
+edition name onto the small runtime. It compiles the current stock surfaces
+and registered Kafka audit cold module; other independently packaged
+integrations still require a maintained host registration. Runtime
+configuration and backend topology decide which compiled capabilities are
+active and safe to operate. A route gate or unused config block is never
+accepted as binary-isolation proof.
 
 The `oauth-client-credentials` grant is an independent optional
 machine-to-machine module, not the definition or foundation of minimal SSO.
@@ -163,6 +159,7 @@ rules for a selected flow.
 
 Every configured binary receives:
 
+- source version;
 - profile ID;
 - canonical module-lock digest;
 - ordered compiled module IDs.
@@ -175,7 +172,10 @@ It exposes them without loading runtime configuration:
 ```
 
 This is the `nginx -V` equivalent. It contains no secrets or runtime module
-configuration.
+configuration. Public edition builds make their identity visible through the
+normal `version` command: a `v1.1.1` build reports
+`snaplink-v1.1.1.prototype`, `snaplink-v1.1.1.minimal`, or
+`snaplink-v1.1.1.production`.
 
 ### 5. Require a generation-based lifecycle before calling a module hot
 
@@ -248,21 +248,20 @@ private keys or reusable bearer credentials by default.
 
 1. **Build proof:** retain supported compatibility profiles, strict manifests,
    inherited plans, alternate modfiles, lock and binary inventory.
-2. **Prototype proof:** keep `sso-prototype` buildable and test Authorization
-   Code + PKCE plus two-client HTTP OP-session reuse and original `auth_time`.
+2. **Edition proof:** keep `prototype`, `minimal`, and `production` buildable;
+   verify their ordered inheritance, runtime boundaries, compiled inventories,
+   and edition-qualified versions.
 3. **Canonical SSO lifecycle:** move the prototype adapter into the real
    session/auth-code flow and propagate SID through codes and tokens.
 4. **Stable host API and cold isolation:** replace transitional `cmd/`
    adapters with versioned registrars; split the route and builder monolith and
    prove dependency removal.
-5. **Production edition:** make `sso-production` buildable with durable state,
-   OAuth controls, observability and supported topology evidence.
-6. **Complete edition:** make `sso-complete` buildable only after its inherited
-   production base and optional product bundles have release evidence.
-7. **Hot manager:** add generation leases, route guards, drain, readiness and
+5. **Production evidence:** prove the `production` composition against durable
+   state, OAuth/OIDC controls, observability and supported topology.
+6. **Hot manager:** add generation leases, route guards, drain, readiness and
    transition audit; migrate one low-risk background module first.
-8. **External supervisor:** add signed artifact policy and typed RPC processes.
-9. **Release evidence:** publish per-profile SBOMs, locks, signatures and
+7. **External supervisor:** add signed artifact policy and typed RPC processes.
+8. **Release evidence:** publish per-profile SBOMs, locks, signatures and
    provenance.
 
 Nested module paths and versions must be made publishable before remote

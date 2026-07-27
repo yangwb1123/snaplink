@@ -83,17 +83,17 @@ Deliverables:
 ### 5. Isolate the SSO edition hierarchy
 
 The resolver, inherited profiles, module lock, compatibility builds and
-profile-specific entry points are implemented. `sso-prototype` is a buildable
-preview from `cmd/sso-minimal`: it provides an in-memory, loopback-only
-Authorization Code + PKCE OIDC flow and exercises opaque HttpOnly OP-session
-reuse across two registered clients in an HTTP integration test. It preserves
-the original `auth_time`, but does not yet provide browser end-to-end evidence;
-that requires the separate same-origin login frontend.
+profile-specific entry points are implemented. The public hierarchy is
+`prototype → minimal → production`: the prototype is SSO/OAuth with JSON logs
+and a stable default-tenant seam; minimal adds OIDC and tracing; production
+selects the complete current stock `sso-server` composition plus the registered
+Kafka audit cold module. Version output carries the edition suffix.
 
-That behavior is usable for evaluation, but it is not physical isolation.
-`cmd/sso-minimal` still reaches the broad dependency graph through
-`interfaces/sso`, and its OP-session adapter does not yet place the canonical
-session SID into the authorization code and resulting tokens.
+The two smaller editions are usable for evaluation, but are not yet physically
+isolated. Both target `cmd/sso-minimal`, which still reaches the broad
+dependency graph through `interfaces/sso`; their OP-session adapter does not
+yet place the canonical session SID into the authorization code and resulting
+tokens.
 
 Deliverables:
 
@@ -101,13 +101,12 @@ Deliverables:
   the canonical session/authorization-code lifecycle.
 - Extract standard typed route and capability registrars outside `cmd/`.
 - Isolate core HTTP, identity/OAuth stores, password authentication, Ed25519
-  signing and OIDC packages without changing the prototype wire behavior.
+  signing and OIDC packages without changing either smaller edition's wire
+  behavior.
 - Prove physical removal with `go list`, `go version -m`, symbols, binary-size
   deltas and per-profile SBOMs.
-- Make the inherited `sso-production` profile buildable with durable state,
-  security controls, observability and supported topology evidence.
-- Make `sso-complete` buildable only after the production base and its advanced
-  protocol/product modules have independent release evidence.
+- Prove the `production` profile against durable state, security controls,
+  observability and supported topology evidence.
 - Keep `oauth-client-credentials` as an independent optional machine-to-machine
   module rather than an SSO profile foundation.
 - Migrate SAML, LDAP/Kerberos/RADIUS, KMS/HSM and other nested modules to the

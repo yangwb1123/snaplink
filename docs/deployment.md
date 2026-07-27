@@ -25,7 +25,9 @@ origin; `sso-server` does not serve their static assets.
 
 ```bash
 python cli.py build            # -> ./bin/{sso-server, sso-ctl}   (make/Taskfile delegate here)
-python cli.py configure --profile sso-prototype --build
+python cli.py configure --profile prototype --version v1.1.1 --build
+python cli.py configure --profile minimal --version v1.1.1 --build
+python cli.py configure --profile production --version v1.1.1 --build
 python cli.py configure --profile standard-kafka --build  # compatibility composition
 docker build -t snaplink/sso-server .      # the root Dockerfile
 sso-server version                          # build version / VCS revision
@@ -55,18 +57,17 @@ not the new edition hierarchy.
 
 | Edition profile | Build status | Boundary |
 |---|---|---|
-| `sso-prototype` | Preview; buildable | Loopback listener, memory state, one seeded user and two RP clients, Code + mandatory PKCE, OIDC discovery/JWKS/ID Token/UserInfo/logout, and opaque OP-session reuse. |
-| `sso-production` | Planned; extends `sso-prototype` | Adds durable/shared state, production security and operations, administration, observability, and HA providers. |
-| `sso-complete` | Planned; extends `sso-production` | Adds the advanced protocol, enterprise, provisioning, tenant, authorization, threat, governance, and integration sets. |
+| `prototype` | Preview; buildable | Loopback/memory SSO + OAuth Code/mandatory PKCE, password and reusable OP-session login, JSON logs, and one stable `default` tenant. OIDC surfaces are excluded. |
+| `minimal` | Preview; buildable | Extends `prototype` with OIDC discovery, ID Token, UserInfo and logout plus request tracing. |
+| `production` | Supported; buildable | Extends `minimal` with the full current stock `sso-server` composition and registered Kafka audit cold module. Durable backend and topology choices remain operator configuration. |
 
-The preview is not deployable production software and is not yet a physically
-minimal binary. Its dedicated composition root uses `interfaces/sso`, which
-still links much of the existing package/dependency graph. The planned profiles
-describe extraction order; they are not build artifacts. Unless a profile is
-named explicitly, the rest of this guide describes the compatibility
-`sso-server`. The two-client prototype test uses an HTTP cookie jar, not a
-browser. A browser flow needs the separate same-origin login frontend because
-the binary exposes a POST login API and bundles no UI.
+For source version `v1.1.1`, the three binaries report
+`snaplink-v1.1.1.prototype`, `snaplink-v1.1.1.minimal`, and
+`snaplink-v1.1.1.production`. `prototype` and `minimal` currently share
+`cmd/sso-minimal`, so their different runtime surfaces do not yet imply
+different physical dependency graphs. Neither small edition is a production
+topology or browser end-to-end artifact. Unless a profile is named explicitly,
+the rest of this guide describes the compatibility `sso-server`.
 
 ## 2. Run a single instance
 

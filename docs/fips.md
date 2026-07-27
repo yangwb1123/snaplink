@@ -18,16 +18,16 @@ document.
 Since Go 1.24, the Go toolchain ships a FIPS 140-3 validated Cryptographic
 Module **in the standard library** — no cgo, no BoringCrypto, no external C
 dependency. The stock compatibility server, its compatibility profiles, and
-the preview `sso-prototype` build with `CGO_ENABLED=0`. CGO integrations such
-as the nested PKCS#11 module are not available through these profiles. The
+the three public edition profiles build with `CGO_ENABLED=0`. CGO integrations
+such as the nested PKCS#11 module are not selected by those profiles. The
 native module is therefore their FIPS mechanism.
 
-`sso-prototype` is a loopback/memory preview, not a production or physically
-minimal edition: it still composes through `interfaces/sso` and links the
-larger dependency graph. `sso-production` and `sso-complete` are planned and
-have no FIPS artifact to assess. A profile policy value of `fips: compatible`
-is only a build-resolver constraint; it is not evidence of module activation,
-CMVP coverage, product certification, or deployment compliance.
+`prototype` and `minimal` share the `cmd/sso-minimal` dependency graph;
+their different active surfaces are not separate cryptographic boundaries.
+`production` selects the complete current `cmd/sso-server` composition. A
+profile policy value of `fips: compatible` is only a build-resolver
+constraint; no edition name is evidence of module activation, CMVP coverage,
+product certification, or deployment compliance.
 
 There are two independent layers:
 
@@ -88,8 +88,9 @@ keys:
 # Native Go FIPS module, no cgo, no BoringCrypto:
 GOFIPS140=latest CGO_ENABLED=0 go build -o sso-server ./cmd/sso-server
 
-# Preview edition (output under dist/modules/sso-prototype/):
-GOFIPS140=latest CGO_ENABLED=0 python cli.py configure --profile sso-prototype --build
+# Edition build (output under dist/modules/production/):
+GOFIPS140=latest CGO_ENABLED=0 python cli.py configure \
+  --profile production --version v1.1.1 --build
 
 # Docker (see Dockerfile's GOFIPS140 build ARG, default "off"):
 docker build --build-arg GOFIPS140=latest -t snaplink/sso-server-fips .

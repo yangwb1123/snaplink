@@ -29,7 +29,7 @@ Retired audits, plans, and migration records are summarized in
 |---|---|---|
 | Go SDK | **Implemented** | `interfaces/sso` exposes the broadest option surface. An SDK option is not automatically a stock-binary YAML feature. |
 | `sso-server` | **Implemented** | Pure API backend: OAuth/OIDC, self-service/admin HTTP APIs and gRPC control plane. |
-| `cmd/sso-minimal` / `sso-prototype` | **Partial** | Buildable preview with loopback, memory-backed Authorization Code + PKCE OIDC and a two-client HTTP OP-session test. It is not production-ready, browser-E2E-proven, or package-isolated. |
+| `cmd/sso-minimal` / `prototype` / `minimal` | **Partial** | Two buildable single-process editions: `prototype` exposes SSO/OAuth and JSON logs; `minimal` adds OIDC and tracing. They share a physical dependency graph and are not production topologies or browser-E2E artifacts. |
 | Hosted login, admin, self-service, developer and setup UIs | **External** | Separate frontend projects, normally reverse-proxied beside the server. No static SPA is served by this repository. |
 | Admin API-doc viewer | **Implemented** | `WithAPIDocsUI` serves an admin-gated, self-contained API reference. It is not an application UI. |
 | TypeScript/Python SDKs | **Partial** | Generated curated subset; not complete parity with admin/SCIM/SSF/Federation routes. |
@@ -58,19 +58,18 @@ module lock and compiled inventory are implemented. The edition hierarchy is:
 
 | Profile | Status | Open boundary |
 |---|---|---|
-| `sso-prototype` | Preview, buildable | Functional SSO from `cmd/sso-minimal`; still links the broad `interfaces/sso` dependency graph |
-| `sso-production` | Planned | Inherits the prototype; durable state, controls, operations and HA-capable providers remain extraction targets |
-| `sso-complete` | Planned | Inherits production; advanced protocol and product modules remain extraction targets |
+| `prototype` | Preview, buildable | SSO/OAuth + JSON logs + stable `default` tenant seam; shares the broad `cmd/sso-minimal` dependency graph |
+| `minimal` | Preview, buildable | Inherits `prototype`; adds OIDC and tracing but is not yet physically isolated from it |
+| `production` | Supported, buildable | Inherits `minimal`; selects the complete current stock `cmd/sso-server` composition and registered Kafka audit cold module |
 | `standard`, `standard-kafka` | Supported | Compatibility builds, not edition-layer isolation evidence |
 
-The prototype uses an opaque HttpOnly cookie and has a two-client HTTP reuse
-test, but no bundled login UI or browser end-to-end proof. The adapter
-currently lives in `cmd/sso-minimal`. The canonical
-authorization-code flow still needs to create the real OP session, propagate
-its SID through code and tokens, and register the isolated routes through a
-standard typed host API. Until package, symbol, size and SBOM checks show
-otherwise, “buildable prototype” must not be presented as “physically minimal
-binary”.
+The two smaller editions use an opaque HttpOnly cookie but have no bundled
+login UI or browser end-to-end proof. Their adapter lives in
+`cmd/sso-minimal`; the canonical authorization-code flow still needs to create
+the real OP session, propagate its SID through code and tokens, and register
+isolated routes through a standard typed host API. Until package, symbol, size
+and SBOM checks show otherwise, their runtime difference must not be presented
+as physical dependency isolation.
 
 `oauth-client-credentials` is an independent optional machine-to-machine
 module, not an SSO edition baseline.
@@ -133,8 +132,8 @@ implemented.
 ## External/operator responsibilities
 
 - Deploy and version frontend applications separately from `sso-server`.
-- Keep `sso-prototype` on loopback and use it only for evaluation or
-  integration; its memory state and command-level OP session are not a
+- Keep `prototype` and `minimal` on loopback and use them only for evaluation
+  or integration; their memory state and command-level OP session are not a
   production topology.
 - Use shared Redis hot stores, Postgres durable stores and an etcd event bus for
   multi-replica production; memory/per-pod SQLite state is single-replica.

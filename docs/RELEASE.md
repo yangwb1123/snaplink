@@ -24,20 +24,31 @@ Local profile builds produce a module lock and embedded inventory, but
 GoReleaser does not yet publish per-profile artifacts or binary-level profile
 SBOMs:
 
-- `sso-prototype` is a buildable **preview** for loopback/memory, two-client
-  HTTP SSO-mechanism evaluation:
-  `python cli.py configure --profile sso-prototype --build`. It is not a
-  bundled-browser end-to-end artifact.
-- `sso-production` inherits the prototype and `sso-complete` inherits
-  production; both are **planned** and produce no releasable artifact.
+- `prototype` is the smallest buildable SSO/OAuth edition: Code + mandatory
+  PKCE, password/OP-session login, JSON logs, memory defaults, and the stable
+  `default` tenant seam. It deliberately excludes OIDC surfaces.
+- `minimal` inherits `prototype` and adds the common OIDC and tracing surfaces.
+- `production` inherits `minimal` and selects the complete current stock
+  `sso-server` composition plus the registered Kafka audit cold module.
 - `standard` and `standard-kafka` exist only to preserve the historical stock
   composition.
 
-The prototype still composes through `interfaces/sso` and links a larger
-dependency graph; do not call it physically minimal, production-ready, or an
-official release artifact. A module lock records cold capability selection,
-not runtime backend choice, feature-gate state, hot lifecycle support, or an
-SBOM. Follow [plugin-system.md](plugin-system.md).
+Build with an explicit source version, for example:
+
+```bash
+python cli.py configure --profile prototype --version v1.1.1 --build
+python cli.py configure --profile minimal --version v1.1.1 --build
+python cli.py configure --profile production --version v1.1.1 --build
+```
+
+The resulting first version lines are
+`snaplink-v1.1.1.prototype`, `snaplink-v1.1.1.minimal`, and
+`snaplink-v1.1.1.production`. `prototype` and `minimal` still share
+`cmd/sso-minimal` and a larger linked dependency graph; their different
+runtime boundaries are not yet physical-isolation evidence. A module lock
+records cold capability selection, not runtime backend choice, feature-gate
+state, hot lifecycle support, or an SBOM. Follow
+[plugin-system.md](plugin-system.md).
 
 The release pipeline does not currently produce a SLSA provenance statement.
 Do not describe signatures/SBOMs as provenance.
