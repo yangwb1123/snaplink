@@ -15,10 +15,9 @@ import (
 // segmentio/kafka-go) lives in the infrastructure/kafka nested module so its
 // dependency never enters this (the core) module's go.mod — mirrors
 // serverbuildsign.ExternalSignerFactory / RegisterExternalSigner for
-// KMS/HSM signers. An operator who wants audit.kafka.enabled forks this
-// binary's main, imports infrastructure/kafka, and calls
-// RegisterAuditKafkaSinkFactory(kafkaaudit.Factory) once at init; see that
-// module's package doc for the copy-pasteable wiring.
+// KMS/HSM signers. The standard-kafka cold profile imports the module and
+// calls RegisterAuditKafkaSinkFactory(kafkaaudit.Factory) explicitly before
+// configuration is loaded.
 type AuditKafkaSinkFactory func(cfg config.AuditKafkaConfig, logger spi.Logger) (audit.Sink, error)
 
 // auditKafkaFactory holds the single registered factory. Unlike
@@ -75,7 +74,7 @@ func BuildAuditKafkaSink(cfg config.AuditKafkaConfig, logger spi.Logger) (audit.
 	}
 	factory, ok := lookupAuditKafkaSinkFactory()
 	if !ok {
-		return nil, fmt.Errorf("audit.kafka.enabled requires registering serverbuildauthn.RegisterAuditKafkaSinkFactory in your forked cmd binary (see infrastructure/kafka package doc)")
+		return nil, errors.New("audit.kafka.enabled requires the audit-kafka module; build profile standard-kafka (see docs/plugin-system.md)")
 	}
 	sink, err := factory(cfg, logger)
 	if err != nil {

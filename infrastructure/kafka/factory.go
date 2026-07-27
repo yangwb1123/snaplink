@@ -28,13 +28,13 @@ const (
 )
 
 // Factory adapts config.AuditKafkaConfig into New, selecting the wire
-// Formatter from cfg.Format. Register it verbatim from your forked cmd
-// binary's init/main:
+// Formatter from cfg.Format. The generated standard-kafka cold-profile
+// registrar installs it through:
 //
 //	serverbuildauthn.RegisterAuditKafkaSinkFactory(kafkaaudit.Factory)
 //
-// See the package doc for the full wiring snippet. Matches the
-// AuditKafkaSinkFactory signature cmd/sso-server's registry expects.
+// See the package doc for the build command. It matches the
+// AuditKafkaSinkFactory signature the composition registry expects.
 func Factory(cfg config.AuditKafkaConfig, logger spi.Logger) (audit.Sink, error) {
 	format, err := resolveFormat(cfg.Format)
 	if err != nil {

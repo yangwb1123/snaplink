@@ -17,41 +17,33 @@
 // and races-tests in CI with the default toolchain, no C compiler needed
 // (unlike kms/pkcs11).
 //
-// # How it reaches the server (no package-main import, no registry map)
+// # How it reaches the server
 //
 // A separate module's package CANNOT import cmd's package main, so this
 // module references no cmd type. It exposes an importable constructor
 // (New) returning a *Sink that implements the root platform/audit
 // auditspi.Sink interface, PLUS a ready-made [Factory] function matching the
-// AuditKafkaSinkFactory signature cmd/sso-server's registry expects — unlike
+// AuditKafkaSinkFactory signature the composition registry expects — unlike
 // the KMS/LDAP integration points (which need per-vendor operator glue
 // because vendor credentials aren't representable in the core config
 // schema), every Kafka connection parameter this Sink needs already has a
 // home in config.AuditKafkaConfig, so Factory is a complete, drop-in
 // registration.
 //
-// # Operator-fork wiring (copy-pasteable)
+// # Cold-profile wiring
 //
-//	package main
+// Build the supported profile from the root repository:
 //
-//	import (
-//		"github.com/snaplink/sso/cmd/sso-server/serverbuildauthn"
-//		kafkaaudit "github.com/snaplink/sso/kafka"
-//	)
+//	python cli.py configure --profile standard-kafka --build
 //
-//	func init() {
-//		// One call, at package init (before main() builds the app) — the
-//		// registry panics on a duplicate registration, so this must run
-//		// exactly once per process.
-//		serverbuildauthn.RegisterAuditKafkaSinkFactory(kafkaaudit.Factory)
-//	}
-//
-// With that registered, audit.kafka.enabled + audit.kafka.{brokers,topic}
-// in config.yaml (see docs/config-reference.md) is all an operator needs —
-// no additional Go code. Leaving audit.kafka.enabled: true with no factory
-// registered fails boot CLOSED with an error naming the missing
-// RegisterAuditKafkaSinkFactory call, so a forked binary that forgets the
-// import finds out at startup, not via silently-dropped audit events.
+// The generated cold-profile registrar imports this module and explicitly
+// registers [Factory] before configuration is loaded. It uses neither a
+// blank import nor init-time side effects. With that profile,
+// audit.kafka.enabled plus audit.kafka.{brokers,topic} in config.yaml (see
+// docs/config-reference.md) is all an operator needs. Leaving
+// audit.kafka.enabled true in the ordinary standard binary fails boot CLOSED,
+// so a missing compiled module is found at startup rather than through
+// silently dropped audit events.
 //
 // # Wire format
 //

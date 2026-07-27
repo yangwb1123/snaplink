@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://snaplink.dev/schemas/module-catalog-v1alpha1.json",
+  "title": "Snaplink built-in module catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "host_api",
+    "modules"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "host_api": {
+      "type": "string",
+      "pattern": "^v[0-9]+(alpha[0-9]+|beta[0-9]+)?$"
+    },
+    "modules": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "https://snaplink.dev/schemas/module-v1alpha1.json"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "manifest"
+            ],
+            "properties": {
+              "manifest": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

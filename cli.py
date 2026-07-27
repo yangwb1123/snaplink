@@ -31,6 +31,8 @@ Commands:
     vet                    Run go vet
     fmt                    Check gofmt
     build                  Build binaries to bin/
+    configure              Resolve/materialize a cold-module build profile
+    modules                List/check/plan the module catalog
     lint                   Run golangci-lint
     security-scan          Run govulncheck + gosec
     skill <name> [args..]  Run a skill by directory name
@@ -227,6 +229,18 @@ def cmd_build():
     return build_run()
 
 
+def cmd_configure(args: list):
+    sys.path.insert(0, str(ROOT / "ops" / "scripts"))
+    from configure_modules import run_configure
+    return run_configure(args)
+
+
+def cmd_modules(args: list):
+    sys.path.insert(0, str(ROOT / "ops" / "scripts"))
+    from configure_modules import run_modules
+    return run_modules(args)
+
+
 def cmd_lint():
     return run("go", "run", "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest",
                "run", "--timeout", "5m").returncode
@@ -290,6 +304,8 @@ COMMANDS = {
     "vet": cmd_vet,
     "fmt": cmd_fmt,
     "build": cmd_build,
+    "configure": cmd_configure,
+    "modules": cmd_modules,
     "lint": cmd_lint,
     "security-scan": cmd_security_scan,
     "skill": cmd_skill,
@@ -320,7 +336,7 @@ def main():
     if cmd == "review":
         spec = parsed.args[0] if parsed.args else None
         return handler(spec)
-    elif cmd == "skill":
+    elif cmd in ("skill", "configure", "modules"):
         return handler(parsed.args + unknown)
     elif cmd == "help":
         return handler()

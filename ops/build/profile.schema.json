@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://snaplink.dev/schemas/build-profile-v1alpha1.json",
+  "title": "Snaplink build profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "summary",
+    "maturity",
+    "modules",
+    "policy"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "maturity": {
+      "enum": [
+        "supported",
+        "preview",
+        "planned"
+      ]
+    },
+    "modules": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*$"
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allow_cgo",
+        "fips"
+      ],
+      "properties": {
+        "allow_cgo": {
+          "type": "boolean"
+        },
+        "fips": {
+          "enum": [
+            "required",
+            "compatible",
+            "any"
+          ]
+        },
+        "allowed_licenses": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9.+-]*$"
+          }
+        }
+      }
+    }
+  }
+}

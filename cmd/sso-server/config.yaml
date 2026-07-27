@@ -253,12 +253,11 @@ audit:
   # Publishes every event to a Kafka topic — the network-transport sibling
   # of the audit.cef/audit.ocsf/audit.syslog file sinks (see
   # docs/config-reference.md), reusing those exact formatters. Requires a
-  # FORKED cmd binary: the segmentio/kafka-go dependency lives only in
-  # infrastructure/kafka's own go.mod (never this binary's), so enabling
-  # this also requires importing that module and
-  # calling serverbuildauthn.RegisterAuditKafkaSinkFactory(kafkaaudit.Factory)
-  # once at init — see that module's package doc. enabled:true with no
-  # factory registered fails boot closed with a clear error.
+  # cold-profile binary: run
+  #   python cli.py configure --profile standard-kafka --build
+  # The generated registrar links the separate infrastructure/kafka module
+  # and installs its factory explicitly at startup. The ordinary standard
+  # binary keeps Kafka absent; enabled:true there fails boot closed.
   # kafka:
   #   enabled: false
   #   brokers: ["kafka-1.internal:9092", "kafka-2.internal:9092"]

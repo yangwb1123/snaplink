@@ -133,6 +133,34 @@ tasks:
     cmds:
       - '{{.CLI}} build'
 
+  configure:
+    desc: Resolve a cold-module profile and write its lock/build inputs
+    cmds:
+      - '{{.CLI}} configure --profile {{.profile}} {{.args}}'
+    vars:
+      profile: '{{.profile | default "standard"}}'
+      args: '{{.args | default ""}}'
+
+  build-profile:
+    desc: Build sso-server from a cold-module profile
+    cmds:
+      - '{{.CLI}} configure --profile {{.profile}} --build {{.args}}'
+    vars:
+      profile: '{{.profile | default "standard"}}'
+      args: '{{.args | default ""}}'
+
+  modules:
+    desc: Inspect the module catalog (list, check, plan, graph, why)
+    cmds:
+      - '{{.CLI}} modules {{.args}}'
+    vars:
+      args: '{{.args | default "list"}}'
+
+  modules-smoke:
+    desc: Build and verify every supported cold-module profile
+    cmds:
+      - '{{.CLI}} modules smoke'
+
   lint:
     desc: Run golangci-lint
     cmds:

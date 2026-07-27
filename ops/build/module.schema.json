@@ -1,0 +1,348 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://snaplink.dev/schemas/module-v1alpha1.json",
+  "title": "Snaplink build module",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "summary",
+    "kind",
+    "state",
+    "activation",
+    "provides",
+    "requires",
+    "conflicts",
+    "security"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "enum": [
+        "kernel",
+        "bundle",
+        "cold",
+        "hot-precompiled",
+        "hot-external"
+      ]
+    },
+    "state": {
+      "enum": [
+        "embedded",
+        "isolated",
+        "planned"
+      ]
+    },
+    "activation": {
+      "enum": [
+        "locked",
+        "restart",
+        "hot"
+      ]
+    },
+    "locked": {
+      "type": "boolean",
+      "default": false
+    },
+    "host_api": {
+      "type": "string",
+      "pattern": "^v[0-9]+(alpha[0-9]+|beta[0-9]+)?$"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "module_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provides": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/capability"
+      }
+    },
+    "requires": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/capability"
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*$"
+      }
+    },
+    "registration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "package",
+        "symbol"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "package": {
+          "type": "string",
+          "minLength": 1
+        },
+        "symbol": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Za-z0-9_]*$"
+        }
+      }
+    },
+    "targets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cgo"
+      ],
+      "properties": {
+        "goos": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "goarch": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "cgo": {
+          "type": "boolean"
+        },
+        "fips": {
+          "enum": [
+            "compatible",
+            "incompatible",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "licenses": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9.+-]*$"
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "removable",
+        "failure_policy"
+      ],
+      "properties": {
+        "removable": {
+          "type": "boolean"
+        },
+        "failure_policy": {
+          "enum": [
+            "fail-open",
+            "fail-closed",
+            "not-applicable"
+          ]
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "isolated"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "kind": {
+            "const": "cold"
+          },
+          "activation": {
+            "const": "restart"
+          }
+        },
+        "required": [
+          "version",
+          "module_path",
+          "source",
+          "registration",
+          "targets",
+          "licenses"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "kernel"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "state": {
+            "const": "embedded"
+          },
+          "activation": {
+            "const": "locked"
+          },
+          "locked": {
+            "const": true
+          },
+          "security": {
+            "properties": {
+              "removable": {
+                "const": false
+              }
+            }
+          }
+        },
+        "required": [
+          "locked"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "bundle",
+              "cold"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "activation": {
+            "const": "restart"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "hot-precompiled",
+              "hot-external"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "state": {
+            "const": "planned"
+          },
+          "activation": {
+            "const": "hot"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "registration"
+        ]
+      },
+      "then": {
+        "properties": {
+          "state": {
+            "const": "isolated"
+          },
+          "kind": {
+            "const": "cold"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "locked": {
+            "const": true
+          }
+        },
+        "required": [
+          "locked"
+        ]
+      },
+      "then": {
+        "properties": {
+          "activation": {
+            "const": "locked"
+          },
+          "security": {
+            "properties": {
+              "removable": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "capability": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]*\\.v[0-9]+$"
+    }
+  }
+}

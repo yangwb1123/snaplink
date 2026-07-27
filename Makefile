@@ -6,10 +6,12 @@ GO        ?= go
 BIN_DIR   ?= bin
 IMAGE     ?= snaplink/sso-server
 IMAGE_TAG ?= dev
+PROFILE   ?= standard
+MODULE_ARGS ?=
 
 CLI = python cli.py
 
-.PHONY: help test race bench vet fmt build docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
+.PHONY: help test race bench vet fmt build configure build-profile modules-list modules-plan modules-check modules-smoke docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
 
 # ── Go Dev (via $GO directly for speed) ──────────────────────────────
 
@@ -91,11 +93,31 @@ fmt: ## Check gofmt.
 build: ## Compile to $(BIN_DIR)/.
 	$(CLI) build
 
-build-small: ## Compile sso-server with all optional KMS modules excluded (smaller binary, no CGO).
-	CGO_ENABLED=0 go build -tags 'no_kms_awskms no_kms_gcpkms no_kms_azurekeyvault no_pkcs11' -o $(BIN_DIR)/sso-server-small ./cmd/sso-server
+configure: ## Resolve PROFILE and write its module lock/build inputs.
+	$(CLI) configure --profile $(PROFILE) $(MODULE_ARGS)
 
-build-with-pkcs11: ## Compile sso-server with PKCS#11 support (requires CGO + libltdl-dev).
-	CGO_ENABLED=1 go build -o $(BIN_DIR)/sso-server-pkcs11 ./cmd/sso-server
+build-profile: ## Build sso-server from PROFILE (default: standard).
+	$(CLI) configure --profile $(PROFILE) --build $(MODULE_ARGS)
+
+modules-list: ## List cold/hot module catalog entries and migration state.
+	$(CLI) modules list
+
+modules-plan: ## Show dependency closure and blockers for PROFILE.
+	$(CLI) modules plan --profile $(PROFILE) $(MODULE_ARGS)
+
+modules-check: ## Validate module schemas, catalog, manifests, and profiles.
+	$(CLI) modules check
+
+modules-smoke: ## Build and verify every supported cold-module profile.
+	$(CLI) modules smoke
+
+build-small: ## Deprecated alias for the planned minimal profile; fails until real isolation is complete.
+	$(CLI) configure --profile minimal --build
+
+build-with-pkcs11: ## Deprecated placeholder; PKCS#11 is not yet registered by a supported profile.
+	@echo "PKCS#11 is a nested module but is not yet connected to the profile host API." >&2
+	@echo "Use a custom composition today; track extraction with docs/plugin-system.md." >&2
+	@exit 1
 
 examples: ## Compile example apps to ensure they stay buildable.
 	$(GO) build ./docs/examples/...
@@ -193,7 +215,7 @@ ci-modules: ## Build + test all nested modules.
 	cd cmd/sso-mcp && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd cmd/sso-operator && $(GO) build ./... && $(GO) test -race -count=1 ./...
 
-ci: fmt vet race build examples proto-lint ci-modules config-validate-all ## Run CI checks.
+ci: fmt vet race build examples proto-lint ci-modules config-validate-all modules-check modules-smoke ## Run CI checks.
 
 ci-full: ci terraform-validate k8s-render ## Run all CI checks including IaC validation (requires kustomize + terraform).
 
@@ -201,10 +223,10 @@ mod-tidy-all: ## Run go mod tidy in all modules.
 	find . -name go.mod -not -path './.git/*' -execdir go mod tidy \;
 
 clean: ## Remove build artifacts.
-	rm -rf $(BIN_DIR)
+	rm -rf $(BIN_DIR) dist/modules
 
 clean-all: ## Remove build artifacts + go build cache + tidy all modules.
-	rm -rf $(BIN_DIR)
+	rm -rf $(BIN_DIR) dist/modules
 	$(GO) clean -cache
 	find . -name go.mod -not -path './.git/*' -execdir go mod tidy \;
 

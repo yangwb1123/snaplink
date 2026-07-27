@@ -34,10 +34,10 @@ type AuditConfig struct {
 	OCSF   AuditOCSFConfig   `yaml:"ocsf"`
 	Syslog AuditSyslogConfig `yaml:"syslog"`
 	// Kafka publishes every recorded event to a Kafka topic — the network
-	// transport CEF/OCSF/Syslog's doc comments defer to. Requires the
-	// operator's forked cmd binary to import infrastructure/kafka and
-	// register its factory (see that module's package doc); enabling this
-	// with no factory registered fails boot closed with a clear error.
+	// transport CEF/OCSF/Syslog's doc comments defer to. The supported
+	// standard-kafka cold profile links the nested implementation and
+	// registers its factory explicitly; enabling this in a binary without
+	// that compiled module fails boot closed.
 	Kafka AuditKafkaConfig `yaml:"kafka"`
 }
 
@@ -86,12 +86,10 @@ type AuditSyslogConfig struct {
 //
 // The github.com/segmentio/kafka-go dependency lives ONLY in the
 // infrastructure/kafka nested module's own go.mod — this core module never
-// imports it — so Enabled:true requires the operator's forked cmd binary to
-// import that module and call serverbuildauthn.RegisterAuditKafkaSinkFactory
-// once at init (mirrors keys.signing.external /
-// serverbuildsign.RegisterExternalSigner for KMS/HSM signers). Enabled with
-// no factory registered fails boot CLOSED with an error naming the missing
-// registration call, not a silently-dropped audit stream.
+// imports it. Build the standard-kafka cold profile to link the module and
+// install its factory through the generated explicit registrar. Enabled with
+// no compiled factory fails boot CLOSED rather than silently dropping the
+// audit stream.
 type AuditKafkaConfig struct {
 	Enabled bool `yaml:"enabled"`
 	// Brokers lists the bootstrap broker addresses (host:port); required

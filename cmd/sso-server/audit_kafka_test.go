@@ -6,15 +6,11 @@ import (
 	"github.com/snaplink/sso/config"
 )
 
-// audit.kafka's HAPPY path (a real Kafka producer actually publishing) can
-// only be exercised by an operator's forked binary that imports
-// infrastructure/kafka and calls
-// serverbuildauthn.RegisterAuditKafkaSinkFactory — see that module's package
-// doc and cmd/sso-server/serverbuildauthn/build_audit_kafka_test.go for the
-// registry-level coverage (fake factory, no real broker). What cmd/sso-server
-// itself must guarantee, without that registration ever happening, is the
-// FAIL-CLOSED behavior below: a binary that enables audit.kafka but forgets
-// to fork+register never silently drops the audit stream.
+// The standard-kafka cold profile compiles the explicit registration path and
+// verifies the linked module in binary metadata. The root module keeps
+// registry-level behavior coverage with a fake factory and no real broker.
+// The stock binary must still fail closed when Kafka is configured but the
+// audit-kafka module was not compiled in.
 
 func TestBuildApp_AuditKafkaDisabledIsNoop(t *testing.T) {
 	t.Parallel()

@@ -1,0 +1,17 @@
+{
+  "$schema": "../profile.schema.json",
+  "schema_version": 1,
+  "id": "standard",
+  "summary": "Compatibility profile matching the historical stock sso-server composition.",
+  "maturity": "supported",
+  "modules": [
+    "stock-server"
+  ],
+  "policy": {
+    "allow_cgo": false,
+    "fips": "any",
+    "allowed_licenses": [
+      "Apache-2.0"
+    ]
+  }
+}

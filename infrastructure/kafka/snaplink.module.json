@@ -1,0 +1,45 @@
+{
+  "$schema": "../../ops/build/module.schema.json",
+  "schema_version": 1,
+  "id": "audit-kafka",
+  "summary": "Kafka-backed secondary audit sink.",
+  "kind": "cold",
+  "state": "isolated",
+  "activation": "restart",
+  "host_api": "v1alpha1",
+  "version": "v0.0.0",
+  "module_path": "github.com/snaplink/sso/kafka",
+  "source": ".",
+  "provides": [
+    "audit.sink.kafka.v1"
+  ],
+  "requires": [
+    "audit.host.v1"
+  ],
+  "conflicts": [],
+  "registration": {
+    "type": "audit.kafka.factory.v1",
+    "package": "github.com/snaplink/sso/kafka",
+    "symbol": "Factory"
+  },
+  "targets": {
+    "goos": [
+      "darwin",
+      "linux",
+      "windows"
+    ],
+    "goarch": [
+      "amd64",
+      "arm64"
+    ],
+    "cgo": false,
+    "fips": "unknown"
+  },
+  "licenses": [
+    "Apache-2.0"
+  ],
+  "security": {
+    "removable": true,
+    "failure_policy": "fail-open"
+  }
+}

@@ -76,6 +76,12 @@ jobs:
       - name: go build
         run: go build ./...
 
+      - name: module catalog and profiles
+        run: python cli.py modules check
+
+      - name: cold-module profile smoke
+        run: python cli.py modules smoke
+
       - name: compile examples
         # docs/examples/ import the SDK; compile them so API drift is
         # caught before a user tries to follow the quickstart.

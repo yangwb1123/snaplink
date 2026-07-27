@@ -1,0 +1,325 @@
+{
+  "$schema": "./catalog.schema.json",
+  "schema_version": 1,
+  "host_api": "v1alpha1",
+  "modules": [
+    {
+      "schema_version": 1,
+      "id": "core-runtime",
+      "summary": "Process lifecycle, configuration host, and immutable security invariants.",
+      "kind": "kernel",
+      "state": "embedded",
+      "activation": "locked",
+      "locked": true,
+      "host_api": "v1alpha1",
+      "provides": [
+        "config.host.v1",
+        "core.runtime.v1",
+        "lifecycle.host.v1"
+      ],
+      "requires": [],
+      "conflicts": [],
+      "security": {
+        "removable": false,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "stock-server",
+      "summary": "Compatibility bundle containing the current monolithic sso-server composition.",
+      "kind": "bundle",
+      "state": "embedded",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "audit.host.v1",
+        "server.stock.v1"
+      ],
+      "requires": [
+        "core.runtime.v1"
+      ],
+      "conflicts": [],
+      "security": {
+        "removable": true,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "core-http",
+      "summary": "Minimal HTTP transport plus live and ready probes.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "probes.http.v1",
+        "transport.http.v1"
+      ],
+      "requires": [
+        "core.runtime.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": false,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "identity-memory",
+      "summary": "In-process client registry for the minimal single-replica profile.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "client.store.v1"
+      ],
+      "requires": [
+        "core.runtime.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": false,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "signing-ed25519",
+      "summary": "Ed25519 access-token signing, validation, and JWKS publication.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "jwks.http.v1",
+        "token.issuer.v1"
+      ],
+      "requires": [
+        "core.runtime.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": false,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "oauth-client-credentials",
+      "summary": "OAuth token endpoint with the client_credentials grant only.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "grant.client-credentials.v1",
+        "oauth.token.v1"
+      ],
+      "requires": [
+        "client.store.v1",
+        "token.issuer.v1",
+        "transport.http.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": false,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "oauth-metadata",
+      "summary": "OAuth authorization-server metadata and JWKS routes.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "oauth.metadata.v1"
+      ],
+      "requires": [
+        "jwks.http.v1",
+        "transport.http.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": false,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "oauth-browser",
+      "summary": "Authorization code, PKCE, refresh, device, PAR, JAR, and browser login flows.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "oauth.browser.v1"
+      ],
+      "requires": [
+        "oauth.token.v1",
+        "transport.http.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": true,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "oidc-core",
+      "summary": "OIDC ID tokens, userinfo, session, logout, and discovery extensions.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "oidc.core.v1"
+      ],
+      "requires": [
+        "oauth.browser.v1",
+        "token.issuer.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": true,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "self-service",
+      "summary": "Signup, password recovery, profile, MFA, passkey, and privacy APIs.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "identity.self-service.v1"
+      ],
+      "requires": [
+        "transport.http.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": true,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "admin-api",
+      "summary": "Scoped REST and gRPC control-plane APIs.",
+      "kind": "hot-precompiled",
+      "state": "planned",
+      "activation": "hot",
+      "host_api": "v1alpha1",
+      "provides": [
+        "admin.control-plane.v1"
+      ],
+      "requires": [
+        "transport.http.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": true,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "federation",
+      "summary": "OpenID Federation and enterprise connection surfaces.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "federation.openid.v1"
+      ],
+      "requires": [
+        "oidc.core.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": true,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "cluster-ha",
+      "summary": "Shared invalidation bus, registry, and leaderless signing-key aggregation.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "cluster.ha.v1"
+      ],
+      "requires": [
+        "core.runtime.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": true,
+        "failure_policy": "fail-closed"
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "observability",
+      "summary": "Metrics, tracing, audit host, and dynamic exporter slots.",
+      "kind": "cold",
+      "state": "planned",
+      "activation": "restart",
+      "host_api": "v1alpha1",
+      "provides": [
+        "audit.host.v1",
+        "observability.host.v1"
+      ],
+      "requires": [
+        "core.runtime.v1"
+      ],
+      "conflicts": [
+        "stock-server"
+      ],
+      "security": {
+        "removable": true,
+        "failure_policy": "fail-open"
+      }
+    },
+    {
+      "manifest": "../../infrastructure/kafka/snaplink.module.json"
+    }
+  ]
+}

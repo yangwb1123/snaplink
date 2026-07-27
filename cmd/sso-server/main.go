@@ -15,6 +15,7 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
+	"github.com/snaplink/sso/cmd/sso-server/servermodules"
 	"github.com/snaplink/sso/config"
 	configreload "github.com/snaplink/sso/config/reload"
 	"github.com/snaplink/sso/domains/authenticators"
@@ -68,6 +69,10 @@ func main() {
 	if wroteVersion() {
 		return
 	}
+	servermodules.Register()
+	if wroteModules() {
+		return
+	}
 
 	flags := parseRuntimeFlags()
 
@@ -110,11 +115,7 @@ func main() {
 	}
 }
 
-// wroteVersion reports the build version and returns true when the first
-// argument asks for it — checked before any config work, so `sso-server
-// version` (or -version) works without a valid config file. The server itself
-// runs directly (no `run` subcommand) — `sso-server [-config ...]` is the
-// conventional, unchanged invocation.
+// wroteVersion reports the build version before registration or config work.
 func wroteVersion() bool {
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
@@ -124,6 +125,22 @@ func wroteVersion() bool {
 		}
 	}
 	return false
+}
+
+// wroteModules reports inventory after compiled registrars have run, but
+// before config loading. A successful native smoke therefore covers both.
+func wroteModules() bool {
+	if len(os.Args) < 2 || os.Args[1] != "modules" {
+		return false
+	}
+	asJSON := len(os.Args) == 3 && os.Args[2] == "--json"
+	if len(os.Args) > 3 || (len(os.Args) == 3 && !asJSON) {
+		failUsage("usage: %s modules [--json]", progName)
+	}
+	if err := buildinfo.WriteModules(os.Stdout, "sso-server", asJSON); err != nil {
+		fail("write module inventory: %v", err)
+	}
+	return true
 }
 
 // app bundles the wired SDK components so both HTTP and gRPC servers can

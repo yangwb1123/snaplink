@@ -17,6 +17,7 @@ enforcement lives in the committed `*_test.go` gates and `checks/*.py`
 | [ADR-0006](ADR-0006-cognitive-architecture.md) | Seven-layer model is physical and enforced; first path segment identifies the layer | Accepted, amended |
 | [ADR-0007](ADR-0007-directory-fanout-and-the-monolith-exemption-class.md) | Per-directory fan-out budget (≤10 files; ≤15 contributor subdir target) with frozen ceilings for irreducible cohesive packages | Accepted |
 | [ADR-0008](ADR-0008-proto-versioning.md) | Proto API versioning strategy (v1 stable / v2alpha preview / v2beta near-stable / v2 stable); deprecation annotations; buf breaking policy | Accepted |
+| [ADR-0009](ADR-0009-static-and-runtime-modules.md) | NGINX-style static build profiles; generation-based hot activation; external-process third-party plugins | Accepted, incremental |
 
 ## Writing a new ADR
 

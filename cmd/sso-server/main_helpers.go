@@ -26,6 +26,7 @@ func usage() {
 Usage:
   `+progName+` [flags]      run the server (the default; reads --config)
   `+progName+` version      print the build version and exit
+  `+progName+` modules      print the compiled module profile and exit
 
 Flags:
 `)
@@ -33,10 +34,15 @@ Flags:
 }
 
 // fail prints "<prog>: <msg>" to stderr and exits 1 (runtime error).
-// CLI-misuse errors should exit 2 via flag.Usage instead.
 func fail(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, progName+": "+format+"\n", args...)
 	os.Exit(1)
+}
+
+// failUsage reports command misuse with the conventional exit status 2.
+func failUsage(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, progName+": "+format+"\n", args...)
+	os.Exit(2)
 }
 
 // writeAdminPasswordFile atomically writes the bootstrap admin

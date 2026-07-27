@@ -1,0 +1,18 @@
+{
+  "$schema": "../profile.schema.json",
+  "schema_version": 1,
+  "id": "standard-kafka",
+  "summary": "Stock server plus the statically linked Kafka audit sink.",
+  "maturity": "supported",
+  "modules": [
+    "stock-server",
+    "audit-kafka"
+  ],
+  "policy": {
+    "allow_cgo": false,
+    "fips": "any",
+    "allowed_licenses": [
+      "Apache-2.0"
+    ]
+  }
+}
