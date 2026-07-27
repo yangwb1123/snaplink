@@ -1,14 +1,12 @@
-# Pipeline 完整工作闭环
+# Pipeline 设计示例（仅用于 --dry-run）
 #
-# 这个 pipeline 实现了一个完整的开发工作单元：
-# 需求分析 → 技术设计 → 代码实现 → 测试验证 → 最终确认 + git commit
+# 当前 runner 不聚合并行角色输出，且 commands 钩子报错后仍以成功状态继续。
+# 因此本文件不是可执行开发闭环，也不能提供 build/test/release gate。
 #
 # 使用方法：
-#   python3 ai-dev/pi-batch.py --pipeline ai-dev/pipelines/pipeline.example.yaml           # 完整执行
-#   python3 ai-dev/pi-batch.py --pipeline ai-dev/pipelines/pipeline.example.yaml --reuse   # 复用已有输出
 #   python3 ai-dev/pi-batch.py --pipeline ai-dev/pipelines/pipeline.example.yaml --dry-run # 预览
 
-git_commit: true # 全局启用自动 git commit
+git_commit: false # 默认不提交生成输出；需要时显式传 --git-commit
 
 stages:
   # ═══════════════════════════════════════════════════════════════
@@ -67,7 +65,7 @@ stages:
   # 阶段 4：代码测试 + 质量检查
   # 输入：代码实现
   # 角色：QA Lead 审查测试策略
-  # 命令：go build + go test + cli.py harness
+  # 命令定义仅保留作 runner 修复后的设计输入；当前不会形成失败门禁
   # ═══════════════════════════════════════════════════════════════
   - name: code-testing
     from_outputs: code-implementation
@@ -79,11 +77,11 @@ stages:
         timeout: 600
 
     commands:
-      - "echo '=== BUILD ===' && go build ./... 2>&1"
-      - "echo '=== TESTS ===' && go test ./... 2>&1"
-      - "echo '=== HARNESS ===' && python3 cli.py harness 2>&1 || echo 'harness completed (non-fatal)'"
-      - "echo '=== FMT/VET ===' && go vet ./... 2>&1"
-    commands_parallel: true # 4 个命令同时跑
+      - "go build ./..."
+      - "go vet ./..."
+      - "go test -run 'TestMaintainability_|TestArchitecture_' ."
+      - "make ci"
+    commands_parallel: false
 
     mode: serial
 
@@ -108,19 +106,12 @@ stages:
         model:
         timeout: 600
 
-    commands:
-      # 显示最终状态
-      - "echo '=== WORK COMPLETED ===' && date"
-      - "echo 'Files produced:' && ls -la docs/results/{input_stem}.* 2>/dev/null || true"
-      - "echo 'Git status:' && git status -s | head -20"
-      - "echo 'Done!'"
-
     mode: parallel
     workers: 2
 
   # ═══════════════════════════════════════════════════════════════
-  # 阶段 6：自动 git commit（由全局 git_commit: true 处理）
-  # 每个阶段完成后会自动执行 git add + git commit
+  # 阶段 6：可选 git commit
+  # 默认不自动提交；审核工作树和生成输出后再显式启用。
   # 可以在命令行覆盖：
   #   --git-commit     强制启用
   #   --no-git-commit  强制禁用

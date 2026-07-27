@@ -6,38 +6,37 @@ Usage:
   python ai-dev/ai/run-review.py --stage 02 \\
     --project "Snaplink SSO" \\
     --subsystem "OIDC RP-Initiated Logout" \\
-    --files "interfaces/sso/server_logout.go,protocols/oidc/" \\
+    --files "interfaces/sso/handlers.go,protocols/oidc/handle_end_session.go" \\
     --rfcs "RFC6749,OIDC Session Management,OIDC RP-Initiated Logout" \\
     --model claude-sonnet
 
   # Run from a context YAML file (recommended for multi-stage runs)
-  python ai-dev/ai/run-review.py --stage 01 --context ai-dev/ai/reviews/oidc-logout/context.yaml
+  python ai-dev/ai/run-review.py --stage 01 --context ai-dev/ai/examples/oidc-logout-context.yaml
 
   # Dry-run: print the filled prompt without invoking pi
-  python ai-dev/ai/run-review.py --stage 02 --context ai-dev/ai/reviews/oidc-logout/context.yaml --dry-run
+  python ai-dev/ai/run-review.py --stage 02 --context ai-dev/ai/examples/oidc-logout-context.yaml --dry-run
 
   # Run all stages sequentially
-  python ai-dev/ai/run-review.py --all --context ai-dev/ai/reviews/oidc-logout/context.yaml
+  python ai-dev/ai/run-review.py --all --context ai-dev/ai/examples/oidc-logout-context.yaml
 
 Context YAML format:
   project: "Snaplink SSO"
   subsystem: "OIDC RP-Initiated Logout"
-  repo: "/home/dwp/snaplink"
   files:
-    - interfaces/sso/server_logout.go
-    - protocols/oidc/
+    - interfaces/sso/handlers.go
+    - protocols/oidc/handle_end_session.go
   rfcs:
     - OIDC Core (OpenID Connect Core 1.0)
     - OIDC RP-Initiated Logout 1.0
     - RFC6749
   architecture_summary: |
-    The logout handler lives in interfaces/sso/server_logout.go.
+    The logout use case lives in protocols/oidc/handle_end_session.go.
     It coordinates session termination, front-channel logout, and back-channel logout.
-  load_profile: "200 req/s peak, p99 < 100ms target"
-  infra: "3-pod k8s, Redis Cluster, PostgreSQL HA"
-  slo_targets: "99.9% availability, p99 < 200ms"
-  sprint_goal: "Harden logout against session fixation and add back-channel support"
-  team_size: 3
+  load_profile: "(not provided)"
+  infra: "(not provided)"
+  slo_targets: "(not provided)"
+  sprint_goal: "Review the existing flow and define one evidence-backed improvement"
+  team_size: "(unknown)"
 """
 
 import argparse

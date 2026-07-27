@@ -1,122 +1,52 @@
 # Stage 09: CTO Executive Review
 
-## Roles Active
-CTO · Principal Reviewer
+**Roles:** CTO and Principal Reviewer.
 
-## Objective
-Make the final Go/No-Go decision.
-Answer five questions. Produce one decision.
-Do not re-review technical details — the prior stages did that.
-Synthesize the findings from Stages 00-08 into a strategic assessment.
+Read `ai-dev/ai/prompts-shared/{output-format,role-definitions}.md`. Synthesize
+prior evidence; do not repeat the technical reviews. Separate SDK, stock
+binary, nested module, and external frontend readiness. Protocol coverage is
+not certification without current published conformance evidence.
 
----
+## Decision
 
-## Context
+Make one strategic ship/investment decision with named conditions and owners.
 
-**Project**: {{PROJECT_NAME}}
+## Inputs
 
-**Subsystem**: {{SUBSYSTEM}}
+- Project: {{PROJECT_NAME}}
+- Subsystem: {{SUBSYSTEM}}
+- Prior findings summary: {{ALL_PRIOR_FINDINGS_SUMMARY}}
+- Open findings: {{CRITICAL_COUNT}} Critical; {{HIGH_COUNT}} High
+- Team size: {{TEAM_SIZE}}
+- Age in codebase: {{AGE}}
 
-**Summary of Prior Review Findings**:
-{{ALL_PRIOR_FINDINGS_SUMMARY}}
+| Stage | Grade |
+|---|---|
+| 00 Product | {{GRADE_00}} |
+| 01 Architecture | {{GRADE_01}} |
+| 02 Security/protocol | {{GRADE_02}} |
+| 03 Distributed systems | {{GRADE_03}} |
+| 04 Implementation | {{GRADE_04}} |
+| 05 Performance | {{GRADE_05}} |
+| 06 Production readiness | {{GRADE_06}} |
 
-**Critical/High Finding Count**: {{CRITICAL_COUNT}} Critical, {{HIGH_COUNT}} High
+## Five Questions
 
-**Overall Grades from Prior Stages**:
-- Stage 00 Product Discovery: {{GRADE_00}}
-- Stage 01 Architecture: {{GRADE_01}}
-- Stage 02 Security & RFC: {{GRADE_02}}
-- Stage 03 Distributed Systems: {{GRADE_03}}
-- Stage 04 Implementation: {{GRADE_04}}
-- Stage 05 Performance: {{GRADE_05}}
-- Stage 06 Production Readiness: {{GRADE_06}}
+Answer each **Yes** or **No**, followed by one evidence-backed sentence:
 
-**Team Size**: {{TEAM_SIZE}}
+1. Should this be built or shipped now?
+2. Is it appropriately scoped rather than over-engineered?
+3. Is it maintainable for at least five years?
+4. Can the supplied team own its feature, security, integration, and on-call load?
+5. Does expected value justify build and continuing ownership cost?
 
-**Time in System** (how long has this subsystem been in the codebase): {{AGE}}
+## Output
 
----
-
-## The Five Questions
-
-Answer each honestly. Do not hedge. Every answer must be a clear Yes or No with a single-sentence justification.
-
-### Q1: Should we build / ship this now?
-Is the problem real? Is the solution right-sized for the actual need?
-Or should this be delayed, simplified, or rejected?
-
-**Answer**: Yes / No / Conditional
-**Why**:
-
----
-
-### Q2: Is the implementation over-engineered?
-Could three engineers, handed this codebase in 6 months, own and extend it without the original authors?
-Are there abstractions that exist to handle cases that haven't occurred and likely won't?
-
-**Answer**: Yes (over-engineered) / No (appropriately scoped)
-**Why**:
-
----
-
-### Q3: Is this maintainable for 5+ years?
-Will the complexity compound? Are the interfaces stable enough to not require constant renegotiation?
-Is there a junior engineer who could fix a bug in this subsystem without a week of context-loading?
-
-**Answer**: Yes (maintainable) / No (will become a liability)
-**Why**:
-
----
-
-### Q4: Can a 3-engineer team realistically own this?
-Counting: feature work, bug fixes, security patches, oncall incidents, integration support.
-Is the operational surface too wide for the team size?
-
-**Answer**: Yes / No
-**Why**:
-
----
-
-### Q5: Is the engineering ROI justified?
-Does this deliver more business value than the ongoing maintenance cost?
-Is there a simpler approach that delivers 80% of the value at 20% of the complexity?
-
-**Answer**: Yes / No
-**Why**:
-
----
-
-## Final Decision
-
-Choose exactly one:
-
-**[ ] Approve** — Ship as-is. All Critical/High findings resolved. Ready for production.
-
-**[ ] Approve with Simplification** — Ship after removing specified over-engineered components. List them.
-
-**[ ] Redesign** — Core architecture is wrong. Specific redesign required before merge.
-
-**[ ] Delay** — Timing is wrong. Resume when specified condition is met.
-
-**[ ] Reject** — This subsystem should not exist. Specific rationale required.
-
----
-
-## Strategic Output
-
-### Top 10 Priorities (next 30 days)
-Ranked. Specific. Actionable.
-
-### Top 10 Risks (next 12 months)
-What could go wrong even if this ships successfully?
-
-### Explicit Non-Goals
-What will NOT be built, regardless of how often it's requested?
-List with rejection rationale.
-
-### Mandatory Before Next Sprint
-Things that MUST be true before the next sprint begins. (Not should — must.)
-
-### 12-Month Roadmap Implications
-Does this decision affect any planned work for the next 12 months?
-List dependencies created, options opened, or options closed.
+1. Choose exactly one: **Approve**, **Approve with Simplification**,
+   **Redesign**, **Delay**, or **Reject**.
+2. State release scope, evidence, unresolved Critical/High findings, mandatory
+   preconditions, owner, and decision expiry/review date.
+3. Top ten next-30-day priorities: rank, owner, outcome, dependency.
+4. Top ten 12-month risks: likelihood, impact, trigger, mitigation.
+5. Explicit non-goals and 12-month roadmap/options affected by the decision.
+6. Validation performed versus inherited or missing evidence.

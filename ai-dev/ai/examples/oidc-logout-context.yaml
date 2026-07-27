@@ -1,15 +1,16 @@
-# Context file for OIDC RP-Initiated Logout review
+# Illustrative context for an OIDC RP-Initiated Logout review.
+# Replace unknown deployment/project values; they are not Snaplink defaults.
 # Use with: python ai-dev/ai/run-review.py --stage 02 --context ai-dev/ai/examples/oidc-logout-context.yaml
 
 project: "Snaplink SSO"
 subsystem: "OIDC RP-Initiated Logout"
 
 files:
+  - interfaces/sso/server_userinfo.go
+  - interfaces/sso/handlers.go
   - interfaces/sso/server_logout.go
-  - interfaces/sso/server_routes_admin.go
-  - protocols/oidc/
-  - shared/core/consts_oauth.go
-  - shared/core/errors.go
+  - interfaces/sso/server_backchannel_logout.go
+  - protocols/oidc/handle_end_session.go
 
 rfcs:
   - OpenID Connect Core 1.0 (Section 16 — Security Considerations)
@@ -32,27 +33,27 @@ architecture_summary: |
   5. Session termination in the session store
   6. Audit logging of the logout event
 
-storage: "Redis Cluster for sessions, PostgreSQL for client registrations and audit"
+storage: "(replace with the deployment's actual session, client, and audit stores)"
 
-load_profile: "200 req/s peak logout traffic, p99 < 150ms target"
+load_profile: "(not provided)"
 
-infra: "3-pod Kubernetes deployment, Redis Cluster (3 nodes), PostgreSQL HA (1 primary + 1 replica)"
+infra: "(not provided)"
 
-deployment_target: "Kubernetes, Prometheus + Grafana, structured JSON logs to Loki"
+deployment_target: "(not provided)"
 
-slo_targets: "99.9% availability, p99 < 200ms, error rate < 0.1%"
+slo_targets: "(not provided)"
 
-sprint_goal: "Harden OIDC logout against session fixation and CSRF; add back-channel logout support"
+sprint_goal: "Review the existing logout flow and define one evidence-backed improvement"
 
-team_size: 3
-sprint_duration: "2 weeks"
-velocity: "22 story points last sprint"
-age: "~8 months in codebase"
+team_size: "(unknown)"
+sprint_duration: "(unknown)"
+velocity: "(unknown)"
+age: "(unknown)"
 
 # Stage-specific context overrides
 stage_09:
   ALL_PRIOR_FINDINGS_SUMMARY: |
     Aggregate findings from Stages 00-06 pending execution.
     Fill in after running prior stages.
-  CRITICAL_COUNT: "0"
-  HIGH_COUNT: "0"
+  CRITICAL_COUNT: "(unknown)"
+  HIGH_COUNT: "(unknown)"

@@ -1,14 +1,13 @@
-# 完整 SDLC Pipeline - 10 阶段审查流程
+# 完整 SDLC Pipeline - 历史实验配置
 #
-# 使用方法：
-#   python3 ai-dev/pi-batch.py --pipeline ai-dev/pipelines/pipeline-full-sdlc.yaml --mode parallel -w 4
+# 不要直接运行。pi-batch 会对每个上游输出与每个下游角色做笛卡尔展开，
+# 此 10 阶段图会产生组合爆炸，最终 reviewer 也只看到一个直接上游输出，
+# 无法完成这里声明的全局综合。保留本文件仅用于重设计 runner/aggregation。
 #
-# 说明：
-#   这个 pipeline 实现了完整的 AI-SDLC 流程，包含 10 个阶段
-#   每个阶段使用适当的角色组合进行审查
-#   支持并行执行以提高效率
+# 说明：此文件描述目标中的 10 阶段角色图；当前 runner 不支持所需的
+# 聚合语义，因此不代表可执行流程。
 
-git_commit: true # 全局设置，所有阶段默认自动 git commit
+git_commit: false # 生成审查默认不提交；审核后可显式传 --git-commit
 
 stages:
   # ═══════════════════════════════════════════════════════════

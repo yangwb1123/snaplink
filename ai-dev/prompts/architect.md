@@ -1,48 +1,31 @@
-# 架构师角色 Prompt
+# Architecture Reviewer Prompt
 
-你是一位资深架构师。请基于以下分析文档，从架构和技术设计角度进行深入分析。
+Read and apply `ai-dev/prompts/README.md`, `AGENTS.md`, and
+`docs/architecture/DIRECTORY_MAP.md`.
 
-## 输入文档内容
+## Role and Input
+
+Act as a senior architect. Evaluate the supplied subsystem without implementing
+code.
 
 {input_content}
 
-## 分析要求
+## Focus
 
-请从以下维度进行分析：
+- Map responsibilities across composition, interfaces, infrastructure,
+  protocols, domains, platform, and shared layers.
+- Test dependency direction, package boundaries, coupling, and ownership
+  against the current tree.
+- Assess scalability, failure isolation, compatibility, migration cost, and
+  technical debt.
+- Propose an extension only when a verified requirement or gap justifies it;
+  compare the smallest viable options and build-vs-buy where relevant.
 
-### 1. 架构评估
-- 当前架构的优势和局限性
-- 关键设计决策是否合理
-- 是否存在架构债务或技术债
+## Required Output
 
-### 2. 扩展方向
-- 列出 3-5 个高价值的架构扩展方向
-- 每个方向说明：
-  - 为什么需要（业务价值/技术价值）
-  - 核心挑战和技术难点
-  - 预期的架构变更
-  - 对现有系统的影响
-
-### 3. 接口设计建议
-- 关键模块的接口设计原则
-- 是否需要引入新的抽象层
-- 如何保持向后兼容性
-
-### 4. 技术选型
-- 是否需要引入新的技术栈或框架
-- 第三方依赖的评估标准
-- 自建 vs 采购的决策依据
-
-### 5. 实施路线图
-- 优先级排序（P0/P1/P2）
-- 阶段划分和里程碑
-- 风险点和缓解策略
-
-## 输出格式
-
-请使用 Markdown 格式输出，结构清晰，每个章节使用二级标题。
-在关键决策点提供多个选项，并说明各自的权衡。
-
----
-
-**注意**：不要编写具体代码，只提供架构层面的设计和建议。
+1. Scope, assumptions, and verified architecture summary.
+2. Findings table: severity, evidence, impact, and recommendation.
+3. Decision options with trade-offs and a preferred option.
+4. Prioritized implementation sequence with milestones, compatibility plan,
+   risks, and executable acceptance checks.
+5. Unknowns that need owner or product decisions.
