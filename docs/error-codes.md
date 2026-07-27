@@ -1,9 +1,13 @@
 # Error Code Catalog
 
 Every error response from the SSO server's HTTP REST surface carries a
-stable `error` code in the JSON body. SPAs and downstream services
+stable `error` code in the JSON body. API clients and downstream services
 should branch on the code, **never** on the human-readable
 `error_description` (which may change between versions).
+
+The server provides no built-in SPA. “Client” in this catalogue includes
+separately deployed login/admin/self-service frontends as well as direct API
+consumers.
 
 ```json
 { "error": "invalid_credentials" }
@@ -62,7 +66,7 @@ exact emission site.
 | Code                    | HTTP | Emitted when                                                                 | Client should                                   |
 |-------------------------|------|------------------------------------------------------------------------------|-------------------------------------------------|
 | `not_found`             | 404  | `GET /api/v1/setup/status` or `POST /api/v1/setup` while `setup_wizard.enabled=false` (no setup surface exists) | Not applicable — the wizard is disabled |
-| `already_initialized`   | 409  | `POST /api/v1/setup` after an admin already exists — the wizard is single-use and locks so it can't be replayed to plant a second admin | Stop; use `/admin/` to sign in and manage users |
+| `already_initialized`   | 409  | `POST /api/v1/setup` after an admin already exists — the setup API is single-use and locks so it can't be replayed to plant a second admin | Stop; use the external admin frontend or admin API. This server does not mount `/admin/` UI assets |
 | `invalid_request`       | 400  | `POST /api/v1/setup` body fails to parse, or `admin.username`/`admin.password` (min 8 chars) missing | Fix the payload |
 | `internal_error`        | 500  | Provisioning the first admin failed (a store write errored)                  | Retry; check server logs                        |
 
@@ -181,8 +185,8 @@ the attestation certificate.
 Opt-in via `webauthn.primary_auth_enabled` (requires `webauthn.enabled`).
 Registers a `core.Authenticator` under the name `webauthn` in the SAME
 `s.authenticators` registry every other provider uses — a client selects it
-with `{"provider": "webauthn", "credential": {"session_id": "...",
-"assertion": "..."}}`, obtaining `session_id` from the existing
+with `{"provider": "webauthn", "credential": {"session_id": "...", "assertion": "..."}}`,
+obtaining `session_id` from the existing
 UNAUTHENTICATED `POST /webauthn/login/conditional/begin` (discoverable
 credential / passkey autofill; no username). Purely additive: password login
 and WebAuthn-as-second-factor (step-up MFA) are unchanged either way.
@@ -248,17 +252,17 @@ These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary 
 | `invalid_authorization_details` | 400  | RFC 9396 RAR — `authorization_details` parameter is malformed (not a JSON array, element missing `type`, or element `type` not in the client's `allowed_authorization_details_types`); OR (when `security.rar_limits.*` is configured) the payload exceeds the configured max serialized size, top-level element count, or nesting depth — checked BEFORE the payload is fully unmarshaled  | Drop the offending element, get its type allowlisted, or shrink/flatten the payload             |
 | `insufficient_user_authentication` | 401 (RS) / 400 (AS exchange) | RFC 9470 — caller demanded `acr_values` the subject_token's existing ACR doesn't satisfy. On `/token` grant=token-exchange and on resource-server `WWW-Authenticate` challenges. | Route user through `/auth/login` with the same `acr_values` to step up    |
 
-**FAPI 2.0 profile** (`oauth.compliance.profile: fapi_2`, enforce mode): a baseline violation (no PAR, unsigned request object, non-S256 PKCE, non-code response type, or bearer/non-sender-constrained token) is rejected with the standard `invalid_request` (`error_description` carries the failed `fapi:<rule>` id; SPAs branch on `error`, operators on the audit event). No new wire code is introduced — every violation maps onto the existing OAuth vocabulary. In inspection mode (`inspection_only: true`) nothing is rejected; each violation only emits the `fapi_compliance_violation` audit event (`fapi_rule` / `fapi_detail` / `fapi_mode` metadata) and increments `sso_fapi_violations_total{rule,mode}`.
+**FAPI 2.0 profile** (`oauth.compliance.profile: fapi_2`, enforce mode): a baseline violation (no PAR, unsigned request object, non-S256 PKCE, non-code response type, or bearer/non-sender-constrained token) is rejected with the standard `invalid_request` (`error_description` carries the failed `fapi:<rule>` id; API clients branch on `error`, operators on the audit event). No new wire code is introduced — every violation maps onto the existing OAuth vocabulary. In inspection mode (`inspection_only: true`) nothing is rejected; each violation only emits the `fapi_compliance_violation` audit event (`fapi_rule` / `fapi_detail` / `fapi_mode` metadata) and increments `sso_fapi_violations_total{rule,mode}`.
 
-**SPIFFE JWT-SVID token-exchange** (`spiffe.enabled`, `WithSPIFFEJWTSVID`): a SPIFFE JWT-SVID presented as a token-exchange `subject_token` (`subject_token_type=urn:ietf:params:oauth:token-type:jwt`, `sub` a `spiffe://` URI) is validated against the operator-supplied SPIRE trust-bundle JWKS with a strict asymmetric alg-allowlist (no `alg=none`), strict audience binding, and a trust-domain check. **No new wire code is introduced** — EVERY validation failure (bad signature, `alg=none`, wrong audience, wrong trust domain, expired, malformed `sub`) collapses to the standard `invalid_grant`, indistinguishable on the wire (oracle-leak hardening, AGENTS.md §2). A successful acceptance emits the INTERNAL `spiffe_jwt_svid_accepted` audit event (`spiffe_trust_domain` / `spiffe_namespace` / `spiffe_service_account` metadata); rejections are deliberately NOT audited per-cause (that would re-open the oracle).
+**SPIFFE JWT-SVID token-exchange** (`spiffe.enabled`, `WithSPIFFEJWTSVID`): a SPIFFE JWT-SVID presented as a token-exchange `subject_token` (`subject_token_type=urn:ietf:params:oauth:token-type:jwt`, `sub` a `spiffe://` URI) is validated against the operator-supplied SPIRE trust-bundle JWKS with a strict asymmetric alg-allowlist (no `alg=none`), strict audience binding, and a trust-domain check. **No new wire code is introduced** — EVERY validation failure (bad signature, `alg=none`, wrong audience, wrong trust domain, expired, malformed `sub`) collapses to the standard `invalid_grant`, indistinguishable on the wire (oracle-leak hardening, AGENTS.md §3). A successful acceptance emits the INTERNAL `spiffe_jwt_svid_accepted` audit event (`spiffe_trust_domain` / `spiffe_namespace` / `spiffe_service_account` metadata); rejections are deliberately NOT audited per-cause (that would re-open the oracle).
 
 **Cross-tenant B2B collaboration token-exchange** (`WithExternalUserStore` + `WithTenantCollaborationStore`, `domains/tenant`): a token-exchange whose `subject_token` was issued to a client in a DIFFERENT tenant than the exchanging client requires BOTH an explicit `TenantCollaboration` trust row (the guest tenant opts in to accepting guest tokens from the subject's home tenant) AND a matching `GuestRecord` registering that exact subject as a guest. **No new wire code is introduced** — a missing trust row or registration collapses to the standard `invalid_grant` (oracle-leak hardening: no signal about WHICH check failed, or that a cross-tenant boundary was even involved); a requested scope outside the guest's registered `Roles` is the standard `invalid_scope`. Either store left unwired (the default) is a complete no-op — byte-identical to a build without this feature; same-tenant exchanges are always unaffected. A successful cross-tenant hop emits the INTERNAL `cross_tenant_token_exchange` audit event with BOTH the guest-tenant context (`client_id`, `guest_tenant_id`) and the originating home-tenant identity (`original_subject`, `original_tenant`) so a SIEM can always trace the action back to its home account.
 
 **RFC 9321 Transaction Tokens** (`txn_token.enabled`, `WithTransactionTokens`): an internal caller mints a short-lived, workload-identity-bound Txn-Token by sending the SAME `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` request as an ordinary RFC 8693 exchange, but with `requested_token_type=urn:ietf:params:oauth:token-type:txn-token` — every other `requested_token_type` is unaffected. **No new wire code is introduced**: a missing/malformed `subject_token`, `subject_token_type`, or `request_context` collapses to `invalid_request`; an `audience` not naming exactly this deployment's configured Trust Domain is `invalid_target`; an invalid/expired `subject_token` (an ordinary access token on the first hop, or a previously-issued Txn-Token on a chained/nested hop) or an act-chain deeper than 10 hops collapses to `invalid_grant` — the SAME codes the ordinary token-exchange grant already returns for its own subject_token/target gates, so the two are indistinguishable on the wire. When the feature is unconfigured (`txnTokenIssuer` unwired), a `requested_token_type` naming the Txn-Token URN falls straight through to the ordinary token-exchange handler's existing `invalid_request` collapse for an unrecognized type — byte-identical to a build without this feature. See `protocols/oauth/txntoken`.
 
-**Cloud workload-identity client authentication** (`WithWorkloadIdentityProviders`): a client registered with `token_endpoint_auth_method=workload_identity` authenticates at `/token` by presenting a cloud-issued identity token as `client_assertion` with `client_assertion_type=urn:snaplink:params:oauth:client-assertion-type:workload-identity`, instead of a `client_secret` or `private_key_jwt`. The token is verified against the CLOUD provider's OWN published JWKS — GCP against its fixed, stable endpoint (`https://www.googleapis.com/oauth2/v3/certs`, issuer `https://accounts.google.com`); AWS against an OPERATOR-CONFIGURED OIDC issuer (typically a per-cluster EKS OIDC provider URL, since AWS has no single stable global JWKS the way GCP does), with the JWKS URL derived from that issuer via `<issuer>/.well-known/jwks.json` (Azure is a documented follow-up in `securityverify`'s package doc) — with a strict alg-allowlist, issuer + audience binding (aud MUST equal this server's issuer, mirroring the `private_key_jwt` requirement), and the mapped identity MUST equal the client's registered `Client.Attributes[workload_identity_subject]` exactly. **No new wire code is introduced** — EVERY failure (bad signature, wrong issuer/audience, expired, unknown/unmapped identity, subject mismatch, unconfigured provider) collapses to the standard `invalid_client`, the SAME response `private_key_jwt` failures already return (oracle-leak hardening, AGENTS.md §3).
+**Cloud workload-identity client authentication** (`WithWorkloadIdentityProviders`): a client registered with `token_endpoint_auth_method=workload_identity` authenticates at `/token` by presenting a cloud-issued identity token as `client_assertion` with `client_assertion_type=urn:snaplink:params:oauth:client-assertion-type:workload-identity`, instead of a `client_secret` or `private_key_jwt`. The token is verified against the cloud provider's own published JWKS: GCP uses its fixed issuer/JWKS preset; AWS uses an operator-configured OIDC issuer (typically an EKS issuer); Azure uses the tenant-scoped issuer/JWKS preset derived from the configured tenant ID. All providers enforce a strict asymmetric alg allowlist plus issuer, audience and mapped-subject binding. **No new wire code is introduced** — every failure (bad signature, wrong issuer/audience, expired, unknown/unmapped identity, subject mismatch, unconfigured provider) collapses to the standard `invalid_client`, the same response used for `private_key_jwt` failures (oracle-leak hardening, AGENTS.md §3).
 
-**DPoP authorization-code binding** (RFC 9449 §10): an optional `DPoP: <proof>` header on `POST /auth/login` with `response_type=code` binds the issued authorization code to that proof's JWK thumbprint. A malformed/invalid proof on `/auth/login` itself fails the login with `invalid_dpop_proof` (or `use_dpop_nonce` when §8 nonce enforcement is wired) — see the `/userinfo` table below for those two codes' shape, which is identical here. **No new wire code is introduced for the exchange-side gate** — on the subsequent `POST /token` `authorization_code` exchange, a missing DPoP proof or a proof under a different key than the one bound at `/auth/login` collapses to the standard `invalid_grant`, indistinguishable from every other auth-code failure (oracle-leak hardening, AGENTS.md §2). Omitting the `DPoP` header at `/auth/login` leaves the code unbound and the exchange-side gate never fires — fully backwards compatible.
+**DPoP authorization-code binding** (RFC 9449 §10): an optional `DPoP: <proof>` header on `POST /auth/login` with `response_type=code` binds the issued authorization code to that proof's JWK thumbprint. A malformed/invalid proof on `/auth/login` itself fails the login with `invalid_dpop_proof` (or `use_dpop_nonce` when §8 nonce enforcement is wired) — see the `/userinfo` table below for those two codes' shape, which is identical here. **No new wire code is introduced for the exchange-side gate** — on the subsequent `POST /token` `authorization_code` exchange, a missing DPoP proof or a proof under a different key than the one bound at `/auth/login` collapses to the standard `invalid_grant`, indistinguishable from every other auth-code failure (oracle-leak hardening, AGENTS.md §3). Omitting the `DPoP` header at `/auth/login` leaves the code unbound and the exchange-side gate never fires — fully backwards compatible.
 
 ### Token endpoint (`/token`)
 
@@ -726,18 +730,20 @@ independently opt-in and unmounted/off by default.
 
 ## SAML 2.0 (`/saml/*`, `/auth/saml/callback`)
 
-SAML 2.0 is supplied by an operator's SEPARATE/forked module (the
-SAML/XML/DSig dependency stays out of the core go.mod). The codes below
-are the stable wire vocabulary that module SHOULD emit; the core ships
-the constants (`ErrSAML*` in `core/consts.go`) and the dep-free handler
-registry, not the protocol handlers. SAML is inert unless
-`saml.handler` names a registered factory — until then these codes
-never appear.
+SAML 2.0 is supplied by the repository-maintained, opt-in nested module
+`infrastructure/saml` (module path `github.com/snaplink/sso/saml`), keeping the
+SAML/XML/DSig dependency out of the root module's `go.mod`. A custom
+composition binary imports the module and registers its handler factory. The
+codes below are the stable wire vocabulary that module SHOULD emit; the root
+module ships the constants (`ErrSAML*` in `shared/core/consts.go`) and the
+dependency-free handler registry, not the protocol handlers. SAML is inert
+unless `saml.handler` names a registered factory — until then these codes never
+appear.
 
 | Code                     | HTTP | Emitted when                                                                 | Client should                          |
 |--------------------------|------|------------------------------------------------------------------------------|----------------------------------------|
-| `saml_assertion_invalid` | 400  | A returned SAML assertion fails validation — bad signature, wrong audience/issuer, expired, or replayed (causes SHOULD be collapsed onto this one code to avoid an oracle, AGENTS.md §2) | Restart the SAML SSO flow              |
-| `saml_request_invalid`   | 400  | (IdP side) A malformed/forged AuthnRequest, an ACS URL not in the SP's registered allowlist, or an unknown/expired/consumed pending request / invalid session at `/saml/sso/finish` (all collapsed onto this one code — oracle-safe, AGENTS.md §2) | Restart the SAML SSO flow              |
+| `saml_assertion_invalid` | 400  | A returned SAML assertion fails validation — bad signature, wrong audience/issuer, expired, or replayed (causes SHOULD be collapsed onto this one code to avoid an oracle, AGENTS.md §3) | Restart the SAML SSO flow              |
+| `saml_request_invalid`   | 400  | (IdP side) A malformed/forged AuthnRequest, an ACS URL not in the SP's registered allowlist, or an unknown/expired/consumed pending request / invalid session at `/saml/sso/finish` (all collapsed onto this one code — oracle-safe, AGENTS.md §3) | Restart the SAML SSO flow              |
 | `saml_assertion_failed`  | 500  | (IdP side) The server could not mint/sign an assertion — the per-tenant signing key can't drive XML-DSig (e.g. an Ed25519 issuer; goxmldsig has no EdDSA method) or the signing operation errored. Fails CLOSED (no cross-tenant key fallback) | Operator configures an RSA/ECDSA SAML signing key |
 | `saml_not_configured`    | 501  | A SAML endpoint was hit but no SAML handler is wired (`saml.handler` empty)   | Operator enables + registers SAML      |
 
@@ -756,7 +762,7 @@ the RFC 8935 §2.4 key **`err`** (not `error`) plus an optional
 `description`. The `err` codes below are DELIBERATELY COARSE — every trust
 failure (bad signature, untrusted issuer, wrong audience, expired,
 replayed) collapses to one code so the endpoint reveals no oracle of which
-gate failed (AGENTS.md §2). A VALID SET is always **acked (202)** even when
+gate failed (AGENTS.md §3). A VALID SET is always **acked (202)** even when
 it maps to no local subject or carries only unknown events; only the
 failures below return a 400.
 
@@ -796,6 +802,23 @@ compact JWS, `application/entity-statement+jwt`), not JSON.
 
 A signing failure AFTER the subordinate is matched returns `internal_error`
 (500, see Server / configuration).
+
+---
+
+## OpenID Federation 1.0 §8.3 Resolve (`/.well-known/openid-federation-resolve`)
+
+This opt-in endpoint returns `{"chain":["<compact-jws>", ...]}` after resolving
+`sub` to a configured trust anchor. Unlike public entity/fetch metadata, every
+response sets `Cache-Control: no-store` and `Pragma: no-cache`.
+
+| Code | HTTP | Emitted when |
+|---|---:|---|
+| `invalid_request` | 400 | The required `sub` query parameter is missing |
+| `not_found` | 404 | The resolver is unavailable/disabled, or the entity is unknown, unfetchable, invalid, or does not form a trusted chain; all cases collapse to the same response |
+
+The route is mounted only when the Federation entity and an enabled resolver
+are wired. Trust anchors are configured out of band and are never fetched from
+the entity under evaluation.
 
 ---
 
@@ -848,8 +871,8 @@ is gated by the AdminMiddleware, which fronts the SCIM handler: a missing /
 invalid bearer is a **401** and an insufficient scope (`admin:read` on GET,
 `admin:write` on POST/PUT/PATCH/DELETE) is a **403**, both carrying the
 OAuth-style `{"error": ...}` body (`missing_token` / `invalid_token` /
-`forbidden`, see Auth / OAuth above) plus a `WWW-Authenticate: Bearer
-realm="admin"` challenge — the request never reaches the SCIM handler, so it
+`forbidden`, see Auth / OAuth above) plus a
+`WWW-Authenticate: Bearer realm="admin"` challenge — the request never reaches the SCIM handler, so it
 never gets a `scim+json` body.
 
 ---
@@ -885,8 +908,8 @@ plane; `local_only` refuses remote-dependent endpoints (`/auth/home-realm`,
 
 The outbound webhook transports (audit `WebhookSink`, MFA/CIBA push) can
 sign every delivery with HMAC-SHA256 (`X-Signature: t=<unix>,v1=<hex>`,
-Stripe/Svix style) when a `signing_secret` is configured. `security.
-VerifyWebhookSignature` is a receiver-side helper for a peer service to
+Stripe/Svix style) when a `signing_secret` is configured.
+`security.VerifyWebhookSignature` is a receiver-side helper for a peer service to
 authenticate those deliveries — it returns the sentinels below. These are
 **SDK Go errors, not HTTP wire codes**: they never appear in any response
 this SSO server emits (it is the sender, not the receiver), and they carry
@@ -908,8 +931,8 @@ JWKS or remotely via RFC 7662 introspection) and to verify RFC 9449 DPoP
 proofs, without re-implementing the AS's security gates. Like the webhook
 sentinels above, these are **SDK Go errors, not HTTP wire codes** — branch on
 them with `errors.Is`. The package's own `HTTPMiddleware` deliberately
-collapses all of them to the standard RFC 6750 `WWW-Authenticate:
-error="invalid_token"` challenge on the wire, so a caller-visible 401 can
+collapses all of them to the standard RFC 6750
+`WWW-Authenticate: error="invalid_token"` challenge on the wire, so a caller-visible 401 can
 never become a token-validation oracle.
 
 | Sentinel                 | Returned when                                                                 |
@@ -964,5 +987,7 @@ at `/api/v1/admin/threat-policies/*` translate them to HTTP 404 on the wire.
   programmatically.
 - **Adding a new code:** declare in `consts.go` (or the per-handler
   file if it's handler-local), update this catalog in the same commit.
-  CI's `make ci` doesn't (yet) enforce the catalog-vs-consts.go
-  symmetry, but a future check can.
+  CI enforces bidirectional catalog/constant coverage through
+  `TestErrorCodesDocumented` in `docs/docscheck/error_codes_test.go`
+  (with its named exceptions); `TestSentinelErrorsDocumented` covers
+  sentinel errors.

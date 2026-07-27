@@ -2,12 +2,17 @@
 
 One-command setup for sso-server + etcd, optionally with a Prometheus
 + Grafana observability stack pre-wired to the dashboard from
-`deploy/grafana/`.
+`ops/deploy/grafana/`.
+
+`sso-server` is a pure HTTP/gRPC API backend. This stack does not include a
+hosted login page, self-service portal, setup UI, developer portal, or admin
+console; run the separate frontend project behind a reverse proxy when a
+browser UI is required.
 
 ## Quickstart
 
 ```bash
-cd deploy/compose
+cd ops/deploy/compose
 
 # sso-server + etcd:
 docker compose up --build
@@ -25,8 +30,8 @@ source).
 
 | Service     | Port  | URL                                          |
 |-------------|-------|----------------------------------------------|
-| sso-server  | 8080  | http://localhost:8080 (REST + JWKS + /metrics) |
-| sso-server  | 8081  | gRPC (Authorizer, AuditWriter, Discovery)    |
+| sso-server  | 8080  | http://localhost:8080 (API + JWKS + probes + metrics) |
+| sso-server  | 8081  | gRPC control plane, authz, audit, and discovery |
 | etcd        | 2379  | http://localhost:2379                        |
 | prometheus  | 9090  | http://localhost:9090 (profile only)         |
 | grafana     | 3000  | http://localhost:3000 (admin/admin)          |
@@ -51,8 +56,8 @@ curl -s http://localhost:8080/.well-known/jwks.json | jq .
 
 ## Demonstrating the etcd config source
 
-The sso-server is started with `--etcd-endpoints etcd:2379
---etcd-prefix /snaplink/config`. The etcd source slots into the
+The sso-server is started with
+`--etcd-endpoints etcd:2379 --etcd-prefix /snaplink/config`. The etcd source slots into the
 loader chain between env and flag (lowest = file, highest = flag).
 Add or change a key in etcd → the next sso-server restart picks up
 the override.
@@ -88,7 +93,7 @@ docker compose down -v         # also wipes the etcd volume
 ## Layout
 
 ```
-deploy/compose/
+ops/deploy/compose/
 ├── compose.yaml              # services
 ├── config.yaml               # bind-mounted into sso-server
 ├── prometheus.yml            # scrape config
@@ -100,17 +105,18 @@ deploy/compose/
 └── README.md                 # you are here
 ```
 
-The actual dashboard JSON + alert rules live in `deploy/grafana/` and
+The actual dashboard JSON + alert rules live in `ops/deploy/grafana/` and
 are bind-mounted here — keeps one source of truth across the K8s and
 compose paths.
 
 ## What this stack is NOT
 
-* **Not production-grade.** etcd runs single-node with an ephemeral
+* **Not production-grade.** One API replica uses the configured development
+  stores; etcd runs single-node with an ephemeral
   volume; admin/admin Grafana credentials; anonymous viewer access
   on; sso-server has no TLS termination, no rate limiting wired,
-  no real users seeded.
+  no real users seeded. Memory and local SQLite stores are not shared HA state.
 * **Not the K8s shape.** For an in-cluster deployment see
-  `deploy/k8s/` — the manifests there share the same config / image
-  shape but layer in production-friendly defaults (distroless pod
-  security, anti-affinity, separate /livez + /readyz probes).
+  `ops/deploy/kustomize/` — the manifests there share the same config/image
+  shape and expose separate `/livez` and `/readyz` probes. Use the production
+  overlay plus externally managed Redis, Postgres, and etcd for HA.

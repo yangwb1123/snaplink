@@ -1,2 +1,3 @@
 <!-- Split a large file -->
-python skills/split-large-file/run.py <file>
+Read `docs/skills/split-large-file/SKILL.md` completely, then split the target
+without changing behavior or widening an exemption.

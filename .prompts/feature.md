@@ -13,11 +13,13 @@ Use this as the standing brief for any feature work in snaplink.
    where a `Memory*` impl exists (ADR-0004).
 
 ## While coding
-- Keep the dependency direction `handlers → oauth/oidc → security → core`;
-  put shared types in `core`, never reach up to the root (ADR-0002).
+- Keep the dependency direction
+  `composition → interfaces → infrastructure → protocols → domains → platform → shared`;
+  put shared SPIs/types in `shared/core`, and never import an upper layer
+  (ADR-0006).
 - Budgets (ADR-0005): file ≤ 500 lines, function ≤ 50 lines, cyclomatic ≤ 15,
   cognitive ≤ 20. If an edit would push a file over 500, **split first**
-  (`skills/refactor-large-file.md`), then continue.
+  (`docs/skills/split-large-file/SKILL.md`), then continue.
 - Honor the relevant §3 invariants (oracle-leak collapse, anti-enumeration,
   fail-open vs fail-closed, RFC 9068 claim stamping, cache headers, `iss`).
 - New `Err*` → update `docs/error-codes.md`; documented endpoint change →
@@ -26,13 +28,13 @@ Use this as the standing brief for any feature work in snaplink.
 ## Before marking complete (safe checks — do NOT regenerate scaffolding)
 ```
 go build ./... && go vet ./...
-go test -run 'TestMaintainability_|TestArchitecture_ImportBoundaries' ./...
+go test -run 'TestMaintainability_|TestArchitecture_' .
 go test ./... -race                 # or: go test ./test/ -run TestE2E -v
-python cli.py check-root && python cli.py complexity && python cli.py architecture && python cli.py check-invariants
+python cli.py check-root && python cli.py check-invariants
 ```
-> Avoid `cli.py harness` / `check-filesize` / `generate` on an uncommitted tree
-> — they regenerate scaffolding. Use `make ci` (`fmt vet race build proto-lint
-> ci-modules`) for the full gate.
+> Do not run a scaffolding generator on an uncommitted tree. Use `make ci`
+> (`fmt vet race build examples proto-lint ci-modules config-validate-all`)
+> for the core executable gate.
 
 ## Output
 1. Design (which package, which SPI, why no new directory)

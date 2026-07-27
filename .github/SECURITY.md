@@ -1,15 +1,15 @@
 # Security Policy
 
-> **Security architecture reference:** [`docs/SECURITY.md`](docs/SECURITY.md) — hardened
+> **Security architecture reference:** [`docs/SECURITY.md`](../docs/SECURITY.md) — hardened
 > areas, fail-open/closed decision matrix, developer checklist, and operator
 > hardening guide. This file is the policy entry point; the architecture
 > reference lives alongside the code it documents.
 
 ## Supported Versions
 
-`snaplink/sso` is pre-1.0 — security fixes land on `main` and the most
-recent tagged release. Operators running off-tag commits should rebase
-to receive fixes.
+`snaplink/sso` is pre-1.0 and currently has no tagged supported release.
+Security fixes land on `main`. Deployments built from another commit must move
+to a fixed commit explicitly; there is no maintained release branch yet.
 
 Once 1.0 ships, support will follow SemVer: latest minor + previous
 minor receive security fixes; older minors are end-of-life.
@@ -25,13 +25,14 @@ Use one of the following private channels:
    The maintainers receive a private advisory, can collaborate on a
    fix in a private fork, and coordinate the CVE + disclosure date.
 
-2. **Email** — `security@snaplink.dev` (placeholder; replace with the
-   real contact once the project domain + mailbox are set up).
+2. **Email** — no project security mailbox is currently published. Do not send
+   a report to an address found only in old documentation; use GitHub Security
+   Advisories until a verified contact is listed here.
 
 Include in the report:
 
-- Affected component (`authenticators/keypair`, `bootstrap/lock/etcd`,
-  the gRPC `AuditWriter`, etc.) and version / commit SHA.
+- Affected component (`domains/authenticators`, `platform/bootstrap`,
+  `interfaces/grpcserver`, etc.) and version / commit SHA.
 - A minimal reproducer or proof-of-concept.
 - Impact assessment (auth bypass, privilege escalation, DoS, info
   disclosure, etc.) and whether you've observed exploitation in the
@@ -53,18 +54,23 @@ Include in the report:
 
 In scope:
 
-- `cmd/sso-server` runtime + every package in this module
-- Default implementations in `defaultimpl/`, `authenticators/`,
-  `permissions/memory`, `audit/memory_sink.go`, etc.
+- `cmd/sso-server`, the public SDK under `interfaces/sso`, and every package in
+  the root Go module
+- Default implementations under `infrastructure/defaultimpl` and stock
+  implementations under `domains/*`, `platform/*`, and `protocols/*`
+- Nested modules under `infrastructure/` and `cmd/` when the report concerns
+  code maintained in this repository
 - Wire format of HTTP REST endpoints and gRPC services
-- The bundled OpenResty configuration under `deploy/openresty/`
+- Deployment assets under `ops/deploy/`
 
 Out of scope:
 
 - Third-party operator-provided backends (your SQL store, your KMS,
   your reverse proxy)
+- Separately deployed login, administration, self-service, developer, and setup
+  frontends; this repository contains the API backend only
 - Misconfiguration that is loudly warned about in code (e.g., running
-  the `ssoclient/dev` stubs in production — the package emits a
+  the `interfaces/ssoclient/dev` stubs in production — the package emits a
   startup banner)
-- Demo / example apps under `examples/` that explicitly carry seed
+- Demo / example apps under `docs/examples/` that explicitly carry seed
   credentials

@@ -41,12 +41,19 @@ file, the Postgres database, the Redis keyspace, the etcd cluster), are
 each backend's own concern — §3 maps every backend this SDK ships to its
 own replication/backup mechanism.
 
+Snapshot schema v1 is a **subset**, not a complete export of all durable
+control-plane state. It does not include tenants, enterprise connections,
+pairwise-subject mappings, MFA enrollments, signing private keys, audit rows or
+other backend-specific tables. Preserve those with backend-native backups.
+Expanding this set requires a versioned snapshot schema; see
+[ROADMAP.md](ROADMAP.md).
+
 ## 2. Failure levels
 
 | Level | Scenario | Blast radius | RPO target | RTO target | Response |
 |---|---|---|---|---|---|
 | **1 — Component** | One dependency call fails (authenticator backend timeout, risk scorer unreachable, geo lookup down) | Single request | 0 (no committed data touched) | Seconds | Handled in-process by the documented fail-open/fail-closed behavior per AGENTS.md §3 (e.g. geo/risk fail-open, signature validation fail-closed). No operator action. |
-| **2 — Replica** | One replica process/pod crashes or is evicted | One replica; others keep serving | 0 (durable stores are shared, not per-replica) | Minutes (orchestrator reschedule + `/readyz` pass) | Kubernetes/orchestrator restarts the pod. `/livez` + `/readyz` gate traffic until the replacement is healthy. No data-recovery action — durable state never lived on the replica. |
+| **2 — Replica** | One replica process/pod crashes or is evicted | One replica; others keep serving only in a correctly shared-state Tier-B deployment | 0 for shared Postgres/Redis/etcd state; local memory state is lost and per-pod SQLite state may be unavailable | Minutes (orchestrator reschedule + `/readyz` pass) | Kubernetes/orchestrator restarts the pod. `/livez` + `/readyz` gate traffic. If the deployment used local auth state, affected flows must restart; do not describe that topology as HA. |
 | **3 — Durable-store loss (single site)** | A backend's data is lost or corrupted in place: SQLite file corruption, Postgres database/volume loss, Redis keyspace flush, etcd cluster loses quorum | All replicas sharing that backend, one site/cluster | Bounded by that backend's own backup/replication cadence (§3) | Tens of minutes (restore + validate before re-admitting traffic) | Restore the affected backend from its own backup/replica (§3), or restore control-plane state from the newest DR replica (§4) if the loss included clients/users/permissions. Validate via §6 before removing the maintenance page. |
 | **4 — Site/region loss** | The entire cluster — every replica, every backend, and any DR mount colocated with it — is unreachable (region outage, catastrophic infra failure) | Everything at that site | Bounded by DR replication lag to the OFF-site target (`dr.interval`, reported as `sso_dr_snapshot_replication_lag_seconds`) | Hours (stand up a new cluster, restore control-plane state, re-provision or fail over each backend, re-point DNS/LB, validate) | Stand up a fresh cluster in a surviving region. Restore control-plane state from the DR replica (§4/§6). Each backend's own cross-region strategy (§3) governs how much of tier-2/backend data survives; sessions/tokens are expected to be lost (users re-authenticate). |
 
@@ -65,12 +72,12 @@ they do not by themselves make backups happen faster.
 | **PostgreSQL** (`infrastructure/postgres`, shared `*sql.DB` pool) | Durable backend for identity, tenants, audit, permissions, etc. (`*.backend: postgres`) | Operator-managed: native streaming replication to a standby, `pg_dump`/`pg_basebackup`, or a managed Postgres provider's PITR | Cross-region streaming replica or WAL archiving to the DR region — outside this SDK's process; the SDK only needs `postgres.dsn` re-pointed after failover |
 | **Redis** (`infrastructure/redis`, shared client) | Hot/ephemeral backend for sessions, OAuth hot stores, rate limiting, JTI replay, MFA challenges (`*.backend: redis`) | Operator-managed: RDB/AOF persistence + a replica (Sentinel/Cluster) for HA within a region | Not recommended cross-region — this tier is intentionally short-lived (§1); a lost Redis keyspace forces re-auth, it does not lose business data. Do not treat Redis as a DR target. |
 | **etcd** (`platform/cluster`, `platform/registry`, `platform/netpolicy`, `keys.signing_key_registry`) | Cross-replica coordination: invalidation bus, service registry, network policy, leaderless signing-key aggregation | `etcdctl snapshot save` on a schedule (etcd's own mechanism); etcd's Raft replication already gives in-region HA across its member set | Restore an etcd snapshot into a fresh cluster at the DR site; coordination state (client cache invalidation, key aggregation) rebuilds itself once replicas reconnect — it is not itself an RPO-sensitive business-data store |
-| **Control-plane state** (clients, users, roles/assignments/menus, network policy, bootstrap state — backend-agnostic, whichever store above backs them) | Everything `interfaces/snapshot.Snapshotter` enumerates | **`platform/lifecycle/dr.SnapshotReplicator`** (§4) — exports via the SAME `Snapshotter`+`Pipeline` the manual/retention snapshot subsystem uses, copies the sealed+checksummed envelope to `dr.target_dir` on `dr.interval` | This is the ONE tier this framework replicates cross-site by design; point `dr.target_dir` at an off-node/off-region mount |
+| **Snapshot control-plane subset** (clients, users, roles/assignments/menus, network policy, bootstrap state — backend-agnostic) | Exactly what snapshot schema v1 enumerates; not tenants/connections/pairwise subjects/MFA/signing keys/audit rows | **`platform/lifecycle/dr.SnapshotReplicator`** (§4) — exports via the SAME `Snapshotter`+`Pipeline` the manual/retention snapshot subsystem uses, copies the sealed+checksummed envelope to `dr.target_dir` on `dr.interval` | This is the ONE tier this framework replicates cross-site by design; point `dr.target_dir` at an off-node/off-region mount and back up omitted durable state natively |
 
 ## 4. SnapshotReplicator
 
-`platform/lifecycle/dr.SnapshotReplicator` (wired by `cmd/sso-server` when `dr.enabled:
-true`) runs a background loop:
+`platform/lifecycle/dr.SnapshotReplicator` (wired by `cmd/sso-server` when
+`dr.enabled: true`) runs a background loop:
 
 1. **Export** — calls the configured snapshot pipeline's `Snapshotter.Export`
    + `Pipeline.Save` to produce the same sealed `SealedEnvelope` bytes the
@@ -206,12 +213,14 @@ not switching"):
    primary (repoint DNS/LB, flip a standby to read-write). This lives OUTSIDE
    the process, so it is a `ReplicaPromoter` seam; a drill wires the no-op
    `MemoryReplicaPromoter` (a drill must NOT actually cut traffic over).
-3. **`restore_state`** — applies the verified replica's control-plane state
+3. **`restore_state`** — applies the verified replica's snapshot subset
    into the target stores via the existing `snapshot.Restorer` (a
    `StateRestorer` seam). Signing keys, sessions, and tokens are NOT part of
-   this — they are out of snapshot scope (§1); the DR region carries the
-   primary's signing **public** keys independently via leaderless verify-key
-   adoption, so pre-failover tokens keep verifying.
+   this — they are out of snapshot scope (§1). Pre-failover tokens continue
+   verifying only when the DR deployment preserved the relevant verification
+   keys out-of-band (for example through durable signer/KMS material or an
+   independently backed-up key registry). Leaderless peer-key adoption is a
+   live-cluster mechanism, not a signing-key backup.
 4. **`readiness_probe`** — reuses `DRReadiness.ReadyCheck` to confirm the
    recovered replica is within its RPO target before it is declared live.
 
@@ -241,8 +250,8 @@ make dr-drill        # or: go test ./test/dr/... -race -count=1 -v
 |---|---|
 | replicate → corrupt the replica → `Run` | integrity step detects it and aborts before promotion; DR target left untouched |
 | replicate → restore | DR-target clients/roles/assignments/bootstrap-version round-trip the primary |
-| issue token pre-failover → restore | the pre-failover token still verifies on the DR side (signing keys survive a control-plane restore) |
-| record audit events across a restore | the audit hash chain stays continuous (`VerifyChain` passes) |
+| issue token pre-failover → restore | with the same verification key deliberately supplied to both sides, the control-plane restore does not itself invalidate the token; this does not prove key-material DR |
+| record audit events across a restore | with the audit backend retained by the harness, the hash chain remains continuous (`VerifyChain` passes); audit rows are not in the snapshot |
 
 `make dr-drill` is deliberately **not** part of the default `make ci` target —
 run it on demand and before a release, alongside `make chaos-test`.

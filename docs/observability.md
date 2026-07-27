@@ -1,6 +1,8 @@
 # Observability
 
-Metrics, audit, and tracing reference. Extracted from AGENTS.md.
+Metrics, audit and tracing reference for the API runtime. A separately deployed
+frontend has its own browser/static-asset telemetry; it is not instrumented by
+this process.
 
 ## Metrics
 
@@ -31,7 +33,7 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_client_store_cache_total` | Counter | outcome (hit\|miss) |
 | `sso_audit_async_drops_{queue_full,closed,inner_error}_total` | Counter | — |
 | `sso_audit_async_queue_{depth,capacity}` | Gauge | — |
-| `sso_feature_gate_enabled` | Gauge | feature (oidc\|ciba\|caep\|federation\|self_service\|admin_api\|web_spa) — set once at boot, 1=mounted / 0=disabled via `feature_gates` |
+| `sso_feature_gate_enabled` | Gauge | feature (oidc\|ciba\|caep\|federation\|self_service\|admin_api\|web_spa) — seeded at boot and updated on supported hot reloads; 1=reachable / 0=disabled |
 | `sso_dr_snapshot_replication_lag_seconds` | Gauge | — (absent until the first successful DR replication) |
 | `sso_dr_last_recovery_seconds` | Gauge | — (absent until a recovery is timed via `RecoveryTimeTracker`) |
 | `sso_dr_readiness` | Gauge | — (1 = verified replica within RPO target, 0 otherwise; see [dr-framework.md](dr-framework.md)) |
@@ -41,12 +43,27 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_signing_verify_key_set_size` | Gauge | — (current size of the peer-adopted verify-only key set; the memory footprint `PruneVerifyKeys` manages) |
 | `sso_signing_key_usage_total` | Counter | alg, kid (in-process JWT signing operations; wire via `WithEd25519Metrics`/`WithECDSAMetrics`/`WithRSAMetrics`) |
 | `sso_connection_health_probes_total` | Counter | type (oidc\|saml), outcome (healthy\|degraded\|unreachable) |
+| `sso_invalidation_bus_{up,reconnects_total}` | Gauge/Counter | — |
+| `sso_netpolicy_classifier_{up,reconnects_total}` | Gauge/Counter | — |
+| `sso_ssf_sets_received_total` | Counter | outcome |
+| `sso_conditional_access_decisions_total` | Counter | decision |
+| `sso_token_policy_{evaluations,denials,renew_required}_total` | Counter | bounded policy outcome dimensions |
+| `sso_token_usage_{events,dropped}_total` / `sso_token_usage_tracked_buckets` | Counter/Gauge | bounded outcome / — |
+| `sso_token_anomaly_findings_total` | Counter | severity/type bounded by detector vocabulary |
+| `sso_degradation_mode` / `sso_degraded_rejections_total` | Gauge/Counter | mode / mode, method |
+| `sso_config_drift_detected_total` | Counter | — |
+| `sso_dr_last_drill_success` | Gauge | — (absent before the first drill) |
+
+`sso_feature_gate_enabled` is seeded at boot and updated when a supported
+SIGHUP hot reload changes live gate state. The legacy `web_spa` label now
+represents only `/branding`; it does not indicate that a static frontend is
+served.
 
 ## Audit
 
 ### Pipeline
 
-Compose `Async → Multi → Retry → leaf`. Hash chain: `PrevHash`+`Hash`; verify via `sso-ctl audit-verify`. Bounded dimensions: outcome/type/client/provider (see AGENTS.md §4 cardinality rule).
+Compose `Async → Multi → Retry → leaf`. Hash chain: `PrevHash`+`Hash`; verify via `sso-ctl audit-verify`. Bounded dimensions: outcome/type/client/provider (see the `platform/audit` invariant in AGENTS.md §2).
 
 ### Hard Constraints
 
@@ -59,9 +76,9 @@ Compose `Async → Multi → Retry → leaf`. Hash chain: `PrevHash`+`Hash`; ver
 
 | YAML | Function | label |
 |---|---|---|
-| `audit.retention.*` | `audit/sqlite.Sink.Prune` | `audit` |
-| `snapshot.retention.*` | `snapshot.PruneOldest` | `snapshot` |
-| `mfa.provider.push.prune_interval` | `sqlite.PushApprovalStore.PruneExpired` | `push_approvals` |
+| `audit.retention.*` | `platform/audit/sqlite.Sink.Prune` | `audit` |
+| `snapshot.retention.*` | `interfaces/snapshot.PruneOldest` | `snapshot` |
+| `mfa.provider.push.prune_interval` | `infrastructure/defaultimpl/sqlite.PushApprovalStore.PruneExpired` | `push_approvals` |
 
 ### Config
 

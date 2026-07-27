@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Regenerate engineering scaffolding (replaces generate-engineering.sh).
+"""Regenerate disposable engineering scaffolding.
 
-Generates the agent-OS docs under docs/agent-os/ (HARNESS.md, BOOTSTRAP.md,
-ARCHITECTURE.md, EVALUATION.md, CHECKS_REGISTRY.md, TODO.md) plus .githooks/,
-skills/, .pi/, docs/*.
+Project Markdown is source-controlled and hand-maintained. This script verifies
+the tracked agent-OS, review, feature-spec, and pi prompt documents exist; it
+does not overwrite them with embedded point-in-time copies.
 """
 
 import shutil
@@ -31,220 +31,38 @@ def symlink_skills():
     (ROOT / ".pi" / "skills").mkdir(parents=True, exist_ok=True)
     for skill in ["split-large-file", "refactor-high-complexity", "add-new-handler",
                   "oracle-leak", "post-edit-check", "architecture-fix", "project-reorganization"]:
-        src = f"../../skills/{skill}"
+        src = f"../../docs/skills/{skill}"
         dst = ROOT / ".pi" / "skills" / skill
         dst.unlink(missing_ok=True)
         dst.symlink_to(src)
 
 
+def require_tracked_markdown(path: str):
+    target = ROOT / path
+    if not target.is_file():
+        raise FileNotFoundError(f"required tracked Markdown missing: {path}")
+
+
 def write_todo_md():
-    content = """# TODO.md -- Task Tracking
-
-## Phase D Complete
-All 5 original large files (13,830 lines) refactored into 39 focused files
-(~3,000 lines, 78% reduction). Harness regenerates from
-`docs/templates/engineering/`.
-
-## SPLIT_NOW (filesize-exempted, structured)
-1. [ ] sso.go (679 lines) -- Server struct + NewServer + jwksSingleFlight
-2. [ ] signing_key_aggregation.go (776 lines) -- JWKS aggregation
-3. [ ] cmd/sso-server/build_stores.go (4546 lines) -- buildApp (2453 lines, exempted)
-4. [ ] config/config.go (2021 lines) -- config loader + types
-5. [ ] defaultimpl/ed25519_jwt_issuer.go (1240 lines) -- Ed25519 issuer
-
-## Files under 500 (recently split from exemptions)
-- [x] token_handler.go: 623 -> 449 lines
-- [x] me_handler.go: 587 -> 180 lines
-- [x] login_handler.go: 612 -> 483 lines
-- [x] handler.go: 2617 -> 38 lines
-- [x] handlers.go: 3675 -> 273 lines
-- [x] server_extensions.go: 3055 -> 483 lines
-- [x] cmd/sso-server/main.go: 5565 -> 704 lines
-
-## Complexity Tech Debt
-Functions >15 cyclo (frozen backlog in maintainability_complexity_test.go):
-- handleLogin (97), handleToken (89), finishLogin (57), Mount (52)
-- buildApp (256), handleTokenExchangeGrant (50), buildOIDCConfiguration (36)
-- HandleSilentRenewal (30), HandleEndSession (28)
-- resolveLoginRequest (26), handleRefreshTokenGrant (25)
-- ~20 more in oidc/oauth/defaultimpl (16-24)
-
-## Test Coverage (statement)
-1. [ ] core/: 44.2% (4 test files)
-2. [ ] oidc/: 21.3% (5 test files)
-3. [ ] oauth/: 27.7% (13 test files)
-4. [ ] security/: 59.9% (8 test files)
-5. [ ] middleware/: 54.1%
-6. [ ] defaultimpl/: 73.0%
-
-## Infrastructure
-1. [x] Filesize gate
-2. [x] Complexity + function-length gate (committed: maintainability_complexity_test.go; cyclo <= 15, lines <= 50)
-3. [x] Architecture dependency rules (declarative, 6-layer map)
-4. [x] Security invariants (10 checks)
-5. [x] Harness self-test (11 tests)
-6. [x] Acceptance gate (build + vet + filesize + arch + invariants + coverage)
-7. [x] CI integration (2 workflows)
-8. [x] 7 engineering skills (split, refactor, add-handler, oracle-leak, post-edit, arch-fix, reorganization)
-"""
-    out = ROOT / "docs" / "agent-os" / "TODO.md"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(content)
+    require_tracked_markdown("docs/agent-os/TODO.md")
 
 
 def write_review_checklist():
-    content = """# Code Review Checklist
-
-## Engineering Gates
-- [ ] `go test -run TestMaintainability_ ./...` passes (committed gates: file-size <=500 + cyclo <=15 + function-length <=50)
-- [ ] `go test -run TestArchitecture_ImportBoundaries ./...` passes (dependency direction)
-- [ ] No new file > 500 lines, no new function > 15 cyclo or > 50 lines
-- [ ] Architecture dependency rules satisfied
-
-## Security
-- [ ] Credential/bearer endpoints: `tokenNoStoreHeaders(ctx)` at entry
-- [ ] Every 401: `setBearerChallenge(ctx, ...)`
-- [ ] Oracle-leak: unknown/expired/consumed/mismatch -> unified error response
-- [ ] Anti-enumeration: bcrypt dummy hash for unknown users
-- [ ] Audit: `SetMeta(e, k, v)`, never `e.Metadata = map{...}`
-- [ ] `make check-invariants` passes
-
-## Code Quality
-- [ ] No mocks -- Memory* implementations used
-- [ ] No emoji in code, comments, or commits
-- [ ] Comments explain WHY, not what
-- [ ] Error codes documented in docs/error-codes.md
-- [ ] Endpoint changes documented in docs/openapi.yaml
-
-## Commit
-- [ ] Conventional format: feat(area):, fix(area):, chore:, docs:
-- [ ] Imperative subject
-- [ ] Body explains WHY, not what
-"""
-    (ROOT / "docs" / "review-checklist.md").write_text(content)
+    require_tracked_markdown("docs/review-checklist.md")
 
 
 def write_feature_spec_template():
-    content = """# Feature Spec: <name>
-
-> Generated by: Architect Agent | For: Implement Agent | Verified by: Reviewer Agent
-
-## 1. Goal
-One paragraph. What does this feature do? Why?
-
-## 2. Module Classification
-- [ ] OAuth Grant / OIDC Flow Handler
-- [ ] Store Implementation (Memory / SQLite)
-- [ ] Admin Endpoint
-- [ ] Authenticator
-- [ ] Audit Sink
-- [ ] Infrastructure / Config
-- [ ] Refactoring (no new feature)
-
-## 3. Acceptance Criteria
-Check applicable EVALUATION.md criteria. Will be verified by Reviewer.
-
-### Universal
-- [ ] U1-U9: `make acceptance` passes
-
-### If OAuth/OIDC
-- [ ] O1-O11: per EVALUATION.md sec 2
-
-### If Store
-- [ ] S1-S7: per EVALUATION.md sec 2
-
-### If Admin
-- [ ] A1-A4: per EVALUATION.md sec 2
-
-### If Authenticator
-- [ ] N1-N5: per EVALUATION.md sec 2
-
-## 4. Files to Create
-```
-path/to/new/file.go   -- purpose
-```
-
-## 5. Files to Modify
-```
-path/to/existing.go   -- what changes
-```
-
-## 6. Boundaries (NOT to modify)
-```
-path/to/forbidden.go  -- why
-```
-
-## 7. Dependencies
-- New YAML keys: ...
-- New SPIs: ...
-- New WithXxxStore options: ...
-"""
-    (ROOT / "docs" / "templates" / "feature-spec.md").parent.mkdir(parents=True, exist_ok=True)
-    (ROOT / "docs" / "templates" / "feature-spec.md").write_text(content)
-
-
-def write_appendix_system():
-    content = """# Engineering System
-
-This project has a formal engineering system. Read these files:
-- docs/agent-os/HARNESS.md -- Gate specification
-- docs/agent-os/BOOTSTRAP.md -- Project context
-- docs/agent-os/ARCHITECTURE.md -- Package map
-- docs/agent-os/EVALUATION.md -- Acceptance criteria per module type
-- docs/agent-os/CHECKS_REGISTRY.md -- All checks
-- AGENTS.md -- Full agent behavior rules
-
-## Agent Roles
-
-For non-trivial features, follow this workflow:
-
-```
-Architect Agent -> feature-spec.md
-     |
-Implement Agent -> code + make acceptance
-     |
-Reviewer Agent  -> bash .check-review-feature.sh
-```
-
-### Architect Agent
-Read: `.pi/prompts/architect.md`
-Output: `docs/feature-spec-<name>.md`
-
-### Implement Agent
-Read: `.pi/prompts/implement.md`
-Input: `docs/feature-spec-<name>.md`
-Gate: `make acceptance`
-
-### Reviewer Agent
-Read: `.pi/prompts/review.md`
-Verify: `bash .check-review-feature.sh docs/feature-spec-<name>.md`
-
-## Required Workflow
-1. **After every edit:** `python cli.py check` (filesize + vet)
-2. **Before every commit:** `python cli.py accept` (full evaluation suite)
-3. **Before every push:** `python cli.py harness` (full gates)
-4. **For features:** Architect -> Implement -> Review cycle
-5. **For refactors:** skills/ (split, refactor, oracle-leak, etc.)
-"""
-    (ROOT / ".pi" / "APPEND_SYSTEM.md").write_text(content)
+    require_tracked_markdown("docs/templates/feature-spec.md")
 
 
 def write_pi_files():
-    write_appendix_system()
+    require_tracked_markdown(".pi/APPEND_SYSTEM.md")
     (ROOT / ".pi" / "settings.json").write_text(
         '{\n  "additionalSystemFiles": [".pi/APPEND_SYSTEM.md"]\n}\n'
     )
-    prompts = {
-        "architect.md": "<!-- Architect Agent: produce a feature spec -->\nUse docs/templates/feature-spec.md.\n",
-        "implement.md": "<!-- Implement Agent: follow the feature spec -->\nRead feature-spec-<name>.md. Follow it strictly.\nAfter each edit: python cli.py check.\nWhen done: python cli.py accept\n",
-        "review.md": "<!-- Reviewer Agent: verify implementation -->\n1. python cli.py accept\n2. Security: tokenNoStoreHeaders, setBearerChallenge, oracle-leak\n3. Quality: no mocks, no emoji\n",
-        "diagnose.md": "<!-- Run diagnosis -->\npython scripts/diagnose.py\n",
-        "refactor.md": "<!-- Refactor a complex function -->\npython skills/refactor-high-complexity/run.py <file>\n",
-        "split.md": "<!-- Split a large file -->\npython skills/split-large-file/run.py <file>\n",
-    }
-    for name, content in prompts.items():
-        (ROOT / ".pi" / "prompts" / name).parent.mkdir(parents=True, exist_ok=True)
-        (ROOT / ".pi" / "prompts" / name).write_text(content)
+    for name in ["architect.md", "implement.md", "review.md", "diagnose.md",
+                 "refactor.md", "split.md"]:
+        require_tracked_markdown(f".pi/prompts/{name}")
 
 
 def write_githooks():
@@ -282,16 +100,14 @@ if __name__ == "__main__": sys.exit(main())
 
 def run():
     print("  [gen] Generating engineering scaffolding...")
-    print("  [gen] checks/ (13 files, source-controlled)")
+    print("  [gen] checks/ (source-controlled)")
 
-    # Core documents (relocated to docs/agent-os/; gitignored scaffolding)
+    # Core documents are tracked sources, not generated copies.
     for doc in ["HARNESS.md", "BOOTSTRAP.md", "ARCHITECTURE.md", "EVALUATION.md", "CHECKS_REGISTRY.md"]:
-        if (ROOT / "docs" / "agent-os" / doc).exists():
-            print(f"  [gen] docs/agent-os/{doc}")
-        else:
-            print(f"  [WARN] docs/agent-os/{doc} not found")
+        require_tracked_markdown(f"docs/agent-os/{doc}")
+        print(f"  [check] docs/agent-os/{doc}")
     write_todo_md()
-    print("  [gen] TODO.md")
+    print("  [check] docs/agent-os/TODO.md")
 
     # Git hooks
     write_githooks()
@@ -304,20 +120,20 @@ def run():
     # Scripts
     print("  [gen] scripts/ (3 .py files, source-controlled)")
 
-    # .pi/
+    # .pi/ Markdown is tracked; only settings.json is deterministic output.
     write_pi_files()
-    print("  [gen] .pi/ (9 files)")
+    print("  [check] .pi/ tracked prompts; [gen] settings.json")
 
-    # docs/review-checklist.md
+    # Review documents are tracked sources.
     write_review_checklist()
-    print("  [gen] docs/review-checklist.md")
+    print("  [check] docs/review-checklist.md")
 
     # docs/templates/feature-spec.md
     write_feature_spec_template()
-    print("  [gen] docs/templates/feature-spec.md")
+    print("  [check] docs/templates/feature-spec.md")
 
     print()
-    print("  [gen] Done: 40+ files generated (cli.py, Taskfile.yml, pyproject.toml are source-controlled)")
+    print("  [gen] Done: disposable hooks/settings refreshed; tracked Markdown preserved")
     return 0
 
 

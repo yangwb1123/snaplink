@@ -1,86 +1,58 @@
-# ADR-0006 — Cognitive architecture: enforced layers over a flat tree
+# ADR-0006 — Physical seven-layer architecture
 
 ## Status
 
-Accepted (2026-06-19).
+Accepted; amended after execution of the layered-topology migration.
 
 ## Context
 
-The repo has ~53 top-level package directories. Flat-but-many is hard for a
-newcomer to form a model from, and nothing stops *layering erosion* — a domain
-package quietly importing infrastructure, a protocol importing the HTTP edge —
-which the Go compiler permits right up until it becomes a cycle.
-
-The goal (per the "cognitive architecture" framing) is **low cognitive load,
-clear boundaries, single responsibility, sustainable evolution** — Screaming
-Architecture + the Stable/Acyclic Dependencies principles — *not* a smaller
-directory count.
-
-The obvious move — physically retree into `domains/ protocols/ platform/
-interfaces/ infrastructure/ shared/` — was rejected for v1: this is a **library**
-whose import paths are a published API, so moving public packages breaks every
-consumer and is a v2-major change ([ADR-0001](ADR-0001-directory-layout.md),
-[ADR-0003](ADR-0003-protocol-grouping.md)).
+A flat package tree made the dependency model hard to discover and allowed
+layering erosion that the compiler could not detect. The original decision
+introduced a seven-layer conceptual overlay without moving paths. The
+repository subsequently executed the physical move while preserving the root
+module path.
 
 ## Decision
 
-Adopt a **seven-layer cognitive model as an enforced overlay**, without moving
-public import paths:
+Use seven enforced ranks:
 
+```text
+shared(0) < platform(1) < domains(2) < protocols(3)
+          < infrastructure(4) < interfaces(5) < composition(6)
 ```
-shared(0) < platform(1) < domains(2) < protocols(3) < infrastructure(4) < interfaces(5) < composition(6)
-```
 
-A package may import only its own layer or a **lower-rank** (more-shared) one.
-Two mechanisms realize it:
+The first path segment is the layer for the six library ranks. Composition
+includes commands, configuration, examples, and integration wiring.
 
-1. **An enforcement gate** — `architecture_layer_test.go`
-   (`TestArchitecture_LayerBoundaries`): every main-module package is classified
-   in `layerName()`; an upward import fails the build; an **unclassified** package
-   also fails, so the model can't drift behind the package list. Pre-existing
-   upward edges are grandfathered in a **shrink-only** `layerExemptions` (same
-   ratchet as the other gates).
-2. **A navigability map** — [`docs/architecture/DIRECTORY_MAP.md`](../architecture/DIRECTORY_MAP.md):
-   the flat packages presented under their layers, with the dependency-direction
-   diagram (the 30-second view).
+A package may import only the same rank or a lower rank. The gate classifies
+special composition/generated/internal paths explicitly and fails any
+unclassified package.
 
-Layer-placement judgment calls of record: `security` → **shared** (crypto/security
-kernel below the protocols); `audit` → **platform** (the Recorder/Sink *mechanism*
-is observability used by every layer, distinct from the DDD audit *domain*);
-`geo`/`anomaly` → **platform**/**domains** respectively; the root `sso` package →
-**interfaces** (it is the public `Server` API + `server_*.go` handlers); `ssoclient`
-→ **interfaces** (outbound consumer SDK). `internal/` is already layer-aligned
-(`internal/auth/*` = domains, `internal/handler` = interfaces), so no relocation
-was performed.
+Judgment calls of record:
 
-The seeded backlog at adoption was **9 upward edges** across 112 packages — almost
-all the root god-package fan-in (`authenticators`/`defaultimpl` → root) plus a few
-cross-cutting couplings (`audit`→tenant/region, `oauth`/`selfservice`→middleware,
-`scim`→admin).
+- `shared/security` is a reusable security kernel below protocols.
+- `platform/audit` owns audit recording/sink mechanics used across domains.
+- `domains/anomaly` is behavioral detection, while `platform/geo` is
+  cross-cutting request enrichment.
+- `interfaces/sso` is the public Server and route-composition edge.
+- `interfaces/ssoclient` is the downstream consumer interface.
+- Concrete memory/SQLite/Redis/Postgres adapters are infrastructure.
+
+Nine inherited upward edges remain in `layerExemptions`. Their exact set is
+shrink-only and no new edge may be added. The map has no automatic count latch;
+code review is the enforcement against adding a matching exemption alongside a
+new upward import.
 
 ## Consequences
 
-**Pros**
-- The cognitive model is a *checked invariant*, not a wiki page that rots — new
-  upward edges fail CI; the backlog only shrinks.
-- Zero consumer breakage; no import-path churn; the path-keyed gates stay valid.
-- The newcomer 30-second test is met by the map + enforced layers.
-
-**Cons / risks**
-- Physical tree and logical layers differ; the map is the bridge (a contributor
-  must read it). Mitigated by linking it from `AGENTS.md` and `.arch/rules.yaml`.
-- `layerName()` is a hand-maintained classification; a new top-level package must
-  be added (the gate fails loudly until it is — intended).
-
-## Alternatives considered
-
-- **Full physical v2 retree** — correct end-state if/when a major version is cut
-  (with deprecation aliases, atomic gate-prefix edits, one layer per reviewed PR);
-  deferred, not rejected.
-- **Documentation only** — rejected: a doc without enforcement erodes, which is the
-  exact failure mode this ADR exists to prevent.
+- The filesystem, import paths, and gate all express the same model.
+- Moving a package across layers changes its public import path and requires an
+  explicit compatibility/versioning decision.
+- New top-level paths must be classified; new one-off packages should usually
+  extend an existing cohesive package instead.
 
 ## Enforcement
 
-`go test -run TestArchitecture_LayerBoundaries ./...` (rides `make ci`'s `race`
-step). Manifest: [`.arch/rules.yaml`](../../.arch/rules.yaml) `architecture.layers`.
+`architecture_layer_test.go`
+(`TestArchitecture_LayerBoundaries`) and
+[DIRECTORY_MAP.md](../architecture/DIRECTORY_MAP.md).

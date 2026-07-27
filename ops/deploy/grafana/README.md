@@ -1,11 +1,12 @@
 # Grafana dashboard + Prometheus alerts for snaplink/sso
 
 Starter pack for the observability story: a Grafana dashboard
-visualizing the 5 `sso_*` metrics + Go runtime collectors, plus a
+visualizing a curated subset of the bounded-cardinality `sso_*` metrics and Go
+runtime collectors, plus a
 Prometheus alert ruleset covering the most common SLO violations.
 
 ```
-deploy/grafana/
+ops/deploy/grafana/
 ├── sso-overview.json   # Grafana 10+ dashboard (16 panels across 6 rows)
 ├── alerts.yaml         # Prometheus alerting rules (11 rules)
 └── README.md           # you are here
@@ -105,3 +106,6 @@ The dashboard panels are intentionally vendor-neutral — replace the
 default thresholds (the green/yellow/red color stops in the overview
 stat panels) with values that match what "healthy" looks like for
 your deployment.
+
+This pack observes the API service only. Product frontends are separate
+deployments and need their own browser-side availability/error telemetry.

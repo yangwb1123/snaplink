@@ -2,61 +2,54 @@
 
 ## Status
 
-Accepted.
+Accepted; updated for the physical layered tree.
 
 ## Context
 
-The compiler forbids import *cycles* but does not enforce a *direction*. Under
-long autonomous development the silent failure mode is leaf-package erosion: a
-low-level package grows an upward import, and the architecture quietly inverts
-until a cycle finally appears. The original harness template proposed a generic
-`interfaces → application → domain ; infrastructure → domain` onion. snaplink
-already runs a concrete, narrower direction that matches its actual code.
+The Go compiler prevents cycles, but it does not prevent a low-level package
+from reaching upward into HTTP composition or concrete infrastructure. Those
+edges erode the architecture before they form a compile-time cycle.
 
 ## Decision
 
-The allowed dependency direction is:
+The layer ranks, from most shared to most concrete, are:
 
+```text
+shared(0) < platform(1) < domains(2) < protocols(3)
+          < infrastructure(4) < interfaces(5) < composition(6)
 ```
-handlers (root package sso) → oauth | oidc → security → core
-infrastructure (defaultimpl, redis, sqlite, …) → core
-```
 
-Invariants (enforced, not aspirational):
+An importer may reference only its own rank or a lower rank.
 
-1. **`core` imports no internal package** — it is the SPI / types / sentinels
-   leaf. Everything may depend on it; it depends on nothing internal.
-2. **`oauth` MUST NOT import `oidc`** and **`oidc` MUST NOT import `oauth`** —
-   this prevents the `oauth ↔ oidc` cycle. Two pre-existing files
-   (`oidc/handle_silent_renewal.go`, `oidc/handle_end_session.go`) import
-   `oauth` and are **grandfathered** under a shrink-only ratchet; they are
-   one-way, so no compile cycle exists. They should be dissolved via an injected
-   interface, not extended.
-3. **Nothing imports `cmd/`.**
-4. Cross-package coupling that must cross a boundary goes through an **interface
-   defined in the lower/destination package** (the hexagonal `Deps` pattern),
-   never by reaching back up to the root.
+Additional hard boundaries:
 
-There is deliberately **no fan-in cap** (see ADR-0004): `core` is imported by
-~219 files by design.
+1. `shared/core` imports no snaplink package.
+2. `protocols/oauth` and `protocols/oidc` do not import one another. Both
+   directions have zero exemptions.
+3. No library package imports `cmd/`.
+4. A dependency that appears to require an upward edge is inverted through an
+   interface owned by the lower layer, or wired in `interfaces/sso`/
+   composition.
+5. New top-level or `internal/` packages must be classified in
+   `layerName()`; an unclassified package fails the gate.
+
+The whole-layer gate retains nine frozen upward edges inherited at adoption.
+They are explicit, shrink-only debt; new entries are prohibited by policy.
+Unlike the file/function/fan-out maps, `layerExemptions` has no count latch, so
+review must enforce this rule.
 
 ## Consequences
 
-**Pros**
-- The dependency graph stays acyclic and one-directional with a committed proof.
-- New shared types have an obvious home (`core`), discouraging root coupling.
-
-**Cons / Risks**
-- Renaming `oauth/` or `oidc/` requires editing the gate's literal `fromDir`
-  prefixes *in the same commit*, or the cycle guard silently stops matching
-  (goes green while no longer enforcing). This is the primary reason ADR-0003
-  keeps the protocol packages flat.
-- The grandfathered `oidc → oauth` edge is a latent coupling; the ratchet keeps
-  it from spreading but it should be retired.
+- Cross-layer design errors fail during root gate tests, not after a cycle
+  appears.
+- Shared interfaces belong in `shared/core`, `shared/spi`, or the lower owning
+  package rather than in interfaces/infrastructure.
+- Some pre-existing couplings remain visible in `layerExemptions`, but their
+  count and exact edges cannot grow.
 
 ## Enforcement
 
-`architecture_gate_test.go` (`go test -run TestArchitecture_ImportBoundaries
-./...`, rides the `race`/`make ci` step) and `python cli.py architecture`
-(`checks/architecture.py`). Manifest: [`.arch/rules.yaml`](../../.arch/rules.yaml)
-`architecture:`.
+- `architecture_gate_test.go`
+- `architecture_layer_test.go`
+- `python cli.py architecture` (a separate declarative check)
+- [directory map](../architecture/DIRECTORY_MAP.md)

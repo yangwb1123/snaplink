@@ -1,100 +1,121 @@
-# RELEASE.md — Release Process
+# Release Process
 
-## Versioning
+The project follows Semantic Versioning. It is currently pre-1.0, so every
+release must state any public Go/API/config/storage behavior that changed.
+There is no guaranteed calendar cadence.
 
-This project follows [Semantic Versioning 2.0.0](https://semver.org/).
+## Distributed artifacts
 
-- **Major**: Breaking changes to public API, storage format, or protocol behavior
-- **Minor**: New features, new protocol support, non-breaking enhancements
-- **Patch**: Bug fixes, security patches, performance improvements
+GoReleaser currently defines:
 
-## Release Cadence
+- `sso-server`
+- `sso-ctl`
+- the separately-moduled `sso-mcp`
+- `sso-server` and `sso-mcp` container images
+- SHA-256 checksums
+- one SPDX-JSON SBOM per archive
+- keyless Cosign signatures for archives and container images
 
-- **Minor releases**: Every 2-4 weeks
-- **Patch releases**: As needed (typically within 24h of a critical fix)
-- **Security releases**: Immediately upon verification
+The normal `python cli.py build` engineering gate builds only `sso-server` and
+`sso-ctl`; `make release-snapshot` is the check for the complete GoReleaser
+matrix.
 
-## Release Process
+The release pipeline does not currently produce a SLSA provenance statement.
+Do not describe signatures/SBOMs as provenance.
 
-### 1. Prepare Release Branch
+## 1. Prepare
+
+Create a release branch without rewriting public history:
 
 ```bash
 git checkout -b release/vX.Y.Z
 ```
 
-### 2. Update Changelog
+Move entries from `Unreleased` into a dated section in
+[CHANGELOG.md](../CHANGELOG.md). Include breaking API/config/storage changes,
+security fixes and operator migration steps.
 
-Move items from `[Unreleased]` to the new version section in `CHANGELOG.md`:
+Reconcile the documentation in the same change:
 
-```markdown
-## [v0.13.0] - 2026-06-15
+- new/changed endpoints → `docs/openapi.yaml`
+- new/changed config → `docs/config-reference.md`
+- new wire errors → `docs/error-codes.md`
+- changed capability/limitation → `docs/feature-matrix.md` and
+  `docs/deferred-backlog.md`
 
-### Added
-- ...
+## 2. Validate
 
-### Fixed
-- ...
-
-### Security
-- ...
-```
-
-### 3. Run Full Validation
+Run the authoritative committed gates:
 
 ```bash
-make ci           # Build + test + lint
-make harness      # Engineering gates (generates scaffolding + checks)
-make diagnose     # Codebase health
-make coverage     # Coverage report
+make ci
+go test -run 'TestMaintainability_|TestArchitecture_' .
 ```
 
-### 4. Tag and Push
+Then run the relevant supplementary diagnostics and documentation/backend
+checks:
+
+```bash
+python cli.py harness
+python cli.py check-invariants
+python cli.py check-exemptions
+make docs-validate
+make docs-check
+make backend-semantics
+```
+
+The committed root gate tests run by `make ci` are the merge authority.
+The Python harness and exemption checker are supplementary: they can expose
+checker/configuration drift (the current exemption checker reports stale
+required entries), so they must not be used as the sole release proof or to
+override a root-gate failure. Resolve and record any disagreement.
+
+Run the applicable release-only suites explicitly; they are not included in
+default `make ci`:
+
+```bash
+make chaos-test
+make dr-drill
+make release-snapshot
+```
+
+Also inspect the report-only security jobs (for example Trivy and any
+non-failing scanner invocation). A green workflow can mean “scan completed,”
+not “zero findings.”
+
+For an advertised FIPS artifact, additionally build/test with the exact pinned
+`GOFIPS140` selector and retain the Go/module/certificate evidence described in
+[fips.md](fips.md). For an advertised OIDC/FAPI certification, retain the
+official conformance result described in
+[sso/oidc-conformance.md](sso/oidc-conformance.md).
+
+## 3. Tag and publish
+
+After validation and review:
 
 ```bash
 git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-The tag triggers `.github/workflows/release.yml` which:
-1. Builds binaries via goreleaser
-2. Creates a GitHub release
-3. Attaches checksums and SBOM
+The tag triggers `.github/workflows/release.yml`, which runs GoReleaser,
+creates the GitHub release and publishes configured images/assets. Never bypass
+hooks or an applicable repository signature policy to make a release pass.
 
-### 5. Post-Release
+## 4. Verify published output
 
-- Verify the GitHub release was created
-- Update any downstream consumers (sdks, docs)
-- Announce in relevant channels
+- Confirm every expected OS/architecture archive exists.
+- Verify `checksums.txt`, SBOMs and Cosign signatures.
+- Pull each published container by immutable digest and run `version`.
+- Run a smoke login/token/UserInfo flow against the released image.
+- Confirm release notes link the correct migration and security guidance.
+- Notify downstream SDK/frontend/module consumers of the exact compatible
+  server version.
 
-## Hotfix Process
+## Hotfix and security releases
 
-For critical bugs or security issues:
-
-```bash
-git checkout vX.Y.Z      # From the last release tag
-git checkout -b hotfix/vX.Y.Z+1
-# Apply fix
-git commit -m "fix: ..."
-make ci
-make harness
-git tag vX.Y.Z+1
-git push origin vX.Y.Z+1
-```
-
-## Security Releases
-
-See `docs/security-policy.md` for vulnerability reporting.
-Security releases follow the same process as hotfixes but may skip the full changelog update.
-
-## Release Criteria
-
-A release must pass ALL of the following:
-
-- [ ] `make ci` — builds, tests, race detector, proto lint, modules
-- [ ] `make harness` — all 6 engineering gates
-- [ ] `make check-invariants` — 10 security invariants
-- [ ] `make diagnose` — no critical findings
-- [ ] Changelog updated
-- [ ] `docs/error-codes.md` covers all new error codes
-- [ ] `docs/openapi.yaml` covers all new endpoints
-- [ ] ADR written for any significant architecture change
+Branch from the affected release tag, apply the smallest safe fix, run the same
+validation appropriate to the change, add a changelog security entry and issue
+a new SemVer tag. Security reporting, coordination and disclosure timelines are
+defined only in [`.github/SECURITY.md`](../.github/SECURITY.md); this document
+does not duplicate or override them.

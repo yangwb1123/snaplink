@@ -1,7 +1,13 @@
 # snaplink/sso — TypeScript client (generated)
 
-`client.ts` is **generated output**, committed the same way `gen/proto/*.pb.go`
-is: checked in for consumers to use directly, regenerated from
+> **Scope:** convenience client for a curated OpenAPI subset. It is not a
+> complete SDK for every runtime route, not an npm package, and does not ship a
+> login page, self-service portal, setup UI, developer portal, or admin console.
+> `sso-server` is a pure API backend; those browser experiences are separate
+> frontend projects.
+
+`client.ts` is **generated output**, committed the same way generated Go under
+`gen/proto/` is: checked in for consumers to use directly, regenerated from
 `docs/openapi.yaml` by a Go program rather than hand-maintained.
 
 ```
@@ -15,10 +21,16 @@ generator is a plain Go program (`cmd/gensdk`) that parses the YAML spec
 plain `.ts` file; nothing here runs `npm install` or `tsc` as part of
 `make ci` or any other repo build target.
 
+The generator reads `docs/openapi.yaml`; it does not discover Go route
+registration. A runtime endpoint missing from OpenAPI cannot appear in this
+client, so route inventory and OpenAPI validation must be reconciled before
+claiming complete API coverage.
+
 ## What's covered
 
 A curated, hand-scoped **subset** of `docs/openapi.yaml` — not a full
-mirror of all ~200 operations the spec documents. The full allowlist lives
+mirror of the more than 250 operations the spec currently documents. The full
+allowlist lives
 as `coreSurface` in `cmd/gensdk/operations.go`:
 
 - **Discovery**: JWKS, OpenID Connect discovery document, OAuth
@@ -33,7 +45,7 @@ as `coreSurface` in `cmd/gensdk/operations.go`:
   listing, permissions/roles/menu-tree.
 - **A small representative admin sample**: client lookup by id, the
   runtime endpoint inventory, and the audit-event query API — enough to
-  demonstrate the pattern, NOT the full ~150-route
+  demonstrate the pattern, NOT the full admin
   grpc-gateway-generated admin CRUD surface (clients/users/tenants/
   domains/releases/snapshots/tokens/policies/...), nor SCIM, CAEP/SSF,
   OpenID Federation, webhooks, or compliance export/erase. Widening

@@ -5,26 +5,31 @@ can't — drift between `.arch/rules.yaml`/ADRs and reality, latent layering
 inversions, and god-package growth.
 
 ## Inputs
-- `AGENTS.md` (module map, gates), `docs/adr/`, `.arch/rules.yaml`,
-  `docs/maintainability-gates.md`.
+- `AGENTS.md` (invariants and gates),
+  `docs/architecture/DIRECTORY_MAP.md` (canonical package map), `docs/adr/`,
+  `.arch/rules.yaml`, and `docs/maintainability-gates.md`.
 - Real tree only: enumerate with `git ls-files`; **ignore** `.claude/worktrees/`,
   `.qoder/`, `.qwen/` (they are full repo copies that inflate every count ~50×).
 
 ## Checklist
-1. **Gates green?** `go test -run 'TestMaintainability_|TestArchitecture_ImportBoundaries' ./...`
-   and `python cli.py {check-root,complexity,architecture,check-invariants}`.
+1. **Gates green?** Run `go test -run 'TestMaintainability_|TestArchitecture_' .`.
+   Treat Python checks as supplementary and report any disagreement with the
+   committed Go gates or `engineering.yaml`.
 2. **Budget headroom.** Files approaching 500 lines; functions approaching the
    cyclo/cognit/len caps. Flag the next god-file before it lands.
    `git ls-files '*.go' | grep -v _test.go | grep -v gen/proto | while read f; do wc -l "$f"; done | awk '$1>450' | sort -rn`
-3. **Layering reality.** Re-derive the import graph; confirm `core` is still a
-   leaf and the direction holds. Look for new *upward* edges and **latent
-   inversions** (a "domain" package importing an infra adapter). Known watch
-   items: `spi/risk.go → geo`, `anomaly/types.go → geo + defaultimpl`,
-   `metering/sqlite → audit/sqlite`, the grandfathered `oidc → oauth` pair.
-4. **God-package fan-out.** Is the root `package sso` shrinking or growing?
-   Count root non-test files; is decomposition progressing (ADR-0001)?
-5. **Manifest accuracy.** Does every number/command in `.arch/rules.yaml` still
-   match its enforcer? The enforcer wins — fix the manifest, not the gate.
+3. **Layering reality.** Re-derive the import graph; confirm `shared/core`
+   imports no internal package and the direction
+   `composition → interfaces → infrastructure → protocols → domains → platform → shared`
+   holds. Look for upward edges and for either peer import between
+   `protocols/oauth` and `protocols/oidc`.
+4. **Composition-package fan-out.** Count non-test files in
+   `interfaces/sso`; compare the measured value with `AGENTS.md`,
+   `engineering.yaml`, and `directory_fanout_test.go`. A changed exemption
+   ceiling is itself a finding.
+5. **Manifest accuracy.** Does every number/command in `AGENTS.md`,
+   `engineering.yaml`, `.arch/rules.yaml`, and the executable enforcer agree?
+   No source silently wins: report and reconcile drift.
 6. **ADR drift.** Any merged change that altered a rule without an ADR?
 
 ## Output

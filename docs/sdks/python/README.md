@@ -1,7 +1,13 @@
 # snaplink/sso — Python client (generated)
 
-`client.py` is **generated output**, committed the same way `gen/proto/*.pb.go`
-is: checked in for consumers to use directly, regenerated from
+> **Scope:** convenience client for a curated OpenAPI subset. It is not a
+> complete SDK for every runtime route, not published to PyPI, and does not
+> provide hosted-login, self-service, setup, developer-portal, or admin-console
+> UI. `sso-server` is a pure API backend; browser applications and consoles are
+> separate frontend projects.
+
+`client.py` is **generated output**, committed the same way generated Go under
+`gen/proto/` is: checked in for consumers to use directly, regenerated from
 `docs/openapi.yaml` by a Go program rather than hand-maintained.
 
 ```
@@ -14,6 +20,11 @@ is stdlib `urllib.request`, wire-shape typing is stdlib `typing.TypedDict`
 — so there is no `pip install` step either; vendor the single file into
 your project (`pyproject.toml`/`requirements.txt` packaging is
 deliberately not set up here — see "What's NOT here" below).
+
+The generator reads `docs/openapi.yaml`; it does not inspect Go route
+registration. A runtime endpoint that has not yet been added to OpenAPI cannot
+appear in this client. Reconcile the runtime route inventory and OpenAPI before
+claiming complete API coverage.
 
 ## What's covered
 
@@ -73,6 +84,10 @@ nothing to require). This is meant to be vendored as a single file, not
 published to PyPI — turning it into a real package is a separate,
 deliberate decision for whoever wants to publish it, not something this
 generator should quietly decide.
+
+There is also no generated compatibility policy or semantic-versioned Python
+release. Consumers that vendor the file should regenerate and review it when
+upgrading the server.
 
 ## Usage
 

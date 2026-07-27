@@ -1,7 +1,33 @@
 # Documentation index
 
-Map of everything under `docs/` (plus the cross-cutting root docs). Start with
-the [root README](../README.md) for integration, or jump to a section below.
+Index of maintained project documentation. Start with the
+[root README](../README.md) for integration, or jump to a section below.
+
+## Product boundary and source of truth
+
+`snaplink/sso` is an API-first identity backend. The repository ships the Go
+SDK, the `sso-server` runtime, control-plane APIs and operator tools. It does
+**not** ship a hosted-login application, admin console, self-service portal,
+developer portal or setup wizard UI. Those are separate frontend projects that
+call the HTTP APIs and are normally reverse-proxied beside `sso-server`.
+
+Documentation should be read in this order when statements disagree:
+
+1. Runtime route and option wiring in `interfaces/sso` and `cmd/sso-server`.
+2. [feature-matrix.md](feature-matrix.md) plus
+   [deferred-backlog.md](deferred-backlog.md), the bounded capability baseline.
+3. [openapi.yaml](openapi.yaml), the static HTTP contract. A configured
+   replica's actual route set is available from the admin-gated
+   `GET /api/v1/admin/endpoints` inventory; optional routes only exist when
+   their stores/options are wired.
+4. [ROADMAP.md](ROADMAP.md), which contains future priorities rather than
+   claims about already-shipped behavior.
+
+Retired plans and audits are indexed in [HISTORY.md](HISTORY.md).
+Exploratory AI output is ignored by default. Neither is a product commitment.
+
+Keep each fact in its authority above and link to it elsewhere; do not copy
+feature, gate, configuration, or error tables into another guide.
 
 ## Getting started / integration
 
@@ -10,38 +36,43 @@ the [root README](../README.md) for integration, or jump to a section below.
   HTTP/gRPC wire API, the `sso-ctl` CLI) with a copy-pasteable snippet for each.
 - [examples/](examples/) — runnable samples. `examples/quickstart` is a single
   `go run` end-to-end demo (embed → PKCE login → token → userinfo → local JWKS
-  verify); `examples/basic` shows all auth methods + a config file;
+  verify); `examples/basic` shows representative baseline auth methods plus a
+  config file;
   `examples/{remote-app,embedded-app,appcore}` show the consumer modes;
   `examples/grpc-client` drives the admin gRPC API.
-- [openapi.yaml](openapi.yaml) — the OpenAPI 3 contract for the HTTP surface.
+- [openapi.yaml](openapi.yaml) — the OpenAPI 3 contract for the documented HTTP
+  surface. Use the runtime endpoint inventory to distinguish configured
+  optional routes from routes that are absent on a particular replica.
 - [deployment.md](deployment.md) — build, run, Kubernetes/Compose, the four call
   surfaces, and the **distributed architecture** (cluster Bus, shared-state
   tiers, which modules scale, microservices decomposition).
 
 ## Reference
 
-- [config-reference.md](config-reference.md) — every `config.yaml` key (server binary).
+- [config-reference.md](config-reference.md) — curated stock-binary YAML reference.
 - [error-codes.md](error-codes.md) — the wire error-code catalogue.
 - [feature-matrix.md](feature-matrix.md) — supported RFCs / features and their wiring.
 - [observability.md](observability.md) — metrics, tracing, audit hash chain, probes.
-- [security-policy.md](security-policy.md) — the security model and reporting.
+- [security-policy.md](security-policy.md) — pointers to the authoritative
+  vulnerability-reporting policy and the technical security architecture.
 - [wasmauthz.md](wasmauthz.md) — the pluggable WASM authorization engine: ABI
   contract, how to author a compatible policy module, fail-closed guarantee.
 
 ## Architecture
 
-- [architecture/DIRECTORY_MAP.md](architecture/DIRECTORY_MAP.md) — the layered tree
-  (`shared < platform < domains < protocols < infrastructure < interfaces`) and
-  where each package lives.
-- [adr/](adr/) — Architecture Decision Records (ADR-0001 layout … ADR-0006
-  cognitive architecture); see [adr/README.md](adr/README.md).
-- [architecture/V2-MIGRATION.md](architecture/V2-MIGRATION.md) — the layered-topology migration notes.
+- [architecture/DIRECTORY_MAP.md](architecture/DIRECTORY_MAP.md) — the layered
+  tree (`composition → interfaces → infrastructure → protocols → domains → platform → shared`)
+  and where each package lives.
+- [adr/](adr/) — Architecture Decision Records (ADR-0001 layout … ADR-0008
+  proto versioning); see [adr/README.md](adr/README.md).
+- [HISTORY.md](HISTORY.md) — retired migration records, implementation plans,
+  feature records, and documentation audits.
 
 ## Development
 
 - [../AGENTS.md](../AGENTS.md) — the master operational guide: code budgets,
   dependency direction, root policy, global protocol invariants (oracle-leak /
-  anti-enumeration / fail-closed), and the coding conventions. **§4 gates are
+  anti-enumeration / fail-closed), and the coding conventions. **§0 gates are
   hard gates.** Both human and AI contributors should read this first.
 - [developer-guide.md](developer-guide.md) — first-time setup, the daily
   workflow, make/`cli.py` targets, and common tasks.
@@ -55,9 +86,9 @@ the [root README](../README.md) for integration, or jump to a section below.
 
 ## Operations & process
 
-- [RELEASE.md](RELEASE.md) — the release process (goreleaser, two binaries).
-- [CHANGELOG.md](CHANGELOG.md) — release history.
-- [ROADMAP.md](ROADMAP.md) / [migration-roadmap.md](migration-roadmap.md) — planned + historical work.
+- [RELEASE.md](RELEASE.md) — the release process and distributed artifacts.
+- [CHANGELOG.md](../CHANGELOG.md) — release history.
+- [ROADMAP.md](ROADMAP.md) — current priorities and explicit non-goals.
 
 ## Agent OS (AI-agent harness)
 

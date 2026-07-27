@@ -1,6 +1,15 @@
-# Terraform - AWS Infrastructure for SSO Server
+# Terraform — AWS infrastructure reference for SSO Server
 
-Production-ready AWS infrastructure for deploying the SnapLink SSO server.
+Reference Terraform for the AWS substrate used by a SnapLink SSO deployment.
+It provisions a VPC, EKS, RDS PostgreSQL, and an ElastiCache Redis replication
+group. It does **not** deploy `sso-server`, etcd, an ingress/load balancer,
+certificates, External Secrets, PgBouncer, DNS, product frontends, or the
+production Kustomize overlay.
+
+> Treat this as a starting scaffold, not a production-ready stack. Run
+> `terraform validate`/`plan` against the target AWS account, review provider
+> and Kubernetes versions, fix the application/backend integration described
+> below, and perform a security/cost review before apply.
 
 ## Architecture
 
@@ -25,16 +34,16 @@ Production-ready AWS infrastructure for deploying the SnapLink SSO server.
 │  └─────────────┘    └─────────────┘    └─────────────┘     │
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │  RDS PostgreSQL (Multi-AZ)                           │  │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐          │  │
-│  │  │ Primary  │  │Standby   │  │Standby   │          │  │
-│  │  └──────────┘  └──────────┘  └──────────┘          │  │
+│  │  RDS PostgreSQL DB instance (Multi-AZ in prod)       │  │
+│  │  ┌──────────┐          ┌──────────┐                 │  │
+│  │  │ Primary  │          │ Standby  │                 │  │
+│  │  └──────────┘          └──────────┘                 │  │
 │  └──────────────────────────────────────────────────────┘  │
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │  ElastiCache Redis (Cluster Mode)                    │  │
+│  │  ElastiCache Redis replication group                │  │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐          │  │
-│  │  │ Node 1   │  │ Node 2   │  │ Node 3   │          │  │
+│  │  │ Primary  │  │ Replica  │  │ Replica  │ (prod)   │  │
 │  │  └──────────┘  └──────────┘  └──────────┘          │  │
 │  └──────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
@@ -45,6 +54,7 @@ Production-ready AWS infrastructure for deploying the SnapLink SSO server.
 - Terraform >= 1.5.0
 - AWS CLI configured with appropriate credentials
 - AWS account with permissions for VPC, EKS, RDS, ElastiCache
+- `kubectl` and Kustomize for the separate application deployment
 
 ## Quick Start
 
@@ -62,7 +72,7 @@ terraform apply -var-file="environments/dev/terraform.tfvars"
 ```bash
 cd ops/deploy/terraform
 
-# Set Redis AUTH token (required for production)
+# Set a strong Redis AUTH token (the Terraform does not generate one)
 export TF_VAR_redis_auth_token="your-secure-password-here"
 
 terraform init
@@ -81,10 +91,16 @@ aws eks update-kubeconfig --region us-east-1 --name sso-server
 # Verify connection
 kubectl get nodes
 
-# Deploy SSO server using Kustomize
-kubectl apply -k ../../k8s/        # Dev
-kubectl apply -k ../../k8s-prod/   # Prod
+# From the repository root, render/review the canonical manifests:
+kubectl kustomize ops/deploy/kustomize/overlays/dev/
+kubectl kustomize ops/deploy/kustomize/overlays/prod/
 ```
+
+Do not apply the production overlay unchanged to this Terraform output. The
+overlay assumes Redis Cluster seed endpoints, external etcd, PgBouncer, Redis
+CA material, and pre-created secrets; this Terraform currently supplies a
+cluster-mode-disabled Redis replication-group primary endpoint and no etcd or
+PgBouncer.
 
 ## Configuration
 
@@ -111,9 +127,12 @@ See `variables.tf` for all options. Key ones:
 After deployment, Terraform outputs:
 
 - `eks_cluster_endpoint` - EKS API endpoint
-- `rds_endpoint` - PostgreSQL connection string
-- `redis_primary_endpoint` - Redis connection string
+- `rds_endpoint` - PostgreSQL host and port
+- `redis_primary_endpoint` - Redis primary host
 - `kubeconfig_instructions` - kubectl setup commands
+
+The committed `kubeconfig_instructions` output still mentions the deprecated
+`ops/deploy/k8s*` copies. Prefer the canonical Kustomize commands shown above.
 
 Get outputs:
 
@@ -125,53 +144,61 @@ terraform output redis_primary_endpoint
 
 ## SSO Server Configuration
 
-Use the Terraform outputs to configure the SSO server:
+The stock binary directly supports Redis and Postgres, but each enabled concern
+must select the intended backend. A configuration adapted to this Terraform
+shape starts along these lines:
 
 ```yaml
-# config.yaml (prod example)
-storage:
-  hot:
-    backend: redis
-    redis:
-      address: <redis_primary_endpoint>
-      password: <from TF_VAR_redis_auth_token>
-      tls: true
-  durable:
-    backend: sqlite
-    sqlite:
-      dsn: <rds_endpoint>
+# config.yaml fragment; inject passwords/DSN through Secret-backed SSO_* env
+redis:
+  mode: single
+  addrs: ["<redis_primary_endpoint>:6379"]
+  tls:
+    enabled: true
 
+postgres:
+  dialect: postgres
+  # dsn supplied as SSO_POSTGRES__DSN
+
+oauth: { backend: redis }
+ciba: { backend: redis }
+identity:
+  backend: postgres
+  session_backend: redis
+permissions: { enabled: true, backend: postgres }
+tenant: { enabled: true, backend: postgres }
+audit: { enabled: true, backend: postgres, hash_chain: true }
+
+# Provision etcd separately before enabling multi-replica invalidation/registry:
 cluster:
   bus:
     backend: etcd
-    etcd:
-      endpoints: ["etcd-1:2379", "etcd-2:2379", "etcd-3:2379"]
+    etcd_endpoints: ["<etcd-1>:2379", "<etcd-2>:2379", "<etcd-3>:2379"]
 ```
+
+This is not exhaustive. Password reset, MFA challenges, JTI replay, rate
+limits, lockout, WebAuthn ceremonies, refresh grace, and every other enabled
+stateful feature also need reviewed shared backends. See
+[`docs/config-reference.md`](../../../docs/config-reference.md) and
+[`docs/deployment.md`](../../../docs/deployment.md).
 
 ## Cost Estimation
 
-### Development (dev)
-
-- EKS: ~$73/month (2 t3.small nodes)
-- RDS: ~$15/month (db.t3.micro)
-- Redis: ~$15/month (cache.t3.micro)
-- NAT Gateway: ~$32/month
-- **Total: ~$135/month**
-
-### Production (prod)
-
-- EKS: ~$219/month (3 t3.medium nodes)
-- RDS: ~$130/month (db.t3.medium, Multi-AZ)
-- Redis: ~$100/month (3 cache.t3.medium)
-- NAT Gateway: ~$96/month (3 AZs)
-- **Total: ~$545/month**
+Committed dollar estimates become misleading as AWS pricing, regions, traffic,
+storage, backups, NAT usage, and instance availability change. Generate an
+account/region-specific estimate from the reviewed Terraform plan with the AWS
+Pricing Calculator or your established infrastructure-cost tool. Include data
+transfer, NAT processing, CloudWatch, snapshots, Secrets Manager, and the
+separately provisioned etcd/ingress/frontend resources.
 
 ## Security
 
-- All databases encrypted at rest (AWS KMS)
+- RDS and ElastiCache encryption at rest enabled
 - Redis in-transit encryption enabled
-- EKS cluster endpoint private (prod)
-- Security groups restrict access to application only
+- EKS cluster endpoint private in the prod variable set
+- The modules intend to restrict database ingress to application nodes; verify
+  the rendered security-group IDs and EKS node-group wiring in the target
+  account before apply
 - RDS deletion protection enabled (prod)
 - Automated backups with retention
 
@@ -181,12 +208,11 @@ cluster:
 terraform destroy -var-file="environments/dev/terraform.tfvars"
 ```
 
-**Note:** RDS has deletion protection enabled in production. Disable it first:
-
-```bash
-terraform apply -var="deletion_protection=false" -var-file="environments/prod/terraform.tfvars"
-terraform destroy -var-file="environments/prod/terraform.tfvars"
-```
+**Production note:** the root configuration derives RDS deletion protection
+from `environment == "prod"`; there is no `deletion_protection` root variable.
+A production destroy therefore requires a reviewed Terraform change or an
+explicit AWS retirement workflow, followed by a new plan. Preserve and verify
+the final snapshot before removing protection.
 
 ## Troubleshooting
 
@@ -208,8 +234,8 @@ aws secretsmanager get-secret-value \
   --secret-id $(terraform output -raw rds_master_user_secret_arn) \
   --query SecretString --output text
 
-# Connect
-psql -h <rds_endpoint> -U sso_admin -d sso
+# Connect after supplying the retrieved password without logging it
+psql "host=<rds-host> port=5432 user=sso_admin dbname=sso sslmode=verify-full"
 ```
 
 ## CI/CD Integration
@@ -234,4 +260,4 @@ Add to CI pipeline:
 - [AWS EKS Best Practices](https://aws.github.io/aws-eks-best-practices/)
 - [RDS PostgreSQL Best Practices](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_BestPractices.html)
 - [ElastiCache Redis Best Practices](https://docs.aws.amazon.com/AmazonElastiCache/latest/red-ug/best-practices.html)
-- [Kustomize Deployment](../k8s/README.md)
+- [Canonical Kustomize Deployment](../kustomize/README.md)

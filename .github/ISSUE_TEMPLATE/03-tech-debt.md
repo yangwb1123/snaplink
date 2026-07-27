@@ -7,7 +7,7 @@ assignees: ''
 
 ---
 ## Area
-<!-- e.g., handlers.go splitting, core/ test coverage, architecture violation -->
+<!-- e.g., interfaces/sso fan-out, shared/core coverage, gate drift, architecture violation -->
 
 ## Current State
 <!-- What's the problem? -->
@@ -19,6 +19,7 @@ assignees: ''
 - [ ] Blocks development velocity
 - [ ] Increases risk of regression
 - [ ] Violates engineering gate (specify: filesize/complexity/architecture)
+- [ ] Documentation, manifest, and executable gate disagree
 - [ ] Other:
 
 ## Effort Estimate

@@ -1,194 +1,82 @@
 # Contributing to snaplink/sso
 
-Thanks for your interest. This file covers the contributor-facing
-process. **For day-to-day development conventions** (commit style,
-coding rules, "things not to do" list, repository layout, capability
-catalog) read [`AGENTS.md`](AGENTS.md) — that's the source of truth
-and is significantly more detailed than this file. Everyone
-participating is expected to follow the
-[Code of Conduct](CODE_OF_CONDUCT.md).
+Thank you for contributing. Follow the [Code of Conduct](CODE_OF_CONDUCT.md)
+and read [`AGENTS.md`](AGENTS.md) before editing; it is the authority for code,
+security, architecture, and commit rules.
 
-## TL;DR
+## Quick start
 
 ```bash
 git clone <your-fork>
 cd sso
-go build ./...                # compiles everything
-go test ./... -race           # unit + integration tests, race detector on
-make ci                       # gofmt + vet + race + build + proto-lint + ci-modules
-# write code
-make ci                       # again, must stay green
-git commit -s -m "feat(scope): one-line summary"
-gh pr create
+go build ./...
+go test ./... -race
+make ci
+git commit -s -m "feat(scope): describe the change"
 ```
 
-## Build & test commands
+The root module is pure Go by default. Optional integrations and tools under
+`infrastructure/` and `cmd/` may have their own `go.mod`; `make ci-modules`
+builds those nested modules. There is deliberately no `go.work`.
 
-| Command | What it does |
-|---|---|
-| `go build ./...` | Compiles every package in the root module. |
-| `go test ./... -race` | Unit + integration tests (`package ssotest` under `test/`), race detector on. |
-| `go test ./test/ -run TestE2E -v` | Cross-wired HTTP + JWKS + bufconn end-to-end suite. |
-| `make ci` | Full local gate: gofmt + `go vet` + `-race` tests + build + example apps + proto-lint + nested-module build/test + config validation. Mirrors what CI runs. |
-| `make dev` | Hot-reload dev loop for `cmd/sso-server` (see "Local dev loop" below). |
-| `python cli.py check` / `make check-quick` | Fast post-edit check (file-size + `go vet`) — run this after every edit, before the full suite. |
+For local workflows and proportional test selection, see the
+[developer guide](docs/developer-guide.md).
 
-`go.mod` has no external SaaS dependencies and pure-Go (no CGO) default
-backends; nested modules under `kms/*`, `saml/`, `ldap/`, `kerberos/`,
-`radius/`, `extauthz/`, `redis/` each carry their own `go.mod` and are
-built/tested separately (`make ci-modules`; no `go.work` on purpose —
-see the comment at the top of `.github/workflows/ci.yml`).
+## Before opening a change
 
-## Hard gates (AGENTS.md §0 — violations are regressions, not style nits)
+- Security vulnerabilities must use the private process in
+  [`.github/SECURITY.md`](.github/SECURITY.md), never a public issue.
+- Bugs should include a commit/version, minimal reproducer, expected/actual
+  behavior, and redacted configuration.
+- Discuss new public API or product scope in an issue before implementation.
+- UI work belongs to the separately deployed frontend projects; this
+  repository provides the API backend.
 
-Every change is held to these committed, CI-enforced budgets:
+## Pull requests
 
-- **File size** — `.go` files ≤ 500 lines. Over budget → split first,
-  don't append (`docs/skills/split-large-file/SKILL.md`).
-- **Function size** — ≤ 50 lines; **cyclomatic complexity** ≤ 15;
-  **if-nesting depth** ≤ 3 (guard clauses / early return instead).
-- **Directory depth** ≤ 3; ≤ 10 Go files per directory; ≤ 15 subdirs
-  per directory.
-- **Dependency direction** — imports point one-way toward the shared
-  kernel (`interfaces/* → protocols/* → shared/security → shared/core`).
-  No upward import, no `protocols/oauth ↔ protocols/oidc`, nothing
-  imports `cmd/`.
-- **Never widen an exemption list** to grandfather a new violation —
-  the maintainability exemption lists are count-capped and only
-  shrink.
+1. Keep one concern per PR and preserve unrelated worktree changes.
+2. Add tests for new behavior and use the real memory/backend
+   implementations rather than mocks.
+3. Run the post-edit gates from `AGENTS.md`, the relevant risk-based suites,
+   and `make ci`.
+4. Update contract documentation with code: OpenAPI for HTTP, the error
+   catalog for wire errors, the configuration reference for settings, and an
+   ADR for architectural decisions.
+5. Use a Conventional Commit title with an imperative summary. The body
+   explains why and calls out compatibility, migration, security, or wire
+   consequences.
 
-Run `go test -run 'TestMaintainability_|TestArchitecture_ImportBoundaries' ./...`
-after any `.go` change — these are the same committed tests CI runs
-(part of `make ci`'s `race` target). See
-[`AGENTS.md` §0](AGENTS.md#0-engineering-principles-hard-gates) and
-[`docs/maintainability-gates.md`](docs/maintainability-gates.md) for
-the full rationale and the refactor playbooks under `docs/skills/`.
+Hosted CI adds lint, security, protocol-breaking, OpenAPI, container, and
+infrastructure checks to the local `make ci` baseline.
 
-## Local dev loop
+## Review
 
-For iterating on `cmd/sso-server` with automatic rebuild-and-restart on
-save, use [air](https://github.com/air-verse/air) via `make dev` (or
-`go run github.com/air-verse/air@latest -c .air.toml` directly) — it is
-fetched on demand like the other `go run <tool>@latest` invocations in
-this `Makefile` (`proto-lint`, `docs-validate`, `release-check`), so it
-is **not** a `go.mod` dependency. See `.air.toml` at the repo root for
-the watched paths and build command.
+A maintainer approval is required. Changes to protobuf wire formats, audit,
+bootstrap/snapshot integrity, or cryptographic code require two approvals.
+Review comments are marked blocking, nit, or suggestion; only blocking
+comments prevent merge.
 
-Config changes to a *running* process (without a rebuild) can instead
-use `SIGHUP`-triggered hot reload — see `config/reload` (currently
-wires `logging.level` live; everything else needs a restart, by
-design — see that package's doc comment for why).
+Squash merge is the default, so the PR title and description must be suitable
+as the final commit message.
 
-## Reporting issues
+## DCO sign-off
 
-- **Security vulnerabilities** — do NOT open a public issue. Follow
-  [`.github/SECURITY.md`](.github/SECURITY.md).
-- **Bugs** — open a GitHub issue. Include version / commit SHA,
-  minimal reproducer, expected vs actual, and any relevant config
-  (with secrets redacted).
-- **Feature requests** — open a GitHub issue describing the use case
-  *first*. Drive-by PRs adding new public API surface without prior
-  discussion are likely to be sent back for design iteration.
-
-## Development setup
-
-The full setup walkthrough lives in [`AGENTS.md` §"Setup commands"](AGENTS.md#setup-commands).
-Short version:
-
-- Go (version pinned in `go.mod`)
-- Python ≥ 3.12 (`pyproject.toml`) — the engineering CLI (`cli.py`)
-  that `make harness` / `make check` / `make generate-engineering`
-  shell out to
-- `make` for the standard task bundle
-- Docker (optional, for `make docker` and the CI smoke job locally)
-- `kubectl` (optional, for `deploy/k8s/`)
-- `buf` is fetched on demand via `go run` — no local install required
-
-A ready-to-use environment with all of the above is provided by
-[`.devcontainer/`](.devcontainer/) (VS Code Dev Containers / GitHub
-Codespaces) — opening the repo in the devcontainer runs `go build
-./...` once via `postCreateCommand` to warm the module cache.
-
-## Submitting a pull request
-
-1. **Fork + branch** — branch names are not enforced; descriptive
-   helps (`feat/sql-user-provider`, `fix/jwks-cache-race`).
-2. **One concern per PR** — multiple commits inside a PR are fine, but
-   each PR should have one focus. A "while I was in there" cleanup
-   PR is easier to review than the same cleanup tangled with a
-   feature.
-3. **Tests** — every new behavior gets a test in the same package.
-   See [`AGENTS.md` §"Test instructions"](AGENTS.md#test-instructions)
-   for the coverage convention (informational, not a gate).
-4. **`make ci`** must stay green locally before pushing. CI runs the
-   same checks; failing CI on a fixable thing slows everyone down.
-5. **Conventional commits** — `<type>(scope): summary` (see [§"Commit
-   conventions" in AGENTS.md](AGENTS.md#commit-conventions)).
-   Common types: `feat`, `fix`, `chore`, `docs`, `test`, `refactor`,
-   `ci`, `deploy`. Imperative subject, body explains *why*.
-
-## Review process
-
-- PRs require a maintainer LGTM. Two LGTMs for changes touching:
-  - `proto/` (wire format)
-  - `audit/` (compliance surface)
-  - `bootstrap/` or `snapshot/` (data integrity)
-  - cryptographic code (`defaultimpl/ed25519_*`,
-    `snapshot/encryption/`, `authenticators/keypair`,
-    `authenticators/certificate`)
-- Reviewers will tag concerns as **blocking**, **nit**, or
-  **suggestion**. Only blocking comments must be addressed before
-  merge; the rest are optional.
-- Squash-merge is the default; the squashed commit message inherits
-  the PR title + description, so make the title PR-quality.
-
-## DCO / Sign-off
-
-We use the Developer Certificate of Origin (DCO) — each commit must
-be signed-off:
+Every commit must carry a Developer Certificate of Origin sign-off:
 
 ```bash
-git commit -s -m "feat(scope): summary"
+git commit -s -m "fix(oauth): preserve refresh-family replay semantics"
 ```
 
-This adds a `Signed-off-by:` trailer affirming you have the right to
-contribute the change under the project's license (Apache 2.0, see
-[`LICENSE`](LICENSE)).
+Do not bypass hooks, rewrite shared history, or use destructive Git commands
+without authorization.
 
-CI will block merges of unsigned commits. To retroactively sign past
-commits:
+## Do not send
 
-```bash
-git rebase --signoff HEAD~N
-```
+- unrelated formatting or cleanup mixed into a feature;
+- dependencies without a justified use case and supply-chain review;
+- speculative public APIs for private experiments;
+- generated binaries, secrets, or unreviewed AI output; or
+- documentation claims that were not verified against current code.
 
-## Coding conventions
-
-The full list is in [`AGENTS.md` §"Conventions"](AGENTS.md#conventions).
-Highlights:
-
-- **No literals leak** — paths / headers / error codes go in
-  `consts.go` (root or per-package).
-- **Comments explain *why*, not *what***. Reach for one only when
-  there's a hidden constraint a future reader would otherwise
-  reverse-engineer.
-- **No mocks for storage** — tests use the real `MemoryProvider` /
-  `MemorySink` / `memory.Registry`. Mocks invite test↔prod drift.
-- **No emojis** in code, comments, or commits.
-
-## What NOT to send
-
-- Drive-by reformatting of unrelated files (use a focused `chore:
-  gofmt` if you must).
-- New dependencies without a use case justifying the supply-chain
-  cost — open an issue first.
-- Public API additions to make a private experiment easier — keep
-  experiments in your fork.
-- AI-generated PRs without human review of every line. Tools welcome;
-  unreviewed bot PRs not.
-
-## Questions
-
-For development questions, prefer GitHub Discussions over private
-emails so future contributors can search the same answer. For
-security, see [`.github/SECURITY.md`](.github/SECURITY.md).
+For searchable development questions, use GitHub Discussions. For implementation
+details, see [the documentation index](docs/README.md).

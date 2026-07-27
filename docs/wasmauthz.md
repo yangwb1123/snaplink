@@ -6,6 +6,12 @@ engine hosted on [wazero](https://github.com/tetratelabs/wazero), a pure-Go
 bytes of a COMPILED `.wasm` module implementing a small, fixed ABI; the
 engine calls into it once per decision.
 
+> **Availability:** this is an SDK capability. The stock `sso-server`
+> configuration has no WASM module-path key and does not call
+> `WithWASMAuthzEngine`; use an embedding/custom composition root. The admin
+> debug route described below only appears in that composition. This repository
+> also serves no policy-authoring frontend.
+
 This is the same shape as this SDK's other pluggable primitives —
 `platform/lifecycle/rebac` (Zanzibar-style ReBAC) is the closest sibling:
 
@@ -23,7 +29,7 @@ wasmauthz is a FOURTH, independent authorization model alongside
 and `platform/lifecycle/rebac` (relationship-based) — none of the four
 consult each other.
 
-## What this is NOT (see `docs/deferred-backlog.md`)
+## Related but independently wired capabilities
 
 This is the authorization-**engine** half of the "Edge MQTT + WASM" backlog
 entry. The other pieces:
@@ -33,18 +39,18 @@ entry. The other pieces:
   legacy on-prem auth system being bridged in) hosted in WASM, mirroring
   this package's own alloc/call/dealloc interop pattern and fail-closed
   doctrine but with an authentication-shaped ABI (`authenticate` instead
-  of `authorize`) and result (`{authenticated, subject_id, claims,
-  reason}` instead of `{allowed, reason}`). It implements
+  of `authorize`) and result
+  (`{authenticated, subject_id, claims, reason}` instead of `{allowed, reason}`). It implements
   `core.Authenticator` directly, so it wires through the existing generic
   `sso.WithAuthenticator(a)` — no new SDK option was needed. See that
   package's doc.go for the full ABI contract.
-- An MQTT `cluster.Bus` backend — done. `infrastructure/mqtt`
+- An MQTT `cluster.Bus` backend — implemented. `infrastructure/mqtt`
   (`github.com/snaplink/sso/mqtt`), a nested module built on
   `github.com/eclipse/paho.golang`. Wires through the existing
-  `sso.WithInvalidationBus(bus)` (fork-only — no config.yaml-driven
-  backend selection yet, since `cluster.Bus` has no factory-registration
-  extension point the way `infrastructure/kafka`'s audit sink does; see
-  that package's doc.go).
+  `sso.WithInvalidationBus(bus)` in a custom composition binary. The stock YAML
+  has no MQTT bus selector because `cluster.Bus` has no factory-registration
+  extension point like the `infrastructure/kafka` audit sink; see that
+  package's `doc.go`.
 - An MQTT CAEP/SSF channel — done. `protocols/caep`'s `Transmitter`
   gained a local `MQTTPublisher` interface + `WithMQTTPublisher` option
   (mirroring `Logger`'s "kept local so caep depends only on core + audit"

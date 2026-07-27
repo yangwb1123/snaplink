@@ -1,2 +1,3 @@
 <!-- Refactor a complex function -->
-python skills/refactor-high-complexity/run.py <file>
+Read `docs/skills/refactor-high-complexity/SKILL.md` completely, then follow
+its behavior-preserving workflow for the target file.

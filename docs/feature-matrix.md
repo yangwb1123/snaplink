@@ -1,70 +1,91 @@
 # Feature Matrix
 
-OAuth 2.0 / OIDC / SSO feature compliance matrix. Extracted from AGENTS.md.
+OAuth 2.0 / OIDC / SSO capability matrix, verified against the current code on
+2026-07-27.
+
+This table records implemented code, not certification and not default
+availability on every deployment:
+
+- An `interfaces/sso` `With*` option is an **SDK** capability.
+- A `config.yaml` key is a **stock `sso-server`** capability.
+- A row naming a nested module (SAML, LDAP, Kerberos, RADIUS, ext-authz,
+  Kafka, MQTT or selected KMS/HSM adapters) requires that module to be built or
+  registered by the composition root.
+- Optional endpoints only exist when their required store/option is wired and
+  their feature gate is on.
+- The runtime is API-only. Frontend applications are external projects; the
+  admin-gated API-doc viewer is the only self-contained HTML utility described
+  here.
+
+“Implemented” does not mean OpenID Certified. Certification evidence is tracked
+in [sso/oidc-conformance.md](sso/oidc-conformance.md), and intentional limits
+are tracked in [deferred-backlog.md](deferred-backlog.md).
 
 | Spec | Endpoint(s) | Opt-in | File |
 |---|---|---|---|
-| RFC 6749 §4.1 authorization_code | `/auth/login` + `/token` | `WithAuthCodeStore` | `oauth/auth_code.go` |
-| RFC 6749 §4.4 client_credentials | `/token` | always | `oauth/client_creds.go` |
-| RFC 6749 §6 refresh_token | `/token` | `WithRefreshTokenStore`; grace: `WithRefreshRotationGrace(window)`; family absolute-max-lifetime: `WithRefreshAbsoluteMaxLifetime(d)` | `oauth/refresh_token.go` |
-| RFC 7636 PKCE | `/auth/login` + `/token` | per-request / `Client.RequirePKCE` | `oauth/auth_code.go` |
-| RFC 7662 introspection | `/token/introspect` | always; cache: `WithIntrospectionCache`; batch: `WithIntrospectionBatch(maxSize)` | `oauth/handle_introspect.go` + `oauth/introspect_cache.go` |
-| RFC 9701 signed introspection | `/token/introspect` (`Accept: application/token-introspection+jwt`) | `WithIntrospectionSigner(signer)`; default OFF; reuses the existing signing issuer OR (`keys.introspection_signing.enabled`) a DEDICATED, independently-rotated key; JWKS `use:introspection` | `oauth/handle_introspect.go` |
-| RFC 7009 revocation | `/token/revoke[-all]` | always; bulk: `RefreshTokenSubjectIndex`; cross-replica: `WithCrossReplicaRevocation`; durable: `With{Algo}RevocationStore` | `oauth/handle_revoke.go` |
-| RFC 8628 device | `/device/{code,verify}`, `/token` | `WithDeviceCodeStore` | `oauth/device_code.go` |
-| RFC 8693 token-exchange | `/token` | always; refresh: `WithRefreshTokenStore`; actor replay: `WithJTIReplayStore`; act-chain cycle detection: always-on; chain-lifetime cap: `WithMaxTokenExchangeChainLifetime(d)`; hop authorization: `WithTokenExchangePolicy(policy)` (`domains/tokenexchange` SPI + `memory.Store` reference impl); cross-tenant B2B collaboration: `WithExternalUserStore(store)` + `WithTenantCollaborationStore(store)` (`domains/tenantcollab` SPI + `memory` reference impl; BOTH required to activate, fail-closed default-deny) | `handlers.go` + `internal/handler/tokengrant/token_exchange.go` |
-| RFC 8707 resource indicators | every issuance | `Client.AllowedResources` | per-grant |
-| RFC 9126 PAR | `/par` | `WithPARStore` | `oauth/handle_par.go` |
-| RFC 7591/7592 DCR | `/register[/:id]` | `WithDynamicClientRegistration` | `oauth/handle_register.go` |
-| OIDC Core ID Token | `id_token` w/ `openid` | `WithIDTokenIssuer`; `at_hash` when `access_token` in same response | `handler.go` + `oidc/userinfo_signing.go` |
-| OIDC Discovery 1.0 | `/.well-known/openid-configuration` | always | `handlers.go` + `oidc/discovery_doc_cache.go` |
-| RFC 8414 AS Metadata (alias, same handler/body as OIDC discovery) | `/.well-known/oauth-authorization-server` | always | `server_discovery.go` |
-| OIDC RP-Initiated Logout | `/end_session` | always | `oidc/handle_end_session.go` |
-| OIDC BCL 1.0 | `/logout`, `/end_session` | `WithBackchannelLogout`; multi-RP: `WithSubjectClientIndex` | `server_extensions.go` |
-| OIDC FCL 1.0 | `/end_session` | `Client.FrontchannelLogoutURI` | `server_extensions.go` |
-| OIDC `sid` claim | access + id + logout | `WithSessionManager` | `defaultimpl/ed25519_jwt_issuer.go` |
-| OIDC `login_hint` | `/auth/login`, `/par`, JAR | always | `handler.go` + `oauth/par.go` + `server_extensions.go` |
-| OIDC Form Post | `/auth/login`, `/par`, JAR | always | `oidc/form_post.go` |
-| JARM | `response_mode={jwt,query.jwt,fragment.jwt,form_post.jwt}` | `WithJARM(signer)` (fail-closed without) | `oidc/jarm.go` |
-| OIDC `prompt=none` | `/auth/login` | `WithSessionManager` + `WithIDTokenIssuer` | `oidc/handle_silent_renewal.go` |
-| RFC 7521+7523 `private_key_jwt` | `/token`, `/par`, `/introspect`, `/revoke` | `Client.JWKS`; sig via `AsymmetricJWSAlgs` | `server_extensions.go` |
-| RFC 9207 AS Issuer Id | every `/auth/login` | always | `handlers.go` |
-| RFC 9068 JWT Access Token | JWT access tokens | always; alg gate `WithSupportedSigningAlgs` | `defaultimpl/{ed25519,ecdsa,rsa}_jwt_issuer.go` |
-| RFC 8705 mTLS-bound + aliases | `/token` + `/userinfo` | `WithClientCertExtractor` | `server_extensions.go` |
-| mTLS / X.509 certificate revocation check | `/token` (tls_client_auth, self_signed_tls) + `certificate` authenticator | `WithMTLSRevocationChecker` (client auth) / `authenticators.WithCertRevocationChecker` (end-user X.509 login); default OFF, fail-open on checker error | `server_token_clientauth.go` + `domains/authenticators/certificate.go` + `spi/cert_revocation.go` |
-| RFC 9470 Step-Up | resource-server helper | always | `security/step_up_auth.go` |
-| RFC 9449 DPoP | `/token` + `/userinfo` | header-triggered; replay: `WithJTIReplayStore`; nonce: `WithDPoPNonceProvider` | `server_extensions.go` |
-| RFC 8414 §2.1 signed_metadata | discovery | `WithMetadataSigner` | `handlers.go` |
-| OAuth 2.1 strict | `/auth/login` | `WithOAuth21StrictMode` | `handler.go` |
-| FAPI 2.0 profile | `/auth/login` + `/token` + discovery | `WithFAPIProfile(Inspection\|Enforce)` | `fapi/` + `handler.go` |
-| RFC 9396 RAR | `authorization_details` | per-client allowlist | `oauth/rar.go` |
-| RFC 9101 JAR | `request`, `request_uri` | `Client.JWKS`; URL fetch: `WithJARFetcher`; required: `Client.RequireSignedRequestObject` | `server_extensions.go` + `security/jar_fetch.go` |
-| RFC 9101 §6.4 JWE JAR | `request` (JWE) | `WithJARDecrypter`; enc key in JWKS `use:enc` | `security/jwe.go` |
-| OIDC §10.2 id_token JWE | `id_token` (encrypted) | `WithJWEResponseEncrypter` + per-client `IDTokenEncryptedResponseAlg/_Enc` | `oidc/userinfo_signing.go` |
-| OIDC §5.3.2 userinfo JWE | `/userinfo` (encrypted) | `WithJWEResponseEncrypter` + per-client `UserinfoEncryptedResponseAlg/_Enc` | `oidc/userinfo_signing.go` |
-| OIDC CIBA (poll+ping) | `/backchannel-authentication`, `/token` | `WithCIBA`; ping: `WithCIBAPingNotifier` | `oauth/ciba.go` + `oauth/handle_ciba.go` |
-| MFA orchestration | `/auth/login` + `/auth/mfa` | `WithMFAProvider` + `WithMFAChallengeStore` | `handlers.go` + `spi/mfa.go` |
-| Per-account lockout | `/auth/login` | `WithAccountLockout` | `security/account_lockout.go` |
-| Password history / reuse prevention | `POST /me/password`, `POST /auth/reset-password` | `WithPasswordHistoryStore` (+ `PasswordPolicyConfig.MaxHistory` for the record capacity) | `interfaces/sso/server_signup.go` + `defaultimpl/memorystorecredential/memory_password_credentials.go` |
-| SPIFFE JWT-SVID token-exchange | `/token` | `WithSPIFFEJWTSVID(trustDomain, audience, JWKSSource)` | `security/spiffe_svid.go` |
-| RFC 9321 Transaction Tokens | `/token` (grant=token-exchange, `requested_token_type=...:txn-token`) | `WithTransactionTokens(Issuer, Validator)` | `oauth/txntoken/` |
-| Cloud workload-identity client auth (GCP, AWS, Azure) | `/token` client authentication | `WithWorkloadIdentityProviders(security.NewGCPWorkloadIdentityValidator(...), security.NewAWSWorkloadIdentityValidator(issuer, ...), security.NewAzureWorkloadIdentityValidator(tenantID, ...))` + `Client.TokenEndpointAuthMethod=workload_identity` | `security/securityverify/workload_identity.go` + `securityverify/workload_identity_presets.go` |
-| OpenID SSF v1 SET transmitter | push to RP receiver | `WithCAEPTransmitter` | `caep/` |
-| OpenID SSF v1 SET receiver | `/ssf/receive` | `WithCAEPReceiver` | `caep/receiver.go` |
-| Envoy ext_authz HTTP | `/mesh/ext-authz` | `WithMeshExtAuthz(path)` | `handler.go` + `mesh_authz.go` |
-| Envoy ext_authz gRPC | `envoy.service.auth.v3.Authorization` | `extauthz` nested module | `extauthz/authz.go` |
-| SAML 2.0 SP+IdP | `/auth/saml/*`, `/saml/*` | `saml` nested module | `saml/saml.go` |
+| RFC 6749 §4.1 authorization_code | `/auth/login` + `/token` | `WithAuthCodeStore` | `protocols/oauth/oauthspi/auth_code.go` + `protocols/oauth/oauthwire/auth_code_handler.go` |
+| RFC 6749 §4.4 client_credentials | `/token` | always | `protocols/oauth/oauthwire/client_creds.go` |
+| RFC 6749 §6 refresh_token | `/token` | `WithRefreshTokenStore`; grace: `WithRefreshRotationGrace(window)`; family absolute-max-lifetime: `WithRefreshAbsoluteMaxLifetime(d)` | `protocols/oauth/oauthspi/refresh_token.go` + `interfaces/sso/server_token.go` |
+| RFC 7636 PKCE | `/auth/login` + `/token` | per-request / `Client.RequirePKCE` | `protocols/oauth/oauthwire/auth_code_handler.go` |
+| RFC 7662 introspection | `/token/introspect` | always; cache: `WithIntrospectionCache`; batch: `WithIntrospectionBatch(maxSize)` | `protocols/oauth/handle_introspect.go` + `protocols/oauth/introspect_cache.go` |
+| RFC 9701 signed introspection | `/token/introspect` (`Accept: application/token-introspection+jwt`) | `WithIntrospectionSigner(signer)`; default OFF; reuses the existing signing issuer OR (`keys.introspection_signing.enabled`) a DEDICATED, independently-rotated key; JWKS `use:introspection` | `protocols/oauth/handle_introspect.go` |
+| RFC 7009 revocation | `/token/revoke[-all]` | always; bulk: `RefreshTokenSubjectIndex`; cross-replica: `WithCrossReplicaRevocation`; durable: `With{Algo}RevocationStore` | `protocols/oauth/handle_revoke.go` |
+| RFC 8628 device | `/device/{code,verify}`, `/token` | `WithDeviceCodeStore` | `protocols/oauth/oauthspi/device_code.go` + `interfaces/sso/server_token.go` |
+| RFC 8693 token-exchange | `/token` | always; refresh: `WithRefreshTokenStore`; actor replay: `WithJTIReplayStore`; act-chain cycle detection: always-on; chain-lifetime cap: `WithMaxTokenExchangeChainLifetime(d)`; hop authorization: `WithTokenExchangePolicy(policy)` (`domains/tokenexchange` SPI + `memory.Store` reference impl); cross-tenant B2B collaboration: `WithExternalUserStore(store)` + `WithTenantCollaborationStore(store)` (`domains/tenant` SPI + `domains/tenant/memory` reference impl; BOTH required to activate, fail-closed default-deny) | `interfaces/sso/server_token.go` + `domains/tokenexchange/` + `domains/tenant/tenant_collab.go` |
+| RFC 8707 resource indicators | every issuance | `Client.AllowedResources` | `shared/core/types.go` + issuance handlers under `interfaces/sso/` |
+| RFC 9126 PAR | `/par` | `WithPARStore` | `protocols/oauth/handle_par.go` |
+| RFC 7591/7592 DCR | `/register[/:id]` | `WithDynamicClientRegistration` | `protocols/oauth/handle_register.go` |
+| OIDC Core ID Token | `id_token` w/ `openid` | `WithIDTokenIssuer`; `at_hash` when `access_token` in same response | `protocols/oidc/types.go` + `interfaces/sso/server_finish_login.go` + `infrastructure/defaultimpl/ed25519_issue.go` + `infrastructure/defaultimpl/ecdsa_issue.go` + `infrastructure/defaultimpl/rsa_issue.go` |
+| OIDC Discovery 1.0 | `/.well-known/openid-configuration` | always | `interfaces/sso/server_discovery.go` + `interfaces/sso/server_discovery_config.go` + `protocols/oidc/oidcsupport/discovery_doc_cache.go` |
+| RFC 8414 AS Metadata (alias, same handler/body as OIDC discovery) | `/.well-known/oauth-authorization-server` | always | `interfaces/sso/server_discovery.go` |
+| OIDC RP-Initiated Logout | `/end_session` | always | `protocols/oidc/handle_end_session.go` |
+| OIDC BCL 1.0 | `/logout`, `/end_session` | `WithBackchannelLogout`; multi-RP: `WithSubjectClientIndex` | `interfaces/sso/server_backchannel_logout.go` |
+| OIDC FCL 1.0 | `/end_session` | `Client.FrontchannelLogoutURI` | `interfaces/sso/server_backchannel_logout.go` + `protocols/oidc/handle_end_session.go` |
+| OIDC `sid` claim | access + id + logout | `WithSessionManager` | `infrastructure/defaultimpl/ed25519_issue.go` + `infrastructure/defaultimpl/ecdsa_issue.go` + `infrastructure/defaultimpl/rsa_issue.go` |
+| OIDC `login_hint` | `/auth/login`, `/par`, JAR | always | `interfaces/sso/server_login.go` + `protocols/oauth/oauthspi/par.go` + `interfaces/sso/server_jar.go` |
+| OIDC Form Post | `/auth/login`, `/par`, JAR | always | `protocols/oidc/oidcsupport/form_post.go` |
+| JARM | `response_mode={jwt,query.jwt,fragment.jwt,form_post.jwt}` | `WithJARM(signer)` (fail-closed without) | `protocols/oidc/jarm.go` |
+| OIDC `prompt=none` | `/auth/login` | `WithSessionManager` + `WithIDTokenIssuer` | `protocols/oidc/handle_silent_renewal.go` |
+| RFC 7521+7523 `private_key_jwt` | `/token`, `/par`, `/introspect`, `/revoke` | `Client.JWKS`; sig via `AsymmetricJWSAlgs` | `interfaces/sso/server_token_clientauth.go` + `shared/security/securityverify/jwks_verify.go` |
+| RFC 9207 AS Issuer Id | every `/auth/login` | always | `interfaces/sso/server_finish_login.go` |
+| RFC 9068 JWT Access Token | JWT access tokens | always; alg gate `WithSupportedSigningAlgs` | `infrastructure/defaultimpl/ed25519_issue.go` + `infrastructure/defaultimpl/ecdsa_issue.go` + `infrastructure/defaultimpl/rsa_issue.go` + `infrastructure/defaultimpl/ed25519_validate.go` + `infrastructure/defaultimpl/ecdsa_validate.go` + `infrastructure/defaultimpl/rsa_validate.go` |
+| RFC 8705 mTLS-bound + aliases | `/token` + `/userinfo` | `WithClientCertExtractor` | `interfaces/sso/server_token_clientauth.go` + `interfaces/sso/server_userinfo.go` |
+| mTLS / X.509 certificate revocation check | `/token` (tls_client_auth, self_signed_tls) + `certificate` authenticator | `WithMTLSRevocationChecker` (client auth) / `authenticators.WithCertRevocationChecker` (end-user X.509 login); default OFF, fail-open on checker error | `interfaces/sso/server_token_clientauth.go` + `domains/authenticators/certificate.go` + `shared/spi/risk.go` |
+| RFC 9470 Step-Up | resource-server helper | always | `shared/security/securityverify/step_up_auth.go` |
+| RFC 9449 DPoP | `/token` + `/userinfo` | header-triggered; replay: `WithJTIReplayStore`; nonce: `WithDPoPNonceProvider` | `interfaces/sso/server_dpop.go` |
+| RFC 8414 §2.1 signed_metadata | discovery | `WithMetadataSigner` | `interfaces/sso/server_discovery_config.go` + `protocols/oidc/metadata.go` |
+| OAuth 2.1 strict | `/auth/login` | `WithOAuth21StrictMode` | `interfaces/sso/options.go` + `interfaces/sso/server_finish_login.go` |
+| FAPI 2.0 profile | `/auth/login` + `/token` + discovery | `WithFAPIProfile(Inspection\|Enforce)` | `protocols/fapi/` + `interfaces/sso/server_discovery_config.go` |
+| RFC 9396 RAR | `authorization_details` | per-client allowlist | `protocols/oauth/oauthvalidate/rar.go` + `interfaces/sso/server_login.go` |
+| RFC 9101 JAR | `request`, `request_uri` | `Client.JWKS`; URL fetch: `WithJARFetcher`; required: `Client.RequireSignedRequestObject` | `interfaces/sso/server_jar.go` + `shared/security/securityverify/jar_fetch.go` |
+| RFC 9101 §6.4 JWE JAR | `request` (JWE) | `WithJARDecrypter`; enc key in JWKS `use:enc` | `shared/security/jwe.go` |
+| OIDC §10.2 id_token JWE | `id_token` (encrypted) | `WithJWEResponseEncrypter` + per-client `IDTokenEncryptedResponseAlg/_Enc` | `protocols/oidc/userinfo_signing.go` |
+| OIDC §5.3.2 userinfo JWE | `/userinfo` (encrypted) | `WithJWEResponseEncrypter` + per-client `UserinfoEncryptedResponseAlg/_Enc` | `protocols/oidc/userinfo_signing.go` |
+| OIDC CIBA (poll + ping + push; no `user_code` mode) | `/backchannel-authentication`, `/token` | `WithCIBA`; ping: `WithCIBAPingNotifier`; push: `WithCIBAPushNotifier` | `protocols/oauth/oauthspi/ciba.go` + `protocols/oauth/handle_ciba.go` |
+| MFA orchestration | `/auth/login` + `/auth/mfa` | `WithMFAProvider` + `WithMFAChallengeStore` | `interfaces/sso/server_mfa.go` + `shared/spi/mfa.go` |
+| Per-account lockout | `/auth/login` | `WithAccountLockout` | `shared/security/account_lockout.go` + `interfaces/sso/options.go` |
+| Password history / reuse prevention | `POST /me/password`, `POST /auth/reset-password` | `WithPasswordHistoryStore` (+ `PasswordPolicyConfig.MaxHistory` for the record capacity) | `interfaces/sso/server_signup.go` + `infrastructure/defaultimpl/memorystorecredential/memory_password_credentials.go` |
+| SPIFFE JWT-SVID token-exchange | `/token` | `WithSPIFFEJWTSVID(trustDomain, audience, JWKSSource)` | `shared/security/securityverify/spiffe_svid.go` |
+| RFC 9321 Transaction Tokens | `/token` (grant=token-exchange, `requested_token_type=...:txn-token`) | `WithTransactionTokens(Issuer, Validator)` | `protocols/oauth/txntoken/` |
+| Cloud workload-identity client auth (GCP, AWS, Azure) | `/token` client authentication | `WithWorkloadIdentityProviders(security.NewGCPWorkloadIdentityValidator(...), security.NewAWSWorkloadIdentityValidator(issuer, ...), security.NewAzureWorkloadIdentityValidator(tenantID, ...))` + `Client.TokenEndpointAuthMethod=workload_identity` | `shared/security/securityverify/workload_identity.go` + `shared/security/securityverify/workload_identity_presets.go` |
+| OpenID SSF v1 configuration + Stream Management | `/.well-known/ssf-configuration`, `/ssf/streams[/:id]` | configuration is CAEP-gated; CRUD requires `WithCAEPStreamStore` | `protocols/caep/receiver.go` + `interfaces/sso/server_federation.go` + `infrastructure/defaultimpl/sqlite/authz_stores.go` |
+| OpenID SSF v1 SET transmitter | push to the affected RP receiver | `WithCAEPTransmitter` | `protocols/caep/broadcaster.go` |
+| OpenID SSF v1 SET receiver | `/ssf/receive` | `WithCAEPReceiver` | `protocols/caep/receiver_receive.go` |
+| Envoy ext_authz HTTP | `/mesh/ext-authz` | `WithMeshExtAuthz(path)` | `interfaces/sso/mesh_authz.go` |
+| Envoy ext_authz gRPC | `envoy.service.auth.v3.Authorization` | `extauthz` nested module | `infrastructure/extauthz/authz.go` |
+| SAML 2.0 SP+IdP | `/auth/saml/*`, `/saml/*` | `saml` nested module | `infrastructure/saml/saml.go` |
 | Cross-protocol coordinated logout (SAML SLO reached from OIDC/session logout) | `POST /logout`, `GET /end_session` | always (Session Hub is always-on bookkeeping); SAML leg fires only when `saml`'s `Deps.SessionHub` was wired | `platform/lifecycle/sessionhub/coordinator.go` + `interfaces/sso/server_backchannel_logout.go`'s `TriggerSessionHubLogout` |
 | RFC 7662 introspection `renew_after` early warning | `/token/introspect` | automatic once `WithTokenPolicy`'s `RequireRenewAfter` is configured | `domains/tokenpolicy/evaluate.go`'s `RenewAt` + `protocols/oauth/handle_introspect.go` |
-| Kerberos/SPNEGO | `/auth/kerberos` | `kerberos` nested module | `kerberos/handler.go` |
-| RADIUS authenticator | via `WithAuthenticator` | `radius` nested module | `radius/authenticator.go` |
-| WebAuthn attestation policy | `/webauthn/registration/finish` | `webauthn.Config.{AttestationConveyance,AttestationPolicy,MDS}` | `authenticators/webauthn/` |
-| WebAuthn passwordless PRIMARY login | `/auth/login` `provider=webauthn` | `webauthn.primary_auth_enabled`; per-client `Client.AllowPasswordlessOnly` | `authenticators/webauthn/conditional_login.go` |
-| Multi-region data residency | `/auth/login` + `/userinfo` + mesh + WebAuthn | `WithRegionMiddleware` + `WithTenantResidencyCheck` | `region/region.go` + `server_extensions.go` |
-| SCIM 2.0 | `/api/v1/scim/v2/` | `scim.NewHandler(users, basePath, ...)` | `scim/handler.go` |
-| SCIM 2.0 push provisioning (outbound) | pushes to a downstream SCIM app's `/Users` + `/Groups` | `scim.push.enabled` / `sso.WithSCIMProvisioner` | `scimprovision/http_provisioner.go` + `scimprovision/sink.go` |
-| Embedded API-docs viewer (self-contained, admin-gated) | `/api/v1/admin/docs` + `/openapi.json` | `sso.WithAPIDocsUI` | `interfaces/apidocs/` |
-| CSP Level 3 + Permissions-Policy + Clear-Site-Data | every response + admin/login/portal SPA bundles + `/logout`, `/me/account/erase` | `WithSecurityHeaders` / `WithSecurityHeadersPolicy` | `internal/handler/security_headers.go` |
-| OpenID Federation 1.0 (5 slices) | `/.well-known/openid-federation`, `/fetch` | `WithFederationEntity(cfg, signer)` | `federation/` + `handlers.go` + `sso.go` |
+| Kerberos/SPNEGO | `/auth/kerberos` | `kerberos` nested module | `infrastructure/kerberos/handler.go` |
+| RADIUS authenticator | via `WithAuthenticator` | `radius` nested module | `infrastructure/radius/authenticator.go` |
+| WebAuthn attestation policy | `/webauthn/registration/finish` | `webauthn.Config.{AttestationConveyance,AttestationPolicy,MDS}` | `domains/authenticators/webauthn/` |
+| WebAuthn passwordless PRIMARY login | `/auth/login` `provider=webauthn` | `webauthn.primary_auth_enabled`; per-client `Client.AllowPasswordlessOnly` | `domains/authenticators/webauthn/conditional_login.go` |
+| Multi-region data residency | `/auth/login` + `/userinfo` + mesh + WebAuthn | `WithRegionMiddleware` + `WithTenantResidencyCheck` | `domains/region/region.go` + `interfaces/sso/server_extensions.go` |
+| SCIM 2.0 | `/api/v1/scim/v2/` | `scim.NewHandler(users, basePath, ...)` | `protocols/scim/handler.go` |
+| SCIM 2.0 push provisioning (outbound) | pushes to a downstream SCIM app's `/Users` + `/Groups` | `scim.push.enabled` / `sso.WithSCIMProvisioner` | `protocols/scimprovision/http_provisioner.go` + `protocols/scimprovision/sink.go` |
+| FGA / ReBAC product API | `/authz/tuples`, `/authz/tuples/batch`, `/authz/graph`, `/authz/check` | tuple routes: `WithRebacStore`; check: `WithRebacEngine`; client-credentials gated; memory + SQLite stores | `platform/lifecycle/rebac/` + `infrastructure/defaultimpl/sqlite/authz_stores.go` + `interfaces/sso/server_routes.go` |
+| API-docs viewer (self-contained utility, admin-gated; not a product frontend) | `/api/v1/admin/docs` + `/api/v1/admin/docs/openapi.json` | SDK-only `sso.WithAPIDocsUI` | `interfaces/apidocs/` |
+| CSP Level 3 + Permissions-Policy + Clear-Site-Data | API responses + `/logout`, `/me/account/erase` | `WithSecurityHeaders` / `WithSecurityHeadersPolicy`; separately deployed frontends configure their own static-asset CSP | `internal/handler/security_headers.go` |
+| OpenID Federation 1.0 entity + operational endpoints | `/.well-known/openid-federation`, `/fetch`, `/.well-known/openid-federation-{list,resolve,trust-mark-status,historical-keys}` | `WithFederationEntity(cfg, signer)`; individual routes also depend on subordinates/resolver/historical-key store | `domains/federation/` + `interfaces/sso/server_federation.go` |
 | User-lifecycle admin state machine (INVITED→ACTIVE→{SUSPENDED,INACTIVE}→ARCHIVED→PURGED) + optional auto-deprovision sweep | `GET`/`POST /api/v1/admin/users/:id/lifecycle` | `WithUserLifecycle(store)` (+ `WithUserAutoDeprovision(cfg, activity)`); cmd: `user_lifecycle.enabled` (+ `.auto_deprovision.enabled`) | `domains/userlifecycle/` + `interfaces/sso/options_admin.go` + `cmd/sso-server/build_stores.go` |
 | Self-service identity linking / account-merge conflict resolution | `GET`/`DELETE /me/identities` | `WithIdentityLinkStore(store)` (+ `WithIdentityMergePolicy(policy)`, an extension point for custom login integrations); cmd: `self_service.identity_link.enabled` (+ `.merge_policy`) | `domains/identitylink/` + `interfaces/sso/options_passwd.go` + `cmd/sso-server/build_stores.go` |

@@ -1,2 +1,6 @@
 <!-- Run diagnosis -->
-python scripts/diagnose.py
+Read `AGENTS.md` and `docs/agent-os/CHECKS_REGISTRY.md`, then run:
+
+```bash
+python cli.py diagnose
+```

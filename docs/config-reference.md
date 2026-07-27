@@ -1,6 +1,13 @@
 # Configuration Reference
 
-YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md) for architectural constraints.
+YAML configuration accepted by the stock `sso-server` binary. SDK-only options
+and nested-module integration APIs are documented with their packages and are
+not automatically expressible in this file. See [AGENTS.md](../AGENTS.md) for
+architectural constraints.
+
+`sso-server` is an API-only backend. It does not serve hosted-login, admin,
+self-service, developer or setup frontend applications. A frontend deployment
+uses the APIs below and is normally reverse-proxied beside the server.
 
 ## OAuth
 
@@ -23,6 +30,7 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 | Key | Effect |
 |---|---|
 | `server.http2.enabled` | Controls HTTP/2 server-side support. `false` (default) disables HTTP/2 via `GODEBUG=http2server=0` (safe behind a reverse proxy). `true` enables HTTP/2 — required for gRPC or direct-client deployments. If the `GODEBUG` env var is already explicitly set, this field is ignored (explicit env override takes precedence). See `config.HTTP2Config`. |
+| `hosted_login.enabled` | Compatibility placeholder only. The field is parsed but the current stock binary has no hosted-login filesystem or route wiring, so setting it does not mount `/login/` or any other frontend. Use a separate frontend project. Do not use this key as a readiness/capability signal. |
 
 ## OIDC
 
@@ -36,8 +44,8 @@ YAML configuration knobs extracted from AGENTS.md. See [AGENTS.md](../AGENTS.md)
 | Key | Effect |
 |---|---|
 | `security.mtls.backend` | `tls`\|`header`; `header` for reverse-proxy edges (`X-SSL-Client-Cert`); edge MUST strip from untrusted traffic |
-| `security.trusted_proxies.{cidrs,hops}` | CIDR allowlist compiled once (`peertrust.Checker`) gating EVERY proxy-supplied input on the direct peer (`RemoteAddr`): the XFF chain walk (rate-limit IP keying + geo/risk-scorer IP; untrusted peer ⇒ RemoteAddr), base-URL derivation from `X-Forwarded-Proto/Host` (issuer/discovery/registration URIs/DPoP `htu`; untrusted peer ⇒ direct Host/TLS), the mesh ext_authz endpoint (untrusted peer ⇒ 401 `invalid_token`, no `X-Auth-*` — include the sidecar's CIDR when `mesh.ext_authz.enabled`), the `region.header_name` resolver (untrusted peer ⇒ pinned default), and the `security.mtls.backend: header` cert extractor (untrusted peer ⇒ no cert ⇒ unbound token / normal `invalid_token` path). Unset = legacy first-hop trust on all of the above, byte-identical |
-| `security.security_headers.{enabled,csp_directives,permissions_policy}` | Off by default. Adds CSP (with a per-request `script-src` nonce) + Permissions-Policy to every response, INCLUDING the admin console / hosted login / portal SPA bundles; also adds `Clear-Site-Data` on `POST /logout` and a non-dry-run `POST /me/account/erase`. `csp_directives`/`permissions_policy` override the SDK's conservative default (`handler.DefaultSecurityHeadersPolicy`) — leave unset to use it |
+| `security.trusted_proxies.{cidrs,hops}` | CIDR allowlist compiled once (`peertrust.Checker`) gating the supported proxy-supplied consumers on the direct peer (`RemoteAddr`): the XFF chain walk (rate-limit IP keying + geo/risk-scorer IP; untrusted peer ⇒ RemoteAddr), base-URL derivation from `X-Forwarded-Proto/Host` (issuer/discovery/registration URIs/DPoP `htu`; untrusted peer ⇒ direct Host/TLS), the mesh ext_authz endpoint (untrusted peer ⇒ 401 `invalid_token`, no `X-Auth-*` — include the sidecar's CIDR when `mesh.ext_authz.enabled`), the `region.header_name` resolver (untrusted peer ⇒ pinned default), and the `security.mtls.backend: header` cert extractor (untrusted peer ⇒ no cert ⇒ unbound token / normal `invalid_token` path). Known readers not yet gated are audit IP enrichment, `domains/tenant/middleware.go` XFH tenant resolution, `interfaces/ssoclient/rs`, and push-callback client IP; do not treat their headers as trustworthy at an untrusted edge. Unset = legacy first-hop trust on the supported consumers above |
+| `security.security_headers.{enabled,csp_directives,permissions_policy}` | Off by default. Adds CSP (with a per-request `script-src` nonce) + Permissions-Policy to API responses; also adds `Clear-Site-Data` on `POST /logout` and a non-dry-run `POST /me/account/erase`. Separately deployed frontends must set their own static-asset CSP. `csp_directives`/`permissions_policy` override the SDK's conservative default (`handler.DefaultSecurityHeadersPolicy`) — leave unset to use it |
 | `spiffe.{enabled,trust_domain,audience,jwks_file,max_clock_skew}` | Enabled requires ALL of `trust_domain`+`audience`+`jwks_file`; cmd fails loud on missing |
 | `security.rar_limits.{max_bytes,max_elements,max_depth}` | Bounds an RFC 9396 `authorization_details` payload's SHAPE (serialized size / top-level array element count / max nesting depth) BEFORE it is fully unmarshaled, on `/auth/login` and `/par`. Each sub-field `<= 0` (default) = unbounded — composes with, does not replace, `security.body_limit`. Rejects with the existing `invalid_authorization_details` code. Maps to `sso.WithAuthorizationDetailsLimits` |
 | `security.scope_limit.max_count` | Caps the number of space/array-separated scopes accepted in a single `/auth/login` or `/par` request. `<= 0` (default) = unbounded. Distinct from the SDK's internal `oauth.MaxScopeLen` byte cap — this is a token-COUNT cap. Rejects with `invalid_scope`. Maps to `sso.WithMaxScopeCount` |
@@ -104,9 +112,9 @@ Values below are exactly what the binary's boot-time dispatch accepts
 
 All `backend: redis` **hot** stores share the ONE `redis:` block below. All
 `backend: postgres` **durable** stores share the ONE `postgres:` block below —
-a shared *sql.DB pool per replica, not one pool per store. Selecting `redis`/
-`postgres` without its block is a boot error (`<domain>.backend=postgres but no
-postgres block configured (set postgres.dsn)`).
+a shared *sql.DB pool per replica, not one pool per store. Selecting
+`redis`/`postgres` without its block is a boot error:
+`<domain>.backend=postgres but no postgres block configured (set postgres.dsn)`.
 
 ### B2B connection email-domain verification
 
@@ -190,7 +198,7 @@ DSN is typically injected via env (`SSO_POSTGRES__DSN`) or a `secret://` ref.
 | `postgres.conn_max_lifetime` / `postgres.conn_max_idle_time` | connection recycling |
 
 See [deployment.md](deployment.md) for the HA topology and
-`ops/deploy/k8s-prod/config.yaml` for the canonical production selection
+`ops/deploy/kustomize/overlays/prod/config.yaml` for the canonical production selection
 (durable → postgres, hot → redis, coordination → etcd).
 
 ## Email (SMTP)
@@ -262,13 +270,14 @@ sender renders the OTP body through `html/template` for XSS-hardening, which
 HTML-entity-escapes a literal `&` in an interpolated value to `&amp;` and
 would corrupt a two-`&`-joined-param link. Splitting the email into a `#`
 fragment keeps the whole link free of any HTML-special character, so it
-survives that renderer unmodified — zero changes to `infrastructure/
-defaultimpl/emailsmtp` were needed. `base_url` should point at this SDK's
-hosted login SPA (`/login/`, `WithHostedLoginFS`) or an equivalent static
-page whose script parses `?token=` + `#email=` from the URL and POSTs
+survives that renderer unmodified — zero changes to
+`infrastructure/defaultimpl/emailsmtp` were needed. `base_url` should point at the
+deployment's external login frontend or another operator-controlled page
+whose script parses `?token=` + `#email=` from the URL and POSTs
 `{provider: "magiclink", credential: {email, code: token}}` to `/auth/login`
 — the SAME request shape every other credential authenticator already uses,
-so no new HTTP endpoint or request-binding change was needed either.
+so no new HTTP endpoint or request-binding change is needed. This repository
+does not provide that landing page.
 
 Caveat: because the link is opened out-of-band (a different browser/device
 than the one that started the OAuth flow may open it), the emailed link
@@ -299,11 +308,11 @@ does not do so today.
 
 | Key | Effect |
 |---|---|
-| `audit.retention.*` | `audit/sqlite.Sink.Prune` |
+| `audit.retention.*` | `platform/audit/sqlite.Sink.Prune` |
 | `audit.async.{enabled,buffer_size,workers,record_timeout_ms}` | Wraps the composed audit sink in `audit.AsyncSink` so `Record` returns on a buffered hot path instead of waiting for the inner sink — critical when the sink is network-bound (webhook/kafka), pointless overhead for a bare `MemorySink`. `buffer_size`/`workers` fall back to library defaults when `<= 0`; `record_timeout_ms` caps a single inner `Record` call so a hung downstream can't pin a worker (`0` = no timeout). Drops (queue full / closed / inner error) are logged and scraped via the `sso_audit_async_*` collectors when `metrics.enabled` |
 | `audit.async.batch_size` | `> 1` switches the async worker to batch draining (`audit.NewBatchAsyncSink`): up to `batch_size` queued events collapse into ONE `RecordBatch` call — a single SQLite/Postgres transaction instead of N single-row INSERTs. Requires the composed sink to support batch writes: the `memory`/`sqlite`/`postgres` primary alone does, but any webhook/cef/ocsf/syslog/kafka fan-out (`MultiSink`) does not — that combination **fails boot loud** rather than leaving the knob silently inert. `0` (default) and `1` both mean per-event delivery, byte-identical to the pre-batching behavior; negative values fail boot (unlike `buffer_size`/`workers` there is no "default please" reading — the library's own `<= 1` fallback is `DefaultBatchSize` 64, which a config typo must never surprise-enable) |
-| `snapshot.retention.*` | `snapshot.PruneOldest` |
-| `mfa.provider.push.prune_interval` | `sqlite.PushApprovalStore.PruneExpired` |
+| `snapshot.retention.*` | `interfaces/snapshot.PruneOldest` |
+| `mfa.provider.push.prune_interval` | `infrastructure/defaultimpl/sqlite.PushApprovalStore.PruneExpired` |
 | `metrics.tenant_label_allowlist` | `WithTenantMetricsAllowlist` — bounded per-tenant login/issue metrics + `"other"` bucket; empty = off |
 | `audit.webhook.signing_secret` | HMAC-SHA256 payload signing on the audit `WebhookSink` — every POST carries `X-Signature: t=<unix>,v1=<hex>`; empty = off; receivers verify with `security.VerifyWebhookSignature`. Inject via env/`secret://`, never YAML literal |
 | `audit.webhook.subscriptions[]` | Fan the audit stream to multiple endpoints, each with its own event-type filter. Per entry the stack is `RetryingSink(FilteringSink(WebhookSink))`, all fanned into the one `MultiSink` beside the primary sink. The legacy scalar `audit.webhook.url` (when set) is compiled as an implicit **unfiltered** subscription named `default`; both may be set together |
@@ -345,7 +354,7 @@ feature existed (no extra signal handler is even registered).
 | `SIGHUP` (running `sso-server` process) | Re-reads config from the SAME source chain (file + env + etcd + flag) it booted with, diffs it against the previously-tracked config (`platform/configaudit.Diff`, the same JSON-Patch engine the admin running-vs-applied endpoint uses), applies the safe subset, and logs `config reload applied` with `applied` (what changed live) and `ignored_requires_restart` (everything else that changed but was left untouched) |
 | `logging.level` | Swaps the server's `*slog.LevelVar`, so verbosity changes with no restart and no dropped log lines |
 | `security.rate_limit.*` | Rebuilds the WHOLE `ratelimit.Policy` (via the same `serverbuildplatform.BuildRateLimitPolicy` the boot path uses) and hot-swaps it into the already-mounted middleware (`ratelimit.DynamicMiddleware` reads its Policy from a `ratelimit.PolicyStore` fresh on every request, instead of a plain `ratelimit.Middleware`'s baked-in-by-value closure). Every changed leaf under the block (a prefix's `per_sec`, `default_burst`, …) triggers exactly ONE rebuild, not one per leaf. In-memory limiter bucket state resets on rebuild (a safe, side-effect-free change — no correctness impact). Enabling/disabling rate limiting ENTIRELY (the `enabled` flag going from `false` to `true`, when no `WithRateLimit` was ever wired) still needs a restart — there is no middleware slot to swap into if it was never installed |
-| `feature_gates.{admin_api,web_spa,oidc,ciba,caep,federation,self_service}` | `interfaces/sso` mounts EVERY gated surface unconditionally at `Mount()` time now and gates reachability with a request-time check (`shared/core.GatedRouter` for router-native groups, `shared/core.GateHTTPHandler` for the SPA static-asset mounts) instead of deciding "mount or don't" once, at boot. Each gate's `Set*GateHook` (wired to the matching `Server.Set*GateEnabled`) flips its check live, in BOTH directions, with no restart — gate-off answers `http.NotFound` byte-identically to a path that was never registered. Three have an asymmetry reported as `ignored_requires_restart` rather than falsely applied: `web_spa` (no SPA filesystem ever wired via a `With*FS` option), `caep` (no `WithCAEPReceiver`), and `federation` (none of protected-resource metadata / `WithFederationEntity` / `WithConnectionStore` wired) — a live gate can only suppress/reveal an already-mounted route, never conjure one that doesn't exist. The other four (`admin_api`, `oidc`, `ciba`, `self_service`) have no such gap — each group always has at least one unconditionally-mounted route to gate |
+| `feature_gates.{admin_api,web_spa,oidc,ciba,caep,federation,self_service}` | `interfaces/sso` registers the applicable route groups at `Mount()` time and checks live gate state through `shared/core.GatedRouter`. Each `Set*GateHook` flips reachable routes in both directions without a restart; gate-off returns a router-native 404. A gate cannot create missing dependencies: `web_spa` is ignored when no tenant store exists (it now gates only `/branding`), `caep` cannot create an unwired receiver/stream store, and `federation` cannot create an unwired entity/connection store. |
 | Storage backends, `server.listen`, TLS material, cluster/etcd endpoints, … | Detected if changed, reported under `ignored_requires_restart`, and left COMPLETELY untouched — never silently misapplied. These require closing and re-opening a connection or listener; applying them live risks leaking the old one or serving with an inconsistent half-applied state. See `config/reload`'s package doc for the full rationale |
 | A failed reload (e.g. the file was hand-edited into an invalid state) | Logged (`config reload failed; continuing with previous configuration`) and otherwise ignored — the process keeps running on its last-good configuration; SIGHUP can never crash a running server |
 
@@ -358,7 +367,7 @@ feature existed (no extra signal handler is even registered).
 | `audit.ocsf.{enabled,output}` | Enables an OCSF (Open Cybersecurity Schema Framework) NDJSON sink — one OCSF Authentication/Account Change/Authorize Session/API Activity-class JSON object per line, with `product.name`/`product.vendor_name` fixed to `SSO`/`Snaplink` |
 | `audit.syslog.{enabled,output,facility,hostname,app_name}` | Enables an RFC 5424 syslog sink (structured-data carries `Event.Metadata`; RFC 3164 legacy BSD framing is NOT supported). `facility` follows RFC 5424 Table 1 (0-23); `0` (the Go zero value) falls back to `10` (authpriv), since facility 0 (kernel) is never a realistic choice for an application audit trail. `hostname` empty resolves `os.Hostname()` at wiring time; `app_name` empty defaults to `sso-server` |
 | SIEM severity | All three formatters project ONE shared internal severity scale (`Outcome` + a small per-`EventType` override table in `auditsink`) into their own range: CEF `0-10`, OCSF `severity_id` `1-6`, syslog `0-7` — an event escalated once is escalated identically across every export format |
-| `audit.kafka.enabled` | Publishes every recorded event as one Kafka message on `audit.kafka.topic`. The `github.com/segmentio/kafka-go` dependency lives ONLY in the `infrastructure/kafka` nested Go module (own `go.mod`) — this core module never imports it — so `enabled: true` additionally requires the operator's forked `cmd` binary to import that module and call `serverbuildauthn.RegisterAuditKafkaSinkFactory(kafkaaudit.Factory)` once at init (mirrors `keys.signing.external` / `RegisterExternalSigner` for KMS/HSM signers; see the module's package doc). `enabled: true` with no factory registered fails boot CLOSED with an error naming the missing registration call |
+| `audit.kafka.enabled` | Publishes every recorded event as one Kafka message on `audit.kafka.topic`. The `github.com/segmentio/kafka-go` dependency lives ONLY in the `infrastructure/kafka` nested Go module (own `go.mod`) — the root module never imports it — so `enabled: true` additionally requires a custom composition binary to import that module and call `serverbuildauthn.RegisterAuditKafkaSinkFactory(kafkaaudit.Factory)` once at init (mirrors `keys.signing.external` / `RegisterExternalSigner` for KMS/HSM signers; see the module's package doc). `enabled: true` with no factory registered fails boot CLOSED with an error naming the missing registration call |
 | `audit.kafka.{brokers,topic}` | REQUIRED when enabled. `brokers` lists bootstrap broker addresses (host:port), tried in order; `topic` is the single destination topic for every event (no per-tenant/per-event-type routing — pair with a downstream Kafka Streams/Connect job for that) |
 | `audit.kafka.format` | Wire encoding per message: `json` (default) — an explicit `schema_version` field wrapping the `auditspi.Event` JSON, since a Kafka consumer (unlike an HTTP webhook receiver) has no per-message content negotiation — or `cef` \| `ocsf` \| `syslog`, reusing the SAME `auditsink` formatters `audit.cef`/`audit.ocsf`/`audit.syslog` use, unchanged, over this transport |
 | `audit.kafka.{client_id,required_acks,batch_timeout,async}` | `client_id` (default `sso-server`) identifies the producer in broker-side logs. `required_acks` is `none`\|`one`\|`all` (default `all` — full ISR ack; audit events are a compliance record this sink does not want silently dropped on a leader failover, the opposite of the underlying Kafka client's own library default). `batch_timeout` bounds partial-batch buffering (library default 1s when zero). `async` (default `false`) publishes fire-and-forget when `true`, swallowing the produce error — leave `false` and pair with `audit.async` to move the broker round-trip off the request hot path instead, so `Record`'s error return stays a real signal for the audit Recorder's fail-open policy |
@@ -600,7 +609,7 @@ framework" for the wire error codes each mechanism returns.
 | `admin_write_quota.enabled` | Wires a per-tenant/admin write-op QUOTA onto the admin middleware (`AdminMiddleware.SetWriteQuota`) — a hard, fixed-window budget on POST/PUT/PATCH/DELETE under `/api/v1/admin/`, distinct from `security.rate_limit`'s token-bucket RATE (which never resets wholesale, only refills) |
 | `admin_write_quota.limit` / `admin_write_quota.window` | Max writes allowed per fixed window (e.g. `limit: 500`, `window: 1h`); `<=0` on either disables enforcement even when `enabled: true` |
 | `admin_write_quota.key_by` | `tenant` keys the budget by the acting admin's tenant (falling back to admin identity when the token carries none); anything else (including omitted) keys by admin identity — each admin gets an independent budget |
-| `admin_change_approval.enabled` | Builds an in-memory `admingovernance.ApprovalStore` and wires `sso.WithChangeApprovalStore`, mounting the generic two-person change-approval workflow: `POST`/`GET /api/v1/admin/changes`, `GET .../{id}`, `POST .../{id}/approve\|reject`. Generalizes break-glass's propose/approve/self-approval-refusal shape to arbitrary admin mutation types. The shipped binary registers NO `Applier` — an approved change stays `approved` unless a forked `main` registers one into its own `*admingovernance.Registry` |
+| `admin_change_approval.enabled` | Builds an in-memory `admingovernance.ApprovalStore` and wires `sso.WithChangeApprovalStore`, mounting the generic two-person change-approval workflow: `POST`/`GET /api/v1/admin/changes`, `GET .../{id}`, `POST .../{id}/approve\|reject`. Generalizes break-glass's propose/approve/self-approval-refusal shape to arbitrary admin mutation types. The stock binary registers NO `Applier` — an approved change stays `approved` unless a custom composition root registers one into its own `*admingovernance.Registry` |
 | `admin_change_approval.action_types` | Allow-list restricting `POST /api/v1/admin/changes`'s `action_type` to these values; empty (default) accepts any `action_type` |
 | `admin_destructive_actions.enabled` | Wires a destructive-action confirmation guard onto the admin middleware (`AdminMiddleware.SetDestructiveActions`): a request matching a configured `(method, path_prefix)` rule is refused (`409`) unless it carries `X-Confirm: true` — mirrors the `{confirm: true}` convention the bulk-revoke-by-user and self-service account-erase endpoints already use, generalized to a header because this gate runs BEFORE any handler parses a body (and must also cover the grpc-gateway-proxied tenant/client/user/token/permission CRUD services) |
 | `admin_destructive_actions.rules[].method` / `.path_prefix` / `.action` | One classified-destructive rule; `path_prefix` matches by prefix (not exact template) since a resolved request path carries the real id, e.g. `path_prefix: /api/v1/admin/tenants/` catches every tenant id. `action` is an operator-chosen label for logging only |
@@ -612,9 +621,10 @@ framework" for the wire error codes each mechanism returns.
 
 | Key | Effect |
 |---|---|
-| `feature_gates.{oidc,ciba,caep,federation,self_service,admin_api,web_spa}` | Each is `*bool`; omitted (default) or `true` = routes mounted (today's behavior); explicit `false` = `Mount()` never registers that surface's routes — a probe gets a router-native 404, not a reachable-but-declining handler. A surface's own opt-in config (e.g. `caep.receiver`) keeps gating its routes on TOP of this — the gate never re-enables a surface that isn't otherwise wired |
+| `feature_gates.{oidc,ciba,caep,federation,self_service,admin_api,web_spa}` | Each is `*bool`; omitted (default) or `true` = reachable when the surface's own dependencies are wired; explicit `false` = request-time gate returns the router-native 404. A gate never constructs a missing store/handler. |
 | `feature_gates.oidc` | Gates `/userinfo` + `/end_session`; discovery drops `userinfo_endpoint`/`end_session_endpoint` (both `omitempty`) when off |
 | `feature_gates.ciba` | Gates `POST /backchannel-authentication` (previously mounted unconditionally, 501-ing without a CIBA store — this is the first way to make it a 404 instead) |
 | `feature_gates.admin_api` | Gates the ENTIRE `/api/v1/admin/*` group (incl. the `GET /api/v1/admin/endpoints` runtime inventory); off ⇒ every route in the group answers a router-native 404 — the group itself is always registered (so this gate is SIGHUP hot-reloadable in both directions; see "Hot Reload" above), reachability is what the gate controls |
+| `feature_gates.web_spa` | Legacy name retained for compatibility. With a tenant store wired it gates only public `GET /branding`; no SPA/static frontend is mounted. |
 | GET `/api/v1/admin/endpoints` | Admin-gated (`admin:read`) runtime inventory: method + path + `feature_gates` surface (or `core`) for every route THIS replica actually registered |
 | Startup visibility | Any explicitly-disabled gate emits a `feature_gates_disabled` audit event + log line + sets `sso_feature_gate_enabled{feature=...}` to 0 (1 for every enabled gate) — attack-surface changes are security-relevant |

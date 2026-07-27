@@ -1,67 +1,57 @@
-# ADR-0001 — Directory layout: flat library, composition-only root
+# ADR-0001 — Physically layered library, gate-only repository root
 
 ## Status
 
-Accepted. (Reaffirmed by the 2026-06-19 architecture audit.)
+Accepted; amended after the layered-topology migration. The original flat-tree
+decision is historical and is superseded by ADR-0006 plus the executed
+migration summarized in [`docs/HISTORY.md`](../HISTORY.md).
 
 ## Context
 
-snaplink is an OAuth2/OIDC SSO **library + binary**, not a deployable app. Its
-~53 top-level package directories (`oauth/`, `oidc/`, `core/`, `security/`,
-`defaultimpl/`, …) and its public import paths (`github.com/snaplink/sso/...`)
-are a **published API contract** that external embedders and the 11 nested
-modules depend on.
+snaplink is an embeddable Go library plus runnable server. Its packages need a
+clear dependency direction, while the repository root must not become a
+business-logic package or a second public facade.
 
-A proposal surfaced to retree the repo into an application-style
-`domains/ application/ infrastructure/ interfaces/` hierarchy with a fixed
-"max 10 root directories" allowlist. An audit measured the impact against the
-real tree:
-
-- 53 dirs hold Go code; 47 fall outside the proposed allowlist (i.e. nearly the
-  whole codebase would be "illegal").
-- The move would rewrite import paths across 367+ files (root), 219 (core),
-  106 (oauth), and rename 11 nested `go.mod` module paths whose
-  `replace => ../` directives are depth-sensitive — a breaking change for every
-  downstream consumer, for naming benefit only.
-- It would also have to be co-ordinated atomically with the path-keyed
-  committed gates or CI breaks (see ADR-0005).
+The project originally kept public packages flat to avoid import-path changes.
+It later performed an in-place breaking reorganization without changing the
+root module major version. The current public Server import is
+`github.com/snaplink/sso/interfaces/sso`.
 
 ## Decision
 
-1. **Keep the flat, domain-per-directory layout.** Directory count is not
-   capped; a new cohesive concern gets its own top-level package.
-2. **The repo root is composition-only.** Root may hold *only*
-   server-wiring/composition files (`sso.go`, `server_*.go`, `accessors*.go`,
-   `options*.go`, `handlers.go`, `aliases.go`, `mesh_authz.go`,
-   `signing_key_aggregation*.go`, `storage_health.go`, `sso_*.go`). No
-   `*_handler.go` / `*_service.go` / `*_store.go` / `*_grant.go` and no business
-   logic in root. Non-exempt root file count ≤ **15**.
-3. **No `domains/application/infrastructure/interfaces` retree** unless and
-   until a major (v2) version with deprecation-alias windows is explicitly
-   undertaken. The target tree is recorded as conceptual documentation, not an
-   executable migration.
+1. Library packages live under the physical layer directories `shared/`,
+   `platform/`, `domains/`, `protocols/`, `infrastructure/`, and `interfaces/`.
+   The first path segment is the architectural layer.
+2. The repository root contains no production Go. Its Go files are committed
+   `package archgate` tests only; repository and build files are controlled by
+   `engineering.yaml`'s `root_policy`.
+3. The public Server API and HTTP composition live in `interfaces/sso`.
+   Business behavior extracts downward into protocol/domain packages through
+   small dependency interfaces.
+4. `cmd/`, `config/`, examples, tests, protobuf sources/generated code,
+   deployment files, and engineering checks are composition/tooling surfaces.
+5. Do not recreate old flat-package compatibility shims or a root
+   `package sso` facade without a separately reviewed versioning decision.
 
 ## Consequences
 
-**Pros**
-- Public import paths stay stable; no consumer breakage.
-- New work extends existing packages instead of inventing root directories.
-- The root god-package problem is addressed by *internal* decomposition
-  (hexagonal `HandleX(deps Deps, ctx)` extraction), not by moving files across
-  module boundaries.
+**Benefits**
 
-**Cons**
-- The root `package sso` remains large (the one genuine cohesion smell); it is
-  shrunk gradually and sequentially, not via a big-bang.
-- "Many top-level directories" can look like sprawl to newcomers; this ADR plus
-  the AGENTS.md module map are the orientation.
+- The filesystem communicates the dependency model before code is read.
+- The root cannot silently regrow into a god package.
+- New packages have a deterministic placement rule and are classified by the
+  architecture gate.
 
-**Risks**
-- Drift: someone adds a business file to root. Mitigated by `python cli.py
-  check-root` (`checks/root_business_code.py`) and the ≤15 count
-  (`checks/root_files.py`, surfaced in `cli.py accept` `[U8]`).
+**Costs**
+
+- Consumers of former flat imports had to move to layered paths despite the
+  unchanged module major version.
+- Some cohesive public packages exceed the directory file-count budget and
+  remain at frozen ceilings under ADR-0007.
 
 ## Enforcement
 
-`python cli.py check-root` · root file count in `python cli.py accept`.
-Manifest: [`.arch/rules.yaml`](../../.arch/rules.yaml) `root:`.
+- `architecture_layer_test.go`
+- `maxdepth_test.go`
+- `checks/root_business_code.py` and `checks/root_files.py`
+- [directory map](../architecture/DIRECTORY_MAP.md)

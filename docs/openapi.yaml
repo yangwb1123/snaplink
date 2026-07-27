@@ -3055,6 +3055,101 @@ paths:
         "500":
           description: Subordinate statement signing failed.
 
+  /.well-known/openid-federation-resolve:
+    get:
+      tags: [federation]
+      summary: OpenID Federation 1.0 §8.3 trust-chain resolution.
+      description: |
+        Resolves the required `sub` Entity Identifier to the configured trust
+        anchors and returns the signed Entity Statements in chain order.
+        Mounted only when `WithFederationEntity` is wired and its resolver is
+        enabled by at least one configured trust anchor.
+
+        Resolution is fail-closed. An unknown entity, metadata/fetch failure,
+        invalid statement, untrusted chain, or unavailable resolver collapses
+        to the same 404 `not_found` response so callers cannot locate the
+        failed trust-chain step. All responses, including errors, set
+        `Cache-Control: no-store` and `Pragma: no-cache`.
+      operationId: resolveFederationTrustChain
+      parameters:
+        - name: sub
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uri
+          description: Entity Identifier whose chain should be resolved.
+      responses:
+        "200":
+          description: Signed Entity Statements forming the resolved chain.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: Always `no-store`.
+            Pragma:
+              schema:
+                type: string
+              description: Always `no-cache`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [chain]
+                properties:
+                  chain:
+                    type: array
+                    items:
+                      type: string
+                      description: Compact signed Entity Statement JWS.
+        "400":
+          description: Federation `invalid_request`; the required `sub` is missing.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: Always `no-store`.
+            Pragma:
+              schema:
+                type: string
+              description: Always `no-cache`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    example: invalid_request
+                  error_description:
+                    type: string
+        "404":
+          description: |
+            Federation `not_found`; resolver absence, unknown entity, fetch
+            failure, invalid statement, and untrusted chain are deliberately
+            indistinguishable.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: Always `no-store`.
+            Pragma:
+              schema:
+                type: string
+              description: Always `no-cache`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    example: not_found
+                  error_description:
+                    type: string
+
   /end_session:
     get:
       tags: [auth]
@@ -10341,6 +10436,12 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     Unauthorized:
       description: Missing or invalid bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: The requested resource does not exist.
       content:
         application/json:
           schema:

@@ -1,56 +1,66 @@
 # OIDC Conformance Test Suite
 
-This directory contains the Docker Compose configuration for running the
+This directory is a **manual scaffold** for running the
 [OpenID Foundation's Conformance Test Suite](https://gitlab.com/openid/conformance-suite)
 against the SSO server.
 
-## Quick Start
+> **No conformance claim:** this harness is not part of `make ci`, requires
+> browser interaction, and has no committed pass report or certification
+> artifact. “Implemented in the server” is not equivalent to “passed the OIDF
+> suite,” and snaplink must not be described as OIDF-certified on the basis of
+> this directory.
+
+## Current scaffold status
+
+The checked-in Compose file is **not runnable as-is**:
+
+- it references a repository-root `Dockerfile.test` that is not present;
+- `config.env` is not interpolated by `docker-compose.yml`, so editing it does
+  not currently change the services; and
+- several `SSO_*` names in the Compose environment predate the current nested
+  configuration mapping.
+
+Before using the scaffold, update it to build the root `Dockerfile`, mount a
+validated current server configuration, and explicitly wire every test
+parameter. Validate that configuration with:
 
 ```bash
-# 1. Build the test Docker image and start all services
-docker compose up -d
-
-# 2. Wait for all services to be healthy
-docker compose logs -f conformance-suite
-
-# 3. Open http://localhost:8080 in a browser
-#    (the conformance suite web UI)
+sso-ctl config validate --file <conformance-config.yaml>
 ```
 
-## Configuration
+The authoritative configuration keys are documented in
+[`docs/config-reference.md`](../../docs/config-reference.md). The broader
+manual certification procedure and current certification status are in
+[`docs/sso/oidc-conformance.md`](../../docs/sso/oidc-conformance.md).
 
-Edit `config.env` to customise:
-- `SSO_*` — server under test settings
-- `CONFORMANCE_TEST_PLANS` — which OIDC profiles to test (basic, implicit, hybrid, config, dynamic, formpost, session, logout, ciba, jarm, fapi)
+## Manual execution after scaffold repair
 
-## Test Plan Selection
+Once the Compose wiring has been repaired and reviewed:
 
-Open the conformance suite web UI at http://localhost:8080 and:
+```bash
+docker compose up -d --build
+docker compose logs -f conformance-suite
+```
+
+Open `http://localhost:8080` and:
 
 1. Create a new test plan
-2. Select the modules matching `CONFORMANCE_TEST_PLANS`
-3. Point the suite at http://sso-server:8080 (internal Docker network)
+2. Select only the modules enabled in the server-under-test configuration
+3. Point the suite at `http://sso-server:8080` on the internal Docker network
 4. Enter the RP's test client credentials (created automatically by the suite)
 5. Run the tests
+6. Export and archive the exact plan, server commit/configuration, and results
 
-## Supported Test Profiles
-
-| Profile | Status | Notes |
-|---------|--------|-------|
-| OP Basic | ✅ Implemented | Auth Code + ID Token + UserInfo |
-| OP Implicit | ✅ Implemented | Implicit Flow (deprecated) |
-| OP Hybrid | ✅ Implemented | Hybrid Flow |
-| OP Config | ✅ Implemented | Discovery |
-| OP Dynamic | ✅ Implemented | DCR |
-| OP FormPost | ✅ Implemented | form_post response mode |
-| OP Session | ✅ Implemented | session_state + check_session_iframe |
-| OP Logout | ✅ Implemented | end_session + BCL + FCL |
-| OP CIBA | ✅ Implemented | Backchannel Authentication |
-| OP JARM | ✅ Implemented | JWT Secured Auth Response Mode |
-| OP FAPI | ✅ Implemented | FAPI 2.0 Security Profile |
+For certification-quality evidence, use an externally reachable HTTPS issuer
+and the OIDF-required redirect/browser setup rather than treating this
+HTTP-only local topology as the final environment.
 
 ## Troubleshooting
 
-- **Server won't start**: Check `docker compose logs sso-server`
-- **Tests fail with redirect errors**: Ensure `CONFORMANCE_SSO_SERVER` is reachable from the conformance container
-- **Database connection refused**: Check `docker compose logs conformance-db`
+- Server startup: `docker compose logs sso-server`
+- Redirect/network failure: verify the issuer and server URL are reachable from
+  the conformance container.
+- Database failure: `docker compose logs conformance-db`
+
+Profile support and certification status belong only in
+[`docs/sso/oidc-conformance.md`](../../docs/sso/oidc-conformance.md).

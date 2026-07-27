@@ -1,26 +1,34 @@
 # awskms — AWS KMS signer for snaplink/sso
 
+> **Wiring boundary:** this is an opt-in nested module at
+> `infrastructure/kms/awskms/`, with published module path
+> `github.com/snaplink/sso/kms/awskms`. The stock `sso-server` contains the
+> generic external-signer registry but does not register an AWS client or read
+> AWS credentials. Use a custom composition binary that registers/builds this
+> signer before selecting it in signing configuration.
+
 A concrete [`crypto.Signer`](https://pkg.go.dev/crypto#Signer) backed by an
 **AWS KMS asymmetric key**, so JWT signing private keys **never leave the
-KMS HSM**. This is the #1 compliance gate for **FIPS 140-2/3, PCI-DSS, and
-SOC 2**: KMS key material is non-exportable by design — the SSO process
+KMS HSM**. Non-exportable key custody is a common control for **FIPS 140-2/3,
+PCI-DSS, and SOC 2** deployments: the SSO process
 holds only the public half and a key reference, and every signature is a
 KMS round-trip.
 
 ## Why a separate module
 
-This is a **separate nested Go module**
-(`github.com/snaplink/sso/kms/awskms`) so the heavy, vendor-specific
+This is a **separate nested Go module** stored at
+`infrastructure/kms/awskms/` (`github.com/snaplink/sso/kms/awskms`) so the
+heavy, vendor-specific
 `aws-sdk-go-v2` dependency **never enters the core `sso` module's
 `go.mod`** — the core's zero-external-SDK invariant stays intact. Operators
 who need KMS-backed signing opt in by importing this submodule from their
 own `cmd` binary.
 
 It plugs into the SSO signing seam that was already complete: the issuers
-expose `With{ECDSA,RSA}ExternalSigner`, and `defaultimpl/cryptosigner`
-bridges any stdlib `crypto.Signer` into them (handling the ECDSA DER → JWS
-`R‖S` conversion). This package supplies the concrete AWS KMS
-`crypto.Signer` for that seam.
+expose `With{ECDSA,RSA}ExternalSigner`, and
+`infrastructure/defaultimpl/cryptosigner` bridges any stdlib `crypto.Signer`
+into them (handling the ECDSA DER → JWS `R‖S` conversion). This package
+supplies the concrete AWS KMS `crypto.Signer` for that seam.
 
 ## Install
 
@@ -36,9 +44,9 @@ import (
     "github.com/aws/aws-sdk-go-v2/config"
     "github.com/aws/aws-sdk-go-v2/service/kms"
 
-    "github.com/snaplink/sso"
-    "github.com/snaplink/sso/defaultimpl"
-    "github.com/snaplink/sso/defaultimpl/cryptosigner"
+    "github.com/snaplink/sso/infrastructure/defaultimpl"
+    "github.com/snaplink/sso/infrastructure/defaultimpl/cryptosigner"
+    sso "github.com/snaplink/sso/interfaces/sso"
     "github.com/snaplink/sso/kms/awskms"
 )
 
@@ -122,8 +130,9 @@ microseconds in-process). Mitigations:
   amortized over a longer token lifetime.
 - Cache minted tokens / id_tokens where the claim set is stable, or front
   KMS with a short-lived in-process signing cache.
-- Run a **single signing leader** (or share one KMS key across replicas) so
-  JWKS stays consistent; the public key is fetched once and cached.
+- Share one KMS key across replicas, or configure the platform signing-key
+  registry so every replica can publish/adopt the complete verification set.
+  The public key is cached independently in each process.
 
 **Fail-closed:** any KMS error from `Sign` aborts token issuance rather than
 emitting an unsigned token.
@@ -135,7 +144,9 @@ emitting an unsigned token.
 make ci-modules
 
 # or directly:
-cd kms/awskms && go build ./... && go test -race ./...
+cd infrastructure/kms/awskms
+go build ./...
+go test -race ./...
 ```
 
 The unit tests use an **in-process fake KMS client** (a locally generated

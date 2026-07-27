@@ -1,25 +1,33 @@
-# OpenResty front-end for snaplink/sso
+# OpenResty edge prototype for snaplink/sso
 
 This directory ships an OpenResty configuration that sits in front of the
-`cmd/sso-server` binary and adds three things at the edge:
+`cmd/sso-server` API binary and demonstrates three edge concerns:
+
+> **Prototype boundary:** this is not a hosted login/admin frontend and is not
+> part of the stock `sso-server` binary. The product's login, self-service,
+> setup, developer, and admin UIs are separate projects. The Lua verifier here
+> is Ed25519-only and does not reproduce the server's full bearer, issuer,
+> audience, DPoP, mTLS, revocation, or oracle-safe error policy. Do not use it as
+> the sole production authorization boundary without a dedicated security
+> review and conformance tests.
 
 1. **Local JWT verification** — the gateway pulls `/.well-known/jwks.json`
    once per minute and verifies EdDSA-signed access tokens locally with
-   `lua-resty-jwt`. Authenticated requests no longer round-trip the SSO
-   server just to validate the token.
+   `lua-resty-jwt`. This prototype handles only `OKP`/Ed25519 JWKs; ECDSA, RSA,
+   PS256, opaque tokens, and multi-algorithm key sets are unsupported.
 2. **Permission gating** — for protected routes, the first request per
    `(token, client_id)` calls `/permissions/me` and caches the resulting
    set in `ngx.shared.DICT` for 60s. Subsequent requests are checked
-   in-process, so 90%+ of authorization work never touches Go.
-3. **Per-request audit** — `log_by_lua_block` writes a JSON-Lines event for
+   in-process until that cache expires.
+3. **Per-request edge log** — `log_by_lua_block` writes a JSON-Lines event for
    every request (success, failure, 4xx, 5xx) including request id, trace
-   context, latency and upstream status. Pair with Filebeat/Vector/Promtail
-   to ship to your audit store.
+   context, latency and upstream status. This is not a substitute for the
+   platform's tamper-evident audit pipeline.
 
 ## Layout
 
 ```
-deploy/openresty/
+ops/deploy/openresty/
 ├── nginx.conf           # entrypoint
 ├── conf.d/
 │   ├── sso.conf         # server block: routes, TLS, log_by_lua hookup
@@ -35,14 +43,17 @@ deploy/openresty/
 
 ## Prerequisites
 
-OpenResty 1.21+ with the following bundled modules (all are part of the
-default OpenResty distribution):
+OpenResty 1.21+ with the following Lua modules available:
 
 - `lua-resty-jwt`
 - `lua-resty-http`
 - `lua-resty-lock`
 
-If you build OpenResty from source, ensure these are linked.
+The checked-in Dockerfile copies configuration but does not install or verify
+these Lua packages. Confirm the selected base image contains compatible
+versions, or install/pin them explicitly before running the image. Also verify
+that the chosen JWT library supports Ed25519 in the representation passed by
+`jwks_cache.lua`.
 
 ## Running locally
 
@@ -57,7 +68,7 @@ go run . --config config.yaml
 In another, start OpenResty against this config:
 
 ```sh
-cd deploy/openresty
+cd ops/deploy/openresty
 mkdir -p logs ssl
 # Generate a self-signed cert for the dev https listener.
 openssl req -x509 -newkey ed25519 -nodes \
@@ -69,6 +80,10 @@ openresty -p "$PWD" -c nginx.conf
 ```
 
 End-to-end smoke test:
+
+The example below assumes `mobile-app` is present and a password user `alice`
+has been explicitly seeded. The reference server config does not enable that
+user by default.
 
 ```sh
 # 1. Login through the gateway (passes through to SSO).
@@ -91,10 +106,15 @@ tail -n 5 logs/audit.jsonl
 
 | Route | Edge auth | Notes |
 | --- | --- | --- |
-| `/health`, `/.well-known/jwks.json` | none | discoverable for any client |
-| `/auth/*`, `/token`, `/logout` | none | login flow itself can't require login |
+| `/health`, `/.well-known/jwks.json` | none | current public prototype routes; use `/livez` and `/readyz` for real probes |
+| `/auth/login`, `/auth/send-code`, `/auth/callback`, `/token`, `/logout` | none | exact public routes in the current prototype config |
 | `/userinfo`, `/menus/me`, `/permissions/me`, `/roles/me` | `auth.verify()` | JWT must be valid; subject is forwarded via `X-Auth-Subject` |
 | `/api/v1/*` | `auth.verify()` | layer extra RBAC inside Go for admin endpoints |
+
+There is no catch-all proxy. Unlisted protocol routes—including `/auth/mfa`,
+token introspection/revocation, most discovery endpoints, registration, PAR,
+device flow, CIBA, and federation—are not exposed by this prototype until
+explicitly added and tested.
 
 ## Adding a permission gate
 
@@ -115,8 +135,17 @@ exact codes, `<domain>:*`, and `*` wildcards.
 
 ## Production hardening
 
-This config is the smallest thing that demonstrates the architecture. Before
-production, consider:
+This config is the smallest thing that demonstrates the architecture. It is
+not production-ready. Before promoting a derived gateway:
+
+- **Token validation parity** — enforce the expected algorithm before
+  signature verification, issuer, every accepted audience shape, expiry/not
+  before/skew, token type, revocation, DPoP/mTLS binding, and the platform's
+  oracle-safe `invalid_token` behavior. Add ECDSA/RSA/PS256 or explicitly reject
+  deployments that publish those keys.
+- **Authoritative authorization** — treat `X-Auth-*` as trusted only when the Go
+  server is configured to trust this exact proxy CIDR; strip client-supplied
+  values before setting them.
 
 - **Real TLS certs** — replace the self-signed `ssl/dev.{crt,key}` with a
   managed cert (Let's Encrypt, internal CA).

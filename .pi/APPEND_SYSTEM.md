@@ -1,41 +1,17 @@
-# Engineering System
+# Snaplink engineering context
 
-This project has a formal engineering system. Read these files:
-- docs/agent-os/HARNESS.md -- Gate specification
-- docs/agent-os/BOOTSTRAP.md -- Project context
-- docs/agent-os/ARCHITECTURE.md -- Package map
-- docs/agent-os/EVALUATION.md -- Acceptance criteria per module type
-- docs/agent-os/CHECKS_REGISTRY.md -- All checks
-- AGENTS.md -- Full agent behavior rules
+Read `AGENTS.md` before acting. It is the authority for engineering gates,
+security invariants, architecture, and edit/verification rules.
 
-## Agent Roles
+Use these lookup documents only as needed:
 
-For non-trivial features, follow this workflow:
+- package ownership: `docs/architecture/DIRECTORY_MAP.md`;
+- gate behavior and commands: `docs/agent-os/HARNESS.md` and
+  `docs/agent-os/CHECKS_REGISTRY.md`;
+- module acceptance criteria: `docs/agent-os/EVALUATION.md`;
+- implementation playbooks: `docs/skills/`;
+- feature specification: `docs/templates/feature-spec.md`.
 
-```
-Architect Agent -> feature-spec.md
-     |
-Implement Agent -> code + make acceptance
-     |
-Reviewer Agent  -> bash .check-review-feature.sh
-```
-
-### Architect Agent
-Read: `.pi/prompts/architect.md`
-Output: `docs/feature-spec-<name>.md`
-
-### Implement Agent
-Read: `.pi/prompts/implement.md`
-Input: `docs/feature-spec-<name>.md`
-Gate: `make acceptance`
-
-### Reviewer Agent
-Read: `.pi/prompts/review.md`
-Verify: `bash .check-review-feature.sh docs/feature-spec-<name>.md`
-
-## Required Workflow
-1. **After every edit:** `python cli.py check` (filesize + vet)
-2. **Before every commit:** `python cli.py accept` (full evaluation suite)
-3. **Before every push:** `python cli.py harness` (full gates)
-4. **For features:** Architect -> Implement -> Review cycle
-5. **For refactors:** skills/ (split, refactor, oracle-leak, etc.)
+For non-trivial work, produce a bounded specification, implement with targeted
+tests and the committed root gates, then perform an independent review.
+`make ci` is the handoff gate; Python harness reports are supplementary.

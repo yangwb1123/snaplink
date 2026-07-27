@@ -7,22 +7,23 @@ segment IS the layer. The dependency direction is **enforced** by
 `architecture_layer_test.go` (`TestArchitecture_LayerBoundaries`, package
 `archgate` at the repo root, [ADR-0006](../adr/ADR-0006-cognitive-architecture.md)).
 
-## Top-level layout (≤15 dirs)
+## Layered library layout
 
 ```
 shared/          dependency-free kernel        core · spi · security · i18n · trust
-domains/         business capabilities         tenant · region · permissions · federation · connections · metering · anomaly · authenticators · conditionalaccess · identitylink · tokenanomaly · tokenexchange · tokenpolicy · tokenusage · userlifecycle
+domains/         business capabilities         tenant · region · permissions · federation · connections · metering · anomaly · authenticators · conditionalaccess · identitylink · threataction · tokenanomaly · tokenexchange · tokenpolicy · tokenusage · userlifecycle
 protocols/       identity-protocol use-cases   oauth · oidc · scim · fapi · caep · selfservice · compliance · lifecyclereactions · scimprovision
 platform/        cross-cutting capabilities    cluster · signingkeys · registry · netpolicy · metrics · tracing · bootstrap · buildinfo · releases · migrate · geo · audit · sse · configaudit · lifecycle (dr · rotation)
-interfaces/      inbound delivery + Server API grpcserver · adapters · admin · apidocs · middleware · cors · ratelimit · web · ssoclient · snapshot · sso(the public Server)
-infrastructure/  concrete SPI impls            defaultimpl · ldap · kerberos · radius · saml · redis · extauthz · kafka · mqtt · postgres · kms/*
-internal/        unexported helpers            internal/auth/* (domains) · internal/handler (interfaces)
-cmd/ · config/ · docs/ · gen/ · proto/ · test/ · ops/ · checks/
+interfaces/      inbound delivery + Server API grpcserver · adapters · admin · apidocs · middleware · cors · ratelimit · ssoclient · snapshot · sso (public API-only Server)
+infrastructure/  concrete SPI impls            defaultimpl · redis · postgres · sms · optional nested ldap/kerberos/radius/saml/extauthz/kafka/mqtt/kms modules
+internal/        unexported helpers            internal/auth/* (domains) · internal/{handler,adminuser} (interfaces)
+cmd/ · config/ · docs/ · gen/ · proto/ · test/ · ops/ · checks/  composition/tooling
 ```
 
 The repo root holds **no library `.go` files** — only the committed gate tests
 (`package archgate`: architecture + maintainability budgets). The public Server
 API is `github.com/snaplink/sso/interfaces/sso` (package `sso`).
+It serves APIs only; hosted UIs are separate frontend projects.
 
 ## Dependency direction (one-way, toward the shared kernel)
 
@@ -46,13 +47,13 @@ not a DDD "audit domain" — hence platform.
 
 ## Notes on the layered tree
 
-- This layout was reached by physically moving the packages (a breaking
-  import-path change); the move table, import codemod, and consumer-migration
-  script are in [V2-MIGRATION.md](V2-MIGRATION.md). When published it warrants a
-  major-version tag ([ADR-0003](../adr/ADR-0003-protocol-grouping.md)).
-- Nested modules (ldap, kerberos, radius, saml, redis, extauthz, kms/*) keep their
-  own `go.mod` and module paths; only their directories moved under
-  `infrastructure/` (their `replace github.com/snaplink/sso => ../../` was adjusted).
+- This layout was reached by physically moving packages without changing the
+  root module path. That was an import-path-breaking in-place reorganization;
+  retired migration records are indexed in [HISTORY.md](../HISTORY.md).
+- Nested modules
+  (`infrastructure/{ldap,kerberos,radius,saml,extauthz,kafka,mqtt,kms/*}` and
+  `cmd/{sso-mcp,sso-operator}`) retain their own `go.mod`. Redis and Postgres
+  are root-module packages.
 - `gen/` (generated protobuf Go) and `proto/` (`.proto` sources) stay top-level —
   they are codegen-coupled (`buf`).
 
@@ -69,4 +70,5 @@ not a DDD "audit domain" — hence platform.
    (`webauthnsqlite`), don't nest a 4th level (gate: `maxdepth_test.go`).
 5. Stay within the budgets (file ≤ 500 lines, function ≤ 50 / cyclo ≤ 15) and
    **never add a maintainability exemption for new code** — the lists are
-   count-capped and only shrink. Full contributor rule: AGENTS.md §0.6.
+   count-capped and only shrink. Full contributor rule:
+   [AGENTS.md §0.6](../../AGENTS.md).

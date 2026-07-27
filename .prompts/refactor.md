@@ -10,7 +10,7 @@ fix that first (AGENTS.md §0.1 Cardinal rule).
 - **No "while I'm here" scope creep** (AGENTS.md Don'ts). One concern per change.
 - **Stay in budget** (ADR-0005): split a >500-line file into cohesive
   `*_<domain>.go` files in the *same* package (pure relocation + `goimports -w`),
-  per `skills/refactor-large-file.md`. Don't add to an exemption list.
+  per `docs/skills/split-large-file/SKILL.md`. Don't add to an exemption list.
 - **Ratchet artifacts move with the code.** The size/complexity/architecture
   gates key on relative path (+ function name). When you move or rename a file,
   update the matching exemption keys **in the same commit**, then regenerate +
@@ -21,19 +21,17 @@ fix that first (AGENTS.md §0.1 Cardinal rule).
   path is a breaking change — needs an ADR + (for nested modules) a `go.mod`
   path + `replace` update, deferred to a major version.
 
-## High-risk zone — sequential, not autonomous
-Extracting auth/token/crypto handlers from the root `package sso` into
-hexagonal `HandleX(deps Deps, ctx)` functions: do **one file per reviewed
-commit**. Declare the `Deps` interface in the destination package, add a
-`BuildXDeps` completeness test that fails on any nil field, and prove behavior
-parity with the oracle-leak / anti-enumeration / E2E suites. (A prior partial
-`ServerDeps` migration silently regressed `IsUnknownTokenErr` / cross-replica /
-413 / readyz — do not repeat it via parallel agents.)
+## High-risk zone
+Extracting auth/token/crypto behavior from `interfaces/sso` into a lower layer
+must preserve the composition package's wire behavior. Declare the narrow
+`Deps` interface in the destination package and prove parity with oracle-leak,
+anti-enumeration, refresh-replay, and cross-server tests. Do not move public
+import paths merely to reduce a file count.
 
 ## Verify (safe; no scaffolding regen)
 ```
 go build ./... && go vet ./...
-go test -run 'TestMaintainability_|TestArchitecture_ImportBoundaries' ./...
+go test -run 'TestMaintainability_|TestArchitecture_' .
 go test ./... -race
-python cli.py check-root && python cli.py complexity && python cli.py architecture
+python cli.py check-root && python cli.py check-invariants
 ```

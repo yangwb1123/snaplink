@@ -2,7 +2,7 @@
 
 Operational guide for AI agents. Follows [agents.md](https://agents.md). User instructions override conflicts. **§3 invariants are gates — violations are regressions.**
 
-**Agent OS:** [BOOTSTRAP.md](docs/agent-os/BOOTSTRAP.md) (context) → [ARCHITECTURE.md](docs/agent-os/ARCHITECTURE.md) (package map) → [HARNESS.md](docs/agent-os/HARNESS.md) (gate spec) → [EVALUATION.md](docs/agent-os/EVALUATION.md) (acceptance criteria) → [CHECKS_REGISTRY.md](docs/agent-os/CHECKS_REGISTRY.md) (all checks) → [Skills](docs/skills/) (refactor patterns)
+**Agent OS:** [BOOTSTRAP.md](docs/agent-os/BOOTSTRAP.md) (context) → [ARCHITECTURE.md](docs/agent-os/ARCHITECTURE.md) (package map) → [HARNESS.md](docs/agent-os/HARNESS.md) (gate spec) → [EVALUATION.md](docs/agent-os/EVALUATION.md) (acceptance criteria) → [CHECKS_REGISTRY.md](docs/agent-os/CHECKS_REGISTRY.md) (agent engineering checks) → [Skills](docs/skills/) (refactor patterns)
 
 **Reference:** [Config](docs/config-reference.md) | [Features](docs/feature-matrix.md) | [Observability](docs/observability.md) | [Errors](docs/error-codes.md) | [OpenAPI](docs/openapi.yaml) | [ADRs](docs/adr/) | [Arch rules](.arch/rules.yaml) | [Prompts](.prompts/)
 
@@ -10,11 +10,13 @@ Operational guide for AI agents. Follows [agents.md](https://agents.md). User in
 
 ## 0. Engineering Principles (HARD GATES)
 
-Every threshold is declared in `engineering.yaml` (single source — don't
-restate values elsewhere) and enforced by the committed root gate tests
-(`package archgate`), which run inside `make ci` independent of the generative
-`make harness`. `python cli.py <command>` runs any check singly;
-[CHECKS_REGISTRY.md](docs/agent-os/CHECKS_REGISTRY.md) catalogs them all.
+The repository currently has two enforcement paths: declarative Python checks
+loaded from `engineering.yaml`, and committed root Go gate tests
+(`package archgate`) that run inside `make ci`. When they disagree, satisfy the
+stricter rule and report the drift; never edit a threshold as part of unrelated
+feature work. `python cli.py <command>` runs an individual or composite check;
+[CHECKS_REGISTRY.md](docs/agent-os/CHECKS_REGISTRY.md) catalogs both agent
+engineering enforcement paths and their known gaps.
 
 ### 0.1 Code Budgets
 
@@ -22,17 +24,18 @@ restate values elsewhere) and enforced by the committed root gate tests
 |---|---|---|
 | File lines (`.go`) | ≤ 500 | STOP feature. Split first ([skill](docs/skills/split-large-file/)) |
 | Function lines | ≤ 50 | Extract sub-functions |
-| Cyclomatic complexity | ≤ 15 | [refactor-high-complexity](docs/skills/refactor-high-complexity.md) |
+| Cyclomatic complexity | ≤ 15 | [refactor-high-complexity](docs/skills/refactor-high-complexity/SKILL.md) |
 | If-nesting depth | ≤ 3 | Guard clauses / early return |
 | Directory depth | ≤ 3 | Flatten (merge leaf dir into parent name); `gen/`, `ops/deploy/`, `testdata` exempt |
 | Non-test Go files per dir | ≤ 10 | Split flat package into cohesive sub-packages |
-| Subdirs per dir | ≤ 15 | Regroup leaf packages; see `directory_fanout_test.go` |
+| Subdirs per dir | ≤ 15 contributor target | Python config rejects >15; the committed Go gate currently rejects >16 — do not use the one-directory gap |
 
-Exemption maps are count-capped and SHRINK-ONLY — adding one fails the build.
-The per-file and per-function backlogs are **zero**. Fan-out ceilings are
-frozen per directory: `interfaces/sso` is AT its 57 non-test-file ceiling —
-extend an existing file or extract to a domain package (`_test.go` files never
-count against a ceiling).
+The file/function exemption maps are mechanically capped at zero; fan-out maps
+have count latches and frozen per-directory ceilings. `layerExemptions` is also
+SHRINK-ONLY by policy, but has no automatic count latch, so review must reject
+every addition. `interfaces/sso` is AT its 60 non-test-file ceiling — extend an
+existing file or extract to a domain package (`_test.go` files never count
+against a ceiling).
 
 **Cardinal rule:** if your edit would breach a budget, SPLIT FIRST, then
 continue. Refactoring always outranks feature work (480+ line file you'll
@@ -45,7 +48,7 @@ toward the shared kernel — see [DIRECTORY_MAP](docs/architecture/DIRECTORY_MAP
 (canonical), enforced by `architecture_layer_test.go`:
 
 ```
-interfaces/* → protocols/* → domains/* → platform/* | infrastructure/* → shared/*
+composition → interfaces → infrastructure → protocols → domains → platform → shared
 ```
 
 **Prohibits:** `protocols/oauth ↔ protocols/oidc` (either direction — route
@@ -77,7 +80,7 @@ domain packages via the hexagonal pattern (§4 Common Tasks).
 | Pattern | Do instead |
 |---|---|
 | `TODO: refactor later` | Refactor immediately |
-| Appending to a 490+ line file | Split first ([refactor-large-file](docs/skills/refactor-large-file.md)) |
+| Appending to a 490+ line file | Split first ([split-large-file](docs/skills/split-large-file/SKILL.md)) |
 | `protocols/oidc` ↔ `protocols/oauth` import | Route via `interfaces/sso/handlers.go` |
 | `e.Metadata = map{...}` | `audit.SetMeta(e, k, v)` only |
 | Mocks where a Memory* impl exists | Real `MemoryProvider`/`MemorySink`/`memory.Registry`/… |
@@ -97,21 +100,27 @@ domain packages via the hexagonal pattern (§4 Common Tasks).
 
 ## 1. System Overview
 
-OAuth 2.0 + OIDC SSO server SDK + runnable binary. All concerns are
+OAuth 2.0 + OIDC SSO server SDK + runnable API-only binary. All concerns are
 interfaces; defaults in `infrastructure/defaultimpl/` (memory) +
-`infrastructure/defaultimpl/sqlite/` (pure-Go, no CGO). No external SaaS deps.
+`infrastructure/defaultimpl/sqlite/` (pure-Go, no CGO). No required external
+SaaS dependency.
+Hosted login, admin, self-service, developer, and setup UIs are separate
+frontend projects; neither the SDK nor `sso-server` serves static frontend
+bundles.
 
 ```bash
 go build ./...
 go test ./... -race
 go test ./test/ -run TestE2E -v    # cross-wire HTTP + JWKS + bufconn
-make ci                             # gofmt + vet + race + build + proto-lint + ci-modules
+make ci                             # fmt + vet + race + build + examples + proto-lint + ci-modules + config validation
 ```
 
-**Middleware stack** (probes registered OUTSIDE):
+**Middleware stack** (outermost → router; probes registered OUTSIDE):
 ```
 /metrics, /livez, /readyz                         ← outside ratelimit
-tracing → ratelimit → bodyLimit → metrics → CORS → router
+panic recovery → tracing → metrics → trusted proxy → ratelimit → degradation
+→ API version → body limit → compression → CORS → security headers
+→ request logging → router
 ```
 
 ---
@@ -125,7 +134,7 @@ keeps only package-level invariants not already stated in full in §3:
 
 | Package | Invariant not covered elsewhere |
 |---|---|
-| `shared/core` | SPIs: User/Client/Session/Token/Subject/AuthRequest/AuthResult + Authenticator/UserProvider/ClientStore/SessionManager/TokenIssuer/JWK; wire consts + sentinels; imports NO internal package |
+| `shared/core` | SPIs: User/Client/Session/Token/Subject/AuthRequest/AuthResult + Authenticator/UserProvider/ClientStore/SessionManager/TokenIssuer/JWK; wire consts + sentinels; imports NO snaplink package |
 | `protocols/oauth` | AuthCode/Device/Refresh/PAR stores, hexagonal grant handlers; single-use `DELETE RETURNING` (no read-then-delete race); refresh family rotation |
 | `protocols/oidc` | `at_hash` required when access_token is in the response; discovery derived from server state; `claims` parameter rides `AuthCode.RequestedClaims` through every store into the ID-token/access-token projection |
 | `shared/security` | `AsymmetricJWSAlgs`: EdDSA/ES256-512/RS256/PS256 ONLY; `alg=none` banned; algorithm checked BEFORE signature verify; outbound metadata/JAR fetches ride `securityverify.SSRFGuardedDialer` (dial-time DNS-rebind block, oracle-stable errors) |
@@ -268,7 +277,7 @@ resolution, `interfaces/ssoclient/rs`, push-callback client IP.
 | New audit Sink | Implement `audit.Sink` (+ `audit.Closer`); wire via `audit.New(...)` / `MultiSink` |
 | New permissions backend | `permissions.Provider` in `domains/permissions/<name>/`; run `permissionstest.ConformanceSuite` |
 | New gRPC service | `proto/<name>/v1/<name>.proto` → regen → `interfaces/grpcserver/<name>.go` → `bufconn` test |
-| New OAuth/OIDC grant | `oauth.BindParams`; HTTP Basic > body creds; oracle-leak; `DELETE RETURNING`; wire in `interfaces/sso/sso.go`; discovery |
+| New OAuth/OIDC grant | `oauth.BindParams`; HTTP Basic > body creds; oracle-leak; `DELETE RETURNING`; wire in `interfaces/sso/server_routes*.go`; discovery |
 | New credential endpoint | `tokenNoStoreHeaders(ctx)` at entry; `setBearerChallenge(ctx, ...)` on 401 |
 | Extract to domain pkg | Pure functions in `internal/<module>/` → thin `(s *Server)` wrapper → update `Deps` iface → `python cli.py check-root` |
 

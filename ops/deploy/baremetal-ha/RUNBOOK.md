@@ -1,13 +1,27 @@
 # Bare-Metal HA Runbook — sso-server
 
-Operator procedures for the production HA deployment of `sso-server` (OAuth2 /
-OIDC). Topology and rationale: `docs/superpowers/specs/2026-06-26-baremetal-ha-data-layer-design.md`.
-Artifacts in this directory drop directly onto VMs; the `docker-compose.yml` here
-stands up the same topology on one host for CI / dev / demo.
+Intended operator procedures for the bare-metal HA reference topology of
+`sso-server` (OAuth2/OIDC APIs). Retired design rationale is indexed in
+[`docs/HISTORY.md`](../../../docs/HISTORY.md); current runtime architecture is
+in `docs/deployment.md`.
+
+> **Current status — validation draft, not an executable production runbook.**
+> The checked-in Compose/app healthchecks execute `wget` and shell commands in
+> the distroless `sso-server` image; `sso/config.yaml` fails schema validation
+> on obsolete `server.addr` and `server.trusted_proxies` paths; the HAProxy
+> `:443` binding has no TLS configuration; `smoke.sh` contains redacted
+> placeholders; and no systemd unit files are shipped. Fix those artifacts,
+> substitute host-specific addresses, credentials, certificates and services,
+> then rehearse every procedure in staging before production use.
+
+Artifacts in this directory are templates for VMs; `docker-compose.yml` is
+intended to collapse the same topology onto one host after the blockers above
+are resolved. The server provides APIs only; product browser frontends are
+separate deployments.
 
 Tiers: 3-node etcd (Patroni DCS + `cluster.Bus` + signing-key registry) ·
 Postgres HA (Patroni, 1 leader + 2 sync-capable replicas) · Redis Cluster (3
-master + 3 replica, 16384 slots) · stateless `sso-server` app tier · HAProxy +
+master + 3 replica, 16384 slots) · shared-state `sso-server` app tier · HAProxy +
 keepalived edge presenting VIP `10.0.0.100`.
 
 Real names used throughout: `etcd1-3`, `pg1-3` (Patroni scope `sso`),
@@ -19,8 +33,8 @@ stats, `5432` PG leader, `5433` PG replicas, `8008` Patroni REST, `6379` Redis,
 
 > Two run modes. Commands below show the **compose** form
 > (`docker compose exec <svc> ...`). On VMs the same config files run under
-> **systemd** units (one service per process); drop the `docker compose exec
-> <svc>` prefix and run the inner command on the owning VM. Per-step systemd
+> **systemd** units (one service per process); drop the
+> `docker compose exec <svc>` prefix and run the inner command on the owning VM. Per-step systemd
 > notes are inline.
 
 ---
@@ -63,8 +77,9 @@ Rules:
   `haproxy-b` + keepalived `state BACKUP` (priority 100) on VM2. The VIP
   `10.0.0.100/24` (`virtual_router_id 51`) floats between VM1 and VM2 only. VM3
   runs no edge.
-- App tier is stateless: scale `sso-server` out to more VMs freely (mind the
-  Postgres connection budget, §5).
+- The app tier is stateless only after **every enabled concern** selects shared
+  Redis/Postgres/etcd state. Then scale `sso-server` out while observing the
+  Postgres connection budget (§5).
 
 VM-mode file placement (per VM): the relevant config file(s) from this directory
 plus a systemd unit. Example VM1: `etcd`, `patroni/patroni.yml`,
@@ -100,8 +115,9 @@ docker compose up -d etcd1 etcd2 etcd3
 # GATE: all three healthy
 docker compose exec etcd1 etcdctl endpoint health --cluster
 ```
-Expected: three `http://etcdN:2379 is healthy` lines. (systemd: `systemctl start
-etcd` on VM1-3, then the same `etcdctl endpoint health --cluster`.)
+Expected: three `http://etcdN:2379 is healthy` lines. On systemd, run
+`systemctl start etcd` on VM1-3, then the same
+`etcdctl endpoint health --cluster`.
 
 ### Step 2 — Postgres (Patroni)
 
@@ -155,7 +171,7 @@ docker compose run --rm --no-deps haproxy-a haproxy -c -f /usr/local/etc/haproxy
 docker compose up -d haproxy-a haproxy-b
 sleep 8
 # GATE: app reachable through the edge; :5432 lands on the writable leader
-curl -ks https://localhost:8080/readyz                       # -> 200
+curl -fsS http://localhost:8080/readyz                       # -> 200
 docker compose exec -e PGPASSWORD="$SSO_DB_PASSWORD" haproxy-a sh -c \
   'apk add --no-cache postgresql-client >/dev/null 2>&1; \
    psql "host=localhost port=5432 user=sso dbname=sso" -tAc "select pg_is_in_recovery()"'
@@ -315,9 +331,10 @@ etcdctl snapshot restore /backup/etcd-<date>.db \
   --data-dir /etcd-data-restored
 # repeat per node with its own --name / --initial-advertise-peer-urls, then start all three.
 ```
-After restore, restart Patroni so it re-reads the DCS; the app's `cluster.Bus`
-reconnects automatically (fail-open, never blocked the request path while etcd
-was down).
+After restore, restart Patroni so it re-reads the DCS. The app must resubscribe
+to the invalidation Bus, flush affected caches, and re-seed revocation deny
+sets before clearing degraded state. A failed re-seed keeps `/readyz` red; do
+not treat etcd recovery as transparently fail-open.
 
 ---
 
@@ -325,8 +342,9 @@ was down).
 
 ### 5.1 sso-server replicas vs auth RPS / HAProxy maxconn
 
-Stateless tier — size by `peak_auth_RPS ÷ per_replica_throughput`, then add one
-replica for N+1 headroom. HAProxy `maxconn 20000` (global) is the edge ceiling.
+Shared-state tier — once all enabled state is externalized, size by
+`peak_auth_RPS ÷ per_replica_throughput`, then add one replica for N+1
+headroom. HAProxy `maxconn 20000` (global) is the edge ceiling.
 
 | Peak auth RPS | sso replicas | HAProxy global `maxconn` | Notes |
 |---|---|---|---|
@@ -385,17 +403,18 @@ needed at this scale.
 ## 6. Security Hardening checklist
 
 - [ ] **XFF trusted-edge contract.** Confirm HAProxy **strips inbound** and
-  **re-sets** the forwarded headers (in `haproxy/haproxy.cfg` `frontend
-  sso_http`): `http-request del-header X-Forwarded-For` / `del-header
-  X-Forwarded-Proto`, then `set-header X-Forwarded-For %[src]` / `set-header
-  X-Forwarded-Proto https`. `sso-server` trusts only the first hop
+  **re-sets** the forwarded headers (in `haproxy/haproxy.cfg`, frontend
+  `sso_http`): `http-request del-header X-Forwarded-For` /
+  `del-header X-Forwarded-Proto`, then `set-header X-Forwarded-For %[src]` /
+  `set-header X-Forwarded-Proto https`. `sso-server` trusts only the first hop
   (`trusted_proxies: [10.0.0.0/8, 172.16.0.0/12]` in `sso/config.yaml`). Verify a
   client-supplied `X-Forwarded-For` is overwritten, not honored — otherwise geo /
   ratelimit IP-keying / base-URL can be spoofed (AGENTS.md §3). This is a hard
   invariant.
-- [ ] **TLS at the edge.** HAProxy terminates TLS and forwards
-  `X-Forwarded-Proto: https`. Bind a real cert on `:443` (passthrough is an
-  alternative). Redirect `:80`→`:443`.
+- [ ] **TLS at the edge.** The checked-in HAProxy config does **not** terminate
+  TLS even though it binds `:443` and stamps `X-Forwarded-Proto: https`. Add a
+  real `bind :443 ssl crt ...` (or put another terminating edge in front),
+  verify the trusted-proxy contract, and redirect `:80` to `:443`.
 - [ ] **TLS on backend links.** Set `redis.tls.enabled: true` + `ca_file` in
   `sso/config.yaml` (currently `false` for the one-host demo); enable
   `sslmode=verify-full` in the Postgres DSN (demo uses `prefer`); enable TLS +

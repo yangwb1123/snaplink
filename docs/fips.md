@@ -6,6 +6,13 @@ config flag adds on top of it. Both are **opt-in and default-off** — a
 deployment that does neither is byte-identical to a build without this
 document.
 
+> **Compliance boundary:** enabling the Go Cryptographic Module and
+> `keys.signing.fips_mode` does not certify the snaplink product or an
+> operator's deployment. A compliance claim must name the exact Go toolchain,
+> `GOFIPS140` module version/CMVP certificate, build artifact and runtime
+> configuration that were assessed. `GOFIPS140=latest` may select module code
+> that is not yet covered by an issued certificate.
+
 ## What "FIPS mode" actually is here
 
 Since Go 1.24, the Go toolchain ships a FIPS 140-3 validated Cryptographic
@@ -90,6 +97,10 @@ docker build --build-arg GOFIPS140=latest -t snaplink/sso-server-fips .
 Pick `certified` if an auditor needs to cite an actual NIST certificate
 number; pick `latest` (or `inprocess`) if you want current FIPS-approved
 algorithm behavior without waiting on certification lag.
+
+Record the resolved Go version and module selection in the release evidence;
+do not document only the symbolic selector because its target can change with
+the toolchain.
 
 ## Running
 

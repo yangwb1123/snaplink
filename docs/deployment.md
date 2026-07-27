@@ -5,6 +5,10 @@ Every capability below is grounded in what the code actually does — where the
 stock binary stops and the SDK begins is called out explicitly, because it
 changes how you scale.
 
+The runtime is API-only. Login, admin, self-service, developer and setup UIs
+are separate deployments and are normally reverse-proxied at the same public
+origin; `sso-server` does not serve their static assets.
+
 - [1. Build](#1-build)
 - [2. Run a single instance](#2-run-a-single-instance)
 - [3. Configuration model](#3-configuration-model)
@@ -32,9 +36,13 @@ GOFIPS140=latest CGO_ENABLED=0 go build -o sso-server ./cmd/sso-server
 docker build --build-arg GOFIPS140=latest -t snaplink/sso-server-fips .
 ```
 
-Two binaries ship: **`sso-server`** (the runtime) and **`sso-ctl`** (offline
-operator toolbelt: `audit-verify`, `import`, `migrate`, `snapshot`, `config
-validate`, `hash`, `version`).
+The normal engineering build produces **`sso-server`** (runtime) and
+**`sso-ctl`** (offline operator toolbelt: `audit-verify`, `import`, `migrate`,
+`snapshot`, `config validate`, `hash`, `version`). The GoReleaser distribution
+also includes the separately-moduled **`sso-mcp`** gateway; it is not part of
+`python cli.py build`'s two-binary gate. See
+[`cmd/sso-mcp/README.md`](../cmd/sso-mcp/README.md) for its tools, configuration,
+and security boundary.
 
 ## 2. Run a single instance
 
@@ -78,16 +86,14 @@ Each pluggable concern picks a backend via its `backend:` key. **What the
 | `registry`, `netpolicy` | `memory` · `etcd` |
 | `config` source | file · env · `etcd` |
 
-> **Both Redis AND Postgres backends are now wired into the stock binary.** Redis
+> **Both Redis AND Postgres backends are wired into the stock binary.** Redis
 > (`backend: redis` on the hot stores, configured by one shared `redis:` block —
 > single/sentinel/cluster) and Postgres/CockroachDB (`backend: postgres` on the
-> durable stores, one shared `postgres:` block). Each lives in a separate Go
-> module (`infrastructure/redis/`, `infrastructure/postgres/`) pulled in by
-> `cmd/sso-server` via go.mod `replace`, so their dependencies (go-redis, pgx)
-> enter the *binary* build but not the SDK library packages. Sessions take their
-> own `identity.session_backend` so the hot session store can be Redis while
-> durable clients/users stay on a Postgres cluster. See §6 for the full HA
-> topology.
+> durable stores, one shared `postgres:` block). Both are root-module
+> infrastructure packages, so their dependencies are tracked by the root
+> `go.mod`. Sessions take their own `identity.session_backend` so the hot
+> session store can be Redis while durable clients/users stay on a Postgres
+> cluster. See §6 for the full HA topology.
 
 ## 4. How clients call it
 
@@ -97,6 +103,9 @@ Each pluggable concern picks a backend via its `backend:` key. **What the
 | Ops / control plane | **gRPC `:8081`** + **REST `/api/v1/admin/*`** | services: admin (clients/users/tenants/permissions/releases/snapshots/tokens), authz, audit, discovery, netpolicy — gated by `admin:read` / `admin:write`. |
 | **Go downstream service** | **`interfaces/ssoclient`** | `remote` verifies tokens **locally** against cached JWKS (the SSO server is **off the per-request hot path**) and calls authz/audit over gRPC; also `local` (embed), `dev` (allow-all), `bootstrap`. |
 | Go app embedding SSO | **SDK** | `sso.NewServer(opts...).Handler()` on any `net/http` listener. |
+
+Frontend applications are ordinary HTTP clients of these APIs. They are not a
+fifth static-file surface in this repository.
 
 Minimal RP flow over the wire:
 
@@ -109,26 +118,19 @@ curl https://sso.example.com/userinfo -H 'Authorization: Bearer <access_token>'
 
 ## 5. Kubernetes
 
-Manifests live in [`ops/deploy/k8s`](../ops/deploy/k8s) (Kustomize):
+The canonical Kustomize tree is
+[`ops/deploy/kustomize`](../ops/deploy/kustomize):
 
 ```bash
-kubectl apply -k ops/deploy/k8s/
+kubectl kustomize ops/deploy/kustomize/overlays/dev/
+kubectl kustomize ops/deploy/kustomize/overlays/prod/
 ```
 
-What the base gives you: a `Deployment` (pod anti-affinity, non-root + seccomp
-hardening, `--config /etc/sso/config.yaml`, `SSO_*` env-override hooks), a
-`Service` (8080/8081), a `ConfigMap` (hashed → rollout on change), and a
-`namespace`. The kubelet hits `/livez` + `/readyz` (outside the rate limiter).
-
-**For production, a ready-made HA overlay ships at
-[`ops/deploy/k8s-prod`](../ops/deploy/k8s-prod)** (`kubectl apply -k
-ops/deploy/k8s-prod/`): it layers an `HPA` (safe because state is shared), a
-`PodDisruptionBudget`, zone `topologySpreadConstraints`, a `preStop` drain +
-`terminationGracePeriodSeconds`, a tolerant `/readyz` probe, secret-injected
-backend credentials, and the Tier-B config (hot → Redis Cluster, durable →
-Postgres, coordination → etcd). Still pin the image to a digest and replace the
-placeholder Secret. The base `replicas: 2` with the default `memory` backend is
-**not** correct for stateful flows — pick a **shared-state strategy (§6)**.
+Render and review before applying. The base still models an unsafe
+multi-replica/memory shape; development must use one replica and production
+must externalize every enabled stateful concern. The canonical
+[Kustomize README](../ops/deploy/kustomize/README.md) records current asset
+blockers and required external services.
 
 `ops/deploy/compose/` runs the same image with Prometheus + Grafana
 (dashboards/alerts provisioned) for a local/observability stack.
@@ -157,9 +159,11 @@ install), so JWKS is fleet-consistent with no leader election. `registry`,
 ### 6b. Shared state — the part that decides your topology
 
 Coordination events are not the *primary data*. Auth codes, sessions, refresh
-tokens, PAR/device/CIBA requests, MFA challenges live in **stores**, and the
-binary's stores are `memory` (per-pod) or `sqlite` (file-local). **Neither is
-shared across replicas.** Consequence:
+tokens, PAR/device/CIBA requests and MFA challenges live in **stores**.
+`memory` is per-process and a per-pod SQLite DSN is file-local; neither is
+shared across replicas. The stock binary also supports shared Redis hot stores
+and Postgres durable stores, but the operator must select them explicitly.
+With a local backend selected:
 
 > With the default `memory` (or per-pod `sqlite`) backend and >1 replica, an
 > authorization code minted on replica A is invisible to replica B, so the
@@ -180,14 +184,13 @@ So choose a tier:
 | **B — HA, shared hot store** | N replicas, hot stores `backend: redis` (Redis Cluster) + etcd Bus | true horizontal scale; a config choice on the stock binary today |
 | **C — verification fleet** | Many downstream services, each `ssoclient/remote` (local JWKS) | always — this side scales freely regardless of the SSO server's tier |
 
-> **Tier B is a config choice on the stock binary now.** Set `backend: redis` on
+> **Tier B is a config choice on the stock binary.** Set `backend: redis` on
 > the hot stores (auth_code, refresh, session via `identity.session_backend`,
 > par, device_code, ciba, jti_replay, mfa.challenge) and `ratelimit`, give a
 > shared `redis:` block (`mode: cluster`), set `backend: postgres` on the durable
 > stores (identity, permissions, tenant, audit, consent, …) with a shared
 > `postgres:` block, and turn on the etcd Bus. Both Redis and Postgres backends
-> are separate Go modules pulled into the binary build (not the SDK library
-> packages) via go.mod `replace` directives.
+> are root-module infrastructure packages wired by `cmd/sso-server`.
 
 Tier B `config.yaml` (hot → Redis Cluster, durable → Postgres, coordination → etcd;
 secrets via `SSO_REDIS__PASSWORD` / `SSO_POSTGRES__DSN`):

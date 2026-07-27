@@ -2,23 +2,31 @@
 
 ## Status
 
-Accepted (2026-06-29).
+Accepted (2026-06-29). Partially implemented: all current proto packages are
+stable `v1`; HTTP version negotiation, deprecation headers, and one opt-in
+`v2alpha` proof route exist. No `v2alpha`/`v2beta` proto service has shipped.
 
 ## Context
 
 All admin, audit, authz, and discovery protos are published as `v1`:
 
 ```
-proto/admin/v1/{clients,permissions,releases,snapshots,tenants,tokens,users}.proto
+proto/admin/v1/{clients,keys,permissions,releases,snapshots,tenants,tokens,users}.proto
 proto/audit/v1/audit.proto
 proto/authz/v1/authz.proto
 proto/discovery/v1/discovery.proto
 proto/netpolicy/v1/netpolicy.proto
 ```
 
-There is currently no documented versioning strategy, no deprecation annotations on any field or message, and no `v2alpha` / `v2beta` preview paths. This makes it unclear how to introduce breaking changes when the API needs to evolve.
+Every current proto carries a stable-package header. There are no deprecated
+fields/messages and no preview proto directories because no breaking successor
+has been introduced. The HTTP Server already supports opt-in `Accept-Version`
+negotiation, `Deprecation`/`Sunset` headers, and
+`GET /api/v2alpha/version` as a proof of the preview-path mechanism.
 
-A `proto-breaking` Make target runs [`buf breaking`](https://buf.build/docs/breaking/overview) in CI against the `main` branch:
+A `proto-breaking` Make target can run
+[`buf breaking`](https://buf.build/docs/breaking/overview) against `main`. It
+is not part of default `make ci`:
 
 ```makefile
 proto-breaking: ## Check proto wire-breaking vs main.
@@ -96,7 +104,9 @@ Adopt Google's API versioning conventions for gRPC (as documented in the [Google
     // Breaking changes are not permitted in this package without a minimum 6-month deprecation window.
     ```
 
-8. **buf configuration** — `buf.yaml` (or `buf.gen.yaml`) should declare the `v1` packages as stable and `v2alpha`/`v2beta` packages as unstable so that `buf breaking` correctly enforces different rules for each tier.
+8. **buf configuration** — `proto/buf.yaml` / `proto/buf.gen.yaml` and CI must
+   keep stable `v1` packages under breaking-change protection. Add
+   preview-specific rules when the first preview proto package is created.
 
 ## Consequences
 
@@ -115,10 +125,15 @@ Adopt Google's API versioning conventions for gRPC (as documented in the [Google
 
 ## Compliance
 
-This ADR is enforced by convention and code review. There is no automated gate that tags a proto as `v1` without a deprecation annotation — compliance depends on:
+This ADR is enforced by code review and protocol tooling. There is no custom
+lint rule that validates every lifecycle statement, so compliance depends on:
 
 - **Code reviews** verifying that new proto additions follow the rules above.
-- **The existing `proto-breaking` Make target** (buf breaking against `main`), which catches wire-incompatible changes regardless of version tier.
+- **The `proto-breaking` Make target** (buf breaking against `main`) when run
+  for a proto change; default `make ci` performs proto linting but not this
+  comparison.
+- **Server integration tests** for `Accept-Version`, deprecation headers, and
+  the opt-in `v2alpha` proof route.
 - **Manual audit** before each release to confirm deprecation windows are honoured and reservation annotations are in place.
 
 If a future gate (e.g. a `buf lint` rule or a committed check script) can enforce parts of this policy automatically, it should be added and this section updated.

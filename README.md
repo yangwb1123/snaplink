@@ -4,9 +4,10 @@
 [![engineering gates](https://github.com/snaplink/sso/actions/workflows/engineering.yml/badge.svg)](https://github.com/snaplink/sso/actions/workflows/engineering.yml)
 
 An OAuth 2.0 + OpenID Connect **SSO server**, shipped two ways: as a **Go SDK** you
-embed as a library, and as a **runnable binary** you configure with YAML. Pure
-Go (no CGO), no external SaaS dependencies; in-memory and pure-Go SQLite default
-backends, with optional etcd / Redis for clustering.
+embed as a library, and as a **runnable, API-only binary** you configure with
+YAML. Pure Go (no CGO for the default build), no required external SaaS
+dependencies; in-memory and pure-Go SQLite default backends, with optional
+Redis, Postgres, and etcd-backed components for multi-replica deployments.
 
 ```
 import "github.com/snaplink/sso/interfaces/sso"     // the public SDK
@@ -25,6 +26,10 @@ go build ./cmd/sso-ctl                              // the offline operator CLI
 | A downstream app **consuming** an SSO (verify tokens, authorize, audit) | **Client packages** | `interfaces/ssoclient` (`local` / `remote` / `dev`) |
 | A relying party / SPA / resource server (any language) | **HTTP OAuth2/OIDC + gRPC** | `/.well-known/openid-configuration`, `/token`, `/userinfo`, `/api/v1/admin/*` |
 | An operator running offline maintenance | **CLI** | `sso-ctl` (`audit-verify` / `import` / `migrate` / `snapshot`) |
+
+The SDK and `sso-server` serve APIs only. Hosted login, admin, self-service,
+developer, and setup interfaces are separate frontend projects placed behind
+the same reverse proxy; this repository does not mount their static bundles.
 
 ---
 
@@ -90,12 +95,13 @@ Key ideas:
   `SessionManager` / `TokenIssuer` / `Authenticator` interfaces (all re-exported
   in `interfaces/sso/aliases.go`), or use `infrastructure/defaultimpl` (memory)
   / `infrastructure/defaultimpl/sqlite` (pure-Go, persistent).
-- **~90 `WithXxx` options** cover security, multi-tenancy, observability, MFA,
-  federation, CAEP, and embedded SPAs. See `interfaces/sso/options*.go`.
+- **Functional options** cover security, multi-tenancy, observability, MFA,
+  federation, CAEP/SSF, ReBAC, and API feature gates. The surface evolves, so
+  use `interfaces/sso/options*.go` rather than relying on a documented count.
 
-Examples: `docs/examples/quickstart`, `docs/examples/basic` (all 7 auth
-methods), and the godoc `Example_minimumViable` / `Example_productionWiring` in
-`interfaces/sso/example_test.go`.
+Examples: `docs/examples/quickstart`, `docs/examples/basic` (representative
+baseline authentication methods), and the godoc `Example_minimumViable` /
+`Example_productionWiring` in `interfaces/sso/example_test.go`.
 
 ## 2. Run the binary
 
@@ -160,7 +166,9 @@ first-run init). Business code is identical across modes — see
 
 ## 4. Call over the wire (HTTP OAuth2/OIDC + gRPC)
 
-Any language hits the standard endpoints (contract: `docs/openapi.yaml`):
+Any language hits the standard endpoints. `docs/openapi.yaml` is the published
+HTTP reference; route registration under `interfaces/sso/server_routes*.go`
+is the implementation source of truth and must be updated in the same change:
 
 ```bash
 curl https://sso.example.com/.well-known/openid-configuration   # discovery
@@ -196,8 +204,10 @@ in `gen/proto/`. A Go gRPC client example is `docs/examples/grpc-client`.
 
 ## 5. Operator CLI (`sso-ctl`)
 
-`cmd/` builds exactly two binaries — `sso-server` (runtime) and `sso-ctl`
-(offline toolbelt):
+The root module's supported build produces two binaries — `sso-server`
+(runtime) and `sso-ctl` (offline toolbelt). `cmd/gensdk` is a repository tool;
+`cmd/sso-mcp` and `cmd/sso-operator` are independently versioned nested
+modules:
 
 ```bash
 make build      # or: python cli.py build   ->   ./bin/{sso-server, sso-ctl}
@@ -228,7 +238,8 @@ go test ./test/ -race        # cross-wired HTTP + JWKS integration suite
 
 ## Further reading
 
-- `docs/openapi.yaml` — the full HTTP API contract.
+- `docs/openapi.yaml` — the published HTTP API reference; keep it synchronized
+  with `interfaces/sso/server_routes*.go`.
 - `docs/examples/` — runnable samples (quickstart, basic, embedded-app, remote-app, appcore, grpc-client, playground).
 - `interfaces/sso/example_test.go`, `interfaces/ssoclient/{local,dev}/example_test.go` — godoc SDK templates (render on pkg.go.dev).
 - `AGENTS.md` — architecture, layering, and the engineering conventions enforced by the committed gates.

@@ -1,45 +1,31 @@
-# Production HA overlay
+# Legacy production Kubernetes overlay
 
-> **⚠️ DEPRECATED**: This directory is maintained for backward compatibility.
-> New deployments should use the canonical structure at
-> **[ops/deploy/kustomize/overlays/prod/](../kustomize/overlays/prod/)**.
->
-> This directory (`ops/deploy/k8s-prod/`) is identical to
-> `ops/deploy/kustomize/overlays/prod/`.
+> Deprecated compatibility copy. New deployments use
+> [`ops/deploy/kustomize/overlays/prod/`](../kustomize/overlays/prod/); that
+> overlay wins on conflict.
 
-N stateless `sso-server` replicas behind shared backends — the "Tier B"
-topology from [`docs/deployment.md`](../../docs/deployment.md) §6. A Kustomize
-overlay over the base in [`../k8s`](../k8s).
+Do not apply this directory as-is. Its `preStop` hook calls `/bin/sleep` in a
+distroless image, `config.yaml` contains an invalid
+`server_pairwise_subjects_note` key, and secrets are placeholders.
+
+Render for inspection:
 
 ```bash
-kubectl apply -k ops/deploy/k8s-prod/
+kubectl kustomize ops/deploy/k8s-prod/
 ```
 
-## What this overlay adds over the base
+Before any production rollout:
 
-| Resource | Why |
-|---|---|
-| `hpa.yaml` (HPA, min 3 / max 20, CPU 70%) | Autoscaling — **safe only because state is shared** (Redis Cluster + Postgres). The base `memory` backend would lose per-pod auth codes/sessions on scale events. |
-| `pdb.yaml` (PDB minAvailable 2) | Keeps quorum through node drains / rolling upgrades. |
-| `config.yaml` (replaces the base ConfigMap) | Hot stores → Redis Cluster, durable stores → Postgres, coordination → etcd. |
-| `patch-deployment.yaml` | Secret-injected backend creds (`SSO_*` env), zone spread, `preStop` drain + `terminationGracePeriodSeconds`, tolerant readiness probe. |
-| `secretGenerator` | **Placeholder** — replace with sealed-secrets / external-secrets / Vault. |
+- pin the image by digest and replace the invalid hook;
+- validate configuration and replace placeholder secrets with a managed secret
+  source;
+- externalize every enabled stateful feature to shared storage;
+- keep Redis auth state on `noeviction` masters;
+- configure Postgres HA, etcd-backed invalidation/registry, and a
+  TLS-terminating trusted edge;
+- verify `/readyz` covers Redis, Postgres, etcd, and signing-key aggregation;
+  and
+- deploy browser frontends separately.
 
-## External dependencies you must stand up
-
-- **Redis Cluster** (≥ 3 masters + replicas). **HARD requirement:** the auth
-  keyspace must run `maxmemory-policy noeviction` (or `volatile-ttl`).
-- **Postgres-wire DB cluster** — PostgreSQL (HA via Patroni / a managed service)
-  **or** CockroachDB (set `postgres.dialect: cockroach`).
-- **etcd** (3/5-node) — the cluster Bus + registry + leaderless JWKS aggregation.
-- A **TLS-terminating edge** (Ingress / OpenResty / Envoy) that strips and
-  re-sets `X-Forwarded-*`.
-
-## Production checklist
-
-1. Pin the image to a digest (the base uses `:latest`).
-2. Replace the placeholder `sso-server-secrets` with a real secret store.
-3. Set `server.issuer` (config.yaml) to the externally-reachable HTTPS URL.
-4. Point `redis.addrs`, `postgres` DSN, and `cluster.bus.etcd_endpoints` at your
-   real services; mount the Redis CA into the `sso-server-redis-tls` secret.
-5. Confirm `/readyz` gates on Redis + Postgres reachability.
+The current topology and safety rationale live in
+[`docs/deployment.md`](../../../docs/deployment.md).

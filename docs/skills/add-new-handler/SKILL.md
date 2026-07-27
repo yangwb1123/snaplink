@@ -1,14 +1,35 @@
-# Skill: Add New Handler
+# Skill: Add a handler
 
-**Trigger:** New OAuth/OIDC handler, store, or endpoint.
+**Trigger:** Add or change an OAuth/OIDC, self-service, federation/SSF, ReBAC,
+or admin HTTP endpoint.
 
-**Usage:** `python skills/add-new-handler/run.py --name <Name> --type <handler|store> --module <oauth|oidc>`
+The current `run.py` scaffold is legacy: it emits pre-layer import paths and
+must not be used to create code. Follow this checked workflow instead.
 
-## Requirements
-- bindOAuthParams for parameter binding
-- DELETE RETURNING for single-use stores
-- Oracle-leak: unknown/expired/consumed -> unified error
-- tokenNoStoreHeaders(ctx) on credential/bearer endpoints
-- setBearerChallenge(ctx, ...) on every 401
-- Wire in sso.go + advertise in discovery
-- Add WithXxxStore option
+## Workflow
+
+1. Choose the owning package. Protocol behavior belongs under `protocols/`;
+   business policy belongs under `domains/`; HTTP wiring stays thin in
+   `interfaces/sso`.
+2. Check the target file and directory frozen ceilings before editing.
+3. Bind OAuth form/JSON via `oauth.BindParams` (`bindOAuthParams` in the
+   Server); preserve HTTP Basic precedence where applicable.
+4. For credential/bearer routes, call `tokenNoStoreHeaders` at entry and use
+   `setBearerChallenge` for every 401.
+5. Collapse oracle-safe and anti-enumeration failures exactly as `AGENTS.md`
+   requires.
+6. Consume single-use state atomically; carry refresh `FamilyID` through every
+   rotation.
+7. Register in the applicable `interfaces/sso/server_routes*.go`; update
+   discovery if it advertises the capability.
+8. Update `docs/openapi.yaml` and `docs/error-codes.md`.
+9. Add unit and cross-server negative-path tests.
+
+## Verify
+
+```bash
+go build ./... && go vet ./...
+go test -run 'TestMaintainability_|TestArchitecture_' .
+python cli.py check-invariants
+make ci
+```
