@@ -228,7 +228,6 @@ func authorityHints(cfg *Config) []string {
 	return append([]string(nil), cfg.AuthorityHints...)
 }
 
-
 // HistoricalKey records one previously-used signing key.
 type HistoricalKey struct {
 	// KID is the key identifier that was used in the JWK.

@@ -86,8 +86,6 @@ func TestStoreInterface(t *testing.T) {
 	var _ Store = (*MemoryStore)(nil)
 }
 
-
-
 type MemoryStore struct{}
 
 func (m *MemoryStore) Record(_ context.Context, ev Event) error { return nil }

@@ -11,8 +11,8 @@ import (
 
 // MemoryStore is an in-process Store backed by a map.
 type MemoryStore struct {
-	mu          sync.RWMutex
-	byID        map[string]*Device
+	mu            sync.RWMutex
+	byID          map[string]*Device
 	byFingerprint map[string]string // "userID\x00fingerprint" → deviceID
 }
 

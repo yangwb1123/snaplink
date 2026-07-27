@@ -15,7 +15,7 @@ type streamTestDeps struct {
 	store StreamStore
 }
 
-func (d *streamTestDeps) StreamStore() StreamStore          { return d.store }
+func (d *streamTestDeps) StreamStore() StreamStore { return d.store }
 func (d *streamTestDeps) ErrorBody(code string) map[string]any {
 	return map[string]any{"error": code}
 }

@@ -250,13 +250,19 @@ func (s *Server) mountAdminUserState(api Router) {
 		api.GET(PathAdminUserLifecycle, s.handleAdminGetUserLifecycle)
 		api.POST(PathAdminUserLifecycle, s.handleAdminTransitionUserLifecycle)
 	}
-	if s.recoveryCodeStore != nil { api.POST(PathAdminUserRecoveryCodes, s.handleAdminResetUserRecoveryCodes) }
-	if s.loginHistory != nil { api.GET(PathAdminUserLoginHistory, s.handleAdminListUserLoginHistory) }
+	if s.recoveryCodeStore != nil {
+		api.POST(PathAdminUserRecoveryCodes, s.handleAdminResetUserRecoveryCodes)
+	}
+	if s.loginHistory != nil {
+		api.GET(PathAdminUserLoginHistory, s.handleAdminListUserLoginHistory)
+	}
 }
 
 // mountAdminDeviceUserRoutes registers the device-related admin routes.
 func (s *Server) mountAdminDeviceUserRoutes(api Router) {
-	if s.deviceStore == nil { return }
+	if s.deviceStore == nil {
+		return
+	}
 	api.GET(PathAdminUserDevices, s.handleAdminListUserDevices)
 	api.DELETE(PathAdminUserDeviceByID, s.handleAdminDeleteUserDevice)
 	api.GET(PathAdminDevices, s.handleAdminListAllDevices)

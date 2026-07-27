@@ -17,12 +17,12 @@ func TestMemoryHistoryStore_Adversarial_ConcurrentRecord(t *testing.T) {
 		go func(val int) {
 			defer wg.Done()
 			rec := &LoginRecord{
-				UserID:    "user-h",
-				Time:      time.Now(),
-				IP:        "10.0.0.1",
-				Provider:  "password",
-				Success:   true,
-				DeviceID:  "dev-" + itoa(val),
+				UserID:     "user-h",
+				Time:       time.Now(),
+				IP:         "10.0.0.1",
+				Provider:   "password",
+				Success:    true,
+				DeviceID:   "dev-" + itoa(val),
 				TrustScore: float64(val) / float64(goroutines),
 			}
 			_ = s.Record(rec)

@@ -25,7 +25,7 @@ var errWeakSignatureAlgorithm = errors.New("saml/sp: SHA-1 signature/digest algo
 var weakXMLDSigAlgorithms = map[string]bool{
 	"http://www.w3.org/2000/09/xmldsig#rsa-sha1":        true,
 	"http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha1": true,
-	"http://www.w3.org/2000/09/xmldsig#sha1":             true,
+	"http://www.w3.org/2000/09/xmldsig#sha1":            true,
 }
 
 // rejectWeakSignatureAlgorithms inspects EVERY SignatureMethod and

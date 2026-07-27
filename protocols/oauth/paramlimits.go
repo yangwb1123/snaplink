@@ -10,12 +10,12 @@ import "github.com/yangwb1123/snaplink/shared/core"
 // but before it is persisted. Values exceeding these limits receive
 // a 400 invalid_request response.
 const (
-	MaxStateLen       = 2048  // bytes — RFC 6749 recommends >= 128 bits
-	MaxRedirectURILen = 2048  // bytes — no RFC max; 2 KB is generous
-	MaxScopeLen       = 4096  // bytes — 100 scopes × 40 chars on average
-	MaxNonceLen       = 256   // bytes — OIDC nonce, typically 16-32 bytes
-	MaxResourceLen    = 2048  // bytes — per RFC 8707 resource indicator
-	MaxCustomParamLen = 4096  // bytes — any other auth request parameter
+	MaxStateLen       = 2048 // bytes — RFC 6749 recommends >= 128 bits
+	MaxRedirectURILen = 2048 // bytes — no RFC max; 2 KB is generous
+	MaxScopeLen       = 4096 // bytes — 100 scopes × 40 chars on average
+	MaxNonceLen       = 256  // bytes — OIDC nonce, typically 16-32 bytes
+	MaxResourceLen    = 2048 // bytes — per RFC 8707 resource indicator
+	MaxCustomParamLen = 4096 // bytes — any other auth request parameter
 )
 
 // ValidateAuthRequestParamLength checks individual OAuth authorization

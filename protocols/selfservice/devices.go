@@ -14,7 +14,9 @@ import (
 func HandleMyDevices(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
 	userID, ok := d.MeSubjectOrChallenge(ctx)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	store := d.DeviceStore()
 	if store == nil {
 		ctx.JSON(http.StatusOK, map[string]any{"devices": []device.Device{}})
@@ -41,12 +43,20 @@ func HandleMyDevices(d Deps, ctx core.HandlerContext) {
 func HandleMyDeviceByID(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
 	userID, ok := d.MeSubjectOrChallenge(ctx)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	store := d.DeviceStore()
-	if store == nil { ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound)); return }
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
 	deviceID := ctx.Param("id")
 	dev, err := store.Get(ctx.Request().Context(), deviceID)
-	if err != nil || dev.UserID != userID { ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound)); return }
+	if err != nil || dev.UserID != userID {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
 	type deviceDetail struct {
 		device.Device
 		ActiveSessions []core.Session `json:"active_sessions"`
@@ -58,7 +68,9 @@ func HandleMyDeviceByID(d Deps, ctx core.HandlerContext) {
 			activeSessions = append(activeSessions, *s)
 		}
 	}
-	if activeSessions == nil { activeSessions = []core.Session{} }
+	if activeSessions == nil {
+		activeSessions = []core.Session{}
+	}
 	ctx.JSON(http.StatusOK, deviceDetail{Device: *dev, ActiveSessions: activeSessions})
 }
 
@@ -67,12 +79,20 @@ func HandleMyDeviceByID(d Deps, ctx core.HandlerContext) {
 func HandleUpdateMyDevice(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
 	userID, ok := d.MeSubjectOrChallenge(ctx)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	store := d.DeviceStore()
-	if store == nil { ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound)); return }
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
 	deviceID := ctx.Param("id")
 	dev, err := store.Get(ctx.Request().Context(), deviceID)
-	if err != nil || dev.UserID != userID { ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound)); return }
+	if err != nil || dev.UserID != userID {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
 	var req struct {
 		Name  string `json:"name"`
 		Notes string `json:"notes"`
@@ -91,8 +111,12 @@ func HandleUpdateMyDevice(d Deps, ctx core.HandlerContext) {
 		return
 	}
 	resp := map[string]any{core.KeyStatus: core.StatusOK}
-	if req.Name != "" { resp["device_name"] = req.Name }
-	if req.Notes != "" { resp["notes"] = req.Notes }
+	if req.Name != "" {
+		resp["device_name"] = req.Name
+	}
+	if req.Notes != "" {
+		resp["notes"] = req.Notes
+	}
 	ctx.JSON(http.StatusOK, resp)
 }
 
@@ -101,12 +125,20 @@ func HandleUpdateMyDevice(d Deps, ctx core.HandlerContext) {
 func HandleReportLostDevice(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
 	userID, ok := d.MeSubjectOrChallenge(ctx)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	store := d.DeviceStore()
-	if store == nil { ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound)); return }
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
 	deviceID := ctx.Param("id")
 	dev, err := store.Get(ctx.Request().Context(), deviceID)
-	if err != nil || dev.UserID != userID { ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound)); return }
+	if err != nil || dev.UserID != userID {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
 	// Revoke all sessions for this device.
 	sessions, err := d.SessionManager().ListByUser(ctx.Request().Context(), userID)
 	if err == nil {
@@ -132,12 +164,20 @@ func HandleReportLostDevice(d Deps, ctx core.HandlerContext) {
 func HandleSetDeviceTrust(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
 	userID, ok := d.MeSubjectOrChallenge(ctx)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	store := d.DeviceStore()
-	if store == nil { ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound)); return }
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
 	deviceID := ctx.Param("id")
 	dev, err := store.Get(ctx.Request().Context(), deviceID)
-	if err != nil || dev.UserID != userID { ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound)); return }
+	if err != nil || dev.UserID != userID {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
 	dev.TrustScore = 0.9
 	dev.TrustLabel = device.TrustLabelForScore(0.9)
 	dev.TrustHistory = appendTrustHistoryForReason(dev, 0.9, "manual_trust")
@@ -152,12 +192,20 @@ func HandleSetDeviceTrust(d Deps, ctx core.HandlerContext) {
 func HandleDeleteMyDevice(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
 	userID, ok := d.MeSubjectOrChallenge(ctx)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	store := d.DeviceStore()
-	if store == nil { ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound)); return }
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
 	deviceID := ctx.Param("id")
 	dev, err := store.Get(ctx.Request().Context(), deviceID)
-	if err != nil || dev.UserID != userID { ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound)); return }
+	if err != nil || dev.UserID != userID {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+		return
+	}
 	sessions, err := d.SessionManager().ListByUser(ctx.Request().Context(), userID)
 	if err == nil {
 		for _, s := range sessions {
@@ -177,16 +225,22 @@ func HandleDeleteMyDevice(d Deps, ctx core.HandlerContext) {
 func mapDeviceSessions(sessions []*core.Session) map[string]int {
 	m := make(map[string]int)
 	for _, s := range sessions {
-		if s.DeviceID != "" { m[s.DeviceID]++ }
+		if s.DeviceID != "" {
+			m[s.DeviceID]++
+		}
 	}
 	return m
 }
 
 func appendTrustHistoryForReason(dev *device.Device, score float64, reason string) []device.TrustHistoryEntry {
 	entry := device.TrustHistoryEntry{Time: time.Now(), Score: score, Label: device.TrustLabelForScore(score), Reason: reason}
-	if dev == nil || len(dev.TrustHistory) == 0 { return []device.TrustHistoryEntry{entry} }
+	if dev == nil || len(dev.TrustHistory) == 0 {
+		return []device.TrustHistoryEntry{entry}
+	}
 	h := append(dev.TrustHistory, entry)
-	if len(h) > 20 { h = h[len(h)-20:] }
+	if len(h) > 20 {
+		h = h[len(h)-20:]
+	}
 	return h
 }
 
@@ -214,34 +268,64 @@ func sortDevices(entries []deviceEntry, sortBy, order string) {
 }
 
 func sortStr(a, b string, desc bool) bool {
-	if desc { return a > b }; return a < b
+	if desc {
+		return a > b
+	}
+	return a < b
 }
 func filterDevicesByQuery(ctx core.HandlerContext, devices []*device.Device) []*device.Device {
-	if fl := ctx.Query("trust_label"); fl != "" { devices = filterByField(devices, func(d *device.Device) string { return d.TrustLabel }, fl) }
-	if ctx.Query("suspicious") == "true" { devices = filterByPred(devices, func(d *device.Device) bool { return d.Suspicious }) }
-	if fp := ctx.Query("platform"); fp != "" { devices = filterByField(devices, func(d *device.Device) string { return d.Platform }, fp) }
-	if ft := ctx.Query("type"); ft != "" { devices = filterByField(devices, func(d *device.Device) string { return string(d.Type) }, ft) }
+	if fl := ctx.Query("trust_label"); fl != "" {
+		devices = filterByField(devices, func(d *device.Device) string { return d.TrustLabel }, fl)
+	}
+	if ctx.Query("suspicious") == "true" {
+		devices = filterByPred(devices, func(d *device.Device) bool { return d.Suspicious })
+	}
+	if fp := ctx.Query("platform"); fp != "" {
+		devices = filterByField(devices, func(d *device.Device) string { return d.Platform }, fp)
+	}
+	if ft := ctx.Query("type"); ft != "" {
+		devices = filterByField(devices, func(d *device.Device) string { return string(d.Type) }, ft)
+	}
 	return devices
 }
 func filterByField(devices []*device.Device, getter func(*device.Device) string, val string) []*device.Device {
-	if val == "" { return devices }
+	if val == "" {
+		return devices
+	}
 	var out []*device.Device
-	for _, d := range devices { if getter(d) == val { out = append(out, d) } }
+	for _, d := range devices {
+		if getter(d) == val {
+			out = append(out, d)
+		}
+	}
 	return out
 }
 func filterByPred(devices []*device.Device, pred func(*device.Device) bool) []*device.Device {
 	var out []*device.Device
-	for _, d := range devices { if pred(d) { out = append(out, d) } }
+	for _, d := range devices {
+		if pred(d) {
+			out = append(out, d)
+		}
+	}
 	return out
 }
 func sortFloat(a, b float64, desc bool) bool {
-	if desc { return a > b }; return a < b
+	if desc {
+		return a > b
+	}
+	return a < b
 }
 func sortInt(a, b int, desc bool) bool {
-	if desc { return a > b }; return a < b
+	if desc {
+		return a > b
+	}
+	return a < b
 }
 func sortTime(a, b time.Time, desc bool) bool {
-	if desc { return a.After(b) }; return a.Before(b)
+	if desc {
+		return a.After(b)
+	}
+	return a.Before(b)
 }
 
 // ---- Enriched session listing ----
@@ -249,33 +333,40 @@ func sortTime(a, b time.Time, desc bool) bool {
 func HandleMySessionsEnriched(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
 	userID, ok := d.MeSubjectOrChallenge(ctx)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	sessions, err := d.SessionManager().ListByUser(ctx.Request().Context(), userID)
 	if err != nil {
 		d.Logger().Error("list sessions failed", "user_id", userID, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
 		return
 	}
-	if sessions == nil { sessions = []*core.Session{} }
+	if sessions == nil {
+		sessions = []*core.Session{}
+	}
 	type enrichedSession struct {
 		*core.Session
-		DeviceName string `json:"device_name,omitempty"`
-		DeviceType string `json:"device_type,omitempty"`
-		DevicePlat string `json:"device_platform,omitempty"`
-		DeviceOSVer string `json:"device_os_version,omitempty"`
-		DeviceBrowser string `json:"device_browser,omitempty"`
-		TrustScore float64 `json:"trust_score,omitempty"`
-		TrustLabel string `json:"trust_label,omitempty"`
+		DeviceName    string  `json:"device_name,omitempty"`
+		DeviceType    string  `json:"device_type,omitempty"`
+		DevicePlat    string  `json:"device_platform,omitempty"`
+		DeviceOSVer   string  `json:"device_os_version,omitempty"`
+		DeviceBrowser string  `json:"device_browser,omitempty"`
+		TrustScore    float64 `json:"trust_score,omitempty"`
+		TrustLabel    string  `json:"trust_label,omitempty"`
 	}
 	out := make([]enrichedSession, len(sessions))
 	for i, s := range sessions {
 		e := enrichedSession{Session: s}
 		if ds := d.DeviceStore(); ds != nil && s.DeviceID != "" {
 			if dev, err := ds.Get(ctx.Request().Context(), s.DeviceID); err == nil {
-				e.DeviceName = dev.DeviceName; e.DeviceType = string(dev.Type)
-				e.DevicePlat = dev.Platform; e.DeviceOSVer = dev.OSVersion
+				e.DeviceName = dev.DeviceName
+				e.DeviceType = string(dev.Type)
+				e.DevicePlat = dev.Platform
+				e.DeviceOSVer = dev.OSVersion
 				e.DeviceBrowser = dev.BrowserName
-				e.TrustScore = dev.TrustScore; e.TrustLabel = dev.TrustLabel
+				e.TrustScore = dev.TrustScore
+				e.TrustLabel = dev.TrustLabel
 			}
 		}
 		out[i] = e
@@ -290,7 +381,9 @@ func HandleMySessionsEnriched(d Deps, ctx core.HandlerContext) {
 func HandleMyDeviceSessions(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
 	userID, ok := d.MeSubjectOrChallenge(ctx)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	deviceID := ctx.Param("id")
 	// Verify device ownership and capture device for IP fallback.
 	var dev *device.Device
@@ -311,9 +404,13 @@ func HandleMyDeviceSessions(d Deps, ctx core.HandlerContext) {
 	}
 	var out []*core.Session
 	for _, s := range sessions {
-		if s.DeviceID == deviceID || (s.DeviceID == "" && dev != nil && s.IP == dev.LastIP) { out = append(out, s) }
+		if s.DeviceID == deviceID || (s.DeviceID == "" && dev != nil && s.IP == dev.LastIP) {
+			out = append(out, s)
+		}
 	}
-	if out == nil { out = []*core.Session{} }
+	if out == nil {
+		out = []*core.Session{}
+	}
 	ctx.JSON(http.StatusOK, map[string]any{"sessions": out, "session_count": len(out)})
 }
 
@@ -322,7 +419,9 @@ func HandleMyDeviceSessions(d Deps, ctx core.HandlerContext) {
 func HandleMyDeviceActivity(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
 	userID, ok := d.MeSubjectOrChallenge(ctx)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	deviceID := ctx.Param("id")
 	// Verify the device belongs to this user.
 	if ds := d.DeviceStore(); ds != nil {
@@ -349,25 +448,31 @@ func HandleMyDeviceActivity(d Deps, ctx core.HandlerContext) {
 func HandleMySecurityActivity(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
 	userID, ok := d.MeSubjectOrChallenge(ctx)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	type actEvt struct {
-		Time time.Time `json:"time"`
-		Type string `json:"type"`
-		Detail string `json:"detail,omitempty"`
-		DeviceID string `json:"device_id,omitempty"`
-		Device string `json:"device,omitempty"`
-		Location string `json:"location,omitempty"`
-		IP string `json:"ip,omitempty"`
-		TrustScore float64 `json:"trust_score,omitempty"`
-		TrustLabel string `json:"trust_label,omitempty"`
+		Time       time.Time `json:"time"`
+		Type       string    `json:"type"`
+		Detail     string    `json:"detail,omitempty"`
+		DeviceID   string    `json:"device_id,omitempty"`
+		Device     string    `json:"device,omitempty"`
+		Location   string    `json:"location,omitempty"`
+		IP         string    `json:"ip,omitempty"`
+		TrustScore float64   `json:"trust_score,omitempty"`
+		TrustLabel string    `json:"trust_label,omitempty"`
 	}
 	var events []actEvt
 	if ls := d.LoginHistoryStore(); ls != nil {
 		if recs, err := ls.RecentByUser(userID, 20); err == nil {
 			for _, r := range recs {
 				typ := "login"
-				if r.DeviceIsNew { typ = "new_device" }
-				if r.LocationIsNew { typ = "new_location" }
+				if r.DeviceIsNew {
+					typ = "new_device"
+				}
+				if r.LocationIsNew {
+					typ = "new_location"
+				}
 				events = append(events, actEvt{Time: r.Time, Type: typ, Detail: r.Device, DeviceID: r.DeviceID, Device: r.Device, Location: r.Location, IP: r.IP})
 			}
 		}
@@ -376,13 +481,17 @@ func HandleMySecurityActivity(d Deps, ctx core.HandlerContext) {
 		if devs, err := ds.ListByUser(ctx.Request().Context(), userID); err == nil {
 			for _, dev := range devs {
 				detail := dev.DeviceName
-				if detail == "" { detail = string(dev.Type) }
+				if detail == "" {
+					detail = string(dev.Type)
+				}
 				events = append(events, actEvt{Time: dev.FirstSeenAt, Type: "device_registered", Detail: detail, DeviceID: dev.ID, Device: detail, IP: dev.LastIP, TrustScore: dev.TrustScore, TrustLabel: dev.TrustLabel})
 			}
 		}
 	}
 	sort.Slice(events, func(i, j int) bool { return events[i].Time.After(events[j].Time) })
-	if len(events) > 30 { events = events[:30] }
+	if len(events) > 30 {
+		events = events[:30]
+	}
 	ctx.JSON(http.StatusOK, map[string]any{"events": events})
 }
 
@@ -391,7 +500,9 @@ func HandleMySecurityActivity(d Deps, ctx core.HandlerContext) {
 func HandleMyLoginHistory(d Deps, ctx core.HandlerContext) {
 	d.TokenNoStoreHeaders(ctx)
 	userID, ok := d.MeSubjectOrChallenge(ctx)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	store := d.LoginHistoryStore()
 	if store == nil {
 		ctx.JSON(http.StatusOK, map[string]any{"login_history": []*device.LoginRecord{}})

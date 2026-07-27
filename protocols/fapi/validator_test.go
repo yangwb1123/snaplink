@@ -409,8 +409,8 @@ func TestAllowedClientAuthMethods_Inspection_Passthrough(t *testing.T) {
 func TestExtractJWTAlg(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name     string
-		compact  string
+		name    string
+		compact string
 		wantAlg string
 	}{
 		{"ES256 JWT", "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature", "ES256"},

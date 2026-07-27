@@ -43,7 +43,7 @@ type adminGRPCHarness struct {
 	Recorder   *audit.Recorder
 	TempTokens authenticators.TempTokenStore
 
-	ctx       context.Context // pre-populated with admin bearer metadata
+	ctx        context.Context // pre-populated with admin bearer metadata
 	adminToken string
 }
 

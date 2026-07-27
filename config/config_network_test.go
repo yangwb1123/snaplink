@@ -1,8 +1,8 @@
 package config
 
 import (
-	"github.com/yangwb1123/snaplink/platform/netpolicy"
 	"context"
+	"github.com/yangwb1123/snaplink/platform/netpolicy"
 	"testing"
 )
 
@@ -14,10 +14,12 @@ func (m *mockNetworkStore) Apply(_ context.Context, p *netpolicy.Policy) (*netpo
 	m.policies = append(m.policies, *p)
 	return p, nil
 }
-func (m *mockNetworkStore) Get(_ context.Context, name string) (*netpolicy.Policy, error) { return nil, nil }
-func (m *mockNetworkStore) List(_ context.Context) ([]*netpolicy.Policy, error) { return nil, nil }
-func (m *mockNetworkStore) Delete(_ context.Context, name string) error { return nil }
-func (m *mockNetworkStore) Close() error { return nil }
+func (m *mockNetworkStore) Get(_ context.Context, name string) (*netpolicy.Policy, error) {
+	return nil, nil
+}
+func (m *mockNetworkStore) List(_ context.Context) ([]*netpolicy.Policy, error)     { return nil, nil }
+func (m *mockNetworkStore) Delete(_ context.Context, name string) error             { return nil }
+func (m *mockNetworkStore) Close() error                                            { return nil }
 func (m *mockNetworkStore) Watch(_ context.Context) (<-chan netpolicy.Event, error) { return nil, nil }
 
 func TestApplyNetworkPolicySeeds(t *testing.T) {
@@ -26,9 +28,9 @@ func TestApplyNetworkPolicySeeds(t *testing.T) {
 
 	seeds := []NetworkPolicySeed{
 		{
-			Name:      "allow-datacenter",
-			CIDRs:     []string{"10.0.0.0/8", "192.168.0.0/16"},
-			Priority:  100,
+			Name:     "allow-datacenter",
+			CIDRs:    []string{"10.0.0.0/8", "192.168.0.0/16"},
+			Priority: 100,
 		},
 		{
 			Name:      "allow-vpn",

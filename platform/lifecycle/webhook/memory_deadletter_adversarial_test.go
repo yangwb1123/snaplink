@@ -53,7 +53,7 @@ func TestMemoryDeadLetterStore_Adversarial_ConcurrentAddSameID(t *testing.T) {
 
 	// Pre-create with a known ID so concurrent adds try to upsert
 	store.Add(ctx, DeadLetterEntry{
-		ID: "known-id",
+		ID:             "known-id",
 		SubscriptionID: "known-sub",
 		LastError:      "original",
 		LastFailedAt:   time.Now(),
@@ -113,7 +113,7 @@ func TestMemoryDeadLetterStore_Adversarial_RaceAddAndList(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := range 15 {
-			store.Delete(ctx, "sub-" + itoa(i))
+			store.Delete(ctx, "sub-"+itoa(i))
 		}
 	}()
 
@@ -145,11 +145,15 @@ func TestMemoryDeadLetterStore_Adversarial_CapacityWithConcurrent(t *testing.T) 
 }
 
 func itoa(n int) string {
-	if n == 0 { return "0" }
+	if n == 0 {
+		return "0"
+	}
 	var buf [8]byte
 	i := len(buf)
 	for n > 0 {
-		i--; buf[i] = byte('0' + n%10); n /= 10
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
 	}
 	return string(buf[i:])
 }

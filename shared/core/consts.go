@@ -1,4 +1,5 @@
 package core
+
 // Endpoint paths registered by Server.Mount.
 const (
 	PathHealth         = "/health"
@@ -33,11 +34,11 @@ const (
 	PathAuditEvents     = "/audit/events"
 	PathAuditEventByID  = "/audit/events/:id"
 	PathAuditFacets     = "/audit/facets"
-	PathMyPermissions = "/permissions/me"
-	PathMyMenus       = "/menus/me"
-	PathMyRoles       = "/roles/me"
-	PathMySessions    = "/sessions/me"
-	PathMySessionByID = "/sessions/me/:id"
+	PathMyPermissions   = "/permissions/me"
+	PathMyMenus         = "/menus/me"
+	PathMyRoles         = "/roles/me"
+	PathMySessions      = "/sessions/me"
+	PathMySessionByID   = "/sessions/me/:id"
 	// PathMeSessions*, PathMeSessionByID, and PathMeSessionsRevokeAll are the
 	// /me/*-namespace variants of the /sessions/me* paths. These follow the
 	// self-service /me/* convention (cf. PathMe, PathMyMFA) and provide a
@@ -45,8 +46,8 @@ const (
 	PathMeSessions          = "/me/sessions"
 	PathMeSessionByID       = "/me/sessions/:id"
 	PathMeSessionsRevokeAll = "/me/sessions/revoke-all"
-	PathMyConsents    = "/consents/me"
-	PathMyConsentByID = "/consents/me/:client_id"
+	PathMyConsents          = "/consents/me"
+	PathMyConsentByID       = "/consents/me/:client_id"
 	// PathBranding is the public, unauthenticated tenant-branding lookup the
 	// hosted login SPA fetches (by client_id) to white-label the sign-in page.
 	// Returns only non-sensitive presentation data (brand name, color, logo).
@@ -110,17 +111,17 @@ const (
 	// the CURRENT device trusted (POST) — gated on the caller's bearer token
 	// having completed MFA THIS session (amr contains "mfa"), so a stolen
 	// session that never stepped up can never mint a skip grant.
-	PathMyDevices       = "/me/devices"
-	PathMyDeviceByID    = "/me/devices/:id"
-	PathMyDevicesTrust      = "/me/devices/trust"
-	PathMyDeviceTrustByID   = "/me/devices/:id/trust"
-	PathMyDeviceActivity    = "/me/devices/:id/activity"
-	PathMyDeviceLost      = "/me/devices/:id/lost"
-	PathMyDeviceSessions  = "/me/devices/:id/sessions"
-	PathMyLoginHistory       = "/me/login-history"
-	PathMySecurityActivity   = "/me/security/activity"
-	PathMeSessionsEnriched   = "/me/sessions/enriched"
-	PathLoginUIMetadata      = "/login-ui/metadata"
+	PathMyDevices          = "/me/devices"
+	PathMyDeviceByID       = "/me/devices/:id"
+	PathMyDevicesTrust     = "/me/devices/trust"
+	PathMyDeviceTrustByID  = "/me/devices/:id/trust"
+	PathMyDeviceActivity   = "/me/devices/:id/activity"
+	PathMyDeviceLost       = "/me/devices/:id/lost"
+	PathMyDeviceSessions   = "/me/devices/:id/sessions"
+	PathMyLoginHistory     = "/me/login-history"
+	PathMySecurityActivity = "/me/security/activity"
+	PathMeSessionsEnriched = "/me/sessions/enriched"
+	PathLoginUIMetadata    = "/login-ui/metadata"
 	// PathMyWebAuthnRegisterBegin / Finish are AUTHENTICATED self-service passkey
 	// registration (POST). Unlike the signup ceremony (/webauthn/registration/*,
 	// username from the body), these bind the new credential to the BEARER
@@ -367,8 +368,8 @@ const (
 	// transmitter's JWKS + aud-binding + exp + jti-replay) and, for a
 	// PRECISELY-mapped local subject, revokes that subject's local access.
 	// Only mounted when WithCAEPReceiver is wired (byte-identical off).
-	PathSSFReceive = "/ssf/receive"
-	PathSSFConfig  = "/.well-known/ssf-configuration"
+	PathSSFReceive    = "/ssf/receive"
+	PathSSFConfig     = "/.well-known/ssf-configuration"
 	PathSSFStreams    = "/ssf/streams"
 	PathSSFStreamByID = "/ssf/streams/:id"
 	// PathFederationEntityConfig is the OpenID Federation 1.0 §9 well-known
@@ -406,7 +407,7 @@ const (
 	// (GET ?sub=<entity_id>) — leaf configuration → subordinate statements →
 	// anchor configuration, leaf-first. Missing sub → 400; unresolvable → 404
 	// (oracle-safe). Only mounted with trust anchors configured; no-store cache.
-	PathFederationResolve       = "/.well-known/openid-federation-resolve"
+	PathFederationResolve         = "/.well-known/openid-federation-resolve"
 	PathFederationTrustMarkStatus = "/.well-known/openid-federation-trust-mark-status"
 	// PathFederationList is the OpenID Federation 1.0 §8.2 Federation Listing
 	// endpoint. When this server is configured as a federation SUPERIOR (one or
@@ -419,10 +420,10 @@ const (
 	// historical keys endpoint. Returns a JWKS containing previously-published
 	// signing keys that may still be valid for verifying old statements.
 	PathFederationHistoricalKeys = "/.well-known/openid-federation-historical-keys"
-	PathNetPolicies        = "/netpolicy/policies"
-	PathNetPolicyByName    = "/netpolicy/policies/:name"
-	PathNetPolicyClassify  = "/netpolicy/classify"
-	PathNetPolicyResolveMe = "/netpolicy/resolve-me"
+	PathNetPolicies              = "/netpolicy/policies"
+	PathNetPolicyByName          = "/netpolicy/policies/:name"
+	PathNetPolicyClassify        = "/netpolicy/classify"
+	PathNetPolicyResolveMe       = "/netpolicy/resolve-me"
 	// SAML 2.0 canonical mount points for the external/forked SAML module.
 	// PathSAMLMetadata serves the IdP entity descriptor; PathSAMLSSO is the
 	// IdP-side SSO receiver (AuthnRequest in); PathSAMLSSOCallback is the

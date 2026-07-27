@@ -32,8 +32,8 @@ type testCtx struct {
 }
 
 func (c *testCtx) ResponseWriter() http.ResponseWriter { return c.w }
-func (c *testCtx) Request() *http.Request               { return c.r }
-func (c *testCtx) Query(name string) string             { return c.r.URL.Query().Get(name) }
+func (c *testCtx) Request() *http.Request              { return c.r }
+func (c *testCtx) Query(name string) string            { return c.r.URL.Query().Get(name) }
 func (c *testCtx) JSON(code int, v any) {
 	c.status = code
 	c.jsonOut = v
@@ -165,7 +165,7 @@ type listDeps struct {
 
 func (d *listDeps) FederationConfig() *federation.Config         { return d.cfg }
 func (d *listDeps) ResolveIssuer(ctx core.HandlerContext) string { return "https://server.example.com" }
-func (d *listDeps) LogError(msg string, args ...any)            {}
+func (d *listDeps) LogError(msg string, args ...any)             {}
 
 func TestHandleFederationList_NoSubordinates(t *testing.T) {
 	cfg := &federation.Config{OrganizationName: "test-org"}

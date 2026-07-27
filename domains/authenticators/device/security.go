@@ -12,7 +12,7 @@ type PreviousLogin struct {
 	Time     time.Time `json:"time,omitempty"`
 	IP       string    `json:"ip,omitempty"`
 	DeviceID string    `json:"device_id,omitempty"`
-	Device   string    `json:"device,omitempty"` // device type + name summary
+	Device   string    `json:"device,omitempty"`   // device type + name summary
 	Location string    `json:"location,omitempty"` // city, region summary
 }
 

@@ -14,8 +14,8 @@ func TestAdminGRPC_PermissionCRUD(t *testing.T) {
 	added, err := svc.AddRole(h.ctx, &adminv1.AddRoleRequest{
 		ClientId: "test-client",
 		Role: &adminv1.Role{
-			Code: "test-role",
-			Name: "Test Role",
+			Code:        "test-role",
+			Name:        "Test Role",
 			Permissions: []string{"test:read", "test:write"},
 		},
 	})

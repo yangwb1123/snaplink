@@ -82,4 +82,3 @@ type SAMLSPProviderConfig struct {
 	// enable only for peers that require it.
 	AllowIDPInitiated bool `yaml:"allow_idp_initiated"`
 }
-

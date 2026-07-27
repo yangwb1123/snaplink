@@ -35,8 +35,6 @@ func TestExecuteFuncAdapter(t *testing.T) {
 	_ = result
 }
 
-
-
 func TestThreatExecutorInterface(t *testing.T) {
 	// Compile-time check
 	var _ ThreatExecutor = (*mockExecutor)(nil)
@@ -48,5 +46,3 @@ func (m *mockExecutor) Name() string { return "mock" }
 func (m *mockExecutor) Execute(ctx context.Context, threat Threat, policy ThreatPolicy) (ActionResult, error) {
 	return ActionResult{}, nil
 }
-
-

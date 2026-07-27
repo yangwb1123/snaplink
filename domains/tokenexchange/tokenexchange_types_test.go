@@ -6,12 +6,12 @@ import (
 
 func TestHopFields(t *testing.T) {
 	h := Hop{
-		SubjectID:         "user-1",
-		ActorSubject:      "admin-1",
-		ClientID:          "client-1",
+		SubjectID:          "user-1",
+		ActorSubject:       "admin-1",
+		ClientID:           "client-1",
 		RequestedTokenType: "urn:ietf:params:oauth:token-type:access_token",
-		Scopes:            []string{"openid", "profile"},
-		Resources:         []string{"https://api.example.com"},
+		Scopes:             []string{"openid", "profile"},
+		Resources:          []string{"https://api.example.com"},
 	}
 
 	if h.SubjectID != "user-1" {
@@ -40,10 +40,10 @@ func TestHopZeroValue(t *testing.T) {
 
 func TestRuleFields(t *testing.T) {
 	r := Rule{
-		Name:          "allow-user-delegation",
-		SubjectID:     "user-1",
-		ActorSubject:  "admin-1",
-		ClientID:      "client-1",
+		Name:         "allow-user-delegation",
+		SubjectID:    "user-1",
+		ActorSubject: "admin-1",
+		ClientID:     "client-1",
 	}
 
 	if r.Name != "allow-user-delegation" {

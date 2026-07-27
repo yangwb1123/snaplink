@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
 )
 
 // tmDeps implements TrustMarkStatusDeps for testing.
@@ -18,15 +17,15 @@ func (d *tmDeps) LogError(msg string, args ...any)          {}
 
 // tmCtx is a minimal core.HandlerContext for testing.
 type tmCtx struct {
-	w        http.ResponseWriter
-	r        *http.Request
-	status   int
-	jsonOut  any
+	w       http.ResponseWriter
+	r       *http.Request
+	status  int
+	jsonOut any
 }
 
 func (c *tmCtx) ResponseWriter() http.ResponseWriter { return c.w }
-func (c *tmCtx) Request() *http.Request               { return c.r }
-func (c *tmCtx) Query(name string) string             { return c.r.URL.Query().Get(name) }
+func (c *tmCtx) Request() *http.Request              { return c.r }
+func (c *tmCtx) Query(name string) string            { return c.r.URL.Query().Get(name) }
 func (c *tmCtx) JSON(code int, v any) {
 	c.status = code
 	c.jsonOut = v

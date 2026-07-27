@@ -9,7 +9,7 @@ import (
 // MemoryStore is an in-process Store backed by a map. Suitable for dev,
 // single-node deployments, and tests.
 type MemoryStore struct {
-	mu  sync.RWMutex
+	mu   sync.RWMutex
 	byID map[string]*Provider
 }
 

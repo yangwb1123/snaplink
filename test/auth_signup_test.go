@@ -243,9 +243,9 @@ func (s *stubSignupRateLimiter) Allow(_ string) (bool, time.Duration) {
 //   - A retryAfter of 0 suppresses the header entirely.
 func TestSignupRateLimit_Returns429WithRetryAfterCeiling(t *testing.T) {
 	cases := []struct {
-		retryAfter     time.Duration
-		wantHeader     string
-		wantHeaderSet  bool
+		retryAfter    time.Duration
+		wantHeader    string
+		wantHeaderSet bool
 	}{
 		{500 * time.Millisecond, "1", true},
 		{time.Second, "1", true},

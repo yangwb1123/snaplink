@@ -21,7 +21,7 @@ type fakeRotator struct {
 }
 
 func (f *fakeRotator) Type() corecredential.CredentialType { return testCredType }
-func (f *fakeRotator) OverlapWindow() time.Duration         { return f.overlap }
+func (f *fakeRotator) OverlapWindow() time.Duration        { return f.overlap }
 func (f *fakeRotator) Rotate(context.Context) (corecredential.CredentialMeta, error) {
 	if f.failErr != nil {
 		err := f.failErr

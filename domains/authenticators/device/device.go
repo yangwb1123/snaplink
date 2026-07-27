@@ -98,11 +98,17 @@ type Device struct {
 // DecayTrustScore reduces a device's trust score based on days since last seen.
 // A device not seen in 30+ days loses 0.1 per 30 days, to a minimum of 0.2.
 func DecayTrustScore(score float64, daysSinceLastSeen int) float64 {
-	if daysSinceLastSeen <= 0 { return score }
+	if daysSinceLastSeen <= 0 {
+		return score
+	}
 	decay := float64(daysSinceLastSeen) / 30.0 * 0.1
-	if decay > 0.5 { decay = 0.5 } // max decay
+	if decay > 0.5 {
+		decay = 0.5
+	} // max decay
 	score -= decay
-	if score < 0.2 { score = 0.2 }
+	if score < 0.2 {
+		score = 0.2
+	}
 	return score
 }
 

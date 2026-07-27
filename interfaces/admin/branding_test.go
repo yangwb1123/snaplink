@@ -1,10 +1,10 @@
 package admin
 
 import (
-	"fmt"
-	"context"
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -20,7 +20,7 @@ type brandingTestDeps struct {
 	store *brandingTestStore
 }
 
-func (d *brandingTestDeps) TenantStore() tenant.Store        { return d.store }
+func (d *brandingTestDeps) TenantStore() tenant.Store { return d.store }
 func (d *brandingTestDeps) ErrorBody(code string) map[string]any {
 	return map[string]any{"error": code}
 }
@@ -57,11 +57,15 @@ func (s *brandingTestStore) PutTenant(_ context.Context, t *tenant.Tenant) error
 func (s *brandingTestStore) Close() error { return nil }
 
 func (s *brandingTestStore) ListTenants(_ context.Context) ([]*tenant.Tenant, error) { return nil, nil }
-func (s *brandingTestStore) DeleteTenant(_ context.Context, id string) error { return nil }
-func (s *brandingTestStore) GetDomain(_ context.Context, hostname string) (*tenant.Domain, error) { return nil, nil }
+func (s *brandingTestStore) DeleteTenant(_ context.Context, id string) error         { return nil }
+func (s *brandingTestStore) GetDomain(_ context.Context, hostname string) (*tenant.Domain, error) {
+	return nil, nil
+}
 func (s *brandingTestStore) ListDomains(_ context.Context) ([]*tenant.Domain, error) { return nil, nil }
-func (s *brandingTestStore) ListDomainsByTenant(_ context.Context, tenantID string) ([]*tenant.Domain, error) { return nil, nil }
-func (s *brandingTestStore) PutDomain(_ context.Context, d *tenant.Domain) error { return nil }
+func (s *brandingTestStore) ListDomainsByTenant(_ context.Context, tenantID string) ([]*tenant.Domain, error) {
+	return nil, nil
+}
+func (s *brandingTestStore) PutDomain(_ context.Context, d *tenant.Domain) error   { return nil }
 func (s *brandingTestStore) DeleteDomain(_ context.Context, hostname string) error { return nil }
 
 func brandingCtx(t *testing.T, method, path, body string) *brandingHandlerCtx {
@@ -94,7 +98,7 @@ func (c *brandingHandlerCtx) Bind(v any) error {
 	return json.NewDecoder(c.req.Body).Decode(v)
 }
 func (c *brandingHandlerCtx) Query(key string) string { return c.req.URL.Query().Get(key) }
-func (c *brandingHandlerCtx) Param(key string) string  { return "" }
+func (c *brandingHandlerCtx) Param(key string) string { return "" }
 
 func TestAdminGetBranding(t *testing.T) {
 	store := newBrandingTestStore()

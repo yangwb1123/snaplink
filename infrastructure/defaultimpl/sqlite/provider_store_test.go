@@ -178,4 +178,3 @@ func TestSQLiteProviderStore_GetNotFound(t *testing.T) {
 		t.Error("expected error for nonexistent provider")
 	}
 }
-

@@ -108,5 +108,3 @@ type KeyOriginProvider interface {
 	// unknown kid returns OriginUnknown, nil.
 	KeyOrigin(ctx context.Context, kid string) (KeyOrigin, error)
 }
-
-

@@ -118,16 +118,15 @@ func cacheAgeSeconds(d time.Duration) string {
 	return fmt.Sprintf("%.0f", d.Seconds())
 }
 
-
 // TrustMarkStatus is the response for the Trust Mark Status endpoint.
 type TrustMarkStatus struct {
-	Valid bool `json:"valid"`
-	Issuer string `json:"issuer,omitempty"`
-	Subject string `json:"subject,omitempty"`
+	Valid         bool   `json:"valid"`
+	Issuer        string `json:"issuer,omitempty"`
+	Subject       string `json:"subject,omitempty"`
 	TrustMarkType string `json:"trust_mark_type,omitempty"`
-	IssuedAt int64 `json:"issued_at,omitempty"`
-	ExpiresAt int64 `json:"expires_at,omitempty"`
-	Error string `json:"error,omitempty"`
+	IssuedAt      int64  `json:"issued_at,omitempty"`
+	ExpiresAt     int64  `json:"expires_at,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
 
 // TrustMarkStatusDeps is what HandleTrustMarkStatus needs.
@@ -139,33 +138,66 @@ type TrustMarkStatusDeps interface {
 // HandleTrustMarkStatus serves GET /.well-known/openid-federation-trust-mark-status
 func HandleTrustMarkStatus(deps TrustMarkStatusDeps, ctx core.HandlerContext) {
 	compact := ctx.Query("trust_mark")
-	if compact == "" { ctx.JSON(http.StatusBadRequest, map[string]any{"valid": false, "error": "trust_mark required"}); return }
+	if compact == "" {
+		ctx.JSON(http.StatusBadRequest, map[string]any{"valid": false, "error": "trust_mark required"})
+		return
+	}
 	claims, err := parseTrustMark(compact)
-	if err != nil { ctx.JSON(http.StatusBadRequest, TrustMarkStatus{Valid: false, Error: err.Error()}); return }
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, TrustMarkStatus{Valid: false, Error: err.Error()})
+		return
+	}
 	issuerID := resolveTMIssuer(ctx, claims)
-	if issuerID == "" { return }
+	if issuerID == "" {
+		return
+	}
 	fetcher := deps.FederationFetcher()
-	if fetcher == nil { fetcher = newHTTPFetcher() }
+	if fetcher == nil {
+		fetcher = newHTTPFetcher()
+	}
 	ec, err := fetcher.FetchEntityConfiguration(context.Background(), issuerID)
-	if err != nil { deps.LogError("trust mark: fetch issuer config failed", "issuer", issuerID, "error", err); ctx.JSON(http.StatusOK, TrustMarkStatus{Valid: false, Issuer: issuerID, Error: "unable to fetch issuer config"}); return }
+	if err != nil {
+		deps.LogError("trust mark: fetch issuer config failed", "issuer", issuerID, "error", err)
+		ctx.JSON(http.StatusOK, TrustMarkStatus{Valid: false, Issuer: issuerID, Error: "unable to fetch issuer config"})
+		return
+	}
 	parsed, err := parseStatement(string(ec))
-	if err != nil { deps.LogError("trust mark: parse issuer config failed", "issuer", issuerID, "error", err); ctx.JSON(http.StatusOK, TrustMarkStatus{Valid: false, Issuer: issuerID, Error: "unable to parse issuer config"}); return }
-	if _, err := security.VerifyCompactJWS(compact, parsed.claims.JWKS.Keys, federationAsymmetricAlgs()); err != nil { ctx.JSON(http.StatusOK, TrustMarkStatus{Valid: false, Issuer: issuerID, Subject: claims.Sub, TrustMarkType: claims.TrustMarkType, Error: "signature verification failed"}); return }
-	if err := checkTMExpiry(claims); err != nil { ctx.JSON(http.StatusOK, TrustMarkStatus{Valid: false, Issuer: issuerID, Subject: claims.Sub, TrustMarkType: claims.TrustMarkType, Error: err.Error()}); return }
+	if err != nil {
+		deps.LogError("trust mark: parse issuer config failed", "issuer", issuerID, "error", err)
+		ctx.JSON(http.StatusOK, TrustMarkStatus{Valid: false, Issuer: issuerID, Error: "unable to parse issuer config"})
+		return
+	}
+	if _, err := security.VerifyCompactJWS(compact, parsed.claims.JWKS.Keys, federationAsymmetricAlgs()); err != nil {
+		ctx.JSON(http.StatusOK, TrustMarkStatus{Valid: false, Issuer: issuerID, Subject: claims.Sub, TrustMarkType: claims.TrustMarkType, Error: "signature verification failed"})
+		return
+	}
+	if err := checkTMExpiry(claims); err != nil {
+		ctx.JSON(http.StatusOK, TrustMarkStatus{Valid: false, Issuer: issuerID, Subject: claims.Sub, TrustMarkType: claims.TrustMarkType, Error: err.Error()})
+		return
+	}
 	ctx.JSON(http.StatusOK, TrustMarkStatus{Valid: true, Issuer: issuerID, Subject: claims.Sub, TrustMarkType: claims.TrustMarkType, IssuedAt: claims.Iat, ExpiresAt: claims.Exp})
 }
 
 func resolveTMIssuer(ctx core.HandlerContext, claims trustMarkClaims) string {
 	issuerID := ctx.Query("issuer")
-	if issuerID == "" { issuerID = claims.Iss }
-	if issuerID == "" { ctx.JSON(http.StatusBadRequest, TrustMarkStatus{Valid: false, Error: "could not determine issuer"}); return "" }
+	if issuerID == "" {
+		issuerID = claims.Iss
+	}
+	if issuerID == "" {
+		ctx.JSON(http.StatusBadRequest, TrustMarkStatus{Valid: false, Error: "could not determine issuer"})
+		return ""
+	}
 	return issuerID
 }
 
 func checkTMExpiry(claims trustMarkClaims) error {
 	now := time.Now()
 	skew := 5 * time.Minute
-	if claims.Iat > 0 && time.Unix(claims.Iat, 0).After(now.Add(skew)) { return fmt.Errorf("trust mark not yet valid") }
-	if claims.Exp > 0 && time.Unix(claims.Exp, 0).Before(now.Add(-skew)) { return fmt.Errorf("trust mark has expired") }
+	if claims.Iat > 0 && time.Unix(claims.Iat, 0).After(now.Add(skew)) {
+		return fmt.Errorf("trust mark not yet valid")
+	}
+	if claims.Exp > 0 && time.Unix(claims.Exp, 0).Before(now.Add(-skew)) {
+		return fmt.Errorf("trust mark has expired")
+	}
 	return nil
 }

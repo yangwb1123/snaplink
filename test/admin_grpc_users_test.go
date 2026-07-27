@@ -12,7 +12,7 @@ func TestAdminGRPC_UserCRUD(t *testing.T) {
 
 	created, err := svc.Create(h.ctx, &adminv1.CreateUserRequest{
 		User: &adminv1.User{
-			Id: "new-user",
+			Id:         "new-user",
 			Attributes: map[string]string{"email": "new-user@example.com"},
 		},
 	})

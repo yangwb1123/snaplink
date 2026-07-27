@@ -353,4 +353,3 @@ func recordPasswordHistory(d Deps, rctx context.Context, userID, password string
 		d.Logger().Error("password history record failed", "user_id", userID, "error", err)
 	}
 }
-

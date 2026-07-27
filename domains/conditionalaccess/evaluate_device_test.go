@@ -89,14 +89,14 @@ func TestMatchDeviceConditions_IsNewLocation(t *testing.T) {
 func TestMatchDeviceConditions_MultipleConditions(t *testing.T) {
 	// All conditions must match
 	c := Conditions{
-		DeviceType:        "mobile",
-		DeviceTrustLevel:  0.5,
-		IsNewDevice:       true,
+		DeviceType:       "mobile",
+		DeviceTrustLevel: 0.5,
+		IsNewDevice:      true,
 	}
 	ac := AccessContext{
-		DeviceType:        "mobile",
-		DeviceTrustLevel:  0.7,
-		IsNewDevice:       true,
+		DeviceType:       "mobile",
+		DeviceTrustLevel: 0.7,
+		IsNewDevice:      true,
 	}
 	if !matchDeviceConditions(c, ac) {
 		t.Error("all conditions should match")
@@ -105,14 +105,14 @@ func TestMatchDeviceConditions_MultipleConditions(t *testing.T) {
 
 func TestMatchDeviceConditions_MultipleConditionsOneFails(t *testing.T) {
 	c := Conditions{
-		DeviceType:        "mobile",
-		DeviceTrustLevel:  0.5,
-		IsNewDevice:       true,
+		DeviceType:       "mobile",
+		DeviceTrustLevel: 0.5,
+		IsNewDevice:      true,
 	}
 	ac := AccessContext{
-		DeviceType:        "mobile",
-		DeviceTrustLevel:  0.7,
-		IsNewDevice:       false, // this one fails
+		DeviceType:       "mobile",
+		DeviceTrustLevel: 0.7,
+		IsNewDevice:      false, // this one fails
 	}
 	if matchDeviceConditions(c, ac) {
 		t.Error("should fail when IsNewDevice doesn't match")

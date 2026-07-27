@@ -1,4 +1,5 @@
 package core
+
 // HTTP header names and well-known values.
 const (
 	HeaderAuthorization = "Authorization"
@@ -50,7 +51,7 @@ const (
 	HeaderSunset = "Sunset"
 	// HeaderLink carries the RFC 8288 sunset migration-guide URL alongside
 	// HeaderSunset, e.g. `Link: <https://...>; rel="sunset"`.
-	HeaderLink = "Link"
+	HeaderLink      = "Link"
 	BearerPrefix    = "Bearer "
 	TokenTypeBearer = "Bearer"
 	ContentTypeJSON = "application/json"
@@ -66,9 +67,9 @@ const (
 	// attacker) can never mistake this response for a bearer access
 	// token by typ alone.
 	JWTTypIntrospection = "token-introspection+jwt"
-	CORSAllowedMethods = "GET, POST, OPTIONS"
-	CORSAllowedHeaders = "Content-Type, Authorization"
-	CORSAllowAllOrigin = "*"
+	CORSAllowedMethods  = "GET, POST, OPTIONS"
+	CORSAllowedHeaders  = "Content-Type, Authorization"
+	CORSAllowAllOrigin  = "*"
 	// Mesh ext_authz identity response headers. On a 200 ALLOW the
 	// ext_authz HTTP endpoint stamps these so the sidecar injects them
 	// into the upstream request — the "validate the token at the sidecar,
@@ -91,6 +92,7 @@ const (
 	// as a credential or an identity claim.
 	HeaderDeviceID = "X-Device-Id"
 )
+
 // JSON response keys used across handlers.
 const (
 	KeyError            = "error"
@@ -104,37 +106,37 @@ const (
 	// request's W3C trace ID (see TraceIDFromContext), so a client can
 	// hand support the exact value that correlates to server-side
 	// audit/trace records without having to capture response headers.
-	KeyTraceID         = "trace_id"
-	KeyStatus          = "status"
-	KeyIssuer          = "issuer"
-	KeyVersion         = "version"
-	KeyVCSRevision     = "vcs_revision"
-	KeyVCSTime         = "vcs_time"
-	KeyProviders       = "providers"
-	KeyClientContext   = "client_context"
-	KeyDevice          = "device"
-	KeyActiveDevices   = "active_devices"
-	KeyLoginPageURI    = "login_page_uri"
-	KeyPreviousLogin   = "previous_login"
+	KeyTraceID          = "trace_id"
+	KeyStatus           = "status"
+	KeyIssuer           = "issuer"
+	KeyVersion          = "version"
+	KeyVCSRevision      = "vcs_revision"
+	KeyVCSTime          = "vcs_time"
+	KeyProviders        = "providers"
+	KeyClientContext    = "client_context"
+	KeyDevice           = "device"
+	KeyActiveDevices    = "active_devices"
+	KeyLoginPageURI     = "login_page_uri"
+	KeyPreviousLogin    = "previous_login"
 	KeyDeviceLimitWarn  = "device_limit_warning"
 	KeySessionLimitWarn = "session_limit_warning"
-	KeyBranding       = "branding"
-	KeyProviderType  = "type"
-	KeyProviderIcon    = "icon_url"
-	KeyProviderBuiltin = "builtin"
-	KeyProviderLabel   = "button_label"
-	KeyProviderID      = "id"
-	KeySupportedGrants = "supported_grants"
-	KeySessionID       = "session_id"
-	KeyAccessToken     = "access_token"
-	KeyRefreshToken    = "refresh_token"
-	KeyTokenType       = "token_type"
-	KeyExpiresIn       = "expires_in"
-	KeyScope           = "scope"
-	KeyRevoked         = "revoked"
-	KeyTokenStrategy   = "token_strategy"
-	KeyRecommendedLang = "recommended_language"
-	KeyCountryCode     = "country_code"
+	KeyBranding         = "branding"
+	KeyProviderType     = "type"
+	KeyProviderIcon     = "icon_url"
+	KeyProviderBuiltin  = "builtin"
+	KeyProviderLabel    = "button_label"
+	KeyProviderID       = "id"
+	KeySupportedGrants  = "supported_grants"
+	KeySessionID        = "session_id"
+	KeyAccessToken      = "access_token"
+	KeyRefreshToken     = "refresh_token"
+	KeyTokenType        = "token_type"
+	KeyExpiresIn        = "expires_in"
+	KeyScope            = "scope"
+	KeyRevoked          = "revoked"
+	KeyTokenStrategy    = "token_strategy"
+	KeyRecommendedLang  = "recommended_language"
+	KeyCountryCode      = "country_code"
 	// KeyServingRegion names the region deployment that served the login
 	// response (multi-region / data-residency layer). DISTINCT from
 	// geo's "region" (an ISO 3166-2 client-IP subdivision) — this is WHICH
@@ -162,9 +164,9 @@ const (
 	// KeyRenewAfter (opt-in, WithTokenPolicy's RequireRenewAfter) is the unix
 	// time an ACTIVE token needs renewal, ahead of the {active:false} cutover.
 	KeyRenewAfter = "renew_after"
-	KeyClientID  = "client_id"
-	KeyTenantID  = "tenant_id"
-	KeyStrategy  = "token_strategy_used"
+	KeyClientID   = "client_id"
+	KeyTenantID   = "tenant_id"
+	KeyStrategy   = "token_strategy_used"
 	// KeyClientName / KeyScopes are presentational fields in the consent_required
 	// response — the app's display name and the per-scope description list.
 	KeyClientName = "client_name"
@@ -242,6 +244,7 @@ const (
 	// per-client AllowedScopes gate.
 	ScopeDeviceSSO = "device_sso"
 )
+
 // Status strings returned in successful responses.
 const (
 	StatusOK            = "ok"
@@ -249,21 +252,24 @@ const (
 	StatusSent          = "sent"
 	StatusAuthenticated = "authenticated"
 )
+
 // Netpolicy response keys.
 const (
 	KeyNetPolicies = "policies"
 	KeyNetClass    = "class"
 	KeyNetPolicy   = "policy"
 )
+
 // Permission endpoint response keys + errors.
 const (
-	KeyPermissions = "permissions"
-	KeyRoles       = "roles"
-	KeyMenus       = "menus"
-	KeyClient      = "client_id"
+	KeyPermissions                     = "permissions"
+	KeyRoles                           = "roles"
+	KeyMenus                           = "menus"
+	KeyClient                          = "client_id"
 	ErrPermissionProviderNotConfigured = "permission_provider_not_configured"
 	ErrPermissionLookupFailed          = "permission_lookup_failed"
 )
+
 // Token Portfolio governance route paths (Phase 3 of token governance).
 // Relocated from consts.go to keep that file within the per-file line budget
 // while shared/core stays at its frozen file count. Group-relative on the
@@ -275,10 +281,12 @@ const (
 	PathAdminTokenSuspicious = "/admin/tokens/suspicious"
 	PathAdminTokenBulkRevoke = "/admin/tokens/bulk-revoke" // distinct from the gateway's single-revoke path; see mountAdminTokenGovernance
 )
+
 // PathAdminTokenExchangeChain is the RFC 8693 token-exchange delegation-chain
 // read endpoint (pure observability; WithTokenExchangeChainStore). Group-
 // relative on the /api/v1 router group; admin-gated (GET admin:read).
 const PathAdminTokenExchangeChain = "/admin/tokenexchange/chains/:jti"
+
 // PathAdminFederationHealth is the read-only admin listing of federation
 // peer metadata health: last fetch success/failure, consecutive failures,
 // and last-observed TLS certificate expiry (+ a derived cert_expiring
@@ -291,6 +299,7 @@ const PathAdminTokenExchangeChain = "/admin/tokenexchange/chains/:jti"
 const (
 	PathAdminFederationHealth = "/api/v1/admin/federation/health"
 )
+
 // PathAdminCryptoKeys / PathAdminCryptoKeyCompromise back the
 // cryptographic-material inventory (GET admin:read; POST admin:write) —
 // see platform/lifecycle/cryptoinventory. Mounted only when
@@ -300,6 +309,7 @@ const (
 	PathAdminCryptoKeys          = "/admin/crypto/keys"
 	PathAdminCryptoKeyCompromise = "/admin/crypto/keys/:id/compromise"
 )
+
 // PathCheckSessionIframe is the OpenID Connect Session Management 1.0 §2
 // check_session_iframe endpoint — the OP-hosted, RP-embeddable static page a
 // hidden iframe uses to detect End-User login-state changes. Path segment
@@ -310,6 +320,7 @@ const (
 const (
 	PathCheckSessionIframe = "/check_session_iframe"
 )
+
 // Generic event/webhook egress engine (platform/lifecycle/webhook, opt-in
 // sso.WithWebhookEngine): admin subscription management + dead-letter-queue
 // inspection/replay. Group-relative on the /api/v1 router group; GET is
@@ -322,6 +333,7 @@ const (
 	PathAdminWebhookDeadLetters      = "/admin/webhooks/deadletters"
 	PathAdminWebhookDeadLetterReplay = "/admin/webhooks/deadletters/:id/replay"
 )
+
 // Generic webhook egress engine response keys.
 const (
 	KeyWebhookSubscriptions = "subscriptions"
@@ -329,17 +341,19 @@ const (
 	KeyWebhookDeadLetters   = "dead_letters"
 	KeyWebhookDeadLetter    = "dead_letter"
 )
+
 // ReBAC relationship-tuple engine (platform/lifecycle/rebac, opt-in
 // sso.WithRebacEngine): a single operational-debugging admin:read endpoint
 // over the Check engine. Mounted only when an Engine is wired —
 // byte-identical to a build without the feature.
 const (
-	PathAdminRebacCheck = "/admin/rebac/check"
-	PathAuthzTuples     = "/authz/tuples"
+	PathAdminRebacCheck  = "/admin/rebac/check"
+	PathAuthzTuples      = "/authz/tuples"
 	PathAuthzTuplesBatch = "/authz/tuples/batch"
-	PathAuthzGraph      = "/authz/graph"
-	PathAuthzCheck      = "/authz/check"
+	PathAuthzGraph       = "/authz/graph"
+	PathAuthzCheck       = "/authz/check"
 )
+
 // Pluggable WASM authorization-decision engine (platform/lifecycle/wasmauthz,
 // opt-in sso.WithWASMAuthzEngine): a single operational-debugging
 // admin:read endpoint over the hosted policy module's Authorize call.
@@ -350,11 +364,13 @@ const (
 const (
 	PathAdminWASMAuthzCheck = "/admin/wasmauthz/check"
 )
+
 // WASM authz Check response keys.
 const (
 	KeyWASMAuthzAllowed = "allowed"
 	KeyWASMAuthzReason  = "reason"
 )
+
 // ReBAC Check response keys.
 const (
 	KeyRebacAllowed  = "allowed"
@@ -362,6 +378,7 @@ const (
 	KeyRebacRelation = "relation"
 	KeyRebacSubject  = "subject"
 )
+
 // PathAdminChanges / PathAdminChangeByID / PathAdminChangeApprove /
 // PathAdminChangeReject serve the generic change-approval workflow
 // (platform/lifecycle/admingovernance). Relocated from consts.go for the same
@@ -372,6 +389,7 @@ const (
 	PathAdminChangeApprove = "/admin/changes/:id/approve"
 	PathAdminChangeReject  = "/admin/changes/:id/reject"
 )
+
 // PathAPIVersionPreview is the ADR-0008 v2alpha proof-of-mechanism route: a
 // single read-only capability probe (GET) demonstrating that a "/api/v2alpha"
 // path-prefix CAN be routed, without committing to a full v2 API surface.
@@ -380,28 +398,29 @@ const (
 // (byte-identical off otherwise). Relocated here (not consts.go) because
 // consts.go is at its per-file line budget.
 const PathAPIVersionPreview = "/api/v2alpha/version"
+
 // B2B connections/tenant-membership/org-invitation/delegated-org-admin path
 const (
 	// PathAdminConnections / PathAdminConnectionByID manage B2B connections.
 	// GET ?tenant_id= (admin:read). POST/DELETE (admin:write).
-	PathAdminProviders       = "/admin/providers"
-	PathAdminProviderByID    = "/admin/providers/:id"
-	PathAdminDevices             = "/admin/devices"
-	PathAdminDevicesBulkRevoke   = "/admin/devices/bulk-revoke"
-	PathAdminDeviceStats         = "/admin/devices/stats"
-	PathAdminSecurityActivity    = "/admin/security/activity"
-	PathAdminUserDevices        = "/admin/users/:id/devices"
-	PathAdminUserDeviceByID  = "/admin/users/:id/devices/:deviceId"
+	PathAdminProviders         = "/admin/providers"
+	PathAdminProviderByID      = "/admin/providers/:id"
+	PathAdminDevices           = "/admin/devices"
+	PathAdminDevicesBulkRevoke = "/admin/devices/bulk-revoke"
+	PathAdminDeviceStats       = "/admin/devices/stats"
+	PathAdminSecurityActivity  = "/admin/security/activity"
+	PathAdminUserDevices       = "/admin/users/:id/devices"
+	PathAdminUserDeviceByID    = "/admin/users/:id/devices/:deviceId"
 	PathAdminDeviceActivity    = "/admin/devices/:id/activity"
 	PathAdminDeviceTrustReset  = "/admin/devices/:id/trust"
-	PathAdminUserLoginHistory = "/admin/users/:id/login-history"
-	PathAdminConnections    = "/admin/connections"
-	PathAdminConnectionByID = "/admin/connections/:id"
-// PathAdminConnectionDomains - list claims; PathAdminConnectionDomainVerify - DNS-TXT check.
+	PathAdminUserLoginHistory  = "/admin/users/:id/login-history"
+	PathAdminConnections       = "/admin/connections"
+	PathAdminConnectionByID    = "/admin/connections/:id"
+	// PathAdminConnectionDomains - list claims; PathAdminConnectionDomainVerify - DNS-TXT check.
 	// A verified claim blocks routing takeover.
 	PathAdminConnectionDomains      = "/admin/connections/:id/domains"
 	PathAdminConnectionDomainVerify = "/admin/connections/:id/domains/:domain/verify"
-// PathAdminConnectionHealth / PathAdminConnectionProbe (admin:read/admin:write).
+	// PathAdminConnectionHealth / PathAdminConnectionProbe (admin:read/admin:write).
 	// (admin:write). Mounted only when a connection store is wired.
 	PathAdminConnectionHealth = "/admin/connections/:id/health"
 	PathAdminConnectionProbe  = "/admin/connections/:id/probe"
@@ -456,6 +475,7 @@ const (
 	// recipient email in the admin's own org.
 	PathOrgAdminInvitationByEmail = "/me/organizations/:tenant_id/invitations/:email"
 )
+
 // Threat-policy admin path constants (Active ITDR detection-to-response bridge).
 // Group-relative on the /api/v1 router group; GET is admin:read, PUT/DELETE are
 // admin:write via the default AdminMiddleware method-scope rule. Mounted only when

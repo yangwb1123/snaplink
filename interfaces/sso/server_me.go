@@ -206,10 +206,14 @@ func (s *Server) handleDeleteMySession(ctx HandlerContext) { selfservice.HandleD
 func (s *Server) handleMyLoginHistory(ctx HandlerContext) { selfservice.HandleMyLoginHistory(s, ctx) }
 
 // handleMySecurityActivity delegates to selfservice.HandleMySecurityActivity.
-func (s *Server) handleMySecurityActivity(ctx HandlerContext) { selfservice.HandleMySecurityActivity(s, ctx) }
+func (s *Server) handleMySecurityActivity(ctx HandlerContext) {
+	selfservice.HandleMySecurityActivity(s, ctx)
+}
 
 // handleMeSessionsEnriched delegates to the enriched session listing.
-func (s *Server) handleMeSessionsEnriched(ctx HandlerContext) { selfservice.HandleMySessionsEnriched(s, ctx) }
+func (s *Server) handleMeSessionsEnriched(ctx HandlerContext) {
+	selfservice.HandleMySessionsEnriched(s, ctx)
+}
 
 // handleLoginUIMetadata serves the login UI metadata endpoint, enriched
 // with geo context and provider list from the server's configuration.
@@ -226,10 +230,16 @@ func (s *Server) handleMyDeviceByID(ctx HandlerContext) { selfservice.HandleMyDe
 // handleDeleteMyDevice delegates to selfservice.HandleDeleteMyDevice.
 func (s *Server) handleDeleteMyDevice(ctx HandlerContext) { selfservice.HandleDeleteMyDevice(s, ctx) }
 func (s *Server) handleUpdateMyDevice(ctx HandlerContext) { selfservice.HandleUpdateMyDevice(s, ctx) }
-func (s *Server) handleMyDeviceActivity(ctx HandlerContext)  { selfservice.HandleMyDeviceActivity(s, ctx) }
-func (s *Server) handleMyDeviceSessions(ctx HandlerContext)  { selfservice.HandleMyDeviceSessions(s, ctx) }
-func (s *Server) handleSetDeviceTrust(ctx HandlerContext)    { selfservice.HandleSetDeviceTrust(s, ctx) }
-func (s *Server) handleReportLostDevice(ctx HandlerContext) { selfservice.HandleReportLostDevice(s, ctx) }
+func (s *Server) handleMyDeviceActivity(ctx HandlerContext) {
+	selfservice.HandleMyDeviceActivity(s, ctx)
+}
+func (s *Server) handleMyDeviceSessions(ctx HandlerContext) {
+	selfservice.HandleMyDeviceSessions(s, ctx)
+}
+func (s *Server) handleSetDeviceTrust(ctx HandlerContext) { selfservice.HandleSetDeviceTrust(s, ctx) }
+func (s *Server) handleReportLostDevice(ctx HandlerContext) {
+	selfservice.HandleReportLostDevice(s, ctx)
+}
 
 // handleRevokeMySessions delegates to selfservice.HandleRevokeMySessions.
 func (s *Server) handleRevokeMySessions(ctx HandlerContext) {
@@ -326,9 +336,11 @@ func (s *Server) mountSelfServiceProfile() {
 	gr.GET(PathMyMenus, s.handleMyMenus)
 	gr.GET(PathMyRoles, s.handleMyRoles)
 	if s.sessionMgr != nil {
-		gr.GET(PathMySessions, s.handleMySessions); gr.DELETE(PathMySessions, s.handleRevokeMySessions)
+		gr.GET(PathMySessions, s.handleMySessions)
+		gr.DELETE(PathMySessions, s.handleRevokeMySessions)
 		gr.DELETE(PathMySessionByID, s.handleDeleteMySession)
-		gr.GET(PathMeSessions, s.handleMeSessions); gr.DELETE(PathMeSessionByID, s.handleDeleteMeSession)
+		gr.GET(PathMeSessions, s.handleMeSessions)
+		gr.DELETE(PathMeSessionByID, s.handleDeleteMeSession)
 		gr.POST(PathMeSessionsRevokeAll, s.handleMeSessionsRevokeAll)
 		if s.deviceStore != nil {
 			gr.GET(PathMeSessionsEnriched, s.handleMeSessionsEnriched)
@@ -337,9 +349,16 @@ func (s *Server) mountSelfServiceProfile() {
 	if s.deviceStore != nil {
 		gr.GET(PathMyDevices, s.handleMyDevices)
 		gr.GET(PathMyDeviceByID, s.handleMyDeviceByID)
-		gr.PATCH(PathMyDeviceByID, s.handleUpdateMyDevice); gr.DELETE(PathMyDeviceByID, s.handleDeleteMyDevice); gr.GET(PathMyDeviceActivity, s.handleMyDeviceActivity); gr.GET(PathMyDeviceSessions, s.handleMyDeviceSessions); gr.POST(PathMyDeviceTrustByID, s.handleSetDeviceTrust); gr.POST(PathMyDeviceLost, s.handleReportLostDevice)
+		gr.PATCH(PathMyDeviceByID, s.handleUpdateMyDevice)
+		gr.DELETE(PathMyDeviceByID, s.handleDeleteMyDevice)
+		gr.GET(PathMyDeviceActivity, s.handleMyDeviceActivity)
+		gr.GET(PathMyDeviceSessions, s.handleMyDeviceSessions)
+		gr.POST(PathMyDeviceTrustByID, s.handleSetDeviceTrust)
+		gr.POST(PathMyDeviceLost, s.handleReportLostDevice)
 	}
-	if s.loginHistory != nil { gr.GET(PathMyLoginHistory, s.handleMyLoginHistory) }
+	if s.loginHistory != nil {
+		gr.GET(PathMyLoginHistory, s.handleMyLoginHistory)
+	}
 	if s.deviceStore != nil || s.loginHistory != nil {
 		gr.GET(PathMySecurityActivity, s.handleMySecurityActivity)
 	}

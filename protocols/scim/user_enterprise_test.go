@@ -168,7 +168,7 @@ func TestReplaceUser_ManagerCycleRejected(t *testing.T) {
 
 	t.Run("indirect", func(t *testing.T) {
 		a := seedUser(t, h, `{"userName":"a@example.com"}`)
-		b := seedUser(t, h, `{"userName":"b@example.com", "` + enterpriseSchemaURN + `": {"manager": {"value": "` + a + `"}}}`)
+		b := seedUser(t, h, `{"userName":"b@example.com", "`+enterpriseSchemaURN+`": {"manager": {"value": "`+a+`"}}}`)
 
 		// Attempt A.manager = B, which would close the cycle A -> B -> A.
 		body := `{"userName":"a@example.com", "` + enterpriseSchemaURN + `": {"manager": {"value": "` + b + `"}}}`

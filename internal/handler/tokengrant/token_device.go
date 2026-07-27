@@ -82,13 +82,13 @@ func deviceMintAndRespond(d DeviceGrantDeps, ctx core.HandlerContext, client *co
 	issuedSub := d.ApplyPairwiseSubject(ctx.Request().Context(), client, dc.UserID)
 	token, err := ti.Issue(ctx.Request().Context(), &core.Subject{
 		ID: issuedSub, Provider: dc.Provider, Claims: dc.Attributes,
-		Resources:            dc.Resources,
-		ClientID:             client.ID,
-		AuthTime:             time.Now(),
-		AMR:                  []string{dc.Provider},
-		TTL:                  client.AccessTokenTTL,
-		ConfirmationJKT:      dpopJKT,
-		ConfirmationX5TS256:  mtlsX5T,
+		Resources:           dc.Resources,
+		ClientID:            client.ID,
+		AuthTime:            time.Now(),
+		AMR:                 []string{dc.Provider},
+		TTL:                 client.AccessTokenTTL,
+		ConfirmationJKT:     dpopJKT,
+		ConfirmationX5TS256: mtlsX5T,
 	}, dc.Scopes)
 	if err != nil {
 		d.SrvLogger().Error("device token issuance failed", "strategy", strategy, "error", err)

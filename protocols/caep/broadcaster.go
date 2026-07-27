@@ -497,4 +497,3 @@ func receiverEndpoint(c *core.Client) string {
 // ErrInvalidReceiverEndpoint and ValidateReceiverEndpoint moved to
 // broadcaster_retry.go (which had room) to keep this file within the
 // per-file line budget.
-

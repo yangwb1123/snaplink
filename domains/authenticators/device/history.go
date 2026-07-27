@@ -15,9 +15,9 @@ type LoginRecord struct {
 	Time      time.Time `json:"time"`
 	IP        string    `json:"ip"`
 	DeviceID  string    `json:"device_id,omitempty"`
-	Device    string    `json:"device,omitempty"`      // device summary from UA
-	Location  string    `json:"location,omitempty"`   // geo summary
-	Provider  string    `json:"provider,omitempty"`   // auth provider used
+	Device    string    `json:"device,omitempty"`   // device summary from UA
+	Location  string    `json:"location,omitempty"` // geo summary
+	Provider  string    `json:"provider,omitempty"` // auth provider used
 	Success   bool      `json:"success"`
 	SessionID string    `json:"session_id,omitempty"`
 
@@ -25,7 +25,7 @@ type LoginRecord struct {
 	TrustScore float64 `json:"trust_score,omitempty"`
 
 	// Security flags — set during login when device is new or location changes.
-	DeviceIsNew    bool `json:"device_is_new,omitempty"`
+	DeviceIsNew   bool `json:"device_is_new,omitempty"`
 	LocationIsNew bool `json:"location_is_new,omitempty"`
 }
 

@@ -176,7 +176,9 @@ func newFakeStatusStore() *fakeStatusStore {
 	return s
 }
 
-func (s *fakeStatusStore) key(t corecredential.CredentialType, id string) string { return string(t) + "|" + id }
+func (s *fakeStatusStore) key(t corecredential.CredentialType, id string) string {
+	return string(t) + "|" + id
+}
 
 func (s *fakeStatusStore) Upsert(_ context.Context, meta corecredential.CredentialMeta) error {
 	<-s.mu

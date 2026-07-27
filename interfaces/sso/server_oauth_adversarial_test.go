@@ -113,9 +113,9 @@ func TestAdversarial_DeviceAwareTTL_NilSecurityCtx(t *testing.T) {
 
 func TestAdversarial_UASummary_MalformedUA(t *testing.T) {
 	tests := []string{
-		"   ",                 // whitespace only
-		"Mozilla/5.0",         // incomplete UA
-		string([]byte{0xff}),  // binary garbage
+		"   ",                // whitespace only
+		"Mozilla/5.0",        // incomplete UA
+		string([]byte{0xff}), // binary garbage
 	}
 	for _, ua := range tests {
 		result := uaSummary(ua)

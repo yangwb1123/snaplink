@@ -1,17 +1,19 @@
 package sso
+
 import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"strings"
-	"time"
 	"github.com/yangwb1123/snaplink/internal/auth/consent"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/spi"
+	"net/http"
+	"strings"
+	"time"
 )
+
 func (s *Server) handleLogout(ctx HandlerContext) {
 	var req struct {
 		SessionID string `json:"session_id"`
@@ -37,6 +39,7 @@ func (s *Server) handleLogout(ctx HandlerContext) {
 		KeyRevoked: revoked,
 	})
 }
+
 // captureBackchannelTarget resolves the (subject, client, sid) for back-channel
 // logout from the bearer BEFORE it is revoked — the post-revoke Validate call
 // would fail. Best-effort: a malformed or already-expired bearer just yields no
@@ -67,6 +70,7 @@ func (s *Server) captureBackchannelTarget(ctx HandlerContext, bearer string) (bc
 	}
 	return bcSubject, bcClientID, bcSID
 }
+
 // revokeLogoutCredentials destroys the session (when present) and revokes the
 // bearer across every registered issuer, returning the list of revoked-credential
 // markers in append order: RevokedSession first, then one RevokedToken per issuer
@@ -94,6 +98,7 @@ func (s *Server) revokeLogoutCredentials(ctx HandlerContext, sessionID, bearer s
 	}
 	return revoked
 }
+
 // maybeFanOutBackchannel notifies the client in the bearer's aud / client_id
 // that this user just logged out so the RP can tear down its local session
 // (OIDC Back-Channel Logout 1.0). No-op when the subsystem isn't wired or the
@@ -158,6 +163,7 @@ func (s *Server) handleGetClient(ctx HandlerContext) {
 	}
 	ctx.JSON(http.StatusOK, client)
 }
+
 // handleConsentGate checks whether the user has consented to the requested
 // scopes for the given client. Returns true when the gate fired (caller
 // MUST return immediately) or false when the request may proceed.
@@ -207,6 +213,7 @@ func (s *Server) handleConsentGate(ctx HandlerContext, userID string, client *Cl
 	s.recordConsentEvent(ctx, audit.EventConsentGranted, audit.OutcomeSuccess, userID, clientID, scopes)
 	return false
 }
+
 // evaluateConsentNeed is the pure consent-gate predicate: it returns whether the
 // request must prompt for consent given the existing grant lookup result. On a
 // store outage (err != nil that is not ErrNoConsentGrant) it fails open — logs
@@ -241,6 +248,7 @@ func (s *Server) evaluateConsentNeed(userID string, client *Client, scopes []str
 	}
 	return false
 }
+
 // issueConsentChallengeResponse records a denial when a challenge was presented
 // but failed (expired / fabricated / replayed / wrong scopes — a first-time
 // prompt with an empty challenge is not a denial), then issues a fresh challenge
@@ -271,6 +279,7 @@ func (s *Server) issueConsentChallengeResponse(ctx HandlerContext, userID string
 	}
 	ctx.JSON(http.StatusOK, resp)
 }
+
 // recordConsentGrant persists an up-to-date consent grant (refreshing GrantedAt).
 // Fail-open on write errors.
 func (s *Server) recordConsentGrant(requestCtx context.Context, userID, clientID string, scopes []string) {
@@ -285,6 +294,7 @@ func (s *Server) recordConsentGrant(requestCtx context.Context, userID, clientID
 	}
 	_ = s.consentStore.RecordConsent(requestCtx, grant)
 }
+
 // recordConsentEvent emits a user-initiated consent-lifecycle audit event
 // (granted / revoked / denied). No-op when no auditor is wired. The acting
 // subject is the resource owner (userID) — distinct from the admin-plane
@@ -307,6 +317,7 @@ func (s *Server) recordConsentEvent(ctx HandlerContext, evtType audit.EventType,
 	}
 	s.auditor.Record(ctx.Request().Context(), evt)
 }
+
 // ensureJITMembership auto-provisions org membership on login when enabled: a
 // user authenticating through a tenant-bound client who has no membership in
 // that tenant is added as a member, so federated users appear in their org
@@ -333,6 +344,7 @@ func (s *Server) ensureJITMembership(ctx HandlerContext, client *Client, userID 
 		s.auditor.Record(rctx, evt)
 	}
 }
+
 // createSession mints a session capturing device context (IP/UA) and enforcing
 // session caps (max_active_sessions, per-user, tenant quota). Eviction is
 // scoped to tenantID; listing/eviction errors fail-open (logged, not blocking).
@@ -373,6 +385,7 @@ func (s *Server) createSession(ctx HandlerContext, userID, clientID, tenantID st
 	}
 	return sess, err
 }
+
 // createSessionRecord writes the session (CreateWithMeta or plain Create).
 func (s *Server) createSessionRecord(ctx HandlerContext, rctx context.Context, userID, tenantID string, deviceID ...string) (*Session, error) {
 	mc, ok := s.sessionMgr.(SessionMetaCreator)
@@ -402,6 +415,7 @@ func (s *Server) createSessionRecord(ctx HandlerContext, rctx context.Context, u
 	}
 	return mc.CreateWithMeta(rctx, userID, meta)
 }
+
 // evictOldestSession lists the user's sessions for the given tenant and, when
 // the count is at or above limit, destroys the session with the earliest
 // CreatedAt. Scoped to tenantID: each tenant's quota is independent.
@@ -432,6 +446,7 @@ func (s *Server) evictOldestSession(rctx context.Context, userID, tenantID strin
 			"error", err, "user", userID, "session", oldest.ID)
 	}
 }
+
 // deviceCapExceededForDevice checks if the device already has the max allowed
 // sessions. Returns true when the cap would be exceeded (caller should refuse).
 func (s *Server) deviceCapExceededForDevice(rctx context.Context, userID, devID string) bool {
@@ -448,6 +463,7 @@ func (s *Server) deviceCapExceededForDevice(rctx context.Context, userID, devID 
 	}
 	return count >= s.devicePolicy.MaxSessionsPerDevice
 }
+
 // oldestSession returns the session with the earliest CreatedAt from a slice.
 func oldestSession(sessions []*Session) *Session {
 	var oldest *Session
@@ -458,6 +474,7 @@ func oldestSession(sessions []*Session) *Session {
 	}
 	return oldest
 }
+
 // describeScopes pairs each requested scope with its operator-defined human
 // description (WithScopeDescriptions) for the consent_required response. A scope
 // with no registered description carries an empty one — the consent UI falls

@@ -71,11 +71,11 @@ func TestClientWritePrep(t *testing.T) {
 
 func TestClientScanRowScalars(t *testing.T) {
 	r := &clientScanRow{
-		activeInt:         1,
-		requirePKCEInt:    1,
-		requireSROInt:     0,
-		secret:            "$2a$10$dummyhashdummyhashdummyhashdummyhashdummyhashdu",
-		rat:               "$2a$10$dummyhashdummyhashdummyhashdummyhashdummyhashdu",
+		activeInt:      1,
+		requirePKCEInt: 1,
+		requireSROInt:  0,
+		secret:         "$2a$10$dummyhashdummyhashdummyhashdummyhashdummyhashdu",
+		rat:            "$2a$10$dummyhashdummyhashdummyhashdummyhashdummyhashdu",
 	}
 	r.scalars()
 
@@ -159,8 +159,8 @@ func TestUnmarshalClientJSONMap(t *testing.T) {
 
 func BenchmarkClientWriteArgs(b *testing.B) {
 	client := &sso.Client{
-		ID:           "bench-client",
-		RedirectURIs: []string{"https://app.example.com/callback"},
+		ID:            "bench-client",
+		RedirectURIs:  []string{"https://app.example.com/callback"},
 		AllowedScopes: []string{"openid", "profile"},
 	}
 

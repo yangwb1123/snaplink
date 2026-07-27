@@ -178,11 +178,21 @@ func denyOnError(dec Decision, name string, err error) Decision {
 // comparison / time literal returns a non-nil error (fail-closed at the call
 // site).
 func matchDeviceConditions(c Conditions, ac AccessContext) bool {
-	if c.DeviceManaged != nil && *c.DeviceManaged != (ac.DevicePosture == PostureManaged) { return false }
-	if c.DeviceType != "" && c.DeviceType != ac.DeviceType { return false }
-	if c.DeviceTrustLevel > 0 && ac.DeviceTrustLevel < c.DeviceTrustLevel { return false }
-	if c.IsNewDevice && !ac.IsNewDevice { return false }
-	if c.IsNewLocation && !ac.IsNewLocation { return false }
+	if c.DeviceManaged != nil && *c.DeviceManaged != (ac.DevicePosture == PostureManaged) {
+		return false
+	}
+	if c.DeviceType != "" && c.DeviceType != ac.DeviceType {
+		return false
+	}
+	if c.DeviceTrustLevel > 0 && ac.DeviceTrustLevel < c.DeviceTrustLevel {
+		return false
+	}
+	if c.IsNewDevice && !ac.IsNewDevice {
+		return false
+	}
+	if c.IsNewLocation && !ac.IsNewLocation {
+		return false
+	}
 	return true
 }
 

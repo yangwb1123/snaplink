@@ -274,7 +274,9 @@ func TestMemoryStore_Adversarial_NilContext(t *testing.T) {
 
 // itoa is a minimal int→string for test helpers (avoid strconv import).
 func itoa(n int) string {
-	if n == 0 { return "0" }
+	if n == 0 {
+		return "0"
+	}
 	var buf [8]byte
 	i := len(buf)
 	for n > 0 {

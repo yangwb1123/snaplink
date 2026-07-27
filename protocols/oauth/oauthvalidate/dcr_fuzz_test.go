@@ -47,7 +47,7 @@ func FuzzValidateDCRMetadata(f *testing.F) {
 	}
 
 	policy := &DCRPolicy{
-		DefaultActive:        true,
+		DefaultActive:         true,
 		AllowedAuthenticators: []string{"password", "webauthn", "totp"},
 	}
 	supportedGrants := []string{"authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", "urn:openid:params:grant-type:ciba"}
@@ -57,15 +57,15 @@ func FuzzValidateDCRMetadata(f *testing.F) {
 		idTokenEncAlg, idTokenEncEnc, userinfoEncAlg, userinfoEncEnc string,
 	) {
 		req := &DCRMetadata{
-			RedirectURIs:                  splitStrings(redirectURIs),
-			TokenEndpointAuthMethod:       tokenEndpointAuthMethod,
-			GrantTypes:                    splitStrings(grantTypes),
-			ResponseTypes:                 splitStrings(responseTypes),
-			AllowedAuthenticators:         splitStrings(allowedAuthenticators),
-			IDTokenEncryptedResponseAlg:   idTokenEncAlg,
-			IDTokenEncryptedResponseEnc:   idTokenEncEnc,
-			UserinfoEncryptedResponseAlg:  userinfoEncAlg,
-			UserinfoEncryptedResponseEnc:  userinfoEncEnc,
+			RedirectURIs:                 splitStrings(redirectURIs),
+			TokenEndpointAuthMethod:      tokenEndpointAuthMethod,
+			GrantTypes:                   splitStrings(grantTypes),
+			ResponseTypes:                splitStrings(responseTypes),
+			AllowedAuthenticators:        splitStrings(allowedAuthenticators),
+			IDTokenEncryptedResponseAlg:  idTokenEncAlg,
+			IDTokenEncryptedResponseEnc:  idTokenEncEnc,
+			UserinfoEncryptedResponseAlg: userinfoEncAlg,
+			UserinfoEncryptedResponseEnc: userinfoEncEnc,
 		}
 
 		// The contract under test: this MUST NOT panic for any input.

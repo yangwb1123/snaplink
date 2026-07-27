@@ -1,17 +1,19 @@
 package caep
+
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
-	"net/http"
-	"time"
+	"errors"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
-	"crypto/rand"
-	"encoding/hex"
-	"errors"
+	"net/http"
 	"sync"
+	"time"
 )
+
 // The CAEP/SSF RECEIVER — the inbound half of OpenID Shared Signals.
 //   - subject mapping PRECISION (the other crux): the SET's subject is
 //     mapped to a LOCAL user via an explicit, configured strategy. A
@@ -45,6 +47,7 @@ import (
 // be precise (a mismatch is wrongful revocation), so the strategy is an
 // EXPLICIT operator choice per trusted transmitter, never a guess.
 type SubjectMapMode int
+
 const (
 	// SubjectMapOpaque treats the SET's `sub_id` opaque `id` as the LOCAL
 	// user id directly. This is the symmetric inverse of THIS project's
@@ -68,6 +71,7 @@ const (
 	// subjects under ITS configured provider, never another upstream's.
 	SubjectMapIssSub
 )
+
 // Subject-identifier `format` values (RFC 9493 §3) the receiver
 // understands. A SET whose sub_id uses an unrecognised format maps to no
 // subject (no-op + ack) rather than being guessed.
@@ -75,22 +79,26 @@ const (
 	subjectFormatOpaque = "opaque"
 	subjectFormatIssSub = "iss_sub"
 )
+
 // DefaultReceiverMaxClockSkew bounds SET iat/exp freshness validation.
 // SETs are short-lived (the Transmitter defaults to a 2-minute TTL); a
 // small skew tolerates clock drift between the upstream transmitter and
 // this server without meaningfully widening the replay window.
 const DefaultReceiverMaxClockSkew = 60 * time.Second
+
 // EventSSFEventReceived is the internal audit event recorded when a
 // validated SET is processed (whether or not it found a local subject to
 // act on). It carries the transmitter iss + the event type + the mapped
 // local subject via SetMeta — NEVER the raw SET (which is a signed bearer
 // artefact). Operator-facing signal, not a wire code.
 const EventSSFEventReceived audit.EventType = "ssf_event_received"
+
 // EventSSFRevocation is the internal audit event recorded when a validated
 // SET caused a LOCAL revocation (sessions + refresh tokens killed for the
 // mapped subject). Distinct from ssf_event_received so an operator can
 // alert specifically on receiver-driven revocations.
 const EventSSFRevocation audit.EventType = "ssf_revocation"
+
 // Receiver-side metric outcome labels for sso_ssf_sets_received_total.
 // Bounded cardinality by construction.
 const (
@@ -104,10 +112,12 @@ const (
 	// untrusted iss / wrong aud / expired / replayed / malformed).
 	ReceiverOutcomeRejected = "rejected"
 )
+
 // ReceiverMetricFunc records one inbound-SET outcome. Wired by cmd to the
 // sso_ssf_sets_received_total{outcome} counter; nil ⇒ no metric. Mirrors
 // the transmitter's MetricFunc seam (keeps caep free of a prometheus dep).
 type ReceiverMetricFunc func(outcome string)
+
 // TrustedTransmitter describes ONE upstream transmitter the receiver will
 // accept SETs from. The set of these IS the trust allowlist: a SET whose
 // `iss` matches none of them is rejected before any signature work.
@@ -146,6 +156,7 @@ type TrustedTransmitter struct {
 	// PS256, EdDSA). A symmetric alg here is rejected by VerifyCompactJWS.
 	AllowedAlgs []string
 }
+
 // trustedEntry is the normalized internal form of a TrustedTransmitter:
 // the alg allowlist materialized into a set and the allowed-events
 // materialized into a set for O(1) checks.
@@ -156,6 +167,7 @@ type trustedEntry struct {
 	allowedAlgs   map[string]struct{}
 	allowedEvents map[string]struct{} // nil ⇒ all known events honored
 }
+
 // SubjectRevoker performs the local "revoke ALL of this subject's access"
 // action once a SET is fully validated and its subject is mapped. It is a
 // narrow seam (one method) so the receiver depends on a behavior, not on a
@@ -171,6 +183,7 @@ type SubjectRevoker interface {
 	// other) — revoking is the safe direction.
 	RevokeAllForSubject(ctx context.Context, localUserID string) (RevocationResult, error)
 }
+
 // RevocationResult reports what a RevokeAllForSubject did (for audit).
 type RevocationResult struct {
 	RefreshTokensRevoked int
@@ -181,6 +194,7 @@ type RevocationResult struct {
 	// revoke", which the receiver's audit trail doesn't need to tell apart.
 	TrustedDevicesRevoked int
 }
+
 // SubjectResolver maps a SET subject identifier to a LOCAL user id. The
 // default resolver (userProviderResolver) uses core.UserProvider; the seam
 // is exported so an operator with a bespoke external-id store can plug a
@@ -194,6 +208,7 @@ type SubjectResolver interface {
 	// transmitter may retry).
 	ResolveLocalSubject(ctx context.Context, mode SubjectMapMode, provider string, sub setSubjectID) (localUserID string, ok bool, err error)
 }
+
 // setSubjectID is the RFC 9493 Subject Identifier carried in a SET's
 // `sub_id`. The receiver parses the two formats it acts on (opaque,
 // iss_sub) plus the bare `sub` string fallback (some transmitters carry
@@ -204,6 +219,7 @@ type setSubjectID struct {
 	Iss    string `json:"iss"` // iss_sub
 	Sub    string `json:"sub"` // iss_sub
 }
+
 // inboundSETClaims is the SET payload subset the receiver validates +
 // acts on. `aud` is string-or-array per RFC 7519 §4.1.3 (setAudClaim,
 // jws.go).
@@ -217,6 +233,7 @@ type inboundSETClaims struct {
 	Sub    string                     `json:"sub"` // top-level subject fallback
 	Events map[string]json.RawMessage `json:"events"`
 }
+
 // ReceiverResult is the outcome of processing one inbound SET, returned so
 // the HTTP handler can choose the ack status + audit shape WITHOUT the
 // receiver knowing about HTTP.
@@ -241,6 +258,7 @@ type ReceiverResult struct {
 	// (oracle-safe).
 	RejectCode string
 }
+
 // SSF / RFC 8935 receiver error codes (the `err` field of the SSF error
 // response). Deliberately COARSE so the receiver never leaks which precise
 // validation gate failed (signature vs aud vs replay vs expiry) — an
@@ -257,6 +275,7 @@ const (
 	// failure of the SET; ALL trust failures collapse to it (oracle-safe).
 	ErrReceiverInvalidKey = "invalid_key"
 )
+
 // Receiver consumes inbound SETs from configured trusted transmitters and
 // revokes local access for the mapped subject.
 type Receiver struct {
@@ -264,7 +283,7 @@ type Receiver struct {
 	// of keys IS the allowlist.
 	trusted map[string]trustedEntry
 	// audience is THIS server's identifier the SET `aud` MUST contain.
-	audience string
+	audience     string
 	maxClockSkew time.Duration
 	// jtiReplay consumes the SET jti (MarkSeen) so a replayed SET can't
 	// re-trigger. REQUIRED — without a replay store the receiver cannot
@@ -278,8 +297,9 @@ type Receiver struct {
 	recorder *audit.Recorder    // audit sink; may be nil (no audit)
 	metric   ReceiverMetricFunc // may be nil
 	logger   Logger             // may be nil
-	now func() time.Time // injectable clock for tests; nil ⇒ time.Now
+	now      func() time.Time   // injectable clock for tests; nil ⇒ time.Now
 }
+
 // SSFConfiguration describes this server's SSF transmitter capabilities.
 // Served at /.well-known/ssf-configuration per OpenID SSF §4.
 type SSFConfiguration struct {
@@ -296,11 +316,13 @@ type SSFConfiguration struct {
 	// SupportedEvents lists the SSF event types this transmitter can emit.
 	SupportedEvents []string `json:"supported_events,omitempty"`
 }
+
 // SSFConfigDeps is what HandleSSFConfiguration needs from the host server.
 type SSFConfigDeps interface {
 	// ResolveIssuer resolves the issuer URL for the current request.
 	ResolveIssuer(ctx core.HandlerContext) string
 }
+
 // DefaultSSFSupportedEvents is the set of SSF/CAEP events the transmitter
 // currently maps from internal audit events. Aligned with event_mapper.go.
 var DefaultSSFSupportedEvents = []string{
@@ -309,6 +331,7 @@ var DefaultSSFSupportedEvents = []string{
 	"https://schemas.openid.net/secevent/caep/event-type/credential-change",
 	"https://schemas.openid.net/secevent/risc/event-type/account-disabled",
 }
+
 // HandleSSFConfiguration serves GET /.well-known/ssf-configuration — returns
 // the SSF transmitter metadata a receiver needs to configure SET delivery.
 func HandleSSFConfiguration(d SSFConfigDeps, ctx core.HandlerContext) {
@@ -325,6 +348,7 @@ func HandleSSFConfiguration(d SSFConfigDeps, ctx core.HandlerContext) {
 	}
 	ctx.JSON(http.StatusOK, cfg)
 }
+
 // Stream represents an SSF event stream (RFC 8935 §2). A stream is a
 // delivery channel for Security Event Tokens (SETs) pushed to a receiver.
 type Stream struct {
@@ -343,6 +367,7 @@ type Stream struct {
 	// UpdatedAt is when the stream was last modified.
 	UpdatedAt time.Time `json:"updated_at"`
 }
+
 // StreamDelivery configures how SETs are delivered for a stream.
 type StreamDelivery struct {
 	// Method is the delivery method URI.
@@ -352,6 +377,7 @@ type StreamDelivery struct {
 	// Authorization is the bearer token the transmitter includes.
 	Authorization string `json:"authorization,omitempty"`
 }
+
 // StreamStore persists SSF event streams.
 type StreamStore interface {
 	// Create inserts a new stream. Returns ErrStreamExists if the ID is taken.
@@ -365,16 +391,19 @@ type StreamStore interface {
 	// List returns every stream (optionally filtered by subject).
 	List(ctx context.Context, subject string) ([]*Stream, error)
 }
+
 // Sentinel errors.
 var (
 	ErrStreamNotFound = errors.New("caep: stream not found")
 	ErrStreamExists   = errors.New("caep: stream already exists")
 )
+
 // MemoryStreamStore is an in-memory StreamStore implementation.
 type MemoryStreamStore struct {
-	mu     sync.RWMutex
+	mu      sync.RWMutex
 	streams map[string]*Stream
 }
+
 func NewMemoryStreamStore() *MemoryStreamStore {
 	return &MemoryStreamStore{
 		streams: make(map[string]*Stream),
@@ -402,7 +431,9 @@ func (m *MemoryStreamStore) Get(_ context.Context, id string) (*Stream, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	s, ok := m.streams[id]
-	if !ok { return nil, ErrStreamNotFound }
+	if !ok {
+		return nil, ErrStreamNotFound
+	}
 	cp := *s
 	return &cp, nil
 }
@@ -433,9 +464,12 @@ func (m *MemoryStreamStore) List(_ context.Context, subject string) ([]*Stream, 
 			out = append(out, &cp)
 		}
 	}
-	if out == nil { out = []*Stream{} }
+	if out == nil {
+		out = []*Stream{}
+	}
 	return out, nil
 }
+
 // StreamAPIHandler holds the stream management HTTP handlers.
 // StreamAPIDeps is what the stream management handlers need.
 type StreamAPIDeps interface {
@@ -443,42 +477,72 @@ type StreamAPIDeps interface {
 	ErrorBody(code string) map[string]any
 	ErrorBodyDesc(code, desc string) map[string]any
 }
+
 // HandleCreateStream serves POST /ssf/streams — creates a new event stream.
 func HandleCreateStream(d StreamAPIDeps, ctx core.HandlerContext) {
 	store := d.StreamStore()
-	if store == nil { ctx.JSON(http.StatusNotFound, d.ErrorBody("not_found")); return }
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody("not_found"))
+		return
+	}
 	var s Stream
-	if err := ctx.Bind(&s); err != nil { ctx.JSON(http.StatusBadRequest, d.ErrorBody("invalid_request")); return }
+	if err := ctx.Bind(&s); err != nil {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBody("invalid_request"))
+		return
+	}
 	if err := store.Create(ctx.Request().Context(), &s); err != nil {
-		if err == ErrStreamExists { ctx.JSON(http.StatusConflict, d.ErrorBody("already_exists")); return }
-		ctx.JSON(http.StatusInternalServerError, d.ErrorBody("internal_error")); return
+		if err == ErrStreamExists {
+			ctx.JSON(http.StatusConflict, d.ErrorBody("already_exists"))
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody("internal_error"))
+		return
 	}
 	ctx.JSON(http.StatusCreated, s)
 }
+
 // HandleGetStream serves GET /ssf/streams/:id
 func HandleGetStream(d StreamAPIDeps, ctx core.HandlerContext) {
 	store := d.StreamStore()
-	if store == nil { ctx.JSON(http.StatusNotFound, d.ErrorBody("not_found")); return }
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody("not_found"))
+		return
+	}
 	id := ctx.Param("id")
 	s, err := store.Get(ctx.Request().Context(), id)
-	if err != nil { ctx.JSON(http.StatusNotFound, d.ErrorBody("not_found")); return }
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody("not_found"))
+		return
+	}
 	ctx.JSON(http.StatusOK, s)
 }
+
 // HandleListStreams serves GET /ssf/streams — lists all streams.
 func HandleListStreams(d StreamAPIDeps, ctx core.HandlerContext) {
 	store := d.StreamStore()
-	if store == nil { ctx.JSON(http.StatusNotFound, d.ErrorBody("not_found")); return }
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody("not_found"))
+		return
+	}
 	streams, err := store.List(ctx.Request().Context(), ctx.Query("subject"))
-	if err != nil { ctx.JSON(http.StatusInternalServerError, d.ErrorBody("internal_error")); return }
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody("internal_error"))
+		return
+	}
 	ctx.JSON(http.StatusOK, map[string]any{"streams": streams})
 }
+
 // HandleDeleteStream serves DELETE /ssf/streams/:id
 func HandleDeleteStream(d StreamAPIDeps, ctx core.HandlerContext) {
 	store := d.StreamStore()
-	if store == nil { ctx.JSON(http.StatusNotFound, d.ErrorBody("not_found")); return }
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody("not_found"))
+		return
+	}
 	id := ctx.Param("id")
 	if err := store.Delete(ctx.Request().Context(), id); err != nil {
-		ctx.JSON(http.StatusInternalServerError, d.ErrorBody("internal_error")); return
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody("internal_error"))
+		return
 	}
 	ctx.JSON(http.StatusOK, map[string]any{"status": "ok"})
 }
@@ -486,15 +550,28 @@ func HandleDeleteStream(d StreamAPIDeps, ctx core.HandlerContext) {
 // HandleUpdateStream serves PUT /ssf/streams/:id — updates a stream.
 func HandleUpdateStream(d StreamAPIDeps, ctx core.HandlerContext) {
 	store := d.StreamStore()
-	if store == nil { ctx.JSON(http.StatusNotFound, d.ErrorBody("not_found")); return }
+	if store == nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody("not_found"))
+		return
+	}
 	id := ctx.Param("id")
 	s, err := store.Get(ctx.Request().Context(), id)
-	if err != nil { ctx.JSON(http.StatusNotFound, d.ErrorBody("not_found")); return }
-	if err := ctx.Bind(&s); err != nil { ctx.JSON(http.StatusBadRequest, d.ErrorBody("invalid_request")); return }
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, d.ErrorBody("not_found"))
+		return
+	}
+	if err := ctx.Bind(&s); err != nil {
+		ctx.JSON(http.StatusBadRequest, d.ErrorBody("invalid_request"))
+		return
+	}
 	s.ID = id // path param wins
 	if err := store.Update(ctx.Request().Context(), s); err != nil {
-		if err == ErrStreamNotFound { ctx.JSON(http.StatusNotFound, d.ErrorBody("not_found")); return }
-		ctx.JSON(http.StatusInternalServerError, d.ErrorBody("internal_error")); return
+		if err == ErrStreamNotFound {
+			ctx.JSON(http.StatusNotFound, d.ErrorBody("not_found"))
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, d.ErrorBody("internal_error"))
+		return
 	}
 	ctx.JSON(http.StatusOK, s)
 }

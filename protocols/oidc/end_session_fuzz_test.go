@@ -22,9 +22,9 @@ import (
 func FuzzComposePostLogoutTarget(f *testing.F) {
 	// Seed corpus: realistic post-logout URIs with various client configs.
 	type seed struct {
-		postLogoutURI   string
-		state           string
-		allowlist       []string
+		postLogoutURI string
+		state         string
+		allowlist     []string
 	}
 	seeds := []seed{
 		{postLogoutURI: "https://client.example/logged-out", state: "abc123", allowlist: []string{"https://client.example/logged-out"}},

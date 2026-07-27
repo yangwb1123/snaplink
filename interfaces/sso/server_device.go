@@ -328,10 +328,11 @@ func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, devi
 // form where users enter the user_code displayed on their device.
 //
 // Mode dispatch (query-param driven):
-//   ?check=USERCODE  — JSON status (for the page's JS polling). Unauthenticated;
-//                      only reveals states the device already learns via /token.
-//   (no check)       — HTML verification page with content negotiation:
-//                      Accept: text/html → HTML page; otherwise → 406.
+//
+//	?check=USERCODE  — JSON status (for the page's JS polling). Unauthenticated;
+//	                   only reveals states the device already learns via /token.
+//	(no check)       — HTML verification page with content negotiation:
+//	                   Accept: text/html → HTML page; otherwise → 406.
 //
 // The HTML page includes code entry, inline authentication, and approval flow.
 func (s *Server) handleDeviceVerifyPage(ctx HandlerContext) {

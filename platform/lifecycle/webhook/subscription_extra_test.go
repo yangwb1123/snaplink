@@ -36,7 +36,7 @@ func TestValidateHTTPSURL(t *testing.T) {
 func TestEventSubscriptionValidate(t *testing.T) {
 	t.Run("valid subscription", func(t *testing.T) {
 		sub := EventSubscription{
-			URL:    "https://hooks.example.com/callback",
+			URL:        "https://hooks.example.com/callback",
 			EventTypes: []audit.EventType{"login", "logout"},
 			Secret:     "whsec_test-secret",
 		}

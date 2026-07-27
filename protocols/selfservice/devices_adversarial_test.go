@@ -99,19 +99,27 @@ func TestDeviceFilter_Combined(t *testing.T) {
 
 // filter helpers extracted from HandleMyDevices for unit testing
 func filterByTrustLabel(devices []*device.Device, label string) []*device.Device {
-	if label == "" { return devices }
+	if label == "" {
+		return devices
+	}
 	var out []*device.Device
 	for _, d := range devices {
-		if d.TrustLabel == label { out = append(out, d) }
+		if d.TrustLabel == label {
+			out = append(out, d)
+		}
 	}
 	return out
 }
 
 func filterBySuspicious(devices []*device.Device, val string) []*device.Device {
-	if val != "true" { return devices }
+	if val != "true" {
+		return devices
+	}
 	var out []*device.Device
 	for _, d := range devices {
-		if d.Suspicious { out = append(out, d) }
+		if d.Suspicious {
+			out = append(out, d)
+		}
 	}
 	return out
 }

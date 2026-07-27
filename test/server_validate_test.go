@@ -235,7 +235,7 @@ func TestLogin_ProvidersListing_ScopedByClient(t *testing.T) {
 	if len(providers) != 1 {
 		t.Fatalf("providers = %v, want only [password] for restricted client", providers)
 	}
-		if pm, _ := providers[0].(map[string]any); pm == nil || pm["id"] != "password" {
+	if pm, _ := providers[0].(map[string]any); pm == nil || pm["id"] != "password" {
 		t.Errorf("provider = %v, want password", pm)
 	}
 }

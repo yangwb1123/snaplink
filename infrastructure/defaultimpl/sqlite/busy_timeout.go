@@ -16,8 +16,8 @@ import (
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/shared/security"
-	sqlited "modernc.org/sqlite"
 	"golang.org/x/crypto/bcrypt"
+	sqlited "modernc.org/sqlite"
 )
 
 const defaultBusyTimeoutMS = 5000

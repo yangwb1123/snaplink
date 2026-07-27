@@ -1,8 +1,8 @@
 package sso
+
 import (
 	"encoding/json"
 	"errors"
-	"net/http"
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/interfaces/admin"
@@ -13,11 +13,14 @@ import (
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"net/http"
 )
+
 // tracer is shared by audit-event helpers for parsing inbound W3C
 // traceparent headers into TraceID/SpanID for stamping on Event
 // records. Stateless — safe at package scope.
 var tracer = audit.NewTracer()
+
 // active state + standard metadata claims for a presented access or
 // refresh token. Inactive tokens return {active: false} only, with no
 // extra metadata — §2.2 mandates this to limit oracle leakage.
@@ -31,6 +34,7 @@ var tracer = audit.NewTracer()
 // file for the RFC 7662 + 7521/7523 client-auth precedence + §2.2
 // {active:false} oracle-leak hardening.
 func (s *Server) handleIntrospect(ctx HandlerContext) { oauth.HandleIntrospect(s, ctx) }
+
 // authenticateClientCreds verifies the client_id + secret pair via
 // the wired ClientStore + tenant gate. Used by handleRevoke + future
 // handle_par migration. Returns nil on success.
@@ -50,11 +54,13 @@ func (s *Server) authenticateClientCreds(ctx HandlerContext, id, secret string) 
 	}
 	return s.clientStore.ValidateSecret(ctx.Request().Context(), id, secret)
 }
+
 // basicClientCreds delegates to oauth.BasicClientCreds — see that
 // function for the RFC 6749 §2.3.1 precedence rationale.
 func basicClientCreds(r *http.Request) (id, secret string, ok bool) {
 	return oauth.BasicClientCreds(r)
 }
+
 // handlePAR implements RFC 9126 Pushed Authorization Requests.
 // Confidential clients POST their authorization request parameters
 // here BEFORE redirecting the user agent, getting back an opaque
@@ -92,10 +98,12 @@ func basicClientCreds(r *http.Request) (id, secret string, ok bool) {
 // handlePAR delegates to oauth.HandlePAR — see that file for the
 // RFC 9126 pre-redirect client authentication + validation flow.
 func (s *Server) handlePAR(ctx HandlerContext) { oauth.HandlePAR(s, ctx) }
+
 // handleRevoke delegates to oauth.HandleRevoke — see that file for
 // the §2.2 always-200 oracle-leak hardening + hint-driven
 // best-effort dual-tier revocation.
 func (s *Server) handleRevoke(ctx HandlerContext) { oauth.HandleRevoke(s, ctx) }
+
 // handleRevokeAll implements the "logout everywhere" endpoint. The
 // user presents a bearer token; the server reads sub + aud from its
 // claims, then kills every refresh token bound to that
@@ -116,6 +124,7 @@ func (s *Server) handleRevoke(ctx HandlerContext) { oauth.HandleRevoke(s, ctx) }
 // file for the bearer-token-authenticated "logout everywhere"
 // semantics via the RefreshTokenSubjectIndex extension.
 func (s *Server) handleRevokeAll(ctx HandlerContext) { oauth.HandleRevokeAll(s, ctx) }
+
 // handleEndSession implements OpenID Connect RP-Initiated Logout 1.0.
 // Unlike POST /logout (a session-scoped bearer-authenticated kill
 // switch), this is a GET endpoint a relying party can redirect the
@@ -161,14 +170,18 @@ func (s *Server) handleRevokeAll(ctx HandlerContext) { oauth.HandleRevokeAll(s, 
 // iframe gather/render + BCL fan-out + phishing-safe redirect
 // allowlist semantics.
 func (s *Server) handleEndSession(ctx HandlerContext) { oidc.HandleEndSession(s, ctx) }
+
 // handleRegister (RFC 7591 DCR, rate-limit-gated) moved to quota.go — see
 // checkClientRegistrationRateLimit's doc for why.
 // handleRegistrationGet delegates to oauth.HandleRegistrationGet (RFC 7592 §2.1).
 func (s *Server) handleRegistrationGet(ctx HandlerContext) { oauth.HandleRegistrationGet(s, ctx) }
+
 // handleRegistrationPut delegates to oauth.HandleRegistrationPut (RFC 7592 §2.2).
 func (s *Server) handleRegistrationPut(ctx HandlerContext) { oauth.HandleRegistrationPut(s, ctx) }
+
 // handleRegistrationDelete delegates to oauth.HandleRegistrationDelete (RFC 7592 §2.3).
 func (s *Server) handleRegistrationDelete(ctx HandlerContext) { oauth.HandleRegistrationDelete(s, ctx) }
+
 // mfaResumeState is the JSON-encoded blob persisted alongside the
 // spi.MFAChallenge. Opaque to spi.MFAChallengeStore backends; the SSO server
 // marshals + unmarshals so the post-step-up handler can replay the
@@ -180,11 +193,14 @@ func (s *Server) handleRegistrationDelete(ctx HandlerContext) { oauth.HandleRegi
 // the signal on the round trip. This is the ONE intentional persistence
 // generateDeviceCodeBytes delegates to oauth.GenerateDeviceCode.
 func normalizeUserCode(s string) string { return oauth.NormalizeUserCode(s) }
+
 // splitScope delegates to oauth.SplitScope.
 func splitScope(s string) []string { return oauth.SplitScope(s) }
+
 // Query parameter accepted by the /permissions/me, /menus/me, /roles/me
 // endpoints to scope the lookup to a particular APP.
 const QueryClientID = "client_id"
+
 // authenticatedSubject resolves the bearer token to a user ID + client ID.
 // client_id resolution: explicit query param > token audience > "".
 func (s *Server) authenticatedSubject(ctx HandlerContext) (userID, clientID string, ok bool) {
@@ -204,6 +220,7 @@ func (s *Server) authenticatedSubject(ctx HandlerContext) (userID, clientID stri
 	}
 	return claims.Subject, clientID, true
 }
+
 // Netpolicy endpoint handlers moved to netpolicy/handlers.go. Methods
 // below stay as thin delegators so the existing route binding via
 // method values keeps working.
@@ -213,6 +230,7 @@ func (s *Server) handleApplyNetPolicy(ctx HandlerContext)     { netpolicy.Handle
 func (s *Server) handleDeleteNetPolicy(ctx HandlerContext)    { netpolicy.HandleDelete(s, ctx) }
 func (s *Server) handleClassifyNetPolicy(ctx HandlerContext)  { netpolicy.HandleClassify(s, ctx) }
 func (s *Server) handleResolveMeNetPolicy(ctx HandlerContext) { netpolicy.HandleResolveMe(s, ctx) }
+
 // Generic event/webhook egress engine endpoint handlers moved to
 // platform/lifecycle/webhook/handlers.go. Methods below stay as thin delegators so the
 // existing route binding via method values keeps working.
@@ -231,6 +249,7 @@ func (s *Server) handleWebhookListDeadLetters(ctx HandlerContext) {
 func (s *Server) handleWebhookReplayDeadLetter(ctx HandlerContext) {
 	webhook.HandleReplayDeadLetter(s, ctx)
 }
+
 // Generic event/webhook egress engine admin route-path re-exports —
 // aliases.go and server_routes_admin.go are both at their line budget, same
 // reason as the Token Portfolio consts in server_routes_admin.go.
@@ -240,6 +259,7 @@ const (
 	PathAdminWebhookDeadLetters      = core.PathAdminWebhookDeadLetters
 	PathAdminWebhookDeadLetterReplay = core.PathAdminWebhookDeadLetterReplay
 )
+
 // mountWebhookAdminAPI registers the opt-in generic event/webhook egress
 // engine's admin surface (opt-in WithWebhookEngine): subscription
 // management + dead-letter-queue inspection/replay. Not mounted without an
@@ -256,21 +276,31 @@ func (s *Server) mountWebhookAdminAPI(api Router) {
 	api.GET(PathAdminWebhookDeadLetters, s.handleWebhookListDeadLetters)
 	api.POST(PathAdminWebhookDeadLetterReplay, s.handleWebhookReplayDeadLetter)
 }
-func (s *Server) handleRebacCheck(ctx HandlerContext)     { rebac.HandleCheck(s, ctx) }
-func (s *Server) handleAuthzWriteTuples(ctx HandlerContext)  { rebac.HandleWriteTuple(s, ctx) }
-func (s *Server) handleAuthzDeleteTuple(ctx HandlerContext)  { rebac.HandleDeleteTuple(s, ctx) }
-func (s *Server) handleAuthzReadTuples(ctx HandlerContext)   { rebac.HandleReadTuples(s, ctx) }
-func (s *Server) handleAuthzCheckAccess(ctx HandlerContext)  { rebac.HandleCheckAccess(s, ctx) }
-func (s *Server) handleAuthzBatchWriteTuples(ctx HandlerContext) { rebac.HandleBatchWriteTuples(s, ctx) }
-func (s *Server) handleAuthzReverseExpand(ctx HandlerContext)    { rebac.HandleReverseExpand(s, ctx) }
-func (s *Server) handleAdminListProviders(ctx HandlerContext)  { admin.HandleAdminListProviders(s, ctx) }
-func (s *Server) handleAdminGetProvider(ctx HandlerContext)    { admin.HandleAdminGetProvider(s, ctx) }
-func (s *Server) handleAdminCreateProvider(ctx HandlerContext) { admin.HandleAdminCreateProvider(s, ctx) }
-func (s *Server) handleAdminUpdateProvider(ctx HandlerContext) { admin.HandleAdminUpdateProvider(s, ctx) }
-func (s *Server) handleAdminDeleteProvider(ctx HandlerContext) { admin.HandleAdminDeleteProvider(s, ctx) }
+func (s *Server) handleRebacCheck(ctx HandlerContext)       { rebac.HandleCheck(s, ctx) }
+func (s *Server) handleAuthzWriteTuples(ctx HandlerContext) { rebac.HandleWriteTuple(s, ctx) }
+func (s *Server) handleAuthzDeleteTuple(ctx HandlerContext) { rebac.HandleDeleteTuple(s, ctx) }
+func (s *Server) handleAuthzReadTuples(ctx HandlerContext)  { rebac.HandleReadTuples(s, ctx) }
+func (s *Server) handleAuthzCheckAccess(ctx HandlerContext) { rebac.HandleCheckAccess(s, ctx) }
+func (s *Server) handleAuthzBatchWriteTuples(ctx HandlerContext) {
+	rebac.HandleBatchWriteTuples(s, ctx)
+}
+func (s *Server) handleAuthzReverseExpand(ctx HandlerContext) { rebac.HandleReverseExpand(s, ctx) }
+func (s *Server) handleAdminListProviders(ctx HandlerContext) { admin.HandleAdminListProviders(s, ctx) }
+func (s *Server) handleAdminGetProvider(ctx HandlerContext)   { admin.HandleAdminGetProvider(s, ctx) }
+func (s *Server) handleAdminCreateProvider(ctx HandlerContext) {
+	admin.HandleAdminCreateProvider(s, ctx)
+}
+func (s *Server) handleAdminUpdateProvider(ctx HandlerContext) {
+	admin.HandleAdminUpdateProvider(s, ctx)
+}
+func (s *Server) handleAdminDeleteProvider(ctx HandlerContext) {
+	admin.HandleAdminDeleteProvider(s, ctx)
+}
+
 // PathAdminRebacCheck route-path re-export — aliases.go is at its line
 // budget, same reason as the Token Portfolio / crypto-inventory consts.
 const PathAdminRebacCheck = core.PathAdminRebacCheck
+
 // mountRebacAdminAPI registers the opt-in ReBAC Check engine's ONE
 // operational-debugging route (opt-in WithRebacEngine). Not mounted without
 // an engine — byte-identical to a build without the feature. This is
@@ -283,6 +313,7 @@ func (s *Server) mountRebacAdminAPI(api Router) {
 	}
 	api.GET(PathAdminRebacCheck, s.handleRebacCheck)
 }
+
 // ClassifyRequest is exposed for embedders that want to classify a request
 // in their own middleware. Returns nil when no classifier is wired or no
 // policy matches.
@@ -292,6 +323,7 @@ func (s *Server) ClassifyRequest(r *http.Request) *netpolicy.Policy {
 	}
 	return s.netClassifier.Classify(r.RemoteAddr, r.Host)
 }
+
 // audit.EventFromRequest pre-fills an Event with caller-side
 // metadata (IP, user-agent, request ID, trace context, plus geo
 // when the geo middleware is wired). Handlers fill the rest.
@@ -318,6 +350,7 @@ func (s *Server) ClassifyRequest(r *http.Request) *netpolicy.Policy {
 // time.Time stamped at /auth/login entry. Used by recordLogin* to
 // observe the per-provider login duration histogram.
 const ctxKeyLoginStart = "_sso_login_start"
+
 // observeLoginDuration computes elapsed since the stamp + observes
 // the histogram. Safe no-op when metrics aren't wired or the stamp
 // is absent (defensive — tests may bypass handleLogin).
@@ -373,6 +406,7 @@ func (s *Server) handleAuthzPolicyBundle(ctx HandlerContext) {
 	}
 	s.serveAuthzPolicyBundle(ctx, clientID, base, bundle)
 }
+
 // serveAuthzPolicyBundle renders the built bundle: it computes the
 // content-based ETag, writes the cache entry, and emits the response
 // tail. Split out of handleAuthzPolicyBundle to keep both functions
@@ -401,6 +435,7 @@ func (s *Server) serveAuthzPolicyBundle(ctx HandlerContext, clientID, base strin
 	s.storeAuthzPolicyBundleCache(clientID, base, entry)
 	oidc.WriteDoc(ctx, entry, s.authzPolicyBundleCacheTTL)
 }
+
 // errorBody delegates to core/error_body.go, enriching the envelope with
 // the request's trace ID (core.TraceIDFromContext) when the Tracing
 // middleware populated one on ctx.Request().Context() — nil/absent trace
@@ -410,9 +445,11 @@ func (s *Server) serveAuthzPolicyBundle(ctx HandlerContext, clientID, base strin
 func errorBody(ctx HandlerContext, code string) map[string]string {
 	return core.ErrorBodyWithTrace(code, core.TraceIDFromContext(ctx.Request().Context()))
 }
+
 // bearerToken delegates to oauth.BearerToken — see that function for
 // the RFC 6750 §2.1 missing-vs-bad-credential distinction.
 func bearerToken(r *http.Request) string { return oauth.BearerToken(r) }
+
 // clientTenantOK delegates to tenant.ClientOK.
 func clientTenantOK(ctx HandlerContext, client *Client) bool {
 	return tenant.ClientOK(ctx, client)
@@ -432,6 +469,7 @@ func (s *Server) handleHealth(ctx HandlerContext) {
 	}
 	ctx.JSON(http.StatusOK, resp)
 }
+
 // mountAdminChangeApproval registers the generic change-approval workflow
 // routes. Mounted only when a store is wired — byte-identical to a build
 // without WithChangeApprovalStore. Relocated from options_admin.go to keep
@@ -449,6 +487,7 @@ func (s *Server) mountAdminChangeApproval(api Router) {
 	api.POST(core.PathAdminChangeApprove, s.handleAdminApproveChange)
 	api.POST(core.PathAdminChangeReject, s.handleAdminRejectChange)
 }
+
 // Generic change-approval workflow handlers — thin wrappers delegating to
 // the admin package's HandleAdminX free functions (*Server satisfies
 // admin.Deps via accessors.go); the logic + audit live in
@@ -458,15 +497,35 @@ func (s *Server) handleAdminListChanges(ctx HandlerContext)   { admin.HandleAdmi
 func (s *Server) handleAdminGetChange(ctx HandlerContext)     { admin.HandleAdminGetChange(s, ctx) }
 func (s *Server) handleAdminApproveChange(ctx HandlerContext) { admin.HandleAdminApproveChange(s, ctx) }
 func (s *Server) handleAdminRejectChange(ctx HandlerContext)  { admin.HandleAdminRejectChange(s, ctx) }
-func (s *Server) handleAdminListUserDevices(ctx HandlerContext)   { admin.HandleAdminListUserDevices(s, ctx) }
-func (s *Server) handleAdminDeleteUserDevice(ctx HandlerContext)  { admin.HandleAdminDeleteUserDevice(s, ctx) }
-func (s *Server) handleAdminListAllDevices(ctx HandlerContext)    { admin.HandleAdminListAllDevices(s, ctx) }
-func (s *Server) handleAdminDeviceStats(ctx HandlerContext)       { admin.HandleAdminDeviceStats(s, ctx) }
-func (s *Server) handleAdminDeviceActivity(ctx HandlerContext)    { admin.HandleAdminDeviceActivity(s, ctx) }
-func (s *Server) handleAdminResetDeviceTrust(ctx HandlerContext)   { admin.HandleAdminResetDeviceTrust(s, ctx) }
-func (s *Server) handleAdminBulkRevokeDevices(ctx HandlerContext)  { admin.HandleAdminBulkRevokeDevices(s, ctx) }
-func (s *Server) handleAdminListSecurityActivity(ctx HandlerContext) { admin.HandleAdminListSecurityActivity(s, ctx) }
-func (s *Server) handleAdminListUserLoginHistory(ctx HandlerContext) { admin.HandleAdminListUserLoginHistory(s, ctx) }
-func (s *Server) handleAdminGetBranding(ctx HandlerContext)    { admin.HandleAdminGetBranding(s, ctx) }
-func (s *Server) handleAdminUpdateBranding(ctx HandlerContext) { admin.HandleAdminUpdateBranding(s, ctx) }
-func (s *Server) handleAdminDeleteBranding(ctx HandlerContext) { admin.HandleAdminDeleteBranding(s, ctx) }
+func (s *Server) handleAdminListUserDevices(ctx HandlerContext) {
+	admin.HandleAdminListUserDevices(s, ctx)
+}
+func (s *Server) handleAdminDeleteUserDevice(ctx HandlerContext) {
+	admin.HandleAdminDeleteUserDevice(s, ctx)
+}
+func (s *Server) handleAdminListAllDevices(ctx HandlerContext) {
+	admin.HandleAdminListAllDevices(s, ctx)
+}
+func (s *Server) handleAdminDeviceStats(ctx HandlerContext) { admin.HandleAdminDeviceStats(s, ctx) }
+func (s *Server) handleAdminDeviceActivity(ctx HandlerContext) {
+	admin.HandleAdminDeviceActivity(s, ctx)
+}
+func (s *Server) handleAdminResetDeviceTrust(ctx HandlerContext) {
+	admin.HandleAdminResetDeviceTrust(s, ctx)
+}
+func (s *Server) handleAdminBulkRevokeDevices(ctx HandlerContext) {
+	admin.HandleAdminBulkRevokeDevices(s, ctx)
+}
+func (s *Server) handleAdminListSecurityActivity(ctx HandlerContext) {
+	admin.HandleAdminListSecurityActivity(s, ctx)
+}
+func (s *Server) handleAdminListUserLoginHistory(ctx HandlerContext) {
+	admin.HandleAdminListUserLoginHistory(s, ctx)
+}
+func (s *Server) handleAdminGetBranding(ctx HandlerContext) { admin.HandleAdminGetBranding(s, ctx) }
+func (s *Server) handleAdminUpdateBranding(ctx HandlerContext) {
+	admin.HandleAdminUpdateBranding(s, ctx)
+}
+func (s *Server) handleAdminDeleteBranding(ctx HandlerContext) {
+	admin.HandleAdminDeleteBranding(s, ctx)
+}

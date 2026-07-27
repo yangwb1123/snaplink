@@ -10,8 +10,8 @@ import (
 
 func TestRoleToGroup(t *testing.T) {
 	role := permissions.Role{
-		Code: "admin",
-		Name: "Administrator",
+		Code:        "admin",
+		Name:        "Administrator",
 		Permissions: []string{"user:read", "user:write"},
 	}
 	members := []string{"user-1", "user-2"}

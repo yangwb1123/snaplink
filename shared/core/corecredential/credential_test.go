@@ -52,7 +52,7 @@ func TestRotationNoticeFields(t *testing.T) {
 			CreatedAt: now,
 		},
 		Compromised: true,
-		Reason:     "test compromise",
+		Reason:      "test compromise",
 	}
 
 	if notice.Type != CredentialTypeOAuthClientSecret {

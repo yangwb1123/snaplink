@@ -66,7 +66,6 @@ func TestSecurityHeaders_ProbeEndpointsStayHeaderFree(t *testing.T) {
 	}
 }
 
-
 func TestSecurityHeadersPolicy_OverridesCSPDirectives(t *testing.T) {
 	t.Parallel()
 	h := shNewServer(sso.WithSecurityHeadersPolicy(handler.SecurityHeadersPolicy{

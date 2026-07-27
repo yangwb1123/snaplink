@@ -37,10 +37,10 @@ type gcTestDeps struct {
 func (d *gcTestDeps) ApprovalStore() admingovernance.ApprovalStore             { return d.store }
 func (d *gcTestDeps) ChangeRegistry() *admingovernance.Registry                { return d.registry }
 func (d *gcTestDeps) ApprovalActionTypes() admingovernance.RequiredActionTypes { return d.actionTypes }
-func (d *gcTestDeps) ProviderStore() provider.Store    { return nil }
-func (d *gcTestDeps) DeviceStore() device.Store              { return nil }
-func (d *gcTestDeps) LoginHistoryStore() device.HistoryStore { return nil }
-func (d *gcTestDeps) ConnectionStore() connections.Store { return nil }
+func (d *gcTestDeps) ProviderStore() provider.Store                            { return nil }
+func (d *gcTestDeps) DeviceStore() device.Store                                { return nil }
+func (d *gcTestDeps) LoginHistoryStore() device.HistoryStore                   { return nil }
+func (d *gcTestDeps) ConnectionStore() connections.Store                       { return nil }
 func (d *gcTestDeps) ClientStore() core.ClientStore                            { return nil }
 func (d *gcTestDeps) SessionManager() core.SessionManager                      { return nil }
 func (d *gcTestDeps) Permissions() permissions.Provider                        { return nil }

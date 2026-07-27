@@ -1,7 +1,6 @@
 package sso
+
 import (
-	"net/http"
-	"time"
 	"github.com/yangwb1123/snaplink/domains/authenticators/device"
 	"github.com/yangwb1123/snaplink/domains/connections"
 	"github.com/yangwb1123/snaplink/domains/connections/provider"
@@ -12,9 +11,13 @@ import (
 	"github.com/yangwb1123/snaplink/protocols/caep"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"net/http"
+	"time"
 )
+
 // PathAdminFederationHealth re-export.
 const PathAdminFederationHealth = core.PathAdminFederationHealth
+
 func (s *Server) BuildOPMetadata(ctx HandlerContext, base string) federation.OPFederationMetadata {
 	cfg := s.buildOIDCConfiguration(ctx, base)
 	return federation.OPFederationMetadata{
@@ -35,6 +38,7 @@ func (s *Server) BuildOPMetadata(ctx HandlerContext, base string) federation.OPF
 
 // for the X-Forwarded-Proto / X-Forwarded-Host edge trust contract.
 func requestBaseURL(r *http.Request) string { return middleware.BaseURL(r) }
+
 // WithJWKSCacheTTL overrides the Cache-Control max-age advertised
 // on /.well-known/jwks.json. Default is [DefaultJWKSCacheMaxAge]
 // (5 minutes). Lower this when key rotation must propagate faster;
@@ -47,6 +51,7 @@ func requestBaseURL(r *http.Request) string { return middleware.BaseURL(r) }
 func WithJWKSCacheTTL(ttl time.Duration) Option {
 	return func(s *Server) { s.jwksCacheTTL = ttl }
 }
+
 // WithMetadataSigner enables RFC 8414 §2.1 signed_metadata on the
 // discovery document. When wired, every /.well-known/openid-configuration
 // response carries a `signed_metadata` field whose value is a JWS over
@@ -61,6 +66,7 @@ func WithJWKSCacheTTL(ttl time.Duration) Option {
 func WithMetadataSigner(s oidc.MetadataSigner) Option {
 	return func(srv *Server) { srv.metadataSigner = s }
 }
+
 // WithFederationEntity mounts the OpenID Federation 1.0 entity-configuration
 // endpoint (PathFederationEntityConfig, "/.well-known/openid-federation"),
 // serving this server's SELF-SIGNED Entity Statement so the OP participates
@@ -96,6 +102,7 @@ func WithFederationEntity(cfg *federation.Config, signer federation.JWTSigner, r
 		srv.federationEntity = federation.NewEntityHandler(cfg, signer, resolverOpts...)
 	}
 }
+
 // WithFederationHistoricalKeyStore wires the historical signing key store
 // for the OpenID Federation 1.0 8.5 historical_keys endpoint. When wired,
 // the server mounts PathFederationHistoricalKeys returning a JWKS of all
@@ -130,9 +137,11 @@ func WithFederationHistoricalKeyStore(store federation.HistoricalKeyStore) Optio
 func WithFederationAutoRegistration() Option {
 	return func(s *Server) { s.federationAutoRegister = true }
 }
+
 // FederationEntity returns the wired federation entity handler (nil when
 // WithFederationEntity is not configured).
 func (s *Server) FederationEntity() *federation.EntityHandler { return s.federationEntity }
+
 // WithFederationConnectionHealth wires an OPTIONAL observability store
 // tracking each federation peer's fetch-path health (last success/failure,
 // consecutive-failure count, last-observed TLS certificate expiry) and mounts
@@ -160,16 +169,19 @@ func WithFederationConnectionHealth(store federationhealth.ConnectionHealth, cer
 		s.federationCertExpiryWarning = certExpiryWarning
 	}
 }
+
 // FederationConnectionHealth returns the wired health store (nil when
 // WithFederationConnectionHealth is not configured). Satisfies
 // federationhealth.Deps for HandleListPeerHealth.
 func (s *Server) FederationConnectionHealth() federationhealth.ConnectionHealth {
 	return s.federationHealth
 }
+
 // FederationCertExpiryWarning returns the configured "expiring soon"
 // threshold (<= 0 when unconfigured — HandleListPeerHealth applies its
 // default). Satisfies federationhealth.Deps.
 func (s *Server) FederationCertExpiryWarning() time.Duration { return s.federationCertExpiryWarning }
+
 // FederationHealthNow is the clock federationhealth.HandleListPeerHealth
 // computes the cert_expiring classification against. Satisfies
 // federationhealth.Deps.
@@ -180,6 +192,7 @@ func (s *Server) FederationHealthNow() time.Time { return time.Now() }
 func (s *Server) handleFederationHealth(ctx HandlerContext) {
 	federationhealth.HandleListPeerHealth(s, ctx)
 }
+
 // mountClusterObservabilityEndpoints registers the full-path admin
 // observability GET routes (authz policy bundle, storage health, federation
 // peer connection health) — split out of mountClusterEndpoints purely to
@@ -215,6 +228,7 @@ func (s *Server) mountClusterObservabilityEndpoints() {
 		s.router.GET(PathAdminFederationHealth, s.handleFederationHealth)
 	}
 }
+
 // mountClusterEndpoints registers the full-path admin/cluster endpoints
 // (authz policy bundle, storage health, mesh ext_authz, CAEP/SSF receiver),
 // each opt-in and gated on its wiring. Moved from server_routes.go (which
@@ -292,6 +306,7 @@ func (s *Server) mountFederationEndpoints() {
 		gr.GET(PathFederationHistoricalKeys, s.handleFederationHistoricalKeys)
 	}
 }
+
 // federationMeshState holds OpenID Federation, CAEP receiver, B2B connections, Envoy/Istio mesh ext_authz, and storage-health fields.
 type federationMeshState struct {
 	// CAEP/SSF RECEIVER (the inbound half of OpenID Shared Signals — the
@@ -390,6 +405,7 @@ type federationMeshState struct {
 	// federationhealth.DefaultCertExpiryWarning.
 	federationCertExpiryWarning time.Duration
 }
+
 // Enterprise connection email-domain verification (admin). Relocated from
 // server_admin_handlers.go (which was at the line budget) to sit beside
 // this file's other connectionStore-backed handlers.
@@ -399,11 +415,13 @@ func (s *Server) handleAdminListConnectionDomains(ctx HandlerContext) {
 func (s *Server) handleAdminVerifyConnectionDomain(ctx HandlerContext) {
 	admin.HandleAdminVerifyConnectionDomain(s, ctx)
 }
+
 // Zero-trust conditional-access (CAP) governance view (admin). Relocated
 // from server_admin_handlers.go (which was at the line budget).
 func (s *Server) handleAdminListAccessPolicies(ctx HandlerContext) {
 	admin.HandleAdminListAccessPolicies(s, ctx)
 }
+
 // ConnectionProber returns the wired reachability prober for the admin
 // connection-test endpoint, defaulting to the stdlib-backed production HTTP
 // prober (bounded by connectionProbeTimeout) when no custom one was injected.
@@ -415,6 +433,7 @@ func (s *Server) ConnectionProber() connections.Prober {
 	}
 	return connections.NewHTTPProber(s.connectionProbeTimeout)
 }
+
 // WithConnectionProber injects the reachability check the admin
 // POST /api/v1/admin/connections/:id/probe endpoint uses to test a
 // connection's configured upstream (first-class DI so tests run
@@ -429,6 +448,7 @@ func WithConnectionProber(p connections.Prober) Option {
 		}
 	}
 }
+
 // WithConnectionProbeTimeout bounds the production HTTP prober's per-probe
 // round-trip (connections.DefaultProbeTimeout, 10s, when unset). No effect
 // when WithConnectionProber supplies a custom Prober.

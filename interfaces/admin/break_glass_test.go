@@ -67,10 +67,10 @@ func (d *bgTestDeps) Metrics() *metrics.Metrics                             { re
 func (d *bgTestDeps) BreakGlassStore() core.BreakGlassStore                 { return d.breakGlass }
 func (d *bgTestDeps) Auditor() *audit.Recorder                              { return d.auditor }
 func (d *bgTestDeps) Logger() spi.Logger                                    { return bgTestLogger{} }
-func (d *bgTestDeps) ProviderStore() provider.Store   { return nil }
-func (d *bgTestDeps) DeviceStore() device.Store              { return nil }
-func (d *bgTestDeps) LoginHistoryStore() device.HistoryStore { return nil }
-func (d *bgTestDeps) ConnectionStore() connections.Store { return nil }
+func (d *bgTestDeps) ProviderStore() provider.Store                         { return nil }
+func (d *bgTestDeps) DeviceStore() device.Store                             { return nil }
+func (d *bgTestDeps) LoginHistoryStore() device.HistoryStore                { return nil }
+func (d *bgTestDeps) ConnectionStore() connections.Store                    { return nil }
 func (d *bgTestDeps) ConditionalAccessStore() conditionalaccess.Store       { return nil }
 func (d *bgTestDeps) DomainResolver() connections.DNSResolver               { return nil }
 func (d *bgTestDeps) TenantUserStore() core.TenantUserStore                 { return nil }

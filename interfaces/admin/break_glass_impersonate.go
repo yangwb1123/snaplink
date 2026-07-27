@@ -5,10 +5,10 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/shared/core"
-	"github.com/yangwb1123/snaplink/domains/tenant"
 )
 
 // Break-glass LIVE impersonation: an active+approved impersonate/escalate grant
@@ -169,6 +169,7 @@ func cascadeRevokeImpersonationTokens(d Deps, ctx context.Context, tokens []stri
 		d.RevokeToken(ctx, tok)
 	}
 }
+
 // HandleAdminGetBranding returns tenant branding settings.
 func HandleAdminGetBranding(d BrandingDeps, ctx core.HandlerContext) {
 	tenantID := ctx.Query("tenant_id")
@@ -253,7 +254,6 @@ func HandleAdminDeleteBranding(d BrandingDeps, ctx core.HandlerContext) {
 	}
 	ctx.JSON(http.StatusOK, map[string]any{"status": "ok", "tenant_id": tenantID})
 }
-
 
 // BrandingDeps is what the admin branding handlers need.
 type BrandingDeps interface {

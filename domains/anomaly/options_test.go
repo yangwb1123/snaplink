@@ -127,9 +127,13 @@ func TestLoginEventFields(t *testing.T) {
 }
 
 type stubDetector struct{}
+
 func (s *stubDetector) Name() string { return "stub" }
-func (s *stubDetector) Inspect(ctx context.Context, event *LoginEvent) ([]Signal, error) { return nil, nil }
+func (s *stubDetector) Inspect(ctx context.Context, event *LoginEvent) ([]Signal, error) {
+	return nil, nil
+}
 
 type stubSink struct{}
-func (s *stubSink) Name() string { return "stub" }
+
+func (s *stubSink) Name() string                                                        { return "stub" }
 func (s *stubSink) Record(ctx context.Context, event *LoginEvent, anomaly Signal) error { return nil }

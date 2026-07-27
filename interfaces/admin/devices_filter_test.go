@@ -36,5 +36,7 @@ func TestFilterByField(t *testing.T) {
 		{Platform: "iOS", Fingerprint: "fp3"},
 	}
 	result := filterField(devices, func(d *device.Device) string { return d.Platform }, "iOS")
-	if len(result) != 2 { t.Errorf("expected 2, got %d", len(result)) }
+	if len(result) != 2 {
+		t.Errorf("expected 2, got %d", len(result))
+	}
 }

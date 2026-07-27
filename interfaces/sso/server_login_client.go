@@ -261,15 +261,15 @@ func (s *Server) buildAccessContext(ctx HandlerContext, result *AuthResult, req 
 	signals := s.buildTrustSignals(ctx, result, client)
 	dc := deviceCtxFrom(ctx)
 	ac := conditionalaccess.AccessContext{
-		DevicePosture:    s.lookupDevicePosture(ctx, signals),
-		Country:          signals.Geo.CountryCode,
-		Now:              time.Now(),
-		RequestedScopes:  req.Scope,
-		Subject:          result.UserID,
-		ClientID:         client.ID,
-		DeviceType:       deviceTypeFromCtx(ctx),
-		IsNewDevice:      dc != nil && dc.SecurityCtx != nil && dc.SecurityCtx.DeviceIsNew,
-		IsNewLocation:    dc != nil && dc.SecurityCtx != nil && dc.SecurityCtx.LocationIsNew,
+		DevicePosture:   s.lookupDevicePosture(ctx, signals),
+		Country:         signals.Geo.CountryCode,
+		Now:             time.Now(),
+		RequestedScopes: req.Scope,
+		Subject:         result.UserID,
+		ClientID:        client.ID,
+		DeviceType:      deviceTypeFromCtx(ctx),
+		IsNewDevice:     dc != nil && dc.SecurityCtx != nil && dc.SecurityCtx.DeviceIsNew,
+		IsNewLocation:   dc != nil && dc.SecurityCtx != nil && dc.SecurityCtx.LocationIsNew,
 	}
 	if s.trustScorer == nil {
 		return ac

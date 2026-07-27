@@ -139,9 +139,9 @@ func (v *Validator) checkClientAuth(clientID, method string) []Violation {
 
 // SigningAlgContext carries the signals for a signing-algorithm check.
 type SigningAlgContext struct {
-	ClientID        string
-	RequestObjectAlg string // alg of the signed request object (JAR), empty if unsigned
-	IDTokenAlg       string // alg of the ID token about to be issued, empty if not an OIDC flow
+	ClientID           string
+	RequestObjectAlg   string // alg of the signed request object (JAR), empty if unsigned
+	IDTokenAlg         string // alg of the ID token about to be issued, empty if not an OIDC flow
 	ClientAssertionAlg string // alg of the client assertion (private_key_jwt), empty if none
 }
 
@@ -184,9 +184,9 @@ func (v *Validator) CheckSigningAlg(sc SigningAlgContext) []Violation {
 
 // CIBAContext carries CIBA-specific signals for FAPI compliance checking.
 type CIBAContext struct {
-	ClientID            string
-	DeliveryMode        string // poll, ping, or push
-	UserCodeRequired    bool
+	ClientID         string
+	DeliveryMode     string // poll, ping, or push
+	UserCodeRequired bool
 }
 
 // CheckCIBA returns violations when the CIBA backchannel delivery mode is

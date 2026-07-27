@@ -244,11 +244,11 @@ func randomHex(n int) string {
 }
 
 var (
-	_ core.SessionManager      = (*MemorySessionManager)(nil)
-	_ core.SessionMetaCreator  = (*MemorySessionManager)(nil)
-	_ core.SessionTenantIndex  = (*MemorySessionManager)(nil)
-	_ core.SessionTenantLister = (*MemorySessionManager)(nil)
-	_ core.SessionTrustManager = (*MemorySessionManager)(nil)
-	_ io.Closer                = (*MemorySessionManager)(nil)
+	_ core.SessionManager         = (*MemorySessionManager)(nil)
+	_ core.SessionMetaCreator     = (*MemorySessionManager)(nil)
+	_ core.SessionTenantIndex     = (*MemorySessionManager)(nil)
+	_ core.SessionTenantLister    = (*MemorySessionManager)(nil)
+	_ core.SessionTrustManager    = (*MemorySessionManager)(nil)
+	_ io.Closer                   = (*MemorySessionManager)(nil)
 	_ core.SessionActivityTracker = (*MemorySessionManager)(nil)
 )

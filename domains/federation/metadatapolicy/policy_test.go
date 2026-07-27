@@ -168,5 +168,3 @@ func TestApplySupersetOf(t *testing.T) {
 		}
 	})
 }
-
-

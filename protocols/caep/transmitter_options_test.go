@@ -21,11 +21,13 @@ func (m *mockClientStore) Get(_ context.Context, id string) (*core.Client, error
 	return &core.Client{ID: id, Active: true}, nil
 }
 func (m *mockClientStore) ValidateSecret(_ context.Context, id, secret string) error { return nil }
-func (m *mockClientStore) List(_ context.Context) ([]*core.Client, error) { return nil, nil }
-func (m *mockClientStore) Add(_ context.Context, c *core.Client) error { return nil }
-func (m *mockClientStore) Update(_ context.Context, c *core.Client) error { return nil }
-func (m *mockClientStore) Delete(_ context.Context, id string) error { return nil }
-func (m *mockClientStore) RotateSecret(_ context.Context, id string) (string, error) { return "new-secret", nil }
+func (m *mockClientStore) List(_ context.Context) ([]*core.Client, error)            { return nil, nil }
+func (m *mockClientStore) Add(_ context.Context, c *core.Client) error               { return nil }
+func (m *mockClientStore) Update(_ context.Context, c *core.Client) error            { return nil }
+func (m *mockClientStore) Delete(_ context.Context, id string) error                 { return nil }
+func (m *mockClientStore) RotateSecret(_ context.Context, id string) (string, error) {
+	return "new-secret", nil
+}
 
 func TestWithIssuer(t *testing.T) {
 	tx := &Transmitter{}

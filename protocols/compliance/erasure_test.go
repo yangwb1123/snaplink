@@ -199,7 +199,9 @@ func TestEraseSubject_EmptyUserID(t *testing.T) {
 
 // --- consent + MFA-enrollment stubs for the inheritance-erasure test ---
 
-type fakeConsentStore struct{ grants map[string][]core.ConsentGrant }
+type fakeConsentStore struct {
+	grants map[string][]core.ConsentGrant
+}
 
 func (f *fakeConsentStore) RecordConsent(_ context.Context, g core.ConsentGrant) error {
 	f.grants[g.UserID] = append(f.grants[g.UserID], g)
@@ -222,7 +224,9 @@ func (f *fakeConsentStore) ListByUser(_ context.Context, userID string) ([]core.
 	return f.grants[userID], nil
 }
 
-type fakeMFAEnroll struct{ factors map[string][]core.MFAEnrolledFactor }
+type fakeMFAEnroll struct {
+	factors map[string][]core.MFAEnrolledFactor
+}
 
 func (f *fakeMFAEnroll) ListFactors(_ context.Context, userID string) ([]core.MFAEnrolledFactor, error) {
 	return f.factors[userID], nil

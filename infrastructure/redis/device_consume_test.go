@@ -84,8 +84,8 @@ func TestDeviceConsumeIfApprovedPreservesResources(t *testing.T) {
 	ctx := context.Background()
 	if err := s.Issue(ctx, &oauth.DeviceCode{
 		DeviceCode: "dc-res", UserCode: "uc-res", ClientID: "c",
-		Resources:  []string{"https://api.example.com"},
-		ExpiresAt:  time.Now().Add(time.Minute),
+		Resources: []string{"https://api.example.com"},
+		ExpiresAt: time.Now().Add(time.Minute),
 	}); err != nil {
 		t.Fatalf("issue: %v", err)
 	}

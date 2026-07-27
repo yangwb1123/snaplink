@@ -15,7 +15,7 @@ type testDeps struct {
 }
 
 func (d *testDeps) RebacStore() RelationTupleStore { return d.store }
-func (d *testDeps) RebacEngine() *Engine            { return d.engine }
+func (d *testDeps) RebacEngine() *Engine           { return d.engine }
 func (d *testDeps) ErrorBody(code string) map[string]any {
 	return map[string]any{"error": code}
 }
@@ -43,8 +43,8 @@ func (c *rebacTestCtx) JSON(code int, v any) {
 func (c *rebacTestCtx) Bind(v any) error {
 	return json.NewDecoder(c.req.Body).Decode(v)
 }
-func (c *rebacTestCtx) Query(key string) string   { return c.req.URL.Query().Get(key) }
-func (c *rebacTestCtx) Param(key string) string    { return "" }
+func (c *rebacTestCtx) Query(key string) string { return c.req.URL.Query().Get(key) }
+func (c *rebacTestCtx) Param(key string) string { return "" }
 
 func newRebacCtx(t *testing.T, method, path, body string) *rebacTestCtx {
 	t.Helper()

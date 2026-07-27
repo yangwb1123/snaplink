@@ -24,8 +24,8 @@ type ssfCtx struct {
 }
 
 func (c *ssfCtx) ResponseWriter() http.ResponseWriter { return c.w }
-func (c *ssfCtx) Request() *http.Request               { return c.r }
-func (c *ssfCtx) Query(name string) string             { return c.r.URL.Query().Get(name) }
+func (c *ssfCtx) Request() *http.Request              { return c.r }
+func (c *ssfCtx) Query(name string) string            { return c.r.URL.Query().Get(name) }
 func (c *ssfCtx) JSON(code int, v any) {
 	c.status = code
 	c.body = v

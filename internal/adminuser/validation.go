@@ -12,8 +12,8 @@ import (
 var (
 	ErrValidationUsernameFormat = errors.New("adminuser: username must start with a letter and contain only letters, digits, underscores, or hyphens")
 	ErrValidationUsernameLength = errors.New("adminuser: username must be 3-50 characters")
-	ErrValidationEmailFormat   = errors.New("adminuser: invalid email format")
-	ErrValidationPassword      = errors.New("adminuser: password must be at least 8 characters with at least one letter and one digit")
+	ErrValidationEmailFormat    = errors.New("adminuser: invalid email format")
+	ErrValidationPassword       = errors.New("adminuser: password must be at least 8 characters with at least one letter and one digit")
 )
 
 // Username validation constraints.

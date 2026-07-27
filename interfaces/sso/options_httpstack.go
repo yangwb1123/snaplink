@@ -419,7 +419,7 @@ var _ webhook.HandlerDeps = (*Server)(nil)
 
 // RebacEngine returns the wired rebac.Engine (nil when unset), satisfying
 // rebac.HandlerDeps for the admin debug route.
-func (s *Server) RebacEngine() *rebac.Engine          { return s.rebacEngine }
+func (s *Server) RebacEngine() *rebac.Engine           { return s.rebacEngine }
 func (s *Server) RebacStore() rebac.RelationTupleStore { return s.rebacStore }
 
 var _ rebac.HandlerDeps = (*Server)(nil)
@@ -474,6 +474,7 @@ func WithAPIVersioning(supported ...string) Option {
 func WithAPIDeprecation(policy middleware.DeprecationPolicy) Option {
 	return func(s *Server) { s.deprecationPolicy = &policy }
 }
+
 // WithRouteDeprecation marks a single endpoint or a path-prefix group
 // deprecated. path is matched exactly, or — when it ends in "/" — as a
 // prefix (e.g. "/api/v1/admin/" matches every admin route). May be called
@@ -487,6 +488,7 @@ func WithRouteDeprecation(path string, policy middleware.DeprecationPolicy) Opti
 		s.routeDeprecations[path] = policy
 	}
 }
+
 // WithAPIVersionPreview mounts GET /api/v2alpha/version — ADR-0008's ONE
 // example route proving the "/api/v2alpha" path-prefix routing mechanism
 // works, without building out a full v2 API surface. The response echoes
@@ -496,5 +498,6 @@ func WithRouteDeprecation(path string, policy middleware.DeprecationPolicy) Opti
 func WithAPIVersionPreview() Option {
 	return func(s *Server) { s.apiV2AlphaPreview = true }
 }
+
 // WithAPIDocsUI moved to server_routes.go, beside mountAPIDocsUI (the route
 // registration it feeds), to keep this file within the per-file line budget.
