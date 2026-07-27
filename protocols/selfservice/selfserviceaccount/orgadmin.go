@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yangwb1123/snaplink/platform/audit"
@@ -159,6 +160,30 @@ func guardLastAdminDemotion(d Deps, ctx core.HandlerContext, tenantID, targetID 
 	return false
 }
 
+// orgAdminTenantLocks serializes the check-then-act sequence (isLastAdmin /
+// guardLastAdminDemotion read, followed by the Add/Remove write) per tenant
+// for HandleOrgAdminPutMember and HandleOrgAdminRemoveMember. Neither the read
+// nor the write is individually racy (the memory/sqlite TenantUserStore peers
+// lock their own state), but WITHOUT serializing the pair, two concurrent
+// requests against a tenant's two admins (X and Y) can each independently
+// observe "the other admin still exists" and both proceed, leaving the tenant
+// with zero admins and no self-service recovery path. This is a same-process
+// guard for THIS handler surface only — it does not coordinate across
+// replicas or with the platform-admin roster handlers (admin/tenants.go), and
+// is not a substitute for a store-level CAS: the TenantUserStore SPI
+// (shared/core/tenant_user.go) deliberately has none, since third-party
+// backends can't be assumed to support locking.
+var orgAdminTenantLocks sync.Map // tenantID string -> *sync.Mutex
+
+// lockOrgAdminTenant acquires the per-tenant critical-section lock for
+// tenantID and returns the release func (call via defer).
+func lockOrgAdminTenant(tenantID string) func() {
+	muAny, _ := orgAdminTenantLocks.LoadOrStore(tenantID, &sync.Mutex{})
+	mu := muAny.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
 // bindRole parses the {role} body (form or JSON), defaulting to member and
 // rejecting an unknown value with 400. Returns ok=false after writing the error.
 func bindRole(d Deps, ctx core.HandlerContext) (core.TenantRole, bool) {
@@ -250,6 +275,12 @@ func HandleOrgAdminPutMember(d Deps, ctx core.HandlerContext) {
 	}
 	targetID := ctx.Param("user_id")
 	rctx := ctx.Request().Context()
+
+	// See orgAdminTenantLocks: the last-admin read and the Add write below
+	// must be atomic with respect to a concurrent request on this tenant.
+	unlock := lockOrgAdminTenant(tenantID)
+	defer unlock()
+
 	existing, err := d.TenantUserStore().Get(rctx, tenantID, targetID)
 	if err != nil || existing == nil {
 		// The proven admin is entitled to see org-internal membership, so a
@@ -286,6 +317,12 @@ func HandleOrgAdminRemoveMember(d Deps, ctx core.HandlerContext) {
 	}
 	targetID := ctx.Param("user_id")
 	rctx := ctx.Request().Context()
+
+	// See orgAdminTenantLocks: the last-admin read and the Remove write below
+	// must be atomic with respect to a concurrent request on this tenant.
+	unlock := lockOrgAdminTenant(tenantID)
+	defer unlock()
+
 	last, err := isLastAdmin(d, rctx, tenantID, targetID)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
