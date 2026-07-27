@@ -33,13 +33,13 @@ the same reverse proxy; this repository does not mount their static bundles.
 
 ### Edition profiles
 
-The public editions are additive: `prototype → minimal → production`.
+The public editions are additive: `prototype → minimal → full`.
 
 | Profile | Intended scope |
 |---|---|
 | `prototype` | Smallest runnable SSO/OAuth slice: Authorization Code + mandatory PKCE, password login and reusable OP session, basic JSON logs, memory defaults, and one stable `default` tenant as a migration seam. OIDC surfaces are excluded. |
 | `minimal` | Adds the common OIDC surface (discovery, ID Token, UserInfo and logout) and request tracing while retaining the single-process defaults. |
-| `production` | Full current stock `sso-server` composition plus the registered Kafka audit cold module, subject to normal configuration and backend requirements. Independently packaged integrations still require their own maintained registration. |
+| `full` | Full current stock `sso-server` composition plus the registered Kafka audit cold module, subject to normal configuration and backend requirements. Independently packaged integrations still require their own maintained registration. |
 | `standard`, `standard-kafka` | Compatibility profiles for the historical stock composition; not public edition tiers. |
 
 Build all three editions from the same source version:
@@ -47,12 +47,17 @@ Build all three editions from the same source version:
 ```bash
 python cli.py configure --profile prototype --version v1.1.1 --build
 python cli.py configure --profile minimal --version v1.1.1 --build
-python cli.py configure --profile production --version v1.1.1 --build
+python cli.py configure --profile full --version v1.1.1 --build
 ```
 
 Their `version` output is edition-qualified:
 `snaplink-v1.1.1.prototype`, `snaplink-v1.1.1.minimal`, and
-`snaplink-v1.1.1.production`.
+`snaplink-v1.1.1.full`.
+
+The following lines report the UTC build time, full Git commit hash (with a
+`modified` marker for dirty source), and Go toolchain version. Set
+`SOURCE_DATE_EPOCH` when a profile build needs a reproducible timestamp.
+`--profile production` remains a compatibility alias for `full`.
 
 `prototype` and `minimal` have distinct runtime surfaces but currently share
 the `cmd/sso-minimal` physical package/dependency graph. A disabled route is
@@ -264,7 +269,7 @@ python cli.py modules list   # module catalog and migration state
 python cli.py modules plan --profile prototype
 python cli.py configure --profile prototype --version v1.1.1 --build
 python cli.py configure --profile minimal --version v1.1.1 --build
-python cli.py configure --profile production --version v1.1.1 --build
+python cli.py configure --profile full --version v1.1.1 --build
 python cli.py configure --profile standard-kafka --build  # compatibility build
 go build ./...               # compile everything
 go test ./...                # unit + integration (package ssotest under test/)

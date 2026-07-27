@@ -194,7 +194,7 @@ func (s *Server) handleStatus(ctx HandlerContext) {
 	body := map[string]any{
 		"version":        bi.Version,
 		"commit":         bi.VCSRevision,
-		"build_time":     bi.VCSTime,
+		"build_time":     bi.BuildTime,
 		"uptime_seconds": int(uptime.Seconds()),
 		"modules":        modules,
 	}

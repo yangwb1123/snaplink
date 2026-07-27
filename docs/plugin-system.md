@@ -16,7 +16,7 @@ the commands and profiles available in the current tree.
 | Profile inheritance and profile-specific build targets | Implemented |
 | Alternate `go.mod`/`go.sum`, canonical lock and embedded inventory | Implemented |
 | `standard` and `standard-kafka` compatibility builds | Supported |
-| `prototype`, `minimal`, and `production` edition builds | Buildable |
+| `prototype`, `minimal`, and `full` edition builds | Buildable |
 | Package-level dependency isolation for `prototype`/`minimal` | Incomplete |
 | In-process hot lifecycle or external plugin supervisor | Not implemented |
 
@@ -32,13 +32,13 @@ that every excluded capability or dependency left the binary.
 |---|---|---|
 | `prototype` | preview | Smallest SSO/OAuth runtime: password login, Authorization Code + mandatory PKCE, reusable OP session, basic JSON logs, memory defaults and a stable `default` tenant migration seam |
 | `minimal` | preview | Extends `prototype` with OIDC discovery, ID Token, UserInfo and logout plus request tracing |
-| `production` | supported | Extends `minimal` with the full current stock `sso-server` composition and the registered Kafka audit cold module |
+| `full` | supported | Extends `minimal` with the full current stock `sso-server` composition and the registered Kafka audit cold module |
 | `standard` | supported | Compatibility profile for the historical stock `sso-server` composition |
 | `standard-kafka` | supported | Extends `standard` with the statically linked Kafka audit sink |
 
 Inheritance is additive: a child selects its parent's modules and adds its own
 edition bundle. It inherits the build target unless it explicitly overrides
-one. `prototype` and `minimal` use `cmd/sso-minimal`; `production` selects
+one. `prototype` and `minimal` use `cmd/sso-minimal`; `full` selects
 `cmd/sso-server` so its inventory describes the complete stock composition
 rather than the smaller runtime. Compilation does not turn every production
 option on: runtime configuration, feature gates and backend availability
@@ -55,8 +55,8 @@ Validate and inspect the catalog:
 python cli.py modules check
 python cli.py modules list
 python cli.py modules plan --profile prototype
-python cli.py modules graph --profile production
-python cli.py modules why op-session-sso --profile production
+python cli.py modules graph --profile full
+python cli.py modules why op-session-sso --profile full
 ```
 
 Build the public editions:
@@ -64,11 +64,11 @@ Build the public editions:
 ```bash
 python cli.py configure --profile prototype --version v1.1.1 --build
 python cli.py configure --profile minimal --version v1.1.1 --build
-python cli.py configure --profile production --version v1.1.1 --build
+python cli.py configure --profile full --version v1.1.1 --build
 
 dist/modules/prototype/snaplink version
 dist/modules/minimal/snaplink version
-dist/modules/production/snaplink version
+dist/modules/full/snaplink version
 # alice/s3cret
 # demo-app/demo-secret       -> http://127.0.0.1:3000/callback
 # demo-app-b/demo-secret-b   -> http://127.0.0.1:3001/callback
@@ -76,8 +76,11 @@ dist/modules/production/snaplink version
 
 The first output lines are respectively
 `snaplink-v1.1.1.prototype`, `snaplink-v1.1.1.minimal`, and
-`snaplink-v1.1.1.production`. The explicit source version is also recorded in
+`snaplink-v1.1.1.full`. The explicit source version is also recorded in
 the module lock.
+
+`production` remains accepted as a compatibility alias for the `full` profile;
+new automation and artifact paths should use `full`.
 
 Build compatibility profiles:
 
@@ -137,7 +140,7 @@ dependency removal.
 (discovery, ID Token, UserInfo and logout), the `openid`, `profile`, and
 `email` scope baseline, and request tracing.
 
-`production` uses the complete stock `cmd/sso-server` composition and adds the
+`full` uses the complete stock `cmd/sso-server` composition and adds the
 registered Kafka audit cold module. The capability table in
 [feature-matrix.md](feature-matrix.md) identifies independently packaged
 integrations that still require maintained registration. Operators must also

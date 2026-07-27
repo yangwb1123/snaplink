@@ -10,7 +10,7 @@ availability on every deployment:
 - A `config.yaml` key is a **stock `sso-server`** capability.
 - A row naming a nested module (SAML, LDAP, Kerberos, RADIUS, ext-authz,
   Kafka, MQTT or selected KMS/HSM adapters) requires that module to be built or
-  registered by the composition root. `production` and the historical
+  registered by the composition root. `full` and the historical
   `standard-kafka` compatibility profile carry Kafka; the others remain
   integration-required.
 - Optional endpoints only exist when their required store/option is wired and
@@ -36,7 +36,7 @@ lifecycle.
 |---|---|---|
 | `prototype` | Preview; buildable | SSO + OAuth Authorization Code/PKCE, password and reusable OP-session login, basic JSON logs, memory defaults, and a stable `default` tenant seam. OIDC surfaces are excluded. |
 | `minimal` | Preview; buildable | Inherits `prototype`; adds OIDC discovery, ID Token, UserInfo and logout plus request tracing. |
-| `production` | Supported; buildable | Inherits `minimal`; selects the complete current stock `sso-server` composition and registered Kafka audit cold module. Other independently packaged integrations remain registration-dependent. |
+| `full` | Supported; buildable | Inherits `minimal`; selects the complete current stock `sso-server` composition and registered Kafka audit cold module. Other independently packaged integrations remain registration-dependent. |
 | `standard`, `standard-kafka` | Supported compatibility profiles | Historical stock composition only; not layers in the edition hierarchy. |
 
 Build an edition with, for example,

@@ -84,8 +84,8 @@ Deliverables:
 
 The resolver, inherited profiles, module lock, compatibility builds and
 profile-specific entry points are implemented. The public hierarchy is
-`prototype → minimal → production`: the prototype is SSO/OAuth with JSON logs
-and a stable default-tenant seam; minimal adds OIDC and tracing; production
+`prototype → minimal → full`: the prototype is SSO/OAuth with JSON logs
+and a stable default-tenant seam; minimal adds OIDC and tracing; full
 selects the complete current stock `sso-server` composition plus the registered
 Kafka audit cold module. Version output carries the edition suffix.
 
@@ -105,7 +105,7 @@ Deliverables:
   behavior.
 - Prove physical removal with `go list`, `go version -m`, symbols, binary-size
   deltas and per-profile SBOMs.
-- Prove the `production` profile against durable state, security controls,
+- Prove the `full` profile against durable state, security controls,
   observability and supported topology evidence.
 - Keep `oauth-client-credentials` as an independent optional machine-to-machine
   module rather than an SSO profile foundation.

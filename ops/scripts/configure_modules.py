@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -39,8 +40,9 @@ OVERLAY_TARGET = (
     ROOT / "cmd" / "sso-server" / "servermodules" / "register_configured.go"
 )
 BUILDINFO_IMPORT = "github.com/yangwb1123/snaplink/platform/buildinfo"
+CORE_BUILDINFO_IMPORT = "github.com/yangwb1123/snaplink/shared/core"
 ROOT_MODULE_PATH = "github.com/yangwb1123/snaplink"
-EDITION_PROFILES = frozenset({"prototype", "minimal", "production"})
+EDITION_PROFILES = frozenset({"prototype", "minimal", "full"})
 SEMVER_PRERELEASE_ID = (
     r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
 )
@@ -560,6 +562,23 @@ def _git_state() -> tuple[str, bool]:
     return revision, dirty
 
 
+def _build_timestamp() -> str:
+    source_epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if source_epoch is None:
+        instant = datetime.datetime.now(datetime.timezone.utc)
+    else:
+        try:
+            instant = datetime.datetime.fromtimestamp(
+                int(source_epoch),
+                datetime.timezone.utc,
+            )
+        except (OverflowError, OSError, ValueError) as exc:
+            raise BuildModulesError(
+                "SOURCE_DATE_EPOCH must be a valid Unix timestamp"
+            ) from exc
+    return instant.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _lock_modules(
     plan: Plan,
     source_digests: dict[str, str],
@@ -637,17 +656,26 @@ def _write_lock(payload: dict, out_dir: Path) -> tuple[Path, str]:
     return path, digest
 
 
-def _build_ldflags(plan: Plan, lock_digest: str, build_version: str) -> str:
+def _build_ldflags(
+    plan: Plan,
+    lock_digest: str,
+    build_version: str,
+    build_time: str,
+    git_hash: str,
+    dirty: bool,
+) -> str:
     modules = ",".join(module.id for module in plan.modules)
     values = {
-        "BuildProfile": plan.profile.id,
-        "ModuleLockDigest": lock_digest,
-        "CompiledModules": modules,
-        "Version": build_version,
+        f"{BUILDINFO_IMPORT}.BuildProfile": plan.profile.id,
+        f"{BUILDINFO_IMPORT}.ModuleLockDigest": lock_digest,
+        f"{BUILDINFO_IMPORT}.CompiledModules": modules,
+        f"{BUILDINFO_IMPORT}.Version": build_version,
+        f"{CORE_BUILDINFO_IMPORT}.BuildVersion": build_version,
+        f"{CORE_BUILDINFO_IMPORT}.BuildTime": build_time,
+        f"{CORE_BUILDINFO_IMPORT}.GitHash": git_hash,
+        f"{CORE_BUILDINFO_IMPORT}.BuildModified": str(dirty).lower(),
     }
-    return " ".join(
-        f"-X {BUILDINFO_IMPORT}.{name}={value}" for name, value in values.items()
-    )
+    return " ".join(f"-X {name}={value}" for name, value in values.items())
 
 
 def _build_binary(
@@ -659,6 +687,9 @@ def _build_binary(
     build_input_digest: str,
     env: dict[str, str],
     build_version: str,
+    build_time: str,
+    git_hash: str,
+    dirty: bool,
 ) -> None:
     binary.parent.mkdir(parents=True, exist_ok=True)
     args = [
@@ -668,7 +699,14 @@ def _build_binary(
         "-buildvcs=true",
         *_go_flags(modfile, overlay, "readonly"),
         "-ldflags",
-        _build_ldflags(plan, lock_digest, build_version),
+        _build_ldflags(
+            plan,
+            lock_digest,
+            build_version,
+            build_time,
+            git_hash,
+            dirty,
+        ),
         "-o",
         str(binary),
         plan.profile.build_package,
@@ -704,7 +742,15 @@ def _build_binary(
         )
     if _is_native_target(env):
         _verify_binary_inventory(plan, binary, lock_digest, env)
-        _verify_binary_version(plan, binary, build_version, env)
+        _verify_binary_version(
+            plan,
+            binary,
+            build_version,
+            build_time,
+            git_hash,
+            dirty,
+            env,
+        )
 
 
 def _binary_module_paths(metadata: str) -> set[str]:
@@ -755,12 +801,20 @@ def _verify_binary_version(
     plan: Plan,
     binary: Path,
     build_version: str,
+    build_time: str,
+    git_hash: str,
+    dirty: bool,
     env: dict[str, str],
 ) -> None:
     lines = _run([str(binary), "version"], env=env).splitlines()
-    expected = _expected_version_line(plan, build_version)
-    if not lines or lines[0] != expected:
-        actual = lines[0] if lines else "<empty>"
+    modified = " (modified)" if dirty else ""
+    expected = [
+        _expected_version_line(plan, build_version),
+        f"  build time: {build_time}",
+        f"  git hash:   {git_hash}{modified}",
+    ]
+    if lines[:3] != expected:
+        actual = lines[:3] if lines else ["<empty>"]
         raise BuildModulesError(
             f"built binary version mismatch: expected {expected!r}, got {actual!r}"
         )
@@ -884,6 +938,7 @@ def configure(argv: list[str]) -> int:
         )
         _, lock_digest = _write_lock(payload, staging)
         if args.build:
+            build_time = _build_timestamp()
             _build_binary(
                 plan,
                 modfile,
@@ -893,6 +948,9 @@ def configure(argv: list[str]) -> int:
                 build_input_digest,
                 env,
                 args.version,
+                build_time,
+                payload["core"]["revision"],
+                payload["core"]["dirty"],
             )
         _publish_output(staging, out_dir)
     except Exception:

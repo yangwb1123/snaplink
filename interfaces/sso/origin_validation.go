@@ -77,6 +77,7 @@ const KeySupportedGrants = core.KeySupportedGrants
 const KeyTokenHint = core.KeyTokenHint
 const KeyTokenStrategy = core.KeyTokenStrategy
 const KeyTokenType = core.KeyTokenType
+const KeyBuildTime = core.KeyBuildTime
 const KeyVCSRevision = core.KeyVCSRevision
 const KeyVCSTime = core.KeyVCSTime
 const KeyVersion = core.KeyVersion

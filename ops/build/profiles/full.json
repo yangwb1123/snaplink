@@ -1,8 +1,8 @@
 {
   "$schema": "../profile.schema.json",
   "schema_version": 1,
-  "id": "production",
-  "summary": "Complete current Snaplink server and registered production modules.",
+  "id": "full",
+  "summary": "Complete current Snaplink server and registered full-edition modules.",
   "maturity": "supported",
   "extends": "minimal",
   "modules": [

@@ -11,19 +11,27 @@ import (
 // production replica is running read this from the unauthenticated
 // health endpoint — saves a shell into the container.
 //
-// Fields are best-effort: when the binary wasn't built with
-// `-buildvcs=true` (default for `go build`) or via `go install`
-// from a non-VCS path, VCSRevision + VCSTime will be empty. Version
-// defaults to "(devel)" when not built from a tagged module —
-// matches the runtime/debug behavior so operators see something
-// rather than an empty field.
+// Fields are best-effort: release builders inject BuildTime and may override
+// the version and revision. Ordinary builds fall back to runtime/debug, where
+// VCSTime is the commit time rather than the build time. Version defaults to
+// "(devel)" when not built from a tagged module so operators never see an
+// empty version.
 type BuildInfo struct {
 	Version     string `json:"version"`
 	VCSRevision string `json:"vcs_revision,omitempty"`
 	VCSTime     string `json:"vcs_time,omitempty"`
+	BuildTime   string `json:"build_time,omitempty"`
+	VCSModified bool   `json:"vcs_modified,omitempty"`
 }
 
 var (
+	// BuildVersion, BuildTime, GitHash, and BuildModified are populated by
+	// release builders. runtime/debug remains the fallback for ordinary builds.
+	BuildVersion  string
+	BuildTime     string
+	GitHash       string
+	BuildModified string
+
 	buildInfoOnce sync.Once
 	buildInfoVal  BuildInfo
 )
@@ -36,21 +44,37 @@ var (
 // can still read as a meaningful "this is a dev build" signal.
 func ReadBuildInfo() BuildInfo {
 	buildInfoOnce.Do(func() {
+		buildInfoVal = BuildInfo{
+			Version:     BuildVersion,
+			VCSRevision: GitHash,
+			BuildTime:   BuildTime,
+			VCSModified: BuildModified == "true",
+		}
 		info, ok := debug.ReadBuildInfo()
 		if !ok {
-			buildInfoVal = BuildInfo{Version: "(unknown)"}
+			if buildInfoVal.Version == "" {
+				buildInfoVal.Version = "(unknown)"
+			}
 			return
 		}
-		buildInfoVal.Version = info.Main.Version
+		if buildInfoVal.Version == "" {
+			buildInfoVal.Version = info.Main.Version
+		}
 		if buildInfoVal.Version == "" {
 			buildInfoVal.Version = "(devel)"
 		}
 		for _, s := range info.Settings {
 			switch s.Key {
 			case "vcs.revision":
-				buildInfoVal.VCSRevision = s.Value
+				if buildInfoVal.VCSRevision == "" {
+					buildInfoVal.VCSRevision = s.Value
+				}
 			case "vcs.time":
 				buildInfoVal.VCSTime = s.Value
+			case "vcs.modified":
+				if BuildModified == "" {
+					buildInfoVal.VCSModified = s.Value == "true"
+				}
 			}
 		}
 	})

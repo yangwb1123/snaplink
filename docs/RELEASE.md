@@ -28,7 +28,7 @@ SBOMs:
   PKCE, password/OP-session login, JSON logs, memory defaults, and the stable
   `default` tenant seam. It deliberately excludes OIDC surfaces.
 - `minimal` inherits `prototype` and adds the common OIDC and tracing surfaces.
-- `production` inherits `minimal` and selects the complete current stock
+- `full` inherits `minimal` and selects the complete current stock
   `sso-server` composition plus the registered Kafka audit cold module.
 - `standard` and `standard-kafka` exist only to preserve the historical stock
   composition.
@@ -38,12 +38,13 @@ Build with an explicit source version, for example:
 ```bash
 python cli.py configure --profile prototype --version v1.1.1 --build
 python cli.py configure --profile minimal --version v1.1.1 --build
-python cli.py configure --profile production --version v1.1.1 --build
+python cli.py configure --profile full --version v1.1.1 --build
 ```
 
 The resulting first version lines are
 `snaplink-v1.1.1.prototype`, `snaplink-v1.1.1.minimal`, and
-`snaplink-v1.1.1.production`. `prototype` and `minimal` still share
+`snaplink-v1.1.1.full`. Every version command also reports the UTC build time,
+full Git hash, dirty-source marker, and Go toolchain. `prototype` and `minimal` still share
 `cmd/sso-minimal` and a larger linked dependency graph; their different
 runtime boundaries are not yet physical-isolation evidence. A module lock
 records cold capability selection, not runtime backend choice, feature-gate

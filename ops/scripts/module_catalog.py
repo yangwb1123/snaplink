@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BUILD_DIR = ROOT / "ops" / "build"
 CATALOG_PATH = BUILD_DIR / "modules.json"
 PROFILES_DIR = BUILD_DIR / "profiles"
+PROFILE_ALIASES = {"production": "full"}
 
 MODULE_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 CAPABILITY_RE = re.compile(r"^[a-z][a-z0-9_.-]*\.v[0-9]+$")
@@ -565,6 +566,8 @@ def _validate_profile_build(data: dict, label: str) -> None:
 
 def _profile_path(profile: str) -> Path:
     requested = Path(profile)
+    if not requested.suffix:
+        profile = PROFILE_ALIASES.get(profile, profile)
     path = (
         requested
         if requested.suffix == ".json"

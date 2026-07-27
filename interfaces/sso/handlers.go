@@ -421,6 +421,9 @@ func (s *Server) handleHealth(ctx HandlerContext) {
 	if bi.VCSTime != "" {
 		resp[KeyVCSTime] = bi.VCSTime
 	}
+	if bi.BuildTime != "" {
+		resp[KeyBuildTime] = bi.BuildTime
+	}
 	ctx.JSON(http.StatusOK, resp)
 }
 

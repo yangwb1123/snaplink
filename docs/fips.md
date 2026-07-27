@@ -24,7 +24,7 @@ native module is therefore their FIPS mechanism.
 
 `prototype` and `minimal` share the `cmd/sso-minimal` dependency graph;
 their different active surfaces are not separate cryptographic boundaries.
-`production` selects the complete current `cmd/sso-server` composition. A
+`full` selects the complete current `cmd/sso-server` composition. A
 profile policy value of `fips: compatible` is only a build-resolver
 constraint; no edition name is evidence of module activation, CMVP coverage,
 product certification, or deployment compliance.
@@ -88,9 +88,9 @@ keys:
 # Native Go FIPS module, no cgo, no BoringCrypto:
 GOFIPS140=latest CGO_ENABLED=0 go build -o sso-server ./cmd/sso-server
 
-# Edition build (output under dist/modules/production/):
+# Edition build (output under dist/modules/full/):
 GOFIPS140=latest CGO_ENABLED=0 python cli.py configure \
-  --profile production --version v1.1.1 --build
+  --profile full --version v1.1.1 --build
 
 # Docker (see Dockerfile's GOFIPS140 build ARG, default "off"):
 docker build --build-arg GOFIPS140=latest -t snaplink/sso-server-fips .

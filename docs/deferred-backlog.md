@@ -46,7 +46,7 @@ module lock and compiled inventory are implemented. The edition hierarchy is:
 |---|---|---|
 | `prototype` | Preview, buildable | SSO/OAuth + JSON logs + stable `default` tenant seam; shares the broad `cmd/sso-minimal` dependency graph |
 | `minimal` | Preview, buildable | Inherits `prototype`; adds OIDC and tracing but is not yet physically isolated from it |
-| `production` | Supported, buildable | Inherits `minimal`; selects the complete current stock `cmd/sso-server` composition and registered Kafka audit cold module |
+| `full` | Supported, buildable | Inherits `minimal`; selects the complete current stock `cmd/sso-server` composition and registered Kafka audit cold module |
 | `standard`, `standard-kafka` | Supported | Compatibility builds, not edition-layer isolation evidence |
 
 The two smaller editions use an opaque HttpOnly cookie but have no bundled

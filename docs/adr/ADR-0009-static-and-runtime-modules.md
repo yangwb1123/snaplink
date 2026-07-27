@@ -117,7 +117,7 @@ The current profiles are:
 | `standard-kafka` | supported | Extends `standard` with the statically linked Kafka audit sink |
 | `prototype` | preview | Smallest SSO/OAuth runtime: Authorization Code + mandatory PKCE, password/OP-session SSO, JSON logs, memory defaults and the stable `default` tenant seam |
 | `minimal` | preview | Extends `prototype` with OIDC discovery, ID Token, UserInfo and logout plus request tracing |
-| `production` | supported | Extends `minimal` with the complete current stock `sso-server` composition and registered Kafka audit cold module |
+| `full` | supported | Extends `minimal` with the complete current stock `sso-server` composition and registered Kafka audit cold module |
 
 `standard` remains the compatibility default during migration.
 `prototype` and `minimal` are separate build profiles and expose different
@@ -138,7 +138,7 @@ The extraction target is therefore:
 - prove excluded dependencies are absent with package, binary-size, symbol and
   SBOM evidence.
 
-`production` overrides the smaller command target with `cmd/sso-server`, so
+`full` overrides the smaller command target with `cmd/sso-server`, so
 its inventory describes the full current server instead of stamping a larger
 edition name onto the small runtime. It compiles the current stock surfaces
 and registered Kafka audit cold module; other independently packaged
@@ -175,7 +175,7 @@ This is the `nginx -V` equivalent. It contains no secrets or runtime module
 configuration. Public edition builds make their identity visible through the
 normal `version` command: a `v1.1.1` build reports
 `snaplink-v1.1.1.prototype`, `snaplink-v1.1.1.minimal`, or
-`snaplink-v1.1.1.production`.
+`snaplink-v1.1.1.full`.
 
 ### 5. Require a generation-based lifecycle before calling a module hot
 
@@ -248,7 +248,7 @@ private keys or reusable bearer credentials by default.
 
 1. **Build proof:** retain supported compatibility profiles, strict manifests,
    inherited plans, alternate modfiles, lock and binary inventory.
-2. **Edition proof:** keep `prototype`, `minimal`, and `production` buildable;
+2. **Edition proof:** keep `prototype`, `minimal`, and `full` buildable;
    verify their ordered inheritance, runtime boundaries, compiled inventories,
    and edition-qualified versions.
 3. **Canonical SSO lifecycle:** move the prototype adapter into the real
@@ -256,7 +256,7 @@ private keys or reusable bearer credentials by default.
 4. **Stable host API and cold isolation:** replace transitional `cmd/`
    adapters with versioned registrars; split the route and builder monolith and
    prove dependency removal.
-5. **Production evidence:** prove the `production` composition against durable
+5. **Production evidence:** prove the `full` composition against durable
    state, OAuth/OIDC controls, observability and supported topology.
 6. **Hot manager:** add generation leases, route guards, drain, readiness and
    transition audit; migrate one low-risk background module first.

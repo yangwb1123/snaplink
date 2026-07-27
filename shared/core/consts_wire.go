@@ -112,6 +112,7 @@ const (
 	KeyVersion          = "version"
 	KeyVCSRevision      = "vcs_revision"
 	KeyVCSTime          = "vcs_time"
+	KeyBuildTime        = "build_time"
 	KeyProviders        = "providers"
 	KeyClientContext    = "client_context"
 	KeyDevice           = "device"

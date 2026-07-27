@@ -27,10 +27,10 @@ origin; `sso-server` does not serve their static assets.
 python cli.py build            # -> ./bin/{sso-server, sso-ctl}   (make/Taskfile delegate here)
 python cli.py configure --profile prototype --version v1.1.1 --build
 python cli.py configure --profile minimal --version v1.1.1 --build
-python cli.py configure --profile production --version v1.1.1 --build
+python cli.py configure --profile full --version v1.1.1 --build
 python cli.py configure --profile standard-kafka --build  # compatibility composition
 docker build -t snaplink/sso-server .      # the root Dockerfile
-sso-server version                          # build version / VCS revision
+sso-server version                          # version / build time / Git hash / Go version
 sso-server modules                          # compiled profile/inventory; configured builds include a lock digest
 ```
 
@@ -59,11 +59,11 @@ not the new edition hierarchy.
 |---|---|---|
 | `prototype` | Preview; buildable | Loopback/memory SSO + OAuth Code/mandatory PKCE, password and reusable OP-session login, JSON logs, and one stable `default` tenant. OIDC surfaces are excluded. |
 | `minimal` | Preview; buildable | Extends `prototype` with OIDC discovery, ID Token, UserInfo and logout plus request tracing. |
-| `production` | Supported; buildable | Extends `minimal` with the full current stock `sso-server` composition and registered Kafka audit cold module. Durable backend and topology choices remain operator configuration. |
+| `full` | Supported; buildable | Extends `minimal` with the full current stock `sso-server` composition and registered Kafka audit cold module. Durable backend and topology choices remain operator configuration. |
 
 For source version `v1.1.1`, the three binaries report
 `snaplink-v1.1.1.prototype`, `snaplink-v1.1.1.minimal`, and
-`snaplink-v1.1.1.production`. `prototype` and `minimal` currently share
+`snaplink-v1.1.1.full`. `prototype` and `minimal` currently share
 `cmd/sso-minimal`, so their different runtime surfaces do not yet imply
 different physical dependency graphs. Neither small edition is a production
 topology or browser end-to-end artifact. Unless a profile is named explicitly,

@@ -41,7 +41,13 @@ func TestBuildInfoJSONOmitsEmptyVCS(t *testing.T) {
 	}
 
 	// With VCS data populated, the optional keys appear.
-	full := BuildInfo{Version: "v1.2.3", VCSRevision: "deadbeef", VCSTime: "2026-06-16T00:00:00Z"}
+	full := BuildInfo{
+		Version:     "v1.2.3",
+		VCSRevision: "deadbeef",
+		VCSTime:     "2026-06-15T23:59:00Z",
+		BuildTime:   "2026-06-16T00:00:00Z",
+		VCSModified: true,
+	}
 	out2, err := json.Marshal(full)
 	if err != nil {
 		t.Fatalf("Marshal(full) error = %v", err)

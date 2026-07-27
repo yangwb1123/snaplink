@@ -12,7 +12,7 @@ MODULE_ARGS ?=
 
 CLI = python cli.py
 
-.PHONY: help test race bench vet fmt build configure build-profile build-prototype build-minimal build-production build-small modules-list modules-plan modules-check modules-smoke docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
+.PHONY: help test race bench vet fmt build configure build-profile build-prototype build-minimal build-full build-production build-small modules-list modules-plan modules-check modules-smoke docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
 
 # ── Go Dev (via $GO directly for speed) ──────────────────────────────
 
@@ -118,8 +118,10 @@ build-prototype: ## Build the OAuth SSO prototype tier.
 build-minimal: ## Build the common OAuth/OIDC SSO tier.
 	$(CLI) configure --profile minimal --version $(VERSION) --build $(MODULE_ARGS)
 
-build-production: ## Build the complete current production tier.
-	$(CLI) configure --profile production --version $(VERSION) --build $(MODULE_ARGS)
+build-full: ## Build the complete current Snaplink edition.
+	$(CLI) configure --profile full --version $(VERSION) --build $(MODULE_ARGS)
+
+build-production: build-full ## Compatibility alias for build-full.
 
 build-small: build-prototype ## Compatibility alias for build-prototype.
 

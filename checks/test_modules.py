@@ -37,7 +37,7 @@ def test_repository_catalog_and_profiles_validate():
     assert checked[0] == "catalog (32 modules)"
     assert any(item.startswith("profile prototype") for item in checked)
     assert any(item.startswith("profile minimal") for item in checked)
-    assert any(item.startswith("profile production") for item in checked)
+    assert any(item.startswith("profile full") for item in checked)
     catalog_schema = json.loads(
         (ROOT / "ops" / "build" / "catalog.schema.json").read_text()
     )
@@ -49,17 +49,17 @@ def test_repository_catalog_and_profiles_validate():
 
 
 def test_smoke_matrix_includes_supported_and_buildable_preview_profiles():
-    assert supported_profile_ids() == ("production", "standard", "standard-kafka")
+    assert supported_profile_ids() == ("full", "standard", "standard-kafka")
     assert buildable_profile_ids() == (
+        "full",
         "minimal",
-        "production",
         "prototype",
         "standard",
         "standard-kafka",
     )
     assert module_builder._smoke_profile_ids() == (
+        "full",
         "minimal",
-        "production",
         "prototype",
         "standard",
         "standard-kafka",
@@ -107,25 +107,29 @@ def test_prototype_uses_its_own_build_target():
 def test_product_tiers_are_buildable_and_inherit_capabilities():
     prototype = resolve_plan("prototype")
     minimal = resolve_plan("minimal")
-    production = resolve_plan("production")
+    full = resolve_plan("full")
     prototype_modules = {module.id for module in prototype.modules}
     minimal_modules = {module.id for module in minimal.modules}
-    production_modules = {module.id for module in production.modules}
+    full_modules = {module.id for module in full.modules}
 
-    assert prototype_modules < minimal_modules < production_modules
+    assert prototype_modules < minimal_modules < full_modules
     assert minimal.profile.build_package == "./cmd/sso-minimal"
     assert minimal.profile.composition_module == "sso-minimal-runtime"
-    assert production.profile.build_package == "./cmd/sso-server"
-    assert production.profile.composition_module == "sso-production-runtime"
-    assert {"stock-server", "audit-kafka"} <= production_modules
-    assert production.dependencies["sso-production-runtime"] == (
+    assert full.profile.build_package == "./cmd/sso-server"
+    assert full.profile.composition_module == "sso-production-runtime"
+    assert {"stock-server", "audit-kafka"} <= full_modules
+    assert full.dependencies["sso-production-runtime"] == (
         "audit-kafka",
         "sso-minimal-runtime",
         "stock-server",
     )
     assert prototype.buildable
     assert minimal.buildable
-    assert production.buildable
+    assert full.buildable
+
+
+def test_production_profile_name_is_a_full_compatibility_alias():
+    assert resolve_plan("production").profile.id == "full"
 
 
 @pytest.mark.parametrize(
@@ -164,7 +168,14 @@ def test_tier_version_lines_and_ldflags_are_exact():
         module_builder._expected_version_line(plan, version)
         == "snaplink-v1.1.1.minimal"
     )
-    ldflags = module_builder._build_ldflags(plan, "sha256:test", version)
+    ldflags = module_builder._build_ldflags(
+        plan,
+        "sha256:test",
+        version,
+        "2026-07-27T12:34:56Z",
+        "0123456789abcdef",
+        True,
+    )
     assert (
         "-X github.com/yangwb1123/snaplink/platform/buildinfo.Version=v1.1.1"
         in ldflags
@@ -173,6 +184,34 @@ def test_tier_version_lines_and_ldflags_are_exact():
         "-X github.com/yangwb1123/snaplink/platform/buildinfo.BuildProfile=minimal"
         in ldflags
     )
+    assert (
+        "-X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v1.1.1"
+        in ldflags
+    )
+    assert (
+        "-X github.com/yangwb1123/snaplink/shared/core.BuildTime="
+        "2026-07-27T12:34:56Z"
+        in ldflags
+    )
+    assert (
+        "-X github.com/yangwb1123/snaplink/shared/core.GitHash=0123456789abcdef"
+        in ldflags
+    )
+    assert (
+        "-X github.com/yangwb1123/snaplink/shared/core.BuildModified=true"
+        in ldflags
+    )
+
+
+def test_build_timestamp_honors_source_date_epoch(monkeypatch):
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "0")
+    assert module_builder._build_timestamp() == "1970-01-01T00:00:00Z"
+
+
+def test_build_timestamp_rejects_invalid_source_date_epoch(monkeypatch):
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "not-a-timestamp")
+    with pytest.raises(BuildModulesError, match="SOURCE_DATE_EPOCH"):
+        module_builder._build_timestamp()
 
 
 def test_profile_inheritance_cycle_is_rejected(tmp_path, monkeypatch):

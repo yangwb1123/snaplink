@@ -18,9 +18,9 @@ contains gate tests only, while the public API-only Server lives in
 
 Cold compatibility composition enters through
 `cmd/sso-server/servermodules`. The public edition hierarchy is
-`prototype → minimal → production`: `prototype` provides SSO/OAuth, JSON logs,
+`prototype → minimal → full`: `prototype` provides SSO/OAuth, JSON logs,
 memory defaults and a stable `default` tenant seam; `minimal` adds OIDC and
-tracing; `production` selects the complete current `cmd/sso-server`
+tracing; `full` selects the complete current `cmd/sso-server`
 composition plus the registered Kafka audit cold module. The first two target
 `cmd/sso-minimal` and still share its larger `interfaces/sso` dependency graph
 despite their distinct runtime surfaces. `standard` and `standard-kafka` are

@@ -9,16 +9,17 @@ import (
 	"fmt"
 	"io"
 	"runtime"
-	"runtime/debug"
 	"strings"
+
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 const productName = "snaplink"
 
 var editionProfiles = map[string]struct{}{
-	"prototype":  {},
-	"minimal":    {},
-	"production": {},
+	"prototype": {},
+	"minimal":   {},
+	"full":      {},
 }
 
 // Version is replaced by release or profile builds through -ldflags.
@@ -38,28 +39,11 @@ func ResolveProfile(override, profile string) (ver, revision string, dirty bool)
 	if ver == "" {
 		ver = Version
 	}
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		if ver == "" {
-			ver = "(unknown)"
-		}
-		return FormatEditionVersion(ver, profile), "", false
-	}
+	info := core.ReadBuildInfo()
 	if ver == "" {
-		ver = info.Main.Version
-		if ver == "" || ver == "(devel)" {
-			ver = "(devel)"
-		}
+		ver = info.Version
 	}
-	for _, s := range info.Settings {
-		switch s.Key {
-		case "vcs.revision":
-			revision = s.Value
-		case "vcs.modified":
-			dirty = s.Value == "true"
-		}
-	}
-	return FormatEditionVersion(ver, profile), revision, dirty
+	return FormatEditionVersion(ver, profile), info.VCSRevision, info.VCSModified
 }
 
 // FormatEditionVersion returns the public identity of a tier build.
@@ -69,6 +53,7 @@ func FormatEditionVersion(base, profile string) string {
 		return base
 	}
 	base = strings.TrimPrefix(strings.TrimSpace(base), productName+"-")
+	base = strings.TrimSuffix(base, ".production")
 	for edition := range editionProfiles {
 		base = strings.TrimSuffix(base, "."+edition)
 	}
@@ -99,17 +84,22 @@ func Write(w io.Writer, progName, override string) {
 // WriteProfile renders a version using an explicit profile identity.
 func WriteProfile(w io.Writer, progName, override, profile string) {
 	v, rev, dirty := ResolveProfile(override, profile)
+	info := core.ReadBuildInfo()
 	label := progName + " " + v
 	if IsEditionProfile(profile) {
 		label = v
-	}
-	if rev == "" {
-		_, _ = fmt.Fprintf(w, "%s (%s)\n", label, runtime.Version())
-		return
 	}
 	suffix := ""
 	if dirty {
 		suffix = " (modified)"
 	}
-	_, _ = fmt.Fprintf(w, "%s\n  revision: %s%s\n  go:       %s\n", label, rev, suffix, runtime.Version())
+	_, _ = fmt.Fprintf(
+		w,
+		"%s\n  build time: %s\n  git hash:   %s%s\n  go:         %s\n",
+		label,
+		fallback(info.BuildTime, "(unknown)"),
+		fallback(rev, "(unknown)"),
+		suffix,
+		runtime.Version(),
+	)
 }

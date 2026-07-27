@@ -10496,6 +10496,12 @@ components:
             ISO 8601 commit timestamp, paired with vcs_revision when
             available.
           example: "2026-05-22T06:49:13Z"
+        build_time:
+          type: string
+          description: |
+            UTC RFC 3339 timestamp injected when the binary was built.
+            Omitted when the build path did not provide one.
+          example: "2026-07-27T12:34:56Z"
 
     AuthorizationDetail:
       type: object

@@ -30,7 +30,7 @@ bundles a login UI or represents a production topology.
 
 `ops/build/` owns strict manifests/profiles and `ops/scripts/` materializes an
 alternate module graph under ignored `dist/modules/`. The public hierarchy is
-`prototype → minimal → production`; `production` overrides the smaller command
+`prototype → minimal → full`; `full` overrides the smaller command
 target with the complete current `cmd/sso-server` composition and registered
 Kafka audit cold module. `standard` and `standard-kafka` preserve only the
 historical stock composition. See [`plugin-system.md`](../plugin-system.md).
