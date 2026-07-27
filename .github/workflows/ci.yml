@@ -43,6 +43,24 @@ jobs:
   test:
     name: vet + race + build
     runs-on: ubuntu-latest
+    # Postgres service container: unlocks infrastructure/postgres/*_test.go
+    # and test/backendsemantics/*.go, which self-skip via testDSN() when
+    # SSO_TEST_POSTGRES_DSN is unset. They're already part of the `go test
+    # ./...` sweep below — the DSN alone is what was missing.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: sso_test
+          POSTGRES_USER: sso
+          POSTGRES_PASSWORD: sso
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U sso -d sso_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
     steps:
       - uses: actions/checkout@v4
 
@@ -90,7 +108,12 @@ jobs:
       - name: go test (race)
         # -race catches the concurrency bugs single-threaded runs hide.
         # -count=1 disables the test cache so flaky tests can't masquerade
-        # as passing.
+        # as passing. SSO_TEST_POSTGRES_DSN points at the postgres service
+        # above so the otherwise-self-skipping postgres integration tests
+        # run here instead of being silently skipped forever.
+        env:
+          SSO_TEST_POSTGRES_DSN: postgres://sso:sso@localhost:5432/sso_test?sslmode=disable
+          SSO_TEST_POSTGRES_DIALECT: postgres
         run: go test -race -count=1 ./...
 
       - name: config validate (all 7 config.yaml files)
@@ -416,3 +439,23 @@ jobs:
           # matrix lives in a follow-up once we have a push target.
           platforms: linux/amd64
           tags: snaplink/sso-server:ci
+
+  chaos:
+    # test/chaos/*.go (fault injection: storage error fail-open/closed,
+    # panic recovery, clock jumps) is gated behind `//go:build chaos` and
+    # was never invoked anywhere in this workflow. Matches `make
+    # chaos-test`'s own stated intent ("slower — run on main/pre-release,
+    # not every PR"): main-only, not on pull_request.
+    name: chaos (main only)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go test (chaos)
+        run: go test -tags chaos ./test/chaos/... -race -count=2
