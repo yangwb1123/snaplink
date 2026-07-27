@@ -15,7 +15,7 @@ import (
 //   - pending  → user hasn't acted yet; poll returns authorization_pending
 //   - approved → user verified user_code + authenticated; poll succeeds
 //   - denied   → user explicitly rejected; poll returns access_denied
-//   - expired  → ExpiresAt passed; poll returns expired_token
+//   - expired  → ExpiresAt passed; poll returns invalid_grant
 //
 // LastPoll + Interval enforce the RFC's slow_down anti-thrash rule:
 // when a device polls faster than Interval, the server returns
@@ -91,6 +91,6 @@ type DeviceCodeStore interface {
 
 // ErrDeviceCodeNotFound is returned by store lookups when the code
 // is unknown, expired, or already consumed. Indistinguishable so
-// the token endpoint maps to expired_token without leaking which
+// the token endpoint maps to invalid_grant without leaking which
 // case applied.
 var ErrDeviceCodeNotFound = errors.New("sso: device code not found or expired")

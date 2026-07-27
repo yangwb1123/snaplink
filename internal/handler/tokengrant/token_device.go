@@ -2,7 +2,6 @@ package tokengrant
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"slices"
 	"time"
@@ -37,7 +36,7 @@ type DeviceGrantDeps interface {
 // dpopJKT and mtlsX5T carry the RFC 9449 DPoP / RFC 8705 mTLS sender-constraints
 // extracted by the caller; both are "" when the client sent no proof.
 // Returns one of the RFC 8628 §3.5 sentinels: authorization_pending, slow_down,
-// access_denied, expired_token, invalid_grant, or a standard token response.
+// access_denied, invalid_grant, or a standard token response.
 // The device_code is single-use — deleted on success and on denial.
 func HandleDeviceGrant(d DeviceGrantDeps, ctx core.HandlerContext, client *core.Client, deviceCode, dpopJKT, mtlsX5T string) {
 	store := d.DeviceCodeStore()
@@ -49,19 +48,19 @@ func HandleDeviceGrant(d DeviceGrantDeps, ctx core.HandlerContext, client *core.
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return
 	}
-	dc, ok := devicePollGate(d, ctx, store, client, deviceCode)
+	_, ok := devicePollGate(d, ctx, store, client, deviceCode)
 	if !ok {
 		return
 	}
 
 	// Atomically CLAIM the approved code BEFORE minting: of N concurrent polls
 	// exactly one wins the delete-and-return; the losers (and an already-consumed
-	// or expired code) get ErrDeviceCodeNotFound -> expired_token. This is what
+	// or expired code) collapse to invalid_grant. This is what
 	// makes the device_code single-use under concurrency — the prior
 	// mint-then-Delete let two simultaneous polls each mint a full token set.
 	dc, err := store.ConsumeIfApproved(ctx.Request().Context(), deviceCode)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrExpiredToken))
+		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
 		return
 	}
 
@@ -116,11 +115,6 @@ func deviceMintAndRespond(d DeviceGrantDeps, ctx core.HandlerContext, client *co
 func devicePollGate(d DeviceGrantDeps, ctx core.HandlerContext, store oauth.DeviceCodeStore, client *core.Client, deviceCode string) (*oauth.DeviceCode, bool) {
 	dc, err := store.GetByDeviceCode(ctx.Request().Context(), deviceCode)
 	if err != nil {
-		// CRITICAL: unknown/expired device_code stays expired_token, NOT invalid_grant.
-		if errors.Is(err, oauth.ErrDeviceCodeNotFound) {
-			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrExpiredToken))
-			return nil, false
-		}
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
 		return nil, false
 	}

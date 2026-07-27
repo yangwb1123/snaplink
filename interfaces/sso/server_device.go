@@ -313,8 +313,7 @@ func (s *Server) applyDeviceDecision(ctx HandlerContext, dc *oauth.DeviceCode, c
 //   - authorization_pending: user hasn't acted yet
 //   - slow_down: device polled faster than Interval (RFC says +5s)
 //   - access_denied: user explicitly denied
-//   - expired_token: TTL elapsed
-//   - invalid_grant: unknown code / wrong client
+//   - invalid_grant: unknown / expired / consumed code or wrong client
 //
 // or a standard token response on success.
 func (s *Server) handleDeviceTokenGrant(ctx HandlerContext, client *Client, deviceCode, dpopJKT, mtlsX5T string) {

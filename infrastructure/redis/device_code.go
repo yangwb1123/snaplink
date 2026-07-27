@@ -93,7 +93,7 @@ func (s *DeviceCodeStore) Issue(ctx context.Context, dc *oauth.DeviceCode) error
 
 // GetByDeviceCode looks up by device_code. Unknown / TTL-evicted /
 // just-expired all collapse to ErrDeviceCodeNotFound (§2 oracle-leak:
-// the token endpoint maps it to expired_token without leaking the case).
+// the token endpoint maps it to invalid_grant without leaking the case).
 func (s *DeviceCodeStore) GetByDeviceCode(ctx context.Context, deviceCode string) (*oauth.DeviceCode, error) {
 	return s.getByDeviceCode(ctx, deviceCode)
 }

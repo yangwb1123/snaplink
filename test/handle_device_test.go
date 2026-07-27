@@ -20,9 +20,11 @@ import (
 )
 
 const (
-	devUser   = "u-device"
-	devClient = "device-client"
-	devSecret = "device-secret"
+	devUser        = "u-device"
+	devClient      = "device-client"
+	devSecret      = "device-secret"
+	devOtherClient = "other-device-client"
+	devOtherSecret = "other-device-secret"
 )
 
 func newDeviceServer(t *testing.T, ttl, interval time.Duration) *httptest.Server {
@@ -32,6 +34,10 @@ func newDeviceServer(t *testing.T, ttl, interval time.Duration) *httptest.Server
 	clients := defaultimpl.NewMemoryClientStore()
 	clients.AddSeed(&sso.Client{
 		ID: devClient, Secret: devSecret,
+		AllowedAuthenticators: []string{"password"}, TokenStrategy: "jwt", Active: true,
+	})
+	clients.AddSeed(&sso.Client{
+		ID: devOtherClient, Secret: devOtherSecret,
 		AllowedAuthenticators: []string{"password"}, TokenStrategy: "jwt", Active: true,
 	})
 	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
@@ -207,6 +213,10 @@ func TestDevice_FullApprovalRoundTripMintsTokens(t *testing.T) {
 	if body["access_token"] == "" {
 		t.Errorf("missing access_token: %v", body)
 	}
+	status, body = pollToken(t, srv, dc)
+	if status != http.StatusBadRequest || body["error"] != "invalid_grant" {
+		t.Errorf("consumed device_code replay = %d %v, want 400 invalid_grant", status, body)
+	}
 }
 
 func TestDevice_VerifyAcceptsDashlessUserCode(t *testing.T) {
@@ -260,8 +270,8 @@ func TestDevice_ExpiredCodeRejected(t *testing.T) {
 	if status != http.StatusBadRequest {
 		t.Fatalf("status = %d", status)
 	}
-	if body["error"] != "expired_token" {
-		t.Errorf("error = %v want expired_token", body["error"])
+	if body["error"] != "invalid_grant" {
+		t.Errorf("error = %v want invalid_grant", body["error"])
 	}
 }
 
@@ -273,18 +283,20 @@ func TestDevice_WrongClientCannotPoll(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"grant_type":    "urn:ietf:params:oauth:grant-type:device_code",
 		"device_code":   dc,
-		"client_id":     "different-client",
-		"client_secret": "different-secret",
+		"client_id":     devOtherClient,
+		"client_secret": devOtherSecret,
 	})
 	resp, err := http.Post(srv.URL+"/token", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	// Goes through requireDeps → invalid_client (different client doesn't
-	// exist), which proves the binding check runs before token issuance.
-	if resp.StatusCode == http.StatusOK {
-		t.Errorf("status = 200 — different client succeeded in stealing device_code")
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode mismatch response: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest || out["error"] != "invalid_grant" {
+		t.Errorf("wrong-client device_code = %d %v, want 400 invalid_grant", resp.StatusCode, out)
 	}
 }
 

@@ -35,20 +35,6 @@ Retired audits, plans, and migration records are summarized in
 | TypeScript/Python SDKs | **Partial** | Generated curated subset; not complete parity with admin/SCIM/SSF/Federation routes. |
 | Nested protocol/infrastructure modules | **Partial** | Strict cold-build profiles and the Kafka static adapter are implemented. A versioned registrar outside `cmd/` is still required before other module families can use the standard host API. |
 
-## Current implementation deviations
-
-These are observed implementation/documentation drifts, not accepted product
-limits. The target contract remains the invariant in `AGENTS.md`.
-
-- **Device grant oracle collapse:** `AGENTS.md` §3 requires an unknown,
-  expired, consumed or mismatched device code presented to `/token` to return
-  `400 invalid_grant`. The current
-  `internal/handler/tokengrant/token_device.go` implementation returns
-  `expired_token` for the unknown/expired/consumed branches while using
-  `invalid_grant` for client mismatch/store errors. Reconcile the handler and
-  its tests to the invariant; do not treat the current distinction as a stable
-  wire contract.
-
 ## Partial capabilities
 
 ### Static build modules and runtime plugin lifecycle

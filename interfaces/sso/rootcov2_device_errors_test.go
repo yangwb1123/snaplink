@@ -101,7 +101,7 @@ func TestRcov2DE_DeviceTokenGrantErrors(t *testing.T) {
 		t.Errorf("device grant no code = %d, want 400", status)
 	}
 
-	// Unknown device_code => 400 (expired_token, anti-enumeration).
+	// Unknown device_code => 400 invalid_grant (oracle-safe collapse).
 	status, out := rcovPostJSON(t, s.http.URL+"/token", "", map[string]any{
 		"grant_type":    "urn:ietf:params:oauth:grant-type:device_code",
 		"device_code":   "totally-unknown-device-code",
@@ -110,6 +110,9 @@ func TestRcov2DE_DeviceTokenGrantErrors(t *testing.T) {
 	})
 	if status != http.StatusBadRequest {
 		t.Errorf("device grant unknown code = %d, want 400 (body=%v)", status, out)
+	}
+	if out["error"] != sso.ErrInvalidGrant {
+		t.Errorf("device grant unknown code = %v, want invalid_grant", out)
 	}
 }
 

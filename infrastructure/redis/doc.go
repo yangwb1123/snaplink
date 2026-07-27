@@ -115,7 +115,7 @@
 //     (and Delete) — the same atomic get-and-delete as the auth-code /
 //     PAR stores. A replayed mfa_challenge / device_code finds nothing;
 //     unknown / expired / consumed collapse to one not-found sentinel
-//     (the §2 mfa_invalid + expired_token oracle patterns). The device
+//     (the §2 mfa_invalid + invalid_grant oracle patterns). The device
 //     flow's user_code lookup is a thin pointer key that dereferences to
 //     the canonical device_code record; both share one TTL so they evict
 //     together.

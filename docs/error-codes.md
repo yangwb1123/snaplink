@@ -299,7 +299,8 @@ other grants above use, for the SAME oracle-leak reasons.
 |-------------------------|------|---------------------------------------------------------------------------|----------------------------------------------------------|
 | `authorization_pending` | 400  | RFC 8628 §3.5 / CIBA Core §11 — user hasn't confirmed yet; poll again at `interval` | Keep polling, respect the AS-supplied interval         |
 | `slow_down`             | 400  | RFC 8628 §3.5 / CIBA Core §11 — caller polled faster than the AS-supplied interval | Add 5 seconds to the interval, then keep polling         |
-| `expired_token`         | 400  | RFC 8628 §3.5 / CIBA Core §11 — `device_code` / `auth_req_id` TTL elapsed (also unknown/consumed id — collapsed for anti-enumeration) | Restart the flow with a fresh request |
+| `invalid_grant`         | 400  | Device `device_code` is unknown, expired, consumed, or bound to another client — every terminal cause collapses to this code | Restart the device flow |
+| `expired_token`         | 400  | CIBA Core §11 — `auth_req_id` TTL elapsed (also unknown/consumed id — collapsed for anti-enumeration) | Restart the CIBA flow with a fresh request |
 | `access_denied`         | 400  | RFC 8628 §3.5 / CIBA Core §11 — the user explicitly denied the request    | Surface to the user; do not auto-retry                   |
 
 ### CIBA backchannel authentication (`/backchannel-authentication`)
