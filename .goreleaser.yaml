@@ -28,6 +28,10 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
+      - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+      - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+      - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+      - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
     goos:
       - linux
       - darwin
@@ -53,6 +57,10 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
+      - -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v{{ .Version }}
+      - -X github.com/yangwb1123/snaplink/shared/core.BuildTime={{ .Date }}
+      - -X github.com/yangwb1123/snaplink/shared/core.GitHash={{ .FullCommit }}
+      - -X github.com/yangwb1123/snaplink/shared/core.BuildModified={{ .IsGitDirty }}
     goos:
       - linux
       - darwin
@@ -153,6 +161,12 @@ dockers:
       - "--label=org.opencontainers.image.description=Snaplink SSO server"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.source={{ .GitURL }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--build-arg=VERSION=v{{ .Version }}"
+      - "--build-arg=BUILD_TIME={{ .Date }}"
+      - "--build-arg=GIT_HASH={{ .FullCommit }}"
+      - "--build-arg=BUILD_MODIFIED={{ .IsGitDirty }}"
 
   - image_templates:
       - "ghcr.io/snaplink/sso-mcp:{{ .Version }}"

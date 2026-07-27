@@ -31,6 +31,10 @@ FROM golang:1.26-alpine AS builder
 # "latest" | a pinned module version (e.g. "v1.0.0") | "inprocess" |
 # "certified" — see docs/fips.md for the tradeoffs between these.
 ARG GOFIPS140=off
+ARG VERSION
+ARG BUILD_TIME
+ARG GIT_HASH
+ARG BUILD_MODIFIED
 
 # git is needed by `go build` when modules pull from a private VCS;
 # harmless here, fixes the most-common future surprise.
@@ -84,11 +88,19 @@ COPY . .
 # binary that runs on distroless static. -trimpath strips local paths
 # from stack traces for reproducibility. GOFIPS140 (see ARG above) is a
 # pure-Go stdlib build flag — orthogonal to CGO_ENABLED=0, never requires it.
-RUN CGO_ENABLED=0 GOOS=linux GOFIPS140=${GOFIPS140} go build \
-    -trimpath \
-    -ldflags="-s -w" \
-    -o /out/sso-server \
-    ./cmd/sso-server
+RUN resolved_build_time="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"; \
+    resolved_git_hash="${GIT_HASH:-$(git rev-parse HEAD 2>/dev/null || true)}"; \
+    resolved_modified="${BUILD_MODIFIED:-$(test -z "$(git status --porcelain 2>/dev/null)" || echo true)}"; \
+    CGO_ENABLED=0 GOOS=linux GOFIPS140=${GOFIPS140} go build \
+      -trimpath \
+      -buildvcs=true \
+      -ldflags="-s -w \
+        -X github.com/yangwb1123/snaplink/shared/core.BuildVersion=${VERSION} \
+        -X github.com/yangwb1123/snaplink/shared/core.BuildTime=${resolved_build_time} \
+        -X github.com/yangwb1123/snaplink/shared/core.GitHash=${resolved_git_hash} \
+        -X github.com/yangwb1123/snaplink/shared/core.BuildModified=${resolved_modified}" \
+      -o /out/sso-server \
+      ./cmd/sso-server
 
 # ═════════════════════════════════════════════════════════════════
 # Build sso-mcp  (MCP protocol gateway)
