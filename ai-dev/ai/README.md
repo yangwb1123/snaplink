@@ -28,23 +28,28 @@ Run only the stages that match the decision: `02 → 04 → 06` for a pre-merge
 feature review, `02 → 03 → 06` for production hardening, or one focused stage
 for a specific question.
 
-## Current runner limits
+## Runner status
 
-`--dry-run` reliably renders the selected prompt. Live runs currently stream
-agent output to the terminal but do not persist the advertised
-`stage-NN.out.md` file because the subprocess is not captured. `--all` runs
-stages in order but does not inject one stage's output into the next.
+- `--dry-run` renders the selected prompt without invoking an agent.
+- Live runs stream agent output to the terminal and persist it to
+  `stage-NN.out.md` under the review output directory (default
+  `ai-dev/ai/reviews/<context>`; `--output-dir` overrides). Partial output is
+  kept when a stage fails, so failures leave inspectable evidence.
+- `--all` runs stages in order and injects each completed stage's output into
+  the paste-style variables of downstream stages (Stage 00 →
+  `PRODUCT_DISCOVERY_OUTPUT`; Stage 01 → `ARCHITECTURE_OUTPUT`; completed
+  stages → `PRIOR_FINDINGS`, `CRITICAL_HIGH_FINDINGS`,
+  `ALL_PRIOR_FINDINGS_SUMMARY`, `COMMITTED_STORIES`). Explicit context or CLI
+  values win over chained output.
+- Omitted context fields render as `(not provided: ...)` or `(unknown)`; the
+  runner no longer fabricates storage, team-size, or sprint-length facts.
+- `--agent-bin` overrides the agent binary configured in
+  `ai-dev/pi-batch.yaml` (default `pi`).
 
-Until the runner is repaired, capture output explicitly and copy any prior
-finding into the context fields needed by the next stage. Exploratory review
-directories are ignored by Git; promote verified conclusions into maintained
-project documents instead of committing the raw corpus.
-
-Omitted values are not all neutral: the current mapper assumes
-`Redis Cluster, PostgreSQL` for storage, team size `3`, and a two-week sprint.
-Override those fields or treat them as unknown rather than project facts.
-The context file's `repo:` value fills the prompt only; pass `--repo /path`
-explicitly to set the live agent process working directory.
+Exploratory review directories are ignored by Git; promote verified
+conclusions into maintained project documents instead of committing the raw
+corpus. The context file's `repo:` value fills the prompt only; pass
+`--repo /path` explicitly to set the live agent process working directory.
 
 ## Usage
 
@@ -103,5 +108,5 @@ To add or rename a stage, update `sdlc.yaml` and its prompt; the runner loads
 the stage map dynamically. Preserve every `{{VARIABLE}}` used by the schema.
 
 For individual role prompts, or to inspect multi-input pipelines with
-`--dry-run`, use `ai-dev/pi-batch.py`; see its current limitations in
+`--dry-run`, use `ai-dev/pi-batch.py`; see its runner status in
 [`../docs/AUTOMATION_WORKFLOW_SUMMARY.md`](../docs/AUTOMATION_WORKFLOW_SUMMARY.md).

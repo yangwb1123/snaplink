@@ -1,11 +1,9 @@
-# 完整 SDLC Pipeline - 历史实验配置
+# 完整 SDLC Pipeline - 聚合模式
 #
-# 不要直接运行。pi-batch 会对每个上游输出与每个下游角色做笛卡尔展开，
-# 此 10 阶段图会产生组合爆炸，最终 reviewer 也只看到一个直接上游输出，
-# 无法完成这里声明的全局综合。保留本文件仅用于重设计 runner/aggregation。
-#
-# 说明：此文件描述目标中的 10 阶段角色图；当前 runner 不支持所需的
-# 聚合语义，因此不代表可执行流程。
+# runner 现已支持 aggregate: true：每个下游角色模板把上游全部输出合并为一份
+# 综合提示词（{input_stem} 固定为 combined），不再做笛卡尔扇出，reviewer 可以
+# 看到全部上游证据。本图仍是长时运行实验：执行前先用 --dry-run 检查；生成的
+# 审查默认不提交（git_commit: false），结论需人工验证后提升到维护文档。
 
 git_commit: false # 生成审查默认不提交；审核后可显式传 --git-commit
 
@@ -25,6 +23,7 @@ stages:
   # ═══════════════════════════════════════════════════════════
   - name: stage-1-architecture
     from_outputs: stage-0-discovery
+    aggregate: true
     tasks:
       - role: architect
         prompt_template: ai-dev/prompts/architect.md
@@ -46,6 +45,7 @@ stages:
   # ═══════════════════════════════════════════════════════════
   - name: stage-2-security
     from_outputs: stage-1-architecture
+    aggregate: true
     tasks:
       - role: security
         prompt_template: ai-dev/prompts/security_engineer.md
@@ -67,6 +67,7 @@ stages:
   # ═══════════════════════════════════════════════════════════
   - name: stage-3-distributed
     from_outputs: stage-2-security
+    aggregate: true
     tasks:
       - role: distributed
         prompt_template: ai-dev/prompts/distributed_engineer.md
@@ -88,6 +89,7 @@ stages:
   # ═══════════════════════════════════════════════════════════
   - name: stage-4-implementation
     from_outputs: stage-3-distributed
+    aggregate: true
     tasks:
       - role: staff
         prompt_template: ai-dev/prompts/staff_engineer.md
@@ -109,6 +111,7 @@ stages:
   # ═══════════════════════════════════════════════════════════
   - name: stage-5-performance
     from_outputs: stage-4-implementation
+    aggregate: true
     tasks:
       - role: performance
         prompt_template: ai-dev/prompts/performance_engineer.md
@@ -124,6 +127,7 @@ stages:
   # ═══════════════════════════════════════════════════════════
   - name: stage-6-production-ready
     from_outputs: stage-5-performance
+    aggregate: true
     tasks:
       - role: sre
         prompt_template: ai-dev/prompts/sre_engineer.md
@@ -155,6 +159,7 @@ stages:
   # ═══════════════════════════════════════════════════════════
   - name: stage-7-sprint-planning
     from_outputs: stage-6-production-ready
+    aggregate: true
     tasks:
       - role: pm
         prompt_template: ai-dev/prompts/pm.md
@@ -181,6 +186,7 @@ stages:
   # ═══════════════════════════════════════════════════════════
   - name: stage-8-sprint-review
     from_outputs: stage-7-sprint-planning
+    aggregate: true
     tasks:
       - role: staff
         prompt_template: ai-dev/prompts/staff_engineer.md
@@ -207,6 +213,7 @@ stages:
   # ═══════════════════════════════════════════════════════════
   - name: stage-9-cto-decision
     from_outputs: stage-8-sprint-review
+    aggregate: true
     tasks:
       - role: cto
         prompt_template: ai-dev/prompts/cto.md

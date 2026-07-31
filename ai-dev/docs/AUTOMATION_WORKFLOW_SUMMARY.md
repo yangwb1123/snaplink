@@ -17,25 +17,28 @@ repository's executable tests and does not replace them.
   worktree change; see the safety warning in
   [`GIT_AUTO_COMMIT_GUIDE.md`](GIT_AUTO_COMMIT_GUIDE.md).
 
-## Current runner limits
+## Runner status
 
-Use pipelines for dry-run inspection only until these defects are fixed:
+- `run-review.py` live runs persist each stage to `stage-NN.out.md` (partial
+  output is kept on failure), and `--all` injects completed stage outputs
+  into downstream paste-style variables; explicit context/CLI values win.
+- Post-stage pipeline `commands` failures now fail the run with a non-zero
+  exit, so configured build, vet, test, or `make ci` hooks act as failure
+  gates when a pipeline defines them. Commands still only run when a stage
+  declares them.
+- `from_outputs` stages accept `aggregate: true`, which merges every upstream
+  artifact into one combined prompt per role template (`{input_stem}` becomes
+  `combined`) instead of fanning each artifact into an independent task.
+- Pipeline `mode`, `workers`, and `timeout` are overridden by the matching
+  top-level CLI flags when those flags are passed explicitly (`--mode`,
+  `-w`/`--workers`, `--timeout`).
+- `pi-batch.py` resolves `pi-batch.yaml` next to the script first, then the
+  process working directory, so repository-root invocations pick up
+  `ai-dev/pi-batch.yaml`. `--agent-bin` still overrides it explicitly.
 
-- post-stage `commands` currently raise an internal `subprocess` binding error;
-  the runner logs only a warning and still exits successfully, so configured
-  build, vet, test, or `make ci` commands are **not** release gates;
-- `from_outputs` fans every upstream artifact into an independent downstream
-  task instead of aggregating role results, so implementation pipelines can
-  repeat or conflict rather than apply one combined design.
-- pipeline `mode`, `workers`, and `timeout` come from each stage; the matching
-  top-level CLI flags do not override them;
-- `pi-batch.py` looks for optional `pi-batch.yaml` in the process working
-  directory. Repository-root commands therefore ignore `ai-dev/pi-batch.yaml`;
-  pass `--agent-bin` explicitly when its built-in `pi` default is unsuitable.
-
-`ai-dev/pipelines/pipeline-full-sdlc.yaml` is a retained design experiment, not
-a supported runner path: the current executor expands each upstream output
-against every downstream task instead of aggregating stage results.
+`ai-dev/pipelines/pipeline-full-sdlc.yaml` is a long-running experimental
+graph; its stages use `aggregate: true` so downstream roles see all upstream
+evidence. Inspect it with `--dry-run` before executing.
 
 ## Recommended use
 

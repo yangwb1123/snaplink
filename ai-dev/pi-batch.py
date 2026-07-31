@@ -62,15 +62,19 @@ except ImportError:
 
 # -- declarative config (pi-batch.yaml) ----------------------------------
 def _load_batch_config(path: str = "pi-batch.yaml") -> dict:
-    """Optional defaults for pi-batch.py. Missing file -> {} (built-in
-    defaults below apply), so the script still runs standalone with zero
-    config -- copy pi-batch.yaml alongside pi-batch.py to point it at a
-    different agent CLI."""
-    p = Path(path)
-    if not yaml or not p.exists():
-        return {}
-    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-    return data if isinstance(data, dict) else {}
+    """Optional defaults for pi-batch.py. Resolution order: the file next to
+    this script (ai-dev/pi-batch.yaml when run from the repository root),
+    then the process working directory. Missing file -> {} (built-in defaults
+    below apply), so the script still runs standalone with zero config --
+    copy pi-batch.yaml alongside pi-batch.py to point it at a different
+    agent CLI."""
+    for p in (Path(__file__).resolve().parent / Path(path).name, Path(path)):
+        if not yaml or not p.exists():
+            continue
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        if isinstance(data, dict):
+            return data
+    return {}
 
 
 _BATCH_CFG = _load_batch_config()
@@ -93,6 +97,7 @@ class Stage:
     output_suffix: str = ".out.md"
     mode: str = "serial"
     workers: int = AGENT_DEFAULT_WORKERS
+    aggregate: bool = False  # from_outputs: merge all upstream outputs into one prompt per template
     tasks: list = field(default_factory=list)
     commands: list = field(default_factory=list)
     commands_parallel: bool = False  # if True, run commands concurrently
@@ -109,6 +114,7 @@ class Stage:
             "output_suffix": self.output_suffix,
             "mode": self.mode,
             "workers": self.workers,
+            "aggregate": self.aggregate,
             "tasks": self.tasks,
             "commands": self.commands,
             "commands_parallel": self.commands_parallel,
@@ -158,6 +164,7 @@ def load_pipeline(path: str) -> Pipeline:
             output_suffix=s.get("output_suffix", ".out.md"),
             mode=s.get("mode", "serial"),
             workers=s.get("workers", AGENT_DEFAULT_WORKERS),
+            aggregate=s.get("aggregate", False),
             tasks=s.get("tasks", []),
             commands=s.get("commands", []),
             commands_parallel=s.get("commands_parallel", False),
@@ -170,14 +177,66 @@ def load_pipeline(path: str) -> Pipeline:
     return Pipeline(stages=stages)
 
 
-def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_override: str = "", reuse: bool = False) -> list[TaskResult]:
-    """Execute one stage and return results.
-    
+def _task_from_def(task_def: dict, prompt: str, output_path: str, model_override: str = "", timeout_override: int = 0) -> Task:
+    """Build a task from a pipeline template definition, applying CLI-level
+    model and timeout overrides on top of per-task values."""
+    task = Task(
+        prompt=prompt,
+        output=output_path,
+        model=task_def.get("model", ""),
+        cwd=task_def.get("cwd", ""),
+        timeout=task_def.get("timeout", 300),
+    )
+    if model_override:
+        task.model = model_override
+    if timeout_override:
+        task.timeout = timeout_override
+    return task
+
+
+def _aggregate_tasks(stage: Stage, prev_outputs: list, model_override: str = "", timeout_override: int = 0) -> list[Task]:
+    """Combine every upstream artifact into one prompt per task template so
+    downstream roles see all evidence (input_stem becomes 'combined') instead
+    of fanning each artifact into an independent task."""
+    parts = []
+    for out_path_str in prev_outputs:
+        out_path = Path(out_path_str)
+        if not out_path.exists():
+            log.warning("Output file not found: %s", out_path)
+            continue
+        parts.append("--- %s ---\n%s" % (out_path.stem, out_path.read_text(encoding="utf-8")))
+    if not parts:
+        log.warning("No upstream outputs available for aggregate stage '%s'", stage.name)
+        return []
+    combined = "\n\n".join(parts)
+
+    tasks = []
+    for task_def in stage.tasks:
+        prompt_template_path = Path(task_def.get("prompt_template", ""))
+        if not prompt_template_path.exists():
+            log.error("Prompt template not found: %s", prompt_template_path)
+            continue
+        template = prompt_template_path.read_text(encoding="utf-8")
+        prompt = template.replace("{input_content}", combined)
+        prompt = prompt.replace("{input_stem}", "combined")
+        prompt = prompt.replace("{input_path}", ", ".join(prev_outputs))
+        output_path = task_def.get("output", "").replace("{input_stem}", "combined")
+        tasks.append(_task_from_def(task_def, prompt, output_path, model_override, timeout_override))
+    return tasks
+
+
+def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_override: str = "", reuse: bool = False, timeout_override: int = 0) -> tuple[list[TaskResult], bool]:
+    """Execute one stage and return (task_results, stage_ok).
+
+    stage_ok is False when any task or configured post-stage command failed,
+    so command hooks act as a failure gate for the pipeline.
+
     Args:
         stage: Stage definition
         stage_outputs: dict mapping stage name -> list of output file paths
         model_override: override model for all tasks
         reuse: if True, skip tasks whose output files already exist
+        timeout_override: per-task timeout override (seconds)
     """
     log.info("")
     log.info("=" * 60)
@@ -193,7 +252,7 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
         dir_path = Path(stage.from_dir)
         if not dir_path.is_dir():
             log.error("Directory not found: %s", stage.from_dir)
-            return []
+            return [], False
         
         for fpath in sorted(dir_path.glob(f"*{stage.suffix}")):
             if fpath.name.endswith(stage.output_suffix):
@@ -214,6 +273,8 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
             )
             if model_override:
                 task.model = model_override
+            if timeout_override:
+                task.timeout = timeout_override
             tasks.append(task)
         
         log.info("Loaded %d tasks from %s", len(tasks), stage.from_dir)
@@ -222,59 +283,56 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
     elif stage.from_outputs:
         if stage.from_outputs not in stage_outputs:
             log.error("Previous stage '%s' not found", stage.from_outputs)
-            return []
-        
+            return [], False
+
         prev_outputs = stage_outputs[stage.from_outputs]
-        
-        # For each output file from previous stage, create tasks based on task templates
-        for out_path_str in prev_outputs:
-            out_path = Path(out_path_str)
-            if not out_path.exists():
-                log.warning("Output file not found: %s", out_path)
-                continue
-            
-            input_content = out_path.read_text(encoding="utf-8")
-            input_stem = out_path.stem
-            
-            # Create tasks from templates
-            for task_def in stage.tasks:
-                prompt_template_path = Path(task_def.get("prompt_template", ""))
-                if not prompt_template_path.exists():
-                    log.error("Prompt template not found: %s", prompt_template_path)
+
+        if stage.aggregate:
+            # Merge every upstream artifact into one combined prompt per
+            # template so downstream roles see all evidence, instead of
+            # fanning each artifact into independent (and conflicting) tasks.
+            tasks.extend(_aggregate_tasks(stage, prev_outputs, model_override, timeout_override))
+        else:
+            # For each output file from previous stage, create tasks based on task templates
+            for out_path_str in prev_outputs:
+                out_path = Path(out_path_str)
+                if not out_path.exists():
+                    log.warning("Output file not found: %s", out_path)
                     continue
-                
-                template = prompt_template_path.read_text(encoding="utf-8")
-                
-                # Replace placeholders
-                prompt = template.replace("{input_content}", input_content)
-                prompt = prompt.replace("{input_stem}", input_stem)
-                prompt = prompt.replace("{input_path}", str(out_path))
-                
-                # Resolve output path
-                output_template = task_def.get("output", "")
-                output_path = output_template.replace("{input_stem}", input_stem)
-                
-                task = Task(
-                    prompt=prompt,
-                    output=output_path,
-                    model=task_def.get("model", ""),
-                    cwd=task_def.get("cwd", ""),
-                    timeout=task_def.get("timeout", 300),
-                )
-                if model_override:
-                    task.model = model_override
-                tasks.append(task)
-        
-        log.info("Loaded %d tasks from %d outputs of stage '%s'", 
+
+                input_content = out_path.read_text(encoding="utf-8")
+                input_stem = out_path.stem
+
+                # Create tasks from templates
+                for task_def in stage.tasks:
+                    prompt_template_path = Path(task_def.get("prompt_template", ""))
+                    if not prompt_template_path.exists():
+                        log.error("Prompt template not found: %s", prompt_template_path)
+                        continue
+
+                    template = prompt_template_path.read_text(encoding="utf-8")
+
+                    # Replace placeholders
+                    prompt = template.replace("{input_content}", input_content)
+                    prompt = prompt.replace("{input_stem}", input_stem)
+                    prompt = prompt.replace("{input_path}", str(out_path))
+
+                    # Resolve output path
+                    output_template = task_def.get("output", "")
+                    output_path = output_template.replace("{input_stem}", input_stem)
+
+                    tasks.append(_task_from_def(task_def, prompt, output_path, model_override, timeout_override))
+
+        log.info("Loaded %d tasks from %d outputs of stage '%s'",
                  len(tasks), len(prev_outputs), stage.from_outputs)
-    
+
     else:
         log.error("Stage '%s' must have either 'from_dir' or 'from_outputs'", stage.name)
-        return []
-    
+        return [], False
+
     if not tasks:
         log.warning("No tasks to execute in stage '%s'", stage.name)
-        return []
+        return [], True
     
     # Execute tasks
     if stage.mode == "parallel":
@@ -293,6 +351,8 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
     log.info("")
     log.info("Stage '%s' completed: %d/%d tasks succeeded", 
              stage.name, len(outputs), len(tasks))
+
+    stage_ok = all(r.success for r in results)
     
     # Execute shell commands after pi tasks
     if stage.commands:
@@ -327,7 +387,6 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
                 return False
         
         if stage.commands_parallel:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
             with ThreadPoolExecutor(max_workers=len(stage.commands)) as pool:
                 futs = {pool.submit(run_single_cmd, cmd, i): cmd for i, cmd in enumerate(stage.commands, 1)}
                 cmd_results = [f.result() for f in as_completed(futs)]
@@ -341,12 +400,12 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
         if all_cmd_ok:
             log.info("All %d commands passed for stage '%s'", len(stage.commands), stage.name)
         else:
-            log.warning("Some commands failed for stage '%s'", stage.name)
+            stage_ok = False
+            log.warning("Stage '%s' FAILED: some post-stage commands failed", stage.name)
     
     # Git commit after stage
     if stage.git_commit and outputs:
         try:
-            import subprocess
             commit_msg = stage.commit_message or "[pi-batch] Stage: %s - %d tasks completed" % (stage.name, len(outputs))
             file_list = " ".join(["\"%s\"" % o for o in outputs])
             
@@ -371,10 +430,10 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
         except Exception as e:
             log.warning("Git commit failed: %s", e)
     
-    return results
+    return results, stage_ok
 
 
-def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = False, reuse: bool = False) -> list[TaskResult]:
+def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = False, reuse: bool = False, timeout_override: int = 0) -> tuple[list[TaskResult], list[str]]:
     """Execute all stages in a pipeline sequentially.
     
     Args:
@@ -382,11 +441,13 @@ def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = F
         model_override: override model for all tasks
         dry_run: if True, only print task list without executing
         reuse: if True, skip tasks whose output files already exist
+        timeout_override: per-task timeout override (seconds)
     
     Returns:
-        All task results from all stages
+        (all task results, names of stages that failed tasks or commands)
     """
     all_results: list[TaskResult] = []
+    failed_stages: list[str] = []
     stage_outputs: dict[str, list[str]] = {}  # stage_name -> [output_file_paths]
     
     log.info("")
@@ -418,10 +479,12 @@ def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = F
             log.info("  Mode: %s", stage.mode)
             continue
         
-        results = execute_stage(stage, stage_outputs, model_override, reuse)
+        results, stage_ok = execute_stage(stage, stage_outputs, model_override, reuse, timeout_override)
         all_results.extend(results)
+        if not stage_ok:
+            failed_stages.append(stage.name)
     
-    return all_results
+    return all_results, failed_stages
 
 
 # -- logging ----------------------------------------------------------
@@ -815,6 +878,18 @@ def main() -> None:
             for stage in pipeline.stages:
                 stage.git_commit = False
         
+        # Explicit CLI flags override per-stage mode/workers; --timeout is
+        # threaded through execute_stage so every task inherits it. argparse
+        # cannot report whether a flag that has a default was passed, so scan
+        # argv for the exact flag names.
+        if "--mode" in sys.argv:
+            for stage in pipeline.stages:
+                stage.mode = args.mode
+        if "-w" in sys.argv or "--workers" in sys.argv:
+            for stage in pipeline.stages:
+                stage.workers = args.workers
+        timeout_override = args.timeout if "--timeout" in sys.argv else 0
+        
         # Apply commit message prefix
         for stage in pipeline.stages:
             if stage.git_commit and not stage.commit_message:
@@ -825,9 +900,10 @@ def main() -> None:
             return
         
         try:
-            all_results = run_pipeline(pipeline, model_override=args.model, reuse=reuse_outputs)
+            all_results, failed_stages = run_pipeline(pipeline, model_override=args.model, reuse=reuse_outputs, timeout_override=timeout_override)
             print_summary(all_results)
-            if any(not r.success for r in all_results):
+            if failed_stages or any(not r.success for r in all_results):
+                log.error("Failed stages: %s", ", ".join(failed_stages) if failed_stages else "(task failures)")
                 sys.exit(1)
         except KeyboardInterrupt:
             log.warning("Interrupted by user")
@@ -890,7 +966,6 @@ def main() -> None:
 
         # Git commit for single-stage modes
         if not args.pipeline and args.git_commit and not args.no_git_commit:
-            import subprocess
             outputs = [r.task.output for r in results if r.success and r.task.output]
             if outputs:
                 try:

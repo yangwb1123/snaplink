@@ -128,8 +128,8 @@ _DEFAULT_STAGE_VARS = {
         "PROJECT_NAME": "",
         "SUBSYSTEM": "",
         "SPRINT_GOAL": "",
-        "TEAM_SIZE": "3",
-        "SPRINT_DURATION": "2 weeks",
+        "TEAM_SIZE": "",
+        "SPRINT_DURATION": "",
         "CRITICAL_HIGH_FINDINGS": "(paste Critical/High findings from all prior stages)",
         "ARCHITECTURE_OUTPUT": "(paste Stage 01 ADR)",
         "VELOCITY": "(last sprint velocity, or 'unknown')",
@@ -155,7 +155,7 @@ _DEFAULT_STAGE_VARS = {
         "GRADE_04": "N/A",
         "GRADE_05": "N/A",
         "GRADE_06": "N/A",
-        "TEAM_SIZE": "3",
+        "TEAM_SIZE": "",
         "AGE": "(unknown)",
     },
 }
@@ -225,14 +225,14 @@ def context_to_vars(ctx: dict, stage: str) -> dict:
         "PRIMARY_FILES": files_str,
         "RFC_REFERENCES": rfcs_str,
         "ARCHITECTURE_SUMMARY": ctx.get("architecture_summary", "(see primary files)"),
-        "STORAGE_SUMMARY": ctx.get("storage", "Redis Cluster, PostgreSQL"),
+        "STORAGE_SUMMARY": ctx.get("storage", ""),
         "LOAD_PROFILE": ctx.get("load_profile", "(not specified)"),
         "INFRA_SUMMARY": ctx.get("infra", "(not specified)"),
         "SLO_TARGETS": ctx.get("slo_targets", "(not specified)"),
         "DEPLOYMENT_TARGET": ctx.get("deployment_target", ctx.get("infra", "(not specified)")),
         "SPRINT_GOAL": ctx.get("sprint_goal", "(not specified)"),
-        "TEAM_SIZE": str(ctx.get("team_size", 3)),
-        "SPRINT_DURATION": ctx.get("sprint_duration", "2 weeks"),
+        "TEAM_SIZE": str(ctx.get("team_size", "")),
+        "SPRINT_DURATION": ctx.get("sprint_duration", ""),
         "VELOCITY": ctx.get("velocity", "(unknown)"),
         "AGE": ctx.get("age", "(unknown)"),
     }
@@ -251,12 +251,60 @@ def fill_template(template_path: Path, variables: dict) -> str:
     return text
 
 
+# Stage output chaining for --all: target stage -> variable -> source stages.
+# Only paste-style variables get chained; explicit context values win (checked
+# in main before chain_variables runs).
+CHAIN_SOURCES = {
+    "01": {"PRODUCT_DISCOVERY_OUTPUT": ["00"]},
+    "02": {"ARCHITECTURE_OUTPUT": ["01"]},
+    "03": {"ARCHITECTURE_OUTPUT": ["01"]},
+    "04": {"PRIOR_FINDINGS": ["01", "02", "03"]},
+    "06": {"PRIOR_FINDINGS": ["02", "03", "04", "05"]},
+    "07": {
+        "CRITICAL_HIGH_FINDINGS": ["00", "01", "02", "03", "04", "05", "06"],
+        "ARCHITECTURE_OUTPUT": ["01"],
+    },
+    "08": {"COMMITTED_STORIES": ["07"]},
+    "09": {"ALL_PRIOR_FINDINGS_SUMMARY": ["00", "01", "02", "03", "04", "05", "06", "07", "08"]},
+}
+
+
+def chain_variables(prior_outputs: dict, stage: str, variables: dict, schema_defaults: dict) -> dict:
+    """Inject completed stage outputs into the current stage's paste-style
+    variables. A variable is treated as explicitly provided (and left
+    untouched) only when it differs from the schema placeholder default or
+    the context-provided value; schema placeholders are chainable slots."""
+    chained = {}
+    for var, sources in CHAIN_SOURCES.get(stage, {}).items():
+        current = variables.get(var)
+        if current and current != schema_defaults.get(var):
+            continue
+        parts = []
+        for src in sources:
+            text = prior_outputs.get(src)
+            if text:
+                parts.append(f"--- Stage {src} output ---\n{text}")
+        if parts:
+            chained[var] = "\n\n".join(parts)
+    return chained
+
+
+def stage_out_dir(args) -> Path:
+    if args.output_dir:
+        return Path(args.output_dir)
+    return Path(__file__).parent / "reviews" / args.context_name
+
+
 def run_stage(stage: str, prompt: str, args) -> int:
-    out_dir = Path(args.output_dir) if args.output_dir else Path(__file__).parent / "reviews" / args.context_name
+    """Invoke the agent and persist its output. Output streams to the
+    terminal and is written to stage-NN.out.md, including partial output when
+    the agent exits non-zero, so failures leave inspectable evidence."""
+    out_dir = stage_out_dir(args)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / f"stage-{stage}.out.md"
 
-    cmd = [AGENT_BIN, "-p", prompt]
+    agent_bin = args.agent_bin or AGENT_BIN
+    cmd = [agent_bin, "-p", prompt]
     if args.model:
         cmd.extend(["--model", args.model])
 
@@ -266,13 +314,26 @@ def run_stage(stage: str, prompt: str, args) -> int:
     print(f"{'='*60}\n", flush=True)
 
     try:
-        result = subprocess.run(cmd, capture_output=False, text=True, cwd=args.repo or os.getcwd())
-        if result.returncode == 0 and hasattr(result, "stdout") and result.stdout:
-            out_file.write_text(result.stdout, encoding="utf-8")
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            cwd=args.repo or os.getcwd(),
+        )
+        assert proc.stdout is not None
+        with out_file.open("w", encoding="utf-8") as fh:
+            for line in proc.stdout:
+                print(line, end="", flush=True)
+                fh.write(line)
+        rc = proc.wait()
+        if rc == 0:
             print(f"\nWROTE: {out_file}", flush=True)
-        return result.returncode
+        else:
+            print(f"\nStage {stage} failed (exit={rc}); partial output kept in {out_file}", file=sys.stderr, flush=True)
+        return rc
     except FileNotFoundError:
-        print(f"ERROR: '{AGENT_BIN}' not found in PATH.", file=sys.stderr)
+        print(f"ERROR: '{agent_bin}' not found in PATH.", file=sys.stderr)
         return 1
 
 
@@ -294,6 +355,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rfcs", help="Comma-separated RFC/standard references")
     p.add_argument("--repo", help="Repository path (default: cwd)")
     p.add_argument("--model", default="", help="Model for pi invocation")
+    p.add_argument("--agent-bin", default="", help="Agent CLI binary (default: ai-dev/pi-batch.yaml agent.bin, else 'pi')")
     p.add_argument("--output-dir", metavar="DIR", help="Output directory for review files")
     p.add_argument("--dry-run", action="store_true",
                    help="Print filled prompt without invoking pi")
@@ -342,6 +404,7 @@ def main() -> None:
         sys.exit(1)
 
     failures = []
+    prior_outputs: dict = {}
     for stage in stages_to_run:
         template_file = prompts_dir / STAGES[stage]
         if not template_file.exists():
@@ -353,6 +416,7 @@ def main() -> None:
         defaults = STAGE_VARS.get(stage, {})
         variables = {k: ctx.get(k.lower(), v) for k, v in defaults.items()}
         variables.update(context_to_vars(ctx, stage))
+        variables.update(chain_variables(prior_outputs, stage, variables, defaults))
 
         prompt = fill_template(template_file, variables)
 
@@ -368,6 +432,12 @@ def main() -> None:
             failures.append(stage)
             if not args.all:
                 sys.exit(rc)
+            continue
+
+        # Keep completed output for chaining into later stages of --all.
+        out_file = stage_out_dir(args) / f"stage-{stage}.out.md"
+        if out_file.exists():
+            prior_outputs[stage] = out_file.read_text(encoding="utf-8")
 
     if failures:
         print(f"\nFailed stages: {', '.join(failures)}", file=sys.stderr)
