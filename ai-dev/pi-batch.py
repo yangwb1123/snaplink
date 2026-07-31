@@ -149,6 +149,8 @@ class Stage:
     role_dir: str = ""  # directory of role templates the orchestrator may choose from
     output_dir: str = ""  # where role deliverables are written (required for meta stages)
     max_iterations: int = 3  # orchestrator -> roles -> fold -> re-ask loop limit
+    from_prompt: str = ""  # one-sentence starting prompt instead of from_dir files
+    output: str = ""  # output file for the from_prompt task (required with from_prompt)
     tasks: list = field(default_factory=list)
     commands: list = field(default_factory=list)
     commands_parallel: bool = False  # if True, run commands concurrently
@@ -172,6 +174,8 @@ class Stage:
             "role_dir": self.role_dir,
             "output_dir": self.output_dir,
             "max_iterations": self.max_iterations,
+            "from_prompt": self.from_prompt,
+            "output": self.output,
             "tasks": self.tasks,
             "commands": self.commands,
             "commands_parallel": self.commands_parallel,
@@ -228,6 +232,8 @@ def load_pipeline(path: str) -> Pipeline:
             role_dir=s.get("role_dir", ""),
             output_dir=s.get("output_dir", ""),
             max_iterations=s.get("max_iterations", 3),
+            from_prompt=s.get("from_prompt", ""),
+            output=s.get("output", ""),
             tasks=s.get("tasks", []),
             commands=s.get("commands", []),
             commands_parallel=s.get("commands_parallel", False),
@@ -469,9 +475,27 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
     # Dynamic role orchestration (meta stage) is handled entirely here.
     if stage.meta:
         return _run_meta_stage(stage, stage_outputs, model_override, timeout_override, validate_cmd)
+
+    # Stage type 0: from_prompt - a one-sentence starting point whose output
+    # feeds downstream from_outputs stages (no input file needed).
+    if stage.from_prompt:
+        if not stage.output:
+            log.error("Stage '%s': from_prompt requires output", stage.name)
+            return [], False
+        if reuse and Path(stage.output).exists():
+            log.info("REUSE: %s (output exists)", stage.output)
+            reused_outputs.append(stage.output)
+        else:
+            task = Task(prompt=stage.from_prompt, output=stage.output)
+            if model_override:
+                task.model = model_override
+            if timeout_override:
+                task.timeout = timeout_override
+            tasks.append(task)
+        log.info("Loaded 1 task from from_prompt for stage '%s'", stage.name)
     
     # Stage type 1: from_dir - read .md files from directory
-    if stage.from_dir:
+    elif stage.from_dir:
         dir_path = Path(stage.from_dir)
         if not dir_path.is_dir():
             log.error("Directory not found: %s", stage.from_dir)

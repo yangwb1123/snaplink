@@ -901,6 +901,90 @@ def test_meta_stage_requires_output_dir(tmp_path, fake_agent):
     assert results == []
 
 
+def test_stage_from_prompt(tmp_path, fake_agent):
+    """A one-sentence starting prompt runs as a task and feeds downstream."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    output = tmp_path / "kickoff.md"
+    stage = mod.Stage(name="kickoff", from_prompt="Analyze the idea: offline-first sync.", output=str(output))
+    results, ok = mod.execute_stage(stage, {})
+    assert ok is True
+    assert len(results) == 1
+    assert output.exists()
+    assert results[0].task.output == str(output)
+
+
+def test_stage_from_prompt_requires_output(tmp_path, fake_agent):
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    stage = mod.Stage(name="kickoff", from_prompt="Analyze something.")
+    results, ok = mod.execute_stage(stage, {})
+    assert ok is False
+    assert results == []
+
+
+def test_stage_from_prompt_reuse(tmp_path, fake_agent):
+    """--reuse skips a from_prompt task whose output already exists and keeps
+    the path visible to downstream stages."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    output = tmp_path / "kickoff.md"
+    output.write_text("existing", encoding="utf-8")
+    stage = mod.Stage(name="kickoff", from_prompt="Analyze something.", output=str(output))
+    stage_outputs = {}
+    results, ok = mod.execute_stage(stage, stage_outputs, reuse=True)
+    assert ok is True
+    assert results == []
+    assert stage_outputs["kickoff"] == [str(output)]
+
+
+def test_pipeline_from_prompt_to_meta(tmp_path):
+    """End to end: a one-sentence prompt kickstarts a meta stage that
+    discovers roles and folds their deliverables back."""
+    mod = load_batch()
+    counter = tmp_path / "counter"
+    counter.touch()
+    agent = tmp_path / "meta-agent.sh"
+    agent.write_text(
+        "#!/bin/sh\n"
+        "if echo \"$2\" | grep -q 'Available roles'; then\n"
+        f"  n=$(wc -l < {counter})\n"
+        f"  echo x >> {counter}\n"
+        "  if [ \"$n\" -le 0 ]; then echo '[\"security_engineer\"]'; else echo '[]'; fi\n"
+        "else\n"
+        "  echo '## Kickoff analysis'\n"
+        "fi\n"
+    )
+    agent.chmod(0o755)
+    mod.AGENT_BIN = str(agent)
+    roles = tmp_path / "roles"
+    roles.mkdir()
+    (roles / "security_engineer.md").write_text("# Security\n{input_content}\n", encoding="utf-8")
+
+    kickoff = tmp_path / "kickoff.md"
+    out_dir = tmp_path / "reviews"
+    pipeline = mod.Pipeline(stages=[
+        mod.Stage(name="kickoff", from_prompt="Analyze the idea: offline-first sync.", output=str(kickoff)),
+        mod.Stage(name="review", from_outputs="kickoff", meta=True, role_dir=str(roles),
+                  output_dir=str(out_dir), max_iterations=3),
+    ])
+    results, failed = mod.run_pipeline(pipeline)
+    assert failed == []
+    assert len(results) == 2  # kickoff task + one discovered role task
+    assert (out_dir / "security_engineer.md").exists()
+
+
+def test_stage_from_prompt_validate(tmp_path, fake_agent):
+    """A stage-level validate_cmd applies to from_prompt tasks."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    output = tmp_path / "kickoff.md"
+    stage = mod.Stage(name="kickoff", from_prompt="Analyze something.", output=str(output), validate_cmd="exit 1")
+    results, ok = mod.execute_stage(stage, {})
+    assert ok is False
+    assert not output.exists()
+
+
 def test_pipeline_reports_failed_stage(tmp_path, fake_agent):
     mod = load_batch()
     mod.AGENT_BIN = str(fake_agent)

@@ -161,20 +161,27 @@ A stage or task without any configuration simply inherits the CLI default
 ## Self-optimizing role orchestration (meta stages)
 
 For analyzing arbitrary projects and ideas, a pipeline stage with `meta: true`
-discovers its review roles at run time instead of fixing them in YAML:
+discovers its review roles at run time instead of fixing them in YAML. The
+starting point can be a one-sentence prompt (no input files needed):
 
 ```yaml
 stages:
-  - name: requirements
-    from_dir: docs/requirements      # any project's ideas/requirements
+  - name: kickoff
+    from_prompt: "Analyze the idea: offline-first sync for the todo app."  # one sentence
+    output: docs/reviews/kickoff.md
 
   - name: review
-    from_outputs: requirements
+    from_outputs: kickoff
     meta: true                       # orchestrator picks the roles
     role_dir: ai-dev/prompts         # point at the target project's role templates
     output_dir: docs/reviews
     max_iterations: 3
 ```
+
+`from_prompt` is a full stage type: it runs as a single task, honors
+`--reuse`/validation/sessions, and its output feeds downstream `from_outputs`
+stages. `from_dir` remains available when the input is a directory of
+documents.
 
 Each iteration:
 
