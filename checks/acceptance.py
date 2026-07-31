@@ -74,6 +74,17 @@ def run() -> int:
     rc, out = run_py("checks.invariants")
     ok("security invariants") if rc == 0 else (nok("security invariants"), print(out))
 
+    print("[C1] Runtime route / OpenAPI contract")
+    rc, out = run_py("checks.route_contract")
+    ok("route/OpenAPI contract") if rc == 0 else (nok("route/OpenAPI contract"), print(out))
+
+    print("[C2] Capability registry / feature matrix contract")
+    rc, out = run_py("ops.scripts.capability_registry", "check")
+    ok("capability registry contract") if rc == 0 else (
+        nok("capability registry contract"),
+        print(out),
+    )
+
     print("[Section 4] Coverage regression")
     rc, out = run_py("checks.coverage")
     ok("coverage") if rc == 0 else nok("coverage")

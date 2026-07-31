@@ -1,7 +1,7 @@
 # Feature Matrix
 
 OAuth 2.0 / OIDC / SSO capability matrix, verified against the current code on
-2026-07-27.
+2026-07-29.
 
 This table records implemented code, not certification and not default
 availability on every deployment:
@@ -31,6 +31,43 @@ Availability has four independent dimensions:
 Do not infer one dimension from another. In particular, a disabled gate does
 not remove linked code, and the current server has no general hot-plugin
 lifecycle.
+
+<!-- BEGIN GENERATED CAPABILITY AVAILABILITY -->
+## Capability availability registry
+
+Generated from [`ops/build/capabilities.json`](../ops/build/capabilities.json); edit the registry and run `python cli.py capabilities generate`.
+
+| Capability | Availability | Default | Feature gate | Required store(s) | Surface(s) |
+|---|---|---|---|---|---|
+| Admin control plane (`admin.control-plane`) | `sdk`<br>`stock-binary` | `conditional` | `feature_gates.admin_api` | `AdminTokenStore` | `/api/v1/admin/*` |
+| Embedded API docs viewer (`api.docs-viewer`) | `sdk` | `disabled` | `feature_gates.admin_api` | — | `/api/v1/admin/docs` |
+| Kafka audit sink (`audit.kafka`) | `stock-binary`<br>`module-only` | `disabled` | — | — | `audit sink` |
+| Fine-grained authorization (`authorization.fga`) | `sdk`<br>`stock-binary` | `disabled` | — | `RebacStore`<br>`RebacEngine` | `/authz/*` |
+| Public tenant branding (`branding.public`) | `sdk`<br>`stock-binary` | `conditional` | `feature_gates.web_spa` | `TenantStore` | `/branding` |
+| CAEP and Shared Signals (`caep.shared-signals`) | `sdk`<br>`stock-binary` | `disabled` | `feature_gates.caep` | `CAEPStreamStore`<br>`JTIReplayStore` | `/.well-known/ssf-configuration`<br>`/ssf/*` |
+| OpenID Connect CIBA (`ciba.core`) | `sdk`<br>`stock-binary` | `disabled` | `feature_gates.ciba` | `CIBAStore` | `/backchannel-authentication`<br>`/token` |
+| Cluster and HA coordination (`cluster.ha`) | `sdk`<br>`stock-binary` | `disabled` | — | `cluster.Bus`<br>`shared durable stores` | `/readyz`<br>`cross-replica bus` |
+| OpenID Federation (`federation.openid`) | `sdk`<br>`stock-binary` | `disabled` | `feature_gates.federation` | `FederationEntity` | `/.well-known/openid-federation*`<br>`/auth/home-realm` |
+| Admin console (`frontend.admin`) | `external-frontend` | `external` | — | — | `/admin/*` |
+| Developer portal (`frontend.developer`) | `external-frontend` | `external` | — | — | `/developer/*` |
+| Hosted login (`frontend.login`) | `external-frontend` | `external` | — | — | `/login/*` |
+| Self-service portal (`frontend.self-service`) | `external-frontend` | `external` | — | — | `/portal/*` |
+| Setup application (`frontend.setup`) | `external-frontend` | `external` | — | — | `/setup/*` |
+| Enterprise authenticators (`identity.enterprise-auth`) | `module-only` | `disabled` | — | — | `/auth/saml/*`<br>`/auth/kerberos`<br>`Authenticator SPI` |
+| MFA and passkeys (`identity.mfa`) | `sdk`<br>`stock-binary` | `conditional` | — | `MFAChallengeStore`<br>`MFAEnrollmentStore` | `/auth/mfa`<br>`/me/mfa/*`<br>`/webauthn/*` |
+| Password authentication (`identity.password`) | `sdk`<br>`stock-binary` | `enabled` | — | `UserProvider`<br>`PasswordCredentialStore` | `/auth/login` |
+| Identity self-service APIs (`identity.self-service`) | `sdk`<br>`stock-binary` | `conditional` | `feature_gates.self_service` | `UserProvider`<br>`feature-specific stores` | `/me/*`<br>`/sessions/me/*`<br>`/consents/me/*` |
+| Signing-key lifecycle (`keys.lifecycle`) | `sdk`<br>`stock-binary` | `conditional` | — | `signing key Registry` | `/.well-known/jwks.json`<br>`/readyz` |
+| Advanced OAuth security (`oauth.advanced`) | `sdk`<br>`stock-binary` | `conditional` | — | `feature-specific OAuth stores` | `/par`<br>`/token`<br>`/auth/login` |
+| OAuth client credentials (`oauth.client-credentials`) | `sdk`<br>`stock-binary` | `enabled` | — | `ClientStore` | `/token` |
+| OAuth SSO core (`oauth.sso`) | `sdk`<br>`stock-binary` | `enabled` | — | `AuthCodeStore`<br>`SessionManager` | `/auth/login`<br>`/token` |
+| Observability (`observability.core`) | `sdk`<br>`stock-binary` | `enabled` | — | — | `/livez`<br>`/readyz`<br>`/metrics` |
+| OpenID Connect core (`oidc.core`) | `sdk`<br>`stock-binary` | `enabled` | `feature_gates.oidc` | `IDTokenIssuer` | `/.well-known/openid-configuration`<br>`/userinfo`<br>`/end_session` |
+| SCIM provisioning (`provisioning.scim`) | `sdk`<br>`stock-binary` | `disabled` | — | `UserProvider` | `/api/v1/scim/v2/*` |
+| Production storage backends (`storage.production`) | `stock-binary` | `conditional` | — | — | `storage SPI` |
+| Tenant platform (`tenant.platform`) | `sdk`<br>`stock-binary` | `conditional` | — | `TenantStore` | `/api/v1/admin/tenants/*`<br>`tenant middleware` |
+| Threat detection and response (`threat.detection-response`) | `sdk`<br>`stock-binary` | `disabled` | — | `ThreatPolicyStore`<br>`anomaly stores` | `/api/v1/admin/threat-policies/*`<br>`/api/v1/admin/tokens/suspicious` |
+<!-- END GENERATED CAPABILITY AVAILABILITY -->
 
 | Profile | Maturity | Capability claim |
 |---|---|---|
@@ -116,4 +153,4 @@ are tracked in [deferred-backlog.md](deferred-backlog.md).
 | CSP Level 3 + Permissions-Policy + Clear-Site-Data | API responses + `/logout`, `/me/account/erase` | `WithSecurityHeaders` / `WithSecurityHeadersPolicy`; separately deployed frontends configure their own static-asset CSP | `internal/handler/security_headers.go` |
 | OpenID Federation 1.0 entity + operational endpoints | `/.well-known/openid-federation`, `/fetch`, `/.well-known/openid-federation-{list,resolve,trust-mark-status,historical-keys}` | `WithFederationEntity(cfg, signer)`; individual routes also depend on subordinates/resolver/historical-key store | `domains/federation/` + `interfaces/sso/server_federation.go` |
 | User-lifecycle admin state machine (INVITED→ACTIVE→{SUSPENDED,INACTIVE}→ARCHIVED→PURGED) + optional auto-deprovision sweep | `GET`/`POST /api/v1/admin/users/:id/lifecycle` | `WithUserLifecycle(store)` (+ `WithUserAutoDeprovision(cfg, activity)`); cmd: `user_lifecycle.enabled` (+ `.auto_deprovision.enabled`) | `domains/userlifecycle/` + `interfaces/sso/options_admin.go` + `cmd/sso-server/build_stores.go` |
-| Self-service identity linking / account-merge conflict resolution | `GET`/`DELETE /me/identities` | `WithIdentityLinkStore(store)` (+ `WithIdentityMergePolicy(policy)`, an extension point for custom login integrations); cmd: `self_service.identity_link.enabled` (+ `.merge_policy`) | `domains/identitylink/` + `interfaces/sso/options_passwd.go` + `cmd/sso-server/build_stores.go` |
+| Durable identity linking / account-merge conflict resolution | `GET`/`DELETE /me/identities` + built-in OIDC federation subject mapping | `WithIdentityLinkStore(store)` (+ `WithIdentityMergePolicy(policy)`); cmd: `self_service.identity_link.{enabled,backend,merge_policy}`; memory + SQLite + Postgres | `domains/identitylink/` + `infrastructure/identitylinkpostgres/` + `cmd/sso-server/build_stores.go` |

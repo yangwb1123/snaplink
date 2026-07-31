@@ -185,6 +185,14 @@ def test_tier_version_lines_and_ldflags_are_exact():
         in ldflags
     )
     assert (
+        "-X github.com/yangwb1123/snaplink/platform/buildinfo.CompiledCapabilities="
+        "config.host.v1,core.runtime.v1,lifecycle.host.v1,"
+        "oauth.sso-prototype.v1,observability.logging.v1,"
+        "observability.tracing.v1,oidc.common.v1,security.policy.v1,"
+        "server.sso-minimal.v1,server.sso-prototype.v1,tenant.default.v1"
+        in ldflags
+    )
+    assert (
         "-X github.com/yangwb1123/snaplink/shared/core.BuildVersion=v1.1.1"
         in ldflags
     )

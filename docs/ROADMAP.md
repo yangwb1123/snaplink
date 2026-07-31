@@ -1,6 +1,6 @@
 # Roadmap
 
-> Current planning baseline, verified against the repository on 2026-07-27.
+> Current planning baseline, verified against the repository on 2026-07-28.
 > Older roadmap revisions remain available in Git history; they are not kept
 > inline because many of their gaps have since been implemented.
 
@@ -16,22 +16,22 @@ work stays out of it.
 
 ## P0 — trustworthy contracts and release evidence
 
-### 1. Synchronize routes, OpenAPI and capability metadata
+### 1. Derive generated SDK inputs from committed contracts
 
-The runtime has moved faster than the static documentation. Recent SSF,
-Federation, FGA, branding, provider and device/security administration routes
-must be represented consistently in OpenAPI and generated SDK inputs.
+Runtime/OpenAPI drift is now blocked by `python cli.py check-routes`: it
+compiles the real Go route constants, compares every statically registered
+stock-server route with OpenAPI and rejects missing or duplicate operation
+identifiers. Capability availability is now declared in
+`ops/build/capabilities.json`; `python cli.py capabilities check` validates its
+runtime-gate/module links and blocks generated feature-matrix drift. The
+remaining work is to derive generated SDK inputs from these committed
+contracts.
 
 Deliverables:
 
-- Generate or verify OpenAPI coverage from the runtime endpoint inventory.
-- Add a CI failure for a new public route without an OpenAPI operation or an
-  explicit internal-only exemption.
-- Maintain one machine-readable capability registry with availability
-  (`sdk`, `stock-binary`, `module-only`, `external-frontend`), default state,
-  feature gate and required store.
-- Generate the human feature matrix from that registry once the schema is
-  stable.
+- Define supported generated SDK languages and their compatibility policy.
+- Generate SDK operation surfaces from OpenAPI and capability availability
+  without duplicating route or edition metadata.
 
 ### 2. Produce auditable OIDC/FAPI conformance evidence
 
@@ -50,22 +50,6 @@ Deliverables:
   publish the tested commit/configuration.
 - Only use “OpenID Certified” or FAPI certification language after an issued
   listing exists.
-
-### 3. Make production topology failures loud
-
-Memory and per-pod SQLite stores are valid for a single replica but cannot
-provide cross-replica OAuth single-use semantics. A production deployment
-should not silently combine multiple replicas with local auth-code, refresh,
-session, PAR, device, CIBA, JTI or MFA-challenge state.
-
-Deliverables:
-
-- Validate replica/topology intent at startup or admission time.
-- Require an explicit unsafe acknowledgement for multi-replica local state.
-- Keep the production overlay on Redis hot stores, Postgres durable stores and
-  an etcd event bus; test loss/recovery semantics against real backends.
-- Reconcile engineering-gate documentation, generated thresholds and committed
-  tests so a green release signal has one meaning.
 
 ### 4. Remove obsolete frontend configuration semantics
 
@@ -118,22 +102,6 @@ Deliverables:
 
 ## P1 — production completeness
 
-### 6. Expand snapshot/DR control-plane coverage
-
-Snapshot schema v1 includes clients, users, roles, assignments, menus, network
-policy and bootstrap state. It intentionally excludes hot sessions/tokens, but
-it also does not currently cover tenants, enterprise connections, pairwise
-subject mappings, MFA enrollments or signing private keys.
-
-Deliverables:
-
-- Design snapshot schema v2 with per-category capability negotiation.
-- Prioritize tenants, connections and pairwise subject mappings because their
-  loss changes routing or external subject identity.
-- Keep session/token state excluded and document re-authentication as the
-  recovery behavior.
-- Emit the required cache/invalidation events after restore.
-
 ### 7. Reach API-client parity
 
 The generated TypeScript and Python clients cover a curated subset.
@@ -158,21 +126,6 @@ Deliverables:
 - Add cross-project compatibility tests; do not re-introduce static SPA bundles
   into `sso-server`.
 
-### 9. Strengthen secrets at rest
-
-Password/client credentials are hashed by their stores, but active OAuth bearer
-artifacts such as SQLite refresh tokens and authorization/device codes are
-stored as lookup keys in plaintext. Encrypted snapshots do not protect a live
-database or Redis export.
-
-Deliverables:
-
-- Design deployment-keyed HMAC lookup keys and a backwards-compatible
-  migration for active opaque artifacts.
-- Preserve atomic consume, family replay detection and oracle-safe errors.
-- Document key rotation and disaster-recovery implications before enabling the
-  feature by default.
-
 Non-prioritized product directions remain in
 [deferred-backlog.md](deferred-backlog.md); they do not enter release ordering
 until promoted here.
@@ -181,8 +134,7 @@ until promoted here.
 
 1. Contract/capability synchronization.
 2. Conformance evidence and release-gate integrity.
-3. HA topology validation.
-4. Obsolete frontend-config migration.
-5. Canonical OP-session/SID integration and physical profile isolation.
-6. Snapshot schema v2 and API-client parity.
-7. New protocol families only after the production-completeness work above.
+3. Obsolete frontend-config migration.
+4. Canonical OP-session/SID integration and physical profile isolation.
+5. API-client parity and the external frontend contract.
+6. New protocol families only after the production-completeness work above.

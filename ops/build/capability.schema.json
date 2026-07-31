@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://snaplink.dev/schemas/capability-registry-v1.json",
+  "title": "Snaplink capability registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "availability_classes",
+    "default_states",
+    "feature_gates",
+    "capabilities"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "availability_classes": {
+      "type": "array",
+      "items": {
+        "enum": ["sdk", "stock-binary", "module-only", "external-frontend"]
+      },
+      "minItems": 4,
+      "uniqueItems": true
+    },
+    "default_states": {
+      "type": "array",
+      "items": {
+        "enum": ["enabled", "disabled", "conditional", "external"]
+      },
+      "minItems": 4,
+      "uniqueItems": true
+    },
+    "feature_gates": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "admin_api",
+          "web_spa",
+          "oidc",
+          "ciba",
+          "caep",
+          "federation",
+          "self_service"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/capability"
+      },
+      "minItems": 1
+    }
+  },
+  "$defs": {
+    "stringList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "summary",
+        "availability",
+        "default_state",
+        "feature_gate",
+        "required_stores",
+        "module_capabilities",
+        "config_keys",
+        "surfaces",
+        "sources"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9.-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "availability": {
+          "$ref": "#/$defs/stringList",
+          "minItems": 1
+        },
+        "default_state": {
+          "enum": ["enabled", "disabled", "conditional", "external"]
+        },
+        "feature_gate": {
+          "enum": [
+            null,
+            "admin_api",
+            "web_spa",
+            "oidc",
+            "ciba",
+            "caep",
+            "federation",
+            "self_service"
+          ]
+        },
+        "required_stores": {
+          "$ref": "#/$defs/stringList"
+        },
+        "module_capabilities": {
+          "$ref": "#/$defs/stringList"
+        },
+        "config_keys": {
+          "$ref": "#/$defs/stringList"
+        },
+        "surfaces": {
+          "$ref": "#/$defs/stringList",
+          "minItems": 1
+        },
+        "sources": {
+          "$ref": "#/$defs/stringList",
+          "minItems": 1
+        }
+      }
+    }
+  }
+}

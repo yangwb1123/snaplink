@@ -42,7 +42,7 @@ class TestADR0003(unittest.TestCase):
 
     def test_recognized_layer_dirs_cover_key_layers(self):
         expected = {"shared", "domains", "protocols", "platform",
-                    "interfaces", "infrastructure", "cmd"}
+                    "interfaces", "infrastructure", "cmd", "dist"}
         for exp in expected:
             self.assertIn(exp, RECOGNIZED_LAYER_DIRS)
 
