@@ -791,6 +791,116 @@ def test_cli_validate_named_gofmt(tmp_path):
     assert "VALIDATION FAILED" in result.stderr
 
 
+def _meta_agent(tmp_path, counter, meta_log, plan):
+    """Fake agent: orchestrator calls (prompt contains 'Available roles')
+    return role lists from `plan` in order, then []; role tasks return a
+    deliverable. Orchestrator prompts are appended to meta_log."""
+    agent = tmp_path / "meta-agent.sh"
+    plan_body = "\n".join(f"    {i}) echo '{roles}' ;;" for i, roles in enumerate(plan))
+    agent.write_text(
+        "#!/bin/sh\n"
+        "if echo \"$2\" | grep -q 'Available roles'; then\n"
+        f"  echo \"$2\" >> {meta_log}\n"
+        f"  n=$(wc -l < {counter})\n"
+        f"  echo x >> {counter}\n"
+        "  case \"$n\" in\n"
+        f"{plan_body}\n"
+        "    *) echo '[]' ;;\n"
+        "  esac\n"
+        "else\n"
+        "  echo '## Role deliverable'\n"
+        "fi\n"
+    )
+    agent.chmod(0o755)
+    return agent
+
+
+def _role_dir(tmp_path):
+    d = tmp_path / "roles"
+    d.mkdir()
+    (d / "security_engineer.md").write_text("# Security Review\nInput: {input_content}\n", encoding="utf-8")
+    (d / "qa_lead.md").write_text("# QA Review\nInput: {input_content}\n", encoding="utf-8")
+    return d
+
+
+def _meta_stage(mod, tmp_path, plan, max_iterations=3):
+    counter = tmp_path / "counter"
+    counter.touch()  # agent reads it before the first append
+    meta_log = tmp_path / "meta.log"
+    agent = _meta_agent(tmp_path, counter, meta_log, plan)
+    mod.AGENT_BIN = str(agent)
+    inputs = tmp_path / "in"
+    inputs.mkdir()
+    idea = inputs / "idea.md"
+    idea.write_text("idea content", encoding="utf-8")
+    out_dir = tmp_path / "reviews"
+    stage = mod.Stage(
+        name="review",
+        from_outputs="req",
+        meta=True,
+        role_dir=str(_role_dir(tmp_path)),
+        output_dir=str(out_dir),
+        max_iterations=max_iterations,
+    )
+    results, ok = mod.execute_stage(stage, {"req": [str(idea)]})
+    return results, ok, out_dir, meta_log
+
+
+def test_meta_stage_dynamic_roles(tmp_path):
+    """The orchestrator picks a role, it executes, then reports completion."""
+    mod = load_batch()
+    results, ok, out_dir, _ = _meta_stage(mod, tmp_path, ["[\"security_engineer\"]"])
+    assert ok is True
+    assert len(results) == 1
+    assert (out_dir / "security_engineer.md").exists()
+    assert not (out_dir / "qa_lead.md").exists()
+
+
+def test_meta_stage_iterates_and_folds_evidence(tmp_path):
+    """Role deliverables fold back into the evidence: the second orchestrator
+    round sees the first role's output and picks another role."""
+    mod = load_batch()
+    results, ok, out_dir, meta_log = _meta_stage(
+        mod, tmp_path, ['["security_engineer"]', '["qa_lead"]'], max_iterations=3
+    )
+    assert ok is True
+    assert len(results) == 2
+    assert (out_dir / "security_engineer.md").exists()
+    assert (out_dir / "qa_lead.md").exists()
+    calls = meta_log.read_text(encoding="utf-8").split("Analyze the deliverables")
+    assert len(calls) == 4  # 3 orchestrator calls (security, qa, then [])
+    assert "--- security_engineer deliverable ---" in calls[2]  # second call sees folded evidence
+
+
+def test_meta_stage_unknown_role_skipped(tmp_path):
+    """A role name outside the role dir is skipped with a warning, not executed."""
+    mod = load_batch()
+    results, ok, out_dir, _ = _meta_stage(mod, tmp_path, ['["ghost_role"]'])
+    assert ok is True
+    assert results == []
+    assert not (out_dir / "ghost_role.md").exists()
+
+
+def test_meta_stage_path_traversal_rejected(tmp_path):
+    """The orchestrator output is untrusted: traversal names must not escape
+    the role dir."""
+    mod = load_batch()
+    results, ok, out_dir, _ = _meta_stage(mod, tmp_path, ['[".."]'])
+    assert results == []
+    assert not (tmp_path / ".md").exists()
+    assert not (tmp_path.parent / "reviews.md").exists()
+
+
+def test_meta_stage_requires_output_dir(tmp_path, fake_agent):
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    inputs = _inputs_dir(tmp_path)
+    stage = mod.Stage(name="review", from_outputs="req", meta=True, role_dir=str(_role_dir(tmp_path)))
+    results, ok = mod.execute_stage(stage, {"req": [str(inputs / "task1.md")]})
+    assert ok is False
+    assert results == []
+
+
 def test_pipeline_reports_failed_stage(tmp_path, fake_agent):
     mod = load_batch()
     mod.AGENT_BIN = str(fake_agent)

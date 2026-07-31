@@ -158,6 +158,40 @@ A stage or task without any configuration simply inherits the CLI default
 (no validation when `--validate-cmd` is absent), so the common case of
 "analysis batches never validate, code batches opt in" needs no boilerplate.
 
+## Self-optimizing role orchestration (meta stages)
+
+For analyzing arbitrary projects and ideas, a pipeline stage with `meta: true`
+discovers its review roles at run time instead of fixing them in YAML:
+
+```yaml
+stages:
+  - name: requirements
+    from_dir: docs/requirements      # any project's ideas/requirements
+
+  - name: review
+    from_outputs: requirements
+    meta: true                       # orchestrator picks the roles
+    role_dir: ai-dev/prompts         # point at the target project's role templates
+    output_dir: docs/reviews
+    max_iterations: 3
+```
+
+Each iteration:
+
+1. the orchestrator agent reads the current deliverables and `Available roles`
+   from `role_dir`, and replies with a JSON role list (e.g.
+   `["security_engineer", "qa_lead"]`) or `[]` when done;
+2. every chosen role template runs against the aggregated inputs and its
+   deliverable is written to `output_dir`;
+3. the deliverables fold back into the evidence, so the next orchestrator
+   round sees what previous roles concluded;
+4. the loop stops when the orchestrator says `[]` or `max_iterations` is
+   reached.
+
+The orchestrator output is untrusted input: role names must resolve to `.md`
+files inside `role_dir` (path traversal is rejected). All other machinery
+(retries, `--reuse`, rounds, validation, sessions) applies to meta stages too.
+
 ## One session, many steps
 
 By default every call starts a fresh agent session. When later steps should

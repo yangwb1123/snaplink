@@ -144,6 +144,11 @@ class Stage:
     workers: int = AGENT_DEFAULT_WORKERS
     aggregate: bool = False  # from_outputs: merge all upstream outputs into one prompt per template
     validate_cmd: Optional[str] = None  # None = inherit CLI --validate-cmd, "" = disabled, else command
+    meta: bool = False  # dynamic role orchestration: agent picks review roles per iteration
+    meta_prompt: str = ""  # custom orchestrator prompt ({roles}/{input_content} placeholders)
+    role_dir: str = ""  # directory of role templates the orchestrator may choose from
+    output_dir: str = ""  # where role deliverables are written (required for meta stages)
+    max_iterations: int = 3  # orchestrator -> roles -> fold -> re-ask loop limit
     tasks: list = field(default_factory=list)
     commands: list = field(default_factory=list)
     commands_parallel: bool = False  # if True, run commands concurrently
@@ -162,6 +167,11 @@ class Stage:
             "workers": self.workers,
             "aggregate": self.aggregate,
             "validate_cmd": self.validate_cmd,
+            "meta": self.meta,
+            "meta_prompt": self.meta_prompt,
+            "role_dir": self.role_dir,
+            "output_dir": self.output_dir,
+            "max_iterations": self.max_iterations,
             "tasks": self.tasks,
             "commands": self.commands,
             "commands_parallel": self.commands_parallel,
@@ -213,6 +223,11 @@ def load_pipeline(path: str) -> Pipeline:
             workers=s.get("workers", AGENT_DEFAULT_WORKERS),
             aggregate=s.get("aggregate", False),
             validate_cmd=s.get("validate_cmd"),
+            meta=s.get("meta", False),
+            meta_prompt=s.get("meta_prompt", ""),
+            role_dir=s.get("role_dir", ""),
+            output_dir=s.get("output_dir", ""),
+            max_iterations=s.get("max_iterations", 3),
             tasks=s.get("tasks", []),
             commands=s.get("commands", []),
             commands_parallel=s.get("commands_parallel", False),
@@ -242,6 +257,18 @@ def _task_from_def(task_def: dict, prompt: str, output_path: str, model_override
     return task
 
 
+def _combine_outputs(prev_outputs: list) -> str:
+    """Concatenate upstream artifacts into one evidence block."""
+    parts = []
+    for out_path_str in prev_outputs:
+        out_path = Path(out_path_str)
+        if not out_path.exists():
+            log.warning("Output file not found: %s", out_path)
+            continue
+        parts.append("--- %s ---\n%s" % (out_path.stem, out_path.read_text(encoding="utf-8")))
+    return "\n\n".join(parts)
+
+
 def _aggregate_tasks(stage: Stage, prev_outputs: list, model_override: str = "", timeout_override: int = 0, reuse: bool = False) -> tuple[list[Task], list[str]]:
     """Combine every upstream artifact into one prompt per task template so
     downstream roles see all evidence (input_stem becomes 'combined') instead
@@ -251,17 +278,10 @@ def _aggregate_tasks(stage: Stage, prev_outputs: list, model_override: str = "",
     whose combined output file already exists is skipped and its path is
     returned as reused so downstream stages still see it.
     """
-    parts = []
-    for out_path_str in prev_outputs:
-        out_path = Path(out_path_str)
-        if not out_path.exists():
-            log.warning("Output file not found: %s", out_path)
-            continue
-        parts.append("--- %s ---\n%s" % (out_path.stem, out_path.read_text(encoding="utf-8")))
-    if not parts:
+    combined = _combine_outputs(prev_outputs)
+    if not combined:
         log.warning("No upstream outputs available for aggregate stage '%s'", stage.name)
         return [], []
-    combined = "\n\n".join(parts)
 
     tasks = []
     reused = []
@@ -281,6 +301,141 @@ def _aggregate_tasks(stage: Stage, prev_outputs: list, model_override: str = "",
             continue
         tasks.append(_task_from_def(task_def, prompt, output_path, model_override, timeout_override))
     return tasks, reused
+
+
+# Orchestrator prompt for meta stages: the agent looks at the current
+# deliverables and picks the review roles that still add value.
+_DEFAULT_META_PROMPT = """Analyze the deliverables below and decide which expert review roles are still needed to harden them.
+
+Available roles: {roles}
+
+Rules:
+- Only choose roles that add real value for this deliverable set.
+- Output ONLY a JSON array of role names, e.g. ["security_engineer", "qa_lead"].
+- Output [] when the deliverables are complete.
+
+Deliverables:
+{input_content}
+"""
+
+
+def _available_roles(role_dir: str) -> list:
+    """List role template names (file stems) inside role_dir."""
+    base = Path(role_dir).resolve()
+    if not base.is_dir():
+        log.error("Role dir not found: %s", role_dir)
+        return []
+    return sorted(p.stem for p in base.glob("*.md") if p.stem != "README")
+
+
+def _load_role_template(role_dir: str, role: str) -> Optional[str]:
+    """Load a role template by name, refusing anything outside role_dir (the
+    orchestrator output is untrusted input)."""
+    base = Path(role_dir).resolve()
+    target = (base / (role + ".md")).resolve()
+    if not base.is_dir() or not target.is_file() or not str(target).startswith(str(base)):
+        log.warning("Unknown role template: %s (must be a .md file inside %s)", role, role_dir)
+        return None
+    return target.read_text(encoding="utf-8")
+
+
+def _parse_role_list(stdout: str) -> list:
+    """Parse a JSON role list from the orchestrator output, tolerating prose
+    and markdown fences around the array. Unparseable output -> [] (treat as
+    'no more roles needed')."""
+    m = re.search(r"\[[^\]]*\]", stdout or "", re.S)
+    if m:
+        try:
+            data = json.loads(m.group(0))
+            if isinstance(data, list):
+                return [str(x).strip() for x in data if str(x).strip()]
+        except json.JSONDecodeError:
+            pass
+    log.warning("META orchestrator output did not contain a JSON role list; treating as complete")
+    return []
+
+
+def _run_meta_stage(stage: Stage, stage_outputs: dict, model_override: str = "", timeout_override: int = 0,
+                    validate_cmd: str = "") -> tuple[list[TaskResult], bool]:
+    """Dynamic role orchestration: ask the agent which roles the current
+    deliverables still need, execute each chosen role template against the
+    aggregated inputs, fold the role deliverables back into the evidence, and
+    iterate until the orchestrator reports no more roles or max_iterations is
+    reached. This is the self-optimizing part: the role set is discovered
+    during execution instead of fixed in the pipeline."""
+    if stage.from_outputs not in stage_outputs:
+        log.error("Previous stage '%s' not found", stage.from_outputs)
+        return [], False
+    if not stage.output_dir:
+        log.error("Meta stage '%s' requires output_dir for role deliverables", stage.name)
+        return [], False
+
+    combined = _combine_outputs(stage_outputs[stage.from_outputs])
+    if not combined:
+        log.warning("No upstream outputs available for meta stage '%s'", stage.name)
+        return [], True
+
+    role_names = _available_roles(stage.role_dir)
+    if not role_names:
+        log.error("Meta stage '%s': no role templates found in %s", stage.name, stage.role_dir)
+        return [], False
+    out_dir = Path(stage.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    all_results: list[TaskResult] = []
+    role_outputs: list[str] = []
+    for iteration in range(1, stage.max_iterations + 1):
+        log.info("META iteration %d/%d for stage '%s' (roles available: %s)",
+                 iteration, stage.max_iterations, stage.name, ", ".join(role_names))
+        meta_prompt = (stage.meta_prompt or _DEFAULT_META_PROMPT)
+        meta_prompt = meta_prompt.replace("{roles}", ", ".join(role_names)).replace("{input_content}", combined)
+        meta_task = Task(prompt=meta_prompt)
+        if model_override:
+            meta_task.model = model_override
+        if timeout_override:
+            meta_task.timeout = timeout_override
+        meta_result = run_task(meta_task)
+        if not meta_result.success:
+            log.warning("META orchestrator call failed: %s; stopping role expansion", meta_result.reason)
+            break
+        roles = _parse_role_list(meta_result.stdout)
+        if not roles:
+            log.info("META orchestrator: no more roles needed (iteration %d)", iteration)
+            break
+        log.info("META orchestrator selected roles: %s", ", ".join(roles))
+
+        iteration_ok = True
+        for role in roles:
+            template = _load_role_template(stage.role_dir, role)
+            if template is None:
+                iteration_ok = False
+                continue
+            prompt = template.replace("{input_content}", combined).replace("{input_stem}", stage.name)
+            out_path = out_dir / f"{role}.md"
+            task = Task(prompt=prompt, output=str(out_path))
+            if model_override:
+                task.model = model_override
+            if timeout_override:
+                task.timeout = timeout_override
+            result = run_task(task)
+            if result.success:
+                result.success = _save_validated(task, result, validate_cmd)
+                if not result.success:
+                    result.reason = "validation failed"
+            all_results.append(result)
+            if not result.success:
+                iteration_ok = False
+            role_outputs.append(str(out_path))
+            # fold the role deliverable back into the evidence for the next
+            # orchestrator round (self-optimization loop)
+            if out_path.exists():
+                combined += f"\n\n--- {role} deliverable ---\n" + out_path.read_text(encoding="utf-8")
+        if not iteration_ok:
+            log.warning("META stage '%s': some role tasks failed in iteration %d", stage.name, iteration)
+            break
+
+    stage_outputs[stage.name] = role_outputs
+    return all_results, all(r.success for r in all_results)
 
 
 def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_override: str = "", reuse: bool = False, timeout_override: int = 0,
@@ -310,6 +465,10 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
     
     tasks: list[Task] = []
     reused_outputs: list[str] = []
+
+    # Dynamic role orchestration (meta stage) is handled entirely here.
+    if stage.meta:
+        return _run_meta_stage(stage, stage_outputs, model_override, timeout_override, validate_cmd)
     
     # Stage type 1: from_dir - read .md files from directory
     if stage.from_dir:
