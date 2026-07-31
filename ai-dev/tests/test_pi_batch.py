@@ -623,6 +623,91 @@ def test_cli_validate_cmd_gate(tmp_path, fake_agent):
     assert (inputs / "task1.out.md").exists()
 
 
+def test_task_validate_overrides_cli_in_serial(tmp_path, fake_agent):
+    """Per-task validate wins over the CLI gate: a failing CLI gate is
+    overridden by a passing task-level gate."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    output = tmp_path / "o.md"
+    task = mod.Task(prompt="x", output=str(output), validate="true")
+    results = mod.run_serial([task], validate_cmd="exit 1")
+    assert results[0].success is True
+    assert output.exists()
+
+
+def test_task_validate_empty_disables_cli(tmp_path, fake_agent):
+    """An empty task-level validate disables the CLI gate for that task (e.g.
+    analysis tasks that produce no code)."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    output = tmp_path / "o.md"
+    task = mod.Task(prompt="x", output=str(output), validate="")
+    results = mod.run_serial([task], validate_cmd="exit 1")
+    assert results[0].success is True
+    assert output.exists()
+
+
+def test_cli_task_validate_override_and_disable(tmp_path, fake_agent):
+    """YAML tasks can set validate per task: one overrides the failing CLI
+    gate, another disables it entirely."""
+    tasks_yaml = tmp_path / "tasks.yaml"
+    tasks_yaml.write_text(
+        "tasks:\n"
+        f"  - prompt: t1\n    output: {tmp_path / '1.md'}\n    validate: 'true'\n"
+        f"  - prompt: t2\n    output: {tmp_path / '2.md'}\n    validate: ''\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable, str(PI_BATCH), str(tasks_yaml),
+            "--agent-bin", str(fake_agent),
+            "--mode", "serial",
+            "--validate-cmd", "exit 1",
+        ],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "1.md").exists()
+    assert (tmp_path / "2.md").exists()
+
+
+def test_stage_validate_cmd_applies(tmp_path, fake_agent):
+    """A stage-level validate_cmd gates every task of that stage."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    inputs = _inputs_dir(tmp_path)
+    stage = mod.Stage(name="s0", from_dir=str(inputs), validate_cmd="exit 1")
+    results, ok = mod.execute_stage(stage, {})
+    assert ok is False
+    assert not (inputs / "task1.out.md").exists()
+
+
+def test_stage_validate_empty_disables_cli(tmp_path, fake_agent):
+    """An empty stage-level validate_cmd disables the CLI gate for the stage
+    (analysis stages that produce no code)."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    inputs = _inputs_dir(tmp_path)
+    stage = mod.Stage(name="s0", from_dir=str(inputs), validate_cmd="")
+    results, ok = mod.execute_stage(stage, {}, validate_cmd="exit 1")
+    assert ok is True
+    assert (inputs / "task1.out.md").exists()
+
+
+def test_stage_inherits_cli_validate(tmp_path, fake_agent):
+    """A stage without validate_cmd inherits the CLI gate."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    inputs = _inputs_dir(tmp_path)
+    stage = mod.Stage(name="s0", from_dir=str(inputs))
+    results, ok = mod.execute_stage(stage, {}, validate_cmd="true")
+    assert ok is True
+    (inputs / "task1.out.md").unlink()
+    results2, ok2 = mod.execute_stage(stage, {}, validate_cmd="exit 1")
+    assert ok2 is False
+    assert not (inputs / "task1.out.md").exists()
+
+
 def test_pipeline_reports_failed_stage(tmp_path, fake_agent):
     mod = load_batch()
     mod.AGENT_BIN = str(fake_agent)

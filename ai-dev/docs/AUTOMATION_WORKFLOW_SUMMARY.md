@@ -49,6 +49,12 @@ repository's executable tests and does not replace them.
   project checks (e.g. `go build ./... && go vet ./...`, `gofmt -l`,
   `python cli.py check`) never land on disk. Works in serial, parallel,
   pipeline, and `run-review.py` modes, and integrates with retries/rounds.
+- Validation is optional per stage, not a global must: a task-level
+  `validate` field (YAML tasks) and a stage-level `validate_cmd` (pipeline
+  stages) override the CLI default; an empty value explicitly disables
+  validation for that task/stage, so analysis-only tasks (e.g. "propose
+  three new feature points") that produce no code skip the gate while code
+  generation tasks keep it. Precedence: task > stage > CLI > none.
 - 24x7 operation: `--retries` (serial mode) retries failed tasks with
   exponential backoff (`--retry-delay`/`--retry-backoff`; rate-limit and
   network failures wait at least 30s), `--min-interval` throttles successful

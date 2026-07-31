@@ -116,6 +116,7 @@ class Stage:
     mode: str = "serial"
     workers: int = AGENT_DEFAULT_WORKERS
     aggregate: bool = False  # from_outputs: merge all upstream outputs into one prompt per template
+    validate_cmd: Optional[str] = None  # None = inherit CLI --validate-cmd, "" = disabled, else command
     tasks: list = field(default_factory=list)
     commands: list = field(default_factory=list)
     commands_parallel: bool = False  # if True, run commands concurrently
@@ -133,6 +134,7 @@ class Stage:
             "mode": self.mode,
             "workers": self.workers,
             "aggregate": self.aggregate,
+            "validate_cmd": self.validate_cmd,
             "tasks": self.tasks,
             "commands": self.commands,
             "commands_parallel": self.commands_parallel,
@@ -183,6 +185,7 @@ def load_pipeline(path: str) -> Pipeline:
             mode=s.get("mode", "serial"),
             workers=s.get("workers", AGENT_DEFAULT_WORKERS),
             aggregate=s.get("aggregate", False),
+            validate_cmd=s.get("validate_cmd"),
             tasks=s.get("tasks", []),
             commands=s.get("commands", []),
             commands_parallel=s.get("commands_parallel", False),
@@ -390,12 +393,17 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
     if session_mode == "per-stage":
         stage_session_id = f"{session_name}-{stage.name}"
 
+    # Per-stage engineering gate: the stage's own validate_cmd wins over the
+    # CLI default ("" disables validation for this stage), and per-task
+    # validate fields override both inside run_serial/run_parallel.
+    stage_validate = stage.validate_cmd if stage.validate_cmd is not None else validate_cmd
+
     # Execute tasks
     if stage.mode == "parallel":
-        results = run_parallel(tasks, stage.workers, validate_cmd=validate_cmd)
+        results = run_parallel(tasks, stage.workers, validate_cmd=stage_validate)
     else:
         results = run_serial(tasks, retries=0, session_mode=session_mode, session_id=stage_session_id, session_name=session_name,
-                             validate_cmd=validate_cmd)
+                             validate_cmd=stage_validate)
     
     # Collect output paths (reused outputs keep feeding downstream stages)
     outputs = list(reused_outputs)
@@ -573,6 +581,7 @@ class Task:
     cwd: str = ""
     timeout: int = AGENT_DEFAULT_TIMEOUT
     env: dict = field(default_factory=dict)
+    validate: Optional[str] = None  # per-task engineering gate; None = inherit, "" = disabled
 
     def to_cmd(self, session_flags: Optional[list] = None) -> list[str]:
         cmd = [AGENT_BIN, "-p", self.prompt]
@@ -986,7 +995,7 @@ def run_serial(tasks: list[Task], retries: int = 0, retry_delay: float = 10.0, b
                 flags = _session_flags("continue", session_id, session_name)
         result = run_task(task, task_index=i, total=total, parallel=False, session_flags=flags)
         if result.success:
-            result.success = _save_validated(task, result, validate_cmd)
+            result.success = _save_validated(task, result, task.validate if task.validate is not None else validate_cmd)
             if not result.success:
                 result.reason = "validation failed"
         attempt = 0
@@ -1000,7 +1009,7 @@ def run_serial(tasks: list[Task], retries: int = 0, retry_delay: float = 10.0, b
             retry_flags = _session_flags("continue", session_id, session_name) if session_mode != "new" else None
             result = run_task(task, task_index=i, total=total, parallel=False, session_flags=retry_flags)
             if result.success:
-                result.success = _save_validated(task, result, validate_cmd)
+                result.success = _save_validated(task, result, task.validate if task.validate is not None else validate_cmd)
                 if not result.success:
                     result.reason = "validation failed"
         results.append(result)
@@ -1019,7 +1028,7 @@ def run_parallel(tasks: list[Task], workers: int = AGENT_DEFAULT_WORKERS, valida
     def _run_one(task: Task, index: int) -> TaskResult:
         result = run_task(task, task_index=index, total=total, parallel=True)
         if result.success:
-            result.success = _save_validated(task, result, validate_cmd)
+            result.success = _save_validated(task, result, task.validate if task.validate is not None else validate_cmd)
             if not result.success:
                 result.reason = "validation failed"
         return result

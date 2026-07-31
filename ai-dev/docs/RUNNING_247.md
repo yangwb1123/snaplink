@@ -110,6 +110,49 @@ once per stage; `--validate-cmd` runs per artifact and should stay light
 `--max-rounds`, a generated artifact that fails validation is regenerated
 automatically until it passes or the budget is exhausted.
 
+## Validation is optional per stage
+
+Not every flow generates code. An analysis task ("analyze the project and
+propose three new feature points") produces a markdown proposal, so forcing
+`go build` on it is meaningless. The gate is therefore configurable at three
+levels, with per-task overrides:
+
+```yaml
+# tasks.yaml — per-task gates
+# precedence: task validate > stage validate_cmd > CLI --validate-cmd > none
+tasks:
+  # analysis-only: explicitly skip validation ("" = disabled)
+  - prompt: "Analyze the project and propose 3 new feature points"
+    output: proposals/analysis.md
+    validate: ""
+
+  # code generation: gate this task even when the CLI default is off
+  - prompt: "Write a Go helper"
+    output: gen/helper.go
+    validate: 'test -z "$(gofmt -l {output})"'
+
+  # unset: inherit the CLI --validate-cmd (or no gate at all)
+  - prompt: "Draft an RFC"
+    output: docs/rfc.md
+```
+
+```yaml
+# pipeline.yaml — stage-level gates
+stages:
+  - name: analysis
+    from_dir: docs/proposals
+    validate_cmd: ""   # analysis stage: no engineering gate
+
+  - name: implementation
+    from_outputs: analysis
+    aggregate: true
+    validate_cmd: "go build ./... && go vet ./..."
+```
+
+A stage or task without any configuration simply inherits the CLI default
+(no validation when `--validate-cmd` is absent), so the common case of
+"analysis batches never validate, code batches opt in" needs no boilerplate.
+
 ## One session, many steps
 
 By default every call starts a fresh agent session. When later steps should
