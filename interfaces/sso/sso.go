@@ -285,7 +285,7 @@ func (s *Server) allGateStates() []gateState {
 		{"federation", s.federationGateOn()},
 		{"self_service", s.selfServiceGateOn()},
 		{"admin_api", s.adminAPIGateOn()},
-		{"web_spa", s.webSPAGateOn()},
+		{"branding", s.brandingGateOn()},
 	}
 }
 

@@ -40,12 +40,13 @@
       "items": {
         "enum": [
           "admin_api",
-          "web_spa",
+          "branding",
           "oidc",
           "ciba",
           "caep",
           "federation",
-          "self_service"
+          "self_service",
+          "web_spa"
         ]
       },
       "uniqueItems": true
@@ -107,12 +108,13 @@
           "enum": [
             null,
             "admin_api",
-            "web_spa",
+            "branding",
             "oidc",
             "ciba",
             "caep",
             "federation",
-            "self_service"
+            "self_service",
+            "web_spa"
           ]
         },
         "required_stores": {

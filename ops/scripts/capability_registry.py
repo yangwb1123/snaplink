@@ -62,6 +62,11 @@ LIST_FIELDS = {
     "sources",
 }
 CAPABILITY_ID_RE = re.compile(r"^[a-z][a-z0-9.-]+$")
+# Deprecated YAML aliases still parsed by FeatureGatesConfig (kept in the
+# registry's feature_gates list because the drift check compares against the
+# Go struct's YAML tags) but not standalone runtime gates: no capability may
+# reference them, and they are excluded from the missing-gate error.
+DEPRECATED_FEATURE_GATES = frozenset({"web_spa"})
 FEATURE_GATES_RE = re.compile(
     r"type FeatureGatesConfig struct \{(?P<body>.*?)\n\}",
     re.DOTALL,
@@ -368,7 +373,7 @@ def validate_registry(
         for capability in capabilities
         if capability["feature_gate"] is not None
     }
-    missing_gates = sorted(set(feature_gates) - used_gates)
+    missing_gates = sorted(set(feature_gates) - used_gates - DEPRECATED_FEATURE_GATES)
     if missing_gates:
         raise CapabilityRegistryError(
             f"{REGISTRY_PATH}.capabilities: feature gates without a capability: "

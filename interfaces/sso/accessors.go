@@ -51,16 +51,25 @@ func (s *Server) SetAdminAPIGateEnabled(enabled bool) bool {
 	return true
 }
 
-// SetWebSPAGateEnabled flips the LIVE feature_gates.web_spa value read by
-// webSPAGateOn. sso-server no longer serves any static frontend itself (see
-// buildProbeMux) — the only remaining consumer of this gate is
-// mountBrandingEndpoint (server_me.go), which the per-host branding lookup
-// still uses. Returns false (report the change as Ignored, mirroring
+// SetBrandingGateEnabled flips the LIVE feature_gates.branding value read
+// by brandingGateOn (server_routes.go) — the config/reload SIGHUP hook
+// (SetBrandingGateHook) calls this. sso-server no longer serves any static
+// frontend itself (see buildProbeMux) — the only remaining consumer of this
+// gate is mountBrandingEndpoint (server_me.go), which the per-host branding
+// lookup still uses. Returns false (report the change as Ignored, mirroring
 // SetRateLimitPolicy's "nothing to swap into" contract) when no tenant store
 // is wired, since branding has nothing to key off without one.
-func (s *Server) SetWebSPAGateEnabled(enabled bool) bool {
-	s.webSPALive.Store(enabled)
+func (s *Server) SetBrandingGateEnabled(enabled bool) bool {
+	s.brandingLive.Store(enabled)
 	return s.tenantStore != nil
+}
+
+// SetWebSPAGateEnabled is the deprecated alias of SetBrandingGateEnabled,
+// retained for source compatibility. New callers should use
+// SetBrandingGateEnabled; the legacy feature_gates.web_spa name is accepted
+// by the config layer as a deprecated alias of feature_gates.branding.
+func (s *Server) SetWebSPAGateEnabled(enabled bool) bool {
+	return s.SetBrandingGateEnabled(enabled)
 }
 func (s *Server) AuthCodeStore() oauth.AuthCodeStore         { return s.authCodeStore }
 func (s *Server) AuthCodeTTL() time.Duration                 { return s.authCodeTTL }

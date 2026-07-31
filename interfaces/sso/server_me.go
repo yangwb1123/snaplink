@@ -335,7 +335,7 @@ func (s *Server) mountUnauthenticatedSelfServiceRoutes() {
 // group via core.GatedRouter (SetSelfServiceGateEnabled) instead of the
 // previous single boot-time early-return. The public per-host branding
 // lookup used to live here too; it moved to mountBrandingEndpoint (gated by
-// WebSPA instead — it serves the hosted login SPA, not an authenticated
+// branding — it serves the hosted login SPA, not an authenticated
 // self-service action).
 func (s *Server) mountSelfServiceCredentials() {
 	gr := core.NewGatedRouter(s.router, s.selfServiceGateOn)
@@ -385,18 +385,18 @@ func (s *Server) mountSelfServiceCredentials() {
 // mountBrandingEndpoint registers the public per-host branding lookup the
 // hosted login SPA consumes. Mounted whenever a tenant store is wired
 // (Domain.Branding is its source) — byte-identical to a build without one.
-// Reachability is gated LIVE by the WebSPA flag via core.GatedRouter (NOT
+// Reachability is gated LIVE by the branding flag via core.GatedRouter (NOT
 // a bare core.GateHandler wrap around the handler): this route is
 // registered on s.router, which also carries global middleware added via
 // Use() (Tracing) BEFORE Mount() reaches this call — only GatedRouter's
 // route-matching-level gate (StdRoute.live) prevents that middleware
 // from running on a gated-off request; a handler-only wrap would still
 // let it stamp response headers before the wrapped handler's own check
-// ever ran. Hot-toggles with the rest of the WebSPA surface
+// ever ran. Hot-toggles with the rest of the branding surface
 // (server_routes.go's buildProbeMux) instead of needing a re-Mount.
 func (s *Server) mountBrandingEndpoint() {
 	if s.tenantStore != nil {
-		core.NewGatedRouter(s.router, s.webSPAGateOn).GET(PathBranding, s.handleBranding)
+		core.NewGatedRouter(s.router, s.brandingGateOn).GET(PathBranding, s.handleBranding)
 	}
 }
 

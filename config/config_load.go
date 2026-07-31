@@ -129,6 +129,18 @@ func (c *Config) validate() error {
 	if err := ValidateVersion(c); err != nil {
 		return err
 	}
+	if err := c.normalizeFeatureGates(); err != nil {
+		return err
+	}
+	// hosted_login is a legacy no-op: sso-server mounts no frontend, so the
+	// parsed block can never enable anything. Deprecation is loud so an
+	// operator who still sets it does not mistake it for a capability
+	// signal (see docs/config-reference.md). Removal lands with the next
+	// schema-version bump.
+	if c.HostedLogin.Enabled {
+		slog.Warn("config: hosted_login is deprecated and has no effect — sso-server serves no " +
+			"frontend; deploy the login UI as a separate project (see docs/frontend-contract.md)")
+	}
 	if err := c.validateTopology(); err != nil {
 		return err
 	}

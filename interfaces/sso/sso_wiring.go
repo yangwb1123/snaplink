@@ -205,7 +205,7 @@ type wiringState struct {
 	// registers routes for (attack-surface reduction). Zero value = every
 	// gate unset ⇒ byte-identical to a pre-gate build (see FeatureGates).
 	featureGates FeatureGates
-	// adminAPILive / webSPALive / oidcLive / cibaLive / caepLive /
+	// adminAPILive / brandingLive / oidcLive / cibaLive / caepLive /
 	// federationLive / selfServiceLive hold the LIVE, hot-reloadable
 	// feature_gates.* values read by the seven *GateOn methods
 	// (server_routes.go) — seeded from featureGates once in NewServer
@@ -214,7 +214,7 @@ type wiringState struct {
 	// a SIGHUP reload to. Read from the request-handling goroutine, written
 	// from the reload goroutine — must be atomic.
 	adminAPILive    atomic.Bool
-	webSPALive      atomic.Bool
+	brandingLive    atomic.Bool
 	oidcLive        atomic.Bool
 	cibaLive        atomic.Bool
 	caepLive        atomic.Bool

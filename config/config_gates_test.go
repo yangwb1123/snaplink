@@ -92,7 +92,35 @@ func TestFeatureGatesConfig_EnvOverride(t *testing.T) {
 	if cfg.FeatureGates.OIDC == nil || *cfg.FeatureGates.OIDC != false {
 		t.Errorf("env feature_gates.oidc = %v, want explicit false", cfg.FeatureGates.OIDC)
 	}
-	if cfg.FeatureGates.WebSPA == nil || *cfg.FeatureGates.WebSPA != false {
-		t.Errorf("env feature_gates.web_spa = %v, want explicit false", cfg.FeatureGates.WebSPA)
+	if cfg.FeatureGates.Branding == nil || *cfg.FeatureGates.Branding != false {
+		t.Errorf("env feature_gates.branding = %v, want explicit false", cfg.FeatureGates.Branding)
+	}
+}
+
+// TestFeatureGatesConfig_WebSPAAliasNormalization proves the deprecated
+// feature_gates.web_spa YAML/env key folds into the canonical Branding field
+// (with a warning) instead of surviving as a second source of truth, and
+// that setting BOTH keys fails loud.
+func TestFeatureGatesConfig_WebSPAAliasNormalization(t *testing.T) {
+	t.Parallel()
+	p := writeTemp(t, "base.yaml", "server:\n  issuer: t\n  listen: :8080\n")
+	envSrc := &EnvSource{Prefix: "SSO_", Separator: "__", Environ: envFn(
+		"SSO_FEATURE_GATES__WEB_SPA=false",
+	)}
+	cfg, err := LoadFromSources(context.Background(), NewFileSource(p), envSrc)
+	if err != nil {
+		t.Fatalf("LoadFromSources: %v", err)
+	}
+	if cfg.FeatureGates.WebSPA != nil {
+		t.Errorf("feature_gates.web_spa = %v, want normalized away (nil)", cfg.FeatureGates.WebSPA)
+	}
+	if cfg.FeatureGates.Branding == nil || *cfg.FeatureGates.Branding != false {
+		t.Errorf("feature_gates.branding = %v, want explicit false inherited from web_spa", cfg.FeatureGates.Branding)
+	}
+
+	// Both keys set must fail loud rather than silently pick one.
+	p2 := writeTemp(t, "both.yaml", "server:\n  issuer: t\n  listen: :8080\nfeature_gates:\n  branding: true\n  web_spa: false\n")
+	if _, err := LoadFromSources(context.Background(), NewFileSource(p2)); err == nil {
+		t.Fatal("LoadFromSources with both branding and web_spa: want error")
 	}
 }

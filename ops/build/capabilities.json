@@ -15,12 +15,13 @@
   ],
   "feature_gates": [
     "admin_api",
-    "web_spa",
+    "branding",
     "oidc",
     "ciba",
     "caep",
     "federation",
-    "self_service"
+    "self_service",
+    "web_spa"
   ],
   "capabilities": [
     {
@@ -81,10 +82,10 @@
       "summary": "Per-host public branding metadata for independently deployed frontends.",
       "availability": ["sdk", "stock-binary"],
       "default_state": "conditional",
-      "feature_gate": "web_spa",
+      "feature_gate": "branding",
       "required_stores": ["TenantStore"],
       "module_capabilities": ["platform.tenant.v1"],
-      "config_keys": ["feature_gates.web_spa", "tenant"],
+      "config_keys": ["feature_gates.branding", "tenant"],
       "surfaces": ["/branding"],
       "sources": ["interfaces/sso/server_me.go"]
     },

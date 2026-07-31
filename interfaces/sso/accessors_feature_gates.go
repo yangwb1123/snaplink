@@ -34,7 +34,7 @@ const PathAdminSessionsLinked = core.PathAdminSessionsLinked
 // under the maintainability line budget.
 func (s *Server) seedFeatureGateLiveFlags() {
 	s.adminAPILive.Store(gateOn(s.featureGates.AdminAPI))
-	s.webSPALive.Store(gateOn(s.featureGates.WebSPA))
+	s.brandingLive.Store(gateOn(s.featureGates.brandingGate()))
 	s.oidcLive.Store(gateOn(s.featureGates.OIDC))
 	s.cibaLive.Store(gateOn(s.featureGates.CIBA))
 	s.caepLive.Store(gateOn(s.featureGates.CAEP))
@@ -68,7 +68,7 @@ func (s *Server) SetCIBAGateEnabled(enabled bool) bool {
 // (WithCAEPReceiver): with no mounted route for this flag to affect,
 // flipping it has no observable effect, so the caller (config/reload)
 // should report the change as Ignored rather than Applied — mirroring
-// SetWebSPAGateEnabled's "nothing to flip" contract.
+// SetBrandingGateEnabled's "nothing to flip" contract.
 func (s *Server) SetCAEPGateEnabled(enabled bool) bool {
 	s.caepLive.Store(enabled)
 	return s.caepReceiver != nil

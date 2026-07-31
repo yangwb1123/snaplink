@@ -1,9 +1,9 @@
 package sso_test
 
 // feature_gate_hotreload_test.go covers Server.SetAdminAPIGateEnabled /
-// Server.SetWebSPAGateEnabled — interfaces/sso's half of the
-// feature_gates.admin_api / feature_gates.web_spa SIGHUP hot-reload
-// (config/reload's SetAdminAPIGateHook / SetWebSPAGateHook wire a real
+// Server.SetBrandingGateEnabled — interfaces/sso's half of the
+// feature_gates.admin_api / feature_gates.branding SIGHUP hot-reload
+// (config/reload's SetAdminAPIGateHook / SetBrandingGateHook wire a real
 // reload to these two methods on a cmd/sso-server process; here we drive
 // them directly, mirroring rate_limit_hotreload_test.go's shape). The whole
 // point of this feature is the oracle-safety of the OFF path, so these
@@ -110,26 +110,26 @@ func TestSetAdminAPIGateEnabled_LiveToggleIsByteIdenticalTo404(t *testing.T) {
 	}
 }
 
-// TestSetWebSPAGateEnabled_NoTenantStore_ReturnsFalseGracefully proves the
+// TestSetBrandingGateEnabled_NoTenantStore_ReturnsFalseGracefully proves the
 // one real asymmetry: sso-server serves no static frontend of its own (see
 // buildProbeMux) — mountBrandingEndpoint (server_me.go) is the ONLY route
-// left gated by web_spa, and it requires a tenant store. With none wired,
-// there is nothing mounted for the gate to affect, so SetWebSPAGateEnabled
+// left gated by branding, and it requires a tenant store. With none wired,
+// there is nothing mounted for the gate to affect, so SetBrandingGateEnabled
 // must report that (false), not silently no-op while looking like it
 // succeeded — that distinction is what lets config/reload surface it as
 // Result.Ignored instead of a false Result.Applied.
-func TestSetWebSPAGateEnabled_NoTenantStore_ReturnsFalseGracefully(t *testing.T) {
+func TestSetBrandingGateEnabled_NoTenantStore_ReturnsFalseGracefully(t *testing.T) {
 	srv := sso.NewServer(
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
 		// No tenant store at all — mirrors a deployment without multi-tenancy.
 	)
 	_ = srv.Handler()
 
-	if srv.SetWebSPAGateEnabled(false) {
-		t.Fatal("SetWebSPAGateEnabled(false) = true, want false (no tenant store was ever wired)")
+	if srv.SetBrandingGateEnabled(false) {
+		t.Fatal("SetBrandingGateEnabled(false) = true, want false (no tenant store was ever wired)")
 	}
-	if srv.SetWebSPAGateEnabled(true) {
-		t.Fatal("SetWebSPAGateEnabled(true) = true, want false (still nothing wired to affect)")
+	if srv.SetBrandingGateEnabled(true) {
+		t.Fatal("SetBrandingGateEnabled(true) = true, want false (still nothing wired to affect)")
 	}
 }
 
@@ -186,13 +186,13 @@ func TestSetAdminAPIGateEnabled_ByteIdenticalWithGlobalTracingMiddleware(t *test
 	fghrAssertIdentical(t, got, baseline, "admin_api live-disabled with Tracing wired")
 }
 
-// TestSetWebSPAGateEnabled_BrandingEndpoint_ByteIdenticalTo404 covers the
-// mountBrandingEndpoint code path (server_me.go) — the ONLY route web_spa
+// TestSetBrandingGateEnabled_BrandingEndpoint_ByteIdenticalTo404 covers the
+// mountBrandingEndpoint code path (server_me.go) — the ONLY route branding
 // still gates now that sso-server serves no static frontend of its own.
 // Registered on s.router (not a raw http.ServeMux entry) and so subject to
 // the exact same global-middleware-leak risk admin_api had — this test also
 // wires WithTracingMiddleware to reproduce that scenario precisely.
-func TestSetWebSPAGateEnabled_BrandingEndpoint_ByteIdenticalTo404(t *testing.T) {
+func TestSetBrandingGateEnabled_BrandingEndpoint_ByteIdenticalTo404(t *testing.T) {
 	srv := sso.NewServer(
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
 		sso.WithTracingMiddleware(),
@@ -201,21 +201,21 @@ func TestSetWebSPAGateEnabled_BrandingEndpoint_ByteIdenticalTo404(t *testing.T) 
 	h := srv.Handler()
 
 	if resp := fghrGet(h, "/branding"); resp.status == http.StatusNotFound {
-		t.Fatalf("GET /branding with web_spa on = 404, want reachable (tenant store is wired)")
+		t.Fatalf("GET /branding with branding on = 404, want reachable (tenant store is wired)")
 	}
 	baseline := fghrGet(h, fghrNeverMountedBaseline)
 
-	if !srv.SetWebSPAGateEnabled(false) {
-		t.Fatal("SetWebSPAGateEnabled(false) = false, want true (tenant store is wired)")
+	if !srv.SetBrandingGateEnabled(false) {
+		t.Fatal("SetBrandingGateEnabled(false) = false, want true (tenant store is wired)")
 	}
 	got := fghrGet(h, "/branding")
 	if _, ok := got.header["X-Request-Id"]; ok {
 		t.Errorf("gated-off branding response leaked X-Request-Id — Tracing middleware ran even though the gate was off")
 	}
-	fghrAssertIdentical(t, got, baseline, "web_spa live-disabled (branding) with Tracing wired")
+	fghrAssertIdentical(t, got, baseline, "branding live-disabled with Tracing wired")
 
-	if !srv.SetWebSPAGateEnabled(true) {
-		t.Fatal("SetWebSPAGateEnabled(true) = false, want true")
+	if !srv.SetBrandingGateEnabled(true) {
+		t.Fatal("SetBrandingGateEnabled(true) = false, want true")
 	}
 	if resp := fghrGet(h, "/branding"); resp.status == http.StatusNotFound {
 		t.Fatalf("GET /branding after live re-enable = 404, want reachable")
@@ -358,7 +358,7 @@ func TestSetCAEPGateEnabled_LiveToggleByteIdenticalWithTracing(t *testing.T) {
 }
 
 // TestSetCAEPGateEnabled_NoReceiverWired_ReturnsFalseGracefully mirrors
-// SetWebSPAGateEnabled's "nothing to flip" contract: with no CAEP receiver
+// SetBrandingGateEnabled's "nothing to flip" contract: with no CAEP receiver
 // ever wired, there is no already-mounted route for the gate to affect.
 func TestSetCAEPGateEnabled_NoReceiverWired_ReturnsFalseGracefully(t *testing.T) {
 	srv := sso.NewServer(sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()))
@@ -407,7 +407,7 @@ func TestSetFederationGateEnabled_LiveToggleByteIdenticalWithTracing(t *testing.
 }
 
 // TestSetFederationGateEnabled_NothingWired_ReturnsFalseGracefully mirrors
-// SetWebSPAGateEnabled's "nothing to flip" contract: with none of the
+// SetBrandingGateEnabled's "nothing to flip" contract: with none of the
 // federation sub-features ever wired, there is no already-mounted route for
 // the gate to affect.
 func TestSetFederationGateEnabled_NothingWired_ReturnsFalseGracefully(t *testing.T) {

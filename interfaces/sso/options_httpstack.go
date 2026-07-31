@@ -292,11 +292,22 @@ type FeatureGates struct {
 	// admin-scoped). Off ⇒ operators who run admin tooling out-of-band
 	// (or not at all) don't expose the admin bearer-auth challenge surface.
 	AdminAPI *bool
-	// WebSPA gates the per-host branding lookup (GET /branding) — the only
-	// route left under this flag now that sso-server serves no static
-	// frontend of its own (every hosted UI is a separate project, reverse
-	// proxied alongside this server).
+	// Branding gates the public per-host branding lookup (GET /branding) —
+	// the only route left under this flag now that sso-server serves no
+	// static frontend of its own. Canonical name; WebSPA is its deprecated
+	// alias (both set = Branding wins; YAML rejects both set).
+	Branding *bool
+	// WebSPA is the deprecated alias of Branding, retained for source
+	// compatibility.
 	WebSPA *bool
+}
+
+// brandingGate resolves the canonical gate: Branding, else WebSPA, else nil.
+func (f FeatureGates) brandingGate() *bool {
+	if f.Branding != nil {
+		return f.Branding
+	}
+	return f.WebSPA
 }
 
 // WithFeatureGates installs deployment-shape attack-surface gating: any
@@ -308,8 +319,8 @@ type FeatureGates struct {
 //
 //	srv := sso.NewServer(
 //	    sso.WithFeatureGates(sso.FeatureGates{
-//	        OIDC:   sso.Bool(false), // OAuth-2.0-only deployment
-//	        WebSPA: sso.Bool(false), // API-only, no hosted UI
+//	        OIDC:     sso.Bool(false), // OAuth-2.0-only deployment
+//	        Branding: sso.Bool(false), // API-only, no hosted UI
 //	    }),
 //	)
 func WithFeatureGates(g FeatureGates) Option {

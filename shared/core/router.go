@@ -253,7 +253,7 @@ func extractParams(ctx *Context, pattern, actual string) {
 // boot, off whatever backing dependency (store, filesystem) already exists,
 // then let an independent runtime toggle control reachability afterward
 // without re-registering anything — see GatedRouter's doc for the fuller
-// rationale (interfaces/sso's admin_api / web_spa gates are the motivating
+// rationale (interfaces/sso's admin_api / branding gates are the motivating
 // callers).
 func GateHandler(live func() bool, h HandlerFunc) HandlerFunc {
 	return func(ctx HandlerContext) {

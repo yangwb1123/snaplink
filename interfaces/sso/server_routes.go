@@ -205,14 +205,14 @@ func gateOn(explicit *bool) bool {
 // seeded from s.featureGates once in NewServer) rather than s.featureGates
 // directly — each is hot-reloadable via its matching Set*GateEnabled method
 // (accessors_feature_gates.go for the five here; SetAdminAPIGateEnabled/
-// SetWebSPAGateEnabled live in accessors.go).
+// SetBrandingGateEnabled live in accessors.go).
 func (s *Server) oidcGateOn() bool        { return s.oidcLive.Load() }
 func (s *Server) cibaGateOn() bool        { return s.cibaLive.Load() }
 func (s *Server) caepGateOn() bool        { return s.caepLive.Load() }
 func (s *Server) federationGateOn() bool  { return s.federationLive.Load() }
 func (s *Server) selfServiceGateOn() bool { return s.selfServiceLive.Load() }
 func (s *Server) adminAPIGateOn() bool    { return s.adminAPILive.Load() }
-func (s *Server) webSPAGateOn() bool      { return s.webSPALive.Load() }
+func (s *Server) brandingGateOn() bool     { return s.brandingLive.Load() }
 
 // mountOIDCUserEndpoints registers the OIDC-specific /userinfo,
 // /end_session, and (session-management-gated) /check_session_iframe

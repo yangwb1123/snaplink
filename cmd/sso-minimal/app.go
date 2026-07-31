@@ -180,7 +180,7 @@ func featureGatesForEdition(edition runtimeEdition) sso.FeatureGates {
 		Federation:  sso.Bool(false),
 		SelfService: sso.Bool(false),
 		AdminAPI:    sso.Bool(false),
-		WebSPA:      sso.Bool(false),
+		Branding:    sso.Bool(false),
 	}
 }
 

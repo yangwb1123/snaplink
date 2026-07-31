@@ -43,7 +43,7 @@ Generated from [`ops/build/capabilities.json`](../ops/build/capabilities.json); 
 | Embedded API docs viewer (`api.docs-viewer`) | `sdk` | `disabled` | `feature_gates.admin_api` | — | `/api/v1/admin/docs` |
 | Kafka audit sink (`audit.kafka`) | `stock-binary`<br>`module-only` | `disabled` | — | — | `audit sink` |
 | Fine-grained authorization (`authorization.fga`) | `sdk`<br>`stock-binary` | `disabled` | — | `RebacStore`<br>`RebacEngine` | `/authz/*` |
-| Public tenant branding (`branding.public`) | `sdk`<br>`stock-binary` | `conditional` | `feature_gates.web_spa` | `TenantStore` | `/branding` |
+| Public tenant branding (`branding.public`) | `sdk`<br>`stock-binary` | `conditional` | `feature_gates.branding` | `TenantStore` | `/branding` |
 | CAEP and Shared Signals (`caep.shared-signals`) | `sdk`<br>`stock-binary` | `disabled` | `feature_gates.caep` | `CAEPStreamStore`<br>`JTIReplayStore` | `/.well-known/ssf-configuration`<br>`/ssf/*` |
 | OpenID Connect CIBA (`ciba.core`) | `sdk`<br>`stock-binary` | `disabled` | `feature_gates.ciba` | `CIBAStore` | `/backchannel-authentication`<br>`/token` |
 | Cluster and HA coordination (`cluster.ha`) | `sdk`<br>`stock-binary` | `disabled` | — | `cluster.Bus`<br>`shared durable stores` | `/readyz`<br>`cross-replica bus` |

@@ -51,18 +51,25 @@ Deliverables:
 - Only use “OpenID Certified” or FAPI certification language after an issued
   listing exists.
 
-### 4. Remove obsolete frontend configuration semantics
+### 4. Remove obsolete frontend configuration semantics — DONE
 
-The parsed `hosted_login` block has no runtime frontend to enable.
-`feature_gates.web_spa` now controls only the public `/branding` lookup.
+The parsed `hosted_login` block has no runtime frontend to enable:
+`feature_gates.branding` (renamed from `web_spa`) now controls only the
+public `/branding` lookup.
 
-Deliverables:
+Delivered:
 
-- Deprecate or remove `hosted_login` in a versioned configuration migration.
-- Rename or clearly alias `web_spa` to a branding/API-oriented name without a
-  silent compatibility break.
-- Publish the API contract an external frontend must use for login, consent,
-  self-service, admin and first-run setup.
+- `hosted_login` is a parsed no-op with a loud startup deprecation warning;
+  removal lands with the next schema-version bump.
+- `feature_gates.web_spa` is a deprecated alias of the canonical
+  `feature_gates.branding`; both set fails loud at boot, only `web_spa`
+  warns and folds into `branding`. SDK `FeatureGates.Branding` is the
+  canonical field; `WebSPA` remains a source-compatible alias. Runtime gate
+  name, metric label, audit reason and reload paths use `branding`;
+  `/feature_gates/web_spa` reload paths stay accepted.
+- The external-frontend API contract (login, consent, self-service, admin,
+  first-run setup, CSP/cookie/proxy requirements) is published in
+  [frontend-contract.md](frontend-contract.md).
 
 ### 5. Isolate the SSO edition hierarchy
 
