@@ -1,0 +1,43 @@
+# 一键案例：snaplink MFA 子系统分析 + 动态角色审查
+#
+# 结合本项目（snaplink MFA：domains/mfa/、interfaces/sso/me_mfa.go）与
+# 实际软件开发流程：一句话需求起点 → 分析产出 → 编排者按实际软件开发角色
+# （architect / security_engineer / protocol_expert / qa_lead / ...）动态挑选
+# 审查角色 → 并发执行 → 证据折叠 → 收敛。
+#
+# 执行（用户亲自运行，需要 PATH 中有 pi 且 API 可用）：
+#   python ai-dev/pi-batch.py ai-dev/examples/quickstart-snaplink-analysis.yaml \
+#     --log-file logs/quickstart.log
+#
+# 产物：
+#   docs/proposals/mfa-analysis.md                  # 分析：3 个改进点
+#   docs/proposals/<角色名>.md                      # 编排者挑选的审查角色交付物
+#
+# 扩展：加一个 from_outputs 阶段即可接入完整 SDLC 角色流水线
+# （参考 ai-dev/examples/sdlc-mini-pipeline.yaml）。
+
+git_commit: false
+
+stages:
+  # ── 阶段 1：一句话起点（无需准备任何输入文件）──
+  # 结合项目真实子系统：分析 MFA，提出 3 个有证据的改进点
+  - name: kickoff
+    from_prompt: |
+      Analyze the snaplink MFA subsystem (domains/mfa/,
+      interfaces/sso/me_mfa.go) against docs/feature-matrix.md and
+      docs/error-codes.md. Propose exactly 3 evidence-backed improvement
+      points. For each: name, problem, evidence (file/symbol), proposed
+      behavior, acceptance check. Output a markdown document.
+    output: docs/proposals/mfa-analysis.md
+    mode: serial
+
+  # ── 阶段 2：动态角色审查（meta 编排，自优化）──
+  # 编排者分析阶段 1 的产出，从 ai-dev/prompts 的角色库中挑选还需要哪些
+  # 角色（架构/安全/协议/QA/...），并发执行，产出折回证据后收敛
+  - name: review
+    from_outputs: kickoff
+    meta: true
+    role_dir: ai-dev/prompts
+    output_dir: docs/proposals
+    max_iterations: 2
+    mode: serial
