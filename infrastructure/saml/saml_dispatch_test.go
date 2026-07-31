@@ -17,6 +17,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/ssoext"
 	samlmod "github.com/yangwb1123/snaplink/saml"
 	"github.com/yangwb1123/snaplink/saml/sp"
 )
@@ -38,9 +39,11 @@ func buildMultiSPACS(t *testing.T, a, b spParams) (http.HandlerFunc, *idpKey) {
 	t.Helper()
 	idp := newIDPKey(t)
 	res, err := samlmod.Build(samlmod.Deps{
-		SessionManager: defaultimpl.NewMemorySessionManager(),
-		UserProvider:   defaultimpl.NewMemoryUserProvider(),
-		ClientStore:    defaultimpl.NewMemoryClientStore(),
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager: defaultimpl.NewMemorySessionManager(),
+			UserProvider:   defaultimpl.NewMemoryUserProvider(),
+			ClientStore:    defaultimpl.NewMemoryClientStore(),
+		},
 	}, samlmod.Config{
 		SPs: []sp.SPConfig{
 			{Name: a.name, EntityID: a.entityID, ACSURL: a.acsURL, IDPCert: idp.certPEM(), IDPEntityID: idpEntity},

@@ -23,6 +23,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/ssoext"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/sessionhub"
 	samlmod "github.com/yangwb1123/snaplink/saml"
 	"github.com/yangwb1123/snaplink/saml/sp"
@@ -44,9 +45,11 @@ func buildTestServer(t *testing.T) (http.HandlerFunc, sso.SessionManager, sso.Us
 	users := defaultimpl.NewMemoryUserProvider()
 
 	res, err := samlmod.Build(samlmod.Deps{
-		SessionManager: sessions,
-		UserProvider:   users,
-		ClientStore:    defaultimpl.NewMemoryClientStore(),
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager: sessions,
+			UserProvider:   users,
+			ClientStore:    defaultimpl.NewMemoryClientStore(),
+		},
 	}, samlmod.Config{
 		SPs: []sp.SPConfig{{
 			Name:        "test-idp",
@@ -217,10 +220,12 @@ func TestACS_ValidAssertion_LinksCoreAndSAMLLegs(t *testing.T) {
 	hub := sessionhub.NewCoordinator(spy, nil, nil, nil)
 
 	res, err := samlmod.Build(samlmod.Deps{
-		SessionManager: defaultimpl.NewMemorySessionManager(),
-		UserProvider:   defaultimpl.NewMemoryUserProvider(),
-		ClientStore:    defaultimpl.NewMemoryClientStore(),
-		SessionHub:     hub,
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager: defaultimpl.NewMemorySessionManager(),
+			UserProvider:   defaultimpl.NewMemoryUserProvider(),
+			ClientStore:    defaultimpl.NewMemoryClientStore(),
+		},
+		SessionHub: hub,
 	}, samlmod.Config{
 		SPs: []sp.SPConfig{{
 			Name:        "test-idp",
@@ -277,15 +282,19 @@ func TestACS_ValidAssertion_LinksCoreAndSAMLLegs(t *testing.T) {
 func TestBuild_RejectsMissingDeps(t *testing.T) {
 	t.Parallel()
 	_, err := samlmod.Build(samlmod.Deps{
-		UserProvider: defaultimpl.NewMemoryUserProvider(),
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			UserProvider: defaultimpl.NewMemoryUserProvider(),
+		},
 	}, samlmod.Config{SPs: []sp.SPConfig{{Name: "x"}}})
 	if err == nil || !strings.Contains(err.Error(), "SessionManager required") {
 		t.Errorf("Build without SessionManager err = %v, want SessionManager required", err)
 	}
 
 	_, err = samlmod.Build(samlmod.Deps{
-		SessionManager: defaultimpl.NewMemorySessionManager(),
-		UserProvider:   defaultimpl.NewMemoryUserProvider(),
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager: defaultimpl.NewMemorySessionManager(),
+			UserProvider:   defaultimpl.NewMemoryUserProvider(),
+		},
 	}, samlmod.Config{})
 	if err == nil || !strings.Contains(err.Error(), "at least one SP") {
 		t.Errorf("Build with no SPs err = %v, want at-least-one-SP", err)
@@ -300,8 +309,10 @@ func TestBuild_RejectsDuplicateSPNames(t *testing.T) {
 		IDPCert: idp.certPEM(), IDPEntityID: idpEntity,
 	}
 	_, err := samlmod.Build(samlmod.Deps{
-		SessionManager: defaultimpl.NewMemorySessionManager(),
-		UserProvider:   defaultimpl.NewMemoryUserProvider(),
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager: defaultimpl.NewMemorySessionManager(),
+			UserProvider:   defaultimpl.NewMemoryUserProvider(),
+		},
 	}, samlmod.Config{SPs: []sp.SPConfig{spc, spc}})
 	if err == nil || !strings.Contains(err.Error(), "duplicate SP name") {
 		t.Errorf("Build with duplicate SP names err = %v, want duplicate-name", err)

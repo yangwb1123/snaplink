@@ -19,6 +19,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/ssoext"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/sessionhub"
 	samlmod "github.com/yangwb1123/snaplink/saml"
 	"github.com/yangwb1123/snaplink/saml/idp"
@@ -55,11 +56,13 @@ func TestBuild_IdPEnabled_MountsThreeHandlers(t *testing.T) {
 	clients := defaultimpl.NewMemoryClientStore()
 
 	res, err := samlmod.Build(samlmod.Deps{
-		ClientStore:     clients,
-		SessionManager:  defaultimpl.NewMemorySessionManager(),
-		UserProvider:    defaultimpl.NewMemoryUserProvider(),
-		IssuerForClient: func(*sso.Client) (string, sso.TokenIssuer, error) { return "t", issuer, nil },
-		Issuer:          asIssuer,
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			ClientStore:     clients,
+			SessionManager:  defaultimpl.NewMemorySessionManager(),
+			UserProvider:    defaultimpl.NewMemoryUserProvider(),
+			IssuerForClient: func(*sso.Client) (string, sso.TokenIssuer, error) { return "t", issuer, nil },
+			Issuer:          asIssuer,
+		},
 	}, samlmod.Config{
 		IdP: samlmod.IdPConfig{Enabled: true},
 	})
@@ -99,12 +102,14 @@ func TestBuild_IdPEnabled_WiresSessionHubSAMLTrigger(t *testing.T) {
 	}
 
 	_, err := samlmod.Build(samlmod.Deps{
-		ClientStore:     defaultimpl.NewMemoryClientStore(),
-		SessionManager:  defaultimpl.NewMemorySessionManager(),
-		UserProvider:    defaultimpl.NewMemoryUserProvider(),
-		IssuerForClient: func(*sso.Client) (string, sso.TokenIssuer, error) { return "t", issuer, nil },
-		Issuer:          asIssuer,
-		SessionHub:      hub,
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			ClientStore:     defaultimpl.NewMemoryClientStore(),
+			SessionManager:  defaultimpl.NewMemorySessionManager(),
+			UserProvider:    defaultimpl.NewMemoryUserProvider(),
+			IssuerForClient: func(*sso.Client) (string, sso.TokenIssuer, error) { return "t", issuer, nil },
+			Issuer:          asIssuer,
+		},
+		SessionHub: hub,
 	}, samlmod.Config{
 		IdP: samlmod.IdPConfig{Enabled: true},
 	})
@@ -127,10 +132,12 @@ func TestBuild_SPOnly_DoesNotWireSAMLTrigger(t *testing.T) {
 	hub := sessionhub.NewCoordinator(nil, nil, nil, nil)
 
 	_, err := samlmod.Build(samlmod.Deps{
-		SessionManager: defaultimpl.NewMemorySessionManager(),
-		UserProvider:   defaultimpl.NewMemoryUserProvider(),
-		ClientStore:    defaultimpl.NewMemoryClientStore(),
-		SessionHub:     hub,
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager: defaultimpl.NewMemorySessionManager(),
+			UserProvider:   defaultimpl.NewMemoryUserProvider(),
+			ClientStore:    defaultimpl.NewMemoryClientStore(),
+		},
+		SessionHub: hub,
 	}, samlmod.Config{
 		SPs: []sp.SPConfig{{
 			Name:        "test-idp",
@@ -153,8 +160,10 @@ func TestBuild_SPOnly_DoesNotWireSAMLTrigger(t *testing.T) {
 func TestBuild_NothingRequested_Errors(t *testing.T) {
 	t.Parallel()
 	_, err := samlmod.Build(samlmod.Deps{
-		SessionManager: defaultimpl.NewMemorySessionManager(),
-		UserProvider:   defaultimpl.NewMemoryUserProvider(),
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager: defaultimpl.NewMemorySessionManager(),
+			UserProvider:   defaultimpl.NewMemoryUserProvider(),
+		},
 	}, samlmod.Config{})
 	if err == nil || !strings.Contains(err.Error(), "nothing to build") {
 		t.Errorf("err = %v, want nothing-to-build", err)
@@ -188,11 +197,13 @@ func TestIdPToSP_RoundTrip(t *testing.T) {
 	}
 
 	res, err := samlmod.Build(samlmod.Deps{
-		ClientStore:     clients,
-		SessionManager:  sessions,
-		UserProvider:    users,
-		IssuerForClient: func(*sso.Client) (string, sso.TokenIssuer, error) { return "t", issuer, nil },
-		Issuer:          asIssuer,
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			ClientStore:     clients,
+			SessionManager:  sessions,
+			UserProvider:    users,
+			IssuerForClient: func(*sso.Client) (string, sso.TokenIssuer, error) { return "t", issuer, nil },
+			Issuer:          asIssuer,
+		},
 	}, samlmod.Config{
 		IdP: samlmod.IdPConfig{Enabled: true},
 	})

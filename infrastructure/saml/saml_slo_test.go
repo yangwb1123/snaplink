@@ -26,6 +26,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/interfaces/ssoext"
 	samlmod "github.com/yangwb1123/snaplink/saml"
 	"github.com/yangwb1123/snaplink/saml/idp"
 	"github.com/yangwb1123/snaplink/saml/sp"
@@ -47,9 +48,11 @@ func buildSLOServer(t *testing.T) (http.HandlerFunc, sso.SessionManager, *idpKey
 	sessions := defaultimpl.NewMemorySessionManager()
 
 	res, err := samlmod.Build(samlmod.Deps{
-		SessionManager: sessions,
-		UserProvider:   defaultimpl.NewMemoryUserProvider(),
-		ClientStore:    defaultimpl.NewMemoryClientStore(),
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager: sessions,
+			UserProvider:   defaultimpl.NewMemoryUserProvider(),
+			ClientStore:    defaultimpl.NewMemoryClientStore(),
+		},
 	}, samlmod.Config{
 		SPs: []sp.SPConfig{{
 			Name:         "test-idp",
@@ -191,11 +194,13 @@ func TestSPSLO_EndToEnd_OnlySubjectTerminated(t *testing.T) {
 func TestBuild_MountsFrontChannelContinueRoute(t *testing.T) {
 	t.Parallel()
 	res, err := samlmod.Build(samlmod.Deps{
-		SessionManager:  defaultimpl.NewMemorySessionManager(),
-		UserProvider:    defaultimpl.NewMemoryUserProvider(),
-		ClientStore:     defaultimpl.NewMemoryClientStore(),
-		IssuerForClient: func(*sso.Client) (string, sso.TokenIssuer, error) { return "t", nil, nil },
-		Issuer:          asIssuer,
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager:  defaultimpl.NewMemorySessionManager(),
+			UserProvider:    defaultimpl.NewMemoryUserProvider(),
+			ClientStore:     defaultimpl.NewMemoryClientStore(),
+			IssuerForClient: func(*sso.Client) (string, sso.TokenIssuer, error) { return "t", nil, nil },
+			Issuer:          asIssuer,
+		},
 	}, samlmod.Config{
 		IdP: samlmod.IdPConfig{Enabled: true},
 	})
@@ -231,9 +236,11 @@ func TestSPSLO_FrontChannel_RedirectsResponseToContinue(t *testing.T) {
 	const idpContinueURL = "https://idp.example.com/saml/slo/continue"
 
 	res, err := samlmod.Build(samlmod.Deps{
-		SessionManager: sessions,
-		UserProvider:   defaultimpl.NewMemoryUserProvider(),
-		ClientStore:    defaultimpl.NewMemoryClientStore(),
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager: sessions,
+			UserProvider:   defaultimpl.NewMemoryUserProvider(),
+			ClientStore:    defaultimpl.NewMemoryClientStore(),
+		},
 	}, samlmod.Config{
 		SPs: []sp.SPConfig{{
 			Name:              "test-idp",
@@ -319,9 +326,11 @@ func buildMultiSPSLOServer(t *testing.T) (http.HandlerFunc, sso.SessionManager, 
 	sessions := defaultimpl.NewMemorySessionManager()
 
 	res, err := samlmod.Build(samlmod.Deps{
-		SessionManager: sessions,
-		UserProvider:   defaultimpl.NewMemoryUserProvider(),
-		ClientStore:    defaultimpl.NewMemoryClientStore(),
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager: sessions,
+			UserProvider:   defaultimpl.NewMemoryUserProvider(),
+			ClientStore:    defaultimpl.NewMemoryClientStore(),
+		},
 	}, samlmod.Config{
 		SPs: []sp.SPConfig{
 			{
@@ -532,11 +541,13 @@ func TestSLO_SPtoIdPtoSP_RoundTrip(t *testing.T) {
 	}
 
 	res, err := samlmod.Build(samlmod.Deps{
-		ClientStore:     clients,
-		SessionManager:  sessions,
-		UserProvider:    defaultimpl.NewMemoryUserProvider(),
-		IssuerForClient: func(*sso.Client) (string, sso.TokenIssuer, error) { return "t", issuer, nil },
-		Issuer:          asIssuer,
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			ClientStore:     clients,
+			SessionManager:  sessions,
+			UserProvider:    defaultimpl.NewMemoryUserProvider(),
+			IssuerForClient: func(*sso.Client) (string, sso.TokenIssuer, error) { return "t", issuer, nil },
+			Issuer:          asIssuer,
+		},
 	}, samlmod.Config{IdP: samlmod.IdPConfig{Enabled: true}})
 	if err != nil {
 		t.Fatalf("saml.Build: %v", err)

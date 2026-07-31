@@ -38,14 +38,16 @@
 //
 // The OPERATOR'S FORK (their own package main, which calls
 // ssoext.RegisterSAMLHandlers) adapts saml.BuildResult onto
-// ssoext.SAMLHandlerSet inside the factory closure. Copy-pasteable wiring:
+// ssoext.SAMLHandlerSet inside the factory closure. Since saml.Deps EMBEDS
+// ssoext.SAMLServerDeps, the adaptation is one field — no field-for-field
+// copy. Copy-pasteable wiring:
 //
 //	package main
 //
 //	import (
 //		"context"
 //
-//		"github.com/yangwb1123/snaplink/interfaces/sso"
+//		"github.com/yangwb1123/snaplink/interfaces/ssoext"
 //		samlmod "github.com/yangwb1123/snaplink/saml"
 //		"github.com/yangwb1123/snaplink/saml/sp"
 //	)
@@ -53,16 +55,12 @@
 //	func init() {
 //		// Register a SAML handler factory under the name the operator selects
 //		// via cfg.saml.handler (here "crewjam"). cmd calls it once at boot with
-//		// its SAMLServerDeps; we adapt those into saml.Deps, call saml.Build,
-//		// and map the BuildResult onto cmd's SAMLHandlerSet.
-//		RegisterSAMLHandlers("crewjam", func(ctx context.Context, d SAMLServerDeps) (*SAMLHandlerSet, error) {
+//		// ssoext.SAMLServerDeps; we pass them straight into saml.Build via the
+//		// embedded SAMLServerDeps field and map the BuildResult onto
+//		// ssoext.SAMLHandlerSet.
+//		ssoext.RegisterSAMLHandlers("crewjam", func(ctx context.Context, d ssoext.SAMLServerDeps) (*ssoext.SAMLHandlerSet, error) {
 //			res, err := samlmod.Build(samlmod.Deps{
-//				ClientStore:     d.ClientStore,
-//				SessionManager:  d.SessionManager,
-//				UserProvider:    d.UserProvider,
-//				IssuerForClient: d.IssuerForClient,
-//				Issuer:          d.Issuer,
-//				Logger:          d.Logger,
+//				SAMLServerDeps: d,
 //			}, samlmod.Config{
 //				SPs: []sp.SPConfig{{
 //					Name:           "acme-idp",
