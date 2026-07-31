@@ -48,10 +48,13 @@ for a specific question.
 - Agent results are validated before saving: non-zero exit, empty output, or
   a provider/CLI failure signature (quota, rate limit, billing, auth error
   codes such as `insufficient_quota` or `rate_limit_error`, `429 Too Many
-  Requests`, leading `ERROR:`/`fatal:` banners) rejects the stage and no
-  `stage-NN.out.md` is written. Generic words like "error" or "timeout" are
-  not treated as failures, so review findings about timeouts or unauthorized
-  responses are not misclassified. Rejected stages fail the run and are
+  Requests`, offline/DNS/TLS/proxy failures such as `network is unreachable`,
+  `connection refused`, `curl: (7)`, leading `ERROR:`/`fatal:` banners)
+  rejects the stage and no `stage-NN.out.md` is written. Generic words like
+  "error" or "timeout" are not treated as failures, so review findings about
+  timeouts or unauthorized responses are not misclassified. A per-stage
+  deadline (`--timeout`, default 600s) kills a hung agent so an offline
+  machine cannot block the runner. Rejected stages fail the run and are
   skipped by downstream chaining.
 
 Exploratory review directories are ignored by Git; promote verified

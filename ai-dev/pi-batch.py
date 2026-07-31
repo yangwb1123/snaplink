@@ -46,6 +46,7 @@ import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -654,8 +655,11 @@ def _read_stream(stream, prefix: str, collector: list) -> None:
 # Provider/CLI failure signatures. Only signatures that never appear in
 # legitimate agent output are matched across the whole stdout; generic words
 # like "error" or "timeout" are intentionally absent so that review findings
-# about timeouts or unauthorized responses are not misclassified.
+# about timeouts or unauthorized responses are not misclassified. The network
+# group covers offline/DNS/TLS/proxy failures, which agent CLIs report with
+# these exact phrases when the machine loses connectivity.
 _AGENT_ERROR_PATTERNS = (
+    # provider error codes (quota, rate limit, billing, auth)
     re.compile(r"rate_?limit_?error", re.IGNORECASE),
     re.compile(r"insufficient_?quota", re.IGNORECASE),
     re.compile(r"quota_?exceeded", re.IGNORECASE),
@@ -667,6 +671,33 @@ _AGENT_ERROR_PATTERNS = (
     re.compile(r"context_?length_?exceeded", re.IGNORECASE),
     re.compile(r"overloaded_?error", re.IGNORECASE),
     re.compile(r"429 too many requests", re.IGNORECASE),
+    # network connectivity failures (offline, DNS, TLS, proxy)
+    re.compile(r"network is unreachable", re.IGNORECASE),
+    re.compile(r"no route to host", re.IGNORECASE),
+    re.compile(r"temporary failure in name resolution", re.IGNORECASE),
+    re.compile(r"name or service not known", re.IGNORECASE),
+    re.compile(r"dns resolution failed", re.IGNORECASE),
+    re.compile(r"getaddrinfo", re.IGNORECASE),
+    re.compile(r"max retries exceeded", re.IGNORECASE),
+    re.compile(r"certificate verify failed", re.IGNORECASE),
+    re.compile(r"connectionerror", re.IGNORECASE),
+    re.compile(r"sslerror", re.IGNORECASE),
+    re.compile(r"proxyerror", re.IGNORECASE),
+    re.compile(r"econnrefused", re.IGNORECASE),
+    re.compile(r"econnreset", re.IGNORECASE),
+    re.compile(r"etimedout", re.IGNORECASE),
+    re.compile(r"curl: \(\d+\)", re.IGNORECASE),
+    re.compile(r"connection timed out", re.IGNORECASE),
+    re.compile(r"connect timed out", re.IGNORECASE),
+    re.compile(r"operation timed out", re.IGNORECASE),
+    re.compile(r"connection refused", re.IGNORECASE),
+    re.compile(r"connection reset", re.IGNORECASE),
+    re.compile(r"connection closed", re.IGNORECASE),
+    re.compile(r"broken pipe", re.IGNORECASE),
+    re.compile(r"failed to connect", re.IGNORECASE),
+    re.compile(r"unable to connect", re.IGNORECASE),
+    re.compile(r"could not connect", re.IGNORECASE),
+    # CLI-level failure banners
     re.compile(r"^\[?error\]?:", re.IGNORECASE | re.MULTILINE),
     re.compile(r"^fatal:", re.IGNORECASE | re.MULTILINE),
 )
@@ -717,6 +748,7 @@ def run_task(task: Task, task_index: int = 0, total: int = 0, parallel: bool = F
             text=True,
             cwd=workdir,
             env=env,
+            start_new_session=True,  # own process group so the whole child tree can be killed on timeout
         )
 
         # Read stdout and stderr concurrently via threads
@@ -755,7 +787,12 @@ def run_task(task: Task, task_index: int = 0, total: int = 0, parallel: bool = F
         )
 
     except subprocess.TimeoutExpired:
-        proc.kill()
+        # Kill the whole group: the direct child may have spawned helpers
+        # (e.g. a shell running sleep) that keep the pipes open.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            proc.kill()
         elapsed = time.monotonic() - start
         log.error("TIMEOUT  [%.1fs]  [limit=%ss]", elapsed, task.timeout)
         return TaskResult(

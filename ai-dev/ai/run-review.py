@@ -42,8 +42,10 @@ Context YAML format:
 import argparse
 import os
 import re
+import signal
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 try:
@@ -299,8 +301,11 @@ def stage_out_dir(args) -> Path:
 # Provider/CLI failure signatures. Only signatures that never appear in
 # legitimate review prose are matched across the whole output; generic words
 # like "error" or "timeout" are intentionally absent so that review findings
-# about timeouts or unauthorized responses are not misclassified.
+# about timeouts or unauthorized responses are not misclassified. The network
+# group covers offline/DNS/TLS/proxy failures, which agent CLIs report with
+# these exact phrases when the machine loses connectivity.
 _AGENT_ERROR_PATTERNS = (
+    # provider error codes (quota, rate limit, billing, auth)
     re.compile(r"rate_?limit_?error", re.IGNORECASE),
     re.compile(r"insufficient_?quota", re.IGNORECASE),
     re.compile(r"quota_?exceeded", re.IGNORECASE),
@@ -312,6 +317,33 @@ _AGENT_ERROR_PATTERNS = (
     re.compile(r"context_?length_?exceeded", re.IGNORECASE),
     re.compile(r"overloaded_?error", re.IGNORECASE),
     re.compile(r"429 too many requests", re.IGNORECASE),
+    # network connectivity failures (offline, DNS, TLS, proxy)
+    re.compile(r"network is unreachable", re.IGNORECASE),
+    re.compile(r"no route to host", re.IGNORECASE),
+    re.compile(r"temporary failure in name resolution", re.IGNORECASE),
+    re.compile(r"name or service not known", re.IGNORECASE),
+    re.compile(r"dns resolution failed", re.IGNORECASE),
+    re.compile(r"getaddrinfo", re.IGNORECASE),
+    re.compile(r"max retries exceeded", re.IGNORECASE),
+    re.compile(r"certificate verify failed", re.IGNORECASE),
+    re.compile(r"connectionerror", re.IGNORECASE),
+    re.compile(r"sslerror", re.IGNORECASE),
+    re.compile(r"proxyerror", re.IGNORECASE),
+    re.compile(r"econnrefused", re.IGNORECASE),
+    re.compile(r"econnreset", re.IGNORECASE),
+    re.compile(r"etimedout", re.IGNORECASE),
+    re.compile(r"curl: \(\d+\)", re.IGNORECASE),
+    re.compile(r"connection timed out", re.IGNORECASE),
+    re.compile(r"connect timed out", re.IGNORECASE),
+    re.compile(r"operation timed out", re.IGNORECASE),
+    re.compile(r"connection refused", re.IGNORECASE),
+    re.compile(r"connection reset", re.IGNORECASE),
+    re.compile(r"connection closed", re.IGNORECASE),
+    re.compile(r"broken pipe", re.IGNORECASE),
+    re.compile(r"failed to connect", re.IGNORECASE),
+    re.compile(r"unable to connect", re.IGNORECASE),
+    re.compile(r"could not connect", re.IGNORECASE),
+    # CLI-level failure banners
     re.compile(r"^\[?error\]?:", re.IGNORECASE | re.MULTILINE),
     re.compile(r"^fatal:", re.IGNORECASE | re.MULTILINE),
 )
@@ -359,13 +391,32 @@ def run_stage(stage: str, prompt: str, args) -> int:
             stderr=subprocess.STDOUT,
             text=True,
             cwd=args.repo or os.getcwd(),
+            start_new_session=True,  # own process group so the whole child tree can be killed on timeout
         )
         assert proc.stdout is not None
+
+        # Stream to the terminal from a reader thread so the main thread can
+        # enforce the deadline; a hung agent (e.g. offline machine) must not
+        # block the runner forever.
         lines = []
-        for line in proc.stdout:
-            print(line, end="", flush=True)
-            lines.append(line)
-        rc = proc.wait()
+
+        def _read():
+            for line in proc.stdout:
+                print(line, end="", flush=True)
+                lines.append(line)
+
+        reader = threading.Thread(target=_read, daemon=True)
+        reader.start()
+        try:
+            rc = proc.wait(timeout=getattr(args, "timeout", 0) or 600)
+        except subprocess.TimeoutExpired:
+            # Kill the whole group: the direct child may have spawned helpers
+            # (e.g. a shell running sleep) that keep the pipe open.
+            os.killpg(proc.pid, signal.SIGKILL)
+            reader.join(timeout=5)
+            print(f"\nStage {stage} REJECTED: agent timed out; output NOT saved to {out_file}", file=sys.stderr, flush=True)
+            return 1
+        reader.join(timeout=5)
     except FileNotFoundError:
         print(f"ERROR: '{agent_bin}' not found in PATH.", file=sys.stderr)
         return 1
@@ -399,6 +450,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--repo", help="Repository path (default: cwd)")
     p.add_argument("--model", default="", help="Model for pi invocation")
     p.add_argument("--agent-bin", default="", help="Agent CLI binary (default: ai-dev/pi-batch.yaml agent.bin, else 'pi')")
+    p.add_argument("--timeout", type=int, default=0,
+                   help="Per-stage agent timeout in seconds (default: 600; 0 = default)")
     p.add_argument("--output-dir", metavar="DIR", help="Output directory for review files")
     p.add_argument("--dry-run", action="store_true",
                    help="Print filled prompt without invoking pi")

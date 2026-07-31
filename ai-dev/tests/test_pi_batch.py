@@ -223,6 +223,27 @@ def test_agent_legitimate_prose_is_saved(tmp_path):
     assert output.exists()
 
 
+def test_agent_offline_output_rejects_task_and_does_not_save(tmp_path):
+    """Offline/network failure replies must mark the task failed and never
+    write the output file."""
+    for banner in (
+        "curl: (7) Failed to connect to api.example.com",
+        "ConnectionError: network is unreachable",
+        "requests.exceptions.ConnectionError: Max retries exceeded",
+    ):
+        agent = tmp_path / "offline-agent.sh"
+        agent.write_text(f"#!/bin/sh\necho \"{banner}\"\n")
+        agent.chmod(0o755)
+        mod = load_batch()
+        mod.AGENT_BIN = str(agent)
+        output = tmp_path / "result.md"
+        task = mod.Task(prompt="review this", output=str(output))
+        result = mod.run_task(task)
+        assert result.success is False
+        mod.save_result(task, result)
+        assert not output.exists()
+
+
 def test_pipeline_reports_failed_stage(tmp_path, fake_agent):
     mod = load_batch()
     mod.AGENT_BIN = str(fake_agent)

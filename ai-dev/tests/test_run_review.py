@@ -50,6 +50,7 @@ class _Args:
         self.output_dir = kwargs.get("output_dir")
         self.context_name = kwargs.get("context_name", "ctx")
         self.repo = kwargs.get("repo")
+        self.timeout = kwargs.get("timeout", 0)
 
 
 def test_chain_variables_fills_schema_placeholder():
@@ -141,6 +142,36 @@ def test_run_stage_rejects_empty_output(tmp_path):
     agent.chmod(0o755)
     mod = load_runner()
     args = _Args(agent_bin=str(agent), output_dir=str(tmp_path), repo=str(tmp_path))
+    rc = mod.run_stage("00", "PROMPT BODY", args)
+    assert rc == 1
+    assert not (tmp_path / "stage-00.out.md").exists()
+
+
+def test_run_stage_rejects_offline_output(tmp_path):
+    """Offline/network failure replies (curl banner, DNS, refused) must not save."""
+    for banner in (
+        "curl: (7) Failed to connect to api.example.com port 443",
+        "getaddrinfo: Name or service not known",
+        "ConnectionError: network is unreachable",
+        "connect: No route to host",
+    ):
+        agent = tmp_path / "offline-agent.sh"
+        agent.write_text(f"#!/bin/sh\necho \"{banner}\"\n")
+        agent.chmod(0o755)
+        mod = load_runner()
+        args = _Args(agent_bin=str(agent), output_dir=str(tmp_path), repo=str(tmp_path))
+        assert mod.run_stage("00", "PROMPT BODY", args) == 1
+        assert not (tmp_path / "stage-00.out.md").exists()
+
+
+def test_run_stage_rejects_timeout(tmp_path):
+    """A hung agent (e.g. offline machine) must be killed at the deadline and
+    leave no output file."""
+    agent = tmp_path / "hung-agent.sh"
+    agent.write_text("#!/bin/sh\nsleep 30\n")
+    agent.chmod(0o755)
+    mod = load_runner()
+    args = _Args(agent_bin=str(agent), output_dir=str(tmp_path), repo=str(tmp_path), timeout=1)
     rc = mod.run_stage("00", "PROMPT BODY", args)
     assert rc == 1
     assert not (tmp_path / "stage-00.out.md").exists()
