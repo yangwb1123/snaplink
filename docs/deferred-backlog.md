@@ -29,11 +29,11 @@ Retired audits, plans, and migration records are summarized in
 |---|---|---|
 | Go SDK | **Implemented** | `interfaces/sso` exposes the broadest option surface. An SDK option is not automatically a stock-binary YAML feature. |
 | `sso-server` | **Implemented** | Pure API backend: OAuth/OIDC, self-service/admin HTTP APIs and gRPC control plane. |
-| `cmd/sso-minimal` / `prototype` / `minimal` | **Partial** | Two buildable single-process editions: `prototype` exposes SSO/OAuth and JSON logs; `minimal` adds OIDC and tracing. They share a physical dependency graph and are not production topologies or browser-E2E artifacts. |
+| `cmd/sso-minimal` / `prototype` / `minimal` | **Implemented** | Two buildable single-process editions: `prototype` exposes SSO/OAuth and JSON logs; `minimal` adds OIDC and tracing. Physical isolation from the durable/admin/observability graph is declared in `ops/build/profile-isolation.json` and proven by `python cli.py profiles evidence` (packages, modules, symbols, size). Not production topologies or browser-E2E artifacts. |
 | Hosted login, admin, self-service, developer and setup UIs | **External** | Separate frontend projects, normally reverse-proxied beside the server. No static SPA is served by this repository; the API contract those projects must consume is [frontend-contract.md](frontend-contract.md). |
 | Admin API-doc viewer | **Implemented** | `WithAPIDocsUI` serves an admin-gated, self-contained API reference. It is not an application UI. |
 | TypeScript/Python SDKs | **Implemented** | Generated from `docs/openapi.yaml` via the `ops/build/sdk-surface.json` registry (full documented operation set: admin, SCIM, SSF, Federation included); validated by `python cli.py sdk-surface check`. Not yet published as versioned packages. |
-| Nested protocol/infrastructure modules | **Partial** | Strict cold-build profiles and the Kafka static adapter are implemented. A versioned registrar outside `cmd/` is still required before other module families can use the standard host API. |
+| Nested protocol/infrastructure modules | **Partial** | Strict cold-build profiles and the Kafka static adapter are implemented. The standard host API (`interfaces/ssoext` on `platform/registrar`) now exists outside `cmd/`; migrating SAML/LDAP/Kerberos/RADIUS/KMS families onto it is the remaining work. |
 
 ## Partial capabilities
 
@@ -49,13 +49,12 @@ module lock and compiled inventory are implemented. The edition hierarchy is:
 | `full` | Supported, buildable | Inherits `minimal`; selects the complete current stock `cmd/sso-server` composition and registered Kafka audit cold module |
 | `standard`, `standard-kafka` | Supported | Compatibility builds, not edition-layer isolation evidence |
 
-The two smaller editions use an opaque HttpOnly cookie but have no bundled
-login UI or browser end-to-end proof. Their adapter lives in
-`cmd/sso-minimal`; the canonical authorization-code flow still needs to create
-the real OP session, propagate its SID through code and tokens, and register
-isolated routes through a standard typed host API. Until package, symbol, size
-and SBOM checks show otherwise, their runtime difference must not be presented
-as physical dependency isolation.
+The two smaller editions use an opaque HttpOnly cookie bound to the
+CANONICAL session (created by the authorization-code flow, SID propagated
+through code and tokens) but have no bundled login UI or browser end-to-end
+proof. Their session adapter lives in `cmd/sso-minimal`; package, symbol,
+size and SBOM checks (`python cli.py profiles evidence`) now back the
+physical dependency isolation claim.
 
 `oauth-client-credentials` is an independent optional machine-to-machine
 module, not an SSO edition baseline.
