@@ -310,14 +310,19 @@ def _aggregate_tasks(stage: Stage, prev_outputs: list, model_override: str = "",
 
 
 # Orchestrator prompt for meta stages: the agent looks at the current
-# deliverables and picks the review roles that still add value.
+# deliverables and picks the review roles that still add value. Roles can be
+# names from the role dir, or ad-hoc definitions with their own task.
 _DEFAULT_META_PROMPT = """Analyze the deliverables below and decide which expert review roles are still needed to harden them.
 
 Available roles: {roles}
 
 Rules:
 - Only choose roles that add real value for this deliverable set.
-- Output ONLY a JSON array of role names, e.g. ["security_engineer", "qa_lead"].
+- Prefer a role name from the list above.
+- When no listed role fits, define an ad-hoc role as a JSON object
+  {{\"role\": \"<name>\", \"task\": \"<assignment for this reviewer>\"}}.
+- Output ONLY a JSON array of role names and/or role objects, e.g.
+  ["security_engineer", {{\"role\": \"perf_reviewer\", \"task\": \"Analyze performance bottlenecks\"}}].
 - Output [] when the deliverables are complete.
 
 Deliverables:
@@ -326,10 +331,10 @@ Deliverables:
 
 
 def _available_roles(role_dir: str) -> list:
-    """List role template names (file stems) inside role_dir."""
+    """List role template names (file stems) inside role_dir; empty when the
+    dir is missing (meta stages may still run with ad-hoc roles only)."""
     base = Path(role_dir).resolve()
     if not base.is_dir():
-        log.error("Role dir not found: %s", role_dir)
         return []
     return sorted(p.stem for p in base.glob("*.md") if p.stem != "README")
 
@@ -345,19 +350,27 @@ def _load_role_template(role_dir: str, role: str) -> Optional[str]:
     return target.read_text(encoding="utf-8")
 
 
-def _parse_role_list(stdout: str) -> list:
-    """Parse a JSON role list from the orchestrator output, tolerating prose
-    and markdown fences around the array. Unparseable output -> [] (treat as
-    'no more roles needed')."""
+def _parse_role_plan(stdout: str) -> list:
+    """Parse the orchestrator plan from its JSON output, tolerating prose and
+    markdown fences. Each plan item is either a role name (string, resolved
+    against role_dir) or an ad-hoc role {"role": ..., "task": ...}. Unparseable
+    output -> [] (treat as 'no more roles needed')."""
     m = re.search(r"\[[^\]]*\]", stdout or "", re.S)
     if m:
         try:
             data = json.loads(m.group(0))
             if isinstance(data, list):
-                return [str(x).strip() for x in data if str(x).strip()]
+                plan = []
+                for item in data:
+                    if isinstance(item, str) and item.strip():
+                        plan.append({"role": item.strip(), "task": ""})
+                    elif isinstance(item, dict) and str(item.get("role", "")).strip():
+                        plan.append({"role": str(item["role"]).strip(),
+                                     "task": str(item.get("task", "")).strip()})
+                return plan
         except json.JSONDecodeError:
             pass
-    log.warning("META orchestrator output did not contain a JSON role list; treating as complete")
+    log.warning("META orchestrator output did not contain a JSON role plan; treating as complete")
     return []
 
 
@@ -382,9 +395,6 @@ def _run_meta_stage(stage: Stage, stage_outputs: dict, model_override: str = "",
         return [], True
 
     role_names = _available_roles(stage.role_dir)
-    if not role_names:
-        log.error("Meta stage '%s': no role templates found in %s", stage.name, stage.role_dir)
-        return [], False
     out_dir = Path(stage.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -392,9 +402,10 @@ def _run_meta_stage(stage: Stage, stage_outputs: dict, model_override: str = "",
     role_outputs: list[str] = []
     for iteration in range(1, stage.max_iterations + 1):
         log.info("META iteration %d/%d for stage '%s' (roles available: %s)",
-                 iteration, stage.max_iterations, stage.name, ", ".join(role_names))
+                 iteration, stage.max_iterations, stage.name, ", ".join(role_names) or "(none)")
         meta_prompt = (stage.meta_prompt or _DEFAULT_META_PROMPT)
-        meta_prompt = meta_prompt.replace("{roles}", ", ".join(role_names)).replace("{input_content}", combined)
+        meta_prompt = meta_prompt.replace("{roles}", ", ".join(role_names) or "(none - define ad-hoc roles)")
+        meta_prompt = meta_prompt.replace("{input_content}", combined)
         meta_task = Task(prompt=meta_prompt)
         if model_override:
             meta_task.model = model_override
@@ -404,38 +415,64 @@ def _run_meta_stage(stage: Stage, stage_outputs: dict, model_override: str = "",
         if not meta_result.success:
             log.warning("META orchestrator call failed: %s; stopping role expansion", meta_result.reason)
             break
-        roles = _parse_role_list(meta_result.stdout)
+        roles = _parse_role_plan(meta_result.stdout)
         if not roles:
             log.info("META orchestrator: no more roles needed (iteration %d)", iteration)
             break
-        log.info("META orchestrator selected roles: %s", ", ".join(roles))
+        log.info("META orchestrator selected %d role(s)", len(roles))
 
+        # Build role tasks: ad-hoc roles ({"role", "task"}) get their task
+        # description plus the current context; named roles load the
+        # role_dir template. Output names are sanitized (orchestrator input
+        # is untrusted).
+        role_tasks = []
         iteration_ok = True
-        for role in roles:
-            template = _load_role_template(stage.role_dir, role)
-            if template is None:
-                iteration_ok = False
-                continue
-            prompt = template.replace("{input_content}", combined).replace("{input_stem}", stage.name)
-            out_path = out_dir / f"{role}.md"
+        for item in roles:
+            role = item["role"]
+            task_desc = item["task"]
+            if task_desc:
+                prompt = f"{task_desc}\n\nContext (current deliverables):\n{combined}"
+            else:
+                template = _load_role_template(stage.role_dir, role)
+                if template is None:
+                    iteration_ok = False
+                    continue
+                prompt = template.replace("{input_content}", combined).replace("{input_stem}", stage.name)
+            safe_name = re.sub(r"[^A-Za-z0-9_-]", "_", role) or "role"
+            out_path = out_dir / f"{safe_name}.md"
             task = Task(prompt=prompt, output=str(out_path))
             if model_override:
                 task.model = model_override
             if timeout_override:
                 task.timeout = timeout_override
-            result = run_task(task)
+            role_tasks.append((role, task))
+
+        # Run the chosen roles concurrently, each in its own agent session
+        # (parallel sessions must not be shared: conversation order would
+        # interleave).
+        def _run_role(item):
+            role, task = item
+            result = run_task(task, parallel=True)
             if result.success:
                 result.success = _save_validated(task, result, validate_cmd)
                 if not result.success:
                     result.reason = "validation failed"
-            all_results.append(result)
-            if not result.success:
-                iteration_ok = False
-            role_outputs.append(str(out_path))
-            # fold the role deliverable back into the evidence for the next
-            # orchestrator round (self-optimization loop)
-            if out_path.exists():
-                combined += f"\n\n--- {role} deliverable ---\n" + out_path.read_text(encoding="utf-8")
+            return role, result
+
+        with ThreadPoolExecutor(max_workers=max(1, stage.workers or AGENT_DEFAULT_WORKERS)) as pool:
+            futures = [pool.submit(_run_role, item) for item in role_tasks]
+            for fut in as_completed(futures):
+                role, result = fut.result()
+                all_results.append(result)
+                if not result.success:
+                    iteration_ok = False
+                if result.task.output:
+                    role_outputs.append(result.task.output)
+                    # fold the role deliverable back into the evidence for
+                    # the next orchestrator round (self-optimization loop)
+                    out_path = Path(result.task.output)
+                    if out_path.exists():
+                        combined += f"\n\n--- {role} deliverable ---\n" + out_path.read_text(encoding="utf-8")
         if not iteration_ok:
             log.warning("META stage '%s': some role tasks failed in iteration %d", stage.name, iteration)
             break

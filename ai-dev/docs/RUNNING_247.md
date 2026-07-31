@@ -186,18 +186,24 @@ documents.
 Each iteration:
 
 1. the orchestrator agent reads the current deliverables and `Available roles`
-   from `role_dir`, and replies with a JSON role list (e.g.
-   `["security_engineer", "qa_lead"]`) or `[]` when done;
-2. every chosen role template runs against the aggregated inputs and its
-   deliverable is written to `output_dir`;
+   from `role_dir`, and replies with a JSON plan: role names (e.g.
+   `["security_engineer", "qa_lead"]`) and/or ad-hoc role objects
+   (`{"role": "perf_reviewer", "task": "Analyze performance bottlenecks"}`),
+   or `[]` when done;
+2. every chosen role runs **concurrently, each in its own agent session**:
+   named roles load their `role_dir` template, ad-hoc roles use their task
+   description plus the current deliverables as context (no template
+   needed);
 3. the deliverables fold back into the evidence, so the next orchestrator
    round sees what previous roles concluded;
 4. the loop stops when the orchestrator says `[]` or `max_iterations` is
    reached.
 
-The orchestrator output is untrusted input: role names must resolve to `.md`
-files inside `role_dir` (path traversal is rejected). All other machinery
-(retries, `--reuse`, rounds, validation, sessions) applies to meta stages too.
+The orchestrator output is untrusted input: named roles must resolve to `.md`
+files inside `role_dir` (path traversal rejected) and ad-hoc role names are
+sanitized for output paths. `role_dir` may be absent — ad-hoc roles alone are
+enough. All other machinery (retries, `--reuse`, rounds, validation,
+sessions) applies to meta stages too.
 
 ## One session, many steps
 
