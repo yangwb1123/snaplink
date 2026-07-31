@@ -26,24 +26,28 @@ import (
 	"slices"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/connections"
 	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/netpolicy"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // SchemaVersion is the version of the Snapshot envelope. Bump when a
 // breaking field change happens; readers refuse unknown versions.
-const SchemaVersion = "1"
+const SchemaVersion = "2"
 
 // Snapshot is the in-memory representation of an exported state.
 type Snapshot struct {
-	SchemaVersion   string         `json:"schema_version"`
-	SnapshotID      string         `json:"snapshot_id"`
-	TakenAtUnix     int64          `json:"taken_at_unix"`
-	SourceNamespace string         `json:"source_namespace"`
-	SourceNodeID    string         `json:"source_node_id,omitempty"`
-	BootstrapState  BootstrapState `json:"bootstrap_state"`
-	Resources       Resources      `json:"resources"`
+	SchemaVersion   string             `json:"schema_version"`
+	SnapshotID      string             `json:"snapshot_id"`
+	TakenAtUnix     int64              `json:"taken_at_unix"`
+	SourceNamespace string             `json:"source_namespace"`
+	SourceNodeID    string             `json:"source_node_id,omitempty"`
+	BootstrapState  BootstrapState     `json:"bootstrap_state"`
+	Categories      []ResourceCategory `json:"categories"`
+	Resources       Resources          `json:"resources"`
 }
 
 // BootstrapState captures the highest applied step version for the
@@ -59,12 +63,16 @@ type BootstrapState struct {
 // slice / empty map means "nothing of this kind in the snapshot" and
 // is treated as a no-op on restore (NOT as "delete everything").
 type Resources struct {
-	Clients     []*sso.Client       `json:"clients,omitempty"`
-	Users       []*sso.User         `json:"users,omitempty"`
-	Roles       []ClientRoles       `json:"roles,omitempty"`
-	Assignments []ClientAssignments `json:"assignments,omitempty"`
-	Menus       []ClientMenus       `json:"menus,omitempty"`
-	NetPolicy   []*netpolicy.Policy `json:"netpolicy,omitempty"`
+	Tenants       []*tenant.Tenant                  `json:"tenants,omitempty"`
+	TenantDomains []*tenant.Domain                  `json:"tenant_domains,omitempty"`
+	Connections   []*connections.Connection         `json:"connections,omitempty"`
+	Clients       []*sso.Client                     `json:"clients,omitempty"`
+	Users         []*sso.User                       `json:"users,omitempty"`
+	Pairwise      []security.PairwiseSubjectMapping `json:"pairwise_subjects,omitempty"`
+	Roles         []ClientRoles                     `json:"roles,omitempty"`
+	Assignments   []ClientAssignments               `json:"assignments,omitempty"`
+	Menus         []ClientMenus                     `json:"menus,omitempty"`
+	NetPolicy     []*netpolicy.Policy               `json:"netpolicy,omitempty"`
 }
 
 // ClientRoles is one (clientID, []Role) tuple for the per-client
@@ -92,19 +100,24 @@ type ClientMenus struct {
 type ResourceCategory string
 
 const (
-	CategoryClients     ResourceCategory = "clients"
-	CategoryUsers       ResourceCategory = "users"
-	CategoryRoles       ResourceCategory = "roles"
-	CategoryAssignments ResourceCategory = "assignments"
-	CategoryMenus       ResourceCategory = "menus"
-	CategoryNetPolicy   ResourceCategory = "netpolicy"
+	CategoryTenants       ResourceCategory = "tenants"
+	CategoryTenantDomains ResourceCategory = "tenant_domains"
+	CategoryConnections   ResourceCategory = "connections"
+	CategoryClients       ResourceCategory = "clients"
+	CategoryUsers         ResourceCategory = "users"
+	CategoryPairwise      ResourceCategory = "pairwise_subjects"
+	CategoryRoles         ResourceCategory = "roles"
+	CategoryAssignments   ResourceCategory = "assignments"
+	CategoryMenus         ResourceCategory = "menus"
+	CategoryNetPolicy     ResourceCategory = "netpolicy"
 )
 
 // AllCategories is the canonical category list, used for "include all"
 // defaulting. Do not mutate the returned slice.
 func AllCategories() []ResourceCategory {
 	return []ResourceCategory{
-		CategoryClients, CategoryUsers, CategoryRoles,
+		CategoryTenants, CategoryTenantDomains, CategoryConnections,
+		CategoryClients, CategoryUsers, CategoryPairwise, CategoryRoles,
 		CategoryAssignments, CategoryMenus, CategoryNetPolicy,
 	}
 }
@@ -116,7 +129,27 @@ func excluded(c ResourceCategory, excludes []ResourceCategory) bool {
 
 // IsValidSchemaVersion reports whether v is one this build can handle.
 // Centralized so the codec, restorer, and admin RPC all agree.
-func IsValidSchemaVersion(v string) bool { return v == SchemaVersion }
+func IsValidSchemaVersion(v string) bool { return v == "1" || v == SchemaVersion }
+
+// IncludesCategory reports whether restore may reconcile c. Version 1 can only
+// describe its legacy categories. A nil v2 manifest preserves compatibility
+// for in-process callers; exported v2 snapshots always use an explicit list.
+func (s *Snapshot) IncludesCategory(c ResourceCategory) bool {
+	if s.SchemaVersion == "1" {
+		return slices.Contains(legacyCategories(), c)
+	}
+	if s.Categories == nil {
+		return true
+	}
+	return slices.Contains(s.Categories, c)
+}
+
+func legacyCategories() []ResourceCategory {
+	return []ResourceCategory{
+		CategoryClients, CategoryUsers, CategoryRoles,
+		CategoryAssignments, CategoryMenus, CategoryNetPolicy,
+	}
+}
 
 // Sentinel errors. Admin RPCs map these to gRPC codes; restorers return
 // them so callers can branch on the failure mode.

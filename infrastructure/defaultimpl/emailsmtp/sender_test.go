@@ -69,6 +69,9 @@ func TestSender_SendResetToken(t *testing.T) {
 	if !strings.Contains(got.msg, "Subject:") {
 		t.Fatal("no Subject header in rendered message")
 	}
+	if !strings.Contains(got.msg, "flow=reset_password&amp;token=tok-123") {
+		t.Fatalf("reset action URL is not explicit or escaped: %q", got.msg)
+	}
 }
 
 func TestSender_SendEmailVerificationToken(t *testing.T) {
@@ -86,6 +89,9 @@ func TestSender_SendEmailVerificationToken(t *testing.T) {
 	}
 	if !strings.Contains(got.msg, "verify-tok") {
 		t.Fatal("token missing from rendered message")
+	}
+	if !strings.Contains(got.msg, "flow=verify_email&amp;token=verify-tok") {
+		t.Fatalf("verification action URL is not explicit: %q", got.msg)
 	}
 }
 
@@ -107,6 +113,9 @@ func TestSender_SendEmailChangeToken(t *testing.T) {
 	if !strings.Contains(got.msg, "change-tok") {
 		t.Fatal("token missing from rendered message")
 	}
+	if !strings.Contains(got.msg, "flow=change_email&amp;token=change-tok") {
+		t.Fatalf("email-change action URL is not explicit: %q", got.msg)
+	}
 }
 
 func TestSender_SendInvitation(t *testing.T) {
@@ -127,6 +136,9 @@ func TestSender_SendInvitation(t *testing.T) {
 	}
 	if !strings.Contains(got.msg, "tenant-42") || !strings.Contains(got.msg, "admin") {
 		t.Fatal("tenant/role missing from rendered message")
+	}
+	if !strings.Contains(got.msg, "flow=invitation&amp;token=invite-tok") {
+		t.Fatalf("invitation action URL is not explicit: %q", got.msg)
 	}
 }
 

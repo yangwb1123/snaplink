@@ -24,12 +24,14 @@ uses the APIs below and is normally reverse-proxied beside the server.
 | `security.jti_replay.fail_closed` | Store error → reject (treat-as-replay) instead of fail-open |
 | `identity.client_cache.{enabled,ttl}` | Per-login ClientStore.Get TTL cache (default 30s); `KindClientChange` bus-invalidated on every mutation |
 | `client_registration.default_active` | `true` (default) activates a new DCR registration immediately; `false` opts into the developer-app registration review workflow — the client registers pending (`Active=false`, unable to authenticate on ANY grant) until an admin calls `POST /api/v1/admin/clients/{id}/approve` or `/reject` (`ClientAdminService`) |
+| `client_registration.rotate_access_token_overlap` | Recovery window for RFC 7592 registration-token rotation. The credential used for a successful PUT remains valid for retries during this interval; `<= 0` defaults to 5 minutes. |
 
 ## Server
 
 | Key | Effect |
 |---|---|
 | `server.http2.enabled` | Controls HTTP/2 server-side support. `false` (default) disables HTTP/2 via `GODEBUG=http2server=0` (safe behind a reverse proxy). `true` enables HTTP/2 — required for gRPC or direct-client deployments. If the `GODEBUG` env var is already explicitly set, this field is ignored (explicit env override takes precedence). See `config.HTTP2Config`. |
+| `server.topology.{mode,allow_per_pod_state}` | `mode: single` declares one process; `mode: multi` makes per-process OAuth, session, replay, identity, CIBA, and MFA challenge stores a boot error. `allow_per_pod_state: true` is an explicit development-only escape hatch and is rejected unless mode is `multi`. |
 | `hosted_login.enabled` | Compatibility placeholder only. The field is parsed but the current stock binary has no hosted-login filesystem or route wiring, so setting it does not mount `/login/` or any other frontend. Use a separate frontend project. Do not use this key as a readiness/capability signal. |
 
 ## OIDC
@@ -37,6 +39,7 @@ uses the APIs below and is normally reverse-proxied beside the server.
 | Key | Effect |
 |---|---|
 | `server.issuer` | MUST differ from `sso.DefaultIssuer`; stamped into JWT `iss`, discovery `issuer`, every RFC 9207 `iss` |
+| `server.required_capabilities` | Optional build/deployment contract. Startup and `--validate-only` fail closed unless every listed capability ID appears in the immutable inventory embedded by `python cli.py configure`; inspect with `sso-server modules --json` |
 | `oidc.response_encryption.backend` | JWE-encrypts `id_token` + `/userinfo` responses for clients registering `id_token_encrypted_response_alg`/`userinfo_encrypted_response_alg`: `""` (off, default) \| `rsa` (RSA-OAEP-256) \| `ecdh` (ECDH-ES[+A256KW]) \| `multi` (both, routed per-client by registered key type). Stateless — reads each recipient's public key from the client's registered JWKS |
 
 ## Security
@@ -44,7 +47,7 @@ uses the APIs below and is normally reverse-proxied beside the server.
 | Key | Effect |
 |---|---|
 | `security.mtls.backend` | `tls`\|`header`; `header` for reverse-proxy edges (`X-SSL-Client-Cert`); edge MUST strip from untrusted traffic |
-| `security.trusted_proxies.{cidrs,hops}` | CIDR allowlist compiled once (`peertrust.Checker`) gating the supported proxy-supplied consumers on the direct peer (`RemoteAddr`): the XFF chain walk (rate-limit IP keying + geo/risk-scorer IP; untrusted peer ⇒ RemoteAddr), base-URL derivation from `X-Forwarded-Proto/Host` (issuer/discovery/registration URIs/DPoP `htu`; untrusted peer ⇒ direct Host/TLS), the mesh ext_authz endpoint (untrusted peer ⇒ 401 `invalid_token`, no `X-Auth-*` — include the sidecar's CIDR when `mesh.ext_authz.enabled`), the `region.header_name` resolver (untrusted peer ⇒ pinned default), and the `security.mtls.backend: header` cert extractor (untrusted peer ⇒ no cert ⇒ unbound token / normal `invalid_token` path). Known readers not yet gated are audit IP enrichment, `domains/tenant/middleware.go` XFH tenant resolution, `interfaces/ssoclient/rs`, and push-callback client IP; do not treat their headers as trustworthy at an untrusted edge. Unset = legacy first-hop trust on the supported consumers above |
+| `security.trusted_proxies.{cidrs,hops}` | CIDR allowlist compiled once (`peertrust.Checker`) gating proxy-supplied input on the direct peer (`RemoteAddr`): XFF client IP (rate limit, geo/risk, audit, push callback), `X-Forwarded-Host/Proto` (issuer/discovery/registration/DPoP `htu`, tenant domain routing), mesh `X-Auth-*`, serving-region headers, and header-backed mTLS certificates. Untrusted peer ⇒ direct IP/Host/TLS or the consumer's normal unauthenticated fallback. The resource-server SDK accepts the same middleware through `rs.Config.TrustedProxies`. Unset = legacy first-hop trust |
 | `security.security_headers.{enabled,csp_directives,permissions_policy}` | Off by default. Adds CSP (with a per-request `script-src` nonce) + Permissions-Policy to API responses; also adds `Clear-Site-Data` on `POST /logout` and a non-dry-run `POST /me/account/erase`. Separately deployed frontends must set their own static-asset CSP. `csp_directives`/`permissions_policy` override the SDK's conservative default (`handler.DefaultSecurityHeadersPolicy`) — leave unset to use it |
 | `spiffe.{enabled,trust_domain,audience,jwks_file,max_clock_skew}` | Enabled requires ALL of `trust_domain`+`audience`+`jwks_file`; cmd fails loud on missing |
 | `security.rar_limits.{max_bytes,max_elements,max_depth}` | Bounds an RFC 9396 `authorization_details` payload's SHAPE (serialized size / top-level array element count / max nesting depth) BEFORE it is fully unmarshaled, on `/auth/login` and `/par`. Each sub-field `<= 0` (default) = unbounded — composes with, does not replace, `security.body_limit`. Rejects with the existing `invalid_authorization_details` code. Maps to `sso.WithAuthorizationDetailsLimits` |
@@ -81,6 +84,8 @@ Values below are exactly what the binary's boot-time dispatch accepts
 | Clients + Users (durable identity) | `identity.backend` | `memory` · `sqlite` · `postgres` |
 | Sessions (hot; falls back to `identity.backend`) | `identity.session_backend` | `memory` · `sqlite` · `redis` · `postgres` |
 | OAuth hot stores (auth_code / refresh_token / device_code / par — one key) | `oauth.backend` | `memory` · `sqlite` · `redis` |
+| OAuth opaque lookup protection | `oauth.{sqlite,redis}.{lookup_hmac_key_file,lookup_hmac_previous_key_file}` | Optional files containing at least 32 bytes. New authorization codes, refresh tokens, device/user codes and PAR URIs are stored only as domain-separated HMAC lookup keys. Redis also protects refresh-token index members and removes raw device/user codes from stored JSON and pointer values. Reads try current key, previous key, then legacy plaintext so rollout and rotation preserve in-flight grants. Remove the previous key only after the longest artifact TTL has elapsed; plaintext fallback exists solely for pre-feature records. |
+| OAuth expiry cleanup | `oauth.{auth_code,refresh_token,device_code,par}.reap_interval` | Positive cadence starts background cleanup for memory and SQLite stores; Redis relies on native key TTL. SQLite cleanup uses each table's `expires_at` index. Refresh cleanup also expires the consumed-token family ledger after the token validity window, preventing unbounded reuse-history growth without weakening live-token replay detection. `0` disables background cleanup. |
 | Refresh rotation grace | `oauth.refresh_token.rotation_grace_backend` | `memory` · `sqlite` · `redis` |
 | CIBA requests | `ciba.backend` | `memory` · `sqlite` · `redis` |
 | MFA challenge | `mfa.challenge.backend` | `memory` · `sqlite` · `redis` |
@@ -150,8 +155,9 @@ natively probe) via `sso.WithConnectionProber`. Each probe increments
 | Key | Effect |
 |---|---|
 | `self_service.consent.max_ttl` | Hard server-wide ceiling on consent grant lifetime (`WithConsentTTL`): every recorded grant gets `ExpiresAt = GrantedAt + max_ttl`, after which `GetConsent` treats it as absent and `/auth/login` re-prompts. `0` (default) = no server-enforced expiry — permanent until revoked. Independent of, and can only be tightened by, a client's own `consent_refresh_interval`. Requires `self_service.consent.backend` to be set. |
-| `self_service.identity_link.enabled` | Builds an in-memory `identitylink.Store` and wires `sso.WithIdentityLinkStore`, mounting `GET`/`DELETE /me/identities` — list and unlink the caller's own linked external identities. Disabled by default: byte-identical to a build without the feature |
-| `self_service.identity_link.merge_policy` | `""` / `"reject"` (**default, safe**): wires NO `MergePolicy` Option — a nil policy is already treated as `identitylink.RejectPolicy{}` by `identitylink.Resolve`, the package's own conservative baseline for "an operator who hasn't decided how to merge two accounts should never have that decided for them silently". `"link_only"` wires `identitylink.NewLinkOnlyMergePolicy`, which auto-merges a losing account's identity links onto the winner (sessions/consents/tokens are NOT touched — see the package doc). Any other value fails loud at boot. This only affects the `MergePolicy` EXTENSION POINT (`Server.IdentityLinkStore`/`Server.IdentityMergePolicy`, consulted by a custom login integration) — the stock `/auth/login` handler never calls it |
+| `self_service.identity_link.enabled` | Wires `sso.WithIdentityLinkStore`, mounting `GET`/`DELETE /me/identities` and mapping subjects in built-in static/connection-backed OIDC federation. Disabled by default |
+| `self_service.identity_link.backend` | `memory` (default/compatibility, single process), `sqlite` (durable one-host install; requires `.sqlite.dsn`), or `postgres` (uses the global Postgres pool for multi-replica consistency). One active `(provider, subject)` can belong to exactly one local account |
+| `self_service.identity_link.merge_policy` | `""` / `"reject"` (**default, safe**) rejects conflicting account ownership. `"link_only"` atomically reassigns the losing account's active identity links to the existing owner; sessions, consents, OAuth/refresh tokens, MFA and audit ownership are deliberately NOT merged. Any other value fails at boot |
 
 ## Setup Wizard (first-run onboarding)
 
@@ -421,9 +427,17 @@ Downstream identity resolution uses `externalId` (RFC 7643 §3.1) + a `filter=ex
 
 | Key | Effect |
 |---|---|
-| `snapshot.redact_secrets` | Zeros `Client.Secret` on export-local copies (NOT restorable — use encryption for backup); default nil ⇒ byte-identical |
+| `snapshot.redact_secrets` | Removes client credentials, known user credential attributes and secret-bearing enterprise-connection config keys from export-local copies (NOT restorable — use encryption for backup); default nil ⇒ byte-identical |
 | `snapshot.storage.backend` | Where `Pipeline` persists envelopes: `file` (default; `snapshot.storage.file.dir`, defaults to `./snapshots`) \| `inline` (in-memory; tests only) |
 | `snapshot.encryption.backend` | Sealer for snapshot envelopes: `none` (default; plaintext JSON) \| `passphrase` (argon2id + XChaCha20-Poly1305; `passphrase`/`passphrase_file`) \| `key` (operator-supplied 32-byte `key`/`key_file`, e.g. from a KMS-issued DEK) |
+
+Snapshot schema v2 carries an explicit category manifest and adds tenants,
+tenant-domain routing, enterprise connections and pairwise-subject mappings.
+Readers continue accepting v1; a v1 replace restore cannot delete categories
+that v1 could not represent. After a successful non-dry-run restore, the server
+flushes every local control-plane cache and broadcasts the same full
+invalidation to peer replicas. Sessions and live tokens remain deliberately
+excluded.
 
 ## Releases
 

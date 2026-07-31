@@ -10,7 +10,7 @@
 //
 // For tests use the memory aggregator with pre-populated records:
 //
-//	agg := meteringmemory.New()
+//	agg := meteringmemory.NewAggregator()
 //	agg.Record(&metering.TenantUsage{...})
 package metering
 
@@ -33,13 +33,13 @@ const (
 // period. All counts are non-negative; a zero count means no events of
 // that type occurred in the window.
 type TenantUsage struct {
-	TenantID      string
-	Period        UsagePeriod
-	PeriodStart   time.Time
-	Logins        int64 // login events with outcome=success
-	TokensIssued  int64 // token_issued events
-	ActiveUsers   int64 // distinct ActorIDs that logged in successfully
-	MFAChallenges int64 // mfa_required events
+	TenantID      string      `json:"tenant_id"`
+	Period        UsagePeriod `json:"period"`
+	PeriodStart   time.Time   `json:"period_start"`
+	Logins        int64       `json:"logins"`         // login events with outcome=success
+	TokensIssued  int64       `json:"tokens_issued"`  // token_issued events
+	ActiveUsers   int64       `json:"active_users"`   // distinct ActorIDs that logged in successfully
+	MFAChallenges int64       `json:"mfa_challenges"` // mfa_required events
 	// ActiveClients is the distinct ClientID count for the tenant in the
 	// period, computed from the audit log like ActiveUsers — NOT from the
 	// tokenusage store. tokenusage buckets are deployment-wide token
@@ -47,7 +47,7 @@ type TenantUsage struct {
 	// tenant dimension by design; the audit log already carries tenant +
 	// client on every event and is metering's single source of truth for
 	// the per-tenant billing view.
-	ActiveClients int64
+	ActiveClients int64 `json:"active_clients"`
 }
 
 // Aggregator computes per-tenant usage from the audit log.

@@ -8,6 +8,7 @@ import (
 	tenantmemory "github.com/yangwb1123/snaplink/domains/tenant/memory"
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"google.golang.org/grpc/codes"
 )
 
@@ -26,7 +27,10 @@ func newTenantAdminServiceForTest(store tenant.Store, rec *audit.Recorder) (*Ten
 	svc := NewTenantAdminService(store, rec,
 		func(id string) { cb.invalidatedSuspension = append(cb.invalidatedSuspension, id) },
 		func(id string) { cb.invalidatedResidency = append(cb.invalidatedResidency, id) },
-		func(_ context.Context, id string) { cb.revokedTenants = append(cb.revokedTenants, id) },
+		func(_ context.Context, id string) core.TenantCredentialRevocationReport {
+			cb.revokedTenants = append(cb.revokedTenants, id)
+			return core.TenantCredentialRevocationReport{TenantID: id}
+		},
 	)
 	return svc, cb
 }
@@ -210,6 +214,38 @@ func TestTenantAdminService_SetTenantStatus(t *testing.T) {
 	requireOK(t, err, "sink.Query")
 	if len(events) != 2 { // suspend + re-activate; the no-op flip records nothing
 		t.Errorf("expected 2 status-change audit events, got %d", len(events))
+	}
+}
+
+func TestTenantAdminService_SuspendReturnsCredentialRevocationReport(t *testing.T) {
+	store := tenantmemory.New()
+	report := core.TenantCredentialRevocationReport{
+		TenantID: "t1", RefreshTokensRevoked: 2, SessionsRevoked: 1,
+		Results: []core.CredentialRevocationResult{{
+			IdempotencyKey: "tenant:t1:session:s1", Kind: "session",
+			ResourceID: "s1", Status: "failed", Error: "backend unavailable",
+		}},
+	}
+	svc := NewTenantAdminService(store, nil, nil, nil,
+		func(context.Context, string) core.TenantCredentialRevocationReport { return report })
+	ctx := context.Background()
+	_, err := svc.CreateTenant(ctx, &adminv1.CreateTenantRequest{
+		Tenant: &adminv1.Tenant{Id: "t1", Slug: "t1"},
+	})
+	requireOK(t, err, "CreateTenant")
+
+	resp, err := svc.SetTenantStatus(ctx, &adminv1.SetTenantStatusRequest{
+		Id: "t1", Status: string(tenant.StatusSuspended),
+	})
+	requireOK(t, err, "SetTenantStatus")
+	got := resp.GetCredentialRevocation()
+	if got == nil || got.GetComplete() || got.GetRefreshTokensRevoked() != 2 ||
+		got.GetSessionsRevoked() != 1 || len(got.GetResults()) != 1 {
+		t.Fatalf("credential revocation = %+v", got)
+	}
+	if got.Results[0].GetIdempotencyKey() != "tenant:t1:session:s1" ||
+		got.Results[0].GetStatus() != "failed" {
+		t.Fatalf("result = %+v", got.Results[0])
 	}
 }
 

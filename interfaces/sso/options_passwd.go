@@ -329,6 +329,22 @@ func WithConsentChallengeStore(store ConsentChallengeStore) Option {
 	}
 }
 
+// WithLoginTransactionStore overrides the single-replica store used between
+// completed primary/MFA authentication and a consent decision. Clustered
+// consent-only deployments should provide a shared implementation.
+func WithLoginTransactionStore(
+	store spi.MFAChallengeStore, ttl time.Duration,
+) Option {
+	return func(s *Server) {
+		if store != nil {
+			s.loginTransactionStore = store
+		}
+		if ttl > 0 {
+			s.loginTransactionTTL = ttl
+		}
+	}
+}
+
 // WithScopeDescriptions registers operator-defined human descriptions for OAuth
 // scopes (scope -> description). They are surfaced in the consent_required
 // response (alongside the client's display name) so a consent UI can show

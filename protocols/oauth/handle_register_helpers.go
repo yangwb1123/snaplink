@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -9,6 +10,57 @@ import (
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
+
+const (
+	dcrResponseTypesAttribute = "_snaplink_dcr_response_types"
+	dcrContactsAttribute      = "_snaplink_dcr_contacts"
+)
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func dcrJWKS(keys []core.JWK) *DCRJWKS {
+	if len(keys) == 0 {
+		return nil
+	}
+	return &DCRJWKS{Keys: append([]core.JWK(nil), keys...)}
+}
+
+func dcrRequestKeys(req *DCRRequest) []core.JWK {
+	if req.JWKS == nil {
+		return nil
+	}
+	return append([]core.JWK(nil), req.JWKS.Keys...)
+}
+
+func dcrAttributes(req *DCRRequest, existing map[string]string) map[string]string {
+	out := make(map[string]string, len(existing)+2)
+	for key, value := range existing {
+		out[key] = value
+	}
+	for key, values := range map[string][]string{
+		dcrResponseTypesAttribute: req.ResponseTypes,
+		dcrContactsAttribute:      req.Contacts,
+	} {
+		data, _ := json.Marshal(values)
+		out[key] = string(data)
+	}
+	return out
+}
+
+func dcrAttributeList(attributes map[string]string, key string) []string {
+	out := []string{}
+	if attributes != nil {
+		_ = json.Unmarshal([]byte(attributes[key]), &out)
+	}
+	return out
+}
 
 // recordRegistrationCreated writes the EventClientRegistered lifecycle event
 // for a freshly minted confidential client on the /register path. The
@@ -135,6 +187,12 @@ func buildRegisteredClient(req *DCRRequest, policy *DCRPolicy, id, secret, regTo
 		AllowedResources:        append([]string(nil), req.AllowedResources...),
 		PostLogoutRedirectURIs:  append([]string(nil), req.PostLogoutRedirectURIs...),
 		RegistrationAccessToken: regToken,
+		Attributes:              dcrAttributes(req, nil),
+		JWKS:                    dcrRequestKeys(req),
+		TLSClientAuthSubjectDN:  req.TLSClientAuthSubjectDN,
+		TLSClientAuthSANDNS:     req.TLSClientAuthSANDNS,
+		TLSClientAuthSANEmail:   req.TLSClientAuthSANEmail,
+		TLSClientAuthSANURI:     req.TLSClientAuthSANURI,
 
 		GrantTypes:                   append([]string(nil), req.GrantTypes...),
 		TokenEndpointAuthMethod:      req.TokenEndpointAuthMethod,
@@ -169,6 +227,12 @@ func buildDCRResponse(req *DCRRequest, client *core.Client, ctx core.HandlerCont
 		AllowedResources:        client.AllowedResources,
 		PostLogoutRedirectURIs:  client.PostLogoutRedirectURIs,
 		RequirePKCE:             client.RequirePKCE,
+		TenantID:                client.TenantID,
+		JWKS:                    dcrJWKS(client.JWKS),
+		TLSClientAuthSubjectDN:  client.TLSClientAuthSubjectDN,
+		TLSClientAuthSANDNS:     client.TLSClientAuthSANDNS,
+		TLSClientAuthSANEmail:   client.TLSClientAuthSANEmail,
+		TLSClientAuthSANURI:     client.TLSClientAuthSANURI,
 
 		IDTokenEncryptedResponseAlg:  client.IDTokenEncryptedResponseAlg,
 		IDTokenEncryptedResponseEnc:  client.IDTokenEncryptedResponseEnc,
@@ -184,23 +248,46 @@ func buildDCRResponse(req *DCRRequest, client *core.Client, ctx core.HandlerCont
 // reveal once in the response ("" => no rotation, field stays omitted). On a
 // generator failure it keeps its own distinct log message and returns the
 // error so the caller emits a 500.
-func rotateRAT(d RegisterDeps, client *core.Client) (ratToStore, newRAT string, err error) {
-	ratToStore = client.RegistrationAccessToken // existing hash, unchanged
+type ratRotation struct {
+	current, plaintext, previous string
+	overlapUntil                 time.Time
+}
+
+func rotateRAT(d RegisterDeps, client *core.Client, bearer string) (ratRotation, error) {
+	rotation := ratRotation{
+		current: client.RegistrationAccessToken, previous: client.PreviousRegistrationAccessToken,
+		overlapUntil: client.RegistrationAccessTokenOverlapUntil,
+	}
 	if !d.DCRPolicy().RotateRegistrationAccessToken {
-		return ratToStore, "", nil
+		return rotation, nil
 	}
 	t, err := GenerateClientSecret()
 	if err != nil {
 		d.SrvLogger().Error("dcr reg-token rotation gen failed", "error", err)
-		return "", "", err
+		return ratRotation{}, err
 	}
-	return t, t, nil // plaintext; the store hashes it at rest on Update
+	if !validRegistrationTokenPrevious(client, bearer, time.Now()) {
+		rotation.previous = client.RegistrationAccessToken
+		overlap := d.DCRPolicy().RegistrationAccessTokenOverlap
+		if overlap <= 0 {
+			overlap = 5 * time.Minute
+		}
+		rotation.overlapUntil = time.Now().Add(overlap)
+	}
+	rotation.current, rotation.plaintext = t, t
+	return rotation, nil
+}
+
+func validRegistrationTokenPrevious(client *core.Client, bearer string, now time.Time) bool {
+	return !client.RegistrationAccessTokenOverlapUntil.IsZero() &&
+		now.Before(client.RegistrationAccessTokenOverlapUntil) &&
+		security.CompareClientSecret(client.PreviousRegistrationAccessToken, bearer)
 }
 
 // buildUpdatedClient assembles the core.Client for the RFC 7592 §2.2 update
 // path. The client_secret stays unchanged (rotation is a separate admin RPC);
 // ratToStore carries the preserved-or-rotated registration_access_token.
-func buildUpdatedClient(req *DCRRequest, client *core.Client, ratToStore string) *core.Client {
+func buildUpdatedClient(req *DCRRequest, client *core.Client, rotation ratRotation) *core.Client {
 	tokenStrategy := req.TokenStrategy
 	if tokenStrategy == "" {
 		tokenStrategy = client.TokenStrategy
@@ -212,34 +299,30 @@ func buildUpdatedClient(req *DCRRequest, client *core.Client, ratToStore string)
 	if tokenAuthMethod == "" {
 		tokenAuthMethod = client.TokenEndpointAuthMethod
 	}
-	return &core.Client{
-		ID:                      client.ID,
-		Secret:                  client.Secret, // unchanged
-		RegistrationAccessToken: ratToStore,
-		Active:                  client.Active,
-		Name:                    req.ClientName,
-		RedirectURIs:            append([]string(nil), req.RedirectURIs...),
-		AllowedScopes:           SplitScope(req.Scope),
-		AllowedAuthenticators:   append([]string(nil), req.AllowedAuthenticators...),
-		TokenStrategy:           tokenStrategy,
-		TokenEndpointAuthMethod: tokenAuthMethod,
-		// Tenant is immutable across a 7592 update: the secret (hence the client
-		// identity + tenant binding) is preserved, so a PUT MUST NOT let the
-		// holder re-home the client into another tenant.
-		TenantID: client.TenantID,
-		// Derive public-ness from the STORED credential (the secret is preserved
-		// above), NOT req.TokenEndpointAuthMethod — otherwise a PUT omitting or
-		// changing that field could clear RequirePKCE on a still-public client,
-		// reaching the public-client-without-PKCE state the create path forbids.
-		RequirePKCE:            req.RequirePKCE || client.Secret == "",
-		AllowedPKCEMethods:     pkceMethodsForRegistration(req.RequirePKCE || client.Secret == ""),
-		AllowedResources:       append([]string(nil), req.AllowedResources...),
-		PostLogoutRedirectURIs: append([]string(nil), req.PostLogoutRedirectURIs...),
-		GrantTypes:             append([]string(nil), req.GrantTypes...),
-
-		IDTokenEncryptedResponseAlg:  req.IDTokenEncryptedResponseAlg,
-		IDTokenEncryptedResponseEnc:  req.IDTokenEncryptedResponseEnc,
-		UserinfoEncryptedResponseAlg: req.UserinfoEncryptedResponseAlg,
-		UserinfoEncryptedResponseEnc: req.UserinfoEncryptedResponseEnc,
-	}
+	updated := *client
+	updated.RegistrationAccessToken = rotation.current
+	updated.PreviousRegistrationAccessToken = rotation.previous
+	updated.RegistrationAccessTokenOverlapUntil = rotation.overlapUntil
+	updated.Name = req.ClientName
+	updated.RedirectURIs = append([]string(nil), req.RedirectURIs...)
+	updated.AllowedScopes = SplitScope(req.Scope)
+	updated.AllowedAuthenticators = append([]string(nil), req.AllowedAuthenticators...)
+	updated.TokenStrategy = tokenStrategy
+	updated.TokenEndpointAuthMethod = tokenAuthMethod
+	updated.RequirePKCE = req.RequirePKCE || client.Secret == ""
+	updated.AllowedPKCEMethods = pkceMethodsForRegistration(updated.RequirePKCE)
+	updated.AllowedResources = append([]string(nil), req.AllowedResources...)
+	updated.PostLogoutRedirectURIs = append([]string(nil), req.PostLogoutRedirectURIs...)
+	updated.GrantTypes = append([]string(nil), req.GrantTypes...)
+	updated.Attributes = dcrAttributes(req, client.Attributes)
+	updated.JWKS = dcrRequestKeys(req)
+	updated.TLSClientAuthSubjectDN = req.TLSClientAuthSubjectDN
+	updated.TLSClientAuthSANDNS = req.TLSClientAuthSANDNS
+	updated.TLSClientAuthSANEmail = req.TLSClientAuthSANEmail
+	updated.TLSClientAuthSANURI = req.TLSClientAuthSANURI
+	updated.IDTokenEncryptedResponseAlg = req.IDTokenEncryptedResponseAlg
+	updated.IDTokenEncryptedResponseEnc = req.IDTokenEncryptedResponseEnc
+	updated.UserinfoEncryptedResponseAlg = req.UserinfoEncryptedResponseAlg
+	updated.UserinfoEncryptedResponseEnc = req.UserinfoEncryptedResponseEnc
+	return &updated
 }

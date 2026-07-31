@@ -30,7 +30,10 @@ func HandleMyDevices(d Deps, ctx core.HandlerContext) {
 	}
 	devices = filterDevicesByQuery(ctx, devices)
 	entries := make([]deviceEntry, len(devices))
-	sessions, _ := d.SessionManager().ListByUser(ctx.Request().Context(), userID)
+	var sessions []*core.Session
+	if manager := d.SessionManager(); manager != nil {
+		sessions, _ = manager.ListByUser(ctx.Request().Context(), userID)
+	}
 	sessionByDevice := mapDeviceSessions(sessions)
 	for i, dev := range devices {
 		entries[i] = deviceEntry{Device: *dev, ActiveSessions: sessionByDevice[dev.ID]}
@@ -61,7 +64,10 @@ func HandleMyDeviceByID(d Deps, ctx core.HandlerContext) {
 		device.Device
 		ActiveSessions []core.Session `json:"active_sessions"`
 	}
-	sessions, _ := d.SessionManager().ListByUser(ctx.Request().Context(), userID)
+	var sessions []*core.Session
+	if manager := d.SessionManager(); manager != nil {
+		sessions, _ = manager.ListByUser(ctx.Request().Context(), userID)
+	}
 	var activeSessions []core.Session
 	for _, s := range sessions {
 		if s.DeviceID == deviceID || (s.DeviceID == "" && s.IP == dev.LastIP) {
@@ -139,24 +145,20 @@ func HandleReportLostDevice(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
 		return
 	}
-	// Revoke all sessions for this device.
-	sessions, err := d.SessionManager().ListByUser(ctx.Request().Context(), userID)
-	if err == nil {
-		for _, s := range sessions {
-			if s.DeviceID == deviceID || (s.DeviceID == "" && s.IP == dev.LastIP) {
-				d.SessionManager().Destroy(ctx.Request().Context(), s.ID)
-			}
-		}
-	}
-	// Flag the device as suspicious.
+	sessions := device.RevokeSessions(
+		ctx.Request().Context(), d.SessionManager(), userID, deviceID, dev.LastIP,
+	)
 	dev.Suspicious = true
+	result := device.MutationResult{
+		DeviceID: deviceID, DeviceStatus: device.MutationSuspended, Sessions: sessions,
+	}
 	if err := store.Upsert(ctx.Request().Context(), dev); err != nil {
 		d.Logger().Error("report lost device: upsert failed", "device_id", deviceID, "error", err)
-		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
-		return
+		result.DeviceStatus = device.MutationFailed
+		result.DeviceError = "device_update_failed"
 	}
 	d.Logger().Info("device reported lost", "user_id", userID, "device_id", deviceID, "device_ip", dev.LastIP)
-	ctx.JSON(http.StatusOK, map[string]any{core.KeyStatus: core.StatusOK, "device_suspended": true})
+	writeDeviceMutation(ctx, result)
 }
 
 // HandleSetDeviceTrust serves POST /me/devices/:id/trust — marks a device as
@@ -206,20 +208,28 @@ func HandleDeleteMyDevice(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
 		return
 	}
-	sessions, err := d.SessionManager().ListByUser(ctx.Request().Context(), userID)
-	if err == nil {
-		for _, s := range sessions {
-			if s.DeviceID == deviceID || (s.DeviceID == "" && s.IP == dev.LastIP) {
-				d.SessionManager().Destroy(ctx.Request().Context(), s.ID)
-			}
-		}
+	sessions := device.RevokeSessions(
+		ctx.Request().Context(), d.SessionManager(), userID, deviceID, dev.LastIP,
+	)
+	result := device.MutationResult{
+		DeviceID: deviceID, DeviceStatus: device.MutationDeleted, Sessions: sessions,
 	}
 	if err := store.Delete(ctx.Request().Context(), deviceID); err != nil {
 		d.Logger().Error("delete device failed", "device_id", deviceID, "error", err)
-		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
-		return
+		result.DeviceStatus = device.MutationFailed
+		result.DeviceError = "device_delete_failed"
 	}
-	ctx.JSON(http.StatusOK, map[string]any{core.KeyStatus: core.StatusOK})
+	writeDeviceMutation(ctx, result)
+}
+
+func writeDeviceMutation(ctx core.HandlerContext, result device.MutationResult) {
+	code := http.StatusOK
+	status := core.StatusOK
+	if !result.Succeeded() {
+		code = http.StatusMultiStatus
+		status = "partial_failure"
+	}
+	ctx.JSON(code, map[string]any{core.KeyStatus: status, "result": result})
 }
 
 func mapDeviceSessions(sessions []*core.Session) map[string]int {

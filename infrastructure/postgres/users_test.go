@@ -222,3 +222,21 @@ func TestUser_NanosecondRoundTrip(t *testing.T) {
 		t.Logf("updated_at = %v (note: zero sub-second is possible but rare)", got.UpdatedAt)
 	}
 }
+
+func TestUser_ListPaginated(t *testing.T) {
+	t.Parallel()
+	p := freshUserProvider(t)
+	ctx := context.Background()
+	for _, id := range []string{"e", "a", "d", "b", "c"} {
+		if err := p.CreateOrUpdate(ctx, &core.User{ID: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, total, err := p.ListPaginated(ctx, 1, 2)
+	if err != nil {
+		t.Fatalf("ListPaginated: %v", err)
+	}
+	if total != 5 || len(page) != 2 || page[0].ID != "b" || page[1].ID != "c" {
+		t.Fatalf("page=%v total=%d, want [b c], 5", page, total)
+	}
+}

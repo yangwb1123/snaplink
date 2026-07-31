@@ -167,6 +167,23 @@ func HandleReplayDeadLetter(d HandlerDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusNotFound, errBody(core.ErrWebhookDeadLetterNotFound))
 		return
 	}
+	if errors.Is(err, ErrReplayCleanup) {
+		ctx.JSON(http.StatusMultiStatus, map[string]any{
+			core.KeyWebhookDeadLetter: entry,
+			"delivery_status":         "delivered",
+			"cleanup_status":          "failed",
+			"retry_safe":              true,
+		})
+		return
+	}
+	if errors.Is(err, ErrReplayInProgress) {
+		ctx.JSON(http.StatusConflict, map[string]any{
+			core.KeyWebhookDeadLetter: entry,
+			core.KeyError:             "webhook_replay_in_progress",
+			"retry_safe":              false,
+		})
+		return
+	}
 	if err != nil {
 		// The subscription resolve or the replay POST itself failed — an
 		// external/upstream condition, not this server's fault; the entry
@@ -175,7 +192,12 @@ func HandleReplayDeadLetter(d HandlerDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadGateway, errBodyDesc(core.ErrInternal, err.Error()))
 		return
 	}
-	ctx.JSON(http.StatusOK, map[string]any{core.KeyWebhookDeadLetter: entry})
+	ctx.JSON(http.StatusOK, map[string]any{
+		core.KeyWebhookDeadLetter: entry,
+		"delivery_status":         "delivered",
+		"cleanup_status":          "complete",
+		"retry_safe":              true,
+	})
 }
 
 // subscriptionStoreOrErr resolves the wired SubscriptionStore, writing the

@@ -167,6 +167,26 @@ func TestUserProvider_List_OrderById(t *testing.T) {
 	}
 }
 
+func TestUserProvider_ListPaginated(t *testing.T) {
+	t.Parallel()
+	p := newTestProvider(t)
+	ctx := context.Background()
+	for _, id := range []string{"e", "a", "d", "b", "c"} {
+		_ = p.CreateOrUpdate(ctx, &sso.User{ID: id})
+	}
+	page, total, err := p.ListPaginated(ctx, 1, 2)
+	if err != nil {
+		t.Fatalf("ListPaginated: %v", err)
+	}
+	if total != 5 || len(page) != 2 || page[0].ID != "b" || page[1].ID != "c" {
+		t.Fatalf("page=%v total=%d, want [b c], 5", page, total)
+	}
+	empty, total, err := p.ListPaginated(ctx, 99, 10)
+	if err != nil || total != 5 || len(empty) != 0 {
+		t.Fatalf("past-end page=%v total=%d err=%v", empty, total, err)
+	}
+}
+
 func TestUserProvider_Delete_RemovesUser(t *testing.T) {
 	t.Parallel()
 	p := newTestProvider(t)

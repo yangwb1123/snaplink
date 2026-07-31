@@ -114,3 +114,48 @@ func TestRedisUserProvider_ListAndDelete(t *testing.T) {
 		t.Errorf("idempotent Delete = %v, want nil", err)
 	}
 }
+
+func TestRedisUserProvider_ListPaginated(t *testing.T) {
+	t.Parallel()
+	_, rdb := newTestClient(t)
+	up := NewUserProvider(rdb)
+	ctx := context.Background()
+	for _, id := range []string{"e", "a", "d", "b", "c"} {
+		if err := up.CreateOrUpdate(ctx, &sso.User{ID: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, total, err := up.ListPaginated(ctx, 1, 2)
+	if err != nil {
+		t.Fatalf("ListPaginated: %v", err)
+	}
+	if total != 5 || len(page) != 2 || page[0].ID != "b" || page[1].ID != "c" {
+		t.Fatalf("page=%v total=%d, want [b c], 5", page, total)
+	}
+	empty, total, err := up.ListPaginated(ctx, 99, 10)
+	if err != nil || total != 5 || len(empty) != 0 {
+		t.Fatalf("past-end page=%v total=%d err=%v", empty, total, err)
+	}
+}
+
+func TestRedisUserProvider_ListPaginatedMigratesLegacyIndex(t *testing.T) {
+	t.Parallel()
+	_, rdb := newTestClient(t)
+	up := NewUserProvider(rdb)
+	ctx := context.Background()
+	for _, id := range []string{"c", "a", "b"} {
+		if err := up.CreateOrUpdate(ctx, &sso.User{ID: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := rdb.Del(ctx, userPageKey, userPageReadyKey).Err(); err != nil {
+		t.Fatal(err)
+	}
+	page, total, err := up.ListPaginated(ctx, 0, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 || len(page) != 2 || page[0].ID != "a" || page[1].ID != "b" {
+		t.Fatalf("migrated page=%v total=%d, want [a b], 3", page, total)
+	}
+}

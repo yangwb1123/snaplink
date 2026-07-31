@@ -73,6 +73,11 @@ const (
 	// a dropped Event only prolongs the stale-config window by one cache TTL.
 	KindConnectionChange EventKind = "connection.change"
 
+	// KindControlPlaneRestore signals that a portable snapshot restore changed
+	// an unknown set of control-plane keys. Replace mode may delete identifiers
+	// absent from the artifact, so subscribers must flush every affected cache.
+	KindControlPlaneRestore EventKind = "control_plane.restore"
+
 	// KindSigningKeyRotation signals that the publishing replica rotated its
 	// signing key: a NEW kid is now the active signer and an OLD (demoted) kid
 	// is verify-only, scheduled for retirement at a wall-clock deadline. The

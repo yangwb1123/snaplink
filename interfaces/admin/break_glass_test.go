@@ -56,6 +56,7 @@ type bgTestDeps struct {
 	// (TargetHoldsAdminScope). Empty ⇒ no target is privileged, so the floor is a
 	// no-op and every pre-existing break-glass test behaves unchanged.
 	privilegedTargets map[string]bool
+	revokeTokenErr    error
 }
 
 func (d *bgTestDeps) SessionMgr() core.SessionManager                       { return d.sessions }
@@ -122,7 +123,12 @@ func (d *bgTestDeps) MintImpersonationToken(ctx context.Context, a core.AdminSes
 	return core.ImpersonationCredential{Token: tok.AccessToken, TokenType: tok.TokenType, ExpiresIn: tok.ExpiresIn, SessionID: sid}, nil
 }
 
-func (d *bgTestDeps) RevokeToken(ctx context.Context, token string) { _ = d.tokens.Revoke(ctx, token) }
+func (d *bgTestDeps) RevokeToken(ctx context.Context, token string) error {
+	if d.revokeTokenErr != nil {
+		return d.revokeTokenErr
+	}
+	return d.tokens.Revoke(ctx, token)
+}
 
 // TargetHoldsAdminScope mirrors *sso.Server's real floor: a configured set of
 // privileged targets stands in for the permissions.Provider admin-scope lookup.
@@ -331,6 +337,65 @@ func TestBreakGlassCreate_ReadonlyScopeNeverMintsSession(t *testing.T) {
 	all, _ := d.sessions.ListAll(context.Background())
 	if len(all) != 0 {
 		t.Fatalf("readonly grant must leave zero sessions — no bearer exists to mutate through, got %d", len(all))
+	}
+}
+
+type createFailBreakGlassStore struct{ core.BreakGlassStore }
+
+func (createFailBreakGlassStore) Create(context.Context, core.AdminSession) error {
+	return errors.New("injected grant persistence failure")
+}
+
+func TestBreakGlassCreate_PersistsGrantBeforeMintingSession(t *testing.T) {
+	d := newBGTestDeps()
+	d.breakGlass = createFailBreakGlassStore{BreakGlassStore: d.breakGlass}
+	ctx, w := bgCtx("admin-a", "", `{
+		"target_user_id":"user-1","reason":"ticket-1","scope":"impersonate"
+	}`)
+	HandleCreateBreakGlass(d, ctx)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+	sessions, err := d.sessions.ListAll(context.Background())
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("failed grant persistence orphaned sessions: %+v", sessions)
+	}
+}
+
+type destroyFailSessionManager struct{ core.SessionManager }
+
+func (destroyFailSessionManager) Destroy(context.Context, string) error {
+	return errors.New("injected session destroy failure")
+}
+
+func TestBreakGlassRevoke_ReturnsEveryDerivedCredentialFailure(t *testing.T) {
+	d := newBGTestDeps()
+	ctx, w := bgCtx("admin-a", "", `{
+		"target_user_id":"user-1","reason":"ticket-1","scope":"impersonate"
+	}`)
+	HandleCreateBreakGlass(d, ctx)
+	created := decodeSession(t, w)
+	d.sessions = destroyFailSessionManager{SessionManager: d.sessions}
+	d.revokeTokenErr = errors.New("injected token revoke failure")
+
+	rctx, rw := bgCtx("admin-a", created.ID, "")
+	HandleRevokeBreakGlass(d, rctx)
+	if rw.Code != http.StatusMultiStatus {
+		t.Fatalf("status = %d, body=%s", rw.Code, rw.Body.String())
+	}
+	var response struct {
+		Results []derivedCredentialResult `json:"credential_results"`
+	}
+	if err := json.Unmarshal(rw.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Results) != 1 || response.Results[0].Kind != "session" ||
+		response.Results[0].Status != "failed" ||
+		response.Results[0].IdempotencyKey == "" {
+		t.Fatalf("credential results = %+v", response.Results)
 	}
 }
 

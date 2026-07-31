@@ -44,7 +44,7 @@ func clientWriteArgs(c *sso.Client, secret, rat string) ([]any, error) {
 	postLogout, _ := json.Marshal(c.PostLogoutRedirectURIs)
 	authzDetails, _ := json.Marshal(c.AllowedAuthorizationDetailsTypes)
 	pkceM, _ := json.Marshal(c.AllowedPKCEMethods)
-	attrs, _ := json.Marshal(c.Attributes)
+	attrs, _ := json.Marshal(clientAttributesForStorage(c))
 
 	return []any{
 		c.ID, secret, c.Name,
@@ -65,6 +65,47 @@ func clientWriteArgs(c *sso.Client, secret, rat string) ([]any, error) {
 	}, nil
 }
 
+func clientAttributesForStorage(c *sso.Client) map[string]string {
+	out := make(map[string]string, len(c.Attributes)+8)
+	for key, value := range c.Attributes {
+		out[key] = value
+	}
+	data, _ := json.Marshal(c.GrantTypes)
+	out["_snaplink_client_grant_types"] = string(data)
+	out["_snaplink_client_token_auth_method"] = c.TokenEndpointAuthMethod
+	out["_snaplink_client_tls_subject_dn"] = c.TLSClientAuthSubjectDN
+	out["_snaplink_client_tls_san_dns"] = c.TLSClientAuthSANDNS
+	out["_snaplink_client_tls_san_email"] = c.TLSClientAuthSANEmail
+	out["_snaplink_client_tls_san_uri"] = c.TLSClientAuthSANURI
+	out["_snaplink_client_previous_rat"] = c.PreviousRegistrationAccessToken
+	out["_snaplink_client_rat_overlap_until"] = c.RegistrationAccessTokenOverlapUntil.UTC().Format(time.RFC3339Nano)
+	return out
+}
+
+func hydrateClientAttributes(c *sso.Client) {
+	if c.Attributes == nil {
+		return
+	}
+	_ = json.Unmarshal([]byte(c.Attributes["_snaplink_client_grant_types"]), &c.GrantTypes)
+	c.TokenEndpointAuthMethod = c.Attributes["_snaplink_client_token_auth_method"]
+	c.TLSClientAuthSubjectDN = c.Attributes["_snaplink_client_tls_subject_dn"]
+	c.TLSClientAuthSANDNS = c.Attributes["_snaplink_client_tls_san_dns"]
+	c.TLSClientAuthSANEmail = c.Attributes["_snaplink_client_tls_san_email"]
+	c.TLSClientAuthSANURI = c.Attributes["_snaplink_client_tls_san_uri"]
+	c.PreviousRegistrationAccessToken = c.Attributes["_snaplink_client_previous_rat"]
+	c.RegistrationAccessTokenOverlapUntil, _ = time.Parse(
+		time.RFC3339Nano, c.Attributes["_snaplink_client_rat_overlap_until"],
+	)
+	for _, key := range []string{
+		"_snaplink_client_grant_types", "_snaplink_client_token_auth_method",
+		"_snaplink_client_tls_subject_dn", "_snaplink_client_tls_san_dns",
+		"_snaplink_client_tls_san_email", "_snaplink_client_tls_san_uri",
+		"_snaplink_client_previous_rat", "_snaplink_client_rat_overlap_until",
+	} {
+		delete(c.Attributes, key)
+	}
+}
+
 // clientWritePrep hashes the secret + registration access token and
 // builds the shared write-argument bundle. Add / Put / Update only
 // differ in their SQL verb, so they all funnel through here.
@@ -77,7 +118,13 @@ func clientWritePrep(c *sso.Client) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return clientWriteArgs(c, secret, rat)
+	previousRAT, err := hashClientSecretField(c.PreviousRegistrationAccessToken, "previous rat")
+	if err != nil {
+		return nil, err
+	}
+	prepared := *c
+	prepared.PreviousRegistrationAccessToken = previousRAT
+	return clientWriteArgs(&prepared, secret, rat)
 }
 
 // clientScanRow holds the raw column values scanned from a client row
@@ -198,5 +245,6 @@ func (r *clientScanRow) jsonFields() error {
 			return err
 		}
 	}
+	hydrateClientAttributes(c)
 	return nil
 }

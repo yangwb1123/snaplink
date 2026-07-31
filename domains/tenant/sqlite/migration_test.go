@@ -165,8 +165,9 @@ func TestMigration_V3NoOpsOnV2PopulatedDB(t *testing.T) {
 	}
 	defer func() { _ = s.Close() }()
 
-	if v, _ := migrate.CurrentVersion(ctx, s.db, "tenant"); v != 3 {
-		t.Errorf("post-upgrade version = %d, want 3", v)
+	head := migrations[len(migrations)-1].Version
+	if v, _ := migrate.CurrentVersion(ctx, s.db, "tenant"); v != head {
+		t.Errorf("post-upgrade version = %d, want %d", v, head)
 	}
 
 	// The pre-existing row survives, keeps its v2 region fields, and

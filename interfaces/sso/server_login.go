@@ -12,7 +12,6 @@ import (
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/platform/cluster"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
-	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/trust"
 )
@@ -41,29 +40,26 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	if s.checkLoginDeadline(ctx, req.State) {
 		return
 	}
-
-	// OIDC Core §3.1.2.1 prompt=none silent-renewal contract; parsed before the
-	// providers/credential paths so this branch can override them (see handlePromptNone).
-	prompts := oidc.ParsePromptValues(req.Prompt)
-	if oidc.PromptHasNone(prompts) {
-		s.handlePromptNone(ctx, prompts, &req)
+	if s.handleLoginContinuationOrPromptNone(ctx, req) {
 		return
 	}
 	if s.checkLoginDeadline(ctx, req.State) {
 		return
 	}
 
-	client, handled := s.preAuthLoginGates(ctx, &req)
+	authzCtx, client, handled := s.preAuthLoginGates(ctx, &req)
 	if handled {
 		return
 	}
+	ctx = authzCtx
 
 	result, handled := s.credentialLoginStage(ctx, &req, client)
 	if handled {
 		return
 	}
 
-	s.finishLogin(ctx, result, req, client)
+	nextCtx := s.wrapForLoginContinuation(ctx, result, req, client, false)
+	s.finishLogin(nextCtx, result, req, client)
 }
 
 func (s *Server) directMintClaims(ctx HandlerContext, result *AuthResult, score trust.TrustScore, known bool) map[string]string {
@@ -200,32 +196,33 @@ func (s *Server) armAuthzRequestTimeout(ctx HandlerContext) context.CancelFunc {
 // authz-request validation (order JAR -> FAPI -> param shapes) — with the
 // login deadline re-checked between stages. handled=true means a response was
 // ALREADY written and the caller MUST return.
-func (s *Server) preAuthLoginGates(ctx HandlerContext, req *login.Request) (*Client, bool) {
+func (s *Server) preAuthLoginGates(ctx HandlerContext, req *login.Request) (HandlerContext, *Client, bool) {
 	// No provider selected yet: home-realm discovery (B2B) or generic provider list.
 	if s.respondLoginProviders(ctx, req) {
-		return nil, true
+		return ctx, nil, true
 	}
 	if s.checkLoginDeadline(ctx, req.State) {
-		return nil, true
+		return ctx, nil, true
 	}
 
 	// Pre-authentication client gates (existence/active/tenant/residency/PAR-JAR-required/allowlist).
 	client, handled := s.resolveAndValidateLoginClient(ctx, req)
 	if handled {
-		return nil, true
+		return ctx, nil, true
 	}
+	ctx = s.wrapAuthorizationResponse(ctx, req, client)
 	if s.checkLoginDeadline(ctx, req.State) {
-		return nil, true
+		return ctx, nil, true
 	}
 
 	// Post PAR+JAR-merge authz-request validation (order JAR -> FAPI -> param shapes).
 	if s.runPostMergeAuthzValidation(ctx, req, client) {
-		return nil, true
+		return ctx, nil, true
 	}
 	if s.checkLoginDeadline(ctx, req.State) {
-		return nil, true
+		return ctx, nil, true
 	}
-	return client, false
+	return ctx, client, false
 }
 
 // credentialLoginStage resolves the authenticator, validates credentials

@@ -8,6 +8,7 @@ import (
 	"context"
 	"maps"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -17,18 +18,20 @@ import (
 // Store holds Tenants + Domains in process-local maps. Safe for
 // concurrent use.
 type Store struct {
-	mu      sync.RWMutex
-	tenants map[string]*tenant.Tenant
-	domains map[string]*tenant.Domain // keyed by hostname (lowercased)
-	now     func() time.Time
+	mu       sync.RWMutex
+	tenants  map[string]*tenant.Tenant
+	domains  map[string]*tenant.Domain // keyed by hostname (lowercased)
+	branding map[string]tenant.Branding
+	now      func() time.Time
 }
 
 // New constructs an empty Store.
 func New() *Store {
 	return &Store{
-		tenants: make(map[string]*tenant.Tenant),
-		domains: make(map[string]*tenant.Domain),
-		now:     func() time.Time { return time.Now().UTC() },
+		tenants:  make(map[string]*tenant.Tenant),
+		domains:  make(map[string]*tenant.Domain),
+		branding: make(map[string]tenant.Branding),
+		now:      func() time.Time { return time.Now().UTC() },
 	}
 }
 
@@ -77,6 +80,7 @@ func (s *Store) DeleteTenant(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.tenants, id)
+	delete(s.branding, id)
 	// Cascade: drop any domains pointing at this tenant. The store
 	// is the source of truth — leaving orphan Domain rows would
 	// route to a 404 tenant on next request.
@@ -86,6 +90,51 @@ func (s *Store) DeleteTenant(_ context.Context, id string) error {
 		}
 	}
 	return nil
+}
+
+// GetBranding returns the dedicated branding resource without exposing or
+// copying Tenant.Settings.
+func (s *Store) GetBranding(_ context.Context, tenantID string) (tenant.Branding, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.tenants[tenantID]; !ok {
+		return tenant.Branding{}, tenant.ErrTenantNotFound
+	}
+	value, ok := s.branding[tenantID]
+	if !ok {
+		return tenant.Branding{Values: map[string]string{}, Version: "0"}, nil
+	}
+	value.Values = maps.Clone(value.Values)
+	return value, nil
+}
+
+// PutBranding atomically compares and advances the resource version.
+func (s *Store) PutBranding(
+	_ context.Context, tenantID string, values map[string]string, expectedVersion string,
+) (tenant.Branding, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.tenants[tenantID]; !ok {
+		return tenant.Branding{}, tenant.ErrTenantNotFound
+	}
+	current, ok := s.branding[tenantID]
+	if !ok {
+		current = tenant.Branding{Version: "0"}
+	}
+	if current.Version != expectedVersion {
+		return tenant.Branding{}, tenant.ErrBrandingPrecondition
+	}
+	next := tenant.Branding{
+		Values: maps.Clone(values), Version: nextBrandingVersion(current.Version),
+	}
+	s.branding[tenantID] = next
+	next.Values = maps.Clone(next.Values)
+	return next, nil
+}
+
+func nextBrandingVersion(current string) string {
+	version, _ := strconv.ParseUint(current, 10, 64)
+	return strconv.FormatUint(version+1, 10)
 }
 
 // --- Domains ---

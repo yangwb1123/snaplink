@@ -1,3 +1,5 @@
+version: 1
+
 server:
   # Operator-chosen issuer identifier. Used everywhere consistently:
   # the JWT `iss` claim on every access / id / refresh / logout token,
@@ -15,6 +17,9 @@ server:
   # breaks every RFC 9068 access-token validator. Config validation
   # refuses it.
   issuer: sso-server
+  # Deployment contract: startup and --validate-only fail when the configured
+  # binary was built without any listed capability.
+  required_capabilities: [core.runtime.v1, server.stock.v1]
   # base_url is currently informational only — the SDK derives absolute
   # URLs (callback redirects, JWKS) from incoming request headers and
   # reverse-proxy hints, not from this constant. Keeping it for future
@@ -28,6 +33,12 @@ server:
   pprof:
     enabled: false
     listen: "127.0.0.1:6060"
+  # Declare multi when requests can land on more than one sso-server process.
+  # Multi mode refuses to boot with process-local critical stores. The unsafe
+  # escape hatch exists only for development fault-injection.
+  topology:
+    mode: single
+    allow_per_pod_state: false
   # session_ttl + token_ttl are read by cmd/sso-server when constructing
   # the default SessionManager / TokenIssuer. They are NOT wired through
   # sso.With{Session,Token}TTL (those options are deprecated no-ops);
@@ -100,7 +111,7 @@ logging:
 # share session state for TokenStrategySession clients. DSN can be
 # shared with oauth.sqlite.dsn for a single-file install.
 identity:
-  backend: memory       # memory | sqlite
+  backend: memory       # memory | sqlite | postgres
   sqlite:
     dsn: ""             # e.g. file:/var/lib/sso/sso.db?_journal=WAL
 
@@ -125,16 +136,16 @@ self_service:
     sqlite:
       dsn: ""           # e.g. file:/var/lib/sso/passwords.db?_journal=WAL&_pragma=busy_timeout(5000)
 
-  # Self-service signup email verification. When signup is enabled, this section
-  # controls whether email verification is required (Mode B) or optional (Mode A).
-  # require_verification: when true, POST /auth/register requires email and returns
-  #   201 {"status":"pending"} — the user is NOT created until they complete
-  #   verification via POST /auth/verify-email. When false (default), accounts are
-  #   created immediately and email_verified is set to "true" if email is provided.
-  # verification_token_ttl: how long a verification token remains valid. 0 = 15m.
-  registration:
-    require_verification: false
-    verification_token_ttl: 0
+  # Linked external identities used by federated login and /me/identities.
+  # memory is development-only; sqlite persists one-host installs; postgres
+  # shares the global postgres pool across replicas. link_only is an explicit
+  # opt-in because it atomically moves identity links, not sessions/consents.
+  identity_link:
+    enabled: false
+    backend: "sqlite"       # memory | sqlite | postgres
+    sqlite:
+      dsn: ""               # e.g. file:/var/lib/sso/identity-links.db?_journal=WAL&_pragma=busy_timeout(5000)
+    merge_policy: "reject"  # reject | link_only
 
 # OpenID Connect Native SSO 1.0. When enabled, a /token request that includes
 # the device_sso scope gets a device_secret (+ ds_hash in the id_token); a
@@ -777,12 +788,23 @@ oauth:
   backend: memory        # memory | sqlite
   sqlite:
     dsn: ""              # e.g. file:/var/lib/sso/sso.db?_journal=WAL&_pragma=busy_timeout(5000)
+    # Optional at-rest protection for opaque OAuth credentials. New rows store
+    # only HMAC lookup keys; reads also try the previous key and legacy
+    # plaintext rows so rotation and rollout do not log users out.
+    lookup_hmac_key_file: ""
+    lookup_hmac_previous_key_file: ""
+  redis:
+    # Same contract for Redis key names, index members, and device-code values.
+    lookup_hmac_key_file: ""
+    lookup_hmac_previous_key_file: ""
   auth_code:
     enabled: true       # grant_type=authorization_code (RFC 6749 §4.1)
     ttl: 10m            # SDK default when <=0 (also 10m)
+    reap_interval: 1m   # memory/SQLite; Redis uses native TTL
   refresh_token:
     enabled: true       # grant_type=refresh_token, single-use rotation
     ttl: 720h           # 30d; SDK default when <=0
+    reap_interval: 15m  # also bounds consumed-token reuse-ledger growth
     # Opt-in grace window: a concurrent double-submit of the just-rotated token
     # is idempotent within the window (multi-tab SPA / mobile cold-start races)
     # instead of tripping family-reuse detection. 0 = strict single-use.
@@ -790,11 +812,13 @@ oauth:
   device_code:
     enabled: false      # grant_type=urn:ietf:params:oauth:grant-type:device_code (RFC 8628)
     ttl: 10m
+    reap_interval: 1m
     poll_interval: 5s   # minimum allowed poll cadence; faster→slow_down
     verification_base_url: ""   # empty: derive from request
   par:
     enabled: false      # POST /par + request_uri (RFC 9126)
     ttl: 90s
+    reap_interval: 1m
   # RFC 9101 §5.2.2 — JAR `request_uri` URL fetching. The inline
   # `request=<jwt>` flow works without this; only the URL-fetched
   # variant needs the HTTP fetcher. Each client also needs
@@ -864,10 +888,11 @@ client_registration:
   allowed_authenticators: []
   # Mint a fresh registration_access_token on every PUT /register/:id
   # (RFC 7592 §3.2), limiting a leaked token's lifetime. The new token is
-  # returned once in the PUT response; the old one stops working. Default
-  # false keeps the token stable — enable only if your managing clients
-  # capture the rotated token from each update response.
+  # returned once in the PUT response. The credential used for the rotation
+  # remains valid during rotate_access_token_overlap so a lost response can be
+  # retried without orphaning management access.
   rotate_access_token: false
+  rotate_access_token_overlap: 5m
 
 # WebAuthn (CTAP/FIDO2) ceremony endpoints. Mounts four POST routes on
 # the SSO router when enabled:

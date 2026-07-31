@@ -663,16 +663,14 @@ a store that doesn't implement it is treated as "no password", failing
 CLOSED so a user is never silently locked out). Every successful unlink emits
 `identity_unlinked` (`identity_id`, `provider`).
 
-`domains/identitylink.MergePolicy` is a separate, related extension point (not
-an HTTP endpoint): the decision seam for when a login flow discovers that an
-external identity is already linked to a DIFFERENT local account than the one
-currently resolving. The stock `/auth/login` handler does not invoke it — a
-custom authenticator/login integration retrieves it via
-`Server.IdentityMergePolicy` / `Server.IdentityLinkStore` and calls
-`identitylink.Resolve` itself. The default `RejectPolicy` always refuses (safe
-default); the reference `LinkOnlyMergePolicy` merges ONLY the identity link
-records onto the winning account (sessions/consents/tokens are NOT merged —
-see the package doc). Both outcomes are recorded via
+`domains/identitylink.MergePolicy` is the decision seam for when a federated
+login discovers that an external identity is already linked to a DIFFERENT
+local account. The stock binary wires it into both static and
+connection-backed OIDC federation; custom authenticators can reuse the same
+Server accessors. The default `RejectPolicy` always refuses (safe default);
+the reference `LinkOnlyMergePolicy` atomically merges ONLY identity-link
+records onto the winning account (sessions/consents/tokens are NOT merged).
+Both outcomes are recorded via
 `identitylink.RecordMergeDecision` as `identity_merged` / `identity_merge_rejected`.
 
 | Code                            | HTTP | Emitted when                                                                                     |

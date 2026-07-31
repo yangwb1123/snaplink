@@ -129,7 +129,7 @@ func RunCIBAPrune(ctx context.Context, done chan<- struct{}, store *sqlitestores
 // isolate a fault — an unrecovered panic here would not just skip one prune
 // tick, it would crash the whole process and take every other in-flight
 // request down with it. Mirrors tokenanomaly.Detector.processFindingSafe /
-// tokenusage.Recorder.recordSafe's rationale for the identical shape.
+// metering.Recorder.recordSafe's rationale for the identical shape.
 func pruneCIBASafe(ctx context.Context, store *sqlitestores.CIBAStore, logger spi.Logger, m *metrics.Metrics) {
 	defer func() {
 		if rec := recover(); rec != nil {

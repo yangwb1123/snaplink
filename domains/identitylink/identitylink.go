@@ -51,31 +51,21 @@
 // treat every OTHER store as still keyed on the losing account's id unless
 // they separately migrate it.
 //
-// # Live login-flow wiring is an extension point, not built in
+// # Live login-flow wiring
 //
-// The stock /auth/login handler this SDK ships does NOT call [Resolve]
-// automatically — it has no concept of "external identity" for
-// password/TOTP/WebAuthn logins; there is nothing to resolve there. The
-// built-in federated authenticator, OIDCFederationAuthenticator (see
-// domains/authenticators), sets AuthResult.UserID directly from the external
-// subject BY DEFAULT, but it now also accepts an optional
-// authenticators.UserLinker (wired via authenticators.WithUserLinker) that
-// CAN call into this exact path: [NewAuthenticatorLinker] is the ready-made
-// adapter, a thin wrapper around [Resolve] backed by a [Store] +
-// [MergePolicy]. A genuine same-identity-different-account conflict still
-// only arises once an operator (or a custom "connect an additional identity"
-// flow they build on top of [Store.Link]) has deliberately created a link
-// record for one account while a different account authenticates with the
-// same (provider, subject) pair. For any OTHER custom Authenticator, [Resolve]
-// remains the pure seam to call directly — retrieve the store/policy via
-// sso.Server.IdentityLinkStore / sso.Server.IdentityMergePolicy from within
-// its Callback, override the returned AuthResult.UserID with the resolved
-// id, and treat a returned [ErrAccountConflict] as a login failure.
+// Password/TOTP/WebAuthn logins have no external identity to resolve. The
+// stock binary does wire [NewAuthenticatorLinker] into its static and
+// connection-backed OIDC federation authenticators when identity linking is
+// enabled. SDK embedders and other custom Authenticators can use [Resolve] or
+// the same adapter directly. A genuine conflict only arises after a separate,
+// deliberate account-connect flow has created a link for one local account
+// while another account authenticates with the same provider/subject pair.
 package identitylink
 
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -117,7 +107,7 @@ type Identity struct {
 }
 
 // Store persists per-user identity links. Implementations live in
-// identitylink/<backend>/ (memory today). When no Store is wired the
+// identitylink/<backend>/. When no Store is wired the
 // self-service /me/identities surface is simply absent — byte-identical to a
 // build without the feature.
 type Store interface {
@@ -129,9 +119,9 @@ type Store interface {
 	// Link records a new active link between userID and (provider, subject).
 	// Idempotent: relinking the SAME (userID, provider, subject) while it is
 	// already active returns the existing Identity unchanged rather than a
-	// duplicate. Does NOT check whether (provider, subject) is already
-	// linked to a DIFFERENT user — that is [Store.FindByProviderSubject]'s
-	// job, consulted by [Resolve] before a caller decides to Link.
+	// duplicate. A pair actively owned by another user returns
+	// ErrAccountConflict; implementations MUST enforce that uniqueness under
+	// concurrent calls.
 	Link(ctx context.Context, userID, provider, subject string) (Identity, error)
 
 	// Unlink revokes the ACTIVE link "id" belonging to userID. Ownership is
@@ -150,6 +140,14 @@ type Store interface {
 	FindByProviderSubject(ctx context.Context, provider, subject string) (Identity, bool, error)
 }
 
+// AtomicMerger is the capability LinkOnlyMergePolicy requires. The conflict
+// ownership check and reassignment of every active IncomingUserID link MUST
+// commit atomically; a stale conflict returns ErrAccountConflict without
+// changing either account.
+type AtomicMerger interface {
+	MergeUserLinks(ctx context.Context, conflict Conflict) error
+}
+
 // Sentinel errors. The self-service handler maps ErrLastAuthMethod to the
 // stable wire code identity_unlink_last_method (see docs/error-codes.md);
 // ErrNotFound collapses to the same 404 as an unowned/unknown id.
@@ -162,7 +160,34 @@ var (
 	// self-service handler as HTTP 409) when removing a link would leave the
 	// account with no remaining way to authenticate.
 	ErrLastAuthMethod = errors.New("identitylink: cannot unlink the last remaining authentication method")
+
+	// ErrInvalidIdentity rejects empty local IDs, providers, or external
+	// subjects before they can create ambiguous global ownership records.
+	ErrInvalidIdentity = errors.New("identitylink: user, provider, and subject are required")
 )
+
+// ValidateLinkInput validates the stable identity-link key fields without
+// rewriting them; provider-scoped subjects remain case-sensitive and opaque.
+func ValidateLinkInput(userID, provider, subject string) error {
+	if strings.TrimSpace(userID) == "" ||
+		strings.TrimSpace(provider) == "" ||
+		strings.TrimSpace(subject) == "" {
+		return ErrInvalidIdentity
+	}
+	return nil
+}
+
+// ValidateConflict rejects malformed or self-conflicting merge requests.
+func ValidateConflict(conflict Conflict) error {
+	if err := ValidateLinkInput(conflict.IncomingUserID, conflict.Provider, conflict.Subject); err != nil {
+		return err
+	}
+	if strings.TrimSpace(conflict.ExistingUserID) == "" ||
+		conflict.ExistingUserID == conflict.IncomingUserID {
+		return ErrInvalidIdentity
+	}
+	return nil
+}
 
 // PasswordPresenceChecker is an OPTIONAL capability a core.PasswordCredentialStore
 // implementation MAY satisfy so GuardUnlink's "does this user have another

@@ -2,8 +2,11 @@ package admin
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
@@ -117,7 +120,7 @@ func mintAndRespondImpersonation(d Deps, ctx core.HandlerContext, store core.Bre
 	}
 	updated, err := store.AttachImpersonationToken(rctx, a.ID, cred.Token)
 	if err != nil {
-		d.RevokeToken(rctx, cred.Token)
+		_ = d.RevokeToken(rctx, cred.Token)
 		writeAttachError(ctx, d, a.ID, err)
 		return
 	}
@@ -164,10 +167,70 @@ func impersonationResponse(a core.AdminSession, cred core.ImpersonationCredentia
 // on each token is only the backstop; this is what makes revocation IMMEDIATE
 // (a stateless JWT can't self-revoke). Best-effort per token, mirroring the
 // session cascade: one unknown/expired token can't abort the rest.
-func cascadeRevokeImpersonationTokens(d Deps, ctx context.Context, tokens []string) {
-	for _, tok := range tokens {
-		d.RevokeToken(ctx, tok)
+type derivedCredentialResult struct {
+	IdempotencyKey string `json:"idempotency_key"`
+	Kind           string `json:"kind"`
+	ID             string `json:"id"`
+	Status         string `json:"status"`
+	Error          string `json:"error,omitempty"`
+}
+
+func cascadeRevokeSessions(d Deps, ctx context.Context, sessionIDs []string) []derivedCredentialResult {
+	out := make([]derivedCredentialResult, 0, len(sessionIDs))
+	for _, sid := range sessionIDs {
+		result := derivedCredentialResult{
+			IdempotencyKey: "break-glass:session:" + sid,
+			Kind:           "session", ID: sid, Status: "revoked",
+		}
+		if d.SessionMgr() == nil {
+			result.Status, result.Error = "failed", "session manager is not configured"
+		} else if err := d.SessionMgr().Destroy(ctx, sid); err != nil {
+			result.Status, result.Error = "failed", err.Error()
+		}
+		out = append(out, result)
 	}
+	return out
+}
+
+func cascadeRevokeImpersonationTokens(
+	d Deps, ctx context.Context, tokens []string,
+) []derivedCredentialResult {
+	out := make([]derivedCredentialResult, 0, len(tokens))
+	for _, tok := range tokens {
+		sum := sha256.Sum256([]byte(tok))
+		id := fmt.Sprintf("token_%x", sum[:8])
+		result := derivedCredentialResult{
+			IdempotencyKey: "break-glass:token:" + id,
+			Kind:           "token", ID: id, Status: "revoked",
+		}
+		if err := d.RevokeToken(ctx, tok); err != nil {
+			result.Status, result.Error = "failed", err.Error()
+		}
+		out = append(out, result)
+	}
+	return out
+}
+
+func allDerivedCredentialsRevoked(results []derivedCredentialResult) bool {
+	for _, result := range results {
+		if result.Status != "revoked" {
+			return false
+		}
+	}
+	return true
+}
+
+func writeBreakGlassCompensation(
+	ctx core.HandlerContext, grantID string, results []derivedCredentialResult,
+) {
+	status := http.StatusInternalServerError
+	if !allDerivedCredentialsRevoked(results) {
+		status = http.StatusMultiStatus
+	}
+	ctx.JSON(status, map[string]any{
+		core.KeyError: "break_glass_activation_failed", "grant_id": grantID,
+		"grant_status": "revoked", "credential_results": results,
+	})
 }
 
 // HandleAdminGetBranding returns tenant branding settings.
@@ -177,21 +240,17 @@ func HandleAdminGetBranding(d BrandingDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrInvalidRequest))
 		return
 	}
-	store := d.TenantStore()
-	if store == nil {
-		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+	store, ok := d.TenantStore().(tenant.BrandingStore)
+	if !ok {
+		ctx.JSON(http.StatusNotImplemented, d.ErrorBody(core.ErrNotFound))
 		return
 	}
-	t, err := store.GetTenant(ctx.Request().Context(), tenantID)
-	if err != nil || t == nil {
-		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+	branding, err := store.GetBranding(ctx.Request().Context(), tenantID)
+	if err != nil {
+		writeBrandingStoreError(d, ctx, err)
 		return
 	}
-	settings := t.Settings
-	if settings == nil {
-		settings = map[string]string{}
-	}
-	ctx.JSON(http.StatusOK, map[string]any{"tenant_id": tenantID, "branding": settings})
+	writeBrandingResponse(ctx, tenantID, branding)
 }
 
 // HandleAdminUpdateBranding updates tenant branding settings.
@@ -212,22 +271,7 @@ func HandleAdminUpdateBranding(d BrandingDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, d.ErrorBodyDesc(core.ErrInvalidRequest, "branding object required"))
 		return
 	}
-	store := d.TenantStore()
-	if store == nil {
-		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
-		return
-	}
-	t, err := store.GetTenant(ctx.Request().Context(), tenantID)
-	if err != nil || t == nil {
-		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
-		return
-	}
-	t.Settings = req.Branding
-	if err := store.PutTenant(ctx.Request().Context(), t); err != nil {
-		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
-		return
-	}
-	ctx.JSON(http.StatusOK, map[string]any{"status": "ok", "tenant_id": tenantID, "branding": req.Branding})
+	updateBranding(d, ctx, tenantID, req.Branding)
 }
 
 // HandleAdminDeleteBranding clears tenant branding settings.
@@ -237,22 +281,65 @@ func HandleAdminDeleteBranding(d BrandingDeps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, d.ErrorBody(core.ErrInvalidRequest))
 		return
 	}
-	store := d.TenantStore()
-	if store == nil {
-		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+	updateBranding(d, ctx, tenantID, map[string]string{})
+}
+
+func updateBranding(
+	d BrandingDeps, ctx core.HandlerContext, tenantID string, values map[string]string,
+) {
+	expected, ok := parseBrandingETag(ctx.Request().Header.Get("If-Match"))
+	if !ok {
+		ctx.JSON(http.StatusPreconditionRequired, d.ErrorBodyDesc(
+			core.ErrInvalidRequest, "a current branding If-Match value is required",
+		))
 		return
 	}
-	t, err := store.GetTenant(ctx.Request().Context(), tenantID)
-	if err != nil || t == nil {
-		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+	store, ok := d.TenantStore().(tenant.BrandingStore)
+	if !ok {
+		ctx.JSON(http.StatusNotImplemented, d.ErrorBody(core.ErrNotFound))
 		return
 	}
-	t.Settings = map[string]string{}
-	if err := store.PutTenant(ctx.Request().Context(), t); err != nil {
+	branding, err := store.PutBranding(ctx.Request().Context(), tenantID, values, expected)
+	if err != nil {
+		writeBrandingStoreError(d, ctx, err)
+		return
+	}
+	writeBrandingResponse(ctx, tenantID, branding)
+}
+
+func writeBrandingResponse(ctx core.HandlerContext, tenantID string, branding tenant.Branding) {
+	ctx.ResponseWriter().Header().Set("ETag", brandingETag(branding.Version))
+	ctx.JSON(http.StatusOK, map[string]any{
+		"status": "ok", "tenant_id": tenantID,
+		"branding": branding.Values, "version": branding.Version,
+	})
+}
+
+func writeBrandingStoreError(d BrandingDeps, ctx core.HandlerContext, err error) {
+	switch {
+	case errors.Is(err, tenant.ErrBrandingPrecondition):
+		ctx.JSON(http.StatusPreconditionFailed, d.ErrorBodyDesc(
+			core.ErrInvalidRequest, "branding changed; refresh before saving",
+		))
+	case errors.Is(err, tenant.ErrTenantNotFound):
+		ctx.JSON(http.StatusNotFound, d.ErrorBody(core.ErrNotFound))
+	default:
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
-		return
 	}
-	ctx.JSON(http.StatusOK, map[string]any{"status": "ok", "tenant_id": tenantID})
+}
+
+func brandingETag(version string) string { return `"branding-` + version + `"` }
+
+func parseBrandingETag(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if len(value) < len(`"branding-0"`) || value[0] != '"' || value[len(value)-1] != '"' {
+		return "", false
+	}
+	version := strings.TrimSuffix(strings.TrimPrefix(value, `"branding-`), `"`)
+	if version == "" || strings.ContainsAny(version, `" ,`) {
+		return "", false
+	}
+	return version, true
 }
 
 // BrandingDeps is what the admin branding handlers need.

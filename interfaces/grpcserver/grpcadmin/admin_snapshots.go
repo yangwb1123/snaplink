@@ -10,6 +10,7 @@ import (
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/interfaces/snapshot"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/operations"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -26,10 +27,20 @@ type SnapshotAdminService struct {
 	snapshotter *snapshot.Snapshotter
 	restorer    *snapshot.Restorer
 	recorder    *audit.Recorder
+	operations  operations.Store
 }
 
-func NewSnapshotAdminService(p *snapshot.Pipeline, st snapshot.Storage, sn *snapshot.Snapshotter, r *snapshot.Restorer, recorder *audit.Recorder) *SnapshotAdminService {
-	return &SnapshotAdminService{pipeline: p, storage: st, snapshotter: sn, restorer: r, recorder: recorder}
+func NewSnapshotAdminService(p *snapshot.Pipeline, st snapshot.Storage, sn *snapshot.Snapshotter, r *snapshot.Restorer, recorder *audit.Recorder, operationStores ...operations.Store) *SnapshotAdminService {
+	var operationStore operations.Store
+	if len(operationStores) > 0 {
+		operationStore = operationStores[0]
+	} else {
+		operationStore = operations.NewMemoryStore()
+	}
+	return &SnapshotAdminService{
+		pipeline: p, storage: st, snapshotter: sn, restorer: r,
+		recorder: recorder, operations: operationStore,
+	}
 }
 
 func (s *SnapshotAdminService) ready() error {
@@ -135,6 +146,10 @@ func (s *SnapshotAdminService) Get(ctx context.Context, in *adminv1.GetSnapshotR
 	if err != nil {
 		return nil, mapSnapshotError(err, "load "+in.Id)
 	}
+	// Ordinary admin reads are an inspection surface, never a credential
+	// recovery channel. Redact the decoded in-memory copy unconditionally;
+	// the sealed stored artifact remains unchanged and therefore restorable.
+	snapshot.SnapshotRedactSecrets().Redact(snap)
 	resBytes, err := json.Marshal(snap.Resources)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "marshal resources: %v", err)
@@ -175,10 +190,28 @@ func (s *SnapshotAdminService) Restore(ctx context.Context, in *adminv1.RestoreS
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unknown mode %q", in.Mode)
 	}
+	if s.operations == nil {
+		return nil, status.Error(codes.FailedPrecondition, "durable operation store not configured")
+	}
+	return s.restoreTracked(ctx, in, mode)
+}
 
+func (s *SnapshotAdminService) restoreTracked(
+	ctx context.Context, in *adminv1.RestoreSnapshotRequest, mode snapshot.RestoreMode,
+) (*adminv1.RestoreSnapshotResponse, error) {
+	operation, err := operations.Start(ctx, s.operations, "snapshot_restore", in.Id)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "start restore operation: %v", err)
+	}
+	if err := operations.BeginStep(ctx, s.operations, &operation, "load_snapshot"); err != nil {
+		return nil, status.Errorf(codes.Internal, "persist restore step: %v", err)
+	}
 	snap, err := s.pipeline.Load(ctx, s.storage, in.Id)
 	if err != nil {
-		return nil, mapSnapshotError(err, "load "+in.Id)
+		return nil, s.failRestoreOperation(ctx, &operation, err, "load "+in.Id)
+	}
+	if err := operations.FinishStep(ctx, s.operations, &operation, nil); err != nil {
+		return nil, status.Errorf(codes.Internal, "persist restore step: %v", err)
 	}
 	opts := snapshot.RestoreOptions{
 		Mode:             mode,
@@ -189,13 +222,35 @@ func (s *SnapshotAdminService) Restore(ctx context.Context, in *adminv1.RestoreS
 	for _, x := range in.Exclude {
 		opts.Exclude = append(opts.Exclude, snapshot.ResourceCategory(x))
 	}
+	if err := operations.BeginStep(ctx, s.operations, &operation, "apply_resources"); err != nil {
+		return nil, status.Errorf(codes.Internal, "persist restore step: %v", err)
+	}
 	rep, err := s.restorer.Restore(ctx, snap, opts)
 	if err != nil {
-		return nil, mapSnapshotError(err, "restore "+in.Id)
+		return nil, s.failRestoreOperation(ctx, &operation, err, "restore "+in.Id)
+	}
+	if err := operations.FinishStep(ctx, s.operations, &operation, nil); err != nil {
+		return nil, status.Errorf(codes.Internal, "persist restore step: %v", err)
 	}
 	target := fmt.Sprintf("%s mode=%s dry_run=%t", in.Id, mode, in.DryRun)
 	recordAdmin(ctx, s.recorder, audit.EventSnapshotRestored, target)
-	return &adminv1.RestoreSnapshotResponse{Report: reportToProto(rep)}, nil
+	result, _ := json.Marshal(rep)
+	if err := operations.Finish(ctx, s.operations, &operation, result, nil); err != nil {
+		return nil, status.Errorf(codes.Internal, "finish restore operation: %v", err)
+	}
+	return &adminv1.RestoreSnapshotResponse{
+		Report: reportToProto(rep), OperationId: operation.ID,
+		Operation: operationToProto(operation),
+	}, nil
+}
+
+func (s *SnapshotAdminService) failRestoreOperation(
+	ctx context.Context, operation *operations.Operation, cause error, prefix string,
+) error {
+	_ = operations.FinishStep(ctx, s.operations, operation, cause)
+	mapped := mapSnapshotError(cause, prefix)
+	_ = operations.Finish(ctx, s.operations, operation, nil, mapped)
+	return operationFailureError(*operation, mapped)
 }
 
 func (s *SnapshotAdminService) Delete(ctx context.Context, in *adminv1.DeleteSnapshotRequest) (*adminv1.DeleteSnapshotResponse, error) {

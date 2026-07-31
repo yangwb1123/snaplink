@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
+	"github.com/yangwb1123/snaplink/domains/metering"
 )
 
 // TestNewDetector verifies nil-safe behavior and constructor.
@@ -24,10 +24,10 @@ func TestNewDetector(t *testing.T) {
 
 	// Nil-safe methods
 	var nilD *Detector
-	if nilD.Record(context.Background(), tokenusage.Event{}) != nil {
+	if nilD.Record(context.Background(), metering.Event{}) != nil {
 		t.Error("nil Record should return nil")
 	}
-	obs, _ := nilD.Query(context.Background(), tokenusage.Query{})
+	obs, _ := nilD.Query(context.Background(), metering.Query{})
 	if obs != nil {
 		t.Error("nil Query should return nil")
 	}
@@ -40,8 +40,8 @@ func TestNewDetector(t *testing.T) {
 func TestDetector_NilSafeMethods(t *testing.T) {
 	var nilD *Detector
 
-	_ = nilD.Record(context.Background(), tokenusage.Event{Thumbprint: "tp-1", ClientID: "c1"})
-	_, _ = nilD.Query(context.Background(), tokenusage.Query{})
+	_ = nilD.Record(context.Background(), metering.Event{Thumbprint: "tp-1", ClientID: "c1"})
+	_, _ = nilD.Query(context.Background(), metering.Query{})
 	_, _ = nilD.Analyze(context.Background())
 	nilD.SetFindingHook(nil)
 	// _ = nilD.findingHook() -- not nil-safe (deliberate, uses d.mu)
@@ -57,14 +57,14 @@ func TestDetector_RecordForwards(t *testing.T) {
 		t.Fatal("expected non-nil detector")
 	}
 
-	ev := tokenusage.Event{
+	ev := metering.Event{
 		Thumbprint: "tp-test-1",
 		ClientID:   "test-client",
 		SubjectID:  "test-user",
 		GeoCountry: "US",
 		At:         time.Now(),
-		Endpoint:   tokenusage.EndpointToken,
-		Kind:       tokenusage.KindAccess,
+		Endpoint:   metering.EndpointToken,
+		Kind:       metering.KindAccess,
 	}
 	if err := d.Record(ctx, ev); err != nil {
 		t.Fatalf("Record: %v", err)
@@ -73,17 +73,17 @@ func TestDetector_RecordForwards(t *testing.T) {
 }
 
 // TestFoldClientMinuteRates tests the rate folding logic.
-// recordingStore is a minimal tokenusage.Store implementation for testing.
+// recordingStore is a minimal metering.Store implementation for testing.
 type recordingStore struct {
 	count atomic.Int64
 }
 
-func (s *recordingStore) Record(_ context.Context, _ tokenusage.Event) error {
+func (s *recordingStore) Record(_ context.Context, _ metering.Event) error {
 	s.count.Add(1)
 	return nil
 }
 
-func (s *recordingStore) Query(_ context.Context, _ tokenusage.Query) ([]tokenusage.Bucket, error) {
+func (s *recordingStore) Query(_ context.Context, _ metering.Query) ([]metering.Bucket, error) {
 	return nil, nil
 }
 
@@ -103,11 +103,11 @@ func TestFoldClientMinuteRates(t *testing.T) {
 	})
 
 	t.Run("aggregates by client+minute", func(t *testing.T) {
-		buckets := []tokenusage.Bucket{
-			{Minute: now, ClientID: "c1", Endpoint: tokenusage.EndpointToken, Kind: tokenusage.KindAccess, Count: 5},
-			{Minute: now, ClientID: "c1", Endpoint: tokenusage.EndpointToken, Kind: tokenusage.KindRefresh, Count: 3},
-			{Minute: now, ClientID: "c2", Endpoint: tokenusage.EndpointToken, Kind: tokenusage.KindAccess, Count: 1},
-			{Minute: now.Add(-1 * time.Minute), ClientID: "c1", Endpoint: tokenusage.EndpointToken, Kind: tokenusage.KindAccess, Count: 2},
+		buckets := []metering.Bucket{
+			{Minute: now, ClientID: "c1", Endpoint: metering.EndpointToken, Kind: metering.KindAccess, Count: 5},
+			{Minute: now, ClientID: "c1", Endpoint: metering.EndpointToken, Kind: metering.KindRefresh, Count: 3},
+			{Minute: now, ClientID: "c2", Endpoint: metering.EndpointToken, Kind: metering.KindAccess, Count: 1},
+			{Minute: now.Add(-1 * time.Minute), ClientID: "c1", Endpoint: metering.EndpointToken, Kind: metering.KindAccess, Count: 2},
 		}
 		result := foldClientMinuteRates(buckets)
 		if result == nil {

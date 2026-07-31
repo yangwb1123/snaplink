@@ -43,7 +43,8 @@ type testDeps struct {
 	passwordReset *memorystorecredential.MemoryPasswordResetStore
 	emailChange   *memorystorecredential.MemoryEmailChangeStore
 	emailVerify   *memorystorecredential.MemoryEmailVerificationStore
-	sessions      *memorystoreidentity.MemorySessionManager
+	sessions      core.SessionManager
+	devices       device.Store
 	consents      *memorystoreidentity.MemoryConsentStore
 	tenantUsers   *memorystoreidentity.MemoryTenantUserStore
 	invitations   *memorystoreidentity.MemoryInvitationStore
@@ -140,7 +141,7 @@ func (d *testDeps) RegistrationGates() []spi.RegistrationGate      { return d.re
 func (d *testDeps) SignupRateLimiter() selfservicecore.RateLimiter { return d.rateLimiter }
 
 func (d *testDeps) SessionManager() core.SessionManager          { return d.sessions }
-func (d *testDeps) DeviceStore() device.Store                    { return nil }
+func (d *testDeps) DeviceStore() device.Store                    { return d.devices }
 func (d *testDeps) LoginHistoryStore() device.HistoryStore       { return nil }
 func (d *testDeps) TenantUserStore() core.TenantUserStore        { return d.tenantUsers }
 func (d *testDeps) InvitationStore() core.InvitationStore        { return d.invitations }

@@ -176,7 +176,7 @@ type selfServiceState struct {
 	// byte-identical to a build without it.
 	recoveryCodeStore RecoveryCodeStore
 
-	// trustedDeviceStore backs the self-service GET/POST/DELETE /me/devices*
+	// trustedDeviceStore backs GET/POST/DELETE /me/trusted-devices*
 	// "remember this device" surface AND the /auth/login step-up-skip check
 	// (WithTrustedDeviceStore). Nil ⇒ the self-service routes are NOT mounted
 	// and a login NEVER skips a risk-scorer-demanded MFA challenge —

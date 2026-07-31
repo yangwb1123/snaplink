@@ -113,3 +113,11 @@ func TrustedDeviceMaxVersion() int { return 1 }
 // declared for the ciba_push_deadletters store (CIBA Core §10.3 push
 // delivery failure replay queue).
 func CIBAPushDeadLettersMaxVersion() int { return 1 }
+
+// InvitationsMaxVersion returns the highest migration version declared for
+// the invitations store.
+func InvitationsMaxVersion() int { return 1 }
+
+// TenantMembershipsMaxVersion returns the highest migration version declared
+// for the B2B organization membership store.
+func TenantMembershipsMaxVersion() int { return 1 }

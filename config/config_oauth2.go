@@ -4,14 +4,14 @@ import "time"
 
 type OAuthConfig struct {
 	// Backend selects the storage substrate for auth_code,
-	// refresh_token, and device_code. "memory" (default) is in-
+	// refresh_token, device_code, and PAR. "memory" (default) is in-
 	// process; "sqlite" persists across restarts and shares state
-	// across processes that point at the same file. PAR remains
-	// memory-only (no SQLite backend yet). Each individually-enabled
+	// across processes that point at the same file. Each individually-enabled
 	// store inherits this choice unless the store's own Backend
 	// override is set.
 	Backend       string                   `yaml:"backend"`
 	SQLite        OAuthSQLiteConfig        `yaml:"sqlite"`
+	Redis         OAuthRedisConfig         `yaml:"redis"`
 	AuthCode      OAuthAuthCodeConfig      `yaml:"auth_code"`
 	RefreshToken  OAuthRefreshTokenConfig  `yaml:"refresh_token"`
 	DeviceCode    OAuthDeviceCodeConfig    `yaml:"device_code"`
@@ -98,7 +98,17 @@ type OAuthComplianceConfig struct {
 // Each store opens its own *sql.DB pool against the same file;
 // SQLite's OS-level file lock coordinates writes.
 type OAuthSQLiteConfig struct {
-	DSN string `yaml:"dsn"`
+	DSN                       string `yaml:"dsn"`
+	LookupHMACKeyFile         string `yaml:"lookup_hmac_key_file"`
+	LookupHMACPreviousKeyFile string `yaml:"lookup_hmac_previous_key_file"`
+}
+
+// OAuthRedisConfig protects opaque OAuth artifacts in Redis key names and
+// values. The previous key permits rolling rotation without invalidating
+// in-flight grants; legacy plaintext reads support safe first rollout.
+type OAuthRedisConfig struct {
+	LookupHMACKeyFile         string `yaml:"lookup_hmac_key_file"`
+	LookupHMACPreviousKeyFile string `yaml:"lookup_hmac_previous_key_file"`
 }
 
 // OAuthJARConfig opts into RFC 9101 §5.2.2 — request_uri URL fetching.
@@ -138,10 +148,9 @@ type OAuthRefreshTokenConfig struct {
 	// (0 = unbounded, the default); ignored by sqlite/redis backends,
 	// which bound growth via their own storage. ReapInterval, when
 	// positive, starts a background sweep removing expired tokens that
-	// no Consume/Inspect call ever revisits again — otherwise those rely
-	// solely on the store's existing per-call lazy GC. Both only take
-	// effect when oauth.backend is "" or "memory"; see
-	// infrastructure/defaultimpl/memorystoreoauth.MemoryRefreshTokenStore.
+	// no Consume/Inspect call ever revisits again. MaxEntries applies only
+	// to memory; ReapInterval applies to memory and SQLite (Redis uses native
+	// key TTL). See memorystoreoauth.MemoryRefreshTokenStore.
 	MaxEntries   int           `yaml:"max_entries"`
 	ReapInterval time.Duration `yaml:"reap_interval"`
 }
@@ -171,13 +180,9 @@ type OAuthStoreConfig struct {
 	RotationGraceBackend string `yaml:"rotation_grace_backend"`
 }
 
-// OAuthAuthCodeConfig extends OAuthStoreConfig with the same MaxEntries/
-// ReapInterval memory-backend knobs as OAuthRefreshTokenConfig/
-// OAuthDeviceCodeConfig/OAuthPARConfig (see infrastructure/defaultimpl/
-// memorystoreoauth.MemoryAuthCodeStore). Kept as its own type for the same
-// reason OAuthPARConfig is: adding these directly to the shared
-// OAuthStoreConfig would collide with the sibling configs that already
-// embed it and redeclare the same field names at their own level.
+// OAuthAuthCodeConfig extends OAuthStoreConfig with bounded-memory and
+// memory/SQLite expiry-sweep knobs. It remains a distinct type because the
+// sibling configs embed OAuthStoreConfig and redeclare the same fields.
 type OAuthAuthCodeConfig struct {
 	OAuthStoreConfig `yaml:",inline"`
 
@@ -195,21 +200,14 @@ type OAuthDeviceCodeConfig struct {
 	PollInterval        time.Duration `yaml:"poll_interval"`
 	VerificationBaseURL string        `yaml:"verification_base_url"`
 
-	// MaxEntries / ReapInterval mirror OAuthRefreshTokenConfig's fields
-	// of the same name, applied to the device-code memory backend
-	// instead (see infrastructure/defaultimpl/memorystoreoauth.
-	// MemoryDeviceCodeStore). Both default to 0 (disabled/unbounded).
+	// MaxEntries applies to memory. ReapInterval applies to memory and SQLite;
+	// Redis expires each code natively. Both default to 0.
 	MaxEntries   int           `yaml:"max_entries"`
 	ReapInterval time.Duration `yaml:"reap_interval"`
 }
 
-// OAuthPARConfig extends OAuthStoreConfig with the same MaxEntries/
-// ReapInterval memory-backend knobs as OAuthRefreshTokenConfig and
-// OAuthDeviceCodeConfig (see infrastructure/defaultimpl/
-// memorystoreoauth.MemoryPARStore). Kept as its own type — rather than
-// adding these fields directly to the shared OAuthStoreConfig — so
-// auth_code (which also embeds OAuthStoreConfig but has no bounded-store
-// support) doesn't gain YAML fields that silently do nothing.
+// OAuthPARConfig extends OAuthStoreConfig with the same bounded-memory and
+// memory/SQLite expiry-sweep knobs as the other opaque OAuth stores.
 type OAuthPARConfig struct {
 	OAuthStoreConfig `yaml:",inline"`
 

@@ -7,14 +7,15 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/domains/federation"
+	"github.com/yangwb1123/snaplink/domains/metering"
 	"github.com/yangwb1123/snaplink/domains/threataction"
 	"github.com/yangwb1123/snaplink/domains/tokenanomaly"
 	"github.com/yangwb1123/snaplink/domains/tokenpolicy"
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
 	"github.com/yangwb1123/snaplink/interfaces/admin"
 	"github.com/yangwb1123/snaplink/interfaces/ratelimit"
 	"github.com/yangwb1123/snaplink/interfaces/sso/servercache"
 	"github.com/yangwb1123/snaplink/internal/auth/consent"
+	"github.com/yangwb1123/snaplink/internal/auth/login"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/sessionhub"
 	"github.com/yangwb1123/snaplink/platform/sse"
@@ -67,6 +68,7 @@ func NewServer(opts ...Option) *Server {
 	s.authzPolicyBundleCacheTTL = DefaultAuthzPolicyBundleCacheTTL
 	s.jwksCacheTTL = defaultJWKSCacheTTL
 	s.consentChallenges = consent.NewChallengeStore()
+	s.loginTransactionStore = login.NewMemoryTransactionStore()
 	s.panicRecovery = true
 	// Conservative built-in default — see clientRegistrationRateLimiter's doc
 	// (sso_protocol.go) for why this one is seeded here rather than left nil
@@ -191,7 +193,7 @@ func (s *Server) applyMetricsWiring() {
 		return
 	}
 	s.metrics.EnableTokenUsageMetrics()
-	s.tokenUsageRecorder.SetHooks(tokenusage.Hooks{
+	s.tokenUsageRecorder.SetHooks(metering.Hooks{
 		Recorded: s.metrics.ObserveTokenUsageEvent,
 		Dropped:  s.metrics.ObserveTokenUsageDropped,
 		Tracked:  s.metrics.SetTokenUsageTrackedBuckets,
@@ -325,7 +327,7 @@ func (s *Server) recordFeatureGateStartup() {
 // the /api/v1/admin/ prefix; only mounted when a Recorder is wired, so
 // s.tokenUsageRecorder is always non-nil here.
 func (s *Server) handleAdminTokenUsage(ctx HandlerContext) {
-	tokenusage.HandleAdminUsage(s.tokenUsageRecorder.UsageStore(), s.logger, ctx)
+	metering.HandleAdminUsage(s.tokenUsageRecorder.UsageStore(), s.logger, ctx)
 }
 
 // handleAdminTokenPolicies serves GET /api/v1/admin/token-policies — the
@@ -342,7 +344,7 @@ func (s *Server) handleAdminTokenPolicies(ctx HandlerContext) {
 // gated (admin:read) by the /api/v1/admin/ prefix; only mounted when a
 // Recorder is wired, so s.tokenUsageRecorder is always non-nil here.
 func (s *Server) handleAdminTokenPortfolio(ctx HandlerContext) {
-	tokenusage.HandleAdminPortfolio(s.tokenUsageRecorder.UsageStore(), s.logger, ctx)
+	metering.HandleAdminPortfolio(s.tokenUsageRecorder.UsageStore(), s.logger, ctx)
 }
 
 // handleAdminTokenSubject serves GET /api/v1/admin/tokens/subjects/:subject —

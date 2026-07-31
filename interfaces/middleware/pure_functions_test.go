@@ -1,12 +1,12 @@
 package middleware
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
 func TestTokenNoStoreHeaders(t *testing.T) {
@@ -68,7 +68,10 @@ func TestRealClientIP(t *testing.T) {
 	}
 
 	// With context value (set by TrustedProxies middleware)
-	ctx := context.WithValue(r.Context(), realClientIPKey{}, "10.0.0.1")
+	ctx := peertrust.WithRequestInfo(r.Context(), peertrust.RequestInfo{
+		ClientIP:                "10.0.0.1",
+		ForwardedHeadersTrusted: true,
+	})
 	r = r.WithContext(ctx)
 	if got := RealClientIP(r); got != "10.0.0.1" {
 		t.Errorf("RealClientIP() with context = %q, want 10.0.0.1", got)

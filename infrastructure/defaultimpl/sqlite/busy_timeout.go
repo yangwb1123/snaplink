@@ -13,8 +13,11 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memreaper"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/security"
 	"golang.org/x/crypto/bcrypt"
 	sqlited "modernc.org/sqlite"
@@ -65,3 +68,81 @@ func isBcryptHash(s string) bool {
 func compareClientSecret(stored, plaintext string) bool {
 	return security.CompareClientSecret(stored, plaintext)
 }
+
+const sqliteExpirySweepTimeout = 30 * time.Second
+
+type sqliteExpiryReaper struct {
+	worker *memreaper.Reaper
+}
+
+func startSQLiteExpiryReaper(db *sql.DB, interval time.Duration, statements ...string) *sqliteExpiryReaper {
+	if db == nil || interval <= 0 {
+		return nil
+	}
+	worker := memreaper.Start(interval, func(now time.Time) {
+		ctx, cancel := context.WithTimeout(context.Background(), sqliteExpirySweepTimeout)
+		defer cancel()
+		for _, statement := range statements {
+			_, _ = db.ExecContext(ctx, statement, now.UnixNano())
+		}
+	})
+	return &sqliteExpiryReaper{worker: worker}
+}
+
+func (r *sqliteExpiryReaper) Close() error {
+	if r == nil {
+		return nil
+	}
+	return r.worker.Close()
+}
+
+func replaceSQLiteReaper(current **sqliteExpiryReaper, next *sqliteExpiryReaper) {
+	if *current != nil {
+		_ = (*current).Close()
+	}
+	*current = next
+}
+
+func (s *AuthCodeStore) StartReaper(interval time.Duration) {
+	replaceSQLiteReaper(&s.reaper, startSQLiteExpiryReaper(s.db, interval,
+		`DELETE FROM auth_codes WHERE expires_at < ?`))
+}
+
+func (s *RefreshTokenStore) StartReaper(interval time.Duration) {
+	replaceSQLiteReaper(&s.reaper, startSQLiteExpiryReaper(s.db, interval,
+		`DELETE FROM refresh_token_families WHERE expires_at < ?`,
+		`DELETE FROM refresh_tokens WHERE expires_at < ?`,
+		`DELETE FROM refresh_rotation_windows
+           WHERE family_id NOT IN (SELECT family_id FROM refresh_token_families)
+             AND ? > 0`))
+}
+
+func (s *DeviceCodeStore) StartReaper(interval time.Duration) {
+	replaceSQLiteReaper(&s.reaper, startSQLiteExpiryReaper(s.db, interval,
+		`DELETE FROM device_codes WHERE expires_at < ?`))
+}
+
+func (s *PARStore) StartReaper(interval time.Duration) {
+	replaceSQLiteReaper(&s.reaper, startSQLiteExpiryReaper(s.db, interval,
+		`DELETE FROM par_requests WHERE expires_at < ?`))
+}
+
+// mirrorRefreshFamily retains consumed-token reuse detection only through the
+// token's validity window; after that, replay can no longer yield credentials
+// and the ledger row may be reclaimed.
+func (s *RefreshTokenStore) mirrorRefreshFamily(
+	ctx context.Context, token, familyID string, expiresAt time.Time,
+) error {
+	if familyID == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+        INSERT OR REPLACE INTO refresh_token_families (token, family_id, expires_at)
+        VALUES (?, ?, ?)`, token, familyID, expiresAt.UnixNano())
+	if err != nil {
+		return fmt.Errorf("sqlite: insert refresh_token_families: %w", err)
+	}
+	return nil
+}
+
+var _ oauth.RefreshTokenStore = (*RefreshTokenStore)(nil)

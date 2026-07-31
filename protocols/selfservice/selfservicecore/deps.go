@@ -134,7 +134,7 @@ type Deps interface {
 	// when device tracking is not configured.
 	DeviceStore() device.Store
 
-	// Trusted-device MFA-skip self-service (GET/POST/DELETE /me/devices*).
+	// Trusted-device MFA-skip self-service (GET/POST/DELETE /me/trusted-devices*).
 	// Nil TrustedDeviceStore ⇒ those routes are not mounted. TrustedDeviceTTL
 	// is consulted by the Trust handler when minting a fresh grant.
 	TrustedDeviceStore() core.TrustedDeviceStore

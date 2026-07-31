@@ -51,7 +51,15 @@ CREATE INDEX IF NOT EXISTS idx_par_requests_expires_at
 // one replica is consumable on the replica that handles the
 // subsequent /auth/login redirect.
 type PARStore struct {
-	db *sql.DB
+	db             *sql.DB
+	lookupHMACKeys [][]byte
+	reaper         *sqliteExpiryReaper
+}
+
+// SetLookupHMACKeys enables current-key writes plus previous-key and legacy
+// plaintext reads for rolling migration. Keys are copied before retention.
+func (s *PARStore) SetLookupHMACKeys(keys ...[]byte) {
+	s.lookupHMACKeys = cloneLookupKeys(keys...)
 }
 
 // NewPARStore opens dsn, migrates the schema, and returns the store.
@@ -89,6 +97,7 @@ func (s *PARStore) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
+	_ = s.reaper.Close()
 	err := s.db.Close()
 	s.db = nil
 	return err
@@ -138,7 +147,8 @@ func (s *PARStore) Issue(ctx context.Context, req *oauth.PARRequest) (string, er
             resource, authorization_details, login_hint, response_mode,
             acr_values, ui_locales, claims, expires_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		uri, req.ClientID, req.ResponseType, req.RedirectURI,
+		opaqueLookupKey(firstLookupKey(s.lookupHMACKeys), "par", uri),
+		req.ClientID, req.ResponseType, req.RedirectURI,
 		string(scopeJSON), req.State, req.Nonce,
 		req.CodeChallenge, req.CodeChallengeMethod,
 		string(resourceJSON), string(req.AuthorizationDetails),
@@ -155,13 +165,23 @@ func (s *PARStore) Issue(ctx context.Context, req *oauth.PARRequest) (string, er
 // makes single-use enforcement race-free — same pattern as
 // oauth.AuthCodeStore.Consume.
 func (s *PARStore) Consume(ctx context.Context, requestURI string) (*oauth.PARRequest, error) {
+	for _, candidate := range opaqueLookupCandidates(s.lookupHMACKeys, "par", requestURI) {
+		out, err := s.consume(ctx, candidate)
+		if !errors.Is(err, oauth.ErrPARNotFound) {
+			return out, err
+		}
+	}
+	return nil, oauth.ErrPARNotFound
+}
+
+func (s *PARStore) consume(ctx context.Context, lookup string) (*oauth.PARRequest, error) {
 	row := s.db.QueryRowContext(ctx, `
         DELETE FROM par_requests WHERE request_uri = ?
         RETURNING client_id, response_type, redirect_uri, scope,
                   state, nonce, code_challenge, code_challenge_method,
                   resource, authorization_details, login_hint,
                   response_mode, acr_values, ui_locales, claims,
-                  expires_at`, requestURI)
+                  expires_at`, lookup)
 	out, err := scanPARRequest(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, oauth.ErrPARNotFound

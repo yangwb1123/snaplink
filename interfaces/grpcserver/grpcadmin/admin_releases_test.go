@@ -6,6 +6,7 @@ import (
 
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/operations"
 	"github.com/yangwb1123/snaplink/platform/releases"
 	"github.com/yangwb1123/snaplink/platform/releases/pinnernoop"
 	"github.com/yangwb1123/snaplink/platform/releases/storememory"
@@ -74,7 +75,8 @@ func TestReleaseAdminService_FullCycle(t *testing.T) {
 	registry := &releases.Registry{Store: store, Pinner: noop.Pinner{}}
 	sink := audit.NewMemorySink(50)
 	rec := audit.New(sink)
-	svc := NewReleaseAdminService(registry, store, rec)
+	operationStore := operations.NewMemoryStore()
+	svc := NewReleaseAdminService(registry, store, rec, operationStore)
 	ctx := context.Background()
 
 	requireOK(t, register(ctx, svc, "rel-1", 1), "Register rel-1")
@@ -93,6 +95,11 @@ func TestReleaseAdminService_FullCycle(t *testing.T) {
 	requireOK(t, err, "Pin rel-1")
 	if pin1.Report.ReleaseId != "rel-1" || pin1.Report.PreviousId != "" {
 		t.Errorf("Pin rel-1 report = %+v", pin1.Report)
+	}
+	tracked, err := operationStore.Get(ctx, pin1.OperationId)
+	if err != nil || tracked.State != operations.StateSucceeded ||
+		pin1.Operation.GetId() != pin1.OperationId {
+		t.Fatalf("pin operation = %+v, stored=%+v, err=%v", pin1.Operation, tracked, err)
 	}
 
 	cur, err := svc.GetCurrent(ctx, &adminv1.GetCurrentReleaseRequest{})

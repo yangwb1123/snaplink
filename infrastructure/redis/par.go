@@ -18,12 +18,19 @@ const parKeyPrefix = "sso:par:" // sso:par:<request_uri> -> JSON
 // Multi-replica safe: a request_uri minted on one replica is consumable
 // on the replica that handles the /auth/login redirect.
 type PARStore struct {
-	rdb goredis.Cmdable
+	rdb            goredis.Cmdable
+	lookupHMACKeys [][]byte
 }
 
 // NewPARStore builds the store over an existing go-redis client.
 func NewPARStore(rdb goredis.Cmdable) *PARStore {
 	return &PARStore{rdb: rdb}
+}
+
+// SetLookupHMACKeys enables current-key writes plus previous-key and legacy
+// plaintext reads for no-logout rotation.
+func (s *PARStore) SetLookupHMACKeys(keys ...[]byte) {
+	s.lookupHMACKeys = cloneLookupKeys(keys...)
 }
 
 // Ping reports Redis health for [sso.WithReadyCheck].
@@ -55,7 +62,8 @@ func (s *PARStore) Issue(ctx context.Context, req *oauth.PARRequest) (string, er
 	if ttl <= 0 {
 		ttl = oauth.DefaultPARTTL
 	}
-	if err := s.rdb.Set(ctx, parKey(uri), blob, ttl).Err(); err != nil {
+	lookup := opaqueLookupKey(firstLookupKey(s.lookupHMACKeys), "par", uri)
+	if err := s.rdb.Set(ctx, parKey(lookup), blob, ttl).Err(); err != nil {
 		return "", fmt.Errorf("redis: insert par_request: %w", err)
 	}
 	return uri, nil
@@ -66,12 +74,19 @@ func (s *PARStore) Issue(ctx context.Context, req *oauth.PARRequest) (string, er
 // already-consumed all map to ErrPARNotFound (RFC 9126 §2.2 oracle-
 // resistance §2).
 func (s *PARStore) Consume(ctx context.Context, requestURI string) (*oauth.PARRequest, error) {
-	blob, err := s.rdb.GetDel(ctx, parKey(requestURI)).Bytes()
-	if errors.Is(err, goredis.Nil) {
-		return nil, oauth.ErrPARNotFound
+	var blob []byte
+	for _, candidate := range opaqueLookupCandidates(s.lookupHMACKeys, "par", requestURI) {
+		var err error
+		blob, err = s.rdb.GetDel(ctx, parKey(candidate)).Bytes()
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, goredis.Nil) {
+			return nil, fmt.Errorf("redis: consume par_request: %w", err)
+		}
 	}
-	if err != nil {
-		return nil, fmt.Errorf("redis: consume par_request: %w", err)
+	if blob == nil {
+		return nil, oauth.ErrPARNotFound
 	}
 	var out oauth.PARRequest
 	if err := json.Unmarshal(blob, &out); err != nil {

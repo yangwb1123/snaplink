@@ -47,10 +47,14 @@ func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
 	// including the v3 RFC 9068 auth-context columns (amr/acr/auth_time), the
 	// v4 RFC 9449 DPoP key-binding column (confirmation_jkt), the v5
 	// token-policy max_refresh_depth column (generation), and the v6
-	// absolute-max-lifetime column (family_created_at).
+	// absolute-max-lifetime column (family_created_at). v7 also adds an expiry
+	// to the consumed-token family ledger.
 	if _, err := db.Exec(`SELECT family_id, resources, authorization_details, sid,
 		amr, acr, auth_time, confirmation_jkt, generation, family_created_at FROM refresh_tokens`); err != nil {
 		t.Errorf("legacy columns not backfilled: %v", err)
+	}
+	if _, err := db.Exec(`SELECT expires_at FROM refresh_token_families`); err != nil {
+		t.Errorf("family ledger expiry not backfilled: %v", err)
 	}
 	// The backfilled generation column defaults to 0 on the pre-existing row.
 	var gen int
@@ -64,8 +68,8 @@ func TestMigration_RefreshTokensBackfillsLegacyColumns(t *testing.T) {
 	if err := db.QueryRow(`SELECT token FROM refresh_tokens WHERE token='old'`).Scan(&token); err != nil {
 		t.Errorf("legacy row lost: %v", err)
 	}
-	if v, _ := migrate.CurrentVersion(ctx, db, "refresh_tokens"); v != 6 {
-		t.Errorf("version = %d, want 6", v)
+	if v, _ := migrate.CurrentVersion(ctx, db, "refresh_tokens"); v != 7 {
+		t.Errorf("version = %d, want 7", v)
 	}
 }
 

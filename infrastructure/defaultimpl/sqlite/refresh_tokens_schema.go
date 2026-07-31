@@ -57,11 +57,14 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family
     ON refresh_tokens(family_id);
 
 CREATE TABLE IF NOT EXISTS refresh_token_families (
-    token     TEXT PRIMARY KEY,
-    family_id TEXT NOT NULL
+    token      TEXT PRIMARY KEY,
+    family_id  TEXT    NOT NULL,
+    expires_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_refresh_token_families_family
     ON refresh_token_families(family_id);
+CREATE INDEX IF NOT EXISTS idx_refresh_token_families_expires
+    ON refresh_token_families(expires_at);
 `
 
 // refreshTokenMigrations is the schema history. v1 is a Func migration
@@ -103,6 +106,37 @@ var refreshTokenMigrations = []migrate.Migration{
 	// those families rather than fabricating a start time — an additive
 	// migration that never retroactively kills a pre-existing family.
 	{Version: 6, Name: "refresh_token_family_created_at", Func: addRefreshTokenFamilyCreatedAt},
+	// v7 bounds the consumed-token reuse ledger. Legacy consumed rows cannot
+	// recover their original expiry, so retain them for 30 days from migration
+	// (security-safe widening); active rows inherit their exact expiry.
+	{Version: 7, Name: "refresh_token_family_expiry", Func: addRefreshTokenFamilyExpiry},
+}
+
+func addRefreshTokenFamilyExpiry(ctx context.Context, x migrate.Execer) error {
+	has, err := refreshTokenFamilyColumnExists(ctx, x, "expires_at")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if _, err := x.ExecContext(ctx,
+			`ALTER TABLE refresh_token_families ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	if _, err := x.ExecContext(ctx, `
+        UPDATE refresh_token_families
+           SET expires_at = COALESCE(
+               (SELECT expires_at FROM refresh_tokens
+                 WHERE refresh_tokens.token = refresh_token_families.token),
+               (CAST(strftime('%s','now') AS INTEGER) + 2592000) * 1000000000
+           )
+         WHERE expires_at = 0`); err != nil {
+		return err
+	}
+	_, err = x.ExecContext(ctx, `
+        CREATE INDEX IF NOT EXISTS idx_refresh_token_families_expires
+            ON refresh_token_families(expires_at)`)
+	return err
 }
 
 // addRefreshTokenAuthContext adds amr/acr/auth_time (preserve original
@@ -214,7 +248,15 @@ func addRefreshTokenFamilyCreatedAt(ctx context.Context, x migrate.Execer) error
 // named column, via PRAGMA table_info (the table name is a constant, not
 // user input).
 func refreshTokenColumnExists(ctx context.Context, x migrate.Execer, column string) (bool, error) {
-	rows, err := x.QueryContext(ctx, `PRAGMA table_info(refresh_tokens)`)
+	return sqliteColumnExists(ctx, x, `PRAGMA table_info(refresh_tokens)`, column)
+}
+
+func refreshTokenFamilyColumnExists(ctx context.Context, x migrate.Execer, column string) (bool, error) {
+	return sqliteColumnExists(ctx, x, `PRAGMA table_info(refresh_token_families)`, column)
+}
+
+func sqliteColumnExists(ctx context.Context, x migrate.Execer, query, column string) (bool, error) {
+	rows, err := x.QueryContext(ctx, query)
 	if err != nil {
 		return false, err
 	}

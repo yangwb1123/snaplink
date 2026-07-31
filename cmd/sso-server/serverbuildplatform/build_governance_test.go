@@ -427,7 +427,7 @@ func TestBuildTokenAnomaly_EnabledCoWiresRecorderAndDetector(t *testing.T) {
 	if rec == nil || det == nil {
 		t.Fatal("enabled token_anomaly must return a recorder + detector")
 	}
-	// The recorder must drain into the detector (the tokenusage.Store decorator),
+	// The recorder must drain into the detector (the metering.Store decorator),
 	// not into a bare aggregation store — otherwise the detector never observes.
 	if got, ok := rec.UsageStore().(*tokenanomaly.Detector); !ok || got != det {
 		t.Fatalf("recorder store = %T; want the returned *tokenanomaly.Detector (co-wired)", rec.UsageStore())

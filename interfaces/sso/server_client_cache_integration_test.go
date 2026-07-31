@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso/servercache"
+	"github.com/yangwb1123/snaplink/platform/cluster"
+	clustermem "github.com/yangwb1123/snaplink/platform/cluster/memory"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
@@ -66,6 +68,25 @@ func TestServer_InvalidateClientCacheEvicts(t *testing.T) {
 	}
 	if got.Name != "v2" {
 		t.Fatalf("name after InvalidateClientCache = %q, want v2", got.Name)
+	}
+}
+
+func TestServer_InvalidateRestoredControlPlanePublishesFullFlush(t *testing.T) {
+	t.Parallel()
+	bus := clustermem.New()
+	t.Cleanup(func() { _ = bus.Close() })
+	events, err := bus.Subscribe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	NewServer(WithInvalidationBus(bus)).InvalidateRestoredControlPlane()
+	select {
+	case event := <-events:
+		if event.Kind != cluster.KindControlPlaneRestore {
+			t.Fatalf("event kind = %q", event.Kind)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("restore invalidation was not published")
 	}
 }
 

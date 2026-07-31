@@ -49,7 +49,7 @@ func (s *StaticSource) Keys(context.Context) ([]Entry, error) {
 // still records the bookkeeping.
 func (s *StaticSource) RetireKey(ctx context.Context, keyID string) error {
 	if s.OnRetire == nil {
-		return nil
+		return ErrRetirementUnsupported
 	}
 	return s.OnRetire(ctx, keyID)
 }

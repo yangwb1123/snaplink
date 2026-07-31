@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
 // HandlerContextKey is the value-bag key the Middleware stashes
@@ -179,13 +180,16 @@ func ResolveTenantID(ctx context.Context, store Store, opts MiddlewareOptions, r
 
 // DefaultHostExtractor pulls the hostname from the standard places:
 // the Host header (mandatory in HTTP/1.1), or the first hop of an
-// X-Forwarded-Host when present (only trust when the AS sits behind
-// a known proxy). Strips port + lowercases for canonical matching.
+// trusted X-Forwarded-Host when present. Once trusted-proxy middleware
+// evaluates the request, an untrusted direct peer cannot steer tenant
+// resolution; without that middleware the legacy first-hop behavior remains.
+// Strips port + lowercases for canonical matching.
 func DefaultHostExtractor(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	if xfh := r.Header.Get("X-Forwarded-Host"); xfh != "" {
+	if xfh := r.Header.Get("X-Forwarded-Host"); xfh != "" &&
+		peertrust.ForwardedHeadersTrusted(r) {
 		// First entry in the comma-sep list = original client-supplied
 		// Host; trailing entries are the proxy chain.
 		if comma := strings.IndexByte(xfh, ','); comma > 0 {

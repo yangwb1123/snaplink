@@ -70,13 +70,13 @@ func (s *RotationSource) Keys(context.Context) ([]Entry, error) {
 // compromise-bookkeeping record still stands regardless.
 func (s *RotationSource) RetireKey(ctx context.Context, keyID string) error {
 	if s.Scheduler == nil {
-		return nil
+		return ErrRetirementUnsupported
 	}
 	s.mu.Lock()
 	credType, ok := s.types[keyID]
 	s.mu.Unlock()
 	if !ok {
-		return nil
+		return ErrRetirementUnsupported
 	}
 	_, err := s.Scheduler.Compromise(ctx, credType, "cryptoinventory: key reported compromised")
 	return err

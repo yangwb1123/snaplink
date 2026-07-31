@@ -77,7 +77,9 @@ type Client struct {
 	// client_secret; constant-time compared on every management
 	// request. Empty means dynamic management is disabled for this
 	// client (legacy / operator-provisioned clients never had one).
-	RegistrationAccessToken string `json:"-" yaml:"-"`
+	RegistrationAccessToken             string    `json:"-" yaml:"-"`
+	PreviousRegistrationAccessToken     string    `json:"-" yaml:"-"`
+	RegistrationAccessTokenOverlapUntil time.Time `json:"-" yaml:"-"`
 
 	// PostLogoutRedirectURIs is the allowlist of URLs the OIDC
 	// RP-Initiated Logout endpoint will redirect the user back to

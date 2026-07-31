@@ -3,6 +3,7 @@ package emailsmtp
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/yangwb1123/snaplink/shared/spi"
@@ -13,8 +14,15 @@ import (
 // Email+Code, ...) — each embedded template references only the fields
 // relevant to its own message type.
 type tmplData struct {
-	Token, Code, Target, Email, NewEmail, TenantID, Role, LinkBaseURL, From string
+	Token, Code, Target, Email, NewEmail, TenantID, Role, ActionURL, From string
 }
+
+const (
+	actionResetPassword = "reset_password"
+	actionVerifyEmail   = "verify_email"
+	actionChangeEmail   = "change_email"
+	actionInvitation    = "invitation"
+)
 
 // Sender is the built-in net/smtp implementation of the four shared/spi
 // token-delivery senders plus the OTP email transport. It structurally
@@ -72,14 +80,14 @@ var (
 // SendResetToken implements spi.PasswordResetSender.
 func (s *Sender) SendResetToken(_ context.Context, target, token string) error {
 	return s.deliver(tmplPasswordReset, target, tmplData{
-		Target: target, Token: token, LinkBaseURL: s.cfg.LinkBaseURL, From: s.cfg.From,
+		Target: target, Token: token, ActionURL: actionLink(s.cfg.LinkBaseURL, actionResetPassword, token), From: s.cfg.From,
 	})
 }
 
 // SendEmailVerificationToken implements spi.EmailVerificationSender.
 func (s *Sender) SendEmailVerificationToken(_ context.Context, email, token string) error {
 	return s.deliver(tmplEmailVerification, email, tmplData{
-		Email: email, Token: token, LinkBaseURL: s.cfg.LinkBaseURL, From: s.cfg.From,
+		Email: email, Token: token, ActionURL: actionLink(s.cfg.LinkBaseURL, actionVerifyEmail, token), From: s.cfg.From,
 	})
 }
 
@@ -87,7 +95,7 @@ func (s *Sender) SendEmailVerificationToken(_ context.Context, email, token stri
 // the NEW address (proves control of it) — matches the interface doc comment.
 func (s *Sender) SendEmailChangeToken(_ context.Context, newEmail, token string) error {
 	return s.deliver(tmplEmailChange, newEmail, tmplData{
-		NewEmail: newEmail, Token: token, LinkBaseURL: s.cfg.LinkBaseURL, From: s.cfg.From,
+		NewEmail: newEmail, Token: token, ActionURL: actionLink(s.cfg.LinkBaseURL, actionChangeEmail, token), From: s.cfg.From,
 	})
 }
 
@@ -95,8 +103,21 @@ func (s *Sender) SendEmailChangeToken(_ context.Context, newEmail, token string)
 func (s *Sender) SendInvitation(_ context.Context, email, tenantID, role, token string) error {
 	return s.deliver(tmplInvitation, email, tmplData{
 		Email: email, TenantID: tenantID, Role: role, Token: token,
-		LinkBaseURL: s.cfg.LinkBaseURL, From: s.cfg.From,
+		ActionURL: actionLink(s.cfg.LinkBaseURL, actionInvitation, token), From: s.cfg.From,
 	})
+}
+
+func actionLink(base, action, token string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+	query := u.Query()
+	query.Set("flow", action)
+	query.Set("token", token)
+	u.RawQuery = query.Encode()
+	u.Fragment = ""
+	return u.String()
 }
 
 // Send is the email-OTP transport domains/authenticators.EmailSender dials

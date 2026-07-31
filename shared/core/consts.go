@@ -106,22 +106,22 @@ const (
 	// plaintext codes exactly once; GET returns the remaining count only
 	// (never the codes). Mounted only when a RecoveryCodeStore is wired.
 	PathMyMFARecoveryCodes = "/me/mfa/recovery-codes"
-	// PathMyDevices lists the authenticated user's trusted (MFA-skip) devices
-	// (GET); PathMyDeviceByID revokes one (DELETE). PathMyDevicesTrust marks
-	// the CURRENT device trusted (POST) — gated on the caller's bearer token
-	// having completed MFA THIS session (amr contains "mfa"), so a stolen
-	// session that never stepped up can never mint a skip grant.
-	PathMyDevices          = "/me/devices"
-	PathMyDeviceByID       = "/me/devices/:id"
-	PathMyDevicesTrust     = "/me/devices/trust"
-	PathMyDeviceTrustByID  = "/me/devices/:id/trust"
-	PathMyDeviceActivity   = "/me/devices/:id/activity"
-	PathMyDeviceLost       = "/me/devices/:id/lost"
-	PathMyDeviceSessions   = "/me/devices/:id/sessions"
-	PathMyLoginHistory     = "/me/login-history"
-	PathMySecurityActivity = "/me/security/activity"
-	PathMeSessionsEnriched = "/me/sessions/enriched"
-	PathLoginUIMetadata    = "/login-ui/metadata"
+	// Physical-device posture and MFA-skip trusted-browser grants are distinct
+	// resources. They never share GET/DELETE routes because their identifiers
+	// and destructive semantics differ.
+	PathMyDevices             = "/me/devices"
+	PathMyDeviceByID          = "/me/devices/:id"
+	PathMyTrustedDevices      = "/me/trusted-devices"
+	PathMyTrustedDeviceByID   = "/me/trusted-devices/:id"
+	PathMyTrustedDevicesTrust = "/me/trusted-devices/trust"
+	PathMyDeviceTrustByID     = "/me/devices/:id/trust"
+	PathMyDeviceActivity      = "/me/devices/:id/activity"
+	PathMyDeviceLost          = "/me/devices/:id/lost"
+	PathMyDeviceSessions      = "/me/devices/:id/sessions"
+	PathMyLoginHistory        = "/me/login-history"
+	PathMySecurityActivity    = "/me/security/activity"
+	PathMeSessionsEnriched    = "/me/sessions/enriched"
+	PathLoginUIMetadata       = "/login-ui/metadata"
 	// PathMyWebAuthnRegisterBegin / Finish are AUTHENTICATED self-service passkey
 	// registration (POST). Unlike the signup ceremony (/webauthn/registration/*,
 	// username from the body), these bind the new credential to the BEARER

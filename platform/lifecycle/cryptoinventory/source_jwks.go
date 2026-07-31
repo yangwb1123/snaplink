@@ -2,6 +2,7 @@ package cryptoinventory
 
 import (
 	"context"
+	"errors"
 
 	"github.com/yangwb1123/snaplink/shared/core"
 )
@@ -94,15 +95,24 @@ func (s *JWKSSource) Keys(ctx context.Context) ([]Entry, error) {
 // either kind depending on the deployment. A kid neither seam recognizes is
 // simply a no-op (the key stays recorded compromised regardless).
 func (s *JWKSSource) RetireKey(_ context.Context, keyID string) error {
+	var attempted bool
+	var retirementErrors []error
 	for _, ti := range s.Issuers {
 		if r, ok := ti.(keyRetirer); ok {
-			_ = r.RetireKey(keyID)
+			attempted = true
+			if err := r.RetireKey(keyID); err != nil {
+				retirementErrors = append(retirementErrors, err)
+			}
 		}
 		if d, ok := ti.(keyDropper); ok {
+			attempted = true
 			d.DropVerifyKey(keyID)
 		}
 	}
-	return nil
+	if !attempted {
+		return ErrRetirementUnsupported
+	}
+	return errors.Join(retirementErrors...)
 }
 
 // purposeFromUse maps a JWK's RFC 7517 "use" to this package's Purpose

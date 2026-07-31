@@ -139,6 +139,43 @@ func TestHandleBatchWriteTuples_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestHandleBatchWriteTuples_IsAtomicAndReportsStableItems(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+	_ = store.Write(ctx, Tuple{Object: "doc:existing", Relation: "viewer", Subject: "user:alice"})
+	deps := &testDeps{store: store}
+	body := `{"idempotency_key":"batch-42","writes":[
+		{"object":"doc:new","relation":"viewer","subject":"user:bob"},
+		{"object":"invalid","relation":"viewer","subject":"user:carol"}
+	]}`
+
+	first := newRebacCtx(t, "POST", "/authz/tuples/batch", body)
+	HandleBatchWriteTuples(deps, first)
+	if first.rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body=%s", first.rec.Code, first.rec.Body.String())
+	}
+	tuples, _ := store.Read(ctx, TupleFilter{})
+	if len(tuples) != 1 || tuples[0].Object != "doc:existing" {
+		t.Fatalf("invalid batch partially mutated graph: %+v", tuples)
+	}
+	var response struct {
+		Items []batchTupleResult `json:"items"`
+	}
+	if err := json.NewDecoder(first.rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Items) != 2 ||
+		response.Items[0].IdempotencyKey != "batch-42:write:0" ||
+		response.Items[1].IdempotencyKey != "batch-42:write:1" {
+		t.Fatalf("unstable per-item results: %+v", response.Items)
+	}
+	for _, item := range response.Items {
+		if item.Status != "not_applied" {
+			t.Fatalf("item unexpectedly applied: %+v", item)
+		}
+	}
+}
+
 func TestHandleReverseExpand(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryStore()

@@ -55,8 +55,8 @@ func TestMaxVersions_AllReturnPositive(t *testing.T) {
 	if got := sqlite.SessionsMaxVersion(); got != 4 {
 		t.Errorf("SessionsMaxVersion() = %d, want 4 (v4 session trust-score columns)", got)
 	}
-	if got := sqlite.RefreshTokensMaxVersion(); got != 6 {
-		t.Errorf("RefreshTokensMaxVersion() = %d, want 6 (v6 adds family_created_at for the absolute-max-lifetime cap)", got)
+	if got := sqlite.RefreshTokensMaxVersion(); got != 7 {
+		t.Errorf("RefreshTokensMaxVersion() = %d, want 7 (v7 bounds the family reuse ledger)", got)
 	}
 	if got := sqlite.AuthCodesMaxVersion(); got != 4 {
 		t.Errorf("AuthCodesMaxVersion() = %d, want 4 (v3 adds requested_claims for the OIDC §5.5 claims parameter, v4 adds auth_time/amr/acr/resources/authorization_details/sid RFC 9068 auth context)", got)

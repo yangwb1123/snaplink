@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
-	tokenusagememory "github.com/yangwb1123/snaplink/domains/tokenusage/memory"
+	"github.com/yangwb1123/snaplink/domains/metering"
+	tokenusagememory "github.com/yangwb1123/snaplink/domains/metering/memory"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreoauth"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
@@ -175,7 +175,7 @@ func TestAdminBulkTokenRevoke_ReachableAtItsOwnPath(t *testing.T) {
 			t.Fatalf("seed refresh token %s: %v", tok, err)
 		}
 	}
-	rec := tokenusage.NewRecorder(tokenusagememory.New())
+	rec := metering.NewRecorder(tokenusagememory.New())
 	rec.Start()
 
 	srv := sso.NewServer(

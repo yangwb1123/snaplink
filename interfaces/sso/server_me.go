@@ -173,7 +173,7 @@ func (s *Server) handleRevokeMyTrustedDevice(ctx HandlerContext) {
 }
 
 // mountTrustedDeviceRoutes registers the self-service "remember this device"
-// MFA-skip surface (GET/POST/DELETE /me/devices*) on gr, the SAME
+// MFA-skip surface (GET/POST/DELETE /me/trusted-devices*) on gr, the SAME
 // SelfService-gated core.GatedRouter mountSelfServiceCredentials builds — so
 // this group hot-toggles with the rest of the self-service surface instead
 // of needing its own gate. Byte-identical without a store wired.
@@ -181,9 +181,9 @@ func (s *Server) mountTrustedDeviceRoutes(gr Router) {
 	if s.trustedDeviceStore == nil {
 		return
 	}
-	gr.GET(PathMyDevices, s.handleMyTrustedDevices)
-	gr.POST(PathMyDevicesTrust, s.handleTrustMyDevice)
-	gr.DELETE(PathMyDeviceByID, s.handleRevokeMyTrustedDevice)
+	gr.GET(PathMyTrustedDevices, s.handleMyTrustedDevices)
+	gr.POST(PathMyTrustedDevicesTrust, s.handleTrustMyDevice)
+	gr.DELETE(PathMyTrustedDeviceByID, s.handleRevokeMyTrustedDevice)
 }
 
 // handleMyWebAuthnRegisterBegin delegates to selfservice.HandleWebAuthnRegisterBegin.
@@ -401,10 +401,10 @@ func (s *Server) mountBrandingEndpoint() {
 }
 
 // WithTrustedDeviceStore wires the "remember this device" MFA-skip store. It
-// mounts the self-service surface GET /me/devices (list), POST
-// /me/devices/trust (mark the CURRENT device trusted — gated on the
+// mounts the self-service surface GET /me/trusted-devices (list), POST
+// /me/trusted-devices/trust (mark the CURRENT device trusted — gated on the
 // caller's bearer token having completed MFA THIS session, i.e. its amr
-// contains "mfa"), and DELETE /me/devices/:id (revoke one) — and it arms the
+// contains "mfa"), and DELETE /me/trusted-devices/:id (revoke one) — and it arms the
 // /auth/login step-up-skip check: when the configured RiskScorer demands
 // DecisionRequireMFA, a request presenting a live grant
 // (login.Request.DeviceToken) for the SAME (user, client) pair skips the

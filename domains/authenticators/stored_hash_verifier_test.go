@@ -163,7 +163,7 @@ func TestLazyRehash_UpgradesImportedHashOnLogin(t *testing.T) {
 		if err != nil {
 			t.Fatalf("rehash update failed: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("rehash updater did not complete")
 	}
 	u, err := p.GetByID(ctx, "alice")

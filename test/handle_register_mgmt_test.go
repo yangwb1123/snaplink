@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yangwb1123/snaplink/shared/security"
 )
@@ -171,9 +172,22 @@ func doPut(t *testing.T, uri, tok, body string) (int, map[string]any) {
 	return resp.StatusCode, out
 }
 
+func doMgmtGetStatus(t *testing.T, uri, tok string) int {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, uri, nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return resp.StatusCode
+}
+
 // TestRegistrationMgmt_Put_RotatesAccessToken: with rotation enabled, a PUT
-// mints a fresh registration_access_token (returned once), the old token stops
-// working, and the new token authorizes subsequent management calls.
+// mints a fresh registration_access_token (returned once). Both credentials
+// authorize reads during the bounded recovery overlap; the first confirmed
+// write with the new token retires the original token.
 func TestRegistrationMgmt_Put_RotatesAccessToken(t *testing.T) {
 	srv, store := newDCRHarness(t, oauth.DCRPolicy{
 		AllowOpenRegistration:         true,
@@ -204,12 +218,32 @@ func TestRegistrationMgmt_Put_RotatesAccessToken(t *testing.T) {
 	if security.CompareClientSecret(stored.RegistrationAccessToken, tok) {
 		t.Errorf("old token still validates after rotation")
 	}
-	// The OLD token is now rejected (401) and the NEW token is accepted.
-	if status, _ := doPut(t, uri, tok, `{"redirect_uris":["https://app.example/cb"]}`); status != http.StatusUnauthorized {
-		t.Errorf("old token after rotation: status=%d want 401", status)
+	if !security.CompareClientSecret(stored.PreviousRegistrationAccessToken, tok) {
+		t.Error("stored overlap token does not match the original token")
 	}
-	if status, _ := doPut(t, uri, newTok, `{"redirect_uris":["https://app.example/cb2"]}`); status != http.StatusOK {
-		t.Errorf("new token after rotation: status=%d want 200", status)
+	if !stored.RegistrationAccessTokenOverlapUntil.After(time.Now()) {
+		t.Error("rotation did not persist a future overlap deadline")
+	}
+	if status := doMgmtGetStatus(t, uri, tok); status != http.StatusOK {
+		t.Errorf("old token during overlap: status=%d want 200", status)
+	}
+	if status := doMgmtGetStatus(t, uri, newTok); status != http.StatusOK {
+		t.Errorf("new token during overlap: status=%d want 200", status)
+	}
+
+	status, confirmed := doPut(t, uri, newTok, `{"redirect_uris":["https://app.example/cb2"]}`)
+	if status != http.StatusOK {
+		t.Fatalf("confirmed write with new token: status=%d want 200", status)
+	}
+	nextTok, _ := confirmed["registration_access_token"].(string)
+	if nextTok == "" || nextTok == newTok {
+		t.Fatalf("confirmed write did not rotate the token: %q", nextTok)
+	}
+	if status := doMgmtGetStatus(t, uri, tok); status != http.StatusUnauthorized {
+		t.Errorf("original token after confirmation: status=%d want 401", status)
+	}
+	if status := doMgmtGetStatus(t, uri, nextTok); status != http.StatusOK {
+		t.Errorf("latest token after confirmation: status=%d want 200", status)
 	}
 }
 

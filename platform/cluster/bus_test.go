@@ -19,6 +19,9 @@ func TestEventKindConstants(t *testing.T) {
 	if KindTenantSuspension != "tenant_suspension" {
 		t.Errorf("expected 'tenant_suspension', got %q", KindTenantSuspension)
 	}
+	if KindControlPlaneRestore != "control_plane.restore" {
+		t.Errorf("expected 'control_plane.restore', got %q", KindControlPlaneRestore)
+	}
 }
 
 func TestMetaConfigDigest(t *testing.T) {
@@ -52,6 +55,7 @@ func TestAllEventKinds(t *testing.T) {
 		KindClientChange,
 		KindAuthzPolicyChange,
 		KindTenantSuspension,
+		KindControlPlaneRestore,
 	}
 
 	for _, kind := range allKinds {
@@ -69,6 +73,7 @@ func TestEventKindUniqueness(t *testing.T) {
 		KindClientChange,
 		KindAuthzPolicyChange,
 		KindTenantSuspension,
+		KindControlPlaneRestore,
 	}
 
 	for _, kind := range allKinds {

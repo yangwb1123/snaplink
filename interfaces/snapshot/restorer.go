@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/yangwb1123/snaplink/domains/connections"
 	"github.com/yangwb1123/snaplink/domains/permissions"
+	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/bootstrap"
 	"github.com/yangwb1123/snaplink/platform/netpolicy"
+	"github.com/yangwb1123/snaplink/shared/security"
 )
 
 // RestoreMode is how a Restorer treats existing destination state.
@@ -34,12 +37,22 @@ const (
 // optional in the same shape as Snapshotter — categories whose backend is
 // nil are silently skipped on restore.
 type Restorer struct {
-	Clients     sso.ClientStore      // optional
-	Users       sso.UserProvider     // optional
-	Permissions permissions.Provider // optional
-	NetPolicy   netpolicy.Store      // optional
-	Tracker     bootstrap.Tracker    // optional, for AdvanceBootstrap
-	Namespace   string               // bootstrap namespace; defaults to snapshot's
+	Clients     sso.ClientStore               // optional
+	Users       sso.UserProvider              // optional
+	Permissions permissions.Provider          // optional
+	NetPolicy   netpolicy.Store               // optional
+	Tenants     tenant.Store                  // optional
+	Connections connections.Store             // optional
+	Pairwise    security.PairwiseSubjectStore // optional
+	Invalidator RestoreInvalidator            // optional
+	Tracker     bootstrap.Tracker             // optional, for AdvanceBootstrap
+	Namespace   string                        // bootstrap namespace; defaults to snapshot's
+}
+
+// RestoreInvalidator flushes local and peer control-plane caches after a
+// successful non-dry-run restore.
+type RestoreInvalidator interface {
+	InvalidateRestoredControlPlane()
 }
 
 // RestoreOptions tunes a single Restore call.
@@ -95,11 +108,11 @@ func (r *Restorer) Restore(ctx context.Context, snap *Snapshot, opts RestoreOpti
 	rep := &Report{
 		Mode:   opts.Mode,
 		DryRun: opts.DryRun,
-		Items:  make(map[ResourceCategory]CategoryCounts, 6),
+		Items:  make(map[ResourceCategory]CategoryCounts, len(AllCategories())),
 	}
 
 	for _, p := range r.restorePlan(ctx, snap, opts) {
-		if excluded(p.cat, opts.Exclude) {
+		if excluded(p.cat, opts.Exclude) || !snap.IncludesCategory(p.cat) {
 			continue
 		}
 		c, err := p.run()
@@ -108,6 +121,9 @@ func (r *Restorer) Restore(ctx context.Context, snap *Snapshot, opts RestoreOpti
 			rep.Errors = append(rep.Errors, fmt.Sprintf("%s: %v", p.cat, err))
 			return rep, fmt.Errorf("snapshot restore: %s: %w", p.cat, err)
 		}
+	}
+	if !opts.DryRun && r.Invalidator != nil {
+		r.Invalidator.InvalidateRestoredControlPlane()
 	}
 
 	if opts.AdvanceBootstrap {
@@ -158,13 +174,254 @@ type catRunner struct {
 // is the terminal advance handled separately by the caller.
 func (r *Restorer) restorePlan(ctx context.Context, snap *Snapshot, opts RestoreOptions) []catRunner {
 	return []catRunner{
+		{CategoryTenants, func() (CategoryCounts, error) { return r.restoreTenants(ctx, snap, opts) }},
+		{CategoryTenantDomains, func() (CategoryCounts, error) { return r.restoreTenantDomains(ctx, snap, opts) }},
+		{CategoryConnections, func() (CategoryCounts, error) { return r.restoreConnections(ctx, snap, opts) }},
 		{CategoryClients, func() (CategoryCounts, error) { return r.restoreClients(ctx, snap, opts) }},
 		{CategoryUsers, func() (CategoryCounts, error) { return r.restoreUsers(ctx, snap, opts) }},
+		{CategoryPairwise, func() (CategoryCounts, error) { return r.restorePairwise(ctx, snap, opts) }},
 		{CategoryRoles, func() (CategoryCounts, error) { return r.restoreRoles(ctx, snap, opts) }},
 		{CategoryMenus, func() (CategoryCounts, error) { return r.restoreMenus(ctx, snap, opts) }},
 		{CategoryAssignments, func() (CategoryCounts, error) { return r.restoreAssignments(ctx, snap, opts) }},
 		{CategoryNetPolicy, func() (CategoryCounts, error) { return r.restoreNetPolicy(ctx, snap, opts) }},
 	}
+}
+
+func (r *Restorer) restorePairwise(ctx context.Context, snap *Snapshot, opts RestoreOptions) (CategoryCounts, error) {
+	var counts CategoryCounts
+	if r.Pairwise == nil {
+		return counts, nil
+	}
+	if opts.Mode == ModeReplace {
+		if err := r.prunePairwise(ctx, snap.Resources.Pairwise, opts.DryRun, &counts); err != nil {
+			return counts, err
+		}
+	}
+	for _, item := range snap.Resources.Pairwise {
+		_, err := r.Pairwise.LocalSubject(ctx, item.PairwiseSub)
+		exists := err == nil
+		if err != nil && !errors.Is(err, security.ErrPairwiseUnknown) {
+			return counts, err
+		}
+		if exists && opts.Mode == ModeMerge {
+			counts.Skipped++
+			continue
+		}
+		if exists {
+			counts.Updated++
+		} else {
+			counts.Inserted++
+		}
+		if !opts.DryRun {
+			if err := r.Pairwise.MapPairwise(ctx, item.PairwiseSub, item.LocalSub); err != nil {
+				return counts, err
+			}
+		}
+	}
+	return counts, nil
+}
+
+func (r *Restorer) prunePairwise(ctx context.Context, wanted []security.PairwiseSubjectMapping, dryRun bool, counts *CategoryCounts) error {
+	lister, listOK := r.Pairwise.(security.PairwiseSubjectLister)
+	deleter, deleteOK := r.Pairwise.(security.PairwiseSubjectDeleter)
+	if !listOK || !deleteOK {
+		return errors.Join(ErrUnsupportedRestore, errors.New("pairwise backend cannot list and delete records"))
+	}
+	current, err := lister.ListPairwiseSubjects(ctx)
+	if err != nil {
+		return err
+	}
+	keep := make(map[string]bool, len(wanted))
+	for _, item := range wanted {
+		keep[item.PairwiseSub] = true
+	}
+	for _, item := range current {
+		if keep[item.PairwiseSub] {
+			continue
+		}
+		counts.Deleted++
+		if !dryRun {
+			if err := deleter.DeletePairwiseSubject(ctx, item.PairwiseSub); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Restorer) restoreTenants(ctx context.Context, snap *Snapshot, opts RestoreOptions) (CategoryCounts, error) {
+	var counts CategoryCounts
+	if r.Tenants == nil {
+		return counts, nil
+	}
+	if opts.Mode == ModeReplace {
+		if err := r.pruneTenants(ctx, snap.Resources.Tenants, opts.DryRun, &counts); err != nil {
+			return counts, err
+		}
+	}
+	for _, item := range snap.Resources.Tenants {
+		_, err := r.Tenants.GetTenant(ctx, item.ID)
+		exists := err == nil
+		if err != nil && !errors.Is(err, tenant.ErrTenantNotFound) {
+			return counts, err
+		}
+		if exists && opts.Mode == ModeMerge {
+			counts.Skipped++
+			continue
+		}
+		if exists {
+			counts.Updated++
+		} else {
+			counts.Inserted++
+		}
+		if !opts.DryRun {
+			if err := r.Tenants.PutTenant(ctx, item); err != nil {
+				return counts, err
+			}
+		}
+	}
+	return counts, nil
+}
+
+func (r *Restorer) pruneTenants(ctx context.Context, wanted []*tenant.Tenant, dryRun bool, counts *CategoryCounts) error {
+	current, err := r.Tenants.ListTenants(ctx)
+	if err != nil {
+		return err
+	}
+	keep := make(map[string]bool, len(wanted))
+	for _, item := range wanted {
+		keep[item.ID] = true
+	}
+	for _, item := range current {
+		if keep[item.ID] {
+			continue
+		}
+		counts.Deleted++
+		if !dryRun {
+			if err := r.Tenants.DeleteTenant(ctx, item.ID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Restorer) restoreTenantDomains(ctx context.Context, snap *Snapshot, opts RestoreOptions) (CategoryCounts, error) {
+	var counts CategoryCounts
+	if r.Tenants == nil {
+		return counts, nil
+	}
+	if opts.Mode == ModeReplace {
+		if err := r.pruneTenantDomains(ctx, snap.Resources.TenantDomains, opts.DryRun, &counts); err != nil {
+			return counts, err
+		}
+	}
+	for _, item := range snap.Resources.TenantDomains {
+		_, err := r.Tenants.GetDomain(ctx, item.Hostname)
+		exists := err == nil
+		if err != nil && !errors.Is(err, tenant.ErrDomainNotFound) {
+			return counts, err
+		}
+		if exists && opts.Mode == ModeMerge {
+			counts.Skipped++
+			continue
+		}
+		if exists {
+			counts.Updated++
+		} else {
+			counts.Inserted++
+		}
+		if !opts.DryRun {
+			if err := r.Tenants.PutDomain(ctx, item); err != nil {
+				return counts, err
+			}
+		}
+	}
+	return counts, nil
+}
+
+func (r *Restorer) pruneTenantDomains(ctx context.Context, wanted []*tenant.Domain, dryRun bool, counts *CategoryCounts) error {
+	current, err := r.Tenants.ListDomains(ctx)
+	if err != nil {
+		return err
+	}
+	keep := make(map[string]bool, len(wanted))
+	for _, item := range wanted {
+		keep[item.Hostname] = true
+	}
+	for _, item := range current {
+		if keep[item.Hostname] {
+			continue
+		}
+		counts.Deleted++
+		if !dryRun {
+			if err := r.Tenants.DeleteDomain(ctx, item.Hostname); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Restorer) restoreConnections(ctx context.Context, snap *Snapshot, opts RestoreOptions) (CategoryCounts, error) {
+	var counts CategoryCounts
+	if r.Connections == nil {
+		return counts, nil
+	}
+	if opts.Mode == ModeReplace {
+		if err := r.pruneConnections(ctx, snap.Resources.Connections, opts.DryRun, &counts); err != nil {
+			return counts, err
+		}
+	}
+	for _, item := range snap.Resources.Connections {
+		_, err := r.Connections.Get(ctx, item.ID)
+		exists := err == nil
+		if err != nil && !errors.Is(err, connections.ErrNoConnection) {
+			return counts, err
+		}
+		if exists && opts.Mode == ModeMerge {
+			counts.Skipped++
+			continue
+		}
+		if exists {
+			counts.Updated++
+		} else {
+			counts.Inserted++
+		}
+		if !opts.DryRun {
+			if err := r.Connections.Upsert(ctx, item); err != nil {
+				return counts, err
+			}
+		}
+	}
+	return counts, nil
+}
+
+func (r *Restorer) pruneConnections(ctx context.Context, wanted []*connections.Connection, dryRun bool, counts *CategoryCounts) error {
+	lister, ok := r.Connections.(connections.Lister)
+	if !ok {
+		return errors.Join(ErrUnsupportedRestore, errors.New("connections backend cannot list all records"))
+	}
+	current, err := lister.List(ctx)
+	if err != nil {
+		return err
+	}
+	keep := make(map[string]bool, len(wanted))
+	for _, item := range wanted {
+		keep[item.ID] = true
+	}
+	for _, item := range current {
+		if keep[item.ID] {
+			continue
+		}
+		counts.Deleted++
+		if !dryRun {
+			if err := r.Connections.Delete(ctx, item.ID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // advanceBootstrap bumps the destination Tracker's recorded "highest

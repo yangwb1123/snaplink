@@ -42,7 +42,7 @@ func (b *appBuilder) wireSelfServicePassword() error {
 	}
 	b.passwordStore = passwordStore
 
-	auths, tempStore, totpAuth, totpEnrollStore, err := serverbuildauthn.BuildAuthenticatorsDurable(cfg, logger, passwordStore, b.userProvider, b.redis, b.pgDB, b.pgDialect)
+	auths, tempStore, totpAuth, totpEnrollStore, err := serverbuildauthn.BuildAuthenticatorsDurableWithLinker(cfg, logger, passwordStore, b.userProvider, b.redis, b.pgDB, b.pgDialect, b.identityLinker)
 	if err != nil {
 		return fmt.Errorf("authenticators: %w", err)
 	}

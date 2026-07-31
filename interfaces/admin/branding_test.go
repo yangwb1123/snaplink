@@ -30,7 +30,8 @@ func (d *brandingTestDeps) ErrorBodyDesc(code, desc string) map[string]any {
 
 // brandingTestStore partially implements tenant.Store for testing.
 type brandingTestStore struct {
-	tenants map[string]*tenantTenant
+	tenants  map[string]*tenantTenant
+	branding map[string]tenant.Branding
 }
 
 type tenantTenant struct {
@@ -39,7 +40,38 @@ type tenantTenant struct {
 }
 
 func newBrandingTestStore() *brandingTestStore {
-	return &brandingTestStore{tenants: map[string]*tenantTenant{}}
+	return &brandingTestStore{
+		tenants: map[string]*tenantTenant{}, branding: map[string]tenant.Branding{},
+	}
+}
+
+func (s *brandingTestStore) GetBranding(_ context.Context, id string) (tenant.Branding, error) {
+	if _, ok := s.tenants[id]; !ok {
+		return tenant.Branding{}, tenant.ErrTenantNotFound
+	}
+	if branding, ok := s.branding[id]; ok {
+		return branding, nil
+	}
+	return tenant.Branding{Values: map[string]string{}, Version: "0"}, nil
+}
+
+func (s *brandingTestStore) PutBranding(
+	_ context.Context, id string, values map[string]string, expected string,
+) (tenant.Branding, error) {
+	current, err := s.GetBranding(nil, id)
+	if err != nil {
+		return tenant.Branding{}, err
+	}
+	if current.Version != expected {
+		return tenant.Branding{}, tenant.ErrBrandingPrecondition
+	}
+	next := "1"
+	if expected == "1" {
+		next = "2"
+	}
+	branding := tenant.Branding{Values: values, Version: next}
+	s.branding[id] = branding
+	return branding, nil
 }
 
 func (s *brandingTestStore) GetTenant(_ context.Context, id string) (*tenant.Tenant, error) {
@@ -102,7 +134,10 @@ func (c *brandingHandlerCtx) Param(key string) string { return "" }
 
 func TestAdminGetBranding(t *testing.T) {
 	store := newBrandingTestStore()
-	store.tenants["tenant-1"] = &tenantTenant{ID: "tenant-1", Settings: map[string]string{"logo": "https://example.com/logo.png"}}
+	store.tenants["tenant-1"] = &tenantTenant{ID: "tenant-1"}
+	store.branding["tenant-1"] = tenant.Branding{
+		Values: map[string]string{"logo": "https://example.com/logo.png"}, Version: "3",
+	}
 	deps := newBrandingDeps(store)
 
 	ctx := brandingCtx(t, "GET", "/admin/branding?tenant_id=tenant-1", "")
@@ -115,6 +150,9 @@ func TestAdminGetBranding(t *testing.T) {
 	json.NewDecoder(ctx.rec.Body).Decode(&result)
 	if result["tenant_id"] != "tenant-1" {
 		t.Errorf("expected tenant-1, got %v", result["tenant_id"])
+	}
+	if result["version"] != "3" || ctx.rec.Header().Get("ETag") != `"branding-3"` {
+		t.Errorf("missing branding version/etag: body=%v headers=%v", result, ctx.rec.Header())
 	}
 	branding := result["branding"].(map[string]any)
 	if branding["logo"] != "https://example.com/logo.png" {
@@ -139,6 +177,7 @@ func TestAdminUpdateBranding(t *testing.T) {
 
 	body := `{"branding":{"logo":"https://example.com/logo.png","color":"#ff0000"}}`
 	ctx := brandingCtx(t, "PUT", "/admin/branding?tenant_id=tenant-1", body)
+	ctx.req.Header.Set("If-Match", `"branding-0"`)
 	HandleAdminUpdateBranding(deps, ctx)
 
 	if ctx.rec.Code != http.StatusOK {
@@ -146,26 +185,44 @@ func TestAdminUpdateBranding(t *testing.T) {
 	}
 
 	// Verify persistence
-	tnt, _ := store.GetTenant(nil, "tenant-1")
-	if tnt.Settings["logo"] != "https://example.com/logo.png" {
-		t.Errorf("expected logo to be persisted, got %v", tnt.Settings["logo"])
+	branding, _ := store.GetBranding(nil, "tenant-1")
+	if branding.Values["logo"] != "https://example.com/logo.png" {
+		t.Errorf("expected logo to be persisted, got %v", branding.Values["logo"])
 	}
 }
 
 func TestAdminDeleteBranding(t *testing.T) {
 	store := newBrandingTestStore()
-	store.tenants["tenant-1"] = &tenantTenant{ID: "tenant-1", Settings: map[string]string{"logo": "x"}}
+	store.tenants["tenant-1"] = &tenantTenant{ID: "tenant-1"}
+	store.branding["tenant-1"] = tenant.Branding{
+		Values: map[string]string{"logo": "x"}, Version: "1",
+	}
 	deps := newBrandingDeps(store)
 
 	ctx := brandingCtx(t, "DELETE", "/admin/branding?tenant_id=tenant-1", "")
+	ctx.req.Header.Set("If-Match", `"branding-1"`)
 	HandleAdminDeleteBranding(deps, ctx)
 
 	if ctx.rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", ctx.rec.Code)
 	}
 
-	tnt, _ := store.GetTenant(nil, "tenant-1")
-	if len(tnt.Settings) != 0 {
-		t.Errorf("expected empty settings after delete, got %v", tnt.Settings)
+	branding, _ := store.GetBranding(nil, "tenant-1")
+	if len(branding.Values) != 0 || branding.Version != "2" {
+		t.Errorf("expected versioned empty branding after delete, got %v", branding)
+	}
+}
+
+func TestAdminUpdateBrandingRejectsStaleVersion(t *testing.T) {
+	store := newBrandingTestStore()
+	store.tenants["tenant-1"] = &tenantTenant{ID: "tenant-1"}
+	store.branding["tenant-1"] = tenant.Branding{Values: map[string]string{}, Version: "1"}
+	ctx := brandingCtx(t, "PUT", "/admin/branding?tenant_id=tenant-1", `{"branding":{}}`)
+	ctx.req.Header.Set("If-Match", `"branding-0"`)
+
+	HandleAdminUpdateBranding(newBrandingDeps(store), ctx)
+
+	if ctx.rec.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale branding update = %d, want 412", ctx.rec.Code)
 	}
 }

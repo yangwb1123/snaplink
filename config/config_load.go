@@ -129,6 +129,9 @@ func (c *Config) validate() error {
 	if err := ValidateVersion(c); err != nil {
 		return err
 	}
+	if err := c.validateTopology(); err != nil {
+		return err
+	}
 	level := strings.ToLower(c.Logging.Level)
 	switch level {
 	case "debug", "info", "error":
@@ -152,6 +155,21 @@ func (c *Config) validate() error {
 	}
 	if c.Backup.Keep < 0 {
 		return fmt.Errorf("config: backup.keep must be >= 0 (0 disables retention), got %d", c.Backup.Keep)
+	}
+	return nil
+}
+
+func (c *Config) validateTopology() error {
+	mode := strings.ToLower(strings.TrimSpace(c.Server.Topology.Mode))
+	switch mode {
+	case "", TopologyModeSingle, TopologyModeMulti:
+		c.Server.Topology.Mode = mode
+	default:
+		return fmt.Errorf("config: server.topology.mode must be %q or %q, got %q",
+			TopologyModeSingle, TopologyModeMulti, c.Server.Topology.Mode)
+	}
+	if c.Server.Topology.AllowPerPodState && mode != TopologyModeMulti {
+		return errors.New("config: server.topology.allow_per_pod_state requires mode: multi")
 	}
 	return nil
 }

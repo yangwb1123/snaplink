@@ -9,9 +9,15 @@ import (
 	"github.com/yangwb1123/snaplink/shared/spi"
 
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildplatform"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildsign"
 	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/domains/identitylink"
+	identitylinksqlite "github.com/yangwb1123/snaplink/domains/identitylink/sqlite"
 	"github.com/yangwb1123/snaplink/domains/userlifecycle"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreidentity"
+	identitylinkpostgres "github.com/yangwb1123/snaplink/infrastructure/identitylinkpostgres"
+	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
+	"github.com/yangwb1123/snaplink/interfaces/snapshot"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/admingovernance"
 	"github.com/yangwb1123/snaplink/shared/security/peertrust"
@@ -41,10 +47,9 @@ func buildApp(cfg *config.Config, logger spi.Logger) (builtApp *app, retErr erro
 	if err := b.wirePostgres(); err != nil {
 		return nil, err
 	}
-	// Loud warning if a cluster is declared but core stores still resolve to
-	// per-pod memory — the misconfig that boots clean + green /readyz while
-	// breaking correctness behind a multi-replica load balancer.
-	b.warnHACoherence()
+	if err := b.enforceHACoherence(); err != nil {
+		return nil, err
+	}
 	if err := b.wireFoundation(); err != nil {
 		return nil, err
 	}
@@ -69,56 +74,88 @@ func buildApp(cfg *config.Config, logger spi.Logger) (builtApp *app, retErr erro
 	return b.finalize()
 }
 
-// warnHACoherence emits a LOUD warning when a Redis/Postgres cluster is declared
-// but a core security/correctness store still resolves to per-pod memory. Such a
-// config boots clean and reports /readyz GREEN (the cluster ping passes) while
-// silently serving from state no peer replica can see: behind a round-robin LB
-// an auth code minted on one replica is unknown on another (~2/3 of /token
-// exchanges fail invalid_grant), and refresh-reuse / replay / session defenses
-// become per-pod. It does NOT fail boot (single-replica + hybrid are valid), but
-// names exactly which store to move onto the cluster.
-func (b *appBuilder) warnHACoherence() {
+// enforceHACoherence fails declared multi-replica deployments before any
+// domain store starts serving private state. Undeclared legacy topologies keep
+// the previous warning behavior when a shared backend hints at HA intent.
+func (b *appBuilder) enforceHACoherence() error {
+	issues := b.haCoherenceIssues()
+	if len(issues) == 0 {
+		return nil
+	}
+	topology := b.cfg.Server.Topology
+	if topology.Mode == config.TopologyModeMulti && !topology.AllowPerPodState {
+		return fmt.Errorf("multi-replica topology requires shared critical stores: %s",
+			strings.Join(issues, "; "))
+	}
+	b.logger.Error("HA INCOHERENCE: critical stores are per-process; select shared backends before placing replicas behind one load balancer",
+		"per_pod_stores", issues, "unsafe_override", topology.AllowPerPodState)
+	return nil
+}
+
+func (b *appBuilder) haCoherenceIssues() []string {
+	multi := b.cfg.Server.Topology.Mode == config.TopologyModeMulti
 	redisHA := b.cfg.Redis.Configured()
 	pgHA := b.cfg.Postgres.Configured()
-	if !redisHA && !pgHA {
-		return
+	if !multi && !redisHA && !pgHA {
+		return nil
 	}
-	perPod := func(backend string) bool {
-		s := strings.ToLower(strings.TrimSpace(backend))
-		return s == "" || s == "memory"
+	checks := []struct {
+		enabled bool
+		key     string
+		backend string
+	}{
+		{true, "oauth.backend", b.cfg.OAuth.Backend},
+		{true, "identity.session_backend", resolvedSessionBackend(b.cfg.Identity)},
+		{b.cfg.Security.JTIReplay.Enabled, "security.jti_replay.backend", b.cfg.Security.JTIReplay.Backend},
+		{b.cfg.CIBA.Enabled, "ciba.backend", b.cfg.CIBA.Backend},
+		{multi || pgHA, "identity.backend", b.cfg.Identity.Backend},
+		{multi && b.cfg.MFA.Enabled, "mfa.challenge.backend", b.cfg.MFA.Challenge.Backend},
+		{multi && b.cfg.SelfService.IdentityLink.Enabled, "self_service.identity_link.backend", b.cfg.SelfService.IdentityLink.Backend},
+		{multi && b.cfg.Server.PairwiseSubjects.Enabled, "server.pairwise_subjects.backend", b.cfg.Server.PairwiseSubjects.Backend},
 	}
 	var stuck []string
-	// Hot cross-replica stores: needed whenever EITHER cluster is declared (a
-	// postgres-only multi-replica deploy still must not run oauth/jti on memory).
-	if redisHA || pgHA {
-		if perPod(b.cfg.OAuth.Backend) {
-			stuck = append(stuck, "oauth.backend (auth_code/refresh/device/par): token exchange FAILS across replicas")
-		}
-		sess := b.cfg.Identity.SessionBackend
-		if sess == "" {
-			sess = b.cfg.Identity.Backend
-		}
-		if perPod(sess) {
-			stuck = append(stuck, "identity.session_backend: sessions are per-pod")
-		}
-		if perPod(b.cfg.Security.JTIReplay.Backend) {
-			stuck = append(stuck, "security.jti_replay.backend: replay defense is per-pod")
-		}
-		if b.cfg.CIBA.Enabled && perPod(b.cfg.CIBA.Backend) {
-			stuck = append(stuck, "ciba.backend: CIBA poll/ping FAILS across replicas")
+	for _, check := range checks {
+		if check.enabled && perPodBackend(check.backend) {
+			stuck = append(stuck, check.key)
 		}
 	}
-	if pgHA && perPod(b.cfg.Identity.Backend) {
-		stuck = append(stuck, "identity.backend (clients/users): durable records are per-pod, lost on restart")
+	return stuck
+}
+
+func resolvedSessionBackend(cfg config.IdentityConfig) string {
+	if strings.TrimSpace(cfg.SessionBackend) != "" {
+		return cfg.SessionBackend
 	}
-	if len(stuck) == 0 {
-		return
+	return cfg.Backend
+}
+
+func perPodBackend(backend string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(backend))
+	return normalized == "" || normalized == "memory"
+}
+
+// buildSnapshotterRestorer constructs the disaster-recovery view over the live
+// stores. Keeping it outside build_app_cluster.go preserves that file's hard
+// size budget while the v2 snapshot expands its resource set.
+func (b *appBuilder) buildSnapshotterRestorer(srw *snapshotReleaseWiring, srv *sso.Server) {
+	pairwise := srv.PairwiseStore()
+	srw.snapshotter = &snapshot.Snapshotter{
+		Clients: b.clientStore, Users: b.userProvider,
+		Permissions: b.provider, NetPolicy: b.netStore,
+		Tenants: b.tenantStore, Connections: b.connectionStore,
+		Pairwise:  pairwise,
+		Namespace: bootstrapNamespace,
 	}
-	// Error level (not Info) so this is impossible to miss: the Info-level
-	// "single-replica only" per-store logs already exist and were demonstrably
-	// too quiet. Boot continues — single-replica/hybrid are valid.
-	b.logger.Error("HA INCOHERENCE: a redis/postgres cluster is configured but core stores still default to per-pod memory — behind a multi-replica load balancer this breaks correctness; select the per-store backends (see ops/deploy/k8s-prod/config.yaml)",
-		"per_pod_stores", stuck)
+	if b.cfg.Snapshot.RedactSecrets {
+		srw.snapshotter.DefaultExportRedactor = snapshot.SnapshotRedactSecrets()
+	}
+	srw.restorer = &snapshot.Restorer{
+		Clients: b.clientStore, Users: b.userProvider,
+		Permissions: b.provider, NetPolicy: b.netStore,
+		Tenants: b.tenantStore, Connections: b.connectionStore,
+		Pairwise: pairwise, Invalidator: srv,
+		Namespace: bootstrapNamespace,
+	}
 }
 
 // wirePeerTrust compiles security.trusted_proxies.cidrs ONCE into the
@@ -158,10 +195,10 @@ func (b *appBuilder) wireFoundation() error {
 // to finalize() (after wireCluster) so it can share the Active ITDR threat
 // executor with tokenanomaly.Detector; see wireThreatAction's doc comment.
 func (b *appBuilder) wireDomains() error {
-	if err := b.wireSelfServicePassword(); err != nil {
+	if err := b.wireIdentityLink(); err != nil {
 		return err
 	}
-	if err := b.wireIdentityLink(); err != nil {
+	if err := b.wireSelfServicePassword(); err != nil {
 		return err
 	}
 	if err := b.wireGeoRegionRisk(); err != nil {
@@ -340,7 +377,7 @@ func (b *appBuilder) startUserAutoDeprovisionSweep(srv *sso.Server) {
 // already the package's own safe default).
 func (b *appBuilder) wireIdentityLink() error {
 	cfg := b.cfg.SelfService.IdentityLink
-	store, policy, err := serverbuildplatform.BuildIdentityLink(cfg)
+	store, policy, err := serverbuildplatform.BuildIdentityLinkDurable(cfg, b.pgDB, b.pgDialect)
 	if err != nil {
 		return fmt.Errorf("self_service.identity_link: %w", err)
 	}
@@ -351,8 +388,44 @@ func (b *appBuilder) wireIdentityLink() error {
 	if policy != nil {
 		b.opts = append(b.opts, sso.WithIdentityMergePolicy(policy))
 	}
-	b.logger.Info("self-service identity linking enabled (/me/identities)", "merge_policy", cfg.MergePolicy)
+	if err := b.checkIdentityLinkSchema(store, cfg.Backend); err != nil {
+		closeIfCloser(store)
+		return err
+	}
+	b.identityLinker = identitylink.NewAuthenticatorLinker(store, policy, b.recorder)
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "identity-links", store)
+	b.appendIdentityLinkHealth(store, cfg.Backend)
+	b.logger.Info("self-service identity linking enabled (/me/identities)",
+		"backend", cfg.Backend, "merge_policy", cfg.MergePolicy)
 	return nil
+}
+
+func (b *appBuilder) checkIdentityLinkSchema(store identitylink.Store, backend string) error {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case "sqlite":
+		err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, store, "identity_links", identitylinksqlite.MaxVersion())
+		if err != nil {
+			return fmt.Errorf("schema check identity_links: %w", err)
+		}
+	case "postgres":
+		err := postgresbackend.CheckSchema(b.schemaCtx, b.pgDB, "identity_links", identitylinkpostgres.MaxVersion())
+		if err != nil {
+			return fmt.Errorf("schema check identity_links: %w", err)
+		}
+	}
+	return nil
+}
+
+func (b *appBuilder) appendIdentityLinkHealth(store identitylink.Store, backend string) {
+	if !strings.EqualFold(strings.TrimSpace(backend), "postgres") {
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(
+			b.storageHealthSources, "identity-links", store)
+		return
+	}
+	if pinger, ok := store.(interface{ Ping(context.Context) error }); ok {
+		b.storageHealthSources = append(b.storageHealthSources,
+			sso.StorageHealthSource{Name: "identity-links", Ping: pinger.Ping})
+	}
 }
 
 // --- helpers ---

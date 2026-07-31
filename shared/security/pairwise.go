@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/url"
+	"sort"
 	"sync"
 
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -38,6 +39,26 @@ const (
 type PairwiseSubjectStore interface {
 	MapPairwise(ctx context.Context, pairwiseSub, localSub string) error
 	LocalSubject(ctx context.Context, pairwiseSub string) (string, error)
+}
+
+// PairwiseSubjectMapping is the portable representation used by disaster
+// recovery exports. It contains no credential secret: pairwise_sub is already
+// the opaque identifier exposed to the relying party.
+type PairwiseSubjectMapping struct {
+	PairwiseSub string `json:"pairwise_sub"`
+	LocalSub    string `json:"local_sub"`
+}
+
+// PairwiseSubjectLister is the optional enumeration capability required by
+// snapshot export and replace-mode restore.
+type PairwiseSubjectLister interface {
+	ListPairwiseSubjects(ctx context.Context) ([]PairwiseSubjectMapping, error)
+}
+
+// PairwiseSubjectDeleter is the optional deletion capability required by
+// replace-mode restore.
+type PairwiseSubjectDeleter interface {
+	DeletePairwiseSubject(ctx context.Context, pairwiseSub string) error
 }
 
 // ErrPairwiseUnknown is the sentinel a PairwiseSubjectStore returns
@@ -85,6 +106,26 @@ func (m *MemoryPairwiseSubjectStore) LocalSubject(_ context.Context, pairwiseSub
 		return "", ErrPairwiseUnknown
 	}
 	return local, nil
+}
+
+// ListPairwiseSubjects returns a deterministic copy for portable snapshots.
+func (m *MemoryPairwiseSubjectStore) ListPairwiseSubjects(_ context.Context) ([]PairwiseSubjectMapping, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]PairwiseSubjectMapping, 0, len(m.entries))
+	for pairwiseSub, localSub := range m.entries {
+		out = append(out, PairwiseSubjectMapping{PairwiseSub: pairwiseSub, LocalSub: localSub})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PairwiseSub < out[j].PairwiseSub })
+	return out, nil
+}
+
+// DeletePairwiseSubject removes one mapping. Missing mappings are a no-op.
+func (m *MemoryPairwiseSubjectStore) DeletePairwiseSubject(_ context.Context, pairwiseSub string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.entries, pairwiseSub)
+	return nil
 }
 
 // DefaultPairwiseSalt is used when an operator wires the pairwise

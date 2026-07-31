@@ -16,9 +16,11 @@ import (
 )
 
 type mfaResumeState struct {
-	Result           *AuthResult       `json:"result"`
-	Request          login.Request     `json:"request"`
-	CredentialHealth *CredentialHealth `json:"credential_health,omitempty"`
+	Result                 *AuthResult       `json:"result"`
+	Request                login.Request     `json:"request"`
+	CredentialHealth       *CredentialHealth `json:"credential_health,omitempty"`
+	AuthenticationComplete bool              `json:"authentication_complete,omitempty"`
+	TrustDevice            bool              `json:"trust_device,omitempty"`
 }
 
 // issueMFAChallenge mints a single-use challenge ID + persists the
@@ -55,6 +57,8 @@ func (s *Server) persistMFAChallenge(ctx HandlerContext, result *AuthResult, req
 	// Set CredentialHealth explicitly: AuthResult.CredentialHealth is
 	// json:"-", so the embedded Result drops it; this side channel
 	// preserves it for the post-step-up audit in finishLogin.
+	req.Credential = nil
+	req.DeviceToken = ""
 	stateBlob, err := json.Marshal(&mfaResumeState{Result: result, Request: req, CredentialHealth: result.CredentialHealth})
 	if err != nil {
 		s.logger.Error("mfa: failed to marshal resume state", "error", err, "client", client.ID, "user", result.UserID)
@@ -322,6 +326,10 @@ func (s *Server) resumeLoginAfterMFA(ctx HandlerContext, challenge *spi.MFAChall
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBody(ctx, ErrInternal))
 		return
 	}
+	if state.AuthenticationComplete {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBody(ctx, ErrMFAInvalid))
+		return
+	}
 	state.Result.CredentialHealth = state.CredentialHealth
 	state.Result.AuthMethods = handler.WithMFAMethod(state.Result.AuthMethods, method)
 
@@ -352,7 +360,9 @@ func (s *Server) resumeLoginAfterMFA(ctx HandlerContext, challenge *spi.MFAChall
 	if s.resumeLoginResidualGates(ctx, state, client) {
 		return
 	}
-	s.finishLoginWithDeviceTrust(ctx, state.Result, state.Request, client, challenge.SubjectID, trustDevice)
+	authzCtx := s.wrapAuthorizationResponse(ctx, &state.Request, client)
+	nextCtx := s.wrapForLoginContinuation(authzCtx, state.Result, state.Request, client, trustDevice)
+	s.finishLoginWithDeviceTrust(nextCtx, state.Result, state.Request, client, challenge.SubjectID, trustDevice)
 }
 
 // resumeLoginResidualGates runs the SECOND-leg gates that must be

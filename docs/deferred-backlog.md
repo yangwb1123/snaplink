@@ -81,12 +81,13 @@ not part of default CI. See [sso/oidc-conformance.md](sso/oidc-conformance.md).
 
 ### Disaster-recovery snapshot scope
 
-Snapshot schema v1 covers clients, users, roles, assignments, menus, network
-policy and bootstrap state. It intentionally excludes sessions/tokens, and
-currently also excludes tenants, enterprise connections, pairwise subject
-mappings, MFA enrollments and signing private keys. Raw Postgres, Redis, SQLite
-and etcd recovery remains operator-managed. See
-[dr-framework.md](dr-framework.md).
+Snapshot schema v2 adds an explicit category manifest plus tenants,
+tenant-domain routing and enterprise connections while retaining v1 read
+compatibility. It also preserves pairwise subject mappings and broadcasts a
+full control-plane cache invalidation after a committed restore. It
+intentionally excludes sessions/tokens, MFA enrollments and signing private
+keys. Raw Postgres, Redis, SQLite and etcd recovery remains operator-managed.
+See [dr-framework.md](dr-framework.md).
 
 ### Multi-language SDK parity
 
@@ -95,9 +96,13 @@ and direct HTTP/gRPC consumers have access to more features.
 
 ### Identity linking
 
-The stock binary wires an in-memory identity-link store. The merge policy is an
-extension point for custom login integrations; the stock `/auth/login` handler
-does not perform account merging.
+The stock binary supports memory, SQLite and Postgres identity-link stores and
+wires them into static and connection-backed OIDC federation. `link_only`
+atomically moves identity-link ownership but deliberately does not merge
+sessions, consents, tokens, MFA enrollments or historical audit ownership.
+A first-party “connect another identity” ceremony remains an external
+frontend/custom-authenticator flow because it requires fresh proof from both
+accounts; the API never accepts an unverified provider/subject claim.
 
 ### User lifecycle
 

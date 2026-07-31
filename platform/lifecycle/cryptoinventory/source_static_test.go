@@ -49,10 +49,10 @@ func TestStaticSource_RetireKey(t *testing.T) {
 		t.Errorf("OnRetire called with %q, want anchor-1", retiredWith)
 	}
 
-	// Nil OnRetire is a no-op, not an error.
+	// Nil OnRetire is reported exactly as unsupported.
 	readOnly := &StaticSource{SourceName: "kms"}
-	if err := readOnly.RetireKey(context.Background(), "anchor-1"); err != nil {
-		t.Errorf("RetireKey with nil OnRetire should be a no-op, got: %v", err)
+	if err := readOnly.RetireKey(context.Background(), "anchor-1"); !errors.Is(err, ErrRetirementUnsupported) {
+		t.Errorf("RetireKey with nil OnRetire = %v, want unsupported", err)
 	}
 
 	// A propagated OnRetire error surfaces to the caller.

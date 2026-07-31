@@ -18,6 +18,7 @@ package admingovernance
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -40,19 +41,19 @@ const (
 // Payload is a caller-defined JSON document interpreted only by whichever
 // Applier is registered for ActionType — this package never inspects it.
 type ChangeRequest struct {
-	ID         string
-	ActionType string
-	Payload    []byte
+	ID         string          `json:"id"`
+	ActionType string          `json:"action_type"`
+	Payload    json.RawMessage `json:"payload"`
 	// Reason is the mandatory ticket/justification, mirroring break-glass's
 	// mandatory reason: an unexplained governed change is itself an audit
 	// finding.
-	Reason      string
-	ProposedBy  string
-	ApprovedBy  string
-	Status      ChangeStatus
-	FailureNote string
-	CreatedAt   time.Time
-	DecidedAt   time.Time
+	Reason      string       `json:"reason"`
+	ProposedBy  string       `json:"proposed_by"`
+	ApprovedBy  string       `json:"approved_by,omitempty"`
+	Status      ChangeStatus `json:"status"`
+	FailureNote string       `json:"failure_note,omitempty"`
+	CreatedAt   time.Time    `json:"created_at"`
+	DecidedAt   time.Time    `json:"decided_at,omitempty"`
 }
 
 // Sentinel errors an ApprovalStore implementation MUST return (checked via

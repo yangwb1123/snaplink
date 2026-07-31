@@ -72,24 +72,39 @@ func HandleCreateBreakGlass(d Deps, ctx core.HandlerContext) {
 	}
 
 	rctx := ctx.Request().Context()
-	if !a.wasApprovalRequired {
-		sids, err := mintImpersonationSession(d, rctx, a.AdminSession)
-		if err != nil {
-			d.Logger().Error("break-glass mint impersonation session failed", "target_user_id", a.TargetUserID, "error", err)
-			ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
-			return
-		}
-		a.Status = core.AdminSessionActive
-		a.ApprovedBy = a.AdminUserID
-		a.SessionIDs = sids
-	}
 	a.AuditID = recordBreakGlassEvent(d, rctx, audit.ClientIP(ctx.Request()), audit.EventAdminBreakGlassCreated, a.AdminSession)
 	if err := store.Create(rctx, a.AdminSession); err != nil {
 		d.Logger().Error("break-glass create failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
-	ctx.JSON(http.StatusCreated, a.AdminSession)
+	if a.wasApprovalRequired {
+		ctx.JSON(http.StatusCreated, a.AdminSession)
+		return
+	}
+	activateCreatedBreakGlass(d, ctx, store, a.AdminSession)
+}
+
+func activateCreatedBreakGlass(
+	d Deps, ctx core.HandlerContext, store core.BreakGlassStore, pending core.AdminSession,
+) {
+	rctx := ctx.Request().Context()
+	sids, err := mintImpersonationSession(d, rctx, pending)
+	if err != nil {
+		_, _ = store.Revoke(rctx, pending.ID)
+		d.Logger().Error("break-glass mint impersonation session failed", "id", pending.ID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	active, err := store.Activate(rctx, pending.ID, pending.AdminUserID, sids)
+	if err == nil {
+		ctx.JSON(http.StatusCreated, active)
+		return
+	}
+	results := cascadeRevokeSessions(d, rctx, sids)
+	_, _ = store.Revoke(rctx, pending.ID)
+	d.Logger().Error("break-glass activation failed", "id", pending.ID, "error", err)
+	writeBreakGlassCompensation(ctx, pending.ID, results)
 }
 
 // pendingBreakGlassSession is a freshly validated (not yet minted/persisted)
@@ -199,10 +214,17 @@ func HandleRevokeBreakGlass(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 		return
 	}
-	cascadeRevokeSessions(d, rctx, a.SessionIDs)
-	cascadeRevokeImpersonationTokens(d, rctx, a.ImpersonationTokens)
+	results := cascadeRevokeSessions(d, rctx, a.SessionIDs)
+	results = append(results, cascadeRevokeImpersonationTokens(d, rctx, a.ImpersonationTokens)...)
 	recordBreakGlassEvent(d, rctx, audit.ClientIP(ctx.Request()), audit.EventAdminBreakGlassRevoked, a)
-	ctx.JSON(http.StatusOK, map[string]string{core.KeyStatus: "revoked"})
+	status := http.StatusOK
+	if !allDerivedCredentialsRevoked(results) {
+		status = http.StatusMultiStatus
+	}
+	ctx.JSON(status, map[string]any{
+		core.KeyStatus: "revoked", "grant_id": a.ID,
+		"credential_results": results, "retryable": status == http.StatusMultiStatus,
+	})
 }
 
 // HandleApproveBreakGlass serves POST /api/v1/admin/break-glass/:id/approve
@@ -380,16 +402,6 @@ func mintImpersonationSession(d Deps, ctx context.Context, a core.AdminSession) 
 // target user. Best-effort per session — a SessionManager that already
 // forgot the id is not an error, so one bad id can't abort the rest of the
 // cascade.
-func cascadeRevokeSessions(d Deps, ctx context.Context, sessionIDs []string) {
-	sm := d.SessionMgr()
-	if sm == nil {
-		return
-	}
-	for _, sid := range sessionIDs {
-		_ = sm.Destroy(ctx, sid)
-	}
-}
-
 // recordBreakGlassEvent emits evtType with the SOC 2 evidence-chain metadata
 // every break-glass lifecycle event MUST carry, and returns the recorded
 // event's ID (empty when no Auditor is wired) for AdminSession.AuditID.

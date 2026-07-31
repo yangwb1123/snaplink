@@ -28,7 +28,12 @@ func HandleMySessionsEnriched(d Deps, ctx core.HandlerContext) {
 	if !ok {
 		return
 	}
-	sessions, err := d.SessionManager().ListByUser(ctx.Request().Context(), userID)
+	manager := d.SessionManager()
+	if manager == nil {
+		ctx.JSON(http.StatusOK, map[string]any{"sessions": []*core.Session{}})
+		return
+	}
+	sessions, err := manager.ListByUser(ctx.Request().Context(), userID)
 	if err != nil {
 		d.Logger().Error("list sessions failed", "user_id", userID, "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))
@@ -85,8 +90,12 @@ func HandleMyDeviceSessions(d Deps, ctx core.HandlerContext) {
 			return
 		}
 	}
-	// List matching sessions.
-	sessions, err := d.SessionManager().ListByUser(ctx.Request().Context(), userID)
+	manager := d.SessionManager()
+	if manager == nil {
+		ctx.JSON(http.StatusServiceUnavailable, d.ErrorBody(core.ErrInternal))
+		return
+	}
+	sessions, err := manager.ListByUser(ctx.Request().Context(), userID)
 	if err != nil {
 		d.Logger().Error("device sessions: list failed", "error", err)
 		ctx.JSON(http.StatusInternalServerError, d.ErrorBody(core.ErrInternal))

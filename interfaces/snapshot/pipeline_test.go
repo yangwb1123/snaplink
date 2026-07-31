@@ -25,7 +25,8 @@ func TestJSONCodec_Roundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if !strings.Contains(string(raw), `"schema_version": "1"`) {
+	wantVersion := `"schema_version": "` + snapshot.SchemaVersion + `"`
+	if !strings.Contains(string(raw), wantVersion) {
 		t.Errorf("missing schema_version in output:\n%s", string(raw))
 	}
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
+	"github.com/yangwb1123/snaplink/domains/metering"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
@@ -31,7 +31,7 @@ type introspectDeps struct {
 	issuers       map[string]core.TokenIssuer
 	validate      func(ctx context.Context, token string) (*core.TokenClaims, string, error)
 	verifyCA      func(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
-	usageRecorder *tokenusage.Recorder
+	usageRecorder *metering.Recorder
 	// renewExceeded stands in for the token-policy require_renew seam. Nil =
 	// default-off (never exceeded, zero renewAt), so an unset hook keeps
 	// introspection byte-identical to a build without a wired policy.
@@ -59,9 +59,9 @@ func (d *introspectDeps) VerifyJWTClientAssertion(ctx context.Context, a, f, i s
 	return d.verifyCA(ctx, a, f, i)
 }
 
-func (d *introspectDeps) IntrospectionCache() IntrospectionCache   { return nil }
-func (d *introspectDeps) IntrospectionCacheTTL() time.Duration     { return 0 }
-func (d *introspectDeps) TokenUsageRecorder() *tokenusage.Recorder { return d.usageRecorder }
+func (d *introspectDeps) IntrospectionCache() IntrospectionCache { return nil }
+func (d *introspectDeps) IntrospectionCacheTTL() time.Duration   { return 0 }
+func (d *introspectDeps) TokenUsageRecorder() *metering.Recorder { return d.usageRecorder }
 func (d *introspectDeps) IntrospectionRenewExceeded(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) (bool, time.Time) {
 	if d.renewExceeded == nil {
 		return false, time.Time{}

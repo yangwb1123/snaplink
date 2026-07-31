@@ -101,16 +101,35 @@ type Store interface {
 	Close() error
 }
 
+// Branding is the independently versioned tenant branding resource.
+// Branding is deliberately separate from Tenant.Settings so an editor cannot
+// overwrite feature flags, locale, or other tenant configuration.
+type Branding struct {
+	Values  map[string]string `json:"branding"`
+	Version string            `json:"version"`
+}
+
+// BrandingStore applies atomic optimistic concurrency to tenant branding.
+// Expected version "0" creates the resource; every successful write advances
+// the version. Implementations must not read-modify-write Tenant.Settings.
+type BrandingStore interface {
+	GetBranding(ctx context.Context, tenantID string) (Branding, error)
+	PutBranding(
+		ctx context.Context, tenantID string, values map[string]string, expectedVersion string,
+	) (Branding, error)
+}
+
 // Sentinel errors. Admin RPCs map these to gRPC codes; middleware
 // treats ErrTenantNotFound / ErrDomainNotFound as "no tenant for
 // this request" (non-fatal — handlers decide).
 var (
-	ErrTenantNotFound = errors.New("tenant: not found")
-	ErrDomainNotFound = errors.New("tenant: domain not found")
-	ErrDomainExists   = errors.New("tenant: domain hostname already in use")
-	ErrTenantExists   = errors.New("tenant: id already in use")
-	ErrInvalidTenant  = errors.New("tenant: invalid")
-	ErrInvalidDomain  = errors.New("tenant: invalid domain")
+	ErrTenantNotFound       = errors.New("tenant: not found")
+	ErrDomainNotFound       = errors.New("tenant: domain not found")
+	ErrDomainExists         = errors.New("tenant: domain hostname already in use")
+	ErrTenantExists         = errors.New("tenant: id already in use")
+	ErrInvalidTenant        = errors.New("tenant: invalid")
+	ErrInvalidDomain        = errors.New("tenant: invalid domain")
+	ErrBrandingPrecondition = errors.New("tenant: branding precondition failed")
 )
 
 // Validate sanity-checks a Tenant before persistence. ID + Slug

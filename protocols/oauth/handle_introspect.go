@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/metering"
 	"github.com/yangwb1123/snaplink/domains/tenant"
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
@@ -42,7 +42,7 @@ type IntrospectDeps interface {
 	// TokenUsageRecorder returns the optional token-usage telemetry
 	// recorder. A nil recorder (telemetry disabled) makes every Offer a
 	// no-op — introspection behavior is unaffected either way.
-	TokenUsageRecorder() *tokenusage.Recorder
+	TokenUsageRecorder() *metering.Recorder
 	// SessionManager returns the optional session manager for session-aware
 	// introspection. When nil, the introspection layer cannot verify session
 	// liveness and returns only token-level information (existing behavior).
@@ -332,10 +332,10 @@ func recordIntrospectionUsage(d IntrospectDeps, claims *core.TokenClaims) {
 	if clientID == "" && len(claims.Audience) > 0 {
 		clientID = claims.Audience[0]
 	}
-	d.TokenUsageRecorder().Offer(tokenusage.Event{
-		Thumbprint: tokenusage.Thumbprint(claims.JTI),
-		Kind:       tokenusage.KindAccess,
-		Endpoint:   tokenusage.EndpointIntrospect,
+	d.TokenUsageRecorder().Offer(metering.Event{
+		Thumbprint: metering.Thumbprint(claims.JTI),
+		Kind:       metering.KindAccess,
+		Endpoint:   metering.EndpointIntrospect,
 		ClientID:   clientID,
 		SubjectID:  claims.Subject,
 	})
@@ -439,9 +439,9 @@ func introspectRefresh(d IntrospectDeps, ctx core.HandlerContext, token string) 
 	if len(info.Scopes) > 0 {
 		body[core.KeyScope] = strings.Join(info.Scopes, " ")
 	}
-	d.TokenUsageRecorder().Offer(tokenusage.Event{
-		Kind:      tokenusage.KindRefresh,
-		Endpoint:  tokenusage.EndpointIntrospect,
+	d.TokenUsageRecorder().Offer(metering.Event{
+		Kind:      metering.KindRefresh,
+		Endpoint:  metering.EndpointIntrospect,
 		ClientID:  info.ClientID,
 		SubjectID: info.UserID,
 	})

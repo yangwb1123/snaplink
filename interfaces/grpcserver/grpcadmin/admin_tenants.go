@@ -9,6 +9,7 @@ import (
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -37,7 +38,7 @@ type TenantAdminService struct {
 	// revokeTenantTokens proactively purges the tenant's refresh tokens
 	// when it is suspended (wired to (*sso.Server).RevokeTenantRefreshTokens).
 	// Optional — nil is a no-op.
-	revokeTenantTokens func(ctx context.Context, tenantID string)
+	revokeTenantTokens func(ctx context.Context, tenantID string) core.TenantCredentialRevocationReport
 }
 
 // NewTenantAdminService wires the store, audit recorder, the suspension-cache
@@ -45,7 +46,7 @@ type TenantAdminService struct {
 // active token-revocation hook fired on suspend. Pass nil for any callback
 // when the SSO server doesn't have the corresponding feature enabled (the
 // call is a no-op then).
-func NewTenantAdminService(store tenant.Store, recorder *audit.Recorder, invalidateCache func(string), invalidateResidency func(string), revokeTokens func(context.Context, string)) *TenantAdminService {
+func NewTenantAdminService(store tenant.Store, recorder *audit.Recorder, invalidateCache func(string), invalidateResidency func(string), revokeTokens func(context.Context, string) core.TenantCredentialRevocationReport) *TenantAdminService {
 	if invalidateCache == nil {
 		invalidateCache = func(string) {}
 	}
@@ -53,7 +54,9 @@ func NewTenantAdminService(store tenant.Store, recorder *audit.Recorder, invalid
 		invalidateResidency = func(string) {}
 	}
 	if revokeTokens == nil {
-		revokeTokens = func(context.Context, string) {}
+		revokeTokens = func(_ context.Context, tenantID string) core.TenantCredentialRevocationReport {
+			return core.TenantCredentialRevocationReport{TenantID: tenantID}
+		}
 	}
 	return &TenantAdminService{
 		store:                     store,
@@ -298,8 +301,8 @@ func (s *TenantAdminService) DeleteTenant(ctx context.Context, in *adminv1.Delet
 	// A deleted tenant must not leave usable refresh tokens behind for its
 	// (now-orphaned) clients — purge them too, symmetric with the suspend
 	// path. Best-effort; the hook logs + audits internally.
-	s.revokeTenantTokens(ctx, in.Id)
-	return &adminv1.DeleteTenantResponse{}, nil
+	report := s.revokeTenantTokens(ctx, in.Id)
+	return &adminv1.DeleteTenantResponse{CredentialRevocation: tenantRevocationToProto(report)}, nil
 }
 
 func (s *TenantAdminService) SetTenantStatus(ctx context.Context, in *adminv1.SetTenantStatusRequest) (*adminv1.SetTenantStatusResponse, error) {
@@ -339,14 +342,38 @@ func (s *TenantAdminService) SetTenantStatus(ctx context.Context, in *adminv1.Se
 	// still-valid refresh token. Best-effort — the hook logs + audits
 	// internally; fires only on a real flip to Suspended (the no-op path
 	// returned above, and a flip to Active must not purge).
+	var revocation *adminv1.TenantCredentialRevocationReport
 	if newStatus == tenant.StatusSuspended {
-		s.revokeTenantTokens(ctx, in.Id)
+		report := s.revokeTenantTokens(ctx, in.Id)
+		revocation = tenantRevocationToProto(report)
 	}
 	fresh, _ := s.store.GetTenant(ctx, in.Id)
 	if fresh == nil {
 		fresh = existing
 	}
-	return &adminv1.SetTenantStatusResponse{Tenant: tenantToProto(fresh)}, nil
+	return &adminv1.SetTenantStatusResponse{
+		Tenant: freshTenantProto(fresh), CredentialRevocation: revocation,
+	}, nil
+}
+
+func freshTenantProto(t *tenant.Tenant) *adminv1.Tenant { return tenantToProto(t) }
+
+func tenantRevocationToProto(
+	report core.TenantCredentialRevocationReport,
+) *adminv1.TenantCredentialRevocationReport {
+	out := &adminv1.TenantCredentialRevocationReport{
+		TenantId: report.TenantID, RefreshTokensRevoked: int32(report.RefreshTokensRevoked),
+		SessionsRevoked: int32(report.SessionsRevoked), Complete: report.Complete(),
+		Results: make([]*adminv1.CredentialRevocationResult, 0, len(report.Results)),
+	}
+	for _, result := range report.Results {
+		out.Results = append(out.Results, &adminv1.CredentialRevocationResult{
+			IdempotencyKey: result.IdempotencyKey, Kind: result.Kind,
+			ResourceId: result.ResourceID, Status: result.Status,
+			RevokedCount: int32(result.RevokedCount), Error: result.Error,
+		})
+	}
+	return out
 }
 
 // Domain CRUD (ListDomains/GetDomain/CreateDomain/UpdateDomain/DeleteDomain)

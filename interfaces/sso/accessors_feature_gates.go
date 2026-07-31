@@ -323,12 +323,16 @@ func (s *Server) TargetHoldsAdminScope(ctx context.Context, targetUserID, client
 // the revoke/expiry cascade's promise ("a revoked grant can never be used
 // again") did not actually hold. Best-effort — a nil/absent issuer is a
 // no-op, matching the logout revocation path.
-func (s *Server) RevokeToken(ctx context.Context, token string) {
+func (s *Server) RevokeToken(ctx context.Context, token string) error {
 	if token == "" || len(s.tokenIssuers) == 0 {
-		return
+		return nil
 	}
 	revoked, failed := s.RevokeAcrossIssuers(ctx, token)
 	s.auditPartialRevokeFailureCtx(ctx, revoked, failed)
+	if len(failed) > 0 {
+		return fmt.Errorf("revoke failed for issuers: %s", strings.Join(failed, ","))
+	}
+	return nil
 }
 
 // AuditPartialRevokeFailure emits an audit event when some issuers failed to revoke.

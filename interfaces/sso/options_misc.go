@@ -3,12 +3,12 @@ package sso
 import (
 	"github.com/yangwb1123/snaplink/domains/anomaly"
 	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
+	"github.com/yangwb1123/snaplink/domains/metering"
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/domains/region"
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/domains/tokenanomaly"
 	"github.com/yangwb1123/snaplink/domains/tokenpolicy"
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
 	"github.com/yangwb1123/snaplink/platform/cluster"
 	"github.com/yangwb1123/snaplink/platform/geo"
 	"github.com/yangwb1123/snaplink/platform/metrics"
@@ -244,7 +244,7 @@ func WithAnomalyRunner(r *anomaly.Runner) Option {
 	return func(s *Server) { s.anomalyRunner = r }
 }
 
-// WithTokenUsageRecorder wires a [tokenusage.Recorder] — the bounded-buffer
+// WithTokenUsageRecorder wires a [metering.Recorder] — the bounded-buffer
 // telemetry sink that Offers a usage event on every successful token
 // issuance and introspection, off the request hot path. When BOTH this
 // option AND [WithMetrics] are set, NewServer arms the recorder's Prometheus
@@ -256,7 +256,7 @@ func WithAnomalyRunner(r *anomaly.Runner) Option {
 // nil recorder → every Offer is a safe no-op (mirrors WithAnomalyRunner).
 // Pre-call recorder.Start() before passing here so the drainer is alive
 // when the first event arrives.
-func WithTokenUsageRecorder(r *tokenusage.Recorder) Option {
+func WithTokenUsageRecorder(r *metering.Recorder) Option {
 	return func(s *Server) { s.tokenUsageRecorder = r }
 }
 
@@ -292,7 +292,7 @@ func WithTokenPolicy(store tokenpolicy.Store) Option {
 // /api/v1/admin/tokens/suspicious.
 //
 // The SAME detector value MUST also be the store passed to the
-// [tokenusage.Recorder] this server uses (the detector is a tokenusage.Store
+// [metering.Recorder] this server uses (the detector is a metering.Store
 // decorator) so the recorder's drain feeds it observations; wire it as both
 // the recorder's store and here.
 //
@@ -313,9 +313,13 @@ func WithTokenAnomalyDetector(d *tokenanomaly.Detector) Option {
 // [WithMFAProvider] is set.
 func WithMFAChallengeStore(store spi.MFAChallengeStore, ttl time.Duration) Option {
 	return func(s *Server) {
-		s.mfaChallengeStore = store
+		if store != nil {
+			s.mfaChallengeStore = store
+			s.loginTransactionStore = store
+		}
 		if ttl > 0 {
 			s.mfaChallengeTTL = ttl
+			s.loginTransactionTTL = ttl
 		}
 	}
 }

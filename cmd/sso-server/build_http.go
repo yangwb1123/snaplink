@@ -180,6 +180,9 @@ func adminGatewayResourcePaths() []string {
 		// "{id}:restore".
 		"/api/v1/admin/snapshots",
 		"/api/v1/admin/snapshots/{id}",
+		// durable multi-step operation journal
+		"/api/v1/admin/operations",
+		"/api/v1/admin/operations/{id}",
 		// tenants — proto/admin/v1/tenants.proto. "{id}" also catches
 		// "{id}:set-status".
 		"/api/v1/admin/tenants",
@@ -440,25 +443,39 @@ func registerAdminGateway(ctx context.Context, gw *runtime.ServeMux, a *app) err
 			return fmt.Errorf("gateway keys: %w", err)
 		}
 	}
-	if a.snapshotPipeline != nil {
-		if err := adminv1.RegisterSnapshotAdminServiceHandlerServer(ctx, gw, grpcserver.NewSnapshotAdminService(
-			a.snapshotPipeline, a.snapshotStorage, a.snapshotter, a.snapshotRestorer, a.recorder)); err != nil {
-			return fmt.Errorf("gateway snapshots: %w", err)
-		}
-	}
-	if a.releaseStore != nil {
-		if err := adminv1.RegisterReleaseAdminServiceHandlerServer(ctx, gw, grpcserver.NewReleaseAdminService(
-			a.releaseRegistry, a.releaseStore, a.recorder)); err != nil {
-			return fmt.Errorf("gateway releases: %w", err)
-		}
+	if err := registerLifecycleGateway(ctx, gw, a); err != nil {
+		return err
 	}
 	if a.tenantStore != nil {
 		if err := adminv1.RegisterTenantAdminServiceHandlerServer(ctx, gw, grpcserver.NewTenantAdminService(
 			a.tenantStore, a.recorder, a.server.InvalidateTenantSuspensionCache,
 			a.server.InvalidateTenantResidencyCache,
-			func(ctx context.Context, id string) { _, _ = a.server.RevokeTenantRefreshTokens(ctx, id) })); err != nil {
+			a.server.RevokeTenantCredentials)); err != nil {
 			return fmt.Errorf("gateway tenants: %w", err)
 		}
+	}
+	return nil
+}
+
+func registerLifecycleGateway(ctx context.Context, gw *runtime.ServeMux, a *app) error {
+	if a.snapshotPipeline != nil {
+		if err := adminv1.RegisterSnapshotAdminServiceHandlerServer(ctx, gw, grpcserver.NewSnapshotAdminService(
+			a.snapshotPipeline, a.snapshotStorage, a.snapshotter, a.snapshotRestorer, a.recorder, a.operationStore)); err != nil {
+			return fmt.Errorf("gateway snapshots: %w", err)
+		}
+	}
+	if a.releaseStore != nil {
+		if err := adminv1.RegisterReleaseAdminServiceHandlerServer(ctx, gw, grpcserver.NewReleaseAdminService(
+			a.releaseRegistry, a.releaseStore, a.recorder, a.operationStore)); err != nil {
+			return fmt.Errorf("gateway releases: %w", err)
+		}
+	}
+	if a.operationStore == nil {
+		return nil
+	}
+	if err := adminv1.RegisterOperationAdminServiceHandlerServer(
+		ctx, gw, grpcserver.NewOperationAdminService(a.operationStore)); err != nil {
+		return fmt.Errorf("gateway operations: %w", err)
 	}
 	return nil
 }

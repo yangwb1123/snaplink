@@ -3,12 +3,16 @@ package grpcadmin
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
 
+	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/operations"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
@@ -165,4 +169,95 @@ func recordAdminMeta(ctx context.Context, recorder *audit.Recorder, t audit.Even
 		audit.SetMeta(evt, k, v)
 	}
 	recorder.Record(ctx, evt)
+}
+
+type OperationAdminService struct {
+	adminv1.UnimplementedOperationAdminServiceServer
+	store operations.Store
+}
+
+func NewOperationAdminService(store operations.Store) *OperationAdminService {
+	return &OperationAdminService{store: store}
+}
+
+func (s *OperationAdminService) GetOperation(
+	ctx context.Context, in *adminv1.GetOperationRequest,
+) (*adminv1.GetOperationResponse, error) {
+	if s.store == nil {
+		return nil, status.Error(codes.FailedPrecondition, "operation store not configured")
+	}
+	if in == nil || in.Id == "" {
+		return nil, status.Error(codes.InvalidArgument, "id required")
+	}
+	operation, err := s.store.Get(ctx, in.Id)
+	if errors.Is(err, operations.ErrNotFound) {
+		return nil, status.Error(codes.NotFound, "operation not found")
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "get operation: %v", err)
+	}
+	return &adminv1.GetOperationResponse{Operation: operationToProto(operation)}, nil
+}
+
+func (s *OperationAdminService) ListOperations(
+	ctx context.Context, _ *adminv1.ListOperationsRequest,
+) (*adminv1.ListOperationsResponse, error) {
+	if s.store == nil {
+		return nil, status.Error(codes.FailedPrecondition, "operation store not configured")
+	}
+	items, err := s.store.List(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list operations: %v", err)
+	}
+	out := &adminv1.ListOperationsResponse{
+		Operations: make([]*adminv1.AdminOperation, 0, len(items)),
+	}
+	for _, operation := range items {
+		out.Operations = append(out.Operations, operationToProto(operation))
+	}
+	return out, nil
+}
+
+func operationToProto(operation operations.Operation) *adminv1.AdminOperation {
+	out := &adminv1.AdminOperation{
+		Id: operation.ID, Kind: operation.Kind, Target: operation.Target,
+		State: operation.State, CurrentStep: operation.CurrentStep,
+		ResultJson: append([]byte(nil), operation.ResultJSON...), Error: operation.Error,
+		CreatedAtUnix: operation.CreatedAt.Unix(), UpdatedAtUnix: operation.UpdatedAt.Unix(),
+		Steps:         make([]*adminv1.OperationStep, 0, len(operation.Steps)),
+		Compensations: make([]*adminv1.OperationStep, 0, len(operation.Compensations)),
+	}
+	for _, step := range operation.Steps {
+		out.Steps = append(out.Steps, operationStepToProto(step))
+	}
+	for _, step := range operation.Compensations {
+		out.Compensations = append(out.Compensations, operationStepToProto(step))
+	}
+	return out
+}
+
+func operationStepToProto(step operations.Step) *adminv1.OperationStep {
+	out := &adminv1.OperationStep{Name: step.Name, State: step.State, Error: step.Error}
+	if !step.StartedAt.IsZero() {
+		out.StartedAtUnix = step.StartedAt.Unix()
+	}
+	if !step.FinishedAt.IsZero() {
+		out.FinishedAtUnix = step.FinishedAt.Unix()
+	}
+	return out
+}
+
+func operationFailureError(operation operations.Operation, cause error) error {
+	st := status.Convert(cause)
+	withDetails, err := st.WithDetails(&errdetails.ErrorInfo{
+		Reason: "OPERATION_FAILED",
+		Metadata: map[string]string{
+			"operation_id":  operation.ID,
+			"operation_url": "/api/v1/admin/operations/" + operation.ID,
+		},
+	})
+	if err != nil {
+		return cause
+	}
+	return withDetails.Err()
 }

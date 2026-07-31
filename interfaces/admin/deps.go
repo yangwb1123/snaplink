@@ -118,8 +118,9 @@ type Deps interface {
 	// RevokeToken denies a bearer across every registered issuer (publishing on
 	// the cluster bus like /token/revoke). The break-glass cascade uses it to
 	// kill impersonation credentials the instant a grant is revoked/expired, and
-	// to clean up a token whose atomic attach lost a race. Best-effort.
-	RevokeToken(ctx context.Context, token string)
+	// to clean up a token whose atomic attach lost a race. An error identifies
+	// a bearer that could not be denied by every responsible issuer.
+	RevokeToken(ctx context.Context, token string) error
 	// InvalidateConnectionCache publishes a KindConnectionChange event to the
 	// cluster bus so peer replicas evict any cached connection config for connID.
 	// Called after every connection upsert and delete. Fire-and-forget: a bus

@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package snaplink.admin.v1;
+
+import "google/api/annotations.proto";
+
+option go_package = "github.com/yangwb1123/snaplink/gen/proto/admin/v1;adminv1";
+
+service OperationAdminService {
+  rpc GetOperation(GetOperationRequest) returns (GetOperationResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/operations/{id}" };
+  }
+  rpc ListOperations(ListOperationsRequest) returns (ListOperationsResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/operations" };
+  }
+}
+
+message OperationStep {
+  string name = 1;
+  string state = 2;
+  string error = 3;
+  int64 started_at_unix = 4;
+  int64 finished_at_unix = 5;
+}
+
+message AdminOperation {
+  string id = 1;
+  string kind = 2;
+  string target = 3;
+  string state = 4;
+  string current_step = 5;
+  repeated OperationStep steps = 6;
+  repeated OperationStep compensations = 7;
+  bytes result_json = 8;
+  string error = 9;
+  int64 created_at_unix = 10;
+  int64 updated_at_unix = 11;
+}
+
+message GetOperationRequest { string id = 1; }
+message GetOperationResponse { AdminOperation operation = 1; }
+message ListOperationsRequest {}
+message ListOperationsResponse { repeated AdminOperation operations = 1; }

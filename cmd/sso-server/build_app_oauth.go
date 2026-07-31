@@ -163,7 +163,7 @@ func (b *appBuilder) wireConnectionStore() error {
 	// connection's stored config (build failures land in the audit trail —
 	// b.recorder is populated by wireFoundation before wireDomains runs).
 	b.opts = append(b.opts, sso.WithConnectionAuthenticatorFactory(
-		serverbuildauthn.NewConnectionAuthenticatorFactory(b.recorder, b.logger, 0)))
+		serverbuildauthn.NewConnectionAuthenticatorFactoryWithLinker(b.recorder, b.logger, 0, b.identityLinker)))
 	if cfg.Connections.Probe.Timeout > 0 {
 		b.opts = append(b.opts, sso.WithConnectionProbeTimeout(cfg.Connections.Probe.Timeout))
 	}

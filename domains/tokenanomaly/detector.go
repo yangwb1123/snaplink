@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/metering"
 	"github.com/yangwb1123/snaplink/domains/threataction"
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
@@ -55,7 +55,7 @@ type observation struct {
 	minSwitch time.Duration
 }
 
-// Detector decorates a [tokenusage.Store]: it forwards Record/Query verbatim
+// Detector decorates a [metering.Store]: it forwards Record/Query verbatim
 // (so the wave-1 usage read API is byte-identical) while ALSO capturing a
 // bounded per-thumbprint observation on each Record — the raw geo/subject the
 // aggregating store discards. A periodic [Detector.Analyze] sweep turns those
@@ -65,7 +65,7 @@ type observation struct {
 // recorder's drain goroutine — OFF the request path, exactly like the
 // aggregation it wraps.
 type Detector struct {
-	next     tokenusage.Store
+	next     metering.Store
 	findings FindingStore
 
 	mu    sync.Mutex
@@ -96,12 +96,12 @@ type Detector struct {
 	logger spi.Logger
 }
 
-// The Detector decorates a tokenusage.Store (forwarding Record/Query) and, when
+// The Detector decorates a metering.Store (forwarding Record/Query) and, when
 // the wrapped store reports cardinality, its TrackedBucketReporter — so it drops
 // in as the wave-1 Recorder's store without changing the usage read API.
 var (
-	_ tokenusage.Store                 = (*Detector)(nil)
-	_ tokenusage.TrackedBucketReporter = (*Detector)(nil)
+	_ metering.Store                 = (*Detector)(nil)
+	_ metering.TrackedBucketReporter = (*Detector)(nil)
 )
 
 // Option tunes a Detector at construction.
@@ -191,9 +191,9 @@ func WithLogger(l spi.Logger) Option {
 // NewDetector builds a Detector wrapping next and emitting to findings.
 // Returns nil when next is nil — every method on a nil *Detector is a safe
 // no-op, so callers can wire it unconditionally (mirrors
-// tokenusage.NewRecorder). findings may be nil: Analyze still computes and
+// metering.NewRecorder). findings may be nil: Analyze still computes and
 // returns findings but skips persistence.
-func NewDetector(next tokenusage.Store, findings FindingStore, opts ...Option) *Detector {
+func NewDetector(next metering.Store, findings FindingStore, opts ...Option) *Detector {
 	if next == nil {
 		return nil
 	}
@@ -249,7 +249,7 @@ func (d *Detector) findingHook() func(findingType, severity string) {
 // the recorder's drain goroutine — never the request path. A capture never
 // fails; the store's error is returned verbatim so the recorder's fail-open
 // logging is unchanged.
-func (d *Detector) Record(ctx context.Context, ev tokenusage.Event) error {
+func (d *Detector) Record(ctx context.Context, ev metering.Event) error {
 	if d == nil {
 		return nil
 	}
@@ -262,7 +262,7 @@ func (d *Detector) Record(ctx context.Context, ev tokenusage.Event) error {
 
 // Query forwards to the wrapped store unchanged — the usage read API sees the
 // same buckets it would without the detector.
-func (d *Detector) Query(ctx context.Context, q tokenusage.Query) ([]tokenusage.Bucket, error) {
+func (d *Detector) Query(ctx context.Context, q metering.Query) ([]metering.Bucket, error) {
 	if d == nil {
 		return nil, nil
 	}
@@ -275,7 +275,7 @@ func (d *Detector) TrackedBuckets() int {
 	if d == nil {
 		return 0
 	}
-	if rep, ok := d.next.(tokenusage.TrackedBucketReporter); ok {
+	if rep, ok := d.next.(metering.TrackedBucketReporter); ok {
 		return rep.TrackedBuckets()
 	}
 	return 0
@@ -283,7 +283,7 @@ func (d *Detector) TrackedBuckets() int {
 
 // recordObservation folds one thumbprint-bearing event into its observation,
 // evicting the oldest thumbprint at cap. Caller must NOT hold d.mu.
-func (d *Detector) recordObservation(ev tokenusage.Event) {
+func (d *Detector) recordObservation(ev metering.Event) {
 	at := ev.At
 	if at.IsZero() {
 		at = d.clock()
@@ -368,7 +368,7 @@ func (d *Detector) Analyze(ctx context.Context) ([]Finding, error) {
 
 // processFindingSafe wraps processFinding in recover(): FindingStore and
 // ThreatExecutor are pluggable, operator-supplied implementations (mirrors
-// tokenusage.Recorder.recordSafe's rationale) — a panic in either must fail
+// metering.Recorder.recordSafe's rationale) — a panic in either must fail
 // only THIS finding, not escape the sweep and crash the permanent background
 // goroutine an operator is documented to run Analyze from.
 func (d *Detector) processFindingSafe(ctx context.Context, f Finding, hook func(findingType, severity string)) (err error) {

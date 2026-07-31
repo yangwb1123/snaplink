@@ -21,3 +21,33 @@ type BackupSource interface {
 // Relocated here (not consts_wire.go) because that file is at its per-file
 // line budget.
 const PathAdminSessionsLinked = "/admin/sessions/linked/:subject"
+
+// CredentialRevocationResult is one independently retryable leg of a
+// tenant-lifecycle credential purge.
+type CredentialRevocationResult struct {
+	IdempotencyKey string `json:"idempotency_key"`
+	Kind           string `json:"kind"`
+	ResourceID     string `json:"resource_id"`
+	Status         string `json:"status"`
+	RevokedCount   int    `json:"revoked_count"`
+	Error          string `json:"error,omitempty"`
+}
+
+// TenantCredentialRevocationReport makes suspension/deletion cleanup
+// observable instead of hiding refresh-token or session failures.
+type TenantCredentialRevocationReport struct {
+	TenantID             string                       `json:"tenant_id"`
+	RefreshTokensRevoked int                          `json:"refresh_tokens_revoked"`
+	SessionsRevoked      int                          `json:"sessions_revoked"`
+	Results              []CredentialRevocationResult `json:"results"`
+}
+
+// Complete reports whether every configured revocation leg succeeded.
+func (r TenantCredentialRevocationReport) Complete() bool {
+	for _, result := range r.Results {
+		if result.Status == "failed" {
+			return false
+		}
+	}
+	return true
+}

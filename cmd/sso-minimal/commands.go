@@ -72,6 +72,14 @@ func writeModules(w io.Writer, asJSON bool) error {
 			return err
 		}
 	}
+	if _, err := fmt.Fprintln(w, "  capabilities:"); err != nil {
+		return err
+	}
+	for _, id := range inventory.Capabilities {
+		if _, err := fmt.Fprintf(w, "    - %s\n", id); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -87,6 +95,19 @@ func moduleInventory() buildinfo.ModuleInventory {
 			"core-runtime",
 			"sso-prototype-runtime",
 			"sso-minimal-runtime",
+		}
+		inventory.Capabilities = []string{
+			"config.host.v1",
+			"core.runtime.v1",
+			"lifecycle.host.v1",
+			"oauth.sso-prototype.v1",
+			"observability.logging.v1",
+			"observability.tracing.v1",
+			"oidc.common.v1",
+			"security.policy.v1",
+			"server.sso-minimal.v1",
+			"server.sso-prototype.v1",
+			"tenant.default.v1",
 		}
 	}
 	return inventory

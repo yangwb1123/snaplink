@@ -61,7 +61,8 @@ type ClientRegistrationConfig struct {
 	// PUT /register/:id (RFC 7592 §3.2), limiting a leaked token's lifetime.
 	// Default false keeps the token stable across updates (byte-identical);
 	// enabling it requires managing clients to capture the new token per PUT.
-	RotateAccessToken bool `yaml:"rotate_access_token"`
+	RotateAccessToken        bool          `yaml:"rotate_access_token"`
+	RotateAccessTokenOverlap time.Duration `yaml:"rotate_access_token_overlap"`
 }
 
 // BackchannelLogoutConfig opts into OIDC Back-Channel Logout 1.0.

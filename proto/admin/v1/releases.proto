@@ -8,6 +8,7 @@ syntax = "proto3";
 package snaplink.admin.v1;
 
 import "google/api/annotations.proto";
+import "admin/v1/operations.proto";
 
 option go_package = "github.com/yangwb1123/snaplink/gen/proto/admin/v1;adminv1";
 
@@ -97,10 +98,18 @@ message GetCurrentReleaseResponse {
 }
 
 message PinReleaseRequest { string id = 1; }
-message PinReleaseResponse { PinReport report = 1; }
+message PinReleaseResponse {
+  PinReport report = 1;
+  string operation_id = 2;
+  AdminOperation operation = 3;
+}
 
 message RollbackReleaseRequest { string id = 1; }
-message RollbackReleaseResponse { PinReport report = 1; }
+message RollbackReleaseResponse {
+  PinReport report = 1;
+  string operation_id = 2;
+  AdminOperation operation = 3;
+}
 
 message DeleteReleaseRequest { string id = 1; }
 message DeleteReleaseResponse {}

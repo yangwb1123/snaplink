@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/core"
 
 	_ "modernc.org/sqlite" // register the "sqlite" driver name.
 )
@@ -210,6 +211,48 @@ func (p *UserProvider) List(ctx context.Context) ([]*sso.User, error) {
 	return out, nil
 }
 
+// ListPaginated implements [core.UserPaginationProvider] without loading the
+// full user table into the process. Ordering matches List.
+func (p *UserProvider) ListPaginated(ctx context.Context, offset, limit int) ([]*sso.User, int, error) {
+	var total int
+	if err := p.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("sqlite: count users: %w", err)
+	}
+	offset, limit = normalizeUserPage(offset, limit)
+	rows, err := p.db.QueryContext(ctx, `
+        SELECT id, external_id, provider, email, name, attributes, created_at, updated_at
+          FROM users ORDER BY id ASC LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("sqlite: list paginated: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]*sso.User, 0, limit)
+	for rows.Next() {
+		u, scanErr := scanUser(rows)
+		if scanErr != nil {
+			return nil, 0, scanErr
+		}
+		out = append(out, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("sqlite: paginated rows: %w", err)
+	}
+	return out, total, nil
+}
+
+func normalizeUserPage(offset, limit int) (int, int) {
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	return offset, limit
+}
+
 // Delete implements [sso.UserProvider]. Idempotent — missing ids
 // return nil (matches the interface contract documented in user.go).
 func (p *UserProvider) Delete(ctx context.Context, id string) error {
@@ -267,3 +310,4 @@ func nullable(s string) sql.NullString {
 
 // Compile-time interface assertion.
 var _ sso.UserProvider = (*UserProvider)(nil)
+var _ core.UserPaginationProvider = (*UserProvider)(nil)

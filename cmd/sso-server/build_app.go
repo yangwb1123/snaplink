@@ -16,11 +16,11 @@ import (
 	"github.com/yangwb1123/snaplink/domains/authenticators"
 	"github.com/yangwb1123/snaplink/domains/authenticators/webauthn"
 	"github.com/yangwb1123/snaplink/domains/connections"
+	"github.com/yangwb1123/snaplink/domains/metering"
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/domains/region"
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/domains/tokenanomaly"
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/emailsmtp"
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
 	"github.com/yangwb1123/snaplink/interfaces/grpcserver"
@@ -67,6 +67,7 @@ type appBuilder struct {
 	pgDialect postgresbackend.Dialect
 
 	metricsRegistry *metrics.Metrics
+	identityLinker  authenticators.UserLinker
 
 	// peerTrust is the ONE compiled security.trusted_proxies checker fanned
 	// out to every proxy-header consumer (region header resolver, mTLS
@@ -204,11 +205,11 @@ type appBuilder struct {
 
 	// Token-anomaly subsystem (wave-4 cmd wiring, token_anomaly.enabled).
 	// tokenUsageRecorder is the bounded-buffer telemetry substrate whose drain
-	// feeds tokenAnomalyDetector (the tokenusage.Store decorator it wraps); both
+	// feeds tokenAnomalyDetector (the metering.Store decorator it wraps); both
 	// are built pre-NewServer by wireTokenAnomaly and the RunTokenAnomalyDetection
 	// sweep is Started post-NewServer under the tokenAnomalySweep cancel/done pair.
 	// The recorder is Closed at shutdown to drain its queue. All nil when off.
-	tokenUsageRecorder      *tokenusage.Recorder
+	tokenUsageRecorder      *metering.Recorder
 	tokenAnomalyDetector    *tokenanomaly.Detector
 	tokenAnomalySweepCancel context.CancelFunc
 	tokenAnomalySweepDone   <-chan struct{}
@@ -264,7 +265,7 @@ func (b *appBuilder) finalize() (*app, error) {
 	// On-demand signing-key rotation admin service (needs srv for the hook).
 	rt.keyAdmin = b.buildKeyAdminService(srv)
 	rt.adminMW = b.wireAdminMW(srv)
-	rt.snapshots, err = b.wireSnapshotReleases()
+	rt.snapshots, err = b.wireSnapshotReleases(srv)
 	if err != nil {
 		return nil, err
 	}
@@ -384,6 +385,7 @@ func (b *appBuilder) assemble(rt serverRuntime) *app {
 		snapshotRestorer:  srw.restorer,
 		keyAdmin:          rt.keyAdmin,
 		releaseRegistry:   srw.releaseRegistry, releaseStore: srw.releaseStore,
+		operationStore:          srw.operationStore,
 		tenantStore:             b.tenantStore,
 		connectionStore:         b.connectionStore,
 		regionResolver:          b.regionResolver,

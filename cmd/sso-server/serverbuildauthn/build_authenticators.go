@@ -40,6 +40,12 @@ func BuildAuthenticators(cfg *config.Config, logger spi.Logger, passwordStore ss
 // pg may be nil (no postgres block) — backends that require it then fail loud at
 // boot rather than silently using per-pod state.
 func BuildAuthenticatorsDurable(cfg *config.Config, logger spi.Logger, passwordStore sso.PasswordCredentialStore, userProvider sso.UserProvider, rdb goredis.Cmdable, pg *sql.DB, dialect postgresbackend.Dialect) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator, sso.MFAEnrollmentStore, error) {
+	return BuildAuthenticatorsDurableWithLinker(cfg, logger, passwordStore, userProvider, rdb, pg, dialect, nil)
+}
+
+// BuildAuthenticatorsDurableWithLinker wires linker into every configured
+// static OIDC federation authenticator.
+func BuildAuthenticatorsDurableWithLinker(cfg *config.Config, logger spi.Logger, passwordStore sso.PasswordCredentialStore, userProvider sso.UserProvider, rdb goredis.Cmdable, pg *sql.DB, dialect postgresbackend.Dialect, linker authenticators.UserLinker) ([]sso.Authenticator, authenticators.TempTokenStore, *authenticators.TOTPAuthenticator, sso.MFAEnrollmentStore, error) {
 	var auths []sso.Authenticator
 	var tempStore authenticators.TempTokenStore
 	var totpAuth *authenticators.TOTPAuthenticator
@@ -80,9 +86,7 @@ func BuildAuthenticatorsDurable(cfg *config.Config, logger spi.Logger, passwordS
 		return nil, nil, nil, nil, err
 	}
 
-	// linker nil: no identitylink.Store is built in this binary yet (see
-	// appendOIDCFederationAuthenticators's doc for the wiring seam this leaves).
-	auths = appendOIDCFederationAuthenticators(auths, cfg.Authenticators.OIDCFederation, logger, nil)
+	auths = appendOIDCFederationAuthenticators(auths, cfg.Authenticators.OIDCFederation, logger, linker)
 	return auths, tempStore, totpAuth, totpEnrollStore, nil
 }
 

@@ -44,9 +44,10 @@ own replication/backup mechanism.
 Snapshot schema v1 is a **subset**, not a complete export of all durable
 control-plane state. It does not include tenants, enterprise connections,
 pairwise-subject mappings, MFA enrollments, signing private keys, audit rows or
-other backend-specific tables. Preserve those with backend-native backups.
-Expanding this set requires a versioned snapshot schema; see
-[ROADMAP.md](ROADMAP.md).
+other backend-specific tables. Schema v2 adds tenants, tenant domains,
+enterprise connections and pairwise-subject mappings while keeping v1
+read-compatible. Preserve every still-omitted resource with backend-native
+backups.
 
 ## 2. Failure levels
 
@@ -72,7 +73,7 @@ they do not by themselves make backups happen faster.
 | **PostgreSQL** (`infrastructure/postgres`, shared `*sql.DB` pool) | Durable backend for identity, tenants, audit, permissions, etc. (`*.backend: postgres`) | Operator-managed: native streaming replication to a standby, `pg_dump`/`pg_basebackup`, or a managed Postgres provider's PITR | Cross-region streaming replica or WAL archiving to the DR region — outside this SDK's process; the SDK only needs `postgres.dsn` re-pointed after failover |
 | **Redis** (`infrastructure/redis`, shared client) | Hot/ephemeral backend for sessions, OAuth hot stores, rate limiting, JTI replay, MFA challenges (`*.backend: redis`) | Operator-managed: RDB/AOF persistence + a replica (Sentinel/Cluster) for HA within a region | Not recommended cross-region — this tier is intentionally short-lived (§1); a lost Redis keyspace forces re-auth, it does not lose business data. Do not treat Redis as a DR target. |
 | **etcd** (`platform/cluster`, `platform/registry`, `platform/netpolicy`, `keys.signing_key_registry`) | Cross-replica coordination: invalidation bus, service registry, network policy, leaderless signing-key aggregation | `etcdctl snapshot save` on a schedule (etcd's own mechanism); etcd's Raft replication already gives in-region HA across its member set | Restore an etcd snapshot into a fresh cluster at the DR site; coordination state (client cache invalidation, key aggregation) rebuilds itself once replicas reconnect — it is not itself an RPO-sensitive business-data store |
-| **Snapshot control-plane subset** (clients, users, roles/assignments/menus, network policy, bootstrap state — backend-agnostic) | Exactly what snapshot schema v1 enumerates; not tenants/connections/pairwise subjects/MFA/signing keys/audit rows | **`platform/lifecycle/dr.SnapshotReplicator`** (§4) — exports via the SAME `Snapshotter`+`Pipeline` the manual/retention snapshot subsystem uses, copies the sealed+checksummed envelope to `dr.target_dir` on `dr.interval` | This is the ONE tier this framework replicates cross-site by design; point `dr.target_dir` at an off-node/off-region mount and back up omitted durable state natively |
+| **Snapshot control-plane subset** (tenants/domains/connections, clients, users, pairwise subjects, roles/assignments/menus, network policy, bootstrap state — backend-agnostic) | Snapshot schema v2 enumerates categories explicitly; MFA/signing keys/audit rows remain outside it, and v1 stays readable without gaining authority over v2-only categories. A successful non-dry-run restore broadcasts a full control-plane cache invalidation after all selected categories commit. | **`platform/lifecycle/dr.SnapshotReplicator`** (§4) — exports via the SAME `Snapshotter`+`Pipeline` the manual/retention snapshot subsystem uses, copies the sealed+checksummed envelope to `dr.target_dir` on `dr.interval` | This is the ONE tier this framework replicates cross-site by design; point `dr.target_dir` at an off-node/off-region mount and back up omitted durable state natively |
 
 ## 4. SnapshotReplicator
 

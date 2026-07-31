@@ -11,14 +11,14 @@ import (
 
 	"github.com/yangwb1123/snaplink/config"
 	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
+	"github.com/yangwb1123/snaplink/domains/metering"
+	tokenusagememory "github.com/yangwb1123/snaplink/domains/metering/memory"
 	"github.com/yangwb1123/snaplink/domains/threataction"
 	threatactionmemory "github.com/yangwb1123/snaplink/domains/threataction/memory"
 	"github.com/yangwb1123/snaplink/domains/tokenanomaly"
 	tokenanomalymemory "github.com/yangwb1123/snaplink/domains/tokenanomaly/memory"
 	"github.com/yangwb1123/snaplink/domains/tokenpolicy"
 	tokenpolicymemory "github.com/yangwb1123/snaplink/domains/tokenpolicy/memory"
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
-	tokenusagememory "github.com/yangwb1123/snaplink/domains/tokenusage/memory"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/cluster"
@@ -316,7 +316,7 @@ func BuildThreatAction(
 // BuildTokenAnomaly assembles the wave-4 token-behavior anomaly subsystem when
 // token_anomaly.enabled: a bounded token-usage aggregation store, the
 // tokenanomaly.Detector that DECORATES it (capturing per-thumbprint geo/velocity
-// observations), and the tokenusage.Recorder whose drain goroutine feeds the
+// observations), and the metering.Recorder whose drain goroutine feeds the
 // detector off the request path. The detector is returned so the caller wires it
 // as BOTH the recorder's store (already done here — the recorder drains into the
 // detector) AND via sso.WithTokenAnomalyDetector; the recorder is returned so the
@@ -329,7 +329,7 @@ func BuildThreatAction(
 // threatExec is the optional Active ITDR executor (BuildThreatAction); nil
 // leaves the detector's Analyze sweep audit/metric-only, exactly as before
 // this option existed.
-func BuildTokenAnomaly(cfg config.TokenAnomalyConfig, logger spi.Logger, threatExec threataction.ThreatExecutor) (*tokenusage.Recorder, *tokenanomaly.Detector, error) {
+func BuildTokenAnomaly(cfg config.TokenAnomalyConfig, logger spi.Logger, threatExec threataction.ThreatExecutor) (*metering.Recorder, *tokenanomaly.Detector, error) {
 	if !cfg.Enabled {
 		return nil, nil, nil
 	}
@@ -342,7 +342,7 @@ func BuildTokenAnomaly(cfg config.TokenAnomalyConfig, logger spi.Logger, threatE
 	store := tokenusagememory.New(usageStoreOptions(cfg)...)
 	findings := tokenanomalymemory.NewFindingStore(findingStoreOptions(cfg)...)
 	detector := tokenanomaly.NewDetector(store, findings, detectorOptions(cfg, logger, threatExec)...)
-	rec := tokenusage.NewRecorder(detector, recorderOptions(cfg, logger)...)
+	rec := metering.NewRecorder(detector, recorderOptions(cfg, logger)...)
 	return rec, detector, nil
 }
 
@@ -365,10 +365,10 @@ func findingStoreOptions(cfg config.TokenAnomalyConfig) []tokenanomalymemory.Opt
 
 // recorderOptions maps the recorder knobs; the logger is always set so a drain
 // error surfaces on the operator's configured logger rather than being silent.
-func recorderOptions(cfg config.TokenAnomalyConfig, logger spi.Logger) []tokenusage.RecorderOption {
-	opts := []tokenusage.RecorderOption{tokenusage.WithRecorderLogger(logger)}
+func recorderOptions(cfg config.TokenAnomalyConfig, logger spi.Logger) []metering.RecorderOption {
+	opts := []metering.RecorderOption{metering.WithRecorderLogger(logger)}
 	if cfg.QueueSize > 0 {
-		opts = append(opts, tokenusage.WithQueueSize(cfg.QueueSize))
+		opts = append(opts, metering.WithQueueSize(cfg.QueueSize))
 	}
 	return opts
 }

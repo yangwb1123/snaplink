@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"time"
 )
 
 // PathRegister is the RFC 7591 Dynamic Client Registration endpoint.
@@ -37,6 +38,10 @@ type DCRPolicy struct {
 	// stable across updates) byte-identically — enabling it is a behavior
 	// change a managing client must handle (capture the new token each PUT).
 	RotateRegistrationAccessToken bool
+	// RegistrationAccessTokenOverlap keeps the credential used for a
+	// successful rotation valid long enough to retry a lost PUT response.
+	// Non-positive values use a conservative five-minute overlap.
+	RegistrationAccessTokenOverlap time.Duration
 
 	// DefaultActive controls the Active field on newly-registered
 	// clients. Most deployments want true so clients work

@@ -100,7 +100,7 @@ func TestRunAuditRetention_ExitsOnContextCancel(t *testing.T) {
 
 // countingLogger is a real spi.Logger that tallies Error calls so a test can
 // prove a recovered panic was routed through the logger — mirrors the
-// identically-named helper in domains/tokenusage/recorder_test.go.
+// identically-named helper in domains/metering/recorder_test.go.
 type countingLogger struct {
 	mu      sync.Mutex
 	errMsgs []string

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/domains/anomaly"
+	"github.com/yangwb1123/snaplink/domains/metering"
 	"github.com/yangwb1123/snaplink/domains/tokenpolicy"
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/sessionhub"
 	"github.com/yangwb1123/snaplink/platform/metrics"
@@ -425,9 +425,9 @@ func (s *Server) recordCodeSent(ctx HandlerContext, provider, target string, ok 
 func (s *Server) recordTokenIssued(ctx HandlerContext, clientID, strategy, subjectID string) {
 	s.recordTenantTokenIssued(ctx, clientID, strategy)
 	audit.RecordTokenIssued(s.auditor, ctx, clientID, strategy, subjectID)
-	s.tokenUsageRecorder.Offer(tokenusage.Event{
-		Kind:      tokenusage.KindAccess,
-		Endpoint:  tokenusage.EndpointToken,
+	s.tokenUsageRecorder.Offer(metering.Event{
+		Kind:      metering.KindAccess,
+		Endpoint:  metering.EndpointToken,
 		ClientID:  clientID,
 		SubjectID: subjectID,
 	})
@@ -438,9 +438,9 @@ func (s *Server) recordTokenIssued(ctx HandlerContext, clientID, strategy, subje
 // issue (login / authz_code) from rotation (refresh_token grant).
 func (s *Server) recordRefreshTokenIssued(ctx HandlerContext, clientID, subjectID string, rotation bool) {
 	audit.RecordRefreshTokenIssued(s.auditor, ctx, clientID, subjectID, rotation)
-	s.tokenUsageRecorder.Offer(tokenusage.Event{
-		Kind:      tokenusage.KindRefresh,
-		Endpoint:  tokenusage.EndpointToken,
+	s.tokenUsageRecorder.Offer(metering.Event{
+		Kind:      metering.KindRefresh,
+		Endpoint:  metering.EndpointToken,
 		ClientID:  clientID,
 		SubjectID: subjectID,
 	})
@@ -450,9 +450,9 @@ func (s *Server) recordRefreshTokenIssued(ctx HandlerContext, clientID, subjectI
 // OIDC id_token is appended to the response.
 func (s *Server) recordIDTokenIssued(ctx HandlerContext, clientID, subjectID string) {
 	audit.RecordIDTokenIssued(s.auditor, ctx, clientID, subjectID)
-	s.tokenUsageRecorder.Offer(tokenusage.Event{
-		Kind:      tokenusage.KindID,
-		Endpoint:  tokenusage.EndpointToken,
+	s.tokenUsageRecorder.Offer(metering.Event{
+		Kind:      metering.KindID,
+		Endpoint:  metering.EndpointToken,
 		ClientID:  clientID,
 		SubjectID: subjectID,
 	})

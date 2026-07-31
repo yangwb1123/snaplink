@@ -92,6 +92,9 @@ func TestMemoryInventory_ReportKeyCompromise_TriggersRetirer(t *testing.T) {
 	if entry.Status != StatusCompromised {
 		t.Errorf("Status = %q, want compromised", entry.Status)
 	}
+	if entry.RetirementStatus == "" {
+		t.Fatal("compromise result omitted retirement status")
+	}
 	if entry.CompromiseReason != "leaked in incident INC-1" {
 		t.Errorf("CompromiseReason = %q", entry.CompromiseReason)
 	}
@@ -123,6 +126,9 @@ func TestMemoryInventory_ReportKeyCompromise_NoRetirerStillRecords(t *testing.T)
 	}
 	if entry.Status != StatusCompromised {
 		t.Errorf("Status = %q, want compromised even without a Retirer", entry.Status)
+	}
+	if entry.RetirementStatus != RetirementUnsupported {
+		t.Fatalf("retirement status = %q, want unsupported", entry.RetirementStatus)
 	}
 }
 

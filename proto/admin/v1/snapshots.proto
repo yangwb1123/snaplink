@@ -8,6 +8,7 @@ syntax = "proto3";
 package snaplink.admin.v1;
 
 import "google/api/annotations.proto";
+import "admin/v1/operations.proto";
 
 option go_package = "github.com/yangwb1123/snaplink/gen/proto/admin/v1;adminv1";
 
@@ -98,6 +99,8 @@ message RestoreSnapshotRequest {
 
 message RestoreSnapshotResponse {
   RestoreReport report = 1;
+  string operation_id = 2;
+  AdminOperation operation = 3;
 }
 
 message DeleteSnapshotRequest { string id = 1; }

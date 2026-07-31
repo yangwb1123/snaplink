@@ -17,7 +17,7 @@ import (
 func TestTenantUsageRoute_ResolvesAtDocumentedPath(t *testing.T) {
 	srv := sso.NewServer(
 		sso.WithIssuer("https://sso.example"),
-		sso.WithTenantUsageAggregator(meteringmemory.New()),
+		sso.WithTenantUsageAggregator(meteringmemory.NewAggregator()),
 	)
 	hs := httptest.NewServer(srv.Handler())
 	defer hs.Close()

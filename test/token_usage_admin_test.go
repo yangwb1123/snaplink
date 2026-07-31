@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
-	tokenusagememory "github.com/yangwb1123/snaplink/domains/tokenusage/memory"
+	"github.com/yangwb1123/snaplink/domains/metering"
+	tokenusagememory "github.com/yangwb1123/snaplink/domains/metering/memory"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/admin"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
@@ -23,13 +23,13 @@ const (
 	tokUsageIssuer = "https://sso.tokusage.test"
 )
 
-// tokenUsageHarness wires a real Server + a real tokenusage.Recorder over a
+// tokenUsageHarness wires a real Server + a real metering.Recorder over a
 // real in-memory Store (no mocks, per AGENTS.md §0.5) so /token issuance and
 // /token/introspect can be exercised end-to-end and the aggregated buckets
 // verified through the admin read API.
 type tokenUsageHarness struct {
 	hs  *httptest.Server
-	rec *tokenusage.Recorder
+	rec *metering.Recorder
 }
 
 func newTokenUsageHarness(t *testing.T) *tokenUsageHarness {
@@ -39,7 +39,7 @@ func newTokenUsageHarness(t *testing.T) *tokenUsageHarness {
 		ID: tokUsageClient, Secret: tokUsageSecret, Active: true,
 		TokenStrategy: "jwt",
 	})
-	rec := tokenusage.NewRecorder(tokenusagememory.New())
+	rec := metering.NewRecorder(tokenusagememory.New())
 	rec.Start()
 
 	srv := sso.NewServer(
@@ -116,7 +116,7 @@ func (h *tokenUsageHarness) introspect(t *testing.T, token string) {
 
 // queryUsage drains the recorder (so async Offers land in the store) then
 // hits the admin read API and returns the decoded buckets.
-func (h *tokenUsageHarness) queryUsage(t *testing.T, qs string) []tokenusage.Bucket {
+func (h *tokenUsageHarness) queryUsage(t *testing.T, qs string) []metering.Bucket {
 	t.Helper()
 	if err := h.rec.Close(context.Background()); err != nil {
 		t.Fatalf("recorder Close: %v", err)
@@ -131,7 +131,7 @@ func (h *tokenUsageHarness) queryUsage(t *testing.T, qs string) []tokenusage.Buc
 		t.Fatalf("usage status = %d, body = %s", resp.StatusCode, body)
 	}
 	var out struct {
-		Buckets []tokenusage.Bucket `json:"buckets"`
+		Buckets []metering.Bucket `json:"buckets"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
 		t.Fatalf("decode usage response: %v", err)
@@ -151,14 +151,14 @@ func TestTokenUsageAdmin_IssuanceAndIntrospectionAggregate(t *testing.T) {
 	buckets := h.queryUsage(t, "?client_id="+tokUsageClient)
 	var sawToken, sawIntrospect bool
 	for _, b := range buckets {
-		if b.ClientID != tokUsageClient || b.Kind != tokenusage.KindAccess {
+		if b.ClientID != tokUsageClient || b.Kind != metering.KindAccess {
 			t.Errorf("unexpected bucket %+v, want client=%s kind=access", b, tokUsageClient)
 			continue
 		}
 		switch b.Endpoint {
-		case tokenusage.EndpointToken:
+		case metering.EndpointToken:
 			sawToken = true
-		case tokenusage.EndpointIntrospect:
+		case metering.EndpointIntrospect:
 			sawIntrospect = true
 		}
 	}

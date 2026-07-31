@@ -94,6 +94,9 @@ func TestKeyAdmin_Rotate_OverlapAndAudit(t *testing.T) {
 	if resp.OldKid == "" || resp.NewKid == "" || resp.OldKid == resp.NewKid {
 		t.Fatalf("rotate returned bad kids: %+v", resp)
 	}
+	if resp.KeyClass != "token_signing" || resp.RolloutState != "new_active_old_verify_only" {
+		t.Fatalf("rotation scope/state omitted: %+v", resp)
+	}
 	if iss.KeyID() != resp.NewKid {
 		t.Errorf("active kid = %q, want new %q", iss.KeyID(), resp.NewKid)
 	}

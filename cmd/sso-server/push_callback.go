@@ -12,6 +12,7 @@ import (
 	"github.com/yangwb1123/snaplink/config"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
@@ -213,11 +214,12 @@ func parsePushCallbackPath(urlPath string) (string, string) {
 	return strings.TrimSuffix(dir, "/"), file
 }
 
-// callbackClientIP returns the request's client IP — XFF-aware,
-// falls back to RemoteAddr. Same threat model as the rest of the
-// cmd's XFF surfaces (trust the first hop iff the operator has a
-// trusted reverse proxy stripping untrusted headers).
+// callbackClientIP returns the trusted-proxy middleware's canonical client IP
+// when available, otherwise preserving the legacy XFF → RemoteAddr behavior.
 func callbackClientIP(r *http.Request) net.IP {
+	if info, ok := peertrust.RequestInfoFrom(r); ok && info.ClientIP != "" {
+		return normalizeIP(net.ParseIP(info.ClientIP))
+	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		if idx := strings.IndexByte(xff, ','); idx > 0 {
 			xff = xff[:idx]

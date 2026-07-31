@@ -7,14 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/metering"
+	tokenusagemem "github.com/yangwb1123/snaplink/domains/metering/memory"
 	"github.com/yangwb1123/snaplink/domains/threataction"
 	"github.com/yangwb1123/snaplink/domains/tokenanomaly"
 	tokenanomalymem "github.com/yangwb1123/snaplink/domains/tokenanomaly/memory"
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
-	tokenusagemem "github.com/yangwb1123/snaplink/domains/tokenusage/memory"
 )
 
-// The detector is a tokenusage.Store decorator + off-path Analyze sweep. These
+// The detector is a metering.Store decorator + off-path Analyze sweep. These
 // tests drive it through the REAL memory usage store (as `next`) and the REAL
 // memory finding store — no mocks, per repo convention. A fixed clock makes
 // the window/velocity math deterministic.
@@ -25,7 +25,7 @@ func fixedClock() func() time.Time { return func() time.Time { return base.Add(3
 
 // newDetector builds a detector over fresh memory stores at the fixed clock,
 // returning it plus the finding store to inspect.
-func newDetector(t *testing.T, opts ...tokenanomaly.Option) (*tokenanomaly.Detector, *tokenanomalymem.FindingStore, tokenusage.Store) {
+func newDetector(t *testing.T, opts ...tokenanomaly.Option) (*tokenanomaly.Detector, *tokenanomalymem.FindingStore, metering.Store) {
 	t.Helper()
 	next := tokenusagemem.New()
 	fs := tokenanomalymem.NewFindingStore()
@@ -35,10 +35,10 @@ func newDetector(t *testing.T, opts ...tokenanomaly.Option) (*tokenanomaly.Detec
 
 func presentAt(t *testing.T, d *tokenanomaly.Detector, thumb, client, geo string, at time.Time) {
 	t.Helper()
-	if err := d.Record(context.Background(), tokenusage.Event{
+	if err := d.Record(context.Background(), metering.Event{
 		Thumbprint: thumb,
-		Kind:       tokenusage.KindAccess,
-		Endpoint:   tokenusage.EndpointIntrospect,
+		Kind:       metering.KindAccess,
+		Endpoint:   metering.EndpointIntrospect,
 		ClientID:   client,
 		SubjectID:  "user-" + client,
 		GeoCountry: geo,
@@ -370,7 +370,7 @@ func TestDetector_NoSpikeBelowFloor(t *testing.T) {
 func TestDetector_ForwardsStore(t *testing.T) {
 	d, _, next := newDetector(t)
 	issue(t, d, "c1", 3, base.Add(-1*time.Minute))
-	buckets, err := d.Query(context.Background(), tokenusage.Query{})
+	buckets, err := d.Query(context.Background(), metering.Query{})
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestDetector_ForwardsStore(t *testing.T) {
 		t.Error("TrackedBuckets forwarded 0, want >0")
 	}
 	// The wrapped store agrees.
-	if got, _ := next.Query(context.Background(), tokenusage.Query{}); len(got) != len(buckets) {
+	if got, _ := next.Query(context.Background(), metering.Query{}); len(got) != len(buckets) {
 		t.Errorf("decorator Query diverged from wrapped store")
 	}
 }
@@ -406,7 +406,7 @@ func TestDetector_MetricHook(t *testing.T) {
 // TestDetector_NilSafe: every method on a nil detector is a safe no-op.
 func TestDetector_NilSafe(t *testing.T) {
 	var d *tokenanomaly.Detector
-	if err := d.Record(context.Background(), tokenusage.Event{}); err != nil {
+	if err := d.Record(context.Background(), metering.Event{}); err != nil {
 		t.Errorf("nil Record: %v", err)
 	}
 	if _, err := d.Analyze(context.Background()); err != nil {
@@ -418,7 +418,7 @@ func TestDetector_NilSafe(t *testing.T) {
 }
 
 // TestNewDetector_NilNext: a nil wrapped store yields a nil detector (safe
-// no-op wiring, mirroring tokenusage.NewRecorder).
+// no-op wiring, mirroring metering.NewRecorder).
 func TestNewDetector_NilNext(t *testing.T) {
 	if d := tokenanomaly.NewDetector(nil, tokenanomalymem.NewFindingStore()); d != nil {
 		t.Fatal("NewDetector(nil, ...) should be nil")
@@ -451,9 +451,9 @@ func TestDetector_ConcurrentRecordAndAnalyze(t *testing.T) {
 func issue(t *testing.T, d *tokenanomaly.Detector, client string, n int, at time.Time) {
 	t.Helper()
 	for i := 0; i < n; i++ {
-		if err := d.Record(context.Background(), tokenusage.Event{
-			Kind:     tokenusage.KindAccess,
-			Endpoint: tokenusage.EndpointToken,
+		if err := d.Record(context.Background(), metering.Event{
+			Kind:     metering.KindAccess,
+			Endpoint: metering.EndpointToken,
 			ClientID: client,
 			At:       at,
 		}); err != nil {

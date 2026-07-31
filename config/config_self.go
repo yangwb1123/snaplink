@@ -60,10 +60,9 @@ type SelfServiceConfig struct {
 	// anti-enumeration-safe but delivers nothing (a startup warning is logged).
 	PasswordReset PasswordResetConfig `yaml:"password_reset"`
 	// IdentityLink backs the self-service identity-linking surface
-	// (GET/DELETE /me/identities, domains/identitylink). Enabling it wires
-	// an in-memory identitylink.Store; MergePolicy selects the (unrelated,
-	// login-flow) conflict-resolution strategy an operator's OWN
-	// authenticator integration may consult — see IdentityLinkConfig's doc.
+	// (GET/DELETE /me/identities, domains/identitylink). MergePolicy also
+	// applies to the built-in static and connection-backed OIDC federation
+	// authenticators.
 	IdentityLink IdentityLinkConfig `yaml:"identity_link"`
 }
 
@@ -71,16 +70,16 @@ type SelfServiceConfig struct {
 // (domains/identitylink, sso.WithIdentityLinkStore): GET/DELETE
 // /me/identities let the authenticated user list and unlink their own
 // linked external identities. Disabled by default: Enabled=false wires
-// nothing — byte-identical to a build without the feature. Only a memory
-// backend exists today (domains/identitylink/memory).
+// nothing — byte-identical to a build without the feature. Backend defaults
+// to memory for compatibility; sqlite is durable for one host and postgres
+// shares the global Postgres pool across replicas.
 //
 // MergePolicy selects the conflict-resolution strategy for the SEPARATE,
 // extension-point concern of "a login flow discovers this external identity
 // is already linked to a DIFFERENT account" (domains/identitylink.MergePolicy)
-// — the stock /auth/login handler never consults it; a custom authenticator
-// integration retrieves it via Server.IdentityLinkStore /
-// Server.IdentityMergePolicy (see the package doc's "Live login-flow
-// wiring" section). Values:
+// — the stock binary wires it into both forms of OIDC federation. Custom
+// authenticators can retrieve the same store/policy through Server accessors.
+// Values:
 //
 //   - "" / "reject" (DEFAULT, SAFE): wires no MergePolicy Option at all — a
 //     nil MergePolicy is already treated as identitylink.RejectPolicy{} by
@@ -97,8 +96,10 @@ type SelfServiceConfig struct {
 // Any other value fails loud at boot rather than silently falling back to
 // the safe default.
 type IdentityLinkConfig struct {
-	Enabled     bool   `yaml:"enabled"`
-	MergePolicy string `yaml:"merge_policy"`
+	Enabled     bool                 `yaml:"enabled"`
+	Backend     string               `yaml:"backend"` // ""/memory | sqlite | postgres
+	SQLite      IdentitySQLiteConfig `yaml:"sqlite"`
+	MergePolicy string               `yaml:"merge_policy"`
 }
 
 // PasswordResetConfig wires the forgot-password reset-token store. Mirrors

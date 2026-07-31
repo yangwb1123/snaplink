@@ -37,6 +37,20 @@ func (s *Server) InvalidateClientCache(clientID string) {
 	}
 }
 
+// InvalidateRestoredControlPlane flushes every local control-plane cache and
+// asks peer replicas to do the same. Replace restores can delete identifiers
+// absent from the artifact, so granular per-key events cannot cover them.
+func (s *Server) InvalidateRestoredControlPlane() {
+	s.flushInvalidationCaches()
+	if s.invalidationBus == nil {
+		return
+	}
+	evt := cluster.Event{Kind: cluster.KindControlPlaneRestore}
+	if err := s.invalidationBus.Publish(context.Background(), evt); err != nil {
+		s.logger.Error("invalidation bus publish failed", "kind", string(evt.Kind), "error", err)
+	}
+}
+
 // Invalidation-bus resubscribe backoff bounds + the degraded-audit reason.
 // Identical shape to the signing-key aggregation bounds (signing_key_aggregation.go):
 // on a Subscribe-channel close while ctx is live the loop retries with an
@@ -297,6 +311,27 @@ func (s *Server) applyInvalidationSafe(ctx context.Context, evt cluster.Event) {
 // bind its deferred-retire timers to it (a clean shutdown cancels them); the
 // cache-invalidation arms ignore it (they are synchronous).
 func (s *Server) applyInvalidation(ctx context.Context, evt cluster.Event) {
+	if s.applyControlPlaneInvalidation(evt) {
+		return
+	}
+	switch evt.Kind {
+	case cluster.KindSigningKeyRotation:
+		s.applyCoordinatedKeyRotation(ctx, evt)
+		s.InvalidateJWKSBodyCache()
+	case cluster.KindSessionSuspended:
+		s.applySessionSuspension(evt)
+	case cluster.KindTokenRevoked:
+		s.applyTokenRevocation(ctx, evt)
+	case cluster.KindConfigDigest:
+		// Handled by configaudit.DriftDetector's own bus subscription.
+	default:
+		// Unknown kind from a newer peer is ignored during mixed-version rollout.
+	}
+}
+
+// applyControlPlaneInvalidation handles cache-only events and reports whether
+// it recognized the kind. Security-state events stay in applyInvalidation.
+func (s *Server) applyControlPlaneInvalidation(evt cluster.Event) bool {
 	switch evt.Kind {
 	case cluster.KindTenantSuspension:
 		if s.tenantSuspensionCache != nil {
@@ -317,34 +352,17 @@ func (s *Server) applyInvalidation(ctx context.Context, evt cluster.Event) {
 		s.invalidateDiscoveryCaches()
 		s.InvalidateJWKSBodyCache()
 	case cluster.KindAuthzPolicyChange:
-		// evt.Key is the clientID whose role definitions changed; drop this
-		// replica's cached bundle so the sidecar's next pull re-renders.
 		s.invalidateAuthzPolicyBundleCacheLocal(evt.Key)
-	case cluster.KindSigningKeyRotation:
-		// A peer rotated its signing key: adopt the new kid verify-only now,
-		// deferring the demoted kid's retirement (see coordinated_key_rotation.go).
-		// No-op unless WithCoordinatedKeyRotation armed this replica.
-		s.applyCoordinatedKeyRotation(ctx, evt)
-		s.InvalidateJWKSBodyCache()
 	case cluster.KindConnectionChange:
 		// evt.Key is the connID whose config changed. No per-replica cache
 		// exists yet to evict; arm kept explicit vs. the default (unknown
 		// kind) branch for a mixed-version rollout.
-	case cluster.KindSessionSuspended:
-		s.applySessionSuspension(evt)
-	case cluster.KindTokenRevoked:
-		// A peer revoked an access token: ADD it to this replica's per-issuer
-		// in-process deny-set via the LOCAL-only revoke path (which never
-		// re-publishes — no broadcast loop). Purely additive + fail-open; no-op
-		// unless WithCrossReplicaRevocation armed this replica. See
-		// cross_replica_revocation.go.
-		s.applyTokenRevocation(ctx, evt)
-	case cluster.KindConfigDigest:
-		// Handled by configaudit.DriftDetector's own bus subscription, not here.
+	case cluster.KindControlPlaneRestore:
+		s.flushInvalidationCaches()
 	default:
-		// Unknown kind from a newer peer — ignore rather than error, so a
-		// mixed-version cluster degrades gracefully during a rollout.
+		return false
 	}
+	return true
 }
 
 // applySessionSuspension handles KindSessionSuspended: evt.Key is the

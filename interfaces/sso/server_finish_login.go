@@ -427,9 +427,20 @@ func (s *Server) renderAuthCodeResponse(ctx HandlerContext, req *login.Request, 
 	}
 	if oidc.IsJARMResponseMode(req.ResponseMode) {
 		signer, ok := s.jarmSignerForClient(client)
-		if !ok || !oidc.RenderJARMResponse(ctx, signer, req.ResponseMode, req.RedirectURI, s.resolveIssuer(ctx), client.ID, code, req.State) {
+		if !ok {
 			ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
+			return
 		}
+		if req.ResponseMode != oidc.ResponseModeFormPostJWT && ctx.Request().Method != http.MethodGet {
+			response, err := oidc.SignJARMResponse(ctx.Request().Context(), signer, s.resolveIssuer(ctx), client.ID, code, req.State)
+			if err == nil {
+				ctx.JSON(http.StatusOK, map[string]any{oidc.KeyResponse: response})
+				return
+			}
+		} else if oidc.RenderJARMResponse(ctx, signer, req.ResponseMode, req.RedirectURI, s.resolveIssuer(ctx), client.ID, code, req.State) {
+			return
+		}
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
 		return
 	}
 	resp := map[string]any{

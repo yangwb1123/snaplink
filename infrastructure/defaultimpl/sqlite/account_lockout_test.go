@@ -19,7 +19,7 @@ func newAccountLockoutForTest(t *testing.T) *AccountLockout {
 	}
 	// Tight numbers so tests stay fast.
 	lockout.MaxFailures = 3
-	lockout.LockoutDuration = 200 * time.Millisecond
+	lockout.LockoutDuration = 5 * time.Second
 	lockout.FailureWindow = time.Minute
 	t.Cleanup(func() { _ = lockout.Close() })
 	return lockout
@@ -76,8 +76,10 @@ func TestAccountLockout_IsLockedReportsState(t *testing.T) {
 		t.Fatal("unknown key must not be locked")
 	}
 
-	for range lockout.MaxFailures {
-		_, _, _ = lockout.RegisterFailure(ctx, "alice")
+	for i := range lockout.MaxFailures {
+		if _, _, err := lockout.RegisterFailure(ctx, "alice"); err != nil {
+			t.Fatalf("RegisterFailure %d: %v", i, err)
+		}
 	}
 
 	locked, _, err = lockout.IsLocked(ctx, "alice")
@@ -110,6 +112,7 @@ func TestAccountLockout_RegisterSuccessClears(t *testing.T) {
 func TestAccountLockout_AutoUnlockAfterDuration(t *testing.T) {
 	t.Parallel()
 	lockout := newAccountLockoutForTest(t)
+	lockout.LockoutDuration = 200 * time.Millisecond
 	ctx := context.Background()
 
 	for range lockout.MaxFailures {

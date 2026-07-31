@@ -44,12 +44,25 @@ func BuildAuthCodeStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.Auth
 		if cfg.SQLite.DSN == "" {
 			return nil, errors.New("oauth.sqlite.dsn required when backend=sqlite")
 		}
-		return sqlitestores.NewAuthCodeStore(cfg.SQLite.DSN)
+		keys, err := ResolveOAuthLookupHMACKeys(cfg.SQLite)
+		if err != nil {
+			return nil, err
+		}
+		store, err := sqlitestores.NewAuthCodeStore(cfg.SQLite.DSN)
+		if err == nil {
+			store.SetLookupHMACKeys(keys...)
+			store.StartReaper(cfg.AuthCode.ReapInterval)
+		}
+		return store, err
 	case "redis":
 		if rdb == nil {
 			return nil, errRedisNotConfigured("oauth")
 		}
-		return redisbackend.NewAuthCodeStore(rdb), nil
+		store := redisbackend.NewAuthCodeStore(rdb)
+		if err := configureRedisLookup(store, cfg.Redis); err != nil {
+			return nil, err
+		}
+		return store, nil
 	default:
 		return nil, fmt.Errorf("unknown oauth.backend %q (supported: memory, sqlite, redis)", cfg.Backend)
 	}
@@ -70,12 +83,18 @@ func BuildRefreshTokenStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.
 		if cfg.SQLite.DSN == "" {
 			return nil, errors.New("oauth.sqlite.dsn required when backend=sqlite")
 		}
+		keys, err := ResolveOAuthLookupHMACKeys(cfg.SQLite)
+		if err != nil {
+			return nil, err
+		}
 		s, err := sqlitestores.NewRefreshTokenStore(cfg.SQLite.DSN)
 		if err != nil {
 			return nil, err
 		}
 		s.MaxRotationsPerWindow = cfg.RefreshToken.MaxRotationsPerWindow
 		s.RotationWindow = cfg.RefreshToken.RotationWindow
+		s.SetLookupHMACKeys(keys...)
+		s.StartReaper(cfg.RefreshToken.ReapInterval)
 		return s, nil
 	case "redis":
 		if rdb == nil {
@@ -83,9 +102,13 @@ func BuildRefreshTokenStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.
 		}
 		// WithRotationCap restores the per-family velocity cap the memory +
 		// sqlite peers honor (the redis peer dropped it before this wiring).
-		return redisbackend.NewRefreshTokenStore(rdb,
+		store := redisbackend.NewRefreshTokenStore(rdb,
 			redisbackend.WithRotationCap(cfg.RefreshToken.MaxRotationsPerWindow, cfg.RefreshToken.RotationWindow),
-		), nil
+		)
+		if err := configureRedisLookup(store, cfg.Redis); err != nil {
+			return nil, err
+		}
+		return store, nil
 	default:
 		return nil, fmt.Errorf("unknown oauth.backend %q (supported: memory, sqlite, redis)", cfg.Backend)
 	}
@@ -104,12 +127,25 @@ func BuildDeviceCodeStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.De
 		if cfg.SQLite.DSN == "" {
 			return nil, errors.New("oauth.sqlite.dsn required when backend=sqlite")
 		}
-		return sqlitestores.NewDeviceCodeStore(cfg.SQLite.DSN)
+		keys, err := ResolveOAuthLookupHMACKeys(cfg.SQLite)
+		if err != nil {
+			return nil, err
+		}
+		store, err := sqlitestores.NewDeviceCodeStore(cfg.SQLite.DSN)
+		if err == nil {
+			store.SetLookupHMACKeys(keys...)
+			store.StartReaper(cfg.DeviceCode.ReapInterval)
+		}
+		return store, err
 	case "redis":
 		if rdb == nil {
 			return nil, errRedisNotConfigured("oauth")
 		}
-		return redisbackend.NewDeviceCodeStore(rdb), nil
+		store := redisbackend.NewDeviceCodeStore(rdb)
+		if err := configureRedisLookup(store, cfg.Redis); err != nil {
+			return nil, err
+		}
+		return store, nil
 	default:
 		return nil, fmt.Errorf("unknown oauth.backend %q (supported: memory, sqlite, redis)", cfg.Backend)
 	}
@@ -128,15 +164,92 @@ func BuildPARStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.PARStore,
 		if cfg.SQLite.DSN == "" {
 			return nil, errors.New("oauth.sqlite.dsn required when backend=sqlite")
 		}
-		return sqlitestores.NewPARStore(cfg.SQLite.DSN)
+		keys, err := ResolveOAuthLookupHMACKeys(cfg.SQLite)
+		if err != nil {
+			return nil, err
+		}
+		store, err := sqlitestores.NewPARStore(cfg.SQLite.DSN)
+		if err == nil {
+			store.SetLookupHMACKeys(keys...)
+			store.StartReaper(cfg.PAR.ReapInterval)
+		}
+		return store, err
 	case "redis":
 		if rdb == nil {
 			return nil, errRedisNotConfigured("oauth")
 		}
-		return redisbackend.NewPARStore(rdb), nil
+		store := redisbackend.NewPARStore(rdb)
+		if err := configureRedisLookup(store, cfg.Redis); err != nil {
+			return nil, err
+		}
+		return store, nil
 	default:
 		return nil, fmt.Errorf("unknown oauth.backend %q (supported: memory, sqlite, redis)", cfg.Backend)
 	}
+}
+
+// ResolveOAuthLookupHMACKeys loads the current and optional previous lookup
+// keys. The current key writes new rows; both keys plus legacy plaintext are
+// tried on reads, allowing a no-logout rolling rotation.
+func ResolveOAuthLookupHMACKeys(cfg config.OAuthSQLiteConfig) ([][]byte, error) {
+	return resolveOAuthLookupHMACKeys(
+		cfg.LookupHMACKeyFile, cfg.LookupHMACPreviousKeyFile, "oauth.sqlite",
+	)
+}
+
+// ResolveOAuthRedisLookupHMACKeys applies the same rotation contract to Redis.
+func ResolveOAuthRedisLookupHMACKeys(cfg config.OAuthRedisConfig) ([][]byte, error) {
+	return resolveOAuthLookupHMACKeys(
+		cfg.LookupHMACKeyFile, cfg.LookupHMACPreviousKeyFile, "oauth.redis",
+	)
+}
+
+type lookupHMACStore interface {
+	SetLookupHMACKeys(...[]byte)
+}
+
+func configureRedisLookup(store lookupHMACStore, cfg config.OAuthRedisConfig) error {
+	keys, err := ResolveOAuthRedisLookupHMACKeys(cfg)
+	if err == nil {
+		store.SetLookupHMACKeys(keys...)
+	}
+	return err
+}
+
+func resolveOAuthLookupHMACKeys(currentFile, previousFile, scope string) ([][]byte, error) {
+	if currentFile == "" {
+		if previousFile != "" {
+			return nil, fmt.Errorf("%s.lookup_hmac_previous_key_file requires lookup_hmac_key_file", scope)
+		}
+		return nil, nil
+	}
+	current, err := readOAuthLookupHMACKey(currentFile)
+	if err != nil {
+		return nil, fmt.Errorf("%s lookup HMAC current key: %w", scope, err)
+	}
+	keys := [][]byte{current}
+	if previousFile != "" {
+		previous, err := readOAuthLookupHMACKey(previousFile)
+		if err != nil {
+			return nil, fmt.Errorf("%s lookup HMAC previous key: %w", scope, err)
+		}
+		keys = append(keys, previous)
+	}
+	return keys, nil
+}
+
+func readOAuthLookupHMACKey(path string) ([]byte, error) {
+	key, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(key) != 32 {
+		key = []byte(strings.TrimRight(string(key), "\r\n"))
+	}
+	if len(key) < 32 {
+		return nil, fmt.Errorf("key file %q must contain at least 32 bytes", path)
+	}
+	return key, nil
 }
 
 // ResolvePairwiseSalt reads the pairwise hash salt with the same

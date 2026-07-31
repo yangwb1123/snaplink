@@ -68,12 +68,13 @@ func (b *appBuilder) wireDCRBackchannel() error {
 	cfg, logger := b.cfg, b.logger
 	if cr := cfg.ClientRegistration; cr.Enabled {
 		b.opts = append(b.opts, sso.WithDynamicClientRegistration(oauth.DCRPolicy{
-			InitialAccessToken:            cr.InitialAccessToken,
-			AllowOpenRegistration:         cr.AllowOpenRegistration,
-			DefaultActive:                 cr.DefaultActive,
-			DefaultTokenStrategy:          cr.DefaultTokenStrategy,
-			AllowedAuthenticators:         cr.AllowedAuthenticators,
-			RotateRegistrationAccessToken: cr.RotateAccessToken,
+			InitialAccessToken:             cr.InitialAccessToken,
+			AllowOpenRegistration:          cr.AllowOpenRegistration,
+			DefaultActive:                  cr.DefaultActive,
+			DefaultTokenStrategy:           cr.DefaultTokenStrategy,
+			AllowedAuthenticators:          cr.AllowedAuthenticators,
+			RotateRegistrationAccessToken:  cr.RotateAccessToken,
+			RegistrationAccessTokenOverlap: cr.RotateAccessTokenOverlap,
 		}))
 		if cr.AllowOpenRegistration && cr.InitialAccessToken == "" {
 			logger.Info("client_registration: OPEN — no initial_access_token; production deployments SHOULD restrict")

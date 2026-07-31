@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/yangwb1123/snaplink/domains/connections"
@@ -12,10 +13,6 @@ import (
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
-
-// B2B enterprise-connection admin CRUD, extracted from package sso (root) into
-// the admin domain. *sso.Server keeps thin wrappers delegating here.
-// Behavior-identical to the prior inline definitions; gated by AdminMiddleware.
 
 // connectionJSON is the wire shape for admin enterprise-connection management.
 type connectionJSON struct {
@@ -31,8 +28,45 @@ type connectionJSON struct {
 func connectionToJSON(c *connections.Connection) connectionJSON {
 	return connectionJSON{
 		ID: c.ID, TenantID: c.TenantID, Type: string(c.Type),
-		DisplayName: c.DisplayName, Domains: c.Domains, Enabled: c.Enabled, Config: c.Config,
+		DisplayName: c.DisplayName, Domains: c.Domains, Enabled: c.Enabled, Config: readConfig(c.Config),
 	}
+}
+
+func readConfig(config map[string]string) map[string]string {
+	out := make(map[string]string, len(config))
+	for key, value := range config {
+		if !writeOnlyConfigKey(key) {
+			out[key] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func mergeWriteConfig(stored, submitted map[string]string) map[string]string {
+	out := make(map[string]string, len(submitted)+len(stored))
+	for key, value := range submitted {
+		out[key] = value
+	}
+	for key, value := range stored {
+		_, supplied := submitted[key]
+		if writeOnlyConfigKey(key) && !supplied {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func writeOnlyConfigKey(key string) bool {
+	key = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(key), "-", "_"))
+	for _, marker := range []string{"secret", "password", "private_key", "privatekey", "access_token", "refresh_token", "api_key", "apikey", "signing_key"} {
+		if strings.Contains(key, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // recordAdminConnectionAction emits a connection-mutation audit event keyed on
@@ -106,6 +140,13 @@ func HandleAdminUpsertConnection(d Deps, ctx core.HandlerContext) {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidRequest))
 		return
 	}
+	if current, err := d.ConnectionStore().Get(ctx.Request().Context(), req.ID); err == nil {
+		req.Config = mergeWriteConfig(current.Config, req.Config)
+	} else if !errors.Is(err, connections.ErrNoConnection) {
+		d.Logger().Error("admin upsert connection: get failed", "id", req.ID, "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
 	conn := &connections.Connection{
 		ID: req.ID, TenantID: req.TenantID, Type: ct,
 		DisplayName: req.DisplayName, Domains: req.Domains, Enabled: req.Enabled, Config: req.Config,
@@ -138,12 +179,6 @@ func HandleAdminDeleteConnection(d Deps, ctx core.HandlerContext) {
 	recordAdminConnectionAction(d, ctx, audit.EventAdminConnectionDeleted, id, "")
 	ctx.JSON(http.StatusNoContent, nil)
 }
-
-// Enterprise-connection health telemetry: a stored last-probe-outcome record
-// (status/last-success/last-error) plus an admin-triggered synchronous probe
-// that actually attempts the OIDC discovery / SAML metadata fetch and
-// updates it. Mirrors the domain-verification handlers' shape (a GET reader +
-// a POST that performs the real check and persists the result).
 
 // connectionHealthJSON is the wire shape for both the GET .../health reader
 // and the POST .../probe response (the probe returns the record it just wrote).
@@ -283,7 +318,7 @@ func providerToJSON(p *provider.Provider) providerJSON {
 		ID: p.ID, TenantID: p.TenantID, Type: string(p.Type),
 		DisplayName: p.DisplayName, IconURL: p.IconURL,
 		ButtonLabel: p.ButtonLabel, ButtonColor: p.ButtonColor,
-		Enabled: p.Enabled, Config: p.Config,
+		Enabled: p.Enabled, Config: readConfig(p.Config),
 		CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 	}
 }
@@ -407,6 +442,17 @@ func HandleAdminUpdateProvider(d Deps, ctx core.HandlerContext) {
 		return
 	}
 	j.ID = id
+	current, err := store.Get(ctx.Request().Context(), id)
+	if err != nil {
+		if errors.Is(err, provider.ErrNoSuchProvider) {
+			ctx.JSON(http.StatusNotFound, core.ErrorBody(core.ErrNotFound))
+			return
+		}
+		d.Logger().Error("admin: get provider before update", "error", err)
+		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		return
+	}
+	j.Config = mergeWriteConfig(current.Config, j.Config)
 	p := providerFromJSON(j)
 	if err := store.Update(ctx.Request().Context(), p); err != nil {
 		if errors.Is(err, provider.ErrNoSuchProvider) {

@@ -1,7 +1,7 @@
 // Package tokenpolicy is the token-policy engine (Phase 2 of token
 // governance) — the policy LAYER between a token request and issuance that
 // the raw Client.AccessTokenTTL / issuer-default TTL cannot express. It
-// complements the wave-1 telemetry package [domains/tokenusage]: telemetry
+// complements the wave-1 telemetry package [domains/metering]: telemetry
 // answers "which tokens are used"; this answers "which tokens may be
 // issued, for how long, and in what combination".
 //

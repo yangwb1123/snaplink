@@ -60,13 +60,10 @@ func CheckSQLiteSchema(ctx context.Context, v any, namespace string, binaryMax i
 // report) and the report contains exactly the SQLite-backed stores — the
 // same set /readyz aggregates, but with per-store detail.
 //
-// When the store also exposes DB() *sql.DB (every SQLite store does) the
-// source carries a SchemaVersions closure that runs migrate.Status on that
-// store's handle, so the report shows each store's migrate-namespace ->
-// applied-version map. A store without an accessible *sql.DB is Ping-only
-// (no schema_versions). name is operator-facing and MUST NOT carry a DSN or
-// secret — the report never surfaces the connection string, only this label
-// plus a generic reachability error.
+// When the store exposes a SQLite DB() *sql.DB, the source also carries a
+// SchemaVersions closure. Postgres-wire stores expose DB too, but
+// migrate.Status is SQLite-specific; they remain Ping-only instead of
+// returning a false sqlite_master error from the admin report.
 func AppendStorageHealthSource(sources []sso.StorageHealthSource, name string, v any) []sso.StorageHealthSource {
 	p, ok := v.(interface{ Ping(context.Context) error })
 	if !ok {
@@ -75,7 +72,7 @@ func AppendStorageHealthSource(sources []sso.StorageHealthSource, name string, v
 	src := sso.StorageHealthSource{Name: name, Ping: p.Ping}
 	if d, ok := v.(interface{ DB() *sql.DB }); ok {
 		db := d.DB()
-		if db != nil {
+		if db != nil && isSQLiteDB(db) {
 			src.SchemaVersions = func(ctx context.Context) (map[string]int, error) {
 				st, err := migrate.Status(ctx, db)
 				if err != nil {
@@ -90,6 +87,13 @@ func AppendStorageHealthSource(sources []sso.StorageHealthSource, name string, v
 		}
 	}
 	return append(sources, src)
+}
+
+func isSQLiteDB(db *sql.DB) bool {
+	if db == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(fmt.Sprintf("%T", db.Driver())), "sqlite")
 }
 
 // AppendRateLimitReadyChecks registers a /readyz check for the

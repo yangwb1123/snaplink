@@ -111,12 +111,12 @@ func TestWrongAndUnknownCredentialsAreIndistinguishable(t *testing.T) {
 	if knownStatus != http.StatusUnauthorized || unknownStatus != knownStatus {
 		t.Fatalf("credential statuses = known %d, unknown %d", knownStatus, unknownStatus)
 	}
-	knownEnvelope, unknownEnvelope := map[string]string{}, map[string]string{}
+	knownEnvelope, unknownEnvelope := map[string]any{}, map[string]any{}
 	if json.Unmarshal(knownBody, &knownEnvelope) != nil ||
 		json.Unmarshal(unknownBody, &unknownEnvelope) != nil {
 		t.Fatalf("decode credential failures: known=%s unknown=%s", knownBody, unknownBody)
 	}
-	if knownEnvelope["trace_id"] == "" || unknownEnvelope["trace_id"] == "" {
+	if knownEnvelope["trace_id"] == nil || unknownEnvelope["trace_id"] == nil {
 		t.Fatalf("credential failures lack trace IDs: known=%s unknown=%s", knownBody, unknownBody)
 	}
 	delete(knownEnvelope, "trace_id")

@@ -12,6 +12,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/config"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
 // shutdownApp tears down the lifecycle goroutines + closers a fully-featured
@@ -530,6 +531,20 @@ func TestCallbackClientIP_XFFFirstHopWins(t *testing.T) {
 	ip := callbackClientIP(r)
 	if ip == nil || ip.String() != "203.0.113.7" {
 		t.Fatalf("callbackClientIP = %v; want 203.0.113.7 (first XFF hop)", ip)
+	}
+}
+
+func TestCallbackClientIP_UntrustedPeerIgnoresForgedXFF(t *testing.T) {
+	t.Parallel()
+	r := httptest.NewRequest(http.MethodPost, "/push/approval/x/approve", nil)
+	r.RemoteAddr = "203.0.113.9:1234"
+	r.Header.Set("X-Forwarded-For", "10.1.2.3")
+	r = r.WithContext(peertrust.WithRequestInfo(r.Context(), peertrust.RequestInfo{
+		ClientIP:                "203.0.113.9",
+		ForwardedHeadersTrusted: false,
+	}))
+	if ip := callbackClientIP(r); ip == nil || ip.String() != "203.0.113.9" {
+		t.Fatalf("callbackClientIP = %v; want canonical direct-peer IP", ip)
 	}
 }
 

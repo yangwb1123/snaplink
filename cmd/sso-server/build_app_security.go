@@ -245,7 +245,7 @@ func (b *appBuilder) wireGovernance(threatExec threataction.ThreatExecutor) erro
 
 // wireTokenAnomaly builds the wave-4 token-behavior anomaly subsystem
 // (token_anomaly.enabled) and appends its two Options. The detector is a
-// tokenusage.Store decorator, so enabling it ALSO wires the wave-1 token-usage
+// metering.Store decorator, so enabling it ALSO wires the wave-1 token-usage
 // recorder (WithTokenUsageRecorder) as its telemetry substrate: the recorder
 // drains usage events into the detector off the request path, and
 // startGovernanceWorkers starts the periodic RunTokenAnomalyDetection sweep. The

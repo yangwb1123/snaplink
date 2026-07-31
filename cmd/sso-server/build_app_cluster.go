@@ -16,6 +16,7 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/cluster"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/operations"
 	"github.com/yangwb1123/snaplink/platform/registry"
 	"github.com/yangwb1123/snaplink/platform/releases"
 	"github.com/yangwb1123/snaplink/platform/signingkeys"
@@ -95,6 +96,7 @@ type snapshotReleaseWiring struct {
 	restorer        *snapshot.Restorer
 	releaseRegistry *releases.Registry
 	releaseStore    releases.ReleaseStore
+	operationStore  operations.Store
 	retentionCancel context.CancelFunc
 	retentionDone   <-chan struct{}
 }
@@ -373,7 +375,7 @@ func (b *appBuilder) makeRotateHook(srv *sso.Server, grace time.Duration) func(s
 
 // wireSnapshotReleases builds the snapshot + release subsystems, the snapshot
 // retention loop, and wires snapshot-aware release rollback.
-func (b *appBuilder) wireSnapshotReleases() (*snapshotReleaseWiring, error) {
+func (b *appBuilder) wireSnapshotReleases(srv *sso.Server) (*snapshotReleaseWiring, error) {
 	cfg, logger := b.cfg, b.logger
 	srw := &snapshotReleaseWiring{}
 
@@ -384,7 +386,7 @@ func (b *appBuilder) wireSnapshotReleases() (*snapshotReleaseWiring, error) {
 	srw.pipeline = pipeline
 	srw.storage = snapStorage
 	if pipeline != nil {
-		b.buildSnapshotterRestorer(srw)
+		b.buildSnapshotterRestorer(srw, srv)
 	}
 
 	releaseRegistry, releaseStore, err := serverbuildplatform.BuildReleaseSubsystem(cfg, logger)
@@ -393,6 +395,10 @@ func (b *appBuilder) wireSnapshotReleases() (*snapshotReleaseWiring, error) {
 	}
 	srw.releaseRegistry = releaseRegistry
 	srw.releaseStore = releaseStore
+	srw.operationStore, err = serverbuildplatform.BuildOperationStore(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("operation store: %w", err)
+	}
 	if err := b.startSnapshotRetention(srw); err != nil {
 		return nil, err
 	}
@@ -410,31 +416,6 @@ func (b *appBuilder) wireSnapshotReleases() (*snapshotReleaseWiring, error) {
 		logger.Info("release rollback wired with snapshot restore")
 	}
 	return srw, nil
-}
-
-// buildSnapshotterRestorer constructs the Snapshotter + Restorer over the live
-// stores (called only when the snapshot pipeline is enabled).
-func (b *appBuilder) buildSnapshotterRestorer(srw *snapshotReleaseWiring) {
-	srw.snapshotter = &snapshot.Snapshotter{
-		Clients:     b.clientStore,
-		Users:       b.userProvider,
-		Permissions: b.provider,
-		NetPolicy:   b.netStore,
-		Namespace:   bootstrapNamespace,
-	}
-	// Opt-in defense-in-depth: when set, EVERY export strips client credentials
-	// so a plaintext export is safe to share/inspect. NOT a restore path —
-	// encryption stays the route for restorable backups.
-	if b.cfg.Snapshot.RedactSecrets {
-		srw.snapshotter.DefaultExportRedactor = snapshot.SnapshotRedactSecrets()
-	}
-	srw.restorer = &snapshot.Restorer{
-		Clients:     b.clientStore,
-		Users:       b.userProvider,
-		Permissions: b.provider,
-		NetPolicy:   b.netStore,
-		Namespace:   bootstrapNamespace,
-	}
 }
 
 // startSnapshotRetention boots the snapshot-retention prune loop when enabled,

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -40,12 +41,19 @@ const (
 // served /device/verify and pollable on whichever replica the device's
 // /token poll lands on.
 type DeviceCodeStore struct {
-	rdb goredis.Cmdable
+	rdb            goredis.Cmdable
+	lookupHMACKeys [][]byte
 }
 
 // NewDeviceCodeStore builds the store over an existing go-redis client.
 func NewDeviceCodeStore(rdb goredis.Cmdable) *DeviceCodeStore {
 	return &DeviceCodeStore{rdb: rdb}
+}
+
+// SetLookupHMACKeys enables current-key writes plus previous-key and legacy
+// plaintext reads for no-logout rotation.
+func (s *DeviceCodeStore) SetLookupHMACKeys(keys ...[]byte) {
+	s.lookupHMACKeys = cloneLookupKeys(keys...)
 }
 
 // Ping reports Redis health for [sso.WithReadyCheck].
@@ -67,7 +75,12 @@ func (s *DeviceCodeStore) Issue(ctx context.Context, dc *oauth.DeviceCode) error
 	if dc == nil || dc.DeviceCode == "" || dc.UserCode == "" {
 		return oauth.ErrDeviceCodeNotFound
 	}
-	blob, err := json.Marshal(dc)
+	deviceLookup := opaqueLookupKey(firstLookupKey(s.lookupHMACKeys), "device_code", dc.DeviceCode)
+	userLookup := opaqueLookupKey(firstLookupKey(s.lookupHMACKeys), "user_code", dc.UserCode)
+	stored := *dc
+	stored.DeviceCode = deviceLookup
+	stored.UserCode = userLookup
+	blob, err := json.Marshal(&stored)
 	if err != nil {
 		return fmt.Errorf("redis: marshal device_code: %w", err)
 	}
@@ -78,14 +91,14 @@ func (s *DeviceCodeStore) Issue(ctx context.Context, dc *oauth.DeviceCode) error
 		// anyway. Mirrors the auth_code / par stores.
 		return nil
 	}
-	if err := s.rdb.Set(ctx, deviceCodeKey(dc.DeviceCode), blob, ttl).Err(); err != nil {
+	if err := s.rdb.Set(ctx, deviceCodeKey(deviceLookup), blob, ttl).Err(); err != nil {
 		return fmt.Errorf("redis: insert device_code: %w", err)
 	}
-	if err := s.rdb.Set(ctx, userCodeKey(dc.UserCode), dc.DeviceCode, ttl).Err(); err != nil {
+	if err := s.rdb.Set(ctx, userCodeKey(userLookup), deviceLookup, ttl).Err(); err != nil {
 		// Roll back the record so a half-written code can't be polled by
 		// device_code yet never found by user_code (the user could never
 		// approve it). Best-effort; the record self-evicts at TTL anyway.
-		_ = s.rdb.Del(ctx, deviceCodeKey(dc.DeviceCode)).Err()
+		_ = s.rdb.Del(ctx, deviceCodeKey(deviceLookup)).Err()
 		return fmt.Errorf("redis: insert user_code pointer: %w", err)
 	}
 	return nil
@@ -103,30 +116,57 @@ func (s *DeviceCodeStore) GetByDeviceCode(ctx context.Context, deviceCode string
 // pointer to an already-evicted record) is indistinguishable from an
 // unknown user_code.
 func (s *DeviceCodeStore) GetByUserCode(ctx context.Context, userCode string) (*oauth.DeviceCode, error) {
-	deviceCode, err := s.resolveUserCode(ctx, userCode)
+	deviceLookup, err := s.resolveUserCode(ctx, userCode)
 	if err != nil {
 		return nil, err
 	}
-	return s.getByDeviceCode(ctx, deviceCode)
+	out, err := s.getStoredByDeviceLookup(ctx, deviceLookup)
+	if err != nil {
+		return nil, err
+	}
+	out.UserCode = userCode
+	if strings.HasPrefix(out.DeviceCode, opaqueLookupPrefix) {
+		out.DeviceCode = ""
+	}
+	return out, nil
 }
 
 // resolveUserCode reads the user_code -> device_code pointer.
 func (s *DeviceCodeStore) resolveUserCode(ctx context.Context, userCode string) (string, error) {
-	deviceCode, err := s.rdb.Get(ctx, userCodeKey(userCode)).Result()
-	if errors.Is(err, goredis.Nil) {
-		return "", oauth.ErrDeviceCodeNotFound
+	for _, lookup := range opaqueLookupCandidates(s.lookupHMACKeys, "user_code", userCode) {
+		deviceLookup, err := s.rdb.Get(ctx, userCodeKey(lookup)).Result()
+		if err == nil {
+			return deviceLookup, nil
+		}
+		if !errors.Is(err, goredis.Nil) {
+			return "", fmt.Errorf("redis: resolve user_code: %w", err)
+		}
 	}
-	if err != nil {
-		return "", fmt.Errorf("redis: resolve user_code: %w", err)
-	}
-	return deviceCode, nil
+	return "", oauth.ErrDeviceCodeNotFound
 }
 
 // getByDeviceCode reads + decodes the canonical record, collapsing
 // missing / expired to ErrDeviceCodeNotFound and opportunistically GCing
 // a just-expired record (and its pointer) so a retry sees clean state.
 func (s *DeviceCodeStore) getByDeviceCode(ctx context.Context, deviceCode string) (*oauth.DeviceCode, error) {
-	blob, err := s.rdb.Get(ctx, deviceCodeKey(deviceCode)).Bytes()
+	for _, lookup := range opaqueLookupCandidates(s.lookupHMACKeys, "device_code", deviceCode) {
+		out, err := s.getStoredByDeviceLookup(ctx, lookup)
+		if errors.Is(err, oauth.ErrDeviceCodeNotFound) {
+			continue
+		}
+		if out != nil {
+			out.DeviceCode = deviceCode
+			if strings.HasPrefix(out.UserCode, opaqueLookupPrefix) {
+				out.UserCode = ""
+			}
+		}
+		return out, err
+	}
+	return nil, oauth.ErrDeviceCodeNotFound
+}
+
+func (s *DeviceCodeStore) getStoredByDeviceLookup(ctx context.Context, deviceLookup string) (*oauth.DeviceCode, error) {
+	blob, err := s.rdb.Get(ctx, deviceCodeKey(deviceLookup)).Bytes()
 	if errors.Is(err, goredis.Nil) {
 		return nil, oauth.ErrDeviceCodeNotFound
 	}
@@ -140,14 +180,14 @@ func (s *DeviceCodeStore) getByDeviceCode(ctx context.Context, deviceCode string
 	if out.IsExpired() {
 		// Eviction-lag window: the TTL hasn't fired yet but the code is
 		// logically expired. Delete both keys and report not-found.
-		s.deleteBoth(ctx, out.DeviceCode, out.UserCode)
+		s.deleteBoth(ctx, deviceLookup, out.UserCode)
 		return nil, oauth.ErrDeviceCodeNotFound
 	}
 	// LastPoll lives in its own key; when present it is authoritative over the
 	// vestigial value carried in the record blob. A missing key (never polled)
 	// leaves the blob's zero value intact. Best-effort: a read error here only
 	// affects a UX timestamp, never the auth decision.
-	if lp, err := s.rdb.Get(ctx, lastPollKey(deviceCode)).Result(); err == nil {
+	if lp, err := s.rdb.Get(ctx, lastPollKey(deviceLookup)).Result(); err == nil {
 		if ns, perr := strconv.ParseInt(lp, 10, 64); perr == nil {
 			out.LastPoll = time.Unix(0, ns)
 		}
@@ -184,16 +224,25 @@ func (s *DeviceCodeStore) UpdateLastPoll(ctx context.Context, deviceCode string,
 	// the poll loop never rewrites the canonical record and thus can never
 	// clobber a concurrent Approve. Unknown/expired code -> ErrDeviceCodeNotFound
 	// (preserves the prior contract via the record key's PTTL).
-	ttl, err := s.rdb.PTTL(ctx, deviceCodeKey(deviceCode)).Result()
-	if err != nil {
-		return fmt.Errorf("redis: device_code pttl: %w", err)
+	var deviceLookup string
+	var ttl time.Duration
+	for _, lookup := range opaqueLookupCandidates(s.lookupHMACKeys, "device_code", deviceCode) {
+		var err error
+		ttl, err = s.rdb.PTTL(ctx, deviceCodeKey(lookup)).Result()
+		if err != nil {
+			return fmt.Errorf("redis: device_code pttl: %w", err)
+		}
+		if ttl != -2 {
+			deviceLookup = lookup
+			break
+		}
 	}
-	if ttl == -2 { // key absent: unknown or TTL-evicted
+	if deviceLookup == "" {
 		return oauth.ErrDeviceCodeNotFound
 	}
 	// ttl == -1 (present, no expiry) clamps to 0 = no expiry on the poll key.
 	exp := max(ttl, 0)
-	if err := s.rdb.Set(ctx, lastPollKey(deviceCode), strconv.FormatInt(t.UnixNano(), 10), exp).Err(); err != nil {
+	if err := s.rdb.Set(ctx, lastPollKey(deviceLookup), strconv.FormatInt(t.UnixNano(), 10), exp).Err(); err != nil {
 		return fmt.Errorf("redis: update last_poll: %w", err)
 	}
 	return nil
@@ -202,11 +251,11 @@ func (s *DeviceCodeStore) UpdateLastPoll(ctx context.Context, deviceCode string,
 // mutateByUserCode resolves the pointer then applies a read-modify-write
 // to the canonical record.
 func (s *DeviceCodeStore) mutateByUserCode(ctx context.Context, userCode string, mut func(*oauth.DeviceCode)) error {
-	deviceCode, err := s.resolveUserCode(ctx, userCode)
+	deviceLookup, err := s.resolveUserCode(ctx, userCode)
 	if err != nil {
 		return err
 	}
-	return s.mutateByDeviceCode(ctx, deviceCode, mut)
+	return s.mutateByDeviceLookup(ctx, deviceLookup, mut)
 }
 
 // mutateByDeviceCode applies a read-modify-write to the canonical record,
@@ -216,8 +265,8 @@ func (s *DeviceCodeStore) mutateByUserCode(ctx context.Context, userCode string,
 // whole-record rewrite is safe. The high-frequency poll path (UpdateLastPoll)
 // deliberately does NOT use it: it writes LastPoll to a separate key so it can
 // never clobber a concurrent Approve on a real cluster (see lastPollKeyPrefix).
-func (s *DeviceCodeStore) mutateByDeviceCode(ctx context.Context, deviceCode string, mut func(*oauth.DeviceCode)) error {
-	dc, err := s.getByDeviceCode(ctx, deviceCode)
+func (s *DeviceCodeStore) mutateByDeviceLookup(ctx context.Context, deviceLookup string, mut func(*oauth.DeviceCode)) error {
+	dc, err := s.getStoredByDeviceLookup(ctx, deviceLookup)
 	if err != nil {
 		return err
 	}
@@ -232,7 +281,7 @@ func (s *DeviceCodeStore) mutateByDeviceCode(ctx context.Context, deviceCode str
 	// with NO TTL (KEEPTTL has nothing to keep) — pollable inside the original
 	// window, a single-use violation. redis.Nil means the key was already gone,
 	// so dropping the mutation is the correct idempotent outcome, not an error.
-	err = s.rdb.SetArgs(ctx, deviceCodeKey(deviceCode), blob, goredis.SetArgs{Mode: "XX", KeepTTL: true}).Err()
+	err = s.rdb.SetArgs(ctx, deviceCodeKey(deviceLookup), blob, goredis.SetArgs{Mode: "XX", KeepTTL: true}).Err()
 	if err != nil && !errors.Is(err, goredis.Nil) {
 		return fmt.Errorf("redis: update device_code: %w", err)
 	}
@@ -246,21 +295,23 @@ func (s *DeviceCodeStore) Delete(ctx context.Context, deviceCode string) error {
 	// Read the record first to learn the user_code so its pointer is
 	// reaped too. A missing record still deletes the device_code key
 	// (idempotent); the orphaned pointer, if any, self-evicts at TTL.
-	blob, err := s.rdb.Get(ctx, deviceCodeKey(deviceCode)).Bytes()
-	if errors.Is(err, goredis.Nil) {
+	for _, lookup := range opaqueLookupCandidates(s.lookupHMACKeys, "device_code", deviceCode) {
+		blob, err := s.rdb.Get(ctx, deviceCodeKey(lookup)).Bytes()
+		if errors.Is(err, goredis.Nil) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("redis: delete device_code: %w", err)
+		}
+		var out oauth.DeviceCode
+		if json.Unmarshal(blob, &out) == nil {
+			s.deleteBoth(ctx, lookup, out.UserCode)
+			return nil
+		}
+		if err := s.rdb.Del(ctx, deviceCodeKey(lookup)).Err(); err != nil {
+			return fmt.Errorf("redis: delete device_code: %w", err)
+		}
 		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("redis: delete device_code: %w", err)
-	}
-	var out oauth.DeviceCode
-	if json.Unmarshal(blob, &out) == nil {
-		s.deleteBoth(ctx, deviceCode, out.UserCode)
-		return nil
-	}
-	// Unparseable record (shouldn't happen): drop the device_code key.
-	if err := s.rdb.Del(ctx, deviceCodeKey(deviceCode)).Err(); err != nil {
-		return fmt.Errorf("redis: delete device_code: %w", err)
 	}
 	return nil
 }
@@ -298,12 +349,21 @@ return false
 // one wins the blob). A pending/denied/unknown/expired code -> the script
 // returns false -> ErrDeviceCodeNotFound.
 func (s *DeviceCodeStore) ConsumeIfApproved(ctx context.Context, deviceCode string) (*oauth.DeviceCode, error) {
-	res, err := consumeIfApprovedScript.Run(ctx, s.rdb, []string{deviceCodeKey(deviceCode)}).Result()
-	if errors.Is(err, goredis.Nil) {
-		return nil, oauth.ErrDeviceCodeNotFound // script returned false/nil
+	var res any
+	var deviceLookup string
+	for _, lookup := range opaqueLookupCandidates(s.lookupHMACKeys, "device_code", deviceCode) {
+		var err error
+		res, err = consumeIfApprovedScript.Run(ctx, s.rdb, []string{deviceCodeKey(lookup)}).Result()
+		if err == nil {
+			deviceLookup = lookup
+			break
+		}
+		if !errors.Is(err, goredis.Nil) {
+			return nil, fmt.Errorf("redis: consume_if_approved device_code: %w", err)
+		}
 	}
-	if err != nil {
-		return nil, fmt.Errorf("redis: consume_if_approved device_code: %w", err)
+	if deviceLookup == "" {
+		return nil, oauth.ErrDeviceCodeNotFound
 	}
 	blob, ok := res.(string)
 	if !ok {
@@ -316,9 +376,13 @@ func (s *DeviceCodeStore) ConsumeIfApproved(ctx context.Context, deviceCode stri
 	// Canonical key already deleted by the script; reap the pointer + last_poll
 	// keys (different slots, so separate routed DELs) best-effort.
 	_ = s.rdb.Del(ctx, userCodeKey(out.UserCode)).Err()
-	_ = s.rdb.Del(ctx, lastPollKey(deviceCode)).Err()
+	_ = s.rdb.Del(ctx, lastPollKey(deviceLookup)).Err()
 	if out.IsExpired() {
 		return nil, oauth.ErrDeviceCodeNotFound
+	}
+	out.DeviceCode = deviceCode
+	if strings.HasPrefix(out.UserCode, opaqueLookupPrefix) {
+		out.UserCode = ""
 	}
 	return &out, nil
 }

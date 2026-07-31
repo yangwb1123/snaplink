@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/interfaces/ssoclient/remote"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
@@ -92,6 +93,11 @@ type Config struct {
 	// DPoPVerifier tunes RFC 9449 proof checking; nil uses a process-wide
 	// default (one shared jti replay cache — see DPoPVerifier).
 	DPoPVerifier *DPoPVerifier
+
+	// TrustedProxies gates DPoP htu reconstruction on the direct peer and
+	// canonicalizes X-Forwarded-* once. Build it with
+	// middleware.NewTrustedProxies. Nil preserves legacy first-hop trust.
+	TrustedProxies *middleware.TrustedProxies
 
 	// MaxClockSkew bounds exp/nbf/iat comparison drift; <=0 selects
 	// DefaultMaxClockSkew.

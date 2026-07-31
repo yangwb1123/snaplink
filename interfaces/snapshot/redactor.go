@@ -1,6 +1,11 @@
 package snapshot
 
-import "github.com/yangwb1123/snaplink/interfaces/sso"
+import (
+	"strings"
+
+	"github.com/yangwb1123/snaplink/domains/connections"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
+)
 
 // Redactor strips or transforms secret-bearing fields on a Snapshot
 // BEFORE it is serialized + sealed. It mirrors the audit.Redactor idiom
@@ -99,6 +104,11 @@ func SnapshotRedactSecrets() Redactor {
 			}
 			redactUserSecrets(u)
 		}
+		for _, connection := range snap.Resources.Connections {
+			if connection != nil {
+				redactConnectionSecrets(connection)
+			}
+		}
 	})
 }
 
@@ -138,4 +148,16 @@ func redactUserSecrets(u *sso.User) {
 		cleaned = nil
 	}
 	u.Attributes = cleaned
+}
+
+func redactConnectionSecrets(connection *connections.Connection) {
+	for key := range connection.Config {
+		normalized := strings.ToLower(key)
+		if strings.Contains(normalized, "secret") ||
+			strings.Contains(normalized, "password") ||
+			strings.Contains(normalized, "private_key") ||
+			strings.HasSuffix(normalized, "_token") {
+			delete(connection.Config, key)
+		}
+	}
 }

@@ -2,6 +2,7 @@ package grpcadmin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -9,6 +10,7 @@ import (
 
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/lifecycle/operations"
 	"github.com/yangwb1123/snaplink/platform/releases"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,16 +22,25 @@ import (
 // the right backend at cmd time; this service is unaware.
 type ReleaseAdminService struct {
 	adminv1.UnimplementedReleaseAdminServiceServer
-	registry *releases.Registry
-	store    releases.ReleaseStore
-	recorder *audit.Recorder
+	registry   *releases.Registry
+	store      releases.ReleaseStore
+	recorder   *audit.Recorder
+	operations operations.Store
 }
 
 // NewReleaseAdminService takes the Registry (for Pin/Rollback/Current)
 // plus the underlying Store (for Register/List/Get/Delete which don't
 // need the Pinner). Both must point at the same backing store.
-func NewReleaseAdminService(reg *releases.Registry, store releases.ReleaseStore, recorder *audit.Recorder) *ReleaseAdminService {
-	return &ReleaseAdminService{registry: reg, store: store, recorder: recorder}
+func NewReleaseAdminService(reg *releases.Registry, store releases.ReleaseStore, recorder *audit.Recorder, operationStores ...operations.Store) *ReleaseAdminService {
+	var operationStore operations.Store
+	if len(operationStores) > 0 {
+		operationStore = operationStores[0]
+	} else {
+		operationStore = operations.NewMemoryStore()
+	}
+	return &ReleaseAdminService{
+		registry: reg, store: store, recorder: recorder, operations: operationStore,
+	}
 }
 
 func (s *ReleaseAdminService) ready() error {
@@ -129,13 +140,16 @@ func (s *ReleaseAdminService) Pin(ctx context.Context, in *adminv1.PinReleaseReq
 	if in == nil || in.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "id required")
 	}
-	rep, err := s.registry.Pin(ctx, in.Id)
+	rep, operation, err := s.applyReleaseTracked(ctx, in.Id, "release_pin", s.registry.Pin)
 	if err != nil {
-		return nil, mapReleaseError(err, "pin "+in.Id)
+		return nil, err
 	}
 	target := fmt.Sprintf("%s previous=%s", rep.ReleaseID, rep.PreviousID)
 	recordAdmin(ctx, s.recorder, audit.EventReleasePinned, target)
-	return &adminv1.PinReleaseResponse{Report: pinReportToProto(rep)}, nil
+	return &adminv1.PinReleaseResponse{
+		Report: pinReportToProto(rep), OperationId: operation.ID,
+		Operation: operationToProto(operation),
+	}, nil
 }
 
 func (s *ReleaseAdminService) Rollback(ctx context.Context, in *adminv1.RollbackReleaseRequest) (*adminv1.RollbackReleaseResponse, error) {
@@ -148,13 +162,61 @@ func (s *ReleaseAdminService) Rollback(ctx context.Context, in *adminv1.Rollback
 	if in == nil || in.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "id required")
 	}
-	rep, err := s.registry.Rollback(ctx, in.Id)
+	rep, operation, err := s.applyReleaseTracked(ctx, in.Id, "release_rollback", s.registry.Rollback)
 	if err != nil {
-		return nil, mapReleaseError(err, "rollback "+in.Id)
+		return nil, err
 	}
 	target := fmt.Sprintf("%s previous=%s", rep.ReleaseID, rep.PreviousID)
 	recordAdmin(ctx, s.recorder, audit.EventReleaseRolledBack, target)
-	return &adminv1.RollbackReleaseResponse{Report: pinReportToProto(rep)}, nil
+	return &adminv1.RollbackReleaseResponse{
+		Report: pinReportToProto(rep), OperationId: operation.ID,
+		Operation: operationToProto(operation),
+	}, nil
+}
+
+func (s *ReleaseAdminService) applyReleaseTracked(
+	ctx context.Context, id, kind string,
+	apply func(context.Context, string) (*releases.PinReport, error),
+) (*releases.PinReport, operations.Operation, error) {
+	if s.operations == nil {
+		return nil, operations.Operation{}, status.Error(
+			codes.FailedPrecondition, "durable operation store not configured")
+	}
+	operation, err := operations.Start(ctx, s.operations, kind, id)
+	if err != nil {
+		return nil, operation, status.Errorf(codes.Internal, "start release operation: %v", err)
+	}
+	if err := operations.BeginStep(ctx, s.operations, &operation, "apply_release"); err != nil {
+		return nil, operation, status.Errorf(codes.Internal, "persist release step: %v", err)
+	}
+	report, applyErr := apply(ctx, id)
+	_ = operations.FinishStep(ctx, s.operations, &operation, applyErr)
+	if applyErr != nil {
+		return nil, operation, s.failReleaseOperation(ctx, &operation, applyErr, kind+" "+id)
+	}
+	result, _ := json.Marshal(report)
+	if err := operations.Finish(ctx, s.operations, &operation, result, nil); err != nil {
+		return nil, operation, status.Errorf(codes.Internal, "finish release operation: %v", err)
+	}
+	return report, operation, nil
+}
+
+func (s *ReleaseAdminService) failReleaseOperation(
+	ctx context.Context, operation *operations.Operation, cause error, prefix string,
+) error {
+	var rollback *releases.AutoRollbackError
+	if errors.As(cause, &rollback) {
+		compensationState, compensationError := operations.StepSucceeded, ""
+		if rollback.CompensationError != nil {
+			compensationState, compensationError = operations.StepFailed, rollback.CompensationError.Error()
+		}
+		_ = operations.AddCompensation(
+			ctx, s.operations, operation, "automatic_rollback",
+			compensationState, compensationError)
+	}
+	mapped := mapReleaseError(cause, prefix)
+	_ = operations.Finish(ctx, s.operations, operation, nil, mapped)
+	return operationFailureError(*operation, mapped)
 }
 
 func (s *ReleaseAdminService) Delete(ctx context.Context, in *adminv1.DeleteReleaseRequest) (*adminv1.DeleteReleaseResponse, error) {

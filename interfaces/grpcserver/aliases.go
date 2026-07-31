@@ -30,6 +30,7 @@ var (
 	NewReleaseAdminService    = grpcadmin.NewReleaseAdminService
 	NewSnapshotAdminService   = grpcadmin.NewSnapshotAdminService
 	NewTenantAdminService     = grpcadmin.NewTenantAdminService
+	NewOperationAdminService  = grpcadmin.NewOperationAdminService
 	NewTokenAdminService      = grpcadmin.NewTokenAdminService
 	NewUserAdminService       = grpcadmin.NewUserAdminService
 )

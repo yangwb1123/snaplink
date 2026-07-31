@@ -42,7 +42,12 @@ func TestStartRotation_MultiAlg_RotatesAndRetires(t *testing.T) {
 			done := tc.issuer.StartRotation(ctx, defaultimpl.RotationConfig{
 				Interval:    tc.interval,
 				GracePeriod: tc.grace,
-				OnRotate:    func(o, n string) { rotated <- [2]string{o, n} },
+				OnRotate: func(o, n string) {
+					select {
+					case rotated <- [2]string{o, n}:
+					default:
+					}
+				},
 			})
 
 			var first [2]string

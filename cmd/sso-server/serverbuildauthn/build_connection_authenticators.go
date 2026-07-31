@@ -43,6 +43,7 @@ type connectionAuthEntry struct {
 type ConnectionAuthenticatorFactory struct {
 	auditor *audit.Recorder
 	logger  spi.Logger
+	linker  authenticators.UserLinker
 	max     int
 
 	mu    sync.Mutex
@@ -53,6 +54,12 @@ type ConnectionAuthenticatorFactory struct {
 // may be nil (build failures are then log-only); maxEntries <= 0 uses
 // DefaultConnectionAuthCacheSize.
 func NewConnectionAuthenticatorFactory(auditor *audit.Recorder, logger spi.Logger, maxEntries int) *ConnectionAuthenticatorFactory {
+	return NewConnectionAuthenticatorFactoryWithLinker(auditor, logger, maxEntries, nil)
+}
+
+// NewConnectionAuthenticatorFactoryWithLinker additionally maps upstream
+// subjects through the configured identity-link store.
+func NewConnectionAuthenticatorFactoryWithLinker(auditor *audit.Recorder, logger spi.Logger, maxEntries int, linker authenticators.UserLinker) *ConnectionAuthenticatorFactory {
 	if logger == nil {
 		logger = spi.NopLogger{}
 	}
@@ -62,6 +69,7 @@ func NewConnectionAuthenticatorFactory(auditor *audit.Recorder, logger spi.Logge
 	return &ConnectionAuthenticatorFactory{
 		auditor: auditor,
 		logger:  logger,
+		linker:  linker,
 		max:     maxEntries,
 		cache:   make(map[string]connectionAuthEntry),
 	}
@@ -79,7 +87,7 @@ func (f *ConnectionAuthenticatorFactory) AuthenticatorFor(ctx context.Context, c
 	if auth := f.cached(c.ID, fp); auth != nil {
 		return auth, nil
 	}
-	auth, err := buildConnectionOIDCAuthenticator(c)
+	auth, err := buildConnectionOIDCAuthenticator(c, f.linker)
 	if err != nil {
 		// Operator-visible misconfiguration signal; the caller's wire response
 		// stays byte-identical to an unknown provider (anti-enumeration).
@@ -147,7 +155,7 @@ func connectionConfigFingerprint(c *connections.Connection) string {
 // connection ID — the exact value /auth/login dispatches on (provider=<id>),
 // so lockout keys, metrics labels, and audit trails all line up with the
 // connection. NewOIDCFederationAuthenticator owns required-field validation.
-func buildConnectionOIDCAuthenticator(c *connections.Connection) (core.Authenticator, error) {
+func buildConnectionOIDCAuthenticator(c *connections.Connection, linker authenticators.UserLinker) (core.Authenticator, error) {
 	return authenticators.NewOIDCFederationAuthenticator(authenticators.OIDCFederationConfig{
 		Name:                  c.ID,
 		AuthorizationEndpoint: strings.TrimSpace(c.Config[connections.ConfigKeyOIDCAuthorizationEndpoint]),
@@ -158,7 +166,7 @@ func buildConnectionOIDCAuthenticator(c *connections.Connection) (core.Authentic
 		RedirectURI:           strings.TrimSpace(c.Config[connections.ConfigKeyOIDCRedirectURI]),
 		Scopes:                strings.Fields(c.Config[connections.ConfigKeyOIDCScopes]),
 		SubjectFieldOverride:  strings.TrimSpace(c.Config[connections.ConfigKeyOIDCSubjectField]),
-	})
+	}, authenticators.WithUserLinker(linker))
 }
 
 // Interface guard (in the implementation package per convention).

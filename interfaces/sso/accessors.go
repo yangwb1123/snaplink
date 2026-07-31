@@ -10,12 +10,12 @@ import (
 	"github.com/yangwb1123/snaplink/domains/connections"
 	"github.com/yangwb1123/snaplink/domains/connections/provider"
 	"github.com/yangwb1123/snaplink/domains/federation"
+	"github.com/yangwb1123/snaplink/domains/metering"
 	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/domains/region"
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/domains/tokenanomaly"
 	"github.com/yangwb1123/snaplink/domains/tokenexchange"
-	"github.com/yangwb1123/snaplink/domains/tokenusage"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/cluster"
 	"github.com/yangwb1123/snaplink/platform/geo"
@@ -173,9 +173,9 @@ func (s *Server) AnomalyRunner() *anomaly.Runner           { return s.anomalyRun
 // TokenUsageRecorder returns the opt-in token-usage telemetry recorder, or
 // nil when [WithTokenUsageRecorder] was never wired. Satisfies
 // oauth.IntrospectDeps for the /token/introspect usage-recording seam; every
-// method on a nil *tokenusage.Recorder is a safe no-op, so callers never
+// method on a nil *metering.Recorder is a safe no-op, so callers never
 // need a nil check.
-func (s *Server) TokenUsageRecorder() *tokenusage.Recorder { return s.tokenUsageRecorder }
+func (s *Server) TokenUsageRecorder() *metering.Recorder { return s.tokenUsageRecorder }
 
 // TokenAnomalyDetector returns the opt-in token-behavior anomaly detector, or
 // nil when [WithTokenAnomalyDetector] was never wired. Every method on a nil
