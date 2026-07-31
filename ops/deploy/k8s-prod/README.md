@@ -4,9 +4,7 @@
 > [`ops/deploy/kustomize/overlays/prod/`](../kustomize/overlays/prod/); that
 > overlay wins on conflict.
 
-Do not apply this directory as-is. Its `preStop` hook calls `/bin/sleep` in a
-distroless image, `config.yaml` contains an invalid
-`server_pairwise_subjects_note` key, and secrets are placeholders.
+Do not apply this directory as-is. Its secrets are placeholders.
 
 Render for inspection:
 
@@ -16,7 +14,7 @@ kubectl kustomize ops/deploy/k8s-prod/
 
 Before any production rollout:
 
-- pin the image by digest and replace the invalid hook;
+- pin the image by digest;
 - validate configuration and replace placeholder secrets with a managed secret
   source;
 - externalize every enabled stateful feature to shared storage;

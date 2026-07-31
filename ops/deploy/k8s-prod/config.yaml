@@ -10,6 +10,11 @@ server:
   listen: ":8080"
   # issuer MUST be the externally-reachable URL the edge terminates TLS on.
   issuer: "https://sso.example.com"
+  required_capabilities: [core.runtime.v1, server.stock.v1]
+  topology:
+    mode: multi
+  pairwise_subjects:
+    backend: postgres
 
 # ---- HOT / EPHEMERAL tier: one shared Redis Cluster, fanned out to every hot store ----
 redis:
@@ -33,7 +38,11 @@ redis:
   # volatile-ttl). Evicting a live refresh-family ledger or jti key silently
   # breaks reuse/replay detection — a security regression, not a cache miss.
 
-oauth: { backend: redis } # auth_code / refresh / device_code / par
+oauth:
+  backend: redis # auth_code / refresh / device_code / par
+  redis:
+    lookup_hmac_key_file: /etc/sso/oauth-lookup/current.key
+    lookup_hmac_previous_key_file: ""
 ciba: { backend: redis }
 mfa:
   challenge: { backend: redis }
@@ -62,8 +71,8 @@ audit: { enabled: true, backend: postgres, hash_chain: true }
 self_service:
   consent: { backend: postgres }
   password: { backend: postgres }
+  identity_link: { enabled: true, backend: postgres, merge_policy: reject }
 native_sso: { backend: postgres } # device_secrets
-server_pairwise_subjects_note: "set server.pairwise_subjects.backend: postgres if pairwise subjects are enabled"
 
 # ---- COORDINATION tier: etcd. REQUIRED once cross_replica_revocation is on ----
 cluster:

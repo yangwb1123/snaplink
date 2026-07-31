@@ -40,9 +40,13 @@ spec:
               podAffinityTerm:
                 labelSelector:
                   matchLabels:
-                    {{- include "sso-server.selectorLabels" . | nindent 20 }}
+                    {{- include "sso-server.selectorLabels" $ | nindent 20 }}
                 topologyKey: {{ .topologyKey }}
       {{- end }}
+      {{- end }}
+      {{- with .Values.deployment.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -57,14 +61,14 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       terminationGracePeriodSeconds: {{ .Values.deployment.terminationGracePeriodSeconds }}
-      {{- with .Values.deployment.lifecycle }}
-      lifecycle:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
       containers:
         - name: sso-server
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.deployment.lifecycle }}
+          lifecycle:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           args:
             - "--config"
             - "/etc/sso/config.yaml"

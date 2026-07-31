@@ -7,17 +7,9 @@ setup, developer, and admin browser UIs are separate frontend deployments.
 
 > **State requirement:** more than one API replica is correct only when every
 > enabled stateful concern uses shared Redis/Postgres/etcd backends. The
-> base/dev shape inherits two memory-backed replicas and is therefore for
-> rendering/probe evaluation only unless patched to one replica. The production
+> base/dev shape uses one memory-backed replica. The production
 > overlay is a reference that still requires real external services, secrets,
 > certificates, and per-feature backend review.
->
-> **Image compatibility:** the current production overlay uses
-> `/bin/sleep` in a `preStop` hook, while the repository image is distroless.
-> It also contains an unknown `server_pairwise_subjects_note` config key, so
-> `sso-ctl config validate-schema` fails. Replace the hook (or use a reviewed
-> image that supplies it) and convert that note to a YAML comment or valid
-> configuration before rollout.
 
 ## Layout
 
@@ -44,14 +36,17 @@ kustomize/
 ## Usage
 
 ```bash
-# Dev: render first; patch replicas to 1 before applying with memory stores
+# Dev: one memory-backed replica
 kubectl kustomize ops/deploy/kustomize/overlays/dev/
 
 # Production: apply only after the external services/secrets/hook review above
 kubectl apply -k ops/deploy/kustomize/overlays/prod/
 
-# Base: render-only reference; it inherits the unsafe two-memory-replica shape
+# Base: one memory-backed replica
 kubectl kustomize ops/deploy/kustomize/base/
+
+# Kubernetes 1.30+: enforce the same HA contract at admission and on /scale
+kubectl apply -f ops/deploy/k8s-admission/topology-policy.yaml
 ```
 
 ## Makefile Targets
@@ -66,14 +61,19 @@ make k8s-diff     # Diff rendered output between dev and prod overlays
 | Aspect | Dev (`overlays/dev`) | Prod (`overlays/prod`) |
 |--------|----------------------|------------------------|
 | Image tag | `dev` | `prod` (pin to digest in real deploys) |
-| Replicas | 2 (from base) | 3 |
+| Replicas | 1 (from base) | 3 |
 | Backends | memory (not HA-safe) | Redis + Postgres + etcd for configured concerns |
 | HPA | none | CPU 70%, min 3 / max 20 |
 | PDB | none | minAvailable 2 |
 | Secrets | none (base ConfigMap only) | `secretGenerator` placeholder |
 | Zone spread | none | `topologySpreadConstraints` |
-| Graceful shutdown | default | preStop + 40s terminationGracePeriod |
+| Graceful shutdown | default | 40s terminationGracePeriod |
 | Readiness probe | default (2 failures) | tolerant (4 failures) |
+
+The native admission policy is optional on clusters older than Kubernetes
+1.30. On supported clusters it rejects unsafe multi-replica Deployments and
+unapproved scale updates. The process startup check remains authoritative on
+every Kubernetes version.
 
 ## Migration from Legacy Paths
 

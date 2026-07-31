@@ -1,0 +1,49 @@
+{{- $replicas := int .Values.deployment.replicas -}}
+{{- if .Values.autoscaling.enabled -}}
+{{- $replicas = max $replicas (int .Values.autoscaling.maxReplicas) -}}
+{{- end -}}
+{{- if gt $replicas 1 -}}
+{{- $server := default (dict) .Values.config.server -}}
+{{- $topology := default (dict) (get $server "topology") -}}
+{{- if ne (default "" (get $topology "mode")) "multi" -}}
+{{- fail "multi-replica deployment requires config.server.topology.mode=multi" -}}
+{{- end -}}
+{{- if (default false (get $topology "allow_per_pod_state")) -}}
+{{- fail "multi-replica deployment forbids config.server.topology.allow_per_pod_state=true" -}}
+{{- end -}}
+{{- $oauth := default (dict) .Values.config.oauth -}}
+{{- $identity := default (dict) .Values.config.identity -}}
+{{- $sessionBackend := default (default "" (get $identity "backend")) (get $identity "session_backend") -}}
+{{- if has (default "" (get $oauth "backend")) (list "" "memory") -}}
+{{- fail "multi-replica deployment requires shared config.oauth.backend" -}}
+{{- end -}}
+{{- if has (default "" (get $identity "backend")) (list "" "memory") -}}
+{{- fail "multi-replica deployment requires shared config.identity.backend" -}}
+{{- end -}}
+{{- if has $sessionBackend (list "" "memory") -}}
+{{- fail "multi-replica deployment requires shared config.identity.session_backend" -}}
+{{- end -}}
+{{- $security := default (dict) .Values.config.security -}}
+{{- $jti := default (dict) (get $security "jti_replay") -}}
+{{- if and (default false (get $jti "enabled")) (has (default "" (get $jti "backend")) (list "" "memory")) -}}
+{{- fail "multi-replica deployment with JTI replay requires shared config.security.jti_replay.backend" -}}
+{{- end -}}
+{{- $ciba := default (dict) .Values.config.ciba -}}
+{{- if and (default false (get $ciba "enabled")) (has (default "" (get $ciba "backend")) (list "" "memory")) -}}
+{{- fail "multi-replica deployment with CIBA requires shared config.ciba.backend" -}}
+{{- end -}}
+{{- $mfa := default (dict) .Values.config.mfa -}}
+{{- $challenge := default (dict) (get $mfa "challenge") -}}
+{{- if and (default false (get $mfa "enabled")) (has (default "" (get $challenge "backend")) (list "" "memory")) -}}
+{{- fail "multi-replica deployment with MFA requires shared config.mfa.challenge.backend" -}}
+{{- end -}}
+{{- $selfService := default (dict) (get .Values.config "self_service") -}}
+{{- $identityLink := default (dict) (get $selfService "identity_link") -}}
+{{- if and (default false (get $identityLink "enabled")) (has (default "" (get $identityLink "backend")) (list "" "memory")) -}}
+{{- fail "multi-replica deployment with identity linking requires shared config.self_service.identity_link.backend" -}}
+{{- end -}}
+{{- $pairwise := default (dict) (get $server "pairwise_subjects") -}}
+{{- if and (default false (get $pairwise "enabled")) (has (default "" (get $pairwise "backend")) (list "" "memory")) -}}
+{{- fail "multi-replica deployment with pairwise subjects requires shared config.server.pairwise_subjects.backend" -}}
+{{- end -}}
+{{- end -}}

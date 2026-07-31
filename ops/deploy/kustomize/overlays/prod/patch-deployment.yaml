@@ -6,6 +6,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: sso-server
+  labels:
+    snaplink.io/topology: multi
 spec:
   template:
     spec:
@@ -18,20 +20,28 @@ spec:
           labelSelector:
             matchLabels:
               app.kubernetes.io/name: sso-server
-      # Give in-flight authorization_code / token exchanges time to finish.
-      # preStop flips the pod out of rotation (readiness drops once the endpoint
-      # controller observes termination) and the sleep lets the LB stop sending
-      # new requests before SIGTERM triggers the binary's 15s graceful shutdown.
+      # Give in-flight authorization_code / token exchanges time to finish
+      # after Kubernetes removes the terminating pod from service endpoints.
       terminationGracePeriodSeconds: 40
       containers:
         - name: sso-server
-          lifecycle:
-            preStop:
-              exec:
-                command: ["/bin/sleep", "10"]
           # Secrets from a Secret via the SSO_<SECTION>__<KEY> env-override
           # mechanism (config/source_env.go) — no ConfigMap fork needed.
           env:
+            # These literal overrides are the admission contract. The native
+            # policy can validate pod specs but cannot dereference ConfigMaps;
+            # the process reads the same values, so admission and startup agree.
+            - { name: SSO_SERVER__TOPOLOGY__MODE, value: multi }
+            - { name: SSO_SERVER__TOPOLOGY__ALLOW_PER_POD_STATE, value: "false" }
+            - { name: SSO_OAUTH__BACKEND, value: redis }
+            - { name: SSO_IDENTITY__BACKEND, value: postgres }
+            - { name: SSO_IDENTITY__SESSION_BACKEND, value: redis }
+            - { name: SSO_SECURITY__JTI_REPLAY__BACKEND, value: redis }
+            - { name: SSO_CIBA__BACKEND, value: redis }
+            - { name: SSO_MFA__CHALLENGE__BACKEND, value: redis }
+            - { name: SSO_SELF_SERVICE__IDENTITY_LINK__BACKEND, value: postgres }
+            - { name: SSO_SERVER__PAIRWISE_SUBJECTS__BACKEND, value: postgres }
+            - { name: SSO_OAUTH__REDIS__LOOKUP_HMAC_KEY_FILE, value: /etc/sso/oauth-lookup/current.key }
             - name: SSO_REDIS__PASSWORD
               valueFrom:
                 secretKeyRef: { name: sso-server-secrets, key: redis-password }
@@ -55,8 +65,16 @@ spec:
             - name: redis-tls
               mountPath: /etc/redis-tls
               readOnly: true
+            - name: oauth-lookup
+              mountPath: /etc/sso/oauth-lookup
+              readOnly: true
       volumes:
         - name: redis-tls
           secret:
             secretName: sso-server-redis-tls
             optional: true
+        - name: oauth-lookup
+          secret:
+            secretName: sso-server-secrets
+            items:
+              - { key: oauth-lookup-key, path: current.key }
