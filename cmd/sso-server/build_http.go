@@ -11,6 +11,7 @@ import (
 	"github.com/yangwb1123/snaplink/config"
 	adminv1 "github.com/yangwb1123/snaplink/gen/proto/admin/v1"
 	"github.com/yangwb1123/snaplink/interfaces/grpcserver"
+	"github.com/yangwb1123/snaplink/interfaces/ssoext"
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/spi"
@@ -374,12 +375,12 @@ func mountSAMLHandler(cfg *config.Config, a *app, logger spi.Logger) error {
 	if cfg.SAML.Handler == "" {
 		return nil
 	}
-	factory, ok := lookupSAMLHandlerFactory(cfg.SAML.Handler)
+	factory, ok := ssoext.LookupSAMLHandlerFactory(cfg.SAML.Handler)
 	if !ok {
-		return fmt.Errorf("saml.handler %q is not registered (call RegisterSAMLHandlers from your forked main); registered: %v",
-			cfg.SAML.Handler, RegisteredSAMLHandlers())
+		return fmt.Errorf("saml.handler %q is not registered (call ssoext.RegisterSAMLHandlers from your forked main); registered: %v",
+			cfg.SAML.Handler, ssoext.RegisteredSAMLHandlers())
 	}
-	set, err := factory(context.Background(), SAMLServerDeps{
+	set, err := factory(context.Background(), ssoext.SAMLServerDeps{
 		IssuerForClient:       a.server.IssuerForClient,
 		ClientStore:           a.clientStore,
 		SessionManager:        a.sessionMgr,

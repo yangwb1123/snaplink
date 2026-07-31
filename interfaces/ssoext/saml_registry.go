@@ -1,14 +1,26 @@
-package main
+// Package ssoext is the operator-extension host API for the stock server:
+// the typed, name-addressed registrars a forked binary uses to plug in
+// surfaces whose heavy dependencies (SAML/XML/DSig, vendor KMS SDKs) must
+// stay out of the core module's go.mod. The registrars themselves live
+// here — OUTSIDE cmd — so a fork imports the types instead of
+// re-declaring them, and the generic machinery is the single standard
+// implementation in platform/registrar.
+//
+// Registration is process-local and name-addressed by configuration
+// (saml.handler selects a factory by name at boot). It is the in-process
+// compile-time seam for forked binaries only — NOT a hot-plugin registry:
+// nothing here can add entries after startup, and installable third-party
+// code must run out of process over the typed authenticated protocol (see
+// docs/plugin-system.md).
+package ssoext
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"sort"
-	"sync"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/registrar"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
@@ -18,7 +30,8 @@ import (
 // from their forked binary WITHOUT the SAML SDK entering this module's
 // go.mod (the firm zero-external-dep invariant; the factory closes over its
 // own crewjam types in the operator's module). It mirrors how
-// serverbuildsign.ExternalSignerFactory keeps the vendor KMS SDK in the operator's main.
+// serverbuildsign.ExternalSignerFactory keeps the vendor KMS SDK in the
+// operator's main.
 //
 // The factory gets exactly what a SAML SP/IdP surface needs to mint tokens
 // the same way the rest of the server does:
@@ -94,16 +107,15 @@ type SAMLHandlerSet struct {
 // registers it via RegisterSAMLHandlers.
 type SAMLHandlerFactory func(ctx context.Context, deps SAMLServerDeps) (*SAMLHandlerSet, error)
 
-// samlHandlerRegistry holds operator-registered SAML handler factories. The
+// SAMLHandlerRegistry holds operator-registered SAML handler factories. The
 // SAML SDK (crewjam/saml, encoding/xml DSig, etc.) lives in the operator's
 // forked binary, not this module — the operator calls RegisterSAMLHandlers
 // from their main before running the server, then selects the factory by
-// name via saml.handler. This mirrors serverbuildsign.ExternalSignerRegistry EXACTLY (which
-// keeps the vendor KMS SDK out of the SPI the same way).
-var samlHandlerRegistry = struct {
-	mu        sync.RWMutex
-	factories map[string]SAMLHandlerFactory
-}{factories: map[string]SAMLHandlerFactory{}}
+// name via saml.handler. The generic machinery is the standard
+// platform/registrar implementation (same shape as
+// serverbuildsign.RegisterExternalSigner). Exported so tests can clean up
+// between runs via Unregister.
+var SAMLHandlerRegistry = registrar.New[SAMLHandlerFactory]()
 
 // RegisterSAMLHandlers registers a SAML handler factory under name,
 // reachable via saml.handler. Intended to be called from an operator's
@@ -111,38 +123,17 @@ var samlHandlerRegistry = struct {
 // or a duplicate name (all unrecoverable wiring mistakes) — identical to
 // serverbuildsign.RegisterExternalSigner.
 func RegisterSAMLHandlers(name string, f SAMLHandlerFactory) {
-	if name == "" {
-		panic("RegisterSAMLHandlers: empty name")
-	}
-	if f == nil {
-		panic(fmt.Sprintf("RegisterSAMLHandlers: nil factory for %q", name))
-	}
-	samlHandlerRegistry.mu.Lock()
-	defer samlHandlerRegistry.mu.Unlock()
-	if _, dup := samlHandlerRegistry.factories[name]; dup {
-		panic(fmt.Sprintf("RegisterSAMLHandlers: %q already registered", name))
-	}
-	samlHandlerRegistry.factories[name] = f
+	SAMLHandlerRegistry.Register(name, f)
 }
 
-// lookupSAMLHandlerFactory returns the factory registered under name.
-func lookupSAMLHandlerFactory(name string) (SAMLHandlerFactory, bool) {
-	samlHandlerRegistry.mu.RLock()
-	defer samlHandlerRegistry.mu.RUnlock()
-	f, ok := samlHandlerRegistry.factories[name]
-	return f, ok
+// LookupSAMLHandlerFactory returns the factory registered under name.
+func LookupSAMLHandlerFactory(name string) (SAMLHandlerFactory, bool) {
+	return SAMLHandlerRegistry.Lookup(name)
 }
 
 // RegisteredSAMLHandlers returns the sorted names of all registered SAML
 // factories, for the boot-time diagnostic when saml.handler names an
 // unregistered factory.
 func RegisteredSAMLHandlers() []string {
-	samlHandlerRegistry.mu.RLock()
-	defer samlHandlerRegistry.mu.RUnlock()
-	names := make([]string, 0, len(samlHandlerRegistry.factories))
-	for n := range samlHandlerRegistry.factories {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
+	return SAMLHandlerRegistry.Names()
 }

@@ -16,11 +16,12 @@
 //
 // # Architecture: importable root-typed results (no package-main import)
 //
-// The cmd/sso-server SAML registry types (RegisterSAMLHandlers, SAMLServerDeps,
-// SAMLHandlerSet) live in package main — and a separate module's package CANNOT
-// import package main. So this module does NOT reference any cmd type. Instead
-// it exposes its OWN importable types, built from root-module + stdlib + crewjam
-// types only:
+// The SAML registry types (RegisterSAMLHandlers, SAMLServerDeps, SAMLHandlerSet)
+// live in interfaces/ssoext — the operator-extension host API OUTSIDE cmd — so
+// a separate module CAN import them directly. This module still does NOT
+// reference them: it exposes its OWN importable types, built from root-module
+// + stdlib + crewjam types only, keeping the crewjam dependency in THIS
+// module's go.mod:
 //
 //   - saml.Deps          — a struct of ROOT-module-typed accessors
 //     (sso.ClientStore, sso.SessionManager, sso.UserProvider,
@@ -35,9 +36,9 @@
 //     SPAuthenticator per SPConfig plus the POST /auth/saml/callback ACS
 //     handler.
 //
-// The OPERATOR'S FORK (their own package main, which DOES have cmd's
-// RegisterSAMLHandlers) adapts saml.BuildResult onto main.SAMLHandlerSet inside
-// the factory closure. Copy-pasteable wiring:
+// The OPERATOR'S FORK (their own package main, which calls
+// ssoext.RegisterSAMLHandlers) adapts saml.BuildResult onto
+// ssoext.SAMLHandlerSet inside the factory closure. Copy-pasteable wiring:
 //
 //	package main
 //

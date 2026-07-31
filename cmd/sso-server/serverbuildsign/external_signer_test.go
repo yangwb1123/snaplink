@@ -48,9 +48,7 @@ func registerExternalSignerForTest(t *testing.T, name string, f ExternalSignerFa
 	t.Helper()
 	RegisterExternalSigner(name, f)
 	t.Cleanup(func() {
-		ExternalSignerRegistry.mu.Lock()
-		defer ExternalSignerRegistry.mu.Unlock()
-		delete(ExternalSignerRegistry.factories, name)
+		ExternalSignerRegistry.Unregister(name)
 	})
 }
 
