@@ -136,7 +136,7 @@ class Pipeline:
 def load_pipeline(path: str) -> Pipeline:
     """Load pipeline definition from YAML file."""
     if not yaml:
-        log.error("PyYAML not installed. Run: pip install pyyaml")
+        log.error("PyYAML not installed. Install the project: uv sync (or pip install pyyaml)")
         sys.exit(1)
     
     fpath = Path(path)

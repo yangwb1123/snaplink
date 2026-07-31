@@ -42,8 +42,9 @@ evidence. Inspect it with `--dry-run` before executing.
 
 ## Recommended use
 
-YAML task and pipeline loading requires PyYAML, which is not managed as a
-repository Python dependency: `python -m pip install PyYAML`.
+YAML task and pipeline loading requires PyYAML, which is managed in
+`pyproject.toml`; install the project with `uv sync` (or
+`pip install -e .`) before running the runners.
 
 1. Put a bounded proposal in `docs/feature-spec-<name>.md` using
    `docs/templates/feature-spec.md`.

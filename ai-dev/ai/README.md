@@ -53,8 +53,9 @@ corpus. The context file's `repo:` value fills the prompt only; pass
 
 ## Usage
 
-Context YAML requires PyYAML, which this repository does not install as a
-managed Python dependency: `python -m pip install PyYAML`.
+Context YAML requires PyYAML, which is managed in `pyproject.toml`;
+install the project with `uv sync` (or `pip install -e .`) before running
+the runners.
 
 Render a prompt without invoking an agent:
 

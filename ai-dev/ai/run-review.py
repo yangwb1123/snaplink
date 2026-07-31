@@ -195,7 +195,7 @@ AGENT_BIN = _load_agent_bin()
 
 def load_context(path: str) -> dict:
     if not yaml:
-        print("ERROR: PyYAML not installed. Run: pip install pyyaml", file=sys.stderr)
+        print("ERROR: PyYAML not installed. Install the project: uv sync (or pip install pyyaml)", file=sys.stderr)
         sys.exit(1)
     fpath = Path(path)
     if not fpath.exists():
