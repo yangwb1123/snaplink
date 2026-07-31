@@ -1,48 +1,57 @@
 # OIDC Conformance Test Suite — docker compose
 #
 # Runs the OpenID Foundation's conformance test suite against a local
-# SSO server instance.
+# SSO server instance built from this repository.
 #
 # Usage:
-#   docker compose up -d
-#   # Open http://localhost:8080 in a browser
-#   # Configure the test suite to point at http://localhost:8180 (sso-server)
+#   docker compose up -d --build
+#   # Open http://localhost:8080 in a browser, create a test plan from the
+#   # supported modules in README.md, and point the suite at the server
+#   # under test (browser URL http://localhost:8180).
 #
-# The sso-server container is built from the local source tree. The
-# conformance-suite container is the official OpenID Foundation image.
+# The image is PINNED to a release tag of the official OIDF suite — never
+# change it to :latest. Bump deliberately, re-run, and archive the results
+# per README.md before updating the tag.
 #
-# Environment variables in config.env override defaults.
+# Environment variables in config.env override the defaults below (compose
+# interpolates ${VAR:-default} from that file when run with
+# `docker compose --env-file config.env up`; the compose file also loads
+# config.env directly via env_file for the containers).
 
 services:
   # SSO server under test — built from the local source tree
   sso-server:
     build:
       context: ../..
-      dockerfile: Dockerfile.test
+      dockerfile: Dockerfile
     ports:
       - "8180:8080"
+    volumes:
+      # Bind-mounted so the harness pins the exact server configuration
+      # under test. Validate it first with:
+      #   docker compose run --rm --no-deps sso-server --validate-only
+      - ./config.yaml:/etc/sso/conformance.yaml:ro
+    command: ["--config", "/etc/sso/conformance.yaml"]
     environment:
-      - SSO_ISSUER=http://localhost:8180
-      - SSO_STORAGE=sqlite
-      - SSO_SIGNUP_ENABLED=true
-      - SSO_DCR_ENABLED=true
-      - SSO_ALLOW_OPEN_REGISTRATION=true
-      - SSO_LOG_LEVEL=debug
+      - SSO_SERVER__ISSUER=http://localhost:8180
+      - SSO_LOGGING__LEVEL=debug
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 3s
       timeout: 2s
-      retries: 10
+      retries: 15
       start_period: 5s
     networks:
       - conformance-net
 
-  # OIDF conformance test suite
+  # OIDF conformance test suite — official image, pinned release tag
   conformance-suite:
-    image: openid/conformance-suite:latest
+    image: registry.gitlab.com/openid/conformance-suite:release-v5.2.1
     ports:
       - "8080:8080"
       - "8443:8443"
+    env_file:
+      - config.env
     environment:
       - CONFORMANCE_DB_HOST=conformance-db
       - CONFORMANCE_DB_PORT=5432
@@ -50,6 +59,9 @@ services:
       - CONFORMANCE_DB_USER=conformance
       - CONFORMANCE_DB_PASSWORD=conformance
       - CONFORMANCE_SERVER_EXTERNAL_URL=http://localhost:8080
+      # Inside the compose network the suite's server-side calls reach the
+      # server-under-test directly; the BROWSER reaches it via localhost:8180
+      # (the issuer configured in config.yaml).
       - CONFORMANCE_SSO_SERVER=http://sso-server:8080
       - CONFORMANCE_SSO_DISCOVERY=http://sso-server:8080/.well-known/openid-configuration
     depends_on:
@@ -60,7 +72,7 @@ services:
     networks:
       - conformance-net
 
-  # Database for conformance test suite
+  # Database for the conformance test suite
   conformance-db:
     image: postgres:16-alpine
     environment:

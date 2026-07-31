@@ -99,26 +99,32 @@ package-specific engineering floors, not protocol-conformance percentages.
 ## OIDF conformance harness
 
 The manual scaffold lives in
-[`test/oidc-conformance/`](../../test/oidc-conformance/README.md). It is
-currently not runnable as checked in; that README records the missing build,
-configuration, and environment wiring. The workflow remains interactive and
-there are no OIDC-conformance Make targets.
+[`test/oidc-conformance/`](../../test/oidc-conformance/README.md) and is now
+runnable as checked in: it pins the official suite image to a release tag
+(`registry.gitlab.com/openid/conformance-suite:release-v5.2.1`), mounts a
+committed, `--validate-only`-checked server configuration, and defines the
+supported-profile allowlist. The workflow remains browser-interactive and
+not part of `make ci`; there are no OIDC-conformance Make targets.
+
+**Supported OIDF modules** (only code-based profiles; implicit and hybrid
+are rejected by the runtime and must never be selected): `basic` (code),
+`config`, `dynamic`, `formpost`, `session`, `logout`; `jarm`, `fapi`
+(FAPI 2.0 code) and `ciba` only when their wiring is enabled.
 
 Before treating a run as release evidence:
 
-1. Pin the conformance-suite image by version/digest instead of `latest`.
-2. Use HTTPS and issuer/redirect URIs valid for the selected plan.
-3. Select only profiles matching the response types and options actually
-   configured.
+1. Use the pinned conformance-suite image (never `:latest`); record its digest.
+2. Use HTTPS and issuer/redirect URIs valid for the selected plan for the
+   certification run (the committed harness is an HTTP-only smoke topology).
+3. Select only modules from the allowlist above, matching the response types
+   and options actually configured.
 4. Archive the suite version, plan, configuration, server commit and complete
-   result export.
+   result export under `test/oidc-conformance/results/<commit>/` (see the
+   harness README's Evidence section).
 5. Resolve failures without weakening oracle-leak, anti-enumeration or
    signature-validation invariants.
 6. Submit to the OpenID Foundation and wait for an issued listing before
    changing the certification status above.
-
-Treat any profile names in Compose configuration as experiments, not as a
-support matrix; the runtime boundary above and current code are authoritative.
 
 ## Interoperability evidence
 

@@ -64,3 +64,6 @@ __pycache__/
 /sso-migrate
 /sso-snapshotctl
 /sso-import
+
+# OIDC conformance run archives (large, timestamped; see test/oidc-conformance/results/README.md)
+test/oidc-conformance/results/*/
