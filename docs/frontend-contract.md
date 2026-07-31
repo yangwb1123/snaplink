@@ -175,3 +175,12 @@ never serves it.
 - Frontends should pin the server minor version they are tested against and
   treat `/api/v1/admin/endpoints` + discovery as the runtime truth, not this
   document.
+- **Cross-project compatibility tests**: `test/frontend_contract_test.go`
+  (package `ssotest`) walks this contract end-to-end exactly as a separately
+  deployed UI would — discovery, PKCE login with the canonical
+  `session_id`, token exchange with `sid` continuity, `/me` self-service,
+  the endpoint inventory, the `unsupported_provider` error vocabulary and
+  logout/session death. It is part of the E2E suite (`go test ./test/ -run
+  TestE2E`) so a contract drift fails CI. The server remains a pure API
+  backend: no static SPA bundle is re-introduced into `sso-server`; these
+  tests exercise the API from outside, like a real frontend project would.

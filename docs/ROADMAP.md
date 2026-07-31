@@ -138,17 +138,23 @@ Delivered:
 Remaining (non-blocking): SemVer/API-diff checks and versioned package
 publication once the contract is declared stable by the maintainers.
 
-### 8. Define the external frontend release contract
+### 8. Define the external frontend release contract — DONE
 
 Frontend implementation is outside this repository. Backend work is limited to
 stable APIs and integration metadata.
 
-Deliverables:
+Delivered:
 
-- Version login UI metadata, branding, consent, setup and error contracts.
-- Document CSP/cookie/reverse-proxy requirements for separately deployed UIs.
-- Add cross-project compatibility tests; do not re-introduce static SPA bundles
-  into `sso-server`.
+- [docs/frontend-contract.md](../frontend-contract.md) versions the login,
+  consent, setup, self-service, admin and error contracts (JSON shapes,
+  oracle-safe error vocabulary, session_id/sid semantics).
+- CSP/cookie/reverse-proxy requirements for separately deployed UIs are
+  documented (deployment shape + proxy section of that file).
+- Cross-project compatibility tests: `test/frontend_contract_test.go` walks
+  the documented contract end-to-end from outside the server (discovery,
+  PKCE login, token exchange, `/me`, endpoint inventory, error vocabulary,
+  logout), so drift fails CI. No static SPA bundle is re-introduced into
+  `sso-server`.
 
 Non-prioritized product directions remain in
 [deferred-backlog.md](deferred-backlog.md); they do not enter release ordering
