@@ -41,6 +41,13 @@ repository's executable tests and does not replace them.
 - `pi-batch.py` resolves `pi-batch.yaml` next to the script first, then the
   process working directory, so repository-root invocations pick up
   `ai-dev/pi-batch.yaml`. `--agent-bin` still overrides it explicitly.
+- 24x7 operation: `--retries` (serial mode) retries failed tasks with
+  exponential backoff (`--retry-delay`/`--retry-backoff`; rate-limit and
+  network failures wait at least 30s), `--min-interval` throttles successful
+  tasks, and `--max-rounds` (0 = forever) reruns the batch until every task
+  passes with `--round-delay` rest between rounds; combined with `--reuse`
+  each round runs only the failures. `--log-file` appends a timestamped log
+  for supervision. See `RUNNING_247.md` for nohup/systemd deployment.
 - Task results are validated before saving: non-zero exit, empty output, or
   a provider/CLI failure signature (quota, rate limit, billing, auth error
   codes such as `insufficient_quota` or `rate_limit_error`, `429 Too Many

@@ -305,6 +305,131 @@ def test_reuse_skips_existing_from_outputs_fanout(tmp_path, fake_agent):
     assert sorted(stage_outputs2["s1"]) == sorted(r.task.output for r in results1)
 
 
+def _flaky_agent(tmp_path, counter, fail_times):
+    """Agent that fails with a rate-limit reply for the first `fail_times`
+    calls, then succeeds; each call appends to `counter`."""
+    agent = tmp_path / "flaky-agent.sh"
+    agent.write_text(
+        "#!/bin/sh\n"
+        f"echo x >> {counter}\n"
+        f"if [ $(wc -l < {counter}) -le {fail_times} ]; then\n"
+        "  echo 'Error: rate_limit_error'\n"
+        "else\n"
+        "  echo 'OK'\n"
+        "fi\n"
+    )
+    agent.chmod(0o755)
+    return agent
+
+
+def test_serial_retry_recovers_after_transient_failure(tmp_path, monkeypatch):
+    """A rate-limit reply is retried and the task succeeds on the next try."""
+    counter = tmp_path / "counter"
+    agent = _flaky_agent(tmp_path, counter, fail_times=1)
+    mod = load_batch()
+    mod.AGENT_BIN = str(agent)
+    monkeypatch.setattr(mod.time, "sleep", lambda _: None)  # no real backoff wait
+    output = tmp_path / "o.md"
+    results = mod.run_serial([mod.Task(prompt="x", output=str(output))], retries=2, retry_delay=0)
+    assert results[0].success is True
+    assert output.exists()
+    assert counter.read_text(encoding="utf-8").count("x") == 2
+
+
+def test_serial_retry_exhausts(tmp_path, monkeypatch):
+    """A persistently failing task is retried up to the limit, then fails and
+    never saves an output file."""
+    counter = tmp_path / "counter"
+    agent = _flaky_agent(tmp_path, counter, fail_times=999)
+    mod = load_batch()
+    mod.AGENT_BIN = str(agent)
+    monkeypatch.setattr(mod.time, "sleep", lambda _: None)
+    output = tmp_path / "o.md"
+    results = mod.run_serial([mod.Task(prompt="x", output=str(output))], retries=2, retry_delay=0)
+    assert results[0].success is False
+    assert results[0].reason
+    assert not output.exists()
+    assert counter.read_text(encoding="utf-8").count("x") == 3  # 1 + 2 retries
+
+
+def test_task_result_carries_reason(tmp_path, fake_agent, error_agent):
+    mod = load_batch()
+    mod.AGENT_BIN = str(error_agent)
+    failed = mod.run_task(mod.Task(prompt="x"))
+    assert failed.success is False
+    assert "rate" in failed.reason.lower()
+    mod.AGENT_BIN = str(fake_agent)
+    ok = mod.run_task(mod.Task(prompt="x"))
+    assert ok.success is True
+    assert ok.reason == ""
+
+
+def test_max_rounds_loop_reruns_failures(tmp_path):
+    """CLI --max-rounds reruns the whole batch each round and exits non-zero
+    when the rounds are exhausted."""
+    counter = tmp_path / "counter"
+    agent = _flaky_agent(tmp_path, counter, fail_times=999)
+    inputs = _inputs_dir(tmp_path)
+    result = subprocess.run(
+        [
+            sys.executable, str(PI_BATCH),
+            "--from-dir", str(inputs),
+            "--agent-bin", str(agent),
+            "--mode", "serial",
+            "--max-rounds", "2",
+            "--round-delay", "0",
+        ],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode != 0
+    assert counter.read_text(encoding="utf-8").count("x") == 4  # 2 rounds x 2 tasks
+    assert not (inputs / "task1.out.md").exists()
+
+
+def test_loop_stops_when_all_pass(tmp_path):
+    """--max-rounds 0 loops until every task passes, then exits 0."""
+    counter = tmp_path / "counter"
+    agent = _flaky_agent(tmp_path, counter, fail_times=2)
+    inputs = _inputs_dir(tmp_path)
+    result = subprocess.run(
+        [
+            sys.executable, str(PI_BATCH),
+            "--from-dir", str(inputs),
+            "--agent-bin", str(agent),
+            "--mode", "serial",
+            "--max-rounds", "0",
+            "--round-delay", "0",
+        ],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    # round 1: 2 failures; round 2: both pass -> 4 calls total
+    assert counter.read_text(encoding="utf-8").count("x") == 4
+    assert (inputs / "task1.out.md").exists()
+
+
+def test_reuse_filters_single_batch(tmp_path, fake_agent):
+    """--reuse in single-batch mode skips tasks with existing outputs."""
+    counter = tmp_path / "counter"
+    agent = tmp_path / "counting-agent.sh"
+    agent.write_text(f"#!/bin/sh\necho x >> {counter}\necho \"$2\"\n")
+    agent.chmod(0o755)
+    inputs = _inputs_dir(tmp_path)
+    base = [
+        sys.executable, str(PI_BATCH),
+        "--from-dir", str(inputs),
+        "--agent-bin", str(agent),
+        "--mode", "serial",
+    ]
+    first = subprocess.run(base, capture_output=True, text=True, timeout=120)
+    assert first.returncode == 0, first.stderr
+    assert counter.read_text(encoding="utf-8").count("x") == 2
+    second = subprocess.run(base + ["--reuse"], capture_output=True, text=True, timeout=120)
+    assert second.returncode == 0, second.stderr
+    assert "nothing to run" in second.stderr  # log line goes to stderr
+    assert counter.read_text(encoding="utf-8").count("x") == 2  # agent not called again
+
+
 def test_pipeline_reports_failed_stage(tmp_path, fake_agent):
     mod = load_batch()
     mod.AGENT_BIN = str(fake_agent)

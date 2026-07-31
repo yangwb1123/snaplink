@@ -656,6 +656,7 @@ class TaskResult:
     stderr: str = ""
     elapsed: float = 0.0
     returncode: int = -1
+    reason: str = ""  # human-readable failure cause (agent rejection, timeout, ...)
 
 
 def _read_stream(stream, prefix: str, collector: list) -> None:
@@ -806,6 +807,7 @@ def run_task(task: Task, task_index: int = 0, total: int = 0, parallel: bool = F
             stderr=stderr_text,
             elapsed=elapsed,
             returncode=proc.returncode,
+            reason=reason or "",
         )
 
     except subprocess.TimeoutExpired:
@@ -823,16 +825,17 @@ def run_task(task: Task, task_index: int = 0, total: int = 0, parallel: bool = F
             stderr=f"Task timed out after {task.timeout}s",
             elapsed=elapsed,
             returncode=-1,
+            reason="task timed out",
         )
 
     except FileNotFoundError:
         log.error("'%s' not found in PATH. Is it installed? (configure agent.bin in pi-batch.yaml)", AGENT_BIN)
-        return TaskResult(task=task, success=False, stderr=f"{AGENT_BIN} not found in PATH")
+        return TaskResult(task=task, success=False, stderr=f"{AGENT_BIN} not found in PATH", reason="agent binary not found")
 
     except Exception as e:
         elapsed = time.monotonic() - start
         log.error("ERROR  [%.1fs]  [%s]", elapsed, e)
-        return TaskResult(task=task, success=False, stderr=str(e), elapsed=elapsed)
+        return TaskResult(task=task, success=False, stderr=str(e), elapsed=elapsed, reason=str(e))
 
 
 def save_result(task: Task, result: TaskResult) -> None:
@@ -857,15 +860,42 @@ def save_result(task: Task, result: TaskResult) -> None:
 
 
 # -- serial / parallel dispatch ---------------------------------------
-def run_serial(tasks: list[Task]) -> list[TaskResult]:
-    """Execute tasks one by one with real-time output streaming."""
+# Failure reasons that typically clear up on their own (rate limits, quota,
+# offline conditions) deserve a longer retry backoff.
+_RETRYABLE_REASON = re.compile(r"rate|429|quota|network|connect|unreachable|timeout", re.IGNORECASE)
+
+
+def _retry_wait(result: TaskResult, attempt: int, retry_delay: float, backoff: float) -> float:
+    """Exponential backoff for a retry attempt; provider/network failures wait
+    at least 30s so a rate-limit window can clear."""
+    wait = retry_delay * (backoff ** (attempt - 1))
+    if _RETRYABLE_REASON.search(result.reason or ""):
+        wait = max(wait, 30.0)
+    return wait
+
+
+def run_serial(tasks: list[Task], retries: int = 0, retry_delay: float = 10.0, backoff: float = 2.0, min_interval: float = 0.0) -> list[TaskResult]:
+    """Execute tasks one by one with real-time output streaming. Failed tasks
+    are retried with exponential backoff up to `retries` extra attempts, and
+    successful tasks are throttled by `min_interval` seconds so long-running
+    24x7 batches do not hammer the provider."""
     results = []
     total = len(tasks)
     for i, task in enumerate(tasks, 1):
         log.info("-- [%d/%d] --", i, total)
         result = run_task(task, task_index=i, total=total, parallel=False)
+        attempt = 0
+        while not result.success and attempt < retries:
+            attempt += 1
+            wait = _retry_wait(result, attempt, retry_delay, backoff)
+            log.warning("RETRY %d/%d for task [%d/%d] in %.0fs (reason: %s)",
+                        attempt, retries, i, total, wait, result.reason or f"exit {result.returncode}")
+            time.sleep(wait)
+            result = run_task(task, task_index=i, total=total, parallel=False)
         save_result(task, result)
         results.append(result)
+        if result.success and min_interval > 0:
+            time.sleep(min_interval)
     return results
 
 
@@ -952,6 +982,20 @@ def build_parser() -> argparse.ArgumentParser:
                    help="disable git commit (overrides pipeline setting)")
     p.add_argument("--commit-prefix", default=COMMIT_PREFIX_DEFAULT,
                    help=f"prefix for auto-generated commit messages (default: {COMMIT_PREFIX_DEFAULT})")
+    p.add_argument("--retries", type=int, default=0,
+                   help="Retry failed tasks up to N extra attempts with exponential backoff (serial mode)")
+    p.add_argument("--retry-delay", type=float, default=10.0,
+                   help="Base retry wait in seconds (default: 10; rate-limit/network failures wait at least 30s)")
+    p.add_argument("--retry-backoff", type=float, default=2.0,
+                   help="Retry backoff multiplier (default: 2)")
+    p.add_argument("--min-interval", type=float, default=0.0,
+                   help="Minimum seconds between successful serial tasks (throttle for 24x7 runs)")
+    p.add_argument("--max-rounds", type=int, default=1,
+                   help="Max execution rounds; 0 = loop forever until every task passes (default: 1)")
+    p.add_argument("--round-delay", type=float, default=60.0,
+                   help="Seconds to wait between rounds (default: 60)")
+    p.add_argument("--log-file", default="",
+                   help="Append run log to FILE for 24x7 supervision")
     p.add_argument("--dry-run", action="store_true",
                    help="print task list without executing")
     return p
@@ -962,7 +1006,16 @@ def main() -> None:
     args = build_parser().parse_args()
     AGENT_BIN = args.agent_bin
 
-    # -- pipeline mode --
+    # Append run log to FILE for 24x7 supervision
+    if args.log_file:
+        fh = logging.FileHandler(args.log_file, encoding="utf-8")
+        fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        log.addHandler(fh)
+
+    # -- pipeline setup (one-time) --
+    pipeline = None
+    reuse_outputs = False
+    timeout_override = 0
     if args.pipeline:
         pipeline = load_pipeline(args.pipeline)
         reuse_outputs = args.reuse and not args.force
@@ -991,95 +1044,131 @@ def main() -> None:
         for stage in pipeline.stages:
             if stage.git_commit and not stage.commit_message:
                 stage.commit_message = "%s Stage: %s" % (args.commit_prefix, stage.name)
-        
-        if dry_run := args.dry_run:
-            run_pipeline(pipeline, model_override=args.model, dry_run=True, reuse=reuse_outputs)
-            return
-        
-        try:
-            all_results, failed_stages = run_pipeline(pipeline, model_override=args.model, reuse=reuse_outputs, timeout_override=timeout_override)
-            print_summary(all_results)
-            if failed_stages or any(not r.success for r in all_results):
-                log.error("Failed stages: %s", ", ".join(failed_stages) if failed_stages else "(task failures)")
-                sys.exit(1)
-        except KeyboardInterrupt:
-            log.warning("Interrupted by user")
-            sys.exit(130)
-        return
 
-    # -- single-stage modes --
-    if args.from_dir:
-        tasks = load_tasks_from_dir(args.from_dir, args.suffix)
-        if not tasks:
-            log.error("No %s files found in %s", args.suffix, args.from_dir)
-            sys.exit(1)
-    elif args.prompt:
-        tasks = [Task(prompt=args.prompt, output=args.output or "")]
-    elif args.source:
-        tasks = load_tasks(args.source)
-    else:
-        stdin = sys.stdin.read().strip()
-        if stdin:
-            tasks = [Task(prompt=stdin)]
-        else:
-            log.error("Provide a prompt (-p), a task file, --from-dir, or --pipeline")
-            sys.exit(1)
-
-    # Apply single-task output shortcut
-    if args.output and len(tasks) == 1:
-        tasks[0].output = args.output
-
-    # Apply global overrides
-    if args.model:
-        for t in tasks:
-            t.model = args.model
-    if args.timeout:
-        for t in tasks:
-            t.timeout = args.timeout
-
-    if not tasks:
-        log.error("No tasks to execute")
-        sys.exit(1)
-
-    # -- dry-run --
-    if args.dry_run:
-        print("Tasks: %d" % len(tasks))
-        print("Mode:  %s" % args.mode)
-        print()
-        for i, t in enumerate(tasks, 1):
-            print("  [%d] %s..." % (i, t.prompt[:80]))
-            print("      model=%s  dir=%s  output=%s" %
-                  (t.model or "default", t.workdir(), t.output or "(stdout)"))
-        return
-
-    # -- execute --
+    # -- round loop for 24x7 operation --
+    # Each round reruns only the tasks/stages that failed or were rejected
+    # (reuse skips existing outputs). --max-rounds 0 loops forever until every
+    # task passes, with --round-delay seconds of rest between rounds so quota
+    # and rate-limit windows can clear.
+    max_rounds = args.max_rounds
+    stdin_tasks = None  # stdin is consumed once; later rounds reuse it
+    round_no = 0
     try:
-        if args.mode == "serial":
-            results = run_serial(tasks)
-        else:
-            results = run_parallel(tasks, args.workers)
+        while True:
+            round_no += 1
+            log.info("")
+            log.info("=" * 60)
+            log.info("ROUND %d of %s", round_no, "unlimited" if max_rounds == 0 else max_rounds)
+            log.info("=" * 60)
 
-        print_summary(results)
+            round_failed = False
 
-        # Git commit for single-stage modes
-        if not args.pipeline and args.git_commit and not args.no_git_commit:
-            outputs = [r.task.output for r in results if r.success and r.task.output]
-            if outputs:
-                try:
-                    subprocess.run(["git", "rev-parse", "--git-dir"],
-                                   capture_output=True, timeout=5)
-                    subprocess.run(["git", "add"] + outputs,
-                                   capture_output=True, timeout=10)
-                    msg = "%s Single batch: %d tasks" % (args.commit_prefix, len(outputs))
-                    subprocess.run(["git", "commit", "-m", msg],
-                                   capture_output=True, timeout=10)
-                    log.info("GIT COMMIT: %s (files: %d)", msg, len(outputs))
-                except Exception as e:
-                    log.warning("Git commit skipped: %s", e)
+            if pipeline is not None:
+                # -- pipeline mode --
+                if args.dry_run:
+                    run_pipeline(pipeline, model_override=args.model, dry_run=True, reuse=reuse_outputs)
+                    return
+                all_results, failed_stages = run_pipeline(pipeline, model_override=args.model, reuse=reuse_outputs, timeout_override=timeout_override)
+                print_summary(all_results)
+                round_failed = bool(failed_stages or any(not r.success for r in all_results))
+                if round_failed:
+                    log.error("Failed stages: %s", ", ".join(failed_stages) if failed_stages else "(task failures)")
+            else:
+                # -- single-batch modes --
+                if args.from_dir:
+                    tasks = load_tasks_from_dir(args.from_dir, args.suffix)
+                    if not tasks:
+                        log.error("No %s files found in %s", args.suffix, args.from_dir)
+                        sys.exit(1)
+                elif args.prompt:
+                    tasks = [Task(prompt=args.prompt, output=args.output or "")]
+                elif args.source:
+                    tasks = load_tasks(args.source)
+                elif stdin_tasks is not None:
+                    tasks = stdin_tasks
+                else:
+                    stdin = sys.stdin.read().strip()
+                    if stdin:
+                        stdin_tasks = [Task(prompt=stdin)]
+                        tasks = stdin_tasks
+                    else:
+                        log.error("Provide a prompt (-p), a task file, --from-dir, or --pipeline")
+                        sys.exit(1)
 
-        if any(not r.success for r in results):
-            sys.exit(1)
+                # Apply single-task output shortcut
+                if args.output and len(tasks) == 1:
+                    tasks[0].output = args.output
 
+                # Apply global overrides
+                if args.model:
+                    for t in tasks:
+                        t.model = args.model
+                if args.timeout:
+                    for t in tasks:
+                        t.timeout = args.timeout
+
+                if not tasks:
+                    log.error("No tasks to execute")
+                    sys.exit(1)
+
+                # reuse: drop tasks whose output already exists, so a later
+                # round reruns only the failures
+                if args.reuse and not args.force:
+                    kept = [t for t in tasks if not (t.output and Path(t.output).exists())]
+                    skipped = len(tasks) - len(kept)
+                    if skipped:
+                        log.info("Reuse: %d task(s) already have outputs, skipped", skipped)
+                    tasks = kept
+                    if not tasks:
+                        log.info("All tasks already have outputs; nothing to run")
+                        return
+
+                # -- dry-run --
+                if args.dry_run:
+                    print("Tasks: %d" % len(tasks))
+                    print("Mode:  %s" % args.mode)
+                    print()
+                    for i, t in enumerate(tasks, 1):
+                        print("  [%d] %s..." % (i, t.prompt[:80]))
+                        print("      model=%s  dir=%s  output=%s" %
+                              (t.model or "default", t.workdir(), t.output or "(stdout)"))
+                    return
+
+                # -- execute --
+                if args.mode == "serial":
+                    results = run_serial(tasks, retries=args.retries, retry_delay=args.retry_delay,
+                                         backoff=args.retry_backoff, min_interval=args.min_interval)
+                else:
+                    results = run_parallel(tasks, args.workers)
+
+                print_summary(results)
+                round_failed = any(not r.success for r in results)
+
+                # Git commit for single-batch modes (per round)
+                if args.git_commit and not args.no_git_commit:
+                    outputs = [r.task.output for r in results if r.success and r.task.output]
+                    if outputs:
+                        try:
+                            subprocess.run(["git", "rev-parse", "--git-dir"],
+                                           capture_output=True, timeout=5)
+                            subprocess.run(["git", "add"] + outputs,
+                                           capture_output=True, timeout=10)
+                            msg = "%s Single batch: %d tasks" % (args.commit_prefix, len(outputs))
+                            subprocess.run(["git", "commit", "-m", msg],
+                                           capture_output=True, timeout=10)
+                            log.info("GIT COMMIT: %s (files: %d)", msg, len(outputs))
+                        except Exception as e:
+                            log.warning("Git commit skipped: %s", e)
+
+            if not round_failed:
+                log.info("All tasks passed in round %d", round_no)
+                return
+            if max_rounds > 0 and round_no >= max_rounds:
+                log.error("Max rounds (%d) reached with tasks still failing; rerun with --reuse to continue later", max_rounds)
+                sys.exit(1)
+            log.warning("Round %d finished with failures; waiting %.0fs before round %d",
+                        round_no, args.round_delay, round_no + 1)
+            time.sleep(args.round_delay)
     except KeyboardInterrupt:
         log.warning("Interrupted by user")
         sys.exit(130)
