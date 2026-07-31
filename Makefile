@@ -12,7 +12,7 @@ MODULE_ARGS ?=
 
 CLI = python cli.py
 
-.PHONY: help test race bench vet fmt build configure build-profile build-prototype build-minimal build-full build-production build-small modules-list modules-plan modules-check modules-smoke capabilities-check capabilities-generate docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve route-contract release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
+.PHONY: help test ai-dev-test race bench vet fmt build configure build-profile build-prototype build-minimal build-full build-production build-small modules-list modules-plan modules-check modules-smoke capabilities-check capabilities-generate docker ci ci-modules clean clean-all proto-lint proto-breaking proto-gen docs-validate docs-check docs-serve route-contract release-snapshot release-check security-scan security-scan-all load-test load-test-record load-test-compare load-test-ci lint generate-engineering harness filesize complexity architecture coverage coverage-check evaluate check-exemptions self-test check-invariants review health-report diagnose trend acceptance examples lint-all bench-all bench-gate bench-gate-record config-validate config-validate-all k8s-render k8s-diff docker-scan test-e2e backend-semantics chaos-test mod-tidy-all check-test skill-test adr-compliance playground dev
 
 # ── Go Dev (via $GO directly for speed) ──────────────────────────────
 
@@ -327,6 +327,8 @@ trend: ## Record trend snapshot.
 health-report: ## Health report.
 	$(CLI) health-report
 
+ai-dev-test: ## Run ai-dev/ unit tests (validate review and pipeline runners).
+	python -m pytest ai-dev/tests/ -v
 check-test: ## Run checks/ unit tests (validate engineering gates themselves).
 	python -m pytest checks/ -v
 
@@ -484,4 +486,4 @@ licenses-notice: ## Generate NOTICE.txt for distribution (Apache 2.0 §4).
 	@echo "Full dependency list: see licenses.csv (make licenses)" >> NOTICE.txt
 	@echo "NOTICE.txt written ($$(wc -l < NOTICE.txt) lines)"
 
-.PHONY: licenses licenses-check licenses-notice release-snapshot release docker-push docker-multiarch lint-all security-scan-all config-validate-all smoke-test k8s-render k8s-diff terraform-validate terraform-plan-dev terraform-plan-prod check-test skill-test adr-compliance
+.PHONY: ai-dev-test licenses licenses-check licenses-notice release-snapshot release docker-push docker-multiarch lint-all security-scan-all config-validate-all smoke-test k8s-render k8s-diff terraform-validate terraform-plan-dev terraform-plan-prod check-test skill-test adr-compliance
