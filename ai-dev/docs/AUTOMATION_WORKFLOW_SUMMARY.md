@@ -19,9 +19,12 @@ repository's executable tests and does not replace them.
 
 ## Runner status
 
-- `run-review.py` live runs persist each stage to `stage-NN.out.md` (partial
-  output is kept on failure), and `--all` injects completed stage outputs
-  into downstream paste-style variables; explicit context/CLI values win.
+- `run-review.py` live runs persist each stage to `stage-NN.out.md` (only
+  after validation: rejected or failed stages leave no file), and `--all`
+  injects completed stage outputs into downstream paste-style variables;
+  explicit context/CLI values win. `--all --resume` skips stages with a
+  saved output and chains from those files, so an interrupted session
+  continues from its last completed stage.
 - Post-stage pipeline `commands` failures now fail the run with a non-zero
   exit, so configured build, vet, test, or `make ci` hooks act as failure
   gates when a pipeline defines them. Commands still only run when a stage
@@ -29,6 +32,9 @@ repository's executable tests and does not replace them.
 - `from_outputs` stages accept `aggregate: true`, which merges every upstream
   artifact into one combined prompt per role template (`{input_stem}` becomes
   `combined`) instead of fanning each artifact into an independent task.
+  `--reuse` now also skips `from_outputs` tasks (aggregate and fan-out) whose
+  output file already exists and keeps the reused paths visible to
+  downstream stages, so a pipeline resumes without re-running completed work.
 - Pipeline `mode`, `workers`, and `timeout` are overridden by the matching
   top-level CLI flags when those flags are passed explicitly (`--mode`,
   `-w`/`--workers`, `--timeout`).

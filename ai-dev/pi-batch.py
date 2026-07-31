@@ -195,10 +195,15 @@ def _task_from_def(task_def: dict, prompt: str, output_path: str, model_override
     return task
 
 
-def _aggregate_tasks(stage: Stage, prev_outputs: list, model_override: str = "", timeout_override: int = 0) -> list[Task]:
+def _aggregate_tasks(stage: Stage, prev_outputs: list, model_override: str = "", timeout_override: int = 0, reuse: bool = False) -> tuple[list[Task], list[str]]:
     """Combine every upstream artifact into one prompt per task template so
     downstream roles see all evidence (input_stem becomes 'combined') instead
-    of fanning each artifact into an independent task."""
+    of fanning each artifact into an independent task.
+
+    Returns (new_tasks, reused_output_paths). With reuse=True, a template
+    whose combined output file already exists is skipped and its path is
+    returned as reused so downstream stages still see it.
+    """
     parts = []
     for out_path_str in prev_outputs:
         out_path = Path(out_path_str)
@@ -208,10 +213,11 @@ def _aggregate_tasks(stage: Stage, prev_outputs: list, model_override: str = "",
         parts.append("--- %s ---\n%s" % (out_path.stem, out_path.read_text(encoding="utf-8")))
     if not parts:
         log.warning("No upstream outputs available for aggregate stage '%s'", stage.name)
-        return []
+        return [], []
     combined = "\n\n".join(parts)
 
     tasks = []
+    reused = []
     for task_def in stage.tasks:
         prompt_template_path = Path(task_def.get("prompt_template", ""))
         if not prompt_template_path.exists():
@@ -222,8 +228,12 @@ def _aggregate_tasks(stage: Stage, prev_outputs: list, model_override: str = "",
         prompt = prompt.replace("{input_stem}", "combined")
         prompt = prompt.replace("{input_path}", ", ".join(prev_outputs))
         output_path = task_def.get("output", "").replace("{input_stem}", "combined")
+        if reuse and output_path and Path(output_path).exists():
+            log.info("REUSE: %s (output exists)", output_path)
+            reused.append(output_path)
+            continue
         tasks.append(_task_from_def(task_def, prompt, output_path, model_override, timeout_override))
-    return tasks
+    return tasks, reused
 
 
 def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_override: str = "", reuse: bool = False, timeout_override: int = 0) -> tuple[list[TaskResult], bool]:
@@ -247,6 +257,7 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
     log.info("=" * 60)
     
     tasks: list[Task] = []
+    reused_outputs: list[str] = []
     
     # Stage type 1: from_dir - read .md files from directory
     if stage.from_dir:
@@ -264,7 +275,7 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
             # Check if output already exists and reuse flag is set
             if reuse and out_path.exists():
                 log.info("REUSE: %s (output exists: %s)", fpath.name, out_path.name)
-                stage_outputs.setdefault(stage.name, []).append(str(out_path))
+                reused_outputs.append(str(out_path))
                 continue
             
             task = Task(
@@ -292,7 +303,9 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
             # Merge every upstream artifact into one combined prompt per
             # template so downstream roles see all evidence, instead of
             # fanning each artifact into independent (and conflicting) tasks.
-            tasks.extend(_aggregate_tasks(stage, prev_outputs, model_override, timeout_override))
+            agg_tasks, agg_reused = _aggregate_tasks(stage, prev_outputs, model_override, timeout_override, reuse)
+            tasks.extend(agg_tasks)
+            reused_outputs.extend(agg_reused)
         else:
             # For each output file from previous stage, create tasks based on task templates
             for out_path_str in prev_outputs:
@@ -322,6 +335,11 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
                     output_template = task_def.get("output", "")
                     output_path = output_template.replace("{input_stem}", input_stem)
 
+                    if reuse and output_path and Path(output_path).exists():
+                        log.info("REUSE: %s (output exists)", output_path)
+                        reused_outputs.append(output_path)
+                        continue
+
                     tasks.append(_task_from_def(task_def, prompt, output_path, model_override, timeout_override))
 
         log.info("Loaded %d tasks from %d outputs of stage '%s'",
@@ -332,6 +350,10 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
         return [], False
 
     if not tasks:
+        if reused_outputs:
+            stage_outputs[stage.name] = reused_outputs
+            log.info("Stage '%s' fully reused (%d outputs)", stage.name, len(reused_outputs))
+            return [], True
         log.warning("No tasks to execute in stage '%s'", stage.name)
         return [], True
     
@@ -341,8 +363,8 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
     else:
         results = run_serial(tasks)
     
-    # Collect output paths
-    outputs = []
+    # Collect output paths (reused outputs keep feeding downstream stages)
+    outputs = list(reused_outputs)
     for r in results:
         if r.success and r.task.output:
             outputs.append(r.task.output)

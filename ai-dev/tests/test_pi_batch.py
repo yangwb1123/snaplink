@@ -244,6 +244,67 @@ def test_agent_offline_output_rejects_task_and_does_not_save(tmp_path):
         assert not output.exists()
 
 
+def test_reuse_skips_existing_from_outputs_aggregate(tmp_path, fake_agent):
+    """--reuse must skip from_outputs tasks whose output exists and keep the
+    reused paths visible to downstream stages."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    inputs = _inputs_dir(tmp_path)
+    template = tmp_path / "role.md"
+    template.write_text("Role prompt for {input_stem}:\n{input_content}\n", encoding="utf-8")
+    combined = tmp_path / "combined.out.md"
+
+    stage0 = mod.Stage(name="s0", from_dir=str(inputs))
+    results0, _ = mod.execute_stage(stage0, {})
+    outputs0 = [r.task.output for r in results0 if r.success]
+    stage1 = mod.Stage(
+        name="s1",
+        from_outputs="s0",
+        aggregate=True,
+        tasks=[{"prompt_template": str(template), "output": str(combined)}],
+    )
+    results1, _ = mod.execute_stage(stage1, {"s0": outputs0})
+    assert len(results1) == 1
+    assert combined.exists()
+
+    # second pass with reuse: nothing reruns, downstream still sees combined
+    stage_outputs2 = {}
+    results0b, ok0 = mod.execute_stage(stage0, stage_outputs2, reuse=True)
+    assert ok0 is True and len(results0b) == 0
+    assert sorted(stage_outputs2["s0"]) == sorted(outputs0)
+    results1b, ok1 = mod.execute_stage(stage1, stage_outputs2, reuse=True)
+    assert ok1 is True and len(results1b) == 0
+    assert stage_outputs2["s1"] == [str(combined)]
+
+
+def test_reuse_skips_existing_from_outputs_fanout(tmp_path, fake_agent):
+    """Non-aggregate from_outputs tasks with existing outputs are reused too."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    inputs = _inputs_dir(tmp_path)
+    template = tmp_path / "role.md"
+    template.write_text("Role prompt for {input_stem}:\n{input_content}\n", encoding="utf-8")
+
+    stage0 = mod.Stage(name="s0", from_dir=str(inputs))
+    results0, _ = mod.execute_stage(stage0, {})
+    outputs0 = [r.task.output for r in results0 if r.success]
+    stage1 = mod.Stage(
+        name="s1",
+        from_outputs="s0",
+        tasks=[{"prompt_template": str(template), "output": str(tmp_path / "{input_stem}.out.md")}],
+    )
+    results1, _ = mod.execute_stage(stage1, {"s0": outputs0})
+    assert len(results1) == 2
+    assert all(Path(r.task.output).exists() for r in results1)
+
+    stage_outputs2 = {}
+    results0b, ok0 = mod.execute_stage(stage0, stage_outputs2, reuse=True)
+    assert ok0 is True and len(results0b) == 0
+    results1b, ok1 = mod.execute_stage(stage1, stage_outputs2, reuse=True)
+    assert ok1 is True and len(results1b) == 0
+    assert sorted(stage_outputs2["s1"]) == sorted(r.task.output for r in results1)
+
+
 def test_pipeline_reports_failed_stage(tmp_path, fake_agent):
     mod = load_batch()
     mod.AGENT_BIN = str(fake_agent)

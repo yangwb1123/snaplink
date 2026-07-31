@@ -41,6 +41,10 @@ for a specific question.
   stages → `PRIOR_FINDINGS`, `CRITICAL_HIGH_FINDINGS`,
   `ALL_PRIOR_FINDINGS_SUMMARY`, `COMMITTED_STORIES`). Explicit context or CLI
   values win over chained output.
+- `--all --resume` continues a previous session: stages whose `stage-NN.out.md`
+  already exists are skipped (the agent is not called again) and the saved
+  outputs chain into the remaining stages, so a run interrupted by quota,
+  rate limits, or offline conditions picks up exactly where it stopped.
 - Omitted context fields render as `(not provided: ...)` or `(unknown)`; the
   runner no longer fabricates storage, team-size, or sprint-length facts.
 - `--agent-bin` overrides the agent binary configured in

@@ -228,6 +228,101 @@ def test_all_chains_stage_outputs_end_to_end(tmp_path, fake_agent):
     assert (out_dir / "stage-09.out.md").read_text(encoding="utf-8").strip() == "9"
 
 
+def test_resume_skips_completed_stages(tmp_path):
+    """--resume must not call the agent again for stages with saved output."""
+    counter = tmp_path / "counter"
+    agent = tmp_path / "counter-agent.sh"
+    agent.write_text(
+        f"#!/bin/sh\necho x >> {counter}\necho \"OK\"\n"
+    )
+    agent.chmod(0o755)
+    ctx = tmp_path / "ctx.yaml"
+    ctx.write_text("project: Test\nsubsystem: Chain\n", encoding="utf-8")
+    out_dir = tmp_path / "reviews"
+    cmd = [
+        sys.executable, str(RUN_REVIEW),
+        "--all", "--context", str(ctx),
+        "--agent-bin", str(agent),
+        "--output-dir", str(out_dir),
+        "--repo", str(tmp_path),
+    ]
+    first = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    assert first.returncode == 0, first.stderr
+    calls_after_first = counter.read_text(encoding="utf-8").count("x")
+    assert calls_after_first == 10
+
+    second = subprocess.run(cmd + ["--resume"], capture_output=True, text=True, timeout=120)
+    assert second.returncode == 0, second.stderr
+    assert "SKIP" in second.stdout
+    calls_after_resume = counter.read_text(encoding="utf-8").count("x")
+    assert calls_after_resume == 10  # no agent call on resume
+    assert len(list(out_dir.iterdir())) == 10
+
+
+def test_resume_reruns_failed_stage_with_disk_chaining(tmp_path):
+    """A stage rejected in the previous session reruns on --resume and chains
+    from outputs saved on disk; completed stages are not rerun."""
+    counter = tmp_path / "counter"
+    rejecting = tmp_path / "rejecting-agent.sh"
+    rejecting.write_text(
+        "#!/bin/sh\n"
+        f"echo x >> {counter}\n"
+        "case \"$2\" in\n"
+        "  *\"# Stage 02\"*) echo \"Error: rate_limit_error\" ; exit 0 ;;\n"
+        "  *) echo \"OK\" ;;\n"
+        "esac\n"
+    )
+    rejecting.chmod(0o755)
+    ctx = tmp_path / "ctx.yaml"
+    ctx.write_text("project: Test\nsubsystem: Chain\n", encoding="utf-8")
+    out_dir = tmp_path / "reviews"
+    base = [
+        sys.executable, str(RUN_REVIEW),
+        "--all", "--context", str(ctx),
+        "--output-dir", str(out_dir),
+        "--repo", str(tmp_path),
+    ]
+    first = subprocess.run(base + ["--agent-bin", str(rejecting)], capture_output=True, text=True, timeout=120)
+    assert first.returncode != 0  # stage 02 rejected
+    outputs = sorted(p.name for p in out_dir.iterdir())
+    assert len(outputs) == 9
+    assert "stage-02.out.md" not in outputs
+
+    counting = tmp_path / "counting-agent.sh"
+    counting.write_text(
+        "#!/bin/sh\n"
+        f"echo x >> {counter}\n"
+        "echo \"$2\" | grep -o -- '--- Stage [0-9][0-9] output ---' | wc -l\n"
+    )
+    counting.chmod(0o755)
+    second = subprocess.run(base + ["--agent-bin", str(counting), "--resume"], capture_output=True, text=True, timeout=120)
+    assert second.returncode == 0, second.stderr
+    assert second.stdout.count("SKIP") == 9
+    outputs = sorted(p.name for p in out_dir.iterdir())
+    assert len(outputs) == 10
+    # only stage 02 ran on resume and it chained the on-disk stage 01 output
+    # (first run called the agent 10 times, including the rejected stage 02)
+    calls_after_resume = counter.read_text(encoding="utf-8").count("x")
+    assert calls_after_resume == 11
+    assert (out_dir / "stage-02.out.md").read_text(encoding="utf-8").strip() == "1"
+
+
+def test_resume_requires_all(tmp_path, fake_agent):
+    mod = load_runner()
+    ctx = tmp_path / "ctx.yaml"
+    ctx.write_text("project: Test\nsubsystem: Chain\n", encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable, str(RUN_REVIEW),
+            "--stage", "01", "--resume", "--context", str(ctx),
+            "--agent-bin", str(fake_agent), "--output-dir", str(tmp_path / "r"),
+        ],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode != 0
+    assert "--resume requires --all" in result.stderr
+
+
 def test_all_rejected_stage_is_skipped_in_chaining(tmp_path):
     """A stage whose agent output carries a provider failure signature must
     leave no md file and must not feed later stages. Stage 02 is rejected, so

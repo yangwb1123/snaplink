@@ -441,6 +441,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Stage number to run (00-09)")
     p.add_argument("--all", action="store_true",
                    help="Run all stages sequentially")
+    p.add_argument("--resume", action="store_true",
+                   help="Resume a previous --all session: skip stages whose output file already exists and chain from the saved outputs")
     p.add_argument("--context", metavar="FILE",
                    help="Context YAML file with subsystem details")
     p.add_argument("--project", help="Project name (overrides context YAML)")
@@ -499,9 +501,30 @@ def main() -> None:
         print("ERROR: specify --stage NN or --all", file=sys.stderr)
         sys.exit(1)
 
+    if args.resume and not args.all:
+        print("ERROR: --resume requires --all", file=sys.stderr)
+        sys.exit(1)
+
+    out_dir = stage_out_dir(args)
     failures = []
     prior_outputs: dict = {}
+    if args.resume:
+        # Resume a previous session: load completed outputs from disk so
+        # downstream stages chain from them, and skip stages that already
+        # produced a non-empty file (they ran and passed validation last
+        # time; rejected stages never leave a file, so they rerun).
+        for stage in stages_to_run:
+            out_file = out_dir / f"stage-{stage}.out.md"
+            if out_file.exists() and out_file.stat().st_size > 0:
+                prior_outputs[stage] = out_file.read_text(encoding="utf-8")
+        skipped = len(prior_outputs)
+        print(f"Resume: {skipped} completed stage(s) found, {len(stages_to_run) - skipped} to run", flush=True)
+
     for stage in stages_to_run:
+        if args.resume and stage in prior_outputs:
+            print(f"  Stage {stage}: SKIP (output exists: {out_dir / f'stage-{stage}.out.md'})", flush=True)
+            continue
+
         template_file = prompts_dir / STAGES[stage]
         if not template_file.exists():
             print(f"ERROR: template not found: {template_file}", file=sys.stderr)
