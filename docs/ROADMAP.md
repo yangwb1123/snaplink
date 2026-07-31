@@ -35,16 +35,25 @@ Delivered:
 - The compatibility policy (additive, semver-tracked, operationId
   verbatim naming) is committed in the registry itself.
 
-### 2. Produce auditable OIDC/FAPI conformance evidence — PARTIAL
+### 2. Produce auditable OIDC/FAPI conformance evidence — PARTIAL (headless run + archive landed; HTTPS certification run + OIDF listing remain)
 
-The harness in `test/oidc-conformance/` is repaired and runnable as
-checked in: the official suite image is pinned to a release tag
+The harness in `test/oidc-conformance/` is repaired and **headless-runnable
+as checked in**: the official suite image is pinned to a release tag
 (`registry.gitlab.com/openid/conformance-suite:release-v5.2.1`), the server
 under test uses a committed, `--validate-only`-checked config, and the
 supported-profile allowlist excludes implicit/hybrid (the runtime rejects
-those response types). What remains is the interactive run itself: a
-browser-driven suite run with archived plan/result artifacts per the
-harness README, and an official OpenID Foundation listing before any
+those response types). `./run-headless.sh` drives the whole run — build,
+DCR-register the suite's OIDC login client, signup admin user, create the
+Basic-certification discovery plan, run a module through headless Chrome
+(auto-fulfilling the JSON logins), and archive plan/log/info under
+`results/<commit>/`.
+
+Smoke evidence (HTTP-only local topology): `oidcc-server` completes with
+59 SUCCESS steps; the single failure is the expected
+`VerifyClientManagementCredentials` https-URI requirement.
+
+Remaining: an official run against an externally reachable HTTPS issuer
+with archived artifacts, and an OpenID Foundation listing before any
 certification language is used.
 
 ### 4. Remove obsolete frontend configuration semantics — DONE

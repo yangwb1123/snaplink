@@ -1,13 +1,15 @@
 # OIDC Conformance Status
 
-Last verified against the code on 2026-07-27.
+Last verified against the code on 2026-07-31.
 
 ## Certification status
 
 Snaplink has **no recorded OpenID Foundation certification listing or official
-conformance result**. The repository contains protocol tests and an interactive
-Docker Compose harness for the OIDF suite, but that harness is not part of
-default CI and no result artifact is committed.
+conformance result**. The repository contains protocol tests and a
+**headless, repeatable** Docker Compose harness for the OIDF suite
+(`test/oidc-conformance/run-headless.sh`), plus a smoke-topology run archive
+under `test/oidc-conformance/results/<commit>/` (git-ignored; regenerate with
+the script). The harness is not part of default CI.
 
 Therefore:
 
@@ -15,6 +17,25 @@ Therefore:
 - “Implemented” below means code/tests exist, not that an OIDF profile passed.
 - An RFP response must name the exact server commit, configuration and official
   result it relies on.
+
+## Smoke run evidence (HTTP-only local topology)
+
+`test/oidc-conformance/run-headless.sh` against the pinned suite image
+`release-v5.2.1` produced, for the `oidcc-server` module of the Basic
+certification plan (discovery + dynamic-client variants):
+
+- 59 SUCCESS steps covering discovery fetch/validation, JWKS fetch and
+  validation, dynamic client registration, the authorization-code round
+  trip (browser-driven login against the local OP), ID-token verification,
+  userinfo and resource-endpoint calls.
+- One expected FAILURE: `VerifyClientManagementCredentials` requires an
+  `https` client-management URL, which an HTTP-only local issuer cannot
+  provide. An externally reachable HTTPS issuer is required before any
+  certification claim (see the harness README).
+
+This is smoke evidence only — not an OIDF result. Certification language
+still requires an official suite run against an HTTPS topology with archived
+plan/result artifacts and, for "certified", an issued OIDF listing.
 
 ## Current response-type boundary
 
