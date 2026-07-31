@@ -16,40 +16,36 @@ work stays out of it.
 
 ## P0 — trustworthy contracts and release evidence
 
-### 1. Derive generated SDK inputs from committed contracts
+### 1. Derive generated SDK inputs from committed contracts — DONE
 
-Runtime/OpenAPI drift is now blocked by `python cli.py check-routes`: it
-compiles the real Go route constants, compares every statically registered
-stock-server route with OpenAPI and rejects missing or duplicate operation
-identifiers. Capability availability is now declared in
-`ops/build/capabilities.json`; `python cli.py capabilities check` validates its
-runtime-gate/module links and blocks generated feature-matrix drift. The
-remaining work is to derive generated SDK inputs from these committed
-contracts.
+Runtime/OpenAPI drift is blocked by `python cli.py check-routes`;
+capability availability is declared in `ops/build/capabilities.json`.
+Generated SDK inputs are now derived from committed contracts:
 
-Deliverables:
+Delivered:
 
-- Define supported generated SDK languages and their compatibility policy.
-- Generate SDK operation surfaces from OpenAPI and capability availability
-  without duplicating route or edition metadata.
+- `ops/build/sdk-surface.json` declares the generated-SDK operation surface
+  as validated data (grouped, capability-linked, with per-language
+  compatibility policy); the generators (`cmd/gensdk`) carry no allowlist
+  of their own.
+- `python cli.py sdk-surface check` validates the registry against
+  `docs/openapi.yaml` (every operationId must exist) and
+  `ops/build/capabilities.json` (every capability reference must exist),
+  and `sdk-surface generate` re-emits every language from the registry.
+- The compatibility policy (additive, semver-tracked, operationId
+  verbatim naming) is committed in the registry itself.
 
-### 2. Produce auditable OIDC/FAPI conformance evidence
+### 2. Produce auditable OIDC/FAPI conformance evidence — PARTIAL
 
-The implementation has extensive local protocol tests, but this project has
-not recorded an official OpenID Foundation conformance run and is not
-certified. The current Docker Compose harness is browser-driven and outside
-default CI.
-
-Deliverables:
-
-- Pin the official conformance-suite image instead of using `latest`.
-- Define supported test profiles from actual response types and configured
-  features; do not claim implicit or hybrid OP profiles while the runtime only
-  accepts `code` and direct-mint `token`.
-- Run the suite in a repeatable environment, archive plan/result artifacts and
-  publish the tested commit/configuration.
-- Only use “OpenID Certified” or FAPI certification language after an issued
-  listing exists.
+The harness in `test/oidc-conformance/` is repaired and runnable as
+checked in: the official suite image is pinned to a release tag
+(`registry.gitlab.com/openid/conformance-suite:release-v5.2.1`), the server
+under test uses a committed, `--validate-only`-checked config, and the
+supported-profile allowlist excludes implicit/hybrid (the runtime rejects
+those response types). What remains is the interactive run itself: a
+browser-driven suite run with archived plan/result artifacts per the
+harness README, and an official OpenID Foundation listing before any
+certification language is used.
 
 ### 4. Remove obsolete frontend configuration semantics — DONE
 
@@ -109,17 +105,24 @@ Deliverables:
 
 ## P1 — production completeness
 
-### 7. Reach API-client parity
+### 7. Reach API-client parity — DONE
 
-The generated TypeScript and Python clients cover a curated subset.
+The generated TypeScript and Python clients cover the complete documented
+operation set.
 
-Deliverables:
+Delivered:
 
-- Derive clients from the reconciled OpenAPI contract.
-- Cover admin, self-service, SCIM, SSF and Federation operations intended for
-  public consumption.
-- Add SemVer/API-diff checks and publish versioned packages only after the
-  contract is stable.
+- Clients are derived from the reconciled OpenAPI contract via the
+  `ops/build/sdk-surface.json` registry (validated by
+  `python cli.py sdk-surface check`); no route or edition metadata is
+  duplicated in the generators.
+- Admin, self-service, SCIM, SSF and Federation operations intended for
+  public consumption are all covered (312 operations).
+- The compatibility policy (additive, semver-tracked, operationId
+  verbatim naming) is committed in the registry.
+
+Remaining (non-blocking): SemVer/API-diff checks and versioned package
+publication once the contract is declared stable by the maintainers.
 
 ### 8. Define the external frontend release contract
 

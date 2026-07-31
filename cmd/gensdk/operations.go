@@ -1,6 +1,48 @@
 package main
 
-import "sort"
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"sort"
+)
+
+// surfaceRegistry is the committed SDK-surface file
+// (ops/build/sdk-surface.json): the operationId allowlist grouped by
+// surface, capability linkage and language compatibility policy. The
+// generator reads ONLY this file for its selection — there is no
+// second allowlist in code (the previous hand-scoped coreSurface map
+// was removed when the registry landed).
+type surfaceRegistry struct {
+	Groups []struct {
+		ID         string   `json:"id"`
+		Name       string   `json:"name"`
+		Capability *string  `json:"capability"`
+		Operations []string `json:"operations"`
+	} `json:"groups"`
+}
+
+// loadSurface reads + flattens the registry into the operationId set.
+func loadSurface(path string) (map[string]bool, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read sdk-surface registry: %w", err)
+	}
+	var reg surfaceRegistry
+	if err := json.Unmarshal(raw, &reg); err != nil {
+		return nil, fmt.Errorf("parse sdk-surface registry %s: %w", path, err)
+	}
+	set := map[string]bool{}
+	for _, g := range reg.Groups {
+		for _, id := range g.Operations {
+			if set[id] {
+				return nil, fmt.Errorf("sdk-surface registry %s: operationId %q appears in more than one group", path, id)
+			}
+			set[id] = true
+		}
+	}
+	return set, nil
+}
 
 // Param is one path or query parameter.
 type Param struct {
@@ -28,43 +70,31 @@ type Operation struct {
 	RequiresAuth bool
 }
 
-// coreSurface is the curated, hand-scoped operationId allowlist this
-// generator emits clients for — the "pragmatic subset" the SDKs cover
-// (see docs/sdks/*/README.md for the full rationale of what's in vs.
-// deferred). Grouped by theme purely for readability here; extraction
-// order is re-derived from the spec (by tag, then path) in Extract.
-var coreSurface = map[string]bool{
-	// Discovery.
-	"getJWKS": true, "getOpenIDConfiguration": true, "getOAuthAuthorizationServerMetadata": true,
-	// Core OAuth2/OIDC auth + token lifecycle.
-	"postLogin": true, "postMFAComplete": true, "postSendCode": true,
-	"postToken": true, "postIntrospect": true, "postRevoke": true, "postRevokeAll": true,
-	"postPAR": true, "postDeviceCode": true, "postDeviceVerify": true,
-	"postRegister": true, "getRegistration": true, "putRegistration": true, "deleteRegistration": true,
-	"postLogout": true, "getUserInfo": true,
-	// Self-service (/me* family).
-	"getMe": true, "patchMe": true, "changeMyPassword": true, "listMyMFAFactors": true,
-	"listMySessions": true, "revokeMySessions": true, "listMyConsents": true,
-	"getMyPermissions": true, "getMyRoles": true, "getMyMenus": true,
-	// Small representative admin sample (see README — NOT the full ~150-route
-	// grpc-gateway-generated admin CRUD surface).
-	"getClientByID": true, "getAdminEndpoints": true, "queryAuditEvents": true,
-}
+// coreSurface is the operationId allowlist this generator emits clients
+// for, loaded from the committed SDK-surface registry
+// (ops/build/sdk-surface.json, validated by `cli.py sdk-surface check`)
+// rather than a hard-coded Go map — see the package doc. The registry
+// groups operations by surface (discovery, oauth-core, self-service,
+// admin, scim, ssf, federation, ...), links each group to a capability in
+// ops/build/capabilities.json where one exists, and carries the per-
+// language compatibility policy. loadSurface returns the flattened set;
+// every id MUST exist in docs/openapi.yaml (the checker enforces it).
+var coreSurface map[string]bool
 
 var httpMethods = []string{"get", "post", "put", "patch", "delete"}
 
-// Extract walks doc.paths and returns one Operation per coreSurface
-// operationId found, resolving its parameters/request body/success
-// response against reg. Sorted by (tag, path, method) for deterministic
-// output.
-func Extract(doc map[string]interface{}, reg *Registry) []Operation {
+// Extract walks doc.paths and returns one Operation per allowed
+// operationId (from the sdk-surface registry), resolving its
+// parameters/request body/success response against reg. Sorted by
+// (tag, path, method) for deterministic output.
+func Extract(doc map[string]interface{}, reg *Registry, allowed map[string]bool) []Operation {
 	paths, _ := doc["paths"].(map[string]interface{})
 	var ops []Operation
 	for path, rawItem := range paths {
 		item, _ := rawItem.(map[string]interface{})
 		itemParams, _ := item["parameters"].([]interface{})
 		for _, method := range httpMethods {
-			if op, ok := extractOne(path, method, item, itemParams, reg); ok {
+			if op, ok := extractOne(path, method, item, itemParams, reg, allowed); ok {
 				ops = append(ops, op)
 			}
 		}
@@ -82,14 +112,14 @@ func Extract(doc map[string]interface{}, reg *Registry) []Operation {
 }
 
 // extractOne builds one Operation, returning ok==false when this
-// path+method isn't in coreSurface (or doesn't exist).
-func extractOne(path, method string, item map[string]interface{}, itemParams []interface{}, reg *Registry) (Operation, bool) {
+// path+method isn't in the allowed surface (or doesn't exist).
+func extractOne(path, method string, item map[string]interface{}, itemParams []interface{}, reg *Registry, allowed map[string]bool) (Operation, bool) {
 	rawOp, ok := item[method].(map[string]interface{})
 	if !ok {
 		return Operation{}, false
 	}
 	id, _ := rawOp["operationId"].(string)
-	if !coreSurface[id] {
+	if !allowed[id] {
 		return Operation{}, false
 	}
 	op := Operation{

@@ -35,6 +35,7 @@ Commands:
     configure              Resolve/materialize a cold-module build profile
     modules                List/check/plan the module catalog
     capabilities           Validate/generate/list the capability registry
+    sdk-surface            Validate/regenerate/list the SDK-surface registry
     lint                   Run golangci-lint
     security-scan          Run govulncheck + gosec
     skill <name> [args..]  Run a skill by directory name
@@ -254,6 +255,12 @@ def cmd_capabilities(args: list):
     return capabilities_run(args)
 
 
+def cmd_sdk_surface(args: list):
+    sys.path.insert(0, str(ROOT / "ops" / "scripts"))
+    from sdk_surface import run as sdk_surface_run
+    return sdk_surface_run(args)
+
+
 def cmd_lint():
     return run("go", "run", "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest",
                "run", "--timeout", "5m").returncode
@@ -321,6 +328,7 @@ COMMANDS = {
     "configure": cmd_configure,
     "modules": cmd_modules,
     "capabilities": cmd_capabilities,
+    "sdk-surface": cmd_sdk_surface,
     "lint": cmd_lint,
     "security-scan": cmd_security_scan,
     "skill": cmd_skill,
@@ -351,7 +359,7 @@ def main():
     if cmd == "review":
         spec = parsed.args[0] if parsed.args else None
         return handler(spec)
-    elif cmd in ("skill", "configure", "modules", "capabilities"):
+    elif cmd in ("skill", "configure", "modules", "capabilities", "sdk-surface"):
         return handler(parsed.args + unknown)
     elif cmd == "help":
         return handler()

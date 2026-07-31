@@ -1,9 +1,9 @@
 # snaplink/sso — Python client (generated)
 
-> **Scope:** convenience client for a curated OpenAPI subset. It is not a
-> complete SDK for every runtime route, not published to PyPI, and does not
-> provide hosted-login, self-service, setup, developer-portal, or admin-console
-> UI. `sso-server` is a pure API backend; browser applications and consoles are
+> **Scope:** generated client for the full documented API surface of
+> `docs/openapi.yaml`. It is not published to PyPI, and does not provide
+> hosted-login, self-service, setup, developer-portal, or admin-console UI.
+> `sso-server` is a pure API backend; browser applications and consoles are
 > separate frontend projects.
 
 `client.py` is **generated output**, committed the same way generated Go under
@@ -14,8 +14,9 @@
 go run ./cmd/gensdk --lang=py
 ```
 
-Regenerate after any change to `docs/openapi.yaml` that touches an operation
-listed below. `client.py` has **zero third-party dependencies** — transport
+Regenerate after any change to `docs/openapi.yaml` or
+`ops/build/sdk-surface.json` (run `python cli.py sdk-surface generate`, which
+re-emits every language). `client.py` has **zero third-party dependencies** — transport
 is stdlib `urllib.request`, wire-shape typing is stdlib `typing.TypedDict`
 — so there is no `pip install` step either; vendor the single file into
 your project (`pyproject.toml`/`requirements.txt` packaging is
@@ -28,11 +29,11 @@ claiming complete API coverage.
 
 ## What's covered
 
-The exact same curated, hand-scoped operation subset as the TypeScript
-client (`../typescript/README.md`) — see that file for the full list and
-the rationale for what's deferred. The allowlist itself lives once, in Go,
-as `coreSurface` in `cmd/gensdk/operations.go`, and both language
-emitters read from it, so the two clients can never drift apart in scope.
+The **complete** operation set of `docs/openapi.yaml` — the same surface as
+`../typescript/README.md` (every documented operation today, including the
+full admin control plane, SCIM, SSF and Federation). The operationId set is
+declared once in `ops/build/sdk-surface.json`, and both language emitters
+read from it, so the two clients can never drift apart in scope.
 
 Method names are the operation's `operationId` converted to
 **snake_case** (`post_token`, `get_user_info`, ...) for a PEP 8-idiomatic

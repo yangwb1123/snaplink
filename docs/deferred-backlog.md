@@ -32,7 +32,7 @@ Retired audits, plans, and migration records are summarized in
 | `cmd/sso-minimal` / `prototype` / `minimal` | **Partial** | Two buildable single-process editions: `prototype` exposes SSO/OAuth and JSON logs; `minimal` adds OIDC and tracing. They share a physical dependency graph and are not production topologies or browser-E2E artifacts. |
 | Hosted login, admin, self-service, developer and setup UIs | **External** | Separate frontend projects, normally reverse-proxied beside the server. No static SPA is served by this repository; the API contract those projects must consume is [frontend-contract.md](frontend-contract.md). |
 | Admin API-doc viewer | **Implemented** | `WithAPIDocsUI` serves an admin-gated, self-contained API reference. It is not an application UI. |
-| TypeScript/Python SDKs | **Partial** | Generated curated subset; not complete parity with admin/SCIM/SSF/Federation routes. |
+| TypeScript/Python SDKs | **Implemented** | Generated from `docs/openapi.yaml` via the `ops/build/sdk-surface.json` registry (full documented operation set: admin, SCIM, SSF, Federation included); validated by `python cli.py sdk-surface check`. Not yet published as versioned packages. |
 | Nested protocol/infrastructure modules | **Partial** | Strict cold-build profiles and the Kafka static adapter are implemented. A versioned registrar outside `cmd/` is still required before other module families can use the standard host API. |
 
 ## Partial capabilities
@@ -67,10 +67,12 @@ audit taps and the external-process supervisor are not implemented. See
 
 ### Static HTTP contract and generated clients
 
-The runtime has recently added SSF, Federation, FGA, branding, provider and
-device/security administration routes faster than the OpenAPI/generated-client
-surface was updated. The configured replica's admin endpoint inventory is the
-runtime truth; contract reconciliation is P0 in the roadmap.
+Contract reconciliation is complete: `python cli.py check-routes` keeps the
+runtime route inventory and OpenAPI in lockstep, and
+`python cli.py sdk-surface check` keeps the generated clients reconciled with
+both. The configured replica's admin endpoint inventory
+(`GET /api/v1/admin/endpoints`) remains the runtime truth for what a given
+deployment actually registers.
 
 ### Official protocol certification
 
@@ -91,8 +93,10 @@ See [dr-framework.md](dr-framework.md).
 
 ### Multi-language SDK parity
 
-The TypeScript/Python generators deliberately expose a curated surface. Go SDK
-and direct HTTP/gRPC consumers have access to more features.
+The TypeScript/Python generators expose the complete documented operation
+surface (parity with the OpenAPI contract). Go SDK and direct HTTP/gRPC
+consumers may still access runtime features that are not yet documented in
+OpenAPI.
 
 ### Identity linking
 

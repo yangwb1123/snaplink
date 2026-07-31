@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -140,5 +141,50 @@ func TestGenerateTS_BalancedBracesAndNoRawTemplateLeftovers(t *testing.T) {
 	}
 	if strings.Contains(out, "}});") {
 		t.Error(`generated output contains "}});" -- the extra-closing-brace regression`)
+	}
+}
+
+// TestPyFieldName_KeywordAndNonIdentifierMangling proves wire keys that are
+// Python keywords (BootstrapAdvance.from, ClassifyResponse.class) or
+// non-identifiers (SCIM's "$ref", extension-namespaced keys) get a
+// deterministic, valid identifier — the generated client.py must parse, and
+// the wire key is never changed (only the TypedDict attribute name).
+func TestPyFieldName_KeywordAndNonIdentifierMangling(t *testing.T) {
+	cases := map[string]string{
+		"from":   "from_",
+		"class":  "class_",
+		"$ref":   "_ref",
+		"value":  "value",
+		"normal": "normal",
+	}
+	for in, want := range cases {
+		if got := pyFieldName(in); got != want {
+			t.Errorf("pyFieldName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestLoadSurface_FlattensAndRejectsDuplicates covers the registry loader:
+// duplicate operationIds across groups must fail loud (the registry checker
+// rejects them too, but the generator must not silently pick one).
+func TestLoadSurface_FlattensAndRejectsDuplicates(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/surface.json"
+	write := func(content string) {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`{"groups":[{"id":"a","operations":["x","y"]},{"id":"b","operations":["z"]}]}`)
+	got, err := loadSurface(path)
+	if err != nil {
+		t.Fatalf("loadSurface: %v", err)
+	}
+	if len(got) != 3 || !got["x"] || !got["z"] {
+		t.Errorf("loadSurface flattened = %v, want {x,y,z}", got)
+	}
+	write(`{"groups":[{"id":"a","operations":["x"]},{"id":"b","operations":["x"]}]}`)
+	if _, err := loadSurface(path); err == nil {
+		t.Fatal("loadSurface with duplicate operationId: want error")
 	}
 }
