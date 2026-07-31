@@ -31,14 +31,14 @@ func buildHandlerWithClients(cfg runtimeConfig, extraClients []clientSeed) (http
 	return buildHandlerWithSessions(
 		cfg,
 		extraClients,
-		newOPSessionStore(cfg.User),
+		newOPSessionGate(),
 	)
 }
 
 func buildHandlerWithSessions(
 	cfg runtimeConfig,
 	extraClients []clientSeed,
-	sessions *opSessionStore,
+	sessions *opSessionGate,
 ) (http.Handler, error) {
 	users := defaultimpl.NewMemoryUserProvider()
 	passwords := defaultimpl.NewMemoryPasswordCredentialStore()
@@ -56,8 +56,9 @@ func buildHandlerWithSessions(
 		return nil, err
 	}
 	opts := serverOptions(cfg, users, passwords, clientStore, issuer, tenantStore)
-	opts = append(opts, sso.WithAuthenticator(newOPSessionAuthenticator(sessions)))
+	opts = append(opts, sso.WithAuthenticator(newOPSessionAuthenticator(sessions, cfg.User)))
 	server := sso.NewServer(opts...)
+	sessions.setMgr(server.SessionMgr())
 	handler := newOPSessionHandler(server.Handler(), sessions, cfg.Issuer)
 	return newPrototypeSurface(
 		handler,
@@ -156,6 +157,12 @@ func buildPasswordAuthenticator(
 		}
 		result.ExternalID = seed.Username
 		result.Attributes = userClaims(seed)
+		// A successful password login starts a canonical OP session: the
+		// code flow mints the session, the response returns session_id, and
+		// the browser cookie binds to it — prompt=none / max_age resume
+		// then works against the canonical SessionManager, not a parallel
+		// edition-local store.
+		result.CreateSession = true
 		return result, nil
 	})
 	return authenticators.NewPasswordAuthenticator(verifier)

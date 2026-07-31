@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -185,6 +186,64 @@ func TestOPSessionHonorsPromptLogin(t *testing.T) {
 	}
 }
 
+// TestOPSessionSIDPropagatesThroughCodeExchange is the canonical-lifecycle
+// regression test for P0-5: the OP session created at password login must
+// flow as session_id in the code response, as the sid claim in the id_token
+// of BOTH the originating and the resumed exchange, and must die on logout
+// (after which prompt=none resume must fail). No edition-local session store
+// exists anymore — every assertion reads the canonical SessionManager.
+func TestOPSessionSIDPropagatesThroughCodeExchange(t *testing.T) {
+	cfg := defaultsFromEnv(func(string) string { return "" })
+	cfg.Issuer = "http://issuer.example"
+	rpB := clientSeed{
+		ID: "rp-b", Secret: "rp-b-secret",
+		RedirectURI: "http://127.0.0.1:3001/callback",
+		Scopes:      []string{"openid"},
+	}
+	cfg.Client.Scopes = []string{"openid"}
+	server, client := twoRPServer(t, cfg, rpB)
+
+	// Password login mints a canonical session; the code response carries it.
+	status, body := postJSONWithClient(t, client, server.URL+"/auth/login",
+		loginPayloadForClient(cfg, cfg.Client))
+	if status != http.StatusOK || body["code"] == nil {
+		t.Fatalf("login = %d %v, want code", status, body)
+	}
+	sessionID, _ := body["session_id"].(string)
+	if sessionID == "" {
+		t.Fatalf("login response has no session_id: %v", body)
+	}
+
+	// The exchanged id_token carries the SAME sid.
+	tokens := exchangeForClient(t, client, server.URL, cfg.Client, body["code"].(string))
+	if got := jwtStringClaim(t, tokens["id_token"], "sid"); got != sessionID {
+		t.Fatalf("id_token sid = %q, want session %q", got, sessionID)
+	}
+
+	// Resume for RP-B without credentials: same session, same sid.
+	codeB := loginForCodeWithClient(t, client, server.URL, cfg, rpB, false)
+	tokensB := exchangeForClient(t, client, server.URL, rpB, codeB)
+	if got := jwtStringClaim(t, tokensB["id_token"], "sid"); got != sessionID {
+		t.Fatalf("resumed id_token sid = %q, want session %q", got, sessionID)
+	}
+
+	// Logout destroys the canonical session; a stale cookie cannot resume.
+	_, body = postJSONWithClient(t, client, server.URL+"/logout", map[string]any{
+		"session_id": sessionID,
+	})
+	if body["status"] != "logged_out" {
+		t.Fatalf("logout = %v, want logged_out", body)
+	}
+	payload := loginPayloadForClient(cfg, rpB)
+	delete(payload, "provider")
+	delete(payload, "credential")
+	payload["prompt"] = "none"
+	_, body = postJSONWithClient(t, client, server.URL+"/auth/login", payload)
+	if body["code"] != nil {
+		t.Fatalf("prompt=none resumed after logout: %v", body)
+	}
+}
+
 func testServer(t *testing.T) (*httptest.Server, runtimeConfig) {
 	t.Helper()
 	cfg := defaultsFromEnv(func(string) string { return "" })
@@ -223,9 +282,9 @@ func prototypeServer(
 func prototypeServerWithSessions(
 	t *testing.T,
 	cfg runtimeConfig,
-) (*httptest.Server, *http.Client, *opSessionStore) {
+) (*httptest.Server, *http.Client, *opSessionGate) {
 	t.Helper()
-	sessions := newOPSessionStore(cfg.User)
+	sessions := newOPSessionGate()
 	app, err := buildHandlerWithSessions(cfg, []clientSeed{cfg.Second}, sessions)
 	if err != nil {
 		t.Fatalf("build handler: %v", err)
@@ -443,17 +502,20 @@ func assertStringList(t *testing.T, value any, want []string) {
 	}
 }
 
-func setOPSessionAuthTime(t *testing.T, sessions *opSessionStore, authTime time.Time) {
+func setOPSessionAuthTime(t *testing.T, gate *opSessionGate, authTime time.Time) {
 	t.Helper()
-	sessions.mu.Lock()
-	defer sessions.mu.Unlock()
-	if len(sessions.sessions) != 1 {
-		t.Fatalf("OP sessions = %d, want 1", len(sessions.sessions))
+	mgr := gate.manager()
+	if mgr == nil {
+		t.Fatal("no session manager wired")
 	}
-	for key, session := range sessions.sessions {
-		session.authenticatedAt = authTime
-		sessions.sessions[key] = session
+	sessions, err := mgr.ListByUser(context.Background(), defaultUserID)
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
 	}
+	if len(sessions) != 1 {
+		t.Fatalf("OP sessions = %d, want 1", len(sessions))
+	}
+	sessions[0].CreatedAt = authTime
 }
 
 func jwtTimeClaim(t *testing.T, raw any, name string) int64 {
@@ -479,4 +541,29 @@ func jwtTimeClaim(t *testing.T, raw any, name string) int64 {
 		t.Fatalf("%s claim = %v", name, claims[name])
 	}
 	return int64(value)
+}
+
+func jwtStringClaim(t *testing.T, raw any, name string) string {
+	t.Helper()
+	token, ok := raw.(string)
+	if !ok {
+		t.Fatalf("%s token = %T, want string", name, raw)
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		t.Fatalf("%s token has %d parts", name, len(parts))
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("decode %s payload: %v", name, err)
+	}
+	claims := map[string]any{}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatalf("decode %s claims: %v", name, err)
+	}
+	value, _ := claims[name].(string)
+	if value == "" {
+		t.Fatalf("%s claim = %v, want string", name, claims[name])
+	}
+	return value
 }

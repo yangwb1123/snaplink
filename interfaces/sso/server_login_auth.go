@@ -21,6 +21,7 @@ func (s *Server) issueAuthCode(
 	req *login.Request,
 	client *Client,
 	confirmationJKT string,
+	sessionID string,
 ) (string, error) {
 	return oauth.IssueAuthCode(ctx, oauth.IssueAuthCodeParams{
 		AuthCodeTTL:          s.authCodeTTL,
@@ -41,6 +42,7 @@ func (s *Server) issueAuthCode(
 		AuthorizationDetails: req.AuthorizationDetails,
 		ConfirmationJKT:      confirmationJKT,
 		RequestedClaims:      req.Claims,
+		SID:                  sessionID,
 	})
 }
 
@@ -451,4 +453,35 @@ func (s *Server) registerLoginDevice(ctx HandlerContext, userID string) *deviceC
 		BrowserName: dp.BrowserName, DeviceName: dp.DeviceName,
 		IsNew: secCtx != nil && secCtx.DeviceIsNew, Fingerprint: fp,
 		SecurityCtx: secCtx, TrustScore: trustScore}
+}
+
+// codeFlowSession resolves the canonical OP session for an authorization-code
+// login. Precedence: an authenticator-resumed session (AuthResult.SessionID)
+// is validated against the live session store; a fresh login that asked for
+// one (AuthResult.CreateSession) mints it through the same createSession path
+// the direct-mint branch uses (quotas, per-device caps, trust meta). Returns
+// "" when no session manager is wired, the login carried no session semantics,
+// or the session could not be created/validated (fail-open with an audit/log
+// trail — the login itself never fails on a session-layer outage).
+func (s *Server) codeFlowSession(ctx HandlerContext, result *AuthResult, client *Client) string {
+	if s.sessionMgr == nil {
+		return ""
+	}
+	if result.SessionID != "" {
+		sess, err := s.sessionMgr.Get(ctx.Request().Context(), result.SessionID)
+		if err == nil && sess != nil && !sess.Revoked && !sess.IsExpired() && sess.UserID == result.UserID {
+			return sess.ID
+		}
+		s.logger.Error("code flow: resumed session invalid, dropping sid", "session", result.SessionID, "error", err)
+		return ""
+	}
+	if !result.CreateSession {
+		return ""
+	}
+	sess, err := s.createSession(ctx, result.UserID, client.ID, client.TenantID)
+	if err != nil {
+		s.logger.Error("code flow: session creation failed, login continues without sid", "error", err, "user", result.UserID)
+		return ""
+	}
+	return sess.ID
 }

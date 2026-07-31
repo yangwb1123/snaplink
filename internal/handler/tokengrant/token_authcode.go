@@ -245,6 +245,12 @@ func authCodeIssueIDToken(d AuthCodeGrantDeps, ctx core.HandlerContext, client *
 		AccessToken:     accessToken,
 		DeviceSecret:    deviceSecretValue,
 		RequestedClaims: info.RequestedClaims,
+		// The session the login bound into the code (IssueAuthCodeParams.SID)
+		// MUST ride the exchange-minted id_token as the sid claim — an RP
+		// that bound its local state to sid at login sees the same session
+		// here, and back-channel logout targets it. Mirrors the direct-mint
+		// branch (emitLoginIDToken passes session.ID the same way).
+		SID: info.SID,
 	})
 	if err != nil {
 		d.SrvLogger().Error("id token issue failed", "error", err, "client", client.ID, "user", info.UserID)

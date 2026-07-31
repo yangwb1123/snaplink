@@ -400,19 +400,34 @@ func (s *Server) finishLoginCodeFlow(ctx HandlerContext, result *AuthResult, req
 	if handled {
 		return
 	}
-	code, err := s.issueAuthCode(ctx.Request().Context(), result, req, client, dpopJKT)
+	// Canonical OP-session lifecycle: a login that resumed an existing
+	// session (SessionID) or requested one (CreateSession) gets its session
+	// created/validated HERE, in the authorization-code flow — the SID then
+	// rides the code into the exchanged tokens instead of living in an
+	// edition-local cookie store. Fail-open: a session-manager outage or a
+	// stale resumed session drops the sid (login proceeds; auditors see the
+	// empty session on recordLoginSuccess) rather than blocking the login.
+	sessionID := s.codeFlowSession(ctx, result, client)
+	code, err := s.issueAuthCode(ctx.Request().Context(), result, req, client, dpopJKT, sessionID)
 	if err != nil {
 		s.logger.Error("failed to issue auth code", "error", err)
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
 		return
 	}
-	// WithTrustScoreSerialization is NOT wired here (meta=nil): this branch
-	// persists a code and mints no token until a LATER, separate /token
-	// exchange (possibly a different replica) — there is no synchronous
-	// login-success session/token pair to attach a trust score to. Only the
-	// direct-mint branch (finishLoginDirectMint) serializes a trust score.
-	s.recordLoginSuccess(ctx, client.ID, req.Provider, "code", result.UserID, "", nil)
-	s.renderAuthCodeResponse(ctx, req, client, code)
+	s.recordCodeFlowSuccess(ctx, result, req, client, code, sessionID)
+}
+
+// recordCodeFlowSuccess persists the login-success audit row (with the
+// canonical session ID when the login carried one) and renders the code
+// response. WithTrustScoreSerialization is NOT wired here (meta=nil): this
+// branch persists a code and mints no token until a LATER, separate /token
+// exchange — there is no synchronous login-success session/token pair to
+// attach a trust score to. Only the direct-mint branch serializes one.
+// The session ID IS persisted: codeFlowSession created/resumed it, and the
+// /token exchange propagates it into the id_token sid claim.
+func (s *Server) recordCodeFlowSuccess(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client, code, sessionID string) {
+	s.recordLoginSuccess(ctx, client.ID, req.Provider, "code", result.UserID, sessionID, nil)
+	s.renderAuthCodeResponse(ctx, req, client, code, sessionID)
 }
 
 // renderAuthCodeResponse writes the authorization_code result in the negotiated
@@ -420,7 +435,7 @@ func (s *Server) finishLoginCodeFlow(ctx HandlerContext, result *AuthResult, req
 // the default JSON body. The caller has already issued the code and recorded
 // success; a JARM signing failure fails closed with invalid_request rather than
 // leaking the bare code under the shared key.
-func (s *Server) renderAuthCodeResponse(ctx HandlerContext, req *login.Request, client *Client, code string) {
+func (s *Server) renderAuthCodeResponse(ctx HandlerContext, req *login.Request, client *Client, code, sessionID string) {
 	if req.ResponseMode == ResponseModeFormPost {
 		s.renderFormPostResponse(ctx, req.RedirectURI, code, req.State)
 		return
@@ -446,6 +461,15 @@ func (s *Server) renderAuthCodeResponse(ctx HandlerContext, req *login.Request, 
 	resp := map[string]any{
 		KeyCode: code,
 		KeyIss:  s.resolveIssuer(ctx),
+	}
+	// The OP session created/resumed for this login rides the JSON body as
+	// session_id (same key the direct-mint branch returns) so a first-party
+	// frontend can bind its own browser state to the canonical session
+	// (e.g. an OP-session cookie for prompt=none resume). Empty = the login
+	// carried no session (stock-server behavior) — the key is omitted and
+	// the wire body is byte-identical to the pre-session code flow.
+	if sessionID != "" {
+		resp[KeySessionID] = sessionID
 	}
 	if req.State != "" {
 		resp[KeyState] = req.State

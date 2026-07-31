@@ -212,7 +212,7 @@ func (s *Server) caepGateOn() bool        { return s.caepLive.Load() }
 func (s *Server) federationGateOn() bool  { return s.federationLive.Load() }
 func (s *Server) selfServiceGateOn() bool { return s.selfServiceLive.Load() }
 func (s *Server) adminAPIGateOn() bool    { return s.adminAPILive.Load() }
-func (s *Server) brandingGateOn() bool     { return s.brandingLive.Load() }
+func (s *Server) brandingGateOn() bool    { return s.brandingLive.Load() }
 
 // mountOIDCUserEndpoints registers the OIDC-specific /userinfo,
 // /end_session, and (session-management-gated) /check_session_iframe

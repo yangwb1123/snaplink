@@ -182,6 +182,24 @@ type AuthResult struct {
 	CountryCode         string // ISO 3166-1 alpha-2, optional
 	RecommendedLanguage string // BCP-47, optional
 
+	// SessionID is the canonical OP session this login resumed. An
+	// authenticator that validated an existing live session (e.g. a
+	// prompt=none resume or a first-party SSO session) returns that
+	// session's ID so the authorization code, refresh token and resulting
+	// id_token carry the SAME sid instead of minting a new session.
+	// Empty = fresh authentication with no prior session to resume.
+	SessionID string
+
+	// CreateSession requests a canonical OP session for a fresh login.
+	// When the server has a SessionManager wired, the authorization-code
+	// flow creates the session, stamps its ID into the code (so the
+	// exchanged tokens carry the sid claim) and returns it as
+	// session_id. False leaves the code flow session-free (the stock
+	// server's current behavior) — the flag makes OP-session semantics
+	// opt-in per authenticator instead of changing every login's wire
+	// shape.
+	CreateSession bool
+
 	// AchievedACR is the Authentication Context Class Reference the
 	// authenticator actually satisfied on this login (RFC 9068 §2.2 /
 	// OIDC Core §2).  Authenticators that can achieve different ACR
