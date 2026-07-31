@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Profile physical-isolation manifest",
+  "description": "Declares the package-set boundary each build profile must respect, proven by `python cli.py profiles evidence`. Prefixes match package import paths relative to the module root (trailing slash = every subpackage).",
+  "type": "object",
+  "required": ["schema_version", "profiles"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["summary", "binaries", "must_not_link", "must_link"],
+        "properties": {
+          "summary": { "type": "string" },
+          "binaries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["package", "binary"],
+              "properties": {
+                "package": { "type": "string" },
+                "binary": { "type": "string" }
+              }
+            }
+          },
+          "must_not_link": { "type": "array", "items": { "type": "string" } },
+          "must_link": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

@@ -115,6 +115,12 @@ modules-smoke: ## Build supported profiles plus every currently buildable previe
 capabilities-check: ## Validate capability metadata and generated feature matrix.
 	$(CLI) capabilities check
 
+sdk-surface-check: ## Validate the generated-SDK surface registry against OpenAPI + capabilities.
+	$(CLI) sdk-surface check
+
+profiles-evidence: ## Build + prove per-profile physical isolation (packages/modules/symbols/size).
+	$(CLI) profiles evidence
+
 capabilities-generate: ## Regenerate feature-matrix capability availability.
 	$(CLI) capabilities generate
 
@@ -235,7 +241,7 @@ ci-modules: ## Build + test all nested modules.
 	cd cmd/sso-mcp && $(GO) build ./... && $(GO) test -race -count=1 ./...
 	cd cmd/sso-operator && $(GO) build ./... && $(GO) test -race -count=1 ./...
 
-ci: fmt vet race build examples proto-lint ci-modules config-validate-all modules-check modules-smoke route-contract capabilities-check ## Run CI checks.
+ci: fmt vet race build examples proto-lint ci-modules config-validate-all modules-check modules-smoke route-contract capabilities-check sdk-surface-check profiles-evidence ## Run CI checks.
 
 ci-full: ci terraform-validate k8s-render ## Run all CI checks including IaC validation (requires kustomize + terraform).
 

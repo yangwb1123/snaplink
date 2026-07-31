@@ -26,6 +26,8 @@ Catalog of the Python engineering helpers. Committed Go gates are specified in
 | `self_test.py` | Deliberately bad harness probes | `self-test` |
 | `ops/scripts/module_catalog.py` | Strict module/profile validation and capability planning | `modules check`, `modules list`, `modules plan`, `modules graph`, `modules why` |
 | `ops/scripts/capability_registry.py` | Validates product availability against runtime gates/module capabilities and detects generated feature-matrix drift | `capabilities check`, `capabilities generate`, `capabilities list` |
+| `ops/scripts/sdk_surface.py` | Validates the generated-SDK operation registry against OpenAPI + capabilities and re-emits every language | `sdk-surface check`, `sdk-surface generate`, `sdk-surface list` |
+| `ops/scripts/profile_evidence.py` | Builds profile binaries and asserts the declared package-isolation boundaries (durable/admin graph must stay out of the small editions), archiving per-binary package/module/symbol/size evidence | `profiles evidence [--skip-build]` |
 | `ops/scripts/configure_modules.py` | Atomic alternate modfile/overlay/lock materialization and profile builds | `configure --profile <id> [--version vX.Y.Z] [--build]` |
 
 `config.py` loads `engineering.yaml`; `make_help.py` formats Make target help.
@@ -38,12 +40,12 @@ Run `python cli.py check-test` for check-module tests and
 |---|---|
 | Fast loop | `check`, `check-filesize` |
 | Composite reports | `harness`, `accept`, `evaluate` |
-| Specific checks | `complexity`, `architecture`, `coverage`, `check-invariants`, `check-routes`, `capabilities check`, `check-root`, `check-exemptions`, `adr-compliance` |
+| Specific checks | `complexity`, `architecture`, `coverage`, `check-invariants`, `check-routes`, `capabilities check`, `sdk-surface check`, `profiles evidence`, `check-root`, `check-exemptions`, `adr-compliance` |
 | Scaffolding | `generate` |
 | Diagnostics | `diagnose`, `trend`, `health-report`, `self-test` |
 | Test execution | `test`, `race`, `bench`, `check-test`, `skill-test` |
 | Review | `review [spec]` |
-| Module builds | `modules <action>`, `capabilities <action>`, `configure --profile <id> [--version vX.Y.Z] [--build]`; `modules smoke` builds every supported profile plus each currently buildable preview |
+| Module builds | `modules <action>`, `capabilities <action>`, `sdk-surface <action>`, `profiles evidence`, `configure --profile <id> [--version vX.Y.Z] [--build]`; `modules smoke` builds every supported profile plus each currently buildable preview |
 
 `python cli.py --help` is the executable command index.
 

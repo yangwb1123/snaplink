@@ -67,41 +67,55 @@ Delivered:
   first-run setup, CSP/cookie/proxy requirements) is published in
   [frontend-contract.md](frontend-contract.md).
 
-### 5. Isolate the SSO edition hierarchy
+### 5. Isolate the SSO edition hierarchy — PARTIAL (core isolation landed; nested-module migration + release signing remain)
 
 The resolver, inherited profiles, module lock, compatibility builds and
 profile-specific entry points are implemented. The public hierarchy is
 `prototype → minimal → full`: the prototype is SSO/OAuth with JSON logs
 and a stable default-tenant seam; minimal adds OIDC and tracing; full
-selects the complete current stock `sso-server` composition plus the registered
-Kafka audit cold module. Version output carries the edition suffix.
+selects the complete current stock `sso-server` composition plus the
+registered Kafka audit cold module. Version output carries the edition
+suffix.
 
-The two smaller editions are usable for evaluation, but are not yet physically
-isolated. Both target `cmd/sso-minimal`, which still reaches the broad
-dependency graph through `interfaces/sso`; their OP-session adapter does not
-yet place the canonical session SID into the authorization code and resulting
-tokens.
+Delivered:
 
-Deliverables:
+- **Canonical OP-session/SID lifecycle**: OP-session creation,
+  `prompt`/`max_age` resume, logout and SID propagation now live in the
+  canonical session/authorization-code lifecycle. `AuthResult` carries
+  SessionID/CreateSession; the code flow creates/validates sessions through
+  the SessionManager, stamps SID into the code, and the exchange-minted
+  id_token emits the sid claim. The minimal edition's parallel
+  `opSessionStore` is gone — its cookie IS the canonical session ID
+  (see `cmd/sso-minimal/op_session.go` and the SID propagation test).
+- **Standard typed registrars outside cmd/**: `platform/registrar` is the
+  single generic typed registry; the SAML route registrar moved to the new
+  `interfaces/ssoext` host API; `serverbuildsign`'s external-signer
+  registry now builds on the same machinery.
+- **Physical isolation + evidence**: `python cli.py profiles evidence`
+  builds every profile binary, asserts the declared
+  `ops/build/profile-isolation.json` boundaries (the small editions must
+  not link the durable/admin/observability graph; the full edition must
+  link it) and archives per-binary package lists, `go version -m` SBOMs,
+  symbol counts and size deltas under `dist/profiles/`. Wired into
+  `make ci`. Full-profile evidence (durable state, security controls,
+  observability, topology) is documented in
+  `docs/architecture/profile-isolation.md`.
+- **Module discipline**: `oauth-client-credentials` is verified as an
+  independent optional machine-to-machine cold module (conflicts with the
+  stock server; not a profile foundation). Nested modules remain separate
+  Go modules; the standard host API (`interfaces/ssoext` +
+  `platform/registrar`) is the migration target.
 
-- Move OP-session creation, `prompt`/`max_age`, logout and SID propagation into
-  the canonical session/authorization-code lifecycle.
-- Extract standard typed route and capability registrars outside `cmd/`.
-- Isolate core HTTP, identity/OAuth stores, password authentication, Ed25519
-  signing and OIDC packages without changing either smaller edition's wire
-  behavior.
-- Prove physical removal with `go list`, `go version -m`, symbols, binary-size
-  deltas and per-profile SBOMs.
-- Prove the `full` profile against durable state, security controls,
-  observability and supported topology evidence.
-- Keep `oauth-client-credentials` as an independent optional machine-to-machine
-  module rather than an SSO profile foundation.
-- Migrate SAML, LDAP/Kerberos/RADIUS, KMS/HSM and other nested modules to the
-  standard host API after that boundary is stable.
-- Add generation leases, static route slots and drain before classifying any
-  in-process capability as hot; keep installable third-party code out of
-  process.
-- Publish profile locks, binary SBOMs, signatures and provenance.
+Remaining:
+
+- Migrate SAML, LDAP/Kerberos/RADIUS, KMS/HSM and other nested modules to
+  the standard host API now that the boundary is stable.
+- Add generation leases, static route slots and drain before classifying
+  any in-process capability as hot; installable third-party code stays out
+  of process.
+- Publish profile locks, binary SBOMs, signatures and provenance for
+  release artifacts (evidence bundles exist; release signing is the
+  release pipeline's job — see docs/RELEASE.md).
 
 ## P1 — production completeness
 
