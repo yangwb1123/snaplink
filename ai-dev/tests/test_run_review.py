@@ -323,6 +323,51 @@ def test_resume_requires_all(tmp_path, fake_agent):
     assert "--resume requires --all" in result.stderr
 
 
+def test_all_shared_session(tmp_path):
+    """--all --session-mode shared: the first stage starts the session (with
+    --name), the remaining stages continue it with the session id only."""
+    args_log = tmp_path / "args.log"
+    agent = tmp_path / "record-agent.sh"
+    agent.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" >> {args_log}\necho OK\n")
+    agent.chmod(0o755)
+    ctx = tmp_path / "ctx.yaml"
+    ctx.write_text("project: Test\nsubsystem: Chain\n", encoding="utf-8")
+    out_dir = tmp_path / "reviews"
+    result = subprocess.run(
+        [
+            sys.executable, str(RUN_REVIEW),
+            "--all", "--context", str(ctx),
+            "--agent-bin", str(agent),
+            "--output-dir", str(out_dir),
+            "--repo", str(tmp_path),
+            "--session-mode", "shared",
+            "--session-name", "rev1",
+        ],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    lines = args_log.read_text(encoding="utf-8").splitlines()
+    assert lines.count("rev1") == 11  # 1 display name + 10 session-id uses
+    assert lines.count("--name") == 1  # only the first stage names the session
+    assert len(list(out_dir.iterdir())) == 10
+
+
+def test_shared_session_requires_all(tmp_path, fake_agent):
+    mod = load_runner()
+    ctx = tmp_path / "ctx.yaml"
+    ctx.write_text("project: Test\nsubsystem: Chain\n", encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable, str(RUN_REVIEW),
+            "--stage", "01", "--session-mode", "shared", "--context", str(ctx),
+            "--agent-bin", str(fake_agent), "--output-dir", str(tmp_path / "r"),
+        ],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode != 0
+    assert "--session-mode shared requires --all" in result.stderr
+
+
 def test_all_rejected_stage_is_skipped_in_chaining(tmp_path):
     """A stage whose agent output carries a provider failure signature must
     leave no md file and must not feed later stages. Stage 02 is rejected, so

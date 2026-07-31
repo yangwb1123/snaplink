@@ -430,6 +430,136 @@ def test_reuse_filters_single_batch(tmp_path, fake_agent):
     assert counter.read_text(encoding="utf-8").count("x") == 2  # agent not called again
 
 
+def _recording_agent(tmp_path, args_log):
+    """Agent that appends every argv element (one per line) to args_log."""
+    agent = tmp_path / "record-agent.sh"
+    agent.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" >> {args_log}\necho OK\n")
+    agent.chmod(0o755)
+    return agent
+
+
+def test_shared_session_flags_sequence(tmp_path):
+    """Shared mode: the first call starts the session (with --name), later
+    calls continue it (session id only)."""
+    args_log = tmp_path / "args.log"
+    agent = _recording_agent(tmp_path, args_log)
+    mod = load_batch()
+    mod.AGENT_BIN = str(agent)
+    out = tmp_path / "o"
+    tasks = [mod.Task(prompt="p1", output=str(out / "1.md")), mod.Task(prompt="p2", output=str(out / "2.md"))]
+    results = mod.run_serial(tasks, session_mode="shared", session_id="sess-1", session_name="props")
+    assert all(r.success for r in results)
+    lines = args_log.read_text(encoding="utf-8").splitlines()
+    assert lines == ["-p", "p1", "--session-id", "sess-1", "--name", "props",
+                     "-p", "p2", "--session-id", "sess-1"]
+
+
+def test_new_session_has_no_session_flags(tmp_path):
+    """Default mode: every call is a fresh session (no session flags)."""
+    args_log = tmp_path / "args.log"
+    agent = _recording_agent(tmp_path, args_log)
+    mod = load_batch()
+    mod.AGENT_BIN = str(agent)
+    tasks = [mod.Task(prompt="p1", output=str(tmp_path / "1.md")), mod.Task(prompt="p2", output=str(tmp_path / "2.md"))]
+    mod.run_serial(tasks)
+    lines = args_log.read_text(encoding="utf-8").splitlines()
+    assert "--session-id" not in lines
+    assert "--name" not in lines
+
+
+def test_per_stage_session_ids(tmp_path):
+    """per-stage mode derives one session id per stage."""
+    args_log = tmp_path / "args.log"
+    agent = _recording_agent(tmp_path, args_log)
+    mod = load_batch()
+    mod.AGENT_BIN = str(agent)
+    d1 = tmp_path / "a"
+    d2 = tmp_path / "b"
+    d1.mkdir()
+    d2.mkdir()
+    (d1 / "t.md").write_text("t1", encoding="utf-8")
+    (d2 / "t.md").write_text("t2", encoding="utf-8")
+    stage_a = mod.Stage(name="stage-a", from_dir=str(d1))
+    stage_b = mod.Stage(name="stage-b", from_dir=str(d2))
+    _, ok_a = mod.execute_stage(stage_a, {}, session_mode="per-stage", session_name="run1")
+    _, ok_b = mod.execute_stage(stage_b, {}, session_mode="per-stage", session_name="run1")
+    assert ok_a and ok_b
+    lines = args_log.read_text(encoding="utf-8").splitlines()
+    assert "run1-stage-a" in lines
+    assert "run1-stage-b" in lines
+    assert lines.count("--name") == 2  # each stage starts its own session
+
+
+def test_shared_session_parallel_rejected(tmp_path, fake_agent):
+    """Shared sessions must not run in parallel: interleaved calls would
+    corrupt the conversation order."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    inputs = _inputs_dir(tmp_path)
+    stage = mod.Stage(name="s0", from_dir=str(inputs), mode="parallel")
+    results, ok = mod.execute_stage(stage, {}, session_mode="shared", session_name="x")
+    assert ok is False
+    assert results == []
+
+
+def test_cli_shared_session_flags(tmp_path):
+    """CLI --session-mode shared passes session flags to the agent."""
+    args_log = tmp_path / "args.log"
+    agent = _recording_agent(tmp_path, args_log)
+    tasks_yaml = tmp_path / "tasks.yaml"
+    tasks_yaml.write_text(
+        "tasks:\n"
+        f"  - prompt: t1\n    output: {tmp_path / '1.md'}\n"
+        f"  - prompt: t2\n    output: {tmp_path / '2.md'}\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable, str(PI_BATCH), str(tasks_yaml),
+            "--agent-bin", str(agent),
+            "--mode", "serial",
+            "--session-mode", "shared",
+            "--session-name", "proposals",
+        ],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    lines = args_log.read_text(encoding="utf-8").splitlines()
+    assert "--session-id" in lines
+    assert lines.count("proposals") == 3  # 1 name + 2 session-id uses
+
+
+def test_cli_per_stage_requires_pipeline(tmp_path, fake_agent):
+    tasks_yaml = tmp_path / "tasks.yaml"
+    tasks_yaml.write_text("tasks:\n  - prompt: t1\n", encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable, str(PI_BATCH), str(tasks_yaml),
+            "--agent-bin", str(fake_agent),
+            "--session-mode", "per-stage",
+        ],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode != 0
+    assert "per-stage requires --pipeline" in result.stderr
+
+
+def test_cli_shared_session_parallel_rejected(tmp_path, fake_agent):
+    tasks_yaml = tmp_path / "tasks.yaml"
+    tasks_yaml.write_text("tasks:\n  - prompt: t1\n", encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable, str(PI_BATCH), str(tasks_yaml),
+            "--agent-bin", str(fake_agent),
+            "--mode", "parallel",
+            "--session-mode", "shared",
+        ],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode != 0
+    assert "requires --mode serial" in result.stderr
+
+
 def test_pipeline_reports_failed_stage(tmp_path, fake_agent):
     mod = load_batch()
     mod.AGENT_BIN = str(fake_agent)

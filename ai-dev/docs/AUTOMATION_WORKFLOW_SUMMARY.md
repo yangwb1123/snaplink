@@ -48,6 +48,16 @@ repository's executable tests and does not replace them.
   passes with `--round-delay` rest between rounds; combined with `--reuse`
   each round runs only the failures. `--log-file` appends a timestamped log
   for supervision. See `RUNNING_247.md` for nohup/systemd deployment.
+- Session reuse: `--session-mode shared` runs every task of a batch/pipeline
+  in one agent session (the first call starts it with `--session-id` and
+  `--name`, later calls continue it), `--session-mode per-stage` gives each
+  pipeline stage its own session, and the default `new` starts a fresh
+  session per call. Session ids are derived from `--session-name` (default:
+  task source stem), so resumed runs continue the same session. Shared
+  sessions require serial execution; the flags come from
+  `pi-batch.yaml` `agent.session_flags` (pi-style by default) so other agent
+  CLIs can be adapted. `run-review.py --all` supports the same with
+  `--session-mode shared`.
 - Task results are validated before saving: non-zero exit, empty output, or
   a provider/CLI failure signature (quota, rate limit, billing, auth error
   codes such as `insufficient_quota` or `rate_limit_error`, `429 Too Many

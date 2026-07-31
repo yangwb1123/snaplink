@@ -78,6 +78,40 @@ The same loop applies to pipelines (`--pipeline file.yaml`), where `--reuse`
 already skips completed stage tasks and `aggregate: true` merges upstream
 outputs.
 
+## One session, many steps
+
+By default every call starts a fresh agent session. When later steps should
+see the conversation context of earlier ones — for example the stages of a
+pipeline building on each other's discussion — reuse one session:
+
+```bash
+# one session for the whole pipeline (every stage continues it)
+python ai-dev/pi-batch.py --pipeline sdlc.yaml \
+  --session-mode shared --session-name sdlc-2026-07
+
+# one session per pipeline stage (parallel roles inside a stage share it)
+python ai-dev/pi-batch.py --pipeline sdlc.yaml \
+  --session-mode per-stage --session-name sdlc-2026-07
+
+# one session across all ten review stages
+python ai-dev/ai/run-review.py --all --context ctx.yaml \
+  --session-mode shared --session-name review-2026-07
+```
+
+- The first call starts the session with `--session-id <id> --name <name>`;
+  later calls pass `--session-id <id>` only. Session ids are derived from
+  `--session-name`, so a resumed run (`--reuse`/`--resume`) continues the
+  same conversation instead of starting over.
+- Shared sessions require serial execution (`--mode serial`); parallel calls
+  would interleave inside one session and corrupt the conversation order, so
+  the runner rejects that combination.
+- The flags come from `pi-batch.yaml` `agent.session_flags` (pi-style by
+  default). For another agent CLI, point those flags at its own
+  continue-session option.
+- Keep sessions small: one long-lived session accumulates context until the
+  model window fills, so prefer `per-stage` over `shared` for long pipelines
+  and start a new `--session-name` per campaign.
+
 ## Running detached (nohup)
 
 ```bash

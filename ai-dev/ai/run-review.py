@@ -47,6 +47,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from typing import Optional
 
 try:
     import yaml
@@ -194,6 +195,36 @@ def _load_agent_bin() -> str:
 
 STAGES, STAGE_VARS = _load_stage_schema()
 AGENT_BIN = _load_agent_bin()
+
+# pi-style session flags (shared with pi-batch.py via ai-dev/pi-batch.yaml
+# agent.session_flags when present); {session}/{name} are substituted per run.
+_DEFAULT_SESSION_FLAGS = {
+    "start": ["--session-id", "{session}", "--name", "{name}"],
+    "continue": ["--session-id", "{session}"],
+}
+
+
+def _load_session_flags() -> dict:
+    """Read agent.session_flags from ai-dev/pi-batch.yaml (shared with
+    pi-batch.py); fall back to pi-style flags when absent."""
+    if not yaml:
+        return {k: list(v) for k, v in _DEFAULT_SESSION_FLAGS.items()}
+    path = Path(__file__).parent.parent / "pi-batch.yaml"
+    if not path.exists():
+        return {k: list(v) for k, v in _DEFAULT_SESSION_FLAGS.items()}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    cfg = (data.get("agent") or {}).get("session_flags")
+    if isinstance(cfg, dict):
+        return {k: list(v) for k, v in cfg.items()}
+    return {k: list(v) for k, v in _DEFAULT_SESSION_FLAGS.items()}
+
+
+SESSION_FLAGS = _load_session_flags()
+
+
+def session_flags(key: str, session_id: str, session_name: str) -> list:
+    flags = SESSION_FLAGS.get(key) or _DEFAULT_SESSION_FLAGS[key]
+    return [f.replace("{session}", session_id).replace("{name}", session_name) for f in flags]
 
 
 def load_context(path: str) -> dict:
@@ -364,7 +395,7 @@ def agent_failure_reason(returncode: int, output: str) -> str:
     return ""
 
 
-def run_stage(stage: str, prompt: str, args) -> int:
+def run_stage(stage: str, prompt: str, args, session_flags: Optional[list] = None) -> int:
     """Invoke the agent and persist only validated output. Output streams to
     the terminal while running; stage-NN.out.md is written only when the
     agent exits 0 and the output carries no provider/CLI failure signature.
@@ -378,6 +409,8 @@ def run_stage(stage: str, prompt: str, args) -> int:
     cmd = [agent_bin, "-p", prompt]
     if args.model:
         cmd.extend(["--model", args.model])
+    if session_flags:
+        cmd.extend(session_flags)
 
     print(f"\n{'='*60}", flush=True)
     print(f"  Stage {stage}: {STAGES[stage]}", flush=True)
@@ -454,6 +487,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--agent-bin", default="", help="Agent CLI binary (default: ai-dev/pi-batch.yaml agent.bin, else 'pi')")
     p.add_argument("--timeout", type=int, default=0,
                    help="Per-stage agent timeout in seconds (default: 600; 0 = default)")
+    p.add_argument("--session-mode", choices=["new", "shared"], default="new",
+                   help="Session reuse across --all stages: new = fresh session per stage (default), shared = one session for the whole review run")
+    p.add_argument("--session-name", default="",
+                   help="Reproducible session base name (default: context name); shared sessions continue across runs")
     p.add_argument("--output-dir", metavar="DIR", help="Output directory for review files")
     p.add_argument("--dry-run", action="store_true",
                    help="Print filled prompt without invoking pi")
@@ -505,9 +542,14 @@ def main() -> None:
         print("ERROR: --resume requires --all", file=sys.stderr)
         sys.exit(1)
 
+    if args.session_mode != "new" and not args.all:
+        print("ERROR: --session-mode shared requires --all", file=sys.stderr)
+        sys.exit(1)
+
     out_dir = stage_out_dir(args)
     failures = []
     prior_outputs: dict = {}
+    session_name = args.session_name or args.context_name
     if args.resume:
         # Resume a previous session: load completed outputs from disk so
         # downstream stages chain from them, and skip stages that already
@@ -520,6 +562,7 @@ def main() -> None:
         skipped = len(prior_outputs)
         print(f"Resume: {skipped} completed stage(s) found, {len(stages_to_run) - skipped} to run", flush=True)
 
+    session_active = False
     for stage in stages_to_run:
         if args.resume and stage in prior_outputs:
             print(f"  Stage {stage}: SKIP (output exists: {out_dir / f'stage-{stage}.out.md'})", flush=True)
@@ -546,7 +589,17 @@ def main() -> None:
             print(prompt)
             continue
 
-        rc = run_stage(stage, prompt, args)
+        # Shared session: the first executed stage starts the session, later
+        # stages continue it; --resume skips do not consume the session.
+        flags = None
+        if args.session_mode != "new":
+            if not session_active:
+                flags = session_flags("start", session_name, session_name)
+                session_active = True
+            else:
+                flags = session_flags("continue", session_name, session_name)
+
+        rc = run_stage(stage, prompt, args, flags)
         if rc != 0:
             failures.append(stage)
             if not args.all:

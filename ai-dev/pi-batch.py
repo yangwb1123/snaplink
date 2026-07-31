@@ -86,6 +86,23 @@ AGENT_DEFAULT_TIMEOUT = _AGENT_CFG.get("default_timeout", 300)
 AGENT_DEFAULT_WORKERS = _AGENT_CFG.get("default_workers", 4)
 COMMIT_PREFIX_DEFAULT = _BATCH_CFG.get("commit", {}).get("prefix", "[pi-batch]")
 
+# pi-style session flags, used when pi-batch.yaml does not define
+# agent.session_flags (other agent CLIs can override via that key).
+# {session} and {name} placeholders are substituted per run.
+_DEFAULT_SESSION_FLAGS = {
+    "start": ["--session-id", "{session}", "--name", "{name}"],
+    "continue": ["--session-id", "{session}"],
+}
+
+
+def _session_flags(key: str, session_id: str, session_name: str) -> list:
+    """Resolve the configured session flags for a call (start or continue),
+    replacing {session} and {name} placeholders. Falls back to pi-style
+    flags when the config does not define agent.session_flags."""
+    cfg = (_AGENT_CFG.get("session_flags") or {}) if isinstance(_AGENT_CFG.get("session_flags"), dict) else {}
+    flags = cfg.get(key) or _DEFAULT_SESSION_FLAGS[key]
+    return [f.replace("{session}", session_id).replace("{name}", session_name) for f in flags]
+
 
 # -- Pipeline data structures -------------------------------------------
 @dataclass
@@ -236,7 +253,8 @@ def _aggregate_tasks(stage: Stage, prev_outputs: list, model_override: str = "",
     return tasks, reused
 
 
-def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_override: str = "", reuse: bool = False, timeout_override: int = 0) -> tuple[list[TaskResult], bool]:
+def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_override: str = "", reuse: bool = False, timeout_override: int = 0,
+                  session_mode: str = "new", session_name: str = "") -> tuple[list[TaskResult], bool]:
     """Execute one stage and return (task_results, stage_ok).
 
     stage_ok is False when any task or configured post-stage command failed,
@@ -248,6 +266,9 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
         model_override: override model for all tasks
         reuse: if True, skip tasks whose output files already exist
         timeout_override: per-task timeout override (seconds)
+        session_mode: "new" (fresh session per call), "shared" (one session
+            for the whole pipeline), or "per-stage" (one session per stage)
+        session_name: reproducible base name for shared/per-stage sessions
     """
     log.info("")
     log.info("=" * 60)
@@ -356,12 +377,23 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
             return [], True
         log.warning("No tasks to execute in stage '%s'", stage.name)
         return [], True
-    
+
+    # Shared sessions must not run in parallel: interleaved calls would
+    # corrupt the conversation order inside one session.
+    if session_mode != "new" and stage.mode == "parallel":
+        log.error("Stage '%s': --session-mode %s requires serial execution (parallel would interleave one session)",
+                  stage.name, session_mode)
+        return [], False
+
+    stage_session_id = session_name
+    if session_mode == "per-stage":
+        stage_session_id = f"{session_name}-{stage.name}"
+
     # Execute tasks
     if stage.mode == "parallel":
         results = run_parallel(tasks, stage.workers)
     else:
-        results = run_serial(tasks)
+        results = run_serial(tasks, retries=0, session_mode=session_mode, session_id=stage_session_id, session_name=session_name)
     
     # Collect output paths (reused outputs keep feeding downstream stages)
     outputs = list(reused_outputs)
@@ -456,7 +488,8 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
     return results, stage_ok
 
 
-def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = False, reuse: bool = False, timeout_override: int = 0) -> tuple[list[TaskResult], list[str]]:
+def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = False, reuse: bool = False, timeout_override: int = 0,
+                 session_mode: str = "new", session_name: str = "") -> tuple[list[TaskResult], list[str]]:
     """Execute all stages in a pipeline sequentially.
     
     Args:
@@ -465,6 +498,9 @@ def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = F
         dry_run: if True, only print task list without executing
         reuse: if True, skip tasks whose output files already exist
         timeout_override: per-task timeout override (seconds)
+        session_mode: "new", "shared" (one session for the whole pipeline),
+            or "per-stage" (one session per stage)
+        session_name: reproducible base name for shared/per-stage sessions
     
     Returns:
         (all task results, names of stages that failed tasks or commands)
@@ -502,7 +538,7 @@ def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = F
             log.info("  Mode: %s", stage.mode)
             continue
         
-        results, stage_ok = execute_stage(stage, stage_outputs, model_override, reuse, timeout_override)
+        results, stage_ok = execute_stage(stage, stage_outputs, model_override, reuse, timeout_override, session_mode, session_name)
         all_results.extend(results)
         if not stage_ok:
             failed_stages.append(stage.name)
@@ -535,7 +571,7 @@ class Task:
     timeout: int = AGENT_DEFAULT_TIMEOUT
     env: dict = field(default_factory=dict)
 
-    def to_cmd(self) -> list[str]:
+    def to_cmd(self, session_flags: Optional[list] = None) -> list[str]:
         cmd = [AGENT_BIN, "-p", self.prompt]
         if self.model:
             cmd.extend(["--model", self.model])
@@ -547,6 +583,8 @@ class Task:
             cmd.extend(["--tools", self.tools])
         if self.exclude_tools:
             cmd.extend(["--exclude-tools", self.exclude_tools])
+        if session_flags:
+            cmd.extend(session_flags)
         return cmd
 
     def workdir(self) -> str:
@@ -741,9 +779,11 @@ def agent_failure_reason(returncode: int, output: str) -> str:
     return ""
 
 
-def run_task(task: Task, task_index: int = 0, total: int = 0, parallel: bool = False) -> TaskResult:
-    """Execute one pi task, streaming output in real-time, and return the result."""
-    cmd = task.to_cmd()
+def run_task(task: Task, task_index: int = 0, total: int = 0, parallel: bool = False, session_flags: Optional[list] = None) -> TaskResult:
+    """Execute one pi task, streaming output in real-time, and return the result.
+    session_flags (e.g. --session-id for a shared session) are appended to
+    the agent command when provided."""
+    cmd = task.to_cmd(session_flags=session_flags)
     workdir = task.workdir()
     start = time.monotonic()
 
@@ -874,16 +914,30 @@ def _retry_wait(result: TaskResult, attempt: int, retry_delay: float, backoff: f
     return wait
 
 
-def run_serial(tasks: list[Task], retries: int = 0, retry_delay: float = 10.0, backoff: float = 2.0, min_interval: float = 0.0) -> list[TaskResult]:
+def run_serial(tasks: list[Task], retries: int = 0, retry_delay: float = 10.0, backoff: float = 2.0, min_interval: float = 0.0,
+               session_mode: str = "new", session_id: str = "", session_name: str = "") -> list[TaskResult]:
     """Execute tasks one by one with real-time output streaming. Failed tasks
     are retried with exponential backoff up to `retries` extra attempts, and
     successful tasks are throttled by `min_interval` seconds so long-running
-    24x7 batches do not hammer the provider."""
+    24x7 batches do not hammer the provider.
+
+    With session_mode "shared", every task in this list continues the same
+    agent session (the first call starts it with the configured start flags,
+    later calls pass the continue flags); "per-stage" behaves the same here
+    and is differentiated by the caller via session_id."""
     results = []
     total = len(tasks)
+    session_active = False
     for i, task in enumerate(tasks, 1):
         log.info("-- [%d/%d] --", i, total)
-        result = run_task(task, task_index=i, total=total, parallel=False)
+        flags = None
+        if session_mode != "new":
+            if not session_active:
+                flags = _session_flags("start", session_id, session_name)
+                session_active = True
+            else:
+                flags = _session_flags("continue", session_id, session_name)
+        result = run_task(task, task_index=i, total=total, parallel=False, session_flags=flags)
         attempt = 0
         while not result.success and attempt < retries:
             attempt += 1
@@ -891,7 +945,9 @@ def run_serial(tasks: list[Task], retries: int = 0, retry_delay: float = 10.0, b
             log.warning("RETRY %d/%d for task [%d/%d] in %.0fs (reason: %s)",
                         attempt, retries, i, total, wait, result.reason or f"exit {result.returncode}")
             time.sleep(wait)
-            result = run_task(task, task_index=i, total=total, parallel=False)
+            # retries stay inside the same session
+            retry_flags = _session_flags("continue", session_id, session_name) if session_mode != "new" else None
+            result = run_task(task, task_index=i, total=total, parallel=False, session_flags=retry_flags)
         save_result(task, result)
         results.append(result)
         if result.success and min_interval > 0:
@@ -996,6 +1052,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Seconds to wait between rounds (default: 60)")
     p.add_argument("--log-file", default="",
                    help="Append run log to FILE for 24x7 supervision")
+    p.add_argument("--session-mode", choices=["new", "shared", "per-stage"], default="new",
+                   help="Session reuse: new = fresh session per call (default), shared = one session for the whole batch/pipeline, per-stage = one session per pipeline stage")
+    p.add_argument("--session-name", default="",
+                   help="Reproducible session base name (default: task source file stem); shared sessions continue across runs")
     p.add_argument("--dry-run", action="store_true",
                    help="print task list without executing")
     return p
@@ -1053,6 +1113,26 @@ def main() -> None:
     max_rounds = args.max_rounds
     stdin_tasks = None  # stdin is consumed once; later rounds reuse it
     round_no = 0
+
+    # Session semantics: shared/per-stage require serial execution and a
+    # reproducible session name so a resumed run continues the same session.
+    session_name = args.session_name
+    if not session_name:
+        if args.pipeline:
+            session_name = Path(args.pipeline).stem
+        elif args.source:
+            session_name = Path(args.source).stem
+        elif args.from_dir:
+            session_name = Path(args.from_dir).name
+        else:
+            session_name = "batch"
+    if args.session_mode != "new" and args.mode == "parallel" and not args.pipeline:
+        log.error("--session-mode %s requires --mode serial (parallel would interleave one session)", args.session_mode)
+        sys.exit(1)
+    if args.session_mode == "per-stage" and not args.pipeline:
+        log.error("--session-mode per-stage requires --pipeline (there are no stages in single-batch mode)")
+        sys.exit(1)
+
     try:
         while True:
             round_no += 1
@@ -1068,7 +1148,8 @@ def main() -> None:
                 if args.dry_run:
                     run_pipeline(pipeline, model_override=args.model, dry_run=True, reuse=reuse_outputs)
                     return
-                all_results, failed_stages = run_pipeline(pipeline, model_override=args.model, reuse=reuse_outputs, timeout_override=timeout_override)
+                all_results, failed_stages = run_pipeline(pipeline, model_override=args.model, reuse=reuse_outputs, timeout_override=timeout_override,
+                                                         session_mode=args.session_mode, session_name=session_name)
                 print_summary(all_results)
                 round_failed = bool(failed_stages or any(not r.success for r in all_results))
                 if round_failed:
@@ -1137,7 +1218,8 @@ def main() -> None:
                 # -- execute --
                 if args.mode == "serial":
                     results = run_serial(tasks, retries=args.retries, retry_delay=args.retry_delay,
-                                         backoff=args.retry_backoff, min_interval=args.min_interval)
+                                         backoff=args.retry_backoff, min_interval=args.min_interval,
+                                         session_mode=args.session_mode, session_id=session_name, session_name=session_name)
                 else:
                     results = run_parallel(tasks, args.workers)
 
