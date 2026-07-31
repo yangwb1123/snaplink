@@ -459,6 +459,33 @@ def run_stage(stage: str, prompt: str, args, session_flags: Optional[list] = Non
     if reason:
         print(f"\nStage {stage} REJECTED: {reason}; output NOT saved to {out_file}", file=sys.stderr, flush=True)
         return 1
+
+    # Engineering gate: write to a temp file, validate it, then atomically
+    # rename on success (or delete on failure) so a result that fails the
+    # project checks never lands as a review file. {output} points at the
+    # temp file so the gate can inspect the generated content.
+    validate_cmd = getattr(args, "validate_cmd", "")
+    if validate_cmd:
+        tmp_file = out_file.with_name(out_file.name + ".tmp")
+        tmp_file.write_text(output, encoding="utf-8")
+        cmd = validate_cmd.replace("{output}", str(tmp_file)).replace("{cwd}", args.repo or os.getcwd())
+        try:
+            vproc = subprocess.run(cmd, shell=True, cwd=args.repo or os.getcwd(),
+                                   capture_output=True, text=True, timeout=600)
+        except subprocess.TimeoutExpired:
+            tmp_file.unlink(missing_ok=True)
+            print(f"\nStage {stage} REJECTED: validation timed out ({cmd}); output NOT saved to {out_file}", file=sys.stderr, flush=True)
+            return 1
+        if vproc.returncode != 0:
+            tmp_file.unlink(missing_ok=True)
+            print(f"\nStage {stage} REJECTED: validation failed (exit={vproc.returncode}): {cmd}; output NOT saved to {out_file}", file=sys.stderr, flush=True)
+            for line in (vproc.stdout or "").strip().splitlines()[-5:]:
+                print(f"  | {line}", file=sys.stderr)
+            return 1
+        tmp_file.rename(out_file)
+        print(f"\nWROTE: {out_file} (validated)", flush=True)
+        return 0
+
     out_file.write_text(output, encoding="utf-8")
     print(f"\nWROTE: {out_file}", flush=True)
     return 0
@@ -491,6 +518,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Session reuse across --all stages: new = fresh session per stage (default), shared = one session for the whole review run")
     p.add_argument("--session-name", default="",
                    help="Reproducible session base name (default: context name); shared sessions continue across runs")
+    p.add_argument("--validate-cmd", default="",
+                   help="Engineering gate run against the agent result BEFORE stage-NN.out.md is written; {output} and {cwd} placeholders are substituted. Non-zero exit rejects the stage and leaves no file")
     p.add_argument("--output-dir", metavar="DIR", help="Output directory for review files")
     p.add_argument("--dry-run", action="store_true",
                    help="Print filled prompt without invoking pi")

@@ -560,6 +560,69 @@ def test_cli_shared_session_parallel_rejected(tmp_path, fake_agent):
     assert "requires --mode serial" in result.stderr
 
 
+def test_validate_cmd_passes_saves_output(tmp_path, fake_agent):
+    """A passing engineering gate saves the output file."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    output = tmp_path / "o.md"
+    results = mod.run_serial([mod.Task(prompt="x", output=str(output))], validate_cmd="true")
+    assert results[0].success is True
+    assert output.exists()
+
+
+def test_validate_cmd_failure_does_not_save(tmp_path, fake_agent):
+    """A failing engineering gate rejects the result and leaves no file."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    output = tmp_path / "o.md"
+    results = mod.run_serial([mod.Task(prompt="x", output=str(output))], validate_cmd="exit 7")
+    assert results[0].success is False
+    assert "validation" in results[0].reason
+    assert not output.exists()
+
+
+def test_validate_cmd_output_placeholder(tmp_path, fake_agent):
+    """{output} is substituted with the output path before validation."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    output = tmp_path / "o.md"
+    results = mod.run_serial([mod.Task(prompt="x", output=str(output))], validate_cmd='test -f "{output}"')
+    assert results[0].success is True
+    assert output.exists()
+
+
+def test_validate_failure_retry_regenerates(tmp_path, fake_agent):
+    """A validation failure is retried: the agent regenerates and the second
+    validation passes, so the output is saved."""
+    counter = tmp_path / "counter"
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    output = tmp_path / "o.md"
+    validate = f"echo x >> {counter}; [ $(wc -l < {counter}) -le 1 ] && exit 1 || exit 0"
+    results = mod.run_serial([mod.Task(prompt="x", output=str(output))], retries=1, retry_delay=0, validate_cmd=validate)
+    assert results[0].success is True
+    assert output.exists()
+    assert counter.read_text(encoding="utf-8").count("x") == 2
+
+
+def test_cli_validate_cmd_gate(tmp_path, fake_agent):
+    """CLI --validate-cmd: failing gate exits non-zero and leaves no file;
+    passing gate saves."""
+    inputs = _inputs_dir(tmp_path)
+    base = [
+        sys.executable, str(PI_BATCH),
+        "--from-dir", str(inputs),
+        "--agent-bin", str(fake_agent),
+        "--mode", "serial",
+    ]
+    failing = subprocess.run(base + ["--validate-cmd", "exit 1"], capture_output=True, text=True, timeout=120)
+    assert failing.returncode != 0
+    assert not (inputs / "task1.out.md").exists()
+    passing = subprocess.run(base + ["--validate-cmd", "true"], capture_output=True, text=True, timeout=120)
+    assert passing.returncode == 0, passing.stderr
+    assert (inputs / "task1.out.md").exists()
+
+
 def test_pipeline_reports_failed_stage(tmp_path, fake_agent):
     mod = load_batch()
     mod.AGENT_BIN = str(fake_agent)

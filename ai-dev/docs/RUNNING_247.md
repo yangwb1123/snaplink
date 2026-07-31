@@ -78,6 +78,38 @@ The same loop applies to pipelines (`--pipeline file.yaml`), where `--reuse`
 already skips completed stage tasks and `aggregate: true` merges upstream
 outputs.
 
+## Engineering gates on generated results
+
+Generated artifacts are only committed after the project's engineering
+checks pass. `--validate-cmd` runs a command against every agent result
+before its output file is written (the result is staged to a temp file
+substituted for `{output}`, then atomically renamed on success; a failing
+gate deletes it and marks the task failed for retry/rerun):
+
+```bash
+# generated Go code must compile, vet, and be gofmt-clean
+python ai-dev/pi-batch.py code-tasks.yaml \
+  --validate-cmd "go build ./... && go vet ./... && test -z \"$(gofmt -l {output})\""
+
+# quick project gate (filesize + vet) after every generated file
+python ai-dev/pi-batch.py code-tasks.yaml \
+  --validate-cmd "python cli.py check"
+
+# generated config must pass the config contract validation
+python ai-dev/pi-batch.py config-tasks.yaml \
+  --validate-cmd "python cli.py config-validate"
+
+# review output must pass a doc-level gate before stage-NN.out.md lands
+python ai-dev/ai/run-review.py --all --context ctx.yaml \
+  --validate-cmd "test -s {output}"
+```
+
+Heavy full gates (`make ci`) belong in pipeline stage `commands`, which run
+once per stage; `--validate-cmd` runs per artifact and should stay light
+(compile/vet/fmt/lint of the generated file). Combined with `--retries` and
+`--max-rounds`, a generated artifact that fails validation is regenerated
+automatically until it passes or the budget is exhausted.
+
 ## One session, many steps
 
 By default every call starts a fresh agent session. When later steps should

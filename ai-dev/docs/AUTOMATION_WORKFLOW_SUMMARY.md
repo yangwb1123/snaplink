@@ -41,6 +41,14 @@ repository's executable tests and does not replace them.
 - `pi-batch.py` resolves `pi-batch.yaml` next to the script first, then the
   process working directory, so repository-root invocations pick up
   `ai-dev/pi-batch.yaml`. `--agent-bin` still overrides it explicitly.
+- `--validate-cmd` runs an engineering gate against every agent result
+  BEFORE its output is committed: the result is written to a temp file
+  (`{output}` placeholder), the command must exit 0, then the file is
+  atomically renamed into place; a failing gate deletes the temp file and
+  marks the task/stage failed, so generated artifacts that do not pass
+  project checks (e.g. `go build ./... && go vet ./...`, `gofmt -l`,
+  `python cli.py check`) never land on disk. Works in serial, parallel,
+  pipeline, and `run-review.py` modes, and integrates with retries/rounds.
 - 24x7 operation: `--retries` (serial mode) retries failed tasks with
   exponential backoff (`--retry-delay`/`--retry-backoff`; rate-limit and
   network failures wait at least 30s), `--min-interval` throttles successful

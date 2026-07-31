@@ -51,6 +51,7 @@ class _Args:
         self.context_name = kwargs.get("context_name", "ctx")
         self.repo = kwargs.get("repo")
         self.timeout = kwargs.get("timeout", 0)
+        self.validate_cmd = kwargs.get("validate_cmd", "")
 
 
 def test_chain_variables_fills_schema_placeholder():
@@ -366,6 +367,21 @@ def test_shared_session_requires_all(tmp_path, fake_agent):
     )
     assert result.returncode != 0
     assert "--session-mode shared requires --all" in result.stderr
+
+
+def test_run_stage_validation_failure_not_saved(tmp_path, fake_agent):
+    """A failing --validate-cmd rejects the stage and leaves no file; a
+    passing gate saves the output."""
+    mod = load_runner()
+    args = _Args(agent_bin=str(fake_agent), output_dir=str(tmp_path), repo=str(tmp_path), validate_cmd="exit 3")
+    rc = mod.run_stage("00", "PROMPT BODY", args)
+    assert rc == 1
+    assert not (tmp_path / "stage-00.out.md").exists()
+
+    args = _Args(agent_bin=str(fake_agent), output_dir=str(tmp_path), repo=str(tmp_path), validate_cmd="true")
+    rc = mod.run_stage("00", "PROMPT BODY", args)
+    assert rc == 0
+    assert (tmp_path / "stage-00.out.md").exists()
 
 
 def test_all_rejected_stage_is_skipped_in_chaining(tmp_path):

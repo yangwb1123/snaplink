@@ -254,7 +254,7 @@ def _aggregate_tasks(stage: Stage, prev_outputs: list, model_override: str = "",
 
 
 def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_override: str = "", reuse: bool = False, timeout_override: int = 0,
-                  session_mode: str = "new", session_name: str = "") -> tuple[list[TaskResult], bool]:
+                  session_mode: str = "new", session_name: str = "", validate_cmd: str = "") -> tuple[list[TaskResult], bool]:
     """Execute one stage and return (task_results, stage_ok).
 
     stage_ok is False when any task or configured post-stage command failed,
@@ -269,6 +269,7 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
         session_mode: "new" (fresh session per call), "shared" (one session
             for the whole pipeline), or "per-stage" (one session per stage)
         session_name: reproducible base name for shared/per-stage sessions
+        validate_cmd: engineering validation run before each output is saved
     """
     log.info("")
     log.info("=" * 60)
@@ -391,9 +392,10 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
 
     # Execute tasks
     if stage.mode == "parallel":
-        results = run_parallel(tasks, stage.workers)
+        results = run_parallel(tasks, stage.workers, validate_cmd=validate_cmd)
     else:
-        results = run_serial(tasks, retries=0, session_mode=session_mode, session_id=stage_session_id, session_name=session_name)
+        results = run_serial(tasks, retries=0, session_mode=session_mode, session_id=stage_session_id, session_name=session_name,
+                             validate_cmd=validate_cmd)
     
     # Collect output paths (reused outputs keep feeding downstream stages)
     outputs = list(reused_outputs)
@@ -489,7 +491,7 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
 
 
 def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = False, reuse: bool = False, timeout_override: int = 0,
-                 session_mode: str = "new", session_name: str = "") -> tuple[list[TaskResult], list[str]]:
+                 session_mode: str = "new", session_name: str = "", validate_cmd: str = "") -> tuple[list[TaskResult], list[str]]:
     """Execute all stages in a pipeline sequentially.
     
     Args:
@@ -501,6 +503,7 @@ def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = F
         session_mode: "new", "shared" (one session for the whole pipeline),
             or "per-stage" (one session per stage)
         session_name: reproducible base name for shared/per-stage sessions
+        validate_cmd: engineering validation run before each output is saved
     
     Returns:
         (all task results, names of stages that failed tasks or commands)
@@ -538,7 +541,7 @@ def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = F
             log.info("  Mode: %s", stage.mode)
             continue
         
-        results, stage_ok = execute_stage(stage, stage_outputs, model_override, reuse, timeout_override, session_mode, session_name)
+        results, stage_ok = execute_stage(stage, stage_outputs, model_override, reuse, timeout_override, session_mode, session_name, validate_cmd)
         all_results.extend(results)
         if not stage_ok:
             failed_stages.append(stage.name)
@@ -914,12 +917,56 @@ def _retry_wait(result: TaskResult, attempt: int, retry_delay: float, backoff: f
     return wait
 
 
+def _save_validated(task: Task, result: TaskResult, validate_cmd: str) -> bool:
+    """Save a successful result through the engineering gate. The output is
+    written to a temp file, validated, then atomically renamed into place on
+    success; a failing gate deletes the temp file and leaves no artifact.
+    {output} points at the temp file so the gate can inspect the generated
+    content. Returns True when the artifact was saved."""
+    if not result.success:
+        return False
+    if not validate_cmd:
+        save_result(task, result)
+        return True
+    out_path = task.output_path()
+    if out_path is None:
+        # no file target: nothing to validate against, print as usual
+        save_result(task, result)
+        return True
+    tmp = out_path.with_name(out_path.name + ".tmp")
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    tmp.write_text(result.stdout, encoding="utf-8")
+    cmd = validate_cmd.replace("{output}", str(tmp)).replace("{cwd}", task.workdir())
+    log.info("VALIDATE: %s", cmd)
+    try:
+        proc = subprocess.run(cmd, shell=True, cwd=task.workdir(), capture_output=True, text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        proc = None
+    if proc is not None and proc.returncode == 0:
+        tmp.rename(out_path)
+        log.info("WROTE %s (validated)", out_path)
+        return True
+    tmp.unlink(missing_ok=True)
+    log.warning("VALIDATION FAILED%s: %s; output NOT saved",
+                f" (exit={proc.returncode})" if proc is not None else " (timeout)", cmd)
+    if proc is not None:
+        for line in (proc.stdout or "").strip().splitlines()[-10:]:
+            log.warning("  | %s", line)
+        for line in (proc.stderr or "").strip().splitlines()[-10:]:
+            log.warning("  | %s", line)
+    return False
+
+
 def run_serial(tasks: list[Task], retries: int = 0, retry_delay: float = 10.0, backoff: float = 2.0, min_interval: float = 0.0,
-               session_mode: str = "new", session_id: str = "", session_name: str = "") -> list[TaskResult]:
+               session_mode: str = "new", session_id: str = "", session_name: str = "", validate_cmd: str = "") -> list[TaskResult]:
     """Execute tasks one by one with real-time output streaming. Failed tasks
     are retried with exponential backoff up to `retries` extra attempts, and
     successful tasks are throttled by `min_interval` seconds so long-running
     24x7 batches do not hammer the provider.
+
+    validate_cmd runs against each agent result before the output file is
+    committed (engineering gate); a non-zero exit marks the task failed and
+    leaves no artifact, so the retry/round machinery regenerates it.
 
     With session_mode "shared", every task in this list continues the same
     agent session (the first call starts it with the configured start flags,
@@ -938,6 +985,10 @@ def run_serial(tasks: list[Task], retries: int = 0, retry_delay: float = 10.0, b
             else:
                 flags = _session_flags("continue", session_id, session_name)
         result = run_task(task, task_index=i, total=total, parallel=False, session_flags=flags)
+        if result.success:
+            result.success = _save_validated(task, result, validate_cmd)
+            if not result.success:
+                result.reason = "validation failed"
         attempt = 0
         while not result.success and attempt < retries:
             attempt += 1
@@ -948,26 +999,38 @@ def run_serial(tasks: list[Task], retries: int = 0, retry_delay: float = 10.0, b
             # retries stay inside the same session
             retry_flags = _session_flags("continue", session_id, session_name) if session_mode != "new" else None
             result = run_task(task, task_index=i, total=total, parallel=False, session_flags=retry_flags)
-        save_result(task, result)
+            if result.success:
+                result.success = _save_validated(task, result, validate_cmd)
+                if not result.success:
+                    result.reason = "validation failed"
         results.append(result)
         if result.success and min_interval > 0:
             time.sleep(min_interval)
     return results
 
 
-def run_parallel(tasks: list[Task], workers: int = AGENT_DEFAULT_WORKERS) -> list[TaskResult]:
-    """Execute tasks concurrently with a thread pool and real-time output."""
+def run_parallel(tasks: list[Task], workers: int = AGENT_DEFAULT_WORKERS, validate_cmd: str = "") -> list[TaskResult]:
+    """Execute tasks concurrently with a thread pool and real-time output.
+    Each result passes the engineering validation gate before its output file
+    is committed; a non-zero validation exit leaves no artifact."""
     total = len(tasks)
     log.info("PARALLEL x%d  (%d tasks)", workers, total)
+
+    def _run_one(task: Task, index: int) -> TaskResult:
+        result = run_task(task, task_index=index, total=total, parallel=True)
+        if result.success:
+            result.success = _save_validated(task, result, validate_cmd)
+            if not result.success:
+                result.reason = "validation failed"
+        return result
 
     results: list[TaskResult] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         # Pass task_index so parallel output lines are prefixed
-        fut_map = {pool.submit(run_task, t, i, total, True): t for i, t in enumerate(tasks, 1)}
+        fut_map = {pool.submit(_run_one, t, i): t for i, t in enumerate(tasks, 1)}
         for i, fut in enumerate(as_completed(fut_map), 1):
             task = fut_map[fut]
             result = fut.result()
-            save_result(task, result)
             results.append(result)
             log.info("PROGRESS: %d/%d done", i, total)
 
@@ -1056,6 +1119,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Session reuse: new = fresh session per call (default), shared = one session for the whole batch/pipeline, per-stage = one session per pipeline stage")
     p.add_argument("--session-name", default="",
                    help="Reproducible session base name (default: task source file stem); shared sessions continue across runs")
+    p.add_argument("--validate-cmd", default="",
+                   help="Engineering gate run against every agent result BEFORE its output is saved (e.g. 'go build ./... && go vet ./...', 'python cli.py check'); {output} and {cwd} placeholders are substituted. Non-zero exit rejects the result and leaves no file")
     p.add_argument("--dry-run", action="store_true",
                    help="print task list without executing")
     return p
@@ -1149,7 +1214,7 @@ def main() -> None:
                     run_pipeline(pipeline, model_override=args.model, dry_run=True, reuse=reuse_outputs)
                     return
                 all_results, failed_stages = run_pipeline(pipeline, model_override=args.model, reuse=reuse_outputs, timeout_override=timeout_override,
-                                                         session_mode=args.session_mode, session_name=session_name)
+                                                         session_mode=args.session_mode, session_name=session_name, validate_cmd=args.validate_cmd)
                 print_summary(all_results)
                 round_failed = bool(failed_stages or any(not r.success for r in all_results))
                 if round_failed:
@@ -1219,9 +1284,10 @@ def main() -> None:
                 if args.mode == "serial":
                     results = run_serial(tasks, retries=args.retries, retry_delay=args.retry_delay,
                                          backoff=args.retry_backoff, min_interval=args.min_interval,
-                                         session_mode=args.session_mode, session_id=session_name, session_name=session_name)
+                                         session_mode=args.session_mode, session_id=session_name, session_name=session_name,
+                                         validate_cmd=args.validate_cmd)
                 else:
-                    results = run_parallel(tasks, args.workers)
+                    results = run_parallel(tasks, args.workers, validate_cmd=args.validate_cmd)
 
                 print_summary(results)
                 round_failed = any(not r.success for r in results)
