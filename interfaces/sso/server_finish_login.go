@@ -65,28 +65,6 @@ func (s *Server) finishLoginDispatch(ctx HandlerContext, result *AuthResult, req
 	s.finishLoginDirectMint(ctx, result, req, client)
 }
 
-// upsertLoginUser provisions/refreshes the local user record from the
-// authentication result when a UserProvider is wired. On a store failure it has
-// ALREADY written the exact 500 internal body and returns halted=true; the
-// caller must return immediately. No provider = no-op (halted=false).
-func (s *Server) upsertLoginUser(ctx HandlerContext, result *AuthResult, state string) bool {
-	if s.userProvider == nil {
-		return false
-	}
-	user := &User{
-		ID:         result.UserID,
-		ExternalID: result.ExternalID,
-		Provider:   result.Provider,
-		Attributes: result.Attributes,
-	}
-	if err := s.userProvider.CreateOrUpdate(ctx.Request().Context(), user); err != nil {
-		s.logger.Error("failed to upsert user", "error", err)
-		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
-		return true
-	}
-	return false
-}
-
 // validateAndAuthorizeScope runs the pre-side-effect gates shared by both login
 // branches and resolves the granted scope set. On any halt it has ALREADY written
 // the exact 400 body (unsupported_response_type / invalid_request / invalid_scope)

@@ -456,3 +456,33 @@ func (s *Server) InvalidateTenantSuspensionCache(tenantID string) {
 		}
 	}
 }
+
+// upsertLoginUser provisions/refreshes the local user record from the
+// authentication result when a UserProvider is wired. On a store failure it has
+// ALREADY written the exact 500 internal body and returns halted=true; the
+// caller must return immediately. No provider = no-op (halted=false).
+func (s *Server) upsertLoginUser(ctx HandlerContext, result *AuthResult, state string) bool {
+	if s.userProvider == nil {
+		return false
+	}
+	// Preserve profile attributes when the authenticator returned none: a
+	// login must not wipe claims another flow (signup, self-service, SCIM)
+	// stored on the user record — the login is a refresh, not a reset.
+	if result.Attributes == nil {
+		if existing, err := s.userProvider.GetByID(ctx.Request().Context(), result.UserID); err == nil && existing != nil {
+			result.Attributes = existing.Attributes
+		}
+	}
+	user := &User{
+		ID:         result.UserID,
+		ExternalID: result.ExternalID,
+		Provider:   result.Provider,
+		Attributes: result.Attributes,
+	}
+	if err := s.userProvider.CreateOrUpdate(ctx.Request().Context(), user); err != nil {
+		s.logger.Error("failed to upsert user", "error", err)
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
+		return true
+	}
+	return false
+}
