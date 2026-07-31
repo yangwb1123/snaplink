@@ -1134,6 +1134,53 @@ def test_meta_stage_concurrent_ad_hoc_roles(tmp_path):
     assert (out_dir / "ux_reviewer.md").exists()
 
 
+def test_cli_auto_pipeline_detection(tmp_path, fake_agent):
+    """A pipeline YAML passed as the positional source (no --pipeline flag)
+    is auto-detected and runs in pipeline mode, so documented commands like
+    `pi-batch.py pipeline.yaml --reuse` work as written."""
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    (inputs / "idea.md").write_text("idea", encoding="utf-8")
+    pipeline = tmp_path / "pipeline.yaml"
+    pipeline.write_text(
+        "git_commit: false\n"
+        "stages:\n"
+        f"  - name: req\n    from_dir: {inputs}\n    mode: serial\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable, str(PI_BATCH), str(pipeline),
+            "--agent-bin", str(fake_agent),
+        ],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "switching to pipeline mode" in result.stderr
+    assert (inputs / "idea.out.md").exists()
+
+
+def test_cli_auto_pipeline_detection_reuse(tmp_path, fake_agent):
+    """The reported failure mode: pipeline YAML + --reuse without --pipeline
+    now runs the pipeline and reuses existing outputs."""
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    (inputs / "idea.md").write_text("idea", encoding="utf-8")
+    pipeline = tmp_path / "pipeline.yaml"
+    pipeline.write_text(
+        "git_commit: false\n"
+        "stages:\n"
+        f"  - name: req\n    from_dir: {inputs}\n    mode: serial\n",
+        encoding="utf-8",
+    )
+    base = [sys.executable, str(PI_BATCH), str(pipeline), "--agent-bin", str(fake_agent)]
+    first = subprocess.run(base, capture_output=True, text=True, timeout=120)
+    assert first.returncode == 0, first.stderr
+    second = subprocess.run(base + ["--reuse"], capture_output=True, text=True, timeout=120)
+    assert second.returncode == 0, second.stderr
+    assert "REUSE" in second.stderr or "fully reused" in second.stderr
+
+
 def test_pipeline_reports_failed_stage(tmp_path, fake_agent):
     mod = load_batch()
     mod.AGENT_BIN = str(fake_agent)

@@ -1394,6 +1394,21 @@ def main() -> None:
     args = build_parser().parse_args()
     AGENT_BIN = args.agent_bin
 
+    # Auto-detect pipeline files: a YAML source with a top-level 'stages'
+    # key is a pipeline definition, not a task list, so
+    # `pi-batch.py pipeline.yaml --reuse` works without the --pipeline flag.
+    if args.source and not args.pipeline and yaml:
+        src = Path(args.source)
+        if src.exists() and src.suffix in (".yaml", ".yml"):
+            try:
+                data = yaml.safe_load(src.read_text(encoding="utf-8")) or {}
+            except Exception:
+                data = {}
+            if isinstance(data, dict) and "stages" in data:
+                log.info("Detected pipeline file (top-level 'stages'): switching to pipeline mode")
+                args.pipeline = args.source
+                args.source = ""
+
     # Append run log to FILE for 24x7 supervision
     if args.log_file:
         fh = logging.FileHandler(args.log_file, encoding="utf-8")
@@ -1521,7 +1536,7 @@ def main() -> None:
                         t.timeout = args.timeout
 
                 if not tasks:
-                    log.error("No tasks to execute")
+                    log.error("No tasks to execute: a YAML source must contain a 'tasks' list (pipelines use 'stages' and are auto-detected)")
                     sys.exit(1)
 
                 # reuse: drop tasks whose output already exists, so a later
