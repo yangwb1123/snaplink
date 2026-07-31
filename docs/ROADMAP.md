@@ -108,8 +108,11 @@ Delivered:
 
 Remaining:
 
-- Migrate SAML, LDAP/Kerberos/RADIUS, KMS/HSM and other nested modules to
-  the standard host API now that the boundary is stable.
+- Migrate LDAP/Kerberos/RADIUS/KMS nested modules to the standard host API
+  now that the boundary is stable (SAML — the registrar-bound module — is
+  already on it via `saml.Deps` embedding `ssoext.SAMLServerDeps`; the
+  others are config-wired infrastructure modules with no cmd registrar
+  dependency).
 - Add generation leases, static route slots and drain before classifying
   any in-process capability as hot; installable third-party code stays out
   of process.
