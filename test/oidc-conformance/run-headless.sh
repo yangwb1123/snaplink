@@ -27,7 +27,7 @@ SERVER_HTTP="http://127.0.0.1:8180"
 say() { printf '\n== %s\n' "$*"; }
 
 say "validating pinned server config"
-"${COMPOSE[@]}" run --rm --no-deps sso-server --validate-only >/dev/null
+"${COMPOSE[@]}" run --rm --no-deps sso-server --validate-only --config /etc/sso/conformance.yaml >/dev/null
 
 say "starting harness"
 "${COMPOSE[@]}" up -d --build >/dev/null
@@ -88,17 +88,24 @@ PY
   curl -sk -b "$COOKIE_JAR" -c "$COOKIE_JAR" -L -o /dev/null \
     "https://localhost:8443/login/oauth2/code/gitlab?code=${code}&state=${state}"
 }
-login_flow
+for attempt in $(seq 1 8); do
+  login_flow || true
+  if curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/currentuser" | python3 -c \
+    "import json,sys; assert json.load(sys.stdin).get('isAdmin'), 'not admin'" 2>/dev/null; then
+    break
+  fi
+  echo "  login attempt $attempt failed; retrying in 10s"
+  sleep 10
+done
 curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/currentuser" | python3 -c \
   "import json,sys; assert json.load(sys.stdin).get('isAdmin'), 'suite login failed: not admin'"
 
 say "creating the Basic certification plan (discovery + dynamic client)"
+curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/plan/info/oidcc-basic-certification-test-plan" \
+  > /tmp/planinfo.json
 PLAN_BODY="$(python3 - <<PY
-import json, urllib.request, ssl
-ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
-req = urllib.request.Request("$SUITE_BASE/api/plan/info/oidcc-basic-certification-test-plan",
-    headers={"Cookie": open("$COOKIE_JAR").read()})
-info = json.load(urllib.request.urlopen(req, context=ctx))
+import json
+info = json.load(open("/tmp/planinfo.json"))
 body = {
   "modules": info["modules"],
   "override": {"oidcc-server": {"server": {"discoveryUrl": "$DISCOVERY_URL"}}},
@@ -130,17 +137,14 @@ python3 "$(dirname "$0")/drive_test.py" "$TEST_ID" "$COOKIE_STR" "$TIMEOUT" || t
 
 say "archiving evidence"
 COMMIT="$(cd ../.. && git rev-parse --short HEAD)"
-OUT="results/${COMMIT}"
+OUT="$(pwd)/results/${COMMIT}"
 mkdir -p "$OUT"
 curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/log/${TEST_ID}" > "$OUT/oidcc-server.log.json"
 curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/info/${TEST_ID}" > "$OUT/oidcc-server.info.json"
 curl -sk -b "$COOKIE_JAR" "$SUITE_BASE/api/plan/${PLAN_ID}" > "$OUT/plan.json"
 cp config.yaml "$OUT/config.yaml"
-(
-  cd ../..
-  git rev-parse HEAD > "$OUT/commit.txt"
-  git status --porcelain > "$OUT/worktree.txt" || true
-) || true
+(cd ../.. && git rev-parse HEAD > "$OUT/commit.txt" 2>/dev/null || true)
+(cd ../.. && git status --porcelain > "$OUT/worktree.txt" 2>/dev/null || true)
 echo "artifacts in results/${COMMIT}/"
 
 say "final test state"

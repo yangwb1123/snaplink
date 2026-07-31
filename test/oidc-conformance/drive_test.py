@@ -128,8 +128,8 @@ def main():
         while time.time() - start < timeout:
             info = api(cj, f"/api/info/{test_id}")
             status = info.get("status")
-            if status == "COMPLETED":
-                print(f"[driver] COMPLETED result={info.get('result')}", flush=True)
+            if status in ("COMPLETED", "FINISHED"):
+                print(f"[driver] {status} result={info.get('result')}", flush=True)
                 return 0 if info.get("result") == "PASSED" else 1
             if status in ("INTERRUPTED", "FAILED", "CANCELLED"):
                 print(f"[driver] terminal {status} {info.get('result')}", flush=True)
