@@ -17,6 +17,8 @@ import (
 // Exemptions (deeper nesting is intrinsic / tool-mandated, NOT a cognitive-load
 // surface):
 //   - any "testdata" subtree — Go build-ignored test fixtures.
+//   - "test/oidc-conformance/results" — per-commit conformance-run archives
+//     (git-ignored; <commit>/layout mirrors the harness archive convention).
 //   - "ops/deploy/**" — deployment config with externally-mandated layouts
 //     (grafana provisioning requires provisioning/{dashboards,datasources};
 //     docker-compose relative mounts; openresty conf.d/lua). Flattening breaks
@@ -38,6 +40,9 @@ func TestArchitecture_DirectoryDepth(t *testing.T) {
 			return filepath.SkipDir // build dirs, test fixtures, and dotfile/tool dirs (.git/.claude/.qwen/...)
 		}
 		rel := filepath.ToSlash(path)
+		if strings.HasPrefix(rel, "test/oidc-conformance/results") {
+			return filepath.SkipDir // per-commit conformance-run archives (git-ignored)
+		}
 		if rel == "." {
 			return nil
 		}
