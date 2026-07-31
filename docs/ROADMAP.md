@@ -35,7 +35,7 @@ Delivered:
 - The compatibility policy (additive, semver-tracked, operationId
   verbatim naming) is committed in the registry itself.
 
-### 2. Produce auditable OIDC/FAPI conformance evidence — PARTIAL (headless run + archive landed; HTTPS certification run + OIDF listing remain)
+### 2. Produce auditable OIDC/FAPI conformance evidence — PARTIAL (headless run + archive landed; HTTPS topology run + OIDF listing remain)
 
 The harness in `test/oidc-conformance/` is repaired and **headless-runnable
 as checked in**: the official suite image is pinned to a release tag
