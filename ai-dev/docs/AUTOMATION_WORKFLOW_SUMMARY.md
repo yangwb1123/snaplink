@@ -35,6 +35,12 @@ repository's executable tests and does not replace them.
 - `pi-batch.py` resolves `pi-batch.yaml` next to the script first, then the
   process working directory, so repository-root invocations pick up
   `ai-dev/pi-batch.yaml`. `--agent-bin` still overrides it explicitly.
+- Task results are validated before saving: non-zero exit, empty output, or
+  a provider/CLI failure signature (quota, rate limit, billing, auth error
+  codes such as `insufficient_quota` or `rate_limit_error`, `429 Too Many
+  Requests`, leading `ERROR:`/`fatal:` banners) marks the task failed and no
+  output file is written; generic words like "error" or "timeout" are not
+  treated as failures, so review prose is not misclassified.
 
 `ai-dev/pipelines/pipeline-full-sdlc.yaml` is a long-running experimental
 graph; its stages use `aggregate: true` so downstream roles see all upstream

@@ -41,6 +41,7 @@ Context YAML format:
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -295,10 +296,48 @@ def stage_out_dir(args) -> Path:
     return Path(__file__).parent / "reviews" / args.context_name
 
 
+# Provider/CLI failure signatures. Only signatures that never appear in
+# legitimate review prose are matched across the whole output; generic words
+# like "error" or "timeout" are intentionally absent so that review findings
+# about timeouts or unauthorized responses are not misclassified.
+_AGENT_ERROR_PATTERNS = (
+    re.compile(r"rate_?limit_?error", re.IGNORECASE),
+    re.compile(r"insufficient_?quota", re.IGNORECASE),
+    re.compile(r"quota_?exceeded", re.IGNORECASE),
+    re.compile(r"credit_?balance_?too_?low", re.IGNORECASE),
+    re.compile(r"billing_?error", re.IGNORECASE),
+    re.compile(r"payment_?required", re.IGNORECASE),
+    re.compile(r"invalid_?api_?key", re.IGNORECASE),
+    re.compile(r"authentication_?error", re.IGNORECASE),
+    re.compile(r"context_?length_?exceeded", re.IGNORECASE),
+    re.compile(r"overloaded_?error", re.IGNORECASE),
+    re.compile(r"429 too many requests", re.IGNORECASE),
+    re.compile(r"^\[?error\]?:", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^fatal:", re.IGNORECASE | re.MULTILINE),
+)
+
+
+def agent_failure_reason(returncode: int, output: str) -> str:
+    """Return a short reason when the agent result must be discarded, or ''
+    when the output is a usable result. Non-zero exit, empty output, and
+    provider/CLI failure signatures (quota, rate limit, auth, billing) all
+    reject the result so error replies are never saved as review files."""
+    if returncode != 0:
+        return f"agent exited {returncode}"
+    if not output or not output.strip():
+        return "agent produced no output"
+    for pattern in _AGENT_ERROR_PATTERNS:
+        if pattern.search(output):
+            return f"agent reported provider failure ({pattern.pattern})"
+    return ""
+
+
 def run_stage(stage: str, prompt: str, args) -> int:
-    """Invoke the agent and persist its output. Output streams to the
-    terminal and is written to stage-NN.out.md, including partial output when
-    the agent exits non-zero, so failures leave inspectable evidence."""
+    """Invoke the agent and persist only validated output. Output streams to
+    the terminal while running; stage-NN.out.md is written only when the
+    agent exits 0 and the output carries no provider/CLI failure signature.
+    Rejected output is not saved and the stage fails, so quota or rate-limit
+    replies cannot become committed review artifacts."""
     out_dir = stage_out_dir(args)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / f"stage-{stage}.out.md"
@@ -322,19 +361,23 @@ def run_stage(stage: str, prompt: str, args) -> int:
             cwd=args.repo or os.getcwd(),
         )
         assert proc.stdout is not None
-        with out_file.open("w", encoding="utf-8") as fh:
-            for line in proc.stdout:
-                print(line, end="", flush=True)
-                fh.write(line)
+        lines = []
+        for line in proc.stdout:
+            print(line, end="", flush=True)
+            lines.append(line)
         rc = proc.wait()
-        if rc == 0:
-            print(f"\nWROTE: {out_file}", flush=True)
-        else:
-            print(f"\nStage {stage} failed (exit={rc}); partial output kept in {out_file}", file=sys.stderr, flush=True)
-        return rc
     except FileNotFoundError:
         print(f"ERROR: '{agent_bin}' not found in PATH.", file=sys.stderr)
         return 1
+
+    output = "".join(lines)
+    reason = agent_failure_reason(rc, output)
+    if reason:
+        print(f"\nStage {stage} REJECTED: {reason}; output NOT saved to {out_file}", file=sys.stderr, flush=True)
+        return 1
+    out_file.write_text(output, encoding="utf-8")
+    print(f"\nWROTE: {out_file}", flush=True)
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -651,6 +651,42 @@ def _read_stream(stream, prefix: str, collector: list) -> None:
         stream.close()
 
 
+# Provider/CLI failure signatures. Only signatures that never appear in
+# legitimate agent output are matched across the whole stdout; generic words
+# like "error" or "timeout" are intentionally absent so that review findings
+# about timeouts or unauthorized responses are not misclassified.
+_AGENT_ERROR_PATTERNS = (
+    re.compile(r"rate_?limit_?error", re.IGNORECASE),
+    re.compile(r"insufficient_?quota", re.IGNORECASE),
+    re.compile(r"quota_?exceeded", re.IGNORECASE),
+    re.compile(r"credit_?balance_?too_?low", re.IGNORECASE),
+    re.compile(r"billing_?error", re.IGNORECASE),
+    re.compile(r"payment_?required", re.IGNORECASE),
+    re.compile(r"invalid_?api_?key", re.IGNORECASE),
+    re.compile(r"authentication_?error", re.IGNORECASE),
+    re.compile(r"context_?length_?exceeded", re.IGNORECASE),
+    re.compile(r"overloaded_?error", re.IGNORECASE),
+    re.compile(r"429 too many requests", re.IGNORECASE),
+    re.compile(r"^\[?error\]?:", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^fatal:", re.IGNORECASE | re.MULTILINE),
+)
+
+
+def agent_failure_reason(returncode: int, output: str) -> str:
+    """Return a short reason when the agent result must be discarded, or ''
+    when the output is a usable result. Non-zero exit, empty output, and
+    provider/CLI failure signatures (quota, rate limit, auth, billing) all
+    reject the result so error replies are never saved as task outputs."""
+    if returncode != 0:
+        return f"agent exited {returncode}"
+    if not output or not output.strip():
+        return "agent produced no output"
+    for pattern in _AGENT_ERROR_PATTERNS:
+        if pattern.search(output):
+            return f"agent reported provider failure ({pattern.pattern})"
+    return ""
+
+
 def run_task(task: Task, task_index: int = 0, total: int = 0, parallel: bool = False) -> TaskResult:
     """Execute one pi task, streaming output in real-time, and return the result."""
     cmd = task.to_cmd()
@@ -699,6 +735,10 @@ def run_task(task: Task, task_index: int = 0, total: int = 0, parallel: bool = F
         success = proc.returncode == 0
         stdout_text = "".join(stdout_lines)
         stderr_text = "".join(stderr_lines)
+        reason = agent_failure_reason(proc.returncode, stdout_text)
+        if reason:
+            success = False
+            log.warning("agent output REJECTED: %s", reason)
 
         if success:
             log.info("OK  done  [%.1fs]  [output=%s]", elapsed, task.output or "(stdout)")
@@ -737,7 +777,10 @@ def run_task(task: Task, task_index: int = 0, total: int = 0, parallel: bool = F
 
 
 def save_result(task: Task, result: TaskResult) -> None:
-    """Write task result to its output file, or print to stdout."""
+    """Write a successful task result to its output file, or print to stdout.
+    Failed or rejected results are never written to disk: quota or rate-limit
+    replies must not become committed artifacts, so the error is logged only.
+    """
     out_path = task.output_path()
     if out_path is None:
         sys.stdout.write(result.stdout)
@@ -745,18 +788,13 @@ def save_result(task: Task, result: TaskResult) -> None:
             sys.stderr.write(result.stderr)
         return
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if not result.success:
+        log.error("NOT SAVED %s: task failed (exit=%d, %.1fs)", out_path, result.returncode, result.elapsed)
+        return
 
-    if result.success:
-        out_path.write_text(result.stdout, encoding="utf-8")
-        log.info("WROTE %s  (%d bytes)", out_path, len(result.stdout))
-    else:
-        content = "# TASK FAILED (exit=%d, elapsed=%.1fs)\n\n" % (result.returncode, result.elapsed)
-        if result.stderr:
-            content += "## stderr\n\n```\n%s\n```\n\n" % result.stderr
-        content += result.stdout
-        out_path.write_text(content, encoding="utf-8")
-        log.info("WROTE (with error info) %s", out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(result.stdout, encoding="utf-8")
+    log.info("WROTE %s  (%d bytes)", out_path, len(result.stdout))
 
 
 # -- serial / parallel dispatch ---------------------------------------

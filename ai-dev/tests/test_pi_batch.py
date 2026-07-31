@@ -36,6 +36,15 @@ def fake_agent(tmp_path):
     return path
 
 
+@pytest.fixture()
+def error_agent(tmp_path):
+    """A fake agent that replies with a provider rate-limit error, exit 0."""
+    path = tmp_path / "error-agent.sh"
+    path.write_text("#!/bin/sh\necho \"Error: rate_limit_error, please retry\"\n")
+    path.chmod(0o755)
+    return path
+
+
 def _run_import(cwd, script_path):
     code = (
         "import importlib.util, sys\n"
@@ -169,6 +178,49 @@ def test_fanout_default_creates_one_task_per_artifact(tmp_path, fake_agent):
     results1, ok1 = mod.execute_stage(stage1, {"s0": outputs})
     assert ok1 is True
     assert len(results1) == 2  # fan-out preserved for non-aggregate stages
+
+
+def test_agent_provider_error_rejects_task_and_does_not_save(tmp_path, error_agent):
+    """Exit 0 with a rate-limit reply must mark the task failed and never
+    write the output file."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(error_agent)
+    output = tmp_path / "result.md"
+    task = mod.Task(prompt="review this", output=str(output))
+    result = mod.run_task(task)
+    assert result.success is False
+    assert result.returncode == 0  # the process itself succeeded
+    mod.save_result(task, result)
+    assert not output.exists()
+
+
+def test_agent_nonzero_exit_does_not_save(tmp_path):
+    agent = tmp_path / "exit-agent.sh"
+    agent.write_text("#!/bin/sh\necho \"partial\"\nexit 2\n")
+    agent.chmod(0o755)
+    mod = load_batch()
+    mod.AGENT_BIN = str(agent)
+    output = tmp_path / "result.md"
+    task = mod.Task(prompt="review this", output=str(output))
+    result = mod.run_task(task)
+    assert result.success is False
+    mod.save_result(task, result)
+    assert not output.exists()
+
+
+def test_agent_legitimate_prose_is_saved(tmp_path):
+    """Review prose mentioning error words must not be misclassified."""
+    agent = tmp_path / "prose-agent.sh"
+    agent.write_text("#!/bin/sh\necho \"timeout handling and 401 Unauthorized are findings\"\n")
+    agent.chmod(0o755)
+    mod = load_batch()
+    mod.AGENT_BIN = str(agent)
+    output = tmp_path / "result.md"
+    task = mod.Task(prompt="review this", output=str(output))
+    result = mod.run_task(task)
+    assert result.success is True
+    mod.save_result(task, result)
+    assert output.exists()
 
 
 def test_pipeline_reports_failed_stage(tmp_path, fake_agent):

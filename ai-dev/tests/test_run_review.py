@@ -100,17 +100,67 @@ def test_run_stage_persists_output(tmp_path, fake_agent):
     assert out.read_text(encoding="utf-8").strip() == "0"
 
 
-def test_run_stage_keeps_partial_output_on_failure(tmp_path):
+def test_run_stage_does_not_save_on_failure(tmp_path):
+    """A failing agent must not leave a stage-NN.out.md behind."""
     agent = tmp_path / "fail-agent.sh"
     agent.write_text("#!/bin/sh\necho \"partial evidence\"\nexit 3\n")
     agent.chmod(0o755)
     mod = load_runner()
     args = _Args(agent_bin=str(agent), output_dir=str(tmp_path), repo=str(tmp_path))
     rc = mod.run_stage("00", "PROMPT BODY", args)
-    assert rc == 3
-    out = tmp_path / "stage-00.out.md"
-    assert out.exists()
-    assert "partial evidence" in out.read_text(encoding="utf-8")
+    assert rc == 1
+    assert not (tmp_path / "stage-00.out.md").exists()
+
+
+def test_run_stage_rejects_provider_error_output(tmp_path):
+    """Exit 0 with a provider failure signature (rate limit) must not save."""
+    agent = tmp_path / "ratelimit-agent.sh"
+    agent.write_text("#!/bin/sh\necho \"Error: rate_limit_error, retry later\"\n")
+    agent.chmod(0o755)
+    mod = load_runner()
+    args = _Args(agent_bin=str(agent), output_dir=str(tmp_path), repo=str(tmp_path))
+    rc = mod.run_stage("00", "PROMPT BODY", args)
+    assert rc == 1
+    assert not (tmp_path / "stage-00.out.md").exists()
+
+
+def test_run_stage_rejects_quota_output(tmp_path):
+    agent = tmp_path / "quota-agent.sh"
+    agent.write_text("#!/bin/sh\necho \"insufficient_quota: API credits exhausted\"\n")
+    agent.chmod(0o755)
+    mod = load_runner()
+    args = _Args(agent_bin=str(agent), output_dir=str(tmp_path), repo=str(tmp_path))
+    rc = mod.run_stage("00", "PROMPT BODY", args)
+    assert rc == 1
+    assert not (tmp_path / "stage-00.out.md").exists()
+
+
+def test_run_stage_rejects_empty_output(tmp_path):
+    agent = tmp_path / "empty-agent.sh"
+    agent.write_text("#!/bin/sh\n")
+    agent.chmod(0o755)
+    mod = load_runner()
+    args = _Args(agent_bin=str(agent), output_dir=str(tmp_path), repo=str(tmp_path))
+    rc = mod.run_stage("00", "PROMPT BODY", args)
+    assert rc == 1
+    assert not (tmp_path / "stage-00.out.md").exists()
+
+
+def test_run_stage_saves_legitimate_mention_of_error_words(tmp_path):
+    """Review prose discussing timeouts or unauthorized responses must not be
+    misclassified as a provider failure."""
+    agent = tmp_path / "prose-agent.sh"
+    agent.write_text(
+        "#!/bin/sh\n"
+        "echo 'The flow relies on timeout handling and returns 401 Unauthorized; "
+        "quota is not enforced here.'\n"
+    )
+    agent.chmod(0o755)
+    mod = load_runner()
+    args = _Args(agent_bin=str(agent), output_dir=str(tmp_path), repo=str(tmp_path))
+    rc = mod.run_stage("00", "PROMPT BODY", args)
+    assert rc == 0
+    assert (tmp_path / "stage-00.out.md").exists()
 
 
 def test_all_chains_stage_outputs_end_to_end(tmp_path, fake_agent):
@@ -145,3 +195,39 @@ def test_all_chains_stage_outputs_end_to_end(tmp_path, fake_agent):
     assert (out_dir / "stage-06.out.md").read_text(encoding="utf-8").strip() == "4"
     assert (out_dir / "stage-07.out.md").read_text(encoding="utf-8").strip() == "8"
     assert (out_dir / "stage-09.out.md").read_text(encoding="utf-8").strip() == "9"
+
+
+def test_all_rejected_stage_is_skipped_in_chaining(tmp_path):
+    """A stage whose agent output carries a provider failure signature must
+    leave no md file and must not feed later stages. Stage 02 is rejected, so
+    stage 04 chains only stage 01."""
+    agent = tmp_path / "mixed-agent.sh"
+    agent.write_text(
+        "#!/bin/sh\n"
+        "case \"$2\" in\n"
+        "  *\"# Stage 02\"*) echo \"Error: rate_limit_error\" ; exit 0 ;;\n"
+        "  *) echo \"$2\" | grep -o -- '--- Stage [0-9][0-9] output ---' | wc -l ;;\n"
+        "esac\n"
+    )
+    agent.chmod(0o755)
+    ctx = tmp_path / "ctx.yaml"
+    ctx.write_text("project: Test\nsubsystem: Chain\n", encoding="utf-8")
+    out_dir = tmp_path / "reviews"
+    result = subprocess.run(
+        [
+            sys.executable, str(RUN_REVIEW),
+            "--all", "--context", str(ctx),
+            "--agent-bin", str(agent),
+            "--output-dir", str(out_dir),
+            "--repo", str(tmp_path),
+        ],
+        capture_output=True, text=True, timeout=120,
+    )
+    # stage 02 fails -> overall non-zero, but later stages still run
+    assert result.returncode != 0
+    outputs = sorted(p.name for p in out_dir.iterdir())
+    assert len(outputs) == 9
+    assert "stage-02.out.md" not in outputs
+    assert (out_dir / "stage-00.out.md").read_text(encoding="utf-8").strip() == "0"
+    assert (out_dir / "stage-03.out.md").read_text(encoding="utf-8").strip() == "1"
+    assert (out_dir / "stage-04.out.md").read_text(encoding="utf-8").strip() == "2"
