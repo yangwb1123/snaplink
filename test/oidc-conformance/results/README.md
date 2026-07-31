@@ -1,11 +1,6 @@
-# Conformance run archives
+# Conformance results archive
 
-Each certification-quality run is archived under `results/<commit>/`:
-
-- `plan.json` — exported test plan (modules, variants, client settings)
-- `report/` — raw suite results export
-- `config.yaml` — the exact server configuration under test
-- `inventory.txt` — `go version -m` inventory of the tested binary
-
-Archives are git-ignored (results are large and timestamped); reference an
-archive by commit from `docs/sso/oidc-conformance.md` when a claim is made.
+Store run artifacts under `results/<commit>/` (git-ignored): run
+`./run-headless.sh` which writes the plan, test log, test info and the
+pinned config for the exact commit. Keep the `results/README.md` template
+committed; attach the archive to the release that claims the run.

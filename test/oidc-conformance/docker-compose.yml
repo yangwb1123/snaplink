@@ -24,6 +24,7 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
+      target: sso-server
     ports:
       - "8180:8080"
     volumes:
@@ -31,12 +32,18 @@ services:
       # under test. Validate it first with:
       #   docker compose run --rm --no-deps sso-server --validate-only
       - ./config.yaml:/etc/sso/conformance.yaml:ro
+      # Persistent sqlite state (identity/oauth/password stores) so the
+      # DCR-registered suite client + signup admin survive container
+      # recreation; 0777 host dir because the distroless runtime is nonroot.
+      - ./data:/data
     command: ["--config", "/etc/sso/conformance.yaml"]
     environment:
-      - SSO_SERVER__ISSUER=http://localhost:8180
+      - SSO_SERVER__ISSUER=http://sso-issuer:8180
       - SSO_LOGGING__LEVEL=debug
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      # distroless runtime has no wget/shell; the image ships the static Go
+      # health probe built in the Dockerfile (test/oidc-conformance/healthcheck).
+      test: ["CMD", "/healthcheck"]
       interval: 3s
       timeout: 2s
       retries: 15
@@ -48,27 +55,81 @@ services:
   conformance-suite:
     image: registry.gitlab.com/openid/conformance-suite:release-v5.2.1
     ports:
-      - "8080:8080"
-      - "8443:8443"
+      # Host 8088 (not 8080) — a local dev box commonly has something on
+      # 8080; the suite is reached via CONFORMANCE_SERVER_EXTERNAL_URL.
+      # HTTPS is terminated by the nginx proxy below (the suite itself
+      # only listens on 8080 and refuses non-https requests).
+      - "8088:8080"
     env_file:
       - config.env
     environment:
+      # The suite's entrypoint forwards these as -D overrides; empty values
+      # would blank the defaults and abort boot. Placeholder credentials are
+      # enough to start (the gitlab/google login buttons are unusable in a
+      # local harness — plans are created via the API below).
+      # The suite's admin login is OIDC: point the "gitlab" registration at
+      # the LOCAL server under test (its own discovery), with a client
+      # registered via DCR and a signup user whose preferred_username
+      # matches the admin group. This makes the whole harness self-contained
+      # (no external gitlab/google account).
+      - OIDC_GITLAB_CLIENTID=QRys1l5U4PLnAJI5jyF_jxp9
+      - OIDC_GITLAB_SECRET=D3BvKVKAcwJdI0TF6iZt0yi5SyihNPrjjA5YcVzBnEY
+      - OIDC_GOOGLE_CLIENTID=google-client
+      - OIDC_GOOGLE_SECRET=google-secret
+      - JAVA_EXTRA_ARGS=-Doidc.gitlab.iss=http://sso-issuer:8180
+          -Doidc.admin.issuer=http://sso-issuer:8180
+          -Doidc.admin.group=openid-conformance-suite-admins
+          -Dspring.security.oauth2.client.provider.gitlab.user-name-attribute=sub
+          -Doidc.gitlab.admin-group-indicator-claims={'sub':{'openid-conformance-suite-admins'}} -Dlogging.level.org.springframework.security=DEBUG
       - CONFORMANCE_DB_HOST=conformance-db
       - CONFORMANCE_DB_PORT=5432
       - CONFORMANCE_DB_NAME=conformance
       - CONFORMANCE_DB_USER=conformance
       - CONFORMANCE_DB_PASSWORD=conformance
-      - CONFORMANCE_SERVER_EXTERNAL_URL=http://localhost:8080
+      - CONFORMANCE_SERVER_EXTERNAL_URL=http://localhost:8088
       # Inside the compose network the suite's server-side calls reach the
       # server-under-test directly; the BROWSER reaches it via localhost:8180
       # (the issuer configured in config.yaml).
       - CONFORMANCE_SSO_SERVER=http://sso-server:8080
       - CONFORMANCE_SSO_DISCOVERY=http://sso-server:8080/.well-known/openid-configuration
+    extra_hosts:
+      # The issuer under test is http://sso-issuer:8180. The suite container
+      # resolves it via host-gateway to the host, where compose publishes
+      # 8180 -> sso-server:8080. A real browser would add a hosts entry too;
+      # the headless runner uses curl --resolve sso-issuer:8180:127.0.0.1.
+      - "sso-issuer:host-gateway"
     depends_on:
       sso-server:
         condition: service_healthy
       conformance-db:
         condition: service_started
+      mongodb:
+        condition: service_started
+    networks:
+      - conformance-net
+
+  # TLS-terminating reverse proxy (the suite requires https + proper
+  # X-Forwarded-Proto; the official deployment uses Apache in front).
+  suite-proxy:
+    image: nginx:latest
+    ports:
+      - "8443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/certs:ro
+    depends_on:
+      conformance-suite:
+        condition: service_started
+    networks:
+      - conformance-net
+
+  # MongoDB for the conformance suite (Spring Data MongoDB; the suite's
+  # hardcoded default connection string is mongodb://mongodb:27017, so the
+  # service MUST be named "mongodb" for compose DNS to resolve it).
+  mongodb:
+    image: mongo:6.0  # the suite sets FCV 6.0; Mongo 8 rejects it
+    ports:
+      - "27018:27017"
     networks:
       - conformance-net
 
@@ -79,8 +140,11 @@ services:
       - POSTGRES_DB=conformance
       - POSTGRES_USER=conformance
       - POSTGRES_PASSWORD=conformance
+    # Host mapping 5433 (not 5432) so a local postgres on 5432 does not
+    # collide; the suite reaches the DB over the compose network at
+    # conformance-db:5432 regardless of this mapping.
     ports:
-      - "5432:5432"
+      - "5433:5432"
     networks:
       - conformance-net
 

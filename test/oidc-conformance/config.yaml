@@ -12,7 +12,9 @@
 version: 1
 
 server:
-  issuer: http://localhost:8180   # canonical URL the browser reaches
+  issuer: http://sso-issuer:8180  # canonical URL; the suite container resolves
+                                  # it via extra_hosts host-gateway, a browser
+                                  # via a hosts entry or curl --resolve
   listen: ":8080"                 # inside the container / compose network
   default_token_strategy: jwt
   http2:
@@ -21,10 +23,16 @@ server:
 identity:
   backend: sqlite
   sqlite:
-    dsn: "file:/var/lib/sso/sso.db?_journal=WAL"
+    dsn: "file:/data/sso.db?_journal=WAL"  # /tmp is the writable scratch dir in the distroless nonroot runtime
 
 oauth:
   backend: sqlite
+  sqlite:
+    dsn: "file:/data/sso-oauth.db?_journal=WAL"
+  auth_code:
+    enabled: true
+    ttl: 5m
+
 
 self_service:
   # The conformance suite provisions its test users through the public
@@ -32,6 +40,8 @@ self_service:
   signup: true
   password:
     backend: sqlite
+    sqlite:
+      dsn: "file:/data/sso-pw.db?_journal=WAL"
 
 client_registration:
   # The conformance suite registers its own test clients via RFC 7591.
@@ -50,9 +60,19 @@ oidc:
   response_encryption:
     backend: ""        # JARM/encryption modules are exercised via client JWKS
 
+bootstrap:
+  # The harness needs no seeded admin/console client; disabling skips the
+  # seed_admin_role step (which would require a permissions provider).
+  disabled: true
+
+keys:
+  signing:
+    # ES256: the conformance suite's JwtDecoder does not accept EdDSA.
+    alg: rs256
+
 feature_gates:
   oidc: true
-  admin_api: true
+  admin_api: false   # conformance harness needs no admin surface
 
 logging:
   level: debug
