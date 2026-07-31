@@ -1,0 +1,32 @@
+# 小规模功能需求提案示例 — snaplink OIDC logout
+#
+# 场景：分析项目 OIDC RP-Initiated Logout 子系统，产出 3 个新增功能点，
+# 再把最优提案细化成 feature spec。纯分析/文档产出，不生成代码，
+# 因此两个任务都显式跳过工程质量门禁（validate: ""）。
+#
+# 用法（见同目录 README.md）：
+#   python ai-dev/pi-batch.py ai-dev/examples/snaplink-proposals.yaml \
+#     --mode serial --session-mode shared --session-name logout-proposals \
+#     --log-file logs/proposals.log
+#
+# 第二个任务的 prompt 依赖第一个任务的分析，因此用 --session-mode shared
+# 让两个任务在同一个 agent 会话中连续执行（第二个任务能看到第一轮的讨论）。
+
+tasks:
+  - prompt: |
+      Analyze the snaplink OIDC RP-Initiated Logout flow
+      (protocols/oidc/, interfaces/sso/server_logout.go) against
+      docs/feature-matrix.md and docs/deferred-backlog.md, then propose
+      exactly 3 new feature points. For each: name, problem, evidence
+      (file/symbol), proposed behavior, and acceptance check. Output a
+      markdown document.
+    output: docs/proposals/oidc-logout-3-features.md
+    validate: ""            # 纯分析产出，跳过工程质量门禁
+
+  - prompt: |
+      Take the top proposal from the previous analysis and write a bounded
+      feature spec following docs/templates/feature-spec.md: goal,
+      non-goals, affected layers, wire/security contract impact, and
+      acceptance criteria.
+    output: docs/proposals/oidc-logout-feature-spec.md
+    validate: ""            # 纯文档产出
