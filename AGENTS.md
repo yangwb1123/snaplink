@@ -1,308 +1,249 @@
 # AGENTS.md
 
-Operational guide for AI agents. Follows [agents.md](https://agents.md). User instructions override conflicts. **§3 invariants are gates — violations are regressions.**
+Execution contract for AI agents working on Snaplink. User instructions override
+this file. Security, wire-compatibility, and engineering gates are regression
+boundaries, not suggestions.
 
-**Agent OS:** [BOOTSTRAP.md](docs/agent-os/BOOTSTRAP.md) (context) → [ARCHITECTURE.md](docs/agent-os/ARCHITECTURE.md) (package map) → [HARNESS.md](docs/agent-os/HARNESS.md) (gate spec) → [EVALUATION.md](docs/agent-os/EVALUATION.md) (acceptance criteria) → [CHECKS_REGISTRY.md](docs/agent-os/CHECKS_REGISTRY.md) (agent engineering checks) → [Skills](docs/skills/) (refactor patterns)
+## 1. Product and Source of Truth
 
-**Reference:** [Config](docs/config-reference.md) | [Features](docs/feature-matrix.md) | [Observability](docs/observability.md) | [Errors](docs/error-codes.md) | [OpenAPI](docs/openapi.yaml) | [ADRs](docs/adr/) | [Arch rules](.arch/rules.yaml) | [Prompts](.prompts/)
+Snaplink is an embeddable OAuth 2.0/OIDC SSO SDK plus an API-only
+`sso-server`. Optional protocols, storage backends, and integrations are
+composed as modules. Browser UIs remain separate projects; an OpenResty/Envoy
+deployment may mount those assets and proxy the API, but the Go server must not
+become a static-frontend host.
 
----
+Use the narrowest authoritative source: executable code and gates for current
+behavior; [DIRECTORY_MAP](docs/architecture/DIRECTORY_MAP.md) for ownership;
+[OpenAPI](docs/openapi.yaml), [Config](docs/config-reference.md),
+[Features](docs/feature-matrix.md), [Errors](docs/error-codes.md), and
+[Observability](docs/observability.md) for public contracts; and the Agent OS
+[BOOTSTRAP](docs/agent-os/BOOTSTRAP.md) →
+[ARCHITECTURE](docs/agent-os/ARCHITECTURE.md) →
+[HARNESS](docs/agent-os/HARNESS.md) →
+[EVALUATION](docs/agent-os/EVALUATION.md) →
+[CHECKS_REGISTRY](docs/agent-os/CHECKS_REGISTRY.md) for execution.
+Plans/requirements/analysis describe intent, not shipped functionality.
 
-## 0. Engineering Principles (HARD GATES)
+Treat code/document or gate/config disagreement as drift: satisfy the stricter
+contract, report it, and never relax a threshold during unrelated work.
 
-The repository currently has two enforcement paths: declarative Python checks
-loaded from `engineering.yaml`, and committed root Go gate tests
-(`package archgate`) that run inside `make ci`. When they disagree, satisfy the
-stricter rule and report the drift; never edit a threshold as part of unrelated
-feature work. `python cli.py <command>` runs an individual or composite check;
-[CHECKS_REGISTRY.md](docs/agent-os/CHECKS_REGISTRY.md) catalogs both agent
-engineering enforcement paths and their known gaps.
+## 2. Engineering Gates
 
-### 0.1 Code Budgets
+### Budgets
 
-| Metric | Limit | Violation Action |
-|---|---|---|
-| File lines (`.go`) | ≤ 500 | STOP feature. Split first ([skill](docs/skills/split-large-file/)) |
-| Function lines | ≤ 50 | Extract sub-functions |
-| Cyclomatic complexity | ≤ 15 | [refactor-high-complexity](docs/skills/refactor-high-complexity/SKILL.md) |
-| If-nesting depth | ≤ 3 | Guard clauses / early return |
-| Directory depth | ≤ 3 | Flatten (merge leaf dir into parent name); `gen/`, `ops/deploy/`, `testdata` exempt |
-| Non-test Go files per dir | ≤ 10 | Split flat package into cohesive sub-packages |
-| Subdirs per dir | ≤ 15 contributor target | Python config rejects >15; the committed Go gate currently rejects >16 — do not use the one-directory gap |
+| Metric | Limit | Required response |
+|---|---:|---|
+| Go file | 500 lines | Stop and split first |
+| Function | 50 lines | Extract focused functions |
+| Cyclomatic complexity | 15 | Simplify or use [the refactor skill](docs/skills/refactor-high-complexity/SKILL.md) |
+| `if` nesting | 3 | Use guards and early returns |
+| Directory depth | 3 | Flatten; `gen/`, `ops/deploy/`, `testdata` exempt |
+| Non-test Go files/directory | 10 | Extract cohesive subpackages |
+| Subdirectories/directory | 15 | Do not exploit the Go gate's temporary `>16` drift |
 
-The file/function exemption maps are mechanically capped at zero; fan-out maps
-have count latches and frozen per-directory ceilings. `layerExemptions` is also
-SHRINK-ONLY by policy, but has no automatic count latch, so review must reject
-every addition. `interfaces/sso` is AT its 60 non-test-file ceiling — extend an
-existing file or extract to a domain package (`_test.go` files never count
-against a ceiling).
+- Split before feature work if the change would cross a budget.
+- Exemption maps never grow. File/function exemptions are capped at zero;
+  fan-out ceilings are frozen; `layerExemptions` is shrink-only.
+- `interfaces/sso` is at its 60-file ceiling. Extend an existing file or move
+  behavior down to a domain package; `_test.go` files do not count.
 
-**Cardinal rule:** if your edit would breach a budget, SPLIT FIRST, then
-continue. Refactoring always outranks feature work (480+ line file you'll
-exceed → refactor the pre-existing violation first).
+### Architecture
 
-### 0.2 Dependency Direction
+Imports flow toward the shared kernel:
 
-The first path segment IS the architectural layer; imports point one-way
-toward the shared kernel — see [DIRECTORY_MAP](docs/architecture/DIRECTORY_MAP.md)
-(canonical), enforced by `architecture_layer_test.go`:
-
-```
+```text
 composition → interfaces → infrastructure → protocols → domains → platform → shared
 ```
 
-**Prohibits:** `protocols/oauth ↔ protocols/oidc` (either direction — route
-via `interfaces/sso/handlers.go`), `cmd/ ← any`, and any upward
-(toward-interfaces) layer import. Never add a `layerExemptions` entry. A new
-top-level (or `internal/`) package MUST be classified in `layerName()`
-(`architecture_layer_test.go`) — unclassified fails the gate by design.
+- No upward import, no `protocols/oauth ↔ protocols/oidc` import, and no package
+  imports `cmd/`. OAuth/OIDC coordination belongs in
+  `interfaces/sso/handlers.go`.
+- New top-level or `internal/` packages must be classified in `layerName()` in
+  `architecture_layer_test.go`. Never add a `layerExemptions` entry.
+- The repository root contains no production Go. Only gate tests and files
+  allowed by `engineering.yaml` `root_policy` may live there.
+- Place code by responsibility, extend an existing package for one-off work,
+  and preserve the hexagonal boundary: domain `HandleX(deps Deps, ctx)` plus a
+  thin `*sso.Server` adapter/accessor.
+- Probes remain outside rate limiting; preserve the documented middleware order.
 
-### 0.3 Post-Edit Verification
+### Mandatory verification
 
-After every `.go` change, fail-fast — fix before the next task:
+After every `.go` edit, fail fast before continuing:
 
 ```bash
 go build ./... && go vet ./...
 go test -run 'TestMaintainability_|TestArchitecture_' .
 ```
 
-### 0.4 Root Directory Policy
-
-The repo root carries NO production Go — only the archgate gate tests plus the
-composition/config files whitelisted in `engineering.yaml` `root_policy:`
-(enforced by `python cli.py check-root`; banned patterns include
-`*_handler.go`, `*_service.go`, `*_store.go`, `*_grant.go`). The SDK's
-composition root is `interfaces/sso/`; business logic extracts OUT of it into
-domain packages via the hexagonal pattern (§4 Common Tasks).
-
-### 0.5 Prohibited Patterns
-
-| Pattern | Do instead |
-|---|---|
-| `TODO: refactor later` | Refactor immediately |
-| Appending to a 490+ line file | Split first ([split-large-file](docs/skills/split-large-file/SKILL.md)) |
-| `protocols/oidc` ↔ `protocols/oauth` import | Route via `interfaces/sso/handlers.go` |
-| `e.Metadata = map{...}` | `audit.SetMeta(e, k, v)` only |
-| Mocks where a Memory* impl exists | Real `MemoryProvider`/`MemorySink`/`memory.Registry`/… |
-| Growing any exemption map | Split / flatten / extract (§0.1) |
-
-### 0.6 Adding New Feature Code (pre-flight checklist — the rules are §0.1/§0.2)
-
-1. Place by responsibility under its layer dir (ARCHITECTURE.md) — extend an existing package, don't proliferate a new one for a one-off.
-2. Imports point DOWN only, toward `shared/` (§0.2).
-3. Directory depth ≤ 3 (§0.1) — flatten a new backend/variant into the parent name (`webauthnsqlite`), don't nest a 4th level.
-4. Budgets (§0.1) — SPLIT FIRST if your edit would breach.
-5. NEVER add a maintainability exemption to grandfather your own violation (§0.1).
-6. Classify any new top-level (or `internal/`) package in `layerName()` (`architecture_layer_test.go`).
-7. Before done: §0.3 verification passes with no new exemptions.
-
-### 0.7 Module Builds and Runtime Plugins
-
-- Cold-module selection goes through `python cli.py configure`; its default
-  output stays under ignored `dist/modules/`. A custom `--out` inside the
-  repository MUST stay under `dist/`; root `go.mod`/`go.sum` are immutable.
-- Manifests are strict `snaplink.module.json` data. No shell/template fields,
-  arbitrary Go expressions, blank imports, or registration through `init`.
-- Kernel security invariants are non-removable. A route/config gate is not
-  evidence that code or dependencies were compiled out.
-- In-process hot activation is allowed only for precompiled modules behind a
-  generation lease + drain lifecycle. The current `FeatureGates`,
-  `Server.Handle`, `AddReadyCheck`, and `audit.Recorder.AddSink` are not
-  hot-plugin registries.
-- Installable third-party hot plugins run out of process through a typed,
-  authenticated protocol. Never use Go `plugin.Open` for server extensions.
-- Follow [ADR-0009](docs/adr/ADR-0009-static-and-runtime-modules.md) and
-  [plugin-system.md](docs/plugin-system.md); `python cli.py modules check` must
-  pass with every manifest/profile change.
-
----
-
-## 1. System Overview
-
-OAuth 2.0 + OIDC SSO server SDK + runnable API-only binary. All concerns are
-interfaces; defaults in `infrastructure/defaultimpl/` (memory) +
-`infrastructure/defaultimpl/sqlite/` (pure-Go, no CGO). No required external
-SaaS dependency.
-Hosted login, admin, self-service, developer, and setup UIs are separate
-frontend projects; neither the SDK nor `sso-server` serves static frontend
-bundles.
+Before handoff, run checks proportional to the change:
 
 ```bash
-go build ./...
 go test ./... -race
-go test ./test/ -run TestE2E -v    # cross-wire HTTP + JWKS + bufconn
-make ci                             # fmt + vet + race + build + examples + proto-lint + ci-modules + config validation
+go test ./test/ -run TestE2E -v
+make ci
 ```
 
-**Middleware stack** (outermost → router; probes registered OUTSIDE):
-```
-/metrics, /livez, /readyz                         ← outside ratelimit
-panic recovery → tracing → metrics → trusted proxy → ratelimit → degradation
-→ API version → body limit → compression → CORS → security headers
-→ request logging → router
-```
+`make ci` is the full gate, including nested modules, examples, config, and
+module validation. Use `python cli.py <command>` for a targeted check; see the
+checks registry for coverage and known gaps.
 
----
+## 3. Security and Wire Contracts
 
-## 2. Module Map
+### Oracle-safe responses
 
-The full package list lives in [ARCHITECTURE.md](docs/agent-os/ARCHITECTURE.md)
-(agent lookup) / [DIRECTORY_MAP](docs/architecture/DIRECTORY_MAP.md)
-(canonical; wins on conflict) — don't duplicate it here, it drifts. This table
-keeps only package-level invariants not already stated in full in §3:
+Different internal causes in each row must remain indistinguishable:
 
-| Package | Invariant not covered elsewhere |
+| Surface | Required behavior |
 |---|---|
-| `shared/core` | SPIs: User/Client/Session/Token/Subject/AuthRequest/AuthResult + Authenticator/UserProvider/ClientStore/SessionManager/TokenIssuer/JWK; wire consts + sentinels; imports NO snaplink package |
-| `protocols/oauth` | AuthCode/Device/Refresh/PAR stores, hexagonal grant handlers; single-use `DELETE RETURNING` (no read-then-delete race); refresh family rotation |
-| `protocols/oidc` | `at_hash` required when access_token is in the response; discovery derived from server state; `claims` parameter rides `AuthCode.RequestedClaims` through every store into the ID-token/access-token projection |
-| `shared/security` | `AsymmetricJWSAlgs`: EdDSA/ES256-512/RS256/PS256 ONLY; `alg=none` banned; algorithm checked BEFORE signature verify; outbound metadata/JAR fetches ride `securityverify.SSRFGuardedDialer` (dial-time DNS-rebind block, oracle-stable errors) |
-| `shared/trust` | Trust scoring is FAIL-OPEN advisory input to conditional access — a trust signal must NEVER become a lockout lever; live at request time only when `access_policies.enforce` wires the CAP engine |
-| `domains/anomaly` | Async behavioral detection, OFF the request path; NEVER feeds an auth decision |
-| `domains/connections` | `/auth/login` `provider=<connection id>` dispatches via `AuthenticatorFactory` (production impl in `cmd/sso-server/serverbuildauthn`); a statically-registered provider name WINS; cross-tenant guard (tenant-A host never dispatches tenant-B's connection); unknown/disabled/cross-tenant/build-failure ALL collapse to the same `unsupported_provider` — failure detail ONLY in the `connection_authenticator_build_failed` audit event |
-| `platform/cluster` | Cross-replica Bus kinds: `KindTokenRevoked`, `KindSigningKeyRotation`, `KindClientChange`, `KindAuthzPolicyChange`, `KindTenantSuspension` |
-| `interfaces/admin` | Scoped `admin:read`/`admin:write`; 401 sets `Bearer realm="admin"` |
-| `domains/permissions` | `user:*` ⊇ `user:read` wildcard semantics; new backend MUST pass `permissionstest.ConformanceSuite` |
-| `infrastructure/defaultimpl` | Each issuer (Ed25519/ECDSA/RSA) accepts ONLY its own alg |
-| `platform/signingkeys` | Leaderless peer-key adoption alg-matched BEFORE install; degraded → 503 (the aggregation loop AND the etcd registry's publish-lease check are both in `/readyz`) |
-| `platform/audit` | `SetMeta` only, never `e.Metadata = map{...}` (also §0.5); W3C TraceID/SpanID; bounded cardinality; a new EventType must be filed in `auditreport` (control area or the uncategorized allowlist — the drift test names strays) |
-| `cmd/sso-server/servermodules` | Explicit cold-module composition hook only; generated builds replace its configured file through the single allow-listed overlay path; no `init` or blank imports |
-
-Packages with a full dedicated invariant section already in §3 (not repeated
-here): `domains/tenant` + `platform/geo`/`domains/region` → Tenant & Residency
-· `protocols/caep` → CAEP/SSF · `domains/federation` → Federation ·
-`domains/authenticators` → Anti-Enumeration. Everything else is pure
-package-map, not a gate — see ARCHITECTURE.md.
-
-**Nested modules** (own `go.mod`; no `go.work`; `make ci` → `ci-modules`):
-`infrastructure/{kms/{awskms,gcpkms,azurekeyvault,pkcs11},saml,ldap,kerberos,radius,extauthz,kafka,mqtt}`,
-`cmd/sso-mcp`, `cmd/sso-operator`. `infrastructure/redis` and
-`infrastructure/postgres` are ROOT-module packages (their deps are tracked
-under `/`).
-
----
-
-## 3. Global Constraints (GATES)
-
-### Oracle-Leak Hardening
-
-| Scenario | Required response |
-|---|---|
-| AuthCode/Refresh/Device/PAR: unknown/expired/consumed/mismatch on `/token` | `400 invalid_grant` |
-| Stale/missing PAR `request_uri` | `invalid_request_uri` |
-| DPoP/mTLS failure | `invalid_token` |
+| AuthCode/Refresh/Device/PAR unknown, expired, consumed, or mismatched at `/token` | `400 invalid_grant` |
+| Missing/stale PAR `request_uri` | `invalid_request_uri` |
+| DPoP or mTLS failure | `invalid_token` |
 | `private_key_jwt` failure | `invalid_client` |
+| `/register/:client_id` missing, wrong, or unknown bearer | identical `401 invalid_token` |
+| `/token/revoke` with valid client credentials | `200` regardless of token existence |
+| Inactive introspection | `{"active":false}` |
+| Unknown, disabled, cross-tenant, or broken login provider/connection | byte-identical `400 unsupported_provider`; details only in audit |
+| Unknown bcrypt user | cost-matched dummy hash |
+| Unknown WebAuthn user/session | `404 session_invalid` |
+| Any MFA failure | `400 mfa_invalid`; details only in `mfa_failure` audit |
 
-### Anti-Enumeration
+### OAuth/OIDC invariants
 
-| Endpoint | Required behavior |
+- Bind form and JSON through `oauth.BindParams` via `bindOAuthParams`. HTTP
+  Basic wins over body credentials on `/token`, `/introspect`, `/revoke`,
+  and `/par`.
+- Capture PKCE at login and verify it only for authorization-code exchange.
+  Refresh never carries a verifier.
+- Single-use stores consume atomically (`DELETE RETURNING`, not read/delete).
+  Carry `FamilyID` through refresh rotation; reuse deletes the family and
+  returns `invalid_grant`. Concurrent retries are idempotent only inside the
+  grace window.
+- Refuse expired/revoked sessions before refresh. Production clocks slew; they
+  do not step backward.
+- Discovery is derived from server state. `aud` accepts string/array and emits
+  a compact string for a single audience.
+- Credential endpoints, including errors, use `Cache-Control: no-store` and
+  `Pragma: no-cache`. New bearer endpoints call `tokenNoStoreHeaders` and set
+  401 challenges via `setBearerChallenge`; descriptions use
+  `security.QuoteAuthParam`.
+- Every authorization response resolves issuer with `s.resolveIssuer(ctx)`;
+  new authorization handlers use `s.authzErrorBody`, not `errorBody`.
+- Every RFC 9068 issue sets `Subject.ClientID`; `jti` is generated. Preserve
+  login `AuthTime`/`AMR`/`ACR`, authorization-code login time, refresh auth
+  context, and token-exchange `AuthTime`/`ACR`/`AMR`/`SID` plus the `act` chain.
+  Client credentials set client identity only.
+- `at_hash` is mandatory when an ID-token response contains an access token.
+  OIDC requested claims survive the AuthCode store and token projection.
+
+### Trust, isolation, and failure modes
+
+- Accepted JWS algorithms are EdDSA, ES256-512, RS256, and PS256 only.
+  Reject `none`; check the algorithm before signature verification; each
+  concrete issuer accepts only its own algorithm.
+- Outbound metadata/JAR/federation requests use the shared SSRF-guarded dialer.
+  Anchor keys are never fetched.
+- `security.trusted_proxies` gates XFF, forwarded host/proto, header mTLS,
+  region headers, mesh `X-Auth-*`, audit/push IPs, tenant XFH, and the resource
+  server middleware. A trusted edge strips and re-sets these headers. Unset
+  means legacy first-hop trust and is unsafe at an untrusted edge. New
+  proxy-supplied consumers must reuse the canonical peer-trust context.
+- Trust scoring is fail-open advisory input to enforced conditional access.
+  Anomaly detection stays asynchronous and never decides authentication.
+- A statically registered authenticator name wins over a dynamic connection.
+- Fail open with audit/logging: refresh or ID-token issuance helpers, geo,
+  risk/trust scoring, audit sink errors, tenant-suspension lookup outage,
+  default JTI-replay-store errors, and anomaly runner.
+- Fail closed: signatures/validation, scope expansion, refresh rotation,
+  refresh-family reuse, federation trust chains, CAEP receiver, and
+  invalidation-bus recovery. Recovery re-subscribes, flushes caches, and
+  re-seeds revocation deny-sets before clearing degraded readiness.
+- Tenant mismatch is `403 tenant_mismatch`; suspension uses
+  `ErrTenantSuspended` and fails open on store outage. Admin mutations
+  invalidate suspension/residency caches. Residency errors are governance
+  errors, not credential oracles.
+- Signing-key rotation keeps the old key verify-only through token TTL.
+  Peer-key adoption is algorithm-matched before install; deferred retirement
+  may widen, never shorten, the verification window. Degraded key state is 503.
+- CAEP transmits only to affected clients; tenant events query only that tenant.
+  Receiver endpoints come from validated HTTPS client attributes, never request
+  input, and receivers fail closed with JTI replay checks.
+- Federation is fail closed: collapse trust errors to
+  `ErrTrustChainInvalid`; a pre-registered client wins; auto-registration never
+  creates an empty secret.
+
+## 4. Extension and Module Rules
+
+- Every storage concern is an interface plus a real `Memory*` implementation
+  and optional durable backends. Prefer those implementations over mocks; a new
+  permissions backend must pass `permissionstest.ConformanceSuite`.
+- `shared/core` imports no Snaplink package. Implementation interface guards
+  live with implementations, not interfaces.
+- Admin HTTP/gRPC uses `admin:read` and `admin:write`; HTTP 401 identifies
+  `Bearer realm="admin"`. `user:*`-style wildcards include narrower permissions.
+- Audit metadata is added only through `audit.SetMeta`. New event types must be
+  classified in `auditreport`; preserve bounded cardinality and W3C trace IDs.
+- Cross-replica invalidation covers token revocation, signing-key rotation,
+  client/authz-policy changes, and tenant suspension.
+
+Module/profile changes obey [ADR-0009](docs/adr/ADR-0009-static-and-runtime-modules.md)
+and [plugin-system.md](docs/plugin-system.md):
+
+- Generate cold builds with `python cli.py configure`; repository output stays
+  under `dist/`. Root `go.mod` and `go.sum` remain unchanged.
+- Manifests are strict `snaplink.module.json` data: no shell/templates,
+  arbitrary Go expressions, blank imports, `init` registration, or removable
+  kernel-security invariants. Route/config gating does not prove code was
+  compiled out.
+- In-process hot activation is only for precompiled modules with generation
+  leases, drain, readiness, and stop lifecycle. Installable third-party code
+  runs out of process over a typed authenticated protocol; never use
+  `plugin.Open`. `FeatureGates`, `Server.Handle`, `AddReadyCheck`, and
+  `audit.Recorder.AddSink` are not hot-plugin registries.
+- Run `python cli.py modules check` and prove the final `go version -m`
+  inventory for profile changes.
+
+Nested modules own their `go.mod` and use no `go.work`:
+`infrastructure/{kms/{awskms,gcpkms,azurekeyvault,pkcs11},saml,ldap,kerberos,radius,extauthz,kafka,mqtt}`,
+`cmd/sso-mcp`, and `cmd/sso-operator`. Redis and Postgres remain root-module
+packages.
+
+## 5. Change Workflow
+
+1. Confirm the requested behavior exists in code/current contracts; do not
+   implement roadmap prose by assumption.
+2. Identify the owning layer and affected security/wire contracts.
+3. Check file, function, directory, and fan-out budgets before editing.
+4. Make the smallest cohesive change; no speculative framework or unrelated
+   cleanup.
+5. Test beside the code; cross-server integration belongs in `test/`
+   (`package ssotest`). Race fixes run with `-count=10+`.
+6. Update contracts in the same change: new `Err*` →
+   `docs/error-codes.md`; endpoint → `docs/openapi.yaml`; config knob →
+   `docs/config-reference.md`.
+7. Run mandatory gates and report any pre-existing failure separately.
+
+| Change | Required pattern |
 |---|---|
-| `/register/:client_id` | Missing/wrong/unknown bearer → identical 401 `invalid_token` |
-| `/token/revoke` | 200 on valid client creds regardless of token existence |
-| `/token/introspect` inactive | `{"active":false}` |
-| `/auth/login` provider dispatch | Unknown provider / unknown / disabled / cross-tenant / misconfigured connection → byte-identical 400 `unsupported_provider` |
-| bcrypt (unknown user) | Cost-matched dummy hash |
-| WebAuthn (unknown user/session) | `404 session_invalid` |
-| MFA `/auth/mfa` | All failures → `400 mfa_invalid`; detail ONLY in `mfa_failure` audit |
+| Authenticator | `domains/authenticators` → config → `cmd/sso-server/serverbuildauthn` |
+| Audit sink | `audit.Sink` (+ `audit.Closer`) → `audit.New`/`MultiSink` |
+| Permissions backend | `permissions.Provider` → `permissionstest.ConformanceSuite` |
+| gRPC service | proto → regenerate → `interfaces/grpcserver` → bufconn test |
+| OAuth/OIDC grant | bind params, oracle safety, atomic consume, route, discovery |
+| Credential endpoint | no-store headers + correct bearer challenge |
+| Domain extraction | domain free function + thin Server wrapper + accessors |
+| Cold/hot module | follow the lifecycle rules above and module validation |
 
-### Fail Modes
+## 6. Coding and Repository Discipline
 
-- **Fail-Open** (log + continue): refresh issuance, ID Token issuance, geo, risk-scorer, trust-scorer, audit Sink error, tenant-suspension outage, JTI-replay store error (default), anomaly runner.
-- **Fail-Closed**: refresh rotation grant (500), signature/validation failure, scope expansion, family reuse → `DeleteFamily` → `invalid_grant`, trust-chain validation, CAEP receiver, invalidation-bus recovery (resubscribe FIRST, then flush caches + re-seed revocation deny-sets, ONLY THEN clear degraded — a failed re-seed keeps the replica degraded and `/readyz` red).
-
-### Wire Contracts
-
-- **SPI + Storage:** Every concern = interface + `memory` impl ± `sqlite`/`etcd`/`file`. No mocks in tests.
-- **Form + JSON:** All endpoints via `oauth.BindParams` (`bindOAuthParams` wrapper in `interfaces/sso`). HTTP Basic > body creds on `/token`, `/introspect`, `/revoke`, `/par`.
-- **PKCE:** Captured at `/auth/login`; verified at `/token` `grant=authorization_code` only. Refresh carries no verifier.
-- **Refresh family:** `FamilyID` through every rotation; reuse → `DeleteFamily` → `invalid_grant`. Grace window: concurrent double-submit idempotent; post-window replay still kills family.
-- **Session refresh:** Refuses expired/revoked BEFORE extending. Forward/monotonic wall clock — ops MUST slew, never step.
-- **`aud` claim:** Unmarshals string or array; marshals single-aud as compact string per OIDC.
-- **Discovery:** Derived from server state. New opt-in → branch the doc. New bearer endpoint → `tokenNoStoreHeaders` + `setBearerChallenge`.
-
-### Credential Endpoints
-
-- **Cache headers:** `/token`, `/introspect`, `/revoke[-all]`, `/par`, `/auth/login`, `/userinfo`, `/register*` → `Cache-Control: no-store` + `Pragma: no-cache`. Including errors.
-- **401 WWW-Authenticate:** `setBearerChallenge`: missing token omits `error=`; validation failure → `error="invalid_token"`. Descriptions via `security.QuoteAuthParam`.
-- **RFC 9207 `iss`:** Every `/auth/login` response uses `s.resolveIssuer(ctx)`. New authz handlers MUST use `s.authzErrorBody(ctx, code)`, not `errorBody`.
-
-### RFC 9068 Claims (every Issue)
-
-- MUST set `Subject.ClientID`. `jti` always auto-generated.
-- Login: `AuthTime`+`AMR` from live event; `acr` from `AuthResult.AchievedACR` (empty → omitted). MFA second leg folds factor + `mfa`.
-- `auth_code`: stamps `auth_time` from `AuthCode.AuthTime` (real `/auth/login` moment, NOT exchange time).
-- Refresh: propagates original AMR without resetting `AuthTime`.
-- Token-exchange: propagates `AuthTime`+`ACR`+`AMR`+`SID` from inbound; multi-hop `act` chain prepended.
-- `client_credentials`: `ClientID` only.
-
-### Proxy-Supplied Input Trust
-
-`security.trusted_proxies` (CIDR list → `shared/security/peertrust.Checker`,
-compiled once at boot) gates EVERY proxy-supplied input: the XFF chain walk
-(ratelimit IP keying, geo/risk client IP), `X-Forwarded-Proto/Host` (base
-URL/issuer, DPoP `htu`, discovery URIs), `security.mtls.backend: header` cert
-extraction, region `HeaderResolver`, and mesh `X-Auth-*` (ext_authz denies an
-untrusted direct peer with the standard `invalid_token` challenge — not
-probeable). UNSET = legacy first-hop trust, ONLY safe behind a trusted edge
-that strips + re-sets these headers. Known still-ungated readers (don't grow
-the list): audit IP enrichment, `domains/tenant/middleware.go` XFH tenant
-resolution, `interfaces/ssoclient/rs`, push-callback client IP.
-
-### Tenant & Residency
-
-- Mismatch → 403 `tenant_mismatch`; suspended → `ErrTenantSuspended`; fail-OPEN on outage.
-- Admin mutation MUST call `InvalidateTenantSuspensionCache` / `InvalidateTenantResidencyCache`.
-- Residency: `region_not_allowed`/`residency_violation` are governance codes (NOT credential oracles).
-
-### Signing Keys
-
-- `RotateKey`/`RetireKey`: overlap-window; demoted key stays verify-only through TTL.
-- Leaderless: peer-key adoption alg-matched BEFORE install; decode failure OPEN; adopted keys in separate verify set.
-- Coordinated cutover: FAIL-SAFE — deferred retire only widens verify window, never retires early.
-
-### CAEP / SSF
-
-- Transmitter: push ONLY to affected client's receiver; tenant events → `ListByTenant` of THAT tenant only (no cross-tenant leak).
-- Receiver: FAIL-CLOSED; jti-replay verified; endpoint from `Client.Attributes["caep_receiver_endpoint"]` (HTTPS, validated at create/update — NEVER request input).
-
-### Federation
-
-- Trust-chain FAIL-CLOSED; all failures → `ErrTrustChainInvalid` (oracle-safe); anchor keys NEVER fetched; metadata fetches ride the shared SSRF-guarded dialer.
-- Auto-registration: pre-registered client WINS; chain failure → byte-identical `invalid_client`; `Secret=""` NEVER.
-
----
-
-## 4. Coding Conventions
-
-- **No literal leaks** — paths/headers/error codes in `consts.go`.
-- **No emojis** in code, comments, or commits.
-- **Comments explain WHY** — hidden constraints, invariants, workarounds only. Never "what".
-- **Interface guards** in implementation packages, never in interface package (cycle).
-- **Tests:** Unit tests beside code. Cross-server integration → `test/` (`package ssotest`). Race fixes prove with `-count=10+`.
-- **Hexagonal extraction:** `HandleX(deps Deps, ctx)` free functions in domain packages. `*sso.Server` satisfies `Deps` via `accessors.go`.
-- **Docs in the same commit:** new `Err*` → `docs/error-codes.md`; documented endpoint change → `docs/openapi.yaml`; new config knob → `docs/config-reference.md`.
-
-### Don'ts
-
-- No `git reset --hard`, `push --force`, `branch -D` without authorization.
-- No git-config changes; no hook bypass (`--no-verify`/`--no-gpg-sign`).
-- No "while I'm here" cleanup/refactors; no Markdown files unless asked.
-- Never violate oracle-leak / anti-enumeration patterns.
-
-### Common Tasks
-
-| Task | Pattern |
-|---|---|
-| New authenticator | `domains/authenticators/<name>.go` → YAML in `config/` → wire in `cmd/sso-server/serverbuildauthn` |
-| New audit Sink | Implement `audit.Sink` (+ `audit.Closer`); wire via `audit.New(...)` / `MultiSink` |
-| New permissions backend | `permissions.Provider` in `domains/permissions/<name>/`; run `permissionstest.ConformanceSuite` |
-| New gRPC service | `proto/<name>/v1/<name>.proto` → regen → `interfaces/grpcserver/<name>.go` → `bufconn` test |
-| New OAuth/OIDC grant | `oauth.BindParams`; HTTP Basic > body creds; oracle-leak; `DELETE RETURNING`; wire in `interfaces/sso/server_routes*.go`; discovery |
-| New credential endpoint | `tokenNoStoreHeaders(ctx)` at entry; `setBearerChallenge(ctx, ...)` on 401 |
-| Extract to domain pkg | Pure functions in `internal/<module>/` → thin `(s *Server)` wrapper → update `Deps` iface → `python cli.py check-root` |
-| New cold module/profile | Typed registration seam → strict `snaplink.module.json` → catalog/profile → `python cli.py modules check` → prove final `go version -m` inventory |
-| New hot module | Static surface + generation leases + readiness/drain/Stop; third-party installable code stays out of process; see ADR-0009 |
-
-### Commits
-
-Conventional (`feat(area):`, `fix(area):`, `chore:`, `docs:`). Imperative subject. Body explains why. Co-author trailer when AI-assisted. Don't commit binaries.
+- Put paths, headers, and error codes in `consts.go`; avoid literal leaks.
+- Comments explain hidden constraints and reasons, not visible mechanics.
+- No emojis in code, comments, or commits. No deferred-refactor TODOs.
+- Do not assign `e.Metadata` directly, add exemptions, or bypass hooks
+  (`--no-verify`/`--no-gpg-sign`).
+- Do not change git configuration or use `git reset --hard`, force-push, or
+  delete branches without explicit authorization.
+- Preserve unrelated worktree changes. Do not add Markdown or perform
+  “while here” cleanup unless requested.
+- Commits are conventional and imperative; the body explains why. Add an
+  AI co-author trailer when applicable, and never commit binaries.
