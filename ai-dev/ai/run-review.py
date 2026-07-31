@@ -227,6 +227,42 @@ def session_flags(key: str, session_id: str, session_name: str) -> list:
     return [f.replace("{session}", session_id).replace("{name}", session_name) for f in flags]
 
 
+# Named engineering gates declared in ai-dev/pi-batch.yaml (validators key),
+# shared with pi-batch.py; like engineering.yaml for cli.py.
+_DEFAULT_VALIDATORS = {
+    "quick": "python cli.py check",
+    "gofmt": 'test -z "$(gofmt -l {output})"',
+}
+
+
+def _load_validators() -> dict:
+    if not yaml:
+        return dict(_DEFAULT_VALIDATORS)
+    path = Path(__file__).parent.parent / "pi-batch.yaml"
+    if not path.exists():
+        return dict(_DEFAULT_VALIDATORS)
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    v = data.get("validators")
+    if isinstance(v, dict):
+        merged = dict(_DEFAULT_VALIDATORS)
+        merged.update(v)
+        return merged
+    return dict(_DEFAULT_VALIDATORS)
+
+
+VALIDATORS = _load_validators()
+
+
+def resolve_validators(value: str) -> list:
+    """Expand a comma-separated list into validation commands: registry names
+    are replaced by their pi-batch.yaml command, anything else is used as a
+    raw shell command. Empty value -> no validation."""
+    out = []
+    for item in [x.strip() for x in (value or "").split(",") if x.strip()]:
+        out.append(VALIDATORS.get(item, item))
+    return out
+
+
 def load_context(path: str) -> dict:
     if not yaml:
         print("ERROR: PyYAML not installed. Install the project: uv sync (or pip install pyyaml)", file=sys.stderr)
@@ -460,27 +496,29 @@ def run_stage(stage: str, prompt: str, args, session_flags: Optional[list] = Non
         print(f"\nStage {stage} REJECTED: {reason}; output NOT saved to {out_file}", file=sys.stderr, flush=True)
         return 1
 
-    # Engineering gate: write to a temp file, validate it, then atomically
-    # rename on success (or delete on failure) so a result that fails the
-    # project checks never lands as a review file. {output} points at the
-    # temp file so the gate can inspect the generated content.
-    validate_cmd = getattr(args, "validate_cmd", "")
-    if validate_cmd:
+    # Engineering gates: write to a temp file, run every resolved validator
+    # (AND semantics), then atomically rename on success (or delete on
+    # failure) so a result that fails the project checks never lands as a
+    # review file. {output} points at the temp file so gates can inspect it.
+    validate_spec = ",".join(x for x in (getattr(args, "validate", ""), getattr(args, "validate_cmd", "")) if x)
+    commands = resolve_validators(validate_spec)
+    if commands:
         tmp_file = out_file.with_name(out_file.name + ".tmp")
         tmp_file.write_text(output, encoding="utf-8")
-        cmd = validate_cmd.replace("{output}", str(tmp_file)).replace("{cwd}", args.repo or os.getcwd())
-        try:
-            vproc = subprocess.run(cmd, shell=True, cwd=args.repo or os.getcwd(),
-                                   capture_output=True, text=True, timeout=600)
-        except subprocess.TimeoutExpired:
+        for raw in commands:
+            cmd = raw.replace("{output}", str(tmp_file)).replace("{cwd}", args.repo or os.getcwd())
+            try:
+                vproc = subprocess.run(cmd, shell=True, cwd=args.repo or os.getcwd(),
+                                       capture_output=True, text=True, timeout=600)
+            except subprocess.TimeoutExpired:
+                vproc = None
+            if vproc is not None and vproc.returncode == 0:
+                continue
             tmp_file.unlink(missing_ok=True)
-            print(f"\nStage {stage} REJECTED: validation timed out ({cmd}); output NOT saved to {out_file}", file=sys.stderr, flush=True)
-            return 1
-        if vproc.returncode != 0:
-            tmp_file.unlink(missing_ok=True)
-            print(f"\nStage {stage} REJECTED: validation failed (exit={vproc.returncode}): {cmd}; output NOT saved to {out_file}", file=sys.stderr, flush=True)
-            for line in (vproc.stdout or "").strip().splitlines()[-5:]:
-                print(f"  | {line}", file=sys.stderr)
+            print(f"\nStage {stage} REJECTED: validation failed{'' if vproc is None else f' (exit={vproc.returncode})'}: {cmd}; output NOT saved to {out_file}", file=sys.stderr, flush=True)
+            if vproc is not None:
+                for line in (vproc.stdout or "").strip().splitlines()[-5:]:
+                    print(f"  | {line}", file=sys.stderr)
             return 1
         tmp_file.rename(out_file)
         print(f"\nWROTE: {out_file} (validated)", flush=True)
@@ -518,6 +556,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Session reuse across --all stages: new = fresh session per stage (default), shared = one session for the whole review run")
     p.add_argument("--session-name", default="",
                    help="Reproducible session base name (default: context name); shared sessions continue across runs")
+    p.add_argument("--validate", default="",
+                   help="Named validators from ai-dev/pi-batch.yaml validators registry, comma-separated (e.g. 'quick,gofmt'); AND semantics. Unknown names are treated as raw shell commands")
     p.add_argument("--validate-cmd", default="",
                    help="Engineering gate run against the agent result BEFORE stage-NN.out.md is written; {output} and {cwd} placeholders are substituted. Non-zero exit rejects the stage and leaves no file")
     p.add_argument("--output-dir", metavar="DIR", help="Output directory for review files")

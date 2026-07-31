@@ -104,6 +104,33 @@ def _session_flags(key: str, session_id: str, session_name: str) -> list:
     return [f.replace("{session}", session_id).replace("{name}", session_name) for f in flags]
 
 
+def _load_validators() -> dict:
+    """Read the named validators registry from pi-batch.yaml (like the
+    project's engineering.yaml declares gates for cli.py); empty when absent
+    so the script stays portable."""
+    if not yaml:
+        return {}
+    path = Path(__file__).resolve().parent / "pi-batch.yaml"
+    if not path.exists():
+        return {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    v = data.get("validators")
+    return dict(v) if isinstance(v, dict) else {}
+
+
+VALIDATORS = _load_validators()
+
+
+def _resolve_validators(value: str) -> list:
+    """Expand a comma-separated list into validation commands: registry names
+    are replaced by their pi-batch.yaml command, anything else is used as a
+    raw shell command. Empty value -> no validation."""
+    out = []
+    for item in [x.strip() for x in (value or "").split(",") if x.strip()]:
+        out.append(VALIDATORS.get(item, item))
+    return out
+
+
 # -- Pipeline data structures -------------------------------------------
 @dataclass
 class Stage:
@@ -927,14 +954,17 @@ def _retry_wait(result: TaskResult, attempt: int, retry_delay: float, backoff: f
 
 
 def _save_validated(task: Task, result: TaskResult, validate_cmd: str) -> bool:
-    """Save a successful result through the engineering gate. The output is
-    written to a temp file, validated, then atomically renamed into place on
-    success; a failing gate deletes the temp file and leaves no artifact.
-    {output} points at the temp file so the gate can inspect the generated
-    content. Returns True when the artifact was saved."""
+    """Save a successful result through the engineering gates. The output is
+    written to a temp file, every resolved validator command must exit 0
+    (AND semantics), then the file is atomically renamed into place; a
+    failing gate deletes the temp file and leaves no artifact. {output}
+    points at the temp file so gates can inspect the generated content.
+    validate_cmd is a comma-separated list of registry names or raw shell
+    commands (see _resolve_validators). Returns True when saved."""
     if not result.success:
         return False
-    if not validate_cmd:
+    commands = _resolve_validators(validate_cmd)
+    if not commands:
         save_result(task, result)
         return True
     out_path = task.output_path()
@@ -945,25 +975,27 @@ def _save_validated(task: Task, result: TaskResult, validate_cmd: str) -> bool:
     tmp = out_path.with_name(out_path.name + ".tmp")
     tmp.parent.mkdir(parents=True, exist_ok=True)
     tmp.write_text(result.stdout, encoding="utf-8")
-    cmd = validate_cmd.replace("{output}", str(tmp)).replace("{cwd}", task.workdir())
-    log.info("VALIDATE: %s", cmd)
-    try:
-        proc = subprocess.run(cmd, shell=True, cwd=task.workdir(), capture_output=True, text=True, timeout=600)
-    except subprocess.TimeoutExpired:
-        proc = None
-    if proc is not None and proc.returncode == 0:
-        tmp.rename(out_path)
-        log.info("WROTE %s (validated)", out_path)
-        return True
-    tmp.unlink(missing_ok=True)
-    log.warning("VALIDATION FAILED%s: %s; output NOT saved",
-                f" (exit={proc.returncode})" if proc is not None else " (timeout)", cmd)
-    if proc is not None:
-        for line in (proc.stdout or "").strip().splitlines()[-10:]:
-            log.warning("  | %s", line)
-        for line in (proc.stderr or "").strip().splitlines()[-10:]:
-            log.warning("  | %s", line)
-    return False
+    for raw in commands:
+        cmd = raw.replace("{output}", str(tmp)).replace("{cwd}", task.workdir())
+        log.info("VALIDATE: %s", cmd)
+        try:
+            proc = subprocess.run(cmd, shell=True, cwd=task.workdir(), capture_output=True, text=True, timeout=600)
+        except subprocess.TimeoutExpired:
+            proc = None
+        if proc is not None and proc.returncode == 0:
+            continue
+        tmp.unlink(missing_ok=True)
+        log.warning("VALIDATION FAILED%s: %s; output NOT saved",
+                    f" (exit={proc.returncode})" if proc is not None else " (timeout)", cmd)
+        if proc is not None:
+            for line in (proc.stdout or "").strip().splitlines()[-10:]:
+                log.warning("  | %s", line)
+            for line in (proc.stderr or "").strip().splitlines()[-10:]:
+                log.warning("  | %s", line)
+        return False
+    tmp.rename(out_path)
+    log.info("WROTE %s (validated)", out_path)
+    return True
 
 
 def run_serial(tasks: list[Task], retries: int = 0, retry_delay: float = 10.0, backoff: float = 2.0, min_interval: float = 0.0,
@@ -1128,6 +1160,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Session reuse: new = fresh session per call (default), shared = one session for the whole batch/pipeline, per-stage = one session per pipeline stage")
     p.add_argument("--session-name", default="",
                    help="Reproducible session base name (default: task source file stem); shared sessions continue across runs")
+    p.add_argument("--validate", default="",
+                   help="Named validators from pi-batch.yaml validators registry, comma-separated (e.g. 'quick,gofmt'); AND semantics. Unknown names are treated as raw shell commands")
     p.add_argument("--validate-cmd", default="",
                    help="Engineering gate run against every agent result BEFORE its output is saved (e.g. 'go build ./... && go vet ./...', 'python cli.py check'); {output} and {cwd} placeholders are substituted. Non-zero exit rejects the result and leaves no file")
     p.add_argument("--dry-run", action="store_true",
@@ -1207,6 +1241,10 @@ def main() -> None:
         log.error("--session-mode per-stage requires --pipeline (there are no stages in single-batch mode)")
         sys.exit(1)
 
+    # Validation gates: named validators (--validate) and the raw command
+    # (--validate-cmd) both apply, in that order, with AND semantics.
+    cli_validate = ",".join(x for x in (args.validate, args.validate_cmd) if x)
+
     try:
         while True:
             round_no += 1
@@ -1223,7 +1261,7 @@ def main() -> None:
                     run_pipeline(pipeline, model_override=args.model, dry_run=True, reuse=reuse_outputs)
                     return
                 all_results, failed_stages = run_pipeline(pipeline, model_override=args.model, reuse=reuse_outputs, timeout_override=timeout_override,
-                                                         session_mode=args.session_mode, session_name=session_name, validate_cmd=args.validate_cmd)
+                                                         session_mode=args.session_mode, session_name=session_name, validate_cmd=cli_validate)
                 print_summary(all_results)
                 round_failed = bool(failed_stages or any(not r.success for r in all_results))
                 if round_failed:
@@ -1294,9 +1332,9 @@ def main() -> None:
                     results = run_serial(tasks, retries=args.retries, retry_delay=args.retry_delay,
                                          backoff=args.retry_backoff, min_interval=args.min_interval,
                                          session_mode=args.session_mode, session_id=session_name, session_name=session_name,
-                                         validate_cmd=args.validate_cmd)
+                                         validate_cmd=cli_validate)
                 else:
-                    results = run_parallel(tasks, args.workers, validate_cmd=args.validate_cmd)
+                    results = run_parallel(tasks, args.workers, validate_cmd=cli_validate)
 
                 print_summary(results)
                 round_failed = any(not r.success for r in results)

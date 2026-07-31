@@ -19,5 +19,16 @@ agent:
     start: ["--session-id", "{session}", "--name", "{name}"]
     continue: ["--session-id", "{session}"]
 
+# Named engineering gates, referenced via --validate NAME[,NAME...] or a
+# task/stage validate field. Commands run against each generated artifact
+# before it is committed; {output} and {cwd} placeholders are substituted at
+# run time. Add project gates here instead of repeating shell strings.
+validators:
+  quick: "python cli.py check"
+  gofmt: 'test -z "$(gofmt -l {output})"'
+  build: "go build ./... && go vet ./..."
+  config: "python cli.py config-validate"
+  root: "python cli.py check-root"
+
 commit:
   prefix: "[pi-batch]"

@@ -81,28 +81,33 @@ outputs.
 ## Engineering gates on generated results
 
 Generated artifacts are only committed after the project's engineering
-checks pass. `--validate-cmd` runs a command against every agent result
-before its output file is written (the result is staged to a temp file
-substituted for `{output}`, then atomically renamed on success; a failing
-gate deletes it and marks the task failed for retry/rerun):
+checks pass. Validators are declared once in `pi-batch.yaml`, like
+`engineering.yaml` declares the gates for `cli.py`, and referenced by name:
+
+```yaml
+# pi-batch.yaml
+validators:
+  quick: "python cli.py check"          # filesize + vet
+  gofmt: 'test -z "$(gofmt -l {output})"'
+  build: "go build ./... && go vet ./..."
+  config: "python cli.py config-validate"
+  root: "python cli.py check-root"
+```
 
 ```bash
-# generated Go code must compile, vet, and be gofmt-clean
-python ai-dev/pi-batch.py code-tasks.yaml \
-  --validate-cmd "go build ./... && go vet ./... && test -z \"$(gofmt -l {output})\""
+# named validators, AND semantics (all must pass)
+python ai-dev/pi-batch.py code-tasks.yaml --validate quick,gofmt
 
-# quick project gate (filesize + vet) after every generated file
-python ai-dev/pi-batch.py code-tasks.yaml \
-  --validate-cmd "python cli.py check"
-
-# generated config must pass the config contract validation
-python ai-dev/pi-batch.py config-tasks.yaml \
-  --validate-cmd "python cli.py config-validate"
+# add a one-off raw command without touching the registry
+python ai-dev/pi-batch.py code-tasks.yaml --validate-cmd "python cli.py check"
 
 # review output must pass a doc-level gate before stage-NN.out.md lands
-python ai-dev/ai/run-review.py --all --context ctx.yaml \
-  --validate-cmd "test -s {output}"
+python ai-dev/ai/run-review.py --all --context ctx.yaml --validate gofmt
 ```
+
+A `validate` value on a task or stage overrides the CLI default and may also
+be a registry name (`validate: gofmt`) or a raw command; an empty value
+disables the gate for that task/stage (see next section).
 
 Heavy full gates (`make ci`) belong in pipeline stage `commands`, which run
 once per stage; `--validate-cmd` runs per artifact and should stay light

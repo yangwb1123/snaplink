@@ -708,6 +708,89 @@ def test_stage_inherits_cli_validate(tmp_path, fake_agent):
     assert not (inputs / "task1.out.md").exists()
 
 
+def test_resolve_validators_expansion():
+    """Registry names expand to their declared commands; unknown items stay
+    raw; empty value disables validation."""
+    mod = load_batch()
+    expanded = mod._resolve_validators("quick,gofmt")
+    assert expanded == [mod.VALIDATORS["quick"], mod.VALIDATORS["gofmt"]]
+    assert "python cli.py check" in expanded[0]
+    assert mod._resolve_validators("exit 7") == ["exit 7"]
+    assert mod._resolve_validators("") == []
+
+
+def test_validate_named_reference_gofmt(tmp_path):
+    """--validate gofmt uses the registry command to gate generated Go code."""
+    mod = load_batch()
+    good = tmp_path / "good-agent.sh"
+    good.write_text("#!/bin/sh\necho 'package main\n\nfunc main() {\n\tprintln(\"x\")\n}'\n")
+    good.chmod(0o755)
+    mod.AGENT_BIN = str(good)
+    output = tmp_path / "main.go"
+    results = mod.run_serial([mod.Task(prompt="x", output=str(output))], validate_cmd="gofmt")
+    assert results[0].success is True
+    assert output.exists()
+
+    bad = tmp_path / "bad-agent.sh"
+    bad.write_text("#!/bin/sh\necho 'package main\nfunc main(){println(\"x\")}'\n")
+    bad.chmod(0o755)
+    mod.AGENT_BIN = str(bad)
+    output2 = tmp_path / "bad.go"
+    results2 = mod.run_serial([mod.Task(prompt="x", output=str(output2))], validate_cmd="gofmt")
+    assert results2[0].success is False
+    assert not output2.exists()
+
+
+def test_validate_unknown_name_treated_as_command(tmp_path, fake_agent):
+    """A name that is not in the registry is executed as a raw command."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    output = tmp_path / "o.md"
+    results = mod.run_serial([mod.Task(prompt="x", output=str(output))], validate_cmd="true")
+    assert results[0].success is True
+    assert output.exists()
+
+
+def test_validate_multiple_and_semantics(tmp_path, fake_agent):
+    """Comma-separated validators all must pass (AND)."""
+    mod = load_batch()
+    mod.AGENT_BIN = str(fake_agent)
+    output = tmp_path / "o.md"
+    ok = mod.run_serial([mod.Task(prompt="x", output=str(output))], validate_cmd="true,true")
+    assert ok[0].success is True
+    assert output.exists()
+
+    output2 = tmp_path / "o2.md"
+    fail = mod.run_serial([mod.Task(prompt="x", output=str(output2))], validate_cmd="true,exit 1")
+    assert fail[0].success is False
+    assert not output2.exists()
+
+
+def test_cli_validate_named_gofmt(tmp_path):
+    """CLI --validate gofmt gates generated Go code end to end."""
+    bad = tmp_path / "bad-agent.sh"
+    bad.write_text("#!/bin/sh\necho 'package main\nfunc main(){println(\"x\")}'\n")
+    bad.chmod(0o755)
+    tasks_yaml = tmp_path / "tasks.yaml"
+    tasks_yaml.write_text(
+        "tasks:\n"
+        f"  - prompt: t1\n    output: {tmp_path / 'main.go'}\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable, str(PI_BATCH), str(tasks_yaml),
+            "--agent-bin", str(bad),
+            "--mode", "serial",
+            "--validate", "gofmt",
+        ],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode != 0
+    assert not (tmp_path / "main.go").exists()
+    assert "VALIDATION FAILED" in result.stderr
+
+
 def test_pipeline_reports_failed_stage(tmp_path, fake_agent):
     mod = load_batch()
     mod.AGENT_BIN = str(fake_agent)
