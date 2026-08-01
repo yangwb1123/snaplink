@@ -1,0 +1,112 @@
+# 全流程案例：从想法到真实实现 + 验收（使用 ai-dev 全部特性）
+#
+# 流程：需求分析 → 架构设计 → 交叉对抗审查（meta 多角色并发）→ 裁决门 →
+#       真实实现（agent 直接改仓库代码 + go build/vet 门禁）→ 验收门 →
+#       git 提交 + 归档 + 决策日志
+#
+# 特性覆盖：
+#   from_prompt 一句话起点 / from_outputs+aggregate 串联 / meta 动态角色
+#   编排（命名+ad-hoc、并发独立会话、证据折叠）/ gate 裁决（fail closed）/
+#   decision log / git commit / archive / validate 工程门禁 / reuse / retries
+#
+# 执行（真实 pi，1-2 小时量级；建议先 --dry-run 预览）：
+#   python ai-dev/pi-batch.py ai-dev/examples/full-sdlc-implement.yaml \
+#     --log-file logs/full-impl.log
+#   断点续跑：加 --reuse
+#
+# 安全说明：implement 阶段 agent 会直接修改仓库代码，之后由
+#   validate: build（go build+vet）与 acceptance 验收门把关；
+#   每阶段 git_commit 保留历史，可随时回退。
+
+git_commit: true
+decision_log: docs/DECISIONS.md
+archive_dir: docs/archive
+
+stages:
+  # ── 1. 需求分析：一句话起点 ──
+  - name: requirements
+    from_prompt: |
+      Analyze the snaplink MFA subsystem (domains/mfa/,
+      interfaces/sso/me_mfa.go) against docs/feature-matrix.md and
+      docs/error-codes.md. Propose exactly 3 evidence-backed improvement
+      points. For each: name, problem, evidence (file/symbol), proposed
+      behavior, acceptance check. Use markdown headings (## ...) for
+      each decision so it can be indexed in the decision log.
+    output: docs/proposals/requirements.md
+    mode: serial
+
+  # ── 2. 架构设计 ──
+  - name: design
+    from_outputs: requirements
+    aggregate: true
+    mode: serial
+    tasks:
+      - prompt: |
+          You are the architect. Read {input_content} and produce a
+          design doc: API surface, storage model, failure modes, and
+          what could break the design. Markdown headings (## ...) for
+          each decision.
+        output: docs/proposals/design.md
+
+  # ── 3. 交叉对抗验证：编排者现场挑选审查角色，并发执行、证据折叠 ──
+  - name: adversarial_review
+    from_outputs: design
+    meta: true
+    role_dir: ai-dev/prompts
+    output_dir: docs/proposals
+    max_iterations: 2
+    mode: serial
+
+  # ── 4. 裁决门：gatekeeper 读全部产出，VERDICT: PASS/FAIL ──
+  - name: gate
+    from_outputs: adversarial_review
+    aggregate: true
+    gate: true
+    mode: serial
+    tasks:
+      - prompt: |
+          You are the gatekeeper. Read {input_content} (requirements,
+          design, review deliverables). Cross-check the review findings
+          against the design: are they resolved or dismissed with
+          reasons? Output on the last line:
+          VERDICT: PASS
+          or
+          VERDICT: FAIL - <blocking issues>
+          FAIL blocks the implementation stage.
+        output: docs/proposals/gate.md
+
+  # ── 5. 真实实现：agent 直接修改仓库代码 + 工程门禁 ──
+  - name: implement
+    from_outputs: gate
+    aggregate: true
+    mode: serial
+    validate: build            # go build ./... && go vet ./...（改动后仓库必须可编译）
+    tasks:
+      - prompt: |
+          You are the code implementer. Read {input_content} (approved
+          design and gate ruling). Implement the accepted improvements
+          directly in this repository: create or modify the Go files,
+          add unit tests beside the code, and run
+          'go build ./... && go test ./...' until they pass.
+          Do NOT commit. Finally write a change report with markdown
+          headings (## ...): what changed per improvement, files and
+          symbols touched, test coverage added, and any deviations
+          from the design with reasons.
+        output: docs/proposals/impl.md
+
+  # ── 6. 验收门：QA 核对实现是否覆盖验收标准 ──
+  - name: acceptance
+    from_outputs: implement
+    aggregate: true
+    gate: true
+    mode: serial
+    tasks:
+      - prompt: |
+          You are the QA lead. Read {input_content} (design,
+          implementation change report). Verify each improvement's
+          acceptance check is actually covered by the changes and
+          tests. Output on the last line:
+          VERDICT: PASS
+          or
+          VERDICT: FAIL - <missing coverage>
+        output: docs/proposals/acceptance.md

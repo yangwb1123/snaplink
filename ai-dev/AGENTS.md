@@ -200,6 +200,21 @@ python ai-dev/quality.py --strict ai-dev/ # 严格模式（含文件行数预算
 - `pi-batch.yaml` 的 `validators.pyquality` 已注册，可在流水线阶段当
   工程门禁使用；重构 ai-dev 自身时用它对标验收（当前全树严格模式达标）
 
+### 2.11 特性与流程环节映射（整套流程 = 全部特性）
+
+| 流程环节 | 使用的特性 |
+|---|---|
+| 发现问题 | 滚动分析脚本（会话延续/决策日志/归档/节流）或 meta 编排 |
+| 需求分析 | `from_prompt` 一句话起点 |
+| 阶段串联 | `from_outputs` + `aggregate`（上游全部产出合并为一份证据） |
+| 交叉对抗 | meta 动态角色：命名/ad-hoc、并发独立会话、证据折叠 |
+| 阶段目标确认 | `gate` 裁决门：VERDICT PASS/FAIL，fail closed 阻断 |
+| 真实实现 | agent 直接改仓库代码（`full-sdlc-implement.yaml`），`validate: build` 工程门禁 |
+| 验收 | 第二个 gate（QA 核对验收标准覆盖） |
+| 决策记录 | `decision_log`（每阶段思考点+理由+证据，追加式） |
+| 完成即处理 | `git_commit`（每阶段）+ `archive_dir`（全成功后归档） |
+| 韧性 | 失败签名拒绝落盘、`--reuse` 断点续跑、`--retries`、7×24 轮循环 |
+
 ## 3. 命令速查
 
 ```bash
@@ -210,6 +225,11 @@ python ai-dev/pi-batch.py ai-dev/examples/meta-review-pipeline.yaml
 #          → git 提交 → 归档 → 决策日志
 python ai-dev/pi-batch.py ai-dev/examples/quickstart-full-sdlc.yaml \
   --log-file logs/full-sdlc.log
+
+# 全流程真实实现版：同一闭环，但 implement 阶段 agent 直接修改仓库代码
+# （go build/vet 门禁 + QA 验收门把关），建议先 --dry-run 预览再跑
+python ai-dev/pi-batch.py ai-dev/examples/full-sdlc-implement.yaml \
+  --log-file logs/full-impl.log
 
 # MFA 子系统分析（一句话起点 + 动态角色审查）
 python ai-dev/pi-batch.py ai-dev/examples/quickstart-snaplink-analysis.yaml
