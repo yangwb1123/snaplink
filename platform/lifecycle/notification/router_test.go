@@ -165,6 +165,14 @@ func TestRouterPresentsPasswordChangeAndConsentRevoke(t *testing.T) {
 	}{
 		{event: audit.Event{Type: audit.EventPasswordChanged}, title: "Password changed"},
 		{event: audit.Event{Type: audit.EventConsentRevoked, ClientID: "app-1"}, title: "Application access revoked"},
+		{event: audit.Event{Type: audit.EventAdminPasswordResetTokensRevoked}, title: "Password reset links revoked"},
+		{event: audit.Event{Type: audit.EventAdminEmailChangeTokensRevoked}, title: "Email change requests revoked"},
+		{event: audit.Event{Type: audit.EventAdminAccountUnlocked}, title: "Account unlocked by administrator"},
+		{event: audit.Event{Type: audit.EventAdminTenantMemberAdded}, title: "Organization access changed"},
+		{event: audit.Event{Type: audit.EventAdminUserLifecycleChanged, Metadata: map[string]string{"to_state": "suspended"}}, title: "Account status changed"},
+		{event: audit.Event{Type: audit.EventAdminUserLifecycleChanged, Metadata: map[string]string{"to_state": "active"}}, title: "Account access restored"},
+		{event: audit.Event{Type: audit.EventAdminTempTokenIssued}, title: "Temporary access token issued"},
+		{event: audit.Event{Type: audit.EventAdminBreakGlassImpersonationStarted}, title: "Emergency access used"},
 	}
 	for _, test := range tests {
 		title, _, _ := presentation(DefaultMappings()[test.event.Type], &test.event)
