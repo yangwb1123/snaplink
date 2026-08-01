@@ -237,6 +237,14 @@ python ai-dev/pi-batch.py ai-dev/examples/full-sdlc-implement.yaml \
 bash ai-dev/scripts/full-flow.sh 3 300            # 3 轮分析 + 交互选方向
 bash ai-dev/scripts/full-flow.sh 3 300 "设备信任"  # 3 轮分析 + 直接实现该方向
 
+# 全自动：按项目架构模块逐个分析 → 自动提取每个方向 → 每个方向跑完整实现
+#   full-auto.sh [--modules m1,m2] [--max-directions N] [--dry-run]
+# 默认扫描 domains/interfaces/infrastructure/platform/protocols/shared 全部
+# 模块；gate FAIL 等失败记录到 SUMMARY 并继续下一项，无人值守
+bash ai-dev/scripts/full-auto.sh --dry-run                     # 先看计划
+bash ai-dev/scripts/full-auto.sh --max-directions 3            # 全模块自动跑
+bash ai-dev/scripts/full-auto.sh --modules "domains/mfa"       # 限定模块
+
 # MFA 子系统分析（一句话起点 + 动态角色审查）
 python ai-dev/pi-batch.py ai-dev/examples/quickstart-snaplink-analysis.yaml
 
