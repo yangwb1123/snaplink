@@ -481,7 +481,15 @@ paths:
             when a write would leave the home region under enforced writes) /
             risk-denied (`risk_denied`) / conditional-access denied
             (`conditional_access_denied`, only when the CAP engine is wired
-            with live enforcement and a matched policy's verdict is deny).
+            with live enforcement and a matched policy's verdict is deny) /
+            authentication Hook refusal (`hook_rejected`) / required
+            profile data missing (`profile_incomplete`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: A fail-closed authentication Hook timed out (`hook_timeout`).
           content:
             application/json:
               schema:
@@ -694,8 +702,10 @@ paths:
       description: |
         Consumes the single-use reset token (before setting the password, so a
         race/failure can't replay it), sets the new password, and best-effort
-        revokes the user's existing sessions. Oracle-safe: unknown / expired /
-        consumed token, user gone, and set-password errors ALL collapse to one
+        revokes the user's existing sessions, refresh tokens across every
+        client, and trusted-device grants minted under the old credential.
+        Oracle-safe: unknown / expired / consumed token, user gone, and
+        set-password errors ALL collapse to one
         `reset_invalid` (400, never 500). When a password policy validator
         and/or history store is wired, a non-compliant or recently-reused new
         password instead returns `password_policy_violation` (the token is
@@ -1022,7 +1032,14 @@ paths:
           description: |
             Client allowed but tenant binding rejected the request
             (the resolved tenant ≠ `Client.TenantID`). Wire code:
-            `tenant_mismatch`.
+            `tenant_mismatch`; a fail-closed pre-token Hook may instead return
+            `hook_rejected` or another explicitly configured 403 code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: A fail-closed pre-token Hook timed out (`hook_timeout`).
           content:
             application/json:
               schema:
@@ -1850,6 +1867,170 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /me/notifications:
+    get:
+      tags: [self-service]
+      summary: List the authenticated user's notifications.
+      description: |
+        Returns a newest-first, subject-isolated inbox page and the caller's
+        total unread count. Mounted only when a NotificationStore is wired.
+        `Cache-Control: no-store`.
+      operationId: listMyNotifications
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: before_id
+          in: query
+          description: Opaque notification ID returned on the preceding page.
+          schema: { type: string }
+        - name: unread_only
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Notification page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: Notification storage is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /me/notifications/{id}/read:
+    post:
+      tags: [self-service]
+      summary: Mark one owned notification as read.
+      description: |
+        Idempotently marks a notification belonging to the authenticated
+        subject. Unknown and cross-subject IDs both return `not_found`.
+        `Cache-Control: no-store`.
+      operationId: markMyNotificationRead
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Notification is read.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, id]
+                properties:
+                  status: { type: string, enum: [read] }
+                  id: { type: string }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: Notification storage is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /me/notifications/preferences:
+    get:
+      tags: [self-service]
+      summary: Get notification delivery preferences.
+      description: |
+        Returns all supported type/channel pairs. Pairs without an explicit
+        stored value default to enabled. `Cache-Control: no-store`.
+      operationId: getMyNotificationPreferences
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Effective notification preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPreferences"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: Notification preference storage is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    put:
+      tags: [self-service]
+      summary: Replace notification delivery preferences.
+      description: |
+        Replaces the caller's explicit preferences. Type/channel pairs must be
+        supported and unique; subject_id from the request is ignored and bound
+        to the authenticated subject. `Cache-Control: no-store`.
+      operationId: replaceMyNotificationPreferences
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationPreferences"
+      responses:
+        "200":
+          description: Effective notification preferences after replacement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPreferences"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: Notification preference storage is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /me/notifications/stream:
+    get:
+      tags: [self-service]
+      summary: Stream the authenticated user's notifications.
+      description: |
+        Bearer-authenticated Server-Sent Events. Live and replayed events are
+        forcibly filtered to the authenticated subject; query parameters
+        cannot widen that filter. Each `notification` event's data is a
+        NotificationEvent JSON object.
+      operationId: streamMyNotifications
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Subject-filtered notification event stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Tenant residency policy denied access.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "503":
+          description: Notification stream is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
   /me/account/erase:
     post:
       tags: [self-service]
@@ -1885,6 +2066,7 @@ paths:
                   dry_run: { type: boolean }
                   refresh_tokens_deleted: { type: integer }
                   sessions_destroyed: { type: integer }
+                  notifications_deleted: { type: boolean }
                   user_deleted: { type: boolean }
                   skipped: { type: array, items: { type: string } }
         "400":
@@ -7448,6 +7630,34 @@ paths:
                 $ref: "#/components/schemas/CreateClientResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/v1/admin/clients/expiring:
+    get:
+      tags: [admin]
+      summary: List clients whose secret is expired or nearing expiry.
+      operationId: adminClientListExpiring
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: within_seconds
+          in: query
+          required: false
+          schema: { type: integer, format: int64, minimum: 1 }
+          description: Look-ahead window. Omit or use 0 for the 30-day default; maximum 100 years.
+      responses:
+        "200":
+          description: Clients ordered by secret expiry, then ID. Legacy/public clients with no expiry are omitted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListExpiringClientsResponse"
+        "400":
+          description: Invalid look-ahead window.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/v1/admin/clients/{id}:
     parameters:
       - name: id
@@ -7522,10 +7732,18 @@ paths:
         Returns the new secret ONCE; the caller MUST capture it
         immediately. Subsequent Get / List responses will not
         re-emit it. Audit event `admin_client_rotate_secret`
-        records the rotation.
+        records the rotation. The old secret remains valid during
+        `overlap_seconds`; authentication fails after the returned
+        `client_secret_expires_at` deadline.
       operationId: adminClientRotateSecret
       security:
         - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotateSecretRequest"
       responses:
         "200":
           description: New secret.
@@ -7533,6 +7751,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RotateSecretResponse"
+        "400":
+          description: Invalid overlap/lifetime policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/v1/admin/clients/{id}/approve:
@@ -8252,8 +8476,11 @@ paths:
         Sets the user's password on their behalf — the helpdesk "reset this
         user's password" flow. admin:write; emits admin_password_reset (never
         the password). Writes the same credential the self-service
-        /me/password change does, so it takes effect on the user's next login.
-        Mounted only when a PasswordCredentialStore is wired.
+        /me/password change does. After the password commits, all existing
+        sessions, refresh tokens across every client, and trusted-device grants
+        are revoked best-effort so credentials minted under the old password
+        cannot remain active. Mounted only when a PasswordCredentialStore is
+        wired.
       operationId: adminUserResetPassword
       security:
         - bearerAuth: []
@@ -12608,6 +12835,10 @@ components:
         id: { type: string }
         name: { type: string }
         active: { type: boolean }
+        client_secret_expires_at:
+          type: integer
+          format: int64
+          description: Unix seconds; 0 means never expires (legacy/public client).
         token_strategy:
           type: string
           enum: [jwt, session]
@@ -13324,6 +13555,13 @@ components:
           format: int32
           description: Count of clients matching `filter` (approximate under concurrent mutation — see the List description).
 
+    ListExpiringClientsResponse:
+      type: object
+      properties:
+        clients:
+          type: array
+          items: { $ref: "#/components/schemas/AdminClient" }
+
     GetAdminClientResponse:
       type: object
       properties:
@@ -13339,12 +13577,28 @@ components:
       properties:
         client: { $ref: "#/components/schemas/AdminClient" }
 
+    RotateSecretRequest:
+      type: object
+      properties:
+        overlap_seconds:
+          type: integer
+          format: int64
+          description: 0 selects 24h; explicit values must be at least 3600.
+        lifetime_seconds:
+          type: integer
+          format: int64
+          description: 0 selects 90d; must be greater than overlap_seconds.
+
     RotateSecretResponse:
       type: object
       properties:
         secret:
           type: string
           description: New client_secret — display once.
+        client_secret_expires_at:
+          type: integer
+          format: int64
+          description: Unix expiry of the newly-issued secret.
 
     ApproveClientResponse:
       type: object
@@ -13638,8 +13892,8 @@ components:
           type: integer
           description: |
             Unix seconds; `0` means "never expires" per RFC 7591
-            §3.2.1. Operators rotating secrets manage expiry
-            externally.
+            §3.2.1 (public clients). Newly registered confidential
+            clients receive the server's 90-day default lifetime.
         registration_access_token:
           type: string
           description: |
@@ -14109,6 +14363,53 @@ components:
             or status-code text only — never upstream response body).
             Omitted when status is healthy.
 
+    NotificationEvent:
+      type: object
+      required: [id, type, title, body, severity, channel, created_at]
+      properties:
+        id: { type: string }
+        subject_id: { type: string, description: Authenticated notification owner. }
+        tenant_id: { type: string }
+        type:
+          type: string
+          enum: [password_expiring, new_device_login, mfa_removed, consent_granted, session_expiring, password_leaked, account_locked, security_event]
+        title: { type: string }
+        body: { type: string }
+        severity: { type: string, enum: [info, warning, critical] }
+        channel: { type: string, enum: [in_app, email] }
+        created_at: { type: string, format: date-time }
+        read_at: { type: string, format: date-time }
+
+    NotificationPreference:
+      type: object
+      required: [type, channel, enabled]
+      properties:
+        subject_id: { type: string, readOnly: true }
+        type:
+          type: string
+          enum: [password_expiring, new_device_login, mfa_removed, consent_granted, session_expiring, password_leaked, account_locked, security_event]
+        channel: { type: string, enum: [in_app, email] }
+        enabled: { type: boolean }
+
+    NotificationPreferences:
+      type: object
+      required: [preferences]
+      properties:
+        preferences:
+          type: array
+          maxItems: 32
+          items: { $ref: "#/components/schemas/NotificationPreference" }
+
+    NotificationList:
+      type: object
+      required: [notifications, unread_count, has_more]
+      properties:
+        notifications:
+          type: array
+          items: { $ref: "#/components/schemas/NotificationEvent" }
+        unread_count: { type: integer, minimum: 0 }
+        has_more: { type: boolean }
+
     ErasureReport:
       type: object
       properties:
@@ -14121,6 +14422,9 @@ components:
           description: Tokens revoked (or, under dry_run, the projected count when previewable).
         sessions_destroyed:
           type: integer
+        notifications_deleted:
+          type: boolean
+          description: Whether in-app notifications were deleted; preferences are erased in the same step when wired.
         user_deleted:
           type: boolean
         skipped:

@@ -107,6 +107,9 @@ exact emission site.
 | `unmet_authentication_requirements`   | 400  | The RP supplied `acr_values` but the authenticator's `AchievedACR` is absent or not in that set (OIDC Core §3.1.2.6 / §5.5.1.1) | Route user through a stronger authentication method or re-prompt |
 | `email_not_verified`                  | 403  | Login succeeded but the account's email has not completed self-service verification, and the deployment requires it before minting a session | Complete the email verification flow, then retry login |
 | `password_expired`                    | 403  | Login succeeded (password matched) but `PasswordPolicyConfig.MaxAgeDays` is set and the credential has aged past that window. Not a credential oracle — the password already verified; this is a policy-state signal | Route the user through a forced change-password flow, then retry login |
+| `hook_rejected`                       | 403  | A fail-closed authentication-pipeline Hook rejected the request or returned an unclassified internal error | Do not retry unchanged; contact the operator |
+| `hook_timeout`                        | 503  | A fail-closed authentication-pipeline Hook exceeded its independent timeout | Retry later; operator checks Hook health |
+| `profile_incomplete`                  | 403  | The built-in profile-completion Hook found a required authenticated-user attribute empty | Complete the required profile fields, then retry |
 
 ### Code delivery (`/auth/send-code`)
 
@@ -233,6 +236,16 @@ and WebAuthn-as-second-factor (step-up MFA) are unchanged either way.
 | `confirmation_required` | 400  | `POST /me/account/erase` was called for a real (non dry-run) deletion without `confirm` matching the caller's own subject | Re-submit with `confirm` set to the subject |
 | `email_change_invalid`  | 400  | `POST /me/email/verify` got an unknown / expired / already-consumed token, or one belonging to a different user — all collapsed | Restart from `POST /me/email/change` |
 | `invitation_invalid`    | 400  | `POST /me/invitations/accept` got an unknown / expired / already-consumed org-invitation token — all collapsed (cause in logs) | Request a fresh invitation from an org admin |
+
+### User notifications (`/me/notifications*`)
+
+| Code | HTTP | Emitted when | Client should |
+|---|---|---|---|
+| `notification_store_unavailable` | 503 | The notification inbox, preference store, or SSE broker is not wired or returned an operational error | Keep the rest of the account portal available; retry the notification operation later |
+
+Marking an unknown notification, including one owned by a different subject,
+returns the existing `not_found` code. This prevents the endpoint from becoming
+a cross-account notification-ID oracle.
 
 ### Authorization (`/auth/login`, `/par`)
 

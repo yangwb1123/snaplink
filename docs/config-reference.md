@@ -228,8 +228,42 @@ is ASYNC fire-and-forget (a background goroutine bounded by `smtp.timeout`) so
 | `smtp.from` | Envelope + `From:` header address |
 | `smtp.starttls` | Documents intent; `net/smtp.SendMail` negotiates STARTTLS automatically whenever the server advertises it and falls back to plaintext otherwise |
 | `smtp.timeout` | Per-send bound for the background dispatch goroutine; 0 = 10s default |
-| `smtp.templates_dir` | Filesystem overlay for the five go:embed default templates (`password_reset`/`email_verification`/`email_change`/`invitation`/`otp`); empty = embedded defaults only |
+| `smtp.templates_dir` | Filesystem overlay for the six go:embed default templates (`password_reset`/`email_verification`/`email_change`/`invitation`/`otp`/`notification`); empty = embedded defaults only |
 | `smtp.link_base_url` | Prefixed to reset/verify/invite links — required because the sender only ever sees the token/target its `spi.*Sender` method receives, never `server.issuer` |
+
+## User Notifications
+
+The notification subsystem is opt-in. When enabled, security-relevant audit
+events are routed asynchronously to the in-app inbox and, when configured, to
+email. Delivery failure never changes the result of the originating security
+operation. See [notifications.md](notifications.md) for event mappings and API
+semantics.
+
+| Key | Effect |
+|---|---|
+| `notifications.enabled` | Enables the notification stores, audit-event router, self-service inbox/preferences API, and subject-filtered SSE feed. Default `false` |
+| `notifications.backend` | Inbox and preference persistence: `memory` (default) or `sqlite` |
+| `notifications.sqlite.dsn` | Required when `backend: sqlite`; both notification tables share this database |
+| `notifications.email_enabled` | Also deliver enabled notification types through the built-in SMTP sender. Requires `smtp.enabled` and a resolvable user email; otherwise only in-app delivery is wired |
+| `notifications.cooldown` | Per-`{subject,type}` duplicate suppression window. Default `5m`; `0` disables suppression |
+| `notifications.queue_size` | Bounded asynchronous audit-event queue capacity. Default `256`; must be positive |
+| `notifications.workers` | Delivery worker count. Default `2`; must be positive |
+| `notifications.session_expiry_warning` | Notify once an active server-side session enters this remaining-lifetime window. Default `30m`; must be positive |
+| `notifications.session_scan_interval` | How often the session index is scanned for expiry warnings. Default `1m`; must be positive |
+
+```yaml
+notifications:
+  enabled: true
+  backend: sqlite
+  sqlite:
+    dsn: file:/var/lib/snaplink/notifications.db
+  email_enabled: true
+  cooldown: 5m
+  queue_size: 256
+  workers: 2
+  session_expiry_warning: 30m
+  session_scan_interval: 1m
+```
 
 ## SMS
 
@@ -329,6 +363,18 @@ does not do so today.
 | `mfa.provider.push.webhook.signing_secret` | Same HMAC-SHA256 `X-Signature` signing on the MFA push webhook transport, re-signed with a fresh timestamp per retry; empty = off. `ciba.webhook.signing_secret` shares the same `MFAPushWebhookConfig` struct, so it behaves identically for CIBA notifications |
 | `config_audit.enabled` / `.backend` / `.sqlite.dsn` | Runtime-config audit (`platform/configaudit`): when enabled, cmd builds the `configaudit.Store` (`memory`\|`sqlite`), captures the redacted applied-config snapshot once at boot, and wires `sso.WithConfigSnapshots` + `WithConfigAuditStore`, mounting `GET /api/v1/admin/config/{running,applied,diff,history}` + the client/tenant/policy change-capture hook |
 | `config_audit.drift.interval` | `sso.WithConfigDriftDetection` — cross-replica config-digest broadcast (`cluster.KindConfigDigest`) + compare loop; `<= 0` (default) = off, report-only |
+
+## Authentication Pipeline
+
+Optional built-in lifecycle Hooks. An absent block registers no Hooks and keeps
+the original authentication/token path unchanged. See
+[Authentication Pipeline Hooks](auth-pipeline-hooks.md) for the SDK SPI, custom
+Hooks, failure semantics, and WASM/SIEM adapters.
+
+| Key | Effect |
+|---|---|
+| `auth_pipeline.ip_skip_mfa_cidrs` | CIDRs whose successfully authenticated requests may skip MFA challenges. CIDRs are validated at startup; risk and conditional-access deny verdicts still reject. Empty = no Hook. |
+| `auth_pipeline.required_profile_attributes` | Authenticated-user attribute names that must be non-empty before session/token side effects. Empty/duplicate names fail startup. Empty list = no Hook. |
 
 ## Config JSON Schema & Validation
 
@@ -482,6 +528,17 @@ Disabled by default; the read-only governance inventory (`GET /api/v1/admin/cred
 | `rotation.overlap` | Window a demoted secret stays verify-only after each rotation so in-flight pre-rotation deliveries still authenticate; `<=0` = no overlap |
 | `rotation.tick` | Scheduler due-check poll resolution (how late a due rotation can fire, NOT the cadence); `<=0` = `rotation.DefaultSchedulerTick` |
 | `rotation.retry_base` / `rotation.retry_max` | Failure-retry backoff (base doubled per consecutive failure, capped) while the old credential keeps serving; `<=0` = package defaults |
+
+OAuth client secrets use the same scheduler but have an independent cadence and a storage-backed zero-downtime rollout window:
+
+| Key | Effect |
+|---|---|
+| `client_secret_rotation.enabled` | Enables scheduled rotation for active confidential clients. The configured client store must implement due-listing and overlap rotation; memory, SQLite, Postgres, Redis, and the built-in cache/federation decorators do |
+| `client_secret_rotation.interval` | How old a client secret may become and how often that credential class is scheduled; required (`> 0`) when enabled |
+| `client_secret_rotation.overlap` | How long the previous bcrypt hash remains valid after rotation. `0` selects the 24h default; an explicit value must be at least 1h. The new secret works immediately, the old secret works only before the persisted deadline, and a later rotation replaces the prior fallback |
+| `client_secret_rotation.lifetime` | Validity of each newly rotated secret. `0` selects `interval + overlap`; an explicit value must be greater than `interval`, preventing scheduler jitter from expiring a secret before its replacement is installed |
+
+The admin `RotateSecret` RPC uses a 24h default overlap and 90-day lifetime even when scheduled rotation is disabled, allowing operators to deploy the newly returned secret without downtime. It accepts explicit `overlap_seconds` / `lifetime_seconds`, returns `client_secret_expires_at`, and `GET /api/v1/admin/clients/expiring?within_seconds=` provides the 30-day warning view. Direct store calls with no overlap remain an immediate-cutover primitive for compromise response and tests. Previous hashes and overlap deadlines are persisted by every production client-store backend but never appear in client DTOs, snapshots, or discovery metadata; expiry itself is safe admin metadata and is included in the admin/DCR projections.
 
 Enabling `rotation` also wires `sso.WithCredentialCompromise` against the SAME Scheduler, mounting the emergency `POST /api/v1/admin/credentials/{type}/compromise` (`admin:write`) — force-rotates a leaked credential class OFF schedule with NO overlap window; the response is the new version's governance metadata only, never the secret.
 

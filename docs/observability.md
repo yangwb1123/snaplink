@@ -15,6 +15,8 @@ All metrics use bounded cardinality — **no per-path/per-user labels**.
 | `sso_login_attempts_total` / `_duration_seconds` | Counter/Histogram | provider, outcome |
 | `sso_tokens_issued_total` | Counter | strategy |
 | `sso_risk_decisions_total` | Counter | decision |
+| `sso_auth_hook_execution_duration_seconds` | Histogram | phase, hook, outcome (hook names are startup-registered; max 32 per phase) |
+| `sso_notifications_delivery_failed_total` | Counter | channel (`in_app`\|`email`\|`queue`); increments for terminal delivery failures and bounded-queue drops |
 | `sso_mfa_challenges_total` | Counter | mfa_method |
 | `sso_mfa_completions_total` / `_duration_seconds` | Counter/Histogram | mfa_method, outcome |
 | `sso_webauthn_{registrations,assertions}_total` | Counter | outcome |
@@ -73,6 +75,7 @@ Compose `Async → Multi → Retry → leaf`. Hash chain: `PrevHash`+`Hash`; ver
 - Every Event carries W3C `TraceID`/`SpanID`.
 - Optional `FacetQuerier` (type-asserted, `GET /api/v1/audit/facets`); 501 when unsupported.
 - `feature_gates_disabled` — emitted once at boot ONLY when an operator explicitly disabled ≥1 `feature_gates` surface; `Reason`/`disabled_gates` metadata lists the gate names (comma-joined). A build that never touches `feature_gates` emits nothing new here.
+- `auth_hook_executed` / `auth_hook_failed` — one per registered authentication-pipeline Hook invocation; metadata includes phase, bounded hook name, duration, and whether the flow continued. Hook errors, headers, credentials, claims, and token material are excluded.
 
 ### Retention Schedulers
 
