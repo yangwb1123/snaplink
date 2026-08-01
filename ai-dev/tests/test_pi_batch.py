@@ -66,6 +66,7 @@ def test_config_resolved_next_to_script_beats_cwd(tmp_path):
     script_dir.mkdir()
     cwd_dir.mkdir()
     shutil.copy(PI_BATCH, script_dir / "pi-batch.py")
+    shutil.copytree(PI_BATCH.parent / "pbatch", script_dir / "pbatch")
     (script_dir / "pi-batch.yaml").write_text(
         "agent:\n  bin: script-agent\n  default_workers: 7\n", encoding="utf-8"
     )
@@ -84,6 +85,7 @@ def test_config_falls_back_to_cwd(tmp_path):
     script_dir.mkdir()
     cwd_dir.mkdir()
     shutil.copy(PI_BATCH, script_dir / "pi-batch.py")
+    shutil.copytree(PI_BATCH.parent / "pbatch", script_dir / "pbatch")
     (cwd_dir / "pi-batch.yaml").write_text(
         "agent:\n  bin: cwd-agent\n  default_workers: 5\n", encoding="utf-8"
     )
@@ -99,6 +101,7 @@ def test_config_builtin_defaults_without_any_config(tmp_path):
     script_dir.mkdir()
     cwd_dir.mkdir()
     shutil.copy(PI_BATCH, script_dir / "pi-batch.py")
+    shutil.copytree(PI_BATCH.parent / "pbatch", script_dir / "pbatch")
     result = _run_import(cwd_dir, script_dir / "pi-batch.py")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "pi 4"
@@ -114,7 +117,7 @@ def _inputs_dir(tmp_path, names=("task1.md", "task2.md")):
 
 def test_command_failure_fails_stage(tmp_path, fake_agent):
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     inputs = _inputs_dir(tmp_path)
     stage = mod.Stage(name="s0", from_dir=str(inputs), commands=["exit 3"])
     results, ok = mod.execute_stage(stage, {})
@@ -124,7 +127,7 @@ def test_command_failure_fails_stage(tmp_path, fake_agent):
 
 def test_command_success_passes_stage(tmp_path, fake_agent):
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     inputs = _inputs_dir(tmp_path)
     stage = mod.Stage(name="s0", from_dir=str(inputs), commands=["true"])
     results, ok = mod.execute_stage(stage, {})
@@ -134,7 +137,7 @@ def test_command_success_passes_stage(tmp_path, fake_agent):
 
 def test_aggregate_merges_upstream_outputs(tmp_path, fake_agent):
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     inputs = _inputs_dir(tmp_path)
     template = tmp_path / "role.md"
     template.write_text("Role prompt for {input_stem}:\n{input_content}\n", encoding="utf-8")
@@ -161,7 +164,7 @@ def test_aggregate_merges_upstream_outputs(tmp_path, fake_agent):
 
 def test_fanout_default_creates_one_task_per_artifact(tmp_path, fake_agent):
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     inputs = _inputs_dir(tmp_path)
     template = tmp_path / "role.md"
     template.write_text("Role prompt for {input_stem}:\n{input_content}\n", encoding="utf-8")
@@ -184,7 +187,7 @@ def test_agent_provider_error_rejects_task_and_does_not_save(tmp_path, error_age
     """Exit 0 with a rate-limit reply must mark the task failed and never
     write the output file."""
     mod = load_batch()
-    mod.AGENT_BIN = str(error_agent)
+    mod.config.AGENT_BIN = str(error_agent)
     output = tmp_path / "result.md"
     task = mod.Task(prompt="review this", output=str(output))
     result = mod.run_task(task)
@@ -199,7 +202,7 @@ def test_agent_nonzero_exit_does_not_save(tmp_path):
     agent.write_text("#!/bin/sh\necho \"partial\"\nexit 2\n")
     agent.chmod(0o755)
     mod = load_batch()
-    mod.AGENT_BIN = str(agent)
+    mod.config.AGENT_BIN = str(agent)
     output = tmp_path / "result.md"
     task = mod.Task(prompt="review this", output=str(output))
     result = mod.run_task(task)
@@ -214,7 +217,7 @@ def test_agent_legitimate_prose_is_saved(tmp_path):
     agent.write_text("#!/bin/sh\necho \"timeout handling and 401 Unauthorized are findings\"\n")
     agent.chmod(0o755)
     mod = load_batch()
-    mod.AGENT_BIN = str(agent)
+    mod.config.AGENT_BIN = str(agent)
     output = tmp_path / "result.md"
     task = mod.Task(prompt="review this", output=str(output))
     result = mod.run_task(task)
@@ -235,7 +238,7 @@ def test_agent_offline_output_rejects_task_and_does_not_save(tmp_path):
         agent.write_text(f"#!/bin/sh\necho \"{banner}\"\n")
         agent.chmod(0o755)
         mod = load_batch()
-        mod.AGENT_BIN = str(agent)
+        mod.config.AGENT_BIN = str(agent)
         output = tmp_path / "result.md"
         task = mod.Task(prompt="review this", output=str(output))
         result = mod.run_task(task)
@@ -248,7 +251,7 @@ def test_reuse_skips_existing_from_outputs_aggregate(tmp_path, fake_agent):
     """--reuse must skip from_outputs tasks whose output exists and keep the
     reused paths visible to downstream stages."""
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     inputs = _inputs_dir(tmp_path)
     template = tmp_path / "role.md"
     template.write_text("Role prompt for {input_stem}:\n{input_content}\n", encoding="utf-8")
@@ -280,7 +283,7 @@ def test_reuse_skips_existing_from_outputs_aggregate(tmp_path, fake_agent):
 def test_reuse_skips_existing_from_outputs_fanout(tmp_path, fake_agent):
     """Non-aggregate from_outputs tasks with existing outputs are reused too."""
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     inputs = _inputs_dir(tmp_path)
     template = tmp_path / "role.md"
     template.write_text("Role prompt for {input_stem}:\n{input_content}\n", encoding="utf-8")
@@ -327,7 +330,7 @@ def test_serial_retry_recovers_after_transient_failure(tmp_path, monkeypatch):
     counter = tmp_path / "counter"
     agent = _flaky_agent(tmp_path, counter, fail_times=1)
     mod = load_batch()
-    mod.AGENT_BIN = str(agent)
+    mod.config.AGENT_BIN = str(agent)
     monkeypatch.setattr(mod.time, "sleep", lambda _: None)  # no real backoff wait
     output = tmp_path / "o.md"
     results = mod.run_serial([mod.Task(prompt="x", output=str(output))], retries=2, retry_delay=0)
@@ -342,7 +345,7 @@ def test_serial_retry_exhausts(tmp_path, monkeypatch):
     counter = tmp_path / "counter"
     agent = _flaky_agent(tmp_path, counter, fail_times=999)
     mod = load_batch()
-    mod.AGENT_BIN = str(agent)
+    mod.config.AGENT_BIN = str(agent)
     monkeypatch.setattr(mod.time, "sleep", lambda _: None)
     output = tmp_path / "o.md"
     results = mod.run_serial([mod.Task(prompt="x", output=str(output))], retries=2, retry_delay=0)
@@ -354,11 +357,11 @@ def test_serial_retry_exhausts(tmp_path, monkeypatch):
 
 def test_task_result_carries_reason(tmp_path, fake_agent, error_agent):
     mod = load_batch()
-    mod.AGENT_BIN = str(error_agent)
+    mod.config.AGENT_BIN = str(error_agent)
     failed = mod.run_task(mod.Task(prompt="x"))
     assert failed.success is False
     assert "rate" in failed.reason.lower()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     ok = mod.run_task(mod.Task(prompt="x"))
     assert ok.success is True
     assert ok.reason == ""
@@ -444,7 +447,7 @@ def test_shared_session_flags_sequence(tmp_path):
     args_log = tmp_path / "args.log"
     agent = _recording_agent(tmp_path, args_log)
     mod = load_batch()
-    mod.AGENT_BIN = str(agent)
+    mod.config.AGENT_BIN = str(agent)
     out = tmp_path / "o"
     tasks = [mod.Task(prompt="p1", output=str(out / "1.md")), mod.Task(prompt="p2", output=str(out / "2.md"))]
     results = mod.run_serial(tasks, session_mode="shared", session_id="sess-1", session_name="props")
@@ -459,7 +462,7 @@ def test_new_session_has_no_session_flags(tmp_path):
     args_log = tmp_path / "args.log"
     agent = _recording_agent(tmp_path, args_log)
     mod = load_batch()
-    mod.AGENT_BIN = str(agent)
+    mod.config.AGENT_BIN = str(agent)
     tasks = [mod.Task(prompt="p1", output=str(tmp_path / "1.md")), mod.Task(prompt="p2", output=str(tmp_path / "2.md"))]
     mod.run_serial(tasks)
     lines = args_log.read_text(encoding="utf-8").splitlines()
@@ -472,7 +475,7 @@ def test_per_stage_session_ids(tmp_path):
     args_log = tmp_path / "args.log"
     agent = _recording_agent(tmp_path, args_log)
     mod = load_batch()
-    mod.AGENT_BIN = str(agent)
+    mod.config.AGENT_BIN = str(agent)
     d1 = tmp_path / "a"
     d2 = tmp_path / "b"
     d1.mkdir()
@@ -494,7 +497,7 @@ def test_shared_session_parallel_rejected(tmp_path, fake_agent):
     """Shared sessions must not run in parallel: interleaved calls would
     corrupt the conversation order."""
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     inputs = _inputs_dir(tmp_path)
     stage = mod.Stage(name="s0", from_dir=str(inputs), mode="parallel")
     results, ok = mod.execute_stage(stage, {}, session_mode="shared", session_name="x")
@@ -563,7 +566,7 @@ def test_cli_shared_session_parallel_rejected(tmp_path, fake_agent):
 def test_validate_cmd_passes_saves_output(tmp_path, fake_agent):
     """A passing engineering gate saves the output file."""
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     output = tmp_path / "o.md"
     results = mod.run_serial([mod.Task(prompt="x", output=str(output))], validate_cmd="true")
     assert results[0].success is True
@@ -573,7 +576,7 @@ def test_validate_cmd_passes_saves_output(tmp_path, fake_agent):
 def test_validate_cmd_failure_does_not_save(tmp_path, fake_agent):
     """A failing engineering gate rejects the result and leaves no file."""
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     output = tmp_path / "o.md"
     results = mod.run_serial([mod.Task(prompt="x", output=str(output))], validate_cmd="exit 7")
     assert results[0].success is False
@@ -584,7 +587,7 @@ def test_validate_cmd_failure_does_not_save(tmp_path, fake_agent):
 def test_validate_cmd_output_placeholder(tmp_path, fake_agent):
     """{output} is substituted with the output path before validation."""
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     output = tmp_path / "o.md"
     results = mod.run_serial([mod.Task(prompt="x", output=str(output))], validate_cmd='test -f "{output}"')
     assert results[0].success is True
@@ -596,7 +599,7 @@ def test_validate_failure_retry_regenerates(tmp_path, fake_agent):
     validation passes, so the output is saved."""
     counter = tmp_path / "counter"
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     output = tmp_path / "o.md"
     validate = f"echo x >> {counter}; [ $(wc -l < {counter}) -le 1 ] && exit 1 || exit 0"
     results = mod.run_serial([mod.Task(prompt="x", output=str(output))], retries=1, retry_delay=0, validate_cmd=validate)
@@ -627,7 +630,7 @@ def test_task_validate_overrides_cli_in_serial(tmp_path, fake_agent):
     """Per-task validate wins over the CLI gate: a failing CLI gate is
     overridden by a passing task-level gate."""
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     output = tmp_path / "o.md"
     task = mod.Task(prompt="x", output=str(output), validate="true")
     results = mod.run_serial([task], validate_cmd="exit 1")
@@ -639,7 +642,7 @@ def test_task_validate_empty_disables_cli(tmp_path, fake_agent):
     """An empty task-level validate disables the CLI gate for that task (e.g.
     analysis tasks that produce no code)."""
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     output = tmp_path / "o.md"
     task = mod.Task(prompt="x", output=str(output), validate="")
     results = mod.run_serial([task], validate_cmd="exit 1")
@@ -674,7 +677,7 @@ def test_cli_task_validate_override_and_disable(tmp_path, fake_agent):
 def test_stage_validate_cmd_applies(tmp_path, fake_agent):
     """A stage-level validate_cmd gates every task of that stage."""
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     inputs = _inputs_dir(tmp_path)
     stage = mod.Stage(name="s0", from_dir=str(inputs), validate_cmd="exit 1")
     results, ok = mod.execute_stage(stage, {})
@@ -686,7 +689,7 @@ def test_stage_validate_empty_disables_cli(tmp_path, fake_agent):
     """An empty stage-level validate_cmd disables the CLI gate for the stage
     (analysis stages that produce no code)."""
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     inputs = _inputs_dir(tmp_path)
     stage = mod.Stage(name="s0", from_dir=str(inputs), validate_cmd="")
     results, ok = mod.execute_stage(stage, {}, validate_cmd="exit 1")
@@ -697,7 +700,7 @@ def test_stage_validate_empty_disables_cli(tmp_path, fake_agent):
 def test_stage_inherits_cli_validate(tmp_path, fake_agent):
     """A stage without validate_cmd inherits the CLI gate."""
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     inputs = _inputs_dir(tmp_path)
     stage = mod.Stage(name="s0", from_dir=str(inputs))
     results, ok = mod.execute_stage(stage, {}, validate_cmd="true")
@@ -725,7 +728,7 @@ def test_validate_named_reference_gofmt(tmp_path):
     good = tmp_path / "good-agent.sh"
     good.write_text("#!/bin/sh\necho 'package main\n\nfunc main() {\n\tprintln(\"x\")\n}'\n")
     good.chmod(0o755)
-    mod.AGENT_BIN = str(good)
+    mod.config.AGENT_BIN = str(good)
     output = tmp_path / "main.go"
     results = mod.run_serial([mod.Task(prompt="x", output=str(output))], validate_cmd="gofmt")
     assert results[0].success is True
@@ -734,7 +737,7 @@ def test_validate_named_reference_gofmt(tmp_path):
     bad = tmp_path / "bad-agent.sh"
     bad.write_text("#!/bin/sh\necho 'package main\nfunc main(){println(\"x\")}'\n")
     bad.chmod(0o755)
-    mod.AGENT_BIN = str(bad)
+    mod.config.AGENT_BIN = str(bad)
     output2 = tmp_path / "bad.go"
     results2 = mod.run_serial([mod.Task(prompt="x", output=str(output2))], validate_cmd="gofmt")
     assert results2[0].success is False
@@ -744,7 +747,7 @@ def test_validate_named_reference_gofmt(tmp_path):
 def test_validate_unknown_name_treated_as_command(tmp_path, fake_agent):
     """A name that is not in the registry is executed as a raw command."""
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     output = tmp_path / "o.md"
     results = mod.run_serial([mod.Task(prompt="x", output=str(output))], validate_cmd="true")
     assert results[0].success is True
@@ -754,7 +757,7 @@ def test_validate_unknown_name_treated_as_command(tmp_path, fake_agent):
 def test_validate_multiple_and_semantics(tmp_path, fake_agent):
     """Comma-separated validators all must pass (AND)."""
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     output = tmp_path / "o.md"
     ok = mod.run_serial([mod.Task(prompt="x", output=str(output))], validate_cmd="true,true")
     assert ok[0].success is True
@@ -828,7 +831,7 @@ def _meta_stage(mod, tmp_path, plan, max_iterations=3):
     counter.touch()  # agent reads it before the first append
     meta_log = tmp_path / "meta.log"
     agent = _meta_agent(tmp_path, counter, meta_log, plan)
-    mod.AGENT_BIN = str(agent)
+    mod.config.AGENT_BIN = str(agent)
     inputs = tmp_path / "in"
     inputs.mkdir()
     idea = inputs / "idea.md"
@@ -893,7 +896,7 @@ def test_meta_stage_path_traversal_rejected(tmp_path):
 
 def test_meta_stage_requires_output_dir(tmp_path, fake_agent):
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     inputs = _inputs_dir(tmp_path)
     stage = mod.Stage(name="review", from_outputs="req", meta=True, role_dir=str(_role_dir(tmp_path)))
     results, ok = mod.execute_stage(stage, {"req": [str(inputs / "task1.md")]})
@@ -904,7 +907,7 @@ def test_meta_stage_requires_output_dir(tmp_path, fake_agent):
 def test_stage_from_prompt(tmp_path, fake_agent):
     """A one-sentence starting prompt runs as a task and feeds downstream."""
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     output = tmp_path / "kickoff.md"
     stage = mod.Stage(name="kickoff", from_prompt="Analyze the idea: offline-first sync.", output=str(output))
     results, ok = mod.execute_stage(stage, {})
@@ -916,7 +919,7 @@ def test_stage_from_prompt(tmp_path, fake_agent):
 
 def test_stage_from_prompt_requires_output(tmp_path, fake_agent):
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     stage = mod.Stage(name="kickoff", from_prompt="Analyze something.")
     results, ok = mod.execute_stage(stage, {})
     assert ok is False
@@ -927,7 +930,7 @@ def test_stage_from_prompt_reuse(tmp_path, fake_agent):
     """--reuse skips a from_prompt task whose output already exists and keeps
     the path visible to downstream stages."""
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     output = tmp_path / "kickoff.md"
     output.write_text("existing", encoding="utf-8")
     stage = mod.Stage(name="kickoff", from_prompt="Analyze something.", output=str(output))
@@ -956,7 +959,7 @@ def test_pipeline_from_prompt_to_meta(tmp_path):
         "fi\n"
     )
     agent.chmod(0o755)
-    mod.AGENT_BIN = str(agent)
+    mod.config.AGENT_BIN = str(agent)
     roles = tmp_path / "roles"
     roles.mkdir()
     (roles / "security_engineer.md").write_text("# Security\n{input_content}\n", encoding="utf-8")
@@ -977,7 +980,7 @@ def test_pipeline_from_prompt_to_meta(tmp_path):
 def test_stage_from_prompt_validate(tmp_path, fake_agent):
     """A stage-level validate_cmd applies to from_prompt tasks."""
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     output = tmp_path / "kickoff.md"
     stage = mod.Stage(name="kickoff", from_prompt="Analyze something.", output=str(output), validate_cmd="exit 1")
     results, ok = mod.execute_stage(stage, {})
@@ -1010,7 +1013,7 @@ def test_meta_stage_ad_hoc_role(tmp_path):
         "fi\n"
     )
     agent.chmod(0o755)
-    mod.AGENT_BIN = str(agent)
+    mod.config.AGENT_BIN = str(agent)
     inputs = tmp_path / "in"
     inputs.mkdir()
     idea = inputs / "idea.md"
@@ -1050,7 +1053,7 @@ def test_meta_stage_mixed_roles(tmp_path):
         "fi\n"
     )
     agent.chmod(0o755)
-    mod.AGENT_BIN = str(agent)
+    mod.config.AGENT_BIN = str(agent)
     inputs = tmp_path / "in"
     inputs.mkdir()
     idea = inputs / "idea.md"
@@ -1085,7 +1088,7 @@ def test_meta_stage_role_name_sanitized(tmp_path):
         "fi\n"
     )
     agent.chmod(0o755)
-    mod.AGENT_BIN = str(agent)
+    mod.config.AGENT_BIN = str(agent)
     inputs = tmp_path / "in"
     inputs.mkdir()
     idea = inputs / "idea.md"
@@ -1119,7 +1122,7 @@ def test_meta_stage_concurrent_ad_hoc_roles(tmp_path):
         "fi\n"
     )
     agent.chmod(0o755)
-    mod.AGENT_BIN = str(agent)
+    mod.config.AGENT_BIN = str(agent)
     inputs = tmp_path / "in"
     inputs.mkdir()
     idea = inputs / "idea.md"
@@ -1189,7 +1192,7 @@ def test_task_timeout_kills_promptly(tmp_path):
     agent = tmp_path / "slow-agent.sh"
     agent.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
     agent.chmod(0o755)
-    mod.AGENT_BIN = str(agent)
+    mod.config.AGENT_BIN = str(agent)
     task = mod.Task(prompt="p", timeout=2)
     result = mod.run_task(task)
     assert result.success is False
@@ -1209,7 +1212,7 @@ def test_task_timeout_after_streaming_output(tmp_path):
         encoding="utf-8",
     )
     agent.chmod(0o755)
-    mod.AGENT_BIN = str(agent)
+    mod.config.AGENT_BIN = str(agent)
     task = mod.Task(prompt="p", timeout=3)
     result = mod.run_task(task)
     assert result.success is False
@@ -1350,7 +1353,7 @@ def test_archive_outputs_after_full_success_single_batch(tmp_path):
     agent = tmp_path / "ok-agent.sh"
     agent.write_text("#!/bin/sh\necho '## 扩展方向 A'\n", encoding="utf-8")
     agent.chmod(0o755)
-    mod.AGENT_BIN = str(agent)
+    mod.config.AGENT_BIN = str(agent)
     out1 = tmp_path / "runs" / "run-1.md"
     task1 = mod.Task(prompt="p", output=str(out1))
     r1 = mod.run_task(task1)
@@ -1422,7 +1425,7 @@ def test_archive_outputs_pipeline_after_gate_pass(tmp_path):
 
 def test_pipeline_reports_failed_stage(tmp_path, fake_agent):
     mod = load_batch()
-    mod.AGENT_BIN = str(fake_agent)
+    mod.config.AGENT_BIN = str(fake_agent)
     inputs = _inputs_dir(tmp_path)
     pipeline = mod.Pipeline(stages=[
         mod.Stage(name="s0", from_dir=str(inputs), commands=["exit 1"]),
