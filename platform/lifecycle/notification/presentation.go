@@ -42,6 +42,13 @@ func adminAuditEventPresentation(event *audit.Event) (string, string, core.Notif
 		return "Account unlocked by administrator", "An administrator cleared your account lockout. You can try signing in again.", core.NotificationInfo, true
 	case audit.EventAdminRoleAssigned, audit.EventAdminRoleUnassigned:
 		return "Application access changed", "An administrator changed roles assigned to your account.", core.NotificationWarning, true
+	default:
+		return adminAccessEventPresentation(event)
+	}
+}
+
+func adminAccessEventPresentation(event *audit.Event) (string, string, core.NotificationSeverity, bool) {
+	switch event.Type {
 	case audit.EventAdminTenantMemberAdded, audit.EventAdminTenantMemberRemoved:
 		return "Organization access changed", "An administrator changed your organization membership.", core.NotificationWarning, true
 	case audit.EventAdminUserLifecycleChanged:
