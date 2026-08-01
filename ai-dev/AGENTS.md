@@ -156,6 +156,23 @@ decision_log: docs/DECISIONS.md
 决策点摘录（交付物的 markdown 标题 + 首句，完整理由在产物文件里）、证据
 路径。追加式保留全程历史——包括被否定的方案和 gate 裁决。
 
+### 2.9 git 提交与归档（完成即处理，保持目录整洁）
+
+```yaml
+# pipeline 顶层
+git_commit: true            # 每阶段完成后提交产物（单批用 --git-commit）
+archive_dir: docs/archive   # 全部成功完成后，把交付物移入 docs/archive/<name>-<时间戳>/
+```
+
+- 阶段/任务完成后 git commit（`git_commit: true` 或 `--git-commit`），
+  交付物进入版本历史
+- **全部成功（无失败阶段、gate 全部 PASS）后才归档**：中间 md 移入
+  `archive_dir` 时间戳子目录，工作区只剩决策日志与归档；git 历史保留
+  一切，可随时找回
+- 滚动分析（`for i in ...` 单批循环）：每轮成功后自动归档
+  `--archive-dir docs/archive`，输出目录只留最新一轮
+- gate FAIL / 任务失败：不归档（阶段目标未达成，保留现场供排查）
+
 ## 3. 命令速查
 
 ```bash

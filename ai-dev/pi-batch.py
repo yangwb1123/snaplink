@@ -46,6 +46,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -192,6 +193,8 @@ class Pipeline:
     """Multi-stage pipeline definition."""
     stages: list[Stage] = field(default_factory=list)
     decision_log: str = ""  # append structured decisions per finished stage
+    archive_dir: str = ""  # move completed deliverables here after a successful run
+    name: str = "pipeline"  # label for archive subdirectories
     
     def to_dict(self):
         return {"stages": [s.to_dict() for s in self.stages]}
@@ -247,7 +250,8 @@ def load_pipeline(path: str) -> Pipeline:
         )
         stages.append(stage)
     
-    return Pipeline(stages=stages, decision_log=data.get("decision_log", ""))
+    return Pipeline(stages=stages, decision_log=data.get("decision_log", ""),
+                    archive_dir=data.get("archive_dir", ""), name=Path(path).stem)
 
 
 def _task_prompt(task_def: dict, input_content: str, input_stem: str, input_path: str) -> str:
@@ -759,6 +763,29 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
 _GATE_VERDICT_RE = re.compile(r"VERDICT\s*:\s*(PASS|FAIL|REJECT)", re.IGNORECASE)
 
 
+def _archive_outputs(outputs: list, archive_dir: str, label: str) -> list:
+    """Move finished deliverables into a timestamped archive subdirectory
+    once the stage/pipeline completed (all tasks succeeded, gates passed).
+    The worktree stays clean; git history (committed artifacts) retains
+    everything, and the decision log points at the original paths. Returns
+    the moved destinations for logging."""
+    if not archive_dir or not outputs:
+        return []
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = Path(archive_dir) / f"{label}-{stamp}"
+    target.mkdir(parents=True, exist_ok=True)
+    moved = []
+    for o in outputs:
+        p = Path(o)
+        if p.exists():
+            dest = target / p.name
+            shutil.move(str(p), str(dest))
+            moved.append(str(dest))
+    if moved:
+        log.info("ARCHIVED %d deliverable(s) -> %s", len(moved), target)
+    return moved
+
+
 def _gate_verdict(output_paths: list) -> Optional[str]:
     """Read a gate stage's deliverables and return its verdict
     (PASS/FAIL/REJECT) or None when no VERDICT: line is present. The
@@ -822,7 +849,7 @@ def _append_decision_log(path: str, stage_name: str, results: list, stage_ok: bo
 
 
 def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = False, reuse: bool = False, timeout_override: int = 0,
-                 session_mode: str = "new", session_name: str = "", validate_cmd: str = "", decision_log: str = "") -> tuple[list[TaskResult], list[str]]:
+                 session_mode: str = "new", session_name: str = "", validate_cmd: str = "", decision_log: str = "", archive_dir: str = "") -> tuple[list[TaskResult], list[str]]:
     """Execute all stages in a pipeline sequentially.
     
     Args:
@@ -900,6 +927,12 @@ def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = F
             failed_stages.append(stage.name)
             log.error("Pipeline halted by gate: %s", stage.name)
             break
+
+    # The pipeline completed (no failed stages, no gate rejection): move the
+    # committed deliverables into the archive so the worktree stays clean.
+    if not failed_stages and (pipeline.archive_dir or archive_dir):
+        outputs = [r.task.output for r in all_results if r.success and r.task.output]
+        _archive_outputs(outputs, archive_dir or pipeline.archive_dir, pipeline.name)
     
     return all_results, failed_stages
 
@@ -1486,6 +1519,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Append run log to FILE for 24x7 supervision")
     p.add_argument("--decision-log", default="",
                    help="Append structured per-stage decision records to FILE (overrides pipeline 'decision_log')")
+    p.add_argument("--archive-dir", default="",
+                   help="Move completed deliverables into DIR/<label>-<timestamp>/ after a fully successful run (keeps the worktree clean; git history retains everything)")
     p.add_argument("--session-mode", choices=["new", "shared", "per-stage"], default="new",
                    help="Session reuse: new = fresh session per call (default), shared = one session for the whole batch/pipeline, per-stage = one session per pipeline stage")
     p.add_argument("--session-name", default="",
@@ -1607,7 +1642,7 @@ def main() -> None:
                     return
                 all_results, failed_stages = run_pipeline(pipeline, model_override=args.model, reuse=reuse_outputs, timeout_override=timeout_override,
                                                          session_mode=args.session_mode, session_name=session_name, validate_cmd=cli_validate,
-                                                         decision_log=args.decision_log)
+                                                         decision_log=args.decision_log, archive_dir=args.archive_dir)
                 print_summary(all_results)
                 round_failed = bool(failed_stages or any(not r.success for r in all_results))
                 if round_failed:
@@ -1710,6 +1745,11 @@ def main() -> None:
 
             if not round_failed:
                 log.info("All tasks passed in round %d", round_no)
+                # Rolling re-analysis produces many artifacts; archive them
+                # once a round fully succeeded so the worktree stays clean.
+                if args.archive_dir and results:
+                    outputs = [r.task.output for r in results if r.success and r.task.output]
+                    _archive_outputs(outputs, args.archive_dir, "batch")
                 return
             if max_rounds > 0 and round_no >= max_rounds:
                 log.error("Max rounds (%d) reached with tasks still failing; rerun with --reuse to continue later", max_rounds)

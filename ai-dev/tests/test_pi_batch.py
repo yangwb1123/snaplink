@@ -1343,6 +1343,83 @@ def test_gate_missing_verdict_fails_closed(tmp_path):
     assert "Pipeline halted by gate: gate" in result.stderr
 
 
+def test_archive_outputs_after_full_success_single_batch(tmp_path):
+    """Rolling single-batch runs: once a round fully succeeds, its
+    deliverables move into the archive so the worktree stays clean."""
+    mod = load_batch()
+    agent = tmp_path / "ok-agent.sh"
+    agent.write_text("#!/bin/sh\necho '## 扩展方向 A'\n", encoding="utf-8")
+    agent.chmod(0o755)
+    mod.AGENT_BIN = str(agent)
+    out1 = tmp_path / "runs" / "run-1.md"
+    task1 = mod.Task(prompt="p", output=str(out1))
+    r1 = mod.run_task(task1)
+    mod.save_result(task1, r1)
+    assert r1.success and out1.exists()
+    archive = tmp_path / "archive"
+    moved = mod._archive_outputs([str(out1)], str(archive), "batch")
+    assert len(moved) == 1 and not out1.exists()
+    assert Path(moved[0]).exists()
+    assert "batch-" in moved[0]
+
+
+def test_archive_outputs_pipeline_after_gate_pass(tmp_path):
+    """A fully successful pipeline (gate PASS, all stages ok) moves its
+    deliverables into archive_dir; a gate FAIL must not archive anything."""
+    inputs = tmp_path / "in"
+    inputs.mkdir()
+    (inputs / "idea.md").write_text("idea", encoding="utf-8")
+    agent = tmp_path / "agent.sh"
+    agent.write_text("#!/bin/sh\necho '## D\nVERDICT: PASS'\n", encoding="utf-8")
+    agent.chmod(0o755)
+    pipeline = tmp_path / "p.yaml"
+    pipeline.write_text(
+        "git_commit: false\n"
+        f"archive_dir: {tmp_path / 'archive'}\n"
+        "stages:\n"
+        f"  - name: design\n    from_dir: {inputs}\n    mode: serial\n"
+        "  - name: gate\n"
+        f"    from_outputs: design\n    gate: true\n    mode: serial\n"
+        "    tasks:\n"
+        "      - prompt: \"Review and output VERDICT: PASS or FAIL.\"\n"
+        "        output: gate.md\n",
+        encoding="utf-8",
+    )
+    ok = subprocess.run([sys.executable, str(PI_BATCH), str(pipeline), "--agent-bin", str(agent)],
+                        capture_output=True, text=True, timeout=120)
+    assert ok.returncode == 0, ok.stderr
+    assert "ARCHIVED 2 deliverable(s)" in ok.stderr
+    assert not (inputs / "idea.out.md").exists()
+    assert not (tmp_path / "gate.md").exists()
+    assert len(list((tmp_path / "archive").rglob("*.md"))) == 2
+
+    # Gate FAIL: nothing is archived (the stage goal was not achieved)
+    fail_agent = tmp_path / "fail-agent.sh"
+    fail_agent.write_text("#!/bin/sh\necho 'VERDICT: FAIL - blocking issue'\n", encoding="utf-8")
+    fail_agent.chmod(0o755)
+    inputs2 = tmp_path / "in2"
+    inputs2.mkdir()
+    (inputs2 / "idea.md").write_text("idea", encoding="utf-8")
+    pipeline2 = tmp_path / "p2.yaml"
+    pipeline2.write_text(
+        "git_commit: false\n"
+        f"archive_dir: {tmp_path / 'archive2'}\n"
+        "stages:\n"
+        f"  - name: design\n    from_dir: {inputs2}\n    mode: serial\n"
+        "  - name: gate\n"
+        f"    from_outputs: design\n    gate: true\n    mode: serial\n"
+        "    tasks:\n"
+        "      - prompt: \"Review and output VERDICT: PASS or FAIL.\"\n"
+        "        output: gate2.md\n",
+        encoding="utf-8",
+    )
+    fail = subprocess.run([sys.executable, str(PI_BATCH), str(pipeline2), "--agent-bin", str(fail_agent)],
+                          capture_output=True, text=True, timeout=120)
+    assert "GATE REJECTED" in fail.stderr
+    assert "ARCHIVED" not in fail.stderr
+    assert not (tmp_path / "archive2").exists()
+
+
 def test_pipeline_reports_failed_stage(tmp_path, fake_agent):
     mod = load_batch()
     mod.AGENT_BIN = str(fake_agent)
