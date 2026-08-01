@@ -70,7 +70,11 @@ const (
 	PathMe = "/me"
 	// PathMyPassword is the authenticated self-service password change
 	// (POST). Verifies the current password, then sets a new one.
-	PathMyPassword = "/me/password"
+	PathMyPassword                = "/me/password"
+	PathMyNotifications           = "/me/notifications"
+	PathMyNotificationRead        = "/me/notifications/:id/read"
+	PathMyNotificationPreferences = "/me/notifications/preferences"
+	PathMyNotificationStream      = "/me/notifications/stream"
 	// PathMyMFA lists the authenticated user's registered second factors (GET);
 	// PathMyMFAByID unbinds one (DELETE).
 	PathMyMFA     = "/me/mfa"

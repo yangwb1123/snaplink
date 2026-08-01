@@ -227,6 +227,128 @@ type AuthResult struct {
 	CredentialHealth *CredentialHealth `json:"-"`
 }
 
+// LoginPhase identifies one extension point in the authentication lifecycle.
+// The two notification phases are observational and always fail open.
+type LoginPhase string
+
+const (
+	PhasePreAuthenticate   LoginPhase = "pre_authenticate"
+	PhasePostAuthenticate  LoginPhase = "post_authenticate"
+	PhasePreTokenIssuance  LoginPhase = "pre_token_issuance"
+	PhasePostTokenIssuance LoginPhase = "post_token_issuance"
+	PhaseOnLoginFailed     LoginPhase = "on_login_failed"
+)
+
+// HookInput is the immutable-by-contract snapshot supplied to an AuthHook.
+// The registry deep-clones every mutable field before each invocation.
+type HookInput struct {
+	Phase       LoginPhase
+	ClientID    string
+	TenantID    string
+	Provider    string
+	IP          string
+	Headers     map[string]string
+	UserID      string
+	AuthResult  *AuthResult
+	Claims      map[string]string
+	Scopes      []string
+	SessionID   string
+	FailureCode string
+	Token       *Token
+}
+
+// HookOutput is the complete set of supported mutations. Outputs returned in
+// an incompatible phase are rejected rather than silently ignored.
+type HookOutput struct {
+	Attributes map[string]string
+	Claims     map[string]string
+	SkipMFA    bool
+}
+
+// AuthHook extends one authentication phase. Hooks should honor ctx promptly.
+type AuthHook interface {
+	Phase() LoginPhase
+	Execute(ctx context.Context, input *HookInput) (*HookOutput, error)
+}
+
+// AuthHookConfig controls deterministic ordering and failure behavior.
+type AuthHookConfig struct {
+	Name       string
+	Priority   int
+	FailClosed bool
+	Timeout    time.Duration
+}
+
+// AuthHookConfigurator lets a hook provide its default registration config.
+type AuthHookConfigurator interface {
+	AuthHookConfig() AuthHookConfig
+}
+
+// AuthHookExecution is the bounded, non-secret observation emitted per run.
+type AuthHookExecution struct {
+	Phase     LoginPhase
+	Name      string
+	Duration  time.Duration
+	Outcome   string
+	Continued bool
+	Code      string
+	ClientID  string
+	TenantID  string
+	Provider  string
+	UserID    string
+	IP        string
+}
+
+// AuthHookObserver receives one execution result for audit and metrics.
+type AuthHookObserver func(context.Context, AuthHookExecution)
+
+// AuthHookFunc is a compact adapter for code-defined hooks.
+type AuthHookFunc struct {
+	At     LoginPhase
+	Config AuthHookConfig
+	Run    func(context.Context, *HookInput) (*HookOutput, error)
+}
+
+func (h AuthHookFunc) Phase() LoginPhase { return h.At }
+
+func (h AuthHookFunc) Execute(ctx context.Context, in *HookInput) (*HookOutput, error) {
+	return h.Run(ctx, in)
+}
+
+func (h AuthHookFunc) AuthHookConfig() AuthHookConfig { return h.Config }
+
+func NewPreAuthenticateHook(config AuthHookConfig, run func(context.Context, *HookInput) (*HookOutput, error)) AuthHook {
+	return AuthHookFunc{At: PhasePreAuthenticate, Config: config, Run: run}
+}
+
+func NewPostAuthenticateHook(config AuthHookConfig, run func(context.Context, *HookInput) (*HookOutput, error)) AuthHook {
+	return AuthHookFunc{At: PhasePostAuthenticate, Config: config, Run: run}
+}
+
+func NewPreTokenIssuanceHook(config AuthHookConfig, run func(context.Context, *HookInput) (*HookOutput, error)) AuthHook {
+	return AuthHookFunc{At: PhasePreTokenIssuance, Config: config, Run: run}
+}
+
+func NewPostTokenIssuanceHook(config AuthHookConfig, run func(context.Context, *HookInput) (*HookOutput, error)) AuthHook {
+	return AuthHookFunc{At: PhasePostTokenIssuance, Config: config, Run: run}
+}
+
+func NewLoginFailedHook(config AuthHookConfig, run func(context.Context, *HookInput) (*HookOutput, error)) AuthHook {
+	return AuthHookFunc{At: PhaseOnLoginFailed, Config: config, Run: run}
+}
+
+// GeoInfo is one IP's optional geographic lookup result. Zero coordinates
+// mean unknown, not the geographic point (0,0).
+type GeoInfo struct {
+	CountryCode         string  `json:"country_code,omitempty"`
+	Region              string  `json:"region,omitempty"`
+	City                string  `json:"city,omitempty"`
+	TimeZone            string  `json:"time_zone,omitempty"`
+	RecommendedLanguage string  `json:"recommended_language,omitempty"`
+	Latitude            float64 `json:"latitude,omitempty"`
+	Longitude           float64 `json:"longitude,omitempty"`
+}
+
 // CredentialHealth carries a non-blocking login-time signal about the
 // password's strength/breach status. nil = no signal (healthy or check
 // disabled). Never serialized into tokens.

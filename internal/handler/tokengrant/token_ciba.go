@@ -110,7 +110,7 @@ func buildCIBATokenResponse(d CIBAGrantDeps, ctx core.HandlerContext, client *co
 	}, r.Scopes)
 	if err != nil {
 		d.SrvLogger().Error("ciba token issuance failed", "strategy", strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		writeTokenIssueError(ctx, err)
 		return nil, false
 	}
 	resp := map[string]any{

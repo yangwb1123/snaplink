@@ -11,6 +11,8 @@ const (
 	NameTokensIssuedTotal               = "sso_tokens_issued_total"
 	NameRiskDecisionsTotal              = "sso_risk_decisions_total"
 	NameConditionalAccessDecisionsTotal = "sso_conditional_access_decisions_total"
+	NameAuthHookExecutionDuration       = "sso_auth_hook_execution_duration_seconds"
+	NameNotificationDeliveryFailed      = "sso_notifications_delivery_failed_total"
 	NameSessionTrustStepUpTotal         = "sso_zero_trust_session_stepup_total"
 	NameMFAChallengesTotal              = "sso_mfa_challenges_total"
 	NameMFACompletionsTotal             = "sso_mfa_completions_total"

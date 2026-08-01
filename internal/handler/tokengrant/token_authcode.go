@@ -127,7 +127,7 @@ func authCodeIssueAccessToken(d AuthCodeGrantDeps, ctx core.HandlerContext, clie
 	}, scopes)
 	if err != nil {
 		d.LogErrorCtx(ctx, "token issuance failed", "strategy", strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		writeTokenIssueError(ctx, err)
 		return nil, nil, "", time.Time{}, nil, false
 	}
 	d.RecordTokenIssued(ctx, client.ID, strategy, info.UserID)

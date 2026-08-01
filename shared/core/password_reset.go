@@ -131,3 +131,94 @@ type PasswordHistoryStore interface {
 	// a password change.
 	CheckHistory(ctx context.Context, userID, newPassword string) (bool, error)
 }
+
+// NotificationType is the stable category used by preferences and clients.
+type NotificationType string
+
+const (
+	NotificationPasswordExpiring NotificationType = "password_expiring"
+	NotificationNewDeviceLogin   NotificationType = "new_device_login"
+	NotificationMFARemoved       NotificationType = "mfa_removed"
+	NotificationConsentGranted   NotificationType = "consent_granted"
+	NotificationSessionExpiring  NotificationType = "session_expiring"
+	NotificationPasswordLeaked   NotificationType = "password_leaked"
+	NotificationAccountLocked    NotificationType = "account_locked"
+	NotificationSecurityEvent    NotificationType = "security_event"
+)
+
+// NotificationSeverity is a bounded presentation hint, never authorization data.
+type NotificationSeverity string
+
+const (
+	NotificationInfo     NotificationSeverity = "info"
+	NotificationWarning  NotificationSeverity = "warning"
+	NotificationCritical NotificationSeverity = "critical"
+)
+
+// NotificationChannel identifies an independently delivered destination.
+type NotificationChannel string
+
+const (
+	NotificationChannelInApp NotificationChannel = "in_app"
+	NotificationChannelEmail NotificationChannel = "email"
+)
+
+// NotificationEvent is an end-user security or account lifecycle message.
+type NotificationEvent struct {
+	ID        string               `json:"id"`
+	SubjectID string               `json:"subject_id,omitempty"`
+	TenantID  string               `json:"tenant_id,omitempty"`
+	Type      NotificationType     `json:"type"`
+	Title     string               `json:"title"`
+	Body      string               `json:"body"`
+	Severity  NotificationSeverity `json:"severity"`
+	Channel   NotificationChannel  `json:"channel"`
+	CreatedAt time.Time            `json:"created_at"`
+	ReadAt    *time.Time           `json:"read_at,omitempty"`
+}
+
+// NotificationStore persists the in-app inbox. Implementations must isolate
+// subjects and make MarkRead idempotent.
+type NotificationStore interface {
+	Create(ctx context.Context, event *NotificationEvent) error
+	ListBySubject(ctx context.Context, subjectID string, since time.Time, limit int) ([]*NotificationEvent, error)
+	MarkRead(ctx context.Context, id string) error
+	UnreadCount(ctx context.Context, subjectID string) (int, error)
+	DeleteForSubject(ctx context.Context, subjectID string) error
+}
+
+var (
+	ErrNotificationInvalid  = errors.New("sso: invalid notification")
+	ErrNotificationNotFound = errors.New("sso: notification not found")
+)
+
+// NotificationPageStore is the optional cursor extension used by the HTTP API.
+type NotificationPageStore interface {
+	ListPage(ctx context.Context, subjectID, beforeID string, unreadOnly bool, limit int) ([]*NotificationEvent, bool, error)
+}
+
+// NotificationSubjectMarker prevents a caller marking another subject's item.
+type NotificationSubjectMarker interface {
+	MarkReadForSubject(ctx context.Context, subjectID, id string) error
+}
+
+// NotificationSender delivers one channel. Delivery errors never roll back
+// another channel or the audit event that produced the notification.
+type NotificationSender interface {
+	SendNotification(ctx context.Context, event *NotificationEvent) error
+}
+
+// NotificationPreference controls one type/channel pair for one subject.
+type NotificationPreference struct {
+	SubjectID string              `json:"subject_id,omitempty"`
+	Type      NotificationType    `json:"type"`
+	Channel   NotificationChannel `json:"channel"`
+	Enabled   bool                `json:"enabled"`
+}
+
+// NotificationPreferenceStore persists per-subject delivery choices.
+type NotificationPreferenceStore interface {
+	ListBySubject(ctx context.Context, subjectID string) ([]NotificationPreference, error)
+	Put(ctx context.Context, preference NotificationPreference) error
+	DeleteForSubject(ctx context.Context, subjectID string) error
+}

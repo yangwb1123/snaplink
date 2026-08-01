@@ -28,7 +28,7 @@ type RefreshGrantDeps interface {
 	RecordTokenIssued(ctx core.HandlerContext, clientID, strategy, subjectID string)
 	RecordRefreshTokenIssued(ctx core.HandlerContext, clientID, subjectID string, rotation bool)
 	RecordSubjectClientAccess(ctx context.Context, subject, clientID string)
-	RecordRefreshTokenReuse(ctx core.HandlerContext, clientID, familyID string, killed int)
+	RecordRefreshTokenReuse(ctx core.HandlerContext, clientID, subjectID, familyID string, killed int)
 	RecordRefreshRotationVelocity(ctx core.HandlerContext, clientID, familyID string, count, killed int)
 	IncRefreshRotationVelocityExceeded()
 	LogErrorCtx(ctx core.HandlerContext, msg string, kv ...any)
@@ -178,7 +178,7 @@ func refreshIssueAndRotate(d RefreshGrantDeps, ctx core.HandlerContext, client *
 	token, err := ti.Issue(ctx.Request().Context(), subject, grantScopes)
 	if err != nil {
 		d.LogErrorCtx(ctx, "token issuance failed", "strategy", strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		writeTokenIssueError(ctx, err)
 		return
 	}
 	// Rotation: issue a NEW refresh token (the old one was deleted by Consume).
@@ -300,7 +300,7 @@ func refreshHandleConsumeError(d RefreshGrantDeps, ctx core.HandlerContext, clie
 					"client", client.ID)
 			}
 		}
-		d.RecordRefreshTokenReuse(ctx, client.ID, info.FamilyID, killed)
+		d.RecordRefreshTokenReuse(ctx, client.ID, info.UserID, info.FamilyID, killed)
 	}
 	return false
 }

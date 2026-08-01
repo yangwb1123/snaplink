@@ -44,6 +44,8 @@ var controlAreaDefs = []controlAreaDef{
 		eventTypes: []audit.EventType{
 			audit.EventLogin,
 			audit.EventLoginFailure,
+			audit.EventAuthHookExecuted,
+			audit.EventAuthHookFailed,
 			audit.EventLogout,
 			audit.EventClientAccess,
 			audit.EventPermissionQuery,
@@ -53,6 +55,8 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventCrossTenantTokenExchange,
 			audit.EventAgentDelegationTokenIssued,
 			audit.EventAgentSessionRevoked,
+			audit.EventPasswordExpiring,
+			audit.EventPasswordChanged,
 		},
 	},
 	{
@@ -62,6 +66,7 @@ var controlAreaDefs = []controlAreaDef{
 			audit.EventMFARequired,
 			audit.EventMFASuccess,
 			audit.EventMFAFailure,
+			audit.EventMFARemoved,
 			audit.EventTOTPEnrolled,
 			audit.EventTOTPEnrollFailed,
 			audit.EventWebAuthnRegistered,

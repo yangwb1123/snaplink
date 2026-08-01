@@ -48,6 +48,34 @@ type ClientRotationLister interface {
 	ListDueForRotation(ctx context.Context, olderThan time.Time) ([]string, error)
 }
 
+// ClientSecretOverlapRotator is the optional zero-downtime rotation contract.
+// Implementations atomically retain the old hash until overlap elapses.
+type ClientSecretOverlapRotator interface {
+	RotateSecretWithOverlap(ctx context.Context, clientID string, overlap time.Duration) (string, error)
+}
+
+// ClientSecretLifecycleRotator atomically installs overlap and expiry policy.
+type ClientSecretLifecycleRotator interface {
+	RotateSecretWithLifecycle(ctx context.Context, clientID string, overlap, lifetime time.Duration) (string, error)
+}
+
+// DefaultOverlap is used by control-plane rotations when no explicit policy
+// is supplied. It matches the documented lifecycle default.
+const DefaultOverlap = 24 * time.Hour
+
+// DefaultLifetime applies to newly-created or manually-rotated confidential
+// clients when no deployment-specific lifecycle is supplied.
+const DefaultLifetime = 90 * 24 * time.Hour
+
+// ExpiresAt converts a lifecycle duration to its persisted deadline. A
+// non-positive lifetime is the backward-compatible never-expiring sentinel.
+func ExpiresAt(now time.Time, lifetime time.Duration) time.Time {
+	if lifetime <= 0 {
+		return time.Time{}
+	}
+	return now.Add(lifetime)
+}
+
 // ClientSecretRotator adapts a core.ClientStore to
 // corecredential.CredentialRotator so the platform/lifecycle/rotation
 // Scheduler can sweep OAuth client secrets on a cadence — the same
@@ -73,6 +101,8 @@ type ClientRotationLister interface {
 type ClientSecretRotator struct {
 	store    core.ClientStore
 	interval time.Duration
+	overlap  time.Duration
+	lifetime time.Duration
 	logger   spi.Logger
 
 	mu     sync.Mutex
@@ -85,11 +115,22 @@ type ClientSecretRotator struct {
 // old) — one knob, so "rotate every 90 days" means exactly that for every
 // client rather than a sweep frequency independent of the staleness bar.
 // logger defaults to a no-op when nil.
-func NewClientSecretRotator(store core.ClientStore, interval time.Duration, logger spi.Logger) *ClientSecretRotator {
+func NewClientSecretRotator(store core.ClientStore, interval time.Duration, logger spi.Logger, overlap ...time.Duration) *ClientSecretRotator {
 	if logger == nil {
 		logger = spi.NopLogger{}
 	}
-	return &ClientSecretRotator{store: store, interval: interval, logger: logger}
+	var window time.Duration
+	if len(overlap) > 0 {
+		window = overlap[0]
+	}
+	var lifetime time.Duration
+	if len(overlap) > 0 {
+		lifetime = DefaultLifetime
+	}
+	if len(overlap) > 1 {
+		lifetime = overlap[1]
+	}
+	return &ClientSecretRotator{store: store, interval: interval, overlap: window, lifetime: lifetime, logger: logger}
 }
 
 var _ corecredential.CredentialRotator = (*ClientSecretRotator)(nil)
@@ -98,21 +139,8 @@ func (r *ClientSecretRotator) Type() corecredential.CredentialType {
 	return corecredential.CredentialTypeOAuthClientSecret
 }
 
-// OverlapWindow deliberately returns 0 — NO overlap. A client's OLD secret
-// stops validating the INSTANT RotateSecret installs the new hash: every
-// shipped ClientStore backend has ONE active secret column with no
-// fallback-verify-previous path. This is a documented, deliberate scope cut
-// for this initial version: a real overlap window needs a previous-secret-
-// hash + NotAfter fallback added to ValidateSecret in EVERY ClientStore
-// backend (memory, sqlite, postgres, redis, the federation dynamic-
-// registration store, and the ClientStoreCache decorator) — a much larger,
-// security-sensitive cross-cutting change than an initial scheduled-rotation
-// feature warrants, and one that risks under-testing a hot-path verify
-// routine more than it's worth for a v1. Operators that need a grace period
-// should stage their OWN rollout (rotate, then push the new secret to the
-// app before the next scheduled sweep) until a future version adds real
-// overlap support. KNOWN LIMITATION — tracked as follow-up work.
-func (r *ClientSecretRotator) OverlapWindow() time.Duration { return 0 }
+// OverlapWindow reports how long the prior client secret remains valid.
+func (r *ClientSecretRotator) OverlapWindow() time.Duration { return r.overlap }
 
 // Rotate sweeps every due client. See the type doc for why a "rotation" here
 // is a sweep over many clients, not one secret.
@@ -153,7 +181,7 @@ func (r *ClientSecretRotator) rotateDue(ctx context.Context, due []string) (int,
 	rotated := 0
 	var firstErr error
 	for _, id := range due {
-		if _, err := r.store.RotateSecret(ctx, id); err != nil {
+		if _, err := r.rotateOne(ctx, id); err != nil {
 			r.logger.Error("scheduled client secret rotation failed for one client — its previous secret keeps serving",
 				"client_id", id, "error", err)
 			if firstErr == nil {
@@ -164,6 +192,23 @@ func (r *ClientSecretRotator) rotateDue(ctx context.Context, due []string) (int,
 		rotated++
 	}
 	return rotated, firstErr
+}
+
+func (r *ClientSecretRotator) rotateOne(ctx context.Context, id string) (string, error) {
+	if r.overlap <= 0 && r.lifetime <= 0 {
+		return r.store.RotateSecret(ctx, id)
+	}
+	if store, ok := r.store.(ClientSecretLifecycleRotator); ok {
+		return store.RotateSecretWithLifecycle(ctx, id, r.overlap, r.lifetime)
+	}
+	if r.overlap <= 0 {
+		return r.store.RotateSecret(ctx, id)
+	}
+	store, ok := r.store.(ClientSecretOverlapRotator)
+	if !ok {
+		return "", core.ErrUnsupportedOperation
+	}
+	return store.RotateSecretWithOverlap(ctx, id, r.overlap)
 }
 
 // recordSweep advances the sweep counter and returns the synthetic

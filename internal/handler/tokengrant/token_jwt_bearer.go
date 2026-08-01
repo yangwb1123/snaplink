@@ -102,7 +102,7 @@ func issueJWTBearerToken(d JWTBearerGrantDeps, ctx core.HandlerContext, client *
 	}, scopes)
 	if err != nil {
 		d.LogErrorCtx(ctx, "jwt-bearer token issuance failed", "strategy", strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		writeTokenIssueError(ctx, err)
 		return
 	}
 	d.RecordTokenIssued(ctx, client.ID, strategy, subject)

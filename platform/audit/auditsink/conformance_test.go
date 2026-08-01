@@ -108,6 +108,7 @@ var allKnownEventTypes = []auditspi.EventType{
 	auditspi.EventOrgMemberAutoProvisioned,
 	auditspi.EventPartialRevokeFailure,
 	auditspi.EventPasswordCompromised,
+	auditspi.EventPasswordChanged,
 	auditspi.EventPasswordResetCompleted,
 	auditspi.EventPasswordResetFailed,
 	auditspi.EventPasswordResetRequested,

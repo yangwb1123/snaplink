@@ -45,7 +45,7 @@ func HandleClientCredentialsGrant(d ClientCredentialsDeps, ctx core.HandlerConte
 	}, grantCCScopes)
 	if err != nil {
 		d.LogErrorCtx(ctx, "token issuance failed", "strategy", strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		writeTokenIssueError(ctx, err)
 		return
 	}
 	d.RecordTokenIssued(ctx, client.ID, strategy, client.ID)
@@ -56,4 +56,12 @@ func HandleClientCredentialsGrant(d ClientCredentialsDeps, ctx core.HandlerConte
 		core.KeyScope:         token.Scope,
 		core.KeyTokenStrategy: strategy,
 	})
+}
+
+func writeTokenIssueError(ctx core.HandlerContext, err error) {
+	if status, code, ok := core.AuthHookHTTPError(err); ok {
+		ctx.JSON(status, core.ErrorBody(code))
+		return
+	}
+	ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
 }

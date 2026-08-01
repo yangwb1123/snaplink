@@ -369,7 +369,7 @@ func tokExResolveSubjectAndIssue(d TokenExchangeDeps, ctx core.HandlerContext, c
 	token, err := st.ti.Issue(ctx.Request().Context(), tokExSubject(client, st), st.scopes)
 	if err != nil {
 		d.SrvLogger().Error("token exchange issuance failed", "strategy", st.strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		writeTokenIssueError(ctx, err)
 		return true
 	}
 	st.token = token

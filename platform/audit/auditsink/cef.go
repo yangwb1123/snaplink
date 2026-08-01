@@ -55,6 +55,7 @@ var cefEventNames = map[auditspi.EventType]string{
 	auditspi.EventPasswordResetRequested:   "Password Reset Requested",
 	auditspi.EventPasswordResetCompleted:   "Password Reset Completed",
 	auditspi.EventPasswordResetFailed:      "Password Reset Failed",
+	auditspi.EventPasswordChanged:          "Password Changed",
 	auditspi.EventTOTPEnrolled:             "TOTP Enrolled",
 	auditspi.EventTOTPEnrollFailed:         "TOTP Enrollment Failed",
 	auditspi.EventRecoveryCodesRegenerated: "MFA Recovery Codes Regenerated",

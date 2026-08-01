@@ -25,6 +25,19 @@ func registerConditionalAccessMetrics(factory promauto.Factory, m *Metrics) {
 			Help: "Live sessions the zero-trust continuous-verification agent marked for step-up because their decayed trust score fell below the configured floor. No labels (bounded). Zero traffic when WithSessionTrustDecay isn't wired.",
 		},
 	)
+
+	m.AuthHookExecutionDuration = factory.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    NameAuthHookExecutionDuration,
+			Help:    "Authentication lifecycle hook duration by registered hook and outcome.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"phase", "hook", "outcome"},
+	)
+	m.NotificationDeliveryFailed = factory.NewCounterVec(
+		prometheus.CounterOpts{Name: NameNotificationDeliveryFailed, Help: "Failed or dropped user-notification deliveries by bounded channel."},
+		[]string{"channel"},
+	)
 }
 
 // registerRateLimitMetrics registers the per-tenant rate-limit-hits counter.

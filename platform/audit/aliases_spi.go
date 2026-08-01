@@ -88,6 +88,8 @@ const (
 	EventAgentDelegationTokenIssued          = auditspi.EventAgentDelegationTokenIssued
 	EventAgentSessionRevoked                 = auditspi.EventAgentSessionRevoked
 	EventAnomalyDetected                     = auditspi.EventAnomalyDetected
+	EventAuthHookExecuted                    = auditspi.EventAuthHookExecuted
+	EventAuthHookFailed                      = auditspi.EventAuthHookFailed
 	EventBootstrapLockAcquired               = auditspi.EventBootstrapLockAcquired
 	EventBootstrapLockContended              = auditspi.EventBootstrapLockContended
 	EventBootstrapLockLost                   = auditspi.EventBootstrapLockLost
@@ -139,6 +141,7 @@ const (
 	EventLogout                              = auditspi.EventLogout
 	EventLogoutNotified                      = auditspi.EventLogoutNotified
 	EventMFAFailure                          = auditspi.EventMFAFailure
+	EventMFARemoved                          = auditspi.EventMFARemoved
 	EventMFARequired                         = auditspi.EventMFARequired
 	EventMFASkippedTrustedDevice             = auditspi.EventMFASkippedTrustedDevice
 	EventMFASuccess                          = auditspi.EventMFASuccess
@@ -150,6 +153,8 @@ const (
 	EventOrgMemberAutoProvisioned            = auditspi.EventOrgMemberAutoProvisioned
 	EventPartialRevokeFailure                = auditspi.EventPartialRevokeFailure
 	EventPasswordCompromised                 = auditspi.EventPasswordCompromised
+	EventPasswordChanged                     = auditspi.EventPasswordChanged
+	EventPasswordExpiring                    = auditspi.EventPasswordExpiring
 	EventPasswordResetCompleted              = auditspi.EventPasswordResetCompleted
 	EventPasswordResetFailed                 = auditspi.EventPasswordResetFailed
 	EventPasswordResetRequested              = auditspi.EventPasswordResetRequested

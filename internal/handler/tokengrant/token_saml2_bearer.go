@@ -110,7 +110,7 @@ func issueSAML2Token(d SAML2BearerGrantDeps, ctx core.HandlerContext, client *co
 	}, scopes)
 	if err != nil {
 		d.LogErrorCtx(ctx, "saml2-bearer: token issuance failed", "strategy", strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		writeTokenIssueError(ctx, err)
 		return
 	}
 	d.RecordTokenIssued(ctx, client.ID, strategy, subject)

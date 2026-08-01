@@ -146,6 +146,9 @@ const (
 	// check, so a distinct code here leaks nothing about whether a guessed
 	// password was ever valid. See AGENTS.md §3 Anti-Enumeration.
 	ErrPasswordExpired            = "password_expired"
+	ErrAuthHookRejected           = "hook_rejected"
+	ErrAuthHookTimeout            = "hook_timeout"
+	ErrProfileIncomplete          = "profile_incomplete"
 	ErrInvitationInvalid          = "invitation_invalid"
 	ErrTOTPInvalidCode            = "totp_invalid_code"
 	ErrTOTPEnrollmentNotSupported = "totp_enrollment_not_supported"
@@ -300,6 +303,9 @@ const (
 	// existence or another org's roster (anti-enumeration). It is NOT a credential
 	// oracle: a subject already knows its own memberships via /me/organizations.
 	ErrForbidden = "forbidden"
+	// ErrNotificationStoreUnavailable is returned when a configured inbox
+	// backend cannot safely serve or mutate the authenticated subject's data.
+	ErrNotificationStoreUnavailable = "notification_store_unavailable"
 	// ErrLastOrgAdmin is the 409 returned when removing or demoting the FINAL
 	// admin of an org (including self-removal / self-demotion) — doing so would
 	// orphan the org with no one able to administer it.

@@ -91,7 +91,7 @@ func deviceMintAndRespond(d DeviceGrantDeps, ctx core.HandlerContext, client *co
 	}, dc.Scopes)
 	if err != nil {
 		d.SrvLogger().Error("device token issuance failed", "strategy", strategy, "error", err)
-		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrInternal))
+		writeTokenIssueError(ctx, err)
 		return
 	}
 	resp := map[string]any{
