@@ -1,0 +1,13 @@
+Verification complete. The security review is written to `docs/security-review-mfa-subsystem-gaps.md` (docs-only; no `.go` edits, no gates triggered).
+
+## Summary
+
+**All three architect points verified independently against code at `6c8fb33c`** — including the mfa-analysis note on `Registrar.FinishRegistration` (subject-bound at `webauthn.go:376`, never step-up-bound).
+
+**Finding 1 — High (Verified):** `HandleDeleteMyMFAFactor` (mfa.go:40), `HandleTOTPEnrollConfirm` (107), `HandleGenerateRecoveryCodes` (159), `HandleWebAuthnRegisterFinish` (security.go:149) all gate on `MeSubjectOrChallenge` only, discarding the `claims.AMR` that `meClaimsOrChallenge` (server_me.go:40) already resolves — while `HandleTrustMyDevice` (trusted_devices.go:66) enforces RFC 9470 for the weaker action, documented at error-codes.md:218. Exploit: a stolen non-stepped-up bearer deletes all factors (permanent MFA downgrade), regenerates recovery codes (revoking the victim's batch), and binds an attacker factor. Refinement over the architect's proposal: the zero-factor bootstrap exemption applies only to first-factor commit; deletion and recovery-code regeneration stay gated unconditionally.
+
+**Finding 2 — Medium (Verified):** `mfaLockoutKey` (server_mfa.go:301) = `"mfa lockout:"+subjectID`; the password leg is per-(client,user) (`LockoutKey`, account_lockout.go:199); `challenge.ClientID` is available. 5 wrong factors via any one client lock the subject on all clients for 15 min, repeatable — a one-client password compromise becomes whole-account MFA DoS. `test/mfa_test.go:803` pins the bare key; `mfa_locked` is undocumented. Fix preserves wire shape and the namespace-disjointness property.
+
+**Finding 3 — Low (Verified):** `evaluateLoginRisk` (server_login_client.go:181) consults `trustedDeviceAllowsSkip`; `enforceConditionalAccessLogin` (243–245) issues unconditionally; both run in `runPostCredentialGates` (server_login_gates.go:274). Enforced-verdict-wins is security-correct; the fix is docs + a `trusted_device_overridden` audit marker with bounded cardinality.
+
+The document includes the required sections: assets/trust boundaries/attacker model, severity-graded findings with exploit steps and regression tests, an 11-row abuse-case table (replay, cross-tenant, header forgery, resource exhaustion, leakage — with the already-covered items and the by-design device-token case marked as such), 10 verified positive controls, residual risks (per-replica lockout, bearer-equivalent device tokens, bootstrap-exemption window, AMR-across-refresh to pin), and a P0–P3 validation plan. No secrets in examples; all proposed fixes keep wire responses byte-identical.
