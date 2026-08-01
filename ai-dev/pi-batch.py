@@ -82,7 +82,7 @@ _BATCH_CFG = _load_batch_config()
 _AGENT_CFG = _BATCH_CFG.get("agent", {})
 AGENT_BIN = _AGENT_CFG.get("bin", "pi")
 AGENT_DEFAULT_MODEL = _AGENT_CFG.get("default_model", "")
-AGENT_DEFAULT_TIMEOUT = _AGENT_CFG.get("default_timeout", 300)
+AGENT_DEFAULT_TIMEOUT = _AGENT_CFG.get("default_timeout", 900)
 AGENT_DEFAULT_WORKERS = _AGENT_CFG.get("default_workers", 4)
 COMMIT_PREFIX_DEFAULT = _BATCH_CFG.get("commit", {}).get("prefix", "[pi-batch]")
 
@@ -254,7 +254,7 @@ def _task_from_def(task_def: dict, prompt: str, output_path: str, model_override
         output=output_path,
         model=task_def.get("model", ""),
         cwd=task_def.get("cwd", ""),
-        timeout=task_def.get("timeout", 300),
+        timeout=task_def.get("timeout", AGENT_DEFAULT_TIMEOUT),
     )
     if model_override:
         task.model = model_override

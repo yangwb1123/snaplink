@@ -43,10 +43,10 @@ agent 回复**不是正确输出时一律不落盘**：
     `connection refused/reset`、`curl: (N)`、`ECONNREFUSED`…
   - CLI 横幅：行首 `ERROR:` / `fatal:`
 - 防误判：不匹配宽泛词（`error`/`timeout`/`401`），评审正文不会被误杀
-- `--timeout`（默认 300s）超时 → 进程组 SIGKILL，拒绝并零孤儿进程。
-  硬超时按绝对截止时间执行（管道线程不延长窗口）；深度分析任务建议
-  `--timeout 900`，同时 pi 侧 HTTP 空闲超时 `httpIdleTimeoutMs` 默认
-  300s（项目级 `.pi/settings.json` 已调大到 900s）
+- `--timeout`（默认 900s）超时 → 进程组 SIGKILL，拒绝并零孤儿进程。
+  硬超时按绝对截止时间执行（管道线程不延长窗口）；深度分析任务可用
+  默认值即可，pi 侧 HTTP 空闲超时 `httpIdleTimeoutMs` 默认 300s
+  （项目级 `.pi/settings.json` 已调大到 900s，两者对齐）
 - 拒绝 = 无产物文件；任务失败 → 可自动重试/下轮重跑
 
 ### 2.3 工程质量验证

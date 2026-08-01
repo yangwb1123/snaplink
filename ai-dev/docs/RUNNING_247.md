@@ -38,11 +38,12 @@ batch does not hammer the provider into a rate limit.
 
 Transient failures (rate limit, quota, offline, timeout) are retried in
 serial mode with exponential backoff. Two timeout layers matter for long
-analysis tasks: the per-task hard timeout `--timeout` (default 300s, kills
+analysis tasks: the per-task hard timeout `--timeout` (default 900s, kills
 the whole process group at an absolute deadline) and pi's own HTTP idle
 timeout `httpIdleTimeoutMs` (default 300s; this repo raises it to 900s via
-`.pi/settings.json`). Deep analysis routinely exceeds 300s, so run such
-pipelines with `--timeout 900`:
+`.pi/settings.json`). Deep analysis routinely exceeds 300s, so the defaults
+are aligned on 900s; lower `--timeout` per task when a fast turnaround is
+needed:
 
 ```bash
 python ai-dev/pi-batch.py proposals.yaml \
