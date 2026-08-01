@@ -220,38 +220,41 @@ def load_pipeline(path: str) -> Pipeline:
     
     # Global settings (applied to all stages that don't set it explicitly)
     global_git_commit = data.get("git_commit", False)
-    
-    stages = []
-    for s in data["stages"]:
-        stage = Stage(
-            name=s.get("name", ""),
-            from_dir=s.get("from_dir", ""),
-            from_outputs=s.get("from_outputs", ""),
-            suffix=s.get("suffix", ".md"),
-            output_suffix=s.get("output_suffix", ".out.md"),
-            mode=s.get("mode", "serial"),
-            workers=s.get("workers", AGENT_DEFAULT_WORKERS),
-            aggregate=s.get("aggregate", False),
-            validate_cmd=s.get("validate_cmd"),
-            meta=s.get("meta", False),
-            meta_prompt=s.get("meta_prompt", ""),
-            role_dir=s.get("role_dir", ""),
-            output_dir=s.get("output_dir", ""),
-            max_iterations=s.get("max_iterations", 3),
-            gate=s.get("gate", False),
-            from_prompt=s.get("from_prompt", ""),
-            output=s.get("output", ""),
-            tasks=s.get("tasks", []),
-            commands=s.get("commands", []),
-            commands_parallel=s.get("commands_parallel", False),
-            cwd=s.get("cwd", ""),
-            git_commit=s.get("git_commit", global_git_commit),
-            commit_message=s.get("commit_message", ""),
-        )
-        stages.append(stage)
+
+    stages = [_parse_stage_def(s, global_git_commit) for s in data["stages"]]
     
     return Pipeline(stages=stages, decision_log=data.get("decision_log", ""),
                     archive_dir=data.get("archive_dir", ""), name=Path(path).stem)
+
+
+def _parse_stage_def(s: dict, global_git_commit: bool) -> Stage:
+    """Map one YAML stage definition onto a Stage (untrusted keys ignored;
+    unknown keys simply do not exist on the dataclass)."""
+    return Stage(
+        name=s.get("name", ""),
+        from_dir=s.get("from_dir", ""),
+        from_outputs=s.get("from_outputs", ""),
+        suffix=s.get("suffix", ".md"),
+        output_suffix=s.get("output_suffix", ".out.md"),
+        mode=s.get("mode", "serial"),
+        workers=s.get("workers", AGENT_DEFAULT_WORKERS),
+        aggregate=s.get("aggregate", False),
+        validate_cmd=s.get("validate_cmd"),
+        meta=s.get("meta", False),
+        meta_prompt=s.get("meta_prompt", ""),
+        role_dir=s.get("role_dir", ""),
+        output_dir=s.get("output_dir", ""),
+        max_iterations=s.get("max_iterations", 3),
+        gate=s.get("gate", False),
+        from_prompt=s.get("from_prompt", ""),
+        output=s.get("output", ""),
+        tasks=s.get("tasks", []),
+        commands=s.get("commands", []),
+        commands_parallel=s.get("commands_parallel", False),
+        cwd=s.get("cwd", ""),
+        git_commit=s.get("git_commit", global_git_commit),
+        commit_message=s.get("commit_message", ""),
+    )
 
 
 def _task_prompt(task_def: dict, input_content: str, input_stem: str, input_path: str) -> str:
@@ -396,11 +399,10 @@ def _parse_role_plan(stdout: str) -> list:
 def _run_meta_stage(stage: Stage, stage_outputs: dict, model_override: str = "", timeout_override: int = 0,
                     validate_cmd: str = "") -> tuple[list[TaskResult], bool]:
     """Dynamic role orchestration: ask the agent which roles the current
-    deliverables still need, execute each chosen role template against the
-    aggregated inputs, fold the role deliverables back into the evidence, and
-    iterate until the orchestrator reports no more roles or max_iterations is
-    reached. This is the self-optimizing part: the role set is discovered
-    during execution instead of fixed in the pipeline."""
+    deliverables still need, execute each chosen role against the aggregated
+    inputs, fold the role deliverables back into the evidence, and iterate
+    until the orchestrator reports no more roles or max_iterations is
+    reached (self-optimizing: the role set is discovered at run time)."""
     if stage.from_outputs not in stage_outputs:
         log.error("Previous stage '%s' not found", stage.from_outputs)
         return [], False
@@ -420,221 +422,204 @@ def _run_meta_stage(stage: Stage, stage_outputs: dict, model_override: str = "",
     all_results: list[TaskResult] = []
     role_outputs: list[str] = []
     for iteration in range(1, stage.max_iterations + 1):
-        log.info("META iteration %d/%d for stage '%s' (roles available: %s)",
-                 iteration, stage.max_iterations, stage.name, ", ".join(role_names) or "(none)")
-        meta_prompt = (stage.meta_prompt or _DEFAULT_META_PROMPT)
-        meta_prompt = meta_prompt.replace("{roles}", ", ".join(role_names) or "(none - define ad-hoc roles)")
-        meta_prompt = meta_prompt.replace("{input_content}", combined)
-        meta_task = Task(prompt=meta_prompt)
-        if model_override:
-            meta_task.model = model_override
-        if timeout_override:
-            meta_task.timeout = timeout_override
-        meta_result = run_task(meta_task)
-        if not meta_result.success:
-            log.warning("META orchestrator call failed: %s; stopping role expansion", meta_result.reason)
-            break
-        roles = _parse_role_plan(meta_result.stdout)
-        if not roles:
-            log.info("META orchestrator: no more roles needed (iteration %d)", iteration)
-            break
-        log.info("META orchestrator selected %d role(s)", len(roles))
-
-        # Build role tasks: ad-hoc roles ({"role", "task"}) get their task
-        # description plus the current context; named roles load the
-        # role_dir template. Output names are sanitized (orchestrator input
-        # is untrusted).
-        role_tasks = []
-        iteration_ok = True
-        for item in roles:
-            role = item["role"]
-            task_desc = item["task"]
-            if task_desc:
-                prompt = f"{task_desc}\n\nContext (current deliverables):\n{combined}"
-            else:
-                template = _load_role_template(stage.role_dir, role)
-                if template is None:
-                    iteration_ok = False
-                    continue
-                prompt = template.replace("{input_content}", combined).replace("{input_stem}", stage.name)
-            safe_name = re.sub(r"[^A-Za-z0-9_-]", "_", role) or "role"
-            out_path = out_dir / f"{safe_name}.md"
-            task = Task(prompt=prompt, output=str(out_path))
-            if model_override:
-                task.model = model_override
-            if timeout_override:
-                task.timeout = timeout_override
-            role_tasks.append((role, task))
-
-        # Run the chosen roles concurrently, each in its own agent session
-        # (parallel sessions must not be shared: conversation order would
-        # interleave).
-        def _run_role(item):
-            role, task = item
-            result = run_task(task, parallel=True)
-            if result.success:
-                result.success = _save_validated(task, result, validate_cmd)
-                if not result.success:
-                    result.reason = "validation failed"
-            return role, result
-
-        with ThreadPoolExecutor(max_workers=max(1, stage.workers or AGENT_DEFAULT_WORKERS)) as pool:
-            futures = [pool.submit(_run_role, item) for item in role_tasks]
-            for fut in as_completed(futures):
-                role, result = fut.result()
-                all_results.append(result)
-                if not result.success:
-                    iteration_ok = False
-                if result.task.output:
-                    role_outputs.append(result.task.output)
-                    # fold the role deliverable back into the evidence for
-                    # the next orchestrator round (self-optimization loop)
-                    out_path = Path(result.task.output)
-                    if out_path.exists():
-                        combined += f"\n\n--- {role} deliverable ---\n" + out_path.read_text(encoding="utf-8")
-        if not iteration_ok:
-            log.warning("META stage '%s': some role tasks failed in iteration %d", stage.name, iteration)
+        done, ok, combined = _run_meta_iteration(stage, combined, role_names, model_override, timeout_override,
+                                                 validate_cmd, iteration, all_results, role_outputs)
+        if done or not ok:
             break
 
     stage_outputs[stage.name] = role_outputs
     return all_results, all(r.success for r in all_results)
 
 
+def _run_meta_iteration(stage: Stage, combined: str, role_names: list, model_override: str, timeout_override: int,
+                        validate_cmd: str, iteration: int, all_results: list, role_outputs: list) -> tuple[bool, bool, str]:
+    """One orchestrator round: ask which roles are needed, run them
+    concurrently (each in its own session), fold deliverables back into the
+    evidence (returned as the new combined context). Returns (done, ok,
+    combined): done=True stops the loop (orchestrator failure, no roles
+    left, or role failures)."""
+    log.info("META iteration %d/%d for stage '%s' (roles available: %s)",
+             iteration, stage.max_iterations, stage.name, ", ".join(role_names) or "(none)")
+    meta_task = _build_meta_prompt_task(stage, role_names, combined, model_override, timeout_override)
+    meta_result = run_task(meta_task)
+    if not meta_result.success:
+        log.warning("META orchestrator call failed: %s; stopping role expansion", meta_result.reason)
+        return True, False, combined
+    roles = _parse_role_plan(meta_result.stdout)
+    if not roles:
+        log.info("META orchestrator: no more roles needed (iteration %d)", iteration)
+        return True, True, combined
+    log.info("META orchestrator selected %d role(s)", len(roles))
+
+    role_tasks, iteration_ok = _build_role_tasks(stage, roles, combined, model_override, timeout_override)
+
+    def _run_role(item):
+        role, task = item
+        result = run_task(task, parallel=True)
+        if result.success:
+            result.success = _save_validated(task, result, validate_cmd)
+            if not result.success:
+                result.reason = "validation failed"
+        return role, result
+
+    with ThreadPoolExecutor(max_workers=max(1, stage.workers or AGENT_DEFAULT_WORKERS)) as pool:
+        futures = [pool.submit(_run_role, item) for item in role_tasks]
+        for fut in as_completed(futures):
+            role, result = fut.result()
+            all_results.append(result)
+            if not result.success:
+                iteration_ok = False
+            if result.task.output:
+                role_outputs.append(result.task.output)
+                # fold the role deliverable back into the evidence for
+                # the next orchestrator round (self-optimization loop)
+                out_path = Path(result.task.output)
+                if out_path.exists():
+                    combined += f"\n\n--- {role} deliverable ---\n" + out_path.read_text(encoding="utf-8")
+    if not iteration_ok:
+        log.warning("META stage '%s': some role tasks failed in iteration %d", stage.name, iteration)
+        return True, False, combined
+    return False, True, combined
+
+
+def _build_meta_prompt_task(stage: Stage, role_names: list, combined: str, model_override: str, timeout_override: int) -> Task:
+    """Assemble the orchestrator prompt (custom meta_prompt or the default,
+    with {roles}/{input_content} placeholders) as a task."""
+    meta_prompt = (stage.meta_prompt or _DEFAULT_META_PROMPT)
+    meta_prompt = meta_prompt.replace("{roles}", ", ".join(role_names) or "(none - define ad-hoc roles)")
+    meta_prompt = meta_prompt.replace("{input_content}", combined)
+    task = Task(prompt=meta_prompt)
+    if model_override:
+        task.model = model_override
+    if timeout_override:
+        task.timeout = timeout_override
+    return task
+
+
+def _build_role_tasks(stage: Stage, roles: list, combined: str, model_override: str, timeout_override: int) -> tuple[list, bool]:
+    """Turn the orchestrator plan into tasks: ad-hoc roles ({"role",
+    "task"}) get their task description plus the current context; named
+    roles load the role_dir template. Output names are sanitized (the
+    orchestrator output is untrusted). Returns ([(role, Task)], ok); ok is
+    False when a named role had no template."""
+    role_tasks = []
+    ok = True
+    for item in roles:
+        role = item["role"]
+        task_desc = item["task"]
+        if task_desc:
+            prompt = f"{task_desc}\n\nContext (current deliverables):\n{combined}"
+        else:
+            template = _load_role_template(stage.role_dir, role)
+            if template is None:
+                ok = False
+                continue
+            prompt = template.replace("{input_content}", combined).replace("{input_stem}", stage.name)
+        safe_name = re.sub(r"[^A-Za-z0-9_-]", "_", role) or "role"
+        out_path = Path(stage.output_dir) / f"{safe_name}.md"
+        task = Task(prompt=prompt, output=str(out_path))
+        if model_override:
+            task.model = model_override
+        if timeout_override:
+            task.timeout = timeout_override
+        role_tasks.append((role, task))
+    return role_tasks, ok
+
+
+def _stage_from_prompt_tasks(stage: Stage, reuse: bool, model_override: str, timeout_override: int) -> tuple[list[Task], list[str]]:
+    """One-sentence starting point: a single task whose output feeds
+    downstream from_outputs stages (no input file needed)."""
+    if not stage.output:
+        log.error("Stage '%s': from_prompt requires output", stage.name)
+        return [], []
+    if reuse and Path(stage.output).exists():
+        log.info("REUSE: %s (output exists)", stage.output)
+        return [], [stage.output]
+    task = Task(prompt=stage.from_prompt, output=stage.output)
+    if model_override:
+        task.model = model_override
+    if timeout_override:
+        task.timeout = timeout_override
+    log.info("Loaded 1 task from from_prompt for stage '%s'", stage.name)
+    return [task], []
+
+
+def _stage_from_dir_tasks(stage: Stage, reuse: bool, model_override: str, timeout_override: int) -> tuple[list[Task], list[str]]:
+    """Read .md files from a directory; one task per file, output next to
+    the input with the stage's output suffix."""
+    dir_path = Path(stage.from_dir)
+    if not dir_path.is_dir():
+        log.error("Directory not found: %s", stage.from_dir)
+        return [], []
+    tasks: list[Task] = []
+    reused: list[str] = []
+    for fpath in sorted(dir_path.glob(f"*{stage.suffix}")):
+        if fpath.name.endswith(stage.output_suffix):
+            continue
+        out_path = fpath.parent / (fpath.stem + stage.output_suffix)
+        if reuse and out_path.exists():
+            log.info("REUSE: %s (output exists: %s)", fpath.name, out_path.name)
+            reused.append(str(out_path))
+            continue
+        task = Task(prompt=fpath.read_text(encoding="utf-8"), output=str(out_path), cwd=str(fpath.parent))
+        if model_override:
+            task.model = model_override
+        if timeout_override:
+            task.timeout = timeout_override
+        tasks.append(task)
+    log.info("Loaded %d tasks from %s", len(tasks), stage.from_dir)
+    return tasks, reused
+
+
+def _stage_from_outputs_tasks(stage: Stage, stage_outputs: dict, reuse: bool, model_override: str, timeout_override: int) -> tuple[list[Task], list[str]]:
+    """Tasks fed by the previous stage's artifacts: one combined task per
+    template (aggregate) or one task per artifact per template."""
+    if stage.from_outputs not in stage_outputs:
+        log.error("Previous stage '%s' not found", stage.from_outputs)
+        return [], []
+    prev_outputs = stage_outputs[stage.from_outputs]
+    tasks: list[Task] = []
+    reused: list[str] = []
+    if stage.aggregate:
+        # Merge every upstream artifact into one combined prompt per
+        # template so downstream roles see all evidence, instead of
+        # fanning each artifact into independent (and conflicting) tasks.
+        agg_tasks, agg_reused = _aggregate_tasks(stage, prev_outputs, model_override, timeout_override, reuse)
+        return agg_tasks, agg_reused
+    for out_path_str in prev_outputs:
+        out_path = Path(out_path_str)
+        if not out_path.exists():
+            log.warning("Output file not found: %s", out_path)
+            continue
+        input_content = out_path.read_text(encoding="utf-8")
+        input_stem = out_path.stem
+        # Create tasks from templates (prompt string or template file,
+        # both with {input_content}/{input_stem} placeholders)
+        for task_def in stage.tasks:
+            prompt = _task_prompt(task_def, input_content, input_stem, str(out_path))
+            if not prompt:
+                continue
+            output_path = task_def.get("output", "").replace("{input_stem}", input_stem)
+            if reuse and output_path and Path(output_path).exists():
+                log.info("REUSE: %s (output exists)", output_path)
+                reused.append(output_path)
+                continue
+            tasks.append(_task_from_def(task_def, prompt, output_path, model_override, timeout_override))
+    log.info("Loaded %d tasks from %d outputs of stage '%s'",
+             len(tasks), len(prev_outputs), stage.from_outputs)
+    return tasks, reused
+
+
 def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_override: str = "", reuse: bool = False, timeout_override: int = 0,
                   session_mode: str = "new", session_name: str = "", validate_cmd: str = "") -> tuple[list[TaskResult], bool]:
-    """Execute one stage and return (task_results, stage_ok).
-
-    stage_ok is False when any task or configured post-stage command failed,
-    so command hooks act as a failure gate for the pipeline.
-
-    Args:
-        stage: Stage definition
-        stage_outputs: dict mapping stage name -> list of output file paths
-        model_override: override model for all tasks
-        reuse: if True, skip tasks whose output files already exist
-        timeout_override: per-task timeout override (seconds)
-        session_mode: "new" (fresh session per call), "shared" (one session
-            for the whole pipeline), or "per-stage" (one session per stage)
-        session_name: reproducible base name for shared/per-stage sessions
-        validate_cmd: engineering validation run before each output is saved
-    """
-    log.info("")
-    log.info("=" * 60)
-    log.info("STAGE: %s", stage.name)
-    if reuse:
-        log.info("(reusing existing outputs if available)")
-    log.info("=" * 60)
+    """Execute one stage and return (task_results, stage_ok). stage_ok is
+    False when any task or configured post-stage command failed, so command
+    hooks act as a failure gate for the pipeline."""
+    _log_stage_header(stage, reuse)
     
-    tasks: list[Task] = []
-    reused_outputs: list[str] = []
-
-    # Dynamic role orchestration (meta stage) is handled entirely here.
-    if stage.meta:
-        return _run_meta_stage(stage, stage_outputs, model_override, timeout_override, validate_cmd)
-
-    # Stage type 0: from_prompt - a one-sentence starting point whose output
-    # feeds downstream from_outputs stages (no input file needed).
-    if stage.from_prompt:
-        if not stage.output:
-            log.error("Stage '%s': from_prompt requires output", stage.name)
-            return [], False
-        if reuse and Path(stage.output).exists():
-            log.info("REUSE: %s (output exists)", stage.output)
-            reused_outputs.append(stage.output)
-        else:
-            task = Task(prompt=stage.from_prompt, output=stage.output)
-            if model_override:
-                task.model = model_override
-            if timeout_override:
-                task.timeout = timeout_override
-            tasks.append(task)
-        log.info("Loaded 1 task from from_prompt for stage '%s'", stage.name)
-    
-    # Stage type 1: from_dir - read .md files from directory
-    elif stage.from_dir:
-        dir_path = Path(stage.from_dir)
-        if not dir_path.is_dir():
-            log.error("Directory not found: %s", stage.from_dir)
-            return [], False
-        
-        for fpath in sorted(dir_path.glob(f"*{stage.suffix}")):
-            if fpath.name.endswith(stage.output_suffix):
-                continue
-            prompt = fpath.read_text(encoding="utf-8")
-            out_path = fpath.parent / (fpath.stem + stage.output_suffix)
-            
-            # Check if output already exists and reuse flag is set
-            if reuse and out_path.exists():
-                log.info("REUSE: %s (output exists: %s)", fpath.name, out_path.name)
-                reused_outputs.append(str(out_path))
-                continue
-            
-            task = Task(
-                prompt=prompt,
-                output=str(out_path),
-                cwd=str(fpath.parent),
-            )
-            if model_override:
-                task.model = model_override
-            if timeout_override:
-                task.timeout = timeout_override
-            tasks.append(task)
-        
-        log.info("Loaded %d tasks from %s", len(tasks), stage.from_dir)
-    
-    # Stage type 2: from_outputs - use outputs from previous stage
-    elif stage.from_outputs:
-        if stage.from_outputs not in stage_outputs:
-            log.error("Previous stage '%s' not found", stage.from_outputs)
-            return [], False
-
-        prev_outputs = stage_outputs[stage.from_outputs]
-
-        if stage.aggregate:
-            # Merge every upstream artifact into one combined prompt per
-            # template so downstream roles see all evidence, instead of
-            # fanning each artifact into independent (and conflicting) tasks.
-            agg_tasks, agg_reused = _aggregate_tasks(stage, prev_outputs, model_override, timeout_override, reuse)
-            tasks.extend(agg_tasks)
-            reused_outputs.extend(agg_reused)
-        else:
-            # For each output file from previous stage, create tasks based on task templates
-            for out_path_str in prev_outputs:
-                out_path = Path(out_path_str)
-                if not out_path.exists():
-                    log.warning("Output file not found: %s", out_path)
-                    continue
-
-                input_content = out_path.read_text(encoding="utf-8")
-                input_stem = out_path.stem
-
-                # Create tasks from templates (prompt string or template file,
-                # both with {input_content}/{input_stem} placeholders)
-                for task_def in stage.tasks:
-                    prompt = _task_prompt(task_def, input_content, input_stem, str(out_path))
-                    if not prompt:
-                        continue
-
-                    # Resolve output path
-                    output_template = task_def.get("output", "")
-
-                    # Resolve output path
-                    output_template = task_def.get("output", "")
-                    output_path = output_template.replace("{input_stem}", input_stem)
-
-                    if reuse and output_path and Path(output_path).exists():
-                        log.info("REUSE: %s (output exists)", output_path)
-                        reused_outputs.append(output_path)
-                        continue
-
-                    tasks.append(_task_from_def(task_def, prompt, output_path, model_override, timeout_override))
-
-        log.info("Loaded %d tasks from %d outputs of stage '%s'",
-                 len(tasks), len(prev_outputs), stage.from_outputs)
-
-    else:
-        log.error("Stage '%s' must have either 'from_dir' or 'from_outputs'", stage.name)
-        return [], False
+    tasks, reused_outputs, early = _build_stage_tasks(stage, stage_outputs, reuse, model_override, timeout_override, validate_cmd)
+    if early is not None:
+        return early
 
     if not tasks:
         if reused_outputs:
@@ -651,113 +636,157 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
                   stage.name, session_mode)
         return [], False
 
-    stage_session_id = session_name
-    if session_mode == "per-stage":
-        stage_session_id = f"{session_name}-{stage.name}"
-
+    stage_session_id = f"{session_name}-{stage.name}" if session_mode == "per-stage" else session_name
     # Per-stage engineering gate: the stage's own validate_cmd wins over the
     # CLI default ("" disables validation for this stage), and per-task
     # validate fields override both inside run_serial/run_parallel.
     stage_validate = stage.validate_cmd if stage.validate_cmd is not None else validate_cmd
 
-    # Execute tasks
+    results, outputs = _execute_stage_tasks(stage, tasks, reused_outputs, stage_validate,
+                                            session_mode, session_name, stage_session_id)
+    stage_outputs[stage.name] = outputs
+
+    log.info("")
+    log.info("Stage '%s' completed: %d/%d tasks succeeded",
+             stage.name, len(outputs), len(tasks))
+
+    stage_ok = all(r.success for r in results)
+
+    if not _run_stage_commands(stage):
+        stage_ok = False
+
+    _git_commit_stage(stage, outputs)  # failures are advisory, not a stage failure
+
+    return results, stage_ok
+
+
+def _log_stage_header(stage: Stage, reuse: bool) -> None:
+    """Print the stage banner and whether reuse applies."""
+    log.info("")
+    log.info("=" * 60)
+    log.info("STAGE: %s", stage.name)
+    if reuse:
+        log.info("(reusing existing outputs if available)")
+    log.info("=" * 60)
+
+
+def _build_stage_tasks(stage: Stage, stage_outputs: dict, reuse: bool, model_override: str, timeout_override: int, validate_cmd: str) -> tuple[list, list, Optional[tuple]]:
+    """Build the stage's task list from its input source (from_prompt,
+    from_dir, or from_outputs). Returns (tasks, reused, early_result);
+    early_result is not None when the stage must stop immediately."""
+    tasks: list[Task] = []
+    reused_outputs: list[str] = []
+
+    # Dynamic role orchestration (meta stage) is handled entirely here.
+    if stage.meta:
+        return [], [], _run_meta_stage(stage, stage_outputs, model_override, timeout_override, validate_cmd)
+
+    if stage.from_prompt:
+        tasks, reused_outputs = _stage_from_prompt_tasks(stage, reuse, model_override, timeout_override)
+        if not tasks and not reused_outputs:
+            return [], [], ([], False)
+    elif stage.from_dir:
+        tasks, reused_outputs = _stage_from_dir_tasks(stage, reuse, model_override, timeout_override)
+    elif stage.from_outputs:
+        tasks, reused_outputs = _stage_from_outputs_tasks(stage, stage_outputs, reuse, model_override, timeout_override)
+        if stage.from_outputs not in stage_outputs and not tasks:
+            return [], [], ([], False)
+    else:
+        log.error("Stage '%s' must have either 'from_dir' or 'from_outputs'", stage.name)
+        return [], [], ([], False)
+    return tasks, reused_outputs, None
+
+
+def _execute_stage_tasks(stage: Stage, tasks: list, reused_outputs: list, stage_validate: str,
+                         session_mode: str, session_name: str, stage_session_id: str) -> tuple[list, list]:
+    """Run the stage's tasks (serial or parallel) and collect the output
+    paths that downstream stages will consume (reused outputs included)."""
     if stage.mode == "parallel":
         results = run_parallel(tasks, stage.workers, validate_cmd=stage_validate)
     else:
         results = run_serial(tasks, retries=0, session_mode=session_mode, session_id=stage_session_id, session_name=session_name,
                              validate_cmd=stage_validate)
-    
-    # Collect output paths (reused outputs keep feeding downstream stages)
     outputs = list(reused_outputs)
     for r in results:
         if r.success and r.task.output:
             outputs.append(r.task.output)
-    
-    stage_outputs[stage.name] = outputs
-    
-    log.info("")
-    log.info("Stage '%s' completed: %d/%d tasks succeeded", 
-             stage.name, len(outputs), len(tasks))
+    return results, outputs
 
-    stage_ok = all(r.success for r in results)
-    
-    # Execute shell commands after pi tasks
-    if stage.commands:
-        log.info("")
-        log.info("Running %d commands for stage '%s'... (parallel=%s)",
-                 len(stage.commands), stage.name, stage.commands_parallel)
-        cmd_cwd = stage.cwd or os.getcwd()
-        
-        def run_single_cmd(cmd: str, index: int) -> tuple:
-            log.info("CMD [%d/%d]: %s", index, len(stage.commands), cmd)
-            try:
-                proc = subprocess.run(
-                    cmd, shell=True, cwd=cmd_cwd,
-                    capture_output=True, text=True, timeout=600
-                )
-                if proc.returncode == 0:
-                    log.info("CMD OK (exit=0) [%d/%d]", index, len(stage.commands))
-                    if proc.stdout:
-                        for line in proc.stdout.strip().split("\n")[-10:]:
-                            log.info("  | %s", line)
-                else:
-                    log.warning("CMD FAILED (exit=%d) [%d/%d]", proc.returncode, index, len(stage.commands))
-                    if proc.stderr:
-                        for line in proc.stderr.strip().split("\n")[-10:]:
-                            log.warning("  | %s", line)
-                    if proc.stdout:
-                        for line in proc.stdout.strip().split("\n")[-5:]:
-                            log.info("  | %s", line)
-                return True if proc.returncode == 0 else False
-            except Exception as e:
-                log.warning("CMD ERROR [%d/%d]: %s", index, len(stage.commands), e)
-                return False
-        
-        if stage.commands_parallel:
-            with ThreadPoolExecutor(max_workers=len(stage.commands)) as pool:
-                futs = {pool.submit(run_single_cmd, cmd, i): cmd for i, cmd in enumerate(stage.commands, 1)}
-                cmd_results = [f.result() for f in as_completed(futs)]
-                all_cmd_ok = all(cmd_results)
+
+def _run_stage_commands(stage: Stage) -> bool:
+    """Run the stage's shell commands (post-task hooks); False when any
+    command failed, making hooks act as a failure gate for the stage."""
+    if not stage.commands:
+        return True
+    log.info("")
+    log.info("Running %d commands for stage '%s'... (parallel=%s)",
+             len(stage.commands), stage.name, stage.commands_parallel)
+    cmd_cwd = stage.cwd or os.getcwd()
+
+    if stage.commands_parallel:
+        with ThreadPoolExecutor(max_workers=len(stage.commands)) as pool:
+            futs = {pool.submit(_run_single_cmd, cmd, i, len(stage.commands), cmd_cwd): cmd for i, cmd in enumerate(stage.commands, 1)}
+            cmd_results = [f.result() for f in as_completed(futs)]
+        all_cmd_ok = all(cmd_results)
+    else:
+        all_cmd_ok = True
+        for i, cmd in enumerate(stage.commands, 1):
+            if not _run_single_cmd(cmd, i, len(stage.commands), cmd_cwd):
+                all_cmd_ok = False
+
+    if all_cmd_ok:
+        log.info("All %d commands passed for stage '%s'", len(stage.commands), stage.name)
+    else:
+        log.warning("Stage '%s' FAILED: some post-stage commands failed", stage.name)
+    return all_cmd_ok
+
+
+def _run_single_cmd(cmd: str, index: int, total: int, cmd_cwd: str) -> bool:
+    """Run one post-stage shell command and stream the tail of its output."""
+    log.info("CMD [%d/%d]: %s", index, total, cmd)
+    try:
+        proc = subprocess.run(
+            cmd, shell=True, cwd=cmd_cwd,
+            capture_output=True, text=True, timeout=600
+        )
+        if proc.returncode == 0:
+            log.info("CMD OK (exit=0) [%d/%d]", index, total)
+            if proc.stdout:
+                for line in proc.stdout.strip().split("\n")[-10:]:
+                    log.info("  | %s", line)
         else:
-            all_cmd_ok = True
-            for i, cmd in enumerate(stage.commands, 1):
-                if not run_single_cmd(cmd, i):
-                    all_cmd_ok = False
-        
-        if all_cmd_ok:
-            log.info("All %d commands passed for stage '%s'", len(stage.commands), stage.name)
-        else:
-            stage_ok = False
-            log.warning("Stage '%s' FAILED: some post-stage commands failed", stage.name)
-    
-    # Git commit after stage
-    if stage.git_commit and outputs:
-        try:
-            commit_msg = stage.commit_message or "[pi-batch] Stage: %s - %d tasks completed" % (stage.name, len(outputs))
-            file_list = " ".join(["\"%s\"" % o for o in outputs])
-            
-            # Check if git repo exists
-            result = subprocess.run(
-                ["git", "rev-parse", "--git-dir"],
-                capture_output=True, text=True, timeout=10
-            )
-            if result.returncode == 0:
-                # Add and commit
-                subprocess.run(
-                    ["git", "add"] + outputs,
-                    capture_output=True, timeout=10
-                )
-                subprocess.run(
-                    ["git", "commit", "-m", commit_msg],
-                    capture_output=True, timeout=10
-                )
-                log.info("GIT COMMIT: %s (files: %d)", commit_msg, len(outputs))
-            else:
-                log.warning("Not a git repository, skipping git commit")
-        except Exception as e:
-            log.warning("Git commit failed: %s", e)
-    
-    return results, stage_ok
+            log.warning("CMD FAILED (exit=%d) [%d/%d]", proc.returncode, index, total)
+            if proc.stderr:
+                for line in proc.stderr.strip().split("\n")[-10:]:
+                    log.warning("  | %s", line)
+            if proc.stdout:
+                for line in proc.stdout.strip().split("\n")[-5:]:
+                    log.info("  | %s", line)
+        return proc.returncode == 0
+    except Exception as e:
+        log.warning("CMD ERROR [%d/%d]: %s", index, total, e)
+        return False
+
+
+def _git_commit_stage(stage: Stage, outputs: list) -> bool:
+    """Commit the stage's deliverables into git; failures are advisory
+    (a commit problem must not fail the stage itself)."""
+    if not stage.git_commit or not outputs:
+        return True
+    try:
+        commit_msg = stage.commit_message or "[pi-batch] Stage: %s - %d tasks completed" % (stage.name, len(outputs))
+        file_list = " ".join(["\"%s\"" % o for o in outputs])
+
+        if subprocess.run(["git", "rev-parse", "--git-dir"], capture_output=True, text=True, timeout=10).returncode != 0:
+            log.warning("Not a git repository, skipping git commit")
+            return False
+        subprocess.run(["git", "add"] + outputs, capture_output=True, timeout=10)
+        subprocess.run(["git", "commit", "-m", commit_msg], capture_output=True, timeout=10)
+        log.info("GIT COMMIT: %s (files: %d)", commit_msg, len(outputs))
+    except Exception as e:
+        log.warning("Git commit failed: %s", e)
+        return False
+    return True
 
 
 _GATE_VERDICT_RE = re.compile(r"VERDICT\s*:\s*(PASS|FAIL|REJECT)", re.IGNORECASE)
@@ -850,22 +879,9 @@ def _append_decision_log(path: str, stage_name: str, results: list, stage_ok: bo
 
 def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = False, reuse: bool = False, timeout_override: int = 0,
                  session_mode: str = "new", session_name: str = "", validate_cmd: str = "", decision_log: str = "", archive_dir: str = "") -> tuple[list[TaskResult], list[str]]:
-    """Execute all stages in a pipeline sequentially.
-    
-    Args:
-        pipeline: Pipeline definition
-        model_override: override model for all tasks
-        dry_run: if True, only print task list without executing
-        reuse: if True, skip tasks whose output files already exist
-        timeout_override: per-task timeout override (seconds)
-        session_mode: "new", "shared" (one session for the whole pipeline),
-            or "per-stage" (one session per stage)
-        session_name: reproducible base name for shared/per-stage sessions
-        validate_cmd: engineering validation run before each output is saved
-    
-    Returns:
-        (all task results, names of stages that failed tasks or commands)
-    """
+    """Execute all stages sequentially; returns (all task results, names of
+    stages that failed tasks or commands). Gates halt the pipeline, decision
+    logs record every stage, and completed runs archive their deliverables."""
     all_results: list[TaskResult] = []
     failed_stages: list[str] = []
     stage_outputs: dict[str, list[str]] = {}  # stage_name -> [output_file_paths]
@@ -881,42 +897,15 @@ def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = F
     
     for stage in pipeline.stages:
         if dry_run:
-            log.info("")
-            log.info("STAGE: %s (dry-run)", stage.name)
-            if stage.from_dir:
-                log.info("  Will read .md files from: %s", stage.from_dir)
-                if reuse:
-                    log.info("  Will skip files with existing outputs")
-            elif stage.from_outputs:
-                log.info("  Will use outputs from stage: %s", stage.from_outputs)
-                log.info("  Task templates: %d", len(stage.tasks))
-            if stage.commands:
-                log.info("  Commands: %d (parallel=%s)", len(stage.commands), stage.commands_parallel)
-                for cmd in stage.commands:
-                    log.info("    | %s", cmd)
-            if stage.git_commit:
-                log.info("  Git commit: YES")
-            log.info("  Mode: %s", stage.mode)
+            _describe_stage(stage, reuse)
             continue
-        
+
         results, stage_ok = execute_stage(stage, stage_outputs, model_override, reuse, timeout_override, session_mode, session_name, validate_cmd)
         all_results.extend(results)
         if not stage_ok:
             failed_stages.append(stage.name)
 
-        # Verdict gate: a FAIL/REJECT verdict (or a missing verdict, which
-        # fails closed) blocks every later stage; the pipeline stops with a
-        # GATE REJECTED report instead of proceeding on unverified work.
-        gate_verdict: Optional[str] = None
-        if stage.gate:
-            gate_verdict = _gate_verdict(stage_outputs.get(stage.name, []))
-            if gate_verdict is None:
-                gate_verdict = "FAIL"
-                log.error("GATE stage '%s' produced no VERDICT: line; failing closed", stage.name)
-            elif gate_verdict in ("FAIL", "REJECT"):
-                log.error("GATE REJECTED at stage '%s' (verdict: %s) — later stages blocked", stage.name, gate_verdict)
-            else:
-                log.info("GATE PASSED at stage '%s'", stage.name)
+        gate_verdict = _handle_gate(stage, stage_outputs)
 
         # Structured decision record for this stage (append-only history)
         log_path = decision_log or pipeline.decision_log
@@ -935,6 +924,43 @@ def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = F
         _archive_outputs(outputs, archive_dir or pipeline.archive_dir, pipeline.name)
     
     return all_results, failed_stages
+
+
+def _describe_stage(stage: Stage, reuse: bool) -> None:
+    """Dry-run: print what the stage would do without executing it."""
+    log.info("")
+    log.info("STAGE: %s (dry-run)", stage.name)
+    if stage.from_dir:
+        log.info("  Will read .md files from: %s", stage.from_dir)
+        if reuse:
+            log.info("  Will skip files with existing outputs")
+    elif stage.from_outputs:
+        log.info("  Will use outputs from stage: %s", stage.from_outputs)
+        log.info("  Task templates: %d", len(stage.tasks))
+    if stage.commands:
+        log.info("  Commands: %d (parallel=%s)", len(stage.commands), stage.commands_parallel)
+        for cmd in stage.commands:
+            log.info("    | %s", cmd)
+    if stage.git_commit:
+        log.info("  Git commit: YES")
+    log.info("  Mode: %s", stage.mode)
+
+
+def _handle_gate(stage: Stage, stage_outputs: dict) -> Optional[str]:
+    """Evaluate a gate stage's deliverables: VERDICT: PASS/FAIL/REJECT.
+    A missing verdict fails closed (no explicit pass, no unlock). Returns
+    the verdict or None when the stage is not a gate."""
+    if not stage.gate:
+        return None
+    verdict = _gate_verdict(stage_outputs.get(stage.name, []))
+    if verdict is None:
+        verdict = "FAIL"
+        log.error("GATE stage '%s' produced no VERDICT: line; failing closed", stage.name)
+    elif verdict in ("FAIL", "REJECT"):
+        log.error("GATE REJECTED at stage '%s' (verdict: %s) — later stages blocked", stage.name, verdict)
+    else:
+        log.info("GATE PASSED at stage '%s'", stage.name)
+    return verdict
 
 
 # -- logging ----------------------------------------------------------
@@ -1184,10 +1210,7 @@ def run_task(task: Task, task_index: int = 0, total: int = 0, parallel: bool = F
     start = time.monotonic()
 
     # Build a prefix for output lines
-    if parallel and total > 1:
-        prefix = f"[task-{task_index}] "
-    else:
-        prefix = ""
+    prefix = f"[task-{task_index}] " if (parallel and total > 1) else ""
 
     brief = " ".join(cmd[:4]) + ("..." if len(cmd) > 4 else "")
     log.info(">>  %s  [model=%s]  [timeout=%ss]  [dir=%s]",
@@ -1195,9 +1218,6 @@ def run_task(task: Task, task_index: int = 0, total: int = 0, parallel: bool = F
 
     env = os.environ.copy()
     env.update(task.env)
-
-    stdout_lines: list[str] = []
-    stderr_lines: list[str] = []
 
     try:
         proc = subprocess.Popen(
@@ -1210,63 +1230,15 @@ def run_task(task: Task, task_index: int = 0, total: int = 0, parallel: bool = F
             start_new_session=True,  # own process group so the whole child tree can be killed on timeout
         )
 
-        # Read stdout and stderr concurrently via threads
-        from threading import Thread
-        tout = Thread(target=_read_stream, args=(proc.stdout, prefix, stdout_lines), daemon=True)
-        terr = Thread(target=_read_stream, args=(proc.stderr, prefix, stderr_lines), daemon=True)
-        tout.start()
-        terr.start()
-
-        # Hard deadline: kill the process group when task.timeout elapses.
-        # Thread joins only drain pipes and must not extend the window, so
-        # each join/wait gets the remaining budget (they return early when
-        # the agent exits).
-        deadline = start + task.timeout
-        tout.join(timeout=max(0, deadline - time.monotonic()))
-        terr.join(timeout=max(0, deadline - time.monotonic()))
-        proc.wait(timeout=max(0.1, deadline - time.monotonic()))
+        # Read stdout and stderr concurrently via threads, then wait on a
+        # hard deadline (kills the process group when task.timeout elapses).
+        stdout_lines, stderr_lines = _stream_proc(proc, prefix, start, task.timeout)
 
         elapsed = time.monotonic() - start
-        success = proc.returncode == 0
-        stdout_text = "".join(stdout_lines)
-        stderr_text = "".join(stderr_lines)
-        reason = agent_failure_reason(proc.returncode, stdout_text)
-        if reason:
-            success = False
-            log.warning("agent output REJECTED: %s", reason)
-
-        if success:
-            log.info("OK  done  [%.1fs]  [output=%s]", elapsed, task.output or "(stdout)")
-        else:
-            log.warning("FAIL  [code=%d]  [%.1fs]", proc.returncode, elapsed)
-
-        return TaskResult(
-            task=task,
-            success=success,
-            stdout=stdout_text,
-            stderr=stderr_text,
-            elapsed=elapsed,
-            returncode=proc.returncode,
-            reason=reason or "",
-        )
+        return _result_from_proc(task, proc, stdout_lines, stderr_lines, elapsed)
 
     except subprocess.TimeoutExpired:
-        # Kill the whole group: the direct child may have spawned helpers
-        # (e.g. a shell running sleep) that keep the pipes open.
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            proc.kill()
-        elapsed = time.monotonic() - start
-        log.error("TIMEOUT  [%.1fs]  [limit=%ss]", elapsed, task.timeout)
-        return TaskResult(
-            task=task,
-            success=False,
-            stderr=f"Task timed out after {task.timeout}s",
-            elapsed=elapsed,
-            returncode=-1,
-            reason="task timed out",
-        )
+        return _timeout_result(task, proc, start)
 
     except FileNotFoundError:
         log.error("'%s' not found in PATH. Is it installed? (configure agent.bin in pi-batch.yaml)", AGENT_BIN)
@@ -1357,6 +1329,59 @@ def _save_validated(task: Task, result: TaskResult, validate_cmd: str) -> bool:
     tmp.rename(out_path)
     log.info("WROTE %s (validated)", out_path)
     return True
+
+
+def _result_from_proc(task: Task, proc: subprocess.Popen, stdout_lines: list, stderr_lines: list, elapsed: float) -> TaskResult:
+    """Assemble the TaskResult from a finished process: failure-signature
+    rejection (quota/rate-limit/offline/timeout text) overrides exit code 0."""
+    stdout_text = "".join(stdout_lines)
+    stderr_text = "".join(stderr_lines)
+    reason = agent_failure_reason(proc.returncode, stdout_text)
+    success = proc.returncode == 0 and not reason
+    if reason:
+        log.warning("agent output REJECTED: %s", reason)
+    if success:
+        log.info("OK  done  [%.1fs]  [output=%s]", elapsed, task.output or "(stdout)")
+    else:
+        log.warning("FAIL  [code=%d]  [%.1fs]", proc.returncode, elapsed)
+    return TaskResult(
+        task=task, success=success, stdout=stdout_text, stderr=stderr_text,
+        elapsed=elapsed, returncode=proc.returncode, reason=reason or "",
+    )
+
+
+def _timeout_result(task: Task, proc: subprocess.Popen, start: float) -> TaskResult:
+    """Kill the whole process group (the direct child may have spawned
+    helpers that keep pipes open) and return a timed-out result."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        proc.kill()
+    elapsed = time.monotonic() - start
+    log.error("TIMEOUT  [%.1fs]  [limit=%ss]", elapsed, task.timeout)
+    return TaskResult(
+        task=task, success=False, stderr=f"Task timed out after {task.timeout}s",
+        elapsed=elapsed, returncode=-1, reason="task timed out",
+    )
+
+
+def _stream_proc(proc: subprocess.Popen, prefix: str, start: float, timeout: int) -> tuple[list[str], list[str]]:
+    """Drain stdout/stderr concurrently via daemon threads, then wait on a
+    hard deadline. Thread joins only drain pipes and must not extend the
+    window, so each join/wait gets the remaining budget (they return early
+    when the agent exits). Raises TimeoutExpired when the deadline hits."""
+    from threading import Thread
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+    tout = Thread(target=_read_stream, args=(proc.stdout, prefix, stdout_lines), daemon=True)
+    terr = Thread(target=_read_stream, args=(proc.stderr, prefix, stderr_lines), daemon=True)
+    tout.start()
+    terr.start()
+    deadline = start + timeout
+    tout.join(timeout=max(0, deadline - time.monotonic()))
+    terr.join(timeout=max(0, deadline - time.monotonic()))
+    proc.wait(timeout=max(0.1, deadline - time.monotonic()))
+    return stdout_lines, stderr_lines
 
 
 def run_serial(tasks: list[Task], retries: int = 0, retry_delay: float = 10.0, backoff: float = 2.0, min_interval: float = 0.0,
@@ -1472,25 +1497,24 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
+    _add_source_args(p)
+    _add_runtime_args(p)
+    _add_batch_args(p)
+    return p
+
+
+def _add_source_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("source", nargs="?",
                    help="YAML task file / JSON file / plain text prompt")
     p.add_argument("-p", "--prompt", help="inline prompt (single task shortcut)")
     p.add_argument("-o", "--output", help="output file path (single task only)")
-    p.add_argument("--mode", choices=["serial", "parallel"], default="serial",
-                   help="execution mode (default: serial)")
-    p.add_argument("-w", "--workers", type=int, default=AGENT_DEFAULT_WORKERS,
-                   help=f"parallel worker count (default: {AGENT_DEFAULT_WORKERS})")
-    p.add_argument("--agent-bin", default=AGENT_BIN,
-                   help=f"agent CLI binary to invoke per task (default: {AGENT_BIN}; "
-                        "set agent.bin in pi-batch.yaml to change the default)")
-    p.add_argument("--model", default="",
-                   help="default model override for all tasks")
-    p.add_argument("--timeout", type=int, default=0,
-                   help="default timeout override for all tasks (seconds)")
     p.add_argument("--from-dir", metavar="DIR",
                    help="load one task per .md file in DIR")
     p.add_argument("--suffix", default=".md",
                    help="file suffix for --from-dir (default: .md)")
+
+
+def _add_runtime_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--pipeline", metavar="FILE",
                    help="run a multi-stage pipeline from YAML file")
     p.add_argument("--reuse", action="store_true",
@@ -1503,18 +1527,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help="disable git commit (overrides pipeline setting)")
     p.add_argument("--commit-prefix", default=COMMIT_PREFIX_DEFAULT,
                    help=f"prefix for auto-generated commit messages (default: {COMMIT_PREFIX_DEFAULT})")
-    p.add_argument("--retries", type=int, default=0,
-                   help="Retry failed tasks up to N extra attempts with exponential backoff (serial mode)")
-    p.add_argument("--retry-delay", type=float, default=10.0,
-                   help="Base retry wait in seconds (default: 10; rate-limit/network failures wait at least 30s)")
-    p.add_argument("--retry-backoff", type=float, default=2.0,
-                   help="Retry backoff multiplier (default: 2)")
-    p.add_argument("--min-interval", type=float, default=0.0,
-                   help="Minimum seconds between successful serial tasks (throttle for 24x7 runs)")
-    p.add_argument("--max-rounds", type=int, default=1,
-                   help="Max execution rounds; 0 = loop forever until every task passes (default: 1)")
-    p.add_argument("--round-delay", type=float, default=60.0,
-                   help="Seconds to wait between rounds (default: 60)")
     p.add_argument("--log-file", default="",
                    help="Append run log to FILE for 24x7 supervision")
     p.add_argument("--decision-log", default="",
@@ -1534,25 +1546,38 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _add_batch_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--mode", choices=["serial", "parallel"], default="serial",
+                   help="execution mode (default: serial)")
+    p.add_argument("-w", "--workers", type=int, default=AGENT_DEFAULT_WORKERS,
+                   help=f"parallel worker count (default: {AGENT_DEFAULT_WORKERS})")
+    p.add_argument("--agent-bin", default=AGENT_BIN,
+                   help=f"agent CLI binary to invoke per task (default: {AGENT_BIN}; "
+                        "set agent.bin in pi-batch.yaml to change the default)")
+    p.add_argument("--model", default="",
+                   help="default model override for all tasks")
+    p.add_argument("--timeout", type=int, default=0,
+                   help="default timeout override for all tasks (seconds)")
+    p.add_argument("--retries", type=int, default=0,
+                   help="Retry failed tasks up to N extra attempts with exponential backoff (serial mode)")
+    p.add_argument("--retry-delay", type=float, default=10.0,
+                   help="Base retry wait in seconds (default: 10; rate-limit/network failures wait at least 30s)")
+    p.add_argument("--retry-backoff", type=float, default=2.0,
+                   help="Retry backoff multiplier (default: 2)")
+    p.add_argument("--min-interval", type=float, default=0.0,
+                   help="Minimum seconds between successful serial tasks (throttle for 24x7 runs)")
+    p.add_argument("--max-rounds", type=int, default=1,
+                   help="Max execution rounds; 0 = loop forever until every task passes (default: 1)")
+    p.add_argument("--round-delay", type=float, default=60.0,
+                   help="Seconds to wait between rounds (default: 60)")
+
+
 def main() -> None:
     global AGENT_BIN
     args = build_parser().parse_args()
     AGENT_BIN = args.agent_bin
 
-    # Auto-detect pipeline files: a YAML source with a top-level 'stages'
-    # key is a pipeline definition, not a task list, so
-    # `pi-batch.py pipeline.yaml --reuse` works without the --pipeline flag.
-    if args.source and not args.pipeline and yaml:
-        src = Path(args.source)
-        if src.exists() and src.suffix in (".yaml", ".yml"):
-            try:
-                data = yaml.safe_load(src.read_text(encoding="utf-8")) or {}
-            except Exception:
-                data = {}
-            if isinstance(data, dict) and "stages" in data:
-                log.info("Detected pipeline file (top-level 'stages'): switching to pipeline mode")
-                args.pipeline = args.source
-                args.source = ""
+    _auto_detect_pipeline(args)
 
     # Append run log to FILE for 24x7 supervision
     if args.log_file:
@@ -1560,60 +1585,26 @@ def main() -> None:
         fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
         log.addHandler(fh)
 
-    # -- pipeline setup (one-time) --
-    pipeline = None
-    reuse_outputs = False
-    timeout_override = 0
-    if args.pipeline:
-        pipeline = load_pipeline(args.pipeline)
-        reuse_outputs = args.reuse and not args.force
-        
-        # Apply git_commit override to all stages
-        if args.git_commit and not args.no_git_commit:
-            for stage in pipeline.stages:
-                stage.git_commit = True
-        elif args.no_git_commit:
-            for stage in pipeline.stages:
-                stage.git_commit = False
-        
-        # Explicit CLI flags override per-stage mode/workers; --timeout is
-        # threaded through execute_stage so every task inherits it. argparse
-        # cannot report whether a flag that has a default was passed, so scan
-        # argv for the exact flag names.
-        if "--mode" in sys.argv:
-            for stage in pipeline.stages:
-                stage.mode = args.mode
-        if "-w" in sys.argv or "--workers" in sys.argv:
-            for stage in pipeline.stages:
-                stage.workers = args.workers
-        timeout_override = args.timeout if "--timeout" in sys.argv else 0
-        
-        # Apply commit message prefix
-        for stage in pipeline.stages:
-            if stage.git_commit and not stage.commit_message:
-                stage.commit_message = "%s Stage: %s" % (args.commit_prefix, stage.name)
+    pipeline = _setup_pipeline(args)
+    timeout_override = args.timeout if "--timeout" in sys.argv else 0
 
-    # -- round loop for 24x7 operation --
-    # Each round reruns only the tasks/stages that failed or were rejected
-    # (reuse skips existing outputs). --max-rounds 0 loops forever until every
-    # task passes, with --round-delay seconds of rest between rounds so quota
-    # and rate-limit windows can clear.
-    max_rounds = args.max_rounds
-    stdin_tasks = None  # stdin is consumed once; later rounds reuse it
-    round_no = 0
+    session_name = _derive_session_name(args)
+    _validate_session_flags(args)
 
-    # Session semantics: shared/per-stage require serial execution and a
-    # reproducible session name so a resumed run continues the same session.
-    session_name = args.session_name
-    if not session_name:
-        if args.pipeline:
-            session_name = Path(args.pipeline).stem
-        elif args.source:
-            session_name = Path(args.source).stem
-        elif args.from_dir:
-            session_name = Path(args.from_dir).name
-        else:
-            session_name = "batch"
+    # Validation gates: named validators (--validate) and the raw command
+    # (--validate-cmd) both apply, in that order, with AND semantics.
+    cli_validate = ",".join(x for x in (args.validate, args.validate_cmd) if x)
+
+    try:
+        _run_rounds(args, pipeline, session_name, cli_validate, timeout_override)
+    except KeyboardInterrupt:
+        log.warning("\nInterrupted by user. Rerun with --reuse to continue later.")
+        sys.exit(130)
+
+
+def _validate_session_flags(args) -> None:
+    """Shared/per-stage sessions require serial execution; per-stage needs
+    a pipeline (single-batch has no stages)."""
     if args.session_mode != "new" and args.mode == "parallel" and not args.pipeline:
         log.error("--session-mode %s requires --mode serial (parallel would interleave one session)", args.session_mode)
         sys.exit(1)
@@ -1621,145 +1612,240 @@ def main() -> None:
         log.error("--session-mode per-stage requires --pipeline (there are no stages in single-batch mode)")
         sys.exit(1)
 
-    # Validation gates: named validators (--validate) and the raw command
-    # (--validate-cmd) both apply, in that order, with AND semantics.
-    cli_validate = ",".join(x for x in (args.validate, args.validate_cmd) if x)
 
-    try:
-        while True:
-            round_no += 1
-            log.info("")
-            log.info("=" * 60)
-            log.info("ROUND %d of %s", round_no, "unlimited" if max_rounds == 0 else max_rounds)
-            log.info("=" * 60)
+def _run_rounds(args, pipeline: Optional[Pipeline], session_name: str, cli_validate: str, timeout_override: int) -> None:
+    """The 24x7 round loop: rerun only the tasks/stages that failed or were
+    rejected each round; --max-rounds 0 loops forever with --round-delay
+    rest between rounds so quota and rate-limit windows can clear."""
+    max_rounds = args.max_rounds
+    stdin_tasks = None  # stdin is consumed once; later rounds reuse it
+    round_no = 0
+    while True:
+        round_no += 1
+        log.info("")
+        log.info("=" * 60)
+        log.info("ROUND %d of %s", round_no, "unlimited" if max_rounds == 0 else max_rounds)
+        log.info("=" * 60)
 
-            round_failed = False
+        if pipeline is not None:
+            round_failed = _run_pipeline_round(args, pipeline, session_name, cli_validate,
+                                               timeout_override, reuse_outputs=args.reuse and not args.force)
+        else:
+            round_failed = _run_batch_round(args, stdin_tasks, session_name, cli_validate,
+                                            max_rounds, round_no)
 
-            if pipeline is not None:
-                # -- pipeline mode --
-                if args.dry_run:
-                    run_pipeline(pipeline, model_override=args.model, dry_run=True, reuse=reuse_outputs)
-                    return
-                all_results, failed_stages = run_pipeline(pipeline, model_override=args.model, reuse=reuse_outputs, timeout_override=timeout_override,
-                                                         session_mode=args.session_mode, session_name=session_name, validate_cmd=cli_validate,
-                                                         decision_log=args.decision_log, archive_dir=args.archive_dir)
-                print_summary(all_results)
-                round_failed = bool(failed_stages or any(not r.success for r in all_results))
-                if round_failed:
-                    log.error("Failed stages: %s", ", ".join(failed_stages) if failed_stages else "(task failures)")
-            else:
-                # -- single-batch modes --
-                if args.from_dir:
-                    tasks = load_tasks_from_dir(args.from_dir, args.suffix)
-                    if not tasks:
-                        log.error("No %s files found in %s", args.suffix, args.from_dir)
-                        sys.exit(1)
-                elif args.prompt:
-                    tasks = [Task(prompt=args.prompt, output=args.output or "")]
-                elif args.source:
-                    tasks = load_tasks(args.source)
-                elif stdin_tasks is not None:
-                    tasks = stdin_tasks
-                else:
-                    stdin = sys.stdin.read().strip()
-                    if stdin:
-                        stdin_tasks = [Task(prompt=stdin)]
-                        tasks = stdin_tasks
-                    else:
-                        log.error("Provide a prompt (-p), a task file, --from-dir, or --pipeline")
-                        sys.exit(1)
+        if not round_failed:
+            log.info("All tasks passed in round %d", round_no)
+            return
+        if max_rounds > 0 and round_no >= max_rounds:
+            log.error("Max rounds (%d) reached with tasks still failing; rerun with --reuse to continue later", max_rounds)
+            sys.exit(1)
+        log.warning("Round %d finished with failures; waiting %.0fs before round %d",
+                    round_no, args.round_delay, round_no + 1)
+        time.sleep(args.round_delay)
+def _auto_detect_pipeline(args) -> None:
+    """A YAML source with a top-level 'stages' key is a pipeline definition,
+    not a task list, so `pi-batch.py pipeline.yaml --reuse` works without the
+    --pipeline flag."""
+    if not (args.source and not args.pipeline and yaml):
+        return
+    src = Path(args.source)
+    if src.exists() and src.suffix in (".yaml", ".yml"):
+        try:
+            data = yaml.safe_load(src.read_text(encoding="utf-8")) or {}
+        except Exception:
+            data = {}
+        if isinstance(data, dict) and "stages" in data:
+            log.info("Detected pipeline file (top-level 'stages'): switching to pipeline mode")
+            args.pipeline = args.source
+            args.source = ""
 
-                # Apply single-task output shortcut
-                if args.output and len(tasks) == 1:
-                    tasks[0].output = args.output
 
-                # Apply global overrides
-                if args.model:
-                    for t in tasks:
-                        t.model = args.model
-                if args.timeout:
-                    for t in tasks:
-                        t.timeout = args.timeout
+def _setup_pipeline(args) -> Optional[Pipeline]:
+    """Load the pipeline (one-time) and apply CLI overrides: git_commit,
+    mode/workers (explicit flags only, scanned from argv because argparse
+    cannot report defaults), and the commit-message prefix."""
+    if not args.pipeline:
+        return None
+    pipeline = load_pipeline(args.pipeline)
 
-                if not tasks:
-                    log.error("No tasks to execute: a YAML source must contain a 'tasks' list (pipelines use 'stages' and are auto-detected)")
-                    sys.exit(1)
+    if args.git_commit and not args.no_git_commit:
+        for stage in pipeline.stages:
+            stage.git_commit = True
+    elif args.no_git_commit:
+        for stage in pipeline.stages:
+            stage.git_commit = False
 
-                # reuse: drop tasks whose output already exists, so a later
-                # round reruns only the failures
-                if args.reuse and not args.force:
-                    kept = [t for t in tasks if not (t.output and Path(t.output).exists())]
-                    skipped = len(tasks) - len(kept)
-                    if skipped:
-                        log.info("Reuse: %d task(s) already have outputs, skipped", skipped)
-                    tasks = kept
-                    if not tasks:
-                        log.info("All tasks already have outputs; nothing to run")
-                        return
+    if "--mode" in sys.argv:
+        for stage in pipeline.stages:
+            stage.mode = args.mode
+    if "-w" in sys.argv or "--workers" in sys.argv:
+        for stage in pipeline.stages:
+            stage.workers = args.workers
 
-                # -- dry-run --
-                if args.dry_run:
-                    print("Tasks: %d" % len(tasks))
-                    print("Mode:  %s" % args.mode)
-                    print()
-                    for i, t in enumerate(tasks, 1):
-                        print("  [%d] %s..." % (i, t.prompt[:80]))
-                        print("      model=%s  dir=%s  output=%s" %
-                              (t.model or "default", t.workdir(), t.output or "(stdout)"))
-                    return
+    for stage in pipeline.stages:
+        if stage.git_commit and not stage.commit_message:
+            stage.commit_message = "%s Stage: %s" % (args.commit_prefix, stage.name)
+    return pipeline
 
-                # -- execute --
-                if args.mode == "serial":
-                    results = run_serial(tasks, retries=args.retries, retry_delay=args.retry_delay,
-                                         backoff=args.retry_backoff, min_interval=args.min_interval,
-                                         session_mode=args.session_mode, session_id=session_name, session_name=session_name,
-                                         validate_cmd=cli_validate)
-                else:
-                    results = run_parallel(tasks, args.workers, validate_cmd=cli_validate)
 
-                print_summary(results)
-                round_failed = any(not r.success for r in results)
+def _derive_session_name(args) -> str:
+    """Reproducible session base name: explicit --session-name wins, else the
+    source stem (pipeline/source/dir), else 'batch'."""
+    if args.session_name:
+        return args.session_name
+    if args.pipeline:
+        return Path(args.pipeline).stem
+    if args.source:
+        return Path(args.source).stem
+    if args.from_dir:
+        return Path(args.from_dir).name
+    return "batch"
 
-                # Structured decision record for single-batch runs (rolling
-                # re-analysis keeps a history of what each round decided and
-                # why, instead of overwriting the artifact silently)
-                if args.decision_log and results:
-                    source_name = Path(args.source).stem if args.source else (args.from_dir or "batch")
-                    _append_decision_log(args.decision_log, source_name, results, not round_failed, None)
 
-                # Git commit for single-batch modes (per round)
-                if args.git_commit and not args.no_git_commit:
-                    outputs = [r.task.output for r in results if r.success and r.task.output]
-                    if outputs:
-                        try:
-                            subprocess.run(["git", "rev-parse", "--git-dir"],
-                                           capture_output=True, timeout=5)
-                            subprocess.run(["git", "add"] + outputs,
-                                           capture_output=True, timeout=10)
-                            msg = "%s Single batch: %d tasks" % (args.commit_prefix, len(outputs))
-                            subprocess.run(["git", "commit", "-m", msg],
-                                           capture_output=True, timeout=10)
-                            log.info("GIT COMMIT: %s (files: %d)", msg, len(outputs))
-                        except Exception as e:
-                            log.warning("Git commit skipped: %s", e)
+def _load_batch_tasks(args, stdin_tasks) -> list:
+    """Single-batch task sources: --from-dir files, -p prompt, task file,
+    or stdin (consumed once, reused by later rounds)."""
+    if args.from_dir:
+        tasks = load_tasks_from_dir(args.from_dir, args.suffix)
+        if not tasks:
+            log.error("No %s files found in %s", args.suffix, args.from_dir)
+            sys.exit(1)
+        return tasks
+    if args.prompt:
+        return [Task(prompt=args.prompt, output=args.output or "")]
+    if args.source:
+        return load_tasks(args.source)
+    if stdin_tasks is not None:
+        return stdin_tasks
+    stdin = sys.stdin.read().strip()
+    if stdin:
+        return [Task(prompt=stdin)]
+    log.error("Provide a prompt (-p), a task file, --from-dir, or --pipeline")
+    sys.exit(1)
 
-            if not round_failed:
-                log.info("All tasks passed in round %d", round_no)
-                # Rolling re-analysis produces many artifacts; archive them
-                # once a round fully succeeded so the worktree stays clean.
-                if args.archive_dir and results:
-                    outputs = [r.task.output for r in results if r.success and r.task.output]
-                    _archive_outputs(outputs, args.archive_dir, "batch")
-                return
-            if max_rounds > 0 and round_no >= max_rounds:
-                log.error("Max rounds (%d) reached with tasks still failing; rerun with --reuse to continue later", max_rounds)
-                sys.exit(1)
-            log.warning("Round %d finished with failures; waiting %.0fs before round %d",
-                        round_no, args.round_delay, round_no + 1)
-            time.sleep(args.round_delay)
-    except KeyboardInterrupt:
-        log.warning("Interrupted by user")
-        sys.exit(130)
+
+def _apply_task_overrides(args, tasks) -> None:
+    """Single-task output shortcut and global model/timeout overrides."""
+    if args.output and len(tasks) == 1:
+        tasks[0].output = args.output
+    if args.model:
+        for t in tasks:
+            t.model = args.model
+    if args.timeout:
+        for t in tasks:
+            t.timeout = args.timeout
+
+
+def _run_pipeline_round(args, pipeline: Pipeline, session_name: str, cli_validate: str,
+                        timeout_override: int, reuse_outputs: bool) -> bool:
+    """One round of pipeline mode; True when the round failed."""
+    if args.dry_run:
+        run_pipeline(pipeline, model_override=args.model, dry_run=True, reuse=reuse_outputs)
+        return False
+    all_results, failed_stages = run_pipeline(pipeline, model_override=args.model, reuse=reuse_outputs, timeout_override=timeout_override,
+                                              session_mode=args.session_mode, session_name=session_name, validate_cmd=cli_validate,
+                                              decision_log=args.decision_log, archive_dir=args.archive_dir)
+    print_summary(all_results)
+    if failed_stages or any(not r.success for r in all_results):
+        log.error("Failed stages: %s", ", ".join(failed_stages) if failed_stages else "(task failures)")
+        return True
+    return False
+
+
+def _run_batch_round(args, stdin_tasks, session_name: str, cli_validate: str, max_rounds: int, round_no: int) -> bool:
+    """One round of single-batch mode: load tasks, apply overrides and reuse
+    filtering, execute, record decisions and archive on full success.
+    Returns True when the round failed (caller may loop again)."""
+    tasks = _load_batch_tasks(args, stdin_tasks)
+    _apply_task_overrides(args, tasks)
+
+    if not tasks:
+        log.error("No tasks to execute: a YAML source must contain a 'tasks' list (pipelines use 'stages' and are auto-detected)")
+        sys.exit(1)
+
+    tasks = _filter_reused(tasks, args.reuse and not args.force)
+    if not tasks:
+        log.info("All tasks already have outputs; nothing to run")
+        return False
+
+    if args.dry_run:
+        _print_dry_run(tasks, args.mode)
+        return False
+
+    results, round_failed = _execute_batch(tasks, args, session_name, cli_validate)
+    _finalize_batch_round(args, results, round_failed)
+    return round_failed
+
+
+def _finalize_batch_round(args, results: list, round_failed: bool) -> None:
+    """Decision log, git commit, and archive for a finished single-batch
+    round (archive only when the round fully succeeded)."""
+    # Structured decision record for single-batch runs (rolling
+    # re-analysis keeps a history of what each round decided and why,
+    # instead of overwriting the artifact silently)
+    if args.decision_log and results:
+        source_name = Path(args.source).stem if args.source else (args.from_dir or "batch")
+        _append_decision_log(args.decision_log, source_name, results, not round_failed, None)
+
+    # Git commit for single-batch modes (per round)
+    if args.git_commit and not args.no_git_commit:
+        outputs = [r.task.output for r in results if r.success and r.task.output]
+        if outputs:
+            try:
+                subprocess.run(["git", "rev-parse", "--git-dir"],
+                               capture_output=True, timeout=5)
+                subprocess.run(["git", "add"] + outputs,
+                               capture_output=True, timeout=10)
+                msg = "%s Single batch: %d tasks" % (args.commit_prefix, len(outputs))
+                subprocess.run(["git", "commit", "-m", msg],
+                               capture_output=True, timeout=10)
+                log.info("GIT COMMIT: %s (files: %d)", msg, len(outputs))
+            except Exception as e:
+                log.warning("Git commit skipped: %s", e)
+
+    # Rolling re-analysis produces many artifacts; archive them once a
+    # round fully succeeded so the worktree stays clean.
+    if not round_failed and args.archive_dir and results:
+        outputs = [r.task.output for r in results if r.success and r.task.output]
+        _archive_outputs(outputs, args.archive_dir, "batch")
+
+
+def _filter_reused(tasks: list, reuse: bool) -> list:
+    """Drop tasks whose output already exists when reuse is on, so a later
+    round reruns only the failures."""
+    if not reuse:
+        return tasks
+    kept = [t for t in tasks if not (t.output and Path(t.output).exists())]
+    skipped = len(tasks) - len(kept)
+    if skipped:
+        log.info("Reuse: %d task(s) already have outputs, skipped", skipped)
+    return kept
+
+
+def _print_dry_run(tasks: list, mode: str) -> None:
+    """Print what single-batch would execute without running it."""
+    print("Tasks: %d" % len(tasks))
+    print("Mode:  %s" % mode)
+    print()
+    for i, t in enumerate(tasks, 1):
+        print("  [%d] %s..." % (i, t.prompt[:80]))
+        print("      model=%s  dir=%s  output=%s" %
+              (t.model or "default", t.workdir(), t.output or "(stdout)"))
+
+
+def _execute_batch(tasks: list, args, session_name: str, cli_validate: str) -> tuple[list, bool]:
+    """Run the single-batch tasks (serial with retries, or parallel) and
+    print the summary. Returns (results, round_failed)."""
+    if args.mode == "serial":
+        results = run_serial(tasks, retries=args.retries, retry_delay=args.retry_delay,
+                             backoff=args.retry_backoff, min_interval=args.min_interval,
+                             session_mode=args.session_mode, session_id=session_name, session_name=session_name,
+                             validate_cmd=cli_validate)
+    else:
+        results = run_parallel(tasks, args.workers, validate_cmd=cli_validate)
+    print_summary(results)
+    return results, any(not r.success for r in results)
 
 
 if __name__ == "__main__":

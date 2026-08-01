@@ -454,43 +454,16 @@ def run_stage(stage: str, prompt: str, args, session_flags: Optional[list] = Non
     print(f"{'='*60}\n", flush=True)
 
     try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            cwd=args.repo or os.getcwd(),
-            start_new_session=True,  # own process group so the whole child tree can be killed on timeout
-        )
-        assert proc.stdout is not None
-
-        # Stream to the terminal from a reader thread so the main thread can
-        # enforce the deadline; a hung agent (e.g. offline machine) must not
-        # block the runner forever.
-        lines = []
-
-        def _read():
-            for line in proc.stdout:
-                print(line, end="", flush=True)
-                lines.append(line)
-
-        reader = threading.Thread(target=_read, daemon=True)
-        reader.start()
-        try:
-            rc = proc.wait(timeout=getattr(args, "timeout", 0) or 600)
-        except subprocess.TimeoutExpired:
-            # Kill the whole group: the direct child may have spawned helpers
-            # (e.g. a shell running sleep) that keep the pipe open.
-            os.killpg(proc.pid, signal.SIGKILL)
-            reader.join(timeout=5)
-            print(f"\nStage {stage} REJECTED: agent timed out; output NOT saved to {out_file}", file=sys.stderr, flush=True)
-            return 1
-        reader.join(timeout=5)
+        rc, output = _run_agent(cmd, args.repo or os.getcwd(), getattr(args, "timeout", 0) or 600)
     except FileNotFoundError:
         print(f"ERROR: '{agent_bin}' not found in PATH.", file=sys.stderr)
         return 1
 
-    output = "".join(lines)
+    if rc < 0:
+        print(f"\nStage {stage} REJECTED: agent timed out; output NOT saved to {out_file}", file=sys.stderr, flush=True)
+        return 1
+
+    output = "".join(output)
     reason = agent_failure_reason(rc, output)
     if reason:
         print(f"\nStage {stage} REJECTED: {reason}; output NOT saved to {out_file}", file=sys.stderr, flush=True)
@@ -503,29 +476,72 @@ def run_stage(stage: str, prompt: str, args, session_flags: Optional[list] = Non
     validate_spec = ",".join(x for x in (getattr(args, "validate", ""), getattr(args, "validate_cmd", "")) if x)
     commands = resolve_validators(validate_spec)
     if commands:
-        tmp_file = out_file.with_name(out_file.name + ".tmp")
-        tmp_file.write_text(output, encoding="utf-8")
-        for raw in commands:
-            cmd = raw.replace("{output}", str(tmp_file)).replace("{cwd}", args.repo or os.getcwd())
-            try:
-                vproc = subprocess.run(cmd, shell=True, cwd=args.repo or os.getcwd(),
-                                       capture_output=True, text=True, timeout=600)
-            except subprocess.TimeoutExpired:
-                vproc = None
-            if vproc is not None and vproc.returncode == 0:
-                continue
-            tmp_file.unlink(missing_ok=True)
-            print(f"\nStage {stage} REJECTED: validation failed{'' if vproc is None else f' (exit={vproc.returncode})'}: {cmd}; output NOT saved to {out_file}", file=sys.stderr, flush=True)
-            if vproc is not None:
-                for line in (vproc.stdout or "").strip().splitlines()[-5:]:
-                    print(f"  | {line}", file=sys.stderr)
-            return 1
-        tmp_file.rename(out_file)
-        print(f"\nWROTE: {out_file} (validated)", flush=True)
-        return 0
+        return _run_validators(stage, out_file, output, commands, args.repo or os.getcwd())
 
     out_file.write_text(output, encoding="utf-8")
     print(f"\nWROTE: {out_file}", flush=True)
+    return 0
+
+
+def _run_agent(cmd: list, cwd: str, timeout: int) -> tuple[int, list[str]]:
+    """Run the agent, streaming output to the terminal from a reader
+    thread while the main thread enforces the deadline; a hung agent (e.g.
+    offline machine) must not block the runner forever. Returns (returncode,
+    lines); returncode is -1 on timeout."""
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        cwd=cwd,
+        start_new_session=True,  # own process group so the whole child tree can be killed on timeout
+    )
+    assert proc.stdout is not None
+
+    lines: list[str] = []
+
+    def _read():
+        for line in proc.stdout:
+            print(line, end="", flush=True)
+            lines.append(line)
+
+    reader = threading.Thread(target=_read, daemon=True)
+    reader.start()
+    try:
+        rc = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # Kill the whole group: the direct child may have spawned helpers
+        # (e.g. a shell running sleep) that keep the pipe open.
+        os.killpg(proc.pid, signal.SIGKILL)
+        reader.join(timeout=5)
+        return -1, lines
+    reader.join(timeout=5)
+    return rc, lines
+
+
+def _run_validators(stage: str, out_file, output: str, commands: list, cwd: str) -> int:
+    """Run every resolved validator against a temp copy of the output
+    (AND semantics); atomically rename on success, delete on failure so a
+    result that fails the project checks never lands as a review file."""
+    tmp_file = out_file.with_name(out_file.name + ".tmp")
+    tmp_file.write_text(output, encoding="utf-8")
+    for raw in commands:
+        cmd = raw.replace("{output}", str(tmp_file)).replace("{cwd}", cwd)
+        try:
+            vproc = subprocess.run(cmd, shell=True, cwd=cwd,
+                                   capture_output=True, text=True, timeout=600)
+        except subprocess.TimeoutExpired:
+            vproc = None
+        if vproc is not None and vproc.returncode == 0:
+            continue
+        tmp_file.unlink(missing_ok=True)
+        print(f"\nStage {stage} REJECTED: validation failed{'' if vproc is None else f' (exit={vproc.returncode})'}: {cmd}; output NOT saved to {out_file}", file=sys.stderr, flush=True)
+        if vproc is not None:
+            for line in (vproc.stdout or "").strip().splitlines()[-5:]:
+                print(f"  | {line}", file=sys.stderr)
+        return 1
+    tmp_file.rename(out_file)
+    print(f"\nWROTE: {out_file} (validated)", flush=True)
     return 0
 
 
@@ -569,87 +585,41 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
 
+    ctx = _build_context(args)
     prompts_dir = Path(__file__).parent / "prompts"
-    if not prompts_dir.exists():
-        print(f"ERROR: prompts directory not found: {prompts_dir}", file=sys.stderr)
-        sys.exit(1)
 
-    # Build context
-    ctx = {}
-    if args.context:
-        ctx = load_context(args.context)
-        args.context_name = Path(args.context).stem
-    else:
-        args.context_name = args.subsystem or "review"
-
-    # CLI overrides
-    if args.project:
-        ctx["project"] = args.project
-    if args.subsystem:
-        ctx["subsystem"] = args.subsystem
-    if args.files:
-        ctx["files"] = [f.strip() for f in args.files.split(",")]
-    if args.rfcs:
-        ctx["rfcs"] = [r.strip() for r in args.rfcs.split(",")]
-    if args.repo:
-        ctx["repo"] = args.repo
-
-    # Determine stages to run
-    if args.all:
-        stages_to_run = sorted(STAGES.keys())
-    elif args.stage:
-        stage = args.stage.zfill(2)
-        if stage not in STAGES:
-            print(f"ERROR: unknown stage '{args.stage}'. Valid: {', '.join(STAGES.keys())}", file=sys.stderr)
-            sys.exit(1)
-        stages_to_run = [stage]
-    else:
-        print("ERROR: specify --stage NN or --all", file=sys.stderr)
-        sys.exit(1)
-
-    if args.resume and not args.all:
-        print("ERROR: --resume requires --all", file=sys.stderr)
-        sys.exit(1)
-
-    if args.session_mode != "new" and not args.all:
-        print("ERROR: --session-mode shared requires --all", file=sys.stderr)
-        sys.exit(1)
+    stages_to_run = _resolve_stages(args)
 
     out_dir = stage_out_dir(args)
     failures = []
     prior_outputs: dict = {}
     session_name = args.session_name or args.context_name
     if args.resume:
-        # Resume a previous session: load completed outputs from disk so
-        # downstream stages chain from them, and skip stages that already
-        # produced a non-empty file (they ran and passed validation last
-        # time; rejected stages never leave a file, so they rerun).
-        for stage in stages_to_run:
-            out_file = out_dir / f"stage-{stage}.out.md"
-            if out_file.exists() and out_file.stat().st_size > 0:
-                prior_outputs[stage] = out_file.read_text(encoding="utf-8")
-        skipped = len(prior_outputs)
+        prior_outputs, skipped = _resume_prior(args, stages_to_run, out_dir)
         print(f"Resume: {skipped} completed stage(s) found, {len(stages_to_run) - skipped} to run", flush=True)
 
+    failures = _run_stage_loop(args, stages_to_run, prompts_dir, ctx, out_dir, session_name, prior_outputs)
+
+    if failures:
+        print(f"\nFailed stages: {', '.join(failures)}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _run_stage_loop(args, stages_to_run: list, prompts_dir, ctx: dict, out_dir, session_name: str, prior_outputs: dict) -> list:
+    """Run each stage in order: skip resumed outputs, fill the template with
+    chained variables, start/continue the shared session, and keep completed
+    outputs for chaining into later stages. Returns the list of failed stages."""
+    failures = []
     session_active = False
     for stage in stages_to_run:
         if args.resume and stage in prior_outputs:
             print(f"  Stage {stage}: SKIP (output exists: {out_dir / f'stage-{stage}.out.md'})", flush=True)
             continue
 
-        template_file = prompts_dir / STAGES[stage]
-        if not template_file.exists():
-            print(f"ERROR: template not found: {template_file}", file=sys.stderr)
+        prompt, missing = _stage_prompt(args, stage, prompts_dir, ctx, prior_outputs)
+        if missing:
             failures.append(stage)
             continue
-
-        # Build variable map for this stage
-        defaults = STAGE_VARS.get(stage, {})
-        variables = {k: ctx.get(k.lower(), v) for k, v in defaults.items()}
-        variables.update(context_to_vars(ctx, stage))
-        variables.update(chain_variables(prior_outputs, stage, variables, defaults))
-
-        prompt = fill_template(template_file, variables)
 
         if args.dry_run:
             print(f"\n{'='*60}")
@@ -679,10 +649,82 @@ def main() -> None:
         out_file = stage_out_dir(args) / f"stage-{stage}.out.md"
         if out_file.exists():
             prior_outputs[stage] = out_file.read_text(encoding="utf-8")
+    return failures
 
-    if failures:
-        print(f"\nFailed stages: {', '.join(failures)}", file=sys.stderr)
+
+def _stage_prompt(args, stage: str, prompts_dir, ctx: dict, prior_outputs: dict) -> tuple[str, bool]:
+    """Fill the stage template with context and chained variables from
+    prior stage outputs. Returns (prompt, missing_template)."""
+    template_file = prompts_dir / STAGES[stage]
+    if not template_file.exists():
+        print(f"ERROR: template not found: {template_file}", file=sys.stderr)
+        return "", True
+
+    defaults = STAGE_VARS.get(stage, {})
+    variables = {k: ctx.get(k.lower(), v) for k, v in defaults.items()}
+    variables.update(context_to_vars(ctx, stage))
+    variables.update(chain_variables(prior_outputs, stage, variables, defaults))
+    return fill_template(template_file, variables), False
+
+
+def _build_context(args) -> dict:
+    """Review context from the ctx file plus CLI overrides; the context
+    name becomes the session base name for shared sessions."""
+    prompts_dir = Path(__file__).parent / "prompts"
+    if not prompts_dir.exists():
+        print(f"ERROR: prompts directory not found: {prompts_dir}", file=sys.stderr)
         sys.exit(1)
+    ctx = {}
+    if args.context:
+        ctx = load_context(args.context)
+        args.context_name = Path(args.context).stem
+    else:
+        args.context_name = args.subsystem or "review"
+    if args.project:
+        ctx["project"] = args.project
+    if args.subsystem:
+        ctx["subsystem"] = args.subsystem
+    if args.files:
+        ctx["files"] = [f.strip() for f in args.files.split(",")]
+    if args.rfcs:
+        ctx["rfcs"] = [r.strip() for r in args.rfcs.split(",")]
+    if args.repo:
+        ctx["repo"] = args.repo
+    return ctx
+
+
+def _resolve_stages(args) -> list:
+    """--all runs every stage; --stage NN runs one. --resume and shared
+    sessions only make sense for a full run, so they are rejected otherwise."""
+    if args.resume and not args.all:
+        print("ERROR: --resume requires --all", file=sys.stderr)
+        sys.exit(1)
+    if args.session_mode != "new" and not args.all:
+        print("ERROR: --session-mode shared requires --all", file=sys.stderr)
+        sys.exit(1)
+    if args.all:
+        return sorted(STAGES.keys())
+    if args.stage:
+        stage = args.stage.zfill(2)
+        if stage not in STAGES:
+            print(f"ERROR: unknown stage '{args.stage}'. Valid: {', '.join(STAGES.keys())}", file=sys.stderr)
+            sys.exit(1)
+        return [stage]
+    print("ERROR: specify --stage NN or --all", file=sys.stderr)
+    sys.exit(1)
+
+
+def _resume_prior(args, stages_to_run: list, out_dir) -> tuple[dict, int]:
+    """Resume a previous session: load completed outputs from disk so
+    downstream stages chain from them, and skip stages that already produced
+    a non-empty file (they ran and passed validation last time; rejected
+    stages never leave a file, so they rerun). Returns (prior_outputs, count)."""
+    prior_outputs: dict = {}
+    for stage in stages_to_run:
+        out_file = out_dir / f"stage-{stage}.out.md"
+        if out_file.exists() and out_file.stat().st_size > 0:
+            prior_outputs[stage] = out_file.read_text(encoding="utf-8")
+    return prior_outputs, len(prior_outputs)
 
 
 if __name__ == "__main__":

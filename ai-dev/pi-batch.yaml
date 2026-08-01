@@ -29,6 +29,7 @@ validators:
   build: "go build ./... && go vet ./..."
   config: "python cli.py config-validate"
   root: "python cli.py check-root"
+  pyquality: "python {cwd}/ai-dev/quality.py {cwd}/ai-dev"
 
 commit:
   prefix: "[pi-batch]"

@@ -173,6 +173,19 @@ archive_dir: docs/archive   # 全部成功完成后，把交付物移入 docs/ar
   `--archive-dir docs/archive`，输出目录只留最新一轮
 - gate FAIL / 任务失败：不归档（阶段目标未达成，保留现场供排查）
 
+### 2.10 代码组织质量门禁（dogfooding）
+
+```bash
+python ai-dev/quality.py ai-dev/          # 组织质量扫描（纯标准库）
+# 注册为 validator 后可在流水线中调用：
+#   --validate pyquality
+```
+
+- 预算与仓库 Go 门禁对齐：函数 ≤50 行、复杂度 ≤15、文件 ≤1000 行、
+  重复函数体检测（测试文件预算 ×2）
+- `pi-batch.yaml` 的 `validators.pyquality` 已注册，可在流水线阶段当
+  工程门禁使用；重构 ai-dev 自身时用它对标验收
+
 ## 3. 命令速查
 
 ```bash
