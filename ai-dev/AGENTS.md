@@ -231,6 +231,12 @@ python ai-dev/pi-batch.py ai-dev/examples/quickstart-full-sdlc.yaml \
 python ai-dev/pi-batch.py ai-dev/examples/full-sdlc-implement.yaml \
   --log-file logs/full-impl.log
 
+# 一体式入口：滚动分析发现方向 → 选择方向 → 自动跑完整 SDLC（含真实实现）
+#   full-flow.sh [轮数] [间隔秒] [方向]
+# 交互模式：不给方向参数，展示候选后输入；非交互：直接传方向
+bash ai-dev/scripts/full-flow.sh 3 300            # 3 轮分析 + 交互选方向
+bash ai-dev/scripts/full-flow.sh 3 300 "设备信任"  # 3 轮分析 + 直接实现该方向
+
 # MFA 子系统分析（一句话起点 + 动态角色审查）
 python ai-dev/pi-batch.py ai-dev/examples/quickstart-snaplink-analysis.yaml
 
