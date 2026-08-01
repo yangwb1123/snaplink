@@ -153,6 +153,11 @@ func shutdownServers(ctx context.Context, logger spi.Logger, httpSrv, pprofSrv *
 func shutdownSubsystems(ctx context.Context, a *app, logger spi.Logger) {
 	shutdownWatchLoops(ctx, a)
 	shutdownSchedulers(ctx, a, logger)
+	if a.server != nil {
+		if err := a.server.ShutdownNotificationRouter(ctx); err != nil {
+			logger.Error("notification router drain timed out", "error", err)
+		}
+	}
 	// Anomaly detection: drain queue + close SQLite stores. Bounded
 	// by the same shutdown ctx so a hung detector backend can't
 	// stall the whole process.
@@ -206,6 +211,8 @@ func closeMemoryStoreReapers(a *app) {
 	closeIfCloser(a.server.AuthCodeStore())
 	closeIfCloser(a.server.SessionManager())
 	closeIfCloser(a.server.IdentityLinkStore())
+	closeIfCloser(a.server.NotificationStore())
+	closeIfCloser(a.server.NotificationPreferenceStore())
 }
 
 // closeIfCloser closes v when it implements io.Closer, else no-ops.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-yaml"
 
@@ -103,7 +104,27 @@ func registerClientSecretRotator(reg *rotation.Registry, clientCfg config.Client
 		return fmt.Errorf("client_secret_rotation.enabled requires a ClientStore implementing "+
 			"clientrotation.ClientRotationLister (the memory + sqlite defaultimpl backends do); got %T", clientStore)
 	}
-	rotator := clientrotation.NewClientSecretRotator(clientStore, clientCfg.Interval, logger)
+	overlap := clientCfg.Overlap
+	if overlap == 0 {
+		overlap = clientrotation.DefaultOverlap
+	}
+	if overlap < time.Hour {
+		return errors.New("client_secret_rotation.overlap must be >= 1h when client_secret_rotation.enabled")
+	}
+	if _, ok := clientStore.(clientrotation.ClientSecretOverlapRotator); !ok {
+		return fmt.Errorf("client_secret_rotation overlap requires ClientSecretOverlapRotator; got %T", clientStore)
+	}
+	lifetime := clientCfg.Lifetime
+	if lifetime == 0 {
+		lifetime = clientCfg.Interval + overlap
+	}
+	if lifetime <= clientCfg.Interval {
+		return errors.New("client_secret_rotation.lifetime must be greater than interval")
+	}
+	if _, ok := clientStore.(clientrotation.ClientSecretLifecycleRotator); !ok {
+		return fmt.Errorf("client_secret_rotation lifetime requires ClientSecretLifecycleRotator; got %T", clientStore)
+	}
+	rotator := clientrotation.NewClientSecretRotator(clientStore, clientCfg.Interval, logger, overlap, lifetime)
 	if err := reg.Register(rotator, clientCfg.Interval); err != nil {
 		return fmt.Errorf("rotation: register client secret rotator: %w", err)
 	}

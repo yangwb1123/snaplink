@@ -85,8 +85,8 @@ import (
 var safeReloadPaths = map[string]bool{
 	"/logging/level":              true,
 	"/feature_gates/admin_api":    true,
-	"/feature_gates/branding":    true,
-	"/feature_gates/web_spa":    true, // deprecated alias of branding
+	"/feature_gates/branding":     true,
+	"/feature_gates/web_spa":      true, // deprecated alias of branding
 	"/feature_gates/oidc":         true,
 	"/feature_gates/ciba":         true,
 	"/feature_gates/caep":         true,

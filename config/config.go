@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
@@ -91,6 +92,32 @@ type Config struct {
 	ThreatAction         ThreatActionConfig              `yaml:"threat_action"`
 	Webhooks             WebhooksConfig                  `yaml:"webhooks"`
 	SMTP                 SMTPConfig                      `yaml:"smtp"`
+	AuthPipeline         AuthPipelineConfig              `yaml:"auth_pipeline"`
+	Notifications        NotificationsConfig             `yaml:"notifications"`
+}
+
+// AuthPipelineConfig wires the safe built-in lifecycle hooks. Custom and WASM
+// hooks remain code-injected because executable policy is not YAML data.
+type AuthPipelineConfig struct {
+	IPSkipMFACIDRs            []string `yaml:"ip_skip_mfa_cidrs"`
+	RequiredProfileAttributes []string `yaml:"required_profile_attributes"`
+}
+
+// NotificationsConfig enables the end-user security inbox and audit router.
+type NotificationsConfig struct {
+	Enabled              bool                     `yaml:"enabled"`
+	Backend              string                   `yaml:"backend"`
+	SQLite               NotificationSQLiteConfig `yaml:"sqlite"`
+	EmailEnabled         bool                     `yaml:"email_enabled"`
+	Cooldown             time.Duration            `yaml:"cooldown"`
+	QueueSize            int                      `yaml:"queue_size"`
+	Workers              int                      `yaml:"workers"`
+	SessionExpiryWarning time.Duration            `yaml:"session_expiry_warning"`
+	SessionScanInterval  time.Duration            `yaml:"session_scan_interval"`
+}
+
+type NotificationSQLiteConfig struct {
+	DSN string `yaml:"dsn"`
 }
 
 // FeatureGatesConfig controls which optional protocol surfaces the server

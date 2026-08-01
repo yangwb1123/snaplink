@@ -114,6 +114,28 @@ func TestBuildCredentialRotation_ClientSecretRotationRequiresInterval(t *testing
 	}
 }
 
+func TestBuildCredentialRotation_ClientSecretRotationRejectsShortOverlap(t *testing.T) {
+	t.Parallel()
+	clientCfg := config.ClientSecretRotationConfig{
+		Enabled: true, Interval: 24 * time.Hour, Overlap: 30 * time.Minute,
+	}
+	store := defaultimpl.NewMemoryClientStore()
+	if _, _, err := BuildCredentialRotation(config.RotationConfig{}, clientCfg, nil, store, govLogger(), nil); err == nil {
+		t.Fatal("expected overlap shorter than one hour to fail closed")
+	}
+}
+
+func TestBuildCredentialRotation_ClientSecretRotationRejectsLifetimeAtInterval(t *testing.T) {
+	t.Parallel()
+	clientCfg := config.ClientSecretRotationConfig{
+		Enabled: true, Interval: 24 * time.Hour, Overlap: time.Hour, Lifetime: 24 * time.Hour,
+	}
+	store := defaultimpl.NewMemoryClientStore()
+	if _, _, err := BuildCredentialRotation(config.RotationConfig{}, clientCfg, nil, store, govLogger(), nil); err == nil {
+		t.Fatal("expected lifetime at the rotation interval to fail closed")
+	}
+}
+
 func TestBuildCredentialRotation_ClientSecretRotationRequiresClientStore(t *testing.T) {
 	t.Parallel()
 	clientCfg := config.ClientSecretRotationConfig{Enabled: true, Interval: time.Hour}
