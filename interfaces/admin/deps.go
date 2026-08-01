@@ -140,3 +140,38 @@ type Deps interface {
 	// ActionTypes). Empty ⇒ unrestricted — every action_type accepted.
 	ApprovalActionTypes() admingovernance.RequiredActionTypes
 }
+
+type trustedDeviceStoreProvider interface {
+	TrustedDeviceStore() core.TrustedDeviceStore
+}
+
+// revokeAdminPasswordResetCredentials best-effort invalidates credentials
+// minted under the old password. The password change has already committed,
+// so cleanup errors are observable but never turn the request into a false 500.
+func revokeAdminPasswordResetCredentials(d Deps, ctx core.HandlerContext, userID string) {
+	rctx := ctx.Request().Context()
+	if sessions := d.SessionManager(); sessions != nil {
+		items, err := sessions.ListByUser(rctx, userID)
+		if err != nil {
+			d.Logger().Error("admin password reset: list sessions failed", "user_id", userID, "error", err)
+		} else {
+			for _, session := range items {
+				if err := sessions.Destroy(rctx, session.ID); err != nil {
+					d.Logger().Error("admin password reset: revoke session failed", "session_id", session.ID, "error", err)
+				}
+			}
+		}
+	}
+	if index, ok := d.RefreshTokenStore().(oauth.RefreshTokenSubjectIndex); ok {
+		if _, err := index.DeleteAllForSubject(rctx, userID, ""); err != nil {
+			d.Logger().Error("admin password reset: revoke refresh tokens failed", "user_id", userID, "error", err)
+		}
+	}
+	provider, ok := any(d).(trustedDeviceStoreProvider)
+	if !ok || provider.TrustedDeviceStore() == nil {
+		return
+	}
+	if _, err := provider.TrustedDeviceStore().RevokeAll(rctx, userID); err != nil {
+		d.Logger().Error("admin password reset: revoke trusted devices failed", "user_id", userID, "error", err)
+	}
+}

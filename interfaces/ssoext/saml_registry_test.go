@@ -68,7 +68,6 @@ func TestRegisterSAMLHandlers_RejectsBadInput(t *testing.T) {
 	ssoextAssertPanic(t, "duplicate", func() { RegisterSAMLHandlers("saml-dup", good) })
 }
 
-
 // ssoextAssertPanic is the local panic assertion helper (mirrors the one in
 // cmd/sso-server's external_signer_test.go).
 func ssoextAssertPanic(t *testing.T, label string, f func()) {

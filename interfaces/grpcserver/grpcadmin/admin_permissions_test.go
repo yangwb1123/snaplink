@@ -99,7 +99,8 @@ func TestPermissionAdminService_RoleCRUDAndInvalidateCallback(t *testing.T) {
 func TestPermissionAdminService_AssignmentsAndMenus(t *testing.T) {
 	t.Parallel()
 	prov := permissions.NewMemoryProvider()
-	svc := NewPermissionAdminService(prov, nil, nil)
+	sink := audit.NewMemorySink(10)
+	svc := NewPermissionAdminService(prov, audit.New(sink), nil)
 	ctx := context.Background()
 
 	_, err := svc.AssignRoles(ctx, &adminv1.AssignRolesRequest{ClientId: "web", UserId: "alice", Roles: []string{"editor"}})
@@ -116,6 +117,19 @@ func TestPermissionAdminService_AssignmentsAndMenus(t *testing.T) {
 	list, _ = svc.ListAssignments(ctx, &adminv1.ListAssignmentsRequest{ClientId: "web"})
 	if len(list.Assignments) != 0 {
 		t.Errorf("expected no assignments after Unassign, got %+v", list.Assignments)
+	}
+	events, err := sink.Query(ctx, audit.Query{Limit: 10})
+	requireOK(t, err, "sink.Query")
+	for _, eventType := range []audit.EventType{audit.EventAdminRoleAssigned, audit.EventAdminRoleUnassigned} {
+		found := false
+		for _, event := range events {
+			if event.Type == eventType && event.Metadata["target_user_id"] == "alice" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s audit event missing target_user_id", eventType)
+		}
 	}
 
 	_, err = svc.SetMenus(ctx, &adminv1.SetMenusRequest{ClientId: "web", Menus: []*adminv1.MenuItem{

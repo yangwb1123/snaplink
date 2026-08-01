@@ -192,6 +192,7 @@ func HandleAdminResetUserPassword(d Deps, ctx core.HandlerContext) {
 		return
 	}
 	recordAdminPasswordHistory(d, ctx, userID, req.NewPassword)
+	revokeAdminPasswordResetCredentials(d, ctx, userID)
 	recordAdminUserAction(d, ctx, audit.EventAdminPasswordReset, userID, "", "")
 	ctx.JSON(http.StatusNoContent, nil)
 }

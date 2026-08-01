@@ -17,6 +17,9 @@ service ClientAdminService {
   rpc List(ListClientsRequest) returns (ListClientsResponse) {
     option (google.api.http) = { get: "/api/v1/admin/clients" };
   }
+  rpc ListExpiring(ListExpiringClientsRequest) returns (ListExpiringClientsResponse) {
+    option (google.api.http) = { get: "/api/v1/admin/clients/expiring" };
+  }
   rpc Get(GetClientRequest) returns (GetClientResponse) {
     option (google.api.http) = { get: "/api/v1/admin/clients/{id}" };
   }
@@ -73,6 +76,8 @@ message Client {
   repeated string allowed_authenticators = 6;
   string token_strategy = 7;
   bool   active         = 8;
+  // Unix timestamp. 0 means the secret never expires (legacy/public client).
+  int64  client_secret_expires_at = 9;
 }
 
 message ListClientsRequest {
@@ -96,6 +101,12 @@ message ListClientsResponse {
   repeated Client clients = 1;
 }
 
+message ListExpiringClientsRequest {
+  // Look-ahead window in seconds. 0 selects the 30-day default.
+  int64 within_seconds = 1;
+}
+message ListExpiringClientsResponse { repeated Client clients = 1; }
+
 message GetClientRequest    { string id = 1; }
 message GetClientResponse   { Client client = 1; }
 
@@ -108,8 +119,17 @@ message UpdateClientResponse { Client client = 1; }
 message DeleteClientRequest  { string id = 1; }
 message DeleteClientResponse {}
 
-message RotateSecretRequest  { string id = 1; }
-message RotateSecretResponse { string secret = 1; }
+message RotateSecretRequest  {
+  string id = 1;
+  // 0 selects the 24-hour default; explicit values must be >= 3600.
+  int64 overlap_seconds = 2;
+  // 0 selects the 90-day default; must be longer than overlap.
+  int64 lifetime_seconds = 3;
+}
+message RotateSecretResponse {
+  string secret = 1;
+  int64 client_secret_expires_at = 2;
+}
 
 message ApproveClientRequest  { string id = 1; }
 message ApproveClientResponse { Client client = 1; }
