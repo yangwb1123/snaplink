@@ -1,15 +1,13 @@
-Spec written to `docs/requirements/domains-anomaly-detect-convergence.md`, following the sibling format of `domains-anomaly-tenant-dimension.md` (direction #1's spec, which explicitly defers this convergence to a separate spec). All three decisions verified against current code:
+Spec written to `docs/auto/domains-permissions-spec.md`. All evidence claims were independently re-verified against the tree before writing:
 
-## 1. Delete the dead subtree `domains/anomaly/{detect,signature,fingerprint}`
-- **Evidence**: repo-wide grep shows only intra-subtree imports; `detect/` has zero test files; `docs/proposals/design.md:21` calls it "the dead `domains/anomaly/detect/` package" that must be mechanically updated on every SPI change (proven during the v2 store migration); `signature.Store.DistinctCount` (store.go:30) has zero callers; production wiring at `cmd/sso-server/anomaly.go:258-349` uses only `defaultimpl/detectors`.
-- **Acceptance**: zero import matches, `go build/vet`, maintainability+architecture gates, `make ci`.
+**Verified evidence**
+- `ResourceProvider`/`ResolveResource`/`RegisterResource` — grep across all `*.go` returns zero consumers outside `domains/permissions/`; `sqlite.go:18-21` doc admits resources "NOT covered"; `authz.go` `Check` does flat `permissions.Matches` only; `memory.go:283` emits `Permission{Code: code}` with `Resource` never populated while `authz.proto` already reserves the wire field; `rar.go` shape-checks RFC 9396 details but never validates them.
+- `ActiveRoles`/`SessionRoleActivator` — zero consumers outside the package; `permissionstest/sod_conformance.go` self-admits gaps via `t.Skip` on type-asserts; admin proto has only 8 role/assignment/menu RPCs; `docs/feature-matrix.md` and `docs/error-codes.md` have no SoD entries.
+- `authz.go` `Check` has no audit event and no `sso_authz_*` metrics anywhere; `RecordQuery`/`EventPermissionQuery` (`aliases_spi.go:162`) covers only `/me/*`; `PolicyBundle` carries only roles + wildcard semantics, and `server_health.go:40` calls it "the role-definition half"; `invalidateAuthzPolicy` plumbing already exists.
 
-## 2. Single source of truth for wire-stable `Signal.Type` constants
-- **Evidence**: collision table — `detect/velocity.go:96` `"velocity_burst"` == `detectors/velocity.go:15` `DetectorTypeVelocity`; same for `new_device`/`new_country`; `credential_stuffing` vs `brute_force_shadow` (semantic twin, different name). Wire-stability contract documented in `velocity.go:12-14` ("renaming silently breaks operator dashboards") and `types.go:112-114` — yet the domain package defines no constants.
-- **Acceptance**: `SignalType*` consts in `domains/anomaly`, `DetectorType*` become aliases, no raw-string `Type:` emissions.
+**The 3 improvements (each `##` section: problem → evidence → proposed behavior → acceptance check)**
+1. **Wire the resource catalog into an enforcement point** — conformance suite + durable sqlite/redis/postgres backends, admin gRPC/REST management, resource-aware authz `Check`, RAR validation against the catalog.
+2. **Make SoD operable end-to-end** — admin RPCs for conflict sets/session activation, durable SSoD/DSoD tables, `Check` consumption of `ActiveRoles` keyed by OIDC `sid`, error-code/feature-matrix sync.
+3. **Decision-plane observability + complete policy export** — `EventPermissionCheck` audit + `sso_authz_checks_total` counters, `PolicyBundle` v2 with resources/SoD sets (ETag-preserving), OPA reference-policy conformance to prevent sidecar drift.
 
-## 3. Fix reference-pointer drift + codify ordering/write-ownership contract
-- **Evidence**: `runner.go:13` points at nonexistent `infrastructure/defaultimpl/anomaly` (verified: only `detectors/` exists); the load-bearing order (impossible-travel owns history writes, velocity/new-baseline read-only, per `detectors/velocity.go:21-26`) is enforced by nothing — `buildAnomalyDetectors` order is silently load-bearing.
-- **Acceptance**: stale pointer gone everywhere; runner doc states order + write-ownership rule; zero behavior change.
-
-Non-goals stated: tenant dimension (spec exists) and the retention loop (separate spec), plus the `inspectTimeout` shared-budget caveat recorded as a documented limitation only.
+Docs-only change — no Go gates triggered.
