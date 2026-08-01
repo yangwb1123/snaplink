@@ -1,20 +1,15 @@
-Spec written to `docs/requirements/domains-anomaly-tenant-dimension.md`. All claims were verified against executable code before writing:
+Spec written to `docs/requirements/domains-anomaly-detect-convergence.md`, following the sibling format of `domains-anomaly-tenant-dimension.md` (direction #1's spec, which explicitly defers this convergence to a separate spec). All three decisions verified against current code:
 
-**Verification performed**
-- `dispatchLoginAnomaly` (`interfaces/sso/server_helpers.go:298`) has no tenant param; tenant is available at every call site (resolved `client.TenantID` at `server_login_client.go:397`; `clientStore.Get` pattern at `server_tenant_residency.go:22-25`)
-- `LoginEvent`/`Signal` (`domains/anomaly/types.go`) and `LoginEntry` (`recent_login.go:69`) carry no `TenantID`; `Recent`/`Count` are keyed by `SubjectID`/`ipHash` alone
-- SQLite schema (`infrastructure/defaultimpl/sqlite/recent_login.go:14-31`) has no `tenant_id` column and a cross-tenant `(subject_id, ts)` index; memory store keyed by `SubjectID` only (`memorystorecredential/memory_recent_login.go:37`)
-- Audit sink (`domains/anomaly/sink.go`) writes no tenant despite the canonical `EnrichTenant` pattern (`platform/audit/handler_helpers.go:62-69`); runner invokes tenant-aware `ThreatExecutor` (`runner.go:216-227`) with a tenant-less signal, while `Threat.TenantID` already exists (`threataction.go:50-51`)
+## 1. Delete the dead subtree `domains/anomaly/{detect,signature,fingerprint}`
+- **Evidence**: repo-wide grep shows only intra-subtree imports; `detect/` has zero test files; `docs/proposals/design.md:21` calls it "the dead `domains/anomaly/detect/` package" that must be mechanically updated on every SPI change (proven during the v2 store migration); `signature.Store.DistinctCount` (store.go:30) has zero callers; production wiring at `cmd/sso-server/anomaly.go:258-349` uses only `defaultimpl/detectors`.
+- **Acceptance**: zero import matches, `go build/vet`, maintainability+architecture gates, `make ci`.
 
-**The three improvements** (scope fixed to direction #1, tenant dimension)
+## 2. Single source of truth for wire-stable `Signal.Type` constants
+- **Evidence**: collision table — `detect/velocity.go:96` `"velocity_burst"` == `detectors/velocity.go:15` `DetectorTypeVelocity`; same for `new_device`/`new_country`; `credential_stuffing` vs `brute_force_shadow` (semantic twin, different name). Wire-stability contract documented in `velocity.go:12-14` ("renaming silently breaks operator dashboards") and `types.go:112-114` — yet the domain package defines no constants.
+- **Acceptance**: `SignalType*` consts in `domains/anomaly`, `DetectorType*` become aliases, no raw-string `Type:` emissions.
 
-## 1. Thread TenantID through dispatch + event/signal model
-`LoginEvent.TenantID`/`Signal.TenantID` added; `dispatchLoginAnomaly` gains a tenant param (success paths pass `client.TenantID`, failure paths resolve best-effort). Acceptance: tenant round-trips through runner to sink; tenant-less clients stay empty.
+## 3. Fix reference-pointer drift + codify ordering/write-ownership contract
+- **Evidence**: `runner.go:13` points at nonexistent `infrastructure/defaultimpl/anomaly` (verified: only `detectors/` exists); the load-bearing order (impossible-travel owns history writes, velocity/new-baseline read-only, per `detectors/velocity.go:21-26`) is enforced by nothing — `buildAnomalyDetectors` order is silently load-bearing.
+- **Acceptance**: stale pointer gone everywhere; runner doc states order + write-ownership rule; zero behavior change.
 
-## 2. Tenant-scope both history stores
-`LoginEntry.TenantID`, `Recent(ctx, tenantID, subjectID, …)` and `Record/Count(ctx, tenantID, ipHash, …)` interface changes; SQLite gains `tenant_id` column + `(tenant_id, subject_id, ts DESC)` / `(tenant_id, ip_hash, ts)` indexes with migration; memory uses composite keys. Acceptance: same subject/IP in t1 vs t2 never share state; EXPLAIN QUERY PLAN shows new index.
-
-## 3. Tenant-stamp audit sink + gate threat-executor bridge
-`NewRecorderSink` sets `Event.TenantID`/`tenant.id` meta; runner copies `TenantID` onto the `Threat` and refuses execution on empty/mismatched tenant with warn+metric (fail-open audit-only for legacy embedders). Acceptance: executor receives `Threat.TenantID == "t1"`; cross-tenant regression test proves t1 spray never acts on t2.
-
-Each section lists file/symbol evidence and a concrete acceptance check; cross-cutting notes cover the AGENTS.md contract-update obligation and explicitly scope out analysis directions #2 (dead code) and #3 (retention loop).
+Non-goals stated: tenant dimension (spec exists) and the retention loop (separate spec), plus the `inspectTimeout` shared-budget caveat recorded as a documented limitation only.
