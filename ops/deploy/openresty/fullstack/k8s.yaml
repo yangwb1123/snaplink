@@ -29,7 +29,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: openresty
-          image: snaplink/sso-gateway:full-b24b0b0-gw5
+          image: snaplink/sso-gateway:full-b24b0b0-gw6
           imagePullPolicy: Never
           ports:
             - name: http

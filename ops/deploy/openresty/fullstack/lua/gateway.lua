@@ -74,7 +74,7 @@ function M.login_access()
 
     ngx.header["Cache-Control"] = "no-store"
     ngx.header["Pragma"] = "no-cache"
-    return ngx.redirect(target, ngx.HTTP_FOUND)
+    return ngx.redirect(target, ngx.HTTP_MOVED_TEMPORARILY)
 end
 
 function M.headers()
