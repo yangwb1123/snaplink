@@ -794,7 +794,7 @@ def _extract_decisions(text: str, limit: int = 5) -> list[str]:
     return out
 
 
-def _append_decision_log(path: str, stage: Stage, results: list, stage_ok: bool, verdict: Optional[str]) -> None:
+def _append_decision_log(path: str, stage_name: str, results: list, stage_ok: bool, verdict: Optional[str]) -> None:
     """Append one structured decision record per finished stage: the
     stage, its status, each decision point extracted from the deliverables
     (heading + first sentence, the full reasoning lives in the artifacts),
@@ -803,7 +803,7 @@ def _append_decision_log(path: str, stage: Stage, results: list, stage_ok: bool,
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     with open(target, "a", encoding="utf-8") as f:
-        f.write(f"\n## {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} — stage '{stage.name}' — "
+        f.write(f"\n## {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} — stage '{stage_name}' — "
                 f"{'PASS' if stage_ok else 'FAIL'}")
         if verdict:
             f.write(f" (gate verdict: {verdict})")
@@ -894,7 +894,7 @@ def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = F
         # Structured decision record for this stage (append-only history)
         log_path = decision_log or pipeline.decision_log
         if log_path and results:
-            _append_decision_log(log_path, stage, results, stage_ok, gate_verdict)
+            _append_decision_log(log_path, stage.name, results, stage_ok, gate_verdict)
 
         if gate_verdict in ("FAIL", "REJECT"):
             failed_stages.append(stage.name)
@@ -1684,6 +1684,13 @@ def main() -> None:
 
                 print_summary(results)
                 round_failed = any(not r.success for r in results)
+
+                # Structured decision record for single-batch runs (rolling
+                # re-analysis keeps a history of what each round decided and
+                # why, instead of overwriting the artifact silently)
+                if args.decision_log and results:
+                    source_name = Path(args.source).stem if args.source else (args.from_dir or "batch")
+                    _append_decision_log(args.decision_log, source_name, results, not round_failed, None)
 
                 # Git commit for single-batch modes (per round)
                 if args.git_commit and not args.no_git_commit:
