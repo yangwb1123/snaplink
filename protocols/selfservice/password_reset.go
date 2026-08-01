@@ -7,6 +7,7 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicecore"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
@@ -125,8 +126,33 @@ func HandleResetPassword(d Deps, ctx core.HandlerContext) {
 	}
 	recordPasswordHistory(d, rctx, rt.UserID, req.NewPassword)
 	revoked := revokeUserSessionsBestEffort(d, ctx, rt.UserID)
-	recordPasswordResetCompleted(d, ctx, rt.UserID, revoked)
+	refreshRevoked := revokeUserRefreshTokensBestEffort(d, ctx, rt.UserID)
+	selfservicecore.RevokeTrustedDevicesOnCompromiseSignal(d, ctx, rt.UserID, "password_reset")
+	recordPasswordResetCompleted(d, ctx, rt.UserID, revoked, refreshRevoked)
 	ctx.JSON(http.StatusOK, map[string]any{"status": "ok"})
+}
+
+type refreshTokenStoreProvider interface {
+	RefreshTokenStore() oauth.RefreshTokenStore
+}
+
+// revokeUserRefreshTokensBestEffort removes every refresh token for userID
+// after account recovery. The optional capability keeps embedders without a
+// subject index compatible; a cleanup failure never rolls back the new password.
+func revokeUserRefreshTokensBestEffort(d Deps, ctx core.HandlerContext, userID string) bool {
+	provider, ok := any(d).(refreshTokenStoreProvider)
+	if !ok || provider.RefreshTokenStore() == nil {
+		return false
+	}
+	index, ok := provider.RefreshTokenStore().(oauth.RefreshTokenSubjectIndex)
+	if !ok {
+		return false
+	}
+	if _, err := index.DeleteAllForSubject(ctx.Request().Context(), userID, ""); err != nil {
+		d.Logger().Error("password reset: revoke refresh tokens failed", "user_id", userID, "error", err)
+		return false
+	}
+	return true
 }
 
 // revokeUserSessionsBestEffort destroys all of userID's sessions after a reset
@@ -170,7 +196,7 @@ func recordPasswordResetRequested(d Deps, ctx core.HandlerContext, deliveryOK bo
 	d.Auditor().Record(ctx.Request().Context(), evt)
 }
 
-func recordPasswordResetCompleted(d Deps, ctx core.HandlerContext, userID string, revoked bool) {
+func recordPasswordResetCompleted(d Deps, ctx core.HandlerContext, userID string, sessionsRevoked, refreshRevoked bool) {
 	if d.Auditor() == nil {
 		return
 	}
@@ -180,7 +206,8 @@ func recordPasswordResetCompleted(d Deps, ctx core.HandlerContext, userID string
 		ActorID: userID,
 		ActorIP: audit.ClientIP(ctx.Request()),
 	}
-	audit.SetMeta(evt, "sessions_revoked", passwordResetBoolStr(revoked))
+	audit.SetMeta(evt, "sessions_revoked", passwordResetBoolStr(sessionsRevoked))
+	audit.SetMeta(evt, "refresh_tokens_revoked", passwordResetBoolStr(refreshRevoked))
 	d.Auditor().Record(ctx.Request().Context(), evt)
 }
 

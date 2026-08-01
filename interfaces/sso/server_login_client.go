@@ -178,7 +178,7 @@ func (s *Server) evaluateLoginRisk(ctx HandlerContext, result *AuthResult, req *
 			// (user, client) lets a genuinely returning device skip the
 			// challenge entirely — checked BEFORE issuing one so a hit never
 			// even mints a throwaway challenge.
-			if s.trustedDeviceAllowsSkip(ctx, result.UserID, req.ClientID, req.DeviceToken) {
+			if authHookSkipsMFA(ctx) || s.trustedDeviceAllowsSkip(ctx, result.UserID, req.ClientID, req.DeviceToken) {
 				return false
 			}
 			// Step-up gate engaged: persist the in-flight state and return
@@ -241,6 +241,9 @@ func (s *Server) enforceConditionalAccessLogin(ctx HandlerContext, result *AuthR
 		ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, core.ErrConditionalAccessDenied, req.State))
 		return true
 	case conditionalaccess.VerdictRequireStepUp:
+		if authHookSkipsMFA(ctx) {
+			return false
+		}
 		if s.mfaProvider != nil && s.mfaChallengeStore != nil {
 			s.issueMFAChallenge(ctx, result, *req, client)
 			return true

@@ -40,6 +40,7 @@ import (
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystorecredential"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreidentity"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/sse"
 	"github.com/yangwb1123/snaplink/protocols/compliance"
 	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicecore"
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -206,6 +207,11 @@ func (d *testDeps) AccountEraser() *compliance.Eraser  { return d.accountEraser 
 
 func (d *testDeps) PasswordPolicyValidator() spi.PasswordPolicyValidator { return d.passwordPolicy }
 func (d *testDeps) PasswordHistoryStore() core.PasswordHistoryStore      { return d.passwordHistory }
+func (d *testDeps) NotificationStore() core.NotificationStore            { return nil }
+func (d *testDeps) NotificationPreferenceStore() core.NotificationPreferenceStore {
+	return nil
+}
+func (d *testDeps) NotificationBroker() *sse.Broker { return nil }
 
 var _ Deps = (*testDeps)(nil)
 

@@ -141,27 +141,24 @@ func (b *appBuilder) wirePasswordReset() error {
 	return nil
 }
 
-// wireEmailSenders builds the built-in SMTP sender (nil, byte-identical
-// no-op when smtp.enabled=false or no host is set) and, when built, wires it
-// as all four shared/spi token-delivery senders — one SMTP config, one
-// transport, one template set backing password reset, email verification,
-// email change, and org invitations.
+// wireEmailSenders wires SMTP token delivery and the optional notification inbox.
 func (b *appBuilder) wireEmailSenders() error {
 	sender, err := serverbuildplatform.BuildEmailSender(b.cfg.SMTP, b.logger)
 	if err != nil {
 		return fmt.Errorf("smtp sender: %w", err)
 	}
-	if sender == nil {
-		return nil
+	if sender != nil {
+		b.emailSender = sender
+		b.opts = append(b.opts, sso.WithPasswordResetSender(sender), sso.WithEmailVerificationSender(sender),
+			sso.WithEmailChangeSender(sender), sso.WithInvitationSender(sender))
+		b.logger.Info("built-in SMTP email delivery enabled", "host", b.cfg.SMTP.Host, "port", b.cfg.SMTP.Port)
 	}
-	b.emailSender = sender
-	b.opts = append(b.opts,
-		sso.WithPasswordResetSender(sender),
-		sso.WithEmailVerificationSender(sender),
-		sso.WithEmailChangeSender(sender),
-		sso.WithInvitationSender(sender),
-	)
-	b.logger.Info("built-in SMTP email delivery enabled", "host", b.cfg.SMTP.Host, "port", b.cfg.SMTP.Port)
+	notificationOpts, err := serverbuildplatform.BuildNotifications(
+		b.cfg.Notifications, b.userProvider, b.sessionMgr, sender, b.metricsRegistry, b.logger)
+	if err != nil {
+		return fmt.Errorf("notifications: %w", err)
+	}
+	b.opts = append(b.opts, notificationOpts...)
 	return nil
 }
 

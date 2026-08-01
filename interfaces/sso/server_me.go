@@ -172,6 +172,22 @@ func (s *Server) handleRevokeMyTrustedDevice(ctx HandlerContext) {
 	selfservice.HandleRevokeMyTrustedDevice(s, ctx)
 }
 
+func (s *Server) handleMyNotifications(ctx HandlerContext) {
+	selfservice.HandleMyNotifications(s, ctx)
+}
+func (s *Server) handleMarkMyNotificationRead(ctx HandlerContext) {
+	selfservice.HandleMarkMyNotificationRead(s, ctx)
+}
+func (s *Server) handleMyNotificationPreferences(ctx HandlerContext) {
+	selfservice.HandleMyNotificationPreferences(s, ctx)
+}
+func (s *Server) handlePutNotificationPreferences(ctx HandlerContext) {
+	selfservice.HandlePutNotificationPreferences(s, ctx)
+}
+func (s *Server) handleMyNotificationStream(ctx HandlerContext) {
+	selfservice.HandleMyNotificationStream(s, ctx)
+}
+
 // mountTrustedDeviceRoutes registers the self-service "remember this device"
 // MFA-skip surface (GET/POST/DELETE /me/trusted-devices*) on gr, the SAME
 // SelfService-gated core.GatedRouter mountSelfServiceCredentials builds — so
@@ -339,6 +355,7 @@ func (s *Server) mountUnauthenticatedSelfServiceRoutes() {
 // self-service action).
 func (s *Server) mountSelfServiceCredentials() {
 	gr := core.NewGatedRouter(s.router, s.selfServiceGateOn)
+	s.mountNotificationRoutes(gr)
 	// Self-service MFA factor management. Mounted only with an enrollment
 	// store; byte-identical without one.
 	if s.mfaEnrollmentStore != nil {
@@ -358,6 +375,24 @@ func (s *Server) mountSelfServiceCredentials() {
 		gr.GET(PathMyMFARecoveryCodes, s.handleGetRecoveryCodesCount)
 	}
 	s.mountTrustedDeviceRoutes(gr)
+	s.mountSelfServicePrivacyRoutes(gr)
+}
+
+func (s *Server) mountNotificationRoutes(gr Router) {
+	if s.notificationStore != nil {
+		gr.GET(PathMyNotifications, s.handleMyNotifications)
+		gr.POST(PathMyNotificationRead, s.handleMarkMyNotificationRead)
+		if s.NotificationBroker() != nil {
+			gr.GET(core.PathMyNotificationStream, s.handleMyNotificationStream)
+		}
+	}
+	if s.notificationPreferenceStore != nil {
+		gr.GET(PathMyNotificationPreferences, s.handleMyNotificationPreferences)
+		gr.PUT(PathMyNotificationPreferences, s.handlePutNotificationPreferences)
+	}
+}
+
+func (s *Server) mountSelfServicePrivacyRoutes(gr Router) {
 	// Self-service passkey registration (authenticated, bearer-bound). Mounts
 	// independently of the enrollment store: the registered credential lands in
 	// the WebAuthn store the Registrar wraps and surfaces in /me/mfa via the

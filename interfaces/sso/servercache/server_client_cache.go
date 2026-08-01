@@ -176,6 +176,30 @@ func (c *ClientStoreCache) RotateSecret(ctx context.Context, clientID string) (s
 	return secret, nil
 }
 
+func (c *ClientStoreCache) RotateSecretWithOverlap(ctx context.Context, clientID string, overlap time.Duration) (string, error) {
+	store, ok := c.inner.(clientrotation.ClientSecretOverlapRotator)
+	if !ok {
+		return "", core.ErrUnsupportedOperation
+	}
+	secret, err := store.RotateSecretWithOverlap(ctx, clientID, overlap)
+	if err == nil {
+		c.Evict(clientID)
+	}
+	return secret, err
+}
+
+func (c *ClientStoreCache) RotateSecretWithLifecycle(ctx context.Context, clientID string, overlap, lifetime time.Duration) (string, error) {
+	store, ok := c.inner.(clientrotation.ClientSecretLifecycleRotator)
+	if !ok {
+		return "", core.ErrUnsupportedOperation
+	}
+	secret, err := store.RotateSecretWithLifecycle(ctx, clientID, overlap, lifetime)
+	if err == nil {
+		c.Evict(clientID)
+	}
+	return secret, err
+}
+
 // ListByTenant forwards to the inner store's TenantScopedClientStore
 // extension when present, preserving that optional capability through the
 // decorator (uncached — admin listing, not the hot path).

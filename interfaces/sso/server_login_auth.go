@@ -115,6 +115,7 @@ func (s *Server) authenticateUser(ctx HandlerContext, req *login.Request, client
 // "unknown session" from "unknown user" by response shape, nor tell it
 // reached that state via /auth/login vs. the ceremony's own endpoint.
 func (s *Server) handleAuthFailure(ctx HandlerContext, req *login.Request, lockKey string, err error) {
+	defer s.notifyLoginFailedHook(ctx, req, core.ErrInvalidCredentials)
 	s.logErrorCtx(ctx, "authentication failed", "provider", req.Provider, "error", err)
 	if s.accountLockout != nil && lockKey != "" {
 		if locked, until, _ := s.accountLockout.RegisterFailure(ctx.Request().Context(), lockKey); locked {
@@ -251,7 +252,12 @@ func (s *Server) rejectExpiredPassword(ctx HandlerContext, req *login.Request, r
 		return false
 	}
 	changedAt, err := reader.PasswordChangedAt(ctx.Request().Context(), result.UserID)
-	if err != nil || time.Since(changedAt) < time.Duration(maxAgeDays)*24*time.Hour {
+	if err != nil {
+		return false
+	}
+	age, maxAge := time.Since(changedAt), time.Duration(maxAgeDays)*24*time.Hour
+	if age < maxAge {
+		s.recordPasswordExpiring(ctx, req, result, maxAge-age)
 		return false
 	}
 	s.recordLoginFailure(ctx, req.ClientID, req.Provider, core.ErrPasswordExpired)

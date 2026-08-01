@@ -10,6 +10,15 @@ package selfservice
 import (
 	"github.com/yangwb1123/snaplink/protocols/selfservice/selfserviceaccount"
 	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicecore"
+	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicenotification"
+)
+
+var (
+	HandleMyNotifications            = selfservicenotification.HandleList
+	HandleMarkMyNotificationRead     = selfservicenotification.HandleMarkRead
+	HandleMyNotificationPreferences  = selfservicenotification.HandleGetPreferences
+	HandlePutNotificationPreferences = selfservicenotification.HandlePutPreferences
+	HandleMyNotificationStream       = selfservicenotification.HandleStream
 )
 
 // Deps is the self-service capability surface (defined in selfservicecore).

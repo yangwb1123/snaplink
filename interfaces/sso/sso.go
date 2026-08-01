@@ -38,6 +38,8 @@ type Server struct {
 	selfServiceState
 	threatState
 	tokenExchangeChainState
+	authPipelineState
+	notificationState
 }
 
 // Option configures the Server.
@@ -139,6 +141,7 @@ func (s *Server) applySessionHub() {
 // all, that branch is skipped entirely — a build using none of these
 // features is byte-identical.
 func (s *Server) applyAuditSinkTaps() {
+	s.applyNotificationErasureWiring()
 	if s.auditor == nil {
 		return
 	}
@@ -153,6 +156,10 @@ func (s *Server) applyAuditSinkTaps() {
 	}
 	if s.scimProvisionSink != nil {
 		s.auditor.AddSink(s.scimProvisionSink)
+	}
+	if s.notificationRouter != nil {
+		s.auditor.AddSink(s.notificationRouter)
+		s.notificationRouter.Start(context.Background())
 	}
 }
 

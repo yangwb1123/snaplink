@@ -64,7 +64,7 @@ func (s *Server) issuerForClient(c *Client) (string, TokenIssuer, error) {
 	// every grant + the /auth/login direct mint (all funnel through here),
 	// without touching each ti.Issue call site. Byte-identical no-op when no
 	// policy store is wired — NewClampingIssuer returns ti unchanged.
-	return name, tokenpolicy.NewClampingIssuer(ti, s.tokenPolicyStore), nil
+	return name, s.authHookIssuer(c, tokenpolicy.NewClampingIssuer(ti, s.tokenPolicyStore)), nil
 }
 
 // enforceTokenPolicy runs the wired token-policy engine's DENY dimensions for
@@ -474,8 +474,8 @@ func (s *Server) recordDeviceCodeDecision(ctx HandlerContext, userID, deviceClie
 // recordRefreshTokenReuse emits a refresh_token_reuse_detected event.
 // Fired from the rotation grant when the store signals
 // oauth.ErrRefreshTokenReused — a security signal worth routing to alerting.
-func (s *Server) recordRefreshTokenReuse(ctx HandlerContext, clientID, familyID string, killed int) {
-	audit.RecordRefreshTokenReuse(s.auditor, ctx, clientID, familyID, killed)
+func (s *Server) recordRefreshTokenReuse(ctx HandlerContext, clientID, subjectID, familyID string, killed int) {
+	audit.RecordRefreshTokenReuse(s.auditor, ctx, clientID, subjectID, familyID, killed)
 }
 
 // recordRefreshRotationVelocity emits a refresh_rotation_velocity_exceeded

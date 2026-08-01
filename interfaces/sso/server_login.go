@@ -40,6 +40,9 @@ func (s *Server) handleLogin(ctx HandlerContext) {
 	if s.checkLoginDeadline(ctx, req.State) {
 		return
 	}
+	if s.runPreAuthenticateHook(ctx, &req, nil) {
+		return
+	}
 	if s.handleLoginContinuationOrPromptNone(ctx, req) {
 		return
 	}
@@ -122,6 +125,10 @@ func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *lo
 	}, req.Scope)
 	if err != nil {
 		s.logger.Error("failed to issue token", "strategy", strategy, "error", err)
+		if status, code, ok := core.AuthHookHTTPError(err); ok {
+			ctx.JSON(status, s.authzErrorBodyWithState(ctx, code, state))
+			return "", nil, "", err
+		}
 		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, state))
 		return "", nil, "", err
 	}
@@ -237,6 +244,9 @@ func (s *Server) credentialLoginStage(ctx HandlerContext, req *login.Request, cl
 		return nil, true
 	}
 	if s.checkLoginDeadline(ctx, req.State) {
+		return nil, true
+	}
+	if s.runPostAuthenticateHook(ctx, req, client, result) {
 		return nil, true
 	}
 

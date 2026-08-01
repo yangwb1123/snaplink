@@ -160,7 +160,7 @@ type ServerDeps struct {
 	RecordCodeSent           func(ctx HandlerContext, provider, target string, ok bool)
 	RecordDeviceCodeIssued   func(ctx HandlerContext, clientID string)
 	RecordSelfErase          func(ctx HandlerContext, userID string)
-	RecordRefreshTokenReuse  func(ctx HandlerContext, clientID, familyID string, killed int)
+	RecordRefreshTokenReuse  func(ctx HandlerContext, clientID, subjectID, familyID string, killed int)
 	MeSubjectOrChallenge     func(ctx HandlerContext) (string, bool)
 	LogErrorCtx              func(ctx HandlerContext, msg string, kv ...any)
 	RevokeAcrossIssuers      func(ctx context.Context, token string) ([]string, []string)

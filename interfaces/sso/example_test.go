@@ -14,6 +14,7 @@ import (
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
 
@@ -238,4 +239,22 @@ func ExampleServer_withCustomHTTPHandler() {
 
 	// http.ListenAndServe(":8080", mux)
 	_ = handler
+}
+
+// ExampleServer_withAuthHooks adds ordered, fail-closed policy at two supported
+// lifecycle coordinates without replacing the built-in login flow.
+func ExampleServer_withAuthHooks() {
+	profile := core.NewPostAuthenticateHook(core.AuthHookConfig{
+		Name: "company.profile", Priority: 20, FailClosed: true,
+	}, func(_ context.Context, _ *core.HookInput) (*core.HookOutput, error) {
+		return &core.HookOutput{Attributes: map[string]string{"source": "company"}}, nil
+	})
+	claims := core.NewPreTokenIssuanceHook(core.AuthHookConfig{
+		Name: "company.claims", Priority: 30, FailClosed: true,
+	}, func(_ context.Context, _ *core.HookInput) (*core.HookOutput, error) {
+		return &core.HookOutput{Claims: map[string]string{"policy_version": "2026-08"}}, nil
+	})
+
+	server := sso.NewServer(sso.WithAuthHook(profile, claims))
+	_ = server
 }

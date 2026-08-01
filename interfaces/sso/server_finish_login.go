@@ -142,7 +142,7 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 	if !ok {
 		return
 	}
-	if s.devicePolicy.RequireMFAForNewDevice && deviceCtx != nil && deviceCtx.SecurityCtx != nil && deviceCtx.SecurityCtx.DeviceIsNew && s.mfaProvider != nil && s.mfaChallengeStore != nil {
+	if s.devicePolicy.RequireMFAForNewDevice && deviceCtx != nil && deviceCtx.SecurityCtx != nil && deviceCtx.SecurityCtx.DeviceIsNew && !authHookSkipsMFA(ctx) && s.mfaProvider != nil && s.mfaChallengeStore != nil {
 		s.issueMFAChallenge(ctx, result, *req, client)
 		return
 	}

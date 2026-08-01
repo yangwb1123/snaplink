@@ -116,6 +116,7 @@ func eraseReportResponse(report *compliance.Report) map[string]any {
 		"consent_revoked":        report.ConsentRevoked,
 		"mfa_factors_removed":    report.MFAFactorsRemoved,
 		"reset_tokens_revoked":   report.ResetTokensRevoked,
+		"notifications_deleted":  report.NotificationsDeleted,
 		"user_deleted":           report.UserDeleted,
 		"skipped":                report.Skipped,
 	}

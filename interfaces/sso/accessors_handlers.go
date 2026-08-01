@@ -330,8 +330,8 @@ func (s *Server) RefreshGrace() tokengrant.RefreshGraceStore { return s.refreshG
 
 // RecordRefreshTokenReuse emits the family-reuse audit event (token replayed
 // after rotation → family killed).
-func (s *Server) RecordRefreshTokenReuse(ctx HandlerContext, clientID, familyID string, killed int) {
-	s.recordRefreshTokenReuse(ctx, clientID, familyID, killed)
+func (s *Server) RecordRefreshTokenReuse(ctx HandlerContext, clientID, subjectID, familyID string, killed int) {
+	s.recordRefreshTokenReuse(ctx, clientID, subjectID, familyID, killed)
 }
 
 // RecordRefreshRotationVelocity emits the rotation-velocity-breach audit event.

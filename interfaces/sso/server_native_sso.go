@@ -18,6 +18,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // issueDeviceSecret mints a fresh Native SSO device_secret, stores its binding,
@@ -198,6 +199,10 @@ func (s *Server) mintNativeSSOAccessToken(ctx HandlerContext, idTokenClaims *Tok
 	}, scopes)
 	if err != nil {
 		s.logErrorCtx(ctx, "native sso token issuance failed", "strategy", strategy, "error", err)
+		if status, code, ok := core.AuthHookHTTPError(err); ok {
+			ctx.JSON(status, errorBody(ctx, code))
+			return nil, "", "", false
+		}
 		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
 		return nil, "", "", false
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/selfservice/selfservicecore"
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -60,7 +61,17 @@ func HandleChangeMyPassword(d Deps, ctx core.HandlerContext) {
 	// "revoke all sessions" self-service call sites (sessions.go) and
 	// /token/revoke-all — see selfservicecore.RevokeTrustedDevicesOnCompromiseSignal.
 	selfservicecore.RevokeTrustedDevicesOnCompromiseSignal(d, ctx, userID, "password_change")
+	recordPasswordChanged(d, ctx, userID)
 	ctx.JSON(http.StatusNoContent, nil)
+}
+
+func recordPasswordChanged(d Deps, ctx core.HandlerContext, userID string) {
+	if d.Auditor() == nil {
+		return
+	}
+	event := &audit.Event{Type: audit.EventPasswordChanged, Outcome: audit.OutcomeSuccess,
+		ActorID: userID, ActorIP: audit.ClientIP(ctx.Request())}
+	d.Auditor().Record(ctx.Request().Context(), event)
 }
 
 // validateNewPassword runs the wired complexity-policy check followed by the
