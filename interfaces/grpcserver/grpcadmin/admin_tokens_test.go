@@ -183,6 +183,8 @@ func TestTokenAdminService_IssueTempToken(t *testing.T) {
 	requireOK(t, err, "sink.Query")
 	if len(events) != 1 {
 		t.Errorf("expected 1 temp-token-issued audit event, got %d", len(events))
+	} else if events[0].Metadata["target_user_id"] != "carol" {
+		t.Errorf("temp-token audit target_user_id = %q, want carol", events[0].Metadata["target_user_id"])
 	}
 }
 

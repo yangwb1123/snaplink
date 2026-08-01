@@ -58,6 +58,25 @@ function M.access()
     ngx.req.set_header("X-Request-ID", request_id)
 end
 
+function M.login_access()
+    M.access()
+
+    local provider = ngx.var.arg_provider
+    if ngx.req.get_method() ~= "GET" or (provider and #provider > 0) then
+        return
+    end
+
+    local target = "/login/"
+    local args = ngx.var.args
+    if args and #args > 0 then
+        target = target .. "?" .. args
+    end
+
+    ngx.header["Cache-Control"] = "no-store"
+    ngx.header["Pragma"] = "no-cache"
+    return ngx.redirect(target, ngx.HTTP_FOUND)
+end
+
 function M.headers()
     ngx.header["X-Request-ID"] = ngx.var.gateway_request_id
     ngx.header["X-Snaplink-Gateway"] = "openresty-lua"
