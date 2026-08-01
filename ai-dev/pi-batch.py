@@ -52,6 +52,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -149,6 +150,7 @@ class Stage:
     role_dir: str = ""  # directory of role templates the orchestrator may choose from
     output_dir: str = ""  # where role deliverables are written (required for meta stages)
     max_iterations: int = 3  # orchestrator -> roles -> fold -> re-ask loop limit
+    gate: bool = False  # verdict gate: output must contain VERDICT: PASS/FAIL/REJECT; FAIL/REJECT blocks later stages
     from_prompt: str = ""  # one-sentence starting prompt instead of from_dir files
     output: str = ""  # output file for the from_prompt task (required with from_prompt)
     tasks: list = field(default_factory=list)
@@ -189,6 +191,7 @@ class Stage:
 class Pipeline:
     """Multi-stage pipeline definition."""
     stages: list[Stage] = field(default_factory=list)
+    decision_log: str = ""  # append structured decisions per finished stage
     
     def to_dict(self):
         return {"stages": [s.to_dict() for s in self.stages]}
@@ -232,6 +235,7 @@ def load_pipeline(path: str) -> Pipeline:
             role_dir=s.get("role_dir", ""),
             output_dir=s.get("output_dir", ""),
             max_iterations=s.get("max_iterations", 3),
+            gate=s.get("gate", False),
             from_prompt=s.get("from_prompt", ""),
             output=s.get("output", ""),
             tasks=s.get("tasks", []),
@@ -243,7 +247,23 @@ def load_pipeline(path: str) -> Pipeline:
         )
         stages.append(stage)
     
-    return Pipeline(stages=stages)
+    return Pipeline(stages=stages, decision_log=data.get("decision_log", ""))
+
+
+def _task_prompt(task_def: dict, input_content: str, input_stem: str, input_path: str) -> str:
+    """Build the prompt for a task definition: a literal 'prompt' string or
+    a 'prompt_template' file, both with {input_content}/{input_stem}/{input_path}
+    placeholders. Returns '' when neither is present (caller skips it)."""
+    prompt = task_def.get("prompt", "")
+    prompt_template_path = Path(task_def.get("prompt_template", ""))
+    if task_def.get("prompt_template") and prompt_template_path.exists():
+        prompt = prompt_template_path.read_text(encoding="utf-8")
+    if not prompt:
+        log.error("Task in stage needs 'prompt' or an existing 'prompt_template' file")
+        return ""
+    return (prompt.replace("{input_content}", input_content)
+                 .replace("{input_stem}", input_stem)
+                 .replace("{input_path}", input_path))
 
 
 def _task_from_def(task_def: dict, prompt: str, output_path: str, model_override: str = "", timeout_override: int = 0) -> Task:
@@ -292,14 +312,9 @@ def _aggregate_tasks(stage: Stage, prev_outputs: list, model_override: str = "",
     tasks = []
     reused = []
     for task_def in stage.tasks:
-        prompt_template_path = Path(task_def.get("prompt_template", ""))
-        if not prompt_template_path.exists():
-            log.error("Prompt template not found: %s", prompt_template_path)
+        prompt = _task_prompt(task_def, combined, "combined", ", ".join(prev_outputs))
+        if not prompt:
             continue
-        template = prompt_template_path.read_text(encoding="utf-8")
-        prompt = template.replace("{input_content}", combined)
-        prompt = prompt.replace("{input_stem}", "combined")
-        prompt = prompt.replace("{input_path}", ", ".join(prev_outputs))
         output_path = task_def.get("output", "").replace("{input_stem}", "combined")
         if reuse and output_path and Path(output_path).exists():
             log.info("REUSE: %s (output exists)", output_path)
@@ -589,19 +604,15 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
                 input_content = out_path.read_text(encoding="utf-8")
                 input_stem = out_path.stem
 
-                # Create tasks from templates
+                # Create tasks from templates (prompt string or template file,
+                # both with {input_content}/{input_stem} placeholders)
                 for task_def in stage.tasks:
-                    prompt_template_path = Path(task_def.get("prompt_template", ""))
-                    if not prompt_template_path.exists():
-                        log.error("Prompt template not found: %s", prompt_template_path)
+                    prompt = _task_prompt(task_def, input_content, input_stem, str(out_path))
+                    if not prompt:
                         continue
 
-                    template = prompt_template_path.read_text(encoding="utf-8")
-
-                    # Replace placeholders
-                    prompt = template.replace("{input_content}", input_content)
-                    prompt = prompt.replace("{input_stem}", input_stem)
-                    prompt = prompt.replace("{input_path}", str(out_path))
+                    # Resolve output path
+                    output_template = task_def.get("output", "")
 
                     # Resolve output path
                     output_template = task_def.get("output", "")
@@ -745,8 +756,73 @@ def execute_stage(stage: Stage, stage_outputs: dict[str, list[str]], model_overr
     return results, stage_ok
 
 
+_GATE_VERDICT_RE = re.compile(r"VERDICT\s*:\s*(PASS|FAIL|REJECT)", re.IGNORECASE)
+
+
+def _gate_verdict(output_paths: list) -> Optional[str]:
+    """Read a gate stage's deliverables and return its verdict
+    (PASS/FAIL/REJECT) or None when no VERDICT: line is present. The
+    verdict is untrusted text from the agent, so an absent verdict is a
+    FAIL (fail closed): a gate without an explicit pass does not unlock."""
+    for p in output_paths:
+        path = Path(p)
+        if not path.exists():
+            continue
+        m = _GATE_VERDICT_RE.search(path.read_text(encoding="utf-8"))
+        if m:
+            return m.group(1).upper()
+    return None
+
+
+def _extract_decisions(text: str, limit: int = 5) -> list[str]:
+    """Pull decision points (markdown headings) with their first sentence
+    from a deliverable: an index into the full reasoning stored in the
+    artifact, so the decision log stays readable while pointing at the
+    complete rationale."""
+    out = []
+    for i, line in enumerate((text or "").splitlines()):
+        if re.match(r"^#{2,3}\s+", line):
+            heading = line.lstrip("# ").strip()
+            nxt = ""
+            for n in (text or "").splitlines()[i + 1:i + 4]:
+                if n.strip() and not n.lstrip().startswith("#"):
+                    nxt = n.strip()[:120]
+                    break
+            out.append(f"{heading}: {nxt}" if nxt else heading)
+            if len(out) >= limit:
+                break
+    return out
+
+
+def _append_decision_log(path: str, stage: Stage, results: list, stage_ok: bool, verdict: Optional[str]) -> None:
+    """Append one structured decision record per finished stage: the
+    stage, its status, each decision point extracted from the deliverables
+    (heading + first sentence, the full reasoning lives in the artifacts),
+    and the evidence file paths. Appending keeps the whole history; the
+    log is a first-class deliverable of the pipeline."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with open(target, "a", encoding="utf-8") as f:
+        f.write(f"\n## {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} — stage '{stage.name}' — "
+                f"{'PASS' if stage_ok else 'FAIL'}")
+        if verdict:
+            f.write(f" (gate verdict: {verdict})")
+        f.write("\n")
+        for r in results:
+            decisions = _extract_decisions(r.stdout)
+            label = r.task.output or "(stdout)"
+            status = "ok" if r.success else f"FAILED: {r.reason}"
+            f.write(f"- task {label} [{status}]")
+            if decisions:
+                f.write(": " + "; ".join(decisions))
+            f.write("\n")
+        evidence = [r.task.output for r in results if r.task.output]
+        if evidence:
+            f.write(f"- evidence: {', '.join(evidence)}\n")
+
+
 def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = False, reuse: bool = False, timeout_override: int = 0,
-                 session_mode: str = "new", session_name: str = "", validate_cmd: str = "") -> tuple[list[TaskResult], list[str]]:
+                 session_mode: str = "new", session_name: str = "", validate_cmd: str = "", decision_log: str = "") -> tuple[list[TaskResult], list[str]]:
     """Execute all stages in a pipeline sequentially.
     
     Args:
@@ -800,6 +876,30 @@ def run_pipeline(pipeline: Pipeline, model_override: str = "", dry_run: bool = F
         all_results.extend(results)
         if not stage_ok:
             failed_stages.append(stage.name)
+
+        # Verdict gate: a FAIL/REJECT verdict (or a missing verdict, which
+        # fails closed) blocks every later stage; the pipeline stops with a
+        # GATE REJECTED report instead of proceeding on unverified work.
+        gate_verdict: Optional[str] = None
+        if stage.gate:
+            gate_verdict = _gate_verdict(stage_outputs.get(stage.name, []))
+            if gate_verdict is None:
+                gate_verdict = "FAIL"
+                log.error("GATE stage '%s' produced no VERDICT: line; failing closed", stage.name)
+            elif gate_verdict in ("FAIL", "REJECT"):
+                log.error("GATE REJECTED at stage '%s' (verdict: %s) — later stages blocked", stage.name, gate_verdict)
+            else:
+                log.info("GATE PASSED at stage '%s'", stage.name)
+
+        # Structured decision record for this stage (append-only history)
+        log_path = decision_log or pipeline.decision_log
+        if log_path and results:
+            _append_decision_log(log_path, stage, results, stage_ok, gate_verdict)
+
+        if gate_verdict in ("FAIL", "REJECT"):
+            failed_stages.append(stage.name)
+            log.error("Pipeline halted by gate: %s", stage.name)
+            break
     
     return all_results, failed_stages
 
@@ -889,7 +989,11 @@ def load_tasks(source: str) -> list[Task]:
 
     # YAML
     if yaml and (source.endswith((".yaml", ".yml")) or raw.lstrip().startswith("tasks:")):
-        data = yaml.safe_load(raw)
+        try:
+            data = yaml.safe_load(raw)
+        except Exception as e:
+            log.warning("Task file '%s' is not valid YAML (%s); treating it as a plain-text prompt", source, e)
+            return [Task(prompt=raw.strip())]
         tasks_data = data.get("tasks", []) if isinstance(data, dict) else data
         tasks = []
         for t in tasks_data:
@@ -1380,6 +1484,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Seconds to wait between rounds (default: 60)")
     p.add_argument("--log-file", default="",
                    help="Append run log to FILE for 24x7 supervision")
+    p.add_argument("--decision-log", default="",
+                   help="Append structured per-stage decision records to FILE (overrides pipeline 'decision_log')")
     p.add_argument("--session-mode", choices=["new", "shared", "per-stage"], default="new",
                    help="Session reuse: new = fresh session per call (default), shared = one session for the whole batch/pipeline, per-stage = one session per pipeline stage")
     p.add_argument("--session-name", default="",
@@ -1500,7 +1606,8 @@ def main() -> None:
                     run_pipeline(pipeline, model_override=args.model, dry_run=True, reuse=reuse_outputs)
                     return
                 all_results, failed_stages = run_pipeline(pipeline, model_override=args.model, reuse=reuse_outputs, timeout_override=timeout_override,
-                                                         session_mode=args.session_mode, session_name=session_name, validate_cmd=cli_validate)
+                                                         session_mode=args.session_mode, session_name=session_name, validate_cmd=cli_validate,
+                                                         decision_log=args.decision_log)
                 print_summary(all_results)
                 round_failed = bool(failed_stages or any(not r.success for r in all_results))
                 if round_failed:

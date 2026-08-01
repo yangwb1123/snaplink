@@ -1217,6 +1217,132 @@ def test_task_timeout_after_streaming_output(tmp_path):
     assert result.elapsed < 7, f"kill window too wide: {result.elapsed:.1f}s"
 
 
+def test_gate_verdict_blocks_later_stages(tmp_path):
+    """A gate stage with VERDICT: FAIL stops the pipeline: later stages are
+    skipped and the gate is reported as failed."""
+    mod = load_batch()
+    inputs = tmp_path / "in"
+    inputs.mkdir()
+    (inputs / "idea.md").write_text("idea", encoding="utf-8")
+    gate_agent = tmp_path / "gate-agent.sh"
+    gate_agent.write_text("#!/bin/sh\necho 'VERDICT: FAIL - design has open security issues'\n", encoding="utf-8")
+    gate_agent.chmod(0o755)
+    plan_agent = tmp_path / "plan-agent.sh"
+    plan_agent.write_text("#!/bin/sh\necho '## should never run'\n", encoding="utf-8")
+    plan_agent.chmod(0o755)
+    pipeline = tmp_path / "p.yaml"
+    pipeline.write_text(
+        "git_commit: false\n"
+        f"decision_log: {tmp_path / 'DECISIONS.md'}\n"
+        "stages:\n"
+        f"  - name: design\n    from_dir: {inputs}\n    mode: serial\n"
+        "  - name: gate\n"
+        f"    from_outputs: design\n    gate: true\n    mode: serial\n"
+        "    tasks:\n"
+        "      - prompt: \"Review the design and output VERDICT: PASS or FAIL with reasons.\"\n"
+        "        output: gate.md\n"
+        "  - name: impl\n"
+        f"    from_outputs: gate\n    mode: serial\n"
+        "    tasks:\n"
+        "      - prompt: \"Implement per approved design.\"\n"
+        "        output: impl.md\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [sys.executable, str(PI_BATCH), str(pipeline), "--agent-bin", str(gate_agent)],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert "GATE REJECTED at stage 'gate'" in result.stderr
+    assert "Pipeline halted by gate: gate" in result.stderr
+    # impl stage must not have run: switch to an agent that would emit the
+    # impl deliverable; it must never be invoked because the gate blocks it
+    plan_result = subprocess.run(
+        [sys.executable, str(PI_BATCH), str(pipeline), "--agent-bin", str(plan_agent), "--reuse"],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert "GATE REJECTED" in plan_result.stderr
+    assert "STAGE: impl" not in plan_result.stderr
+    log_text = (tmp_path / "DECISIONS.md").read_text(encoding="utf-8")
+    assert "stage 'gate'" in log_text
+    assert "gate verdict: FAIL" in log_text
+
+
+def test_gate_verdict_passes_and_decision_log(tmp_path):
+    """VERDICT: PASS unlocks later stages; the decision log records the
+    decisions (markdown headings) and evidence for every stage."""
+    mod = load_batch()
+    inputs = tmp_path / "in"
+    inputs.mkdir()
+    (inputs / "idea.md").write_text("idea", encoding="utf-8")
+    agent = tmp_path / "pass-agent.sh"
+    agent.write_text(
+        "#!/bin/sh\n"
+        "echo '## API surface: REST endpoints under /sso'\n"
+        "echo '## Storage model: Postgres with atomic consume'\n"
+        "echo 'VERDICT: PASS - all review points resolved'\n",
+        encoding="utf-8",
+    )
+    agent.chmod(0o755)
+    pipeline = tmp_path / "p.yaml"
+    pipeline.write_text(
+        "git_commit: false\n"
+        f"decision_log: {tmp_path / 'DECISIONS.md'}\n"
+        "stages:\n"
+        f"  - name: design\n    from_dir: {inputs}\n    mode: serial\n"
+        "  - name: gate\n"
+        f"    from_outputs: design\n    gate: true\n    mode: serial\n"
+        "    tasks:\n"
+        "      - prompt: \"Review the design and output VERDICT: PASS or FAIL with reasons.\"\n"
+        "        output: gate.md\n"
+        "  - name: impl\n"
+        f"    from_outputs: gate\n    mode: serial\n"
+        "    tasks:\n"
+        "      - prompt: \"Implement per approved design.\"\n"
+        "        output: impl.md\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [sys.executable, str(PI_BATCH), str(pipeline), "--agent-bin", str(agent)],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "GATE PASSED at stage 'gate'" in result.stderr
+    assert "STAGE: impl" in result.stderr
+    log_text = (tmp_path / "DECISIONS.md").read_text(encoding="utf-8")
+    # decision points from the deliverables are indexed in the log
+    assert "API surface" in log_text
+    assert "Storage model" in log_text
+    assert "gate verdict: PASS" in log_text
+    assert log_text.count("— stage '") == 3  # design + gate + impl records
+
+
+def test_gate_missing_verdict_fails_closed(tmp_path):
+    """A gate deliverable without any VERDICT: line does not unlock the
+    pipeline (fail closed): later stages are blocked."""
+    mod = load_batch()
+    inputs = tmp_path / "in"
+    inputs.mkdir()
+    (inputs / "idea.md").write_text("idea", encoding="utf-8")
+    agent = tmp_path / "noverdict-agent.sh"
+    agent.write_text("#!/bin/sh\necho '## Review notes, no verdict given'\n", encoding="utf-8")
+    agent.chmod(0o755)
+    pipeline = tmp_path / "p.yaml"
+    pipeline.write_text(
+        "git_commit: false\n"
+        "stages:\n"
+        f"  - name: gate\n    from_dir: {inputs}\n    gate: true\n    mode: serial\n"
+        "  - name: impl\n"
+        f"    from_outputs: gate\n    mode: serial\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [sys.executable, str(PI_BATCH), str(pipeline), "--agent-bin", str(agent)],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert "produced no VERDICT: line; failing closed" in result.stderr
+    assert "Pipeline halted by gate: gate" in result.stderr
+
+
 def test_pipeline_reports_failed_stage(tmp_path, fake_agent):
     mod = load_batch()
     mod.AGENT_BIN = str(fake_agent)

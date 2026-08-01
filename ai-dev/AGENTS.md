@@ -120,11 +120,51 @@ stages:
 - 安全：编排输出不可信——命名角色模板查找限制在 role_dir 内（防路径
   穿越），ad-hoc 角色名 sanitize 为安全文件名
 
+### 2.7 裁决门（交叉对抗验证的阶段目标确认）
+
+```yaml
+stages:
+  - name: adversarial_review   # 编排者挑多个角色并发交叉审查（对抗视角）
+    from_outputs: design
+    meta: true
+    role_dir: ai-dev/prompts
+    output_dir: docs/proposals
+    max_iterations: 2
+  - name: gate                  # 独立 gatekeeper 裁决：VERDICT: PASS/FAIL
+    from_outputs: adversarial_review
+    aggregate: true
+    gate: true
+    tasks:
+      - prompt: "... output VERDICT: PASS or VERDICT: FAIL - <reasons>"
+        output: docs/proposals/gate.md
+```
+
+- `gate: true` 阶段读取产出中的 `VERDICT: PASS|FAIL|REJECT` 行；
+  FAIL/REJECT **阻断后续所有阶段**（流水线停止并报告 GATE REJECTED）；
+  无 VERDICT 行视为 FAIL（fail closed，未显式通过不放行）
+- 交叉对抗由 meta 阶段提供：security_engineer 挑战架构、qa_lead 找缺陷、
+  protocol_expert 验线协议……并发执行、证据折叠；gatekeeper 独立裁决
+
+### 2.8 决策日志（每个决策的思考点与理由）
+
+```yaml
+# pipeline 顶层，或 CLI --decision-log FILE 覆盖
+decision_log: docs/DECISIONS.md
+```
+
+每个阶段完成后自动追加一条结构化记录：时间、阶段、PASS/FAIL、裁决结果、
+决策点摘录（交付物的 markdown 标题 + 首句，完整理由在产物文件里）、证据
+路径。追加式保留全程历史——包括被否定的方案和 gate 裁决。
+
 ## 3. 命令速查
 
 ```bash
 # 一句话 → 动态角色分析（任意项目）
 python ai-dev/pi-batch.py ai-dev/examples/meta-review-pipeline.yaml
+
+# 完整闭环：一句话 → 需求 → 设计 → 对抗审查 → 裁决门 → 实现+工程门禁 → 验收门 → 决策日志
+python ai-dev/pi-batch.py ai-dev/examples/quickstart-full-sdlc.yaml \
+  --log-file logs/full-sdlc.log
 
 # SDLC 角色流水线（需求→架构→安全→质量，6 角色）
 python ai-dev/pi-batch.py ai-dev/examples/sdlc-mini-pipeline.yaml \
