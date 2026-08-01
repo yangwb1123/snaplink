@@ -7,7 +7,12 @@
 #
 # 执行（用户亲自运行，需要 PATH 中有 pi 且 API 可用）：
 #   python ai-dev/pi-batch.py ai-dev/examples/quickstart-snaplink-analysis.yaml \
-#     --log-file logs/quickstart.log
+#     --timeout 900 --log-file logs/quickstart.log
+#
+# 说明：深度分析任务经常超过默认 300s 超时（pi 的 HTTP 空闲超时
+# httpIdleTimeoutMs 默认也是 300s，本仓库 .pi/settings.json 已调大到
+# 900s），因此用 --timeout 900 给 agent 完整分析时间；硬超时到点会
+# 杀掉整个进程组并拒绝产物，不会留下半成品。
 #
 # 产物：
 #   docs/proposals/mfa-analysis.md                  # 分析：3 个改进点

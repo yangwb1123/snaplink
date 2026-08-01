@@ -1080,10 +1080,14 @@ def run_task(task: Task, task_index: int = 0, total: int = 0, parallel: bool = F
         tout.start()
         terr.start()
 
-        # Wait with timeout
-        tout.join(timeout=task.timeout)
-        terr.join(timeout=task.timeout)
-        proc.wait(timeout=max(1, task.timeout - (time.monotonic() - start)))
+        # Hard deadline: kill the process group when task.timeout elapses.
+        # Thread joins only drain pipes and must not extend the window, so
+        # each join/wait gets the remaining budget (they return early when
+        # the agent exits).
+        deadline = start + task.timeout
+        tout.join(timeout=max(0, deadline - time.monotonic()))
+        terr.join(timeout=max(0, deadline - time.monotonic()))
+        proc.wait(timeout=max(0.1, deadline - time.monotonic()))
 
         elapsed = time.monotonic() - start
         success = proc.returncode == 0

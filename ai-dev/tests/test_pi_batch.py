@@ -1181,6 +1181,42 @@ def test_cli_auto_pipeline_detection_reuse(tmp_path, fake_agent):
     assert "REUSE" in second.stderr or "fully reused" in second.stderr
 
 
+def test_task_timeout_kills_promptly(tmp_path):
+    """The hard timeout must kill the agent near the configured limit. A
+    regression: two sequential Thread.join(timeout) calls each consumed the
+    full budget, so the real kill window was ~2x the configured timeout."""
+    mod = load_batch()
+    agent = tmp_path / "slow-agent.sh"
+    agent.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
+    agent.chmod(0o755)
+    mod.AGENT_BIN = str(agent)
+    task = mod.Task(prompt="p", timeout=2)
+    result = mod.run_task(task)
+    assert result.success is False
+    assert result.reason == "task timed out"
+    assert result.elapsed < 6, f"kill window too wide: {result.elapsed:.1f}s"
+
+
+def test_task_timeout_after_streaming_output(tmp_path):
+    """An agent that streams output but never finishes is still killed at the
+    deadline (pipe-drain threads must not extend the window)."""
+    mod = load_batch()
+    agent = tmp_path / "streamer.sh"
+    agent.write_text(
+        "#!/bin/sh\n"
+        "i=0\n"
+        "while [ \"$i\" -lt 30 ]; do echo tick; i=$((i+1)); sleep 1; done\n",
+        encoding="utf-8",
+    )
+    agent.chmod(0o755)
+    mod.AGENT_BIN = str(agent)
+    task = mod.Task(prompt="p", timeout=3)
+    result = mod.run_task(task)
+    assert result.success is False
+    assert result.reason == "task timed out"
+    assert result.elapsed < 7, f"kill window too wide: {result.elapsed:.1f}s"
+
+
 def test_pipeline_reports_failed_stage(tmp_path, fake_agent):
     mod = load_batch()
     mod.AGENT_BIN = str(fake_agent)
