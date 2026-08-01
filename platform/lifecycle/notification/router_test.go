@@ -190,6 +190,7 @@ func TestRouterResolvesAccountLockAndAdministrativeTargets(t *testing.T) {
 		{event: audit.Event{Type: audit.EventAccountLocked, ActorID: "web:+15551234567", ClientID: "web", Provider: "phone"}, want: "user-3"},
 		{event: audit.Event{Type: audit.EventAdminRoleAssigned, ActorID: "admin", Metadata: map[string]string{"target_user_id": "user-1"}}, want: "user-1"},
 		{event: audit.Event{Type: audit.EventAdminPasswordReset, ActorID: "admin", Metadata: map[string]string{"target_user": "user-2"}}, want: "user-2"},
+		{event: audit.Event{Type: audit.EventAdminAccountUnlocked, ActorID: "admin", Metadata: map[string]string{"target_user": "alice"}}, want: "user-1"},
 	}
 	for _, test := range tests {
 		if got := router.eventSubject(context.Background(), &test.event); got != test.want {
@@ -208,7 +209,11 @@ func TestDefaultMappingsCoverAdministrativeSecurityActions(t *testing.T) {
 		audit.EventAdminConsentRevoked, audit.EventAdminMFAFactorRemoved,
 		audit.EventAdminRecoveryCodesReset, audit.EventAdminPasswordReset,
 		audit.EventAdminUserEmailChanged, audit.EventAdminDeviceSecretsRevoked,
-		audit.EventAdminRefreshTokensRevoked,
+		audit.EventAdminRefreshTokensRevoked, audit.EventAdminPasswordResetTokensRevoked,
+		audit.EventAdminEmailChangeTokensRevoked, audit.EventAdminAccountUnlocked,
+		audit.EventAdminTenantMemberAdded, audit.EventAdminTenantMemberRemoved,
+		audit.EventAdminUserLifecycleChanged, audit.EventAdminTempTokenIssued,
+		audit.EventAdminBreakGlassImpersonationStarted,
 	} {
 		if _, ok := mappings[eventType]; !ok {
 			t.Errorf("missing notification mapping for %s", eventType)

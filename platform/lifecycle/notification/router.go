@@ -136,6 +136,14 @@ func DefaultMappings() map[audit.EventType]core.NotificationType {
 		audit.EventAdminUserEmailChanged:     core.NotificationSecurityEvent,
 		audit.EventAdminDeviceSecretsRevoked: core.NotificationSecurityEvent,
 		audit.EventAdminRefreshTokensRevoked: core.NotificationSecurityEvent,
+		audit.EventAdminPasswordResetTokensRevoked:     core.NotificationSecurityEvent,
+		audit.EventAdminEmailChangeTokensRevoked:       core.NotificationSecurityEvent,
+		audit.EventAdminAccountUnlocked:                core.NotificationSecurityEvent,
+		audit.EventAdminTenantMemberAdded:              core.NotificationSecurityEvent,
+		audit.EventAdminTenantMemberRemoved:            core.NotificationSecurityEvent,
+		audit.EventAdminUserLifecycleChanged:           core.NotificationSecurityEvent,
+		audit.EventAdminTempTokenIssued:                core.NotificationSecurityEvent,
+		audit.EventAdminBreakGlassImpersonationStarted: core.NotificationSecurityEvent,
 	}
 }
 

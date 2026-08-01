@@ -50,8 +50,19 @@ const WriteTimeout = 10 * time.Second
 // a,b (comma-separated) and ?tenant_id=t. A Last-Event-ID header
 // replays the missed ring-buffered events before going live.
 func HandleStream(b *Broker, heartbeat time.Duration, ctx core.HandlerContext) {
+	handleFilteredStream(b, filterFromRequest(ctx), heartbeat, ctx)
+}
+
+// HandleFilteredStream serves a caller-supplied, authorization-derived filter.
+// It is used by user notification streams so request query parameters can never
+// widen the authenticated subject boundary.
+func HandleFilteredStream(b *Broker, filter Filter, heartbeat time.Duration, ctx core.HandlerContext) {
+	handleFilteredStream(b, filter, heartbeat, ctx)
+}
+
+func handleFilteredStream(b *Broker, filter Filter, heartbeat time.Duration, ctx core.HandlerContext) {
 	w, r := ctx.ResponseWriter(), ctx.Request()
-	sub, err := b.Subscribe(filterFromRequest(ctx))
+	sub, err := b.Subscribe(filter)
 	if err != nil {
 		ctx.JSON(http.StatusServiceUnavailable, map[string]string{core.KeyError: ErrStreamBusy})
 		return

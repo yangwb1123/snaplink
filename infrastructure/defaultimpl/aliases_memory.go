@@ -12,8 +12,13 @@ package defaultimpl
 import (
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystorecredential"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreidentity"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystorenotification"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/memorystoreoauth"
 )
+
+type MemoryNotificationStore = memorystorenotification.Store
+
+var NewMemoryNotificationStore = memorystorenotification.New
 
 // --- memorystoreoauth ---
 type (

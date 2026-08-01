@@ -46,21 +46,26 @@ type Options struct {
 // comparisons are a plain integer order). Data is the pre-marshaled
 // JSON payload written verbatim into the `data:` line.
 type Event struct {
-	ID       uint64
-	Type     string
-	TenantID string
-	Data     []byte
+	ID        uint64
+	Type      string
+	TenantID  string
+	SubjectID string
+	Data      []byte
 }
 
 // Filter restricts which events a subscriber receives. Zero value
 // matches everything.
 type Filter struct {
-	Types    []string // empty = all types
-	TenantID string   // empty = all tenants
+	Types     []string // empty = all types
+	TenantID  string   // empty = all tenants
+	SubjectID string   // empty = all subjects; mandatory for end-user streams
 }
 
 func (f Filter) matches(ev Event) bool {
 	if f.TenantID != "" && ev.TenantID != f.TenantID {
+		return false
+	}
+	if f.SubjectID != "" && ev.SubjectID != f.SubjectID {
 		return false
 	}
 	if len(f.Types) == 0 {

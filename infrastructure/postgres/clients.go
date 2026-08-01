@@ -81,9 +81,20 @@ ALTER TABLE clients ADD COLUMN IF NOT EXISTS client_trust_score DOUBLE PRECISION
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS client_trust_set_at BIGINT NOT NULL DEFAULT 0;
 `
 
+const clientSchemaV3 = `
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS previous_secret TEXT NOT NULL DEFAULT '';
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS secret_overlap_until BIGINT NOT NULL DEFAULT 0;
+`
+
+const clientSchemaV4 = `
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS secret_expires_at BIGINT NOT NULL DEFAULT 0;
+`
+
 var clientMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline", SQL: clientSchema},
 	{Version: 2, Name: "secret_rotation_and_trust_score", SQL: clientSchemaV2},
+	{Version: 3, Name: "client_secret_overlap", SQL: clientSchemaV3},
+	{Version: 4, Name: "client_secret_expiry", SQL: clientSchemaV4},
 }
 
 // Statements derived once from clientColumns so the INSERT / upsert / UPDATE /
@@ -188,8 +199,13 @@ func (s *ClientStore) ValidateSecret(ctx context.Context, clientID, clientSecret
 	if err != nil {
 		return err
 	}
-	if !security.CompareClientSecret(c.Secret, clientSecret) {
+	current := security.CompareClientSecret(c.Secret, clientSecret)
+	previous := time.Now().Before(c.SecretOverlapUntil) && security.CompareClientSecret(c.PreviousSecret, clientSecret)
+	if !current && !previous {
 		return errors.New("invalid client secret")
+	}
+	if !c.SecretExpiresAt.IsZero() && !time.Now().Before(c.SecretExpiresAt) {
+		return errors.New("client secret expired")
 	}
 	if !c.Active {
 		return errors.New("client is inactive")
@@ -264,7 +280,11 @@ func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
 	// ListDueForRotation. A secretless client (federation-derived/public) has
 	// nothing to rotate, so its timestamp stays zero (never due).
 	if c.Secret != "" {
-		c.SecretRotatedAt = time.Now()
+		now := time.Now()
+		c.SecretRotatedAt = now
+		if c.SecretExpiresAt.IsZero() {
+			c.SecretExpiresAt = now.Add(clientrotation.DefaultLifetime)
+		}
 	}
 	args, err := clientWritePrep(c)
 	if err != nil {
@@ -325,6 +345,14 @@ func (s *ClientStore) Delete(ctx context.Context, clientID string) error {
 }
 
 func (s *ClientStore) RotateSecret(ctx context.Context, clientID string) (string, error) {
+	return s.RotateSecretWithLifecycle(ctx, clientID, 0, clientrotation.DefaultLifetime)
+}
+
+func (s *ClientStore) RotateSecretWithOverlap(ctx context.Context, clientID string, overlap time.Duration) (string, error) {
+	return s.RotateSecretWithLifecycle(ctx, clientID, overlap, clientrotation.DefaultLifetime)
+}
+
+func (s *ClientStore) RotateSecretWithLifecycle(ctx context.Context, clientID string, overlap, lifetime time.Duration) (string, error) {
 	plain, err := generateClientSecret()
 	if err != nil {
 		return "", err
@@ -333,9 +361,16 @@ func (s *ClientStore) RotateSecret(ctx context.Context, clientID string) (string
 	if err != nil {
 		return "", fmt.Errorf("postgres: hash rotated secret: %w", err)
 	}
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE clients SET secret = $1, secret_rotated_at = $2 WHERE id = $3`,
-		hashed, time.Now().UnixNano(), clientID)
+	now := time.Now()
+	var until int64
+	if overlap > 0 {
+		until = now.Add(overlap).UnixNano()
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE clients SET
+		previous_secret = CASE WHEN $1 > 0 THEN secret ELSE '' END,
+		secret_overlap_until = $2, secret = $3, secret_rotated_at = $4,
+		secret_expires_at = $5 WHERE id = $6`,
+		int64(overlap), until, hashed, now.UnixNano(), unixNanoOrZero(clientrotation.ExpiresAt(now, lifetime)), clientID)
 	if err != nil {
 		return "", fmt.Errorf("postgres: rotate secret: %w", err)
 	}
@@ -378,8 +413,10 @@ func isUniqueViolation(err error) bool {
 }
 
 var (
-	_ sso.ClientStore                     = (*ClientStore)(nil)
-	_ sso.TenantScopedClientStore         = (*ClientStore)(nil)
-	_ core.ClientStoreStats               = (*ClientStore)(nil)
-	_ clientrotation.ClientRotationLister = (*ClientStore)(nil)
+	_ sso.ClientStore                             = (*ClientStore)(nil)
+	_ sso.TenantScopedClientStore                 = (*ClientStore)(nil)
+	_ core.ClientStoreStats                       = (*ClientStore)(nil)
+	_ clientrotation.ClientRotationLister         = (*ClientStore)(nil)
+	_ clientrotation.ClientSecretOverlapRotator   = (*ClientStore)(nil)
+	_ clientrotation.ClientSecretLifecycleRotator = (*ClientStore)(nil)
 )

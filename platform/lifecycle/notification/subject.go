@@ -17,10 +17,20 @@ func WithUserProvider(users core.UserProvider) Option {
 }
 
 func (r *Router) eventSubject(ctx context.Context, event *audit.Event) string {
-	for _, key := range []string{"subject_id", "user_id", "target_user_id", "target_user"} {
+	for _, key := range []string{"subject_id", "user_id", "target_user_id"} {
 		if value := event.Metadata[key]; value != "" {
 			return value
 		}
+	}
+	if target := event.Metadata["target_user"]; target != "" {
+		if event.Type == audit.EventAdminAccountUnlocked {
+			subject, err := r.resolveUserIdentity(ctx, "", target)
+			if err != nil {
+				r.log.Error("notification account-unlock subject resolution failed", "error", err)
+			}
+			return subject
+		}
+		return target
 	}
 	if event.Type != audit.EventAccountLocked {
 		return event.ActorID

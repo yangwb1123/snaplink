@@ -72,8 +72,8 @@ services:
       # registered via DCR and a signup user whose preferred_username
       # matches the admin group. This makes the whole harness self-contained
       # (no external gitlab/google account).
-      - OIDC_GITLAB_CLIENTID=QRys1l5U4PLnAJI5jyF_jxp9
-      - OIDC_GITLAB_SECRET=D3BvKVKAcwJdI0TF6iZt0yi5SyihNPrjjA5YcVzBnEY
+      - OIDC_GITLAB_CLIENTID=OuGBQD0tOyf4sgWY7Kwu99zm
+      - OIDC_GITLAB_SECRET=v8RzbLs4Ml5kLiCVdZ15cTZlu_e9gBrRPZerVVIQ2NM
       - OIDC_GOOGLE_CLIENTID=google-client
       - OIDC_GOOGLE_SECRET=google-secret
       - JAVA_EXTRA_ARGS=-Doidc.gitlab.iss=http://sso-issuer:8180

@@ -7,11 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"time"
 
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security/clientrotation"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -61,13 +64,25 @@ func clientKey(id string) string { return clientKeyPrefix + id }
 // drop them. The wrapper carries them in explicit fields — the same problem
 // the SQLite peer solves with dedicated columns.
 type storedClient struct {
-	Client   *sso.Client `json:"client"`
-	Secret   string      `json:"secret,omitempty"`
-	RegToken string      `json:"reg_token,omitempty"`
+	Client          *sso.Client `json:"client"`
+	Secret          string      `json:"secret,omitempty"`
+	PreviousSecret  string      `json:"previous_secret,omitempty"`
+	SecretRotatedAt time.Time   `json:"secret_rotated_at,omitempty"`
+	OverlapUntil    time.Time   `json:"secret_overlap_until,omitempty"`
+	SecretExpiresAt time.Time   `json:"secret_expires_at,omitempty"`
+	RegToken        string      `json:"reg_token,omitempty"`
+	PreviousReg     string      `json:"previous_reg_token,omitempty"`
+	RegOverlapUntil time.Time   `json:"reg_overlap_until,omitempty"`
 }
 
 func marshalClient(c *sso.Client) ([]byte, error) {
-	return json.Marshal(storedClient{Client: c, Secret: c.Secret, RegToken: c.RegistrationAccessToken})
+	return json.Marshal(storedClient{
+		Client: c, Secret: c.Secret, PreviousSecret: c.PreviousSecret,
+		SecretRotatedAt: c.SecretRotatedAt, OverlapUntil: c.SecretOverlapUntil,
+		SecretExpiresAt: c.SecretExpiresAt,
+		RegToken:        c.RegistrationAccessToken, PreviousReg: c.PreviousRegistrationAccessToken,
+		RegOverlapUntil: c.RegistrationAccessTokenOverlapUntil,
+	})
 }
 
 func unmarshalClient(raw []byte) (*sso.Client, error) {
@@ -79,7 +94,13 @@ func unmarshalClient(raw []byte) (*sso.Client, error) {
 		return nil, errors.New("redis: nil client in stored record")
 	}
 	sc.Client.Secret = sc.Secret
+	sc.Client.PreviousSecret = sc.PreviousSecret
+	sc.Client.SecretRotatedAt = sc.SecretRotatedAt
+	sc.Client.SecretOverlapUntil = sc.OverlapUntil
+	sc.Client.SecretExpiresAt = sc.SecretExpiresAt
 	sc.Client.RegistrationAccessToken = sc.RegToken
+	sc.Client.PreviousRegistrationAccessToken = sc.PreviousReg
+	sc.Client.RegistrationAccessTokenOverlapUntil = sc.RegOverlapUntil
 	return sc.Client, nil
 }
 
@@ -103,8 +124,13 @@ func (s *ClientStore) ValidateSecret(ctx context.Context, clientID, clientSecret
 	if err != nil {
 		return err
 	}
-	if !security.CompareClientSecret(c.Secret, clientSecret) {
+	current := security.CompareClientSecret(c.Secret, clientSecret)
+	previous := time.Now().Before(c.SecretOverlapUntil) && security.CompareClientSecret(c.PreviousSecret, clientSecret)
+	if !current && !previous {
 		return errors.New("redis: invalid client secret")
+	}
+	if !c.SecretExpiresAt.IsZero() && !time.Now().Before(c.SecretExpiresAt) {
+		return errors.New("redis: client secret expired")
 	}
 	if !c.Active {
 		return errors.New("redis: client is inactive")
@@ -154,6 +180,13 @@ func (s *ClientStore) Add(ctx context.Context, c *sso.Client) error {
 	}
 	if err := hashClientSecrets(c); err != nil {
 		return err
+	}
+	if c.Secret != "" {
+		now := time.Now()
+		c.SecretRotatedAt = now
+		if c.SecretExpiresAt.IsZero() {
+			c.SecretExpiresAt = now.Add(clientrotation.DefaultLifetime)
+		}
 	}
 	raw, err := marshalClient(c)
 	if err != nil {
@@ -208,10 +241,14 @@ func (s *ClientStore) Delete(ctx context.Context, clientID string) error {
 }
 
 func (s *ClientStore) RotateSecret(ctx context.Context, clientID string) (string, error) {
-	c, err := s.Get(ctx, clientID)
-	if err != nil {
-		return "", err
-	}
+	return s.RotateSecretWithLifecycle(ctx, clientID, 0, clientrotation.DefaultLifetime)
+}
+
+func (s *ClientStore) RotateSecretWithOverlap(ctx context.Context, clientID string, overlap time.Duration) (string, error) {
+	return s.RotateSecretWithLifecycle(ctx, clientID, overlap, clientrotation.DefaultLifetime)
+}
+
+func (s *ClientStore) RotateSecretWithLifecycle(ctx context.Context, clientID string, overlap, lifetime time.Duration) (string, error) {
 	plaintext, err := generateSecret(32)
 	if err != nil {
 		return "", err
@@ -220,18 +257,81 @@ func (s *ClientStore) RotateSecret(ctx context.Context, clientID string) (string
 	if err != nil {
 		return "", fmt.Errorf("redis: hash rotated secret: %w", err)
 	}
-	// Store the hash; return the plaintext (one-time reveal). c.Secret is
-	// already a hash from the prior write — overwrite it directly without
-	// re-running hashClientSecrets (which would no-op on the bcrypt prefix).
-	c.Secret = hashed
-	raw, err := marshalClient(c)
+	for attempt := 0; attempt < 5; attempt++ {
+		oldRaw, err := s.rdb.Get(ctx, clientKey(clientID)).Bytes()
+		if errors.Is(err, goredis.Nil) {
+			return "", sso.ErrNoSuchClient
+		}
+		if err != nil {
+			return "", fmt.Errorf("redis: get client for rotation: %w", err)
+		}
+		newRaw, err := rotatedClientRecord(oldRaw, hashed, overlap, lifetime)
+		if err != nil {
+			return "", err
+		}
+		swapped, err := s.swapClientRecord(ctx, clientID, oldRaw, newRaw)
+		if err != nil {
+			return "", err
+		}
+		if swapped {
+			return plaintext, nil
+		}
+	}
+	return "", errors.New("redis: concurrent client secret rotations did not converge")
+}
+
+func rotatedClientRecord(raw []byte, hashed string, overlap, lifetime time.Duration) ([]byte, error) {
+	c, err := unmarshalClient(raw)
 	if err != nil {
-		return "", fmt.Errorf("redis: encode client: %w", err)
+		return nil, fmt.Errorf("redis: decode client for rotation: %w", err)
 	}
-	if err := s.rdb.Set(ctx, clientKey(clientID), raw, 0).Err(); err != nil {
-		return "", fmt.Errorf("redis: persist rotated secret: %w", err)
+	now := time.Now()
+	c.PreviousSecret = ""
+	c.SecretOverlapUntil = time.Time{}
+	if overlap > 0 && c.Secret != "" {
+		c.PreviousSecret = c.Secret
+		c.SecretOverlapUntil = now.Add(overlap)
 	}
-	return plaintext, nil
+	c.Secret = hashed
+	c.SecretRotatedAt = now
+	c.SecretExpiresAt = clientrotation.ExpiresAt(now, lifetime)
+	encoded, err := marshalClient(c)
+	if err != nil {
+		return nil, fmt.Errorf("redis: encode client: %w", err)
+	}
+	return encoded, nil
+}
+
+func (s *ClientStore) swapClientRecord(ctx context.Context, id string, oldRaw, newRaw []byte) (bool, error) {
+	const script = `
+local current = redis.call('GET', KEYS[1])
+if not current then return -1 end
+if current ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2])
+return 1`
+	result, err := s.rdb.Eval(ctx, script, []string{clientKey(id)}, oldRaw, newRaw).Int64()
+	if err != nil {
+		return false, fmt.Errorf("redis: persist rotated secret: %w", err)
+	}
+	if result < 0 {
+		return false, sso.ErrNoSuchClient
+	}
+	return result == 1, nil
+}
+
+func (s *ClientStore) ListDueForRotation(ctx context.Context, olderThan time.Time) ([]string, error) {
+	clients, err := s.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, c := range clients {
+		if c.Active && c.Secret != "" && !c.SecretRotatedAt.IsZero() && !c.SecretRotatedAt.After(olderThan) {
+			ids = append(ids, c.ID)
+		}
+	}
+	slices.Sort(ids)
+	return ids, nil
 }
 
 // hashClientSecrets bcrypt-hashes the Secret + RegistrationAccessToken in place
@@ -252,6 +352,20 @@ func hashClientSecrets(c *sso.Client) error {
 			return fmt.Errorf("redis: hash registration token: %w", err)
 		}
 		c.RegistrationAccessToken = h
+	}
+	if c.PreviousSecret != "" && !isBcryptHash(c.PreviousSecret) {
+		h, err := bcryptHash(c.PreviousSecret)
+		if err != nil {
+			return fmt.Errorf("redis: hash previous secret: %w", err)
+		}
+		c.PreviousSecret = h
+	}
+	if c.PreviousRegistrationAccessToken != "" && !isBcryptHash(c.PreviousRegistrationAccessToken) {
+		h, err := bcryptHash(c.PreviousRegistrationAccessToken)
+		if err != nil {
+			return fmt.Errorf("redis: hash previous registration token: %w", err)
+		}
+		c.PreviousRegistrationAccessToken = h
 	}
 	return nil
 }
@@ -276,4 +390,9 @@ func generateSecret(n int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-var _ sso.ClientStore = (*ClientStore)(nil)
+var (
+	_ sso.ClientStore                             = (*ClientStore)(nil)
+	_ clientrotation.ClientRotationLister         = (*ClientStore)(nil)
+	_ clientrotation.ClientSecretOverlapRotator   = (*ClientStore)(nil)
+	_ clientrotation.ClientSecretLifecycleRotator = (*ClientStore)(nil)
+)

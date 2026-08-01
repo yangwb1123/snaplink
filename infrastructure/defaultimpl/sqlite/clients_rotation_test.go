@@ -64,6 +64,56 @@ func TestSQLiteClients_RotateSecretUpdatesSecretRotatedAt(t *testing.T) {
 	}
 }
 
+func TestSQLiteClients_RotateSecretOverlapLifecycle(t *testing.T) {
+	t.Parallel()
+	st := newClientStore(t)
+	ctx := context.Background()
+	if err := st.Add(ctx, &sso.Client{ID: "overlap", Secret: "old", Active: true}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	newSecret, err := st.RotateSecretWithOverlap(ctx, "overlap", time.Hour)
+	if err != nil {
+		t.Fatalf("RotateSecretWithOverlap: %v", err)
+	}
+	if err := st.ValidateSecret(ctx, "overlap", newSecret); err != nil {
+		t.Fatalf("new secret inside overlap: %v", err)
+	}
+	if err := st.ValidateSecret(ctx, "overlap", "old"); err != nil {
+		t.Fatalf("old secret inside overlap: %v", err)
+	}
+	client, err := st.Get(ctx, "overlap")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if client.PreviousSecret == "old" || !client.SecretOverlapUntil.After(time.Now()) {
+		t.Fatalf("overlap metadata not stored safely: %+v", client)
+	}
+	client.SecretOverlapUntil = time.Now().Add(-time.Second)
+	if err := st.Update(ctx, client); err != nil {
+		t.Fatalf("expire overlap: %v", err)
+	}
+	if err := st.ValidateSecret(ctx, "overlap", "old"); err == nil {
+		t.Fatal("old secret after overlap must be rejected")
+	}
+}
+
+func TestSQLiteClients_SecretExpiryPersistsAndIsEnforced(t *testing.T) {
+	t.Parallel()
+	st := newClientStore(t)
+	ctx := context.Background()
+	expires := time.Now().Add(-time.Minute)
+	if err := st.Add(ctx, &sso.Client{ID: "expired", Secret: "secret", Active: true, SecretExpiresAt: expires}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	client, err := st.Get(ctx, "expired")
+	if err != nil || client.SecretExpiresAt.UnixNano() != expires.UnixNano() {
+		t.Fatalf("expiry did not round-trip: client=%+v err=%v", client, err)
+	}
+	if err := st.ValidateSecret(ctx, "expired", "secret"); err == nil {
+		t.Fatal("expired client secret must be rejected")
+	}
+}
+
 // TestSQLiteClients_ListDueForRotation proves the query's full contract: only
 // ACTIVE, secret-bearing clients whose secret is at least as old as the
 // cutoff are due; an inactive client, a secretless client, and a

@@ -9,6 +9,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/security"
+	"github.com/yangwb1123/snaplink/shared/security/clientrotation"
 )
 
 const (
@@ -172,7 +173,7 @@ func buildRegisteredClient(req *DCRRequest, policy *DCRPolicy, id, secret, regTo
 	if tokenStrategy == "" {
 		tokenStrategy = policy.DefaultTokenStrategy
 	}
-	return &core.Client{
+	client := &core.Client{
 		ID:                      id,
 		Secret:                  secret,
 		Name:                    req.ClientName,
@@ -201,6 +202,10 @@ func buildRegisteredClient(req *DCRRequest, policy *DCRPolicy, id, secret, regTo
 		UserinfoEncryptedResponseAlg: req.UserinfoEncryptedResponseAlg,
 		UserinfoEncryptedResponseEnc: req.UserinfoEncryptedResponseEnc,
 	}
+	if !public {
+		client.SecretExpiresAt = clientrotation.ExpiresAt(time.Now(), clientrotation.DefaultLifetime)
+	}
+	return client
 }
 
 // buildDCRResponse builds the RFC 7591 §3.2.1 successful-registration body,
@@ -212,7 +217,7 @@ func buildDCRResponse(req *DCRRequest, client *core.Client, ctx core.HandlerCont
 		ClientID:                client.ID,
 		ClientSecret:            secret,
 		ClientIDIssuedAt:        time.Now().Unix(),
-		ClientSecretExpiresAt:   0, // 0 = never expires per RFC 7591 §3.2.1
+		ClientSecretExpiresAt:   dcrClientSecretExpiry(client),
 		RegistrationAccessToken: regToken,
 		RegistrationClientURI:   middleware.BaseURL(ctx.Request()) + PathRegister + "/" + client.ID,
 		RedirectURIs:            client.RedirectURIs,
@@ -239,6 +244,13 @@ func buildDCRResponse(req *DCRRequest, client *core.Client, ctx core.HandlerCont
 		UserinfoEncryptedResponseAlg: client.UserinfoEncryptedResponseAlg,
 		UserinfoEncryptedResponseEnc: client.UserinfoEncryptedResponseEnc,
 	}
+}
+
+func dcrClientSecretExpiry(client *core.Client) int64 {
+	if client == nil || client.SecretExpiresAt.IsZero() {
+		return 0
+	}
+	return client.SecretExpiresAt.Unix()
 }
 
 // rotateRAT implements the RFC 7592 §3.2 optional registration_access_token

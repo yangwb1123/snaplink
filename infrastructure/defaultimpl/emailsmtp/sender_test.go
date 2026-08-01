@@ -2,11 +2,44 @@ package emailsmtp
 
 import (
 	"context"
+	"errors"
 	"net/smtp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yangwb1123/snaplink/shared/core"
 )
+
+func TestNotificationSenderResolvesRecipientAndReturnsTransportError(t *testing.T) {
+	wantErr := errors.New("smtp unavailable")
+	calls := 0
+	sender, err := New(Config{Host: "smtp.example", Port: 25, From: "security@example.com"}, nil,
+		WithSendFunc(func(_ string, _ smtp.Auth, _ string, to []string, message []byte) error {
+			calls++
+			if len(to) != 1 || to[0] != "alice@example.com" {
+				t.Fatalf("to=%v", to)
+			}
+			if !strings.Contains(string(message), "Account locked") || !strings.Contains(string(message), "Review activity") {
+				t.Fatalf("message=%s", message)
+			}
+			return wantErr
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := NewNotificationSender(sender, func(_ context.Context, subjectID string) (string, error) {
+		if subjectID != "alice" {
+			t.Fatalf("subject=%q", subjectID)
+		}
+		return "alice@example.com", nil
+	})
+	err = adapter.SendNotification(context.Background(), &core.NotificationEvent{SubjectID: "alice",
+		Title: "Account locked", Body: "Review activity"})
+	if !errors.Is(err, wantErr) || calls != 1 {
+		t.Fatalf("err=%v calls=%d", err, calls)
+	}
+}
 
 // captured is one delivery observed by captureSend.
 type captured struct {

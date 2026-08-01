@@ -65,6 +65,58 @@ func TestMemoryClientStore_RotateSecretUpdatesSecretRotatedAt(t *testing.T) {
 	}
 }
 
+func TestMemoryClientStore_RotateSecretOverlapLifecycle(t *testing.T) {
+	t.Parallel()
+	store := defaultimpl.NewMemoryClientStore()
+	ctx := context.Background()
+	if err := store.Add(ctx, &sso.Client{ID: "overlap", Secret: "old", Active: true}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	newSecret, err := store.RotateSecretWithOverlap(ctx, "overlap", time.Hour)
+	if err != nil {
+		t.Fatalf("RotateSecretWithOverlap: %v", err)
+	}
+	if err := store.ValidateSecret(ctx, "overlap", newSecret); err != nil {
+		t.Fatalf("new secret inside overlap: %v", err)
+	}
+	if err := store.ValidateSecret(ctx, "overlap", "old"); err != nil {
+		t.Fatalf("old secret inside overlap: %v", err)
+	}
+	client, err := store.Get(ctx, "overlap")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if client.PreviousSecret == "old" || !client.SecretOverlapUntil.After(time.Now()) {
+		t.Fatalf("overlap metadata not stored safely: %+v", client)
+	}
+	client.SecretOverlapUntil = time.Now().Add(-time.Second)
+	if err := store.Update(ctx, client); err != nil {
+		t.Fatalf("expire overlap: %v", err)
+	}
+	if err := store.ValidateSecret(ctx, "overlap", "old"); err == nil {
+		t.Fatal("old secret after overlap must be rejected")
+	}
+}
+
+func TestMemoryClientStore_SecretExpiryEnforced(t *testing.T) {
+	t.Parallel()
+	store := defaultimpl.NewMemoryClientStore()
+	ctx := context.Background()
+	if err := store.Add(ctx, &sso.Client{ID: "expired", Secret: "secret", Active: true, SecretExpiresAt: time.Now().Add(-time.Minute)}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := store.ValidateSecret(ctx, "expired", "secret"); err == nil {
+		t.Fatal("expired client secret must be rejected")
+	}
+	if err := store.Add(ctx, &sso.Client{ID: "default-expiry", Secret: "secret", Active: true}); err != nil {
+		t.Fatalf("Add default expiry: %v", err)
+	}
+	client, err := store.Get(ctx, "default-expiry")
+	if err != nil || time.Until(client.SecretExpiresAt) < 89*24*time.Hour {
+		t.Fatalf("new secret did not receive default lifetime: client=%+v err=%v", client, err)
+	}
+}
+
 // TestMemoryClientStore_ListDueForRotation proves the due-listing contract:
 // active + secret-bearing + rotated at-or-before the cutoff. Zero
 // SecretRotatedAt (AddSeed — the YAML-seed loading path — never stamps it,

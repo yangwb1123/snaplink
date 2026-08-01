@@ -76,8 +76,8 @@ func TestDCR_HappyPath_IssuesIDAndSecret(t *testing.T) {
 	if issuedAt, _ := body["client_id_issued_at"].(float64); issuedAt <= 0 {
 		t.Errorf("client_id_issued_at = %v", issuedAt)
 	}
-	if exp, _ := body["client_secret_expires_at"].(float64); exp != 0 {
-		t.Errorf("client_secret_expires_at = %v want 0 (never)", exp)
+	if exp, _ := body["client_secret_expires_at"].(float64); exp <= float64(time.Now().Add(89*24*time.Hour).Unix()) {
+		t.Errorf("client_secret_expires_at = %v want approximately 90 days", exp)
 	}
 	// Server-side: client is in the store and active.
 	stored, err := store.Get(context.Background(), id)
@@ -86,6 +86,9 @@ func TestDCR_HappyPath_IssuesIDAndSecret(t *testing.T) {
 	}
 	if !stored.Active {
 		t.Errorf("expected Active=true")
+	}
+	if stored.SecretExpiresAt.IsZero() {
+		t.Error("confidential DCR client must persist a secret expiry")
 	}
 	if stored.TokenStrategy != "jwt" {
 		t.Errorf("TokenStrategy = %q want jwt", stored.TokenStrategy)

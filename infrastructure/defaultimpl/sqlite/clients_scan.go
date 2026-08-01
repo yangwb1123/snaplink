@@ -1,11 +1,13 @@
 package sqlite
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/security/clientrotation"
 )
 
 // hashClientSecretField re-hashes value only when it is a non-empty
@@ -62,6 +64,8 @@ func clientWriteArgs(c *sso.Client, secret, rat string) ([]any, error) {
 		c.FrontchannelLogoutURI, boolToInt(c.Federation), string(attrs),
 		unixNanoOrZero(c.SecretRotatedAt),
 		c.ClientTrustScore, unixNanoOrZero(c.ClientTrustSetAt),
+		c.PreviousSecret, unixNanoOrZero(c.SecretOverlapUntil),
+		unixNanoOrZero(c.SecretExpiresAt),
 	}, nil
 }
 
@@ -145,6 +149,9 @@ type clientScanRow struct {
 	bclURI, subjectType, sectorURI, fclURI                 string
 	secretRotatedAtUnixNs                                  int64
 	clientTrustSetAtUnixNs                                 int64
+	previousSecret                                         string
+	secretOverlapUntilUnixNs                               int64
+	secretExpiresAtUnixNs                                  int64
 }
 
 // scanInto reads every column of the SELECT projection into the raw
@@ -164,6 +171,8 @@ func (r *clientScanRow) scanInto(s scanner) error {
 		&r.bclURI, &r.subjectType, &r.sectorURI, &r.fclURI,
 		&r.federationInt, &r.attrsBlob, &r.secretRotatedAtUnixNs,
 		&r.c.ClientTrustScore, &r.clientTrustSetAtUnixNs,
+		&r.previousSecret, &r.secretOverlapUntilUnixNs,
+		&r.secretExpiresAtUnixNs,
 	)
 }
 
@@ -206,6 +215,49 @@ func (r *clientScanRow) scalars() {
 	if r.clientTrustSetAtUnixNs != 0 {
 		c.ClientTrustSetAt = time.Unix(0, r.clientTrustSetAtUnixNs).UTC()
 	}
+	c.PreviousSecret = r.previousSecret
+	if r.secretOverlapUntilUnixNs != 0 {
+		c.SecretOverlapUntil = time.Unix(0, r.secretOverlapUntilUnixNs).UTC()
+	}
+	if r.secretExpiresAtUnixNs != 0 {
+		c.SecretExpiresAt = time.Unix(0, r.secretExpiresAtUnixNs).UTC()
+	}
+}
+
+func (s *ClientStore) RotateSecret(ctx context.Context, clientID string) (string, error) {
+	return s.RotateSecretWithLifecycle(ctx, clientID, 0, clientrotation.DefaultLifetime)
+}
+
+func (s *ClientStore) RotateSecretWithOverlap(ctx context.Context, clientID string, overlap time.Duration) (string, error) {
+	return s.RotateSecretWithLifecycle(ctx, clientID, overlap, clientrotation.DefaultLifetime)
+}
+
+func (s *ClientStore) RotateSecretWithLifecycle(ctx context.Context, clientID string, overlap, lifetime time.Duration) (string, error) {
+	plain, err := generateClientSecret()
+	if err != nil {
+		return "", err
+	}
+	hashed, err := hashClientSecret(plain)
+	if err != nil {
+		return "", fmt.Errorf("sqlite: hash rotated secret: %w", err)
+	}
+	now := time.Now()
+	until := time.Time{}
+	if overlap > 0 {
+		until = now.Add(overlap)
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE clients SET
+		previous_secret = CASE WHEN ? > 0 THEN secret ELSE '' END,
+		secret_overlap_until = ?, secret = ?, secret_rotated_at = ?, secret_expires_at = ? WHERE id = ?`,
+		int64(overlap), unixNanoOrZero(until), hashed, unixNanoOrZero(now),
+		unixNanoOrZero(clientrotation.ExpiresAt(now, lifetime)), clientID)
+	if err != nil {
+		return "", fmt.Errorf("sqlite: rotate secret: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return "", sso.ErrNoSuchClient
+	}
+	return plain, nil
 }
 
 // unmarshalClientJSON treats empty / "[]" / "{}" / "null" blobs as the

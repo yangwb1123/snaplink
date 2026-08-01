@@ -197,6 +197,36 @@ func TestEraseSubject_EmptyUserID(t *testing.T) {
 	}
 }
 
+func TestEraseSubject_ClearsNotificationsAndPreferences(t *testing.T) {
+	ctx := context.Background()
+	store := defaultimpl.NewMemoryNotificationStore()
+	prefs := store.PreferenceStore()
+	for _, subject := range []string{"alice", "bob"} {
+		if err := store.Create(ctx, &core.NotificationEvent{SubjectID: subject, Type: core.NotificationSecurityEvent,
+			Channel: core.NotificationChannelInApp}); err != nil {
+			t.Fatal(err)
+		}
+		if err := prefs.Put(ctx, core.NotificationPreference{SubjectID: subject, Type: core.NotificationSecurityEvent,
+			Channel: core.NotificationChannelEmail, Enabled: false}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	eraser := &compliance.Eraser{Notifications: store, NotificationPreferences: prefs}
+	report, err := eraser.EraseSubject(ctx, "alice", compliance.EraseOptions{})
+	if err != nil || !report.NotificationsDeleted {
+		t.Fatalf("report=%#v err=%v", report, err)
+	}
+	if items, _ := store.ListBySubject(ctx, "alice", time.Time{}, 20); len(items) != 0 {
+		t.Fatalf("alice notifications remain: %d", len(items))
+	}
+	if items, _ := store.ListBySubject(ctx, "bob", time.Time{}, 20); len(items) != 1 {
+		t.Fatalf("bob notifications=%d", len(items))
+	}
+	if values, _ := prefs.ListBySubject(ctx, "alice"); len(values) != 0 {
+		t.Fatalf("alice preferences remain: %d", len(values))
+	}
+}
+
 // --- consent + MFA-enrollment stubs for the inheritance-erasure test ---
 
 type fakeConsentStore struct {

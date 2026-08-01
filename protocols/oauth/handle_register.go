@@ -434,7 +434,7 @@ func projectClientToDCRResponse(c *core.Client, ctx core.HandlerContext) DCRResp
 	// also permits ("SHOULD" is not "MUST").
 	return DCRResponse{
 		ClientID:                c.ID,
-		ClientSecretExpiresAt:   0,
+		ClientSecretExpiresAt:   dcrClientSecretExpiry(c),
 		RegistrationClientURI:   middleware.BaseURL(ctx.Request()) + PathRegister + "/" + c.ID,
 		RedirectURIs:            c.RedirectURIs,
 		GrantTypes:              append([]string(nil), c.GrantTypes...),
