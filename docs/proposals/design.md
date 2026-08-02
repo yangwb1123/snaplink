@@ -1,19 +1,14 @@
-Design doc written to `docs/auto/interfaces-cors-direction2-design.md`. Every claim was re-verified against source before writing; the doc also resolves four ambiguities the spec left open.
+Design doc written to `docs/auto/interfaces-cors-observability-design.md` (docs-only change, no Go edits). Every citation was re-verified against source before writing.
 
-## What the design covers
+**Structure** — five `##` sections:
 
-**Decision 1 — `security.cors.path_overrides` YAML mapping**
-- API surface: `CORSConfig.PathOverrides map[string]CORSConfig` + extracted mapping helper in `toPolicy()`, `/`-prefix validation at `LoadFromSources`, gate widening at **both** sites (`config_load.go:315`, `build_app_security.go:170`), inline struct → `toPolicy()` call, boot-log override count
-- Storage model: pure in-memory chain (YAML → `CORSConfig` → `cors.Policy` → precomputed `corsConfig`); no persistence, no cross-replica state; the pointer-overwrite hazard collapses to two calls of the same function
-- Failure modes: non-`/` prefix, empty-origins override (preflight falls through to router — no short-circuit), `enabled:false` ignored by construction, `/token` vs `/tokenizer` prefix bleed, and a **pre-existing nondeterminism I verified in `buildOverrideConfigs`** (equal-length prefix ties depend on map iteration order — now operator-reachable, recommended 4-line deterministic tie-break)
+- **## Shared mechanism** — `cors.BlockObserver` + variadic `Option` (private type, `WithBlockObserver` constructor so all ~10 existing call sites stay source-compatible); reject branch splits into no-Origin pass-through vs. observer-then-forward; observer reports the *PathOverrides-resolved* decision, not the default policy.
+- **## Decision 1: `sso_cors_blocked_total`** — `CORSBlockedTotal` field beside `CIBAPingTotal` (`metrics.go:190`), registration in a **new `platform/metrics/cors.go`** because `metrics_ctor.go` is at 497/500 (the one-line call → 498 is the budget-shaped answer); `reason`/`preflight` closed vocabulary (max cardinality 2), raw `{origin,path}` explicitly rejected per `observability.md:7`.
+- **## Decision 2: `cors_origin_blocked`** — `RecordCORSOriginBlocked` mirroring `RecordCIBAPingFailed` (`recorder_events.go:139`): nil-recorder no-op, `SetMeta`-only, W3C trace via context (tracing runs outside CORS, so it's already stamped); login gate keeps the 403 `authzErrorBody` and drops only the log at `server_login.go:174`; **classified in CC6.1 Access control** (not CC7.2 — the dominant case is benign misconfig, not anomaly), satisfying the `drift_test.go:41` guard.
+- **## Decision 3: contract + E2E** — observability.md rows + middleware-order sentence, and a `test/cors_observability_test.go` with the five pinned cases (exactly-one on `/auth/login`, PathOverrides-allowed origins uncounted, nil-safety, counter+`sso_http_requests_total` moving together).
 
-**Decision 2 — contract docs**
-- API surface: one Security-table row naming every leaf incl. new D1/D3 fields, three pinned semantics (empty-origins disables, credentials+`*` echo-origin, restart-required), example drift fix in `cors.go:44` + `cors_test.go:193`
-- Key ruling: the spec's "zero occurrences repo-wide" grep is **unsatisfiable as written** — `X-RateLimit-Remaining` survives in historical analysis/results docs that document the drift itself; I scoped the enforceable grep to code + contract docs and recorded the ruling
+**Key findings beyond the spec** (each with API surface / storage model / failure modes / breakage risks):
 
-**Decision 3 — append semantics + constants**
-- API surface: `AllowedHeadersExclusive` escape hatch, defaults-first case-insensitive order-preserving dedup, `cors` → `shared/core` import (verified acyclic via `go list`: core imports only stdlib), optional `DefaultAllowedHeaders` built from core constants
-- **Explicitly flagged as the direction's only behavior change**: `buildConfig` is shared by config and direct SDK paths, so SDK callers with non-empty `AllowedHeaders` switch from replacement to merge — deliberate and documented, with the escape hatch
-- Critical find: `cors_test.go:140` is the one existing test encoding the old replacement contract (`"X-Custom, Authorization"`) and **must** change in the same commit
-
-Cross-cutting: gates sequence, budgets (zero new files in `config/`, zero production changes in `interfaces/sso`, `test/` integration file exempt), and non-goals restated.
+1. **Pre-existing asymmetry surfaced**: `isOriginAllowed` (`origin_validation.go:103`) ignores `PathOverrides` while the middleware honors them — a hypothetical `/auth/login` override would 403 with zero telemetry after the log removal. Documented as a known limitation with the unification deferred to direction 二 (non-goal).
+2. **Metrics/audit divergence is designed**: the counter is synchronous (always fires); the event is best-effort (async sink drops counted by `sso_audit_async_drops_*`) — the trade-off is stated explicitly.
+3. **Two budget tripwires** shaped the design: `metrics_ctor.go` 500-line cap (new file split) and the `interfaces/sso` 60-file ceiling (observer is a `*Server` method in `origin_validation.go`, wiring is two lines in `server_routes.go:452`).
