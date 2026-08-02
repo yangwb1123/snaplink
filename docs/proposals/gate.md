@@ -1,46 +1,34 @@
-All verification complete. Here is my gatekeeper cross-check.
+All cross-checks complete. Here is the gatekeeper report.
 
----
+# Gatekeeper cross-check: review findings vs. design/implementation
 
-# Gatekeeper Review — `docs/auto/domains-region-observability-design.md`
+**State:** Reviews were filed against design commit `744580d8`. The design doc (`docs/auto/domains-region-token-contract-design.md`) is **unchanged** since then — no review finding was folded into it (no uncommitted doc edits; the `docs/` diffs present belong to other batches). The in-flight implementation resolves a subset in code. I re-verified every finding against the live tree; `go build` and `TestMaintainability_|TestArchitecture_` pass at write time.
 
-**Inputs**: 6 review deliverables (security, QA, SRE, principal, performance, compliance) vs. the design at its current on-disk state (mtime 2026-08-01 16:59, unchanged since HEAD `36d0527c`; no revision markers, no corrective edit pass present). I independently re-verified the load-bearing mechanics behind every blocking finding against source.
+## Resolved (in the in-flight code, not in the design doc)
 
-## Independent re-verification of the blocking mechanics
+| Finding | Status | Evidence |
+|---|---|---|
+| QA F1 — remote gate fail-closed, both modes, order pinning | **Resolved** | `introspect_test.go` in-set/out-of-set/no-echo cases; `TestValidateToken_ServingRegionGateRunsLast`; remote gate sits last in `validateIntrospectedClaims` with the fail-closed asymmetry documented inline |
+| QA F2 — per-issuer ID-token stamps | **Resolved** | `TestServingRegion_IDTokenClaim` iterates all three signers, empty ⇒ absent |
+| QA F3 — `baseAdvertisedGrants` move | **Resolved** | Deterministic move adopted: helper now in `server_discovery_cache.go:47`; `server_discovery_config.go` at 488, gates green |
+| QA F5 — `refreshRotatedSubject` param | **Resolved** | Param added (`token_refresh.go:245`), unit pin in `refresh_grace_test.go:28`, E2E re-stamp test |
+| QA F6 — full-payload decode helper | **Resolved** | `decodeJWTPayload` decodes both tokens in E2E |
+| QA F7 — echo positive + negative | **Resolved** | `TestIntrospectionEmitsServingRegion` (present + absent) |
+| Sec F2 — `[""]` fail-open edge | **Partially resolved** | `HasServingRegionIn` short-circuits on empty claim, so `[""]` cannot admit claim-less tokens — but the explicit `AllowedServingRegions: []string{""}` regression test requested by the reviewer does not exist |
+| Sec F4(a) — `HasServingRegion` vs `HasServingRegionIn` | **Resolved** | Both defined; gate uses `HasServingRegionIn` |
+| Proto H2 — placement/budget arithmetic | **Resolved** | 503→500, split `introspect_body.go`, `handle_introspect.go` 415; maintainability gates pass |
+| Proto L2 / DPoP ordering | **Resolved** | Gate-last placement pinned by test + comment |
 
-| Claim | My verification |
-|---|---|
-| Options apply in slice order | `sso.go:88-89` `for _, opt := range opts { opt(s) }` ✓ |
-| `WithTenantResidencyCheck` appended before `WithMetrics` in stock build | `build_stores.go:68` `wireDomains()` → `wireGeoRegionRisk` → `wireRegion` (`build_app_selfservice.go:262`); `build_stores.go:71` `wireEdge()` → `wireMetricsCollector` → `WithMetrics` (`build_app_oidc.go:414`) ✓ |
-| `WithMetrics` is the sole writer of `s.metrics` | `options_misc.go:331-333` ✓ |
-| Precedent `SetFeatureGateEnabled` runs post-options | `sso.go:311` inside `recordFeatureGateStartup()` (post-options tail) ✓ |
-| Alert gate requires `summary` AND `description` | `platform/metrics/alert_rules_test.go:91-98` ✓ |
-| No stock resolver ever errors (dead `SSORegionResolutionDegraded`) | `domains/region/resolver.go:62-87` — absent/rejected values fall back to `(Default, nil)`; `ChainResolver` only propagates ✓ |
+## Unresolved — no dismissal with reasons anywhere
 
-## Finding-by-finding cross-check (blocking list from the principal review §4 preconditions)
+1. **Sec F1 / Proto H1 / M1 / M2 (High/Medium) — six mint sites still unstamped and not allowlisted.** Verified in the live tree: `protocols/oidc/handle_silent_renewal.go:210` (access) and `:390` (ID); `cmd/sso-server/serverwebauthn/webauthn.go:217` (access) and `:291` (ID); `infrastructure/kerberos/handler.go:268` (access) and `:294` (ID). The design's "deliberately empty" list covers only break-glass and admin temp tokens; silent renewal runs inside the HandlerContext pipeline (region stashed, so stamping is trivial and its omission breaks decision 2's "advertised == minted" invariant), WebAuthn already resolves the region for its residency gate, and Kerberos needs the deps-threaded decision the reviewers demanded. The requested mint-site enumeration regression test does not exist. Decision 3's fail-closed gate will mass-deny all six flows in region-pinned deployments.
+2. **Contract docs missing (AGENTS.md §5.6 — same change).** Verified absent: `docs/error-codes.md` row 88 (no RS-gate/`serving_region` disposition); `docs/openapi.yaml` (only the pre-existing login `serving_region` at :12156 — no `OpenIDConfiguration` extension property, no token-schema claims, no login-description update); `docs/feature-matrix.md` row 150 unextended; `docs/config-reference.md` has no `WithServingRegionAdvertisement`/`AllowedServingRegions` entries.
+3. **Sec F3 (Medium) — trust-chain precondition unstated.** No `PeerTrust`/`Allowed` precondition on `AllowedServingRegions` anywhere; no header-resolver-without-`PeerTrust` warning; error-codes row (the remediation's carrier) is untouched.
+4. **QA F4 (Medium) — Mount-time warn untested.** Warning exists at `server_routes.go:139-140` but no log-capture test asserts it fires at Mount.
+5. **Proto L3 (Low) — adversarial inputs unpinned.** No non-string `serving_region` (`123`) → `ErrTokenMalformed`/parse-failure test in either mode.
 
-| # | Finding (severity) | In the design today | Status |
-|---|---|---|---|
-| C1 | Boot gauge set in `WithTenantResidencyCheck` no-ops under stock option order → `SSOResidencyFailOpen` dead in the stock binary | Design still mandates: "set to 1 by `WithTenantResidencyCheck` via the nil-safe setter" (Decision 2, API surface §2) and sequencing step 2: "`ResidencyEnabled` setter in `WithTenantResidencyCheck`". No post-options `applyMetricsWiring` hook, no order-independence test, no cmd-level option-order check. | **UNRESOLVED** |
-| H1 | Alert YAML fails `TestDeployAlerts_ConventionsHold` | Snippet still uses `# description:` YAML comments, no `summary` annotation (Decision 2, §4). | **UNRESOLVED** |
-| H2 | "Enabled but never enforcing" (silent-inert) is unobservable | No guard alert (`enabled==1 and sum(rate(decisions[1h]))==0`), no boot-time validation in `wireRegion`, no dropped-region counter. The design's only reference to this failure class is the problem restatement itself. | **UNRESOLVED** |
-| M1 | Mesh-path `region_denied` per-request durable amplification | Design still asserts "The `region_denied` event is rare by construction (denial-only)" (Decision 3, Storage model) with unbounded per-request emission; no token bucket, no sampled event, no suppression counter. | **UNRESOLVED** |
-| M2 | `region` label cardinality unbounded in legacy config | Design still states "an attacker who can influence the region label can already influence the policy itself, so no new trust boundary" and defers to "Documented in the observability section as an operator obligation". No `region="unlisted"` bucketing, no boot warning for empty allowlist + unset `trusted_proxies`. | **UNRESOLVED** |
-| M3 | No cmd test covers `wireRegion` OnError closure; design's hedge is void | Design still hedges: "The unit test on the closure (`build_app` test path) is what pins this" — the review verified no such test path exists. | **UNRESOLVED** |
-| H3 | "Gauge guards both alert expressions" self-contradicted; `SSORegionResolutionDegraded` unreachable | Design still claims "the existence guard on both alert expressions" (Decision 2, API surface §2) while its own YAML guards only `SSOResidencyFailOpen`; no re-key onto a reachable signal, no embedder-facing documentation. | **UNRESOLVED** |
-| L1 | "No `test/` e2e wires `WithMetrics`" is false | Design still carries "Test-harness gap: … if no `test/` e2e currently wires `WithMetrics` … the one acceptance item with a real unknown" (Decision 4, What could break) — refuted by `test/metrics_e2e_test.go:73`, `ratelimit_e2e_test.go:74`, `tenant_metrics_e2e_test.go:89`, `ciba_ping_test.go:182`. | **UNRESOLVED** |
-| L2 | "`me` surface: GET `/me`, `/me/data-export` only — verified" inaccurate | Still says "consumed by `protocols/selfservice` for GET `/me`, `/me/data-export` only — verified" (Decision 1, API surface §2) — omits `selfservicenotification/handlers.go` (3 sites) and `profile.go:58`. | **UNRESOLVED** |
-| L3 | Observe ladder has no unmapped-error default | Design says only "must not inherit a future default's label"; does not pin the default branch (observe nothing + log) the review requires. | **UNRESOLVED** |
-| L4 | `docs/auto/` must not ride the implementation commit | Directory still untracked; `TestArchitecture_DirectorySubdirFanout` red on disk (docs 17 > 16). Process gate for the implementation commit, not fixable in the doc — but must be enforced at commit time. | **UNRESOLVED (process)** |
-| T1 | SDK break decision | Design does decide: param version preferred, fallback seam documented, release note called. | Resolved (only decision item with a committed position) |
-| T2/T3/T5/T6/T8 | Bounded emission / silent-inert choice / cardinality enforcement / dead-alert re-key / gauge placement | No decision recorded for any. | **UNRESOLVED** |
+## Verdict
 
-## Assessment
+The implementation is strong on the decision-3 gate matrix, per-issuer ID stamps, budget placement, and E2E — but the two highest-severity review findings (the incomplete mint-site inventory with six live unstamped paths, and the §5.6 contract-doc obligation) are neither resolved nor dismissed with reasons, and the design document itself was never revised to incorporate any review feedback. The silent-renewal/WebAuthn/Kerberos gap converts decision 3 from a governance gate into an availability break on real user paths, and no enumeration net exists to prevent regression. This blocks implementation-stage handoff as reviewed.
 
-The design is unchanged from the state the reviewers examined. **None of the three blocking defects (C1, H1, H2) is addressed**, none of the four medium items (M1, M2, M3, H3) is resolved, and the low-severity evidence errors (L1, L2, L3) are still present verbatim. The principal reviewer's precondition list (§4: "all must land in the design before coding") is entirely unfulfilled, and the compliance officer's final posture — "as written today, half of that claim — the detection half — fails verification in the default build" — still holds.
-
-Most critically, C1 remains a **test-reality divergence**: the design's own proposed acceptance test ("gauge 1 after option / absent without") would pass with hand-picked option order while the stock binary ships the alert dead — the exact failure the review consensus flagged as Critical.
-
-There is no delta to re-review; the corrective edit pass never happened. The implementation stage must not start from this document.
-
-VERDICT: FAIL - blocking issues: C1 (gauge set inside WithTenantResidencyCheck no-ops under stock option order; must move to a post-options step e.g. applyMetricsWiring with an order-independence test), H1 (alert YAML fails TestDeployAlerts_ConventionsHold; needs real summary+description annotations), H2 (silent-inert "enabled but never enforcing" gap unresolved; pick guard alert / boot validation / dropped-region counter and document), plus unresolved M1 (unbounded mesh region_denied emission), M2 (unbounded region label cardinality), M3 (void cmd-test hedge), H3 (self-contradicted gauge-guard claim + dead SSORegionResolutionDegraded), and doc corrections L1-L3. The design must be revised to close these and re-reviewed (delta) before implementation.
+VERDICT: FAIL - six unstamped mint sites (silent renewal x2, WebAuthn x2, Kerberos x2) with no enumeration test or documented exclusion; contract docs (error-codes.md, openapi.yaml, feature-matrix.md, config-reference.md) unupdated per AGENTS.md 5.6; trust-chain precondition (Sec F3) unstated; Mount-warn untested (QA F4); explicit ["\"]-config and non-string-claim tests missing
