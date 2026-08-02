@@ -1,11 +1,14 @@
-Spec written to `docs/auto/interfaces-cors-observability-spec.md` (docs-only change, no Go edits so no build gates needed). Three evidence-backed decisions for direction 三:
+Requirements spec written to `docs/auto/interfaces-grpcserver-transport-governance-spec.md`. All evidence was verified directly against the code before writing:
 
-**Shared mechanism (prerequisite):** `cors.Middleware` gains a variadic `BlockObserver` option, wired by sso at `server_routes.go:452` — the reject branch in `cors.go` currently forwards silently with zero signal, and CORS sits innermost so the observer covers every path, not just `/auth/login`.
+**Verified evidence chain:**
+- `interfaces/admin/middleware.go:317-345` — `HTTPMiddleware` runs the full 6-step chain; `authorizeGRPC` (:220) does bearer + scope only; `enforceIdleTimeout`/`Touch` (:395/:405) never fires on gRPC.
+- `interfaces/admin/governance.go:306/364/381/408` — all governance checks take `http.ResponseWriter`/`*http.Request`; policy state already lives on the shared `Middleware` (wired at `cmd/sso-server/build_app.go:309-338`), so gRPC has the data but no execution path.
+- `cmd/sso-server/main_servers.go:192` — interceptor chain is only Recovery + adminMW; TLS optional at :170-181; `-grpc-listen` defaulted on.
+- `interfaces/grpcserver/grpcadmin/admin_paginate.go` — confirmed direction 2's self-admitted deferred debt (excluded per scope: the task targets direction 1 only).
 
-**## 1. `sso_cors_blocked_total` counter** — the middleware reject branch has no counters (`cors.go` `Middleware()` silent `next.ServeHTTP`); `metrics.Middleware` only labels `method, status_class`, so blocked origins are indistinguishable from normal traffic. Proposes a `reason`+`preflight` labeled CounterVec registered beside the `CIBAPingTotal` precedent (`metrics_ctor.go:316`), explicitly rejecting the analysis's raw `{origin,path}` labels to honor the bounded-cardinality invariant (`observability.md:7`, `sanitizeMethod` precedent).
+**The 3 improvements (decomposition of direction 1):**
+1. **Governance parity on the interceptor chain** — shared transport-agnostic gate running IP policy / rate limit / write quota on both gRPC unary and stream interceptors in HTTP order, so the two transports cannot drift again.
+2. **Destructive confirmation + idle timeout on gRPC** — `grpc-metadata-x-confirm` convention, and `GetByID`/`Touch` idle enforcement inside `authorizeGRPC` (JTI already available from claims).
+3. **Transport hardening** — TLS never silently plaintext by default (ephemeral cert or startup refusal), plus a fail-closed startup guard that rejects configs where governance is enabled but not enforceable on the gRPC plane.
 
-**## 2. `cors_origin_blocked` audit event** — `server_login.go:174`'s `logger.Info("origin_blocked")` is the tree's only signal: log-only, login-path-only, no trace/audit correlation. Proposes a `RecordCORSOriginBlocked` event mirroring `RecordCIBAPingFailed` (`recorder_events.go:139`), classification in `auditreport` (drift test at `:41`), and removal of the login gate's duplicate log so the invariant is exactly one event per rejected request.
-
-**## 3. Contract + E2E coverage** — `observability.md:100` documents CORS in the chain but no rejection telemetry, and no `test/` case exercises the boundary with the login CSRF gate. Proposes the docs rows plus a `ssotest` E2E case proving no double-count across enforcement points and that `PathOverrides`-allowed origins stay uncounted.
-
-Each decision carries evidence with exact file/symbol citations and a concrete acceptance check; non-goals keep scope tight (no allow/deny semantics, no new Err*/endpoints, no cardinality drift).
+Each section has a concrete acceptance check (unit tests in `interfaces/admin`, e2e in `test/`, contract-doc updates per AGENTS.md §5, and the mandatory gate commands).
