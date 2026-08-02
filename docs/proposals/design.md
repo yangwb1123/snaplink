@@ -1,16 +1,16 @@
-Design doc written to `docs/auto/interfaces-apidocs-design.md`. Here is a summary of what it decides:
+Design doc written to `docs/auto/interfaces-apidocs-direction1-design.md` (doc-only, no Go gates touched). I verified every evidence claim against source before committing it — including a few facts the spec didn't pin down and that materially shape the design:
 
-## Design highlights
+**Grounded findings from verification:**
+- `StdRouter.Group` accumulates prefixes internally (`shared/core/router.go:288`), so the recording wrapper must track its own prefix chain and mirror that rule — the child recorder reuses the parent's map+mutex, exactly as `StdRouter.Group` shares the route table.
+- Layer ranks (`architecture_layer_test.go:41`: platform=1, interfaces=5) confirm `interfaces/sso → platform/buildinfo` is a legal downward import — no exemption.
+- `interfaces/sso` is exactly 60 non-test files, and the placement table in the doc is budget-checked: `server_health.go` (443, +57) holds the recorder type, `server_routes_admin.go` (332, +168) the projection helper, since `server_routes.go` has only 12 lines of headroom.
+- Options apply before `Mount` (`sso.go:82`), so the recorder wrap in `mountMiddleware` (:108) deterministically observes every registration; late option application degrades to verbatim per fail-safe.
 
-**Ground truth verified beyond the spec** (9 binding facts). The spec's evidence had three material inaccuracies that the design resolves rather than inherits:
-- `kin-openapi` is **not** a go.mod dependency (only an unpinned `go run @latest` in the Makefile) → the diff tool reuses `cmd/gensdk`'s `goccy/go-yaml` parser, honoring "no new module dependency" over the spec's "reuse kin-openapi" wording
-- `interfaces/sso` does **not** currently consume `platform/buildinfo` → the new import is legal (downward) but net-new, flagged for the architecture gate
-- The 81-operation gap is **not** the analysis's family list (v2alpha/setup/WASM/CAEP/federation are all statically registered, hence inside the 241) → Decision 3's triage must enumerate the real set, and the runtime/reverse-check split is designed accordingly
+**Per-decision coverage (each under `##`, each with API surface / storage model / failure modes / what could break):**
+- **D1**: `Endpoint` + `Projection.Mounted` in apidocs; `recordingRouter` (embedded `core.Router`, prefix-aware `Group`) in sso; RWMutex-guarded set, per-request sorted snapshot + probe consts; parity test via an additive `--dump-routes` checker flag feeding a `testdata` fixture (testdata/`_test.go` don't count against the ceiling); flags the structural 81-op gap — fully-optioned builds still filter ~81 never-mounted documented operations, changing the served doc from spec-reference to deployment-inventory.
+- **D2**: `ResolveIssuer` closure wired to `s.resolveIssuer` — no trust logic in apidocs; stateless; single-entry `servers` rewrite with nil/empty/sentinel fallback; calls out the issuer-vs-console-host topology divergence and pins it by test.
+- **D3**: `Version` resolved once at option time via `buildinfo.Resolve("")`; empty/`(devel)` falls back to `0.1.0`; `specTitleVersion` picks it up with no template change; flags the non-semver edition-label risk for strict parsers.
 
-**Decision 1 — projection**: instead of a hand-maintained option→path table, `mountMiddleware` wraps `s.router` in a ~55-line `core.Router` recorder (8-method interface, adapter-agnostic) capturing the byte-exact mounted set at the source; `Server.Handle` routes flow through it, so embedder-dynamic routes are free; `/livez`+`/readyz` added explicitly. `apidocs.New` takes a `Projection{Mounted func() []Endpoint, Version, ResolveIssuer}` struct — nil fields degrade to the unprojected spec. Budget-critical: all sso-side code lands in `server_routes_admin.go`/`server_resource.go` (60-file ceiling, `server_routes.go` at 488/500).
+**Cross-cutting**: one pipeline shared by all three decisions, sequencing 1→2→3, the gate sequence including the fixture-drift guard in `make ci`, and whole-design risks (served-doc semantics shift, budget pressure interaction between the 60-file ceiling and the 500-line gate, checker coupling).
 
-**Decision 2 — rendering**: per-op codes are extracted from response descriptions but filtered through a bounded `stableErrorCodes` vocabulary map (so `client_id` prose can never render as a code); the full catalog is a new `go:embed error-codes.md` in the rank-0 `docs` package; all rendering stays textContent-only, CSP-nonce-safe, offline-capable. Rejected `x-error-codes` spec annotations (258 ErrorResponse refs make completeness impossible).
-
-**Decision 3 — lockstep**: the recorder makes runtime static exception lists unnecessary, so the exception inventory cleanly lives in `sdk-surface.json` (schema-extended) as the spec wanted; reverse check + embed-consistency (go-run hash helper, the route_contract.py precedent) run under the existing `route-contract` ci target; `cmd/sdkdiff` uses git-show snapshots and canonical schema fingerprints so cosmetic edits don't false-flag breaking changes.
-
-Each decision section covers API surface, storage model, failure modes, and what could break it, ending with an acceptance-mapping table tying every spec acceptance check to a concrete design provision.
+One judgment call to surface: I recommended the `--dump-routes` checker flag + checked-in fixture as the parity mechanism (spec requires `check-routes` output unchanged — the flag is additive), rather than shelling out from Go tests, which would be fragile and cross-language.
