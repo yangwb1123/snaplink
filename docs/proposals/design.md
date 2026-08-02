@@ -1,17 +1,9 @@
-Design doc complete: `docs/auto/interfaces-sso-direction2-postgres-hotstore-design.md` (sibling of the spec). All claims were grounded in code before writing — I verified the SQLite consume/ledger/rotation statements, the oauthspi optional surface, the `runTx`/`serializable` retry helper, the session-store shared-pool precedent, the boot-gate branching precedent, and the exact consumer line numbers.
+Design doc written to `docs/auto/interfaces-sso-direction3-design.md`. It fixes the three improvements down to decisions with the requested sections (## per decision: API surface for 改进一/二, consolidation mechanics for 改进三, storage model, failure modes, what could break the design).
 
-Structure — `##` per decision, each with the four requested sections:
+Before writing, I re-verified every spec claim against the tree and surfaced **three spec corrections** — the two important ones:
 
-**## Decision 1 — Postgres OAuth hot-store implementations**
-- **API surface**: 4 new files in `package postgres` (fan-out capped at exactly 4 non-test files), `New*StoreWithDB(db, dialect)` constructors running per-namespace migrations, `DB()`/`Ping()`/`Close()` readiness trio, `*MaxVersion()` helpers. Constraint flagged: `session.go`'s `interfaces/sso` import is a frozen exemption — new files must import `oauthspi` only.
-- **Storage model**: 4 namespaces, full-column baseline DDL (no sqlite backfill ladder), `DELETE ... RETURNING` atomic consume, ledger mirror wrapped in `runTx` (fail-closed — the one place a naive translation silently kills reuse detection), CRDB serializable retry for rotation.
-- **Failure modes** + **what could break**: `?`→`$N` drift, pgx multi-statement rejection, orphaned ledger rows, CI test-DB availability.
+1. **File-ceiling blockers (the headline finding).** 8 of the 13 target packages are themselves AT a file ceiling: `protocols/oauth` (12 = exemption 12), `platform/audit` (16 = exemption 16), `domains/federation` (24 = exemption 24), `protocols/oidc`/`caep`/`selfservice`/`domains/permissions` (10 = default cap), and `interfaces/admin` (10, with **no exemption entry at all** — the spec's acceptance wording references a `dirFileCountExemptions` value for admin that doesn't exist). A naive "add a mount entry point" as a new file fails the committed fan-out gate in every one of these. The design fixes a per-package placement table: mount code appends to an existing file with measured 500-line-budget headroom (`interfaces/admin` → `deps.go` at 177 lines, the only admin file with room; `middleware.go`/`connections.go` are at 492/498). Only configaudit, netpolicy, rebac, webhook, wasmauthz get new `mount.go` files.
 
-**## Decision 2 — Optional-SPI parity**
-- Full optional assertion set (`Inspector`/`SubjectIndex`/`Counter`/`ClientPurger`/`FamilyTracker`/`RotationLimiter`/`ExpiryLister`) + `SetLookupHMACKeys`, `oauth.postgres` config, guard test.
-- Key finding captured: sqlite's `ListExpiring` thumbprints the *stored HMAC value*, not the raw token — parity means reproducing that exactly, and a "fix" would break the opaque-lookup invariant.
+2. **Acceptance-grep ambiguity.** The spec's literal `grep -c "func (s \*Server) handle"` counts **254, not 234** — 20 body-bearing multi-arg helpers (`handleDeviceTokenGrant`, `handleLivez`, …) contain `(ctx HandlerContext)` but aren't delegates and stay. The anchored sole-parameter filter is specified, or the gate is off by ~29 methods.
 
-**## Decision 3 — Stock-binary surface closure**
-- Builder signatures thread `pgDB`/`pgDialect`; schema gate branches per backend (the `CheckSQLiteSchema`-on-postgres false boot failure); backend-accurate ready-check names; `wireRefreshRotationGrace` postgres case with a `refresh_grace` namespace (BYTEA successor blob); HA-coherence lock test.
-
-Plus a per-decision verification table and strict dependency order 1→2→3. One citation corrected post-write (`RefreshGraceStore` interface path/line).
+Also covered: gate-closure semantics (method values, never `.Load()` results — hot-reload byte-identity), nil-gate panic discipline, boot-time wiring via nil-tolerant deps accessors rather than re-exported predicates, storage model (explicitly zero runtime storage; only the committed exemption table + AGENTS.md sentence change), seven runtime failure modes, and a nine-item risk register ordered by likelihood — with `SEED_DIRFANOUT` same-commit ratchet and the `aliases.go` SDK-facade no-touch rule among the mitigations.
