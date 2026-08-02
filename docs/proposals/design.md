@@ -1,14 +1,29 @@
-Design doc written to `docs/design/admin-list-keyset-pagination.md`. It was grounded in the actual code: all 9 List handlers, `admin_paginate.go`'s offset shim and its own "deferred" note, `spi.go`'s optional-extension precedents (`TenantScopedClientStore`, `ClientStoreStats`, `ClientRotationLister`), the cache decorator passthrough, the two protos lacking page fields, and the doc contracts (`clients.proto:84,100`, `openapi.yaml`).
+Design doc written to `docs/design/grpcserver-observability-tls.md` (25303 bytes). All spec evidence was re-verified against the working tree first; every file/line reference in the doc is current.
 
-## Decisions (## headings in the doc)
+## Design summary
 
-- **D1 — SPI placement**: `shared/core/pagination.go` (new file, not `spi.go` — that file is at its 500-line budget per its own header; the `tenant_user.go` split precedent applies). Shared `PageQuery` + `ParseFilterExpr`; per-entity extensions (`PaginatedClientStore`, `PaginatedUserProvider`, `PaginatedSessionLister`, plus a separate `ClientExpiryLister` for the window) live in each entity's home package since stores can't import grpcadmin. Cursor is **store-opaque bytes** — the handler can't reconstruct time sort keys from protos (wire `User` has no `created_at`), so the store must be the cursor authority.
-- **D2 — Token format**: `v1.<b64url(payload)>.<b64url(HMAC-SHA256)>`, payload = `after || filter_canonical || order_canonical`. MAC over the whole payload (equivalent binding, one fewer field); `seq` from the requirement sketch dropped (idempotent paging has no replay hazard). Codec in existing `shared/security` package — no new package, no `layerName()` churn. Legacy/v1 formats are disjoint by construction (digits-only base64 has no dots).
-- **D3 — Dispatch**: one generic `runListPage` helper in `admin_paginate.go` (only file with budget headroom); extension → fallback on `ErrUnsupportedOperation`. Key insight: all filter/order error strings are **row-independent**, so validation stays handler-side (single-sourced strings) while matching semantics push down.
-- **D4 — Proto**: additive fields only — `ListExpiring` and `ListOperations` (the only two messages lacking page fields).
-- **D5/D6 — Storage model**: keyset predicate with id tiebreaker (table of per-entity sort keys/tiebreakers); memory stores reproduce today's semantics by calling extracted shared matchers/comparators (no duplication, so fallback tests double as drift detectors).
-- **D7 — TotalSize**: extension path = `totalHint` → `Stats().count` → `0`; never `List(ctx)` to count. Memory returns exact hints, so existing exactness assertions hold.
-- **D9 — Failure modes**: oracle-safe table — every cursor failure collapses to byte-identical `invalid page_token`.
-- **D10 — What could break it**: 12-item risk register. The two sharpest: (1) **MAC key stability** — no deployment-stable secret exists today; ephemeral default invalidates cursors on restart/multi-replica, and a stable key needs a config key (flagged as a deliberate scope deviation needing sign-off); (2) **`ListOperations` gains its first deterministic order** (id asc) on the extension path — the one genuine behavioral change. Also: grpcadmin 500-line/file ceiling (mitigation: codec lives in shared/security; escape hatch if it still overflows), token-internal test assertions, proto regen being load-bearing, and keyset concurrency-test semantics (inserts *before* the cursor legitimately don't appear).
+**## Decision 1 — API surface**
+`grpcserver.RegisterObservability(s *grpc.Server, checks func() map[string]func(ctx) error) (stop func())` in a new `interfaces/grpcserver/obs.go` (6→7 non-test files, within the 10-file budget). Registers the stock `health.Server` + `reflection.Register`; the `checks` func-value keeps `grpcserver` free of any `interfaces/sso` import (no new graph edges). cmd wires `a.server.BuildHandlerDeps().ReadyChecks` (verified at `accessors_handlers.go:343`). Per-service statuses derive from `s.GetServiceInfo()` each tick — no ordering constraint, no extra param.
 
-No `.go` files were touched, so no mandatory gates were run; `make ci` will validate the buf/OpenAPI regen path when implementation starts.
+**## Decision 2 — Health semantics**
+Single poller goroutine: immediate first evaluation, then 5s interval; per-evaluation `recover` (panicking checks can't kill the poller — matches `/readyz`'s net/http survivability); 3s aggregate deadline mirroring `handleReadyz`. `stop()` cancels the poller + `health.Server.Shutdown()` so Watch clients see draining. Documented divergence: `WithReadyCheckTimeout` metadata is invisible through the accessor — gRPC health applies only the aggregate bound (not fixable without touching `interfaces/sso`, which is out of scope).
+
+**## Decision 3 — Metrics**
+`ss_grpc_requests_total` + `sso_grpc_request_duration_seconds` with labels `grpc_service` (memoized allowlist from `GetServiceInfo()`, unknown → `"other"`) and `code_class` (fixed `ok|client|server` table). Health/reflection RPCs are denylisted so LB probe traffic never dominates dashboards. Interceptors live in `interfaces/grpcserver/metrics.go`, vectors + registration in `platform/metrics` — same split as the HTTP pair. `a.metrics` is nil-safe (`main.go:274`).
+
+**## Decision 4 — Tracing + chain order**
+`otelgrpc v0.68.0` (exact contrib/otel alignment). New order: `metrics → otelgrpc → Recovery → adminMW`. This deliberately amends the documented "Recovery outermost" invariant — the comment is rewritten and the observability layer is panic-safe (defensive recover → Internal, never crashes the process). The panic-counted-as-server-class test is the regression lock.
+
+**## Decision 5 — TLS fail-closed**
+New `-grpc-tls-cert/-key` (fallback to shared pair) + `-grpc-insecure`. A pure decision function implements the 6-row matrix: non-loopback + no material → startup error; loopback or explicit opt-out → logged plaintext exceptions; cert+insecure → error. Flags stay runtime-only (no Config keys → docscheck gate unaffected). Verified no `test/` harness passes `-grpc-listen`, so the stock-run breaking change has no CI blast radius.
+
+**## Decision 6 — Storage model**
+No durable storage. In-memory only: health status map (a *projection* of the existing store-health check closures — no new probing), bounded prometheus vectors, one memoized allowlist per server, OTLP's bounded span queue.
+
+**## Decision 7 — Failure modes**
+11-row table: check panics/hangs, flapping, handler vs. observability-layer panics, exporter down, metrics disabled, cert failures, reflection-on-plaintext, poller leak (owned by `stop()`).
+
+**## Decision 8 — What could break the design**
+Nine risks with mitigations: chain-order regression (test-locked), otelgrpc missing from module cache (needs network fetch; minimal-diff criterion), `GetServiceInfo` fallback, stock-run startup break, unauthenticated health/reflection (accepted convention), cardinality growing with SDK-registered services, per-check-timeout divergence, flag/Config asymmetry, `health.Server.Shutdown()` availability (checked at implementation).
+
+Contract updates and the full gate sequence (`go build/vet` → maintainability/architecture → `-race` → TestE2E → `make ci`) close the doc, per AGENTS.md §5.
