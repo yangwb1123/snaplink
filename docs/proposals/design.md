@@ -1,11 +1,17 @@
-Design doc written to `docs/auto/domains-permissions-design.md`. It's a docs-only change; no Go gates triggered.
+The design doc is written to `docs/design/permissions-resource-catalog-wiring.md`. All claims were verified against the tree before writing. Summary of the design:
 
-**What the design decides** (each a `## Decision:` section covering API surface, storage model, failure modes, and breakage risks):
+**## 1 — Resource-aware `Check`**
+- Additive `CheckRequest` fields 4–6 (`resource_type`, `tenant_id`, `attributes` map) per ADR-0008; presence = non-empty `resource_type` (safe: `Resource.Validate()` rejects empty types).
+- One exported `CheckResource(rp, lookup, perms, want)` in the domain, placed in the **existing** `resources.go` — the package root is exactly at its 10-file ceiling, contradicting the requirement's "not at ceilings" claim.
+- Decision table: `Found=false` → flat `Matches` fallback (spec-mandated, byte-identical); `Found=true` → `RequiresAuth` gate, then per-`RequireMode` projection via `EffectiveRequireMode()`. Lookup against a non-`ResourceProvider` backend fails closed with `FailedPrecondition`.
 
-1. **Resource enforcement through the provider seam** — shared `MatchResource` domain function (folded into `resources.go` because `domains/permissions` is at its 10-file ceiling), `ResourceConformanceSuite` with no skip branches for first-party backends, new `ResourceAdminService` **relocated to `interfaces/grpcserver/`** (the spec's literal placement in `grpcadmin/` would breach that directory's 10/10 fan-out ceiling), additive `CheckRequest` fields (`tenant_id`, `resource`, `session_id`), `RequiresAuth` enforced by the gate rather than `Check`, and RAR catalog validation moved from `oauthvalidate` (deliberately shape-only, no provider access) to a composition-root domain function — a documented deviation from the spec's wording that still meets its acceptance check.
+**## 2 — Durable catalog + conformance**
+- Migration v2 `permissions_resources` (unique tuple, JSON-as-TEXT columns, RFC3339 timestamps) with provider-maintained dispatch columns. `http_api` uses a `(method, segments)` narrowing index + Go `matchPath` — exact keys are unsound for `:param` wildcards; all other types get exact `dispatch_key` hits.
+- Upsert semantics via tx + owner SELECT (avoids `RowsAffected` ambiguity), matching the memory peer's check-then-write under lock.
+- `ResourceConformanceSuite` with an honest `SkipReason` mechanism; zero skips for memory + sqlite.
 
-2. **SoD end-to-end** — new `SoDAdminService` (7 RPCs, SSoD/DSoD/activation), the `Check` evaluation matrix (session_id absent → assigned set; present + activator → active set, empty = deny, fail-closed), durable `sod_conflicts`/`activation_conflicts`/`active_sessions` tables, and **atomicity as the sharp edge**: check-and-write in one `BEGIN IMMEDIATE` txn for sqlite, serializable for postgres, Lua for redis, with a parallel-assignment conformance subtest.
+**## 3 — Admin CRUD + RAR enforcement**
+- Four additive RPCs; implementations go into the **existing** `admin_permissions.go` (`grpcadmin/` is also exactly at its 10-file ceiling — second contradiction with the requirement). Error mapping, audit events (classified in `auditreport`), and `invalidateAuthzPolicy` on register/delete.
+- PAR gate: `security.rar_catalog_check.enabled` knob → `PARDeps.ResourceCatalog()` accessor (only implementer is `*sso.Server` plus one test fake); enforcement via `ValidateAuthorizationDetailsCatalog` in `oauthvalidate` using `client.TenantID`/`client.ID` scoping, fail-closed on unknown elements, shape-only when unconfigured.
 
-3. **Observability + bundle v2** — `EventPermissionCheck` (classified in `auditreport`; the drift test forces it), `sso_authz_checks_total{decision}` with bounded labels, additive `PolicyBundle` v2 (resources + conflict sets, sorted canonical bytes, ETag-stable), OPA reference-policy extension with a hermetic test-only OPA dependency for drift detection (CLI-exec fallback documented), and `invalidateAuthzPolicy` fired from every new mutation.
-
-**Key findings that shaped the design**: two fan-out ceilings (grpcadmin 10/10, permissions 10/10) force placement decisions the spec didn't account for; `authz.proto` is ADR-0008 STABLE so only additive wire changes are legal; and the fail-open/fail-closed split must be strict — decisions fail closed on store errors, issuance fails open with audit, mutations fail closed.
+**Failure modes & breakage risks** include the `Found=false` allow-inversion window (spec-mandated, flagged for a follow-up knob), `RequiresAuth` being unverifiable at `Check` (no auth-state input), rolling-deploy skew, `gen/` drift, migration-version pins in `schema_guard_test.go` (must verify), PAR-only enforcement gap vs `/auth/login`, and the still-dead `Permission.Resource` wire field.
