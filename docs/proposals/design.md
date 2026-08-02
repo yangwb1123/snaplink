@@ -1,17 +1,19 @@
-The design doc is written to `docs/design/permissions-resource-catalog-wiring.md`. All claims were verified against the tree before writing. Summary of the design:
+Design doc written to `docs/auto/domains-permissions-sod-design.md` (509 lines), as the counterpart to the spec. All evidence re-verified against the tree before writing; two claims were corrected in-flight (the audit-helper location).
 
-**## 1 — Resource-aware `Check`**
-- Additive `CheckRequest` fields 4–6 (`resource_type`, `tenant_id`, `attributes` map) per ADR-0008; presence = non-empty `resource_type` (safe: `Resource.Validate()` rejects empty types).
-- One exported `CheckResource(rp, lookup, perms, want)` in the domain, placed in the **existing** `resources.go` — the package root is exactly at its 10-file ceiling, contradicting the requirement's "not at ceilings" claim.
-- Decision table: `Found=false` → flat `Matches` fallback (spec-mandated, byte-identical); `Found=true` → `RequiresAuth` gate, then per-`RequireMode` projection via `EffectiveRequireMode()`. Lookup against a non-`ResourceProvider` backend fails closed with `FailedPrecondition`.
+## Design decisions
 
-**## 2 — Durable catalog + conformance**
-- Migration v2 `permissions_resources` (unique tuple, JSON-as-TEXT columns, RFC3339 timestamps) with provider-maintained dispatch columns. `http_api` uses a `(method, segments)` narrowing index + Go `matchPath` — exact keys are unsound for `:param` wildcards; all other types get exact `dispatch_key` hits.
-- Upsert semantics via tx + owner SELECT (avoids `RowsAffected` ambiguity), matching the memory peer's check-then-write under lock.
-- `ResourceConformanceSuite` with an honest `SkipReason` mechanism; zero skips for memory + sqlite.
+**## Decision: admin surface — `SoDAdminService` in the proto file, implemented in `grpcserver`, not `grpcadmin`**
+- The spec's literal placement fails two gates: `grpcadmin/` is at 10/10 non-test files (verified), and adding ~175 lines to `admin_permissions.go` (264 lines today) would crowd the 500-line budget. Mandatory deviation: same proto file/package/REST prefixes, but a **new additive service** (ADR-0008-safe) implemented in `interfaces/grpcserver/sod_admin.go` (6→7/10 files).
+- Pinned the wire contract: 7 RPCs, REST paths under `/conflicts` and `/users/{user_id}/sessions/{session_id}/roles`, error mapping table (InvalidArgument/FailedPrecondition → 400 with `invalid_conflict_set`/`role_not_assigned`/`role_conflict`), `ConflictDetails` in status details + audit only (oracle-safe family), 4 new audit events (auditreport-classified), `invalidateAuthzPolicy` on declarations only.
 
-**## 3 — Admin CRUD + RAR enforcement**
-- Four additive RPCs; implementations go into the **existing** `admin_permissions.go` (`grpcadmin/` is also exactly at its 10-file ceiling — second contradiction with the requirement). Error mapping, audit events (classified in `auditreport`), and `invalidateAuthzPolicy` on register/delete.
-- PAR gate: `security.rar_catalog_check.enabled` knob → `PARDeps.ResourceCatalog()` accessor (only implementer is `*sso.Server` plus one test fake); enforcement via `ValidateAuthorizationDetailsCatalog` in `oauthvalidate` using `client.TenantID`/`client.ID` scoping, fail-closed on unknown elements, shape-only when unconfigured.
+**## Decision: storage model — three tables per durable backend, atomic check-and-write**
+- Migration v2 on sqlite (named consistently `permissions_sod_conflicts`/`permissions_activation_conflicts`/`permissions_active_sessions` with a client index for the `RemoveRole` cascade), identical postgres tables, redis JSON docs + TTL.
+- Atomicity per backend: sqlite `BEGIN IMMEDIATE` (writer-serialized), postgres `SELECT ... FOR UPDATE`/SERIALIZABLE, redis Lua — closing the "works on memory, breaks on sqlite" race.
+- Conformance: spec's "delete skip branches" strengthened to skip→`t.Fatalf` — the type-assert stays as self-documentation, but a backend omitting SoD now *fails* instead of silently passing.
 
-**Failure modes & breakage risks** include the `Found=false` allow-inversion window (spec-mandated, flagged for a follow-up knob), `RequiresAuth` being unverifiable at `Check` (no auth-state input), rolling-deploy skew, `gen/` drift, migration-version pins in `schema_guard_test.go` (must verify), PAR-only enforcement gap vs `/auth/login`, and the still-dead `Permission.Resource` wire field.
+**## Decision: enforcement — session-scoped `Check` over the ACTIVE set**
+- `CheckRequest.session_id = 6` (coordinated with the sibling resource design's reserved numbering), full decision matrix — including the row the spec left open (session_id present + provider without activator → documented assigned-set fallback, unreachable from first-party callers since the mesh gate checks the interface first).
+- "Activate at login" pinned: best-effort activation of the *full assigned set* (fresh sessions behave exactly like today); `ErrRoleConflict` (legitimately held DSoD-exclusive pair) → audit + empty active set, login never fails, decision point stays fail-closed.
+- One shared projection via `UnionPermissions` folded into `matcher.go` (domains/permissions is at 10/10 files); lifecycle hooks fold into `accessors_handlers.go` (interfaces/sso at its 60-file ceiling).
+
+**## Decision: sequencing and cross-cutting risks** — land storage → admin → enforcement (the only caller-visible behavior change), budget table, and the cross-cutting breakage list (field-number collision, non-retroactive `SetConflictSets` semantics, multi-client `sid` scoping, per-login write cost, drift between the two design docs).
