@@ -1,13 +1,18 @@
-Design doc written to `docs/auto/domains-userlifecycle-direction2-design.md`, following the `direction1-design.md` convention (verification record, numbered decisions, failure-mode table, risk list, test plan). Every spec claim was re-verified against the tree before writing — with three corrections found:
+Design doc written to `docs/auto/domains-userlifecycle-prod-design.md` — exactly 3 `##` decisions, each covering API surface, storage model, failure modes, and what could break the design. No Go code changed (doc-only, matching the spec's own convention).
 
-**Corrections to the spec (documented in the verification record):**
-- `memory_test.go:88-89` is not a PURGED persistence fixture — it's `TestGet_ReturnsCopy` (copy isolation). The "PURGED persists forever" claim is proven structurally (no `Store.Delete`, terminal table), so the behavior stands but the evidence citation was wrong.
-- The admin handler 404 check is at lines 28-31, not 22-25 (minor drift).
-- **Direction 1 has not landed** (`AllowsAuthentication`/`rejectLifecycleBlockedUser` absent), so the acceptance-trigger ordering contract must compose under both orderings.
+**Verification performed before writing** (all claims checked against the code, not just the spec):
 
-**Key design decisions:**
-1. **Erase on purge** — the admin handler owns the erasure (only it can refuse-before-`Append` in fail-closed mode and surface the report in the response); `EraseOnPurge` remains the reference reaction for SDK embedders. Documented deviation: `cmd` does *not* register `OnUserPurged` on the bus — doing so would erase every purge twice. Handler-owned erasure also keeps fail-closed enforcement working with `audit.enabled: false` (stronger than direction 1's bus dependency).
-2. **INVITED provisioning** — domain `SeedInvited`/`AcceptInvitation`/`Seeder`, admin seed form (knob-gated, with the existing 409/400 mapping), SCIM create hook via a new option (no new file in `protocols/scim` — frozen fan-out ceiling), auto-accept on first login pinned to run *before* direction 1's gate.
-3. **Tombstone** — idempotent `Store.Delete`, delete rule `rep.Err()==nil && rep.UserDeleted` (the record outlives nothing but never misrepresents a surviving account), crash-window repair inside `SeedInvited`.
+- `Store` interface, `ErrStateConflict` semantics, `ListByState` "no record never returned" contract — `userlifecycle.go`
+- Memory store's exact Append rules (missing row treated as `DefaultState`) — `memory.go`
+- `SweepOnce` full-roster walk, `MaxPerSweep` applied-only cap, skip-and-log conflicts — `sweep.go`
+- Wiring seams: `build_stores.go:347` (`SessionLastActive`), `BuildUserLifecycle` unconditional memory, `BuildIdentityLinkDurable(cfg, pg, dialect)` as the backend-selection precedent
+- Login anchors `server_login_auth.go:98` / `server_oauth.go:223`; ceremony coverage verified transitively via `server_mfa.go` replaying `finishLogin`
+- Gate context: `maintainability_budget_test.go` skips `infrastructure/postgres`; `permissions/sqlite` + `permissionstest` as the peer/conformance precedents; `defaultimpl/sqlite` as the SQLite-peer precedent
 
-**Biggest risk (verified with line counts):** `interfaces/admin` is at its 10-file ceiling with every file 460-492 lines, and `interfaces/sso` is at its 60-file ceiling with nearly every file 488-500. The design mandates a new `interfaces/admin/lifecycle` subpackage and a concrete `interfaces/sso` shuffle (userlifecycle option cluster → `server_routes_admin.go`, helper → `server_login_resolve.go`), with a fallback if direction 1 has already consumed the headroom.
+**Three architect-level corrections to the spec, each load-bearing** (documented with rationale in the preamble and per-decision):
+
+1. **Companion interfaces, never `Store`-method additions** — `Store` is SDK surface; `SweepLeaser`/`StaleEnumerator`/`ActivityRecorder` are resolved by type assertion, so external implementers keep compiling and memory builds stay byte-identical.
+2. **The spec's `ListByState`-based candidate enumeration is rejected** — it cannot see implicit-ACTIVE users (no record), whom the sweep deprovisions today; it would silently stop sweeping them. Replaced with a keyset cursor over stale last-active values, which provably covers recorded and unrecorded candidates and satisfies the O(k) acceptance.
+3. **Last-active is a separate table, not a column on `user_lifecycle`** — a column would make every login create a lifecycle row, breaking "no record = ACTIVE" and the decision-2 cursor simultaneously.
+
+Also resolved a real contradiction in the spec: the lease must live inside `SweepOnce` (opt-in via new zero-value `Holder`/`LeaseTTL` fields) for both "lease at the loop" and "two concurrent `SweepOnce`s — exactly one applies" to hold.
