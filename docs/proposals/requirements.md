@@ -1,11 +1,19 @@
-Spec written to `docs/auto/domains-tokenpolicy-direction2-spec.md`. Summary of the analysis and the three evidence-backed improvements:
+Spec written and verified: `docs/auto/domains-tokenpolicy-direction3-spec.md` (285 lines, mirrored location — `docs/auto` links to `docs/architect-analysis/auto`, matching the direction-2 spec convention). All cited symbols and line numbers verified against the tree.
 
-**Verification of the direction claim** — confirmed by reading the code: `DenyReason`'s doc comment in `domains/tokenpolicy/tokenpolicy.go` claims "metric label + audit detail ONLY", but both production deny paths (`enforceTokenPolicy` at `interfaces/sso/server_helpers.go:85-104` and `sessionPolicyCapExceeded` at `interfaces/sso/server_oauth.go:151-190` — the analysis doc only cited the first) write `s.logger.Info` + two metric calls with zero `s.auditor` involvement. `platform/audit` has no token-policy event type; the `sso_token_policy_denials_total` metric is reason-labeled only. This is an audit-invariant violation per AGENTS.md §3 ("details only in audit").
+## Summary of the specification
 
-**The 3 improvements** (each with problem / file+symbol evidence / proposed behavior / acceptance check):
+**Scope**: direction 3 from `docs/auto/domains-tokenpolicy-analysis.md` — upgrading the policy selector from client-only to tenant/subject-aware. Three evidence-backed improvements, each under a `##` heading with name, problem, evidence (file/symbol), proposed behavior, and acceptance check:
 
-1. **`token_policy_denied` event emission at both deny seams** — new `EventType` + SPI alias + nil-safe `audit.RecordTokenPolicyDenied` helper (following `RecordDeviceCodeDecision` at `recorder_events.go:80`), wired into `enforceTokenPolicy` and `sessionPolicyCapExceeded`; wire stays generic `invalid_scope`/`invalid_grant`, no event on allow/fail-open/unwired-store.
-2. **End-to-end registration** — `KnownEventTypes` entry, `auditreport` SOC2 classification into the CC7.2 "Anomaly and lockout monitoring" bucket (`control_areas.go:158-169`, alongside refresh-reuse/FAPI), CEF/OCSF sink mappings, and `docs/observability.md` documentation — without this, `TestKnownEventTypesIsComplete` and `TestEveryKnownEventTypeIsClaimedOrExplicitlyUncategorized` fail CI and the event silently lands in "Uncategorized".
-3. **Attribution metadata** — additive `PolicyDecision.DeniedBy` (the first-deny rule's `Name`, satisfying the currently-unconsumed `Policy.Name` "for audit" claim) carried as `policy_name` via `SetMeta` with subject on `ActorID`; bounded cardinality preserved (metric stays reason-only, no scopes/request input in metadata).
+### ## Improvement 1: `TenantID` 选择器（治理单元升级到租户维度）
+- **Evidence**: `Policy`/`PolicyInput` have no tenant field (`tokenpolicy.go:53-98,112-127`); `matches()` is exact client equality only (`evaluate.go:53-63`); platform precedent is per-tenant everywhere — `tenantTokenStrategies` key isolation (`server_helpers.go:39-40`), `Client.TenantID` (`shared/core/types.go:39-47`), `TenantScopedClientStore.ListByTenant` (`spi.go:93`).
+- **Key design**: empty `tenant_id` = global rule; additive matching with existing strictest-wins combination, so tenant rules can only tighten global rules (never widen). Tenant threaded through all four seams (scope-combo gate, refresh-depth gate, session cap, and `ClampingIssuer` via a new mint-time `core.Subject.TenantID` stamped at the ~10 existing issue call sites, mirroring the `ServingRegion` precedent).
 
-Non-negotiable invariants are listed up front (oracle-safe wire, byte-identical default-off, fail-open, single emission per deny, `SetMeta`-only, `domains/tokenpolicy` stays pure, budget-aware placement given `server_helpers.go` is at 493/500 lines). No `.go` files were changed — this is spec-only, so no build gates were run.
+### ## Improvement 2: 主体感知选择器（Subject 精确/通配 + 租户角色）
+- **Evidence**: `PolicyInput.Subject` is populated by `EnforceRefreshDepthPolicy` and `sessionPolicyCapExceeded` but never read by `matches()`; `TenantRole` closed set member/admin/guest + `TenantUserStore` single-source-of-truth (`tenant_user.go:9-26`); `s.tenantUserStore` usage precedent at `server_logout.go:322-330`.
+- **Key design**: `Policy.Subject` (trailing-`*` wildcard, same semantics as `scopePresent`) + `Policy.SubjectRoles` closed set; role resolution at the session seam fails open (no roles ⇒ role selector doesn't match).
+
+### ## Improvement 3: `ClientID` 通配匹配 + 新选择器字段严格 YAML 校验
+- **Evidence**: `matches()` exact-only client equality vs the `scopePresent` wildcard precedent in the same file; non-strict `yaml.Unmarshal` in `tokenpolicy/yaml.go:19-24` vs conditionalaccess's `DisallowUnknownField` (`conditionalaccess/yaml.go:33`).
+- **Key design**: the specific hazard is a misspelled `tenant_id` being silently dropped → a "tenant rule" quietly becomes a fleet-wide global rule (empty selector). Strict parse + a shared `Validate([]Policy) error` pure function (reject bare `*` wildcards, non-closed-set roles) so config and YAML fail loud.
+
+Also includes a non-negotiable invariants section (oracle-safe wire unchanged, single-tenant byte-compatibility, fail-open preserved, domain stays pure, `server_helpers.go` 493/500-line budget respected via call-site threading) and the AGENTS.md §5.6 contract-updates table (`openapi.yaml:6836`, `config-reference.md:588`).
