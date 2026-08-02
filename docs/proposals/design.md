@@ -1,19 +1,16 @@
-Design doc written to `docs/auto/interfaces-middleware-design.md`. Every budget and signature claim was re-verified against the tree before writing.
+Design doc written and verified. Summary of the deliverable:
 
-## Key decisions
+## `docs/auto/interfaces-middleware-direction2-design.md`
 
-**## Package layout** — New `interfaces/middleware/chain` subpackage (not an extension of `middleware.go`). The 10-file fanout ceiling forbids a new root file, and the in-file estimate lands at ~490 lines (>450 trigger, ~zero headroom under the 500 cap). `middleware.go` re-exports `type Chain = chain.Chain` + `var FromCore = chain.FromCore` so the spec name `middleware.Chain` holds. `chain` imports only `net/http` + `shared/core`; both packages classify as `interfaces` by first-segment rule — no `layerName()` change.
+**The one finding that matters most** — verified by compile experiment against `go 1.26.1` before writing anything:
 
-**## API surface** — `type Middleware = func(http.Handler) http.Handler` as a *type alias* (not defined type): every existing constructor (`Recover`, `Compress`, `AcceptVersion`, `Degradation`, `RequestLogger`, `metrics.Middleware`, `ratelimit.DynamicMiddleware`, `tracing.Middleware`, `cors.Middleware`, `handler.SecurityHeaders`, `TrustedProxies.Middleware`) is assignable with zero conversions. 12 unexported slot fields, 12 nil-tolerant `With*` builders, `WithProbes` (map copied), `Wrap` (fixed-sequence `if` chain — no slice to shuffle), `SlotOrder()`, `FromCore` (mirrors `StdRouter`'s Abort loop at `router.go:270-277`).
+> **The spec's literal API is illegal Go.** `HandlerContext.Get[T](RequestKey[T])` as an interface method fails to compile (`interface method must have no type parameters`). The design replaces it with generic **free functions** `core.Get[T](*RequestState, RequestKey[T])` + a non-generic `HandlerContext.State() *RequestState` accessor. The compile-time cross-type guarantee survives (T is inferred from the key), and a working prototype of the final API shape was compiled and run.
 
-**## Storage model** — No persistent state. Chain is rebuilt per `Handler()` call (preserving today's semantics); the one side-effectful assignment is `s.rateLimitStore` (kept in `buildChain` so `SetRateLimitPolicy` hot-reload keeps working); degradation gauge seeding stays as a one-call-site helper; idempotency cache untouched.
+Other verified corrections baked in: the "four string keys" are really **seven** (const-keyed `geo:info` + region's bag key escape the spec's literal-string grep); capture position at the router boundary is what keeps the idempotency replay cache uncompressed (a stack installed at RequestLogger's layer would cache gzip bytes and replay them as JSON).
 
-**## Tracing slot** — Two independent options (`requestIDMW` request-ID/W3C + `tracingOperation` OTel) compose into the single Tracing slot, OTel-outermost. Flagged the intentional behavior delta: 429/503/413 rejections now carry `X-Request-Id` (today they don't, since Tracing ran inside the router).
-
-**## Failure modes / what could break it** — 10-item risk register: the `health_test.go:121` direct `Tracing()(ctx)` break, fake-context harness rewrites in `test/middleware_test.go`, the `sso.AuthMiddleware`/`sso.CORS` SDK break, the parent→child import cycle trap, probe-mux byte-identity (ServeMux path-cleaning), and the finding that generic `middleware.Idempotency` has **zero production call sites** — so test (d) pins a documented contract, not an enforced composition.
-
-## Notable verification findings beyond the spec
-
-- `server_routes.go` is 488/500 lines — the collapse nets −70, relieving the pressure that forced `wrap*` relocation
-- `mountMiddleware`'s `TracingMiddleware()` `router.Use` (line 113) is the only server-side `core.MiddlewareFunc` tracing consumer; tenant/geo/region stay on `Router.Use`
-- `Deprecation` wraps outside `AcceptVersion` today — the single AcceptVersion slot receives the server-composed pair to preserve exact order
+**Structure** (per your request, one `##` decision each):
+- **Decision 1 — Typed registry**: `RequestKey[T]`/`RequestState`/`RequestStateOf` API; name-keyed `map[string]typedSlot` storage with a Set-time cross-type collision panic (fail-fast); a `var requestStateAnchor = new(int)` context anchor so the `rg 'type \w+Key struct{}'` freeze stays literally true; all 8 struct keys + 7 bag keys migrated with signature-preserving helpers; per-adapter `sync.Map` bags and the `*r = *r.WithContext` mutation deleted.
+- **Decision 2 — Capture stack**: `CaptureStack.Wrap/Add` + `CaptureHandle.Status/Body/Unlock`; install at the router boundary only (std `NewContext`, gin/echo `ServeHTTP` — the gin `WriteHeaderNow` edge dies by construction); layers are positionless (two captures see identical bytes by construction); `RequestLogger` becomes Add-only with one documented behavior delta; the full deletion set (`SetResponseWriter`, `InstallCapture`, `CaptureWriter`, `requestLogResponseWriter`, `recordCaptureMissing`, `EventIdempotencyCaptureMissing` + all 5 audit-touchpoint files) lands in one commit.
+- **Decision 3 — Unified surface**: two-return `RequestStateOf` attach semantics; tenant single-lookup with `ResolveTenantID` retained as a one-line registry-first adapter (spec's own parenthetical); zero-query reject path when the slot is filled.
+- **Delivery order** (1 → 3 → 2, each gated with `-race` + `make ci`) and a **"what could break the design"** section covering the 11 real hazards — including the two that are security-relevant (compression-position replay corruption, registry divergence via context rebasing).
+- Four spec corrections flagged explicitly at the end, including the Go language finding.
