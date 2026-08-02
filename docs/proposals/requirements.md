@@ -1,16 +1,17 @@
-Spec written to `docs/auto/interfaces-sso-direction1-spec.md`. All claims were verified against the code before writing; the key verified numbers differ slightly from the analysis doc (174 unique `func With*` declared, 159 unique wired in `cmd/sso-server`, 48 unreachable — the analysis's "223/970" used a looser identifier count).
+Spec complete: `docs/auto/interfaces-sso-direction2-postgres-hotstore-spec.md`
 
-**Scope and baseline (verified):**
-- `interfaces/sso/options*.go` (7 files): 174 unique `func With*` constructors
-- `cmd/sso-server/` (22 non-test files): 159 unique `sso.With*` references → 48 declared options unreachable from the stock binary
-- `docs/config-reference.md`: 42 sections; `ops/build/capabilities.json` `config_keys` hand-maintained; `capability_registry.py` validates only non-emptiness; no option→config gate exists (only `check-routes` and `sdk-surface check` loops)
+## Summary
 
-**Three decisions (each with name / problem / evidence / proposed behavior / acceptance check under `##`):**
+I verified the 方向二 claim against the code, then produced a 3-decision requirements spec, each with name, problem, evidence (file/symbol), proposed behavior, and acceptance check. Key verification findings:
 
-1. **Option-surface registry + gate (`options check`)** — `ops/build/option-surface.json` + `checks/option_surface.py` + `cli.py options check` + `make ci`, mirroring `sdk-surface check`/`check-routes`; every option classified `config`/`wired`/`sdk-only` explicitly.
+**Gap confirmed**: `oauth.backend` dispatch (`serverbuildstore/build_oauth_stores.go`) only handles `memory|sqlite|redis`; `infrastructure/postgres/` has zero OAuth hot stores; `docs/config-reference.md:100` is asymmetric with `identity.session_backend` (line 99, already postgres-capable). The postgres hot-store template already exists — `infrastructure/postgres/session.go` (`NewSessionManagerWithDB` + per-namespace `Run`).
 
-2. **Close two verified reachability defects** — the `server.issuer` drift (`config_server.go:17` documented to stamp JWT/discovery/RFC 9207, but `sso.WithIssuer` at `options.go:348` is never wired, so `resolveIssuer` at `server_discovery.go:251` falls back to request base URL while JWT `iss` comes from `BuildSigningIssuer` — a real RFC 9207 mix-up risk); and the retention/backup family (`WithDataRetentionSweep` at `server_backup.go:179`, `WithBackupDir/Retention/Source`) with zero YAML path, plus the self-admitted dead wiring warning at `build_governance.go:229`.
+## The 3 decisions
 
-3. **Capabilities `config_keys` becomes a verified fact source** — extend `capability_registry.py` to check key existence and `stock-binary`-requires-config coverage, and derive the `feature-matrix.md` availability columns from the registry so the hand-annotated table locks step.
+1. **Postgres implementations of the four OAuth hot-store SPIs** — new `auth_code.go` / `refresh_token.go` / `device_code.go` / `par.go` in `infrastructure/postgres`, translating the SQLite `DELETE ... RETURNING` atomic-consume semantics (verified at `sqlite/auth_codes.go:303-320` etc.), family ledger, and reuse detection; shared-pool constructors per the session-store precedent. `interfaces/sso` stays frozen (60-file ceiling) — `WithAuthCodeStore(store oauth.AuthCodeStore, ...)` accepts any implementation.
 
-The spec ends with the handoff gate (`make ci`, race tests, `test/` e2e additions) and notes the dependency order 1 → 2, 1 → 3.
+2. **Optional-SPI and opaque-lookup parity** — the postgres refresh store must implement `RefreshTokenSubjectIndex`/`ClientPurger`/`FamilyTracker`/`RotationLimiter`/`ExpiryLister` + `SetLookupHMACKeys`, because `interfaces/sso` consumes them via type assertion (`server_tenant.go:169` tenant-suspension purge, `sso.go:375` governance, `build_app_oauth.go:245-247` GDPR erasure) — omitting them silently degrades shipped features, the worst failure mode for a "first-class" backend.
+
+3. **Stock-binary surface closure** — `case "postgres"` in all four builders (loud `errPostgresNotConfigured`-style failure), schema boot-gate branching (`CheckSQLiteSchema` would falsely fail on a postgres pool; precedent `checkIdentityLinkSchema` at `build_stores.go:403-410`), `rotation_grace_backend=postgres` (currently rejected at `build_app_oauth.go:257-300`), docs enum updates, and HA-coherence test locking.
+
+Dependency order 1→2→3, each gated by `go build/vet`, maintainability/architecture tests, `-race`, E2E, and `make ci`.
