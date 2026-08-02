@@ -1,38 +1,26 @@
-## Gatekeeper verdict
+All key facts independently verified. Here is my gatekeeper ruling.
 
-I cross-checked the five reviews (protocol, architecture, database, QA, security) against the design and the implementation-stage deliverable.
+## Cross-check: review findings vs. the design
 
-### Core problem: wrong deliverable
+**Resolved in the design (verified in text + tree):**
+- **Spec corrections 1–3** — ceiling-aware placement (8 of 13 packages at cap, `interfaces/admin` has no exemption entry — confirmed absent from `directory_fanout_test.go:51-61`), the anchored acceptance grep (I re-ran: 234 anchored vs 254 literal — confirmed), and `deps.go` (177 lines) as the only admin placement option. All three fixes are real and inline.
+- **D3 gate-closure rule** — "pass method values, never `.Load()`" is verified correct and load-bearing (`GatedRouter.live` consulted per request at `router.go:267`; 7 hot-reload tests pin it).
+- **Placement table, 174-delegate census, ratchet mechanics** — independently reproduced by all four reviewers; I confirm the map values and gate semantics.
+- **Protocol F1–F6** — the protocol review itself certifies them non-blocking for the refactor; the design's wire-invisible claim holds (paths are `core.Path*` re-exports).
 
-The five reviews all adjudicate **`docs/auto/interfaces-sso-direction2-postgres-hotstore-design.md`** — the Postgres OAuth hot-store backend design (direction2). The code-implementer's deliverable is **`docs/architect-analysis/auto/domains-tokenpolicy-direction3-implementation-plan.md`** — the *tenant-dimension token-policy selectors* plan (direction3). These are unrelated features:
+**NOT resolved, and NOT dismissed with reasons (the design predates all reviews, 13:31 vs 13:38–13:50, and has no revision):**
 
-| Check | Postgres hot-store design (reviewed) | Tokenpolicy plan (delivered) |
+| Sev | Finding | Status in design |
 |---|---|---|
-| Scope | `oauth.backend=postgres`, 4 stores + grace cache, migration/wiring | `denyTokenScopeCombo` tenantID, subject-aware selectors, mint-site census |
-| Review set addressed | protocol F1–F6, arch F1–F6, db F-1–F-6, QA F1–F10, security FIND-1–8 | security F1–F5, SRE F1–F8, QA H1/H2 M1–M5 L1/L2 (a *different* review set) |
-| `postgres` mentions in plan | — | 0 (grep-verified) |
-| `tokenpolicy`/scope-combo mentions in design | 0 (grep-verified) | — |
+| **Critical** | Decision 3's `Mount()` sketch passes `nil` for 10 of 13 mounts (design:248–259) while Decision 1 declares nil a panic — literal implementation panics at boot | Unaddressed; the "// or the area's gate closure" comment is a hedge, not a decision |
+| **Critical** | Same sketch silently drops 3 live gates — verified: `oidcGateOn` gates `/userinfo`/`/end_session`/`/check_session_iframe` (`server_userinfo.go:33`), `cibaGateOn` gates `/backchannel-authentication` (`server_routes.go:239`), `federationGateOn` gates the federation surface (`server_federation.go:197`) | Absent from FM1–FM7 and the risk register; Decision 4 names only 4 of 7 atomics (omits exactly the dropped `oidcLive`/`cibaLive`/`federationLive`) |
+| **High** | `check-routes` goes vacuous on the move — verified `ROUTE_DIR = interfaces/sso` + receiver whitelist `{s.router, api, gr, ssf, selfServiceGR}` (`route_contract.py:18,21`), while the design's own signature uses receiver `r`; one-directional (zero discovered = PASS) | Acceptance demands it stay "unchanged" while FM4/FM5/FM7 and risk 7 lean on it — self-contradictory, unaddressed |
+| **High** | FM4 misdescribes the router — verified append-only, first-match-wins (`router.go:223-267`); no duplicate detection exists anywhere; "exactly one registration" is an uncommitted aspiration | FM4 text wrong, mitigation inert |
+| **High** | Sketch omits `mountAdminTokenExchangeChainRoutes` — documented admin route silently disappears; cannot fold into `MountAdminSurface` (package cycle) | Unaddressed |
+| Medium | ≤52 target not derived (only 1 of ≥8 deletions enumerated); FM6 cites a phantom `TestArchitecture_` middleware-order test (verified absent); FM5/FM7 overclaim (no test boots every config; no store-unwired route-set test); `sdk-surface` never scans `aliases.go`; "419 re-exports" not reproducible | All unaddressed |
+| Low | Stale numbers in the design's own text: "40 mounts across 16 files" (→14), "11 sub-mounts" (→12), adminuser bodies in "users.go 464 lines" (→ `internal/adminuser/handlers.go` 239), "off by 20–29" (→20) | Still present in design:16, :150, :202 |
+| Pre-existing | 4 maintainability + 1 vet + 5 `interfaces/sso` failures in the worktree (pi-batch stage work, none in target packages) | Correctly reported separately per AGENTS.md §5.7 — not the design's fault, but the design's acceptance ("gates green") cannot be demonstrated until baselined (QA F6) |
 
-No implementation plan exists for the postgres hot-store design anywhere (`docs/auto/` holds only its design + spec). The implementer's plan also says "no `.go` file was changed," so nothing was implemented for either feature.
+**Consensus:** all four reviews converge — the census, placement table, and ratchet architecture are sound and gate-consistent, but the design is not implementable as written: the `Mount()` sketch contradicts its own Decision 1, drops three hot-reload gates (an AGENTS.md §3 invariant break), and relies on a regression net that stops measuring exactly when the code moves. None of these are resolved or dismissed in the design text; they are open.
 
-### Review-findings cross-check: none resolved or dismissed
-
-Every substantive finding from the five reviews is untouched — not resolved, not dismissed with reasons:
-
-- **QA F1 (High)** — four-flow E2E byte-parity has no executable harness; the plan proposes no harness and names no venue. Unaddressed.
-- **Protocol F1 / QA F2 / Security FIND-3** — postgres conformance suite must run (not skip) in CI; no suite exists at all. Unaddressed.
-- **Protocol F3 / QA F8 / Security FIND-2** — DDL constraint enumeration (`user_code NOT NULL UNIQUE`, PKs on `code`/`token`/`device_code`/`request_uri`); absent from design and plan. Unaddressed.
-- **Security FIND-1** — key-posture decision for the fresh postgres backend (nil-key → raw credentials at rest); no decision made. Unaddressed.
-- **Database F-2 / QA F5 / Security abuse row 15** — rotation-window orphan prune (third reaper statement, `DeleteFamily` window wipe); absent from design text and plan. Unaddressed.
-- **Security FIND-5** — fifth domain kind `"user_code"` + raw-value re-stamp translation rule; absent. Unaddressed.
-- **Architect F2 / QA F1** — byte-parity venue (`test/backendsemantics` DSN gating); unaddressed.
-- **QA F3** — shared-DB `-count=10 -race` test isolation; unaddressed.
-- **QA F4** — port-source citations (`sqlite/refresh_tokens_rotation_test.go` does not exist; redis lacks `ExpiryLister`); the plan never touches these.
-- **Security FIND-4 / FIND-6 / FIND-7** — grace-cache credential posture, auth-code reuse-ledger scope declaration, layer-exemption wording: no text fixes in either document.
-- Citation drifts (protocol F6, arch F4, db F-5) and pre-existing red gates (protocol F2-adjacent, arch F6, db F-3, QA F10, security FIND-8): the tokenpolicy plan's §11 notes pre-existing red items *for its own gate sequence*, but nothing carries the postgres design's obligations.
-
-### Bottom line
-
-The implementation stage produced a plan for a different design and different review set. The reviewed design's blocking findings (QA F1, protocol F1/QA F2/security FIND-3, protocol F3/security FIND-2, security FIND-1) and all lower-severity items remain wholly unresolved, and no implementation of the postgres hot-store design exists. This cannot proceed to implementation of the reviewed design.
-
-VERDICT: FAIL - implementation deliverable targets the wrong design (domains-tokenpolicy-direction3 instead of interfaces-sso-direction2-postgres-hotstore); none of the five reviews' findings (QA F1-F10, protocol F1-F6, arch F1-F6, db F-1-F-6, security FIND-1-FIND-8) are resolved or dismissed with reasons; no postgres hot-store code, DDL, tests, or harness work exists.
+VERDICT: FAIL - the design's own Mount() sketch passes nil for 10 of 13 mounts while Decision 1 declares nil a panic (boot-time panic or contradiction, unresolved); the same sketch drops three live hot-reload gates (oidcGateOn, cibaGateOn, federationGateOn — fail-open wire change, absent from FM1-FM7 and the risk register, Decision 4 omits 3 of 7 atomics); check-routes goes vacuous when routes move (ROUTE_DIR/receiver whitelist hardcoded to interfaces/sso, one-directional) while the acceptance demands it stay "unchanged"; FM4 misdescribes the router (no duplicate detection exists); the sketch omits mountAdminTokenExchangeChainRoutes (documented route disappears); plus unaddressed Mediums (≤52 not derived, phantom FM6 test, overclaimed FM5/FM7 mitigations) and stale numbers (16→14 files, 11→12 sub-mounts, adminuser bodies in internal/adminuser/handlers.go). All four reviews converge on these; the design has not been revised since they were written.
