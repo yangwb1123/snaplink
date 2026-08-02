@@ -1,19 +1,14 @@
-Design doc complete: `docs/auto/interfaces-grpcserver-transport-governance-design.md`
+Design doc written to `docs/design/admin-list-keyset-pagination.md`. It was grounded in the actual code: all 9 List handlers, `admin_paginate.go`'s offset shim and its own "deferred" note, `spi.go`'s optional-extension precedents (`TenantScopedClientStore`, `ClientStoreStats`, `ClientRotationLister`), the cache decorator passthrough, the two protos lacking page fields, and the doc contracts (`clients.proto:84,100`, `openapi.yaml`).
 
-## What was produced
+## Decisions (## headings in the doc)
 
-A design doc decomposing the spec's 3 improvements into 4 decisions, each with API surface, storage model, failure modes, and "what could break":
+- **D1 — SPI placement**: `shared/core/pagination.go` (new file, not `spi.go` — that file is at its 500-line budget per its own header; the `tenant_user.go` split precedent applies). Shared `PageQuery` + `ParseFilterExpr`; per-entity extensions (`PaginatedClientStore`, `PaginatedUserProvider`, `PaginatedSessionLister`, plus a separate `ClientExpiryLister` for the window) live in each entity's home package since stores can't import grpcadmin. Cursor is **store-opaque bytes** — the handler can't reconstruct time sort keys from protos (wire `User` has no `created_at`), so the store must be the cursor authority.
+- **D2 — Token format**: `v1.<b64url(payload)>.<b64url(HMAC-SHA256)>`, payload = `after || filter_canonical || order_canonical`. MAC over the whole payload (equivalent binding, one fewer field); `seq` from the requirement sketch dropped (idempotent paging has no replay hazard). Codec in existing `shared/security` package — no new package, no `layerName()` churn. Legacy/v1 formats are disjoint by construction (digits-only base64 has no dots).
+- **D3 — Dispatch**: one generic `runListPage` helper in `admin_paginate.go` (only file with budget headroom); extension → fallback on `ErrUnsupportedOperation`. Key insight: all filter/order error strings are **row-independent**, so validation stays handler-side (single-sourced strings) while matching semantics push down.
+- **D4 — Proto**: additive fields only — `ListExpiring` and `ListOperations` (the only two messages lacking page fields).
+- **D5/D6 — Storage model**: keyset predicate with id tiebreaker (table of per-entity sort keys/tiebreakers); memory stores reproduce today's semantics by calling extracted shared matchers/comparators (no duplication, so fallback tests double as drift detectors).
+- **D7 — TotalSize**: extension path = `totalHint` → `Stats().count` → `0`; never `List(ctx)` to count. Memory returns exact hints, so existing exactness assertions hold.
+- **D9 — Failure modes**: oracle-safe table — every cursor failure collapses to byte-identical `invalid page_token`.
+- **D10 — What could break it**: 12-item risk register. The two sharpest: (1) **MAC key stability** — no deployment-stable secret exists today; ephemeral default invalidates cursors on restart/multi-replica, and a stable key needs a config key (flagged as a deliberate scope deviation needing sign-off); (2) **`ListOperations` gains its first deterministic order** (id asc) on the extension path — the one genuine behavioral change. Also: grpcadmin 500-line/file ceiling (mitigation: codec lives in shared/security; escape hatch if it still overflows), token-internal test assertions, proto regen being load-bearing, and keyset concurrency-test semantics (inserts *before* the cursor legitimately don't appear).
 
-**D1 — One shared two-phase governance gate.** Rather than the spec's minimal call-site (gate after `authorizeGRPC`), the design splits into `preAuthGRPC` (IP policy → rate limit → confirm — no claims needed) and `postAuthGRPC` (idle → quota), which preserves the documented HTTP chain order **exactly** and keeps the "disallowed network never reaches auth machinery" property on both transports. HTTP checks become pure predicates with thin wrappers (byte-identical HTTP). Error mapping: `ResourceExhausted`/`PermissionDenied`/`FailedPrecondition`/`Unauthenticated` with constant strings; no `Retry-After` on gRPC (trailers rejected as oracle).
-
-**D2 — Destructive confirmation via canonical RPC→(method, path) map.** The proto `google.api.http` annotations are the authoritative mapping (~50 entries), mirrored into a static table; a conformance test re-derives the table from `proto/admin/v1/*.proto` so drift is a test failure, not a silent guard gap. `grpc-metadata-x-confirm` → server key `x-confirm` (gRPC lower-cases).
-
-**D3 — Idle timeout + Touch on gRPC**, fail-open on store error (mirroring HTTP), touch at stream open+close (bounded), with the mid-stream-expiry limitation explicitly documented.
-
-**D4 — TLS never silently plaintext** (`admin.grpc_tls: required|ephemeral|plaintext`, default `required` = startup refusal) plus a fail-closed arming guard (`GRPCGovernanceArmed()` set only by the gated interceptor construction path) that converts future wiring drift into a startup error naming the control.
-
-## Critical constraint discovered
-
-`interfaces/admin` is at its 10-file fan-out ceiling and both `middleware.go` (492) and `governance.go` (483) are within 17 lines of the 500-line cap. The design's load-bearing rebalance: move the ~200-line change-approval HTTP handler block (`governance.go:30-228`) into `deps.go` (177 → ~375), freeing space for the ~155–190 lines of gate code — the only relocation that fits the frozen budgets.
-
-All cited lines were re-verified (`authorizeGRPC` :220, HTTP chain :317-345, `checkWriteQuota` :408, TLS condition `main_servers.go:172`, `-grpc-listen` default `main_wiring.go:59`), and the session-TTL detail was corrected to the actual `WithAdminSessionTTL` sso.Option rather than a YAML key.
+No `.go` files were touched, so no mandatory gates were run; `make ci` will validate the buf/OpenAPI regen path when implementation starts.
