@@ -1,19 +1,15 @@
-Spec written and verified: `docs/auto/domains-tokenpolicy-direction3-spec.md` (285 lines, mirrored location — `docs/auto` links to `docs/architect-analysis/auto`, matching the direction-2 spec convention). All cited symbols and line numbers verified against the tree.
+Spec written to `docs/auto/domains-userlifecycle-direction1-spec.md`, following the repo's `domains-<module>-direction<N>-spec.md` convention. All evidence was verified against the actual code before writing.
 
-## Summary of the specification
+## Requirements spec — Direction 1: lifecycle state becomes an enforced auth gate
 
-**Scope**: direction 3 from `docs/auto/domains-tokenpolicy-analysis.md` — upgrading the policy selector from client-only to tenant/subject-aware. Three evidence-backed improvements, each under a `##` heading with name, problem, evidence (file/symbol), proposed behavior, and acceptance check:
+**Verified core gap**: `rejectDeactivatedUser` (`interfaces/sso/server_login_auth.go:144`) is the only post-credential gate and reads only SCIM `scim:active` (`shared/core/types_auth.go` `User.IsActive`); `HandleRefreshGrant` (`internal/handler/tokengrant/token_refresh.go`) checks consume/DPoP/lifetime/session-liveness/depth/velocity but never user state; `applyLifecycleTransition` (`interfaces/admin/lifecycle.go`) does `Append` + audit only. The package doc admits "not an auth decision on the request path" and `options_admin.go:277` says it "NEVER gates authentication".
 
-### ## Improvement 1: `TenantID` 选择器（治理单元升级到租户维度）
-- **Evidence**: `Policy`/`PolicyInput` have no tenant field (`tokenpolicy.go:53-98,112-127`); `matches()` is exact client equality only (`evaluate.go:53-63`); platform precedent is per-tenant everywhere — `tenantTokenStrategies` key isolation (`server_helpers.go:39-40`), `Client.TenantID` (`shared/core/types.go:39-47`), `TenantScopedClientStore.ListByTenant` (`spi.go:93`).
-- **Key design**: empty `tenant_id` = global rule; additive matching with existing strictest-wins combination, so tenant rules can only tighten global rules (never widen). Tenant threaded through all four seams (scope-combo gate, refresh-depth gate, session cap, and `ClampingIssuer` via a new mint-time `core.Subject.TenantID` stamped at the ~10 existing issue call sites, mirroring the `ServingRegion` precedent).
+The three improvements:
 
-### ## Improvement 2: 主体感知选择器（Subject 精确/通配 + 租户角色）
-- **Evidence**: `PolicyInput.Subject` is populated by `EnforceRefreshDepthPolicy` and `sessionPolicyCapExceeded` but never read by `matches()`; `TenantRole` closed set member/admin/guest + `TenantUserStore` single-source-of-truth (`tenant_user.go:9-26`); `s.tenantUserStore` usage precedent at `server_logout.go:322-330`.
-- **Key design**: `Policy.Subject` (trailing-`*` wildcard, same semantics as `scopePresent`) + `Policy.SubjectRoles` closed set; role resolution at the session seam fails open (no roles ⇒ role selector doesn't match).
+**## 1. Login-path lifecycle gate** — a shared `rejectLifecycleBlockedUser` helper invoked at all three existing `rejectDeactivatedUser` sites (password login :98, federated callback `server_oauth.go:223`, MFA second leg `server_mfa.go:359`). Non-ACTIVE (incl. INVITED) → deny after credential verification, collapse to existing 403 `account_locked` (oracle-safe; state only in audit). No-record=ACTIVE, nil-store=no-op, store-error=fail closed. *Acceptance*: `test/` integration — SUSPENDED user's correct password → 403, no session/tokens.
 
-### ## Improvement 3: `ClientID` 通配匹配 + 新选择器字段严格 YAML 校验
-- **Evidence**: `matches()` exact-only client equality vs the `scopePresent` wildcard precedent in the same file; non-strict `yaml.Unmarshal` in `tokenpolicy/yaml.go:19-24` vs conditionalaccess's `DisallowUnknownField` (`conditionalaccess/yaml.go:33`).
-- **Key design**: the specific hazard is a misspelled `tenant_id` being silently dropped → a "tenant rule" quietly becomes a fleet-wide global rule (empty selector). Strict parse + a shared `Validate([]Policy) error` pure function (reject bare `*` wildcards, non-closed-set roles) so config and YAML fail loud.
+**## 2. Refresh-grant lifecycle gate** — optional `LifecycleState(ctx, userID)` accessor on `RefreshGrantDeps` (satisfied via the existing `accessors_token_grant.go` pattern); checked after session-liveness, before any rotation side effect; non-ACTIVE → the byte-identical 400 `invalid_grant` of unknown/expired/consumed. *Acceptance*: oracle test proving suspended user's family stops rotating with indistinguishable body.
 
-Also includes a non-negotiable invariants section (oracle-safe wire unchanged, single-tenant byte-compatibility, fail-open preserved, domain stays pure, `server_helpers.go` 493/500-line budget respected via call-site threading) and the AGENTS.md §5.6 contract-updates table (`openapi.yaml:6836`, `config-reference.md:588`).
+**## 3. Transition-time revocation reaction** — `RevokeAccessOnSuspend` sharing the extracted legs of `revoke_on_archive.go` (credentials-first, best-effort, idempotent), registered via `OnUserSuspended`/`OnUserArchived` on a `LifecycleEventBus` added as an audit sink in `cmd/sso-server/build_stores.go` `wireUserLifecycle` — closing the pre-transition credential window (`OnUserSuspended` currently has zero production callers; repo grep confirms). *Acceptance*: after SUSPENDED, live session → 401 and refresh family deleted; disabled config stays byte-identical.
+
+The spec also pins the preserved invariants: no-record=ACTIVE, unwired=byte-identical, oracle-safe collapses, fail-closed outage policy (matching the documented `refreshCheckSessionLiveness` contract, with the difference from tenant-suspension fail-open explicitly called out), and import-direction constraints per AGENTS.md.
