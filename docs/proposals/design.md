@@ -1,20 +1,22 @@
-Design doc written to `docs/auto/domains-tokenpolicy-design.md`, grounded in grep-verified code (not just the spec). Key decisions, each under its own `##`:
+Design doc written to `docs/auto/domains-tokenpolicy-direction2-design.md`. I verified every evidence claim in the spec against the code first — all check out:
 
-**API surface**
-- `ParseYAML` → `DisallowUnknownField` only (stays a pure parser; `Validate` needs `defaultTTL`, which is a wiring concern, so the conditionalaccess-style combined loader doesn't transfer — strictness parity is what matters).
-- `Policy.Validate(defaultTTL) error` (hard errors: negatives, renew ∉ (0,1], empty name) split from `AdvisoryWarnings(defaultTTL) []string` (MaxTTL > default) so warnings can never block.
-- `Store` gains `Get`/`Put`/`Delete` + `ErrPolicyNotFound` (value-returning `Get`, unlike threataction's pointer). Breaking change, but grep shows only in-repo implementers.
-- Three `:name` admin routes with the threataction decode-vs-semantic split (`invalid_request` vs `invalid_policy` + description), `admin:read`/`admin:write` via the default middleware method rule, mounted only under `WithTokenPolicy`.
-- `HandleAdminPutPolicy` returns `bool` — the minimal contract change letting the thin server wrapper publish the invalidation event without pulling the bus into the domain package.
+**Verified during review**
+- Both deny seams confirmed audit-free: `enforceTokenPolicy` (server_helpers.go:99-104) and `sessionPolicyCapExceeded` (server_oauth.go:184-190, behind the `DenyActiveSessions` reason guard); the session seam is reached only via `createSession` (server_logout.go:357)
+- `Event` struct has the needed `Reason`/`ActorID`/`ClientID`/`Metadata` fields; `HandlerContext = core.HandlerContext` so the helper's context parameter binds directly
+- Precedents confirmed: nil-safe `RecordDeviceCodeDecision`, `audit.RecordRefreshRotationVelocityExceeded(s.auditor, ctx, ...)` at server_helpers.go:487, CC7.2 bucket, CEF/OCSF triplet mappings
+- Budgets confirmed: server_helpers.go 493/500, server_oauth.go 481/500, recorder_events.go 354/500 — the whole change to the two tight files is two one-line calls
 
-**Two deliberate spec refinements (called out in the doc)**
-1. Default-TTL visibility: `PolicyInput.DefaultTTL` + `NewClampingIssuer(inner, store, defaultTTL)` with a new `WithTokenPolicyDefaultTTL` wired from `cfg.Server.TokenTTL` — the same value `build_signing_issuers.go` already feeds the issuers. The doc flags the #1 risk: if those two plumbing points diverge, the min-clamp can still widen.
-2. The spec's "sqlite 与 File/Policies 互斥" + "空表时播种" tension: resolved as `sqlite` + optional seed-source, seed applied only when the table is empty (first boot), with a loud skip log. Strict exclusivity would make the spec's own seed sentence unreachable.
+**Design decisions (## headings)**
 
-**Storage model**: single `token_policies (name PK, policy_json)` table, `platform/migrate` v1 baseline, `modernc.org/sqlite`; memory store becomes map-keyed COW preserving *insertion order* (deliberately not name-sorted — re-sorting would silently change which deny reason lands in the audit for overlapping rules); sqlite orders by name, divergence documented. Snapshot model: write-sync refresh + bus-triggered `Refresh` (`KindTokenPolicyChange`, keyless whole-list event like `KindDiscoveryReload`) + recovery reseed; `Policies()` never touches disk.
+1. **API surface — event type/alias/helper**: `EventTokenPolicyDenied = "token_policy_denied"` + SPI alias + `audit.RecordTokenPolicyDenied(rec, ctx, clientID, subjectID, policyName, reason)` with an explicit field-mapping table (Reason from the closed `DenyReason` set, `policy_name` via `SetMeta` only when non-empty, empty `ActorID` = honest absence at the scope-combo seam).
+2. **`PolicyDecision.DeniedBy`**: the one real trap — it must be assigned in the *same first-deny branch* as `Reason`; a post-loop pass would silently flip attribution to the last deny.
+3. **Wiring**: exact one-line insertions with placement rules — emission inside the deny branch only, wire write stays last, no double-emission (both token seams funnel through `enforceTokenPolicy`'s single deny branch; session seam is disjoint).
+4. **Registration**: `KnownEventTypes` + CC7.2 claim + CEF/OCSF + `docs/observability.md`; flagged that adding the type to the *uncategorized list* instead of the CC7.2 claim would pass the drift test while silently hiding governance denials from the SOC2 report.
 
-**Failure modes**: full table — all fail-open contracts preserved; new loud failures at boot and `400 invalid_policy` on write.
+**Storage model**: no new storage, no schema, no migration — the event rides the existing recorder → sink pipeline; cardinality table per dimension with the explicit not-stored list (scopes, client lists, request input).
 
-**What could break it**: 9 risks ranked, with mitigations — TTL-plumbing divergence (worst), Store-interface breakage, deny-reason ordering drift across backends, seed-skip surprise, stale-snapshot over-deny, dropped publish, strict-parse boot breaks for existing typo'd configs, `NewClampingIssuer` signature churn, migration namespace collisions.
+**Failure modes**: 10-row table — nil recorder, fail-open store/list errors (no manufactured deny records), default-off, sink errors fail open, canceled contexts.
 
-The doc closes with the acceptance-test mapping and the `make ci` gate sequence.
+**What could break the design**: 9 risks led by the file budgets (493/500 and 481/500 leave room for exactly the two lines), then `DeniedBy` branch drift, registration drift, name-based (not ID-based) attribution breaking across rule renames/reorders, cardinality creep, wire regression, double emission, seam-guard placement, and the docs gate.
+
+No `.go` files changed, so no build gates run — consistent with the spec being spec-only.
