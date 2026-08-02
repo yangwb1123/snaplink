@@ -1,13 +1,20 @@
-Design doc written to `docs/auto/domains-tokenexchange-audit-design.md`. All evidence re-verified against the tree before writing — and verification surfaced two constraints the spec didn't surface, which shaped the design:
+Design doc written to `docs/auto/domains-tokenpolicy-design.md`, grounded in grep-verified code (not just the spec). Key decisions, each under its own `##`:
 
-**Key findings**
+**API surface**
+- `ParseYAML` → `DisallowUnknownField` only (stays a pure parser; `Validate` needs `defaultTTL`, which is a wiring concern, so the conditionalaccess-style combined loader doesn't transfer — strictness parity is what matters).
+- `Policy.Validate(defaultTTL) error` (hard errors: negatives, renew ∉ (0,1], empty name) split from `AdvisoryWarnings(defaultTTL) []string` (MaxTTL > default) so warnings can never block.
+- `Store` gains `Get`/`Put`/`Delete` + `ErrPolicyNotFound` (value-returning `Get`, unlike threataction's pointer). Breaking change, but grep shows only in-repo implementers.
+- Three `:name` admin routes with the threataction decode-vs-semantic split (`invalid_request` vs `invalid_policy` + description), `admin:read`/`admin:write` via the default middleware method rule, mounted only under `WithTokenPolicy`.
+- `HandleAdminPutPolicy` returns `bool` — the minimal contract change letting the thin server wrapper publish the invalidation event without pulling the bus into the domain package.
 
-1. **File-budget collision (the big one)**: `token_exchange.go` is 499/500 lines and `token_exchange_stages.go` is 495/500 (exemption maps frozen empty), and `internal/handler/tokengrant` sits at exactly 10/10 non-test files with no fan-out exemption — so no new file can be created and ~16+ lines must move *out* of `token_exchange.go`. The design resolves this (§4): both new `Record*` helpers go into `platform/audit/recorder_events.go` (354/500, the canonical home of `RecordDeviceCodeDecision`-style helpers), and `tokExAuditCrossTenant` (16 lines) moves there as a generalized `RecordCrossTenantTokenExchange` to free the needed headroom, with `tokExAuditSPIFFE`/`tokExActorChainHasCycle` as the agreed margin mechanism.
+**Two deliberate spec refinements (called out in the doc)**
+1. Default-TTL visibility: `PolicyInput.DefaultTTL` + `NewClampingIssuer(inner, store, defaultTTL)` with a new `WithTokenPolicyDefaultTTL` wired from `cfg.Server.TokenTTL` — the same value `build_signing_issuers.go` already feeds the issuers. The doc flags the #1 risk: if those two plumbing points diverge, the min-clamp can still widen.
+2. The spec's "sqlite 与 File/Policies 互斥" + "空表时播种" tension: resolved as `sqlite` + optional seed-source, seed applied only when the table is empty (first boot), with a loud skip log. Strict exclusivity would make the spec's own seed sentence unreachable.
 
-2. **`tokExRecordChainHop` needs `req`**: both decisions 2 and 3 need `req.RequestedTokenType`, but the helper's signature is `(d, ctx, client, st)` — the design pins the signature change (single call site at line 147, `req` in scope).
+**Storage model**: single `token_policies (name PK, policy_json)` table, `platform/migrate` v1 baseline, `modernc.org/sqlite`; memory store becomes map-keyed COW preserving *insertion order* (deliberately not name-sorted — re-sorting would silently change which deny reason lands in the audit for overlapping rules); sqlite orders by name, divergence documented. Snapshot model: write-sync refresh + bus-triggered `Refresh` (`KindTokenPolicyChange`, keyless whole-list event like `KindDiscoveryReload`) + recovery reseed; `Policies()` never touches disk.
 
-3. **`ruleMatches` is unexported**: `memory.Store.DenyReason` can't reuse the matcher, so the design adds an exported `MatchRule(hop, rules) (Rule, bool)` used by both `Evaluate` and the new `DenyReasoner` — single source of truth so Allow and DenyReason can never disagree (modulo a documented copy-on-write TOCTOU that's advisory-only).
+**Failure modes**: full table — all fail-open contracts preserved; new loud failures at boot and `400 invalid_policy` on write.
 
-4. **Space-join encoding is safe**: OAuth scope grammar and RFC 8703/8707 resource URIs both exclude U+0020, so the flat-column space-join round-trips symmetrically — locked by a unit test, with the degenerate case documented as observability-only harm.
+**What could break it**: 9 risks ranked, with mitigations — TTL-plumbing divergence (worst), Store-interface breakage, deny-reason ordering drift across backends, seed-skip surprise, stale-snapshot over-deny, dropped publish, strict-parse boot breaks for existing typo'd configs, `NewClampingIssuer` signature churn, migration namespace collisions.
 
-Each decision section covers API surface, storage model, failure modes (as tables), and what could break the design (drift gates, oracle-safety regression, migration versioning, `parent_jti` semantic confusion, event-count leakage, cardinality creep). No Go gates were run — this was a docs-only change; the doc pins the verification sequence for implementation.
+The doc closes with the acceptance-test mapping and the `make ci` gate sequence.
