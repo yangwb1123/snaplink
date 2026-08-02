@@ -1,19 +1,10 @@
-Design doc delivered: `docs/auto/domains-region-observability-design.md` (491 lines, 4 `##` decision sections). Every cited line was verified against source before writing; the design honors all three baked-in constraints and resolves the spec's ambiguities.
+Design doc written to `docs/auto/domains-region-token-contract-design.md`. It covers the three decisions (`##` per decision, each with API surface / storage model / failure modes / breakage risks), plus a cross-cutting section.
 
-## What the design decides
+Key findings beyond the spec — the spec's proposed placements were checked against the actual gates and two collide:
 
-**1. One observation choke point (improvement 1)** — `checkTenantResidency` gains a `surface` param with a documented call-site table (login ×4 sites, token_grant, mesh, userinfo, me — closed set). Key pinning decisions:
-- Verdict mapping is an explicit `errors.Is` ladder onto `{allow, region_not_allowed, residency_violation}` — never `mapResidencyError`'s `access_denied` default, which would break the closed set.
-- Cache `miss` = any fall-through past `cache.get` (including fail-open), so hit-rate literally measures store-round-trip avoidance; exactly one cache observation per `resolveResidencyPolicy` call.
-- Early ladder returns (engine off, fail-open) emit **nothing** — that's what makes "unwired ⇒ series absent" true.
+- **`server_discovery_config.go` and `handle_introspect.go` are both at exactly 500 lines** (`maintainability_budget_test.go`: 501 fails). The introspection echo cannot live in `populateAccessIntrospectionBody` as the spec proposed, and `applyServingRegionMetadata`'s call cannot be added to `buildOIDCConfiguration` without a compensating one-line reduction. The design pins: (1) a net-zero split in `protocols/oauth` (new `introspect_body.go` + merge `introspect_session.go`, keeping the frozen 12-file fan-out), and (2) re-homing the discovery option + helper to `server_discovery_cache.go` (295 lines) instead of `options_misc.go` (496, 4 lines headroom).
+- **`server_finish_login.go` has exactly 1 line of headroom** (499) — `emitLoginIDToken`'s stamp is the only edit that file may receive; `server_login.go`, `token_exchange.go`, `token_exchange_stages.go`, `server_tenant_residency.go` are similarly near the limit. The `servingRegionFrom` helper goes in `server_tenant_residency.go` (493 → 499).
+- **The `wireIntrospection` embed is not enough for Decision 3** — `ValidateTokenWithIntrospect` projects `Claims` field-by-field, so the remote-mode copy must be added explicitly or the remote gate silently no-ops; the design flags the fail-closed-vs-`Issuer`-optional asymmetry in `validateIntrospectedClaims` as the copy-paste trap.
+- **Rollout order is load-bearing** (claims → discovery → RS gate), and refresh-rotation re-stamping is pinned as intended mint-time semantics so it isn't later "fixed" as a bug.
 
-**2. Fail-open alerting (improvement 2)** — `store_unwired` fires per gated request (nothing is ever cached in that misconfiguration, so it's loud by design); `sso_residency_enabled == 1` boot gauge guards both alert expressions; cmd `wireRegion`'s OnError closure bumps `sso_region_resolution_errors_total` — the only layering-legal seam.
-
-**3. Audit trail (improvement 3)** — the spec named only the auditreport classification, but I found **three more compile-enforced surfaces** a new EventType must touch: `KnownEventTypes` completeness test (AST-parses consts), the CEF/OCSF conformance test, and `aliases_spi.go`. The doc lists all five as a checklist — this is a five-edit change or CI fails.
-
-## Risks flagged
-
-- **`ResidencyDecision` signature change** is an exported SDK Go API break (spec's 4th call site forces it); all consumers are in-repo, with a documented fallback if SDK stability is demanded.
-- **Test-harness unknown**: no `test/` e2e currently wires `WithMetrics` (verified by grep), so the mesh scrape assertion needs a test-only harness extension.
-- `metrics_ctor.go` goes 497→498 lines — the register body must live in `residency.go`.
-- `region` label cardinality relies on the existing middleware `AllowedRegions` allowlist — documented as an operator obligation in the observability section.
+Storage model across all three decisions is deliberately zero-persistence: the token is the carrier, the option is process-static config, the RS gate is config-only — the only "storage" touched is the existing per-base-URL discovery cache, which is safe because the advertised value is deployment-static.
