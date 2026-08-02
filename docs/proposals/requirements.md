@@ -1,20 +1,17 @@
-需求规格已产出：`docs/auto/interfaces-cors-requirements.md`（全部证据已对照源码逐条核实）。
+Spec written to `docs/auto/interfaces-cors-direction2-spec.md`. All evidence was verified against the code before writing.
 
-## 三个改进决策（均为证据背书）
+## Summary
 
-**## Decision 1 — `interfaces/cors` 可热替换策略载体（PolicyStore + DynamicMiddleware）**
-- 问题：`Middleware()` 构造时经 `buildConfig` 把策略烘焙进闭包（cors.go:84/172），`sso.corsPolicy` 是 boot-only 指针（sso_protocol.go:139），SPA 域名变更必须重启
-- 证据对照：`ratelimit.PolicyStore` + `DynamicMiddleware`（middleware.go:145-167）与 `SetRateLimitPolicy`（server_routes.go:415）已是现成范式
-- 验收：镜像 `rate_limit_hotreload_test.go` 的即时替换 + 未启用返回 `false` 测试
+**决定 1：`security.cors.path_overrides` YAML 映射**
+- Problem: `Policy.PathOverrides`（`cors.go:58-66` 卖点特性）在配置层被截断；`CORSConfig` 无字段、`toPolicy()` 不映射，且 stock binary 有**第二处**内联映射（`build_app_security.go:170-179`，因 `WithCORS` 指针覆盖而为生效点），只修 `toPolicy()` 也投递不出去
+- Proposed: `CORSConfig` 加 `path_overrides` 字段 + 提取映射 helper + 内联映射改调 `toPolicy()` + 接线门放宽为 `origins > 0 || overrides > 0`（`/` 前缀校验 fail loud）
 
-**## Decision 2 — `SetCORSPolicy` 接入 SIGHUP 热重载，`security.cors` 入契约文档**
-- 问题：`config/reload/reload.go:98-102` 可热应用块只有 rate_limit 一类；`toPolicy()`（config_load.go:472）是纯函数却未接线；Hot Reload 表（config-reference.md:433）与 Security 表均无 CORS 行
-- 行为：沿用"整块一次重建、diff 驱动、未启用落入 `ignored_requires_restart`"的 rate_limit 契约
-- 验收：reload_test.go 模式用例 + 两处表格行存在
+**决定 2：`security.cors` 入契约文档**
+- Problem: `config-reference.md:63-70` Security 表列了 8 个键唯独没有 `security.cors`（违反 AGENTS.md §5）；且 `cors.go:44` 文档举例的 `X-RateLimit-Remaining` 在整个 ratelimit 包中不存在（只发 `Retry-After`），测试固件 `cors_test.go:193` 传播同一虚构
+- Proposed: 补全 Security 表行（覆盖每个 leaf + 空 origins 语义 + 需重启无热更新），示例改为真实头 `X-Request-Id`/`Retry-After`，全库零残留
 
-**## Decision 3 — origin 判定收敛为单一实现，登录 CSRF 门复用**
-- 问题：`isOriginAllowed`（origin_validation.go:103-124）线性扫描 + 硬编码 `"*"`，重写 `corsConfig.originAllowed`（cors.go:112，map + `OriginWildcard`）；`rejectDisallowedLoginOrigin`（server_login.go:166）无视 `PathOverrides`——两个执行点可分叉
-- 行为：导出 `Policy.OriginAllowed(origin, path)`（含最长前缀 override 语义），删除 sso 侧重复实现，门显式声明"共享判定、默认策略语义"并补 `test/` 联动集成测试
-- 验收：cors 包单测 + sso 既有用例改走共享判定原样通过 + 新 e2e 覆盖 PathOverrides×登录门一致性
+**决定 3：允许头列表"追加到默认值"语义 + 常量单一来源**
+- Problem: `buildConfig`（`cors.go:88`）空=默认、非空=整体替换；DPoP 是头等公民（`server_oauth.go:19-20` 读取 `HeaderDPoP`），运维写 `allowed_headers: [DPoP]` 会静默丢掉 `Authorization` → 难排查的 401；另 `consts.go` 因不成立的循环担忧重复声明 `shared/core` 已有的头常量
+- Proposed: 非空列表合并进默认值（去重、确定性顺序）+ `allowed_headers_exclusive` 逃生舱；`consts.go` 改 import `shared/core`（层级上无环）
 
-规格内注明约束：`interfaces/sso` 60 文件上限（新代码并入既有文件）、`config/` 文件数冻结，方向二/三明确列为非目标。
+每个决定含验收检查（针对性单测/集成测试 + 构建/维护性门 + `make ci`）。文末附影响面与约束：无安全语义变更、无新 Err*/端点、`config/` 文件数冻结内扩展、明确非目标（方向一/三的热更新、origin 单一事实来源、可观测性）。
