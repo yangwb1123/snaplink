@@ -1,9 +1,22 @@
-Design doc written to `docs/auto/interfaces-sso-direction3-design.md`. It fixes the three improvements down to decisions with the requested sections (## per decision: API surface for 改进一/二, consolidation mechanics for 改进三, storage model, failure modes, what could break the design).
+All claims in the doc are verified against the code. Design doc written to `docs/auto/interfaces-ssoclient-oauth-client-design.md`.
 
-Before writing, I re-verified every spec claim against the tree and surfaced **three spec corrections** — the two important ones:
+## Summary
 
-1. **File-ceiling blockers (the headline finding).** 8 of the 13 target packages are themselves AT a file ceiling: `protocols/oauth` (12 = exemption 12), `platform/audit` (16 = exemption 16), `domains/federation` (24 = exemption 24), `protocols/oidc`/`caep`/`selfservice`/`domains/permissions` (10 = default cap), and `interfaces/admin` (10, with **no exemption entry at all** — the spec's acceptance wording references a `dirFileCountExemptions` value for admin that doesn't exist). A naive "add a mount entry point" as a new file fails the committed fan-out gate in every one of these. The design fixes a per-package placement table: mount code appends to an existing file with measured 500-line-budget headroom (`interfaces/admin` → `deps.go` at 177 lines, the only admin file with room; `middleware.go`/`connections.go` are at 492/498). Only configaudit, netpolicy, rebac, webhook, wasmauthz get new `mount.go` files.
+**Grounded scope**: every endpoint the client will talk to already exists and is gate-tested — `/token` grant dispatch (`server_token.go:148`), Basic-wins client auth (`oauthwire`), PAR (`handle_par.go`), device flow with `slow_down`/`pending`/`invalid_grant` semantics (`token_device.go`), DPoP nonce challenge (`server_dpop.go`), and the RS verifier ladder (`rs/dpop.go`). Zero server changes; this is pure client-side addition.
 
-2. **Acceptance-grep ambiguity.** The spec's literal `grep -c "func (s \*Server) handle"` counts **254, not 234** — 20 body-bearing multi-arg helpers (`handleDeviceTokenGrant`, `handleLivez`, …) contain `(ctx HandlerContext)` but aren't delegates and stay. The anchored sole-parameter filter is specified, or the gate is off by ~29 methods.
+**## Decision 1 — TokenClient facade + remote HTTP implementation**
+- API: `TokenClient` interface (in existing `client.go`) with `GeneratePKCE`/`ExchangeCode`/`Refresh`/`ClientCredentials`; `remote/token.go` with `NewTokenClient(tokenURL, opts...)`, Basic-vs-form credential options mirroring the server's precedence, and typed sentinels in `types.go`.
+- Storage: fully stateless client; PKCE verifier and refresh tokens are App-owned by design (multi-instance safety, rotation persistence).
+- Failure modes: no auto-retry anywhere (single-use artifacts → `invalid_grant`), oracle-safe error mapping (known §5.2 codes → sentinels, everything else opaque), fail-closed on 2xx-without-`access_token`.
+- Break risks: `remote/token.go` line budget (mitigated by hosting the form-POST helper in `auth.go`; the 500-line gate outranks the "two new files" planning number), complexity budget of the error switch, and the test-harness rule (must not import `test/` — composition layer; existing `auth_test.go` pattern instead).
 
-Also covered: gate-closure semantics (method values, never `.Load()` results — hot-reload byte-identity), nil-gate panic discipline, boot-time wiring via nil-tolerant deps accessors rather than re-exported predicates, storage model (explicitly zero runtime storage; only the committed exemption table + AGENTS.md sentence change), seven runtime failure modes, and a nine-item risk register ordered by likelihood — with `SEED_DIRFANOUT` same-commit ratchet and the `aliases.go` SDK-facade no-touch rule among the mitigations.
+**## Decision 2 — PAR + Device flow**
+- API: `StartPAR(PARRequest) → PARResponse{RequestURI, ExpiresIn}`; `DeviceFlow(scopes) → DeviceSession`; `Wait(ctx)` state machine honoring server `interval`, `slow_down → interval+5s`, terminal `access_denied`/`expired_token`/`invalid_grant`, local-expiry cutoff, transient-error retry within the session window.
+- Key finding: this server collapses expired/unknown device codes to `invalid_grant` at `/token` (CIBA alone uses `expired_token`), so the client maps both terminally and self-terminates on local expiry — an App sees `ErrExpiredToken` regardless of wire-code drift.
+
+**## Decision 3 — DPoP proof generator**
+- API: new `interfaces/ssoclient/dpop` package (`GenerateKey`, `Key.Proof(method, uri, accessToken, nonce)`, RFC 7638 thumbprint); `WithDPoPKey` wires proofs onto every credential request, with a bounded one-shot nonce retry and a fail-closed downgrade check (`token_type: "DPoP"` expected).
+- Sharpest constraint found: `shared/security` root **and** `securityverify/` are both at the 10-file ceiling, and `jwks_verify.go` is 476 lines — a shared JWS signer cannot be added there today. The signer stays private in `dpop.go` (stdlib ed25519), which must be flagged when `private_key_jwt` client auth eventually lands.
+- Layer gate: no `layerName()` change needed — first path segment `interfaces` already classifies the new package; no exemptions.
+
+Budget accounting verified: `interfaces/sso` stays at exactly 60 files, ssoclient root 4→4, remote 4→5, two new non-test files total, all within limits.
