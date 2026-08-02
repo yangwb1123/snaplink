@@ -1,25 +1,11 @@
-Specification complete: `docs/auto/domains-userlifecycle-prod-spec.md` (exactly 3 `##` decisions, every claim verified against the code before writing).
+Spec written to `docs/auto/interfaces-adapters-direction1-spec.md`. All evidence was verified against current code before writing — including the exact assertion lines (`idempotency.go:74`, `server_token.go:125`), the zero hits for `Abort`/`Written` in `shared/core` + `interfaces/adapters`, the unconditional `wrapHandler` loops in both adapters, and (via `go doc`) that gin `Context.Writer` and echo `Response.Writer` are public reassignable fields, which makes capture wireable.
 
-## Summary
+The three evidence-backed improvements (## headings in the spec):
 
-**Direction 3 — 生产化短板** decomposed into three independently shippable improvements, each preserving the module's anchors (无记录=ACTIVE, zero-value=OFF, unwired=byte-identical):
+1. **Short-circuit primitive: `Abort()`/`Aborted()`/`Written()` on `HandlerContext`** — Problem: middlewares cannot stop the handler (`StdRouter.ServeHTTP` and both adapters' `wrapHandler` run middlewares then the handler unconditionally), so `middleware.Auth`'s 401 and `CORS`'s 204 double-write, and gin's native `c.Abort()` is useless because the adapter drives the chain itself. Proposed: interface primitives + chain-stop in all three backends; Auth/CORS call `Abort()`. Acceptance: byte-identical 401/204 + handler-not-executed across StdRouter/gin/echo.
 
-### 1. Durable SQL `Store` peer
-- **Problem**: only `memory.Store` exists (`build_userlifecycle.go` returns `userlifecyclememory.New()` unconditionally); state is process-local and lost on restart, so multi-replica deployments diverge silently and AGENTS.md's cross-replica invalidation list omits lifecycle.
-- **Evidence**: `domains/userlifecycle/memory/memory.go` package doc ("State is lost on restart…"), `userlifecycle.go` `Store` interface comment ("memory today; a SQL peer can follow the same contract"), zero `userlifecycle` refs under `infrastructure/`, `docs/config-reference.md`.
-- **Proposed**: `infrastructure/postgres` backend implementing the same contract — single-statement conditional `INSERT`/`UPDATE` mapped to `ErrStateConflict`, `Get` returns DefaultState for missing rows, config-selected backend, shared conformance suite with memory.
-- **Acceptance**: conformance parity both backends; two-handle race test → one success, one `ErrStateConflict`; gates + `make ci`.
+2. **Response capture: `SetResponseWriter` promoted to the interface** — Problem: `/token` idempotent replay capture installs via `ctx.(*core.Context)` (idempotency.go:74, server_token.go:125); under adapters the assertion fails silently, so the AGENTS.md idempotency wire contract vanishes with no error. Proposed: interface method + writer-swap wiring (`c.Writer = w` / `c.Response().Writer = w`); `grep .(*core.Context)` in `interfaces/` must be zero. Acceptance: byte-identical replayed `/token` response, grant executed once, on all three backends.
 
-### 2. Lease-serialized, cursor-based incremental sweep
-- **Problem**: `SweepOnce` walks the full unpaginated roster (`Users.List`); `ListByState` exists but has zero callers (its own doc says the sweep uses the full roster); every replica runs its own ticker and `ErrStateConflict` races are silently swallowed.
-- **Evidence**: `sweep.go` `SweepOnce`/`apply`, `userlifecycle.go:143-147`, `shared/core/spi.go:42` (`UserProvider.List` "pagination is the caller's responsibility"), `options_admin.go` `RunUserAutoDeprovision`, `build_stores.go:368`.
-- **Proposed**: store-level sweep lease (SQL conditional upsert w/ TTL; memory single-flight), keyset-cursor `ListByStateAfter`, `MaxPerSweep` extended to bound scanned candidates; `SweepOnce` semantics unchanged.
-- **Acceptance**: two-holder race test → exactly one applies; O(k) scan for k dormant of N; existing `sweep_test.go` cases unchanged; `-race` + `make ci`.
+3. **Hit-short-circuit + loud commit: one idempotent-hit path** — Problem: cache-hit requires handler cooperation (`HandleIdempotentRequest` at handler entrance — a limitation the code self-documents), the token endpoint duplicates the mechanism inline, and `CommitIdempotentResponse` silently skips when capture is missing. Proposed: `middleware.Idempotency` short-circuits hits via `Abort()` (retiring the convention), /token keeps its post-auth hit-check (oracle ordering: no cached 200 replayed to a request that would fail auth), commit becomes a loud audited failure. Acceptance: side-effect counter increments exactly once across three backends; wrong-secret replay returns 400; audit event on capture loss.
 
-### 3. Persistent last-active signal written from the login hot path
-- **Problem**: `ActivityTracker.Touch` has zero production callers (the only `.Touch(` is `adminTokenStore` in `middleware.go:405`, an unrelated type); default wiring `SessionLastActive` is blind outside the session-retention window — config reference concedes "no other activity backend exists in this wiring today".
-- **Evidence**: `memory.go` `ActivityTracker` doc ("Wire it into the login path…"), `dormancy.go` caveat, `build_stores.go:347` seam, login anchors `server_login_auth.go:98` / `server_oauth.go:223`, `spi.go:150` `TrackActivity` is session-scoped.
-- **Proposed**: durable last-active store (with improvement 1), `Touch` after `rejectDeactivatedUser` and in `finalizeCallbackSession`, fail-open on write error, durable source becomes the default when SQL is wired, `SessionLastActive` stays fallback.
-- **Acceptance**: login → expire sessions → `LastActive` still non-zero and sweep evaluates; injected store failure doesn't block login; monotonicity; gates.
-
-No Go code changed, so no build gates were required; the doc lives alongside the other `docs/auto/domains-*-spec.md` files (note: `docs/` is a symlink target outside the git worktree, matching the existing analysis-doc convention).
+Dependencies run 1 → 2 → 3, and each step is independently shippable with the mandatory gates.
