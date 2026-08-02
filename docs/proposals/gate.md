@@ -1,35 +1,38 @@
-Gatekeeper audit complete. I read the implementation plan in full, the design, all three named reviews (security/SRE/QA), the protocol review, and the pre-impl reconciliation checklist — then verified the load-bearing claims against the tree, including an empirical probe of the SRE F2 mechanism.
+## Gatekeeper verdict
 
-## Audit: findings resolved or dismissed with reasons
+I cross-checked the five reviews (protocol, architecture, database, QA, security) against the design and the implementation-stage deliverable.
 
-**Resolved with reasons (the bulk — and I verified the load-bearing mechanisms):**
+### Core problem: wrong deliverable
 
-| Finding | Plan item | Verification |
+The five reviews all adjudicate **`docs/auto/interfaces-sso-direction2-postgres-hotstore-design.md`** — the Postgres OAuth hot-store backend design (direction2). The code-implementer's deliverable is **`docs/architect-analysis/auto/domains-tokenpolicy-direction3-implementation-plan.md`** — the *tenant-dimension token-policy selectors* plan (direction3). These are unrelated features:
+
+| Check | Postgres hot-store design (reviewed) | Tokenpolicy plan (delivered) |
 |---|---|---|
-| Security F1 / QA H1 (census 12 vs 10) | §3: 13 sites + 1 template, per-site decisions | Correct; matches reconciled checklist §1.2 |
-| Security F2 / QA H2 (inert selectors, 5th Evaluate site) | §7 + §9 liveness matrix + no-op pins | Introspection row present |
-| Security F3 / SRE F4 (fail-open observability) | §6 bounded counter + metric call | Present in tree (`ObserveTokenPolicyRoleResolutionError`) |
-| Security F4 (tenant_id unvalidated) | §4.5 Validate rules | `validate.go` present, `core.TenantRole` set confirmed |
-| Security F5 (server_oauth math) | §1.3: +14 → 495 | **Confirmed**: seam is exactly 45 lines (162–206), file is 495 |
-| SRE F1 (stock never wires store) | §4.4 boot warning + docs | `hasRoleSelectors` + `slog.Warn` present in `build_governance.go` |
-| SRE F2 (inline strictness bypassable) | §4.2 `Policy.UnmarshalYAML` | **Probed with goccy v1.19.2**: lenient fallback now errors on `tennat_id` (`[2:1] unknown field`); unrelated keys still tolerate. Mechanism works |
-| SRE F7 (server_helpers math) | §1.2: 493→495, rebuttal | **Confirmed**: both signatures are single-line with `tenantID`; file is 495 = 493+2. F7's 497 was a miscount |
-| QA L2 ("7th file") | §4.5: 6th | Confirmed: 6 non-test files in `domains/tokenpolicy` |
-| QA M1–M5, L1, SRE F3/F5/F6/F8, Protocol F1/F2/F4 | §7–§11 | Mapped with concrete pins/tests |
+| Scope | `oauth.backend=postgres`, 4 stores + grace cache, migration/wiring | `denyTokenScopeCombo` tenantID, subject-aware selectors, mint-site census |
+| Review set addressed | protocol F1–F6, arch F1–F6, db F-1–F-6, QA F1–F10, security FIND-1–8 | security F1–F5, SRE F1–F8, QA H1/H2 M1–M5 L1/L2 (a *different* review set) |
+| `postgres` mentions in plan | — | 0 (grep-verified) |
+| `tokenpolicy`/scope-combo mentions in design | 0 (grep-verified) | — |
 
-## Blocking issues
+No implementation plan exists for the postgres hot-store design anywhere (`docs/auto/` holds only its design + spec). The implementer's plan also says "no `.go` file was changed," so nothing was implemented for either feature.
 
-1. **Security F6 (Info) is unmapped.** §8's map stops at Security F5. The cross-client `ListByUser` counting quirk ("document in config-reference, do not change semantics") appears nowhere in the plan — neither the §8 table nor the doc program. The claim "§8 maps every security/SRE/QA finding (F1–F8, H1–H2, M1–M5, L1–L2)" is false as written: the security review has F1–F6.
-2. **Protocol F3 (Medium) is unmapped.** The ID-token-TTL-unchanged-by-tenant-clamp asymmetry needs a config-reference statement plus extending the claim-surface pin ("ID-token TTL unchanged by tenant clamp"). The plan's claim pin (§11 step 2) covers only the access-token no-`tenant_id` assertion.
-3. **Protocol F5 (Info) is unmapped.** Opaque temp tokens (`grpcadmin/admin_tokens.go`, `temp_token.go`) as declared exceptions to the "uniform clamp" wording in config-reference are absent.
-4. **Protocol F6 (Info) partially unmapped.** The §3 census table carries no stock-vs-embedding reachability column (agent delegation is embedding-only per checklist §1.3), and the plan nowhere states the checklist's correction of both reviews' "stock" framing.
-5. **Baseline staleness voiding the gate proof.** Every §1/§10 figure is anchored to `ff690260`; HEAD is now `e231a479` and the worktree already carries the .go implementation with different counts (`server_token.go` 462 not 500, `server_login.go` 469 not 499, `build_governance.go` 456, `metrics_token.go` 172, `evaluate.go` 215, `yaml.go` 45, `clamp_issuer.go` 76, `types_token.go` 284). The openapi cites (:6836/:6868-6884) are also stale — the endpoint is at :6900 and the item schema currently lacks all three fields. The plan must be re-anchored before execution.
+### Review-findings cross-check: none resolved or dismissed
 
-## Non-blocking notes
-- The plan's §4.2 supersedes the preimpl-checklist's adjudicated warn-only stance on SRE F2 — the mechanism is verified working and matches design intent 3c, but the deviation from the checklist's §3.2/G7 pin should be flagged explicitly.
-- §11's gate sequence omits `go test ./test/ -run TestE2E -v` (AGENTS.md §2; QA CI-gaps; checklist G11).
-- The pre-existing `make ci` red items are accurately reported and still present (gofmt on `refresh_tokens_schema.go`; `test/region_token_contract_test.go`).
+Every substantive finding from the five reviews is untouched — not resolved, not dismissed with reasons:
 
-The engineering substance is sound — the two disputed arithmetic items and the strictness mechanism all check out empirically — but three review findings (one Medium) are neither resolved nor dismissed with reasons, the §8 completeness claim is false, and the gate-proof table describes a tree that no longer exists. These are cheap to close but must be closed before the implementation stage proceeds.
+- **QA F1 (High)** — four-flow E2E byte-parity has no executable harness; the plan proposes no harness and names no venue. Unaddressed.
+- **Protocol F1 / QA F2 / Security FIND-3** — postgres conformance suite must run (not skip) in CI; no suite exists at all. Unaddressed.
+- **Protocol F3 / QA F8 / Security FIND-2** — DDL constraint enumeration (`user_code NOT NULL UNIQUE`, PKs on `code`/`token`/`device_code`/`request_uri`); absent from design and plan. Unaddressed.
+- **Security FIND-1** — key-posture decision for the fresh postgres backend (nil-key → raw credentials at rest); no decision made. Unaddressed.
+- **Database F-2 / QA F5 / Security abuse row 15** — rotation-window orphan prune (third reaper statement, `DeleteFamily` window wipe); absent from design text and plan. Unaddressed.
+- **Security FIND-5** — fifth domain kind `"user_code"` + raw-value re-stamp translation rule; absent. Unaddressed.
+- **Architect F2 / QA F1** — byte-parity venue (`test/backendsemantics` DSN gating); unaddressed.
+- **QA F3** — shared-DB `-count=10 -race` test isolation; unaddressed.
+- **QA F4** — port-source citations (`sqlite/refresh_tokens_rotation_test.go` does not exist; redis lacks `ExpiryLister`); the plan never touches these.
+- **Security FIND-4 / FIND-6 / FIND-7** — grace-cache credential posture, auth-code reuse-ledger scope declaration, layer-exemption wording: no text fixes in either document.
+- Citation drifts (protocol F6, arch F4, db F-5) and pre-existing red gates (protocol F2-adjacent, arch F6, db F-3, QA F10, security FIND-8): the tokenpolicy plan's §11 notes pre-existing red items *for its own gate sequence*, but nothing carries the postgres design's obligations.
 
-VERDICT: FAIL - Security F6, Protocol F3, Protocol F5 unmapped (neither resolved nor dismissed with reasons); §8 completeness claim false (stops at Security F5, omits the protocol review); census table lacks stock-vs-SDK reachability (Protocol F6); entire line-count/gate-proof table anchored to stale baseline ff690260 while HEAD/worktree have moved (implementation already applied; counts differ)
+### Bottom line
+
+The implementation stage produced a plan for a different design and different review set. The reviewed design's blocking findings (QA F1, protocol F1/QA F2/security FIND-3, protocol F3/security FIND-2, security FIND-1) and all lower-severity items remain wholly unresolved, and no implementation of the postgres hot-store design exists. This cannot proceed to implementation of the reviewed design.
+
+VERDICT: FAIL - implementation deliverable targets the wrong design (domains-tokenpolicy-direction3 instead of interfaces-sso-direction2-postgres-hotstore); none of the five reviews' findings (QA F1-F10, protocol F1-F6, arch F1-F6, db F-1-F-6, security FIND-1-FIND-8) are resolved or dismissed with reasons; no postgres hot-store code, DDL, tests, or harness work exists.
