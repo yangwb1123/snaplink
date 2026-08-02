@@ -1,19 +1,19 @@
-Design doc written to `docs/auto/domains-permissions-sod-design.md` (509 lines), as the counterpart to the spec. All evidence re-verified against the tree before writing; two claims were corrected in-flight (the audit-helper location).
+Design doc delivered: `docs/auto/domains-region-observability-design.md` (491 lines, 4 `##` decision sections). Every cited line was verified against source before writing; the design honors all three baked-in constraints and resolves the spec's ambiguities.
 
-## Design decisions
+## What the design decides
 
-**## Decision: admin surface — `SoDAdminService` in the proto file, implemented in `grpcserver`, not `grpcadmin`**
-- The spec's literal placement fails two gates: `grpcadmin/` is at 10/10 non-test files (verified), and adding ~175 lines to `admin_permissions.go` (264 lines today) would crowd the 500-line budget. Mandatory deviation: same proto file/package/REST prefixes, but a **new additive service** (ADR-0008-safe) implemented in `interfaces/grpcserver/sod_admin.go` (6→7/10 files).
-- Pinned the wire contract: 7 RPCs, REST paths under `/conflicts` and `/users/{user_id}/sessions/{session_id}/roles`, error mapping table (InvalidArgument/FailedPrecondition → 400 with `invalid_conflict_set`/`role_not_assigned`/`role_conflict`), `ConflictDetails` in status details + audit only (oracle-safe family), 4 new audit events (auditreport-classified), `invalidateAuthzPolicy` on declarations only.
+**1. One observation choke point (improvement 1)** — `checkTenantResidency` gains a `surface` param with a documented call-site table (login ×4 sites, token_grant, mesh, userinfo, me — closed set). Key pinning decisions:
+- Verdict mapping is an explicit `errors.Is` ladder onto `{allow, region_not_allowed, residency_violation}` — never `mapResidencyError`'s `access_denied` default, which would break the closed set.
+- Cache `miss` = any fall-through past `cache.get` (including fail-open), so hit-rate literally measures store-round-trip avoidance; exactly one cache observation per `resolveResidencyPolicy` call.
+- Early ladder returns (engine off, fail-open) emit **nothing** — that's what makes "unwired ⇒ series absent" true.
 
-**## Decision: storage model — three tables per durable backend, atomic check-and-write**
-- Migration v2 on sqlite (named consistently `permissions_sod_conflicts`/`permissions_activation_conflicts`/`permissions_active_sessions` with a client index for the `RemoveRole` cascade), identical postgres tables, redis JSON docs + TTL.
-- Atomicity per backend: sqlite `BEGIN IMMEDIATE` (writer-serialized), postgres `SELECT ... FOR UPDATE`/SERIALIZABLE, redis Lua — closing the "works on memory, breaks on sqlite" race.
-- Conformance: spec's "delete skip branches" strengthened to skip→`t.Fatalf` — the type-assert stays as self-documentation, but a backend omitting SoD now *fails* instead of silently passing.
+**2. Fail-open alerting (improvement 2)** — `store_unwired` fires per gated request (nothing is ever cached in that misconfiguration, so it's loud by design); `sso_residency_enabled == 1` boot gauge guards both alert expressions; cmd `wireRegion`'s OnError closure bumps `sso_region_resolution_errors_total` — the only layering-legal seam.
 
-**## Decision: enforcement — session-scoped `Check` over the ACTIVE set**
-- `CheckRequest.session_id = 6` (coordinated with the sibling resource design's reserved numbering), full decision matrix — including the row the spec left open (session_id present + provider without activator → documented assigned-set fallback, unreachable from first-party callers since the mesh gate checks the interface first).
-- "Activate at login" pinned: best-effort activation of the *full assigned set* (fresh sessions behave exactly like today); `ErrRoleConflict` (legitimately held DSoD-exclusive pair) → audit + empty active set, login never fails, decision point stays fail-closed.
-- One shared projection via `UnionPermissions` folded into `matcher.go` (domains/permissions is at 10/10 files); lifecycle hooks fold into `accessors_handlers.go` (interfaces/sso at its 60-file ceiling).
+**3. Audit trail (improvement 3)** — the spec named only the auditreport classification, but I found **three more compile-enforced surfaces** a new EventType must touch: `KnownEventTypes` completeness test (AST-parses consts), the CEF/OCSF conformance test, and `aliases_spi.go`. The doc lists all five as a checklist — this is a five-edit change or CI fails.
 
-**## Decision: sequencing and cross-cutting risks** — land storage → admin → enforcement (the only caller-visible behavior change), budget table, and the cross-cutting breakage list (field-number collision, non-retroactive `SetConflictSets` semantics, multi-client `sid` scoping, per-login write cost, drift between the two design docs).
+## Risks flagged
+
+- **`ResidencyDecision` signature change** is an exported SDK Go API break (spec's 4th call site forces it); all consumers are in-repo, with a documented fallback if SDK stability is demanded.
+- **Test-harness unknown**: no `test/` e2e currently wires `WithMetrics` (verified by grep), so the mesh scrape assertion needs a test-only harness extension.
+- `metrics_ctor.go` goes 497→498 lines — the register body must live in `residency.go`.
+- `region` label cardinality relies on the existing middleware `AllowedRegions` allowlist — documented as an operator obligation in the observability section.
