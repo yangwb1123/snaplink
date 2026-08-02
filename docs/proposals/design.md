@@ -1,21 +1,21 @@
-Design doc written to `docs/auto/interfaces-ratelimit-design.md`. All claims verified against the code before writing. Summary of the decisions:
+Design doc written to `docs/auto/interfaces-ratelimit-direction2-design.md`. It grounds every claim in the code I read (all three backends, middleware, metrics layer, and the full caller graph).
 
-## Decisions (one `##` heading each)
+## What the doc covers
 
-**1. Shared post-auth checkpoint mechanism** — `interfaces/ratelimit` gains two exports: `Checkpoint(store, r)` (programmatic evaluation of a `PolicyStore` without writing, reusing `Policy.Key`, prefix rules, and the rejection metric) and `TooManyRequests(w, retry)` (exported form of the existing `writeTooManyRequests`). This keeps the `rate_limited` wire shape in one place and gives hot-reload + metrics to all three surfaces for free, with no layering violation.
+**Per-decision sections (## 决策一/二/三), each with API surface, storage model, failure modes, and breakage analysis**, plus a global blast-radius inventory and a commit/verification plan.
 
-**2. Identity lands in the request context** — `core.HandlerContext` gains additive `SetRequest(r)`; `interfaces/middleware` gains `WithClientID`/`ClientIDFromContext` (twin of the dead `WithSubject`); `ratelimit` gains `KeyByClientID` (mirror of `KeyBySubject`). This is the spec's mandated "first production write of `WithSubject`".
+## Key architect findings beyond the spec
 
-**3. 改进一 `/token`** — `WithTokenEndpointClientRateLimit(limiter)` + `SetTokenEndpointClientRateLimit` (SIGHUP), checkpointed right after `authenticateTokenClient`, before residency. **One refinement over the spec's letter**: the `client:<id>` key is written only for credential-verified clients (secret/assertion/mTLS) — public clients authenticate with a publicly-known `client_id`, so keying their bucket on it would *create* a new DoS vector (the same flaw class as UNSAFE `KeyByClientIDOrIP`); they fall back to IP. Grant limiter migrates `*rate.Limiter` → `ratelimit.Limiter` to fix the `unsupported_grant_type`-on-429 drift.
+1. **A coupling the spec misses: `selfservicecore.RateLimiter`** (`protocols/selfservice/selfservicecore/deps.go:21`) has a byte-identical signature to `ratelimit.Limiter`. Go has no covariance, so changing `Allow`'s return type silently breaks the documented public wiring `WithSelfServiceSignupRateLimiter(ratelimit.NewMemoryLimiter(...))` (options_passwd.go:139). Resolution: hoist the `Allowance` value type to `shared/spi` so `*MemoryLimiter` satisfies both interfaces structurally — zero adapters, zero breaks. Alternatives (type duplication, signature change) rejected with reasons.
 
-**4. 改进二 `/userinfo`** — because `protocols/oidc` can't import `interfaces/*`, two new `UserInfoDeps` hooks (`StoreUserInfoSubject`, `UserInfoRateLimited`) are called between bearer validation and the residency gate, mirroring the `MaybeSignUserInfo` precedent. A router-level capture-middleware alternative is rejected (double signature verification on the scrape path + 401-challenge drift risk). Mesh ext_authz uses the same store after `MeshAuthorize`. Key = `claims.Subject`, not the resolved local ID (the lookup is what we're protecting).
+2. **Deny-all vs fail-open are indistinguishable by value** (both have `Limit==0`). The header-writing rule needs a three-way table (`Limit>0` → all three headers; `!OK && Limit==0` → `Remaining: 0` only; `OK && Limit==0` → nothing), which the spec implied but didn't state.
 
-**5. 改进三 admin** — two tiers as one opt-in unit: unconfigured = byte-identical (constant `"admin"` key, `rate_limit_exceeded` body); configured = tier-1 rekeyed per-IP (required, or A's flood exhausts the global bucket before tier-2 can protect B) + tier-2 `admin:<subject>` right after `authenticateHTTP`, before the idle-timeout check (constant 429 shape, no new oracle). Both tiers reject with standard `rate_limited`.
+3. **Redis deny-all needs an explicit `denyAll` marker** — `{limit:1, window:365d}` is value-indistinguishable from a legitimate config; it can't be inferred from numbers.
 
-**6. Config/SIGHUP** — `security.rate_limit.token_client.*`, `security.rate_limit.userinfo.*` (shared backend dispatch, one new reload hook called once per Reload), `admin.rate_limit.per_admin.*` (boot + runtime `PolicyStore` swap, matching the existing admin lifecycle).
+4. **The 1/64 sampling for `sso_rate_limit_remaining` must live in the middleware closure, not the backend**: `calls` is unexported, `{policy}` is only known there, and SQLite's prune sampling is clock-based not call-based — middleware-level sampling gives uniform semantics across all three backends.
 
-**7. Storage** — no new state; existing `Limiter` SPI (Memory 16-shard/10-min-prune, SQLite, Redis), cardinality naturally bounded by registered clients/subjects/admins.
+5. **Memory's buckets gauge hook can't fire on the inline prune path** — that runs under a shard lock and `Buckets()` locks all shards (self-deadlock). It fires only inside `StartPruner`'s background sweep, meaning the gauge is gated on `prune_interval` (documented).
 
-**8. Failure modes + What could break** — the honest list: `SetRequest` ripple, public-client spoof, the `"client:"` namespace collision if an operator shares an instance across phases (hard documented invariant), the two deliberate 429 wire changes, admin tier-1 rekeying being load-bearing (and the e2e rate-sizing constraint), hot-reload hook wiring, and the 60-file/50-line budget ceilings. One spec ambiguity is resolved explicitly: the admin body unification is scoped to the opted-in mode, since unconditional unification would fail the "byte-identical default" acceptance.
+6. **Zero storage changes**: SQLite table and Redis Lua script stay untouched — both already hold or return the needed data; Memory reads `x/time`'s `Tokens()` after Cancel, inside the shard lock.
 
-No Go code was touched; per the requirements spec, no gates were triggered.
+Also documented: the full caller graph (sso quota.go, admin governance.go, three test doubles, fuzz/bench), the `Reset` epoch-vs-delta draft ambiguity, and a risk register with severities and mitigations.
