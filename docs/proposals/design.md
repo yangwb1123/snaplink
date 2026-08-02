@@ -1,23 +1,13 @@
-Design doc written to `docs/auto/domains-tokenexchange-design.md`. Summary of the decisions:
+Design doc written to `docs/auto/domains-tokenexchange-audit-design.md`. All evidence re-verified against the tree before writing — and verification surfaced two constraints the spec didn't surface, which shaped the design:
 
-## Decisions
+**Key findings**
 
-**## Decision 1 — `MutablePolicy` seam** — `Replace([]Rule) error` + `Rules()` + `DefaultAllow()`, defined beside `Policy` in `domains/tokenexchange/tokenexchange.go`. `Replace` gains an error return (free: zero production callers today, verified). `default_allow` stays config-owned/immutable — PUT moves only rules, avoiding a second mutation path. Unwired or non-mutable policies mount nothing (byte-identical).
+1. **File-budget collision (the big one)**: `token_exchange.go` is 499/500 lines and `token_exchange_stages.go` is 495/500 (exemption maps frozen empty), and `internal/handler/tokengrant` sits at exactly 10/10 non-test files with no fan-out exemption — so no new file can be created and ~16+ lines must move *out* of `token_exchange.go`. The design resolves this (§4): both new `Record*` helpers go into `platform/audit/recorder_events.go` (354/500, the canonical home of `RecordDeviceCodeDecision`-style helpers), and `tokExAuditCrossTenant` (16 lines) moves there as a generalized `RecordCrossTenantTokenExchange` to free the needed headroom, with `tokExAuditSPIFFE`/`tokExActorChainHasCycle` as the agreed margin mechanism.
 
-**## Decision 2 — Admin API** — `GET`/`PUT /api/v1/admin/tokenexchange/policies` (admin:read/write), `{default_allow, rules, total}` envelope with rules in evaluation order; PUT is full-replace with validation (Name non-empty, 1000-rule cap, wildcard shape) failing `400` before any store call. Handlers in a new `interfaces/admin/tokenexchange_policies.go` (no ceiling there; owns `ActorFromContext`), thin wrappers + mount in `accessors_threat.go` (427→~465, ≤500) — **zero new `interfaces/sso` files**. New audit event `token_exchange_policy_updated` with actor + before/after counts.
+2. **`tokExRecordChainHop` needs `req`**: both decisions 2 and 3 need `req.RequestedTokenType`, but the helper's signature is `(d, ctx, client, st)` — the design pins the signature change (single call site at line 147, `req` in scope).
 
-**## Decision 3 — Matching dimensions** — `Scopes` ALL-of + trailing-`"*"` prefix wildcard (tokenpolicy precedent), `Resources` ANY-of (deliberate defensive divergence — exact equality would let a hop evade a deny by adding an unrelated audience), `RequestedTokenType` exact; empty = wildcard. Extracted `scopeMatches`/`resourceMatches` helpers keep `ruleMatches` ~25 lines; `Evaluate` stays pure; empty new fields = byte-compatible.
+3. **`ruleMatches` is unexported**: `memory.Store.DenyReason` can't reuse the matcher, so the design adds an exported `MatchRule(hop, rules) (Rule, bool)` used by both `Evaluate` and the new `DenyReasoner` — single source of truth so Allow and DenyReason can never disagree (modulo a documented copy-on-write TOCTOU that's advisory-only).
 
-**## Decision 4 — sqlite store** — `tokenexchange_policy_rules` table (position PK preserves order, scalar columns + JSON for the two lists), full in-memory snapshot with copy-on-write (read path zero I/O), `Replace` = single tx delete+reinsert with rollback keeping disk+snapshot on the old set, loud boot load, `PolicyStoreMaxVersion` + `CheckSQLiteSchema` drift gate. `default_allow` deliberately not persisted (config-owned). Multi-replica staleness documented as a known limitation.
+4. **Space-join encoding is safe**: OAuth scope grammar and RFC 8703/8707 resource URIs both exclude U+0020, so the flat-column space-join round-trips symmetrically — locked by a unit test, with the degenerate case documented as observability-only harm.
 
-**## Decision 5 — Config/wiring** — `backend`/`default_allow`/`policies`/`policies_file` on `OAuthTokenExchangeConfig`, DSN reused from `oauth.sqlite`; strict-YAML bundle parser (deliberate deviation from lenient `tokenpolicy.ParseYAML`); `BuildTokenExchangePolicyStore` beside `BuildTokenPolicyStore`.
-
-**## Decision 6 — Failure modes** — table covering boot, Replace, eval, audit, config, schema drift, torn reads.
-
-**## Decision 7 — What could break it** — the biggest finding:
-
-- **`build_app_oauth.go` has only 13 lines of headroom** (487/500, zero exemptions enforced repo-wide) — the requirement's literal "新增 `wireTokenExchangePolicy` in build_app_oauth.go" is inconsistent with the gate. Resolution: relocate `wireTokenExchangeChainLifetime` into a new `cmd/sso-server/build_app_tokenexchange.go` with the new wire function; fallback (inline into `wireOAuthGrantStores`, 487+10=497) if the team rejects new cmd files.
-- Audit event must land in `KnownEventTypes` + `drift_test.go` + CEF/OCSF maps in the same change or `make ci` fails.
-- `accessors_threat.go` (73 headroom) must keep only thin wrappers; `build_governance.go` (70) needs the builder lean with parsing in the domain package.
-- E2E restart test needs two boots against one temp DSN (close server 1 first to avoid WAL locking).
-- The analysis doc's false "tokenpolicy has sqlite backend" claim must not leak into `docs/config-reference.md`.
+Each decision section covers API surface, storage model, failure modes (as tables), and what could break the design (drift gates, oracle-safety regression, migration versioning, `parent_jti` semantic confusion, event-count leakage, cardinality creep). No Go gates were run — this was a docs-only change; the doc pins the verification sequence for implementation.
