@@ -1,12 +1,15 @@
-Design doc written to `docs/auto/domains-threataction-design.md`. Every decision was checked against the code and the AGENTS.md gates.
+Design doc written to `docs/auto/domains-threataction-playbook-design.md`, with every decision verified against the code first.
 
-**Decision summary**
+**Key verification findings that shaped the design:**
 
-- **## Decision 1 — Backend selection**: `threat_action.backend` (`memory` default | `sqlite`) + `threat_action.sqlite.dsn`, shaped like `config_audit`/`notifications`; fail-loud on missing DSN/unknown backend; `BuildThreatAction`'s `(exec, store, err)` return is preserved. Because `config_snapshot.go` sits at 482/500 lines, `ThreatActionConfig` moves to a new `config/config_threataction.go`; the builder switch + seeding move to a new `serverbuildplatform/build_threataction.go` (the function is at the 50-line budget).
-- **## Decision 2 — Durable-store hardening**: the dormant store's `New()` lacks WAL / `busy_timeout` / `MaxOpenConns(1)`; without them the multi-replica write path degrades into the limiter's fail-open branch. Since `domains/` cannot import `infrastructure/`, the pragmas, a local `BEGIN IMMEDIATE` helper, and an idempotent connection hook are reimplemented in `threataction/sqlite` (~25 lines).
-- **## Decision 3 — Lifecycle/readiness/schema gate**: sqlite handle stashed on `appBuilder`→`app`, closed in `shutdownSubsystems` after HTTP drain (mirrors `anomalyRuntime`); ready check + storage-health + `CheckSQLiteSchema` wired in `wireThreatAction` — this finally gives `ThreatPolicyMaxVersion()` (zero callers today) its boot gate. `wireThreatAction` needs a small helper extraction to stay under its function budget.
-- **## Decision 4 — Seed-once**: new transactional `SeedIfEmpty` on the sqlite store (`BEGIN IMMEDIATE` + re-check inside the txn, so concurrent replica boots and racing admin PUTs serialize); memory path stays byte-identical; boot log asserts `seeded`/`kept`.
-- **## Decision 5 — Shared limiter**: new `threataction.RateLimitStore` interface + `WithRateLimitStore` option (nil ⇒ current map, unchanged); `threat_rate_limits` table keyed by `(subject, threat_type, action, window_start)` as migration v2, atomic RMW under the SQLite writer lock, "replace-if-expired" semantics preserved, denied hits write nothing, goroutine-free sweep, fail-open on error; `backend: memory` is explicitly documented as per-replica with the N× budget caveat.
-- **## Failure modes** table (fail-loud boot vs fail-open runtime split) and **## What could break the design** (budgets, layer rule, silent-degradation point, NFS DSN constraint, YAML no-longer-reapplies, no wire/audit/OpenAPI drift).
+- `ThreatExecutors.Execute` is exactly **50 lines** — at the budget ceiling, so the multi-action executor must be an orchestrator over extracted helpers (plan construction + per-action execution), or the change fails `TestMaintainability_`.
+- Both production callers (`anomaly/runner.go:225`, `tokenanomaly/detector.go:419`) **discard the `ActionResult` and only check `err`** — so changing the interface to `([]ActionResult, error)` is free at every caller. The interface doc already promises "zero or more Actions"; the single-value signature is an implementation lag, not a contract.
+- The sqlite store's own design note ("nothing ever queries by SQL WHERE clause… no migration surface") is the precedent that kills the `priority INTEGER` column idea: `priority`/`actions` stay in the JSON blob, ordering happens in Go via a **single exported comparator** shared by both stores — parity by construction, not parallel maintenance.
+- No new `Err*` needed (`ErrInvalidPolicy` + reason strings), so `docs/error-codes.md` is untouched; openapi `required` must drop `action` to `[name, enabled]` or new `actions`-only payloads fail schema validation.
 
-Notable design judgment calls: relocating `ThreatActionConfig` (budget), reimplementing rather than importing the shared-DB pragmas (layer rule), and no new audit event type for seeding (boot log line only, so `auditreport` classification is untouched).
+**Notable design calls:**
+
+1. **Dedup before rate-limiting** — the highest-priority owner's `RateLimit` gates the action; a lower-priority duplicate never retries. Faithful generalization of today's first-match (windows were never independent), but worth documenting.
+2. **Per-action `recover`** (mirroring `inspectSafe`) — without it, one panicking handler in a list would drop *all* remaining actions of the threat, strictly widening today's blast radius and violating the package's own same-threat guarantee.
+3. **`default_action` frozen** as zero-match-only; the "silent takeover" interplay (a catch-all policy makes `default_action` unreachable) is documented as a known consequence.
+4. **Mixed-version blob overwrites** flagged: a pre-upgrade server `PUT`-ing a row strips new fields — pre-existing blob-store property, newly consequential during rolling upgrades.
