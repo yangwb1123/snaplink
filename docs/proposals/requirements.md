@@ -1,15 +1,22 @@
-Spec written to `docs/auto/interfaces-middleware-spec.md`. Every citation was verified against the code before writing (line numbers, signatures, alias targets, budget ceilings).
+Specification complete and saved to `docs/auto/interfaces-middleware-direction2-spec.md`. All evidence citations were verified against actual source line numbers. Summary:
 
-## Summary
+## Requirements Specification: direction 2 — core 层「请求级状态注册表 + 响应捕获栈」
 
-**Direction**: formalize the middleware chain as a typed pipeline with named slots. Verified the analysis claims: dual signatures coexist in `middleware.go` (`Recover` is `http.Handler`-shaped, `Auth`/`CORS`/`Logger`/`Tracing`/`Idempotency` are `core.MiddlewareFunc`); ordering invariants are comment-only across `server_routes.go:360-470`, `sso_wiring.go:389-421`, `server_health.go:347-351`; probes bypass the stack via a hand-written `buildProbeMux` (`server_routes.go:475`). Also confirmed binding budgets: `interfaces/middleware` at exactly 10 non-test files, `interfaces/sso` at the 60-file ceiling, `directory_fanout_test.go:34,59`.
+**Scope constraints** (verified): `shared/core` at frozen 23-file ceiling (`directory_fanout_test.go:63`) → registry/capture code must be net-file-neutral (carve `Context`/`trackingResponseWriter` out of `router.go`, 456 lines); `interfaces/sso` at 60-file ceiling; `shared/core` imports no Snaplink packages (typed keys instantiated by owning packages); `HandlerContext.SetResponseWriter` removal lands with all 3 adapters + `backgroundHandlerContext` in one change.
 
-### Three improvements (each with name / problem / evidence / proposed behavior / acceptance check)
+### ## 1. 类型化请求级状态注册表（typed request-state registry）
+- **Problem**: state split across ~11 private `struct{}` context keys (`subjectKey`, `idempotencyKey`, `requestInfoKey`, `traceIDContextKey`, geo `ctxKey`, `breakGlassActorKey`, `actorContextKey`, `claimsCtxKey`…) plus an untyped string-keyed `sync.Map` value bag with 4 production string keys (`"tenant:resolved"` `tenant/middleware.go:17`, `"auth_hook_skip_mfa"` `accessors_threat.go:20`, `"device_ctx"` `server_finish_login.go:140`, cross-package read `"extensions"` `loginui.go:31`).
+- **Proposed**: `core.RequestKey[T]` + `Get[T]/Set[T]` on `HandlerContext`; string-key shim deleted after migration.
+- **Acceptance**: zero `ctx.Set("`/`ctx.Get("` hits in production; cross-type key use fails to compile; `shared/core: 23` unchanged.
 
-1. **`middleware.Chain` — named-slot typed pipeline**: fixed slot fields (Recover → Tracing → Metrics → TrustedProxies → RateLimit → Degradation → AcceptVersion → BodyLimit → Compression → CORS → SecurityHeaders → RequestLog → Router) with probes as a structural pre-chain slot; wrong order unrepresentable at compile time. Collapses all seven hand-written assembly functions in `interfaces/sso` into one construction (edits to existing files only).
+### ## 2. core 层响应捕获栈（composable capture stack）
+- **Problem**: capture is writer-swap based (`SetResponseWriter` + `trackingResponseWriter` re-wrap at `router.go:60-90`); `idempotency.go:16-25` documents how capture "silently broke under the adapters before"; gin needs `ginCaptureWriter` facade, echo swaps `Response().Writer`, `request_log.go`'s `requestLogResponseWriter` is a separate http-level capture with no defined composition; failures surface only via the `idempotency_capture_missing` audit canary (`recordCaptureMissing` `idempotency.go:212`); `backgroundHandlerContext.SetResponseWriter` silently no-ops (`sso_wiring.go:304`).
+- **Proposed**: order-independent `CaptureStack` with install-time layer handles (capture structurally impossible to miss); delete `SetResponseWriter`, `InstallCapture`, `recordCaptureMissing`, `EventIdempotencyCaptureMissing`.
+- **Acceptance**: routertest conformance on std/gin/echo with two simultaneous captures seeing identical status+body; zero `SetResponseWriter|InstallCapture` outside core; audit taxonomy + `docs/observability.md` updated in same change.
 
-2. **Single-signature pipeline + one `FromCore` boundary adapter**: standardize on `func(http.Handler) http.Handler`; migrate the in-use `core.MiddlewareFunc` middlewares; delete legacy `Auth`/`CORS` (verified dead server-side — only `aliases.go:43-44` re-exports and tests reference them); `core.MiddlewareFunc` stays for route-level `Router.Use`.
+### ## 3. 统一请求状态表面（single request-state surface）
+- **Problem**: http.Handler-level middlewares write `r.Context()` (TrustedProxies via third-party `peertrust.WithRequestInfo`, `rs.HTTPMiddleware`), HandlerContext-level write the bag — same data reachable two ways; worst case `ResolveTenantID` (`tenant/middleware.go:137-149`) is a second full copy of the Host→Domain→Tenant lookup because the rate-limit rejection metric runs before tenant middleware.
+- **Proposed**: registry lives on `r.Context()` (`core.RequestStateOf`), `HandlerContext` is a view; tenant resolution memoized in one slot — rejection path reuses it, `ResolveTenantID` deleted.
+- **Acceptance**: cross-signature read/write tests; mock-Store count proves zero second lookups when slot is filled; `requestInfoKey`/`ResolveTenantID` grep-zero.
 
-3. **Ordering invariants as executable tests**: four regression tests bound to the chain — forged-XFF rate-limit bucketing, degradation-gate position (rate-limited outside, body-limit short-circuit), probe bypass (byte-identical with/without chain), and the route-level idempotency-after-auth oracle invariant (`idempotency.go:142-153`) — each designed to fail on a deliberate slot swap.
-
-Budget constraints drove key decisions: chain code extends `middleware.go` (or a new `chain/` subpackage) since the directory is at its 10-file ceiling; `interfaces/sso` changes are edits only; the consolidation relieves `server_routes.go`'s line-budget pressure. No changes to `core/router.go`, the capture mechanism, or observability (directions 2–3, out of scope).
+A delivery order (registry → surface → capture stack, each independently gated with `go test ./... -race` + `make ci`) closes the spec.
