@@ -1,25 +1,11 @@
-Specification written to `docs/auto/interfaces-ssoclient-direction2-spec.md`. All evidence was verified against the code before writing — here's the summary:
+Spec written to `docs/auto/infrastructure-redis-direction1-spec.md`. All cited evidence verified against source (line numbers confirmed: `build_bootstrap.go:222` redis readycheck, `config_keys.go:151` `ClusterBusConfig`, `server_invalidation.go:140/175/259`, `BuildInvalidationBus` switch, `mqtt/subscribe.go:41`).
 
-## Deliverable: `docs/auto/interfaces-ssoclient-direction2-spec.md`
+**Summary — 3 evidence-backed improvements for direction 1 (Redis as cluster coordination layer):**
 
-**Contract principle**: the `AuthClient` facade must never be weaker than the `rs` layer it wraps or the server endpoint it calls.
+1. **`redisbus` package implementing `cluster.Bus` over pub/sub** — `platform/cluster/bus.go` SPI is JSON-shaped and best-effort (no delivery guarantees needed); `infrastructure/mqtt/bus.go` proves the SPI is implementable on a pub/sub transport; `BuildInvalidationBus` currently has no redis branch. New `bus.go` in the existing root-module redis package: JSON-marshaled `Event` on a namespaced, hash-tag-safe channel, own-event self-skip, `ErrClosed` semantics matching mqtt, miniredis-based tests.
 
-### ## Improvement 1: Mandatory issuer pinning in `remote.AuthClient`
-- **Problem**: `iss` is parsed and dropped — `remote.ValidateToken` verifies only signature + exp/nbf, so a multi-App central-SSO deployment accepts tokens minted for other clients.
-- **Evidence**: `remote/auth.go` `jwtPayload.Iss:74` never read; `AuthOption` has no issuer option; vs. `rs/rs.go:88-89` (Issuer REQUIRED), `rs/claims.go:162-164` (exact match), `rs/validate.go:26-28` (fail-closed).
-- **Proposed**: `WithIssuer` option + `ErrIssuerRequired` fail-closed gate + exact-match `ErrIssuerMismatch`; surface `Subject.Issuer` in both implementations (`local` drops `TokenClaims.Issuer` today).
-- **Acceptance**: cross-issuer rejection tests; existing multi-alg matrix passes with the option wired.
+2. **Wire `redis` backend into `BuildInvalidationBus` + `ClusterBusConfig`** — the config comment (`"" | "memory" | "etcd"`) and `docs/config-reference.md:127` enumerate only memory/etcd; the bus must reuse the single shared client built in `build_bootstrap.go` (one pool, one HA story), mirroring the existing `case "redis"` in `BuildRateLimitPolicy`. Includes config validation, doc sync, and a `test/` end-to-end cross-server test.
 
-### ## Improvement 2: Audience enforcement in `remote` and `local`
-- **Problem**: `aud` passes through to `Subject.Audience` unchecked in both implementations — a horizontal privilege boundary across Apps.
-- **Evidence**: `remote/auth.go` `normalizeAudience` pass-through; `local/auth.go:42-50` unchecked copy; `docs/examples/embedded-app/main.go:35-38` admits the gap with its `clientID=""` workaround; vs. `rs/claims.go:179-181` + `rs/introspect.go:124-127` `ExpectedAud` gate.
-- **Proposed**: `WithExpectedAud` on both implementations with rs-mirroring semantics (empty = skip, set = mandatory containment, `ErrAudienceMismatch`); fix the example to mint `aud` and delete the workaround.
-- **Acceptance**: cross-client token rejection tests (string and array `aud` forms); example builds with a real client ID.
+3. **Loss-detection semantics: close the subscribe channel on pub/sub disconnect** — `runInvalidationBus` treats channel closure as the sole degraded signal driving resubscribe + re-seed (`resubscribeAndReseed`, `invalidation_bus_degraded` audit, `InvalidationBusReady`); a silently-dead subscription would make the replica *believe* it is coordinated while blind. Matches `mqtt/subscribe.go`'s session-loss closure precedent and AGENTS.md §3 fail-closed recovery.
 
-### ## Improvement 3: `Logout` revocation contract
-- **Problem**: `remote.Logout`'s first line `if c.logoutURL == "" || req == nil { return nil }` silently claims success when no request was sent, while the server's RFC 7009 endpoint (`protocols/oauth/handle_revoke.go`) answers definitively and `local.Logout` already errors on empty requests — the two facade implementations disagree.
-- **Evidence**: `remote/auth.go` Logout + `WithLogoutURL` doc ("silently skips"); `server_routes.go:182` `POST PathRevoke`; `handle_revoke.go` "always 200 OK ... regardless of whether the token existed"; `local/auth.go:64-66`.
-- **Proposed**: `ErrLogoutNotConfigured` + argument error instead of nil; new `WithRevokeURL(url, clientID, clientSecret)` speaking the server's actual form-bound `token`/`token_type_hint` + Basic-auth contract (keeping `WithLogoutURL` for the OIDC end-session path).
-- **Acceptance**: loud-failure unit tests; no caller depends on silent nil; both implementations agree on the no-op contract.
-
-The spec also includes non-goals (direction 1's token-acquisition scope excluded), budget checks (no new packages, `interfaces/sso` 60-file ceiling untouched), and a landing order. No code was modified — this is spec-only, per the request.
+Not folded in (out of scope for this direction): store observability metrics, session-enumeration N+1, and the `doc.go` nested-module drift.
