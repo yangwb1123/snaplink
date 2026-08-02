@@ -1,34 +1,37 @@
-All cross-checks complete. Here is the gatekeeper report.
+# Gatekeeper Cross-Check: Review Findings vs. Design
 
-# Gatekeeper cross-check: review findings vs. design/implementation
+I re-read the design (`docs/design/domains-region-policystore-spi.md`) and the requirements spec it implements, then mapped every material finding from the five reviews against the design text as written.
 
-**State:** Reviews were filed against design commit `744580d8`. The design doc (`docs/auto/domains-region-token-contract-design.md`) is **unchanged** since then — no review finding was folded into it (no uncommitted doc edits; the `docs/` diffs present belong to other batches). The in-flight implementation resolves a subset in code. I re-verified every finding against the live tree; `go build` and `TestMaintainability_|TestArchitecture_` pass at write time.
+## Findings resolved or dismissed with adequate reasons
 
-## Resolved (in the in-flight code, not in the design doc)
-
-| Finding | Status | Evidence |
+| Finding | Design response | Ruling |
 |---|---|---|
-| QA F1 — remote gate fail-closed, both modes, order pinning | **Resolved** | `introspect_test.go` in-set/out-of-set/no-echo cases; `TestValidateToken_ServingRegionGateRunsLast`; remote gate sits last in `validateIntrospectedClaims` with the fail-closed asymmetry documented inline |
-| QA F2 — per-issuer ID-token stamps | **Resolved** | `TestServingRegion_IDTokenClaim` iterates all three signers, empty ⇒ absent |
-| QA F3 — `baseAdvertisedGrants` move | **Resolved** | Deterministic move adopted: helper now in `server_discovery_cache.go:47`; `server_discovery_config.go` at 488, gates green |
-| QA F5 — `refreshRotatedSubject` param | **Resolved** | Param added (`token_refresh.go:245`), unit pin in `refresh_grace_test.go:28`, E2E re-stamp test |
-| QA F6 — full-payload decode helper | **Resolved** | `decodeJWTPayload` decodes both tokens in E2E |
-| QA F7 — echo positive + negative | **Resolved** | `TestIntrospectionEmitsServingRegion` (present + absent) |
-| Sec F2 — `[""]` fail-open edge | **Partially resolved** | `HasServingRegionIn` short-circuits on empty claim, so `[""]` cannot admit claim-less tokens — but the explicit `AllowedServingRegions: []string{""}` regression test requested by the reviewer does not exist |
-| Sec F4(a) — `HasServingRegion` vs `HasServingRegionIn` | **Resolved** | Both defined; gate uses `HasServingRegionIn` |
-| Proto H2 — placement/budget arithmetic | **Resolved** | 503→500, split `introspect_body.go`, `handle_introspect.go` 415; maintainability gates pass |
-| Proto L2 / DPoP ordering | **Resolved** | Gate-last placement pinned by test + comment |
+| Arch F3 ≡ Sec F4 ≡ Prin M-5: `memory.Store.Set` signature under-specified | Design's `regiontest.Backend` pins exactly `Set(ctx, tenantID, p) error` / `Delete(ctx, tenantID) error`; risk #5 acknowledges compile-time break; in-repo churn is mechanical | Resolved in substance (conformance interface locks it) |
+| Arch F5 ≡ Prin L-4: `wireRegion` ordering | Design states explicitly: store built before resolver-nil early return (boot-loud); option appended unconditionally, nil-safe | Resolved |
+| DB L5 ≡ Prin L-2: `NewWithDB` error swallow | Design proposes no `NewWithDB` | Resolved by construction |
+| Sec F6 ≡ Prin I-2 (serving-region config validation), Arch F6 ≡ I-1 (`PutTenant` validation) | Pre-existing / spec-scoped out; recorded as residual | Dismissed with reasons (follow-up scope) |
+| Arch F7 ≡ Prin I-3 (boot-seed-only, no admin RPC) | Design risk #3 documents it plus the `InvalidateTenantResidencyCache` embedder obligation | Dismissed with reasons (scope decision) |
+| Sec F5 ≡ Prin L-5 (`AllowedRegions` cardinality) | Optional, Low | Dismissed (non-blocking) |
+| Arch F4 ≡ Prin L-3 (subdir count 1→2 vs 1→3) | Doc inconsistency only; no gate impact | Cosmetic, non-blocking |
 
-## Unresolved — no dismissal with reasons anywhere
+## Findings unresolved or dismissed with inadequate reasons
 
-1. **Sec F1 / Proto H1 / M1 / M2 (High/Medium) — six mint sites still unstamped and not allowlisted.** Verified in the live tree: `protocols/oidc/handle_silent_renewal.go:210` (access) and `:390` (ID); `cmd/sso-server/serverwebauthn/webauthn.go:217` (access) and `:291` (ID); `infrastructure/kerberos/handler.go:268` (access) and `:294` (ID). The design's "deliberately empty" list covers only break-glass and admin temp tokens; silent renewal runs inside the HandlerContext pipeline (region stashed, so stamping is trivial and its omission breaks decision 2's "advertised == minted" invariant), WebAuthn already resolves the region for its residency gate, and Kerberos needs the deps-threaded decision the reviewers demanded. The requested mint-site enumeration regression test does not exist. Decision 3's fail-closed gate will mass-deny all six flows in region-pinned deployments.
-2. **Contract docs missing (AGENTS.md §5.6 — same change).** Verified absent: `docs/error-codes.md` row 88 (no RS-gate/`serving_region` disposition); `docs/openapi.yaml` (only the pre-existing login `serving_region` at :12156 — no `OpenIDConfiguration` extension property, no token-schema claims, no login-description update); `docs/feature-matrix.md` row 150 unextended; `docs/config-reference.md` has no `WithServingRegionAdvertisement`/`AllowedServingRegions` entries.
-3. **Sec F3 (Medium) — trust-chain precondition unstated.** No `PeerTrust`/`Allowed` precondition on `AllowedServingRegions` anywhere; no header-resolver-without-`PeerTrust` warning; error-codes row (the remediation's carrier) is untouched.
-4. **QA F4 (Medium) — Mount-time warn untested.** Warning exists at `server_routes.go:139-140` but no log-capture test asserts it fires at Mount.
-5. **Proto L3 (Low) — adversarial inputs unpinned.** No non-string `serving_region` (`123`) → `ErrTokenMalformed`/parse-failure test in either mode.
+**H-1 — Ladder order (`Tenants == nil` short-circuit) — UNRESOLVED, blocking.** Arch F1 ≡ Prin H-1 ≡ QA F3. The design's ladder step 1 still reads `deps.Tenants == nil → (zero, false, false)` *before* the store tier. With `tenant.enabled=false` (`BuildTenantStore` returns `(nil,nil)`, verified) or a store-only embedder, the store is never consulted — the exact configuration the SPI exists for. The spec mandates store-first ("when a store is wired → `store.GetPolicy`"); the design's own acceptance (1) fails in that config. The design contains this defect as written; no amendment was made.
+
+**H-2 — Partial-policy authority — DISMISSED, but the dismissal is inadequate; blocking.** DB H1 ≡ Sec F1 ≡ Prin H-2 ≡ QA F2. The design keeps the authority predicate `HomeRegion != "" || len(AllowedRegions) > 0 || EnforceWrites`, `ValidatePolicy` stays format-only (skips empty `HomeRegion`), and the failure mode is documented as "authoritative by design; operator-owned". The dismissal argument (replace-not-merge preserves the single-source-of-truth property) addresses pin *replacement*, but three reviewers independently verified the actual effect is worse than documented: `{allowed_regions:[eu-west-1]}` is authoritative yet *inert* (`evaluateResidency` returns nil on empty `HomeRegion` — the entire gate disables, not just a pin drops), silently removing the tenant-row pin the spec's "can only ADD constraint, never silently REMOVE it" rationale promises. The design's own risk #4 admits the under-constraint migration scenario and defers the fix as a follow-up; the principal review made the dual fix (reject partial in `ValidatePolicy` + narrow authority predicate to `HomeRegion != ""`) a precondition. This contradicts the spec's own rationale — the dismissal does not hold.
+
+## Unresolved, design silent (non-blocking alone, but required amendments)
+
+- **DB M2 ≡ Prin M-3**: sqlite backend omits `MaxVersion()`/`CheckSQLiteSchema` and `AppendStorageHealthSource` — no mention in the design; "mirrors connections/sqlite" is precisely the wrong model here.
+- **DB M3 ≡ Prin M-4**: no `SetMaxOpenConns(1)`/WAL/busy_timeout guidance for a writer-bearing store — absent.
+- **Compliance F1 (High in its rubric)**: no audit events for policy-store `Set`/`Delete`; `config_audit` snapshot coverage of `region.policy_store` unstated — neither resolved nor dismissed.
+- **Sec F2 ≡ Prin M-1**: admin tenant edits silently inert for store-backed tenants — no warning mechanism or write-through; needs at least the config-reference note and a product decision.
+- **Sec F3 ≡ Prin M-2 ≡ QA F6**: `DeleteTenant` → store-row cleanup — documented as out-of-scope, but no locking test for either the documented or the remediated behavior.
+- **QA F1/F2/F5/F7**: the four highest-value test locks (`cacheable=false` recovery, authority predicate, `Tenants==nil` ordering, boot-loud propagation, sqlite house patterns) are absent from the design's test plan.
+- **DB L4 ≡ Prin L-1**: no `GetPolicy` latency bound; **QA §5**: `-run TestE2E` does not match the residency E2E tests (`TestResidency_*`).
 
 ## Verdict
 
-The implementation is strong on the decision-3 gate matrix, per-issuer ID stamps, budget placement, and E2E — but the two highest-severity review findings (the incomplete mint-site inventory with six live unstamped paths, and the §5.6 contract-doc obligation) are neither resolved nor dismissed with reasons, and the design document itself was never revised to incorporate any review feedback. The silent-renewal/WebAuthn/Kerberos gap converts decision 3 from a governance gate into an availability break on real user paths, and no enumeration net exists to prevent regression. This blocks implementation-stage handoff as reviewed.
+The design is thorough and the placement/gate resolution is correct, but the two convergent High defects remain in the design **as written**: (1) the `Tenants == nil` short-circuit makes the store tier unreachable in the store-only configuration, and (2) the authority predicate + format-only `ValidatePolicy` accept a partial policy that silently disables the entire residency gate, violating the spec's own add-only rationale. Both are cheap, precisely specified fixes (ladder reorder; reject partial policies + narrow predicate) that the principal review designated as the gate between design and implementation. The design must be amended (or the deviations explicitly signed off with amended spec rationale) before implementation proceeds; the pattern-parity and audit/decision items (M2/M3, compliance F1, admin-inert warning, delete-cleanup, QA test locks) must be folded in or explicitly recorded.
 
-VERDICT: FAIL - six unstamped mint sites (silent renewal x2, WebAuthn x2, Kerberos x2) with no enumeration test or documented exclusion; contract docs (error-codes.md, openapi.yaml, feature-matrix.md, config-reference.md) unupdated per AGENTS.md 5.6; trust-chain precondition (Sec F3) unstated; Mount-warn untested (QA F4); explicit ["\"]-config and non-string-claim tests missing
+VERDICT: FAIL - H-1 ladder short-circuits before the store tier when Tenants==nil (store unreachable in store-only config); H-2 partial-policy authority predicate makes a HomeRegion-less store policy authoritative-but-inert, silently disabling the gate and violating the spec's add-only guarantee — both unresolved in the design; plus unaddressed amendments: sqlite schema-safety/health/concurrency parity (M2/M3), audit events for policy-store writes (compliance F1), admin-edit inertness warning (Sec F2), delete-cleanup decision + tests (Sec F3/QA F6), and the QA F1/F2/F5 locking tests
