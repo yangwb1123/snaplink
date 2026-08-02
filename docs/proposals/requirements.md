@@ -1,17 +1,11 @@
-Spec complete: `docs/auto/interfaces-sso-direction2-postgres-hotstore-spec.md`
+Specification written to `docs/auto/interfaces-sso-direction3-spec.md`. It implements 方向三 from the analysis with re-measured evidence — the analysis's "至少 104" thin delegates is actually **174 of 234** `handle*` methods (74%) in the current tree, and the 60-file ceiling (`directory_fanout_test.go:59`) is confirmed machine-enforced at the exact current file count.
 
-## Summary
+## The 3 improvements
 
-I verified the 方向二 claim against the code, then produced a 3-decision requirements spec, each with name, problem, evidence (file/symbol), proposed behavior, and acceptance check. Key verification findings:
+1. **协议路由挂载下沉** — 109 non-admin thin delegates (selfservice 56, oauth/oidc/caep/rebac 24, netpolicy 6, federation 6, webhook 5, configaudit 5, permissions/audit 6, wasmauthz 1) plus their 40 mount sites move into owning packages via a `MountRoutes(r core.Router, d Deps, gates …)` pattern. Architecturally free: `core.Router`/`HandlerContext` live in `shared/core` below every layer, and the deps interfaces (`IntrospectDeps`, `selfservicecore.Deps`) already exist. Acceptance: handle-method count 234 → ≤125, `cli.py check-routes` lockstep, zero `layerExemptions` growth.
 
-**Gap confirmed**: `oauth.backend` dispatch (`serverbuildstore/build_oauth_stores.go`) only handles `memory|sqlite|redis`; `infrastructure/postgres/` has zero OAuth hot stores; `docs/config-reference.md:100` is asymmetric with `identity.session_backend` (line 99, already postgres-capable). The postgres hot-store template already exists — `infrastructure/postgres/session.go` (`NewSessionManagerWithDB` + per-namespace `Run`).
+2. **Admin 管理面整组下沉** — the largest cluster (60 admin + 5 adminuser delegates, `mountAdminSurface` + 11 sub-mounts, `server_admin_handlers.go` 498 lines, `server_routes_admin.go` 332 lines) moves to `interfaces/admin`, which already owns `AdminMiddleware`, `Deps`, and every `HandleAdminX` body — same-layer work touching no exemption. Hot-reload gates stay byte-identical via closure-injected `adminAPIGateOn`. Acceptance: `server_admin_handlers.go` ≤200 lines, admin route set unchanged.
 
-## The 3 decisions
+3. **文件归并与天花板棘轮** — after 1+2, merge residuals and ratchet `dirFileCountExemptions["interfaces/sso"]` from 60 to ≤52 (the gate's own "SHRINK THESE" contract makes lowering the sanctioned direction), regenerating via `SEED_DIRFANOUT=1`, and update the AGENTS.md §2 ceiling sentence. This converts the slimming into durable, gate-enforced headroom — the prerequisite that unlocks directions 一/二.
 
-1. **Postgres implementations of the four OAuth hot-store SPIs** — new `auth_code.go` / `refresh_token.go` / `device_code.go` / `par.go` in `infrastructure/postgres`, translating the SQLite `DELETE ... RETURNING` atomic-consume semantics (verified at `sqlite/auth_codes.go:303-320` etc.), family ledger, and reuse detection; shared-pool constructors per the session-store precedent. `interfaces/sso` stays frozen (60-file ceiling) — `WithAuthCodeStore(store oauth.AuthCodeStore, ...)` accepts any implementation.
-
-2. **Optional-SPI and opaque-lookup parity** — the postgres refresh store must implement `RefreshTokenSubjectIndex`/`ClientPurger`/`FamilyTracker`/`RotationLimiter`/`ExpiryLister` + `SetLookupHMACKeys`, because `interfaces/sso` consumes them via type assertion (`server_tenant.go:169` tenant-suspension purge, `sso.go:375` governance, `build_app_oauth.go:245-247` GDPR erasure) — omitting them silently degrades shipped features, the worst failure mode for a "first-class" backend.
-
-3. **Stock-binary surface closure** — `case "postgres"` in all four builders (loud `errPostgresNotConfigured`-style failure), schema boot-gate branching (`CheckSQLiteSchema` would falsely fail on a postgres pool; precedent `checkIdentityLinkSchema` at `build_stores.go:403-410`), `rotation_grace_backend=postgres` (currently rejected at `build_app_oauth.go:257-300`), docs enum updates, and HA-coherence test locking.
-
-Dependency order 1→2→3, each gated by `go build/vet`, maintainability/architecture tests, `-race`, E2E, and `make ci`.
+No `.go` files were modified; the deliverable is the spec document only.
