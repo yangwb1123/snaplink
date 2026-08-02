@@ -1,11 +1,18 @@
-Spec written to `docs/auto/interfaces-adapters-direction1-spec.md`. All evidence was verified against current code before writing — including the exact assertion lines (`idempotency.go:74`, `server_token.go:125`), the zero hits for `Abort`/`Written` in `shared/core` + `interfaces/adapters`, the unconditional `wrapHandler` loops in both adapters, and (via `go doc`) that gin `Context.Writer` and echo `Response.Writer` are public reassignable fields, which makes capture wireable.
+Spec written to `docs/auto/interfaces-adapters-direction2-spec.md`. I verified each claim against the code before writing:
 
-The three evidence-backed improvements (## headings in the spec):
+**Verified evidence base**
+- `shared/core/router.go` — `StdRouter.ServeHTTP` falls through to `http.NotFound` for unmatched routes (incl. method mismatch); `gatedRegistrar` doc explicitly states adapters "never implements this, and GatedRouter falls back to handler-wrapping"; `StdRouter.registerGated` snapshots middlewares at registration.
+- `interfaces/adapters/gin/adapter.go` / `echo/adapter.go` — `wrapHandler` iterates `g.middlewares` at **request** time with no lock; echo uses `echo.New()` defaults (JSON 404 / 405 on method mismatch); gin relies on `gin.Default()` coincidences.
+- `adapter_test.go` (11+11 cases) — all happy path, zero 404/405/gating/middleware-order coverage.
+- `shared/core/router_test.go:188,204,443,500` — single-backend property locks (`MethodMismatchFallsThrough`, `NotFound`, `LiveToggleControlsReachabilityByteIdenticalTo404`, `GateOffSkipsGlobalMiddleware_NoHeaderLeak`).
+- Precedent: `domains/permissions/permissionstest/conformance.go` `ConformanceSuite`, wired by memory/sqlite/postgres/redis.
 
-1. **Short-circuit primitive: `Abort()`/`Aborted()`/`Written()` on `HandlerContext`** — Problem: middlewares cannot stop the handler (`StdRouter.ServeHTTP` and both adapters' `wrapHandler` run middlewares then the handler unconditionally), so `middleware.Auth`'s 401 and `CORS`'s 204 double-write, and gin's native `c.Abort()` is useless because the adapter drives the chain itself. Proposed: interface primitives + chain-stop in all three backends; Auth/CORS call `Abort()`. Acceptance: byte-identical 401/204 + handler-not-executed across StdRouter/gin/echo.
+**The 3 decisions**
 
-2. **Response capture: `SetResponseWriter` promoted to the interface** — Problem: `/token` idempotent replay capture installs via `ctx.(*core.Context)` (idempotency.go:74, server_token.go:125); under adapters the assertion fails silently, so the AGENTS.md idempotency wire contract vanishes with no error. Proposed: interface method + writer-swap wiring (`c.Writer = w` / `c.Response().Writer = w`); `grep .(*core.Context)` in `interfaces/` must be zero. Acceptance: byte-identical replayed `/token` response, grant executed once, on all three backends.
+| ## | Name | Core gap |
+|---|---|---|
+| 1 | `routertest.ConformanceSuite` | New test-only package (permissionstest pattern; `shared/core` imports no Snaplink packages, so adapter tests can legally consume it); fixed route table + scenario matrix asserting **byte equality** (status + body + headers), wired into std/gin/echo; baseline must fail on echo before fixes |
+| 2 | 未匹配响应归一化 | Adapters must explicitly install not-found/method-not-allowed handlers emitting `http.NotFound` bytes (404 plain text, not echo's JSON 405), with an explicit opt-out for app-owned 404s; pinned by suite scenarios, not framework defaults |
+| 3 | 注册期快照 + 公开门控注册 | Snapshot middleware at registration (StdRouter parity), race-free `Use()`/`ServeHTTP`, and promote `gatedRegistrar` to a public interface adapters implement so gate-off is byte-identical to never-mounted — including no global-middleware header fingerprints |
 
-3. **Hit-short-circuit + loud commit: one idempotent-hit path** — Problem: cache-hit requires handler cooperation (`HandleIdempotentRequest` at handler entrance — a limitation the code self-documents), the token endpoint duplicates the mechanism inline, and `CommitIdempotentResponse` silently skips when capture is missing. Proposed: `middleware.Idempotency` short-circuits hits via `Abort()` (retiring the convention), /token keeps its post-auth hit-check (oracle ordering: no cached 200 replayed to a request that would fail auth), commit becomes a loud audited failure. Acceptance: side-effect counter increments exactly once across three backends; wrong-secret replay returns 400; audit event on capture loss.
-
-Dependencies run 1 → 2 → 3, and each step is independently shippable with the mandatory gates.
+Each decision carries the required problem → evidence (file/symbol) → proposed behavior → acceptance check chain; acceptance checks are falsifiable (they fail today on gin/echo and pass after the change), which is what makes byte consistency an executable constraint rather than documentation.
