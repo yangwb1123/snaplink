@@ -1,15 +1,18 @@
-Written to `docs/auto/domains-threataction-requirements.md`. I verified every claim against the code first:
+Spec written to `docs/auto/domains-threataction-playbook-spec.md`. All evidence was verified against the code before writing:
 
-**Evidence verification performed**
-- `grep -rln "threataction/sqlite"` repo-wide: zero importers (only a doc-comment mention in `domains/tokenexchange/sqlite/chain_store.go`) — the SQLite store is confirmed dead code despite 6 passing tests.
-- `BuildThreatAction` (`cmd/sso-server/serverbuildplatform/build_governance.go:310`) hardcodes `threatactionmemory.NewThreatPolicyStore()`; `ThreatActionConfig` (`config/config_snapshot.go:472`) has no `backend`/DSN knob.
-- `registry.go`: `rateLimit map[string]*rateLimitEntry` + `allow()`/`rateLimitSweepThreshold` are strictly in-process; the sqlite schema has only the `threat_policies` table.
-- Sibling patterns confirmed for reuse: `BuildConfigAuditStore` backend switch, `buildTenantStoreBackend` logging, `anomalyRuntime.close` lifecycle, `ThreatPolicyStore.Ping` ready-check.
+**Verified evidence highlights**
+- `threataction.go`: `Action` doc claims "Multiple actions can result from one Threat" while `ActionResult` carries a single action — and `RateLimitKey` is already per-action keyed (composition anticipated at the limiter, never the model).
+- `policy.go`: `ThreatPolicy.Action Action` — single value field.
+- `registry.go`: `Execute` early-returns after one handler; package doc's FAIL-OPEN promise ("one broken executor must not block ... acting on the SAME threat") is unfulfillable by construction.
+- `memory/policy_store.go` and `sqlite/policy_store.go`: both `List` sort by `Name` — "first-match wins, ordered by name" is a lexicographic accident; name doubles as the CRUD path parameter.
+- `admin.go`: `invalidPolicyReason` validates one action only; no ordering concept in the CRUD path.
+- `build_governance.go` (~line 338): `WithDefaultAction` wired as zero-match fallback only — cannot stack.
+- `docs/openapi.yaml` ThreatPolicy schema: documents "first-match in name order"; `required: [name, enabled, action]`.
 
-**The 3 improvements** (## headings, each with name / problem / evidence / proposed behavior / acceptance check):
+**The 3 improvements** (ordered by dependency, each wire-compatible with existing single-`action` payloads):
 
-1. **Backend selection** — wire the dormant SQLite store into `BuildThreatAction` behind `threat_action.backend: memory|sqlite` + `threat_action.sqlite.dsn`, fail loud on missing DSN, with lifecycle (close + ready-check) mirroring `anomalyRuntime`; default stays byte-identical.
-2. **Seed-once boot semantics** — the current unconditional `store.Put` seed loop would silently roll back admin-authored policies on every restart once the store is durable; seeds must apply only to an empty store, with a logged seed/keep decision.
-3. **Cross-replica rate limiting** — per-process limiter gives an attacker N× budget across N replicas; add a `threat_rate_limits` SQLite table with atomic upsert keyed by `(subject, type, action, window_start)` behind the same backend switch, fail-open on store error, memory path unchanged.
+1. **Ordered multi-action playbook per policy** — add `Actions []Action` (legacy `action` kept as shorthand); `Execute` iterates in order, reusing the existing per-action `RateLimitKey`/`allow()` and per-action `recordAudit`; returns `[]ActionResult`; per-action FAIL-OPEN makes the same-threat sibling guarantee real.
+2. **Explicit `priority` replaces name ordering** — `(priority asc, name asc)` total order in both stores in lockstep; default 0 means existing deployments are byte-identical (regression-free); negative priority rejected at admin validation.
+3. **Multi-policy accumulation** — `matchPolicies` returns all matches in priority order, flattened with per-action dedup (highest-priority policy owns rate-limit/audit attribution); `default_action` stays zero-match-only and is explicitly *not* changed to avoid altering fail-safe semantics — stacking is expressed via a low-priority catch-all policy.
 
-Each acceptance check names concrete tests (restart-survival, two-replica shared-window, boot-error cases) plus the mandatory gates (`go build ./... && go vet ./...`, architecture/maintainability tests, `make ci`) and the `docs/config-reference.md` contract updates required by AGENTS.md §5.
+Acceptance checks are concrete per improvement (audit-event counts, cross-policy sibling isolation, store-order parity, legacy-payload byte-identity, admin rejection of invalid priority).
