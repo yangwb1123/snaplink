@@ -1,13 +1,25 @@
-Spec written to `docs/auto/domains-userlifecycle-direction2-spec.md`, following the existing `direction1-spec.md` convention. All claims were verified against the code before writing.
+Specification complete: `docs/auto/domains-userlifecycle-prod-spec.md` (exactly 3 `##` decisions, every claim verified against the code before writing).
 
 ## Summary
 
-**Direction 2**: PURGED claims erasure without erasing; INVITED has no production entry. Three evidence-backed improvements:
+**Direction 3 — 生产化短板** decomposed into three independently shippable improvements, each preserving the module's anchors (无记录=ACTIVE, zero-value=OFF, unwired=byte-identical):
 
-**1. Erase on purge** — `StatePurged` is documented as "the account's data has been erased" (`domains/userlifecycle/userlifecycle.go`), but `applyLifecycleTransition` (`interfaces/admin/lifecycle.go:73-91`) only Appends + audits. `OnUserPurged` (`bus.go`) has zero production callers; `NewLifecycleEventBus` is constructed only in tests/doc examples; the production `compliance.Eraser` (built at `cmd/sso-server/compliance_routes.go:32-47`) is wired only to `/me/account/erase` and the admin GDPR endpoint. Proposed: `lifecyclereactions.EraseOnPurge` reference reaction, composition-root bus wiring, config-gated `purge_requires_erasure` fail-closed mode, erasure summary in the response/audit.
+### 1. Durable SQL `Store` peer
+- **Problem**: only `memory.Store` exists (`build_userlifecycle.go` returns `userlifecyclememory.New()` unconditionally); state is process-local and lost on restart, so multi-replica deployments diverge silently and AGENTS.md's cross-replica invalidation list omits lifecycle.
+- **Evidence**: `domains/userlifecycle/memory/memory.go` package doc ("State is lost on restart…"), `userlifecycle.go` `Store` interface comment ("memory today; a SQL peer can follow the same contract"), zero `userlifecycle` refs under `infrastructure/`, `docs/config-reference.md`.
+- **Proposed**: `infrastructure/postgres` backend implementing the same contract — single-statement conditional `INSERT`/`UPDATE` mapped to `ErrStateConflict`, `Get` returns DefaultState for missing rows, config-selected backend, shared conformance suite with memory.
+- **Acceptance**: conformance parity both backends; two-handle race test → one success, one `ErrStateConflict`; gates + `make ci`.
 
-**2. INVITED provisioning entry** — The seed edge `StateNone→StateInvited` exists (`transitions.go:26`) and memory implements it (`memory/memory.go:52-55`), but the only production `Append` callers (`lifecycle.go:80` with `From=rec.State` — never `StateNone`; `sweep.go:144`) can't reach it; `StateInvited` appears nowhere in production outside the package (verified by grep). Proposed: SCIM/admin seed writer via `Append(From: StateNone)` + a first-login (or admin) `INVITED→ACTIVE` acceptance trigger, which direction 1's gate depends on.
+### 2. Lease-serialized, cursor-based incremental sweep
+- **Problem**: `SweepOnce` walks the full unpaginated roster (`Users.List`); `ListByState` exists but has zero callers (its own doc says the sweep uses the full roster); every replica runs its own ticker and `ErrStateConflict` races are silently swallowed.
+- **Evidence**: `sweep.go` `SweepOnce`/`apply`, `userlifecycle.go:143-147`, `shared/core/spi.go:42` (`UserProvider.List` "pagination is the caller's responsibility"), `options_admin.go` `RunUserAutoDeprovision`, `build_stores.go:368`.
+- **Proposed**: store-level sweep lease (SQL conditional upsert w/ TTL; memory single-flight), keyset-cursor `ListByStateAfter`, `MaxPerSweep` extended to bound scanned candidates; `SweepOnce` semantics unchanged.
+- **Acceptance**: two-holder race test → exactly one applies; O(k) scan for k dormant of N; existing `sweep_test.go` cases unchanged; `-race` + `make ci`.
 
-**3. PURGED tombstone semantics** — The `Store` interface has no `Delete`; a PURGED record persists forever (`memory_test.go:88-89` proves the current behavior), is terminal (`transitions.go:33`), and orphans when the eraser deletes the user (admin handlers 404, `lifecycle.go:22-25`). The codebase explicitly anticipates same-id re-registration (`erasure.go:32-35`), but re-provisioning would inherit an inescapable PURGED record. Proposed: add idempotent `Store.Delete`, erase→audit→delete terminal sequence, and a crash-window repair in the provisioning path.
+### 3. Persistent last-active signal written from the login hot path
+- **Problem**: `ActivityTracker.Touch` has zero production callers (the only `.Touch(` is `adminTokenStore` in `middleware.go:405`, an unrelated type); default wiring `SessionLastActive` is blind outside the session-retention window — config reference concedes "no other activity backend exists in this wiring today".
+- **Evidence**: `memory.go` `ActivityTracker` doc ("Wire it into the login path…"), `dormancy.go` caveat, `build_stores.go:347` seam, login anchors `server_login_auth.go:98` / `server_oauth.go:223`, `spi.go:150` `TrackActivity` is session-scoped.
+- **Proposed**: durable last-active store (with improvement 1), `Touch` after `rejectDeactivatedUser` and in `finalizeCallbackSession`, fail-open on write error, durable source becomes the default when SQL is wired, `SessionLastActive` stays fallback.
+- **Acceptance**: login → expire sessions → `LastActive` still non-zero and sweep evaluates; injected store failure doesn't block login; monotonicity; gates.
 
-Each improvement carries concrete acceptance checks (unit + `ssotest` integration + fail-closed tests), and the "unwired = byte-identical" / "no record = ACTIVE" anchors from the analysis are preserved as non-negotiable invariants.
+No Go code changed, so no build gates were required; the doc lives alongside the other `docs/auto/domains-*-spec.md` files (note: `docs/` is a symlink target outside the git worktree, matching the existing analysis-doc convention).
