@@ -1,15 +1,18 @@
-Design doc written to `docs/auto/domains-threataction-playbook-design.md`, with every decision verified against the code first.
+Design doc written to `docs/auto/domains-threataction-direction3-design.md`. All evidence re-verified against the tree before writing.
 
-**Key verification findings that shaped the design:**
+## What the doc contains
 
-- `ThreatExecutors.Execute` is exactly **50 lines** — at the budget ceiling, so the multi-action executor must be an orchestrator over extracted helpers (plan construction + per-action execution), or the change fails `TestMaintainability_`.
-- Both production callers (`anomaly/runner.go:225`, `tokenanomaly/detector.go:419`) **discard the `ActionResult` and only check `err`** — so changing the interface to `([]ActionResult, error)` is free at every caller. The interface doc already promises "zero or more Actions"; the single-value signature is an implementation lag, not a contract.
-- The sqlite store's own design note ("nothing ever queries by SQL WHERE clause… no migration surface") is the precedent that kills the `priority INTEGER` column idea: `priority`/`actions` stay in the JSON blob, ordering happens in Go via a **single exported comparator** shared by both stores — parity by construction, not parallel maintenance.
-- No new `Err*` needed (`ErrInvalidPolicy` + reason strings), so `docs/error-codes.md` is untouched; openapi `required` must drop `action` to `[name, enabled]` or new `actions`-only payloads fail schema validation.
+**`## Decision 1: response metrics`** — `WithMetricsCallbacks(matched, executed, rateLimited, noHandler)` on `ThreatExecutors` (anomaly's nil-safe stub pattern), four `sso_threat_*` counter vecs registered eagerly via `registerThreatMetrics`, `BuildThreatAction` gains a nil-safe `*metrics.Metrics` param with a mandatory helper split (32→50-line budget). Label cardinality bounded by construction: `severity` labeled from `threat.Severity` (detector-closed set), never `policy.Severity` (free-form).
 
-**Notable design calls:**
+**`## Decision 2: execution history`** — `ExecutionRecord` + `ExecutionHistoryStore` SPI (`Record`/`List` with subject/action/type filter), `WithExecutionHistory` option, fail-open `RecordExecutionFailOpen` mirroring `RecordHopFailOpen`. Storage model: memory (append-only slice) + sqlite with its own `migrate` namespace (`threat_executions` version table), columnar DDL + 3 `(field, recorded_at)` indexes, wall-clock unix-millis timestamps. Admin endpoint `GET /api/v1/admin/threat-executions` gated on store wiring, mounted beside the policy-CRUD block in `server_routes_admin.go`, independent `threat_action.history.backend/dsn` config knob.
 
-1. **Dedup before rate-limiting** — the highest-priority owner's `RateLimit` gates the action; a lower-priority duplicate never retries. Faithful generalization of today's first-match (windows were never independent), but worth documenting.
-2. **Per-action `recover`** (mirroring `inspectSafe`) — without it, one panicking handler in a list would drop *all* remaining actions of the threat, strictly widening today's blast radius and violating the package's own same-threat guarantee.
-3. **`default_action` frozen** as zero-match-only; the "silent takeover" interplay (a catch-all policy makes `default_action` unreachable) is documented as a known consequence.
-4. **Mixed-version blob overwrites** flagged: a pre-upgrade server `PUT`-ing a row strips new fields — pre-existing blob-store property, newly consequential during rolling upgrades.
+**`## Decision 3: real notification`** — local `Notifier` SPI with `NewNotifyExecutor(notifier)` (nil → honest `OK:false "notify action not wired"`), canonical `EventThreatNotifyExecuted` in `auditspi` + CC7.2 classification in `auditreport`, one `DefaultMappings` row → `security_event`, a severity-aware presentation case, and a `routerNotifier` adapter at the composition root.
+
+## Four design-level findings surfaced during verification
+
+1. **The router is already an auditor sink** (`applyAuditSinkTaps`, `sso.go:161`) — the notifier tap plus registry emission double-enqueues; the 5-minute cooldown dedupes, but `cooldown: 0` yields duplicate inbox rows. Resolved explicitly with a documented edge + test pinning.
+2. **Threat severity is absent from audit metadata today** — the "critical when severity is critical" presentation requires a new `threat.severity` meta key.
+3. **Wire order is safe**: `BuildNotifications` runs before `wireThreatAction` in `finalize`, so one new `appBuilder` field carries the router.
+4. **`recordAudit` is the shared choke point of all three decisions** — both history and event-type selection fold into it (one new bool param) rather than parallel call sites.
+
+Each decision covers API surface, storage model, failure modes (including how to read the new counters), and what could break the design (budgets, wire-visible event-type split, fail-open creep on reads, cooldown edge, config-drift contract rules).
