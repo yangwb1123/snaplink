@@ -1,33 +1,26 @@
-All contested claims verified directly. Here is my gatekeeper cross-check.
+# Gatekeeper report — direction 3, cross-check of review findings vs design + implementation plan
 
-# Gatekeeper Review — `token_policy_denied` audit event design
+I re-verified the plan's load-bearing claims against the tree at HEAD `ff690260` (source reads + a fresh goccy probe), then traced every review finding to a plan disposition.
 
-Verified myself: `allKnownEventTypes` is a hand-transcribed snapshot whose own comment states new consts "silently fall back... until a maintainer adds it here" (conformance_test.go:9–19), and the parity check logs via `t.Logf`, never fails (:157–163). `make ci` targets contain no `docs-check`; `docs-check` validates only `error-codes.md`, `openapi.yaml`, `SECURITY.md` existence/cross-refs — **not** `observability.md`. Federated callback passes `clientID=""` (server_oauth.go:220–223); `error-codes.md:262` documents `access_denied` as 400 while code returns 403 (server_oauth.go:226).
+## Verified by inspection (all hold)
 
-## Findings cross-check
+- **Budgets**: `server_token.go` exactly 500, `server_helpers.go` 493, `server_oauth.go` 481, `server_login.go` 499, `token_refresh.go` 430, `token_exchange_stages.go` 495; scope-combo call at `server_token.go:168`; `createSession(..., tenantID, ...)` at `server_logout.go:345`, seam call at `:357` without tenant; `sessionPolicyCapExceeded(ctx, userID, clientID)` at `server_oauth.go:162`.
+- **Census**: `core.Subject{`/aliased `Subject{` mints confirmed at `handle_silent_renewal.go:210`, `agentidentity/grant.go:185`, `accessors_feature_gates.go:257` (`issuerForClient(nil)` — structurally unstampable, confirmed), `server_login.go:112`, `server_native_sso.go:190`, plus the codegen template — the alias at `aliases.go:132` explains why both reviews' counts of 12 were each incomplete. **13 + 1 is ground truth.**
+- **Wiring**: zero hits for `WithTenantUserStore` / `WithAgentDelegationGrant` / `WithSAML2BearerGrant` in `cmd/` — SRE F1 and the checklist's reachability corrections hold; `decodeStrictWithFallback` at `config/source.go:260`.
+- **SRE F2 fix re-probed**: the plan's type-alias `Policy.UnmarshalYAML` + `DisallowUnknownField` errors on a misspelled item field under **both** the strict pass and the lenient fallback re-decode (my probe on goccy v1.19.2: all 3 cases pass) — the inline-path hazard the design's 3c claimed but couldn't deliver is genuinely closed at decode time.
 
-| Review finding | Severity | Resolved in design? | Disposition |
-|---|---|---|---|
-| Compliance F1 — fail-open outage invisible in audit/metrics | Med | **No** | Design's failure-mode table documents the behavior but Decision 4(4)'s observability entry does not require the doc note; availability signal correctly deferred. Amend Decision 4(4). |
-| Compliance F2 — no default retention; prune breaks chain | Med | Dismissed w/ reason | Pre-existing, inherited, ops-runbook follow-up; officer explicitly finds no blockers. Track, don't gate. |
-| Compliance F3 — audit-query gate is composition-dependent | Low | No | Out of scope; requires one doc note in the observability entry. Amend Decision 4(4). |
-| Compliance F4 — name-based attribution | Low | **Yes** | Design risk #4 self-identifies and mandates the doc limitation. |
-| QA F1 / SRE F4 — design risk #9 is false (`make ci` does not gate `observability.md`) | Med | **No — design contains a factually wrong claim** | Verified false. A wrong "CI will catch it" assumption changes implementer behavior. Must be corrected. |
-| QA F2 / Security F3 / Protocol F3 / SRE F4 — missing fifth registration (`allKnownEventTypes`) | Med/Low, **required before merge** by Security + Protocol | **No** | Verified: without it, OCSF silently falls back to generic class (classUID 0); design's own CEF/OCSF test-plan assertions are unenforced. One-line design amendment. |
-| Security F1 / Protocol F1 / SRE F5 — pre-rate-limit, pre-code-validation amplification | Med | No | Verified ordering (server_token.go:168 before :181). Remediation = observability doc note (+ optional follow-up ordering fix). Amend Decision 4(4). |
-| Security F2 / Protocol F2 / SRE F6 — `OutcomeFailure` mislabels successful auth-code login | Med/Low | No | Verified: `codeFlowSession` fails open (server_login_auth.go:489–493); design's field-table rationale "a deny is a failed issuance" is false on that path. Doc note + pinned test required. |
-| Security F5 / Protocol F5 — empty `clientID` at federated seam | Info | No | Design's Seam B table implies client always present; verified false. Correct table + doc note. |
-| Protocol F4 — `access_denied` 400-vs-403 drift | Low | No | Pre-existing, but the observability update should pin 403. Amend Decision 4(4). |
-| Security F4 — untyped `reason`; set-membership assertion | Low | Partial | Signature correct as designed; add exhaustive `Reason ∈ {…}` assertion to test plan. |
-| QA F3/F4/F5, Protocol F6, Compliance F5, SRE F7 | Info | Dismissed w/ reasons | SOC2 coverage mechanical (good); errStore fixture is test infra; refresh ordering correct; stale RFC citation pre-existing; jurisdiction out of repo scope. |
-| SRE F1/F2/F3 — alert rules, engine-silent detection, evidence durability | High/Med (launch) | No | SRE frames as **launch blockers**, all detection/documentation surface, none touching the 493/500 and 481/500 seams. Gate on implementation, but the design must record them as launch-stage requirements so they are tracked, not lost. |
+## Finding dispositions
 
-## Blocking issues
+**Resolved with concrete plan items**: Security F1 (13+1 census, per-site stamps + `expires_in == 300` tests), F2 (introspection seam named, liveness matrix §9, no-op pins), F3 (bounded counter + `ObserveTokenPolicyRoleResolutionError`), F4 (`tenant_id` `Validate` rules), F5 (481→495 exact); SRE F1 (boot warning + config-reference; sqlite builder deferred with zero-new-storage reason, recorded follow-up), F2 (§4.2 — stronger than the checklist's accept-warn adjudication), F3 (binary-first ordering, deployment.md, release notes), F4 (counter), F5 (route_contract.py schema assertion), F6 (federated matrix row); QA H1/H2, M1–M5, L1; Protocol F1 (stamp alternative, which the review itself sanctioned, + static tripwire), F2, F4 (cite corrected to `:6868-6884`), F6.
 
-1. **Decision 4 is incomplete: a fifth registration is missing.** `allKnownEventTypes` (auditsink/conformance_test.go:20) must gain `auditspi.EventTokenPolicyDenied`, or the CEF/OCSF mappings are never conformance-guarded and OCSF silently degrades to the generic class. Flagged "required before merge" by Security F3 and Protocol F3, echoed by QA F2 and SRE F4. The design's "four registrations, each load-bearing" is authoritative-but-wrong.
-2. **Design risk #9 is factually false.** No gate (`make ci`, `docs-check`, or any checks/ script) validates `docs/observability.md`. The risk item must be corrected so the implementation does not rely on a nonexistent CI docs gate (AGENTS.md §5.6 discipline is the only enforcement).
-3. **Decision 4(4)'s observability entry is underspecified.** It must be expanded to include the documentation the reviews require in this change: fail-open outage invisibility (Compliance F1), deny-path amplification bounds + `audit.async` mitigation (Security/Protocol F1), `OutcomeFailure`-on-successful-login semantics on the auth-code path (Security/Protocol F2), empty `clientID` at the federated seam (Security/Protocol F5), `access_denied`=403 pin (Protocol F4), and the admin-gate requirement (Compliance F3) — plus the pinned tests: code-flow success-with-event, `Reason` set-membership, mixed unnamed-first-denier `DeniedBy` edge.
+**Dismissed with reasons**: SRE F7 (495, not 497 — both signatures are 103/129 chars, single-line, gofmt doesn't wrap; verified), SRE F8 (no SLO framework; measurement noted), QA L2 (6th non-test file; verified 5 exist), Protocol F1's structural-wrapper preference (superseded by the review-sanctioned stamp alternative + tripwire).
 
-All three are cheap, additive amendments — none touches the two one-line seams, the budgets, or the core decisions (oracle safety, single-emission, fail-open/default-off all verified sound). SRE's alert rules and evidence-durability text are launch-stage requirements to be tracked in the design, not implementation blockers.
+**Neither resolved nor dismissed — three residual gaps (non-blocking, must be folded into the planned work)**:
 
-VERDICT: FAIL - Decision 4 registration list omits the required fifth registration `allKnownEventTypes` (auditsink/conformance_test.go), design risk #9 falsely claims `make ci` gates `docs/observability.md`, and Decision 4(4) omits required observability-doc entries (fail-open invisibility, deny-path amplification bounds, OutcomeFailure-on-success semantics, federated empty clientID, access_denied 403 pin, admin-gate note) plus their pinned tests; amend the design before implementation.
+1. **Protocol F3 (Medium)** — the ID-token/access-token exp asymmetry: the plan's claim-surface pin covers only "no `tenant_id` claim"; the "paired ID-token TTL unchanged" assertion and the config-reference sentence are absent from both the plan and the checklist. Same files the plan already touches.
+2. **Protocol F5 (Info)** — temp-token governance-invisibility declaration sentence absent (the break-glass half is covered by the EXEMPT decision + pin).
+3. **Checklist G11's E2E gate** (`go test ./test/ -run TestE2E -v`) is not carried into the plan's §11 gate sequence; the checklist's H2/H3 arithmetic (497/~491) also still diverges from the plan's simulated 495/495 — implementers must treat the plan as authoritative.
+
+No High finding and no enforcement-affecting finding is unaddressed; the remaining items are documentation/pin/gate-list completeness in files the plan already edits.
+
+VERDICT: PASS
