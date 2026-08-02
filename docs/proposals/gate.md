@@ -1,39 +1,44 @@
-I have everything I need. Here is my cross-check.
+All verification complete. Here is the gatekeeper's cross-check.
 
 ---
 
-# Gatekeeper cross-check: review findings vs. design
+# Gatekeeper Review — interfaces/adapters Direction 2 (router conformance suite)
 
-**Artifacts examined:** `docs/auto/interfaces-adapters-direction1-design.md` (388 lines, **zero diff vs. HEAD** — unrevised), `docs/auto/interfaces-adapters-direction1-spec.md`, `interfaces-adapters-direction1-security-review.md`, and the implementer's deliverable. All claims below re-verified against code and echo v4.15.2 / gin module sources.
+**Method:** cross-checked all six reviews' findings against the *current* design (`docs/architect-analysis/auto/interfaces-adapters-direction2-design.md`, rev. 03:50, which post-dates the reviews at 03:14–03:44 and carries an "Implementation notes (as landed)" section) and the landed code in the working tree. Ran the committed gates myself.
 
-## Are the review findings resolved or dismissed?
+**Gates actually run this revision:**
+- `go build ./...` — clean; `go vet ./...` — clean
+- `go test -run 'TestMaintainability_|TestArchitecture_' .` — **green** (file-size budget incl. `aliases.go` @ 500; import-boundary rule 3)
+- `python cli.py check-filesize` — **PASS**
+- `go test ./interfaces/adapters/... ./shared/core/...` — green; `routertest` conformance suite runs all 14 scenarios × 3 backends (verified verbosely: `TestConformanceSuite_StdRouter` 14/14 PASS)
+- `go test -race ./interfaces/adapters/...` — green
 
-| Finding | Severity | Status in design doc |
+## Finding-by-finding disposition
+
+| Finding | Status | Evidence |
 |---|---|---|
-| **QA F1 / Arch F3** — implementor inventory wrong ("two test fakes") | High | **UNRESOLVED.** Design line 75 still says "plus the two test fakes". Verified: **8** standalone fakes exist (`fakeContext`, `testHandlerContext`, `tmCtx`, `testCtx`, `ssfCtx`, `brandingHandlerCtx`, `rebacTestCtx`, `rcovCtx`). Step 1 fails at `go vet`/`go test` as written. |
-| **QA F2 / Arch F6** — acceptance asserts 400; wire is 401 | High | **UNRESOLVED.** Design line 385 still says "wrong-secret replay → 400 `invalid_client`". Verified: `server_token_clientauth.go:160,167` → `StatusUnauthorized`; `rootcov_flow_test.go:371` asserts 401. Spec line 214 also still says 400. |
-| **Arch F1** — echo capture recursion (`ResponseWriter()` returns `*echo.Response`) | High | **UNRESOLVED, and live in the worktree.** `echo/adapter.go:90` returns `c.Response()`; `idempotency.go:105` wraps it; `SetResponseWriter` sets `c.Response().Writer = capture` → `Response.Write → capture.Write → Response.Write → …` infinite recursion. No test exercises it (grep: zero), so it ships silently. |
-| **Sec F1** — generic cache keyed on raw header, cross-tenant bleed | High | **DISMISSED without fix.** Decision 6: "The generic middleware keeps its simpler raw-key semantics". No principal/tenant scoping added. |
-| **Sec F2** — oracle-safe ordering is a doc comment, not a property | High | **DISMISSED.** Failure table still classifies misorder as "Fail closed by position invariant"; nothing enforces it (architect F5 also flags the mislabel). |
-| **Sec F3** — `trackingResponseWriter` lacks `Unwrap`/Flusher; SSE dies on StdRouter | High | **UNRESOLVED.** Design never mentions SSE/`Unwrap`/`http.NewResponseController` (grep: zero). Verified `platform/sse/handler.go:72` does `http.NewResponseController(ctx.ResponseWriter()).Flush()` — the new tracking wrapper breaks admin/user streams on StdRouter. |
-| **QA F4 / Arch F4** — echo `Flush`/`Hijack` misdescribed | Medium | **UNRESOLVED.** Risk #9 still claims they "reach the original Writer … not the capture". Verified echo `response.go:89-102`: `r.Writer` is read at call time → after swap they hit the capture; `Flush()` **panics**. |
-| **Sec F5** — gin facade "loud failure" claim wrong | Medium | **UNRESOLVED.** Risk #1 still claims gin adding a method breaks compilation; embedding `gin.ResponseWriter` compiles silently. |
-| **Arch F2** — step-1 `SetResponseWriter` re-wrap silently kills commit path | Medium | **UNRESOLVED.** No sequencing change; dead window from step 1→3 unaddressed. |
-| **QA F3** — generic middleware entirely untested; step 3 deletes untested code | Medium | **UNRESOLVED.** No generic-path test plan in design. |
-| **QA F5** — no concurrency test for the wire contract | Medium | **UNRESOLVED.** No concurrent-retry case in acceptance mapping. |
-| **Sec F4 / F6** — replay regenerates headers; chain-stop drops downstream middleware | Medium | **UNRESOLVED.** Neither addressed. |
-| QA F6/F7/F8, Arch F5/F7/F8, Sec F7/F8 | Low/Info | Unresolved (doc-level); the three Highs above already block. |
+| **C1** — alias in `aliases.go` → 501 lines (Security F1, Protocol M1, Staff F5) | **Resolved** | `type GatedRegistrar = core.GatedRegistrar` landed at `interfaces/sso/origin_validation.go:32` (the documented relocation home); `aliases.go` untouched at 500; both size gates green |
+| **C2** — `shared/core/routertest/` violates import-boundary rule 3 (Staff F1) | **Resolved** | Suite lives at `interfaces/adapters/routertest/` (`conformance.go` + `conformance_test.go`), imports `core` downward, layer-legal; `TestArchitecture_ImportBoundaries` green, no exemptions |
+| **H1** — `e.NotFoundHandler = …` doesn't compile; package-level vars (Staff F2, QA F-1) | **Resolved** | Echo adapter installs `engine.RouteNotFound("/*", …)` (adapter.go:85) + delegating `HTTPErrorHandler`; builds and vets clean |
+| **H2** — gin TSR 301 defeats scenario 7 (Protocol H1, Staff F3, QA F-2) | **Resolved** | Gin adapter pins `HandleMethodNotAllowed = false`, `RedirectTrailingSlash = false`, `RedirectFixedPath = false` (adapter.go:69-71); trailing-slash scenario green |
+| Wrong baseline cells (echo HEAD empty-body 405, echo OPTIONS 204+Allow, gin 301, gin gate fallback body+header leak) | **Resolved** | Corrected in as-landed notes; suite now green on all tuples |
+| Cross-backend JSON byte equality (scenarios 1/8/14) | **Resolved** | Pinned to status + JSON value + `Content-Type` prefix; byte equality reserved for the unmatched contract |
+| Red-baseline vs green-tree contradiction | **Resolved** | Red baseline recorded from scratch runs against un-normalized configs; suite+fixes land atomically (documented) |
+| Security F2 — `WithFrameworkNotFound()` × gating oracle degradation | **Resolved in substance** | Option docs: opting out "gives up the byte-identity guarantee, and the routertest conformance suite must never be wired against this configuration" (both adapters); design risk item 3 (divergence hatch + Factory rule). Nit: docs never literally say "gated-off routes become distinguishable"; the guarantee statement covers it — non-blocking |
+| Security F3 — snapshot as silent authz/audit migration hazard | **Resolved** | Design risk item 6: release-notes contract change + scenario 10 pins; scenario 10 runs green |
+| Security F4 — constructor mutates embedder engine | **Resolved** | Precedence rule documented ("later assignment wins"); constructor docs on both adapters; engine-level boundary (risk item 7) documented |
+| Security F5 — bytes can't catch side-effect-only handler execution | **Resolved** | Gate-off scenarios assert `handlerCalls.Load() == 0` (conformance.go:372, 447) |
+| QA additions (wrong-method-on-gated-off; echo caveats: install-before-first-request, later-registration-wins) | **Resolved** | Wrong-method-on-gated-off pinned in as-landed notes; echo later-wins precedence documented in adapter comment (adapter.go:45-47); install-before-first-request inherent (constructor-installed) |
+| L1/L2, I1–I4, F6 (line arithmetic), architect unknowns (routertest home, TSR pin, OPTIONS contract, spec-correction scope) | **Resolved/documented** | As-landed notes correct the gin charset mechanism, `Allow` discard, HEAD/OPTIONS deliberation; landed adapters 253/257 lines — both < 260 as claimed |
 
-## Implementation-plan check
+## Non-blocking observations
 
-**The code-implementer's deliverable is for the wrong design.** `docs/architect-analysis/auto/domains-tokenpolicy-direction3-implementation-plan.md` implements *tenant-dimension token-policy selectors* (`denyTokenScopeCombo`, `BuildTokenPolicyStore`, `subject_roles`). It does not reference `interfaces/adapters`, `HandlerContext` growth, `Abort`/`Written`/`SetResponseWriter`, or idempotency capture anywhere. **No implementation plan exists for interfaces-adapters-direction1**, and none of its review findings are addressed by any deliverable.
-
-## Additional blocking observation
-
-The worktree (uncommitted, post-review mtimes) already contains an implementation of the uncorrected design — `shared/core/router.go` (+84), `interfaces/middleware/idempotency.go` (+220), both adapters — embedding the unfixed bugs: the echo recursion cycle (Arch F1), tracking writer without `Unwrap`/Flusher (Sec F3), and the raw-key generic cache (Sec F1). This contradicts the "design-only revision" convention and would ship all three Highs.
+1. **Process anomaly:** the implementer deliverable quoted in the gate request is `domains-tokenpolicy-direction3-implementation-plan.md` — a *different* feature batch (tokenpolicy domain). It addresses none of these findings. The direction2 implementation record is the design's "Implementation notes (as landed)" section plus the landed code, which I verified directly. The tokenpolicy plan should not be mistaken for this gate's artifact.
+2. **Design hygiene:** body sections (lines ~52-55, 298, 519-529) still contain the pre-correction text ("alias goes in `aliases.go`", "Create `shared/core/routertest/`") that the as-landed section explicitly supersedes. Harmless to the build but should be cleaned so future readers don't follow the stale text.
+3. Direction2 changes are uncommitted in the working tree (expected at this stage); `make ci` and E2E remain the implementation-stage handoff gates.
 
 ## Verdict
 
-The design was **never revised**: zero diff against HEAD. Every review explicitly conditioned implementation on corrections (QA: "must not proceed … with F1 and F2 uncorrected"; architect Option A mandates F1–F6 fixes in the design commit; security lists 3 Highs). None were applied. The implementer delivered a plan for an unrelated design. Three Highs are live in the uncommitted worktree implementation.
+All four blockers (C1, C2, H1, H2) and the medium findings are resolved with reasons and verified by the committed gates and the green conformance suite across all three backends; remaining items are documentation nits. The design is ready for the implementation stage.
 
-VERDICT: FAIL - (1) design doc unrevised: QA F1/F2, arch F1, sec F1/F2/F3 all still open; (2) echo capture recursion (arch F1) live in worktree code; (3) tracking writer breaks SSE streaming (sec F3); (4) acceptance still asserts 400 where the wire contract is 401 (QA F2); (5) implementer's plan is for domains-tokenpolicy-direction3, not this design — no implementation plan exists for interfaces-adapters-direction1.
+VERDICT: PASS
