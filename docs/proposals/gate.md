@@ -1,45 +1,40 @@
-# Gatekeeper cross-check — review findings vs design (`docs/auto/interfaces-apidocs-design.md` @ `9b3b4966`)
+# Gatekeeper Cross-Check: Review Findings vs Design
 
-The design file is **unchanged since the reviews** (`git diff 9b3b4966 -- docs/auto/interfaces-apidocs-design.md` is empty). I re-verified the disputed mechanisms against code: `GatedRouter.register` type-asserts `g.inner.(GatedRegistrar)` at `shared/core/router.go:428` (handler-wrap fallback when the assertion fails), and `adminGatewayExactPaths()` exists in `cmd/sso-server/build_http.go` on the separate admin gRPC-gateway `ServeMux`.
+**Evidence base**: design at HEAD (`a9a2a2ce`, unmodified — `git diff HEAD -- docs/auto/interfaces-cors-design.md` is empty, so the design is byte-identical to the revision all six reviews examined). I independently re-verified the load-bearing claims with grep/`wc -l`/`git show`.
 
-## Resolved or dismissed with reasons
+## Independent re-verification (gatekeeper's own checks)
 
-| Finding | Status | Evidence in design |
+| Claim | My check | Result |
 |---|---|---|
-| T3 — goccy over kin-openapi | **Resolved** | Ground truth #1 + Decision 3: no-new-go.mod-dependency, flagged as spec drift |
-| T4 — `sdk-surface.json` as exception home | **Resolved** | Decision 3 storage model; runtime never reads it |
-| T5 — 81-op triage automation | **Partially** | Design has a bootstrap script but insists triage "cannot be automated" (arch: 79/81 derivable); compatible in direction |
-| check-embed `go run` helper pattern (QA F1's inverted pattern) | **Resolved** | Decision 3 uses it for embed hashing |
-| Fail-safe degradation, no-store, admin gating, probe consts | **Resolved** | Ground truth #6, Decision 1 failure modes |
-| P1–P4, P6 protocol defects | **Dismissed with reason** | Pre-existing, separate workstream (principal §2 exclusions) |
+| `toPolicy()` unexported | `config_load.go:472` `func (c *CORSConfig) toPolicy()` — lowercase | **Confirmed** — design line 134 calls it from package `main` |
+| `core.HeaderOrigin` absent | `HeaderOrigin` only at `interfaces/cors/consts.go:7`; zero hits in `shared/` | **Confirmed** — design line 217 references it |
+| `server_login.go` at ceiling | HEAD version = 498 lines (reviews measured 500 at their revision); gate fails at `>500` (`maintainability_budget_test.go:34,87`) | **Confirmed, slack ≈ 0–2 lines** |
+| `corsPolicy` read points | 5 refs / 3 functions (`origin_validation.go:105,110`; `server_login.go:167`; `server_routes.go:451,452`) + field decl/assign | **Design's "仅 2 处" is wrong** |
+| `applyRateLimit` has no `Enabled` check | grep `Enabled` in `reload.go` → only comments re `Set*GateEnabled` | **Confirmed** — design's "与 rate_limit 的 enabled 契约一致" is false |
+| `CORSConfig` = 7 fields, no `path_overrides` | `config_admin.go` struct confirmed | **Confirmed** |
+| Third mapping copy | `build_app_security.go:169-181` inline literal | **Confirmed** |
 
-## Unresolved — no fix, no dismissal reason in the design
+## Finding-by-finding disposition
 
-**High (block Decision 1):**
-- **H1** — Design's core premise is affirmatively wrong: it asserts the 81 are "documented-but-never-registered" and "the runtime needs no exception list at all". Verified: 53 admin ops are **live on the gateway mux** (invisible to any `s.router` recorder → projected spec omits 53 live endpoints in the stock composition); 26 are live via `Server.Handle` (the recorder *will* capture them). Zero mentions of `adminGatewayExactPaths`, composition merge, or an SDK-scope note.
-- **H2** — The recorder silently degrades `GatedRegistrar` on all nine gated surfaces (wire-visible `X-Request-Id` fingerprint on gated-off routes). The design's only mitigation — "no code type-asserts `s.router`" — misses the transitive assertion at `router.go:428`. Zero mentions of `GatedRegistrar`/`RegisterGated`.
+| Review finding | In design? | Disposition |
+|---|---|---|
+| **H-1** `toPolicy()` unexported → compile failure (QA/Arch/Sec/Principal) | Design line 134 still `c.toPolicy()` in `main_wiring.go` | **NOT RESOLVED** |
+| **M-1** `core.HeaderOrigin` doesn't exist → compile failure | Design line 217 still `core.HeaderOrigin` | **NOT RESOLVED** |
+| **H-2** `server_login.go` ~500-line ceiling, absent from constraint table, D3 edits it (+doc comment, +import) | Design still targets `server_login.go` for gate rewrite + extended doc comment; no net-zero rule | **NOT RESOLVED** |
+| **M-2/Arch F1** per-request config rebuild contradicts "热路径仍走预计算 config"; ratelimit mirror is alloc-free | Storage model still `atomic.Pointer[Policy]` + "`buildConfig` 每次从 Policy 值新建" — no `policyEntry`-with-precomputed-configs; the fix the reviews require is not in the design | **NOT RESOLVED** |
+| **M-3** `path_overrides` doc row implies nonexistent YAML knob; `SetCORSPolicy` whole-policy replacement (drops boot `PathOverrides`) undocumented | Design D2 doc row still says "`path_overrides` 说明最长前缀优先"; `SetCORSPolicy` doc lacks the whole-policy-replacement statement | **NOT RESOLVED** |
+| **M-4** aliasing claims factually wrong (`&policy` hold; "store 化后不可能" — element-level alias persists) | False claims remain verbatim; doc-contract mitigation *is* mentioned (What-could-break #3), deep-copy decision unmade | **PARTIAL** (mitigation mentioned; false claims + T2 decision outstanding) |
+| **M-5/Arch F4** three mapping copies; `build_app_security.go` literal not unified | Not mentioned in design | **NOT RESOLVED** |
+| **L-1** "与 rate_limit 的 enabled 契约一致" factually false (rate_limit is driftier; CORS stricter) | Wrong claim still in failure-mode table; must not relax CORS — design is correct on behavior, wrong on the justification | **NOT RESOLVED** (wording) |
+| **L-2** `corsPolicy` count wrong (2 → 5 refs/3 functions) | "仅 2 处" still in §0 and 关键推论 | **NOT RESOLVED** (doc accuracy) |
+| **L-3** reload Applied entry lacks origins | `applyCORS` still returns `"security.cors: policy rebuilt"` | **NOT RESOLVED** |
+| **L-4** preflight-cache non-retroactivity; boot/reload fail-closed asymmetry | Asymmetry planned for Hot Reload row (**partial**); preflight-cache lag absent | **PARTIAL** |
+| **I-1/I-2/I-3** stale package doc; one-request-apart note; identity fast-path scope | Not addressed | **NOT RESOLVED** (Info) |
 
-**Medium:**
-- **M1** — Design promises per-request dynamic-toggle evaluation ("evaluated per request … caepLive may change") but `mountedEndpoints()` is a plain RLock snapshot + probe consts; no live-gate consult. The acceptance "no 404-ing op" fails at gate granularity (CAEP/SSF/federation/CIBA).
-- **M2** — Parity test as stated ("`mountedEndpoints()` covers every route `check-routes` reports") is unsatisfiable; no machine-readable `check-routes` output, no three-way split, no Handle-table parity.
-- **M3** — No named sso-layer option-toggle test (federation on/off ⇒ op presence in served JSON).
-- **M4** — Recorder `Group` prefix accounting has no direct unit tests (nested groups, `:id:pin`, `releases:current`, `{param}`↔`:param`); relies solely on the broken parity test.
-- **M6** — Design *commits to* the flagged XSS pattern: "pageData gaining the catalog bytes as `template.JS`" — raw bytes, breaking the existing `template.JS(json.Marshal(...))` discipline (`template.go:18,39`); `error-codes.md` already contains `<`.
-- **M5** — Partial only: says "update schema + registry tests" but no named tests, no `operationId ∈ OpenAPI` exception invariant, no schema_version decision (U3).
+## Verdict rationale
 
-**Low / in-scope:**
-- **P5** (blocks Decision 2 sign-off) — `bearerAuth` "Ed25519-signed JWT" drift not folded into Decision 2.
-- **L1** — `buildinfo.Resolve("")` → `(devel)` makes the "empty ⇒ keep spec version" fallback dead; semantics unpinned.
-- **L2/L3/L5/L6/L9** — no named tests: recorder concurrency, check-embed fixtures, sdkdiff fingerprint, byte-determinism, `make sdk-changelog` quoting/no-match-exception-fails.
+The design document is **unchanged** from the exact revision the reviews reviewed. None of the review findings are resolved in the document, and none are dismissed with reasons. The principal reviewer's own gate — "实现前前置条件（设计文档修订，一次 change）" — is entirely unmet. Three findings are literal compile/gate failures if implemented as written (`c.toPolicy()`, `core.HeaderOrigin`, `server_login.go` ≤500), one is a self-contradicting hot-path allocation regression (DynamicMiddleware storage model), and the remainder are contract-doc drift and factually wrong claims that all reviews independently flagged.
 
-**Owner decisions U1–U5** (stock-deployment scope, request-time toggle semantics, schema versioning, issuer scope, changelog destination): **none recorded** — the design records zero of the five.
+The direction is sound and no reviewer found a High/Critical architectural flaw — but the required design revisions (a bounded, single-change doc update per principal §4) must land before implementation proceeds. "Conditionally ready" with unmet preconditions is not ready.
 
-## DevOps cross-check
-
-Design-specific deployment impact is zero (no config/state/routes) — consistent. F4 (`sdk-surface-check` runs nowhere in GitHub Actions) is directly relevant to Decision 3's schema extension and is unaddressed; F1/F1b/F2/F3/F5 are pre-existing pipeline/workspace issues outside this design's scope.
-
-## Verdict
-
-The principal review's verdict was "conditionally ready" with three explicit preconditions blocking Decision 1 (H2 fix, U1/U2 decisions, parity re-spec) — and the design has not been amended to meet any of them. Two Highs, five of six Mediums, P5, and U1–U5 are neither resolved nor dismissed with reasons; H1 is contradicted by the code, H2 is missed by the design's stated mitigation, and M6 is adopted verbatim as the insecure pattern. The design must be amended (H1 scope/merge, H2 `GatedRegistrar` delegation + live-predicate recording, M1 gate-aware accessor, M2 three-way parity with machine-readable `check-routes`, M6 `json.Marshal`, P5, U1–U5 recorded) and re-reviewed before implementation.
-
-VERDICT: FAIL - H1 (81-op premise wrong; projection omits 53 live gateway-mux endpoints, no composition merge/scope decision), H2 (recorder breaks GatedRegistrar on nine gated surfaces - wire-visible gating fingerprint), M1 (gate-blind projection advertises 404-ing ops; per-request toggle promise undeliverable), M2 (parity test unsatisfiable as stated, no machine-readable oracle), M3/M4 (named option-toggle and Group-recorder tests absent), M6 (raw template.JS XSS pattern adopted), P5 (bearerAuth drift not folded into Decision 2), U1-U5 owner decisions unrecorded - all block implementation of Decisions 1-3; design must be amended and re-reviewed first.
+VERDICT: FAIL - blocking issues: (1) `c.toPolicy()` called from package main — `CORSConfig.toPolicy` is unexported (compile failure; must export `ToPolicy` or add a cmd-side helper, and unify the `build_app_security.go` inline mapping, M-1/M-5); (2) `core.HeaderOrigin` does not exist — D3 gate rewrite must use `cors.HeaderOrigin` or keep the `"Origin"` literal (M-1); (3) D3 edits `server_login.go` at a ~498–500-line ceiling with no net-zero discipline in the design's constraint table (H-2 — `TestMaintainability_` will fail); (4) D1 storage model `atomic.Pointer[Policy]` + per-value `buildConfig` rebuild contradicts the design's own "热路径仍走预计算 config" claim and the alloc-free ratelimit mirror — must adopt the `policyEntry{policy, defaultCfg, overrideCfgs}` precompute-at-Set model (M-2); (5) config-reference Security row documents `path_overrides` as a knob `CORSConfig` does not have, and `SetCORSPolicy`'s whole-policy replacement (dropping boot `PathOverrides`) is undocumented (M-3); (6) factually wrong claims still in the doc: "与 rate_limit 的 enabled 契约一致" (rate_limit has no Enabled check), "corsPolicy 仅 2 处读取点" (5 refs/3 functions), "原实现持有调用方指针 / store 化后不可能" (element-level alias persists; deep-copy decision unmade) (L-1/L-2/M-4); (7) reload Applied entry lacks the new origins list (L-3). All seven must be corrected in the design doc (per principal reviewer §4 preconditions) before the implementation stage starts.
