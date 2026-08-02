@@ -1423,6 +1423,86 @@ def test_archive_outputs_pipeline_after_gate_pass(tmp_path):
     assert not (tmp_path / "archive2").exists()
 
 
+def test_role_suggestions_score_relevance(tmp_path):
+    """The orchestrator prompt gains keyword-based relevance suggestions so
+    it can judge before executing instead of touring every role."""
+    mod = load_batch()
+    combined = ("Design doc: snapshot-credential-aware-recovery. Secret "
+                "regeneration, WebAuthn portability, TOTP seeds, Schema v3 "
+                "migration, proto fields, audit-stripping guard.")
+    roles = ["architect", "database_architect", "security_engineer", "qa_lead", "ux_designer"]
+    sugg = mod._role_suggestions(combined, roles)
+    assert "Relevance suggestions" in sugg
+    assert "database_architect: 4" in sugg
+    assert "security_engineer: 4" in sugg
+    assert "ux_designer" not in sugg  # no keyword hits: not listed
+    # scores are sorted descending
+    lines = [l for l in sugg.splitlines() if ": " in l and l.strip()[0].isalpha()]
+    scores = [int(l.rsplit(": ", 1)[1]) for l in lines]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_role_suggestions_fallback_without_keywords(tmp_path):
+    """Without the keyword index the suggestion block is empty (old
+    behavior, no relevance gating)."""
+    mod = load_batch()
+    saved = mod.config.ROLE_KEYWORDS
+    mod.config.ROLE_KEYWORDS = {}
+    try:
+        assert mod._role_suggestions("any text", ["architect"]) == ""
+    finally:
+        mod.config.ROLE_KEYWORDS = saved
+
+
+def test_meta_prompt_injects_suggestions(tmp_path):
+    """End to end: the orchestrator call carries the relevance block and the
+    at-most-3-roles rule."""
+    mod = load_batch()
+    args_log = tmp_path / "args.log"
+    agent = tmp_path / "agent.sh"
+    agent.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$2\" >> {args_log}\n"
+        "if echo \"$2\" | grep -q 'Available roles'; then echo '[]'; else echo '## ok'; fi\n",
+        encoding="utf-8",
+    )
+    agent.chmod(0o755)
+    mod.config.AGENT_BIN = str(agent)
+    inputs = tmp_path / "in"
+    inputs.mkdir()
+    idea = inputs / "idea.md"
+    idea.write_text("credential recovery with secret rotation and TOTP seeds", encoding="utf-8")
+    roles = tmp_path / "roles"
+    roles.mkdir()
+    stage = mod.Stage(name="review", from_outputs="req", meta=True, role_dir=str(roles),
+                      output_dir=str(tmp_path / "out"), max_iterations=1)
+    results, ok = mod.execute_stage(stage, {"req": [str(idea)]})
+    assert ok is True
+    full = args_log.read_text(encoding="utf-8")
+    assert "Relevance suggestions" in full
+    assert "AT MOST 3 roles" in full
+
+
+def test_parse_role_plan_fenced_json_with_brackets():
+    """Ad-hoc role plans in a ```json fence survive ']' inside quoted task
+    text (e.g. CredentialRecovery[].Secret), which broke the old non-greedy
+    span parser."""
+    mod = load_batch()
+    out = (
+        "Each target is load-bearing:\n"
+        "```json\n"
+        '[{"role": "crypto_security_reviewer", "task": "Review Decision 3: CredentialRecovery[].Secret must never persist."},'
+        '{"role": "wire_compat_reviewer", "task": "Review SchemaVersion 2->3 bump."}]\n'
+        "```\n"
+    )
+    plan = mod._parse_role_plan(out)
+    assert [p["role"] for p in plan] == ["crypto_security_reviewer", "wire_compat_reviewer"]
+    assert "CredentialRecovery[].Secret" in plan[0]["task"]
+    # classic simple array still works
+    assert [p["role"] for p in mod._parse_role_plan('["security_engineer"]')] == ["security_engineer"]
+    assert mod._parse_role_plan("[]") == []
+
+
 def test_pipeline_reports_failed_stage(tmp_path, fake_agent):
     mod = load_batch()
     mod.config.AGENT_BIN = str(fake_agent)

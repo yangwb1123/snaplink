@@ -154,19 +154,43 @@ def _aggregate_tasks(stage: Stage, prev_outputs: list, model_override: str = "",
 _DEFAULT_META_PROMPT = """Analyze the deliverables below and decide which expert review roles are still needed to harden them.
 
 Available roles: {roles}
-
+{role_suggestions}
 Rules:
-- Only choose roles that add real value for this deliverable set.
-- Prefer a role name from the list above.
+- Select AT MOST 3 roles, and only roles with clear relevance to the
+  deliverables (prefer the suggested list, relevance >= 5).
+- Do NOT select roles just because they exist; irrelevant reviews are noise
+  and cost real API budget.
 - When no listed role fits, define an ad-hoc role as a JSON object
   {{\"role\": \"<name>\", \"task\": \"<assignment for this reviewer>\"}}.
 - Output ONLY a JSON array of role names and/or role objects, e.g.
-  ["security_engineer", {{\"role\": \"perf_reviewer\", \"task\": \"Analyze performance bottlenecks\"}}].
+  [\"security_engineer\", {{\"role\": \"perf_reviewer\", \"task\": \"Analyze performance bottlenecks\"}}].
 - Output [] when the deliverables are complete.
 
 Deliverables:
 {input_content}
 """
+
+
+def _role_suggestions(combined: str, role_names: list) -> str:
+    """Keyword-overlap relevance of each available role to the current
+    deliverables, injected into the orchestrator prompt so it can judge
+    before executing (instead of touring every role every iteration).
+    Returns an empty string when no keyword index exists (old behavior)."""
+    if not config.ROLE_KEYWORDS:
+        return ""
+    lowered = combined.lower()
+    scored = []
+    for role in role_names:
+        words = config.ROLE_KEYWORDS.get(role)
+        if not words:
+            continue
+        hits = sum(1 for w in words if w.lower() in lowered)
+        if hits:
+            scored.append((role, min(10, hits * 2)))
+    if not scored:
+        return "Relevance suggestions: none of the available roles match the deliverables (consider ad-hoc roles or []).\n"
+    lines = [f"  {role}: {score}" for role, score in sorted(scored, key=lambda x: -x[1])]
+    return "Relevance suggestions (keyword overlap with the deliverables, 0-10):\n" + "\n".join(lines) + "\n"
 
 
 def _available_roles(role_dir: str) -> list:
@@ -190,25 +214,39 @@ def _load_role_template(role_dir: str, role: str) -> Optional[str]:
 
 
 def _parse_role_plan(stdout: str) -> list:
-    """Parse the orchestrator plan from its JSON output, tolerating prose and
-    markdown fences. Each plan item is either a role name (string, resolved
-    against role_dir) or an ad-hoc role {"role": ..., "task": ...}. Unparseable
-    output -> [] (treat as 'no more roles needed')."""
-    m = re.search(r"\[[^\]]*\]", stdout or "", re.S)
-    if m:
+    """Parse the orchestrator plan from its JSON output, tolerating prose,
+    markdown fences, and brackets inside quoted task text. Each plan item is
+    either a role name (string, resolved against role_dir) or an ad-hoc role
+    {"role": ..., "task": ...}. Unparseable output -> [] (treat as 'no more
+    roles needed')."""
+    text = stdout or ""
+    candidates = []
+    # 1) whole-output JSON (or the fenced ```json block) as-is
+    for block in re.findall(r"```(?:json)?\s*\n?([\s\S]*?)```", text):
+        candidates.append(block.strip())
+    candidates.append(text.strip())
+    # 2) greedy span first (survives ']' inside quoted task text), then the
+    #    classic non-greedy span as a fallback for prose-heavy output
+    for pattern in (r"\[.*\]", r"\[[^\]]*\]"):
+        m = re.search(pattern, text, re.S)
+        if m:
+            candidates.append(m.group(0))
+    for cand in candidates:
         try:
-            data = json.loads(m.group(0))
-            if isinstance(data, list):
-                plan = []
-                for item in data:
-                    if isinstance(item, str) and item.strip():
-                        plan.append({"role": item.strip(), "task": ""})
-                    elif isinstance(item, dict) and str(item.get("role", "")).strip():
-                        plan.append({"role": str(item["role"]).strip(),
-                                     "task": str(item.get("task", "")).strip()})
-                return plan
+            data = json.loads(cand)
         except json.JSONDecodeError:
-            pass
+            continue
+        if not isinstance(data, list):
+            continue
+        plan = []
+        for item in data:
+            if isinstance(item, str) and item.strip():
+                plan.append({"role": item.strip(), "task": ""})
+            elif isinstance(item, dict) and str(item.get("role", "")).strip():
+                plan.append({"role": str(item["role"]).strip(),
+                             "task": str(item.get("task", "")).strip()})
+        if plan or data == []:
+            return plan
     log.warning("META orchestrator output did not contain a JSON role plan; treating as complete")
     return []
 
@@ -301,9 +339,10 @@ def _run_meta_iteration(stage: Stage, combined: str, role_names: list, model_ove
 
 def _build_meta_prompt_task(stage: Stage, role_names: list, combined: str, model_override: str, timeout_override: int) -> Task:
     """Assemble the orchestrator prompt (custom meta_prompt or the default,
-    with {roles}/{input_content} placeholders) as a task."""
+    with {roles}/{role_suggestions}/{input_content} placeholders) as a task."""
     meta_prompt = (stage.meta_prompt or _DEFAULT_META_PROMPT)
     meta_prompt = meta_prompt.replace("{roles}", ", ".join(role_names) or "(none - define ad-hoc roles)")
+    meta_prompt = meta_prompt.replace("{role_suggestions}", _role_suggestions(combined, role_names))
     meta_prompt = meta_prompt.replace("{input_content}", combined)
     task = Task(prompt=meta_prompt)
     if model_override:

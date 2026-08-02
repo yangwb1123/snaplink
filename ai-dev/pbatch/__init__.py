@@ -10,8 +10,8 @@ from .config import (AGENT_BIN, AGENT_DEFAULT_MODEL, AGENT_DEFAULT_TIMEOUT,
 from .models import Pipeline, Stage, Task, TaskResult
 from .runner import (agent_failure_reason, print_summary, run_parallel,
                      run_serial, run_task, save_result)
-from .config import _session_flags
-from .pipeline import _archive_outputs
+from .config import ROLE_KEYWORDS, _session_flags
+from .pipeline import _archive_outputs, _parse_role_plan, _role_suggestions
 from .runner import _resolve_validators
 from .pipeline import (execute_stage, load_pipeline, load_tasks,
                        load_tasks_from_dir, run_pipeline)
@@ -25,4 +25,5 @@ __all__ = [
     "run_task", "save_result", "execute_stage", "load_pipeline", "load_tasks",
     "load_tasks_from_dir", "run_pipeline", "build_parser", "main",
     "_session_flags", "_archive_outputs", "_resolve_validators",
+    "ROLE_KEYWORDS", "_role_suggestions", "_parse_role_plan",
 ]

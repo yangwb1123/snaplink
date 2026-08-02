@@ -43,6 +43,38 @@ def _find_batch_config() -> Optional[dict]:
     return None
 
 
+def _find_sidecar(name: str) -> Optional[dict]:
+    """Locate and parse a sidecar YAML (e.g. role_keywords.yaml) next to the
+    entry script, the package dir, or the cwd; None when absent."""
+    if not yaml:
+        return None
+    candidates = []
+    script_dir = os.environ.get("PBATCH_SCRIPT_DIR", "")
+    if script_dir:
+        candidates.append(Path(script_dir) / name)
+    candidates.append(Path(__file__).resolve().parent / name)
+    candidates.append(Path(__file__).resolve().parent.parent / name)  # ai-dev/ next to pbatch/
+    candidates.append(Path(name))
+    for p in candidates:
+        if not p.exists():
+            continue
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _load_role_keywords() -> dict:
+    """Role -> keyword list for meta-stage relevance scoring. Empty when the
+    sidecar is absent (orchestration then falls back to the plain role
+    list, i.e. the pre-scoring behavior)."""
+    data = _find_sidecar("role_keywords.yaml") or {}
+    return {k: v for k, v in data.items() if isinstance(v, list) and v}
+
+
+ROLE_KEYWORDS = _load_role_keywords()
+
+
 def _load_batch_config(path: str = "pi-batch.yaml") -> dict:
     """Optional defaults for pi-batch. Missing file -> {} (built-in defaults
     below apply), so the tool still runs standalone with zero config -- copy
