@@ -1,19 +1,12 @@
-Design doc written to `docs/auto/domains-tenant-direction3-design.md`. It follows the established design-doc format (`## Decision` headings, each with problem restated / API surface / storage model / failure modes / what could break the design), with three decisions plus a sequencing/gate-compliance section.
+Design doc written to `docs/auto/domains-threataction-design.md`. Every decision was checked against the code and the AGENTS.md gates.
 
-## What the design fixes
+**Decision summary**
 
-**Decision 1 — Durable backends**: sqlite `collab.go` (migration v5 appended to the shared `migrations` list, single `"tenant"` namespace), postgres `collab.go`, and the in-place `ConformanceSuite` in `domains/tenant/memory`. Key storage decisions: no FK to `tenants` (opaque IDs, memory-tenant deployments), `created_at` as Unix-nano integers matching the tenant tables, and JSON `null` round-trip for nil-vs-empty `Roles`/`Attributes` parity with memory.
+- **## Decision 1 — Backend selection**: `threat_action.backend` (`memory` default | `sqlite`) + `threat_action.sqlite.dsn`, shaped like `config_audit`/`notifications`; fail-loud on missing DSN/unknown backend; `BuildThreatAction`'s `(exec, store, err)` return is preserved. Because `config_snapshot.go` sits at 482/500 lines, `ThreatActionConfig` moves to a new `config/config_threataction.go`; the builder switch + seeding move to a new `serverbuildplatform/build_threataction.go` (the function is at the 50-line budget).
+- **## Decision 2 — Durable-store hardening**: the dormant store's `New()` lacks WAL / `busy_timeout` / `MaxOpenConns(1)`; without them the multi-replica write path degrades into the limiter's fail-open branch. Since `domains/` cannot import `infrastructure/`, the pragmas, a local `BEGIN IMMEDIATE` helper, and an idempotent connection hook are reimplemented in `threataction/sqlite` (~25 lines).
+- **## Decision 3 — Lifecycle/readiness/schema gate**: sqlite handle stashed on `appBuilder`→`app`, closed in `shutdownSubsystems` after HTTP drain (mirrors `anomalyRuntime`); ready check + storage-health + `CheckSQLiteSchema` wired in `wireThreatAction` — this finally gives `ThreatPolicyMaxVersion()` (zero callers today) its boot gate. `wireThreatAction` needs a small helper extraction to stay under its function budget.
+- **## Decision 4 — Seed-once**: new transactional `SeedIfEmpty` on the sqlite store (`BEGIN IMMEDIATE` + re-check inside the txn, so concurrent replica boots and racing admin PUTs serialize); memory path stays byte-identical; boot log asserts `seeded`/`kept`.
+- **## Decision 5 — Shared limiter**: new `threataction.RateLimitStore` interface + `WithRateLimitStore` option (nil ⇒ current map, unchanged); `threat_rate_limits` table keyed by `(subject, threat_type, action, window_start)` as migration v2, atomic RMW under the SQLite writer lock, "replace-if-expired" semantics preserved, denied hits write nothing, goroutine-free sweep, fail-open on error; `backend: memory` is explicitly documented as per-replica with the N× budget caveat.
+- **## Failure modes** table (fail-loud boot vs fail-open runtime split) and **## What could break the design** (budgets, layer rule, silent-degradation point, NFS DSN constraint, YAML no-longer-reapplies, no wire/audit/OpenAPI drift).
 
-**Decision 2 — Admin surface**: six RPCs with exact route shapes. Two notable calls I made:
-- `guest_tenant_id` is **required** on both list RPCs — the SPIs have no global list, so unfiltered listing would couple the service to a `tenant.Store`; full inventory belongs to the snapshot category.
-- The second key of composite removes rides as a **query parameter**, not a second path segment — tenant IDs and raw subject IDs are opaque and may contain `/`.
-
-**Decision 3 — Snapshot + provisioning**: two new categories, per-tenant export via the existing `ListTenants` scan, restore arms with full mode semantics (Merge-skip / Overwrite-upsert / Replace-prune, with `ErrUnsupportedRestore` when no tenant store is wired, per the pairwise precedent), and shared-`*sql.DB` wiring in `wireTenant`. No new config knob — durability derives from `tenant.backend`.
-
-## Three spec corrections surfaced during design
-
-1. **Postgres upgrade trap (most important)**: the spec's "extend `tenantSchema`'s ensure path" is wrong — the versioned runner (`applyPending` in `infrastructure/postgres/migrate.go`) never re-applies an already-stamped v1 baseline, so existing postgres DBs would silently lack the collab tables. The design mandates a **v2 migration** in `tenantMigrations` plus an upgrade-path test.
-2. **Wire-key drift**: `shared/core/consts_wire.go` has only `KeyGuestTenantID`; `home_tenant_id`/`external_subject_id` are not existing consts — two must be added.
-3. **File budget**: the spec's single-file plan (`admin_domains.go` 171 → ~470) leaves ~30 lines of headroom; a realistic estimate is ~530. Split committed: RPCs in `admin_domains.go`, converters/helpers in `admin_paginate.go` (331 → ~430, both under 500).
-
-All budget numbers were re-verified against the tree, including the pre-existing quirk that `infrastructure/postgres` (26 files) is gate-skipped via `skipDirs` despite AGENTS.md calling it a root-module package — noted, not fixed.
+Notable design judgment calls: relocating `ThreatActionConfig` (budget), reimplementing rather than importing the shared-DB pragmas (layer rule), and no new audit event type for seeding (boot log line only, so `auditreport` classification is untouched).
