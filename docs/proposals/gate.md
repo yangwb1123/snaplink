@@ -1,48 +1,45 @@
-I verified the design (`docs/auto/interfaces-admin-direction1-design.md`) and spec against the tree, and spot-checked the reviewers' load-bearing claims myself: `methodScopeForPath` is literal prefix+segment-boundary matching (no `:param`); `ResourceProvider` exists only in memory (`domains/permissions` — zero hits in sqlite/redis/postgres); `accessors_feature_gates.go` is 499 lines; prod overlay runs `permissions.backend: postgres`; `haCoherenceIssues` has no permissions row; `wireAdminMW` (build_app.go:269) runs inside `buildApp`, before `runBootstrap` (main.go:392); `TargetHoldsAdminScope` maps `ErrUserNotFound → continue`; SOC2 `AccessReview` reads `ListAssignments`; the gateway emits `POST /api/v1/admin/tenants/{id}:set-status`; AGENTS.md §3's oracle table has no tenant row.
+# Gatekeeper cross-check — review findings vs design (`docs/auto/interfaces-apidocs-design.md` @ `9b3b4966`)
 
-# Gatekeeper cross-check: reviews vs. design
+The design file is **unchanged since the reviews** (`git diff 9b3b4966 -- docs/auto/interfaces-apidocs-design.md` is empty). I re-verified the disputed mechanisms against code: `GatedRouter.register` type-asserts `g.inner.(GatedRegistrar)` at `shared/core/router.go:428` (handler-wrap fallback when the assertion fails), and `adminGatewayExactPaths()` exists in `cmd/sso-server/build_http.go` on the separate admin gRPC-gateway `ServeMux`.
 
-## Resolved in the design (with reasons)
+## Resolved or dismissed with reasons
 
-- **D2 wire-code reconciliation** (protocol F2a, architect M-3 core, principal trade-off #1): design picks byte-identical `forbidden` at the middleware, `tenant_mismatch` only as host backstop — the stricter, oracle-safe reading, with the alternative stated. Correct call, but see F2b below (AGENTS.md row is an *ADD*, not an amend; spec acceptance line `:136` not in the doc list).
-- **Strict vs. plain subset** (architect L-1 owner question, principal trade-off #2): strict chosen, equal-level refusal preserved, both directions pinned — but the *mid-tier* widening (full `admin:*` impersonating an `admin:write` holder) is not in the compatibility table (security F5, architect L-1).
-- **`admin:changes:approve` declared** (principal trade-off #3), **audit event reuse** (#4), **`""` = no check** legacy-safe approval semantics (security F6's semantics, deliberate).
-- **QA F1**: the spec acceptance matrix explicitly adds `admin:write`-only subjects — the missing coverage is planned.
-- **DS F4/F8, perf F8, database F4's D3 angle**: memory-only ApprovalStore acknowledged; no-cache acknowledged as correct.
-- **Database review F1/F2/F3/F5/F6/F7/F8**: pre-existing repo-wide issues, not introduced by this change; must be reported separately per AGENTS.md §5.7, not blocking.
+| Finding | Status | Evidence in design |
+|---|---|---|
+| T3 — goccy over kin-openapi | **Resolved** | Ground truth #1 + Decision 3: no-new-go.mod-dependency, flagged as spec drift |
+| T4 — `sdk-surface.json` as exception home | **Resolved** | Decision 3 storage model; runtime never reads it |
+| T5 — 81-op triage automation | **Partially** | Design has a bootstrap script but insists triage "cannot be automated" (arch: 79/81 derivable); compatible in direction |
+| check-embed `go run` helper pattern (QA F1's inverted pattern) | **Resolved** | Decision 3 uses it for embed hashing |
+| Fail-safe degradation, no-store, admin gating, probe consts | **Resolved** | Ground truth #6, Decision 1 failure modes |
+| P1–P4, P6 protocol defects | **Dismissed with reason** | Pre-existing, separate workstream (principal §2 exclusions) |
 
-## Unresolved — High (blocking)
+## Unresolved — no fix, no dismissal reason in the design
 
-1. **H-1 / security F3 — `:param` routes unmatchable**: the `CapabilityTable` is defined "generic over the existing `methodScopeForPath` longest-prefix semantics" — literal matching. Four of the six declared sensitive entries (`users/:id/password`, `tenants/:id/export`, `break-glass/:id/impersonate`, `changes/:id/approve`) can never match a concrete path. D1's enforcement silently no-ops on exactly the routes it exists for; the design's failure-mode section addresses over-narrowing, not this under-matching. No pattern-aware matching and no "catalog is the `:param` carrier" declaration.
-2. **H-2 — design claims a false fact**: "the resource catalog is … and the sqlite backend" — verified false; `ResourceProvider` is MemoryProvider-only. On the durable backend, step 2 of the resolution chain does not exist, so the sensitive subset rests solely on the (per #1 `:param`-incapable) table.
-3. **H-3 — budget trip**: `accessors_feature_gates.go` is 499 lines; D3's `CanImpersonate` (~40 lines) minus removed `TargetHoldsAdminScope` (~30) lands it at ~509, mechanically failing `TestMaintainability_FileSizeBudget`. The design's budget plan covers only `middleware.go`/`governance.go`; `connections.go` (498) also unmentioned.
-4. **Security F2 — tenant-tagged grants unrestricted in code space**: `AddTenantRole` has no code-space allow-list; a tenant admin holding tagged `admin:keys:write` passes `RotateSigningKey` (gRPC resolves tenant from claim; `PermissionsForTenant` unions tagged grants). Platform-wide codes escape tenant isolation.
-5. **Principal H1 — `ErrUserNotFound` carve-out dropped**: the design's `CanImpersonate` contract says "Provider error ⇒ (false, err) fail CLOSED" with no unknown-user exception; today's implementation maps `ErrUserNotFound → not privileged`. As written, ordinary-user break-glass — the primary use case — fails closed with the generic 403.
-6. **Principal H2 — suffix routes mis-parsed**: default pattern "segment 1 after the prefix" turns `acme:set-status` into tenant `acme:set-status`; tenant-scoped admins are silently denied on the flagship `SetTenantStatus` routes (verified the gateway emits `{id}:set-status`). Functional break of the D2 headline story, unaddressed.
-7. **DS F1 — D2 no-op in production**: prod overlay is `permissions.backend: postgres`; the design mandates `TenantPermissionsProvider` only for memory+sqlite. Tenant isolation is accepted on memory and absent on the actual production backend.
-8. **DS F3 — catalog-seed concurrency**: the new bootstrap step is create-only, the tracker is per-replica, default lock is noop; no idempotent-upsert or at-least-once contract stated → first-boot deadlock risk on shared sqlite under concurrent boots.
-9. **Perf F1 — O(total role count) per gate fetch**: sqlite/postgres fetch is a full per-client role scan; D2's tenant-tagged roles grow exactly that table; the JOIN + `(client_id, tenant_id)` index fix belongs in the D2 sqlite migration, which the design omits entirely (architect M-2).
-10. **Perf F2 — per-request catalog scans**: step 2 pays up to 2 full-catalog scans on all 55 non-sensitive routes; no post-bootstrap materialization into the table; and the design's wiring-time validation would false-fail every boot because `wireAdminMW` runs before bootstrap seeds the catalog (architect M-1).
-11. **Compliance F2 — evidence invisibility**: D2 deliberately makes `ListAssignments` ignore tenant-tagged data, but `SOC2Reporter.AccessReview` reads `ListAssignments` → tenant admins invisible to access-review evidence; the CC8.1 pack omits all five `EventAdminChange*` events (including D3's new denial records). Unaddressed.
-12. **DS F2 — HA coherence gap**: `haCoherenceIssues` has no permissions-provider row; multi-replica + memory permissions passes coherence while D1's catalog seed and D2's `AddTenantRole` diverge per replica → intermittent 403s.
-13. **Security F1 — ownership, not just grant-vs-request-tenant**: on tenant-resolved routes without `:id` (`users/:id/password`, `branding?tenant_id=`), a tenant-scoped acme admin passes the check for globex resources; no per-resource ownership assertion or explicit v1 non-goal. The design's "route-shape dependence" paragraph acknowledges the unresolvable case but not this one.
-14. **Principal H3 / DS F5 — resolver-outage fail-open**: a *new* fail-open surface not in AGENTS.md's enumerated list, with cluster-wide isolation-widening during outage; the design asserts the suspension-outage precedent instead of obtaining an explicit security-owner decision.
-15. **DS F2-adjacent / protocol F3 — trusted-edge binding**: `SetTenantResolver` has no requirement to consume the trusted-proxy-stripped host; at an untrusted edge an attacker steers the resolved tenant (and `?tenant_id=` routes are invisible to the path table).
+**High (block Decision 1):**
+- **H1** — Design's core premise is affirmatively wrong: it asserts the 81 are "documented-but-never-registered" and "the runtime needs no exception list at all". Verified: 53 admin ops are **live on the gateway mux** (invisible to any `s.router` recorder → projected spec omits 53 live endpoints in the stock composition); 26 are live via `Server.Handle` (the recorder *will* capture them). Zero mentions of `adminGatewayExactPaths`, composition merge, or an SDK-scope note.
+- **H2** — The recorder silently degrades `GatedRegistrar` on all nine gated surfaces (wire-visible `X-Request-Id` fingerprint on gated-off routes). The design's only mitigation — "no code type-asserts `s.router`" — misses the transitive assertion at `router.go:428`. Zero mentions of `GatedRegistrar`/`RegisterGated`.
 
-## Unresolved — Medium (contract/doc obligations, AGENTS.md §5.6)
+**Medium:**
+- **M1** — Design promises per-request dynamic-toggle evaluation ("evaluated per request … caepLive may change") but `mountedEndpoints()` is a plain RLock snapshot + probe consts; no live-gate consult. The acceptance "no 404-ing op" fails at gate granularity (CAEP/SSF/federation/CIBA).
+- **M2** — Parity test as stated ("`mountedEndpoints()` covers every route `check-routes` reports") is unsatisfiable; no machine-readable `check-routes` output, no three-way split, no Handle-table parity.
+- **M3** — No named sso-layer option-toggle test (federation on/off ⇒ op presence in served JSON).
+- **M4** — Recorder `Group` prefix accounting has no direct unit tests (nested groups, `:id:pin`, `releases:current`, `{param}`↔`:param`); relies solely on the broken parity test.
+- **M6** — Design *commits to* the flagged XSS pattern: "pageData gaining the catalog bytes as `template.JS`" — raw bytes, breaking the existing `template.JS(json.Marshal(...))` discipline (`template.go:18,39`); `error-codes.md` already contains `<`.
+- **M5** — Partial only: says "update schema + registry tests" but no named tests, no `operationId ∈ OpenAPI` exception invariant, no schema_version decision (U3).
 
-- **Protocol F1 / principal M3**: `RequiredPermissions[0]` panics on empty lists and silently narrows multi-code `RequireAny`; `RequireAll` rejection point (global vs. gate-only) unnamed.
-- **Protocol F2b / principal M1**: AGENTS.md oracle row is an *add* (contract-level change needing authority); the spec acceptance line `:136` and openapi rows 1061/9540/9571 are not in the design's same-change doc list; doc amendment is sequenced after the code it contradicts (step 6 after step 3).
-- **Protocol F4**: openapi admin-vocabulary description, six operation descriptions, and feature-matrix row not in the contract list.
-- **Principal M2**: non-`admin:` catalog codes (e.g. custom `tenant:export`) have no fallback classification; upgrade activation for pre-existing custom catalogs undefined.
-- **Principal M4**: discovery/login `roles` claim projection of tenant-tagged roles unaddressed (only `PermissionAdminService` noted).
-- **Principal M5 / QA F5**: gRPC tenant-CRUD methods consulting `TenantFromContext` not enumerated; no planned coverage for the net-new disagreement logic.
-- **Principal M6**: no cross-server D2 E2E in `test/` (`package ssotest`) — all D2 acceptance is unit-level.
-- **Architect I-1 / security F4**: `ErrUserNotFound → 403` and fallback-error → 500 short-circuits not pinned for the new authorizer interfaces (a 500/403 oracle drift risk).
-- **DS F6/F7, perf F3/F4**: read-amplification budget, resolver-op bound, and `CanImpersonate` fetch bound unstated; gate/mint race not pinned by test.
-- **QA F3**: `tenantRequestMismatch` backstop has no test at all.
-- **Compliance F3/F5**: HTTP gate denials remain unaudited (gRPC-only `SetAuditRecorder`); mid-tier impersonation widening ships without a stated review procedure.
+**Low / in-scope:**
+- **P5** (blocks Decision 2 sign-off) — `bearerAuth` "Ed25519-signed JWT" drift not folded into Decision 2.
+- **L1** — `buildinfo.Resolve("")` → `(devel)` makes the "empty ⇒ keep spec version" fallback dead; semantics unpinned.
+- **L2/L3/L5/L6/L9** — no named tests: recorder concurrency, check-embed fixtures, sdkdiff fingerprint, byte-determinism, `make sdk-changelog` quoting/no-match-exception-fails.
 
-**Bottom line:** the design resolves the wire-code conflict and the delegation semantics by explicit, defensible choices, and its self-identified #1 risk (legacy fallback omission) is properly mitigated in the acceptance plan. But the High findings above are not dismissed with reasons — they are gaps or inaccuracies in the design text (the `:param` matching hole, the false sqlite-catalog claim, the dropped `ErrUserNotFound` carve-out, the missing sqlite migration/HA/production-backend scope, the unrestricted tenant code space, the budget trip, the seed-concurrency contract). Several would fail the design's own acceptance checks or the maintainability gates mid-implementation.
+**Owner decisions U1–U5** (stock-deployment scope, request-time toggle semantics, schema versioning, issuer scope, changelog destination): **none recorded** — the design records zero of the five.
 
-VERDICT: FAIL - H-1/H-2 (:param routes unmatchable + catalog is memory-only, so the sensitive subset is unenforceable on durable backends), H-3 (accessors_feature_gates.go 499→~509 lines trips the file budget), security F2 (tenant-tagged grants unrestricted, platform-wide codes escape), principal H1 (ErrUserNotFound carve-out dropped breaks ordinary-user break-glass), principal H2 (suffix routes `{id}:set-status` mis-parsed, D2 flagship routes denied), DS F1 (D2 absent on prod postgres backend), DS F3 (catalog-seed concurrency/idempotency contract missing), perf F1/F2 + architect M-1/M-2 (sqlite migration, JOIN+index, post-bootstrap materialization and validation ordering), compliance F2 (tenant admins invisible to SOC2 access-review evidence), DS F2 (permissions provider missing from HA coherence), security F1 (no resource-ownership assertion), principal H3 (resolver-outage fail-open needs an explicit security-owner decision), plus §5.6 contract-list gaps (spec acceptance line, openapi rows, AGENTS.md oracle-row add, feature-matrix). Pre-existing database findings (pg canary, pairwise salt, pg audit retention) are separate and must be reported independently, not fixed inside this change.
+## DevOps cross-check
+
+Design-specific deployment impact is zero (no config/state/routes) — consistent. F4 (`sdk-surface-check` runs nowhere in GitHub Actions) is directly relevant to Decision 3's schema extension and is unaddressed; F1/F1b/F2/F3/F5 are pre-existing pipeline/workspace issues outside this design's scope.
+
+## Verdict
+
+The principal review's verdict was "conditionally ready" with three explicit preconditions blocking Decision 1 (H2 fix, U1/U2 decisions, parity re-spec) — and the design has not been amended to meet any of them. Two Highs, five of six Mediums, P5, and U1–U5 are neither resolved nor dismissed with reasons; H1 is contradicted by the code, H2 is missed by the design's stated mitigation, and M6 is adopted verbatim as the insecure pattern. The design must be amended (H1 scope/merge, H2 `GatedRegistrar` delegation + live-predicate recording, M1 gate-aware accessor, M2 three-way parity with machine-readable `check-routes`, M6 `json.Marshal`, P5, U1–U5 recorded) and re-reviewed before implementation.
+
+VERDICT: FAIL - H1 (81-op premise wrong; projection omits 53 live gateway-mux endpoints, no composition merge/scope decision), H2 (recorder breaks GatedRegistrar on nine gated surfaces - wire-visible gating fingerprint), M1 (gate-blind projection advertises 404-ing ops; per-request toggle promise undeliverable), M2 (parity test unsatisfiable as stated, no machine-readable oracle), M3/M4 (named option-toggle and Group-recorder tests absent), M6 (raw template.JS XSS pattern adopted), P5 (bearerAuth drift not folded into Decision 2), U1-U5 owner decisions unrecorded - all block implementation of Decisions 1-3; design must be amended and re-reviewed first.
