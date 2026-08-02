@@ -1,14 +1,17 @@
-The design doc is complete: `docs/auto/interfaces-sso-direction1-design.md`. Each of the three decisions has the four required sections (## API surface, ## Storage model, ## Failure modes, ## What could break the design), plus a verified baseline and a handoff/acceptance-mapping plan.
+Design doc complete: `docs/auto/interfaces-sso-direction2-postgres-hotstore-design.md` (sibling of the spec). All claims were grounded in code before writing — I verified the SQLite consume/ledger/rotation statements, the oauthspi optional surface, the `runTx`/`serializable` retry helper, the session-store shared-pool precedent, the boot-gate branching precedent, and the exact consumer line numbers.
 
-Key findings from re-verification that shaped the design:
+Structure — `##` per decision, each with the four requested sections:
 
-1. **The spec's headline numbers are `options*.go`-scoped and one "wiring" is a phantom.** My precise measurement: 223 declared options across all of `interfaces/sso` (174 in `options*.go`); raw `sso.With*` mentions in `cmd/sso-server` = 159 but that includes test files and two comment/string-only mentions (`WithTenantUserStore` in the `build_governance.go:229` warning, `WithTrustedDeviceStore` in a `build_spiffe_caep.go` comment) — the true stripped, non-test wired set is **153**, and the unreachable set is **70** (53 + 17), not 48/65. The registry is therefore scoped to the full 223-option surface — otherwise `WithDataRetentionSweep` (declared in `server_backup.go`, outside the 174) escapes the gate, and the check must strip comments/literals or it blesses phantom wiring.
+**## Decision 1 — Postgres OAuth hot-store implementations**
+- **API surface**: 4 new files in `package postgres` (fan-out capped at exactly 4 non-test files), `New*StoreWithDB(db, dialect)` constructors running per-namespace migrations, `DB()`/`Ping()`/`Close()` readiness trio, `*MaxVersion()` helpers. Constraint flagged: `session.go`'s `interfaces/sso` import is a frozen exemption — new files must import `oauthspi` only.
+- **Storage model**: 4 namespaces, full-column baseline DDL (no sqlite backfill ladder), `DELETE ... RETURNING` atomic consume, ledger mirror wrapped in `runTx` (fail-closed — the one place a naive translation silently kills reuse detection), CRDB serializable retry for rotation.
+- **Failure modes** + **what could break**: `?`→`$N` drift, pgx multi-statement rejection, orphaned ledger rows, CI test-DB availability.
 
-2. **Decision 2 got cheaper and more precise than the spec assumed:** `backup.dir`/`backup.keep` already exist in `config.Backup` and `config-reference.md` but are never consumed (verified zero references) — so the work is wiring, not new keys (only `backup.sources[]` is new). The issuer fix is a one-line unconditional `sso.WithIssuer(cfg.Server.Issuer)` in `build_app_core.go` (the minimal binary already does it). For `WithTenantUserStore`, the design chooses `sdk-only` + keep the runtime warning — a memory store would create a worse fail-open half-state.
+**## Decision 2 — Optional-SPI parity**
+- Full optional assertion set (`Inspector`/`SubjectIndex`/`Counter`/`ClientPurger`/`FamilyTracker`/`RotationLimiter`/`ExpiryLister`) + `SetLookupHMACKeys`, `oauth.postgres` config, guard test.
+- Key finding captured: sqlite's `ListExpiring` thumbprints the *stored HMAC value*, not the raw token — parity means reproducing that exactly, and a "fix" would break the opaque-lookup invariant.
 
-3. **Decision 3's "add a generator" already shipped** — the feature-matrix availability table is already marker-generated and diff-gated by `capabilities check` in `docs-validate`. The design extends the existing marker region (config-keys column + option-coverage count) rather than adding a second writer, and the real new work is key-existence validation (via a committed `ops/build/config-keys.json` artifact derived from `sso-ctl config schema`) plus the option→capability lattice cross-checking `option-surface.json`.
+**## Decision 3 — Stock-binary surface closure**
+- Builder signatures thread `pgDB`/`pgDialect`; schema gate branches per backend (the `CheckSQLiteSchema`-on-postgres false boot failure); backend-accurate ready-check names; `wireRefreshRotationGrace` postgres case with a `refresh_grace` namespace (BYTEA successor blob); HA-coherence lock test.
 
-A few things worth your attention before implementation:
-- **Scope call to confirm:** the acceptance line `declared=174 wired=159` in the spec cannot be reproduced honestly; the design reports `declared=223 (options*.go subset 174) wired=153` and prints both variants.
-- **Inline yaml structs** (`keys.introspection_signing` embeds `SigningConfig`) are the one place `config/schema` reflection semantics need verification before the `config-keys` artifact is trusted.
-- **`server.issuer` empty-path divergence** (JWT fallback vs `requestBaseURL` on the default path) is flagged as an implementation verification item.
+Plus a per-decision verification table and strict dependency order 1→2→3. One citation corrected post-write (`RefreshGraceStore` interface path/line).
