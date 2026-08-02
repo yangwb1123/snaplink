@@ -1,21 +1,16 @@
-Spec delivered at `docs/auto/domains-region-observability-spec.md` (all cited lines verified against source). Grounded in the analysis doc's direction 1 — decision metrics + failure alerts for the fail-open residency control — with exactly 3 evidence-backed improvements:
+Spec written to `docs/auto/domains-region-token-contract-spec.md` (matches the `domains-region-*-spec.md` convention). Summary of the three evidence-backed improvements for direction 2:
 
-## 1. Residency decision and cache counters (`sso_residency_decisions_total{code,region,surface}` + `sso_residency_cache_total{outcome}`)
-- **Problem**: the only enforcement layer with zero metrics; the mesh DENY (`mesh_authz.go:197`) is countable nowhere.
-- **Evidence**: `server_tenant_residency.go` `checkTenantResidency`/`resolveResidencyPolicy` (no `s.metrics` touch), `conditional_access.go` observe pattern, `metrics_ctor.go:54` (497/500 lines → new file split), 8 gate call sites enumerated.
-- **Behavior**: `surface` parameter on the unexported choke point `checkTenantResidency` (4 call sites, single observation point, no drift); nil-safe observers; closed label sets.
-- **Acceptance**: registry-scrape unit test + server test asserting `code="region_not_allowed"` increments and zero series when unwired.
+## 决策 1 — `serving_region` claim on access + ID tokens
+- **Problem**: mint region exists only in the login response map (`applyLoginResponseExtras`, self-described "UX, not a security signal"), audit `region.serving`, and the in-process middleware stash — never in the token. A eu-west-1-minted token is indistinguishable at a us-east RS; the server's own read gate (`residencyDeniedForAccess`) needs a ClientStore round-trip per read because tokens carry no provenance.
+- **Evidence**: `server_finish_login.go:319-330`; `shared/core/types_token.go` `Subject` (no region); `defaultimpl/issue_payload.go` `buildAccessPayload`; `ed25519_types.go` payloads; `oidcsupport/idtoken_claims.go` `ProjectIDTokenClaims` (region must be a first-class field, not a `Claims`-map entry, or §5.5 projection drops it); introspection echo point `handle_introspect.go:366`.
+- **Proposed**: typed `ServingRegion` on `core.Subject`/`core.TokenClaims`/`ed25519Payload`/`ed25519IDPayload` + `oidc.IDTokenRequest`, stamped by every mint path from `region.FromHandlerContext(ctx)` (middleware mounted globally at `server_routes.go:132`); empty ⇒ omitted, zero-value byte-identical.
 
-## 2. Fail-open and resolver-failure alerting (`sso_residency_failopen_total{reason}` + `sso_residency_enabled` + `sso_region_resolution_errors_total` + 2 alert rules)
-- **Problem**: store-outage fail-open leaves only one `logger.Error` line; every other fail-open subsystem has a metric-and-alert safety net (`SSORiskScorerSilent` precedent in `alerts.yaml:89`).
-- **Evidence**: `resolveResidencyPolicy` fail-open branches, `middleware.go:14-19` OnError (log-only at `build_app_selfservice.go:256-262`), `SigningBackendUp`/`FeatureGateEnabled` gauge precedents.
-- **Behavior**: `store_error`/`store_unwired` reasons, boot-time enabled gauge to key alerts, cmd OnError bumps the counter (layering-safe — `domains/region` never imports metrics).
-- **Acceptance**: injected failing tenant.Store test (request still allowed, counter bumped), promtool check.
+## 决策 2 — Discovery advertises the region
+- **Problem**: `docs/error-codes.md:88` tells clients to "route to an allowed region", but `ProviderMetadata` has no region field and `claims_supported` (`applyStaticClaimsAndSecurity:381`) is hardcoded without it; `serving_region` appears only in the login schema (`openapi.yaml:12156`).
+- **Proposed**: opt-in `WithServingRegionAdvertisement` → SnapLink-extension `serving_region` field (omitempty, mirroring `MFAEndpoint`/`WithOperatorMetadata`) + `claims_supported` membership; static-per-process so it's safe in the per-base-URL discovery cache; covered by `signed_metadata` automatically.
 
-## 3. Read-gate denial audit trail + observability contract doc
-- **Problem**: read-gate denials (`/userinfo`, mesh, `/me`) emit no audit event — unprovable enforcement; `docs/observability.md` has 0 region/residency hits.
-- **Evidence**: `mesh_authz.go:197` binary DENY with no server-side record, `residencyDeniedForAccess` returns and records nothing, `audit/handler_helpers.go:25` `region.serving` enrichment is undocumented, `auditreport/drift_test.go` classification requirement.
-- **Behavior**: new `region_denied` audit event (server-side only, wire shapes untouched), classified in `auditreport`, plus a `### Residency` doc section tying together counters, alerts, fail-open contract, and audit events.
-- **Acceptance**: audit test + drift test + doc/consts name cross-check.
+## 决策 3 — RS SDK typed claim + opt-in region gate
+- **Problem**: `interfaces/ssoclient/rs` validates locally with the AS off the path, but unknown claims only land in `Raw` (`claims.go`); no typed region, no way to express "this deployment only serves eu-west-1-minted tokens" — the constraint stops at the SSO server, not where tenant data lives.
+- **Proposed**: `Claims.ServingRegion` + `wireClaims` field (covers both modes since `wireIntrospection` embeds it), `Config.AllowedServingRegions` gate in `validateClaims` + `validateIntrospectedClaims` — fail-closed when configured, new `ErrServingRegionMismatch` sentinel mapped to 403 (governance denial, mirroring the AS's region_not_allowed-vs-invalid_token discipline), zero-value config unchanged.
 
-Constraints baked in: no `domains/region` import change, no new `interfaces/sso` file (60-file ceiling), `metrics_ctor.go` split into `platform/metrics/residency.go`, oracle-safe wire behavior byte-identical throughout.
+All three preserve the fail-open decision ladder, introspection's documented non-gate, and zero-value byte-identity; contract docs (openapi/error-codes/feature-matrix) are updated in the same change per AGENTS.md §5.6.
