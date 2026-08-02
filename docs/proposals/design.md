@@ -1,18 +1,15 @@
-Design doc written to `docs/auto/domains-threataction-direction3-design.md`. All evidence re-verified against the tree before writing.
+Design doc written to `docs/auto/domains-tokenanomaly-direction1-design.md`, following the spec convention. All evidence was re-verified against source before writing (grep confirmed `GeoCountry:` exists only in test files; all five Offer seams, the v7 sqlite migration ceiling, the composite's store-driven policy matching, and the revoke executor's subject-fallback were checked).
 
-## What the doc contains
+Key design decisions:
 
-**`## Decision 1: response metrics`** — `WithMetricsCallbacks(matched, executed, rateLimited, noHandler)` on `ThreatExecutors` (anomaly's nil-safe stub pattern), four `sso_threat_*` counter vecs registered eagerly via `registerThreatMetrics`, `BuildThreatAction` gains a nil-safe `*metrics.Metrics` param with a mandatory helper split (32→50-line budget). Label cardinality bounded by construction: `severity` labeled from `threat.Severity` (detector-closed set), never `policy.Severity` (free-form).
+- **## Decision 1** — one canonical `geo.CountryCodeFromContext` in `platform/geo`: the only new import edge is `protocols/oauth → platform/geo`, which is legal downward (layer 3 → 1); a shared-kernel reader guarantees byte-identical `GeoCountry` across both layers.
+- **## Decision 2** — `s.offerUsage(ctx, ev)` choke point in `interfaces/sso`; zero-value `""` keeps all three `record*Issued` Events byte-identical without a geo source.
+- **## Decision 3** — `recordIntrospectionUsage` gains a `ctx` param (single caller, package-private); response bodies and no-store headers untouched.
+- **## Decision 4** — `RefreshToken.JTI` stamped in the fresh-family branch (mirroring `FamilyID` at `auth_code_handler.go:238-244`), propagated via `RefreshAuthContext` — the existing "don't grow the 14-param signature" bucket — so the six tokengrant handlers and the Deps interface need zero signature changes.
+- **## Decision 5** — storage model: memory field-copy, redis `omitempty` JSON (both directions compatible), sqlite **v8** additive migration following the v3–v7 idempotent-column pattern; legacy rows degrade to `""`.
+- **## Decision 6** — `Thumbprint: metering.Thumbprint(info.JTI)` on the refresh-introspect Offer; rotation chains stay under one stable thumbprint.
+- **## Decision 7** — Evidence gains sorted `geos` (comma-join, `exists`/`eq`-matchable) and numeric `count` (`gt`/`lt`); wire strings already match 1:1.
+- **## Decision 8** — the contract tests, including the documented nuance that `ActionRevoke` for geo findings executes via the subject-scoped fallback (no detector populates `FamilyID` today — the test asserts this deliberately rather than pretending family revoke fires).
+- **## Decision 9** — docs surface (feature-matrix + config-reference).
 
-**`## Decision 2: execution history`** — `ExecutionRecord` + `ExecutionHistoryStore` SPI (`Record`/`List` with subject/action/type filter), `WithExecutionHistory` option, fail-open `RecordExecutionFailOpen` mirroring `RecordHopFailOpen`. Storage model: memory (append-only slice) + sqlite with its own `migrate` namespace (`threat_executions` version table), columnar DDL + 3 `(field, recorded_at)` indexes, wall-clock unix-millis timestamps. Admin endpoint `GET /api/v1/admin/threat-executions` gated on store wiring, mounted beside the policy-CRUD block in `server_routes_admin.go`, independent `threat_action.history.backend/dsn` config knob.
-
-**`## Decision 3: real notification`** — local `Notifier` SPI with `NewNotifyExecutor(notifier)` (nil → honest `OK:false "notify action not wired"`), canonical `EventThreatNotifyExecuted` in `auditspi` + CC7.2 classification in `auditreport`, one `DefaultMappings` row → `security_event`, a severity-aware presentation case, and a `routerNotifier` adapter at the composition root.
-
-## Four design-level findings surfaced during verification
-
-1. **The router is already an auditor sink** (`applyAuditSinkTaps`, `sso.go:161`) — the notifier tap plus registry emission double-enqueues; the 5-minute cooldown dedupes, but `cooldown: 0` yields duplicate inbox rows. Resolved explicitly with a documented edge + test pinning.
-2. **Threat severity is absent from audit metadata today** — the "critical when severity is critical" presentation requires a new `threat.severity` meta key.
-3. **Wire order is safe**: `BuildNotifications` runs before `wireThreatAction` in `finalize`, so one new `appBuilder` field carries the router.
-4. **`recordAudit` is the shared choke point of all three decisions** — both history and event-type selection fold into it (one new bool param) rather than parallel call sites.
-
-Each decision covers API surface, storage model, failure modes (including how to read the new counters), and what could break the design (budgets, wire-visible event-type split, fail-open creep on reads, cooldown edge, config-drift contract rules).
+Then **## Failure modes** (12-row table) and **## What could break the design** (10 risks), the most notable being: `server_helpers.go` is at 493/500 lines (mitigation: new `server_usage_geo.go`), the per-replica observation-table limit on cross-replica geo detection (pre-existing wave-1 architecture, not a regression, but bounds the flagship promise), and the `count`-means-different-things-per-type policy footgun.
