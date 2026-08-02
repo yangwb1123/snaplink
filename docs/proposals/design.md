@@ -1,16 +1,20 @@
-Design doc written and verified. Summary of the deliverable:
+Design doc written to `docs/design/middleware-observability-unified.md`. It grounds every decision in the code I verified (slot ordering in `server_routes.go:364-407`, `WithRequestLogging` having zero production callers, `peertrust.RequestInfoFrom` being the canonical IP source, otelhttp being the existing `Traceparent` injector, `tracing.Init` being a no-op without an endpoint).
 
-## `docs/auto/interfaces-middleware-direction2-design.md`
+## Key decisions
 
-**The one finding that matters most** — verified by compile experiment against `go 1.26.1` before writing anything:
+**Improvements 1–2 (log side)** — one middleware, one capture stack:
+- `middleware.AccessLogger(l spi.Logger, policy BodyLogPolicy)` — INFO, fixed 7-field schema (`method`, `path`, `status`, `duration_ms`, `client_ip`, `request_id`, `trace_id`), no `query` (query strings can carry `code`/`token`). Installed in a fixed `buildMiddlewareChain` slot: inside trustedProxies (real client IP), outside ratelimit (429s are logged). Probes stay exempt for free via `buildProbeMux`.
+- `BodyLogPolicy` (paths allowlist / `AllowAllPaths` deprecated escape hatch / `sample_rate` / 4 KB cap) replaces the boolean; `WithRequestLogging` keeps its name, changes its parameter. `middleware.RequestLogger` is deleted — its debug-level "log everything" shape becomes an explicit, redacted, sampled policy on the same middleware.
+- Redaction: form + JSON parsed, keys matched exact + substring heuristic (`secret|password|token|assertion|code`), always over-redacting, nested JSON walked; non-structured content types pass capped-raw (documented limitation).
+- SDK stays byte-identical (`accessLogPolicy == nil` by default); `cmd/sso-server` enables via `logging.access_log.enabled` (tri-state, default on) in the SIGHUP `ignored_requires_restart` bucket.
 
-> **The spec's literal API is illegal Go.** `HandlerContext.Get[T](RequestKey[T])` as an interface method fails to compile (`interface method must have no type parameters`). The design replaces it with generic **free functions** `core.Get[T](*RequestState, RequestKey[T])` + a non-generic `HandlerContext.State() *RequestState` accessor. The compile-time cross-type guarantee survives (T is inferred from the key), and a working prototype of the final API shape was compiled and run.
+**Improvement 3 (correlation)** — one switch, one source:
+- New `middleware.Correlation(operation)` wraps `tracing.Middleware`; from the live span context it stamps `core.WithTraceID`, `X-Trace-Id`, `X-Request-Id` (preserve-or-generate). `WithTracing` alone now decides span tree + audit correlation + error-body `trace_id`. Full removal list for the legacy surface (7 locations, including `cmd/sso-minimal` and `docs/examples/basic`).
+- `EventFromRequest` reads `trace.SpanFromContext` first (span IDs + real parent), header parse demoted to external-caller fallback.
+- `platform/tracing`'s `StartSpan`/`ParentFromIDs` seams need no changes — async audit sub-spans now provably link to the request span.
 
-Other verified corrections baked in: the "four string keys" are really **seven** (const-keyed `geo:info` + region's bag key escape the spec's literal-string grep); capture position at the router boundary is what keeps the idempotency replay cache uncompressed (a stack installed at RequestLogger's layer would cache gzip bytes and replay them as JSON).
+**Storage model**: no new durable state — the log record is the storage (fail-open, lossy by design), audit events keep their schema (only field provenance changes), sampling is stateless Bernoulli.
 
-**Structure** (per your request, one `##` decision each):
-- **Decision 1 — Typed registry**: `RequestKey[T]`/`RequestState`/`RequestStateOf` API; name-keyed `map[string]typedSlot` storage with a Set-time cross-type collision panic (fail-fast); a `var requestStateAnchor = new(int)` context anchor so the `rg 'type \w+Key struct{}'` freeze stays literally true; all 8 struct keys + 7 bag keys migrated with signature-preserving helpers; per-adapter `sync.Map` bags and the `*r = *r.WithContext` mutation deleted.
-- **Decision 2 — Capture stack**: `CaptureStack.Wrap/Add` + `CaptureHandle.Status/Body/Unlock`; install at the router boundary only (std `NewContext`, gin/echo `ServeHTTP` — the gin `WriteHeaderNow` edge dies by construction); layers are positionless (two captures see identical bytes by construction); `RequestLogger` becomes Add-only with one documented behavior delta; the full deletion set (`SetResponseWriter`, `InstallCapture`, `CaptureWriter`, `requestLogResponseWriter`, `recordCaptureMissing`, `EventIdempotencyCaptureMissing` + all 5 audit-touchpoint files) lands in one commit.
-- **Decision 3 — Unified surface**: two-return `RequestStateOf` attach semantics; tenant single-lookup with `ResolveTenantID` retained as a one-line registry-first adapter (spec's own parenthetical); zero-query reject path when the slot is filled.
-- **Delivery order** (1 → 3 → 2, each gated with `-race` + `make ci`) and a **"what could break the design"** section covering the 11 real hazards — including the two that are security-relevant (compression-position replay corruption, registry divergence via context rebasing).
-- Four spec corrections flagged explicitly at the end, including the Go language finding.
+**Biggest break risks** (documented with mitigations): (1) `X-Trace-Id`/audit `trace_id` disappear for OTel-less deployments — the intended one-switch semantics but wire-visible, mitigated by a boot warning + doc change; (2) otelhttp's `Traceparent` response-header injection becomes load-bearing — pinned by an integration test; (3) `feature_gate_hotreload_test.go` asserts headers from the old `router.Use` location and must be moved to the outer chain.
+
+One open point I flagged in the doc: acceptance B1's wording ("`/token` 即使策略开启也永不记录 body") only holds when `/token` isn't in the allowlist — the design treats the allowlist as the operator's explicit risk acceptance, which is what the policy requires.
