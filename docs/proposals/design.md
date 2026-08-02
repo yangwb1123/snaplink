@@ -1,20 +1,21 @@
-Design doc written to `docs/design/middleware-observability-unified.md`. It grounds every decision in the code I verified (slot ordering in `server_routes.go:364-407`, `WithRequestLogging` having zero production callers, `peertrust.RequestInfoFrom` being the canonical IP source, otelhttp being the existing `Traceparent` injector, `tracing.Init` being a no-op without an endpoint).
+Design doc written to `docs/auto/interfaces-ratelimit-design.md`. All claims verified against the code before writing. Summary of the decisions:
 
-## Key decisions
+## Decisions (one `##` heading each)
 
-**Improvements 1–2 (log side)** — one middleware, one capture stack:
-- `middleware.AccessLogger(l spi.Logger, policy BodyLogPolicy)` — INFO, fixed 7-field schema (`method`, `path`, `status`, `duration_ms`, `client_ip`, `request_id`, `trace_id`), no `query` (query strings can carry `code`/`token`). Installed in a fixed `buildMiddlewareChain` slot: inside trustedProxies (real client IP), outside ratelimit (429s are logged). Probes stay exempt for free via `buildProbeMux`.
-- `BodyLogPolicy` (paths allowlist / `AllowAllPaths` deprecated escape hatch / `sample_rate` / 4 KB cap) replaces the boolean; `WithRequestLogging` keeps its name, changes its parameter. `middleware.RequestLogger` is deleted — its debug-level "log everything" shape becomes an explicit, redacted, sampled policy on the same middleware.
-- Redaction: form + JSON parsed, keys matched exact + substring heuristic (`secret|password|token|assertion|code`), always over-redacting, nested JSON walked; non-structured content types pass capped-raw (documented limitation).
-- SDK stays byte-identical (`accessLogPolicy == nil` by default); `cmd/sso-server` enables via `logging.access_log.enabled` (tri-state, default on) in the SIGHUP `ignored_requires_restart` bucket.
+**1. Shared post-auth checkpoint mechanism** — `interfaces/ratelimit` gains two exports: `Checkpoint(store, r)` (programmatic evaluation of a `PolicyStore` without writing, reusing `Policy.Key`, prefix rules, and the rejection metric) and `TooManyRequests(w, retry)` (exported form of the existing `writeTooManyRequests`). This keeps the `rate_limited` wire shape in one place and gives hot-reload + metrics to all three surfaces for free, with no layering violation.
 
-**Improvement 3 (correlation)** — one switch, one source:
-- New `middleware.Correlation(operation)` wraps `tracing.Middleware`; from the live span context it stamps `core.WithTraceID`, `X-Trace-Id`, `X-Request-Id` (preserve-or-generate). `WithTracing` alone now decides span tree + audit correlation + error-body `trace_id`. Full removal list for the legacy surface (7 locations, including `cmd/sso-minimal` and `docs/examples/basic`).
-- `EventFromRequest` reads `trace.SpanFromContext` first (span IDs + real parent), header parse demoted to external-caller fallback.
-- `platform/tracing`'s `StartSpan`/`ParentFromIDs` seams need no changes — async audit sub-spans now provably link to the request span.
+**2. Identity lands in the request context** — `core.HandlerContext` gains additive `SetRequest(r)`; `interfaces/middleware` gains `WithClientID`/`ClientIDFromContext` (twin of the dead `WithSubject`); `ratelimit` gains `KeyByClientID` (mirror of `KeyBySubject`). This is the spec's mandated "first production write of `WithSubject`".
 
-**Storage model**: no new durable state — the log record is the storage (fail-open, lossy by design), audit events keep their schema (only field provenance changes), sampling is stateless Bernoulli.
+**3. 改进一 `/token`** — `WithTokenEndpointClientRateLimit(limiter)` + `SetTokenEndpointClientRateLimit` (SIGHUP), checkpointed right after `authenticateTokenClient`, before residency. **One refinement over the spec's letter**: the `client:<id>` key is written only for credential-verified clients (secret/assertion/mTLS) — public clients authenticate with a publicly-known `client_id`, so keying their bucket on it would *create* a new DoS vector (the same flaw class as UNSAFE `KeyByClientIDOrIP`); they fall back to IP. Grant limiter migrates `*rate.Limiter` → `ratelimit.Limiter` to fix the `unsupported_grant_type`-on-429 drift.
 
-**Biggest break risks** (documented with mitigations): (1) `X-Trace-Id`/audit `trace_id` disappear for OTel-less deployments — the intended one-switch semantics but wire-visible, mitigated by a boot warning + doc change; (2) otelhttp's `Traceparent` response-header injection becomes load-bearing — pinned by an integration test; (3) `feature_gate_hotreload_test.go` asserts headers from the old `router.Use` location and must be moved to the outer chain.
+**4. 改进二 `/userinfo`** — because `protocols/oidc` can't import `interfaces/*`, two new `UserInfoDeps` hooks (`StoreUserInfoSubject`, `UserInfoRateLimited`) are called between bearer validation and the residency gate, mirroring the `MaybeSignUserInfo` precedent. A router-level capture-middleware alternative is rejected (double signature verification on the scrape path + 401-challenge drift risk). Mesh ext_authz uses the same store after `MeshAuthorize`. Key = `claims.Subject`, not the resolved local ID (the lookup is what we're protecting).
 
-One open point I flagged in the doc: acceptance B1's wording ("`/token` 即使策略开启也永不记录 body") only holds when `/token` isn't in the allowlist — the design treats the allowlist as the operator's explicit risk acceptance, which is what the policy requires.
+**5. 改进三 admin** — two tiers as one opt-in unit: unconfigured = byte-identical (constant `"admin"` key, `rate_limit_exceeded` body); configured = tier-1 rekeyed per-IP (required, or A's flood exhausts the global bucket before tier-2 can protect B) + tier-2 `admin:<subject>` right after `authenticateHTTP`, before the idle-timeout check (constant 429 shape, no new oracle). Both tiers reject with standard `rate_limited`.
+
+**6. Config/SIGHUP** — `security.rate_limit.token_client.*`, `security.rate_limit.userinfo.*` (shared backend dispatch, one new reload hook called once per Reload), `admin.rate_limit.per_admin.*` (boot + runtime `PolicyStore` swap, matching the existing admin lifecycle).
+
+**7. Storage** — no new state; existing `Limiter` SPI (Memory 16-shard/10-min-prune, SQLite, Redis), cardinality naturally bounded by registered clients/subjects/admins.
+
+**8. Failure modes + What could break** — the honest list: `SetRequest` ripple, public-client spoof, the `"client:"` namespace collision if an operator shares an instance across phases (hard documented invariant), the two deliberate 429 wire changes, admin tier-1 rekeying being load-bearing (and the e2e rate-sizing constraint), hot-reload hook wiring, and the 60-file/50-line budget ceilings. One spec ambiguity is resolved explicitly: the admin body unification is scoped to the opted-in mode, since unconditional unification would fail the "byte-identical default" acceptance.
+
+No Go code was touched; per the requirements spec, no gates were triggered.
