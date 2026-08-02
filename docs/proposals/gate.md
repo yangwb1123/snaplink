@@ -1,53 +1,22 @@
-All review claims cross-checked against the design/spec and independently verified against the code. Here is the gatekeeper assessment.
+Cross-check complete. I read the design (`docs/auto/interfaces-snapshot-restore-safety-design.md`, 533 lines), the principal review (consolidated, 335 lines), and re-verified the load-bearing code facts (`codec_json.go:49` `DisallowUnknownFields`, `operations.go:153` `AddCompensation`, `admin_paginate.go:318` `operationFailureError` — all as the reviews state). I then grepped the design for each required amendment.
 
-# Gatekeeper Cross-Check: 方向二 Design vs. Six Reviews
+## Cross-check: review findings vs. design
 
-**Timeline note:** design/spec were finalized at 10:23–10:28; all reviews landed 10:34–10:47. **The design was not revised in response to any review.** The principal review's own verdict is "Conditionally Ready" — and the conditions are exactly the items below, none of which are in the design.
+**All five reviews + principal review converge on three High defects, and the design still contains every one of them verbatim:**
 
-## Verified in code (my own reads, agreeing with reviewers)
-
-| Claim | Code evidence | Status |
-|---|---|---|
-| H1: `Close()` sets `s.db=nil`; `Allow` has no nil guard; `main_wiring.go` comment claims SQLiteLimiter isn't an `io.Closer` (it is); `closePolicyLimiters` → `closeIfCloser` will close it on SIGHUP | sqlite_limiter.go:122-131, 148; main_wiring.go:163-170 | **Confirmed — real High, absent from design** |
-| H2: normal reject path unconditionally `persistBucket` + `tx.Commit()`; only `denyAll` returns early | sqlite_limiter.go:160-177 | **Confirmed — design/spec say the opposite** |
-| M1: Memory deny-all allows the first `burst` requests (`wait==0 → true,0`); `perSecond<=0` guard fires only on reject | ratelimit.go:185-198 | **Confirmed — allow-branch `ResetIn = (burst−tokens)/0 = +Inf` unguarded in design** |
-| M9: `stubRateLimiter` (testhelpers_test.go:393) + `stubSignupRateLimiter` (auth_signup_test.go:235) implement old signature | both files | **Confirmed — missing from migration table** |
-| L3: only `var _ Limiter` assertion is SQLite's (sqlite_limiter.go:255); `sso` **does** import ratelimit (quota.go:10) | grep | **Confirmed — two design factual errors** |
-| M2: config_load.go:414,457 drops `PerSec<=0` rules; stock builder builds prefix limiters unconditionally (serverbuildplatform/build_ratelimit_cluster.go:75) | both files | **Confirmed — asymmetry unreported in design** |
-| M4: metrics.go 494/500, metrics_ctor.go 497/500 | wc -l | **Confirmed — commit 3 trips the gate; "新开文件" escape can't hold struct fields** |
-| M7: benchgate gates only `^BenchmarkMemoryLimiterAllow` | ops/deploy/benchgate/benchmarks.yaml:40-41 | **Confirmed — the only new hot-path cost is invisible to the named gate** |
-| M8: `recordRejection` short-circuits on `p.Metrics==nil` (middleware.go:195-197); design's closure atomic is unconditional | code + design 决策三② | **Confirmed** |
-| M6: cors.go:44 lists only X-RateLimit-Remaining; ExposedHeaders is operator YAML | interfaces/cors/cors.go | **Confirmed — CORS absent from blast radius** |
-
-## Findings disposition
-
-**Resolved or dismissed with reasons (acceptable):**
-- Redis deny-all short-circuit (perf L5/T9) — out of scope, would change fail-open doctrine; explicit maintainer+security decision pending — *dismissed with reason, decision still owed*.
-- Cache-Control no-store on middleware 429 (L5) — pre-existing, out of scope per RFC 9111, tracked separately — *dismissed with reason*.
-- `X-` prefix + epoch Reset (L7) — deliberate GitHub-convention choice, epoch risk recorded (risk #2); the prefix-deviation note itself is not yet in consts.go/openapi — *mostly dismissed, note owed*.
-- selfservicecore coupling, `Buckets()` deadlock, denyAll marker, zero storage change — all Verified by six reviewers and my reads; these are the design's strengths, no action.
-
-**Unresolved — no mention in design, or design text contradicts the finding:**
-
-| # | Severity | Finding | Design status |
+| Finding | Required fix (reviews) | Design as written | Status |
 |---|---|---|---|
-| H1 | High | SIGHUP + SQLite → nil-db panic | **Absent from design entirely**; principal T10 mandates in-change fix (commit 3 rewrites the same wiring; AGENTS.md forbids deferred TODOs) |
-| H2 | High | Design/spec claim SQLite rejects "roll back" — code persists+commits | **Doc still wrong** (design 存储模型表, spec 验收 3); literal implementation resurrects brute-force budgets mid-attack |
-| H3 | High | fail-open `{OK:true,Limit:0}` sampled into `sso_rate_limit_remaining` | **No `a.Limit>0` guard** in 决策三②; heads-doctrine and gauge rule conflict |
-| M1 | Med | deny-all allow-branch division-by-zero; header table has no 4th row | Design guards only the reject branch; 四方独立 finding unresolved |
-| M2 | Med | `per_sec:0` SDK-drop vs stock-deny-all | Not mentioned; needs maintainer+security decision (T3) |
-| M3 | Med | unlabeled `buckets` gauge, N+1 writers | Design explicitly says 无标签 with no justification (T6 says label it) |
-| M4 | Med | metrics.go 494/500 — commit 3 trips gate | "新开文件" cannot carry struct fields; unresolved |
-| M5 | Med | SQLite→Metrics mechanism unspecified | Commit-3 list wires only `MemoryLimiter.SetBucketObserver`; SQLite COUNT is unimplementable as planned |
-| M6 | Med | CORS: SPA can't read Limit/Reset by default | Absent from blast radius; doc fix owed |
-| M7 | Med | No middleware benchmark; named gate can't see new cost | Unresolved — principal precondition #3 |
-| M8 | Med | Unconditional atomic on metrics-nil default | Design keeps it unconditional (T4: guard) |
-| M9 | Med | Migration table misses two `selfservicecore` stubs | Table incomplete (compile-time safety, but plan is wrong) |
-| L1-L4, L6, L8 | Low | error-codes caveat, prune_interval doc row, var-`_`/import-direction errata, fuzz invariants, clock/failover notes, Reset-vs-Retry-After test pin | All unaddressed one-line doc/test items |
-| Baseline | — | QA captured bench numbers (178–447 ns/op, 64 B/op, 1 alloc/op) — **not committed** | Principal precondition #1; the "no regression" gate is void if commit 1 lands without it |
+| **F-1** (High, S-F1/D-H1): body-level `kind` breaks wire compat — `DisallowUnknownFields` makes safety bodies undecodable by old binaries | Header-only `kind`; `Snapshot.Kind` tagged `json:"-"` | Line 85: `Snapshot.Kind string` with `json:"kind,omitempty"`; line 140: "old readers ignore" claim | **Unresolved** |
+| **F-2** (High, S-F2): rollback scope ≠ failed-restore scope; netpolicy rewind | Rollback exclude = original `Exclude` ∪ (AllCategories ∖ source snapshot's categories) | Line 379: `Exclude: <original request's exclude>` with a "minimality" claim | **Unresolved** |
+| **F-3** (High, P-F1/S-F3): error-with-response is impossible per gRPC spec; rollback report + `operation_id` never reach any client | `status.WithDetails` + `operationFailureError` on both failure paths; `operation_id` in status message | Line 391: `return (response-with-report, err)`; runbook tells REST clients to read `GetOperation(operation_id)` they never receive | **Unresolved** |
+| **F-9** (DS-F4/Q-F5): nil-snapshotter check fires before kind is resolvable; safety-source restore spuriously fails | Resolve kind via `Get`+`PeekEnvelope` before `operations.Start` | No pre-Start PeekEnvelope ordering anywhere in the doc | **Unresolved** |
+| **F-11** (D-H2): "Phase A failure → stores equal pre-restore" unsatisfiable — `SetMenus` wipes menus in Phase A before `AssignRoles` can fail | Rewrite acceptance: "old ∪ inserts, minus replaced menus; zero prune deletions" | Line 316: "all `Deleted == 0`, stores equal pre-restore (old superset)" — unimplementable as written | **Unresolved** |
+| **F-10** (S-F5/D-M5): plaintext default × retention-exempt × no TTL, automatic unredacted captures | Safety TTL first-class; warn/audit on `Algorithm==none`; `caep_receiver_auth` scrub | Line 152: "TTL is a later iteration" | **Unresolved** |
+| **F-8** (S-F4/DS-F5): concurrent restores unserialized; one rollback reverts another's committed state | Single-flight gate (reject while a restore op is `running`) | No locking/serialization mechanism anywhere in the doc | **Unresolved** |
+| **F-4** (Q-F2): P0 fault-injection acceptance unbuildable — no seam exists | `failAfterN` wrapper fixtures specified in the design | No mention of `failAfterN` or any new fault seam | **Unresolved** |
 
-## Verdict
+The design is the pre-review revision; none of the principal review §4 amendment set (F-1, F-2, F-3, F-9, F-11, F-20, F-16, F-21, F-18, F-19, F-12) has landed. Findings are neither resolved nor dismissed with reasons — the reviews' demands are simply absent from the document. The reviews were written *against* this exact text, so the "conditionally ready, amendment set must land in the same change" precondition is unmet.
 
-The design's core architecture is sound and independently verified — but the gatekeeper question is whether review findings are resolved or dismissed with reasons. They are **not**: the design predates the reviews, contains two factually wrong statements (H2, L3) that would misdirect implementation, omits a verified in-tree High-severity crash (H1) that the principal ruling requires to land in the same change, and its planned verification story is structurally blind to its own hot-path cost (M7/M8, no committed baseline). Three Highs and the M1/M9 corrections are preconditions the principal review states must land **before commit 1**, and none are in the design. Conditional readiness was granted on conditions; the conditions are unmet.
+**Blocking delivery problem:** there is **no implementation plan for this design**. The only implementation plan in the tree — and the entire code-implementer report attached to this gate — is `docs/auto/domains-tokenpolicy-direction3-implementation-plan.md` (`server_token.go`/`server_helpers.go`/`server_oauth.go`/`validate.go`, tenant-scoped token policy). That is a different design with different reviews; it mentions nothing about snapshots or restore safety. The implementation-stage deliverable for `interfaces-snapshot-restore-safety` was never produced, so there is nothing to approve for implementation, and the amendment set + P0 suite (golden-marshal, rollback-scope, gateway error transport, single-flight, `failAfterN` fault injection) are all unspecified at the plan level.
 
-VERDICT: FAIL - design/spec must be corrected and re-issued before implementation: (1) H2 doc fix (SQLite rejects persist+commit, only denyAll rolls back) + spec 验收3; (2) H1 added to change scope (Allow nil-guard, main_wiring.go comment, Close-after-Allow test, hot-reload -race; land with commit 3); (3) H3 `a.Limit>0` gauge sampling guard; (4) M1 unconditional `ResetIn=0` for perSecond<=0 + 4th header-table row + deny-all allow-path test; (5) M9 migration table += stubRateLimiter/stubSignupRateLimiter; L3 errata (add `var _ Limiter = (*MemoryLimiter)(nil)`; fix import-direction claim); (6) M4 Metrics struct move to new file (commit 3 gate); (7) M5 SQLite observer mechanism specified; (8) M7 BenchmarkMiddlewareAllow* matrix (metrics-nil/wired/headers/parallel) before commit 2; (9) M8 guard atomic+sampling behind `p.Metrics != nil`; (10) M3 `{policy}` label on buckets gauge; (11) commit benchstat baseline (QA's numbers) to docs/auto/ before commit 1; (12) record T3/T9/T7/T8 decisions and M2/M6 doc items; (13) low-item doc fixes (L1 error-codes caveat, L2 prune_interval row, L4 fuzz invariants, L6 observability notes). Re-review the amended design before implementation starts.
+VERDICT: FAIL - the three High review findings (F-1 body-level `kind` breaks wire compat, F-2 rollback scope exceeds failed-restore scope, F-3 impossible error-with-response) remain verbatim in the unamended design; the principal-review amendment set (F-9 pre-Start kind resolution, F-11 menus acceptance rewrite, F-10 TTL, F-8 single-flight, F-4 failAfterN seam) has not landed; and the implementation-stage deliverable is missing entirely — the only implementation plan submitted concerns a different design (domains-tokenpolicy-direction3).
