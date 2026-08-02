@@ -1,18 +1,23 @@
-Spec written to `docs/requirements/domains-region-policystore-spi.md` (verified every cited file:line against the codebase). Exactly three evidence-backed improvements for expansion direction #3:
+Spec written to `docs/auto/domains-tenant-direction1-spec.md`. It follows the sibling-spec convention (Chinese title, English body) and contains exactly the three evidence-backed improvements for 方向 1:
 
-## 1. Wire the dead PolicyStore SPI into the enforcement engine
-- **Problem**: `region.PolicyStore` (`domains/region/region.go:70`) and `memory.Store` have zero production importers — `resolveResidencyPolicy` (`interfaces/sso/server_tenant_residency.go:214`) hardcodes `tenantStore.GetTenant` → `residencyPolicyFromTenant` (line 425). SDK embedders can't plug a policy source.
-- **Behavior**: new `WithResidencyPolicyStore(region.PolicyStore)` option in a *new* file (`server_tenant_residency.go` is at the 500-line budget ceiling); two-tier resolution — non-zero store policy wins, zero/error falls through to tenant fields (fail-open, store can only add constraint, never silently remove it); nil store = byte-identical.
-- **Accept**: precedence/fail-open unit tests; existing `TestResidency_*` suites unchanged.
+## Summary
 
-## 2. Durable sqlite PolicyStore backend + config surface
-- **Problem**: `memory.Store`'s own doc says policies are "loaded from config at boot" (`memory.go:1-4`) but no config surface exists; every sibling store (tenant, connections at `build_tenant_geo_region.go:109`) has memory|sqlite; `RegionConfig` (`config/config_geo_tenant.go:59`) has no policy-store knobs.
-- **Behavior**: `domains/region/sqlite` (`New(dsn)`, `platform/migrate`, JSON `allowed_regions` column, mirroring `connections/sqlite/store.go`); `region.policy_store.{backend,sqlite.dsn,seed[]}` config; `BuildRegionPolicyStore` with boot-loud seeding; `regiontest` conformance helper run against both backends.
-- **Accept**: conformance + persistence-across-reopen tests; build tests for each backend; E2E untouched.
+**## Improvement 1: `tenant.Resolver` — converge duplicated resolution logic**
+- **Problem**: Host→Domain→Tenant resolution is implemented three times (`Middleware`, `ResolveTenantID`, `handleBranding` fallback); the "identical result" invariant is enforced only by review.
+- **Evidence**: `domains/tenant/middleware.go:73–122` (Middleware), `middleware.go:137–172` (ResolveTenantID, whose doc concedes the duplication), `interfaces/sso/options_httpstack.go:121` + `server_routes.go:425` (call sites), `interfaces/sso/server_me.go:107–116` (third copy), `middleware_test.go` (pinning tests).
+- **Proposed**: single canonical `Resolve` in a new `resolver.go`; `Middleware`/`ResolveTenantID`/branding fallback all delegate.
+- **Acceptance**: existing middleware tests unchanged; grep-proof that `ResolveTenantID` no longer calls the store; knob-matrix equivalence table test.
 
-## 3. Region-ID validation at every policy write boundary
-- **Problem**: `trimRegions` (`admin_tenants.go:444-457`) "does NOT validate region identity" while `evaluateResidency` (`server_tenant_residency.go:246-261`) and `HeaderResolver.Resolve` (`resolver.go:62-77`) compare IDs by exact string equality — `"EU-WEST-1"` vs `"eu-west-1"` silently under-constrains a default-fail-open compliance control.
-- **Behavior**: `region.ValidateID`/`ValidatePolicy` enforcing lowercase DNS-label form + new `ErrInvalidRegion`; enforced at admin (`InvalidArgument` via the existing `ErrInvalidTenant` mapping), `memory.Store.Set` (gains error return; all existing tests use valid IDs), `sqlite.Store.Set`, and config seed (boot-loud). No silent case normalization — loud rejection only.
-- **Accept**: accept/reject unit tests, grpcadmin `InvalidArgument` test, store-unchanged-on-invalid tests, full gates (`go build`, `go vet`, `-race`, `make ci`).
+**## Improvement 2: Route-resolution TTL cache — zero store calls on hit**
+- **Problem**: every request pays 2 DB round trips; Store doc blesses caching ("backends MAY cache aggressively", tenant.go:81–84) but postgres/sqlite `GetDomain` are live queries and there is no wrapper; suspension/residency have caches, routing has none.
+- **Evidence**: `tenant.go:81–84`, `middleware.go:23` (100 ms timeout), `infrastructure/postgres/tenant_domains.go:15–25`, `domains/tenant/sqlite/sqlite.go:265–277`, `server_tenant_residency.go:59–95` (the TTL pattern to mirror).
+- **Proposed**: resolver-owned hostname→Resolved TTL cache (60 s default, off by default for byte-identity), suspended verdicts cached, negatives not cached.
+- **Acceptance**: counting-store test — N requests ⇒ 1 GetDomain + 1 GetTenant, expiry re-fetch, disabled ⇒ N pairs.
 
-All three preserve oracle-safe semantics, the `evaluateResidency` decision ladder, and nil-default behavior; contract updates (config-reference, feature-matrix, error-codes, DIRECTORY_MAP) are folded into each decision per AGENTS.md §5.
+**## Improvement 3: Invalidation-bus integration — `KindTenantDomain` + admin callbacks + re-seed**
+- **Problem**: no routing-class bus event, so rebinds/deletes can't converge cross-replica; domain admin mutations publish nothing; `flushInvalidationCaches` can't re-seed a lost route event.
+- **Evidence**: `platform/cluster/bus.go:30–79` (no domain kind), `server_invalidation.go:338–357` (no arm), `server_discovery_cache.go:283–314` (no flush), `grpcadmin/admin_domains.go:75–144` (mutation sites), `admin_tenants.go:19–49` (callback pattern to mirror), `server_tenant_residency.go:454–463` (publish pattern).
+- **Proposed**: new `KindTenantDomain` event; `InvalidateDomainCache` mirroring residency; nil-safe admin callbacks; tenant-scoped eviction via reverse index on suspension/residency arms; `Flush()` in recovery re-seed.
+- **Acceptance**: memory-bus integration test (replica B re-resolves immediately after replica A's rebind), dispatch/eviction unit tests, unwired byte-identity, `make ci`.
+
+The spec also records preserved invariants (oracle-safety, fail-open ladders, zero-value byte-identity, no new upward imports, `domains/tenant` 4→5 files under the 10-file budget) and a verification plan with the mandatory gates.
