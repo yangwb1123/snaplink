@@ -1,16 +1,18 @@
-Spec written to `docs/auto/domains-region-token-contract-spec.md` (matches the `domains-region-*-spec.md` convention). Summary of the three evidence-backed improvements for direction 2:
+Spec written to `docs/requirements/domains-region-policystore-spi.md` (verified every cited file:line against the codebase). Exactly three evidence-backed improvements for expansion direction #3:
 
-## 决策 1 — `serving_region` claim on access + ID tokens
-- **Problem**: mint region exists only in the login response map (`applyLoginResponseExtras`, self-described "UX, not a security signal"), audit `region.serving`, and the in-process middleware stash — never in the token. A eu-west-1-minted token is indistinguishable at a us-east RS; the server's own read gate (`residencyDeniedForAccess`) needs a ClientStore round-trip per read because tokens carry no provenance.
-- **Evidence**: `server_finish_login.go:319-330`; `shared/core/types_token.go` `Subject` (no region); `defaultimpl/issue_payload.go` `buildAccessPayload`; `ed25519_types.go` payloads; `oidcsupport/idtoken_claims.go` `ProjectIDTokenClaims` (region must be a first-class field, not a `Claims`-map entry, or §5.5 projection drops it); introspection echo point `handle_introspect.go:366`.
-- **Proposed**: typed `ServingRegion` on `core.Subject`/`core.TokenClaims`/`ed25519Payload`/`ed25519IDPayload` + `oidc.IDTokenRequest`, stamped by every mint path from `region.FromHandlerContext(ctx)` (middleware mounted globally at `server_routes.go:132`); empty ⇒ omitted, zero-value byte-identical.
+## 1. Wire the dead PolicyStore SPI into the enforcement engine
+- **Problem**: `region.PolicyStore` (`domains/region/region.go:70`) and `memory.Store` have zero production importers — `resolveResidencyPolicy` (`interfaces/sso/server_tenant_residency.go:214`) hardcodes `tenantStore.GetTenant` → `residencyPolicyFromTenant` (line 425). SDK embedders can't plug a policy source.
+- **Behavior**: new `WithResidencyPolicyStore(region.PolicyStore)` option in a *new* file (`server_tenant_residency.go` is at the 500-line budget ceiling); two-tier resolution — non-zero store policy wins, zero/error falls through to tenant fields (fail-open, store can only add constraint, never silently remove it); nil store = byte-identical.
+- **Accept**: precedence/fail-open unit tests; existing `TestResidency_*` suites unchanged.
 
-## 决策 2 — Discovery advertises the region
-- **Problem**: `docs/error-codes.md:88` tells clients to "route to an allowed region", but `ProviderMetadata` has no region field and `claims_supported` (`applyStaticClaimsAndSecurity:381`) is hardcoded without it; `serving_region` appears only in the login schema (`openapi.yaml:12156`).
-- **Proposed**: opt-in `WithServingRegionAdvertisement` → SnapLink-extension `serving_region` field (omitempty, mirroring `MFAEndpoint`/`WithOperatorMetadata`) + `claims_supported` membership; static-per-process so it's safe in the per-base-URL discovery cache; covered by `signed_metadata` automatically.
+## 2. Durable sqlite PolicyStore backend + config surface
+- **Problem**: `memory.Store`'s own doc says policies are "loaded from config at boot" (`memory.go:1-4`) but no config surface exists; every sibling store (tenant, connections at `build_tenant_geo_region.go:109`) has memory|sqlite; `RegionConfig` (`config/config_geo_tenant.go:59`) has no policy-store knobs.
+- **Behavior**: `domains/region/sqlite` (`New(dsn)`, `platform/migrate`, JSON `allowed_regions` column, mirroring `connections/sqlite/store.go`); `region.policy_store.{backend,sqlite.dsn,seed[]}` config; `BuildRegionPolicyStore` with boot-loud seeding; `regiontest` conformance helper run against both backends.
+- **Accept**: conformance + persistence-across-reopen tests; build tests for each backend; E2E untouched.
 
-## 决策 3 — RS SDK typed claim + opt-in region gate
-- **Problem**: `interfaces/ssoclient/rs` validates locally with the AS off the path, but unknown claims only land in `Raw` (`claims.go`); no typed region, no way to express "this deployment only serves eu-west-1-minted tokens" — the constraint stops at the SSO server, not where tenant data lives.
-- **Proposed**: `Claims.ServingRegion` + `wireClaims` field (covers both modes since `wireIntrospection` embeds it), `Config.AllowedServingRegions` gate in `validateClaims` + `validateIntrospectedClaims` — fail-closed when configured, new `ErrServingRegionMismatch` sentinel mapped to 403 (governance denial, mirroring the AS's region_not_allowed-vs-invalid_token discipline), zero-value config unchanged.
+## 3. Region-ID validation at every policy write boundary
+- **Problem**: `trimRegions` (`admin_tenants.go:444-457`) "does NOT validate region identity" while `evaluateResidency` (`server_tenant_residency.go:246-261`) and `HeaderResolver.Resolve` (`resolver.go:62-77`) compare IDs by exact string equality — `"EU-WEST-1"` vs `"eu-west-1"` silently under-constrains a default-fail-open compliance control.
+- **Behavior**: `region.ValidateID`/`ValidatePolicy` enforcing lowercase DNS-label form + new `ErrInvalidRegion`; enforced at admin (`InvalidArgument` via the existing `ErrInvalidTenant` mapping), `memory.Store.Set` (gains error return; all existing tests use valid IDs), `sqlite.Store.Set`, and config seed (boot-loud). No silent case normalization — loud rejection only.
+- **Accept**: accept/reject unit tests, grpcadmin `InvalidArgument` test, store-unchanged-on-invalid tests, full gates (`go build`, `go vet`, `-race`, `make ci`).
 
-All three preserve the fail-open decision ladder, introspection's documented non-gate, and zero-value byte-identity; contract docs (openapi/error-codes/feature-matrix) are updated in the same change per AGENTS.md §5.6.
+All three preserve oracle-safe semantics, the `evaluateResidency` decision ladder, and nil-default behavior; contract updates (config-reference, feature-matrix, error-codes, DIRECTORY_MAP) are folded into each decision per AGENTS.md §5.
