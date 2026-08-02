@@ -1,16 +1,19 @@
-Design doc written to `docs/design/domains-region-policystore-spi.md`. Every cited file:line in the requirements spec was re-verified against the codebase before designing.
+Design doc written to `docs/auto/domains-tenant-direction3-design.md`. It follows the established design-doc format (`## Decision` headings, each with problem restated / API surface / storage model / failure modes / what could break the design), with three decisions plus a sequencing/gate-compliance section.
 
-## Key findings from verification
+## What the design fixes
 
-**One gate conflict found**: the spec mandates a *new* file `interfaces/sso/server_residency_policystore.go`, but `interfaces/sso` is at its frozen 60-file ceiling (`directory_fanout_test.go`: `dirFileCountExemptions["interfaces/sso"] = 60`, enforced as regression-if-grown — a 61st file fails `make ci`). The design resolves it the AGENTS.md-sanctioned way: the two-tier resolution moves **down** into a new `domains/region/policyresolve.go` (domain free function + thin Server wrapper), while the `WithResidencyPolicyStore` option and field land in the existing `sso_wiring.go` (439 lines, ~61 headroom). `server_tenant_residency.go` shrinks to ~460, staying under its 500-line budget.
+**Decision 1 — Durable backends**: sqlite `collab.go` (migration v5 appended to the shared `migrations` list, single `"tenant"` namespace), postgres `collab.go`, and the in-place `ConformanceSuite` in `domains/tenant/memory`. Key storage decisions: no FK to `tenants` (opaque IDs, memory-tenant deployments), `created_at` as Unix-nano integers matching the tenant tables, and JSON `null` round-trip for nil-vs-empty `Roles`/`Attributes` parity with memory.
 
-**All other spec claims verified**: 500-line ceiling, dead SPI with zero production importers, trim-only admin boundary, exact-match enforcement, all `memory.Store.Set` callers using valid lowercase IDs, `ErrInvalidTenant`→`InvalidArgument` mapping, connections/sqlite pattern, `permissionstest` conformance pattern, `modernc.org/sqlite` already in root `go.mod`, same-layer domain imports precedented (`tokenanomaly` → `metering`).
+**Decision 2 — Admin surface**: six RPCs with exact route shapes. Two notable calls I made:
+- `guest_tenant_id` is **required** on both list RPCs — the SPIs have no global list, so unfiltered listing would couple the service to a `tenant.Store`; full inventory belongs to the snapshot category.
+- The second key of composite removes rides as a **query parameter**, not a second path segment — tenant IDs and raw subject IDs are opaque and may contain `/`.
 
-## Design decisions per heading
+**Decision 3 — Snapshot + provisioning**: two new categories, per-tenant export via the existing `ListTenants` scan, restore arms with full mode semantics (Merge-skip / Overwrite-upsert / Replace-prune, with `ErrUnsupportedRestore` when no tenant store is wired, per the pairwise precedent), and shared-`*sql.DB` wiring in `wireTenant`. No new config knob — durability derives from `tenant.backend`.
 
-- **Two-tier resolution**: precise ladder (cache → store → tenant fields), with two subtleties nailed down: (1) store-*error* fall-throughs are **not cached** (`cacheable=false`) so a transient outage can't cement an under-constrained policy for a full TTL; (2) the "store only adds constraint" guarantee holds only for zero/error answers — a *non-zero* store policy **replaces** tenant fields wholesale (no merge), documented as an operator footgun.
-- **sqlite backend + config**: `region_policies(tenant_id PK, home_region, allowed_regions JSON, enforce_writes)` via `platform/migrate` namespace `"region"`; `region.policy_store.{backend,sqlite.dsn,seed[]}`; `BuildRegionPolicyStore` boot-loud on bad DSN/seed/backend; `wireRegion` gains an error return; `regiontest` conformance `Backend` interface (Set/Delete beyond the read-only `PolicyStore`).
-- **Validation**: `ValidateID`/`ValidatePolicy`/`ErrInvalidRegion`, enforced at admin (via the existing `ErrInvalidTenant` shape), memory/sqlite `Set` (validate-before-store, state unchanged), and seed. One documented deviation: the spec's literal regex admits `a--b`; I chose the strict DNS-label form `^[a-z0-9]+(-[a-z0-9]+)*$` + length 1–63, which matches the spec's own prose and has an identical acceptance set.
-- **What could break the design**: 10 ordered risks, topped by the file-ceiling trap, cache-poisoning across tiers, the replace-not-merge surprise, and the `Set` signature tightening.
+## Three spec corrections surfaced during design
 
-One note: `docs/architecture/DIRECTORY_MAP.md` needs **no** structural change — its layout block enumerates only top-level packages (subpackages like `connections/sqlite` aren't listed), so `region/{sqlite,regiontest}` ownership follows the existing `domains/` row.
+1. **Postgres upgrade trap (most important)**: the spec's "extend `tenantSchema`'s ensure path" is wrong — the versioned runner (`applyPending` in `infrastructure/postgres/migrate.go`) never re-applies an already-stamped v1 baseline, so existing postgres DBs would silently lack the collab tables. The design mandates a **v2 migration** in `tenantMigrations` plus an upgrade-path test.
+2. **Wire-key drift**: `shared/core/consts_wire.go` has only `KeyGuestTenantID`; `home_tenant_id`/`external_subject_id` are not existing consts — two must be added.
+3. **File budget**: the spec's single-file plan (`admin_domains.go` 171 → ~470) leaves ~30 lines of headroom; a realistic estimate is ~530. Split committed: RPCs in `admin_domains.go`, converters/helpers in `admin_paginate.go` (331 → ~430, both under 500).
+
+All budget numbers were re-verified against the tree, including the pre-existing quirk that `infrastructure/postgres` (26 files) is gate-skipped via `skipDirs` despite AGENTS.md calling it a root-module package — noted, not fixed.
