@@ -1,38 +1,35 @@
-All key claims verified. I have everything needed for the gatekeeper cross-check.
+Gatekeeper audit complete. I read the implementation plan in full, the design, all three named reviews (security/SRE/QA), the protocol review, and the pre-impl reconciliation checklist — then verified the load-bearing claims against the tree, including an empirical probe of the SRE F2 mechanism.
 
----
+## Audit: findings resolved or dismissed with reasons
 
-# Gatekeeper Report — `docs/design/interfaces-snapshot-credential-aware-recovery.md`
+**Resolved with reasons (the bulk — and I verified the load-bearing mechanisms):**
 
-**Scope note:** The submitted `protocol_expert` review targets the *companion* design `docs/auto/interfaces-snapshot-restore-safety-design.md` (auto-safety/rollback feature), not this design. The credential-aware design has its own protocol review in-tree (`docs/design/interfaces-snapshot-credential-aware-recovery-protocol-review.md`); I cross-checked both, plus direct code verification of the shared claims (codec ordering, `runPlan` abort, ledger marshal sites, `ValidateSecret`/PAR empty-secret acceptance, Export error mapping, TOTP backend inventory, `redact_secrets` default, go-webauthn pin).
+| Finding | Plan item | Verification |
+|---|---|---|
+| Security F1 / QA H1 (census 12 vs 10) | §3: 13 sites + 1 template, per-site decisions | Correct; matches reconciled checklist §1.2 |
+| Security F2 / QA H2 (inert selectors, 5th Evaluate site) | §7 + §9 liveness matrix + no-op pins | Introspection row present |
+| Security F3 / SRE F4 (fail-open observability) | §6 bounded counter + metric call | Present in tree (`ObserveTokenPolicyRoleResolutionError`) |
+| Security F4 (tenant_id unvalidated) | §4.5 Validate rules | `validate.go` present, `core.TenantRole` set confirmed |
+| Security F5 (server_oauth math) | §1.3: +14 → 495 | **Confirmed**: seam is exactly 45 lines (162–206), file is 495 |
+| SRE F1 (stock never wires store) | §4.4 boot warning + docs | `hasRoleSelectors` + `slog.Warn` present in `build_governance.go` |
+| SRE F2 (inline strictness bypassable) | §4.2 `Policy.UnmarshalYAML` | **Probed with goccy v1.19.2**: lenient fallback now errors on `tennat_id` (`[2:1] unknown field`); unrelated keys still tolerate. Mechanism works |
+| SRE F7 (server_helpers math) | §1.2: 493→495, rebuttal | **Confirmed**: both signatures are single-line with `tenantID`; file is 495 = 493+2. F7's 497 was a miscount |
+| QA L2 ("7th file") | §4.5: 6th | Confirmed: 6 non-test files in `domains/tokenpolicy` |
+| QA M1–M5, L1, SRE F3/F5/F6/F8, Protocol F1/F2/F4 | §7–§11 | Mapped with concrete pins/tests |
 
-## Cross-check: resolved vs. dismissed vs. unaddressed
+## Blocking issues
 
-**Resolved or dismissed with reasons (OK):**
-- Artifact-integrity / no-plaintext invariants (DB-F8), approximate-consistency inheritance (DB-F9 — needs one explicit sentence), orphan-credential interaction (DB-F10, design flags + documents no-prune with reasons), artifact-producer trust and counter-regression direction (SEC Info, verified correct), `Get` serving envelope ciphertext (SEC Info, acceptable + doc note).
+1. **Security F6 (Info) is unmapped.** §8's map stops at Security F5. The cross-client `ListByUser` counting quirk ("document in config-reference, do not change semantics") appears nowhere in the plan — neither the §8 table nor the doc program. The claim "§8 maps every security/SRE/QA finding (F1–F8, H1–H2, M1–M5, L1–L2)" is false as written: the security review has F1–F6.
+2. **Protocol F3 (Medium) is unmapped.** The ID-token-TTL-unchanged-by-tenant-clamp asymmetry needs a config-reference statement plus extending the claim-surface pin ("ID-token TTL unchanged by tenant clamp"). The plan's claim pin (§11 step 2) covers only the access-token no-`tenant_id` assertion.
+3. **Protocol F5 (Info) is unmapped.** Opaque temp tokens (`grpcadmin/admin_tokens.go`, `temp_token.go`) as declared exceptions to the "uniform clamp" wording in config-reference are absent.
+4. **Protocol F6 (Info) partially unmapped.** The §3 census table carries no stock-vs-embedding reachability column (agent delegation is embedding-only per checklist §1.3), and the plan nowhere states the checklist's correction of both reviews' "stock" framing.
+5. **Baseline staleness voiding the gate proof.** Every §1/§10 figure is anchored to `ff690260`; HEAD is now `e231a479` and the worktree already carries the .go implementation with different counts (`server_token.go` 462 not 500, `server_login.go` 469 not 499, `build_governance.go` 456, `metrics_token.go` 172, `evaluate.go` 215, `yaml.go` 45, `clamp_issuer.go` 76, `types_token.go` 284). The openapi cites (:6836/:6868-6884) are also stale — the endpoint is at :6900 and the item schema currently lacks all three fields. The plan must be re-anchored before execution.
 
-**Flagged in the design but NOT resolved — mechanism wrong or state accepted:**
-- **SEC-F1 / P-F1 (High) — empty-secret client authentication.** Verified: `ValidateSecret` accepts stored-empty + presented-empty (`CompareClientSecret("","")==true`); `verifyTokenClientAuth` (`server_token_clientauth.go:213-216`) and `authenticatePARClient` (`handle_par.go:141-142`) have no non-empty guard, unlike `authenticateClientCreds` (`handlers.go:41`). The design's premise ("the grant silently breaks") is factually wrong — token minting is *masked* by `denyPublicClientCredentials` (`server_token.go:387-389`), but **PAR silently accepts the empty secret** (the in-tree protocol review executed this probe). The design explicitly accepts "restored with empty secrets exactly as today" (missing rotator) and the disabled-client "latent trap" with a runbook note — both are bypass-class states. **Unresolved; requires design amendment (root-fix empty-secret rejection + PAR guard + fail-closed reclassification of the missing-rotator row).**
-- **SEC-F2 / DB-F1 (High) — rotated secrets in the durable ledger.** Verified three `json.Marshal(rep)` sites (success `:327`, partial `:316`, rollback `:408`) all serialize the raw `Report` into the file-backed operations ledger, and the rollback path attaches the failed report to status details (`withReportDetail`). The design flags the requirement but anchors the strip at "reportToProto-adjacent code" — **the wrong place**; an implementer following the design literally still leaks. Needs by-construction strip (`json:"-"` or a persistence projection) covering all three sites. **Unresolved.**
-- **SEC-F4 — undecryptable envelope, opt-in unset.** Verified `runPlan` aborts on the first category error (`restorer_stage.go:22-36`); the design's "restore succeeds … the report records a category error" is mutually exclusive unless the TOTP stage reuses the non-fatal per-call session, which the design never says. The unset path also must decrypt the envelope to enumerate users — "opt-in" semantics contradicted. **Unresolved (design contradiction).**
-- **SEC-F3 — pre-existing-user credential binding.** The "written by this restore" gate exists only for Decision 1; Decision 2 `AddCredential` appends to any existing user and Decision 3 `ImportSeed` is a `user_id`-keyed upsert that **overwrites** pre-existing enrollments (verified `postgres/totp_enrollment.go`, sqlite). The design flags only the orphan case, not the overwrite case. **Unresolved.**
-- **SEC-F5 / P-F8 — `DeriveSealer` mechanism underspecified.** "Derive from KDF output" is stated, but not whether derivation is per-Seal/Open with the salt carried in `SeedEnvelope.Params`; a pre-derived variant ships cross-node undecryptable — the primary air-gapped use case. **Unresolved.**
-- **DB-F2 — failure-path secret delivery.** If a later category fails after rotation, the RPC errors with no report; with F1's strip, the secrets' only copy is gone (re-run converges only if it succeeds). Unaddressed in the design; the fix (status-details transport) matches the house pattern (`operationFailureError`) the protocol review endorses. **Unaddressed.**
+## Non-blocking notes
+- The plan's §4.2 supersedes the preimpl-checklist's adjudicated warn-only stance on SRE F2 — the mechanism is verified working and matches design intent 3c, but the deviation from the checklist's §3.2/G7 pin should be flagged explicitly.
+- §11's gate sequence omits `go test ./test/ -run TestE2E -v` (AGENTS.md §2; QA CI-gaps; checklist G11).
+- The pre-existing `make ci` red items are accurately reported and still present (gofmt on `refresh_tokens_schema.go`; `test/region_token_contract_test.go`).
 
-**Wrong or missing but non-blocking (must land in the same change):**
-- **DB-F3/SEC-F6/P-F5 — Decision 4 mechanism inverted.** Verified: `DisallowUnknownFields` decode precedes `IsValidSchemaVersion` (`codec_json.go:43-50`); old binaries get a JSON error → `Internal`, not `ErrUnknownSchemaVersion`. Requires codec reorder + doc correction.
-- **DB-F4 — TOTP implementer list.** Design names `MemoryTOTPStore` (test type); stock wiring is `defaultmfa.MemoryTOTPEnrollmentStore` and postgres `TOTPEnrollmentStore` (both verified) — both unnamed; missing them silently disables the feature on the HA path.
-- **P-F2 — eligibility over-match.** `Active && Secret == ""` rotates public (`auth_method="none"`) and federation clients, minting spurious plaintext secrets; needs an auth-method predicate + third report classification.
-- **P-F3 — `RegistrationAccessToken` loss** on fresh-node restore is undeclared (no regeneration, no marker).
-- **P-F4 — handle re-mint dismissed as "cosmetic"**; conditional login resolves by `GetByHandle`, so discoverable credentials break on the fallback path — needs reclassification or fail-closed skip.
-- **SEC-F7 — Export error mapping.** Verified `Export` maps everything to `codes.Internal`; Decision 5's `failed_precondition` claim needs an unlisted Export-handler change.
-- **DB-F6/P-F4 — citation**: go.mod pins v0.17.3, not v0.17.4. **DB-F7/P-F7** — `redact_secrets` default is off, so the failure-table parenthetical is backwards. **DB-F5** — read-only discipline for `Get` results should be stated for the clients stage too.
-- **PROTO-F2/F3/F4/F5 (restore-safety design)** — out of scope for this design's text; they gate the companion design, except PROTO-F1's transport rule, which is incorporated via DB-F2.
+The engineering substance is sound — the two disputed arithmetic items and the strictness mechanism all check out empirically — but three review findings (one Medium) are neither resolved nor dismissed with reasons, the §8 completeness claim is false, and the gate-proof table describes a tree that no longer exists. These are cheap to close but must be closed before the implementation stage proceeds.
 
-**Pre-existing condition:** the in-tree credential-aware protocol review reports `go test ./interfaces/snapshot/...` does not build in the WIP worktree (`restore_safety_test.go:105`) — reported separately; no design claim rests on it, and the AGENTS.md gates apply at implementation.
-
-## Verdict rationale
-
-The design is un-implemented and its architecture (capability assertions, purpose-separated sealing, v3 gating, report markers) is sound. But the gate cannot pass on an unamended design: two **High** findings (empty-secret client-auth bypass — the design's central premise is contradicted by verified behavior at PAR; rotated-secret ledger persistence — the strip is anchored at the wrong serialization layer) and four **Medium** design-level defects (runPlan-abort contradiction, pre-existing-user credential binding, `DeriveSealer` cross-node mechanism, failure-path secret delivery) are neither resolved nor dismissed with reasons in the design text. All are bounded, in-scope amendments; none require re-architecture.
-
-VERDICT: FAIL - empty-secret client-auth bypass unresolved (SEC-F1/P-F1; design premise wrong, PAR accepts empty secrets today); rotated-secret ledger/status-details persistence unresolved with the strip mis-anchored at reportToProto (SEC-F2/DB-F1); undecryptable-envelope non-opted-in path contradicts runPlan's abort contract (SEC-F4); pre-existing-user TOTP/WebAuthn credential binding without a write-set gate (SEC-F3); DeriveSealer cross-node derivation mechanism underspecified (SEC-F5); failure-path secret delivery unaddressed (DB-F2). All six need amendment in the design before implementation; the remaining findings (version-check ordering, TOTP implementer list, eligibility predicate, RAT declaration, handle fallback, Export error mapping, citation/default fixes) must land in the same change.
+VERDICT: FAIL - Security F6, Protocol F3, Protocol F5 unmapped (neither resolved nor dismissed with reasons); §8 completeness claim false (stops at Security F5, omits the protocol review); census table lacks stock-vs-SDK reachability (Protocol F6); entire line-count/gate-proof table anchored to stale baseline ff690260 while HEAD/worktree have moved (implementation already applied; counts differ)
