@@ -1,29 +1,19 @@
-Design doc written to `docs/design/grpcserver-observability-tls.md` (25303 bytes). All spec evidence was re-verified against the working tree first; every file/line reference in the doc is current.
+Design doc written to `docs/auto/interfaces-middleware-design.md`. Every budget and signature claim was re-verified against the tree before writing.
 
-## Design summary
+## Key decisions
 
-**## Decision 1 — API surface**
-`grpcserver.RegisterObservability(s *grpc.Server, checks func() map[string]func(ctx) error) (stop func())` in a new `interfaces/grpcserver/obs.go` (6→7 non-test files, within the 10-file budget). Registers the stock `health.Server` + `reflection.Register`; the `checks` func-value keeps `grpcserver` free of any `interfaces/sso` import (no new graph edges). cmd wires `a.server.BuildHandlerDeps().ReadyChecks` (verified at `accessors_handlers.go:343`). Per-service statuses derive from `s.GetServiceInfo()` each tick — no ordering constraint, no extra param.
+**## Package layout** — New `interfaces/middleware/chain` subpackage (not an extension of `middleware.go`). The 10-file fanout ceiling forbids a new root file, and the in-file estimate lands at ~490 lines (>450 trigger, ~zero headroom under the 500 cap). `middleware.go` re-exports `type Chain = chain.Chain` + `var FromCore = chain.FromCore` so the spec name `middleware.Chain` holds. `chain` imports only `net/http` + `shared/core`; both packages classify as `interfaces` by first-segment rule — no `layerName()` change.
 
-**## Decision 2 — Health semantics**
-Single poller goroutine: immediate first evaluation, then 5s interval; per-evaluation `recover` (panicking checks can't kill the poller — matches `/readyz`'s net/http survivability); 3s aggregate deadline mirroring `handleReadyz`. `stop()` cancels the poller + `health.Server.Shutdown()` so Watch clients see draining. Documented divergence: `WithReadyCheckTimeout` metadata is invisible through the accessor — gRPC health applies only the aggregate bound (not fixable without touching `interfaces/sso`, which is out of scope).
+**## API surface** — `type Middleware = func(http.Handler) http.Handler` as a *type alias* (not defined type): every existing constructor (`Recover`, `Compress`, `AcceptVersion`, `Degradation`, `RequestLogger`, `metrics.Middleware`, `ratelimit.DynamicMiddleware`, `tracing.Middleware`, `cors.Middleware`, `handler.SecurityHeaders`, `TrustedProxies.Middleware`) is assignable with zero conversions. 12 unexported slot fields, 12 nil-tolerant `With*` builders, `WithProbes` (map copied), `Wrap` (fixed-sequence `if` chain — no slice to shuffle), `SlotOrder()`, `FromCore` (mirrors `StdRouter`'s Abort loop at `router.go:270-277`).
 
-**## Decision 3 — Metrics**
-`ss_grpc_requests_total` + `sso_grpc_request_duration_seconds` with labels `grpc_service` (memoized allowlist from `GetServiceInfo()`, unknown → `"other"`) and `code_class` (fixed `ok|client|server` table). Health/reflection RPCs are denylisted so LB probe traffic never dominates dashboards. Interceptors live in `interfaces/grpcserver/metrics.go`, vectors + registration in `platform/metrics` — same split as the HTTP pair. `a.metrics` is nil-safe (`main.go:274`).
+**## Storage model** — No persistent state. Chain is rebuilt per `Handler()` call (preserving today's semantics); the one side-effectful assignment is `s.rateLimitStore` (kept in `buildChain` so `SetRateLimitPolicy` hot-reload keeps working); degradation gauge seeding stays as a one-call-site helper; idempotency cache untouched.
 
-**## Decision 4 — Tracing + chain order**
-`otelgrpc v0.68.0` (exact contrib/otel alignment). New order: `metrics → otelgrpc → Recovery → adminMW`. This deliberately amends the documented "Recovery outermost" invariant — the comment is rewritten and the observability layer is panic-safe (defensive recover → Internal, never crashes the process). The panic-counted-as-server-class test is the regression lock.
+**## Tracing slot** — Two independent options (`requestIDMW` request-ID/W3C + `tracingOperation` OTel) compose into the single Tracing slot, OTel-outermost. Flagged the intentional behavior delta: 429/503/413 rejections now carry `X-Request-Id` (today they don't, since Tracing ran inside the router).
 
-**## Decision 5 — TLS fail-closed**
-New `-grpc-tls-cert/-key` (fallback to shared pair) + `-grpc-insecure`. A pure decision function implements the 6-row matrix: non-loopback + no material → startup error; loopback or explicit opt-out → logged plaintext exceptions; cert+insecure → error. Flags stay runtime-only (no Config keys → docscheck gate unaffected). Verified no `test/` harness passes `-grpc-listen`, so the stock-run breaking change has no CI blast radius.
+**## Failure modes / what could break it** — 10-item risk register: the `health_test.go:121` direct `Tracing()(ctx)` break, fake-context harness rewrites in `test/middleware_test.go`, the `sso.AuthMiddleware`/`sso.CORS` SDK break, the parent→child import cycle trap, probe-mux byte-identity (ServeMux path-cleaning), and the finding that generic `middleware.Idempotency` has **zero production call sites** — so test (d) pins a documented contract, not an enforced composition.
 
-**## Decision 6 — Storage model**
-No durable storage. In-memory only: health status map (a *projection* of the existing store-health check closures — no new probing), bounded prometheus vectors, one memoized allowlist per server, OTLP's bounded span queue.
+## Notable verification findings beyond the spec
 
-**## Decision 7 — Failure modes**
-11-row table: check panics/hangs, flapping, handler vs. observability-layer panics, exporter down, metrics disabled, cert failures, reflection-on-plaintext, poller leak (owned by `stop()`).
-
-**## Decision 8 — What could break the design**
-Nine risks with mitigations: chain-order regression (test-locked), otelgrpc missing from module cache (needs network fetch; minimal-diff criterion), `GetServiceInfo` fallback, stock-run startup break, unauthenticated health/reflection (accepted convention), cardinality growing with SDK-registered services, per-check-timeout divergence, flag/Config asymmetry, `health.Server.Shutdown()` availability (checked at implementation).
-
-Contract updates and the full gate sequence (`go build/vet` → maintainability/architecture → `-race` → TestE2E → `make ci`) close the doc, per AGENTS.md §5.
+- `server_routes.go` is 488/500 lines — the collapse nets −70, relieving the pressure that forced `wrap*` relocation
+- `mountMiddleware`'s `TracingMiddleware()` `router.Use` (line 113) is the only server-side `core.MiddlewareFunc` tracing consumer; tenant/geo/region stay on `Router.Use`
+- `Deprecation` wraps outside `AcceptVersion` today — the single AcceptVersion slot receives the server-composed pair to preserve exact order
