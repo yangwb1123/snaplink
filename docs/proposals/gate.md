@@ -1,44 +1,30 @@
-All verification complete. Here is the gatekeeper's cross-check.
+All verification complete. Here is my gatekeeper cross-check.
 
----
+## Gatekeeper cross-check: findings vs. design
 
-# Gatekeeper Review — interfaces/adapters Direction 2 (router conformance suite)
+**Method:** Read `docs/design/adapters-delivery-path.md`, `docs/requirements/adapters-delivery-path.md`, and `docs/requirements/adapters-delivery-path-adjudication.md` in full; re-verified the contested code facts in the tree (testkit wiring, 501/400 paths, recovery ordering, capabilities.json, ci.yml absence).
 
-**Method:** cross-checked all six reviews' findings against the *current* design (`docs/architect-analysis/auto/interfaces-adapters-direction2-design.md`, rev. 03:50, which post-dates the reviews at 03:14–03:44 and carries an "Implementation notes (as landed)" section) and the landed code in the working tree. Ran the committed gates myself.
+### Finding-by-finding status
 
-**Gates actually run this revision:**
-- `go build ./...` — clean; `go vet ./...` — clean
-- `go test -run 'TestMaintainability_|TestArchitecture_' .` — **green** (file-size budget incl. `aliases.go` @ 500; import-boundary rule 3)
-- `python cli.py check-filesize` — **PASS**
-- `go test ./interfaces/adapters/... ./shared/core/...` — green; `routertest` conformance suite runs all 14 scenarios × 3 backends (verified verbosely: `TestConformanceSuite_StdRouter` 14/14 PASS)
-- `go test -race ./interfaces/adapters/...` — green
+| Finding (sev) | Adjudication | State in design/requirements files (verified) | Status |
+|---|---|---|---|
+| secF1 ≡ qaF1 — testkit cannot run scenarios 1–3 (**High**) | **W1/R1**: extend testkit with auth-code store, refresh store, redirect URIs, raw-body refresh parse | **Not amended.** Design Decision 1 adds only `WithRouter`; verified `testkit.go` `NewServer` wires neither store, `seedClient` sets no `RedirectURIs` → `server_finish_login.go:383-394` yields 501/400. Matrix as written cannot pass on any backend | **Unresolved in design** |
+| devH1 — baseline uncommitted (**High**) | **W4/R3**: landing order C1→C2→C3, row absent until C3 | Partially: design sequencing says I3 lands last, but no commit-atomicity/row-absence rule in the design; governed by adjudication only | Partial (governance trail) |
+| devH2 — no CI registration (**High**) | **W5**: add `make adapters-check` to `ci.yml` | **Not amended.** Decision 6 registers cli.py/Makefile/CHECKS_REGISTRY only; `ci.yml` appears nowhere in the design. Gate runs nowhere in GitHub Actions | **Unresolved in design** |
+| devM1 ≡ qaF3 — spec literal byte-identity (**Med**) | **W2**: amend requirements acceptance + 预期行为 2 | **Not amended.** Requirements line 23 still asserts "404/`token` 错误响应字节…逐字节相同". Persisted gate unsatisfiable | **Unresolved in requirements** |
+| secF2 — recovery ordering inverted (**Med**) | **W3/R4**: `gin.New()`, rewrite failure-mode 10, panic-route smoke | **Not amended.** Failure-mode 10 still claims "sso's recovery fires first" (verified inverted: `wrapPanicRecovery` outermost, `server_routes.go:399`); Decision 3 still uses `gin.Default()` | **Unresolved in design** |
+| qaF2 — concurrent subtest unasserted (**Med**) | **W6**: outcome-pin every request 200 | **Not amended.** No outcome-pinning language in design | **Unresolved in design** |
+| devM3 — row before evidence (**Med**) | **R3**: row + check + registrations + ci.yml + requirements amendment atomic in C3 | Partial (I3-last only); no atomic-commit binding in design | Partial |
+| secF3 — false empty-capabilities precedent (**Low**) | **W9a**: correct the claim | **Not amended.** Decision 5 still cites the empty-capabilities precedent; verified `capabilities.json:360` = `["storage.production.v1"]` (non-empty) | **Unresolved in design** |
+| qaF4/F5/F6, secF4 — line-cap, no-store, refresh positive path (**Low**) | **W7, W8** | **Not amended.** Absent from Decision 2/6 | Unresolved in design |
+| qaF9 — `/auth/callback` wording (**Info**) | **W9c** | **Not amended.** Design line 108 still says "authorize via `/auth/callback`" | Unresolved in design |
+| qaF7 — race split (**Info**) | **W9b** | Not amended (doc item, deferred to `docs/adapters.md`) | Deferred, non-blocking |
+| qaF8 — validator strictness (**Info**) | verify-after-generate | Already in design (failure-mode 9, what-could-break 5) | **Resolved** |
+| devL1/L2, qaF7 — release comment, file count, race split | W9d / closed / W9b | L2 dismissed by measurement (60 files, ceiling exact); L1 is a one-line doc fix outside design scope | Dismissed with reasons |
+| devM2 — PAT (**High ops**) | **W10**: maintainer revoke/rotate | Out of design scope, operational; assigned with validation | Dismissed with reason (outside tree) |
 
-## Finding-by-finding disposition
+## Verdict rationale
 
-| Finding | Status | Evidence |
-|---|---|---|
-| **C1** — alias in `aliases.go` → 501 lines (Security F1, Protocol M1, Staff F5) | **Resolved** | `type GatedRegistrar = core.GatedRegistrar` landed at `interfaces/sso/origin_validation.go:32` (the documented relocation home); `aliases.go` untouched at 500; both size gates green |
-| **C2** — `shared/core/routertest/` violates import-boundary rule 3 (Staff F1) | **Resolved** | Suite lives at `interfaces/adapters/routertest/` (`conformance.go` + `conformance_test.go`), imports `core` downward, layer-legal; `TestArchitecture_ImportBoundaries` green, no exemptions |
-| **H1** — `e.NotFoundHandler = …` doesn't compile; package-level vars (Staff F2, QA F-1) | **Resolved** | Echo adapter installs `engine.RouteNotFound("/*", …)` (adapter.go:85) + delegating `HTTPErrorHandler`; builds and vets clean |
-| **H2** — gin TSR 301 defeats scenario 7 (Protocol H1, Staff F3, QA F-2) | **Resolved** | Gin adapter pins `HandleMethodNotAllowed = false`, `RedirectTrailingSlash = false`, `RedirectFixedPath = false` (adapter.go:69-71); trailing-slash scenario green |
-| Wrong baseline cells (echo HEAD empty-body 405, echo OPTIONS 204+Allow, gin 301, gin gate fallback body+header leak) | **Resolved** | Corrected in as-landed notes; suite now green on all tuples |
-| Cross-backend JSON byte equality (scenarios 1/8/14) | **Resolved** | Pinned to status + JSON value + `Content-Type` prefix; byte equality reserved for the unmatched contract |
-| Red-baseline vs green-tree contradiction | **Resolved** | Red baseline recorded from scratch runs against un-normalized configs; suite+fixes land atomically (documented) |
-| Security F2 — `WithFrameworkNotFound()` × gating oracle degradation | **Resolved in substance** | Option docs: opting out "gives up the byte-identity guarantee, and the routertest conformance suite must never be wired against this configuration" (both adapters); design risk item 3 (divergence hatch + Factory rule). Nit: docs never literally say "gated-off routes become distinguishable"; the guarantee statement covers it — non-blocking |
-| Security F3 — snapshot as silent authz/audit migration hazard | **Resolved** | Design risk item 6: release-notes contract change + scenario 10 pins; scenario 10 runs green |
-| Security F4 — constructor mutates embedder engine | **Resolved** | Precedence rule documented ("later assignment wins"); constructor docs on both adapters; engine-level boundary (risk item 7) documented |
-| Security F5 — bytes can't catch side-effect-only handler execution | **Resolved** | Gate-off scenarios assert `handlerCalls.Load() == 0` (conformance.go:372, 447) |
-| QA additions (wrong-method-on-gated-off; echo caveats: install-before-first-request, later-registration-wins) | **Resolved** | Wrong-method-on-gated-off pinned in as-landed notes; echo later-wins precedence documented in adapter comment (adapter.go:45-47); install-before-first-request inherent (constructor-installed) |
-| L1/L2, I1–I4, F6 (line arithmetic), architect unknowns (routertest home, TSR pin, OPTIONS contract, spec-correction scope) | **Resolved/documented** | As-landed notes correct the gin charset mechanism, `Allow` discard, HEAD/OPTIONS deliberation; landed adapters 253/257 lines — both < 260 as claimed |
+The adjudication is complete and sound — every finding has a ruling, owner, and falsifiable validation, and its §4 lists seven exact deltas to apply. **But none of those deltas are in the design or requirements files.** The design the implementation stage would consume still contains: (1) a harness that provably cannot run the matrix's own scenarios 1–3 (501/400, verified); (2) a factually inverted recovery-ordering claim and `gin.Default()` in the embed template; (3) a false capabilities-registry precedent; (4) no `ci.yml` registration for the anti-regression gate; and the requirements file still asserts the unachievable literal byte-identity. The principal_reviewer's own line — "four amendments make it implementable" — concedes the design as written is not implementable. The failure is mechanical, not conceptual: the adjudicated amendments must land in the two persisted documents before implementation starts.
 
-## Non-blocking observations
-
-1. **Process anomaly:** the implementer deliverable quoted in the gate request is `domains-tokenpolicy-direction3-implementation-plan.md` — a *different* feature batch (tokenpolicy domain). It addresses none of these findings. The direction2 implementation record is the design's "Implementation notes (as landed)" section plus the landed code, which I verified directly. The tokenpolicy plan should not be mistaken for this gate's artifact.
-2. **Design hygiene:** body sections (lines ~52-55, 298, 519-529) still contain the pre-correction text ("alias goes in `aliases.go`", "Create `shared/core/routertest/`") that the as-landed section explicitly supersedes. Harmless to the build but should be cleaned so future readers don't follow the stale text.
-3. Direction2 changes are uncommitted in the working tree (expected at this stage); `make ci` and E2E remain the implementation-stage handoff gates.
-
-## Verdict
-
-All four blockers (C1, C2, H1, H2) and the medium findings are resolved with reasons and verified by the committed gates and the green conformance suite across all three backends; remaining items are documentation nits. The design is ready for the implementation stage.
-
-VERDICT: PASS
+VERDICT: FAIL - blocking issues: (1) W1/F1 testkit wiring (auth-code store, refresh store, redirect URIs, raw refresh parse) absent from design Decision 1/2 — matrix scenarios 1–3 cannot pass; (2) W5/H2 `adapters-check` not registered in ci.yml — anti-regression gate runs nowhere in GitHub Actions; (3) W2/M1 requirements file line 23 still asserts unachievable literal byte-identity; (4) W3/F2 failure-mode 10 still states the inverted recovery ordering and Decision 3 still uses `gin.Default()`; (5) W9a/F3 false `storage.production` empty-capabilities precedent still in Decision 5; (6) W6/W7/W8/W9c prescribed assertions (concurrent outcomes, line-cap, no-store, refresh positive path, callback wording) absent. All have adjudicated resolutions — apply adjudication §4 deltas to `docs/design/adapters-delivery-path.md` and `docs/requirements/adapters-delivery-path.md`, then re-gate.
