@@ -1,21 +1,18 @@
-Design doc written to `docs/auto/interfaces-ratelimit-direction2-design.md`. It grounds every claim in the code I read (all three backends, middleware, metrics layer, and the full caller graph).
+Design doc written to `docs/auto/interfaces-snapshot-restore-safety-design.md`. All spec evidence claims were re-verified against the code before writing; the doc follows the house format (companion header, fixed constraints, `## Decision N` sections each covering API surface / storage model / failure modes / what could break).
 
-## What the doc covers
+## Verified corrections found while checking the spec's claims
 
-**Per-decision sections (## 决策一/二/三), each with API surface, storage model, failure modes, and breakage analysis**, plus a global blast-radius inventory and a commit/verification plan.
+- **`operations.AddCompensation` already exists** (`platform/lifecycle/operations/operations.go`) and `AdminOperation.compensations` is already on the wire (proto field 7, projected by `operationToProto`) — D3 needs no new operations API or proto, only population of the existing slot. The spec's "operations 包需暴露 append 辅助" assumption is outdated.
+- **`mapSnapshotError` maps `ErrUnsupportedRestore` → `Internal` today** (default branch) — D2's preflight move must also fix this to `FailedPrecondition`.
+- **`PruneOldest` is pipeline-free** and `Kind` lives in the encrypted body — retention can't see it. D1 therefore mirrors `kind` into the `SealedEnvelope` header (additive JSON field) so retention skips victims with a cheap `Get`+`PeekEnvelope` (O(victims), no decryption). This is the storage-model mechanism the spec left open.
+- **Menus have no separate prune** (`replaceMenus` wipes via `SetMenus` replace semantics) — they stay in D2's Phase A; the split table must not invent `pruneMenus`.
+- **No existing test pins the wipe-first partial-failure shape** — D2's changed failure semantics break no committed test, but the fault-injection tests must land in the same change.
+- **Spec checklist gap closed**: the proto checklist omits `rollback_on_error`, but `restoreTracked` must learn rollback intent — the design adds `RestoreSnapshotRequest.rollback_on_error = 8` (BoolValue, additive) and flags it explicitly for the spec amendment.
 
-## Key architect findings beyond the spec
+## Design highlights
 
-1. **A coupling the spec misses: `selfservicecore.RateLimiter`** (`protocols/selfservice/selfservicecore/deps.go:21`) has a byte-identical signature to `ratelimit.Limiter`. Go has no covariance, so changing `Allow`'s return type silently breaks the documented public wiring `WithSelfServiceSignupRateLimiter(ratelimit.NewMemoryLimiter(...))` (options_passwd.go:139). Resolution: hoist the `Allowance` value type to `shared/spi` so `*MemoryLimiter` satisfies both interfaces structurally — zero adapters, zero breaks. Alternatives (type duplication, signature change) rejected with reasons.
+- **D1 (safety snapshot)**: capture step between `load_snapshot` and `apply_resources`, explicit no-op `RedactorFunc` override (beats `DefaultExportRedactor` — verified `effectiveRedactor`), kind-based recursion guard, fail-closed `FailedPrecondition` before `operations.Start` when snapshotter is unwired, tri-state `BoolValue` opt-out, dry-run precedence.
+- **D2 (stage-then-prune)**: `stagePlan`/`prunePlan` move to new `restorer_stage.go` (restorer.go shrinks from 474 lines), capability preflight limited to the two verified capability-guarded prunes (connections `Lister`, pairwise `Lister`+`Deleter`), Phase B preserves category order (load-bearing for FK-strict backends), `Committed=false` on dry-run.
+- **D3 (rollback)**: rollback validation reads the raw `AutoSafetySnapshot` before defaulting (explicit net required), `Exclude` carried into the rollback re-apply for minimality, invalidator fires twice total (inner re-apply success + orchestrator — matching the spec's acceptance), error-with-response semantics and the grpc-gateway body-drop caveat documented, rollback-failure never claims success.
 
-2. **Deny-all vs fail-open are indistinguishable by value** (both have `Limit==0`). The header-writing rule needs a three-way table (`Limit>0` → all three headers; `!OK && Limit==0` → `Remaining: 0` only; `OK && Limit==0` → nothing), which the spec implied but didn't state.
-
-3. **Redis deny-all needs an explicit `denyAll` marker** — `{limit:1, window:365d}` is value-indistinguishable from a legitimate config; it can't be inferred from numbers.
-
-4. **The 1/64 sampling for `sso_rate_limit_remaining` must live in the middleware closure, not the backend**: `calls` is unexported, `{policy}` is only known there, and SQLite's prune sampling is clock-based not call-based — middleware-level sampling gives uniform semantics across all three backends.
-
-5. **Memory's buckets gauge hook can't fire on the inline prune path** — that runs under a shard lock and `Buckets()` locks all shards (self-deadlock). It fires only inside `StartPruner`'s background sweep, meaning the gauge is gated on `prune_interval` (documented).
-
-6. **Zero storage changes**: SQLite table and Redis Lua script stay untouched — both already hold or return the needed data; Memory reads `x/time`'s `Tokens()` after Cancel, inside the shard lock.
-
-Also documented: the full caller graph (sso quota.go, admin governance.go, three test doubles, fuzz/bench), the `Reset` epoch-vs-delta draft ambiguity, and a risk register with severities and mitigations.
+Key risks surfaced: rolling-upgrade retention hazard (old node deletes safety artifacts), capture non-atomicity under concurrent writes, secrets-at-rest on retention-exempt artifacts, storage growth, and the rollback-is-also-not-a-transaction limitation.
