@@ -1,18 +1,15 @@
-Design doc written to `docs/auto/domains-userlifecycle-prod-design.md` — exactly 3 `##` decisions, each covering API surface, storage model, failure modes, and what could break the design. No Go code changed (doc-only, matching the spec's own convention).
+Design doc written to `docs/auto/interfaces-adapters-direction1-design.md`. I re-verified every spec claim against the code first and surfaced three facts the spec missed that now drive the design:
 
-**Verification performed before writing** (all claims checked against the code, not just the spec):
+**New evidence found during verification:**
+1. **gin's `c.Writer` is `gin.ResponseWriter`, not `http.ResponseWriter`** — the spec's literal `c.Writer = w` proposal does not compile for a bare capture wrapper. The design adds a facade (`ginCaptureWriter` embedding the original gin writer, routing `Header`/`Write`/`WriteHeader` through the capture) that keeps `interfaces/middleware` gin-free.
+2. **`server_token.go` is exactly 500 lines** — at the Go file budget ceiling. The design mandates net-negative edits there (assertion replacement −2 lines, inline-capture removal −40).
+3. **The commit path's `ctx.ResponseWriter().(*idempotentResponseWriter)` assertion breaks under adapters even after step 2** — a spec gap. Capture retrieval moves to the request context (Decision 5), which is also what makes step 2's acceptance formally re-sequenced (wiring in step 2, end-to-end replay only provable in step 3).
 
-- `Store` interface, `ErrStateConflict` semantics, `ListByState` "no record never returned" contract — `userlifecycle.go`
-- Memory store's exact Append rules (missing row treated as `DefaultState`) — `memory.go`
-- `SweepOnce` full-roster walk, `MaxPerSweep` applied-only cap, skip-and-log conflicts — `sweep.go`
-- Wiring seams: `build_stores.go:347` (`SessionLastActive`), `BuildUserLifecycle` unconditional memory, `BuildIdentityLinkDurable(cfg, pg, dialect)` as the backend-selection precedent
-- Login anchors `server_login_auth.go:98` / `server_oauth.go:223`; ceremony coverage verified transitively via `server_mfa.go` replaying `finishLogin`
-- Gate context: `maintainability_budget_test.go` skips `infrastructure/postgres`; `permissions/sqlite` + `permissionstest` as the peer/conformance precedents; `defaultimpl/sqlite` as the SQLite-peer precedent
+**Design decisions (each a `##` heading):**
+- **API surface**: `Abort()`/`Aborted()`/`Written()`/`SetResponseWriter` on `HandlerContext` (11→15 methods); compiler-enforced migration of exactly 4 production implementors + 2 test fakes; aliases unchanged.
+- **Storage model**: `Aborted` as a per-request struct field in all three backends (gin's native abort deliberately unused); `Written()` via a permanent `trackingResponseWriter` in core that survives capture swaps by re-wrapping; gin/echo delegate to their own committed-state.
+- **Chain-stop**: one `if ctx.Aborted() { break }` per middleware + guarded handler call in all three loops; opt-in so `TestGatedRouter_*` stays byte-identical; only `Auth`/`CORS` migrate.
+- **Failure modes** table: 12 cases with fail-open/fail-closed classification, including misordered middleware replay (position invariant, not code property), capture loss (audited, Decision 7), and custom third-party routers that ignore the flag.
+- **What could break it**: 10 risks — gin interface drift on upgrade, the 500-line budget, the SDK semver break for external implementors, the `*r = *r.WithContext` mutation pattern, audit cardinality, echo `Flush`/`Hijack` bypassing the swap, and more.
 
-**Three architect-level corrections to the spec, each load-bearing** (documented with rationale in the preamble and per-decision):
-
-1. **Companion interfaces, never `Store`-method additions** — `Store` is SDK surface; `SweepLeaser`/`StaleEnumerator`/`ActivityRecorder` are resolved by type assertion, so external implementers keep compiling and memory builds stay byte-identical.
-2. **The spec's `ListByState`-based candidate enumeration is rejected** — it cannot see implicit-ACTIVE users (no record), whom the sweep deprovisions today; it would silently stop sweeping them. Replaced with a keyset cursor over stale last-active values, which provably covers recorded and unrecorded candidates and satisfies the O(k) acceptance.
-3. **Last-active is a separate table, not a column on `user_lifecycle`** — a column would make every login create a lifecycle row, breaking "no record = ACTIVE" and the decision-2 cursor simultaneously.
-
-Also resolved a real contradiction in the spec: the lease must live inside `SweepOnce` (opt-in via new zero-value `Holder`/`LeaseTTL` fields) for both "lease at the loop" and "two concurrent `SweepOnce`s — exactly one applies" to hold.
+The doc also maps every spec acceptance check to where it's proven. No code was changed — this is design-only, per the request.
