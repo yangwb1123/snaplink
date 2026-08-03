@@ -35,8 +35,9 @@ redis:
     ca_file: /etc/redis-tls/ca.crt
     server_name: redis.svc
   # Operator HARD requirement on the cluster: maxmemory-policy noeviction (or
-  # volatile-ttl). Evicting a live refresh-family ledger or jti key silently
-  # breaks reuse/replay detection — a security regression, not a cache miss.
+  # volatile-ttl). Evicting a live refresh-family ledger, jti key, or active
+  # revocation silently breaks reuse/replay/recovery — a security regression,
+  # not a cache miss.
 
 oauth:
   backend: redis # auth_code / refresh / device_code / par
@@ -74,7 +75,7 @@ self_service:
   identity_link: { enabled: true, backend: postgres, merge_policy: reject }
 native_sso: { backend: postgres } # device_secrets
 
-# ---- COORDINATION tier: etcd. REQUIRED once cross_replica_revocation is on ----
+# ---- COORDINATION tier: this profile uses etcd (the bus may also use Redis) ----
 cluster:
   bus:
     backend: etcd
@@ -85,6 +86,9 @@ registry:
   etcd_endpoints: [etcd-0:2379, etcd-1:2379, etcd-2:2379]
 
 keys:
+  signing:
+    # Shared recovery source for revocations missed during a bus outage.
+    revocation_backend: redis
   rotation:
     coordinated_cutover: true # FAIL-SAFE: deferred retire only widens the verify window
   signing_key_registry:

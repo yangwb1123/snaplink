@@ -79,11 +79,12 @@ type SigningConfig struct {
 
 	// RevocationBackend selects the durable RevocationStore backend for
 	// access-token revocations that survive a process restart.
-	// "" (default) = in-process only; "memory" = durable MemoryRevocationStore
-	// (for testing / single-replica); "sqlite" = durable SQLite store (requires
-	// RevocationDSN). When set, the store is seeded at boot so a pre-restart
-	// revocation is honored again. Orthogonal to the live cross-replica bus
-	// (WithCrossReplicaRevocation). cmd knob: keys.signing.revocation_backend.
+	// "" (default) = in-process only; "memory" = process-lifetime test store;
+	// "sqlite" = single-replica durable store (requires RevocationDSN); "redis"
+	// = shared multi-replica store using the top-level redis block. The store is
+	// seeded at boot and after invalidation-bus recovery. A declared multi-replica
+	// topology with CrossReplicaRevocation requires redis so a replica can recover
+	// revocations missed during a bus outage.
 	RevocationBackend string `yaml:"revocation_backend"`
 	// RevocationDSN is the SQLite DSN for the durable revocation store.
 	// Required when RevocationBackend = "sqlite"; ignored otherwise.
@@ -136,8 +137,9 @@ type KeyRotationConfig struct {
 // admin action on one replica takes effect on every replica immediately
 // instead of after each node's cache TTL elapses. The memory backend is
 // per-process (effectively a no-op for multi-replica — single-node
-// already invalidates locally); etcd is cluster-shared. The bus is
-// fail-open by design, so it is deliberately NOT a readiness dependency.
+// already invalidates locally); etcd and redis are cluster-shared. A lost
+// subscription degrades readiness until resubscribe and state re-seeding
+// succeed; publish failures remain fail-open after the local mutation.
 type ClusterConfig struct {
 	Bus ClusterBusConfig `yaml:"bus"`
 	// CrossReplicaRevocation enables propagation of access-token revocations

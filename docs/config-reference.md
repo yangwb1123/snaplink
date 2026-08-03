@@ -84,7 +84,7 @@ waits for the replay worker to stop before Redis closes.
 | `keys.rotation.grace_period` | Overlap window the demoted key stays verify-only. Also the DEFAULT for on-demand `POST /api/v1/admin/keys/rotate` (see below); when unset the admin rotate falls back to a 24h constant. MUST be >= the max access-token TTL or tokens minted just before a rotation are stranded |
 | `POST /api/v1/admin/keys/rotate`, `GET /api/v1/admin/keys` | On-demand `KeyAdminService` (admin:write / admin:read): rotate the primary signing key now (reusing the scheduled side effects) or list public key metadata. Request `grace_seconds` (>=60) overrides `grace_period`; external-signer builds refuse (412), non-rotatable issuers return 501 |
 | `keys.rotation.coordinated_cutover` | `WithCoordinatedKeyRotation`: broadcasts demoted+new kids + `now+GracePeriod` retire deadline over `cluster.Bus` (`KindSigningKeyRotation`); FAIL-SAFE: deferred retire only widens verify window, never retires early |
-| `keys.signing.revocation_backend` | `With{Algo}RevocationStore` for durable revocation across restarts; `SeedRevocations` re-seeds at boot |
+| `keys.signing.revocation_backend` | `With{Algo}RevocationStore` for restart/recovery-safe revocation; `SeedRevocations` re-seeds at boot and after invalidation-bus recovery. `redis` uses the shared top-level client and is required when `server.topology.mode=multi` and `cluster.cross_replica_revocation=true`; memory/SQLite cannot recover an event missed by another pod. |
 | `keys.signing_key_registry.{backend,replica_id,lease_ttl}` | Opt-in leaderless aggregation (`memory`\|`etcd`). `WithSigningKeyReplicaID` REQUIRED when wired. Degraded → `/readyz` 503 + `signing_key_aggregation_degraded` audit |
 | `keys.signing.fips_mode` | Off by default. When `true`, `BuildSigningIssuer` requires the binary's Go Cryptographic Module to actually be active (`GOFIPS140`/`GODEBUG=fips140`) and validates `keys.signing.alg` against a FIPS 186-5-approved allowlist (default: all four supported algs — see [docs/fips.md](fips.md) for why Ed25519 is included) before constructing the issuer |
 | `keys.signing.fips_allowed_algs` | Optional narrower allowlist consulted only when `fips_mode` is `true`; empty (default) = the package's full approved set |
@@ -128,9 +128,9 @@ Values below are exactly what the binary's boot-time dispatch accepts
 | Audit primary sink | `audit.backend` | `memory` · `sqlite` · `postgres` |
 | Permissions | `permissions.backend` | `memory` · `sqlite` · `postgres` |
 | Anomaly detectors | `anomaly.{recent_login,ip_failure}.backend` | `memory` · `sqlite` |
-| Signing-key revocation | `keys.signing.revocation_backend` | `memory` · `sqlite` |
+| Signing-key revocation | `keys.signing.revocation_backend` | off · `memory` · `sqlite` · `redis` |
 | Signing-key registry | `keys.signing_key_registry.backend` | off · `memory` · `etcd` |
-| Cross-replica bus | `cluster.bus.backend` | off · `memory` · `etcd` |
+| Cross-replica bus | `cluster.bus.backend` | off · `memory` · `etcd` · `redis` |
 | Service registry | `registry.backend` | `memory` · `etcd` |
 | Network policy store | `network.store` | `memory` · `etcd` |
 | Bootstrap lock | `bootstrap.lock.backend` | `noop` · `file` · `etcd` |
@@ -140,6 +140,12 @@ All `backend: redis` **hot** stores share the ONE `redis:` block below. All
 a shared *sql.DB pool per replica, not one pool per store. Selecting
 `redis`/`postgres` without its block is a boot error:
 `<domain>.backend=postgres but no postgres block configured (set postgres.dsn)`.
+
+The Redis invalidation bus and revocation set carry complete bearer tokens.
+Production Redis ACLs and network policy MUST limit the application identity to
+its `snaplink:cluster:bus` channel and `sso:jwt:revocations` key (plus the other
+explicitly configured Snaplink keyspaces), and TLS MUST protect traffic outside
+a trusted private network.
 
 ### B2B connection email-domain verification
 

@@ -181,7 +181,8 @@ func BuildRegistry(cfg *config.RegistryConfig, logger spi.Logger) (registry.Regi
 // same client every redis-backed store uses — one pool, one HA story).
 // The etcd/redis paths are constructed here so the transitive deps stay
 // out of the cluster SPI, mirroring BuildRegistry. Returns the kind for
-// logging; the bus is fail-open, so it intentionally gets no /readyz check.
+// logging; composition registers subscriber-degradation readiness, while the
+// shared Redis client and etcd backend expose their own transport checks.
 //
 // instanceID arms the redis backend's publisher self-skip (a replica must
 // not re-apply its own mutations; see redis.WithInstanceID). It is ignored

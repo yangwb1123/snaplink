@@ -122,6 +122,10 @@ func (b *appBuilder) haCoherenceIssues() []string {
 			stuck = append(stuck, check.key)
 		}
 	}
+	if multi && b.cfg.Cluster.CrossReplicaRevocation &&
+		!strings.EqualFold(strings.TrimSpace(b.cfg.Keys.Signing.RevocationBackend), "redis") {
+		stuck = append(stuck, "keys.signing.revocation_backend")
+	}
 	return stuck
 }
 

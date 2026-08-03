@@ -76,6 +76,7 @@ func TestBuildSigningIssuer_ExternalSigner(t *testing.T) {
 				config.SigningConfig{Alg: tc.alg, External: name},
 				config.ServerConfig{Issuer: "https://sso.test"},
 				nil,
+				nil,
 				spi.NopLogger{},
 			)
 			if err != nil {
@@ -94,6 +95,7 @@ func TestBuildSigningIssuer_UnregisteredExternal(t *testing.T) {
 		config.SigningConfig{Alg: "eddsa", External: "does-not-exist"},
 		config.ServerConfig{Issuer: "https://sso.test"},
 		nil,
+		nil,
 		spi.NopLogger{},
 	)
 	if err == nil {
@@ -111,6 +113,7 @@ func TestBuildSigningIssuer_AlgKeyMismatchFailsClosed(t *testing.T) {
 		config.SigningConfig{Alg: "es256", External: "ext-mismatch"},
 		config.ServerConfig{Issuer: "https://sso.test"},
 		nil,
+		nil,
 		spi.NopLogger{},
 	)
 	if err == nil {
@@ -124,6 +127,7 @@ func TestBuildSigningIssuer_NoExternalIsInProcess(t *testing.T) {
 	iss, alg, probe, err := BuildSigningIssuer(
 		config.SigningConfig{Alg: "eddsa"},
 		config.ServerConfig{Issuer: "https://sso.test"},
+		nil,
 		nil,
 		spi.NopLogger{},
 	)
@@ -153,6 +157,7 @@ func TestExternalSignerMetrics(t *testing.T) {
 	iss, _, _, err := BuildSigningIssuer(
 		config.SigningConfig{Alg: "es256", External: "ext-metrics"},
 		config.ServerConfig{Issuer: "https://sso.test"},
+		nil,
 		m,
 		spi.NopLogger{},
 	)

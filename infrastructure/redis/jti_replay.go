@@ -3,13 +3,25 @@ package redis
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
 
-const jtiKeyPrefix = "sso:jti:" // sso:jti:<jti> -> "1" (presence marker)
+const (
+	jtiKeyPrefix     = "sso:jti:"            // sso:jti:<jti> -> "1" (presence marker)
+	revocationSetKey = "sso:jwt:revocations" // sorted-set member=token, score=exp
+)
+
+var recordRevocationScript = goredis.NewScript(`
+redis.call("ZADD", KEYS[1], ARGV[2], ARGV[3])
+redis.call("ZREMRANGEBYSCORE", KEYS[1], "-inf", "(" .. ARGV[1])
+return 1
+`)
 
 // JTIReplayStore is the Redis-backed implementation of
 // [security.JTIReplayStore]. A jti seen on one replica is recorded in
@@ -74,7 +86,75 @@ func (s *JTIReplayStore) Forget(ctx context.Context, jti string) error {
 	return s.rdb.Del(ctx, jtiKey(jti)).Err()
 }
 
+// RevocationStore is the shared Redis implementation of
+// [defaultimpl.RevocationStore]. Tokens are members of one sorted set and
+// their unix-second expiries are scores, allowing every replica to load the
+// same deny-set after restart or invalidation-bus recovery while pruning with
+// a single bounded command. Validation remains in-process; Redis is consulted
+// only by Revoke, boot seeding, and recovery seeding.
+type RevocationStore struct {
+	rdb goredis.Cmdable
+}
+
+// NewRevocationStore builds the store over the process-wide Redis client.
+func NewRevocationStore(rdb goredis.Cmdable) *RevocationStore {
+	return &RevocationStore{rdb: rdb}
+}
+
+// Revoke atomically prunes expired members and records token until expUnix.
+// The script is idempotent and one-key, so it is safe on standalone, Sentinel,
+// and Redis Cluster clients and bounds storage to the active token window.
+func (s *RevocationStore) Revoke(ctx context.Context, token string, expUnix int64) error {
+	err := recordRevocationScript.Run(
+		ctx,
+		s.rdb,
+		[]string{revocationSetKey},
+		time.Now().Unix(),
+		expUnix,
+		token,
+	).Err()
+	if err != nil {
+		return fmt.Errorf("redis: record token revocation: %w", err)
+	}
+	return nil
+}
+
+// Load returns every revocation whose expiry has not passed, after pruning
+// older entries so both the returned map and Redis key remain TTL-bounded.
+func (s *RevocationStore) Load(ctx context.Context) (map[string]int64, error) {
+	now := time.Now().Unix()
+	if err := s.Prune(ctx, now); err != nil {
+		return nil, err
+	}
+	entries, err := s.rdb.ZRangeByScoreWithScores(ctx, revocationSetKey, &goredis.ZRangeBy{
+		Min: strconv.FormatInt(now, 10), Max: "+inf",
+	}).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis: load token revocations: %w", err)
+	}
+	out := make(map[string]int64, len(entries))
+	for _, entry := range entries {
+		token, ok := entry.Member.(string)
+		if !ok {
+			return nil, fmt.Errorf("redis: token revocation member has type %T", entry.Member)
+		}
+		out[token] = int64(entry.Score)
+	}
+	return out, nil
+}
+
+// Prune drops entries strictly older than nowUnix. The exclusive upper bound
+// preserves a token whose exp equals the cutoff, matching the SPI contract.
+func (s *RevocationStore) Prune(ctx context.Context, nowUnix int64) error {
+	max := "(" + strconv.FormatInt(nowUnix, 10)
+	if err := s.rdb.ZRemRangeByScore(ctx, revocationSetKey, "-inf", max).Err(); err != nil {
+		return fmt.Errorf("redis: prune token revocations: %w", err)
+	}
+	return nil
+}
+
 var (
 	_ security.JTIReplayStore     = (*JTIReplayStore)(nil)
 	_ security.JTIReplayForgetter = (*JTIReplayStore)(nil)
+	_ defaultimpl.RevocationStore = (*RevocationStore)(nil)
 )

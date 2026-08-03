@@ -68,13 +68,12 @@ func pruneRevoked(m map[string]int64, nowUnix int64) {
 // in-process revocation deny-set. Without one, a revoked-but-unexpired access
 // token RESURRECTS after a process restart / rolling deploy (the in-process
 // map starts empty) and on a late-joining replica — exactly when a stolen
-// token is most valuable. Wiring a store (memory for single-process; sqlite or
-// redis on a SHARED backend for multi-replica) makes a revocation survive a
-// restart: the issuer PERSISTS each Revoke and RE-SEEDS its in-process map from
-// the store at boot via SeedRevocations. Validate still consults ONLY the fast
-// in-process map — the store is never on the per-validation hot path. Live
-// cross-replica propagation is the separate cluster bus (WithCrossReplicaRevocation);
-// this closes the orthogonal restart/late-join durability gap.
+// token is most valuable. Wiring SQLite closes the single-replica restart gap;
+// shared Redis closes restart, late-join, and bus-recovery gaps in a fleet. The
+// issuer PERSISTS each Revoke and RE-SEEDS its in-process map from the store at
+// boot via SeedRevocations. Validate still consults ONLY the fast in-process
+// map — the store is never on the per-validation hot path. Live cross-replica
+// propagation is the separate cluster bus (WithCrossReplicaRevocation).
 //
 // All exp values are unix SECONDS (the issuers' `exp` unit). Impls MUST be
 // safe for concurrent use.
@@ -89,8 +88,8 @@ type RevocationStore interface {
 
 // MemoryRevocationStore is the in-process RevocationStore. It is "durable" only
 // for the life of the process — useful in tests + single-process deployments
-// that want the SeedRevocations seam exercised; restart-survival across a
-// multi-replica fleet needs a sqlite or redis store on a SHARED backend.
+// that want the SeedRevocations seam exercised; restart and recovery safety
+// across a multi-replica fleet needs the shared Redis store.
 type MemoryRevocationStore struct {
 	mu sync.Mutex
 	m  map[string]int64

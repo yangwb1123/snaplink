@@ -467,7 +467,7 @@ func (b *appBuilder) wireIntrospectionSigning() error {
 	if !cfg.Enabled {
 		return nil
 	}
-	issuer, alg, extSigner, err := serverbuildsign.BuildSigningIssuer(cfg.SigningConfig, b.cfg.Server, b.metricsRegistry, b.logger)
+	issuer, alg, extSigner, err := serverbuildsign.BuildSigningIssuer(cfg.SigningConfig, b.cfg.Server, b.redis, b.metricsRegistry, b.logger)
 	if err != nil {
 		return fmt.Errorf("keys.introspection_signing: %w", err)
 	}

@@ -199,10 +199,10 @@ func (b *appBuilder) wireInvalidationBusOpts(invalidationBus cluster.Bus) error 
 	cfg, logger := b.cfg, b.logger
 	if invalidationBus == nil {
 		if cfg.Keys.Rotation.CoordinatedCutover {
-			return errors.New("keys.rotation.coordinated_cutover requires a live cluster.bus (set cluster.bus.backend=etcd) — refusing to boot with it INERT")
+			return errors.New("keys.rotation.coordinated_cutover requires a live cluster.bus (set cluster.bus.backend=etcd or redis) — refusing to boot with it INERT")
 		}
 		if cfg.Cluster.CrossReplicaRevocation {
-			return errors.New("cluster.cross_replica_revocation requires a live cluster.bus (set cluster.bus.backend=etcd) — refusing to boot with revocation propagation INERT")
+			return errors.New("cluster.cross_replica_revocation requires a live cluster.bus (set cluster.bus.backend=etcd or redis) — refusing to boot with revocation propagation INERT")
 		}
 		return nil
 	}

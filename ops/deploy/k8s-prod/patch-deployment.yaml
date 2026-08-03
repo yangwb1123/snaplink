@@ -38,6 +38,7 @@ spec:
             - { name: SSO_SECURITY__JTI_REPLAY__BACKEND, value: redis }
             - { name: SSO_CIBA__BACKEND, value: redis }
             - { name: SSO_MFA__CHALLENGE__BACKEND, value: redis }
+            - { name: SSO_KEYS__SIGNING__REVOCATION_BACKEND, value: redis }
             - { name: SSO_SELF_SERVICE__IDENTITY_LINK__BACKEND, value: postgres }
             - { name: SSO_SERVER__PAIRWISE_SUBJECTS__BACKEND, value: postgres }
             - { name: SSO_OAUTH__REDIS__LOOKUP_HMAC_KEY_FILE, value: /etc/sso/oauth-lookup/current.key }

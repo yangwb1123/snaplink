@@ -136,7 +136,7 @@ func (b *appBuilder) wireSigningIssuer() error {
 	// backed by an external KMS/HSM signer. Both concrete types satisfy
 	// the same interface set; only the scheduled rotation loop below is
 	// EdDSA-specific (type-asserted there).
-	jwtIssuer, signingAlg, externalSigner, err := serverbuildsign.BuildSigningIssuer(cfg.Keys.Signing, cfg.Server, b.metricsRegistry, logger)
+	jwtIssuer, signingAlg, externalSigner, err := serverbuildsign.BuildSigningIssuer(cfg.Keys.Signing, cfg.Server, b.redis, b.metricsRegistry, logger)
 	if err != nil {
 		return err
 	}

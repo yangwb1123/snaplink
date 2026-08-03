@@ -45,6 +45,12 @@ func TestHACoherenceAcceptsSharedCriticalStores(t *testing.T) {
 			JTIReplay: config.JTIReplayConfig{Enabled: true, Backend: "redis"},
 		},
 		CIBA: config.CIBAConfig{Enabled: true, Backend: "redis"},
+		Cluster: config.ClusterConfig{
+			CrossReplicaRevocation: true,
+		},
+		Keys: config.KeysConfig{
+			Signing: config.SigningConfig{RevocationBackend: "redis"},
+		},
 		MFA: config.MFAConfig{
 			Enabled:   true,
 			Challenge: config.MFAChallengeConfig{Backend: "redis"},
@@ -58,6 +64,30 @@ func TestHACoherenceAcceptsSharedCriticalStores(t *testing.T) {
 	if err := b.enforceHACoherence(); err != nil {
 		t.Fatalf("shared topology rejected: %v", err)
 	}
+}
+
+func TestHACoherenceRequiresSharedRevocationRecoveryStore(t *testing.T) {
+	t.Parallel()
+	for _, backend := range []string{"", "memory", "sqlite"} {
+		cfg := &config.Config{
+			Server:  config.ServerConfig{Topology: config.TopologyConfig{Mode: config.TopologyModeMulti}},
+			Cluster: config.ClusterConfig{CrossReplicaRevocation: true},
+			Keys:    config.KeysConfig{Signing: config.SigningConfig{RevocationBackend: backend}},
+		}
+		issues := (&appBuilder{cfg: cfg}).haCoherenceIssues()
+		if !containsString(issues, "keys.signing.revocation_backend") {
+			t.Errorf("backend %q issues = %v, want revocation recovery-store issue", backend, issues)
+		}
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 // TestHACoherenceAcceptsPostgresOAuth locks the postgres OAuth backend as
@@ -109,7 +139,10 @@ func TestKubernetesAdmissionPolicyCoversHACoherenceContract(t *testing.T) {
 			JTIReplay: config.JTIReplayConfig{Enabled: true},
 		},
 		CIBA: config.CIBAConfig{Enabled: true},
-		MFA:  config.MFAConfig{Enabled: true},
+		Cluster: config.ClusterConfig{
+			CrossReplicaRevocation: true,
+		},
+		MFA: config.MFAConfig{Enabled: true},
 		SelfService: config.SelfServiceConfig{
 			IdentityLink: config.IdentityLinkConfig{Enabled: true},
 		},
@@ -125,6 +158,7 @@ func TestKubernetesAdmissionPolicyCoversHACoherenceContract(t *testing.T) {
 		"mfa.challenge.backend":              "SSO_MFA__CHALLENGE__BACKEND",
 		"self_service.identity_link.backend": "SSO_SELF_SERVICE__IDENTITY_LINK__BACKEND",
 		"server.pairwise_subjects.backend":   "SSO_SERVER__PAIRWISE_SUBJECTS__BACKEND",
+		"keys.signing.revocation_backend":    "SSO_KEYS__SIGNING__REVOCATION_BACKEND",
 		"user_lifecycle.backend":             "SSO_USER_LIFECYCLE__ENABLED",
 	}
 	root := filepath.Join("..", "..")

@@ -4,6 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildsign"
 	"github.com/yangwb1123/snaplink/config"
 	"github.com/yangwb1123/snaplink/shared/spi"
@@ -11,21 +14,30 @@ import (
 
 func TestBuildRevocationStore(t *testing.T) {
 	t.Parallel()
-	if s, err := serverbuildsign.BuildRevocationStore(config.SigningConfig{}); err != nil || s != nil {
+	if s, err := serverbuildsign.BuildRevocationStore(config.SigningConfig{}, nil); err != nil || s != nil {
 		t.Errorf("empty backend = (%v, %v), want (nil, nil)", s, err)
 	}
-	if s, err := serverbuildsign.BuildRevocationStore(config.SigningConfig{RevocationBackend: "memory"}); err != nil || s == nil {
+	if s, err := serverbuildsign.BuildRevocationStore(config.SigningConfig{RevocationBackend: "memory"}, nil); err != nil || s == nil {
 		t.Errorf("memory backend = (%v, %v), want a non-nil store", s, err)
 	}
 	if s, err := serverbuildsign.BuildRevocationStore(config.SigningConfig{
 		RevocationBackend: "sqlite", RevocationDSN: "file:" + t.TempDir() + "/r.db",
-	}); err != nil || s == nil {
+	}, nil); err != nil || s == nil {
 		t.Errorf("sqlite backend = (%v, %v), want a non-nil store", s, err)
 	}
-	if _, err := serverbuildsign.BuildRevocationStore(config.SigningConfig{RevocationBackend: "sqlite"}); err == nil {
+	if _, err := serverbuildsign.BuildRevocationStore(config.SigningConfig{RevocationBackend: "sqlite"}, nil); err == nil {
 		t.Error("sqlite without a DSN should error")
 	}
-	if _, err := serverbuildsign.BuildRevocationStore(config.SigningConfig{RevocationBackend: "bogus"}); err == nil {
+	if _, err := serverbuildsign.BuildRevocationStore(config.SigningConfig{RevocationBackend: "redis"}, nil); err == nil {
+		t.Error("redis without a shared client should error")
+	}
+	mr := miniredis.RunT(t)
+	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	if s, err := serverbuildsign.BuildRevocationStore(config.SigningConfig{RevocationBackend: "redis"}, rdb); err != nil || s == nil {
+		t.Errorf("redis backend = (%v, %v), want a non-nil store", s, err)
+	}
+	if _, err := serverbuildsign.BuildRevocationStore(config.SigningConfig{RevocationBackend: "bogus"}, nil); err == nil {
 		t.Error("an unknown backend should error")
 	}
 }
@@ -39,6 +51,7 @@ func TestBuildSigningIssuer_WithRevocation(t *testing.T) {
 		iss, _, _, err := serverbuildsign.BuildSigningIssuer(
 			config.SigningConfig{Alg: alg, RevocationBackend: "memory"},
 			config.ServerConfig{Issuer: "https://sso.test"},
+			nil,
 			nil,
 			spi.NopLogger{},
 		)

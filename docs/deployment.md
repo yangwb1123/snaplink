@@ -262,17 +262,18 @@ tenant: { enabled: true, backend: postgres }
 audit: { enabled: true, backend: postgres, hash_chain: true }
 
 cluster:
-  bus: { backend: etcd, endpoints: [etcd-0:2379] }
+  bus: { backend: etcd, etcd_endpoints: [etcd-0:2379] }
   cross_replica_revocation: true
 keys:
+  signing: { revocation_backend: redis }
   signing_key_registry: { backend: etcd, etcd_endpoints: [etcd-0:2379] }
 ```
 
 > **Operator hard requirement:** the Redis auth keyspace MUST run
 > `maxmemory-policy noeviction` (or `volatile-ttl`). Evicting a live
-> refresh-family ledger or a jti key is a SECURITY regression (reuse/replay
-> detection silently fails), not a cache miss. Keep single-use/replay reads on
-> the master (`route_by_latency`/`read_only` off) so replica lag can't let a
+> refresh-family ledger, jti key, or active revocation entry is a SECURITY
+> regression (reuse/replay/recovery silently fails), not a cache miss. Keep
+> single-use/replay reads on the master (`route_by_latency`/`read_only` off) so replica lag can't let a
 > replay slip past detection. Migrating single-node → cluster is NOT drop-in
 > (hash-tag key layout changes) — drain rather than expect key continuity;
 > acceptable since hot state is short-TTL.

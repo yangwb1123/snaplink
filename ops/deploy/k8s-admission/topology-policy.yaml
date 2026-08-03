@@ -68,6 +68,13 @@ spec:
         !has(object.spec.replicas) || object.spec.replicas <= 1 ||
         object.spec.template.spec.containers.exists(c,
           c.name == "sso-server" && has(c.env) &&
+          c.env.exists(e, e.name == "SSO_KEYS__SIGNING__REVOCATION_BACKEND" &&
+                          e.value == "redis"))
+      message: multi-replica sso-server requires Redis-backed revocation recovery
+    - expression: >-
+        !has(object.spec.replicas) || object.spec.replicas <= 1 ||
+        object.spec.template.spec.containers.exists(c,
+          c.name == "sso-server" && has(c.env) &&
           c.env.exists(e, e.name == "SSO_CIBA__BACKEND" &&
                           e.value in ["sqlite", "redis"]))
       message: multi-replica sso-server requires a shared CIBA backend

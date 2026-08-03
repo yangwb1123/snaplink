@@ -7,8 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
@@ -100,6 +104,14 @@ func TestEd25519Issuer_RevocationSurvivesRestart_SQLite(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	runRevocationRestart(t, store)
+}
+
+func TestEd25519Issuer_RevocationSurvivesRestart_Redis(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	runRevocationRestart(t, redisbackend.NewRevocationStore(rdb))
 }
 
 func TestEd25519Issuer_NilStore_SeedNoOp(t *testing.T) {
