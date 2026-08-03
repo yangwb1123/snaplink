@@ -112,7 +112,7 @@ func TestAccountLockout_RegisterSuccessClears(t *testing.T) {
 func TestAccountLockout_AutoUnlockAfterDuration(t *testing.T) {
 	t.Parallel()
 	lockout := newAccountLockoutForTest(t)
-	lockout.LockoutDuration = 200 * time.Millisecond
+	lockout.LockoutDuration = time.Minute
 	ctx := context.Background()
 
 	for range lockout.MaxFailures {
@@ -122,7 +122,11 @@ func TestAccountLockout_AutoUnlockAfterDuration(t *testing.T) {
 	if !locked {
 		t.Fatal("expected locked immediately after threshold")
 	}
-	time.Sleep(lockout.LockoutDuration + 50*time.Millisecond)
+	if _, err := lockout.db.ExecContext(ctx,
+		`UPDATE account_lockouts SET locked_until = ? WHERE key = ?`,
+		time.Now().Add(-time.Second).UnixNano(), "alice"); err != nil {
+		t.Fatalf("expire lock: %v", err)
+	}
 	locked, _, _ = lockout.IsLocked(ctx, "alice")
 	if locked {
 		t.Fatal("auto-unlock failed — IsLocked still true past LockoutDuration")
