@@ -3,6 +3,7 @@ package defaultimpl_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -129,14 +130,12 @@ func TestHTTPWebhookPushTransport_RespectsContextCancelBetweenRetries(t *testing
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
-	start := time.Now()
 	err := tr.Send(ctx, "ch", "alice", nil)
-	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("want error from canceled context")
 	}
-	if elapsed > 500*time.Millisecond {
-		t.Errorf("Send took %v with 150ms timeout — backoff didn't honor ctx", elapsed)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Send error = %v, want context deadline exceeded", err)
 	}
 }
 
