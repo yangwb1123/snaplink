@@ -114,7 +114,7 @@ func (b *appBuilder) haCoherenceIssues() []string {
 		{multi && b.cfg.MFA.Enabled, "mfa.challenge.backend", b.cfg.MFA.Challenge.Backend},
 		{multi && b.cfg.SelfService.IdentityLink.Enabled, "self_service.identity_link.backend", b.cfg.SelfService.IdentityLink.Backend},
 		{multi && b.cfg.Server.PairwiseSubjects.Enabled, "server.pairwise_subjects.backend", b.cfg.Server.PairwiseSubjects.Backend},
-		{multi && b.cfg.UserLifecycle.Enabled, "user_lifecycle.backend", "memory"},
+		{multi && b.cfg.UserLifecycle.Enabled, "user_lifecycle.backend", b.cfg.UserLifecycle.Backend},
 	}
 	var stuck []string
 	for _, check := range checks {
@@ -341,7 +341,10 @@ func (b *appBuilder) wireUserLifecycle() error {
 	if err != nil {
 		return fmt.Errorf("user_lifecycle: %w", err)
 	}
-	store := serverbuildplatform.BuildUserLifecycle(cfg)
+	store, err := serverbuildplatform.BuildUserLifecycle(cfg, b.pgDB, b.pgDialect)
+	if err != nil {
+		return fmt.Errorf("user_lifecycle: %w", err)
+	}
 	if store == nil {
 		return nil
 	}

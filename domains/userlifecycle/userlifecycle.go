@@ -124,10 +124,11 @@ type Record struct {
 	UpdatedAt time.Time    `json:"updated_at,omitzero"`
 }
 
-// Store persists per-user lifecycle state + history. Implementations live in
-// userlifecycle/<backend>/ (memory today; a SQL peer can follow the same
-// contract). When no Store is wired the lifecycle surface is simply absent —
-// byte-identical to a build without the feature.
+// Store persists per-user lifecycle state + history. The in-process reference
+// implementation lives in userlifecycle/memory; the stock shared durable
+// adapter lives in infrastructure/userlifecyclepostgres. When no Store is
+// wired the lifecycle surface is simply absent — byte-identical to a build
+// without the feature.
 type Store interface {
 	// Get returns the lifecycle record for userID. A user with no stored record
 	// is returned as {State: DefaultState} with empty history — NEVER an error —
@@ -150,6 +151,22 @@ type Store interface {
 	// sweep enumerates the full roster via core.UserProvider for the active set.
 	// Order is unspecified.
 	ListByState(ctx context.Context, state State) ([]string, error)
+}
+
+// StateReader is the optional hot-path projection implemented by stores that
+// can read current state without materializing append-only history.
+type StateReader interface {
+	GetState(ctx context.Context, userID string) (State, error)
+}
+
+// ReadState uses the state-only projection when available and otherwise
+// preserves compatibility with Store implementations that only expose Get.
+func ReadState(ctx context.Context, store Store, userID string) (State, error) {
+	if reader, ok := store.(StateReader); ok {
+		return reader.GetState(ctx, userID)
+	}
+	record, err := store.Get(ctx, userID)
+	return record.State, err
 }
 
 // TransitionObserver receives a successfully committed lifecycle transition.
@@ -178,6 +195,10 @@ func (s *observedStore) Append(ctx context.Context, userID string, transition Tr
 	}
 	s.observe(ctx, userID, transition)
 	return nil
+}
+
+func (s *observedStore) GetState(ctx context.Context, userID string) (State, error) {
+	return ReadState(ctx, s.Store, userID)
 }
 
 // Sentinel errors. The admin transition handler maps these to stable wire

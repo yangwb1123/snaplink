@@ -114,11 +114,9 @@ grant (including the human behind agent delegation), server-side access/ID-token
 validation across the full `sub`/`act` chain, and introspection; non-active
 transitions also revoke sessions and refresh tokens. It remains additive to
 `core.User.IsActive`, and `client_credentials` remains outside this user gate.
-The remaining boundary is persistence/HA: only a process-memory lifecycle store
-exists, so state is lost on restart and startup/admission reject enabling it in
-a declared multi-replica topology (except the explicit unsafe development
-override). A shared durable lifecycle backend and an event channel for resource
-servers that validate JWTs fully offline remain future work.
+The stock Postgres/Cockroach backend persists state and append-only history for
+multi-replica deployments. A standardized event channel for resource servers
+that validate JWTs fully offline remains future work.
 
 ### SMTP transport
 

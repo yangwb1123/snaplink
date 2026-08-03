@@ -1695,12 +1695,12 @@ mfa:
       dsn: ""
 
 # User account lifecycle is an optional fail-closed auth/token gate and admin
-# state machine. The stock backend is process memory only: state is lost on
-# restart and enabled=true is rejected with server.topology.mode=multi unless
-# the explicitly unsafe allow_per_pod_state development override is set.
-# Every transition to a non-active state revokes sessions and refresh tokens.
+# state machine. Memory is single-process; postgres persists state + history
+# and is required when enabled in a declared multi-replica topology. Every
+# transition to a non-active state revokes sessions and refresh tokens.
 user_lifecycle:
   enabled: false
+  backend: "memory" # memory | postgres (uses the shared top-level postgres block)
   auto_deprovision:
     enabled: false
     dormant_after: 2160h # 90d; >0 required when enabled

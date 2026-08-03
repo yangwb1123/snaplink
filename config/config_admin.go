@@ -263,6 +263,7 @@ type BreakGlassConfig struct {
 // config_*.go.
 type UserLifecycleConfig struct {
 	Enabled         bool                      `yaml:"enabled"`
+	Backend         string                    `yaml:"backend"` // ""|memory|postgres
 	AutoDeprovision UserAutoDeprovisionConfig `yaml:"auto_deprovision"`
 }
 

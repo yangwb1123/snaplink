@@ -230,11 +230,10 @@ So choose a tier:
 > `postgres:` block, and turn on the etcd Bus. Both Redis and Postgres backends
 > are root-module infrastructure packages wired by `cmd/sso-server`.
 
-`user_lifecycle.enabled` is currently the exception to Tier B: the stock binary
-only has a process-memory lifecycle store. Declared multi-replica startup and
-the Kubernetes admission policy therefore reject enabling it (the explicit
-`allow_per_pod_state` escape hatch is development-only). Keep it disabled in an
-HA fleet until a shared lifecycle store is supplied through SDK composition.
+User lifecycle participates in Tier B when `user_lifecycle.backend: postgres`;
+the state machine and its full transition history then share the durable pool.
+The memory default remains single-process and is rejected when lifecycle is
+enabled in a declared multi-replica topology.
 
 Tier B `config.yaml` (hot → Redis Cluster, durable → Postgres, coordination → etcd;
 secrets via `SSO_REDIS__PASSWORD` / `SSO_POSTGRES__DSN`):
@@ -260,6 +259,7 @@ identity: { backend: postgres, session_backend: redis } # durable on DB, session
 permissions: { enabled: true, backend: postgres }
 tenant: { enabled: true, backend: postgres }
 audit: { enabled: true, backend: postgres, hash_chain: true }
+user_lifecycle: { enabled: true, backend: postgres }
 
 cluster:
   bus: { backend: etcd, etcd_endpoints: [etcd-0:2379] }

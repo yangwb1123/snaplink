@@ -100,9 +100,9 @@ func SweepOnce(ctx context.Context, d SweepDeps) (int, error) {
 // whether it did. It reads the current state, the last-active signal, decides
 // the next state, and (if any) applies it.
 func (d SweepDeps) sweepUser(ctx context.Context, userID string, now time.Time) bool {
-	rec, err := d.Lifecycle.Get(ctx, userID)
+	current, err := ReadState(ctx, d.Lifecycle, userID)
 	if err != nil {
-		d.logError("lifecycle sweep get failed", userID, err)
+		d.logError("lifecycle sweep state lookup failed", userID, err)
 		return false
 	}
 	lastActive, err := d.LastActive.LastActive(ctx, userID)
@@ -110,11 +110,11 @@ func (d SweepDeps) sweepUser(ctx context.Context, userID string, now time.Time) 
 		d.logError("lifecycle sweep last-active failed", userID, err)
 		return false
 	}
-	next := d.nextState(rec.State, lastActive, now)
+	next := d.nextState(current, lastActive, now)
 	if next == StateNone {
 		return false
 	}
-	return d.apply(ctx, userID, rec.State, next, now)
+	return d.apply(ctx, userID, current, next, now)
 }
 
 // nextState returns the state the sweep should advance from -> to, or StateNone

@@ -250,7 +250,10 @@ func TestUserLifecycle_AutoDeprovisionSweepAdvancesDormantUser(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	store := serverbuildplatform.BuildUserLifecycle(cfg.UserLifecycle)
+	store, err := serverbuildplatform.BuildUserLifecycle(cfg.UserLifecycle, nil, "")
+	if err != nil {
+		t.Fatalf("BuildUserLifecycle: %v", err)
+	}
 	if store == nil {
 		t.Fatal("BuildUserLifecycle returned nil with user_lifecycle.enabled=true")
 	}

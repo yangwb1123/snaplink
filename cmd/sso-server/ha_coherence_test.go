@@ -59,6 +59,7 @@ func TestHACoherenceAcceptsSharedCriticalStores(t *testing.T) {
 			Topology:         config.TopologyConfig{Mode: config.TopologyModeMulti},
 			PairwiseSubjects: config.PairwiseSubjectsConfig{Enabled: true, Backend: "postgres"},
 		},
+		UserLifecycle: config.UserLifecycleConfig{Enabled: true, Backend: "postgres"},
 	}
 	b := &appBuilder{cfg: cfg, logger: quietLogger()}
 	if err := b.enforceHACoherence(); err != nil {
@@ -159,7 +160,7 @@ func TestKubernetesAdmissionPolicyCoversHACoherenceContract(t *testing.T) {
 		"self_service.identity_link.backend": "SSO_SELF_SERVICE__IDENTITY_LINK__BACKEND",
 		"server.pairwise_subjects.backend":   "SSO_SERVER__PAIRWISE_SUBJECTS__BACKEND",
 		"keys.signing.revocation_backend":    "SSO_KEYS__SIGNING__REVOCATION_BACKEND",
-		"user_lifecycle.backend":             "SSO_USER_LIFECYCLE__ENABLED",
+		"user_lifecycle.backend":             "SSO_USER_LIFECYCLE__BACKEND",
 	}
 	root := filepath.Join("..", "..")
 	policy := readHAContractFile(t, filepath.Join(root, "ops", "deploy", "k8s-admission", "topology-policy.yaml"))

@@ -74,6 +74,7 @@ self_service:
   # issue/redeem flow is two requests that can land on different replicas).
   password_reset: { backend: redis }
 native_sso: { backend: postgres }      # device_secrets
+user_lifecycle: { enabled: true, backend: postgres }
 
 # ---- COORDINATION tier: etcd ----
 cluster:

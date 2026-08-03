@@ -76,8 +76,7 @@ func (s *Server) LifecycleState(ctx context.Context, subject string) (userlifecy
 	if err != nil {
 		return userlifecycle.StateNone, err
 	}
-	record, err := s.userLifecycleStore.Get(ctx, local)
-	return record.State, err
+	return userlifecycle.ReadState(ctx, s.userLifecycleStore, local)
 }
 
 func (s *Server) lifecycleAuthenticationError(ctx context.Context, subject string) error {

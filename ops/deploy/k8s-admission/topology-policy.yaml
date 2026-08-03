@@ -103,9 +103,11 @@ spec:
         !has(object.spec.replicas) || object.spec.replicas <= 1 ||
         object.spec.template.spec.containers.exists(c,
           c.name == "sso-server" && has(c.env) &&
-          c.env.exists(e, e.name == "SSO_USER_LIFECYCLE__ENABLED" &&
-                          e.value.lowerAscii() == "false"))
-      message: multi-replica sso-server forbids user lifecycle until a shared backend is available
+          (c.env.exists(e, e.name == "SSO_USER_LIFECYCLE__ENABLED" &&
+                           e.value.lowerAscii() == "false") ||
+           c.env.exists(e, e.name == "SSO_USER_LIFECYCLE__BACKEND" &&
+                           e.value == "postgres")))
+      message: multi-replica sso-server requires lifecycle disabled or backed by Postgres
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding

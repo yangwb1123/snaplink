@@ -45,3 +45,10 @@ func runTx(ctx context.Context, db *sql.DB, opts *sql.TxOptions, fn func(*sql.Tx
 // serializable is the TxOptions every read-modify-write store path passes to
 // runTx. Declared once so the intent reads the same at every call site.
 var serializable = &sql.TxOptions{Isolation: sql.LevelSerializable}
+
+// RunSerializable executes fn as one retryable serializable transaction.
+// Infrastructure adapters outside this package use it for atomic
+// read-modify-write operations while sharing the process-wide Postgres pool.
+func RunSerializable(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) error {
+	return runTx(ctx, db, serializable, fn)
+}

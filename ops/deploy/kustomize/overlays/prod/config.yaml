@@ -74,6 +74,7 @@ self_service:
   password: { backend: postgres }
   identity_link: { enabled: true, backend: postgres, merge_policy: reject }
 native_sso: { backend: postgres } # device_secrets
+user_lifecycle: { enabled: true, backend: postgres }
 
 # ---- COORDINATION tier: this profile uses etcd (the bus may also use Redis) ----
 cluster:
