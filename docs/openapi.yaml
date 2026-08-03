@@ -1006,13 +1006,17 @@ paths:
 
         **Client authentication** — per RFC 6749 §2.3.1, `Authorization:
         Basic <base64(client_id:client_secret)>` beats body
-        `client_id` / `client_secret`. RFC 7521 + 7523 `private_key_jwt`
-        is accepted via `client_assertion` + `client_assertion_type =
-        urn:ietf:params:oauth:client-assertion-type:jwt-bearer` for
-        clients whose `Client.JWKS` is registered. Public clients
-        authenticate with `client_id` only (PKCE-bound). RFC 8705 mTLS
-        is accepted when `WithClientCertExtractor` is wired (cert
-        thumbprint binds the issued token via `cnf.x5t#S256`).
+        `client_id` / `client_secret`. A `client_assertion` is a distinct
+        authentication method and cannot be combined with Basic or a body
+        secret. The selected method MUST match the client's registered
+        `token_endpoint_auth_method`; mismatch or fallback returns opaque
+        `401 invalid_client`. RFC 7521 + 7523 `private_key_jwt` is accepted
+        via `client_assertion` + `client_assertion_type =
+        urn:ietf:params:oauth:client-assertion-type:jwt-bearer` for clients
+        whose `Client.JWKS` is registered. Public clients authenticate with
+        `client_id` only (PKCE-bound). RFC 8705 mTLS is accepted when
+        `WithClientCertExtractor` is wired (cert thumbprint binds the issued
+        token via `cnf.x5t#S256`).
 
         **DPoP** (RFC 9449) — supply `DPoP: <proof>` header to bind the
         issued access token to a sender-constrained key. Server may
@@ -1172,7 +1176,9 @@ paths:
 
         When user lifecycle is wired, an access or refresh token whose subject
         is no longer `active` returns exactly `{"active": false}`; a lifecycle
-        read error fails closed to the same response.
+        read error fails closed to the same response. This live check includes
+        the access token's complete `act` chain and runs even on an introspection
+        cache hit, so a cached `active: true` cannot bypass account suspension.
 
         Client authentication follows the same rules as /token:
         Basic > body > private_key_jwt. Caller MUST be a registered
@@ -12816,8 +12822,8 @@ components:
             token_endpoint_auth_method=workload_identity, whenever
             `client_assertion` is supplied; otherwise rejected with
             `invalid_request`. For workload-identity, `client_id`
-            (form field or Basic auth) is REQUIRED — the cloud token's
-            verified identity is not itself this server's client_id.
+            is REQUIRED as a form/JSON field — the cloud token's verified
+            identity is not itself this server's client_id.
         agent_session_id:
           type: string
           description: |

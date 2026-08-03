@@ -217,6 +217,9 @@ func resolveAssertionClient(ctx context.Context, clientStore ClientStore, sub st
 		// Active gate (the OTHER client-auth path) doesn't run this path.
 		return nil, errors.New("jwt_client_assertion: client inactive")
 	}
+	if method := client.TokenEndpointAuthMethod; method != "" && method != "private_key_jwt" {
+		return nil, errors.New("jwt_client_assertion: client not registered for private_key_jwt")
+	}
 	if len(client.JWKS) == 0 {
 		return nil, errors.New("jwt_client_assertion: client has no registered JWKS")
 	}

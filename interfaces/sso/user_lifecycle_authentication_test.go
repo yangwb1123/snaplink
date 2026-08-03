@@ -12,6 +12,7 @@ import (
 	lifecyclememory "github.com/yangwb1123/snaplink/domains/userlifecycle/memory"
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	internalhandler "github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
 
@@ -121,28 +122,41 @@ func TestUserLifecycle_BlocksDelegationMintAndActorChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	delegatedIssuer := defaultimpl.NewEd25519JWTIssuer(defaultimpl.WithEd25519TokenTTL(time.Minute))
+	introspectionCache := internalhandler.NewMemoryIntrospectionCache()
 	s := rcovNewServer(t,
 		sso.WithUserLifecycle(store),
 		sso.WithTokenIssuer("delegated-lifecycle-test", delegatedIssuer),
+		sso.WithIntrospectionCache(introspectionCache, time.Minute),
 		sso.WithAgentDelegationGrant(agents, sessions, func(context.Context, string) ([]string, error) {
 			return []string{"read"}, nil
 		}),
 	)
+	token, err := delegatedIssuer.Issue(ctx, &core.Subject{
+		ID: "agent-1", ClientID: rcovClient, Actor: &core.ActorClaim{Subject: rcovUser},
+	}, []string{"openid"})
+	if err != nil {
+		t.Fatalf("issue delegated token: %v", err)
+	}
+	status, out := rcovPostJSON(t, s.http.URL+"/token/introspect", "", map[string]any{
+		"token": token.AccessToken, "client_id": rcovClient, "client_secret": rcovSecret,
+	})
+	if status != http.StatusOK || out["active"] != true {
+		t.Fatalf("delegated token initial introspection status=%d body=%v", status, out)
+	}
 	suspendLifecycleUser(t, store)
 
-	status, out := rcovPostJSON(t, s.http.URL+"/token", "", map[string]any{
+	status, out = rcovPostJSON(t, s.http.URL+"/token", "", map[string]any{
 		"grant_type": core.GrantTypeAgentDelegation, "agent_session_id": "delegation-1",
 		"client_id": rcovClient, "client_secret": rcovSecret,
 	})
 	if status != http.StatusBadRequest || out["error"] != core.ErrInvalidGrant {
 		t.Fatalf("delegation mint after suspend status=%d body=%v, want 400 invalid_grant", status, out)
 	}
-
-	token, err := delegatedIssuer.Issue(ctx, &core.Subject{
-		ID: "agent-1", ClientID: rcovClient, Actor: &core.ActorClaim{Subject: rcovUser},
-	}, []string{"openid"})
-	if err != nil {
-		t.Fatalf("issue delegated token: %v", err)
+	status, out = rcovPostJSON(t, s.http.URL+"/token/introspect", "", map[string]any{
+		"token": token.AccessToken, "client_id": rcovClient, "client_secret": rcovSecret,
+	})
+	if status != http.StatusOK || out["active"] != false {
+		t.Fatalf("cached delegated introspection after suspend status=%d body=%v, want inactive", status, out)
 	}
 	status, out = rcovDo(t, http.MethodGet, s.http.URL+"/userinfo", token.AccessToken, nil)
 	if status != http.StatusUnauthorized {

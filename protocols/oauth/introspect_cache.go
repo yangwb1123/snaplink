@@ -12,10 +12,12 @@ import (
 // CachedResult holds a cached introspection response body. The Body is a
 // map[string]any so it round-trips through JSON identically to the original
 // introspection response — every field (active, sub, iss, client_id, exp, iat,
-// scope, etc.) is preserved as-is. An inactive result contains only
-// {"active": false}.
+// scope, etc.) is preserved as-is. LifecycleSubjects is internal enforcement
+// metadata (sub followed by the RFC 8693 act chain), never emitted in the wire
+// body. An inactive result contains only {"active": false}.
 type CachedResult struct {
-	Body map[string]any
+	Body              map[string]any
+	LifecycleSubjects []string
 }
 
 // IntrospectionCache is the optional best-effort cache for token introspection
@@ -116,12 +118,16 @@ func introspectOne(d IntrospectDeps, ctx core.HandlerContext, token, hint string
 	if cache != nil {
 		cacheKey = tokenHash(token)
 		if cached, ok := cache.Get(cacheKey); ok {
-			return cached.Body
+			return lifecycleCheckedCachedResult(d, ctx, cache, cacheKey, token, cached)
 		}
 	}
 	if body, ok := resolveIntrospection(d, ctx, token, hint); ok {
 		if cache != nil {
-			cache.Set(cacheKey, &CachedResult{Body: body}, d.IntrospectionCacheTTL())
+			subjects, stillActive := introspectionCacheSubjects(d, ctx, token, body)
+			if !stillActive {
+				return cacheInactiveIntrospection(cache, cacheKey, d.IntrospectionCacheTTL())
+			}
+			cache.Set(cacheKey, &CachedResult{Body: body, LifecycleSubjects: subjects}, d.IntrospectionCacheTTL())
 		}
 		return body
 	}
@@ -130,6 +136,54 @@ func introspectOne(d IntrospectDeps, ctx core.HandlerContext, token, hint string
 	if cache != nil {
 		cache.Set(cacheKey, &CachedResult{Body: inactive}, d.IntrospectionCacheTTL())
 	}
+	return inactive
+}
+
+func lifecycleCheckedCachedResult(d IntrospectDeps, ctx core.HandlerContext, cache IntrospectionCache, key, token string, cached *CachedResult) map[string]any {
+	if cached == nil {
+		return cacheInactiveIntrospection(cache, key, d.IntrospectionCacheTTL())
+	}
+	if cached.Body == nil {
+		return cacheInactiveIntrospection(cache, key, d.IntrospectionCacheTTL())
+	}
+	if cached.Body[core.KeyActive] != true {
+		return cached.Body
+	}
+	subjects := cached.LifecycleSubjects
+	if len(subjects) == 0 {
+		var active bool
+		subjects, active = introspectionCacheSubjects(d, ctx, token, cached.Body)
+		if !active {
+			return cacheInactiveIntrospection(cache, key, d.IntrospectionCacheTTL())
+		}
+	}
+	for _, subject := range subjects {
+		if !introspectionLifecycleActive(d, ctx.Request().Context(), subject) {
+			return cacheInactiveIntrospection(cache, key, d.IntrospectionCacheTTL())
+		}
+	}
+	return cached.Body
+}
+
+func introspectionCacheSubjects(d IntrospectDeps, ctx core.HandlerContext, token string, body map[string]any) ([]string, bool) {
+	subject, _ := body[core.KeySub].(string)
+	if body[core.KeyTokenHint] != "access_token" {
+		return []string{subject}, subject != "" && introspectionLifecycleActive(d, ctx.Request().Context(), subject)
+	}
+	claims, _, err := d.ValidateAnyToken(ctx.Request().Context(), token)
+	if err != nil || claims == nil {
+		return nil, false
+	}
+	subjects := []string{claims.Subject}
+	for actor := claims.Actor; actor != nil; actor = actor.Actor {
+		subjects = append(subjects, actor.Subject)
+	}
+	return subjects, true
+}
+
+func cacheInactiveIntrospection(cache IntrospectionCache, key string, ttl time.Duration) map[string]any {
+	inactive := map[string]any{core.KeyActive: false}
+	cache.Set(key, &CachedResult{Body: inactive}, ttl)
 	return inactive
 }
 

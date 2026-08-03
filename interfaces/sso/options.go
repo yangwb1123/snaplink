@@ -299,10 +299,10 @@ func WithClientStoreCache(ttl time.Duration) Option {
 // is significant.
 //
 // The cache wraps the existing handler — it does NOT replace it. On a
-// CACHE HIT the result is returned immediately without any JWT signature
-// verification. On a CACHE MISS the full verification runs and the result
-// is stored (including negative results — {active: false} — so a flood of
-// expired-token polls also skips verification).
+// CACHE HIT the result skips JWT signature verification but still rechecks the
+// live user-lifecycle state of sub and every act-chain subject when that gate is
+// wired. On a CACHE MISS the full verification runs and the result is stored
+// (including negative results — {active: false}).
 //
 // SECURITY CONSIDERATIONS:
 //   - The cache key is SHA-256(token), not the raw token — an attacker who
@@ -314,6 +314,8 @@ func WithClientStoreCache(ttl time.Duration) Option {
 //     This is an INTENTIONAL tradeoff: revocation is not instant (eventual
 //     consistency). The alternative (no cache) means every introspection
 //     pays full signature verification cost.
+//   - Lifecycle denial is never TTL-stale: cache hits re-read lifecycle state
+//     and overwrite a denied entry with active:false (fail closed on errors).
 //   - The cache is BEST-EFFORT: on store error (including a full cache),
 //     verification proceeds normally (fail-open).
 //

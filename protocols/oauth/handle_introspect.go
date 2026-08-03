@@ -95,8 +95,9 @@ type introspectRequest struct {
 //
 // When an IntrospectionCache is wired, the handler checks the cache
 // (keyed by SHA-256(token)) BEFORE performing full JWT signature
-// verification. On a hit the cached response is returned immediately.
-// On a miss the normal verification runs and the result is stored for
+// verification. On a hit the cached response is returned after the lightweight
+// live user-lifecycle check (when wired), without signature verification. On a
+// miss the normal verification runs and the result is stored for
 // the configured TTL (default 60s). This trades immediate revocation
 // propagation for dramatic CPU savings in high-traffic microservice
 // meshes — see the security considerations on the option doc for the

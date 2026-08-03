@@ -14,6 +14,7 @@ package sso_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -526,6 +527,133 @@ func TestRcov_ClientCredentialsGrant(t *testing.T) {
 	if tok["access_token"] == "" || tok["access_token"] == nil {
 		t.Errorf("no access_token: %v", tok)
 	}
+}
+
+// Registered confidential clients must use the exact secret transport named
+// by token_endpoint_auth_method. Treating basic/post as interchangeable makes
+// RFC 7591 management metadata misleading and can expose a secret in a request
+// body even when the operator required an Authorization header.
+func TestRcov_ClientCredentialsEnforcesRegisteredAuthMethod(t *testing.T) {
+	t.Parallel()
+	s := rcovNewServer(t)
+	const secret = "method-bound-secret"
+	for _, method := range []string{"client_secret_basic", "client_secret_post"} {
+		s.clients.AddSeed(&sso.Client{
+			ID: method, Secret: secret, Name: method, Active: true,
+			TokenStrategy: "jwt", GrantTypes: []string{"client_credentials"},
+			AllowedScopes: []string{"machine"}, TokenEndpointAuthMethod: method,
+		})
+	}
+
+	issue := func(clientID string, basic bool) int {
+		t.Helper()
+		body := "grant_type=client_credentials&scope=machine"
+		if !basic {
+			body += "&client_id=" + clientID + "&client_secret=" + secret
+		}
+		req, err := http.NewRequest(http.MethodPost, s.http.URL+"/token", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if basic {
+			req.SetBasicAuth(clientID, secret)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return resp.StatusCode
+	}
+
+	if status := issue("client_secret_basic", true); status != http.StatusOK {
+		t.Fatalf("basic client using Basic = %d, want 200", status)
+	}
+	if status := issue("client_secret_basic", false); status != http.StatusUnauthorized {
+		t.Errorf("basic client using request body = %d, want 401", status)
+	}
+	if status := issue("client_secret_post", false); status != http.StatusOK {
+		t.Fatalf("post client using request body = %d, want 200", status)
+	}
+	if status := issue("client_secret_post", true); status != http.StatusUnauthorized {
+		t.Errorf("post client using Basic = %d, want 401", status)
+	}
+}
+
+type rcovTokenAuthCase struct {
+	name, contentType, body string
+	authorizers             []string
+}
+
+func TestRcov_TokenClientAuthPreservesBasicPrecedence(t *testing.T) {
+	t.Parallel()
+	s := rcovNewServer(t)
+	basic := "Basic " + base64.StdEncoding.EncodeToString([]byte(rcovClient+":"+rcovSecret))
+	formType := "application/x-www-form-urlencoded"
+	tests := []rcovTokenAuthCase{
+		{"body secret", formType, "grant_type=client_credentials&client_id=other&client_secret=wrong", []string{basic}},
+		{"empty body secret", formType, "grant_type=client_credentials&client_secret=", []string{basic}},
+		{"empty JSON secret", "application/json", `{"grant_type":"client_credentials","client_secret":""}`, []string{basic}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			status, out := rcovTokenAuthRaw(t, s, tc)
+			if status != http.StatusOK || out["access_token"] == nil {
+				t.Errorf("status=%d body=%v, want token success", status, out)
+			}
+		})
+	}
+}
+
+func TestRcov_TokenClientAuthRejectsAmbiguousOrMalformedCredentials(t *testing.T) {
+	t.Parallel()
+	s := rcovNewServer(t)
+	const noneClient = "empty-assertion-none-client"
+	s.clients.AddSeed(&sso.Client{ID: noneClient, Active: true, TokenStrategy: "jwt", TokenEndpointAuthMethod: "none"})
+	basic := "Basic " + base64.StdEncoding.EncodeToString([]byte(rcovClient+":"+rcovSecret))
+	formType := "application/x-www-form-urlencoded"
+	tests := []rcovTokenAuthCase{
+		{"Basic and assertion", formType, "grant_type=client_credentials&client_assertion_type=" + sso.ClientAssertionTypeJWTBearer + "&client_assertion=not-a-jwt", []string{basic}},
+		{"Basic and empty assertion", formType, "grant_type=client_credentials&client_assertion=", []string{basic}},
+		{"Basic and empty assertion type", formType, "grant_type=client_credentials&client_assertion_type=", []string{basic}},
+		{"Basic and empty JSON assertion", "application/json", `{"grant_type":"client_credentials","client_assertion":""}`, []string{basic}},
+		{"body secret and assertion", formType, "grant_type=client_credentials&client_id=" + rcovClient + "&client_secret=" + rcovSecret + "&client_assertion_type=" + sso.ClientAssertionTypeJWTBearer + "&client_assertion=not-a-jwt", nil},
+		{"none and empty assertion", formType, "grant_type=authorization_code&client_id=" + noneClient + "&client_assertion=", nil},
+		{"none and empty assertion type", formType, "grant_type=authorization_code&client_id=" + noneClient + "&client_assertion_type=", nil},
+		{"malformed Authorization", formType, "grant_type=client_credentials", []string{"Basic not-base64"}},
+		{"multiple Authorization", formType, "grant_type=client_credentials", []string{basic, basic}},
+		{"none and empty JSON assertion type", "application/json", `{"grant_type":"authorization_code","client_id":"` + noneClient + `","client_assertion_type":""}`, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			status, out := rcovTokenAuthRaw(t, s, tc)
+			if status != http.StatusUnauthorized || out["error"] != sso.ErrInvalidClient {
+				t.Errorf("status=%d body=%v, want 401 invalid_client", status, out)
+			}
+		})
+	}
+}
+
+func rcovTokenAuthRaw(t *testing.T, s *rcovServer, tc rcovTokenAuthCase) (int, map[string]any) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, s.http.URL+"/token", strings.NewReader(tc.body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", tc.contentType)
+	for _, value := range tc.authorizers {
+		req.Header.Add("Authorization", value)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return resp.StatusCode, out
 }
 
 // TestRcov_TokenUnknownGrant covers the unsupported_grant_type branch.
