@@ -58,7 +58,7 @@ landing, per AGENTS.md.
 | R4 | Single-use challenge consume; correct-code-after-consume rejected | Covered | `verifyMFAFactor` 95.7%; `TestMFA_RecoveryCode_HappyPathAndSingleUse` (test/mfa_recovery_test.go:94) |
 | R5 | Recovery-code login path | Covered | `TestMFA_RecoveryCode_HappyPathAndSingleUse`, `TestMFA_RecoveryCode_WrongCode` (test/mfa_recovery_test.go:129) |
 | R6 | Recovery-code regeneration / count endpoints | **Missing (Verified)** | 0.0% measured; no test file references `/me/mfa/recovery-codes` |
-| R7 | CA live gate: step-up routing, decay-to-allow without MFA wiring, fail-open on store outage | Covered (unit) | `TestConditionalAccess_EnforceStepUpRoutesToMFA`, `_EnforceStepUpDecaysToAllowWithoutMFA`, `_EnforceFailsOpenOnStoreOutage` |
+| R7 | CA live gate: step-up routing, fail-closed without MFA wiring, fail-open on store outage | Covered (unit) | `TestConditionalAccess_EnforceStepUpRoutesToMFA`, `_EnforceStepUpFailsClosedWithoutMFA`, `_EnforceFailsOpenOnStoreOutage` |
 | R8 | WebAuthn finish bearer bound to begin session subject | Covered (subject only) | `Registrar.FinishRegistration` enforces `expectedUserID` (domains/authenticators/webauthn/registrar.go:50); `TestWebAuthnRegister_FinishBadSession` (test/me_mfa_webauthn_register_test.go:131). Never step-up-bound — confirms the mfa-analysis note |
 | R9 | Route mounting gated on wiring (enroller/writer/registrar) | Covered | `TestTOTPEnroll_NotMountedWithoutEnroller`, `_NotMountedWithoutWriter`, `TestWebAuthnRegister_NotMountedWithoutRegistrar` |
 

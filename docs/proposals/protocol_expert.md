@@ -1,18 +1,19 @@
-The review is complete. Here's a summary of what was done:
+Review complete. Deliverable: `docs/auto/infrastructure-redis-direction1-protocol-review.md` (doc-only change; no Go files touched, so the mandatory gates don't apply).
 
-## Verification results (all three points confirmed against code)
+## What I did
 
-**Checks performed:** evidence scans across 9 files, plus `go test ./protocols/selfservice/selfserviceaccount/ -count=1` (ok) and `go test ./test/ -run 'TestMFA_SecondFactorLockout|TestTOTPEnroll_ConfirmThenListedAndUsable|TestMFA_TrustDevice_MintsGrantAndReturnsToken' -count=1 -v` (3/3 PASS).
+Read `ai-dev/prompts/README.md`, the spec and design docs, then independently re-verified every protocol-relevant claim against source and the **pinned vendored dependencies** (go-redis v9.20.0, miniredis v2.38.0 in the module cache), not just the worktree.
 
-- **Point 1 (step-up gate)** — **Verified.** All four mutation handlers (`mfa.go:40/107/159`, `security.go:149`) use only `MeSubjectOrChallenge`; `HandleTrustMyDevice` (trusted_devices.go:56, check at 66) is the in-repo RFC 9470 precedent. The analysis-block note is also confirmed: `Registrar.FinishRegistration` (registrar.go:50) enforces finish-bearer == begin-session subject via `expectedUserID`, but never step-up. Existing e2e tests enroll with a plain password token (verified in `test/me_mfa_totp_enroll_test.go`).
-- **Point 2 (lockout key scope)** — **Verified.** `mfaLockoutKey` (server_mfa.go:301) is subject-only; `LockoutKey` (account_lockout.go:199) is `clientID+":"+identity`; defaults 5/1h/15min; `challenge.ClientID` round-trips (`spi.MFAChallenge`); `test/mfa_test.go:803` asserts on the bare `"mfa lockout:alice"` key; `mfa_locked` is code-only.
-- **Point 3 (trusted-device split)** — **Verified.** Risk path skips at server_login_client.go:181–183, CA path issues unconditionally at 245, both run from `runPostCredentialGates` (274/281/284); the `mfa_required` audit event is emitted inside shared `issueMFAChallenge` (server_mfa.go:36), so the proposed marker is implementable at one call site; error-codes.md:221 and feature-matrix:130 document no CA exception.
+## Standards actually in scope
 
-## Deliverable
+The design touches zero HTTP surfaces, so I reviewed the protocol contracts whose semantics the bus carries: RFC 7009 §2.1/§2.2/§2.2.1 (revocation), RFC 9068 (access-token deny-set), RFC 7519 §4.1.4 (`exp`), RFC 7517/OIDC JWKS rotation, RFC 8414/OIDC Discovery freshness, and the CAEP/SSF boundary. Compliance matrix shows the design **preserves** every wire contract it touches (200-always revoke, oracle-safety, client auth, no-store headers, discovery derivation) — verified against `handle_revoke.go`, `cross_replica.go`, `revocation_set.go`, `server_discovery_cache.go`.
 
-- `docs/architect-analysis-mfa-subsystem-gaps.md` — the architect output (already present, matches the analysis block; no changes needed).
-- **`docs/architect-analysis-mfa-protocol-review-gaps.md`** (new) — this run's protocol-expert output: scope/references (RFC 8176, RFC 9470, NIST 800-63B §5.2.9/§5.2.2, RFC 6749 §5.1), a 10-row compliance matrix with status/deviation/test evidence, findings 1–3 with severities (High / Medium / Medium), requirement levels, and corrective behavior, plus priority conformance tests, the declared bootstrap exemption, and certification posture (none claimed; proposals touch no OIDC/OAuth wire surface).
+## Key findings (protocol side)
 
-Key protocol-review judgment: RFC 9470 applies to the self-service APIs only as the codebase's own established adaptation — the authoritative grounding for point 1 is NIST 800-63B §5.2.9; points 2 and 3 have no normative wire basis (availability and contract discipline respectively).
+- **P-1 Critical** — G-2 ("loss = closed channel") is not delivered by `PubSub.Channel()` on go-redis v9.20.0: `initMsgChan` closes only on `pool.ErrClosed` and retries forever (`pubsub.go:731-737`); ping failure → `reconnect`, never closure (`pubsub.go:709-717`); no read deadline with timeout 0 (`internal/pool/conn.go` `noDeadline`). A blind replica would validate revoked RFC 9068 tokens until `exp` with `/readyz` green. Fix: bus-owned `ReceiveTimeout` loop + `ps.Close()` unblock + `defer ps.Close()`.
+- **P-2 High** — the `KindTokenRevoked` re-seed source is sqlite/memory only (`build_signing.go:84-107`); the direction's "one Redis" story silently degrades to a no-op re-seed unless `keys.signing.revocation_backend: sqlite` is stated as a requirement.
+- **P-3 High** — F-1's "TTL fallback" wording is wrong for `KindTokenRevoked` (deny-set is exp-bounded, no TTL); collision impact is the token's full remaining validity. Requires the build-layer ID-equality test.
+- **P-4 Medium** — the channel now carries full bearer credentials; Redis ACL/network-isolation requirements must be documented as operational MUSTs.
+- **P-6** — corrected a factual error in the design's loss taxonomy (go-redis heartbeat reconnects, never closes).
 
-Docs-only change: no Go files touched, so no build/vet/architecture gates were triggered.
+Corroborated the database review's Critical/High and the QA lead's H1/H2/M1/M4 with my own vendored-source line citations.
