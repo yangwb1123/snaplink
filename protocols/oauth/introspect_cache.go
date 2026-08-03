@@ -121,12 +121,8 @@ func introspectOne(d IntrospectDeps, ctx core.HandlerContext, token, hint string
 			return lifecycleCheckedCachedResult(d, ctx, cache, cacheKey, token, cached)
 		}
 	}
-	if body, ok := resolveIntrospection(d, ctx, token, hint); ok {
+	if body, subjects, ok := resolveIntrospection(d, ctx, token, hint); ok {
 		if cache != nil {
-			subjects, stillActive := introspectionCacheSubjects(d, ctx, token, body)
-			if !stillActive {
-				return cacheInactiveIntrospection(cache, cacheKey, d.IntrospectionCacheTTL())
-			}
 			cache.Set(cacheKey, &CachedResult{Body: body, LifecycleSubjects: subjects}, d.IntrospectionCacheTTL())
 		}
 		return body
@@ -174,11 +170,18 @@ func introspectionCacheSubjects(d IntrospectDeps, ctx core.HandlerContext, token
 	if err != nil || claims == nil {
 		return nil, false
 	}
+	return lifecycleSubjectsFromClaims(claims), true
+}
+
+func lifecycleSubjectsFromClaims(claims *core.TokenClaims) []string {
+	if claims == nil {
+		return nil
+	}
 	subjects := []string{claims.Subject}
 	for actor := claims.Actor; actor != nil; actor = actor.Actor {
 		subjects = append(subjects, actor.Subject)
 	}
-	return subjects, true
+	return subjects
 }
 
 func cacheInactiveIntrospection(cache IntrospectionCache, key string, ttl time.Duration) map[string]any {

@@ -240,35 +240,37 @@ func authenticateIntrospectClient(d IntrospectDeps, clientStore core.ClientStore
 // first populated body. Resolution order is hint-driven: when the hint is
 // "refresh_token" try the refresh store first to avoid an unnecessary
 // access-token signature check, but ALWAYS fall back to the other tier so a
-// wrong hint doesn't mark a valid token inactive.
-func resolveIntrospection(d IntrospectDeps, ctx core.HandlerContext, token, hint string) (map[string]any, bool) {
+// wrong hint doesn't mark a valid token inactive. The returned subject chain
+// lets the cache preserve lifecycle checks without validating the token twice.
+func resolveIntrospection(d IntrospectDeps, ctx core.HandlerContext, token, hint string) (map[string]any, []string, bool) {
 	if hint == "refresh_token" {
-		if body, ok := introspectRefresh(d, ctx, token); ok {
-			return body, true
+		if body, subjects, ok := introspectRefresh(d, ctx, token); ok {
+			return body, subjects, true
 		}
-		if body, ok := introspectAccess(d, ctx, token); ok {
-			return body, true
+		if body, subjects, ok := introspectAccess(d, ctx, token); ok {
+			return body, subjects, true
 		}
-		return nil, false
+		return nil, nil, false
 	}
-	if body, ok := introspectAccess(d, ctx, token); ok {
-		return body, true
+	if body, subjects, ok := introspectAccess(d, ctx, token); ok {
+		return body, subjects, true
 	}
-	if body, ok := introspectRefresh(d, ctx, token); ok {
-		return body, true
+	if body, subjects, ok := introspectRefresh(d, ctx, token); ok {
+		return body, subjects, true
 	}
-	return nil, false
+	return nil, nil, false
 }
 
 // introspectAccess validates the token as an access token via every
-// registered issuer. Returns a populated metadata body on success.
-func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (map[string]any, bool) {
+// registered issuer. Returns a populated metadata body and lifecycle subjects
+// on success.
+func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (map[string]any, []string, bool) {
 	if len(d.TokenIssuers()) == 0 {
-		return nil, false
+		return nil, nil, false
 	}
 	claims, issuerName, err := d.ValidateAnyToken(ctx.Request().Context(), token)
 	if err != nil || !core.IsAccessTokenClaims(claims) {
-		return nil, false
+		return nil, nil, false
 	}
 	// Token-policy require_renew (opt-in, default-off): a token used past its
 	// require_renew fraction of TTL is reported INACTIVE so the resource server
@@ -281,7 +283,7 @@ func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (
 	renewExceeded, renewAt := d.IntrospectionRenewExceeded(ctx.Request().Context(), introspectClientID(claims),
 		claims.Scopes, claims.IssuedAt, claims.ExpiresAt)
 	if renewExceeded {
-		return nil, false
+		return nil, nil, false
 	}
 
 	// Session-aware introspection (opt-in): when the token carries an sid claim
@@ -290,7 +292,7 @@ func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (
 	// {active:false}. Fail-open on store errors (logged, treated as active).
 	if claims.SID != "" && d.SessionManager() != nil {
 		if !introspectSessionActive(d, ctx, claims) {
-			return nil, false
+			return nil, nil, false
 		}
 	}
 
@@ -307,7 +309,7 @@ func introspectAccess(d IntrospectDeps, ctx core.HandlerContext, token string) (
 	}
 	populateAccessIntrospectionBody(body, claims)
 	recordIntrospectionUsage(d, ctx, claims)
-	return body, true
+	return body, lifecycleSubjectsFromClaims(claims), true
 }
 
 // introspectClientID resolves the client that "owns" the token for token-policy
@@ -330,19 +332,19 @@ func introspectClientID(claims *core.TokenClaims) string {
 // the per-file line budget).
 
 // introspectRefresh queries the optional RefreshTokenInspector.
-// Returns (nil, false) when the store doesn't implement the
-// inspector extension OR the token is unknown / expired.
-func introspectRefresh(d IntrospectDeps, ctx core.HandlerContext, token string) (map[string]any, bool) {
+// Returns (nil, nil, false) when the store doesn't implement the inspector
+// extension OR the token is unknown / expired.
+func introspectRefresh(d IntrospectDeps, ctx core.HandlerContext, token string) (map[string]any, []string, bool) {
 	insp, ok := d.RefreshTokenStore().(RefreshTokenInspector)
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
 	info, err := insp.Inspect(ctx.Request().Context(), token)
 	if err != nil || info == nil {
-		return nil, false
+		return nil, nil, false
 	}
 	if !introspectionLifecycleActive(d, ctx.Request().Context(), info.UserID) {
-		return nil, false
+		return nil, nil, false
 	}
 	body := map[string]any{
 		core.KeyActive:    true,
@@ -368,7 +370,7 @@ func introspectRefresh(d IntrospectDeps, ctx core.HandlerContext, token string) 
 		Thumbprint: metering.Thumbprint(info.JTI),
 		GeoCountry: geo.CountryCodeFromContext(ctx),
 	})
-	return body, true
+	return body, []string{info.UserID}, true
 }
 
 func introspectionLifecycleActive(deps any, ctx context.Context, subject string) bool {

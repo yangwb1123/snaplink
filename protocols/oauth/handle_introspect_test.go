@@ -44,7 +44,9 @@ type introspectDeps struct {
 	// sessionMgr stands in for the session-liveness gate. Nil (the zero
 	// value every other test in this file relies on) reproduces the
 	// default-off, byte-identical behavior of an unwired SessionManager.
-	sessionMgr core.SessionManager
+	sessionMgr         core.SessionManager
+	introspectionCache IntrospectionCache
+	cacheTTL           time.Duration
 }
 
 func (d *introspectDeps) ClientStoreAccessor() core.ClientStore     { return d.clients }
@@ -59,8 +61,8 @@ func (d *introspectDeps) VerifyJWTClientAssertion(ctx context.Context, a, f, i s
 	return d.verifyCA(ctx, a, f, i)
 }
 
-func (d *introspectDeps) IntrospectionCache() IntrospectionCache { return nil }
-func (d *introspectDeps) IntrospectionCacheTTL() time.Duration   { return 0 }
+func (d *introspectDeps) IntrospectionCache() IntrospectionCache { return d.introspectionCache }
+func (d *introspectDeps) IntrospectionCacheTTL() time.Duration   { return d.cacheTTL }
 func (d *introspectDeps) TokenUsageRecorder() *metering.Recorder { return d.usageRecorder }
 func (d *introspectDeps) IntrospectionRenewExceeded(ctx context.Context, clientID string, scopes []string, issuedAt, expiresAt time.Time) (bool, time.Time) {
 	if d.renewExceeded == nil {
@@ -799,7 +801,7 @@ func TestIntrospectAccessRejectsExplicitIDTokenUse(t *testing.T) {
 		return &core.TokenClaims{TokenUse: core.TokenUseIDToken, Subject: "user-1"}, "jwt", nil
 	}
 	ctx, _ := newCtx(http.MethodPost, core.ContentTypeJSON, "")
-	if _, active := introspectAccess(d, ctx, "signed-id-token"); active {
+	if _, _, active := introspectAccess(d, ctx, "signed-id-token"); active {
 		t.Fatal("ID token must not introspect as an active access token")
 	}
 }
