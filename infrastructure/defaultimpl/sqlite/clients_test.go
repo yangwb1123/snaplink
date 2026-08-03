@@ -32,6 +32,7 @@ func TestSQLiteClients_AddGetRoundTrip(t *testing.T) {
 		RedirectURIs:          []string{"https://app/cb", "https://app/cb2"},
 		AllowedScopes:         []string{"read", "write"},
 		AllowedAuthenticators: []string{"password", "phone"},
+		LoginPageURI:          "https://login.example/authorize",
 		TokenStrategy:         "jwt",
 		Active:                true,
 		TenantID:              "acme",
@@ -46,7 +47,7 @@ func TestSQLiteClients_AddGetRoundTrip(t *testing.T) {
 	}
 	// Secret is now stored as a bcrypt hash — verify via ValidateSecret, not
 	// direct string comparison.
-	if out.Name != "Web App" || out.TenantID != "acme" {
+	if out.Name != "Web App" || out.TenantID != "acme" || out.LoginPageURI != in.LoginPageURI {
 		t.Errorf("scalar mismatch: %+v", out)
 	}
 	if !strings.HasPrefix(out.Secret, "$2") {

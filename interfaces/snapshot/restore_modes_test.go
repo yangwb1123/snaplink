@@ -14,7 +14,8 @@ import (
 )
 
 // newBlank builds an empty destination wired the same way fixtureBlank is,
-// so the restore mode tests below all share one construction path.
+// so the restore mode tests below all share one construction path. pairwise
+// stays nil (unwired) unless a test opts in explicitly.
 func newBlank() *fixtureBlank {
 	return &fixtureBlank{
 		clients: defaultimpl.NewMemoryClientStore(),
@@ -66,7 +67,7 @@ func TestRestore_Merge_AllPermissionCategories(t *testing.T) {
 	if len(roles) != 2 {
 		t.Errorf("alpha roles=%d want 2", len(roles))
 	}
-	menus, _ := dst.perms.GetMenus(ctx, "alpha")
+	menus, _ := dst.perms.(permissions.MenuLister).GetMenus(ctx, "alpha")
 	if len(menus) != 1 {
 		t.Errorf("alpha menus=%d want 1", len(menus))
 	}
@@ -431,22 +432,6 @@ func TestRestore_DefaultMode_IsMerge(t *testing.T) {
 	}
 }
 
-// snapshotter builds a Snapshotter wired to f's stores, mirroring
-// fixture.snapshotter() — lets fixtureBlank double as an export source when
-// a test needs full control over what's populated (e.g. a client with
-// intentionally zero roles/assignments/menus, to exercise the exporter's
-// "skip empty" convention deliberately).
-func (f *fixtureBlank) snapshotter() *snapshot.Snapshotter {
-	return &snapshot.Snapshotter{
-		Clients:     f.clients,
-		Users:       f.users,
-		Permissions: f.perms,
-		NetPolicy:   f.netpol,
-		Tracker:     f.tracker,
-		Namespace:   "sso-server",
-	}
-}
-
 // TestRestore_Replace_WipesRolesForZeroEntryClient proves the ModeReplace
 // prune fix: client "gamma" has ZERO roles at export time, so the exporter's
 // size optimization gives it no ClientRoles entry — but it DOES appear in
@@ -572,7 +557,7 @@ func TestRestore_Replace_WipesMenusForZeroEntryClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("restore: %v\nreport=%+v", err, rep)
 	}
-	menus, err := dst.perms.GetMenus(ctx, "gamma")
+	menus, err := dst.perms.(permissions.MenuLister).GetMenus(ctx, "gamma")
 	if err != nil {
 		t.Fatalf("get menus: %v", err)
 	}
@@ -641,7 +626,7 @@ func TestRestore_MergeOverwrite_LeavesZeroEntryClientPermissionsUntouched(t *tes
 			if len(assignments) != 1 {
 				t.Errorf("%s wrongly touched gamma assignments: %+v", mode, assignments)
 			}
-			menus, err := dst.perms.GetMenus(ctx, "gamma")
+			menus, err := dst.perms.(permissions.MenuLister).GetMenus(ctx, "gamma")
 			if err != nil {
 				t.Fatalf("get menus: %v", err)
 			}

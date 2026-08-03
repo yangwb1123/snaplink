@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     issued_at              INTEGER NOT NULL,
     expires_at             INTEGER NOT NULL,
     family_id              TEXT    NOT NULL DEFAULT '',
+    jti                    TEXT    NOT NULL DEFAULT '',
     resources              TEXT    NOT NULL DEFAULT '[]',
     authorization_details  TEXT    NOT NULL DEFAULT '',
     sid                    TEXT    NOT NULL DEFAULT '',
@@ -110,6 +111,13 @@ var refreshTokenMigrations = []migrate.Migration{
 	// recover their original expiry, so retain them for 30 days from migration
 	// (security-safe widening); active rows inherit their exact expiry.
 	{Version: 7, Name: "refresh_token_family_expiry", Func: addRefreshTokenFamilyExpiry},
+	// v8 backfills the jti column (the refresh-introspect thumbprint
+	// correlation id — see oauthspi.RefreshToken.JTI). Fresh DBs get it from
+	// the baseline DDL; pre-v8 DBs get it here. Existing rows default to '' —
+	// a pre-feature token reads JTI "", so its introspection Offer stays
+	// thumbprint-less (Thumbprint("") => no observation) and the per-token
+	// geo table sees byte-identical behavior to before the feature.
+	{Version: 8, Name: "refresh_token_jti", Func: addRefreshTokenJTI},
 }
 
 func addRefreshTokenFamilyExpiry(ctx context.Context, x migrate.Execer) error {
@@ -241,6 +249,23 @@ func addRefreshTokenFamilyCreatedAt(ctx context.Context, x migrate.Execer) error
 	}
 	_, err = x.ExecContext(ctx,
 		`ALTER TABLE refresh_tokens ADD COLUMN family_created_at INTEGER NOT NULL DEFAULT 0`)
+	return err
+}
+
+// addRefreshTokenJTI adds the jti column (refresh-introspect thumbprint
+// correlation id) to a pre-existing refresh_tokens table. Idempotent via the
+// column-exists check; existing rows default to ” so a token issued before
+// the feature reads JTI "" (thumbprint-less, pre-feature behavior).
+func addRefreshTokenJTI(ctx context.Context, x migrate.Execer) error {
+	has, err := refreshTokenColumnExists(ctx, x, "jti")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	_, err = x.ExecContext(ctx,
+		`ALTER TABLE refresh_tokens ADD COLUMN jti TEXT NOT NULL DEFAULT ''`)
 	return err
 }
 

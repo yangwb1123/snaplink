@@ -166,6 +166,7 @@ type protocolState struct {
 	protectedResourceMetadata  *ProtectedResourceMetadata
 	cibaStore                  oauth.CIBAStore
 	cibaTransport              oauth.CIBATransport
+	cibaUserCodeVerifier       oauth.CIBAUserCodeVerifier
 	cibaPingNotifier           oauth.CIBAPingNotifier
 	cibaPushNotifier           oauthspi.CIBAPushNotifier
 	cibaRequestTTL             time.Duration

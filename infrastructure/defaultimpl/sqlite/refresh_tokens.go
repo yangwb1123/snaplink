@@ -97,14 +97,14 @@ func (s *RefreshTokenStore) Issue(ctx context.Context, token string, info *oauth
 	lookup := opaqueLookupKey(firstLookupKey(s.lookupHMACKeys), "refresh_token", token)
 	_, err = s.db.ExecContext(ctx, `
         INSERT INTO refresh_tokens (token, user_id, client_id, provider,
-            scopes, attributes, issued_at, expires_at, family_id, resources,
+            scopes, attributes, issued_at, expires_at, family_id, jti, resources,
             authorization_details, sid, amr, acr, auth_time, confirmation_jkt,
             generation, family_created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		lookup, info.UserID, info.ClientID, info.Provider,
 		string(scopes), string(attrs),
 		info.IssuedAt.UnixNano(), info.ExpiresAt.UnixNano(),
-		info.FamilyID, string(resources),
+		info.FamilyID, info.JTI, string(resources),
 		string(info.AuthorizationDetails), info.SID,
 		string(amr), info.Acr, unixNanoOrZero(info.AuthTime), info.ConfirmationJKT,
 		info.Generation, unixNanoOrZero(info.FamilyCreatedAt),
@@ -154,7 +154,7 @@ func (s *RefreshTokenStore) consume(ctx context.Context, lookup string) (*oauth.
 	row := s.db.QueryRowContext(ctx, `
         DELETE FROM refresh_tokens WHERE token = ?
         RETURNING user_id, client_id, provider, scopes, attributes,
-                  issued_at, expires_at, family_id, resources,
+                  issued_at, expires_at, family_id, jti, resources,
                   authorization_details, sid, amr, acr, auth_time,
                   confirmation_jkt, generation, family_created_at`, lookup)
 	out, err := scanRefreshToken(row)
@@ -197,7 +197,7 @@ func (s *RefreshTokenStore) Inspect(ctx context.Context, token string) (*oauth.R
 func (s *RefreshTokenStore) inspect(ctx context.Context, lookup string) (*oauth.RefreshToken, error) {
 	row := s.db.QueryRowContext(ctx, `
         SELECT user_id, client_id, provider, scopes, attributes,
-               issued_at, expires_at, family_id, resources,
+               issued_at, expires_at, family_id, jti, resources,
                authorization_details, sid, amr, acr, auth_time,
                confirmation_jkt, generation, family_created_at
         FROM refresh_tokens WHERE token = ?`, lookup)
@@ -391,7 +391,7 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 	var (
 		out                                        oauth.RefreshToken
 		provider, scopesJSON, attrsJSON, resources string
-		familyID, authDetails, sid                 string
+		familyID, jti, authDetails, sid            string
 		amrJSON, acr                               string
 		issuedAtUnixNs, expiresAtUnixNs            int64
 		authTimeUnixNs                             int64
@@ -403,7 +403,7 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 		&out.UserID, &out.ClientID, &provider,
 		&scopesJSON, &attrsJSON,
 		&issuedAtUnixNs, &expiresAtUnixNs,
-		&familyID, &resources,
+		&familyID, &jti, &resources,
 		&authDetails, &sid,
 		&amrJSON, &acr, &authTimeUnixNs,
 		&confirmationJKT, &generation, &familyCreatedAtUnixNs,
@@ -412,6 +412,7 @@ func scanRefreshToken(s scanner) (*oauth.RefreshToken, error) {
 	}
 	out.ConfirmationJKT = confirmationJKT
 	out.Generation = generation
+	out.JTI = jti
 	if authDetails != "" {
 		out.AuthorizationDetails = json.RawMessage(authDetails)
 	}

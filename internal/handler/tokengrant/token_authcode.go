@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/region"
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
@@ -40,6 +41,16 @@ type AuthCodeGrantDeps interface {
 	SrvLogger() spi.Logger
 }
 
+// servingRegionFrom returns the serving region the region middleware
+// stashed on ctx, or "" when no middleware ran / it resolved none. The
+// token grants live inside the HandlerContext pipeline (the region
+// middleware is mounted globally), so every mint site stamps mint-region
+// evidence from this — the same stash the residency gates read.
+func servingRegionFrom(ctx core.HandlerContext) string {
+	id, _ := region.FromHandlerContext(ctx)
+	return string(id)
+}
+
 // HandleAuthCodeGrant processes the RFC 6749 §4.1.3 authorization_code token
 // exchange. Behavior is byte-identical to the prior root handler.
 //
@@ -64,6 +75,9 @@ func HandleAuthCodeGrant(d AuthCodeGrantDeps, ctx core.HandlerContext, client *c
 	}
 	info, ok := authCodeValidate(d, ctx, client, req, dpopJKT)
 	if !ok {
+		return
+	}
+	if lifecycleGrantBlocked(d, ctx, info.UserID) {
 		return
 	}
 	resp, token, issuedSub, authTime, scopes, ok := authCodeIssueAccessToken(d, ctx, client, req, info, scopes, dpopJKT, mtlsX5T)
@@ -98,13 +112,7 @@ func authCodeIssueAccessToken(d AuthCodeGrantDeps, ctx core.HandlerContext, clie
 		return nil, nil, "", time.Time{}, nil, false
 	}
 	scopes = info.Scopes //nolint:staticcheck // SA4009: see func comment — code-bound scopes are authoritative
-	if len(scopes) == 0 {
-		scopes = strings.Split(req.Scope, " ")
-	}
 	resources := info.Resources
-	if len(resources) == 0 {
-		resources = req.Resource
-	}
 	issuedSub := d.ApplyPairwiseSubject(ctx.Request().Context(), client, info.UserID)
 	authTime := info.AuthTime
 	if authTime.IsZero() {
@@ -114,11 +122,13 @@ func authCodeIssueAccessToken(d AuthCodeGrantDeps, ctx core.HandlerContext, clie
 		ID: issuedSub, Provider: info.Provider, Claims: info.Attributes,
 		Resources:            resources,
 		ClientID:             client.ID,
+		TenantID:             client.TenantID,
 		AuthTime:             authTime,
 		AMR:                  handler.AmrOrProvider(info.AuthMethods, info.Provider),
 		ACR:                  info.ACR,
 		AuthorizationDetails: oauth.CloneRawJSON(info.AuthorizationDetails),
 		SID:                  info.SID,
+		ServingRegion:        servingRegionFrom(ctx),
 		TTL:                  client.AccessTokenTTL,
 		ConfirmationJKT:      dpopJKT,
 		ConfirmationX5TS256:  mtlsX5T,
@@ -186,6 +196,21 @@ func authCodeValidate(d AuthCodeGrantDeps, ctx core.HandlerContext, client *core
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
 		return nil, false
 	}
+	if req.Scope != "" {
+		requested := strings.Fields(req.Scope)
+		if !oauth.IsScopeSubset(requested, info.Scopes) {
+			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidScope))
+			return nil, false
+		}
+		info.Scopes = requested
+	}
+	if len(req.Resource) > 0 {
+		if !oauth.IsScopeSubset(req.Resource, info.Resources) {
+			ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidTarget))
+			return nil, false
+		}
+		info.Resources = append([]string(nil), req.Resource...)
+	}
 	return info, true
 }
 
@@ -235,22 +260,25 @@ func authCodeIssueIDToken(d AuthCodeGrantDeps, ctx core.HandlerContext, client *
 		claims = oidc.ProjectIDTokenClaims(claims, info.RequestedClaims)
 	}
 	idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-		Subject:         issuedSub,
-		Audience:        client.ID,
-		Nonce:           info.Nonce,
-		AuthTime:        authTime,
-		AMR:             handler.AmrOrProvider(info.AuthMethods, info.Provider),
-		ACR:             info.ACR,
-		Claims:          claims,
-		AccessToken:     accessToken,
-		DeviceSecret:    deviceSecretValue,
-		RequestedClaims: info.RequestedClaims,
+		Subject:              issuedSub,
+		Audience:             client.ID,
+		Nonce:                info.Nonce,
+		AuthTime:             authTime,
+		AMR:                  handler.AmrOrProvider(info.AuthMethods, info.Provider),
+		ACR:                  info.ACR,
+		Claims:               claims,
+		AccessToken:          accessToken,
+		DeviceSecret:         deviceSecretValue,
+		RequestedClaims:      info.RequestedClaims,
+		GrantedScopes:        info.Scopes,
+		GrantedResources:     info.Resources,
+		AuthorizationDetails: info.AuthorizationDetails,
 		// The session the login bound into the code (IssueAuthCodeParams.SID)
 		// MUST ride the exchange-minted id_token as the sid claim — an RP
 		// that bound its local state to sid at login sees the same session
-		// here, and back-channel logout targets it. Mirrors the direct-mint
-		// branch (emitLoginIDToken passes session.ID the same way).
-		SID: info.SID,
+		// here, and back-channel logout targets it.
+		SID:           info.SID,
+		ServingRegion: servingRegionFrom(ctx),
 	})
 	if err != nil {
 		d.SrvLogger().Error("id token issue failed", "error", err, "client", client.ID, "user", info.UserID)

@@ -80,6 +80,11 @@ type SAMLServerDeps struct {
 	// register; this hook lets a factory register additional ones itself if
 	// it must (kept symmetric with the webauthn/SP plumbing).
 	RegisterAuthenticator func(a sso.Authenticator)
+
+	// ResumeFederatedLogin hands a validated SAML assertion back to the
+	// server-owned OAuth authorization transaction. It returns false only for
+	// legacy ACS requests that did not originate at /auth/login.
+	ResumeFederatedLogin func(http.ResponseWriter, *http.Request, string, *sso.AuthResult) bool
 }
 
 // SAMLHandler is one HTTP route a SAMLHandlerFactory contributes (e.g. the

@@ -26,12 +26,18 @@ uses the APIs below and is normally reverse-proxied beside the server.
 | `client_registration.default_active` | `true` (default) activates a new DCR registration immediately; `false` opts into the developer-app registration review workflow — the client registers pending (`Active=false`, unable to authenticate on ANY grant) until an admin calls `POST /api/v1/admin/clients/{id}/approve` or `/reject` (`ClientAdminService`) |
 | `client_registration.rotate_access_token_overlap` | Recovery window for RFC 7592 registration-token rotation. The credential used for a successful PUT remains valid for retries during this interval; `<= 0` defaults to 5 minutes. |
 
+## Clients
+
+| Key | Effect |
+|---|---|
+| `clients[].login_page_uri` | Absolute hosted-login URL used after a verified upstream OIDC/SAML callback. Required for federated RP authorization: Snaplink redirects here with a fresh one-use `login_transaction_id` in the fragment, then the page POSTs it to `/auth/login` to resume the original post-PAR/JAR request through policy, MFA, consent, and response delivery. Must be HTTPS, except HTTP loopback URLs used for local development. Missing or unsafe values make `authorization_request_passthrough_supported=false` and federated kickoff fails closed. |
+
 ## Server
 
 | Key | Effect |
 |---|---|
 | `server.http2.enabled` | Controls HTTP/2 server-side support. `false` (default) disables HTTP/2 via `GODEBUG=http2server=0` (safe behind a reverse proxy). `true` enables HTTP/2 — required for gRPC or direct-client deployments. If the `GODEBUG` env var is already explicitly set, this field is ignored (explicit env override takes precedence). See `config.HTTP2Config`. |
-| `server.topology.{mode,allow_per_pod_state}` | `mode: single` declares one process; `mode: multi` makes per-process OAuth, session, replay, identity, CIBA, and MFA challenge stores a boot error. `allow_per_pod_state: true` is an explicit development-only escape hatch and is rejected unless mode is `multi`. |
+| `server.topology.{mode,allow_per_pod_state}` | `mode: single` declares one process; `mode: multi` makes per-process OAuth, session, replay, identity, CIBA, MFA challenge, pairwise-subject, identity-link, and enabled user-lifecycle stores a boot error. `allow_per_pod_state: true` is an explicit development-only escape hatch and is rejected unless mode is `multi`. |
 | `hosted_login.enabled` | **Deprecated no-op.** The field is parsed (with a startup warning when enabled) but the stock binary has no hosted-login filesystem or route wiring, so setting it never mounts `/login/` or any other frontend. Deploy the login UI as a separate project and drive it through the APIs in [frontend-contract.md](frontend-contract.md). Do not use this key as a readiness/capability signal. Removed with the next schema-version bump. |
 
 ## OIDC
@@ -41,6 +47,20 @@ uses the APIs below and is normally reverse-proxied beside the server.
 | `server.issuer` | MUST differ from `sso.DefaultIssuer`; stamped into JWT `iss`, discovery `issuer`, every RFC 9207 `iss` |
 | `server.required_capabilities` | Optional build/deployment contract. Startup and `--validate-only` fail closed unless every listed capability ID appears in the immutable inventory embedded by `python cli.py configure`; inspect with `sso-server modules --json` |
 | `oidc.response_encryption.backend` | JWE-encrypts `id_token` + `/userinfo` responses for clients registering `id_token_encrypted_response_alg`/`userinfo_encrypted_response_alg`: `""` (off, default) \| `rsa` (RSA-OAEP-256) \| `ecdh` (ECDH-ES[+A256KW]) \| `multi` (both, routed per-client by registered key type). Stateless — reads each recipient's public key from the client's registered JWKS |
+| `backchannel_logout.enabled` | Enables OIDC Back-Channel Logout for `/logout` and `/end_session`. Each RP delivery has a shared 5-second budget and retries transient transport, 408, 429, and 5xx failures up to three total attempts with jittered exponential backoff. Retry tokens are freshly signed to avoid the RP's `jti` replay guard, and delivery preserves request values while ignoring browser/gateway cancellation. |
+| `backchannel_logout.max_concurrent` | Bounds simultaneous RP notifications in multi-RP fan-out; `<=0` uses 8. |
+| `backchannel_logout.index.backend` | Subject-to-client fan-out index: `memory` (single replica), `sqlite`, or `redis`. Successfully notified clients are removed; failed clients remain indexed for a later logout/session-hub retry. |
+| `backchannel_logout.failure_queue.backend` | Exhausted-delivery queue: `""` disables it; `memory` enables bounded process-local governance; `redis` persists failures across restart and coordinates replay leases across replicas. The queue stores subject/client/SID/URI inputs, never the signed logout token. |
+| `backchannel_logout.failure_queue.retry_interval` | Background sweep cadence and first retry delay; default `30s`. Recoverable transport/timeout/408/429/5xx/issuer failures are retried; permanent RP 4xx entries remain visible for manual replay without background hammering. |
+| `backchannel_logout.failure_queue.batch_size` | Maximum due entries claimed per sweep; default 50, admin list/replay APIs clamp requests to 200. |
+| `backchannel_logout.failure_queue.lease_duration` | Per-entry replay ownership lease; default `30s`. Prevents concurrent workers/admins from sending one entry at the same time and expires after a crashed worker. |
+
+When a failure queue is wired, administrators gain `GET
+/api/v1/admin/backchannel-logout/failures`, single-item `POST
+.../failures/{id}/replay`, and due-batch `POST .../failures/replay`. GET requires
+`admin:read`; POST requires `admin:write`. Successful replay acknowledges the
+entry and removes the matching subject/client fan-out index record. Shutdown
+waits for the replay worker to stop before Redis closes.
 
 ## Security
 
@@ -269,6 +289,19 @@ notifications:
 
 The phone one-time-code authenticator (`authenticators.phone`) dials an
 `authenticators.SMSSender`; `authenticators.phone.sms` selects the transport.
+All built-in email/SMS OTP and magic-link authenticators share three abuse
+controls in their `CodeStore`: a 60-second resend cooldown, at most five failed
+verification attempts per issued value, and fixed-window send budgets. The
+default budgets are 20 sends per tenant-scoped identity and 1,000 sends per
+tenant every 24 hours. Redis reserves the identity and tenant counters in one
+Lua operation, so multiple replicas cannot overspend the budget. The fifth mismatch
+invalidates that value while returning the same generic credential error as
+an ordinary mismatch. If a synchronous delivery call fails, the built-in
+memory and Redis stores conditionally remove that undelivered value and release
+its cooldown and quota reservation, allowing an immediate retry without risking
+deletion of a newer issuance. Quota exhaustion is deliberately returned as the
+same HTTP 200 `{"status":"sent"}` response as a successful send and does not call
+the transport, preventing account/target and budget-state probing.
 `provider` unset or `"log"` (the default) logs the code instead of sending
 it — byte-identical to the stub that shipped before this config section
 existed. `provider: "http"` dispatches over the built-in
@@ -280,6 +313,15 @@ fails the boot loudly rather than silently falling back to the log stub.
 
 | Key | Effect |
 |---|---|
+| `authenticators.code_send_quota.identity_limit` | Maximum sends to one target inside one tenant and window; default 20. `-1` disables this dimension; `0` selects the default |
+| `authenticators.code_send_quota.tenant_limit` | Maximum sends across all targets in one tenant and window; default 1,000. `-1` disables this dimension; `0` selects the default |
+| `authenticators.code_send_quota.window` | Fixed-window duration shared by both limits; default `24h` and must be positive after defaults are applied |
+| `authenticators.code_delivery.async` | Enables the bounded in-memory OTP/magic-link worker queue; default `false` preserves synchronous delivery |
+| `authenticators.code_delivery.queue_size` | Maximum accepted pending deliveries; default 256, maximum 10,000. A full queue fails the request and conditionally invalidates the freshly stored code |
+| `authenticators.code_delivery.workers` | Concurrent delivery workers; default 2, maximum 64 |
+| `authenticators.code_delivery.attempts` | Maximum provider attempts per accepted delivery; default 3, maximum 10 |
+| `authenticators.code_delivery.attempt_timeout` | Per-provider-attempt timeout; default `10s`, maximum `2m` |
+| `authenticators.code_delivery.retry_backoff` | Initial exponential retry delay; default `200ms`, maximum `30s` |
 | `authenticators.phone.sms.provider` | `""` / `"log"` (default; log-only stub) \| `"http"` (real SMS via `infrastructure/sms`) |
 | `authenticators.phone.sms.account_sid` | Twilio (or compatible) Account SID — HTTP Basic Auth username AND the Messages-resource path segment; required when `provider: "http"` |
 | `authenticators.phone.sms.auth_token` | HTTP Basic Auth password — supports `secret://` resolution (`config/secrets.go`) and the `SSO_AUTHENTICATORS__PHONE__SMS__AUTH_TOKEN` env override; never commit a plaintext value; required when `provider: "http"` |
@@ -553,11 +595,13 @@ Token-policy governance engine (`domains/tokenpolicy`, `sso.WithTokenPolicy`). D
 
 ## Conditional Access
 
-Zero-trust conditional-access (CAP) engine (`domains/conditionalaccess`, `sso.WithConditionalAccess`), mounting the read-only view `GET /api/v1/admin/access-policies`. Disabled by default. The engine is ALWAYS evaluable via `Server.EvaluateConditionalAccess`; it additionally becomes a LIVE Policy Enforcement Point on `/auth/login` — after credential validation, before token/session issuance — only when `access_policies.enforce` is `true`. With `enforce` left `false` (the default), a wired store changes no live auth decision, matching every prior release's advisory-only behavior. Provide policies via EITHER `access_policies.file` OR `access_policies.policies`; both fails loud.
+Zero-trust conditional-access (CAP) engine (`domains/conditionalaccess`, `sso.WithConditionalAccess`), mounting `GET /api/v1/admin/access-policies` and the immediate convergence operation `POST /api/v1/admin/access-policies/converge`. Disabled by default. The engine is ALWAYS evaluable via `Server.EvaluateConditionalAccess`; when `access_policies.enforce` is `true` it additionally becomes a LIVE Policy Enforcement Point after credential validation on `/auth/login`, on `prompt=none` renewal, before every refresh-token successor is issued, and in a periodic active-session convergence worker. With `enforce` left `false` (the default), a wired store changes no live auth decision, matching every prior release's advisory-only behavior. Provide policies via EITHER `access_policies.file` OR `access_policies.policies`; both fails loud.
 
-A matched `deny` verdict returns `403 conditional_access_denied`; a matched `require_step_up` verdict routes through the SAME MFA orchestration `mfa.*` configures (`WithMFAProvider` + `WithMFAChallengeStore`) — without both wired it decays to allow, never inventing a step-up path the deployment hasn't configured. A trust-scorer or policy-store outage always FAILS OPEN on `/auth/login` (logs and proceeds), regardless of `default_deny` — a risk signal must never become an account-lockout oracle.
+A matched `deny` verdict returns `403 conditional_access_denied` during interactive login; a matched `require_step_up` verdict routes through the SAME MFA orchestration `mfa.*` configures (`WithMFAProvider` + `WithMFAChallengeStore`). Without both MFA dependencies wired, the resolved operator policy fails closed with `403 conditional_access_denied` instead of being bypassed. `restrict_scopes` is intersected with the client-authorized scope set and survives MFA and consent continuations, so authorization codes, access tokens, and refresh tokens all inherit the reduced authority; `log: true` emits the resolved structured decision. `prompt=none` silent renewal re-evaluates the same policy after validating the ID-token hint and its exact `sid`: deny is blocked, required step-up returns `interaction_required`, and scope restrictions cap the renewed token. The hint binds its original scopes, RFC 8707 resources, and RFC 9396 authorization details; renewal may preserve or reduce that grant but expansion returns `400 consent_required` and requires an interactive flow. Refresh-token use re-evaluates current groups, device, trust, geo, session age, and authentication age: deny collapses to `400 invalid_grant`, step-up (or a continuously verified session marked `StepUpRequired`) returns `400 insufficient_user_authentication`, and scope restriction can only shrink the successor grant. The caller must restart an interactive login to satisfy a refresh-time step-up. A trust-scorer or policy-store outage still FAILS OPEN on login, silent renewal, and refresh (logs and proceeds), regardless of `default_deny` — an unavailable risk signal must never become an account-lockout oracle.
 
-Pair with `sso.WithTrustScorer` (a `shared/trust.TrustScorer`, typically a `trust.WeightedComposite` — see "Trust Scoring" below for the reference-implementation cmd wiring) and `sso.WithDeviceFingerprint` (a `conditionalaccess.DeviceFingerprint`, e.g. `conditionalaccess.NewMemoryDeviceFingerprint()`) to feed the engine real trust-score and device-posture signals; `WithDeviceFingerprint` remains a Go-level SDK option with no YAML surface (no reference implementation to declare declaratively), so operators wire a custom device-posture source directly like a custom `RiskScorer`.
+Pair with `sso.WithTrustScorer` (a `shared/trust.TrustScorer`, typically a `trust.WeightedComposite` — see "Trust Scoring" below for the reference-implementation cmd wiring) and `sso.WithDeviceFingerprint` (a `conditionalaccess.DeviceFingerprint`, e.g. `conditionalaccess.NewMemoryDeviceFingerprint()`) to feed the engine real composite-trust and managed-posture signals. `user.member_of` reads the current per-user/client role codes from `permissions.Provider`; `device.type` is parsed from User-Agent, while `device.trust_level`, `device.is_new`, and `device.is_new_location` read the physical device inventory wired by `sso.WithDeviceStore`. `session.age_seconds` and `authentication.age_seconds` are inclusive minimum ages used for periodic reauthentication; a missing or future-dated timestamp does not match. `session.max_concurrent` is a per-subject/client ceiling: login evaluates existing sessions plus the prospective new one, while convergence removes newest excess sessions until the count is within the ceiling. Missing/erroring role, device, geo, or session-count sources degrade to an absent signal instead of denying.
+
+When enforcement is active, server-side sessions persist client, scope, authentication-time, device and trust context across memory, SQLite, Redis and Postgres backends. Each sweep uses one policy snapshot: deny revokes; step-up writes `StepUpRequired`; scope restriction persists an authorization ceiling that refresh may preserve or reduce but never re-expand. The first sweep runs at process startup, later sweeps use the configured interval, and the admin POST runs the same bounded pass immediately. Policy-store failure mutates nothing and is retried on the next interval.
 
 | Key | Effect |
 |---|---|
@@ -565,7 +609,9 @@ Pair with `sso.WithTrustScorer` (a `shared/trust.TrustScorer`, typically a `trus
 | `access_policies.policies` | Inline CAP rule list (`name`, `priority`, `enabled`, `dry_run`, `conditions`, `actions`) |
 | `access_policies.degraded_trust` | Conservative trust value substituted when a signal is missing; `<=0` or `>1` normalizes to the engine default (`0.3`) |
 | `access_policies.default_deny` | Flips the no-policy-matched verdict from allow to deny (a zero-trust posture) and governs the fallback when the store is unavailable |
-| `access_policies.enforce` | Activates the live `/auth/login` PEP. `false` (default) keeps the engine advisory-only even with policies configured — stage policies (`dry_run` entries, `enforce: false`) and check the admin governance view before flipping this on |
+| `access_policies.enforce` | Activates live enforcement on `/auth/login`, `prompt=none`, and refresh-token issuance. `false` (default) keeps the engine advisory-only even with policies configured — stage policies (`dry_run` entries, `enforce: false`) and check the admin governance view before flipping this on |
+| `access_policies.session_sweep_interval` | Active-session convergence cadence when enforcement is enabled. `0` takes `5m`; negative values fail startup |
+| `access_policies.session_sweep_batch_size` | Maximum sessions evaluated/mutated per pass. `0` takes `500`; negative values fail startup. The cursor advances between passes |
 
 ## Trust Scoring
 
@@ -652,20 +698,24 @@ Emergency ("break-glass") admin sessions. Disabled by default; without it no bre
 
 ## User Lifecycle
 
-User-lifecycle state-machine admin surface (`domains/userlifecycle`, `sso.WithUserLifecycle`), mounting `GET`/`POST /api/v1/admin/users/:id/lifecycle`. GOVERNANCE metadata only — it NEVER gates authentication (`core.User.IsActive` still owns the login decision). Disabled by default: an absent/`false` section wires nothing, byte-identical to a build without the feature. Only a memory backend exists today (`domains/userlifecycle/memory`).
+User lifecycle is both an admin state machine (`domains/userlifecycle`, `sso.WithUserLifecycle`) and an end-user authentication gate. It mounts `GET`/`POST /api/v1/admin/users/:id/lifecycle`; only `active` accounts may complete interactive, MFA or federated continuation login, redeem/renew/exchange an end-user grant (authorization code, refresh, device, CIBA, token exchange, JWT bearer, SAML bearer or agent delegation), or pass the server's access/ID-token validation path. Validation checks both `sub` and every RFC 8693 `act` link, so suspending a delegating human also stops an agent token. `client_credentials` is deliberately unaffected because it has no user subject. A missing lifecycle record is implicitly `active`; a lifecycle-store read failure fails closed. This is additive to SCIM/core `User.IsActive`: either control can deny an account.
+
+The stock server synchronously revokes the subject's live sessions and all refresh tokens when a transition enters `invited`, `suspended`, `inactive`, `archived`, or `purged`. Stateless access tokens cannot be physically deleted, but subsequent validation by this server rejects them and RFC 7662 introspection returns `active: false`. A resource server that validates JWTs entirely offline must use introspection or a separate revocation/event channel when immediate lifecycle enforcement is required.
+
+Disabled by default: an absent/`false` section wires nothing, byte-identical to a build without the feature. Only a process-memory lifecycle backend exists today (`domains/userlifecycle/memory`), so state is lost on restart and `server.topology.mode: multi` rejects an enabled lifecycle feature unless the explicitly unsafe `allow_per_pod_state` development override is set.
 
 `user_lifecycle.auto_deprovision` is a SEPARATE, independently-gated opt-in — mirrors `sso.WithUserAutoDeprovision` itself requiring `sso.WithUserLifecycle` at the SDK layer, since the sweep persists through the SAME store. Enabling it with `user_lifecycle.enabled: false` fails loud at boot rather than silently building a sweep with nowhere to persist its transitions. When armed, `Server.RunUserAutoDeprovision` runs in a background goroutine (standard cancel/done shutdown lifecycle) advancing dormant accounts: `ACTIVE` → `INACTIVE` past `dormant_after`, and — when `archive_after > 0` — `INACTIVE` → `ARCHIVED` past `dormant_after + archive_after`. Activity is derived from the wired `SessionManager` (`userlifecycle.SessionLastActive`) — a user with no live session reads as "unknown" and is never touched (fail-safe by design; no other activity backend exists in this wiring today).
 
 | Key | Effect |
 |---|---|
-| `user_lifecycle.enabled` | Builds the `userlifecycle.Store` and wires `sso.WithUserLifecycle`, mounting the admin state-machine endpoints |
+| `user_lifecycle.enabled` | Builds the memory `userlifecycle.Store`, mounts the admin state-machine endpoints, enables the fail-closed end-user auth/token gate, and wires transition-triggered session/refresh-token revocation. Single-replica only in the stock binary |
 | `user_lifecycle.auto_deprovision.enabled` | Arms the background dormancy sweep. Requires `user_lifecycle.enabled: true`, plus `dormant_after` and `sweep_interval` both `> 0` (fails loud at boot otherwise) |
 | `user_lifecycle.auto_deprovision.dormant_after` | How long an `ACTIVE` account may be idle before the sweep moves it to `INACTIVE`. `<=0` disables the sweep |
 | `user_lifecycle.auto_deprovision.archive_after` | ADDITIONAL idle time beyond `dormant_after` before an `INACTIVE` account advances to `ARCHIVED` (measured from last activity). `<=0` leaves `INACTIVE` accounts untouched indefinitely |
 | `user_lifecycle.auto_deprovision.max_per_sweep` | Caps transitions applied per sweep (a deprovisioning-storm guard); `0` = unlimited |
 | `user_lifecycle.auto_deprovision.sweep_interval` | `Server.RunUserAutoDeprovision` background-loop cadence; `<=0` disables the loop even when `dormant_after` is set |
 
-Every applied transition (admin- or sweep-driven) emits `admin_user_lifecycle_changed` (see `docs/error-codes.md`'s "User lifecycle state machine" section for the full state table and wire error codes).
+Every applied transition (admin- or sweep-driven) emits `admin_user_lifecycle_changed` and runs the same revocation reaction (see `docs/error-codes.md`'s "User lifecycle state machine" section for the full state table and wire error codes).
 
 ## Admin Governance Framework
 

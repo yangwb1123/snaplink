@@ -117,11 +117,15 @@ type brandingHandlerCtx struct {
 	req *http.Request
 }
 
-func (c *brandingHandlerCtx) ResponseWriter() http.ResponseWriter { return c.rec }
-func (c *brandingHandlerCtx) Request() *http.Request              { return c.req }
-func (c *brandingHandlerCtx) Set(key string, v any)               {}
-func (c *brandingHandlerCtx) Get(key string) any                  { return nil }
-func (c *brandingHandlerCtx) Redirect(code int, url string)       { http.Redirect(c.rec, c.req, url, code) }
+func (c *brandingHandlerCtx) ResponseWriter() http.ResponseWriter     { return c.rec }
+func (c *brandingHandlerCtx) Request() *http.Request                  { return c.req }
+func (c *brandingHandlerCtx) Set(key string, v any)                   {}
+func (c *brandingHandlerCtx) Get(key string) any                      { return nil }
+func (c *brandingHandlerCtx) Abort()                                  {}
+func (c *brandingHandlerCtx) Aborted() bool                           { return false }
+func (c *brandingHandlerCtx) Written() bool                           { return false }
+func (c *brandingHandlerCtx) SetResponseWriter(w http.ResponseWriter) {} // tests never swap writers
+func (c *brandingHandlerCtx) Redirect(code int, url string)           { http.Redirect(c.rec, c.req, url, code) }
 func (c *brandingHandlerCtx) JSON(code int, v any) {
 	c.rec.WriteHeader(code)
 	json.NewEncoder(c.rec).Encode(v)

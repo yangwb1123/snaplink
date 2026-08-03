@@ -20,6 +20,8 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/snapshot"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/admingovernance"
+	"github.com/yangwb1123/snaplink/protocols/lifecyclereactions"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/security/peertrust"
 )
 
@@ -112,6 +114,7 @@ func (b *appBuilder) haCoherenceIssues() []string {
 		{multi && b.cfg.MFA.Enabled, "mfa.challenge.backend", b.cfg.MFA.Challenge.Backend},
 		{multi && b.cfg.SelfService.IdentityLink.Enabled, "self_service.identity_link.backend", b.cfg.SelfService.IdentityLink.Backend},
 		{multi && b.cfg.Server.PairwiseSubjects.Enabled, "server.pairwise_subjects.backend", b.cfg.Server.PairwiseSubjects.Backend},
+		{multi && b.cfg.UserLifecycle.Enabled, "user_lifecycle.backend", "memory"},
 	}
 	var stuck []string
 	for _, check := range checks {
@@ -338,8 +341,9 @@ func (b *appBuilder) wireUserLifecycle() error {
 	if store == nil {
 		return nil
 	}
+	store = b.observeLifecycleRevocations(store)
 	b.opts = append(b.opts, sso.WithUserLifecycle(store))
-	b.logger.Info("user lifecycle: admin state-machine enabled (/api/v1/admin/users/:id/lifecycle)")
+	b.logger.Info("user lifecycle: authentication gate and admin state-machine enabled")
 	if !deprovision.Enabled() {
 		return nil
 	}
@@ -350,6 +354,23 @@ func (b *appBuilder) wireUserLifecycle() error {
 		"dormant_after", deprovision.DormantAfter, "archive_after", deprovision.ArchiveAfter,
 		"sweep_interval", b.userAutoDeprovisionInterval)
 	return nil
+}
+
+func (b *appBuilder) observeLifecycleRevocations(store userlifecycle.Store) userlifecycle.Store {
+	var refresh oauth.RefreshTokenSubjectIndex
+	if index, ok := b.refreshTokenStore.(oauth.RefreshTokenSubjectIndex); ok {
+		refresh = index
+	}
+	bus := userlifecycle.NewLifecycleEventBus(userlifecycle.WithBusLogger(b.logger))
+	revoke := lifecyclereactions.RevokeAccess(b.sessionMgr, refresh)
+	bus.OnUserInvited(revoke)
+	bus.OnUserSuspended(revoke)
+	bus.OnUserInactive(revoke)
+	bus.OnUserArchived(revoke)
+	bus.OnUserPurged(revoke)
+	return userlifecycle.ObserveTransitions(store, func(ctx context.Context, userID string, transition userlifecycle.Transition) {
+		bus.Dispatch(ctx, userID, transition.To)
+	})
 }
 
 // startUserAutoDeprovisionSweep runs Server.RunUserAutoDeprovision in a

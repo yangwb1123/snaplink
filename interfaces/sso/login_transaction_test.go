@@ -137,8 +137,11 @@ func TestAuthorizationError_JARMPostReturnsSignedEnvelope(t *testing.T) {
 	if status != http.StatusOK || len(strings.Split(response, ".")) != 3 {
 		t.Fatalf("JARM error envelope = %d %v", status, body)
 	}
-	if body["error"] != nil || body["redirect_uri_validated"] != nil {
+	if body["error"] != nil || body["state"] != nil {
 		t.Fatalf("unsigned authorization fields escaped JARM: %v", body)
+	}
+	if body["redirect_uri_validated"] != true || body["redirect_uri"] != rcovRedirect || body["response_mode"] != "query.jwt" {
+		t.Fatalf("JARM delivery metadata = %v", body)
 	}
 }
 
@@ -152,12 +155,52 @@ func TestAuthorizationError_RedirectAttestationRequiresRegisteredURI(t *testing.
 		"state": "error-state",
 	}
 	_, body := rcovPostJSON(t, server.http.URL+"/auth/login", "", login)
-	if body["redirect_uri_validated"] != true || body["error"] == nil {
+	if body["redirect_uri_validated"] != true || body["error"] == nil ||
+		body["redirect_uri"] != rcovRedirect || body["response_mode"] != "query" || body["state"] != "error-state" {
 		t.Fatalf("registered redirect was not attested: %v", body)
 	}
 	login["redirect_uri"] = "https://attacker.example/callback"
 	_, body = rcovPostJSON(t, server.http.URL+"/auth/login", "", login)
 	if body["redirect_uri_validated"] != nil {
 		t.Fatalf("unregistered redirect was attested: %v", body)
+	}
+}
+
+func TestAuthorizationSuccess_RedirectAttestationUsesEffectiveStateAndMode(t *testing.T) {
+	t.Parallel()
+	server := rcovNewServer(t)
+	status, body := rcovPostJSON(t, server.http.URL+"/auth/login", "", map[string]any{
+		"provider": "password", "client_id": rcovClient,
+		"credential":    map[string]string{"username": rcovUsername, "password": rcovPassword},
+		"response_type": "token", "redirect_uri": rcovRedirect,
+		"state": "token-state",
+	})
+	if status != http.StatusOK || body["access_token"] == nil {
+		t.Fatalf("token login = %d %v", status, body)
+	}
+	if body["redirect_uri_validated"] != true || body["redirect_uri"] != rcovRedirect ||
+		body["response_mode"] != "fragment" || body["state"] != "token-state" {
+		t.Fatalf("token delivery metadata = %v", body)
+	}
+}
+
+func TestAuthorizationSuccess_JARMReturnsOnlyEnvelopeAndDeliveryMetadata(t *testing.T) {
+	t.Parallel()
+	server := rcovNewServer(t, sso.WithJARM(defaultimpl.NewEd25519JWTIssuer()))
+	status, body := rcovPostJSON(t, server.http.URL+"/auth/login", "", map[string]any{
+		"provider": "password", "client_id": rcovClient,
+		"credential":    map[string]string{"username": rcovUsername, "password": rcovPassword},
+		"response_type": "code", "response_mode": "query.jwt",
+		"redirect_uri": rcovRedirect, "state": "signed-success-state",
+	})
+	response, _ := body["response"].(string)
+	if status != http.StatusOK || len(strings.Split(response, ".")) != 3 {
+		t.Fatalf("JARM success envelope = %d %v", status, body)
+	}
+	if body["code"] != nil || body["state"] != nil || body["access_token"] != nil {
+		t.Fatalf("unsigned authorization fields escaped JARM: %v", body)
+	}
+	if body["redirect_uri_validated"] != true || body["redirect_uri"] != rcovRedirect || body["response_mode"] != "query.jwt" {
+		t.Fatalf("JARM delivery metadata = %v", body)
 	}
 }

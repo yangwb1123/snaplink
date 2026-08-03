@@ -94,7 +94,9 @@ func capNewAdminServer(t *testing.T) *capAdminEnv {
 	_ = prov.AssignRoles(ctx, rcovUser, rcovClient, []string{"root"})
 
 	capStore := conditionalaccess.NewMemoryStore()
-	_ = capStore.Put(ctx, denyLowTrustPolicy())
+	policy := denyLowTrustPolicy()
+	policy.DryRun = true
+	_ = capStore.Put(ctx, policy)
 
 	srv := sso.NewServer(
 		sso.WithUserProvider(users),
@@ -104,7 +106,7 @@ func capNewAdminServer(t *testing.T) *capAdminEnv {
 		sso.WithTokenIssuer("jwt", defaultimpl.NewEd25519JWTIssuer()),
 		sso.WithDefaultTokenStrategy("jwt"),
 		sso.WithPermissionProvider(prov),
-		sso.WithConditionalAccess(capStore, conditionalaccess.Config{}),
+		sso.WithConditionalAccess(capStore, conditionalaccess.Config{Enforce: true}),
 	)
 
 	mw := sso.NewAdminMiddleware(srv, prov)
@@ -152,6 +154,10 @@ func TestConditionalAccess_AdminGate(t *testing.T) {
 	if int(total) != 1 {
 		t.Errorf("total = %v, want 1", out["total"])
 	}
+	status, out = rcovDo(t, http.MethodPost, env.url+"/api/v1/admin/access-policies/converge", env.token, nil)
+	if status != http.StatusOK || out["scanned"] == nil {
+		t.Fatalf("admin converge = %d body=%v", status, out)
+	}
 }
 
 // --- Live /auth/login PEP wiring (enforceConditionalAccessLogin) ---
@@ -168,7 +174,7 @@ func capLoginBody() map[string]any {
 func stepUpAllPolicy() conditionalaccess.Policy {
 	return conditionalaccess.Policy{
 		Name: "stepup-all", Priority: 100, Enabled: true,
-		Actions: conditionalaccess.Actions{RequireStepUp: "mfa"},
+		Actions: conditionalaccess.Actions{RequireStepUp: "mfa", RestrictScopes: []string{"openid"}},
 	}
 }
 
@@ -176,6 +182,13 @@ func denyAllPolicy() conditionalaccess.Policy {
 	return conditionalaccess.Policy{
 		Name: "deny-all", Priority: 100, Enabled: true,
 		Actions: conditionalaccess.Actions{Deny: true},
+	}
+}
+
+func restrictScopesAllPolicy() conditionalaccess.Policy {
+	return conditionalaccess.Policy{
+		Name: "restrict-scopes-all", Priority: 100, Enabled: true,
+		Actions: conditionalaccess.Actions{RestrictScopes: []string{"openid"}, Log: true},
 	}
 }
 
@@ -260,6 +273,26 @@ func TestConditionalAccess_EnforceAllowsWhenNoPolicyMatches(t *testing.T) {
 	}
 }
 
+func TestConditionalAccess_EnforceRestrictsIssuedScopes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := conditionalaccess.NewMemoryStore()
+	if err := store.Put(ctx, restrictScopesAllPolicy()); err != nil {
+		t.Fatalf("put policy: %v", err)
+	}
+	s := rcovNewServer(t, sso.WithConditionalAccess(store, conditionalaccess.Config{Enforce: true}))
+	body := capLoginBody()
+	body["scope"] = []string{"openid", "profile", "email"}
+
+	status, out := rcovPostJSON(t, s.http.URL+"/auth/login", "", body)
+	if status != http.StatusOK {
+		t.Fatalf("restricted-scope status=%d body=%v", status, out)
+	}
+	if out["scope"] != "openid" {
+		t.Errorf("scope=%v, want openid", out["scope"])
+	}
+}
+
 // TestConditionalAccess_EnforceStepUpRoutesToMFA proves VerdictRequireStepUp
 // routes through the EXISTING MFA orchestration (WithMFAProvider +
 // WithMFAChallengeStore) rather than inventing a parallel mechanism.
@@ -276,7 +309,9 @@ func TestConditionalAccess_EnforceStepUpRoutesToMFA(t *testing.T) {
 		sso.WithMFAChallengeStore(defaultimpl.NewMemoryMFAChallengeStore(), 0),
 	)
 
-	status, out := rcovPostJSON(t, s.http.URL+"/auth/login", "", capLoginBody())
+	body := capLoginBody()
+	body["scope"] = []string{"openid", "profile"}
+	status, out := rcovPostJSON(t, s.http.URL+"/auth/login", "", body)
 	if status != http.StatusOK {
 		t.Fatalf("step-up leg1 status=%d body=%v", status, out)
 	}
@@ -286,14 +321,21 @@ func TestConditionalAccess_EnforceStepUpRoutesToMFA(t *testing.T) {
 	if out["mfa_challenge_id"] == "" || out["mfa_challenge_id"] == nil {
 		t.Fatalf("no mfa_challenge_id: %v", out)
 	}
+	challengeID, _ := out["mfa_challenge_id"].(string)
+	status, out = rcovPostJSON(t, s.http.URL+"/auth/mfa", "", map[string]any{
+		"mfa_challenge_id": challengeID,
+		"mfa_method":       "totp",
+		"code":             "123456",
+	})
+	if status != http.StatusOK || out["scope"] != "openid" {
+		t.Fatalf("step-up restricted result status=%d body=%v, want scope openid", status, out)
+	}
 }
 
-// TestConditionalAccess_EnforceStepUpDecaysToAllowWithoutMFA proves the
-// explicit "never invent a step-up path the deployment hasn't configured"
-// contract: VerdictRequireStepUp with no MFA provider/store wired falls
-// through to a normal successful login — the same historical no-op
-// RiskScorer's RequireMFA decays to.
-func TestConditionalAccess_EnforceStepUpDecaysToAllowWithoutMFA(t *testing.T) {
+// TestConditionalAccess_EnforceStepUpFailsClosedWithoutMFA proves a resolved
+// operator authorization policy cannot be bypassed by incomplete deployment
+// wiring. Store/signal outages still fail open in the separate test below.
+func TestConditionalAccess_EnforceStepUpFailsClosedWithoutMFA(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	store := conditionalaccess.NewMemoryStore()
@@ -303,11 +345,14 @@ func TestConditionalAccess_EnforceStepUpDecaysToAllowWithoutMFA(t *testing.T) {
 	s := rcovNewServer(t, sso.WithConditionalAccess(store, conditionalaccess.Config{Enforce: true}))
 
 	status, out := rcovPostJSON(t, s.http.URL+"/auth/login", "", capLoginBody())
-	if status != http.StatusOK {
-		t.Fatalf("step-up-without-mfa status=%d body=%v, want 200 (decays to allow)", status, out)
+	if status != http.StatusForbidden {
+		t.Fatalf("step-up-without-mfa status=%d body=%v, want 403", status, out)
 	}
-	if out["access_token"] == nil || out["access_token"] == "" {
-		t.Errorf("no access_token: %v", out)
+	if out["error"] != "conditional_access_denied" {
+		t.Errorf("error=%v, want conditional_access_denied", out["error"])
+	}
+	if out["access_token"] != nil {
+		t.Errorf("unexpected access_token: %v", out)
 	}
 }
 

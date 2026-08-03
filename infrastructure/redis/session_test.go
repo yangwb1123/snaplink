@@ -54,6 +54,60 @@ func TestSessionCreateGetDestroy(t *testing.T) {
 	}
 }
 
+func TestSessionAuthorizationMetaRoundTrips(t *testing.T) {
+	t.Parallel()
+	_, rdb := newTestClient(t)
+	sm := NewSessionManager(rdb, WithSessionTTL(time.Hour))
+	ctx := context.Background()
+	authTime := time.Now().UTC().Add(-time.Minute).Truncate(time.Millisecond)
+	sess, err := sm.CreateWithMeta(ctx, "alice", sso.SessionMeta{ClientID: "client", DeviceID: "device", TenantID: "tenant", AuthorizedScopes: []string{"openid", "admin"}, AuthTime: authTime, TrustScore: 0.8, TrustSetAt: authTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sm.SetAuthorizedScopes(ctx, sess.ID, []string{"openid"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sm.MarkStepUp(ctx, sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := sm.Get(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ClientID != "client" || got.DeviceID != "device" || got.TenantID != "tenant" || !got.AuthTime.Equal(authTime) || !got.StepUpRequired {
+		t.Fatalf("metadata=%+v", got)
+	}
+	if len(got.AuthorizedScopes) != 1 || got.AuthorizedScopes[0] != "openid" {
+		t.Fatalf("scopes=%v", got.AuthorizedScopes)
+	}
+}
+
+func TestSessionSecurityUpdatesDoNotRecreateDestroyedHash(t *testing.T) {
+	t.Parallel()
+	_, rdb := newTestClient(t)
+	sm := NewSessionManager(rdb, WithSessionTTL(time.Hour))
+	ctx := context.Background()
+	session, err := sm.Create(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sm.Destroy(ctx, session.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := sm.MarkStepUp(ctx, session.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := sm.SetTrust(ctx, session.ID, 0.9, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := sm.SetAuthorizedScopes(ctx, session.ID, []string{"openid"}); err != nil {
+		t.Fatal(err)
+	}
+	if exists := rdb.Exists(ctx, sessionKey(session.ID)).Val(); exists != 0 {
+		t.Fatal("security update recreated a destroyed session hash")
+	}
+}
+
 // TestSessionCreateRollsBackOnExpireFailure covers the partial-write path: an
 // HSet that succeeds followed by an Expire that fails must not strand a
 // hash with no TTL in Redis. Pre-fix, Create returned the Expire error but
@@ -240,10 +294,10 @@ func TestSessionRefreshMillisBoundary(t *testing.T) {
 
 // TestSessionRefreshNearExpiryPublicAPI exercises the same boundary through
 // the public Refresh API (not the raw script): a session whose stored
-// expires_at is a hair in the FUTURE refreshes; a hair in the PAST is
-// refused as ErrSessionNotFound. Uses a comfortable margin (50ms) so the
-// wall-clock read inside Refresh can't straddle the boundary and flake,
-// while still proving millis round-trips correctly end to end.
+// expires_at is in the FUTURE refreshes; one in the PAST is refused as
+// ErrSessionNotFound. A several-second margin keeps this public API assertion
+// stable under the race detector and parallel package load; exact millisecond
+// boundaries are covered by TestSessionRefreshExpiryBoundaryScript above.
 func TestSessionRefreshNearExpiryPublicAPI(t *testing.T) {
 	t.Parallel()
 	_, rdb := newTestClient(t)
@@ -255,8 +309,8 @@ func TestSessionRefreshNearExpiryPublicAPI(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	// Pin expires_at just AFTER now -> Refresh must extend.
-	future := time.Now().Add(50 * time.Millisecond)
+	// Pin expires_at after now -> Refresh must extend.
+	future := time.Now().Add(5 * time.Second)
 	if err := rdb.HSet(ctx, sessionKey(sess.ID),
 		"expires_at", strconv.FormatInt(future.UnixMilli(), 10)).Err(); err != nil {
 		t.Fatalf("set future exp: %v", err)

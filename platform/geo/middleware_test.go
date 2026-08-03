@@ -360,3 +360,48 @@ func TestDefaultIPExtractor_GarbageRemoteAddrReturnsNil(t *testing.T) {
 		t.Errorf("got %v, want nil for unparseable RemoteAddr", got)
 	}
 }
+
+// TestCountryCodeFromContext_StashedInfo returns the country code the
+// middleware stashed — the canonical geo→Event read both interfaces/sso and
+// protocols/oauth route their token-usage Offer seams through.
+func TestCountryCodeFromContext_StashedInfo(t *testing.T) {
+	t.Parallel()
+	hctx := newHCtx(httptest.NewRequest(http.MethodGet, "/token", nil))
+	hctx.Set(geo.HandlerContextKey, &geo.GeoInfo{CountryCode: "DE"})
+	if got := geo.CountryCodeFromContext(hctx); got != "DE" {
+		t.Errorf("CountryCodeFromContext = %q, want DE", got)
+	}
+}
+
+// TestCountryCodeFromContext_NoGeoDegradesToEmpty proves the zero-value
+// contract: no stash (no provider wired / lookup miss / unknown IP) reads
+// "" so every Offer seam emits a byte-identical Event to a build without
+// the extractor.
+func TestCountryCodeFromContext_NoGeoDegradesToEmpty(t *testing.T) {
+	t.Parallel()
+	hctx := newHCtx(httptest.NewRequest(http.MethodGet, "/token", nil))
+	if got := geo.CountryCodeFromContext(hctx); got != "" {
+		t.Errorf("CountryCodeFromContext = %q, want '' with no stash", got)
+	}
+}
+
+// TestCountryCodeFromContext_WrongTypeDegradesToEmpty guards the type
+// assertion: a non-*GeoInfo value under the key must read "" (the stash
+// key is package-internal, but a defensive read keeps the seam oracle-safe).
+func TestCountryCodeFromContext_WrongTypeDegradesToEmpty(t *testing.T) {
+	t.Parallel()
+	hctx := newHCtx(httptest.NewRequest(http.MethodGet, "/token", nil))
+	hctx.Set(geo.HandlerContextKey, "not-geo-info")
+	if got := geo.CountryCodeFromContext(hctx); got != "" {
+		t.Errorf("CountryCodeFromContext = %q, want '' for a wrong-typed stash", got)
+	}
+}
+
+// TestCountryCodeFromContext_NilContextIsSafe mirrors FromHandlerContext's
+// nil guard — a nil HandlerContext must read "" without panicking.
+func TestCountryCodeFromContext_NilContextIsSafe(t *testing.T) {
+	t.Parallel()
+	if got := geo.CountryCodeFromContext(nil); got != "" {
+		t.Errorf("CountryCodeFromContext(nil) = %q, want ''", got)
+	}
+}

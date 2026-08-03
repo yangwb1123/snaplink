@@ -34,12 +34,12 @@ func TestHandleCreateStream(t *testing.T) {
 
 	HandleCreateStream(deps, ctx)
 
-	if ctx.response.Code != http.StatusCreated {
-		t.Errorf("expected 201, got %d: %s", ctx.response.Code, ctx.response.Body.String())
+	if ctx.rec.Code != http.StatusCreated {
+		t.Errorf("expected 201, got %d: %s", ctx.rec.Code, ctx.rec.Body.String())
 	}
 
 	var result Stream
-	json.NewDecoder(ctx.response.Body).Decode(&result)
+	json.NewDecoder(ctx.rec.Body).Decode(&result)
 	if result.Issuer != "https://sso.test" {
 		t.Errorf("expected issuer, got %q", result.Issuer)
 	}
@@ -61,8 +61,8 @@ func TestHandleCreateStream_Duplicate(t *testing.T) {
 	}`)
 
 	HandleCreateStream(deps, hctx)
-	if hctx.response.Code != http.StatusConflict {
-		t.Errorf("expected 409 for duplicate, got %d", hctx.response.Code)
+	if hctx.rec.Code != http.StatusConflict {
+		t.Errorf("expected 409 for duplicate, got %d", hctx.rec.Code)
 	}
 }
 
@@ -71,8 +71,8 @@ func TestHandleCreateStream_NoStore(t *testing.T) {
 	ctx := newTestContext(t, "POST", "/ssf/streams", `{}`)
 
 	HandleCreateStream(deps, ctx)
-	if ctx.response.Code != http.StatusNotFound {
-		t.Errorf("expected 404 when no store, got %d", ctx.response.Code)
+	if ctx.rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 when no store, got %d", ctx.rec.Code)
 	}
 }
 
@@ -86,12 +86,12 @@ func TestHandleGetStream(t *testing.T) {
 	hctx := newTestContext(t, "GET", "/ssf/streams/"+s.ID, "")
 
 	HandleGetStream(deps, hctx)
-	if hctx.response.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", hctx.response.Code)
+	if hctx.rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", hctx.rec.Code)
 	}
 
 	var result Stream
-	json.NewDecoder(hctx.response.Body).Decode(&result)
+	json.NewDecoder(hctx.rec.Body).Decode(&result)
 	if result.ID != s.ID {
 		t.Errorf("expected id %q, got %q", s.ID, result.ID)
 	}
@@ -103,8 +103,8 @@ func TestHandleGetStream_NotFound(t *testing.T) {
 	hctx := newTestContext(t, "GET", "/ssf/streams/nonexistent", "")
 
 	HandleGetStream(deps, hctx)
-	if hctx.response.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", hctx.response.Code)
+	if hctx.rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", hctx.rec.Code)
 	}
 }
 
@@ -122,12 +122,12 @@ func TestHandleListStreams(t *testing.T) {
 	hctx := newTestContext(t, "GET", "/ssf/streams", "")
 
 	HandleListStreams(deps, hctx)
-	if hctx.response.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", hctx.response.Code)
+	if hctx.rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", hctx.rec.Code)
 	}
 
 	var result map[string]any
-	json.NewDecoder(hctx.response.Body).Decode(&result)
+	json.NewDecoder(hctx.rec.Body).Decode(&result)
 	streams := result["streams"].([]any)
 	if len(streams) != 3 {
 		t.Errorf("expected 3 streams, got %d", len(streams))
@@ -144,8 +144,8 @@ func TestHandleDeleteStream(t *testing.T) {
 	hctx := newTestContext(t, "DELETE", "/ssf/streams/"+s.ID, "")
 
 	HandleDeleteStream(deps, hctx)
-	if hctx.response.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", hctx.response.Code)
+	if hctx.rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", hctx.rec.Code)
 	}
 
 	_, err := store.Get(context.Background(), s.ID)
@@ -165,8 +165,8 @@ func TestHandleUpdateStream(t *testing.T) {
 	hctx := newTestContext(t, "PUT", "/ssf/streams/"+s.ID, updatedJSON)
 
 	HandleUpdateStream(deps, hctx)
-	if hctx.response.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d: %s", hctx.response.Code, hctx.response.Body.String())
+	if hctx.rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", hctx.rec.Code, hctx.rec.Body.String())
 	}
 
 	got, _ := store.Get(context.Background(), s.ID)
@@ -187,7 +187,8 @@ func newTestContext(t *testing.T, method, path, body string) *testHandlerContext
 	}
 	rec := httptest.NewRecorder()
 	return &testHandlerContext{
-		response:    rec,
+		rec:         rec,
+		w:           rec,
 		request:     req,
 		contextVars: map[string]any{},
 		params:      parsePathParams(path),
@@ -195,22 +196,28 @@ func newTestContext(t *testing.T, method, path, body string) *testHandlerContext
 }
 
 type testHandlerContext struct {
-	response    *httptest.ResponseRecorder
+	rec         *httptest.ResponseRecorder
+	w           http.ResponseWriter
 	request     *http.Request
 	contextVars map[string]any
 	params      map[string]string
+	aborted     bool
 }
 
-func (c *testHandlerContext) ResponseWriter() http.ResponseWriter { return c.response }
-func (c *testHandlerContext) Request() *http.Request              { return c.request }
-func (c *testHandlerContext) Get(key string) any                  { return c.contextVars[key] }
-func (c *testHandlerContext) Set(key string, v any)               { c.contextVars[key] = v }
+func (c *testHandlerContext) ResponseWriter() http.ResponseWriter     { return c.w }
+func (c *testHandlerContext) Request() *http.Request                  { return c.request }
+func (c *testHandlerContext) Get(key string) any                      { return c.contextVars[key] }
+func (c *testHandlerContext) Set(key string, v any)                   { c.contextVars[key] = v }
+func (c *testHandlerContext) Abort()                                  { c.aborted = true }
+func (c *testHandlerContext) Aborted() bool                           { return c.aborted }
+func (c *testHandlerContext) Written() bool                           { return false }
+func (c *testHandlerContext) SetResponseWriter(w http.ResponseWriter) { c.w = w }
 func (c *testHandlerContext) Redirect(code int, target string) {
-	http.Redirect(c.response, c.request, target, code)
+	http.Redirect(c.w, c.request, target, code)
 }
 func (c *testHandlerContext) JSON(code int, v any) {
-	c.response.WriteHeader(code)
-	json.NewEncoder(c.response).Encode(v)
+	c.w.WriteHeader(code)
+	json.NewEncoder(c.w).Encode(v)
 }
 func (c *testHandlerContext) Bind(v any) error {
 	return json.NewDecoder(c.request.Body).Decode(v)

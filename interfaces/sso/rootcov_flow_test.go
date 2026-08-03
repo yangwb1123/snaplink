@@ -79,6 +79,7 @@ func rcovNewServer(t *testing.T, extra ...sso.Option) *rcovServer {
 		Secret:                rcovSecret,
 		Name:                  "Root Coverage Client",
 		RedirectURIs:          []string{rcovRedirect},
+		LoginPageURI:          "https://login.example.test/authorize",
 		AllowedAuthenticators: []string{"password"},
 		TokenStrategy:         "jwt",
 		Active:                true,
@@ -303,6 +304,78 @@ func TestRcov_AuthCodeRoundTrip(t *testing.T) {
 	})
 	if status != http.StatusBadRequest || tok["error"] != "invalid_grant" {
 		t.Errorf("code replay = %d %v, want 400 invalid_grant", status, tok)
+	}
+}
+
+func TestRcov_AuthCodeCannotExpandEmptyGrant(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, field string
+		value       any
+		wantError   string
+	}{
+		{name: "scope", field: "scope", value: "admin:write", wantError: "invalid_scope"},
+		{name: "resource", field: "resource", value: []string{"https://api.example"}, wantError: "invalid_target"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := rcovNewServer(t)
+			code := rcovIssueEmptyAuthCode(t, s)
+			request := map[string]any{
+				"grant_type": "authorization_code", "code": code,
+				"client_id": rcovClient, "client_secret": rcovSecret, "redirect_uri": rcovRedirect,
+			}
+			request[test.field] = test.value
+			status, out := rcovPostJSON(t, s.http.URL+"/token", "", request)
+			if status != http.StatusBadRequest || out["error"] != test.wantError || out["access_token"] != nil {
+				t.Fatalf("expanded %s status=%d body=%v", test.name, status, out)
+			}
+		})
+	}
+}
+
+func rcovIssueEmptyAuthCode(t *testing.T, s *rcovServer) string {
+	t.Helper()
+	status, out := rcovPostJSON(t, s.http.URL+"/auth/login", "", map[string]any{
+		"provider": "password", "client_id": rcovClient,
+		"credential":    map[string]string{"username": rcovUsername, "password": rcovPassword},
+		"response_type": "code", "redirect_uri": rcovRedirect,
+	})
+	code, _ := out["code"].(string)
+	if status != http.StatusOK || code == "" {
+		t.Fatalf("issue empty auth code status=%d body=%v", status, out)
+	}
+	return code
+}
+
+func TestRcov_TokenIdempotencyRequiresSameAuthenticatedOperation(t *testing.T) {
+	t.Parallel()
+	cache := defaultimpl.NewMemoryIdempotentCache(time.Hour)
+	t.Cleanup(cache.Close)
+	s := rcovNewServer(t, sso.WithIdempotentStore(cache))
+	request := map[string]any{
+		"grant_type": "client_credentials", "client_id": rcovClient,
+		"client_secret": rcovSecret, "scope": "read",
+	}
+	status, first := capPostJSONWithHeader(t, s.http.URL+"/token", "Idempotency-Key", "shared-key", request)
+	if status != http.StatusOK || first["access_token"] == nil {
+		t.Fatalf("first request status=%d body=%v", status, first)
+	}
+	status, replay := capPostJSONWithHeader(t, s.http.URL+"/token", "Idempotency-Key", "shared-key", request)
+	if status != http.StatusOK || replay["access_token"] != first["access_token"] {
+		t.Fatalf("same operation status=%d body=%v, want cached token", status, replay)
+	}
+	badAuth := map[string]any{
+		"grant_type": "client_credentials", "client_id": rcovClient,
+		"client_secret": "wrong", "scope": "read",
+	}
+	status, denied := capPostJSONWithHeader(t, s.http.URL+"/token", "Idempotency-Key", "shared-key", badAuth)
+	if status != http.StatusUnauthorized || denied["access_token"] != nil {
+		t.Fatalf("unauthenticated replay status=%d body=%v", status, denied)
+	}
+	request["scope"] = "write"
+	status, distinct := capPostJSONWithHeader(t, s.http.URL+"/token", "Idempotency-Key", "shared-key", request)
+	if status != http.StatusOK || distinct["scope"] != "write" || distinct["access_token"] == first["access_token"] {
+		t.Fatalf("different operation status=%d body=%v", status, distinct)
 	}
 }
 

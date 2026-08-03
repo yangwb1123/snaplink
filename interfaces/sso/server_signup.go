@@ -2,6 +2,7 @@ package sso
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -63,6 +64,19 @@ func (s *Server) PasswordResetResolver() func(ctx context.Context, identifier st
 // PasswordResetDeliveryResolver returns the password reset delivery resolver function.
 func (s *Server) PasswordResetDeliveryResolver() func(ctx context.Context, userID string) (string, error) {
 	return s.passwordResetDeliveryResolver
+}
+
+// ShutdownAuthenticatorDelivery drains optional asynchronous OTP/magic-link
+// transports before their CodeStore or network dependencies are closed.
+func (s *Server) ShutdownAuthenticatorDelivery(ctx context.Context) error {
+	var failures []error
+	for _, authenticator := range s.authenticators {
+		closer, ok := authenticator.(interface{ CloseCodeDelivery(context.Context) error })
+		if ok {
+			failures = append(failures, closer.CloseCodeDelivery(ctx))
+		}
+	}
+	return errors.Join(failures...)
 }
 
 // PasswordResetSender returns the password reset sender.

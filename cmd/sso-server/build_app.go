@@ -202,6 +202,8 @@ type appBuilder struct {
 	sessionTrustDecayOn    bool
 	continuousVerifyCancel context.CancelFunc
 	continuousVerifyDone   <-chan struct{}
+	capConvergenceCancel   context.CancelFunc
+	capConvergenceDone     <-chan struct{}
 
 	// Token-anomaly subsystem (wave-4 cmd wiring, token_anomaly.enabled).
 	// tokenUsageRecorder is the bounded-buffer telemetry substrate whose drain

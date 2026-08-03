@@ -19,7 +19,7 @@ func SessionsMaxVersion() int { return migrate.MaxVersion(sessionMigrations) }
 
 // UsersMaxVersion returns the highest migration version declared for the
 // users store.
-func UsersMaxVersion() int { return 1 }
+func UsersMaxVersion() int { return migrate.MaxVersion(userMigrations) }
 
 // ClientsMaxVersion returns the highest migration version declared for
 // the clients store.

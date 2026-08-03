@@ -6,12 +6,16 @@ type OAuthConfig struct {
 	// Backend selects the storage substrate for auth_code,
 	// refresh_token, device_code, and PAR. "memory" (default) is in-
 	// process; "sqlite" persists across restarts and shares state
-	// across processes that point at the same file. Each individually-enabled
+	// across processes that point at the same file; "postgres" shares
+	// the cluster-wide state across replicas via the postgres: block
+	// (no separate DSN — the shared pool is reused, mirroring
+	// identity.session_backend=postgres). Each individually-enabled
 	// store inherits this choice unless the store's own Backend
 	// override is set.
 	Backend       string                   `yaml:"backend"`
 	SQLite        OAuthSQLiteConfig        `yaml:"sqlite"`
 	Redis         OAuthRedisConfig         `yaml:"redis"`
+	Postgres      OAuthPostgresConfig      `yaml:"postgres"`
 	AuthCode      OAuthAuthCodeConfig      `yaml:"auth_code"`
 	RefreshToken  OAuthRefreshTokenConfig  `yaml:"refresh_token"`
 	DeviceCode    OAuthDeviceCodeConfig    `yaml:"device_code"`
@@ -103,6 +107,18 @@ type OAuthSQLiteConfig struct {
 	LookupHMACPreviousKeyFile string `yaml:"lookup_hmac_previous_key_file"`
 }
 
+// OAuthPostgresConfig protects opaque OAuth artifacts in Postgres columns
+// with the same domain-separated HMAC lookup keys the sqlite/redis peers
+// use. The previous key permits rolling rotation without invalidating
+// in-flight grants; legacy plaintext reads support safe first rollout.
+// The postgres: block remains the single DSN source — this section carries
+// lookup keys only. Unset keys fall back to raw plaintext storage, exactly
+// like the peers (set them in production).
+type OAuthPostgresConfig struct {
+	LookupHMACKeyFile         string `yaml:"lookup_hmac_key_file"`
+	LookupHMACPreviousKeyFile string `yaml:"lookup_hmac_previous_key_file"`
+}
+
 // OAuthRedisConfig protects opaque OAuth artifacts in Redis key names and
 // values. The previous key permits rolling rotation without invalidating
 // in-flight grants; legacy plaintext reads support safe first rollout.
@@ -173,10 +189,12 @@ type OAuthStoreConfig struct {
 	RotationGraceWindow time.Duration `yaml:"rotation_grace_window"`
 	// RotationGraceBackend selects where the grace successor is remembered:
 	// "" | "memory" (in-process, single-replica ONLY) | "redis" (cluster-shared,
-	// requires a redis block). On a multi-replica deployment with a no-affinity
+	// requires a redis block) | "postgres" (cluster-shared, requires a
+	// postgres block). On a multi-replica deployment with a no-affinity
 	// load balancer, "memory" causes a false family-reuse kill (logout storm)
 	// when a double-submit lands on a different replica than the rotation — use
-	// "redis" so the grace decision is shared. Ignored when grace_window = 0.
+	// "redis"/"postgres" so the grace decision is shared. Ignored when
+	// grace_window = 0.
 	RotationGraceBackend string `yaml:"rotation_grace_backend"`
 }
 

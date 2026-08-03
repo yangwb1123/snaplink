@@ -195,12 +195,18 @@ type IssueRefreshTokenParams struct {
 	RefreshTokenStore interface {
 		Issue(ctx context.Context, token string, info *oauthspi.RefreshToken) error
 	}
-	UserID               string
-	ClientID             string
-	Provider             string
-	Scopes               []string
-	Attributes           map[string]string
-	FamilyID             string
+	UserID     string
+	ClientID   string
+	Provider   string
+	Scopes     []string
+	Attributes map[string]string
+	FamilyID   string
+	// JTI is the refresh record's correlation id (see
+	// oauthspi.RefreshToken.JTI). Empty at first issue: IssueRefreshToken
+	// stamps one in the fresh-family branch. ROTATION callers thread the
+	// parent's JTI via RefreshAuthContext so the whole family presents one
+	// stable thumbprint at the refresh-introspect Offer.
+	JTI                  string
 	Resources            []string
 	AuthorizationDetails json.RawMessage
 	SID                  string
@@ -242,6 +248,13 @@ func IssueRefreshToken(ctx context.Context, p IssueRefreshTokenParams) (string, 
 			return "", fmt.Errorf("generate refresh family id: %w", err)
 		}
 		p.FamilyID = fid
+		if p.JTI == "" {
+			jti, err := GenerateAuthCodeBytes()
+			if err != nil {
+				return "", fmt.Errorf("generate refresh jti: %w", err)
+			}
+			p.JTI = jti
+		}
 	}
 	entry := buildRefreshTokenEntry(p, ttl, freshFamily)
 	if err := p.RefreshTokenStore.Issue(ctx, token, entry); err != nil {
@@ -285,6 +298,7 @@ func buildRefreshTokenEntry(p IssueRefreshTokenParams, ttl time.Duration, freshF
 		IssuedAt:             now,
 		ExpiresAt:            now.Add(ttl),
 		FamilyID:             p.FamilyID,
+		JTI:                  p.JTI,
 		Resources:            append([]string(nil), p.Resources...),
 		AuthorizationDetails: oauthvalidate.CloneRawJSON(p.AuthorizationDetails),
 		SID:                  p.SID,

@@ -2,9 +2,12 @@ package redis
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -16,6 +19,8 @@ import (
 const (
 	otpCodePrefix     = "sso:otp:"    // sso:otp:<key> -> the one-time code
 	otpCooldownPrefix = "sso:otp:cd:" // sso:otp:cd:<key> -> cooldown sentinel
+	otpQuotaPrefix    = "sso:otp:q:"  // sso:otp:q:<tenant-hash> -> quota hash
+	otpRecordPrefix   = "v1:"
 )
 
 func otpCodeKey(key string) string     { return otpCodePrefix + key }
@@ -27,22 +32,31 @@ func otpCooldownKey(key string) string { return otpCooldownPrefix + key }
 // replica than the send and always fails — passwordless login breaks under HA.
 // One key per (key) so Save/Verify are single-key and CROSSSLOT-safe.
 //
-// Verify replicates the memory peer's retry semantics EXACTLY: a wrong code does
-// NOT consume the entry (the user may retry a typo within the TTL); only a
-// correct code is deleted (single-use). The comparison is constant-time, matching
-// the memory peer — so the read-compare-delete is done client-side rather than a
-// GETDEL (which would consume on every attempt, including typos). The GET-then-
-// conditional-DEL is not a single atomic op, but the only race is two concurrent
-// CORRECT submissions of the same code both succeeding — a benign double-use far
-// less consequential than dropping a typo retry or leaking a timing signal.
+// Verify replicates the memory peer's retry semantics: a typo is retryable up
+// to the fixed per-code attempt limit, a correct code is single-use, and the
+// terminal failed attempt invalidates it. Comparisons happen client-side in
+// constant time; Lua compare-and-update/delete operations make both consumption
+// and attempt accounting atomic without consuming a code on the first typo.
 type CodeStore struct {
-	rdb      goredis.Cmdable
-	cooldown time.Duration
+	rdb         goredis.Cmdable
+	cooldown    time.Duration
+	maxAttempts int
+	quota       authenticators.CodeSendQuota
 }
 
 // NewCodeStore builds the store over an existing go-redis client.
 func NewCodeStore(rdb goredis.Cmdable) *CodeStore {
-	return &CodeStore{rdb: rdb, cooldown: authenticators.DefaultCodeResendCooldown}
+	return NewCodeStoreWithQuota(rdb, authenticators.DefaultCodeSendQuota())
+}
+
+// NewCodeStoreWithQuota builds a Redis store with explicit delivery budgets.
+func NewCodeStoreWithQuota(rdb goredis.Cmdable, quota authenticators.CodeSendQuota) *CodeStore {
+	return &CodeStore{
+		rdb:         rdb,
+		cooldown:    authenticators.DefaultCodeResendCooldown,
+		maxAttempts: authenticators.DefaultCodeMaxAttempts,
+		quota:       quota,
+	}
 }
 
 // Ping reports Redis health for [sso.WithReadyCheck].
@@ -63,39 +77,208 @@ func (s *CodeStore) Save(ctx context.Context, key, code string, ttl time.Duratio
 	if ttl <= 0 {
 		return nil
 	}
+	cooldownAcquired := false
 	if s.cooldown > 0 {
 		ok, err := s.rdb.SetNX(ctx, otpCooldownKey(key), 1, s.cooldown).Result()
 		if err == nil && !ok {
 			return spi.ErrCodeCooldownActive
 		}
+		cooldownAcquired = err == nil && ok
 		// On Redis error: fail open — don't block code sends due to Redis issues.
 	}
-	if err := s.rdb.Set(ctx, otpCodeKey(key), code, ttl).Err(); err != nil {
+	reserved, quotaErr := s.reserveQuota(ctx, key)
+	if errors.Is(quotaErr, spi.ErrCodeSendQuotaExceeded) {
+		if cooldownAcquired {
+			_ = s.rdb.Del(ctx, otpCooldownKey(key)).Err()
+		}
+		return quotaErr
+	}
+	if err := s.rdb.Set(ctx, otpCodeKey(key), encodeOTPRecord(code, 0), ttl).Err(); err != nil {
+		s.releaseReservation(ctx, key, reserved, cooldownAcquired)
 		return fmt.Errorf("redis: save otp code: %w", err)
 	}
 	return nil
 }
 
+func (s *CodeStore) reserveQuota(ctx context.Context, identity string) (bool, error) {
+	if s.quota.IdentityLimit <= 0 && s.quota.TenantLimit <= 0 {
+		return false, nil
+	}
+	result, err := reserveOTPQuotaScript.Run(ctx, s.rdb, []string{otpQuotaKey(ctx)},
+		otpQuotaIdentity(identity), s.quota.IdentityLimit, s.quota.TenantLimit,
+		quotaWindowSeconds(s.quota.Window)).Int64()
+	if err != nil {
+		return false, nil // quota storage outage is fail-open
+	}
+	if result != 0 {
+		return false, spi.ErrCodeSendQuotaExceeded
+	}
+	return true, nil
+}
+
+func (s *CodeStore) releaseReservation(ctx context.Context, identity string, reserved, cooldown bool) {
+	if reserved {
+		_, _ = releaseOTPQuotaScript.Run(ctx, s.rdb, []string{otpQuotaKey(ctx)}, otpQuotaIdentity(identity)).Result()
+	}
+	if cooldown {
+		_ = s.rdb.Del(ctx, otpCooldownKey(identity)).Err()
+	}
+}
+
+func otpQuotaKey(ctx context.Context) string {
+	tenantID := spi.CodeSendTenant(ctx)
+	if tenantID == "" {
+		tenantID = "_public"
+	}
+	sum := sha256.Sum256([]byte(tenantID))
+	return fmt.Sprintf("%s%x", otpQuotaPrefix, sum[:16])
+}
+
+func otpQuotaIdentity(identity string) string {
+	sum := sha256.Sum256([]byte(identity))
+	return fmt.Sprintf("i:%x", sum[:16])
+}
+
+func quotaWindowSeconds(window time.Duration) int64 {
+	if window <= 0 {
+		window = authenticators.DefaultCodeSendQuotaWindow
+	}
+	seconds := int64((window + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
+}
+
 // Verify constant-time-compares the presented code to the stored one. Missing or
 // expired (GET miss) and a mismatch both return [authenticators.ErrCodeInvalid]
 // (the same oracle-safe sentinel the memory peer returns); only a correct code
-// is deleted (single-use), leaving a typo retryable within the TTL.
+// is deleted (single-use), leaving typos retryable within the TTL until the
+// shared attempt limit is reached.
 func (s *CodeStore) Verify(ctx context.Context, key, code string) error {
-	stored, err := s.rdb.Get(ctx, otpCodeKey(key)).Result()
+	raw, err := s.rdb.Get(ctx, otpCodeKey(key)).Result()
 	if errors.Is(err, goredis.Nil) {
 		return authenticators.ErrCodeInvalid
 	}
 	if err != nil {
 		return fmt.Errorf("redis: verify otp code: %w", err)
 	}
-	if subtle.ConstantTimeCompare([]byte(stored), []byte(code)) != 1 {
+	stored, attempts := decodeOTPRecord(raw)
+	if subtle.ConstantTimeCompare([]byte(stored), []byte(code)) == 1 {
+		return s.consume(ctx, key, raw)
+	}
+	return s.recordFailure(ctx, key, raw, stored, attempts+1)
+}
+
+func (s *CodeStore) consume(ctx context.Context, key, raw string) error {
+	deleted, err := compareDeleteCodeScript.Run(ctx, s.rdb, []string{otpCodeKey(key)}, raw).Int64()
+	if err != nil {
+		return fmt.Errorf("redis: consume otp code: %w", err)
+	}
+	if deleted != 1 {
 		return authenticators.ErrCodeInvalid
 	}
-	// Correct: consume (single-use). Best-effort DEL — the compare already
-	// authorized the login; a DEL error at worst leaves the code redeemable
-	// until its TTL.
-	_ = s.rdb.Del(ctx, otpCodeKey(key)).Err()
 	return nil
 }
 
+func (s *CodeStore) recordFailure(ctx context.Context, key, raw, code string, attempts int) error {
+	next := encodeOTPRecord(code, attempts)
+	if s.maxAttempts > 0 && attempts >= s.maxAttempts {
+		next = ""
+	}
+	if _, err := compareUpdateCodeScript.Run(ctx, s.rdb, []string{otpCodeKey(key)}, raw, next).Result(); err != nil {
+		return fmt.Errorf("redis: record otp failure: %w", err)
+	}
+	return authenticators.ErrCodeInvalid
+}
+
+// Invalidate conditionally removes an undelivered code and then releases its
+// resend cooldown. The value comparison prevents a stale failure callback from
+// deleting a newer issuance.
+func (s *CodeStore) Invalidate(ctx context.Context, key, code string) error {
+	raw, err := s.rdb.Get(ctx, otpCodeKey(key)).Result()
+	if errors.Is(err, goredis.Nil) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("redis: load otp for invalidation: %w", err)
+	}
+	stored, _ := decodeOTPRecord(raw)
+	if subtle.ConstantTimeCompare([]byte(stored), []byte(code)) != 1 {
+		return nil
+	}
+	deleted, err := compareDeleteCodeScript.Run(ctx, s.rdb, []string{otpCodeKey(key)}, raw).Int64()
+	if err != nil {
+		return fmt.Errorf("redis: invalidate otp code: %w", err)
+	}
+	if deleted == 1 {
+		if err := s.rdb.Del(ctx, otpCooldownKey(key)).Err(); err != nil {
+			return fmt.Errorf("redis: release otp cooldown: %w", err)
+		}
+		s.releaseReservation(ctx, key, true, false)
+	}
+	return nil
+}
+
+func encodeOTPRecord(code string, attempts int) string {
+	return otpRecordPrefix + strconv.Itoa(attempts) + ":" + code
+}
+
+func decodeOTPRecord(raw string) (string, int) {
+	if !strings.HasPrefix(raw, otpRecordPrefix) {
+		return raw, 0
+	}
+	parts := strings.SplitN(strings.TrimPrefix(raw, otpRecordPrefix), ":", 2)
+	if len(parts) != 2 {
+		return raw, 0
+	}
+	attempts, err := strconv.Atoi(parts[0])
+	if err != nil || attempts < 0 {
+		return raw, 0
+	}
+	return parts[1], attempts
+}
+
+var compareDeleteCodeScript = goredis.NewScript(`
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+redis.call('DEL', KEYS[1])
+return 1
+`)
+
+var compareUpdateCodeScript = goredis.NewScript(`
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+if ARGV[2] == '' then
+  redis.call('DEL', KEYS[1])
+else
+  redis.call('SET', KEYS[1], ARGV[2], 'KEEPTTL')
+end
+return 1
+`)
+
+var reserveOTPQuotaScript = goredis.NewScript(`
+local identity = tonumber(redis.call('HGET', KEYS[1], ARGV[1]) or '0')
+local total = tonumber(redis.call('HGET', KEYS[1], 'total') or '0')
+local identity_limit = tonumber(ARGV[2])
+local tenant_limit = tonumber(ARGV[3])
+if identity_limit > 0 and identity >= identity_limit then return 1 end
+if tenant_limit > 0 and total >= tenant_limit then return 2 end
+redis.call('HINCRBY', KEYS[1], ARGV[1], 1)
+redis.call('HINCRBY', KEYS[1], 'total', 1)
+if redis.call('TTL', KEYS[1]) < 0 then redis.call('EXPIRE', KEYS[1], ARGV[4]) end
+return 0
+`)
+
+var releaseOTPQuotaScript = goredis.NewScript(`
+local identity = tonumber(redis.call('HGET', KEYS[1], ARGV[1]) or '0')
+local total = tonumber(redis.call('HGET', KEYS[1], 'total') or '0')
+if identity > 0 then redis.call('HINCRBY', KEYS[1], ARGV[1], -1) end
+if total > 0 then redis.call('HINCRBY', KEYS[1], 'total', -1) end
+return 1
+`)
+
 var _ authenticators.CodeStore = (*CodeStore)(nil)
+var _ authenticators.CodeInvalidator = (*CodeStore)(nil)

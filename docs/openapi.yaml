@@ -375,9 +375,14 @@ paths:
       summary: Start a browser-based federated login.
       description: |
         Browser-navigation counterpart to POST `/auth/login`. Query parameters
-        are bound to the same login request, but this method is intended only
-        for providers that redirect the browser to an external identity
-        provider.
+        are bound to the same authorization request, including PAR/JAR and
+        repeated resource indicators, but this method is intended only for
+        providers that redirect the browser to an external identity provider.
+        Provider discovery advertises
+        `authorization_request_passthrough_supported: true` when this complete
+        binding contract is available for an active client with a valid
+        `login_page_uri`; clients MUST fail closed when the field is absent
+        instead of stripping or abandoning the effective authorization request.
       operationId: getLogin
       parameters:
         - name: provider
@@ -390,6 +395,61 @@ paths:
           in: query
           schema: { type: string, format: uri }
         - name: state
+          in: query
+          schema: { type: string }
+        - name: response_type
+          in: query
+          schema: { type: string }
+        - name: response_mode
+          in: query
+          schema: { type: string }
+        - name: scope
+          in: query
+          schema: { type: string }
+        - name: resource
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string, format: uri }
+        - name: request_uri
+          in: query
+          schema: { type: string }
+        - name: request
+          in: query
+          schema: { type: string, description: Compact RFC 9101 request object. }
+        - name: authorization_details
+          in: query
+          schema: { type: string, description: JSON-encoded RFC 9396 array. }
+        - name: claims
+          in: query
+          schema: { type: string, description: JSON-encoded OIDC claims object. }
+        - name: id_token_hint
+          in: query
+          schema: { type: string }
+        - name: max_age
+          in: query
+          schema: { type: integer, format: int64, minimum: 0 }
+        - name: nonce
+          in: query
+          schema: { type: string }
+        - name: code_challenge
+          in: query
+          schema: { type: string }
+        - name: code_challenge_method
+          in: query
+          schema: { type: string }
+        - name: prompt
+          in: query
+          schema: { type: string }
+        - name: login_hint
+          in: query
+          schema: { type: string }
+        - name: acr_values
+          in: query
+          schema: { type: string }
+        - name: ui_locales
           in: query
           schema: { type: string }
       responses:
@@ -426,6 +486,19 @@ paths:
         + `DPoP-Nonce` header when §8 nonce enforcement is wired),
         mirroring `/token`'s DPoP gate. Omitting the header keeps the
         code unbound — fully backwards compatible.
+
+        **Silent renewal** (`prompt=none`) requires a valid ID Token hint and
+        the exact session named by its `sid` to remain live; access tokens are
+        not accepted as hints. The ID Token binds the scopes, RFC 8707
+        resources, and RFC 9396 authorization details originally granted.
+        Omitting those parameters preserves the bound grant, while a supplied
+        subset downscopes it. Any expansion returns `400 consent_required` so
+        the RP falls back to an interactive authorization flow.
+
+        When `WithUserLifecycle` is wired, only an `active` user may complete
+        primary login, MFA, a federated continuation, or silent renewal. A
+        non-active state or lifecycle-store read failure fails closed as `403
+        account_locked`. This gate is additive to the core/SCIM `active` flag.
       operationId: postLogin
       requestBody:
         required: true
@@ -458,6 +531,11 @@ paths:
               engine wired with live enforcement, demanded a step-up factor.
               `mfa_challenge_id` + `mfa_methods` direct the client
               to POST `/auth/mfa` next.
+            Terminal authorization JSON with a registered redirect URI also
+            includes `redirect_uri_validated: true`, the effective post-PAR/JAR
+            `redirect_uri`, normalized `response_mode`, and effective `state`.
+            JARM keeps result parameters inside the signed `response` JWT and
+            exposes only that delivery metadata outside it.
           content:
             application/json:
               schema:
@@ -481,9 +559,11 @@ paths:
             when a write would leave the home region under enforced writes) /
             risk-denied (`risk_denied`) / conditional-access denied
             (`conditional_access_denied`, only when the CAP engine is wired
-            with live enforcement and a matched policy's verdict is deny) /
+            with live enforcement and a matched policy denies or requires
+            unavailable step-up dependencies) /
             authentication Hook refusal (`hook_rejected`) / required
-            profile data missing (`profile_incomplete`).
+            profile data missing (`profile_incomplete`) / verified user blocked
+            by core/SCIM or lifecycle state (`account_locked`).
           content:
             application/json:
               schema:
@@ -565,7 +645,8 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: |
-            Client became inactive (or tenant suspended) between
+            Client became inactive, tenant was suspended, or the verified user
+            became unavailable by core/SCIM or lifecycle state between
             challenge issue and completion. Distinguished from
             mfa_invalid so operators triaging audit can tell it
             wasn't the factor that failed.
@@ -589,7 +670,16 @@ paths:
         `CodeSender` (phone, email, magiclink). The follow-up call to
         `/auth/login` carries the delivered code as
         `credential.code` — for `magiclink` this is the opaque token
-        embedded in the emailed link, not something the user types.
+        embedded in the emailed link, not something the user types. Built-in
+        stores allow at most five failed verification attempts for each issued
+        value; the fifth mismatch invalidates it without exposing a distinct
+        error. A synchronous downstream delivery failure conditionally revokes
+        the undelivered value and releases its cooldown and send-budget
+        reservation for an immediate retry. Built-in stores also enforce
+        fixed-window per-tenant-identity and tenant-wide send budgets (defaults:
+        20 and 1,000 per 24 hours). Budget exhaustion suppresses delivery but
+        intentionally returns the same 200 `{"status":"sent"}` response as a
+        successful send, so callers cannot probe target or quota state.
       operationId: postSendCode
       requestBody:
         required: true
@@ -606,13 +696,21 @@ paths:
                 value: { provider: magiclink, target: "user@example.com" }
       responses:
         "200":
-          description: Code sent. Body is empty / minimal.
+          description: Code accepted for delivery, or oracle-safe suppression because its send budget was exhausted.
           content:
             application/json:
               schema:
                 type: object
+                properties:
+                  status: { type: string, enum: [sent] }
         "400":
           $ref: "#/components/responses/BadRequest"
+        "429":
+          description: A code was already sent to this target during the fixed 60-second resend cooldown.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Delivery failed (downstream SMS / email error).
           content:
@@ -800,26 +898,24 @@ paths:
       description: |
         Where upstream OIDC / OAuth 2.0 providers (Google, Microsoft,
         GitHub, Auth0, Keycloak, ...) redirect after a federated login
-        kicked off by `/auth/login?provider=<name>`. This endpoint
-        finishes the redirect leg of the upstream flow: it pops the
-        per-provider `state`, exchanges `code` for tokens at the
-        upstream IdP, materializes a local `User` via `UserProvider`,
-        and mints a single-use `session_id` the SPA can carry into
-        subsequent calls.
+        kicked off by `/auth/login?provider=<name>`. Snaplink consumes the
+        server-minted state before exchanging the upstream code, resolves the
+        one authenticator bound to that state, and never probes other
+        authenticators. Legacy or replayed state returns `invalid_callback`.
 
-        The `provider` query is optional — when omitted, every wired
-        `oidc_federation` authenticator is tried in registration order
-        until one accepts the `(code, state)` pair. Missing or
-        unparseable `code` / `state` returns `400 invalid_callback`;
-        an unknown / mismatched `state` collapses to
-        `401 callback_failed` to keep state-binding probes from
-        leaking which provider issued the original kickoff (one of the
-        oracle-leak hardening rules in AGENTS.md).
+        A verified identity does not mint an unrelated generic session. The
+        original effective post-PAR/JAR authorization request is advanced
+        through the same account, policy, MFA, consent, and response-delivery
+        gates as primary login. The browser receives `302` to the registered
+        client's `login_page_uri`; the URL fragment contains only a fresh
+        one-use `login_transaction_id`. The hosted page removes that fragment
+        before POSTing it to `/auth/login`. Original RP state and credentials
+        are never exposed in this continuation URL.
       operationId: getAuthCallback
       parameters:
         - name: code
           in: query
-          required: true
+          required: false
           schema: { type: string }
           description: Authorization code returned by the upstream IdP.
         - name: state
@@ -832,30 +928,27 @@ paths:
           required: false
           schema: { type: string }
           description: |
-            Federation provider name (matches the `provider:` value in
-            the cmd `authenticators.oidc_federation[]` block). When
-            omitted, every wired federation authenticator is probed.
+            Optional provider assertion. When present it MUST match the
+            provider bound to the server state; omission does not trigger
+            authenticator probing.
+        - name: error
+          in: query
+          required: false
+          schema: { type: string }
+          description: Upstream OAuth error, such as `access_denied`.
       responses:
-        "200":
-          description: Federation succeeded; session minted.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CallbackResponse"
+        "302":
+          description: |
+            Redirect to the client's validated hosted login page with a
+            one-use `login_transaction_id` in the fragment.
         "400":
-          description: Missing / malformed `code` or `state`, or unknown provider.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Upstream exchange or state validation failed.
+          description: Missing, legacy, expired, or replayed callback state.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
-          description: Local session storage failed after upstream succeeded.
+          description: The one-use hosted-login continuation could not be stored.
           content:
             application/json:
               schema:
@@ -949,6 +1042,14 @@ paths:
         than the one presented at `/auth/login`) all collapse to a
         single `400 invalid_grant` response so an attacker polling
         can't distinguish failure modes.
+
+        **User lifecycle** — when wired, only `active` user subjects may redeem
+        authorization-code, refresh, device, CIBA, token-exchange, JWT-bearer,
+        SAML-bearer, or agent-delegation grants. Access validation checks the
+        token's `sub` and every RFC 8693 `act` link, so a suspended delegating
+        human also blocks agent-token use. A non-active state or lifecycle-store
+        read error fails closed as the same `400 invalid_grant`;
+        `client_credentials` is unaffected because it has no user subject.
       operationId: postToken
       requestBody:
         required: true
@@ -1011,7 +1112,8 @@ paths:
           description: |
             Grant-specific failure — `invalid_request`,
             `invalid_grant`, `invalid_target`, `invalid_dpop_proof`,
-            `use_dpop_nonce`. Body shape is the standard
+            `use_dpop_nonce`. `invalid_grant` also covers a non-active user
+            lifecycle state or fail-closed lifecycle lookup. Body shape is the standard
             ErrorResponse.
           content:
             application/json:
@@ -1067,6 +1169,10 @@ paths:
         `{"active": false}` and nothing else; presence of any other
         field on the response implies the token was valid at the
         moment of introspection.
+
+        When user lifecycle is wired, an access or refresh token whose subject
+        is no longer `active` returns exactly `{"active": false}`; a lifecycle
+        read error fails closed to the same response.
 
         Client authentication follows the same rules as /token:
         Basic > body > private_key_jwt. Caller MUST be a registered
@@ -1411,6 +1517,69 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /backchannel-authentication:
+    post:
+      tags: [auth]
+      summary: Initiate OpenID Connect CIBA authentication.
+      description: |
+        Authenticated clients initiate a CIBA Core 1.0 request using exactly
+        one of `login_hint`, `id_token_hint`, or `login_hint_token`. HTTP Basic
+        credentials take precedence over body credentials; private_key_jwt is
+        accepted through `client_assertion`.
+
+        `requested_expiry` may shorten the server-configured request lifetime
+        but can never extend it. `user_code` is accepted only when the SDK has
+        a dedicated `WithCIBAUserCodeVerifier`; the value is verified after
+        hint resolution and is never persisted in the CIBA request or reused
+        as the user's OP password. Discovery advertises this with
+        `backchannel_user_code_parameter_supported`.
+      operationId: postBackchannelAuthentication
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/CIBABackchannelRequest"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CIBABackchannelRequest"
+      responses:
+        "200":
+          description: Pending CIBA request accepted and delivered.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CIBABackchannelResponse"
+        "400":
+          description: |
+            invalid_request, invalid_scope, invalid_target, unknown_user_id,
+            missing_user_code, or invalid_user_code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Client authentication failed (`invalid_client`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Client inactive or tenant mismatch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: CIBA store/transport not wired (`ciba_not_configured`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /register:
     post:
       tags: [auth]
@@ -1649,7 +1818,10 @@ paths:
         Body is optional; bearer-only logouts are allowed. When both
         a session id and a bearer are supplied, both are revoked
         (covers the "log me out everywhere" case where the SPA holds
-        a JWT but the device that started the session is gone).
+        a JWT but the device that started the session is gone). When OIDC
+        Back-Channel Logout is enabled, RP delivery survives client disconnect,
+        retries transient failures up to three total attempts within one
+        five-second budget, and emits one final success/failure audit result.
       operationId: postLogout
       security:
         - bearerAuth: []
@@ -2941,7 +3113,9 @@ paths:
         OpenID-style `/userinfo` endpoint — validates the bearer,
         resolves the subject id, and returns the `User` record from
         the configured `UserProvider`. The shape mirrors the User
-        struct in `types.go`.
+        struct in `types.go`. A signed ID Token is not an access-token
+        credential here and receives the same `401 invalid_token` response as
+        any other invalid bearer.
       operationId: getUserInfo
       security:
         - bearerAuth: []
@@ -3555,6 +3729,12 @@ paths:
         `post_logout_redirect_uri` (when in the client's allowlist)
         or returns 204.
 
+        Back-channel RP delivery, when enabled, is detached from browser
+        cancellation and retries transient failures up to three total attempts
+        inside one five-second budget. Local logout remains successful when an
+        RP is unavailable; the failed target stays in the subject-client index
+        for a later logout pass.
+
         `post_logout_redirect_uri` MUST exact-match a registered
         URI — no path tolerance, no scheme-only match. Unrecognized
         URIs fall back to 204 rather than opening a redirect vector
@@ -3613,7 +3793,8 @@ paths:
         "400":
           description: |
             `id_token_hint` was supplied but failed signature / expiry
-            / format validation.
+            / format / token-use validation. A valid access token is not an
+            ID Token hint and is rejected here.
           content:
             application/json:
               schema:
@@ -5573,23 +5754,40 @@ paths:
         policies, ordered by evaluation precedence (priority descending, then
         name) so an operator sees exactly the order the engine resolves them
         in. Each policy carries its conditions (`user.member_of`,
-        `device.managed`, `risk_score` comparison, geo, time window) and its
+        `device.managed`, `device.type`, `device.trust_level`, first-seen
+        device/location, `risk_score` comparison, geo, time window,
+        `session.age_seconds`, `authentication.age_seconds`,
+        `session.max_concurrent`) and its
         actions (`allow` / `deny` / `require_step_up` / `restrict_scopes` /
         `log`).
 
         The server always exposes an evaluation entry point (an allow / deny /
         require-step-up decision, degrading to a conservative trust floor when
         a signal is missing rather than denying outright). It ADDITIONALLY
-        becomes a live `/auth/login` Policy Enforcement Point — after
-        credential validation, before token/session issuance — only when the
-        engine's `enforce` config is set; a matched `deny` blocks the login
+        becomes a live Policy Enforcement Point after credential validation
+        on `/auth/login`, on `prompt=none` renewal, and before refresh-token
+        successor issuance only when the engine's `enforce` config is set; a
+        matched `deny` blocks the interactive login
         (`403 conditional_access_denied`) and a matched `require_step_up`
-        routes through the existing MFA orchestration (never inventing a
-        step-up path the deployment hasn't configured). With `enforce` left at
+        routes through the existing MFA orchestration. If that orchestration
+        is not configured, the resolved operator policy fails closed with the
+        same 403 instead of being bypassed. `restrict_scopes` is enforced as an
+        intersection after client scope authorization and persists across MFA
+        and consent continuations; `log` emits a structured policy decision.
+        `prompt=none` renewals re-evaluate the policy after exact hint/session
+        validation, returning `interaction_required` when step-up is needed;
+        their bound scope/resource/RAR grant can only stay equal or shrink.
+        Refresh-token use re-evaluates live groups, device, trust, geo, session
+        age, and authentication age. Deny collapses to `400 invalid_grant`;
+        policy step-up or a continuously verified session marked for step-up
+        returns `400 insufficient_user_authentication`; scope restrictions can
+        only shrink the successor grant. Missing/future age signals do not
+        match. The user must return to interactive login to satisfy step-up.
+        With `enforce` left at
         its default `false`, wiring policies changes no live auth decision —
         this endpoint remains a pure read-only view either way. A trust-scorer
-        or policy-store outage always fails OPEN on `/auth/login` regardless of
-        `enforce`/`default_deny`. Policy authoring is out of band (a YAML
+        or policy-store outage always fails OPEN on login, silent renewal, and
+        refresh regardless of `enforce`/`default_deny`. Policy authoring is out of band (a YAML
         bundle loaded at boot), so this endpoint only lists.
 
         Admin-gated — the admin middleware enforces `admin:read` (the path
@@ -5613,6 +5811,49 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Bearer lacks the `admin:read` scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/access-policies/converge:
+    post:
+      tags: [admin]
+      summary: Apply current conditional-access policies to active sessions now.
+      description: |
+        Runs one bounded active-session convergence pass using a single current
+        policy snapshot. `deny` revokes the session, `require_step_up` marks it
+        for reauthentication, and `restrict_scopes` durably shrinks its scope
+        ceiling before the next refresh. A backend that cannot persist a
+        security-relevant mutation revokes the affected session instead of
+        silently retaining broader authority. Policy-store failure performs no
+        mutations (fail-open on the data source) and returns 500 so an operator
+        can retry. The periodic worker performs the same pass automatically
+        when `access_policies.enforce` is enabled.
+
+        Admin-gated with `admin:write`. The pass is bounded by
+        `access_policies.session_sweep_batch_size`; repeated calls advance a
+        cursor through the active set.
+      operationId: convergeAccessPolicySessions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Bounded convergence pass result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessPolicyConvergenceSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Bearer lacks the `admin:write` scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Policy/session store unavailable; no session mutations were applied.
           content:
             application/json:
               schema:
@@ -5793,6 +6034,101 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/admin/backchannel-logout/failures:
+    get:
+      tags: [admin]
+      summary: List exhausted OIDC back-channel logout deliveries.
+      description: |
+        Returns the tenant-scoped failure queue when a BCL failure queue is
+        configured. Redis entries survive restart. Records contain only the
+        inputs needed to mint a new logout token; signed tokens are never
+        persisted. Permanent RP 4xx failures remain visible but are excluded
+        from automatic sweeps. admin:read.
+      operationId: listBackchannelLogoutFailures
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        "200":
+          description: Matching failures ordered by next attempt time.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  failures:
+                    type: array
+                    items: { $ref: "#/components/schemas/BCLFailure" }
+                  total: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/backchannel-logout/failures/{id}/replay:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [admin]
+      summary: Replay one OIDC back-channel logout failure.
+      description: |
+        Acquires a cluster-shared lease and mints a fresh logout token/JTI for
+        every attempt. Success acknowledges the queue entry and removes the
+        subject/client fan-out index record. Tenant mismatch is the same 404
+        as an unknown id. admin:write.
+      operationId: replayBackchannelLogoutFailure
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Delivery and queue cleanup completed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  failure: { $ref: "#/components/schemas/BCLFailure" }
+                  delivery_status: { type: string, enum: [delivered] }
+                  cleanup_status: { type: string, enum: [complete] }
+        "207": { description: RP delivery succeeded but queue cleanup remains pending. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: Unknown or cross-tenant failure id. }
+        "409": { description: Another replay owns the failure lease. }
+        "502": { description: Delivery failed again; the entry remains queued. }
+
+  /api/v1/admin/backchannel-logout/failures/replay:
+    post:
+      tags: [admin]
+      summary: Replay a batch of due OIDC back-channel logout failures.
+      description: |
+        Claims and replays up to limit due failures for the acting tenant.
+        Concurrent claims are reported as busy rather than duplicated.
+        Permanent RP 4xx entries require the single-item manual replay route.
+        admin:write.
+      operationId: replayDueBackchannelLogoutFailures
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        "200":
+          description: Replay pass completed; individual delivery failures remain queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+                  replay: { $ref: "#/components/schemas/BCLReplaySummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
   /api/v1/admin/rebac/check:
     get:
@@ -8390,7 +8726,10 @@ paths:
         illegal_lifecycle_transition, an unrecognized target 400
         unknown_lifecycle_state, and a concurrent change 409
         lifecycle_state_conflict. Emits admin_user_lifecycle_changed
-        (target_user, from_state, to_state, reason).
+        (target_user, from_state, to_state, reason). The stock server also
+        destroys the subject's sessions and all refresh tokens synchronously
+        when the target state is invited, suspended, inactive, archived, or
+        purged.
       operationId: adminUserTransitionLifecycle
       security:
         - bearerAuth: []
@@ -10050,7 +10389,9 @@ paths:
         Operator-driven one-time token bound to a user — password
         resets, magic-link distribution, first-login flows.
         TTL is server-side via authenticators.temp_token.ttl.
-        Display the returned token ONCE; never echo it back.
+        Display the returned token ONCE; never echo it back. Emits
+        admin_temp_token_issued with target_user_id so the affected user can
+        receive a security notification when notifications are enabled.
       operationId: adminTokenIssueTemp
       security:
         - bearerAuth: []
@@ -10296,8 +10637,9 @@ paths:
       summary: SCIM resource schemas (RFC 7643 §7).
       description: |
         Returns the implemented resource schemas (always `User`; `Group`
-        only when `scim.groups.enabled`) wrapped in the SCIM
-        `ListResponse` envelope. Admin-gated — `admin:read`.
+        only when `scim.groups.enabled`) plus the always-supported RFC 7643
+        Enterprise User extension, wrapped in the SCIM `ListResponse`
+        envelope. Admin-gated — `admin:read`.
       operationId: scimSchemas
       security:
         - bearerAuth: []
@@ -10474,9 +10816,10 @@ paths:
       description: |
         Returns Users in the SCIM `ListResponse` envelope. Supports the
         optional `filter` query parameter (RFC 7644 §3.4.2.2) — applied
-        BEFORE pagination so `totalResults` reflects the filtered set — and
-        1-based `startIndex` / `count` pagination (§3.4.2.4; `count` is
-        clamped to 200, default 100). Admin-gated — `admin:read`.
+        BEFORE sorting and pagination so `totalResults` reflects the filtered
+        set — `sortBy` / `sortOrder` (§3.4.2.3), and 1-based `startIndex` /
+        `count` pagination (§3.4.2.4; `count` is clamped to 200, default 100).
+        Admin-gated — `admin:read`.
       operationId: scimListUsers
       security:
         - bearerAuth: []
@@ -10489,6 +10832,21 @@ paths:
             `userName eq "alice"`. A malformed expression yields HTTP 400
             `invalidFilter`.
           example: userName eq "alice"
+        - name: sortBy
+          in: query
+          schema: { type: string }
+          description: |
+            SCIM attribute path used to stable-sort the filtered result set
+            before pagination (RFC 7644 §3.4.2.3), for example `userName`,
+            `externalId`, or `name.familyName`.
+          example: userName
+        - name: sortOrder
+          in: query
+          schema:
+            type: string
+            enum: [ascending, descending]
+            default: ascending
+          description: Sort direction; defaults to ascending when omitted.
         - name: startIndex
           in: query
           schema: { type: integer, default: 1, minimum: 1 }
@@ -10695,10 +11053,10 @@ paths:
       summary: List / search SCIM Groups (RFC 7644 §3.4).
       description: |
         Returns Groups in the SCIM `ListResponse` envelope, with the same
-        `filter` / `startIndex` / `count` semantics as `/Users`. A SCIM
-        Group maps onto a `permissions.Role`; members are the users
-        assigned that role. Mounted ONLY when `scim.groups.enabled` (a
-        `permissions.Provider` is wired) — otherwise the route is absent
+        `filter` / `sortBy` / `sortOrder` / `startIndex` / `count` semantics
+        as `/Users`. A SCIM Group maps onto a `permissions.Role`; members are
+        the users assigned that role. Mounted ONLY when `scim.groups.enabled`
+        (a `permissions.Provider` is wired) — otherwise the route is absent
         (404). Admin-gated — `admin:read`.
       operationId: scimListGroups
       security:
@@ -10709,6 +11067,20 @@ paths:
           schema: { type: string }
           description: SCIM filter expression (RFC 7644 §3.4.2.2); malformed → 400 `invalidFilter`.
           example: displayName eq "admins"
+        - name: sortBy
+          in: query
+          schema: { type: string }
+          description: |
+            SCIM attribute path used to stable-sort the filtered result set
+            before pagination (RFC 7644 §3.4.2.3), for example `displayName`.
+          example: displayName
+        - name: sortOrder
+          in: query
+          schema:
+            type: string
+            enum: [ascending, descending]
+            default: ascending
+          description: Sort direction; defaults to ascending when omitted.
         - name: startIndex
           in: query
           schema: { type: integer, default: 1, minimum: 1 }
@@ -11938,6 +12310,19 @@ components:
         session_id:
           type: string
           description: Server-side session handle for logout calls.
+        state:
+          type: string
+          description: Effective server-owned authorization state, when supplied.
+        redirect_uri_validated:
+          type: boolean
+          description: True only after redirect_uri passed the registered-client checks.
+        redirect_uri:
+          type: string
+          format: uri
+          description: Effective post-PAR/JAR authorization response target.
+        response_mode:
+          type: string
+          description: Effective mode; defaults to query for code and fragment for token responses.
         session_state:
           type: string
           description: |
@@ -12016,6 +12401,12 @@ components:
           items:
             type: string
           description: Authenticator names this client may use.
+        authorization_request_passthrough_supported:
+          type: boolean
+          description: |
+            True only when top-level federated GET can preserve the complete
+            authorization request, the active client has a valid secure
+            `login_page_uri`, and terminal JSON attests effective delivery.
 
     MFARequiredResponse:
       type: object
@@ -12742,6 +13133,71 @@ components:
           type: integer
           description: Minimum seconds between /token polls.
 
+    CIBABackchannelRequest:
+      type: object
+      oneOf:
+        - required: [login_hint]
+        - required: [id_token_hint]
+        - required: [login_hint_token]
+      properties:
+        client_id:
+          type: string
+          description: May instead be supplied by HTTP Basic or client assertion.
+        client_secret:
+          type: string
+          writeOnly: true
+        scope:
+          type: string
+          description: Space-delimited scope list.
+        login_hint:
+          type: string
+        id_token_hint:
+          type: string
+        login_hint_token:
+          type: string
+        binding_message:
+          type: string
+        acr_values:
+          type: string
+        nonce:
+          type: string
+        resource:
+          type: array
+          items: { type: string, format: uri }
+        user_code:
+          type: string
+          writeOnly: true
+          description: Dedicated CIBA secret; requires a wired user-code verifier.
+        requested_expiry:
+          type: integer
+          minimum: 1
+          description: Requested lifetime in seconds; only shortens the server limit.
+        client_notification_token:
+          type: string
+          writeOnly: true
+          description: Bearer credential used for ping/push notification.
+        client_assertion:
+          type: string
+          writeOnly: true
+        client_assertion_type:
+          type: string
+          enum: [urn:ietf:params:oauth:client-assertion-type:jwt-bearer]
+
+    CIBABackchannelResponse:
+      type: object
+      required: [auth_req_id, expires_in, interval]
+      properties:
+        auth_req_id:
+          type: string
+          description: Opaque single-use identifier redeemed through the CIBA grant.
+        expires_in:
+          type: integer
+          minimum: 1
+        interval:
+          type: integer
+          minimum: 1
+          description: Minimum seconds between token polls.
+
     DeviceVerifyRequest:
       type: object
       required: [user_code, approve]
@@ -12846,6 +13302,13 @@ components:
         redirect_uris:
           type: array
           items: { type: string }
+        login_page_uri:
+          type: string
+          format: uri
+          description: |
+            HTTPS hosted-login URL (HTTP is allowed only for loopback hosts).
+            Required to resume OIDC/SAML federation into this client's
+            original authorization request.
         post_logout_redirect_uris:
           type: array
           items: { type: string }
@@ -13530,6 +13993,12 @@ components:
         redirect_uris:
           type: array
           items: { type: string }
+        login_page_uri:
+          type: string
+          format: uri
+          description: |
+            Hosted-login continuation URL for OIDC/SAML federation. HTTPS is
+            required except for loopback HTTP development URLs.
         allowed_scopes:
           type: array
           items: { type: string }
@@ -14269,6 +14738,35 @@ components:
         delivered_at: { type: string, format: date-time }
         cleanup_error: { type: string }
 
+    BCLFailure:
+      type: object
+      description: Exhausted BCL delivery inputs and retry state. Never contains a signed logout token.
+      required: [id, client_id, subject, token_subject, uri, attempts, last_error, permanent, first_failed_at, last_failed_at, next_attempt_at]
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        client_id: { type: string }
+        subject: { type: string, description: Local subject used for fan-out index cleanup. }
+        token_subject: { type: string, description: Pairwise or public subject to place in the freshly signed logout token. }
+        uri: { type: string, format: uri }
+        sid: { type: string }
+        attempts: { type: integer }
+        last_error: { type: string }
+        permanent: { type: boolean, description: True for RP 4xx failures excluded from background sweeps. }
+        first_failed_at: { type: string, format: date-time }
+        last_failed_at: { type: string, format: date-time }
+        next_attempt_at: { type: string, format: date-time }
+        delivered_at: { type: string, format: date-time }
+
+    BCLReplaySummary:
+      type: object
+      required: [attempted, delivered, failed, busy]
+      properties:
+        attempted: { type: integer }
+        delivered: { type: integer }
+        failed: { type: integer }
+        busy: { type: integer }
+
     ReBACTuple:
       type: object
       required: [object, relation, subject]
@@ -14872,6 +15370,26 @@ components:
           items:
             $ref: "#/components/schemas/AccessPolicy"
 
+    AccessPolicyConvergenceSummary:
+      type: object
+      required: [scanned, revoked, step_up_marked, scopes_restricted, failed]
+      properties:
+        scanned:
+          type: integer
+          minimum: 0
+        revoked:
+          type: integer
+          minimum: 0
+        step_up_marked:
+          type: integer
+          minimum: 0
+        scopes_restricted:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+
     AccessPolicy:
       type: object
       required: [name, enabled]
@@ -14897,10 +15415,26 @@ components:
             user_member_of:
               type: array
               items: { type: string }
-              description: Any-of. Matches when the subject is in at least one of these groups.
+              description: Any-of current per-user/client permissions role codes. A missing/erroring provider supplies no groups.
             device_managed:
               type: boolean
               description: Tri-state (omitted = unconstrained). true matches only a managed device; false matches an unmanaged or unreported device.
+            device_type:
+              type: string
+              enum: [mobile, desktop, browser, tablet, app, bot, unknown]
+              description: Device classification parsed from the current User-Agent.
+            device_trust_level:
+              type: number
+              format: double
+              minimum: 0
+              maximum: 1
+              description: Minimum tracked physical-device trust score. Zero/unavailable device inventory is unconstrained at the signal source.
+            device_is_new:
+              type: boolean
+              description: When true, matches a fingerprint not yet present in the physical device inventory.
+            device_is_new_location:
+              type: boolean
+              description: When true, matches a tracked device whose current client IP differs from its last IP.
             risk_score:
               type: string
               description: Comparison against derived risk (1 - effective trust), e.g. "> 0.5".
@@ -14920,6 +15454,23 @@ components:
               type: string
               description: UTC "HH:MM" exclusive upper bound; when before < after the window wraps midnight.
               example: "18:00"
+            session_age_seconds:
+              type: integer
+              format: int64
+              minimum: 0
+              description: Inclusive minimum age of the current session in seconds. Zero is unconstrained; missing or future session metadata never matches.
+              example: 86400
+            authentication_age_seconds:
+              type: integer
+              format: int64
+              minimum: 0
+              description: Inclusive minimum age of the original end-user authentication event in seconds, used for periodic reauthentication. Zero is unconstrained; missing or future auth_time never matches.
+              example: 43200
+            session_max_concurrent:
+              type: integer
+              minimum: 0
+              description: Maximum active sessions for the same subject/client. The login gate evaluates the prospective count, while convergence revokes only sessions beyond the ceiling. Zero is unconstrained; an unavailable count does not match.
+              example: 3
         actions:
           type: object
           description: Deny beats require_step_up beats allow; restrict_scopes and log ride along.

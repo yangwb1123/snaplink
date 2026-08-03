@@ -38,6 +38,11 @@ import (
 // breaking field change happens; readers refuse unknown versions.
 const SchemaVersion = "2"
 
+// KindSafetySnapshot marks an artifact produced as the pre-restore safety
+// net (the undo artifact for rollback / manual operator recovery). Ordinary
+// exports carry an empty kind.
+const KindSafetySnapshot = "safety"
+
 // Snapshot is the in-memory representation of an exported state.
 type Snapshot struct {
 	SchemaVersion   string             `json:"schema_version"`
@@ -48,6 +53,17 @@ type Snapshot struct {
 	BootstrapState  BootstrapState     `json:"bootstrap_state"`
 	Categories      []ResourceCategory `json:"categories"`
 	Resources       Resources          `json:"resources"`
+
+	// Kind classifies the artifact: empty = ordinary export,
+	// KindSafetySnapshot = pre-restore safety net. Deliberately NOT
+	// serialized into the body (json:"-"): the JSON codec decodes with
+	// DisallowUnknownFields, so a body-level key would make safety
+	// artifacts undecodable by pre-change binaries (a wire-compat
+	// regression). The kind travels in the SealedEnvelope HEADER instead
+	// (Pipeline.Save mirrors it), which both old and new readers tolerate
+	// as an additive JSON field and which retention/List can read without
+	// decryption.
+	Kind string `json:"-"`
 }
 
 // BootstrapState captures the highest applied step version for the
@@ -127,6 +143,14 @@ func excluded(c ResourceCategory, excludes []ResourceCategory) bool {
 	return slices.Contains(excludes, c)
 }
 
+// ExcludedListed reports whether c appears in excludes. Exported for the
+// rollback-scope computation's callers (the admin orchestrator pins the
+// rollback exclusion set with it); excluded is the internal shorthand used
+// by the restore plan.
+func ExcludedListed(excludes []ResourceCategory, c ResourceCategory) bool {
+	return excluded(c, excludes)
+}
+
 // IsValidSchemaVersion reports whether v is one this build can handle.
 // Centralized so the codec, restorer, and admin RPC all agree.
 func IsValidSchemaVersion(v string) bool { return v == "1" || v == SchemaVersion }
@@ -159,6 +183,12 @@ var (
 	ErrConfirmationRequired = errors.New("snapshot: replace mode requires confirmation token")
 	ErrConfirmationMismatch = errors.New("snapshot: confirmation token mismatch")
 	ErrUnsupportedRestore   = errors.New("snapshot: backend lacks the capability needed to restore this resource")
+	// ErrRollbackWithoutSafety is the SDK validation sentinel for
+	// RollbackOnError without an explicit AutoSafetySnapshot net: rollback
+	// semantics without an undo artifact would silently degrade to a plain
+	// partial apply. The Restorer validates the intent; the orchestration
+	// that actually rolls back lives above it.
+	ErrRollbackWithoutSafety = errors.New("snapshot: rollback requires an explicit safety snapshot (auto_safety_snapshot=true)")
 )
 
 // timeNow is overridable in tests. Production code uses time.Now.

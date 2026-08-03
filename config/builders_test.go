@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/yangwb1123/snaplink/domains/authenticators"
 	"github.com/yangwb1123/snaplink/domains/permissions"
@@ -250,6 +251,54 @@ func TestApplyCodeDefaults_NonZeroValuesPreserved(t *testing.T) {
 	}
 	if c.CodeTTL != authenticators.DefaultPhoneCodeTTL*3 {
 		t.Errorf("CodeTTL changed: %v", c.CodeTTL)
+	}
+}
+
+func TestCodeSendQuotaDefaultsAndValidation(t *testing.T) {
+	t.Parallel()
+	c := &Config{}
+	c.applyDefaults()
+	quota := c.Authenticators.CodeSendQuota
+	if quota.IdentityLimit != authenticators.DefaultCodeIdentitySendLimit ||
+		quota.TenantLimit != authenticators.DefaultCodeTenantSendLimit ||
+		quota.Window != authenticators.DefaultCodeSendQuotaWindow {
+		t.Fatalf("quota defaults = %+v", quota)
+	}
+	c.Authenticators.CodeSendQuota.IdentityLimit = -2
+	if err := c.validateCodeSendQuota(); err == nil {
+		t.Fatal("invalid negative quota should fail")
+	}
+}
+
+func TestCodeDeliveryValidation(t *testing.T) {
+	t.Parallel()
+	if err := (CodeDeliveryConfig{Async: true, Workers: 2, Attempts: 3}).validate(); err != nil {
+		t.Fatalf("valid delivery config: %v", err)
+	}
+	if err := (CodeDeliveryConfig{Async: true, QueueSize: -1}).validate(); err == nil {
+		t.Fatal("negative delivery config should fail")
+	}
+	if err := (CodeDeliveryConfig{Async: true, Attempts: authenticators.MaxCodeDeliveryAttempts + 1}).validate(); err == nil {
+		t.Fatal("excessive delivery config should fail")
+	}
+}
+
+func TestBCLFailureQueueDefaultsAndValidation(t *testing.T) {
+	t.Parallel()
+	c := &Config{BackchannelLogout: BackchannelLogoutConfig{
+		Enabled: true, FailureQueue: BCLFailureQueueConfig{Backend: "redis"},
+	}}
+	c.applyDefaults()
+	queue := c.BackchannelLogout.FailureQueue
+	if queue.RetryInterval != 30*time.Second || queue.BatchSize != 50 || queue.LeaseDuration != 30*time.Second {
+		t.Fatalf("failure queue defaults = %+v", queue)
+	}
+	if err := c.validateBCLFailureQueue(); err != nil {
+		t.Fatalf("valid failure queue: %v", err)
+	}
+	c.BackchannelLogout.Enabled = false
+	if err := c.validateBCLFailureQueue(); err == nil {
+		t.Fatal("failure queue without BCL should fail")
 	}
 }
 

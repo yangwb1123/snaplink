@@ -108,7 +108,31 @@ func (s *Server) validateAndAuthorizeScope(ctx HandlerContext, req *login.Reques
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidScope, req.State))
 		return nil, true
 	}
-	return granted, false
+	restricted := restrictGrantedScopes(granted, req.PolicyScopeRestriction)
+	if policyScopeRemovedAll(granted, restricted, req.PolicyScopeRestriction) {
+		return nil, s.rejectPolicyScopeGrant(ctx, req)
+	}
+	return restricted, false
+}
+
+// restrictGrantedScopes applies a conditional-access allowlist only after the
+// client's own scope validation succeeds. It can remove but never add scopes,
+// and preserves the request/client-default ordering used on the wire.
+func restrictGrantedScopes(granted, allowed []string) []string {
+	if allowed == nil {
+		return granted
+	}
+	set := make(map[string]struct{}, len(allowed))
+	for _, scope := range allowed {
+		set[scope] = struct{}{}
+	}
+	restricted := make([]string, 0, len(granted))
+	for _, scope := range granted {
+		if _, ok := set[scope]; ok {
+			restricted = append(restricted, scope)
+		}
+	}
+	return restricted
 }
 
 func (s *Server) prepareDirectMintSession(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client) (*Session, *deviceContext, string, bool) {
@@ -122,7 +146,7 @@ func (s *Server) prepareDirectMintSession(ctx HandlerContext, result *AuthResult
 	if deviceCtx != nil {
 		devID = deviceCtx.ID
 	}
-	session, err := s.createSession(ctx, result.UserID, client.ID, client.TenantID, devID)
+	session, err := s.createSession(ctx, result.UserID, client.ID, client.TenantID, req.Scope, result.AuthTime, devID)
 	if err == nil {
 		s.linkGlobalSession(ctx.Request().Context(), session, result.UserID)
 		return session, deviceCtx, devID, true
@@ -142,7 +166,7 @@ func (s *Server) finishLoginDirectMint(ctx HandlerContext, result *AuthResult, r
 	if !ok {
 		return
 	}
-	if s.devicePolicy.RequireMFAForNewDevice && deviceCtx != nil && deviceCtx.SecurityCtx != nil && deviceCtx.SecurityCtx.DeviceIsNew && !authHookSkipsMFA(ctx) && s.mfaProvider != nil && s.mfaChallengeStore != nil {
+	if s.devicePolicy.RequireMFAForNewDevice && deviceCtx != nil && deviceCtx.SecurityCtx != nil && deviceCtx.SecurityCtx.DeviceIsNew && !authenticationHasMFA(result) && !authHookSkipsMFA(ctx) && s.mfaProvider != nil && s.mfaChallengeStore != nil {
 		s.issueMFAChallenge(ctx, result, *req, client)
 		return
 	}
@@ -270,17 +294,21 @@ func (s *Server) emitLoginIDToken(ctx HandlerContext, result *AuthResult, req *l
 		claims = oidc.ProjectIDTokenClaims(claims, req.Claims)
 	}
 	idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-		Subject:         issuedSub,
-		Audience:        client.ID,
-		Nonce:           req.Nonce,
-		AuthTime:        time.Now(),
-		AMR:             handler.AmrForResult(result),
-		ACR:             result.AchievedACR,
-		Claims:          claims,
-		SID:             sid,
-		AccessToken:     accessToken,
-		DeviceSecret:    deviceSecret,
-		RequestedClaims: req.Claims,
+		Subject:              issuedSub,
+		Audience:             client.ID,
+		Nonce:                req.Nonce,
+		AuthTime:             time.Now(),
+		AMR:                  handler.AmrForResult(result),
+		ACR:                  result.AchievedACR,
+		Claims:               claims,
+		SID:                  sid,
+		ServingRegion:        servingRegionFrom(ctx),
+		AccessToken:          accessToken,
+		DeviceSecret:         deviceSecret,
+		RequestedClaims:      req.Claims,
+		GrantedScopes:        req.Scope,
+		GrantedResources:     req.Resource,
+		AuthorizationDetails: req.AuthorizationDetails,
 	})
 	if err != nil {
 		s.logger.Error("id token issue failed", "error", err, "client", client.ID, "user", result.UserID)
@@ -385,7 +413,7 @@ func (s *Server) finishLoginCodeFlow(ctx HandlerContext, result *AuthResult, req
 	// edition-local cookie store. Fail-open: a session-manager outage or a
 	// stale resumed session drops the sid (login proceeds; auditors see the
 	// empty session on recordLoginSuccess) rather than blocking the login.
-	sessionID := s.codeFlowSession(ctx, result, client)
+	sessionID := s.codeFlowSession(ctx, result, req, client)
 	code, err := s.issueAuthCode(ctx.Request().Context(), result, req, client, dpopJKT, sessionID)
 	if err != nil {
 		s.logger.Error("failed to issue auth code", "error", err)

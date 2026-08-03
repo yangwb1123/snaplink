@@ -33,6 +33,7 @@ type CIBADeps interface {
 	CIBAStore() CIBAStore
 	CIBARequestTTL() time.Duration
 	CIBAPollInterval() time.Duration
+	CIBAUserCodeVerifier() CIBAUserCodeVerifier
 	ResolveIssuer(ctx core.HandlerContext) string
 	VerifyJWTClientAssertion(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
 	SrvLogger() spi.Logger
@@ -96,8 +97,14 @@ func HandleBackchannelAuth(d CIBADeps, ctx core.HandlerContext) {
 	if !ok {
 		return
 	}
+	if !validateCIBARequestShape(d, ctx, &req) {
+		return
+	}
 	subjectID, provider, ok := resolveCIBASubject(d, ctx, &req)
 	if !ok {
+		return
+	}
+	if !verifyCIBAUserCode(d, ctx, req.ClientID, subjectID, req.UserCode) {
 		return
 	}
 	issueAndDeliverCIBA(d, ctx, client, subjectID, provider, &req)
@@ -116,7 +123,8 @@ type cibaRequest struct {
 	ACRValues               string   `json:"acr_values"`                // OIDC Core §3.1.2.1
 	Nonce                   string   `json:"nonce"`                     // OIDC nonce
 	Resource                []string `json:"resource"`                  // RFC 8707
-	UserCode                string   `json:"user_code"`                 // CIBA Core §7.1 (user-code mode — unsupported)
+	UserCode                string   `json:"user_code"`                 // CIBA Core §7.1
+	RequestedExpiry         *int     `json:"requested_expiry"`          // CIBA Core §7.1; positive seconds
 	ClientNotificationToken string   `json:"client_notification_token"` // CIBA Core §7.1 (ping/push delivery)
 	ClientAssertion         string   `json:"client_assertion"`          // RFC 7521 + 7523
 	ClientAssertionType     string   `json:"client_assertion_type"`     // RFC 7521 + 7523
@@ -226,10 +234,7 @@ func resolveCIBASubject(d CIBADeps, ctx core.HandlerContext, req *cibaRequest) (
 // of the dangling pending request (so no auth_req_id the user can never
 // confirm). On success it records the audit event and writes the 200.
 func issueAndDeliverCIBA(d CIBADeps, ctx core.HandlerContext, client *core.Client, subjectID, provider string, req *cibaRequest) {
-	ttl := d.CIBARequestTTL()
-	if ttl <= 0 {
-		ttl = DefaultCIBARequestTTL
-	}
+	ttl := effectiveCIBARequestTTL(d.CIBARequestTTL(), req.RequestedExpiry)
 	interval := d.CIBAPollInterval()
 	if interval <= 0 {
 		interval = DefaultCIBAPollInterval

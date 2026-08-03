@@ -46,18 +46,22 @@ func Recover(l spi.Logger) func(http.Handler) http.Handler {
 }
 
 // Auth validates Bearer tokens on protected routes. Failures
-// return 401 with the standard {error: invalid_token} body.
+// return 401 with the standard {error: invalid_token} body and abort the
+// chain so the handler never runs after a rejection (without Abort the
+// handler would write a second response on top of the 401).
 func Auth(tokenIssuer core.TokenIssuer) core.MiddlewareFunc {
 	return func(ctx core.HandlerContext) {
 		auth := ctx.Request().Header.Get(core.HeaderAuthorization)
 		if auth == "" || !strings.HasPrefix(auth, core.BearerPrefix) {
 			ctx.JSON(http.StatusUnauthorized, map[string]string{core.KeyError: core.ErrUnauthorized})
+			ctx.Abort()
 			return
 		}
 
 		token := strings.TrimPrefix(auth, core.BearerPrefix)
 		if _, err := tokenIssuer.Validate(ctx.Request().Context(), token); err != nil {
 			ctx.JSON(http.StatusUnauthorized, map[string]string{core.KeyError: core.ErrInvalidToken})
+			ctx.Abort()
 			return
 		}
 	}
@@ -81,6 +85,7 @@ func CORS(allowedOrigins []string) core.MiddlewareFunc {
 
 		if ctx.Request().Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
+			ctx.Abort()
 			return
 		}
 	}

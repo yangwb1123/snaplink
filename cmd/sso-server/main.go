@@ -341,6 +341,8 @@ type app struct {
 	// (session_trust_decay enabled), nil when off.
 	continuousVerifyCancel context.CancelFunc
 	continuousVerifyDone   <-chan struct{}
+	capConvergenceCancel   context.CancelFunc
+	capConvergenceDone     <-chan struct{}
 
 	// tokenUsageRecorder is the bounded-buffer token-usage telemetry recorder
 	// backing the wave-4 anomaly detector (token_anomaly.enabled); its queue is

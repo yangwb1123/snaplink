@@ -33,11 +33,15 @@ func (c *tmCtx) JSON(code int, v any) {
 		rw.WriteHeader(code)
 	}
 }
-func (c *tmCtx) Param(string) string  { return "" }
-func (c *tmCtx) Bind(any) error       { return nil }
-func (c *tmCtx) Redirect(int, string) {}
-func (c *tmCtx) Set(string, any)      {}
-func (c *tmCtx) Get(string) any       { return nil }
+func (c *tmCtx) Param(string) string                     { return "" }
+func (c *tmCtx) Bind(any) error                          { return nil }
+func (c *tmCtx) Redirect(int, string)                    {}
+func (c *tmCtx) Set(string, any)                         {}
+func (c *tmCtx) Get(string) any                          { return nil }
+func (c *tmCtx) Abort()                                  {}
+func (c *tmCtx) Aborted() bool                           { return false }
+func (c *tmCtx) Written() bool                           { return false }
+func (c *tmCtx) SetResponseWriter(w http.ResponseWriter) { c.w = w }
 
 type mockFetcher struct{}
 

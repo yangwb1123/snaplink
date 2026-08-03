@@ -41,11 +41,15 @@ func (c *testCtx) JSON(code int, v any) {
 		rw.WriteHeader(code)
 	}
 }
-func (c *testCtx) Param(string) string  { return "" }
-func (c *testCtx) Bind(any) error       { return nil }
-func (c *testCtx) Redirect(int, string) {}
-func (c *testCtx) Set(string, any)      {}
-func (c *testCtx) Get(string) any       { return nil }
+func (c *testCtx) Param(string) string                     { return "" }
+func (c *testCtx) Bind(any) error                          { return nil }
+func (c *testCtx) Redirect(int, string)                    {}
+func (c *testCtx) Set(string, any)                         {}
+func (c *testCtx) Get(string) any                          { return nil }
+func (c *testCtx) Abort()                                  {}
+func (c *testCtx) Aborted() bool                           { return false }
+func (c *testCtx) Written() bool                           { return false }
+func (c *testCtx) SetResponseWriter(w http.ResponseWriter) { c.w = w }
 
 func intStr(i int) string { return strconv.Itoa(i) }
 

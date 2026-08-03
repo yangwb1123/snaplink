@@ -2,6 +2,7 @@ package sso
 
 import (
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/yangwb1123/snaplink/domains/identitylink"
@@ -292,6 +293,7 @@ type selfServiceState struct {
 	// (WithIdempotentStore). When non-nil, the token handler checks for
 	// an Idempotency-Key header and caches successful responses.
 	idempotentCache core.IdempotentCache
+	idempotentMu    sync.Mutex
 
 	// userLifecycleStore backs the user-lifecycle state-machine admin endpoints
 	// (GET/POST /api/v1/admin/users/:id/lifecycle) and the auto-deprovisioning

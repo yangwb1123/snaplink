@@ -36,6 +36,9 @@ func buildAccessPayload(issuer string, subject *sso.Subject, scopes []string, jt
 		JTI:      jti,
 		ACR:      subject.ACR,
 		SID:      subject.SID,
+		// Unconditional literal assignment (SID discipline): omitempty
+		// performs the omission, so no wire-visible guard is needed.
+		ServingRegion: subject.ServingRegion,
 	}
 	applyOptionalClaims(&payload, subject)
 	return payload

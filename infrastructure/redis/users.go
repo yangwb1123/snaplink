@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
@@ -23,6 +24,7 @@ const (
 	userAllKey        = "sso:user:all"     // legacy SET of every user id
 	userPageKey       = "sso:user:page:v1" // ZSET score=0, lexicographic ids
 	userPageReadyKey  = "sso:user:page:ready"
+	userNamePrefix    = "sso:user:name:" // sso:user:name:<b64(lower(username))> -> id
 	userPageBatchSize = 512
 )
 
@@ -49,6 +51,11 @@ func userKey(id string) string { return userKeyPrefix + id }
 
 func userExtKey(provider, externalID string) string {
 	return userExtPrefix + provider + ":" + base64.RawURLEncoding.EncodeToString([]byte(externalID))
+}
+
+func userNameKey(username string) string {
+	value := strings.ToLower(strings.TrimSpace(username))
+	return userNamePrefix + base64.RawURLEncoding.EncodeToString([]byte(value))
 }
 
 func (p *UserProvider) GetByID(ctx context.Context, id string) (*sso.User, error) {
@@ -90,22 +97,55 @@ func (p *UserProvider) GetByExternalID(ctx context.Context, provider, externalID
 	return u, nil
 }
 
+func (p *UserProvider) GetByUsername(ctx context.Context, username string) (*sso.User, error) {
+	if strings.TrimSpace(username) == "" {
+		return nil, sso.ErrNoSuchUser
+	}
+	id, err := p.rdb.Get(ctx, userNameKey(username)).Result()
+	if errors.Is(err, goredis.Nil) {
+		return nil, sso.ErrNoSuchUser
+	}
+	if err != nil {
+		return nil, fmt.Errorf("redis: get user by username: %w", err)
+	}
+	u, err := p.GetByID(ctx, id)
+	if err != nil || !strings.EqualFold(u.Username, username) {
+		return nil, sso.ErrNoSuchUser
+	}
+	return u, nil
+}
+
+func (p *UserProvider) UsernameExists(ctx context.Context, username string) (bool, error) {
+	_, err := p.GetByUsername(ctx, username)
+	if errors.Is(err, sso.ErrNoSuchUser) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (p *UserProvider) CreateOrUpdate(ctx context.Context, user *sso.User) error {
 	if user == nil || user.ID == "" {
 		return errors.New("redis: user.ID required")
 	}
+	old, _ := p.GetByID(ctx, user.ID)
+	claimed, err := p.claimUsername(ctx, user.Username, user.ID)
+	if err != nil {
+		return err
+	}
 	// If this is an update whose external identity changed, drop the stale
 	// pointer key so GetByExternalID(old) stops resolving.
-	if old, err := p.GetByID(ctx, user.ID); err == nil && old.ExternalID != "" && old.Provider != "" {
+	if old != nil && old.ExternalID != "" && old.Provider != "" {
 		if old.Provider != user.Provider || old.ExternalID != user.ExternalID {
 			_ = p.rdb.Del(ctx, userExtKey(old.Provider, old.ExternalID)).Err()
 		}
 	}
 	raw, err := json.Marshal(user)
 	if err != nil {
+		p.rollbackUsernameClaim(ctx, user.Username, user.ID, claimed)
 		return fmt.Errorf("redis: encode user: %w", err)
 	}
 	if err := p.rdb.Set(ctx, userKey(user.ID), raw, 0).Err(); err != nil {
+		p.rollbackUsernameClaim(ctx, user.Username, user.ID, claimed)
 		return fmt.Errorf("redis: put user: %w", err)
 	}
 	if err := p.rdb.SAdd(ctx, userAllKey, user.ID).Err(); err != nil {
@@ -119,7 +159,48 @@ func (p *UserProvider) CreateOrUpdate(ctx context.Context, user *sso.User) error
 			return fmt.Errorf("redis: index user external id: %w", err)
 		}
 	}
+	if old != nil && old.Username != "" && !strings.EqualFold(old.Username, user.Username) {
+		if err := p.releaseUsername(ctx, old.Username, user.ID); err != nil {
+			return fmt.Errorf("redis: release old username: %w", err)
+		}
+	}
 	return nil
+}
+
+func (p *UserProvider) claimUsername(ctx context.Context, username, id string) (bool, error) {
+	if strings.TrimSpace(username) == "" {
+		return false, nil
+	}
+	key := userNameKey(username)
+	claimed, err := p.rdb.SetNX(ctx, key, id, 0).Result()
+	if err != nil || claimed {
+		return claimed, err
+	}
+	owner, err := p.rdb.Get(ctx, key).Result()
+	if errors.Is(err, goredis.Nil) {
+		return p.claimUsername(ctx, username, id)
+	}
+	if err != nil {
+		return false, fmt.Errorf("redis: inspect username claim: %w", err)
+	}
+	if owner != id {
+		return false, sso.ErrUserExists
+	}
+	return false, nil
+}
+
+func (p *UserProvider) rollbackUsernameClaim(ctx context.Context, username, id string, claimed bool) {
+	if claimed {
+		_ = p.releaseUsername(ctx, username, id)
+	}
+}
+
+func (p *UserProvider) releaseUsername(ctx context.Context, username, id string) error {
+	if strings.TrimSpace(username) == "" {
+		return nil
+	}
+	const compareDelete = `if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) else return 0 end`
+	return p.rdb.Eval(ctx, compareDelete, []string{userNameKey(username)}, id).Err()
 }
 
 func (p *UserProvider) List(ctx context.Context) ([]*sso.User, error) {
@@ -266,7 +347,8 @@ func normalizeUserPage(offset, limit int) (int, int) {
 func (p *UserProvider) Delete(ctx context.Context, id string) error {
 	// Clean up the external-id pointer key too. Best-effort: a missing user is
 	// a no-op (idempotent) so reconciliation loops don't churn.
-	if u, err := p.GetByID(ctx, id); err == nil && u.ExternalID != "" && u.Provider != "" {
+	u, _ := p.GetByID(ctx, id)
+	if u != nil && u.ExternalID != "" && u.Provider != "" {
 		_ = p.rdb.Del(ctx, userExtKey(u.Provider, u.ExternalID)).Err()
 	}
 	if err := p.rdb.Del(ctx, userKey(id)).Err(); err != nil {
@@ -275,8 +357,16 @@ func (p *UserProvider) Delete(ctx context.Context, id string) error {
 	if err := p.rdb.SRem(ctx, userAllKey, id).Err(); err != nil {
 		return err
 	}
-	return p.rdb.ZRem(ctx, userPageKey, id).Err()
+	if err := p.rdb.ZRem(ctx, userPageKey, id).Err(); err != nil {
+		return err
+	}
+	if u != nil {
+		return p.releaseUsername(ctx, u.Username, id)
+	}
+	return nil
 }
 
 var _ sso.UserProvider = (*UserProvider)(nil)
 var _ core.UserPaginationProvider = (*UserProvider)(nil)
+var _ core.UserByUsernameProvider = (*UserProvider)(nil)
+var _ core.UsernameCheckProvider = (*UserProvider)(nil)

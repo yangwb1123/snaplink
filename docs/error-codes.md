@@ -80,7 +80,7 @@ exact emission site.
 |---------------------------------------|------|--------------------------------------------------------------------|--------------------------------------------|
 | `invalid_request`                     | 400  | Request body fails to parse, or required field absent              | Fix the request payload                    |
 | `missing_client_id`                   | 400  | `client_id` omitted from a request that requires it                | Include `client_id`                        |
-| `invalid_credentials`                 | 401  | Username/password mismatch, code mismatch, or other auth failure   | Re-prompt for credentials                  |
+| `invalid_credentials`                 | 401  | Username/password mismatch, OTP/magic-link mismatch (including a code invalidated after its fifth failed attempt), or other auth failure | Re-prompt for credentials; request a new code after repeated failures |
 | `invalid_password`                    | 400  | `POST /me/password`: the current password did not match            | Re-prompt for the current password         |
 | `invalid_client`                      | 401  | Any client-authentication failure on `/token`, `/par`, `/backchannel-authentication`: unknown `client_id` OR bad secret (RFC 6749 §5.2 — one code for both, so the error never reveals which `client_id`s exist) | Check the client id + secret |
 | `inactive_client`                     | 403  | Client exists but `Active: false` in config                        | Operator re-enables the client             |
@@ -93,16 +93,16 @@ exact emission site.
 | `authenticator_not_allowed_for_client`| 403  | Client's `allowed_authenticators` list excludes this provider      | Use a method the client permits            |
 | `passwordless_required`              | 400  | Client's `allow_passwordless_only` is true and `provider=password` was requested — every OTHER provider (`webauthn`, `totp`, phone/email, ...) stays available | Use `provider=webauthn` (passkey) instead |
 | `risk_denied`                         | 403  | `RiskScorer` returned `DecisionDeny`                               | Step up auth, or wait + retry              |
-| `conditional_access_denied`           | 403  | Zero-trust conditional-access (CAP) engine wired with `enforce: true` and a matched policy's verdict is deny | Step up auth, or wait + retry |
+| `conditional_access_denied`           | 403  | Enforced conditional-access policy denied interactive login, or required step-up cannot run because MFA dependencies are unavailable | Complete the required step-up, or ask an administrator to correct the policy/MFA configuration |
 | `unsupported_provider`                | 400  | `provider` is neither a registered authenticator name nor a dispatchable enterprise-connection id — unknown, disabled, other-tenant, and misconfigured connections ALL collapse to this one code (anti-enumeration — no branch reveals which) | Use a valid provider name                  |
 | `unknown_provider`                    | 400  | OAuth/OIDC callback received an unknown provider in `state`        | Restart the auth flow                      |
 | `unsupported_grant_type`              | 400  | `/token` received an unrecognized `grant_type`                     | Use a supported grant type                 |
 | `unauthorized_client`                 | 400  | Client's DCR-registered `grant_types` list excludes the requested `grant_type` (RFC 6749 §5.2 / RFC 8693 §4.5); empty `grant_types` = unrestricted | Register the client with the needed grant type or remove the restriction |
 | `invalid_callback`                    | 400  | OAuth callback body malformed                                      | Restart the auth flow                      |
 | `callback_failed`                     | 401  | OAuth provider rejected the exchange                               | Restart the auth flow                      |
-| `login_required`                      | 400  | `prompt=none` was requested but no live session can fulfill the silent renewal (missing/bad `id_token_hint`, session ended, or hint bound to a different client) | Fall back to the visible login flow        |
-| `interaction_required`                | 400  | (reserved) `prompt=none` set when the AS needs UI interaction to proceed                                            | Fall back to the visible login flow        |
-| `consent_required`                    | 200  | A `ConsentStore` is wired and the user has not yet granted the requested scopes (or `prompt=consent` forced re-consent). HTTP 200 so SPAs can distinguish it from a transport error. Always carries `iss`. The consent UI records the grant via `ConsentStore.RecordConsent`, then retries the login. | Show your consent dialog; retry after grant |
+| `login_required`                      | 400  | `prompt=none` was requested but no live session can fulfill the silent renewal (missing/bad/non-ID-token hint, the hint's exact `sid` ended, or hint bound to a different client) | Fall back to the visible login flow        |
+| `interaction_required`                | 400  | `prompt=none` matched a conditional-access step-up policy, but silent mode cannot display MFA UI | Fall back to the visible login flow and complete step-up |
+| `consent_required`                    | 200 / 400 | HTTP 200: interactive login has no matching `ConsentStore` grant (or `prompt=consent` forced re-consent). HTTP 400: `prompt=none` attempted to expand the ID-token hint's bound scopes, resources, or authorization details, which requires UI. Always carries `iss`. | Show consent in an interactive flow, then retry |
 | `account_selection_required`          | 400  | (reserved) `prompt=none` set when account-picker UI is required                                                     | Fall back to the visible chooser           |
 | `unmet_authentication_requirements`   | 400  | The RP supplied `acr_values` but the authenticator's `AchievedACR` is absent or not in that set (OIDC Core §3.1.2.6 / §5.5.1.1) | Route user through a stronger authentication method or re-prompt |
 | `email_not_verified`                  | 403  | Login succeeded but the account's email has not completed self-service verification, and the deployment requires it before minting a session | Complete the email verification flow, then retry login |
@@ -117,8 +117,14 @@ exact emission site.
 |---------------------------------|------|---------------------------------------------------------|
 | `provider_and_target_required`  | 400  | Either `provider` or `target` missing from request body |
 | `provider_does_not_send_codes`  | 400  | Named provider doesn't implement `CodeSender`           |
-| `send_failed`                   | 500  | Downstream SMS / email delivery error                   |
+| `send_failed`                   | 500  | Downstream SMS / email delivery call failed; built-in stores conditionally revoke the undelivered value and release its cooldown so the caller can retry immediately |
 | `resend_too_soon`               | 429  | A code was already sent to this target within the cooldown window (default 60 s); prevents send-code amplification attacks |
+
+Send-budget exhaustion intentionally emits no distinct error: the endpoint
+returns the normal HTTP 200 `{"status":"sent"}` body while suppressing delivery.
+This keeps tenant/identity quota state and target existence from becoming an
+authentication oracle. Defaults are 20 sends per tenant-scoped identity and
+1,000 per tenant every 24 hours.
 
 ### Logout
 
@@ -130,7 +136,7 @@ exact emission site.
 
 | Code             | HTTP | Emitted when                                                                          | Client should                         |
 |------------------|------|---------------------------------------------------------------------------------------|---------------------------------------|
-| `account_locked` | 423  | `AccountLockout` reports the (client_id, identifier) key is past the failure threshold | Wait until the lock expires, then retry |
+| `account_locked` | 403  | The per-account failure threshold was reached, SCIM/core marked the verified user inactive, or a wired lifecycle store says the verified user is not `active` (including a fail-closed lifecycle read error) | Stop automatic retries; wait for temporary lock expiry or have an operator restore the account |
 
 ### WebAuthn ceremony (`/webauthn/{registration,login}/{begin,finish}`)
 
@@ -263,7 +269,7 @@ These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary 
 | `par_not_configured`         | 501  | `/par` hit but no `WithPARStore` wired                                                  | Operator wires the store                            |
 | `invalid_request_object`     | 400  | RFC 9101 JAR — `request` / `request_uri` carried a signed or encrypted request object that failed to parse / verify / decrypt (bad signature, unknown alg, wrong key, JWE decryption failure)  | Fix the JWT / JWE; verify it's signed by a key in the client's `JWKS` (and encrypted to the AS's `use:enc` JWK when JWE)  |
 | `invalid_authorization_details` | 400  | RFC 9396 RAR — `authorization_details` parameter is malformed (not a JSON array, element missing `type`, or element `type` not in the client's `allowed_authorization_details_types`); OR (when `security.rar_limits.*` is configured) the payload exceeds the configured max serialized size, top-level element count, or nesting depth — checked BEFORE the payload is fully unmarshaled  | Drop the offending element, get its type allowlisted, or shrink/flatten the payload             |
-| `insufficient_user_authentication` | 401 (RS) / 400 (AS exchange) | RFC 9470 — caller demanded `acr_values` the subject_token's existing ACR doesn't satisfy. On `/token` grant=token-exchange and on resource-server `WWW-Authenticate` challenges. | Route user through `/auth/login` with the same `acr_values` to step up    |
+| `insufficient_user_authentication` | 401 (RS) / 400 (AS) | RFC 9470 — caller demanded `acr_values` the subject token's existing ACR does not satisfy; or refresh-time conditional access / continuous verification requires a new step-up. On `/token` token-exchange or refresh grants and on resource-server `WWW-Authenticate` challenges. | Route user through `/auth/login` to step up; do not retry the same refresh token automatically |
 
 **FAPI 2.0 profile** (`oauth.compliance.profile: fapi_2`, enforce mode): a baseline violation (no PAR, unsigned request object, non-S256 PKCE, non-code response type, or bearer/non-sender-constrained token) is rejected with the standard `invalid_request` (`error_description` carries the failed `fapi:<rule>` id; API clients branch on `error`, operators on the audit event). No new wire code is introduced — every violation maps onto the existing OAuth vocabulary. In inspection mode (`inspection_only: true`) nothing is rejected; each violation only emits the `fapi_compliance_violation` audit event (`fapi_rule` / `fapi_detail` / `fapi_mode` metadata) and increments `sso_fapi_violations_total{rule,mode}`.
 
@@ -281,7 +287,7 @@ These codes follow the OAuth 2.0 + RFC 9126 PAR + RFC 7636 PKCE wire vocabulary 
 
 | Code                          | HTTP | Emitted when                                                                            | Client should                                 |
 |-------------------------------|------|-----------------------------------------------------------------------------------------|-----------------------------------------------|
-| `invalid_grant`               | 400  | Auth code / refresh / device / PAR / PKCE failure — collapses every cause into one wire response (oracle-leak hardening, AGENTS.md) | Treat as terminal for that grant; restart flow |
+| `invalid_grant`               | 400  | Auth code / refresh / device / PAR / PKCE failure, including a refresh denied by the current conditional-access policy — collapses every sensitive cause into one wire response (oracle-leak hardening, AGENTS.md) | Treat as terminal for that grant; restart flow |
 | `invalid_target`              | 400  | RFC 8693 — `resource` / `audience` not in the client's `AllowedResources`              | Drop or correct the resource indicator        |
 | `authorization_code_not_configured` | 501 | `grant_type=authorization_code` hit but no `WithAuthCodeStore` wired               | Operator wires the store                      |
 | `refresh_token_not_configured` | 501 | `grant_type=refresh_token` hit but no `WithRefreshTokenStore` wired                    | Operator wires the store                      |
@@ -320,8 +326,10 @@ other grants above use, for the SAME oracle-leak reasons.
 
 | Code                    | HTTP | Emitted when                                                              | Client should                                            |
 |-------------------------|------|---------------------------------------------------------------------------|----------------------------------------------------------|
-| `unknown_user_id`       | 400  | OIDC CIBA Core §13 — no hint supplied, or no `login_hint` / `id_token_hint` / `login_hint_token` resolved to a known user (collapsed for anti-enumeration) | Verify the hint identifies an enrolled user              |
-| `missing_user_code`     | 400  | Reserved — user-code delivery mode is not implemented (poll mode only)    | Use a hint instead of `user_code`                        |
+| `invalid_request`       | 400  | More than one user hint, non-positive `requested_expiry`, or `user_code` supplied while no verifier is wired | Correct the request and retry                            |
+| `unknown_user_id`       | 400  | OIDC CIBA Core §13 — no hint supplied, or the one supplied hint did not resolve to a known user (collapsed for anti-enumeration) | Verify the hint identifies an enrolled user              |
+| `missing_user_code`     | 400  | The wired verifier requires a fresh CIBA user code for this client/user    | Prompt the user for their dedicated CIBA code            |
+| `invalid_user_code`     | 400  | The wired verifier rejected the supplied CIBA user code                    | Discard it and collect a fresh code; do not auto-retry   |
 
 ### Client lookup
 
@@ -441,6 +449,25 @@ via the default `AdminMiddleware` method-scope rule.
 | `webhook_deadletter_not_found`   | 404  | `POST .../deadletters/{id}/replay` on an unknown dead-letter id                                    |
 | `webhook_subscription_not_found` | —    | Reserved wire code (`core.ErrWebhookSubscriptionNotFound`) for an unknown subscription id; `DELETE .../subscriptions/{id}` is currently idempotent (200 regardless), so no handler emits this yet |
 | `internal_error`                 | 502  | `POST .../deadletters/{id}/replay` could not resolve the subscription, or the replay POST itself failed — the entry stays queued for a later retry |
+
+---
+
+## Back-channel logout failure governance (`/api/v1/admin/backchannel-logout/failures*`)
+
+Mounted only when `backchannel_logout.failure_queue.backend` is `memory` or
+`redis`. Entries are tenant-scoped for tenant-resolved admin requests. GET is
+`admin:read`; replay POSTs are `admin:write`.
+
+| Code | HTTP | Emitted when |
+|---|---|---|
+| `bcl_failure_not_found` | 404 | The requested failure id is unknown or belongs to another tenant; both cases deliberately collapse to one response |
+| `bcl_replay_in_progress` | 409 | Another worker or administrator owns the unexpired replay lease |
+| `bcl_delivery_failed` | 502 | The freshly signed replay exhausted its delivery attempts; the entry was rescheduled and remains queryable |
+| `internal_error` | 500 | Queue list/claim/storage access failed |
+
+A `207` response means the RP accepted the replay but queue cleanup failed.
+The entry remains recoverable; replay is safe because logout processing is
+session/subject idempotent and every attempt carries a newly signed token/JTI.
 
 ---
 
@@ -647,6 +674,17 @@ Every applied transition emits `admin_user_lifecycle_changed` (`target_user`,
 ACTIVE→INACTIVE→ARCHIVED with `system` as the actor. Routes are mounted only when
 the store AND a `UserProvider` are wired. None of these codes is a credential
 oracle — the caller is an authenticated admin.
+
+Only `active` may authenticate or continue using end-user credentials. Primary,
+MFA and federated-continuation login denial is `403 account_locked`; denial of
+an authorization-code, refresh, device, CIBA, token-exchange, JWT-bearer,
+SAML-bearer or agent-delegation grant collapses to `400 invalid_grant`;
+access-token use validates `sub` and every `act` link and fails as
+`401 invalid_token`; and introspection returns `200 {"active":false}`. Store
+read errors take the same fail-closed paths. `client_credentials` is not a user
+grant and is unaffected. In the stock server, entering any non-active state also
+synchronously destroys live sessions and deletes refresh tokens across all
+clients before the transition request returns.
 
 | Code                             | HTTP | Emitted when                                                                                     |
 |----------------------------------|------|--------------------------------------------------------------------------------------------------|

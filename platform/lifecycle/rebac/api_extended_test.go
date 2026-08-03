@@ -25,20 +25,25 @@ func (d *testDeps) ErrorBodyDesc(code, desc string) map[string]any {
 
 type rebacTestCtx struct {
 	rec  *httptest.ResponseRecorder
+	w    http.ResponseWriter
 	req  *http.Request
 	vars map[string]any
 }
 
-func (c *rebacTestCtx) ResponseWriter() http.ResponseWriter { return c.rec }
-func (c *rebacTestCtx) Request() *http.Request              { return c.req }
-func (c *rebacTestCtx) Get(key string) any                  { return c.vars[key] }
-func (c *rebacTestCtx) Set(key string, v any)               { c.vars[key] = v }
+func (c *rebacTestCtx) ResponseWriter() http.ResponseWriter     { return c.w }
+func (c *rebacTestCtx) Request() *http.Request                  { return c.req }
+func (c *rebacTestCtx) Get(key string) any                      { return c.vars[key] }
+func (c *rebacTestCtx) Set(key string, v any)                   { c.vars[key] = v }
+func (c *rebacTestCtx) Abort()                                  {}
+func (c *rebacTestCtx) Aborted() bool                           { return false }
+func (c *rebacTestCtx) Written() bool                           { return false }
+func (c *rebacTestCtx) SetResponseWriter(w http.ResponseWriter) { c.w = w }
 func (c *rebacTestCtx) Redirect(code int, url string) {
-	http.Redirect(c.rec, c.req, url, code)
+	http.Redirect(c.w, c.req, url, code)
 }
 func (c *rebacTestCtx) JSON(code int, v any) {
-	c.rec.WriteHeader(code)
-	json.NewEncoder(c.rec).Encode(v)
+	c.w.WriteHeader(code)
+	json.NewEncoder(c.w).Encode(v)
 }
 func (c *rebacTestCtx) Bind(v any) error {
 	return json.NewDecoder(c.req.Body).Decode(v)
@@ -55,8 +60,10 @@ func newRebacCtx(t *testing.T, method, path, body string) *rebacTestCtx {
 	} else {
 		req = httptest.NewRequest(method, path, nil)
 	}
+	rec := httptest.NewRecorder()
 	return &rebacTestCtx{
-		rec:  httptest.NewRecorder(),
+		rec:  rec,
+		w:    rec,
 		req:  req,
 		vars: map[string]any{},
 	}

@@ -70,7 +70,9 @@ func (e *EmailAuthenticator) SendCode(ctx context.Context, email string) error {
 	if err := e.store.Save(ctx, e.key(email), code, e.ttl); err != nil {
 		return fmt.Errorf("email: save code: %w", err)
 	}
-	if err := e.sender.Send(ctx, email, code); err != nil {
+	if err := dispatchCodeDelivery(ctx, e.sender, email, code, func(failureCtx context.Context) {
+		invalidateUndeliveredCode(failureCtx, e.store, e.key(email), code)
+	}); err != nil {
 		return fmt.Errorf("email: send: %w", err)
 	}
 	return nil
@@ -101,6 +103,13 @@ func (e *EmailAuthenticator) Callback(_ context.Context, _ *sso.CallbackState) (
 func (e *EmailAuthenticator) LoginURL(_ string) string { return "" }
 
 func (e *EmailAuthenticator) key(email string) string { return keyPrefixEmail + email }
+
+func (e *EmailAuthenticator) CloseCodeDelivery(ctx context.Context) error {
+	if closer, ok := e.sender.(interface{ Close(context.Context) error }); ok {
+		return closer.Close(ctx)
+	}
+	return nil
+}
 
 // ============================================================================
 // MagicLinkAuthenticator
@@ -227,7 +236,9 @@ func (m *MagicLinkAuthenticator) SendCode(ctx context.Context, email string) err
 	// Extending the interface with a second, link-specific method would only
 	// widen the surface every EmailSender implementation must satisfy, for
 	// no behavioral gain.
-	if err := m.sender.Send(ctx, email, link); err != nil {
+	if err := dispatchCodeDelivery(ctx, m.sender, email, link, func(failureCtx context.Context) {
+		invalidateUndeliveredCode(failureCtx, m.store, m.key(email), token)
+	}); err != nil {
 		return fmt.Errorf("magiclink: send: %w", err)
 	}
 	return nil
@@ -276,6 +287,13 @@ func (m *MagicLinkAuthenticator) Callback(_ context.Context, _ *sso.CallbackStat
 func (m *MagicLinkAuthenticator) LoginURL(_ string) string { return "" }
 
 func (m *MagicLinkAuthenticator) key(email string) string { return keyPrefixMagicLink + email }
+
+func (m *MagicLinkAuthenticator) CloseCodeDelivery(ctx context.Context) error {
+	if closer, ok := m.sender.(interface{ Close(context.Context) error }); ok {
+		return closer.Close(ctx)
+	}
+	return nil
+}
 
 // ============================================================================
 // Registration abuse protection gates

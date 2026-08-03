@@ -29,6 +29,16 @@ type rotatableIssuer interface {
 	StartRotation(context.Context, defaultimpl.RotationConfig) <-chan struct{}
 }
 
+// startCAPConvergence owns the enforced conditional-access session sweep.
+func (b *appBuilder) startCAPConvergence(srv *sso.Server) {
+	if !b.cfg.AccessPolicies.Enforce {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	b.capConvergenceCancel = cancel
+	b.capConvergenceDone = srv.StartConditionalAccessConvergence(ctx)
+}
+
 // defaultRuntimeRotateGrace is the fallback overlap window for an on-demand
 // admin rotation when keys.rotation.grace_period is unset (the scheduled loop
 // may be disabled entirely). It MUST be >= the max access-token TTL so tokens
@@ -123,8 +133,14 @@ func (b *appBuilder) wireCluster(srv **sso.Server) (*clusterWiring, error) {
 	}
 
 	// Cross-replica invalidation bus built before NewServer so the option is in
-	// place; the subscriber is started just after (needs the Server).
-	invalidationBus, _, err := serverbuildplatform.BuildInvalidationBus(&cfg.Cluster.Bus, logger)
+	// place; the subscriber is started just after (needs the Server). The
+	// replica id doubles as the bus's self-skip identity (the SAME derivation
+	// wireSigningKeyRegistryOpts uses), so two replicas never share an id and
+	// the filter can never suppress a peer's events.
+	invalidationBus, _, err := serverbuildplatform.BuildInvalidationBus(
+		&cfg.Cluster.Bus, b.redis,
+		serverbuildplatform.ResolveReplicaID(cfg.Keys.SigningKeyRegistry.ReplicaID, cfg.Registry.ServiceID, cfg.Server.Issuer),
+		logger)
 	if err != nil {
 		return nil, fmt.Errorf("invalidation bus: %w", err)
 	}
@@ -213,10 +229,9 @@ func (b *appBuilder) wireSigningKeyRegistryOpts(signingKeyRegistry signingkeys.R
 	}
 	// Default the replica id to the same hostname-derived id the service
 	// registry uses, so two replicas of one issuer announce distinct ids.
-	replicaID := strings.TrimSpace(cfg.Keys.SigningKeyRegistry.ReplicaID)
-	if replicaID == "" {
-		replicaID = serverbuildplatform.ResolveServiceID(cfg.Registry.ServiceID, cfg.Server.Issuer)
-	}
+	// Shared derivation with the invalidation-bus self-skip filter (wireCluster):
+	// a divergence would silently suppress a peer's events.
+	replicaID := serverbuildplatform.ResolveReplicaID(cfg.Keys.SigningKeyRegistry.ReplicaID, cfg.Registry.ServiceID, cfg.Server.Issuer)
 	b.opts = append(b.opts,
 		sso.WithSharedSigningKeyRegistry(signingKeyRegistry),
 		sso.WithSigningKeyReplicaID(replicaID),

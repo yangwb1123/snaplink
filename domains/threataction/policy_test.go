@@ -548,3 +548,51 @@ func TestMatchType(t *testing.T) {
 		})
 	}
 }
+
+// TestThreatConditions_GeoEvidenceContract pins the Decision-7 policy levers
+// for geo findings: `geos` is an exists/eq-matchable key and `count` is the
+// numeric cardinality gate. A count-conditioned policy on a threat WITHOUT
+// the key fails closed (no match) — the documented behavior that keeps a
+// policy scoped to geo findings from accidentally acting on rate_spike
+// threats whose Evidence carries no count.
+func TestThreatConditions_GeoEvidenceContract(t *testing.T) {
+	t.Parallel()
+	geoThreat := Threat{Type: ThreatVelocity, Severity: SeverityCritical,
+		Evidence: map[string]string{"geos": "CN,US", "count": "2"}}
+
+	t.Run("geos exists matches only when the geo set is present", func(t *testing.T) {
+		tc := ThreatConditions{Key: "geos", Operator: "exists"}
+		if !tc.Match(geoThreat) {
+			t.Error("geos exists must match a geo finding")
+		}
+		if tc.Match(Threat{Type: ThreatRateSpike, Evidence: map[string]string{"token_thumbprint": "t"}}) {
+			t.Error("geos exists must fail closed on a threat without the key")
+		}
+	})
+
+	t.Run("geos eq matches the canonical sorted comma-join", func(t *testing.T) {
+		tc := ThreatConditions{Key: "geos", Operator: "eq", Value: "CN,US"}
+		if !tc.Match(geoThreat) {
+			t.Error("geos eq must match the canonical sorted join")
+		}
+		tc.Value = "US,CN"
+		if tc.Match(geoThreat) {
+			t.Error("geos eq must reject a different ordering (the join is canonical)")
+		}
+	})
+
+	t.Run("count gt is numeric and fails closed on a missing key", func(t *testing.T) {
+		tc := ThreatConditions{Key: "count", Operator: "gt", Value: "1"}
+		if !tc.Match(geoThreat) {
+			t.Error("count gt 1 must match a 2-sighting finding")
+		}
+		tc.Value = "2"
+		if tc.Match(geoThreat) {
+			t.Error("count gt 2 must not match exactly 2")
+		}
+		// rate_spike carries no count key: fail closed, never match.
+		if tc.Match(Threat{Type: ThreatRateSpike, Evidence: map[string]string{}}) {
+			t.Error("count gt on a keyless threat must fail closed")
+		}
+	})
+}

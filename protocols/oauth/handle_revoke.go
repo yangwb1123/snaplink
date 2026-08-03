@@ -260,7 +260,7 @@ func authenticateRevokeAllBearer(d RevokeDeps, ctx core.HandlerContext) (lookupS
 		return "", "", false
 	}
 	claims, _, err := d.ValidateAnyToken(ctx.Request().Context(), bearer)
-	if err != nil || claims == nil || claims.Subject == "" {
+	if err != nil || !core.IsAccessTokenClaims(claims) || claims.Subject == "" {
 		d.SetBearerChallenge(ctx, d.ResolveIssuer(ctx), core.ErrInvalidToken, "The access token is invalid or expired")
 		ctx.JSON(http.StatusUnauthorized, core.ErrorBody(core.ErrInvalidToken))
 		return "", "", false

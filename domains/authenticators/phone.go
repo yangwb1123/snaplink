@@ -74,7 +74,9 @@ func (p *PhoneAuthenticator) SendCode(ctx context.Context, phone string) error {
 	if err := p.store.Save(ctx, p.key(phone), code, p.ttl); err != nil {
 		return fmt.Errorf("phone: save code: %w", err)
 	}
-	if err := p.sender.Send(ctx, phone, code); err != nil {
+	if err := dispatchCodeDelivery(ctx, p.sender, phone, code, func(failureCtx context.Context) {
+		invalidateUndeliveredCode(failureCtx, p.store, p.key(phone), code)
+	}); err != nil {
 		return fmt.Errorf("phone: send sms: %w", err)
 	}
 	return nil
@@ -105,3 +107,10 @@ func (p *PhoneAuthenticator) Callback(_ context.Context, _ *sso.CallbackState) (
 func (p *PhoneAuthenticator) LoginURL(_ string) string { return "" }
 
 func (p *PhoneAuthenticator) key(phone string) string { return keyPrefixPhone + phone }
+
+func (p *PhoneAuthenticator) CloseCodeDelivery(ctx context.Context) error {
+	if closer, ok := p.sender.(interface{ Close(context.Context) error }); ok {
+		return closer.Close(ctx)
+	}
+	return nil
+}

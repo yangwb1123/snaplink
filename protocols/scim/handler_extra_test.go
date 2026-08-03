@@ -1,6 +1,7 @@
 package scim
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +9,34 @@ import (
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 )
+
+func TestCreate_ConcurrentDuplicateUserNameHasSingleWinner(t *testing.T) {
+	t.Parallel()
+	users := defaultimpl.NewMemoryUserProvider()
+	h := NewHandler(users, "")
+	start := make(chan struct{})
+	results := make(chan int, 2)
+	create := func(userName string) {
+		<-start
+		req := httptest.NewRequest(http.MethodPost, pathUsers,
+			strings.NewReader(`{"userName":"`+userName+`"}`))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		results <- rec.Code
+	}
+	go create("Concurrent@example.com")
+	go create("concurrent@example.com")
+	close(start)
+	counts := map[int]int{<-results: 1}
+	counts[<-results]++
+	if counts[http.StatusCreated] != 1 || counts[http.StatusConflict] != 1 {
+		t.Fatalf("concurrent create statuses = %v, want one 201 and one 409", counts)
+	}
+	stored, err := users.List(context.Background())
+	if err != nil || len(stored) != 1 || stored[0].Username == "" {
+		t.Fatalf("stored users = %+v err=%v, want one indexed username", stored, err)
+	}
+}
 
 // These tests cover the User handler branches the main suite does not reach:
 // PUT/PATCH userName-uniqueness conflicts (409), PUT/PATCH blank-userName +

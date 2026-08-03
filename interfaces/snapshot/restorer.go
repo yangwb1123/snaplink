@@ -66,27 +66,73 @@ type RestoreOptions struct {
 	// snapshot's SnapshotID — a dumb "yes I know what I'm doing" knob that
 	// makes accidental wipes hard. Ignored for Merge and Overwrite.
 	Confirm string
+
+	// AutoSafetySnapshot and RollbackOnError are ORCHESTRATOR intents:
+	// the Restorer itself never captures a safety snapshot and never rolls
+	// back (it has no Pipeline/Storage). The orchestrator (grpcadmin
+	// restoreTracked) consumes them to decide capture + rollback behavior
+	// and passes them through so SDK-direct callers get the same
+	// validation. AutoSafetySnapshot is the normalized intent (explicit
+	// true, or defaulted by the orchestrator for replace non-dry-runs);
+	// RollbackOnError requires AutoSafetySnapshot=true or prepareRestore
+	// rejects the call with ErrRollbackWithoutSafety before any write.
+	AutoSafetySnapshot bool
+	RollbackOnError    bool
+
+	// Preview attaches the entry-level snapshot-vs-live diff to the
+	// report on a NON-dry-run restore (dry-run always attaches it). The
+	// preview is computed before any write and fails closed on
+	// enumeration errors. Default false — existing callers see zero
+	// behavior change (Report.Diff stays nil).
+	Preview bool
 }
 
 // Report is the per-category outcome of a restore. Counts are accumulated
 // across the run; a non-nil Errors slice means at least one category bailed
-// (other categories may still have applied — Restorer continues past
-// per-item failures only when nothing destructive has happened yet, see
-// per-category code below).
+// (other categories may still have applied — see Restore). Counts are
+// meaningful only when Committed is true (or the run returned no error):
+// on a Phase B failure the Deleted counts are partial while Inserted /
+// Updated are complete.
 type Report struct {
 	Mode      RestoreMode
 	DryRun    bool
 	Items     map[ResourceCategory]CategoryCounts
 	Bootstrap BootstrapAdvance
 	Errors    []string
+
+	// Committed is true iff a non-dry-run restore completed every phase
+	// without error. Dry-run always reports false (predictions, not
+	// writes). A bootstrap-advance failure AFTER the phases applied leaves
+	// Committed true (data is applied; only the tracker didn't advance) —
+	// callers must not key on err alone.
+	Committed bool
+	// RolledBack and SafetySnapshotID are set by the ORCHESTRATOR on the
+	// rollback path (the Restorer never orchestrates). RolledBack reports
+	// that the failed restore's safety snapshot was re-applied;
+	// SafetySnapshotID names the undo artifact (also echoed on the success
+	// path when a capture ran).
+	RolledBack       bool
+	SafetySnapshotID string
+
+	// Diff is the entry-level snapshot-vs-live preview, computed when
+	// opts.DryRun or opts.Preview. json:"preview,omitempty" keeps every
+	// legacy ResultJSON byte identical when no preview ran. Dry-run
+	// counts of diff-covered categories are projected from this diff;
+	// uncovered categories keep the plan's probe/optimistic counts.
+	Diff *DiffResult `json:"preview,omitempty"`
 }
 
 // CategoryCounts is the per-resource bookkeeping the Report carries.
+// Unchanged counts entries whose content already matches the snapshot —
+// the no-op distinction dry-run previously could not make (presence alone
+// was counted as Updated). It is only meaningful on dry-run reports (and
+// the preview overlay); the apply path never writes an unchanged entry.
 type CategoryCounts struct {
-	Inserted int
-	Updated  int
-	Deleted  int
-	Skipped  int
+	Inserted  int
+	Updated   int
+	Deleted   int
+	Skipped   int
+	Unchanged int
 }
 
 // BootstrapAdvance describes what happened to the destination Tracker.
@@ -101,6 +147,14 @@ type BootstrapAdvance struct {
 // Restore applies snap onto the destination per opts. Returns a Report
 // regardless of error so callers can see partial work; the error (when
 // non-nil) is the first hard failure that aborted the run.
+//
+// ModeReplace runs in TWO phases (see restorer_stage.go): Phase A stages
+// every category's insert/update/upsert in dependency order with all prunes
+// disabled; Phase B, only after Phase A fully succeeds, runs every
+// category's prune in the same order. A mid-plan failure therefore leaves
+// either an old-state superset (Phase A fail — nothing deleted, retry-safe)
+// or a target-state superset (Phase B fail — partial deletes, same-snapshot
+// retry converges). Merge/overwrite run Phase A only, exactly as before.
 func (r *Restorer) Restore(ctx context.Context, snap *Snapshot, opts RestoreOptions) (*Report, error) {
 	if err := r.prepareRestore(snap, &opts); err != nil {
 		return nil, err
@@ -110,37 +164,79 @@ func (r *Restorer) Restore(ctx context.Context, snap *Snapshot, opts RestoreOpti
 		DryRun: opts.DryRun,
 		Items:  make(map[ResourceCategory]CategoryCounts, len(AllCategories())),
 	}
+	if err := r.attachRestorePreview(ctx, snap, opts, rep); err != nil {
+		return nil, err
+	}
+	if err := r.applyRestorePlans(ctx, snap, opts, rep); err != nil {
+		return rep, err
+	}
+	rep.Committed = !opts.DryRun
+	if err := r.advanceRestoreBootstrap(ctx, snap, opts, rep); err != nil {
+		return rep, err
+	}
+	return rep, nil
+}
 
-	for _, p := range r.restorePlan(ctx, snap, opts) {
-		if excluded(p.cat, opts.Exclude) || !snap.IncludesCategory(p.cat) {
-			continue
-		}
-		c, err := p.run()
-		rep.Items[p.cat] = c
-		if err != nil {
-			rep.Errors = append(rep.Errors, fmt.Sprintf("%s: %v", p.cat, err))
-			return rep, fmt.Errorf("snapshot restore: %s: %w", p.cat, err)
+func (r *Restorer) attachRestorePreview(ctx context.Context, snap *Snapshot, opts RestoreOptions, rep *Report) error {
+	if !opts.DryRun && !opts.Preview {
+		return nil
+	}
+	diff, err := r.Preview(ctx, snap, opts)
+	if err == nil {
+		rep.Diff = diff
+	}
+	return err
+}
+
+func (r *Restorer) applyRestorePlans(ctx context.Context, snap *Snapshot, opts RestoreOptions, rep *Report) error {
+	if err := runPlan(ctx, rep, snap, opts, r.stagePlan(ctx, snap, opts)); err != nil {
+		return err
+	}
+	if opts.Mode == ModeReplace {
+		if err := runPlan(ctx, rep, snap, opts, r.prunePlan(ctx, snap, opts)); err != nil {
+			return err
 		}
 	}
 	if !opts.DryRun && r.Invalidator != nil {
 		r.Invalidator.InvalidateRestoredControlPlane()
 	}
-
-	if opts.AdvanceBootstrap {
-		ba, err := r.advanceBootstrap(ctx, snap, opts.DryRun)
-		rep.Bootstrap = ba
-		if err != nil {
-			rep.Errors = append(rep.Errors, "bootstrap: "+err.Error())
-			return rep, fmt.Errorf("snapshot restore: bootstrap advance: %w", err)
-		}
+	if opts.DryRun {
+		overlayDryRunCounts(rep, opts.Mode, rep.Diff)
 	}
+	return nil
+}
 
-	return rep, nil
+func (r *Restorer) advanceRestoreBootstrap(ctx context.Context, snap *Snapshot, opts RestoreOptions, rep *Report) error {
+	if !opts.AdvanceBootstrap {
+		return nil
+	}
+	advance, err := r.advanceBootstrap(ctx, snap, opts.DryRun)
+	rep.Bootstrap = advance
+	if err != nil {
+		rep.Errors = append(rep.Errors, "bootstrap: "+err.Error())
+		return fmt.Errorf("snapshot restore: bootstrap advance: %w", err)
+	}
+	return nil
+}
+
+// ValidateRestore runs prepareRestore's checks (snapshot validity, mode
+// defaulting, the ModeReplace confirmation handshake, capability preflight,
+// and the rollback-requires-a-net rule) WITHOUT applying anything. The admin
+// orchestrator calls it after load and BEFORE the D1 safety capture so an
+// invalid request never writes — not even the undo artifact; Restore itself
+// re-runs the same checks, so SDK-direct callers are equally protected.
+// opts is normalized in place exactly as Restore would.
+func (r *Restorer) ValidateRestore(snap *Snapshot, opts *RestoreOptions) error {
+	return r.prepareRestore(snap, opts)
 }
 
 // prepareRestore validates the snapshot and normalizes opts in place:
 // defaulting an empty Mode to Merge and enforcing the ModeReplace
-// confirmation handshake.
+// confirmation handshake. It also fails before any write when the caller
+// requested rollback without an explicit safety net — the validation reads
+// the caller's RAW AutoSafetySnapshot (the Restorer never defaults it; the
+// orchestrator does) so the strict "rollback requires an explicit net"
+// contract cannot be bypassed by defaulting.
 func (r *Restorer) prepareRestore(snap *Snapshot, opts *RestoreOptions) error {
 	if snap == nil {
 		return errors.New("snapshot: nil snapshot")
@@ -158,268 +254,15 @@ func (r *Restorer) prepareRestore(snap *Snapshot, opts *RestoreOptions) error {
 		if opts.Confirm != snap.SnapshotID {
 			return ErrConfirmationMismatch
 		}
-	}
-	return nil
-}
-
-// catRunner pairs a category with its restore closure.
-type catRunner struct {
-	cat ResourceCategory
-	run func() (CategoryCounts, error)
-}
-
-// restorePlan returns the per-category restore steps in dependency order:
-// clients/users (leaf identities) → roles + menus (per-client config) →
-// assignments (joins user×role) → netpolicy (independent). Bootstrap state
-// is the terminal advance handled separately by the caller.
-func (r *Restorer) restorePlan(ctx context.Context, snap *Snapshot, opts RestoreOptions) []catRunner {
-	return []catRunner{
-		{CategoryTenants, func() (CategoryCounts, error) { return r.restoreTenants(ctx, snap, opts) }},
-		{CategoryTenantDomains, func() (CategoryCounts, error) { return r.restoreTenantDomains(ctx, snap, opts) }},
-		{CategoryConnections, func() (CategoryCounts, error) { return r.restoreConnections(ctx, snap, opts) }},
-		{CategoryClients, func() (CategoryCounts, error) { return r.restoreClients(ctx, snap, opts) }},
-		{CategoryUsers, func() (CategoryCounts, error) { return r.restoreUsers(ctx, snap, opts) }},
-		{CategoryPairwise, func() (CategoryCounts, error) { return r.restorePairwise(ctx, snap, opts) }},
-		{CategoryRoles, func() (CategoryCounts, error) { return r.restoreRoles(ctx, snap, opts) }},
-		{CategoryMenus, func() (CategoryCounts, error) { return r.restoreMenus(ctx, snap, opts) }},
-		{CategoryAssignments, func() (CategoryCounts, error) { return r.restoreAssignments(ctx, snap, opts) }},
-		{CategoryNetPolicy, func() (CategoryCounts, error) { return r.restoreNetPolicy(ctx, snap, opts) }},
-	}
-}
-
-func (r *Restorer) restorePairwise(ctx context.Context, snap *Snapshot, opts RestoreOptions) (CategoryCounts, error) {
-	var counts CategoryCounts
-	if r.Pairwise == nil {
-		return counts, nil
-	}
-	if opts.Mode == ModeReplace {
-		if err := r.prunePairwise(ctx, snap.Resources.Pairwise, opts.DryRun, &counts); err != nil {
-			return counts, err
+		// Capability preflight: fail before any write (including the
+		// operations ledger) when a wired backend lacks a capability its
+		// ModeReplace prune needs.
+		if err := r.preflightReplace(snap, *opts); err != nil {
+			return err
 		}
 	}
-	for _, item := range snap.Resources.Pairwise {
-		_, err := r.Pairwise.LocalSubject(ctx, item.PairwiseSub)
-		exists := err == nil
-		if err != nil && !errors.Is(err, security.ErrPairwiseUnknown) {
-			return counts, err
-		}
-		if exists && opts.Mode == ModeMerge {
-			counts.Skipped++
-			continue
-		}
-		if exists {
-			counts.Updated++
-		} else {
-			counts.Inserted++
-		}
-		if !opts.DryRun {
-			if err := r.Pairwise.MapPairwise(ctx, item.PairwiseSub, item.LocalSub); err != nil {
-				return counts, err
-			}
-		}
-	}
-	return counts, nil
-}
-
-func (r *Restorer) prunePairwise(ctx context.Context, wanted []security.PairwiseSubjectMapping, dryRun bool, counts *CategoryCounts) error {
-	lister, listOK := r.Pairwise.(security.PairwiseSubjectLister)
-	deleter, deleteOK := r.Pairwise.(security.PairwiseSubjectDeleter)
-	if !listOK || !deleteOK {
-		return errors.Join(ErrUnsupportedRestore, errors.New("pairwise backend cannot list and delete records"))
-	}
-	current, err := lister.ListPairwiseSubjects(ctx)
-	if err != nil {
-		return err
-	}
-	keep := make(map[string]bool, len(wanted))
-	for _, item := range wanted {
-		keep[item.PairwiseSub] = true
-	}
-	for _, item := range current {
-		if keep[item.PairwiseSub] {
-			continue
-		}
-		counts.Deleted++
-		if !dryRun {
-			if err := deleter.DeletePairwiseSubject(ctx, item.PairwiseSub); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (r *Restorer) restoreTenants(ctx context.Context, snap *Snapshot, opts RestoreOptions) (CategoryCounts, error) {
-	var counts CategoryCounts
-	if r.Tenants == nil {
-		return counts, nil
-	}
-	if opts.Mode == ModeReplace {
-		if err := r.pruneTenants(ctx, snap.Resources.Tenants, opts.DryRun, &counts); err != nil {
-			return counts, err
-		}
-	}
-	for _, item := range snap.Resources.Tenants {
-		_, err := r.Tenants.GetTenant(ctx, item.ID)
-		exists := err == nil
-		if err != nil && !errors.Is(err, tenant.ErrTenantNotFound) {
-			return counts, err
-		}
-		if exists && opts.Mode == ModeMerge {
-			counts.Skipped++
-			continue
-		}
-		if exists {
-			counts.Updated++
-		} else {
-			counts.Inserted++
-		}
-		if !opts.DryRun {
-			if err := r.Tenants.PutTenant(ctx, item); err != nil {
-				return counts, err
-			}
-		}
-	}
-	return counts, nil
-}
-
-func (r *Restorer) pruneTenants(ctx context.Context, wanted []*tenant.Tenant, dryRun bool, counts *CategoryCounts) error {
-	current, err := r.Tenants.ListTenants(ctx)
-	if err != nil {
-		return err
-	}
-	keep := make(map[string]bool, len(wanted))
-	for _, item := range wanted {
-		keep[item.ID] = true
-	}
-	for _, item := range current {
-		if keep[item.ID] {
-			continue
-		}
-		counts.Deleted++
-		if !dryRun {
-			if err := r.Tenants.DeleteTenant(ctx, item.ID); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (r *Restorer) restoreTenantDomains(ctx context.Context, snap *Snapshot, opts RestoreOptions) (CategoryCounts, error) {
-	var counts CategoryCounts
-	if r.Tenants == nil {
-		return counts, nil
-	}
-	if opts.Mode == ModeReplace {
-		if err := r.pruneTenantDomains(ctx, snap.Resources.TenantDomains, opts.DryRun, &counts); err != nil {
-			return counts, err
-		}
-	}
-	for _, item := range snap.Resources.TenantDomains {
-		_, err := r.Tenants.GetDomain(ctx, item.Hostname)
-		exists := err == nil
-		if err != nil && !errors.Is(err, tenant.ErrDomainNotFound) {
-			return counts, err
-		}
-		if exists && opts.Mode == ModeMerge {
-			counts.Skipped++
-			continue
-		}
-		if exists {
-			counts.Updated++
-		} else {
-			counts.Inserted++
-		}
-		if !opts.DryRun {
-			if err := r.Tenants.PutDomain(ctx, item); err != nil {
-				return counts, err
-			}
-		}
-	}
-	return counts, nil
-}
-
-func (r *Restorer) pruneTenantDomains(ctx context.Context, wanted []*tenant.Domain, dryRun bool, counts *CategoryCounts) error {
-	current, err := r.Tenants.ListDomains(ctx)
-	if err != nil {
-		return err
-	}
-	keep := make(map[string]bool, len(wanted))
-	for _, item := range wanted {
-		keep[item.Hostname] = true
-	}
-	for _, item := range current {
-		if keep[item.Hostname] {
-			continue
-		}
-		counts.Deleted++
-		if !dryRun {
-			if err := r.Tenants.DeleteDomain(ctx, item.Hostname); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (r *Restorer) restoreConnections(ctx context.Context, snap *Snapshot, opts RestoreOptions) (CategoryCounts, error) {
-	var counts CategoryCounts
-	if r.Connections == nil {
-		return counts, nil
-	}
-	if opts.Mode == ModeReplace {
-		if err := r.pruneConnections(ctx, snap.Resources.Connections, opts.DryRun, &counts); err != nil {
-			return counts, err
-		}
-	}
-	for _, item := range snap.Resources.Connections {
-		_, err := r.Connections.Get(ctx, item.ID)
-		exists := err == nil
-		if err != nil && !errors.Is(err, connections.ErrNoConnection) {
-			return counts, err
-		}
-		if exists && opts.Mode == ModeMerge {
-			counts.Skipped++
-			continue
-		}
-		if exists {
-			counts.Updated++
-		} else {
-			counts.Inserted++
-		}
-		if !opts.DryRun {
-			if err := r.Connections.Upsert(ctx, item); err != nil {
-				return counts, err
-			}
-		}
-	}
-	return counts, nil
-}
-
-func (r *Restorer) pruneConnections(ctx context.Context, wanted []*connections.Connection, dryRun bool, counts *CategoryCounts) error {
-	lister, ok := r.Connections.(connections.Lister)
-	if !ok {
-		return errors.Join(ErrUnsupportedRestore, errors.New("connections backend cannot list all records"))
-	}
-	current, err := lister.List(ctx)
-	if err != nil {
-		return err
-	}
-	keep := make(map[string]bool, len(wanted))
-	for _, item := range wanted {
-		keep[item.ID] = true
-	}
-	for _, item := range current {
-		if keep[item.ID] {
-			continue
-		}
-		counts.Deleted++
-		if !dryRun {
-			if err := r.Connections.Delete(ctx, item.ID); err != nil {
-				return err
-			}
-		}
+	if opts.RollbackOnError && !opts.AutoSafetySnapshot {
+		return ErrRollbackWithoutSafety
 	}
 	return nil
 }

@@ -452,11 +452,14 @@ func TestSchemas(t *testing.T) {
 	if len(env.Schemas) != 1 || env.Schemas[0] != SchemaListResponse {
 		t.Errorf("envelope schemas = %v", env.Schemas)
 	}
-	if env.TotalResults != 1 || len(env.Resources) != 1 {
+	if env.TotalResults != 2 || len(env.Resources) != 2 {
 		t.Fatalf("schemas total = %d, resources = %d", env.TotalResults, len(env.Resources))
 	}
 	if env.Resources[0].ID != SchemaUser {
 		t.Errorf("schema id = %q, want %q", env.Resources[0].ID, SchemaUser)
+	}
+	if env.Resources[1].ID != SchemaEnterpriseUser {
+		t.Errorf("extension schema id = %q, want %q", env.Resources[1].ID, SchemaEnterpriseUser)
 	}
 }
 

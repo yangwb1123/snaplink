@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -214,7 +215,32 @@ func BuildTokenPolicyStore(cfg config.TokenPolicyConfig) (tokenpolicy.Store, err
 		}
 		policies = parsed
 	}
+	// Shape validation on BOTH sources: the File path already validated via
+	// ParseYAML, the inline path only reaches a decoded slice here — a bare /
+	// interior "*" selector, a wildcarded/padded tenant_id, or a role outside
+	// the closed set fails boot instead of loading a rule that can never
+	// match. (Misspelled KEYS on the inline path are caught earlier by the
+	// item-level strict YAML decode in the config loader — Policy.UnmarshalYAML
+	// errors in both the strict pass and the lenient fallback.)
+	if err := tokenpolicy.Validate(policies); err != nil {
+		return nil, fmt.Errorf("token_policies: %w", err)
+	}
+	if hasRoleSelectors(policies) {
+		slog.Warn("token_policies: subject_roles selectors are configured, but role resolution requires the tenant-user store (sso.WithTenantUserStore) to be wired — the stock sso-server does not wire it, so role rules never match (fail-open) until it is")
+	}
 	return tokenpolicymemory.NewFromSlice(policies), nil
+}
+
+// hasRoleSelectors reports whether any policy in the set carries a
+// subject_roles selector — the boot-warning predicate for the SRE F1 gap
+// (role rules are a silent no-op without a wired tenant-user store).
+func hasRoleSelectors(policies []tokenpolicy.Policy) bool {
+	for _, p := range policies {
+		if len(p.SubjectRoles) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // BuildConditionalAccess builds the conditionalaccess.Store + engine Config
@@ -233,11 +259,17 @@ func BuildConditionalAccess(cfg config.AccessPolicyConfig) (conditionalaccess.St
 	if file != "" && len(cfg.Policies) > 0 {
 		return nil, conditionalaccess.Config{}, errors.New("access_policies: set either file or inline policies, not both")
 	}
+	if cfg.SessionSweepInterval < 0 || cfg.SessionSweepBatchSize < 0 {
+		return nil, conditionalaccess.Config{}, errors.New("access_policies: session sweep values must not be negative")
+	}
 	store := conditionalaccess.NewMemoryStore()
 	if err := loadAccessPolicies(store, file, cfg.Policies); err != nil {
 		return nil, conditionalaccess.Config{}, err
 	}
-	return store, conditionalaccess.Config{DegradedTrust: cfg.DegradedTrust, DefaultDeny: cfg.DefaultDeny, Enforce: cfg.Enforce}, nil
+	return store, conditionalaccess.Config{
+		DegradedTrust: cfg.DegradedTrust, DefaultDeny: cfg.DefaultDeny, Enforce: cfg.Enforce,
+		SessionSweepInterval: cfg.SessionSweepInterval, SessionSweepBatchSize: cfg.SessionSweepBatchSize,
+	}, nil
 }
 
 // loadAccessPolicies seeds store from the bundle file (strict loader, unknown

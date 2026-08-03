@@ -93,26 +93,27 @@ func (s *Server) TokenExchangePolicy() tokenexchange.Policy { return s.tokenExch
 // IntrospectionSigner returns the wired RFC 9701-style signed-introspection
 // signer (WithIntrospectionSigner), or nil when unwired (every response
 // stays plain JSON).
-func (s *Server) IntrospectionSigner() oauth.IntrospectionSigner  { return s.introspectionSigner }
-func (s *Server) DeviceCodeStore() oauth.DeviceCodeStore          { return s.deviceCodeStore }
-func (s *Server) DeviceCodeTTL() time.Duration                    { return s.deviceCodeTTL }
-func (s *Server) DeviceCodeInterval() time.Duration               { return s.deviceCodeInterval }
-func (s *Server) DeviceVerifyBaseURL() string                     { return s.deviceVerifyBaseURL }
-func (s *Server) PARStore() oauth.PARStore                        { return s.parStore }
-func (s *Server) PARTTL() time.Duration                           { return s.parTTL }
-func (s *Server) CIBAStore() oauth.CIBAStore                      { return s.cibaStore }
-func (s *Server) CIBARequestTTL() time.Duration                   { return s.cibaRequestTTL }
-func (s *Server) CIBAPollInterval() time.Duration                 { return s.cibaPollInterval }
-func (s *Server) DCRPolicy() *oauth.DCRPolicy                     { return s.dcrPolicy }
-func (s *Server) JTIReplayStore() security.JTIReplayStore         { return s.jtiReplayStore }
-func (s *Server) SubjectClientIndex() security.SubjectClientIndex { return s.subjectClientIndex }
-func (s *Server) JARFetcher() security.JARFetcher                 { return s.jarFetcher }
-func (s *Server) JARDecrypter() security.JWEDecrypter             { return s.jarDecrypter }
-func (s *Server) JWEResponseEncrypter() security.JWEEncrypter     { return s.jweResponseEncrypter }
-func (s *Server) AccountLockout() security.AccountLockout         { return s.accountLockout }
-func (s *Server) PairwiseStore() security.PairwiseSubjectStore    { return s.pairwiseStore }
-func (s *Server) ClientCertExtractor() ClientCertExtractor        { return s.clientCertExtractor }
-func (s *Server) DPoPNonceProvider() DPoPNonceProvider            { return s.dpopNonceProvider }
+func (s *Server) IntrospectionSigner() oauth.IntrospectionSigner   { return s.introspectionSigner }
+func (s *Server) DeviceCodeStore() oauth.DeviceCodeStore           { return s.deviceCodeStore }
+func (s *Server) DeviceCodeTTL() time.Duration                     { return s.deviceCodeTTL }
+func (s *Server) DeviceCodeInterval() time.Duration                { return s.deviceCodeInterval }
+func (s *Server) DeviceVerifyBaseURL() string                      { return s.deviceVerifyBaseURL }
+func (s *Server) PARStore() oauth.PARStore                         { return s.parStore }
+func (s *Server) PARTTL() time.Duration                            { return s.parTTL }
+func (s *Server) CIBAStore() oauth.CIBAStore                       { return s.cibaStore }
+func (s *Server) CIBAUserCodeVerifier() oauth.CIBAUserCodeVerifier { return s.cibaUserCodeVerifier }
+func (s *Server) CIBARequestTTL() time.Duration                    { return s.cibaRequestTTL }
+func (s *Server) CIBAPollInterval() time.Duration                  { return s.cibaPollInterval }
+func (s *Server) DCRPolicy() *oauth.DCRPolicy                      { return s.dcrPolicy }
+func (s *Server) JTIReplayStore() security.JTIReplayStore          { return s.jtiReplayStore }
+func (s *Server) SubjectClientIndex() security.SubjectClientIndex  { return s.subjectClientIndex }
+func (s *Server) JARFetcher() security.JARFetcher                  { return s.jarFetcher }
+func (s *Server) JARDecrypter() security.JWEDecrypter              { return s.jarDecrypter }
+func (s *Server) JWEResponseEncrypter() security.JWEEncrypter      { return s.jweResponseEncrypter }
+func (s *Server) AccountLockout() security.AccountLockout          { return s.accountLockout }
+func (s *Server) PairwiseStore() security.PairwiseSubjectStore     { return s.pairwiseStore }
+func (s *Server) ClientCertExtractor() ClientCertExtractor         { return s.clientCertExtractor }
+func (s *Server) DPoPNonceProvider() DPoPNonceProvider             { return s.dpopNonceProvider }
 
 // EncryptIDTokenForClient encrypts an id_token for a specific client when
 // the client has id_token_encrypted_response_alg configured.

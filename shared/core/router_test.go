@@ -43,8 +43,19 @@ func TestContextRequestAndResponseWriter(t *testing.T) {
 	if ctx.Request() != req {
 		t.Error("Request() did not return the wrapped *http.Request")
 	}
-	if ctx.ResponseWriter() != rec {
-		t.Error("ResponseWriter() did not return the wrapped http.ResponseWriter")
+	// ResponseWriter() returns the tracking wrapper (so Written() stays
+	// truthful across SetResponseWriter swaps), not the bare writer —
+	// writes through it must reach the underlying recorder.
+	if ctx.Written() {
+		t.Error("Written() = true before any write")
+	}
+	ctx.ResponseWriter().WriteHeader(http.StatusOK)
+	_, _ = ctx.ResponseWriter().Write([]byte("ok"))
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
+		t.Errorf("writes through ResponseWriter() did not reach the underlying writer: code=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if !ctx.Written() {
+		t.Error("Written() = false after a write")
 	}
 }
 
@@ -421,6 +432,7 @@ var (
 	_ HandlerContext = (*Context)(nil)
 	_ Router         = (*StdRouter)(nil)
 	_ Router         = (*GatedRouter)(nil)
+	_ GatedRegistrar = (*StdRouter)(nil)
 )
 
 // TestGatedRouter_LiveToggleControlsReachabilityByteIdenticalTo404 is the

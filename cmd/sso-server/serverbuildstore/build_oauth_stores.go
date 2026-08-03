@@ -1,6 +1,7 @@
 package serverbuildstore
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
+	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
 	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 )
 
@@ -26,12 +28,11 @@ func errRedisNotConfigured(domain string) error {
 }
 
 // BuildAuthCodeStore / BuildRefreshTokenStore / BuildDeviceCodeStore
-// pick between memory + sqlite per cfg.Backend. SQLite needs a DSN;
-// memory needs nothing. Each SQLite call opens its own connection
-// pool — for SQLite that's fine (OS-level file lock coordinates),
-// for a future shared *sql.DB across stores a different abstraction
-// is needed.
-func BuildAuthCodeStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.AuthCodeStore, error) {
+// pick between memory + sqlite + postgres per cfg.Backend. SQLite needs a
+// DSN; postgres reuses the shared pool threaded from the postgres: block;
+// memory needs nothing. Each SQLite call opens its own connection pool —
+// for SQLite that's fine (OS-level file lock coordinates).
+func BuildAuthCodeStore(cfg config.OAuthConfig, rdb goredis.Cmdable, pgDB *sql.DB, pgDialect postgresbackend.Dialect) (oauth.AuthCodeStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		s := defaultimpl.NewMemoryAuthCodeStore()
@@ -63,12 +64,17 @@ func BuildAuthCodeStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.Auth
 			return nil, err
 		}
 		return store, nil
+	case "postgres":
+		if pgDB == nil {
+			return nil, errPostgresNotConfigured("oauth")
+		}
+		return buildPostgresAuthCodeStore(cfg, pgDB, pgDialect)
 	default:
-		return nil, fmt.Errorf("unknown oauth.backend %q (supported: memory, sqlite, redis)", cfg.Backend)
+		return nil, fmt.Errorf("unknown oauth.backend %q (supported: memory, sqlite, redis, postgres)", cfg.Backend)
 	}
 }
 
-func BuildRefreshTokenStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.RefreshTokenStore, error) {
+func BuildRefreshTokenStore(cfg config.OAuthConfig, rdb goredis.Cmdable, pgDB *sql.DB, pgDialect postgresbackend.Dialect) (oauth.RefreshTokenStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		s := defaultimpl.NewMemoryRefreshTokenStore()
@@ -83,19 +89,7 @@ func BuildRefreshTokenStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.
 		if cfg.SQLite.DSN == "" {
 			return nil, errors.New("oauth.sqlite.dsn required when backend=sqlite")
 		}
-		keys, err := ResolveOAuthLookupHMACKeys(cfg.SQLite)
-		if err != nil {
-			return nil, err
-		}
-		s, err := sqlitestores.NewRefreshTokenStore(cfg.SQLite.DSN)
-		if err != nil {
-			return nil, err
-		}
-		s.MaxRotationsPerWindow = cfg.RefreshToken.MaxRotationsPerWindow
-		s.RotationWindow = cfg.RefreshToken.RotationWindow
-		s.SetLookupHMACKeys(keys...)
-		s.StartReaper(cfg.RefreshToken.ReapInterval)
-		return s, nil
+		return buildSQLiteRefreshTokenStore(cfg)
 	case "redis":
 		if rdb == nil {
 			return nil, errRedisNotConfigured("oauth")
@@ -109,12 +103,17 @@ func BuildRefreshTokenStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.
 			return nil, err
 		}
 		return store, nil
+	case "postgres":
+		if pgDB == nil {
+			return nil, errPostgresNotConfigured("oauth")
+		}
+		return buildPostgresRefreshTokenStore(cfg, pgDB, pgDialect)
 	default:
-		return nil, fmt.Errorf("unknown oauth.backend %q (supported: memory, sqlite, redis)", cfg.Backend)
+		return nil, fmt.Errorf("unknown oauth.backend %q (supported: memory, sqlite, redis, postgres)", cfg.Backend)
 	}
 }
 
-func BuildDeviceCodeStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.DeviceCodeStore, error) {
+func BuildDeviceCodeStore(cfg config.OAuthConfig, rdb goredis.Cmdable, pgDB *sql.DB, pgDialect postgresbackend.Dialect) (oauth.DeviceCodeStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		s := defaultimpl.NewMemoryDeviceCodeStore()
@@ -146,12 +145,17 @@ func BuildDeviceCodeStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.De
 			return nil, err
 		}
 		return store, nil
+	case "postgres":
+		if pgDB == nil {
+			return nil, errPostgresNotConfigured("oauth")
+		}
+		return buildPostgresDeviceCodeStore(cfg, pgDB, pgDialect)
 	default:
-		return nil, fmt.Errorf("unknown oauth.backend %q (supported: memory, sqlite, redis)", cfg.Backend)
+		return nil, fmt.Errorf("unknown oauth.backend %q (supported: memory, sqlite, redis, postgres)", cfg.Backend)
 	}
 }
 
-func BuildPARStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.PARStore, error) {
+func BuildPARStore(cfg config.OAuthConfig, rdb goredis.Cmdable, pgDB *sql.DB, pgDialect postgresbackend.Dialect) (oauth.PARStore, error) {
 	switch strings.ToLower(cfg.Backend) {
 	case "", "memory":
 		s := defaultimpl.NewMemoryPARStore()
@@ -183,9 +187,88 @@ func BuildPARStore(cfg config.OAuthConfig, rdb goredis.Cmdable) (oauth.PARStore,
 			return nil, err
 		}
 		return store, nil
+	case "postgres":
+		if pgDB == nil {
+			return nil, errPostgresNotConfigured("oauth")
+		}
+		return buildPostgresPARStore(cfg, pgDB, pgDialect)
 	default:
-		return nil, fmt.Errorf("unknown oauth.backend %q (supported: memory, sqlite, redis)", cfg.Backend)
+		return nil, fmt.Errorf("unknown oauth.backend %q (supported: memory, sqlite, redis, postgres)", cfg.Backend)
 	}
+}
+
+func buildPostgresAuthCodeStore(cfg config.OAuthConfig, db *sql.DB, dialect postgresbackend.Dialect) (oauth.AuthCodeStore, error) {
+	store, err := postgresbackend.NewAuthCodeStoreWithDB(db, dialect)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := ResolveOAuthPostgresLookupHMACKeys(cfg.Postgres)
+	if err != nil {
+		return nil, err
+	}
+	store.SetLookupHMACKeys(keys...)
+	store.StartReaper(cfg.AuthCode.ReapInterval)
+	return store, nil
+}
+
+func buildSQLiteRefreshTokenStore(cfg config.OAuthConfig) (oauth.RefreshTokenStore, error) {
+	keys, err := ResolveOAuthLookupHMACKeys(cfg.SQLite)
+	if err != nil {
+		return nil, err
+	}
+	store, err := sqlitestores.NewRefreshTokenStore(cfg.SQLite.DSN)
+	if err != nil {
+		return nil, err
+	}
+	store.MaxRotationsPerWindow = cfg.RefreshToken.MaxRotationsPerWindow
+	store.RotationWindow = cfg.RefreshToken.RotationWindow
+	store.SetLookupHMACKeys(keys...)
+	store.StartReaper(cfg.RefreshToken.ReapInterval)
+	return store, nil
+}
+
+func buildPostgresRefreshTokenStore(cfg config.OAuthConfig, db *sql.DB, dialect postgresbackend.Dialect) (oauth.RefreshTokenStore, error) {
+	store, err := postgresbackend.NewRefreshTokenStoreWithDB(db, dialect)
+	if err != nil {
+		return nil, err
+	}
+	store.MaxRotationsPerWindow = cfg.RefreshToken.MaxRotationsPerWindow
+	store.RotationWindow = cfg.RefreshToken.RotationWindow
+	keys, err := ResolveOAuthPostgresLookupHMACKeys(cfg.Postgres)
+	if err != nil {
+		return nil, err
+	}
+	store.SetLookupHMACKeys(keys...)
+	store.StartReaper(cfg.RefreshToken.ReapInterval)
+	return store, nil
+}
+
+func buildPostgresDeviceCodeStore(cfg config.OAuthConfig, db *sql.DB, dialect postgresbackend.Dialect) (oauth.DeviceCodeStore, error) {
+	store, err := postgresbackend.NewDeviceCodeStoreWithDB(db, dialect)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := ResolveOAuthPostgresLookupHMACKeys(cfg.Postgres)
+	if err != nil {
+		return nil, err
+	}
+	store.SetLookupHMACKeys(keys...)
+	store.StartReaper(cfg.DeviceCode.ReapInterval)
+	return store, nil
+}
+
+func buildPostgresPARStore(cfg config.OAuthConfig, db *sql.DB, dialect postgresbackend.Dialect) (oauth.PARStore, error) {
+	store, err := postgresbackend.NewPARStoreWithDB(db, dialect)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := ResolveOAuthPostgresLookupHMACKeys(cfg.Postgres)
+	if err != nil {
+		return nil, err
+	}
+	store.SetLookupHMACKeys(keys...)
+	store.StartReaper(cfg.PAR.ReapInterval)
+	return store, nil
 }
 
 // ResolveOAuthLookupHMACKeys loads the current and optional previous lookup
@@ -201,6 +284,14 @@ func ResolveOAuthLookupHMACKeys(cfg config.OAuthSQLiteConfig) ([][]byte, error) 
 func ResolveOAuthRedisLookupHMACKeys(cfg config.OAuthRedisConfig) ([][]byte, error) {
 	return resolveOAuthLookupHMACKeys(
 		cfg.LookupHMACKeyFile, cfg.LookupHMACPreviousKeyFile, "oauth.redis",
+	)
+}
+
+// ResolveOAuthPostgresLookupHMACKeys applies the same rotation contract to
+// the postgres backend's oauth.postgres lookup-key section.
+func ResolveOAuthPostgresLookupHMACKeys(cfg config.OAuthPostgresConfig) ([][]byte, error) {
+	return resolveOAuthLookupHMACKeys(
+		cfg.LookupHMACKeyFile, cfg.LookupHMACPreviousKeyFile, "oauth.postgres",
 	)
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
@@ -64,17 +65,21 @@ func (j *ECDSAJWTIssuer) IssueIDToken(ctx context.Context, req *oidc.IDTokenRequ
 	now := nowFrom(j.clock)
 	header := ecdsaHeader{Alg: jwtAlgES256, Typ: jwtTyp, Kid: kid}
 	payload := ed25519IDPayload{
-		Iss:   j.issuer,
-		Sub:   req.Subject,
-		Aud:   req.Audience,
-		Exp:   now.Add(ttl).Unix(),
-		Iat:   now.Unix(),
-		Nonce: req.Nonce,
-		AMR:   req.AMR,
-		ACR:   req.ACR,
-		AZP:   req.AZP,
-		SID:   req.SID,
-		Extra: req.Claims,
+		Iss:                  j.issuer,
+		Sub:                  req.Subject,
+		Aud:                  req.Audience,
+		Exp:                  now.Add(ttl).Unix(),
+		Iat:                  now.Unix(),
+		Nonce:                req.Nonce,
+		AMR:                  req.AMR,
+		ACR:                  req.ACR,
+		AZP:                  req.AZP,
+		SID:                  req.SID,
+		ServingRegion:        req.ServingRegion,
+		Extra:                req.Claims,
+		Scope:                strings.Join(req.GrantedScopes, " "),
+		GrantedResources:     append([]string(nil), req.GrantedResources...),
+		AuthorizationDetails: append(json.RawMessage(nil), req.AuthorizationDetails...),
 	}
 	if !req.AuthTime.IsZero() {
 		payload.AuthTime = req.AuthTime.Unix()

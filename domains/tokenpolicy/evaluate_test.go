@@ -195,6 +195,203 @@ func TestEvaluate_SelectorMatching(t *testing.T) {
 	}
 }
 
+// TestEvaluate_TenantSelector proves the tenant dimension: a rule matches only
+// its own tenant, an empty policy tenant is a GLOBAL rule for every tenant,
+// and a zero input tenant (single-tenant deployment) never matches a
+// tenant-scoped rule — the byte-compat contract.
+func TestEvaluate_TenantSelector(t *testing.T) {
+	t.Parallel()
+	tenantRule := []Policy{{Name: "ta-cap", TenantID: "ta", MaxTTL: 5 * time.Minute}}
+	if got := Evaluate(PolicyInput{ClientID: "c", TenantID: "ta", RequestedTTL: time.Hour}, tenantRule); got.EffectiveTTL != 5*time.Minute {
+		t.Fatalf("ta EffectiveTTL = %v, want 5m", got.EffectiveTTL)
+	}
+	if got := Evaluate(PolicyInput{ClientID: "c", TenantID: "tb", RequestedTTL: time.Hour}, tenantRule); got.EffectiveTTL != time.Hour {
+		t.Fatalf("tb EffectiveTTL = %v, want unchanged 1h (other tenant)", got.EffectiveTTL)
+	}
+	if got := Evaluate(PolicyInput{ClientID: "c", TenantID: "", RequestedTTL: time.Hour}, tenantRule); got.EffectiveTTL != time.Hour {
+		t.Fatalf("zero-tenant EffectiveTTL = %v, want unchanged 1h (single-tenant byte-compat)", got.EffectiveTTL)
+	}
+	// Empty policy tenant = global: applies to any input tenant.
+	globalRule := []Policy{{Name: "global", MaxTTL: time.Minute}}
+	for _, tenant := range []string{"", "ta", "tb"} {
+		if got := Evaluate(PolicyInput{ClientID: "c", TenantID: tenant, RequestedTTL: time.Hour}, globalRule); got.EffectiveTTL != time.Minute {
+			t.Fatalf("global rule for tenant %q EffectiveTTL = %v, want 1m", tenant, got.EffectiveTTL)
+		}
+	}
+}
+
+// TestEvaluate_TenantRuleTightensOnly proves the load-bearing no-widening
+// invariant BOTH directions: tenant 5m + global 10m => 5m (tenant tightens),
+// and the reverse combination tenant 10m + global 5m => 5m (a tenant rule can
+// never raise a global ceiling — the strictest-wins union is unchanged).
+func TestEvaluate_TenantRuleTightensOnly(t *testing.T) {
+	t.Parallel()
+	both := []Policy{
+		{Name: "tenant", TenantID: "ta", MaxTTL: 5 * time.Minute},
+		{Name: "global", MaxTTL: 10 * time.Minute},
+	}
+	if got := Evaluate(PolicyInput{ClientID: "c", TenantID: "ta", RequestedTTL: time.Hour}, both); got.EffectiveTTL != 5*time.Minute {
+		t.Fatalf("tenant-tightens EffectiveTTL = %v, want 5m", got.EffectiveTTL)
+	}
+	reverse := []Policy{
+		{Name: "tenant", TenantID: "ta", MaxTTL: 10 * time.Minute},
+		{Name: "global", MaxTTL: 5 * time.Minute},
+	}
+	if got := Evaluate(PolicyInput{ClientID: "c", TenantID: "ta", RequestedTTL: time.Hour}, reverse); got.EffectiveTTL != 5*time.Minute {
+		t.Fatalf("reverse EffectiveTTL = %v, want 5m (tenant rule must never widen)", got.EffectiveTTL)
+	}
+}
+
+// TestEvaluate_ClientPrefixWildcard proves the client selector accepts the
+// same trailing-"*" prefix wildcard as scopes: "payments-*" matches
+// "payments-api" but not "billing", and an exact rule stays exact.
+func TestEvaluate_ClientPrefixWildcard(t *testing.T) {
+	t.Parallel()
+	rule := []Policy{{Name: "pay", ClientID: "payments-*", MaxTTL: time.Minute}}
+	if got := Evaluate(PolicyInput{ClientID: "payments-api", RequestedTTL: time.Hour}, rule); got.EffectiveTTL != time.Minute {
+		t.Fatalf("payments-api EffectiveTTL = %v, want 1m", got.EffectiveTTL)
+	}
+	if got := Evaluate(PolicyInput{ClientID: "billing", RequestedTTL: time.Hour}, rule); got.EffectiveTTL != time.Hour {
+		t.Fatalf("billing EffectiveTTL = %v, want unchanged 1h", got.EffectiveTTL)
+	}
+}
+
+// TestEvaluate_SubjectSelector proves the subject dimension: "svc-*" matches
+// svc-payments but not a human subject, exact match works, and an absent
+// input subject never matches (the documented inertness of subject rules at
+// seams that resolve no subject — fail-open).
+func TestEvaluate_SubjectSelector(t *testing.T) {
+	t.Parallel()
+	subjectRule := []Policy{{Name: "svc", Subject: "svc-*", MaxTTL: time.Minute}}
+	if got := Evaluate(PolicyInput{ClientID: "c", Subject: "svc-payments", RequestedTTL: time.Hour}, subjectRule); got.EffectiveTTL != time.Minute {
+		t.Fatalf("svc-payments EffectiveTTL = %v, want 1m", got.EffectiveTTL)
+	}
+	if got := Evaluate(PolicyInput{ClientID: "c", Subject: "alice", RequestedTTL: time.Hour}, subjectRule); got.EffectiveTTL != time.Hour {
+		t.Fatalf("alice EffectiveTTL = %v, want unchanged 1h", got.EffectiveTTL)
+	}
+	exactRule := []Policy{{Name: "alice", Subject: "alice", MaxTTL: time.Minute}}
+	if got := Evaluate(PolicyInput{ClientID: "c", Subject: "alice", RequestedTTL: time.Hour}, exactRule); got.EffectiveTTL != time.Minute {
+		t.Fatalf("exact-subject EffectiveTTL = %v, want 1m", got.EffectiveTTL)
+	}
+}
+
+// TestEvaluate_SubjectSelector_NoMatchWhenSubjectAbsent pins the clamp-seam
+// inertness (security F2 / QA H2): the ClampingIssuer supplies no Subject, so
+// a subject-scoped max_ttl rule never clamps — the seam sees no subject, the
+// rule is a documented no-op, and the TTL stays unchanged.
+func TestEvaluate_SubjectSelector_NoMatchWhenSubjectAbsent(t *testing.T) {
+	t.Parallel()
+	got := Evaluate(PolicyInput{ClientID: "c", TenantID: "ta", RequestedTTL: time.Hour},
+		[]Policy{{Subject: "svc-*", MaxTTL: 5 * time.Minute}})
+	if got.EffectiveTTL != time.Hour {
+		t.Fatalf("EffectiveTTL = %v, want unchanged 1h (subject selector inert without input subject)", got.EffectiveTTL)
+	}
+}
+
+// TestEvaluate_SubjectRolesSelector proves the role dimension: the input's
+// roles intersect the selector (any one entry suffices), a disjoint set never
+// matches, and EMPTY input roles intersect nothing — the fail-open contract
+// that makes role selectors inert during a roster outage / on unwired
+// deployments.
+func TestEvaluate_SubjectRolesSelector(t *testing.T) {
+	t.Parallel()
+	roleRule := []Policy{{Name: "admin", SubjectRoles: []string{"admin"}, MaxTTL: time.Minute}}
+	if got := Evaluate(PolicyInput{ClientID: "c", SubjectRoles: []string{"member", "admin"}, RequestedTTL: time.Hour}, roleRule); got.EffectiveTTL != time.Minute {
+		t.Fatalf("admin-holder EffectiveTTL = %v, want 1m", got.EffectiveTTL)
+	}
+	if got := Evaluate(PolicyInput{ClientID: "c", SubjectRoles: []string{"member"}, RequestedTTL: time.Hour}, roleRule); got.EffectiveTTL != time.Hour {
+		t.Fatalf("member-only EffectiveTTL = %v, want unchanged 1h", got.EffectiveTTL)
+	}
+	if got := Evaluate(PolicyInput{ClientID: "c", RequestedTTL: time.Hour}, roleRule); got.EffectiveTTL != time.Hour {
+		t.Fatalf("empty-roles EffectiveTTL = %v, want unchanged 1h (fail-open: role selectors inert)", got.EffectiveTTL)
+	}
+	multiRule := []Policy{{Name: "priv", SubjectRoles: []string{"guest", "admin"}, MaxTTL: time.Minute}}
+	if got := Evaluate(PolicyInput{ClientID: "c", SubjectRoles: []string{"admin"}, RequestedTTL: time.Hour}, multiRule); got.EffectiveTTL != time.Minute {
+		t.Fatalf("multi-role intersection EffectiveTTL = %v, want 1m", got.EffectiveTTL)
+	}
+}
+
+// TestEvaluate_AllEmptySelectorsByteIdentical proves a rule with every new
+// selector empty behaves exactly like the pre-feature engine for any input —
+// the legacy byte-compat regression pin.
+func TestEvaluate_AllEmptySelectorsByteIdentical(t *testing.T) {
+	t.Parallel()
+	rule := []Policy{{Name: "global", MaxTTL: time.Minute}}
+	for _, in := range []PolicyInput{
+		{ClientID: "c", RequestedTTL: time.Hour},
+		{ClientID: "c", TenantID: "ta", Subject: "alice", SubjectRoles: []string{"admin"}, RequestedTTL: time.Hour},
+	} {
+		if got := Evaluate(in, rule); got.EffectiveTTL != time.Minute {
+			t.Fatalf("input %+v EffectiveTTL = %v, want 1m (selectors empty => old behavior)", in, got.EffectiveTTL)
+		}
+	}
+}
+
+// TestEvaluate_LegacyBareStarScopeStillMatchAll proves the legacy scope
+// selector keeps its match-all semantics: a bare "*" scope rule matches every
+// request exactly as before the strictness work (Validate gates only the NEW
+// selectors; scopePresent semantics are unchanged).
+func TestEvaluate_LegacyBareStarScopeStillMatchAll(t *testing.T) {
+	t.Parallel()
+	rule := []Policy{{Name: "legacy", Scopes: []string{"*"}, MaxTTL: time.Minute}}
+	if got := Evaluate(PolicyInput{ClientID: "c", Scopes: []string{"anything"}, RequestedTTL: time.Hour}, rule); got.EffectiveTTL != time.Minute {
+		t.Fatalf("bare-star scope EffectiveTTL = %v, want 1m (match-all preserved)", got.EffectiveTTL)
+	}
+}
+
+// TestEvaluate_IntrospectionShapeTenantInert pins the fifth evaluation site's
+// documented inertness (security F2): IntrospectionRenewExceeded supplies
+// only ClientID + Scopes (Decision 5 keeps tenant out of claims), so a
+// tenant-scoped require_renew_after rule never fires there — RenewAfter stays
+// zero and the token is never force-renewed by it.
+func TestEvaluate_IntrospectionShapeTenantInert(t *testing.T) {
+	t.Parallel()
+	got := Evaluate(PolicyInput{ClientID: "c", Scopes: []string{"openid"}, Kind: KindAccess},
+		[]Policy{{TenantID: "ta", RequireRenewAfter: 0.5}})
+	if got.RenewAfter != 0 {
+		t.Fatalf("RenewAfter = %v, want 0 (tenant rule inert at the introspection shape)", got.RenewAfter)
+	}
+}
+
+// TestEvaluate_ScopeComboShapeRoleInert pins the scope-combo seam's
+// documented inertness: denyTokenScopeCombo supplies client + scopes only
+// (no subject, no roles), so a subject_roles-scoped block_scope_combos rule
+// never denies there — the combo is a documented no-op, not a widen.
+func TestEvaluate_ScopeComboShapeRoleInert(t *testing.T) {
+	t.Parallel()
+	got := Evaluate(PolicyInput{ClientID: "c", Scopes: []string{"admin:x", "openid"}, Kind: KindAccess},
+		[]Policy{{SubjectRoles: []string{"admin"}, BlockScopeCombos: [][]string{{"admin:*", "openid"}}}})
+	if got.Deny {
+		t.Fatalf("Deny = true, want false (role-scoped combo rule inert without input roles)")
+	}
+}
+
+// TestPrefixOrExact is the helper's unit truth table: exact match, trailing-"*"
+// prefix match, bare "*" (match-all at the engine level — Validate is the
+// config gate), empty selector, and non-matching prefix.
+func TestPrefixOrExact(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		a, want string
+		match   bool
+	}{
+		{"payments-api", "payments-api", true},
+		{"payments-api", "payments-*", true},
+		{"payments-web", "payments-*", true},
+		{"billing", "payments-*", false},
+		{"anything", "*", true}, // bare "*" matches everything (engine level)
+		{"", "", true},          // empty selector = any
+		{"alice", "", false},    // empty want matches nothing (matches() guards empty selectors)
+		{"alice", "alice", true},
+		{"alicia", "alice", false},
+	}
+	for _, tc := range cases {
+		if got := prefixOrExact(tc.a, tc.want); got != tc.match {
+			t.Errorf("prefixOrExact(%q, %q) = %v, want %v", tc.a, tc.want, got, tc.match)
+		}
+	}
+}
+
 // TestEvaluate_DenyReasonDeterministic proves that when one policy trips
 // multiple dimensions the FIRST in dimension order (scope combo) wins, so the
 // reason is stable.

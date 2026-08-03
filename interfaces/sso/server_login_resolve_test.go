@@ -3,12 +3,58 @@ package sso
 import (
 	"context"
 	"net/http/httptest"
+	"net/url"
+	"slices"
 	"testing"
 
 	"github.com/yangwb1123/snaplink/domains/connections"
 	"github.com/yangwb1123/snaplink/domains/tenant"
 	"github.com/yangwb1123/snaplink/shared/core"
 )
+
+func TestBindLoginRequestFromQueryPreservesAuthorizationRequest(t *testing.T) {
+	t.Parallel()
+	q := url.Values{
+		"provider": {"workforce"}, "client_id": {"client-a"},
+		"request_uri": {"urn:ietf:params:oauth:request_uri:opaque"},
+		"request":     {"header.payload.signature"}, "response_type": {"code"},
+		"redirect_uri": {"https://rp.example/cb"}, "state": {"state-a"},
+		"scope": {"openid profile"}, "resource": {"https://api-a.example", "https://api-b.example read"},
+		"authorization_details": {`[{"type":"payment","actions":["read"]}]`},
+		"claims":                {`{"id_token":{"email":{"essential":true}}}`},
+		"id_token_hint":         {"hint-token"}, "max_age": {"300"},
+		"nonce": {"nonce-a"}, "code_challenge": {"challenge-a"},
+		"code_challenge_method": {"S256"}, "prompt": {"login"},
+		"login_hint": {"user@example.com"}, "response_mode": {"query.jwt"},
+		"acr_values": {"urn:mfa urn:pwd"}, "ui_locales": {"zh-CN en"},
+	}
+	r := httptest.NewRequest("GET", "/auth/login?"+q.Encode(), nil)
+	req, err := bindLoginRequestFromQuery(r)
+	if err != nil {
+		t.Fatalf("bindLoginRequestFromQuery: %v", err)
+	}
+	if req.RequestURI != q.Get("request_uri") || req.Request != q.Get("request") ||
+		req.IDTokenHint != q.Get("id_token_hint") || req.MaxAge == nil || *req.MaxAge != 300 {
+		t.Fatalf("opaque authorization fields were not preserved: %+v", req)
+	}
+	if !slices.Equal(req.Scope, []string{"openid", "profile"}) ||
+		!slices.Equal(req.Resource, []string{"https://api-a.example", "https://api-b.example", "read"}) {
+		t.Fatalf("scope/resource projection = %v / %v", req.Scope, req.Resource)
+	}
+	if string(req.AuthorizationDetails) != q.Get("authorization_details") || string(req.Claims) != q.Get("claims") {
+		t.Fatalf("JSON authorization fields changed: %s / %s", req.AuthorizationDetails, req.Claims)
+	}
+}
+
+func TestBindLoginRequestFromQueryRejectsInvalidMaxAge(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{"-1", "not-a-number", "9223372036854775808"} {
+		r := httptest.NewRequest("GET", "/auth/login?max_age="+url.QueryEscape(raw), nil)
+		if _, err := bindLoginRequestFromQuery(r); err == nil {
+			t.Errorf("max_age %q accepted", raw)
+		}
+	}
+}
 
 // server_login_resolve_test.go direct-call-tests resolveHomeRealm's
 // interaction with the connections.Store domain-verification contract

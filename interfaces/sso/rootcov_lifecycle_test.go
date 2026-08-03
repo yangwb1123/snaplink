@@ -6,17 +6,29 @@ package sso_test
 // WithUserLifecycle is not wired.
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
 	"github.com/yangwb1123/snaplink/domains/userlifecycle/memory"
+	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 )
 
 func TestRcovAdmin_UserLifecycle(t *testing.T) {
 	t.Parallel()
-	env := rcovNewAdminServer(t, sso.WithUserLifecycle(memory.New()))
-	base := env.url + "/api/v1/admin/users/" + rcovUser + "/lifecycle"
+	const managedUser = "rcov-user-managed"
+	users := defaultimpl.NewMemoryUserProvider()
+	for _, userID := range []string{rcovUser, managedUser} {
+		if err := users.CreateOrUpdate(context.Background(), &sso.User{ID: userID}); err != nil {
+			t.Fatalf("seed user %q: %v", userID, err)
+		}
+	}
+	env := rcovNewAdminServer(t,
+		sso.WithUserProvider(users),
+		sso.WithUserLifecycle(memory.New()),
+	)
+	base := env.url + "/api/v1/admin/users/" + managedUser + "/lifecycle"
 
 	// GET: a user with no record reports the implicit default (active) + the
 	// moves legal from it, and an empty (never null) history.

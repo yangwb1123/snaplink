@@ -365,6 +365,12 @@ type Metrics struct {
 	// governance signal (force-refresh), NOT an issuance denial, so it is its
 	// own unlabeled counter rather than a DenyReason on DenialsTotal.
 	TokenPolicyRenewRequiredTotal prometheus.Counter
+	// TokenPolicyRoleResolutionErrorsTotal counts tenant-roster lookup failures
+	// at the session seam (fail-open role resolution — roles stay empty and
+	// role selectors stop matching, so the widening window must be observable).
+	// No labels: bounded-cardinality discipline (a tenant/user label would be
+	// unbounded); the logged error carries the identifiers.
+	TokenPolicyRoleResolutionErrorsTotal prometheus.Counter
 
 	// Token-behavior anomaly findings (opt-in via WithTokenAnomalyDetector +
 	// WithMetrics). Zero traffic when no detector is wired — OPT-IN via

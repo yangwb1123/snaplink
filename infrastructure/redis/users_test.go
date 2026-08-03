@@ -27,6 +27,35 @@ func TestRedisUserProvider_CreateGetRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRedisUserProvider_UserNameClaimLifecycle(t *testing.T) {
+	t.Parallel()
+	_, rdb := newTestClient(t)
+	up := NewUserProvider(rdb)
+	ctx := context.Background()
+	if err := up.CreateOrUpdate(ctx, &sso.User{ID: "u1", Username: "Alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := up.CreateOrUpdate(ctx, &sso.User{ID: "u2", Username: "alice"}); !errors.Is(err, sso.ErrUserExists) {
+		t.Fatalf("duplicate username = %v, want ErrUserExists", err)
+	}
+	if err := up.CreateOrUpdate(ctx, &sso.User{ID: "u1", Username: "Bob"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := up.CreateOrUpdate(ctx, &sso.User{ID: "u2", Username: "Alice"}); err != nil {
+		t.Fatalf("released username could not be reclaimed: %v", err)
+	}
+	got, err := up.GetByUsername(ctx, "ALICE")
+	if err != nil || got.ID != "u2" {
+		t.Fatalf("GetByUsername = %+v, %v; want u2", got, err)
+	}
+	if err := up.Delete(ctx, "u2"); err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := up.UsernameExists(ctx, "alice"); err != nil || exists {
+		t.Fatalf("UsernameExists after delete = %v, %v; want false, nil", exists, err)
+	}
+}
+
 func TestRedisUserProvider_GetByIDUnknown(t *testing.T) {
 	t.Parallel()
 	_, rdb := newTestClient(t)

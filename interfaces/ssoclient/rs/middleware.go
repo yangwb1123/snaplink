@@ -106,6 +106,18 @@ func writeChallenge(w http.ResponseWriter, err error, usedDPoP bool, cfg Config)
 	// the AS's token endpoints, including on errors.
 	h.Set(headerCacheControl, "no-store")
 	h.Set(headerPragma, "no-cache")
+	if errors.Is(err, ErrServingRegionMismatch) {
+		// Governance denial, not a token-validity failure: 403, no bearer
+		// challenge — mirrors the AS's region_not_allowed discipline
+		// (interfaces/sso/server_tenant_residency.go: the token is valid,
+		// so NOT a 401 invalid_token challenge). no-store headers stay set.
+		// Only reachable after full validation (signature/typ/iss/aud/exp),
+		// so a garbage token can never probe the gate.
+		h.Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"region_not_allowed"}`))
+		return
+	}
 	scheme := schemeBearer
 	if usedDPoP {
 		scheme = schemeDPoP

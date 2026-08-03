@@ -211,6 +211,7 @@ func Build(deps Deps, cfg Config) (*BuildResult, error) {
 			users:        deps.UserProvider,
 			logger:       logger,
 			sessionHub:   deps.SessionHub,
+			resumeOAuth:  deps.ResumeFederatedLogin,
 		}
 		handlers = append(handlers, HandlerSpec{
 			Method:  http.MethodPost,
@@ -298,6 +299,7 @@ type acsHandler struct {
 	sessions     sso.SessionManager
 	users        sso.UserProvider
 	logger       spi.Logger
+	resumeOAuth  func(http.ResponseWriter, *http.Request, string, *sso.AuthResult) bool
 
 	// sessionHub, when non-nil (Deps.SessionHub), records this login's
 	// cross-protocol global_sid: a "core" leg (the just-created session) plus
@@ -349,6 +351,9 @@ func (h *acsHandler) serve(w http.ResponseWriter, r *http.Request) {
 		// ProcessAssertion already collapsed every validation failure to the
 		// single oracle-safe error; map it to the wire code with no detail.
 		writeError(w, http.StatusBadRequest, sso.ErrSAMLAssertionInvalid)
+		return
+	}
+	if h.resumeOAuth != nil && h.resumeOAuth(w, r, relayState, result) {
 		return
 	}
 

@@ -2,6 +2,7 @@ package oidc
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -47,6 +48,14 @@ type IDTokenRequest struct {
 	// hash; it MUST NOT appear in the token. Empty omits the claim.
 	DeviceSecret string
 
+	// ServingRegion names the regional deployment that minted this ID
+	// token, stamped as `serving_region` (SnapLink extension claim).
+	// First-class field, never a Claims-map entry, so OIDC Core §5.5
+	// [ProjectIDTokenClaims] (which filters only the extra-claims map)
+	// can never drop it. Empty = no region middleware wired / it
+	// resolved none -> the issuer omits the claim.
+	ServingRegion string
+
 	// RequestedClaims, when non-empty, is the RP's OIDC Core §5.5 `claims`
 	// parameter from the authorization request. The issuer calls
 	// [oidcsupport.ProjectIDTokenClaims] to filter [Claims] to only those
@@ -54,6 +63,14 @@ type IDTokenRequest struct {
 	// declared claim preferences. When empty (default), all claims in [Claims]
 	// are included unchanged (backward compatible).
 	RequestedClaims []byte // json.RawMessage of the `claims` parameter
+
+	// GrantedScopes / GrantedResources / AuthorizationDetails bind an ID
+	// token used as id_token_hint to the authority granted alongside it. Silent
+	// renewal may preserve or reduce this set, but can never expand it without
+	// interactive authorization.
+	GrantedScopes        []string
+	GrantedResources     []string
+	AuthorizationDetails json.RawMessage
 }
 
 // IDTokenIssuer mints OIDC ID Tokens. Optional SPI — when the server

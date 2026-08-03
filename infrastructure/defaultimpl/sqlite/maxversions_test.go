@@ -52,11 +52,14 @@ func TestMaxVersions_AllReturnPositive(t *testing.T) {
 
 	// Stores with appended migrations must report the higher version (proves
 	// MaxVersion reads the slice, not a hardcoded 1).
-	if got := sqlite.SessionsMaxVersion(); got != 4 {
-		t.Errorf("SessionsMaxVersion() = %d, want 4 (v4 session trust-score columns)", got)
+	if got := sqlite.SessionsMaxVersion(); got != 5 {
+		t.Errorf("SessionsMaxVersion() = %d, want 5 (v5 session authorization context)", got)
 	}
-	if got := sqlite.RefreshTokensMaxVersion(); got != 7 {
-		t.Errorf("RefreshTokensMaxVersion() = %d, want 7 (v7 bounds the family reuse ledger)", got)
+	if got := sqlite.UsersMaxVersion(); got != 2 {
+		t.Errorf("UsersMaxVersion() = %d, want 2 (v2 adds SCIM userName uniqueness)", got)
+	}
+	if got := sqlite.RefreshTokensMaxVersion(); got != 8 {
+		t.Errorf("RefreshTokensMaxVersion() = %d, want 8 (v7 bounds the family reuse ledger, v8 adds jti for refresh-introspect thumbprints)", got)
 	}
 	if got := sqlite.AuthCodesMaxVersion(); got != 4 {
 		t.Errorf("AuthCodesMaxVersion() = %d, want 4 (v3 adds requested_claims for the OIDC §5.5 claims parameter, v4 adds auth_time/amr/acr/resources/authorization_details/sid RFC 9068 auth context)", got)

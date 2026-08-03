@@ -78,6 +78,9 @@ message Client {
   bool   active         = 8;
   // Unix timestamp. 0 means the secret never expires (legacy/public client).
   int64  client_secret_expires_at = 9;
+  // Hosted-login return used to resume an upstream OIDC/SAML callback into
+  // this client's original authorization request. HTTPS except loopback dev.
+  string login_page_uri = 10;
 }
 
 message ListClientsRequest {

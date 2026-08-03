@@ -36,6 +36,14 @@ var (
 	// ErrAudienceMismatch: `aud` does not contain Config.ExpectedAud.
 	ErrAudienceMismatch = errors.New("rs: audience mismatch")
 
+	// ErrServingRegionMismatch: the token's `serving_region` is missing or
+	// not in Config.AllowedServingRegions — a governance denial
+	// (region-constrained deployment), NOT a token-validity failure. The
+	// middleware maps it to 403 region_not_allowed without a bearer
+	// challenge, mirroring the AS's two-code discipline. A token without
+	// the claim fails CLOSED when the allowlist is configured.
+	ErrServingRegionMismatch = errors.New("rs: serving region mismatch")
+
 	// ErrTokenExpired: `exp` is in the past beyond the skew tolerance.
 	ErrTokenExpired = errors.New("rs: token expired")
 

@@ -20,16 +20,18 @@ type cibaDeps struct {
 	store       CIBAStore
 	ttl         time.Duration
 	interval    time.Duration
+	userCode    CIBAUserCodeVerifier
 	verifyCA    func(ctx context.Context, assertion, formClientID, asIssuer string) (string, error)
 	resolveHint func(ctx context.Context, loginHint, idTokenHint, loginHintToken string) (string, string, error)
 	deliver     func(ctx context.Context, authReqID, subjectID, bindingMessage string) error
 }
 
-func (d *cibaDeps) ClientStoreAccessor() core.ClientStore    { return d.clients }
-func (d *cibaDeps) CIBAStore() CIBAStore                     { return d.store }
-func (d *cibaDeps) CIBARequestTTL() time.Duration            { return d.ttl }
-func (d *cibaDeps) CIBAPollInterval() time.Duration          { return d.interval }
-func (d *cibaDeps) ResolveIssuer(core.HandlerContext) string { return "https://issuer.test" }
+func (d *cibaDeps) ClientStoreAccessor() core.ClientStore      { return d.clients }
+func (d *cibaDeps) CIBAStore() CIBAStore                       { return d.store }
+func (d *cibaDeps) CIBARequestTTL() time.Duration              { return d.ttl }
+func (d *cibaDeps) CIBAPollInterval() time.Duration            { return d.interval }
+func (d *cibaDeps) CIBAUserCodeVerifier() CIBAUserCodeVerifier { return d.userCode }
+func (d *cibaDeps) ResolveIssuer(core.HandlerContext) string   { return "https://issuer.test" }
 func (d *cibaDeps) VerifyJWTClientAssertion(ctx context.Context, a, f, i string) (string, error) {
 	return d.verifyCA(ctx, a, f, i)
 }
@@ -167,6 +169,70 @@ func TestHandleBackchannelAuth(t *testing.T) {
 		}
 		if got := decodeBody(t, rec)["error"]; got != core.ErrUnknownUserID {
 			t.Fatalf("error = %v, want %s", got, core.ErrUnknownUserID)
+		}
+	})
+
+	t.Run("multiple hints invalid_request", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		d := newCIBADeps(cs, newMemCIBAStore())
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
+			"client_id=rp&client_secret=s&login_hint=known@user&id_token_hint=token")
+		HandleBackchannelAuth(d, ctx)
+		if got := decodeBody(t, rec)["error"]; rec.Code != http.StatusBadRequest || got != core.ErrInvalidRequest {
+			t.Fatalf("multiple hints = %d %v, want 400 invalid_request", rec.Code, got)
+		}
+	})
+
+	t.Run("unsupported user code is rejected", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		d := newCIBADeps(cs, newMemCIBAStore())
+		ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
+			"client_id=rp&client_secret=s&login_hint=known@user&user_code=1234")
+		HandleBackchannelAuth(d, ctx)
+		if got := decodeBody(t, rec)["error"]; rec.Code != http.StatusBadRequest || got != core.ErrInvalidRequest {
+			t.Fatalf("unsupported user_code = %d %v, want 400 invalid_request", rec.Code, got)
+		}
+	})
+
+	t.Run("user code required invalid and accepted", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		d := newCIBADeps(cs, newMemCIBAStore())
+		d.userCode = CIBAUserCodeVerifierFunc(func(_ context.Context, clientID, subjectID, code string) error {
+			if clientID != "rp" || subjectID != "user-1" {
+				return errors.New("wrong binding")
+			}
+			if code == "" {
+				return ErrCIBAUserCodeRequired
+			}
+			if code == "backend" {
+				return errors.New("verifier unavailable")
+			}
+			if code != "fresh-code" {
+				return ErrCIBAUserCodeInvalid
+			}
+			return nil
+		})
+		for _, tc := range []struct {
+			code, want string
+			status     int
+		}{
+			{"", core.ErrMissingUserCode, http.StatusBadRequest},
+			{"wrong", core.ErrInvalidUserCode, http.StatusBadRequest},
+			{"backend", core.ErrInternal, http.StatusInternalServerError},
+			{"fresh-code", "", http.StatusOK},
+		} {
+			ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
+				"client_id=rp&client_secret=s&login_hint=known@user&user_code="+tc.code)
+			HandleBackchannelAuth(d, ctx)
+			if rec.Code != tc.status {
+				t.Fatalf("code %q status = %d, want %d", tc.code, rec.Code, tc.status)
+			}
+			if tc.want != "" && decodeBody(t, rec)["error"] != tc.want {
+				t.Fatalf("code %q error mismatch", tc.code)
+			}
 		}
 	})
 
@@ -328,6 +394,38 @@ func TestHandleBackchannelAuth(t *testing.T) {
 		}
 		if body["interval"] != float64(3) {
 			t.Errorf("interval = %v, want 3", body["interval"])
+		}
+	})
+
+	t.Run("requested expiry can shorten but not extend server ttl", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		d := newCIBADeps(cs, newMemCIBAStore())
+		d.ttl = 30 * time.Second
+		for _, tc := range []struct {
+			requested string
+			want      float64
+		}{{"10", 10}, {"90", 30}} {
+			ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
+				"client_id=rp&client_secret=s&login_hint=known@user&requested_expiry="+tc.requested)
+			HandleBackchannelAuth(d, ctx)
+			if got := decodeBody(t, rec)["expires_in"]; got != tc.want {
+				t.Fatalf("requested %s expires_in = %v, want %v", tc.requested, got, tc.want)
+			}
+		}
+	})
+
+	t.Run("non-positive or malformed requested expiry is invalid_request", func(t *testing.T) {
+		cs := newMemClientStore()
+		cs.put(activeClient("rp"), "s")
+		for _, expiry := range []string{"0", "-1", "bad"} {
+			d := newCIBADeps(cs, newMemCIBAStore())
+			ctx, rec := newCtx(http.MethodPost, ctFormURLEncoded,
+				"client_id=rp&client_secret=s&login_hint=known@user&requested_expiry="+expiry)
+			HandleBackchannelAuth(d, ctx)
+			if got := decodeBody(t, rec)["error"]; rec.Code != http.StatusBadRequest || got != core.ErrInvalidRequest {
+				t.Fatalf("requested_expiry=%q = %d %v, want invalid_request", expiry, rec.Code, got)
+			}
 		}
 	})
 }

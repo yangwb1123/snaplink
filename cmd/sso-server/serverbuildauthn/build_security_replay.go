@@ -17,6 +17,7 @@ import (
 	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
 	redisbackend "github.com/yangwb1123/snaplink/infrastructure/redis"
 
+	"github.com/yangwb1123/snaplink/protocols/oidc/bcl"
 	"github.com/yangwb1123/snaplink/shared/security"
 )
 
@@ -138,6 +139,22 @@ func BuildSubjectClientIndex(cfg config.BCLIndexConfig, rdb goredis.Cmdable) (se
 		return idx, "sqlite (cluster-shared)", nil
 	default:
 		return nil, "", fmt.Errorf("unknown backchannel_logout.index.backend %q", cfg.Backend)
+	}
+}
+
+func BuildBackchannelFailureStore(cfg config.BCLFailureQueueConfig, rdb goredis.Cmdable) (bcl.Store, string, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.Backend)) {
+	case "":
+		return nil, "disabled", nil
+	case "memory":
+		return bcl.NewMemoryStore(0), "memory (process-local)", nil
+	case "redis":
+		if rdb == nil {
+			return nil, "", errors.New("backchannel_logout.failure_queue.backend=redis but no redis block configured")
+		}
+		return redisbackend.NewBackchannelFailureStore(rdb), "redis (persistent, cluster-shared)", nil
+	default:
+		return nil, "", fmt.Errorf("unknown backchannel_logout.failure_queue.backend %q", cfg.Backend)
 	}
 }
 

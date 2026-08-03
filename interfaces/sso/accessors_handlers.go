@@ -3,12 +3,17 @@ package sso
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"time"
 
 	"github.com/yangwb1123/snaplink/shared/security"
 
+	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
 	"github.com/yangwb1123/snaplink/domains/federation"
+	"github.com/yangwb1123/snaplink/domains/permissions"
 	"github.com/yangwb1123/snaplink/interfaces/admin"
+	"github.com/yangwb1123/snaplink/internal/auth/login"
 	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/internal/handler/tokengrant"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
@@ -42,6 +47,71 @@ func (s *Server) RequireClientStore() error {
 // ResolveLocalSubject translates a (possibly pairwise) subject back to the local user id.
 func (s *Server) ResolveLocalSubject(ctx context.Context, sub string) (string, error) {
 	return s.resolveLocalSubject(ctx, sub)
+}
+
+// EnforceSilentRenewalPolicy prevents prompt=none from bypassing live
+// conditional-access decisions after the hint and its session are validated.
+func (s *Server) EnforceSilentRenewalPolicy(ctx core.HandlerContext, req oidc.SilentRenewalRequest,
+	client *core.Client, claims *core.TokenClaims) (oidc.SilentRenewalRequest, bool) {
+	if s.capEngine == nil || !s.capEngine.Config().Enforce {
+		return req, true
+	}
+	subject := claims.Subject
+	if local, err := s.resolveLocalSubject(ctx.Request().Context(), subject); err == nil && local != "" {
+		subject = local
+	}
+	effectiveScopes := req.Scope
+	if len(effectiveScopes) == 0 {
+		effectiveScopes = claims.Scopes
+	}
+	loginReq := &login.Request{ClientID: req.ClientID, Scope: effectiveScopes, Resource: req.Resource}
+	dec, err := s.capEngine.Evaluate(ctx.Request().Context(), s.buildAccessContext(ctx,
+		&AuthResult{UserID: subject, AuthMethods: claims.AMR, AchievedACR: claims.ACR, AuthTime: claims.AuthTime, SessionID: claims.SID}, loginReq, client))
+	if err != nil {
+		s.logger.Error("silent renewal conditional access unavailable; failing open", "error", err,
+			"user", subject, "client", req.ClientID)
+		return req, true
+	}
+	if s.metrics != nil {
+		s.metrics.ObserveConditionalAccessDecision(string(dec.Verdict))
+	}
+	if dec.Log {
+		s.logger.Info("silent renewal conditional access policy matched", "policy", dec.MatchedPolicy,
+			"verdict", dec.Verdict, "user", subject, "client", req.ClientID)
+	}
+	switch dec.Verdict {
+	case conditionalaccess.VerdictDeny:
+		s.recordLoginFailure(ctx, req.ClientID, "silent_renewal", core.ErrConditionalAccessDenied)
+		ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, core.ErrConditionalAccessDenied, req.State))
+		return req, false
+	case conditionalaccess.VerdictRequireStepUp:
+		s.recordLoginFailure(ctx, req.ClientID, "silent_renewal", core.ErrInteractionRequired)
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, core.ErrInteractionRequired, req.State))
+		return req, false
+	}
+	if len(dec.RestrictScopes) > 0 {
+		req.Scope = restrictGrantedScopes(effectiveScopes, dec.RestrictScopes)
+	}
+	return req, true
+}
+
+func (s *Server) conditionalAccessGroups(ctx context.Context, userID, clientID string) []string {
+	if s.permissions == nil {
+		return nil
+	}
+	roles, err := s.permissions.Roles(ctx, userID, clientID)
+	if err != nil {
+		if !errors.Is(err, permissions.ErrUserNotFound) {
+			s.logger.Error("conditional access role lookup failed; using no groups", "error", err,
+				"user", userID, "client", clientID)
+		}
+		return nil
+	}
+	groups := make([]string, 0, len(roles))
+	for _, role := range roles {
+		groups = append(groups, role.Code)
+	}
+	return groups
 }
 
 // RevokeAcrossIssuers / MintImpersonationToken / TargetHoldsAdminScope /

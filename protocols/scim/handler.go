@@ -6,9 +6,9 @@
 // GetByID / List — so SCIM provisioning works against any backend wired
 // into the server (memory, SQLite, or a custom store) with zero schema
 // change. SCIM-only attributes that core.User has no dedicated field for
-// (userName, active, name sub-attributes, non-primary emails) are stored
-// in core.User.Attributes under a "scim:" namespace and round-tripped
-// losslessly (see user.go).
+// (active, name sub-attributes, non-primary emails) are stored in
+// core.User.Attributes under a "scim:" namespace and round-tripped losslessly
+// (see user.go).
 //
 // The Handler is transport-agnostic: it satisfies http.Handler and does
 // its own method + path dispatch (mirroring cmd/sso-server's
@@ -22,6 +22,7 @@ package scim
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -295,6 +296,9 @@ func (h *Handler) locationFor(collection, id string) string {
 // detail is logged (not returned) to prevent internal store messages from
 // leaking in the API response, even though this surface is admin-only.
 func (h *Handler) storageError(err error) ErrorResponse {
+	if errors.Is(err, core.ErrUserExists) {
+		return newError(http.StatusConflict, scimTypeUniqueness, "userName already exists")
+	}
 	if h.logger != nil {
 		h.logger.Error("SCIM storage error", "error", err)
 	}

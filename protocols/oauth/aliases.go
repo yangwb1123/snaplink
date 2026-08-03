@@ -36,6 +36,8 @@ type (
 	CIBARequest                 = oauthspi.CIBARequest
 	CIBAStore                   = oauthspi.CIBAStore
 	CIBATransport               = oauthspi.CIBATransport
+	CIBAUserCodeVerifier        = oauthspi.CIBAUserCodeVerifier
+	CIBAUserCodeVerifierFunc    = oauthspi.CIBAUserCodeVerifierFunc
 	CIBAPingNotifier            = oauthspi.CIBAPingNotifier
 	CIBAPingNotifierFunc        = oauthspi.CIBAPingNotifierFunc
 	CIBAPushNotifier            = oauthspi.CIBAPushNotifier
@@ -90,6 +92,8 @@ var (
 	ErrCIBARequestNotFound       = oauthspi.ErrCIBARequestNotFound
 	ErrCIBARequestInvalid        = oauthspi.ErrCIBARequestInvalid
 	ErrCIBARequestResolved       = oauthspi.ErrCIBARequestResolved
+	ErrCIBAUserCodeRequired      = oauthspi.ErrCIBAUserCodeRequired
+	ErrCIBAUserCodeInvalid       = oauthspi.ErrCIBAUserCodeInvalid
 	BindParams                   = oauthwire.BindParams
 	BearerToken                  = oauthwire.BearerToken
 	BasicClientCreds             = oauthwire.BasicClientCreds

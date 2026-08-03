@@ -33,11 +33,15 @@ func (c *ssfCtx) JSON(code int, v any) {
 		rw.WriteHeader(code)
 	}
 }
-func (c *ssfCtx) Param(string) string  { return "" }
-func (c *ssfCtx) Bind(any) error       { return nil }
-func (c *ssfCtx) Redirect(int, string) {}
-func (c *ssfCtx) Set(string, any)      {}
-func (c *ssfCtx) Get(string) any       { return nil }
+func (c *ssfCtx) Param(string) string                     { return "" }
+func (c *ssfCtx) Bind(any) error                          { return nil }
+func (c *ssfCtx) Redirect(int, string)                    {}
+func (c *ssfCtx) Set(string, any)                         {}
+func (c *ssfCtx) Get(string) any                          { return nil }
+func (c *ssfCtx) Abort()                                  {}
+func (c *ssfCtx) Aborted() bool                           { return false }
+func (c *ssfCtx) Written() bool                           { return false }
+func (c *ssfCtx) SetResponseWriter(w http.ResponseWriter) { c.w = w }
 
 func TestHandleSSFConfiguration(t *testing.T) {
 	deps := &ssfConfigDeps{}

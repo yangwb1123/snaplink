@@ -9,6 +9,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/infrastructure/defaultimpl"
 	"github.com/yangwb1123/snaplink/protocols/oauth/txntoken"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
@@ -191,6 +192,21 @@ func TestHandleGrant_InvalidSubjectTokenIsInvalidGrant(t *testing.T) {
 		SubjectToken:     "not-a-real-token",
 		SubjectTokenType: core.TokenTypeAccessToken,
 		Audience:         []string{testTrustDomain},
+	})
+	assertErrorCode(t, rec, core.ErrInvalidGrant)
+}
+
+func TestHandleGrant_IDTokenDeclaredAsAccessTokenIsInvalidGrant(t *testing.T) {
+	signer, iss := newTestIssuer(t)
+	deps := newTestDeps(signer)
+	idToken, err := signer.IssueIDToken(context.Background(), &oidc.IDTokenRequest{Subject: "alice", Audience: "svc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, rec := newGrantCtx()
+	txntoken.HandleGrant(deps, iss, nil, ctx, &core.Client{ID: "svc"}, txntoken.Request{
+		SubjectToken: idToken, SubjectTokenType: core.TokenTypeAccessToken,
+		Audience: []string{testTrustDomain},
 	})
 	assertErrorCode(t, rec, core.ErrInvalidGrant)
 }

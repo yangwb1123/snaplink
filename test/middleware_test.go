@@ -24,6 +24,7 @@ type fakeContext struct {
 	code    int
 	body    any
 	store   map[string]any
+	aborted bool
 }
 
 func newFake(method, url string) *fakeContext {
@@ -44,13 +45,20 @@ func (c *fakeContext) JSON(code int, v any) {
 	c.jsonHit = true
 	c.code = code
 	c.body = v
+	// A JSON write from Auth/CORS is a terminal response: the chain must
+	// stop, matching the real contexts' abort-after-write contract.
+	c.aborted = true
 	if c.jsonCb != nil {
 		c.jsonCb(code, v)
 	}
 }
-func (c *fakeContext) Redirect(int, string) {}
-func (c *fakeContext) Set(k string, v any)  { c.store[k] = v }
-func (c *fakeContext) Get(k string) any     { return c.store[k] }
+func (c *fakeContext) Redirect(int, string)                    {}
+func (c *fakeContext) Set(k string, v any)                     { c.store[k] = v }
+func (c *fakeContext) Get(k string) any                        { return c.store[k] }
+func (c *fakeContext) Abort()                                  { c.aborted = true }
+func (c *fakeContext) Aborted() bool                           { return c.aborted }
+func (c *fakeContext) Written() bool                           { return c.jsonHit }
+func (c *fakeContext) SetResponseWriter(w http.ResponseWriter) { c.w = w }
 
 // ---------- AuthMiddleware ----------
 

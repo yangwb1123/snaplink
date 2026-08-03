@@ -149,6 +149,7 @@ func (r *Resource) toUser(id string) *core.User {
 		ID:         id,
 		ExternalID: r.ExternalID,
 		Email:      r.primaryEmail(),
+		Username:   r.UserName,
 		Attributes: map[string]string{},
 	}
 	// displayName backs core.User.Name; fall back to the formatted name
@@ -218,6 +219,7 @@ func (r *Resource) toUserPreserving(id string, existing *core.User) *core.User {
 		ExternalID: modeled.ExternalID,
 		Provider:   existing.Provider, // server-managed, not SCIM-modeled
 		Email:      modeled.Email,
+		Username:   modeled.Username,
 		Name:       modeled.Name,
 		Attributes: merged,
 	}
@@ -251,7 +253,7 @@ func UserToResource(u *core.User, location string) Resource {
 		DisplayName: u.Name,
 	}
 	attrs := u.Attributes
-	r.UserName = attrs[attrUserName]
+	r.UserName = storedUserName(u)
 	// active defaults to true when the attribute was never persisted
 	// (e.g. a user created outside SCIM via the admin API): an
 	// account with no explicit deprovision flag is active.
@@ -291,6 +293,13 @@ func UserToResource(u *core.User, location string) Resource {
 		r.Meta.LastModified = u.UpdatedAt.UTC().Format(time.RFC3339)
 	}
 	return r
+}
+
+func storedUserName(u *core.User) string {
+	if u.Username != "" {
+		return u.Username
+	}
+	return u.Attributes[attrUserName]
 }
 
 // emailsFromUser reconstructs the emails array: the primary from

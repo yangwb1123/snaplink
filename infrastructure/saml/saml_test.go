@@ -126,6 +126,49 @@ func TestACS_ValidAssertion_CreatesSession(t *testing.T) {
 	}
 }
 
+func TestACS_ValidAssertion_ResumesOAuthTransaction(t *testing.T) {
+	t.Parallel()
+	idp := newIDPKey(t)
+	sessions := defaultimpl.NewMemorySessionManager()
+	users := defaultimpl.NewMemoryUserProvider()
+	var gotState, gotUser string
+	res, err := samlmod.Build(samlmod.Deps{
+		SAMLServerDeps: ssoext.SAMLServerDeps{
+			SessionManager: sessions, UserProvider: users,
+			ClientStore: defaultimpl.NewMemoryClientStore(),
+			ResumeFederatedLogin: func(w http.ResponseWriter, _ *http.Request, state string, result *sso.AuthResult) bool {
+				gotState, gotUser = state, result.UserID
+				w.WriteHeader(http.StatusFound)
+				return true
+			},
+		},
+	}, samlmod.Config{SPs: []sp.SPConfig{{
+		Name: "test-idp", EntityID: spEntity, ACSURL: acsURL,
+		IDPCert: idp.certPEM(), IDPEntityID: idpEntity,
+	}}})
+	if err != nil {
+		t.Fatalf("saml.Build: %v", err)
+	}
+	var acs http.HandlerFunc
+	for _, handler := range res.Handlers {
+		if handler.Path == sso.PathSAMLSSOCallback && handler.Method == http.MethodPost {
+			acs = handler.Handler
+		}
+	}
+	response := mintSignedResponse(t, idp, "alice@example.com", nil)
+	rec := postACS(acs, response, "test-idp:slf.opaque")
+	if rec.Code != http.StatusFound || gotState != "test-idp:slf.opaque" || gotUser != "alice@example.com" {
+		t.Fatalf("OAuth resume = %d state=%q user=%q", rec.Code, gotState, gotUser)
+	}
+	all, _ := sessions.ListAll(context.Background())
+	if len(all) != 0 {
+		t.Fatalf("ACS created a legacy session before OAuth resume: %v", all)
+	}
+	if _, err := users.GetByID(context.Background(), "alice@example.com"); err == nil {
+		t.Fatal("ACS upserted a user outside the resumed OAuth pipeline")
+	}
+}
+
 func TestACS_InvalidAssertion_400AndNoStore(t *testing.T) {
 	t.Parallel()
 	handler, sessions, _, _ := buildTestServer(t)

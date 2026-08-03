@@ -338,6 +338,11 @@ type AccessPolicyConfig struct {
 	// dry_run policy entries, confirm the admin governance view looks right,
 	// THEN flip this on.
 	Enforce bool `yaml:"enforce"`
+	// SessionSweepInterval is the cadence for active-session re-evaluation.
+	// Zero takes the engine default (5m) when Enforce is true.
+	SessionSweepInterval time.Duration `yaml:"session_sweep_interval"`
+	// SessionSweepBatchSize bounds sessions mutated per pass; zero defaults 500.
+	SessionSweepBatchSize int `yaml:"session_sweep_batch_size"`
 }
 
 // DegradationConfig opts into the disaster-recovery degraded-service control

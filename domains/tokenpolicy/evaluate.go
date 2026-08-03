@@ -80,10 +80,24 @@ func RenewAt(renewAfter float64, issuedAt, expiresAt time.Time) time.Time {
 }
 
 // matches reports whether policy p's selector applies to the request: its
-// ClientID (empty = any) equals the request's, AND every selector scope is
-// present in the request's granted scopes.
+// tenant (empty = any) equals the request's, its ClientID (empty = any)
+// matches exactly or by trailing-"*" prefix, its Subject (empty = any)
+// matches exactly or by trailing-"*" prefix, its role selector (empty =
+// any) intersects the request's resolved roles, AND every selector scope is
+// present in the request's granted scopes. Pure conjunction — evaluation
+// order does not change the result; the tenant check runs first for
+// readability.
 func matches(p *Policy, in PolicyInput) bool {
-	if p.ClientID != "" && p.ClientID != in.ClientID {
+	if p.TenantID != "" && p.TenantID != in.TenantID {
+		return false
+	}
+	if p.ClientID != "" && !prefixOrExact(in.ClientID, p.ClientID) {
+		return false
+	}
+	if p.Subject != "" && !prefixOrExact(in.Subject, p.Subject) {
+		return false
+	}
+	if len(p.SubjectRoles) > 0 && !rolesIntersect(in.SubjectRoles, p.SubjectRoles) {
 		return false
 	}
 	for _, want := range p.Scopes {
@@ -92,6 +106,31 @@ func matches(p *Policy, in PolicyInput) bool {
 		}
 	}
 	return true
+}
+
+// prefixOrExact reports whether a == want, or a has want's non-empty prefix
+// when want ends in "*" (the selector wildcard — same semantics as
+// scopePresent). A bare "*" prefix-matches everything, exactly like the
+// scope selector; Validate is the gate that keeps a bare "*" out of every
+// configuration surface.
+func prefixOrExact(a, want string) bool {
+	if strings.HasSuffix(want, "*") {
+		return strings.HasPrefix(a, strings.TrimSuffix(want, "*"))
+	}
+	return a == want
+}
+
+// rolesIntersect reports whether the input roles share at least one entry
+// with the policy's role selector. Empty input roles (the seam failed open
+// or has no tenant context) intersect nothing — role selectors then never
+// match (fail-open).
+func rolesIntersect(input, want []string) bool {
+	for _, r := range want {
+		if slices.Contains(input, r) {
+			return true
+		}
+	}
+	return false
 }
 
 // clampTTL applies a single MaxTTL ceiling, downward-only. An unset ceiling

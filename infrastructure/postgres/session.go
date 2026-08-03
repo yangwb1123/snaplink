@@ -7,10 +7,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/migrate"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 const sessionIDBytes = 32
@@ -42,7 +44,19 @@ CREATE INDEX IF NOT EXISTS idx_sessions_tenant_id
 
 var sessionMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline", SQL: sessionSchema},
+	{Version: 2, Name: "session-security-context", SQL: `
+ALTER TABLE sessions ADD COLUMN trust_score       DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN trust_set_at      BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN step_up_required  INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN client_id         TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN authorized_scopes TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN auth_time         BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN device_id         TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN kind              TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_sessions_subject_client ON sessions(user_id, client_id);`},
 }
+
+const sessionCols = "id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id, trust_score, trust_set_at, step_up_required, client_id, authorized_scopes, auth_time, device_id, kind"
 
 // SessionManager is the Postgres-backed implementation of [sso.SessionManager].
 // Suitable for multi-replica deployments that want a single DB tech stack
@@ -122,19 +136,18 @@ func (s *SessionManager) CreateWithMeta(ctx context.Context, userID string, meta
 	}
 	now := time.Now().UTC()
 	session := &sso.Session{
-		ID:        id,
-		UserID:    userID,
-		CreatedAt: now,
-		ExpiresAt: now.Add(s.ttl),
-		IP:        meta.IP,
-		UserAgent: meta.UserAgent,
-		TenantID:  meta.TenantID,
+		ID: id, UserID: userID, CreatedAt: now, ExpiresAt: now.Add(s.ttl),
+		IP: meta.IP, UserAgent: meta.UserAgent, TenantID: meta.TenantID,
+		DeviceID: meta.DeviceID, ClientID: meta.ClientID, Kind: meta.Kind,
+		AuthorizedScopes: append([]string(nil), meta.AuthorizedScopes...), AuthTime: meta.AuthTime,
+		TrustScore: meta.TrustScore, TrustSetAt: meta.TrustSetAt,
 	}
 	_, err = s.db.ExecContext(ctx, `
-        INSERT INTO sessions (id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id)
-        VALUES ($1, $2, $3, $4, 0, $5, $6, $7)`,
+        INSERT INTO sessions (id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id, trust_score, trust_set_at, step_up_required, client_id, authorized_scopes, auth_time, device_id, kind)
+        VALUES ($1, $2, $3, $4, 0, $5, $6, $7, $8, $9, 0, $10, $11, $12, $13, $14)`,
 		session.ID, session.UserID, session.CreatedAt.UnixNano(), session.ExpiresAt.UnixNano(),
-		session.IP, session.UserAgent, session.TenantID,
+		session.IP, session.UserAgent, session.TenantID, session.TrustScore, sessionUnixNanoOrZero(session.TrustSetAt),
+		session.ClientID, strings.Join(session.AuthorizedScopes, " "), sessionUnixNanoOrZero(session.AuthTime), session.DeviceID, session.Kind,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: insert session: %w", err)
@@ -145,7 +158,7 @@ func (s *SessionManager) CreateWithMeta(ctx context.Context, userID string, meta
 func (s *SessionManager) Get(ctx context.Context, sessionID string) (*sso.Session, error) {
 	now := time.Now().UnixNano()
 	row := s.db.QueryRowContext(ctx, `
-        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id
+		SELECT `+sessionCols+`
           FROM sessions WHERE id = $1 AND revoked = 0 AND expires_at > $2`, sessionID, now)
 	out, err := scanSession(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -173,7 +186,7 @@ func (s *SessionManager) Refresh(ctx context.Context, sessionID string) (*sso.Se
 	row := s.db.QueryRowContext(ctx, `
         UPDATE sessions SET expires_at = $1
           WHERE id = $2 AND revoked = 0 AND expires_at > $3
-        RETURNING id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id`,
+		RETURNING `+sessionCols,
 		now.Add(s.ttl).UnixNano(), sessionID, now.UnixNano(),
 	)
 	out, err := scanSession(row)
@@ -189,7 +202,7 @@ func (s *SessionManager) Refresh(ctx context.Context, sessionID string) (*sso.Se
 func (s *SessionManager) ListByUser(ctx context.Context, userID string) ([]*sso.Session, error) {
 	now := time.Now().UnixNano()
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id
+		SELECT `+sessionCols+`
           FROM sessions WHERE user_id = $1 AND revoked = 0 AND expires_at > $2`, userID, now)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: list by user: %w", err)
@@ -200,7 +213,7 @@ func (s *SessionManager) ListByUser(ctx context.Context, userID string) ([]*sso.
 
 func (s *SessionManager) ListAll(ctx context.Context) ([]*sso.Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id
+		SELECT `+sessionCols+`
           FROM sessions`)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: list all: %w", err)
@@ -214,7 +227,7 @@ func (s *SessionManager) ListByTenant(ctx context.Context, tenantID string) ([]*
 		return []*sso.Session{}, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `
-        SELECT id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id
+		SELECT `+sessionCols+`
           FROM sessions WHERE tenant_id = $1`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: list by tenant: %w", err)
@@ -235,19 +248,53 @@ func (s *SessionManager) DeleteByTenant(ctx context.Context, tenantID string) (i
 	return int(n), nil
 }
 
+func (s *SessionManager) MarkStepUp(ctx context.Context, sessionID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET step_up_required = 1 WHERE id = $1`, sessionID)
+	return err
+}
+
+func (s *SessionManager) SetTrust(ctx context.Context, sessionID string, score float64, setAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET trust_score = $1, trust_set_at = $2, step_up_required = 0 WHERE id = $3`, score, sessionUnixNanoOrZero(setAt), sessionID)
+	return err
+}
+
+func (s *SessionManager) SetAuthorizedScopes(ctx context.Context, sessionID string, scopes []string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET authorized_scopes = $1 WHERE id = $2`, strings.Join(scopes, " "), sessionID)
+	return err
+}
+
 func scanSession(s scanner) (*sso.Session, error) {
 	var (
 		out                              sso.Session
 		createdAtUnixNs, expiresAtUnixNs int64
 		revokedInt                       int64
+		trustSetAtUnixNs, authTimeUnixNs int64
+		stepUpInt                        int64
+		authorizedScopes                 string
 	)
-	if err := s.Scan(&out.ID, &out.UserID, &createdAtUnixNs, &expiresAtUnixNs, &revokedInt, &out.IP, &out.UserAgent, &out.TenantID); err != nil {
+	if err := s.Scan(&out.ID, &out.UserID, &createdAtUnixNs, &expiresAtUnixNs, &revokedInt, &out.IP, &out.UserAgent, &out.TenantID,
+		&out.TrustScore, &trustSetAtUnixNs, &stepUpInt, &out.ClientID, &authorizedScopes, &authTimeUnixNs, &out.DeviceID, &out.Kind); err != nil {
 		return nil, err
 	}
 	out.CreatedAt = time.Unix(0, createdAtUnixNs).UTC()
 	out.ExpiresAt = time.Unix(0, expiresAtUnixNs).UTC()
 	out.Revoked = revokedInt != 0
+	out.StepUpRequired = stepUpInt != 0
+	out.AuthorizedScopes = strings.Fields(authorizedScopes)
+	if trustSetAtUnixNs != 0 {
+		out.TrustSetAt = time.Unix(0, trustSetAtUnixNs).UTC()
+	}
+	if authTimeUnixNs != 0 {
+		out.AuthTime = time.Unix(0, authTimeUnixNs).UTC()
+	}
 	return &out, nil
+}
+
+func sessionUnixNanoOrZero(value time.Time) int64 {
+	if value.IsZero() {
+		return 0
+	}
+	return value.UnixNano()
 }
 
 func scanSessionList(rows *sql.Rows) ([]*sso.Session, error) {
@@ -274,8 +321,10 @@ func randomSessionID() (string, error) {
 }
 
 var (
-	_ sso.SessionManager      = (*SessionManager)(nil)
-	_ sso.SessionMetaCreator  = (*SessionManager)(nil)
-	_ sso.SessionTenantIndex  = (*SessionManager)(nil)
-	_ sso.SessionTenantLister = (*SessionManager)(nil)
+	_ sso.SessionManager               = (*SessionManager)(nil)
+	_ sso.SessionMetaCreator           = (*SessionManager)(nil)
+	_ sso.SessionTenantIndex           = (*SessionManager)(nil)
+	_ sso.SessionTenantLister          = (*SessionManager)(nil)
+	_ sso.SessionTrustManager          = (*SessionManager)(nil)
+	_ core.SessionAuthorizationManager = (*SessionManager)(nil)
 )

@@ -11,7 +11,7 @@ import (
 
 func TestBuildAuthCodeStore_MemoryDefault(t *testing.T) {
 	t.Parallel()
-	s, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{}, nil)
+	s, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{}, nil, nil, "")
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -22,7 +22,7 @@ func TestBuildAuthCodeStore_MemoryDefault(t *testing.T) {
 
 func TestBuildAuthCodeStore_SQLiteNeedsDSN(t *testing.T) {
 	t.Parallel()
-	_, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{Backend: "sqlite"}, nil)
+	_, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{Backend: "sqlite"}, nil, nil, "")
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -35,7 +35,7 @@ func TestBuildAuthCodeStore_SQLiteOpensFile(t *testing.T) {
 	s, err := serverbuildstore.BuildAuthCodeStore(config.OAuthConfig{
 		Backend: "sqlite",
 		SQLite:  config.OAuthSQLiteConfig{DSN: dsn},
-	}, nil)
+	}, nil, nil, "")
 	if err != nil {
 		t.Fatalf("sqlite build: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestBuildRefreshTokenStore_SQLiteOpensFile(t *testing.T) {
 	s, err := serverbuildstore.BuildRefreshTokenStore(config.OAuthConfig{
 		Backend: "sqlite",
 		SQLite:  config.OAuthSQLiteConfig{DSN: dsn},
-	}, nil)
+	}, nil, nil, "")
 	if err != nil {
 		t.Fatalf("sqlite build: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestBuildRefreshTokenStore_SQLiteOpensFile(t *testing.T) {
 
 func TestBuildDeviceCodeStore_UnknownBackendErrors(t *testing.T) {
 	t.Parallel()
-	_, err := serverbuildstore.BuildDeviceCodeStore(config.OAuthConfig{Backend: "redis"}, nil)
+	_, err := serverbuildstore.BuildDeviceCodeStore(config.OAuthConfig{Backend: "redis"}, nil, nil, "")
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
@@ -70,7 +70,7 @@ func TestBuildDeviceCodeStore_UnknownBackendErrors(t *testing.T) {
 
 func TestBuildPARStore_MemoryDefault(t *testing.T) {
 	t.Parallel()
-	s, err := serverbuildstore.BuildPARStore(config.OAuthConfig{}, nil)
+	s, err := serverbuildstore.BuildPARStore(config.OAuthConfig{}, nil, nil, "")
 	if err != nil {
 		t.Fatalf("memory build: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestBuildPARStore_MemoryDefault(t *testing.T) {
 
 func TestBuildPARStore_SQLiteNeedsDSN(t *testing.T) {
 	t.Parallel()
-	_, err := serverbuildstore.BuildPARStore(config.OAuthConfig{Backend: "sqlite"}, nil)
+	_, err := serverbuildstore.BuildPARStore(config.OAuthConfig{Backend: "sqlite"}, nil, nil, "")
 	if err == nil {
 		t.Fatal("expected error when sqlite backend has empty DSN")
 	}
@@ -94,7 +94,7 @@ func TestBuildPARStore_SQLiteOpensFile(t *testing.T) {
 	s, err := serverbuildstore.BuildPARStore(config.OAuthConfig{
 		Backend: "sqlite",
 		SQLite:  config.OAuthSQLiteConfig{DSN: dsn},
-	}, nil)
+	}, nil, nil, "")
 	if err != nil {
 		t.Fatalf("sqlite build: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestBuildPARStore_SQLiteOpensFile(t *testing.T) {
 
 func TestBuildPARStore_UnknownBackendErrors(t *testing.T) {
 	t.Parallel()
-	_, err := serverbuildstore.BuildPARStore(config.OAuthConfig{Backend: "redis"}, nil)
+	_, err := serverbuildstore.BuildPARStore(config.OAuthConfig{Backend: "redis"}, nil, nil, "")
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}

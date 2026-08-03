@@ -125,7 +125,7 @@ func tokExResolveSubject(d TokenExchangeDeps, ctx core.HandlerContext, req Token
 			err = nil
 		}
 	}
-	if err != nil || claims == nil {
+	if err != nil || !core.TokenClaimsMatchDeclaredType(claims, req.SubjectTokenType) {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
 		return true
 	}
@@ -223,7 +223,7 @@ func tokExResolveActor(d TokenExchangeDeps, ctx core.HandlerContext, client *cor
 // claims and done=true (response already written) when any check fails.
 func tokExValidateActor(d TokenExchangeDeps, ctx core.HandlerContext, req TokenExchangeRequest, st *tokExState) (actorClaims *core.TokenClaims, done bool) {
 	actorClaims, _, aerr := d.ValidateAnyToken(ctx.Request().Context(), req.ActorToken)
-	if aerr != nil || actorClaims == nil {
+	if aerr != nil || !core.TokenClaimsMatchDeclaredType(actorClaims, req.ActorTokenType) {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
 		return nil, true
 	}
@@ -366,7 +366,7 @@ func tokExResolveSubjectAndIssue(d TokenExchangeDeps, ctx core.HandlerContext, c
 		return true
 	}
 	st.issuedSub = d.ApplyPairwiseSubject(ctx.Request().Context(), client, localSub)
-	token, err := st.ti.Issue(ctx.Request().Context(), tokExSubject(client, st), st.scopes)
+	token, err := st.ti.Issue(ctx.Request().Context(), tokExSubject(client, st, servingRegionFrom(ctx)), st.scopes)
 	if err != nil {
 		d.SrvLogger().Error("token exchange issuance failed", "strategy", st.strategy, "error", err)
 		writeTokenIssueError(ctx, err)
@@ -386,12 +386,13 @@ func tokExResolveSubjectAndIssue(d TokenExchangeDeps, ctx core.HandlerContext, c
 // tokExSubject assembles the core.Subject for the exchanged access token from
 // the resolved exchange state. Extracted from tokExResolveSubjectAndIssue to keep
 // that stage within the function-length budget.
-func tokExSubject(client *core.Client, st *tokExState) *core.Subject {
+func tokExSubject(client *core.Client, st *tokExState, servingRegion string) *core.Subject {
 	return &core.Subject{
 		ID:        st.issuedSub,
 		Claims:    st.claims.Extra,
 		Resources: st.resources,
 		ClientID:  client.ID,
+		TenantID:  client.TenantID,
 		// auth_time + amr propagate from the original subject_token — the
 		// exchange doesn't represent a fresh end-user auth event; carrying the
 		// originals lets downstream services see the actual factor strength.
@@ -406,6 +407,10 @@ func tokExSubject(client *core.Client, st *tokExState) *core.Subject {
 		// both carry the inbound sid while the primary access token —
 		// always returned, per RFC 8693 §2.2.1 — silently didn't.
 		SID: st.claims.SID,
+		// Mint-time semantics (decision 1): the region that SERVED this
+		// exchange hop, read from the request stash by the caller — not the
+		// subject_token's original mint region.
+		ServingRegion: servingRegion,
 		// RFC 8693 §4.1 — when an actor_token is presented, the new token carries
 		// `act: {sub: <actor.sub>}`. Nil when no actor_token was supplied.
 		Actor: st.actor,

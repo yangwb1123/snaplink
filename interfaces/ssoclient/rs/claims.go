@@ -21,6 +21,12 @@ type Claims struct {
 	NotBefore int64
 	IssuedAt  int64
 
+	// ServingRegion is the SnapLink extension `serving_region` claim: the
+	// regional deployment that minted this token (echoed by introspection).
+	// Empty when the AS didn't mint/echo it. Config.AllowedServingRegions
+	// gates on it; HasServingRegion reports presence.
+	ServingRegion string
+
 	// RenewAfter is the unix time an introspected token needs renewal, per
 	// the AS's opt-in token-policy governance (WithTokenPolicy's
 	// RequireRenewAfter) — an early warning ahead of the AS eventually
@@ -60,6 +66,28 @@ func (c *Claims) HasAudience(aud string) bool {
 	return false
 }
 
+// HasServingRegion reports whether the token carries a non-empty
+// serving_region claim.
+func (c *Claims) HasServingRegion() bool {
+	return c != nil && c.ServingRegion != ""
+}
+
+// HasServingRegionIn reports whether the token's serving_region is in
+// regions. Exact match — region IDs are opaque, case-sensitive. A token
+// without the claim is never in the set (fail-closed callers use this with
+// a configured allowlist).
+func (c *Claims) HasServingRegionIn(regions []string) bool {
+	if !c.HasServingRegion() {
+		return false
+	}
+	for _, r := range regions {
+		if r == c.ServingRegion {
+			return true
+		}
+	}
+	return false
+}
+
 // wireClaims mirrors the claim names on the wire; aud stays `any` because
 // OIDC allows both a compact string and an array.
 type wireClaims struct {
@@ -72,7 +100,9 @@ type wireClaims struct {
 	JTI      string `json:"jti"`
 	ClientID string `json:"client_id"`
 	Scope    string `json:"scope"`
-	Cnf      struct {
+	// ServingRegion is the SnapLink extension claim (mint-region evidence).
+	ServingRegion string `json:"serving_region"`
+	Cnf           struct {
 		JKT string `json:"jkt"`
 	} `json:"cnf"`
 }
@@ -90,17 +120,18 @@ func parseClaims(payload []byte) (*Claims, error) {
 	// pass succeeded.
 	_ = json.Unmarshal(payload, &raw)
 	return &Claims{
-		Issuer:    w.Iss,
-		Subject:   w.Sub,
-		Audience:  audienceValues(w.Aud),
-		ClientID:  w.ClientID,
-		Scope:     w.Scope,
-		JTI:       w.JTI,
-		ExpiresAt: w.Exp,
-		NotBefore: w.Nbf,
-		IssuedAt:  w.Iat,
-		CnfJKT:    w.Cnf.JKT,
-		Raw:       raw,
+		Issuer:        w.Iss,
+		Subject:       w.Sub,
+		Audience:      audienceValues(w.Aud),
+		ClientID:      w.ClientID,
+		Scope:         w.Scope,
+		JTI:           w.JTI,
+		ExpiresAt:     w.Exp,
+		NotBefore:     w.Nbf,
+		IssuedAt:      w.Iat,
+		CnfJKT:        w.Cnf.JKT,
+		ServingRegion: w.ServingRegion,
+		Raw:           raw,
 	}, nil
 }
 
@@ -147,6 +178,14 @@ func validateClaims(c *Claims, cfg Config, now time.Time) error {
 	}
 	if cfg.ExpectedAud != "" && !c.HasAudience(cfg.ExpectedAud) {
 		return ErrAudienceMismatch
+	}
+	// Region governance gate (opt-in, fail-closed): a region-pinned
+	// deployment cannot accept a token with no verifiable mint region, so
+	// the missing claim is a mismatch, not a pass. Runs LAST — after the
+	// identity/time gates — so a garbage/expired token still reports its
+	// higher-priority sentinel and the gate never becomes a probe oracle.
+	if len(cfg.AllowedServingRegions) > 0 && !c.HasServingRegionIn(cfg.AllowedServingRegions) {
+		return fmt.Errorf("%w: serving_region %q", ErrServingRegionMismatch, c.ServingRegion)
 	}
 	return nil
 }

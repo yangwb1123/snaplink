@@ -8,6 +8,7 @@ syntax = "proto3";
 package snaplink.admin.v1;
 
 import "google/api/annotations.proto";
+import "google/protobuf/wrappers.proto";
 import "admin/v1/operations.proto";
 
 option go_package = "github.com/yangwb1123/snaplink/gen/proto/admin/v1;adminv1";
@@ -95,12 +96,35 @@ message RestoreSnapshotRequest {
   // snapshot's own SnapshotID.
   string confirm = 5;
   repeated string exclude = 6;
+  // Pre-restore safety snapshot (D1). Tri-state: nil = server default
+  // (capture iff mode=replace, non-dry-run, and the source snapshot is not
+  // itself a safety artifact); false = explicit opt-out (no capture even in
+  // replace mode); true = capture regardless of mode. dry_run always wins —
+  // a dry run never captures. The capture is an unredacted full-state
+  // export of the destination node persisted as a kind="safety" envelope;
+  // it is exempt from retention and must be deleted explicitly via the
+  // Delete RPC after the rollback window.
+  google.protobuf.BoolValue auto_safety_snapshot = 7;
+  // Automatic rollback on failure (D3). Tri-state: nil = false. When true,
+  // a FAILED non-dry-run restore re-applies the safety snapshot captured
+  // for this run and the RPC fails with a status whose message and details
+  // report the rollback (see RestoreReport.rolled_back). Requires
+  // auto_safety_snapshot=true (an explicit net — the server default is not
+  // enough), a non-safety source snapshot, and dry_run=false; violations
+  // fail with failed_precondition before any write. Rollback re-applies the
+  // net in replace mode and reverts any concurrent writes made after
+  // capture — restore is a maintenance-window operation.
+  google.protobuf.BoolValue rollback_on_error = 8;
 }
 
 message RestoreSnapshotResponse {
   RestoreReport report = 1;
   string operation_id = 2;
   AdminOperation operation = 3;
+  // SnapshotID of the safety snapshot captured before this restore
+  // (empty when no capture ran — dry-run, explicit opt-out, or a
+  // safety-kind source).
+  string safety_snapshot_id = 4;
 }
 
 message DeleteSnapshotRequest { string id = 1; }
@@ -121,6 +145,10 @@ message SnapshotMeta {
   // Bootstrap tracker high-water mark recorded in this snapshot's
   // namespace at the moment of export.
   int32 bootstrap_applied_version = 9;
+  // Artifact kind: empty = ordinary export, "safety" = pre-restore safety
+  // snapshot (retention-exempt; removed by the Delete RPC). Read from the
+  // envelope header without decryption.
+  string kind = 10;
 }
 
 // RestoreReport mirrors snapshot.Report. Counts roll up across resources.
@@ -130,6 +158,18 @@ message RestoreReport {
   map<string, CategoryCounts> items = 3;
   BootstrapAdvance bootstrap = 4;
   repeated string errors = 5;
+  // True iff a non-dry-run restore completed every phase without error.
+  // Dry runs always report false (predictions, not writes). On a failed
+  // Phase B the Deleted counts are partial while Inserted/Updated are
+  // complete — key on committed, not counts.
+  bool committed = 6;
+  // True iff a failed restore's safety snapshot was re-applied (D3). Set
+  // by the orchestrator; the failing RPC carries it in status details and
+  // the operation record's compensations/result_json.
+  bool rolled_back = 7;
+  // SnapshotID of the safety artifact for this run: the captured net on
+  // success, the re-applied net after a rollback.
+  string safety_snapshot_id = 8;
 }
 
 message CategoryCounts {

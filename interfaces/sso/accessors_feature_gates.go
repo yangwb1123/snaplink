@@ -257,6 +257,7 @@ func (s *Server) MintImpersonationToken(ctx context.Context, a core.AdminSession
 	tok, err := ti.Issue(ctx, &Subject{
 		ID:       a.TargetUserID,
 		ClientID: core.BreakGlassImpersonationClientID,
+		TenantID: "", // break-glass: issuerForClient(nil) — no tenant binding; tenant rules deliberately do not apply
 		AuthTime: time.Now(),
 		AMR:      []string{core.AMRBreakGlass},
 		TTL:      ttl,

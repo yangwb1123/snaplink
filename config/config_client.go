@@ -14,6 +14,7 @@ type ClientConfig struct {
 	RedirectURIs          []string `yaml:"redirect_uris"`
 	AllowedScopes         []string `yaml:"allowed_scopes"`
 	AllowedAuthenticators []string `yaml:"allowed_authenticators"`
+	LoginPageURI          string   `yaml:"login_page_uri,omitempty"`
 	TokenStrategy         string   `yaml:"token_strategy"`
 	Active                bool     `yaml:"active"`
 	// TenantID binds this client to one tenant; empty = no tenant

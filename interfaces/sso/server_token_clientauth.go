@@ -160,6 +160,13 @@ func (s *Server) authenticateTokenClient(ctx HandlerContext, req *oauth.TokenReq
 		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidClient))
 		return nil, basicAuthUsed, true
 	}
+	// Active is method-independent: assertion and mTLS clients skip
+	// ClientStore.ValidateSecret, so relying on that backend gate would let a
+	// deactivated non-secret client continue minting tokens.
+	if !client.Active {
+		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidClient))
+		return nil, basicAuthUsed, true
+	}
 	if !clientTenantOK(ctx, client) {
 		ctx.JSON(http.StatusForbidden, errorBody(ctx, ErrTenantMismatch))
 		return nil, basicAuthUsed, true
@@ -383,6 +390,9 @@ func (s *Server) validateAnyToken(ctx context.Context, token string) (*TokenClai
 			// already-issued bearers, not just future issuance.
 			if tsErr := s.checkTenantNotSuspended(ctx, claims); tsErr != nil {
 				return nil, "", tsErr
+			}
+			if lifecycleErr := s.lifecycleClaimsError(ctx, claims); lifecycleErr != nil {
+				return nil, "", lifecycleErr
 			}
 			// NOTE(region): this bare-context validate has no serving region
 			// (stashed on HandlerContext, out of scope here) — but the read

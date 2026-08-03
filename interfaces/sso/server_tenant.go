@@ -14,6 +14,7 @@ import (
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // ExternalUserStore returns the wired cross-tenant guest-record store
@@ -21,6 +22,30 @@ import (
 // to keep that file within the per-file line budget; belongs beside the
 // other tenant-scoped accessors here.
 func (s *Server) ExternalUserStore() tenant.ExternalUserStore { return s.externalUserStore }
+
+func (s *Server) codeSendContext(ctx HandlerContext) context.Context {
+	tenantID := ""
+	if resolved, ok := tenant.FromHandlerContext(ctx); ok && resolved.Tenant != nil {
+		tenantID = resolved.Tenant.ID
+	}
+	return spi.WithCodeSendTenant(ctx.Request().Context(), tenantID)
+}
+
+func (s *Server) handleCodeSendFailure(ctx HandlerContext, provider, target string, err error) bool {
+	if err == nil {
+		return false
+	}
+	s.logger.Error("send code failed", "provider", provider, "error", err)
+	s.recordCodeSent(ctx, provider, target, false)
+	if errors.Is(err, spi.ErrCodeSendQuotaExceeded) {
+		ctx.JSON(http.StatusOK, map[string]string{KeyStatus: StatusSent})
+	} else if errors.Is(err, spi.ErrCodeCooldownActive) {
+		ctx.JSON(http.StatusTooManyRequests, errorBody(ctx, ErrResendTooSoon))
+	} else {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrSendFailed))
+	}
+	return true
+}
 
 // TenantCollaborationStore returns the wired cross-tenant trust allow-list
 // (WithTenantCollaborationStore), or nil when unwired.

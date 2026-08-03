@@ -9,9 +9,8 @@
 //
 // # Why this is a separate package rather than added to an existing one
 //
-// The one reference reaction here (RevokeAccessOnArchive) needs
-// oauth.RefreshTokenSubjectIndex (protocols/oauth) alongside
-// core.SessionManager and core.ClientStore (shared/core). protocols/oauth
+// The reference reactions here need oauth.RefreshTokenSubjectIndex
+// (protocols/oauth) alongside core.SessionManager (shared/core). protocols/oauth
 // and protocols/caep were both already at their per-directory file-count
 // budget when this feature was built (see directory_fanout_test.go), and
 // protocols/caep additionally already imports protocols/oauth for its own
@@ -19,20 +18,26 @@
 // versa) to reuse StoreRevoker would create an import cycle. A small new
 // package sits alongside both without disturbing either.
 //
-// RevokeAccessOnArchive therefore composes core.SessionManager /
-// oauth.RefreshTokenSubjectIndex / core.ClientStore directly — the SAME
-// three SPIs protocols/caep.StoreRevoker and protocols/compliance.Eraser
+// RevokeAccess therefore composes core.SessionManager and
+// oauth.RefreshTokenSubjectIndex directly — the SAME SPIs
+// protocols/caep.StoreRevoker and protocols/compliance.Eraser
 // each already compose independently for their own "kill all access to this
 // subject" step. This is a third, small, self-contained instance of that
 // same established pattern, not a new one.
 //
-// # Wiring (entirely opt-in; requires no interfaces/sso change)
+// # Wiring
 //
 //	bus := userlifecycle.NewLifecycleEventBus()
-//	bus.OnUserArchived(lifecyclereactions.RevokeAccessOnArchive(sessions, refresh, clients))
-//	recorder.AddSink(bus) // the same AddSink seam webhook.Engine / caep.Transmitter use
-//	srv := sso.NewServer(sso.WithAuditRecorder(recorder), sso.WithUserLifecycle(store), ...)
+//	revoke := lifecyclereactions.RevokeAccess(sessions, refresh)
+//	bus.OnUserSuspended(revoke)
+//	bus.OnUserArchived(revoke)
+//	observed := userlifecycle.ObserveTransitions(store, func(ctx context.Context, userID string, t userlifecycle.Transition) {
+//		bus.Dispatch(ctx, userID, t.To)
+//	})
+//	srv := sso.NewServer(sso.WithUserLifecycle(observed), ...)
 //
-// A LifecycleEventBus with zero registered reactions (the default) is a
-// no-op; never calling this package at all is zero behavior change.
+// ObserveTransitions dispatches only after a successful store append, so the
+// security side effect follows the committed state. The stock sso-server wires
+// every non-active state this way. SDK embedders opt in by composing the wrapper;
+// a LifecycleEventBus with zero reactions is a no-op.
 package lifecyclereactions

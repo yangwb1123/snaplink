@@ -5,10 +5,14 @@ import (
 	"errors"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/authenticators/device"
+	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/platform/cluster"
 	"github.com/yangwb1123/snaplink/platform/configaudit"
+	"github.com/yangwb1123/snaplink/platform/geo"
 	"github.com/yangwb1123/snaplink/platform/metrics"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // InvalidateConnectionCache publishes a KindConnectionChange event to the
@@ -388,6 +392,73 @@ func (s *Server) StartConfigDriftDetection(ctx context.Context) (<-chan struct{}
 		s.runningConfigDigest, s.auditor, s.logger, s.onConfigDriftMismatch,
 	)
 	return dd.Run(ctx)
+}
+
+func (s *Server) RunConditionalAccessConvergence(ctx context.Context) (conditionalaccess.ConvergenceSummary, error) {
+	if s.capEngine == nil {
+		return conditionalaccess.ConvergenceSummary{}, nil
+	}
+	return s.capEngine.ConvergeSessions(ctx, s.sessionMgr, s.sessionConvergenceContext)
+}
+
+func (s *Server) StartConditionalAccessConvergence(ctx context.Context) <-chan struct{} {
+	done := make(chan struct{})
+	if s.capEngine == nil || s.sessionMgr == nil || !s.capEngine.Config().Enforce {
+		close(done)
+		return done
+	}
+	go func() {
+		defer close(done)
+		interval := s.capEngine.Config().SessionSweepInterval
+		if interval <= 0 {
+			interval = conditionalaccess.DefaultSessionSweepInterval
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			if summary, err := s.RunConditionalAccessConvergence(ctx); err != nil {
+				s.logger.Error("conditional access convergence failed; retrying", "error", err)
+			} else if summary.Revoked+summary.StepUpMarked+summary.ScopesRestricted > 0 {
+				s.logger.Info("conditional access sessions converged", "revoked", summary.Revoked, "step_up", summary.StepUpMarked, "restricted", summary.ScopesRestricted)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return done
+}
+
+func (s *Server) sessionConvergenceContext(ctx context.Context, session *core.Session, concurrent int) conditionalaccess.AccessContext {
+	ac := conditionalaccess.AccessContext{
+		TrustScore: session.TrustScore, TrustScoreKnown: !session.TrustSetAt.IsZero(),
+		Now: time.Now(), SessionCreatedAt: session.CreatedAt, AuthTime: session.AuthTime,
+		RequestedScopes: session.AuthorizedScopes, Subject: session.UserID, ClientID: session.ClientID,
+		Groups:             s.conditionalAccessGroups(ctx, session.UserID, session.ClientID),
+		DeviceType:         string(device.ParseUserAgent(session.UserAgent).Type),
+		ConcurrentSessions: concurrent, ConcurrentSessionsKnown: true,
+	}
+	if s.geoProvider != nil && session.IP != "" {
+		if info, err := geo.LookupString(ctx, s.geoProvider, session.IP); err == nil && info != nil {
+			ac.Country = info.CountryCode
+		}
+	}
+	if s.deviceStore == nil || session.DeviceID == "" {
+		return ac
+	}
+	tracked, err := s.deviceStore.Get(ctx, session.DeviceID)
+	if err != nil || tracked == nil {
+		return ac
+	}
+	ac.DeviceType, ac.DeviceTrustLevel = string(tracked.Type), tracked.TrustScore
+	if s.deviceFingerprint != nil {
+		if posture, ok, err := s.deviceFingerprint.Lookup(ctx, tracked.Fingerprint); err == nil && ok {
+			ac.DevicePosture = posture
+		}
+	}
+	return ac
 }
 
 // runningConfigDigest composes RunningConfigSnapshot + configaudit.Digest

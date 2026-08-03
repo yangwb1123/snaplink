@@ -18,7 +18,8 @@ const (
 	// which sits at the file-line budget — for the endpoint-inventory entry
 	// below; interfaces/sso/server_userinfo.go and server_discovery_config.go
 	// reference this SAME package-level const.
-	PathCheckSessionIframe = core.PathCheckSessionIframe
+	PathCheckSessionIframe        = core.PathCheckSessionIframe
+	PathAdminAccessPolicyConverge = core.PathAdminAccessPolicyConverge
 )
 
 // Crypto-material-inventory admin route-path re-exports moved to aliases.go
@@ -196,6 +197,9 @@ func (s *Server) mountAdminAPILifecycleExtra(api Router) {
 	// byte-identical to a build without it.
 	if s.capStore != nil {
 		api.GET(PathAdminAccessPolicies, s.handleAdminListAccessPolicies)
+		if s.capEngine != nil && s.capEngine.Config().Enforce {
+			api.POST(PathAdminAccessPolicyConverge, s.handleAdminConvergeAccessPolicies)
+		}
 	}
 	// DR degraded-service mode read + toggle (opt-in WithDegradationManager).
 	// Admin-gated (GET admin:read, POST admin:write) via the /api/v1/admin/

@@ -41,6 +41,7 @@ spec:
             - { name: SSO_MFA__CHALLENGE__BACKEND, value: redis }
             - { name: SSO_SELF_SERVICE__IDENTITY_LINK__BACKEND, value: postgres }
             - { name: SSO_SERVER__PAIRWISE_SUBJECTS__BACKEND, value: postgres }
+            - { name: SSO_USER_LIFECYCLE__ENABLED, value: "false" }
             - { name: SSO_OAUTH__REDIS__LOOKUP_HMAC_KEY_FILE, value: /etc/sso/oauth-lookup/current.key }
             - name: SSO_REDIS__PASSWORD
               valueFrom:

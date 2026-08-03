@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	configreload "github.com/yangwb1123/snaplink/config/reload"
+	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/shared/spi"
 	"google.golang.org/grpc"
 
@@ -154,6 +155,9 @@ func shutdownSubsystems(ctx context.Context, a *app, logger spi.Logger) {
 	shutdownWatchLoops(ctx, a)
 	shutdownSchedulers(ctx, a, logger)
 	if a.server != nil {
+		if err := a.server.ShutdownAuthenticatorDelivery(ctx); err != nil {
+			logger.Error("authenticator delivery drain timed out", "error", err)
+		}
 		if err := a.server.ShutdownNotificationRouter(ctx); err != nil {
 			logger.Error("notification router drain timed out", "error", err)
 		}
@@ -193,8 +197,19 @@ func shutdownSubsystems(ctx context.Context, a *app, logger spi.Logger) {
 				logger.Error("caep transmitter drain timed out", "error", err)
 			}
 		}
+		shutdownBCLManager(ctx, a.server.LogoutNotifier(), logger)
 	}
 	closeMemoryStoreReapers(a)
+}
+
+func shutdownBCLManager(ctx context.Context, notifier sso.LogoutNotifier, logger spi.Logger) {
+	closer, ok := notifier.(interface{ Close(context.Context) error })
+	if !ok {
+		return
+	}
+	if err := closer.Close(ctx); err != nil {
+		logger.Error("backchannel logout replay drain timed out", "error", err)
+	}
 }
 
 // closeMemoryStoreReapers stops reapers and closes stores that expose
@@ -294,6 +309,8 @@ func shutdownSchedulers(ctx context.Context, a *app, logger spi.Logger) {
 		"break-glass sweeper did not exit cleanly")
 	stopScheduler(ctx, logger, a.continuousVerifyCancel, a.continuousVerifyDone,
 		"continuous-verification agent did not exit cleanly")
+	stopScheduler(ctx, logger, a.capConvergenceCancel, a.capConvergenceDone,
+		"conditional-access convergence did not exit cleanly")
 	stopScheduler(ctx, logger, a.tokenAnomalySweepCancel, a.tokenAnomalySweepDone,
 		"token anomaly sweep did not exit cleanly")
 	stopScheduler(ctx, logger, a.userAutoDeprovisionCancel, a.userAutoDeprovisionDone,

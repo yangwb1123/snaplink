@@ -374,6 +374,29 @@ func TestRcov2Ext_SendCodeSuccess(t *testing.T) {
 	}
 }
 
+func TestRcov2Ext_SendCodeQuotaIsOracleSafe(t *testing.T) {
+	t.Parallel()
+	delivered := 0
+	sender := authenticators.SMSSenderFunc(func(_ context.Context, _, _ string) error {
+		delivered++
+		return nil
+	})
+	quota := authenticators.CodeSendQuota{IdentityLimit: 1, TenantLimit: 10, Window: time.Hour}
+	store := authenticators.NewMemoryCodeStoreWithQuota(0, quota)
+	phone := authenticators.NewPhoneAuthenticator(store, sender)
+	s := rcovNewServer(t, sso.WithAuthenticator(phone))
+	body := map[string]any{"provider": phone.Name(), "target": "+15551234567"}
+	for attempt := 0; attempt < 2; attempt++ {
+		status, out := rcovPostJSON(t, s.http.URL+"/auth/send-code", "", body)
+		if status != http.StatusOK || out["status"] != "sent" {
+			t.Fatalf("send-code attempt %d = %d body=%v, want generic sent", attempt+1, status, out)
+		}
+	}
+	if delivered != 1 {
+		t.Fatalf("deliveries = %d, want quota to suppress the second delivery", delivered)
+	}
+}
+
 // TestRcov2Ext_NativeSSO covers OpenID Connect Native SSO 1.0: a login with the
 // device_sso scope mints a device_secret + ds_hash-bound id_token, which a
 // second app exchanges (subject_token=id_token, actor_token=device_secret) for

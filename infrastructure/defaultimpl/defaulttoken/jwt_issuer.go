@@ -59,6 +59,7 @@ func (j *JWTIssuer) Issue(ctx context.Context, subject *core.Subject, scopes []s
 	expiresAt := now.Add(j.tokenTTL)
 
 	claims := &core.TokenClaims{
+		TokenUse:  core.TokenUseAccessToken,
 		Subject:   subject.ID,
 		Issuer:    j.issuer,
 		Scopes:    scopes,

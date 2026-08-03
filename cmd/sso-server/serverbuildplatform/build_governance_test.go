@@ -342,7 +342,7 @@ func TestBuildConditionalAccess_EnforceDefaultsFalse(t *testing.T) {
 func TestBuildConditionalAccess_EnforcePassesThrough(t *testing.T) {
 	t.Parallel()
 	_, capCfg, err := BuildConditionalAccess(config.AccessPolicyConfig{
-		Enforce:  true,
+		Enforce: true, SessionSweepInterval: time.Minute, SessionSweepBatchSize: 25,
 		Policies: []conditionalaccess.Policy{{Name: "deny", Enabled: true, Actions: conditionalaccess.Actions{Deny: true}}},
 	})
 	if err != nil {
@@ -350,6 +350,17 @@ func TestBuildConditionalAccess_EnforcePassesThrough(t *testing.T) {
 	}
 	if !capCfg.Enforce {
 		t.Error("engine config must carry enforce through")
+	}
+	if capCfg.SessionSweepInterval != time.Minute || capCfg.SessionSweepBatchSize != 25 {
+		t.Fatalf("session sweep config = %s/%d", capCfg.SessionSweepInterval, capCfg.SessionSweepBatchSize)
+	}
+}
+
+func TestBuildConditionalAccessRejectsNegativeSessionSweep(t *testing.T) {
+	t.Parallel()
+	_, _, err := BuildConditionalAccess(config.AccessPolicyConfig{SessionSweepBatchSize: -1, Policies: []conditionalaccess.Policy{{Name: "p", Enabled: true}}})
+	if err == nil {
+		t.Fatal("negative session sweep batch must fail")
 	}
 }
 

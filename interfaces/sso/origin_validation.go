@@ -2,14 +2,21 @@ package sso
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/cors"
+	"github.com/yangwb1123/snaplink/internal/auth/login"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
 // WithCORS installs a CORS middleware between bodyLimit and the router. That
@@ -25,6 +32,12 @@ func WithCORS(policy cors.Policy) Option {
 // The Key* re-exports below moved here from aliases.go to keep that
 // generated file within the per-file line budget; this file otherwise has
 // no relation to the wire-payload key constants.
+// GatedRegistrar re-exports core.GatedRegistrar so SDK callers can
+// type-assert a sso.Router backend's route-matching-level gating capability
+// (and adapters can claim it) without importing shared/core. Placed here,
+// not in aliases.go, which sits at the per-file line budget.
+type GatedRegistrar = core.GatedRegistrar
+
 const KeyAccessToken = core.KeyAccessToken
 const KeyACR = core.KeyACR
 const KeyActive = core.KeyActive
@@ -81,6 +94,246 @@ const KeyBuildTime = core.KeyBuildTime
 const KeyVCSRevision = core.KeyVCSRevision
 const KeyVCSTime = core.KeyVCSTime
 const KeyVersion = core.KeyVersion
+
+// authorizationResponseCtx attests the effective post-PAR/JAR delivery
+// contract. Browser-visible request parameters are never authoritative here.
+type authorizationResponseCtx struct {
+	HandlerContext
+	server *Server
+	req    login.Request
+	client *Client
+}
+
+func (s *Server) wrapAuthorizationResponse(ctx HandlerContext, req *login.Request, client *Client) HandlerContext {
+	if req.RedirectURI == "" || !client.IsRedirectURIValid(req.RedirectURI) {
+		return ctx
+	}
+	if s.oauth21Strict && !isSecureRedirectURI(req.RedirectURI) {
+		return ctx
+	}
+	return &authorizationResponseCtx{HandlerContext: ctx, server: s, req: *req, client: client}
+}
+
+func (c *authorizationResponseCtx) JSON(code int, value any) {
+	errorCode, description, isError := authorizationErrorFields(value)
+	if isError && (errorCode == ErrMFARequired || errorCode == ErrConsentRequired) {
+		c.HandlerContext.JSON(code, value)
+		return
+	}
+	if isError && oidc.IsJARMResponseMode(c.req.ResponseMode) && c.writeJARMError(errorCode, description) {
+		return
+	}
+	body := authorizationResponseMap(value)
+	c.attestAuthorizationDelivery(body)
+	c.HandlerContext.JSON(code, body)
+}
+
+func (c *authorizationResponseCtx) attestAuthorizationDelivery(body map[string]any) {
+	body["redirect_uri_validated"] = true
+	body[KeyRedirectURI] = c.req.RedirectURI
+	body["response_mode"] = effectiveAuthorizationResponseMode(c.req)
+	if oidc.IsJARMResponseMode(c.req.ResponseMode) {
+		delete(body, KeyState)
+		return
+	}
+	if c.req.State != "" {
+		body[KeyState] = c.req.State
+	} else {
+		delete(body, KeyState)
+	}
+}
+
+func effectiveAuthorizationResponseMode(req login.Request) string {
+	if req.ResponseMode != "" {
+		return req.ResponseMode
+	}
+	if req.ResponseType == "" || req.ResponseType == "token" {
+		return ResponseModeFragment
+	}
+	return ResponseModeQuery
+}
+
+func (c *authorizationResponseCtx) writeJARMError(code, description string) bool {
+	signer, ok := c.server.jarmSignerForClient(c.client)
+	if !ok {
+		return false
+	}
+	if c.req.ResponseMode != oidc.ResponseModeFormPostJWT && c.Request().Method != http.MethodGet {
+		response, err := oidc.SignJARMErrorResponse(
+			c.Request().Context(), signer, c.server.resolveIssuer(c), c.client.ID,
+			code, description, c.req.State,
+		)
+		if err != nil {
+			return false
+		}
+		body := map[string]any{oidc.KeyResponse: response}
+		c.attestAuthorizationDelivery(body)
+		c.HandlerContext.JSON(http.StatusOK, body)
+		return true
+	}
+	return oidc.RenderJARMErrorResponse(
+		c.HandlerContext, signer, c.req.ResponseMode, c.req.RedirectURI,
+		c.server.resolveIssuer(c), c.client.ID, code, description, c.req.State,
+	)
+}
+
+func authorizationErrorFields(value any) (string, string, bool) {
+	switch body := value.(type) {
+	case map[string]string:
+		code := body[KeyError]
+		return code, body[KeyErrorDescription], code != ""
+	case map[string]any:
+		code, _ := body[KeyError].(string)
+		description, _ := body[KeyErrorDescription].(string)
+		return code, description, code != ""
+	default:
+		return "", "", false
+	}
+}
+
+func authorizationResponseMap(value any) map[string]any {
+	result := map[string]any{}
+	switch body := value.(type) {
+	case map[string]string:
+		for key, item := range body {
+			result[key] = item
+		}
+	case map[string]any:
+		for key, item := range body {
+			result[key] = item
+		}
+	}
+	return result
+}
+
+const federatedStateSeparator = ":slf."
+
+type federatedAuthorizationState struct {
+	Request  login.Request `json:"request"`
+	Provider string        `json:"provider"`
+}
+
+func (s *Server) beginFederatedLogin(ctx HandlerContext, req *login.Request, client *Client, auth Authenticator) bool {
+	id, err := newMFAChallengeID()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, req.State))
+		return true
+	}
+	wireState := req.Provider + federatedStateSeparator + id
+	location := auth.LoginURL(wireState)
+	if location == "" {
+		return false
+	}
+	if !validFederatedLoginPage(client.LoginPageURI) || s.loginTransactionStore == nil {
+		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
+		return true
+	}
+	clean := *req
+	clean.Credential, clean.DeviceToken = nil, ""
+	clean.LoginTransactionID, clean.ConsentChallengeID, clean.ConsentDecision = "", "", ""
+	blob, err := json.Marshal(&federatedAuthorizationState{Request: clean, Provider: req.Provider})
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, req.State))
+		return true
+	}
+	ttl := s.loginTransactionTTL
+	if ttl <= 0 {
+		ttl = spi.DefaultMFAChallengeTTL
+	}
+	now := time.Now()
+	if err = s.loginTransactionStore.Put(ctx.Request().Context(), &spi.MFAChallenge{
+		ID: wireState, SubjectID: req.Provider, ClientID: client.ID,
+		CreatedAt: now, ExpiresAt: now.Add(ttl), RequestState: blob,
+	}); err != nil {
+		ctx.JSON(http.StatusInternalServerError, s.authzErrorBodyWithState(ctx, ErrInternal, req.State))
+		return true
+	}
+	ctx.Redirect(http.StatusFound, location)
+	return true
+}
+
+func federatedProviderFromState(state string) (string, bool) {
+	provider, opaque, ok := strings.Cut(state, federatedStateSeparator)
+	return provider, ok && provider != "" && opaque != ""
+}
+
+func validFederatedLoginPage(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.IsAbs() && u.Host != "" && u.User == nil && isSecureRedirectURI(raw)
+}
+
+// IsFederatedLoginPageURIValid exposes the exact hosted-login validation used
+// by federation kickoff so configuration and admin surfaces can fail early.
+func IsFederatedLoginPageURIValid(raw string) bool {
+	return validFederatedLoginPage(raw)
+}
+
+func (s *Server) federatedContinuationSupported(ctx HandlerContext, clientID string) bool {
+	if clientID == "" || s.clientStore == nil {
+		return false
+	}
+	client, err := s.clientStore.Get(ctx.Request().Context(), clientID)
+	return err == nil && client != nil && client.Active && validFederatedLoginPage(client.LoginPageURI)
+}
+
+func (s *Server) consumeFederatedAuthorization(ctx HandlerContext, state string) (*federatedAuthorizationState, *Client, bool) {
+	provider, marked := federatedProviderFromState(state)
+	if !marked || s.loginTransactionStore == nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidCallback))
+		return nil, nil, false
+	}
+	challenge, err := s.loginTransactionStore.Consume(ctx.Request().Context(), state)
+	if err != nil || challenge == nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidCallback))
+		return nil, nil, false
+	}
+	resume := &federatedAuthorizationState{}
+	if json.Unmarshal(challenge.RequestState, resume) != nil ||
+		!validFederatedResume(resume, provider, challenge.SubjectID, challenge.ClientID) ||
+		s.clientStore == nil {
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidCallback))
+		return nil, nil, false
+	}
+	client, err := s.clientStore.Get(ctx.Request().Context(), challenge.ClientID)
+	if err != nil || !validFederatedCallbackClient(ctx, client, resume, provider) {
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidCallback))
+		return nil, nil, false
+	}
+	if s.residencyGateLogin(ctx, client.ID, provider, client.TenantID) {
+		return nil, nil, false
+	}
+	return resume, client, true
+}
+
+func federatedContinuationURI(client *Client, req login.Request, transactionID string) (string, error) {
+	u, err := url.Parse(client.LoginPageURI)
+	if err != nil || !validFederatedLoginPage(client.LoginPageURI) {
+		return "", errors.New("invalid federated login page")
+	}
+	q := u.Query()
+	q.Set("client_id", req.ClientID)
+	q.Set("redirect_uri", req.RedirectURI)
+	q.Set("response_type", req.ResponseType)
+	if req.ResponseMode != "" {
+		q.Set("response_mode", req.ResponseMode)
+	}
+	u.RawQuery = q.Encode()
+	u.Fragment = url.Values{login.KeyLoginTransactionID: []string{transactionID}}.Encode()
+	return u.String(), nil
+}
+
+type extensionHandlerContextKey struct{}
+
+func requestWithHandlerContext(ctx HandlerContext) *http.Request {
+	return ctx.Request().WithContext(context.WithValue(ctx.Request().Context(), extensionHandlerContextKey{}, ctx))
+}
+
+func handlerContextForRequest(w http.ResponseWriter, r *http.Request) HandlerContext {
+	if ctx, ok := r.Context().Value(extensionHandlerContextKey{}).(HandlerContext); ok && ctx != nil {
+		return ctx
+	}
+	return core.NewContext(w, r)
+}
 
 // isOriginAllowed checks if the given origin is allowed by the CORS policy.
 // Returns true if:

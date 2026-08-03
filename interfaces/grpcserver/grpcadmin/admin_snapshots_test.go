@@ -168,9 +168,14 @@ func TestSnapshotAdminService_RestoreValidation(t *testing.T) {
 
 	_, err = fx.svc.Restore(ctx, &adminv1.RestoreSnapshotRequest{Id: "missing"})
 	requireCode(t, err, codes.NotFound)
+	// The replace-without-confirm failure is retained as a failed operation
+	// (load step failed; the safety capture never ran — validation precedes
+	// capture). The "missing" restore fails BEFORE operations.Start (the
+	// D1 pre-Start kind peek is a read, and a not-found id must not write
+	// anything, not even a ledger record) — so exactly one failed op exists.
 	operationsList, listErr := fx.ops.List(ctx)
 	requireOK(t, listErr, "list operations")
-	if len(operationsList) < 2 || operationsList[0].State != operations.StateFailed {
+	if len(operationsList) != 1 || operationsList[0].State != operations.StateFailed {
 		t.Fatalf("failed restores not retained: %+v", operationsList)
 	}
 

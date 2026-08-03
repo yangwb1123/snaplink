@@ -124,6 +124,7 @@ const (
 	EventFAPIComplianceViolation             = auditspi.EventFAPIComplianceViolation
 	EventFeatureGatesDisabled                = auditspi.EventFeatureGatesDisabled
 	EventIDTokenIssued                       = auditspi.EventIDTokenIssued
+	EventIdempotencyCaptureMissing           = auditspi.EventIdempotencyCaptureMissing
 	EventIdentityMerged                      = auditspi.EventIdentityMerged
 	EventIdentityMergeRejected               = auditspi.EventIdentityMergeRejected
 	EventIdentityUnlinked                    = auditspi.EventIdentityUnlinked

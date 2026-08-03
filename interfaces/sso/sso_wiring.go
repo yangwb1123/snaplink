@@ -74,23 +74,24 @@ type wiringState struct {
 	// mechanism endpoint, GET /api/v2alpha/version (WithAPIVersionPreview).
 	// False (the default) ⇒ Mount() never registers it — byte-identical to
 	// a build without this feature.
-	apiV2AlphaPreview       bool
-	permissions             permissions.Provider
-	embedPermissions        bool
-	netStore                netpolicy.Store
-	netClassifier           *netpolicy.Classifier
-	netAPI                  bool
-	geoProvider             geo.Provider
-	geoMiddlewareOpts       GeoMiddlewareOptions
-	tenantStore             tenant.Store
-	tenantMiddlewareOpts    TenantMiddlewareOptions
-	tenantSuspensionEnabled bool
-	tenantSuspensionCache   *suspensionCache
-	tenantResidencyEnabled  bool
-	tenantResidencyCache    *residencyCache
-	regionResolver          region.Resolver
-	regionMiddlewareOpts    region.MiddlewareOptions
-	invalidationBus         cluster.Bus
+	apiV2AlphaPreview          bool
+	permissions                permissions.Provider
+	embedPermissions           bool
+	netStore                   netpolicy.Store
+	netClassifier              *netpolicy.Classifier
+	netAPI                     bool
+	geoProvider                geo.Provider
+	geoMiddlewareOpts          GeoMiddlewareOptions
+	tenantStore                tenant.Store
+	tenantMiddlewareOpts       TenantMiddlewareOptions
+	tenantSuspensionEnabled    bool
+	tenantSuspensionCache      *suspensionCache
+	tenantResidencyEnabled     bool
+	tenantResidencyCache       *residencyCache
+	regionResolver             region.Resolver
+	regionMiddlewareOpts       region.MiddlewareOptions
+	servingRegionAdvertisement region.ID
+	invalidationBus            cluster.Bus
 
 	// webhookEngine is the opt-in generic event/webhook egress engine
 	// (WithWebhookEngine). Nil = no admin subscription/dead-letter routes,
@@ -294,6 +295,13 @@ func (b *backgroundHandlerContext) Set(key string, val any) {
 	b.kv[key] = val
 }
 func (b *backgroundHandlerContext) Get(key string) any { return b.kv[key] }
+
+// Background work has no HTTP response, so the chain-control and
+// response-writer methods are inert no-ops.
+func (b *backgroundHandlerContext) Abort()                                {}
+func (b *backgroundHandlerContext) Aborted() bool                         { return false }
+func (b *backgroundHandlerContext) Written() bool                         { return false }
+func (b *backgroundHandlerContext) SetResponseWriter(http.ResponseWriter) {}
 
 // discardResponseWriter is the http.ResponseWriter backgroundHandlerContext
 // hands out. A caller driving logic through it (the Coordinator path) never

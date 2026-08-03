@@ -62,6 +62,83 @@ func TestHTTPMiddleware_InvalidToken401(t *testing.T) {
 	}
 }
 
+// TestHTTPMiddleware_ServingRegionMismatch403 pins the decision-3 wire
+// shape: a region mismatch is a GOVERNANCE denial (403 region_not_allowed,
+// no WWW-Authenticate challenge — mirrors the AS's authzErrorBody
+// discipline), while token-validity failures stay 401 (existing tests). The
+// no-store headers remain set on the 403 like every credential-bearing
+// exchange.
+func TestHTTPMiddleware_ServingRegionMismatch403(t *testing.T) {
+	t.Parallel()
+	iss := newTestIssuer(t)
+	tok, err := iss.MintAccessToken(map[string]any{
+		"sub":            "user-1",
+		"serving_region": "us-east-1",
+	})
+	if err != nil {
+		t.Fatalf("MintAccessToken: %v", err)
+	}
+	cfg := newTestConfig(t, iss, "")
+	cfg.AllowedServingRegions = []string{"eu-west-1"}
+	h := rs.HTTPMiddleware(cfg, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler must not run for a region-mismatched token")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/orders", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	if ch := rec.Header().Get("WWW-Authenticate"); ch != "" {
+		t.Errorf("WWW-Authenticate = %q, want none (governance denial, not token-validity failure)", ch)
+	}
+	if body := rec.Body.String(); body != `{"error":"region_not_allowed"}` {
+		t.Errorf("body = %q, want region_not_allowed JSON", body)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store on the 403 too", cc)
+	}
+}
+
+// TestHTTPMiddleware_ServingRegionMismatchDPoP proves the sentinel survives
+// the ValidateTokenWithDPoP wrap: a region-mismatched token presented over
+// the DPoP scheme still maps to 403, because validateByMode (and its region
+// gate) runs FIRST inside ValidateTokenWithDPoP.
+func TestHTTPMiddleware_ServingRegionMismatchDPoP(t *testing.T) {
+	t.Parallel()
+	iss := newTestIssuer(t)
+	tok, err := iss.MintAccessToken(map[string]any{
+		"sub":            "user-1",
+		"serving_region": "us-east-1",
+	})
+	if err != nil {
+		t.Fatalf("MintAccessToken: %v", err)
+	}
+	cfg := newTestConfig(t, iss, "")
+	cfg.AllowedServingRegions = []string{"eu-west-1"}
+	h := rs.HTTPMiddleware(cfg, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler must not run")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/orders", nil)
+	req.Header.Set("Authorization", "DPoP "+tok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	// The DPoP proof is missing, but the region gate sits AFTER full token
+	// validation (validateByMode runs first inside ValidateTokenWithDPoP) —
+	// the token is valid, so this is the governance 403, not a DPoP 401.
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (region sentinel survives the DPoP wrap)", rec.Code)
+	}
+	if ch := rec.Header().Get("WWW-Authenticate"); ch != "" {
+		t.Errorf("WWW-Authenticate = %q, want none", ch)
+	}
+}
+
 func TestHTTPMiddleware_ValidTokenServesRequest(t *testing.T) {
 	t.Parallel()
 	iss := newTestIssuer(t)

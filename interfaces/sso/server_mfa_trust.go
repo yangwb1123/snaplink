@@ -1,14 +1,20 @@
 package sso
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
 	"github.com/yangwb1123/snaplink/internal/auth/login"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 	"github.com/yangwb1123/snaplink/shared/spi"
 )
 
@@ -94,88 +100,6 @@ func (c *mfaTrustDeviceCtx) JSON(code int, v any) {
 	c.HandlerContext.JSON(code, v)
 }
 
-type authorizationResponseCtx struct {
-	HandlerContext
-	server *Server
-	req    login.Request
-	client *Client
-}
-
-func (s *Server) wrapAuthorizationResponse(ctx HandlerContext, req *login.Request, client *Client) HandlerContext {
-	if req.RedirectURI == "" || !client.IsRedirectURIValid(req.RedirectURI) {
-		return ctx
-	}
-	if s.oauth21Strict && !isSecureRedirectURI(req.RedirectURI) {
-		return ctx
-	}
-	return &authorizationResponseCtx{HandlerContext: ctx, server: s, req: *req, client: client}
-}
-
-func (c *authorizationResponseCtx) JSON(code int, value any) {
-	errorCode, description, ok := authorizationErrorFields(value)
-	if !ok || errorCode == ErrMFARequired || errorCode == ErrConsentRequired {
-		c.HandlerContext.JSON(code, value)
-		return
-	}
-	if oidc.IsJARMResponseMode(c.req.ResponseMode) && c.writeJARMError(errorCode, description) {
-		return
-	}
-	body := authorizationResponseMap(value)
-	body["redirect_uri_validated"] = true
-	c.HandlerContext.JSON(code, body)
-}
-
-func (c *authorizationResponseCtx) writeJARMError(code, description string) bool {
-	signer, ok := c.server.jarmSignerForClient(c.client)
-	if !ok {
-		return false
-	}
-	if c.req.ResponseMode != oidc.ResponseModeFormPostJWT && c.Request().Method != http.MethodGet {
-		response, err := oidc.SignJARMErrorResponse(
-			c.Request().Context(), signer, c.server.resolveIssuer(c), c.client.ID,
-			code, description, c.req.State,
-		)
-		if err != nil {
-			return false
-		}
-		c.HandlerContext.JSON(http.StatusOK, map[string]any{oidc.KeyResponse: response})
-		return true
-	}
-	return oidc.RenderJARMErrorResponse(
-		c.HandlerContext, signer, c.req.ResponseMode, c.req.RedirectURI,
-		c.server.resolveIssuer(c), c.client.ID, code, description, c.req.State,
-	)
-}
-
-func authorizationErrorFields(value any) (string, string, bool) {
-	switch body := value.(type) {
-	case map[string]string:
-		code := body[KeyError]
-		return code, body[KeyErrorDescription], code != ""
-	case map[string]any:
-		code, _ := body[KeyError].(string)
-		description, _ := body[KeyErrorDescription].(string)
-		return code, description, code != ""
-	default:
-		return "", "", false
-	}
-}
-
-func authorizationResponseMap(value any) map[string]any {
-	result := map[string]any{}
-	switch body := value.(type) {
-	case map[string]string:
-		for key, item := range body {
-			result[key] = item
-		}
-	case map[string]any:
-		for key, item := range body {
-			result[key] = item
-		}
-	}
-	return result
-}
-
 type loginContinuationCtx struct {
 	HandlerContext
 	server *Server
@@ -192,6 +116,7 @@ func (s *Server) wrapForLoginContinuation(ctx HandlerContext, result *AuthResult
 	req.LoginTransactionID = ""
 	state := mfaResumeState{
 		Result: result, Request: req, CredentialHealth: result.CredentialHealth,
+		PolicyScopeRestriction: req.PolicyScopeRestriction,
 		AuthenticationComplete: true, TrustDevice: trustDevice,
 	}
 	return &loginContinuationCtx{HandlerContext: ctx, server: s, state: state, client: client}
@@ -227,8 +152,12 @@ func (s *Server) issueLoginTransaction(ctx HandlerContext, state *mfaResumeState
 		ttl = spi.DefaultMFAChallengeTTL
 	}
 	now := time.Now()
+	subjectID := ""
+	if state.Result != nil {
+		subjectID = state.Result.UserID
+	}
 	err = s.loginTransactionStore.Put(ctx.Request().Context(), &spi.MFAChallenge{
-		ID: id, SubjectID: state.Result.UserID, ClientID: client.ID,
+		ID: id, SubjectID: subjectID, ClientID: client.ID,
 		CreatedAt: now, ExpiresAt: now.Add(ttl), RequestState: blob,
 	})
 	return id, err
@@ -241,6 +170,10 @@ func (s *Server) resumeLoginTransaction(ctx HandlerContext, submitted login.Requ
 	}
 	client, ok := s.loginTransactionClient(ctx, challenge, state)
 	if !ok {
+		return
+	}
+	if state.FederatedReturn {
+		s.resumeFederatedLoginTransaction(ctx, state, client)
 		return
 	}
 	state.Request.ConsentChallengeID = submitted.ConsentChallengeID
@@ -274,7 +207,7 @@ func (s *Server) handleLoginContinuationOrPromptNone(ctx HandlerContext, req log
 
 func (s *Server) consumeLoginTransaction(ctx HandlerContext, submitted login.Request) (*spi.MFAChallenge, *mfaResumeState, bool) {
 	if s.loginTransactionStore == nil || submitted.LoginTransactionID == "" ||
-		submitted.ClientID == "" || submitted.ConsentChallengeID == "" {
+		submitted.ClientID == "" {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, submitted.State))
 		return nil, nil, false
 	}
@@ -284,12 +217,112 @@ func (s *Server) consumeLoginTransaction(ctx HandlerContext, submitted login.Req
 		return nil, nil, false
 	}
 	state := &mfaResumeState{}
-	if json.Unmarshal(challenge.RequestState, state) != nil || !state.AuthenticationComplete ||
-		state.Result == nil || state.Result.UserID != challenge.SubjectID {
+	if json.Unmarshal(challenge.RequestState, state) != nil ||
+		!validLoginTransactionState(challenge, state, submitted) {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, submitted.State))
 		return nil, nil, false
 	}
+	state.Request.PolicyScopeRestriction = cloneOptionalScopes(state.PolicyScopeRestriction)
 	return challenge, state, true
+}
+
+func (s *Server) resumeFederatedLoginTransaction(ctx HandlerContext, state *mfaResumeState, client *Client) {
+	authzCtx := s.wrapAuthorizationResponse(ctx, &state.Request, client)
+	if state.FederatedError != "" {
+		status := http.StatusUnauthorized
+		if state.FederatedError == ErrAccessDenied {
+			status = http.StatusForbidden
+		}
+		authzCtx.JSON(status, s.authzErrorBodyWithState(authzCtx, state.FederatedError, state.Request.State))
+		return
+	}
+	if state.Result == nil || s.rejectDeactivatedUser(authzCtx, &state.Request, state.Result.UserID) {
+		return
+	}
+	state.Result.CredentialHealth = state.CredentialHealth
+	if s.runPostAuthenticateHook(authzCtx, &state.Request, client, state.Result) ||
+		s.runPostCredentialGates(authzCtx, &state.Request, state.Result, client) {
+		return
+	}
+	nextCtx := s.wrapForLoginContinuation(authzCtx, state.Result, state.Request, client, false)
+	s.finishLogin(nextCtx, state.Result, state.Request, client)
+}
+
+func (s *Server) queueFederatedContinuation(
+	ctx HandlerContext, resume *federatedAuthorizationState, client *Client,
+	result *AuthResult, errorCode string,
+) {
+	if errorCode != "" {
+		result = nil
+		if errorCode != ErrAccessDenied {
+			errorCode = ErrCallbackFailed
+		}
+	} else if result == nil || result.UserID == "" {
+		result, errorCode = nil, ErrCallbackFailed
+	} else if result.Provider == "" {
+		result.Provider = resume.Provider
+	} else if result.Provider != resume.Provider {
+		result, errorCode = nil, ErrCallbackFailed
+	}
+	state := &mfaResumeState{
+		Result: result, Request: resume.Request, AuthenticationComplete: true,
+		FederatedReturn: true, FederatedError: errorCode,
+	}
+	id, err := s.issueLoginTransaction(ctx, state, client)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
+		return
+	}
+	target, err := federatedContinuationURI(client, resume.Request, id)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrInternal))
+		return
+	}
+	ctx.Redirect(http.StatusFound, target)
+}
+
+// ResumeFederatedLogin lets a dedicated protocol callback (notably SAML ACS)
+// hand a validated identity back to the same one-time OAuth login pipeline.
+func (s *Server) ResumeFederatedLogin(
+	w http.ResponseWriter, r *http.Request, state string, result *AuthResult,
+) bool {
+	if _, marked := federatedProviderFromState(state); !marked {
+		return false
+	}
+	ctx := handlerContextForRequest(w, r)
+	resume, client, ok := s.consumeFederatedAuthorization(ctx, state)
+	if ok {
+		s.queueFederatedContinuation(ctx, resume, client, result, "")
+	}
+	return true
+}
+
+func authenticationHasMFA(result *AuthResult) bool {
+	return result != nil && slices.Contains(result.AuthMethods, "mfa")
+}
+
+func cloneOptionalScopes(scopes []string) []string {
+	if scopes == nil {
+		return nil
+	}
+	return append([]string{}, scopes...)
+}
+
+func mergeScopeRestrictions(current, next []string) []string {
+	if current == nil {
+		return cloneOptionalScopes(next)
+	}
+	return restrictGrantedScopes(current, next)
+}
+
+func policyScopeRemovedAll(granted, restricted, policy []string) bool {
+	return policy != nil && len(granted) > 0 && len(restricted) == 0
+}
+
+func (s *Server) rejectPolicyScopeGrant(ctx HandlerContext, req *login.Request) bool {
+	s.recordLoginFailure(ctx, req.ClientID, req.Provider, ErrInvalidScope)
+	ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidScope, req.State))
+	return true
 }
 
 func (s *Server) loginTransactionClient(ctx HandlerContext, challenge *spi.MFAChallenge, state *mfaResumeState) (*Client, bool) {
@@ -302,7 +335,11 @@ func (s *Server) loginTransactionClient(ctx HandlerContext, challenge *spi.MFACh
 		ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, ErrInactiveClient, state.Request.State))
 		return nil, false
 	}
-	if s.residencyGateLogin(ctx, client.ID, state.Result.Provider, client.TenantID) {
+	provider := state.Request.Provider
+	if state.Result != nil && state.Result.Provider != "" {
+		provider = state.Result.Provider
+	}
+	if s.residencyGateLogin(ctx, client.ID, provider, client.TenantID) {
 		return nil, false
 	}
 	return client, true
@@ -354,4 +391,102 @@ func (s *Server) recordMFADeviceTrusted(ctx HandlerContext, userID, clientID, de
 	}
 	audit.SetMeta(evt, "device_id", deviceID)
 	s.auditor.Record(ctx.Request().Context(), evt)
+}
+
+// EnforceRefreshConditionalAccess is the refresh-token Policy Enforcement
+// Point. It reuses the login signal builder so policy changes, live device/geo
+// posture, group membership, and scope restrictions take effect on the next
+// rotation instead of waiting for the original session to expire.
+func (s *Server) EnforceRefreshConditionalAccess(ctx core.HandlerContext, client *core.Client, info *oauth.RefreshToken, scopes []string) ([]string, bool) {
+	scopes, halted := s.applySessionScopeCeiling(ctx, info.SID, client.ID, scopes)
+	if halted {
+		return nil, true
+	}
+	if s.capEngine == nil || !s.capEngine.Config().Enforce {
+		return scopes, false
+	}
+	result := &AuthResult{UserID: info.UserID, AuthMethods: info.Amr, AchievedACR: info.Acr, AuthTime: info.AuthTime, SessionID: info.SID}
+	req := &login.Request{ClientID: client.ID, Scope: scopes}
+	dec, err := s.capEngine.Evaluate(ctx.Request().Context(), s.buildAccessContext(ctx, result, req, client))
+	if err != nil {
+		s.logger.Error("refresh conditional access unavailable; failing open", "error", err,
+			"user", info.UserID, "client", client.ID)
+		return scopes, false
+	}
+	if s.metrics != nil {
+		s.metrics.ObserveConditionalAccessDecision(string(dec.Verdict))
+	}
+	if dec.Log {
+		s.logger.Info("refresh conditional access policy matched", "policy", dec.MatchedPolicy,
+			"verdict", dec.Verdict, "user", info.UserID, "client", client.ID)
+	}
+	if dec.Verdict == conditionalaccess.VerdictDeny {
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidGrant))
+		return nil, true
+	}
+	if dec.Verdict == conditionalaccess.VerdictRequireStepUp && !authenticationHasMFA(result) {
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, security.ErrInsufficientUserAuthentication))
+		return nil, true
+	}
+	if len(dec.RestrictScopes) > 0 {
+		restricted := restrictGrantedScopes(scopes, dec.RestrictScopes)
+		if policyScopeRemovedAll(scopes, restricted, dec.RestrictScopes) {
+			ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidScope))
+			return nil, true
+		}
+		scopes = restricted
+	}
+	return scopes, false
+}
+
+func (s *Server) applySessionScopeCeiling(ctx core.HandlerContext, sessionID, clientID string, scopes []string) ([]string, bool) {
+	if sessionID == "" || s.sessionMgr == nil {
+		return scopes, false
+	}
+	session, err := s.sessionMgr.Get(ctx.Request().Context(), sessionID)
+	if err != nil || session == nil || session.ClientID != clientID || len(session.AuthorizedScopes) == 0 {
+		return scopes, false
+	}
+	restricted := restrictGrantedScopes(scopes, session.AuthorizedScopes)
+	if policyScopeRemovedAll(scopes, restricted, session.AuthorizedScopes) {
+		ctx.JSON(http.StatusBadRequest, errorBody(ctx, ErrInvalidScope))
+		return nil, true
+	}
+	return restricted, false
+}
+
+func (s *Server) buildLoginAccessContext(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client) conditionalaccess.AccessContext {
+	ac := s.buildAccessContext(ctx, result, req, client)
+	if ac.ConcurrentSessionsKnown {
+		ac.ConcurrentSessions++
+	}
+	return ac
+}
+
+func (s *Server) withConcurrentSessions(ctx context.Context, ac conditionalaccess.AccessContext) conditionalaccess.AccessContext {
+	if s.sessionMgr == nil || ac.Subject == "" {
+		return ac
+	}
+	sessions, err := s.sessionMgr.ListByUser(ctx, ac.Subject)
+	if err != nil {
+		return ac
+	}
+	for _, session := range sessions {
+		if session != nil && !session.Revoked && !session.IsExpired() && session.ClientID == ac.ClientID {
+			ac.ConcurrentSessions++
+		}
+	}
+	ac.ConcurrentSessionsKnown = true
+	return ac
+}
+
+func (s *Server) conditionalAccessSessionCreatedAt(ctx core.HandlerContext, sessionID string) time.Time {
+	if sessionID == "" || s.sessionMgr == nil {
+		return time.Time{}
+	}
+	session, err := s.sessionMgr.Get(ctx.Request().Context(), sessionID)
+	if err != nil || session == nil {
+		return time.Time{}
+	}
+	return session.CreatedAt
 }

@@ -193,7 +193,11 @@ func userInfo(base, accessToken string) map[string]any {
 func verifyLocally(jwksURI, accessToken string) *ssoclient.Subject {
 	jwks := remote.NewJWKSCache(jwksURI)
 	defer jwks.Close()
-	subj, err := remote.NewAuthClient(jwks).ValidateToken(context.Background(), accessToken)
+	// The demo issuer mints iss = sso.DefaultIssuer (no WithEd25519Issuer),
+	// so the pin is the issuer constant, NOT the discovery document's
+	// issuer — that value is request-base-derived here and would mismatch.
+	// A real deployment pins its configured AS issuer.
+	subj, err := remote.NewAuthClient(jwks, remote.WithIssuer(sso.DefaultIssuer)).ValidateToken(context.Background(), accessToken)
 	if err != nil {
 		log.Fatalf("local token verify: %v", err)
 	}

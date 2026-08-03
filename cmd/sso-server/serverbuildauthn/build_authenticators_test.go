@@ -98,7 +98,7 @@ func TestBuildAuthenticatorsDurable_IsWhatBuildAuthenticatorsForwardsTo(t *testi
 
 func TestBuildCodeStore_NilRDBUsesMemory(t *testing.T) {
 	t.Parallel()
-	s := buildCodeStore(nil)
+	s := buildCodeStore(config.CodeSendQuotaConfig{}, nil)
 	if s == nil {
 		t.Fatal("nil code store")
 	}

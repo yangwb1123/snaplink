@@ -6,50 +6,19 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/internal/handler/tokengrant"
 	"github.com/yangwb1123/snaplink/platform/audit"
 	"github.com/yangwb1123/snaplink/protocols/fapi"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oauth/txntoken"
-	"github.com/yangwb1123/snaplink/shared/core"
 )
-
-// idempotentResponseWriter wraps http.ResponseWriter to capture the
-// response body for idempotency caching.
-type idempotentResponseWriter struct {
-	http.ResponseWriter
-	key        string
-	cache      IdempotentCache
-	body       []byte
-	statusCode int
-}
-
-func (w *idempotentResponseWriter) WriteHeader(code int) {
-	w.statusCode = code
-	w.ResponseWriter.WriteHeader(code)
-}
-
-func (w *idempotentResponseWriter) Write(b []byte) (int, error) {
-	if w.statusCode == 0 {
-		w.statusCode = http.StatusOK
-	}
-	n, err := w.ResponseWriter.Write(b)
-	if err == nil && w.statusCode == http.StatusOK && w.key != "" && w.cache != nil {
-		w.body = append(w.body, b...)
-	}
-	return n, err
-}
 
 func (s *Server) handleToken(ctx HandlerContext) {
 	// RFC 6749 §5.1: token responses (success AND error) MUST carry
 	// Cache-Control: no-store + Pragma: no-cache so intermediaries never
 	// retain credentials. Set BEFORE any response body is written.
 	tokenNoStoreHeaders(ctx)
-
-	idemKey, idemRW, served := s.beginTokenIdempotency(ctx)
-	if served {
-		return
-	}
 
 	if err := s.requireDeps(DepTokenIssuer, DepClientStore); err != nil {
 		ctx.JSON(http.StatusInternalServerError, errorBody(ctx, ErrServerMisconfigured))
@@ -86,6 +55,10 @@ func (s *Server) handleToken(ctx HandlerContext) {
 	if s.rejectDisallowedGrantType(ctx, client, req.GrantType) {
 		return
 	}
+	idemKey, idemRW, served := s.beginTokenIdempotency(ctx, client.ID, req, dpopJKT, mtlsX5T)
+	if served {
+		return
+	}
 
 	s.dispatchTokenGrant(ctx, client, req, dpopJKT, mtlsX5T)
 	s.finishTokenIdempotency(ctx, idemKey, idemRW)
@@ -94,44 +67,41 @@ func (s *Server) handleToken(ctx HandlerContext) {
 // beginTokenIdempotency implements the Idempotency-Key fast path: when the
 // header names an already-cached response it is replayed verbatim
 // (served=true, the caller MUST return); otherwise the context's
-// ResponseWriter is swapped for a capture wrapper so finishTokenIdempotency
-// can cache the eventual success body — safe retry semantics.
-func (s *Server) beginTokenIdempotency(ctx HandlerContext) (idemKey string, idemRW *idempotentResponseWriter, served bool) {
+// ResponseWriter is swapped for the shared capture wrapper (middleware.
+// InstallCapture) so finishTokenIdempotency can cache the eventual success
+// body — safe retry semantics. The hit check deliberately runs AFTER
+// client authentication and grant-type rejection (see handleToken): a
+// wrong-secret replay must never receive a cached 200.
+func (s *Server) beginTokenIdempotency(ctx HandlerContext, clientID string, req oauth.TokenRequest, dpopJKT, mtlsX5T string) (idemKey string, idemRW *middleware.CaptureWriter, served bool) {
 	if s.idempotentCache == nil {
 		return "", nil, false
 	}
-	idemKey = ctx.Request().Header.Get("Idempotency-Key")
-	if idemKey == "" {
+	rawKey := ctx.Request().Header.Get("Idempotency-Key")
+	if rawKey == "" {
 		return "", nil, false
 	}
+	idemKey = tokenIdempotencyCacheKey(clientID, rawKey, req, dpopJKT, mtlsX5T)
+	s.idempotentMu.Lock()
 	if cached, ok, _ := s.idempotentCache.Get(ctx.Request().Context(), idemKey); ok && len(cached) > 0 {
-		w := ctx.ResponseWriter()
-		w.Header().Set(HeaderContentType, ContentTypeJSON)
-		w.WriteHeader(http.StatusOK)
-		w.Write(cached)
+		s.idempotentMu.Unlock()
+		middleware.ReplayCachedResponse(ctx, cached)
 		return idemKey, nil, true
 	}
-	idemRW = &idempotentResponseWriter{
-		ResponseWriter: ctx.ResponseWriter(),
-		key:            idemKey,
-		cache:          s.idempotentCache,
-	}
-	// Override the ResponseWriter on the underlying core.Context
-	// so that ctx.JSON() writes through our capture wrapper.
-	if c, ok := ctx.(*core.Context); ok {
-		c.SetResponseWriter(idemRW)
-	}
+	idemRW = middleware.InstallCapture(ctx, s.idempotentMu.Unlock)
 	return idemKey, idemRW, false
 }
 
-// finishTokenIdempotency caches the captured response body for idempotent
-// replay — success (200) responses only.
-func (s *Server) finishTokenIdempotency(ctx HandlerContext, idemKey string, idemRW *idempotentResponseWriter) {
-	if idemRW != nil && len(idemRW.body) > 0 {
-		if idemRW.statusCode == http.StatusOK {
-			_ = s.idempotentCache.Set(ctx.Request().Context(), idemKey, idemRW.body, 0)
-		}
+// finishTokenIdempotency commits the captured /token response through the
+// shared middleware commit — 2xx responses with a body only, so error
+// responses are never replayed as successes — then releases the
+// single-flight lock beginTokenIdempotency took (the idempotentMu
+// serialization is the atomic-consume behavior AGENTS.md §3 requires).
+func (s *Server) finishTokenIdempotency(ctx HandlerContext, idemKey string, idemRW *middleware.CaptureWriter) {
+	if idemRW == nil {
+		return
 	}
+	defer idemRW.Unlock()
+	middleware.CommitCapturedBody(ctx, idemKey, s.idempotentCache, idemRW.Body(), idemRW.StatusCode())
 }
 
 // rejectDisallowedGrantType enforces RFC 6749 §5.2 / RFC 8693 §4.5: when a
@@ -157,7 +127,7 @@ func (s *Server) dispatchTokenGrant(ctx HandlerContext, client *Client, req oaut
 	}
 
 	// Token-policy engine (opt-in): block dangerous scope combos (no-op unwired).
-	if s.denyTokenScopeCombo(ctx, client.ID, scopes) {
+	if s.denyTokenScopeCombo(ctx, client.ID, client.TenantID, scopes) {
 		return
 	}
 

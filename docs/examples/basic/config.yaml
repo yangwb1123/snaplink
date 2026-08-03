@@ -85,6 +85,9 @@ clients:
   - id: web-app
     secret: web-secret
     name: Web App
+    # Required for OIDC/SAML federation; the hosted page consumes the one-use
+    # callback continuation and resumes this client's authorization request.
+    # login_page_uri: http://localhost:8081/login/
     redirect_uris:
       - http://localhost:3000/callback
     allowed_scopes: [openid, profile, email]

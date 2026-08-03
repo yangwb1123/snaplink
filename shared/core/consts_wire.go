@@ -333,6 +333,9 @@ const (
 	PathAdminWebhookSubscriptionByID = "/admin/webhooks/subscriptions/:id"
 	PathAdminWebhookDeadLetters      = "/admin/webhooks/deadletters"
 	PathAdminWebhookDeadLetterReplay = "/admin/webhooks/deadletters/:id/replay"
+	PathAdminBCLFailures             = "/admin/backchannel-logout/failures"
+	PathAdminBCLFailureReplay        = "/admin/backchannel-logout/failures/:id/replay"
+	PathAdminBCLFailuresReplay       = "/admin/backchannel-logout/failures/replay"
 )
 
 // Generic webhook egress engine response keys.

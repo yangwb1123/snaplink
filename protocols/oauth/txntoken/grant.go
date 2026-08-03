@@ -163,7 +163,7 @@ func txnResolveSubjectToken(d Deps, validator *Validator, ctx core.HandlerContex
 	}
 
 	claims, _, err := d.ValidateAnyToken(ctx.Request().Context(), req.SubjectToken)
-	if err != nil || claims == nil {
+	if err != nil || !core.TokenClaimsMatchDeclaredType(claims, req.SubjectTokenType) {
 		ctx.JSON(http.StatusBadRequest, core.ErrorBody(core.ErrInvalidGrant))
 		return "", nil, nil, false
 	}

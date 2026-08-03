@@ -43,6 +43,14 @@ class AccessPolicy(TypedDict, total=False):
     priority: int  # Higher priority is evaluated first; ties break on condition specificity then name.
 
 
+class AccessPolicyConvergenceSummary(TypedDict, total=False):
+    failed: int
+    revoked: int
+    scanned: int
+    scopes_restricted: int
+    step_up_marked: int
+
+
 class AccessPolicyList(TypedDict, total=False):
     """Result of GET /api/v1/admin/access-policies. Policies are ordered by"""
     policies: List[AccessPolicy]
@@ -193,6 +201,31 @@ class AuthzPolicyBundle(TypedDict, total=False):
     wildcard_semantics: WildcardSemantics
 
 
+class BCLFailure(TypedDict, total=False):
+    """Exhausted BCL delivery inputs and retry state. Never contains a signed logout token."""
+    attempts: int
+    client_id: str
+    delivered_at: str
+    first_failed_at: str
+    id: str
+    last_error: str
+    last_failed_at: str
+    next_attempt_at: str
+    permanent: bool  # True for RP 4xx failures excluded from background sweeps.
+    sid: str
+    subject: str  # Local subject used for fan-out index cleanup.
+    tenant_id: str
+    token_subject: str  # Pairwise or public subject to place in the freshly signed logout token.
+    uri: str
+
+
+class BCLReplaySummary(TypedDict, total=False):
+    attempted: int
+    busy: int
+    delivered: int
+    failed: int
+
+
 class BackupReport(TypedDict, total=False):
     """Result summary for POST /api/v1/admin/backup. One entry per"""
     sources: List[BackupSourceResult]
@@ -272,6 +305,7 @@ class ClientMetadata(TypedDict, total=False):
     allowed_resources: List[str]
     allowed_scopes: List[str]
     backchannel_logout_uri: str
+    client_secret_expires_at: int  # Unix seconds; 0 means never expires (legacy/public client).
     device_code_poll_interval: int
     device_code_ttl: int
     frontchannel_logout_uri: str
@@ -535,6 +569,7 @@ class Domain(TypedDict, total=False):
 class ErasureReport(TypedDict, total=False):
     dry_run: bool
     errors: List[str]  # Per-step failures; present on a 207 partial erasure.
+    notifications_deleted: bool  # Whether in-app notifications were deleted; preferences are erased in the same step when wired.
     refresh_tokens_deleted: int  # Tokens revoked (or, under dry_run, the projected count when previewable).
     sessions_destroyed: int
     skipped: List[str]  # Steps skipped because their store wasn't wired (or isn't previewable under dry_run).
@@ -1019,7 +1054,13 @@ class RollbackReleaseResponse(TypedDict, total=False):
     report: PinReport
 
 
+class RotateSecretRequest(TypedDict, total=False):
+    lifetime_seconds: int  # 0 selects 90d; must be greater than overlap_seconds.
+    overlap_seconds: int  # 0 selects 24h; explicit values must be at least 3600.
+
+
 class RotateSecretResponse(TypedDict, total=False):
+    client_secret_expires_at: int  # Unix expiry of the newly-issued secret.
     secret: str  # New client_secret — display once.
 
 
@@ -1372,6 +1413,10 @@ class SSOClient:
         """List the zero-trust conditional-access (CAP) policies (governance view). (operationId: listAccessPolicies)"""
         return self._request("GET", "/api/v1/admin/access-policies", auth=True)
 
+    def converge_access_policy_sessions(self) -> AccessPolicyConvergenceSummary:
+        """Apply current conditional-access policies to active sessions now. (operationId: convergeAccessPolicySessions)"""
+        return self._request("POST", "/api/v1/admin/access-policies/converge", auth=True)
+
     def admin_clear_account_lockout(self, body: Dict[str, Any]) -> None:
         """Clear a brute-force account lockout (helpdesk unlock). (operationId: adminClearAccountLockout)"""
         return self._request("POST", "/api/v1/admin/account-lockout/clear", body=body, auth=True)
@@ -1379,6 +1424,18 @@ class SSOClient:
     def get_authz_policy_bundle(self, query: Optional[Dict[str, Any]] = None) -> AuthzPolicyBundle:
         """Export the role-definition authorization policy bundle. (operationId: getAuthzPolicyBundle)"""
         return self._request("GET", "/api/v1/admin/authz/policy-bundle", query=query, auth=True)
+
+    def list_backchannel_logout_failures(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """List exhausted OIDC back-channel logout deliveries. (operationId: listBackchannelLogoutFailures)"""
+        return self._request("GET", "/api/v1/admin/backchannel-logout/failures", query=query, auth=True)
+
+    def replay_due_backchannel_logout_failures(self, query: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Replay a batch of due OIDC back-channel logout failures. (operationId: replayDueBackchannelLogoutFailures)"""
+        return self._request("POST", "/api/v1/admin/backchannel-logout/failures/replay", query=query, auth=True)
+
+    def replay_backchannel_logout_failure(self, id: str) -> Dict[str, Any]:
+        """Replay one OIDC back-channel logout failure. (operationId: replayBackchannelLogoutFailure)"""
+        return self._request("POST", f"/api/v1/admin/backchannel-logout/failures/{urllib.parse.quote(id)}/replay", auth=True)
 
     def trigger_backup(self) -> BackupReport:
         """Trigger an online VACUUM INTO backup of every registered SQLite source. (operationId: triggerBackup)"""
@@ -1464,9 +1521,9 @@ class SSOClient:
         """Reject a pending client registration. (operationId: adminClientReject)"""
         return self._request("POST", f"/api/v1/admin/clients/{urllib.parse.quote(id)}/reject", body=body, auth=True)
 
-    def admin_client_rotate_secret(self, id: str) -> RotateSecretResponse:
+    def admin_client_rotate_secret(self, id: str, body: Optional[RotateSecretRequest] = None) -> RotateSecretResponse:
         """Mint a fresh client_secret. (operationId: adminClientRotateSecret)"""
-        return self._request("POST", f"/api/v1/admin/clients/{urllib.parse.quote(id)}/rotate-secret", auth=True)
+        return self._request("POST", f"/api/v1/admin/clients/{urllib.parse.quote(id)}/rotate-secret", body=body, auth=True)
 
     def admin_compliance_active_consents(self) -> Dict[str, Any]:
         """Active OAuth consent grants, system-wide. (operationId: adminComplianceActiveConsents)"""

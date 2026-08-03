@@ -62,6 +62,7 @@ func (s *SessionTokenIssuer) Issue(_ context.Context, subject *core.Subject, sco
 
 	s.tokens.Store(tokenID, &sessionEntry{
 		claims: &core.TokenClaims{
+			TokenUse:  core.TokenUseAccessToken,
 			Subject:   subject.ID,
 			Scopes:    scopes,
 			ExpiresAt: expiresAt,

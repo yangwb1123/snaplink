@@ -57,6 +57,19 @@ func TestUser_CreateThenGetByID(t *testing.T) {
 	}
 }
 
+func TestUser_SCIMUserNameUniqueCaseInsensitive(t *testing.T) {
+	p := freshUserProvider(t)
+	ctx := context.Background()
+	first := &core.User{ID: "u1", Attributes: map[string]string{"scim:userName": "Alice@example.com"}}
+	second := &core.User{ID: "u2", Attributes: map[string]string{"scim:userName": "alice@example.com"}}
+	if err := p.CreateOrUpdate(ctx, first); err != nil {
+		t.Fatalf("first CreateOrUpdate: %v", err)
+	}
+	if err := p.CreateOrUpdate(ctx, second); !errors.Is(err, core.ErrUserExists) {
+		t.Fatalf("duplicate CreateOrUpdate = %v, want ErrUserExists", err)
+	}
+}
+
 func TestUser_GetByID_MissingReturnsErrNoSuchUser(t *testing.T) {
 	t.Parallel()
 	p := freshUserProvider(t)

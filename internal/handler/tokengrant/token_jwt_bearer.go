@@ -40,6 +40,9 @@ func HandleJWTBearerGrant(d JWTBearerGrantDeps, ctx core.HandlerContext, client 
 	if !ok {
 		return
 	}
+	if lifecycleGrantBlocked(d, ctx, subject) {
+		return
+	}
 	strategy, ti, ok := resolveIssuerForJWTBearer(d, ctx, client)
 	if !ok {
 		return
@@ -96,9 +99,11 @@ func issueJWTBearerToken(d JWTBearerGrantDeps, ctx core.HandlerContext, client *
 		ID:                  subject,
 		Resources:           resources,
 		ClientID:            client.ID,
+		TenantID:            client.TenantID,
 		TTL:                 client.AccessTokenTTL,
 		ConfirmationJKT:     dpopJKT,
 		ConfirmationX5TS256: mtlsX5T,
+		ServingRegion:       servingRegionFrom(ctx),
 	}, scopes)
 	if err != nil {
 		d.LogErrorCtx(ctx, "jwt-bearer token issuance failed", "strategy", strategy, "error", err)

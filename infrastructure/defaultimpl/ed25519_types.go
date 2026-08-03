@@ -13,14 +13,17 @@ type ed25519Header struct {
 }
 
 type ed25519Payload struct {
-	Iss   string            `json:"iss,omitempty"`
-	Sub   string            `json:"sub,omitempty"`
-	Aud   audClaim          `json:"aud,omitempty"`
-	Exp   int64             `json:"exp,omitempty"`
-	Nbf   int64             `json:"nbf,omitempty"`
-	Iat   int64             `json:"iat,omitempty"`
-	Scope string            `json:"scope,omitempty"`
-	Extra map[string]string `json:"ext,omitempty"`
+	Iss   string   `json:"iss,omitempty"`
+	Sub   string   `json:"sub,omitempty"`
+	Aud   audClaim `json:"aud,omitempty"`
+	Exp   int64    `json:"exp,omitempty"`
+	Nbf   int64    `json:"nbf,omitempty"`
+	Iat   int64    `json:"iat,omitempty"`
+	Scope string   `json:"scope,omitempty"`
+	// GrantedResources is an ID-token-only private binding used to prevent
+	// prompt=none renewal from expanding the original RFC 8707 grant.
+	GrantedResources []string          `json:"_resources,omitempty"`
+	Extra            map[string]string `json:"ext,omitempty"`
 
 	// RFC 9068 §2.2 access-token claims.
 	ClientID string             `json:"client_id,omitempty"`
@@ -30,6 +33,12 @@ type ed25519Payload struct {
 	AMR      []string           `json:"amr,omitempty"`
 	SID      string             `json:"sid,omitempty"`
 	CNF      *confirmationClaim `json:"cnf,omitempty"`
+
+	// ServingRegion is the mint-region evidence claim (SnapLink
+	// extension). Stamped from the region middleware stash at mint time;
+	// omitempty omits it when no region was resolved, so the JSON is
+	// byte-identical to pre-region builds.
+	ServingRegion string `json:"serving_region,omitempty"`
 
 	// RFC 9396 — Rich Authorization Requests. Pass-through of
 	// the original `authorization_details` array as raw JSON so
@@ -127,18 +136,27 @@ func (a audClaim) MarshalJSON() ([]byte, error) {
 // scalar string when single-valued in many real deployments; auth_time
 // is a first-class claim; nonce/amr/acr/azp are OIDC-specific).
 type ed25519IDPayload struct {
-	Iss      string            `json:"iss,omitempty"`
-	Sub      string            `json:"sub,omitempty"`
-	Aud      string            `json:"aud,omitempty"`
-	Exp      int64             `json:"exp,omitempty"`
-	Iat      int64             `json:"iat,omitempty"`
-	Nonce    string            `json:"nonce,omitempty"`
-	AtHash   string            `json:"at_hash,omitempty"`
-	DsHash   string            `json:"ds_hash,omitempty"`
-	AuthTime int64             `json:"auth_time,omitempty"`
-	AMR      []string          `json:"amr,omitempty"`
-	ACR      string            `json:"acr,omitempty"`
-	AZP      string            `json:"azp,omitempty"`
-	SID      string            `json:"sid,omitempty"`
-	Extra    map[string]string `json:"ext,omitempty"`
+	Iss                  string            `json:"iss,omitempty"`
+	Sub                  string            `json:"sub,omitempty"`
+	Aud                  string            `json:"aud,omitempty"`
+	Exp                  int64             `json:"exp,omitempty"`
+	Iat                  int64             `json:"iat,omitempty"`
+	Nonce                string            `json:"nonce,omitempty"`
+	AtHash               string            `json:"at_hash,omitempty"`
+	DsHash               string            `json:"ds_hash,omitempty"`
+	AuthTime             int64             `json:"auth_time,omitempty"`
+	AMR                  []string          `json:"amr,omitempty"`
+	ACR                  string            `json:"acr,omitempty"`
+	AZP                  string            `json:"azp,omitempty"`
+	SID                  string            `json:"sid,omitempty"`
+	Extra                map[string]string `json:"ext,omitempty"`
+	Scope                string            `json:"scope,omitempty"`
+	GrantedResources     []string          `json:"_resources,omitempty"`
+	AuthorizationDetails json.RawMessage   `json:"authorization_details,omitempty"`
+
+	// ServingRegion mirrors the access-token claim (SnapLink extension):
+	// the regional deployment that minted this ID token. First-class
+	// field (never an `ext` map entry) so OIDC §5.5 ProjectIDTokenClaims
+	// — which filters only the Extra map — can never drop it.
+	ServingRegion string `json:"serving_region,omitempty"`
 }

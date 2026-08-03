@@ -342,6 +342,10 @@ func (s *Server) handleAdminListAccessPolicies(ctx HandlerContext) {
 	admin.HandleAdminListAccessPolicies(s, ctx)
 }
 
+func (s *Server) handleAdminConvergeAccessPolicies(ctx HandlerContext) {
+	admin.HandleAdminConvergeAccessPolicies(s, ctx)
+}
+
 // ConnectionProber returns the wired reachability prober for the admin
 // connection-test endpoint, defaulting to the stdlib-backed production HTTP
 // prober (bounded by connectionProbeTimeout) when no custom one was injected.

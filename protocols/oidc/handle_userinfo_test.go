@@ -90,6 +90,19 @@ func TestHandleUserInfo_TransientLookupErrorIsNotUserNotFound(t *testing.T) {
 	}
 }
 
+func TestHandleUserInfo_RejectsIDTokenUse(t *testing.T) {
+	t.Parallel()
+	d := &userinfoHandlerDeps{
+		claims: &core.TokenClaims{TokenUse: core.TokenUseIDToken, Subject: "user-1", Scopes: []string{"openid"}},
+		users:  &erroringUserProvider{err: errors.New("must not reach user lookup")},
+	}
+	ctx, rec := newCtx(http.MethodGet, "/userinfo")
+	oidc.HandleUserInfo(d, ctx)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("ID token at /userinfo status = %d, want 401", rec.Code)
+	}
+}
+
 // TestHandleUserInfo_GenuinelyMissingUserIsNotFound is the control: the
 // canonical core.ErrNoSuchUser sentinel must still map to 404 user_not_found
 // (unchanged behavior for a genuinely deleted/unknown subject).

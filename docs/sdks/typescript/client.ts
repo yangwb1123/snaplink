@@ -46,7 +46,7 @@ export interface AccessPolicy {
   /** Deny beats require_step_up beats allow; restrict_scopes and log ride along. */
   actions?: { allow?: boolean; deny?: boolean; log?: boolean; require_step_up?: string; restrict_scopes?: string[] };
   /** AND-combined predicate; a field left unset is unconstrained. */
-  conditions?: { device_managed?: boolean; geo_in?: string[]; geo_not_in?: string[]; risk_score?: string; time_after?: string; time_before?: string; user_member_of?: string[] };
+  conditions?: { authentication_age_seconds?: number; device_is_new?: boolean; device_is_new_location?: boolean; device_managed?: boolean; device_trust_level?: number; device_type?: "mobile" | "desktop" | "browser" | "tablet" | "app" | "bot" | "unknown"; geo_in?: string[]; geo_not_in?: string[]; risk_score?: string; session_age_seconds?: number; session_max_concurrent?: number; time_after?: string; time_before?: string; user_member_of?: string[] };
   /** Report-only. A match is recorded but not enforced (staging a policy before enforcing). */
   dry_run?: boolean;
   enabled: boolean;
@@ -54,6 +54,14 @@ export interface AccessPolicy {
   name: string;
   /** Higher priority is evaluated first; ties break on condition specificity then name. */
   priority?: number;
+}
+
+export interface AccessPolicyConvergenceSummary {
+  failed: number;
+  revoked: number;
+  scanned: number;
+  scopes_restricted: number;
+  step_up_marked: number;
 }
 
 /** Result of GET /api/v1/admin/access-policies. Policies are ordered by */
@@ -230,6 +238,34 @@ export interface AuthzPolicyBundle {
   wildcard_semantics: WildcardSemantics;
 }
 
+/** Exhausted BCL delivery inputs and retry state. Never contains a signed logout token. */
+export interface BCLFailure {
+  attempts: number;
+  client_id: string;
+  delivered_at?: string;
+  first_failed_at: string;
+  id: string;
+  last_error: string;
+  last_failed_at: string;
+  next_attempt_at: string;
+  /** True for RP 4xx failures excluded from background sweeps. */
+  permanent: boolean;
+  sid?: string;
+  /** Local subject used for fan-out index cleanup. */
+  subject: string;
+  tenant_id?: string;
+  /** Pairwise or public subject to place in the freshly signed logout token. */
+  token_subject: string;
+  uri: string;
+}
+
+export interface BCLReplaySummary {
+  attempted: number;
+  busy: number;
+  delivered: number;
+  failed: number;
+}
+
 /** Result summary for POST /api/v1/admin/backup. One entry per */
 export interface BackupReport {
   sources: BackupSourceResult[];
@@ -324,6 +360,8 @@ export interface ClientMetadata {
   allowed_resources?: string[];
   allowed_scopes?: string[];
   backchannel_logout_uri?: string;
+  /** Unix seconds; 0 means never expires (legacy/public client). */
+  client_secret_expires_at?: number;
   device_code_poll_interval?: number;
   device_code_ttl?: number;
   frontchannel_logout_uri?: string;
@@ -624,6 +662,8 @@ export interface ErasureReport {
   dry_run?: boolean;
   /** Per-step failures; present on a 207 partial erasure. */
   errors?: string[];
+  /** Whether in-app notifications were deleted; preferences are erased in the same step when wired. */
+  notifications_deleted?: boolean;
   /** Tokens revoked (or, under dry_run, the projected count when previewable). */
   refresh_tokens_deleted?: number;
   sessions_destroyed?: number;
@@ -1207,7 +1247,16 @@ export interface RollbackReleaseResponse {
   report?: PinReport;
 }
 
+export interface RotateSecretRequest {
+  /** 0 selects 90d; must be greater than overlap_seconds. */
+  lifetime_seconds?: number;
+  /** 0 selects 24h; explicit values must be at least 3600. */
+  overlap_seconds?: number;
+}
+
 export interface RotateSecretResponse {
+  /** Unix expiry of the newly-issued secret. */
+  client_secret_expires_at?: number;
   /** New client_secret — display once. */
   secret?: string;
 }
@@ -1720,6 +1769,11 @@ export class SSOClient {
     return this.request<AccessPolicyList>("GET", `/api/v1/admin/access-policies`, { auth: true });
   }
 
+  /** Apply current conditional-access policies to active sessions now. */
+  async convergeAccessPolicySessions(): Promise<AccessPolicyConvergenceSummary> {
+    return this.request<AccessPolicyConvergenceSummary>("POST", `/api/v1/admin/access-policies/converge`, { auth: true });
+  }
+
   /** Clear a brute-force account lockout (helpdesk unlock). */
   async adminClearAccountLockout(body: { client_id: string; identifier: string }): Promise<void> {
     return this.request<void>("POST", `/api/v1/admin/account-lockout/clear`, { body, auth: true });
@@ -1728,6 +1782,21 @@ export class SSOClient {
   /** Export the role-definition authorization policy bundle. */
   async getAuthzPolicyBundle(query?: { clientId?: string }): Promise<AuthzPolicyBundle> {
     return this.request<AuthzPolicyBundle>("GET", `/api/v1/admin/authz/policy-bundle`, { query, auth: true });
+  }
+
+  /** List exhausted OIDC back-channel logout deliveries. */
+  async listBackchannelLogoutFailures(query?: { limit?: number }): Promise<{ failures?: BCLFailure[]; total?: number }> {
+    return this.request<{ failures?: BCLFailure[]; total?: number }>("GET", `/api/v1/admin/backchannel-logout/failures`, { query, auth: true });
+  }
+
+  /** Replay a batch of due OIDC back-channel logout failures. */
+  async replayDueBackchannelLogoutFailures(query?: { limit?: number }): Promise<{ replay?: BCLReplaySummary; status?: "ok" }> {
+    return this.request<{ replay?: BCLReplaySummary; status?: "ok" }>("POST", `/api/v1/admin/backchannel-logout/failures/replay`, { query, auth: true });
+  }
+
+  /** Replay one OIDC back-channel logout failure. */
+  async replayBackchannelLogoutFailure(id: string): Promise<{ cleanup_status?: "complete"; delivery_status?: "delivered"; failure?: BCLFailure }> {
+    return this.request<{ cleanup_status?: "complete"; delivery_status?: "delivered"; failure?: BCLFailure }>("POST", `/api/v1/admin/backchannel-logout/failures/${encodeURIComponent(id)}/replay`, { auth: true });
   }
 
   /** Trigger an online VACUUM INTO backup of every registered SQLite source. */
@@ -1836,8 +1905,8 @@ export class SSOClient {
   }
 
   /** Mint a fresh client_secret. */
-  async adminClientRotateSecret(id: string): Promise<RotateSecretResponse> {
-    return this.request<RotateSecretResponse>("POST", `/api/v1/admin/clients/${encodeURIComponent(id)}/rotate-secret`, { auth: true });
+  async adminClientRotateSecret(id: string, body?: RotateSecretRequest): Promise<RotateSecretResponse> {
+    return this.request<RotateSecretResponse>("POST", `/api/v1/admin/clients/${encodeURIComponent(id)}/rotate-secret`, { body, auth: true });
   }
 
   /** Active OAuth consent grants, system-wide. */
@@ -2643,8 +2712,8 @@ export class SSOClient {
   }
 
   /** Send a one-time code for the named authenticator. */
-  async postSendCode(body: SendCodeRequest): Promise<Record<string, unknown>> {
-    return this.request<Record<string, unknown>>("POST", `/auth/send-code`, { body });
+  async postSendCode(body: SendCodeRequest): Promise<{ status?: "sent" }> {
+    return this.request<{ status?: "sent" }>("POST", `/auth/send-code`, { body });
   }
 
   /** Consume a self-service email verification token. */
@@ -3034,8 +3103,8 @@ export class SSOClient {
   }
 
   /** Erase the authenticated user's own account (GDPR Art. 17). */
-  async eraseMyAccount(body: { confirm?: string; dry_run?: boolean }): Promise<{ dry_run?: boolean; refresh_tokens_deleted?: number; sessions_destroyed?: number; skipped?: string[]; user_deleted?: boolean; user_id?: string }> {
-    return this.request<{ dry_run?: boolean; refresh_tokens_deleted?: number; sessions_destroyed?: number; skipped?: string[]; user_deleted?: boolean; user_id?: string }>("POST", `/me/account/erase`, { body, auth: true });
+  async eraseMyAccount(body: { confirm?: string; dry_run?: boolean }): Promise<{ dry_run?: boolean; notifications_deleted?: boolean; refresh_tokens_deleted?: number; sessions_destroyed?: number; skipped?: string[]; user_deleted?: boolean; user_id?: string }> {
+    return this.request<{ dry_run?: boolean; notifications_deleted?: boolean; refresh_tokens_deleted?: number; sessions_destroyed?: number; skipped?: string[]; user_deleted?: boolean; user_id?: string }>("POST", `/me/account/erase`, { body, auth: true });
   }
 
   /** Export the authenticated user's own data (GDPR Art. 15). */

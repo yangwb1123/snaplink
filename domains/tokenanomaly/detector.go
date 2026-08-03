@@ -2,6 +2,8 @@ package tokenanomaly
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -411,14 +413,30 @@ func (d *Detector) dispatchThreat(ctx context.Context, f Finding) {
 		Severity:  string(f.Severity),
 		SubjectID: f.SubjectID,
 		ClientID:  f.ClientID,
-		Evidence: map[string]string{
-			"token_thumbprint": f.Thumbprint,
-			"detail":           f.Detail,
-		},
+		Evidence:  evidenceFor(f),
 	}
 	if _, err := d.threatExec.Execute(ctx, threat, threataction.ThreatPolicy{}); err != nil {
 		d.logger.Error("threat executor failed",
 			"executor", d.threatExec.Name(),
 			"type", f.Type, "subject", f.SubjectID, "error", err)
 	}
+}
+
+// evidenceFor builds the Threat.Evidence map for a finding. Geo findings
+// (multi_geo / velocity) carry their sorted geo set (comma-joined, eq- and
+// exists-matchable) and the sighting count (gt/lt-matchable) so conditional
+// policies can scope actions on the geo evidence itself; rate_spike findings
+// carry only the thumbprint + detail, so a count-conditioned policy fails
+// closed (missing key) for them — see docs/config-reference.md threat_action
+// guidance. The joined string is canonical because geoFinding sorts f.Geos.
+func evidenceFor(f Finding) map[string]string {
+	evidence := map[string]string{
+		"token_thumbprint": f.Thumbprint,
+		"detail":           f.Detail,
+	}
+	if len(f.Geos) > 0 {
+		evidence["geos"] = strings.Join(f.Geos, ",")
+		evidence["count"] = strconv.FormatInt(f.Count, 10)
+	}
+	return evidence
 }

@@ -389,6 +389,7 @@ func mountSAMLHandler(cfg *config.Config, a *app, logger spi.Logger) error {
 		AuditRecorder:         a.recorder,
 		Logger:                logger,
 		RegisterAuthenticator: a.server.RegisterAuthenticator,
+		ResumeFederatedLogin:  a.server.ResumeFederatedLogin,
 	})
 	if err != nil {
 		return fmt.Errorf("saml handler %q: %w", cfg.SAML.Handler, err)

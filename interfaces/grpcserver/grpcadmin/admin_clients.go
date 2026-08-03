@@ -22,8 +22,11 @@ import (
 // anti-exfil rule shared with the YAML + DCR paths. No-op when the
 // attribute is unset.
 func validateClientCAEP(c *sso.Client) error {
-	if c == nil || c.Attributes == nil {
+	if c == nil {
 		return nil
+	}
+	if c.LoginPageURI != "" && !sso.IsFederatedLoginPageURIValid(c.LoginPageURI) {
+		return errors.New("login_page_uri must be HTTPS or loopback HTTP")
 	}
 	if ep := c.Attributes[caep.AttrReceiverEndpoint]; ep != "" {
 		if err := caep.ValidateReceiverEndpoint(ep); err != nil {
@@ -383,6 +386,7 @@ func clientToProto(c *sso.Client, includeSecret bool) *adminv1.Client {
 		TokenStrategy:         c.TokenStrategy,
 		Active:                c.Active,
 		ClientSecretExpiresAt: clientExpiryUnix(c),
+		LoginPageUri:          c.LoginPageURI,
 	}
 	if includeSecret {
 		out.Secret = c.Secret
@@ -404,6 +408,7 @@ func protoToClient(in *adminv1.Client) *sso.Client {
 		TokenStrategy:         in.TokenStrategy,
 		Active:                in.Active,
 		SecretExpiresAt:       timeFromUnix(in.ClientSecretExpiresAt),
+		LoginPageURI:          in.LoginPageUri,
 	}
 }
 
@@ -429,6 +434,7 @@ func applyProtoToExistingClient(existing *sso.Client, in *adminv1.Client) *sso.C
 	c.AllowedAuthenticators = append([]string(nil), in.AllowedAuthenticators...)
 	c.TokenStrategy = in.TokenStrategy
 	c.Active = in.Active
+	c.LoginPageURI = in.LoginPageUri
 	if in.ClientSecretExpiresAt != 0 {
 		c.SecretExpiresAt = timeFromUnix(in.ClientSecretExpiresAt)
 	}

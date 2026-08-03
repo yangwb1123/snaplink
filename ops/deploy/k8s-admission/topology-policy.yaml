@@ -92,6 +92,13 @@ spec:
           c.env.exists(e, e.name == "SSO_SERVER__PAIRWISE_SUBJECTS__BACKEND" &&
                           e.value in ["sqlite", "postgres"]))
       message: multi-replica sso-server requires a shared pairwise-subject backend
+    - expression: >-
+        !has(object.spec.replicas) || object.spec.replicas <= 1 ||
+        object.spec.template.spec.containers.exists(c,
+          c.name == "sso-server" && has(c.env) &&
+          c.env.exists(e, e.name == "SSO_USER_LIFECYCLE__ENABLED" &&
+                          e.value.lowerAscii() == "false"))
+      message: multi-replica sso-server forbids user lifecycle until a shared backend is available
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding

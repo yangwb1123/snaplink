@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -147,6 +148,8 @@ func newCDServer(t *testing.T) (*httptest.Server, *cdFactory) {
 		Name:          "Connection Dispatch",
 		Active:        true,
 		TokenStrategy: sso.TokenStrategySession,
+		RedirectURIs:  []string{"https://rp.example.test/callback"},
+		LoginPageURI:  "https://login.example.test/authorize",
 	})
 	pw := authenticators.NewPasswordAuthenticator(authenticators.PasswordVerifierFunc(
 		func(_ context.Context, u, p string) (*sso.AuthResult, error) {
@@ -178,12 +181,17 @@ func newCDServer(t *testing.T) (*httptest.Server, *cdFactory) {
 // comparison.
 func cdLogin(t *testing.T, ts *httptest.Server, host, provider, state string) (int, http.Header, []byte) {
 	t.Helper()
-	raw, _ := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"provider":   provider,
 		"client_id":  cdClientID,
 		"credential": map[string]string{"username": "alice", "password": "pw"},
 		"state":      state,
-	})
+	}
+	if provider != authenticators.MethodPassword {
+		payload["response_type"] = "code"
+		payload["redirect_uri"] = "https://rp.example.test/callback"
+	}
+	raw, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/auth/login", bytes.NewReader(raw))
 	if err != nil {
 		t.Fatalf("new request: %v", err)
@@ -217,10 +225,14 @@ func TestConnectionDispatch_EnabledConnectionRedirectsUpstream(t *testing.T) {
 	if !strings.HasPrefix(loc, cdAuthzA+"?") {
 		t.Errorf("Location = %q, want the connection's authorization endpoint", loc)
 	}
-	for _, want := range []string{"client_id=upstream-client", "state=st-conn"} {
+	for _, want := range []string{"client_id=upstream-client"} {
 		if !strings.Contains(loc, want) {
 			t.Errorf("Location %q missing %q", loc, want)
 		}
+	}
+	parsed, err := url.Parse(loc)
+	if err != nil || !strings.HasPrefix(parsed.Query().Get("state"), cdConnOkta+":slf.") {
+		t.Errorf("Location %q did not carry server-issued state", loc)
 	}
 	// /auth/login is a credential endpoint even on the federated redirect leg.
 	if cc := hdr.Get("Cache-Control"); !strings.Contains(cc, "no-store") {
@@ -352,14 +364,8 @@ func cdCallback(t *testing.T, ts *httptest.Server, host, provider string) (int, 
 	return resp.StatusCode, body
 }
 
-// TestConnectionDispatch_CallbackCrossTenantGuard locks the callback leg of the
-// same guard the login leg enforces: a callback carrying another tenant's
-// connection id, served under THIS tenant's host, must collapse to the
-// byte-identical unknown_provider response a nonexistent provider gets — NOT a
-// 401 callback_failed (a status-diff + outbound-fetch oracle over cross-tenant
-// connection existence), and the factory must never be reached (no build, no
-// upstream code exchange). Offline + deterministic: the guard fires before any
-// authenticator is built, so no network call is attempted.
+// TestConnectionDispatch_CallbackCrossTenantGuard proves legacy provider-only
+// callbacks cannot probe either nonexistent or cross-tenant connections.
 func TestConnectionDispatch_CallbackCrossTenantGuard(t *testing.T) {
 	t.Parallel()
 	ts, factory := newCDServer(t)
@@ -369,8 +375,8 @@ func TestConnectionDispatch_CallbackCrossTenantGuard(t *testing.T) {
 	if baseStatus != http.StatusBadRequest {
 		t.Fatalf("baseline callback status = %d body=%s, want 400", baseStatus, baseBody)
 	}
-	if !bytes.Contains(baseBody, []byte(`"unknown_provider"`)) {
-		t.Fatalf("baseline callback body = %s, want unknown_provider", baseBody)
+	if !bytes.Contains(baseBody, []byte(`"invalid_callback"`)) {
+		t.Fatalf("baseline callback body = %s, want invalid_callback", baseBody)
 	}
 
 	// cdConnOther belongs to tenant B; a callback for it under tenant A's host

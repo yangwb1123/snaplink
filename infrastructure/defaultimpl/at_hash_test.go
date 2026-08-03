@@ -8,7 +8,14 @@ import (
 	"testing"
 
 	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
+
+type tokenUseIssuer interface {
+	oidc.IDTokenIssuer
+	Issue(context.Context, *core.Subject, []string) (*core.Token, error)
+	Validate(context.Context, string) (*core.TokenClaims, error)
+}
 
 // The canonical OpenID Connect Core 1.0 at_hash example: hashing this
 // access_token with SHA-256 and base64url-encoding the left-most 128 bits
@@ -71,7 +78,7 @@ func TestIssueIDToken_AtHash(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name string
-		iss  oidc.IDTokenIssuer
+		iss  tokenUseIssuer
 		alg  string
 	}{
 		{"ed25519", NewEd25519JWTIssuer(), jwtAlgEdDSA},
@@ -92,6 +99,18 @@ func TestIssueIDToken_AtHash(t *testing.T) {
 			if want := accessTokenHash(tc.alg, specAccessToken); got != want {
 				t.Errorf("at_hash = %q, want %q (alg %s)", got, want, tc.alg)
 			}
+			idClaims, err := tc.iss.Validate(context.Background(), withAT)
+			if err != nil || idClaims.TokenUse != core.TokenUseIDToken {
+				t.Fatalf("validated ID token use = %q, err=%v", idClaims.TokenUse, err)
+			}
+			access, err := tc.iss.Issue(context.Background(), &core.Subject{ID: "sub", ClientID: "client"}, []string{"openid"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			accessClaims, err := tc.iss.Validate(context.Background(), access.AccessToken)
+			if err != nil || accessClaims.TokenUse != core.TokenUseAccessToken {
+				t.Fatalf("validated access token use = %q, err=%v", accessClaims.TokenUse, err)
+			}
 
 			noAT, err := tc.iss.IssueIDToken(context.Background(), &oidc.IDTokenRequest{
 				Subject: "sub", Audience: "aud",
@@ -101,6 +120,40 @@ func TestIssueIDToken_AtHash(t *testing.T) {
 			}
 			if _, present := idTokenClaims(t, noAT)["at_hash"]; present {
 				t.Error("at_hash present though no access_token was supplied")
+			}
+		})
+	}
+}
+
+func TestIssueIDToken_BindsSilentRenewalGrant(t *testing.T) {
+	t.Parallel()
+	details := json.RawMessage(`[{"type":"payment","limit":10}]`)
+	for _, tc := range []struct {
+		name string
+		iss  oidc.IDTokenIssuer
+	}{
+		{"ed25519", NewEd25519JWTIssuer()},
+		{"ecdsa", NewECDSAJWTIssuer()},
+		{"rsa", NewRSAJWTIssuer()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tok, err := tc.iss.IssueIDToken(context.Background(), &oidc.IDTokenRequest{
+				Subject: "sub", Audience: "client", GrantedScopes: []string{"openid", "profile"},
+				GrantedResources: []string{"https://api.example"}, AuthorizationDetails: details,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			claims := idTokenClaims(t, tok)
+			if claims["scope"] != "openid profile" {
+				t.Fatalf("scope=%v", claims["scope"])
+			}
+			resources, _ := claims["_resources"].([]any)
+			if len(resources) != 1 || resources[0] != "https://api.example" {
+				t.Fatalf("resources=%v", claims["_resources"])
+			}
+			if claims["authorization_details"] == nil {
+				t.Fatal("authorization_details missing")
 			}
 		})
 	}

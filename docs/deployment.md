@@ -196,7 +196,8 @@ install), so JWKS is fleet-consistent with no leader election. `registry`,
 ### 6b. Shared state — the part that decides your topology
 
 Coordination events are not the *primary data*. Auth codes, sessions, refresh
-tokens, PAR/device/CIBA requests and MFA challenges live in **stores**.
+tokens, PAR/device/CIBA requests, MFA challenges, and enabled user-lifecycle
+state live in **stores**.
 `memory` is per-process and a per-pod SQLite DSN is file-local; neither is
 shared across replicas. The stock binary also supports shared Redis hot stores
 and Postgres durable stores, but the operator must select them explicitly.
@@ -228,6 +229,12 @@ So choose a tier:
 > stores (identity, permissions, tenant, audit, consent, …) with a shared
 > `postgres:` block, and turn on the etcd Bus. Both Redis and Postgres backends
 > are root-module infrastructure packages wired by `cmd/sso-server`.
+
+`user_lifecycle.enabled` is currently the exception to Tier B: the stock binary
+only has a process-memory lifecycle store. Declared multi-replica startup and
+the Kubernetes admission policy therefore reject enabling it (the explicit
+`allow_per_pod_state` escape hatch is development-only). Keep it disabled in an
+HA fleet until a shared lifecycle store is supplied through SDK composition.
 
 Tier B `config.yaml` (hot → Redis Cluster, durable → Postgres, coordination → etcd;
 secrets via `SSO_REDIS__PASSWORD` / `SSO_POSTGRES__DSN`):

@@ -45,7 +45,7 @@ func (s *Server) meClaimsOrChallenge(ctx HandlerContext) (*core.TokenClaims, boo
 		return nil, false
 	}
 	claims, _, err := s.validateAnyToken(ctx.Request().Context(), tokenString)
-	if err != nil {
+	if err != nil || !core.IsAccessTokenClaims(claims) {
 		s.setResourceBearerChallenge(ctx, s.resolveIssuer(ctx), ErrInvalidToken, "The access token is invalid or expired")
 		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidToken))
 		return nil, false

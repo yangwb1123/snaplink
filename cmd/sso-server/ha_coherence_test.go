@@ -15,7 +15,8 @@ func TestHACoherenceRejectsPerProcessCriticalStores(t *testing.T) {
 			Topology:         config.TopologyConfig{Mode: config.TopologyModeMulti},
 			PairwiseSubjects: config.PairwiseSubjectsConfig{Enabled: true},
 		},
-		MFA: config.MFAConfig{Enabled: true},
+		MFA:           config.MFAConfig{Enabled: true},
+		UserLifecycle: config.UserLifecycleConfig{Enabled: true},
 	}
 	b := &appBuilder{cfg: cfg, logger: quietLogger()}
 	err := b.enforceHACoherence()
@@ -28,6 +29,7 @@ func TestHACoherenceRejectsPerProcessCriticalStores(t *testing.T) {
 		"identity.backend",
 		"mfa.challenge.backend",
 		"server.pairwise_subjects.backend",
+		"user_lifecycle.backend",
 	} {
 		if !strings.Contains(err.Error(), key) {
 			t.Errorf("error %q does not identify %s", err, key)
@@ -55,6 +57,30 @@ func TestHACoherenceAcceptsSharedCriticalStores(t *testing.T) {
 	b := &appBuilder{cfg: cfg, logger: quietLogger()}
 	if err := b.enforceHACoherence(); err != nil {
 		t.Fatalf("shared topology rejected: %v", err)
+	}
+}
+
+// TestHACoherenceAcceptsPostgresOAuth locks the postgres OAuth backend as
+// HA-valid: perPodBackend flags only ""/"memory", so oauth.backend=postgres
+// must be accepted in TopologyModeMulti without AllowPerPodState.
+func TestHACoherenceAcceptsPostgresOAuth(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{
+		OAuth: config.OAuthConfig{Backend: "postgres"},
+		Identity: config.IdentityConfig{
+			Backend:        "postgres",
+			SessionBackend: "redis",
+		},
+		Server: config.ServerConfig{
+			Topology: config.TopologyConfig{Mode: config.TopologyModeMulti},
+		},
+	}
+	b := &appBuilder{cfg: cfg, logger: quietLogger()}
+	if issues := b.haCoherenceIssues(); len(issues) != 0 {
+		t.Fatalf("multi-replica topology rejected postgres OAuth stores: %v", issues)
+	}
+	if err := b.enforceHACoherence(); err != nil {
+		t.Fatalf("enforceHACoherence rejected postgres OAuth stores: %v", err)
 	}
 }
 
@@ -87,6 +113,7 @@ func TestKubernetesAdmissionPolicyCoversHACoherenceContract(t *testing.T) {
 		SelfService: config.SelfServiceConfig{
 			IdentityLink: config.IdentityLinkConfig{Enabled: true},
 		},
+		UserLifecycle: config.UserLifecycleConfig{Enabled: true},
 	}
 	issues := (&appBuilder{cfg: cfg}).haCoherenceIssues()
 	contract := map[string]string{
@@ -98,6 +125,7 @@ func TestKubernetesAdmissionPolicyCoversHACoherenceContract(t *testing.T) {
 		"mfa.challenge.backend":              "SSO_MFA__CHALLENGE__BACKEND",
 		"self_service.identity_link.backend": "SSO_SELF_SERVICE__IDENTITY_LINK__BACKEND",
 		"server.pairwise_subjects.backend":   "SSO_SERVER__PAIRWISE_SUBJECTS__BACKEND",
+		"user_lifecycle.backend":             "SSO_USER_LIFECYCLE__ENABLED",
 	}
 	root := filepath.Join("..", "..")
 	policy := readHAContractFile(t, filepath.Join(root, "ops", "deploy", "k8s-admission", "topology-policy.yaml"))

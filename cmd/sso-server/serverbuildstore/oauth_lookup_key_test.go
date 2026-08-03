@@ -61,3 +61,31 @@ func TestResolveOAuthLookupHMACKeysRejectsShortKey(t *testing.T) {
 		t.Fatalf("err = %v; want minimum key length", err)
 	}
 }
+
+func TestResolveOAuthPostgresLookupHMACKeys(t *testing.T) {
+	dir := t.TempDir()
+	currentPath := filepath.Join(dir, "current")
+	previousPath := filepath.Join(dir, "previous")
+	if err := os.WriteFile(currentPath, []byte("0123456789abcdef0123456789abcdef\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(previousPath, []byte("abcdef0123456789abcdef0123456789"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := ResolveOAuthPostgresLookupHMACKeys(config.OAuthPostgresConfig{
+		LookupHMACKeyFile: currentPath, LookupHMACPreviousKeyFile: previousPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 2 || len(keys[0]) != 32 || len(keys[1]) != 32 {
+		t.Fatalf("resolved key lengths = %v, %v", len(keys[0]), len(keys[1]))
+	}
+	// Previous-without-current is rejected, scoped to oauth.postgres.
+	_, err = ResolveOAuthPostgresLookupHMACKeys(config.OAuthPostgresConfig{
+		LookupHMACPreviousKeyFile: previousPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "oauth.postgres.lookup_hmac_previous_key_file") {
+		t.Fatalf("err = %v; want oauth.postgres-scoped current-key requirement", err)
+	}
+}

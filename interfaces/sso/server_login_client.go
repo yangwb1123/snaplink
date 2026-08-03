@@ -178,7 +178,7 @@ func (s *Server) evaluateLoginRisk(ctx HandlerContext, result *AuthResult, req *
 			// (user, client) lets a genuinely returning device skip the
 			// challenge entirely — checked BEFORE issuing one so a hit never
 			// even mints a throwaway challenge.
-			if authHookSkipsMFA(ctx) || s.trustedDeviceAllowsSkip(ctx, result.UserID, req.ClientID, req.DeviceToken) {
+			if authenticationHasMFA(result) || authHookSkipsMFA(ctx) || s.trustedDeviceAllowsSkip(ctx, result.UserID, req.ClientID, req.DeviceToken) {
 				return false
 			}
 			// Step-up gate engaged: persist the in-flight state and return
@@ -211,8 +211,12 @@ func (s *Server) evaluateLoginRisk(ctx HandlerContext, result *AuthResult, req *
 //   - VerdictDeny blocks the login (403 conditional_access_denied).
 //   - VerdictRequireStepUp reuses the EXISTING RiskScorer step-up mechanism
 //     (WithMFAProvider + WithMFAChallengeStore) rather than inventing a
-//     parallel one: without both wired, it decays to allow — the same
-//     historical no-op RiskScorer's RequireMFA falls back to.
+//     parallel one. Unlike an unavailable risk SIGNAL, a successfully resolved
+//     operator policy is an authorization decision: without both MFA
+//     dependencies wired it fails closed with conditional_access_denied.
+//   - RestrictScopes is retained as an internal ceiling and intersected with
+//     client-authorized scopes immediately before consent/token issuance.
+//   - Log writes the resolved policy decision to the structured server log.
 //   - VerdictAllow (including the engine's own no-policy-matched default)
 //     proceeds.
 //
@@ -223,7 +227,7 @@ func (s *Server) enforceConditionalAccessLogin(ctx HandlerContext, result *AuthR
 		return false
 	}
 	reqCtx := ctx.Request().Context()
-	dec, err := s.capEngine.Evaluate(reqCtx, s.buildAccessContext(ctx, result, req, client))
+	dec, err := s.capEngine.Evaluate(reqCtx, s.buildLoginAccessContext(ctx, result, req, client))
 	if err != nil {
 		// Data-source outage: fail OPEN regardless of the engine's own
 		// configured default verdict (Config.DefaultDeny governs the advisory
@@ -235,19 +239,31 @@ func (s *Server) enforceConditionalAccessLogin(ctx HandlerContext, result *AuthR
 	if s.metrics != nil {
 		s.metrics.ObserveConditionalAccessDecision(string(dec.Verdict))
 	}
+	if dec.Log {
+		s.logger.Info("conditional access policy matched", "policy", dec.MatchedPolicy,
+			"verdict", dec.Verdict, "user", result.UserID, "client", req.ClientID)
+	}
+	if len(dec.RestrictScopes) > 0 {
+		req.PolicyScopeRestriction = mergeScopeRestrictions(req.PolicyScopeRestriction, dec.RestrictScopes)
+	}
 	switch dec.Verdict {
 	case conditionalaccess.VerdictDeny:
 		s.recordLoginFailure(ctx, req.ClientID, req.Provider, core.ErrConditionalAccessDenied)
 		ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, core.ErrConditionalAccessDenied, req.State))
 		return true
 	case conditionalaccess.VerdictRequireStepUp:
-		if authHookSkipsMFA(ctx) {
+		if authenticationHasMFA(result) || authHookSkipsMFA(ctx) {
 			return false
 		}
 		if s.mfaProvider != nil && s.mfaChallengeStore != nil {
 			s.issueMFAChallenge(ctx, result, *req, client)
 			return true
 		}
+		s.logger.Error("conditional access step-up unavailable; failing closed",
+			"policy", dec.MatchedPolicy, "user", result.UserID, "client", req.ClientID)
+		s.recordLoginFailure(ctx, req.ClientID, req.Provider, core.ErrConditionalAccessDenied)
+		ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, core.ErrConditionalAccessDenied, req.State))
+		return true
 	}
 	return false
 }
@@ -255,25 +271,28 @@ func (s *Server) enforceConditionalAccessLogin(ctx HandlerContext, result *AuthR
 // buildAccessContext assembles the conditional-access engine's per-request
 // AccessContext: the wired trust.TrustScorer composite score (degrading to
 // "unknown" on error or when unwired) and the DeviceFingerprint posture
-// lookup (degrading to PostureUnknown identically). Groups is left
-// unpopulated — no group/role-membership signal source is wired into the
-// login path this wave, so a user.member_of policy condition simply never
-// matches (Conditions.specificity treats an empty condition as
-// unconstrained, never as a deny).
+// lookup (degrading to PostureUnknown identically). When a permissions
+// provider is wired, its per-user/client role codes populate Groups for
+// user.member_of policies; an unavailable provider degrades to no groups.
 func (s *Server) buildAccessContext(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client) conditionalaccess.AccessContext {
 	signals := s.buildTrustSignals(ctx, result, client)
-	dc := deviceCtxFrom(ctx)
+	dc := s.conditionalAccessDeviceContext(ctx, result.UserID)
 	ac := conditionalaccess.AccessContext{
-		DevicePosture:   s.lookupDevicePosture(ctx, signals),
-		Country:         signals.Geo.CountryCode,
-		Now:             time.Now(),
-		RequestedScopes: req.Scope,
-		Subject:         result.UserID,
-		ClientID:        client.ID,
-		DeviceType:      deviceTypeFromCtx(ctx),
-		IsNewDevice:     dc != nil && dc.SecurityCtx != nil && dc.SecurityCtx.DeviceIsNew,
-		IsNewLocation:   dc != nil && dc.SecurityCtx != nil && dc.SecurityCtx.LocationIsNew,
+		DevicePosture:    s.lookupDevicePosture(ctx, signals),
+		Country:          signals.Geo.CountryCode,
+		Now:              time.Now(),
+		SessionCreatedAt: s.conditionalAccessSessionCreatedAt(ctx, result.SessionID),
+		AuthTime:         result.AuthTime,
+		RequestedScopes:  req.Scope,
+		Subject:          result.UserID,
+		ClientID:         client.ID,
+		Groups:           s.conditionalAccessGroups(ctx.Request().Context(), result.UserID, client.ID),
+		DeviceType:       dc.Type,
+		DeviceTrustLevel: dc.TrustScore,
+		IsNewDevice:      dc != nil && dc.SecurityCtx != nil && dc.SecurityCtx.DeviceIsNew,
+		IsNewLocation:    dc != nil && dc.SecurityCtx != nil && dc.SecurityCtx.LocationIsNew,
 	}
+	ac = s.withConcurrentSessions(ctx.Request().Context(), ac)
 	if s.trustScorer == nil {
 		return ac
 	}

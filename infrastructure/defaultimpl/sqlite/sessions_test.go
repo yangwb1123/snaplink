@@ -10,6 +10,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/migrate"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func newSessionManagerForTest(t *testing.T) *SessionManager {
@@ -293,7 +294,11 @@ func TestSessionManager_CreateWithMeta_RoundTrips(t *testing.T) {
 	mgr := newSessionManagerForTest(t)
 	ctx := context.Background()
 
-	created, err := mgr.CreateWithMeta(ctx, "alice", sso.SessionMeta{IP: "203.0.113.7", UserAgent: "Mozilla/5.0 Chrome/120"})
+	authTime := time.Now().UTC().Add(-time.Minute).Truncate(time.Nanosecond)
+	created, err := mgr.CreateWithMeta(ctx, "alice", sso.SessionMeta{
+		IP: "203.0.113.7", UserAgent: "Mozilla/5.0 Chrome/120", TenantID: "acme", DeviceID: "device-1",
+		ClientID: "client-1", AuthorizedScopes: []string{"openid", "profile"}, AuthTime: authTime, Kind: core.SessionKindAdminImpersonation,
+	})
 	if err != nil {
 		t.Fatalf("CreateWithMeta: %v", err)
 	}
@@ -307,6 +312,19 @@ func TestSessionManager_CreateWithMeta_RoundTrips(t *testing.T) {
 	}
 	if got.IP != "203.0.113.7" || got.UserAgent != "Mozilla/5.0 Chrome/120" {
 		t.Errorf("Get meta = %q / %q, want 203.0.113.7 / Mozilla...", got.IP, got.UserAgent)
+	}
+	if got.ClientID != "client-1" || got.DeviceID != "device-1" || got.Kind != core.SessionKindAdminImpersonation || !got.AuthTime.Equal(authTime) {
+		t.Fatalf("authorization metadata did not round-trip: %+v", got)
+	}
+	if len(got.AuthorizedScopes) != 2 || got.AuthorizedScopes[1] != "profile" {
+		t.Fatalf("authorized scopes = %v", got.AuthorizedScopes)
+	}
+	if err := mgr.SetAuthorizedScopes(ctx, created.ID, []string{"openid"}); err != nil {
+		t.Fatalf("SetAuthorizedScopes: %v", err)
+	}
+	got, _ = mgr.Get(ctx, created.ID)
+	if len(got.AuthorizedScopes) != 1 || got.AuthorizedScopes[0] != "openid" {
+		t.Fatalf("restricted scopes = %v", got.AuthorizedScopes)
 	}
 	// ListByUser carries it too; Refresh preserves it.
 	list, _ := mgr.ListByUser(ctx, "alice")

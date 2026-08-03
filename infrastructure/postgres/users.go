@@ -38,6 +38,11 @@ CREATE INDEX IF NOT EXISTS idx_users_provider_external
 
 var userMigrations = []migrate.Migration{
 	{Version: 1, Name: "baseline", SQL: userSchema},
+	{Version: 2, Name: "scim_username_unique", SQL: `
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_username
+    ON users(lower((attributes::jsonb ->> 'scim:userName')))
+    WHERE (attributes::jsonb ->> 'scim:userName') IS NOT NULL;
+`},
 }
 
 // UserProvider is the Postgres-backed implementation of [core.UserProvider].
@@ -148,6 +153,9 @@ func (p *UserProvider) CreateOrUpdate(ctx context.Context, u *core.User) error {
 		nullable(u.Email), nullable(u.Name),
 		string(attrs), u.CreatedAt.UnixNano(), u.UpdatedAt.UnixNano())
 	if err != nil {
+		if isUniqueViolation(err) {
+			return core.ErrUserExists
+		}
 		return fmt.Errorf("postgres: upsert user: %w", err)
 	}
 	return nil

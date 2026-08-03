@@ -174,6 +174,7 @@ const (
 	ErrCIBANotConfigured          = "ciba_not_configured"
 	ErrUnknownUserID              = "unknown_user_id"
 	ErrMissingUserCode            = "missing_user_code"
+	ErrInvalidUserCode            = "invalid_user_code"
 	ErrLoginRequired              = "login_required"
 	ErrInteractionRequired        = "interaction_required"
 	ErrConsentRequired            = "consent_required"
@@ -320,4 +321,9 @@ const (
 	// failure vs. a well-formed-but-invalid value. Always paired with an
 	// error_description naming the specific violated field.
 	ErrInvalidPolicy = "invalid_policy"
+	// Back-channel logout failure replay admin API wire codes. Not-found
+	// deliberately also covers cross-tenant ids to avoid resource enumeration.
+	ErrBCLFailureNotFound  = "bcl_failure_not_found"
+	ErrBCLReplayInProgress = "bcl_replay_in_progress"
+	ErrBCLDeliveryFailed   = "bcl_delivery_failed"
 )

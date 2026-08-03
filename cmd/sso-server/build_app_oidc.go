@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -15,12 +16,14 @@ import (
 	sqlitestores "github.com/yangwb1123/snaplink/infrastructure/defaultimpl/sqlite"
 	"github.com/yangwb1123/snaplink/interfaces/middleware"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/internal/handler"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/webhook"
 	"github.com/yangwb1123/snaplink/platform/metrics"
 	"github.com/yangwb1123/snaplink/platform/sse"
 	"github.com/yangwb1123/snaplink/protocols/caep"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/protocols/oidc/bcl"
 )
 
 // wireResponseEncryption wires the OIDC JWE response encrypter per the
@@ -81,24 +84,42 @@ func (b *appBuilder) wireDCRBackchannel() error {
 		}
 	}
 	if cfg.BackchannelLogout.Enabled {
-		idx, mode, err := serverbuildauthn.BuildSubjectClientIndex(cfg.BackchannelLogout.Index, b.redis)
-		if err != nil {
-			return fmt.Errorf("subject_client_index: %w", err)
+		if err := b.wireBackchannelLogout(); err != nil {
+			return err
 		}
-		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, idx, "subject_client_index", sqlitestores.SubjectClientIndexMaxVersion()); err != nil {
-			return fmt.Errorf("schema check subject_client_index: %w", err)
-		}
-		b.opts = append(b.opts,
-			sso.WithBackchannelLogout(b.jwtIssuer, sso.NewHTTPLogoutNotifier()),
-			sso.WithSubjectClientIndex(idx),
-		)
-		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-bcl-subject-client-index", idx)
-		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-bcl-subject-client-index", idx)
-		if n := cfg.BackchannelLogout.MaxConcurrent; n > 0 {
-			b.opts = append(b.opts, sso.WithBackchannelLogoutMaxConcurrent(n))
-		}
-		logger.Info("backchannel logout: enabled", "subject_client_index", mode)
 	}
+	return nil
+}
+
+func (b *appBuilder) wireBackchannelLogout() error {
+	cfg := b.cfg.BackchannelLogout
+	idx, indexMode, err := serverbuildauthn.BuildSubjectClientIndex(cfg.Index, b.redis)
+	if err != nil {
+		return fmt.Errorf("subject_client_index: %w", err)
+	}
+	if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, idx, "subject_client_index", sqlitestores.SubjectClientIndexMaxVersion()); err != nil {
+		return fmt.Errorf("schema check subject_client_index: %w", err)
+	}
+	queue, queueMode, err := serverbuildauthn.BuildBackchannelFailureStore(cfg.FailureQueue, b.redis)
+	if err != nil {
+		return fmt.Errorf("backchannel failure queue: %w", err)
+	}
+	notifier := sso.LogoutNotifier(sso.NewHTTPLogoutNotifier())
+	if queue != nil {
+		notifier = bcl.NewManager(b.jwtIssuer, notifier, queue,
+			bcl.WithRetryInterval(cfg.FailureQueue.RetryInterval), bcl.WithBatchSize(cfg.FailureQueue.BatchSize),
+			bcl.WithLeaseDuration(cfg.FailureQueue.LeaseDuration), bcl.WithLogger(b.logger), bcl.WithAuditor(b.recorder),
+			bcl.WithDelivered(func(ctx context.Context, f bcl.Failure) error { return idx.Forget(ctx, f.Subject, f.ClientID) }))
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "redis-bcl-failure-queue", queue)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "redis-bcl-failure-queue", queue)
+	}
+	b.opts = append(b.opts, sso.WithBackchannelLogout(b.jwtIssuer, notifier), sso.WithSubjectClientIndex(idx))
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "sqlite-bcl-subject-client-index", idx)
+	b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "sqlite-bcl-subject-client-index", idx)
+	if cfg.MaxConcurrent > 0 {
+		b.opts = append(b.opts, sso.WithBackchannelLogoutMaxConcurrent(cfg.MaxConcurrent))
+	}
+	b.logger.Info("backchannel logout: enabled", "subject_client_index", indexMode, "failure_queue", queueMode)
 	return nil
 }
 
@@ -399,4 +420,63 @@ func (b *appBuilder) wireMetricsCollector() {
 		b.opts = append(b.opts, sso.WithTenantMetricsAllowlist(cfg.Metrics.TenantLabelAllowlist))
 		logger.Info("metrics: per-tenant breakdown enabled", "tenants", len(cfg.Metrics.TenantLabelAllowlist))
 	}
+}
+
+// wireJARM wires JWT-secured authorization response mode (response_mode=jwt).
+func (b *appBuilder) wireJARM() error {
+	cfg := b.cfg
+	if !cfg.OAuth.JARM.Enabled {
+		return nil
+	}
+	js, ok := any(b.jwtIssuer).(oidc.JARMSigner)
+	if !ok {
+		return fmt.Errorf("oauth.jarm.enabled but the %s signing issuer does not implement JARM signing", b.signingAlg)
+	}
+	b.opts = append(b.opts, sso.WithJARM(js))
+	b.logger.Info("jarm: enabled (response_mode=jwt)", "signing_alg", b.signingAlg)
+	return nil
+}
+
+// wireIntrospection wires the /token/introspect response-caching, signed-JWT
+// response (reusing the primary signing issuer), and batch tuning knobs.
+func (b *appBuilder) wireIntrospection() error {
+	cfg := b.cfg.OAuth.Introspection
+	if cfg.CacheTTL > 0 {
+		b.opts = append(b.opts, sso.WithIntrospectionCache(handler.NewMemoryIntrospectionCache(), cfg.CacheTTL))
+		b.logger.Info("introspection response cache enabled", "ttl", cfg.CacheTTL)
+	}
+	if cfg.SignedResponseEnabled {
+		is, ok := any(b.jwtIssuer).(oauth.IntrospectionSigner)
+		if !ok {
+			return fmt.Errorf("oauth.introspection.signed_response_enabled but the %s signing issuer does not implement introspection signing", b.signingAlg)
+		}
+		b.opts = append(b.opts, sso.WithIntrospectionSigner(is))
+		b.logger.Info("introspection: signed JWT responses enabled (opt-in via Accept header)", "signing_alg", b.signingAlg)
+	}
+	if cfg.BatchEnabled {
+		b.opts = append(b.opts, sso.WithIntrospectionBatch(cfg.MaxBatchSize))
+		b.logger.Info("introspection: batch requests enabled", "max_batch_size", cfg.MaxBatchSize)
+	}
+	return nil
+}
+
+// wireIntrospectionSigning wires RFC 9701 JWT-formatted /token/introspect
+// responses with the optional dedicated signing issuer.
+func (b *appBuilder) wireIntrospectionSigning() error {
+	cfg := b.cfg.Keys.IntrospectionSigning
+	if !cfg.Enabled {
+		return nil
+	}
+	issuer, alg, extSigner, err := serverbuildsign.BuildSigningIssuer(cfg.SigningConfig, b.cfg.Server, b.metricsRegistry, b.logger)
+	if err != nil {
+		return fmt.Errorf("keys.introspection_signing: %w", err)
+	}
+	signer, ok := any(issuer).(oauth.IntrospectionSigner)
+	if !ok {
+		return fmt.Errorf("keys.introspection_signing.alg %q does not implement introspection-response signing", alg)
+	}
+	b.opts = append(b.opts, sso.WithIntrospectionSigning(signer))
+	b.opts = serverbuildsign.AppendReadyCheck(b.opts, "introspection-external-signer", extSigner)
+	b.logger.Info("introspection signing: enabled (RFC 9701 JWT introspection responses)", "signing_alg", alg)
+	return nil
 }

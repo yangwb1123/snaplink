@@ -68,8 +68,7 @@ func (s *Server) authenticateUser(ctx HandlerContext, req *login.Request, client
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, core.ErrUnsupportedProvider, req.State))
 		return nil, true
 	}
-	if loginURL := auth.LoginURL(req.State); loginURL != "" {
-		ctx.Redirect(http.StatusFound, loginURL)
+	if s.beginFederatedLogin(ctx, req, client, auth) {
 		return nil, true
 	}
 	lockKey := s.lockoutKey(auth, req.ClientID, req.Credential)
@@ -133,25 +132,25 @@ func (s *Server) handleAuthFailure(ctx HandlerContext, req *login.Request, lockK
 	ctx.JSON(http.StatusUnauthorized, s.authzErrorBodyWithState(ctx, core.ErrInvalidCredentials, req.State))
 }
 
-// rejectDeactivatedUser enforces SCIM deprovisioning (RFC 7643 active=false):
-// even with a correct credential, a deactivated account MUST NOT obtain tokens.
+// rejectDeactivatedUser enforces SCIM deprovisioning (RFC 7643 active=false)
+// and the optional user-lifecycle authentication gate: even with a correct
+// credential, an unavailable account MUST NOT obtain tokens.
 // Called AFTER credential verification, BEFORE any token/session side effect, so
 // an IdP connector that PATCHed active=false actually revokes access. Collapses
 // to account_locked (an unavailable account, not a credential oracle: the
-// credential already verified). No UserProvider = no SCIM state = no-op; a
-// not-found user (federated/first login) is treated active. Returns true (with a
-// response written) when the login must be rejected.
+// credential already verified). No UserProvider skips only the SCIM leg; no
+// lifecycle store skips only the lifecycle leg. Returns true (with a response
+// written) when the login must be rejected.
 func (s *Server) rejectDeactivatedUser(ctx HandlerContext, req *login.Request, userID string) bool {
-	if s.userProvider == nil {
-		return false
+	if s.userProvider != nil {
+		u, uerr := s.userProvider.GetByID(ctx.Request().Context(), userID)
+		if uerr == nil && u != nil && !u.IsActive() {
+			s.recordLoginFailure(ctx, req.ClientID, req.Provider, core.ErrAccountLocked)
+			ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, core.ErrAccountLocked, req.State))
+			return true
+		}
 	}
-	u, uerr := s.userProvider.GetByID(ctx.Request().Context(), userID)
-	if uerr != nil || u.IsActive() {
-		return false
-	}
-	s.recordLoginFailure(ctx, req.ClientID, req.Provider, core.ErrAccountLocked)
-	ctx.JSON(http.StatusForbidden, s.authzErrorBodyWithState(ctx, core.ErrAccountLocked, req.State))
-	return true
+	return s.rejectLifecycleBlockedUser(ctx, req, userID)
 }
 
 // lockoutKey derives the per-account brute-force lockout key. An authenticator
@@ -469,7 +468,7 @@ func (s *Server) registerLoginDevice(ctx HandlerContext, userID string) *deviceC
 // "" when no session manager is wired, the login carried no session semantics,
 // or the session could not be created/validated (fail-open with an audit/log
 // trail — the login itself never fails on a session-layer outage).
-func (s *Server) codeFlowSession(ctx HandlerContext, result *AuthResult, client *Client) string {
+func (s *Server) codeFlowSession(ctx HandlerContext, result *AuthResult, req *login.Request, client *Client) string {
 	if s.sessionMgr == nil {
 		return ""
 	}
@@ -484,7 +483,7 @@ func (s *Server) codeFlowSession(ctx HandlerContext, result *AuthResult, client 
 	if !result.CreateSession {
 		return ""
 	}
-	sess, err := s.createSession(ctx, result.UserID, client.ID, client.TenantID)
+	sess, err := s.createSession(ctx, result.UserID, client.ID, client.TenantID, req.Scope, result.AuthTime)
 	if err != nil {
 		s.logger.Error("code flow: session creation failed, login continues without sid", "error", err, "user", result.UserID)
 		return ""

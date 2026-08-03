@@ -74,7 +74,7 @@ func jwksAuthClient(t *testing.T, iss interface {
 	t.Cleanup(srv.Close)
 	cache := remote.NewJWKSCache(srv.URL+"/.well-known/jwks.json", remote.WithJWKSRefreshInterval(time.Hour))
 	t.Cleanup(cache.Close)
-	return remote.NewAuthClient(cache)
+	return remote.NewAuthClient(cache, remote.WithIssuer(sso.DefaultIssuer))
 }
 
 func must(t *testing.T, err error) {

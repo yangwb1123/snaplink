@@ -134,6 +134,58 @@ func TestDetector_ThreatExecutorReceivesFindings(t *testing.T) {
 	if got.Evidence["token_thumbprint"] != want.Thumbprint {
 		t.Errorf("threat evidence thumbprint = %q, want %q", got.Evidence["token_thumbprint"], want.Thumbprint)
 	}
+	// Decision 7: geo findings carry the sorted geo set + sighting count in
+	// Evidence so conditional policies can act on the geo evidence itself.
+	// Geos are sorted in geoFinding, so the comma-join is canonical and
+	// eq-matchable; Count is the observation's sighting count.
+	if got.Type != tokenanomaly.FindingVelocity {
+		t.Fatalf("threat type = %q, want %q (the test drives a velocity finding)", got.Type, tokenanomaly.FindingVelocity)
+	}
+	if got.Evidence["geos"] != "AU,US" {
+		t.Errorf("threat evidence geos = %q, want sorted \"AU,US\"", got.Evidence["geos"])
+	}
+	if got.Evidence["count"] != "2" {
+		t.Errorf("threat evidence count = %q, want \"2\" (two sightings)", got.Evidence["count"])
+	}
+}
+
+// TestDetector_ThreatEvidenceOmitsGeosForSpikes proves the fail-closed
+// count contract: rate_spike findings carry no Geos, so their Evidence must
+// NOT contain the geos/count keys — a count-conditioned policy then fails
+// closed (missing key) instead of matching on a different meaning of count.
+func TestDetector_ThreatEvidenceOmitsGeosForSpikes(t *testing.T) {
+	exec := &recordingThreatExecutor{}
+	d, _, _ := newDetector(t,
+		tokenanomaly.WithSpikeMinCount(5), tokenanomaly.WithSpikeFactor(3),
+		tokenanomaly.WithThreatExecutor(exec))
+	// A per-client rate spike: baseline of 1/min, then a burst of 12. No
+	// thumbprints, no geos — the rate_spike signal path.
+	issue(t, d, "c1", 1, base.Add(-4*time.Minute))
+	issue(t, d, "c1", 1, base.Add(-3*time.Minute))
+	issue(t, d, "c1", 1, base.Add(-2*time.Minute))
+	issue(t, d, "c1", 12, base.Add(-1*time.Minute))
+	found, err := d.Analyze(context.Background())
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	spike := findByType(found, tokenanomaly.FindingRateSpike)
+	if spike == nil {
+		t.Fatalf("no rate_spike finding: %+v", found)
+	}
+	if len(exec.seen) == 0 {
+		t.Fatal("executor saw no Execute calls")
+	}
+	for _, th := range exec.seen {
+		if th.Type != tokenanomaly.FindingRateSpike {
+			continue
+		}
+		if _, ok := th.Evidence["geos"]; ok {
+			t.Error("rate_spike threat must not carry a geos evidence key")
+		}
+		if _, ok := th.Evidence["count"]; ok {
+			t.Error("rate_spike threat must not carry a count evidence key (its count means something else; policies fail closed on absence)")
+		}
+	}
 }
 
 // TestDetector_NilThreatExecutorIsNoop proves the byte-identical-when-unset

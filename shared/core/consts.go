@@ -230,6 +230,9 @@ const (
 	// AdminMiddleware (admin:read). Only mounted when WithConditionalAccess is
 	// wired.
 	PathAdminAccessPolicies = "/admin/access-policies"
+	// PathAdminAccessPolicyConverge immediately re-evaluates active sessions
+	// against the current CAP snapshot (POST, admin:write).
+	PathAdminAccessPolicyConverge = "/admin/access-policies/converge"
 	// Admin/helpdesk management of a user's self-service state. All
 	// group-relative (mounted on /api/v1, gated by AdminMiddleware via the
 	// /api/v1/admin/ prefix: GET = admin:read, DELETE = admin:write).
@@ -460,4 +463,30 @@ const (
 	PathAdminConfigDiff        = "/admin/config/diff"
 	PathAdminConfigHistory     = "/admin/config/history"
 	PathAdminConfigClusterDiff = "/admin/config/cluster-diff" // POST, admin:read override; see platform/configaudit.HandleClusterDiff
+
+	// Compliance-reporting admin surface (mounted by interfaces/admin's
+	// MountAdminSurface when its backing sources are wired). Relocated from
+	// interfaces/sso/server_backup.go when that mount moved down; the data
+	// map is static/code-derived, the other three are store-gated.
+	PathAdminComplianceSOC2Evidence   = "/admin/compliance/soc2-evidence"
+	PathAdminComplianceDataMap        = "/admin/compliance/data-map"
+	PathAdminComplianceConsents       = "/admin/compliance/consents"
+	PathAdminComplianceRetentionSweep = "/admin/compliance/retention-sweep"
+
+	// Disaster-recovery degraded-service mode read/toggle (admin). Mounted
+	// under the /api/v1 group so the admin middleware gates GET as
+	// admin:read and POST as admin:write. Relocated from
+	// interfaces/sso/server_health.go with the admin surface.
+	PathDRMode = "/admin/dr/mode"
+
+	// B2B home-realm discovery (federation surface). GET+POST; the POST is
+	// a real top-level browser navigation (see the handler doc). Relocated
+	// from interfaces/sso/server_login_resolve.go with the federation mount.
+	PathHomeRealm = "/auth/home-realm"
+
+	// Self-service linked-identity listing/unlink (protocols/selfservice).
+	// Relocated from interfaces/sso/server_me.go with the self-service
+	// mount.
+	PathMyIdentities   = "/me/identities"
+	PathMyIdentityByID = "/me/identities/:id"
 )

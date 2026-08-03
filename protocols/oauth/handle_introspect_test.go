@@ -711,6 +711,24 @@ func TestIntrospectionEmitsCnf(t *testing.T) {
 	}
 }
 
+func TestIntrospectionEmitsServingRegion(t *testing.T) {
+	t.Parallel()
+	// Mint-region evidence echoes onto the RFC 7662 body so an RS region
+	// gate can enforce without an extra round-trip.
+	body := map[string]any{}
+	populateAccessIntrospectionBody(body, &core.TokenClaims{Subject: "u", ServingRegion: "eu-west-1"})
+	if got := body[core.KeyServingRegion]; got != "eu-west-1" {
+		t.Errorf("serving_region = %v, want eu-west-1", got)
+	}
+
+	// Empty mint region -> NO member (byte-identical to pre-region builds).
+	body = map[string]any{}
+	populateAccessIntrospectionBody(body, &core.TokenClaims{Subject: "u"})
+	if _, present := body[core.KeyServingRegion]; present {
+		t.Errorf("serving_region emitted for a token without mint region: %v", body)
+	}
+}
+
 // TestIntrospectionTokenTypeReflectsDPoPBinding is the RFC 9449 §7 regression
 // guard: a DPoP-bound token (cnf.jkt present) MUST introspect with
 // token_type=DPoP, not Bearer — mirroring the /token endpoint's
@@ -772,4 +790,16 @@ func TestIntrospectionTokenTypeReflectsDPoPBinding(t *testing.T) {
 			t.Fatalf("token_type = %v, want %s for a DPoP-bound refresh token", got, core.TokenTypeNameDPoP)
 		}
 	})
+}
+
+func TestIntrospectAccessRejectsExplicitIDTokenUse(t *testing.T) {
+	t.Parallel()
+	d := newIntrospectDeps(newMemClientStore(), newMemRefreshStore())
+	d.validate = func(context.Context, string) (*core.TokenClaims, string, error) {
+		return &core.TokenClaims{TokenUse: core.TokenUseIDToken, Subject: "user-1"}, "jwt", nil
+	}
+	ctx, _ := newCtx(http.MethodPost, core.ContentTypeJSON, "")
+	if _, active := introspectAccess(d, ctx, "signed-id-token"); active {
+		t.Fatal("ID token must not introspect as an active access token")
+	}
 }

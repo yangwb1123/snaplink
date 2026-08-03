@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"github.com/yangwb1123/snaplink/config"
 	"github.com/yangwb1123/snaplink/domains/userlifecycle"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/protocols/oauth"
 )
 
 // userlifecycle_wiring_test.go proves the cmd/sso-server composition-root
@@ -134,6 +136,9 @@ func TestWireUserLifecycle_AutoDeprovisionAppendsBothOptions(t *testing.T) {
 func TestUserLifecycle_EndToEnd(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{}
+	cfg.Server.SessionTTL = time.Hour
+	cfg.OAuth.RefreshToken.Enabled = true
+	cfg.OAuth.RefreshToken.TTL = time.Hour
 	cfg.UserLifecycle.Enabled = true
 	a, err := buildApp(cfg, quietLogger())
 	if err != nil {
@@ -144,6 +149,16 @@ func TestUserLifecycle_EndToEnd(t *testing.T) {
 	const uid = "userlifecycle-e2e-user"
 	if err := a.userProvider.CreateOrUpdate(context.Background(), &sso.User{ID: uid}); err != nil {
 		t.Fatalf("seed user: %v", err)
+	}
+	ctx := context.Background()
+	if _, err := a.sessionMgr.Create(ctx, uid); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	const refresh = "userlifecycle-e2e-refresh"
+	if err := a.refreshTokenStore.Issue(ctx, refresh, &oauth.RefreshToken{
+		UserID: uid, ClientID: "client-a", IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("seed refresh token: %v", err)
 	}
 
 	ts := httptest.NewServer(a.server.Handler())
@@ -164,6 +179,17 @@ func TestUserLifecycle_EndToEnd(t *testing.T) {
 	}
 	if out["state"] != "suspended" {
 		t.Errorf("post-transition state = %v, want suspended", out["state"])
+	}
+	sessions, err := a.sessionMgr.ListByUser(ctx, uid)
+	if err != nil || len(sessions) != 0 {
+		t.Fatalf("sessions after suspend = %d, err=%v; want none", len(sessions), err)
+	}
+	inspector, ok := a.refreshTokenStore.(oauth.RefreshTokenInspector)
+	if !ok {
+		t.Fatal("stock refresh-token store does not support inspection")
+	}
+	if _, err := inspector.Inspect(ctx, refresh); !errors.Is(err, oauth.ErrRefreshTokenNotFound) {
+		t.Fatalf("refresh token after suspend error=%v, want revoked", err)
 	}
 
 	status, out = ulJSON(t, http.MethodGet, base, nil)

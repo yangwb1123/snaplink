@@ -176,11 +176,17 @@ func BuildRegistry(cfg *config.RegistryConfig, logger spi.Logger) (registry.Regi
 //
 // Unset backend → nil bus: single-node deployments invalidate caches
 // locally and need no bus, so this is the safe default. memory is
-// per-process (a no-op for multi-replica); etcd is cluster-shared. The
-// etcd path is constructed here so the transitive dep stays out of the
-// cluster SPI, mirroring BuildRegistry. Returns the kind for logging;
-// the bus is fail-open, so it intentionally gets no /readyz check.
-func BuildInvalidationBus(cfg *config.ClusterBusConfig, logger spi.Logger) (cluster.Bus, string, error) {
+// per-process (a no-op for multi-replica); etcd is cluster-shared; redis
+// is cluster-shared via pub/sub over the one shared Redis client (the
+// same client every redis-backed store uses — one pool, one HA story).
+// The etcd/redis paths are constructed here so the transitive deps stay
+// out of the cluster SPI, mirroring BuildRegistry. Returns the kind for
+// logging; the bus is fail-open, so it intentionally gets no /readyz check.
+//
+// instanceID arms the redis backend's publisher self-skip (a replica must
+// not re-apply its own mutations; see redis.WithInstanceID). It is ignored
+// by the memory/etcd branches, whose wire behavior stays byte-identical.
+func BuildInvalidationBus(cfg *config.ClusterBusConfig, rdb goredis.UniversalClient, instanceID string, logger spi.Logger) (cluster.Bus, string, error) {
 	backend := strings.ToLower(strings.TrimSpace(cfg.Backend))
 	switch backend {
 	case "":
@@ -188,6 +194,18 @@ func BuildInvalidationBus(cfg *config.ClusterBusConfig, logger spi.Logger) (clus
 	case "memory":
 		logger.Info("invalidation bus", "backend", "memory")
 		return clustermemory.New(), "memory", nil
+	case "redis":
+		if rdb == nil {
+			return nil, "", errors.New("cluster.bus.backend=redis but no redis block configured (set redis.addrs)")
+		}
+		opts := []redisbackend.BusOption{redisbackend.WithChannel(cfg.RedisChannel)} // empty ⇒ default inside
+		if instanceID != "" {
+			opts = append(opts, redisbackend.WithInstanceID(instanceID))
+		}
+		bus := redisbackend.NewBus(rdb, opts...)
+		logger.Info("invalidation bus", "backend", "redis",
+			"channel", bus.Channel(), "instance_id", bus.InstanceID())
+		return bus, "redis", nil
 	case "etcd":
 		if len(cfg.EtcdEndpoints) == 0 {
 			return nil, "", errors.New("cluster.bus.etcd_endpoints required when cluster.bus.backend=etcd")
@@ -268,6 +286,18 @@ func SigningKeyRotationConfig(cfg config.KeyRotationConfig) (defaultimpl.Rotatio
 		Interval:    cfg.Interval,
 		GracePeriod: cfg.GracePeriod,
 	}, true
+}
+
+// ResolveReplicaID derives the per-replica identity shared by the
+// signing-key registry announcements and the invalidation-bus self-skip
+// filter. An explicit keys.signing_key_registry.replica_id wins; otherwise
+// the service-registry id (explicit registry.service_id, else issuer + short
+// hostname) — so two replicas of one issuer never share an id.
+func ResolveReplicaID(replicaID, serviceID, issuer string) string {
+	if id := strings.TrimSpace(replicaID); id != "" {
+		return id
+	}
+	return ResolveServiceID(serviceID, issuer)
 }
 
 // ResolveServiceID derives the registry Service.ID. Explicit YAML

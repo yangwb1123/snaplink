@@ -17,6 +17,7 @@ import (
 	"github.com/yangwb1123/snaplink/internal/auth/consent"
 	"github.com/yangwb1123/snaplink/internal/auth/login"
 	"github.com/yangwb1123/snaplink/platform/audit"
+	"github.com/yangwb1123/snaplink/platform/geo"
 	"github.com/yangwb1123/snaplink/platform/lifecycle/sessionhub"
 	"github.com/yangwb1123/snaplink/platform/sse"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
@@ -205,6 +206,14 @@ func (s *Server) applyMetricsWiring() {
 		Dropped:  s.metrics.ObserveTokenUsageDropped,
 		Tracked:  s.metrics.SetTokenUsageTrackedBuckets,
 	})
+}
+
+// offerUsage stamps the request's coarse geo onto a token-usage Event and
+// offers it — the single geo choke point every grant-flow Offer seam funnels
+// through. Nil recorder = no-op; no geo => GeoCountry stays "" (fail-open).
+func (s *Server) offerUsage(ctx HandlerContext, ev metering.Event) {
+	ev.GeoCountry = geo.CountryCodeFromContext(ctx)
+	s.tokenUsageRecorder.Offer(ev)
 }
 
 // applyFederationAutoRegistration decorates the wired ClientStore so an

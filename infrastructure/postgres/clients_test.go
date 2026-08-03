@@ -32,6 +32,7 @@ func richClient() *sso.Client {
 		RedirectURIs:                     []string{"https://a/cb", "https://b/cb"},
 		AllowedScopes:                    []string{"openid", "profile"},
 		AllowedAuthenticators:            []string{"password"},
+		LoginPageURI:                     "https://login.example/authorize",
 		TokenStrategy:                    "jwt",
 		Active:                           true,
 		TenantID:                         "t1",
@@ -57,6 +58,22 @@ func richClient() *sso.Client {
 	}
 }
 
+func TestClientLoginPageURIStorageProjection(t *testing.T) {
+	const loginPage = "https://login.example/authorize"
+	stored := clientAttributesForStorage(&sso.Client{
+		LoginPageURI: loginPage,
+		Attributes:   map[string]string{"operator": "visible"},
+	})
+	hydrated := &sso.Client{Attributes: stored}
+	hydrateClientAttributes(hydrated)
+	if hydrated.LoginPageURI != loginPage || hydrated.Attributes["operator"] != "visible" {
+		t.Fatalf("login-page projection did not round-trip: %+v", hydrated)
+	}
+	if _, exposed := hydrated.Attributes["_snaplink_client_login_page_uri"]; exposed {
+		t.Fatal("internal login-page storage key leaked through client attributes")
+	}
+}
+
 func TestClient_AddGetRoundTripAllColumns(t *testing.T) {
 	t.Parallel()
 	s := freshClientStore(t)
@@ -78,7 +95,7 @@ func TestClient_AddGetRoundTripAllColumns(t *testing.T) {
 		t.Fatalf("ValidateSecret(correct): %v", err)
 	}
 	// Every non-secret field must survive the 34-column projection.
-	if got.Name != in.Name || got.TokenStrategy != in.TokenStrategy || got.TenantID != in.TenantID ||
+	if got.Name != in.Name || got.TokenStrategy != in.TokenStrategy || got.TenantID != in.TenantID || got.LoginPageURI != in.LoginPageURI ||
 		!got.Active || !got.RequirePKCE || !got.RequireSignedRequestObject || !got.RequirePAR || !got.Federation {
 		t.Fatalf("scalar/bool round-trip mismatch: %+v", got)
 	}

@@ -20,17 +20,20 @@ func TestTokExSubject_SenderConstraint(t *testing.T) {
 		issuedSub: "alice",
 		confJKT:   "jkt-abc",
 		confX5T:   "x5t-def",
-	})
+	}, "eu-west-1")
 	if bound.ConfirmationJKT != "jkt-abc" || bound.ConfirmationX5TS256 != "x5t-def" {
 		t.Fatalf("sender constraint not bound onto the exchanged token: jkt=%q x5t=%q",
 			bound.ConfirmationJKT, bound.ConfirmationX5TS256)
+	}
+	if bound.ServingRegion != "eu-west-1" {
+		t.Errorf("ServingRegion = %q, want eu-west-1", bound.ServingRegion)
 	}
 
 	// No proof presented -> the exchanged token stays unbound (unchanged).
 	plain := tokExSubject(client, &tokExState{
 		claims:    &core.TokenClaims{Subject: "alice"},
 		issuedSub: "alice",
-	})
+	}, "")
 	if plain.ConfirmationJKT != "" || plain.ConfirmationX5TS256 != "" {
 		t.Fatalf("unbound exchange must leave cnf empty: jkt=%q x5t=%q",
 			plain.ConfirmationJKT, plain.ConfirmationX5TS256)

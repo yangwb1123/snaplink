@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"sync"
 	"time"
 
 	"github.com/yangwb1123/snaplink/platform/lifecycle/sessionhub"
+	"github.com/yangwb1123/snaplink/protocols/oidc/bcl"
 )
 
 // OIDC Back-Channel Logout 1.0.
@@ -43,35 +45,19 @@ import (
 // logout tokens. Same signing key as the access-token issuer is
 // the conventional and recommended setup so RPs verify with one
 // JWKS entry.
-type LogoutTokenIssuer interface {
-	IssueLogoutToken(ctx context.Context, req *LogoutTokenRequest) (string, error)
-}
+type LogoutTokenIssuer = bcl.Issuer
 
 // LogoutTokenRequest carries the issuance inputs. TTL falls
 // back to a short default when zero — logout tokens are
 // single-use and short-lived by nature (the RP processes one
 // immediately on receipt).
-type LogoutTokenRequest struct {
-	Subject  string
-	Audience string
-	TTL      time.Duration
-
-	// SID is the OIDC Back-Channel Logout 1.0 §2.4 session
-	// identifier. When set, the issued logout_token carries a
-	// `sid` claim — the RP uses it to invalidate the specific
-	// session it received the matching id_token for, rather
-	// than wiping every session for the subject. Empty omits
-	// the claim (legacy/coarse behavior).
-	SID string
-}
+type LogoutTokenRequest = bcl.Request
 
 // LogoutNotifier delivers a signed logout_token to the RP's
 // backchannel_logout_uri per OIDC BCL §2.5. Implementations MUST
 // respect the supplied context's deadline so the AS isn't
 // blocked when an RP is slow or unreachable.
-type LogoutNotifier interface {
-	Notify(ctx context.Context, uri string, logoutToken string) error
-}
+type LogoutNotifier = bcl.Notifier
 
 // DefaultBackchannelLogoutTimeout caps an individual RP
 // notification. Short on purpose — the user is waiting on the
@@ -79,6 +65,14 @@ type LogoutNotifier interface {
 // not delay the rest of the logout pipeline. A failure here is
 // logged + audited but not fatal.
 const DefaultBackchannelLogoutTimeout = 5 * time.Second
+
+// Back-channel delivery retries transient failures with freshly signed tokens.
+// All attempts share DefaultBackchannelLogoutTimeout, so retry never extends
+// the logout request's existing per-RP latency budget.
+const (
+	DefaultBackchannelLogoutMaxAttempts = 3
+	DefaultBackchannelLogoutRetryBase   = 50 * time.Millisecond
+)
 
 // DefaultBackchannelLogoutMaxConcurrent caps the multi-RP fan-out
 // parallelism so a user with 50+ active RPs doesn't have /end_session
@@ -141,7 +135,20 @@ func (n *HTTPLogoutNotifier) Notify(ctx context.Context, uri string, logoutToken
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
-	return fmt.Errorf("backchannel_logout: non-2xx status %d from %s", resp.StatusCode, uri)
+	return &backchannelHTTPError{status: resp.StatusCode, uri: uri}
+}
+
+type backchannelHTTPError struct {
+	status int
+	uri    string
+}
+
+func (e *backchannelHTTPError) Error() string {
+	return fmt.Sprintf("backchannel_logout: non-2xx status %d from %s", e.status, e.uri)
+}
+
+func (e *backchannelHTTPError) Retryable() bool {
+	return e.status == http.StatusRequestTimeout || e.status == http.StatusTooManyRequests || e.status >= 500
 }
 
 // sendBackchannelLogout fans out a logout notification for the
@@ -152,14 +159,17 @@ func (n *HTTPLogoutNotifier) Notify(ctx context.Context, uri string, logoutToken
 //
 // Failures are logged + audited but never block the parent
 // /logout response — see the contract on LogoutNotifier.
-func (s *Server) sendBackchannelLogout(ctx HandlerContext, client *Client, subject string, sid string) {
+func (s *Server) sendBackchannelLogout(ctx HandlerContext, client *Client, subject string, sid string) bool {
 	if s.logoutTokenIssuer == nil || s.logoutNotifier == nil {
-		return
+		return true
 	}
 	if client == nil || client.BackchannelLogoutURI == "" {
-		return
+		return true
 	}
-	tokenCtx, cancel := context.WithTimeout(ctx.Request().Context(), DefaultBackchannelLogoutTimeout)
+	// Preserve tenant/trace values but detach delivery from browser disconnects
+	// and gateway cancellation. The absolute timeout still bounds all attempts.
+	baseCtx := context.WithoutCancel(ctx.Request().Context())
+	tokenCtx, cancel := context.WithTimeout(baseCtx, DefaultBackchannelLogoutTimeout)
 	defer cancel()
 	// OIDC BCL §2.1 + pairwise: the logout_token `sub` MUST be the identifier the
 	// TARGET client received in its id_token. For a pairwise client that is its
@@ -169,7 +179,7 @@ func (s *Server) sendBackchannelLogout(ctx HandlerContext, client *Client, subje
 	// it stored). The audit + subject_client_index stay keyed by the local
 	// subject; non-pairwise clients map to the local id unchanged.
 	clientSub := s.applyPairwiseSubject(ctx.Request().Context(), client, subject)
-	logoutToken, err := s.logoutTokenIssuer.IssueLogoutToken(tokenCtx, &LogoutTokenRequest{
+	request := &LogoutTokenRequest{
 		Subject:  clientSub,
 		Audience: client.ID,
 		// OIDC BCL §2.4: `sid` lets the RP scope the logout to
@@ -177,20 +187,86 @@ func (s *Server) sendBackchannelLogout(ctx HandlerContext, client *Client, subje
 		// for. Empty when the inbound id_token_hint had no sid
 		// claim (legacy tokens minted before sid plumbing).
 		SID: sid,
-	})
+	}
+	err := s.deliverBackchannelWithRetry(tokenCtx, client.BackchannelLogoutURI, request)
 	if err != nil {
+		s.queueBackchannelFailure(baseCtx, client, subject, request, err)
+		var issueErr *backchannelIssueError
+		if !errors.As(err, &issueErr) {
+			s.logger.Error("backchannel logout: notify failed",
+				"error", err, "client", client.ID, "uri", client.BackchannelLogoutURI)
+			s.recordLogoutNotifyFailure(ctx, client.ID, subject, err.Error())
+			return false
+		}
 		s.logger.Error("backchannel logout: issue token failed",
 			"error", err, "client", client.ID, "subject", subject)
 		s.recordLogoutNotifyFailure(ctx, client.ID, subject, err.Error())
-		return
-	}
-	if err := s.logoutNotifier.Notify(tokenCtx, client.BackchannelLogoutURI, logoutToken); err != nil {
-		s.logger.Error("backchannel logout: notify failed",
-			"error", err, "client", client.ID, "uri", client.BackchannelLogoutURI)
-		s.recordLogoutNotifyFailure(ctx, client.ID, subject, err.Error())
-		return
+		return false
 	}
 	s.recordLogoutNotifySuccess(ctx, client.ID, subject, client.BackchannelLogoutURI)
+	return true
+}
+
+func (s *Server) queueBackchannelFailure(ctx context.Context, client *Client, subject string, req *LogoutTokenRequest, cause error) {
+	recorder, ok := s.logoutNotifier.(bcl.FailureRecorder)
+	if !ok {
+		return
+	}
+	var statusErr *backchannelHTTPError
+	permanent := errors.As(cause, &statusErr) && !statusErr.Retryable()
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	err := recorder.RecordFailure(recordCtx, bcl.Failure{
+		TenantID: client.TenantID, ClientID: client.ID, Subject: subject,
+		TokenSubject: req.Subject, URI: client.BackchannelLogoutURI, SID: req.SID,
+		Attempts: DefaultBackchannelLogoutMaxAttempts, LastError: cause.Error(), Permanent: permanent,
+	})
+	if err != nil {
+		s.logger.Error("backchannel logout: queue failure failed", "error", err, "client", client.ID)
+	}
+}
+
+type backchannelIssueError struct{ err error }
+
+func (e *backchannelIssueError) Error() string { return e.err.Error() }
+func (e *backchannelIssueError) Unwrap() error { return e.err }
+
+func (s *Server) deliverBackchannelWithRetry(ctx context.Context, uri string, req *LogoutTokenRequest) error {
+	var lastErr error
+	for attempt := 1; attempt <= DefaultBackchannelLogoutMaxAttempts; attempt++ {
+		token, err := s.logoutTokenIssuer.IssueLogoutToken(ctx, req)
+		if err != nil {
+			return &backchannelIssueError{err: err}
+		}
+		lastErr = s.logoutNotifier.Notify(ctx, uri, token)
+		if lastErr == nil || !retryableBackchannelError(lastErr) {
+			return lastErr
+		}
+		if attempt == DefaultBackchannelLogoutMaxAttempts {
+			break
+		}
+		base := DefaultBackchannelLogoutRetryBase << (attempt - 1)
+		delay := time.Duration(float64(base) * (0.75 + rand.Float64()*0.5))
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return lastErr
+}
+
+func retryableBackchannelError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var statusErr *backchannelHTTPError
+	if !errors.As(err, &statusErr) {
+		return true
+	}
+	return statusErr.Retryable()
 }
 
 // recordSubjectClientAccess stamps the (subject, clientID) pair into
@@ -222,6 +298,8 @@ func (s *Server) recordSubjectClientAccess(ctx context.Context, subject, clientI
 // for the same subject doesn't re-notify a client that already
 // processed its logout — keeps the index trim and prevents
 // duplicate logout_token POSTs on subsequent (no-op) logouts.
+// Failed targets remain indexed, allowing a later logout/session-hub pass to
+// retry instead of silently forgetting the undelivered revocation signal.
 //
 // When the index isn't wired, falls back to the single-RP path
 // behind sendBackchannelLogout against originClient.
@@ -289,7 +367,7 @@ func (s *Server) collectBackchannelTargets(ctx HandlerContext, clientIDs []strin
 // unblocking. Bounded worker pool keeps p99 at roughly
 // timeout × ceil(N / max) while avoiding the 50+-connection burst a
 // naive unbounded goroutine-per-RP would emit. The Forget call follows
-// the notification (success or failure) on the same worker — see
+// a successful notification on the same worker — see
 // sendBackchannelLogout for the audit recording contract.
 func (s *Server) dispatchBackchannelFanOut(ctx HandlerContext, targets []*Client, subject string, sid string) {
 	max := s.backchannelLogoutMaxConcurrent
@@ -337,8 +415,9 @@ func (s *Server) dispatchBackchannelOne(ctx HandlerContext, c *Client, subject, 
 	// SAME sid value. RPs that don't recognize the sid
 	// fall back to subject-wide logout per BCL §2.4 —
 	// exactly the desired soft-degradation.
-	s.sendBackchannelLogout(ctx, c, subject, sid)
-	_ = s.subjectClientIndex.Forget(ctx.Request().Context(), subject, c.ID)
+	if s.sendBackchannelLogout(ctx, c, subject, sid) {
+		_ = s.subjectClientIndex.Forget(ctx.Request().Context(), subject, c.ID)
+	}
 }
 
 // TriggerSessionHubLogout resolves the global_sid the Cross-protocol Session

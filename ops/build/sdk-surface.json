@@ -24,6 +24,10 @@
       "name": "admin",
       "operations": [
         "listAccessPolicies",
+        "convergeAccessPolicySessions",
+        "listBackchannelLogoutFailures",
+        "replayBackchannelLogoutFailure",
+        "replayDueBackchannelLogoutFailures",
         "adminClearAccountLockout",
         "getAuthzPolicyBundle",
         "triggerBackup",

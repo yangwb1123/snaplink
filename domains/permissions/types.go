@@ -1,5 +1,9 @@
 package permissions
 
+import (
+	"github.com/yangwb1123/snaplink/shared/core"
+)
+
 // Permission is a single capability code, optionally scoped to a resource.
 // Codes use the "domain:action" convention ("user:read", "order:create"),
 // with "*" allowed as a wildcard segment ("user:*", "*").
@@ -37,3 +41,20 @@ type MenuItem struct {
 
 // MenuTree is the top-level navigation, already filtered for the requesting user.
 type MenuTree []MenuItem
+
+// MountRoutes registers the self-service permission-query surface (GET
+// /permissions/me, /menus/me, /roles/me) on r, wrapped in a core.GatedRouter
+// so the routes hot-toggle with the self-service feature gate exactly as they
+// did when registered from interfaces/sso (mountSelfServiceProfile). gate
+// must be non-nil — the Server's live selfServiceGateOn method value; nil is
+// a programmer error (a silently-unreachable surface would look like a
+// feature regression).
+func MountRoutes(r core.Router, d HandlerDeps, gate func() bool) {
+	if gate == nil {
+		panic("permissions: MountRoutes requires a non-nil gate")
+	}
+	gr := core.NewGatedRouter(r, gate)
+	gr.GET(core.PathMyPermissions, func(ctx core.HandlerContext) { HandleMyPermissions(d, ctx) })
+	gr.GET(core.PathMyMenus, func(ctx core.HandlerContext) { HandleMyMenus(d, ctx) })
+	gr.GET(core.PathMyRoles, func(ctx core.HandlerContext) { HandleMyRoles(d, ctx) })
+}

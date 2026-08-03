@@ -86,6 +86,9 @@ func cibaMintAndRespond(d CIBAGrantDeps, ctx core.HandlerContext, client *core.C
 // ctx is a background-adapted HandlerContext, since the push path has no
 // live HTTP response in flight).
 func buildCIBATokenResponse(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Client, r *oauth.CIBARequest, now time.Time, dpopJKT, mtlsX5T string) (map[string]any, bool) {
+	if lifecycleGrantBlocked(d, ctx, r.SubjectID) {
+		return nil, false
+	}
 	strategy, ti, err := d.IssuerForClient(client)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, core.ErrorBody(core.ErrNoTokenStrategy))
@@ -101,9 +104,11 @@ func buildCIBATokenResponse(d CIBAGrantDeps, ctx core.HandlerContext, client *co
 		Provider:            provider,
 		Resources:           r.Resources,
 		ClientID:            client.ID,
+		TenantID:            client.TenantID,
 		AuthTime:            now,
 		AMR:                 []string{provider},
 		ACR:                 r.ACRValues,
+		ServingRegion:       servingRegionFrom(ctx),
 		TTL:                 client.AccessTokenTTL,
 		ConfirmationJKT:     dpopJKT,
 		ConfirmationX5TS256: mtlsX5T,
@@ -267,12 +272,15 @@ func cibaIssueIDToken(d CIBAGrantDeps, ctx core.HandlerContext, client *core.Cli
 		return
 	}
 	idToken, err := idIssuer.IssueIDToken(ctx.Request().Context(), &oidc.IDTokenRequest{
-		Subject:     issuedSub,
-		Audience:    client.ID,
-		Nonce:       r.Nonce,
-		AuthTime:    now,
-		AMR:         []string{provider},
-		AccessToken: accessToken,
+		Subject:          issuedSub,
+		Audience:         client.ID,
+		Nonce:            r.Nonce,
+		AuthTime:         now,
+		AMR:              []string{provider},
+		ServingRegion:    servingRegionFrom(ctx),
+		AccessToken:      accessToken,
+		GrantedScopes:    r.Scopes,
+		GrantedResources: r.Resources,
 	})
 	if err != nil {
 		d.SrvLogger().Error("id token issue failed", "error", err)

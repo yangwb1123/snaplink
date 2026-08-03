@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/region"
 	"github.com/yangwb1123/snaplink/platform/cluster"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -12,6 +13,44 @@ import (
 
 func WithDiscoveryCacheTTL(d time.Duration) Option {
 	return func(s *Server) { s.discoveryCacheTTL = d }
+}
+
+// WithServingRegionAdvertisement pins this deployment's serving region for
+// DISCOVERY advertisement. The value MUST be deployment-static: the
+// discovery document is cached per base URL, and every minted token in this
+// process must carry the same serving_region. Wire it together with
+// WithRegionMiddleware so advertised == minted. A header-resolver-only
+// deployment (region varies per request) MUST NOT wire this. Empty (the
+// default) omits the field and the claims_supported entry — byte-identical.
+func WithServingRegionAdvertisement(id region.ID) Option {
+	return func(s *Server) { s.servingRegionAdvertisement = id }
+}
+
+// applyServingRegionMetadata advertises the pinned serving region. Runs
+// AFTER applyStaticClaimsAndSecurity because that helper ASSIGNS a fresh
+// ClaimsSupported literal; appending here avoids the overwrite.
+func (s *Server) applyServingRegionMetadata(cfg *oidc.ProviderMetadata) {
+	if s.servingRegionAdvertisement == "" {
+		return
+	}
+	cfg.ServingRegion = string(s.servingRegionAdvertisement)
+	cfg.ClaimsSupported = append(cfg.ClaimsSupported, core.KeyServingRegion)
+}
+
+// baseAdvertisedGrants is the set of grant types ALWAYS advertised in
+// discovery, independent of optional store wiring. device_code and CIBA are
+// conditionally appended in applyGrantEndpoints only when their store is wired
+// (RFC 8414 §2: advertise only what is actually supported — /device/* and the
+// device token grant return 501 when WithDeviceCodeStore is omitted). This is
+// deliberately NARROWER than core.SupportedGrants, which stays the full
+// recognized set for unsupported_grant_type errors.
+func baseAdvertisedGrants() []string {
+	return []string{
+		GrantAuthorizationCode,
+		GrantRefreshToken,
+		GrantClientCredentials,
+		GrantTokenExchange,
+	}
 }
 
 // discoverySnapshot returns the current client-store-derived snapshot,

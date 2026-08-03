@@ -233,9 +233,9 @@ func WithRequestLogging(logBodies bool) Option {
 
 // WithIdempotentStore wires an idempotency cache for the /token endpoint.
 // When set, the server checks for an Idempotency-Key header on token
-// requests and caches the first successful response, returning it for
-// repeat requests with the same key — safe retry semantics without
-// duplicate token issuance.
+// requests and, after authenticating the client and sender constraint, caches
+// the first successful response under a client + request fingerprint. Only an
+// authenticated retry of the same operation can receive that response.
 //
 // The cache TTL is typically aligned with the token lifetime or a
 // maximum of 1 hour. Pass nil to disable idempotency (default).

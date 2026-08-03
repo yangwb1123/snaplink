@@ -30,7 +30,15 @@ func newSnaplinkClient(cfg *Config) (*snaplinkClient, error) {
 		return nil, err
 	}
 	return &snaplinkClient{
-		auth:  remote.NewAuthClient(jwks),
+		auth: remote.NewAuthClient(jwks,
+			// Fail-closed issuer pin + aud pin: the MCP server knows the AS
+			// issuer it trusts, and the token path stamps `aud` with the
+			// RFC 8707 resource URI this server requires (newRSGate enforces
+			// the same pair of claims). An empty issuer fails ValidateToken
+			// loudly with ErrIssuerRequired instead of validating weakly.
+			remote.WithIssuer(cfg.Issuer),
+			remote.WithExpectedAud(cfg.ResourceURI),
+		),
 		authz: remote.NewAuthzClient(conn),
 		jwks:  jwks,
 		conn:  conn,

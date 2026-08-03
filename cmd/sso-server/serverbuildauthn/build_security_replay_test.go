@@ -2,6 +2,7 @@ package serverbuildauthn
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,5 +145,20 @@ func TestBuildAuthenticatorReplayStore_EnabledDefersToBuildJTIReplayStore(t *tes
 	// proving the delegation, not a swallowed/duplicated switch.
 	if _, _, err := buildAuthenticatorReplayStore(config.JTIReplayConfig{Enabled: true, Backend: "carrier-pigeon"}, nil); err == nil {
 		t.Fatal("expected error: enabled jti_replay defers to BuildJTIReplayStore's own validation")
+	}
+}
+
+func TestBuildBackchannelFailureStoreModes(t *testing.T) {
+	t.Parallel()
+	store, mode, err := BuildBackchannelFailureStore(config.BCLFailureQueueConfig{}, nil)
+	if err != nil || store != nil || mode != "disabled" {
+		t.Fatalf("disabled = %v %q %v", store, mode, err)
+	}
+	store, mode, err = BuildBackchannelFailureStore(config.BCLFailureQueueConfig{Backend: "memory"}, nil)
+	if err != nil || store == nil || !strings.Contains(mode, "memory") {
+		t.Fatalf("memory = %v %q %v", store, mode, err)
+	}
+	if _, _, err := BuildBackchannelFailureStore(config.BCLFailureQueueConfig{Backend: "redis"}, nil); err == nil {
+		t.Fatal("redis failure queue without client should fail")
 	}
 }

@@ -436,6 +436,9 @@ clients:
   - id: web-app
     secret: web-secret
     name: Web App
+    # Required when this client enables OIDC/SAML federation. Point it at the
+    # separately deployed hosted login page (for example the Snaplink Console).
+    # login_page_uri: http://localhost:8081/login/
     redirect_uris:
       - http://localhost:3000/callback
     allowed_scopes: [openid, profile, email]
@@ -506,6 +509,25 @@ clients:
   #       x: <base64url-public-key>
 
 authenticators:
+  # Shared fixed-window delivery budgets for phone/email OTP and magic links.
+  # Identity counts are tenant-scoped; Redis enforces both counters atomically
+  # across replicas. Use -1 to disable either dimension (0 selects the default).
+  code_send_quota:
+    identity_limit: 20
+    tenant_limit: 1000
+    window: 24h
+
+  # Optional bounded async delivery for phone/email OTP and magic links.
+  # Plaintext codes stay in process memory only; exhausted jobs invalidate the
+  # current code and release its quota reservation. Zero values use defaults.
+  code_delivery:
+    async: false
+    queue_size: 256
+    workers: 2
+    attempts: 3
+    attempt_timeout: 10s
+    retry_backoff: 200ms
+
   # Username + password authentication. cmd's reference wiring uses a
   # bcrypt verifier closed over the `users` seed list — each entry
   # maps a username to a bcrypt hash on disk and the sso.Subject
@@ -861,17 +883,28 @@ dpop:
 # OIDC Back-Channel Logout 1.0. When enabled, /logout + /end_session
 # POST a signed logout_token to every affected RP's backchannel_logout_uri
 # so server-side sessions get torn down without depending on a browser
-# round-trip. SDK uses HTTPLogoutNotifier (5s timeout, no proxy).
-# index.backend: memory (single-replica) or sqlite (cluster-shared);
-# the sqlite index lets a logout reaching any replica fan out to every
+# round-trip. SDK uses HTTPLogoutNotifier with one 5s total budget and
+# up to 3 attempts for transport/408/429/5xx failures; each retry has a
+# fresh jti, and browser disconnect does not cancel an in-flight delivery.
+# index.backend: memory (single-replica), sqlite, or redis (cluster-shared);
+# a shared index lets a logout reaching any replica fan out to every
 # client a subject has touched cluster-wide.
 backchannel_logout:
   enabled: false
   max_concurrent: 0     # 0 = SDK default (8)
   index:
-    backend: memory     # memory | sqlite
+    backend: memory     # memory | sqlite | redis
     sqlite:
       dsn: ""           # e.g. file:/var/lib/sso/bcl.db?_journal=WAL
+  # Exhausted deliveries can enter an operator-visible replay queue. Redis
+  # persists entries across restart and uses per-entry leases so only one
+  # replica replays an item. Signed logout tokens are never stored; every
+  # attempt mints a fresh token/jti. Empty backend disables the queue.
+  failure_queue:
+    backend: ""         # "" (disabled) | memory | redis
+    retry_interval: 30s
+    batch_size: 50
+    lease_duration: 30s
 
 # RFC 7591 Dynamic Client Registration + RFC 7592 management endpoints.
 # Without enabled, /register returns 501 and every RP must be operator-
@@ -1654,6 +1687,20 @@ mfa:
       # Same DSN cookbook as the rest of the SQLite substrate:
       # dsn: "file:/var/lib/sso/sso.db?_journal=WAL&_pragma=busy_timeout(5000)"
       dsn: ""
+
+# User account lifecycle is an optional fail-closed auth/token gate and admin
+# state machine. The stock backend is process memory only: state is lost on
+# restart and enabled=true is rejected with server.topology.mode=multi unless
+# the explicitly unsafe allow_per_pod_state development override is set.
+# Every transition to a non-active state revokes sessions and refresh tokens.
+user_lifecycle:
+  enabled: false
+  auto_deprovision:
+    enabled: false
+    dormant_after: 2160h # 90d; >0 required when enabled
+    archive_after: 0s    # additional idle time; 0 keeps inactive indefinitely
+    max_per_sweep: 100
+    sweep_interval: 1h
 
 # Frontend + backend app version pin / rollback. Pinner.PinForward +
 # PinRollback encode asymmetric ordering (backend-first forward,

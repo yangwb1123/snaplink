@@ -92,12 +92,26 @@ func (c *Config) applyDefaults() {
 		applyCodeDefaults(c.Authenticators.Email, authenticators.DefaultEmailCodeTTL)
 	}
 	applyMagicLinkDefaults(c.Authenticators.MagicLink)
+	applyCodeSendQuotaDefaults(&c.Authenticators.CodeSendQuota)
+	applyBCLFailureQueueDefaults(&c.BackchannelLogout.FailureQueue)
 	c.applyNotificationDefaults()
 	if c.Authenticators.TempToken != nil && c.Authenticators.TempToken.TTL == 0 {
 		c.Authenticators.TempToken.TTL = authenticators.DefaultTempTokenTTL
 	}
 	if c.Authenticators.KeyPair != nil && c.Authenticators.KeyPair.MaxClockSkew == 0 {
 		c.Authenticators.KeyPair.MaxClockSkew = authenticators.DefaultKeyPairClockSkew
+	}
+}
+
+func applyCodeSendQuotaDefaults(quota *CodeSendQuotaConfig) {
+	if quota.IdentityLimit == 0 {
+		quota.IdentityLimit = authenticators.DefaultCodeIdentitySendLimit
+	}
+	if quota.TenantLimit == 0 {
+		quota.TenantLimit = authenticators.DefaultCodeTenantSendLimit
+	}
+	if quota.Window == 0 {
+		quota.Window = authenticators.DefaultCodeSendQuotaWindow
 	}
 }
 
@@ -165,13 +179,23 @@ func (c *Config) validate() error {
 	if c.Server.Issuer == sso.DefaultIssuer {
 		return fmt.Errorf("config: server.issuer must not equal the SDK sentinel %q — set it to your canonical public URL (e.g. https://sso.example.com) or accept the cmd default %q", sso.DefaultIssuer, DefaultServerIssuer)
 	}
-	for _, cl := range c.Clients {
-		if cl.ID == "" {
-			return errors.New("config: client.id required")
-		}
+	if err := validateConfiguredClients(c.Clients); err != nil {
+		return err
 	}
 	if c.Backup.Keep < 0 {
 		return fmt.Errorf("config: backup.keep must be >= 0 (0 disables retention), got %d", c.Backup.Keep)
+	}
+	return nil
+}
+
+func validateConfiguredClients(clients []ClientConfig) error {
+	for _, client := range clients {
+		if client.ID == "" {
+			return errors.New("config: client.id required")
+		}
+		if client.LoginPageURI != "" && !sso.IsFederatedLoginPageURIValid(client.LoginPageURI) {
+			return fmt.Errorf("config: client %q login_page_uri must be HTTPS or loopback HTTP", client.ID)
+		}
 	}
 	return nil
 }
@@ -180,7 +204,29 @@ func (c *Config) validateFeatureConfig() error {
 	if err := c.validateAuthPipeline(); err != nil {
 		return err
 	}
+	if err := c.validateCodeSendQuota(); err != nil {
+		return err
+	}
+	if err := c.Authenticators.CodeDelivery.validate(); err != nil {
+		return err
+	}
+	if err := c.validateBCLFailureQueue(); err != nil {
+		return err
+	}
 	return c.validateNotifications()
+}
+
+func (c *Config) validateCodeSendQuota() error {
+	quota := c.Authenticators.CodeSendQuota
+	if quota.IdentityLimit < -1 || quota.TenantLimit < -1 {
+		return errors.New("config: authenticators.code_send_quota limits must be -1 or greater")
+	}
+	// Zero is the pre-defaulting value used by tests and programmatic callers;
+	// applyDefaults turns it into the stock 24-hour window on the load path.
+	if quota.Window < 0 {
+		return errors.New("config: authenticators.code_send_quota.window must be positive")
+	}
+	return nil
 }
 
 func (c *Config) applyNotificationDefaults() {

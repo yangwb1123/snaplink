@@ -17,6 +17,8 @@ type bindTarget struct {
 	Flag     bool     `json:"flag"`
 	Scope    []string `json:"scope"`
 	Resource []string `json:"resource"`
+	Count    int      `json:"count"`
+	Expiry   *int     `json:"expiry"`
 	Skipped  string   `json:"-"`
 	NoTag    string
 	unexp    string //nolint:unused // present to exercise the CanSet skip
@@ -62,6 +64,23 @@ func TestFormIntoStruct(t *testing.T) {
 		}
 		if got.Flag {
 			t.Error("flag=yes should be false (only true/1)")
+		}
+	})
+
+	t.Run("integer and optional integer", func(t *testing.T) {
+		var got bindTarget
+		if err := bindForm(t, "count=7&expiry=12", &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Count != 7 || got.Expiry == nil || *got.Expiry != 12 {
+			t.Fatalf("integers = %d %v, want 7 and 12", got.Count, got.Expiry)
+		}
+	})
+
+	t.Run("malformed integer errors", func(t *testing.T) {
+		var got bindTarget
+		if err := bindForm(t, "expiry=not-a-number", &got); err == nil {
+			t.Fatal("malformed integer should fail binding")
 		}
 	})
 

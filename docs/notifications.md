@@ -33,6 +33,10 @@ and preferences before deleting the user.
 | `admin_consent_revoked` | `consent_granted` | warning |
 | `admin_mfa_factor_removed` | `mfa_removed` | critical |
 | `admin_recovery_codes_reset`, `admin_password_reset`, `admin_user_email_changed`, `admin_device_secrets_revoked`, `admin_refresh_tokens_revoked` | `security_event` | warning |
+| `admin_password_reset_tokens_revoked`, `admin_email_change_tokens_revoked`, `admin_account_unlocked` | `security_event` | warning or info |
+| `admin_role_assigned`, `admin_role_unassigned`, `admin_tenant_member_added`, `admin_tenant_member_removed`, `admin_user_lifecycle_changed` | `security_event` | warning or info |
+| `admin_temp_token_issued` | `security_event` | warning |
+| `admin_break_glass_impersonation_started` | `security_event` | critical |
 | Active-session expiry scan | `session_expiring` | warning |
 
 Events raised by an administrator are delivered to the affected user, not the
@@ -42,7 +46,8 @@ owner as the subject. Because `account_locked` stores a canonical
 `client_id:identity` lock key rather than a user ID, the router resolves the
 identity through the configured user provider. Unknown or ambiguous identities
 are deliberately suppressed instead of writing a notification into another
-user's inbox.
+user's inbox. The helpdesk account-unlock event uses the same safe identity
+resolution because that API accepts a login identifier rather than a user ID.
 
 The session scanner runs immediately when notification workers start and then
 at `notifications.session_scan_interval`. It reads only active sessions from the

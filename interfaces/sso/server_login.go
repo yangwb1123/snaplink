@@ -115,11 +115,13 @@ func (s *Server) mintAccessToken(ctx HandlerContext, result *AuthResult, req *lo
 		Claims:               s.directMintClaims(ctx, result, trustScore, trustKnown),
 		Resources:            append([]string(nil), req.Resource...),
 		ClientID:             client.ID,
+		TenantID:             client.TenantID,
 		AuthTime:             time.Now(),
 		AMR:                  handler.AmrForResult(result),
 		ACR:                  result.AchievedACR,
 		AuthorizationDetails: oauth.CloneRawJSON(req.AuthorizationDetails),
 		SID:                  session.ID,
+		ServingRegion:        servingRegionFrom(ctx),
 		TTL:                  ttl,
 		RequestedClaims:      oauth.CloneRawJSON(req.Claims),
 	}, req.Scope)
@@ -284,9 +286,13 @@ func (s *Server) bootstrapLoginRequest(ctx HandlerContext) (login.Request, bool)
 	ctx.Set(ctxKeyLoginStart, time.Now())
 	tokenNoStoreHeaders(ctx)
 	var req login.Request
+	var err error
 	if ctx.Request().Method == http.MethodGet {
-		req = bindLoginRequestFromQuery(ctx.Request())
-	} else if err := ctx.Bind(&req); err != nil {
+		req, err = bindLoginRequestFromQuery(ctx.Request())
+	} else {
+		err = ctx.Bind(&req)
+	}
+	if err != nil {
 		ctx.JSON(http.StatusBadRequest, s.authzErrorBodyWithState(ctx, ErrInvalidRequest, req.State))
 		return req, false
 	}
@@ -294,41 +300,6 @@ func (s *Server) bootstrapLoginRequest(ctx HandlerContext) (login.Request, bool)
 		return req, false
 	}
 	return req, true
-}
-
-// bindLoginRequestFromQuery populates the authorization-request-shaped subset
-// of login.Request from URL query parameters, for the ONLY case a bodyless
-// GET reaches /auth/login: a "Sign in with <federated provider>" button
-// doing a real page navigation. Credential/consent/PAR/JAR fields are
-// deliberately NOT bound here — a GET can't carry a credential (it would
-// leak into browser history / server access logs), so credentialLoginStage
-// either dispatches to auth.LoginURL's redirect (the intended path) or, for
-// a non-federated provider, fails closed the same way an empty credential
-// always has.
-func bindLoginRequestFromQuery(r *http.Request) login.Request {
-	q := r.URL.Query()
-	req := login.Request{
-		Provider:            q.Get("provider"),
-		ClientID:            q.Get("client_id"),
-		State:               q.Get("state"),
-		ResponseType:        q.Get("response_type"),
-		RedirectURI:         q.Get("redirect_uri"),
-		Nonce:               q.Get("nonce"),
-		CodeChallenge:       q.Get("code_challenge"),
-		CodeChallengeMethod: q.Get("code_challenge_method"),
-		Prompt:              q.Get("prompt"),
-		LoginHint:           q.Get("login_hint"),
-		ResponseMode:        q.Get("response_mode"),
-		ACRValues:           q.Get("acr_values"),
-		UILocales:           q.Get("ui_locales"),
-	}
-	if scope := q.Get("scope"); scope != "" {
-		req.Scope = strings.Fields(scope)
-	}
-	if resource := q.Get("resource"); resource != "" {
-		req.Resource = strings.Fields(resource)
-	}
-	return req
 }
 
 // --- Tenant suspension cache -----------------------------------------------

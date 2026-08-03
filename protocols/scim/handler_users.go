@@ -26,15 +26,11 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 	// userNameExists uses strings.EqualFold for case-insensitive uniqueness.
 	res.UserName = strings.TrimSpace(res.UserName)
 	id := h.newID()
-	// Guard against an id collision (newID is random, but a custom
-	// generator could clash) AND enforce userName uniqueness. WHY a
-	// read-then-write (not compare-and-swap): core.UserProvider exposes
-	// no atomic insert, so two concurrent creates of the same userName
-	// could both pass this check. That is an accepted limitation of
-	// composing over the existing SPI without a redesign — SCIM
-	// provisioning is admin-gated and connectors serialize per-resource,
-	// so the race is not reachable in practice. A future Groups/PATCH
-	// slice that needs strict uniqueness should add an indexed SPI.
+	// Guard against an id collision (newID is random, but a custom generator
+	// could clash) and reject an already-visible userName early. This check
+	// provides a useful conflict before constructing the write; every stock
+	// UserProvider also enforces the same uniqueness atomically at its final
+	// write boundary so concurrent requests cannot both commit.
 	if _, err := h.users.GetByID(r.Context(), id); err == nil {
 		h.writeError(w, newError(http.StatusConflict, scimTypeUniqueness, "generated id already exists"))
 		return

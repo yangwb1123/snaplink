@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/userlifecycle"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
 	"github.com/yangwb1123/snaplink/shared/core"
@@ -29,6 +30,8 @@ type fakeCIBAGrantDeps struct {
 	idTokenIssuer    oidc.IDTokenIssuer
 	idTokenEmit      bool
 	idTokenIssuerErr error
+	lifecycleState   userlifecycle.State
+	lifecycleErr     error
 	loggedErrors     []string
 }
 
@@ -51,6 +54,16 @@ func (f *fakeCIBAGrantDeps) IDTokenIssuerForClient(*core.Client) (oidc.IDTokenIs
 
 func (f *fakeCIBAGrantDeps) ApplyPairwiseSubject(_ context.Context, _ *core.Client, localSub string) string {
 	return localSub
+}
+
+func (f *fakeCIBAGrantDeps) LifecycleState(context.Context, string) (userlifecycle.State, error) {
+	if f.lifecycleErr != nil {
+		return userlifecycle.StateNone, f.lifecycleErr
+	}
+	if f.lifecycleState == userlifecycle.StateNone {
+		return userlifecycle.StateActive, nil
+	}
+	return f.lifecycleState, nil
 }
 
 func (f *fakeCIBAGrantDeps) IssueRefreshToken(ctx context.Context, userID, clientID, provider string, scopes []string, attributes map[string]string, familyID string, resources []string, authDetails []byte, sid string, authCtx oauth.RefreshAuthContext, clientTTLOverride time.Duration, confirmationJKT string) (string, error) {
@@ -217,6 +230,20 @@ func TestMintCIBATokensForPush_IssuerResolutionFailure(t *testing.T) {
 	_, ok := MintCIBATokensForPush(d, newBackgroundCtx(), client, r, time.Now())
 	if ok {
 		t.Fatal("expected ok=false when IssuerForClient fails")
+	}
+}
+
+func TestMintCIBATokensForPush_LifecycleBlocked(t *testing.T) {
+	t.Parallel()
+	d := &fakeCIBAGrantDeps{
+		issuer:         &fakeTokenIssuer{},
+		strategy:       "jwt",
+		lifecycleState: userlifecycle.StateSuspended,
+	}
+
+	payload, ok := MintCIBATokensForPush(d, newBackgroundCtx(), &core.Client{ID: "rp"}, approvedCIBARequest(), time.Now())
+	if ok || payload.AccessToken != "" {
+		t.Fatalf("suspended CIBA push = (%+v, %v), want no token and ok=false", payload, ok)
 	}
 }
 

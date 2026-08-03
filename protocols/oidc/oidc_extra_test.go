@@ -155,7 +155,7 @@ func TestHandleEndSession_StateAppendedToExistingQuery(t *testing.T) {
 		ID:                     "rp-1",
 		PostLogoutRedirectURIs: []string{"https://rp.example/bye?ref=1"},
 	})
-	hint := mintAccessToken(t, d.issuer, "user-1", "rp-1")
+	hint := mintIDToken(t, d.issuer, "user-1", "rp-1")
 	q := url.Values{}
 	q.Set("id_token_hint", hint)
 	q.Set("post_logout_redirect_uri", "https://rp.example/bye?ref=1")

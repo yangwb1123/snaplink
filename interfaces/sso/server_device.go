@@ -9,6 +9,7 @@ import (
 	"github.com/yangwb1123/snaplink/internal/handler/tokengrant"
 	"github.com/yangwb1123/snaplink/protocols/oauth"
 	"github.com/yangwb1123/snaplink/protocols/oidc"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 func generateDeviceCodeBytes() (string, error) { return oauth.GenerateDeviceCode() }
@@ -275,7 +276,7 @@ func (s *Server) authenticateDeviceVerifyBearer(ctx HandlerContext) (*TokenClaim
 		return nil, false
 	}
 	claims, _, err := s.validateAnyToken(ctx.Request().Context(), bearer)
-	if err != nil || claims == nil {
+	if err != nil || !core.IsAccessTokenClaims(claims) {
 		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, ErrInvalidToken))
 		return nil, false
 	}

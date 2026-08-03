@@ -16,6 +16,7 @@ func newClient(id string) *sso.Client {
 		Active:                  true,
 		RegistrationAccessToken: "rat-" + id,
 		TenantID:                "acme",
+		LoginPageURI:            "https://login.example/authorize",
 	}
 }
 
@@ -32,7 +33,7 @@ func TestRedisClientStore_AddGetRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.ID != "c1" || got.TenantID != "acme" || !got.Active {
+	if got.ID != "c1" || got.TenantID != "acme" || !got.Active || got.LoginPageURI == "" {
 		t.Errorf("round-trip mismatch: %+v", got)
 	}
 	// Secret must be hashed at rest, not the plaintext.

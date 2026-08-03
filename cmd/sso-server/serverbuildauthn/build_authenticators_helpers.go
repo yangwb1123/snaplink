@@ -150,13 +150,16 @@ func appendPasswordAuthenticator(auths []sso.Authenticator, a *config.PasswordCo
 	return auths, nil
 }
 
-func appendPhoneAuthenticator(auths []sso.Authenticator, a *config.PhoneConfig, codeStore authenticators.CodeStore, logger spi.Logger) ([]sso.Authenticator, error) {
+func appendPhoneAuthenticator(auths []sso.Authenticator, a *config.PhoneConfig, codeStore authenticators.CodeStore, logger spi.Logger, delivery ...config.CodeDeliveryConfig) ([]sso.Authenticator, error) {
 	if a == nil || !a.Enabled {
 		return auths, nil
 	}
 	sender, err := buildPhoneSMSSender(a.SMS, logger)
 	if err != nil {
 		return nil, fmt.Errorf("phone sms sender: %w", err)
+	}
+	if len(delivery) > 0 {
+		sender = wrapSMSCodeSender(sender, delivery[0], logger)
 	}
 	return append(auths, authenticators.NewPhoneAuthenticator(
 		codeStore,
@@ -203,13 +206,16 @@ func buildPhoneSMSSender(cfg *config.SMSConfig, logger spi.Logger) (authenticato
 	}
 }
 
-func appendEmailAuthenticator(auths []sso.Authenticator, a *config.CodeAuthConfig, codeStore authenticators.CodeStore, smtpCfg config.SMTPConfig, logger spi.Logger) ([]sso.Authenticator, error) {
+func appendEmailAuthenticator(auths []sso.Authenticator, a *config.CodeAuthConfig, codeStore authenticators.CodeStore, smtpCfg config.SMTPConfig, logger spi.Logger, delivery ...config.CodeDeliveryConfig) ([]sso.Authenticator, error) {
 	if a == nil || !a.Enabled {
 		return auths, nil
 	}
 	sender, err := buildEmailOTPSender(smtpCfg, logger)
 	if err != nil {
 		return nil, err
+	}
+	if len(delivery) > 0 {
+		sender = wrapEmailCodeSender(sender, delivery[0], logger, "email")
 	}
 	return append(auths, authenticators.NewEmailAuthenticator(
 		codeStore,
@@ -249,7 +255,7 @@ func buildEmailOTPSender(smtpCfg config.SMTPConfig, logger spi.Logger) (authenti
 // completed, so this fails the boot loudly rather than silently shipping a
 // dead feature — mirrors buildPhoneSMSSender's fail-fast contract for a
 // misconfigured "http" SMS provider.
-func appendMagicLinkAuthenticator(auths []sso.Authenticator, a *config.MagicLinkConfig, codeStore authenticators.CodeStore, smtpCfg config.SMTPConfig, logger spi.Logger) ([]sso.Authenticator, error) {
+func appendMagicLinkAuthenticator(auths []sso.Authenticator, a *config.MagicLinkConfig, codeStore authenticators.CodeStore, smtpCfg config.SMTPConfig, logger spi.Logger, delivery ...config.CodeDeliveryConfig) ([]sso.Authenticator, error) {
 	if a == nil || !a.Enabled {
 		return auths, nil
 	}
@@ -259,6 +265,9 @@ func appendMagicLinkAuthenticator(auths []sso.Authenticator, a *config.MagicLink
 	sender, err := buildEmailOTPSender(smtpCfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("magic link smtp sender: %w", err)
+	}
+	if len(delivery) > 0 {
+		sender = wrapEmailCodeSender(sender, delivery[0], logger, "magic_link")
 	}
 	auths = append(auths, authenticators.NewMagicLinkAuthenticator(
 		codeStore,

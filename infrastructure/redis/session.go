@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 const sessionIDBytes = 32
@@ -69,16 +71,21 @@ func sessionKey(id string) string    { return sessionKeyPrefix + id }
 func sessionUserKey(u string) string { return sessionUserPrefix + u }
 
 func (s *SessionManager) Create(ctx context.Context, userID string) (*sso.Session, error) {
+	return s.CreateWithMeta(ctx, userID, sso.SessionMeta{})
+}
+
+func (s *SessionManager) CreateWithMeta(ctx context.Context, userID string, meta sso.SessionMeta) (*sso.Session, error) {
 	id, err := randomSessionID()
 	if err != nil {
 		return nil, fmt.Errorf("redis: random session id: %w", err)
 	}
 	now := time.Now().UTC()
 	session := &sso.Session{
-		ID:        id,
-		UserID:    userID,
-		CreatedAt: now,
-		ExpiresAt: now.Add(s.ttl),
+		ID: id, UserID: userID, CreatedAt: now, ExpiresAt: now.Add(s.ttl),
+		IP: meta.IP, UserAgent: meta.UserAgent, TenantID: meta.TenantID,
+		DeviceID: meta.DeviceID, ClientID: meta.ClientID, Kind: meta.Kind,
+		AuthorizedScopes: append([]string(nil), meta.AuthorizedScopes...), AuthTime: meta.AuthTime,
+		TrustScore: meta.TrustScore, TrustSetAt: meta.TrustSetAt,
 	}
 	// The hash carries expires_at explicitly (in addition to the key
 	// TTL) so Get/Refresh can read the deadline without trusting Redis'
@@ -97,6 +104,13 @@ func (s *SessionManager) Create(ctx context.Context, userID string) (*sso.Sessio
 		"created_at", strconv.FormatInt(now.UnixMilli(), 10),
 		"expires_at", strconv.FormatInt(session.ExpiresAt.UnixMilli(), 10),
 		"revoked", "0",
+		"ip", session.IP, "user_agent", session.UserAgent, "tenant_id", session.TenantID,
+		"device_id", session.DeviceID, "client_id", session.ClientID, "kind", session.Kind,
+		"authorized_scopes", strings.Join(session.AuthorizedScopes, " "),
+		"auth_time", strconv.FormatInt(unixMilliOrZero(session.AuthTime), 10),
+		"trust_score", strconv.FormatFloat(session.TrustScore, 'g', -1, 64),
+		"trust_set_at", strconv.FormatInt(unixMilliOrZero(session.TrustSetAt), 10),
+		"step_up_required", "0",
 	).Err(); err != nil {
 		return nil, fmt.Errorf("redis: create session: %w", err)
 	}
@@ -260,6 +274,34 @@ func (s *SessionManager) collect(ctx context.Context, indexKey string, ids []str
 	return out
 }
 
+func (s *SessionManager) MarkStepUp(ctx context.Context, sessionID string) error {
+	return s.updateSessionFields(ctx, sessionID, "step_up_required", "1")
+}
+
+func (s *SessionManager) SetTrust(ctx context.Context, sessionID string, score float64, setAt time.Time) error {
+	return s.updateSessionFields(ctx, sessionID,
+		"trust_score", strconv.FormatFloat(score, 'g', -1, 64),
+		"trust_set_at", strconv.FormatInt(unixMilliOrZero(setAt), 10),
+		"step_up_required", "0")
+}
+
+func (s *SessionManager) SetAuthorizedScopes(ctx context.Context, sessionID string, scopes []string) error {
+	return s.updateSessionFields(ctx, sessionID, "authorized_scopes", strings.Join(scopes, " "))
+}
+
+var updateSessionFieldsScript = goredis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+redis.call('HSET', KEYS[1], unpack(ARGV))
+return 1
+`)
+
+func (s *SessionManager) updateSessionFields(ctx context.Context, sessionID string, fields ...any) error {
+	if err := updateSessionFieldsScript.Run(ctx, s.rdb, []string{sessionKey(sessionID)}, fields...).Err(); err != nil {
+		return fmt.Errorf("redis: update session field: %w", err)
+	}
+	return nil
+}
+
 func sessionFromHash(id string, vals map[string]string) (*sso.Session, error) {
 	// Timestamps are Unix MILLISECONDS (see Create — ms stays in float64's
 	// exact range so the refresh script's tonumber() comparison is precise).
@@ -271,13 +313,34 @@ func sessionFromHash(id string, vals map[string]string) (*sso.Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("redis: parse expires_at: %w", err)
 	}
-	return &sso.Session{
+	trustScore, _ := strconv.ParseFloat(vals["trust_score"], 64)
+	trustSetAtMs, _ := strconv.ParseInt(vals["trust_set_at"], 10, 64)
+	authTimeMs, _ := strconv.ParseInt(vals["auth_time"], 10, 64)
+	out := &sso.Session{
 		ID:        id,
 		UserID:    vals["user_id"],
 		CreatedAt: time.UnixMilli(createdMs).UTC(),
 		ExpiresAt: time.UnixMilli(expiresMs).UTC(),
 		Revoked:   vals["revoked"] != "0" && vals["revoked"] != "",
-	}, nil
+		IP:        vals["ip"], UserAgent: vals["user_agent"], TenantID: vals["tenant_id"],
+		DeviceID: vals["device_id"], ClientID: vals["client_id"], Kind: vals["kind"],
+		AuthorizedScopes: strings.Fields(vals["authorized_scopes"]), TrustScore: trustScore,
+		StepUpRequired: vals["step_up_required"] == "1",
+	}
+	if trustSetAtMs != 0 {
+		out.TrustSetAt = time.UnixMilli(trustSetAtMs).UTC()
+	}
+	if authTimeMs != 0 {
+		out.AuthTime = time.UnixMilli(authTimeMs).UTC()
+	}
+	return out, nil
+}
+
+func unixMilliOrZero(value time.Time) int64 {
+	if value.IsZero() {
+		return 0
+	}
+	return value.UnixMilli()
 }
 
 func randomSessionID() (string, error) {
@@ -288,4 +351,9 @@ func randomSessionID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-var _ sso.SessionManager = (*SessionManager)(nil)
+var (
+	_ sso.SessionManager               = (*SessionManager)(nil)
+	_ sso.SessionMetaCreator           = (*SessionManager)(nil)
+	_ sso.SessionTrustManager          = (*SessionManager)(nil)
+	_ core.SessionAuthorizationManager = (*SessionManager)(nil)
+)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/interfaces/ssoclient"
 	"github.com/yangwb1123/snaplink/interfaces/ssoclient/remote"
+	"github.com/yangwb1123/snaplink/protocols/oidc"
 )
 
 // Interface satisfaction guards.
@@ -29,11 +31,12 @@ func signerAndCache(t *testing.T) (*defaultimpl.Ed25519JWTIssuer, *remote.AuthCl
 	iss := defaultimpl.NewEd25519JWTIssuer(
 		defaultimpl.WithEd25519Key(priv),
 		defaultimpl.WithEd25519TokenTTL(5*time.Minute),
+		defaultimpl.WithEd25519Issuer("remote-test"),
 	)
 	url, _, stop := jwksServerWithKid(t, pub, iss.KeyID())
 
 	cache := remote.NewJWKSCache(url, remote.WithJWKSRefreshInterval(time.Hour))
-	client := remote.NewAuthClient(cache)
+	client := remote.NewAuthClient(cache, remote.WithIssuer("remote-test"))
 
 	return iss, client, func() {
 		cache.Close()
@@ -106,6 +109,19 @@ func TestRemoteAuth_ValidateRoundtrip(t *testing.T) {
 	}
 }
 
+func TestRemoteAuth_RejectsIDToken(t *testing.T) {
+	t.Parallel()
+	iss, client, stop := signerAndCache(t)
+	defer stop()
+	idToken, err := iss.IssueIDToken(context.Background(), &oidc.IDTokenRequest{Subject: "user-1", Audience: "rp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ValidateToken(context.Background(), idToken); err == nil {
+		t.Fatal("remote access-token validator accepted an ID token")
+	}
+}
+
 func TestRemoteAuth_RejectsTamperedSignature(t *testing.T) {
 	t.Parallel()
 	iss, client, stop := signerAndCache(t)
@@ -168,13 +184,12 @@ func TestRemoteAuth_RejectsExpired(t *testing.T) {
 	}
 }
 
-func TestRemoteAuth_LogoutWithoutURLIsNoop(t *testing.T) {
+func TestRemoteAuth_LogoutWithoutURLFailsClosed(t *testing.T) {
 	t.Parallel()
 	_, client, stop := signerAndCache(t)
 	defer stop()
-	// No WithLogoutURL configured → Logout is silent no-op.
-	if err := client.Logout(context.Background(), &ssoclient.LogoutRequest{AccessToken: "x"}); err != nil {
-		t.Fatalf("Logout without URL: %v", err)
+	if err := client.Logout(context.Background(), &ssoclient.LogoutRequest{AccessToken: "x"}); !errors.Is(err, ssoclient.ErrLogoutNotConfigured) {
+		t.Fatalf("Logout without URL = %v, want ErrLogoutNotConfigured", err)
 	}
 }
 
@@ -205,16 +220,14 @@ func TestRemoteAuth_LogoutCallsConfiguredURL(t *testing.T) {
 	defer cache.Close()
 	client := remote.NewAuthClient(cache, remote.WithLogoutURL(srv.URL))
 
-	if err := client.Logout(context.Background(), &ssoclient.LogoutRequest{
-		AccessToken: "tok-123", SessionID: "sess-1",
-	}); err != nil {
+	if err := client.Logout(context.Background(), &ssoclient.LogoutRequest{SessionID: "sess-1"}); err != nil {
 		t.Fatalf("Logout: %v", err)
 	}
 	if calls != 1 {
 		t.Fatalf("expected 1 server call, got %d", calls)
 	}
-	if sawAuth != "Bearer tok-123" {
-		t.Errorf("bearer header missing: %q", sawAuth)
+	if sawAuth != "" {
+		t.Errorf("unexpected bearer header: %q", sawAuth)
 	}
 	if sawSession != "sess-1" {
 		t.Error("session_id not in body")

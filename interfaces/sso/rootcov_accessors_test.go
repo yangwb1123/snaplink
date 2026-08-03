@@ -45,15 +45,19 @@ func rcovNewCtx(method, url string) *rcovCtx {
 	}
 }
 
-func (c *rcovCtx) Request() *http.Request              { return c.r }
-func (c *rcovCtx) ResponseWriter() http.ResponseWriter { return c.w }
-func (c *rcovCtx) Param(k string) string               { return c.params[k] }
-func (c *rcovCtx) Query(k string) string               { return c.query[k] }
-func (c *rcovCtx) Bind(any) error                      { return errors.New("no body") }
-func (c *rcovCtx) JSON(code int, v any)                { c.code = code; c.body = v }
-func (c *rcovCtx) Redirect(code int, _ string)         { c.code = code }
-func (c *rcovCtx) Set(k string, v any)                 { c.store[k] = v }
-func (c *rcovCtx) Get(k string) any                    { return c.store[k] }
+func (c *rcovCtx) Request() *http.Request                { return c.r }
+func (c *rcovCtx) ResponseWriter() http.ResponseWriter   { return c.w }
+func (c *rcovCtx) Param(k string) string                 { return c.params[k] }
+func (c *rcovCtx) Query(k string) string                 { return c.query[k] }
+func (c *rcovCtx) Bind(any) error                        { return errors.New("no body") }
+func (c *rcovCtx) JSON(code int, v any)                  { c.code = code; c.body = v }
+func (c *rcovCtx) Redirect(code int, _ string)           { c.code = code }
+func (c *rcovCtx) Set(k string, v any)                   { c.store[k] = v }
+func (c *rcovCtx) Get(k string) any                      { return c.store[k] }
+func (c *rcovCtx) Abort()                                {}
+func (c *rcovCtx) Aborted() bool                         { return false }
+func (c *rcovCtx) Written() bool                         { return false }
+func (c *rcovCtx) SetResponseWriter(http.ResponseWriter) {}
 
 // rcovWiredServer builds a *sso.Server with as many concerns wired to real
 // Memory* impls as a single struct can hold, so the accessors return non-nil.
@@ -163,6 +167,7 @@ func TestRcovAccessors_Getters(t *testing.T) {
 	_ = s.DeviceVerifyBaseURL()
 	_ = s.PARTTL()
 	_ = s.CIBAStore()
+	_ = s.CIBAUserCodeVerifier()
 	_ = s.CIBARequestTTL()
 	_ = s.CIBAPollInterval()
 	_ = s.DCRPolicy()

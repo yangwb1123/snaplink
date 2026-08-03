@@ -39,6 +39,11 @@ type Request struct {
 	// challenge. Empty on an untrusted or first-time device — the ordinary
 	// MFA gate applies unchanged.
 	DeviceToken string `json:"device_token"`
+
+	// PolicyScopeRestriction is the server-computed conditional-access scope
+	// ceiling. It is never accepted from the wire; MFA/consent continuation
+	// state persists it explicitly alongside Request.
+	PolicyScopeRestriction []string `json:"-"`
 }
 
 // KeyLoginTransactionID is the wire name of the single-use continuation that

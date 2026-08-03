@@ -109,8 +109,16 @@ accounts; the API never accepts an unverified provider/subject claim.
 
 ### User lifecycle
 
-Lifecycle state is governance metadata with a memory store. It does not replace
-`core.User.IsActive` and does not itself gate authentication.
+Lifecycle state now gates every stock end-user login continuation, user token
+grant (including the human behind agent delegation), server-side access/ID-token
+validation across the full `sub`/`act` chain, and introspection; non-active
+transitions also revoke sessions and refresh tokens. It remains additive to
+`core.User.IsActive`, and `client_credentials` remains outside this user gate.
+The remaining boundary is persistence/HA: only a process-memory lifecycle store
+exists, so state is lost on restart and startup/admission reject enabling it in
+a declared multi-replica topology (except the explicit unsafe development
+override). A shared durable lifecycle backend and an event channel for resource
+servers that validate JWTs fully offline remain future work.
 
 ### SMTP transport
 
@@ -118,10 +126,15 @@ The built-in sender uses `net/smtp`: STARTTLS is negotiated when advertised but
 may fall back to plaintext. Implicit TLS on port 465 is not supported. Require
 TLS at the relay/edge when plaintext fallback is unacceptable.
 
-### CIBA
+### CIBA user-code enrollment boundary
 
-Poll, ping and push delivery seams exist. CIBA `user_code` mode is not
-implemented.
+Poll, ping and push delivery, `requested_expiry`, exactly-one-hint validation,
+and the optional `WithCIBAUserCodeVerifier` protocol seam are implemented.
+The verifier owns user-code enrollment, rotation, constant-time comparison and
+attempt limits; Snaplink does not store the submitted code or silently reuse
+the user's OP password. CIBA Core deliberately leaves code registration out of
+scope, so a first-party code-management ceremony remains an external frontend
+or operator integration rather than a protocol-handler responsibility.
 
 ## External/operator responsibilities
 

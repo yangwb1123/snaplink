@@ -115,3 +115,51 @@ func TestClampingIssuer_NoMatchLeavesTTL(t *testing.T) {
 		t.Fatalf("Revoke delegate: %v", err)
 	}
 }
+
+// TestClampingIssuer_TenantClampsOnlyThatTenant proves the stamp contract: a
+// subject whose TenantID matches the rule's tenant gets clamped; a subject
+// stamped with a DIFFERENT tenant — and an UNSTAMPED subject (TenantID == "",
+// the pre-feature bytes of a missed/old site) — stays unclamped (fail-open).
+func TestClampingIssuer_TenantClampsOnlyThatTenant(t *testing.T) {
+	t.Parallel()
+	store := staticStore{policies: []Policy{{Name: "ta-cap", TenantID: "ta", MaxTTL: 5 * time.Minute}}}
+
+	cases := []struct {
+		name    string
+		subject *core.Subject
+		wantTTL time.Duration
+	}{
+		{"stamped ta clamps", &core.Subject{ID: "u", ClientID: "c", TenantID: "ta", TTL: time.Hour}, 5 * time.Minute},
+		{"stamped tb does not", &core.Subject{ID: "u", ClientID: "c", TenantID: "tb", TTL: time.Hour}, time.Hour},
+		{"unstamped stays unclamped", &core.Subject{ID: "u", ClientID: "c", TTL: time.Hour}, time.Hour},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := &recordingIssuer{}
+			iss := NewClampingIssuer(inner, store)
+			_, _ = iss.Issue(context.Background(), tc.subject, nil)
+			if inner.gotTTL != tc.wantTTL {
+				t.Fatalf("inner got TTL %v, want %v", inner.gotTTL, tc.wantTTL)
+			}
+		})
+	}
+}
+
+// TestClampingIssuer_GlobalRuleClampsAnyTenant proves a GLOBAL max_ttl rule
+// (empty tenant selector) applies to tenant-stamped and unstamped subjects
+// alike — the byte-compat form keeps working under the new dimension.
+func TestClampingIssuer_GlobalRuleClampsAnyTenant(t *testing.T) {
+	t.Parallel()
+	inner := &recordingIssuer{}
+	store := staticStore{policies: []Policy{{Name: "global", MaxTTL: 10 * time.Minute}}}
+	iss := NewClampingIssuer(inner, store)
+
+	for _, tenant := range []string{"", "ta", "tb"} {
+		inner.gotTTL = 0
+		_, _ = iss.Issue(context.Background(),
+			&core.Subject{ID: "u", ClientID: "c", TenantID: tenant, TTL: time.Hour}, nil)
+		if inner.gotTTL != 10*time.Minute {
+			t.Fatalf("tenant %q got TTL %v, want clamped 10m", tenant, inner.gotTTL)
+		}
+	}
+}

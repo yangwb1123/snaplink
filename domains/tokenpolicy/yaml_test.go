@@ -21,13 +21,18 @@ token_policies:
       - [admin:*, openid]
     max_refresh_depth: 3
     max_active_sessions: 4
+  - name: tenant-svc
+    tenant_id: ta
+    subject: svc-*
+    subject_roles: [admin, member]
+    max_ttl: 2m
 `)
 	policies, err := ParseYAML(doc)
 	if err != nil {
 		t.Fatalf("ParseYAML: %v", err)
 	}
-	if len(policies) != 2 {
-		t.Fatalf("got %d policies, want 2", len(policies))
+	if len(policies) != 3 {
+		t.Fatalf("got %d policies, want 3", len(policies))
 	}
 
 	p0 := policies[0]
@@ -52,13 +57,26 @@ token_policies:
 		p1.BlockScopeCombos[0][0] != "admin:*" || p1.BlockScopeCombos[0][1] != "openid" {
 		t.Errorf("policy[1].BlockScopeCombos = %v", p1.BlockScopeCombos)
 	}
+
+	p2 := policies[2]
+	if p2.TenantID != "ta" || p2.Subject != "svc-*" {
+		t.Errorf("policy[2] tenant/subject = %q/%q, want ta/svc-*", p2.TenantID, p2.Subject)
+	}
+	if len(p2.SubjectRoles) != 2 || p2.SubjectRoles[0] != "admin" || p2.SubjectRoles[1] != "member" {
+		t.Errorf("policy[2].SubjectRoles = %v, want [admin member]", p2.SubjectRoles)
+	}
+	if p2.MaxTTL != 2*time.Minute {
+		t.Errorf("policy[2].MaxTTL = %v, want 2m", p2.MaxTTL)
+	}
 }
 
 // TestParseYAML_Empty proves an absent/empty list is a valid "no policies"
-// configuration, not an error.
+// configuration, not an error. NOTE: a stray top-level key (e.g. `other: 1`)
+// is now a strict-parse ERROR, not "no policies" — see TestParseYAML_Malformed
+// (the strictness flip, design 3d).
 func TestParseYAML_Empty(t *testing.T) {
 	t.Parallel()
-	for _, doc := range [][]byte{[]byte(""), []byte("token_policies: []\n"), []byte("other: 1\n")} {
+	for _, doc := range [][]byte{[]byte(""), []byte("token_policies: []\n")} {
 		policies, err := ParseYAML(doc)
 		if err != nil {
 			t.Fatalf("ParseYAML(%q): %v", doc, err)
@@ -69,11 +87,37 @@ func TestParseYAML_Empty(t *testing.T) {
 	}
 }
 
-// TestParseYAML_Malformed proves invalid YAML surfaces an error rather than a
-// silent empty set.
+// TestParseYAML_Malformed proves invalid documents surface an error rather
+// than a silent empty set: malformed YAML, a stray top-level key (previously
+// tolerated as "no policies" — now strict), and a misspelled selector field
+// on an item (the tennat_id typo that would silently demote a tenant rule to
+// a fleet-wide global rule).
 func TestParseYAML_Malformed(t *testing.T) {
 	t.Parallel()
-	if _, err := ParseYAML([]byte("token_policies: [:::not yaml")); err == nil {
-		t.Fatal("ParseYAML(malformed) = nil error, want a decode error")
+	for _, doc := range [][]byte{
+		[]byte("token_policies: [:::not yaml"),
+		[]byte("other: 1\n"),                                        // stray top-level key (was tolerated)
+		[]byte("token_policies:\n  - name: x\n    tennat_id: ta\n"), // misspelled selector
+	} {
+		if _, err := ParseYAML(doc); err == nil {
+			t.Fatalf("ParseYAML(%q) = nil error, want a decode error", doc)
+		}
+	}
+}
+
+// TestParseYAML_LegacyBareStarScopeStillLoads pins the legacy-compat corner:
+// a bare "*" SCOPE selector keeps today's match-all semantics (Validate
+// deliberately leaves scopes unvalidated), so an existing bundle keeps
+// loading — the strictness flip gates only the new client_id/subject
+// selectors and tenant_id.
+func TestParseYAML_LegacyBareStarScopeStillLoads(t *testing.T) {
+	t.Parallel()
+	doc := []byte("token_policies:\n  - name: legacy\n    scopes: [\"*\"]\n")
+	policies, err := ParseYAML(doc)
+	if err != nil {
+		t.Fatalf("ParseYAML(legacy bare-star scope): %v", err)
+	}
+	if len(policies) != 1 || len(policies[0].Scopes) != 1 || policies[0].Scopes[0] != "*" {
+		t.Fatalf("legacy scope selector = %+v, want [*] to survive", policies)
 	}
 }

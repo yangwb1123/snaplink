@@ -96,6 +96,24 @@ func TestRevokeAccessOnArchive_RevokesSessionsAndRefreshTokens(t *testing.T) {
 	}
 }
 
+func TestRevokeAccessOnSuspend_RevokesSessionsAndRefreshTokens(t *testing.T) {
+	const userID = "user-suspended"
+	f := newFixture(t, userID)
+	reaction := lifecyclereactions.RevokeAccessOnSuspend(f.sessions, f.refresh)
+	if err := reaction(context.Background(), userID); err != nil {
+		t.Fatalf("reaction() = %v", err)
+	}
+	if got := f.refreshTokenCount(t, userID); got != 0 {
+		t.Fatalf("after suspend revoke: refresh tokens = %d, want 0", got)
+	}
+	if got := f.sessionCount(t, userID); got != 0 {
+		t.Fatalf("after suspend revoke: sessions = %d, want 0", got)
+	}
+	if err := reaction(context.Background(), userID); err != nil {
+		t.Fatalf("idempotent reaction() = %v", err)
+	}
+}
+
 func TestRevokeAccessOnArchive_WiredThroughLifecycleEventBusEndToEnd(t *testing.T) {
 	const userID = "user-2"
 	f := newFixture(t, userID)

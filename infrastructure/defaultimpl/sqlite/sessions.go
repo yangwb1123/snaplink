@@ -7,10 +7,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
 	"github.com/yangwb1123/snaplink/platform/migrate"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 const sessionIDBytes = 32
@@ -82,12 +84,24 @@ ALTER TABLE sessions ADD COLUMN trust_score      REAL    NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN trust_set_at     INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN step_up_required INTEGER NOT NULL DEFAULT 0;`,
 	},
+	{
+		Version: 5,
+		Name:    "session-authorization-context",
+		SQL: `
+ALTER TABLE sessions ADD COLUMN client_id         TEXT    NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN authorized_scopes TEXT    NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN auth_time         INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN device_id         TEXT    NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN kind              TEXT    NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_sessions_subject_client
+    ON sessions(user_id, client_id);`,
+	},
 }
 
 // sessionCols is the SELECT/RETURNING projection shared by every read path, kept
 // in one place so the v4 trust-decay columns can't drift between the queries and
 // scanSession's field order.
-const sessionCols = "id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id, trust_score, trust_set_at, step_up_required"
+const sessionCols = "id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id, trust_score, trust_set_at, step_up_required, client_id, authorized_scopes, auth_time, device_id, kind"
 
 // SessionManager is the SQLite-backed implementation of
 // [sso.SessionManager]. Suitable for multi-replica deployments and
@@ -170,21 +184,27 @@ func (s *SessionManager) CreateWithMeta(ctx context.Context, userID string, meta
 	}
 	now := time.Now().UTC()
 	session := &sso.Session{
-		ID:         id,
-		UserID:     userID,
-		CreatedAt:  now,
-		ExpiresAt:  now.Add(s.ttl),
-		IP:         meta.IP,
-		UserAgent:  meta.UserAgent,
-		TenantID:   meta.TenantID,
-		TrustScore: meta.TrustScore,
-		TrustSetAt: meta.TrustSetAt,
+		ID:               id,
+		UserID:           userID,
+		CreatedAt:        now,
+		ExpiresAt:        now.Add(s.ttl),
+		IP:               meta.IP,
+		UserAgent:        meta.UserAgent,
+		TenantID:         meta.TenantID,
+		DeviceID:         meta.DeviceID,
+		ClientID:         meta.ClientID,
+		AuthorizedScopes: append([]string(nil), meta.AuthorizedScopes...),
+		AuthTime:         meta.AuthTime,
+		Kind:             meta.Kind,
+		TrustScore:       meta.TrustScore,
+		TrustSetAt:       meta.TrustSetAt,
 	}
 	_, err = s.db.ExecContext(ctx, `
-        INSERT INTO sessions (id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id, trust_score, trust_set_at, step_up_required)
-        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 0)`,
+        INSERT INTO sessions (id, user_id, created_at, expires_at, revoked, ip, user_agent, tenant_id, trust_score, trust_set_at, step_up_required, client_id, authorized_scopes, auth_time, device_id, kind)
+        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
 		session.ID, session.UserID, session.CreatedAt.UnixNano(), session.ExpiresAt.UnixNano(),
 		session.IP, session.UserAgent, session.TenantID, session.TrustScore, unixNanoOrZero(session.TrustSetAt),
+		session.ClientID, strings.Join(session.AuthorizedScopes, " "), unixNanoOrZero(session.AuthTime), session.DeviceID, session.Kind,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: insert session: %w", err)
@@ -330,6 +350,14 @@ func (s *SessionManager) SetTrust(ctx context.Context, sessionID string, score f
 	return nil
 }
 
+func (s *SessionManager) SetAuthorizedScopes(ctx context.Context, sessionID string, scopes []string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET authorized_scopes = ? WHERE id = ?`, strings.Join(scopes, " "), sessionID)
+	if err != nil {
+		return fmt.Errorf("sqlite: set session authorized scopes: %w", err)
+	}
+	return nil
+}
+
 func scanSession(s scanner) (*sso.Session, error) {
 	var (
 		out                              sso.Session
@@ -337,9 +365,12 @@ func scanSession(s scanner) (*sso.Session, error) {
 		revokedInt                       int64
 		trustSetAtUnixNs                 int64
 		stepUpInt                        int64
+		authorizedScopes                 string
+		authTimeUnixNs                   int64
 	)
 	if err := s.Scan(&out.ID, &out.UserID, &createdAtUnixNs, &expiresAtUnixNs, &revokedInt,
-		&out.IP, &out.UserAgent, &out.TenantID, &out.TrustScore, &trustSetAtUnixNs, &stepUpInt); err != nil {
+		&out.IP, &out.UserAgent, &out.TenantID, &out.TrustScore, &trustSetAtUnixNs, &stepUpInt,
+		&out.ClientID, &authorizedScopes, &authTimeUnixNs, &out.DeviceID, &out.Kind); err != nil {
 		return nil, err
 	}
 	out.CreatedAt = time.Unix(0, createdAtUnixNs).UTC()
@@ -352,6 +383,10 @@ func scanSession(s scanner) (*sso.Session, error) {
 		out.TrustSetAt = time.Unix(0, trustSetAtUnixNs).UTC()
 	}
 	out.StepUpRequired = stepUpInt != 0
+	out.AuthorizedScopes = strings.Fields(authorizedScopes)
+	if authTimeUnixNs != 0 {
+		out.AuthTime = time.Unix(0, authTimeUnixNs).UTC()
+	}
 	return &out, nil
 }
 
@@ -389,9 +424,10 @@ func randomSessionID() (string, error) {
 }
 
 var (
-	_ sso.SessionManager      = (*SessionManager)(nil)
-	_ sso.SessionMetaCreator  = (*SessionManager)(nil)
-	_ sso.SessionTenantIndex  = (*SessionManager)(nil)
-	_ sso.SessionTenantLister = (*SessionManager)(nil)
-	_ sso.SessionTrustManager = (*SessionManager)(nil)
+	_ sso.SessionManager               = (*SessionManager)(nil)
+	_ sso.SessionMetaCreator           = (*SessionManager)(nil)
+	_ sso.SessionTenantIndex           = (*SessionManager)(nil)
+	_ sso.SessionTenantLister          = (*SessionManager)(nil)
+	_ sso.SessionTrustManager          = (*SessionManager)(nil)
+	_ core.SessionAuthorizationManager = (*SessionManager)(nil)
 )

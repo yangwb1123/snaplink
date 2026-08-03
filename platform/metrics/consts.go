@@ -67,6 +67,11 @@ const (
 	NameTokenPolicyEvaluationsTotal   = "sso_token_policy_evaluations_total"
 	NameTokenPolicyDenialsTotal       = "sso_token_policy_denials_total"
 	NameTokenPolicyRenewRequiredTotal = "sso_token_policy_renew_required_total"
+	// NameTokenPolicyRoleResolutionErrorsTotal counts failed tenant-roster
+	// lookups at the session seam (fail-open: roles stay empty and role
+	// selectors stop matching). No labels — a per-tenant/user label would be
+	// unbounded (§5); the logged error carries the identifiers.
+	NameTokenPolicyRoleResolutionErrorsTotal = "sso_token_policy_role_resolution_errors_total"
 
 	// Token-behavior anomaly detection (opt-in via WithTokenAnomalyDetector +
 	// WithMetrics). Bounded labels: the closed finding-type set × severity.

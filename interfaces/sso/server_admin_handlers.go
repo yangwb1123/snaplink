@@ -435,7 +435,7 @@ func (s *Server) handleAdminLogout(ctx HandlerContext) {
 		return
 	}
 	claims, _, err := s.validateAnyToken(ctx.Request().Context(), token)
-	if err != nil || claims == nil {
+	if err != nil || !core.IsAccessTokenClaims(claims) {
 		ctx.JSON(http.StatusUnauthorized, errorBody(ctx, core.ErrInvalidToken))
 		return
 	}

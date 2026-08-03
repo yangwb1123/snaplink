@@ -120,9 +120,10 @@ func wireCodeForPolicyDeny(r tokenpolicy.DenyReason) string {
 // here (they need per-grant inputs this seam lacks). Returns true (response
 // written) on a deny. Kept as a one-line call site so dispatchTokenGrant stays
 // within the function-length budget and never imports the tokenpolicy types.
-func (s *Server) denyTokenScopeCombo(ctx HandlerContext, clientID string, scopes []string) bool {
+func (s *Server) denyTokenScopeCombo(ctx HandlerContext, clientID, tenantID string, scopes []string) bool {
 	return s.enforceTokenPolicy(ctx, tokenpolicy.PolicyInput{
 		ClientID: clientID,
+		TenantID: tenantID,
 		Scopes:   scopes,
 		Kind:     tokenpolicy.KindAccess,
 	})
@@ -136,10 +137,11 @@ func (s *Server) denyTokenScopeCombo(ctx HandlerContext, clientID string, scopes
 // on this seam (the refresh grant supplies only client + scopes + depth).
 // Returns true (oracle-safe invalid_grant already written) on a deny; a
 // byte-identical no-op returning false when no token-policy store is wired.
-func (s *Server) EnforceRefreshDepthPolicy(ctx HandlerContext, clientID, subject string, scopes []string, depth int) bool {
+func (s *Server) EnforceRefreshDepthPolicy(ctx HandlerContext, clientID, subject, tenantID string, scopes []string, depth int) bool {
 	return s.enforceTokenPolicy(ctx, tokenpolicy.PolicyInput{
 		ClientID:     clientID,
 		Subject:      subject,
+		TenantID:     tenantID,
 		Scopes:       scopes,
 		Kind:         tokenpolicy.KindRefresh,
 		RefreshDepth: depth,
@@ -425,7 +427,7 @@ func (s *Server) recordCodeSent(ctx HandlerContext, provider, target string, ok 
 func (s *Server) recordTokenIssued(ctx HandlerContext, clientID, strategy, subjectID string) {
 	s.recordTenantTokenIssued(ctx, clientID, strategy)
 	audit.RecordTokenIssued(s.auditor, ctx, clientID, strategy, subjectID)
-	s.tokenUsageRecorder.Offer(metering.Event{
+	s.offerUsage(ctx, metering.Event{
 		Kind:      metering.KindAccess,
 		Endpoint:  metering.EndpointToken,
 		ClientID:  clientID,
@@ -438,7 +440,7 @@ func (s *Server) recordTokenIssued(ctx HandlerContext, clientID, strategy, subje
 // issue (login / authz_code) from rotation (refresh_token grant).
 func (s *Server) recordRefreshTokenIssued(ctx HandlerContext, clientID, subjectID string, rotation bool) {
 	audit.RecordRefreshTokenIssued(s.auditor, ctx, clientID, subjectID, rotation)
-	s.tokenUsageRecorder.Offer(metering.Event{
+	s.offerUsage(ctx, metering.Event{
 		Kind:      metering.KindRefresh,
 		Endpoint:  metering.EndpointToken,
 		ClientID:  clientID,
@@ -450,7 +452,7 @@ func (s *Server) recordRefreshTokenIssued(ctx HandlerContext, clientID, subjectI
 // OIDC id_token is appended to the response.
 func (s *Server) recordIDTokenIssued(ctx HandlerContext, clientID, subjectID string) {
 	audit.RecordIDTokenIssued(s.auditor, ctx, clientID, subjectID)
-	s.tokenUsageRecorder.Offer(metering.Event{
+	s.offerUsage(ctx, metering.Event{
 		Kind:      metering.KindID,
 		Endpoint:  metering.EndpointToken,
 		ClientID:  clientID,

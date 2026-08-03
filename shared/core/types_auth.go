@@ -43,6 +43,17 @@ type Session struct {
 	// login when a DeviceStore is wired. Best-effort, never security load-bearing.
 	DeviceID string `json:"device_id,omitempty"`
 
+	// ClientID and AuthorizedScopes bind the relying party and current
+	// authorization ceiling to the server-side session. Conditional-access
+	// convergence may only reduce AuthorizedScopes; refresh then intersects the
+	// stored ceiling so a later policy relaxation cannot silently re-expand an
+	// already-restricted session. Empty scopes on a legacy row mean unknown.
+	ClientID         string   `json:"client_id,omitempty"`
+	AuthorizedScopes []string `json:"authorized_scopes,omitempty"`
+	// AuthTime is the original end-user authentication event, not a refresh or
+	// session-extension timestamp. It feeds authentication-age policy sweeps.
+	AuthTime time.Time `json:"auth_time,omitempty"`
+
 	// Kind distinguishes special session classes from interactive logins.
 	// Currently the only value is SessionKindAdminImpersonation — a session
 	// minted under a break-glass admin grant — so audit enrichment can

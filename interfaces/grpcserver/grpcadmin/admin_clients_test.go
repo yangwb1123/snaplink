@@ -58,6 +58,10 @@ func TestClientAdminService_InvalidArgument(t *testing.T) {
 	requireCode(t, err, codes.InvalidArgument)
 	_, err = svc.Update(ctx, &adminv1.UpdateClientRequest{Client: &adminv1.Client{}})
 	requireCode(t, err, codes.InvalidArgument)
+	_, err = svc.Create(ctx, &adminv1.CreateClientRequest{Client: &adminv1.Client{
+		Id: "unsafe-login", LoginPageUri: "http://public.example/login",
+	}})
+	requireCode(t, err, codes.InvalidArgument)
 	_, err = svc.Delete(ctx, &adminv1.DeleteClientRequest{})
 	requireCode(t, err, codes.InvalidArgument)
 	_, err = svc.RotateSecret(ctx, &adminv1.RotateSecretRequest{})
@@ -84,10 +88,10 @@ func TestClientAdminService_CRUDAndCallbacks(t *testing.T) {
 	ctx := context.Background()
 
 	created, err := svc.Create(ctx, &adminv1.CreateClientRequest{
-		Client: &adminv1.Client{Id: "web-app", Name: "Web", Active: true, AllowedAuthenticators: []string{"password"}},
+		Client: &adminv1.Client{Id: "web-app", Name: "Web", Active: true, AllowedAuthenticators: []string{"password"}, LoginPageUri: "https://login.example/authorize"},
 	})
 	requireOK(t, err, "Create")
-	if created.Client.Id != "web-app" || created.Client.Secret != "" {
+	if created.Client.Id != "web-app" || created.Client.Secret != "" || created.Client.LoginPageUri == "" {
 		t.Errorf("Create response = %+v", created.Client)
 	}
 	if discoveryCalls != 1 || lastChangedClient != "web-app" {
@@ -112,13 +116,13 @@ func TestClientAdminService_CRUDAndCallbacks(t *testing.T) {
 		t.Errorf("List len = %d", len(list.Clients))
 	}
 
-	_, err = svc.Update(ctx, &adminv1.UpdateClientRequest{Client: &adminv1.Client{Id: "web-app", Name: "Web v2", Active: true}})
+	_, err = svc.Update(ctx, &adminv1.UpdateClientRequest{Client: &adminv1.Client{Id: "web-app", Name: "Web v2", Active: true, LoginPageUri: "http://127.0.0.1:8081/login/"}})
 	requireOK(t, err, "Update")
 	if discoveryCalls != 2 {
 		t.Errorf("expected Update to fire onDiscoveryChange again, count=%d", discoveryCalls)
 	}
 	got, _ = svc.Get(ctx, &adminv1.GetClientRequest{Id: "web-app"})
-	if got.Client.Name != "Web v2" {
+	if got.Client.Name != "Web v2" || got.Client.LoginPageUri != "http://127.0.0.1:8081/login/" {
 		t.Errorf("after Update Name=%q", got.Client.Name)
 	}
 

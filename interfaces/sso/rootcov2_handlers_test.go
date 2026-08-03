@@ -22,6 +22,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -159,20 +160,16 @@ func (rcov2CallbackAuth) Callback(_ context.Context, st *sso.CallbackState) (*ss
 	return nil, errors.New("bad callback")
 }
 
-// TestRcov2H_Callback covers the legacy /auth/callback endpoint: a successful
-// callback creates a session; a missing code is a 400; a bad code is a 401.
+// TestRcov2H_Callback proves callbacks without a server-issued transaction are
+// rejected before any authenticator code exchange.
 func TestRcov2H_Callback(t *testing.T) {
 	t.Parallel()
 	s := rcovNewServer(t, sso.WithAuthenticator(rcov2CallbackAuth{}))
 
-	// Success: provider names the authenticator, code resolves a user.
 	status, out := rcovDo(t, http.MethodGet,
 		s.http.URL+"/auth/callback?provider=rcov2cb&code=good-code&state=st", "", nil)
-	if status != http.StatusOK {
-		t.Fatalf("callback success = %d body=%v", status, out)
-	}
-	if out["status"] != "authenticated" {
-		t.Errorf("callback status = %v, want authenticated", out["status"])
+	if status != http.StatusBadRequest || out["error"] != "invalid_callback" {
+		t.Fatalf("unbound callback = %d body=%v, want invalid_callback", status, out)
 	}
 
 	// Missing code => 400.
@@ -181,11 +178,11 @@ func TestRcov2H_Callback(t *testing.T) {
 		t.Errorf("callback no code = %d, want 400", status)
 	}
 
-	// Bad code => 401.
+	// A different code cannot turn an unbound callback into an exchange.
 	status, _ = rcovDo(t, http.MethodGet,
 		s.http.URL+"/auth/callback?provider=rcov2cb&code=bad&state=st", "", nil)
-	if status != http.StatusUnauthorized {
-		t.Errorf("callback bad code = %d, want 401", status)
+	if status != http.StatusBadRequest {
+		t.Errorf("callback bad code = %d, want 400", status)
 	}
 }
 
@@ -456,6 +453,7 @@ func TestRcov2H_GetLoginFederatedRedirect(t *testing.T) {
 		ID:            fedClient,
 		Name:          "Federated Client",
 		RedirectURIs:  []string{rcovRedirect},
+		LoginPageURI:  "https://login.example.test/authorize",
 		TokenStrategy: "jwt",
 		Active:        true,
 		SkipConsent:   true,
@@ -464,7 +462,8 @@ func TestRcov2H_GetLoginFederatedRedirect(t *testing.T) {
 	client := &http.Client{
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	resp, err := client.Get(s.http.URL + "/auth/login?provider=rcov2fed&client_id=" + fedClient + "&state=xyz")
+	resp, err := client.Get(s.http.URL + "/auth/login?provider=rcov2fed&client_id=" + fedClient +
+		"&response_type=code&redirect_uri=" + rcovRedirect + "&state=xyz")
 	if err != nil {
 		t.Fatalf("GET /auth/login: %v", err)
 	}
@@ -474,8 +473,8 @@ func TestRcov2H_GetLoginFederatedRedirect(t *testing.T) {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status = %d, want %d, body=%s", resp.StatusCode, http.StatusFound, raw)
 	}
-	if loc := resp.Header.Get("Location"); loc != "https://idp.example/authorize?state=xyz" {
-		t.Errorf("Location = %q", loc)
+	if loc := resp.Header.Get("Location"); !strings.HasPrefix(loc, "https://idp.example/authorize?state=rcov2fed:slf.") {
+		t.Errorf("Location = %q, want server-issued federated state", loc)
 	}
 }
 

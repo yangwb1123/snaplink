@@ -149,7 +149,13 @@ type ClusterConfig struct {
 // ClusterBusConfig selects and configures the invalidation bus backend.
 // The etcd_* fields mirror RegistryConfig for operator familiarity.
 type ClusterBusConfig struct {
-	Backend string `yaml:"backend"` // "" | "memory" | "etcd"
+	Backend string `yaml:"backend"` // "" | "memory" | "etcd" | "redis"
+
+	// RedisChannel namespaces this issuer's bus pub/sub channel. Empty means
+	// the default ("snaplink:cluster:bus"). Only consulted when backend=redis;
+	// the connection is always the shared redis.* block (no new endpoint or
+	// credential fields — RedisConfig stays the single HA-tuning point).
+	RedisChannel string `yaml:"redis_channel"`
 
 	EtcdEndpoints   []string      `yaml:"etcd_endpoints"`
 	EtcdPrefix      string        `yaml:"etcd_prefix"`

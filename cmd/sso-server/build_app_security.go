@@ -441,6 +441,7 @@ func (b *appBuilder) startGovernanceWorkers(srv *sso.Server) error {
 		b.continuousVerifyCancel = cancel
 		b.continuousVerifyDone = srv.StartContinuousVerification(ctx)
 	}
+	b.startCAPConvergence(srv)
 	b.startTokenAnomalySweep(srv)
 	b.startBreakGlassSweeper(srv)
 	b.startUserAutoDeprovisionSweep(srv)

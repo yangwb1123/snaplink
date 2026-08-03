@@ -7,7 +7,7 @@ import (
 	"github.com/yangwb1123/snaplink/domains/permissions"
 )
 
-func (r *Restorer) restoreMenus(ctx context.Context, snap *Snapshot, opts RestoreOptions) (CategoryCounts, error) {
+func (r *Restorer) stageMenus(ctx context.Context, snap *Snapshot, opts RestoreOptions) (CategoryCounts, error) {
 	var c CategoryCounts
 	if r.Permissions == nil {
 		return c, nil
@@ -19,7 +19,11 @@ func (r *Restorer) restoreMenus(ctx context.Context, snap *Snapshot, opts Restor
 	// run even when snap.Resources.Menus is entirely empty (every exported
 	// client happened to have zero menus): that's exactly the case a
 	// client's menus were legitimately cleared before the snapshot was
-	// taken, and the destination's stale tree still needs wiping.
+	// taken, and the destination's stale tree still needs wiping. Menus
+	// have no Phase B prune — the wipe IS this stage (SetMenus replace
+	// semantics), so a Phase A failure after menus already ran has already
+	// replaced the destination trees; retry stays convergent because
+	// SetMenus is a replayable replace.
 	if opts.Mode == ModeReplace {
 		err := r.replaceMenus(ctx, snap, ml, hasLister, opts.DryRun, &c)
 		return c, err

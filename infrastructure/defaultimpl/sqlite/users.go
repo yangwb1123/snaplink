@@ -24,15 +24,14 @@ import (
 	"time"
 
 	"github.com/yangwb1123/snaplink/interfaces/sso"
+	"github.com/yangwb1123/snaplink/platform/migrate"
 	"github.com/yangwb1123/snaplink/shared/core"
 
 	_ "modernc.org/sqlite" // register the "sqlite" driver name.
 )
 
-// userSchema is applied at NewUserProvider time via CREATE-IF-NOT-EXISTS.
-// Migration framework deferred — for v1 the single table is stable;
-// future schema changes can layer on a real migration runner without
-// rewriting the existing data layout.
+// userSchema is the version-1 users table. NewUserProvider applies it through
+// the migration runner before the SCIM userName uniqueness index in version 2.
 //
 // Timestamps stored as INTEGER (Unix NANOSECONDS) — SQLite has no
 // native timestamp type and integer-vs-text is faster for the
@@ -56,6 +55,20 @@ CREATE INDEX IF NOT EXISTS idx_users_provider_external
     ON users(provider, external_id)
     WHERE provider IS NOT NULL AND external_id IS NOT NULL;
 `
+
+// userSchemaV2 makes the SCIM userName stored in attributes atomically unique
+// without duplicating it into a second column. The expression index also
+// validates existing rows when an installation is upgraded.
+const userSchemaV2 = `
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_scim_username
+    ON users(lower(json_extract(attributes, '$."scim:userName"')))
+    WHERE json_extract(attributes, '$."scim:userName"') IS NOT NULL;
+`
+
+var userMigrations = []migrate.Migration{
+	{Version: 1, Name: "baseline", SQL: userSchema},
+	{Version: 2, Name: "scim_username_unique", SQL: userSchemaV2},
+}
 
 // UserProvider is the SQLite-backed implementation of [sso.UserProvider].
 type UserProvider struct {
@@ -81,7 +94,7 @@ func NewUserProvider(dsn string) (*UserProvider, error) {
 		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
 	db.SetMaxOpenConns(1) // WAL: one writer at a time prevents lock convoy
-	if err := ensureSchema(db, "users", userSchema); err != nil {
+	if err := migrate.Run(context.Background(), db, "users", userMigrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate: %w", err)
 	}
@@ -180,6 +193,9 @@ func (p *UserProvider) CreateOrUpdate(ctx context.Context, u *sso.User) error {
 		nullable(u.Email), nullable(u.Name),
 		string(attrs), u.CreatedAt.UnixNano(), u.UpdatedAt.UnixNano())
 	if err != nil {
+		if isUniqueViolation(err) {
+			return sso.ErrUserExists
+		}
 		return fmt.Errorf("sqlite: upsert: %w", err)
 	}
 	return nil

@@ -95,6 +95,12 @@ func (m *Metrics) EnableTokenPolicyMetrics() {
 			Help: "Access-token introspections reported inactive because the token passed its require_renew fraction of TTL (governance force-refresh, not an issuance denial). Zero traffic when no policy store is wired or no rule sets require_renew_after.",
 		},
 	)
+	m.TokenPolicyRoleResolutionErrorsTotal = factory.NewCounter(
+		prometheus.CounterOpts{
+			Name: NameTokenPolicyRoleResolutionErrorsTotal,
+			Help: "Tenant-roster lookups that failed at the session seam. Fail-open: roles stay empty and role selectors stop matching (guests get global ceilings) until the roster store recovers — a rising count means the fail-open window is open. No labels (bounded cardinality); the logged error carries tenant/user. Zero traffic when no WithTenantUserStore is wired or no tenant-bound login occurs.",
+		},
+	)
 }
 
 // ObserveTokenPolicyRenewRequired bumps the require_renew introspection counter
@@ -104,6 +110,17 @@ func (m *Metrics) ObserveTokenPolicyRenewRequired() {
 		return
 	}
 	m.TokenPolicyRenewRequiredTotal.Inc()
+}
+
+// ObserveTokenPolicyRoleResolutionError bumps the role-resolution failure
+// counter (fail-open: roles stay empty and role selectors don't match, but
+// the widening window is observable). Nil-safe; no-op until
+// EnableTokenPolicyMetrics ran.
+func (m *Metrics) ObserveTokenPolicyRoleResolutionError() {
+	if m == nil || m.TokenPolicyRoleResolutionErrorsTotal == nil {
+		return
+	}
+	m.TokenPolicyRoleResolutionErrorsTotal.Inc()
 }
 
 // ObserveTokenPolicyEvaluation bumps the evaluation counter for a decision

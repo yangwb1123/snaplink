@@ -2,10 +2,12 @@ package sso
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/yangwb1123/snaplink/domains/authenticators/device"
 	"github.com/yangwb1123/snaplink/domains/authenticators/passkeypolicy"
 	"github.com/yangwb1123/snaplink/domains/conditionalaccess"
 	"github.com/yangwb1123/snaplink/internal/auth/login"
@@ -453,4 +455,40 @@ func (s *Server) hasEnrolledPasskey(ctx context.Context, userID string) bool {
 		}
 	}
 	return false
+}
+
+// conditionalAccessDeviceContext derives the read-only device signals needed
+// by the pre-issuance policy gate. Device registration happens later, so the
+// gate cannot rely on device_ctx having already been attached to the request.
+func (s *Server) conditionalAccessDeviceContext(ctx HandlerContext, userID string) *deviceContext {
+	ua := ctx.Request().UserAgent()
+	parsed := device.ParseUserAgent(ua)
+	dc := &deviceContext{Type: string(parsed.Type)}
+	if s.deviceStore == nil {
+		return dc
+	}
+	fingerprint := device.NewFingerprint(ctx.Request().Header.Get(core.HeaderDeviceID), ua)
+	if fingerprint == "" {
+		return dc
+	}
+	existing, err := s.deviceStore.GetByFingerprint(ctx.Request().Context(), userID, fingerprint)
+	if err != nil && !errors.Is(err, device.ErrNoSuchDevice) {
+		s.logger.Error("conditional access device lookup failed; using no tracking signals", "error", err, "user", userID)
+		return dc
+	}
+	securityCtx := &device.LoginSecurityContext{DeviceIsNew: errors.Is(err, device.ErrNoSuchDevice)}
+	if existing != nil {
+		securityCtx.LocationIsNew = existing.LastIP != "" && existing.LastIP != audit.ClientIP(ctx.Request())
+		if days := int(time.Since(existing.LastSeenAt).Hours() / 24); days > 0 {
+			existing.TrustScore = device.DecayTrustScore(existing.TrustScore, days)
+		}
+	}
+	loginCount := 1
+	if existing != nil {
+		loginCount = existing.LoginCount + 1
+	}
+	dc.Fingerprint = fingerprint
+	dc.SecurityCtx = securityCtx
+	dc.TrustScore = computeDeviceTrustScore(securityCtx, loginCount, existing)
+	return dc
 }

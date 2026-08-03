@@ -39,9 +39,11 @@ func HandleClientCredentialsGrant(d ClientCredentialsDeps, ctx core.HandlerConte
 	// client_credentials: subject IS the client, so ClientID = Sub.
 	token, err := ti.Issue(ctx.Request().Context(), &core.Subject{
 		ID: client.ID, Resources: resources, ClientID: client.ID,
+		TenantID:            client.TenantID,
 		TTL:                 client.AccessTokenTTL,
 		ConfirmationJKT:     dpopJKT,
 		ConfirmationX5TS256: mtlsX5T,
+		ServingRegion:       servingRegionFrom(ctx),
 	}, grantCCScopes)
 	if err != nil {
 		d.LogErrorCtx(ctx, "token issuance failed", "strategy", strategy, "error", err)

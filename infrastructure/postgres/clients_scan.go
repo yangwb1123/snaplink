@@ -111,6 +111,7 @@ func clientAttributesForStorage(c *sso.Client) map[string]string {
 	out["_snaplink_client_tls_san_uri"] = c.TLSClientAuthSANURI
 	out["_snaplink_client_previous_rat"] = c.PreviousRegistrationAccessToken
 	out["_snaplink_client_rat_overlap_until"] = c.RegistrationAccessTokenOverlapUntil.UTC().Format(time.RFC3339Nano)
+	out["_snaplink_client_login_page_uri"] = c.LoginPageURI
 	return out
 }
 
@@ -257,12 +258,14 @@ func hydrateClientAttributes(c *sso.Client) {
 	c.TLSClientAuthSANEmail = c.Attributes["_snaplink_client_tls_san_email"]
 	c.TLSClientAuthSANURI = c.Attributes["_snaplink_client_tls_san_uri"]
 	c.PreviousRegistrationAccessToken = c.Attributes["_snaplink_client_previous_rat"]
+	c.LoginPageURI = c.Attributes["_snaplink_client_login_page_uri"]
 	c.RegistrationAccessTokenOverlapUntil, _ = time.Parse(time.RFC3339Nano, c.Attributes["_snaplink_client_rat_overlap_until"])
 	for _, key := range []string{
 		"_snaplink_client_grant_types", "_snaplink_client_token_auth_method",
 		"_snaplink_client_tls_subject_dn", "_snaplink_client_tls_san_dns",
 		"_snaplink_client_tls_san_email", "_snaplink_client_tls_san_uri",
 		"_snaplink_client_previous_rat", "_snaplink_client_rat_overlap_until",
+		"_snaplink_client_login_page_uri",
 	} {
 		delete(c.Attributes, key)
 	}

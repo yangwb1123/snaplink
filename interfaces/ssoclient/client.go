@@ -9,13 +9,19 @@ import "context"
 type AuthClient interface {
 	// ValidateToken decodes and verifies a bearer token. Returns the
 	// authenticated subject or an error if the token is invalid, expired,
-	// or revoked.
+	// or revoked. `aud` is enforced when the implementation is configured
+	// with an expected audience; the remote implementation also requires
+	// the configured issuer (WithIssuer) and fails closed with
+	// ErrIssuerRequired until it is set.
 	ValidateToken(ctx context.Context, accessToken string) (*Subject, error)
 
-	// Logout revokes the supplied session and/or token. Best-effort: a
-	// success from this call does not guarantee every downstream cache
-	// has invalidated yet (e.g., gateway-side cached permissions might
-	// take their TTL to clear).
+	// Logout revokes the supplied session and/or token. Returns an error
+	// if revocation could not be performed (not configured, bad request,
+	// or transport failure); success means the server accepted the
+	// revocation. A nil error no longer implies every downstream cache has
+	// invalidated — it means the revocation requests were actually sent
+	// and answered (gateway-side cached permissions might still take their
+	// TTL to clear).
 	Logout(ctx context.Context, req *LogoutRequest) error
 }
 

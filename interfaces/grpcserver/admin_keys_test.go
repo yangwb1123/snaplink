@@ -75,7 +75,7 @@ func TestKeyAdmin_Rotate_OverlapAndAudit(t *testing.T) {
 	rec := audit.New(sink)
 	c := startKeyAdminGRPC(t, grpcserver.KeyAdminConfig{
 		Rotate:       rotateSeam(iss),
-		DefaultGrace: 40 * time.Millisecond, // short so the retire fires within the test
+		DefaultGrace: 500 * time.Millisecond, // leaves room for RPC overhead under -race
 		Issuers:      map[string]sso.TokenIssuer{"jwt": iss},
 		Recorder:     rec,
 	})
