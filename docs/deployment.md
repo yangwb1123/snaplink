@@ -138,7 +138,7 @@ load/unload is not available today.
 |---|---|---|
 | Any language (SPA / RP / resource server) | **HTTP OAuth2/OIDC** | `/.well-known/openid-configuration`, `/auth/login`, `/token`, `/userinfo`, `/.well-known/jwks.json`. Contract: [`docs/openapi.yaml`](openapi.yaml). |
 | Ops / control plane | **gRPC `:8081`** + **REST `/api/v1/admin/*`** | services: admin (clients/users/tenants/permissions/releases/snapshots/tokens), authz, audit, discovery, netpolicy — gated by `admin:read` / `admin:write`. |
-| **Go downstream service** | **`interfaces/ssoclient`** | `remote.TokenClient` handles PKCE/token exchange; `remote.AuthClient` verifies tokens **locally** against cached JWKS (the SSO server is **off the per-request hot path**) and authz/audit use gRPC. Also supports `local` (embed), `dev` (allow-all), `bootstrap`. |
+| **Go downstream service** | **`interfaces/ssoclient`** | `remote.BrowserFlow` handles state/cookie/PKCE/token exchange (inject a shared state store when clustered); `remote.AuthClient` verifies tokens **locally** against cached JWKS, and authz/audit use gRPC. Also supports `local` (embed), `dev` (allow-all), `bootstrap`. |
 | Go app embedding SSO | **SDK** | `sso.NewServer(opts...).Handler()` on any `net/http` listener. |
 
 Frontend applications are ordinary HTTP clients of these APIs. They are not a
