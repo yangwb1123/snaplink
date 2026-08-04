@@ -177,23 +177,25 @@ func TestHMACNonceProvider_VerifyRejectsTampered(t *testing.T) {
 }
 
 // TestHMACNonceProvider_VerifyExpired locks the TTL lower bound: a nonce older
-// than ttl is rejected as expired. A sub-second TTL keeps the test fast.
+// than ttl is rejected as expired. Fixed timestamps avoid scheduler-dependent
+// failures under the race detector.
 func TestHMACNonceProvider_VerifyExpired(t *testing.T) {
 	t.Parallel()
-	p, err := NewHMACNonceProvider(20 * time.Millisecond)
-	if err != nil {
-		t.Fatalf("NewHMACNonceProvider: %v", err)
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 11)
 	}
-	nonce, err := p.Issue()
+	p, err := NewHMACNonceProviderWithKey(key, time.Minute)
 	if err != nil {
-		t.Fatalf("Issue: %v", err)
+		t.Fatalf("NewHMACNonceProviderWithKey: %v", err)
 	}
-	if err := p.Verify(nonce); err != nil {
+	fresh := forgeNonce(key, time.Now().UnixNano())
+	if err := p.Verify(fresh); err != nil {
 		t.Fatalf("freshly issued nonce should verify: %v", err)
 	}
-	time.Sleep(60 * time.Millisecond)
-	if err := p.Verify(nonce); err == nil {
-		t.Fatal("expected expired rejection after ttl elapsed")
+	expired := forgeNonce(key, time.Now().Add(-2*time.Minute).UnixNano())
+	if err := p.Verify(expired); err == nil {
+		t.Fatal("expected expired rejection for nonce older than ttl")
 	}
 }
 
