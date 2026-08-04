@@ -29,6 +29,32 @@ func TestTokenClientGeneratePKCE(t *testing.T) {
 	}
 }
 
+func TestTokenClientAuthorizationCodeURL(t *testing.T) {
+	client := remote.NewTokenClient("https://sso.example/token",
+		remote.WithAuthorizationEndpoint("https://sso.example/auth/login?prompt=login"),
+		remote.WithClientID("app"), remote.WithRedirectURI("https://app.example/callback"))
+	target, verifier, err := client.AuthorizationCodeURL("state-1", "openid", "profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	sum := sha256.Sum256([]byte(verifier))
+	if query.Get("client_id") != "app" || query.Get("state") != "state-1" {
+		t.Fatalf("authorization query = %#v", query)
+	}
+	if query.Get("scope") != "openid profile" || query.Get("prompt") != "login" {
+		t.Fatalf("authorization options = %#v", query)
+	}
+	if query.Get("code_challenge") != base64.RawURLEncoding.EncodeToString(sum[:]) ||
+		query.Get("code_challenge_method") != "S256" {
+		t.Fatalf("PKCE query = %#v", query)
+	}
+}
+
 func TestTokenClientExchangeCode(t *testing.T) {
 	var received url.Values
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

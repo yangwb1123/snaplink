@@ -22,21 +22,26 @@ const maxTokenResponseBytes = 1 << 20
 
 // TokenClient is the remote OAuth token-acquisition implementation.
 type TokenClient struct {
-	tokenURL    string
-	clientID    string
-	basicID     string
-	basicSecret string
-	formID      string
-	formSecret  string
-	redirectURI string
-	requirePKCE bool
-	httpc       *http.Client
+	tokenURL         string
+	authorizationURL string
+	clientID         string
+	basicID          string
+	basicSecret      string
+	formID           string
+	formSecret       string
+	redirectURI      string
+	requirePKCE      bool
+	httpc            *http.Client
 }
 
 type TokenOption func(*TokenClient)
 
 func WithClientID(clientID string) TokenOption {
 	return func(c *TokenClient) { c.clientID = clientID }
+}
+
+func WithAuthorizationEndpoint(endpoint string) TokenOption {
+	return func(c *TokenClient) { c.authorizationURL = endpoint }
 }
 
 func WithClientCredentials(clientID, secret string) TokenOption {
@@ -82,6 +87,35 @@ func (c *TokenClient) GeneratePKCE() (string, string, error) {
 	verifier := base64.RawURLEncoding.EncodeToString(raw)
 	challenge := sha256.Sum256([]byte(verifier))
 	return verifier, base64.RawURLEncoding.EncodeToString(challenge[:]), nil
+}
+
+func (c *TokenClient) AuthorizationCodeURL(state string, scopes ...string) (string, string, error) {
+	if state == "" {
+		return "", "", errors.New("ssoclient/remote: authorization state required")
+	}
+	target, err := url.Parse(c.authorizationURL)
+	if err != nil || target.Scheme == "" || target.Host == "" || c.effectiveClientID() == "" {
+		return "", "", errors.New("ssoclient/remote: authorization endpoint and client ID required")
+	}
+	verifier, challenge := "", ""
+	if c.requirePKCE {
+		verifier, challenge, err = c.GeneratePKCE()
+		if err != nil {
+			return "", "", err
+		}
+	}
+	query := target.Query()
+	query.Set("client_id", c.effectiveClientID())
+	query.Set("response_type", "code")
+	query.Set("redirect_uri", c.redirectURI)
+	query.Set("scope", strings.Join(scopes, " "))
+	query.Set("state", state)
+	if challenge != "" {
+		query.Set("code_challenge", challenge)
+		query.Set("code_challenge_method", "S256")
+	}
+	target.RawQuery = query.Encode()
+	return target.String(), verifier, nil
 }
 
 func (c *TokenClient) ExchangeCode(ctx context.Context, code, verifier string) (*ssoclient.TokenResponse, error) {
