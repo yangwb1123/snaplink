@@ -116,6 +116,9 @@ directory_fanout:
     - gen
     - vendor
     - testdata
+    # platform/ has the frozen 16-package layer described by ADR-0007;
+    # the Go gate retains its exact ceiling while new layers stay at 15.
+    - platform
     - ops
     - kms
     - __pycache__

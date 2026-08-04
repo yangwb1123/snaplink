@@ -1,45 +1,64 @@
 package ssoclient
 
-import "errors"
-
-// Facade-level error taxonomy for the AuthClient implementations.
-//
-// These sentinels are Go SDK errors, not wire codes: they are returned by
-// ssoclient/local and ssoclient/remote and never surface on a server
-// endpoint, so docs/error-codes.md is unaffected. A single facade-level
-// sentinel per failure class lets App code write
-// errors.Is(err, ssoclient.ErrAudienceMismatch) and behave identically
-// regardless of which implementation backs the AuthClient — the point of
-// the facade.
-//
-// The rs package keeps its own sentinels (rs.ErrIssuerMismatch etc.) and
-// must not import this package; the duplication is deliberate and parity
-// is test-enforced, not shared-code-enforced. Malformed/signature/expired
-// failures stay plain per-implementation errors (pre-existing remote
-// behavior); this file deliberately covers only the classes the two
-// implementations must agree on.
-var (
-	// ErrIssuerRequired: remote.ValidateToken was called without the
-	// WithIssuer option. Fail-closed config gate mirroring rs's ErrConfig
-	// gate ("Issuer required", rs/validate.go) — the facade must not be
-	// weaker than the rs layer it wraps.
-	ErrIssuerRequired = errors.New("ssoclient: issuer required")
-
-	// ErrIssuerMismatch: the token's `iss` claim differs from the
-	// configured issuer. Exact string match (rs/claims.go). A missing
-	// `iss` claim is the same class: "" never equals a configured issuer.
-	ErrIssuerMismatch = errors.New("ssoclient: issuer mismatch")
-
-	// ErrAudienceMismatch: the token's `aud` does not contain the
-	// configured expected audience, or `aud` is missing. Containment
-	// semantics mirror rs.Config.ExpectedAud (rs/claims.go); the gate is
-	// skipped entirely when no expectation is configured.
-	ErrAudienceMismatch = errors.New("ssoclient: audience mismatch")
-
-	// ErrLogoutNotConfigured: Logout received a field whose capability is
-	// not configured — an AccessToken without WithRevokeURL (remote) or
-	// a SessionID without WithLogoutURL (remote) / WithSessionManager
-	// (local). Replaces the former silent no-op: Logout never claims
-	// success when no revocation request was sent.
-	ErrLogoutNotConfigured = errors.New("ssoclient: logout not configured")
+import (
+	"errors"
+	"fmt"
 )
+
+var (
+	ErrIssuerRequired           = errors.New("ssoclient: issuer required")
+	ErrIssuerMismatch           = errors.New("ssoclient: issuer mismatch")
+	ErrAudienceMismatch         = errors.New("ssoclient: audience mismatch")
+	ErrLogoutNotConfigured      = errors.New("ssoclient: logout not configured")
+	ErrInvalidGrant             = errors.New("invalid_grant")
+	ErrInvalidClient            = errors.New("invalid_client")
+	ErrInvalidScope             = errors.New("invalid_scope")
+	ErrUnsupportedGrantType     = errors.New("unsupported_grant_type")
+	ErrAuthorizationRejected    = errors.New("authorization_rejected")
+	ErrInvalidAuthorizationFlow = errors.New("invalid_authorization_flow")
+)
+
+// AuthorizationError is returned when the authorization endpoint redirects
+// back with an OAuth error instead of a code.
+type AuthorizationError struct {
+	Code        string
+	Description string
+}
+
+func (e *AuthorizationError) Error() string {
+	if e.Description == "" {
+		return fmt.Sprintf("ssoclient: authorization rejected: %s", e.Code)
+	}
+	return fmt.Sprintf("ssoclient: authorization rejected: %s: %s", e.Code, e.Description)
+}
+
+func (e *AuthorizationError) Unwrap() error { return ErrAuthorizationRejected }
+
+// TokenError preserves the OAuth error code without inventing server detail.
+type TokenError struct {
+	Status      int
+	Code        string
+	Description string
+}
+
+func (e *TokenError) Error() string {
+	if e.Description == "" {
+		return fmt.Sprintf("ssoclient: token endpoint HTTP %d: %s", e.Status, e.Code)
+	}
+	return fmt.Sprintf("ssoclient: token endpoint HTTP %d: %s: %s", e.Status, e.Code, e.Description)
+}
+
+func (e *TokenError) Unwrap() error {
+	switch e.Code {
+	case "invalid_grant":
+		return ErrInvalidGrant
+	case "invalid_client":
+		return ErrInvalidClient
+	case "invalid_scope":
+		return ErrInvalidScope
+	case "unsupported_grant_type":
+		return ErrUnsupportedGrantType
+	default:
+		return nil
+	}
+}

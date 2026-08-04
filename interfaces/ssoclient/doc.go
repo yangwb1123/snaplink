@@ -1,7 +1,9 @@
 // Package ssoclient is the App-facing facade for SSO + permissions + audit.
 //
-// It defines three thin interfaces — AuthClient, AuthzClient, AuditClient —
-// that App business code talks to. Each interface has two implementations:
+// It defines four thin interfaces — TokenClient, AuthClient, AuthzClient and
+// AuditClient — that App code talks to. TokenClient centralizes PKCE and OAuth
+// token-endpoint calls; remote.BrowserFlow adds replay-safe state/cookie
+// handling around it. The other capabilities support local/remote wiring:
 //
 //   - ssoclient/local — calls the snaplink/sso SDK in-process. Use it when
 //     the App embeds the SDK and owns its own user / permission / audit
@@ -13,6 +15,7 @@
 //
 // Each capability is selected independently: an App can have
 //
+//	TokenClient = remote (PKCE + authorization-code/refresh/client-credentials)
 //	AuthClient  = remote (central token issuance + JWKS verify)
 //	AuthzClient = local  (business-specific permission rules in-process)
 //	AuditClient = remote (events shipped to a central stream)

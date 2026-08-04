@@ -19,6 +19,7 @@ jobs:
       
       - name: Install engineering tools
         run: |
+          python -m pip install --disable-pip-version-check pytest pyyaml
           go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
           go install github.com/uudashr/gocognit/cmd/gocognit@latest
       
