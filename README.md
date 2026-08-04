@@ -169,10 +169,10 @@ otherwise put a TLS-terminating edge (OpenResty / Envoy / NGINX) in front.
 
 ## 3. Consume from a downstream app (`ssoclient`)
 
-A downstream service does **not** do login (that is the SSO server's HTTP
-surface). It only **verifies** the issued token and answers authorization
-questions. Write business code against the three interfaces and pick a backend
-per capability at startup:
+A downstream app hosts its own redirect/callback and login state, while the SDK
+owns PKCE generation, token-endpoint wire handling, token verification, and
+authorization calls. Write business code against the four interfaces and pick
+a backend per capability at startup:
 
 ```go
 import (
@@ -185,13 +185,24 @@ import (
 conn, _ := grpc.NewClient("sso:8081", grpc.WithTransportCredentials(insecure.NewCredentials()))
 jwks := remote.NewJWKSCache("http://sso:8080/.well-known/jwks.json")
 
+tokens := remote.NewTokenClient("http://sso:8080/token",
+    remote.WithClientID("web-app"),
+    remote.WithRedirectURI("https://app.example/callback"),
+)
 auth  := remote.NewAuthClient(jwks)     // ValidateToken / Logout
 authz := remote.NewAuthzClient(conn)    // Check / ListPermissions / ListRoles / GetMenus (gRPC)
 audit := remote.NewAuditClient(conn)    // Record (gRPC)
 
+verifier, challenge, _ := tokens.GeneratePKCE() // App stores verifier + state and redirects with challenge.
+issued, _ := tokens.ExchangeCode(ctx, callbackCode, verifier)
+_ = issued.AccessToken
+
 subj, _ := auth.ValidateToken(ctx, bearerToken)
 ok, _   := authz.Check(ctx, &ssoclient.CheckRequest{SubjectID: subj.ID, Permission: "items:read"})
 ```
+
+`TokenClient` also exposes `Refresh` and `ClientCredentials`. OAuth failures
+are returned as typed `*ssoclient.TokenError` values with `errors.Is` support.
 
 Backends: `local` (in-process embed), `remote` (gRPC + JWKS), `dev` (allow-all
 stub for development — prints an AUTH-BYPASS warning), `bootstrap` (versioned
