@@ -5,12 +5,34 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/yangwb1123/snaplink/shared/core"
+	"github.com/yangwb1123/snaplink/shared/security"
 	"github.com/yangwb1123/snaplink/shared/security/clientrotation"
+	"golang.org/x/crypto/bcrypt"
 )
+
+// BcryptCost is mutable so high-volume tests can use bcrypt.MinCost.
+var BcryptCost = bcrypt.DefaultCost
+
+func hashClientSecret(plaintext string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(plaintext), BcryptCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
+}
+
+func isBcryptHash(value string) bool {
+	return strings.HasPrefix(value, "$2")
+}
+
+func compareClientSecret(stored, plaintext string) bool {
+	return security.CompareClientSecret(stored, plaintext)
+}
 
 // MemoryClientStore stores client applications in memory. Implements the full
 // core.ClientStore including the admin extensions (List/Update/Delete/Rotate).
@@ -69,7 +91,7 @@ func (m *MemoryClientStore) ValidateSecret(_ context.Context, clientID, clientSe
 	// compareClientSecret uses bcrypt.CompareHashAndPassword when the stored
 	// value starts with "$2" (a bcrypt hash), falling back to constant-time
 	// string compare for plaintext secrets in pre-migration / hand-authored
-	// stores. See client_secret.go.
+	// stores.
 	current := compareClientSecret(c.Secret, clientSecret)
 	previous := time.Now().Before(c.SecretOverlapUntil) && compareClientSecret(c.PreviousSecret, clientSecret)
 	if !current && !previous {
