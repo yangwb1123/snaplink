@@ -381,6 +381,8 @@ func (b *appBuilder) wireMFAProvider() error {
 	if err != nil {
 		return fmt.Errorf("mfa: %w", err)
 	}
+	b.mfaChallengeStore = mfaStore
+	b.mfaChallengeTTL = mfaTTL
 	b.pushApprovalStore = pushApprovalStore
 	b.pushNotify = pushNotify
 	if mfaProvider != nil && mfaStore != nil {

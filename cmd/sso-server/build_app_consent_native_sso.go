@@ -31,6 +31,9 @@ func (b *appBuilder) checkSchema(v any, namespace string, maxVersion int) error 
 // device-secret store, and RFC 9728 protected-resource metadata.
 func (b *appBuilder) wireConsentNativeSSOPRM() error {
 	cfg, logger := b.cfg, b.logger
+	if err := b.wireLoginTransactionStore(); err != nil {
+		return err
+	}
 	if err := b.wireConsentStore(); err != nil {
 		return err
 	}
@@ -47,6 +50,48 @@ func (b *appBuilder) wireConsentNativeSSOPRM() error {
 		}))
 		logger.Info("protected resource metadata enabled", "path", "/.well-known/oauth-protected-resource")
 	}
+	return nil
+}
+
+// wireLoginTransactionStore keeps the one-use state that bridges a completed
+// upstream federation callback back into hosted login on every replica. It is
+// independent of Consent: a federated client can be configured with neither
+// Consent nor MFA, but its callback still crosses two HTTP requests and must
+// not depend on process affinity when a shared backend is configured.
+func (b *appBuilder) wireLoginTransactionStore() error {
+	if b.cfg == nil {
+		return nil
+	}
+	if b.redis == nil {
+		if b.mfaChallengeStore != nil {
+			b.loginTransactionStore = b.mfaChallengeStore
+			b.opts = append(b.opts, sso.WithLoginTransactionStore(
+				b.mfaChallengeStore, b.mfaChallengeTTL,
+			))
+			b.logger.Info("login transaction store: MFA challenge backend (shared)")
+			return nil
+		}
+		backend := strings.ToLower(strings.TrimSpace(b.cfg.MFA.Challenge.Backend))
+		if backend == "" || backend == "memory" {
+			return nil
+		}
+		store, kind, err := serverbuildstore.BuildLoginTransactionStore(
+			b.cfg.MFA.Challenge, nil,
+		)
+		if err != nil {
+			return fmt.Errorf("login transaction store: %w", err)
+		}
+		b.loginTransactionStore = store
+		b.opts = append(b.opts, sso.WithLoginTransactionStore(
+			store, b.cfg.MFA.Challenge.TTL,
+		))
+		b.logger.Info("login transaction store: shared backend", "store", kind)
+		return nil
+	}
+	store := redisbackend.NewMFAChallengeStore(b.redis)
+	b.loginTransactionStore = store
+	b.opts = append(b.opts, sso.WithLoginTransactionStore(store, 0))
+	b.logger.Info("login transaction store: redis (cluster-shared)")
 	return nil
 }
 
@@ -84,7 +129,6 @@ func (b *appBuilder) wireConsentStore() error {
 	// approve re-POST consuming on a different replica doesn't loop forever.
 	if b.redis != nil {
 		b.opts = append(b.opts, sso.WithConsentChallengeStore(redisbackend.NewConsentChallengeStore(b.redis)))
-		b.opts = append(b.opts, sso.WithLoginTransactionStore(redisbackend.NewMFAChallengeStore(b.redis), 0))
 		logger.Info("consent challenge store: redis (cluster-shared)")
 	}
 	return nil

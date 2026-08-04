@@ -164,14 +164,15 @@ type app struct {
 	// Admin-plane dependencies. Held as concrete references so admin RPCs +
 	// bootstrap steps can mutate the same backing stores the SDK runtime
 	// reads from.
-	clientStore          sso.ClientStore
-	userProvider         sso.UserProvider
-	sessionMgr           sso.SessionManager
-	consentStore         sso.ConsentStore              // for the GDPR eraser
-	mfaEnrollStore       sso.MFAEnrollmentStore        // for the GDPR eraser
-	passwordResetRevoker core.PasswordResetRevoker     // for the GDPR eraser
-	tempStore            authenticators.TempTokenStore // may be nil when temp_token disabled
-	tokenIssuers         map[string]sso.TokenIssuer
+	clientStore           sso.ClientStore
+	userProvider          sso.UserProvider
+	sessionMgr            sso.SessionManager
+	consentStore          sso.ConsentStore              // for the GDPR eraser
+	mfaEnrollStore        sso.MFAEnrollmentStore        // for the GDPR eraser
+	passwordResetRevoker  core.PasswordResetRevoker     // for the GDPR eraser
+	loginTransactionStore spi.MFAChallengeStore         // closes a SQLite continuation store
+	tempStore             authenticators.TempTokenStore // may be nil when temp_token disabled
+	tokenIssuers          map[string]sso.TokenIssuer
 
 	// idTokenIssuer + refreshTokenStore are held so the WebAuthn
 	// ceremony extension can issue id_token / refresh_token alongside
@@ -275,7 +276,9 @@ type app struct {
 
 	// Tenant store (multi-tenant routing). Nil when disabled. Closed
 	// during shutdown so SQL backends release their connections.
-	tenantStore tenant.Store
+	tenantStore                  tenant.Store
+	tenantQuotaStop              func(context.Context) bool
+	tenantQuotaProjectionSources *sso.TenantQuotaProjectionSourceRegistry
 
 	// connectionStore holds per-organization enterprise connections for B2B
 	// home-realm discovery. Nil when disabled. Closed during shutdown.
@@ -398,6 +401,7 @@ func run(cfg *config.Config, logger spi.Logger, tlsCert, tlsKey, grpcListen stri
 	if err != nil {
 		return err
 	}
+	wireTenantQuotaProjectionReload(reloader, a.tenantQuotaProjectionSources)
 
 	errCh := make(chan error, 2)
 	startHTTPServer(httpSrv, cfg, logger, tlsCert, tlsKey, errCh)

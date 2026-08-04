@@ -37,6 +37,9 @@ func shutdownApp(t *testing.T, a *app) {
 		a.auditRetentionCancel()
 		waitBounded(a.auditRetentionDone)
 	}
+	if a.tenantQuotaStop != nil && !a.tenantQuotaStop(ctx) {
+		t.Error("tenant quota cleanup loop did not stop")
+	}
 	if a.snapshotRetentionCancel != nil {
 		a.snapshotRetentionCancel()
 		waitBounded(a.snapshotRetentionDone)

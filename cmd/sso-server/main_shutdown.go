@@ -224,6 +224,7 @@ func closeMemoryStoreReapers(a *app) {
 	closeIfCloser(a.server.PARStore())
 	closeIfCloser(a.server.JTIReplayStore())
 	closeIfCloser(a.server.AuthCodeStore())
+	closeIfCloser(a.loginTransactionStore)
 	closeIfCloser(a.server.SessionManager())
 	closeIfCloser(a.server.IdentityLinkStore())
 	closeIfCloser(a.server.NotificationStore())
@@ -287,6 +288,9 @@ func shutdownWatchLoops(ctx context.Context, a *app) {
 // snapshot retention, push + CIBA pruners). Each is cancelled then waited on
 // under the shared deadline; a missed deadline is logged but not fatal.
 func shutdownSchedulers(ctx context.Context, a *app, logger spi.Logger) {
+	if a.tenantQuotaStop != nil && !a.tenantQuotaStop(ctx) {
+		logger.Error("tenant quota cleanup loop did not exit cleanly")
+	}
 	// Stop the audit retention scheduler BEFORE draining the AsyncSink so an
 	// in-flight Prune doesn't race the close (handled by the caller's ordering).
 	stopScheduler(ctx, logger, a.auditRetentionCancel, a.auditRetentionDone,

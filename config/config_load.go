@@ -160,6 +160,9 @@ func (c *Config) validate() error {
 	if err := c.validateTopology(); err != nil {
 		return err
 	}
+	if err := c.validateTenantResourceQuota(); err != nil {
+		return err
+	}
 	if err := c.validateFeatureConfig(); err != nil {
 		return err
 	}

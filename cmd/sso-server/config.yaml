@@ -1450,6 +1450,28 @@ tenant:
   suspension_check:
     enabled: false
     cache_ttl: 30s
+  # Commercial resource limits. disabled/omitted preserves the historical
+  # unlimited behavior. memory is single-replica only; topology.mode=multi
+  # requires postgres, which reuses the shared top-level postgres pool.
+  resource_quota:
+    backend: "disabled"      # disabled | memory | postgres
+    cleanup_interval: 1m     # stale rolling token-window cleanup; 0 also means 1m
+    projection_ingress:
+      enabled: false            # route is cold-enabled; source records support safe SIGHUP updates
+      audience: "snaplink-sso" # exact RFC 8707 aud required on the machine token
+      sources: []               # versioned exact (client_id, source_system) -> tenant bindings
+      # - id: "billing-acme"
+      #   client_id: "snaplink-billing-relay"
+      #   tenant_id: "acme"
+      #   source_system: "snaplink-billing:acme"
+      #   enabled: true
+      #   revision: 1
+    limits: []
+    # - tenant_id: "acme"
+    #   max_clients: 25       # 0 = unlimited
+    #   max_users: 500        # stored, but exact membership lifecycle leasing is not yet wired
+    #   max_sessions: 1000    # exact concurrent sessions; create/destroy/expiry are lease-reconciled
+    #   max_token_rate: 50    # one-minute rolling average requests/second; 0 = unlimited
   # Per-tenant usage/metering report at GET /api/v1/admin/tenants/:id/usage
   # (admin:read). The sqlite aggregator reads the audit_events table, so point
   # its dsn at the audit DB (audit.sqlite.dsn). "" = endpoint not mounted.
@@ -1603,7 +1625,10 @@ risk:
 # challenge.backend=memory is single-replica only — a challenge issued
 # by one replica is unknown to other replicas, so /auth/mfa routed
 # through a load balancer without session affinity surfaces
-# mfa_invalid even on correct codes. Use sqlite for clusters.
+# mfa_invalid even on correct codes. Use sqlite for clusters. The configured
+# shared challenge backend is also reused for federated hosted-login
+# continuation transactions, even if MFA itself is disabled. When Redis is
+# configured, Redis is selected automatically for that one-use transaction.
 mfa:
   enabled: false
   provider:

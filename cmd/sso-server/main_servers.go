@@ -213,7 +213,7 @@ func registerAdminGRPCServices(s *grpc.Server, a *app) {
 	if a.netStore != nil {
 		netpolicyv1.RegisterPolicyServiceServer(s, grpcserver.NewNetPolicyService(a.netStore, a.classifier, a.recorder))
 	}
-	adminv1.RegisterClientAdminServiceServer(s, grpcserver.NewClientAdminService(a.clientStore, a.recorder, a.server.InvalidateDiscoveryCache, a.server.InvalidateClientCache))
+	adminv1.RegisterClientAdminServiceServer(s, newClientAdminService(a))
 	adminv1.RegisterUserAdminServiceServer(s, grpcserver.NewUserAdminService(a.userProvider, a.sessionMgr, a.recorder))
 	adminv1.RegisterTokenAdminServiceServer(s, grpcserver.NewTokenAdminService(grpcserver.TokenAdminConfig{
 		Sessions:            a.sessionMgr,
@@ -245,6 +245,13 @@ func registerAdminGRPCServices(s *grpc.Server, a *app) {
 			a.server.InvalidateTenantResidencyCache,
 			a.server.RevokeTenantCredentials))
 	}
+}
+
+func newClientAdminService(a *app) *grpcserver.ClientAdminService {
+	service := grpcserver.NewClientAdminService(a.clientStore, a.recorder,
+		a.server.InvalidateDiscoveryCache, a.server.InvalidateClientCache)
+	service.SetClientDeletedHook(a.server.ReleaseDeletedClientQuota)
+	return service
 }
 
 // buildHTTPHandler composes the SSO Server's runtime handler with the

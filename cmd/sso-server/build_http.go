@@ -34,6 +34,9 @@ func buildHTTPHandler(cfg *config.Config, a *app, logger spi.Logger) (http.Handl
 	if err := mountDRStatusHandler(cfg, a, logger); err != nil {
 		return nil, err
 	}
+	if err := mountTenantQuotaProjectionHandler(cfg, a, logger); err != nil {
+		return nil, err
+	}
 	return wrapAdminAndBuildMux(cfg, a, base, logger)
 }
 
@@ -420,7 +423,7 @@ func mountSAMLHandler(cfg *config.Config, a *app, logger spi.Logger) error {
 // snapshot / release / tenant services are conditional on their store being
 // wired (nil ⇒ unmounted, byte-identical to a build without them).
 func registerAdminGateway(ctx context.Context, gw *runtime.ServeMux, a *app) error {
-	if err := adminv1.RegisterClientAdminServiceHandlerServer(ctx, gw, grpcserver.NewClientAdminService(a.clientStore, a.recorder, a.server.InvalidateDiscoveryCache, a.server.InvalidateClientCache)); err != nil {
+	if err := adminv1.RegisterClientAdminServiceHandlerServer(ctx, gw, newClientAdminService(a)); err != nil {
 		return fmt.Errorf("gateway clients: %w", err)
 	}
 	if err := adminv1.RegisterUserAdminServiceHandlerServer(ctx, gw, grpcserver.NewUserAdminService(a.userProvider, a.sessionMgr, a.recorder)); err != nil {

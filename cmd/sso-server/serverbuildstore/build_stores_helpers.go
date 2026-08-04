@@ -65,6 +65,14 @@ func buildMFAChallengeStore(cfg config.MFAChallengeConfig, rdb goredis.Cmdable) 
 	}
 }
 
+// BuildLoginTransactionStore selects the one-use store used to bridge an
+// upstream federation callback back into hosted login. It intentionally shares
+// the MFA challenge backend configuration so deployments do not need a second
+// persistence knob for the same atomic consume contract.
+func BuildLoginTransactionStore(cfg config.MFAChallengeConfig, rdb goredis.Cmdable) (spi.MFAChallengeStore, string, error) {
+	return buildMFAChallengeStore(cfg, rdb)
+}
+
 // buildPushApprovalStore selects the push-approval store backend (memory for
 // single-replica, sqlite for cluster). Returns the store plus the concrete
 // sqlite handle (nil for memory) so cmd can register a /readyz check + launch

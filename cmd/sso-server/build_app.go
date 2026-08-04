@@ -12,6 +12,7 @@ import (
 	postgresbackend "github.com/yangwb1123/snaplink/infrastructure/postgres"
 
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildsign"
+	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
 	"github.com/yangwb1123/snaplink/config"
 	"github.com/yangwb1123/snaplink/domains/authenticators"
 	"github.com/yangwb1123/snaplink/domains/authenticators/webauthn"
@@ -154,19 +155,18 @@ type appBuilder struct {
 	webauthnHelper *webauthn.Helper
 	webauthnUsers  webauthn.UserStore
 
-	// MFA push lifecycle.
-	pushApprovalStore *sqlitestores.PushApprovalStore
-	pushNotify        func(string)
-	pushPruneCancel   context.CancelFunc
-	pushPruneDone     <-chan struct{}
+	// MFA and hosted-login one-use state.
+	mfaChallengeStore, loginTransactionStore spi.MFAChallengeStore
+	mfaChallengeTTL                          time.Duration
+	pushApprovalStore                        *sqlitestores.PushApprovalStore
+	pushNotify                               func(string)
+	pushPruneCancel                          context.CancelFunc
+	pushPruneDone                            <-chan struct{}
+	anomalyRT                                *anomalyRuntime
 
-	// Anomaly subsystem.
-	anomalyRT *anomalyRuntime
-
-	// Tenant + connections.
-	tenantStore     tenant.Store
-	connectionStore connections.Store
-
+	tenantStore        tenant.Store
+	tenantQuotaRuntime *serverbuildstore.TenantQuotaRuntime
+	connectionStore    connections.Store
 	// OAuth refresh-token store (consumed by self-service erase + CAEP recv).
 	refreshTokenStore oauth.RefreshTokenStore
 	refreshTokenTTL   time.Duration
@@ -281,6 +281,7 @@ func (b *appBuilder) finalize() (*app, error) {
 	if err := b.registerService(cw); err != nil {
 		return nil, err
 	}
+	b.tenantQuotaRuntime.Start(b.logger)
 	return b.assemble(rt), nil
 }
 
@@ -409,6 +410,7 @@ func (b *appBuilder) assemble(rt serverRuntime) *app {
 		keyRotationStop:         rt.keyRotationStop,
 		redisClient:             b.redis,
 		pgDB:                    b.pgDB,
+		loginTransactionStore:   b.loginTransactionStore,
 	}
 	b.assembleExtras(a, rt)
 	return a

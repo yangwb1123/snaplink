@@ -5,6 +5,7 @@ import (
 
 	"github.com/yangwb1123/snaplink/config"
 	"github.com/yangwb1123/snaplink/protocols/compliance"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // TestBuildApp_SelfServiceDataExport_IncludesConsentAndMFA pins the build-
@@ -65,5 +66,26 @@ func TestBuildApp_SelfServiceDataExport_NoConsentOrMFAWired(t *testing.T) {
 	}
 	if len(exp.Extra) != 0 {
 		t.Fatalf("DataExporter().Extra = %#v, want empty (neither consent nor MFA wired)", exp.Extra)
+	}
+}
+
+func TestBuildApp_SelfServiceDataExportUsesQuotaSessionWrapper(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{}
+	cfg.SelfService.DataExport = true
+	cfg.Tenant.Enabled = true
+	cfg.Tenant.Backend = "memory"
+	cfg.Tenant.ResourceQuota.Backend = "memory"
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer shutdownApp(t, a)
+	exporter := a.server.DataExporter()
+	if exporter == nil || exporter.Sessions != a.sessionMgr {
+		t.Fatalf("data exporter retained raw session manager: exporter=%v app=%T", exporter, a.sessionMgr)
+	}
+	if _, ok := exporter.Sessions.(core.TenantSessionQuotaManager); !ok {
+		t.Fatalf("exporter session manager %T does not hide quota_pending rows", exporter.Sessions)
 	}
 }

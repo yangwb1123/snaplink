@@ -21,8 +21,7 @@ import (
 	"github.com/yangwb1123/snaplink/shared/security"
 )
 
-// wireTenant builds the tenant store, its middleware/suspension options, the
-// per-tenant token-strategy bindings, and the usage-metering aggregator.
+// wireTenant builds tenant storage, policy, quotas, and usage metering.
 func (b *appBuilder) wireTenant() error {
 	cfg, logger := b.cfg, b.logger
 	tenantStore, err := serverbuildstore.BuildTenantStore(cfg, logger, b.pgDB, b.pgDialect)
@@ -33,21 +32,36 @@ func (b *appBuilder) wireTenant() error {
 	if tenantStore == nil {
 		return nil
 	}
-	// Schema-version boot gate: refuse to start when the SQLite tenant
-	// store's live schema is ahead of what this binary knows. Skip for
-	// postgres (its migrate ran at construction — a postgres canary gate
-	// is a follow-up).
+	// Refuse a SQLite schema newer than this binary; Postgres migrates at boot.
 	if !strings.EqualFold(strings.TrimSpace(cfg.Tenant.Backend), "postgres") {
 		if err := serverbuildsign.CheckSQLiteSchema(b.schemaCtx, tenantStore, "tenant", tenantsqlite.TenantMaxVersion()); err != nil {
 			return fmt.Errorf("schema check tenant: %w", err)
 		}
 	}
 	b.wireTenantStoreOptions(tenantStore)
+	quotaRT, err := serverbuildstore.BuildTenantQuotaRuntime(
+		b.schemaCtx, cfg.Tenant.ResourceQuota, b.pgDB, b.pgDialect, b.clientStore,
+	)
+	if err != nil {
+		return fmt.Errorf("tenant resource quota: %w", err)
+	}
+	b.tenantQuotaRuntime = quotaRT
+	if quotaRT != nil {
+		b.opts = append(b.opts, sso.WithTenantQuotaStore(quotaRT.Store))
+		b.opts = serverbuildsign.AppendReadyCheck(b.opts, "tenant-resource-quota", quotaRT.Store)
+		b.storageHealthSources = serverbuildsign.AppendStorageHealthSource(b.storageHealthSources, "tenant-resource-quota", quotaRT.Store)
+		b.sessionMgr, err = serverbuildstore.WrapSessionManagerWithTenantQuota(b.schemaCtx, b.sessionMgr, quotaRT.Store, logger)
+		if err != nil {
+			return fmt.Errorf("reconcile tenant session quota: %w", err)
+		}
+		b.opts = append(b.opts, sso.WithSessionManager(b.sessionMgr))
+		b.rebindQuotaSessionConsumers()
+		logger.Info("tenant resource quota enabled", "backend", cfg.Tenant.ResourceQuota.Backend)
+	}
 	if err := b.wireTenantTokenStrategies(); err != nil {
 		return err
 	}
-	// Per-tenant usage metering report (sso.WithTenantUsageAggregator →
-	// GET /api/v1/admin/tenants/:id/usage). Reads the audit_events table.
+	// Per-tenant usage report reads the audit_events table.
 	agg, err := serverbuildstore.BuildTenantUsageAggregator(cfg.Tenant.UsageMetering)
 	if err != nil {
 		return fmt.Errorf("tenant usage metering: %w", err)
@@ -59,9 +73,7 @@ func (b *appBuilder) wireTenant() error {
 	return nil
 }
 
-// wireTenantStoreOptions wires the tenant store's readiness check, storage
-// health source, resolution middleware options, and suspension check. Split
-// out of wireTenant to stay under the function-length budget.
+// wireTenantStoreOptions wires tenant health, resolution, and suspension.
 func (b *appBuilder) wireTenantStoreOptions(tenantStore tenant.Store) {
 	cfg, logger := b.cfg, b.logger
 	b.opts = append(b.opts, sso.WithTenantStore(tenantStore))

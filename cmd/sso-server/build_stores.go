@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -80,6 +81,10 @@ func buildApp(cfg *config.Config, logger spi.Logger) (builtApp *app, retErr erro
 // domain store starts serving private state. Undeclared legacy topologies keep
 // the previous warning behavior when a shared backend hints at HA intent.
 func (b *appBuilder) enforceHACoherence() error {
+	if b.cfg.Server.Topology.Mode == config.TopologyModeMulti &&
+		strings.EqualFold(strings.TrimSpace(b.cfg.Tenant.ResourceQuota.Backend), "memory") {
+		return errors.New("multi-replica topology requires tenant.resource_quota.backend=postgres")
+	}
 	issues := b.haCoherenceIssues()
 	if len(issues) == 0 {
 		return nil

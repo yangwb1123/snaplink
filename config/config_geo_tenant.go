@@ -1,6 +1,13 @@
 package config
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/yangwb1123/snaplink/domains/tenant/quotabinding"
+	"github.com/yangwb1123/snaplink/shared/core"
+)
 
 // ReleaseProbeHTTPConfig configures the http probe.
 type ReleaseProbeHTTPConfig struct {
@@ -85,6 +92,118 @@ type TenantConfig struct {
 	Domains          []TenantDomainConfig        `yaml:"domains"`
 	SuspensionCheck  TenantSuspensionCheckConfig `yaml:"suspension_check"`
 	UsageMetering    TenantUsageMeteringConfig   `yaml:"usage_metering"`
+	ResourceQuota    TenantResourceQuotaConfig   `yaml:"resource_quota"`
+}
+
+// TenantResourceQuotaConfig selects the per-tenant resource quota backend and
+// seeds operator-declared limits. Empty backend is normalized to disabled.
+type TenantResourceQuotaConfig struct {
+	Backend           string                             `yaml:"backend"` // disabled | memory | postgres
+	CleanupInterval   time.Duration                      `yaml:"cleanup_interval"`
+	Limits            []TenantQuotaSeedConfig            `yaml:"limits"`
+	ProjectionIngress TenantQuotaProjectionIngressConfig `yaml:"projection_ingress"`
+}
+
+// TenantQuotaProjectionIngressConfig exposes the machine-only entitlement
+// projection endpoint. Sources are versioned desired-state records and may be
+// updated in place through the precompiled registry API.
+type TenantQuotaProjectionIngressConfig struct {
+	Enabled  bool                                `yaml:"enabled"`
+	Audience string                              `yaml:"audience"`
+	Sources  []TenantQuotaProjectionSourceConfig `yaml:"sources"`
+}
+
+type TenantQuotaProjectionSourceConfig = quotabinding.Source
+
+// TenantQuotaSeedConfig declares one tenant's initial commercial limits.
+// Zero values remain unlimited and may later be replaced by entitlement sync.
+type TenantQuotaSeedConfig struct {
+	TenantID     string `yaml:"tenant_id"`
+	MaxClients   int    `yaml:"max_clients"`
+	MaxUsers     int    `yaml:"max_users"`
+	MaxSessions  int    `yaml:"max_sessions"`
+	MaxTokenRate int    `yaml:"max_token_rate"`
+}
+
+func (c *Config) validateTenantResourceQuota() error {
+	cfg := &c.Tenant.ResourceQuota
+	cfg.Backend = strings.ToLower(strings.TrimSpace(cfg.Backend))
+	if cfg.Backend == "" {
+		cfg.Backend = "disabled"
+	}
+	if err := c.validateTenantQuotaBackend(); err != nil {
+		return err
+	}
+	if err := validateTenantQuotaProjectionIngress(*cfg); err != nil {
+		return err
+	}
+	if cfg.Backend == "disabled" {
+		if len(cfg.Limits) > 0 {
+			return fmt.Errorf("config: tenant.resource_quota.limits require an enabled backend")
+		}
+		return nil
+	}
+	return validateTenantQuotaSeeds(*cfg)
+}
+
+func validateTenantQuotaProjectionIngress(cfg TenantResourceQuotaConfig) error {
+	ingress := cfg.ProjectionIngress
+	if !ingress.Enabled {
+		return nil
+	}
+	if cfg.Backend == "disabled" {
+		return fmt.Errorf("config: tenant.resource_quota.projection_ingress requires an enabled quota backend")
+	}
+	if !quotabinding.ValidIdentity(ingress.Audience) || len(ingress.Sources) == 0 {
+		return fmt.Errorf("config: tenant.resource_quota.projection_ingress audience and sources are required")
+	}
+	if _, err := quotabinding.NewRegistry(ingress.Sources); err != nil {
+		return fmt.Errorf("config: tenant.resource_quota.projection_ingress sources: %w", err)
+	}
+	return nil
+}
+
+func (c *Config) validateTenantQuotaBackend() error {
+	cfg := c.Tenant.ResourceQuota
+	if cfg.CleanupInterval < 0 {
+		return fmt.Errorf("config: tenant.resource_quota.cleanup_interval must not be negative")
+	}
+	switch cfg.Backend {
+	case "disabled":
+		return nil
+	case "memory", "postgres":
+	default:
+		return fmt.Errorf("config: tenant.resource_quota.backend must be disabled, memory, or postgres, got %q", cfg.Backend)
+	}
+	if !c.Tenant.Enabled {
+		return fmt.Errorf("config: tenant.resource_quota.backend=%s requires tenant.enabled=true", cfg.Backend)
+	}
+	if cfg.Backend == "memory" && c.Server.Topology.Mode == TopologyModeMulti {
+		return fmt.Errorf("config: tenant.resource_quota.backend=memory is unsafe with server.topology.mode=multi; use postgres")
+	}
+	if cfg.Backend == "postgres" && !c.Postgres.Configured() {
+		return fmt.Errorf("config: postgres.dsn required when tenant.resource_quota.backend=postgres")
+	}
+	return nil
+}
+
+func validateTenantQuotaSeeds(cfg TenantResourceQuotaConfig) error {
+	seen := make(map[string]struct{}, len(cfg.Limits))
+	for _, seed := range cfg.Limits {
+		if _, duplicate := seen[seed.TenantID]; duplicate {
+			return fmt.Errorf("config: duplicate tenant.resource_quota limit for tenant %q", seed.TenantID)
+		}
+		seen[seed.TenantID] = struct{}{}
+		if err := core.ValidateQuotaTenantID(seed.TenantID); err != nil {
+			return fmt.Errorf("config: tenant.resource_quota tenant_id %q: %w", seed.TenantID, err)
+		}
+		quota := core.TenantQuota{MaxClients: seed.MaxClients, MaxUsers: seed.MaxUsers,
+			MaxSessions: seed.MaxSessions, MaxTokenRate: seed.MaxTokenRate}
+		if err := core.ValidateTenantQuota(&quota); err != nil {
+			return fmt.Errorf("config: tenant.resource_quota tenant %q: %w", seed.TenantID, err)
+		}
+	}
+	return nil
 }
 
 // TenantUsageMeteringConfig opts into the per-tenant usage/metering report

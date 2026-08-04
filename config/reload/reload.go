@@ -102,6 +102,8 @@ var safeReloadPrefixes = []string{
 	"/security/rate_limit",
 }
 
+const tenantQuotaProjectionSourcesPrefix = "/tenant/resource_quota/projection_ingress/sources"
+
 // hasSafePrefix reports whether path falls under one of safeReloadPrefixes.
 func hasSafePrefix(path string) bool {
 	for _, prefix := range safeReloadPrefixes {
@@ -153,7 +155,8 @@ type Reloader struct {
 	// Ignored instead of Applied. Set via SetRateLimitHook (not a New
 	// constructor param, to avoid breaking existing callers' positional
 	// argument lists).
-	setRateLimitPolicy func(config.RateLimitConfig) error
+	setRateLimitPolicy              func(config.RateLimitConfig) error
+	setTenantQuotaProjectionSources func([]config.TenantQuotaProjectionSourceConfig) error
 
 	// setAdminAPIGate / setBrandingGate apply a reloaded feature_gates.admin_api
 	// / feature_gates.web_spa value live — typically
@@ -263,15 +266,19 @@ func (r *Reloader) Reload(ctx context.Context) (Result, error) {
 	// redacting before diffing would make two different secrets diff to
 	// "no change".
 	ops := configaudit.RedactOps(configaudit.Diff(beforeMap, afterMap))
-	return r.applyOps(ops, newCfg), nil
+	return r.applyOps(ops, newCfg)
 }
 
 // applyOps classifies every diff op as an exact safeReloadPaths match, a
 // safeReloadPrefixes block match, or unsafe, and applies each accordingly.
 // Split out of Reload to stay within the function-length budget. Called
 // with r.mu held.
-func (r *Reloader) applyOps(ops []configaudit.Op, newCfg *config.Config) Result {
-	var res Result
+func (r *Reloader) applyOps(ops []configaudit.Op, newCfg *config.Config) (Result, error) {
+	quotaSourcesChanged := tenantQuotaProjectionSourcesChanged(ops)
+	res, err := r.reconcileTenantQuotaProjectionSources(Result{}, newCfg, quotaSourcesChanged)
+	if err != nil {
+		return res, err
+	}
 	rateLimitChanged := false
 	for _, op := range ops {
 		switch {
@@ -286,6 +293,8 @@ func (r *Reloader) applyOps(ops []configaudit.Op, newCfg *config.Config) Result 
 				continue
 			}
 			res.Applied = append(res.Applied, applied...)
+		case strings.HasPrefix(op.Path, tenantQuotaProjectionSourcesPrefix):
+			continue
 		case hasSafePrefix(op.Path):
 			// Deferred to after the loop: every leaf under security.rate_limit
 			// rebuilds as ONE atomic Policy, not once per changed leaf field
@@ -302,7 +311,16 @@ func (r *Reloader) applyOps(ops []configaudit.Op, newCfg *config.Config) Result 
 			res.Ignored = append(res.Ignored, "/security/rate_limit")
 		}
 	}
-	return res
+	return res, nil
+}
+
+func tenantQuotaProjectionSourcesChanged(ops []configaudit.Op) bool {
+	for _, op := range ops {
+		if strings.HasPrefix(op.Path, tenantQuotaProjectionSourcesPrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // applySafe applies one recognized safe-reload path onto the tracked

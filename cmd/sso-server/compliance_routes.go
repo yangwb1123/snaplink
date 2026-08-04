@@ -23,6 +23,14 @@ func newSelfServiceExporter(users core.UserProvider, sessions core.SessionManage
 	return &compliance.Exporter{Users: users, Sessions: sessions}
 }
 
+// rebindQuotaSessionConsumers replaces the raw manager captured before tenant
+// wiring so internal quota_pending rows never appear in subject exports.
+func (b *appBuilder) rebindQuotaSessionConsumers() {
+	if b.dataExporter != nil {
+		b.dataExporter.Sessions = b.sessionMgr
+	}
+}
+
 // selfServiceAccountEraseOption wires POST /me/account/erase (GDPR Art. 17
 // self-service) with a COMPLETE eraser (incl. refresh-token revocation across
 // clients) so a self-deletion also cuts off the user's tokens.

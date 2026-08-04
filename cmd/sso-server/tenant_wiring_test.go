@@ -1,12 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/yangwb1123/snaplink/cmd/sso-server/serverbuildstore"
 	"github.com/yangwb1123/snaplink/config"
+	"github.com/yangwb1123/snaplink/shared/core"
 )
 
 // TestBuildApp_RefreshRotationGrace_BuildsCleanly verifies a configured refresh
@@ -107,4 +112,75 @@ func TestBuildApp_TenantTokenStrategy_AcceptsRegistered(t *testing.T) {
 		t.Fatalf("buildApp with valid tenant token_strategy: %v", err)
 	}
 	defer func() { _ = a.registry.Close() }()
+}
+
+func TestBuildApp_TenantResourceQuotaInjectsAndStops(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{}
+	cfg.Tenant.Enabled = true
+	cfg.Tenant.Backend = "memory"
+	cfg.Tenant.Tenants = []config.TenantSeedConfig{{ID: "acme", Slug: "acme", Name: "Acme"}}
+	cfg.Tenant.ResourceQuota = config.TenantResourceQuotaConfig{
+		Backend: "memory",
+		Limits:  []config.TenantQuotaSeedConfig{{TenantID: "acme", MaxClients: 1}},
+	}
+	cfg.ClientRegistration.Enabled = true
+	cfg.ClientRegistration.InitialAccessToken = "iat"
+	cfg.ClientRegistration.DefaultActive = true
+
+	a, err := buildApp(cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("buildApp: %v", err)
+	}
+	defer shutdownApp(t, a)
+	if a.tenantQuotaStop == nil {
+		t.Fatal("tenant quota cleanup lifecycle was not retained")
+	}
+	if _, ok := a.sessionMgr.(core.TenantSessionQuotaReconciler); !ok {
+		t.Fatalf("session manager %T does not own quota lifecycle", a.sessionMgr)
+	}
+	httpServer := httptest.NewServer(a.server.Handler())
+	defer httpServer.Close()
+	if status := postQuotaRegistration(t, httpServer.URL); status != http.StatusCreated {
+		t.Fatalf("first registration status=%d, want 201", status)
+	}
+	if status := postQuotaRegistration(t, httpServer.URL); status != http.StatusForbidden {
+		t.Fatalf("second registration status=%d, want 403 quota_exceeded", status)
+	}
+}
+
+func postQuotaRegistration(t *testing.T, baseURL string) int {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"client_name": "quota-client", "tenant_id": "acme",
+		"redirect_uris": []string{"https://app.example.com/cb"},
+	})
+	if err != nil {
+		t.Fatalf("marshal registration: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/register", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new registration request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer iat")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return resp.StatusCode
+}
+
+func TestBuildApp_MultiReplicaAlwaysRejectsMemoryTenantQuota(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{}
+	cfg.Server.Topology.Mode = config.TopologyModeMulti
+	cfg.Server.Topology.AllowPerPodState = true
+	cfg.Tenant.Enabled = true
+	cfg.Tenant.Backend = "memory"
+	cfg.Tenant.ResourceQuota.Backend = "memory"
+	if _, err := buildApp(cfg, quietLogger()); err == nil {
+		t.Fatal("multi-replica memory quota should fail even with allow_per_pod_state")
+	}
 }
