@@ -169,10 +169,10 @@ otherwise put a TLS-terminating edge (OpenResty / Envoy / NGINX) in front.
 
 ## 3. Consume from a downstream app (`ssoclient`)
 
-A downstream app hosts its own redirect/callback and login state, while the SDK
-owns PKCE generation, token-endpoint wire handling, token verification, and
-authorization calls. Write business code against the four interfaces and pick
-a backend per capability at startup:
+A downstream app hosts its redirect/callback routes, while the SDK owns the
+short-lived state/verifier lifecycle, secure cookie, PKCE, token-endpoint wire
+handling, token verification, and authorization calls. Write business code
+against the four interfaces and pick a backend per capability at startup:
 
 ```go
 import (
@@ -190,13 +190,15 @@ tokens := remote.NewTokenClient("http://sso:8080/token",
     remote.WithClientID("web-app"),
     remote.WithRedirectURI("https://app.example/callback"),
 )
+browser, _ := remote.NewBrowserFlow(tokens,
+    remote.WithBrowserScopes("openid", "profile"),
+)
 auth  := remote.NewAuthClient(jwks)     // ValidateToken / Logout
 authz := remote.NewAuthzClient(conn)    // Check / ListPermissions / ListRoles / GetMenus (gRPC)
 audit := remote.NewAuditClient(conn)    // Record (gRPC)
 
-target, verifier, _ := tokens.AuthorizationCodeURL(state, "openid", "profile")
-// App stores verifier + state, then redirects the browser to target.
-issued, _ := tokens.ExchangeCode(ctx, callbackCode, verifier)
+_ = browser.Begin(w, loginRequest)              // Sets state cookie + redirects.
+issued, _ := browser.Callback(w, callbackRequest) // Validates once + exchanges.
 _ = issued.AccessToken
 
 subj, _ := auth.ValidateToken(ctx, bearerToken)
@@ -204,7 +206,9 @@ ok, _   := authz.Check(ctx, &ssoclient.CheckRequest{SubjectID: subj.ID, Permissi
 ```
 
 `TokenClient` also exposes `Refresh` and `ClientCredentials`. OAuth failures
-are returned as typed `*ssoclient.TokenError` values with `errors.Is` support.
+are returned as typed errors with `errors.Is` support. `BrowserFlow` uses a
+bounded in-memory state store by default; clustered Apps inject a shared
+`AuthorizationStateStore` with `remote.WithBrowserStateStore`.
 
 Backends: `local` (in-process embed), `remote` (gRPC + JWKS), `dev` (allow-all
 stub for development — prints an AUTH-BYPASS warning), `bootstrap` (versioned

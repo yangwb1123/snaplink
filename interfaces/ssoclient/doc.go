@@ -2,7 +2,8 @@
 //
 // It defines four thin interfaces — TokenClient, AuthClient, AuthzClient and
 // AuditClient — that App code talks to. TokenClient centralizes PKCE and OAuth
-// token-endpoint calls; the other capabilities support local/remote wiring:
+// token-endpoint calls; remote.BrowserFlow adds replay-safe state/cookie
+// handling around it. The other capabilities support local/remote wiring:
 //
 //   - ssoclient/local — calls the snaplink/sso SDK in-process. Use it when
 //     the App embeds the SDK and owns its own user / permission / audit
