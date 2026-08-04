@@ -367,7 +367,7 @@ func (s *ClientStore) RotateSecretWithLifecycle(ctx context.Context, clientID st
 		until = now.Add(overlap).UnixNano()
 	}
 	res, err := s.db.ExecContext(ctx, `UPDATE clients SET
-		previous_secret = CASE WHEN $1 > 0 THEN secret ELSE '' END,
+		previous_secret = CASE WHEN $1::BIGINT > 0 THEN secret ELSE '' END,
 		secret_overlap_until = $2, secret = $3, secret_rotated_at = $4,
 		secret_expires_at = $5 WHERE id = $6`,
 		int64(overlap), until, hashed, now.UnixNano(), unixNanoOrZero(clientrotation.ExpiresAt(now, lifetime)), clientID)
