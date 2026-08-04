@@ -1,0 +1,112 @@
+# Full-auto summary 2026-08-01 14:20:16
+
+- module domains/anomaly / direction '1. 为 anomaly 数据模型补齐 Tenant 维度（多租户隔离是正确性缺陷，不是增强）': FAIL
+- module domains/anomaly / direction '2. 收敛重复的检测器实现：`domains/anomaly/detect/` 是零引用的死代码且与线上实现线类型撞名': FAIL
+- module domains/anomaly / direction '3. 接通已配置但从未启动的 anomaly 数据保留（retention）回路': FAIL
+- module domains/authenticators: analysis FAILED
+- module domains/conditionalaccess: analysis FAILED
+- module domains/connections: analysis FAILED
+- module domains/federation: analysis FAILED
+- module domains/identitylink: analysis FAILED
+- module domains/metering: analysis FAILED
+- module domains/permissions / direction '模块现状（上下文基线）': FAIL
+- module domains/permissions / direction '方向 1：把资源目录（ResourceProvider）从"已构建未接线"变成资源级授权执行点': FAIL
+- module domains/permissions / direction '方向 2：把 SoD（SSoD/DSoD）从"内存演示"变成可运营的合规控制': FAIL
+- module domains/region / direction '1. 可观测性：为 fail-open 的治理控制补齐决策指标与失效告警': FAIL
+- module domains/region / direction '2. 把 serving region 写进令牌与发现契约：让驻留约束延伸到资源服务器边界': FAIL
+- module domains/region / direction '3. 激活死代码 SPI：让 `PolicyStore` 成为真实扩展点，补耐用后端与区域 ID 校验': FAIL
+- module domains/tenant / direction '方向 1：租户解析热路径"两跳查询 + 零缓存"——收敛重复解析逻辑并接入失效总线': FAIL
+- module domains/tenant / direction '方向 2：`Domain.DefaultClientID` 是"有字段无行为"的悬空契约——接入登录解析或删除': FAIL
+- module domains/tenant / direction '方向 3：B2B 跨租户协作"内存-only + 零管理面"——补齐持久化后端与运营/审计表面': FAIL
+- module domains/threataction / direction '1. 策略存储与限流的持久化、多副本一致性（接线已存在但无人使用的 SQLite store）': FAIL
+- module domains/threataction / direction '2. 多动作响应 Playbook 与显式优先级（组合动作 + 排序语义）': FAIL
+- module domains/threataction / direction '3. 响应可观测性与反馈闭环（指标、执行历史、真实通知）': FAIL
+- module domains/tokenanomaly / direction '1. 打通 Geo 信号链路：multi_geo / velocity 两个旗舰信号在生产路径上是死代码': FAIL
+- module domains/tokenanomaly / direction '2. Finding 全生命周期缺失：无持久化、无 triage 状态、无过期/分页/租户维度，多副本部署下整链失效': FAIL
+- module domains/tokenanomaly / direction '3. 响应精度不足：FamilyID 未贯穿检测→响应链，revoke 退化为整用户兜底；rate_spike 只盯"最后一分钟"': FAIL
+- module domains/tokenexchange / direction '1. 委托链级联撤销：把 ChainStore 从"只读观测"升级为"撤销控制面"': FAIL
+- module domains/tokenexchange / direction '2. 跳授权策略的运营闭环：管理 API + 持久化 + 匹配维度扩展': FAIL
+- module domains/tokenexchange / direction '3. 委托决策的审计盲区：deny 事件缺失 + 令牌↔授权会话不可反查': FAIL
+- module domains/tokenpolicy / direction '方向一：治理生命周期闭环——可写管理 API、持久化后端与规则校验': FAIL
+- module domains/tokenpolicy / direction '方向二：策略拒绝的审计事件化——DenyReason 只进日志，不进审计流': FAIL
+- module domains/tokenpolicy / direction '方向三：租户维度与主体感知的选择器——治理单元从"客户端"升级到"租户/人群"': FAIL
+- module domains/userlifecycle / direction '1. 生命周期状态只是"管理元数据"，从未真正执行——SUSPENDED 用户依然可以登录并换取新令牌': FAIL
+- module domains/userlifecycle / direction '2. PURGED 声称"数据已擦除"却无任何擦除动作；INVITED 状态没有任何生产入口（邀请流程缺失）': FAIL
+- module domains/userlifecycle / direction '3. 生产化短板：仅内存 store、跨副本状态发散、sweep 全量扫描、活动信号无生产写入方': FAIL
+- module interfaces/adapters / direction '方向一：补齐 HandlerContext 的"短路 + 响应捕获"能力，消除适配器下的安全功能静默失效': FAIL
+- module interfaces/adapters / direction '方向二：建立 Router 后端的"行为一致性"测试门（conformance suite），让跨后端字节一致成为可执行约束': FAIL
+- module interfaces/adapters / direction '方向三：把适配器从"演示代码"升级为正式交付路径——真实嵌入集成与端到端验证': FAIL
+- module interfaces/admin / direction '1. 管理授权模型升级：从二元 scope 到可组合的委派 RBAC（角色 × 资源 × 租户）': FAIL
+- module interfaces/admin / direction '2. 管理面双轨一致性：HTTP 与 gRPC 的单一事实源与能力对齐': FAIL
+- module interfaces/admin / direction '3. 管理面拒绝路径审计盲区：被拦截的访问不进审计': FAIL
+- module interfaces/apidocs / direction '全局扫描结论': FAIL
+- module interfaces/apidocs / direction '1. 提供部署感知（runtime-faithful）的 OpenAPI 投影：按已挂载选项过滤路由 + 注入真实 base URL/版本': FAIL
+- module interfaces/apidocs / direction '2. 让查看器渲染安全与错误契约：per-operation 认证要求（security/securitySchemes）与按端点错误码目录': FAIL
+- module interfaces/cors / direction '方向一：CORS 策略热更新 + origin 判定单一事实来源（消除登录 CSRF 门与中间件的逻辑漂移）': FAIL
+- module interfaces/cors / direction '方向二：配置面完整性——`PathOverrides` 对 YAML 运维不可达，`security.cors` 未入契约文档，默认头列表存在"追加"陷阱': FAIL
+- module interfaces/cors / direction '方向三：CORS 执行可观测性——被拒 origin 无指标无审计，跨域探测信号完全不可见': FAIL
+- module interfaces/grpcserver / direction '1. gRPC 管理面传输级治理缺失：IP 策略/速率限制/破坏性确认/空闲超时/写配额在原生 gRPC 上被整体绕过': FAIL
+- module interfaces/grpcserver / direction '2. 管理面 List RPC 全量物化：分页只裁剪响应、不裁剪扫描，每页 O(N) 且游标不稳定': FAIL
+- module interfaces/grpcserver / direction '3. gRPC 平面运维可观测性缺失：无健康检查、无 reflection、无 metrics/tracing 拦截器，TLS 可选': FAIL
+- module interfaces/middleware / direction '1. 将中间件链形式化为带命名槽位的类型化管道（构建期强制排序不变量）': FAIL
+- module interfaces/middleware / direction '2. 在 core 层标准化"请求级状态注册表 + 响应捕获栈"，消灭各包自建上下文管道的重复与脆弱性': FAIL
+- module interfaces/middleware / direction '3. 统一可观测性：常开的结构化访问日志 + 单一 trace/audit 关联点（替代全有或全无的调试日志与双追踪）': FAIL
+- module interfaces/ratelimit / direction '方向一：补齐"认证后"限流——按客户端/按用户分桶的安全落点（第二阶段限流）': FAIL
+- module interfaces/ratelimit / direction '方向二：限流剩余额度可见性——信息头（X-RateLimit-*）与额度指标': FAIL
+- module interfaces/ratelimit / direction '方向三：限流实现碎片化收敛——五套平行限流机制统一到同一 SPI 与同一 429 契约': FAIL
+- module interfaces/snapshot / direction '方向 1：恢复安全化 — 原子性/回滚与恢复前自动安全快照': FAIL
+- module interfaces/snapshot / direction '方向 2：凭据感知的恢复 — 客户端密钥再生与 MFA 注册数据可移植性': FAIL
+- module interfaces/snapshot / direction '方向 3：快照差异与漂移检测 — snapshot-vs-live / snapshot-vs-snapshot 对比': FAIL
+- module interfaces/sso / direction '方向一：SDK 选项面与 stock-server 配置面的一致性缺口': FAIL
+- module interfaces/sso / direction '方向二：Postgres 成为 OAuth 热存储一等后端': FAIL
+- module interfaces/sso / direction '方向三：`interfaces/sso` 天花板下的系统性瘦身（薄委托下沉）': FAIL
+- module interfaces/ssoclient / direction '1. 补全 App 侧令牌获取层（OAuth Client）：PKCE/PAR/Device/Refresh/client_credentials + DPoP 证明生成': FAIL
+- module interfaces/ssoclient / direction '2. 统一并加固验证契约：ssoclient 门面缺失 iss/aud 强制，弱于其封装的 rs 层': FAIL
+- module interfaces/ssoclient / direction '3. 补齐 App 侧事件平面：CAEP/backchannel-logout 接收端 + 批量审计流': FAIL
+- module interfaces/ssoext: analysis FAILED
+- module infrastructure/extauthz: analysis FAILED
+- module infrastructure/identitylinkpostgres: analysis FAILED
+- module infrastructure/kafka: analysis FAILED
+- module infrastructure/kerberos: analysis FAILED
+- module infrastructure/kms: analysis FAILED
+- module infrastructure/ldap: analysis FAILED
+- module infrastructure/mqtt: analysis FAILED
+- module infrastructure/postgres: analysis FAILED
+- module infrastructure/radius: analysis FAILED
+- module infrastructure/redis / direction '1. 让 Redis 从"热路径存储层"升级为集群协调层:增加 cluster.Bus 的 Redis pub/sub 实现': FAIL
+- module infrastructure/redis / direction '2. 存储层可观测性为零:为 Redis stores 注入延迟/错误/命中率指标': FAIL
+- module infrastructure/redis / direction '3. Session 枚举的 N+1 与全局单键索引热点:登录路径上的线性延迟': FAIL
+- module infrastructure/saml: analysis FAILED
+- module infrastructure/sms: analysis FAILED
+- module platform/audit: analysis FAILED
+- module platform/bootstrap: analysis FAILED
+- module platform/buildinfo: analysis FAILED
+- module platform/cluster: analysis FAILED
+- module platform/configaudit: analysis FAILED
+- module platform/geo: analysis FAILED
+- module platform/lifecycle: analysis FAILED
+- module platform/metrics: analysis FAILED
+- module platform/migrate: analysis FAILED
+- module platform/netpolicy: analysis FAILED
+- module platform/registrar: analysis FAILED
+- module platform/registry: analysis FAILED
+- module platform/releases: analysis FAILED
+- module platform/signingkeys: analysis FAILED
+- module platform/sse: analysis FAILED
+- module platform/tracing: analysis FAILED
+- module protocols/caep: analysis FAILED
+- module protocols/compliance: analysis FAILED
+- module protocols/fapi: analysis FAILED
+- module protocols/lifecyclereactions: analysis FAILED
+- module protocols/oauth: analysis FAILED
+- module protocols/oidc: analysis FAILED
+- module protocols/scim: analysis FAILED
+- module protocols/scimprovision: analysis FAILED
+- module protocols/selfservice: analysis FAILED
+- module shared/core: analysis FAILED
+- module shared/i18n: analysis FAILED
+- module shared/security: analysis FAILED
+- module shared/spi: analysis FAILED
+- module shared/trust: analysis FAILED
+
+Passed: 0, failed: 108
