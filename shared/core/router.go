@@ -185,6 +185,7 @@ type StdRoute struct {
 type StdRouter struct {
 	mux         *http.ServeMux
 	prefix      string // group prefix, prepended to every registered path
+	mu          sync.RWMutex // guards middlewares: Use writes, registrations/Group snapshot
 	middlewares []MiddlewareFunc
 	routes      *[]StdRoute // shared across root + groups
 }
@@ -226,23 +227,27 @@ func (r *StdRouter) register(method, path string, handler HandlerFunc) {
 // can offer the same route-matching-level gating; GatedRouter owns the
 // decision of when a route needs live gating.
 func (r *StdRouter) RegisterGated(method, path string, handler HandlerFunc, live func() bool) {
+	r.mu.RLock()
+	mws := append([]MiddlewareFunc{}, r.middlewares...)
+	r.mu.RUnlock()
 	*r.routes = append(*r.routes, StdRoute{
 		path:        r.prefix + r.buildPath(path),
 		method:      method,
 		handler:     handler,
-		middlewares: append([]MiddlewareFunc{}, r.middlewares...),
+		middlewares: mws,
 		live:        live,
 	})
 }
 
 // RegisterLeased registers a static route whose backing generation is pinned
 // before any route middleware runs and released after the request completes.
-func (r *StdRouter) RegisterLeased(
-	method, path string, handler HandlerFunc, acquire RouteLeaseAcquirer,
-) {
+func (r *StdRouter) RegisterLeased(method, path string, handler HandlerFunc, acquire RouteLeaseAcquirer) {
+	r.mu.RLock()
+	mws := append([]MiddlewareFunc{}, r.middlewares...)
+	r.mu.RUnlock()
 	*r.routes = append(*r.routes, StdRoute{
 		path: r.prefix + r.buildPath(path), method: method, handler: handler,
-		middlewares: append([]MiddlewareFunc{}, r.middlewares...), acquire: acquire,
+		middlewares: mws, acquire: acquire,
 	})
 }
 
@@ -250,16 +255,22 @@ func (r *StdRouter) RegisterLeased(
 // given path and inherit the parent's middlewares (plus any new ones).
 // Routes registered on the child end up in the same table the root serves.
 func (r *StdRouter) Group(prefix string, middlewares ...MiddlewareFunc) Router {
+	r.mu.RLock()
+	base := append([]MiddlewareFunc{}, r.middlewares...)
+	r.mu.RUnlock()
 	return &StdRouter{
 		mux:         r.mux,
 		prefix:      r.prefix + r.buildPath(prefix),
-		middlewares: append(append([]MiddlewareFunc{}, r.middlewares...), middlewares...),
+		middlewares: append(base, middlewares...),
 		routes:      r.routes,
 	}
 }
 
 func (r *StdRouter) Use(middlewares ...MiddlewareFunc) {
+	// Registrations snapshot the list; the mutex makes concurrent Use() safe.
+	r.mu.Lock()
 	r.middlewares = append(r.middlewares, middlewares...)
+	r.mu.Unlock()
 }
 
 func (r *StdRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {

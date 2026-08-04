@@ -41,6 +41,10 @@ const (
 	DefaultClientSecret = "testkit-secret"
 	DefaultUsername     = "testkit-user"
 	DefaultPassword     = "testkit-pass"
+	// DefaultRedirectURI is seeded on the harness client so
+	// authorization_code flows work without extra wiring. Override with
+	// WithRedirectURI.
+	DefaultRedirectURI = "http://localhost:9999/callback"
 )
 
 // Harness is a running in-process SSO server. Call Close when done.
@@ -63,6 +67,8 @@ type config struct {
 	scopes          []string
 	users           map[string]string // username -> password
 	usersAreDefault bool
+	router          sso.Router // nil => server default (NewStdRouter)
+	redirectURIs    []string
 }
 
 // Option customizes NewServer.
@@ -82,6 +88,19 @@ func WithClient(id, secret string, scopes ...string) Option {
 			c.scopes = append([]string(nil), scopes...)
 		}
 	}
+}
+
+// WithRouter mounts the SSO server onto the supplied router instead of the
+// default StdRouter — the production embedding shape (sso.WithRouter). A nil
+// router (or unset option) uses the server default, byte-identical to today.
+func WithRouter(r sso.Router) Option {
+	return func(c *config) { c.router = r }
+}
+
+// WithRedirectURI replaces the seeded client redirect URI list (default
+// DefaultRedirectURI).
+func WithRedirectURI(uri string) Option {
+	return func(c *config) { c.redirectURIs = []string{uri} }
 }
 
 // WithUser adds a login user (username/password). Called multiple times to
@@ -113,7 +132,7 @@ func NewServer(opts ...Option) *Harness {
 	clients := seedClient(cfg)
 	pw := newPasswordAuthenticator(cfg)
 
-	srv := sso.NewServer(
+	srvOpts := []sso.Option{
 		sso.WithIssuer(cfg.issuerName),
 		sso.WithUserProvider(users),
 		sso.WithClientStore(clients),
@@ -122,7 +141,17 @@ func NewServer(opts ...Option) *Harness {
 		sso.WithTokenIssuer("jwt", issuer),
 		sso.WithIDTokenIssuer(issuer),
 		sso.WithDefaultTokenStrategy("jwt"),
-	)
+		// Wired by default so the harness can run authorization_code and
+		// refresh-rotation flows out of the box (the router-backend matrix
+		// is the first consumer). A seeded refresh store makes /auth/login
+		// additionally return refresh_token — additive for existing users.
+		sso.WithAuthCodeStore(defaultimpl.NewMemoryAuthCodeStore(), 5*time.Minute),
+		sso.WithRefreshTokenStore(defaultimpl.NewMemoryRefreshTokenStore(), time.Hour),
+	}
+	if cfg.router != nil {
+		srvOpts = append(srvOpts, sso.WithRouter(cfg.router))
+	}
+	srv := sso.NewServer(srvOpts...)
 
 	ts := httptest.NewServer(srv.Handler())
 	return &Harness{
@@ -143,6 +172,7 @@ func resolveConfig(opts ...Option) config {
 		clientSecret: DefaultClientSecret,
 		scopes:       []string{"openid"},
 		users:        map[string]string{DefaultUsername: DefaultPassword},
+		redirectURIs: []string{DefaultRedirectURI},
 	}
 	cfg.markDefaults()
 	for _, o := range opts {
@@ -166,6 +196,7 @@ func seedClient(cfg config) *defaultimpl.MemoryClientStore {
 	clients.AddSeed(&sso.Client{
 		ID:                    cfg.clientID,
 		Secret:                cfg.clientSecret,
+		RedirectURIs:          append([]string(nil), cfg.redirectURIs...),
 		AllowedScopes:         cfg.scopes,
 		AllowedAuthenticators: []string{authenticators.MethodPassword},
 		TokenStrategy:         "jwt",
@@ -206,6 +237,14 @@ func (h *Harness) JWKSURL() string { return h.URL + "/.well-known/jwks.json" }
 // DiscoveryURL is the OIDC discovery document endpoint.
 func (h *Harness) DiscoveryURL() string {
 	return h.URL + "/.well-known/openid-configuration"
+}
+
+// Handler is the full server handler behind URL — the probe mux + SSO
+// middleware chain wrapping whatever router was injected. Recorder-level
+// comparisons (httptest.NewRecorder) see the same bytes the wire serves,
+// minus transport framing such as the Date header.
+func (h *Harness) Handler() http.Handler {
+	return h.server.Config.Handler
 }
 
 // LoginResult holds the tokens returned by a successful Login.
