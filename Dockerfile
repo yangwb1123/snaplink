@@ -49,34 +49,34 @@ RUN go mod download
 # ── Layer 2: sibling module dependencies (each in its own layer
 #    so a source change in one doesn't invalidate another) ─────────
 COPY cmd/sso-mcp/go.mod cmd/sso-mcp/go.sum ./cmd/sso-mcp/
-RUN go mod download ./cmd/sso-mcp/
+RUN cd cmd/sso-mcp && go mod download
 
 COPY infrastructure/extauthz/go.mod infrastructure/extauthz/go.sum ./infrastructure/extauthz/
-RUN go mod download ./infrastructure/extauthz/
+RUN cd infrastructure/extauthz && go mod download
 
 COPY infrastructure/kerberos/go.mod infrastructure/kerberos/go.sum ./infrastructure/kerberos/
-RUN go mod download ./infrastructure/kerberos/
+RUN cd infrastructure/kerberos && go mod download
 
 COPY infrastructure/kms/awskms/go.mod infrastructure/kms/awskms/go.sum ./infrastructure/kms/awskms/
-RUN go mod download ./infrastructure/kms/awskms/
+RUN cd infrastructure/kms/awskms && go mod download
 
 COPY infrastructure/kms/azurekeyvault/go.mod infrastructure/kms/azurekeyvault/go.sum ./infrastructure/kms/azurekeyvault/
-RUN go mod download ./infrastructure/kms/azurekeyvault/
+RUN cd infrastructure/kms/azurekeyvault && go mod download
 
 COPY infrastructure/kms/gcpkms/go.mod infrastructure/kms/gcpkms/go.sum ./infrastructure/kms/gcpkms/
-RUN go mod download ./infrastructure/kms/gcpkms/
+RUN cd infrastructure/kms/gcpkms && go mod download
 
 COPY infrastructure/kms/pkcs11/go.mod infrastructure/kms/pkcs11/go.sum ./infrastructure/kms/pkcs11/
-RUN go mod download ./infrastructure/kms/pkcs11/
+RUN cd infrastructure/kms/pkcs11 && go mod download
 
 COPY infrastructure/ldap/go.mod infrastructure/ldap/go.sum ./infrastructure/ldap/
-RUN go mod download ./infrastructure/ldap/
+RUN cd infrastructure/ldap && go mod download
 
 COPY infrastructure/radius/go.mod infrastructure/radius/go.sum ./infrastructure/radius/
-RUN go mod download ./infrastructure/radius/
+RUN cd infrastructure/radius && go mod download
 
 COPY infrastructure/saml/go.mod infrastructure/saml/go.sum ./infrastructure/saml/
-RUN go mod download ./infrastructure/saml/
+RUN cd infrastructure/saml && go mod download
 
 # ── Layer 3: source code ──────────────────────────────────────────
 COPY . .
@@ -108,11 +108,22 @@ RUN resolved_build_time="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"; \
 # sso-mcp is a nested module (has its own go.mod), so the build
 # must run from ./cmd/sso-mcp with the module's own dependency
 # tree. Identical hardening flags.
-RUN CGO_ENABLED=0 GOOS=linux GOFIPS140=${GOFIPS140} go build \
+RUN cd cmd/sso-mcp && CGO_ENABLED=0 GOOS=linux GOFIPS140=${GOFIPS140} go build \
     -trimpath \
     -ldflags="-s -w" \
     -o /out/sso-mcp \
-    ./cmd/sso-mcp
+    .
+
+# ---- runtime: sso-mcp (target=sso-mcp) ----
+FROM gcr.io/distroless/static:nonroot AS sso-mcp
+
+COPY --from=builder /out/sso-mcp /sso-mcp
+
+# MCP server listens on configurable port (default 8082).
+EXPOSE 8082
+
+USER nonroot:nonroot
+ENTRYPOINT ["/sso-mcp"]
 
 # ---- runtime: sso-server (default target) ----
 FROM gcr.io/distroless/static:nonroot AS sso-server
@@ -126,14 +137,3 @@ EXPOSE 8081
 
 USER nonroot:nonroot
 ENTRYPOINT ["/sso-server"]
-
-# ---- runtime: sso-mcp (target=build-mcp) ----
-FROM gcr.io/distroless/static:nonroot AS sso-mcp
-
-COPY --from=builder /out/sso-mcp /sso-mcp
-
-# MCP server listens on configurable port (default 8082).
-EXPOSE 8082
-
-USER nonroot:nonroot
-ENTRYPOINT ["/sso-mcp"]
